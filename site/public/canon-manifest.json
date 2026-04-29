@@ -1,0 +1,744 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-04-28T13:57:06Z",
+  "canon": [
+    {
+      "topic": "ORC",
+      "title": "Tusker Spec Set",
+      "route": "/developer/specs/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/README.md",
+      "source_path": "docs/specs/README.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "approved",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs",
+        "architecture"
+      ],
+      "updated": "2026-04-28",
+      "summary": "The implementation spec map for Tusker v2, including subsystem boundaries and build order."
+    },
+    {
+      "topic": "ORC",
+      "title": "Spec 00: Product Shape And Operating Modes",
+      "route": "/developer/specs/00-product-modes/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/00-product-modes.md",
+      "source_path": "docs/specs/00-product-modes.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Define what Tusker is before the implementation specs start fanning out."
+    },
+    {
+      "topic": "ORC",
+      "title": "Spec 01: VaultTracker",
+      "route": "/developer/specs/01-vault-tracker/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/01-vault-tracker.md",
+      "source_path": "docs/specs/01-vault-tracker.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Status: Draft"
+    },
+    {
+      "topic": "ORC",
+      "title": "Spec 02: Workflow Contract",
+      "route": "/developer/specs/02-workflow-contract/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/02-workflow-contract.md",
+      "source_path": "docs/specs/02-workflow-contract.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Status: Draft"
+    },
+    {
+      "topic": "ORC",
+      "title": "Spec 03: Global Daemon and Project Registry",
+      "route": "/developer/specs/03-daemon-and-registry/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/03-daemon-and-registry.md",
+      "source_path": "docs/specs/03-daemon-and-registry.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Status: Draft"
+    },
+    {
+      "topic": "ORC",
+      "title": "Spec 04: Workspace Manager",
+      "route": "/developer/specs/04-workspace-manager/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/04-workspace-manager.md",
+      "source_path": "docs/specs/04-workspace-manager.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Define deterministic isolated workspaces for daemon-run agent sessions."
+    },
+    {
+      "topic": "ORC",
+      "title": "05. Runner And Session Protocol",
+      "route": "/developer/specs/05-runner-and-session-protocol/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/05-runner-and-session-protocol.md",
+      "source_path": "docs/specs/05-runner-and-session-protocol.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Status: Draft Scope: daemon-run execution for codex and claude-code"
+    },
+    {
+      "topic": "ORC",
+      "title": "06. Review, Rework, Retry",
+      "route": "/developer/specs/06-review-rework-retry/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/06-review-rework-retry.md",
+      "source_path": "docs/specs/06-review-rework-retry.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Status: Draft Depends on: 01-vault-tracker.md, 03-daemon-and-registry.md, 05-runner-and-session-protocol.md"
+    },
+    {
+      "topic": "ORC",
+      "title": "Spec 07: Documentation Site And Publication Pipeline",
+      "route": "/developer/specs/07-documentation-site-and-publication/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/07-documentation-site-and-publication.md",
+      "source_path": "docs/specs/07-documentation-site-and-publication.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Status: Draft"
+    },
+    {
+      "topic": "ORC",
+      "title": "08. Symphony Alignment And Orchestration Roadmap",
+      "route": "/developer/specs/08-symphony-alignment-and-orchestration-roadmap/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/08-symphony-alignment-and-orchestration-roadmap.md",
+      "source_path": "docs/specs/08-symphony-alignment-and-orchestration-roadmap.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Status: Draft Date: 2026-04-28 Depends on: 00-product-modes.md, 01-vault-tracker.md, 02-workflow-contract.md, 03-daemon-and-registry.md, 04-workspace-manager.md, 05-runner-and-session-protocol.md, 06-review-rework-retry.md"
+    },
+    {
+      "topic": "ORC",
+      "title": "Agent Workflow",
+      "route": "/user/start-here/agent-workflow/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/SKILL.md",
+      "source_path": "skill/SKILL.md",
+      "audience": "user",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "approved",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "start-here",
+        "workflow"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Operating contract for agents working with Tusker in a markdown-first vault."
+    }
+  ],
+  "published": [
+    {
+      "topic": "developer/internals/dispatcher-pseudocode",
+      "title": "Dispatcher pseudocode",
+      "route": "/developer/internals/dispatcher-pseudocode/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/docs/DISPATCHER_PSEUDOCODE.md",
+      "source_path": "skill/docs/DISPATCHER_PSEUDOCODE.md",
+      "audience": "developer",
+      "tags": [
+        "internals"
+      ],
+      "updated": "2026-04-22",
+      "summary": "Reference algorithm for a cron-driven binary that turns the vault's dashboard.json into agent runs. This is the contract the Tusker CLI exposes; the dispatcher does not hand-parse markdown."
+    },
+    {
+      "topic": "developer/internals/failure-classes",
+      "title": "Failure classes and recovery table",
+      "route": "/developer/internals/failure-classes/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/docs/FAILURE_CLASSES.md",
+      "source_path": "skill/docs/FAILURE_CLASSES.md",
+      "audience": "developer",
+      "tags": [
+        "internals"
+      ],
+      "updated": "2026-04-22",
+      "summary": "Every tusker release --to failed|stalled|cancelled takes a --failure-class that drives retry and escalation behavior. The enum is frozen in schema.go."
+    },
+    {
+      "topic": "developer/internals/operator-intervention",
+      "title": "Operator intervention",
+      "route": "/developer/internals/operator-intervention/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/docs/OPERATOR_INTERVENTION.md",
+      "source_path": "skill/docs/OPERATOR_INTERVENTION.md",
+      "audience": "developer",
+      "tags": [
+        "internals"
+      ],
+      "updated": "2026-04-28",
+      "summary": "The dispatcher and tusker CLI cover the steady-state loop. When things wedge — a retry budget exhausts, a human needs to cancel a run mid-flight, or somebody hand-edits a note — a human operator steps in. This doc is the audit-trail contract for those interventions so the vault history stays truthful."
+    },
+    {
+      "topic": "developer/internals/orchestration-runbook",
+      "title": "Orchestration runbook",
+      "route": "/developer/internals/orchestration-runbook/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/docs/ORCHESTRATION_RUNBOOK.md",
+      "source_path": "skill/docs/ORCHESTRATION_RUNBOOK.md",
+      "audience": "developer",
+      "tags": [
+        "internals"
+      ],
+      "updated": "2026-04-28",
+      "summary": "This is the operator contract for ORC-era agent runs. The current vault note stays the durable work record; runtime state lives in the daemon store and run artifacts. Do not smuggle live process state into frontmatter because that turns markdown into a bad database."
+    },
+    {
+      "topic": "developer/internals/v1-design",
+      "title": "Tusker V1 Design Index",
+      "route": "/developer/internals/v1-design/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/V1_DESIGN.md",
+      "source_path": "skill/V1_DESIGN.md",
+      "audience": "developer",
+      "canonical_status": "historical",
+      "deprecated": true,
+      "superseded_by": "/developer/specs/",
+      "tags": [
+        "internals",
+        "design"
+      ],
+      "updated": "2026-04-22",
+      "summary": "Historical design notes covering the Tusker v1 model and operating assumptions."
+    },
+    {
+      "topic": "developer/repository/repository-overview",
+      "title": "Repository Overview",
+      "route": "/developer/repository/repository-overview/",
+      "source_kind": "repo_doc",
+      "source_id": "README.md",
+      "source_path": "README.md",
+      "audience": "developer",
+      "tags": [
+        "repository",
+        "overview"
+      ],
+      "updated": "2026-04-28",
+      "summary": "High-level overview of the Tusker repository, install modes, and key entry points."
+    },
+    {
+      "topic": "ORC",
+      "title": "Tusker Spec Set",
+      "route": "/developer/specs/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/README.md",
+      "source_path": "docs/specs/README.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "approved",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs",
+        "architecture"
+      ],
+      "updated": "2026-04-28",
+      "summary": "The implementation spec map for Tusker v2, including subsystem boundaries and build order."
+    },
+    {
+      "topic": "ORC",
+      "title": "Spec 00: Product Shape And Operating Modes",
+      "route": "/developer/specs/00-product-modes/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/00-product-modes.md",
+      "source_path": "docs/specs/00-product-modes.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Define what Tusker is before the implementation specs start fanning out."
+    },
+    {
+      "topic": "ORC",
+      "title": "Spec 01: VaultTracker",
+      "route": "/developer/specs/01-vault-tracker/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/01-vault-tracker.md",
+      "source_path": "docs/specs/01-vault-tracker.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Status: Draft"
+    },
+    {
+      "topic": "ORC",
+      "title": "Spec 02: Workflow Contract",
+      "route": "/developer/specs/02-workflow-contract/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/02-workflow-contract.md",
+      "source_path": "docs/specs/02-workflow-contract.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Status: Draft"
+    },
+    {
+      "topic": "ORC",
+      "title": "Spec 03: Global Daemon and Project Registry",
+      "route": "/developer/specs/03-daemon-and-registry/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/03-daemon-and-registry.md",
+      "source_path": "docs/specs/03-daemon-and-registry.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Status: Draft"
+    },
+    {
+      "topic": "ORC",
+      "title": "Spec 04: Workspace Manager",
+      "route": "/developer/specs/04-workspace-manager/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/04-workspace-manager.md",
+      "source_path": "docs/specs/04-workspace-manager.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Define deterministic isolated workspaces for daemon-run agent sessions."
+    },
+    {
+      "topic": "ORC",
+      "title": "05. Runner And Session Protocol",
+      "route": "/developer/specs/05-runner-and-session-protocol/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/05-runner-and-session-protocol.md",
+      "source_path": "docs/specs/05-runner-and-session-protocol.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Status: Draft Scope: daemon-run execution for codex and claude-code"
+    },
+    {
+      "topic": "ORC",
+      "title": "06. Review, Rework, Retry",
+      "route": "/developer/specs/06-review-rework-retry/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/06-review-rework-retry.md",
+      "source_path": "docs/specs/06-review-rework-retry.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Status: Draft Depends on: 01-vault-tracker.md, 03-daemon-and-registry.md, 05-runner-and-session-protocol.md"
+    },
+    {
+      "topic": "ORC",
+      "title": "Spec 07: Documentation Site And Publication Pipeline",
+      "route": "/developer/specs/07-documentation-site-and-publication/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/07-documentation-site-and-publication.md",
+      "source_path": "docs/specs/07-documentation-site-and-publication.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Status: Draft"
+    },
+    {
+      "topic": "ORC",
+      "title": "08. Symphony Alignment And Orchestration Roadmap",
+      "route": "/developer/specs/08-symphony-alignment-and-orchestration-roadmap/",
+      "source_kind": "repo_doc",
+      "source_id": "docs/specs/08-symphony-alignment-and-orchestration-roadmap.md",
+      "source_path": "docs/specs/08-symphony-alignment-and-orchestration-roadmap.md",
+      "audience": "developer",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "draft",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "specs"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Status: Draft Date: 2026-04-28 Depends on: 00-product-modes.md, 01-vault-tracker.md, 02-workflow-contract.md, 03-daemon-and-registry.md, 04-workspace-manager.md, 05-runner-and-session-protocol.md, 06-review-rework-retry.md"
+    },
+    {
+      "topic": "user/reference/bases",
+      "title": "Bases — editing and extending",
+      "route": "/user/reference/bases/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/BASES.md",
+      "source_path": "skill/references/BASES.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-22",
+      "summary": "The shipped .base files live in assets/bases/ and are embedded into the compiled tusker binary. On tusker bootstrap, they are written to _system/views/ in the target vault."
+    },
+    {
+      "topic": "user/reference/canon-locations",
+      "title": "Canon locations",
+      "route": "/user/reference/canon-locations/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/CANON_LOCATIONS.md",
+      "source_path": "skill/references/CANON_LOCATIONS.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-22",
+      "summary": "Tusker supports three legitimate canon patterns. Pick one **per epic**, make it explicit, then create the story stack that executes it."
+    },
+    {
+      "topic": "user/reference/commands",
+      "title": "Commands",
+      "route": "/user/reference/commands/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/COMMANDS.md",
+      "source_path": "skill/references/COMMANDS.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Full CLI reference. SKILL.md has the five quick commands; this file covers everything."
+    },
+    {
+      "topic": "user/reference/docs-publication",
+      "title": "Docs publication",
+      "route": "/user/reference/docs-publication/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/DOCS_PUBLICATION.md",
+      "source_path": "skill/references/DOCS_PUBLICATION.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Use this when the user wants project docs, a public docs site, a user guide, release notes, or agent-readable canon. Tusker owns the publication rules. Astro/Starlight only renders the exported tree."
+    },
+    {
+      "topic": "user/reference/formal-intake",
+      "title": "Formal intake",
+      "route": "/user/reference/formal-intake/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/FORMAL_INTAKE.md",
+      "source_path": "skill/references/FORMAL_INTAKE.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Creating a story at risk ≥ medium. This is the ceremony path. Load when the work is a feature, migration, refactor with teeth, or anything with rollout or rollback concerns."
+    },
+    {
+      "topic": "user/reference/optional-plugins",
+      "title": "Optional plugins policy",
+      "route": "/user/reference/optional-plugins/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/OPTIONAL_PLUGINS.md",
+      "source_path": "skill/references/OPTIONAL_PLUGINS.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-21",
+      "summary": "Core rule:"
+    },
+    {
+      "topic": "user/reference/plugin-compat",
+      "title": "Plugin compatibility",
+      "route": "/user/reference/plugin-compat/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/PLUGIN_COMPAT.md",
+      "source_path": "skill/references/PLUGIN_COMPAT.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-21",
+      "summary": "The skill works without any community plugins. Everything below is optional."
+    },
+    {
+      "topic": "user/reference/prerequisites",
+      "title": "Prerequisites and setup notes",
+      "route": "/user/reference/prerequisites/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/PREREQUISITES.md",
+      "source_path": "skill/references/PREREQUISITES.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-22",
+      "summary": "The primary tusker CLI is now built and run with Go."
+    },
+    {
+      "topic": "user/reference/quick-mode",
+      "title": "Quick mode",
+      "route": "/user/reference/quick-mode/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/QUICK_MODE.md",
+      "source_path": "skill/references/QUICK_MODE.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-28",
+      "summary": "The low-ceremony path. Use this for 90% of invocations: logging work, discovering follow-ups, closing things out."
+    },
+    {
+      "topic": "user/reference/repo-contract",
+      "title": "Repo contract",
+      "route": "/user/reference/repo-contract/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/REPO_CONTRACT.md",
+      "source_path": "skill/references/REPO_CONTRACT.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-21",
+      "summary": "The vault is internal working memory. The repository is still where contributors land."
+    },
+    {
+      "topic": "user/reference/risk-and-evidence",
+      "title": "Risk and evidence",
+      "route": "/user/reference/risk-and-evidence/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/RISK_AND_EVIDENCE.md",
+      "source_path": "skill/references/RISK_AND_EVIDENCE.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-22",
+      "summary": "How risk drives ceremony, what evidence each risk tier requires, and who can attest."
+    },
+    {
+      "topic": "user/reference/schema",
+      "title": "Schema",
+      "route": "/user/reference/schema/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/SCHEMA.md",
+      "source_path": "skill/references/SCHEMA.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Frontmatter is the machine layer. Note body is the human layer. Tusker's Go YAML parser preserves the vault schema cleanly, and Obsidian Properties round-trip without drama."
+    },
+    {
+      "topic": "user/reference/specs-as-d-notes",
+      "title": "Specs as D-notes",
+      "route": "/user/reference/specs-as-d-notes/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/SPECS_AS_D_NOTES.md",
+      "source_path": "skill/references/SPECS_AS_D_NOTES.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-22",
+      "summary": "Deprecated guidance."
+    },
+    {
+      "topic": "user/reference/story-decomposition",
+      "title": "Story decomposition",
+      "route": "/user/reference/story-decomposition/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/STORY_DECOMPOSITION.md",
+      "source_path": "skill/references/STORY_DECOMPOSITION.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-22",
+      "summary": "A design doc is not executable work."
+    },
+    {
+      "topic": "user/reference/triggers",
+      "title": "Triggers",
+      "route": "/user/reference/triggers/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/TRIGGERS.md",
+      "source_path": "skill/references/TRIGGERS.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-28",
+      "summary": "When to invoke the Tusker skill, and when to skip it."
+    },
+    {
+      "topic": "user/reference/workflow",
+      "title": "Workflow",
+      "route": "/user/reference/workflow/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/WORKFLOW.md",
+      "source_path": "skill/references/WORKFLOW.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Short reference for the story lifecycle. SKILL.md has the full decision tree and commands; this file covers mechanics that agents need while working a ticket."
+    },
+    {
+      "topic": "ORC",
+      "title": "Agent Workflow",
+      "route": "/user/start-here/agent-workflow/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/SKILL.md",
+      "source_path": "skill/SKILL.md",
+      "audience": "user",
+      "owner_epic": "ORC",
+      "canonical": true,
+      "canonical_status": "approved",
+      "verified_at": "2026-04-28",
+      "tags": [
+        "start-here",
+        "workflow"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Operating contract for agents working with Tusker in a markdown-first vault."
+    },
+    {
+      "topic": "user/start-here/skill-bundle",
+      "title": "Skill Bundle",
+      "route": "/user/start-here/skill-bundle/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/README.md",
+      "source_path": "skill/README.md",
+      "audience": "user",
+      "tags": [
+        "start-here",
+        "user"
+      ],
+      "updated": "2026-04-28",
+      "summary": "Overview of the installable Tusker skill bundle and how operators use it."
+    }
+  ],
+  "do_not_cite": [
+    "site/src/content/docs/**",
+    "site/scripts/sync-docs.mjs",
+    "tusker/_system/generated/**",
+    "docs/archive/**",
+    "docs/progress/**",
+    "docs/strategy/**"
+  ]
+}

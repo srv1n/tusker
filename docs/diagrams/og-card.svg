@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" preserveAspectRatio="xMidYMid meet">
+  <rect width="1280" height="640" fill="#FAFAF7"/>
+  <defs>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.9" fill="rgba(26,26,23,0.06)"/>
+    </pattern>
+  </defs>
+  <rect x="0" y="0" width="1280" height="640" fill="url(#dots)"/>
+  <foreignObject x="0" y="0" width="1280" height="640">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="rzn"
+         style="width:1280px;height:640px;font-size:16px;line-height:1.2;font-family:'Geist Mono',ui-monospace,Menlo,monospace;color:#1A1A17;">
+      <style type="text/css">
+        .rzn, .rzn * { font-family:'Geist Mono',ui-monospace,Menlo,monospace; box-sizing:border-box; margin:0; padding:0; }
+        .rzn .canvas { width:1280px; height:640px; padding:48px 72px; display:flex; flex-direction:column; }
+        .rzn .body { flex:1; min-height:0; display:flex; align-items:center; justify-content:center; gap:56px; margin-top:32px; }
+
+        .rzn .file { width:580px; background:#FAFAF7; border:1.5px solid #1A1A17; border-radius:12px; overflow:hidden; }
+        .rzn .file-header { display:flex; align-items:center; gap:10px; padding:12px 20px; border-bottom:1px solid rgba(26,26,23,0.18); font-size:13px; font-weight:600; letter-spacing:0.12em; color:#3A352D; text-transform:uppercase; background:#F4F1EA; }
+        .rzn .file-dot { width:10px; height:10px; border-radius:999px; background:#3F6F1A; display:inline-block; }
+        .rzn .frontmatter { background:rgba(63,111,26,0.08); padding:14px 22px; font-size:16px; line-height:1.5; color:#1A1A17; }
+        .rzn .fm-key { color:#3F6F1A; font-weight:600; }
+        .rzn .body-md { padding:14px 22px 18px; }
+        .rzn .h1 { font-size:18px; font-weight:700; color:#1A1A17; }
+
+        .rzn .surfaces { display:flex; flex-direction:column; gap:24px; }
+        .rzn .surface { display:flex; align-items:center; gap:14px; }
+        .rzn .surface .swatch { width:14px; height:14px; border-radius:999px; flex:0 0 auto; }
+        .rzn .surface .label { font-size:11px; font-weight:600; letter-spacing:0.18em; text-transform:uppercase; color:#6B6558; }
+        .rzn .surface .name { font-size:22px; font-weight:700; color:#1A1A17; line-height:1.15; margin-top:3px; }
+      </style>
+      <div class="canvas">
+        <div style="font-size:13px;font-weight:600;letter-spacing:0.20em;color:#3A352D;text-transform:uppercase;display:flex;align-items:center;gap:14px;line-height:1;">
+          <span style="width:10px;height:10px;background:#3F6F1A;border-radius:999px;display:inline-block;"></span>
+          <span>TUSKER</span>
+        </div>
+        <div style="font-size:56px;font-weight:700;letter-spacing:-0.02em;line-height:1.02;color:#1A1A17;margin-top:18px;">Tickets that live<br/>in your repo.</div>
+        <div style="font-size:18px;font-weight:400;line-height:1.4;color:#3A352D;margin-top:12px;">As markdown. Read by your agent and by you.</div>
+
+        <div class="body">
+          <div class="file">
+            <div class="file-header">
+              <span class="file-dot"></span>
+              <span>MEM-S-0007.md</span>
+            </div>
+            <div class="frontmatter">
+              <div><span class="fm-key">risk:</span> medium</div>
+              <div><span class="fm-key">status:</span> active</div>
+              <div><span class="fm-key">change_type:</span> feature</div>
+            </div>
+            <div class="body-md">
+              <div class="h1"># Persist agent context<br/>across sessions</div>
+            </div>
+          </div>
+
+          <div class="surfaces">
+            <div class="surface">
+              <span class="swatch" style="background:#3F6F1A;"></span>
+              <div>
+                <div class="label">Frontmatter</div>
+                <div class="name">Your agent</div>
+              </div>
+            </div>
+            <div class="surface">
+              <span class="swatch" style="background:#1A4596;"></span>
+              <div>
+                <div class="label">Body</div>
+                <div class="name">You, in Obsidian</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </foreignObject>
+</svg>

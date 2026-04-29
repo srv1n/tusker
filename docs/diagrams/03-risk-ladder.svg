@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1200" viewBox="0 0 1600 1200" preserveAspectRatio="xMidYMid meet">
+  <rect width="1600" height="1200" fill="#FAFAF7"/>
+  <defs>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.9" fill="rgba(26,26,23,0.06)"/>
+    </pattern>
+  </defs>
+  <rect x="80" y="240" width="1440" height="900" fill="url(#dots)"/>
+  <foreignObject x="0" y="0" width="1600" height="1200">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="rzn"
+         style="width:1600px;height:1200px;font-size:16px;line-height:1.2;font-family:'Geist Mono',ui-monospace,Menlo,monospace;color:#1A1A17;">
+      <style type="text/css">
+        .rzn, .rzn * { font-family:'Geist Mono',ui-monospace,Menlo,monospace; box-sizing:border-box; margin:0; padding:0; }
+        .rzn .canvas { width:1600px; height:1200px; padding:64px 96px 56px; display:flex; flex-direction:column; }
+        .rzn .body { flex:1; min-height:0; display:grid; grid-template-columns: repeat(4, 1fr); gap:24px; align-items:stretch; margin-top:48px; }
+
+        .rzn .tier { display:flex; flex-direction:column; background:#FAFAF7; border:1.5px solid #3A352D; border-radius:12px; overflow:hidden; }
+        .rzn .tier .head { padding:22px 24px 18px; border-bottom:1px solid rgba(26,26,23,0.10); }
+        .rzn .tier-name { font-size:32px; font-weight:700; color:#1A1A17; letter-spacing:-0.01em; }
+        .rzn .tier-when { font-size:14px; color:#6B6558; line-height:1.5; margin-top:8px; }
+        .rzn .stack { display:flex; flex-direction:column; flex:1; padding:18px 22px; gap:14px; }
+        .rzn .row { padding:14px 16px; border:1px solid rgba(26,26,23,0.12); border-radius:8px; font-size:14px; line-height:1.5; color:#3A352D; background:#FAFAF7; }
+        .rzn .row.gate { border:1.5px solid #3F6F1A; background:rgba(63,111,26,0.08); color:#1A1A17; }
+        .rzn .row .label { font-size:11px; font-weight:600; letter-spacing:0.18em; text-transform:uppercase; color:#6B6558; display:block; margin-bottom:6px; }
+        .rzn .row.gate .label { color:#3F6F1A; }
+        .rzn .row .v { font-weight:700; color:#1A1A17; }
+
+        .rzn .meter { display:flex; align-items:center; gap:6px; padding:14px 22px 18px; border-top:1px solid rgba(26,26,23,0.08); }
+        .rzn .meter .seg { height:8px; flex:1; background:rgba(26,26,23,0.10); border-radius:3px; }
+        .rzn .meter .seg.on { background:#1A1A17; }
+        .rzn .meter .seg.warn { background:#9E821B; }
+        .rzn .meter .seg.acc { background:#3F6F1A; }
+      </style>
+      <div class="canvas">
+        <div style="font-size:13px;font-weight:600;letter-spacing:0.20em;color:#3A352D;text-transform:uppercase;display:flex;align-items:center;gap:14px;line-height:1;">
+          <span style="width:10px;height:10px;background:#3F6F1A;border-radius:999px;display:inline-block;"></span>
+          <span>TUSKER &#160;·&#160; 03</span>
+        </div>
+        <div style="font-size:52px;font-weight:700;letter-spacing:-0.015em;line-height:1.05;color:#1A1A17;margin-top:24px;">Risk drives ceremony.</div>
+        <div style="font-size:18px;font-weight:400;line-height:1.45;color:#3A352D;max-width:1200px;margin-top:16px;">Blast radius scales the ticket — not lines of code. A typo at <code style="font-family:inherit;font-weight:600;">low</code> needs one line. A flag flip at <code style="font-family:inherit;font-weight:600;">high</code> needs a human signoff.</div>
+
+        <div class="body">
+          <div class="tier">
+            <div class="head">
+              <div class="tier-name">low</div>
+              <div class="tier-when">typo, doc, dev-only<br/>script, local refactor</div>
+            </div>
+            <div class="stack">
+              <div class="row">
+                <span class="label">EVIDENCE</span>
+                One line. <span class="v">Tests pass. PR link.</span>
+              </div>
+              <div class="row">
+                <span class="label">ATTESTATION</span>
+                <span class="v">1×</span> · agent or human
+              </div>
+            </div>
+            <div class="meter"><div class="seg on"></div><div class="seg"></div><div class="seg"></div><div class="seg"></div></div>
+          </div>
+
+          <div class="tier">
+            <div class="head">
+              <div class="tier-name">medium</div>
+              <div class="tier-when">feature with tests,<br/>module refactor, UI</div>
+            </div>
+            <div class="stack">
+              <div class="row">
+                <span class="label">EVIDENCE</span>
+                Test output <span class="v">or</span> screenshot/gif. PR link.
+              </div>
+              <div class="row">
+                <span class="label">DEMO RULE</span>
+                Feature + UI ⇒ <span class="v">demo asset</span>
+              </div>
+              <div class="row">
+                <span class="label">ATTESTATION</span>
+                <span class="v">1×</span> · agent or human
+              </div>
+            </div>
+            <div class="meter"><div class="seg on"></div><div class="seg on"></div><div class="seg"></div><div class="seg"></div></div>
+          </div>
+
+          <div class="tier">
+            <div class="head">
+              <div class="tier-name">high</div>
+              <div class="tier-when">cross-module, security,<br/>data migration</div>
+            </div>
+            <div class="stack">
+              <div class="row">
+                <span class="label">EVIDENCE</span>
+                Tests + before/after + <span class="v">rollback notes.</span>
+              </div>
+              <div class="row gate">
+                <span class="label">ATTESTATION GATE</span>
+                <span class="v">1× human only.</span> Agent cannot self-attest.
+              </div>
+            </div>
+            <div class="meter"><div class="seg on"></div><div class="seg on"></div><div class="seg warn"></div><div class="seg"></div></div>
+          </div>
+
+          <div class="tier">
+            <div class="head">
+              <div class="tier-name">critical</div>
+              <div class="tier-when">payment, auth, PII,<br/>irreversible migration</div>
+            </div>
+            <div class="stack">
+              <div class="row">
+                <span class="label">EVIDENCE</span>
+                All of high + <span class="v">security review.</span>
+              </div>
+              <div class="row gate">
+                <span class="label">ATTESTATION GATE</span>
+                <span class="v">1× human</span> + <span class="v">code-owner signoff.</span>
+              </div>
+            </div>
+            <div class="meter"><div class="seg on"></div><div class="seg on"></div><div class="seg warn"></div><div class="seg acc"></div></div>
+          </div>
+        </div>
+
+        <div style="height:40px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid rgba(26,26,23,0.12);padding-top:18px;font-size:12px;font-weight:500;letter-spacing:0.18em;color:#6B6558;text-transform:uppercase;margin-top:24px;">
+          <span>TUSKER &#160;·&#160; RISK DRIVES CEREMONY</span><span>03 / 04</span>
+        </div>
+      </div>
+    </div>
+  </foreignObject>
+</svg>

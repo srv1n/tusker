@@ -1,0 +1,57 @@
+filters:
+  and:
+    - 'file.ext == "md"'
+    - 'type == "doc"'
+    - 'status != "archived"'
+properties:
+  "file.name":
+    displayName: "ID"
+  title:
+    displayName: "Title"
+  status:
+    displayName: "Status"
+  audience:
+    displayName: "Audience"
+  epic:
+    displayName: "Epic"
+  publish:
+    displayName: "Publish"
+  publish_path:
+    displayName: "Publish path"
+  published_at:
+    displayName: "Published"
+views:
+  - type: table
+    name: "Pipeline"
+    groupBy:
+      property: note.status
+      direction: ASC
+    order:
+      - "file.name"
+      - title
+      - audience
+      - epic
+      - publish
+  - type: table
+    name: "Ready to publish"
+    filters:
+      and:
+        - 'status == "approved"'
+        - 'publish == true'
+    order:
+      - "file.name"
+      - title
+      - audience
+      - epic
+      - publish_path
+  - type: table
+    name: "Published"
+    filters:
+      and:
+        - 'status == "published"'
+    order:
+      - "file.name"
+      - title
+      - audience
+      - published_at
+      - publish_path

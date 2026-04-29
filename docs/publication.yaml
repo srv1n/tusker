@@ -1,0 +1,71 @@
+repo_docs:
+  - source: docs/specs/README.md
+    route: developer/specs
+    audience: developer
+    title: Tusker Spec Set
+    description: The implementation spec map for Tusker v2, including subsystem boundaries and build order.
+    canonical: true
+    canonical_status: approved
+    owner_epic: ORC
+    verified_at: "2026-04-28"
+    tags: [specs, architecture]
+
+  - source: docs/specs
+    include: "[0-9][0-9]-*.md"
+    route_prefix: developer/specs
+    audience: developer
+    section_title: Specs
+    canonical: true
+    canonical_status: draft
+    owner_epic: ORC
+    verified_at: "2026-04-28"
+    tags: [specs]
+
+  - source: README.md
+    route: developer/repository/repository-overview
+    audience: developer
+    title: Repository Overview
+    description: High-level overview of the Tusker repository, install modes, and key entry points.
+    tags: [repository, overview]
+
+  - source: skill/V1_DESIGN.md
+    route: developer/internals/v1-design
+    audience: developer
+    title: Tusker V1 Design Index
+    description: Historical design notes covering the Tusker v1 model and operating assumptions.
+    canonical_status: historical
+    deprecated: true
+    superseded_by: "/developer/specs/"
+    tags: [internals, design]
+
+  - source: skill/docs
+    include: "*.md"
+    route_prefix: developer/internals
+    audience: developer
+    section_title: Internals
+    tags: [internals]
+
+  - source: skill/README.md
+    route: user/start-here/skill-bundle
+    audience: user
+    title: Skill Bundle
+    description: Overview of the installable Tusker skill bundle and how operators use it.
+    tags: [start-here, user]
+
+  - source: skill/SKILL.md
+    route: user/start-here/agent-workflow
+    audience: user
+    title: Agent Workflow
+    description: Operating contract for agents working with Tusker in a markdown-first vault.
+    canonical: true
+    canonical_status: approved
+    owner_epic: ORC
+    verified_at: "2026-04-28"
+    tags: [start-here, workflow]
+
+  - source: skill/references
+    include: "*.md"
+    route_prefix: user/reference
+    audience: user
+    section_title: Reference
+    tags: [reference]

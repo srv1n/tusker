@@ -1,0 +1,62 @@
+filters:
+  and:
+    - 'file.ext == "md"'
+    - 'type == "epic"'
+    - 'status != "cancelled"'
+properties:
+  "file.name":
+    displayName: "Note"
+  id:
+    displayName: "Acronym"
+  title:
+    displayName: "Title"
+  status:
+    displayName: "Status"
+  owner:
+    displayName: "Owner"
+  target_release:
+    displayName: "Target release"
+  spec_source:
+    displayName: "Spec"
+  created:
+    displayName: "Created"
+  started:
+    displayName: "Started"
+  completed:
+    displayName: "Completed"
+views:
+  - type: table
+    name: "Board"
+    groupBy:
+      property: note.status
+      direction: ASC
+    order:
+      - "file.name"
+      - id
+      - title
+      - owner
+      - target_release
+  - type: table
+    name: "Active"
+    filters:
+      and:
+        - 'status == "active"'
+    order:
+      - "file.name"
+      - id
+      - title
+      - owner
+      - target_release
+      - started
+  - type: table
+    name: "Intake"
+    filters:
+      and:
+        - 'status == "intake"'
+    order:
+      - "file.name"
+      - id
+      - title
+      - owner
+      - target_release
+      - created

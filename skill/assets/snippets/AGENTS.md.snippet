@@ -1,0 +1,18 @@
+## Workflow contract
+
+Use the Obsidian workflow vault for non-trivial work.
+
+For meaningful features, bugs, migrations, or user-visible docs changes:
+
+1. Create a change note. Everything below is a section inside that note, not a separate file.
+2. Fill above the `## Agent handoff` line: problem, desired outcome, scope and non-goals, acceptance criteria, demo flow, considered and rejected alternatives, decision.
+3. Work below the line: plan, work log, PR links, demo artifacts.
+4. Create a user doc or developer doc when the work changes how the system is used or understood.
+5. After material updates, reindex and validate the vault.
+
+Rules:
+
+- `AGENTS.md` stays short and points to deeper docs.
+- Raw transcripts are appendix material, not primary artifacts.
+- Reviewers start from the change note and its PR links, not from chat archaeology.
+- The human contributor must understand the final behavior and major edge cases.

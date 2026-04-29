@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid meet">
+  <rect width="1600" height="1000" fill="#FAFAF7"/>
+  <defs>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.9" fill="rgba(26,26,23,0.06)"/>
+    </pattern>
+  </defs>
+  <rect x="80" y="240" width="1440" height="700" fill="url(#dots)"/>
+  <foreignObject x="0" y="0" width="1600" height="1000">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="rzn"
+         style="width:1600px;height:1000px;font-size:16px;line-height:1.2;font-family:'Geist Mono',ui-monospace,Menlo,monospace;color:#1A1A17;">
+      <style type="text/css">
+        .rzn, .rzn * { font-family:'Geist Mono',ui-monospace,Menlo,monospace; box-sizing:border-box; margin:0; padding:0; }
+        .rzn .canvas { width:1600px; height:1000px; padding:64px 96px 56px; display:flex; flex-direction:column; }
+        .rzn .body { flex:1; min-height:0; display:flex; align-items:center; justify-content:center; gap:48px; margin-top:48px; }
+        .rzn .label-col { width:320px; display:flex; flex-direction:column; gap:14px; }
+        .rzn .label-col.right { align-items:flex-end; text-align:right; }
+        .rzn .badge { display:inline-flex; align-items:center; gap:10px; font-size:12px; font-weight:600; letter-spacing:0.20em; text-transform:uppercase; color:#6B6558; }
+        .rzn .swatch { width:12px; height:12px; border-radius:999px; display:inline-block; }
+        .rzn .reader-name { font-size:32px; font-weight:700; color:#1A1A17; letter-spacing:-0.01em; line-height:1.1; }
+        .rzn .reader-sub { font-size:16px; color:#3A352D; line-height:1.5; }
+        .rzn .file { width:560px; background:#FAFAF7; border:1.5px solid #1A1A17; border-radius:12px; overflow:hidden; }
+        .rzn .file-header { display:flex; align-items:center; justify-content:space-between; padding:14px 20px; border-bottom:1px solid rgba(26,26,23,0.18); font-size:12px; font-weight:600; letter-spacing:0.14em; color:#3A352D; text-transform:uppercase; background:#F4F1EA; }
+        .rzn .file-section { padding:18px 22px; }
+        .rzn .fm { background:rgba(63,111,26,0.08); border-bottom:1px solid rgba(63,111,26,0.30); }
+        .rzn .fm-row { font-size:16px; line-height:1.85; color:#1A1A17; }
+        .rzn .fm-key { color:#3F6F1A; font-weight:600; }
+        .rzn .fm-fence { font-size:13px; color:#6B6558; padding:1px 0; letter-spacing:0.04em; }
+        .rzn .md-h1 { font-size:18px; font-weight:700; margin-bottom:8px; line-height:1.3; }
+        .rzn .md-p { font-size:14px; color:#3A352D; line-height:1.55; }
+        .rzn .arrow-row { display:flex; align-items:center; width:100%; gap:10px; }
+        .rzn .arrow-line { flex:1; height:0; border-top:1.5px solid currentColor; }
+        .rzn .head-right { width:0; height:0; border-left:10px solid currentColor; border-top:6px solid transparent; border-bottom:6px solid transparent; }
+        .rzn .head-left { width:0; height:0; border-right:10px solid currentColor; border-top:6px solid transparent; border-bottom:6px solid transparent; }
+      </style>
+      <div class="canvas">
+        <div style="font-size:13px;font-weight:600;letter-spacing:0.20em;color:#3A352D;text-transform:uppercase;display:flex;align-items:center;gap:14px;line-height:1;">
+          <span style="width:10px;height:10px;background:#3F6F1A;border-radius:999px;display:inline-block;"></span>
+          <span>TUSKER &#160;·&#160; 01</span>
+        </div>
+        <div style="font-size:52px;font-weight:700;letter-spacing:-0.015em;line-height:1.05;color:#1A1A17;margin-top:24px;">One file. Two readers.</div>
+        <div style="font-size:18px;font-weight:400;line-height:1.45;color:#3A352D;max-width:1100px;margin-top:16px;">Frontmatter is the agent's contract. The body is your spec. Both edit the same file. Git is the audit log.</div>
+
+        <div class="body">
+          <div class="label-col">
+            <div class="badge"><span class="swatch" style="background:#3F6F1A;"></span>READS THE FRONTMATTER</div>
+            <div class="reader-name">Your<br/>coding agent</div>
+            <div class="reader-sub">Parses YAML. Picks ceremony from <span style="color:#1A1A17;font-weight:600;">risk</span>. Writes evidence after the run.</div>
+            <div class="arrow-row" style="color:#3F6F1A; margin-top:12px;">
+              <div class="arrow-line"></div>
+              <div class="head-right"></div>
+            </div>
+          </div>
+
+          <div class="file">
+            <div class="file-header"><span>MEM-S-0007.md</span></div>
+            <div class="file-section fm">
+              <div class="fm-fence">---</div>
+              <div class="fm-row"><span class="fm-key">id:</span> MEM-S-0007</div>
+              <div class="fm-row"><span class="fm-key">risk:</span> medium</div>
+              <div class="fm-row"><span class="fm-key">status:</span> active</div>
+              <div class="fm-row"><span class="fm-key">ai_tools:</span> [claude]</div>
+              <div class="fm-fence">---</div>
+            </div>
+            <div class="file-section">
+              <div class="md-h1"># Persist agent context<br/>across sessions</div>
+              <div class="md-p">When the dispatcher restarts, the worker resumes from the last attested checkpoint.</div>
+            </div>
+          </div>
+
+          <div class="label-col right">
+            <div class="badge"><span class="swatch" style="background:#1A4596;"></span>READS THE BODY</div>
+            <div class="reader-name">You,<br/>in Obsidian</div>
+            <div class="reader-sub">Renders headings, links, embeds. Edits acceptance criteria. Browses through Bases.</div>
+            <div class="arrow-row" style="color:#1A4596; margin-top:12px;">
+              <div class="head-left"></div>
+              <div class="arrow-line"></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="height:40px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid rgba(26,26,23,0.12);padding-top:18px;font-size:12px;font-weight:500;letter-spacing:0.18em;color:#6B6558;text-transform:uppercase;">
+          <span>TUSKER &#160;·&#160; ONE FILE, TWO READERS</span><span>01 / 04</span>
+        </div>
+      </div>
+    </div>
+  </foreignObject>
+</svg>

@@ -1,0 +1,91 @@
+filters:
+  and:
+    - 'file.ext == "md"'
+    - 'type == "story" || type == "bug"'
+    - 'status != "cancelled"'
+properties:
+  "file.name":
+    displayName: "ID"
+  title:
+    displayName: "Title"
+  status:
+    displayName: "Status"
+  review_state:
+    displayName: "Review"
+  risk:
+    displayName: "Risk"
+  priority:
+    displayName: "Priority"
+  assignee:
+    displayName: "Assignee"
+  blocked_by:
+    displayName: "Blocked by"
+  due:
+    displayName: "Due"
+  updated:
+    displayName: "Updated"
+views:
+  - type: table
+    name: "Active"
+    filters:
+      and:
+        - 'status == "active"'
+    order:
+      - "file.name"
+      - title
+      - risk
+      - priority
+      - assignee
+      - blocked_by
+      - due
+  - type: table
+    name: "Blocked"
+    filters:
+      and:
+        - 'status == "blocked"'
+    order:
+      - "file.name"
+      - title
+      - risk
+      - priority
+      - assignee
+      - blocked_by
+      - updated
+  - type: table
+    name: "Verification"
+    filters:
+      and:
+        - 'status == "in_review"'
+        - 'review_state == "verification_requested"'
+    order:
+      - "file.name"
+      - title
+      - risk
+      - priority
+      - assignee
+      - updated
+  - type: table
+    name: "Human review"
+    filters:
+      and:
+        - 'status == "in_review"'
+        - 'review_state == "requested"'
+    order:
+      - "file.name"
+      - title
+      - risk
+      - priority
+      - assignee
+      - updated
+  - type: table
+    name: "Follow-ups"
+    filters:
+      and:
+        - 'status == "intake"'
+    order:
+      - "file.name"
+      - title
+      - risk
+      - priority
+      - assignee
+      - updated

@@ -1,0 +1,73 @@
+# OS/editor noise
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.csr
+
+# Logs and temporary files
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+tmp/
+temp/
+.tmp/
+.cache/
+.parcel-cache/
+.eslintcache
+
+# Dependencies
+node_modules/
+vendor/
+
+# Build outputs and packaged releases
+dist/*
+!dist/.gitkeep
+build/
+out/
+coverage/
+*.test
+*.prof
+*.out
+*.bin
+*.exe
+*.dmg
+*.pkg
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.mp4
+*.mov
+*.webm
+
+# Local tool caches and vendored machine binaries
+.tools/
+
+# Astro/Starlight generated output
+site/.astro/
+site/dist/
+site/public/generated/
+site/src/generated/
+
+# Tusker runtime/generated vault state
+tusker/_system/generated/
+tusker/_system/templates.zip

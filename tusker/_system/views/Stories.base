@@ -1,0 +1,144 @@
+filters:
+  and:
+    - 'file.ext == "md"'
+    - 'type == "story"'
+    - 'status != "cancelled"'
+properties:
+  "file.name":
+    displayName: "ID"
+  title:
+    displayName: "Title"
+  status:
+    displayName: "Status"
+  review_state:
+    displayName: "Review"
+  change_type:
+    displayName: "Type"
+  size:
+    displayName: "Size"
+  risk:
+    displayName: "Risk"
+  priority:
+    displayName: "Priority"
+  delegation:
+    displayName: "Delegation"
+  epic:
+    displayName: "Epic"
+  assignee:
+    displayName: "Assignee"
+  ai_assistance:
+    displayName: "AI"
+  due:
+    displayName: "Due"
+  started:
+    displayName: "Started"
+  review_opened:
+    displayName: "Review opened"
+  completed:
+    displayName: "Completed"
+  blocked_since:
+    displayName: "Blocked since"
+views:
+  - type: table
+    name: "Board"
+    groupBy:
+      property: note.status
+      direction: ASC
+    order:
+      - "file.name"
+      - title
+      - risk
+      - size
+      - priority
+      - assignee
+      - due
+  - type: table
+    name: "By risk"
+    groupBy:
+      property: note.risk
+      direction: ASC
+    order:
+      - "file.name"
+      - title
+      - status
+      - priority
+      - assignee
+      - due
+  - type: table
+    name: "By epic"
+    groupBy:
+      property: note.epic
+      direction: ASC
+    order:
+      - "file.name"
+      - title
+      - status
+      - risk
+      - assignee
+      - due
+  - type: table
+    name: "By assignee"
+    groupBy:
+      property: note.assignee
+      direction: ASC
+    order:
+      - "file.name"
+      - title
+      - status
+      - risk
+      - priority
+      - due
+  - type: table
+    name: "Active"
+    filters:
+      and:
+        - 'status == "active"'
+    order:
+      - "file.name"
+      - title
+      - risk
+      - size
+      - priority
+      - delegation
+      - assignee
+      - ai_assistance
+      - due
+  - type: table
+    name: "In review"
+    filters:
+      and:
+        - 'status == "in_review"'
+    order:
+      - "file.name"
+      - title
+      - review_state
+      - risk
+      - priority
+      - assignee
+      - review_opened
+  - type: table
+    name: "Verification"
+    filters:
+      and:
+        - 'status == "in_review"'
+        - 'review_state == "verification_requested"'
+    order:
+      - "file.name"
+      - title
+      - risk
+      - priority
+      - assignee
+      - review_opened
+  - type: table
+    name: "Human review"
+    filters:
+      and:
+        - 'status == "in_review"'
+        - 'review_state == "requested"'
+    order:
+      - "file.name"
+      - title
+      - risk
+      - priority
+      - assignee
+      - review_opened
