@@ -10,7 +10,7 @@ func TestWorkspaceManagerRejectsMismatchedExistingMetadata(t *testing.T) {
 	stateRoot := t.TempDir()
 	manager := NewWorkspaceManager()
 	req := WorkspacePrepareRequest{
-		ProjectID: "project-1", ProjectKey: "MEM", RecordID: "record-1", ItemID: "MEM-S-0001",
+		ProjectID: "project-1", ProjectKey: "MEM", RecordID: "record-1", ItemID: "MEM-T-0001",
 		RepoRoot: t.TempDir(), StateRoot: stateRoot, Strategy: WorkspaceStrategyCopy, WorkRevision: 0,
 	}
 	if _, err := manager.Prepare(req); err != nil {
@@ -38,7 +38,7 @@ func TestWorkspaceManagerSeparatesBranchLineageForSameRecord(t *testing.T) {
 	stateRoot := t.TempDir()
 	manager := NewWorkspaceManager()
 	baseReq := WorkspacePrepareRequest{
-		ProjectID: "project-1", ProjectKey: "MEM", RecordID: "record-1", ItemID: "MEM-S-0001",
+		ProjectID: "project-1", ProjectKey: "MEM", RecordID: "record-1", ItemID: "MEM-T-0001",
 		RepoRoot: t.TempDir(), StateRoot: stateRoot, Strategy: WorkspaceStrategyCopy, WorkRevision: 0,
 	}
 	base, err := manager.Prepare(baseReq)
@@ -64,7 +64,7 @@ func TestWorkspaceManagerRejectsMismatchedBranchMetadata(t *testing.T) {
 	stateRoot := t.TempDir()
 	manager := NewWorkspaceManager()
 	req := WorkspacePrepareRequest{
-		ProjectID: "project-1", ProjectKey: "MEM", RecordID: "record-1", ItemID: "MEM-S-0001",
+		ProjectID: "project-1", ProjectKey: "MEM", RecordID: "record-1", ItemID: "MEM-T-0001",
 		BranchName: "branch-a", RepoRoot: t.TempDir(), StateRoot: stateRoot, Strategy: WorkspaceStrategyCopy, WorkRevision: 0,
 	}
 	if _, err := manager.Prepare(req); err != nil {

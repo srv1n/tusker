@@ -20,7 +20,7 @@ const (
 version: 1
 
 agents:
-  # Names that may appear in story.assignee. "sarav" (or any human name) is fine;
+  # Names that may appear in task.assignee. "sarav" (or any human name) is fine;
   # only agents listed here are dispatchable.
   enabled:
     - sarav
@@ -109,13 +109,13 @@ func parseCLI(argv []string) (string, Args) {
 		command = argv[1]
 		if command == "help" && len(argv) > 2 && !strings.HasPrefix(argv[2], "--") {
 			command = "help " + argv[2]
-			if len(argv) > 3 && !strings.HasPrefix(argv[3], "--") && (argv[2] == "workflow" || argv[2] == "vault" || argv[2] == "daemon" || argv[2] == "projects" || argv[2] == "review" || argv[2] == "retry" || argv[2] == "runs" || argv[2] == "docs") {
+			if len(argv) > 3 && !strings.HasPrefix(argv[3], "--") && commandTakesSubcommand(argv[2]) {
 				command = command + " " + argv[3]
 				return command, parseArgs(argv[4:])
 			}
 			return command, parseArgs(argv[3:])
 		}
-		if len(argv) > 2 && !strings.HasPrefix(argv[2], "--") && (command == "workflow" || command == "vault" || command == "daemon" || command == "projects" || command == "review" || command == "retry" || command == "runs" || command == "docs") {
+		if len(argv) > 2 && !strings.HasPrefix(argv[2], "--") && commandTakesSubcommand(command) {
 			command = command + " " + argv[2]
 			return command, parseArgs(argv[3:])
 		}
@@ -123,11 +123,22 @@ func parseCLI(argv []string) (string, Args) {
 	return command, parseArgs(argv[2:])
 }
 
+func commandTakesSubcommand(command string) bool {
+	switch command {
+	case "docs", "new", "vault", "daemon", "projects", "runs":
+		return true
+	default:
+		return false
+	}
+}
+
 func parseArgs(argv []string) Args {
 	args := Args{}
+	var positionals []string
 	for i := 0; i < len(argv); i++ {
 		current := argv[i]
 		if !strings.HasPrefix(current, "--") {
+			positionals = append(positionals, current)
 			continue
 		}
 		key := strings.TrimPrefix(current, "--")
@@ -137,6 +148,12 @@ func parseArgs(argv []string) Args {
 		}
 		args[key] = argv[i+1]
 		i++
+	}
+	if len(positionals) > 0 {
+		args["_pos"] = strings.Join(positionals, "\n")
+		for i, value := range positionals {
+			args[fmt.Sprintf("_pos%d", i)] = value
+		}
 	}
 	return args
 }
@@ -167,120 +184,50 @@ func run(command string, args Args) (int, error) {
 		}
 	}
 	switch command {
-	case "bootstrap":
-		return 0, bootstrap(args)
-	case "new-epic":
-		return 0, newEpic(args)
-	case "new-story":
-		return 0, createWorkItem(args, "story")
-	case "new-bug":
-		return 0, createWorkItem(args, "bug")
-	case "new-doc":
-		return 0, newDoc(args)
-	case "handoff":
-		return 0, handoffCmd(args)
-	case "set-status":
-		return 0, setStatus(args)
-	case "pickup":
-		return 0, pickup(args)
-	case "release":
-		return 0, release(args)
-	case "attest":
-		return 0, attest(args)
-	case "signoff":
-		return 0, signoff(args)
-	case "attach-evidence":
-		return 0, attachEvidence(args)
-	case "promote-decision":
-		return 0, promoteDecision(args)
+	case "new epic":
+		return 0, newV5Epic(args)
+	case "new task":
+		return 0, newV5Task(args, "feature")
+	case "new bug":
+		return 0, newV5Task(args, "bug")
+	case "new doc":
+		return 0, newV5Doc(args)
+	case "status":
+		return 0, statusCmd(args)
+	case "next":
+		return 0, nextCmd(args)
+	case "claim":
+		return 0, claimCmd(args)
+	case "evidence":
+		return 0, evidenceCmd(args)
+	case "verify":
+		return 0, verifyCmd(args)
+	case "close":
+		return 0, closeV5Cmd(args)
 	case "reindex":
 		return 0, reindex(args)
 	case "validate":
 		return validateCmd(args)
 	case "list":
 		return 0, listCmd(args)
-	case "epics":
-		return 0, epicsCmd(args)
-	case "move":
-		return 0, moveCmd(args)
-	case "workflow init":
-		return 0, workflowInitCmd(args)
-	case "workflow":
-		printWorkflowHelp()
-		return 0, nil
-	case "vault set":
-		return 0, vaultSetCmd(args)
-	case "vault status":
-		return 0, vaultStatusCmd(args)
-	case "vault move":
-		return 0, vaultMoveCmd(args)
-	case "vault repair":
-		return 0, vaultRepairCmd(args)
-	case "vault mount":
-		return 0, vaultMountCmd(args)
-	case "vault unmount":
-		return 0, vaultUnmountCmd(args)
-	case "vault":
-		printVaultHelp()
-		return 0, nil
-	case "mount":
-		return 0, vaultMountCmd(args)
-	case "unmount":
-		return 0, vaultUnmountCmd(args)
-	case "daemon run":
-		return 0, daemonRunCmd(args)
-	case "daemon status":
-		return 0, daemonStatusCmd(args)
-	case "daemon limits":
-		return 0, daemonLimitsCmd(args)
-	case "daemon":
-		printDaemonHelp()
-		return 0, nil
-	case "projects list":
-		return 0, projectsListCmd(args)
-	case "projects add":
-		return 0, projectsAddCmd(args)
-	case "projects limits":
-		return 0, projectsLimitsCmd(args)
-	case "projects enable":
-		return 0, projectsEnableCmd(args)
-	case "projects disable":
-		return 0, projectsDisableCmd(args)
-	case "projects remove":
-		return 0, projectsRemoveCmd(args)
-	case "projects":
-		printProjectsHelp()
-		return 0, nil
-	case "runs":
-		return 0, runsCmd(args)
-	case "runs inspect":
-		return 0, runsInspectCmd(args)
-	case "runs logs":
-		return 0, runsLogsCmd(args)
-	case "runs events":
-		return 0, runsEventsCmd(args)
-	case "runs interrupt":
-		return 0, runsInterruptCmd(args)
-	case "refresh":
-		return 0, refreshCmd(args)
-	case "review approve":
-		return 0, reviewApproveCmd(args)
-	case "review verify":
-		return 0, reviewVerifyCmd(args)
-	case "review request-changes":
-		return 0, reviewRequestChangesCmd(args)
-	case "review comment":
-		return 0, reviewCommentCmd(args)
-	case "review":
-		printReviewHelp()
-		return 0, nil
-	case "retry now":
-		return 0, retryNowCmd(args)
-	case "retry":
-		printRetryHelp()
-		return 0, nil
 	case "docs init":
 		return 0, docsInitCmd(args)
+	case "docs model":
+		return 0, docsModelCmd(args)
+	case "docs map":
+		return 0, docsMapCmd(args)
+	case "docs catalog":
+		return 0, docsCatalogCmd(args)
+	case "docs freshness":
+		return 0, docsFreshnessCmd(args)
+	case "docs check":
+		return 0, docsImpactCheckCmd(args)
+	case "docs apply":
+		return 0, docsImpactApplyCmd(args)
+	case "docs noop":
+		return 0, docsImpactNoopCmd(args)
+	case "docs waive":
+		return 0, docsImpactWaiveCmd(args)
 	case "docs export":
 		return 0, docsExportCmd(args)
 	case "docs dev":
@@ -290,34 +237,87 @@ func run(command string, args Args) (int, error) {
 	case "docs":
 		printDocsHelp()
 		return 0, nil
-	case "sync-repo-contract":
-		return 0, syncRepoContract(args)
-	case "install":
-		return 0, installCmd(args)
+	case "vault set":
+		return 0, vaultSetCmd(args)
+	case "vault status":
+		return 0, vaultStatusCmd(args)
+	case "vault mount":
+		return 0, vaultMountCmd(args)
+	case "vault unmount":
+		return 0, vaultUnmountCmd(args)
+	case "vault repair":
+		return 0, vaultRepairCmd(args)
+	case "vault move":
+		return 0, vaultMoveCmd(args)
+	case "vault":
+		printVaultHelp()
+		return 0, nil
+	case "daemon run":
+		return 0, daemonRunCmd(args)
+	case "daemon status":
+		return 0, daemonStatusCmd(args)
+	case "daemon limits":
+		return 0, daemonLimitsCmd(args)
+	case "daemon":
+		printDaemonHelp()
+		return 0, nil
+	case "projects add":
+		return 0, projectsAddCmd(args)
+	case "projects list":
+		return 0, projectsListCmd(args)
+	case "projects limits":
+		return 0, projectsLimitsCmd(args)
+	case "projects enable":
+		return 0, projectsEnableCmd(args)
+	case "projects disable":
+		return 0, projectsDisableCmd(args)
+	case "projects remove":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, projectsRemoveCmd(args)
+	case "projects":
+		printProjectsHelp()
+		return 0, nil
+	case "runs inspect":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, runsInspectCmd(args)
+	case "runs logs":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, runsLogsCmd(args)
+	case "runs events":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, runsEventsCmd(args)
+	case "runs interrupt":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, runsInterruptCmd(args)
+	case "runs":
+		printRunsHelp()
+		return 0, nil
+	case "refresh":
+		return 0, refreshCmd(args)
 	case "update":
 		return 0, updateCmd(args)
 	case "init":
 		return 0, initCmd(args)
-	case "help bootstrap":
-		printBootstrapHelp()
+	case "help new", "help new epic", "help new task", "help new bug", "help new doc":
+		printNewHelp()
 		return 0, nil
-	case "help new-epic":
-		printNewEpicHelp()
+	case "help status":
+		printStatusHelp()
 		return 0, nil
-	case "help new-story":
-		printNewStoryHelp()
+	case "help next":
+		printNextHelp()
 		return 0, nil
-	case "help new-bug":
-		printNewBugHelp()
+	case "help claim":
+		printClaimHelp()
 		return 0, nil
-	case "help new-doc":
-		printNewDocHelp()
+	case "help evidence":
+		printEvidenceHelp()
 		return 0, nil
-	case "help handoff":
-		printHandoffHelp()
+	case "help verify":
+		printVerifyHelp()
 		return 0, nil
-	case "help set-status":
-		printSetStatusHelp()
+	case "help close":
+		printCloseHelp()
 		return 0, nil
 	case "help list":
 		printListHelp()
@@ -328,19 +328,10 @@ func run(command string, args Args) (int, error) {
 	case "help reindex":
 		printReindexHelp()
 		return 0, nil
-	case "help move":
-		printMoveHelp()
+	case "help docs", "help docs init", "help docs model", "help docs map", "help docs catalog", "help docs freshness", "help docs check", "help docs apply", "help docs noop", "help docs waive", "help docs export", "help docs dev", "help docs build":
+		printDocsHelp()
 		return 0, nil
-	case "help sync-repo-contract":
-		printSyncRepoContractHelp()
-		return 0, nil
-	case "help workflow", "help workflow init":
-		printWorkflowHelp()
-		return 0, nil
-	case "help vault", "help vault set", "help vault status", "help vault move", "help vault repair", "help vault mount", "help vault unmount":
-		printVaultHelp()
-		return 0, nil
-	case "help mount", "help unmount":
+	case "help vault", "help vault set", "help vault status", "help vault mount", "help vault unmount", "help vault repair", "help vault move":
 		printVaultHelp()
 		return 0, nil
 	case "help daemon", "help daemon run", "help daemon status", "help daemon limits":
@@ -352,17 +343,8 @@ func run(command string, args Args) (int, error) {
 	case "help runs", "help runs inspect", "help runs logs", "help runs events", "help runs interrupt":
 		printRunsHelp()
 		return 0, nil
-	case "help review", "help review verify", "help review approve", "help review request-changes", "help review comment":
-		printReviewHelp()
-		return 0, nil
-	case "help retry", "help retry now":
-		printRetryHelp()
-		return 0, nil
-	case "help docs", "help docs init", "help docs export", "help docs dev", "help docs build":
-		printDocsHelp()
-		return 0, nil
-	case "help install":
-		printInstallHelp()
+	case "help refresh":
+		printRefreshHelp()
 		return 0, nil
 	case "help update":
 		printUpdateHelp()
@@ -385,7 +367,7 @@ func run(command string, args Args) (int, error) {
 }
 
 func printHelp() {
-	fmt.Println(`Tusker - markdown-first task tracking with optional daemon orchestration
+	fmt.Println(`Tusker - V5 markdown task and docs tracking
 
 Vault discovery: if [--vault] is omitted, tusker walks up from the current
 working directory looking for a folder named tusker/ (or a vault-shaped dir
@@ -393,48 +375,36 @@ with WORKFLOW.md or _system/config.yaml). Pass --vault <path> only to override.
 
 Start here:
   tusker init --yes
-  tusker new-epic --vault ./tusker --acronym APP --title "App foundation"
-  tusker new-story --vault ./tusker --epic APP --title "Implement auth" --size m --risk medium
+  tusker new epic --vault ./tusker --acronym APP --title "App foundation"
+  tusker new task --vault ./tusker --epic APP --title "Implement auth" --size m --risk medium
 
-Core:
-  init                repo bootstrap: vault + workflow + repo contract
-  bootstrap           create a vault skeleton only
-  new-epic            create an epic
-  new-story           create a story
-  new-bug             create a bug
-  new-doc             create a doc note
-  handoff             render a worker / verifier / reviewer packet
-  set-status          move a ticket through its durable workflow
-  reindex             rebuild generated indexes
+Commands:
+  init                initialize or refresh a repo vault
+  new                 create epic, task, bug task, or doc nodes
+  list                list V5 epics, tasks, and docs
+  status              move a V5 task or epic through its workflow
+  next                show the next pickable task
+  claim               assign a ready/rework task and move it active
+  evidence            attach proof to a V5 task
+  docs                check, apply, waive, export, build, or preview docs
+  vault               symlink repo trackers into a shared Obsidian vault
+  daemon              operator loop for registered local projects
+  projects            register repositories for daemon pickup
+  runs                inspect, tail, and interrupt daemon runs
+  refresh             run one daemon poll tick
+  verify              record task verification
+  close               close a verified task after docs impact is resolved
   validate            check vault invariants
-  list                list notes and work items
-  epics               show the epic roster
-  move                move a work item to a different epic
+  reindex             rebuild generated indexes
   update              refresh the installed binary link and skill bundle
 
-Namespaces:
-  tusker workflow --help
+Help:
+  tusker new --help
+  tusker docs --help
   tusker vault --help
   tusker daemon --help
-  tusker projects --help
   tusker runs --help
-  tusker review --help
-  tusker retry --help
-  tusker docs --help
-  tusker install --help
-  tusker update --help
-  tusker init --help
-
-Orchestration quick start:
-  tusker workflow init --vault ./tusker
-  tusker projects add --repo . --vault ./tusker
-  tusker projects limits --max-active-runs 1
-  tusker daemon limits --max-active-runs 2
-  tusker daemon run --once
-  tusker runs --json
-
-Tracker-only quick stop:
-  tusker projects disable
+  tusker status --help
 
 Global flags:
   --json           Emit machine-readable output on success and error.`)
@@ -444,33 +414,29 @@ func printCommandHelp(command string) bool {
 	switch command {
 	case "init":
 		printInitHelp()
-	case "bootstrap":
-		printBootstrapHelp()
-	case "new-epic":
-		printNewEpicHelp()
-	case "new-story":
-		printNewStoryHelp()
-	case "new-bug":
-		printNewBugHelp()
-	case "new-doc":
-		printNewDocHelp()
-	case "handoff":
-		printHandoffHelp()
-	case "set-status":
-		printSetStatusHelp()
+	case "new", "new epic", "new task", "new bug", "new doc":
+		printNewHelp()
+	case "status":
+		printStatusHelp()
+	case "next":
+		printNextHelp()
+	case "claim":
+		printClaimHelp()
+	case "evidence":
+		printEvidenceHelp()
+	case "verify":
+		printVerifyHelp()
+	case "close":
+		printCloseHelp()
 	case "list":
 		printListHelp()
 	case "validate":
 		printValidateHelp()
 	case "reindex":
 		printReindexHelp()
-	case "move":
-		printMoveHelp()
-	case "sync-repo-contract":
-		printSyncRepoContractHelp()
-	case "workflow", "workflow init":
-		printWorkflowHelp()
-	case "vault", "vault set", "vault status", "vault move", "vault repair", "vault mount", "vault unmount", "mount", "unmount":
+	case "docs", "docs init", "docs model", "docs map", "docs catalog", "docs freshness", "docs check", "docs apply", "docs noop", "docs waive", "docs export", "docs dev", "docs build":
+		printDocsHelp()
+	case "vault", "vault set", "vault status", "vault mount", "vault unmount", "vault repair", "vault move":
 		printVaultHelp()
 	case "daemon", "daemon run", "daemon status", "daemon limits":
 		printDaemonHelp()
@@ -478,14 +444,8 @@ func printCommandHelp(command string) bool {
 		printProjectsHelp()
 	case "runs", "runs inspect", "runs logs", "runs events", "runs interrupt":
 		printRunsHelp()
-	case "review", "review verify", "review approve", "review request-changes", "review comment":
-		printReviewHelp()
-	case "retry", "retry now":
-		printRetryHelp()
-	case "docs", "docs init", "docs export", "docs dev", "docs build":
-		printDocsHelp()
-	case "install":
-		printInstallHelp()
+	case "refresh":
+		printRefreshHelp()
 	case "update":
 		printUpdateHelp()
 	default:
@@ -494,49 +454,74 @@ func printCommandHelp(command string) bool {
 	return true
 }
 
-func printInitHelp() {
+func printDaemonHelp() {
 	fmt.Println(`Usage:
-  tusker init [--vault <path>] [--yes] [--fresh] [--daemon] [--mount|--no-mount] [--mount-name <name>]
-
-What it does:
-  1. bootstraps a fresh vault if needed
-  2. writes WORKFLOW.md
-  3. injects Tusker pointers into AGENTS.md / CLAUDE.md
-  4. installs repo-contract helper docs
-  5. reindexes the vault
-  6. optionally mounts the repo tracker into your configured Obsidian vault
-  7. optionally registers the repo with the daemon
-
-Flags:
-  --vault <path>    target vault path (default: ./tusker)
-  --yes             accept defaults without prompts
-  --fresh           move an existing target vault aside and recreate it cleanly
-  --daemon          also register this repo with the daemon
-  --mount           symlink this repo tracker into the configured Obsidian vault
-  --no-mount        skip the Obsidian mount prompt
-  --mount-name      folder name to show at the Obsidian vault root
-
-Examples:
-  tusker init --yes
-  tusker init --fresh --yes
-  tusker init --yes --mount
-  tusker init --yes --daemon`)
-}
-
-func printWorkflowHelp() {
-	fmt.Println(`Usage:
-  tusker workflow init [--vault <path>]
+  tusker daemon run [--once]
+  tusker daemon status [--json]
+  tusker daemon limits [--max-active-runs <n>] [--json]
 
 Purpose:
-  WORKFLOW.md is the daemon contract. It defines active states, polling,
-  retry behavior, workspace strategy, and runner commands.
+  Operator/internal runtime loop for registered local projects. The normal
+  workflow remains task-centric: edit a task, move it to active or rework, then
+  verify and close after the daemon hands it to review.
 
-Commands:
-  workflow init     write the default WORKFLOW.md if it does not exist
+Behavior:
+  - daemon run polls registered projects and dispatches active/rework tasks
+  - --once performs one poll tick and exits
+  - daemon status reports state-root, project count, and active run count
+  - daemon limits reads or updates the global active-run cap
 
 Examples:
-  tusker workflow init --vault ./tusker
-  tusker workflow init`)
+  tusker daemon status
+  tusker daemon run --once
+  tusker daemon limits --max-active-runs 1`)
+}
+
+func printProjectsHelp() {
+	fmt.Println(`Usage:
+  tusker projects add [--repo <path>] [--vault <path>] [--json]
+  tusker projects list [--json]
+  tusker projects limits [--id <project-id>|--repo <path>|--vault <path>] [--max-active-runs <n>] [--json]
+  tusker projects enable [--id <project-id>|--repo <path>|--vault <path>] [--json]
+  tusker projects disable [--id <project-id>|--repo <path>|--vault <path>] [--json]
+  tusker projects remove <project-id> [--json]
+
+Purpose:
+  Register repo-local Tusker vaults for daemon pickup. Obsidian remains the
+  editing surface; project registration only tells the local runtime what to
+  poll.
+
+Examples:
+  tusker projects add --repo . --vault ./tusker
+  tusker projects list
+  tusker projects disable --repo .`)
+}
+
+func printRunsHelp() {
+	fmt.Println(`Usage:
+  tusker runs inspect <task-id-or-record-id> [--json]
+  tusker runs logs <task-id-or-record-id> [--lines <n>] [--follow] [--json]
+  tusker runs events <task-id-or-record-id> [--lines <n>] [--follow] [--json]
+  tusker runs interrupt <task-id-or-record-id> [--json]
+
+Purpose:
+  Inspect and control daemon runtime state for a task. These commands expose
+  attempts, turns, sessions, event tails, logs, and interrupts without making
+  runtime state part of task frontmatter.
+
+Examples:
+  tusker runs inspect ORC-T-0018 --json
+  tusker runs events ORC-T-0018 --lines 20
+  tusker runs interrupt ORC-T-0018`)
+}
+
+func printRefreshHelp() {
+	fmt.Println(`Usage:
+  tusker refresh [--quiet] [--json]
+
+Purpose:
+  Run one daemon poll tick for registered projects. This is the easiest local
+  smoke path for checking whether active/rework tasks are picked up.`)
 }
 
 func printVaultHelp() {
@@ -544,111 +529,107 @@ func printVaultHelp() {
   tusker vault set --path <obsidian-vault>
   tusker vault status [--json]
   tusker vault mount [--repo <path>] [--vault <path>] [--name <folder>] [--force] [--json]
-  tusker vault unmount [--repo <path> | --name <folder>] [--json]
-  tusker vault move --to <obsidian-vault> [--json]
-  tusker vault repair [--json]
-
-Aliases:
-  tusker mount     same as tusker vault mount
-  tusker unmount   same as tusker vault unmount
+  tusker vault unmount [--name <folder>|--repo <path>|--vault <path>] [--json]
+  tusker vault repair [--force] [--json]
+  tusker vault move --to <obsidian-vault> [--force] [--json]
 
 Purpose:
-  Keep each repo's ./tusker tracker git-committable while exposing many project
-  trackers as root-level folders in one Obsidian vault.
+  Link repo-local Tusker trackers into one shared Obsidian vault so multiple
+  projects can be monitored from one place.
+
+Behavior:
+  - vault set stores the shared Obsidian vault path in Tusker workspace config
+  - vault mount creates a symlink from <obsidian-vault>/<name> to the repo tracker
+  - vault status shows every configured mount and whether its symlink is healthy
+  - vault repair recreates missing mount symlinks from saved metadata
+  - vault move updates the shared vault path and repairs saved mounts
 
 Examples:
-  tusker vault set --path "$HOME/iCloud Drive/Obsidian/Work"
-  tusker init --yes --mount
-  tusker vault mount --name client-a-mobile
-  tusker vault repair`)
+  tusker vault set --path ~/Obsidian/Tusker
+  tusker vault mount --repo . --vault ./tusker --name my-app
+  tusker vault status`)
 }
 
-func printDaemonHelp() {
+func printInitHelp() {
 	fmt.Println(`Usage:
-  tusker daemon run [--once]
-  tusker daemon status [--json]
-  tusker daemon limits [--max-active-runs <N>] [--json]
-  tusker refresh [--json]
+  tusker init [--vault <path>] [--yes] [--fresh]
+  tusker init --migrate-v5 [--vault <path>] [--yes] [--vault-only]
 
-Purpose:
-  The daemon watches registered projects, dispatches active work to runners,
-  reconciles retries, and moves successful work into review. Limit changes are
-  picked up on the next poll; no restart needed.
+What it does:
+  1. initializes a fresh vault if needed
+  2. writes WORKFLOW.md
+  3. injects Tusker pointers into AGENTS.md / CLAUDE.md
+  4. installs repo-contract helper docs
+  5. reindexes the vault
+
+With --migrate-v5 it also converts legacy story/bug notes into V5 tasks,
+renames epic index files to V5 paths, adds schemas, refreshes templates/views,
+and creates a side-by-side backup before writing.
+
+Flags:
+  --vault <path>    target vault path (default: ./tusker)
+  --yes             accept defaults without prompts
+  --fresh           move an existing target vault aside and recreate it cleanly
+  --migrate-v5      repair an existing legacy vault in place
+  --dry-run         show the migration plan without writing
+  --vault-only      update only the vault; skip AGENTS/CLAUDE and repo-contract files
+  --no-backup       skip the migration backup
+  --no-pointers     skip AGENTS.md / CLAUDE.md pointer injection
+  --no-contract     skip repo-contract helper docs
 
 Examples:
-  tusker daemon run --once
-  tusker daemon status --json
-  tusker daemon limits --max-active-runs 2
-  tusker refresh`)
-}
-
-func printProjectsHelp() {
-	fmt.Println(`Usage:
-  tusker projects add --repo <path> [--vault <path>] [--json]
-  tusker projects list [--json]
-  tusker projects limits [--id <project-id> | --repo <path> | --vault <path>] [--max-active-runs <N>] [--json]
-  tusker projects enable [--id <project-id> | --repo <path> | --vault <path>] [--json]
-  tusker projects disable [--id <project-id> | --repo <path> | --vault <path>] [--json]
-  tusker projects remove --id <project-id> [--json]
-
-Purpose:
-  Project registration tells the daemon which repos and vaults to monitor.
-  Disable a project when you want tracker-only mode without removing it from
-  the registry. Project limit changes hot-reload from WORKFLOW.md on the next
-  poll.
-
-Examples:
-  tusker projects limits --max-active-runs 1
-  tusker projects disable
-  tusker projects disable --repo .
-  tusker projects enable --id 01ABC...`)
-}
-
-func printRunsHelp() {
-	fmt.Println(`Usage:
-  tusker runs [--json]
-  tusker runs inspect --id <ID> [--json]
-  tusker runs logs --id <ID> [--follow] [--lines <N>] [--json]
-  tusker runs events --id <ID> [--follow] [--lines <N>] [--json]
-  tusker runs interrupt --id <ID> [--json]
-
-Purpose:
-  Inspect active and historical daemon work, logs, sessions, and interruptions.`)
-}
-
-func printReviewHelp() {
-	fmt.Println(`Usage:
-  tusker review verify --vault <path> --id <ID> --by <name> [--summary "..."]
-  tusker review approve --vault <path> --id <ID> --by <human> [--summary "..."]
-  tusker review request-changes --vault <path> --id <ID> --by <human> [--summary "..."]
-  tusker review comment --vault <path> --id <ID> --by <human> [--summary "..."]
-
-Purpose:
-  Verification checks that the worker's claims match the current tree.
-  Human review then decides approve vs changes requested.`)
-}
-
-func printRetryHelp() {
-	fmt.Println(`Usage:
-  tusker retry now --id <ID>
-
-Purpose:
-  Force a known run back into the retry queue immediately instead of waiting
-  for its backoff timer.`)
+  tusker init --yes
+  tusker init --migrate-v5 --yes --vault-only
+  tusker init --migrate-v5 --dry-run --vault ./tusker`)
 }
 
 func printDocsHelp() {
 	fmt.Println(`Usage:
   tusker docs init [--site <path>] [--force]
+  tusker docs model [--json]
+  tusker docs map [<doc-node>] [--vault <path>] [--json]
+  tusker docs catalog [--vault <path>] [--json]
+  tusker docs freshness [--vault <path>] [--stale] [--json]
+  tusker docs check <id> [--vault <path>] [--json]
+  tusker docs apply <id> --node <doc-node> [--by <name>] [--reason <text>]
+  tusker docs noop <id> --node <doc-node> [--by <name>] [--reason <text>]
+  tusker docs waive <id> <doc-node> [--by <name>] --reason <text>
   tusker docs export [--vault <path>] [--site <path>] [--clean] [--public-only] [--json]
   tusker docs dev [--vault <path>] [--site <path>] [--watch] [--port <n>] [--host <host>]
   tusker docs build [--vault <path>] [--site <path>] [--public-only] [--json]
 
 Purpose:
-  Export published Tusker docs and explicitly registered repo docs into the
-  Astro/Starlight site, then preview or build the static docs output.
+  Own the documentation system from the CLI: explain the model, inspect the
+  docs-map, read the generated catalog, check freshness, resolve task docs
+  impact, and export/build the site.
+
+What it means:
+  _config/docs-map.yaml is the access layer. It maps exact doc_nodes to source
+  pages, domains, Diátaxis mode, audience, agent layer, source-of-truth files,
+  and stale_when triggers. Tasks name doc_nodes when work changes durable
+  understanding. Close requires each targeted doc node to be applied, verified
+  as no-op, or waived with a reason.
+
+Diátaxis modes:
+  tutorial     learn by doing       -> Start here
+  how-to       complete a task      -> Guides
+  reference    look up facts        -> Reference
+  explanation  understand why       -> Concepts
+
+Agent layer:
+  none         human-facing doc only
+  capsule      human-facing doc with a compact agent note
+  standalone   agent-facing runbook or recipe
 
 Notes:
+  docs model explains the philosophy without needing a vault.
+  docs map lists controlled domains and doc_nodes.
+  docs catalog shows reader-facing IA generated from docs-map.
+  docs freshness shows stale/missing/verified docs and linked task evidence.
+  docs check is a dry-run inspection for a task's doc_nodes.
+  docs apply records that a target doc node was updated.
+  docs noop records that a target doc node was checked and already correct.
+  docs waive records an explicit no-change decision for a target doc node.
   The site lives under ./site by default. Repo-doc publishing is configured
   through docs/publication.yaml. Vault docs are included only when a vault is
   discoverable or --vault is provided.
@@ -658,121 +639,101 @@ Notes:
   agents can tell published canon from stale source files.`)
 }
 
-func printBootstrapHelp() {
+func printNewHelp() {
 	fmt.Println(`Usage:
-  tusker bootstrap [--vault <path>] [--epic <ACR> --title <title>]
+  tusker new epic [--vault <path>] --acronym <ACR> --title <title> [--summary <text>] [--owner <name>]
+  tusker new task [--vault <path>] --epic <ACR> --title <title> [--kind <type>] [--status draft|backlog|ready|blocked] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical]
+  tusker new bug  [--vault <path>] --epic <ACR> --title <title> [--status draft|backlog|ready|blocked] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical]
+  tusker new doc  [--vault <path>] --node <route> --title <title> [--publish-lane <lane>] [--no-publish]
 
 Purpose:
-  Create a fresh Tusker vault skeleton without touching repo wiring.
+  Create V5 epics, tasks, bug tasks, and doc nodes.
 
 Examples:
-  tusker bootstrap --vault ./tusker
-  tusker bootstrap --vault ./tusker --epic APP --title "App foundation"`)
+  tusker new epic --vault ./tusker --acronym APP --title "App foundation"
+  tusker new task --vault ./tusker --epic APP --title "Implement auth" --kind feature --risk medium --size m
+  tusker new bug --vault ./tusker --epic APP --title "Fix login redirect" --risk high
+  tusker new doc --vault ./tusker --node developer/auth --title "Auth guide" --publish-lane developer`)
 }
 
-func printNewEpicHelp() {
+func printStatusHelp() {
 	fmt.Println(`Usage:
-  tusker new-epic [--vault <path>] --acronym <ACR> --title <title> [--summary <text>] [--owner <name>] [--spec-source <path>]
+  tusker status <id> <status> [--vault <path>] [--actor <name>] [--reason <text>]
+  tusker status --id <id> --status <status> [--vault <path>] [--actor <name>] [--reason <text>]
+
+Statuses:
+  draft, backlog, ready, active, blocked, review, rework, done, cancelled
 
 Purpose:
-  Create a new epic directory and epic index note.`)
-}
-
-func printNewStoryHelp() {
-	fmt.Println(`Usage:
-  tusker new-story [--vault <path>] --epic <ACR> --title <title> --size s|m|l|xl --risk low|medium|high|critical
-                   [--priority p0|p1|p2|p3|icebox] [--assignee <name>] [--requester <name>]
-                   [--delegation execute|explore|escalate] [--change-type <type>]
-                   [--surfaces <csv>] [--ai-assistance none|light|moderate|heavy]
-                   [--ai-tools <csv>] [--ai-session-log <path>] [--due <date>]
-                   [--related <links>] [--blocks <links>] [--blocked-by <links>] [--tags <csv>]
-
-Formal intake flags:
-  --priority p0|p1|p2|p3|icebox
-  --assignee <name>
-  --requester <name>
-  --delegation execute|explore|escalate
-  --change-type feature|refactor|migration|security|docs|chore|research|incident|bug
-  --surfaces <csv>
-  --ai-assistance none|light|moderate|heavy
-  --ai-tools <csv>
-  --ai-session-log <path>
-  --due <date>
-  --related <links>
-  --blocks <links>
-  --blocked-by <links>
-  --tags <csv>
-
-Purpose:
-  Create a story note under an existing epic.
-
-Examples:
-  tusker new-story --vault ./tusker --epic APP --title "Add login" --size m --risk medium
-  tusker new-story --vault ./tusker --epic APP --title "Harden auth" --size s --risk high --priority p1 --assignee codex --requester sarav --change-type security --surfaces api,auth
-  tusker new-story --vault ./tusker --epic APP --title "Wire checkout" --size l --risk medium --blocks APP-S-0003 --tags payments,ui --due 2026-05-15`)
-}
-
-func printNewBugHelp() {
-	fmt.Println(`Usage:
-  tusker new-bug [--vault <path>] --epic <ACR> --title <title> --size s|m|l|xl --risk low|medium|high|critical
-
-Purpose:
-  Create a bug note under an existing epic.`)
-}
-
-func printNewDocHelp() {
-	fmt.Println(`Usage:
-  tusker new-doc [--vault <path>] --epic <ACR> --title <title>
-                 [--audience <developer|user|release|support|internal>]
-                 [--canon-for <EPIC> | --companion-to <STORY-ID>]
-                 [--status draft|review|approved|published|archived]
-                 [--publish true|false] [--publish-path <route>]
-                 [--publish-description <text>] [--publish-order <n>]
-                 [--publish-section-title <text>] [--publish-url <url>]
-                 [--tags <csv>]
-
-Purpose:
-  Create a companion or canonical doc note under an existing epic.
+  Move a V5 task or epic through its durable workflow.
 
 Notes:
-  Developer docs must declare intent with --canon-for or --companion-to.
-  --publish true requires --status approved|published, --publish-path, and
-  --publish-description.`)
+  blocked requires either --blocked-by <TASK-ID[,TASK-ID]> or --block-reason <text>. Use
+  backlog for shaped future work that should not be picked up in the current release.`)
 }
 
-func printHandoffHelp() {
+func printNextHelp() {
 	fmt.Println(`Usage:
-  tusker handoff [--vault <path>] --id <ID> --for worker|verifier|reviewer [--json]
+  tusker next [--vault <path>] [--epic <ACR>] [--owner <name>] [--json]
+  tusker next --claim --as <agent-or-person> [--vault <path>] [--epic <ACR>] [--json]
 
 Purpose:
-  Render a role-specific packet from the ticket so you can hand work to a
-  coding agent, verifier, or human reviewer without making them rediscover
-  the whole note from scratch.`)
+  Return the next pickable task. Pickable means status ready or rework, no
+  unresolved blockers, and not already assigned to another owner.
+
+Ranking:
+  priority first (p0 before p1), then risk (critical before high), then oldest
+  created date. --claim uses the same rules, then moves the selected task to active.`)
 }
 
-func printSetStatusHelp() {
+func printClaimHelp() {
 	fmt.Println(`Usage:
-  tusker set-status [--vault <path>] --id <ID> --status <status> [--actor <name>] [--reason <text>]
+  tusker claim <id> --as <agent-or-person> [--vault <path>] [--reason <text>] [--json]
 
 Purpose:
-  Update the durable workflow status on a note.
+  Assign one ready/rework task and move it to active. Claim rejects draft,
+  backlog, blocked, active, review, done, cancelled, and tasks with unresolved
+  blocked_by dependencies.`)
+}
 
-Examples:
-  tusker set-status --vault ./tusker --id APP-S-0001 --status active --actor sarav
-  tusker set-status --vault ./tusker --id APP-S-0001 --status done --actor sarav`)
+func printEvidenceHelp() {
+	fmt.Println(`Usage:
+  tusker evidence <id> <kind> <path-or-url> [--vault <path>] [--note <text>]
+  tusker evidence --id <id> --kind <kind> --path <path-or-url> [--vault <path>] [--note <text>]
+
+Purpose:
+  Attach proof to a V5 task before verification and close.`)
+}
+
+func printVerifyHelp() {
+	fmt.Println(`Usage:
+  tusker verify <id> [--vault <path>] [--by <name>] [--summary <text>]
+  tusker verify --id <id> [--vault <path>] [--by <name>] [--summary <text>]
+
+Purpose:
+  Record verification on a V5 task in review status.`)
+}
+
+func printCloseHelp() {
+	fmt.Println(`Usage:
+  tusker close <id> [--vault <path>] [--by <name>] [--reason <text>]
+  tusker close --id <id> [--vault <path>] [--by <name>] [--reason <text>]
+
+Purpose:
+  Close a verified V5 task after required docs impact is applied or waived.`)
 }
 
 func printListHelp() {
 	fmt.Println(`Usage:
-  tusker list [--vault <path>] [--json] [--type epic|story|bug|doc] [--status <status>] [--review-state <state>] [--assignee <name>] [--epic <ACR>]
+  tusker list [--vault <path>] [--json] [--type epic|task|doc] [--status <status>] [--epic <ACR>]
 
 Purpose:
-  Query notes and work items from the vault.
+  Query V5 epics, tasks, and docs from the vault.
 
 Examples:
   tusker list --vault ./tusker
-  tusker list --vault ./tusker --type story --status active
-  tusker list --vault ./tusker --review-state requested --json`)
+  tusker list --vault ./tusker --type task --status active
+  tusker list --vault ./tusker --type doc --json`)
 }
 
 func printValidateHelp() {
@@ -792,20 +753,4 @@ Purpose:
 
 Options:
   --fix-links  Refresh record-id mirror fields from human-authored wikilinks before rebuilding indexes.`)
-}
-
-func printMoveHelp() {
-	fmt.Println(`Usage:
-  tusker move [--vault <path>] --id <ID> --to-epic <ACR>
-
-Purpose:
-  Move a story, bug, or doc to a different epic and rewrite its derived id/path.`)
-}
-
-func printSyncRepoContractHelp() {
-	fmt.Println(`Usage:
-  tusker sync-repo-contract --repo <path> [--vault <path>] [--force]
-
-Purpose:
-  Write helper repo-contract docs and update AGENTS.md / CLAUDE.md Tusker pointers.`)
 }

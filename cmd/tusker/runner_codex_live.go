@@ -81,11 +81,16 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	if err := assertRunnerCommandDir(RunnerCodex, cmd.Dir, req.WorkspacePath); err != nil {
 		return nil, err
 	}
+	resumeSessionRef, resumeMessageRef := "", ""
+	if resume != nil {
+		resumeSessionRef = resume.SessionRef
+		resumeMessageRef = resume.MessageRef
+	}
 	cmd.Env = runnerEnv(runnerLaunchEnv{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		WorkRevision: req.WorkRevision, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: policy,
+		NotePath: req.NotePath, VaultPath: req.VaultPath, SessionRef: resumeSessionRef, MessageRef: resumeMessageRef, CodexPolicy: policy,
 	})
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
@@ -139,7 +144,7 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 
 	var threadID string
 	if resume != nil && strings.TrimSpace(resume.SessionRef) != "" {
-		threadID, err = handle.threadFork(resume.SessionRef, workspaceCWD)
+		threadID, err = handle.threadResume(resume.SessionRef, workspaceCWD)
 	} else {
 		threadID, err = handle.threadStart(workspaceCWD)
 	}
@@ -227,6 +232,24 @@ func (h *codexLiveHandle) threadStart(cwd string) (string, error) {
 	return resp.Thread.ID, err
 }
 
+func (h *codexLiveHandle) threadResume(sessionRef, cwd string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), h.readTimeout())
+	defer cancel()
+	var resp struct {
+		Thread struct {
+			ID string `json:"id"`
+		} `json:"thread"`
+	}
+	err := h.request(ctx, "thread/resume", map[string]any{
+		"threadId":       sessionRef,
+		"cwd":            cwd,
+		"approvalPolicy": h.policy.ApprovalPolicy,
+		"sandbox":        h.policy.ThreadSandbox,
+		"excludeTurns":   true,
+	}, &resp)
+	return resp.Thread.ID, err
+}
+
 func (h *codexLiveHandle) threadFork(sessionRef, cwd string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), h.readTimeout())
 	defer cancel()
@@ -257,16 +280,29 @@ func (h *codexLiveHandle) turnStart(threadID, prompt string) (string, error) {
 		"threadId":       threadID,
 		"cwd":            h.cmd.Dir,
 		"approvalPolicy": h.policy.ApprovalPolicy,
-		"sandboxPolicy":  h.policy.TurnSandboxPolicy,
-		"turnTimeoutMs":  h.policy.TurnTimeoutMS,
-		"readTimeoutMs":  h.policy.ReadTimeoutMS,
-		"stallTimeoutMs": h.policy.StallTimeoutMS,
-		"maxTurns":       h.policy.MaxTurns,
+		"sandboxPolicy":  codexTurnSandboxPolicy(h.policy.TurnSandboxPolicy, h.cmd.Dir),
 		"input": []map[string]any{
-			{"type": "text", "text": prompt},
+			{"type": "text", "text": prompt, "text_elements": []any{}},
 		},
 	}, &resp)
 	return resp.Turn.ID, err
+}
+
+func codexTurnSandboxPolicy(policy, cwd string) map[string]any {
+	switch strings.TrimSpace(policy) {
+	case "danger-full-access":
+		return map[string]any{"type": "dangerFullAccess"}
+	case "read-only":
+		return map[string]any{"type": "readOnly", "networkAccess": false}
+	default:
+		return map[string]any{
+			"type":                "workspaceWrite",
+			"writableRoots":       []string{cwd},
+			"networkAccess":       false,
+			"excludeTmpdirEnvVar": false,
+			"excludeSlashTmp":     false,
+		}
+	}
 }
 
 func (h *codexLiveHandle) readTimeout() time.Duration {
@@ -383,11 +419,21 @@ func (h *codexLiveHandle) handleStdoutLine(line string) {
 }
 
 func (h *codexLiveHandle) handleServerRequest(method, id string, params json.RawMessage) {
+	if dispatch := dispatchCodexExtensionToolRequest(method, params, h.policy.Extensions, h.notePath); dispatch.Handled {
+		h.recordExtensionToolDispatch(method, dispatch)
+		if dispatch.Error != "" {
+			h.writeRPCError(id, -32000, dispatch.Error)
+			return
+		}
+		h.writeRPCResult(id, dynamicToolCallResponse(dispatch.Result))
+		return
+	}
+
 	switch method {
 	case "item/commandExecution/requestApproval":
-		_ = h.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"decision": "accept"}})
+		h.writeRPCResult(id, map[string]any{"decision": "accept"})
 	case "item/fileChange/requestApproval":
-		_ = h.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"decision": "accept"}})
+		h.writeRPCResult(id, map[string]any{"decision": "accept"})
 	case "item/tool/requestUserInput":
 		var payload struct {
 			Questions []struct {
@@ -403,21 +449,26 @@ func (h *codexLiveHandle) handleServerRequest(method, id string, params json.Raw
 				answers[question.ID] = map[string]any{"answers": []string{}}
 			}
 		}
-		_ = h.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"answers": answers}})
+		h.writeRPCResult(id, map[string]any{"answers": answers})
 	case "item/permissions/requestApproval":
-		_ = h.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"permissions": map[string]any{}, "scope": "turn"}})
+		h.writeRPCResult(id, map[string]any{"permissions": map[string]any{}, "scope": "turn"})
+	case "mcpServer/elicitation/request":
+		h.writeRPCResult(id, map[string]any{"action": "cancel", "content": nil, "_meta": nil})
+	case "applyPatchApproval", "execCommandApproval":
+		h.writeRPCResult(id, map[string]any{"decision": "approved"})
+	case "account/chatgptAuthTokens/refresh":
+		h.writeRPCError(id, -32000, "chatgpt auth token refresh is not available in the Tusker runner")
 	default:
-		if dispatch := dispatchCodexExtensionToolRequest(method, params, h.policy.Extensions, h.notePath); dispatch.Handled {
-			h.recordExtensionToolDispatch(method, dispatch)
-			if dispatch.Error != "" {
-				_ = h.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": -32000, "message": dispatch.Error}})
-				return
-			}
-			_ = h.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "result": dispatch.Result})
-			return
-		}
-		_ = h.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "result": nil})
+		h.writeRPCError(id, -32601, "unsupported Codex app-server request: "+method)
 	}
+}
+
+func (h *codexLiveHandle) writeRPCResult(id string, result any) {
+	_ = h.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+}
+
+func (h *codexLiveHandle) writeRPCError(id string, code int, message string) {
+	_ = h.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": code, "message": message}})
 }
 
 type codexExtensionToolDispatch struct {
@@ -530,7 +581,6 @@ func tuskerShowCurrentToolResult(notePath string) (map[string]any, error) {
 		"title":         stringField(data, "title"),
 		"type":          stringField(data, "type"),
 		"status":        stringField(data, "status"),
-		"review_state":  stringField(data, "review_state"),
 		"work_revision": intField(data, "work_revision"),
 		"summary":       firstNonEmpty(stringField(data, "summary"), noteBodyExcerpt(body, 800)),
 		"note_path":     notePath,
@@ -543,6 +593,26 @@ func tuskerShowCurrentToolResult(notePath string) (map[string]any, error) {
 		result["content"] = []map[string]any{{"type": "text", "text": string(encoded)}}
 	}
 	return result, nil
+}
+
+func dynamicToolCallResponse(result any) map[string]any {
+	if payload, ok := result.(map[string]any); ok {
+		if output, ok := payload["output"]; ok {
+			result = output
+		}
+	}
+	text := ""
+	if result != nil {
+		if raw, err := json.Marshal(result); err == nil {
+			text = string(raw)
+		} else {
+			text = fmt.Sprint(result)
+		}
+	}
+	return map[string]any{
+		"success":      true,
+		"contentItems": []map[string]any{{"type": "inputText", "text": text}},
+	}
 }
 
 func noteBodyExcerpt(body string, maxLen int) string {

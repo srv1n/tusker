@@ -46,19 +46,43 @@ for line in sys.stdin:
     elif msg.get("method")=="turn/start":
         assert msg["params"]["cwd"]==os.environ["TUSKER_WORKSPACE"], msg["params"]
         assert msg["params"]["approvalPolicy"]=="on-failure", msg["params"]
-        assert msg["params"]["sandboxPolicy"]=="workspace-write", msg["params"]
-        assert msg["params"]["turnTimeoutMs"]==12345, msg["params"]
-        assert msg["params"]["readTimeoutMs"]==5000, msg["params"]
-        assert msg["params"]["stallTimeoutMs"]==6789, msg["params"]
-        assert msg["params"]["maxTurns"]==2, msg["params"]
-        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"turn":{"id":"turn-123"}}}), flush=True)
-        print(json.dumps({"jsonrpc":"2.0","method":"item/commandExecution/requestApproval","id":"approve-1","params":{"threadId":"thread-123","turnId":"turn-123","itemId":"item-1"}}), flush=True)
-    elif msg.get("id")=="approve-1":
+        assert "turnTimeoutMs" not in msg["params"], msg["params"]
+        assert "readTimeoutMs" not in msg["params"], msg["params"]
+        assert "stallTimeoutMs" not in msg["params"], msg["params"]
+        assert "maxTurns" not in msg["params"], msg["params"]
+        assert msg["params"]["sandboxPolicy"]=={
+            "type":"workspaceWrite",
+            "writableRoots":[os.environ["TUSKER_WORKSPACE"]],
+            "networkAccess":False,
+            "excludeTmpdirEnvVar":False,
+            "excludeSlashTmp":False,
+        }, msg["params"]
+        assert msg["params"]["input"][0]["type"]=="text", msg["params"]
+        assert msg["params"]["input"][0]["text"]=="Ship it.\n", msg["params"]
+        assert msg["params"]["input"][0]["text_elements"]==[], msg["params"]
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"turn":{"id":"turn-123","status":"inProgress","items":[]}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","method":"item/commandExecution/requestApproval","id":"approve-command","params":{"threadId":"thread-123","turnId":"turn-123","itemId":"item-1","command":"go test ./cmd/tusker","cwd":os.environ["TUSKER_WORKSPACE"]}}), flush=True)
+    elif msg.get("id")=="approve-command":
         assert msg["result"]["decision"]=="accept"
-        print(json.dumps({"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-123","turn":{"id":"turn-123"}}}), flush=True)
-        print(json.dumps({"jsonrpc":"2.0","method":"turn/usage","params":{"threadId":"thread-123","turnId":"turn-123","usage":{"input_tokens":11,"output_tokens":7}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","method":"item/fileChange/requestApproval","id":"approve-file","params":{"threadId":"thread-123","turnId":"turn-123","itemId":"item-2","reason":"write result"}}), flush=True)
+    elif msg.get("id")=="approve-file":
+        assert msg["result"]["decision"]=="accept"
+        print(json.dumps({"jsonrpc":"2.0","method":"item/permissions/requestApproval","id":"approve-permissions","params":{"threadId":"thread-123","turnId":"turn-123","itemId":"item-3","cwd":os.environ["TUSKER_WORKSPACE"],"reason":"needs current workspace","permissions":{}}}), flush=True)
+    elif msg.get("id")=="approve-permissions":
+        assert msg["result"]["permissions"]=={}, msg
+        assert msg["result"]["scope"]=="turn", msg
+        print(json.dumps({"jsonrpc":"2.0","method":"item/tool/requestUserInput","id":"user-input","params":{"threadId":"thread-123","turnId":"turn-123","itemId":"item-4","questions":[{"id":"choice","header":"Pick","question":"Choose","isOther":False,"isSecret":False,"options":None}]}}), flush=True)
+    elif msg.get("id")=="user-input":
+        assert msg["result"]["answers"]["choice"]["answers"]==[], msg
+        print(json.dumps({"jsonrpc":"2.0","method":"mcpServer/elicitation/request","id":"mcp-elicit","params":{"server":"demo","message":"Need input","requestedSchema":{}}}), flush=True)
+    elif msg.get("id")=="mcp-elicit":
+        assert msg["result"]["action"]=="cancel", msg
+        assert msg["result"]["content"] is None, msg
+        assert msg["result"]["_meta"] is None, msg
+        print(json.dumps({"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-123","turn":{"id":"turn-123","status":"inProgress","items":[]}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"threadId":"thread-123","turnId":"turn-123","tokenUsage":{"total":{"inputTokens":11,"cachedInputTokens":0,"outputTokens":7,"reasoningOutputTokens":0,"totalTokens":18},"last":{"inputTokens":11,"cachedInputTokens":0,"outputTokens":7,"reasoningOutputTokens":0,"totalTokens":18},"modelContextWindow":200000}}}), flush=True)
         print(json.dumps({"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"threadId":"thread-123","item":{"id":"msg-codex-1"}}}), flush=True)
-        print(json.dumps({"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-123","turn":{"id":"turn-123","status":"completed"}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-123","turn":{"id":"turn-123","status":"completed","items":[]}}}), flush=True)
         break
 `
 	if err := writeText(scriptPath, script); err != nil {
@@ -112,10 +136,7 @@ for line in sys.stdin:
 			t.Fatalf("expected normalized codex events to include %s, got:\n%s", expected, eventsText)
 		}
 	}
-	store, err := OpenRuntimeStore(DefaultStateRoot())
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := openRuntimeStoreEventually(t)
 	defer store.Close()
 	turns := waitForStoredTurnStatus(t, store, "project-1", "record-1", "completed")
 	assertEqual(t, 1, len(turns), "stored codex turn count")
@@ -141,7 +162,7 @@ func TestCodexLiveRunnerContinuesSameThreadWhileNoteRemainsActive(t *testing.T) 
 	if err := writeText(promptPath, "First rendered prompt.\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(notePath, "---\nid: ITEM-1\nrecord_id: record-1\ntype: story\ntitle: Continue me\nstatus: active\n---\n\n"); err != nil {
+	if err := writeText(notePath, "---\nid: ITEM-1\nrecord_id: record-1\ntype: task\ntitle: Continue me\nstatus: active\n---\n\n"); err != nil {
 		t.Fatal(err)
 	}
 	script := `#!/usr/bin/env python3
@@ -155,16 +176,19 @@ for line in sys.stdin:
         print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"thread":{"id":"thread-continue"}}}), flush=True)
     elif msg.get("method")=="turn/start":
         turn_count += 1
+        assert "maxTurns" not in msg["params"], msg["params"]
+        assert msg["params"]["sandboxPolicy"]["type"]=="workspaceWrite", msg["params"]
         text=msg["params"]["input"][0]["text"]
+        assert msg["params"]["input"][0]["text_elements"]==[], msg["params"]
         if turn_count == 1:
             assert "First rendered prompt." in text, text
         if turn_count == 2:
             assert "Continue on the same Codex thread" in text, text
             assert "First rendered prompt." not in text, text
         turn_id=f"turn-{turn_count}"
-        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"turn":{"id":turn_id}}}), flush=True)
-        print(json.dumps({"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-continue","turn":{"id":turn_id}}}), flush=True)
-        print(json.dumps({"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-continue","turn":{"id":turn_id,"status":"completed"}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"turn":{"id":turn_id,"status":"inProgress","items":[]}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-continue","turn":{"id":turn_id,"status":"inProgress","items":[]}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-continue","turn":{"id":turn_id,"status":"completed","items":[]}}}), flush=True)
         if turn_count == 2:
             break
 `
@@ -202,10 +226,7 @@ for line in sys.stdin:
 		t.Fatal(err)
 	}
 	assertEqual(t, 0, status.ExitCode, "codex continuation exit code")
-	store, err := OpenRuntimeStore(DefaultStateRoot())
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := openRuntimeStoreEventually(t)
 	defer store.Close()
 	turns := waitForStoredTurnCount(t, store, "project-1", "record-1", 2)
 	assertEqual(t, "turn-1", turns[0].TurnID, "first turn id")
@@ -219,6 +240,96 @@ for line in sys.stdin:
 	if !strings.Contains(logText, "max turns reached") {
 		t.Fatalf("expected max-turn exhaustion to be surfaced in raw log, got:\n%s", logText)
 	}
+}
+
+func TestCodexLiveRunnerResumesThreadViaProtocolAfterRestart(t *testing.T) {
+	tempRoot := t.TempDir()
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(tempRoot, "state"))
+	workspaceRoot := filepath.Join(tempRoot, "workspace")
+	if err := ensureDir(workspaceRoot); err != nil {
+		t.Fatal(err)
+	}
+	rawLogPath := filepath.Join(tempRoot, "codex.log")
+	statusPath := filepath.Join(tempRoot, "codex.status.json")
+	eventSinkPath := filepath.Join(tempRoot, "events.jsonl")
+	promptPath := filepath.Join(tempRoot, "prompt.txt")
+	scriptPath := filepath.Join(tempRoot, "fake-codex.py")
+	if err := writeText(promptPath, "Resume prompt.\n"); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/usr/bin/env python3
+import json,os,sys
+for line in sys.stdin:
+    msg=json.loads(line)
+    if msg.get("method")=="initialize":
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"serverInfo":{"name":"fake-codex"}}}), flush=True)
+    elif msg.get("method")=="thread/start":
+        raise AssertionError("restart recovery must not start a fresh thread")
+    elif msg.get("method")=="thread/fork":
+        raise AssertionError("restart recovery must not fork when thread/resume is supported")
+    elif msg.get("method")=="thread/resume":
+        assert os.environ["TUSKER_SESSION_REF"]=="thread-before-restart", os.environ.get("TUSKER_SESSION_REF")
+        assert msg["params"]["threadId"]=="thread-before-restart", msg["params"]
+        assert msg["params"]["cwd"]==os.environ["TUSKER_WORKSPACE"], msg["params"]
+        assert msg["params"]["approvalPolicy"]=="never", msg["params"]
+        assert msg["params"]["sandbox"]=="read-only", msg["params"]
+        assert msg["params"]["excludeTurns"] is True, msg["params"]
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"thread":{"id":"thread-before-restart"}}}), flush=True)
+    elif msg.get("method")=="turn/start":
+        assert msg["params"]["threadId"]=="thread-before-restart", msg["params"]
+        assert msg["params"]["sandboxPolicy"]=={"type":"readOnly","networkAccess":False}, msg["params"]
+        assert msg["params"]["input"][0]["text"]=="Resume prompt.\n", msg["params"]
+        assert msg["params"]["input"][0]["text_elements"]==[], msg["params"]
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"turn":{"id":"turn-resumed","status":"inProgress","items":[]}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-before-restart","turn":{"id":"turn-resumed","status":"inProgress","items":[]}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-before-restart","turn":{"id":"turn-resumed","status":"completed","items":[]}}}), flush=True)
+        break
+`
+	if err := writeText(scriptPath, script); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := startLiveCodex(context.Background(), StartRequest{
+		ProjectID:     "project-1",
+		RecordID:      "record-1",
+		ItemID:        "ITEM-1",
+		AttemptID:     "attempt-2",
+		WorkRevision:  0,
+		WorkspacePath: workspaceRoot,
+		PromptPath:    promptPath,
+		EventSinkPath: eventSinkPath,
+		RawLogPath:    rawLogPath,
+		StatusPath:    statusPath,
+		Command:       scriptPath,
+		VaultPath:     tempRoot,
+		CodexPolicy: CodexPolicy{
+			ApprovalPolicy:    "never",
+			ThreadSandbox:     "read-only",
+			TurnSandboxPolicy: "read-only",
+			TurnTimeoutMS:     5000,
+			ReadTimeoutMS:     5000,
+			StallTimeoutMS:    5000,
+			MaxTurns:          1,
+		},
+	}, &ResumeRequest{SessionRef: "thread-before-restart"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "thread-before-restart", result.SessionRef, "resumed codex session ref")
+	waitForStatusFile(t, statusPath)
+	status, err := readRunnerProcessStatus(statusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 0, status.ExitCode, "codex resumed exit code")
+	store := openRuntimeStoreEventually(t)
+	defer store.Close()
+	turns := waitForStoredTurnCount(t, store, "project-1", "record-1", 1)
+	assertEqual(t, "turn-resumed", turns[0].TurnID, "resumed turn id")
+	assertEqual(t, "thread-before-restart", turns[0].SessionRef, "resumed turn session ref")
 }
 
 func TestClaudeLiveRunnerSupportsInterrupt(t *testing.T) {
@@ -417,6 +528,22 @@ func waitForStoredTurnStatus(t *testing.T, store *RuntimeStore, projectID, recor
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for stored turn status %q; latest=%v", status, last)
+	return nil
+}
+
+func openRuntimeStoreEventually(t *testing.T) *RuntimeStore {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		store, err := OpenRuntimeStore(DefaultStateRoot())
+		if err == nil {
+			return store
+		}
+		lastErr = err
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("timed out opening runtime store: %v", lastErr)
 	return nil
 }
 

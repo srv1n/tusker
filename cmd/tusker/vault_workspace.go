@@ -322,7 +322,7 @@ func requireWorkspaceVaultConfig() (WorkspaceVaultConfig, error) {
 		return cfg, err
 	}
 	if strings.TrimSpace(cfg.ObsidianVault) == "" {
-		return cfg, tuskerError(errorMissingArg, "No Obsidian vault configured.", withHint("Run `tusker vault set --path <obsidian-vault>` first."))
+		return cfg, tuskerError(errorMissingArg, "No Obsidian vault configured.", withHint("Run `tusker init --vault <repo>/tusker --yes` without --mount, or configure the Obsidian vault in the workspace config file."))
 	}
 	if err := ensureDir(cfg.ObsidianVault); err != nil {
 		return cfg, err
@@ -432,7 +432,7 @@ func removeWorkspaceMount(mountPath string) error {
 
 func repairWorkspaceMounts(cfg WorkspaceVaultConfig, force bool) ([]MountStatus, error) {
 	if strings.TrimSpace(cfg.ObsidianVault) == "" {
-		return nil, tuskerError(errorMissingArg, "No Obsidian vault configured.", withHint("Run `tusker vault set --path <obsidian-vault>` first."))
+		return nil, tuskerError(errorMissingArg, "No Obsidian vault configured.", withHint("Run `tusker init --vault <repo>/tusker --yes` without --mount, or configure the Obsidian vault in the workspace config file."))
 	}
 	if err := ensureDir(cfg.ObsidianVault); err != nil {
 		return nil, err

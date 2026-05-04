@@ -35,10 +35,10 @@
         .rzn .branch .tag { font-size:10px; font-weight:600; letter-spacing:0.20em; text-transform:uppercase; color:#6B6558; }
         .rzn .branch .desc { font-size:14px; color:#3A352D; line-height:1.55; }
 
-        .rzn .attest { display:flex; align-items:center; gap:20px; padding:20px 26px; border:1.5px solid #3F6F1A; background:rgba(63,111,26,0.08); border-radius:10px; }
-        .rzn .attest .pin { width:14px; height:14px; border-radius:999px; background:#3F6F1A; flex:0 0 auto; }
-        .rzn .attest .text { font-size:16px; color:#1A1A17; line-height:1.5; flex:1; }
-        .rzn .attest .text .v { font-weight:700; }
+        .rzn .verify { display:flex; align-items:center; gap:20px; padding:20px 26px; border:1.5px solid #3F6F1A; background:rgba(63,111,26,0.08); border-radius:10px; }
+        .rzn .verify .pin { width:14px; height:14px; border-radius:999px; background:#3F6F1A; flex:0 0 auto; }
+        .rzn .verify .text { font-size:16px; color:#1A1A17; line-height:1.5; flex:1; }
+        .rzn .verify .text .v { font-weight:700; }
       </style>
       <div class="canvas">
         <div style="font-size:13px;font-weight:600;letter-spacing:0.20em;color:#3A352D;text-transform:uppercase;display:flex;align-items:center;gap:14px;line-height:1;">
@@ -46,23 +46,23 @@
           <span>TUSKER &#160;·&#160; 04</span>
         </div>
         <div style="font-size:52px;font-weight:700;letter-spacing:-0.015em;line-height:1.05;color:#1A1A17;margin-top:24px;">Agents drive. Humans gate.</div>
-        <div style="font-size:18px;font-weight:400;line-height:1.45;color:#3A352D;max-width:1200px;margin-top:16px;">Each transition writes a row to <code style="font-family:inherit;color:#3F6F1A;font-weight:600;">transitions[]</code>. At <code style="font-family:inherit;font-weight:600;">risk &gt;= high</code> the validator blocks <code style="font-family:inherit;font-weight:600;">done</code> until a human attests.</div>
+        <div style="font-size:18px;font-weight:400;line-height:1.45;color:#3A352D;max-width:1200px;margin-top:16px;">Each transition writes a row to <code style="font-family:inherit;color:#3F6F1A;font-weight:600;">transitions[]</code>. At <code style="font-family:inherit;font-weight:600;">risk &gt;= high</code> the validator blocks <code style="font-family:inherit;font-weight:600;">done</code> until a verification and docs impact resolve.</div>
 
         <div class="body">
           <div class="stages">
             <div class="stage"><div class="node"><div class="name">intake</div><div class="tech">spec written</div></div></div>
-            <div class="gap"><span class="gap-label">handoff</span></div>
+            <div class="gap"><span class="gap-label">review</span></div>
             <div class="stage"><div class="node active"><div class="name">active</div><div class="tech">agent runs</div></div></div>
             <div class="gap"><span class="gap-label">verify</span></div>
-            <div class="stage"><div class="node"><div class="name">in_review</div><div class="tech">evidence ready</div></div></div>
-            <div class="gap acc"><span class="gap-label" style="color:#3F6F1A;">attest gate</span></div>
+            <div class="stage"><div class="node"><div class="name">review</div><div class="tech">evidence ready</div></div></div>
+            <div class="gap acc"><span class="gap-label" style="color:#3F6F1A;">close gate</span></div>
             <div class="stage"><div class="node terminal"><div class="name">done</div><div class="tech">locked</div></div></div>
           </div>
 
-          <div class="attest">
+          <div class="verify">
             <span class="pin"></span>
             <div class="text">
-              <span class="v">risk &gt;= high</span> — the validator refuses <code style="font-family:inherit;">status: done</code> without a human attestation. Agents cannot self-attest. <span class="v">critical</span> also requires a code-owner signoff.
+              <span class="v">risk &gt;= high</span> — the validator refuses <code style="font-family:inherit;">status: done</code> without a verification. <span class="v">critical</span> also requires a rollback-owner review.
             </div>
           </div>
 
@@ -83,7 +83,7 @@
         </div>
 
         <div style="height:40px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid rgba(26,26,23,0.12);padding-top:18px;font-size:12px;font-weight:500;letter-spacing:0.18em;color:#6B6558;text-transform:uppercase;margin-top:24px;">
-          <span>TUSKER &#160;·&#160; STORY LIFECYCLE</span><span>04 / 04</span>
+          <span>TUSKER &#160;·&#160; TASK LIFECYCLE</span><span>04 / 04</span>
         </div>
       </div>
     </div>

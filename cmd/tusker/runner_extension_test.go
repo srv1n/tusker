@@ -28,7 +28,7 @@ func TestCodexExtensionToolDeniedByDefault(t *testing.T) {
 func TestCodexExtensionToolShowCurrentReturnsReadOnlyNoteSummary(t *testing.T) {
 	tempRoot := t.TempDir()
 	notePath := filepath.Join(tempRoot, "note.md")
-	if err := writeText(notePath, "---\nid: ORC-S-0015\nrecord_id: rec-0015\ntype: story\ntitle: Extension bridge\nstatus: active\nreview_state: none\nwork_revision: 3\nsummary: Read-only extension bridge slice.\n---\n\n## Workpad\n\nDo not mutate this note.\n"); err != nil {
+	if err := writeText(notePath, "---\nschema: tusker.task/v5\nid: ORC-T-0015\nrecord_id: rec-0015\ntype: task\nkind: feature\nepic: ORC\ntitle: Extension bridge\nstatus: review\nwork_revision: 3\nsummary: Read-only extension bridge slice.\n---\n\n## Workpad\n\nDo not mutate this note.\n"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -53,10 +53,10 @@ func TestCodexExtensionToolShowCurrentReturnsReadOnlyNoteSummary(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected output map, got %T", result["output"])
 	}
-	assertEqual(t, "ORC-S-0015", output["id"], "tool note id")
+	assertEqual(t, "ORC-T-0015", output["id"], "tool note id")
 	assertEqual(t, "rec-0015", output["record_id"], "tool record id")
 	assertEqual(t, "Extension bridge", output["title"], "tool title")
-	assertEqual(t, "active", output["status"], "tool status")
+	assertEqual(t, "review", output["status"], "tool status")
 	assertEqual(t, 3, output["work_revision"], "tool work revision")
 	assertEqual(t, "Read-only extension bridge slice.", output["summary"], "tool summary")
 }

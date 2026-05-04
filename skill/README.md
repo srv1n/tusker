@@ -1,6 +1,6 @@
 # Tusker Skill Bundle
 
-This directory is the installable skill payload that `tusker install` writes into `.agents/skills/` and `.claude/skills/`.
+This directory is the installable skill payload copied by the install script and refreshed by `tusker update`.
 
 What lives here:
 
@@ -15,7 +15,7 @@ If you're using the installed skill, the CLI is the execution surface:
 ```sh
 tusker --help
 tusker init
-tusker bootstrap --vault /path/to/vault
+tusker init --vault /path/to/vault --yes
 tusker update
 ```
 

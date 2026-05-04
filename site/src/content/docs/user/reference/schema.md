@@ -1,6 +1,6 @@
 ---
 title: "Schema"
-description: "Frontmatter is the machine layer. Note body is the human layer. Tusker's Go YAML parser preserves the vault schema cleanly, and Obsidian Properties round-trip without drama."
+description: "Frontmatter is the machine layer. The note body is the human layer. V5 makes **task** the execution unit and keeps docs as durable knowledge pages."
 tusker:
   audience: "user"
   publish_path: "user/reference/schema"
@@ -8,173 +8,256 @@ tusker:
   route: "/user/reference/schema/"
   source_kind: "repo_doc"
   source_path: "skill/references/SCHEMA.md"
-  summary: "Frontmatter is the machine layer. Note body is the human layer. Tusker's Go YAML parser preserves the vault schema cleanly, and Obsidian Properties round-trip without drama."
+  summary: "Frontmatter is the machine layer. The note body is the human layer. V5 makes **task** the execution unit and keeps docs as durable knowledge pages."
   tags:
     - "reference"
-  updated: "2026-04-28"
+  updated: "2026-04-30"
 ---
 
 # Schema
 
-Frontmatter is the machine layer. Note body is the human layer. Tusker's Go YAML parser preserves the vault schema cleanly, and Obsidian Properties round-trip without drama.
+Frontmatter is the machine layer. The note body is the human layer. V5 makes **task** the execution unit and keeps docs as durable knowledge pages.
 
 ## Note types
 
-- `epic` — a coherent workstream or subsystem. Lives at `epics/<ACR>/index.md`.
-- `story` — unit of work. Feature, refactor, migration, docs, chore, research, security, incident. Lives at `epics/<ACR>/<ACR>-S-NNNN.md`.
-- `bug` — defect or regression. Lives at `epics/<ACR>/<ACR>-B-NNNN.md`.
-- `doc` — polished standalone doc that will outlive individual stories. Lives at `epics/<ACR>/<ACR>-D-NNNN.md`.
-- `note` — free-form (dashboard, architecture, daily). No lifecycle.
+- `epic` — workstream boundary, canon pointer, success metrics. Lives at `epics/<ACR>/<ACR>.md`.
+- `task` — executable change contract. Lives at `epics/<ACR>/<ACR>-T-NNNN.md`.
+- `doc` — durable knowledge page. Lives under `docs/<domain>/<slug>.md`.
+- `note` — free-form vault page with no lifecycle.
 
-No project layer, no change layer, no tier. Use `epic + story/bug/doc` everywhere.
+Bug is not a separate execution type in V5. Use `type: task` and `kind: bug`.
+
+## Task frontmatter
+
+```yaml
+---
+schema: tusker.task/v5
+id: NXT-T-0002
+title: Introduce the v5 note model
+type: task
+kind: migration
+epic: NXT
+status: blocked
+priority: p0
+risk: high
+size: l
+domains: [schema, migration]
+doc_nodes: [spec/v5-overview, spec/v5-adoption]
+blocked_by: [NXT-T-0001]
+block_reason: Waiting for the note model migration to land.
+delegation: execute
+ai_assistance: heavy
+ai_tools: [codex]
+created: 2026-04-29
+updated: 2026-04-29
+---
+```
+
+Required before active work:
+
+- `schema`, `id`, `title`, `type`, `kind`, `epic`, `status`
+- `size`, `risk`, `priority`
+- `domains`
+- `created`, `updated`
+- `ai_assistance`
+
+Recommended:
+
+- `doc_nodes`
+- `delegation`
+- `blocked_by`, `blocks`
+- `block_reason` when `status: blocked`
+- `ai_tools`
+- `tags`
+
+Do not add legacy tracker fields such as `record_id`, `schema_version`, `requester`, attestation/signoff fields, record-id mirror fields, or empty optional lifecycle fields. V5 uses the stable `id` plus generated runtime stores; old mirror metadata is noise.
+
+Runtime/dispatch fields:
+
+- Runtime state belongs in generated/runtime stores, not task frontmatter.
+
+Review fields:
+
+- `verified_by`, `verified_at`
+- `closed_by`, `closed_at`
+- `docs_resolution`
+
+## Task body contract
+
+Every medium+ task should expose this split:
+
+```text
+## Intent
+## Scope
+## Acceptance contract
+## Canon
+## Code/system anchors
+## Constraints
+## Escalate if
+## Deliverables
+## Verification plan
+## Knowledge delta
+---
+## Execution plan
+## Evidence
+## Verification log
+## Work log
+```
+
+Use a structured knowledge delta table:
+
+| Topic | Before | After | Audience | Target doc nodes |
+|---|---|---|---|---|
+
+`MISSING_KNOWLEDGE_DELTA` should be a hard failure for `risk >= high` when the task changes durable understanding.
+
+## Doc frontmatter
+
+```yaml
+---
+schema: tusker.doc/v5
+id: spec/v5-overview
+title: Tusker v5 implementation spec
+type: doc
+node: spec/v5-overview
+audience: developer
+mode: explanation
+agent_layer: capsule
+kind: canon
+domains: [schema, workflow, docs]
+source_of_truth: [research/tusker_v5_implementation_spec.md]
+stale_when_paths: [cmd/tusker/**, skill/**]
+canonical_status: approved
+last_verified_at: 2026-04-29
+publish: true
+publish_lane: internal
+publish_path: spec/v5-overview
+publish_description: Transitional implementation spec for Tusker v5.
+created: 2026-04-29
+updated: 2026-04-29
+---
+```
+
+Required:
+
+- `schema`, `id`, `title`, `type`, `node`, `audience`, `kind`
+- `domains`
+- `created`, `updated`
+
+Recommended:
+
+- `mode`: `tutorial | how-to | reference | explanation`
+- `agent_layer`: `none | capsule | standalone`
+- `source_of_truth`
+- `stale_when_paths`
+- `canonical_status`: `draft | approved | deprecated | historical`
+- `last_verified_at`
+- `owner_epic`
+- `superseded_by`
+- `publish`, `publish_lane`, `publish_path`, `publish_description`, `publish_order`, `redirect_from`
+- `related`, `tags`
+
+Docs should be authored under `tusker/docs/**`. Published site files are generated output.
 
 ## Status enums
 
 ### `epic.status`
-`intake`, `active`, `paused`, `done`, `cancelled`
 
-### `story.status`
-`intake`, `active`, `blocked`, `in_review`, `done`, `cancelled`
+`draft`, `backlog`, `ready`, `blocked`, `active`, `review`, `rework`, `done`, `cancelled`
 
-### `bug.status`
-Same as story.
+### `task.status`
 
-### `review_state`
-`none`, `verification_requested`, `requested`, `changes_requested`, `approved`
+`draft`, `backlog`, `ready`, `blocked`, `active`, `review`, `rework`, `done`, `cancelled`
+
+Status meanings:
+
+| Status | Meaning | Pickable? |
+|---|---|---|
+| `draft` | Not fully shaped. | No |
+| `backlog` | Shaped future work, outside the current release/sprint. | No |
+| `ready` | Shaped current work. | Yes, only when unblocked |
+| `blocked` | Current work waiting on Tusker dependencies or an external blocker. | No |
+| `active` | Claimed and in progress. | Already claimed |
+| `review` | Implementation is ready for verification. | No |
+| `rework` | Verification or review found more work. | Yes, only when unblocked |
+| `done` | Accepted and closed. | No |
+| `cancelled` | Intentionally abandoned. | No |
+
+When `status: blocked`, expose `blocked_by` for Tusker task dependencies and `block_reason` for the human/external reason. Do not hide blockers in body text only.
 
 ### `doc.status`
+
 `draft`, `review`, `approved`, `published`, `archived`
 
-Status transitions are recorded in the `transitions[]` frontmatter array as an append-only audit log (from Symphony borrowings). `set-status` writes the row; never hand-edit.
+Status transitions are append-only in `transitions[]`. Use `tusker status`; never hand-edit transitions.
 
 ## Other enums
 
-- `story.change_type`: `feature`, `bug`, `refactor`, `migration`, `security`, `docs`, `chore`, `research`, `incident`
-- `risk`: `low`, `medium`, `high`, `critical` (orthogonal to size)
+- `kind`: `feature`, `bug`, `refactor`, `migration`, `security`, `docs`, `chore`, `research`, `incident`
+- `risk`: `low`, `medium`, `high`, `critical`
 - `size`: `s`, `m`, `l`, `xl`
-- `priority`: `p0`, `p1`, `p2`, `p3`, `icebox`
+- `priority`: `p0`, `p1`, `p2`, `p3`
 - `delegation`: `execute`, `explore`, `escalate`
 - `ai_assistance`: `none`, `light`, `moderate`, `heavy`
-- `ai_tools`: array of strings (e.g. `["claude-code", "codex", "cursor"]`)
-- `doc.audience`: `developer`, `user`, `release`, `support`, `internal`
-- `surfaces`: array including `frontend`, `desktop`, `mobile`, `api`, `backend`, `runtime`, `cli`, `docs`, others as needed
-
-## Epic frontmatter
-
-Required: `id`, `title`, `type`, `status`, `owner`, `created`, `updated`
-
-Recommended: `target_release`, `spec_source` (repo-relative path or wikilink to the canonical design doc), `docs` (array of wikilinks to DOC notes), `success_metrics` (array of strings), `tags`
-
-Status-stamp dates: `started`, `completed`, `cancelled_at`, `paused_since`.
-
-Append-only: `transitions[]`.
-
-## Story frontmatter
-
-Required before `status: active`:
-- `id`, `title`, `type`, `status`, `change_type`, `epic`
-- `size`, `risk`, `priority`, `delegation`
-- `ai_assistance`
-- `requester`, `created`, `updated`
-
-Recommended: `assignee`, `surfaces`, `ai_tools`, `ai_session_log`, `due`, `blocked_by`, `blocks`, `related`, `tags`
-
-Claim/dispatch fields (Symphony): `dispatch_state` (`unclaimed` | `claimed` | `running` | `done` | `failed` | `stalled` | `cancelled`), `claimed_by`, `claimed_at`, `run_attempts`, `last_attempt_at`, `failure_class`.
-
-Attestation fields: `attested_by`, `attested_at`, `attested_role`, `signoff_by`, `signoff_at`.
-
-DoD split: `dod_code_complete` (boolean), `dod_user_verified` (boolean).
-
-Status-stamp dates: `started`, `review_opened`, `completed`, `cancelled_at`, `blocked_since`.
-
-Append-only: `transitions[]`.
-
-## Bug frontmatter
-
-Same required set as story, including `change_type: bug`.
-
-Additional recommended: `severity`, `regression_of`.
-
-## Doc frontmatter
-
-Required: `id`, `title`, `type`, `status`, `epic`, `audience`, `created`, `updated`
-
-Recommended: `doc_intent` (`canon|companion` for developer docs), `canon_for` (wikilink to epic for canonical docs), `story` (wikilink to originating story for companion docs), `canonical` (boolean), `canonical_status` (`draft|approved|deprecated|historical`), `owner_epic`, `verified_at`, `deprecated`, `superseded_by`, `publish` (boolean), `publish_path`, `publish_description`, `publish_order`, `publish_section_title`, `redirect_from`, `publish_url`, `published_at`, `related`, `tags`.
-
-Publication contract:
-
-- `publish: true` requires `status: approved|published`
-- `publish: true` requires non-empty `publish_path` and `publish_description`
-- `publish_path` is a unique route without a leading/trailing slash; top-level lane must be `developer`, `user`, `release-notes`, `support`, or `internal`
-- `publish_order`, if set, must be an integer
-- `publish_section_title`, if set, must be non-empty
-- `redirect_from`, if set, is a list of old route paths without leading/trailing slashes
-- `canonical: true` requires `canonical_status`
-- `canonical_status: approved` should set `verified_at`
-- deprecated docs should set `superseded_by`
-
-## Body sections
-
-Required sections depend on type + risk. See `SKILL.md §Required sections by risk` for the matrix.
-
-Summary:
-
-- Every story/bug has a `---` HR followed by `## Agent handoff`. Above is human-authored spec. Below is agent execution packet + work log.
-- Validator checks required sections are present, and reports missing substance separately. Empty placeholders still do not count as a real ticket.
-- `## Work log`, `## Agent handoff`, and `## Evidence` are exempted from substance checking at creation time — they get filled as work progresses.
-- Evidence gate fires at `in_review`/`done` for risk ≥ medium.
-- UI demo rule: if `change_type: feature` AND `surfaces` contains `frontend`/`desktop`/`mobile` AND risk ≥ medium, `## Evidence` must include a demo asset at `in_review`/`done`.
+- `ai_tools`: array of strings
+- `domains`: broad work/doc areas
+- `doc_nodes`: exact targets from `_config/docs-map.yaml`
+- `doc.audience`: `developer`, `user`, `operator`, `release`, `support`, `agent`, `internal`
+- `doc.mode`: `tutorial`, `how-to`, `reference`, `explanation`
+- `doc.agent_layer`: `none`, `capsule`, `standalone`
+- `doc.kind`: `canon`, `companion`, `guide`, `runbook`, `release`, `support`, or a local extension
 
 ## Linking conventions
 
-- Epic frontmatter references: `docs: ["<EPIC>-D-0001"]`, `spec_source: "docs/specs/X.md"` or `spec_source: "<EPIC>-D-0001"`
-- Story-to-epic: canonical storage is `epic: "ABC"`; the CLI resolves either form, but the templates use wikilinks
-- Story-to-story: `blocked_by`, `blocks`, `related` use wikilinks: `related: ["ABC-S-0007"]`
-- Doc-to-story companion link: `story: "ABC-S-0007"`
-- Canonical developer doc: `doc_intent: "canon"` plus `canon_for: "ABC"`; `new-doc --canon-for` also stamps `canonical: true`, `owner_epic`, and `canonical_status`
+- Task to epic: `epic: NXT` or `epic: "NXT"`; prefer the repo's existing convention.
+- Task to task: `blocked_by`, `blocks`, `related`.
+- Task to docs: `doc_nodes` for automation targets; body links for human reading.
+- Doc identity: `node` is the stable docs node, e.g. `reference/commands`.
+- Canon: epic points to its canon doc or repo spec; task `## Canon` links to the exact source.
 
 ## Generated indexes
 
-`_system/generated/` holds derived JSON, refreshed by `tusker reindex`:
+`_system/generated/` is derived. Regenerate with `tusker reindex`.
 
-- `epics.index.json` — one row per epic
-- `stories.index.json` — one row per story
-- `bugs.index.json` — one row per bug
-- `docs.index.json` — one row per doc
-- `links.index.json` — graph edges
-- `attestation.index.json` — stories/bugs at `in_review` with human review requested
-- `publication.index.json` — exporter-ready publication manifest; top-level `sources.vault_docs` holds publishable vault docs with route metadata (`publish_path`, `publish_description`, `publish_order`, `publish_section_title`, `redirect_from`) and canon lifecycle fields (`canonical`, `canonical_status`, `owner_epic`, `verified_at`, `deprecated`, `superseded_by`)
-- `dashboard.json` — Symphony-borrowed dispatcher snapshot: queues (`unclaimed`/`claimed`/`running`), per-agent activity, failure counters
-- `summary.json` — vault-wide counts
+Common indexes:
 
-Never hand-edit `_system/generated/`.
+- `epics.index.json`
+- `tasks.index.json`
+- `docs.index.json`
+- `links.index.json`
+- `publication.index.json`
+- `dashboard.json`
+- `summary.json`
+
+Never hand-edit generated indexes.
 
 ## Published docs manifests
 
-`tusker docs export` writes site-side manifests:
+`tusker docs export` writes:
 
-- `site/src/generated/content-manifest.json` — schema-versioned route list with title, audience, source path, tags, summary, and canon lifecycle fields.
-- `site/src/generated/canon-manifest.json` — schema-versioned current canon plus all published docs for the static site build. Canon entries come from explicit `canonical: true` metadata, not from broad tags like `specs`.
-- `site/public/canon-manifest.json` — same canon map, available from deployed docs.
-- `site/src/generated/routes-removed.json` — unredirected published routes that disappeared since the previous export.
-- `site/public/llms.txt` and `site/public/llms-full.txt` — agent-friendly route catalogs.
+- `site/src/generated/content-manifest.json`
+- `site/src/generated/canon-manifest.json`
+- `site/public/canon-manifest.json`
+- `site/src/generated/routes-removed.json`
+- `site/public/llms.txt`
+- `site/public/llms-full.txt`
 
-Agents should read `site/public/canon-manifest.json` before treating old repo docs as current truth.
+Agents should read `site/public/canon-manifest.json` before treating old docs as current truth.
 
-When a docs site manifest exists, `tusker validate` fails if either manifest copy diverges, if a published source is newer than the manifest, if a manifest source was deleted, if a route disappeared without `redirect_from`, or if an active epic lacks a canon entry in `canon[]`.
+## Hard invariants
 
-## Hard invariants (from Symphony borrowings)
+Validator failures that matter early in V5:
 
-Validator fails hard if:
-
-- `ID_COLLISION` — two notes share the same `id`
-- `PATH_MISMATCH` — filename does not match the id-derived canonical path
-- `PATH_ESCAPE` — a note references a path that resolves outside the vault
+- `ID_COLLISION` — two notes share an `id`
+- `PATH_MISMATCH` — path does not match the canonical ID/path rule
+- `PATH_ESCAPE` — a note references a path outside the vault
+- `UNKNOWN_DOC_NODE` — a task names a `doc_nodes` entry missing from `_config/docs-map.yaml`
+- `DOCS_IMPACT_UNRESOLVED` — docs-impact gate has neither applied changes nor explicit waiver
+- `MISSING_KNOWLEDGE_DELTA` — high-risk task changed durable understanding without a knowledge delta
+- `CONFIG_INVALID` — docs-map schema, node path, Diátaxis metadata, or freshness metadata is invalid
 
 ## Filename rules
 
-- Epic index: `epics/<ACR>/index.md` (content path is canonical; `id` in frontmatter = the acronym)
-- Story: `epics/<ACR>/<ACR>-S-NNNN.md` (zero-padded 4-digit serial)
-- Bug: `epics/<ACR>/<ACR>-B-NNNN.md`
-- Doc: `epics/<ACR>/<ACR>-D-NNNN.md`
-- Note (free-form): anywhere except `epics/*/` and `_system/`
+- Epic index: `epics/<ACR>/<ACR>.md`
+- Task: `epics/<ACR>/<ACR>-T-NNNN.md`
+- Doc: `docs/<domain>/<slug>.md`

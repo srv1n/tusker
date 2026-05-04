@@ -853,6 +853,34 @@ func (s *RuntimeStore) LatestSession(projectID, recordID, runner string) (*Runne
 	return &session, nil
 }
 
+func (s *RuntimeStore) ListSessionsForRun(projectID, recordID, runner string) ([]RunnerSession, error) {
+	query := `SELECT project_id, record_id, runner, session_ref, last_message_ref, workspace_path, current_item_id, work_revision, last_attempt_id, state, resumable, started_at, last_seen_at, ended_at, last_error
+		FROM sessions
+		WHERE project_id = ? AND record_id = ?`
+	args := []any{projectID, recordID}
+	if strings.TrimSpace(runner) != "" {
+		query += ` AND runner = ?`
+		args = append(args, runner)
+	}
+	query += ` ORDER BY last_seen_at DESC, started_at DESC, session_ref DESC`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RunnerSession
+	for rows.Next() {
+		var session RunnerSession
+		var resumable int
+		if err := rows.Scan(&session.ProjectID, &session.RecordID, &session.Runner, &session.SessionRef, &session.LastMessageRef, &session.WorkspacePath, &session.CurrentItemID, &session.WorkRevision, &session.LastAttemptID, &session.State, &resumable, &session.StartedAt, &session.LastSeenAt, &session.EndedAt, &session.LastError); err != nil {
+			return nil, err
+		}
+		session.Resumable = resumable != 0
+		out = append(out, session)
+	}
+	return out, rows.Err()
+}
+
 func (s *RuntimeStore) MarkSessionState(projectID, sessionRef, state, endedAt, lastError string, resumable bool) error {
 	_, err := s.db.Exec(`UPDATE sessions
 		SET state = ?, ended_at = ?, last_error = ?, resumable = ?, last_seen_at = ?

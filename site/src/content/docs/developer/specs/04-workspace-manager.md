@@ -3,8 +3,8 @@ title: "Spec 04: Workspace Manager"
 description: "Define deterministic isolated workspaces for daemon-run agent sessions."
 tusker:
   audience: "developer"
-  canonical: true
-  canonical_status: "draft"
+  canonical_status: "historical"
+  deprecated: true
   owner_epic: "ORC"
   publish_path: "developer/specs/04-workspace-manager"
   publish_section_title: "Specs"
@@ -12,9 +12,10 @@ tusker:
   source_kind: "repo_doc"
   source_path: "docs/specs/04-workspace-manager.md"
   summary: "Define deterministic isolated workspaces for daemon-run agent sessions."
+  superseded_by: "/user/start-here/agent-workflow/"
   tags:
     - "specs"
-  updated: "2026-04-28"
+  updated: "2026-04-29"
   verified_at: "2026-04-28"
 ---
 
@@ -118,7 +119,7 @@ Use for non-Git or weird repositories.
 2. ensure root containment
 3. create or reuse workspace
 4. run `after_create` if newly created
-5. run project bootstrap / sync logic
+5. run project init or sync logic
 6. run `before_run`
 
 ### Reuse
@@ -238,7 +239,7 @@ Existing files affected:
 | File | Change |
 |---|---|
 | `config.go` | move workspace policy ownership under `WORKFLOW.md` contract |
-| `commands_lifecycle.go` | stop pretending release semantics alone are orchestration |
+| `commands_lifecycle.go` | keep durable status changes separate from runtime orchestration |
 
 ## Diagram
 

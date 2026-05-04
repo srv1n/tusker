@@ -19,8 +19,8 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	if wf.Tracker.Kind != "tusker_vault" {
 		return tuskerError(errorConfigInvalid, "tracker.kind must be tusker_vault", withPath(filePath))
 	}
-	if wf.TrackerSchemaVersion != 2 {
-		return tuskerError(errorConfigInvalid, "tracker_schema_version must be 2", withPath(filePath))
+	if wf.TrackerSchemaVersion != 5 {
+		return tuskerError(errorConfigInvalid, "tracker_schema_version must be 5", withPath(filePath))
 	}
 	if len(wf.Tracker.ActiveStates) == 0 {
 		return tuskerError(errorConfigInvalid, "tracker.active_states must not be empty", withPath(filePath))

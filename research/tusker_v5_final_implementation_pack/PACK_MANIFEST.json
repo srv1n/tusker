@@ -1,0 +1,30 @@
+{
+  "name": "tusker-v5-final-implementation-pack",
+  "created": "2026-04-29",
+  "task_count": 64,
+  "epics": [
+    "ARC",
+    "MIG",
+    "DOC",
+    "MRK",
+    "MED",
+    "EVAL",
+    "CLI",
+    "VAL",
+    "SKL",
+    "ORC",
+    "OBS"
+  ],
+  "decisions": [
+    "story -> task",
+    "bug -> type: task, kind: bug",
+    "docs -> durable pages mapped by doc_nodes",
+    "doc_nodes replace docs enum",
+    "task status stays in frontmatter",
+    "events/runs/generated split audit/runtime/cache",
+    "Diataxis on docs, not tasks",
+    "Markdoc optional publishing layer only",
+    "media requires transcript and companion",
+    "docs evals test task success"
+  ]
+}

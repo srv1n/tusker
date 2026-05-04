@@ -11,40 +11,41 @@ tusker:
   tags:
     - "repository"
     - "overview"
-  updated: "2026-04-28"
+  updated: "2026-04-29"
 ---
 
 # Tusker
 
-A task tracker that lives inside your git repo as plain markdown, and reads cleanly in Obsidian. Built for a single developer working with coding agents.
+Tusker is a markdown-first task tracker that lives inside your git repo and reads cleanly in Obsidian. It is built for one developer, or a very small team, working with coding agents.
 
-Each ticket is one markdown file. It serves two purposes at the same time:
+Each task is one markdown file. It is both:
 
-1. **A detailed instruction set for an agent.** Frontmatter carries the structured fields the agent needs — risk, size, change type, surfaces, dependencies, AI tools — and the body holds the plan, acceptance criteria, verification steps, and code anchors the agent reads before it starts work.
-2. **A human-readable spec.** The same file, opened in Obsidian, reads like a normal design note. Headings, links, embedded diagrams, dataview queries. You write the intent and the acceptance criteria; the agent fills in the plan and the evidence.
+1. **An executable contract for an agent.** Frontmatter carries the machine fields: risk, kind, domains, doc targets, dependencies, AI tools, and lifecycle state. The body carries intent, scope, acceptance, verification, deliverables, evidence, and knowledge delta.
+2. **A human-readable work record.** Open it in Obsidian and it reads like a normal spec plus execution log. Humans define intent and accept evidence; agents implement and leave proof.
 
-The vault is a folder in your repo. Task state is committed alongside the code it describes.
-
-```
+```text
 your-repo/
 ├── src/
 └── tusker/
     ├── epics/
     │   └── MEM/
-    │       ├── MEM.md           # epic + canon
-    │       ├── MEM-S-0001.md    # story
-    │       └── MEM-B-0002.md    # bug
-    ├── _system/
-    └── Dashboard.md
+    │       ├── MEM.md          # epic + canon
+    │       ├── MEM-T-0001.md   # task
+    │       └── MEM-T-0002.md   # task, kind: bug
+    ├── docs/
+    │   ├── spec/
+    │   └── reference/
+    ├── _config/
+    └── _system/
 ```
+
+![Tusker keeps the tracker in git while Obsidian stays a reading and editing surface.](/generated/assets/repo-doc/developer-repository-repository-overview/docs/diagrams/01-two-surfaces.png)
 
 ## Why this exists
 
-Linear and Jira live outside the repo. GitHub Issues are thin and not great for specs. [Beads](https://github.com/steveyegge/beads) gets the git-native idea right but is not built around reading the work in Obsidian.
+Linear and Jira live outside the repo. GitHub Issues are thin. Beads gets the git-native idea right but is not designed around Obsidian-readable executable specs for coding agents.
 
-When the person doing the implementation is a coding agent, the specification is what matters. Acceptance criteria, risk level, evidence after the fact, an attestation trail. Tusker tries to make that the default shape of a ticket.
-
-The design borrows from two things worth reading: the OpenAI harness engineering writeup, and the Symphony multi-agent demo. Tusker is not a clone of either. It is the smallest thing that lets one person manage several repos this way.
+When an agent does the implementation, the spec is the control plane. Tusker makes the ticket carry the acceptance contract, the verification plan, the evidence, and the durable knowledge change. That last part matters: if implementation changes what future readers need to know, the task must say which docs changed or why they did not.
 
 |                                       | Linear / Jira | GitHub Issues | Beads | Tusker |
 | ------------------------------------- | :-----------: | :-----------: | :---: | :----: |
@@ -52,197 +53,168 @@ The design borrows from two things worth reading: the OpenAI harness engineering
 | Plain markdown                        |       no      |      yes      | partial |  yes  |
 | Renders in Obsidian without plugins   |       no      |       no      |   no  |   yes  |
 | Risk-scaled spec and evidence layout  |    partial    |       no      |   no  |   yes  |
+| Docs impact as part of the task       |       no      |       no      |   no  |   yes  |
 | CLI for agents                        |       no      |    partial    |  yes  |   yes  |
 | Installable agent skill               |       no      |       no      |   no  |   yes  |
-| One Obsidian window, many repos       |      n/a      |      n/a      |   no  |   yes  |
-| Reads on a phone over iCloud          |       no      |       no      |   no  |   yes  |
 
-Linear and Jira are overkill for an independent developer or a team of two or three. The setup, the seats, the rituals, the clicking around — it is more overhead than the work it tracks. Tusker is built for that scale. If you have a sprint, a product manager, and 30 engineers, use Linear.
+If you have a sprint, a product manager, and 30 engineers, use Linear. Tusker is for the smaller, sharper setup where the repo is the source of truth.
 
-## What it is
+## The V5 model
 
-There are four pieces. You can use any subset. The skill alone is enough for most cases.
-
-**A skill bundle.** This is the core. Install into Claude Code, Codex CLI, or any harness that loads `SKILL.md`. The skill teaches the agent the file layout, the frontmatter, and the lifecycle. With just the skill installed, an agent can create and update tickets as plain markdown in your repo, and you can read and edit them in Obsidian. No CLI required.
-
-**A Go CLI (`tusker`).** A helper. Single binary, no runtime. It makes the same operations easier and safer: init a vault, mount it into the workspace, create stories with validated frontmatter, run the validator, hand off to agents, attach evidence, attest. If you skip the CLI, the agent will do the equivalent edits directly on the markdown.
-
-**An Obsidian vault layout.** Bases views, dashboards, dataview-friendly frontmatter, snippets, templates. Open the folder as a vault and it works.
-
-**A symlink workspace.** One central Obsidian vault that symlinks every repo's `tusker/` folder. The repo stays the source of truth. The Obsidian vault is just where you read and edit.
-
-There is also an experimental daemon that picks up ready stories and dispatches Claude or Codex sessions, with concurrency caps. It is opt-in. The markdown layer works without it.
-
-## The data model
-
-```
-Vault = one repo
-  └── Epic (3-letter acronym, e.g. MEM)
-        ├── Story  MEM-S-0001
-        ├── Bug    MEM-B-0002
-        └── Doc    MEM-D-0003
+```text
+Epic = workstream boundary + canon + success metrics
+Task = executable change contract
+Bug  = task(kind: bug)
+Doc  = durable knowledge page under tusker/docs
 ```
 
-No project layer. No task layer. Sub-work inside a story is the agent's own todo list.
+The task contract separates five things that should not be blurred:
 
-Stories carry `risk`, `size`, `change_type`, `priority`, `delegation`, `ai_assistance`, `ai_tools`. Risk drives ceremony, not size. A typo at `risk: low` needs one line of evidence. A feature flag flip at `risk: high` needs a rollout plan and a human signoff.
+| Section | Job |
+|---|---|
+| Acceptance contract | What must be true |
+| Deliverables | What artifacts or changes must exist |
+| Verification plan | How truth will be checked |
+| Evidence | Proof produced after execution |
+| Knowledge delta | What durable understanding changed |
 
-## Two surfaces, one set of files
+Tasks carry `risk`, `size`, `kind`, `priority`, `domains`, `doc_nodes`, `delegation`, `ai_assistance`, and `ai_tools`. Risk drives ceremony, not file count. A typo at `risk: low` needs one useful evidence line. A risky migration needs rollout, rollback, verification, and human review.
 
-The repo is the source of truth. `tusker/` is committed with the code. Branches, blame, PRs — the same git tools you already use for code now apply to task state.
+`domains` are broad human-facing areas like `schema`, `cli`, `docs`, or `runtime`. `doc_nodes` are exact documentation targets from `_config/docs-map.yaml`. If `doc_nodes` is non-empty, the docs close gate runs. For high-risk work, the task must include a `## Knowledge delta` table:
 
-Obsidian is the view. One central vault, with a symlink for each repo:
+| Topic | Before | After | Audience | Target doc nodes |
+|---|---|---|---|---|
 
-```
-~/Obsidian/Work/
-├── app-a    -> /repos/app-a/tusker/
-├── app-b    -> /repos/app-b/tusker/
-└── mobile   -> /repos/client/mobile/tusker/
-```
+![Risk controls how much evidence and human review a task needs.](/generated/assets/repo-doc/developer-repository-repository-overview/docs/diagrams/03-risk-ladder.png)
 
-Edits in Obsidian go through the symlink and land in the repo. Put `~/Obsidian/Work/` in iCloud Drive, Syncthing, or Dropbox if you want to read the backlog on a phone. Code stays out of the sync folder.
+## Pieces
+
+**A skill bundle.** Install it into Claude Code, Codex, or any harness that loads `SKILL.md`. The skill teaches the agent the layout, lifecycle, evidence rules, and docs close gate. The skill alone is enough for most users.
+
+**A Go CLI (`tusker`).** A helper binary for init, task creation, status changes, evidence, verification, docs checks, closing, validation, reindexing, docs publishing, and updates. If the CLI is unavailable, the agent can still edit the markdown directly, but the CLI is safer.
+
+**An Obsidian vault layout.** Repo-local markdown, Bases views, dashboards, templates, and generated indexes. Open `tusker/` as a vault and it works.
+
+**A symlink workspace.** One central Obsidian vault can symlink multiple repo-local `tusker/` folders. The repo remains authoritative; Obsidian is the reading and editing surface.
+
+The dispatcher is experimental. It can pick up ready tasks and run Claude or Codex with concurrency caps, but the markdown layer and CLI are the stable core.
 
 ## Install
 
-> The skill alone is enough for most users. Install it into your agent, open the `tusker/` folder in Obsidian, and read and edit specs there. The CLI makes things easier (validation, mounting, evidence handling, atomic status changes) and the agent will use it when it is available, but the commands below are written for the agent, not for you. As a human user, your job is to open the Obsidian vault that gets created, read the specs, edit the acceptance criteria, and watch the Bases views to see what is in flight and what is done.
-
-macOS and Linux:
+The skill alone is enough for most users. The CLI makes operations easier and gives agents atomic status changes, validation, evidence handling, and docs checks.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/srv1n/tusker/main/scripts/install.sh | sh
 ```
 
-With the agent skill for Claude Code and Codex:
+Install the agent skill for Claude Code and Codex:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/srv1n/tusker/main/scripts/install.sh | sh -s -- --codex-user --claude-user
 ```
 
-After pulling or rebuilding Tusker, refresh the installed binary link and installed skill bundle:
+After pulling or rebuilding Tusker, refresh the installed binary link and skill bundle:
 
 ```sh
 tusker update
 ```
 
-Set the workspace once:
-
-```sh
-tusker vault set --path "$HOME/Obsidian/Work"
-```
-
-In any repo, create the tracker and mount it:
+In any repo:
 
 ```sh
 cd ~/code/my-app
-tusker init --yes --mount
+tusker init --yes
 ```
 
-You now have `~/code/my-app/tusker/` (committed) and `~/Obsidian/Work/my-app/` (symlink).
+You now have `~/code/my-app/tusker/` committed with the repo.
 
 ## Working with an agent
 
-With the skill installed, ask Claude Code or Codex to log a story. The agent is instructed to:
+Ask Claude Code or Codex to log a task. The agent should:
 
-1. Run `tusker epics` to see what already exists.
+1. Run `tusker list --type epic` to see existing workstreams.
 2. Pick the right epic, or propose a new one if nothing fits.
-3. Create the story with sensible defaults.
+3. Create a task with sensible defaults.
 4. Print the ID and a one-line reason for the epic choice.
 
-When the agent picks the work up:
+Primary V5 CLI:
 
 ```sh
-tusker handoff --id MEM-S-0007 --for worker
-tusker set-status --id MEM-S-0007 --status active
+tusker new task --epic MEM --title "Add cache invalidation" \
+  --kind feature --size m --risk medium --domains runtime,docs \
+  --doc-nodes reference/cache
+
+tusker status MEM-T-0007 active
 # work happens
-tusker attach-evidence --id MEM-S-0007 --kind pr --path https://github.com/.../pull/42
-tusker review verify --id MEM-S-0007 --by claude
-tusker attest --id MEM-S-0007 --by sarav --role human
-tusker set-status --id MEM-S-0007 --status done
+tusker evidence MEM-T-0007 pr https://github.com/.../pull/42
+tusker status MEM-T-0007 review
+tusker verify MEM-T-0007 --by codex
+tusker close MEM-T-0007 --by sarav
 tusker validate
 ```
 
-You can do every step by hand in Obsidian. The CLI and the markdown stay in sync because the markdown is the data.
+![A task moves from draft to ready, active, review, done, blocked, rework, or cancelled.](/generated/assets/repo-doc/developer-repository-repository-overview/docs/diagrams/04-lifecycle.png)
+
+## Documentation
+
+V5 docs live in `tusker/docs/`, not inside epic folders. They are durable knowledge pages with `schema: tusker.doc/v5`, `node`, `domains`, `audience`, `kind`, and publication metadata.
+
+The full model is documented in [`docs/documentation-model.md`](/developer/documentation-model/). Read that when you need the philosophy, Diátaxis mapping, docs-map contract, freshness model, generated catalog, and publication flow.
+
+Authoring flow:
+
+1. Pick or create the epic that owns the workstream.
+2. Create tasks that name impacted `domains` and exact `doc_nodes`.
+3. Put durable doc changes in `tusker/docs/**`.
+4. Fill `## Knowledge delta` before close when the task changes how future readers should understand the system.
+5. Run the docs close gate before closing.
+
+```sh
+tusker docs model
+tusker docs map
+tusker docs catalog
+tusker docs freshness --stale
+tusker docs check MEM-T-0007
+tusker docs apply MEM-T-0007 --node reference/cache --reason "Updated cache docs"
+# or, when the no-op is intentional:
+tusker docs waive MEM-T-0007 reference/cache --reason "No public behavior changed"
+```
+
+The static site remains generated output. Do not author in `site/src/content/docs/**`. Export/build with:
+
+```sh
+tusker docs export --site ./site
+tusker docs build --site ./site
+```
 
 ## Working without an agent
 
-Skip the daemon:
+Use the tracker by hand:
 
 ```sh
 cd ~/code/my-app
-tusker projects disable
+tusker list --type task
+tusker status MEM-T-0007 active
 ```
 
-You still get the schema, the validator, the Obsidian views, the dashboards, and the CLI.
-
-## The dispatcher (experimental)
-
-A small daemon watches registered trackers, picks up stories that are ready, dispatches Claude or Codex with the right context, enforces concurrency caps, and writes results back as evidence.
-
-```sh
-tusker daemon limits --max-active-runs 2
-cd ~/code/my-app
-tusker projects limits --max-active-runs 1
-```
-
-This is a first pass, not the whole Symphony idea. The markdown, the CLI, and the skill are the stable core. The dispatcher is the part still moving.
-
-## What the skill gives the agent
-
-When the agent loads `SKILL.md`:
-
-- Three rules. Every story has a parent epic. Evidence scales with risk. Every active epic declares canon and has at least one story.
-- Quick mode for routine work. One command, sane defaults, low ceremony.
-- Formal intake for `risk >= medium`. Considered-and-rejected, decision, rollout, human attestation at high and critical.
-- Docs publishing guidance. Agents know when to create D-notes, when to edit repo docs, and how to read the schema-versioned `canon-manifest.json` with explicit `canonical_status` instead of guessing from tags.
-- A routing table so the agent loads `references/SCHEMA.md` only when editing frontmatter, `references/REPO_CONTRACT.md` only when wiring AGENTS.md, and so on.
-
-See [`skill/SKILL.md`](/user/start-here/agent-workflow/) for the full contract.
+You still get markdown tasks, docs, schema validation, Obsidian views, dashboards, and the CLI.
 
 ## Design principles
 
 - Markdown is the source of truth. Frontmatter is the machine layer. Generated JSON is a cache.
+- A task is an executable contract. A bug is `kind: bug`.
 - Risk drives ceremony. Blast radius, not lines of code.
-- Agents act, humans gate. Agents create, execute, and attach evidence. Humans sign off on `risk >= high`.
-- Evidence is artifacts, not plans. `## Evidence` is filled after execution.
-- The vault is both operating surface and spec archive. Canon lives in epic Design, a canonical D-note, or a `spec_source` file in the repo. Stories cite canon by link, never by copy-paste.
-- Progressive disclosure. The skill entry stays short. Reference files are loaded on demand.
-
-## Status
-
-Early. The schema is settled, the validator catches what it should, and I use it on my own work every day. The dispatcher is the unsettled part. Bug reports and PRs are welcome. If you try it on a real project, I would like to hear what worked and what did not.
+- Agents act, humans gate. Agents create, execute, and attach evidence. Humans verify `risk >= high`.
+- Evidence is artifacts, not promises.
+- Docs are part of done. Use `domains`, `doc_nodes`, and knowledge delta; do not let stale docs quietly survive.
+- Progressive disclosure. The skill entry stays short. Reference files load only when needed.
 
 ## Read next
 
 - [`skill/SKILL.md`](/user/start-here/agent-workflow/) — agent contract
-- [`skill/references/COMMANDS.md`](/user/reference/commands/) — full CLI
-- [`skill/references/DOCS_PUBLICATION.md`](/user/reference/docs-publication/) — docs site, canon manifests, and publication flow
-- [`skill/references/SCHEMA.md`](/user/reference/schema/) — frontmatter
+- [`skill/references/COMMANDS.md`](/user/reference/commands/) — CLI surface
+- [`skill/references/SCHEMA.md`](/user/reference/schema/) — V5 frontmatter
 - [`skill/references/WORKFLOW.md`](/user/reference/workflow/) — lifecycle
-- [`skill/references/RISK_AND_EVIDENCE.md`](/user/reference/risk-and-evidence/) — risk tiers
-- [`skill/references/PREREQUISITES.md`](/user/reference/prerequisites/) — install and sync setup
-
-## On the roadmap
-
-Things being worked on or sketched out. None of these are required to use Tusker today.
-
-- **Auto task orchestration.** A more complete dispatcher: stories pick themselves up in dependency order, the daemon reads `blocked_by` and `blocks` to schedule a graph of work across multiple repos, with budget and concurrency caps per project.
-- **Auto document generation.** Generate release notes, changelogs, and per-epic status reports straight from closed stories and their evidence. Same source of truth, no second place to update.
-- **Spec-driven test scaffolding.** Take the acceptance criteria and verification plan from a story and emit a test skeleton in the right place in the repo, so the agent's first commit is the failing test.
-- **Cross-repo views.** A workspace-level dashboard that aggregates active work, blockers, and risk distribution across every mounted tracker.
-- **Better Obsidian Bases.** Pre-built Bases for triage, in-flight work, awaiting review, and risk audit. Drop-in, no plugin gymnastics.
-- **Lightweight web view.** Read-only HTML render of the vault, so a non-Obsidian collaborator can still see the spec and the evidence.
-- **Import from existing trackers.** One-shot import from Linear, GitHub Issues, and Beads, so adopting Tusker does not mean retyping the backlog.
-
-If one of these matters to you, open an issue and say so. It will help me pick what to build next.
-
-## Build from source
-
-```sh
-make build
-make install
-make check
-```
-
-## License
-
-MIT. See [LICENSE](/generated/assets/repo-doc/developer-repository-repository-overview/LICENSE).
+- [`skill/references/DOCS_PUBLICATION.md`](/user/reference/docs-publication/) — docs nodes, close gate, and publication flow
+- [`skill/references/RISK_AND_EVIDENCE.md`](/user/reference/risk-and-evidence/) — risk tiers and evidence
+- [`docs/documentation-model.md`](/developer/documentation-model/) — docs philosophy, layout, Diátaxis, freshness, and publication model

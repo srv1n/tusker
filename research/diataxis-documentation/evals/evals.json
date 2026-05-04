@@ -1,0 +1,35 @@
+{
+  "skill_name": "diataxis-documentation",
+  "evals": [
+    {
+      "id": "single-how-to",
+      "prompt": "Write docs for rotating an API key in production. The reader is an experienced platform engineer.",
+      "expected_output": "Classifies the request as a how-to guide, avoids beginner teaching, includes preconditions, ordered steps, verification, rollback/failure handling, and links to reference/explanation rather than embedding them."
+    },
+    {
+      "id": "tutorial-vs-howto",
+      "prompt": "Turn our 'Getting started with the SDK' notes into a first-time learner doc. The reader has never used the SDK before.",
+      "expected_output": "Classifies as tutorial, uses a safe single path, states what will be built, shows expected outputs, minimizes choices and explanations."
+    },
+    {
+      "id": "api-reference",
+      "prompt": "Create a reference page for the POST /payments endpoint, including parameters, errors, and examples.",
+      "expected_output": "Classifies as reference, uses neutral factual structure with fields/defaults/errors/examples, does not become a tutorial or explanation."
+    },
+    {
+      "id": "explanation",
+      "prompt": "Explain why our billing system uses idempotency keys and what trade-offs that creates.",
+      "expected_output": "Classifies as explanation, discusses rationale, mental model, trade-offs, and misunderstandings without turning into a procedure."
+    },
+    {
+      "id": "program-design",
+      "prompt": "Our docs are a mess. Build a documentation architecture and ongoing process for humans and agents.",
+      "expected_output": "Produces a documentation map, inventory fields, backlog model, maintenance triggers, quality gates, and agent documentation layer. Avoids merely creating four empty folders."
+    },
+    {
+      "id": "agent-docs",
+      "prompt": "Make this runbook usable by coding agents so they stop guessing what command to run and how to validate success.",
+      "expected_output": "Adds agent-facing preconditions, commands, inputs, validation, failure modes, escalation, stale triggers, and source-of-truth."
+    }
+  ]
+}

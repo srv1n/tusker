@@ -3,8 +3,8 @@ title: "05. Runner And Session Protocol"
 description: "Status: Draft Scope: daemon-run execution for codex and claude-code"
 tusker:
   audience: "developer"
-  canonical: true
-  canonical_status: "draft"
+  canonical_status: "historical"
+  deprecated: true
   owner_epic: "ORC"
   publish_path: "developer/specs/05-runner-and-session-protocol"
   publish_section_title: "Specs"
@@ -12,9 +12,10 @@ tusker:
   source_kind: "repo_doc"
   source_path: "docs/specs/05-runner-and-session-protocol.md"
   summary: "Status: Draft Scope: daemon-run execution for codex and claude-code"
+  superseded_by: "/user/start-here/agent-workflow/"
   tags:
     - "specs"
-  updated: "2026-04-28"
+  updated: "2026-04-29"
   verified_at: "2026-04-28"
 ---
 
@@ -200,7 +201,7 @@ The daemon owns:
 - lease bookkeeping
 - attempt creation
 - retry scheduling
-- review handoff
+- review packet generation
 - durable tracker-state writes
 
 ## Start / Resume Contract

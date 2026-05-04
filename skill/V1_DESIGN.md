@@ -1,69 +1,48 @@
-# Tusker V1 — design index
+# Tusker V5 Design Index
 
-The v1 design is spread across the skill entry point and the `references/` folder so agents only load what's relevant. This file is an index.
+The V5 design is spread across the skill entry point and the `references/` folder so agents only load what they need.
 
-## Entry points
+## Entry Points
 
-- **`SKILL.md`** — lean skill contract. Trigger words, three hard rules, quick-mode commands, routing table. Every agent invocation starts here.
-- **`README.md`** — repo README for humans. What Tusker is, how to install, how to point it at a vault.
+- `SKILL.md` - lean skill contract, triggers, routing table, and close flow.
+- `README.md` - repo README for humans.
+- `references/COMMANDS.md` - the small public CLI surface.
 
-## Operating modes
+## Model
 
-Tusker has two ceremony modes; agents pick based on the work:
-
-- **Quick mode** (`references/QUICK_MODE.md`) — the 90% case. Log, discover, close with defaults. `risk: low`, one-line evidence, self-attestation.
-- **Formal intake** (`references/FORMAL_INTAKE.md`) — the ceremony path. `risk ≥ medium`: full frontmatter, considered-and-rejected, decision, rollout, human attestation at `high`/`critical`.
-
-## The model
-
-```
+```text
 Vault = one product/repo
-  └── Epic (3-char acronym, e.g. MEM)
-        ├── Story  MEM-S-NNNN  (work item: feature, refactor, migration, docs, chore, research)
-        ├── Bug    MEM-B-NNNN  (defect)
-        └── Doc    MEM-D-NNNN  (standalone doc: RFC, user guide, release notes)
+  └── Epic  MEM         workstream boundary and canon
+        ├── Task       MEM-T-NNNN executable change contract
+        ├── Bug task   MEM-T-NNNN with kind: bug
+        └── Doc page   tusker/docs/<node>.md durable knowledge
 ```
 
-No project layer. No task layer. Sub-work inside a story is agent-managed (your internal todos). If work doesn't fit one session, split into multiple stories — see `references/STORY_DECOMPOSITION.md`.
+The current work item is a task. Bugs are tasks. Docs are durable pages, not executable work.
 
-## Where to find what
+## Where To Find What
 
 | Topic | File |
 |---|---|
-| Frontmatter fields, enums, linking | `references/SCHEMA.md` |
-| Story lifecycle, status gates | `references/WORKFLOW.md` |
-| Risk tiers, section requirements, evidence, attestation | `references/RISK_AND_EVIDENCE.md` |
-| When to invoke Tusker at all | `references/TRIGGERS.md` |
-| Quick-capture workflow | `references/QUICK_MODE.md` |
-| Full ceremony workflow | `references/FORMAL_INTAKE.md` |
-| Choosing canon location for an epic | `references/CANON_LOCATIONS.md` |
-| Breaking a large spec into stories | `references/STORY_DECOMPOSITION.md` |
-| Full CLI reference | `references/COMMANDS.md` |
-| Bases views (Obsidian) | `references/BASES.md` |
-| Obsidian community plugin compatibility | `references/PLUGIN_COMPAT.md` |
-| Optional plugins worth installing | `references/OPTIONAL_PLUGINS.md` |
-| Install prerequisites (Go, Obsidian, sync) | `references/PREREQUISITES.md` |
-| Repo contract (AGENTS.md, .gitignore, hooks) | `references/REPO_CONTRACT.md` |
-| Dispatcher + cron-driven agent loop | `docs/DISPATCHER_PSEUDOCODE.md` |
-| Failure classes and retry policy | `docs/FAILURE_CLASSES.md` |
-| Safe manual overrides | `docs/OPERATOR_INTERVENTION.md` |
+| Frontmatter fields, IDs, sections | `references/SCHEMA.md` |
+| Task lifecycle and close gates | `references/WORKFLOW.md` |
+| Risk, evidence, and verification | `references/RISK_AND_EVIDENCE.md` |
+| When to invoke Tusker | `references/TRIGGERS.md` |
+| Quick capture | `references/QUICK_MODE.md` |
+| Formal task intake | `references/FORMAL_INTAKE.md` |
+| Canon placement | `references/CANON_LOCATIONS.md` |
+| Decomposing large specs into tasks | `references/TASK_DECOMPOSITION.md` |
+| Obsidian Bases views | `references/BASES.md` |
+| Docs publication | `references/DOCS_PUBLICATION.md` |
 
-## Design principles (the why)
+## Design Principles
 
-**Markdown is the source of truth.** Frontmatter is machine layer, body is human layer. No database. Generated JSON (`_system/generated/*.json`) is a cache, not canon.
+**Markdown is the source of truth.** Frontmatter carries current task state; the body carries the human-readable contract and evidence.
 
-**Risk drives ceremony, not size.** A typo fix at `risk: low` needs one line of evidence; a one-liner that flips a prod flag at `risk: high` needs a rollout plan. Blast radius, not LOC.
+**Tasks carry work. Docs carry durable knowledge.** A task can require docs through `doc_nodes`; close is blocked until those docs are applied or waived.
 
-**Agents act; humans gate.** Agents create, execute, attach evidence, request attestation. Humans sign off on `risk ≥ high`. The validator enforces the boundary.
+**Risk drives ceremony.** Low-risk work can stay light. High and critical work require a real knowledge delta and stronger verification.
 
-**Evidence is artifacts, not plans.** `## Evidence` is filled after execution with links, test output, and demo assets. Plans live in `## Plan` and `## Verification plan`.
+**The public CLI stays small.** The supported surface is `init`, `new`, `list`, `status`, `evidence`, `docs`, `verify`, `close`, `validate`, `reindex`, and `update`.
 
-**The vault is the operating surface AND the spec archive.** Canon may live in epic `## Design`, a canonical D-note, or a repo `spec_source` file — see `references/CANON_LOCATIONS.md`. Stories cite canon with links, not copy-paste.
-
-**Progressive disclosure.** `SKILL.md` is short. Agents load a reference file only when the current task requires it.
-
-## Shipping as a binary
-
-`go build -o dist/tusker ./cmd/tusker` produces `dist/tusker`, a self-contained executable with all templates, bases, snippets, and repo-contract files embedded in the binary. Drop it on `$PATH` and the dispatcher (or any cron caller) can shell out to it with no source checkout or JS runtime installed.
-
-The live vault is the source of truth for policy. The PID table at `_system/logs/runs.json` is a process-liveness cache. Two dispatchers on the same vault: enforce single-writer via `_system/logs/dispatcher.lock`. iCloud sync latency is not a correctness issue — every CLI call reads fresh state, and `pickup` is atomic on the local filesystem.
+**Runtime state is not tracker state.** Attempts, sessions, and event streams belong to runtime storage. Durable lifecycle truth stays in V5 markdown notes.

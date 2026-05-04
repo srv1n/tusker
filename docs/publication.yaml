@@ -3,9 +3,11 @@ repo_docs:
     route: developer/specs
     audience: developer
     title: Tusker Spec Set
-    description: The implementation spec map for Tusker v2, including subsystem boundaries and build order.
-    canonical: true
-    canonical_status: approved
+    description: Historical implementation spec map for the pre-V5 Tusker model; V5 task-contract guidance is current.
+    canonical: false
+    canonical_status: historical
+    deprecated: true
+    superseded_by: "/user/start-here/agent-workflow/"
     owner_epic: ORC
     verified_at: "2026-04-28"
     tags: [specs, architecture]
@@ -15,8 +17,10 @@ repo_docs:
     route_prefix: developer/specs
     audience: developer
     section_title: Specs
-    canonical: true
-    canonical_status: draft
+    canonical: false
+    canonical_status: historical
+    deprecated: true
+    superseded_by: "/user/start-here/agent-workflow/"
     owner_epic: ORC
     verified_at: "2026-04-28"
     tags: [specs]
@@ -27,6 +31,17 @@ repo_docs:
     title: Repository Overview
     description: High-level overview of the Tusker repository, install modes, and key entry points.
     tags: [repository, overview]
+
+  - source: docs/documentation-model.md
+    route: developer/documentation-model
+    audience: developer
+    title: Tusker Documentation Model
+    description: How Tusker lays out durable docs, why Diátaxis is metadata, and how the CLI keeps docs freshness tied to task close.
+    canonical: true
+    canonical_status: approved
+    owner_epic: DOC
+    verified_at: "2026-04-29"
+    tags: [docs, diataxis, architecture]
 
   - source: skill/V1_DESIGN.md
     route: developer/internals/v1-design

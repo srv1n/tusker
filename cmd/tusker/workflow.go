@@ -80,10 +80,10 @@ func legacyConfigPath(vaultPath string) string {
 func defaultWorkflow() Workflow {
 	var wf Workflow
 	wf.WorkflowVersion = 1
-	wf.TrackerSchemaVersion = 2
+	wf.TrackerSchemaVersion = 5
 	wf.Tracker.Kind = "tusker_vault"
-	wf.Tracker.ActiveStates = []string{"active", "rework", "merging"}
-	wf.Tracker.ReviewStates = []string{"in_review"}
+	wf.Tracker.ActiveStates = []string{"active", "rework"}
+	wf.Tracker.ReviewStates = []string{"review"}
 	wf.Tracker.TerminalStates = []string{"done", "cancelled"}
 	wf.Agents.Default = "codex"
 	wf.Agents.Enabled = []string{"sarav", "codex", "claude-code", "gemini"}
@@ -117,7 +117,7 @@ func defaultWorkflow() Workflow {
 func defaultWorkflowMarkdown() string {
 	wf := defaultWorkflow()
 	raw, _ := yaml.Marshal(wf)
-	return "---\n" + strings.TrimSpace(string(raw)) + "\n---\n\n## Routing\n\nYou are working on {{ note.id }} for {{ project.name }}. Dispatch only makes sense because this note is currently {{ note.status }} and the workspace is ready at {{ workspace.path }}.\n\n## Prompt\n\nUse the installed Tusker skill bundle for durable ticket semantics, evidence, and review discipline. Work inside {{ workspace.path }}. Treat {{ repo.root }} as the source repository root for context only unless the task explicitly requires comparing against it.\n\nItem: {{ note.title }}\nRecord: {{ note.record_id }}\nType: {{ note.type }}\nAttempt: {{ attempt.number }}\nWorkflow: {{ workflow.path }}\nVault: {{ vault.path }}\n\n## Completion contract\n\nWhen the work is demonstrably ready for human verification, update the note status to in_review and set review_state to verification_requested. If the work is blocked, set status to blocked with a concrete blocker instead of exiting cleanly. If the note remains active after a turn, the daemon will continue or retry the same session.\n\n## Retry policy\n\nRetry only transient infrastructure failures. Human-directed rework creates a new work revision.\n\n## Human override policy\n\nHumans may edit notes directly, but runtime state belongs to the daemon store.\n"
+	return "---\n" + strings.TrimSpace(string(raw)) + "\n---\n\n## Routing\n\nYou are working on {{ note.id }} for {{ project.name }}. Dispatch only makes sense because this task is currently {{ note.status }} and the workspace is ready at {{ workspace.path }}.\n\n## Prompt\n\nUse the installed Tusker skill bundle for durable task semantics, evidence, and verification discipline. Work inside {{ workspace.path }}. Treat {{ repo.root }} as the source repository root for context only unless the task explicitly requires comparing against it.\n\nItem: {{ note.title }}\nRecord: {{ note.record_id }}\nType: {{ note.type }}\nAttempt: {{ attempt.number }}\nWorkflow: {{ workflow.path }}\nVault: {{ vault.path }}\n\n## Completion contract\n\nWhen the work is demonstrably ready for verification, move the task to `review`. If the work is blocked, set status to `blocked` with a concrete blocker instead of exiting cleanly. If the task remains active after a turn, the daemon will continue or retry the same session.\n\n## Retry policy\n\nRetry only transient infrastructure failures. Human-directed rework creates a new active task revision.\n\n## Human override policy\n\nHumans may edit tasks directly, but runtime state belongs to the daemon store.\n"
 }
 
 func loadWorkflow(vaultPath string) (WorkflowFile, error) {
@@ -184,7 +184,13 @@ func workflowToConfig(wf Workflow) Config {
 func writeDefaultWorkflow(vaultPath string) error {
 	filePath := workflowPath(vaultPath)
 	if fileExists(filePath) {
-		return nil
+		text, err := readText(filePath)
+		if err == nil {
+			data, _, parseErr := parseFrontmatter(text)
+			if parseErr == nil && intField(data, "tracker_schema_version") == 5 {
+				return nil
+			}
+		}
 	}
 	return writeText(filePath, defaultWorkflowMarkdown())
 }

@@ -98,7 +98,7 @@ Use for non-Git or weird repositories.
 2. ensure root containment
 3. create or reuse workspace
 4. run `after_create` if newly created
-5. run project bootstrap / sync logic
+5. run project init or sync logic
 6. run `before_run`
 
 ### Reuse
@@ -218,7 +218,7 @@ Existing files affected:
 | File | Change |
 |---|---|
 | `config.go` | move workspace policy ownership under `WORKFLOW.md` contract |
-| `commands_lifecycle.go` | stop pretending release semantics alone are orchestration |
+| `commands_lifecycle.go` | keep durable status changes separate from runtime orchestration |
 
 ## Diagram
 

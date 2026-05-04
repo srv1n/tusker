@@ -92,7 +92,7 @@ func buildDocsRouteTable(sources []docsSourceDocument) (docsRouteTable, error) {
 		table.BySource[source.SourceAbsPath] = source
 		docsRegisterAlias(table.AliasToRoute, route, source.SourceID)
 		docsRegisterAlias(table.AliasToRoute, route, source.CanonFor)
-		docsRegisterAlias(table.AliasToRoute, route, source.Story)
+		docsRegisterAlias(table.AliasToRoute, route, source.Task)
 		if source.SourceKind == docsSourceKindVault && source.DocIntent == "canon" && strings.TrimSpace(source.Epic) != "" {
 			docsRegisterAlias(table.AliasToRoute, route, source.Epic)
 		}
@@ -111,7 +111,7 @@ func docsAliasPriority(source docsSourceDocument) int {
 	if strings.TrimSpace(source.CanonFor) != "" {
 		score += 3
 	}
-	if strings.TrimSpace(source.Story) != "" {
+	if strings.TrimSpace(source.Task) != "" {
 		score += 1
 	}
 	return score
@@ -288,10 +288,14 @@ func buildDocsContentManifest(generatedAt string, sources []docsSourceDocument) 
 			Title:           source.Title,
 			Route:           source.RouteURL,
 			Audience:        source.Audience,
+			Mode:            source.Mode,
+			AgentLayer:      source.AgentLayer,
+			SourceOfTruth:   append([]string{}, source.SourceOfTruth...),
+			StaleWhenPaths:  append([]string{}, source.StaleWhenPaths...),
 			DocIntent:       source.DocIntent,
 			Epic:            source.Epic,
 			OwnerEpic:       source.OwnerEpic,
-			Story:           source.Story,
+			Task:            source.Task,
 			CanonFor:        source.CanonFor,
 			Canonical:       source.Canonical,
 			CanonicalStatus: source.CanonicalStatus,
@@ -330,9 +334,13 @@ func buildDocsCanonManifest(generatedAt string, sources []docsSourceDocument) do
 			SourceID:        source.ExportID(),
 			SourcePath:      source.SourcePath,
 			Audience:        source.Audience,
+			Mode:            source.Mode,
+			AgentLayer:      source.AgentLayer,
+			SourceOfTruth:   append([]string{}, source.SourceOfTruth...),
+			StaleWhenPaths:  append([]string{}, source.StaleWhenPaths...),
 			DocIntent:       source.DocIntent,
 			OwnerEpic:       source.OwnerEpic,
-			Story:           source.Story,
+			Task:            source.Task,
 			CanonFor:        source.CanonFor,
 			Canonical:       source.Canonical,
 			CanonicalStatus: source.CanonicalStatus,
@@ -382,7 +390,7 @@ func docsIsCanonicalSource(source docsSourceDocument) bool {
 }
 
 func docsCanonTopic(source docsSourceDocument) string {
-	for _, value := range []string{source.OwnerEpic, source.CanonFor, source.Epic, source.Story, source.SourceID, source.RoutePath, source.SourcePath} {
+	for _, value := range []string{source.OwnerEpic, source.CanonFor, source.Epic, source.Task, source.SourceID, source.RoutePath, source.SourcePath} {
 		value = strings.TrimSpace(value)
 		if value != "" {
 			return value

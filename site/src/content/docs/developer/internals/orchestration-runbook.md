@@ -1,6 +1,6 @@
 ---
-title: "Orchestration runbook"
-description: "This is the operator contract for ORC-era agent runs. The current vault note stays the durable work record; runtime state lives in the daemon store and run artifacts. Do not smuggle live process state into frontmatter because that turns markdown into a bad database."
+title: "Orchestration Runbook"
+description: "The public V5 CLI tracks task truth. Runtime orchestration is an operator/internal surface and must not be presented as the normal task workflow."
 tusker:
   audience: "developer"
   publish_path: "developer/internals/orchestration-runbook"
@@ -8,193 +8,99 @@ tusker:
   route: "/developer/internals/orchestration-runbook/"
   source_kind: "repo_doc"
   source_path: "skill/docs/ORCHESTRATION_RUNBOOK.md"
-  summary: "This is the operator contract for ORC-era agent runs. The current vault note stays the durable work record; runtime state lives in the daemon store and run artifacts. Do not smuggle live process state into frontmatter because that turns markdown into a bad database."
+  summary: "The public V5 CLI tracks task truth. Runtime orchestration is an operator/internal surface and must not be presented as the normal task workflow."
   tags:
     - "internals"
-  updated: "2026-04-28"
+  updated: "2026-05-04"
 ---
 
-# Orchestration runbook
+# Orchestration Runbook
 
-This is the operator contract for ORC-era agent runs. The current vault note stays the durable work record; runtime state lives in the daemon store and run artifacts. Do not smuggle live process state into frontmatter because that turns markdown into a bad database.
+The public V5 CLI tracks task truth. Runtime orchestration is an operator/internal surface and must not be presented as the normal task workflow.
 
-## Mental model
+## Current Contract
 
-| Object | Meaning | Durable home |
+| Surface | Status | Operator truth |
 |---|---|---|
-| Work item | Story, bug, epic, or doc note the human cares about. | Vault markdown |
-| Run | One daemon-managed execution against a work item revision. | Runtime store plus artifacts |
-| Attempt | One worker session for a frozen `record_id + work_revision + runner`. | Runtime store |
-| Turn | One Codex continuation inside an attempt. | Runtime event stream |
-| Session | Runner-native conversation context, such as a Codex thread id. | Runtime store as a resume hint |
-| Workpad | Agent-authored live progress for the current work item. | One edited-in-place note section |
-| Review packet | End-of-run proof for humans and verifiers. | `## Evidence` link or append |
+| Markdown task lifecycle | Shipped | `active` and `rework` are runnable states in `WORKFLOW.md`; `ready` is shaped work, not dispatch. |
+| Obsidian task visibility | Shipped | `Tasks.base`/`BugTasks.base` show `Active`, `Blocked`, `Review`, and `Follow-up` (`rework`) views. |
+| Dashboard live-run panel | Shipped as generated markdown | `tusker reindex` renders live runs from the runtime store when the vault has a registered project; no live runs renders an explicit empty state. |
+| Runtime store | Internal code exists | Projects, runs, attempts, turns, sessions, events, usage, and supervisor decisions are modeled outside task frontmatter. |
+| `daemon`, `projects`, `runs`, `refresh` CLI commands | Shipped as operator/internal commands | They register projects, run or tick the daemon, inspect attempts/turns/events/logs, interrupt runs, and manage concurrency limits. |
+| Codex-only status-to-review daemon loop | Shipped for local operator use | A registered project plus `daemon run` or `refresh` can pick up `active`/`rework` tasks, run Codex, and write review packets when Codex moves the task to `review`. |
 
-The note is the product truth. The runtime store is the process truth. Mixing the two is how dashboards start lying.
+## Durable State
 
-## Durable workpad
+- Task status lives in markdown: `draft`, `backlog`, `ready`, `active`, `blocked`, `review`, `rework`, `done`, `cancelled`.
+- Runtime state lives outside markdown under the default state root: registered projects, run leases, attempts, turns, sessions, event tails, raw logs, prompt packets, status files, and supervisor decisions.
+- Do not put leases, process ids, retry timers, token totals, session refs, or raw transcript state into task frontmatter.
 
-Each active agent-run work item should have exactly one live workpad section in the note body:
-
-```markdown
-## Workpad
-
-Last updated: 2026-04-28 14:30 UTC by codex
-Run: <run-id or pending>
-
-### Current plan
-- ...
-
-### Checklist
-- [x] ...
-- [ ] ...
-
-### Decisions and assumptions
-- ...
-
-### Verification notes
-- ...
-
-### Follow-up proposals
-- ...
-```
-
-Rules:
-
-- Edit the existing `## Workpad` in place. Do not append a new progress section per turn.
-- Keep it short enough that a human can resume from it in under a minute.
-- Put live status, plan, blockers, assumptions, and next action here.
-- Put proof under `## Evidence`, not in the workpad.
-- Put audit history in `## Work log`, not in the workpad.
-- If the workpad conflicts with `status`, `review_state`, or evidence, fix the durable fields/evidence. The workpad is a human-readable scratch surface, not a state authority.
-
-## Review packet
-
-A completed attempt needs a review packet before it can be trusted. The packet may be generated by the daemon and refined by the agent, but it must be readable without opening raw logs.
-
-Minimum fields:
-
-| Field | Expectation |
-|---|---|
-| Run identity | run id, attempt id, work revision, runner, model when known |
-| Workspace | workspace path and branch |
-| Scope | concise summary of intended work and actual changes |
-| Diff | changed files plus a short diff summary |
-| Verification | commands run, result status, and links to logs/artifacts |
-| UI proof | screenshots, video, or gif when required by risk/surface |
-| Runtime | turn count, token/runtime summary when available |
-| Risk | open risks, known gaps, skipped checks |
-| Follow-ups | proposed follow-up note IDs or draft titles |
-
-Attach or append the packet under `## Evidence`. Do not replace the workpad with the packet; they answer different questions:
+## Honest Codex Loop
 
 ```text
-Workpad = what is happening now
-Review packet = why this run deserves trust
+ready --human claim/status--> active
+active/rework --daemon eligible state--> runtime run
+runtime run --Codex changes task to review--> review packet + review
+runtime run --task remains active/rework--> continuation retry
+review --human verify--> done
+review --needs more work--> rework
 ```
 
-## PR feedback sweep
+What the code supports:
 
-When a human or reviewer leaves PR feedback, the agent should sweep it deliberately:
+- The workflow default runner is `codex`, with `codex app-server` in `WORKFLOW.md`.
+- Dispatch eligibility is driven by `tracker.active_states`, currently `active` and `rework`.
+- A task with unresolved blockers or `risk: critical` is not dispatched automatically.
+- If a running task leaves `active`/`rework` without a completed runner status, reconciliation releases the run.
+- If Codex writes a completed status file after moving the task to `review`, reconciliation records the run as succeeded and writes the review packet instead of abandoning it as inactive.
+- If the runner exits cleanly while the task is still `active`/`rework`, the daemon queues continuation instead of pretending the work is reviewable.
+- Review packet generation is supported after a clean run has a non-active task state; the packet summarizes attempts, turns, artifacts, supervisor decisions, and residual verification risk.
 
-1. Read every unresolved thread and classify it as `must-fix`, `question`, `nit`, or `follow-up`.
-2. Add the sweep result to the workpad checklist.
-3. Fix `must-fix` items in the current scope.
-4. Answer `question` items in the PR or workpad, then update evidence if behavior changed.
-5. Convert real out-of-scope work into draft follow-up notes. Do not hide it in a comment and do not quietly expand scope.
-6. Leave a review-packet entry naming which feedback was addressed and which note IDs track deferred work.
+What is deliberately not automated:
 
-If the feedback changes the acceptance criteria, bump the work item through rework instead of pretending the original run is still valid.
+- Automatic close. Humans must still verify and close.
+- Blind promotion from `active` to `review`. Codex or a human must move the task state when the work is actually ready.
+- Ignoring stale tracker truth. Non-active/non-review state changes while a run is live release or interrupt the run for audit.
 
-## Rework reset
+## Operator Commands
 
-Use rework when review finds the run incomplete or wrong.
+```bash
+tusker projects add --repo . --vault ./tusker
+tusker daemon status
+tusker refresh --quiet
+tusker daemon run
+tusker runs inspect <TASK-ID> --json
+tusker runs events <TASK-ID> --lines 50
+tusker runs logs <TASK-ID> --lines 80
+tusker runs interrupt <TASK-ID>
+```
 
-Rework reset means:
+Use `refresh --quiet` for smoke tests and `daemon run` for a long-lived local loop.
 
-- Keep prior evidence; it remains useful history.
-- Clear or rewrite the workpad to describe the new plan, not the old stale plan.
-- Increment `work_revision` when the human request materially changes scope or acceptance criteria.
-- Start a new attempt for the new revision. Do not resume the old runner session across a changed revision.
-- Link the rejected review packet from the new workpad if it explains the failure.
+## Human Loop
 
-Blunt rule: continuation is for "keep going"; rework is for "that was not good enough, do it differently."
+Use the shipped task lifecycle when the runtime surface is unavailable:
 
-## Agent-proposed follow-ups
+```bash
+tusker status <TASK-ID> active --actor <name>
+tusker evidence <TASK-ID> packet <file-or-url> --note "<summary>"
+tusker status <TASK-ID> review --actor <name>
+tusker verify <TASK-ID> --by <name>
+tusker close <TASK-ID> --by <reviewer>
+```
 
-Agents may draft follow-up notes when they discover work outside the current acceptance criteria. They must not activate those notes or expand the current story silently.
+Raw logs are useful evidence only after they are summarized into a readable packet. The daemon-generated review packet is the preferred packet evidence for Codex runs.
 
-Draft follow-up requirements:
+## Obsidian Loop
 
-- Status stays `intake`.
-- Priority defaults to `p3` unless the current work is blocked or unsafe without it.
-- The title names the concrete work, not the symptom.
-- The body includes `Discovered from: CURRENT-ID` and one sentence explaining why it is out of scope.
-- The current workpad lists the proposed follow-up under `Follow-up proposals`.
-- The review packet lists the follow-up ID or draft title.
+Open `Dashboard.md`.
 
-Good follow-up: "Add stale-run Obsidian view" discovered while implementing run inspection docs.
-
-Bad follow-up: "Improve orchestration" because it is vague enough to absorb the universe.
-
-## Inspect, resume, interrupt
-
-Use the CLI/runtime surfaces when ORC orchestration is enabled. If a command is missing in the installed binary, treat this section as the target runbook and fall back to `docs/OPERATOR_INTERVENTION.md`.
-
-| Need | Command | What to check |
+| Section | Source | Meaning |
 |---|---|---|
-| See active/queued work | `tusker runs` | project, work item, runner, state, latest event age |
-| Inspect one run | `tusker runs inspect <id>` | attempt, active turn, session ref, workspace, token totals, resume status |
-| Tail raw output | `tusker runs logs <id> --follow` | tool errors, approval prompts, stuck output |
-| Read structured events | `tusker runs events <id>` | normalized tool calls, failures, budget events |
-| See resumable sessions | `tusker sessions` | open, resumable, abandoned sessions |
-| Retry explicitly | `tusker runs retry <id>` | only after failure class says retry makes sense |
-| Interrupt live work | `tusker runs interrupt <id>` | use for scope changes, bad direction, or human takeover |
-| Check daemon health | `tusker daemon status` | registry, queues, limits, stale workers |
+| Active work | `Tasks.base#Active` | Tasks in `status: active`. |
+| Live runs | generated markdown block | Active runtime leases for the registered project, if any. |
+| Blocked | `Tasks.base#Blocked` | Tasks waiting on dependencies or an explicit blocker. |
+| Review | `Tasks.base#Review` | Tasks waiting for human verification. |
+| Follow-up | `Tasks.base#Follow-up` | Tasks in `status: rework`. |
 
-Resume rules:
-
-- Resume only when `record_id`, `work_revision`, runner, and attempt all match.
-- Codex and Claude Code can both resume the same ticket only when the adapter can prove native session continuity.
-- If the runner cannot prove session continuity, start a new supervised attempt and say why.
-- Human-requested changes increment `work_revision`; that means new attempt, not resume.
-- Human interrupt is sticky. Do not auto-resume unless the human explicitly retries.
-- Budget/context failures should produce a supervisor decision: continue with tighter guidance, fork a fresh thread, start a separate branch under the same ticket, or stop for audit. Do not blindly keep burying tokens in the same thread.
-
-Thread and branch rules:
-
-- Continue the same thread when the intent is unchanged, progress is clear, and context is still healthy.
-- Fork a new thread under the same ticket when the context is bloated or confused but the branch is still valid.
-- Start a separate branch under the same ticket when an alternate implementation path needs isolation.
-- Create a follow-up story only when the work is truly out of scope.
-- A model auditor can help in high-risk or ambiguous cases, but the daemon policy owns the decision.
-
-## Codex and Claude Code
-
-Codex app-server has the strongest ORC protocol today. It supports the continuation loop, structured events, tool-call visibility, session resume checks, and review-packet generation expected by this runbook.
-
-Claude Code remains supported, but the adapter must prove what it can actually resume and observe. It may be degraded for some telemetry, but same-ticket resume is still a design requirement where the native session model permits it:
-
-| Capability | Codex app-server | Claude Code |
-|---|---|---|
-| Structured turn events | First-class | Best-effort or unavailable |
-| Tool-call visibility | First-class | Degraded |
-| Resume verification | First-class | Degraded |
-| Interrupt/retry integration | First-class | Degraded |
-| Review packet generation | First-class target | Agent-authored fallback |
-
-If a Claude-backed run cannot produce the required packet or resume proof, say that plainly in evidence. Fake parity is worse than a visible gap.
-
-## Optional tools and MCPs
-
-Injected tools and MCPs are not the core orchestration model. Codex and Claude Code already own their harnesses for file edits, shell, approvals, and sandboxing.
-
-Use optional extensions only when the task needs a specific extra capability:
-
-- a constrained Tusker tracker helper
-- a project MCP
-- browser automation
-- design asset lookup
-- another workflow-approved helper
-
-Extensions must be opt-in, scoped to the project/task/risk profile, and logged in run events. They never bypass the runner sandbox, approval policy, or Tusker risk gates.
+There is no shipped `Orchestration.base`. Do not reference it in dashboards or operator instructions.

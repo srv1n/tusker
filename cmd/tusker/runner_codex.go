@@ -27,7 +27,7 @@ func (r *CodexRunner) Start(ctx context.Context, req StartRequest) (*StartResult
 func (r *CodexRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResult, error) {
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
-		command = "codex exec resume --skip-git-repo-check --json {{session_ref}} -"
+		command = "codex app-server"
 	} else if strings.Contains(command, "{{session_ref}}") {
 		// user-provided resume-aware command
 	} else if strings.HasPrefix(command, "codex exec ") {

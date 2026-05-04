@@ -4,7 +4,7 @@
 version: 1
 
 agents:
-  # Names that may appear in story.assignee. "sarav" (or any human name) is fine;
+  # Names that may appear in task.assignee. "sarav" (or any human name) is fine;
   # only agents listed here are dispatchable.
   enabled:
     - sarav

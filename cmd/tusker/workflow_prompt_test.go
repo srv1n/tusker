@@ -18,11 +18,11 @@ func TestRenderAttemptPromptUsesWorkflowBodyTemplate(t *testing.T) {
 		Body: "Project {{ project.name }} ({{ project.key }}/{{ project.id }})\nWorkspace {{ workspace.path }}\nRepo {{ repo.root }}\nVault {{ vault.path }}\nWorkflow {{ workflow.path }}\nNote {{ note.id }} {{ note.record_id }} {{ note.title }} {{ note.status }} {{ note.type }}\nAttempt {{ attempt.number }}\n",
 	}
 	note := Note{Data: map[string]any{
-		"id":        "MEM-S-0001",
+		"id":        "MEM-T-0001",
 		"record_id": "rec-1",
 		"title":     "Add memory backend",
 		"status":    "active",
-		"type":      "story",
+		"type":      "task",
 	}}
 
 	prompt, err := renderAttemptPrompt(project, wfFile, note, "/workspace/path", 3)
@@ -35,7 +35,7 @@ func TestRenderAttemptPromptUsesWorkflowBodyTemplate(t *testing.T) {
 		"Repo /repo/root",
 		"Vault /vault/root",
 		"Workflow /vault/root/WORKFLOW.md",
-		"Note MEM-S-0001 rec-1 Add memory backend active story",
+		"Note MEM-T-0001 rec-1 Add memory backend active task",
 		"Attempt 3",
 	} {
 		if !strings.Contains(prompt, expected) {

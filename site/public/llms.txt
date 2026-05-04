@@ -1,105 +1,141 @@
 # Tusker Docs
 
-Compact catalog of public docs.
+Compact catalog of exported docs.
 
-- Dispatcher pseudocode | /developer/internals/dispatcher-pseudocode/ | audience: developer | updated: 2026-04-22
-  Reference algorithm for a cron-driven binary that turns the vault's dashboard.json into agent runs. This is the contract the Tusker CLI exposes; the dispatcher does not hand-parse markdown.
+- Tusker v5 implementation spec | /internal/spec/v5-overview/ | audience: developer | mode: explanation | agent_layer: capsule | updated: 2026-04-29
+  Tusker v5 implementation spec.
 
-- Failure classes and recovery table | /developer/internals/failure-classes/ | audience: developer | updated: 2026-04-22
-  Every tusker release --to failed|stalled|cancelled takes a --failure-class that drives retry and escalation behavior. The enum is frozen in schema.go.
+- Tusker v5 adoption guide | /internal/spec/v5-adoption/ | audience: developer | mode: how-to | updated: 2026-05-04
+  Tusker v5 adoption guide.
 
-- Operator intervention | /developer/internals/operator-intervention/ | audience: developer | updated: 2026-04-28
-  The dispatcher and tusker CLI cover the steady-state loop. When things wedge — a retry budget exhausts, a human needs to cancel a run mid-flight, or somebody hand-edits a note — a human operator steps in. This doc is the audit-trail contract for those interventions so the vault history stays truthful.
+- Tusker v5 CLI surface | /internal/reference/cli/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-04
+  Tusker v5 CLI surface.
 
-- Orchestration runbook | /developer/internals/orchestration-runbook/ | audience: developer | updated: 2026-04-28
-  This is the operator contract for ORC-era agent runs. The current vault note stays the durable work record; runtime state lives in the daemon store and run artifacts. Do not smuggle live process state into frontmatter because that turns markdown into a bad database.
+- Validator rollout and failure codes | /internal/reference/validator/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-04-29
+  Validator rollout and failure codes.
 
-- Tusker V1 Design Index | /developer/internals/v1-design/ | audience: developer | updated: 2026-04-22
+- Template contract | /internal/reference/templates/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-04-29
+  Template contract.
+
+- Docs routing, impact hook, and publication model | /internal/reference/docs-pipeline/ | audience: developer | mode: explanation | agent_layer: capsule | updated: 2026-04-29
+  Docs routing, impact hook, and publication model.
+
+- Runtime state, events, and generated caches | /internal/reference/runtime/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-04
+  Runtime state, events, and generated caches.
+
+- Obsidian and view requirements | /internal/reference/obsidian/ | audience: developer | mode: how-to | updated: 2026-05-04
+  Obsidian and view requirements.
+
+- Skill and AGENTS guidance | /internal/reference/skill/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-04-29
+  Skill and AGENTS guidance.
+
+- Agent recipe: using Tusker | /internal/agents/use-tusker/ | audience: agent | mode: how-to | agent_layer: standalone | updated: 2026-04-29
+  Agent recipe: using Tusker.
+
+- Tusker Documentation Model | /developer/documentation-model/ | audience: developer | updated: 2026-04-29
+  How Tusker lays out durable docs, why Diátaxis is metadata, and how the CLI keeps docs freshness tied to task close.
+
+- Dispatcher Pseudocode | /developer/internals/dispatcher-pseudocode/ | audience: developer | updated: 2026-04-29
+  Runtime dispatch reads task-native generated indexes. It does not mutate legacy runtime fields in markdown.
+
+- Failure Classes | /developer/internals/failure-classes/ | audience: developer | updated: 2026-04-29
+  Runtime failures belong in runtime logs and evidence, not task frontmatter.
+
+- Operator Intervention | /developer/internals/operator-intervention/ | audience: developer | updated: 2026-04-29
+  Use the public V5 task commands for manual intervention.
+
+- Orchestration Runbook | /developer/internals/orchestration-runbook/ | audience: developer | updated: 2026-05-04
+  The public V5 CLI tracks task truth. Runtime orchestration is an operator/internal surface and must not be presented as the normal task workflow.
+
+- Tusker V1 Design Index | /developer/internals/v1-design/ | audience: developer | updated: 2026-04-29
   Historical design notes covering the Tusker v1 model and operating assumptions.
 
-- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-04-28
+- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-04-29
   High-level overview of the Tusker repository, install modes, and key entry points.
 
-- Tusker Spec Set | /developer/specs/ | audience: developer | updated: 2026-04-28
-  The implementation spec map for Tusker v2, including subsystem boundaries and build order.
+- Tusker Spec Set | /developer/specs/ | audience: developer | updated: 2026-04-29
+  Historical implementation spec map for the pre-V5 Tusker model; V5 task-contract guidance is current.
 
-- Spec 00: Product Shape And Operating Modes | /developer/specs/00-product-modes/ | audience: developer | updated: 2026-04-28
-  Define what Tusker is before the implementation specs start fanning out.
+- 00 - Product Modes | /developer/specs/00-product-modes/ | audience: developer | updated: 2026-04-29
+  Tusker V5 is one binary with one public workflow: a markdown-first task and docs tracker for agent-heavy software work.
 
-- Spec 01: VaultTracker | /developer/specs/01-vault-tracker/ | audience: developer | updated: 2026-04-28
-  Status: Draft
+- 01 - Vault Tracker | /developer/specs/01-vault-tracker/ | audience: developer | updated: 2026-04-29
+  Tusker V5 stores durable work in Markdown. Frontmatter is the machine-readable current state; body sections are the human-readable contract and proof.
 
-- Spec 02: Workflow Contract | /developer/specs/02-workflow-contract/ | audience: developer | updated: 2026-04-28
-  Status: Draft
+- 02 - Workflow Contract | /developer/specs/02-workflow-contract/ | audience: developer | updated: 2026-04-29
+  WORKFLOW.md is the project-level policy and prompt contract. It is V5 by default and lives at the vault root.
 
-- Spec 03: Global Daemon and Project Registry | /developer/specs/03-daemon-and-registry/ | audience: developer | updated: 2026-04-28
-  Status: Draft
+- 03 - Runtime And Registry | /developer/specs/03-daemon-and-registry/ | audience: developer | updated: 2026-04-29
+  Runtime orchestration is internal implementation. It executes eligible V5 tasks and records attempts, turns, sessions, events, and artifacts outside canonical markdown.
 
-- Spec 04: Workspace Manager | /developer/specs/04-workspace-manager/ | audience: developer | updated: 2026-04-28
+- Spec 04: Workspace Manager | /developer/specs/04-workspace-manager/ | audience: developer | updated: 2026-04-29
   Define deterministic isolated workspaces for daemon-run agent sessions.
 
-- 05. Runner And Session Protocol | /developer/specs/05-runner-and-session-protocol/ | audience: developer | updated: 2026-04-28
+- 05. Runner And Session Protocol | /developer/specs/05-runner-and-session-protocol/ | audience: developer | updated: 2026-04-29
   Status: Draft Scope: daemon-run execution for codex and claude-code
 
-- 06. Review, Rework, Retry | /developer/specs/06-review-rework-retry/ | audience: developer | updated: 2026-04-28
-  Status: Draft Depends on: 01-vault-tracker.md, 03-daemon-and-registry.md, 05-runner-and-session-protocol.md
+- 06 - Verification, Rework, And Close | /developer/specs/06-review-rework-retry/ | audience: developer | updated: 2026-04-29
+  V5 uses a simple lifecycle:
 
-- Spec 07: Documentation Site And Publication Pipeline | /developer/specs/07-documentation-site-and-publication/ | audience: developer | updated: 2026-04-28
-  Status: Draft
+- 07 - Documentation Site And Publication | /developer/specs/07-documentation-site-and-publication/ | audience: developer | updated: 2026-04-29
+  Tusker V5 treats docs as durable pages, not work items.
 
-- 08. Symphony Alignment And Orchestration Roadmap | /developer/specs/08-symphony-alignment-and-orchestration-roadmap/ | audience: developer | updated: 2026-04-28
-  Status: Draft Date: 2026-04-28 Depends on: 00-product-modes.md, 01-vault-tracker.md, 02-workflow-contract.md, 03-daemon-and-registry.md, 04-workspace-manager.md, 05-runner-and-session-protocol.md, 06-review-rework-retry.md
+- 08 - Orchestration Roadmap | /developer/specs/08-symphony-alignment-and-orchestration-roadmap/ | audience: developer | updated: 2026-04-29
+  Tusker V5 keeps Symphony-style orchestration as an internal runtime layer on top of a task-native markdown tracker.
 
-- Bases — editing and extending | /user/reference/bases/ | audience: user | updated: 2026-04-22
-  The shipped .base files live in assets/bases/ and are embedded into the compiled tusker binary. On tusker bootstrap, they are written to _system/views/ in the target vault.
+- Bases — editing and extending | /user/reference/bases/ | audience: user | updated: 2026-05-04
+  The skill payload ships .base files in assets/bases/. Live vault views live in _system/views/.
 
-- Canon locations | /user/reference/canon-locations/ | audience: user | updated: 2026-04-22
-  Tusker supports three legitimate canon patterns. Pick one **per epic**, make it explicit, then create the story stack that executes it.
+- Canon locations | /user/reference/canon-locations/ | audience: user | updated: 2026-04-30
+  Tusker supports three legitimate canon patterns. Pick one per epic, make it explicit, then create the task stack that executes it.
 
-- Commands | /user/reference/commands/ | audience: user | updated: 2026-04-28
-  Full CLI reference. SKILL.md has the five quick commands; this file covers everything.
+- Commands | /user/reference/commands/ | audience: user | updated: 2026-05-04
+  The public V5 CLI is intentionally small. Use these commands.
 
-- Docs publication | /user/reference/docs-publication/ | audience: user | updated: 2026-04-28
-  Use this when the user wants project docs, a public docs site, a user guide, release notes, or agent-readable canon. Tusker owns the publication rules. Astro/Starlight only renders the exported tree.
+- Docs Pages | /user/reference/doc-pages/ | audience: user | updated: 2026-04-29
+  Use this when durable project knowledge belongs in Tusker instead of a task body.
 
-- Formal intake | /user/reference/formal-intake/ | audience: user | updated: 2026-04-28
-  Creating a story at risk ≥ medium. This is the ceremony path. Load when the work is a feature, migration, refactor with teeth, or anything with rollout or rollback concerns.
+- Docs publication | /user/reference/docs-publication/ | audience: user | updated: 2026-04-30
+  Use this when the user wants project docs, a public docs site, a user guide, release notes, support docs, runbooks, or agent-readable canon.
+
+- Formal intake | /user/reference/formal-intake/ | audience: user | updated: 2026-04-30
+  Creating a task at risk >= medium. Load this when the work is a feature, migration, refactor with teeth, public docs change, security-sensitive change, or anything with rollout/rollback concerns.
 
 - Optional plugins policy | /user/reference/optional-plugins/ | audience: user | updated: 2026-04-21
   Core rule:
 
-- Plugin compatibility | /user/reference/plugin-compat/ | audience: user | updated: 2026-04-21
-  The skill works without any community plugins. Everything below is optional.
+- Obsidian Bases | /user/reference/plugin-compat/ | audience: user | updated: 2026-04-30
+  Tusker writes task-native Bases views into _system/views/.
 
 - Prerequisites and setup notes | /user/reference/prerequisites/ | audience: user | updated: 2026-04-22
   The primary tusker CLI is now built and run with Go.
 
-- Quick mode | /user/reference/quick-mode/ | audience: user | updated: 2026-04-28
-  The low-ceremony path. Use this for 90% of invocations: logging work, discovering follow-ups, closing things out.
+- Quick Mode | /user/reference/quick-mode/ | audience: user | updated: 2026-04-29
+  The low-ceremony path for logging work, discovering follow-ups, and closing routine tasks.
 
 - Repo contract | /user/reference/repo-contract/ | audience: user | updated: 2026-04-21
   The vault is internal working memory. The repository is still where contributors land.
 
-- Risk and evidence | /user/reference/risk-and-evidence/ | audience: user | updated: 2026-04-22
-  How risk drives ceremony, what evidence each risk tier requires, and who can attest.
+- Resources | /user/reference/resources/ | audience: user | updated: 2026-04-30
+  Load this when you need to inspect, copy, repair, or explain bundled skill resources. Do not load this for routine task logging.
 
-- Schema | /user/reference/schema/ | audience: user | updated: 2026-04-28
-  Frontmatter is the machine layer. Note body is the human layer. Tusker's Go YAML parser preserves the vault schema cleanly, and Obsidian Properties round-trip without drama.
+- Risk And Evidence | /user/reference/risk-and-evidence/ | audience: user | updated: 2026-04-29
+  Risk drives ceremony. Size is effort; risk is blast radius.
 
-- Specs as D-notes | /user/reference/specs-as-d-notes/ | audience: user | updated: 2026-04-22
-  Deprecated guidance.
+- Schema | /user/reference/schema/ | audience: user | updated: 2026-04-30
+  Frontmatter is the machine layer. The note body is the human layer. V5 makes **task** the execution unit and keeps docs as durable knowledge pages.
 
-- Story decomposition | /user/reference/story-decomposition/ | audience: user | updated: 2026-04-22
-  A design doc is not executable work.
+- Task Decomposition | /user/reference/task-decomposition/ | audience: user | updated: 2026-04-30
+  Use this when a PRD/RFC/spec is too large for one agent pass and needs a task stack.
 
-- Triggers | /user/reference/triggers/ | audience: user | updated: 2026-04-28
+- Triggers | /user/reference/triggers/ | audience: user | updated: 2026-04-29
   When to invoke the Tusker skill, and when to skip it.
 
-- Workflow | /user/reference/workflow/ | audience: user | updated: 2026-04-28
-  Short reference for the story lifecycle. SKILL.md has the full decision tree and commands; this file covers mechanics that agents need while working a ticket.
+- Workflow | /user/reference/workflow/ | audience: user | updated: 2026-04-30
+  Short reference for the V5 task lifecycle.
 
-- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-04-28
+- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-04-30
   Operating contract for agents working with Tusker in a markdown-first vault.
 
-- Skill Bundle | /user/start-here/skill-bundle/ | audience: user | updated: 2026-04-28
+- Skill Bundle | /user/start-here/skill-bundle/ | audience: user | updated: 2026-04-29
   Overview of the installable Tusker skill bundle and how operators use it.

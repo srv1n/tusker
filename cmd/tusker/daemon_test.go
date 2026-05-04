@@ -20,18 +20,18 @@ func TestDaemonEnforcesPerStateDispatchCap(t *testing.T) {
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newEpic(Args{"vault": vault, "acronym": "CAP", "title": "Caps", "summary": "Dispatch cap coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
+	if err := newV5Epic(Args{"vault": vault, "acronym": "CAP", "title": "Caps", "summary": "Dispatch cap coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, title := range []string{"First active story", "Second active story"} {
-		if err := createWorkItem(Args{"vault": vault, "epic": "CAP", "title": title, "size": "m", "risk": "medium", "priority": "p1", "delegation": "execute", "assignee": "codex", "quiet": "true"}, "story"); err != nil {
+	for _, title := range []string{"First active task", "Second active task"} {
+		if err := newV5Task(Args{"vault": vault, "epic": "CAP", "title": title, "size": "m", "risk": "medium", "priority": "p1", "delegation": "execute", "assignee": "codex", "quiet": "true"}, "feature"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := setStatus(Args{"vault": vault, "id": "CAP-S-0001", "status": "active", "actor": "test"}); err != nil {
+	if err := setStatus(Args{"vault": vault, "id": "CAP-T-0001", "status": "active", "actor": "test"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := setStatus(Args{"vault": vault, "id": "CAP-S-0002", "status": "active", "actor": "test"}); err != nil {
+	if err := setStatus(Args{"vault": vault, "id": "CAP-T-0002", "status": "active", "actor": "test"}); err != nil {
 		t.Fatal(err)
 	}
 	updateWorkflowForDaemonTest(t, vault, map[string]int{"active": 1}, 3, `python3 -c 'import time; time.sleep(5)'`)
@@ -49,15 +49,15 @@ func TestDaemonEnforcesPerStateDispatchCap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	firstNote, err := resolveNote(vault, "CAP-S-0001")
+	firstNote, err := resolveNote(vault, "CAP-T-0001")
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if err := store.UpsertRun(RunStatus{
 		ProjectID:       project.ProjectID,
-		RecordID:        stringField(firstNote.Data, "record_id"),
-		ItemID:          "CAP-S-0001",
+		RecordID:        trackerRecordID(firstNote),
+		ItemID:          "CAP-T-0001",
 		Runner:          "codex",
 		LeaseState:      string(LeaseStateRunning),
 		AttemptOutcome:  string(AttemptOutcomeNone),
@@ -88,14 +88,14 @@ func TestDaemonEnforcesPerStateDispatchCap(t *testing.T) {
 		if isDispatchingLeaseState(run.LeaseState) {
 			activeRuns++
 		}
-		if run.ItemID == "CAP-S-0002" {
+		if run.ItemID == "CAP-T-0002" {
 			secondState = run.LeaseState
 			secondAttempts = run.AttemptCount
 		}
 	}
 	assertEqual(t, 1, activeRuns, "active-state cap limits dispatching runs")
-	assertEqual(t, string(LeaseStateUnclaimed), secondState, "second active story remains queued")
-	assertEqual(t, 0, secondAttempts, "state-capped story does not burn an attempt")
+	assertEqual(t, string(LeaseStateUnclaimed), secondState, "second active task remains queued")
+	assertEqual(t, 0, secondAttempts, "state-capped task does not burn an attempt")
 }
 
 func TestDaemonReleasesRunWhenTrackerStateBecomesIneligible(t *testing.T) {
@@ -109,22 +109,22 @@ func TestDaemonReleasesRunWhenTrackerStateBecomesIneligible(t *testing.T) {
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newEpic(Args{"vault": vault, "acronym": "INT", "title": "Interrupts", "summary": "Ineligible state coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
+	if err := newV5Epic(Args{"vault": vault, "acronym": "INT", "title": "Interrupts", "summary": "Ineligible state coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := createWorkItem(Args{"vault": vault, "epic": "INT", "title": "Move while running", "size": "m", "risk": "medium", "priority": "p1", "delegation": "execute", "assignee": "codex", "quiet": "true"}, "story"); err != nil {
+	if err := newV5Task(Args{"vault": vault, "epic": "INT", "title": "Move while running", "size": "m", "risk": "medium", "priority": "p1", "delegation": "execute", "assignee": "codex", "quiet": "true"}, "feature"); err != nil {
 		t.Fatal(err)
 	}
-	if err := setStatus(Args{"vault": vault, "id": "INT-S-0001", "status": "active", "actor": "test"}); err != nil {
+	if err := setStatus(Args{"vault": vault, "id": "INT-T-0001", "status": "active", "actor": "test"}); err != nil {
 		t.Fatal(err)
 	}
-	notePath := filepath.Join(vault, "epics", "INT", "INT-S-0001.md")
+	notePath := filepath.Join(vault, "epics", "INT", "INT-T-0001.md")
 	data, body, err := parseFrontmatterMustRead(notePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data["status"] = "in_review"
-	content, err := serializeDocument(data, body, frontmatterOrderForType("story"))
+	data["status"] = "review"
+	content, err := serializeDocument(data, body, frontmatterOrderForType("task"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,8 +144,8 @@ func TestDaemonReleasesRunWhenTrackerStateBecomesIneligible(t *testing.T) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	if err := store.UpsertRun(RunStatus{
 		ProjectID:       project.ProjectID,
-		RecordID:        stringField(data, "record_id"),
-		ItemID:          "INT-S-0001",
+		RecordID:        firstNonEmpty(stringField(data, "record_id"), stringField(data, "id")),
+		ItemID:          "INT-T-0001",
 		Runner:          "codex",
 		LeaseState:      string(LeaseStateRunning),
 		AttemptOutcome:  string(AttemptOutcomeNone),
@@ -164,7 +164,7 @@ func TestDaemonReleasesRunWhenTrackerStateBecomesIneligible(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run, err := store.FindRun("INT-S-0001")
+	run, err := store.FindRun("INT-T-0001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,16 +173,111 @@ func TestDaemonReleasesRunWhenTrackerStateBecomesIneligible(t *testing.T) {
 	}
 	assertEqual(t, string(LeaseStateReleased), run.LeaseState, "ineligible run released")
 	assertEqual(t, string(AttemptOutcomeAbandoned), run.AttemptOutcome, "ineligible run outcome")
-	if !strings.Contains(run.LastError, `tracker state "in_review" is not active`) {
+	if !strings.Contains(run.LastError, `tracker state "review" is not active`) {
 		t.Fatalf("expected tracker-state release reason, got %q", run.LastError)
 	}
-	decisions, err := store.ListSupervisorDecisionsForRun(project.ProjectID, stringField(data, "record_id"))
+	decisions, err := store.ListSupervisorDecisionsForRun(project.ProjectID, firstNonEmpty(stringField(data, "record_id"), stringField(data, "id")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	decision := requireSupervisorDecision(t, decisions, string(SupervisorDecisionStopForAudit))
-	if !strings.Contains(decision.Reason, `tracker state "in_review" is not active`) {
+	if !strings.Contains(decision.Reason, `tracker state "review" is not active`) {
 		t.Fatalf("expected stop_for_audit tracker reason, got %q", decision.Reason)
+	}
+}
+
+func TestDaemonReconcilesCompletedReviewHandoff(t *testing.T) {
+	tempRoot := t.TempDir()
+	stateRoot := filepath.Join(tempRoot, "state")
+	vault := filepath.Join(tempRoot, "vault")
+	repo := filepath.Join(tempRoot, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := newV5Epic(Args{"vault": vault, "acronym": "HND", "title": "Handoff", "summary": "Review handoff coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := newV5Task(Args{"vault": vault, "epic": "HND", "title": "Complete into review", "size": "m", "risk": "medium", "priority": "p1", "delegation": "execute", "assignee": "codex", "quiet": "true"}, "feature"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setStatus(Args{"vault": vault, "id": "HND-T-0001", "status": "active", "actor": "test"}); err != nil {
+		t.Fatal(err)
+	}
+	notePath := filepath.Join(vault, "epics", "HND", "HND-T-0001.md")
+	data, body, err := parseFrontmatterMustRead(notePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["status"] = "review"
+	content, err := serializeDocument(data, body, frontmatterOrderForType("task"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(notePath, content); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := newRegisteredProject(repo, vault)
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	statusPath := filepath.Join(tempRoot, "runner.status.json")
+	eventSinkPath := filepath.Join(tempRoot, "runner.events.jsonl")
+	if err := writeRunnerStatusFile(statusPath, 0); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	recordID := firstNonEmpty(stringField(data, "record_id"), stringField(data, "id"))
+	if err := store.UpsertRun(RunStatus{
+		ProjectID:       project.ProjectID,
+		RecordID:        recordID,
+		ItemID:          "HND-T-0001",
+		Runner:          "codex",
+		LeaseState:      string(LeaseStateRunning),
+		AttemptOutcome:  string(AttemptOutcomeNone),
+		ActiveAttemptID: "review-handoff-attempt",
+		EventSinkPath:   eventSinkPath,
+		StatusPath:      statusPath,
+		WorkRevision:    intField(data, "work_revision"),
+		AttemptCount:    1,
+		StartedAt:       now,
+		LastEventAt:     now,
+		UpdatedAt:       now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	daemon := &Daemon{stateRoot: stateRoot, store: store}
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := store.FindRun("HND-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run == nil {
+		t.Fatal("expected completed review handoff run row")
+	}
+	assertEqual(t, string(LeaseStateReleased), run.LeaseState, "completed review handoff releases run")
+	assertEqual(t, string(AttemptOutcomeSucceeded), run.AttemptOutcome, "completed review handoff succeeds")
+	assertEqual(t, "", run.LastError, "completed review handoff is not abandoned as inactive")
+	packetPath := filepath.Join(vault, "Attachments", "HND-T-0001", "review-packet-review-handoff-attempt.md")
+	assertExists(t, packetPath)
+	_, updatedBody, err := parseFrontmatterMustRead(notePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(updatedBody, "review-packet-review-handoff-attempt.md") {
+		t.Fatalf("expected note evidence to link review packet, got:\n%s", updatedBody)
 	}
 }
 
@@ -197,16 +292,16 @@ func TestDaemonQueuesContinuationRetryWhenCleanExitLeavesNoteActive(t *testing.T
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newEpic(Args{"vault": vault, "acronym": "CON", "title": "Continuation", "summary": "Continuation retry coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
+	if err := newV5Epic(Args{"vault": vault, "acronym": "CON", "title": "Continuation", "summary": "Continuation retry coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := createWorkItem(Args{"vault": vault, "epic": "CON", "title": "Stay active after clean exit", "size": "m", "risk": "medium", "priority": "p1", "delegation": "execute", "assignee": "codex", "quiet": "true"}, "story"); err != nil {
+	if err := newV5Task(Args{"vault": vault, "epic": "CON", "title": "Stay active after clean exit", "size": "m", "risk": "medium", "priority": "p1", "delegation": "execute", "assignee": "codex", "quiet": "true"}, "feature"); err != nil {
 		t.Fatal(err)
 	}
-	if err := setStatus(Args{"vault": vault, "id": "CON-S-0001", "status": "active", "actor": "test"}); err != nil {
+	if err := setStatus(Args{"vault": vault, "id": "CON-T-0001", "status": "active", "actor": "test"}); err != nil {
 		t.Fatal(err)
 	}
-	note, err := resolveNote(vault, "CON-S-0001")
+	note, err := resolveNote(vault, "CON-T-0001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,8 +322,8 @@ func TestDaemonQueuesContinuationRetryWhenCleanExitLeavesNoteActive(t *testing.T
 	now := time.Now().UTC().Format(time.RFC3339)
 	if err := store.UpsertRun(RunStatus{
 		ProjectID:       project.ProjectID,
-		RecordID:        stringField(note.Data, "record_id"),
-		ItemID:          "CON-S-0001",
+		RecordID:        trackerRecordID(note),
+		ItemID:          "CON-T-0001",
 		Runner:          "codex",
 		LeaseState:      string(LeaseStateRunning),
 		AttemptOutcome:  string(AttemptOutcomeNone),
@@ -250,7 +345,7 @@ func TestDaemonQueuesContinuationRetryWhenCleanExitLeavesNoteActive(t *testing.T
 		t.Fatal(err)
 	}
 
-	run, err := store.FindRun("CON-S-0001")
+	run, err := store.FindRun("CON-T-0001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +357,7 @@ func TestDaemonQueuesContinuationRetryWhenCleanExitLeavesNoteActive(t *testing.T
 	if run.NextRetryAt == "" {
 		t.Fatal("expected 1s continuation retry timestamp")
 	}
-	decisions, err := store.ListSupervisorDecisionsForRun(project.ProjectID, stringField(note.Data, "record_id"))
+	decisions, err := store.ListSupervisorDecisionsForRun(project.ProjectID, trackerRecordID(note))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +371,7 @@ func TestDaemonQueuesContinuationRetryWhenCleanExitLeavesNoteActive(t *testing.T
 	if !strings.Contains(eventText, `"kind":"supervisor_decision"`) || !strings.Contains(eventText, `"kind":"continue_thread"`) {
 		t.Fatalf("expected supervisor decision event, got:\n%s", eventText)
 	}
-	updatedNote, err := resolveNote(vault, "CON-S-0001")
+	updatedNote, err := resolveNote(vault, "CON-T-0001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,23 +389,23 @@ func TestDaemonEmitsNewRevisionDecisionAndClearsOldSession(t *testing.T) {
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newEpic(Args{"vault": vault, "acronym": "REV", "title": "Revision", "summary": "Revision reset coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
+	if err := newV5Epic(Args{"vault": vault, "acronym": "REV", "title": "Revision", "summary": "Revision reset coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := createWorkItem(Args{"vault": vault, "epic": "REV", "title": "Reset stale runtime", "size": "m", "risk": "medium", "priority": "p1", "delegation": "execute", "assignee": "codex", "quiet": "true"}, "story"); err != nil {
+	if err := newV5Task(Args{"vault": vault, "epic": "REV", "title": "Reset stale runtime", "size": "m", "risk": "medium", "priority": "p1", "delegation": "execute", "assignee": "codex", "quiet": "true"}, "feature"); err != nil {
 		t.Fatal(err)
 	}
-	if err := setStatus(Args{"vault": vault, "id": "REV-S-0001", "status": "active", "actor": "test"}); err != nil {
+	if err := setStatus(Args{"vault": vault, "id": "REV-T-0001", "status": "active", "actor": "test"}); err != nil {
 		t.Fatal(err)
 	}
-	notePath := filepath.Join(vault, "epics", "REV", "REV-S-0001.md")
+	notePath := filepath.Join(vault, "epics", "REV", "REV-T-0001.md")
 	data, body, err := parseFrontmatterMustRead(notePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	data["work_revision"] = 1
 	data["risk"] = "critical"
-	content, err := serializeDocument(data, body, frontmatterOrderForType("story"))
+	content, err := serializeDocument(data, body, frontmatterOrderForType("task"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,11 +423,11 @@ func TestDaemonEmitsNewRevisionDecisionAndClearsOldSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	recordID := stringField(data, "record_id")
+	recordID := firstNonEmpty(stringField(data, "record_id"), stringField(data, "id"))
 	if err := store.UpsertRun(RunStatus{
 		ProjectID:       project.ProjectID,
 		RecordID:        recordID,
-		ItemID:          "REV-S-0001",
+		ItemID:          "REV-T-0001",
 		Runner:          "codex",
 		LeaseState:      string(LeaseStateReleased),
 		AttemptOutcome:  string(AttemptOutcomeSucceeded),
@@ -353,7 +448,7 @@ func TestDaemonEmitsNewRevisionDecisionAndClearsOldSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run, err := store.FindRun("REV-S-0001")
+	run, err := store.FindRun("REV-T-0001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,13 +486,13 @@ func TestResolveResumeSessionRequiresRevisionRunnerAndWorkspaceCompatibility(t *
 	now := time.Now().UTC().Format(time.RFC3339)
 	if err := store.SaveSession(RunnerSession{
 		ProjectID: project.ProjectID, RecordID: "record-1", Runner: string(RunnerCodex), SessionRef: "thread-ok",
-		LastMessageRef: "msg-1", WorkspacePath: workspace, CurrentItemID: "RES-S-0001", WorkRevision: 2,
+		LastMessageRef: "msg-1", WorkspacePath: workspace, CurrentItemID: "RES-T-0001", WorkRevision: 2,
 		LastAttemptID: "attempt-old", State: "open", Resumable: true, StartedAt: now, LastSeenAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	run := RunStatus{
-		ProjectID: project.ProjectID, RecordID: "record-1", ItemID: "RES-S-0001", Runner: string(RunnerCodex),
+		ProjectID: project.ProjectID, RecordID: "record-1", ItemID: "RES-T-0001", Runner: string(RunnerCodex),
 		LeaseState: string(LeaseStateRetryQueued), SessionRef: "thread-ok", WorkspacePath: workspace, WorkRevision: 2,
 	}
 	resolved, err := daemon.resolveResumeSession(project, Note{}, run)
@@ -428,7 +523,7 @@ func TestResolveResumeSessionRequiresRevisionRunnerAndWorkspaceCompatibility(t *
 
 	if err := store.SaveSession(RunnerSession{
 		ProjectID: project.ProjectID, RecordID: "record-1", Runner: string(RunnerClaude), SessionRef: "claude-session",
-		WorkspacePath: workspace, CurrentItemID: "RES-S-0001", WorkRevision: 2,
+		WorkspacePath: workspace, CurrentItemID: "RES-T-0001", WorkRevision: 2,
 		LastAttemptID: "claude-attempt", State: "open", Resumable: true, StartedAt: now, LastSeenAt: now,
 	}); err != nil {
 		t.Fatal(err)
@@ -494,22 +589,22 @@ func TestContextWindowFailureEmitsForkThreadDecision(t *testing.T) {
 }
 
 func TestDispatchEligibilityBlocksUnresolvedDependenciesAndCriticalRisk(t *testing.T) {
-	blocker := Note{Data: map[string]any{"id": "DEP-S-0001", "record_id": "rec-blocker", "status": "active"}}
+	blocker := Note{Data: map[string]any{"id": "DEP-T-0001", "record_id": "rec-blocker", "status": "active"}}
 	blocked := Note{Data: map[string]any{
-		"id":                    "DEP-S-0002",
+		"id":                    "DEP-T-0002",
 		"risk":                  "medium",
-		"blocked_by":            []any{"[[DEP-S-0001]]"},
+		"blocked_by":            []any{"[[DEP-T-0001]]"},
 		"blocked_by_record_ids": []any{"rec-blocker"},
 	}}
-	reason := dispatchEligibilityReason(blocked, map[string]Note{"DEP-S-0001": blocker}, map[string]Note{"rec-blocker": blocker})
-	if !strings.Contains(reason, "waiting on DEP-S-0001") {
+	reason := dispatchEligibilityReason(blocked, map[string]Note{"DEP-T-0001": blocker}, map[string]Note{"rec-blocker": blocker})
+	if !strings.Contains(reason, "waiting on DEP-T-0001") {
 		t.Fatalf("expected unresolved dependency reason, got %q", reason)
 	}
 	blocker.Data["status"] = "done"
-	reason = dispatchEligibilityReason(blocked, map[string]Note{"DEP-S-0001": blocker}, map[string]Note{"rec-blocker": blocker})
+	reason = dispatchEligibilityReason(blocked, map[string]Note{"DEP-T-0001": blocker}, map[string]Note{"rec-blocker": blocker})
 	assertEqual(t, "", reason, "resolved dependency allows dispatch")
 
-	critical := Note{Data: map[string]any{"id": "DEP-S-0003", "risk": "critical"}}
+	critical := Note{Data: map[string]any{"id": "DEP-T-0003", "risk": "critical"}}
 	reason = dispatchEligibilityReason(critical, map[string]Note{}, map[string]Note{})
 	if !strings.Contains(reason, "critical risk") {
 		t.Fatalf("expected critical risk block, got %q", reason)
@@ -521,13 +616,13 @@ func TestWriteReviewPacketEvidenceCreatesSubstantiveEvidence(t *testing.T) {
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newEpic(Args{"vault": vault, "acronym": "PKT", "title": "Packets", "summary": "Review packet coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
+	if err := newV5Epic(Args{"vault": vault, "acronym": "PKT", "title": "Packets", "summary": "Review packet coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := createWorkItem(Args{"vault": vault, "epic": "PKT", "title": "Generate packet", "size": "m", "risk": "medium", "priority": "p1", "delegation": "execute", "assignee": "codex", "quiet": "true"}, "story"); err != nil {
+	if err := newV5Task(Args{"vault": vault, "epic": "PKT", "title": "Generate packet", "size": "m", "risk": "medium", "priority": "p1", "delegation": "execute", "assignee": "codex", "quiet": "true"}, "feature"); err != nil {
 		t.Fatal(err)
 	}
-	note, err := resolveNote(vault, "PKT-S-0001")
+	note, err := resolveNote(vault, "PKT-T-0001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,7 +632,7 @@ func TestWriteReviewPacketEvidenceCreatesSubstantiveEvidence(t *testing.T) {
 	}
 	defer store.Close()
 	if err := store.SaveTurn(RunTurn{
-		AttemptID: "attempt-1", ProjectID: "project-1", RecordID: stringField(note.Data, "record_id"),
+		AttemptID: "attempt-1", ProjectID: "project-1", RecordID: trackerRecordID(note),
 		TurnID: "turn-1", TurnIndex: 0, Status: "completed", TotalTokens: 42, LastEventAt: "2026-04-28T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
@@ -545,7 +640,7 @@ func TestWriteReviewPacketEvidenceCreatesSubstantiveEvidence(t *testing.T) {
 	if _, err := store.SaveRuntimeSupervisorDecision(RuntimeSupervisorDecision{
 		DecisionID:       "decision-1",
 		ProjectID:        "project-1",
-		RecordID:         stringField(note.Data, "record_id"),
+		RecordID:         trackerRecordID(note),
 		AttemptID:        "attempt-1",
 		ParentAttemptID:  "attempt-0",
 		SessionRef:       "thread-1",
@@ -558,15 +653,35 @@ func TestWriteReviewPacketEvidenceCreatesSubstantiveEvidence(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	eventPath := filepath.Join(t.TempDir(), "attempt.events.jsonl")
+	eventLog := NewEventLog(eventPath)
+	if err := eventLog.Append("file_change", "attempt-1", RunnerCodex, map[string]any{
+		"path":    "cmd/tusker/daemon.go",
+		"turn_id": "turn-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := eventLog.Append("verification_command", "attempt-1", RunnerCodex, map[string]any{
+		"command":   "go test ./cmd/tusker -run TestWriteReviewPacketEvidenceCreatesSubstantiveEvidence -count=1",
+		"status":    "passed",
+		"exit_code": 0,
+		"turn_id":   "turn-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	run := RunStatus{
-		ProjectID: "project-1", RecordID: stringField(note.Data, "record_id"), ItemID: "PKT-S-0001",
+		ProjectID: "project-1", RecordID: trackerRecordID(note), ItemID: "PKT-T-0001",
 		Runner: string(RunnerCodex), ActiveAttemptID: "attempt-1", WorkspacePath: "/workspace", SessionRef: "thread-1",
-		WorkRevision: 0, StartedAt: "2026-04-28T00:00:00Z", LastEventAt: "2026-04-28T00:00:01Z",
+		EventSinkPath: eventPath,
+		RawLogPath:    filepath.Join(t.TempDir(), "attempt.raw.log"),
+		StatusPath:    filepath.Join(t.TempDir(), "attempt.status.json"),
+		PromptPath:    filepath.Join(t.TempDir(), "attempt.prompt.md"),
+		WorkRevision:  0, StartedAt: "2026-04-28T00:00:00Z", LastEventAt: "2026-04-28T00:00:01Z",
 	}
 	if err := writeReviewPacketEvidence(vault, note, run, store); err != nil {
 		t.Fatal(err)
 	}
-	packetPath := filepath.Join(vault, "Attachments", "PKT-S-0001", "review-packet-attempt-1.md")
+	packetPath := filepath.Join(vault, "Attachments", "PKT-T-0001", "review-packet-attempt-1.md")
 	assertExists(t, packetPath)
 	packet, err := readText(packetPath)
 	if err != nil {
@@ -574,6 +689,21 @@ func TestWriteReviewPacketEvidenceCreatesSubstantiveEvidence(t *testing.T) {
 	}
 	if !strings.Contains(packet, "tokens=42") {
 		t.Fatalf("expected review packet to include turn usage, got:\n%s", packet)
+	}
+	for _, expected := range []string{
+		"- Attempt: attempt-1",
+		"- Work revision: 0",
+		"- Turns: 1",
+		"## Runtime artifacts",
+		"## Changed files",
+		"`cmd/tusker/daemon.go` (event:file_change)",
+		"## Verification",
+		"`go test ./cmd/tusker -run TestWriteReviewPacketEvidenceCreatesSubstantiveEvidence -count=1` result=passed exit_code=0 turn=turn-1",
+		"## Open risks",
+	} {
+		if !strings.Contains(packet, expected) {
+			t.Fatalf("expected review packet to include %q, got:\n%s", expected, packet)
+		}
 	}
 	if !strings.Contains(packet, "## Supervisor decisions") || !strings.Contains(packet, "`resume_session` reason=resumed compatible stored session") {
 		t.Fatalf("expected review packet to include supervisor decisions, got:\n%s", packet)

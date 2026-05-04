@@ -1,6 +1,6 @@
 ---
 title: "Docs publication"
-description: "Use this when the user wants project docs, a public docs site, a user guide, release notes, or agent-readable canon. Tusker owns the publication rules. Astro/Starlight only renders the exported tree."
+description: "Use this when the user wants project docs, a public docs site, a user guide, release notes, support docs, runbooks, or agent-readable canon."
 tusker:
   audience: "user"
   publish_path: "user/reference/docs-publication"
@@ -8,51 +8,118 @@ tusker:
   route: "/user/reference/docs-publication/"
   source_kind: "repo_doc"
   source_path: "skill/references/DOCS_PUBLICATION.md"
-  summary: "Use this when the user wants project docs, a public docs site, a user guide, release notes, or agent-readable canon. Tusker owns the publication rules. Astro/Starlight only renders the exported tree."
+  summary: "Use this when the user wants project docs, a public docs site, a user guide, release notes, support docs, runbooks, or agent-readable canon."
   tags:
     - "reference"
-  updated: "2026-04-28"
+  updated: "2026-04-30"
 ---
 
 # Docs publication
 
-Use this when the user wants project docs, a public docs site, a user guide, release notes, or agent-readable canon. Tusker owns the publication rules. Astro/Starlight only renders the exported tree.
+Use this when the user wants project docs, a public docs site, a user guide, release notes, support docs, runbooks, or agent-readable canon.
 
 ## Read order
 
 1. `README*`, `AGENTS.md`, `CLAUDE.md`, and obvious architecture files.
-2. `tusker/README.md` and the epic roster from `tusker epics`.
-3. Existing repo docs under `docs/` and `docs/publication.yaml`.
-4. Generated manifests if present:
+2. `tusker/README.md` and the epic roster from `tusker list --type epic`.
+3. V5 docs under `tusker/docs/**`.
+4. Repo docs registered through `docs/publication.yaml`.
+5. Generated manifests if present:
+   - `site/public/canon-manifest.json`
    - `site/public/llms.txt`
    - `site/public/llms-full.txt`
-   - `site/public/canon-manifest.json`
    - `site/src/generated/content-manifest.json`
 
-If a source file disagrees with `canon-manifest.json`, trust the manifest first and call out the conflict. Do not quietly cite stale archaeology. Tags are hints; `canonical: true` plus `canonical_status` is authority.
+If a source file disagrees with `canon-manifest.json`, trust the manifest first and call out the conflict. Do not quietly cite stale archaeology.
+
+## V5 docs model
+
+Docs are durable knowledge pages under `tusker/docs/**`.
+
+Tasks carry:
+
+- `domains`: broad areas the work touches
+- `doc_nodes`: exact docs targets from `_config/docs-map.yaml`
+- `## Knowledge delta`: what changed in the reader's mental model
+
+If `doc_nodes` is non-empty, close must prove one of three things:
+
+1. docs were already correct,
+2. docs were updated,
+3. docs update was explicitly waived with a reason.
 
 ## Pick the source
 
 | Need | Source |
 |---|---|
-| implementation canon | canonical D-note: `tusker new-doc --audience developer --canon-for <ACR>` |
-| user guide | user doc: `tusker new-doc --audience user` |
-| support/runbook | support doc: `tusker new-doc --audience support` |
-| release notes | release doc: `tusker new-doc --audience release` |
+| implementation canon | doc under `tusker/docs/**` with `kind: canon` |
+| user guide | doc with `audience: user` |
+| support/runbook | doc with `audience: support` or `kind: runbook` |
+| release notes | doc with `audience: release` or `kind: release` |
 | repo-native spec or README | explicit `docs/publication.yaml` entry |
-| one-story explanation | companion D-note: `tusker new-doc --audience developer --companion-to <STORY-ID>` |
+| one-task explanation | companion doc linked to the task |
 
-Stories and bugs are execution records, not public docs. Their `## Evidence` proves work happened, but it does not auto-publish yet.
+Tasks are execution records, not public docs. Their evidence proves work happened, but does not automatically become publication content.
 
-## Publish a vault doc
+## Diátaxis access model
+
+`_config/docs-map.yaml` is the access layer. Every node must declare:
+
+| Field | Purpose |
+|---|---|
+| `mode` | Dominant reader intent: `tutorial`, `how-to`, `reference`, or `explanation` |
+| `audience` | Primary reader: `developer`, `user`, `operator`, `support`, `release`, `agent`, or `internal` |
+| `agent_layer` | Agent treatment: `none`, `capsule`, or `standalone` |
+| `source_of_truth` | Files that define the page's facts |
+| `stale_when.paths` | Files or globs that should trigger docs freshness review |
+
+Do not force folders to mirror Diátaxis. Tusker uses reader-facing navigation:
+
+| Mode | Default nav |
+|---|---|
+| `tutorial` | Start here |
+| `how-to` | Guides |
+| `reference` | Reference |
+| `explanation` | Concepts |
+
+Agent docs with `audience: agent` or `agent_layer: standalone` appear under For agents. Capsule docs stay in their human-facing section with a small agent note.
+
+## Docs close gate
 
 ```bash
-tusker new-doc --epic <ACR> --title "<Guide>" \
+tusker docs check <TASK-ID>
+tusker docs apply <TASK-ID> --node <DOC-NODE> --reason "<what changed>"
+tusker docs noop <TASK-ID> --node <DOC-NODE> --reason "<why already current>"
+tusker docs waive <TASK-ID> <DOC-NODE> --reason "<why no doc change>"
+```
+
+Run this before `tusker close` when `doc_nodes` exists or when the task's knowledge delta says docs changed.
+
+High-risk tasks that affect durable understanding need a useful knowledge delta:
+
+| Change type | Topic | Before | After | Audience | Target doc nodes | Mode | Status |
+|---|---|---|---|---|---|---|---|
+
+`tusker docs check` reads the task `doc_nodes` and any target nodes in this table. Use existing node IDs from `_config/docs-map.yaml`; unknown nodes are validation failures.
+
+Inspection commands:
+
+| Command | Use |
+|---|---|
+| `tusker docs model` | Explain the docs philosophy, Diátaxis modes, agent layers, and close gate. |
+| `tusker docs map [DOC-NODE]` | Inspect controlled doc nodes and source-of-truth metadata. |
+| `tusker docs catalog` | Show reader-facing IA generated from docs-map. |
+| `tusker docs freshness [--stale]` | Show stale/verified docs, linked tasks, waivers, and stale triggers. |
+
+## Publish vault docs
+
+```bash
+tusker new doc --title "<Guide>" \
+  --node user/guides/<slug> \
   --audience user \
-  --status approved \
-  --publish true \
-  --publish-path user/guides/<slug> \
-  --publish-description "<one sentence>"
+  --kind guide \
+  --domains docs \
+  --publish true
 
 tusker docs export --site ./site
 tusker docs build --site ./site
@@ -61,13 +128,13 @@ tusker docs build --site ./site
 Route rules:
 
 - no leading or trailing slash
-- first segment is `developer`, `user`, `release-notes`, `support`, or `internal`
-- final segment is not `index`
-- route must be unique
+- stable `node` maps to publication route
+- renamed routes need `redirect_from`
+- published canon needs `canonical_status`
 
 ## Publish repo docs
 
-Add the doc or directory to `docs/publication.yaml`:
+Use `docs/publication.yaml` for repo-native docs that should publish:
 
 ```yaml
 repo_docs:
@@ -79,32 +146,11 @@ repo_docs:
     canonical: true
     canonical_status: draft
     owner_epic: ORC
-    verified_at: "2026-04-28"
+    verified_at: "2026-04-29"
     tags: [specs]
 ```
 
 Do not make Astro crawl random markdown. If it should publish, register it.
-
-Canon registry fields:
-
-| Field | Meaning |
-|---|---|
-| `canonical` | opt-in; without this, a repo doc can publish but is not in `canon[]` |
-| `canonical_status` | `draft`, `approved`, `deprecated`, or `historical` |
-| `owner_epic` | epic acronym agents should use for "what is canon for X?" |
-| `verified_at` | date the doc was last checked against implementation |
-| `deprecated` + `superseded_by` | keep stale pages visible without letting agents cite them as current |
-
-## Route lifecycle
-
-When a published route is renamed, add the old route to the replacement page:
-
-```yaml
-redirect_from:
-  - developer/architecture/old-runtime-topology
-```
-
-`tusker docs export` writes `site/src/generated/routes-removed.json` for routes that disappeared without a replacement. `tusker validate` fails while that file has removed routes. Fix it by restoring the source or adding `redirect_from` to the replacement page and exporting again.
 
 ## Build and preview
 
@@ -114,36 +160,45 @@ tusker docs dev --site ./site --watch
 tusker docs build --site ./site
 ```
 
-`--watch` re-exports when vault docs, attachments, or registered repo docs change while Astro serves the generated tree.
+Generated output includes:
 
-NPM scripts in `site/package.json` are wrappers around the Tusker compiler:
+- `site/src/content/docs/**`
+- `site/src/generated/content-manifest.json`
+- `site/src/generated/canon-manifest.json`
+- `site/public/canon-manifest.json`
+- `site/src/generated/routes-removed.json`
+- `site/public/llms.txt`
+- `site/public/llms-full.txt`
 
-```bash
-npm --prefix site run export
-npm --prefix site run dev
-npm --prefix site run build
+Do not author in `site/src/content/docs/**`. It is generated output.
+
+## Route lifecycle
+
+When a published route is renamed, add the old route to replacement metadata:
+
+```yaml
+redirect_from:
+  - developer/architecture/old-runtime-topology
 ```
 
-Do not use `site/scripts/sync-docs.mjs` as the publication path. It is legacy glue and bypasses the route, asset, link, and manifest logic agents need.
-
-`tusker validate` checks generated docs state when a site manifest exists: public/generated manifests must match, published sources must not be newer than `generatedAt`, manifest sources must still exist, removed routes must be covered by `redirect_from`, and each active epic must have a canon entry. If validation says the manifest is stale, run `tusker docs export`.
+`tusker validate` should fail while removed routes lack redirects. Fix by restoring the source or adding `redirect_from`, then export again.
 
 ## Evidence
 
-Attach execution proof to stories with:
+Attach execution proof to tasks:
 
 ```bash
-tusker attach-evidence --id <ID> --kind screenshot --path <file> --note "<caption>"
+tusker evidence <TASK-ID> screenshot <file> --note "<caption>"
 ```
 
-Tusker copies local evidence into `tusker/Attachments/<ID>/` and appends a markdown link to `## Evidence`. Published docs can reference local assets and the exporter will copy/rewrite them, but story evidence is not yet promoted into release pages automatically. If a user-facing doc needs media today, reference the selected screenshot/video from the doc itself.
+Published docs may reference selected local assets, and the exporter can copy/rewrite them. Do not stuff durable explanation into `## Evidence`; create or update a doc.
 
 ## Agent rules
 
 - Read `canon-manifest.json` before broad repo-doc archaeology.
-- Use `canon[].canonical_status` before trusting a page: `approved` is safe, `draft` needs verification, `deprecated`/`historical` is archaeology.
-- Treat `site/src/content/docs/**` as generated output, not authoring source.
-- Treat `_system/generated/**` as generated indexes, not source.
-- Use `docs/publication.yaml` for repo docs; use D-note frontmatter for vault docs.
-- Do not publish internal notes by moving files into the site tree.
-- If a doc should outlive a story, create a D-note instead of stuffing it into `## Evidence`.
+- Use `canonical_status`: `approved` is safe, `draft` needs verification, `deprecated`/`historical` is archaeology.
+- Treat `site/src/content/docs/**` as generated output.
+- Treat `_system/generated/**` as generated indexes.
+- Use `tusker/docs/**` for V5 vault docs.
+- Use `docs/publication.yaml` for repo docs.
+- If docs impact is real, set `doc_nodes` and fill knowledge delta.

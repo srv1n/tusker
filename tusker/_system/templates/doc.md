@@ -1,24 +1,23 @@
 ---
-schema_version: 2
-record_id: ""
-id: "{{id}}"
+schema: tusker.doc/v5
+id: "{{node}}"
 title: "{{title}}"
-type: "doc"
-status: "draft"
-epic: "[[{{epic}}]]"
-epic_record_id: ""
-doc_intent: ""
-canon_for: ""
-story: ""
-story_record_id: ""
-audience: "{{audience}}"
-publish: false
-publish_path: ""
-publish_url: ""
-published_at: ""
-created: "{{date}}"
-updated: "{{date}}"
-tags: []
+type: doc
+node: "{{node}}"
+audience: developer
+mode: reference
+agent_layer: none
+kind: reference
+domains: []
+source_of_truth: []
+stale_when_paths: []
+canonical_status: draft
+publish: true
+publish_lane: internal
+publish_path: "{{publish_path}}"
+publish_description: "{{publish_description}}"
+created: "2026-04-30"
+updated: "2026-04-30"
 ---
 
 # {{title}}
@@ -27,11 +26,22 @@ tags: []
 
 ## Audience
 
-{{audience}}
+developer
+
+## Mode
+
+reference
+
+## Source of truth
+
+-
+
+## Stale when
+
+-
 
 ## Content
 
-## Links
+## Verification notes
 
-- Epic: [[{{epic}}]]
-- Canon intent: set `doc_intent` to `canon` or `companion` for developer docs
+-

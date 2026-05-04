@@ -78,7 +78,7 @@ func walkNoteFiles(vaultPath string) ([]string, error) {
 		}
 		rel = filepath.ToSlash(rel)
 		if entry.IsDir() {
-			if rel == "_system" || strings.HasPrefix(rel, "_system/") || rel == "Attachments" || strings.HasPrefix(rel, "Attachments/") {
+			if rel == "_system" || strings.HasPrefix(rel, "_system/") || rel == "_config" || strings.HasPrefix(rel, "_config/") || rel == "Attachments" || strings.HasPrefix(rel, "Attachments/") {
 				return fs.SkipDir
 			}
 			return nil
@@ -170,7 +170,7 @@ func resolveRecordIDsByLink(notes []Note, value any) []string {
 }
 
 func nextSequence(notes []Note, acronym, kind string) int {
-	letter := map[string]string{"story": "S", "bug": "B", "doc": "D"}[kind]
+	letter := map[string]string{"task": "T", "doc": "D"}[kind]
 	pattern := regexp.MustCompile("^" + acronym + "-" + letter + "-(\\d{4})$")
 	max := 0
 	for _, note := range notes {
@@ -191,7 +191,6 @@ func baseIndexShape(note Note) map[string]any {
 		"title":          stringField(note.Data, "title"),
 		"type":           stringField(note.Data, "type"),
 		"status":         stringField(note.Data, "status"),
-		"review_state":   stringField(note.Data, "review_state"),
 		"work_revision":  intField(note.Data, "work_revision"),
 		"path":           note.RelativePath,
 		"created":        stringField(note.Data, "created"),
@@ -204,7 +203,7 @@ func collectLinks(note Note) []map[string]any {
 	var edges []map[string]any
 	source := stringField(note.Data, "id")
 	sourceRecordID := stringField(note.Data, "record_id")
-	for _, field := range []string{"epic", "story"} {
+	for _, field := range []string{"epic"} {
 		value := note.Data[field]
 		if value == nil || toString(value) == "" {
 			continue

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Obsidian Vault Tracker">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#9F7AEA"/>
+      <stop offset="100%" stop-color="#5B21B6"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#120B24"/>
+  <path d="M20 14L35 8L48 18L44 47L28 56L16 43Z" fill="url(#g)"/>
+  <path d="M28 19L36 15L43 21L40 43L30 49L22 40Z" fill="#E9D5FF" opacity="0.18"/>
+  <path d="M24 24L30 20L36 24L34 38L28 42L22 36Z" fill="#F5F3FF" opacity="0.4"/>
+</svg>

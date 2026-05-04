@@ -130,7 +130,6 @@ func runDocsExport(options docsExportOptions) (docsExportSummary, error) {
 			summary.DeletedDocs++
 		}
 	}
-	publicSources := docsPublicSources(sources)
 	removedRoutes := buildDocsRemovedRoutesReport(generatedAt, previousState, newState, sources)
 	navigation := buildDocsNavigation(sources)
 	contentManifest := buildDocsContentManifest(generatedAt, sources)
@@ -157,10 +156,10 @@ func runDocsExport(options docsExportOptions) (docsExportSummary, error) {
 	if err := writeJSON(filepath.Join(options.SiteRoot, docsExportStateRelative), newState); err != nil {
 		return summary, err
 	}
-	if err := writeText(filepath.Join(options.SiteRoot, docsLLMSTxtRelative), renderLLMSText(publicSources, false)); err != nil {
+	if err := writeText(filepath.Join(options.SiteRoot, docsLLMSTxtRelative), renderLLMSText(sources, false)); err != nil {
 		return summary, err
 	}
-	if err := writeText(filepath.Join(options.SiteRoot, docsLLMSFullTxtRelative), renderLLMSText(publicSources, true)); err != nil {
+	if err := writeText(filepath.Join(options.SiteRoot, docsLLMSFullTxtRelative), renderLLMSText(sources, true)); err != nil {
 		return summary, err
 	}
 	return summary, nil
@@ -176,6 +175,9 @@ func loadDocsSources(options docsExportOptions) ([]docsSourceDocument, error) {
 		return nil, err
 	}
 	sources := append(vaultSources, repoSources...)
+	if docsMap, err := loadDocsMap(options.VaultRoot); err == nil && docsMap != nil {
+		applyDocsMapMetadata(sources, docsMap)
+	}
 	indexRoutes := docsRoutesNeedingIndexPaths(sources)
 	for i := range sources {
 		sources[i].RouteURL = docsRouteURL(sources[i].RoutePath)
@@ -186,6 +188,39 @@ func loadDocsSources(options docsExportOptions) ([]docsSourceDocument, error) {
 	}
 	docsSortSources(sources)
 	return sources, nil
+}
+
+func applyDocsMapMetadata(sources []docsSourceDocument, docsMap *DocsMap) {
+	byID := map[string]DocsMapNode{}
+	byPath := map[string]DocsMapNode{}
+	order := map[string]int{}
+	for i, node := range docsMap.Nodes {
+		byID[node.ID] = node
+		if path := docsNormalizePath(node.SourcePath()); path != "" {
+			byPath[path] = node
+		}
+		order[node.ID] = i + 1
+	}
+	for i := range sources {
+		source := &sources[i]
+		node, ok := byID[source.SourceID]
+		if !ok {
+			node, ok = byPath[docsNormalizePath(source.SourcePath)]
+		}
+		if !ok {
+			continue
+		}
+		if source.SourceID == "" {
+			source.SourceID = node.ID
+		}
+		source.Mode = node.EffectiveMode()
+		source.AgentLayer = node.EffectiveAgentLayer()
+		source.SourceOfTruth = append([]string{}, node.SourceOfTruth...)
+		source.StaleWhenPaths = append([]string{}, node.StaleWhen.Paths...)
+		source.DocsMapOrder = order[node.ID]
+		source.Audience = firstNonEmpty(source.Audience, node.Audience)
+		source.Description = firstNonEmpty(source.Description, node.PublishDescription)
+	}
 }
 
 func loadVaultDocsPublicationSources(vaultRoot string, publicOnly bool) ([]docsSourceDocument, error) {
@@ -222,7 +257,10 @@ func loadVaultDocsPublicationSources(vaultRoot string, publicOnly bool) ([]docsS
 		if err != nil {
 			return nil, err
 		}
-		route := firstNonEmpty(stringField(data, "publish_path"), stringValue(item["publish_path"]))
+		route := docsRouteFromPublishPath(
+			firstNonEmpty(stringField(data, "publish_path"), stringValue(item["publish_path"])),
+			firstNonEmpty(stringField(data, "publish_lane"), stringValue(item["publish_lane"])),
+		)
 		if err := validateDocsRoutePath(route); err != nil {
 			return nil, tuskerError(errorInvalidField, "Published vault doc has invalid publish_path: "+route, withPath(relPath))
 		}
@@ -232,18 +270,22 @@ func loadVaultDocsPublicationSources(vaultRoot string, publicOnly bool) ([]docsS
 		}
 		source := docsSourceDocument{
 			SourceKind:      docsSourceKindVault,
-			SourceID:        firstNonEmpty(stringField(data, "id"), stringValue(item["id"])),
+			SourceID:        firstNonEmpty(stringField(data, "node"), stringField(data, "id"), stringValue(item["id"])),
 			Title:           firstNonEmpty(stringField(data, "title"), stringValue(item["title"]), docsFirstHeading(body), docsTitleizeSegment(filepath.Base(relPath))),
 			Description:     description,
 			Audience:        firstNonEmpty(stringField(data, "audience"), stringValue(item["audience"])),
+			Mode:            firstNonEmpty(stringField(data, "mode"), stringValue(item["mode"])),
+			AgentLayer:      firstNonEmpty(stringField(data, "agent_layer"), stringValue(item["agent_layer"])),
+			SourceOfTruth:   firstNonEmptyList(normalizeList(data["source_of_truth"]), normalizeList(item["source_of_truth"])),
+			StaleWhenPaths:  firstNonEmptyList(normalizeList(data["stale_when_paths"]), normalizeList(item["stale_when_paths"])),
 			DocIntent:       firstNonEmpty(stringField(data, "doc_intent"), stringValue(item["doc_intent"])),
 			Epic:            wikiTarget(firstNonEmpty(stringField(data, "epic"), stringValue(item["epic"]))),
 			OwnerEpic:       wikiTarget(firstNonEmpty(stringField(data, "owner_epic"), stringValue(item["owner_epic"]))),
-			Story:           wikiTarget(firstNonEmpty(stringField(data, "story"), stringValue(item["story"]))),
+			Task:            wikiTarget(firstNonEmpty(stringField(data, "task"), stringValue(item["task"]))),
 			CanonFor:        wikiTarget(firstNonEmpty(stringField(data, "canon_for"), stringValue(item["canon_for"]))),
-			Canonical:       boolField(data, "canonical") || boolValue(item["canonical"]),
+			Canonical:       boolField(data, "canonical") || stringField(data, "kind") == "canon" || boolValue(item["canonical"]),
 			CanonicalStatus: firstNonEmpty(stringField(data, "canonical_status"), stringValue(item["canonical_status"])),
-			VerifiedAt:      firstNonEmpty(stringField(data, "verified_at"), stringValue(item["verified_at"])),
+			VerifiedAt:      firstNonEmpty(stringField(data, "last_verified_at"), stringField(data, "verified_at"), stringValue(item["verified_at"])),
 			Deprecated:      boolField(data, "deprecated") || boolValue(item["deprecated"]),
 			SupersededBy:    firstNonEmpty(stringField(data, "superseded_by"), stringValue(item["superseded_by"])),
 			RedirectFrom:    docsNormalizeRouteList(normalizeList(data["redirect_from"]), normalizeList(item["redirect_from"])),
@@ -261,7 +303,7 @@ func loadVaultDocsPublicationSources(vaultRoot string, publicOnly bool) ([]docsS
 		if source.OwnerEpic == "" {
 			source.OwnerEpic = firstNonEmpty(source.CanonFor, source.Epic)
 		}
-		applyDocsCanonicalDefaults(&source, stringField(data, "status"))
+		applyDocsCanonicalDefaults(&source, firstNonEmpty(stringField(data, "status"), stringField(data, "canonical_status")))
 		if err := validateDocsCanonicalLifecycle(source); err != nil {
 			return nil, err
 		}
@@ -271,6 +313,22 @@ func loadVaultDocsPublicationSources(vaultRoot string, publicOnly bool) ([]docsS
 		out = append(out, source)
 	}
 	return out, nil
+}
+
+func docsRouteFromPublishPath(route, lane string) string {
+	route = strings.Trim(strings.TrimSpace(route), "/")
+	if route == "" {
+		return ""
+	}
+	first := strings.Split(route, "/")[0]
+	if _, ok := docsLaneLabels[first]; ok {
+		return route
+	}
+	lane = strings.Trim(strings.TrimSpace(lane), "/")
+	if _, ok := docsLaneLabels[lane]; ok {
+		return lane + "/" + route
+	}
+	return route
 }
 
 func loadRepoDocsPublicationSources(repoRoot string, publicOnly bool) ([]docsSourceDocument, error) {
@@ -324,10 +382,14 @@ func loadRepoDocsPublicationSources(repoRoot string, publicOnly bool) ([]docsSou
 			Title:           firstNonEmpty(entry.Entry.Title, stringField(data, "title"), stringField(data, "name"), docsFirstHeading(body), docsTitleizeSegment(filepath.Base(entry.SourceAbsPath))),
 			Description:     description,
 			Audience:        firstNonEmpty(entry.Entry.Audience, stringField(data, "audience"), docsAudienceFromRoute(route)),
+			Mode:            stringField(data, "mode"),
+			AgentLayer:      stringField(data, "agent_layer"),
+			SourceOfTruth:   normalizeList(data["source_of_truth"]),
+			StaleWhenPaths:  normalizeList(data["stale_when_paths"]),
 			DocIntent:       stringField(data, "doc_intent"),
 			Epic:            wikiTarget(stringField(data, "epic")),
 			OwnerEpic:       wikiTarget(ownerEpic),
-			Story:           wikiTarget(stringField(data, "story")),
+			Task:            wikiTarget(stringField(data, "task")),
 			CanonFor:        wikiTarget(stringField(data, "canon_for")),
 			Canonical:       canonical,
 			CanonicalStatus: canonicalStatus,
@@ -377,11 +439,23 @@ func renderDocsExportedPage(source docsSourceDocument, body string) (string, err
 	if source.DocIntent != "" {
 		tusker["doc_intent"] = source.DocIntent
 	}
+	if source.Mode != "" {
+		tusker["mode"] = source.Mode
+	}
+	if source.AgentLayer != "" {
+		tusker["agent_layer"] = source.AgentLayer
+	}
+	if len(source.SourceOfTruth) > 0 {
+		tusker["source_of_truth"] = append([]string{}, source.SourceOfTruth...)
+	}
+	if len(source.StaleWhenPaths) > 0 {
+		tusker["stale_when_paths"] = append([]string{}, source.StaleWhenPaths...)
+	}
 	if source.Epic != "" {
 		tusker["epic"] = source.Epic
 	}
-	if source.Story != "" {
-		tusker["story"] = source.Story
+	if source.Task != "" {
+		tusker["task"] = source.Task
 	}
 	if source.CanonFor != "" {
 		tusker["canon_for"] = source.CanonFor
@@ -635,14 +709,9 @@ func renderLLMSText(sources []docsSourceDocument, full bool) string {
 	if full {
 		b.WriteString("Generated catalog of published documentation routes.\n\n")
 	} else {
-		b.WriteString("Compact catalog of public docs.\n\n")
+		b.WriteString("Compact catalog of exported docs.\n\n")
 	}
-	sort.SliceStable(sources, func(i, j int) bool {
-		if sources[i].RoutePath != sources[j].RoutePath {
-			return sources[i].RoutePath < sources[j].RoutePath
-		}
-		return sources[i].Title < sources[j].Title
-	})
+	docsSortSources(sources)
 	for _, source := range sources {
 		b.WriteString("- ")
 		b.WriteString(source.Title)
@@ -651,6 +720,14 @@ func renderLLMSText(sources []docsSourceDocument, full bool) string {
 		if source.Audience != "" {
 			b.WriteString(" | audience: ")
 			b.WriteString(source.Audience)
+		}
+		if source.Mode != "" {
+			b.WriteString(" | mode: ")
+			b.WriteString(source.Mode)
+		}
+		if source.AgentLayer != "" && source.AgentLayer != "none" {
+			b.WriteString(" | agent_layer: ")
+			b.WriteString(source.AgentLayer)
 		}
 		if source.Updated != "" {
 			b.WriteString(" | updated: ")
@@ -670,6 +747,16 @@ func renderLLMSText(sources []docsSourceDocument, full bool) string {
 				b.WriteString("  tags: ")
 				b.WriteString(strings.Join(source.Tags, ", "))
 				b.WriteByte('\n')
+			}
+			if len(source.SourceOfTruth) > 0 {
+				b.WriteString("  source_of_truth: ")
+				b.WriteString(strings.Join(source.SourceOfTruth, ", "))
+				b.WriteByte('\n')
+			}
+			if strings.TrimSpace(source.Body) != "" {
+				b.WriteString("\n")
+				b.WriteString(strings.TrimSpace(source.Body))
+				b.WriteString("\n")
 			}
 		}
 		b.WriteByte('\n')

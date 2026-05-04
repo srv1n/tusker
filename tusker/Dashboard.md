@@ -1,8 +1,8 @@
 ---
 title: "Vault Home"
 type: "note"
-created: "2026-04-28"
-updated: "2026-04-28"
+created: "2026-04-30"
+updated: "2026-04-30"
 tags: ["dashboard"]
 ---
 
@@ -12,42 +12,64 @@ tags: ["dashboard"]
 
 ![[_system/views/Epics.base#Active]]
 
-## Story board
+## Active work
 
-![[_system/views/Stories.base#Board]]
-
-## Active stories
-
-![[_system/views/Stories.base#Active]]
-
-## Orchestration queue
-
-![[_system/views/Orchestration.base#Active]]
-
-## Verification queue
-
-![[_system/views/Verification.base#Queue]]
-
-## Human review queue
-
-![[_system/views/Stories.base#Human review]]
+![[_system/views/Tasks.base#Active]]
 
 ## Live runs
 
 <!-- tusker:live-runs:begin -->
 
-_Auto-generated 2026-04-28T13:57:06Z. No live runs right now._
+_Auto-generated 2026-05-04T15:46:37Z. No live runs right now._
 
 <!-- tusker:live-runs:end -->
 
-## Attestation queue
+## Review
 
-![[_system/views/Attestation.base#Queue]]
+![[_system/views/Tasks.base#Review]]
 
-## Open bugs
+## Follow-up
 
-![[_system/views/Bugs.base#Open]]
+![[_system/views/Tasks.base#Follow-up]]
+
+## Ready
+
+![[_system/views/Tasks.base#Ready]]
+
+## Blocked
+
+![[_system/views/Tasks.base#Blocked]]
+
+## Backlog
+
+![[_system/views/Tasks.base#Backlog]]
+
+## Task board
+
+![[_system/views/Tasks.base#Board]]
+
+## Bug board
+
+![[_system/views/BugTasks.base#Board]]
 
 ## Docs pipeline
 
 ![[_system/views/Docs.base#Pipeline]]
+
+## Docs catalog
+
+![[Docs]]
+
+
+## Docs freshness
+
+<!-- tusker:docs-freshness:begin -->
+
+_Auto-generated 2026-05-04T15:46:37Z. Docs needing verification are shown below._
+
+| Doc node | Freshness | Stale due to |
+|---|---|---|
+| `reference/validator` | `needs_verification` | cmd/tusker/schema.go, cmd/tusker/v5_validation.go, skill/references/SCHEMA.md |
+| `spec/v5-overview` | `needs_verification` | cmd/tusker/**, skill/**, tusker/_config/docs-map.yaml |
+
+<!-- tusker:docs-freshness:end -->

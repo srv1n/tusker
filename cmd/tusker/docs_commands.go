@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -58,6 +60,248 @@ func docsInitCmd(args Args) error {
 		fmt.Printf("Initialized docs output directories under %s\n", siteRoot)
 	}
 	return nil
+}
+
+func docsModelCmd(args Args) error {
+	if args.Bool("json") {
+		emitJSON(map[string]any{
+			"ok": true,
+			"diataxis": []map[string]string{
+				{"mode": "tutorial", "reader_need": "learn by doing", "default_section": "Start here"},
+				{"mode": "how-to", "reader_need": "complete a task", "default_section": "Guides"},
+				{"mode": "reference", "reader_need": "look up facts", "default_section": "Reference"},
+				{"mode": "explanation", "reader_need": "understand why", "default_section": "Concepts"},
+			},
+			"agent_layers": []map[string]string{
+				{"agent_layer": "none", "meaning": "human-facing doc only"},
+				{"agent_layer": "capsule", "meaning": "human-facing doc with a compact agent note"},
+				{"agent_layer": "standalone", "meaning": "agent-facing runbook or recipe"},
+			},
+		})
+		return nil
+	}
+	fmt.Println(`Tusker docs model
+
+Docs are durable knowledge pages under tusker/docs/**. Tasks do not become docs;
+tasks point at exact doc_nodes and prove the docs impact was handled.
+
+Access layer:
+  _config/docs-map.yaml is the controlled catalog. It maps every doc_node to a
+  source page, domain, Diátaxis mode, audience, agent layer, source-of-truth,
+  and stale_when paths.
+
+Diátaxis modes:
+  tutorial     learn by doing       -> Start here
+  how-to       complete a task      -> Guides
+  reference    look up facts        -> Reference
+  explanation  understand why       -> Concepts
+
+Agent layer:
+  none         human-facing doc only
+  capsule      human-facing doc with a compact agent note
+  standalone   agent-facing runbook or recipe
+
+Close gate:
+  If a task names doc_nodes, it cannot close until each node is applied,
+  verified as no-op, or waived with a reason. High-risk tasks also need a
+  Knowledge delta table explaining the reader-facing before/after change.
+
+Useful commands:
+  tusker docs map
+  tusker docs catalog
+  tusker docs freshness
+  tusker docs check <TASK-ID>`)
+	return nil
+}
+
+func docsMapCmd(args Args) error {
+	vaultPath, err := resolveVaultPath(args, false)
+	if err != nil {
+		return err
+	}
+	docsMap, err := loadDocsMap(vaultPath)
+	if err != nil {
+		return err
+	}
+	if docsMap == nil {
+		return tuskerError(errorNotFound, "_config/docs-map.yaml not found", withHint("run `tusker init --yes` or create a docs map"))
+	}
+	nodeID := firstNonEmpty(args.String("node"), args.String("_pos0"))
+	if nodeID != "" {
+		node, ok := docsMap.Node(nodeID)
+		if !ok {
+			return tuskerError(errorUnknownDocNode, "unknown doc_node: "+nodeID, withHint("run `tusker docs map` to list valid nodes"))
+		}
+		if args.Bool("json") {
+			emitJSON(map[string]any{"ok": true, "vault": vaultPath, "node": node})
+			return nil
+		}
+		printDocsMapNode(node)
+		return nil
+	}
+	if args.Bool("json") {
+		emitJSON(map[string]any{"ok": true, "vault": vaultPath, "docs_map": docsMap})
+		return nil
+	}
+	fmt.Printf("Docs map: %s\n\n", filepath.Join(vaultPath, docsMapRelative))
+	fmt.Println("This is the controlled docs catalog. Domains are broad areas; doc_nodes are exact targets tasks can name.")
+	fmt.Println("Each node declares mode, audience, agent_layer, source_of_truth, and stale_when so docs freshness is mechanical.")
+	fmt.Println()
+	fmt.Println("Domains:")
+	domainIDs := make([]string, 0, len(docsMap.Domains))
+	for id := range docsMap.Domains {
+		domainIDs = append(domainIDs, id)
+	}
+	sort.Strings(domainIDs)
+	for _, id := range domainIDs {
+		domain := docsMap.Domains[id]
+		fmt.Printf("- %s — %s\n", id, fallback(domain.Description, domain.Label))
+	}
+	fmt.Println("\nDoc nodes:")
+	for _, node := range docsMap.Nodes {
+		fmt.Printf("- %s — %s\n", node.ID, node.CatalogTitle())
+		fmt.Printf("  %s · %s · %s · %s · %s\n", node.SourcePath(), node.Domain, node.EffectiveMode(), node.Audience, node.EffectiveAgentLayer())
+	}
+	fmt.Println("\nInspect one node with `tusker docs map <doc-node>`.")
+	return nil
+}
+
+func printDocsMapNode(node DocsMapNode) {
+	fmt.Printf("Doc node: %s\n", node.ID)
+	fmt.Printf("Title: %s\n", node.CatalogTitle())
+	fmt.Printf("Page: %s\n", node.SourcePath())
+	fmt.Printf("Domain: %s\n", node.Domain)
+	fmt.Printf("Mode: %s\n", node.EffectiveMode())
+	fmt.Printf("Audience: %s\n", node.Audience)
+	fmt.Printf("Agent layer: %s\n", node.EffectiveAgentLayer())
+	fmt.Printf("Publish: %s -> %s\n", fallback(node.PublishLane, "(none)"), fallback(node.PublishPath, "(none)"))
+	if len(node.SourceOfTruth) > 0 {
+		fmt.Printf("Source of truth: %s\n", strings.Join(node.SourceOfTruth, ", "))
+	}
+	if len(node.StaleWhen.Paths) > 0 {
+		fmt.Printf("Stale when: %s\n", strings.Join(node.StaleWhen.Paths, ", "))
+	}
+	if len(node.Evals) > 0 {
+		fmt.Printf("Evals: %s\n", strings.Join(node.Evals, ", "))
+	}
+}
+
+type docsIndexPayload struct {
+	GeneratedAt string           `json:"generatedAt"`
+	Items       []map[string]any `json:"items"`
+	Catalog     []map[string]any `json:"catalog"`
+}
+
+func loadDocsIndexPayload(vaultPath string) (docsIndexPayload, error) {
+	raw, err := os.ReadFile(filepath.Join(vaultPath, "_system", "generated", "docs.index.json"))
+	if err != nil {
+		return docsIndexPayload{}, err
+	}
+	var payload docsIndexPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return docsIndexPayload{}, err
+	}
+	return payload, nil
+}
+
+func docsCatalogCmd(args Args) error {
+	vaultPath, err := resolveVaultPath(args, false)
+	if err != nil {
+		return err
+	}
+	if err := reindex(Args{"vault": vaultPath, "quiet": "true"}); err != nil {
+		return err
+	}
+	payload, err := loadDocsIndexPayload(vaultPath)
+	if err != nil {
+		return err
+	}
+	if args.Bool("json") {
+		emitJSON(map[string]any{"ok": true, "vault": vaultPath, "generatedAt": payload.GeneratedAt, "catalog": payload.Catalog})
+		return nil
+	}
+	fmt.Printf("Docs catalog: %s\n", filepath.Join(vaultPath, "Docs.md"))
+	fmt.Printf("Generated: %s\n\n", payload.GeneratedAt)
+	fmt.Println("Reader navigation is grouped by intent. Diátaxis mode stays as metadata so folders do not become taxonomy jail.")
+	fmt.Println()
+	currentSection := ""
+	for _, item := range payload.Catalog {
+		section := stringValue(item["section"])
+		if section != currentSection {
+			currentSection = section
+			fmt.Printf("%s\n", section)
+		}
+		fmt.Printf("- %s — %s\n", stringValue(item["doc_node"]), stringValue(item["title"]))
+		fmt.Printf("  %s · %s · %s · %s\n", stringValue(item["path"]), stringValue(item["mode"]), stringValue(item["audience"]), stringValue(item["freshness"]))
+	}
+	return nil
+}
+
+func docsFreshnessCmd(args Args) error {
+	vaultPath, err := resolveVaultPath(args, false)
+	if err != nil {
+		return err
+	}
+	if err := reindex(Args{"vault": vaultPath, "quiet": "true"}); err != nil {
+		return err
+	}
+	payload, err := loadDocsIndexPayload(vaultPath)
+	if err != nil {
+		return err
+	}
+	filtered := docsFilterFreshness(payload.Catalog, args.Bool("stale"))
+	counts := docsFreshnessCounts(payload.Catalog)
+	if args.Bool("json") {
+		emitJSON(map[string]any{"ok": true, "vault": vaultPath, "generatedAt": payload.GeneratedAt, "counts": counts, "items": filtered})
+		return nil
+	}
+	fmt.Printf("Docs freshness: %s\n", filepath.Join(vaultPath, "_system", "generated", "docs.index.json"))
+	fmt.Printf("Generated: %s\n", payload.GeneratedAt)
+	fmt.Printf("Counts: %d verified, %d verified_by_task, %d needs_verification, %d waived, %d missing\n\n", counts["verified"], counts["verified_by_task"], counts["needs_verification"], counts["waived"], counts["missing"])
+	if len(filtered) == 0 {
+		fmt.Println("No docs matched the freshness filter.")
+		return nil
+	}
+	for _, item := range filtered {
+		fmt.Printf("- %s — %s\n", stringValue(item["doc_node"]), stringValue(item["freshness"]))
+		fmt.Printf("  page: %s\n", stringValue(item["path"]))
+		if linked := normalizeList(item["linked_tasks"]); len(linked) > 0 {
+			fmt.Printf("  linked tasks: %s\n", strings.Join(linked, ", "))
+		}
+		if event, ok := item["last_verified_event"].(map[string]any); ok && len(event) > 0 {
+			fmt.Printf("  last event: %s by %s on %s via %s\n", stringValue(event["status"]), stringValue(event["actor"]), stringValue(event["date"]), stringValue(event["task"]))
+		}
+		if staleDueTo := normalizeList(item["stale_due_to"]); len(staleDueTo) > 0 {
+			fmt.Printf("  stale due to: %s\n", strings.Join(staleDueTo, ", "))
+		}
+	}
+	return nil
+}
+
+func docsFilterFreshness(catalog []map[string]any, staleOnly bool) []map[string]any {
+	var out []map[string]any
+	for _, item := range catalog {
+		if staleOnly {
+			switch stringValue(item["freshness"]) {
+			case "verified", "verified_by_task":
+				continue
+			}
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func docsFreshnessCounts(catalog []map[string]any) map[string]int {
+	counts := map[string]int{"verified": 0, "verified_by_task": 0, "needs_verification": 0, "waived": 0, "missing": 0}
+	for _, item := range catalog {
+		status := stringValue(item["freshness"])
+		if _, ok := counts[status]; !ok {
+			counts[status] = 0
+		}
+		counts[status]++
+	}
+	return counts
 }
 
 func docsExportCmd(args Args) error {

@@ -1,62 +1,48 @@
 filters:
   and:
+    - 'this.file.folder == "" || file.inFolder(this.file.folder)'
     - 'file.ext == "md"'
     - 'type == "epic"'
-    - 'status != "cancelled"'
 properties:
   "file.name":
-    displayName: "Note"
-  id:
-    displayName: "Acronym"
+    displayName: "ID"
   title:
     displayName: "Title"
   status:
     displayName: "Status"
-  owner:
-    displayName: "Owner"
-  target_release:
-    displayName: "Target release"
-  spec_source:
-    displayName: "Spec"
-  created:
-    displayName: "Created"
-  started:
-    displayName: "Started"
-  completed:
-    displayName: "Completed"
+  summary:
+    displayName: "Summary"
+  updated:
+    displayName: "Updated"
 views:
-  - type: table
-    name: "Board"
-    groupBy:
-      property: note.status
-      direction: ASC
-    order:
-      - "file.name"
-      - id
-      - title
-      - owner
-      - target_release
   - type: table
     name: "Active"
     filters:
       and:
-        - 'status == "active"'
+        - 'status != "done"'
+        - 'status != "cancelled"'
     order:
       - "file.name"
-      - id
       - title
-      - owner
-      - target_release
-      - started
+      - status
+      - summary
+      - updated
   - type: table
-    name: "Intake"
+    name: "All"
+    order:
+      - "file.name"
+      - title
+      - status
+      - summary
+      - updated
+  - type: table
+    name: "Done"
     filters:
       and:
-        - 'status == "intake"'
+        - 'status == "done" || status == "cancelled"'
     order:
       - "file.name"
-      - id
       - title
-      - owner
-      - target_release
-      - created
+      - status
+      - summary
+      - updated

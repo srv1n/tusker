@@ -1,112 +1,105 @@
 ---
-schema_version: 2
-record_id: ""
+schema: tusker.task/v5
 id: "{{id}}"
 title: "{{title}}"
-type: "bug"
-status: "intake"
-review_state: "none"
-work_revision: 0
-change_type: "bug"
-epic: "[[{{epic}}]]"
-epic_record_id: ""
-size: "s"
-risk: "medium"
-priority: "p2"
-delegation: "execute"
-surfaces: []
-assignee: ""
-requester: ""
-ai_assistance: "heavy"
+type: task
+kind: bug
+epic: "{{epic}}"
+status: draft
+priority: p1
+risk: medium
+size: s
+delegation: execute
+ai_assistance: heavy
 ai_tools: []
-ai_session_log: ""
-attested_by: ""
-attested_at: ""
-attested_role: ""
-signoff_by: ""
-signoff_at: ""
-dod_code_complete: false
-dod_user_verified: false
-created: "{{date}}"
-updated: "{{date}}"
-due: ""
-started: ""
-review_requested_at: ""
-verified_by: ""
-verified_at: ""
-reviewed_by: ""
-reviewed_at: ""
-completed: ""
-cancelled_at: ""
-blocked_since: ""
-prs: []
-related: []
-related_record_ids: []
-blocks: []
-blocks_record_ids: []
+domains: []
+doc_nodes: []
 blocked_by: []
-blocked_by_record_ids: []
-transitions: []
-tags: []
+block_reason: ""
+created: "2026-04-30"
+updated: "2026-04-30"
 ---
 
 # {{id}} · {{title}}
 
-## Summary
+## Intent
 
-<!-- One paragraph: observed behavior, expected behavior, user impact. -->
+## Scope
 
-## Repro
+In:
+- defect fix
+- regression protection
+
+Out:
+- unrelated cleanup
+
+## Symptom
+
+-
+
+## Reproduction
 
 1.
-2.
-3.
 
 Expected:
+-
 
 Observed:
+-
 
-## Environment
+## Acceptance contract
 
-- Platform:
-- Version:
-- Data state:
+| # | Outcome | Proof required | Docs impact |
+|---|---|---|---|
+| 1 |  |  |  |
 
-## Root cause
+## Canon
 
-<!-- Why this happens. Link to the offending code. -->
+-
 
-## Fix
+## Code/system anchors
 
-<!-- The change that resolves it. Not the full diff — the idea. -->
+-
+
+## Constraints
+
+-
+
+## Escalate if
+
+-
+
+## Deliverables
+
+- regression test
+- before/after evidence
 
 ## Verification plan
 
-- [ ]
-- [ ]
+-
 
-## Evidence
+## Knowledge delta
 
-<!-- Required at risk ≥ medium. Test output, before/after screenshots, regression test link. -->
+| Topic | Before | After | Audience | Target doc nodes |
+|---|---|---|---|---|
+|  |  |  |  |  |
 
 ---
 
-## Agent handoff
+## Execution plan
 
-<!--
-Above this line is human-authored spec. Below is agent execution material.
-Agents may append; do not rewrite above the line without approval.
--->
+1. reproduce
+2. fix
+3. add regression protection
 
-Read first:
-1.
+## Evidence
 
-Primary code anchors:
 -
 
-Stop conditions:
-- Regression test added
+## Verification log
+
+-
 
 ## Work log
 
-- {{date}} — tusker — bug created
+- 2026-04-30 — tusker — bug task created

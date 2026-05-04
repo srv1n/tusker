@@ -1,6 +1,6 @@
 ---
-title: "Risk and evidence"
-description: "How risk drives ceremony, what evidence each risk tier requires, and who can attest."
+title: "Risk And Evidence"
+description: "Risk drives ceremony. Size is effort; risk is blast radius."
 tusker:
   audience: "user"
   publish_path: "user/reference/risk-and-evidence"
@@ -8,114 +8,63 @@ tusker:
   route: "/user/reference/risk-and-evidence/"
   source_kind: "repo_doc"
   source_path: "skill/references/RISK_AND_EVIDENCE.md"
-  summary: "How risk drives ceremony, what evidence each risk tier requires, and who can attest."
+  summary: "Risk drives ceremony. Size is effort; risk is blast radius."
   tags:
     - "reference"
-  updated: "2026-04-22"
+  updated: "2026-04-29"
 ---
 
-# Risk and evidence
+# Risk And Evidence
 
-How risk drives ceremony, what evidence each risk tier requires, and who can attest.
+Risk drives ceremony. Size is effort; risk is blast radius.
 
-## Risk is ceremony, not effort
-
-`risk` is orthogonal to `size`. A small typo fix can be `risk: low`; a one-liner that flips a feature flag in prod can be `risk: high`. Pick by blast radius, not by lines of code.
-
-| Risk | When to pick it |
-|---|---|
-| `low` | typo, doc tweak, local refactor, dev-only script, anything reversible with a revert |
-| `medium` | feature with tests, refactor of one module, migration with rollback, UI change on a non-critical path |
-| `high` | security-sensitive change, cross-module refactor, data migration, anything with a staged rollout plan |
-| `critical` | payment/auth/PII pathway, irreversible migration, incident response, anything where a bad deploy means user-visible harm |
-
-## Section requirements
-
-See `FORMAL_INTAKE.md` for the full matrix. Headline:
-
-- `low` — Problem, Acceptance, Plan, Verification, Work log, Agent handoff
-- `medium` — adds Canon, Code anchors, Evidence
-- `high` — adds Considered and rejected, Decision, Rollout
-- `critical` — adds Kill list, plus human attestation + code-owner signoff
-
-## Evidence tiers
-
-`## Evidence` holds artifacts *after* execution, not plans.
-
-| Risk | Minimum evidence |
-|---|---|
-| `low` | one line: commands run, "tests pass," PR link |
-| `medium` | test output OR screenshot/gif, plus PR link |
-| `high` | test output, before/after, rollback notes, PR link |
-| `critical` | all of high + security review summary |
-
-### Conditional demo rule
-
-If `change_type: feature` AND `surfaces` includes a UI surface (frontend/desktop/mobile) AND `risk ≥ medium`:
-
-**`## Evidence` MUST include a demo asset** — video/gif/screenshot — linked from `Attachments/` or a stable external host. The validator enforces this.
-
-### Where binaries live
-
-Vault-relative: `Attachments/<STORY-ID>/<filename>`. The `tusker attach-evidence` command handles this:
-
-```bash
-tusker attach-evidence --id <STORY-ID> --kind <screenshot|video|log|bench|pr> \
-  --path <file-or-url> [--note "..."]
-```
-
-Copies the file, appends a link to `## Evidence`, logs a Work log line.
-
-## Attestation
-
-Attestation asserts: **"I reviewed the evidence and understand the final behavior and edge cases."** Not a claim of having read every line.
-
-| Risk | Required | Who |
+| Risk | Use For | Minimum Evidence |
 |---|---|---|
-| `low` | 1 attestation | agent peer OR human |
-| `medium` | 1 attestation | agent peer OR human |
-| `high` | 1 attestation | **human only** |
-| `critical` | 1 attestation + 1 code-owner signoff | **human only** |
+| `low` | typo, doc tweak, local refactor, dev-only script | one useful line: command run, PR link, or result |
+| `medium` | ordinary feature, tested refactor, reversible migration | test output or demo asset, plus PR/diff link |
+| `high` | security-sensitive change, cross-module refactor, data migration | tests, before/after proof, rollback notes, PR/diff link |
+| `critical` | auth/payment/PII, irreversible migration, incident response | all high-risk evidence plus explicit human review notes |
 
-### Commands
+## Required Sections
+
+V5 task templates provide the sections. Fill them with substance; do not leave placeholders.
+
+- `low`: `Intent`, `Acceptance contract`, `Evidence`
+- `medium`: add `Scope`, `Deliverables`, `Verification plan`
+- `high`: add `Canon`, `Code/system anchors`, `Constraints`, `Knowledge delta`
+- `critical`: add rollback detail and explicit human review notes
+
+## Evidence Command
 
 ```bash
-tusker attest --id <ID> --by <name> --role <agent|human>
-tusker signoff --id <ID> --by <owner>     # critical only
+tusker evidence <TASK-ID> <screenshot|video|log|bench|pr|packet> <file-or-url> [--note "..."]
 ```
 
-Both write frontmatter fields (`attested_by`, `attested_at`, `attested_role`, `signoff_by`, `signoff_at`) and append to Work log.
+Local files are copied under `Attachments/<TASK-ID>/`; URLs are linked as-is. Evidence is proof after execution, not a plan.
 
-### Agent peer attestation
+## Demo Rule
 
-At `risk ≤ medium`, another agent (not the author) can attest. The peer must read the evidence and run the verification plan. Rubber-stamp attestation is worse than no attestation because it burns the trust signal.
+If `kind: feature`, the task touches a UI surface, and `risk >= medium`, attach a screenshot, GIF, or video.
 
-### Human attestation at high/critical
+## Knowledge Delta
 
-A human must read the evidence. Agents cannot attest their own work at these risk levels. The validator refuses `status: done` without human attestation.
+When a task changes durable understanding, fill:
 
-## What the validator checks
+| Topic | Before | After | Audience | Target doc nodes |
+|---|---|---|---|---|
 
-On worker handoff / `set-status active/in_review/done`:
+The row must explain the reader-facing change. “Updated docs” is not a knowledge delta.
 
-- required sections exist AND have substance (not empty, not just "TODO")
-- evidence meets the risk floor
-- demo asset present if the conditional rule fires
-- AI disclosure set
-- attestation present for `done` per risk table
+## Close Gate
 
-On `set-status done` at critical: signoff also required.
+Before close:
 
-## Rollout and kill list
+```bash
+tusker docs check <TASK-ID>
+tusker status <TASK-ID> review
+tusker verify <TASK-ID> --by <name>
+tusker close <TASK-ID> --by <reviewer>
+tusker validate
+```
 
-### Rollout (required at risk ≥ high)
-
-Three parts:
-
-- **Feature flag** — name it. `<scope>_<behavior>_enabled` is the convention. Default off on first build.
-- **Staged rollout** — dev → bake → prod default. Name the bake duration.
-- **Rollback plan** — literal command / toggle / revert. One sentence; prove it's fast.
-
-### Kill list (required at risk = critical)
-
-What gets deleted when this ships. Forces you to commit to the cleanup rather than leaving two code paths alive forever. One bullet per thing to delete, with the story or PR that will do the deletion.
+`close` refuses tasks with unresolved `doc_nodes`.

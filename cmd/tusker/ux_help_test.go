@@ -35,7 +35,6 @@ func TestMissingVaultGuidancePreservesStructuredContext(t *testing.T) {
 		t.Fatalf("unexpected message: %s", issue.Message)
 	}
 	for _, expected := range []string{
-		"tusker bootstrap --vault ./tusker",
 		"tusker init --yes",
 		"tusker --vault <path>",
 	} {
@@ -49,52 +48,40 @@ func TestMissingVaultGuidancePreservesStructuredContext(t *testing.T) {
 	}
 	assertEqual(t, "--vault", context["arg"], "missing vault context arg")
 	assertEqual(t, expectedWD, context["cwd"], "missing vault context cwd")
-	assertEqual(t, "tusker bootstrap --vault ./tusker", context["tracker_only"], "missing vault tracker-only guidance")
 	assertEqual(t, "tusker init --yes", context["repo_wiring"], "missing vault repo-wiring guidance")
 	assertEqual(t, "--vault <path>", context["existing_vault"], "missing vault existing-vault guidance")
 }
 
-func TestNewStoryHelpListsFormalIntakeFlags(t *testing.T) {
-	output := captureStdout(t, printNewStoryHelp)
+func TestNewHelpListsV5Commands(t *testing.T) {
+	output := captureStdout(t, printNewHelp)
 	for _, expected := range []string{
-		"--priority p0|p1|p2|p3|icebox",
-		"--assignee <name>",
-		"--requester <name>",
-		"--delegation execute|explore|escalate",
-		"--change-type feature|refactor|migration|security|docs|chore|research|incident|bug",
-		"--surfaces <csv>",
-		"--ai-assistance none|light|moderate|heavy",
-		"--ai-tools <csv>",
-		"--ai-session-log <path>",
-		"--due <date>",
-		"--related <links>",
-		"--blocks <links>",
-		"--blocked-by <links>",
-		"--tags <csv>",
+		"tusker new epic",
+		"tusker new task",
+		"tusker new bug",
+		"tusker new doc",
+		"--priority p0|p1|p2|p3",
+		"--kind <type>",
+		"--node <route>",
+		"--publish-lane <lane>",
 		"Examples:",
-		"tusker new-story --vault ./tusker --epic APP",
+		"tusker new task --vault ./tusker --epic APP",
 	} {
 		if !strings.Contains(output, expected) {
-			t.Fatalf("new-story help missing %q:\n%s", expected, output)
+			t.Fatalf("new help missing %q:\n%s", expected, output)
 		}
 	}
 }
 
 func TestNewDocHelpListsPublicationFlags(t *testing.T) {
-	output := captureStdout(t, printNewDocHelp)
+	output := captureStdout(t, printNewHelp)
 	for _, expected := range []string{
-		"--status draft|review|approved|published|archived",
-		"--publish true|false",
-		"--publish-path <route>",
-		"--publish-description <text>",
-		"--publish-order <n>",
-		"--publish-section-title <text>",
-		"--publish-url <url>",
-		"--tags <csv>",
-		"--publish true requires --status approved|published",
+		"tusker new doc",
+		"--node <route>",
+		"--publish-lane <lane>",
+		"--no-publish",
 	} {
 		if !strings.Contains(output, expected) {
-			t.Fatalf("new-doc help missing %q:\n%s", expected, output)
+			t.Fatalf("new doc help missing %q:\n%s", expected, output)
 		}
 	}
 }
@@ -102,13 +89,71 @@ func TestNewDocHelpListsPublicationFlags(t *testing.T) {
 func TestUpdateHelpExplainsSkillRefresh(t *testing.T) {
 	output := captureStdout(t, printUpdateHelp)
 	for _, expected := range []string{
-		"tusker update [--bin-dir <path>] [--no-bin] [--repo <path>] [--json]",
+		"tusker update [--bin-dir <path>] [--no-bin] [--repo <path>] [--repo-only] [--json]",
 		"refreshes existing user skills in ~/.agents, ~/.codex, and ~/.claude",
 		"with --repo, also refreshes repo-local .agents/.claude skill installs",
+		"with --repo-only, skips user skill installs and touches only the repo",
 		"from the currently running binary",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("update help missing %q:\n%s", expected, output)
+		}
+	}
+}
+
+func TestVaultHelpExplainsSharedObsidianMounts(t *testing.T) {
+	output := captureStdout(t, printVaultHelp)
+	for _, expected := range []string{
+		"tusker vault set --path <obsidian-vault>",
+		"tusker vault mount [--repo <path>] [--vault <path>] [--name <folder>]",
+		"Link repo-local Tusker trackers into one shared Obsidian vault",
+		"vault mount creates a symlink",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("vault help missing %q:\n%s", expected, output)
+		}
+	}
+}
+
+func TestRuntimeCommandParsingIncludesOperatorGroups(t *testing.T) {
+	cases := []struct {
+		argv    []string
+		command string
+		id      string
+	}{
+		{[]string{"tusker", "daemon", "status"}, "daemon status", ""},
+		{[]string{"tusker", "daemon", "run", "--once"}, "daemon run", ""},
+		{[]string{"tusker", "projects", "add", "--repo", "."}, "projects add", ""},
+		{[]string{"tusker", "runs", "inspect", "ORC-T-0018"}, "runs inspect", "ORC-T-0018"},
+		{[]string{"tusker", "help", "runs", "events"}, "help runs events", ""},
+	}
+	for _, tc := range cases {
+		command, args := parseCLI(tc.argv)
+		assertEqual(t, tc.command, command, "parsed command")
+		if tc.id != "" {
+			assertEqual(t, tc.id, args.String("_pos0"), "parsed positional id")
+		}
+	}
+}
+
+func TestRuntimeHelpExplainsOperatorSurface(t *testing.T) {
+	for name, fn := range map[string]func(){
+		"daemon":   printDaemonHelp,
+		"projects": printProjectsHelp,
+		"runs":     printRunsHelp,
+		"refresh":  printRefreshHelp,
+	} {
+		output := captureStdout(t, fn)
+		for _, expected := range []string{"Usage:", "Purpose:"} {
+			if !strings.Contains(output, expected) {
+				t.Fatalf("%s help missing %q:\n%s", name, expected, output)
+			}
+		}
+	}
+	mainHelp := captureStdout(t, printHelp)
+	for _, expected := range []string{"daemon", "projects", "runs", "refresh"} {
+		if !strings.Contains(mainHelp, expected) {
+			t.Fatalf("main help missing %q:\n%s", expected, mainHelp)
 		}
 	}
 }

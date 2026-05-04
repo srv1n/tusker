@@ -1,0 +1,40 @@
+schema: tusker.risk/v5
+
+tiers:
+  low:
+    required_sections:
+      - Outcome
+      - Acceptance contract
+      - Evidence packet
+  medium:
+    required_sections:
+      - Outcome
+      - Acceptance contract
+      - Scope
+      - Verification contract
+      - Evidence packet
+      - Knowledge delta
+  high:
+    required_sections:
+      - Outcome
+      - Acceptance contract
+      - Scope
+      - Context and canon
+      - Constraints and stop conditions
+      - Verification contract
+      - Evidence packet
+      - Knowledge delta
+      - Verification log
+  critical:
+    required_sections:
+      - Outcome
+      - Acceptance contract
+      - Scope
+      - Context and canon
+      - Constraints and stop conditions
+      - Verification contract
+      - Evidence packet
+      - Knowledge delta
+      - Verification log
+      - Rollback plan
+      - Human signoff

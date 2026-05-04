@@ -53,10 +53,10 @@
           </div>
 
           <div class="file">
-            <div class="file-header"><span>MEM-S-0007.md</span></div>
+            <div class="file-header"><span>MEM-T-0007.md</span></div>
             <div class="file-section fm">
               <div class="fm-fence">---</div>
-              <div class="fm-row"><span class="fm-key">id:</span> MEM-S-0007</div>
+              <div class="fm-row"><span class="fm-key">id:</span> MEM-T-0007</div>
               <div class="fm-row"><span class="fm-key">risk:</span> medium</div>
               <div class="fm-row"><span class="fm-key">status:</span> active</div>
               <div class="fm-row"><span class="fm-key">ai_tools:</span> [claude]</div>
@@ -64,7 +64,7 @@
             </div>
             <div class="file-section">
               <div class="md-h1"># Persist agent context<br/>across sessions</div>
-              <div class="md-p">When the dispatcher restarts, the worker resumes from the last attested checkpoint.</div>
+              <div class="md-p">When the dispatcher restarts, the worker resumes from the last verified evidence checkpoint.</div>
             </div>
           </div>
 

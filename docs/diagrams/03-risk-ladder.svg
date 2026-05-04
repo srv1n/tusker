@@ -37,7 +37,7 @@
           <span>TUSKER &#160;·&#160; 03</span>
         </div>
         <div style="font-size:52px;font-weight:700;letter-spacing:-0.015em;line-height:1.05;color:#1A1A17;margin-top:24px;">Risk drives ceremony.</div>
-        <div style="font-size:18px;font-weight:400;line-height:1.45;color:#3A352D;max-width:1200px;margin-top:16px;">Blast radius scales the ticket — not lines of code. A typo at <code style="font-family:inherit;font-weight:600;">low</code> needs one line. A flag flip at <code style="font-family:inherit;font-weight:600;">high</code> needs a human signoff.</div>
+        <div style="font-size:18px;font-weight:400;line-height:1.45;color:#3A352D;max-width:1200px;margin-top:16px;">Blast radius scales the ticket — not lines of code. A typo at <code style="font-family:inherit;font-weight:600;">low</code> needs one line. A flag flip at <code style="font-family:inherit;font-weight:600;">high</code> needs a explicit verification.</div>
 
         <div class="body">
           <div class="tier">
@@ -51,7 +51,7 @@
                 One line. <span class="v">Tests pass. PR link.</span>
               </div>
               <div class="row">
-                <span class="label">ATTESTATION</span>
+                <span class="label">VERIFICATION</span>
                 <span class="v">1×</span> · agent or human
               </div>
             </div>
@@ -73,7 +73,7 @@
                 Feature + UI ⇒ <span class="v">demo asset</span>
               </div>
               <div class="row">
-                <span class="label">ATTESTATION</span>
+                <span class="label">VERIFICATION</span>
                 <span class="v">1×</span> · agent or human
               </div>
             </div>
@@ -91,8 +91,8 @@
                 Tests + before/after + <span class="v">rollback notes.</span>
               </div>
               <div class="row gate">
-                <span class="label">ATTESTATION GATE</span>
-                <span class="v">1× human only.</span> Agent cannot self-attest.
+                <span class="label">VERIFICATION GATE</span>
+                <span class="v">1× human only.</span> Independent verification required.
               </div>
             </div>
             <div class="meter"><div class="seg on"></div><div class="seg on"></div><div class="seg warn"></div><div class="seg"></div></div>
@@ -109,8 +109,8 @@
                 All of high + <span class="v">security review.</span>
               </div>
               <div class="row gate">
-                <span class="label">ATTESTATION GATE</span>
-                <span class="v">1× human</span> + <span class="v">code-owner signoff.</span>
+                <span class="label">VERIFICATION GATE</span>
+                <span class="v">1× human</span> + <span class="v">rollback-owner review.</span>
               </div>
             </div>
             <div class="meter"><div class="seg on"></div><div class="seg on"></div><div class="seg warn"></div><div class="seg acc"></div></div>

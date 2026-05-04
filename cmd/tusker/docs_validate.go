@@ -146,7 +146,7 @@ func validateDocsPublicationState(vaultPath string, notes []Note) ([]Issue, []Is
 		}
 		epicID := stringField(note.Data, "id")
 		if _, ok := canonByEpic[epicID]; !ok {
-			errs = append(errs, issue(errorDocsCanonMissing, fmt.Sprintf(`active epic "%s" has no published canon entry in canon-manifest.json`, epicID), note.RelativePath, "publish a canonical D-note or registry doc with owner_epic set, then run `tusker docs export`", map[string]any{"epic": epicID}))
+			errs = append(errs, issue(errorDocsCanonMissing, fmt.Sprintf(`active epic "%s" has no published canon entry in canon-manifest.json`, epicID), note.RelativePath, "publish a canonical doc with owner_epic set, then run `tusker docs export`", map[string]any{"epic": epicID}))
 		}
 	}
 

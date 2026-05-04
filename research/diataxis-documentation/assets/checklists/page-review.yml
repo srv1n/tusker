@@ -1,0 +1,37 @@
+universal:
+  - primary_reader_named
+  - primary_user_need_named
+  - one_primary_diataxis_mode
+  - source_of_truth_known_or_assumption_explicit
+  - title_matches_user_need
+  - stale_triggers_defined
+tutorial:
+  - controlled_safe_path
+  - visible_results_early
+  - expected_output_shown
+  - minimal_explanation
+  - no_unnecessary_choices
+how_to:
+  - real_user_goal
+  - competent_user_assumed
+  - verification_step_present
+  - variants_cover_real_cases
+  - theory_linked_out
+reference:
+  - neutral_description
+  - scope_explicit
+  - system_structure_mirrored
+  - defaults_limits_errors_precise
+  - examples_clarify_not_teach
+explanation:
+  - bounded_topic
+  - answers_why_or_model_question
+  - tradeoffs_or_connections_present
+  - no_procedure_creep
+agent_facing:
+  - inputs_outputs_defined
+  - preconditions_defined
+  - defaults_explicit
+  - observable_validation
+  - failure_modes_defined
+  - source_of_truth_and_stale_triggers_defined

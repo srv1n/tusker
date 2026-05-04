@@ -1,14 +1,13 @@
 ---
 workflow_version: 1
-tracker_schema_version: 2
+tracker_schema_version: 5
 tracker:
     kind: tusker_vault
     active_states:
         - active
         - rework
-        - merging
     review_states:
-        - in_review
+        - review
     terminal_states:
         - done
         - cancelled
@@ -46,6 +45,11 @@ codex:
     max_turns: 1
 claude:
     command: claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions
+extensions:
+    enabled: false
+    allowed_tools: []
+    allowed_mcps: []
+    allow_tusker_read_tools: false
 hooks:
     after_workspace_create: []
     before_workspace_remove: []
@@ -53,11 +57,11 @@ hooks:
 
 ## Routing
 
-You are working on {{ note.id }} for {{ project.name }}. Dispatch only makes sense because this note is currently {{ note.status }} and the workspace is ready at {{ workspace.path }}.
+You are working on {{ note.id }} for {{ project.name }}. Dispatch only makes sense because this task is currently {{ note.status }} and the workspace is ready at {{ workspace.path }}.
 
 ## Prompt
 
-Use the installed Tusker skill bundle for durable ticket semantics, evidence, and review discipline. Work inside {{ workspace.path }}. Treat {{ repo.root }} as the source repository root for context only unless the task explicitly requires comparing against it.
+Use the installed Tusker skill bundle for durable task semantics, evidence, and verification discipline. Work inside {{ workspace.path }}. Treat {{ repo.root }} as the source repository root for context only unless the task explicitly requires comparing against it.
 
 Item: {{ note.title }}
 Record: {{ note.record_id }}
@@ -66,10 +70,14 @@ Attempt: {{ attempt.number }}
 Workflow: {{ workflow.path }}
 Vault: {{ vault.path }}
 
+## Completion contract
+
+When the work is demonstrably ready for verification, move the task to `review`. If the work is blocked, set status to `blocked` with a concrete blocker instead of exiting cleanly. If the task remains active after a turn, the daemon will continue or retry the same session.
+
 ## Retry policy
 
-Retry only transient infrastructure failures. Human-directed rework creates a new work revision.
+Retry only transient infrastructure failures. Human-directed rework creates a new active task revision.
 
 ## Human override policy
 
-Humans may edit notes directly, but runtime state belongs to the daemon store.
+Humans may edit tasks directly, but runtime state belongs to the daemon store.

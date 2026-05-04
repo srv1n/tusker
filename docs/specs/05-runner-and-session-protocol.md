@@ -180,7 +180,7 @@ The daemon owns:
 - lease bookkeeping
 - attempt creation
 - retry scheduling
-- review handoff
+- review packet generation
 - durable tracker-state writes
 
 ## Start / Resume Contract

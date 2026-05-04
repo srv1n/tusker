@@ -1,0 +1,9 @@
+# tusker
+.obsidian/workspace*.json
+.obsidian/workspaces*.json
+.obsidian/cache/
+.obsidian/plugins/
+.obsidian/themes/
+.DS_Store
+Thumbs.db
+_system/generated/

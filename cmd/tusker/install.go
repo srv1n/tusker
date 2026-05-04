@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,7 +17,6 @@ import (
 
 const (
 	currentSkillInstallDir = "tusker"
-	legacySkillInstallDir  = "obsidian-vault-tracker"
 )
 
 func syncRepoContract(args Args) error {
@@ -73,87 +73,6 @@ func syncRepoContract(args Args) error {
 	return nil
 }
 
-func installCmd(args Args) error {
-	if args.Bool("help") {
-		printInstallHelp()
-		return nil
-	}
-	if !args.Bool("codex-user") && !args.Bool("claude-user") && args.String("repo") == "" && !args.Bool("bin-only") && !args.Bool("refresh-existing-user-skills") {
-		printInstallHelp()
-		return tuskerError(errorMissingArg, "install needs one of --codex-user, --claude-user, --repo, --bin-only, or --refresh-existing-user-skills")
-	}
-
-	destinations := []string{}
-	if args.Bool("codex-user") {
-		destinations = append(destinations, defaultCodexUserSkillDestination())
-	}
-	if args.Bool("claude-user") {
-		destinations = append(destinations, filepath.Join(userHomeDir(), ".claude", "skills", currentSkillInstallDir))
-	}
-	if repoPath := args.String("repo"); repoPath != "" {
-		repoRoot, err := filepath.Abs(repoPath)
-		if err != nil {
-			return err
-		}
-		destinations = append(destinations,
-			filepath.Join(repoRoot, ".agents", "skills", currentSkillInstallDir),
-			filepath.Join(repoRoot, ".claude", "skills", currentSkillInstallDir),
-		)
-	}
-	migrationReport := []string{}
-	refreshDestinations := []string{}
-	if args.Bool("refresh-existing-user-skills") {
-		var err error
-		migrationReport, err = migrateLegacyUserSkillInstalls()
-		if err != nil {
-			return err
-		}
-		refreshDestinations = existingUserSkillDestinations()
-	}
-
-	for _, destination := range destinations {
-		if !args.Bool("force") && fileExists(destination) {
-			return tuskerError(errorAlreadyExists, "Refusing to overwrite existing install without --force: "+destination, withPath(destination))
-		}
-	}
-
-	if !args.Bool("bin-only") {
-		for _, destination := range destinations {
-			if err := installSkillPayload(destination); err != nil {
-				return err
-			}
-			fmt.Printf("Installed to %s\n", destination)
-		}
-	}
-	for _, destination := range refreshDestinations {
-		if err := installSkillPayload(destination); err != nil {
-			return err
-		}
-		fmt.Printf("Refreshed existing user skill at %s\n", destination)
-	}
-	if !args.Bool("refresh-existing-user-skills") && (args.Bool("codex-user") || args.Bool("claude-user")) {
-		var err error
-		migrationReport, err = migrateLegacyUserSkillInstalls()
-		if err != nil {
-			return err
-		}
-	}
-	for _, line := range migrationReport {
-		fmt.Println(line)
-	}
-	if args.Bool("refresh-existing-user-skills") && len(refreshDestinations) == 0 {
-		fmt.Println("No existing user skill installs found to refresh")
-	}
-
-	if !args.Bool("no-bin") {
-		if err := installBinarySymlink(args); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func updateCmd(args Args) error {
 	if args.Bool("help") {
 		printUpdateHelp()
@@ -161,12 +80,10 @@ func updateCmd(args Args) error {
 	}
 
 	updatedSkills := []string{}
-	migrationReport, err := migrateLegacyUserSkillInstalls()
-	if err != nil {
-		return err
+	destinations := []string{}
+	if !args.Bool("repo-only") {
+		destinations = existingUserSkillDestinations()
 	}
-
-	destinations := existingUserSkillDestinations()
 	if repoPath := strings.TrimSpace(args.String("repo")); repoPath != "" {
 		repoRoot, err := filepath.Abs(repoPath)
 		if err != nil {
@@ -176,6 +93,8 @@ func updateCmd(args Args) error {
 			filepath.Join(repoRoot, ".agents", "skills", currentSkillInstallDir),
 			filepath.Join(repoRoot, ".claude", "skills", currentSkillInstallDir),
 		)
+	} else if args.Bool("repo-only") {
+		return tuskerError(errorMissingArg, "--repo is required with --repo-only", withContext(map[string]any{"arg": "--repo"}))
 	}
 	destinations = uniqueInstallDestinations(destinations)
 
@@ -196,22 +115,18 @@ func updateCmd(args Args) error {
 
 	if args.Bool("json") {
 		emitJSON(map[string]any{
-			"ok":              true,
-			"binary_updated":  binaryUpdated,
-			"updated_skills":  updatedSkills,
-			"migration_notes": migrationReport,
+			"ok":             true,
+			"binary_updated": binaryUpdated,
+			"updated_skills": updatedSkills,
 		})
 		return nil
 	}
 
-	for _, line := range migrationReport {
-		fmt.Println(line)
-	}
 	for _, destination := range updatedSkills {
 		fmt.Printf("Updated Tusker skill at %s\n", destination)
 	}
 	if len(updatedSkills) == 0 {
-		fmt.Println("No existing user skill installs found to refresh. Run `tusker install --codex-user --claude-user` once, or pass `--repo <path>` for repo-local skills.")
+		fmt.Println("No existing user skill installs found to refresh. Pass `--repo <path>` for repo-local skills.")
 	}
 	return nil
 }
@@ -247,59 +162,12 @@ func existingUserSkillDestinations() []string {
 	return destinations
 }
 
-func migrateLegacyUserSkillInstalls() ([]string, error) {
-	pairs := [][2]string{
-		{
-			filepath.Join(userHomeDir(), ".agents", "skills", currentSkillInstallDir),
-			filepath.Join(userHomeDir(), ".agents", "skills", legacySkillInstallDir),
-		},
-		{
-			filepath.Join(userHomeDir(), ".codex", "skills", currentSkillInstallDir),
-			filepath.Join(userHomeDir(), ".codex", "skills", legacySkillInstallDir),
-		},
-		{
-			filepath.Join(userHomeDir(), ".claude", "skills", currentSkillInstallDir),
-			filepath.Join(userHomeDir(), ".claude", "skills", legacySkillInstallDir),
-		},
-	}
-	var report []string
-	for _, pair := range pairs {
-		current := pair[0]
-		legacy := pair[1]
-		if !fileExists(legacy) {
-			continue
-		}
-		if !fileExists(current) {
-			if err := ensureDir(filepath.Dir(current)); err != nil {
-				return nil, err
-			}
-			if err := os.Rename(legacy, current); err != nil {
-				return nil, err
-			}
-			report = append(report, fmt.Sprintf("Migrated legacy skill install %s -> %s", legacy, current))
-			continue
-		}
-		backup := legacySkillBackupPath(legacy)
-		if err := ensureDir(filepath.Dir(backup)); err != nil {
-			return nil, err
-		}
-		if err := os.Rename(legacy, backup); err != nil {
-			return nil, err
-		}
-		report = append(report, fmt.Sprintf("Archived legacy skill install %s -> %s", legacy, backup))
-	}
-	return report, nil
-}
-
-func legacySkillBackupPath(legacy string) string {
-	root := filepath.Dir(filepath.Dir(legacy))
-	name := fmt.Sprintf("%s-%d", legacySkillInstallDir, time.Now().UnixNano())
-	return filepath.Join(root, "skill-backups", name)
-}
-
 func installSkillPayload(destination string) error {
 	entries, err := skillbundle.PayloadEntries()
 	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(destination); err != nil {
 		return err
 	}
 	for _, entry := range entries {
@@ -420,59 +288,38 @@ func findRepoRoot(start string) (string, error) {
 	}
 }
 
-func printInstallHelp() {
-	fmt.Println(`Usage:
-  tusker install --codex-user
-  tusker install --claude-user
-  tusker install --codex-user --claude-user
-  tusker install --repo /path/to/repo
-  tusker install --bin-only
-  tusker install --bin-only --refresh-existing-user-skills
-  tusker update
-
-Every run also symlinks ` + "`tusker`" + ` onto PATH (default ~/.local/bin).
-Override with --bin-dir <path> or skip with --no-bin.
-
-Flags:
-  --codex-user              install skill into ~/.agents/skills/
-  --claude-user             install skill into ~/.claude/skills/
-  --repo <path>             install skill into <repo>/.agents/skills/ and <repo>/.claude/skills/
-  --bin-only                just install the binary, skip the skill copy
-  --refresh-existing-user-skills
-                            refresh existing root user skills only; checks ~/.agents, ~/.codex, and ~/.claude
-  --no-bin                  skip the binary symlink
-  --bin-dir <path>          custom directory for the tusker symlink
-  --force                   overwrite existing installs
-
-Use ` + "`tusker update`" + ` after pulling or rebuilding Tusker. It refreshes the
-currently installed binary link and every existing Tusker user skill bundle from
-the currently running binary.`)
-}
-
 func printUpdateHelp() {
 	fmt.Println(`Usage:
-  tusker update [--bin-dir <path>] [--no-bin] [--repo <path>] [--json]
+  tusker update [--bin-dir <path>] [--no-bin] [--repo <path>] [--repo-only] [--json]
 
 Purpose:
   Refresh the installed tusker binary link and all existing user skill installs
   from the currently running binary. This is the command to run after pulling,
-  rebuilding, or installing a newer Tusker release.
+  rebuilding, or replacing the Tusker binary.
 
 Behavior:
   - refreshes existing user skills in ~/.agents, ~/.codex, and ~/.claude
-  - migrates legacy obsidian-vault-tracker skill installs to tusker
   - relinks tusker on PATH unless --no-bin is passed
   - with --repo, also refreshes repo-local .agents/.claude skill installs
+  - with --repo-only, skips user skill installs and touches only the repo
 
 Examples:
   tusker update
   tusker update --bin-dir ~/.local/bin
-  tusker update --repo . --no-bin`)
+  tusker update --repo . --repo-only --no-bin`)
 }
 
 func initCmd(args Args) error {
 	if args.Bool("help") {
 		printInitHelp()
+		return nil
+	}
+	if args.Bool("migrate-v5") && args.Bool("dry-run") {
+		report, err := migrateLegacyVaultToV5(args)
+		if err != nil {
+			return err
+		}
+		printV5MigrationReport(report, args)
 		return nil
 	}
 	cwd := mustGetwd()
@@ -482,6 +329,7 @@ func initCmd(args Args) error {
 	noMount := args.Bool("no-mount")
 	mountTracker := args.Bool("mount") && !noMount
 	fresh := args.Bool("fresh")
+	vaultOnly := args.Bool("vault-only")
 	interactive := !yes && isTTY(os.Stdin)
 	reader := bufio.NewReader(os.Stdin)
 	ask := func(question string, defaultYes bool) (bool, error) {
@@ -507,6 +355,7 @@ func initCmd(args Args) error {
 		return answer == "y" || answer == "yes", nil
 	}
 	vaultPath := filepath.Join(cwd, "tusker")
+	explicitVault := args.String("vault") != ""
 	if explicit := args.String("vault"); explicit != "" {
 		vaultPath, _ = filepath.Abs(explicit)
 	}
@@ -526,8 +375,11 @@ func initCmd(args Args) error {
 	existingVault := ""
 	if isVaultDir(vaultPath) {
 		existingVault = vaultPath
-	} else if discovered, _ := discoverVault(cwd); discovered != "" {
-		existingVault = discovered
+	} else if !explicitVault {
+		discovered, _ := discoverVault(cwd)
+		if discovered != "" {
+			existingVault = discovered
+		}
 	}
 	if existingVault != "" {
 		fmt.Printf("Vault already present at %s\n", existingVault)
@@ -540,9 +392,9 @@ func initCmd(args Args) error {
 			if err := bootstrap(Args{"vault": vaultPath, "quiet": "true"}); err != nil {
 				return err
 			}
-			fmt.Printf("Bootstrapped vault at %s\n", vaultPath)
+			fmt.Printf("Initialized vault at %s\n", vaultPath)
 		} else {
-			fmt.Println("Skipped vault bootstrap. Aborting - init needs a vault.")
+			fmt.Println("Skipped vault initialization. Aborting - init needs a vault.")
 			return nil
 		}
 	}
@@ -550,42 +402,56 @@ func initCmd(args Args) error {
 	if effectiveVault == "" {
 		effectiveVault = vaultPath
 	}
+	if err := bootstrap(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
+		return err
+	}
 	if err := workflowInitCmd(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
 		return err
+	}
+	if args.Bool("migrate-v5") {
+		report, err := migrateLegacyVaultToV5(args)
+		if err != nil {
+			return err
+		}
+		printV5MigrationReport(report, args)
 	}
 	vaultRelative := relativeFromRepo(cwd, effectiveVault)
 	if vaultRelative == "" {
 		vaultRelative = "tusker"
 	}
-	readmeLink := filepath.ToSlash(filepath.Join(vaultRelative, "README.md"))
-	for _, filename := range []string{"AGENTS.md", "CLAUDE.md"} {
-		filePath := filepath.Join(cwd, filename)
-		question := fmt.Sprintf("%s doesn't exist - create it with the tusker pointer?", filename)
-		if fileExists(filePath) {
-			question = fmt.Sprintf("Found %s - inject tusker epic-roster pointer?", filename)
+	if !vaultOnly && !args.Bool("no-pointers") {
+		readmeLink := filepath.ToSlash(filepath.Join(vaultRelative, "README.md"))
+		for _, filename := range []string{"AGENTS.md", "CLAUDE.md"} {
+			filePath := filepath.Join(cwd, filename)
+			question := fmt.Sprintf("%s doesn't exist - create it with the tusker pointer?", filename)
+			if fileExists(filePath) {
+				question = fmt.Sprintf("Found %s - inject tusker epic-roster pointer?", filename)
+			}
+			doInject, err := ask(question, true)
+			if err != nil {
+				return err
+			}
+			if !doInject {
+				continue
+			}
+			changed, err := upsertTuskerPointer(filePath, readmeLink)
+			if err != nil {
+				return err
+			}
+			if changed != "" {
+				fmt.Printf("%s %s\n", capitalize(changed), filePath)
+			}
 		}
-		doInject, err := ask(question, true)
+	}
+	if !vaultOnly && !args.Bool("no-contract") {
+		doContract, err := ask("Install repo-contract files (.github templates, agent-workflow docs)?", true)
 		if err != nil {
 			return err
 		}
-		if !doInject {
-			continue
-		}
-		changed, err := upsertTuskerPointer(filePath, readmeLink)
-		if err != nil {
-			return err
-		}
-		if changed != "" {
-			fmt.Printf("%s %s\n", capitalize(changed), filePath)
-		}
-	}
-	doContract, err := ask("Install repo-contract files (.github templates, agent-workflow docs)?", true)
-	if err != nil {
-		return err
-	}
-	if doContract {
-		if err := syncRepoContract(Args{"repo": cwd, "vault": effectiveVault}); err != nil {
-			return err
+		if doContract {
+			if err := syncRepoContract(Args{"repo": cwd, "vault": effectiveVault}); err != nil {
+				return err
+			}
 		}
 	}
 	if err := reindex(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
@@ -615,20 +481,41 @@ func initCmd(args Args) error {
 	fmt.Println()
 	fmt.Println("Done. Next steps:")
 	fmt.Println("  tusker validate --vault " + effectiveVault)
-	fmt.Println("  tusker epics --vault " + effectiveVault)
-	fmt.Println("  tusker new-epic --vault " + effectiveVault + " --acronym APP --title \"App foundation\"")
-	if mountTracker {
-		fmt.Println("  tusker vault status")
-	} else {
-		fmt.Println("  tusker vault set --path <obsidian-vault>   # then: tusker mount")
-	}
-	if registerDaemon {
-		fmt.Println("  tusker daemon run --once")
-		fmt.Println("  tusker runs --json")
-	} else {
-		fmt.Println("  tusker projects add --repo . --vault " + effectiveVault + "   # when you want daemon mode")
-	}
+	fmt.Println("  tusker list --vault " + effectiveVault + " --type epic")
+	fmt.Println("  tusker new epic --vault " + effectiveVault + " --acronym APP --title \"App foundation\"")
 	return nil
+}
+
+func printV5MigrationReport(report *v5MigrationReport, args Args) {
+	if args.Bool("json") {
+		emitJSON(report)
+		return
+	}
+	mode := "Migrated"
+	if report.DryRun {
+		mode = "Would migrate"
+	}
+	fmt.Printf("%s %d notes in %s\n", mode, report.NotesChanged, report.Vault)
+	if report.BackupPath != "" {
+		fmt.Printf("Backup: %s\n", report.BackupPath)
+	}
+	if report.FilesMoved > 0 || report.DocsMapNodesAdd > 0 {
+		fmt.Printf("Files moved: %d\n", report.FilesMoved)
+		fmt.Printf("Docs-map nodes added: %d\n", report.DocsMapNodesAdd)
+	}
+	if len(report.IDMap) > 0 {
+		fmt.Println("ID mapping:")
+		keys := make([]string, 0, len(report.IDMap))
+		for key := range report.IDMap {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if report.IDMap[key] != key {
+				fmt.Printf("  %s -> %s\n", key, report.IDMap[key])
+			}
+		}
+	}
 }
 
 func upsertGitignore(vaultPath string) error {
@@ -653,9 +540,9 @@ func renderTuskerPointerBlock(readmeLink string) string {
 		tuskerPointerBegin,
 		"## Project overview + epic roster (Tusker)",
 		"",
-		fmt.Sprintf("This project's vault landing page lives at `%s` — read it before logging new work. It has two sections: a hand-edited **Project overview** (preserved across regens, between `<!-- tusker:overview:begin -->` markers) and an auto-generated **Epic roster** (regenerated on every `tusker reindex`). For a live terminal view of epics only, run `tusker epics`.", readmeLink),
+		fmt.Sprintf("This project's vault landing page lives at `%s` — read it before logging new work. It has two sections: a hand-edited **Project overview** (preserved across regens, between `<!-- tusker:overview:begin -->` markers) and an auto-generated **Epic roster** (regenerated on every `tusker reindex`). For a live terminal view of epics only, run `tusker list --type epic`.", readmeLink),
 		"",
-		"When logging work: pick the epic whose summary best matches, and announce the ID **plus a one-line rationale for the epic choice**. If nothing fits and the work will outlive one story, create a new epic with `tusker new-epic --acronym <ACR> --summary \"...\"`.",
+		"When logging work: pick the epic whose summary best matches, and announce the ID **plus a one-line rationale for the epic choice**. If nothing fits and the work will outlive one task, create a new epic with `tusker new epic --acronym <ACR> --title \"<name>\" --summary \"...\"`.",
 		tuskerPointerEnd,
 	}, "\n")
 }

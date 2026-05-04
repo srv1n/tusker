@@ -1,0 +1,14 @@
+This skill package is licensed under Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0), because it adapts and synthesizes the Diátaxis documentation framework by Daniele Procida.
+
+Attribution:
+- Diátaxis, by Daniele Procida: https://diataxis.fr/
+- Source repository: https://github.com/evildmp/diataxis-documentation-framework
+
+This package does not reproduce the Diátaxis website verbatim. It is a derivative operational guide and Agent Skill built from the framework's public concepts.
+
+CC BY-SA 4.0 summary:
+- You may share and adapt this material.
+- You must give appropriate credit.
+- You must distribute adaptations under the same license.
+
+Full license text: https://creativecommons.org/licenses/by-sa/4.0/legalcode

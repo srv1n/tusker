@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-//go:embed SKILL.md README.md LICENSE V1_DESIGN.md references docs agents assets
+//go:embed SKILL.md LICENSE references docs agents assets
 var embedded embed.FS
 
 type AssetEntry struct {

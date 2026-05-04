@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	docsManifestSchemaVersion    = 1
+	docsManifestSchemaVersion    = 2
 	docsPublicationIndexRelative = "_system/generated/publication.index.json"
 	docsRegistryRelative         = "docs/publication.yaml"
 	docsContentRootRelative      = "src/content/docs"
@@ -48,10 +48,15 @@ type docsSourceDocument struct {
 	Title           string
 	Description     string
 	Audience        string
+	Mode            string
+	AgentLayer      string
+	SourceOfTruth   []string
+	StaleWhenPaths  []string
+	DocsMapOrder    int
 	DocIntent       string
 	Epic            string
 	OwnerEpic       string
-	Story           string
+	Task            string
 	CanonFor        string
 	Canonical       bool
 	CanonicalStatus string
@@ -195,10 +200,14 @@ type docsContentManifestItem struct {
 	Title           string   `json:"title"`
 	Route           string   `json:"route"`
 	Audience        string   `json:"audience"`
+	Mode            string   `json:"mode,omitempty"`
+	AgentLayer      string   `json:"agent_layer,omitempty"`
+	SourceOfTruth   []string `json:"source_of_truth,omitempty"`
+	StaleWhenPaths  []string `json:"stale_when_paths,omitempty"`
 	DocIntent       string   `json:"doc_intent,omitempty"`
 	Epic            string   `json:"epic,omitempty"`
 	OwnerEpic       string   `json:"owner_epic,omitempty"`
-	Story           string   `json:"story,omitempty"`
+	Task            string   `json:"task,omitempty"`
 	CanonFor        string   `json:"canon_for,omitempty"`
 	Canonical       bool     `json:"canonical,omitempty"`
 	CanonicalStatus string   `json:"canonical_status,omitempty"`
@@ -228,9 +237,13 @@ type docsCanonManifestDoc struct {
 	SourceID        string   `json:"source_id,omitempty"`
 	SourcePath      string   `json:"source_path"`
 	Audience        string   `json:"audience,omitempty"`
+	Mode            string   `json:"mode,omitempty"`
+	AgentLayer      string   `json:"agent_layer,omitempty"`
+	SourceOfTruth   []string `json:"source_of_truth,omitempty"`
+	StaleWhenPaths  []string `json:"stale_when_paths,omitempty"`
 	DocIntent       string   `json:"doc_intent,omitempty"`
 	OwnerEpic       string   `json:"owner_epic,omitempty"`
-	Story           string   `json:"story,omitempty"`
+	Task            string   `json:"task,omitempty"`
 	CanonFor        string   `json:"canon_for,omitempty"`
 	Canonical       bool     `json:"canonical,omitempty"`
 	CanonicalStatus string   `json:"canonical_status,omitempty"`
@@ -428,6 +441,15 @@ func docsSortSources(sources []docsSourceDocument) {
 	sort.SliceStable(sources, func(i, j int) bool {
 		left := sources[i]
 		right := sources[j]
+		if left.DocsMapOrder != right.DocsMapOrder {
+			if left.DocsMapOrder == 0 {
+				return false
+			}
+			if right.DocsMapOrder == 0 {
+				return true
+			}
+			return left.DocsMapOrder < right.DocsMapOrder
+		}
 		if left.RoutePath != right.RoutePath {
 			return left.RoutePath < right.RoutePath
 		}

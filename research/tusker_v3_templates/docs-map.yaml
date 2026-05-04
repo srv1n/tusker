@@ -1,0 +1,49 @@
+version: 1
+
+domains:
+  - id: memory
+    title: Memory
+  - id: harness
+    title: Harness
+  - id: rag
+    title: Retrieval
+  - id: ui
+    title: User Interface
+  - id: infra
+    title: Infrastructure
+  - id: agent
+    title: Agents
+
+nodes:
+  - id: memory/overview
+    title: Memory overview
+    page: docs/memory/overview.md
+    role: explainer
+    owners: [core]
+    aliases: [mem, memory]
+
+  - id: memory/retrieval/pipeline
+    title: Memory retrieval pipeline
+    page: docs/memory/retrieval-pipeline.md
+    role: canon
+    owners: [core]
+    aliases: [mem-rag, retrieval]
+
+  - id: harness/overview
+    title: Harness overview
+    page: docs/harness/overview.md
+    role: explainer
+    owners: [core]
+    aliases: [harness]
+
+  - id: harness/skills-and-agents
+    title: Skills and agent workflow
+    page: docs/harness/skills-and-agents.md
+    role: guide
+    owners: [core]
+    aliases: [skills, agents]
+
+rules:
+  - tasks may reference multiple doc_nodes
+  - doc_nodes must exist here before they can be used in a task
+  - aliases are helpers only; node IDs are authoritative

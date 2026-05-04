@@ -1,6 +1,6 @@
 ---
 title: "Formal intake"
-description: "Creating a story at risk ≥ medium. This is the ceremony path. Load when the work is a feature, migration, refactor with teeth, or anything with rollout or rollback concerns."
+description: "Creating a task at risk >= medium. Load this when the work is a feature, migration, refactor with teeth, public docs change, security-sensitive change, or anything with rollout/rollback concerns."
 tusker:
   audience: "user"
   publish_path: "user/reference/formal-intake"
@@ -8,122 +8,115 @@ tusker:
   route: "/user/reference/formal-intake/"
   source_kind: "repo_doc"
   source_path: "skill/references/FORMAL_INTAKE.md"
-  summary: "Creating a story at risk ≥ medium. This is the ceremony path. Load when the work is a feature, migration, refactor with teeth, or anything with rollout or rollback concerns."
+  summary: "Creating a task at risk >= medium. Load this when the work is a feature, migration, refactor with teeth, public docs change, security-sensitive change, or anything with rollout/rollback concerns."
   tags:
     - "reference"
-  updated: "2026-04-28"
+  updated: "2026-04-30"
 ---
 
 # Formal intake
 
-Creating a story at `risk ≥ medium`. This is the ceremony path. Load when the work is a feature, migration, refactor with teeth, or anything with rollout or rollback concerns.
+Creating a task at `risk >= medium`. Load this when the work is a feature, migration, refactor with teeth, public docs change, security-sensitive change, or anything with rollout/rollback concerns.
 
-## When this applies
+## Required frontmatter
 
-- Features that ship to users
-- Refactors that touch shared infrastructure
-- Migrations (data, schema, API contract)
-- Security-sensitive changes (secrets, auth, permissions)
-- Anything with a rollback plan or feature flag
-- Cross-team coordination
+Beyond quick-mode defaults, set:
 
-For anything else, use `QUICK_MODE.md`.
-
-## Required frontmatter at intake
-
-Beyond the quick-mode defaults, you must set:
-
-- `size`: `s|m|l|xl` — effort estimate (agent-sessions, not days)
-- `risk`: `medium|high|critical` — ceremony level
-- `priority`: `p0|p1|p2|p3|icebox`
+- `kind`: `feature|bug|refactor|migration|security|docs|chore|research|incident`
+- `size`: `s|m|l|xl`
+- `risk`: `medium|high|critical`
+- `priority`: `p0|p1|p2|p3`
+- `domains`: broad areas touched
+- `doc_nodes`: exact docs targets when durable docs are affected
 - `delegation`: `execute|explore|escalate`
-- `surfaces`: which layers are touched (`frontend,api,runtime,desktop`)
-- `change_type`: `feature|refactor|migration|security|docs|chore|research|incident`
 - `ai_assistance`: `none|light|moderate|heavy`
 - `ai_tools`: `[claude-code, codex, cursor, ...]`
-- `assignee`: agent or human name (optional but preferred)
+- `assignee`: optional but preferred
 
-If any of these are missing at `status: active`, the validator will block the transition.
+If any required fields are missing at active work, validation should block the transition.
 
 ## Required sections by risk
 
 | Section | medium | high | critical |
 |---|---|---|---|
-| `## Problem` | ✓ | ✓ | ✓ |
-| `## Acceptance criteria` | ✓ | ✓ | ✓ |
-| `## Canon` (spec/RFC references) | ✓ | ✓ | ✓ |
-| `## Code anchors` | ✓ | ✓ | ✓ |
-| `## Plan` | ✓ | ✓ | ✓ |
-| `## Considered and rejected` | | ✓ | ✓ |
-| `## Decision` | | ✓ | ✓ |
-| `## Verification plan` | ✓ | ✓ | ✓ |
-| `## Evidence` | ✓ | ✓ | ✓ |
-| `## Rollout` | | ✓ | ✓ |
-| `## Kill list` | | | ✓ |
-| `## Work log` | ✓ | ✓ | ✓ |
-| `## Agent handoff` (below the `---`) | ✓ | ✓ | ✓ |
+| `## Intent` | yes | yes | yes |
+| `## Scope` | yes | yes | yes |
+| `## Acceptance contract` | yes | yes | yes |
+| `## Canon` | yes | yes | yes |
+| `## Code/system anchors` | yes | yes | yes |
+| `## Constraints` | yes | yes | yes |
+| `## Escalate if` | yes | yes | yes |
+| `## Deliverables` | yes | yes | yes |
+| `## Verification plan` | yes | yes | yes |
+| `## Knowledge delta` | when docs/understanding changes | yes | yes |
+| `## Considered and rejected` | no | yes | yes |
+| `## Decision` | no | yes | yes |
+| `## Rollout` | no | yes | yes |
+| `## Kill list` | no | no | yes |
+| `## Evidence` | yes | yes | yes |
+| `## Verification log` | yes | yes | yes |
+| `## Work log` | yes | yes | yes |
 
-Substance is checked, not presence. A section with `TODO` or empty body fails validation.
+Substance is checked, not presence. `TODO` is not a contract.
 
 ## What each section is for
 
-- **Problem** — what is broken/missing/unclear. Who needs it fixed. *Not* the plan.
-- **Acceptance criteria** — testable outcomes. Written as checklist. Must be verifiable.
-- **Canon** — links to the epic canon, canonical D-note, or repo spec + section numbers. *Never* copy-paste spec prose.
-- **Code anchors** — file paths and (when helpful) line ranges that the agent should read first.
-- **Plan** — ordered approach, not the spec. Reads like a PR description.
-- **Considered and rejected** — alternatives you weighed, one-line reason for each rejection. Forces the decision to be real.
-- **Decision** — the chosen path and the trade-off you accepted.
-- **Verification plan** — tests, manual steps, benchmarks that prove the acceptance criteria.
-- **Evidence** — filled *after* execution. See `RISK_AND_EVIDENCE.md`.
-- **Rollout** — feature flag name, staged rollout plan, rollback plan.
-- **Kill list** — what old code/behavior gets deleted when this ships.
-- **Work log** — bullet per meaningful step, `<date> — <author> — <what>`.
+- **Intent** — what needs to be true and who needs it.
+- **Scope** — explicit in/out boundaries.
+- **Acceptance contract** — testable outcomes.
+- **Canon** — links to epic canon, V5 docs, or repo spec. Never copy-paste the spec.
+- **Code/system anchors** — files, modules, commands, schemas, or docs nodes to inspect first.
+- **Constraints** — things the agent must not break or change.
+- **Escalate if** — stop conditions.
+- **Deliverables** — concrete artifacts expected from the work.
+- **Verification plan** — tests/manual checks/benchmarks before work starts.
+- **Knowledge delta** — what durable understanding changed.
+- **Evidence** — filled after execution.
+- **Verification log** — what was actually checked.
+- **Work log** — dated meaningful steps.
 
 ## Create-and-populate flow
 
 ```bash
-tusker new-story --epic <ACR> --title "<title>" \
-  --size <s|m|l|xl> --risk <medium|high|critical> \
-  --change-type <type> --priority <p0|p1|p2|p3> \
+tusker new task --epic <ACR> --title "<title>" \
+  --kind <kind> --size <s|m|l|xl> --risk <medium|high|critical> \
+  --priority <p0|p1|p2|p3> \
+  --domains "<csv>" \
+  --doc-nodes "<csv>" \
   --delegation <execute|explore|escalate> \
-  --surfaces "<csv>" \
   --ai-assistance heavy --ai-tools codex
 ```
 
-Then open the generated file and fill the sections above. The scaffold includes section stubs — replace every stub, delete nothing.
+Then fill the generated sections. Replace stubs; do not leave placeholders.
 
-## Dependencies between stories
-
-Use wikilinks in frontmatter:
+## Dependencies between tasks
 
 ```yaml
 blocks:
-  - "[[ACR-S-0002]]"
+  - "[[ACR-T-0002]]"
 blocked_by:
-  - "[[ACR-S-0001]]"
+  - "[[ACR-T-0001]]"
 ```
-
-Dependency graphs are rendered in Bases views and checked by `tusker validate`.
 
 ## Delegation
 
-- `execute` — outcome and path known. Agent implements end-to-end.
-- `explore` — outcome known, path unclear. Agent spikes, writes up `Considered and rejected`, stops at `in_review` without merged implementation.
-- `escalate` — architecture or product questions. Agent analyzes, fills `## Decision-needed`, stops at `active`.
+- `execute` — outcome and path are known.
+- `explore` — outcome known, path unclear; agent spikes and writes up tradeoffs.
+- `escalate` — architecture or product question; agent analyzes and stops for decision.
 
-If you're not sure: prefer `execute` and stop yourself mid-work if you hit a genuine unknown. That's more honest than pre-emptively marking everything `explore`.
+Prefer `execute` unless there is a real unknown. Premature `explore` is often just procrastination wearing a lab coat.
 
 ## When the spec is upstream
 
 If the work implements an existing RFC:
 
-- `## Canon` cites the D-note with section numbers: `PLC-D-0001 §§6, 16`
-- `## Code anchors` points to the files the RFC implementations will modify
-- `## Plan` is the implementation order, not a restatement of the RFC
+- `## Canon` cites exact sections.
+- `## Code/system anchors` points to likely implementation files.
+- `## Plan` or execution plan is implementation order, not a restatement of the RFC.
+- `doc_nodes` names docs that must remain true after the change.
 
-If the canon does not yet exist, see `CANON_LOCATIONS.md` — you may need to author it first.
+If canon does not exist, see `CANON_LOCATIONS.md` and create it first.
 
-## Story decomposition
+## Task decomposition
 
-For large RFCs that require multiple stories, see `STORY_DECOMPOSITION.md`. A story titled "implement the RFC" is a decomposition failure.
+For large RFCs, see `TASK_DECOMPOSITION.md`. A task titled "implement the RFC" is a decomposition failure.

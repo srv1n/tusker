@@ -1,6 +1,6 @@
 ---
-title: "Failure classes and recovery table"
-description: "Every tusker release --to failed|stalled|cancelled takes a --failure-class that drives retry and escalation behavior. The enum is frozen in schema.go."
+title: "Failure Classes"
+description: "Runtime failures belong in runtime logs and evidence, not task frontmatter."
 tusker:
   audience: "developer"
   publish_path: "developer/internals/failure-classes"
@@ -8,37 +8,21 @@ tusker:
   route: "/developer/internals/failure-classes/"
   source_kind: "repo_doc"
   source_path: "skill/docs/FAILURE_CLASSES.md"
-  summary: "Every tusker release --to failed|stalled|cancelled takes a --failure-class that drives retry and escalation behavior. The enum is frozen in schema.go."
+  summary: "Runtime failures belong in runtime logs and evidence, not task frontmatter."
   tags:
     - "internals"
-  updated: "2026-04-22"
+  updated: "2026-04-29"
 ---
 
-# Failure classes and recovery table
+# Failure Classes
 
-Every `tusker release --to failed|stalled|cancelled` takes a `--failure-class` that drives retry and escalation behavior. The enum is frozen in [schema.go](/Users/sarav/Downloads/tusker/schema.go:1).
+Runtime failures belong in runtime logs and evidence, not task frontmatter.
 
-| class                | meaning                                                                        | dispatcher action                                                                              | human action                                 |
-| -------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `transient`          | network blip, rate limit, API timeout, CI flake                                | re-enqueue with `config.retry.backoff_seconds[run_attempts]`; cap at `config.retry.max_attempts` | none until retry budget exhausted            |
-| `deterministic`      | assertion failure, type error, test failure, impossible state                  | do NOT retry; leave `dispatch_state: failed`                                                   | triage; fix story or close as invalid        |
-| `stuck`              | heartbeat expired; agent process alive but not progressing                     | kill tree; set `dispatch_state: stalled`; do NOT retry                                         | inspect `Attachments/<ID>/session-*.log`     |
-| `blocked-by-human`   | agent explicitly requested human input and returned                            | do NOT retry; leave `dispatch_state: failed`; surface in inbox                                 | respond to the story's HumanRequest and re-pickup |
-| `budget-exceeded`    | `config.budget.*` ceiling hit                                                  | refuse claim in `pickup`; no spawn                                                             | raise ceiling, or defer work                  |
+| Class | Meaning | Task Action |
+|---|---|---|
+| `transient` | network, rate limit, temporary tool outage | retry when infrastructure recovers |
+| `deterministic` | repeatable test/type/assertion failure | keep task active or move to blocked with evidence |
+| `blocked-by-human` | missing product/security/credential decision | `tusker status <TASK-ID> blocked --reason "<needed decision>"` |
+| `budget-exceeded` | token/time/cost cap hit | split work or reduce scope before resuming |
 
-## Retry budget
-
-`run_attempts` is frontmatter on the story/bug; the dispatcher increments it on every release-to-failed/stalled. Once `run_attempts >= retry.max_attempts`, no further pickups fire for that record — it must be manually re-claimed (see `OPERATOR_INTERVENTION.md`).
-
-Retries only apply to `transient`. Every other class requires human attention before another attempt.
-
-## Escalation
-
-On `failed` or `stalled`, the dispatcher fires `hooks.on_fail` with env vars:
-
-- `TUSKER_ID` — story/bug id
-- `TUSKER_EVENT=on_fail`
-- `TUSKER_DISPATCH_STATE` — `failed` | `stalled`
-- `TUSKER_ACTOR` — `dispatcher`
-
-Typical on_fail hooks: post to Slack, open a GitHub issue, tail session log to ops channel.
+When a failure changes what future readers need to know, add evidence and update the task's knowledge delta.

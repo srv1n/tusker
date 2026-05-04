@@ -160,12 +160,11 @@ func resolveVaultPath(args Args, allowCreate bool) (string, error) {
 	}
 	return "", tuskerError(
 		errorMissingArg,
-		"No Tusker vault found.\n\nRecommended:\n  tusker bootstrap --vault ./tusker\n\nThis creates tracker files only and does not edit AGENTS.md.\n\nOther options:\n  tusker init --yes        # also wires repo instructions\n  tusker --vault <path>    # use an existing vault",
-		withHint("Run `tusker bootstrap --vault ./tusker` for tracker-only setup, or pass --vault <path> for an existing vault."),
+		"No Tusker vault found.\n\nRecommended:\n  tusker init --yes\n\nOther option:\n  tusker --vault <path>    # use an existing vault",
+		withHint("Run `tusker init --yes` for setup, or pass --vault <path> for an existing vault."),
 		withContext(map[string]any{
 			"arg":            "--vault",
 			"cwd":            mustGetwd(),
-			"tracker_only":   "tusker bootstrap --vault ./tusker",
 			"repo_wiring":    "tusker init --yes",
 			"existing_vault": "--vault <path>",
 		}),
@@ -467,6 +466,16 @@ func countStatus(items []map[string]any, status string) int {
 	count := 0
 	for _, item := range items {
 		if stringValue(item["status"]) == status {
+			count++
+		}
+	}
+	return count
+}
+
+func countKind(items []map[string]any, kind string) int {
+	count := 0
+	for _, item := range items {
+		if stringValue(item["kind"]) == kind {
 			count++
 		}
 	}

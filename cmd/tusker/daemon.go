@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -196,13 +198,13 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 		keep := map[string]struct{}{}
 		for _, note := range notes {
 			noteType := stringField(note.Data, "type")
-			if noteType != "story" && noteType != "bug" {
+			if noteType != "task" {
 				continue
 			}
 			if id := stringField(note.Data, "id"); id != "" {
 				notesByID[id] = note
 			}
-			recordID := stringField(note.Data, "record_id")
+			recordID := trackerRecordID(note)
 			if recordID == "" {
 				continue
 			}
@@ -235,14 +237,14 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 
 		for _, note := range notes {
 			noteType := stringField(note.Data, "type")
-			if noteType != "story" && noteType != "bug" {
+			if noteType != "task" {
 				continue
 			}
 			status := stringField(note.Data, "status")
 			if !containsString(wfFile.Data.Tracker.ActiveStates, status) {
 				continue
 			}
-			recordID := stringField(note.Data, "record_id")
+			recordID := trackerRecordID(note)
 			if recordID == "" {
 				continue
 			}
@@ -448,35 +450,16 @@ func dispatchEligibilityAllows(note Note, notesByID map[string]Note, notesByReco
 	return dispatchEligibilityReason(note, notesByID, notesByRecordID) == ""
 }
 
+func trackerRecordID(note Note) string {
+	return firstNonEmpty(stringField(note.Data, "record_id"), stringField(note.Data, "id"))
+}
+
 func dispatchEligibilityReason(note Note, notesByID map[string]Note, notesByRecordID map[string]Note) string {
 	if strings.EqualFold(stringField(note.Data, "risk"), "critical") {
 		return "dispatch blocked: critical risk requires explicit human dispatch"
 	}
-	for _, blocker := range normalizeList(note.Data["blocked_by"]) {
-		target := wikiTarget(blocker)
-		if target == "" {
-			continue
-		}
-		blockingNote, ok := notesByID[target]
-		if !ok {
-			return "dispatch blocked: unresolved blocker " + target
-		}
-		if !blockerResolved(blockingNote) {
-			return "dispatch blocked: waiting on " + target
-		}
-	}
-	for _, recordID := range normalizeList(note.Data["blocked_by_record_ids"]) {
-		recordID = strings.TrimSpace(recordID)
-		if recordID == "" {
-			continue
-		}
-		blockingNote, ok := notesByRecordID[recordID]
-		if !ok {
-			return "dispatch blocked: unresolved blocker record " + recordID
-		}
-		if !blockerResolved(blockingNote) {
-			return "dispatch blocked: waiting on " + firstNonEmpty(stringField(blockingNote.Data, "id"), recordID)
-		}
+	if reason := unresolvedBlockerReason(note, notesByID, notesByRecordID); reason != "" {
+		return "dispatch blocked: " + reason
 	}
 	return ""
 }
@@ -528,11 +511,26 @@ func shouldDispatchRun(run RunStatus, now time.Time) bool {
 }
 
 func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus, trackerState string) (RunStatus, bool, error) {
+	trackerState = strings.TrimSpace(trackerState)
 	if isDispatchingLeaseState(run.LeaseState) && !containsString(wfFile.Data.Tracker.ActiveStates, trackerState) {
+		if completedReviewHandoffCanReconcile(wfFile.Data, run, trackerState) {
+			return d.reconcileRun(ctx, project, wfFile, run)
+		}
 		reason := fmt.Sprintf("tracker state %q is not active; daemon released run", firstNonEmpty(trackerState, "missing"))
 		return d.releaseIneligibleRun(ctx, project, run, reason)
 	}
 	return d.reconcileRun(ctx, project, wfFile, run)
+}
+
+func completedReviewHandoffCanReconcile(wf Workflow, run RunStatus, trackerState string) bool {
+	if !isDispatchingLeaseState(run.LeaseState) {
+		return false
+	}
+	if !containsString(wf.Tracker.ReviewStates, strings.TrimSpace(trackerState)) {
+		return false
+	}
+	statusPath := strings.TrimSpace(run.StatusPath)
+	return statusPath != "" && fileExists(statusPath)
 }
 
 func (d *Daemon) releaseIneligibleRun(ctx context.Context, project RegisteredProject, run RunStatus, reason string) (RunStatus, bool, error) {
@@ -1248,7 +1246,8 @@ func writeReviewPacketEvidence(vaultPath string, note Note, run RunStatus, store
 			supervisorDecisions = loaded
 		}
 	}
-	if err := writeText(packetPath, renderReviewPacket(note, run, turns, supervisorDecisions)); err != nil {
+	facts := collectReviewPacketFacts(run)
+	if err := writeText(packetPath, renderReviewPacket(note, run, turns, supervisorDecisions, facts)); err != nil {
 		return err
 	}
 	data, body, err := parseFrontmatterMustRead(note.AbsolutePath)
@@ -1269,8 +1268,16 @@ func writeReviewPacketEvidence(vaultPath string, note Note, run RunStatus, store
 	return nil
 }
 
-func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDecisions []RuntimeSupervisorDecision) string {
+type reviewPacketFacts struct {
+	ChangedFiles                  []string
+	ChangedFilesStatement         string
+	VerificationCommands          []string
+	VerificationCommandsStatement string
+}
+
+func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDecisions []RuntimeSupervisorDecision, facts reviewPacketFacts) string {
 	var out []string
+	tokenTotals := tokenTotalsForTurns(turns)
 	out = append(out, "# Review packet")
 	out = append(out, "")
 	out = append(out, fmt.Sprintf("- Item: %s - %s", stringField(note.Data, "id"), stringField(note.Data, "title")))
@@ -1278,6 +1285,8 @@ func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDec
 	out = append(out, fmt.Sprintf("- Attempt: %s", run.ActiveAttemptID))
 	out = append(out, fmt.Sprintf("- Runner: %s", run.Runner))
 	out = append(out, fmt.Sprintf("- Work revision: %d", run.WorkRevision))
+	out = append(out, fmt.Sprintf("- Turns: %d", len(turns)))
+	out = append(out, fmt.Sprintf("- Token totals: total=%d input=%d output=%d", tokenTotals.TotalTokens, tokenTotals.InputTokens, tokenTotals.OutputTokens))
 	out = append(out, fmt.Sprintf("- Workspace: %s", run.WorkspacePath))
 	out = append(out, fmt.Sprintf("- Session: %s", run.SessionRef))
 	out = append(out, fmt.Sprintf("- Started: %s", run.StartedAt))
@@ -1318,12 +1327,225 @@ func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDec
 			}
 		}
 	}
+	out = append(out, "", "## Changed files", "")
+	if len(facts.ChangedFiles) == 0 {
+		out = append(out, "- "+firstNonEmpty(facts.ChangedFilesStatement, "No changed files were observed in normalized events or workspace status."))
+	} else {
+		for _, file := range facts.ChangedFiles {
+			out = append(out, "- "+file)
+		}
+	}
 	out = append(out, "", "## Verification", "")
-	out = append(out, "- Daemon observed a zero exit status for the runner process.")
+	if len(facts.VerificationCommands) == 0 {
+		out = append(out, "- "+firstNonEmpty(facts.VerificationCommandsStatement, "No verification commands were observed in normalized events."))
+	} else {
+		for _, command := range facts.VerificationCommands {
+			out = append(out, "- "+command)
+		}
+	}
+	out = append(out, "- Runner process exited cleanly before this packet was generated.")
 	out = append(out, "- Human/verifier must still check claims against the current tree before approval.")
 	out = append(out, "", "## Open risks", "")
 	out = append(out, "- This packet summarizes daemon-observed runtime facts. It does not prove product correctness by itself.")
 	return strings.Join(out, "\n") + "\n"
+}
+
+func collectReviewPacketFacts(run RunStatus) reviewPacketFacts {
+	events := readReviewPacketEvents(run.EventSinkPath)
+	changed := append([]string{}, changedFilesFromEvents(events)...)
+	verification := verificationCommandsFromEvents(events)
+	gitChanged, gitStatement := changedFilesFromWorkspace(run.WorkspacePath)
+	changed = append(changed, gitChanged...)
+	changed = dedupeSortedStrings(changed)
+	statement := "No changed files were observed in normalized events or workspace status."
+	if gitStatement != "" {
+		statement = gitStatement
+	}
+	return reviewPacketFacts{
+		ChangedFiles:                  changed,
+		ChangedFilesStatement:         statement,
+		VerificationCommands:          dedupeSortedStrings(verification),
+		VerificationCommandsStatement: "No verification commands were observed in normalized events.",
+	}
+}
+
+func readReviewPacketEvents(path string) []map[string]any {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	content, err := readText(path)
+	if err != nil {
+		return nil
+	}
+	var events []map[string]any
+	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var event map[string]any
+		if json.Unmarshal([]byte(line), &event) == nil {
+			events = append(events, event)
+		}
+	}
+	return events
+}
+
+func changedFilesFromEvents(events []map[string]any) []string {
+	var out []string
+	for _, event := range events {
+		kind := strings.ToLower(strings.TrimSpace(stringValue(event["kind"])))
+		payload, _ := event["payload"].(map[string]any)
+		if payload == nil {
+			continue
+		}
+		if !strings.Contains(kind, "file") && !strings.Contains(kind, "change") && payload["changed_files"] == nil && payload["files"] == nil {
+			continue
+		}
+		for _, path := range payloadPathValues(payload) {
+			out = append(out, fmt.Sprintf("`%s` (event:%s)", path, firstNonEmpty(kind, "file_change")))
+		}
+	}
+	return out
+}
+
+func payloadPathValues(payload map[string]any) []string {
+	var out []string
+	for _, key := range []string{"path", "file", "file_path", "filename", "relative_path", "target_path", "changed_files", "files", "paths"} {
+		out = append(out, pathValues(payload[key])...)
+	}
+	return dedupeSortedStrings(out)
+}
+
+func pathValues(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		path := strings.TrimSpace(typed)
+		if path == "" {
+			return nil
+		}
+		return []string{path}
+	case []string:
+		var out []string
+		for _, item := range typed {
+			out = append(out, pathValues(item)...)
+		}
+		return out
+	case []any:
+		var out []string
+		for _, item := range typed {
+			out = append(out, pathValues(item)...)
+		}
+		return out
+	case map[string]any:
+		return payloadPathValues(typed)
+	default:
+		return nil
+	}
+}
+
+func verificationCommandsFromEvents(events []map[string]any) []string {
+	var out []string
+	for _, event := range events {
+		kind := strings.ToLower(strings.TrimSpace(stringValue(event["kind"])))
+		payload, _ := event["payload"].(map[string]any)
+		if payload == nil {
+			continue
+		}
+		command := firstNonEmpty(
+			stringValue(payload["command"]),
+			stringValue(payload["cmd"]),
+			stringValue(payload["argv"]),
+		)
+		if command == "" || (!strings.Contains(kind, "verification") && !strings.Contains(kind, "command")) {
+			continue
+		}
+		result := firstNonEmpty(stringValue(payload["result"]), stringValue(payload["status"]), stringValue(payload["outcome"]), "observed")
+		exitCode := firstNonEmpty(stringValue(payload["exit_code"]), stringValue(payload["exitCode"]))
+		at := firstNonEmpty(stringValue(event["at"]), stringValue(payload["at"]))
+		turnID := stringValue(payload["turn_id"])
+		detail := fmt.Sprintf("`%s` result=%s", command, result)
+		if exitCode != "" {
+			detail += " exit_code=" + exitCode
+		}
+		if turnID != "" {
+			detail += " turn=" + turnID
+		}
+		if at != "" {
+			detail += " at=" + at
+		}
+		out = append(out, detail)
+	}
+	return out
+}
+
+func changedFilesFromWorkspace(workspacePath string) ([]string, string) {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if workspacePath == "" {
+		return nil, "No changed files were observed; workspace path was not recorded."
+	}
+	info, err := os.Stat(workspacePath)
+	if err != nil || !info.IsDir() {
+		return nil, "No changed files were observed; workspace path was unavailable."
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", workspacePath, "status", "--short", "--untracked-files=all")
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return nil, "No changed files were observed; git status timed out."
+	}
+	if err != nil {
+		return nil, "No changed files were observed; git status was unavailable."
+	}
+	changed := parseGitStatusShort(string(output))
+	if len(changed) == 0 {
+		return nil, "No changed files were observed by git status in the workspace."
+	}
+	return changed, ""
+}
+
+func parseGitStatusShort(output string) []string {
+	var out []string
+	for _, line := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		status := strings.TrimSpace(line)
+		path := ""
+		if len(line) >= 3 {
+			status = strings.TrimSpace(line[:2])
+			path = strings.TrimSpace(line[3:])
+		}
+		if strings.Contains(path, " -> ") {
+			parts := strings.Split(path, " -> ")
+			path = strings.TrimSpace(parts[len(parts)-1])
+		}
+		if path == "" {
+			path = strings.TrimSpace(line)
+		}
+		out = append(out, fmt.Sprintf("`%s` (%s)", path, firstNonEmpty(status, "changed")))
+	}
+	return dedupeSortedStrings(out)
+}
+
+func dedupeSortedStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func latestRunEventAt(run RunStatus) (time.Time, bool) {
@@ -1458,7 +1680,7 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 		"workspace.path": workspacePath,
 		"workflow.path":  wfFile.Path,
 		"note.id":        stringField(note.Data, "id"),
-		"note.record_id": stringField(note.Data, "record_id"),
+		"note.record_id": trackerRecordID(note),
 		"note.title":     stringField(note.Data, "title"),
 		"note.status":    stringField(note.Data, "status"),
 		"note.type":      stringField(note.Data, "type"),
@@ -1507,14 +1729,11 @@ func markNoteReadyForReview(vaultPath, notePath string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	date := todayISO()
 	prevStatus := stringField(data, "status")
-	prevReview := stringField(data, "review_state")
-	data["status"] = "in_review"
-	data["review_state"] = "verification_requested"
+	data["status"] = "review"
 	data["review_requested_at"] = now
 	data["updated"] = date
-	appendTransition(data, orderedTransition(now, "status", prevStatus, "in_review", "daemon", "runner attempt succeeded"))
-	appendTransition(data, orderedTransition(now, "review", prevReview, "verification_requested", "daemon", "implementation pass completed"))
-	body = appendWorkLogBullet(body, fmt.Sprintf("%s — daemon — implementation pass completed; verification requested", date))
+	appendTransition(data, orderedTransition(now, "status", prevStatus, "review", "daemon", "runner attempt succeeded"))
+	body = appendWorkLogBullet(body, fmt.Sprintf("%s — daemon — implementation pass completed; review requested", date))
 	content, err := serializeDocument(data, body, frontmatterOrderForType(stringField(data, "type")))
 	if err != nil {
 		return err

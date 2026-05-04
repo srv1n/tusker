@@ -10,6 +10,37 @@ import (
 	"time"
 )
 
+type runtimeTokenTotals struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
+}
+
+type runtimeArtifactPaths struct {
+	Workspace string `json:"workspace"`
+	Prompt    string `json:"prompt"`
+	Events    string `json:"events"`
+	RawLog    string `json:"raw_log"`
+	Status    string `json:"status"`
+}
+
+type runInspection struct {
+	OK                       bool                        `json:"ok"`
+	Run                      *RunStatus                  `json:"run"`
+	Attempts                 []RunAttempt                `json:"attempts"`
+	Turns                    []RunTurn                   `json:"turns"`
+	ActiveTurn               *RunTurn                    `json:"active_turn"`
+	LatestTurn               *RunTurn                    `json:"latest_turn"`
+	Sessions                 []RunnerSession             `json:"sessions"`
+	LatestSession            *RunnerSession              `json:"latest_session"`
+	SupervisorDecisions      []RuntimeSupervisorDecision `json:"supervisor_decisions"`
+	LatestSupervisorDecision *RuntimeSupervisorDecision  `json:"latest_supervisor_decision"`
+	LatestEvent              map[string]any              `json:"latest_event,omitempty"`
+	TokenTotals              runtimeTokenTotals          `json:"token_totals"`
+	FailureClass             string                      `json:"failure_class,omitempty"`
+	Paths                    runtimeArtifactPaths        `json:"paths"`
+}
+
 func (s *RuntimeStore) FindRun(identity string) (*RunStatus, error) {
 	rows, err := s.ListRuns()
 	if err != nil {
@@ -44,6 +75,52 @@ func (s *RuntimeStore) ListAttemptsForRun(projectID, recordID string) ([]RunAtte
 	return out, rows.Err()
 }
 
+func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, error) {
+	if run == nil {
+		return runInspection{}, tuskerError(errorNotFound, "run not found")
+	}
+	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil {
+		return runInspection{}, err
+	}
+	turns, err := store.ListTurnsForRun(run.ProjectID, run.RecordID)
+	if err != nil {
+		return runInspection{}, err
+	}
+	sessions, err := store.ListSessionsForRun(run.ProjectID, run.RecordID, run.Runner)
+	if err != nil {
+		return runInspection{}, err
+	}
+	supervisorDecisions, err := store.ListRuntimeSupervisorDecisionsForRun(run.ProjectID, run.RecordID)
+	if err != nil {
+		return runInspection{}, err
+	}
+	latestSession := latestRunnerSession(sessions)
+	eventPath := bestRunEventPath(*run, attempts)
+	return runInspection{
+		OK:                       true,
+		Run:                      run,
+		Attempts:                 attempts,
+		Turns:                    turns,
+		ActiveTurn:               activeRunTurn(turns),
+		LatestTurn:               latestRunTurn(turns),
+		Sessions:                 sessions,
+		LatestSession:            latestSession,
+		SupervisorDecisions:      supervisorDecisions,
+		LatestSupervisorDecision: latestSupervisorDecision(supervisorDecisions),
+		LatestEvent:              latestJSONLEvent(eventPath),
+		TokenTotals:              tokenTotalsForTurns(turns),
+		FailureClass:             runtimeFailureClass(*run, attempts, turns),
+		Paths: runtimeArtifactPaths{
+			Workspace: run.WorkspacePath,
+			Prompt:    run.PromptPath,
+			Events:    eventPath,
+			RawLog:    bestRunLogPath(*run, attempts),
+			Status:    run.StatusPath,
+		},
+	}, nil
+}
+
 func runsInspectCmd(args Args) error {
 	identity, err := requireArg(args, "id")
 	if err != nil {
@@ -61,31 +138,29 @@ func runsInspectCmd(args Args) error {
 	if run == nil {
 		return tuskerError(errorNotFound, "run not found: "+identity)
 	}
-	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	inspection, err := buildRunInspection(store, run)
 	if err != nil {
 		return err
 	}
-	turns, err := store.ListTurnsForRun(run.ProjectID, run.RecordID)
-	if err != nil {
-		return err
-	}
-	supervisorDecisions, err := store.ListRuntimeSupervisorDecisionsForRun(run.ProjectID, run.RecordID)
-	if err != nil {
-		return err
-	}
-	session, err := store.LatestSession(run.ProjectID, run.RecordID, run.Runner)
-	if err != nil {
-		return err
-	}
+	run = inspection.Run
+	attempts := inspection.Attempts
+	turns := inspection.Turns
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "run": run, "attempts": attempts, "turns": turns, "supervisor_decisions": supervisorDecisions, "session": session})
+		emitJSON(inspection)
 		return nil
 	}
 	fmt.Printf("%s (%s)\n", firstNonEmpty(run.ItemID, run.RecordID), run.Runner)
 	fmt.Printf("lease=%s outcome=%s rev=%d attempts=%d pid=%d\n", run.LeaseState, run.AttemptOutcome, run.WorkRevision, run.AttemptCount, run.ProcessPID)
+	if inspection.FailureClass != "" {
+		fmt.Printf("failure_class=%s\n", inspection.FailureClass)
+	}
+	fmt.Printf("tokens total=%d input=%d output=%d\n", inspection.TokenTotals.TotalTokens, inspection.TokenTotals.InputTokens, inspection.TokenTotals.OutputTokens)
 	fmt.Printf("turns=%d", len(turns))
-	if latest := latestRunTurn(turns); latest != nil {
+	if latest := inspection.LatestTurn; latest != nil {
 		fmt.Printf(" latest=%s status=%s last_event=%s tokens=%d", latest.TurnID, latest.Status, latest.LastEventAt, latest.TotalTokens)
+	}
+	if active := inspection.ActiveTurn; active != nil {
+		fmt.Printf(" active=%s", active.TurnID)
 	}
 	fmt.Println()
 	if run.SessionRef != "" {
@@ -97,10 +172,22 @@ func runsInspectCmd(args Args) error {
 	if run.RawLogPath != "" {
 		fmt.Printf("log=%s\n", run.RawLogPath)
 	}
-	if session != nil {
-		fmt.Printf("latest session state=%s resumable=%t last_seen=%s\n", session.State, session.Resumable, session.LastSeenAt)
+	if run.EventSinkPath != "" {
+		fmt.Printf("events=%s\n", run.EventSinkPath)
 	}
-	if latest := latestSupervisorDecision(supervisorDecisions); latest != nil {
+	if run.PromptPath != "" {
+		fmt.Printf("prompt=%s\n", run.PromptPath)
+	}
+	if run.StatusPath != "" {
+		fmt.Printf("status=%s\n", run.StatusPath)
+	}
+	if inspection.LatestEvent != nil {
+		fmt.Printf("latest event=%s at=%s\n", stringValue(inspection.LatestEvent["kind"]), stringValue(inspection.LatestEvent["at"]))
+	}
+	if inspection.LatestSession != nil {
+		fmt.Printf("latest session state=%s resumable=%t last_seen=%s\n", inspection.LatestSession.State, inspection.LatestSession.Resumable, inspection.LatestSession.LastSeenAt)
+	}
+	if latest := inspection.LatestSupervisorDecision; latest != nil {
 		fmt.Printf("latest supervisor decision=%s", latest.Kind)
 		if latest.Reason != "" {
 			fmt.Printf(" reason=%q", latest.Reason)
@@ -153,6 +240,20 @@ func latestRunTurn(turns []RunTurn) *RunTurn {
 	return latest
 }
 
+func activeRunTurn(turns []RunTurn) *RunTurn {
+	var active *RunTurn
+	for i := range turns {
+		turn := &turns[i]
+		if strings.TrimSpace(turn.Status) != "running" {
+			continue
+		}
+		if active == nil || turn.LastEventAt > active.LastEventAt || (turn.LastEventAt == active.LastEventAt && turn.TurnIndex > active.TurnIndex) {
+			active = turn
+		}
+	}
+	return active
+}
+
 func latestSupervisorDecision(decisions []RuntimeSupervisorDecision) *RuntimeSupervisorDecision {
 	var latest *RuntimeSupervisorDecision
 	for i := range decisions {
@@ -166,6 +267,124 @@ func latestSupervisorDecision(decisions []RuntimeSupervisorDecision) *RuntimeSup
 		}
 	}
 	return latest
+}
+
+func latestRunnerSession(sessions []RunnerSession) *RunnerSession {
+	if len(sessions) == 0 {
+		return nil
+	}
+	return &sessions[0]
+}
+
+func tokenTotalsForTurns(turns []RunTurn) runtimeTokenTotals {
+	var totals runtimeTokenTotals
+	for _, turn := range turns {
+		totals.InputTokens += turn.InputTokens
+		totals.OutputTokens += turn.OutputTokens
+		totals.TotalTokens += turn.TotalTokens
+	}
+	if totals.TotalTokens == 0 && (totals.InputTokens > 0 || totals.OutputTokens > 0) {
+		totals.TotalTokens = totals.InputTokens + totals.OutputTokens
+	}
+	return totals
+}
+
+func bestRunEventPath(run RunStatus, attempts []RunAttempt) string {
+	if strings.TrimSpace(run.EventSinkPath) != "" {
+		return run.EventSinkPath
+	}
+	for _, attempt := range attempts {
+		if strings.TrimSpace(attempt.EventSinkPath) != "" {
+			return attempt.EventSinkPath
+		}
+	}
+	return ""
+}
+
+func bestRunLogPath(run RunStatus, attempts []RunAttempt) string {
+	if strings.TrimSpace(run.RawLogPath) != "" {
+		return run.RawLogPath
+	}
+	for _, attempt := range attempts {
+		if strings.TrimSpace(attempt.RawLogPath) != "" {
+			return attempt.RawLogPath
+		}
+	}
+	return ""
+}
+
+func latestJSONLEvent(path string) map[string]any {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	content, err := readText(path)
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		var event map[string]any
+		if json.Unmarshal([]byte(line), &event) == nil {
+			return event
+		}
+	}
+	return nil
+}
+
+func runtimeFailureClass(run RunStatus, attempts []RunAttempt, turns []RunTurn) string {
+	reason := strings.TrimSpace(run.LastError)
+	for _, attempt := range attempts {
+		if reason != "" {
+			break
+		}
+		reason = strings.TrimSpace(attempt.LastError)
+	}
+	for i := len(turns) - 1; i >= 0 && reason == ""; i-- {
+		reason = strings.TrimSpace(turns[i].LastError)
+	}
+	outcome := strings.TrimSpace(run.AttemptOutcome)
+	for _, attempt := range attempts {
+		if outcome != "" && outcome != string(AttemptOutcomeNone) {
+			break
+		}
+		outcome = strings.TrimSpace(attempt.Outcome)
+	}
+	text := strings.ToLower(reason)
+	switch {
+	case text == "" && (outcome == "" || outcome == string(AttemptOutcomeNone) || outcome == string(AttemptOutcomeSucceeded)):
+		return ""
+	case strings.Contains(text, "context window") || strings.Contains(text, "context-window") || strings.Contains(text, "context length") || strings.Contains(text, "maximum context") || strings.Contains(text, "context limit"):
+		return "context_window"
+	case strings.Contains(text, "auth") || strings.Contains(text, "api key") || strings.Contains(text, "token expired") || strings.Contains(text, "invalid token") || strings.Contains(text, "login required") || strings.Contains(text, "not logged in") || strings.Contains(text, "unauthorized") || strings.Contains(text, "forbidden"):
+		return "auth"
+	case strings.Contains(text, "approval") || strings.Contains(text, "permission denied") || strings.Contains(text, "sandbox"):
+		return "policy"
+	case strings.Contains(text, "config") || strings.Contains(text, "unsupported runner") || strings.Contains(text, "command is empty") || strings.Contains(text, "invalid workflow"):
+		return "config"
+	case strings.Contains(text, "budget") || strings.Contains(text, "quota") || strings.Contains(text, "spend limit") || strings.Contains(text, "rate limit budget"):
+		return "budget"
+	case strings.Contains(text, "deterministic") || strings.Contains(text, "validation failed") || strings.Contains(text, "invalid request") || strings.Contains(text, "bad request"):
+		return "deterministic"
+	case strings.Contains(text, "stalled") || strings.Contains(text, "timeout") || strings.Contains(text, "timed out"):
+		return "runner_stall"
+	case strings.Contains(text, "interrupt") || outcome == string(AttemptOutcomeCancelled):
+		return "operator_interrupt"
+	case strings.Contains(text, "missing session") || strings.Contains(text, "resume"):
+		return "session"
+	case strings.Contains(text, "exit") || outcome == string(AttemptOutcomeFailed):
+		return "runner_failure"
+	case outcome == string(AttemptOutcomeBlocked):
+		return "blocked"
+	case outcome == string(AttemptOutcomeAbandoned):
+		return "abandoned"
+	default:
+		return "unknown"
+	}
 }
 
 func runsLogsCmd(args Args) error {
@@ -262,7 +481,16 @@ func runsEventsCmd(args Args) error {
 	tail := tailText(content, lines)
 	if args.Bool("json") {
 		events := parseEventTail(tail)
-		emitJSON(map[string]any{"ok": true, "path": eventPath, "events": events, "tail": tail, "running": run.ProcessPID > 0 && processExists(run.ProcessPID)})
+		emitJSON(map[string]any{
+			"ok":           true,
+			"run":          run,
+			"path":         eventPath,
+			"event_path":   eventPath,
+			"latest_event": latestJSONLEvent(eventPath),
+			"events":       events,
+			"tail":         tail,
+			"running":      run.ProcessPID > 0 && processExists(run.ProcessPID),
+		})
 		return nil
 	}
 	fmt.Print(tail)

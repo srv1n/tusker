@@ -1,9 +1,9 @@
 interface:
   display_name: "Tusker"
-  short_description: "Agent-first work tracking in an Obsidian vault: epics, stories, bugs, docs as markdown with risk-scaled sections, evidence, AI disclosure, and explicit canon selection."
+  short_description: "Markdown work tracking and docs gates"
   icon_small: "./assets/icons/obsidian-vault-small.svg"
   icon_large: "./assets/icons/obsidian-vault-large.svg"
   brand_color: "#7C3AED"
-  default_prompt: "Plan, scope, document, or execute work in an Obsidian vault. Use `tusker` CLI for create/lifecycle/docs/validate. Read `site/public/canon-manifest.json` before old docs; approved canon is safe, draft needs verification, deprecated/historical is archaeology."
+  default_prompt: "Use $tusker to log, document, or close repo-local work."
 policy:
   allow_implicit_invocation: true
