@@ -144,7 +144,7 @@ The public CLI is small on purpose:
 | Area | Commands |
 |---|---|
 | Setup | ` + "`init`, `update`" + ` |
-| Work items | ` + "`new`, `list`, `show`, `search`, `next`, `claim`, `status`, `evidence`, `verify`, `close`" + ` |
+| Work items | ` + "`new`, `list`, `show`, `search`, `compact`, `next`, `claim`, `status`, `evidence`, `verify`, `close`" + ` |
 | Docs | ` + "`docs model`, `docs map`, `docs catalog`, `docs freshness`, `docs check`, `docs apply`, `docs noop`, `docs waive`, `docs export`, `docs dev`, `docs build`" + ` |
 | Shared vaults | ` + "`vault set`, `vault status`, `vault mount`, `vault unmount`, `vault repair`, `vault move`" + ` |
 | Health | ` + "`validate`, `reindex`" + ` |
@@ -178,7 +178,17 @@ tusker show ORC-T-0019 --acceptance
 tusker show ORC-T-0019 --evidence
 ` + "```" + `
 
-` + "`show`" + ` defaults to the agent capsule: the first-screen summary, state, verification/close summaries, and next anchors. Use ` + "`--full`" + ` only when the capsule and exact sections are insufficient.
+` + "`show`" + ` defaults to the agent capsule: the first-screen summary, state, verification/close summaries, and next anchors. ` + "`--verification`" + ` shows verification frontmatter plus a small log tail; use ` + "`--section \"Verification log\"`" + ` only when the full log is needed. Use ` + "`--full`" + ` only when the capsule and exact sections are insufficient.
+
+Use ` + "`compact`" + ` to trim old notes before they become model context:
+
+` + "```bash" + `
+tusker compact ORC-T-0019
+tusker compact ORC-T-0019 --write
+tusker compact --all --json
+` + "```" + `
+
+` + "`compact`" + ` dry-runs by default. It removes empty optional frontmatter and disposable placeholder sections such as empty ` + "`Execution plan`" + ` and creation-only ` + "`Work log`" + `; substantive decisions and evidence are preserved.
 
 ## Repo-local skill refresh
 

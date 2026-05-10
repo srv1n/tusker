@@ -57,13 +57,14 @@ Use Tusker as the execution ledger for agent-first software work: choose the rig
 2. Search for duplicates with `tusker search "<term>" --type task` when creating or updating tracker work.
 3. Drill into one epic with `tusker list --epic <ACR> --type task --open` only when open-task context is needed.
 4. Read a selected task with `tusker show <ID> --capsule` before opening the full markdown.
-5. Create or update the narrowest relevant `task` with clear scope, acceptance criteria, verification plan, and knowledge delta when the work changes durable understanding.
-6. Set `domains` for broad routing and `doc_nodes` for exact docs impact.
-7. Implement the work in the repo or vault, keeping generated indexes rebuildable.
-8. Run focused tests first, then the broader validation path when the change touches shared behavior.
-9. Resolve docs impact for every targeted node with apply, verified no-op, or a waiver with a reason.
-10. Attach evidence or record verification output in the task.
-11. Move the task through review, verification, and close only when gates are satisfied.
+5. For old noisy notes, run `tusker compact <ID>` as a dry-run before opening or editing the full file.
+6. Create or update the narrowest relevant `task` with clear scope, acceptance criteria, verification plan, and knowledge delta when the work changes durable understanding.
+7. Set `domains` for broad routing and `doc_nodes` for exact docs impact.
+8. Implement the work in the repo or vault, keeping generated indexes rebuildable.
+9. Run focused tests first, then the broader validation path when the change touches shared behavior.
+10. Resolve docs impact for every targeted node with apply, verified no-op, or a waiver with a reason.
+11. Attach evidence or record verification output in the task.
+12. Move the task through review, verification, and close only when gates are satisfied.
 
 ## Context discipline
 

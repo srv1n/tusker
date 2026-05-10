@@ -142,7 +142,22 @@ tusker show ORC-T-0019 --acceptance
 tusker show ORC-T-0019 --evidence
 ```
 
-`show` defaults to the agent capsule. `--full` is available, but it should be a deliberate drill-down.
+`show` defaults to the agent capsule. `--verification` shows verification
+frontmatter plus a small log tail; use `--section "Verification log"` only when
+the full log is needed. `--full` is available, but it should be a deliberate
+drill-down.
+
+Use `compact` to trim old notes before they become model context:
+
+```bash
+tusker compact ORC-T-0019
+tusker compact ORC-T-0019 --write
+tusker compact --all --json
+```
+
+`compact` dry-runs by default. It removes empty optional frontmatter and
+disposable placeholder sections such as empty `Execution plan` and creation-only
+`Work log`; substantive decisions and evidence are preserved.
 
 ## Operator/runtime commands
 
@@ -280,6 +295,11 @@ knowledge delta, and verification log. Critical tasks also add rollback.
 Default templates do not include `## Execution plan` or `## Work log`. Those are
 live scratchpads, not durable context. Use evidence summaries, verification
 frontmatter, transitions, and review packets for audit fidelity.
+
+Tusker omits empty optional frontmatter on write. Absence of `doc_nodes`,
+`blocked_by`, `blocks`, `ai_tools`, or `tags` means the same thing as an empty
+list. Use `tusker compact <ID>` to dry-run cleanup for older notes that still
+carry empty fields or disposable placeholder sections.
 
 - Docs routing, impact hook, and publication model | /internal/reference/docs-pipeline/ | audience: developer | mode: explanation | agent_layer: capsule | updated: 2026-04-29
   Docs routing, impact hook, and publication model.
@@ -559,7 +579,7 @@ This is intentionally generated markdown, not a Base. Runtime leases, process id
 
 The Tusker skill bundle is the primary agent contract. It teaches Codex, Claude Code, and other compatible harnesses how to read the vault, choose epics, search for existing work, create tasks, move status, attach evidence, resolve docs impact, and close only after verification.
 
-The skill must keep context use proportional to the job. A lookup is not a closeout, and a backlog note is not a migration. Agents should use `tusker list --type epic`, `tusker search`, one-epic `tusker list --epic <ACR> --type task --open`, `tusker show <ID> --capsule`, and exact task paths before broad file reads. They should not read `Attachments/**`, `_system/generated/**`, build logs, or raw runner logs unless the user is explicitly asking for evidence forensics.
+The skill must keep context use proportional to the job. A lookup is not a closeout, and a backlog note is not a migration. Agents should use `tusker list --type epic`, `tusker search`, one-epic `tusker list --epic <ACR> --type task --open`, `tusker show <ID> --capsule`, `tusker compact <ID>` for old noisy notes, and exact task paths before broad file reads. They should not read `Attachments/**`, `_system/generated/**`, build logs, or raw runner logs unless the user is explicitly asking for evidence forensics.
 
 | Lane | Use for | Expected proof |
 |---|---|---|
@@ -643,13 +663,14 @@ Use Tusker as the execution ledger for agent-first software work: choose the rig
 2. Search for duplicates with `tusker search "<term>" --type task` when creating or updating tracker work.
 3. Drill into one epic with `tusker list --epic <ACR> --type task --open` only when open-task context is needed.
 4. Read a selected task with `tusker show <ID> --capsule` before opening the full markdown.
-5. Create or update the narrowest relevant `task` with clear scope, acceptance criteria, verification plan, and knowledge delta when the work changes durable understanding.
-6. Set `domains` for broad routing and `doc_nodes` for exact docs impact.
-7. Implement the work in the repo or vault, keeping generated indexes rebuildable.
-8. Run focused tests first, then the broader validation path when the change touches shared behavior.
-9. Resolve docs impact for every targeted node with apply, verified no-op, or a waiver with a reason.
-10. Attach evidence or record verification output in the task.
-11. Move the task through review, verification, and close only when gates are satisfied.
+5. For old noisy notes, run `tusker compact <ID>` as a dry-run before opening or editing the full file.
+6. Create or update the narrowest relevant `task` with clear scope, acceptance criteria, verification plan, and knowledge delta when the work changes durable understanding.
+7. Set `domains` for broad routing and `doc_nodes` for exact docs impact.
+8. Implement the work in the repo or vault, keeping generated indexes rebuildable.
+9. Run focused tests first, then the broader validation path when the change touches shared behavior.
+10. Resolve docs impact for every targeted node with apply, verified no-op, or a waiver with a reason.
+11. Attach evidence or record verification output in the task.
+12. Move the task through review, verification, and close only when gates are satisfied.
 
 ## Context discipline
 
@@ -1438,9 +1459,10 @@ Ask Claude Code or Codex to log a task. The agent should:
 2. Run `tusker search "<duplicate clue>" --type task` before creating work that may already exist.
 3. Run `tusker list --epic <ACR> --type task --open` only for the likely epic.
 4. Run `tusker show <ID> --capsule` before opening a full task file.
-5. Pick the right epic, or propose a new one if nothing fits.
-6. Create a task with sensible defaults.
-7. Print the ID and a one-line reason for the epic choice.
+5. Run `tusker compact <ID>` first when an old note still carries scaffolding or empty optional fields.
+6. Pick the right epic, or propose a new one if nothing fits.
+7. Create a task with sensible defaults.
+8. Print the ID and a one-line reason for the epic choice.
 
 Primary V5 CLI:
 
@@ -1448,6 +1470,7 @@ Primary V5 CLI:
 tusker search "cache invalidation" --type task
 tusker list --epic MEM --type task --open
 tusker show MEM-T-0007 --capsule
+tusker compact MEM-T-0007
 tusker new task --epic MEM --title "Add cache invalidation" \
   --kind feature --size m --risk medium --domains runtime,docs \
   --doc-nodes reference/cache
@@ -1647,7 +1670,7 @@ There are no extra public workflow command trees beyond this list.
 - Treat docs impact as part of close, not cleanup.
 - Reject old note models outright; V5 is the only normal model.
 
-- 01 - Vault Tracker | /developer/specs/01-vault-tracker/ | audience: developer | updated: 2026-04-29
+- 01 - Vault Tracker | /developer/specs/01-vault-tracker/ | audience: developer | updated: 2026-05-10
   Tusker V5 stores durable work in Markdown. Frontmatter is the machine-readable current state; body sections are the human-readable contract and proof.
   source: docs/specs/01-vault-tracker.md
   tags: specs
@@ -1688,8 +1711,8 @@ Task frontmatter carries:
 - `schema: tusker.task/v5`
 - `id`, `title`, `type: task`, `kind`
 - `epic`, `status`, `priority`, `risk`, `size`
-- `delegation`, `ai_assistance`, `ai_tools`
-- `domains`, `doc_nodes`, `blocked_by`, `blocks`
+- `delegation`, `ai_assistance`, and optional `ai_tools`
+- optional `domains`, `doc_nodes`, `blocked_by`, `blocks`
 - lifecycle stamps and close/verification fields
 
 Task body sections carry:
@@ -1697,16 +1720,19 @@ Task body sections carry:
 - `Intent`
 - `Scope`
 - `Acceptance contract`
-- `Canon`
-- `Code/system anchors`
-- `Constraints`
+- `Canon` for high/critical work
+- `Code/system anchors` for high/critical work
+- `Constraints` for high/critical work
 - `Deliverables`
 - `Verification plan`
-- `Knowledge delta`
-- `Execution plan`
+- `Knowledge delta` for high/critical work or when durable understanding changes
 - `Evidence`
-- `Verification log`
-- `Work log`
+- `Verification log` for high/critical work
+
+Default task bodies are capsule-first and risk-scaled. They do not carry
+`Execution plan` or `Work log` sections by default; disposable planning belongs
+in runner context, and durable truth belongs in acceptance, evidence,
+verification/close summaries, transitions, and knowledge deltas.
 
 ## Docs Routing
 
@@ -2337,7 +2363,7 @@ On each poll tick the daemon asks the adapter to reconcile running attempts:
 | `event_log.go` | normalized event stream writer |
 | `reconcile.go` | adapter reconciliation loop |
 
-- 06 - Verification, Rework, And Close | /developer/specs/06-review-rework-retry/ | audience: developer | updated: 2026-05-08
+- 06 - Verification, Rework, And Close | /developer/specs/06-review-rework-retry/ | audience: developer | updated: 2026-05-10
   V5 uses a simple lifecycle:
   source: docs/specs/06-review-rework-retry.md
   tags: specs
@@ -2405,11 +2431,11 @@ Close requires:
 - verification exists
 - every `doc_node` is applied, verified no-op, or waived
 
-Close records `closed_by`; the reviewer is `verified_by`. CLI output and the task work log should make both visible.
+Close records `closed_by`; the reviewer is `verified_by`. CLI output and frontmatter summaries should make both visible.
 
 ## Retry
 
-Retry is runtime behavior, not a public lifecycle command. Durable truth remains the task status and work log.
+Retry is runtime behavior, not a public lifecycle command. Durable truth remains task status, transitions, evidence, and verification/close summaries.
 
 - 07 - Documentation Site And Publication | /developer/specs/07-documentation-site-and-publication/ | audience: developer | updated: 2026-04-29
   Tusker V5 treats docs as durable pages, not work items.
@@ -2866,6 +2892,7 @@ tusker new doc --title <title> --node <domain/slug> \
 tusker list [--type epic|task|doc] [--epic <ACR>] [--status <status>] [--open|--closed] [--limit <n>]
 tusker search <text> [--type epic|task|doc] [--epic <ACR>] [--status <status>] [--limit <n>] [--json]
 tusker show <ID> [--capsule|--acceptance|--evidence|--verification|--full]
+tusker compact <ID|--all> [--write] [--json]
 tusker next [--epic <ACR>] [--owner <name>] [--json]
 tusker claim <ID> --as <agent-or-person> [--reason "..."]
 tusker status <ID> <draft|backlog|ready|blocked|active|review|rework|done|cancelled> [--by <actor>] [--reason "..."]
@@ -2939,7 +2966,15 @@ Add `--limit <n>` when an epic has a large queue.
 
 Use `tusker show <ID>` for the selected item before opening the markdown file.
 It defaults to `--capsule`; use `--acceptance`, `--evidence`, or
-`--verification` for a single section. `--full` is an explicit escape hatch.
+`--verification` for a bounded summary. `--verification` shows verification
+frontmatter plus a small log tail; use `--section "Verification log"` only when
+the full log is needed. `--full` is an explicit escape hatch.
+
+Use `tusker compact <ID>` when a note looks noisy. It dry-runs by default and
+reports removable empty optional frontmatter plus disposable placeholder
+sections such as empty `Execution plan` or creation-only `Work log`. Add
+`--write` only after checking that the reported removals are scaffolding, not
+durable decisions.
 
 ### Pick Work
 
@@ -3692,6 +3727,10 @@ Then tell the user: `Logged as <EPIC>-T-NNNN under <EPIC>. Picked <EPIC> because
 `_system/**`, runtime logs, and generated indexes. Use shell `rg` only when you
 need to search source code or non-tracker files.
 
+Use `tusker compact <ID>` as a dry-run before reading or editing old noisy
+notes. It reports empty optional frontmatter and disposable scaffolding that can
+be removed with `--write`.
+
 ## Follow-Ups
 
 ```bash
@@ -4035,6 +4074,11 @@ Recommended:
 - `tags`
 
 Do not add legacy tracker fields such as `record_id`, `schema_version`, `requester`, attestation/signoff fields, record-id mirror fields, or empty optional lifecycle fields. V5 uses the stable `id` plus generated runtime stores; old mirror metadata is noise.
+
+Tusker omits empty optional frontmatter on write. Missing optional lists such as
+`doc_nodes`, `blocked_by`, `blocks`, `ai_tools`, and `tags` mean the same thing
+as an empty list. Missing optional strings such as `assignee` or `block_reason`
+mean unset.
 
 Runtime/dispatch fields:
 
@@ -4582,6 +4626,8 @@ If `WORKFLOW.md` enables `reviewer`, `review` can dispatch an independent review
 - `domains` are broad areas; `doc_nodes` are exact docs targets from `_config/docs-map.yaml`.
 - Close only after evidence, docs impact resolution, verification, and validation.
 - Do not turn backlog/bookkeeping updates into closeout ceremony.
+- Use `tusker compact <ID>` before reading or editing an old noisy task; it is a
+  dry-run unless `--write` is provided.
 - Do not let the implementation worker self-certify. The configured reviewer actor is independent and may close only risks listed in `reviewer.auto_close_risks`.
 - Do not edit generated files in `_system/generated/**` or `site/src/content/docs/**`.
 - Documentation tickets are not permission to dump source text. Before writing docs, choose the audience, Diátaxis mode, and source authority.

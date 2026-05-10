@@ -34,8 +34,8 @@ Task frontmatter carries:
 - `schema: tusker.task/v5`
 - `id`, `title`, `type: task`, `kind`
 - `epic`, `status`, `priority`, `risk`, `size`
-- `delegation`, `ai_assistance`, `ai_tools`
-- `domains`, `doc_nodes`, `blocked_by`, `blocks`
+- `delegation`, `ai_assistance`, and optional `ai_tools`
+- optional `domains`, `doc_nodes`, `blocked_by`, `blocks`
 - lifecycle stamps and close/verification fields
 
 Task body sections carry:
@@ -43,16 +43,19 @@ Task body sections carry:
 - `Intent`
 - `Scope`
 - `Acceptance contract`
-- `Canon`
-- `Code/system anchors`
-- `Constraints`
+- `Canon` for high/critical work
+- `Code/system anchors` for high/critical work
+- `Constraints` for high/critical work
 - `Deliverables`
 - `Verification plan`
-- `Knowledge delta`
-- `Execution plan`
+- `Knowledge delta` for high/critical work or when durable understanding changes
 - `Evidence`
-- `Verification log`
-- `Work log`
+- `Verification log` for high/critical work
+
+Default task bodies are capsule-first and risk-scaled. They do not carry
+`Execution plan` or `Work log` sections by default; disposable planning belongs
+in runner context, and durable truth belongs in acceptance, evidence,
+verification/close summaries, transitions, and knowledge deltas.
 
 ## Docs Routing
 

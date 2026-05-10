@@ -8,7 +8,7 @@ tags: ["docs-catalog", "tusker-generated"]
 
 # Docs Catalog
 
-_Auto-generated 2026-05-10T05:18:42Z from `_config/docs-map.yaml`. Diátaxis mode is metadata; navigation is grouped by reader intent._
+_Auto-generated 2026-05-10T05:43:11Z from `_config/docs-map.yaml`. Diátaxis mode is metadata; navigation is grouped by reader intent._
 
 ## Guides
 

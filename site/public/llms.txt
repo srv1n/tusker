@@ -59,7 +59,7 @@ Compact catalog of exported docs.
 - 00 - Product Modes | /developer/specs/00-product-modes/ | audience: developer | updated: 2026-04-29
   Tusker V5 is one binary with one public workflow: a markdown-first task and docs tracker for agent-heavy software work.
 
-- 01 - Vault Tracker | /developer/specs/01-vault-tracker/ | audience: developer | updated: 2026-04-29
+- 01 - Vault Tracker | /developer/specs/01-vault-tracker/ | audience: developer | updated: 2026-05-10
   Tusker V5 stores durable work in Markdown. Frontmatter is the machine-readable current state; body sections are the human-readable contract and proof.
 
 - 02 - Workflow Contract | /developer/specs/02-workflow-contract/ | audience: developer | updated: 2026-04-29
@@ -74,7 +74,7 @@ Compact catalog of exported docs.
 - 05. Runner And Session Protocol | /developer/specs/05-runner-and-session-protocol/ | audience: developer | updated: 2026-04-29
   Status: Draft Scope: daemon-run execution for codex and claude-code
 
-- 06 - Verification, Rework, And Close | /developer/specs/06-review-rework-retry/ | audience: developer | updated: 2026-05-08
+- 06 - Verification, Rework, And Close | /developer/specs/06-review-rework-retry/ | audience: developer | updated: 2026-05-10
   V5 uses a simple lifecycle:
 
 - 07 - Documentation Site And Publication | /developer/specs/07-documentation-site-and-publication/ | audience: developer | updated: 2026-04-29

@@ -62,7 +62,22 @@ tusker show ORC-T-0019 --acceptance
 tusker show ORC-T-0019 --evidence
 ```
 
-`show` defaults to the agent capsule. `--full` is available, but it should be a deliberate drill-down.
+`show` defaults to the agent capsule. `--verification` shows verification
+frontmatter plus a small log tail; use `--section "Verification log"` only when
+the full log is needed. `--full` is available, but it should be a deliberate
+drill-down.
+
+Use `compact` to trim old notes before they become model context:
+
+```bash
+tusker compact ORC-T-0019
+tusker compact ORC-T-0019 --write
+tusker compact --all --json
+```
+
+`compact` dry-runs by default. It removes empty optional frontmatter and
+disposable placeholder sections such as empty `Execution plan` and creation-only
+`Work log`; substantive decisions and evidence are preserved.
 
 ## Operator/runtime commands
 

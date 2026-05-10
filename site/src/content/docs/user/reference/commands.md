@@ -41,6 +41,7 @@ tusker new doc --title <title> --node <domain/slug> \
 tusker list [--type epic|task|doc] [--epic <ACR>] [--status <status>] [--open|--closed] [--limit <n>]
 tusker search <text> [--type epic|task|doc] [--epic <ACR>] [--status <status>] [--limit <n>] [--json]
 tusker show <ID> [--capsule|--acceptance|--evidence|--verification|--full]
+tusker compact <ID|--all> [--write] [--json]
 tusker next [--epic <ACR>] [--owner <name>] [--json]
 tusker claim <ID> --as <agent-or-person> [--reason "..."]
 tusker status <ID> <draft|backlog|ready|blocked|active|review|rework|done|cancelled> [--by <actor>] [--reason "..."]
@@ -114,7 +115,15 @@ Add `--limit <n>` when an epic has a large queue.
 
 Use `tusker show <ID>` for the selected item before opening the markdown file.
 It defaults to `--capsule`; use `--acceptance`, `--evidence`, or
-`--verification` for a single section. `--full` is an explicit escape hatch.
+`--verification` for a bounded summary. `--verification` shows verification
+frontmatter plus a small log tail; use `--section "Verification log"` only when
+the full log is needed. `--full` is an explicit escape hatch.
+
+Use `tusker compact <ID>` when a note looks noisy. It dry-runs by default and
+reports removable empty optional frontmatter plus disposable placeholder
+sections such as empty `Execution plan` or creation-only `Work log`. Add
+`--write` only after checking that the reported removals are scaffolding, not
+durable decisions.
 
 ### Pick Work
 

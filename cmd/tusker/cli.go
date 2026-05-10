@@ -214,6 +214,8 @@ func run(command string, args Args) (int, error) {
 		return 0, searchCmd(args)
 	case "show":
 		return 0, showCmd(args)
+	case "compact":
+		return 0, compactCmd(args)
 	case "docs init":
 		return 0, docsInitCmd(args)
 	case "docs model":
@@ -332,6 +334,9 @@ func run(command string, args Args) (int, error) {
 	case "help show":
 		printShowHelp()
 		return 0, nil
+	case "help compact":
+		printCompactHelp()
+		return 0, nil
 	case "help validate":
 		printValidateHelp()
 		return 0, nil
@@ -394,6 +399,7 @@ Commands:
   list                list V5 epics, tasks, and docs
   search              search tracker notes without generated files or attachments
   show                show a bounded note capsule or selected section
+  compact             remove empty optional metadata and disposable note scaffolding
   status              move a V5 task or epic through its workflow
   next                show the next pickable task
   claim               assign a ready/rework task and move it active
@@ -418,6 +424,7 @@ Help:
   tusker runs --help
   tusker search --help
   tusker show --help
+  tusker compact --help
   tusker status --help
 
 Global flags:
@@ -448,6 +455,8 @@ func printCommandHelp(command string) bool {
 		printSearchHelp()
 	case "show":
 		printShowHelp()
+	case "compact":
+		printCompactHelp()
 	case "validate":
 		printValidateHelp()
 	case "reindex":
@@ -775,17 +784,34 @@ Examples:
 
 func printShowHelp() {
 	fmt.Println(`Usage:
-  tusker show <ID> [--vault <path>] [--capsule|--acceptance|--evidence|--verification|--full]
+  tusker show <ID> [--vault <path>] [--capsule|--acceptance|--evidence|--verification|--full] [--lines <n>]
   tusker show <ID> --section "<heading>"
 
 Purpose:
   Read the smallest useful slice of a Tusker note. Defaults to --capsule.
+  --verification shows summaries plus a small log tail; use --section for the full log.
 
 Examples:
   tusker show ORC-T-0019
   tusker show ORC-T-0019 --acceptance
   tusker show ORC-T-0019 --evidence
   tusker show ORC-T-0019 --full`)
+}
+
+func printCompactHelp() {
+	fmt.Println(`Usage:
+  tusker compact <ID> [--vault <path>] [--write] [--json]
+  tusker compact --all [--vault <path>] [--write] [--json]
+
+Purpose:
+  Dry-run or apply safe note compaction: remove empty optional frontmatter and
+  disposable placeholder sections such as empty Execution plan and Work log.
+  Substantive sections are preserved.
+
+Examples:
+  tusker compact ORC-T-0019
+  tusker compact ORC-T-0019 --write
+  tusker compact --all --json`)
 }
 
 func printValidateHelp() {

@@ -23,7 +23,7 @@ updated: "2026-05-10"
 
 The Tusker skill bundle is the primary agent contract. It teaches Codex, Claude Code, and other compatible harnesses how to read the vault, choose epics, search for existing work, create tasks, move status, attach evidence, resolve docs impact, and close only after verification.
 
-The skill must keep context use proportional to the job. A lookup is not a closeout, and a backlog note is not a migration. Agents should use `tusker list --type epic`, `tusker search`, one-epic `tusker list --epic <ACR> --type task --open`, `tusker show <ID> --capsule`, and exact task paths before broad file reads. They should not read `Attachments/**`, `_system/generated/**`, build logs, or raw runner logs unless the user is explicitly asking for evidence forensics.
+The skill must keep context use proportional to the job. A lookup is not a closeout, and a backlog note is not a migration. Agents should use `tusker list --type epic`, `tusker search`, one-epic `tusker list --epic <ACR> --type task --open`, `tusker show <ID> --capsule`, `tusker compact <ID>` for old noisy notes, and exact task paths before broad file reads. They should not read `Attachments/**`, `_system/generated/**`, build logs, or raw runner logs unless the user is explicitly asking for evidence forensics.
 
 | Lane | Use for | Expected proof |
 |---|---|---|

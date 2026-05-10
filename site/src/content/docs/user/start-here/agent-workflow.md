@@ -77,6 +77,8 @@ If `WORKFLOW.md` enables `reviewer`, `review` can dispatch an independent review
 - `domains` are broad areas; `doc_nodes` are exact docs targets from `_config/docs-map.yaml`.
 - Close only after evidence, docs impact resolution, verification, and validation.
 - Do not turn backlog/bookkeeping updates into closeout ceremony.
+- Use `tusker compact <ID>` before reading or editing an old noisy task; it is a
+  dry-run unless `--write` is provided.
 - Do not let the implementation worker self-certify. The configured reviewer actor is independent and may close only risks listed in `reviewer.auto_close_risks`.
 - Do not edit generated files in `_system/generated/**` or `site/src/content/docs/**`.
 - Documentation tickets are not permission to dump source text. Before writing docs, choose the audience, Diátaxis mode, and source authority.

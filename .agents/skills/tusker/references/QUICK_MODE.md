@@ -40,6 +40,10 @@ Then tell the user: `Logged as <EPIC>-T-NNNN under <EPIC>. Picked <EPIC> because
 `_system/**`, runtime logs, and generated indexes. Use shell `rg` only when you
 need to search source code or non-tracker files.
 
+Use `tusker compact <ID>` as a dry-run before reading or editing old noisy
+notes. It reports empty optional frontmatter and disposable scaffolding that can
+be removed with `--write`.
+
 ## Follow-Ups
 
 ```bash

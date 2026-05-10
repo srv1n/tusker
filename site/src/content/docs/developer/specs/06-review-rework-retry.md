@@ -15,7 +15,7 @@ tusker:
   superseded_by: "/user/start-here/agent-workflow/"
   tags:
     - "specs"
-  updated: "2026-05-08"
+  updated: "2026-05-10"
   verified_at: "2026-04-28"
 ---
 
@@ -82,8 +82,8 @@ Close requires:
 - verification exists
 - every `doc_node` is applied, verified no-op, or waived
 
-Close records `closed_by`; the reviewer is `verified_by`. CLI output and the task work log should make both visible.
+Close records `closed_by`; the reviewer is `verified_by`. CLI output and frontmatter summaries should make both visible.
 
 ## Retry
 
-Retry is runtime behavior, not a public lifecycle command. Durable truth remains the task status and work log.
+Retry is runtime behavior, not a public lifecycle command. Durable truth remains task status, transitions, evidence, and verification/close summaries.

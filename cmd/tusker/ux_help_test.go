@@ -151,7 +151,7 @@ func TestRuntimeHelpExplainsOperatorSurface(t *testing.T) {
 		}
 	}
 	mainHelp := captureStdout(t, printHelp)
-	for _, expected := range []string{"daemon", "projects", "runs", "refresh", "search", "show"} {
+	for _, expected := range []string{"daemon", "projects", "runs", "refresh", "search", "show", "compact"} {
 		if !strings.Contains(mainHelp, expected) {
 			t.Fatalf("main help missing %q:\n%s", expected, mainHelp)
 		}
@@ -179,9 +179,25 @@ func TestShowHelpExplainsCapsuleFirst(t *testing.T) {
 		"--capsule",
 		"--acceptance",
 		"Defaults to --capsule",
+		"small log tail",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("show help missing %q:\n%s", expected, output)
+		}
+	}
+}
+
+func TestCompactHelpExplainsDryRunFirst(t *testing.T) {
+	output := captureStdout(t, printCompactHelp)
+	for _, expected := range []string{
+		"tusker compact <ID>",
+		"--write",
+		"Dry-run",
+		"Execution plan",
+		"Work log",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("compact help missing %q:\n%s", expected, output)
 		}
 	}
 }

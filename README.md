@@ -137,9 +137,10 @@ Ask Claude Code or Codex to log a task. The agent should:
 2. Run `tusker search "<duplicate clue>" --type task` before creating work that may already exist.
 3. Run `tusker list --epic <ACR> --type task --open` only for the likely epic.
 4. Run `tusker show <ID> --capsule` before opening a full task file.
-5. Pick the right epic, or propose a new one if nothing fits.
-6. Create a task with sensible defaults.
-7. Print the ID and a one-line reason for the epic choice.
+5. Run `tusker compact <ID>` first when an old note still carries scaffolding or empty optional fields.
+6. Pick the right epic, or propose a new one if nothing fits.
+7. Create a task with sensible defaults.
+8. Print the ID and a one-line reason for the epic choice.
 
 Primary V5 CLI:
 
@@ -147,6 +148,7 @@ Primary V5 CLI:
 tusker search "cache invalidation" --type task
 tusker list --epic MEM --type task --open
 tusker show MEM-T-0007 --capsule
+tusker compact MEM-T-0007
 tusker new task --epic MEM --title "Add cache invalidation" \
   --kind feature --size m --risk medium --domains runtime,docs \
   --doc-nodes reference/cache

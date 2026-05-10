@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-05-10T05:18:42Z",
+  "generatedAt": "2026-05-10T05:43:11Z",
   "canon": [
     {
       "topic": "DOC",
@@ -207,7 +207,7 @@
       "tags": [
         "specs"
       ],
-      "updated": "2026-04-29",
+      "updated": "2026-05-10",
       "summary": "Tusker V5 stores durable work in Markdown. Frontmatter is the machine-readable current state; body sections are the human-readable contract and proof."
     },
     {
@@ -302,7 +302,7 @@
       "tags": [
         "specs"
       ],
-      "updated": "2026-05-08",
+      "updated": "2026-05-10",
       "summary": "V5 uses a simple lifecycle:"
     },
     {
