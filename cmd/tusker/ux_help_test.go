@@ -151,7 +151,7 @@ func TestRuntimeHelpExplainsOperatorSurface(t *testing.T) {
 		}
 	}
 	mainHelp := captureStdout(t, printHelp)
-	for _, expected := range []string{"daemon", "projects", "runs", "refresh", "search", "show", "compact"} {
+	for _, expected := range []string{"daemon", "projects", "runs", "refresh", "search", "show", "compact", "context"} {
 		if !strings.Contains(mainHelp, expected) {
 			t.Fatalf("main help missing %q:\n%s", expected, mainHelp)
 		}
@@ -198,6 +198,20 @@ func TestCompactHelpExplainsDryRunFirst(t *testing.T) {
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("compact help missing %q:\n%s", expected, output)
+		}
+	}
+}
+
+func TestContextHelpExplainsTranscriptAudit(t *testing.T) {
+	output := captureStdout(t, printContextHelp)
+	for _, expected := range []string{
+		"tusker context audit",
+		"codex-session.jsonl",
+		"largest tool outputs",
+		"--top <n>",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("context help missing %q:\n%s", expected, output)
 		}
 	}
 }

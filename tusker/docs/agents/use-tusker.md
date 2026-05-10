@@ -47,6 +47,9 @@ Use Tusker as the execution ledger for agent-first software work: choose the rig
 - Start with `tusker list --type epic`; read `tusker/README.md` only when the project overview is needed.
 - Pick an existing epic when the request fits; create a new epic only for a durable workstream.
 - Use `tusker search` before broad repository search when the question is about existing tracker work.
+- Use `tusker context audit --file <jsonl>` before raw-reading Codex JSONL.
+- Use bounded shell reads: `rg -l`, `rg --count`, narrow globs, capped previews,
+  and `tusker docs build --quiet` for successful docs builds.
 - Use task IDs, not story IDs, for executable work.
 - Use `doc_nodes` from `_config/docs-map.yaml`; do not invent them.
 - Treat `_system/generated/**`, `Attachments/**`, raw runner logs, and full build logs as artifact stores, not default context.

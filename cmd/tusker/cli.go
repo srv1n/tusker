@@ -125,7 +125,7 @@ func parseCLI(argv []string) (string, Args) {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "new", "vault", "daemon", "projects", "runs":
+	case "docs", "new", "vault", "daemon", "projects", "runs", "context":
 		return true
 	default:
 		return false
@@ -216,6 +216,8 @@ func run(command string, args Args) (int, error) {
 		return 0, showCmd(args)
 	case "compact":
 		return 0, compactCmd(args)
+	case "context audit":
+		return 0, contextAuditCmd(args)
 	case "docs init":
 		return 0, docsInitCmd(args)
 	case "docs model":
@@ -337,6 +339,9 @@ func run(command string, args Args) (int, error) {
 	case "help compact":
 		printCompactHelp()
 		return 0, nil
+	case "help context", "help context audit":
+		printContextHelp()
+		return 0, nil
 	case "help validate":
 		printValidateHelp()
 		return 0, nil
@@ -400,6 +405,7 @@ Commands:
   search              search tracker notes without generated files or attachments
   show                show a bounded note capsule or selected section
   compact             remove empty optional metadata and disposable note scaffolding
+  context             audit Codex JSONL context and tool-output bloat
   status              move a V5 task or epic through its workflow
   next                show the next pickable task
   claim               assign a ready/rework task and move it active
@@ -425,6 +431,7 @@ Help:
   tusker search --help
   tusker show --help
   tusker compact --help
+  tusker context --help
   tusker status --help
 
 Global flags:
@@ -457,6 +464,8 @@ func printCommandHelp(command string) bool {
 		printShowHelp()
 	case "compact":
 		printCompactHelp()
+	case "context", "context audit":
+		printContextHelp()
 	case "validate":
 		printValidateHelp()
 	case "reindex":
@@ -623,7 +632,7 @@ func printDocsHelp() {
   tusker docs waive <id> <doc-node> [--by <name>] --reason <text>
   tusker docs export [--vault <path>] [--site <path>] [--clean] [--public-only] [--json]
   tusker docs dev [--vault <path>] [--site <path>] [--watch] [--port <n>] [--host <host>]
-  tusker docs build [--vault <path>] [--site <path>] [--public-only] [--json]
+  tusker docs build [--vault <path>] [--site <path>] [--public-only] [--quiet] [--json]
 
 Purpose:
   Own the documentation system from the CLI: explain the model, inspect the
@@ -636,6 +645,8 @@ What it means:
   and stale_when triggers. Tasks name doc_nodes when work changes durable
   understanding. Close requires each targeted doc node to be applied, verified
   as no-op, or waived with a reason.
+  docs build suppresses Astro output when --quiet or --json is set; failures
+  include the final non-empty log tail.
 
 Diátaxis modes:
   tutorial     learn by doing       -> Start here
@@ -801,17 +812,32 @@ Examples:
 func printCompactHelp() {
 	fmt.Println(`Usage:
   tusker compact <ID> [--vault <path>] [--write] [--json]
-  tusker compact --all [--vault <path>] [--write] [--json]
+  tusker compact --all [--vault <path>] [--write] [--json] [--verbose]
 
 Purpose:
   Dry-run or apply safe note compaction: remove empty optional frontmatter and
   disposable placeholder sections such as empty Execution plan and Work log.
   Substantive sections are preserved.
+  With --all, unchanged notes are hidden unless --verbose is set.
 
 Examples:
   tusker compact ORC-T-0019
   tusker compact ORC-T-0019 --write
   tusker compact --all --json`)
+}
+
+func printContextHelp() {
+	fmt.Println(`Usage:
+  tusker context audit --file <codex-session.jsonl> [--top <n>] [--json]
+
+Purpose:
+  Summarize a Codex JSONL transcript without dumping raw session content.
+  Reports output categories, largest tool outputs, token totals, and concrete
+  context-reduction recommendations.
+
+Examples:
+  tusker context audit --file ~/.codex/sessions/2026/05/09/session.jsonl
+  tusker context audit --file ./thread.jsonl --top 20 --json`)
 }
 
 func printValidateHelp() {

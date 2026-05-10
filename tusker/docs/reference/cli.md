@@ -28,6 +28,7 @@ The public CLI is small on purpose:
 | Setup | `init`, `update` |
 | Work items | `new`, `list`, `search`, `show`, `status`, `evidence`, `verify`, `close` |
 | Docs | `docs model`, `docs map`, `docs catalog`, `docs freshness`, `docs check`, `docs apply`, `docs noop`, `docs waive`, `docs export`, `docs dev`, `docs build` |
+| Context audit | `context audit` |
 | Shared vaults | `vault set`, `vault status`, `vault mount`, `vault unmount`, `vault repair`, `vault move` |
 | Operator runtime | `daemon`, `projects`, `runs`, `refresh` |
 | Health | `validate`, `reindex` |
@@ -79,6 +80,17 @@ tusker compact --all --json
 disposable placeholder sections such as empty `Execution plan` and creation-only
 `Work log`; substantive decisions and evidence are preserved.
 
+Use `context audit` to inspect Codex JSONL without dumping the transcript:
+
+```bash
+tusker context audit --file ~/.codex/sessions/2026/05/09/session.jsonl
+tusker context audit --file ./thread.jsonl --top 20 --json
+```
+
+It reports top output categories, largest tool outputs, token totals, and
+context-reduction recommendations. This is the default path for token-burn
+forensics.
+
 ## Operator/runtime commands
 
 The runtime commands are shipped as operator/internal controls. They support the local runner pickup loop while keeping task truth in markdown.
@@ -120,10 +132,12 @@ Use this after pulling or rebuilding Tusker when the repository should carry the
 tusker docs map --json
 tusker docs freshness --stale
 tusker docs export --vault ./tusker --site ./site
-tusker docs build --vault ./tusker --site ./site
+tusker docs build --vault ./tusker --site ./site --quiet
 ```
 
 The site output is generated. Author source docs in `tusker/docs/**` or registered repo docs, not in `site/src/content/docs/**`.
+For agent runs, prefer `docs build --quiet` or `--json`; successful Astro route
+output is suppressed, while failures include the final non-empty log tail.
 
 ## Codex-first orchestration status
 

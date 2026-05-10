@@ -59,10 +59,19 @@ func compactCmd(args Args) error {
 		autoReindex(vaultPath)
 	}
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "write": write, "count": len(results), "items": results})
+		items := filteredCompactResults(results, args)
+		emitJSON(map[string]any{
+			"ok":      true,
+			"write":   write,
+			"count":   len(items),
+			"total":   len(results),
+			"changed": countChangedCompactResults(results),
+			"items":   items,
+		})
 		return nil
 	}
-	for _, result := range results {
+	printed := 0
+	for _, result := range filteredCompactResults(results, args) {
 		changed := result.BytesBefore != result.BytesAfter || len(result.RemovedFields) > 0 || len(result.RemovedSections) > 0
 		action := "unchanged"
 		if result.Written {
@@ -81,11 +90,44 @@ func compactCmd(args Args) error {
 		if len(result.RemovedSections) > 0 {
 			fmt.Printf("  sections: %s\n", strings.Join(result.RemovedSections, ", "))
 		}
+		printed++
+	}
+	if args.Bool("all") && !args.Bool("verbose") {
+		changed := countChangedCompactResults(results)
+		unchanged := len(results) - changed
+		if printed == 0 {
+			fmt.Printf("No compactable notes among %d checked.\n", len(results))
+		} else if unchanged > 0 {
+			fmt.Printf("(%d unchanged notes hidden; add --verbose to show all)\n", unchanged)
+		}
 	}
 	if !write {
 		fmt.Println("dry run; add --write to update files")
 	}
 	return nil
+}
+
+func filteredCompactResults(results []compactResult, args Args) []compactResult {
+	if !args.Bool("all") || args.Bool("verbose") {
+		return results
+	}
+	var out []compactResult
+	for _, result := range results {
+		if result.BytesBefore != result.BytesAfter || len(result.RemovedFields) > 0 || len(result.RemovedSections) > 0 {
+			out = append(out, result)
+		}
+	}
+	return out
+}
+
+func countChangedCompactResults(results []compactResult) int {
+	count := 0
+	for _, result := range results {
+		if result.BytesBefore != result.BytesAfter || len(result.RemovedFields) > 0 || len(result.RemovedSections) > 0 {
+			count++
+		}
+	}
+	return count
 }
 
 func compactNote(note Note, write bool) (compactResult, error) {
