@@ -8,6 +8,18 @@ tags: ["dashboard"]
 
 # Vault Home
 
+## Workflow status
+
+| Surface | Current setting |
+|---|---|
+| Worker dispatch | `active`, `rework` |
+| Review checkpoint | `review` |
+| Default runner | `codex` |
+| Reviewer lane | enabled |
+| Reviewer actor | `agent-reviewer` |
+| Reviewer auto-close | `low`, `medium` |
+| Human gate | `high`, `critical` |
+
 ## Active epics
 
 ![[_system/views/Epics.base#Active]]
@@ -20,7 +32,7 @@ tags: ["dashboard"]
 
 <!-- tusker:live-runs:begin -->
 
-_Auto-generated 2026-05-04T15:46:37Z. No live runs right now._
+_Auto-generated 2026-05-10T05:18:42Z. No live runs right now._
 
 <!-- tusker:live-runs:end -->
 
@@ -65,7 +77,7 @@ _Auto-generated 2026-05-04T15:46:37Z. No live runs right now._
 
 <!-- tusker:docs-freshness:begin -->
 
-_Auto-generated 2026-05-04T15:46:37Z. Docs needing verification are shown below._
+_Auto-generated 2026-05-10T05:18:42Z. Docs needing verification are shown below._
 
 | Doc node | Freshness | Stale due to |
 |---|---|---|

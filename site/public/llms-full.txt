@@ -60,7 +60,7 @@ Use `--vault-only` when the repo already has its own `AGENTS.md`, `CLAUDE.md`, o
 
 Warnings about missing V5 sections in old notes are migration debt, not a broken repo. Fix them when touching the note for real work.
 
-## Codex-only operator loop adoption
+## Codex-first operator loop adoption
 
 V5 adoption and ORC runtime adoption are related but not identical.
 
@@ -70,9 +70,10 @@ V5 adoption and ORC runtime adoption are related but not identical.
 | `active`/`rework` as runnable tracker states | Yes | `WORKFLOW.md` and daemon polling code use these states. |
 | Dashboard active/blocked/review/follow-up visibility | Yes in the checked-in vault and skill assets | The current `.base` files expose these views without `Orchestration.base`; keep code defaults in sync before claiming init/migration emits them. |
 | Dashboard live-run block | Yes, as generated visibility | `tusker reindex` renders runtime rows when a project exists in the runtime store. |
-| Codex-only daemon loop from Obsidian status to review | Yes for local operator use | `daemon`, `projects`, `runs`, and `refresh` are routed. Register the project, run the daemon or one `refresh` tick, and inspect runtime rows. |
+| Codex-first daemon loop from Obsidian status to review | Yes for local operator use | `daemon`, `projects`, `runs`, and `refresh` are routed. Codex is the default live runner today; the runtime lane model is not Codex-specific. |
+| Policy-driven agent reviewer lane | Yes for low/medium auto-close; advisory for high/critical | `WORKFLOW.md` reviewer policy starts an independent `review` lane for the configured runner. Configured reviewers can close low/medium only; high/critical still require a human gate. |
 
-Use the operator loop for smoke tests and local Codex pickup:
+Use the operator loop for smoke tests and local runner pickup:
 
 ```bash
 tusker projects add --repo . --vault ./tusker
@@ -83,13 +84,15 @@ tusker verify <TASK-ID> --by <verifier>
 tusker close <TASK-ID> --by <reviewer>
 ```
 
-The daemon queues continuation if a clean runner exit leaves the task in `active` or `rework`. A review handoff is honest only after Codex or a human moves the task to `review`; the daemon then writes a review packet from the completed run and leaves final verification to a human.
+The daemon queues continuation if a clean runner exit leaves the task in `active` or `rework`. A review handoff is honest only after Codex or a human moves the task to `review`; the daemon then writes a review packet from the completed implementation run.
+
+If reviewer policy is enabled, a later poll can run an independent reviewer prompt for the task in `review`. Low/medium tasks may be verified and closed by the configured reviewer when the evidence, tests, docs, and scope checks pass. High/critical tasks stay in `review` until a human verifies and closes.
 
 ## Rollback
 
 By default migration creates `tusker.backup-v5-YYYYMMDD-HHMMSS`. If a repo has a watcher that restores or deletes sidecar backups, rerun with `--no-backup` only after making your own git or filesystem checkpoint.
 
-- Tusker v5 CLI surface | /internal/reference/cli/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-04
+- Tusker v5 CLI surface | /internal/reference/cli/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-10
   Tusker v5 CLI surface.
   source: docs/reference/cli.md
   source_of_truth: cmd/tusker/cli.go, cmd/tusker/commands_v5.go
@@ -103,15 +106,47 @@ The public CLI is small on purpose:
 | Area | Commands |
 |---|---|
 | Setup | `init`, `update` |
-| Work items | `new`, `list`, `status`, `evidence`, `verify`, `close` |
+| Work items | `new`, `list`, `search`, `show`, `status`, `evidence`, `verify`, `close` |
 | Docs | `docs model`, `docs map`, `docs catalog`, `docs freshness`, `docs check`, `docs apply`, `docs noop`, `docs waive`, `docs export`, `docs dev`, `docs build` |
 | Shared vaults | `vault set`, `vault status`, `vault mount`, `vault unmount`, `vault repair`, `vault move` |
 | Operator runtime | `daemon`, `projects`, `runs`, `refresh` |
 | Health | `validate`, `reindex` |
 
+## Bounded tracker lookup
+
+Use `tusker search` before broad shell searches when the question is about existing tracker work:
+
+```bash
+tusker search "reviewer lane" --type task
+tusker search "docs close gate" --type task --epic DOC --status active
+tusker search "cache" --json
+```
+
+The command searches first-party task, epic, and doc notes. It skips attachments, generated indexes, runtime state, and raw logs, so it is safe as the default duplicate-check and status lookup path for agents.
+
+Use `tusker list` as the progressive index:
+
+```bash
+tusker list --type epic
+tusker list --epic ORC --type task --open
+tusker list --epic ORC --type task --open --limit 10
+```
+
+The first command prints the short epic roster with summaries and counts. The second drills into one epic's open tasks without reading note bodies.
+
+Use `tusker show` before opening a note:
+
+```bash
+tusker show ORC-T-0019
+tusker show ORC-T-0019 --acceptance
+tusker show ORC-T-0019 --evidence
+```
+
+`show` defaults to the agent capsule. `--full` is available, but it should be a deliberate drill-down.
+
 ## Operator/runtime commands
 
-The runtime commands are shipped as operator/internal controls. They support the local Codex pickup loop while keeping task truth in markdown.
+The runtime commands are shipped as operator/internal controls. They support the local runner pickup loop while keeping task truth in markdown.
 
 | Command | Behavior |
 |---|---|
@@ -155,11 +190,40 @@ tusker docs build --vault ./tusker --site ./site
 
 The site output is generated. Author source docs in `tusker/docs/**` or registered repo docs, not in `site/src/content/docs/**`.
 
-## Codex-only orchestration status
+## Codex-first orchestration status
 
-`WORKFLOW.md` currently names `codex` as the default runner and `codex app-server` as the Codex command. The tracker contract says only `active` and `rework` are runnable; `ready` is not dispatched.
+`WORKFLOW.md` currently names `codex` as the default runner and `codex app-server` as the Codex command. That is the first production path, not a permanent product boundary. The tracker and reviewer policies are runner-neutral: future adapters such as `claude-code` or `opencode` should plug into the same task lifecycle, runtime lanes, and close gates.
 
-The local Obsidian-to-review loop is now testable through the operator commands: register the project, move a task to `active` or `rework`, run `refresh` or `daemon run`, and inspect the run. Codex must still move the task to `review` when it is ready; a clean exit that leaves the task `active`/`rework` queues continuation rather than pretending the work is reviewable.
+The local Obsidian-to-review loop is now testable through the operator commands: register the project, move a task to `active` or `rework`, run `refresh` or `daemon run`, and inspect the run. The selected runner must still move the task to `review` when it is ready; a clean exit that leaves the task `active`/`rework` queues continuation rather than pretending the work is reviewable.
+
+## Reviewer close lane
+
+`WORKFLOW.md` can also enable a reviewer lane:
+
+```yaml
+reviewer:
+  enabled: true
+  runner: codex # current default; use another enabled runner when its adapter is ready
+  actor: agent-reviewer
+  auto_close_risks: [low, medium]
+  human_required_risks: [high, critical]
+```
+
+When enabled, a task in `review` can be picked up by an independent reviewer run. The reviewer prompt tells the agent to inspect the task, evidence, diff, tests, docs impact, and caveats. If the task fails review, it should send the task to `rework`:
+
+```bash
+tusker status <TASK-ID> rework --by agent-reviewer --reason "<specific unmet acceptance item>"
+```
+
+For low/medium tasks, the reviewer may close after the normal gates pass:
+
+```bash
+tusker docs check <TASK-ID>
+tusker verify <TASK-ID> --by agent-reviewer --summary "<what was checked>"
+tusker close <TASK-ID> --by agent-reviewer --reason "agent review accepted"
+```
+
+For high/critical tasks, the configured reviewer is blocked from `verify` and `close`; it can produce advisory evidence, but a human must verify and close. Closed task output and frontmatter summaries include both reviewer and closer attribution through `verified_by` and `closed_by`.
 
 ## Shared Obsidian vault
 
@@ -191,7 +255,7 @@ tusker vault status
 
 This page is part of the v5 Tusker canon. Replace the placeholder with project-specific detail as the implementation lands.
 
-- Template contract | /internal/reference/templates/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-04-29
+- Template contract | /internal/reference/templates/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-10
   Template contract.
   source: docs/reference/templates.md
   source_of_truth: cmd/tusker/v5_templates.go, skill/assets/templates
@@ -200,7 +264,22 @@ This page is part of the v5 Tusker canon. Replace the placeholder with project-s
 
 ## Summary
 
-This page is part of the v5 Tusker canon. Replace the placeholder with project-specific detail as the implementation lands.
+Tusker task templates are risk-scaled and capsule-first.
+
+Every task starts with the smallest durable context:
+
+- `## Agent capsule`
+- `## Intent`
+- `## Acceptance contract`
+- `## Evidence`
+
+Medium tasks add scope, deliverables, and verification plan. High and critical
+tasks add canon, code/system anchors, constraints, escalation conditions,
+knowledge delta, and verification log. Critical tasks also add rollback.
+
+Default templates do not include `## Execution plan` or `## Work log`. Those are
+live scratchpads, not durable context. Use evidence summaries, verification
+frontmatter, transitions, and review packets for audit fidelity.
 
 - Docs routing, impact hook, and publication model | /internal/reference/docs-pipeline/ | audience: developer | mode: explanation | agent_layer: capsule | updated: 2026-04-29
   Docs routing, impact hook, and publication model.
@@ -310,13 +389,13 @@ Tusker does not pretend freshness is magic. It records the evidence path and mak
 
 ## Scope
 
-Tusker V5 keeps task truth in markdown and runtime truth outside markdown. The Codex-only orchestration surface is local and operator-facing: register a repo/vault, run one daemon tick or the long-lived daemon, and inspect runtime evidence without putting leases or transcripts into task frontmatter.
+Tusker V5 keeps task truth in markdown and runtime truth outside markdown. The current live runner focus is Codex, but the orchestration model is runner-neutral: register a repo/vault, run one daemon tick or the long-lived daemon, and inspect runtime evidence without putting leases or transcripts into task frontmatter.
 
 ## State boundary
 
 | State | Location | Examples |
 |---|---|---|
-| Task truth | task markdown frontmatter/body | `status`, `assignee`, `blocked_by`, `block_reason`, evidence, verification, work log |
+| Task truth | task markdown frontmatter/body | `status`, `assignee`, `blocked_by`, `block_reason`, capsule, acceptance, evidence, verification and close summaries |
 | Runtime truth | default state root SQLite/files | projects, run leases, attempts, turns, sessions, supervisor decisions, prompt packets, raw logs, event JSONL, status JSON |
 | Dashboard snapshot | `tusker/_system/generated/dashboard.json` and `Dashboard.md` generated blocks | counts, stale docs, live-run rows for the registered project |
 
@@ -337,6 +416,8 @@ tracker:
 
 The daemon polling code uses those states. `ready` is intentionally not runnable; it means shaped work that a human or agent may claim. `blocked`, `review`, `done`, and `cancelled` are not dispatch states.
 
+There is one exception: when `reviewer.enabled` is true, `review` can dispatch a separate reviewer lane. That lane is not implementation work and does not add a task status. It uses runtime lane metadata (`execute` vs `review`) so the daemon can run an independent reviewer once for the current review handoff without looping.
+
 Additional conservative gates:
 
 | Gate | Behavior |
@@ -346,6 +427,8 @@ Additional conservative gates:
 | state leaves `active`/`rework` while running without completed runner status | the run is released/interrupted rather than continuing against stale tracker truth |
 | completed clean run with task in `review` | the daemon reconciles success and writes a review packet |
 | clean runner exit while status remains `active`/`rework` | continuation is queued instead of promoting the task |
+| reviewer lane for `risk: low`/`medium` | reviewer may run `verify` and `close` if all gates pass |
+| reviewer lane for `risk: high`/`critical` | reviewer may advise only; human verification and close are required |
 
 ## Current lifecycle
 
@@ -357,23 +440,28 @@ stateDiagram-v2
   rework --> running: daemon poll
   running --> retry_queued: task remains active/rework after clean exit
   retry_queued --> running: retry due
-  running --> review: Codex changes task to review, then packet is written
+  running --> review: runner changes task to review, then packet is written
+  review --> running: reviewer lane, if enabled
+  running --> done: low/medium reviewer verifies + closes
+  running --> review: high/critical reviewer advises only
   review --> done: human verify + close
-  review --> rework: human requests follow-up
+  review --> rework: reviewer or human requests follow-up
   active --> blocked: Codex or human records blocker
   blocked --> ready: blocker resolved
 ```
 
-The daemon does not blindly move active tasks to review. The runner prompt asks Codex to move the task to `review` when ready. If the task is still `active` or `rework` after a clean exit, the daemon queues continuation. If Codex moves the task to `review` and exits cleanly, the daemon writes the review packet and releases the run as succeeded.
+The daemon does not blindly move active tasks to review. The runner prompt asks the selected agent to move the task to `review` when ready. If the task is still `active` or `rework` after a clean exit, the daemon queues continuation. If the runner moves the task to `review` and exits cleanly, the daemon writes the review packet and releases the implementation run as succeeded.
+
+If reviewer policy is enabled, the next poll can start a distinct `review` lane. The reviewer prompt is read from `WORKFLOW.md` frontmatter, uses the configured reviewer actor, and tells the agent to review without editing implementation files. Low/medium tasks may be verified and closed by the configured reviewer. High/critical tasks stay in `review` for a human even when the agent recommends acceptance.
 
 ## Runtime records
 
 | Record | Purpose |
 |---|---|
 | registered project | repo root, vault root, workflow path, enabled flag, health, last poll/error |
-| run | current lease state, attempt outcome, active attempt, workspace, session, pid, artifact paths, work revision, retry/error timestamps |
-| attempt | immutable-ish execution attempt snapshot with outcome, exit code, artifact paths, pid, start/finish |
-| turn | normalized Codex turn status, session, token usage, last event/error |
+| run | current lease state, lane, attempt outcome, active attempt, workspace, session, pid, artifact paths, work revision, retry/error timestamps |
+| attempt | immutable-ish execution attempt snapshot with lane, outcome, exit code, artifact paths, pid, start/finish |
+| turn | normalized runner turn status, session, token usage, last event/error |
 | session | runner session ref, resumability, workspace, revision, current item, last seen/error |
 | supervisor decision | continuation/resume/fork/new-revision/stop decisions with reasons and context signals |
 
@@ -407,7 +495,7 @@ tusker runs inspect <TASK-ID> --json
 
 ## Review packets
 
-When a clean run reaches a non-active task state, the daemon can write a review packet under `Attachments/<TASK-ID>/review-packet-<attempt>.md` and append packet evidence to the task. The packet is evidence, not approval: it summarizes daemon-observed facts and still requires human verification before close.
+When a clean run reaches a non-active task state, the daemon can write a review packet under `Attachments/<TASK-ID>/review-packet-<attempt>.md` and append packet evidence to the task. The packet records whether the attempt was `execute` or `review`. For low/medium reviewer runs, approval is still expressed through `verified_by` and `closed_by`. For high/critical reviewer runs, the packet is advisory evidence and the human gate remains.
 
 - Obsidian and view requirements | /internal/reference/obsidian/ | audience: developer | mode: how-to | updated: 2026-05-04
   Obsidian and view requirements.
@@ -425,7 +513,8 @@ Open `Dashboard.md` in the repo-local Tusker vault. The dashboard is the Obsidia
 | Active epics | `Epics.base#Active` | epics that are not done/cancelled |
 | Active work | `Tasks.base#Active` | tasks in `status: active` |
 | Live runs | generated markdown block | runtime rows for active leases, if this vault is registered in the runtime store |
-| Review | `Tasks.base#Review` | tasks waiting for human verification |
+| Workflow status | static markdown table | current runner/reviewer policy defaults from `WORKFLOW.md` |
+| Review | `Tasks.base#Review` | tasks waiting for reviewer or human verification |
 | Follow-up | `Tasks.base#Follow-up` | tasks in `status: rework` |
 | Ready | `Tasks.base#Ready` | shaped work not yet dispatching |
 | Blocked | `Tasks.base#Blocked` | blockers and blocker reasons |
@@ -435,6 +524,8 @@ Open `Dashboard.md` in the repo-local Tusker vault. The dashboard is the Obsidia
 | Docs pipeline | `Docs.base#Pipeline` | published docs queue grouped by lane |
 
 `Follow-up` is only a view name. The actual status remains `rework`.
+
+The workflow status table is intentionally static, not a generated runtime block. It is there so the root Obsidian surface states the operating policy at a glance: worker dispatch uses `active`/`rework`; `review` is a checkpoint; the default reviewer actor is `agent-reviewer`; low/medium work may auto-close; high/critical work stays human-gated.
 
 ## Live-run block
 
@@ -457,7 +548,7 @@ This is intentionally generated markdown, not a Base. Runtime leases, process id
 - Include `file.name` in table orders so rows are clickable.
 - Do not reference `Orchestration.base`. V5 ships `Epics.base`, `Tasks.base`, `BugTasks.base`, and `Docs.base`.
 
-- Skill and AGENTS guidance | /internal/reference/skill/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-04-29
+- Skill and AGENTS guidance | /internal/reference/skill/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-10
   Skill and AGENTS guidance.
   source: docs/reference/skill.md
   source_of_truth: skill/SKILL.md, skill/references/**, AGENTS.md
@@ -466,9 +557,58 @@ This is intentionally generated markdown, not a Base. Runtime leases, process id
 
 ## Summary
 
-This page is part of the v5 Tusker canon. Replace the placeholder with project-specific detail as the implementation lands.
+The Tusker skill bundle is the primary agent contract. It teaches Codex, Claude Code, and other compatible harnesses how to read the vault, choose epics, search for existing work, create tasks, move status, attach evidence, resolve docs impact, and close only after verification.
 
-- Agent recipe: using Tusker | /internal/agents/use-tusker/ | audience: agent | mode: how-to | agent_layer: standalone | updated: 2026-04-29
+The skill must keep context use proportional to the job. A lookup is not a closeout, and a backlog note is not a migration. Agents should use `tusker list --type epic`, `tusker search`, one-epic `tusker list --epic <ACR> --type task --open`, `tusker show <ID> --capsule`, and exact task paths before broad file reads. They should not read `Attachments/**`, `_system/generated/**`, build logs, or raw runner logs unless the user is explicitly asking for evidence forensics.
+
+| Lane | Use for | Expected proof |
+|---|---|---|
+| `look-up` | Answer whether work exists, inspect status, find a related task | Epic list, search result, one epic's open tasks, selected task capsule; no mutation and no validation |
+| `bookkeeping` | Add a note, shape backlog, avoid duplicates | Reindex only if indexes changed; validate only if task schema changed |
+| `implementation` | Make code or docs changes tied to a task | Risk-scaled evidence |
+| `closeout` | Move tracked implementation work to review or done | Docs resolution, verification, and validation |
+
+The current source of truth is `skill/SKILL.md` plus the files under `skill/references/**`, `skill/docs/**`, and `skill/assets/**`. Repo-local downstream copies live at `.agents/skills/tusker` and `.claude/skills/tusker`; refresh them from the local source payload with:
+
+```bash
+go run ./cmd/tusker update --repo . --repo-only --no-bin
+```
+
+Use the installed `tusker update --repo . --repo-only --no-bin` only after the installed binary has the desired embedded skill payload.
+
+## Current status
+
+| Surface | Status |
+|---|---|
+| Source skill | `skill/SKILL.md` and `skill/references/**` |
+| Codex repo-local skill | `.agents/skills/tusker` |
+| Claude repo-local skill | `.claude/skills/tusker` |
+| Default worker runner | `codex` |
+| Reviewer lane | enabled by `WORKFLOW.md` |
+| Reviewer actor | `agent-reviewer` |
+| Auto-close risks | `low`, `medium` |
+| Human-gated risks | `high`, `critical` |
+
+## Agent close contract
+
+Agents must treat `review` as a verification checkpoint, not as automatic completion. When `WORKFLOW.md` enables `reviewer`, a separate reviewer run may inspect the task without editing implementation files.
+
+The reviewer checks:
+
+- acceptance contract
+- task scope and surprise file changes
+- evidence and verification log
+- docs impact resolution
+- relevant tests or smoke checks
+- caveats that change scope
+
+For low/medium risk work, the configured reviewer may run `docs check`, `verify`, and `close` when every gate passes. For high/critical work, reviewer output is advisory and a human must verify and close.
+
+## Distribution rule
+
+Do not hand-edit `.agents/skills/tusker` or `.claude/skills/tusker` as the long-term source. Patch `skill/**`, then refresh the repo-local copies. If a repo-local copy has useful divergence, first promote that guidance back into `skill/**`, then regenerate.
+
+- Agent recipe: using Tusker | /internal/agents/use-tusker/ | audience: agent | mode: how-to | agent_layer: standalone | updated: 2026-05-10
   Agent recipe: using Tusker.
   source: docs/agents/use-tusker.md
   source_of_truth: skill/SKILL.md, AGENTS.md
@@ -483,28 +623,59 @@ Use Tusker as the execution ledger for agent-first software work: choose the rig
 
 - User request or active task ID.
 - Vault path, usually `tusker`.
-- Project overview from `tusker/README.md`.
+- Progressive epic index from `tusker list --type epic`.
+- Project overview from `tusker/README.md` only when needed.
 - Docs catalog from `tusker/Docs.md` and `_config/docs-map.yaml`.
 - Relevant canon under `tusker/docs/**`.
 
 ## Preconditions
 
-- Read `tusker/README.md` before creating work.
+- Start with `tusker list --type epic`; read `tusker/README.md` only when the project overview is needed.
 - Pick an existing epic when the request fits; create a new epic only for a durable workstream.
+- Use `tusker search` before broad repository search when the question is about existing tracker work.
 - Use task IDs, not story IDs, for executable work.
 - Use `doc_nodes` from `_config/docs-map.yaml`; do not invent them.
-- Treat `_system/generated/**` as rebuildable output.
+- Treat `_system/generated/**`, `Attachments/**`, raw runner logs, and full build logs as artifact stores, not default context.
 
 ## Steps
 
-1. Inspect the active vault overview and choose the epic that matches the request.
-2. Create or update a `task` with clear scope, acceptance criteria, verification plan, and knowledge delta when the work changes durable understanding.
-3. Set `domains` for broad routing and `doc_nodes` for exact docs impact.
-4. Implement the work in the repo or vault, keeping generated indexes rebuildable.
-5. Run focused tests first, then the broader validation path when the change touches shared behavior.
-6. Resolve docs impact for every targeted node with apply, verified no-op, or a waiver with a reason.
-7. Attach evidence or record verification output in the task.
-8. Move the task through review, verification, and close only when gates are satisfied.
+1. Inspect the short epic roster and choose the likely epic.
+2. Search for duplicates with `tusker search "<term>" --type task` when creating or updating tracker work.
+3. Drill into one epic with `tusker list --epic <ACR> --type task --open` only when open-task context is needed.
+4. Read a selected task with `tusker show <ID> --capsule` before opening the full markdown.
+5. Create or update the narrowest relevant `task` with clear scope, acceptance criteria, verification plan, and knowledge delta when the work changes durable understanding.
+6. Set `domains` for broad routing and `doc_nodes` for exact docs impact.
+7. Implement the work in the repo or vault, keeping generated indexes rebuildable.
+8. Run focused tests first, then the broader validation path when the change touches shared behavior.
+9. Resolve docs impact for every targeted node with apply, verified no-op, or a waiver with a reason.
+10. Attach evidence or record verification output in the task.
+11. Move the task through review, verification, and close only when gates are satisfied.
+
+## Context discipline
+
+Use the lightest lane that preserves truth.
+
+| Lane | Use for | Context budget |
+|---|---|---|
+| Lookup | Answer status or find existing work | `tusker list --type epic`, `tusker search`, one epic's open tasks, one task capsule |
+| Bookkeeping | Add notes or shape backlog | Named task plus epic roster; validate only when schema changed |
+| Implementation | Change code or docs | Task plus directly relevant files |
+| Closeout | Move work to review or done | Evidence, docs resolution, verification, validation |
+
+Do not read attachments, generated indexes, raw runner logs, or full build logs unless the user is explicitly asking for evidence forensics. Save large command output to a file and bring back only the failure summary or a small tail.
+
+## Review lane behavior
+
+If `WORKFLOW.md` enables `reviewer`, moving a task to `review` can trigger an independent reviewer run. The reviewer is not the implementation worker and should not edit implementation files.
+
+Default policy:
+
+| Risk | Reviewer behavior |
+|---|---|
+| `low`, `medium` | reviewer may run `docs check`, `verify`, and `close` after all gates pass |
+| `high`, `critical` | reviewer leaves advisory evidence; a human verifies and closes |
+
+Reviewer attribution is explicit. Low/medium auto-close records the configured `reviewer.actor` as verifier/closer, normally `agent-reviewer`. Human-gated close records the human verifier and closer instead.
 
 ## Validation
 
@@ -928,7 +1099,7 @@ Runtime failures belong in runtime logs and evidence, not task frontmatter.
 
 When a failure changes what future readers need to know, add evidence and update the task's knowledge delta.
 
-- Operator Intervention | /developer/internals/operator-intervention/ | audience: developer | updated: 2026-04-29
+- Operator Intervention | /developer/internals/operator-intervention/ | audience: developer | updated: 2026-05-08
   Use the public V5 task commands for manual intervention.
   source: skill/docs/OPERATOR_INTERVENTION.md
   tags: internals
@@ -964,9 +1135,11 @@ tusker close <TASK-ID> --by <reviewer>
 tusker validate
 ```
 
+If the reviewer lane is enabled, the configured `reviewer.actor` can perform the verify/close steps for low/medium tasks after review passes. For high/critical tasks, use the reviewer output as advisory evidence and leave final verify/close to a human.
+
 Never delete prior evidence or work-log history. Append the new truth.
 
-- Orchestration Runbook | /developer/internals/orchestration-runbook/ | audience: developer | updated: 2026-05-04
+- Orchestration Runbook | /developer/internals/orchestration-runbook/ | audience: developer | updated: 2026-05-08
   The public V5 CLI tracks task truth. Runtime orchestration is an operator/internal surface and must not be presented as the normal task workflow.
   source: skill/docs/ORCHESTRATION_RUNBOOK.md
   tags: internals
@@ -984,7 +1157,8 @@ The public V5 CLI tracks task truth. Runtime orchestration is an operator/intern
 | Dashboard live-run panel | Shipped as generated markdown | `tusker reindex` renders live runs from the runtime store when the vault has a registered project; no live runs renders an explicit empty state. |
 | Runtime store | Internal code exists | Projects, runs, attempts, turns, sessions, events, usage, and supervisor decisions are modeled outside task frontmatter. |
 | `daemon`, `projects`, `runs`, `refresh` CLI commands | Shipped as operator/internal commands | They register projects, run or tick the daemon, inspect attempts/turns/events/logs, interrupt runs, and manage concurrency limits. |
-| Codex-only status-to-review daemon loop | Shipped for local operator use | A registered project plus `daemon run` or `refresh` can pick up `active`/`rework` tasks, run Codex, and write review packets when Codex moves the task to `review`. |
+| Codex-first status-to-review daemon loop | Shipped for local operator use | A registered project plus `daemon run` or `refresh` can pick up `active`/`rework` tasks, run the configured runner, and write review packets when the runner moves the task to `review`. Codex is the default live runner today. |
+| Reviewer lane | Shipped for governed close | Tasks in `review` can dispatch an independent configured reviewer. Low/medium risks may be verified and closed by `reviewer.actor`; high/critical risks remain human-gated. |
 
 ## Durable State
 
@@ -997,9 +1171,10 @@ The public V5 CLI tracks task truth. Runtime orchestration is an operator/intern
 ```text
 ready --human claim/status--> active
 active/rework --daemon eligible state--> runtime run
-runtime run --Codex changes task to review--> review packet + review
+runtime run --runner changes task to review--> review packet + review
 runtime run --task remains active/rework--> continuation retry
-review --human verify--> done
+review --reviewer lane passes low/medium gates--> verified + done
+review --human gate or high/critical--> human verify + done
 review --needs more work--> rework
 ```
 
@@ -1011,11 +1186,14 @@ What the code supports:
 - If a running task leaves `active`/`rework` without a completed runner status, reconciliation releases the run.
 - If Codex writes a completed status file after moving the task to `review`, reconciliation records the run as succeeded and writes the review packet instead of abandoning it as inactive.
 - If the runner exits cleanly while the task is still `active`/`rework`, the daemon queues continuation instead of pretending the work is reviewable.
+- A separate review lane can dispatch tasks already in `review` when `reviewer.enabled` is true and the task risk is covered by policy.
+- Reviewer close is attributed to `reviewer.actor`, so closed tasks record both `verified_by` and `closed_by`.
 - Review packet generation is supported after a clean run has a non-active task state; the packet summarizes attempts, turns, artifacts, supervisor decisions, and residual verification risk.
 
 What is deliberately not automated:
 
-- Automatic close. Humans must still verify and close.
+- High/critical close. Reviewers leave advisory output; humans still verify and close.
+- Reviewer fixes. The reviewer lane is review-only and sends failed work to `rework`.
 - Blind promotion from `active` to `review`. Codex or a human must move the task state when the work is actually ready.
 - Ignoring stale tracker truth. Non-active/non-review state changes while a run is live release or interrupt the run for audit.
 
@@ -1046,7 +1224,7 @@ tusker verify <TASK-ID> --by <name>
 tusker close <TASK-ID> --by <reviewer>
 ```
 
-Raw logs are useful evidence only after they are summarized into a readable packet. The daemon-generated review packet is the preferred packet evidence for Codex runs.
+Raw logs are useful evidence only after they are summarized into a readable packet. The daemon-generated review packet is the preferred packet evidence for Codex runs. If `reviewer.enabled` is true, the daemon may also launch the review lane from `review`; otherwise this remains a manual verify/close step.
 
 ## Obsidian Loop
 
@@ -1057,7 +1235,7 @@ Open `Dashboard.md`.
 | Active work | `Tasks.base#Active` | Tasks in `status: active`. |
 | Live runs | generated markdown block | Active runtime leases for the registered project, if any. |
 | Blocked | `Tasks.base#Blocked` | Tasks waiting on dependencies or an explicit blocker. |
-| Review | `Tasks.base#Review` | Tasks waiting for human verification. |
+| Review | `Tasks.base#Review` | Tasks waiting for reviewer or human verification. |
 | Follow-up | `Tasks.base#Follow-up` | Tasks in `status: rework`. |
 
 There is no shipped `Orchestration.base`. Do not reference it in dashboards or operator instructions.
@@ -1116,7 +1294,7 @@ The current work item is a task. Bugs are tasks. Docs are durable pages, not exe
 
 **Runtime state is not tracker state.** Attempts, sessions, and event streams belong to runtime storage. Durable lifecycle truth stays in V5 markdown notes.
 
-- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-04-29
+- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-05-10
   High-level overview of the Tusker repository, install modes, and key entry points.
   source: README.md
   tags: repository, overview
@@ -1196,15 +1374,32 @@ Tasks carry `risk`, `size`, `kind`, `priority`, `domains`, `doc_nodes`, `delegat
 
 ## Pieces
 
-**A skill bundle.** Install it into Claude Code, Codex, or any harness that loads `SKILL.md`. The skill teaches the agent the layout, lifecycle, evidence rules, and docs close gate. The skill alone is enough for most users.
+**A skill bundle.** Install it into Claude Code, Codex, or any harness that loads `SKILL.md`. The skill teaches the agent the layout, lightweight workflow lanes, lifecycle, evidence rules, and docs close gate. It also tells agents not to read attachments, generated indexes, or raw logs by default. The skill alone is enough for most users.
 
-**A Go CLI (`tusker`).** A helper binary for init, task creation, status changes, evidence, verification, docs checks, closing, validation, reindexing, docs publishing, and updates. If the CLI is unavailable, the agent can still edit the markdown directly, but the CLI is safer.
+**A Go CLI (`tusker`).** A helper binary for init, bounded tracker search, progressive epic/task listing, capsule-first note reading, task creation, status changes, evidence, verification, docs checks, closing, validation, reindexing, docs publishing, and updates. If the CLI is unavailable, the agent can still edit the markdown directly, but the CLI is safer.
 
 **An Obsidian vault layout.** Repo-local markdown, Bases views, dashboards, templates, and generated indexes. Open `tusker/` as a vault and it works.
 
 **A symlink workspace.** One central Obsidian vault can symlink multiple repo-local `tusker/` folders. The repo remains authoritative; Obsidian is the reading and editing surface.
 
-The dispatcher is experimental. It can pick up ready tasks and run Claude or Codex with concurrency caps, but the markdown layer and CLI are the stable core.
+**An operator runtime.** The runtime is local/operator-facing. It can pick up `active` and `rework` tasks for the configured runner, keep leases and transcripts out of task frontmatter, and write review packets. Codex is the default live runner today; the lifecycle and runtime lanes are runner-neutral.
+
+**A reviewer lane.** When `WORKFLOW.md` enables `reviewer`, a task in `review` can get an independent review run. The default actor is `agent-reviewer`: low/medium risk work may be verified and closed by that reviewer after the normal gates pass, while high/critical work stays human-gated.
+
+## Current status
+
+As of 2026-05-08, this repo is on the V5 tracker model with the following default policy:
+
+| Surface | Status | Current setting |
+|---|---|---|
+| Tracker schema | Shipped | `tracker_schema_version: 5` |
+| Agent skill bundle | Shipped | Source skill plus repo-local `.agents/skills/tusker` and `.claude/skills/tusker` installs |
+| Obsidian vault | Shipped | `Dashboard.md`, Bases views, `README.md`, `Docs.md`, and `CHEATSHEET.md` |
+| Worker dispatch | Operator-ready | runnable states are `active` and `rework` |
+| Default runner | Codex-first | `agents.default: codex`, `codex.command: codex app-server` |
+| Reviewer lane | Enabled by default | `reviewer.runner: codex`, `reviewer.actor: agent-reviewer` |
+| Reviewer auto-close | Enabled for low/medium | evidence, docs impact, verification, and validation gates still apply |
+| Human gate | Required for high/critical | reviewer output is advisory; humans verify and close |
 
 ## Install
 
@@ -1240,13 +1435,19 @@ You now have `~/code/my-app/tusker/` committed with the repo.
 Ask Claude Code or Codex to log a task. The agent should:
 
 1. Run `tusker list --type epic` to see existing workstreams.
-2. Pick the right epic, or propose a new one if nothing fits.
-3. Create a task with sensible defaults.
-4. Print the ID and a one-line reason for the epic choice.
+2. Run `tusker search "<duplicate clue>" --type task` before creating work that may already exist.
+3. Run `tusker list --epic <ACR> --type task --open` only for the likely epic.
+4. Run `tusker show <ID> --capsule` before opening a full task file.
+5. Pick the right epic, or propose a new one if nothing fits.
+6. Create a task with sensible defaults.
+7. Print the ID and a one-line reason for the epic choice.
 
 Primary V5 CLI:
 
 ```sh
+tusker search "cache invalidation" --type task
+tusker list --epic MEM --type task --open
+tusker show MEM-T-0007 --capsule
 tusker new task --epic MEM --title "Add cache invalidation" \
   --kind feature --size m --risk medium --domains runtime,docs \
   --doc-nodes reference/cache
@@ -1259,6 +1460,8 @@ tusker verify MEM-T-0007 --by codex
 tusker close MEM-T-0007 --by sarav
 tusker validate
 ```
+
+With the reviewer lane enabled, `review` is not automatically the last human stop. A later daemon tick may run the configured reviewer. For low/medium work the reviewer can verify and close; for high/critical work the reviewer leaves advisory evidence and the task stays in `review` for a human.
 
 ![A task moves from draft to ready, active, review, done, blocked, rework, or cancelled.](docs/diagrams/04-lifecycle.png)
 
@@ -2134,7 +2337,7 @@ On each poll tick the daemon asks the adapter to reconcile running attempts:
 | `event_log.go` | normalized event stream writer |
 | `reconcile.go` | adapter reconciliation loop |
 
-- 06 - Verification, Rework, And Close | /developer/specs/06-review-rework-retry/ | audience: developer | updated: 2026-04-29
+- 06 - Verification, Rework, And Close | /developer/specs/06-review-rework-retry/ | audience: developer | updated: 2026-05-08
   V5 uses a simple lifecycle:
   source: docs/specs/06-review-rework-retry.md
   tags: specs
@@ -2161,6 +2364,15 @@ flowchart LR
 
 `review` means implementation is ready to verify. A worker or runtime path may move a task to `review` only after meaningful evidence exists.
 
+If `WORKFLOW.md` enables the reviewer lane, `review` can also dispatch one independent agent-review run for the current handoff. That run stays in runtime state as lane `review`; it does not add another task status.
+
+Default reviewer policy:
+
+| Risk | Reviewer behavior |
+|---|---|
+| `low`, `medium` | agent reviewer may verify and close when all gates pass |
+| `high`, `critical` | agent reviewer may advise only; human verification and close are required |
+
 ## Verify
 
 `tusker verify <TASK-ID> --by <name>` records:
@@ -2170,6 +2382,8 @@ flowchart LR
 - a `Verification log` row
 
 Verification does not close the task.
+
+The configured reviewer actor is blocked from verifying human-required risk tiers.
 
 ## Rework
 
@@ -2190,6 +2404,8 @@ Close requires:
 - task status is `review`
 - verification exists
 - every `doc_node` is applied, verified no-op, or waived
+
+Close records `closed_by`; the reviewer is `verified_by`. CLI output and the task work log should make both visible.
 
 ## Retry
 
@@ -2618,7 +2834,7 @@ Task `## Canon` should point at the chosen source in read order:
 
 V5 durable docs live under `tusker/docs/**`; do not put new doc nodes under epic folders.
 
-- Commands | /user/reference/commands/ | audience: user | updated: 2026-05-04
+- Commands | /user/reference/commands/ | audience: user | updated: 2026-05-10
   The public V5 CLI is intentionally small. Use these commands.
   source: skill/references/COMMANDS.md
   tags: reference
@@ -2647,7 +2863,9 @@ tusker new doc --title <title> --node <domain/slug> \
   [--audience developer|user|operator|support|release|agent|internal] \
   [--mode tutorial|how-to|reference|explanation] \
   [--agent-layer none|capsule|standalone]
-tusker list [--type epic|task|doc] [--epic <ACR>] [--status <status>]
+tusker list [--type epic|task|doc] [--epic <ACR>] [--status <status>] [--open|--closed] [--limit <n>]
+tusker search <text> [--type epic|task|doc] [--epic <ACR>] [--status <status>] [--limit <n>] [--json]
+tusker show <ID> [--capsule|--acceptance|--evidence|--verification|--full]
 tusker next [--epic <ACR>] [--owner <name>] [--json]
 tusker claim <ID> --as <agent-or-person> [--reason "..."]
 tusker status <ID> <draft|backlog|ready|blocked|active|review|rework|done|cancelled> [--by <actor>] [--reason "..."]
@@ -2676,7 +2894,9 @@ tusker update [--bin-dir <path>] [--no-bin] [--repo <path>] [--repo-only] [--jso
 
 ## Operator Runtime Surface
 
-The daemon/runtime commands are shipped as operator/internal controls. Keep the public workflow task-centric, but use these when running the local Codex pickup loop.
+The daemon/runtime commands are shipped as operator/internal controls. Keep the public workflow task-centric, but use these when running the local runner pickup loop. Codex is the default live runner today; future runner adapters should use the same task lifecycle.
+
+`WORKFLOW.md` also carries a runner-neutral reviewer policy. When `reviewer.enabled` is true, `review` tasks may be dispatched to `reviewer.runner`; low/medium risks can be closed by `reviewer.actor`, while high/critical risks stay human-gated.
 
 | Command | Meaning |
 |---|---|---|
@@ -2698,13 +2918,28 @@ The normal V5 workflow remains task-centric: create/claim/status/evidence/docs/v
 
 ```bash
 tusker list --type epic
-tusker list --epic <ACR>
+tusker search "<duplicate clue>" --type task
+tusker list --epic <ACR> --type task --open
 tusker new task --epic <ACR> --title "<what>" \
   --kind chore --size s --risk low --priority p2 \
   --domains cli
 ```
 
 New tasks should start as `draft` until shaped. Move shaped future work to `backlog`; move shaped current work to `ready`. Only pull `ready` tasks that are unblocked.
+
+Use `tusker search` for tracker lookup before shelling out to `rg`. It searches
+first-party task/epic/doc notes and skips `Attachments/**`, `_system/**`,
+runtime state, and generated indexes.
+
+Use `tusker list --type epic` as the top-level index. It prints epic summaries
+and open/done counts without note bodies. Use
+`tusker list --epic <ACR> --type task --open` to drill into one epic's open
+tasks. Open a task file only after choosing the task.
+Add `--limit <n>` when an epic has a large queue.
+
+Use `tusker show <ID>` for the selected item before opening the markdown file.
+It defaults to `--capsule`; use `--acceptance`, `--evidence`, or
+`--verification` for a single section. `--full` is an explicit escape hatch.
 
 ### Pick Work
 
@@ -2729,7 +2964,9 @@ tusker close <ID> --by <reviewer>
 tusker validate
 ```
 
-For the Codex-only orchestration milestone, `active`/`rework` are the runnable tracker states in `WORKFLOW.md`. `ready` is still only shaped work. Flipping a task to `active` is picked up only when the repo/vault is registered and `daemon run`, `daemon run --once`, or `refresh` is running locally.
+For the current orchestration milestone, `active`/`rework` are the runnable tracker states in `WORKFLOW.md`. `ready` is still only shaped work. Flipping a task to `active` is picked up only when the repo/vault is registered and `daemon run`, `daemon run --once`, or `refresh` is running locally.
+
+When the reviewer lane is enabled, moving a task to `review` can trigger an independent review attempt. Passing low/medium work may be verified and closed by `reviewer.actor`; passing high/critical work stays in `review` for human close.
 
 ### Publish Docs
 
@@ -2815,7 +3052,7 @@ tusker new doc --title "<Spec title>" \
 
 Connect executable work to docs with task `doc_nodes`. Keep implementation work in tasks; keep durable knowledge in docs pages.
 
-- Docs publication | /user/reference/docs-publication/ | audience: user | updated: 2026-04-30
+- Docs publication | /user/reference/docs-publication/ | audience: user | updated: 2026-05-08
   Use this when the user wants project docs, a public docs site, a user guide, release notes, support docs, runbooks, or agent-readable canon.
   source: skill/references/DOCS_PUBLICATION.md
   tags: reference
@@ -2866,6 +3103,56 @@ If `doc_nodes` is non-empty, close must prove one of three things:
 | one-task explanation | companion doc linked to the task |
 
 Tasks are execution records, not public docs. Their evidence proves work happened, but does not automatically become publication content.
+
+## LLM authoring contract
+
+This is the rule agents must apply before drafting docs, not after review.
+
+Documentation tickets are not "copy the task into a page" tickets. For every page, choose:
+
+1. one audience: `user`, `developer`, `agent`, or `internal`
+2. one primary Diátaxis mode: `tutorial`, `how-to`, `reference`, or `explanation`
+3. one source authority set: Tusker D-notes, registered repo docs, or code paths
+
+Human docs are synthesized outputs. Source material is input.
+
+Do not publish these directly as user/developer prose:
+
+- task records
+- evidence logs
+- D-note bodies
+- implementation scratchpads
+- generated manifests
+- agent-only instructions
+- stale or unregistered markdown
+
+Use this split:
+
+| Audience | Write for | Keep out by default |
+|---|---|---|
+| `user` | outcome, steps, expected result, common fixes | task IDs, stale metadata, internal paths |
+| `developer` | contracts, architecture, extension points, validation | raw work logs unless they prove a claim |
+| `agent` | exact canon, constraints, source paths, stale triggers | polished onboarding prose |
+| `internal` | maintainer decisions, operational risk, migration context | basic tutorial walkthroughs |
+
+Mode contract:
+
+| Mode | Page shape | Reject if |
+|---|---|---|
+| `tutorial` | guided learning path with a safe result | starts with reference tables |
+| `how-to` | direct steps for completing a task | wanders into background essay |
+| `reference` | exact facts, schemas, commands, contracts, edge cases | hides edge cases in prose |
+| `explanation` | concepts, tradeoffs, why the system works this way | becomes a procedure |
+
+Quality gate before returning docs:
+
+- The first screen makes the reader intent obvious.
+- One primary audience and one primary mode are declared by the page shape.
+- Raw canon has been transformed for the selected reader.
+- User pages avoid internal metadata.
+- Developer pages include contracts, source paths, edge cases, and verification.
+- Agent/internal pages preserve exact IDs, constraints, source paths, and stale triggers.
+- Claims about behavior include a verification path or are marked unverified.
 
 ## Diátaxis access model
 
@@ -3009,7 +3296,7 @@ Published docs may reference selected local assets, and the exporter can copy/re
 - Use `docs/publication.yaml` for repo docs.
 - If docs impact is real, set `doc_nodes` and fill knowledge delta.
 
-- Formal intake | /user/reference/formal-intake/ | audience: user | updated: 2026-04-30
+- Formal intake | /user/reference/formal-intake/ | audience: user | updated: 2026-05-10
   Creating a task at risk >= medium. Load this when the work is a feature, migration, refactor with teeth, public docs change, security-sensitive change, or anything with rollout/rollback concerns.
   source: skill/references/FORMAL_INTAKE.md
   tags: reference
@@ -3039,6 +3326,7 @@ If any required fields are missing at active work, validation should block the t
 
 | Section | medium | high | critical |
 |---|---|---|---|
+| `## Agent capsule` | yes | yes | yes |
 | `## Intent` | yes | yes | yes |
 | `## Scope` | yes | yes | yes |
 | `## Acceptance contract` | yes | yes | yes |
@@ -3049,18 +3337,15 @@ If any required fields are missing at active work, validation should block the t
 | `## Deliverables` | yes | yes | yes |
 | `## Verification plan` | yes | yes | yes |
 | `## Knowledge delta` | when docs/understanding changes | yes | yes |
-| `## Considered and rejected` | no | yes | yes |
-| `## Decision` | no | yes | yes |
-| `## Rollout` | no | yes | yes |
-| `## Kill list` | no | no | yes |
 | `## Evidence` | yes | yes | yes |
-| `## Verification log` | yes | yes | yes |
-| `## Work log` | yes | yes | yes |
+| `## Verification log` | no | yes | yes |
+| `## Rollback` | no | no | yes |
 
 Substance is checked, not presence. `TODO` is not a contract.
 
 ## What each section is for
 
+- **Agent capsule** — first-screen essence, next anchors, and what not to read by default.
 - **Intent** — what needs to be true and who needs it.
 - **Scope** — explicit in/out boundaries.
 - **Acceptance contract** — testable outcomes.
@@ -3071,9 +3356,9 @@ Substance is checked, not presence. `TODO` is not a contract.
 - **Deliverables** — concrete artifacts expected from the work.
 - **Verification plan** — tests/manual checks/benchmarks before work starts.
 - **Knowledge delta** — what durable understanding changed.
-- **Evidence** — filled after execution.
-- **Verification log** — what was actually checked.
-- **Work log** — dated meaningful steps.
+- **Evidence** — concise proof after execution: PRs, packets, screenshots, or short log tails.
+- **Verification log** — high/critical-only detail when a frontmatter summary is not enough.
+- **Verification/close summaries** — concise frontmatter truth for what was checked and why it closed.
 
 ## Create-and-populate flow
 
@@ -3112,7 +3397,7 @@ If the work implements an existing RFC:
 
 - `## Canon` cites exact sections.
 - `## Code/system anchors` points to likely implementation files.
-- `## Plan` or execution plan is implementation order, not a restatement of the RFC.
+- If you add a `## Plan`, keep it as temporary implementation order, not a restatement of the RFC.
 - `doc_nodes` names docs that must remain true after the change.
 
 If canon does not exist, see `CANON_LOCATIONS.md` and create it first.
@@ -3360,7 +3645,7 @@ If you want phone access, the biggest win is that the canonical artifacts are st
 
 That portability is the whole point.
 
-- Quick Mode | /user/reference/quick-mode/ | audience: user | updated: 2026-04-29
+- Quick Mode | /user/reference/quick-mode/ | audience: user | updated: 2026-05-10
   The low-ceremony path for logging work, discovering follow-ups, and closing routine tasks.
   source: skill/references/QUICK_MODE.md
   tags: reference
@@ -3377,7 +3662,7 @@ Act with defaults and show what you did. If defaults are wrong, the user correct
 
 ```bash
 tusker list --type epic
-tusker list --epic <ACR>
+tusker list --epic <ACR> --type task --open
 tusker new task --epic <ACR> --title "<what happened>" \
   --kind chore --size s --risk low --priority p2 \
   --domains cli
@@ -3397,10 +3682,15 @@ Then tell the user: `Logged as <EPIC>-T-NNNN under <EPIC>. Picked <EPIC> because
 ## Pick The Epic
 
 1. Run `tusker list --type epic` and scan summaries.
-2. Run `tusker list --epic <ACR>` for the likely match.
-3. Match the work to the nearest epic by subsystem.
-4. If nothing fits and this is a real new workstream, create an epic.
-5. If truly uncertain, ask one concrete question.
+2. Run `tusker search "<term>" --type task` before creating anything that might duplicate existing work.
+3. Run `tusker list --epic <ACR> --type task --open` for the likely match only when the search/list result is not enough.
+4. Match the work to the nearest epic by subsystem.
+5. If nothing fits and this is a real new workstream, create an epic.
+6. If truly uncertain, ask one concrete question.
+
+`tusker search` is the default tracker lookup tool. It skips `Attachments/**`,
+`_system/**`, runtime logs, and generated indexes. Use shell `rg` only when you
+need to search source code or non-tracker files.
 
 ## Follow-Ups
 
@@ -3450,14 +3740,19 @@ tusker validate
 
 For quick-mode `risk: low`, one evidence line plus a lightweight verification pass is usually enough. The worker must not certify its own truthfulness.
 
+If `WORKFLOW.md` enables `reviewer`, tasks in `review` can be picked up by the configured reviewer lane. Use `reviewer.actor` (default `agent-reviewer`) for low/medium auto-close when every gate passes. For high/critical tasks, the reviewer leaves advisory evidence and a human runs `verify`/`close`.
+
 ## What Not To Do
 
 - Do not read the full skill to log one routine item.
+- Do not read the full vault README when `tusker list --type epic` is enough.
 - Do not load formal intake unless the work is risky or user-facing.
 - Do not create a durable doc for a one-sentence note.
 - Do not ask questions you can answer from cwd, the epic roster, or the active task.
+- Do not read `Attachments/**`, generated JSON, or raw logs while looking for duplicate tasks.
+- Do not paste full build/test output into the chat. Save full logs as files and read a tight summary or tail.
 
-- Repo contract | /user/reference/repo-contract/ | audience: user | updated: 2026-04-21
+- Repo contract | /user/reference/repo-contract/ | audience: user | updated: 2026-05-10
   The vault is internal working memory. The repository is still where contributors land.
   source: skill/references/REPO_CONTRACT.md
   tags: reference
@@ -3525,6 +3820,7 @@ That means:
 - low-risk changes can often be screened from the summary and proof first
 - risky changes still deserve real code review
 - raw transcripts are optional appendix material, not required reading
+- Tusker lookups should start with `tusker search`, `tusker list`, and exact task paths, not broad reads of attachments, generated indexes, or logs
 
 ## AGENTS.md guidance
 
@@ -3605,7 +3901,7 @@ This skill ships no standalone scripts. The deterministic execution surface is t
 
 If a future resource needs repeatable logic that agents keep rewriting, add it under `scripts/`, test it directly, and mention exactly when to run it from `SKILL.md`.
 
-- Risk And Evidence | /user/reference/risk-and-evidence/ | audience: user | updated: 2026-04-29
+- Risk And Evidence | /user/reference/risk-and-evidence/ | audience: user | updated: 2026-05-10
   Risk drives ceremony. Size is effort; risk is blast radius.
   source: skill/references/RISK_AND_EVIDENCE.md
   tags: reference
@@ -3625,10 +3921,14 @@ Risk drives ceremony. Size is effort; risk is blast radius.
 
 V5 task templates provide the sections. Fill them with substance; do not leave placeholders.
 
-- `low`: `Intent`, `Acceptance contract`, `Evidence`
+- `low`: `Agent capsule`, `Intent`, `Acceptance contract`, `Evidence`
 - `medium`: add `Scope`, `Deliverables`, `Verification plan`
 - `high`: add `Canon`, `Code/system anchors`, `Constraints`, `Knowledge delta`
 - `critical`: add rollback detail and explicit human review notes
+
+Do not add `Execution plan` or `Work log` by default. They are verbose live
+scratchpads, not durable context. Capture durable truth in the capsule,
+acceptance contract, evidence summary, verification fields, and knowledge delta.
 
 ## Evidence Command
 
@@ -3637,6 +3937,12 @@ tusker evidence <TASK-ID> <screenshot|video|log|bench|pr|packet> <file-or-url> [
 ```
 
 Local files are copied under `Attachments/<TASK-ID>/`; URLs are linked as-is. Evidence is proof after execution, not a plan.
+
+Keep evidence small enough for humans and agents to use. Prefer a packet,
+summary, PR link, failing assertion, or the last relevant log lines over copying
+full build logs or whole source files. If full logs are needed, attach the file
+but summarize the signal in the task; agents should not read raw logs by
+default.
 
 ## Demo Rule
 
@@ -3665,7 +3971,9 @@ tusker validate
 
 `close` refuses tasks with unresolved `doc_nodes`.
 
-- Schema | /user/reference/schema/ | audience: user | updated: 2026-04-30
+When `WORKFLOW.md` enables `reviewer`, low/medium tasks may be verified and closed by the configured `reviewer.actor` after all gates pass. High/critical tasks must not be closed by the reviewer; keep them in `review` for human verification and close.
+
+- Schema | /user/reference/schema/ | audience: user | updated: 2026-05-10
   Frontmatter is the machine layer. The note body is the human layer. V5 makes **task** the execution unit and keeps docs as durable knowledge pages.
   source: skill/references/SCHEMA.md
   tags: reference
@@ -3735,30 +4043,47 @@ Runtime/dispatch fields:
 Review fields:
 
 - `verified_by`, `verified_at`
+- `verification_summary`
 - `closed_by`, `closed_at`
+- `close_summary`
 - `docs_resolution`
 
 ## Task body contract
 
-Every medium+ task should expose this split:
+Task bodies are risk-scaled. Keep the first screen small and put durable truth
+in summaries, evidence links, and knowledge deltas. Do not keep an append-only
+work diary by default; status transitions, verification fields, evidence
+summaries, and review packets carry the durable audit trail.
+
+Every task starts with:
 
 ```text
+## Agent capsule
 ## Intent
-## Scope
 ## Acceptance contract
+## Evidence
+```
+
+Medium tasks add:
+
+```text
+## Scope
+## Deliverables
+## Verification plan
+```
+
+High and critical tasks add:
+
+```text
 ## Canon
 ## Code/system anchors
 ## Constraints
 ## Escalate if
-## Deliverables
-## Verification plan
 ## Knowledge delta
----
-## Execution plan
-## Evidence
 ## Verification log
-## Work log
 ```
+
+Critical tasks also add `## Rollback`.
 
 Use a structured knowledge delta table:
 
@@ -4017,7 +4342,7 @@ Do not hide docs work in a final "update docs" task unless the implementation ta
 | `HIT-T-0004` — Add docs close gate coverage | makes the behavior teachable | s | medium | `HIT-T-0002` |
 | `HIT-T-0005` — Remove old path | prevents two models from surviving | s | high | `HIT-T-0003` |
 
-- Triggers | /user/reference/triggers/ | audience: user | updated: 2026-04-29
+- Triggers | /user/reference/triggers/ | audience: user | updated: 2026-05-10
   When to invoke the Tusker skill, and when to skip it.
   source: skill/references/TRIGGERS.md
   tags: reference
@@ -4062,7 +4387,7 @@ Invoke:
 
 - "Can you use this to log stuff in?" -> yes.
 - "File a follow-up: we need to fix the cache key" -> yes, create a task.
-- "What tasks are open for PLC?" -> yes, `list --epic PLC`.
+- "What tasks are open for PLC?" -> yes, `list --epic PLC --type task --open`.
 - "I have an RFC, turn it into tasks" -> yes, create canon/docs and a task stack.
 - "Start this new app and keep docs updated as we build" -> yes, create/choose epic, docs, and tasks with `doc_nodes`.
 - "Create a user guide for this feature" -> yes, create a V5 doc.
@@ -4075,7 +4400,7 @@ Do not invoke:
 - "Write me a regex for emails" -> no, pure one-off task.
 - "Explain how the vault works" -> answer from skill content.
 
-- Workflow | /user/reference/workflow/ | audience: user | updated: 2026-04-30
+- Workflow | /user/reference/workflow/ | audience: user | updated: 2026-05-08
   Short reference for the V5 task lifecycle.
   source: skill/references/WORKFLOW.md
   tags: reference
@@ -4143,6 +4468,7 @@ tusker status <ID> <state> [--reason "..."]
 - `doc_nodes` requires docs check/apply/waive before close.
 - `risk >= high` requires a real `## Knowledge delta`.
 - Epic `done` refuses unfinished child tasks.
+- If `WORKFLOW.md` enables the reviewer lane, an independent agent reviewer may auto-close low/medium tasks after verification, but high/critical tasks remain human-gated.
 
 ## Dependencies
 
@@ -4164,6 +4490,15 @@ State rules:
 
 End-of-run proof belongs under `## Evidence`: changed files, diff summary, commands/results, artifacts, risks, and follow-ups.
 
+Agent reviewer pass:
+
+- The lane is runner-neutral. Codex is the default live runner today, but `reviewer.runner` can point at any enabled runner adapter.
+- Review only; do not edit implementation files.
+- Check acceptance, scope, evidence, verification, docs resolution, and caveats.
+- For low/medium tasks, the configured reviewer may run `verify` and `close` when every gate passes.
+- For high/critical tasks, leave advisory evidence and keep the task in `review` for human verification.
+- If review fails, move to `rework` with the specific unmet acceptance item.
+
 PR feedback sweep:
 
 1. Classify unresolved feedback as `must-fix`, `question`, `nit`, or `follow-up`.
@@ -4183,7 +4518,7 @@ When a task changes durable understanding, fill:
 | Topic | Before | After | Audience | Target doc nodes |
 |---|---|---|---|---|
 
-- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-04-30
+- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-05-10
   Operating contract for agents working with Tusker in a markdown-first vault.
   source: skill/SKILL.md
   tags: start-here, workflow
@@ -4192,22 +4527,42 @@ When a task changes durable understanding, fill:
 
 Use the CLI first. Edit markdown directly only when the CLI cannot express the change.
 
+Default to the lightest lane that preserves truth. A one-line backlog note is
+not a closeout. A task closeout is not a migration. Do not spend context proving
+things the user did not ask to prove.
+
 ## Core Loop
 
 1. Find the vault. Omit `--vault` unless discovery fails.
-2. Read `tusker/README.md` before creating work.
-3. Pick the epic whose summary matches the request.
-4. Create or update a task.
-5. Record evidence, docs impact, verification, and close state.
-6. Run `tusker validate` before saying done.
+2. Start with `tusker list --type epic`; read `tusker/README.md` only when the project overview is needed.
+3. Use `tusker search "<term>" --type task` before creating possible duplicate work.
+4. Drill into one likely epic with `tusker list --epic <ACR> --type task --open` only when open task context is needed.
+5. Create or update the narrowest relevant task record.
+6. If closing tracked implementation work, record evidence, docs impact,
+   verification, and close state.
+7. Run `tusker validate` before saying done when task records changed.
 
 Tell the user the ID and the epic rationale after creating work.
+
+## Lanes
+
+| Lane | Use For | Read | Prove |
+|---|---|---|---|
+| `look-up` | Find whether work exists, answer status, inspect a thread | `tusker list --type epic`, `tusker search`, one epic's open tasks, one named task | No mutation, no validate |
+| `bookkeeping` | Add a work-log note, update a backlog task, avoid duplicates | Epic list plus named task(s) | `tusker reindex` if indexes changed; `validate` only if task schema changed |
+| `implementation` | Code/docs changes for an active task | Task plus directly relevant files | Risk-scaled evidence; close gates only when moving to `done` |
+| `closeout` | Move work to review/done | Task evidence/docs/verification sections | Docs resolution, independent verification, `validate` |
+
+If the user asks for a quick tracking note, stay in `bookkeeping`. Do not run
+the full closeout sequence.
 
 ## Default Commands
 
 ```bash
 tusker list --type epic
-tusker list --epic <ACR>
+tusker search "<term>" --type task
+tusker list --epic <ACR> --type task --open
+tusker show <ID> --capsule
 tusker new task --epic <ACR> --title "<work>" --kind chore --size s --risk low --priority p2 --domains <domain>
 tusker status <ID> active
 tusker evidence <ID> pr <url>
@@ -4218,13 +4573,24 @@ tusker close <ID> --by <reviewer>
 tusker validate
 ```
 
+If `WORKFLOW.md` enables `reviewer`, `review` can dispatch an independent reviewer lane. Codex is the default live runner today, but the policy is runner-neutral: `reviewer.runner` selects an enabled runner, `reviewer.actor` records attribution, low/medium risks may auto-close, and high/critical risks stay human-gated.
+
 ## Non-Negotiables
 
 - Use `task` as the execution unit. A bug is `task(kind: bug)`.
 - Every task belongs to an epic.
 - `domains` are broad areas; `doc_nodes` are exact docs targets from `_config/docs-map.yaml`.
 - Close only after evidence, docs impact resolution, verification, and validation.
+- Do not turn backlog/bookkeeping updates into closeout ceremony.
+- Do not let the implementation worker self-certify. The configured reviewer actor is independent and may close only risks listed in `reviewer.auto_close_risks`.
 - Do not edit generated files in `_system/generated/**` or `site/src/content/docs/**`.
+- Documentation tickets are not permission to dump source text. Before writing docs, choose the audience, Diátaxis mode, and source authority.
+- Human docs are synthesized outputs. Do not publish task records, evidence logs, D-note bodies, generated manifests, or agent-only instructions as user/developer prose.
+- Never read `Attachments/**`, `_system/generated/**`, build logs, or raw runner
+  logs by default. Use `tusker search`, `tusker list`, and exact task paths first.
+- When command output may be large, redirect full output to a file and read only
+  the failure summary or a small tail. Raw logs are evidence artifacts, not model
+  context.
 
 ## Load References Only When Needed
 
@@ -4259,7 +4625,15 @@ tusker docs catalog
 tusker docs freshness --stale
 ```
 
-Then read `references/DOCS_PUBLICATION.md`.
+Then read `references/DOCS_PUBLICATION.md` before drafting or editing prose.
+
+Authoring contract for any docs page:
+
+1. Pick one audience: `user`, `developer`, `agent`, or `internal`.
+2. Pick one primary Diátaxis mode: `tutorial`, `how-to`, `reference`, or `explanation`.
+3. Use source-of-truth material as input, not final prose.
+4. Put exact canon and metadata in an agent/internal lane unless a human reader directly needs it.
+5. Reject pages that mix audiences, mix modes, or fail to answer the reader's first-screen intent.
 
 Resolve each targeted doc node with one of:
 
@@ -4282,9 +4656,10 @@ When manual installation or repair is required, read `references/RESOURCES.md` b
 - Evidence matches risk.
 - Docs impact is applied, noop, or waived with a reason.
 - Verification is recorded.
+- The close record shows who verified and who closed, including `agent-reviewer` or the configured reviewer actor when the reviewer lane closed it.
 - `tusker validate` passes.
 
-- Skill Bundle | /user/start-here/skill-bundle/ | audience: user | updated: 2026-04-29
+- Skill Bundle | /user/start-here/skill-bundle/ | audience: user | updated: 2026-05-10
   Overview of the installable Tusker skill bundle and how operators use it.
   source: skill/README.md
   tags: start-here, user
@@ -4307,8 +4682,11 @@ If you're using the installed skill, the CLI is the execution surface:
 tusker --help
 tusker init
 tusker init --vault /path/to/vault --yes
+tusker search "duplicate clue" --type task
 tusker update
 ```
+
+Use `tusker search` as the default tracker lookup before broad filesystem search. It searches first-party task, epic, and doc notes while skipping attachments, generated indexes, runtime state, and raw logs.
 
 For documentation work, start with `SKILL.md`, then read `references/DOCS_PUBLICATION.md`. Published sites expose `site/public/canon-manifest.json` and `site/public/llms.txt` so agents can find current docs without spelunking stale files. Canon is explicit: `approved` is current, `draft` needs checking, and `deprecated`/`historical` is archaeology.
 

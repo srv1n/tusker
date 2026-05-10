@@ -10,7 +10,7 @@ Act with defaults and show what you did. If defaults are wrong, the user correct
 
 ```bash
 tusker list --type epic
-tusker list --epic <ACR>
+tusker list --epic <ACR> --type task --open
 tusker new task --epic <ACR> --title "<what happened>" \
   --kind chore --size s --risk low --priority p2 \
   --domains cli
@@ -30,10 +30,15 @@ Then tell the user: `Logged as <EPIC>-T-NNNN under <EPIC>. Picked <EPIC> because
 ## Pick The Epic
 
 1. Run `tusker list --type epic` and scan summaries.
-2. Run `tusker list --epic <ACR>` for the likely match.
-3. Match the work to the nearest epic by subsystem.
-4. If nothing fits and this is a real new workstream, create an epic.
-5. If truly uncertain, ask one concrete question.
+2. Run `tusker search "<term>" --type task` before creating anything that might duplicate existing work.
+3. Run `tusker list --epic <ACR> --type task --open` for the likely match only when the search/list result is not enough.
+4. Match the work to the nearest epic by subsystem.
+5. If nothing fits and this is a real new workstream, create an epic.
+6. If truly uncertain, ask one concrete question.
+
+`tusker search` is the default tracker lookup tool. It skips `Attachments/**`,
+`_system/**`, runtime logs, and generated indexes. Use shell `rg` only when you
+need to search source code or non-tracker files.
 
 ## Follow-Ups
 
@@ -83,9 +88,14 @@ tusker validate
 
 For quick-mode `risk: low`, one evidence line plus a lightweight verification pass is usually enough. The worker must not certify its own truthfulness.
 
+If `WORKFLOW.md` enables `reviewer`, tasks in `review` can be picked up by the configured reviewer lane. Use `reviewer.actor` (default `agent-reviewer`) for low/medium auto-close when every gate passes. For high/critical tasks, the reviewer leaves advisory evidence and a human runs `verify`/`close`.
+
 ## What Not To Do
 
 - Do not read the full skill to log one routine item.
+- Do not read the full vault README when `tusker list --type epic` is enough.
 - Do not load formal intake unless the work is risky or user-facing.
 - Do not create a durable doc for a one-sentence note.
 - Do not ask questions you can answer from cwd, the epic roster, or the active task.
+- Do not read `Attachments/**`, generated JSON, or raw logs while looking for duplicate tasks.
+- Do not paste full build/test output into the chat. Save full logs as files and read a tight summary or tail.

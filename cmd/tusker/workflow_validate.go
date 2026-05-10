@@ -49,6 +49,9 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	if wf.Retry.MaxAttempts <= 0 || len(wf.Retry.BackoffMS) == 0 {
 		return tuskerError(errorConfigInvalid, "retry.max_attempts and retry.backoff_ms are required", withPath(filePath))
 	}
+	if err := validateReviewerPolicy(wf.Reviewer, wf.Agents.Enabled, filePath); err != nil {
+		return err
+	}
 	if strings.TrimSpace(wf.Codex.Command) == "" {
 		return tuskerError(errorConfigInvalid, "codex.command is required", withPath(filePath))
 	}
@@ -74,6 +77,44 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	}
 	if strings.TrimSpace(wf.Agents.Default) == "" {
 		return tuskerError(errorConfigInvalid, "agents.default is required", withPath(filePath))
+	}
+	return nil
+}
+
+func validateReviewerPolicy(policy ReviewerPolicy, enabledAgents []string, filePath string) error {
+	if !policy.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(policy.Runner) == "" {
+		return tuskerError(errorConfigInvalid, "reviewer.runner is required when reviewer.enabled is true", withPath(filePath))
+	}
+	if !stringListContainsFold(enabledAgents, policy.Runner) {
+		return tuskerError(errorConfigInvalid, "reviewer.runner must be listed in agents.enabled", withPath(filePath))
+	}
+	if strings.TrimSpace(policy.Actor) == "" {
+		return tuskerError(errorConfigInvalid, "reviewer.actor is required when reviewer.enabled is true", withPath(filePath))
+	}
+	if len(policy.AutoCloseRisks) == 0 && len(policy.HumanRequiredRisks) == 0 {
+		return tuskerError(errorConfigInvalid, "reviewer must define auto_close_risks or human_required_risks", withPath(filePath))
+	}
+	seen := map[string]string{}
+	for field, values := range map[string][]string{
+		"reviewer.auto_close_risks":     policy.AutoCloseRisks,
+		"reviewer.human_required_risks": policy.HumanRequiredRisks,
+	} {
+		for _, raw := range values {
+			value := strings.ToLower(strings.TrimSpace(raw))
+			if _, ok := risks[value]; !ok {
+				return tuskerError(errorConfigInvalid, field+" contains invalid risk "+raw, withPath(filePath))
+			}
+			if previous := seen[value]; previous != "" {
+				return tuskerError(errorConfigInvalid, "reviewer risk "+value+" appears in both "+previous+" and "+field, withPath(filePath))
+			}
+			seen[value] = field
+		}
+	}
+	if strings.TrimSpace(policy.Prompt) == "" {
+		return tuskerError(errorConfigInvalid, "reviewer.prompt is required when reviewer.enabled is true", withPath(filePath))
 	}
 	return nil
 }

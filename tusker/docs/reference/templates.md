@@ -14,11 +14,26 @@ publish_lane: "internal"
 publish_path: "reference/templates"
 publish_description: "Template contract."
 created: "2026-04-29"
-updated: "2026-04-29"
+updated: "2026-05-10"
 ---
 
 # Template contract
 
 ## Summary
 
-This page is part of the v5 Tusker canon. Replace the placeholder with project-specific detail as the implementation lands.
+Tusker task templates are risk-scaled and capsule-first.
+
+Every task starts with the smallest durable context:
+
+- `## Agent capsule`
+- `## Intent`
+- `## Acceptance contract`
+- `## Evidence`
+
+Medium tasks add scope, deliverables, and verification plan. High and critical
+tasks add canon, code/system anchors, constraints, escalation conditions,
+knowledge delta, and verification log. Critical tasks also add rollback.
+
+Default templates do not include `## Execution plan` or `## Work log`. Those are
+live scratchpads, not durable context. Use evidence summaries, verification
+frontmatter, transitions, and review packets for audit fidelity.

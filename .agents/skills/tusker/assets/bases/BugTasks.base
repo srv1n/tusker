@@ -22,11 +22,27 @@ properties:
     displayName: "Epic"
   updated:
     displayName: "Updated"
+  review_requested_at:
+    displayName: "Review Requested"
   blocked_by:
     displayName: "Blocked By"
   block_reason:
     displayName: "Block Reason"
 views:
+  - type: table
+    name: "Active"
+    filters:
+      and:
+        - 'status == "active"'
+    order:
+      - "file.name"
+      - title
+      - risk
+      - priority
+      - assignee
+      - size
+      - epic
+      - updated
   - type: table
     name: "Board"
     filters:
@@ -122,6 +138,34 @@ views:
       - epic
       - blocked_by
       - block_reason
+      - updated
+  - type: table
+    name: "Review"
+    filters:
+      and:
+        - 'status == "review"'
+    order:
+      - "file.name"
+      - title
+      - risk
+      - priority
+      - assignee
+      - epic
+      - review_requested_at
+      - updated
+  - type: table
+    name: "Follow-up"
+    filters:
+      and:
+        - 'status == "rework"'
+    order:
+      - "file.name"
+      - title
+      - risk
+      - priority
+      - assignee
+      - size
+      - epic
       - updated
   - type: table
     name: "Archive"

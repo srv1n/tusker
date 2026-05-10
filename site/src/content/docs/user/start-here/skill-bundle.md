@@ -11,7 +11,7 @@ tusker:
   tags:
     - "start-here"
     - "user"
-  updated: "2026-04-29"
+  updated: "2026-05-10"
 ---
 
 # Tusker Skill Bundle
@@ -32,8 +32,11 @@ If you're using the installed skill, the CLI is the execution surface:
 tusker --help
 tusker init
 tusker init --vault /path/to/vault --yes
+tusker search "duplicate clue" --type task
 tusker update
 ```
+
+Use `tusker search` as the default tracker lookup before broad filesystem search. It searches first-party task, epic, and doc notes while skipping attachments, generated indexes, runtime state, and raw logs.
 
 For documentation work, start with `SKILL.md`, then read `references/DOCS_PUBLICATION.md`. Published sites expose `site/public/canon-manifest.json` and `site/public/llms.txt` so agents can find current docs without spelunking stale files. Canon is explicit: `approved` is current, `draft` needs checking, and `deprecated`/`historical` is archaeology.
 

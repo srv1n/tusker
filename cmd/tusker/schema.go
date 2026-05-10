@@ -206,7 +206,7 @@ var frontmatterOrder = map[string][]string{
 		"schema", "id", "title", "type", "kind", "epic", "status", "priority", "risk", "size",
 		"delegation", "ai_assistance", "ai_tools", "assignee", "domains", "doc_nodes", "blocked_by", "block_reason", "blocks", "created", "updated", "started",
 		"review_requested_at", "completed", "cancelled_at", "blocked_since", "verified_by", "verified_at",
-		"closed_by", "closed_at", "docs_resolution", "transitions", "tags",
+		"verification_summary", "closed_by", "closed_at", "close_summary", "docs_resolution", "transitions", "tags",
 	},
 	"doc": {
 		"schema", "id", "title", "type", "node", "status", "epic", "doc_intent", "canon_for",

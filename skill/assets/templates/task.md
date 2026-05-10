@@ -22,15 +22,14 @@ updated: "2026-04-29"
 
 # {{id}} · {{title}}
 
+## Agent capsule
+
+- Essence: {{title}}.
+- Next action: define acceptance, do the smallest scoped change, and attach concise evidence.
+- Read next: this note, then only the code/docs anchors named here.
+- Avoid: raw logs, full transcripts, generated indexes, and attachments unless doing evidence forensics.
+
 ## Intent
-
-## Scope
-
-In:
--
-
-Out:
--
 
 ## Acceptance contract
 
@@ -38,20 +37,12 @@ Out:
 |---|---|---|---|
 | 1 |  |  |  |
 
-## Canon
+## Scope
 
+In:
 -
 
-## Code/system anchors
-
--
-
-## Constraints
-
--
-
-## Escalate if
-
+Out:
 -
 
 ## Deliverables
@@ -62,26 +53,6 @@ Out:
 
 -
 
-## Knowledge delta
-
-| Topic | Before | After | Audience | Target doc nodes |
-|---|---|---|---|---|
-|  |  |  |  |  |
-
----
-
-## Execution plan
-
-1.
-
 ## Evidence
 
--
-
-## Verification log
-
--
-
-## Work log
-
-- 2026-04-29 — tusker — task created
+- _No evidence yet. Attach summaries, PRs, packets, screenshots, or short log tails only._

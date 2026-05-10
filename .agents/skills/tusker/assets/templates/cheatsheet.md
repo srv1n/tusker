@@ -17,6 +17,19 @@ review -> rework -> active
 active|review|blocked|rework|backlog -> cancelled
 ```
 
+`review` is a checkpoint. With `reviewer.enabled`, the daemon can launch an independent review lane from `review`; low/medium work can close as `agent-reviewer`, and high/critical work stays human-gated.
+
+## Current workflow settings
+
+| Surface | Current setting |
+|---|---|
+| Worker dispatch | `active`, `rework` |
+| Review checkpoint | `review` |
+| Reviewer runner | `codex` |
+| Reviewer actor | `agent-reviewer` |
+| Auto-close | `low`, `medium` |
+| Human close | `high`, `critical` |
+
 ## Common commands
 
 ```bash

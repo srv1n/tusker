@@ -151,9 +151,52 @@ func TestRuntimeHelpExplainsOperatorSurface(t *testing.T) {
 		}
 	}
 	mainHelp := captureStdout(t, printHelp)
-	for _, expected := range []string{"daemon", "projects", "runs", "refresh"} {
+	for _, expected := range []string{"daemon", "projects", "runs", "refresh", "search", "show"} {
 		if !strings.Contains(mainHelp, expected) {
 			t.Fatalf("main help missing %q:\n%s", expected, mainHelp)
+		}
+	}
+}
+
+func TestSearchHelpExplainsBoundedTrackerLookup(t *testing.T) {
+	output := captureStdout(t, printSearchHelp)
+	for _, expected := range []string{
+		"tusker search <text>",
+		"generated indexes",
+		"Attachments",
+		"--limit <n>",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("search help missing %q:\n%s", expected, output)
+		}
+	}
+}
+
+func TestShowHelpExplainsCapsuleFirst(t *testing.T) {
+	output := captureStdout(t, printShowHelp)
+	for _, expected := range []string{
+		"tusker show <ID>",
+		"--capsule",
+		"--acceptance",
+		"Defaults to --capsule",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("show help missing %q:\n%s", expected, output)
+		}
+	}
+}
+
+func TestListHelpExplainsProgressiveDisclosure(t *testing.T) {
+	output := captureStdout(t, printListHelp)
+	for _, expected := range []string{
+		"--open|--closed",
+		"--limit <n>",
+		"without reading note bodies",
+		"tusker list --vault ./tusker --type epic",
+		"tusker list --vault ./tusker --epic ORC --type task --open",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("list help missing %q:\n%s", expected, output)
 		}
 	}
 }

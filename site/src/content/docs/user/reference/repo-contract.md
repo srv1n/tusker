@@ -11,7 +11,7 @@ tusker:
   summary: "The vault is internal working memory. The repository is still where contributors land."
   tags:
     - "reference"
-  updated: "2026-04-21"
+  updated: "2026-05-10"
 ---
 
 # Repo contract
@@ -77,6 +77,7 @@ That means:
 - low-risk changes can often be screened from the summary and proof first
 - risky changes still deserve real code review
 - raw transcripts are optional appendix material, not required reading
+- Tusker lookups should start with `tusker search`, `tusker list`, and exact task paths, not broad reads of attachments, generated indexes, or logs
 
 ## AGENTS.md guidance
 

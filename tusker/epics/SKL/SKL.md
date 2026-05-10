@@ -40,7 +40,7 @@ Out:
 
 ## Task stack
 
-- [[SKL-T-0001]] — Tighten installable skill for V5 distribution (done)
+_No open tasks. Use `tusker list --epic SKL --type task --status done` for closed history._
 
 ## Open questions
 

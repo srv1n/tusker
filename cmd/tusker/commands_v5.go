@@ -127,20 +127,7 @@ func newV5Task(args Args, defaultKind string) error {
 	id := fmt.Sprintf("%s-T-%s", acronym, padNumber(nextSequence(notes, acronym, "task")))
 	filePath := filepath.Join(epicDir, id+".md")
 	date := todayISO()
-	templateName := "task.md"
-	if kind == "bug" {
-		templateName = "bug.md"
-	}
-	template := defaultV5TaskTemplate()
-	if templateName == "bug.md" {
-		template = defaultV5BugTemplate()
-	}
-	rendered := replaceTemplateTokens(template, map[string]string{
-		"{{id}}":    id,
-		"{{title}}": title,
-		"{{epic}}":  acronym,
-		"{{date}}":  date,
-	})
+	rendered := defaultV5TaskDocument(id, title, kind, acronym, risk, size, priority, date)
 	data, body, err := parseFrontmatter(rendered)
 	if err != nil {
 		return err
@@ -356,10 +343,16 @@ func verifyV5Cmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureReviewerMayVerify(vaultPath, data, by); err != nil {
+		return err
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	date := todayISO()
 	data["verified_by"] = by
 	data["verified_at"] = now
+	if summary := strings.TrimSpace(args.String("summary")); summary != "" {
+		data["verification_summary"] = summary
+	}
 	data["updated"] = date
 	body = appendSectionBullet(body, "## Verification log", fmt.Sprintf("- %s — %s — verified%s", date, by, suffixReason(args.String("summary"))), false)
 	content, err := serializeDocument(data, body, frontmatterOrderForType("task"))
@@ -412,12 +405,19 @@ func closeV5Cmd(args Args) error {
 	date := todayISO()
 	now := time.Now().UTC().Format(time.RFC3339)
 	actor := fallback(fallback(args.String("actor"), args.String("by")), "automation")
+	if err := ensureReviewerMayClose(vaultPath, data, actor); err != nil {
+		return err
+	}
+	reviewedBy := firstNonEmpty(stringField(data, "verified_by"), "unknown")
 	data["status"] = "done"
 	data["closed_by"] = actor
 	data["closed_at"] = now
+	if reason := strings.TrimSpace(args.String("reason")); reason != "" {
+		data["close_summary"] = reason
+	}
 	data["completed"] = date
 	data["updated"] = date
-	body = appendWorkLogBullet(body, fmt.Sprintf("%s — %s — closed%s", date, actor, suffixReason(args.String("reason"))))
+	body = appendWorkLogBullet(body, fmt.Sprintf("%s — %s — closed after review by %s%s", date, actor, reviewedBy, suffixReason(args.String("reason"))))
 	content, err := serializeDocument(data, body, frontmatterOrderForType("task"))
 	if err != nil {
 		return err
@@ -427,9 +427,47 @@ func closeV5Cmd(args Args) error {
 	}
 	autoReindex(vaultPath)
 	if !args.Bool("quiet") {
-		fmt.Printf("%s closed\n", id)
+		fmt.Printf("%s closed (reviewed by %s, closed by %s)\n", id, reviewedBy, actor)
 	}
 	return nil
+}
+
+func ensureReviewerMayVerify(vaultPath string, data map[string]any, actor string) error {
+	policy, ok := loadReviewerPolicyForGate(vaultPath)
+	if !ok || !policy.Enabled || strings.TrimSpace(actor) != strings.TrimSpace(policy.Actor) {
+		return nil
+	}
+	risk := stringField(data, "risk")
+	if reviewerRequiresHumanRisk(policy, risk) {
+		return tuskerError(errorInvalidTransition, fmt.Sprintf("%s risk requires human verification; configured reviewer %s may only advise", risk, actor))
+	}
+	if !reviewerMayAutoCloseRisk(policy, risk) {
+		return tuskerError(errorInvalidTransition, fmt.Sprintf("%s risk is not in reviewer.auto_close_risks for %s", risk, actor))
+	}
+	return nil
+}
+
+func ensureReviewerMayClose(vaultPath string, data map[string]any, actor string) error {
+	policy, ok := loadReviewerPolicyForGate(vaultPath)
+	if !ok || !policy.Enabled || strings.TrimSpace(actor) != strings.TrimSpace(policy.Actor) {
+		return nil
+	}
+	risk := stringField(data, "risk")
+	if reviewerRequiresHumanRisk(policy, risk) {
+		return tuskerError(errorInvalidTransition, fmt.Sprintf("%s risk requires human close; configured reviewer %s may only advise", risk, actor))
+	}
+	if !reviewerMayAutoCloseRisk(policy, risk) {
+		return tuskerError(errorInvalidTransition, fmt.Sprintf("%s risk is not in reviewer.auto_close_risks for %s", risk, actor))
+	}
+	return nil
+}
+
+func loadReviewerPolicyForGate(vaultPath string) (ReviewerPolicy, bool) {
+	wfFile, err := loadWorkflow(vaultPath)
+	if err != nil {
+		return ReviewerPolicy{}, false
+	}
+	return wfFile.Data.Reviewer, true
 }
 
 func requireV5NoteForCommand(args Args, id, command string, allowedTypes ...string) (*Note, error) {

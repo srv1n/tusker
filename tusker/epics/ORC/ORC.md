@@ -132,24 +132,21 @@ flowchart TD
 
 ## Task stack
 
-- [[ORC-T-0018]] — Ship Codex-only Obsidian-to-review daemon loop (done)
-- [[ORC-T-0015]] — Add optional tool and MCP extension bridge (blocked)
-- [[ORC-T-0008]] — Normalize Codex app-server events and usage telemetry (blocked)
-- [[ORC-T-0009]] — Add sessions and run viewing commands (blocked)
-- [[ORC-T-0006]] — Interrupt or park runs when tracker state becomes ineligible (blocked)
-- [[ORC-T-0013]] — Generate review packets and evidence summaries (blocked)
-- [[ORC-T-0007]] — Add attempt and turn runtime model (blocked)
-- [[ORC-T-0010]] — Add event-based stall detection and failure classification (blocked)
-- [[ORC-T-0004]] — Resolve review-state canon and schema drift (review)
-- [[ORC-T-0017]] — Add run supervisor session and branch policy (review)
-- [[ORC-T-0011]] — Implement same-thread continuation loop (review)
-- [[ORC-T-0005]] — Enforce per-state concurrency caps (review)
-- [[ORC-T-0014]] — Add workpad and follow-up runbooks to the skill (review)
-- [[ORC-T-0001]] — Enforce workspace cwd and containment for daemon runners (review)
-- [[ORC-T-0003]] — Render WORKFLOW.md body as strict prompt template (review)
-- [[ORC-T-0002]] — Move Codex trust policy into WORKFLOW.md (review)
-- [[ORC-T-0012]] — Add dependency priority and risk-aware dispatch (review)
-- [[ORC-T-0016]] — Publish operator docs and Obsidian views for orchestration state (review)
+_Open tasks only. Closed/cancelled work is intentionally omitted; use `tusker list --epic ORC --type task --status done` for closed history._
+
+- [[ORC-T-0019]] — Add policy-driven agent reviewer close lane (review, p1, high)
+- [[ORC-T-0011]] — Implement same-thread continuation loop (rework, p1, high)
+- [[ORC-T-0017]] — Add run supervisor session and branch policy (rework, p1, high)
+- [[ORC-T-0012]] — Add dependency priority and risk-aware dispatch (rework, p2, medium)
+- [[ORC-T-0014]] — Add workpad and follow-up runbooks to the skill (rework, p2, low)
+- [[ORC-T-0016]] — Publish operator docs and Obsidian views for orchestration state (rework, p2, medium)
+- [[ORC-T-0006]] — Interrupt or park runs when tracker state becomes ineligible (blocked, p0, high)
+- [[ORC-T-0007]] — Add attempt and turn runtime model (blocked, p1, high)
+- [[ORC-T-0008]] — Normalize Codex app-server events and usage telemetry (blocked, p1, medium)
+- [[ORC-T-0009]] — Add sessions and run viewing commands (blocked, p1, medium)
+- [[ORC-T-0010]] — Add event-based stall detection and failure classification (blocked, p1, medium)
+- [[ORC-T-0013]] — Generate review packets and evidence summaries (blocked, p2, medium)
+- [[ORC-T-0015]] — Add optional tool and MCP extension bridge (blocked, p3, high)
 
 ## Open questions
 

@@ -34,6 +34,52 @@ retry:
         - 30000
         - 120000
         - 600000
+reviewer:
+    enabled: true
+    runner: codex
+    actor: agent-reviewer
+    auto_close_risks:
+        - low
+        - medium
+    human_required_risks:
+        - high
+        - critical
+    prompt: |-
+        You are the independent Tusker reviewer for {{ note.id }}.
+
+        Review only. Do not edit implementation files. If the work needs changes, mark the task `rework` with a specific reason instead of fixing it yourself.
+
+        Task:
+        - ID: {{ note.id }}
+        - Title: {{ note.title }}
+        - Risk: {{ note.risk }}
+        - Status: {{ note.status }}
+        - Attempt: {{ attempt.id }}
+        - Workspace: {{ workspace.path }}
+        - Vault: {{ vault.path }}
+
+        Policy:
+        - Reviewer actor: {{ reviewer.actor }}
+        - Auto-close allowed: {{ reviewer.auto_close_allowed }}
+        - Human close required: {{ reviewer.human_required }}
+
+        Checklist:
+        1. Read the task acceptance contract, scope, evidence, verification log, and docs resolution.
+        2. Inspect the current diff against the task scope. Call out surprise files or drive-by refactors.
+        3. Run the verification commands needed to prove the acceptance contract.
+        4. Confirm docs impact is applied, nooped, or waived for every `doc_nodes` entry.
+        5. For risk high or critical, confirm the Knowledge delta is real and reviewer-actionable.
+        6. If a caveat changes scope, decide whether it is acceptable or requires rework.
+
+        If the task fails review, run:
+        tusker status {{ note.id }} rework --by {{ reviewer.actor }} --reason "<specific unmet acceptance item>"
+
+        If auto-close is allowed and every check passes, run:
+        tusker docs check {{ note.id }}
+        tusker verify {{ note.id }} --by {{ reviewer.actor }} --summary "<what you verified>"
+        tusker close {{ note.id }} --by {{ reviewer.actor }} --reason "agent review accepted"
+
+        If human close is required and every check passes, do not run `verify` or `close`. Leave the task in `review` and state the human-review recommendation in your final response.
 codex:
     command: codex app-server
     approval_policy: on-request
@@ -73,6 +119,10 @@ Vault: {{ vault.path }}
 ## Completion contract
 
 When the work is demonstrably ready for verification, move the task to `review`. If the work is blocked, set status to `blocked` with a concrete blocker instead of exiting cleanly. If the task remains active after a turn, the daemon will continue or retry the same session.
+
+## Reviewer contract
+
+If `reviewer.enabled` is true, tasks in `review` may be dispatched to `reviewer.runner` for independent review. The reviewer must not edit implementation files. Low/medium risks can be verified and closed by `reviewer.actor` after all gates pass; high/critical risks stay in `review` for human verification and close.
 
 ## Retry policy
 

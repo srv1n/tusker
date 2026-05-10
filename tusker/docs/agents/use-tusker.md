@@ -24,7 +24,7 @@ publish_lane: "internal"
 publish_path: "agents/use-tusker"
 publish_description: "Agent recipe: using Tusker."
 created: "2026-04-29"
-updated: "2026-04-29"
+updated: "2026-05-10"
 ---
 
 # Agent recipe: using Tusker
@@ -37,28 +37,59 @@ Use Tusker as the execution ledger for agent-first software work: choose the rig
 
 - User request or active task ID.
 - Vault path, usually `tusker`.
-- Project overview from `tusker/README.md`.
+- Progressive epic index from `tusker list --type epic`.
+- Project overview from `tusker/README.md` only when needed.
 - Docs catalog from `tusker/Docs.md` and `_config/docs-map.yaml`.
 - Relevant canon under `tusker/docs/**`.
 
 ## Preconditions
 
-- Read `tusker/README.md` before creating work.
+- Start with `tusker list --type epic`; read `tusker/README.md` only when the project overview is needed.
 - Pick an existing epic when the request fits; create a new epic only for a durable workstream.
+- Use `tusker search` before broad repository search when the question is about existing tracker work.
 - Use task IDs, not story IDs, for executable work.
 - Use `doc_nodes` from `_config/docs-map.yaml`; do not invent them.
-- Treat `_system/generated/**` as rebuildable output.
+- Treat `_system/generated/**`, `Attachments/**`, raw runner logs, and full build logs as artifact stores, not default context.
 
 ## Steps
 
-1. Inspect the active vault overview and choose the epic that matches the request.
-2. Create or update a `task` with clear scope, acceptance criteria, verification plan, and knowledge delta when the work changes durable understanding.
-3. Set `domains` for broad routing and `doc_nodes` for exact docs impact.
-4. Implement the work in the repo or vault, keeping generated indexes rebuildable.
-5. Run focused tests first, then the broader validation path when the change touches shared behavior.
-6. Resolve docs impact for every targeted node with apply, verified no-op, or a waiver with a reason.
-7. Attach evidence or record verification output in the task.
-8. Move the task through review, verification, and close only when gates are satisfied.
+1. Inspect the short epic roster and choose the likely epic.
+2. Search for duplicates with `tusker search "<term>" --type task` when creating or updating tracker work.
+3. Drill into one epic with `tusker list --epic <ACR> --type task --open` only when open-task context is needed.
+4. Read a selected task with `tusker show <ID> --capsule` before opening the full markdown.
+5. Create or update the narrowest relevant `task` with clear scope, acceptance criteria, verification plan, and knowledge delta when the work changes durable understanding.
+6. Set `domains` for broad routing and `doc_nodes` for exact docs impact.
+7. Implement the work in the repo or vault, keeping generated indexes rebuildable.
+8. Run focused tests first, then the broader validation path when the change touches shared behavior.
+9. Resolve docs impact for every targeted node with apply, verified no-op, or a waiver with a reason.
+10. Attach evidence or record verification output in the task.
+11. Move the task through review, verification, and close only when gates are satisfied.
+
+## Context discipline
+
+Use the lightest lane that preserves truth.
+
+| Lane | Use for | Context budget |
+|---|---|---|
+| Lookup | Answer status or find existing work | `tusker list --type epic`, `tusker search`, one epic's open tasks, one task capsule |
+| Bookkeeping | Add notes or shape backlog | Named task plus epic roster; validate only when schema changed |
+| Implementation | Change code or docs | Task plus directly relevant files |
+| Closeout | Move work to review or done | Evidence, docs resolution, verification, validation |
+
+Do not read attachments, generated indexes, raw runner logs, or full build logs unless the user is explicitly asking for evidence forensics. Save large command output to a file and bring back only the failure summary or a small tail.
+
+## Review lane behavior
+
+If `WORKFLOW.md` enables `reviewer`, moving a task to `review` can trigger an independent reviewer run. The reviewer is not the implementation worker and should not edit implementation files.
+
+Default policy:
+
+| Risk | Reviewer behavior |
+|---|---|
+| `low`, `medium` | reviewer may run `docs check`, `verify`, and `close` after all gates pass |
+| `high`, `critical` | reviewer leaves advisory evidence; a human verifies and closes |
+
+Reviewer attribution is explicit. Low/medium auto-close records the configured `reviewer.actor` as verifier/closer, normally `agent-reviewer`. Human-gated close records the human verifier and closer instead.
 
 ## Validation
 

@@ -42,7 +42,8 @@ type Workflow struct {
 		MaxAttempts int   `yaml:"max_attempts"`
 		BackoffMS   []int `yaml:"backoff_ms"`
 	} `yaml:"retry"`
-	Codex struct {
+	Reviewer ReviewerPolicy `yaml:"reviewer"`
+	Codex    struct {
 		Command           string `yaml:"command"`
 		ApprovalPolicy    string `yaml:"approval_policy"`
 		ThreadSandbox     string `yaml:"thread_sandbox"`
@@ -60,6 +61,15 @@ type Workflow struct {
 		AfterWorkspaceCreate  []string `yaml:"after_workspace_create"`
 		BeforeWorkspaceRemove []string `yaml:"before_workspace_remove"`
 	} `yaml:"hooks"`
+}
+
+type ReviewerPolicy struct {
+	Enabled            bool     `yaml:"enabled" json:"enabled"`
+	Runner             string   `yaml:"runner" json:"runner"`
+	Actor              string   `yaml:"actor" json:"actor"`
+	AutoCloseRisks     []string `yaml:"auto_close_risks" json:"auto_close_risks"`
+	HumanRequiredRisks []string `yaml:"human_required_risks" json:"human_required_risks"`
+	Prompt             string   `yaml:"prompt" json:"prompt"`
 }
 
 type ExtensionPolicy struct {
@@ -96,6 +106,12 @@ func defaultWorkflow() Workflow {
 	wf.Workspace.Strategy = "worktree"
 	wf.Retry.MaxAttempts = 3
 	wf.Retry.BackoffMS = []int{30000, 120000, 600000}
+	wf.Reviewer.Enabled = true
+	wf.Reviewer.Runner = "codex"
+	wf.Reviewer.Actor = "agent-reviewer"
+	wf.Reviewer.AutoCloseRisks = []string{"low", "medium"}
+	wf.Reviewer.HumanRequiredRisks = []string{"high", "critical"}
+	wf.Reviewer.Prompt = defaultReviewerPrompt()
 	wf.Codex.Command = "codex app-server"
 	wf.Codex.ApprovalPolicy = "on-request"
 	wf.Codex.ThreadSandbox = "workspace-write"
@@ -114,10 +130,73 @@ func defaultWorkflow() Workflow {
 	return wf
 }
 
+func defaultReviewerPrompt() string {
+	return strings.TrimSpace(`You are the independent Tusker reviewer for {{ note.id }}.
+
+Review only. Do not edit implementation files. If the work needs changes, mark the task ` + "`rework`" + ` with a specific reason instead of fixing it yourself.
+
+Task:
+- ID: {{ note.id }}
+- Title: {{ note.title }}
+- Risk: {{ note.risk }}
+- Status: {{ note.status }}
+- Attempt: {{ attempt.id }}
+- Workspace: {{ workspace.path }}
+- Vault: {{ vault.path }}
+
+Policy:
+- Reviewer actor: {{ reviewer.actor }}
+- Auto-close allowed: {{ reviewer.auto_close_allowed }}
+- Human close required: {{ reviewer.human_required }}
+
+Checklist:
+1. Read the task acceptance contract, scope, evidence, verification log, and docs resolution.
+2. Inspect the current diff against the task scope. Call out surprise files or drive-by refactors.
+3. Run the verification commands needed to prove the acceptance contract.
+4. Confirm docs impact is applied, nooped, or waived for every ` + "`doc_nodes`" + ` entry.
+5. For risk high or critical, confirm the Knowledge delta is real and reviewer-actionable.
+6. If a caveat changes scope, decide whether it is acceptable or requires rework.
+
+If the task fails review, run:
+tusker status {{ note.id }} rework --by {{ reviewer.actor }} --reason "<specific unmet acceptance item>"
+
+If auto-close is allowed and every check passes, run:
+tusker docs check {{ note.id }}
+tusker verify {{ note.id }} --by {{ reviewer.actor }} --summary "<what you verified>"
+tusker close {{ note.id }} --by {{ reviewer.actor }} --reason "agent review accepted"
+
+If human close is required and every check passes, do not run ` + "`verify`" + ` or ` + "`close`" + `. Leave the task in ` + "`review`" + ` and state the human-review recommendation in your final response.`)
+}
+
+func reviewerPolicyCoversRisk(policy ReviewerPolicy, risk string) bool {
+	return reviewerMayAutoCloseRisk(policy, risk) || reviewerRequiresHumanRisk(policy, risk)
+}
+
+func reviewerMayAutoCloseRisk(policy ReviewerPolicy, risk string) bool {
+	return stringListContainsFold(policy.AutoCloseRisks, risk)
+}
+
+func reviewerRequiresHumanRisk(policy ReviewerPolicy, risk string) bool {
+	return stringListContainsFold(policy.HumanRequiredRisks, risk)
+}
+
+func stringListContainsFold(values []string, target string) bool {
+	target = strings.ToLower(strings.TrimSpace(target))
+	if target == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.ToLower(strings.TrimSpace(value)) == target {
+			return true
+		}
+	}
+	return false
+}
+
 func defaultWorkflowMarkdown() string {
 	wf := defaultWorkflow()
 	raw, _ := yaml.Marshal(wf)
-	return "---\n" + strings.TrimSpace(string(raw)) + "\n---\n\n## Routing\n\nYou are working on {{ note.id }} for {{ project.name }}. Dispatch only makes sense because this task is currently {{ note.status }} and the workspace is ready at {{ workspace.path }}.\n\n## Prompt\n\nUse the installed Tusker skill bundle for durable task semantics, evidence, and verification discipline. Work inside {{ workspace.path }}. Treat {{ repo.root }} as the source repository root for context only unless the task explicitly requires comparing against it.\n\nItem: {{ note.title }}\nRecord: {{ note.record_id }}\nType: {{ note.type }}\nAttempt: {{ attempt.number }}\nWorkflow: {{ workflow.path }}\nVault: {{ vault.path }}\n\n## Completion contract\n\nWhen the work is demonstrably ready for verification, move the task to `review`. If the work is blocked, set status to `blocked` with a concrete blocker instead of exiting cleanly. If the task remains active after a turn, the daemon will continue or retry the same session.\n\n## Retry policy\n\nRetry only transient infrastructure failures. Human-directed rework creates a new active task revision.\n\n## Human override policy\n\nHumans may edit tasks directly, but runtime state belongs to the daemon store.\n"
+	return "---\n" + strings.TrimSpace(string(raw)) + "\n---\n\n## Routing\n\nYou are working on {{ note.id }} for {{ project.name }}. Dispatch only makes sense because this task is currently {{ note.status }} and the workspace is ready at {{ workspace.path }}.\n\n## Prompt\n\nUse the installed Tusker skill bundle for durable task semantics, evidence, and verification discipline. Work inside {{ workspace.path }}. Treat {{ repo.root }} as the source repository root for context only unless the task explicitly requires comparing against it.\n\nItem: {{ note.title }}\nRecord: {{ note.record_id }}\nType: {{ note.type }}\nAttempt: {{ attempt.number }}\nWorkflow: {{ workflow.path }}\nVault: {{ vault.path }}\n\n## Completion contract\n\nWhen the work is demonstrably ready for verification, move the task to `review`. If the work is blocked, set status to `blocked` with a concrete blocker instead of exiting cleanly. If the task remains active after a turn, the daemon will continue or retry the same session.\n\n## Reviewer contract\n\nIf `reviewer.enabled` is true, tasks in `review` may be dispatched to `reviewer.runner` for independent review. The reviewer must not edit implementation files. Low/medium risks can be verified and closed by `reviewer.actor` after all gates pass; high/critical risks stay in `review` for human verification and close.\n\n## Retry policy\n\nRetry only transient infrastructure failures. Human-directed rework creates a new active task revision.\n\n## Human override policy\n\nHumans may edit tasks directly, but runtime state belongs to the daemon store.\n"
 }
 
 func loadWorkflow(vaultPath string) (WorkflowFile, error) {

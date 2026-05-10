@@ -2,17 +2,25 @@
 
 Use the Obsidian workflow vault for non-trivial work.
 
+Default to the lightest Tusker lane that preserves truth:
+- Lookup/status questions: use `tusker list --type epic`, `tusker search`, one-epic `tusker list --epic <ACR> --type task --open`, and exact task files only.
+- Backlog or status bookkeeping: update the named task and reindex only if needed.
+- Implementation closeout: then use evidence, docs resolution, verification, and validation.
+
 For meaningful features, bug fixes, migrations, or user-visible docs changes:
 
 1. Create a Tusker task note. Everything below is a section inside that note, not a separate file.
-2. Fill the contract sections: intent, scope, acceptance, deliverables, verification, and docs impact.
-3. Work in the execution sections: plan, evidence, verification log, and work log.
+2. Fill the contract sections: agent capsule, intent, acceptance, scope, deliverables, verification, and docs impact.
+3. Keep durable updates concise: evidence summary, verification summary, close summary, and knowledge delta when understanding changed.
 4. Create a user doc or developer doc when the work changes how the system is used or understood.
 5. After material updates, reindex and validate the vault.
 
 Rules:
 
 - `AGENTS.md` stays short and points to deeper docs.
-- Raw transcripts are appendix material, not primary artifacts.
+- The vault README is an epic index, not a backlog dump. Read it only when the project overview is needed.
+- Do not read `tusker/Attachments/**`, `tusker/_system/generated/**`, raw runner logs, or build logs by default.
+- Raw transcripts and full logs are appendix material, not primary artifacts.
+- Save large command output to files; bring only the failure summary or a small tail into chat.
 - Reviewers start from the change note and its PR links, not from chat archaeology.
 - The human contributor must understand the final behavior and major edge cases.

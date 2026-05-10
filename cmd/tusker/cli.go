@@ -210,6 +210,10 @@ func run(command string, args Args) (int, error) {
 		return validateCmd(args)
 	case "list":
 		return 0, listCmd(args)
+	case "search":
+		return 0, searchCmd(args)
+	case "show":
+		return 0, showCmd(args)
 	case "docs init":
 		return 0, docsInitCmd(args)
 	case "docs model":
@@ -322,6 +326,12 @@ func run(command string, args Args) (int, error) {
 	case "help list":
 		printListHelp()
 		return 0, nil
+	case "help search":
+		printSearchHelp()
+		return 0, nil
+	case "help show":
+		printShowHelp()
+		return 0, nil
 	case "help validate":
 		printValidateHelp()
 		return 0, nil
@@ -382,6 +392,8 @@ Commands:
   init                initialize or refresh a repo vault
   new                 create epic, task, bug task, or doc nodes
   list                list V5 epics, tasks, and docs
+  search              search tracker notes without generated files or attachments
+  show                show a bounded note capsule or selected section
   status              move a V5 task or epic through its workflow
   next                show the next pickable task
   claim               assign a ready/rework task and move it active
@@ -404,6 +416,8 @@ Help:
   tusker vault --help
   tusker daemon --help
   tusker runs --help
+  tusker search --help
+  tusker show --help
   tusker status --help
 
 Global flags:
@@ -430,6 +444,10 @@ func printCommandHelp(command string) bool {
 		printCloseHelp()
 	case "list":
 		printListHelp()
+	case "search":
+		printSearchHelp()
+	case "show":
+		printShowHelp()
 	case "validate":
 		printValidateHelp()
 	case "reindex":
@@ -725,15 +743,49 @@ Purpose:
 
 func printListHelp() {
 	fmt.Println(`Usage:
-  tusker list [--vault <path>] [--json] [--type epic|task|doc] [--status <status>] [--epic <ACR>]
+  tusker list [--vault <path>] [--json] [--type epic|task|doc] [--status <status>] [--epic <ACR>] [--open|--closed] [--limit <n>]
 
 Purpose:
-  Query V5 epics, tasks, and docs from the vault.
+  Query V5 epics, tasks, and docs from the vault without reading note bodies.
+  Start with epics, then drill into one epic's open tasks.
 
 Examples:
   tusker list --vault ./tusker
+  tusker list --vault ./tusker --type epic
+  tusker list --vault ./tusker --epic ORC --type task --open
+  tusker list --vault ./tusker --epic ORC --type task --open --limit 10
   tusker list --vault ./tusker --type task --status active
   tusker list --vault ./tusker --type doc --json`)
+}
+
+func printSearchHelp() {
+	fmt.Println(`Usage:
+  tusker search <text> [--vault <path>] [--type epic|task|doc] [--epic <ACR>] [--status <status>] [--limit <n>] [--json]
+  tusker search --query <text> [--json]
+
+Purpose:
+  Search first-party tracker notes without reading generated indexes,
+  Attachments, runtime state, build logs, or arbitrary repository files.
+
+Examples:
+  tusker search braindump_id --type task
+  tusker search "docs close gate" --epic DOC --limit 10
+  tusker search reviewer --status review --json`)
+}
+
+func printShowHelp() {
+	fmt.Println(`Usage:
+  tusker show <ID> [--vault <path>] [--capsule|--acceptance|--evidence|--verification|--full]
+  tusker show <ID> --section "<heading>"
+
+Purpose:
+  Read the smallest useful slice of a Tusker note. Defaults to --capsule.
+
+Examples:
+  tusker show ORC-T-0019
+  tusker show ORC-T-0019 --acceptance
+  tusker show ORC-T-0019 --evidence
+  tusker show ORC-T-0019 --full`)
 }
 
 func printValidateHelp() {

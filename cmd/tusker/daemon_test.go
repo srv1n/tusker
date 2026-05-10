@@ -118,6 +118,7 @@ func TestDaemonReleasesRunWhenTrackerStateBecomesIneligible(t *testing.T) {
 	if err := setStatus(Args{"vault": vault, "id": "INT-T-0001", "status": "active", "actor": "test"}); err != nil {
 		t.Fatal(err)
 	}
+	setWorkflowReviewerEnabled(t, vault, false)
 	notePath := filepath.Join(vault, "epics", "INT", "INT-T-0001.md")
 	data, body, err := parseFrontmatterMustRead(notePath)
 	if err != nil {
@@ -206,6 +207,7 @@ func TestDaemonReconcilesCompletedReviewHandoff(t *testing.T) {
 	if err := setStatus(Args{"vault": vault, "id": "HND-T-0001", "status": "active", "actor": "test"}); err != nil {
 		t.Fatal(err)
 	}
+	setWorkflowReviewerEnabled(t, vault, false)
 	notePath := filepath.Join(vault, "epics", "HND", "HND-T-0001.md")
 	data, body, err := parseFrontmatterMustRead(notePath)
 	if err != nil {
@@ -279,6 +281,77 @@ func TestDaemonReconcilesCompletedReviewHandoff(t *testing.T) {
 	if !strings.Contains(updatedBody, "review-packet-review-handoff-attempt.md") {
 		t.Fatalf("expected note evidence to link review packet, got:\n%s", updatedBody)
 	}
+}
+
+func TestDaemonDispatchesReviewerLaneOnceForReviewTask(t *testing.T) {
+	tempRoot := t.TempDir()
+	stateRoot := filepath.Join(tempRoot, "state")
+	vault := filepath.Join(tempRoot, "vault")
+	repo := filepath.Join(tempRoot, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := newV5Epic(Args{"vault": vault, "acronym": "ARD", "title": "Agent review dispatch", "summary": "Reviewer lane coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := newV5Task(Args{"vault": vault, "epic": "ARD", "title": "Review me", "size": "m", "risk": "medium", "priority": "p1", "delegation": "execute", "assignee": "codex", "quiet": "true"}, "feature"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setStatus(Args{"vault": vault, "id": "ARD-T-0001", "status": "review", "actor": "test"}); err != nil {
+		t.Fatal(err)
+	}
+	updateWorkflowForDaemonTest(t, vault, map[string]int{}, 1, `python3 -c 'import sys; sys.exit(0)'`)
+
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := newRegisteredProject(repo, vault)
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	daemon := &Daemon{stateRoot: stateRoot, store: store}
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	run := waitForRunLeaseState(t, daemon, store, "ARD-T-0001", LeaseStateReleased)
+	if run == nil {
+		t.Fatal("expected reviewer run row")
+	}
+	assertEqual(t, runLaneReview, run.Lane, "review task dispatches reviewer lane")
+	assertEqual(t, string(LeaseStateReleased), run.LeaseState, "reviewer lane releases after clean exit")
+	assertEqual(t, 1, run.AttemptCount, "reviewer lane uses one attempt")
+	attempts, err := store.ListAttemptsForRun(project.ProjectID, "ARD-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("expected one review attempt, got %#v", attempts)
+	}
+	assertEqual(t, runLaneReview, attempts[0].Lane, "attempt records review lane")
+	prompt, err := readText(attempts[0].PromptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"independent Tusker reviewer", "Auto-close allowed: yes", "tusker close ARD-T-0001 --by agent-reviewer"} {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("expected review prompt to contain %q, got:\n%s", expected, prompt)
+		}
+	}
+
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run, err = store.FindRun("ARD-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 1, run.AttemptCount, "reviewer lane does not loop for the same review handoff")
 }
 
 func TestDaemonQueuesContinuationRetryWhenCleanExitLeavesNoteActive(t *testing.T) {
@@ -753,6 +826,52 @@ func updateWorkflowForDaemonTest(t *testing.T, vault string, stateCaps map[strin
 	if err := writeText(filePath, fm+"\n"+strings.TrimLeft(body, "\n")); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func setWorkflowReviewerEnabled(t *testing.T, vault string, enabled bool) {
+	t.Helper()
+	filePath := workflowPath(vault)
+	text, err := readText(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, body, err := parseFrontmatter(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer, ok := data["reviewer"].(map[string]any)
+	if !ok || reviewer == nil {
+		reviewer = map[string]any{}
+	}
+	reviewer["enabled"] = enabled
+	data["reviewer"] = reviewer
+	fm, err := stringifyFrontmatter(data, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filePath, fm+"\n"+strings.TrimLeft(body, "\n")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func waitForRunLeaseState(t *testing.T, daemon *Daemon, store *RuntimeStore, identity string, state LeaseState) *RunStatus {
+	t.Helper()
+	var run *RunStatus
+	for i := 0; i < 20; i++ {
+		current, err := store.FindRun(identity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current != nil && LeaseState(current.LeaseState) == state {
+			return current
+		}
+		run = current
+		time.Sleep(50 * time.Millisecond)
+		if err := daemon.PollOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return run
 }
 
 func requireSupervisorDecision(t *testing.T, decisions []SupervisorDecision, kind string) SupervisorDecision {

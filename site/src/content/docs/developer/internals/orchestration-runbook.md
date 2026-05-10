@@ -11,7 +11,7 @@ tusker:
   summary: "The public V5 CLI tracks task truth. Runtime orchestration is an operator/internal surface and must not be presented as the normal task workflow."
   tags:
     - "internals"
-  updated: "2026-05-04"
+  updated: "2026-05-08"
 ---
 
 # Orchestration Runbook
@@ -27,7 +27,8 @@ The public V5 CLI tracks task truth. Runtime orchestration is an operator/intern
 | Dashboard live-run panel | Shipped as generated markdown | `tusker reindex` renders live runs from the runtime store when the vault has a registered project; no live runs renders an explicit empty state. |
 | Runtime store | Internal code exists | Projects, runs, attempts, turns, sessions, events, usage, and supervisor decisions are modeled outside task frontmatter. |
 | `daemon`, `projects`, `runs`, `refresh` CLI commands | Shipped as operator/internal commands | They register projects, run or tick the daemon, inspect attempts/turns/events/logs, interrupt runs, and manage concurrency limits. |
-| Codex-only status-to-review daemon loop | Shipped for local operator use | A registered project plus `daemon run` or `refresh` can pick up `active`/`rework` tasks, run Codex, and write review packets when Codex moves the task to `review`. |
+| Codex-first status-to-review daemon loop | Shipped for local operator use | A registered project plus `daemon run` or `refresh` can pick up `active`/`rework` tasks, run the configured runner, and write review packets when the runner moves the task to `review`. Codex is the default live runner today. |
+| Reviewer lane | Shipped for governed close | Tasks in `review` can dispatch an independent configured reviewer. Low/medium risks may be verified and closed by `reviewer.actor`; high/critical risks remain human-gated. |
 
 ## Durable State
 
@@ -40,9 +41,10 @@ The public V5 CLI tracks task truth. Runtime orchestration is an operator/intern
 ```text
 ready --human claim/status--> active
 active/rework --daemon eligible state--> runtime run
-runtime run --Codex changes task to review--> review packet + review
+runtime run --runner changes task to review--> review packet + review
 runtime run --task remains active/rework--> continuation retry
-review --human verify--> done
+review --reviewer lane passes low/medium gates--> verified + done
+review --human gate or high/critical--> human verify + done
 review --needs more work--> rework
 ```
 
@@ -54,11 +56,14 @@ What the code supports:
 - If a running task leaves `active`/`rework` without a completed runner status, reconciliation releases the run.
 - If Codex writes a completed status file after moving the task to `review`, reconciliation records the run as succeeded and writes the review packet instead of abandoning it as inactive.
 - If the runner exits cleanly while the task is still `active`/`rework`, the daemon queues continuation instead of pretending the work is reviewable.
+- A separate review lane can dispatch tasks already in `review` when `reviewer.enabled` is true and the task risk is covered by policy.
+- Reviewer close is attributed to `reviewer.actor`, so closed tasks record both `verified_by` and `closed_by`.
 - Review packet generation is supported after a clean run has a non-active task state; the packet summarizes attempts, turns, artifacts, supervisor decisions, and residual verification risk.
 
 What is deliberately not automated:
 
-- Automatic close. Humans must still verify and close.
+- High/critical close. Reviewers leave advisory output; humans still verify and close.
+- Reviewer fixes. The reviewer lane is review-only and sends failed work to `rework`.
 - Blind promotion from `active` to `review`. Codex or a human must move the task state when the work is actually ready.
 - Ignoring stale tracker truth. Non-active/non-review state changes while a run is live release or interrupt the run for audit.
 
@@ -89,7 +94,7 @@ tusker verify <TASK-ID> --by <name>
 tusker close <TASK-ID> --by <reviewer>
 ```
 
-Raw logs are useful evidence only after they are summarized into a readable packet. The daemon-generated review packet is the preferred packet evidence for Codex runs.
+Raw logs are useful evidence only after they are summarized into a readable packet. The daemon-generated review packet is the preferred packet evidence for Codex runs. If `reviewer.enabled` is true, the daemon may also launch the review lane from `review`; otherwise this remains a manual verify/close step.
 
 ## Obsidian Loop
 
@@ -100,7 +105,7 @@ Open `Dashboard.md`.
 | Active work | `Tasks.base#Active` | Tasks in `status: active`. |
 | Live runs | generated markdown block | Active runtime leases for the registered project, if any. |
 | Blocked | `Tasks.base#Blocked` | Tasks waiting on dependencies or an explicit blocker. |
-| Review | `Tasks.base#Review` | Tasks waiting for human verification. |
+| Review | `Tasks.base#Review` | Tasks waiting for reviewer or human verification. |
 | Follow-up | `Tasks.base#Follow-up` | Tasks in `status: rework`. |
 
 There is no shipped `Orchestration.base`. Do not reference it in dashboards or operator instructions.

@@ -1,8 +1,8 @@
 ---
 title: "Overview"
 type: "note"
-created: "2026-05-04"
-updated: "2026-05-04"
+created: "2026-05-10"
+updated: "2026-05-10"
 tags: ["tusker-generated"]
 ---
 
@@ -10,7 +10,24 @@ tags: ["tusker-generated"]
 
 <!-- tusker:overview:begin -->
 
-_Describe this project in 1-3 paragraphs: what it is, who uses it, and what's in scope. Everything between the overview markers is preserved across `tusker reindex` — only the epic roster below is regenerated._
+Tusker is the repo-local, Obsidian-readable tracker for this project. The stable core is the V5 markdown task model, CLI, docs close gate, generated Bases views, and installable skill bundle. Operator runtime support is active for local use: task truth stays in markdown, while daemon leases, attempts, sessions, logs, and review packets stay in runtime state.
+
+Current workflow policy as of 2026-05-08:
+
+| Surface | Current status |
+|---|---|
+| Tracker schema | `tracker_schema_version: 5` |
+| Runnable worker states | `active`, `rework` |
+| Review checkpoint | `review` |
+| Terminal success | `done` |
+| Default worker runner | `codex` via `codex app-server` |
+| Reviewer lane | enabled |
+| Reviewer runner | `codex` today, configured through `reviewer.runner` |
+| Reviewer actor | `agent-reviewer` |
+| Auto-close risks | `low`, `medium` |
+| Human-gated risks | `high`, `critical` |
+
+The design is Codex-first, not Codex-only. Future Claude Code, OpenCode, or other runner adapters should plug into the same task statuses, runtime lanes, reviewer policy, and close gates.
 
 <!-- tusker:overview:end -->
 
@@ -18,9 +35,9 @@ _Describe this project in 1-3 paragraphs: what it is, who uses it, and what's in
 
 # Epic roster
 
-_Auto-generated 2026-05-04T15:46:37Z. Run `tusker list --type epic` for a live terminal view. Everything below this heading is regenerated on every `tusker reindex` — edits here get overwritten._
+_Auto-generated 2026-05-10T05:18:42Z. This top-level roster intentionally shows epics only. Run `tusker list --type epic` for the live terminal view, then drill into one epic with `tusker list --epic <ACR> --type task --open`._
 
-Agents: read this file before logging new work. Pick the epic whose summary best matches; if nothing fits and the work will outlive one task, propose a new epic with `tusker new epic --acronym <ACR> --title "<name>" --summary "..."`.
+Agents: use this page only to choose the right epic. Do not read every task file. Pick the epic whose summary best matches; if nothing fits and the work will outlive one task, propose a new epic with `tusker new epic --acronym <ACR> --title "<name>" --summary "..."`.
 
 ## Active
 
@@ -28,15 +45,9 @@ Agents: read this file before logging new work. Pick the epic whose summary best
 
 **Summary:** Symphony-aligned daemon work: honest isolation, safe policy, continuation, evidence, and operator visibility.
 
-**Counts:** 18 tasks, 0 bug tasks, 0 docs (open: 17, done: 1)
+**Counts:** 19 tasks, 0 bug tasks, 0 docs (open: 13, done: 6)
 
-**Open work:**
-- [[ORC-T-0015]] — Add optional tool and MCP extension bridge (blocked)
-- [[ORC-T-0008]] — Normalize Codex app-server events and usage telemetry (blocked)
-- [[ORC-T-0009]] — Add sessions and run viewing commands (blocked)
-- [[ORC-T-0006]] — Interrupt or park runs when tracker state becomes ineligible (blocked)
-- [[ORC-T-0013]] — Generate review packets and evidence summaries (blocked)
-- _...and 12 more (run `tusker list --epic ORC`)_
+**Drill down:** `tusker list --epic ORC --type task --open`.
 
 ## Done
 
@@ -46,8 +57,12 @@ Agents: read this file before logging new work. Pick the epic whose summary best
 
 **Counts:** 9 tasks, 0 bug tasks, 0 docs (open: 0, done: 9)
 
+**Drill down:** `tusker list --epic DOC --type task --open`.
+
 ### [[SKL]] — Skill distribution
 
 **Summary:** Tight installable skill payload, metadata, references, templates, and distribution readiness.
 
 **Counts:** 1 task, 0 bug tasks, 0 docs (open: 0, done: 1)
+
+**Drill down:** `tusker list --epic SKL --type task --open`.

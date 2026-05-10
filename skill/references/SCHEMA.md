@@ -63,30 +63,47 @@ Runtime/dispatch fields:
 Review fields:
 
 - `verified_by`, `verified_at`
+- `verification_summary`
 - `closed_by`, `closed_at`
+- `close_summary`
 - `docs_resolution`
 
 ## Task body contract
 
-Every medium+ task should expose this split:
+Task bodies are risk-scaled. Keep the first screen small and put durable truth
+in summaries, evidence links, and knowledge deltas. Do not keep an append-only
+work diary by default; status transitions, verification fields, evidence
+summaries, and review packets carry the durable audit trail.
+
+Every task starts with:
 
 ```text
+## Agent capsule
 ## Intent
-## Scope
 ## Acceptance contract
+## Evidence
+```
+
+Medium tasks add:
+
+```text
+## Scope
+## Deliverables
+## Verification plan
+```
+
+High and critical tasks add:
+
+```text
 ## Canon
 ## Code/system anchors
 ## Constraints
 ## Escalate if
-## Deliverables
-## Verification plan
 ## Knowledge delta
----
-## Execution plan
-## Evidence
 ## Verification log
-## Work log
 ```
+
+Critical tasks also add `## Rollback`.
 
 Use a structured knowledge delta table:
 
