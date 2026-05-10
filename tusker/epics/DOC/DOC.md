@@ -40,15 +40,7 @@ Out:
 
 ## Task stack
 
-- [[DOC-T-0009]] — Expose docs model catalog and freshness in CLI (done)
-- [[DOC-T-0008]] — Add docs freshness index and Obsidian views (done)
-- [[DOC-T-0007]] — Generate llms.txt and llms-full.txt from docs-map (done)
-- [[DOC-T-0003]] — Add first-class agent docs templates (done)
-- [[DOC-T-0002]] — Add Diátaxis-aware doc template (done)
-- [[DOC-T-0006]] — Generate docs catalog and reader-facing IA (done)
-- [[DOC-T-0001]] — Introduce docs-map v5 with Diátaxis fields (done)
-- [[DOC-T-0005]] — Parse structured knowledge delta and route to doc nodes (done)
-- [[DOC-T-0004]] — Implement docs impact hook with dry-run apply waive (done)
+_No open tasks. Use `tusker list --epic DOC --type task --status done` for closed history._
 
 ## Open questions
 

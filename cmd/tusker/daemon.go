@@ -22,6 +22,11 @@ type Daemon struct {
 	store     *RuntimeStore
 }
 
+const (
+	runLaneExecute = "execute"
+	runLaneReview  = "review"
+)
+
 func DefaultStateRoot() string {
 	if explicit := strings.TrimSpace(os.Getenv("TUSKER_STATE_ROOT")); explicit != "" {
 		return explicit
@@ -141,7 +146,7 @@ func (d *Daemon) InterruptRun(ctx context.Context, identity string) error {
 		return err
 	}
 	if strings.TrimSpace(run.SessionRef) != "" {
-		_ = d.store.MarkSessionState(run.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateInterrupted), "", run.LastError, true)
+		_ = d.store.MarkSessionState(run.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateInterrupted), "", run.LastError, run.Lane != runLaneReview)
 	}
 	return nil
 }
@@ -254,6 +259,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			current.RecordID = recordID
 			current.ItemID = stringField(note.Data, "id")
 			current.Runner = firstNonEmpty(resolveRunnerForNote(note, wfFile.Data), current.Runner, wfFile.Data.Agents.Default)
+			current.Lane = firstNonEmpty(current.Lane, runLaneExecute)
 			current.UpdatedAt = now.Format(time.RFC3339)
 			if current.LeaseState == "" {
 				current.LeaseState = string(LeaseStateUnclaimed)
@@ -280,7 +286,12 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				current.SessionRef = ""
 				current.StartedAt = ""
 				current.LastEventAt = ""
+				current.Lane = runLaneExecute
 				clearActiveExecution(&current)
+			}
+			if current.Lane == runLaneReview && LeaseState(current.LeaseState) == LeaseStateReleased {
+				current = prepareRunForLaneDispatch(current, runLaneExecute, current.Runner)
+				current.UpdatedAt = now.Format(time.RFC3339)
 			}
 			if err := d.store.UpsertRun(current); err != nil {
 				return err
@@ -312,7 +323,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 					projectRuns[recordID] = current
 					continue
 				}
-				updated, err := d.dispatchRun(ctx, project, wfFile, note, current)
+				updated, err := d.dispatchRun(ctx, project, wfFile, note, current, runLaneExecute)
 				if err != nil {
 					updated = d.scheduleRetry(updated, wfFile.Data, err.Error())
 				}
@@ -324,6 +335,65 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				projectActiveRuns += dispatchingRunDelta(current, updated)
 				stateActiveRuns[status] += dispatchingRunDelta(current, updated)
 			}
+		}
+
+		for _, note := range notes {
+			noteType := stringField(note.Data, "type")
+			if noteType != "task" {
+				continue
+			}
+			status := stringField(note.Data, "status")
+			if !containsString(wfFile.Data.Tracker.ReviewStates, status) {
+				continue
+			}
+			recordID := trackerRecordID(note)
+			if recordID == "" {
+				continue
+			}
+			current := projectRuns[recordID]
+			if !reviewDispatchAllowed(note, wfFile.Data, current) {
+				continue
+			}
+			reviewerRunner := firstNonEmpty(wfFile.Data.Reviewer.Runner, wfFile.Data.Agents.Default)
+			current.ProjectID = project.ProjectID
+			current.RecordID = recordID
+			current.ItemID = stringField(note.Data, "id")
+			current.WorkRevision = intField(note.Data, "work_revision")
+			current = prepareRunForLaneDispatch(current, runLaneReview, reviewerRunner)
+			current.UpdatedAt = now.Format(time.RFC3339)
+			if err := d.store.UpsertRun(current); err != nil {
+				return err
+			}
+			projectRuns[recordID] = current
+			if !shouldDispatchRun(current, now) {
+				continue
+			}
+			if globalLimit > 0 && globalActiveRuns >= globalLimit {
+				continue
+			}
+			if projectActiveRuns >= projectActiveRunLimit(wfFile.Data) {
+				continue
+			}
+			if stateDispatchCapReached(status, stateActiveRuns, wfFile.Data) {
+				current.LastError = fmt.Sprintf("dispatch blocked: state %q concurrency cap reached", status)
+				current.UpdatedAt = now.Format(time.RFC3339)
+				if err := d.store.UpsertRun(current); err != nil {
+					return err
+				}
+				projectRuns[recordID] = current
+				continue
+			}
+			updated, err := d.dispatchRun(ctx, project, wfFile, note, current, runLaneReview)
+			if err != nil {
+				updated = d.scheduleRetry(updated, wfFile.Data, err.Error())
+			}
+			if err := d.store.UpsertRun(updated); err != nil {
+				return err
+			}
+			projectRuns[recordID] = updated
+			globalActiveRuns += dispatchingRunDelta(current, updated)
+			projectActiveRuns += dispatchingRunDelta(current, updated)
+			stateActiveRuns[status] += dispatchingRunDelta(current, updated)
 		}
 
 		if err := d.store.DeleteRunsNotIn(project.ProjectID, keep); err != nil {
@@ -510,9 +580,52 @@ func shouldDispatchRun(run RunStatus, now time.Time) bool {
 	}
 }
 
+func prepareRunForLaneDispatch(run RunStatus, lane, runner string) RunStatus {
+	if strings.TrimSpace(runner) != "" {
+		run.Runner = runner
+	}
+	if strings.TrimSpace(lane) != "" {
+		run.Lane = lane
+	}
+	run.LeaseState = string(LeaseStateUnclaimed)
+	run.AttemptOutcome = string(AttemptOutcomeNone)
+	run.NextRetryAt = ""
+	run.LastError = ""
+	run.SessionRef = ""
+	clearActiveExecution(&run)
+	return run
+}
+
+func reviewDispatchAllowed(note Note, wf Workflow, run RunStatus) bool {
+	if !wf.Reviewer.Enabled {
+		return false
+	}
+	if stringField(note.Data, "status") != "review" {
+		return false
+	}
+	if stringField(note.Data, "verified_at") != "" || stringField(note.Data, "closed_at") != "" {
+		return false
+	}
+	risk := strings.ToLower(strings.TrimSpace(stringField(note.Data, "risk")))
+	if !reviewerPolicyCoversRisk(wf.Reviewer, risk) {
+		return false
+	}
+	if isDispatchingLeaseState(run.LeaseState) {
+		return false
+	}
+	workRevision := intField(note.Data, "work_revision")
+	if run.Lane == runLaneReview && run.WorkRevision == workRevision && run.AttemptCount > 0 {
+		return false
+	}
+	return true
+}
+
 func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus, trackerState string) (RunStatus, bool, error) {
 	trackerState = strings.TrimSpace(trackerState)
 	if isDispatchingLeaseState(run.LeaseState) && !containsString(wfFile.Data.Tracker.ActiveStates, trackerState) {
+		if run.Lane == runLaneReview && containsString(wfFile.Data.Tracker.ReviewStates, trackerState) {
+			return d.reconcileRun(ctx, project, wfFile, run)
+		}
 		if completedReviewHandoffCanReconcile(wfFile.Data, run, trackerState) {
 			return d.reconcileRun(ctx, project, wfFile, run)
 		}
@@ -614,7 +727,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			WorkRevision:   run.WorkRevision,
 			LastAttemptID:  run.ActiveAttemptID,
 			State:          sessionStateForLeaseState(LeaseState(run.LeaseState)),
-			Resumable:      true,
+			Resumable:      run.Lane != runLaneReview,
 			StartedAt:      run.StartedAt,
 			LastSeenAt:     now,
 			LastError:      run.LastError,
@@ -636,12 +749,12 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			}
 			noteStatus := stringField(note.Data, "status")
 			updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, "", finished)
-			if containsString(wfFile.Data.Tracker.ActiveStates, noteStatus) {
+			if containsString(wfFile.Data.Tracker.ActiveStates, noteStatus) && run.Lane != runLaneReview {
 				parentAttemptID := run.ActiveAttemptID
 				parentSessionRef := run.SessionRef
 				run = scheduleContinuationRetry(run, "runner exited cleanly while tracker state remained active; queued continuation retry")
 				if strings.TrimSpace(run.SessionRef) != "" {
-					_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateRetryQueued), "", run.LastError, true)
+					_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateRetryQueued), "", run.LastError, run.Lane != runLaneReview)
 				}
 				d.emitSupervisorDecision(SupervisorDecision{
 					ProjectID:        project.ProjectID,
@@ -670,7 +783,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			run.NextRetryAt = ""
 			run.LastError = ""
 			if strings.TrimSpace(run.SessionRef) != "" {
-				_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForOutcome(AttemptOutcomeSucceeded), "", "", true)
+				_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForOutcome(AttemptOutcomeSucceeded), "", "", run.Lane != runLaneReview)
 			}
 			clearActiveExecution(&run)
 			return run, true, nil
@@ -679,7 +792,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, status.ExitCode, reason, finished)
 		run = d.scheduleRetry(run, wfFile.Data, reason)
 		if strings.TrimSpace(run.SessionRef) != "" {
-			_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", reason, true)
+			_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", reason, run.Lane != runLaneReview)
 		}
 		clearActiveExecution(&run)
 		run.UpdatedAt = finished
@@ -695,7 +808,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			run = d.scheduleRetry(run, wfFile.Data, reason)
 			run.UpdatedAt = now
 			if strings.TrimSpace(run.SessionRef) != "" {
-				_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", reason, true)
+				_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", reason, run.Lane != runLaneReview)
 			}
 			return run, true, nil
 		}
@@ -737,7 +850,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	parentSessionRef := run.SessionRef
 	clearActiveExecution(&run)
 	if strings.TrimSpace(run.SessionRef) != "" {
-		_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(result.LeaseState), "", result.Reason, result.Outcome != AttemptOutcomeAbandoned)
+		_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(result.LeaseState), "", result.Reason, result.Outcome != AttemptOutcomeAbandoned && run.Lane != runLaneReview)
 	}
 	if result.LeaseState == LeaseStateRetryQueued && result.Outcome == AttemptOutcomeNone {
 		d.emitSupervisorDecision(SupervisorDecision{
@@ -780,7 +893,8 @@ func resolveRunnerForNote(note Note, wf Workflow) string {
 	return wf.Agents.Default
 }
 
-func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus) (RunStatus, error) {
+func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane string) (RunStatus, error) {
+	lane = firstNonEmpty(strings.TrimSpace(lane), runLaneExecute)
 	runner, command, err := runnerForName(run.Runner, wfFile.Data)
 	if err != nil {
 		return run, err
@@ -806,7 +920,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	if err := ensureDir(runDir); err != nil {
 		return run, err
 	}
-	attemptStem := fmt.Sprintf("rev-%02d-attempt-%04d-%s", run.WorkRevision, ordinal, strings.ToLower(attemptID))
+	attemptStem := fmt.Sprintf("rev-%02d-%s-attempt-%04d-%s", run.WorkRevision, lane, ordinal, strings.ToLower(attemptID))
 	promptPath := filepath.Join(runDir, attemptStem+".prompt.md")
 	eventSinkPath := filepath.Join(runDir, attemptStem+".events.jsonl")
 	rawLogPath := filepath.Join(runDir, attemptStem+".raw.log")
@@ -814,11 +928,12 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	startedAt := time.Now().UTC().Format(time.RFC3339)
 	attempt := RunAttempt{
 		AttemptID: attemptID, ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
-		Runner: run.Runner, WorkRevision: run.WorkRevision, WorkspacePath: workspace.Path,
+		Runner: run.Runner, Lane: lane, WorkRevision: run.WorkRevision, WorkspacePath: workspace.Path,
 		PromptPath: promptPath, EventSinkPath: eventSinkPath, RawLogPath: rawLogPath, StatusPath: statusPath,
 		StartedAt: startedAt,
 	}
 	run.LeaseState = string(LeaseStateClaimed)
+	run.Lane = lane
 	run.AttemptCount = ordinal
 	run.WorkspacePath = workspace.Path
 	run.ActiveAttemptID = attemptID
@@ -830,7 +945,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	run.UpdatedAt = attempt.StartedAt
 	run.LastEventAt = attempt.StartedAt
 
-	prompt, err := renderAttemptPrompt(project, wfFile, note, workspace.Path, ordinal)
+	prompt, err := renderAttemptPrompt(project, wfFile, note, workspace.Path, ordinal, attemptID, lane)
 	if err != nil {
 		attempt.Outcome = string(AttemptOutcomeFailed)
 		attempt.LastError = err.Error()
@@ -926,7 +1041,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 			ProjectID: project.ProjectID, RecordID: run.RecordID, Runner: run.Runner, SessionRef: start.SessionRef,
 			LastMessageRef: start.MessageRef,
 			WorkspacePath:  workspace.Path, CurrentItemID: run.ItemID, WorkRevision: run.WorkRevision, LastAttemptID: attemptID,
-			State: sessionStateForOutcome(start.Outcome), Resumable: runner.Capabilities().ResumeSession,
+			State: sessionStateForOutcome(start.Outcome), Resumable: runner.Capabilities().ResumeSession && lane != runLaneReview,
 			StartedAt: firstNonEmpty(run.StartedAt, start.StartedAt), LastSeenAt: time.Now().UTC().Format(time.RFC3339),
 			EndedAt: firstNonEmpty(start.FinishedAt, ""), LastError: start.Reason,
 		})
@@ -955,6 +1070,9 @@ type resolvedResumeSession struct {
 }
 
 func (d *Daemon) resolveResumeSession(project RegisteredProject, note Note, run RunStatus) (resolvedResumeSession, error) {
+	if run.Lane == runLaneReview {
+		return resolvedResumeSession{}, nil
+	}
 	if strings.TrimSpace(run.SessionRef) != "" {
 		session, err := d.store.FindSessionByRef(project.ProjectID, run.SessionRef)
 		if err != nil || session == nil {
@@ -1211,6 +1329,7 @@ func updateRunAttemptFromRun(store *RuntimeStore, run RunStatus, outcome Attempt
 		RecordID:      run.RecordID,
 		ItemID:        run.ItemID,
 		Runner:        run.Runner,
+		Lane:          run.Lane,
 		WorkRevision:  run.WorkRevision,
 		WorkspacePath: run.WorkspacePath,
 		SessionRef:    run.SessionRef,
@@ -1284,6 +1403,7 @@ func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDec
 	out = append(out, fmt.Sprintf("- Record: %s", run.RecordID))
 	out = append(out, fmt.Sprintf("- Attempt: %s", run.ActiveAttemptID))
 	out = append(out, fmt.Sprintf("- Runner: %s", run.Runner))
+	out = append(out, fmt.Sprintf("- Lane: %s", firstNonEmpty(run.Lane, runLaneExecute)))
 	out = append(out, fmt.Sprintf("- Work revision: %d", run.WorkRevision))
 	out = append(out, fmt.Sprintf("- Turns: %d", len(turns)))
 	out = append(out, fmt.Sprintf("- Token totals: total=%d input=%d output=%d", tokenTotals.TotalTokens, tokenTotals.InputTokens, tokenTotals.OutputTokens))
@@ -1670,27 +1790,43 @@ func workspaceStrategyFromWorkflow(value string) WorkspaceStrategy {
 
 var workflowTemplatePlaceholder = regexp.MustCompile(`{{\s*([A-Za-z0-9_.]+)\s*}}`)
 
-func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath string, attemptNumber int) (string, error) {
+func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath string, attemptNumber int, attemptID, lane string) (string, error) {
 	values := map[string]string{
-		"project.name":   project.Name,
-		"project.id":     project.ProjectID,
-		"project.key":    project.ProjectKey,
-		"vault.path":     project.VaultRoot,
-		"repo.root":      project.RepoRoot,
-		"workspace.path": workspacePath,
-		"workflow.path":  wfFile.Path,
-		"note.id":        stringField(note.Data, "id"),
-		"note.record_id": trackerRecordID(note),
-		"note.title":     stringField(note.Data, "title"),
-		"note.status":    stringField(note.Data, "status"),
-		"note.type":      stringField(note.Data, "type"),
-		"attempt.number": strconv.Itoa(attemptNumber),
+		"project.name":                project.Name,
+		"project.id":                  project.ProjectID,
+		"project.key":                 project.ProjectKey,
+		"vault.path":                  project.VaultRoot,
+		"repo.root":                   project.RepoRoot,
+		"workspace.path":              workspacePath,
+		"workflow.path":               wfFile.Path,
+		"note.id":                     stringField(note.Data, "id"),
+		"note.record_id":              trackerRecordID(note),
+		"note.title":                  stringField(note.Data, "title"),
+		"note.status":                 stringField(note.Data, "status"),
+		"note.type":                   stringField(note.Data, "type"),
+		"note.risk":                   stringField(note.Data, "risk"),
+		"attempt.number":              strconv.Itoa(attemptNumber),
+		"attempt.id":                  attemptID,
+		"reviewer.actor":              wfFile.Data.Reviewer.Actor,
+		"reviewer.auto_close_allowed": yesNo(reviewerMayAutoCloseRisk(wfFile.Data.Reviewer, stringField(note.Data, "risk"))),
+		"reviewer.human_required":     yesNo(reviewerRequiresHumanRisk(wfFile.Data.Reviewer, stringField(note.Data, "risk"))),
 	}
-	rendered, err := renderStrictWorkflowTemplate(wfFile.Body, values)
+	template := wfFile.Body
+	if lane == runLaneReview {
+		template = firstNonEmpty(wfFile.Data.Reviewer.Prompt, defaultReviewerPrompt())
+	}
+	rendered, err := renderStrictWorkflowTemplate(template, values)
 	if err != nil {
 		return "", tuskerError(errorConfigInvalid, err.Error(), withPath(wfFile.Path))
 	}
 	return strings.TrimSpace(rendered) + "\n", nil
+}
+
+func yesNo(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
 }
 
 func renderStrictWorkflowTemplate(template string, values map[string]string) (string, error) {

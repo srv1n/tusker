@@ -8,6 +8,18 @@ tags: ["dashboard"]
 
 # Vault Home
 
+## Workflow status
+
+| Surface | Current setting |
+|---|---|
+| Worker dispatch | `active`, `rework` |
+| Review checkpoint | `review` |
+| Default runner | `codex` |
+| Reviewer lane | enabled |
+| Reviewer actor | `agent-reviewer` |
+| Reviewer auto-close | `low`, `medium` |
+| Human gate | `high`, `critical` |
+
 ## Active epics
 
 ![[_system/views/Epics.base#Active]]

@@ -22,7 +22,9 @@ tusker new doc --title <title> --node <domain/slug> \
   [--audience developer|user|operator|support|release|agent|internal] \
   [--mode tutorial|how-to|reference|explanation] \
   [--agent-layer none|capsule|standalone]
-tusker list [--type epic|task|doc] [--epic <ACR>] [--status <status>]
+tusker list [--type epic|task|doc] [--epic <ACR>] [--status <status>] [--open|--closed] [--limit <n>]
+tusker search <text> [--type epic|task|doc] [--epic <ACR>] [--status <status>] [--limit <n>] [--json]
+tusker show <ID> [--capsule|--acceptance|--evidence|--verification|--full]
 tusker next [--epic <ACR>] [--owner <name>] [--json]
 tusker claim <ID> --as <agent-or-person> [--reason "..."]
 tusker status <ID> <draft|backlog|ready|blocked|active|review|rework|done|cancelled> [--by <actor>] [--reason "..."]
@@ -51,7 +53,9 @@ tusker update [--bin-dir <path>] [--no-bin] [--repo <path>] [--repo-only] [--jso
 
 ## Operator Runtime Surface
 
-The daemon/runtime commands are shipped as operator/internal controls. Keep the public workflow task-centric, but use these when running the local Codex pickup loop.
+The daemon/runtime commands are shipped as operator/internal controls. Keep the public workflow task-centric, but use these when running the local runner pickup loop. Codex is the default live runner today; future runner adapters should use the same task lifecycle.
+
+`WORKFLOW.md` also carries a runner-neutral reviewer policy. When `reviewer.enabled` is true, `review` tasks may be dispatched to `reviewer.runner`; low/medium risks can be closed by `reviewer.actor`, while high/critical risks stay human-gated.
 
 | Command | Meaning |
 |---|---|---|
@@ -73,13 +77,28 @@ The normal V5 workflow remains task-centric: create/claim/status/evidence/docs/v
 
 ```bash
 tusker list --type epic
-tusker list --epic <ACR>
+tusker search "<duplicate clue>" --type task
+tusker list --epic <ACR> --type task --open
 tusker new task --epic <ACR> --title "<what>" \
   --kind chore --size s --risk low --priority p2 \
   --domains cli
 ```
 
 New tasks should start as `draft` until shaped. Move shaped future work to `backlog`; move shaped current work to `ready`. Only pull `ready` tasks that are unblocked.
+
+Use `tusker search` for tracker lookup before shelling out to `rg`. It searches
+first-party task/epic/doc notes and skips `Attachments/**`, `_system/**`,
+runtime state, and generated indexes.
+
+Use `tusker list --type epic` as the top-level index. It prints epic summaries
+and open/done counts without note bodies. Use
+`tusker list --epic <ACR> --type task --open` to drill into one epic's open
+tasks. Open a task file only after choosing the task.
+Add `--limit <n>` when an epic has a large queue.
+
+Use `tusker show <ID>` for the selected item before opening the markdown file.
+It defaults to `--capsule`; use `--acceptance`, `--evidence`, or
+`--verification` for a single section. `--full` is an explicit escape hatch.
 
 ### Pick Work
 
@@ -104,7 +123,9 @@ tusker close <ID> --by <reviewer>
 tusker validate
 ```
 
-For the Codex-only orchestration milestone, `active`/`rework` are the runnable tracker states in `WORKFLOW.md`. `ready` is still only shaped work. Flipping a task to `active` is picked up only when the repo/vault is registered and `daemon run`, `daemon run --once`, or `refresh` is running locally.
+For the current orchestration milestone, `active`/`rework` are the runnable tracker states in `WORKFLOW.md`. `ready` is still only shaped work. Flipping a task to `active` is picked up only when the repo/vault is registered and `daemon run`, `daemon run --once`, or `refresh` is running locally.
+
+When the reviewer lane is enabled, moving a task to `review` can trigger an independent review attempt. Passing low/medium work may be verified and closed by `reviewer.actor`; passing high/critical work stays in `review` for human close.
 
 ### Publish Docs
 

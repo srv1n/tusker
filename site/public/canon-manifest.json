@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-05-04T15:44:46Z",
+  "generatedAt": "2026-05-10T05:18:42Z",
   "canon": [
     {
       "topic": "DOC",
@@ -38,7 +38,7 @@
         "start-here",
         "workflow"
       ],
-      "updated": "2026-04-30",
+      "updated": "2026-05-10",
       "summary": "Operating contract for agents working with Tusker in a markdown-first vault."
     }
   ],
@@ -102,7 +102,7 @@
       "tags": [
         "internals"
       ],
-      "updated": "2026-04-29",
+      "updated": "2026-05-08",
       "summary": "Use the public V5 task commands for manual intervention."
     },
     {
@@ -116,7 +116,7 @@
       "tags": [
         "internals"
       ],
-      "updated": "2026-05-04",
+      "updated": "2026-05-08",
       "summary": "The public V5 CLI tracks task truth. Runtime orchestration is an operator/internal surface and must not be presented as the normal task workflow."
     },
     {
@@ -149,7 +149,7 @@
         "repository",
         "overview"
       ],
-      "updated": "2026-04-29",
+      "updated": "2026-05-10",
       "summary": "High-level overview of the Tusker repository, install modes, and key entry points."
     },
     {
@@ -302,7 +302,7 @@
       "tags": [
         "specs"
       ],
-      "updated": "2026-04-29",
+      "updated": "2026-05-08",
       "summary": "V5 uses a simple lifecycle:"
     },
     {
@@ -364,7 +364,7 @@
         "cmd/tusker/cli.go"
       ],
       "canonical_status": "draft",
-      "updated": "2026-04-29",
+      "updated": "2026-05-10",
       "summary": "Agent recipe: using Tusker."
     },
     {
@@ -386,7 +386,7 @@
         "skill/references/COMMANDS.md"
       ],
       "canonical_status": "draft",
-      "updated": "2026-05-04",
+      "updated": "2026-05-10",
       "summary": "Tusker v5 CLI surface."
     },
     {
@@ -480,7 +480,7 @@
         "CLAUDE.md"
       ],
       "canonical_status": "draft",
-      "updated": "2026-04-29",
+      "updated": "2026-05-10",
       "summary": "Skill and AGENTS guidance."
     },
     {
@@ -502,7 +502,7 @@
         "skill/assets/templates/**"
       ],
       "canonical_status": "draft",
-      "updated": "2026-04-29",
+      "updated": "2026-05-10",
       "summary": "Template contract."
     },
     {
@@ -612,7 +612,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-04",
+      "updated": "2026-05-10",
       "summary": "The public V5 CLI is intentionally small. Use these commands."
     },
     {
@@ -640,7 +640,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-04-30",
+      "updated": "2026-05-08",
       "summary": "Use this when the user wants project docs, a public docs site, a user guide, release notes, support docs, runbooks, or agent-readable canon."
     },
     {
@@ -654,7 +654,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-04-30",
+      "updated": "2026-05-10",
       "summary": "Creating a task at risk \u003e= medium. Load this when the work is a feature, migration, refactor with teeth, public docs change, security-sensitive change, or anything with rollout/rollback concerns."
     },
     {
@@ -710,7 +710,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-04-29",
+      "updated": "2026-05-10",
       "summary": "The low-ceremony path for logging work, discovering follow-ups, and closing routine tasks."
     },
     {
@@ -724,7 +724,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-04-21",
+      "updated": "2026-05-10",
       "summary": "The vault is internal working memory. The repository is still where contributors land."
     },
     {
@@ -752,7 +752,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-04-29",
+      "updated": "2026-05-10",
       "summary": "Risk drives ceremony. Size is effort; risk is blast radius."
     },
     {
@@ -766,7 +766,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-04-30",
+      "updated": "2026-05-10",
       "summary": "Frontmatter is the machine layer. The note body is the human layer. V5 makes **task** the execution unit and keeps docs as durable knowledge pages."
     },
     {
@@ -794,7 +794,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-04-29",
+      "updated": "2026-05-10",
       "summary": "When to invoke the Tusker skill, and when to skip it."
     },
     {
@@ -808,7 +808,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-04-30",
+      "updated": "2026-05-08",
       "summary": "Short reference for the V5 task lifecycle."
     },
     {
@@ -827,7 +827,7 @@
         "start-here",
         "workflow"
       ],
-      "updated": "2026-04-30",
+      "updated": "2026-05-10",
       "summary": "Operating contract for agents working with Tusker in a markdown-first vault."
     },
     {
@@ -842,7 +842,7 @@
         "start-here",
         "user"
       ],
-      "updated": "2026-04-29",
+      "updated": "2026-05-10",
       "summary": "Overview of the installable Tusker skill bundle and how operators use it."
     }
   ],

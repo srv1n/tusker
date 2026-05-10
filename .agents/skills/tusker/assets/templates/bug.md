@@ -22,16 +22,20 @@ updated: "2026-04-29"
 
 # {{id}} · {{title}}
 
+## Agent capsule
+
+- Essence: {{title}}.
+- Next action: define acceptance, do the smallest scoped change, and attach concise evidence.
+- Read next: this note, then only the code/docs anchors named here.
+- Avoid: raw logs, full transcripts, generated indexes, and attachments unless doing evidence forensics.
+
 ## Intent
 
-## Scope
+## Acceptance contract
 
-In:
-- defect fix
-- regression protection
-
-Out:
-- unrelated cleanup
+| # | Outcome | Proof required | Docs impact |
+|---|---|---|---|
+| 1 |  |  |  |
 
 ## Symptom
 
@@ -47,59 +51,22 @@ Expected:
 Observed:
 -
 
-## Acceptance contract
+## Scope
 
-| # | Outcome | Proof required | Docs impact |
-|---|---|---|---|
-| 1 |  |  |  |
-
-## Canon
-
+In:
 -
 
-## Code/system anchors
-
--
-
-## Constraints
-
--
-
-## Escalate if
-
+Out:
 -
 
 ## Deliverables
 
-- regression test
-- before/after evidence
+-
 
 ## Verification plan
 
 -
 
-## Knowledge delta
-
-| Topic | Before | After | Audience | Target doc nodes |
-|---|---|---|---|---|
-|  |  |  |  |  |
-
----
-
-## Execution plan
-
-1. reproduce
-2. fix
-3. add regression protection
-
 ## Evidence
 
--
-
-## Verification log
-
--
-
-## Work log
-
-- 2026-04-29 — tusker — bug task created
+- _No evidence yet. Attach summaries, PRs, packets, screenshots, or short log tails only._

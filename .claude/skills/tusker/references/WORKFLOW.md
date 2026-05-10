@@ -61,6 +61,7 @@ tusker status <ID> <state> [--reason "..."]
 - `doc_nodes` requires docs check/apply/waive before close.
 - `risk >= high` requires a real `## Knowledge delta`.
 - Epic `done` refuses unfinished child tasks.
+- If `WORKFLOW.md` enables the reviewer lane, an independent agent reviewer may auto-close low/medium tasks after verification, but high/critical tasks remain human-gated.
 
 ## Dependencies
 
@@ -81,6 +82,15 @@ State rules:
 ## Review And Rework
 
 End-of-run proof belongs under `## Evidence`: changed files, diff summary, commands/results, artifacts, risks, and follow-ups.
+
+Agent reviewer pass:
+
+- The lane is runner-neutral. Codex is the default live runner today, but `reviewer.runner` can point at any enabled runner adapter.
+- Review only; do not edit implementation files.
+- Check acceptance, scope, evidence, verification, docs resolution, and caveats.
+- For low/medium tasks, the configured reviewer may run `verify` and `close` when every gate passes.
+- For high/critical tasks, leave advisory evidence and keep the task in `review` for human verification.
+- If review fails, move to `rework` with the specific unmet acceptance item.
 
 PR feedback sweep:
 

@@ -165,21 +165,27 @@ func reindex(args Args) error {
 	for _, epic := range epics {
 		epic["counts"] = counts[stringValue(epic["id"])]
 	}
+	openTasksByEpic := map[string][]map[string]any{}
+	for _, task := range tasks {
+		epic := stringValue(task["epic"])
+		if epic == "" || !isOpenWorkStatus(stringValue(task["status"])) {
+			continue
+		}
+		openTasksByEpic[epic] = append(openTasksByEpic[epic], task)
+	}
 	for _, epicNote := range epicMap {
 		acronym := stringField(epicNote.Data, "id")
-		var children []map[string]any
-		for _, collection := range [][]map[string]any{tasks, docs} {
-			for _, item := range collection {
-				if stringValue(item["epic"]) == acronym {
-					children = append(children, item)
-				}
+		openTasks := openTasksByEpic[acronym]
+		sortTaskMapsForProgressiveList(openTasks)
+		list := fmt.Sprintf("_No open tasks. Use `tusker list --epic %s --type task --status done` for closed history._", acronym)
+		if len(openTasks) > 0 {
+			lines := []string{
+				fmt.Sprintf("_Open tasks only. Closed/cancelled work is intentionally omitted; use `tusker list --epic %s --type task --status done` for closed history._", acronym),
+				"",
 			}
-		}
-		list := "_No tasks or docs yet._"
-		if len(children) > 0 {
-			var lines []string
-			for _, child := range children {
-				lines = append(lines, fmt.Sprintf("- [[%s]] — %s (%s)", stringValue(child["id"]), stringValue(child["title"]), stringValue(child["status"])))
+			for _, task := range openTasks {
+				meta := compactTaskMeta(task)
+				lines = append(lines, fmt.Sprintf("- [[%s]] — %s%s", stringValue(task["id"]), stringValue(task["title"]), meta))
 			}
 			list = strings.Join(lines, "\n")
 		}
@@ -858,21 +864,44 @@ func listCmd(args Args) error {
 	epic := strings.ToUpper(args.String("epic"))
 	status := args.String("status")
 	assignee := args.String("assignee")
+	openOnly := args.Bool("open")
+	closedOnly := args.Bool("closed")
+	limit := atoiSafe(args.String("limit"))
+	if limit < 0 {
+		limit = 0
+	}
+	if openOnly && closedOnly {
+		return tuskerError(errorInvalidArg, "--open and --closed cannot be combined")
+	}
+	if status != "" && (openOnly || closedOnly) {
+		return tuskerError(errorInvalidArg, "--status cannot be combined with --open or --closed")
+	}
+	taskCounts := taskCountsByEpic(notes)
 	var rows []Note
 	for _, note := range notes {
 		if noteType != "" && stringField(note.Data, "type") != noteType {
 			continue
 		}
+		currentType := stringField(note.Data, "type")
 		if epic != "" {
 			e := stringField(note.Data, "id")
-			if stringField(note.Data, "type") != "epic" {
+			if currentType != "epic" {
 				e = wikiTarget(note.Data["epic"])
 			}
 			if e != epic {
 				continue
 			}
+			if noteType == "" && (openOnly || closedOnly) && currentType == "epic" {
+				continue
+			}
 		}
 		if status != "" && stringField(note.Data, "status") != status {
+			continue
+		}
+		if openOnly && !isOpenWorkStatus(stringField(note.Data, "status")) {
+			continue
+		}
+		if closedOnly && isOpenWorkStatus(stringField(note.Data, "status")) {
 			continue
 		}
 		if assignee != "" && stringField(note.Data, "assignee") != assignee {
@@ -880,10 +909,17 @@ func listCmd(args Args) error {
 		}
 		rows = append(rows, note)
 	}
+	sortListRows(rows)
+	totalRows := len(rows)
+	truncated := 0
+	if limit > 0 && len(rows) > limit {
+		truncated = len(rows) - limit
+		rows = rows[:limit]
+	}
 	if args.Bool("json") {
 		items := make([]map[string]any, 0, len(rows))
 		for _, note := range rows {
-			items = append(items, map[string]any{
+			item := map[string]any{
 				"id":            stringField(note.Data, "id"),
 				"title":         stringField(note.Data, "title"),
 				"type":          stringField(note.Data, "type"),
@@ -901,18 +937,155 @@ func listCmd(args Args) error {
 				"priority": stringField(note.Data, "priority"),
 				"path":     note.RelativePath,
 				"updated":  stringField(note.Data, "updated"),
-			})
+			}
+			if stringField(note.Data, "type") == "epic" {
+				id := stringField(note.Data, "id")
+				item["summary"] = stringField(note.Data, "summary")
+				item["counts"] = epicTaskCount(taskCounts, id)
+			}
+			items = append(items, item)
 		}
-		emitJSON(map[string]any{"ok": true, "count": len(items), "items": items})
+		emitJSON(map[string]any{"ok": true, "count": len(items), "total": totalRows, "truncated": truncated, "items": items})
 		return nil
 	}
 	for _, note := range rows {
+		if stringField(note.Data, "type") == "epic" {
+			id := stringField(note.Data, "id")
+			counts := epicTaskCount(taskCounts, id)
+			summary := strings.TrimSpace(stringField(note.Data, "summary"))
+			fmt.Printf("%-6s  %-8s  open:%-3d done:%-3d  %s\n", id, stringField(note.Data, "status"), counts["open"], counts["done"], stringField(note.Data, "title"))
+			if summary != "" {
+				fmt.Printf("  %s\n", summary)
+			}
+			continue
+		}
 		fmt.Printf("%-14s  %-6s  %-10s  %s\n", stringField(note.Data, "id"), stringField(note.Data, "type"), stringField(note.Data, "status"), stringField(note.Data, "title"))
 	}
 	if len(rows) == 0 && !args.Bool("quiet") {
 		fmt.Println("(no matches)")
 	}
+	if truncated > 0 && !args.Bool("quiet") {
+		fmt.Printf("(...and %d more; use a narrower filter or a higher --limit)\n", truncated)
+	}
 	return nil
+}
+
+func epicTaskCount(counts map[string]map[string]int, epic string) map[string]int {
+	if counts[epic] != nil {
+		return counts[epic]
+	}
+	return map[string]int{"open": 0, "done": 0, "closed": 0, "total": 0}
+}
+
+func taskCountsByEpic(notes []Note) map[string]map[string]int {
+	counts := map[string]map[string]int{}
+	for _, note := range notes {
+		if stringField(note.Data, "type") != "task" {
+			continue
+		}
+		epic := wikiTarget(note.Data["epic"])
+		if epic == "" {
+			epic = stringField(note.Data, "epic")
+		}
+		if epic == "" {
+			continue
+		}
+		if counts[epic] == nil {
+			counts[epic] = map[string]int{"open": 0, "done": 0, "closed": 0, "total": 0}
+		}
+		counts[epic]["total"]++
+		status := stringField(note.Data, "status")
+		if strings.EqualFold(status, "done") {
+			counts[epic]["done"]++
+		} else if isOpenWorkStatus(status) {
+			counts[epic]["open"]++
+		} else {
+			counts[epic]["closed"]++
+		}
+	}
+	return counts
+}
+
+func sortListRows(rows []Note) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		leftType := stringField(rows[i].Data, "type")
+		rightType := stringField(rows[j].Data, "type")
+		if leftType != rightType {
+			return listTypeRank(leftType) < listTypeRank(rightType)
+		}
+		leftStatus := listStatusRank(stringField(rows[i].Data, "status"))
+		rightStatus := listStatusRank(stringField(rows[j].Data, "status"))
+		if leftStatus != rightStatus {
+			return leftStatus < rightStatus
+		}
+		leftPriority := priorityRank(stringField(rows[i].Data, "priority"))
+		rightPriority := priorityRank(stringField(rows[j].Data, "priority"))
+		if leftPriority != rightPriority {
+			return leftPriority < rightPriority
+		}
+		return stringField(rows[i].Data, "id") < stringField(rows[j].Data, "id")
+	})
+}
+
+func sortTaskMapsForProgressiveList(tasks []map[string]any) {
+	sort.SliceStable(tasks, func(i, j int) bool {
+		leftStatus := listStatusRank(stringValue(tasks[i]["status"]))
+		rightStatus := listStatusRank(stringValue(tasks[j]["status"]))
+		if leftStatus != rightStatus {
+			return leftStatus < rightStatus
+		}
+		leftPriority := priorityRank(stringValue(tasks[i]["priority"]))
+		rightPriority := priorityRank(stringValue(tasks[j]["priority"]))
+		if leftPriority != rightPriority {
+			return leftPriority < rightPriority
+		}
+		return stringValue(tasks[i]["id"]) < stringValue(tasks[j]["id"])
+	})
+}
+
+func listTypeRank(noteType string) int {
+	switch noteType {
+	case "epic":
+		return 0
+	case "task":
+		return 1
+	case "doc":
+		return 2
+	default:
+		return 3
+	}
+}
+
+func listStatusRank(status string) int {
+	order := []string{"active", "review", "rework", "ready", "blocked", "backlog", "draft", "done", "cancelled", "archived", "superseded", "deprecated"}
+	for i, value := range order {
+		if strings.EqualFold(status, value) {
+			return i
+		}
+	}
+	return len(order)
+}
+
+func isOpenWorkStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "done", "cancelled", "archived", "superseded", "deprecated":
+		return false
+	default:
+		return true
+	}
+}
+
+func compactTaskMeta(task map[string]any) string {
+	var parts []string
+	for _, key := range []string{"status", "priority", "risk"} {
+		if value := stringValue(task[key]); value != "" {
+			parts = append(parts, value)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }
 
 func writeVaultReadme(vaultPath string, epics, tasks, docs []map[string]any, generatedAt string) error {
@@ -947,16 +1120,6 @@ func writeVaultReadme(vaultPath string, epics, tasks, docs []map[string]any, gen
 		}
 		groups[status] = append(groups[status], epic)
 	}
-	childrenByEpic := map[string][]map[string]any{}
-	for _, collection := range [][]map[string]any{tasks, docs} {
-		for _, item := range collection {
-			epic := stringValue(item["epic"])
-			if epic == "" {
-				continue
-			}
-			childrenByEpic[epic] = append(childrenByEpic[epic], item)
-		}
-	}
 	today := generatedAt[:10]
 	var lines []string
 	lines = append(lines,
@@ -980,9 +1143,9 @@ func writeVaultReadme(vaultPath string, epics, tasks, docs []map[string]any, gen
 		"",
 		"# Epic roster",
 		"",
-		fmt.Sprintf("_Auto-generated %s. Run `tusker list --type epic` for a live terminal view. Everything below this heading is regenerated on every `tusker reindex` — edits here get overwritten._", generatedAt),
+		fmt.Sprintf("_Auto-generated %s. This top-level roster intentionally shows epics only. Run `tusker list --type epic` for the live terminal view, then drill into one epic with `tusker list --epic <ACR> --type task --open`._", generatedAt),
 		"",
-		`Agents: read this file before logging new work. Pick the epic whose summary best matches; if nothing fits and the work will outlive one task, propose a new epic with `+"`tusker new epic --acronym <ACR> --title \"<name>\" --summary \"...\"`"+`.`,
+		`Agents: use this page only to choose the right epic. Do not read every task file. Pick the epic whose summary best matches; if nothing fits and the work will outlive one task, propose a new epic with `+"`tusker new epic --acronym <ACR> --title \"<name>\" --summary \"...\"`"+`.`,
 		"",
 	)
 	anyRendered := false
@@ -1007,29 +1170,9 @@ func writeVaultReadme(vaultPath string, epics, tasks, docs []map[string]any, gen
 				"",
 				fmt.Sprintf("**Counts:** %d task%s, %d bug task%s, %d doc%s (open: %d, done: %d)", counts["tasks"], plural(counts["tasks"]), counts["bug_tasks"], plural(counts["bug_tasks"]), counts["docs"], plural(counts["docs"]), counts["open"], counts["done"]),
 				"",
+				fmt.Sprintf("**Drill down:** `tusker list --epic %s --type task --open`.", stringValue(epic["id"])),
+				"",
 			)
-			var openChildren []map[string]any
-			for _, child := range childrenByEpic[stringValue(epic["id"])] {
-				status := stringValue(child["status"])
-				if status == "done" || status == "cancelled" || status == "archived" || status == "superseded" {
-					continue
-				}
-				openChildren = append(openChildren, child)
-			}
-			if len(openChildren) > 0 {
-				lines = append(lines, "**Open work:**")
-				shown := openChildren
-				if len(shown) > 5 {
-					shown = shown[:5]
-				}
-				for _, child := range shown {
-					lines = append(lines, fmt.Sprintf("- [[%s]] — %s (%s)", stringValue(child["id"]), stringValue(child["title"]), stringValue(child["status"])))
-				}
-				if len(openChildren) > len(shown) {
-					lines = append(lines, fmt.Sprintf("- _...and %d more (run `tusker list --epic %s`)_", len(openChildren)-len(shown), stringValue(epic["id"])))
-				}
-				lines = append(lines, "")
-			}
 		}
 	}
 	if !anyRendered {

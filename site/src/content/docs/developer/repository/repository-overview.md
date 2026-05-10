@@ -11,7 +11,7 @@ tusker:
   tags:
     - "repository"
     - "overview"
-  updated: "2026-04-29"
+  updated: "2026-05-10"
 ---
 
 # Tusker
@@ -89,15 +89,32 @@ Tasks carry `risk`, `size`, `kind`, `priority`, `domains`, `doc_nodes`, `delegat
 
 ## Pieces
 
-**A skill bundle.** Install it into Claude Code, Codex, or any harness that loads `SKILL.md`. The skill teaches the agent the layout, lifecycle, evidence rules, and docs close gate. The skill alone is enough for most users.
+**A skill bundle.** Install it into Claude Code, Codex, or any harness that loads `SKILL.md`. The skill teaches the agent the layout, lightweight workflow lanes, lifecycle, evidence rules, and docs close gate. It also tells agents not to read attachments, generated indexes, or raw logs by default. The skill alone is enough for most users.
 
-**A Go CLI (`tusker`).** A helper binary for init, task creation, status changes, evidence, verification, docs checks, closing, validation, reindexing, docs publishing, and updates. If the CLI is unavailable, the agent can still edit the markdown directly, but the CLI is safer.
+**A Go CLI (`tusker`).** A helper binary for init, bounded tracker search, progressive epic/task listing, capsule-first note reading, task creation, status changes, evidence, verification, docs checks, closing, validation, reindexing, docs publishing, and updates. If the CLI is unavailable, the agent can still edit the markdown directly, but the CLI is safer.
 
 **An Obsidian vault layout.** Repo-local markdown, Bases views, dashboards, templates, and generated indexes. Open `tusker/` as a vault and it works.
 
 **A symlink workspace.** One central Obsidian vault can symlink multiple repo-local `tusker/` folders. The repo remains authoritative; Obsidian is the reading and editing surface.
 
-The dispatcher is experimental. It can pick up ready tasks and run Claude or Codex with concurrency caps, but the markdown layer and CLI are the stable core.
+**An operator runtime.** The runtime is local/operator-facing. It can pick up `active` and `rework` tasks for the configured runner, keep leases and transcripts out of task frontmatter, and write review packets. Codex is the default live runner today; the lifecycle and runtime lanes are runner-neutral.
+
+**A reviewer lane.** When `WORKFLOW.md` enables `reviewer`, a task in `review` can get an independent review run. The default actor is `agent-reviewer`: low/medium risk work may be verified and closed by that reviewer after the normal gates pass, while high/critical work stays human-gated.
+
+## Current status
+
+As of 2026-05-08, this repo is on the V5 tracker model with the following default policy:
+
+| Surface | Status | Current setting |
+|---|---|---|
+| Tracker schema | Shipped | `tracker_schema_version: 5` |
+| Agent skill bundle | Shipped | Source skill plus repo-local `.agents/skills/tusker` and `.claude/skills/tusker` installs |
+| Obsidian vault | Shipped | `Dashboard.md`, Bases views, `README.md`, `Docs.md`, and `CHEATSHEET.md` |
+| Worker dispatch | Operator-ready | runnable states are `active` and `rework` |
+| Default runner | Codex-first | `agents.default: codex`, `codex.command: codex app-server` |
+| Reviewer lane | Enabled by default | `reviewer.runner: codex`, `reviewer.actor: agent-reviewer` |
+| Reviewer auto-close | Enabled for low/medium | evidence, docs impact, verification, and validation gates still apply |
+| Human gate | Required for high/critical | reviewer output is advisory; humans verify and close |
 
 ## Install
 
@@ -133,13 +150,19 @@ You now have `~/code/my-app/tusker/` committed with the repo.
 Ask Claude Code or Codex to log a task. The agent should:
 
 1. Run `tusker list --type epic` to see existing workstreams.
-2. Pick the right epic, or propose a new one if nothing fits.
-3. Create a task with sensible defaults.
-4. Print the ID and a one-line reason for the epic choice.
+2. Run `tusker search "<duplicate clue>" --type task` before creating work that may already exist.
+3. Run `tusker list --epic <ACR> --type task --open` only for the likely epic.
+4. Run `tusker show <ID> --capsule` before opening a full task file.
+5. Pick the right epic, or propose a new one if nothing fits.
+6. Create a task with sensible defaults.
+7. Print the ID and a one-line reason for the epic choice.
 
 Primary V5 CLI:
 
 ```sh
+tusker search "cache invalidation" --type task
+tusker list --epic MEM --type task --open
+tusker show MEM-T-0007 --capsule
 tusker new task --epic MEM --title "Add cache invalidation" \
   --kind feature --size m --risk medium --domains runtime,docs \
   --doc-nodes reference/cache
@@ -152,6 +175,8 @@ tusker verify MEM-T-0007 --by codex
 tusker close MEM-T-0007 --by sarav
 tusker validate
 ```
+
+With the reviewer lane enabled, `review` is not automatically the last human stop. A later daemon tick may run the configured reviewer. For low/medium work the reviewer can verify and close; for high/critical work the reviewer leaves advisory evidence and the task stays in `review` for a human.
 
 ![A task moves from draft to ready, active, review, done, blocked, rework, or cancelled.](/generated/assets/repo-doc/developer-repository-repository-overview/docs/diagrams/04-lifecycle.png)
 

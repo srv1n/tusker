@@ -55,6 +55,41 @@ func TestV5GreenfieldTaskDocsGate(t *testing.T) {
 	}
 }
 
+func TestReviewerPolicyAllowsMediumAndBlocksHighRiskClose(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "vault")
+	must := func(args Args, fn func(Args) error) {
+		t.Helper()
+		if err := fn(args); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
+	must(Args{"vault": vault, "quiet": "true", "acronym": "REV", "title": "Review", "summary": "Review policy."}, newV5Epic)
+	must(Args{"vault": vault, "quiet": "true", "epic": "REV", "title": "Medium review", "risk": "medium", "size": "m"}, func(args Args) error {
+		return newV5Task(args, "feature")
+	})
+	must(Args{"vault": vault, "quiet": "true", "id": "REV-T-0001", "status": "review", "actor": "worker"}, setStatus)
+	must(Args{"vault": vault, "quiet": "true", "id": "REV-T-0001", "by": "agent-reviewer", "summary": "Reviewed acceptance, docs, and tests."}, verifyV5Cmd)
+	must(Args{"vault": vault, "quiet": "true", "id": "REV-T-0001", "by": "agent-reviewer", "reason": "agent review accepted"}, closeV5Cmd)
+	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "epics", "REV", "REV-T-0001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "agent-reviewer", stringField(data, "verified_by"), "medium reviewer")
+	assertEqual(t, "agent-reviewer", stringField(data, "closed_by"), "medium closer")
+	assertEqual(t, "Reviewed acceptance, docs, and tests.", stringField(data, "verification_summary"), "verification summary")
+	assertEqual(t, "agent review accepted", stringField(data, "close_summary"), "close summary")
+
+	must(Args{"vault": vault, "quiet": "true", "epic": "REV", "title": "High review", "risk": "high", "size": "m"}, func(args Args) error {
+		return newV5Task(args, "feature")
+	})
+	must(Args{"vault": vault, "quiet": "true", "id": "REV-T-0002", "status": "review", "actor": "worker"}, setStatus)
+	err = verifyV5Cmd(Args{"vault": vault, "quiet": "true", "id": "REV-T-0002", "by": "agent-reviewer"})
+	if err == nil || !strings.Contains(err.Error(), "requires human verification") {
+		t.Fatalf("expected reviewer verify to be blocked for high risk, got %v", err)
+	}
+}
+
 func TestV5RejectsUnsafeDocNode(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {

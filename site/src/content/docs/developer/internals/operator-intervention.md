@@ -11,7 +11,7 @@ tusker:
   summary: "Use the public V5 task commands for manual intervention."
   tags:
     - "internals"
-  updated: "2026-04-29"
+  updated: "2026-05-08"
 ---
 
 # Operator Intervention
@@ -44,5 +44,7 @@ tusker verify <TASK-ID> --by <verifier>
 tusker close <TASK-ID> --by <reviewer>
 tusker validate
 ```
+
+If the reviewer lane is enabled, the configured `reviewer.actor` can perform the verify/close steps for low/medium tasks after review passes. For high/critical tasks, use the reviewer output as advisory evidence and leave final verify/close to a human.
 
 Never delete prior evidence or work-log history. Append the new truth.

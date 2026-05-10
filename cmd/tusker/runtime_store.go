@@ -44,6 +44,7 @@ type RunStatus struct {
 	RecordID        string `json:"record_id"`
 	ItemID          string `json:"item_id"`
 	Runner          string `json:"runner"`
+	Lane            string `json:"lane"`
 	LeaseState      string `json:"lease_state"`
 	AttemptOutcome  string `json:"attempt_outcome"`
 	ActiveAttemptID string `json:"active_attempt_id"`
@@ -69,6 +70,7 @@ type RunAttempt struct {
 	RecordID      string
 	ItemID        string
 	Runner        string
+	Lane          string
 	WorkRevision  int
 	WorkspacePath string
 	SessionRef    string
@@ -211,6 +213,7 @@ func (s *RuntimeStore) Migrate() error {
 			record_id TEXT NOT NULL,
 			item_id TEXT NOT NULL DEFAULT '',
 			runner TEXT NOT NULL DEFAULT '',
+			lane TEXT NOT NULL DEFAULT '',
 			lease_state TEXT NOT NULL DEFAULT 'unclaimed',
 			attempt_outcome TEXT NOT NULL DEFAULT 'none',
 			active_attempt_id TEXT NOT NULL DEFAULT '',
@@ -236,6 +239,7 @@ func (s *RuntimeStore) Migrate() error {
 			record_id TEXT NOT NULL,
 			item_id TEXT NOT NULL DEFAULT '',
 			runner TEXT NOT NULL DEFAULT '',
+			lane TEXT NOT NULL DEFAULT '',
 			work_revision INTEGER NOT NULL DEFAULT 0,
 			workspace_path TEXT NOT NULL DEFAULT '',
 			session_ref TEXT NOT NULL DEFAULT '',
@@ -325,6 +329,9 @@ func (s *RuntimeStore) Migrate() error {
 	if err := s.ensureColumn("runs", "work_revision", `ALTER TABLE runs ADD COLUMN work_revision INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("runs", "lane", `ALTER TABLE runs ADD COLUMN lane TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
 	if err := s.ensureColumn("runs", "active_attempt_id", `ALTER TABLE runs ADD COLUMN active_attempt_id TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
@@ -356,6 +363,9 @@ func (s *RuntimeStore) Migrate() error {
 		return err
 	}
 	if err := s.ensureColumn("attempts", "process_pid", `ALTER TABLE attempts ADD COLUMN process_pid INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("attempts", "lane", `ALTER TABLE attempts ADD COLUMN lane TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
 	if err := s.ensureColumn("attempts", "status_path", `ALTER TABLE attempts ADD COLUMN status_path TEXT NOT NULL DEFAULT ''`); err != nil {
@@ -537,7 +547,7 @@ func (s *RuntimeStore) ListProjects() ([]RegisteredProject, error) {
 }
 
 func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
-	rows, err := s.db.Query(`SELECT project_id, record_id, item_id, runner, lease_state, attempt_outcome, active_attempt_id, workspace_path, session_ref, process_pid, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, started_at, updated_at FROM runs ORDER BY updated_at DESC, project_id, item_id`)
+	rows, err := s.db.Query(`SELECT project_id, record_id, item_id, runner, lane, lease_state, attempt_outcome, active_attempt_id, workspace_path, session_ref, process_pid, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, started_at, updated_at FROM runs ORDER BY updated_at DESC, project_id, item_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -545,7 +555,7 @@ func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
 	var out []RunStatus
 	for rows.Next() {
 		var run RunStatus
-		if err := rows.Scan(&run.ProjectID, &run.RecordID, &run.ItemID, &run.Runner, &run.LeaseState, &run.AttemptOutcome, &run.ActiveAttemptID, &run.WorkspacePath, &run.SessionRef, &run.ProcessPID, &run.PromptPath, &run.EventSinkPath, &run.RawLogPath, &run.StatusPath, &run.WorkRevision, &run.AttemptCount, &run.NextRetryAt, &run.LastError, &run.LastEventAt, &run.StartedAt, &run.UpdatedAt); err != nil {
+		if err := rows.Scan(&run.ProjectID, &run.RecordID, &run.ItemID, &run.Runner, &run.Lane, &run.LeaseState, &run.AttemptOutcome, &run.ActiveAttemptID, &run.WorkspacePath, &run.SessionRef, &run.ProcessPID, &run.PromptPath, &run.EventSinkPath, &run.RawLogPath, &run.StatusPath, &run.WorkRevision, &run.AttemptCount, &run.NextRetryAt, &run.LastError, &run.LastEventAt, &run.StartedAt, &run.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, run)
@@ -564,11 +574,12 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	_, err := s.db.Exec(`INSERT INTO runs (
-		project_id, record_id, item_id, runner, lease_state, attempt_outcome, active_attempt_id, workspace_path, session_ref, process_pid, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, started_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		project_id, record_id, item_id, runner, lane, lease_state, attempt_outcome, active_attempt_id, workspace_path, session_ref, process_pid, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, started_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id, record_id) DO UPDATE SET
 		item_id=excluded.item_id,
 		runner=excluded.runner,
+		lane=excluded.lane,
 		lease_state=excluded.lease_state,
 		attempt_outcome=excluded.attempt_outcome,
 		active_attempt_id=excluded.active_attempt_id,
@@ -586,19 +597,20 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 		last_event_at=excluded.last_event_at,
 		started_at=excluded.started_at,
 		updated_at=excluded.updated_at`,
-		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.LeaseState, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.ProcessPID, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.StartedAt, run.UpdatedAt)
+		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.Lane, run.LeaseState, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.ProcessPID, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.StartedAt, run.UpdatedAt)
 	return err
 }
 
 func (s *RuntimeStore) SaveAttempt(attempt RunAttempt) error {
 	_, err := s.db.Exec(`INSERT INTO attempts (
-		attempt_id, project_id, record_id, item_id, runner, work_revision, workspace_path, session_ref, process_pid, outcome, exit_code, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, session_ref, process_pid, outcome, exit_code, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(attempt_id) DO UPDATE SET
 		project_id=excluded.project_id,
 		record_id=excluded.record_id,
 		item_id=excluded.item_id,
 		runner=excluded.runner,
+		lane=excluded.lane,
 		work_revision=excluded.work_revision,
 		workspace_path=excluded.workspace_path,
 		session_ref=excluded.session_ref,
@@ -612,7 +624,7 @@ func (s *RuntimeStore) SaveAttempt(attempt RunAttempt) error {
 		last_error=excluded.last_error,
 		started_at=excluded.started_at,
 		finished_at=excluded.finished_at`,
-		attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.WorkRevision, attempt.WorkspacePath, attempt.SessionRef, attempt.ProcessPID, attempt.Outcome, attempt.ExitCode, attempt.PromptPath, attempt.EventSinkPath, attempt.RawLogPath, attempt.StatusPath, attempt.LastError, attempt.StartedAt, attempt.FinishedAt)
+		attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkRevision, attempt.WorkspacePath, attempt.SessionRef, attempt.ProcessPID, attempt.Outcome, attempt.ExitCode, attempt.PromptPath, attempt.EventSinkPath, attempt.RawLogPath, attempt.StatusPath, attempt.LastError, attempt.StartedAt, attempt.FinishedAt)
 	return err
 }
 

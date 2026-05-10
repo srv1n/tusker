@@ -144,7 +144,7 @@ The public CLI is small on purpose:
 | Area | Commands |
 |---|---|
 | Setup | ` + "`init`, `update`" + ` |
-| Work items | ` + "`new`, `list`, `next`, `claim`, `status`, `evidence`, `verify`, `close`" + ` |
+| Work items | ` + "`new`, `list`, `show`, `search`, `next`, `claim`, `status`, `evidence`, `verify`, `close`" + ` |
 | Docs | ` + "`docs model`, `docs map`, `docs catalog`, `docs freshness`, `docs check`, `docs apply`, `docs noop`, `docs waive`, `docs export`, `docs dev`, `docs build`" + ` |
 | Shared vaults | ` + "`vault set`, `vault status`, `vault mount`, `vault unmount`, `vault repair`, `vault move`" + ` |
 | Health | ` + "`validate`, `reindex`" + ` |
@@ -167,6 +167,18 @@ tusker next --claim --as codex --vault ./tusker
 ` + "```" + `
 
 ` + "`next`" + ` returns only pickable work: ` + "`ready`" + ` or ` + "`rework`" + ` tasks with no unresolved ` + "`blocked_by`" + ` dependencies. ` + "`claim`" + ` assigns the task and moves it to ` + "`active`" + `. ` + "`draft`" + ` and ` + "`backlog`" + ` are intentionally not pickable.
+
+## Note reading
+
+Use ` + "`show`" + ` before opening a note:
+
+` + "```bash" + `
+tusker show ORC-T-0019
+tusker show ORC-T-0019 --acceptance
+tusker show ORC-T-0019 --evidence
+` + "```" + `
+
+` + "`show`" + ` defaults to the agent capsule: the first-screen summary, state, verification/close summaries, and next anchors. Use ` + "`--full`" + ` only when the capsule and exact sections are insufficient.
 
 ## Repo-local skill refresh
 
@@ -266,6 +278,18 @@ tags: ["dashboard"]
 
 # Vault Home
 
+## Workflow status
+
+| Surface | Current setting |
+|---|---|
+| Worker dispatch | ` + "`active`, `rework`" + ` |
+| Review checkpoint | ` + "`review`" + ` |
+| Default runner | ` + "`codex`" + ` |
+| Reviewer lane | enabled |
+| Reviewer actor | ` + "`agent-reviewer`" + ` |
+| Reviewer auto-close | ` + "`low`, `medium`" + ` |
+| Human gate | ` + "`high`, `critical`" + ` |
+
 ## Active epics
 
 ![[_system/views/Epics.base#Active]]
@@ -322,6 +346,19 @@ ready|active -> blocked -> ready|active
 review -> rework -> active
 active|review|blocked|rework|backlog -> cancelled
 ` + "```" + `
+
+` + "`review`" + ` is a checkpoint. With ` + "`reviewer.enabled`" + `, the daemon can launch an independent review lane from ` + "`review`" + `; low/medium work can close as ` + "`agent-reviewer`" + `, and high/critical work stays human-gated.
+
+## Current workflow settings
+
+| Surface | Current setting |
+|---|---|
+| Worker dispatch | ` + "`active`, `rework`" + ` |
+| Review checkpoint | ` + "`review`" + ` |
+| Reviewer runner | ` + "`codex`" + ` |
+| Reviewer actor | ` + "`agent-reviewer`" + ` |
+| Auto-close | ` + "`low`, `medium`" + ` |
+| Human close | ` + "`high`, `critical`" + ` |
 
 ## Common commands
 
@@ -626,108 +663,25 @@ Out:
 }
 
 func defaultV5TaskTemplate() string {
-	return `---
-schema: tusker.task/v5
-id: "{{id}}"
-title: "{{title}}"
-type: task
-kind: feature
-epic: "{{epic}}"
-status: draft
-priority: p2
-risk: medium
-size: m
-delegation: execute
-ai_assistance: heavy
-ai_tools: []
-domains: []
-doc_nodes: []
-blocked_by: []
-block_reason: ""
-created: "{{date}}"
-updated: "{{date}}"
----
-
-# {{id}} · {{title}}
-
-## Intent
-
-## Scope
-
-In:
--
-
-Out:
--
-
-## Acceptance contract
-
-| # | Outcome | Proof required | Docs impact |
-|---|---|---|---|
-| 1 |  |  |  |
-
-## Canon
-
--
-
-## Code/system anchors
-
--
-
-## Constraints
-
--
-
-## Escalate if
-
--
-
-## Deliverables
-
--
-
-## Verification plan
-
--
-
-## Knowledge delta
-
-| Topic | Before | After | Audience | Target doc nodes |
-|---|---|---|---|---|
-|  |  |  |  |  |
-
----
-
-## Execution plan
-
-1.
-
-## Evidence
-
--
-
-## Verification log
-
--
-
-## Work log
-
-- {{date}} — tusker — task created
-`
+	return defaultV5TaskDocument("{{id}}", "{{title}}", "feature", "{{epic}}", "medium", "m", "p2", "{{date}}")
 }
 
 func defaultV5BugTemplate() string {
+	return defaultV5TaskDocument("{{id}}", "{{title}}", "bug", "{{epic}}", "medium", "s", "p1", "{{date}}")
+}
+
+func defaultV5TaskDocument(id, title, kind, epic, risk, size, priority, date string) string {
 	return `---
 schema: tusker.task/v5
-id: "{{id}}"
-title: "{{title}}"
+id: "` + id + `"
+title: "` + title + `"
 type: task
-kind: bug
-epic: "{{epic}}"
+kind: ` + kind + `
+epic: "` + epic + `"
 status: draft
-priority: p1
-risk: medium
-size: s
+priority: ` + priority + `
+risk: ` + risk + `
+size: ` + size + `
 delegation: execute
 ai_assistance: heavy
 ai_tools: []
@@ -735,94 +689,134 @@ domains: []
 doc_nodes: []
 blocked_by: []
 block_reason: ""
-created: "{{date}}"
-updated: "{{date}}"
+created: "` + date + `"
+updated: "` + date + `"
 ---
 
-# {{id}} · {{title}}
+` + renderV5TaskBody(id, title, kind, risk, date)
+}
 
-## Intent
+func renderV5TaskBody(id, title, kind, risk, date string) string {
+	var sections []string
+	sections = append(sections,
+		"# "+id+" · "+title,
+		"",
+		"## Agent capsule",
+		"",
+		"- Essence: "+title+".",
+		"- Next action: define acceptance, do the smallest scoped change, and attach concise evidence.",
+		"- Read next: this note, then only the code/docs anchors named here.",
+		"- Avoid: raw logs, full transcripts, generated indexes, and attachments unless doing evidence forensics.",
+		"",
+		"## Intent",
+		"",
+		"## Acceptance contract",
+		"",
+		"| # | Outcome | Proof required | Docs impact |",
+		"|---|---|---|---|",
+		"| 1 |  |  |  |",
+		"",
+	)
+	if kind == "bug" {
+		sections = append(sections,
+			"## Symptom",
+			"",
+			"-",
+			"",
+			"## Reproduction",
+			"",
+			"1.",
+			"",
+			"Expected:",
+			"-",
+			"",
+			"Observed:",
+			"-",
+			"",
+		)
+	}
+	switch strings.ToLower(risk) {
+	case "medium":
+		sections = append(sections, mediumTaskSections()...)
+	case "high":
+		sections = append(sections, mediumTaskSections()...)
+		sections = append(sections, highTaskSections(false)...)
+	case "critical":
+		sections = append(sections, mediumTaskSections()...)
+		sections = append(sections, highTaskSections(true)...)
+	}
+	sections = append(sections,
+		"## Evidence",
+		"",
+		"- _No evidence yet. Attach summaries, PRs, packets, screenshots, or short log tails only._",
+		"",
+	)
+	if strings.EqualFold(risk, "high") || strings.EqualFold(risk, "critical") {
+		sections = append(sections,
+			"## Verification log",
+			"",
+			"- _No verification yet._",
+			"",
+		)
+	}
+	return strings.Join(sections, "\n")
+}
 
-## Scope
+func mediumTaskSections() []string {
+	return []string{
+		"## Scope",
+		"",
+		"In:",
+		"-",
+		"",
+		"Out:",
+		"-",
+		"",
+		"## Deliverables",
+		"",
+		"-",
+		"",
+		"## Verification plan",
+		"",
+		"-",
+		"",
+	}
+}
 
-In:
-- defect fix
-- regression protection
-
-Out:
-- unrelated cleanup
-
-## Symptom
-
--
-
-## Reproduction
-
-1.
-
-Expected:
--
-
-Observed:
--
-
-## Acceptance contract
-
-| # | Outcome | Proof required | Docs impact |
-|---|---|---|---|
-| 1 |  |  |  |
-
-## Canon
-
--
-
-## Code/system anchors
-
--
-
-## Constraints
-
--
-
-## Escalate if
-
--
-
-## Deliverables
-
-- regression test
-- before/after evidence
-
-## Verification plan
-
--
-
-## Knowledge delta
-
-| Topic | Before | After | Audience | Target doc nodes |
-|---|---|---|---|---|
-|  |  |  |  |  |
-
----
-
-## Execution plan
-
-1. reproduce
-2. fix
-3. add regression protection
-
-## Evidence
-
--
-
-## Verification log
-
--
-
-## Work log
-
-- {{date}} — tusker — bug task created
-`
+func highTaskSections(includeRollback bool) []string {
+	sections := []string{
+		"## Canon",
+		"",
+		"-",
+		"",
+		"## Code/system anchors",
+		"",
+		"-",
+		"",
+		"## Constraints",
+		"",
+		"-",
+		"",
+		"## Escalate if",
+		"",
+		"-",
+		"",
+		"## Knowledge delta",
+		"",
+		"| Topic | Before | After | Audience | Target doc nodes |",
+		"|---|---|---|---|---|",
+		"|  |  |  |  |  |",
+		"",
+	}
+	if includeRollback {
+		sections = append(sections,
+			"## Rollback",
+			"",
+			"-",
+			"",
+		)
+	}
+	return sections
 }
 
 func defaultV5DocTemplate() string {

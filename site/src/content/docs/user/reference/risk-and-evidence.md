@@ -11,7 +11,7 @@ tusker:
   summary: "Risk drives ceremony. Size is effort; risk is blast radius."
   tags:
     - "reference"
-  updated: "2026-04-29"
+  updated: "2026-05-10"
 ---
 
 # Risk And Evidence
@@ -29,10 +29,14 @@ Risk drives ceremony. Size is effort; risk is blast radius.
 
 V5 task templates provide the sections. Fill them with substance; do not leave placeholders.
 
-- `low`: `Intent`, `Acceptance contract`, `Evidence`
+- `low`: `Agent capsule`, `Intent`, `Acceptance contract`, `Evidence`
 - `medium`: add `Scope`, `Deliverables`, `Verification plan`
 - `high`: add `Canon`, `Code/system anchors`, `Constraints`, `Knowledge delta`
 - `critical`: add rollback detail and explicit human review notes
+
+Do not add `Execution plan` or `Work log` by default. They are verbose live
+scratchpads, not durable context. Capture durable truth in the capsule,
+acceptance contract, evidence summary, verification fields, and knowledge delta.
 
 ## Evidence Command
 
@@ -41,6 +45,12 @@ tusker evidence <TASK-ID> <screenshot|video|log|bench|pr|packet> <file-or-url> [
 ```
 
 Local files are copied under `Attachments/<TASK-ID>/`; URLs are linked as-is. Evidence is proof after execution, not a plan.
+
+Keep evidence small enough for humans and agents to use. Prefer a packet,
+summary, PR link, failing assertion, or the last relevant log lines over copying
+full build logs or whole source files. If full logs are needed, attach the file
+but summarize the signal in the task; agents should not read raw logs by
+default.
 
 ## Demo Rule
 
@@ -68,3 +78,5 @@ tusker validate
 ```
 
 `close` refuses tasks with unresolved `doc_nodes`.
+
+When `WORKFLOW.md` enables `reviewer`, low/medium tasks may be verified and closed by the configured `reviewer.actor` after all gates pass. High/critical tasks must not be closed by the reviewer; keep them in `review` for human verification and close.

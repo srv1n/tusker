@@ -4,7 +4,11 @@ When work affects planning, PR evidence, demos, or publication docs, invoke the 
 
 ## Workflow expectations
 
-- The task note is the unit of work. Intent, acceptance, deliverables, verification, evidence, and work log are sections inside it.
-- Keep the contract sections stable. Use execution sections for live planning, evidence, verification notes, and work log updates.
+- The task note is the unit of work. Agent capsule, intent, acceptance, deliverables, verification, and evidence are sections inside it.
+- Use `tusker search` and exact task paths before broad repository search when looking for existing tracker work.
+- Use `tusker list --type epic` first; drill into one epic with `tusker list --epic <ACR> --type task --open`.
+- Keep lookup and bookkeeping updates light; do not run closeout ceremony unless moving implementation work to review/done.
+- Keep the contract sections stable. Put durable truth in the capsule, evidence summary, verification summary, close summary, and knowledge delta.
 - Create a user doc or developer doc when the work changes external behavior or operator-facing surfaces.
 - Reindex and validate the vault after material updates.
+- Do not load `tusker/Attachments/**`, generated indexes, raw runner logs, or full build logs unless the task specifically requires evidence forensics.

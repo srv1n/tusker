@@ -14,7 +14,7 @@ publish_lane: "internal"
 publish_path: "reference/cli"
 publish_description: "Tusker v5 CLI surface."
 created: "2026-04-29"
-updated: "2026-05-04"
+updated: "2026-05-10"
 ---
 
 # Tusker v5 CLI surface
@@ -26,15 +26,47 @@ The public CLI is small on purpose:
 | Area | Commands |
 |---|---|
 | Setup | `init`, `update` |
-| Work items | `new`, `list`, `status`, `evidence`, `verify`, `close` |
+| Work items | `new`, `list`, `search`, `show`, `status`, `evidence`, `verify`, `close` |
 | Docs | `docs model`, `docs map`, `docs catalog`, `docs freshness`, `docs check`, `docs apply`, `docs noop`, `docs waive`, `docs export`, `docs dev`, `docs build` |
 | Shared vaults | `vault set`, `vault status`, `vault mount`, `vault unmount`, `vault repair`, `vault move` |
 | Operator runtime | `daemon`, `projects`, `runs`, `refresh` |
 | Health | `validate`, `reindex` |
 
+## Bounded tracker lookup
+
+Use `tusker search` before broad shell searches when the question is about existing tracker work:
+
+```bash
+tusker search "reviewer lane" --type task
+tusker search "docs close gate" --type task --epic DOC --status active
+tusker search "cache" --json
+```
+
+The command searches first-party task, epic, and doc notes. It skips attachments, generated indexes, runtime state, and raw logs, so it is safe as the default duplicate-check and status lookup path for agents.
+
+Use `tusker list` as the progressive index:
+
+```bash
+tusker list --type epic
+tusker list --epic ORC --type task --open
+tusker list --epic ORC --type task --open --limit 10
+```
+
+The first command prints the short epic roster with summaries and counts. The second drills into one epic's open tasks without reading note bodies.
+
+Use `tusker show` before opening a note:
+
+```bash
+tusker show ORC-T-0019
+tusker show ORC-T-0019 --acceptance
+tusker show ORC-T-0019 --evidence
+```
+
+`show` defaults to the agent capsule. `--full` is available, but it should be a deliberate drill-down.
+
 ## Operator/runtime commands
 
-The runtime commands are shipped as operator/internal controls. They support the local Codex pickup loop while keeping task truth in markdown.
+The runtime commands are shipped as operator/internal controls. They support the local runner pickup loop while keeping task truth in markdown.
 
 | Command | Behavior |
 |---|---|
@@ -78,11 +110,40 @@ tusker docs build --vault ./tusker --site ./site
 
 The site output is generated. Author source docs in `tusker/docs/**` or registered repo docs, not in `site/src/content/docs/**`.
 
-## Codex-only orchestration status
+## Codex-first orchestration status
 
-`WORKFLOW.md` currently names `codex` as the default runner and `codex app-server` as the Codex command. The tracker contract says only `active` and `rework` are runnable; `ready` is not dispatched.
+`WORKFLOW.md` currently names `codex` as the default runner and `codex app-server` as the Codex command. That is the first production path, not a permanent product boundary. The tracker and reviewer policies are runner-neutral: future adapters such as `claude-code` or `opencode` should plug into the same task lifecycle, runtime lanes, and close gates.
 
-The local Obsidian-to-review loop is now testable through the operator commands: register the project, move a task to `active` or `rework`, run `refresh` or `daemon run`, and inspect the run. Codex must still move the task to `review` when it is ready; a clean exit that leaves the task `active`/`rework` queues continuation rather than pretending the work is reviewable.
+The local Obsidian-to-review loop is now testable through the operator commands: register the project, move a task to `active` or `rework`, run `refresh` or `daemon run`, and inspect the run. The selected runner must still move the task to `review` when it is ready; a clean exit that leaves the task `active`/`rework` queues continuation rather than pretending the work is reviewable.
+
+## Reviewer close lane
+
+`WORKFLOW.md` can also enable a reviewer lane:
+
+```yaml
+reviewer:
+  enabled: true
+  runner: codex # current default; use another enabled runner when its adapter is ready
+  actor: agent-reviewer
+  auto_close_risks: [low, medium]
+  human_required_risks: [high, critical]
+```
+
+When enabled, a task in `review` can be picked up by an independent reviewer run. The reviewer prompt tells the agent to inspect the task, evidence, diff, tests, docs impact, and caveats. If the task fails review, it should send the task to `rework`:
+
+```bash
+tusker status <TASK-ID> rework --by agent-reviewer --reason "<specific unmet acceptance item>"
+```
+
+For low/medium tasks, the reviewer may close after the normal gates pass:
+
+```bash
+tusker docs check <TASK-ID>
+tusker verify <TASK-ID> --by agent-reviewer --summary "<what was checked>"
+tusker close <TASK-ID> --by agent-reviewer --reason "agent review accepted"
+```
+
+For high/critical tasks, the configured reviewer is blocked from `verify` and `close`; it can produce advisory evidence, but a human must verify and close. Closed task output and frontmatter summaries include both reviewer and closer attribution through `verified_by` and `closed_by`.
 
 ## Shared Obsidian vault
 

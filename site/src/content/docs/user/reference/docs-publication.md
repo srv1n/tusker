@@ -11,7 +11,7 @@ tusker:
   summary: "Use this when the user wants project docs, a public docs site, a user guide, release notes, support docs, runbooks, or agent-readable canon."
   tags:
     - "reference"
-  updated: "2026-04-30"
+  updated: "2026-05-08"
 ---
 
 # Docs publication
@@ -60,6 +60,56 @@ If `doc_nodes` is non-empty, close must prove one of three things:
 | one-task explanation | companion doc linked to the task |
 
 Tasks are execution records, not public docs. Their evidence proves work happened, but does not automatically become publication content.
+
+## LLM authoring contract
+
+This is the rule agents must apply before drafting docs, not after review.
+
+Documentation tickets are not "copy the task into a page" tickets. For every page, choose:
+
+1. one audience: `user`, `developer`, `agent`, or `internal`
+2. one primary Diátaxis mode: `tutorial`, `how-to`, `reference`, or `explanation`
+3. one source authority set: Tusker D-notes, registered repo docs, or code paths
+
+Human docs are synthesized outputs. Source material is input.
+
+Do not publish these directly as user/developer prose:
+
+- task records
+- evidence logs
+- D-note bodies
+- implementation scratchpads
+- generated manifests
+- agent-only instructions
+- stale or unregistered markdown
+
+Use this split:
+
+| Audience | Write for | Keep out by default |
+|---|---|---|
+| `user` | outcome, steps, expected result, common fixes | task IDs, stale metadata, internal paths |
+| `developer` | contracts, architecture, extension points, validation | raw work logs unless they prove a claim |
+| `agent` | exact canon, constraints, source paths, stale triggers | polished onboarding prose |
+| `internal` | maintainer decisions, operational risk, migration context | basic tutorial walkthroughs |
+
+Mode contract:
+
+| Mode | Page shape | Reject if |
+|---|---|---|
+| `tutorial` | guided learning path with a safe result | starts with reference tables |
+| `how-to` | direct steps for completing a task | wanders into background essay |
+| `reference` | exact facts, schemas, commands, contracts, edge cases | hides edge cases in prose |
+| `explanation` | concepts, tradeoffs, why the system works this way | becomes a procedure |
+
+Quality gate before returning docs:
+
+- The first screen makes the reader intent obvious.
+- One primary audience and one primary mode are declared by the page shape.
+- Raw canon has been transformed for the selected reader.
+- User pages avoid internal metadata.
+- Developer pages include contracts, source paths, edge cases, and verification.
+- Agent/internal pages preserve exact IDs, constraints, source paths, and stale triggers.
+- Claims about behavior include a verification path or are marked unverified.
 
 ## Diátaxis access model
 

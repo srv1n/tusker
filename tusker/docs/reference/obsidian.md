@@ -28,7 +28,8 @@ Open `Dashboard.md` in the repo-local Tusker vault. The dashboard is the Obsidia
 | Active epics | `Epics.base#Active` | epics that are not done/cancelled |
 | Active work | `Tasks.base#Active` | tasks in `status: active` |
 | Live runs | generated markdown block | runtime rows for active leases, if this vault is registered in the runtime store |
-| Review | `Tasks.base#Review` | tasks waiting for human verification |
+| Workflow status | static markdown table | current runner/reviewer policy defaults from `WORKFLOW.md` |
+| Review | `Tasks.base#Review` | tasks waiting for reviewer or human verification |
 | Follow-up | `Tasks.base#Follow-up` | tasks in `status: rework` |
 | Ready | `Tasks.base#Ready` | shaped work not yet dispatching |
 | Blocked | `Tasks.base#Blocked` | blockers and blocker reasons |
@@ -38,6 +39,8 @@ Open `Dashboard.md` in the repo-local Tusker vault. The dashboard is the Obsidia
 | Docs pipeline | `Docs.base#Pipeline` | published docs queue grouped by lane |
 
 `Follow-up` is only a view name. The actual status remains `rework`.
+
+The workflow status table is intentionally static, not a generated runtime block. It is there so the root Obsidian surface states the operating policy at a glance: worker dispatch uses `active`/`rework`; `review` is a checkpoint; the default reviewer actor is `agent-reviewer`; low/medium work may auto-close; high/critical work stays human-gated.
 
 ## Live-run block
 

@@ -29,4 +29,6 @@ tusker close <TASK-ID> --by <reviewer>
 tusker validate
 ```
 
+If the reviewer lane is enabled, the configured `reviewer.actor` can perform the verify/close steps for low/medium tasks after review passes. For high/critical tasks, use the reviewer output as advisory evidence and leave final verify/close to a human.
+
 Never delete prior evidence or work-log history. Append the new truth.

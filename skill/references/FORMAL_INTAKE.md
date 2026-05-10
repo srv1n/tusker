@@ -23,6 +23,7 @@ If any required fields are missing at active work, validation should block the t
 
 | Section | medium | high | critical |
 |---|---|---|---|
+| `## Agent capsule` | yes | yes | yes |
 | `## Intent` | yes | yes | yes |
 | `## Scope` | yes | yes | yes |
 | `## Acceptance contract` | yes | yes | yes |
@@ -33,18 +34,15 @@ If any required fields are missing at active work, validation should block the t
 | `## Deliverables` | yes | yes | yes |
 | `## Verification plan` | yes | yes | yes |
 | `## Knowledge delta` | when docs/understanding changes | yes | yes |
-| `## Considered and rejected` | no | yes | yes |
-| `## Decision` | no | yes | yes |
-| `## Rollout` | no | yes | yes |
-| `## Kill list` | no | no | yes |
 | `## Evidence` | yes | yes | yes |
-| `## Verification log` | yes | yes | yes |
-| `## Work log` | yes | yes | yes |
+| `## Verification log` | no | yes | yes |
+| `## Rollback` | no | no | yes |
 
 Substance is checked, not presence. `TODO` is not a contract.
 
 ## What each section is for
 
+- **Agent capsule** — first-screen essence, next anchors, and what not to read by default.
 - **Intent** — what needs to be true and who needs it.
 - **Scope** — explicit in/out boundaries.
 - **Acceptance contract** — testable outcomes.
@@ -55,9 +53,9 @@ Substance is checked, not presence. `TODO` is not a contract.
 - **Deliverables** — concrete artifacts expected from the work.
 - **Verification plan** — tests/manual checks/benchmarks before work starts.
 - **Knowledge delta** — what durable understanding changed.
-- **Evidence** — filled after execution.
-- **Verification log** — what was actually checked.
-- **Work log** — dated meaningful steps.
+- **Evidence** — concise proof after execution: PRs, packets, screenshots, or short log tails.
+- **Verification log** — high/critical-only detail when a frontmatter summary is not enough.
+- **Verification/close summaries** — concise frontmatter truth for what was checked and why it closed.
 
 ## Create-and-populate flow
 
@@ -96,7 +94,7 @@ If the work implements an existing RFC:
 
 - `## Canon` cites exact sections.
 - `## Code/system anchors` points to likely implementation files.
-- `## Plan` or execution plan is implementation order, not a restatement of the RFC.
+- If you add a `## Plan`, keep it as temporary implementation order, not a restatement of the RFC.
 - `doc_nodes` names docs that must remain true after the change.
 
 If canon does not exist, see `CANON_LOCATIONS.md` and create it first.

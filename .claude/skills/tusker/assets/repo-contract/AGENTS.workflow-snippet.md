@@ -7,4 +7,9 @@ Point contributors and agents to:
 - the PR template for evidence
 - the project repo docs for architecture or policy
 
+For Tusker lookup, start with `tusker search`, `tusker list`, and exact task
+paths. Do not search or read `tusker/Attachments/**`, generated indexes, raw
+runner logs, or build logs unless the task is explicitly about evidence
+forensics.
+
 Do not turn `AGENTS.md` into a giant encyclopedia.

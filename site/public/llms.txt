@@ -8,13 +8,13 @@ Compact catalog of exported docs.
 - Tusker v5 adoption guide | /internal/spec/v5-adoption/ | audience: developer | mode: how-to | updated: 2026-05-04
   Tusker v5 adoption guide.
 
-- Tusker v5 CLI surface | /internal/reference/cli/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-04
+- Tusker v5 CLI surface | /internal/reference/cli/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-10
   Tusker v5 CLI surface.
 
 - Validator rollout and failure codes | /internal/reference/validator/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-04-29
   Validator rollout and failure codes.
 
-- Template contract | /internal/reference/templates/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-04-29
+- Template contract | /internal/reference/templates/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-10
   Template contract.
 
 - Docs routing, impact hook, and publication model | /internal/reference/docs-pipeline/ | audience: developer | mode: explanation | agent_layer: capsule | updated: 2026-04-29
@@ -26,10 +26,10 @@ Compact catalog of exported docs.
 - Obsidian and view requirements | /internal/reference/obsidian/ | audience: developer | mode: how-to | updated: 2026-05-04
   Obsidian and view requirements.
 
-- Skill and AGENTS guidance | /internal/reference/skill/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-04-29
+- Skill and AGENTS guidance | /internal/reference/skill/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-10
   Skill and AGENTS guidance.
 
-- Agent recipe: using Tusker | /internal/agents/use-tusker/ | audience: agent | mode: how-to | agent_layer: standalone | updated: 2026-04-29
+- Agent recipe: using Tusker | /internal/agents/use-tusker/ | audience: agent | mode: how-to | agent_layer: standalone | updated: 2026-05-10
   Agent recipe: using Tusker.
 
 - Tusker Documentation Model | /developer/documentation-model/ | audience: developer | updated: 2026-04-29
@@ -41,16 +41,16 @@ Compact catalog of exported docs.
 - Failure Classes | /developer/internals/failure-classes/ | audience: developer | updated: 2026-04-29
   Runtime failures belong in runtime logs and evidence, not task frontmatter.
 
-- Operator Intervention | /developer/internals/operator-intervention/ | audience: developer | updated: 2026-04-29
+- Operator Intervention | /developer/internals/operator-intervention/ | audience: developer | updated: 2026-05-08
   Use the public V5 task commands for manual intervention.
 
-- Orchestration Runbook | /developer/internals/orchestration-runbook/ | audience: developer | updated: 2026-05-04
+- Orchestration Runbook | /developer/internals/orchestration-runbook/ | audience: developer | updated: 2026-05-08
   The public V5 CLI tracks task truth. Runtime orchestration is an operator/internal surface and must not be presented as the normal task workflow.
 
 - Tusker V1 Design Index | /developer/internals/v1-design/ | audience: developer | updated: 2026-04-29
   Historical design notes covering the Tusker v1 model and operating assumptions.
 
-- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-04-29
+- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-05-10
   High-level overview of the Tusker repository, install modes, and key entry points.
 
 - Tusker Spec Set | /developer/specs/ | audience: developer | updated: 2026-04-29
@@ -74,7 +74,7 @@ Compact catalog of exported docs.
 - 05. Runner And Session Protocol | /developer/specs/05-runner-and-session-protocol/ | audience: developer | updated: 2026-04-29
   Status: Draft Scope: daemon-run execution for codex and claude-code
 
-- 06 - Verification, Rework, And Close | /developer/specs/06-review-rework-retry/ | audience: developer | updated: 2026-04-29
+- 06 - Verification, Rework, And Close | /developer/specs/06-review-rework-retry/ | audience: developer | updated: 2026-05-08
   V5 uses a simple lifecycle:
 
 - 07 - Documentation Site And Publication | /developer/specs/07-documentation-site-and-publication/ | audience: developer | updated: 2026-04-29
@@ -89,16 +89,16 @@ Compact catalog of exported docs.
 - Canon locations | /user/reference/canon-locations/ | audience: user | updated: 2026-04-30
   Tusker supports three legitimate canon patterns. Pick one per epic, make it explicit, then create the task stack that executes it.
 
-- Commands | /user/reference/commands/ | audience: user | updated: 2026-05-04
+- Commands | /user/reference/commands/ | audience: user | updated: 2026-05-10
   The public V5 CLI is intentionally small. Use these commands.
 
 - Docs Pages | /user/reference/doc-pages/ | audience: user | updated: 2026-04-29
   Use this when durable project knowledge belongs in Tusker instead of a task body.
 
-- Docs publication | /user/reference/docs-publication/ | audience: user | updated: 2026-04-30
+- Docs publication | /user/reference/docs-publication/ | audience: user | updated: 2026-05-08
   Use this when the user wants project docs, a public docs site, a user guide, release notes, support docs, runbooks, or agent-readable canon.
 
-- Formal intake | /user/reference/formal-intake/ | audience: user | updated: 2026-04-30
+- Formal intake | /user/reference/formal-intake/ | audience: user | updated: 2026-05-10
   Creating a task at risk >= medium. Load this when the work is a feature, migration, refactor with teeth, public docs change, security-sensitive change, or anything with rollout/rollback concerns.
 
 - Optional plugins policy | /user/reference/optional-plugins/ | audience: user | updated: 2026-04-21
@@ -110,32 +110,32 @@ Compact catalog of exported docs.
 - Prerequisites and setup notes | /user/reference/prerequisites/ | audience: user | updated: 2026-04-22
   The primary tusker CLI is now built and run with Go.
 
-- Quick Mode | /user/reference/quick-mode/ | audience: user | updated: 2026-04-29
+- Quick Mode | /user/reference/quick-mode/ | audience: user | updated: 2026-05-10
   The low-ceremony path for logging work, discovering follow-ups, and closing routine tasks.
 
-- Repo contract | /user/reference/repo-contract/ | audience: user | updated: 2026-04-21
+- Repo contract | /user/reference/repo-contract/ | audience: user | updated: 2026-05-10
   The vault is internal working memory. The repository is still where contributors land.
 
 - Resources | /user/reference/resources/ | audience: user | updated: 2026-04-30
   Load this when you need to inspect, copy, repair, or explain bundled skill resources. Do not load this for routine task logging.
 
-- Risk And Evidence | /user/reference/risk-and-evidence/ | audience: user | updated: 2026-04-29
+- Risk And Evidence | /user/reference/risk-and-evidence/ | audience: user | updated: 2026-05-10
   Risk drives ceremony. Size is effort; risk is blast radius.
 
-- Schema | /user/reference/schema/ | audience: user | updated: 2026-04-30
+- Schema | /user/reference/schema/ | audience: user | updated: 2026-05-10
   Frontmatter is the machine layer. The note body is the human layer. V5 makes **task** the execution unit and keeps docs as durable knowledge pages.
 
 - Task Decomposition | /user/reference/task-decomposition/ | audience: user | updated: 2026-04-30
   Use this when a PRD/RFC/spec is too large for one agent pass and needs a task stack.
 
-- Triggers | /user/reference/triggers/ | audience: user | updated: 2026-04-29
+- Triggers | /user/reference/triggers/ | audience: user | updated: 2026-05-10
   When to invoke the Tusker skill, and when to skip it.
 
-- Workflow | /user/reference/workflow/ | audience: user | updated: 2026-04-30
+- Workflow | /user/reference/workflow/ | audience: user | updated: 2026-05-08
   Short reference for the V5 task lifecycle.
 
-- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-04-30
+- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-05-10
   Operating contract for agents working with Tusker in a markdown-first vault.
 
-- Skill Bundle | /user/start-here/skill-bundle/ | audience: user | updated: 2026-04-29
+- Skill Bundle | /user/start-here/skill-bundle/ | audience: user | updated: 2026-05-10
   Overview of the installable Tusker skill bundle and how operators use it.

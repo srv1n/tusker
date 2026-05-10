@@ -56,7 +56,7 @@ func (s *RuntimeStore) FindRun(identity string) (*RunStatus, error) {
 }
 
 func (s *RuntimeStore) ListAttemptsForRun(projectID, recordID string) ([]RunAttempt, error) {
-	rows, err := s.db.Query(`SELECT attempt_id, project_id, record_id, item_id, runner, work_revision, workspace_path, session_ref, process_pid, outcome, exit_code, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
+	rows, err := s.db.Query(`SELECT attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, session_ref, process_pid, outcome, exit_code, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
 		FROM attempts
 		WHERE project_id = ? AND record_id = ?
 		ORDER BY started_at DESC, attempt_id DESC`, projectID, recordID)
@@ -67,7 +67,7 @@ func (s *RuntimeStore) ListAttemptsForRun(projectID, recordID string) ([]RunAtte
 	var out []RunAttempt
 	for rows.Next() {
 		var attempt RunAttempt
-		if err := rows.Scan(&attempt.AttemptID, &attempt.ProjectID, &attempt.RecordID, &attempt.ItemID, &attempt.Runner, &attempt.WorkRevision, &attempt.WorkspacePath, &attempt.SessionRef, &attempt.ProcessPID, &attempt.Outcome, &attempt.ExitCode, &attempt.PromptPath, &attempt.EventSinkPath, &attempt.RawLogPath, &attempt.StatusPath, &attempt.LastError, &attempt.StartedAt, &attempt.FinishedAt); err != nil {
+		if err := rows.Scan(&attempt.AttemptID, &attempt.ProjectID, &attempt.RecordID, &attempt.ItemID, &attempt.Runner, &attempt.Lane, &attempt.WorkRevision, &attempt.WorkspacePath, &attempt.SessionRef, &attempt.ProcessPID, &attempt.Outcome, &attempt.ExitCode, &attempt.PromptPath, &attempt.EventSinkPath, &attempt.RawLogPath, &attempt.StatusPath, &attempt.LastError, &attempt.StartedAt, &attempt.FinishedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, attempt)
@@ -150,7 +150,7 @@ func runsInspectCmd(args Args) error {
 		return nil
 	}
 	fmt.Printf("%s (%s)\n", firstNonEmpty(run.ItemID, run.RecordID), run.Runner)
-	fmt.Printf("lease=%s outcome=%s rev=%d attempts=%d pid=%d\n", run.LeaseState, run.AttemptOutcome, run.WorkRevision, run.AttemptCount, run.ProcessPID)
+	fmt.Printf("lease=%s outcome=%s lane=%s rev=%d attempts=%d pid=%d\n", run.LeaseState, run.AttemptOutcome, firstNonEmpty(run.Lane, runLaneExecute), run.WorkRevision, run.AttemptCount, run.ProcessPID)
 	if inspection.FailureClass != "" {
 		fmt.Printf("failure_class=%s\n", inspection.FailureClass)
 	}

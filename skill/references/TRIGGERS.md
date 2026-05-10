@@ -38,7 +38,7 @@ Invoke:
 
 - "Can you use this to log stuff in?" -> yes.
 - "File a follow-up: we need to fix the cache key" -> yes, create a task.
-- "What tasks are open for PLC?" -> yes, `list --epic PLC`.
+- "What tasks are open for PLC?" -> yes, `list --epic PLC --type task --open`.
 - "I have an RFC, turn it into tasks" -> yes, create canon/docs and a task stack.
 - "Start this new app and keep docs updated as we build" -> yes, create/choose epic, docs, and tasks with `doc_nodes`.
 - "Create a user guide for this feature" -> yes, create a V5 doc.
