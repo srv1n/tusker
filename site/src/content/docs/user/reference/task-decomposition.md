@@ -11,7 +11,7 @@ tusker:
   summary: "Use this when a PRD/RFC/spec is too large for one agent pass and needs a task stack."
   tags:
     - "reference"
-  updated: "2026-04-30"
+  updated: "2026-05-11"
 ---
 
 # Task Decomposition
@@ -54,6 +54,11 @@ A good task has:
 
 ## Split by real boundaries
 
+Prefer tracer-bullet vertical slices: one narrow behavior that cuts through all
+layers needed to make it real, with its own verification. A completed slice
+should be demoable or checkable without waiting for a later "wire it together"
+task.
+
 Good boundaries:
 
 - data model or schema first,
@@ -65,6 +70,7 @@ Good boundaries:
 Weak boundaries:
 
 - "backend" vs "frontend" when the real boundary is contract vs projection,
+- "write all tests" followed by "write all implementation",
 - one task for storage migration plus UX polish plus runtime cleanup,
 - a task whose only acceptance criterion is "RFC implemented",
 - `xl` as an excuse to keep a bloated task.

@@ -85,6 +85,7 @@ func stringifyFrontmatter(data map[string]any, order []string) (string, error) {
 func serializeDocument(data map[string]any, body string, order []string) (string, error) {
 	sanitizeCanonicalNoteData(data)
 	normalizeOrderedFrontmatter(data)
+	pruneEmptyOptionalFrontmatter(data)
 	fm, err := stringifyFrontmatter(data, order)
 	if err != nil {
 		return "", err
@@ -125,6 +126,66 @@ func normalizeOrderedTransition(value any) orderedMap {
 		}
 	default:
 		return orderedMap{}
+	}
+}
+
+func pruneEmptyOptionalFrontmatter(data map[string]any) []string {
+	noteType := stringField(data, "type")
+	if !managedNoteType(noteType) {
+		return nil
+	}
+	var removed []string
+	for _, key := range emptyOptionalFrontmatterFields(noteType) {
+		value, ok := data[key]
+		if !ok {
+			continue
+		}
+		if isEmptyFrontmatterValue(value) {
+			delete(data, key)
+			removed = append(removed, key)
+		}
+	}
+	return removed
+}
+
+func emptyOptionalFrontmatterFields(noteType string) []string {
+	switch noteType {
+	case "epic":
+		return []string{"owner", "doc_nodes", "started", "blocked_since", "completed", "cancelled_at", "transitions", "tags"}
+	case "task":
+		return []string{
+			"delegation", "ai_tools", "assignee", "domains", "doc_nodes", "blocked_by", "block_reason", "blocks",
+			"started", "review_requested_at", "completed", "cancelled_at", "blocked_since",
+			"verified_by", "verified_at", "verification_summary", "closed_by", "closed_at", "close_summary",
+			"docs_resolution", "transitions", "tags",
+		}
+	case "doc":
+		return []string{
+			"epic", "doc_intent", "canon_for", "domains", "source_of_truth", "stale_when_paths",
+			"last_verified_at", "owner_epic", "verified_at", "deprecated", "superseded_by",
+			"publish_order", "publish_section_title", "redirect_from", "publish_url", "published_at", "tags",
+		}
+	default:
+		return nil
+	}
+}
+
+func isEmptyFrontmatterValue(value any) bool {
+	switch current := value.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(current) == ""
+	case []string:
+		return len(filterStrings(current)) == 0
+	case []any:
+		return len(normalizeList(current)) == 0
+	case []orderedMap:
+		return len(current) == 0
+	case map[string]any:
+		return len(current) == 0
+	default:
+		return false
 	}
 }
 

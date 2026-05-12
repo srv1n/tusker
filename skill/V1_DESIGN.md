@@ -30,6 +30,7 @@ The current work item is a task. Bugs are tasks. Docs are durable pages, not exe
 | When to invoke Tusker | `references/TRIGGERS.md` |
 | Quick capture | `references/QUICK_MODE.md` |
 | Formal task intake | `references/FORMAL_INTAKE.md` |
+| Engineering discipline for coding, tests, debugging, and refactors | `references/ENGINEERING_DISCIPLINE.md` |
 | Canon placement | `references/CANON_LOCATIONS.md` |
 | Decomposing large specs into tasks | `references/TASK_DECOMPOSITION.md` |
 | Obsidian Bases views | `references/BASES.md` |

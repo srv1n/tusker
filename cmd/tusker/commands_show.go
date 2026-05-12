@@ -44,7 +44,7 @@ func showCmd(args Args) error {
 	case "evidence":
 		printSectionOrFallback(note, "## Evidence")
 	case "verification":
-		printSectionOrFallback(note, "## Verification log")
+		printVerification(note, args)
 	case "section":
 		heading := strings.TrimSpace(args.String("section"))
 		if !strings.HasPrefix(heading, "#") {
@@ -55,6 +55,59 @@ func showCmd(args Args) error {
 		fmt.Print(renderCapsule(note))
 	}
 	return nil
+}
+
+func printVerification(note Note, args Args) {
+	var lines []string
+	if summary := strings.TrimSpace(stringField(note.Data, "verification_summary")); summary != "" {
+		lines = append(lines, "Verification: "+summary)
+	}
+	if by := strings.TrimSpace(stringField(note.Data, "verified_by")); by != "" {
+		lines = append(lines, "Verified by: "+by)
+	}
+	if at := strings.TrimSpace(stringField(note.Data, "verified_at")); at != "" {
+		lines = append(lines, "Verified at: "+at)
+	}
+	if summary := strings.TrimSpace(stringField(note.Data, "close_summary")); summary != "" {
+		lines = append(lines, "Close: "+summary)
+	}
+	if by := strings.TrimSpace(stringField(note.Data, "closed_by")); by != "" {
+		lines = append(lines, "Closed by: "+by)
+	}
+	if content := strings.TrimSpace(sectionContent(note.Body, "## Verification log")); content != "" {
+		limit := atoiSafe(args.String("lines"))
+		if limit <= 0 {
+			limit = 5
+		}
+		logLines, total := boundedNonEmptyTail(content, limit)
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, fmt.Sprintf("Verification log: last %d of %d entries", len(logLines), total))
+		lines = append(lines, logLines...)
+		if total > len(logLines) {
+			lines = append(lines, "")
+			lines = append(lines, `Full log: tusker show `+stringField(note.Data, "id")+` --section "Verification log"`)
+		}
+	}
+	if len(lines) == 0 {
+		fmt.Fprintf(os.Stdout, "%s\n(no verification summary or Verification log section)\n", noteHeaderLine(note))
+		return
+	}
+	fmt.Fprintf(os.Stdout, "%s\n\n%s\n", noteHeaderLine(note), strings.Join(lines, "\n"))
+}
+
+func boundedNonEmptyTail(content string, limit int) ([]string, int) {
+	var nonEmpty []string
+	for _, line := range strings.Split(content, "\n") {
+		if strings.TrimSpace(line) != "" {
+			nonEmpty = append(nonEmpty, line)
+		}
+	}
+	if limit >= len(nonEmpty) {
+		return nonEmpty, len(nonEmpty)
+	}
+	return nonEmpty[len(nonEmpty)-limit:], len(nonEmpty)
 }
 
 func printSectionOrFallback(note Note, heading string) {

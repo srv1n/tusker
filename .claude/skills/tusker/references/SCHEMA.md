@@ -56,6 +56,11 @@ Recommended:
 
 Do not add legacy tracker fields such as `record_id`, `schema_version`, `requester`, attestation/signoff fields, record-id mirror fields, or empty optional lifecycle fields. V5 uses the stable `id` plus generated runtime stores; old mirror metadata is noise.
 
+Tusker omits empty optional frontmatter on write. Missing optional lists such as
+`doc_nodes`, `blocked_by`, `blocks`, `ai_tools`, and `tags` mean the same thing
+as an empty list. Missing optional strings such as `assignee` or `block_reason`
+mean unset.
+
 Runtime/dispatch fields:
 
 - Runtime state belongs in generated/runtime stores, not task frontmatter.

@@ -37,3 +37,8 @@ knowledge delta, and verification log. Critical tasks also add rollback.
 Default templates do not include `## Execution plan` or `## Work log`. Those are
 live scratchpads, not durable context. Use evidence summaries, verification
 frontmatter, transitions, and review packets for audit fidelity.
+
+Tusker omits empty optional frontmatter on write. Absence of `doc_nodes`,
+`blocked_by`, `blocks`, `ai_tools`, or `tags` means the same thing as an empty
+list. Use `tusker compact <ID>` to dry-run cleanup for older notes that still
+carry empty fields or disposable placeholder sections.

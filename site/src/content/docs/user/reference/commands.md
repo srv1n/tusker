@@ -41,6 +41,7 @@ tusker new doc --title <title> --node <domain/slug> \
 tusker list [--type epic|task|doc] [--epic <ACR>] [--status <status>] [--open|--closed] [--limit <n>]
 tusker search <text> [--type epic|task|doc] [--epic <ACR>] [--status <status>] [--limit <n>] [--json]
 tusker show <ID> [--capsule|--acceptance|--evidence|--verification|--full]
+tusker compact <ID|--all> [--write] [--json] [--verbose]
 tusker next [--epic <ACR>] [--owner <name>] [--json]
 tusker claim <ID> --as <agent-or-person> [--reason "..."]
 tusker status <ID> <draft|backlog|ready|blocked|active|review|rework|done|cancelled> [--by <actor>] [--reason "..."]
@@ -55,7 +56,7 @@ tusker docs noop <TASK-ID> --node <DOC-NODE> [--reason "<why already current>"]
 tusker docs waive <TASK-ID> <DOC-NODE> --reason "<why no doc change>"
 tusker docs export [--vault <path>] [--site <path>] [--clean] [--public-only] [--json]
 tusker docs dev [--vault <path>] [--site <path>] [--watch] [--port <n>] [--host <host>]
-tusker docs build [--vault <path>] [--site <path>] [--public-only] [--json]
+tusker docs build [--vault <path>] [--site <path>] [--public-only] [--quiet] [--json]
 tusker vault set --path <obsidian-vault>
 tusker vault status [--json]
 tusker vault mount [--repo <path>] [--vault <path>] [--name <folder>] [--force] [--json]
@@ -65,6 +66,7 @@ tusker close <ID> --by <reviewer> [--reason "..."]
 tusker validate [--vault <path>] [--json]
 tusker reindex [--vault <path>] [--json]
 tusker update [--bin-dir <path>] [--no-bin] [--repo <path>] [--repo-only] [--json]
+tusker context audit --file <codex-session.jsonl> [--top <n>] [--json]
 ```
 
 ## Operator Runtime Surface
@@ -114,7 +116,19 @@ Add `--limit <n>` when an epic has a large queue.
 
 Use `tusker show <ID>` for the selected item before opening the markdown file.
 It defaults to `--capsule`; use `--acceptance`, `--evidence`, or
-`--verification` for a single section. `--full` is an explicit escape hatch.
+`--verification` for a bounded summary. `--verification` shows verification
+frontmatter plus a small log tail; use `--section "Verification log"` only when
+the full log is needed. `--full` is an explicit escape hatch.
+
+Use `tusker compact <ID>` when a note looks noisy. It dry-runs by default and
+reports removable empty optional frontmatter plus disposable placeholder
+sections such as empty `Execution plan` or creation-only `Work log`. Add
+`--write` only after checking that the reported removals are scaffolding, not
+durable decisions.
+
+Use `tusker context audit --file <jsonl>` for Codex transcript analysis. Do not
+inspect large JSONL files with `head`, `tail`, broad `rg -n`, or ad hoc scripts
+unless the bounded audit output is insufficient.
 
 ### Pick Work
 
@@ -193,9 +207,13 @@ tusker init --migrate-v5 --dry-run --vault ./tusker
 tusker init --migrate-v5 --yes --vault-only --no-mount --vault ./tusker
 tusker validate --vault ./tusker
 tusker docs export --vault ./tusker --site ./site
-tusker docs build --vault ./tusker --site ./site
+tusker docs build --vault ./tusker --site ./site --quiet
 tusker update --repo . --repo-only --no-bin
 ```
+
+Prefer `tusker docs build --quiet` or `--json` in agent runs. Full Astro output
+is useful for humans watching a terminal, but it is wasted model context on
+successful builds.
 
 `--migrate-v5` converts legacy stories and bugs into tasks, renames epic `index.md` files to `<ACR>.md`, rewrites wikilinks, refreshes V5 templates/views, and fills docs-map nodes for published docs. `--repo-only` refreshes `.agents/skills/tusker` and `.claude/skills/tusker` without touching user-level installs or PATH.
 

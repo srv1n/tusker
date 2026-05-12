@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-05-10T05:18:42Z",
+  "generatedAt": "2026-05-11T10:25:01Z",
   "canon": [
     {
       "topic": "DOC",
@@ -38,7 +38,7 @@
         "start-here",
         "workflow"
       ],
-      "updated": "2026-05-10",
+      "updated": "2026-05-11",
       "summary": "Operating contract for agents working with Tusker in a markdown-first vault."
     }
   ],
@@ -134,7 +134,7 @@
         "internals",
         "design"
       ],
-      "updated": "2026-04-29",
+      "updated": "2026-05-11",
       "summary": "Historical design notes covering the Tusker v1 model and operating assumptions."
     },
     {
@@ -149,7 +149,7 @@
         "repository",
         "overview"
       ],
-      "updated": "2026-05-10",
+      "updated": "2026-05-11",
       "summary": "High-level overview of the Tusker repository, install modes, and key entry points."
     },
     {
@@ -207,7 +207,7 @@
       "tags": [
         "specs"
       ],
-      "updated": "2026-04-29",
+      "updated": "2026-05-10",
       "summary": "Tusker V5 stores durable work in Markdown. Frontmatter is the machine-readable current state; body sections are the human-readable contract and proof."
     },
     {
@@ -302,7 +302,7 @@
       "tags": [
         "specs"
       ],
-      "updated": "2026-05-08",
+      "updated": "2026-05-10",
       "summary": "V5 uses a simple lifecycle:"
     },
     {
@@ -364,7 +364,7 @@
         "cmd/tusker/cli.go"
       ],
       "canonical_status": "draft",
-      "updated": "2026-05-10",
+      "updated": "2026-05-11",
       "summary": "Agent recipe: using Tusker."
     },
     {
@@ -480,7 +480,7 @@
         "CLAUDE.md"
       ],
       "canonical_status": "draft",
-      "updated": "2026-05-10",
+      "updated": "2026-05-11",
       "summary": "Skill and AGENTS guidance."
     },
     {
@@ -644,6 +644,20 @@
       "summary": "Use this when the user wants project docs, a public docs site, a user guide, release notes, support docs, runbooks, or agent-readable canon."
     },
     {
+      "topic": "user/reference/engineering-discipline",
+      "title": "Engineering Discipline",
+      "route": "/user/reference/engineering-discipline/",
+      "source_kind": "repo_doc",
+      "source_id": "skill/references/ENGINEERING_DISCIPLINE.md",
+      "source_path": "skill/references/ENGINEERING_DISCIPLINE.md",
+      "audience": "user",
+      "tags": [
+        "reference"
+      ],
+      "updated": "2026-05-11",
+      "summary": "Use this when the work involves non-trivial implementation, bug diagnosis, tests, refactors, architecture seams, performance regressions, or a request for TDD. It is a compact synthesis of the external engineering skills reviewed for SKL-T-0002; do not vendor those skills wholesale into Tusker."
+    },
+    {
       "topic": "user/reference/formal-intake",
       "title": "Formal intake",
       "route": "/user/reference/formal-intake/",
@@ -654,7 +668,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-10",
+      "updated": "2026-05-11",
       "summary": "Creating a task at risk \u003e= medium. Load this when the work is a feature, migration, refactor with teeth, public docs change, security-sensitive change, or anything with rollout/rollback concerns."
     },
     {
@@ -780,7 +794,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-04-30",
+      "updated": "2026-05-11",
       "summary": "Use this when a PRD/RFC/spec is too large for one agent pass and needs a task stack."
     },
     {
@@ -827,7 +841,7 @@
         "start-here",
         "workflow"
       ],
-      "updated": "2026-05-10",
+      "updated": "2026-05-11",
       "summary": "Operating contract for agents working with Tusker in a markdown-first vault."
     },
     {
@@ -842,7 +856,7 @@
         "start-here",
         "user"
       ],
-      "updated": "2026-05-10",
+      "updated": "2026-05-11",
       "summary": "Overview of the installable Tusker skill bundle and how operators use it."
     }
   ],

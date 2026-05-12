@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -345,7 +346,11 @@ func docsBuildCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	if err := runAstroCommand(options.SiteRoot, "build"); err != nil {
+	if args.Bool("quiet") || args.Bool("json") {
+		if err := runAstroCommandQuiet(options.SiteRoot, "build"); err != nil {
+			return err
+		}
+	} else if err := runAstroCommand(options.SiteRoot, "build"); err != nil {
 		return err
 	}
 	if args.Bool("json") {
@@ -446,6 +451,36 @@ func runAstroCommand(siteRoot string, astroArgs ...string) error {
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 	return cmd.Run()
+}
+
+func runAstroCommandQuiet(siteRoot string, astroArgs ...string) error {
+	binary := filepath.Join(siteRoot, "node_modules", ".bin", "astro")
+	if !fileExists(binary) {
+		return tuskerError(errorNotFound, "Astro binary not found under site/node_modules/.bin/astro", withPath(binary))
+	}
+	cmd := exec.Command(binary, astroArgs...)
+	cmd.Dir = siteRoot
+	cmd.Stdin = os.Stdin
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return tuskerError(errorHookFailed, "docs build failed", withHint(tailNonEmptyLines(out.String(), 20)), withPath(siteRoot))
+	}
+	return nil
+}
+
+func tailNonEmptyLines(text string, limit int) string {
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, line)
+		}
+	}
+	if limit <= 0 || len(lines) <= limit {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[len(lines)-limit:], "\n")
 }
 
 type docsWatchedFile struct {

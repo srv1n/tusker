@@ -1,8 +1,8 @@
 ---
 title: "Overview"
 type: "note"
-created: "2026-05-10"
-updated: "2026-05-10"
+created: "2026-05-12"
+updated: "2026-05-12"
 tags: ["tusker-generated"]
 ---
 
@@ -35,7 +35,7 @@ The design is Codex-first, not Codex-only. Future Claude Code, OpenCode, or othe
 
 # Epic roster
 
-_Auto-generated 2026-05-10T05:18:42Z. This top-level roster intentionally shows epics only. Run `tusker list --type epic` for the live terminal view, then drill into one epic with `tusker list --epic <ACR> --type task --open`._
+_Auto-generated 2026-05-12T08:11:39Z. This top-level roster intentionally shows epics only. Run `tusker list --type epic` for the live terminal view, then drill into one epic with `tusker list --epic <ACR> --type task --open`._
 
 Agents: use this page only to choose the right epic. Do not read every task file. Pick the epic whose summary best matches; if nothing fits and the work will outlive one task, propose a new epic with `tusker new epic --acronym <ACR> --title "<name>" --summary "..."`.
 
@@ -63,6 +63,6 @@ Agents: use this page only to choose the right epic. Do not read every task file
 
 **Summary:** Tight installable skill payload, metadata, references, templates, and distribution readiness.
 
-**Counts:** 1 task, 0 bug tasks, 0 docs (open: 0, done: 1)
+**Counts:** 2 tasks, 0 bug tasks, 0 docs (open: 1, done: 1)
 
 **Drill down:** `tusker list --epic SKL --type task --open`.

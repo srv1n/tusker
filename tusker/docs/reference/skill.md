@@ -14,7 +14,7 @@ publish_lane: "internal"
 publish_path: "reference/skill"
 publish_description: "Skill and AGENTS guidance."
 created: "2026-04-29"
-updated: "2026-05-10"
+updated: "2026-05-11"
 ---
 
 # Skill and AGENTS guidance
@@ -23,7 +23,9 @@ updated: "2026-05-10"
 
 The Tusker skill bundle is the primary agent contract. It teaches Codex, Claude Code, and other compatible harnesses how to read the vault, choose epics, search for existing work, create tasks, move status, attach evidence, resolve docs impact, and close only after verification.
 
-The skill must keep context use proportional to the job. A lookup is not a closeout, and a backlog note is not a migration. Agents should use `tusker list --type epic`, `tusker search`, one-epic `tusker list --epic <ACR> --type task --open`, `tusker show <ID> --capsule`, and exact task paths before broad file reads. They should not read `Attachments/**`, `_system/generated/**`, build logs, or raw runner logs unless the user is explicitly asking for evidence forensics.
+The skill must keep context use proportional to the job. A lookup is not a closeout, and a backlog note is not a migration. Agents should use `tusker list --type epic`, `tusker search`, one-epic `tusker list --epic <ACR> --type task --open`, `tusker show <ID> --capsule`, `tusker compact <ID>` for old noisy notes, and exact task paths before broad file reads. They should not read `Attachments/**`, `_system/generated/**`, build logs, or raw runner logs unless the user is explicitly asking for evidence forensics.
+
+For implementation work, the skill also carries a small engineering-discipline hook backed by `skill/references/ENGINEERING_DISCIPLINE.md`. That reference covers behavior-first tests, vertical slices, mock discipline, feedback-loop debugging, surgical diffs, deep modules, and throwaway prototypes. Keep it as synthesized Tusker guidance; do not paste external skill text into the payload.
 
 | Lane | Use for | Expected proof |
 |---|---|---|
@@ -45,6 +47,7 @@ Use the installed `tusker update --repo . --repo-only --no-bin` only after the i
 | Surface | Status |
 |---|---|
 | Source skill | `skill/SKILL.md` and `skill/references/**` |
+| Engineering discipline reference | `skill/references/ENGINEERING_DISCIPLINE.md` |
 | Codex repo-local skill | `.agents/skills/tusker` |
 | Claude repo-local skill | `.claude/skills/tusker` |
 | Default worker runner | `codex` |

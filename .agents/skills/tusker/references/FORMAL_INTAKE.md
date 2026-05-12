@@ -57,6 +57,24 @@ Substance is checked, not presence. `TODO` is not a contract.
 - **Verification log** — high/critical-only detail when a frontmatter summary is not enough.
 - **Verification/close summaries** — concise frontmatter truth for what was checked and why it closed.
 
+## Acceptance and Verification Quality
+
+For implementation work, write acceptance in terms of observable behavior through
+the public interface or user workflow. Do not define success as "calls helper X"
+or "updates file Y" unless that file is the user-visible artifact.
+
+The verification plan should name the fastest useful feedback loop first:
+
+- behavior test at the public interface;
+- CLI or HTTP smoke command with fixture input;
+- browser check for UI behavior;
+- trace replay or targeted harness for bugs;
+- broader suite only after the focused check passes.
+
+For bug tasks, require a reproduction path before the fix whenever practical.
+For refactors, require proof that behavior is unchanged before and after. For
+the full engineering checklist, load `ENGINEERING_DISCIPLINE.md`.
+
 ## Create-and-populate flow
 
 ```bash

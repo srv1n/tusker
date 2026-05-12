@@ -24,7 +24,7 @@ publish_lane: "internal"
 publish_path: "agents/use-tusker"
 publish_description: "Agent recipe: using Tusker."
 created: "2026-04-29"
-updated: "2026-05-10"
+updated: "2026-05-11"
 ---
 
 # Agent recipe: using Tusker
@@ -47,6 +47,9 @@ Use Tusker as the execution ledger for agent-first software work: choose the rig
 - Start with `tusker list --type epic`; read `tusker/README.md` only when the project overview is needed.
 - Pick an existing epic when the request fits; create a new epic only for a durable workstream.
 - Use `tusker search` before broad repository search when the question is about existing tracker work.
+- Use `tusker context audit --file <jsonl>` before raw-reading Codex JSONL.
+- Use bounded shell reads: `rg -l`, `rg --count`, narrow globs, capped previews,
+  and `tusker docs build --quiet` for successful docs builds.
 - Use task IDs, not story IDs, for executable work.
 - Use `doc_nodes` from `_config/docs-map.yaml`; do not invent them.
 - Treat `_system/generated/**`, `Attachments/**`, raw runner logs, and full build logs as artifact stores, not default context.
@@ -57,13 +60,15 @@ Use Tusker as the execution ledger for agent-first software work: choose the rig
 2. Search for duplicates with `tusker search "<term>" --type task` when creating or updating tracker work.
 3. Drill into one epic with `tusker list --epic <ACR> --type task --open` only when open-task context is needed.
 4. Read a selected task with `tusker show <ID> --capsule` before opening the full markdown.
-5. Create or update the narrowest relevant `task` with clear scope, acceptance criteria, verification plan, and knowledge delta when the work changes durable understanding.
-6. Set `domains` for broad routing and `doc_nodes` for exact docs impact.
-7. Implement the work in the repo or vault, keeping generated indexes rebuildable.
-8. Run focused tests first, then the broader validation path when the change touches shared behavior.
-9. Resolve docs impact for every targeted node with apply, verified no-op, or a waiver with a reason.
-10. Attach evidence or record verification output in the task.
-11. Move the task through review, verification, and close only when gates are satisfied.
+5. For old noisy notes, run `tusker compact <ID>` as a dry-run before opening or editing the full file.
+6. Create or update the narrowest relevant `task` with clear scope, acceptance criteria, verification plan, and knowledge delta when the work changes durable understanding.
+7. Set `domains` for broad routing and `doc_nodes` for exact docs impact.
+8. For non-trivial implementation, bug diagnosis, TDD, or refactors, load `skill/references/ENGINEERING_DISCIPLINE.md` and turn the task into behavior-level checks before editing.
+9. Implement the work in the repo or vault, keeping generated indexes rebuildable.
+10. Run focused tests first, then the broader validation path when the change touches shared behavior.
+11. Resolve docs impact for every targeted node with apply, verified no-op, or a waiver with a reason.
+12. Attach evidence or record verification output in the task.
+13. Move the task through review, verification, and close only when gates are satisfied.
 
 ## Context discipline
 
@@ -95,7 +100,7 @@ Reviewer attribution is explicit. Low/medium auto-close records the configured `
 
 - `tusker validate --vault tusker --json` returns no errors.
 - `tusker reindex --vault tusker --json` regenerates indexes without hand-editing them.
-- Targeted tests for the changed code pass.
+- Targeted behavior-level tests or smoke checks for the changed code pass.
 - `tusker docs check <TASK-ID>` reports each impacted node and the expected docs action.
 - Generated docs outputs are rebuilt when public or agent-readable docs changed.
 
