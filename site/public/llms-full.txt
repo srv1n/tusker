@@ -582,7 +582,7 @@ This is intentionally generated markdown, not a Base. Runtime leases, process id
 - Include `file.name` in table orders so rows are clickable.
 - Do not reference `Orchestration.base`. V5 ships `Epics.base`, `Tasks.base`, `BugTasks.base`, and `Docs.base`.
 
-- Skill and AGENTS guidance | /internal/reference/skill/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-10
+- Skill and AGENTS guidance | /internal/reference/skill/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-11
   Skill and AGENTS guidance.
   source: docs/reference/skill.md
   source_of_truth: skill/SKILL.md, skill/references/**, AGENTS.md
@@ -594,6 +594,8 @@ This is intentionally generated markdown, not a Base. Runtime leases, process id
 The Tusker skill bundle is the primary agent contract. It teaches Codex, Claude Code, and other compatible harnesses how to read the vault, choose epics, search for existing work, create tasks, move status, attach evidence, resolve docs impact, and close only after verification.
 
 The skill must keep context use proportional to the job. A lookup is not a closeout, and a backlog note is not a migration. Agents should use `tusker list --type epic`, `tusker search`, one-epic `tusker list --epic <ACR> --type task --open`, `tusker show <ID> --capsule`, `tusker compact <ID>` for old noisy notes, and exact task paths before broad file reads. They should not read `Attachments/**`, `_system/generated/**`, build logs, or raw runner logs unless the user is explicitly asking for evidence forensics.
+
+For implementation work, the skill also carries a small engineering-discipline hook backed by `skill/references/ENGINEERING_DISCIPLINE.md`. That reference covers behavior-first tests, vertical slices, mock discipline, feedback-loop debugging, surgical diffs, deep modules, and throwaway prototypes. Keep it as synthesized Tusker guidance; do not paste external skill text into the payload.
 
 | Lane | Use for | Expected proof |
 |---|---|---|
@@ -615,6 +617,7 @@ Use the installed `tusker update --repo . --repo-only --no-bin` only after the i
 | Surface | Status |
 |---|---|
 | Source skill | `skill/SKILL.md` and `skill/references/**` |
+| Engineering discipline reference | `skill/references/ENGINEERING_DISCIPLINE.md` |
 | Codex repo-local skill | `.agents/skills/tusker` |
 | Claude repo-local skill | `.claude/skills/tusker` |
 | Default worker runner | `codex` |
@@ -642,7 +645,7 @@ For low/medium risk work, the configured reviewer may run `docs check`, `verify`
 
 Do not hand-edit `.agents/skills/tusker` or `.claude/skills/tusker` as the long-term source. Patch `skill/**`, then refresh the repo-local copies. If a repo-local copy has useful divergence, first promote that guidance back into `skill/**`, then regenerate.
 
-- Agent recipe: using Tusker | /internal/agents/use-tusker/ | audience: agent | mode: how-to | agent_layer: standalone | updated: 2026-05-10
+- Agent recipe: using Tusker | /internal/agents/use-tusker/ | audience: agent | mode: how-to | agent_layer: standalone | updated: 2026-05-11
   Agent recipe: using Tusker.
   source: docs/agents/use-tusker.md
   source_of_truth: skill/SKILL.md, AGENTS.md
@@ -683,11 +686,12 @@ Use Tusker as the execution ledger for agent-first software work: choose the rig
 5. For old noisy notes, run `tusker compact <ID>` as a dry-run before opening or editing the full file.
 6. Create or update the narrowest relevant `task` with clear scope, acceptance criteria, verification plan, and knowledge delta when the work changes durable understanding.
 7. Set `domains` for broad routing and `doc_nodes` for exact docs impact.
-8. Implement the work in the repo or vault, keeping generated indexes rebuildable.
-9. Run focused tests first, then the broader validation path when the change touches shared behavior.
-10. Resolve docs impact for every targeted node with apply, verified no-op, or a waiver with a reason.
-11. Attach evidence or record verification output in the task.
-12. Move the task through review, verification, and close only when gates are satisfied.
+8. For non-trivial implementation, bug diagnosis, TDD, or refactors, load `skill/references/ENGINEERING_DISCIPLINE.md` and turn the task into behavior-level checks before editing.
+9. Implement the work in the repo or vault, keeping generated indexes rebuildable.
+10. Run focused tests first, then the broader validation path when the change touches shared behavior.
+11. Resolve docs impact for every targeted node with apply, verified no-op, or a waiver with a reason.
+12. Attach evidence or record verification output in the task.
+13. Move the task through review, verification, and close only when gates are satisfied.
 
 ## Context discipline
 
@@ -719,7 +723,7 @@ Reviewer attribution is explicit. Low/medium auto-close records the configured `
 
 - `tusker validate --vault tusker --json` returns no errors.
 - `tusker reindex --vault tusker --json` regenerates indexes without hand-editing them.
-- Targeted tests for the changed code pass.
+- Targeted behavior-level tests or smoke checks for the changed code pass.
 - `tusker docs check <TASK-ID>` reports each impacted node and the expected docs action.
 - Generated docs outputs are rebuilt when public or agent-readable docs changed.
 
@@ -1278,7 +1282,7 @@ Open `Dashboard.md`.
 
 There is no shipped `Orchestration.base`. Do not reference it in dashboards or operator instructions.
 
-- Tusker V1 Design Index | /developer/internals/v1-design/ | audience: developer | updated: 2026-04-29
+- Tusker V1 Design Index | /developer/internals/v1-design/ | audience: developer | updated: 2026-05-11
   Historical design notes covering the Tusker v1 model and operating assumptions.
   source: skill/V1_DESIGN.md
   tags: internals, design
@@ -1315,6 +1319,7 @@ The current work item is a task. Bugs are tasks. Docs are durable pages, not exe
 | When to invoke Tusker | `references/TRIGGERS.md` |
 | Quick capture | `references/QUICK_MODE.md` |
 | Formal task intake | `references/FORMAL_INTAKE.md` |
+| Engineering discipline for coding, tests, debugging, and refactors | `references/ENGINEERING_DISCIPLINE.md` |
 | Canon placement | `references/CANON_LOCATIONS.md` |
 | Decomposing large specs into tasks | `references/TASK_DECOMPOSITION.md` |
 | Obsidian Bases views | `references/BASES.md` |
@@ -1332,7 +1337,7 @@ The current work item is a task. Bugs are tasks. Docs are durable pages, not exe
 
 **Runtime state is not tracker state.** Attempts, sessions, and event streams belong to runtime storage. Durable lifecycle truth stays in V5 markdown notes.
 
-- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-05-10
+- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-05-11
   High-level overview of the Tusker repository, install modes, and key entry points.
   source: README.md
   tags: repository, overview
@@ -1567,6 +1572,7 @@ You still get markdown tasks, docs, schema validation, Obsidian views, dashboard
 - [`skill/references/WORKFLOW.md`](skill/references/WORKFLOW.md) — lifecycle
 - [`skill/references/DOCS_PUBLICATION.md`](skill/references/DOCS_PUBLICATION.md) — docs nodes, close gate, and publication flow
 - [`skill/references/RISK_AND_EVIDENCE.md`](skill/references/RISK_AND_EVIDENCE.md) — risk tiers and evidence
+- [`skill/references/ENGINEERING_DISCIPLINE.md`](skill/references/ENGINEERING_DISCIPLINE.md) — behavior-first tests, debugging loops, slicing, and surgical changes
 - [`docs/documentation-model.md`](docs/documentation-model.md) — docs philosophy, layout, Diátaxis, freshness, and publication model
 
 - Tusker Spec Set | /developer/specs/ | audience: developer | updated: 2026-04-29
@@ -3357,7 +3363,191 @@ Published docs may reference selected local assets, and the exporter can copy/re
 - Use `docs/publication.yaml` for repo docs.
 - If docs impact is real, set `doc_nodes` and fill knowledge delta.
 
-- Formal intake | /user/reference/formal-intake/ | audience: user | updated: 2026-05-10
+- Engineering Discipline | /user/reference/engineering-discipline/ | audience: user | updated: 2026-05-11
+  Use this when the work involves non-trivial implementation, bug diagnosis, tests, refactors, architecture seams, performance regressions, or a request for TDD. It is a compact synthesis of the external engineering skills reviewed for SKL-T-0002; do not vendor those skills wholesale into Tusker.
+  source: skill/references/ENGINEERING_DISCIPLINE.md
+  tags: reference
+
+# Engineering Discipline
+
+Use this when the work involves non-trivial implementation, bug diagnosis,
+tests, refactors, architecture seams, performance regressions, or a request for
+TDD. It is a compact synthesis of the external engineering skills reviewed for
+SKL-T-0002; do not vendor those skills wholesale into Tusker.
+
+## Imported Ideas Worth Keeping
+
+| Idea | Tusker form | Why it earns space |
+|---|---|---|
+| Behavior-first tests | Test through the public interface and assert observable outcomes. | Survives refactors and proves user/caller value. |
+| Vertical TDD | One behavior -> one failing check -> minimal implementation -> repeat. | Avoids bulk tests for imagined behavior. |
+| Mock discipline | Mock system boundaries; use real owned code or local stand-ins where practical. | Reduces brittle tests and false confidence. |
+| Feedback-loop diagnosis | Reproduce first, sharpen the loop, then test hypotheses. | Debugging without a loop is mostly vibes. |
+| Falsifiable hypotheses | Rank likely causes and state what would prove or disprove each. | Prevents anchoring on the first plausible story. |
+| Surgical edits | Every changed line should trace to the task. | Keeps diffs reviewable and protects user work. |
+| Deep modules | Prefer small interfaces that hide meaningful behavior. | Improves testability, locality, and agent navigation. |
+| Throwaway prototypes | Prototype only to answer a named question, then delete or absorb. | Keeps exploration from rotting into production. |
+
+Skip the parts that do not fit Tusker: per-repo issue tracker setup,
+copy-pasted global Claude rules, and elaborate multi-agent interface-design
+ceremony unless the user explicitly asks for design alternatives.
+
+## Operating Posture
+
+- State assumptions when they affect design, data, privacy, or user-visible
+  behavior.
+- If the request has multiple plausible meanings, name them and choose only
+  when the safe path is obvious. Ask when a wrong guess would be expensive.
+- Push back on unnecessary abstractions, broad rewrites, or vague goals.
+- Prefer the smallest complete change that satisfies the acceptance contract.
+- Do not improve adjacent code, comments, names, or formatting unless the task
+  requires it.
+- Remove only the dead code or unused imports created by your own change.
+
+## Behavior-First Tests
+
+A good test describes what the system does for a caller, not how internals
+coordinate to do it.
+
+Prefer tests that:
+
+- exercise the public interface or task-level workflow;
+- use real owned code paths;
+- assert observable results, persisted state through the domain interface, or
+  emitted protocol/output;
+- use names that read like capabilities;
+- survive private refactors.
+
+Red flags:
+
+- mocking owned modules or internal collaborators;
+- testing private methods;
+- asserting internal call counts or call order;
+- directly querying storage to prove behavior when a domain read interface
+  exists;
+- tests that fail after a private refactor with no behavior change.
+
+Mock only system boundaries:
+
+- true third-party APIs;
+- remote services outside the repo's control;
+- time, randomness, network, and filesystem seams when deterministic tests need
+  control;
+- local stand-ins for owned infrastructure when available, such as an in-memory
+  adapter or test database.
+
+## Vertical Implementation Loop
+
+Do not treat RED as "write every test" and GREEN as "write every line of
+implementation." That creates tests for guesses.
+
+Use this loop instead:
+
+1. Pick one tracer behavior that crosses the important seam.
+2. Write one failing check for that behavior, or the closest equivalent smoke
+   command when tests are not available.
+3. Implement only enough to pass that check.
+4. Repeat for the next behavior, using what the previous slice taught you.
+5. Refactor only when the checks are green.
+
+Good slices are narrow but complete: they pass through every layer needed to
+make one behavior real. Weak slices are horizontal: "backend first," "UI later,"
+or "all tests now, implementation later" when none of the pieces is independently
+verifiable.
+
+## Debugging Discipline
+
+Before diagnosing a bug, build the feedback loop.
+
+A useful loop is:
+
+- fast enough to run repeatedly;
+- deterministic, or at least has a high reproduction rate for flakes;
+- specific to the user-described symptom;
+- runnable by the agent when possible.
+
+Good loop shapes include failing tests, CLI fixtures, HTTP scripts, browser
+scripts, trace replays, small harnesses, fuzz/property loops, and bisect scripts.
+
+After the loop exists:
+
+1. Reproduce the exact failure the user reported.
+2. Write 3-5 ranked hypotheses.
+3. For each hypothesis, state the prediction that would falsify it.
+4. Probe one variable at a time.
+5. Tag temporary logs with a unique prefix like `[DEBUG-abc123]`.
+6. Turn the minimized repro into a regression test at the correct seam.
+7. Remove temporary instrumentation before declaring done.
+
+If no correct test seam exists, record that as architecture debt. A shallow test
+that cannot reproduce the real bug pattern is not a regression test.
+
+## Architecture Language
+
+Use consistent terms when discussing refactors:
+
+- **Module**: something with an interface and implementation.
+- **Interface**: everything a caller must know: types, invariants, ordering,
+  error modes, configuration, and performance expectations.
+- **Implementation**: the code behind the interface.
+- **Seam**: where behavior can vary without editing the caller.
+- **Adapter**: concrete code that satisfies an interface at a seam.
+- **Depth**: leverage at the interface. A deep module hides meaningful behavior
+  behind a small surface.
+- **Locality**: change and bugs concentrate in one place.
+
+Useful tests:
+
+- Deletion test: if deleting the module removes complexity, it was likely a
+  pass-through. If the complexity reappears across callers, the module earned
+  its keep.
+- Interface test: if tests need to reach past the interface, the module shape is
+  probably wrong.
+- Adapter test: one adapter is a hypothetical seam; two adapters usually means
+  the seam is real.
+
+## Prototypes
+
+Prototype when the question cannot be answered cleanly by inspection.
+
+Rules:
+
+- Name the question the prototype answers.
+- Keep it clearly throwaway and close to the code it informs.
+- Provide one command to run it.
+- Avoid persistence unless persistence is the question.
+- Expose the relevant state after each action or variant switch.
+- When done, delete it or absorb the decision into production code.
+- Capture the decision in the task evidence, an ADR, or a nearby note before the
+  prototype disappears.
+
+## Done Criteria
+
+Before moving implementation work to review:
+
+- The acceptance contract is satisfied through behavior-level checks.
+- Focused checks pass, and broader validation ran when shared behavior changed.
+- Temporary instrumentation and throwaway code are gone or clearly marked.
+- The diff contains no speculative features or unrelated cleanup.
+- Docs impact is applied, verified no-op, or waived with a real reason.
+- Evidence names what was tested and what remains risky.
+
+## Source Notes
+
+This guidance was synthesized from:
+
+- Matt Pocock's engineering skills, especially TDD, diagnose, architecture, and
+  vertical issue-slicing guidance:
+  https://github.com/mattpocock/skills/tree/main/skills/engineering
+- Matt Pocock's good/bad test examples:
+  https://github.com/mattpocock/skills/blob/main/skills/engineering/tdd/tests.md
+- Forrest Chang's Karpathy-inspired coding guidelines:
+  https://github.com/forrestchang/andrej-karpathy-skills
+
+Keep this file as Tusker-native guidance. Link sources for attribution; do not
+copy their full text into the skill payload.
+
+- Formal intake | /user/reference/formal-intake/ | audience: user | updated: 2026-05-11
   Creating a task at risk >= medium. Load this when the work is a feature, migration, refactor with teeth, public docs change, security-sensitive change, or anything with rollout/rollback concerns.
   source: skill/references/FORMAL_INTAKE.md
   tags: reference
@@ -3420,6 +3610,24 @@ Substance is checked, not presence. `TODO` is not a contract.
 - **Evidence** — concise proof after execution: PRs, packets, screenshots, or short log tails.
 - **Verification log** — high/critical-only detail when a frontmatter summary is not enough.
 - **Verification/close summaries** — concise frontmatter truth for what was checked and why it closed.
+
+## Acceptance and Verification Quality
+
+For implementation work, write acceptance in terms of observable behavior through
+the public interface or user workflow. Do not define success as "calls helper X"
+or "updates file Y" unless that file is the user-visible artifact.
+
+The verification plan should name the fastest useful feedback loop first:
+
+- behavior test at the public interface;
+- CLI or HTTP smoke command with fixture input;
+- browser check for UI behavior;
+- trace replay or targeted harness for bugs;
+- broader suite only after the focused check passes.
+
+For bug tasks, require a reproduction path before the fix whenever practical.
+For refactors, require proof that behavior is unchanged before and after. For
+the full engineering checklist, load `ENGINEERING_DISCIPLINE.md`.
 
 ## Create-and-populate flow
 
@@ -4313,7 +4521,7 @@ Validator failures that matter early in V5:
 - Task: `epics/<ACR>/<ACR>-T-NNNN.md`
 - Doc: `docs/<domain>/<slug>.md`
 
-- Task Decomposition | /user/reference/task-decomposition/ | audience: user | updated: 2026-04-30
+- Task Decomposition | /user/reference/task-decomposition/ | audience: user | updated: 2026-05-11
   Use this when a PRD/RFC/spec is too large for one agent pass and needs a task stack.
   source: skill/references/TASK_DECOMPOSITION.md
   tags: reference
@@ -4358,6 +4566,11 @@ A good task has:
 
 ## Split by real boundaries
 
+Prefer tracer-bullet vertical slices: one narrow behavior that cuts through all
+layers needed to make it real, with its own verification. A completed slice
+should be demoable or checkable without waiting for a later "wire it together"
+task.
+
 Good boundaries:
 
 - data model or schema first,
@@ -4369,6 +4582,7 @@ Good boundaries:
 Weak boundaries:
 
 - "backend" vs "frontend" when the real boundary is contract vs projection,
+- "write all tests" followed by "write all implementation",
 - one task for storage migration plus UX polish plus runtime cleanup,
 - a task whose only acceptance criterion is "RFC implemented",
 - `xl` as an excuse to keep a bloated task.
@@ -4588,7 +4802,7 @@ When a task changes durable understanding, fill:
 | Topic | Before | After | Audience | Target doc nodes |
 |---|---|---|---|---|
 
-- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-05-10
+- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-05-11
   Operating contract for agents working with Tusker in a markdown-first vault.
   source: skill/SKILL.md
   tags: start-here, workflow
@@ -4625,6 +4839,18 @@ Tell the user the ID and the epic rationale after creating work.
 
 For syntax, read `references/COMMANDS.md` only when the command is not obvious.
 
+## Engineering Discipline
+
+For non-trivial implementation, bug diagnosis, tests, or refactors:
+
+- Convert the request into behavior-level success criteria before editing.
+- Work in vertical slices: one observable behavior, one check, one implementation step.
+- Test through public interfaces. Mock only system boundaries you do not control.
+- Build a fast feedback loop before debugging; if you cannot reproduce, say what you tried and ask for a real artifact.
+- Keep changes surgical. No speculative abstractions, drive-by cleanup, or unrelated formatting churn.
+
+For the fuller checklist, load `references/ENGINEERING_DISCIPLINE.md`.
+
 ## Non-Negotiables
 
 - Use `task` as the execution unit. A bug is `task(kind: bug)`.
@@ -4658,6 +4884,7 @@ For syntax, read `references/COMMANDS.md` only when the command is not obvious.
 | Frontmatter, enums, sections | `references/SCHEMA.md` |
 | Medium/high/critical task intake | `references/FORMAL_INTAKE.md` |
 | Risk, evidence, verification bar | `references/RISK_AND_EVIDENCE.md` |
+| Non-trivial implementation, bugs, TDD, refactors, architecture seams | `references/ENGINEERING_DISCIPLINE.md` |
 | Lifecycle/status rules | `references/WORKFLOW.md` |
 | Docs-map, Diátaxis, docs close gate, publishing | `references/DOCS_PUBLICATION.md` |
 | Durable docs page creation | `references/DOC_PAGES.md` |
@@ -4674,7 +4901,7 @@ Use `tusker new ...` when possible; it writes the right templates. For docs
 work, run the docs inspection commands from `references/COMMANDS.md`, then load
 `references/DOCS_PUBLICATION.md` before drafting prose.
 
-- Skill Bundle | /user/start-here/skill-bundle/ | audience: user | updated: 2026-05-10
+- Skill Bundle | /user/start-here/skill-bundle/ | audience: user | updated: 2026-05-11
   Overview of the installable Tusker skill bundle and how operators use it.
   source: skill/README.md
   tags: start-here, user
@@ -4702,6 +4929,8 @@ tusker update
 ```
 
 Use `tusker search` as the default tracker lookup before broad filesystem search. It searches first-party task, epic, and doc notes while skipping attachments, generated indexes, runtime state, and raw logs.
+
+For non-trivial implementation, bugs, tests, or refactors, start with `SKILL.md`, then read `references/ENGINEERING_DISCIPLINE.md` for the behavior-first testing, diagnosis, slicing, and surgical-diff checklist.
 
 For documentation work, start with `SKILL.md`, then read `references/DOCS_PUBLICATION.md`. Published sites expose `site/public/canon-manifest.json` and `site/public/llms.txt` so agents can find current docs without spelunking stale files. Canon is explicit: `approved` is current, `draft` needs checking, and `deprecated`/`historical` is archaeology.
 

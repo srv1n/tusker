@@ -22,6 +22,8 @@ tusker update
 
 Use `tusker search` as the default tracker lookup before broad filesystem search. It searches first-party task, epic, and doc notes while skipping attachments, generated indexes, runtime state, and raw logs.
 
+For non-trivial implementation, bugs, tests, or refactors, start with `SKILL.md`, then read `references/ENGINEERING_DISCIPLINE.md` for the behavior-first testing, diagnosis, slicing, and surgical-diff checklist.
+
 For documentation work, start with `SKILL.md`, then read `references/DOCS_PUBLICATION.md`. Published sites expose `site/public/canon-manifest.json` and `site/public/llms.txt` so agents can find current docs without spelunking stale files. Canon is explicit: `approved` is current, `draft` needs checking, and `deprecated`/`historical` is archaeology.
 
 Run `tusker update` after pulling or rebuilding Tusker. It refreshes the installed CLI link and the installed Tusker skill bundle from the currently running binary.

@@ -228,4 +228,5 @@ You still get markdown tasks, docs, schema validation, Obsidian views, dashboard
 - [`skill/references/WORKFLOW.md`](skill/references/WORKFLOW.md) — lifecycle
 - [`skill/references/DOCS_PUBLICATION.md`](skill/references/DOCS_PUBLICATION.md) — docs nodes, close gate, and publication flow
 - [`skill/references/RISK_AND_EVIDENCE.md`](skill/references/RISK_AND_EVIDENCE.md) — risk tiers and evidence
+- [`skill/references/ENGINEERING_DISCIPLINE.md`](skill/references/ENGINEERING_DISCIPLINE.md) — behavior-first tests, debugging loops, slicing, and surgical changes
 - [`docs/documentation-model.md`](docs/documentation-model.md) — docs philosophy, layout, Diátaxis, freshness, and publication model

@@ -40,7 +40,9 @@ Out:
 
 ## Task stack
 
-_No open tasks. Use `tusker list --epic SKL --type task --status done` for closed history._
+_Open tasks only. Closed/cancelled work is intentionally omitted; use `tusker list --epic SKL --type task --status done` for closed history._
+
+- [[SKL-T-0002]] — Import engineering discipline into Tusker skill (review, p2, low)
 
 ## Open questions
 

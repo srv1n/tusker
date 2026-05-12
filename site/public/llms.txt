@@ -26,10 +26,10 @@ Compact catalog of exported docs.
 - Obsidian and view requirements | /internal/reference/obsidian/ | audience: developer | mode: how-to | updated: 2026-05-04
   Obsidian and view requirements.
 
-- Skill and AGENTS guidance | /internal/reference/skill/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-10
+- Skill and AGENTS guidance | /internal/reference/skill/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-11
   Skill and AGENTS guidance.
 
-- Agent recipe: using Tusker | /internal/agents/use-tusker/ | audience: agent | mode: how-to | agent_layer: standalone | updated: 2026-05-10
+- Agent recipe: using Tusker | /internal/agents/use-tusker/ | audience: agent | mode: how-to | agent_layer: standalone | updated: 2026-05-11
   Agent recipe: using Tusker.
 
 - Tusker Documentation Model | /developer/documentation-model/ | audience: developer | updated: 2026-04-29
@@ -47,10 +47,10 @@ Compact catalog of exported docs.
 - Orchestration Runbook | /developer/internals/orchestration-runbook/ | audience: developer | updated: 2026-05-08
   The public V5 CLI tracks task truth. Runtime orchestration is an operator/internal surface and must not be presented as the normal task workflow.
 
-- Tusker V1 Design Index | /developer/internals/v1-design/ | audience: developer | updated: 2026-04-29
+- Tusker V1 Design Index | /developer/internals/v1-design/ | audience: developer | updated: 2026-05-11
   Historical design notes covering the Tusker v1 model and operating assumptions.
 
-- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-05-10
+- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-05-11
   High-level overview of the Tusker repository, install modes, and key entry points.
 
 - Tusker Spec Set | /developer/specs/ | audience: developer | updated: 2026-04-29
@@ -98,7 +98,10 @@ Compact catalog of exported docs.
 - Docs publication | /user/reference/docs-publication/ | audience: user | updated: 2026-05-08
   Use this when the user wants project docs, a public docs site, a user guide, release notes, support docs, runbooks, or agent-readable canon.
 
-- Formal intake | /user/reference/formal-intake/ | audience: user | updated: 2026-05-10
+- Engineering Discipline | /user/reference/engineering-discipline/ | audience: user | updated: 2026-05-11
+  Use this when the work involves non-trivial implementation, bug diagnosis, tests, refactors, architecture seams, performance regressions, or a request for TDD. It is a compact synthesis of the external engineering skills reviewed for SKL-T-0002; do not vendor those skills wholesale into Tusker.
+
+- Formal intake | /user/reference/formal-intake/ | audience: user | updated: 2026-05-11
   Creating a task at risk >= medium. Load this when the work is a feature, migration, refactor with teeth, public docs change, security-sensitive change, or anything with rollout/rollback concerns.
 
 - Optional plugins policy | /user/reference/optional-plugins/ | audience: user | updated: 2026-04-21
@@ -125,7 +128,7 @@ Compact catalog of exported docs.
 - Schema | /user/reference/schema/ | audience: user | updated: 2026-05-10
   Frontmatter is the machine layer. The note body is the human layer. V5 makes **task** the execution unit and keeps docs as durable knowledge pages.
 
-- Task Decomposition | /user/reference/task-decomposition/ | audience: user | updated: 2026-04-30
+- Task Decomposition | /user/reference/task-decomposition/ | audience: user | updated: 2026-05-11
   Use this when a PRD/RFC/spec is too large for one agent pass and needs a task stack.
 
 - Triggers | /user/reference/triggers/ | audience: user | updated: 2026-05-10
@@ -134,8 +137,8 @@ Compact catalog of exported docs.
 - Workflow | /user/reference/workflow/ | audience: user | updated: 2026-05-08
   Short reference for the V5 task lifecycle.
 
-- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-05-10
+- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-05-11
   Operating contract for agents working with Tusker in a markdown-first vault.
 
-- Skill Bundle | /user/start-here/skill-bundle/ | audience: user | updated: 2026-05-10
+- Skill Bundle | /user/start-here/skill-bundle/ | audience: user | updated: 2026-05-11
   Overview of the installable Tusker skill bundle and how operators use it.

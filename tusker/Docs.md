@@ -1,14 +1,14 @@
 ---
 title: "Docs Catalog"
 type: "note"
-created: "2026-05-10"
-updated: "2026-05-10"
+created: "2026-05-12"
+updated: "2026-05-12"
 tags: ["docs-catalog", "tusker-generated"]
 ---
 
 # Docs Catalog
 
-_Auto-generated 2026-05-10T06:21:29Z from `_config/docs-map.yaml`. Diátaxis mode is metadata; navigation is grouped by reader intent._
+_Auto-generated 2026-05-12T08:11:39Z from `_config/docs-map.yaml`. Diátaxis mode is metadata; navigation is grouped by reader intent._
 
 ## Guides
 

@@ -21,7 +21,7 @@ tusker:
     - "cmd/tusker/cli.go"
   summary: "Agent recipe: using Tusker."
   tags: []
-  updated: "2026-05-10"
+  updated: "2026-05-11"
 ---
 
 # Agent recipe: using Tusker
@@ -60,11 +60,12 @@ Use Tusker as the execution ledger for agent-first software work: choose the rig
 5. For old noisy notes, run `tusker compact <ID>` as a dry-run before opening or editing the full file.
 6. Create or update the narrowest relevant `task` with clear scope, acceptance criteria, verification plan, and knowledge delta when the work changes durable understanding.
 7. Set `domains` for broad routing and `doc_nodes` for exact docs impact.
-8. Implement the work in the repo or vault, keeping generated indexes rebuildable.
-9. Run focused tests first, then the broader validation path when the change touches shared behavior.
-10. Resolve docs impact for every targeted node with apply, verified no-op, or a waiver with a reason.
-11. Attach evidence or record verification output in the task.
-12. Move the task through review, verification, and close only when gates are satisfied.
+8. For non-trivial implementation, bug diagnosis, TDD, or refactors, load `skill/references/ENGINEERING_DISCIPLINE.md` and turn the task into behavior-level checks before editing.
+9. Implement the work in the repo or vault, keeping generated indexes rebuildable.
+10. Run focused tests first, then the broader validation path when the change touches shared behavior.
+11. Resolve docs impact for every targeted node with apply, verified no-op, or a waiver with a reason.
+12. Attach evidence or record verification output in the task.
+13. Move the task through review, verification, and close only when gates are satisfied.
 
 ## Context discipline
 
@@ -96,7 +97,7 @@ Reviewer attribution is explicit. Low/medium auto-close records the configured `
 
 - `tusker validate --vault tusker --json` returns no errors.
 - `tusker reindex --vault tusker --json` regenerates indexes without hand-editing them.
-- Targeted tests for the changed code pass.
+- Targeted behavior-level tests or smoke checks for the changed code pass.
 - `tusker docs check <TASK-ID>` reports each impacted node and the expected docs action.
 - Generated docs outputs are rebuilt when public or agent-readable docs changed.
 

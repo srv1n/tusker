@@ -14,7 +14,7 @@ tusker:
   tags:
     - "start-here"
     - "workflow"
-  updated: "2026-05-10"
+  updated: "2026-05-11"
   verified_at: "2026-04-28"
 ---
 
@@ -50,6 +50,18 @@ Tell the user the ID and the epic rationale after creating work.
 
 For syntax, read `references/COMMANDS.md` only when the command is not obvious.
 
+## Engineering Discipline
+
+For non-trivial implementation, bug diagnosis, tests, or refactors:
+
+- Convert the request into behavior-level success criteria before editing.
+- Work in vertical slices: one observable behavior, one check, one implementation step.
+- Test through public interfaces. Mock only system boundaries you do not control.
+- Build a fast feedback loop before debugging; if you cannot reproduce, say what you tried and ask for a real artifact.
+- Keep changes surgical. No speculative abstractions, drive-by cleanup, or unrelated formatting churn.
+
+For the fuller checklist, load `references/ENGINEERING_DISCIPLINE.md`.
+
 ## Non-Negotiables
 
 - Use `task` as the execution unit. A bug is `task(kind: bug)`.
@@ -83,6 +95,7 @@ For syntax, read `references/COMMANDS.md` only when the command is not obvious.
 | Frontmatter, enums, sections | `references/SCHEMA.md` |
 | Medium/high/critical task intake | `references/FORMAL_INTAKE.md` |
 | Risk, evidence, verification bar | `references/RISK_AND_EVIDENCE.md` |
+| Non-trivial implementation, bugs, TDD, refactors, architecture seams | `references/ENGINEERING_DISCIPLINE.md` |
 | Lifecycle/status rules | `references/WORKFLOW.md` |
 | Docs-map, Diátaxis, docs close gate, publishing | `references/DOCS_PUBLICATION.md` |
 | Durable docs page creation | `references/DOC_PAGES.md` |

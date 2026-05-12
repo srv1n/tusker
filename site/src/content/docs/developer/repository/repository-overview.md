@@ -11,7 +11,7 @@ tusker:
   tags:
     - "repository"
     - "overview"
-  updated: "2026-05-10"
+  updated: "2026-05-11"
 ---
 
 # Tusker
@@ -244,4 +244,5 @@ You still get markdown tasks, docs, schema validation, Obsidian views, dashboard
 - [`skill/references/WORKFLOW.md`](/user/reference/workflow/) — lifecycle
 - [`skill/references/DOCS_PUBLICATION.md`](/user/reference/docs-publication/) — docs nodes, close gate, and publication flow
 - [`skill/references/RISK_AND_EVIDENCE.md`](/user/reference/risk-and-evidence/) — risk tiers and evidence
+- [`skill/references/ENGINEERING_DISCIPLINE.md`](/user/reference/engineering-discipline/) — behavior-first tests, debugging loops, slicing, and surgical changes
 - [`docs/documentation-model.md`](/developer/documentation-model/) — docs philosophy, layout, Diátaxis, freshness, and publication model
