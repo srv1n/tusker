@@ -85,7 +85,7 @@ Supported inputs:
 
 | Input | Meaning |
 |---|---|
-| `[Tusker v5 CLI surface](/internal/reference/cli/)` | doc node |
+| `reference/cli` | doc node |
 | `MEM` | epic |
 | `MEM-T-0007` | task |
 | relative markdown links | local links from source doc |

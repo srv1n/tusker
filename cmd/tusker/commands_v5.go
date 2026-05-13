@@ -329,6 +329,9 @@ func verifyV5Cmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	if isV6Schema(note.Data) {
+		return verifyV6TaskCmd(vaultPath, note, args)
+	}
 	if stringField(note.Data, "type") != "task" {
 		return tuskerError(errorInvalidArg, fmt.Sprintf(`verify only supports V5 tasks, got "%s"`, stringField(note.Data, "type")), withContext(map[string]any{"id": id, "type": stringField(note.Data, "type")}))
 	}
@@ -383,6 +386,9 @@ func closeV5Cmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	if isV6Schema(note.Data) {
+		return closeV6TaskCmd(vaultPath, note, args)
+	}
 	if stringField(note.Data, "type") != "task" {
 		return tuskerError(errorInvalidArg, fmt.Sprintf(`close only supports V5 tasks, got "%s"`, stringField(note.Data, "type")), withContext(map[string]any{"id": id, "type": stringField(note.Data, "type")}))
 	}
@@ -401,6 +407,19 @@ func closeV5Cmd(args Args) error {
 	}
 	if len(normalizeList(data["doc_nodes"])) > 0 && !docsImpactResolved(data) {
 		return tuskerError(errorDocsImpactUnresolved, id+": docs impact is unresolved", withHint("run `tusker docs check "+id+"`, then apply or waive each node"))
+	}
+	if len(normalizeList(data["knowledge_nodes"])) > 0 {
+		if hasV6Vault(vaultPath) {
+			index, err := v6IndexVault(vaultPath)
+			if err != nil {
+				return err
+			}
+			if issues := knowledgeImpactFreshnessIssues(data, v6FreshnessByNode(index)); len(issues) > 0 {
+				return tuskerError(errorDocsImpactUnresolved, id+": knowledge impact is stale or unresolved: "+strings.Join(issues, "; "), withHint("run `tusker knowledge check "+id+"`, then apply, noop, or waive each node with current sources"))
+			}
+		} else if !knowledgeImpactResolved(data) {
+			return tuskerError(errorDocsImpactUnresolved, id+": knowledge impact is unresolved", withHint("run `tusker knowledge check "+id+"`, then apply, noop, or waive each node"))
+		}
 	}
 	date := todayISO()
 	now := time.Now().UTC().Format(time.RFC3339)

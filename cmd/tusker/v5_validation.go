@@ -134,6 +134,11 @@ func validateV5Note(note Note, ctx validationContext, where string) ([]Issue, []
 				errors = append(errors, issue(errorUnknownDocNode, fmt.Sprintf(`unknown doc_node "%s"`, node), where, "add it to _config/docs-map.yaml or fix the task", map[string]any{"doc_node": node}))
 			}
 		}
+		for _, node := range normalizeList(data["knowledge_nodes"]) {
+			if len(ctx.V6KnowledgeNodes) > 0 && !ctx.V6KnowledgeNodes[node] {
+				errors = append(errors, issue(errorUnknownDocNode, fmt.Sprintf(`unknown V6 knowledge_node "%s"`, node), where, "run `tusker knowledge list` and fix knowledge_nodes", map[string]any{"knowledge_node": node}))
+			}
+		}
 		for _, row := range parseKnowledgeDeltaRows(body) {
 			for _, node := range row.DocNodes {
 				if _, ok := ctx.DocsMap.Node(node); !ok {
@@ -157,6 +162,15 @@ func validateV5Note(note Note, ctx validationContext, where string) ([]Issue, []
 		}
 		if stringField(data, "status") == "done" && len(normalizeList(data["doc_nodes"])) > 0 && !docsImpactResolved(data) {
 			errors = append(errors, issue(errorDocsImpactUnresolved, `task has doc_nodes but docs impact is unresolved`, where, "run `tusker docs check`, then `tusker docs apply` or `tusker docs waive` for each node", map[string]any{"doc_nodes": normalizeList(data["doc_nodes"])}))
+		}
+		if stringField(data, "status") == "done" && len(normalizeList(data["knowledge_nodes"])) > 0 {
+			if len(ctx.V6Freshness) > 0 {
+				if issues := knowledgeImpactFreshnessIssues(data, ctx.V6Freshness); len(issues) > 0 {
+					errors = append(errors, issue(errorDocsImpactUnresolved, `task has stale or unresolved V6 knowledge_nodes`, where, "run `tusker knowledge check`, then apply/noop/waive each node with current sources", map[string]any{"knowledge_nodes": normalizeList(data["knowledge_nodes"]), "issues": issues}))
+				}
+			} else if !knowledgeImpactResolved(data) {
+				errors = append(errors, issue(errorDocsImpactUnresolved, `task has unresolved V6 knowledge_nodes`, where, "run `tusker knowledge check`, then apply/noop/waive each node", map[string]any{"knowledge_nodes": normalizeList(data["knowledge_nodes"])}))
+			}
 		}
 	}
 	return errors, warnings
@@ -276,7 +290,7 @@ func knowledgeDeltaColumn(value string) string {
 	switch value {
 	case "change", "change_type", "type":
 		return "change_type"
-	case "doc_node", "doc_nodes", "target_doc_nodes", "target_docs", "targets":
+	case "doc_node", "doc_nodes", "knowledge_node", "knowledge_nodes", "target_doc_nodes", "target_docs", "target_knowledge_nodes", "target_knowledge", "targets":
 		return "doc_nodes"
 	default:
 		return value

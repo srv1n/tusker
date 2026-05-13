@@ -125,7 +125,7 @@ func parseCLI(argv []string) (string, Args) {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "new", "vault", "daemon", "projects", "runs", "context":
+	case "docs", "domain", "knowledge", "publish", "new", "vault", "daemon", "projects", "runs", "context":
 		return true
 	default:
 		return false
@@ -245,6 +245,55 @@ func run(command string, args Args) (int, error) {
 	case "docs":
 		printDocsHelp()
 		return 0, nil
+	case "domain list":
+		return 0, domainListCmd(args)
+	case "domain show":
+		return 0, domainShowCmd(args)
+	case "domain new":
+		return 0, domainNewCmd(args)
+	case "domain canon":
+		return 0, domainCanonCmd(args)
+	case "domain graph":
+		return 0, domainGraphCmd(args)
+	case "domain":
+		printDomainHelp()
+		return 0, nil
+	case "knowledge map":
+		return 0, knowledgeMapCmd(args)
+	case "knowledge list":
+		return 0, knowledgeListCmd(args)
+	case "knowledge show":
+		return 0, knowledgeShowCmd(args)
+	case "knowledge route":
+		return 0, knowledgeRouteCmd(args)
+	case "knowledge freshness":
+		return 0, knowledgeFreshnessCmd(args)
+	case "knowledge check":
+		return 0, knowledgeCheckCmd(args)
+	case "knowledge apply":
+		return 0, knowledgeApplyCmd(args)
+	case "knowledge noop":
+		return 0, knowledgeNoopCmd(args)
+	case "knowledge waive":
+		return 0, knowledgeWaiveCmd(args)
+	case "knowledge new":
+		return 0, knowledgeNewCmd(args)
+	case "knowledge":
+		printKnowledgeHelp()
+		return 0, nil
+	case "publish export":
+		return 0, publishExportCmd(args)
+	case "publish build":
+		return 0, publishBuildCmd(args)
+	case "publish dev":
+		return 0, publishDevCmd(args)
+	case "publish llms":
+		return 0, publishLLMSCmd(args)
+	case "publish skill":
+		return 0, publishSkillCmd(args)
+	case "publish":
+		printPublishHelp()
+		return 0, nil
 	case "vault set":
 		return 0, vaultSetCmd(args)
 	case "vault status":
@@ -300,6 +349,8 @@ func run(command string, args Args) (int, error) {
 	case "runs":
 		printRunsHelp()
 		return 0, nil
+	case "graph":
+		return 0, graphCmd(args)
 	case "refresh":
 		return 0, refreshCmd(args)
 	case "update":
@@ -350,6 +401,18 @@ func run(command string, args Args) (int, error) {
 		return 0, nil
 	case "help docs", "help docs init", "help docs model", "help docs map", "help docs catalog", "help docs freshness", "help docs check", "help docs apply", "help docs noop", "help docs waive", "help docs export", "help docs dev", "help docs build":
 		printDocsHelp()
+		return 0, nil
+	case "help domain", "help domain list", "help domain show", "help domain new", "help domain canon", "help domain graph":
+		printDomainHelp()
+		return 0, nil
+	case "help knowledge", "help knowledge map", "help knowledge list", "help knowledge show", "help knowledge route", "help knowledge freshness", "help knowledge check", "help knowledge apply", "help knowledge noop", "help knowledge waive", "help knowledge new":
+		printKnowledgeHelp()
+		return 0, nil
+	case "help publish", "help publish export", "help publish build", "help publish dev", "help publish llms", "help publish skill":
+		printPublishHelp()
+		return 0, nil
+	case "help graph":
+		printGraphHelp()
 		return 0, nil
 	case "help vault", "help vault set", "help vault status", "help vault mount", "help vault unmount", "help vault repair", "help vault move":
 		printVaultHelp()
@@ -411,6 +474,10 @@ Commands:
   claim               assign a ready/rework task and move it active
   evidence            attach proof to a V5 task
   docs                check, apply, waive, export, build, or preview docs
+  domain              inspect and create V6 domain knowledge folders
+  knowledge           route, inspect, freshness-check, and resolve V6 knowledge
+  publish             generate V6 site, LLM, and project-skill projections
+  graph               inspect a bounded V6 graph neighborhood
   vault               symlink repo trackers into a shared Obsidian vault
   daemon              operator loop for registered local projects
   projects            register repositories for daemon pickup
@@ -472,6 +539,14 @@ func printCommandHelp(command string) bool {
 		printReindexHelp()
 	case "docs", "docs init", "docs model", "docs map", "docs catalog", "docs freshness", "docs check", "docs apply", "docs noop", "docs waive", "docs export", "docs dev", "docs build":
 		printDocsHelp()
+	case "domain", "domain list", "domain show", "domain new", "domain canon", "domain graph":
+		printDomainHelp()
+	case "knowledge", "knowledge map", "knowledge list", "knowledge show", "knowledge route", "knowledge freshness", "knowledge check", "knowledge apply", "knowledge noop", "knowledge waive", "knowledge new":
+		printKnowledgeHelp()
+	case "publish", "publish export", "publish build", "publish dev", "publish llms", "publish skill":
+		printPublishHelp()
+	case "graph":
+		printGraphHelp()
 	case "vault", "vault set", "vault status", "vault mount", "vault unmount", "vault repair", "vault move":
 		printVaultHelp()
 	case "daemon", "daemon run", "daemon status", "daemon limits":
@@ -560,6 +635,68 @@ Purpose:
   smoke path for checking whether active/rework tasks are picked up.`)
 }
 
+func printDomainHelp() {
+	fmt.Println(`Usage:
+  tusker domain list [--json]
+  tusker domain show <domain-id> [--capsule|--full|--json]
+  tusker domain new <domain-id> --title "..." [--summary "..."]
+  tusker domain canon <domain-id> [--full]
+  tusker domain graph <domain-id> [--depth 1] [--json]
+
+Purpose:
+  Inspect and create V6 source-truth domain folders under tusker/domains/**.
+  Domains route agents and humans to current canon before task proof history.
+
+Examples:
+  tusker domain list
+  tusker domain show runtime --capsule
+  tusker domain new billing --title "Billing" --summary "Plans and invoices."`)
+}
+
+func printKnowledgeHelp() {
+	fmt.Println(`Usage:
+  tusker knowledge map [--json]
+  tusker knowledge list [--domain <id>] [--json]
+  tusker knowledge new <node> --title "..." [--kind reference] [--source <paths>]
+  tusker knowledge show <node> [--capsule|--full|--section <name>|--json]
+  tusker knowledge route "<intent>" [--limit <n>] [--json]
+  tusker knowledge freshness [--stale] [--json]
+  tusker knowledge check <TASK-ID> [--json]
+  tusker knowledge apply <TASK-ID> --node <node> --reason "..."
+  tusker knowledge noop <TASK-ID> --node <node> --reason "..."
+  tusker knowledge waive <TASK-ID> --node <node> --reason "..."
+
+Purpose:
+  Operate the V6 knowledge graph. This is source truth, not publication output.
+
+Examples:
+  tusker knowledge route "reviewer lane auto close"
+  tusker knowledge show runtime/reference/reviewer-lane --capsule
+  tusker knowledge freshness --stale`)
+}
+
+func printPublishHelp() {
+	fmt.Println(`Usage:
+  tusker publish export [--site ./site]
+  tusker publish build [--site ./site] [--quiet]
+  tusker publish dev [--site ./site] [--host 127.0.0.1] [--port 4321]
+  tusker publish llms [--site ./site]
+  tusker publish skill [--out ./dist/project-skill]
+
+Purpose:
+  Generate V6 projections from tusker/domains/**. Source truth stays in the
+  vault; site, LLM lanes, and project-skill packages are disposable output.`)
+}
+
+func printGraphHelp() {
+	fmt.Println(`Usage:
+  tusker graph <node-or-task-or-domain> [--depth 1] [--json]
+
+Purpose:
+  Inspect a bounded V6 graph neighborhood across domains, knowledge nodes,
+  tasks, and epics.`)
+}
+
 func printVaultHelp() {
 	fmt.Println(`Usage:
   tusker vault set --path <obsidian-vault>
@@ -589,7 +726,9 @@ Examples:
 func printInitHelp() {
 	fmt.Println(`Usage:
   tusker init [--vault <path>] [--yes] [--fresh]
+  tusker init --profile generic|library|app|cli|infra|tusker [--yes] [--fresh]
   tusker init --migrate-v5 [--vault <path>] [--yes] [--vault-only]
+  tusker init --migrate-v6 --dry-run [--vault <path>]
 
 What it does:
   1. initializes a fresh vault if needed
@@ -602,11 +741,19 @@ With --migrate-v5 it also converts legacy story/bug notes into V5 tasks,
 renames epic index files to V5 paths, adds schemas, refreshes templates/views,
 and creates a side-by-side backup before writing.
 
+With --profile it creates a V6 knowledge-graph vault under tusker/domains/**
+instead of a V5 docs-map/docs source layout.
+
+With --migrate-v6 --dry-run it reports the clean-break V5-to-V6 path and field
+rewrites. Automated V6 apply is intentionally not hidden behind compatibility aliases.
+
 Flags:
   --vault <path>    target vault path (default: ./tusker)
   --yes             accept defaults without prompts
   --fresh           move an existing target vault aside and recreate it cleanly
+  --profile <name>  create V6 layout: generic, library, app, cli, infra, tusker
   --migrate-v5      repair an existing legacy vault in place
+  --migrate-v6      report explicit V5-to-V6 clean-break migration plan
   --dry-run         show the migration plan without writing
   --vault-only      update only the vault; skip AGENTS/CLAUDE and repo-contract files
   --no-backup       skip the migration backup
@@ -615,8 +762,10 @@ Flags:
 
 Examples:
   tusker init --yes
+  tusker init --profile generic --yes --fresh
   tusker init --migrate-v5 --yes --vault-only
-  tusker init --migrate-v5 --dry-run --vault ./tusker`)
+  tusker init --migrate-v5 --dry-run --vault ./tusker
+  tusker init --migrate-v6 --dry-run --vault ./tusker`)
 }
 
 func printDocsHelp() {

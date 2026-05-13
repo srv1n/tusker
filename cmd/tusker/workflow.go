@@ -266,7 +266,7 @@ func writeDefaultWorkflow(vaultPath string) error {
 		text, err := readText(filePath)
 		if err == nil {
 			data, _, parseErr := parseFrontmatter(text)
-			if parseErr == nil && intField(data, "tracker_schema_version") == 5 {
+			if parseErr == nil && (intField(data, "tracker_schema_version") == 5 || intField(data, "tracker_schema_version") == 6) {
 				return nil
 			}
 		}

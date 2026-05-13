@@ -29,6 +29,10 @@ domains:
   docs-system:
     label: Documentation system
     description: Diátaxis catalog, docs freshness, doc nodes, and agent docs.
+  knowledge-system:
+    label: Knowledge system
+    owner_epic: KNO
+    description: V6 domains, knowledge graph routing, freshness, backrefs, and publication split.
 
 nodes:
   - id: spec/v5-overview
@@ -59,6 +63,20 @@ nodes:
     publish_lane: internal
     publish_path: spec/v5-adoption
     publish_description: Adoption guide for Tusker v5.
+  - id: spec/v6-rfc
+    title: Tusker V6 Product Knowledge Graph RFC
+    page: docs/spec/tusker_v6_rfc.md
+    domain: knowledge-system
+    mode: explanation
+    audience: developer
+    agent_layer: capsule
+    kind: canon
+    source_of_truth: [tusker/docs/spec/tusker_v6_rfc.md]
+    stale_when:
+      paths: [tusker/docs/spec/tusker_v6_rfc.md, cmd/tusker/**, skill/**, tusker/_config/docs-map.yaml]
+    publish_lane: internal
+    publish_path: spec/tusker-v6-rfc
+    publish_description: Hard-break implementation RFC for Tusker V6 knowledge graph.
   - id: reference/cli
     title: Tusker CLI reference
     page: docs/reference/cli.md
