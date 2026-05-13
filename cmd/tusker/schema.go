@@ -204,9 +204,9 @@ var frontmatterOrder = map[string][]string{
 	},
 	"task": {
 		"schema", "id", "title", "type", "kind", "epic", "status", "priority", "risk", "size",
-		"delegation", "ai_assistance", "ai_tools", "assignee", "domains", "doc_nodes", "blocked_by", "block_reason", "blocks", "created", "updated", "started",
+		"delegation", "ai_assistance", "ai_tools", "assignee", "domains", "doc_nodes", "knowledge_nodes", "blocked_by", "block_reason", "blocks", "created", "updated", "started",
 		"review_requested_at", "completed", "cancelled_at", "blocked_since", "verified_by", "verified_at",
-		"verification_summary", "closed_by", "closed_at", "close_summary", "docs_resolution", "transitions", "tags",
+		"verification_summary", "closed_by", "closed_at", "close_summary", "docs_resolution", "knowledge_resolution", "transitions", "tags",
 	},
 	"doc": {
 		"schema", "id", "title", "type", "node", "status", "epic", "doc_intent", "canon_for",
@@ -223,13 +223,18 @@ type parsedID struct {
 }
 
 type validationContext struct {
-	RelativePath string
-	Basename     string
-	EpicAcronyms map[string]struct{}
-	NoteIDs      map[string]struct{}
-	IDToRecordID map[string]string
-	RecordIDs    map[string]struct{}
-	DocsMap      *DocsMap
+	RelativePath     string
+	Basename         string
+	VaultPath        string
+	EpicAcronyms     map[string]struct{}
+	NoteIDs          map[string]struct{}
+	IDToRecordID     map[string]string
+	RecordIDs        map[string]struct{}
+	DocsMap          *DocsMap
+	V6Domains        map[string]bool
+	V6KnowledgeNodes map[string]bool
+	V6LinkTargets    map[string]bool
+	V6Freshness      map[string]v6FreshnessRecord
 }
 
 func parseID(id string) *parsedID {
@@ -377,6 +382,7 @@ func validateNote(note Note, ctx validationContext) ([]Issue, []Issue) {
 	data := note.Data
 	id := stringField(data, "id")
 	noteType := stringField(data, "type")
+	schema := stringField(data, "schema")
 	where := ctx.RelativePath
 	if where == "" {
 		where = ctx.Basename
@@ -388,6 +394,9 @@ func validateNote(note Note, ctx validationContext) ([]Issue, []Issue) {
 		where = "<unknown>"
 	}
 
+	if strings.HasSuffix(schema, "/v6") {
+		return validateV6Note(note, ctx, where)
+	}
 	if _, ok := noteTypes[noteType]; !ok {
 		errors = append(errors, issue(errorUnknownType, fmt.Sprintf(`unknown type "%s"`, noteType), where, "", nil))
 		return errors, warnings
@@ -400,8 +409,8 @@ func validateNote(note Note, ctx validationContext) ([]Issue, []Issue) {
 		}
 		return errors, warnings
 	}
-	if !strings.HasSuffix(stringField(data, "schema"), "/v5") {
-		errors = append(errors, issue(errorInvalidField, fmt.Sprintf(`%s is not a V5 note; current Tusker notes require schema "tusker.<type>/v5"`, where), where, "recreate the note with `tusker new`", map[string]any{"field": "schema", "value": stringField(data, "schema")}))
+	if !strings.HasSuffix(schema, "/v5") {
+		errors = append(errors, issue(errorInvalidField, fmt.Sprintf(`%s is not a V5 or V6 note; current Tusker notes require schema "tusker.<type>/v5" or "tusker.<kind>/v6"`, where), where, "recreate the note with `tusker new` or `tusker knowledge new`", map[string]any{"field": "schema", "value": schema}))
 		return errors, warnings
 	}
 	return validateV5Note(note, ctx, where)

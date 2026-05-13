@@ -26,10 +26,10 @@ func setStatus(args Args) error {
 	if err != nil {
 		return err
 	}
-	if !isV5Schema(note.Data) {
-		return tuskerError(errorInvalidArg, fmt.Sprintf(`status only supports V5 notes, got schema "%s"`, stringField(note.Data, "schema")), withContext(map[string]any{"id": id, "schema": stringField(note.Data, "schema")}))
-	}
 	noteType := stringField(note.Data, "type")
+	if isV6Schema(note.Data) {
+		noteType = effectiveNoteKind(note.Data)
+	}
 	var statusSet map[string]struct{}
 	switch noteType {
 	case "epic", "task":
@@ -81,8 +81,34 @@ func setStatus(args Args) error {
 		if stringField(data, "verified_at") == "" {
 			return tuskerError(errorInvalidTransition, id+": done requires verification first", withHint("run `tusker verify "+id+" --by <name>`"))
 		}
+		if isV6Schema(data) {
+			if issues := v6TaskProofIssues(data, body); len(issues) > 0 {
+				return tuskerError(errorEvidenceGate, id+": proof is incomplete: "+strings.Join(issues, "; "), withHint("fill Acceptance, Evidence, and Verification log before done"))
+			}
+		}
 		if len(normalizeList(data["doc_nodes"])) > 0 && !docsImpactResolved(data) {
 			return tuskerError(errorDocsImpactUnresolved, id+": docs impact is unresolved", withHint("run `tusker docs check "+id+"`, then apply or waive each node"))
+		}
+		if len(normalizeList(data["knowledge_nodes"])) > 0 {
+			if isV6Schema(data) {
+				index, err := v6IndexVault(vaultPath)
+				if err != nil {
+					return err
+				}
+				if issues := knowledgeImpactFreshnessIssues(data, v6FreshnessByNode(index)); len(issues) > 0 {
+					return tuskerError(errorDocsImpactUnresolved, id+": knowledge impact is stale or unresolved: "+strings.Join(issues, "; "), withHint("run `tusker knowledge check "+id+"`, then apply, noop, or waive each node with current sources"))
+				}
+			} else if hasV6Vault(vaultPath) {
+				index, err := v6IndexVault(vaultPath)
+				if err != nil {
+					return err
+				}
+				if issues := knowledgeImpactFreshnessIssues(data, v6FreshnessByNode(index)); len(issues) > 0 {
+					return tuskerError(errorDocsImpactUnresolved, id+": knowledge impact is stale or unresolved: "+strings.Join(issues, "; "), withHint("run `tusker knowledge check "+id+"`, then apply, noop, or waive each node with current sources"))
+				}
+			} else if !knowledgeImpactResolved(data) {
+				return tuskerError(errorDocsImpactUnresolved, id+": knowledge impact is unresolved", withHint("run `tusker knowledge check "+id+"`, then apply, noop, or waive each node"))
+			}
 		}
 	}
 	if noteType == "epic" && nextStatus == "done" {
@@ -108,7 +134,11 @@ func setStatus(args Args) error {
 		}
 	}
 	data["status"] = nextStatus
-	data["updated"] = date
+	if isV6Schema(data) {
+		data["updated_at"] = date
+	} else {
+		data["updated"] = date
+	}
 	if field := statusTransitionDateFields[nextStatus]; field != "" {
 		if !(field == "started" && stringField(data, "started") != "") {
 			data[field] = date
@@ -123,7 +153,11 @@ func setStatus(args Args) error {
 	}
 	appendTransition(data, orderedTransition(now, transitionKind, prev, nextStatus, actor, reason))
 	body = appendWorkLogBullet(body, fmt.Sprintf("%s — %s — status: %s → %s%s", date, actor, fallback(prev, "(unset)"), nextStatus, suffixReason(reason)))
-	content, err := serializeDocument(data, body, frontmatterOrderForType(noteType))
+	order := frontmatterOrderForType(noteType)
+	if isV6Schema(data) {
+		order = v6FrontmatterOrder[noteType]
+	}
+	content, err := serializeDocument(data, body, order)
 	if err != nil {
 		return err
 	}

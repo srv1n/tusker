@@ -1,0 +1,890 @@
+# Tusker V6 knowledge graph
+
+## Adoption canon
+- node: `adoption/canon`
+- domain: `adoption`
+- status: `draft`
+- summary: Install, migration, rollout, and consumer repo adoption.
+
+# Adoption canon
+
+## Read this when
+
+Read this for the current model, invariants, defaults, and boundaries for adoption.
+
+## Do not read this when
+
+Do not use this as task proof; open linked tasks only when implementation history or evidence matters.
+
+## Current model
+
+This domain records current durable truth for adoption.
+
+## Invariants
+
+- Keep current truth in domain knowledge pages.
+- Keep task proof in `tusker/epics/**`.
+- Prefer source code over prose when exact behavior conflicts.
+
+## Current defaults
+
+- New knowledge starts as draft canon until verified.
+- Route through this canon before opening historical tasks.
+
+## Deprecated behavior
+
+- Do not treat task files as canonical documentation.
+
+## Source of truth
+
+- `tusker/SKILL.md`
+
+## Open questions
+
+- Add domain-specific open questions here as the implementation matures.
+
+## Related
+
+- [[adoption/INDEX]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+- [[KNO-T-0007]] touched this knowledge node.
+<!-- tusker:backrefs:end -->
+
+## Cli canon
+- node: `cli/canon`
+- domain: `cli`
+- status: `draft`
+- summary: Command surface, flags, help text, routing, and user-visible terminal behavior.
+
+# Cli canon
+
+## Read this when
+
+Read this for the current model, invariants, defaults, and boundaries for cli.
+
+## Do not read this when
+
+Do not use this as task proof; open linked tasks only when implementation history or evidence matters.
+
+## Current model
+
+This domain records current durable truth for cli.
+
+## Invariants
+
+- Keep current truth in domain knowledge pages.
+- Keep task proof in `tusker/epics/**`.
+- Prefer source code over prose when exact behavior conflicts.
+
+## Current defaults
+
+- New knowledge starts as draft canon until verified.
+- Route through this canon before opening historical tasks.
+
+## Deprecated behavior
+
+- Do not treat task files as canonical documentation.
+
+## Source of truth
+
+- `tusker/SKILL.md`
+
+## Open questions
+
+- Add domain-specific open questions here as the implementation matures.
+
+## Related
+
+- [[cli/INDEX]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+- [[KNO-T-0003]] touched this knowledge node.
+<!-- tusker:backrefs:end -->
+
+## CLI command surface
+- node: `cli/reference/commands`
+- domain: `cli`
+- status: `draft`
+- summary: CLI command surface.
+
+# CLI command surface
+
+## Read this when
+
+Read this when cli command surface is the narrowest matching knowledge node.
+
+## Do not read this when
+
+Do not read this for unrelated domains or task proof history.
+
+## Source of truth
+
+- `cmd/tusker/cli.go`
+- `cmd/tusker/commands_v5.go`
+- `cmd/tusker/docs_commands.go`
+
+## Related
+
+- [[cli/CANON]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+- [[KNO-T-0003]] touched this knowledge node.
+- [[KNO-T-0004]] touched this knowledge node.
+- [[KNO-T-0005]] touched this knowledge node.
+- [[KNO-T-0006]] touched this knowledge node.
+<!-- tusker:backrefs:end -->
+
+## Codebase canon
+- node: `codebase/canon`
+- domain: `codebase`
+- status: `draft`
+- summary: Repository layout, implementation anchors, testing, and safe change rules.
+
+# Codebase canon
+
+## Read this when
+
+Read this for the current model, invariants, defaults, and boundaries for codebase.
+
+## Do not read this when
+
+Do not use this as task proof; open linked tasks only when implementation history or evidence matters.
+
+## Current model
+
+This domain records current durable truth for codebase.
+
+## Invariants
+
+- Keep current truth in domain knowledge pages.
+- Keep task proof in `tusker/epics/**`.
+- Prefer source code over prose when exact behavior conflicts.
+
+## Current defaults
+
+- New knowledge starts as draft canon until verified.
+- Route through this canon before opening historical tasks.
+
+## Deprecated behavior
+
+- Do not treat task files as canonical documentation.
+
+## Source of truth
+
+- `tusker/SKILL.md`
+
+## Open questions
+
+- Add domain-specific open questions here as the implementation matures.
+
+## Related
+
+- [[codebase/INDEX]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+_No task proof recorded yet._
+<!-- tusker:backrefs:end -->
+
+## Repository map
+- node: `codebase/repo-map`
+- domain: `codebase`
+- status: `draft`
+- summary: Repository map for the codebase domain.
+
+# Repository map
+
+## Read this when
+
+Read this when you need repository map for this repository.
+
+## Do not read this when
+
+Do not read this for unrelated product behavior or task proof history.
+
+## Source of truth
+
+- `tusker/SKILL.md`
+
+## Related
+
+- [[codebase/CANON]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+_No task proof recorded yet._
+<!-- tusker:backrefs:end -->
+
+## Safe change rules
+- node: `codebase/safe-change-rules`
+- domain: `codebase`
+- status: `draft`
+- summary: Safe change rules for the codebase domain.
+
+# Safe change rules
+
+## Read this when
+
+Read this when you need safe change rules for this repository.
+
+## Do not read this when
+
+Do not read this for unrelated product behavior or task proof history.
+
+## Source of truth
+
+- `tusker/SKILL.md`
+
+## Related
+
+- [[codebase/CANON]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+_No task proof recorded yet._
+<!-- tusker:backrefs:end -->
+
+## Testing
+- node: `codebase/testing`
+- domain: `codebase`
+- status: `draft`
+- summary: Testing for the codebase domain.
+
+# Testing
+
+## Read this when
+
+Read this when you need testing for this repository.
+
+## Do not read this when
+
+Do not read this for unrelated product behavior or task proof history.
+
+## Source of truth
+
+- `tusker/SKILL.md`
+
+## Related
+
+- [[codebase/CANON]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+_No task proof recorded yet._
+<!-- tusker:backrefs:end -->
+
+## Knowledge System canon
+- node: `knowledge-system/canon`
+- domain: `knowledge-system`
+- status: `draft`
+- summary: Domain knowledge graph, indexer, freshness, routing, backrefs, and publication.
+
+# Knowledge System canon
+
+## Read this when
+
+Read this for the current model, invariants, defaults, and boundaries for knowledge system.
+
+## Do not read this when
+
+Do not use this as task proof; open linked tasks only when implementation history or evidence matters.
+
+## Current model
+
+This domain records current durable truth for knowledge system.
+
+## Invariants
+
+- Keep current truth in domain knowledge pages.
+- Keep task proof in `tusker/epics/**`.
+- Prefer source code over prose when exact behavior conflicts.
+
+## Current defaults
+
+- New knowledge starts as draft canon until verified.
+- Route through this canon before opening historical tasks.
+
+## Deprecated behavior
+
+- Do not treat task files as canonical documentation.
+
+## Source of truth
+
+- `tusker/SKILL.md`
+
+## Open questions
+
+- Add domain-specific open questions here as the implementation matures.
+
+## Related
+
+- [[knowledge-system/INDEX]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+- [[KNO-T-0003]] touched this knowledge node.
+- [[KNO-T-0004]] touched this knowledge node.
+- [[KNO-T-0006]] touched this knowledge node.
+- [[KNO-T-0007]] touched this knowledge node.
+<!-- tusker:backrefs:end -->
+
+## Knowledge freshness
+- node: `knowledge-system/reference/freshness`
+- domain: `knowledge-system`
+- status: `draft`
+- summary: Knowledge freshness.
+
+# Knowledge freshness
+
+## Read this when
+
+Read this when knowledge freshness is the narrowest matching knowledge node.
+
+## Do not read this when
+
+Do not read this for unrelated domains or task proof history.
+
+## Source of truth
+
+- `cmd/tusker/v6_knowledge.go`
+- `cmd/tusker/v6_commands.go`
+
+## Related
+
+- [[knowledge-system/CANON]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+- [[KNO-T-0005]] touched this knowledge node.
+<!-- tusker:backrefs:end -->
+
+## Knowledge publication
+- node: `knowledge-system/reference/publication`
+- domain: `knowledge-system`
+- status: `draft`
+- summary: Knowledge publication.
+
+# Knowledge publication
+
+## Read this when
+
+Read this when knowledge publication is the narrowest matching knowledge node.
+
+## Do not read this when
+
+Do not read this for unrelated domains or task proof history.
+
+## Source of truth
+
+- `cmd/tusker/v6_commands.go`
+- `cmd/tusker/docs_export.go`
+
+## Related
+
+- [[knowledge-system/CANON]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+- [[KNO-T-0006]] touched this knowledge node.
+<!-- tusker:backrefs:end -->
+
+## Obsidian canon
+- node: `obsidian/canon`
+- domain: `obsidian`
+- status: `draft`
+- summary: Vault layout, wikilinks, managed blocks, Bases views, and graph navigation.
+
+# Obsidian canon
+
+## Read this when
+
+Read this for the current model, invariants, defaults, and boundaries for obsidian.
+
+## Do not read this when
+
+Do not use this as task proof; open linked tasks only when implementation history or evidence matters.
+
+## Current model
+
+This domain records current durable truth for obsidian.
+
+## Invariants
+
+- Keep current truth in domain knowledge pages.
+- Keep task proof in `tusker/epics/**`.
+- Prefer source code over prose when exact behavior conflicts.
+
+## Current defaults
+
+- New knowledge starts as draft canon until verified.
+- Route through this canon before opening historical tasks.
+
+## Deprecated behavior
+
+- Do not treat task files as canonical documentation.
+
+## Source of truth
+
+- `tusker/SKILL.md`
+
+## Open questions
+
+- Add domain-specific open questions here as the implementation matures.
+
+## Related
+
+- [[obsidian/INDEX]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+- [[KNO-T-0004]] touched this knowledge node.
+<!-- tusker:backrefs:end -->
+
+## Obsidian vault layout
+- node: `obsidian/reference/vault-layout`
+- domain: `obsidian`
+- status: `draft`
+- summary: Obsidian vault layout.
+
+# Obsidian vault layout
+
+## Read this when
+
+Read this when obsidian vault layout is the narrowest matching knowledge node.
+
+## Do not read this when
+
+Do not read this for unrelated domains or task proof history.
+
+## Source of truth
+
+- `tusker/domains/**`
+- `cmd/tusker/v6_knowledge.go`
+
+## Related
+
+- [[obsidian/CANON]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+- [[KNO-T-0004]] touched this knowledge node.
+- [[KNO-T-0007]] touched this knowledge node.
+<!-- tusker:backrefs:end -->
+
+## Runtime canon
+- node: `runtime/canon`
+- domain: `runtime`
+- status: `draft`
+- summary: Daemon dispatch, runner state, review lane, leases, attempts, sessions, and logs.
+
+# Runtime canon
+
+## Read this when
+
+Read this for the current model, invariants, defaults, and boundaries for runtime.
+
+## Do not read this when
+
+Do not use this as task proof; open linked tasks only when implementation history or evidence matters.
+
+## Current model
+
+This domain records current durable truth for runtime.
+
+## Invariants
+
+- Keep current truth in domain knowledge pages.
+- Keep task proof in `tusker/epics/**`.
+- Prefer source code over prose when exact behavior conflicts.
+
+## Current defaults
+
+- New knowledge starts as draft canon until verified.
+- Route through this canon before opening historical tasks.
+
+## Deprecated behavior
+
+- Do not treat task files as canonical documentation.
+
+## Source of truth
+
+- `tusker/SKILL.md`
+
+## Open questions
+
+- Add domain-specific open questions here as the implementation matures.
+
+## Related
+
+- [[runtime/INDEX]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+_No task proof recorded yet._
+<!-- tusker:backrefs:end -->
+
+## Reviewer lane
+- node: `runtime/reference/reviewer-lane`
+- domain: `runtime`
+- status: `draft`
+- summary: Reviewer lane.
+
+# Reviewer lane
+
+## Read this when
+
+Read this when reviewer lane is the narrowest matching knowledge node.
+
+## Do not read this when
+
+Do not read this for unrelated domains or task proof history.
+
+## Source of truth
+
+- `tusker/WORKFLOW.md`
+- `cmd/tusker/daemon.go`
+- `cmd/tusker/commands_v5.go`
+
+## Related
+
+- [[runtime/CANON]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+- [[KNO-T-0007]] touched this knowledge node.
+<!-- tusker:backrefs:end -->
+
+## Runtime state model
+- node: `runtime/reference/state-model`
+- domain: `runtime`
+- status: `draft`
+- summary: Runtime state model.
+
+# Runtime state model
+
+## Read this when
+
+Read this when runtime state model is the narrowest matching knowledge node.
+
+## Do not read this when
+
+Do not read this for unrelated domains or task proof history.
+
+## Source of truth
+
+- `cmd/tusker/runtime_store.go`
+- `cmd/tusker/daemon.go`
+
+## Related
+
+- [[runtime/CANON]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+_No task proof recorded yet._
+<!-- tusker:backrefs:end -->
+
+## Schema canon
+- node: `schema/canon`
+- domain: `schema`
+- status: `draft`
+- summary: Note schemas, frontmatter, validation, templates, and migrations.
+
+# Schema canon
+
+## Read this when
+
+Read this for the current model, invariants, defaults, and boundaries for schema.
+
+## Do not read this when
+
+Do not use this as task proof; open linked tasks only when implementation history or evidence matters.
+
+## Current model
+
+This domain records current durable truth for schema.
+
+## Invariants
+
+- Keep current truth in domain knowledge pages.
+- Keep task proof in `tusker/epics/**`.
+- Prefer source code over prose when exact behavior conflicts.
+
+## Current defaults
+
+- New knowledge starts as draft canon until verified.
+- Route through this canon before opening historical tasks.
+
+## Deprecated behavior
+
+- Do not treat task files as canonical documentation.
+
+## Source of truth
+
+- `tusker/SKILL.md`
+
+## Open questions
+
+- Add domain-specific open questions here as the implementation matures.
+
+## Related
+
+- [[schema/INDEX]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+_No task proof recorded yet._
+<!-- tusker:backrefs:end -->
+
+## Frontmatter schema
+- node: `schema/reference/frontmatter`
+- domain: `schema`
+- status: `draft`
+- summary: Frontmatter schema.
+
+# Frontmatter schema
+
+## Read this when
+
+Read this when frontmatter schema is the narrowest matching knowledge node.
+
+## Do not read this when
+
+Do not read this for unrelated domains or task proof history.
+
+## Source of truth
+
+- `cmd/tusker/schema.go`
+- `cmd/tusker/v5_validation.go`
+- `cmd/tusker/v6_knowledge.go`
+
+## Related
+
+- [[schema/CANON]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+- [[KNO-T-0005]] touched this knowledge node.
+<!-- tusker:backrefs:end -->
+
+## Skill canon
+- node: `skill/canon`
+- domain: `skill`
+- status: `draft`
+- summary: Operator skill, project skill router, agent instructions, and bundled guidance.
+
+# Skill canon
+
+## Read this when
+
+Read this for the current model, invariants, defaults, and boundaries for skill.
+
+## Do not read this when
+
+Do not use this as task proof; open linked tasks only when implementation history or evidence matters.
+
+## Current model
+
+This domain records current durable truth for skill.
+
+## Invariants
+
+- Keep current truth in domain knowledge pages.
+- Keep task proof in `tusker/epics/**`.
+- Prefer source code over prose when exact behavior conflicts.
+
+## Current defaults
+
+- New knowledge starts as draft canon until verified.
+- Route through this canon before opening historical tasks.
+
+## Deprecated behavior
+
+- Do not treat task files as canonical documentation.
+
+## Source of truth
+
+- `tusker/SKILL.md`
+
+## Open questions
+
+- Add domain-specific open questions here as the implementation matures.
+
+## Related
+
+- [[skill/INDEX]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+- [[KNO-T-0003]] touched this knowledge node.
+- [[KNO-T-0006]] touched this knowledge node.
+- [[KNO-T-0007]] touched this knowledge node.
+<!-- tusker:backrefs:end -->
+
+## Operator skill
+- node: `skill/reference/operator-skill`
+- domain: `skill`
+- status: `draft`
+- summary: Operator skill.
+
+# Operator skill
+
+## Read this when
+
+Read this when operator skill is the narrowest matching knowledge node.
+
+## Do not read this when
+
+Do not read this for unrelated domains or task proof history.
+
+## Source of truth
+
+- `skill/SKILL.md`
+- `skill/references/COMMANDS.md`
+
+## Related
+
+- [[skill/CANON]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+_No task proof recorded yet._
+<!-- tusker:backrefs:end -->
+
+## Workflow canon
+- node: `workflow/canon`
+- domain: `workflow`
+- status: `draft`
+- summary: Task lifecycle, close gates, verification, evidence, and review policy.
+
+# Workflow canon
+
+## Read this when
+
+Read this for the current model, invariants, defaults, and boundaries for workflow.
+
+## Do not read this when
+
+Do not use this as task proof; open linked tasks only when implementation history or evidence matters.
+
+## Current model
+
+This domain records current durable truth for workflow.
+
+## Invariants
+
+- Keep current truth in domain knowledge pages.
+- Keep task proof in `tusker/epics/**`.
+- Prefer source code over prose when exact behavior conflicts.
+
+## Current defaults
+
+- New knowledge starts as draft canon until verified.
+- Route through this canon before opening historical tasks.
+
+## Deprecated behavior
+
+- Do not treat task files as canonical documentation.
+
+## Source of truth
+
+- `tusker/SKILL.md`
+
+## Open questions
+
+- Add domain-specific open questions here as the implementation matures.
+
+## Related
+
+- [[workflow/INDEX]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+_No task proof recorded yet._
+<!-- tusker:backrefs:end -->
+
+## Lifecycle
+- node: `workflow/reference/lifecycle`
+- domain: `workflow`
+- status: `draft`
+- summary: Lifecycle.
+
+# Lifecycle
+
+## Read this when
+
+Read this when lifecycle is the narrowest matching knowledge node.
+
+## Do not read this when
+
+Do not read this for unrelated domains or task proof history.
+
+## Source of truth
+
+- `tusker/WORKFLOW.md`
+- `cmd/tusker/commands_lifecycle.go`
+
+## Related
+
+- [[workflow/CANON]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+_No task proof recorded yet._
+<!-- tusker:backrefs:end -->
+
+## Review policy
+- node: `workflow/reference/review-policy`
+- domain: `workflow`
+- status: `draft`
+- summary: Review policy.
+
+# Review policy
+
+## Read this when
+
+Read this when review policy is the narrowest matching knowledge node.
+
+## Do not read this when
+
+Do not read this for unrelated domains or task proof history.
+
+## Source of truth
+
+- `tusker/WORKFLOW.md`
+- `cmd/tusker/commands_v5.go`
+
+## Related
+
+- [[workflow/CANON]]
+
+## Recent changes
+
+<!-- tusker:backrefs:begin -->
+- [[KNO-T-0005]] touched this knowledge node.
+<!-- tusker:backrefs:end -->

@@ -32,7 +32,7 @@ tags: ["dashboard"]
 
 <!-- tusker:live-runs:begin -->
 
-_Auto-generated 2026-05-12T08:11:39Z. No live runs right now._
+_Auto-generated 2026-05-12T14:50:35Z. No live runs right now._
 
 <!-- tusker:live-runs:end -->
 
@@ -77,11 +77,6 @@ _Auto-generated 2026-05-12T08:11:39Z. No live runs right now._
 
 <!-- tusker:docs-freshness:begin -->
 
-_Auto-generated 2026-05-12T08:11:39Z. Docs needing verification are shown below._
-
-| Doc node | Freshness | Stale due to |
-|---|---|---|
-| `reference/validator` | `needs_verification` | cmd/tusker/schema.go, cmd/tusker/v5_validation.go, skill/references/SCHEMA.md |
-| `spec/v5-overview` | `needs_verification` | cmd/tusker/**, skill/**, tusker/_config/docs-map.yaml |
+_Auto-generated 2026-05-12T14:50:35Z. No stale docs right now._
 
 <!-- tusker:docs-freshness:end -->

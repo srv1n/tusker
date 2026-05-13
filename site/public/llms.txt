@@ -2,36 +2,6 @@
 
 Compact catalog of exported docs.
 
-- Tusker v5 implementation spec | /internal/spec/v5-overview/ | audience: developer | mode: explanation | agent_layer: capsule | updated: 2026-04-29
-  Tusker v5 implementation spec.
-
-- Tusker v5 adoption guide | /internal/spec/v5-adoption/ | audience: developer | mode: how-to | updated: 2026-05-04
-  Tusker v5 adoption guide.
-
-- Tusker v5 CLI surface | /internal/reference/cli/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-10
-  Tusker v5 CLI surface.
-
-- Validator rollout and failure codes | /internal/reference/validator/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-04-29
-  Validator rollout and failure codes.
-
-- Template contract | /internal/reference/templates/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-10
-  Template contract.
-
-- Docs routing, impact hook, and publication model | /internal/reference/docs-pipeline/ | audience: developer | mode: explanation | agent_layer: capsule | updated: 2026-04-29
-  Docs routing, impact hook, and publication model.
-
-- Runtime state, events, and generated caches | /internal/reference/runtime/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-04
-  Runtime state, events, and generated caches.
-
-- Obsidian and view requirements | /internal/reference/obsidian/ | audience: developer | mode: how-to | updated: 2026-05-04
-  Obsidian and view requirements.
-
-- Skill and AGENTS guidance | /internal/reference/skill/ | audience: developer | mode: reference | agent_layer: capsule | updated: 2026-05-11
-  Skill and AGENTS guidance.
-
-- Agent recipe: using Tusker | /internal/agents/use-tusker/ | audience: agent | mode: how-to | agent_layer: standalone | updated: 2026-05-11
-  Agent recipe: using Tusker.
-
 - Tusker Documentation Model | /developer/documentation-model/ | audience: developer | updated: 2026-04-29
   How Tusker lays out durable docs, why Diátaxis is metadata, and how the CLI keeps docs freshness tied to task close.
 

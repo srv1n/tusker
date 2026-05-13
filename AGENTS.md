@@ -3,6 +3,14 @@
 
 Start with `tusker list --type epic` to see the short epic roster. Use `tusker/README.md` only when the project overview is needed; it intentionally omits task lists from the top-level roster.
 
+For current project knowledge, route through `tusker/SKILL.md` and V6 capsules before opening full domain files:
+
+```bash
+tusker knowledge route "<intent>"
+tusker domain show <domain> --capsule
+tusker knowledge show <node> --capsule
+```
+
 Progressive drill-down: `tusker list --epic <ACR> --type task --open` for one epic's open tasks, then `tusker show <ID> --capsule` for the selected task. Open the full task file only when the capsule is insufficient. Use `tusker search "<term>" --type task` before creating possible duplicates. Use `tusker compact <ID>` as a dry-run before reading or editing old noisy notes.
 
 For Codex transcript/token analysis, use `tusker context audit --file <jsonl>`. For broad repository search, prefer `rg -l`, `rg --count`, narrow globs, or capped output before `rg -n`.

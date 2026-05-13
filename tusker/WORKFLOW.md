@@ -1,6 +1,6 @@
 ---
 workflow_version: 1
-tracker_schema_version: 5
+tracker_schema_version: 6
 tracker:
     kind: tusker_vault
     active_states:

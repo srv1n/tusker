@@ -322,6 +322,14 @@ func initCmd(args Args) error {
 		printV5MigrationReport(report, args)
 		return nil
 	}
+	if args.Bool("migrate-v6") {
+		report, err := migrateV5VaultToV6(args)
+		if err != nil {
+			return err
+		}
+		printV6MigrationReport(report, args)
+		return nil
+	}
 	cwd := mustGetwd()
 	yes := args.Bool("yes")
 	registerDaemon := args.Bool("daemon")
@@ -330,6 +338,8 @@ func initCmd(args Args) error {
 	mountTracker := args.Bool("mount") && !noMount
 	fresh := args.Bool("fresh")
 	vaultOnly := args.Bool("vault-only")
+	profile := strings.TrimSpace(args.String("profile"))
+	useV6 := profile != ""
 	interactive := !yes && isTTY(os.Stdin)
 	reader := bufio.NewReader(os.Stdin)
 	ask := func(question string, defaultYes bool) (bool, error) {
@@ -389,8 +399,14 @@ func initCmd(args Args) error {
 			return err
 		}
 		if doVault {
-			if err := bootstrap(Args{"vault": vaultPath, "quiet": "true"}); err != nil {
-				return err
+			if useV6 {
+				if err := bootstrapV6(Args{"vault": vaultPath, "quiet": "true", "profile": profile}); err != nil {
+					return err
+				}
+			} else {
+				if err := bootstrap(Args{"vault": vaultPath, "quiet": "true"}); err != nil {
+					return err
+				}
 			}
 			fmt.Printf("Initialized vault at %s\n", vaultPath)
 		} else {
@@ -402,8 +418,14 @@ func initCmd(args Args) error {
 	if effectiveVault == "" {
 		effectiveVault = vaultPath
 	}
-	if err := bootstrap(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
-		return err
+	if useV6 {
+		if err := bootstrapV6(Args{"vault": effectiveVault, "quiet": "true", "profile": profile}); err != nil {
+			return err
+		}
+	} else {
+		if err := bootstrap(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
+			return err
+		}
 	}
 	if err := workflowInitCmd(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
 		return err
@@ -481,8 +503,13 @@ func initCmd(args Args) error {
 	fmt.Println()
 	fmt.Println("Done. Next steps:")
 	fmt.Println("  tusker validate --vault " + effectiveVault)
-	fmt.Println("  tusker list --vault " + effectiveVault + " --type epic")
-	fmt.Println("  tusker new epic --vault " + effectiveVault + " --acronym APP --title \"App foundation\"")
+	if useV6 {
+		fmt.Println("  tusker domain list --vault " + effectiveVault)
+		fmt.Println("  tusker knowledge route \"change CLI flag\" --vault " + effectiveVault)
+	} else {
+		fmt.Println("  tusker list --vault " + effectiveVault + " --type epic")
+		fmt.Println("  tusker new epic --vault " + effectiveVault + " --acronym APP --title \"App foundation\"")
+	}
 	return nil
 }
 

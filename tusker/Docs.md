@@ -8,7 +8,7 @@ tags: ["docs-catalog", "tusker-generated"]
 
 # Docs Catalog
 
-_Auto-generated 2026-05-12T08:11:39Z from `_config/docs-map.yaml`. Diátaxis mode is metadata; navigation is grouped by reader intent._
+_Auto-generated 2026-05-12T14:50:35Z from `_config/docs-map.yaml`. Diátaxis mode is metadata; navigation is grouped by reader intent._
 
 ## Guides
 
@@ -21,11 +21,12 @@ _Auto-generated 2026-05-12T08:11:39Z from `_config/docs-map.yaml`. Diátaxis mod
 - [[docs/reference/runtime|Runtime state and events]] — `reference/runtime` · reference · developer · verified_by_task
 - [[docs/reference/skill|Skill and agent workflow]] — `reference/skill` · reference · developer · verified_by_task
 - [[docs/reference/templates|Template contract]] — `reference/templates` · reference · developer · verified_by_task
-- [[docs/reference/validator|Tusker validator reference]] — `reference/validator` · reference · developer · needs_verification
+- [[docs/reference/validator|Tusker validator reference]] — `reference/validator` · reference · developer · verified_by_task
 
 ## Concepts
 
-- [[docs/spec/v5-overview|Tusker v5 overview]] — `spec/v5-overview` · explanation · developer · needs_verification
+- [[docs/spec/v5-overview|Tusker v5 overview]] — `spec/v5-overview` · explanation · developer · verified_by_task
+- [[docs/spec/tusker_v6_rfc|Tusker V6 Product Knowledge Graph RFC]] — `spec/v6-rfc` · explanation · developer · verified_by_task
 - [[docs/reference/docs-pipeline|Documentation freshness system]] — `tusker/docs-system` · explanation · developer · verified_by_task
 
 ## For agents

@@ -347,6 +347,9 @@ func reindex(args Args) error {
 	for _, stale := range []string{"stories.index.json", "bugs.index.json", "attestation.index.json"} {
 		_ = os.Remove(filepath.Join(generatedDir, stale))
 	}
+	if err := writeV6GeneratedIndexes(vaultPath, true); err != nil {
+		return err
+	}
 	if err := writeVaultReadme(vaultPath, epics, tasks, docs, generatedAt); err != nil {
 		return err
 	}
@@ -754,12 +757,45 @@ func validateCmd(args Args) (int, error) {
 	noteIDs := map[string]struct{}{}
 	idToRecordID := map[string]string{}
 	recordIDs := map[string]struct{}{}
+	v6Domains := map[string]bool{}
+	v6KnowledgeNodes := map[string]bool{}
+	v6LinkTargets := map[string]bool{}
+	v6Freshness := map[string]v6FreshnessRecord{}
+	var v6Index v6KnowledgeIndex
+	hasV6Index := false
+	if hasV6Vault(vaultPath) {
+		v6Index, err = v6IndexVault(vaultPath)
+		if err != nil {
+			return 0, err
+		}
+		hasV6Index = true
+		for _, domain := range v6Index.Domains {
+			addV6ValidationLinkTarget(v6LinkTargets, domain.ID)
+			addV6ValidationLinkTarget(v6LinkTargets, domain.ID+"/INDEX")
+			addV6ValidationLinkTarget(v6LinkTargets, domain.ID+"/CANON")
+		}
+		for _, node := range v6Index.KnowledgeNodes {
+			v6KnowledgeNodes[node.Node] = true
+			addV6ValidationLinkTarget(v6LinkTargets, node.Node)
+			addV6ValidationLinkTarget(v6LinkTargets, node.Node+".md")
+			for _, alias := range node.Aliases {
+				addV6ValidationLinkTarget(v6LinkTargets, alias)
+			}
+		}
+		for _, freshness := range v6Index.Freshness {
+			v6Freshness[freshness.Node] = freshness
+		}
+	}
 	for _, note := range notes {
 		if stringField(note.Data, "type") == "epic" {
 			epicAcronyms[stringField(note.Data, "id")] = struct{}{}
 		}
+		if stringField(note.Data, "schema") == "tusker.epic/v6" {
+			epicAcronyms[stringField(note.Data, "id")] = struct{}{}
+		}
 		if id := stringField(note.Data, "id"); id != "" {
 			noteIDs[id] = struct{}{}
+			addV6ValidationLinkTarget(v6LinkTargets, id)
 		}
 		if id := stringField(note.Data, "id"); id != "" && stringField(note.Data, "record_id") != "" {
 			idToRecordID[id] = stringField(note.Data, "record_id")
@@ -767,9 +803,22 @@ func validateCmd(args Args) (int, error) {
 		if recordID := stringField(note.Data, "record_id"); recordID != "" {
 			recordIDs[recordID] = struct{}{}
 		}
+		switch stringField(note.Data, "schema") {
+		case "tusker.domain/v6":
+			v6Domains[stringField(note.Data, "id")] = true
+			addV6ValidationLinkTarget(v6LinkTargets, stringField(note.Data, "id"))
+		case "tusker.knowledge/v6":
+			v6KnowledgeNodes[stringField(note.Data, "node")] = true
+			addV6ValidationLinkTarget(v6LinkTargets, stringField(note.Data, "node"))
+		}
 	}
 	var errs, warns []Issue
 	errs = append(errs, validateDocsMapConfig(docsMap)...)
+	if hasV6Index {
+		v6Errs, v6Warns := validateV6Vault(vaultPath, v6Index)
+		errs = append(errs, v6Errs...)
+		warns = append(warns, v6Warns...)
+	}
 	idToPaths := map[string][]string{}
 	publishPathToPaths := map[string][]string{}
 	for _, note := range notes {
@@ -801,13 +850,18 @@ func validateCmd(args Args) (int, error) {
 	}
 	for _, note := range notes {
 		noteErrs, noteWarns := validateNote(note, validationContext{
-			RelativePath: note.RelativePath,
-			Basename:     filepath.Base(note.AbsolutePath),
-			EpicAcronyms: epicAcronyms,
-			NoteIDs:      noteIDs,
-			IDToRecordID: idToRecordID,
-			RecordIDs:    recordIDs,
-			DocsMap:      docsMap,
+			RelativePath:     note.RelativePath,
+			Basename:         filepath.Base(note.AbsolutePath),
+			VaultPath:        vaultPath,
+			EpicAcronyms:     epicAcronyms,
+			NoteIDs:          noteIDs,
+			IDToRecordID:     idToRecordID,
+			RecordIDs:        recordIDs,
+			DocsMap:          docsMap,
+			V6Domains:        v6Domains,
+			V6KnowledgeNodes: v6KnowledgeNodes,
+			V6LinkTargets:    v6LinkTargets,
+			V6Freshness:      v6Freshness,
 		})
 		errs = append(errs, noteErrs...)
 		warns = append(warns, noteWarns...)
