@@ -10,7 +10,7 @@ tusker:
   summary: "Evidence exists to prove acceptance, not to narrate effort."
   tags:
     - "reference"
-  updated: "2026-05-18"
+  updated: "2026-05-20"
 ---
 
 # Risk and Evidence

@@ -10,7 +10,7 @@ tusker:
   summary: "Load this when inspecting, copying, repairing, or explaining bundled skill resources. Do not load for routine task logging."
   tags:
     - "reference"
-  updated: "2026-05-18"
+  updated: "2026-05-20"
 ---
 
 # Resources

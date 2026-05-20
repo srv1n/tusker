@@ -2,7 +2,7 @@
 
 Generated catalog of published documentation routes.
 
-- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-05-15
+- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-05-20
   High-level overview of the Tusker repository, install modes, and key entry points.
   source: README.md
   tags: repository, overview
@@ -194,7 +194,7 @@ tusker legacy docs build --site ./site
 - [`skill/references/ENGINEERING_DISCIPLINE.md`](skill/references/ENGINEERING_DISCIPLINE.md) - test and debugging discipline
 - [`tusker/docs/spec/tusker-v7-repo-local-work-tracker-spec.md`](tusker/docs/spec/tusker-v7-repo-local-work-tracker-spec.md) - V7 spec
 
-- Closeout Protocol | /user/reference/closeout-protocol/ | audience: user | updated: 2026-05-19
+- Closeout Protocol | /user/reference/closeout-protocol/ | audience: user | updated: 2026-05-20
   This protocol prevents token-burning loops when machine work is complete but the task still has human, reviewer, or external gates.
   source: skill/references/CLOSEOUT_PROTOCOL.md
   tags: reference, closeout
@@ -369,7 +369,7 @@ Agent action: stop_until_human_response.
 No further validation was run because the state has not changed.
 ```
 
-- Commands | /user/reference/commands/ | audience: user | updated: 2026-05-19
+- Commands | /user/reference/commands/ | audience: user | updated: 2026-05-20
   Most commands accept [--vault <path>]. Omit it unless discovery fails.
   source: skill/references/COMMANDS.md
   tags: reference
@@ -710,7 +710,7 @@ This guidance was synthesized from:
 Keep this file as Tusker-native guidance. Link sources for attribution; do not
 copy their full text into the skill payload.
 
-- Prerequisites | /user/reference/prerequisites/ | audience: user | updated: 2026-05-18
+- Prerequisites | /user/reference/prerequisites/ | audience: user | updated: 2026-05-20
   The primary execution surface is the tusker CLI. It must be available on PATH or run from the repository build output.
   source: skill/references/PREREQUISITES.md
   tags: reference
@@ -794,7 +794,7 @@ Keep large demo videos, screenshots, and traces out of git unless the project ex
 
 Raw logs and debug output belong in `.tusker/scratch/<TASK-ID>/`, not canonical evidence.
 
-- Quick Mode | /user/reference/quick-mode/ | audience: user | updated: 2026-05-18
+- Quick Mode | /user/reference/quick-mode/ | audience: user | updated: 2026-05-20
   The low-ceremony path for logging work, finding follow-ups, and closing routine tasks without burning context.
   source: skill/references/QUICK_MODE.md
   tags: reference
@@ -982,7 +982,7 @@ Use it as:
 
 The vault and repo docs should carry the detail.
 
-- Resources | /user/reference/resources/ | audience: user | updated: 2026-05-18
+- Resources | /user/reference/resources/ | audience: user | updated: 2026-05-20
   Load this when inspecting, copying, repairing, or explaining bundled skill resources. Do not load for routine task logging.
   source: skill/references/RESOURCES.md
   tags: reference
@@ -1033,7 +1033,7 @@ This skill ships no standalone scripts. The deterministic execution surface is t
 
 If a future resource needs repeatable logic that agents keep rewriting, add it under `scripts/`, test it directly, and mention exactly when to run it from `SKILL.md`.
 
-- Risk And Evidence | /user/reference/risk-and-evidence/ | audience: user | updated: 2026-05-18
+- Risk And Evidence | /user/reference/risk-and-evidence/ | audience: user | updated: 2026-05-20
   Evidence exists to prove acceptance, not to narrate effort.
   source: skill/references/RISK_AND_EVIDENCE.md
   tags: reference
@@ -1147,7 +1147,7 @@ Before adding a test, identify:
 
 Small work usually needs zero or one focused test plus the relevant existing suite. After three failed focused attempts, stop and summarize or gate instead of thrashing.
 
-- Workflow | /user/reference/workflow/ | audience: user | updated: 2026-05-18
+- Workflow | /user/reference/workflow/ | audience: user | updated: 2026-05-20
   Short reference for the V7 task lifecycle.
   source: skill/references/WORKFLOW.md
   tags: reference
@@ -1281,7 +1281,7 @@ When a task changes durable understanding, fill:
 
 `risk >= high` should require a real knowledge delta when durable understanding changed.
 
-- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-05-18
+- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-05-20
   Operating contract for agents working with Tusker in a markdown-first vault.
   source: skill/SKILL.md
   tags: start-here, workflow
@@ -1544,7 +1544,7 @@ For the fuller checklist, load `references/ENGINEERING_DISCIPLINE.md`.
 
 Use `tusker new ...` when possible; it writes the right templates. Do not load the entire skill payload for a routine lookup.
 
-- Skill Bundle | /user/start-here/skill-bundle/ | audience: user | updated: 2026-05-18
+- Skill Bundle | /user/start-here/skill-bundle/ | audience: user | updated: 2026-05-20
   Overview of the installable Tusker skill bundle and how operators use it.
   source: skill/README.md
   tags: start-here, user

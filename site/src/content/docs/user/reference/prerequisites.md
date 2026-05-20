@@ -10,7 +10,7 @@ tusker:
   summary: "The primary execution surface is the tusker CLI. It must be available on PATH or run from the repository build output."
   tags:
     - "reference"
-  updated: "2026-05-18"
+  updated: "2026-05-20"
 ---
 
 # Prerequisites and setup notes

@@ -11,7 +11,7 @@ tusker:
   tags:
     - "start-here"
     - "user"
-  updated: "2026-05-18"
+  updated: "2026-05-20"
 ---
 
 # Tusker Skill Bundle

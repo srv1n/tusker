@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-05-19T05:21:13Z",
+  "generatedAt": "2026-05-20T02:08:19Z",
   "canon": [
     {
       "topic": "ORC",
@@ -18,7 +18,7 @@
         "start-here",
         "workflow"
       ],
-      "updated": "2026-05-18",
+      "updated": "2026-05-20",
       "summary": "Operating contract for agents working with Tusker in a markdown-first vault."
     }
   ],
@@ -35,7 +35,7 @@
         "repository",
         "overview"
       ],
-      "updated": "2026-05-15",
+      "updated": "2026-05-20",
       "summary": "High-level overview of the Tusker repository, install modes, and key entry points."
     },
     {
@@ -50,7 +50,7 @@
         "reference",
         "closeout"
       ],
-      "updated": "2026-05-19",
+      "updated": "2026-05-20",
       "summary": "This protocol prevents token-burning loops when machine work is complete but the task still has human, reviewer, or external gates."
     },
     {
@@ -64,7 +64,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-19",
+      "updated": "2026-05-20",
       "summary": "Most commands accept [--vault \u003cpath\u003e]. Omit it unless discovery fails."
     },
     {
@@ -92,7 +92,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-18",
+      "updated": "2026-05-20",
       "summary": "The primary execution surface is the tusker CLI. It must be available on PATH or run from the repository build output."
     },
     {
@@ -106,7 +106,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-18",
+      "updated": "2026-05-20",
       "summary": "The low-ceremony path for logging work, finding follow-ups, and closing routine tasks without burning context."
     },
     {
@@ -134,7 +134,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-18",
+      "updated": "2026-05-20",
       "summary": "Load this when inspecting, copying, repairing, or explaining bundled skill resources. Do not load for routine task logging."
     },
     {
@@ -148,7 +148,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-18",
+      "updated": "2026-05-20",
       "summary": "Evidence exists to prove acceptance, not to narrate effort."
     },
     {
@@ -162,7 +162,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-18",
+      "updated": "2026-05-20",
       "summary": "Short reference for the V7 task lifecycle."
     },
     {
@@ -181,7 +181,7 @@
         "start-here",
         "workflow"
       ],
-      "updated": "2026-05-18",
+      "updated": "2026-05-20",
       "summary": "Operating contract for agents working with Tusker in a markdown-first vault."
     },
     {
@@ -196,7 +196,7 @@
         "start-here",
         "user"
       ],
-      "updated": "2026-05-18",
+      "updated": "2026-05-20",
       "summary": "Overview of the installable Tusker skill bundle and how operators use it."
     }
   ],

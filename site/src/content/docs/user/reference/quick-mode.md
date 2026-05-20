@@ -10,7 +10,7 @@ tusker:
   summary: "The low-ceremony path for logging work, finding follow-ups, and closing routine tasks without burning context."
   tags:
     - "reference"
-  updated: "2026-05-18"
+  updated: "2026-05-20"
 ---
 
 # Quick Mode
