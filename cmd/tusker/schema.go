@@ -135,6 +135,7 @@ const (
 	errorLacksSubstance             = "LACKS_SUBSTANCE"
 	errorUIDemoMissing              = "UI_DEMO_MISSING"
 	errorEvidenceGate               = "EVIDENCE_GATE"
+	errorScreenshotCheckMissing     = "SCREENSHOT_CHECK_MISSING"
 	errorOrphanWork                 = "ORPHAN_WORK"
 	errorUnknownEpic                = "UNKNOWN_EPIC"
 	errorEpicAcronymMismatch        = "EPIC_ACRONYM_MISMATCH"
@@ -214,6 +215,9 @@ var frontmatterOrder = map[string][]string{
 		"publish", "publish_lane", "publish_path", "publish_description", "publish_order", "publish_section_title", "redirect_from", "publish_url", "published_at", "created", "updated", "tags",
 	},
 	"note": {"title", "type", "created", "updated", "tags"},
+	"proposal": {
+		"schema", "kind", "id", "project", "title", "status", "action", "target_kind", "target", "proposed_fields", "proposed_by", "source_branch", "created_at", "updated_at", "state_rev",
+	},
 }
 
 type parsedID struct {
@@ -394,6 +398,12 @@ func validateNote(note Note, ctx validationContext) ([]Issue, []Issue) {
 		where = "<unknown>"
 	}
 
+	if schema == "" && noteType == "" && stringField(data, "kind") == "" {
+		return errors, warnings
+	}
+	if strings.HasPrefix(schema, "tusker.") && (strings.HasSuffix(schema, "/v7") || schema == "tusker.gate/v1" || schema == "tusker.evidence/v1" || schema == "tusker.attempt/v1" || schema == "tusker.decision/v1" || schema == "tusker.proposal/v1" || schema == "tusker.closeout/v1") {
+		return validateV7Note(note, ctx, where)
+	}
 	if strings.HasSuffix(schema, "/v6") {
 		return validateV6Note(note, ctx, where)
 	}

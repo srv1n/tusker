@@ -52,17 +52,16 @@ func TestMissingVaultGuidancePreservesStructuredContext(t *testing.T) {
 	assertEqual(t, "--vault <path>", context["existing_vault"], "missing vault existing-vault guidance")
 }
 
-func TestNewHelpListsV5Commands(t *testing.T) {
+func TestNewHelpListsV7Defaults(t *testing.T) {
 	output := captureStdout(t, printNewHelp)
 	for _, expected := range []string{
 		"tusker new epic",
 		"tusker new task",
-		"tusker new bug",
-		"tusker new doc",
+		"tusker new gate",
+		"tusker new decision",
 		"--priority p0|p1|p2|p3",
-		"--kind <type>",
-		"--node <route>",
-		"--publish-lane <lane>",
+		"--evidence-required automated_test",
+		"tusker legacy new",
 		"Examples:",
 		"tusker new task --vault ./tusker --epic APP",
 	} {
@@ -70,18 +69,43 @@ func TestNewHelpListsV5Commands(t *testing.T) {
 			t.Fatalf("new help missing %q:\n%s", expected, output)
 		}
 	}
+	for _, legacy := range []string{"tusker new bug", "tusker new doc", "--node <route>", "--publish-lane <lane>"} {
+		if strings.Contains(output, legacy) {
+			t.Fatalf("new help should quarantine legacy surface %q:\n%s", legacy, output)
+		}
+	}
 }
 
-func TestNewDocHelpListsPublicationFlags(t *testing.T) {
-	output := captureStdout(t, printNewHelp)
+func TestMainHelpQuarantinesLegacySurfaces(t *testing.T) {
+	output := captureStdout(t, printHelp)
+	for _, forbidden := range []string{
+		"docs                ",
+		"domain              ",
+		"knowledge           ",
+		"publish             ",
+		"migrate             ",
+		"verify              ",
+		"V5 markdown",
+		"V6 knowledge",
+	} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("main help should not advertise legacy surface %q:\n%s", forbidden, output)
+		}
+	}
 	for _, expected := range []string{
-		"tusker new doc",
-		"--node <route>",
-		"--publish-lane <lane>",
-		"--no-publish",
+		"Tusker - V7",
+		"tusker.yaml",
+		"tusker/work",
+		"legacy",
 	} {
 		if !strings.Contains(output, expected) {
-			t.Fatalf("new doc help missing %q:\n%s", expected, output)
+			t.Fatalf("main help missing %q:\n%s", expected, output)
+		}
+	}
+	legacyHelp := captureStdout(t, printLegacyHelp)
+	for _, expected := range []string{"V5 tracker", "V6 knowledge", "docs-map", "tusker legacy new doc"} {
+		if !strings.Contains(legacyHelp, expected) {
+			t.Fatalf("legacy help missing %q:\n%s", expected, legacyHelp)
 		}
 	}
 }
@@ -133,6 +157,17 @@ func TestRuntimeCommandParsingIncludesOperatorGroups(t *testing.T) {
 		if tc.id != "" {
 			assertEqual(t, tc.id, args.String("_pos0"), "parsed positional id")
 		}
+	}
+}
+
+func TestParseCLIHandlesNoCommand(t *testing.T) {
+	for _, argv := range [][]string{
+		nil,
+		{"tusker"},
+	} {
+		command, args := parseCLI(argv)
+		assertEqual(t, "", command, "parsed command")
+		assertEqual(t, 0, len(args), "parsed args")
 	}
 }
 
@@ -238,6 +273,15 @@ func captureStdout(t *testing.T, fn func()) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	type readResult struct {
+		output []byte
+		err    error
+	}
+	done := make(chan readResult, 1)
+	go func() {
+		output, err := io.ReadAll(reader)
+		done <- readResult{output: output, err: err}
+	}()
 	os.Stdout = writer
 	defer func() {
 		os.Stdout = previous
@@ -248,12 +292,12 @@ func captureStdout(t *testing.T, fn func()) string {
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	output, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatal(err)
+	result := <-done
+	if result.err != nil {
+		t.Fatal(result.err)
 	}
 	if err := reader.Close(); err != nil {
 		t.Fatal(err)
 	}
-	return string(output)
+	return string(result.output)
 }

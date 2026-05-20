@@ -380,6 +380,8 @@ func runtimeFailureClass(run RunStatus, attempts []RunAttempt, turns []RunTurn) 
 		return "runner_failure"
 	case outcome == string(AttemptOutcomeBlocked):
 		return "blocked"
+	case outcome == string(AttemptOutcomeWaitingForHuman):
+		return "waiting_for_human"
 	case outcome == string(AttemptOutcomeAbandoned):
 		return "abandoned"
 	default:

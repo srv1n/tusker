@@ -106,7 +106,7 @@ func TestDefaultDocsMapYAMLIsValidDiataxisCatalog(t *testing.T) {
 
 func TestReindexDocsIndexMergesDocsMapMetadataAndCatalog(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := reindex(Args{"vault": vault, "quiet": "true"}); err != nil {

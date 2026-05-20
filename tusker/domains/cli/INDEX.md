@@ -48,4 +48,5 @@ Read [[cli/CANON]] first, then the narrowest reference node.
 
 <!-- tusker:current-work:begin -->
 - [[ORC-T-0019]] - Add policy-driven agent reviewer close lane (review)
+- [[ORC-T-0020]] - Implement V7 repo-local work tracker slice (active)
 <!-- tusker:current-work:end -->

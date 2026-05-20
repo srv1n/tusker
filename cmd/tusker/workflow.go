@@ -150,7 +150,7 @@ Policy:
 - Human close required: {{ reviewer.human_required }}
 
 Checklist:
-1. Read the task acceptance contract, scope, evidence, verification log, and docs resolution.
+1. Read the task acceptance contract, proof mode, verification, evidence, gates, and docs resolution.
 2. Inspect the current diff against the task scope. Call out surprise files or drive-by refactors.
 3. Run the verification commands needed to prove the acceptance contract.
 4. Confirm docs impact is applied, nooped, or waived for every ` + "`doc_nodes`" + ` entry.
@@ -162,8 +162,8 @@ tusker status {{ note.id }} rework --by {{ reviewer.actor }} --reason "<specific
 
 If auto-close is allowed and every check passes, run:
 tusker docs check {{ note.id }}
-tusker verify {{ note.id }} --by {{ reviewer.actor }} --summary "<what you verified>"
-tusker close {{ note.id }} --by {{ reviewer.actor }} --reason "agent review accepted"
+{{ reviewer.verify_command }}
+{{ reviewer.close_command }}
 
 If human close is required and every check passes, do not run ` + "`verify`" + ` or ` + "`close`" + `. Leave the task in ` + "`review`" + ` and state the human-review recommendation in your final response.`)
 }
@@ -196,7 +196,7 @@ func stringListContainsFold(values []string, target string) bool {
 func defaultWorkflowMarkdown() string {
 	wf := defaultWorkflow()
 	raw, _ := yaml.Marshal(wf)
-	return "---\n" + strings.TrimSpace(string(raw)) + "\n---\n\n## Routing\n\nYou are working on {{ note.id }} for {{ project.name }}. Dispatch only makes sense because this task is currently {{ note.status }} and the workspace is ready at {{ workspace.path }}.\n\n## Prompt\n\nUse the installed Tusker skill bundle for durable task semantics, evidence, and verification discipline. Work inside {{ workspace.path }}. Treat {{ repo.root }} as the source repository root for context only unless the task explicitly requires comparing against it.\n\nItem: {{ note.title }}\nRecord: {{ note.record_id }}\nType: {{ note.type }}\nAttempt: {{ attempt.number }}\nWorkflow: {{ workflow.path }}\nVault: {{ vault.path }}\n\n## Completion contract\n\nWhen the work is demonstrably ready for verification, move the task to `review`. If the work is blocked, set status to `blocked` with a concrete blocker instead of exiting cleanly. If the task remains active after a turn, the daemon will continue or retry the same session.\n\n## Reviewer contract\n\nIf `reviewer.enabled` is true, tasks in `review` may be dispatched to `reviewer.runner` for independent review. The reviewer must not edit implementation files. Low/medium risks can be verified and closed by `reviewer.actor` after all gates pass; high/critical risks stay in `review` for human verification and close.\n\n## Retry policy\n\nRetry only transient infrastructure failures. Human-directed rework creates a new active task revision.\n\n## Human override policy\n\nHumans may edit tasks directly, but runtime state belongs to the daemon store.\n"
+	return "---\n" + strings.TrimSpace(string(raw)) + "\n---\n\n## Routing\n\nYou are working on {{ note.id }} for {{ project.name }}. Dispatch only makes sense because this task is currently {{ note.status }} and the workspace is ready at {{ workspace.path }}.\n\n## Hard stop check\n\nBefore doing work, run `tusker closeout status {{ note.id }} --json` when the V7 closeout command is available. If it reports `agent_action=stop_until_human_response` with a matching fingerprint, do not validate, inspect files, spawn subagents, or modify Tusker records. Reply with the pending human gates/proof and the last closeout snapshot.\n\nRevalidate only after you edited files, a task/gate/evidence state changed, the closeout fingerprint no longer matches, or the user explicitly asked for fresh validation.\n\n## Prompt\n\nUse the installed Tusker skill bundle for durable task semantics and proof discipline. Work inside {{ workspace.path }}. Treat {{ repo.root }} as the source repository root for context only unless the task explicitly requires comparing against it.\n\nItem: {{ note.title }}\nRecord: {{ note.record_id }}\nType: {{ note.type }}\nAttempt: {{ attempt.number }}\nWorkflow: {{ workflow.path }}\nVault: {{ vault.path }}\n\n## Completion contract\n\nSatisfy the task proof mode. For proof_mode=inline, record concise verification rows with `tusker verify add`; do not create evidence files. For card/artifact/audit, create only the evidence the proof mode requires. When machine work is complete and only human-owned proof or gates remain, run `tusker closeout <task-id> --emit-packet --validate \"<command>\"`, then stop. When the work is demonstrably ready for verification, use `tusker finish <task-id> --request-review` so the task reaches `review` or a branch-safe `propose status ... --status review` proposal is created. Attempt handoff alone is not a review request. If proof is blocked, create/propose a gate with a concrete owner, action, and verification instead of appending negative evidence.\n\n## Reviewer contract\n\nIf `reviewer.enabled` is true, tasks in `review` may be dispatched to `reviewer.runner` for independent review. The reviewer must not edit implementation files. Low/medium risks can be verified and closed by `reviewer.actor` after all gates pass; high/critical risks stay in `review` for human verification and close.\n\n## Retry policy\n\nRetry only transient infrastructure failures. Human-directed rework creates a new active task revision.\n\n## Human override policy\n\nHumans may edit tasks directly, but runtime state belongs to the daemon store.\n"
 }
 
 func loadWorkflow(vaultPath string) (WorkflowFile, error) {

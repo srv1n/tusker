@@ -1,9 +1,9 @@
 ---
-title: "Cheat Sheet"
-type: "note"
-created: "2026-04-29"
-updated: "2026-04-29"
-tags: ["cheatsheet"]
+title: "Tusker Cheat Sheet"
+type: note
+created_at: "{{date}}"
+updated_at: "{{date}}"
+tags: [cheatsheet]
 ---
 
 # Tusker Cheat Sheet
@@ -11,53 +11,52 @@ tags: ["cheatsheet"]
 ## Task flow
 
 ```text
-draft -> backlog -> ready -> active -> review -> done
-ready|active -> blocked -> ready|active
-review -> rework -> active
-active|review|blocked|rework|backlog -> cancelled
+idea -> backlog -> ready -> review -> done
+                  ^          |
+                  |          v
+                rework <-----+
+
+any nonterminal state -> cancelled | superseded
 ```
 
-`review` is a checkpoint. With `reviewer.enabled`, the daemon can launch an independent review lane from `review`; low/medium work can close as `agent-reviewer`, and high/critical work stays human-gated.
+Runtime `claimed/running` is not task `status`. A task is agent-runnable only when:
 
-## Current workflow settings
+```text
+status in ready|rework
+readiness == ready
+next_owner == agent or agent:<name>
+agent_action != stop_until_human_response
+```
 
-| Surface | Current setting |
-|---|---|
-| Worker dispatch | `active`, `rework` |
-| Review checkpoint | `review` |
-| Reviewer runner | `codex` |
-| Reviewer actor | `agent-reviewer` |
-| Auto-close | `low`, `medium` |
-| Human close | `high`, `critical` |
+## Human-wait stop
+
+When only human/external blockers remain:
+
+```yaml
+status: review
+readiness: held
+next_owner: human:<name>
+agent_action: stop_until_human_response
+```
+
+Agents do no more tool work in this state.
 
 ## Common commands
 
 ```bash
-tusker validate --vault ./tusker
-tusker list --vault ./tusker --type task
-tusker next --vault ./tusker
-tusker claim --vault ./tusker MEM-T-0001 --as sarav
-tusker status --vault ./tusker MEM-T-0001 active --actor sarav
-tusker evidence --vault ./tusker MEM-T-0001 pr https://example.com/pr/123
-tusker status --vault ./tusker MEM-T-0001 review --actor sarav
-tusker verify --vault ./tusker MEM-T-0001 --by verifier
-tusker close --vault ./tusker MEM-T-0001 --by sarav
+tusker list --type epic
+tusker search "<term>" --type task
+tusker show <TASK-ID> --capsule
+tusker proof status <TASK-ID> --json
+tusker verify add <TASK-ID> --covers A1 --check "<check>" --result pass
+tusker finish <TASK-ID> --request-review --summary "<proof map>"
+tusker validate --json
+tusker closeout status <TASK-ID> --json  # when supported
 ```
 
-## What to open
+## What to read
 
-- `Dashboard.md` = landing page
-- `Tasks.base#Board` = current execution work, grouped by status
-- `Tasks.base#Ready` = shaped, unblocked current work, ready to pull
-- `Tasks.base#Blocked` = current work waiting on dependencies or an external blocker
-- `Tasks.base#Backlog` = shaped future work, not current release
-- `Tasks.base#Needs Attention` = draft, blocked, review, rework — silent rotters
-- `Tasks.base#By Epic` = open work grouped by epic
-- `Tasks.base#Archive` = done + cancelled
-- `BugTasks.base#Board` = current bug execution work, grouped by status
-
-## Files and folders
-
-- `_system/views/*.base` = Bases views
-- `_system/generated/dashboard.json` = derived tracker/runtime snapshot
-- `Attachments/<TASK-ID>/` = evidence files
+- `references/QUICK_MODE.md` for routine log/resume/close.
+- `references/CLOSEOUT_PROTOCOL.md` for human gates and loop prevention.
+- `references/WORKFLOW.md` for lifecycle state.
+- `references/RISK_AND_EVIDENCE.md` for proof expectations.

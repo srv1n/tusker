@@ -1,0 +1,14 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-15T10:40:18Z",
+  "event_kind": "evidence_added",
+  "id": "01KRNKJ1Y1VMBJVR25RN6A5A7C",
+  "object": "VSD-T-0008",
+  "object_kind": "task",
+  "payload": {
+    "evidence": "VSD-T-0008-E-0001",
+    "kind": "automated_test"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

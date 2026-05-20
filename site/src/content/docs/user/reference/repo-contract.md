@@ -1,17 +1,16 @@
 ---
-title: "Repo contract"
+title: "Repo Contract"
 description: "The vault is internal working memory. The repository is still where contributors land."
 tusker:
   audience: "user"
   publish_path: "user/reference/repo-contract"
-  publish_section_title: "Reference"
   route: "/user/reference/repo-contract/"
   source_kind: "repo_doc"
   source_path: "skill/references/REPO_CONTRACT.md"
   summary: "The vault is internal working memory. The repository is still where contributors land."
   tags:
     - "reference"
-  updated: "2026-05-10"
+  updated: "2026-05-18"
 ---
 
 # Repo contract

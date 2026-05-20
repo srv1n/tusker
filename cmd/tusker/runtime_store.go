@@ -112,6 +112,7 @@ const (
 	SupervisorDecisionNewBranch      SupervisorDecisionKind = "new_branch"
 	SupervisorDecisionNewRevision    SupervisorDecisionKind = "new_revision"
 	SupervisorDecisionStopForAudit   SupervisorDecisionKind = "stop_for_audit"
+	SupervisorDecisionStopForHuman   SupervisorDecisionKind = "stop_for_human"
 
 	supervisorDecisionContinueThread = string(SupervisorDecisionContinueThread)
 	supervisorDecisionResumeSession  = string(SupervisorDecisionResumeSession)
@@ -119,6 +120,7 @@ const (
 	supervisorDecisionNewBranch      = string(SupervisorDecisionNewBranch)
 	supervisorDecisionNewRevision    = string(SupervisorDecisionNewRevision)
 	supervisorDecisionStopForAudit   = string(SupervisorDecisionStopForAudit)
+	supervisorDecisionStopForHuman   = string(SupervisorDecisionStopForHuman)
 )
 
 type RuntimeSupervisorDecision struct {

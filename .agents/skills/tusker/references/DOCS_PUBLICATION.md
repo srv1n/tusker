@@ -6,7 +6,7 @@ Use this when the user wants project docs, a public docs site, a user guide, rel
 
 1. `README*`, `AGENTS.md`, `CLAUDE.md`, and obvious architecture files.
 2. `tusker/README.md` and the epic roster from `tusker list --type epic`.
-3. V5 docs under `tusker/docs/**`.
+3. durable docs under `tusker/docs/**`.
 4. Repo docs registered through `docs/publication.yaml`.
 5. Generated manifests if present:
    - `site/public/canon-manifest.json`
@@ -16,7 +16,7 @@ Use this when the user wants project docs, a public docs site, a user guide, rel
 
 If a source file disagrees with `canon-manifest.json`, trust the manifest first and call out the conflict. Do not quietly cite stale archaeology.
 
-## V5 docs model
+## Durable docs model
 
 Docs are durable knowledge pages under `tusker/docs/**`.
 
@@ -66,6 +66,16 @@ Do not publish these directly as user/developer prose:
 - generated manifests
 - agent-only instructions
 - stale or unregistered markdown
+
+For V7, the generated project knowledge skill is a routing surface, not a docs
+dump. Its source truth is `tusker/knowledge/domains/**`; it must not publish
+task bodies, evidence records, attempts, event files, generated manifests,
+packet caches, runtime state, or raw logs as reader-facing docs.
+
+Every exported V7 domain needs a project skill route to that domain's
+`INDEX.md` and `CANON.md`. Tusker regenerates the route table on domain
+creation and `tusker validate` reports `PROJECT_SKILL_DOMAIN_ROUTE_MISSING`
+when the route table drifts.
 
 Use this split:
 
@@ -233,6 +243,6 @@ Published docs may reference selected local assets, and the exporter can copy/re
 - Use `canonical_status`: `approved` is safe, `draft` needs verification, `deprecated`/`historical` is archaeology.
 - Treat `site/src/content/docs/**` as generated output.
 - Treat `_system/generated/**` as generated indexes.
-- Use `tusker/docs/**` for V5 vault docs.
+- Use `tusker/docs/**` for durable vault docs.
 - Use `docs/publication.yaml` for repo docs.
 - If docs impact is real, set `doc_nodes` and fill knowledge delta.

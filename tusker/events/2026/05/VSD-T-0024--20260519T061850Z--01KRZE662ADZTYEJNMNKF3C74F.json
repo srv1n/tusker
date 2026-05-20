@@ -1,0 +1,14 @@
+{
+  "actor": "reviewer:agent",
+  "at": "2026-05-19T06:18:50Z",
+  "event_kind": "closed",
+  "id": "01KRZE662ADZTYEJNMNKF3C74F",
+  "object": "VSD-T-0024",
+  "object_kind": "task",
+  "payload": {
+    "from": "review",
+    "reason": "audit accepted: current-source validation and go test ./... passed"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

@@ -745,6 +745,38 @@ func validateCmd(args Args) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if args.Bool("branch-policy-only") {
+		errs, warns := validateV7BranchPolicy(vaultPath, args)
+		if args.Bool("json") {
+			emitJSON(map[string]any{
+				"ok":       len(errs) == 0,
+				"counts":   map[string]any{"errors": len(errs), "warnings": len(warns)},
+				"errors":   errs,
+				"warnings": warns,
+			})
+			if len(errs) > 0 {
+				return 1, nil
+			}
+			return 0, nil
+		}
+		if len(warns) > 0 {
+			fmt.Println("Warnings:")
+			for _, warning := range warns {
+				fmt.Printf("- %s\n", formatIssue(warning))
+			}
+		}
+		if len(errs) > 0 {
+			fmt.Println("Errors:")
+			for _, current := range errs {
+				fmt.Printf("- %s\n", formatIssue(current))
+			}
+			return 1, nil
+		}
+		if !args.Bool("quiet") {
+			fmt.Println("Branch policy validation passed.")
+		}
+		return 0, nil
+	}
 	notes, err := listAllNotes(vaultPath)
 	if err != nil {
 		return 0, err
@@ -819,12 +851,18 @@ func validateCmd(args Args) (int, error) {
 		errs = append(errs, v6Errs...)
 		warns = append(warns, v6Warns...)
 	}
+	v7SkillErrs, v7SkillWarns := validateV7SkillKnowledge(vaultPath)
+	errs = append(errs, v7SkillErrs...)
+	warns = append(warns, v7SkillWarns...)
 	idToPaths := map[string][]string{}
+	idCollisionLabels := map[string]string{}
 	publishPathToPaths := map[string][]string{}
 	for _, note := range notes {
 		id := stringField(note.Data, "id")
 		if id != "" {
-			idToPaths[id] = append(idToPaths[id], note.RelativePath)
+			collisionKey := validationIDCollisionKey(note)
+			idToPaths[collisionKey] = append(idToPaths[collisionKey], note.RelativePath)
+			idCollisionLabels[collisionKey] = id
 		}
 		if stringField(note.Data, "type") == "doc" && boolField(note.Data, "publish") {
 			publishPath := strings.TrimSpace(stringField(note.Data, "publish_path"))
@@ -840,7 +878,8 @@ func validateCmd(args Args) (int, error) {
 	}
 	for id, paths := range idToPaths {
 		if len(paths) > 1 {
-			errs = append(errs, issue(errorIDCollision, fmt.Sprintf(`id "%s" declared in %d files: %s`, id, len(paths), strings.Join(paths, ", ")), paths[0], "rename one file or change one id; ids must be unique vault-wide", map[string]any{"id": id, "paths": paths}))
+			label := firstNonEmpty(idCollisionLabels[id], id)
+			errs = append(errs, issue(errorIDCollision, fmt.Sprintf(`id "%s" declared in %d files: %s`, label, len(paths), strings.Join(paths, ", ")), paths[0], "rename one file or change one id; ids must be unique within their active schema namespace", map[string]any{"id": label, "paths": paths}))
 		}
 	}
 	for publishPath, paths := range publishPathToPaths {
@@ -866,13 +905,30 @@ func validateCmd(args Args) (int, error) {
 		errs = append(errs, noteErrs...)
 		warns = append(warns, noteWarns...)
 	}
+	eventErrs, eventWarns, eventCount := validateV7Events(vaultPath)
+	errs = append(errs, eventErrs...)
+	warns = append(warns, eventWarns...)
+	generatedErrs, generatedWarns := validateV7GeneratedDashboards(vaultPath)
+	errs = append(errs, generatedErrs...)
+	warns = append(warns, generatedWarns...)
+	attachmentErrs, attachmentWarns := validateV7AttachmentsPolicy(vaultPath)
+	errs = append(errs, attachmentErrs...)
+	warns = append(warns, attachmentWarns...)
+	if args.Bool("branch-policy") {
+		branchErrs, branchWarns := validateV7BranchPolicy(vaultPath, args)
+		errs = append(errs, branchErrs...)
+		warns = append(warns, branchWarns...)
+	}
 	docsErrs, docsWarns := validateDocsPublicationState(vaultPath, notes)
 	errs = append(errs, docsErrs...)
 	warns = append(warns, docsWarns...)
+	if hasV7ProjectSkill(vaultPath) && hasV7KnowledgeDomains(vaultPath) {
+		errs, warns = fenceLegacyV6DocsImpactForV7(errs, warns)
+	}
 	if args.Bool("json") {
 		emitJSON(map[string]any{
 			"ok":       len(errs) == 0,
-			"counts":   map[string]any{"notes": len(notes), "errors": len(errs), "warnings": len(warns)},
+			"counts":   map[string]any{"notes": len(notes), "events": eventCount, "errors": len(errs), "warnings": len(warns)},
 			"errors":   errs,
 			"warnings": warns,
 		})
@@ -895,9 +951,35 @@ func validateCmd(args Args) (int, error) {
 		return 1, nil
 	}
 	if !args.Bool("quiet") {
-		fmt.Printf("Validation passed for %d notes.\n", len(notes))
+		fmt.Printf("Validation passed for %d notes and %d events.\n", len(notes), eventCount)
 	}
 	return 0, nil
+}
+
+func validationIDCollisionKey(note Note) string {
+	id := stringField(note.Data, "id")
+	switch stringField(note.Data, "schema") {
+	case "tusker.domain/v6":
+		return "legacy-domain:" + id
+	case "tusker.domain/v7":
+		return "v7-domain:" + id
+	default:
+		return id
+	}
+}
+
+func fenceLegacyV6DocsImpactForV7(errs, warns []Issue) ([]Issue, []Issue) {
+	var remaining []Issue
+	for _, current := range errs {
+		if current.Code == errorDocsImpactUnresolved && strings.Contains(strings.ToLower(current.Message), "v6 knowledge_nodes") {
+			current.Code = "LEGACY_V6_DOCS_IMPACT_FENCED"
+			current.Hint = "legacy V6 knowledge freshness is fenced from V7 release validation; V7 project truth is tusker/SKILL.md plus tusker/knowledge/domains/**"
+			warns = append(warns, current)
+			continue
+		}
+		remaining = append(remaining, current)
+	}
+	return remaining, warns
 }
 
 func listCmd(args Args) error {
@@ -933,10 +1015,10 @@ func listCmd(args Args) error {
 	taskCounts := taskCountsByEpic(notes)
 	var rows []Note
 	for _, note := range notes {
-		if noteType != "" && stringField(note.Data, "type") != noteType {
+		currentType := noteListKind(note.Data)
+		if noteType != "" && currentType != noteType {
 			continue
 		}
-		currentType := stringField(note.Data, "type")
 		if epic != "" {
 			e := stringField(note.Data, "id")
 			if currentType != "epic" {
@@ -973,15 +1055,16 @@ func listCmd(args Args) error {
 	if args.Bool("json") {
 		items := make([]map[string]any, 0, len(rows))
 		for _, note := range rows {
+			currentType := noteListKind(note.Data)
 			item := map[string]any{
 				"id":            stringField(note.Data, "id"),
 				"title":         stringField(note.Data, "title"),
-				"type":          stringField(note.Data, "type"),
+				"type":          currentType,
 				"status":        stringField(note.Data, "status"),
 				"record_id":     stringField(note.Data, "record_id"),
 				"work_revision": intField(note.Data, "work_revision"),
 				"epic": func() string {
-					if stringField(note.Data, "type") == "epic" {
+					if currentType == "epic" {
 						return stringField(note.Data, "id")
 					}
 					return wikiTarget(note.Data["epic"])
@@ -992,7 +1075,7 @@ func listCmd(args Args) error {
 				"path":     note.RelativePath,
 				"updated":  stringField(note.Data, "updated"),
 			}
-			if stringField(note.Data, "type") == "epic" {
+			if currentType == "epic" {
 				id := stringField(note.Data, "id")
 				item["summary"] = stringField(note.Data, "summary")
 				item["counts"] = epicTaskCount(taskCounts, id)
@@ -1003,7 +1086,8 @@ func listCmd(args Args) error {
 		return nil
 	}
 	for _, note := range rows {
-		if stringField(note.Data, "type") == "epic" {
+		currentType := noteListKind(note.Data)
+		if currentType == "epic" {
 			id := stringField(note.Data, "id")
 			counts := epicTaskCount(taskCounts, id)
 			summary := strings.TrimSpace(stringField(note.Data, "summary"))
@@ -1013,7 +1097,7 @@ func listCmd(args Args) error {
 			}
 			continue
 		}
-		fmt.Printf("%-14s  %-6s  %-10s  %s\n", stringField(note.Data, "id"), stringField(note.Data, "type"), stringField(note.Data, "status"), stringField(note.Data, "title"))
+		fmt.Printf("%-14s  %-6s  %-10s  %s\n", stringField(note.Data, "id"), currentType, stringField(note.Data, "status"), stringField(note.Data, "title"))
 	}
 	if len(rows) == 0 && !args.Bool("quiet") {
 		fmt.Println("(no matches)")
@@ -1034,7 +1118,7 @@ func epicTaskCount(counts map[string]map[string]int, epic string) map[string]int
 func taskCountsByEpic(notes []Note) map[string]map[string]int {
 	counts := map[string]map[string]int{}
 	for _, note := range notes {
-		if stringField(note.Data, "type") != "task" {
+		if noteListKind(note.Data) != "task" {
 			continue
 		}
 		epic := wikiTarget(note.Data["epic"])
@@ -1062,8 +1146,8 @@ func taskCountsByEpic(notes []Note) map[string]map[string]int {
 
 func sortListRows(rows []Note) {
 	sort.SliceStable(rows, func(i, j int) bool {
-		leftType := stringField(rows[i].Data, "type")
-		rightType := stringField(rows[j].Data, "type")
+		leftType := noteListKind(rows[i].Data)
+		rightType := noteListKind(rows[j].Data)
 		if leftType != rightType {
 			return listTypeRank(leftType) < listTypeRank(rightType)
 		}
@@ -1079,6 +1163,13 @@ func sortListRows(rows []Note) {
 		}
 		return stringField(rows[i].Data, "id") < stringField(rows[j].Data, "id")
 	})
+}
+
+func noteListKind(data map[string]any) string {
+	if legacyType := stringField(data, "type"); legacyType != "" {
+		return legacyType
+	}
+	return effectiveV7Kind(data)
 }
 
 func sortTaskMapsForProgressiveList(tasks []map[string]any) {

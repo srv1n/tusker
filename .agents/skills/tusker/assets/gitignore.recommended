@@ -1,9 +1,7 @@
-# tusker
-.obsidian/workspace*.json
-.obsidian/workspaces*.json
-.obsidian/cache/
-.obsidian/plugins/
-.obsidian/themes/
+# Tusker generated/runtime state
+_system/generated/
+.tusker-local/
+.tusker/scratch/
+*.log
 .DS_Store
 Thumbs.db
-_system/generated/

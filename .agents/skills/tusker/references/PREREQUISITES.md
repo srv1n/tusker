@@ -2,126 +2,77 @@
 
 ## Required
 
-### 1) Go
+### 1) Tusker CLI
 
-The primary `tusker` CLI is now built and run with Go.
-
-Minimum expectation:
-
-- Go 1.26+ installed and available on `PATH`
+The primary execution surface is the `tusker` CLI. It must be available on `PATH` or run from the repository build output.
 
 ### 2) Local filesystem access
 
-You need a path where the vault lives. This can be:
+Tusker works against a repo-local or repo-adjacent markdown vault. The vault can be:
 
-- a normal local Obsidian vault
-- a repo-adjacent vault
-- a synced folder
-- a server-side vault mirrored through Obsidian Headless or another file sync system
+- inside the repository;
+- adjacent to the repository;
+- in a synced folder;
+- mounted into the repository for local work.
 
-## Recommended
+The markdown format is the contract. No specific editor is required.
 
-### Obsidian Desktop
-
-Recommended core features:
-
-- Properties
-- Templates
-- Bases
-- Backlinks
-- Search
-- Outgoing links
-- File explorer
-
-These give you the human interface without changing the underlying file format.
-
-### Git
+### 3) Git recommended
 
 Use git for:
 
-- versioning the vault
-- syncing text changes between machines
-- tracking structured updates to plans, reviews, and docs
+- versioning task/proof/docs changes;
+- comparing state fingerprints;
+- syncing text changes between machines;
+- reviewing agent edits.
 
-If you keep large demo videos in git, consider Git LFS. If you do not want binary churn in git, keep videos outside the repo and store the stable file path or URL in the demo note.
+## Suggested filesystem layouts
 
-## Optional
+Repo-contained vault:
 
-### Obsidian CLI
+```text
+repo/
+  tusker/
+  .agents/skills/tusker/
+  .claude/skills/tusker/
+```
 
-Use Obsidian CLI when you want the desktop app itself to be controlled from the terminal.
-
-Good for:
-
-- live search
-- note creation through the app
-- screenshots
-- automated UI-oriented workflows
-
-Caveat:
-
-- it operates against the running Obsidian desktop app
-
-### Obsidian Headless
-
-Use Obsidian Headless when you want sync or publish automation without the desktop app.
-
-Good for:
-
-- CI-style sync
-- server-side vault mirrors
-- publish automation
-- giving agents access to a synced vault without desktop access
-
-Caveats:
-
-- it is still beta
-- it is a separate toolchain from Tusker itself
-- do not use desktop Sync and Headless Sync on the same device
-
-## Suggested filesystem layout
+Repo-adjacent vault:
 
 ```text
 repo/
 vault/
 ```
 
-or:
+Repo-contained is simpler for agents. Repo-adjacent can be cleaner when the vault has private planning material.
 
-```text
-repo/
-  .agents/skills/
-  .claude/skills/
-vault/
-```
-
-Keeping the vault adjacent to the repo is often cleaner than nesting the entire vault inside the repo root.
-
-## Suggested operational split
+## Operational split
 
 Use the code repo for:
 
-- source code
-- public GitHub issues and PRs
-- repo-local docs
-- short `AGENTS.md`
+- source code;
+- public issues and PRs;
+- repo-local docs;
+- short `AGENTS.md`.
 
-Use the vault for:
+Use the Tusker vault for:
 
-- deeper work tracking
-- planning
-- review evidence
-- demo scripts
-- documentation drafts
-- session summaries
-- internal cross-linking
+- work tracking;
+- plans and task contracts;
+- review evidence;
+- gates and decisions;
+- documentation drafts;
+- session summaries;
+- internal cross-linking.
 
-## Mobile and multi-device use
+## Optional editor/UI
 
-If you want phone access, the biggest win is that the canonical artifacts are still plain Markdown. That means:
+Any markdown editor can view the vault. Editor-specific views, plugins, bases, templates, or sync tools are optional and outside the root skill contract.
 
-- readable without the helper scripts
-- searchable without a database
-- portable even if you stop using this skill later
+Do not make agent behavior depend on editor UI features. Agents should use the CLI and plain markdown paths.
 
-That portability is the whole point.
+## Binary artifacts
+
+Keep large demo videos, screenshots, and traces out of git unless the project explicitly wants them. Prefer stable file paths or URLs in evidence cards.
+
+Raw logs and debug output belong in `.tusker/scratch/<TASK-ID>/`, not canonical evidence.

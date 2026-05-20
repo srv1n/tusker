@@ -14,7 +14,7 @@ CHECK := ✓
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test vet check install install-bin install-user install-repo sync-repo-contract release-artifacts tag-release docs-export docs-dev docs-build docs-check
+.PHONY: help build fmt-check test vet validate check install install-bin install-user install-repo sync-repo-contract release-artifacts tag-release docs-export docs-dev docs-build docs-check codebasezip
 
 help: ## Show available make targets
 	@awk 'BEGIN {FS = ":.*## "}; /^[a-zA-Z0-9_.-]+:.*## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -29,7 +29,19 @@ test: ## Run Go tests
 vet: ## Run go vet
 	go vet ./...
 
-check: test vet build ## Run tests, vet, and build
+fmt-check: ## Verify Go source is gofmt-formatted
+	@files=$$(git ls-files -c -o --exclude-standard '*.go' | while IFS= read -r file; do [ -f "$$file" ] && printf '%s\n' "$$file"; done); \
+	if [ -z "$$files" ]; then exit 0; fi; \
+	unformatted=$$(gofmt -l $$files); \
+	if [ -n "$$unformatted" ]; then \
+		printf 'gofmt required:\n%s\n' "$$unformatted"; \
+		exit 1; \
+	fi
+
+validate: ## Run Tusker validation with branch-policy checks
+	go run ./cmd/tusker validate --branch-policy --json
+
+check: fmt-check test vet validate build ## Run format, tests, vet, validation, and build
 
 install-bin: build ## Build/install binary and refresh existing root user skills
 	./"$(DIST_BIN)" update --bin-dir "$(BIN_DIR)"
@@ -93,3 +105,23 @@ docs-build: build ## Export docs and build the static docs site
 docs-check: build ## Validate the vault and build the docs pipeline end-to-end
 	./"$(DIST_BIN)" validate
 	./"$(DIST_BIN)" docs build --site ./site
+
+CODEBASEZIP_NAME ?= tusker-codebase.zip
+CODEBASEZIP_PATH ?= $(CURDIR)/$(CODEBASEZIP_NAME)
+CODEBASEZIP_EXT_PATTERN := \.(go|rs|js|jsx|mjs|cjs|ts|tsx|css|scss|less|html|htm|json|yml|yaml|toml)$$|(^|/)Makefile$|(^|/)go\.mod$|(^|/)go\.sum$
+
+codebasezip: ## Zip code-only source files; use scripts/package-code-review.sh for docs/skills review
+	@tmp_list=$$(mktemp); \
+	git ls-files -c -o --exclude-standard -z | tr '\0' '\n' > "$$tmp_list".all; \
+	grep -E "$(CODEBASEZIP_EXT_PATTERN)" "$$tmp_list".all | sort -u > "$$tmp_list".filtered; \
+	if [ ! -s "$$tmp_list".filtered ]; then \
+		rm -f "$$tmp_list".all "$$tmp_list".filtered; \
+		echo "No source files matched the filter. Refusing to write empty zip." >&2; \
+		exit 1; \
+	fi; \
+	rm -f "$(CODEBASEZIP_PATH)"; \
+	rm -f "$$tmp_list".all; \
+	zip -q -r -D "$(CODEBASEZIP_PATH)" -@ < "$$tmp_list".filtered; \
+	rm -f "$$tmp_list".filtered; \
+	echo "Created $(CODEBASEZIP_PATH)"; \
+	echo "Code-only archive. For docs/skills review use: ./scripts/package-code-review.sh"

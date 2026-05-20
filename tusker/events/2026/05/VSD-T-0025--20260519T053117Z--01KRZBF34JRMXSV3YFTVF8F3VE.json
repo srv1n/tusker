@@ -1,0 +1,14 @@
+{
+  "actor": "agent:codex",
+  "at": "2026-05-19T05:31:17Z",
+  "event_kind": "evidence_added",
+  "id": "01KRZBF34JRMXSV3YFTVF8F3VE",
+  "object": "VSD-T-0025",
+  "object_kind": "task",
+  "payload": {
+    "evidence": "VSD-T-0025-E-0001",
+    "kind": "automated_test"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

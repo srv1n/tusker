@@ -70,6 +70,33 @@ func TestShowDefaultsToCapsuleAndCanReadAcceptanceOnly(t *testing.T) {
 	}
 }
 
+func TestShowSynthesizesV7TaskCapsuleWithRoutingFacts(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "vault")
+	if err := bootstrapV7Profile(vault, "v7"); err != nil {
+		t.Fatal(err)
+	}
+	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App foundation", "summary": "Build the app foundation.", "v7": "true"}, newV7Epic)
+	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Capsule task", "risk": "medium", "priority": "p1", "domains": "project", "v7": "true"}, newV7Task)
+
+	capsule := captureStdout(t, func() {
+		if err := showCmd(Args{"vault": vault, "id": "APP-T-0001", "capsule": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, expected := range []string{
+		"APP-T-0001  task  ready  Capsule task",
+		"Readiness: ready",
+		"Proof:",
+		"Next owner:",
+		"Domains: project",
+		"Project skill route:",
+		"tusker packet APP-T-0001 --for agent",
+		"Forbidden paths:",
+	} {
+		assertContainsIndexTest(t, capsule, expected)
+	}
+}
+
 func TestShowVerificationUsesFrontmatterSummaryWithoutLogSection(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true"}, bootstrap)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -52,6 +53,48 @@ func TestListOpenDrillsIntoOneEpicWithoutClosedTasks(t *testing.T) {
 	assertContainsIndexTest(t, output, "Active task")
 	assertNotContainsIndexTest(t, output, "Closed task")
 	assertNotContainsIndexTest(t, output, "App foundation")
+}
+
+func TestListOpenDrillsIntoV7EpicWithKindAndScalarEpic(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "vault")
+	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
+	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Build the app foundation.", "v7": "true"}, newV7Epic)
+	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Ready V7 task", "status": "ready", "v7": "true"}, newV7Task)
+	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Closed V7 task", "status": "done", "v7": "true"}, newV7Task)
+
+	output := captureStdout(t, func() {
+		if err := listCmd(Args{"vault": vault, "epic": "APP", "type": "task", "open": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	assertContainsIndexTest(t, output, "Ready V7 task")
+	assertContainsIndexTest(t, output, "APP-T-0001      task")
+	assertNotContainsIndexTest(t, output, "Closed V7 task")
+	assertNotContainsIndexTest(t, output, "App V7")
+
+	jsonOutput := captureStdout(t, func() {
+		if err := listCmd(Args{"vault": vault, "epic": "APP", "type": "task", "open": "true", "json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var payload struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(jsonOutput), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Items) != 1 || payload.Items[0]["type"] != "task" {
+		t.Fatalf("expected V7 task JSON type to be task, got %#v", payload.Items)
+	}
+
+	epicOutput := captureStdout(t, func() {
+		if err := listCmd(Args{"vault": vault, "type": "epic"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	assertContainsIndexTest(t, epicOutput, "APP")
+	assertContainsIndexTest(t, epicOutput, "open:1")
+	assertContainsIndexTest(t, epicOutput, "done:1")
 }
 
 func TestListLimitCapsProgressiveDrillDown(t *testing.T) {

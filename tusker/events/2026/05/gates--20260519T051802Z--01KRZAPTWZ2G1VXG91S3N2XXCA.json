@@ -1,0 +1,13 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-19T05:18:02Z",
+  "event_kind": "created",
+  "id": "01KRZAPTWZ2G1VXG91S3N2XXCA",
+  "object": "gates",
+  "object_kind": "domain",
+  "payload": {
+    "path": "knowledge/domains/gates/INDEX.md"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

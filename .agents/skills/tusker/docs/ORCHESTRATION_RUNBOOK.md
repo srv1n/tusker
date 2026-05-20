@@ -1,95 +1,142 @@
 # Orchestration Runbook
 
-The public V5 CLI tracks task truth. Runtime orchestration is an operator/internal surface and must not be presented as the normal task workflow.
-
-## Current Contract
-
-| Surface | Status | Operator truth |
-|---|---|---|
-| Markdown task lifecycle | Shipped | `active` and `rework` are runnable states in `WORKFLOW.md`; `ready` is shaped work, not dispatch. |
-| Obsidian task visibility | Shipped | `Tasks.base`/`BugTasks.base` show `Active`, `Blocked`, `Review`, and `Follow-up` (`rework`) views. |
-| Dashboard live-run panel | Shipped as generated markdown | `tusker reindex` renders live runs from the runtime store when the vault has a registered project; no live runs renders an explicit empty state. |
-| Runtime store | Internal code exists | Projects, runs, attempts, turns, sessions, events, usage, and supervisor decisions are modeled outside task frontmatter. |
-| `daemon`, `projects`, `runs`, `refresh` CLI commands | Shipped as operator/internal commands | They register projects, run or tick the daemon, inspect attempts/turns/events/logs, interrupt runs, and manage concurrency limits. |
-| Codex-first status-to-review daemon loop | Shipped for local operator use | A registered project plus `daemon run` or `refresh` can pick up `active`/`rework` tasks, run the configured runner, and write review packets when the runner moves the task to `review`. Codex is the default live runner today. |
-| Reviewer lane | Shipped for governed close | Tasks in `review` can dispatch an independent configured reviewer. Low/medium risks may be verified and closed by `reviewer.actor`; high/critical risks remain human-gated. |
-
-## Durable State
-
-- Task status lives in markdown: `draft`, `backlog`, `ready`, `active`, `blocked`, `review`, `rework`, `done`, `cancelled`.
-- Runtime state lives outside markdown under the default state root: registered projects, run leases, attempts, turns, sessions, event tails, raw logs, prompt packets, status files, and supervisor decisions.
-- Do not put leases, process ids, retry timers, token totals, session refs, or raw transcript state into task frontmatter.
-
-## Honest Codex Loop
+Tusker orchestration has four layers:
 
 ```text
-ready --human claim/status--> active
-active/rework --daemon eligible state--> runtime run
-runtime run --runner changes task to review--> review packet + review
-runtime run --task remains active/rework--> continuation retry
-review --reviewer lane passes low/medium gates--> verified + done
-review --human gate or high/critical--> human verify + done
-review --needs more work--> rework
+markdown work records  -> durable human/task truth
+runtime store/leases   -> local process truth
+events/attempts        -> audit trail
+generated dashboards   -> rebuildable projections
 ```
 
-What the code supports:
+Only markdown work records and accepted evidence/gates should drive lifecycle truth. Runtime state is operational bookkeeping.
 
-- The workflow default runner is `codex`, with `codex app-server` in `WORKFLOW.md`.
-- Dispatch eligibility is driven by `tracker.active_states`, currently `active` and `rework`.
-- A task with unresolved blockers or `risk: critical` is not dispatched automatically.
-- If a running task leaves `active`/`rework` without a completed runner status, reconciliation releases the run.
-- If Codex writes a completed status file after moving the task to `review`, reconciliation records the run as succeeded and writes the review packet instead of abandoning it as inactive.
-- If the runner exits cleanly while the task is still `active`/`rework`, the daemon queues continuation instead of pretending the work is reviewable.
-- A separate review lane can dispatch tasks already in `review` when `reviewer.enabled` is true and the task risk is covered by policy.
-- Reviewer close is attributed to `reviewer.actor`, so closed tasks record both `verified_by` and `closed_by`.
-- Review packet generation is supported after a clean run has a non-active task state; the packet summarizes attempts, turns, artifacts, supervisor decisions, and residual verification risk.
+## Dispatch eligibility
 
-What is deliberately not automated:
+A daemon or agent runner may pick up a task only when:
 
-- High/critical close. Reviewers leave advisory output; humans still verify and close.
-- Reviewer fixes. The reviewer lane is review-only and sends failed work to `rework`.
-- Blind promotion from `active` to `review`. Codex or a human must move the task state when the work is actually ready.
-- Ignoring stale tracker truth. Non-active/non-review state changes while a run is live release or interrupt the run for audit.
-
-## Operator Commands
-
-```bash
-tusker projects add --repo . --vault ./tusker
-tusker daemon status
-tusker refresh --quiet
-tusker daemon run
-tusker runs inspect <TASK-ID> --json
-tusker runs events <TASK-ID> --lines 50
-tusker runs logs <TASK-ID> --lines 80
-tusker runs interrupt <TASK-ID>
+```text
+effective kind == task
+status in ready|rework
+readiness == ready
+next_owner == agent or agent:<name>
+no valid closeout checkpoint says stop_until_human_response
+no open blocking non-agent gate exists
 ```
 
-Use `refresh --quiet` for smoke tests and `daemon run` for a long-lived local loop.
+Do not dispatch `review` tasks to implementation workers. Review belongs to reviewer/human lanes.
 
-## Human Loop
+## Runtime loop
 
-Use the shipped task lifecycle when the runtime surface is unavailable:
-
-```bash
-tusker status <TASK-ID> active --actor <name>
-tusker evidence <TASK-ID> packet <file-or-url> --note "<summary>"
-tusker status <TASK-ID> review --actor <name>
-tusker verify <TASK-ID> --by <name>
-tusker close <TASK-ID> --by <reviewer>
+```text
+poll:
+  read current task/gate/evidence index
+  reconcile running leases against task state
+  skip terminal, human-wait, external-wait, and reviewer-owned work
+  pick ready/rework agent-owned task
+  claim/lease in runtime store
+  run configured runner
+  collect attempt summary and proof artifacts
+  if machine work complete:
+    request review or emit closeout
+  if task still agent-owned and machine gaps remain:
+    allow one continuation within budget
+  if only human/external gaps remain:
+    release lease, write stop decision, do not retry
 ```
 
-Raw logs are useful evidence only after they are summarized into a readable packet. The daemon-generated review packet is the preferred packet evidence for Codex runs. If `reviewer.enabled` is true, the daemon may also launch the review lane from `review`; otherwise this remains a manual verify/close step.
+## Closeout path
 
-## Obsidian Loop
+```text
+runner exits cleanly
+      |
+      v
+classify proof/gates by owner
+      |
+      +-- machine gaps remain -> one continuation/rework path
+      |
+      +-- reviewer gaps remain -> request reviewer once
+      |
+      +-- human/external gaps only
+              |
+              v
+       emit review packet/checkpoint
+       set/recognize held plus a human/external next_owner
+       release lease
+       supervisor decision: stop_for_human / stop_for_external
+       no continuation retry
+```
 
-Open `Dashboard.md`.
+## Review lane
 
-| Section | Source | Meaning |
-|---|---|---|
-| Active work | `Tasks.base#Active` | Tasks in `status: active`. |
-| Live runs | generated markdown block | Active runtime leases for the registered project, if any. |
-| Blocked | `Tasks.base#Blocked` | Tasks waiting on dependencies or an explicit blocker. |
-| Review | `Tasks.base#Review` | Tasks waiting for reviewer or human verification. |
-| Follow-up | `Tasks.base#Follow-up` | Tasks in `status: rework`. |
+Reviewer lanes are independent from implementation workers.
 
-There is no shipped `Orchestration.base`. Do not reference it in dashboards or operator instructions.
+- Low/medium risk may be closed by an allowed reviewer when proof, gates, docs impact, and policy pass.
+- High/critical risk may get advisory reviewer output, but final close follows human/reviewer policy.
+- If review fails, move to `rework` with exact acceptance gaps.
+- If review leaves only human gates, set/recognize human-wait and stop.
+
+## Continuation retry rule
+
+A clean runner exit is not automatically a reason to continue.
+
+Continue only when:
+
+```text
+machine_missing is nonempty
+same state has not already consumed continuation budget
+next_owner is agent-owned
+readiness is ready
+```
+
+Do not continue when:
+
+```text
+machine_missing is empty
+human_missing or external_missing is nonempty
+open blocking gates are human/external-owned
+closeout packet exists for current fingerprint
+```
+
+## Validation cache
+
+Validation should be keyed by a state fingerprint:
+
+```text
+git HEAD + dirty hash + task/gate/evidence state + command + tusker version
+```
+
+Same fingerprint plus previous pass means validation is reusable. Do not re-run validation on an unchanged human-wait state.
+
+## Supervisor decisions
+
+Useful normalized decisions:
+
+| Decision | Meaning |
+|---|---|
+| `continue_machine_work` | Machine gaps remain and budget allows continuation. |
+| `request_review` | Machine proof is sufficient; reviewer owns next action. |
+| `stop_for_human` | Only human-owned blockers remain. |
+| `stop_for_external` | Only external system/service blockers remain. |
+| `stop_budget_exceeded` | Machine attempts exceeded configured budget. |
+| `interrupt_stale_state` | Task state changed under a running lease. |
+
+## Human-wait packet
+
+A review packet/checkpoint should contain:
+
+- task ID and title;
+- last clean validation command/result/fingerprint;
+- proof mode and acceptance coverage;
+- machine/reviewer/human/external missing proof lists;
+- open gates with owner/action/verification;
+- artifacts/evidence links;
+- exact human options: accept, waive, reject/rework.
+
+## Failure containment
+
+- Do not paste raw logs into task bodies.
+- Do not store transcripts as evidence.
+- Do not use generated dashboards as source of truth.
+- Do not spawn repeated subagent audits after a valid closeout packet.
+- Do not let open human gates make a task agent-runnable.

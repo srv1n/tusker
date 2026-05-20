@@ -78,7 +78,7 @@ func walkNoteFiles(vaultPath string) ([]string, error) {
 		}
 		rel = filepath.ToSlash(rel)
 		if entry.IsDir() {
-			if rel == "_system" || strings.HasPrefix(rel, "_system/") || rel == "_config" || strings.HasPrefix(rel, "_config/") || rel == "Attachments" || strings.HasPrefix(rel, "Attachments/") {
+			if rel == "_system" || strings.HasPrefix(rel, "_system/") || rel == "_config" || strings.HasPrefix(rel, "_config/") || rel == "Attachments" || strings.HasPrefix(rel, "Attachments/") || rel == ".tusker" || strings.HasPrefix(rel, ".tusker/") {
 				return fs.SkipDir
 			}
 			return nil

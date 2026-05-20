@@ -8,14 +8,16 @@ import (
 )
 
 type compactResult struct {
-	ID              string   `json:"id"`
-	Path            string   `json:"path"`
-	Written         bool     `json:"written"`
-	BytesBefore     int      `json:"bytes_before"`
-	BytesAfter      int      `json:"bytes_after"`
-	BytesSaved      int      `json:"bytes_saved"`
-	RemovedFields   []string `json:"removed_fields,omitempty"`
-	RemovedSections []string `json:"removed_sections,omitempty"`
+	ID               string   `json:"id"`
+	Path             string   `json:"path"`
+	Written          bool     `json:"written"`
+	BytesBefore      int      `json:"bytes_before"`
+	BytesAfter       int      `json:"bytes_after"`
+	BytesSaved       int      `json:"bytes_saved"`
+	RemovedFields    []string `json:"removed_fields,omitempty"`
+	RemovedSections  []string `json:"removed_sections,omitempty"`
+	ArchivedLogs     []string `json:"archived_logs,omitempty"`
+	ArchivedEvidence []string `json:"archived_evidence,omitempty"`
 }
 
 func compactCmd(args Args) error {
@@ -24,6 +26,12 @@ func compactCmd(args Args) error {
 		return err
 	}
 	write := args.Bool("write")
+	archiveLogs := args.Bool("archive-logs")
+	if archiveLogs {
+		if err := bootstrapV7Dirs(vaultPath); err != nil {
+			return err
+		}
+	}
 	var notes []Note
 	if args.Bool("all") {
 		all, err := listAllNotes(vaultPath)
@@ -49,7 +57,7 @@ func compactCmd(args Args) error {
 
 	results := make([]compactResult, 0, len(notes))
 	for _, note := range notes {
-		result, err := compactNote(note, write)
+		result, err := compactNote(note, write, archiveLogs, vaultPath)
 		if err != nil {
 			return err
 		}
@@ -72,7 +80,7 @@ func compactCmd(args Args) error {
 	}
 	printed := 0
 	for _, result := range filteredCompactResults(results, args) {
-		changed := result.BytesBefore != result.BytesAfter || len(result.RemovedFields) > 0 || len(result.RemovedSections) > 0
+		changed := compactResultChanged(result)
 		action := "unchanged"
 		if result.Written {
 			action = "compacted"
@@ -89,6 +97,12 @@ func compactCmd(args Args) error {
 		}
 		if len(result.RemovedSections) > 0 {
 			fmt.Printf("  sections: %s\n", strings.Join(result.RemovedSections, ", "))
+		}
+		if len(result.ArchivedLogs) > 0 {
+			fmt.Printf("  archived logs: %s\n", strings.Join(result.ArchivedLogs, ", "))
+		}
+		if len(result.ArchivedEvidence) > 0 {
+			fmt.Printf("  archived evidence: %s\n", strings.Join(result.ArchivedEvidence, ", "))
 		}
 		printed++
 	}
@@ -113,7 +127,7 @@ func filteredCompactResults(results []compactResult, args Args) []compactResult 
 	}
 	var out []compactResult
 	for _, result := range results {
-		if result.BytesBefore != result.BytesAfter || len(result.RemovedFields) > 0 || len(result.RemovedSections) > 0 {
+		if compactResultChanged(result) {
 			out = append(out, result)
 		}
 	}
@@ -123,14 +137,22 @@ func filteredCompactResults(results []compactResult, args Args) []compactResult 
 func countChangedCompactResults(results []compactResult) int {
 	count := 0
 	for _, result := range results {
-		if result.BytesBefore != result.BytesAfter || len(result.RemovedFields) > 0 || len(result.RemovedSections) > 0 {
+		if compactResultChanged(result) {
 			count++
 		}
 	}
 	return count
 }
 
-func compactNote(note Note, write bool) (compactResult, error) {
+func compactResultChanged(result compactResult) bool {
+	return result.BytesBefore != result.BytesAfter ||
+		len(result.RemovedFields) > 0 ||
+		len(result.RemovedSections) > 0 ||
+		len(result.ArchivedLogs) > 0 ||
+		len(result.ArchivedEvidence) > 0
+}
+
+func compactNote(note Note, write, archiveLogs bool, vaultPath string) (compactResult, error) {
 	original, err := readText(note.AbsolutePath)
 	if err != nil {
 		return compactResult{}, err
@@ -141,22 +163,44 @@ func compactNote(note Note, write bool) (compactResult, error) {
 	}
 	removedFields := pruneEmptyOptionalFrontmatter(data)
 	var removedSections []string
+	var archivedLogs []string
+	var archivedEvidence []string
 	if stringField(data, "type") == "task" {
-		body, removedSections = compactTaskBody(body, stringField(data, "risk"))
+		if archiveLogs && strings.HasSuffix(stringField(data, "schema"), "/v5") {
+			body, archivedLogs, err = archiveV5WorkLogSection(vaultPath, note, data, body, write)
+			if err != nil {
+				return compactResult{}, err
+			}
+			if len(archivedLogs) > 0 {
+				removedSections = append(removedSections, "Work log")
+			}
+			body, archivedEvidence, err = archiveV5VerificationLogSection(vaultPath, note, data, body, write)
+			if err != nil {
+				return compactResult{}, err
+			}
+			if len(archivedEvidence) > 0 {
+				removedSections = append(removedSections, "Verification log")
+			}
+		}
+		var compactRemoved []string
+		body, compactRemoved = compactTaskBody(body, stringField(data, "risk"))
+		removedSections = append(removedSections, compactRemoved...)
 	}
 	content, err := serializeDocument(data, body, frontmatterOrderForType(stringField(data, "type")))
 	if err != nil {
 		return compactResult{}, err
 	}
 	result := compactResult{
-		ID:              firstNonEmpty(stringField(data, "id"), filepath.Base(note.AbsolutePath)),
-		Path:            note.RelativePath,
-		Written:         false,
-		BytesBefore:     len([]byte(original)),
-		BytesAfter:      len([]byte(content)),
-		BytesSaved:      len([]byte(original)) - len([]byte(content)),
-		RemovedFields:   removedFields,
-		RemovedSections: removedSections,
+		ID:               firstNonEmpty(stringField(data, "id"), filepath.Base(note.AbsolutePath)),
+		Path:             note.RelativePath,
+		Written:          false,
+		BytesBefore:      len([]byte(original)),
+		BytesAfter:       len([]byte(content)),
+		BytesSaved:       len([]byte(original)) - len([]byte(content)),
+		RemovedFields:    removedFields,
+		RemovedSections:  removedSections,
+		ArchivedLogs:     archivedLogs,
+		ArchivedEvidence: archivedEvidence,
 	}
 	if write && content != original {
 		if err := writeText(note.AbsolutePath, content); err != nil {
@@ -165,6 +209,68 @@ func compactNote(note Note, write bool) (compactResult, error) {
 		result.Written = true
 	}
 	return result, nil
+}
+
+func archiveV5VerificationLogSection(vaultPath string, note Note, data map[string]any, body string, write bool) (string, []string, error) {
+	taskID := stringField(data, "id")
+	verificationLog := sectionContent(body, "## Verification log")
+	if taskID == "" || strings.TrimSpace(verificationLog) == "" || strings.Contains(verificationLog, "_No verification yet") || !v7TaskIDPattern.MatchString(taskID) {
+		return body, nil, nil
+	}
+	if migratedV7EvidenceExists(vaultPath, taskID, "V5 task Verification log") {
+		return removeMarkdownSection(body, "## Verification log"), []string{"existing migrated verification evidence"}, nil
+	}
+	evidenceID := fmt.Sprintf("%s-E-%s", taskID, padNumber(nextV7EvidenceSequence(vaultPath, taskID)))
+	if write {
+		if err := writeMigratedV7EvidenceRecord(vaultPath, note, evidenceID, "log_excerpt", "V5 task Verification log", verificationLog); err != nil {
+			return body, nil, err
+		}
+	}
+	return removeMarkdownSection(body, "## Verification log"), []string{evidenceID}, nil
+}
+
+func archiveV5WorkLogSection(vaultPath string, note Note, data map[string]any, body string, write bool) (string, []string, error) {
+	taskID := stringField(data, "id")
+	workLog := sectionContent(body, "## Work log")
+	if taskID == "" || strings.TrimSpace(workLog) == "" || !v7TaskIDPattern.MatchString(taskID) {
+		return body, nil, nil
+	}
+	if migratedV7AttemptExists(vaultPath, taskID) {
+		return removeMarkdownSection(body, "## Work log"), []string{"existing migrated attempt"}, nil
+	}
+	attemptID := fmt.Sprintf("%s-A-%s", taskID, padNumber(nextV7AttemptSequence(vaultPath, taskID)))
+	if write {
+		if err := writeMigratedV7Attempt(vaultPath, note, attemptID, workLog); err != nil {
+			return body, nil, err
+		}
+	}
+	return removeMarkdownSection(body, "## Work log"), []string{attemptID}, nil
+}
+
+func migratedV7AttemptExists(vaultPath, taskID string) bool {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return false
+	}
+	for _, attempt := range idx.Attempts[taskID] {
+		if stringField(attempt.Data, "runner") == "migration" && strings.Contains(attempt.Body, "Migrated from the V5 task Work log") {
+			return true
+		}
+	}
+	return false
+}
+
+func removeMarkdownSection(body, heading string) string {
+	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	target := strings.TrimSpace(heading)
+	for i, line := range lines {
+		if strings.TrimSpace(line) != target {
+			continue
+		}
+		next := nextHeadingIndex(lines, i+1)
+		return collapseBlankRuns(strings.TrimSpace(strings.Join(append(lines[:i], lines[next:]...), "\n")))
+	}
+	return body
 }
 
 func compactTaskBody(body, risk string) (string, []string) {

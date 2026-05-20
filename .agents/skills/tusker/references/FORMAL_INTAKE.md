@@ -17,7 +17,7 @@ Beyond quick-mode defaults, set:
 - `ai_tools`: `[claude-code, codex, cursor, ...]`
 - `assignee`: optional but preferred
 
-If any required fields are missing at active work, validation should block the transition.
+If any required fields are missing at current work, validation should block the transition.
 
 ## Required sections by risk
 
@@ -46,7 +46,7 @@ Substance is checked, not presence. `TODO` is not a contract.
 - **Intent** — what needs to be true and who needs it.
 - **Scope** — explicit in/out boundaries.
 - **Acceptance contract** — testable outcomes.
-- **Canon** — links to epic canon, V5 docs, or repo spec. Never copy-paste the spec.
+- **Canon** — links to epic canon, durable docs, or repo spec. Never copy-paste the spec.
 - **Code/system anchors** — files, modules, commands, schemas, or docs nodes to inspect first.
 - **Constraints** — things the agent must not break or change.
 - **Escalate if** — stop conditions.

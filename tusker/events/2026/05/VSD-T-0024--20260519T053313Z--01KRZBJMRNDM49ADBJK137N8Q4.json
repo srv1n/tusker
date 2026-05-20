@@ -1,0 +1,15 @@
+{
+  "actor": "agent:codex",
+  "at": "2026-05-19T05:33:13Z",
+  "event_kind": "status_changed",
+  "id": "01KRZBJMRNDM49ADBJK137N8Q4",
+  "object": "VSD-T-0024",
+  "object_kind": "task",
+  "payload": {
+    "from": "ready",
+    "reason": "Ready for independent review after attempt handoff.",
+    "to": "review"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

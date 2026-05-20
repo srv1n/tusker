@@ -1,9 +1,9 @@
 interface:
   display_name: "Tusker"
-  short_description: "Markdown work tracking and docs gates"
-  icon_small: "./assets/icons/obsidian-vault-small.svg"
-  icon_large: "./assets/icons/obsidian-vault-large.svg"
-  brand_color: "#7C3AED"
-  default_prompt: "Use $tusker to log, document, or close repo-local work."
+  short_description: "Repo-local task, evidence, and closeout protocol"
+  icon_small: "./assets/icons/tusker-small.svg"
+  icon_large: "./assets/icons/tusker-large.svg"
+  brand_color: "#374151"
+  default_prompt: "Use $tusker to plan, track, prove, review, or close repo-local work."
 policy:
   allow_implicit_invocation: true

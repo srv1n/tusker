@@ -1,15 +1,11 @@
-## Skills to use
+## Tusker expectations
 
-When work affects planning, PR evidence, demos, or publication docs, invoke the `tusker` skill.
+Invoke the `tusker` skill when work affects planning, tracked implementation, PR evidence, demos, docs, review, or closeout.
 
-## Workflow expectations
-
-- The task note is the unit of work. Agent capsule, intent, acceptance, deliverables, verification, and evidence are sections inside it.
-- Use `tusker search` and exact task paths before broad repository search when looking for existing tracker work.
-- Use `tusker list --type epic` first; drill into one epic with `tusker list --epic <ACR> --type task --open`.
-- Use `tusker compact <ID>` as a dry-run before reading or editing old noisy task notes.
-- Keep lookup and bookkeeping updates light; do not run closeout ceremony unless moving implementation work to review/done.
-- Keep the contract sections stable. Put durable truth in the capsule, evidence summary, verification summary, close summary, and knowledge delta.
-- Create a user doc or developer doc when the work changes external behavior or operator-facing surfaces.
-- Reindex and validate the vault after material updates.
-- Do not load `tusker/Attachments/**`, generated indexes, raw runner logs, or full build logs unless the task specifically requires evidence forensics.
+- The task note is the unit of work.
+- Use `tusker search` and exact task paths before broad repository search.
+- Use `tusker show <ID> --capsule` before reading a full old task.
+- Keep lookup/bookkeeping light; do not run closeout ceremony unless moving implementation work to review/done/human-wait.
+- Revalidate only after mutation, gate/evidence/task state change, stale fingerprint, or explicit user request.
+- If only human/external gates remain, report the packet and stop. Do not inspect files, spawn subagents, or re-run validation.
+- Do not load attachments, generated indexes, raw runner logs, or full build logs unless the task specifically requires evidence forensics.

@@ -59,7 +59,7 @@ func TestNextRanksPickableTasks(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		if err := nextCmd(Args{"vault": vault}); err != nil {
+		if err := nextV5Cmd(Args{"vault": vault}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -88,7 +88,7 @@ func TestBlockedTaskRequiresReasonOrDependency(t *testing.T) {
 func pickupTestVault(t *testing.T) string {
 	t.Helper()
 	vault := filepath.Join(t.TempDir(), "vault")
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV5Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "App work."}); err != nil {

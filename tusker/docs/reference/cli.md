@@ -14,7 +14,7 @@ publish_lane: "internal"
 publish_path: "reference/cli"
 publish_description: "Tusker v5 CLI surface."
 created: "2026-04-29"
-updated: "2026-05-10"
+updated: "2026-05-14"
 ---
 
 # Tusker v5 CLI surface
@@ -125,6 +125,8 @@ tusker update --repo . --repo-only --no-bin
 ```
 
 Use this after pulling or rebuilding Tusker when the repository should carry the current agent skill bundle under `.agents/skills/tusker` and `.claude/skills/tusker`.
+
+`tusker install` without `--repo`, `make install`, and `tusker update` also refresh already-installed user skill bundles under `~/.agents/skills/tusker`, `~/.codex/skills/tusker`, and `~/.claude/skills/tusker`. Refresh replaces the installed payload directory from the embedded bundle, so stale files disappear instead of hanging around beside the current `SKILL.md`. `tusker install --repo <path>` installs repo-local skill bundles without ambient user-skill refresh; pass `--refresh-existing-user-skills`, `--codex-user`, or `--claude-user` to request user-level writes too.
 
 ## Docs pipeline
 

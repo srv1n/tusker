@@ -99,6 +99,44 @@ search needle
 	assertEqual(t, "APP-T-0001", results[0].ID, "filtered search result")
 }
 
+func TestSearchFiltersV7KindWithLegacyTypeFallback(t *testing.T) {
+	vault := t.TempDir()
+	writeSearchFixture(t, vault, "work/tasks/APP-T-0001.md", `---
+schema: "tusker.task/v7"
+kind: "task"
+id: "APP-T-0001"
+project: "app"
+title: "V7 search task"
+epic: "APP"
+status: "ready"
+readiness: "ready"
+---
+
+search needle
+`)
+	writeSearchFixture(t, vault, "epics/APP/APP-T-0002.md", `---
+schema: "tusker.task/v5"
+id: "APP-T-0002"
+title: "Legacy search task"
+type: "task"
+kind: "feature"
+epic: "APP"
+status: "ready"
+---
+
+search needle
+`)
+
+	results := searchNotes(mustListSearchNotes(t, vault), "search needle", searchFilters{Type: "task", Limit: 20})
+	if len(results) != 2 {
+		t.Fatalf("expected V7 and legacy task matches, got %#v", results)
+	}
+	assertEqual(t, "task", results[0].Type, "V7 JSON-compatible type")
+	assertEqual(t, "task", results[0].Kind, "V7 kind")
+	assertEqual(t, "task", results[1].Type, "legacy type fallback")
+	assertEqual(t, "feature", results[1].Kind, "legacy kind preserved")
+}
+
 func TestSearchUsesAllPositionalQueryTerms(t *testing.T) {
 	vault := t.TempDir()
 	writeSearchFixture(t, vault, "epics/APP/APP-T-0001.md", `---

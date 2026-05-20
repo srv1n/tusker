@@ -104,7 +104,7 @@ updated: "2026-04-01"
 
 # Alpha Canon
 `)
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatalf("bootstrap failed: %v", err)
 	}
 	report, err := migrateLegacyVaultToV5(Args{"vault": vault, "no-backup": "true"})

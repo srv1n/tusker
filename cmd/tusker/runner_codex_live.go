@@ -755,7 +755,7 @@ func (h *codexLiveHandle) shouldContinueTurns() bool {
 func (h *codexLiveHandle) continuationPrompt() string {
 	return strings.TrimSpace(fmt.Sprintf(`The tracker item is still in an active state.
 
-Continue on the same Codex thread. Do not re-plan from scratch unless the current evidence proves the prior plan is wrong.
+Continue on the same Codex thread. Do not re-plan from scratch unless the current proof changes the prior plan.
 
 Current item:
 - ID: %s
@@ -763,7 +763,7 @@ Current item:
 - Attempt: %s
 - Completed turns in this attempt: %d
 
-Re-read the note and workspace, update the workpad/evidence, and continue until the item is ready for review or blocked.`, h.itemID, h.recordID, h.attemptID, h.turnIndex+1)) + "\n"
+Re-read the note and workspace, satisfy the task proof mode, and continue until the item is ready for review or blocked. When it is ready, use tusker finish or move/propose the task to review; attempt handoff alone is not the review queue.`, h.itemID, h.recordID, h.attemptID, h.turnIndex+1)) + "\n"
 }
 
 func (h *codexLiveHandle) recordTurnStarted(turnID, at string, payload map[string]any) {

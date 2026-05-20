@@ -1,112 +1,128 @@
 # Workflow
 
-Short reference for the V5 task lifecycle.
+Short reference for the V7 task lifecycle.
 
 ## Lifecycle
 
 ```text
-draft -> backlog -> ready -> active -> review -> done
-                      |         |
-                      v         v
-                   blocked    rework -> active
+idea -> backlog -> ready -> review -> done
+                  ^          |
+                  |          v
+                rework <-----+
 
-active|review|blocked|rework -> cancelled
+any nonterminal state -> cancelled | superseded
 ```
 
-Status contract:
+`claimed`, `running`, `leased`, and `interrupted` are runtime states. They are not task lifecycle statuses.
 
-| Status | Meaning |
-|---|---|
-| `draft` | Not fully shaped, not pickable. |
-| `backlog` | Shaped future work, not current release, not pickable. |
-| `ready` | Shaped current work, pickable only if unblocked. |
-| `blocked` | Current work waiting on Tusker dependencies or an external blocker. |
-| `active` | Claimed/in progress. |
-| `review` | Worker claims implementation is ready for verification. |
-| `rework` | Review found changes needed before another verification pass. |
-| `done` | Accepted and closed. |
-| `cancelled` | Intentionally abandoned. |
+## Status contract
 
-Every transition writes a row to `transitions[]`:
+| Status | Meaning | Agent-runnable? |
+|---|---|---|
+| `idea` | Captured but not shaped. | No |
+| `backlog` | Shaped future work, not current release/work queue. | No |
+| `ready` | Shaped current work. | Yes, only if `readiness: ready` and `next_owner` is agent-owned |
+| `review` | Worker claims implementation is ready for independent verification or human gate. | No |
+| `rework` | Review found changes needed. | Yes, only if `readiness: ready` and `next_owner` is agent-owned |
+| `done` | Accepted and closed. | No |
+| `cancelled` | Intentionally abandoned. | No |
+| `superseded` | Replaced by another task/decision path. | No |
+
+## Readiness contract
+
+| Readiness | Meaning | Agent behavior |
+|---|---|---|
+| `ready` | No known blocker. | May claim/continue if owner is agent. |
+| `blocked_by_gate` | One or more gates block progress. | Read the gate; continue only if the gate is agent-owned. |
+| `blocked_by_dependency` | Another task/decision blocks progress. | Stop unless dependency became satisfied. |
+| `waiting_on_review` | Reviewer lane owns the next action. | Do not implement. |
+| `waiting_on_ci` | CI/external system owns the next action. | Stop after recording a link/status. |
+| `held` | Deliberately paused; with `next_owner: human:*` it is human-wait. | Stop unless explicitly released. |
+| `done`, `cancelled`, `superseded` | Terminal. | Stop. |
+
+## Ownership contract
+
+Use `next_owner` to decide who acts:
 
 ```yaml
-transitions:
-  - from: "backlog"
-    to: "ready"
-    at: "2026-04-29T14:02:11Z"
-    by: "sarav"
-    reason: null
+next_owner: agent
+next_owner: agent:codex
+next_owner: reviewer:agent
+next_owner: human:sarav
+next_owner: external:ci
 ```
 
-Never hand-edit `transitions[]`. Use:
+Agent-runnable work requires:
 
-```bash
-tusker status <ID> <state> [--reason "..."]
+```text
+status in ready|rework
+readiness == ready
+next_owner == agent or next_owner starts with agent:
 ```
 
-## Status Stamps
+Human-owned gates are terminal for agents until the human accepts, waives, or rejects.
 
-- `started`: first entry to `active`
-- `review_requested_at`: entry to `review`
-- `completed`: entry to `done`
-- `cancelled_at`: entry to `cancelled`
-- `blocked_since`: entry to `blocked`
+## Worker finish contract
+
+Implementation is not finished just because an attempt summary exists.
+
+A worker must:
+
+1. satisfy `proof_mode`;
+2. add/update the attempt summary;
+3. request review with `tusker finish <TASK-ID> --request-review --summary "<proof map>"` when possible;
+4. otherwise use a proposal/control command to move to `review`;
+5. create/propose a gate for human/device/env/CI/external blockers;
+6. stop when only human/external gates remain.
+
+Never leave completed implementation work in `ready` or `rework` with only a handoff summary. Handoff is attempt state; `review` plus proof/gates is task state.
+
+## Review and close
+
+- The implementation worker does not self-certify.
+- Low/medium work may be closed by an allowed independent reviewer when proof, gates, docs impact, and policy pass.
+- High/critical work may receive reviewer advice, but final close requires the configured human/reviewer policy.
+- Failed review moves to `rework` with specific unmet acceptance items.
+- Human-only review becomes `readiness: held`, `next_owner: human:*`, and `agent_action: stop_until_human_response`.
 
 ## Gates
 
-- `validate` is the full integrity pass.
-- `review` means the worker claims implementation is ready for verification.
-- `verify` records that the verifier checked the claims against the current tree.
-- `close` records acceptance and moves the task to `done`.
-- `doc_nodes` requires docs check/apply/waive before close.
-- `risk >= high` requires a real `## Knowledge delta`.
-- Epic `done` refuses unfinished child tasks.
-- If `WORKFLOW.md` enables the reviewer lane, an independent agent reviewer may auto-close low/medium tasks after verification, but high/critical tasks remain human-gated.
+A gate must include:
 
-## Dependencies
+```yaml
+kind: gate
+status: open | satisfied | waived
+owner: human:<name> | reviewer:<name> | agent:<name> | external:<service>
+blocks:
+  - <TASK-ID>
+action: <specific action required>
+verification: <what proves completion>
+```
 
-- `blocked_by`: this task depends on these tasks.
-- `blocks`: downstream tasks depend on this task.
-- `block_reason`: human-readable reason for an external or dependency blocker.
+Use gates for:
 
-State rules:
+- human signoff;
+- manual smoke that requires judgement/device/env;
+- credentials/access;
+- product/security/release approval;
+- unavailable external service;
+- CI that cannot be completed inside the current run.
 
-- Unshaped work stays in `draft`.
-- Shaped future work goes to `backlog`.
-- Current-release work moves to `ready` only when it is shaped.
-- Ready work with unresolved Tusker dependencies or an external blocker moves to `blocked`.
-- Active work that cannot continue moves to `blocked`.
-- Blocked tasks should show `blocked_by` and/or `block_reason`.
-- Wire dependency links when tasks are created.
+## Rework reset
 
-## Review And Rework
+When review sends work to `rework`:
 
-End-of-run proof belongs under `## Evidence`: changed files, diff summary, commands/results, artifacts, risks, and follow-ups.
+- keep prior proof that remains valid;
+- name the specific failed acceptance item;
+- set `readiness: ready` and `next_owner: agent` only when the agent can act;
+- clear or supersede stale closeout checkpoints;
+- revalidate once after material changes.
 
-Agent reviewer pass:
-
-- The lane is runner-neutral. Codex is the default live runner today, but `reviewer.runner` can point at any enabled runner adapter.
-- Review only; do not edit implementation files.
-- Check acceptance, scope, evidence, verification, docs resolution, and caveats.
-- For low/medium tasks, the configured reviewer may run `verify` and `close` when every gate passes.
-- For high/critical tasks, leave advisory evidence and keep the task in `review` for human verification.
-- If review fails, move to `rework` with the specific unmet acceptance item.
-
-PR feedback sweep:
-
-1. Classify unresolved feedback as `must-fix`, `question`, `nit`, or `follow-up`.
-2. Fix in-scope `must-fix` items before requesting review again.
-3. Draft out-of-scope work as follow-up tasks.
-
-Rework reset:
-
-- Keep prior evidence.
-- Update the plan around the new scope.
-- Move back to `active` when work resumes.
-
-## Knowledge Delta
+## Knowledge delta
 
 When a task changes durable understanding, fill:
 
-| Topic | Before | After | Audience | Target doc nodes |
+| Topic | Before | After | Audience | Target knowledge |
 |---|---|---|---|---|
+
+`risk >= high` should require a real knowledge delta when durable understanding changed.

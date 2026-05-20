@@ -286,9 +286,22 @@ func newV5Doc(args Args) error {
 func statusCmd(args Args) error {
 	id := firstNonEmpty(args.String("id"), args.String("_pos0"))
 	status := firstNonEmpty(args.String("status"), args.String("_pos1"))
+	if args.String("id") == "" && args.String("status") == "" {
+		first := strings.ToLower(args.String("_pos0"))
+		second := strings.ToUpper(args.String("_pos1"))
+		if _, ok := v7TaskStatuses[first]; ok && v7TaskIDPattern.MatchString(second) {
+			id = second
+			status = first
+		}
+	}
 	args["id"] = id
 	args["status"] = status
 	if id != "" {
+		if vaultPath, err := resolveVaultPath(args, false); err == nil {
+			if note, err := resolveV7Note(vaultPath, id, "task"); err == nil && strings.HasSuffix(stringField(note.Data, "schema"), "/v7") {
+				return statusV7Cmd(args)
+			}
+		}
 		if _, err := requireV5NoteForCommand(args, id, "status", "epic", "task", "doc"); err != nil {
 			return err
 		}
@@ -297,6 +310,15 @@ func statusCmd(args Args) error {
 }
 
 func evidenceCmd(args Args) error {
+	switch strings.ToLower(args.String("_pos0")) {
+	case "add":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos1"))
+		return evidenceV7AddCmd(args)
+	case "promote":
+		return evidenceV7PromoteCmd(args)
+	case "prune":
+		return evidenceV7PruneCmd(args)
+	}
 	args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 	args["kind"] = firstNonEmpty(args.String("kind"), args.String("_pos1"))
 	args["path"] = firstNonEmpty(args.String("path"), args.String("_pos2"))
@@ -381,6 +403,9 @@ func closeV5Cmd(args Args) error {
 	id, err := requireArg(args, "id")
 	if err != nil {
 		return err
+	}
+	if note, err := resolveV7Note(vaultPath, id, "task"); err == nil && strings.HasSuffix(stringField(note.Data, "schema"), "/v7") {
+		return closeV7Cmd(args)
 	}
 	note, err := resolveNote(vaultPath, id)
 	if err != nil {

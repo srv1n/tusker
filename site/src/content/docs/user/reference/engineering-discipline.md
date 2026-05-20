@@ -4,14 +4,13 @@ description: "Use this when the work involves non-trivial implementation, bug di
 tusker:
   audience: "user"
   publish_path: "user/reference/engineering-discipline"
-  publish_section_title: "Reference"
   route: "/user/reference/engineering-discipline/"
   source_kind: "repo_doc"
   source_path: "skill/references/ENGINEERING_DISCIPLINE.md"
   summary: "Use this when the work involves non-trivial implementation, bug diagnosis, tests, refactors, architecture seams, performance regressions, or a request for TDD. It is a compact synthesis of the external engineering skills reviewed for SKL-T-0002; do not vendor those skills wholesale into Tusker."
   tags:
     - "reference"
-  updated: "2026-05-11"
+  updated: "2026-05-18"
 ---
 
 # Engineering Discipline

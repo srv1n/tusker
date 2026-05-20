@@ -1,24 +1,17 @@
 ---
-schema: "tusker.knowledge/v6"
-node: "{{domain}}/canon"
-title: "{{title}} canon"
+schema: tusker.domain-canon/v7
+kind: domain_canon
+id: "{{domain}}/canon"
+project: "{{project}}"
 domain: "{{domain}}"
-kind: "canon"
-audience: "developer"
-agent_layer: "capsule"
-canonical_status: "draft"
+title: "{{title}} canon"
+status: draft
 summary: "{{summary}}"
 source_of_truth:
-  - "tusker/SKILL.md"
-stale_when:
-  paths:
-    - "tusker/SKILL.md"
-publish:
-  lane: "internal"
-  path: "{{domain}}/canon"
-  include_in_llms: true
+  - tusker/knowledge/domains/{{domain}}/INDEX.md
 created_at: "{{date}}"
 updated_at: "{{date}}"
+state_rev: 1
 ---
 
 # {{title}} canon
@@ -29,7 +22,7 @@ Read this for the current {{title}} model.
 
 ## Do not read this when
 
-Do not use this as task proof.
+Do not use this as task proof. Task proof lives in tasks, gates, evidence, attempts, and review packets.
 
 ## Current model
 
@@ -49,7 +42,7 @@ Current model goes here.
 
 ## Source of truth
 
-- `tusker/SKILL.md`
+- `tusker/knowledge/domains/{{domain}}/INDEX.md`
 
 ## Open questions
 
@@ -57,7 +50,7 @@ Current model goes here.
 
 ## Related
 
-- [[{{domain}}/INDEX]]
+- [[INDEX]]
 
 ## Recent changes
 
