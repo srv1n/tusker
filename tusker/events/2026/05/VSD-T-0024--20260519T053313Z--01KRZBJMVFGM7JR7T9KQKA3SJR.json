@@ -1,0 +1,35 @@
+{
+  "actor": "agent:codex",
+  "at": "2026-05-19T05:33:13Z",
+  "event_kind": "updated",
+  "id": "01KRZBJMVFGM7JR7T9KQKA3SJR",
+  "object": "VSD-T-0024",
+  "object_kind": "task",
+  "payload": {
+    "changes": {
+      "next_action": {
+        "from": "Execute the task contract and satisfy proof mode.",
+        "to": "Review evidence and close or return to rework."
+      },
+      "next_owner": {
+        "from": "agent",
+        "to": "reviewer"
+      },
+      "next_ref": {
+        "from": "VSD-T-0024",
+        "to": ""
+      },
+      "next_source": {
+        "from": "task",
+        "to": "review_policy"
+      },
+      "readiness": {
+        "from": "ready",
+        "to": "waiting_on_review"
+      }
+    },
+    "source": "task:VSD-T-0024"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

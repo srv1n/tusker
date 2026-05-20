@@ -97,3 +97,41 @@ func TestRenderAttemptPromptUsesReviewerTemplateForReviewLane(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderAttemptPromptUsesV7ReviewerActorShape(t *testing.T) {
+	project := RegisteredProject{
+		ProjectID:  "project-123",
+		ProjectKey: "APP",
+		Name:       "App",
+		RepoRoot:   "/repo/root",
+		VaultRoot:  "/vault/root",
+	}
+	wf := defaultWorkflow()
+	wfFile := WorkflowFile{
+		Path: "/vault/root/WORKFLOW.md",
+		Body: "worker prompt {{ note.id }}",
+		Data: wf,
+	}
+	note := Note{
+		Data: map[string]any{
+			"schema": "tusker.task/v7",
+			"kind":   "task",
+			"id":     "APP-T-0001",
+			"title":  "Add provider harness",
+			"risk":   "medium",
+			"status": "review",
+		},
+		Body: "## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | First. | Review |\n| A2 | Second. | Review |\n",
+	}
+
+	prompt, err := renderAttemptPrompt(project, wfFile, note, "/workspace/path", 4, "attempt-review", runLaneReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prompt, "tusker close APP-T-0001 --by reviewer:agent") {
+		t.Fatalf("expected V7 reviewer prompt to use reviewer:agent, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "tusker verify add APP-T-0001 --by reviewer:agent --covers A1,A2") || strings.Contains(prompt, "tusker verify APP-T-0001") {
+		t.Fatalf("expected V7 reviewer prompt to use verify add, got:\n%s", prompt)
+	}
+}

@@ -1,13 +1,13 @@
 ---
-schema: tusker.doc/v5
+schema: tusker.doc/v7
+kind: doc
 id: "{{node}}"
 title: "{{title}}"
-type: doc
 node: "{{node}}"
 audience: developer
 mode: reference
 agent_layer: none
-kind: reference
+doc_kind: reference
 domains: []
 source_of_truth: []
 stale_when_paths: []
@@ -16,8 +16,8 @@ publish: true
 publish_lane: internal
 publish_path: "{{publish_path}}"
 publish_description: "{{publish_description}}"
-created: "2026-04-29"
-updated: "2026-04-29"
+created_at: "{{date}}"
+updated_at: "{{date}}"
 ---
 
 # {{title}}
@@ -27,10 +27,6 @@ updated: "2026-04-29"
 ## Audience
 
 developer
-
-## Mode
-
-reference
 
 ## Source of truth
 

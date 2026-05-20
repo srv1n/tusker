@@ -1,6 +1,6 @@
 project_id: tusker
 display_name: tusker
-repo_root: /Users/sarav/Downloads/side/tusker
+repo_root: .
 mount_name: tusker
 created: "2026-04-30"
 updated: "2026-04-30"

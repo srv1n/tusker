@@ -1,0 +1,13 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-19T05:18:03Z",
+  "event_kind": "created",
+  "id": "01KRZAPW07PNRJKGCY8KAT1Y53",
+  "object": "obsidian",
+  "object_kind": "domain",
+  "payload": {
+    "path": "knowledge/domains/obsidian/INDEX.md"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

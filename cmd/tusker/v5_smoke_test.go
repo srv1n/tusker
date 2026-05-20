@@ -17,7 +17,7 @@ func TestV5GreenfieldTaskDocsGate(t *testing.T) {
 		}
 	}
 
-	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
+	must(Args{"vault": vault, "quiet": "true"}, bootstrapLegacy)
 	assertExists(t, filepath.Join(vault, "_config", "docs-map.yaml"))
 	assertExists(t, filepath.Join(vault, "WORKFLOW.md"))
 	assertExists(t, filepath.Join(vault, "docs", "reference", "cli.md"))
@@ -63,7 +63,7 @@ func TestReviewerPolicyAllowsMediumAndBlocksHighRiskClose(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
+	must(Args{"vault": vault, "quiet": "true"}, bootstrapLegacy)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "REV", "title": "Review", "summary": "Review policy."}, newV5Epic)
 	must(Args{"vault": vault, "quiet": "true", "epic": "REV", "title": "Medium review", "risk": "medium", "size": "m"}, func(args Args) error {
 		return newV5Task(args, "feature")
@@ -92,7 +92,7 @@ func TestReviewerPolicyAllowsMediumAndBlocksHighRiskClose(t *testing.T) {
 
 func TestV5RejectsUnsafeDocNode(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	err := newV5Doc(Args{"vault": vault, "title": "Escape", "node": "../../outside", "quiet": "true"})
@@ -103,7 +103,7 @@ func TestV5RejectsUnsafeDocNode(t *testing.T) {
 
 func TestV5BaseViewsScopeToEmbeddingFolder(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -120,7 +120,7 @@ func TestV5BaseViewsScopeToEmbeddingFolder(t *testing.T) {
 
 func TestV5EpicDoneRejectsUnfinishedTasks(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV5Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "App work."}); err != nil {
@@ -137,7 +137,7 @@ func TestV5EpicDoneRejectsUnfinishedTasks(t *testing.T) {
 
 func TestV5DocsCheckRequiresDocsMap(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV5Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "App work."}); err != nil {
@@ -157,7 +157,7 @@ func TestV5DocsCheckRequiresDocsMap(t *testing.T) {
 
 func TestV5DocsNoopResolvesDocsGate(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV5Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "App work."}); err != nil {
@@ -229,7 +229,7 @@ func TestV5CreatesSequentialTaskIDsAndReviewStatus(t *testing.T) {
 
 func TestV5RejectsDuplicateDocNode(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV5Doc(Args{"vault": vault, "quiet": "true", "title": "Memory guide", "node": "guides/memory", "publish-description": "Memory guide."}); err != nil {
@@ -243,7 +243,7 @@ func TestV5RejectsDuplicateDocNode(t *testing.T) {
 
 func TestV5NewDocDefaultsPublishDescription(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV5Doc(Args{"vault": vault, "quiet": "true", "title": "Scratch guide", "node": "developer/scratch"}); err != nil {

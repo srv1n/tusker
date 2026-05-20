@@ -1,0 +1,52 @@
+schema: tusker.config/v1
+project_id: tusker
+project_name: Tusker
+
+storage:
+  root: tusker
+  generated_root: tusker/_generated
+  evidence_root: tusker/evidence
+  events_root: tusker/events
+  attempts_root: tusker/attempts
+
+branches:
+  default_branch: main
+  control:
+    - main
+  state_branch: tusker/state
+  implementation_patterns:
+    - "agent/*"
+    - "task/*"
+    - "feature/*"
+
+validation:
+  task_body_warn_lines: 120
+  task_body_fail_lines: 220
+  require_acceptance_proof: true
+  forbid_work_log_section: true
+  forbid_raw_logs_in_task: true
+  protect_state_fields: true
+  strict_proof_policy: false
+
+runtime:
+  lease_backend: local
+  lease_ttl_minutes: 120
+
+orchestration:
+  workspace:
+    kind: git_worktree
+    root: "../.tusker-worktrees"
+    branch_pattern: "agent/{{task_id}}"
+
+close_policy:
+  low:
+    required_acceptor: reviewer_agent
+  medium:
+    required_acceptor: reviewer_agent
+  high:
+    required_acceptor: human
+  critical:
+    required_acceptor: human
+    required_gates:
+      - release
+      - security

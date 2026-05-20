@@ -1,26 +1,25 @@
 ---
 title: "Resources"
-description: "Load this when you need to inspect, copy, repair, or explain bundled skill resources. Do not load this for routine task logging."
+description: "Load this when inspecting, copying, repairing, or explaining bundled skill resources. Do not load for routine task logging."
 tusker:
   audience: "user"
   publish_path: "user/reference/resources"
-  publish_section_title: "Reference"
   route: "/user/reference/resources/"
   source_kind: "repo_doc"
   source_path: "skill/references/RESOURCES.md"
-  summary: "Load this when you need to inspect, copy, repair, or explain bundled skill resources. Do not load this for routine task logging."
+  summary: "Load this when inspecting, copying, repairing, or explaining bundled skill resources. Do not load for routine task logging."
   tags:
     - "reference"
-  updated: "2026-04-30"
+  updated: "2026-05-18"
 ---
 
 # Resources
 
-Load this when you need to inspect, copy, repair, or explain bundled skill resources. Do not load this for routine task logging.
+Load this when inspecting, copying, repairing, or explaining bundled skill resources. Do not load for routine task logging.
 
 ## Rule
 
-Prefer the CLI. Use bundled resources when installing, refreshing, repairing, or explaining what the skill ships.
+Prefer the CLI. Use bundled resources only for install/update/repair or when explaining what the skill ships.
 
 ## Templates
 
@@ -29,44 +28,28 @@ Templates live in `assets/templates/`. They are source templates for `tusker ini
 | Template | Use |
 |---|---|
 | `epic.md` | Epic workstream file. Prefer `tusker new epic`. |
-| `task.md` | Normal executable task. Prefer `tusker new task`. |
-| `bug.md` | Bug task shape. Prefer `tusker new bug` or `tusker new task --kind bug`. |
-| `doc.md` | Human-facing durable docs page. Prefer `tusker new doc`. |
-| `agent-doc.md` | Agent-facing runbook or recipe. Use when `audience: agent` or `agent_layer: standalone`. |
-| `dashboard.md` | Vault dashboard seed. Written by `tusker init`. |
-| `cheatsheet.md` | Quick reference seed. Written by `tusker init`. |
-| `daily.md` | Optional daily-note helper. Copy only when the user wants daily notes. |
+| `task.md` | Normal executable V7 task. Prefer `tusker new task`. |
+| `bug.md` | Bug task shape. Prefer `tusker new task --kind bug`. |
+| `doc.md` | Human-facing durable docs page. Prefer the docs CLI if available. |
+| `agent-doc.md` | Agent-facing runbook or recipe. |
+| `dashboard.md` | Plain markdown dashboard seed. |
+| `cheatsheet.md` | Plain markdown quick reference. |
+| `daily.md` | Optional daily-note helper. |
 
-Do not hand-copy a template when the CLI can create the file. If you must patch a template, update the matching generated-vault template behavior in the Go code too.
+Do not hand-copy a template when the CLI can create the file. If you patch a template, update the matching generated-vault behavior in the Go code too.
 
-## Bases Views
-
-Bases views live in `assets/bases/` and are written to `_system/views/`.
-
-| View | Use |
-|---|---|
-| `Epics.base` | Epic roster and status scanning. |
-| `Tasks.base` | General task queues. |
-| `BugTasks.base` | Bug-focused task view. |
-| `Docs.base` | Durable docs pages and docs freshness. |
-
-Use these when repairing Obsidian views or explaining the vault UI.
-
-## Repo Contract Assets
+## Repo contract assets
 
 | Asset | Use |
 |---|---|
 | `assets/snippets/AGENTS.md.snippet` | Inject or repair repo-local agent instructions. |
 | `assets/snippets/CLAUDE.md.snippet` | Inject or repair Claude-facing repo instructions. |
 | `assets/repo-contract/AGENTS.workflow-snippet.md` | Explain or patch the workflow contract block. |
-| `assets/snippets/status-hooks.js` | Optional hook helper for teams wiring status automation. |
 | `assets/gitignore.recommended` | Suggested ignore entries for generated/runtime files. |
 
-Use the installer/init command before manual edits. Manual edits are for repair or review.
+## Icons and metadata
 
-## Icons And Metadata
-
-Icons live in `assets/icons/` and are referenced by `agents/openai.yaml`.
+Icons live in `assets/icons/` and are referenced by `agents/openai.yaml`. They are generic Tusker icons, not a requirement for any editor.
 
 `agents/openai.yaml` is UI metadata. Keep it short and aligned with `SKILL.md`.
 

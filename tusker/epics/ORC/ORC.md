@@ -134,6 +134,7 @@ flowchart TD
 
 _Open tasks only. Closed/cancelled work is intentionally omitted; use `tusker list --epic ORC --type task --status done` for closed history._
 
+- [[ORC-T-0020]] — Implement V7 repo-local work tracker slice (active, p0, high)
 - [[ORC-T-0019]] — Add policy-driven agent reviewer close lane (review, p1, high)
 - [[ORC-T-0011]] — Implement same-thread continuation loop (rework, p1, high)
 - [[ORC-T-0017]] — Add run supervisor session and branch policy (rework, p1, high)

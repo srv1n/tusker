@@ -1,16 +1,16 @@
 # Quick Mode
 
-The low-ceremony path for logging work, discovering follow-ups, and closing routine tasks.
+The low-ceremony path for logging work, finding follow-ups, and closing routine tasks without burning context.
 
 ## Principle
 
-Act with defaults and show what you did. If defaults are wrong, the user corrects once and you remember it for the session.
+Act with defaults and show what you did. Do not escalate lookup/bookkeeping into closeout ceremony.
 
-## Log One Task
+## Log one task
 
 ```bash
 tusker list --type epic
-tusker list --epic <ACR> --type task --open
+tusker search "<duplicate clue>" --type task
 tusker new task --epic <ACR> --title "<what happened>" \
   --kind chore --size s --risk low --priority p2 \
   --domains cli
@@ -20,31 +20,26 @@ Then tell the user: `Logged as <EPIC>-T-NNNN under <EPIC>. Picked <EPIC> because
 
 ## Defaults
 
-- `kind: chore` unless it is clearly `bug`, `docs`, `research`, or `security`
-- `size: s`
-- `risk: low`
-- `priority: p2`
-- `domains`: the broad area touched
-- `doc_nodes`: only when durable docs should be checked or updated
+- `kind: chore` unless it is clearly `bug`, `docs`, `research`, `security`, `migration`, or `incident`.
+- `size: s`.
+- `risk: low`.
+- `priority: p2`.
+- `domains`: broad area touched.
+- `proof_mode: inline` for low-risk routine work.
+- knowledge updates only when durable repo understanding changes.
 
-## Pick The Epic
+## Pick the epic
 
 1. Run `tusker list --type epic` and scan summaries.
-2. Run `tusker search "<term>" --type task` before creating anything that might duplicate existing work.
-3. Run `tusker list --epic <ACR> --type task --open` for the likely match only when the search/list result is not enough.
-4. Match the work to the nearest epic by subsystem.
+2. Run `tusker search "<term>" --type task` before creating possible duplicate work.
+3. Run `tusker list --epic <ACR> --type task --open` only for the likely match.
+4. Match the work to the nearest subsystem/workstream.
 5. If nothing fits and this is a real new workstream, create an epic.
-6. If truly uncertain, ask one concrete question.
+6. If still uncertain, ask one concrete question.
 
-`tusker search` is the default tracker lookup tool. It skips `Attachments/**`,
-`_system/**`, runtime logs, and generated indexes. Use shell `rg` only when you
-need to search source code or non-tracker files.
+Use shell `rg` only for source-code search. Use `tusker search` for tracker lookup.
 
-Use `tusker compact <ID>` as a dry-run before reading or editing old noisy
-notes. It reports empty optional frontmatter and disposable scaffolding that can
-be removed with `--write`.
-
-## Follow-Ups
+## Follow-ups
 
 ```bash
 tusker new task --epic <CURRENT-EPIC> --title "<follow-up>" \
@@ -52,9 +47,9 @@ tusker new task --epic <CURRENT-EPIC> --title "<follow-up>" \
   --domains <domain>
 ```
 
-Keep follow-ups in `draft` or `ready`. Agents propose follow-ups; humans activate them.
+Keep speculative follow-ups in `idea` or `backlog`. Do not make agents chase every discovered follow-up.
 
-The follow-up body must include:
+The follow-up body should include:
 
 ```markdown
 Discovered from: [[CURRENT-TASK-ID]]
@@ -62,9 +57,9 @@ Discovered from: [[CURRENT-TASK-ID]]
 This is out of scope because <one concrete reason>.
 ```
 
-## Dependencies
+## Dependencies and blockers
 
-Use relation fields:
+Use relation fields for task dependencies:
 
 ```yaml
 blocked_by:
@@ -73,33 +68,33 @@ blocks:
   - "[[ABC-T-0007]]"
 ```
 
-- Unstarted task with unmet prerequisites: keep it in `draft` or `ready`.
-- Started task that cannot continue: move it to `blocked`.
-- Add both sides of the link when practical.
-
-Do not invent `prerequisites`.
-
-## Close A Task
+Use gates for human/external blockers:
 
 ```bash
-tusker evidence <TASK-ID> pr <url>
-tusker docs check <TASK-ID>
-tusker status <TASK-ID> review
-tusker verify <TASK-ID> --by <name>
-tusker close <TASK-ID> --by <reviewer>
-tusker validate
+tusker new gate --blocks <TASK-ID> --kind verification --owner human:<name> \
+  --action "Run smoke check in <env>" \
+  --verification "Human accepts or waives the smoke result."
 ```
 
-For quick-mode `risk: low`, one evidence line plus a lightweight verification pass is usually enough. The worker must not certify its own truthfulness.
+Do not hide blockers only in body text.
 
-If `WORKFLOW.md` enables `reviewer`, tasks in `review` can be picked up by the configured reviewer lane. Use `reviewer.actor` (default `agent-reviewer`) for low/medium auto-close when every gate passes. For high/critical tasks, the reviewer leaves advisory evidence and a human runs `verify`/`close`.
+## Close a low-risk task
 
-## What Not To Do
+```bash
+tusker verify add <TASK-ID> --covers A1 --check "<focused check>" --result pass --note "<proof>"
+tusker finish <TASK-ID> --request-review --summary "<what changed and where proof lives>"
+tusker validate --json
+```
+
+If the closeout status says only human/reviewer gates remain, stop. Do not keep validating.
+
+## What not to do
 
 - Do not read the full skill to log one routine item.
-- Do not read the full vault README when `tusker list --type epic` is enough.
-- Do not load formal intake unless the work is risky or user-facing.
-- Do not create a durable doc for a one-sentence note.
-- Do not ask questions you can answer from cwd, the epic roster, or the active task.
-- Do not read `Attachments/**`, generated JSON, or raw logs while looking for duplicate tasks.
-- Do not paste full build/test output into the chat. Save full logs as files and read a tight summary or tail.
+- Do not read the whole vault when epic list plus search is enough.
+- Do not load formal intake unless the work is risky, user-facing, or cross-cutting.
+- Do not create durable docs for a one-sentence note.
+- Do not ask questions answerable from cwd, epic roster, or current task.
+- Do not read attachments, generated indexes, raw logs, or full transcripts by default.
+- Do not paste full build/test output into chat. Save logs as files and read a tight summary or tail.
+- Do not revalidate unchanged human-wait states.

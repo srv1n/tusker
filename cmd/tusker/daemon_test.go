@@ -17,7 +17,7 @@ func TestDaemonEnforcesPerStateDispatchCap(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV5Epic(Args{"vault": vault, "acronym": "CAP", "title": "Caps", "summary": "Dispatch cap coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
@@ -106,7 +106,7 @@ func TestDaemonReleasesRunWhenTrackerStateBecomesIneligible(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV5Epic(Args{"vault": vault, "acronym": "INT", "title": "Interrupts", "summary": "Ineligible state coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
@@ -195,7 +195,7 @@ func TestDaemonReconcilesCompletedReviewHandoff(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV5Epic(Args{"vault": vault, "acronym": "HND", "title": "Handoff", "summary": "Review handoff coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
@@ -291,7 +291,7 @@ func TestDaemonDispatchesReviewerLaneOnceForReviewTask(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV5Epic(Args{"vault": vault, "acronym": "ARD", "title": "Agent review dispatch", "summary": "Reviewer lane coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
@@ -362,7 +362,7 @@ func TestDaemonQueuesContinuationRetryWhenCleanExitLeavesNoteActive(t *testing.T
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV5Epic(Args{"vault": vault, "acronym": "CON", "title": "Continuation", "summary": "Continuation retry coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
@@ -451,6 +451,201 @@ func TestDaemonQueuesContinuationRetryWhenCleanExitLeavesNoteActive(t *testing.T
 	assertEqual(t, "active", stringField(updatedNote.Data, "status"), "daemon does not force active note to review")
 }
 
+func TestDaemonCleanExitStopsForV7TerminalHumanWait(t *testing.T) {
+	tempRoot := t.TempDir()
+	stateRoot := filepath.Join(tempRoot, "state")
+	vault := filepath.Join(tempRoot, "vault")
+	repo := filepath.Join(tempRoot, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
+	if err := writeDefaultWorkflow(vault); err != nil {
+		t.Fatal(err)
+	}
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Runtime stop.", "v7": "true"}, newV7Epic)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stop for human", "risk": "low", "priority": "p2", "status": "rework", "proof-mode": "inline", "proof-required": "human_signoff", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestDaemonCleanExitStopsForV7TerminalHumanWait -count=1", "result": "pass", "note": "Machine proof passed."}, verifyV7AddCmd)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "emit-packet": "true", "validate": "printf validation-ok"}, closeoutV7Cmd)
+	note, err := resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := newRegisteredProject(repo, vault)
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	statusPath := filepath.Join(tempRoot, "runner.status.json")
+	eventSinkPath := filepath.Join(tempRoot, "runner.events.jsonl")
+	if err := writeRunnerStatusFile(statusPath, 0); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := store.UpsertRun(RunStatus{
+		ProjectID:       project.ProjectID,
+		RecordID:        trackerRecordID(note),
+		ItemID:          "APP-T-0001",
+		Runner:          "codex",
+		LeaseState:      string(LeaseStateRunning),
+		AttemptOutcome:  string(AttemptOutcomeNone),
+		ActiveAttemptID: "human-wait-attempt",
+		EventSinkPath:   eventSinkPath,
+		StatusPath:      statusPath,
+		SessionRef:      "thread-human-wait",
+		WorkRevision:    intField(note.Data, "work_revision"),
+		AttemptCount:    1,
+		StartedAt:       now,
+		LastEventAt:     now,
+		UpdatedAt:       now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	daemon := &Daemon{stateRoot: stateRoot, store: store}
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := store.FindRun("APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run == nil {
+		t.Fatal("expected run row")
+	}
+	assertEqual(t, string(LeaseStateReleased), run.LeaseState, "human wait releases lease")
+	assertEqual(t, string(AttemptOutcomeWaitingForHuman), run.AttemptOutcome, "human wait outcome")
+	assertEqual(t, "", run.NextRetryAt, "human wait does not queue retry")
+	decisions, err := store.ListSupervisorDecisionsForRun(project.ProjectID, trackerRecordID(note))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireSupervisorDecision(t, decisions, string(SupervisorDecisionStopForHuman))
+}
+
+func TestDaemonDispatchesReviewerForV7HumanClosePolicyWithoutCloseout(t *testing.T) {
+	tempRoot := t.TempDir()
+	stateRoot := filepath.Join(tempRoot, "state")
+	vault := filepath.Join(tempRoot, "vault")
+	repo := filepath.Join(tempRoot, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
+	if err := writeDefaultWorkflow(vault); err != nil {
+		t.Fatal(err)
+	}
+	updateWorkflowForDaemonTest(t, vault, map[string]int{}, 1, `python3 -c 'import sys; sys.exit(0)'`)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Reviewer dispatch.", "v7": "true"}, newV7Epic)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Human close policy review", "risk": "high", "priority": "p1", "status": "review", "proof-mode": "inline", "proof-required": "focused_test", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestDaemonDispatchesReviewerForV7HumanClosePolicyWithoutCloseout -count=1", "result": "pass", "note": "Machine proof passed."}, verifyV7AddCmd)
+	task := mustV7Task(t, vault, "APP-T-0001")
+	idx := mustIndex(t, vault)
+	if _, ok := v7LatestValidTerminalCloseout(vault, task, idx); ok {
+		t.Fatal("test setup should not have a closeout")
+	}
+	projected := v7ProjectedTaskState(vault, task, idx)
+	assertEqual(t, "waiting_on_review", stringField(projected, "readiness"), "projection stays review-owned until closeout")
+	if stringField(projected, "agent_action") == "stop_until_human_response" {
+		t.Fatalf("projection must not advertise human stop without closeout: %#v", projected)
+	}
+
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := newRegisteredProject(repo, vault)
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	daemon := &Daemon{stateRoot: stateRoot, store: store}
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	run := waitForRunLeaseState(t, daemon, store, "APP-T-0001", LeaseStateReleased)
+	if run == nil {
+		t.Fatal("expected reviewer run row")
+	}
+	assertEqual(t, runLaneReview, run.Lane, "review task dispatches reviewer lane without closeout")
+	assertEqual(t, string(AttemptOutcomeSucceeded), run.AttemptOutcome, "reviewer lane completed")
+}
+
+func TestDaemonCleanExitDoesNotStopForV7HumanWaitWithoutCloseout(t *testing.T) {
+	tempRoot := t.TempDir()
+	stateRoot := filepath.Join(tempRoot, "state")
+	vault := filepath.Join(tempRoot, "vault")
+	repo := filepath.Join(tempRoot, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
+	if err := writeDefaultWorkflow(vault); err != nil {
+		t.Fatal(err)
+	}
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Runtime stop.", "v7": "true"}, newV7Epic)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "No checkpoint", "risk": "low", "priority": "p2", "status": "rework", "proof-mode": "inline", "proof-required": "human_signoff", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestDaemonCleanExitDoesNotStopForV7HumanWaitWithoutCloseout -count=1", "result": "pass", "note": "Machine proof passed."}, verifyV7AddCmd)
+	note, err := resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := newRegisteredProject(repo, vault)
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	statusPath := filepath.Join(tempRoot, "runner.status.json")
+	if err := writeRunnerStatusFile(statusPath, 0); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := store.UpsertRun(RunStatus{
+		ProjectID:       project.ProjectID,
+		RecordID:        trackerRecordID(note),
+		ItemID:          "APP-T-0001",
+		Runner:          "codex",
+		LeaseState:      string(LeaseStateRunning),
+		AttemptOutcome:  string(AttemptOutcomeNone),
+		ActiveAttemptID: "human-wait-attempt",
+		StatusPath:      statusPath,
+		SessionRef:      "thread-human-wait",
+		WorkRevision:    intField(note.Data, "work_revision"),
+		AttemptCount:    1,
+		StartedAt:       now,
+		LastEventAt:     now,
+		UpdatedAt:       now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	daemon := &Daemon{stateRoot: stateRoot, store: store}
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run, err := store.FindRun("APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, string(LeaseStateRetryQueued), run.LeaseState, "missing closeout queues continuation")
+	assertEqual(t, string(AttemptOutcomeNone), run.AttemptOutcome, "missing closeout outcome")
+	decisions, err := store.ListSupervisorDecisionsForRun(project.ProjectID, trackerRecordID(note))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireSupervisorDecision(t, decisions, string(SupervisorDecisionContinueThread))
+}
+
 func TestDaemonEmitsNewRevisionDecisionAndClearsOldSession(t *testing.T) {
 	tempRoot := t.TempDir()
 	stateRoot := filepath.Join(tempRoot, "state")
@@ -459,7 +654,7 @@ func TestDaemonEmitsNewRevisionDecisionAndClearsOldSession(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV5Epic(Args{"vault": vault, "acronym": "REV", "title": "Revision", "summary": "Revision reset coverage.", "owner": "sarav", "quiet": "true"}); err != nil {
@@ -686,7 +881,7 @@ func TestDispatchEligibilityBlocksUnresolvedDependenciesAndCriticalRisk(t *testi
 
 func TestWriteReviewPacketEvidenceCreatesSubstantiveEvidence(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV5Epic(Args{"vault": vault, "acronym": "PKT", "title": "Packets", "summary": "Review packet coverage.", "owner": "sarav", "quiet": "true"}); err != nil {

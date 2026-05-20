@@ -264,7 +264,11 @@ func effectiveNoteKind(data map[string]any) string {
 }
 
 func hasV6Vault(vaultPath string) bool {
-	return fileExists(filepath.Join(vaultPath, "SKILL.md")) || fileExists(filepath.Join(vaultPath, "domains"))
+	if fileExists(filepath.Join(vaultPath, "domains")) {
+		return true
+	}
+	data, _, err := parseFrontmatterMustRead(filepath.Join(vaultPath, "SKILL.md"))
+	return err == nil && stringField(data, "schema") == "tusker.project-skill/v6"
 }
 
 func bootstrapV6(args Args) error {
@@ -414,6 +418,9 @@ func writeDefaultV6ProjectSkill(vaultPath string, domains []string) error {
 
 Use this file to route through this repository's Tusker knowledge graph.
 Use the Tusker operator skill for task mechanics and CLI workflow.
+In V7 repositories, the generated project knowledge skill keeps the same split:
+project canon routes live under ` + "`tusker/knowledge/domains/**`" + `; task and
+evidence records are proof/history, not publication source.
 
 ## Routing rule
 
@@ -429,6 +436,8 @@ Read task files only for proof, evidence, or implementation history.
 5. Do not load full files when a capsule or section read is enough.
 6. When suggesting a code change, include verification.
 7. When production impact is possible, include rollback or safe-change checks.
+8. Do not publish task bodies, evidence logs, attempts, generated manifests,
+   packet caches, runtime state, or raw logs as project knowledge.
 
 ## Domains
 
@@ -1041,12 +1050,15 @@ description: "Route through this repository using domain canon, codebase map, ta
 ## Routing rule
 
 Start with the narrowest domain INDEX. Read CANON before task history.
+Use the Tusker operator skill for task mechanics and CLI workflow.
 
 ## Answering rules
 
 1. Prefer domain canon over task history.
 2. Trust source code over prose when they conflict.
 3. Do not read generated output by default.
+4. Do not publish task bodies, evidence logs, attempts, generated manifests,
+   packet caches, runtime state, or raw logs as project knowledge.
 
 ## Domains
 

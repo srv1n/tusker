@@ -1,10 +1,10 @@
 ---
 title: "{{date}}"
-type: "daily"
+type: daily
 date: "{{date}}"
-created: "{{date}}"
-updated: "{{date}}"
-tags: ["daily"]
+created_at: "{{date}}"
+updated_at: "{{date}}"
+tags: [daily]
 ---
 
 # {{date}}
@@ -13,8 +13,8 @@ tags: ["daily"]
 
 - [ ]
 
-## Active changes
+## Linked work
 
 ## Notes
 
-## Linked work
+## Human gates pending

@@ -1,0 +1,35 @@
+{
+  "actor": "tusker:reconcile",
+  "at": "2026-05-15T04:53:19Z",
+  "event_kind": "updated",
+  "id": "01KRMZPPW52EE04WBZJV8EX1GS",
+  "object": "VSD-T-0009",
+  "object_kind": "task",
+  "payload": {
+    "changes": {
+      "next_action": {
+        "from": "Execute the task contract and attach evidence.",
+        "to": "Wait for dependency VSD-T-0005 to reach done."
+      },
+      "next_owner": {
+        "from": "agent",
+        "to": "blocked_dependency"
+      },
+      "next_ref": {
+        "from": "VSD-T-0009",
+        "to": "VSD-T-0005"
+      },
+      "next_source": {
+        "from": "task",
+        "to": "dependency"
+      },
+      "readiness": {
+        "from": "ready",
+        "to": "blocked_by_dependency"
+      }
+    },
+    "source": "projection"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

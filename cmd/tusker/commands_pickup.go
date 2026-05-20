@@ -33,6 +33,22 @@ func claimCmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	if note, err := resolveV7Note(vaultPath, id, "task"); err == nil && strings.HasSuffix(stringField(note.Data, "schema"), "/v7") {
+		if args.String("owner") == "" && args.String("as") != "" {
+			args["owner"] = args.String("as")
+		}
+		if args.String("owner") == "" && args.String("actor") != "" {
+			args["owner"] = args.String("actor")
+		}
+		if args.String("owner") == "" {
+			args["owner"] = "agent:" + defaultActorName()
+		}
+		if _, err := writeV7Lease(args, "active"); err != nil {
+			return err
+		}
+		_ = emitV7Event(vaultPath, id, "task", "claimed", fallback(args.String("owner"), "agent:"+defaultActorName()), map[string]any{"branch": currentGitBranch()})
+		return nil
+	}
 	actor, err := requireClaimActor(args)
 	if err != nil {
 		return err
@@ -52,6 +68,36 @@ func claimCmd(args Args) error {
 }
 
 func nextCmd(args Args) error {
+	vaultPath, err := resolveVaultPath(args, false)
+	if err != nil {
+		return err
+	}
+	epic := strings.ToUpper(strings.TrimSpace(args.String("epic")))
+	owner := strings.TrimSpace(firstNonEmpty(args.String("owner"), args.String("assignee")))
+	selected, ok := pickV7Next(vaultPath, epic, owner)
+	if !ok {
+		return tuskerError(errorNotFound, "No pickable V7 tasks found", withHint("pickable means status ready/rework, readiness ready, and next_owner matching --owner when provided"))
+	}
+	if args.Bool("claim") {
+		if args.String("owner") == "" {
+			args["owner"] = firstNonEmpty(owner, args.String("as"), args.String("actor"), "agent:"+defaultActorName())
+		}
+		args["id"] = stringField(selected.Data, "id")
+		if _, err := writeV7Lease(args, "active"); err != nil {
+			return err
+		}
+	}
+	if args.Bool("json") {
+		emitJSON(map[string]any{"ok": true, "item": selected.Data})
+		return nil
+	}
+	if !args.Bool("quiet") {
+		fmt.Printf("%-14s  %-5s  %-8s  %-6s  %s\n", stringField(selected.Data, "id"), stringField(selected.Data, "priority"), stringField(selected.Data, "risk"), stringField(selected.Data, "status"), stringField(selected.Data, "title"))
+	}
+	return nil
+}
+
+func nextV5Cmd(args Args) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err

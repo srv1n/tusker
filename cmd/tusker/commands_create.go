@@ -7,6 +7,59 @@ import (
 )
 
 func bootstrap(args Args) error {
+	if args.Bool("legacy") || args.Bool("v5") {
+		return bootstrapLegacy(args)
+	}
+	return bootstrapV7(args)
+}
+
+func bootstrapV7(args Args) error {
+	vaultPath, err := resolveVaultPath(args, true)
+	if err != nil {
+		return err
+	}
+	if err := bootstrapV7Dirs(vaultPath); err != nil {
+		return err
+	}
+	if err := writeDefaultRootTuskerConfig(vaultPath); err != nil {
+		return err
+	}
+	if err := ensureV7Domain(vaultPath, "project", "Project", "Durable project knowledge."); err != nil {
+		return err
+	}
+	if err := writeDefaultV7ProjectSkillIfMissing(vaultPath); err != nil {
+		return err
+	}
+	if err := upsertGitignore(vaultPath); err != nil {
+		return err
+	}
+	if epic := strings.ToUpper(args.String("epic")); epic != "" {
+		if !epicAcronymPattern.MatchString(epic) {
+			return tuskerError(errorInvalidArg, fmt.Sprintf(`--epic must be 3 uppercase letters, got "%s"`, args.String("epic")), withContext(map[string]any{"arg": "--epic", "value": args.String("epic")}))
+		}
+		title, err := requireArg(args, "title")
+		if err != nil {
+			return tuskerError(errorMissingArg, "--title (required with --epic)")
+		}
+		if err := newV7Epic(Args{
+			"vault":   vaultPath,
+			"quiet":   "true",
+			"acronym": epic,
+			"title":   title,
+			"owner":   args.String("owner"),
+			"summary": args.String("summary"),
+			"status":  fallback(args.String("status"), "ready"),
+		}); err != nil {
+			return err
+		}
+	}
+	if !args.Bool("quiet") {
+		fmt.Printf("Tusker V7 vault initialized at %s\n", vaultPath)
+	}
+	return nil
+}
+
+func bootstrapLegacy(args Args) error {
 	vaultPath, err := resolveVaultPath(args, true)
 	if err != nil {
 		return err
@@ -29,12 +82,29 @@ func bootstrap(args Args) error {
 		"_system/archive",
 		"_system/workspaces",
 		"_system/logs",
+		"work/epics",
+		"work/tasks",
+		"work/gates",
+		"work/decisions",
+		"work/inbox",
+		"work/archive",
+		"knowledge/domains",
+		"evidence",
+		"events",
+		"attempts",
+		"dashboards",
+		"_generated/indexes",
+		"_generated/packets",
+		"_generated/bases",
 	} {
 		if err := ensureDir(filepath.Join(vaultPath, relative)); err != nil {
 			return err
 		}
 	}
 	if err := writeDefaultConfig(vaultPath); err != nil {
+		return err
+	}
+	if err := writeDefaultRootTuskerConfig(vaultPath); err != nil {
 		return err
 	}
 	docsMapPath := filepath.Join(vaultPath, "_config", "docs-map.yaml")
@@ -94,4 +164,13 @@ func bootstrap(args Args) error {
 		fmt.Printf("Tusker vault initialized at %s\n", vaultPath)
 	}
 	return nil
+}
+
+func writeDefaultRootTuskerConfig(vaultPath string) error {
+	configPath := filepath.Join(filepath.Dir(vaultPath), "tusker.yaml")
+	if fileExists(configPath) {
+		return nil
+	}
+	projectID := sanitizeProjectID(filepath.Base(filepath.Dir(vaultPath)))
+	return writeText(configPath, fmt.Sprintf("schema: tusker.config/v1\nproject_id: %s\nruntime:\n  mutation_mode: single_user_local\n", projectID))
 }

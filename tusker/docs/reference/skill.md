@@ -14,7 +14,7 @@ publish_lane: "internal"
 publish_path: "reference/skill"
 publish_description: "Skill and AGENTS guidance."
 created: "2026-04-29"
-updated: "2026-05-11"
+updated: "2026-05-14"
 ---
 
 # Skill and AGENTS guidance
@@ -41,6 +41,24 @@ go run ./cmd/tusker update --repo . --repo-only --no-bin
 ```
 
 Use the installed `tusker update --repo . --repo-only --no-bin` only after the installed binary has the desired embedded skill payload.
+
+User-level installs in `~/.agents/skills/tusker`, `~/.codex/skills/tusker`, and `~/.claude/skills/tusker` are refreshed by normal `tusker install` runs without `--repo`, by `make install`, and by `tusker update` when they already exist. The embedded payload is authoritative: refresh replaces the installed directory instead of only overwriting `SKILL.md`. `tusker install --repo <path>` is repo-local by default; combine it with `--refresh-existing-user-skills`, `--codex-user`, or `--claude-user` only when user-level writes are intended.
+
+## Two-skill contract
+
+The Tusker skill is the operator skill. It owns tracker mechanics: task lookup,
+evidence, gates, validation, docs impact, branch policy, and close rules.
+
+The project knowledge skill is generated per repository. In V7 it lives at
+`tusker/SKILL.md`, routes agents into `tusker/knowledge/domains/**`, and tells
+agents to read the narrowest domain `INDEX.md` before `CANON.md`. It may point
+to task/evidence/attempt records for proof, but those records are not source
+truth for generated skill publication.
+
+When a V7 domain is added, Tusker refreshes `tusker/SKILL.md` so the routing
+table names that domain's `INDEX.md` and `CANON.md`. `tusker validate` reports
+`PROJECT_SKILL_DOMAIN_ROUTE_MISSING` if domain canon exists without a matching
+project skill route.
 
 ## Current status
 

@@ -1,0 +1,13 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-15T04:46:13Z",
+  "event_kind": "created",
+  "id": "01KRMZ9QF75MMP10TP19EF2MCK",
+  "object": "VSD-T-0004",
+  "object_kind": "task",
+  "payload": {
+    "path": "work/tasks/VSD-T-0004.md"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

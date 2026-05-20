@@ -433,7 +433,7 @@ func TestV6PublishLLMSLanesFilterInternalAndHistorical(t *testing.T) {
 
 func TestV6MigrationDryRunReportsMovesAndFieldRewrites(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+	if err := bootstrapLegacy(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV5Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "App work."}); err != nil {

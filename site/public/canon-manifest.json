@@ -1,27 +1,7 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-05-12T14:50:35Z",
+  "generatedAt": "2026-05-19T05:21:13Z",
   "canon": [
-    {
-      "topic": "DOC",
-      "title": "Tusker Documentation Model",
-      "route": "/developer/documentation-model/",
-      "source_kind": "repo_doc",
-      "source_id": "docs/documentation-model.md",
-      "source_path": "docs/documentation-model.md",
-      "audience": "developer",
-      "owner_epic": "DOC",
-      "canonical": true,
-      "canonical_status": "approved",
-      "verified_at": "2026-04-29",
-      "tags": [
-        "docs",
-        "diataxis",
-        "architecture"
-      ],
-      "updated": "2026-04-29",
-      "summary": "How Tusker lays out durable docs, why Diátaxis is metadata, and how the CLI keeps docs freshness tied to task close."
-    },
     {
       "topic": "ORC",
       "title": "Agent Workflow",
@@ -38,105 +18,11 @@
         "start-here",
         "workflow"
       ],
-      "updated": "2026-05-11",
+      "updated": "2026-05-18",
       "summary": "Operating contract for agents working with Tusker in a markdown-first vault."
     }
   ],
   "published": [
-    {
-      "topic": "DOC",
-      "title": "Tusker Documentation Model",
-      "route": "/developer/documentation-model/",
-      "source_kind": "repo_doc",
-      "source_id": "docs/documentation-model.md",
-      "source_path": "docs/documentation-model.md",
-      "audience": "developer",
-      "owner_epic": "DOC",
-      "canonical": true,
-      "canonical_status": "approved",
-      "verified_at": "2026-04-29",
-      "tags": [
-        "docs",
-        "diataxis",
-        "architecture"
-      ],
-      "updated": "2026-04-29",
-      "summary": "How Tusker lays out durable docs, why Diátaxis is metadata, and how the CLI keeps docs freshness tied to task close."
-    },
-    {
-      "topic": "developer/internals/dispatcher-pseudocode",
-      "title": "Dispatcher Pseudocode",
-      "route": "/developer/internals/dispatcher-pseudocode/",
-      "source_kind": "repo_doc",
-      "source_id": "skill/docs/DISPATCHER_PSEUDOCODE.md",
-      "source_path": "skill/docs/DISPATCHER_PSEUDOCODE.md",
-      "audience": "developer",
-      "tags": [
-        "internals"
-      ],
-      "updated": "2026-04-29",
-      "summary": "Runtime dispatch reads task-native generated indexes. It does not mutate legacy runtime fields in markdown."
-    },
-    {
-      "topic": "developer/internals/failure-classes",
-      "title": "Failure Classes",
-      "route": "/developer/internals/failure-classes/",
-      "source_kind": "repo_doc",
-      "source_id": "skill/docs/FAILURE_CLASSES.md",
-      "source_path": "skill/docs/FAILURE_CLASSES.md",
-      "audience": "developer",
-      "tags": [
-        "internals"
-      ],
-      "updated": "2026-04-29",
-      "summary": "Runtime failures belong in runtime logs and evidence, not task frontmatter."
-    },
-    {
-      "topic": "developer/internals/operator-intervention",
-      "title": "Operator Intervention",
-      "route": "/developer/internals/operator-intervention/",
-      "source_kind": "repo_doc",
-      "source_id": "skill/docs/OPERATOR_INTERVENTION.md",
-      "source_path": "skill/docs/OPERATOR_INTERVENTION.md",
-      "audience": "developer",
-      "tags": [
-        "internals"
-      ],
-      "updated": "2026-05-08",
-      "summary": "Use the public V5 task commands for manual intervention."
-    },
-    {
-      "topic": "developer/internals/orchestration-runbook",
-      "title": "Orchestration Runbook",
-      "route": "/developer/internals/orchestration-runbook/",
-      "source_kind": "repo_doc",
-      "source_id": "skill/docs/ORCHESTRATION_RUNBOOK.md",
-      "source_path": "skill/docs/ORCHESTRATION_RUNBOOK.md",
-      "audience": "developer",
-      "tags": [
-        "internals"
-      ],
-      "updated": "2026-05-08",
-      "summary": "The public V5 CLI tracks task truth. Runtime orchestration is an operator/internal surface and must not be presented as the normal task workflow."
-    },
-    {
-      "topic": "developer/internals/v1-design",
-      "title": "Tusker V1 Design Index",
-      "route": "/developer/internals/v1-design/",
-      "source_kind": "repo_doc",
-      "source_id": "skill/V1_DESIGN.md",
-      "source_path": "skill/V1_DESIGN.md",
-      "audience": "developer",
-      "canonical_status": "historical",
-      "deprecated": true,
-      "superseded_by": "/developer/specs/",
-      "tags": [
-        "internals",
-        "design"
-      ],
-      "updated": "2026-05-11",
-      "summary": "Historical design notes covering the Tusker v1 model and operating assumptions."
-    },
     {
       "topic": "developer/repository/repository-overview",
       "title": "Repository Overview",
@@ -149,227 +35,23 @@
         "repository",
         "overview"
       ],
-      "updated": "2026-05-11",
+      "updated": "2026-05-15",
       "summary": "High-level overview of the Tusker repository, install modes, and key entry points."
     },
     {
-      "topic": "ORC",
-      "title": "Tusker Spec Set",
-      "route": "/developer/specs/",
+      "topic": "user/reference/closeout-protocol",
+      "title": "Closeout Protocol",
+      "route": "/user/reference/closeout-protocol/",
       "source_kind": "repo_doc",
-      "source_id": "docs/specs/README.md",
-      "source_path": "docs/specs/README.md",
-      "audience": "developer",
-      "owner_epic": "ORC",
-      "canonical_status": "historical",
-      "verified_at": "2026-04-28",
-      "deprecated": true,
-      "superseded_by": "/user/start-here/agent-workflow/",
-      "tags": [
-        "specs",
-        "architecture"
-      ],
-      "updated": "2026-04-29",
-      "summary": "Historical implementation spec map for the pre-V5 Tusker model; V5 task-contract guidance is current."
-    },
-    {
-      "topic": "ORC",
-      "title": "00 - Product Modes",
-      "route": "/developer/specs/00-product-modes/",
-      "source_kind": "repo_doc",
-      "source_id": "docs/specs/00-product-modes.md",
-      "source_path": "docs/specs/00-product-modes.md",
-      "audience": "developer",
-      "owner_epic": "ORC",
-      "canonical_status": "historical",
-      "verified_at": "2026-04-28",
-      "deprecated": true,
-      "superseded_by": "/user/start-here/agent-workflow/",
-      "tags": [
-        "specs"
-      ],
-      "updated": "2026-04-29",
-      "summary": "Tusker V5 is one binary with one public workflow: a markdown-first task and docs tracker for agent-heavy software work."
-    },
-    {
-      "topic": "ORC",
-      "title": "01 - Vault Tracker",
-      "route": "/developer/specs/01-vault-tracker/",
-      "source_kind": "repo_doc",
-      "source_id": "docs/specs/01-vault-tracker.md",
-      "source_path": "docs/specs/01-vault-tracker.md",
-      "audience": "developer",
-      "owner_epic": "ORC",
-      "canonical_status": "historical",
-      "verified_at": "2026-04-28",
-      "deprecated": true,
-      "superseded_by": "/user/start-here/agent-workflow/",
-      "tags": [
-        "specs"
-      ],
-      "updated": "2026-05-10",
-      "summary": "Tusker V5 stores durable work in Markdown. Frontmatter is the machine-readable current state; body sections are the human-readable contract and proof."
-    },
-    {
-      "topic": "ORC",
-      "title": "02 - Workflow Contract",
-      "route": "/developer/specs/02-workflow-contract/",
-      "source_kind": "repo_doc",
-      "source_id": "docs/specs/02-workflow-contract.md",
-      "source_path": "docs/specs/02-workflow-contract.md",
-      "audience": "developer",
-      "owner_epic": "ORC",
-      "canonical_status": "historical",
-      "verified_at": "2026-04-28",
-      "deprecated": true,
-      "superseded_by": "/user/start-here/agent-workflow/",
-      "tags": [
-        "specs"
-      ],
-      "updated": "2026-04-29",
-      "summary": "WORKFLOW.md is the project-level policy and prompt contract. It is V5 by default and lives at the vault root."
-    },
-    {
-      "topic": "ORC",
-      "title": "03 - Runtime And Registry",
-      "route": "/developer/specs/03-daemon-and-registry/",
-      "source_kind": "repo_doc",
-      "source_id": "docs/specs/03-daemon-and-registry.md",
-      "source_path": "docs/specs/03-daemon-and-registry.md",
-      "audience": "developer",
-      "owner_epic": "ORC",
-      "canonical_status": "historical",
-      "verified_at": "2026-04-28",
-      "deprecated": true,
-      "superseded_by": "/user/start-here/agent-workflow/",
-      "tags": [
-        "specs"
-      ],
-      "updated": "2026-04-29",
-      "summary": "Runtime orchestration is internal implementation. It executes eligible V5 tasks and records attempts, turns, sessions, events, and artifacts outside canonical markdown."
-    },
-    {
-      "topic": "ORC",
-      "title": "Spec 04: Workspace Manager",
-      "route": "/developer/specs/04-workspace-manager/",
-      "source_kind": "repo_doc",
-      "source_id": "docs/specs/04-workspace-manager.md",
-      "source_path": "docs/specs/04-workspace-manager.md",
-      "audience": "developer",
-      "owner_epic": "ORC",
-      "canonical_status": "historical",
-      "verified_at": "2026-04-28",
-      "deprecated": true,
-      "superseded_by": "/user/start-here/agent-workflow/",
-      "tags": [
-        "specs"
-      ],
-      "updated": "2026-04-29",
-      "summary": "Define deterministic isolated workspaces for daemon-run agent sessions."
-    },
-    {
-      "topic": "ORC",
-      "title": "05. Runner And Session Protocol",
-      "route": "/developer/specs/05-runner-and-session-protocol/",
-      "source_kind": "repo_doc",
-      "source_id": "docs/specs/05-runner-and-session-protocol.md",
-      "source_path": "docs/specs/05-runner-and-session-protocol.md",
-      "audience": "developer",
-      "owner_epic": "ORC",
-      "canonical_status": "historical",
-      "verified_at": "2026-04-28",
-      "deprecated": true,
-      "superseded_by": "/user/start-here/agent-workflow/",
-      "tags": [
-        "specs"
-      ],
-      "updated": "2026-04-29",
-      "summary": "Status: Draft Scope: daemon-run execution for codex and claude-code"
-    },
-    {
-      "topic": "ORC",
-      "title": "06 - Verification, Rework, And Close",
-      "route": "/developer/specs/06-review-rework-retry/",
-      "source_kind": "repo_doc",
-      "source_id": "docs/specs/06-review-rework-retry.md",
-      "source_path": "docs/specs/06-review-rework-retry.md",
-      "audience": "developer",
-      "owner_epic": "ORC",
-      "canonical_status": "historical",
-      "verified_at": "2026-04-28",
-      "deprecated": true,
-      "superseded_by": "/user/start-here/agent-workflow/",
-      "tags": [
-        "specs"
-      ],
-      "updated": "2026-05-10",
-      "summary": "V5 uses a simple lifecycle:"
-    },
-    {
-      "topic": "ORC",
-      "title": "07 - Documentation Site And Publication",
-      "route": "/developer/specs/07-documentation-site-and-publication/",
-      "source_kind": "repo_doc",
-      "source_id": "docs/specs/07-documentation-site-and-publication.md",
-      "source_path": "docs/specs/07-documentation-site-and-publication.md",
-      "audience": "developer",
-      "owner_epic": "ORC",
-      "canonical_status": "historical",
-      "verified_at": "2026-04-28",
-      "deprecated": true,
-      "superseded_by": "/user/start-here/agent-workflow/",
-      "tags": [
-        "specs"
-      ],
-      "updated": "2026-04-29",
-      "summary": "Tusker V5 treats docs as durable pages, not work items."
-    },
-    {
-      "topic": "ORC",
-      "title": "08 - Orchestration Roadmap",
-      "route": "/developer/specs/08-symphony-alignment-and-orchestration-roadmap/",
-      "source_kind": "repo_doc",
-      "source_id": "docs/specs/08-symphony-alignment-and-orchestration-roadmap.md",
-      "source_path": "docs/specs/08-symphony-alignment-and-orchestration-roadmap.md",
-      "audience": "developer",
-      "owner_epic": "ORC",
-      "canonical_status": "historical",
-      "verified_at": "2026-04-28",
-      "deprecated": true,
-      "superseded_by": "/user/start-here/agent-workflow/",
-      "tags": [
-        "specs"
-      ],
-      "updated": "2026-04-29",
-      "summary": "Tusker V5 keeps Symphony-style orchestration as an internal runtime layer on top of a task-native markdown tracker."
-    },
-    {
-      "topic": "user/reference/bases",
-      "title": "Bases — editing and extending",
-      "route": "/user/reference/bases/",
-      "source_kind": "repo_doc",
-      "source_id": "skill/references/BASES.md",
-      "source_path": "skill/references/BASES.md",
+      "source_id": "skill/references/CLOSEOUT_PROTOCOL.md",
+      "source_path": "skill/references/CLOSEOUT_PROTOCOL.md",
       "audience": "user",
       "tags": [
-        "reference"
+        "reference",
+        "closeout"
       ],
-      "updated": "2026-05-04",
-      "summary": "The skill payload ships .base files in assets/bases/. Live vault views live in _system/views/."
-    },
-    {
-      "topic": "user/reference/canon-locations",
-      "title": "Canon locations",
-      "route": "/user/reference/canon-locations/",
-      "source_kind": "repo_doc",
-      "source_id": "skill/references/CANON_LOCATIONS.md",
-      "source_path": "skill/references/CANON_LOCATIONS.md",
-      "audience": "user",
-      "tags": [
-        "reference"
-      ],
-      "updated": "2026-04-30",
-      "summary": "Tusker supports three legitimate canon patterns. Pick one per epic, make it explicit, then create the task stack that executes it."
+      "updated": "2026-05-19",
+      "summary": "This protocol prevents token-burning loops when machine work is complete but the task still has human, reviewer, or external gates."
     },
     {
       "topic": "user/reference/commands",
@@ -382,36 +64,8 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-10",
-      "summary": "The public V5 CLI is intentionally small. Use these commands."
-    },
-    {
-      "topic": "user/reference/doc-pages",
-      "title": "Docs Pages",
-      "route": "/user/reference/doc-pages/",
-      "source_kind": "repo_doc",
-      "source_id": "skill/references/DOC_PAGES.md",
-      "source_path": "skill/references/DOC_PAGES.md",
-      "audience": "user",
-      "tags": [
-        "reference"
-      ],
-      "updated": "2026-04-29",
-      "summary": "Use this when durable project knowledge belongs in Tusker instead of a task body."
-    },
-    {
-      "topic": "user/reference/docs-publication",
-      "title": "Docs publication",
-      "route": "/user/reference/docs-publication/",
-      "source_kind": "repo_doc",
-      "source_id": "skill/references/DOCS_PUBLICATION.md",
-      "source_path": "skill/references/DOCS_PUBLICATION.md",
-      "audience": "user",
-      "tags": [
-        "reference"
-      ],
-      "updated": "2026-05-08",
-      "summary": "Use this when the user wants project docs, a public docs site, a user guide, release notes, support docs, runbooks, or agent-readable canon."
+      "updated": "2026-05-19",
+      "summary": "Most commands accept [--vault \u003cpath\u003e]. Omit it unless discovery fails."
     },
     {
       "topic": "user/reference/engineering-discipline",
@@ -424,54 +78,12 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-11",
+      "updated": "2026-05-18",
       "summary": "Use this when the work involves non-trivial implementation, bug diagnosis, tests, refactors, architecture seams, performance regressions, or a request for TDD. It is a compact synthesis of the external engineering skills reviewed for SKL-T-0002; do not vendor those skills wholesale into Tusker."
     },
     {
-      "topic": "user/reference/formal-intake",
-      "title": "Formal intake",
-      "route": "/user/reference/formal-intake/",
-      "source_kind": "repo_doc",
-      "source_id": "skill/references/FORMAL_INTAKE.md",
-      "source_path": "skill/references/FORMAL_INTAKE.md",
-      "audience": "user",
-      "tags": [
-        "reference"
-      ],
-      "updated": "2026-05-11",
-      "summary": "Creating a task at risk \u003e= medium. Load this when the work is a feature, migration, refactor with teeth, public docs change, security-sensitive change, or anything with rollout/rollback concerns."
-    },
-    {
-      "topic": "user/reference/optional-plugins",
-      "title": "Optional plugins policy",
-      "route": "/user/reference/optional-plugins/",
-      "source_kind": "repo_doc",
-      "source_id": "skill/references/OPTIONAL_PLUGINS.md",
-      "source_path": "skill/references/OPTIONAL_PLUGINS.md",
-      "audience": "user",
-      "tags": [
-        "reference"
-      ],
-      "updated": "2026-04-21",
-      "summary": "Core rule:"
-    },
-    {
-      "topic": "user/reference/plugin-compat",
-      "title": "Obsidian Bases",
-      "route": "/user/reference/plugin-compat/",
-      "source_kind": "repo_doc",
-      "source_id": "skill/references/PLUGIN_COMPAT.md",
-      "source_path": "skill/references/PLUGIN_COMPAT.md",
-      "audience": "user",
-      "tags": [
-        "reference"
-      ],
-      "updated": "2026-04-30",
-      "summary": "Tusker writes task-native Bases views into _system/views/."
-    },
-    {
       "topic": "user/reference/prerequisites",
-      "title": "Prerequisites and setup notes",
+      "title": "Prerequisites",
       "route": "/user/reference/prerequisites/",
       "source_kind": "repo_doc",
       "source_id": "skill/references/PREREQUISITES.md",
@@ -480,8 +92,8 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-04-22",
-      "summary": "The primary tusker CLI is now built and run with Go."
+      "updated": "2026-05-18",
+      "summary": "The primary execution surface is the tusker CLI. It must be available on PATH or run from the repository build output."
     },
     {
       "topic": "user/reference/quick-mode",
@@ -494,12 +106,12 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-10",
-      "summary": "The low-ceremony path for logging work, discovering follow-ups, and closing routine tasks."
+      "updated": "2026-05-18",
+      "summary": "The low-ceremony path for logging work, finding follow-ups, and closing routine tasks without burning context."
     },
     {
       "topic": "user/reference/repo-contract",
-      "title": "Repo contract",
+      "title": "Repo Contract",
       "route": "/user/reference/repo-contract/",
       "source_kind": "repo_doc",
       "source_id": "skill/references/REPO_CONTRACT.md",
@@ -508,7 +120,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-10",
+      "updated": "2026-05-18",
       "summary": "The vault is internal working memory. The repository is still where contributors land."
     },
     {
@@ -522,8 +134,8 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-04-30",
-      "summary": "Load this when you need to inspect, copy, repair, or explain bundled skill resources. Do not load this for routine task logging."
+      "updated": "2026-05-18",
+      "summary": "Load this when inspecting, copying, repairing, or explaining bundled skill resources. Do not load for routine task logging."
     },
     {
       "topic": "user/reference/risk-and-evidence",
@@ -536,50 +148,8 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-10",
-      "summary": "Risk drives ceremony. Size is effort; risk is blast radius."
-    },
-    {
-      "topic": "user/reference/schema",
-      "title": "Schema",
-      "route": "/user/reference/schema/",
-      "source_kind": "repo_doc",
-      "source_id": "skill/references/SCHEMA.md",
-      "source_path": "skill/references/SCHEMA.md",
-      "audience": "user",
-      "tags": [
-        "reference"
-      ],
-      "updated": "2026-05-10",
-      "summary": "Frontmatter is the machine layer. The note body is the human layer. V5 makes **task** the execution unit and keeps docs as durable knowledge pages."
-    },
-    {
-      "topic": "user/reference/task-decomposition",
-      "title": "Task Decomposition",
-      "route": "/user/reference/task-decomposition/",
-      "source_kind": "repo_doc",
-      "source_id": "skill/references/TASK_DECOMPOSITION.md",
-      "source_path": "skill/references/TASK_DECOMPOSITION.md",
-      "audience": "user",
-      "tags": [
-        "reference"
-      ],
-      "updated": "2026-05-11",
-      "summary": "Use this when a PRD/RFC/spec is too large for one agent pass and needs a task stack."
-    },
-    {
-      "topic": "user/reference/triggers",
-      "title": "Triggers",
-      "route": "/user/reference/triggers/",
-      "source_kind": "repo_doc",
-      "source_id": "skill/references/TRIGGERS.md",
-      "source_path": "skill/references/TRIGGERS.md",
-      "audience": "user",
-      "tags": [
-        "reference"
-      ],
-      "updated": "2026-05-10",
-      "summary": "When to invoke the Tusker skill, and when to skip it."
+      "updated": "2026-05-18",
+      "summary": "Evidence exists to prove acceptance, not to narrate effort."
     },
     {
       "topic": "user/reference/workflow",
@@ -592,8 +162,8 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-08",
-      "summary": "Short reference for the V5 task lifecycle."
+      "updated": "2026-05-18",
+      "summary": "Short reference for the V7 task lifecycle."
     },
     {
       "topic": "ORC",
@@ -611,7 +181,7 @@
         "start-here",
         "workflow"
       ],
-      "updated": "2026-05-11",
+      "updated": "2026-05-18",
       "summary": "Operating contract for agents working with Tusker in a markdown-first vault."
     },
     {
@@ -626,7 +196,7 @@
         "start-here",
         "user"
       ],
-      "updated": "2026-05-11",
+      "updated": "2026-05-18",
       "summary": "Overview of the installable Tusker skill bundle and how operators use it."
     }
   ],

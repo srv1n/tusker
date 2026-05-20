@@ -1,16 +1,19 @@
 ---
-schema: "tusker.domain/v6"
+schema: tusker.domain/v7
+kind: domain
 id: "{{domain}}"
+project: "{{project}}"
 title: "{{title}}"
-status: "current"
-owner: "sarav"
+status: draft
 summary: "{{summary}}"
-knowledge_nodes:
-  - "{{domain}}/canon"
 source_of_truth:
-  - "tusker/SKILL.md"
-tags:
-  - "{{domain}}"
+  - tusker/knowledge/domains/{{domain}}/CANON.md
+canonical_files:
+  - INDEX.md
+  - CANON.md
+created_at: "{{date}}"
+updated_at: "{{date}}"
+state_rev: 1
 ---
 
 # {{title}}
@@ -25,23 +28,17 @@ Skip this when another domain is narrower.
 
 ## Current canon
 
-- [[{{domain}}/CANON]]
-
-## Start here
-
-Read [[{{domain}}/CANON]] first.
+- [[CANON]]
 
 ## Main knowledge nodes
 
-- [[{{domain}}/CANON]]
-
-## Source of truth
-
-- `tusker/SKILL.md`
-
-## Related domains
-
-- [[codebase/INDEX]]
+- `CANON.md` — current model, invariants, defaults, deprecated behavior.
+- `runbooks/` — operational procedures.
+- `decisions/` — accepted or pending durable decisions.
+- `interfaces/` — contracts and boundaries.
+- `invariants/` — rules that should not drift.
+- `sources/` — raw or external source material.
+- `glossary.md` — terms of art.
 
 ## Current work
 

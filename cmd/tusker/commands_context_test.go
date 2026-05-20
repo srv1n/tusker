@@ -12,7 +12,7 @@ func TestContextAuditSummarizesTranscriptNoise(t *testing.T) {
 		`{"type":"session_meta","payload":{"id":"sess-1","cwd":"/repo"}}`,
 		`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"rg -n \\\"needle\\\" .\"}","call_id":"call-1"}}`,
 		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"Chunk ID: abc\nOriginal token count: 123\nOutput:\nmatch\n"}}`,
-		`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"python3 - <<'PY'\\nfrom pathlib import Path\\nPath('/Users/sarav/.codex/sessions/2026/05/09/session.jsonl').read_text()\\nPY\"}","call_id":"call-2"}}`,
+		`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"python3 - <<'PY'\\nfrom pathlib import Path\\nPath('/home/sarav/.codex/sessions/2026/05/09/session.jsonl').read_text()\\nPY\"}","call_id":"call-2"}}`,
 		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call-2","output":"Chunk ID: def\nOriginal token count: 75\nOutput:\nsummary\n"}}`,
 		`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":900,"output_tokens":50,"total_tokens":1050}}}}`,
 	}, "\n") + "\n"

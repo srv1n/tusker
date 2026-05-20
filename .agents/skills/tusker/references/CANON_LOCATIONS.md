@@ -5,18 +5,18 @@ Tusker supports three legitimate canon patterns. Pick one per epic, make it expl
 ## Rule
 
 ```text
-Every active epic declares canon and has at least one executable task.
+Every current epic declares canon and has at least one executable task.
 ```
 
-If the epic is active and the task stack does not exist yet, scoping is incomplete.
+If the epic is current and the task stack does not exist yet, scoping is incomplete.
 
 ## Canon patterns
 
 | Canon lives in | Use when | What to set |
 |---|---|---|
 | epic `## Design` | the workstream is still evolving | make `## Design` substantive |
-| V5 doc under `tusker/docs/**` | the spec should be durable, reviewable, or publishable | create a doc with `kind: canon` and a stable `node` |
-| repo file cited by a V5 doc | the contract ships with code or external consumers read it | create a canon doc and put repo paths in `source_of_truth` |
+| durable docs page under `tusker/docs/**` | the spec should be durable, reviewable, or publishable | create a doc with `kind: canon` and a stable `node` |
+| repo file cited by a durable doc | the contract ships with code or external consumers read it | create a canon doc and put repo paths in `source_of_truth` |
 
 ## Pick the epic body when
 
@@ -24,7 +24,7 @@ If the epic is active and the task stack does not exist yet, scoping is incomple
 - you want one living epic page that readers open first
 - the canon is more roadmap than frozen spec
 
-## Pick a V5 canon doc when
+## Pick a durable canon doc when
 
 - multiple tasks cite a shared decision set
 - the doc should outlive day-to-day epic edits
@@ -51,7 +51,7 @@ doc_nodes: [spec/<slug>]
 - external consumers read it from the repository
 - the file belongs beside code generation or protocol assets
 
-Create a V5 canon doc and cite the shipped file:
+Create a durable canon doc and cite the shipped file:
 
 ```yaml
 kind: canon
@@ -98,4 +98,4 @@ Task `## Canon` should point at the chosen source in read order:
 - Contract: `docs/specs/my_protocol.md`
 ```
 
-V5 durable docs live under `tusker/docs/**`; do not put new doc nodes under epic folders.
+Durable docs live under `tusker/docs/**`; do not put new doc nodes under epic folders.

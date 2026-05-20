@@ -27,7 +27,6 @@ const manualMappings = [
     section: 'Developer Repository',
     title: 'Repository Overview',
   },
-  { source: 'skill/V1_DESIGN.md', target: 'developer/internals/v1-design.md', section: 'Developer Internals' },
   { source: 'skill/docs/DISPATCHER_PSEUDOCODE.md', target: 'developer/internals/dispatcher-pseudocode.md', section: 'Developer Internals' },
   { source: 'skill/docs/FAILURE_CLASSES.md', target: 'developer/internals/failure-classes.md', section: 'Developer Internals' },
   { source: 'skill/docs/OPERATOR_INTERVENTION.md', target: 'developer/internals/operator-intervention.md', section: 'Developer Internals' },

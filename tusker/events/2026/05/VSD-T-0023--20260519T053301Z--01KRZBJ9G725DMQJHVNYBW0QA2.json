@@ -1,0 +1,13 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-19T05:33:01Z",
+  "event_kind": "attempt_handoff",
+  "id": "01KRZBJ9G725DMQJHVNYBW0QA2",
+  "object": "VSD-T-0023",
+  "object_kind": "task",
+  "payload": {
+    "attempt": "VSD-T-0023-A-0001"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

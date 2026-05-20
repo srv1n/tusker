@@ -1,0 +1,13 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-19T05:18:02Z",
+  "event_kind": "created",
+  "id": "01KRZAPVFHSWAWP6VCRC3K2VH5",
+  "object": "guardrails",
+  "object_kind": "domain",
+  "payload": {
+    "path": "knowledge/domains/guardrails/INDEX.md"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

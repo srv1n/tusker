@@ -44,6 +44,7 @@ dist/*
 build/
 out/
 coverage/
+/tusker-code-review*.zip
 *.test
 *.prof
 *.out
@@ -69,5 +70,13 @@ site/public/generated/
 site/src/generated/
 
 # Tusker runtime/generated vault state
+.tusker-local/
+.tusker-runtime/
+.tusker/scratch/
+tusker/.tusker/scratch/
 tusker/_system/generated/
 tusker/_system/templates.zip
+tusker/evidence/**/raw-*.log
+tusker/evidence/**/raw-*.txt
+tusker/_generated/indexes/*.json
+tusker/_generated/packets/*.tmp

@@ -181,7 +181,7 @@ func discoverVault(startDir string) (string, error) {
 			return dir, nil
 		}
 		child := filepath.Join(dir, "tusker")
-		if isVaultDir(child) {
+		if isVaultDir(child) || (fileExists(filepath.Join(dir, "tusker.yaml")) && dirExists(child)) {
 			return child, nil
 		}
 		parent := filepath.Dir(dir)
@@ -193,7 +193,15 @@ func discoverVault(startDir string) (string, error) {
 }
 
 func isVaultDir(dir string) bool {
-	return fileExists(filepath.Join(dir, "WORKFLOW.md")) || fileExists(filepath.Join(dir, "_system", "config.yaml"))
+	return fileExists(filepath.Join(dir, "WORKFLOW.md")) ||
+		fileExists(filepath.Join(dir, "_system", "config.yaml")) ||
+		dirExists(filepath.Join(dir, "work")) ||
+		dirExists(filepath.Join(dir, "knowledge", "domains"))
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func requireArg(args Args, name string) (string, error) {

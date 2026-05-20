@@ -38,8 +38,8 @@ func syncRepoContract(args Args) error {
 	} else {
 		if discovered, _ := discoverVault(repoPath); discovered != "" {
 			vaultPath = discovered
-		} else if discovered, _ := discoverVault(mustGetwd()); discovered != "" {
-			vaultPath = discovered
+		} else {
+			vaultPath = filepath.Join(repoPath, "tusker")
 		}
 	}
 	vaultRelative := "tusker"
@@ -127,6 +127,69 @@ func updateCmd(args Args) error {
 	}
 	if len(updatedSkills) == 0 {
 		fmt.Println("No existing user skill installs found to refresh. Pass `--repo <path>` for repo-local skills.")
+	}
+	return nil
+}
+
+func installCmd(args Args) error {
+	if args.Bool("help") {
+		printInstallHelp()
+		return nil
+	}
+
+	installedSkills := []string{}
+	destinations := []string{}
+	repoPath := strings.TrimSpace(args.String("repo"))
+	if repoPath == "" || args.Bool("refresh-existing-user-skills") {
+		destinations = existingUserSkillDestinations()
+	}
+	if args.Bool("codex-user") {
+		destinations = append(destinations, defaultCodexUserSkillDestination())
+	}
+	if args.Bool("claude-user") {
+		destinations = append(destinations, filepath.Join(userHomeDir(), ".claude", "skills", currentSkillInstallDir))
+	}
+	if repoPath != "" {
+		repoRoot, err := filepath.Abs(repoPath)
+		if err != nil {
+			return err
+		}
+		destinations = append(destinations,
+			filepath.Join(repoRoot, ".agents", "skills", currentSkillInstallDir),
+			filepath.Join(repoRoot, ".claude", "skills", currentSkillInstallDir),
+		)
+	}
+	destinations = uniqueInstallDestinations(destinations)
+
+	for _, destination := range destinations {
+		if err := installSkillPayload(destination); err != nil {
+			return err
+		}
+		installedSkills = append(installedSkills, destination)
+	}
+
+	binaryInstalled := false
+	if !args.Bool("no-bin") {
+		if err := installBinarySymlink(args); err != nil {
+			return err
+		}
+		binaryInstalled = true
+	}
+
+	if args.Bool("json") {
+		emitJSON(map[string]any{
+			"ok":               true,
+			"binary_installed": binaryInstalled,
+			"installed_skills": installedSkills,
+		})
+		return nil
+	}
+
+	for _, destination := range installedSkills {
+		fmt.Printf("Installed Tusker skill at %s\n", destination)
+	}
+	if len(installedSkills) == 0 && args.Bool("no-bin") {
+		fmt.Println("No install destinations selected.")
 	}
 	return nil
 }
@@ -309,6 +372,37 @@ Examples:
   tusker update --repo . --repo-only --no-bin`)
 }
 
+func printInstallHelp() {
+	fmt.Println(`Usage:
+  tusker install [--bin-dir <path>] [--no-bin] [--codex-user] [--claude-user] [--repo <path>] [--refresh-existing-user-skills] [--force] [--json]
+
+Purpose:
+  Install the Tusker binary link and refresh/install skill bundles from the
+  currently running binary. This is used by make install and the shell installer.
+
+Behavior:
+  - refreshes already-installed user skills in ~/.agents, ~/.codex, and ~/.claude
+  - --codex-user installs ~/.agents/skills/tusker
+  - --claude-user installs ~/.claude/skills/tusker
+  - --repo installs repo-local .agents/.claude skill bundles without ambient user skill refresh
+  - --refresh-existing-user-skills also refreshes existing user skills when --repo is used
+  - relinks tusker on PATH unless --no-bin is passed
+  - --force is accepted for installer compatibility
+
+Examples:
+  tusker install --codex-user --claude-user
+  tusker install --repo . --no-bin
+  tusker install --no-bin`)
+}
+
+func printSyncRepoContractHelp() {
+	fmt.Println(`Usage:
+  tusker sync-repo-contract --repo <path> [--vault <path>] [--force]
+
+Purpose:
+  Install or refresh repo-local agent workflow files and Tusker pointers.`)
+}
+
 func initCmd(args Args) error {
 	if args.Bool("help") {
 		printInitHelp()
@@ -339,7 +433,9 @@ func initCmd(args Args) error {
 	fresh := args.Bool("fresh")
 	vaultOnly := args.Bool("vault-only")
 	profile := strings.TrimSpace(args.String("profile"))
-	useV6 := profile != ""
+	useLegacy := args.Bool("legacy") || args.Bool("migrate-v5")
+	useV7 := !useLegacy && (args.Bool("v7") || profile == "" || strings.EqualFold(profile, "v7"))
+	useV6 := !useLegacy && profile != "" && !strings.EqualFold(profile, "v7")
 	interactive := !yes && isTTY(os.Stdin)
 	reader := bufio.NewReader(os.Stdin)
 	ask := func(question string, defaultYes bool) (bool, error) {
@@ -385,7 +481,7 @@ func initCmd(args Args) error {
 	existingVault := ""
 	if isVaultDir(vaultPath) {
 		existingVault = vaultPath
-	} else if !explicitVault {
+	} else if !explicitVault && !mountTracker {
 		discovered, _ := discoverVault(cwd)
 		if discovered != "" {
 			existingVault = discovered
@@ -399,7 +495,15 @@ func initCmd(args Args) error {
 			return err
 		}
 		if doVault {
-			if useV6 {
+			if useLegacy {
+				if err := bootstrapLegacy(Args{"vault": vaultPath, "quiet": "true"}); err != nil {
+					return err
+				}
+			} else if useV7 {
+				if err := bootstrapV7Profile(vaultPath, profile); err != nil {
+					return err
+				}
+			} else if useV6 {
 				if err := bootstrapV6(Args{"vault": vaultPath, "quiet": "true", "profile": profile}); err != nil {
 					return err
 				}
@@ -418,8 +522,16 @@ func initCmd(args Args) error {
 	if effectiveVault == "" {
 		effectiveVault = vaultPath
 	}
-	if useV6 {
+	if useLegacy {
+		if err := bootstrapLegacy(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
+			return err
+		}
+	} else if useV6 {
 		if err := bootstrapV6(Args{"vault": effectiveVault, "quiet": "true", "profile": profile}); err != nil {
+			return err
+		}
+	} else if useV7 {
+		if err := bootstrapV7Profile(effectiveVault, profile); err != nil {
 			return err
 		}
 	} else {
@@ -503,7 +615,10 @@ func initCmd(args Args) error {
 	fmt.Println()
 	fmt.Println("Done. Next steps:")
 	fmt.Println("  tusker validate --vault " + effectiveVault)
-	if useV6 {
+	if useV7 {
+		fmt.Println("  tusker domain list --v7 --vault " + effectiveVault)
+		fmt.Println("  tusker publish skill --v7 --vault " + effectiveVault)
+	} else if useV6 {
 		fmt.Println("  tusker domain list --vault " + effectiveVault)
 		fmt.Println("  tusker knowledge route \"change CLI flag\" --vault " + effectiveVault)
 	} else {
@@ -605,7 +720,7 @@ func relativeFromRepo(repoPath, vaultPath string) string {
 	if err != nil {
 		return vaultPath
 	}
-	if strings.HasPrefix(rel, "..") {
+	if rel == ".." || strings.HasPrefix(rel, "../") {
 		return vaultPath
 	}
 	return filepath.ToSlash(rel)

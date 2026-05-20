@@ -15,11 +15,24 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
+      - name: Enforce Tusker branch policy
+        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'tusker-state-change')
+        run: go run ./cmd/tusker validate --branch-policy-only --base origin/main
+
       - name: Run check suite
         run: make check
+
+      - name: Run strict V7 skill doctor
+        run: |
+          go run ./cmd/tusker skill doctor --strict --json
+          tmp="$(mktemp -d)"
+          go run ./cmd/tusker publish skill --v7 --out "$tmp/project-skill" --quiet
+          go run ./cmd/tusker skill doctor --package "$tmp/project-skill" --strict --json

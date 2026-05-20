@@ -1,0 +1,13 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-19T05:18:00Z",
+  "event_kind": "created",
+  "id": "01KRZAPSKXH8DWX2V9KYFS9D9C",
+  "object": "cli",
+  "object_kind": "domain",
+  "payload": {
+    "path": "knowledge/domains/cli/INDEX.md"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

@@ -41,7 +41,7 @@ Invoke:
 - "What tasks are open for PLC?" -> yes, `list --epic PLC --type task --open`.
 - "I have an RFC, turn it into tasks" -> yes, create canon/docs and a task stack.
 - "Start this new app and keep docs updated as we build" -> yes, create/choose epic, docs, and tasks with `doc_nodes`.
-- "Create a user guide for this feature" -> yes, create a V5 doc.
+- "Create a user guide for this feature" -> yes, create a durable docs page.
 - "Publish the docs site" -> yes, use `docs export/dev/build`.
 - "Close HIT-T-0001, I've merged it" -> yes, evidence/docs check/verify/close.
 

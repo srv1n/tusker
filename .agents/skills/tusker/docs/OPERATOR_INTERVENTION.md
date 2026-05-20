@@ -1,34 +1,63 @@
 # Operator Intervention
 
-Use the public V5 task commands for manual intervention.
+Use CLI control commands for manual intervention. Do not hand-edit protected lifecycle fields unless repairing corruption.
 
-## Reset A Task
+## Resume agent work
 
-```bash
-tusker status <TASK-ID> active --actor <name> --reason "<why work can resume>"
-```
-
-Use this when a task was blocked or rework is complete.
-
-## Cancel A Task
+Use this when a human/reviewer rejected closeout and the task has concrete machine work again:
 
 ```bash
-tusker status <TASK-ID> cancelled --actor <name> --reason "<why cancelled>"
+tusker status <TASK-ID> rework --by human:<name> --reason "<specific failed acceptance item>"
 ```
 
-Cancellation is terminal. Create a new task if the work needs to continue under different scope.
+Set or expect:
 
-## Verify And Close
+```yaml
+readiness: ready
+next_owner: agent
+agent_action: continue
+```
+
+Old closeout checkpoints are stale after rework.
+
+## Stop for human
+
+Use or confirm this when the machine work is complete and only human gates remain:
+
+```yaml
+status: review
+readiness: held
+next_owner: human:<name>
+agent_action: stop_until_human_response
+```
+
+Do not ask the agent to continue unless you also accept, waive, or reject the gate.
+
+## Cancel a task
 
 ```bash
-tusker evidence <TASK-ID> log <file-or-url> --note "<what this proves>"
-tusker docs check <TASK-ID>
-tusker status <TASK-ID> review --actor <name>
-tusker verify <TASK-ID> --by <verifier>
-tusker close <TASK-ID> --by <reviewer>
-tusker validate
+tusker status <TASK-ID> cancelled --by human:<name> --reason "<why cancelled>"
 ```
 
-If the reviewer lane is enabled, the configured `reviewer.actor` can perform the verify/close steps for low/medium tasks after review passes. For high/critical tasks, use the reviewer output as advisory evidence and leave final verify/close to a human.
+Cancellation is terminal. Create a new task if the work continues under different scope.
 
-Never delete prior evidence or work-log history. Append the new truth.
+## Accept or waive gates
+
+```bash
+tusker gate satisfy <GATE-ID> --by human:<name> --evidence "<what was reviewed>"
+tusker gate waive <GATE-ID> --by human:<name> --reason "<why waiver is acceptable>"
+```
+
+After gate changes, run one final closeout validation if the task can close.
+
+## Verify and close
+
+```bash
+tusker proof status <TASK-ID> --json
+tusker validate --json
+tusker close <TASK-ID> --by reviewer:<name> --reason "<acceptance/proof summary>"
+```
+
+Low/medium work may be closed by an allowed independent reviewer. High/critical work follows the configured human/reviewer policy.
+
+Never delete prior evidence or summaries just to make the task look cleaner. Supersede stale evidence and keep the current truth obvious.

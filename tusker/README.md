@@ -1,8 +1,8 @@
 ---
 title: "Overview"
 type: "note"
-created: "2026-05-12"
-updated: "2026-05-12"
+created: "2026-05-19"
+updated: "2026-05-19"
 tags: ["tusker-generated"]
 ---
 
@@ -35,7 +35,7 @@ The design is Codex-first, not Codex-only. Future Claude Code, OpenCode, or othe
 
 # Epic roster
 
-_Auto-generated 2026-05-12T14:50:35Z. This top-level roster intentionally shows epics only. Run `tusker list --type epic` for the live terminal view, then drill into one epic with `tusker list --epic <ACR> --type task --open`._
+_Auto-generated 2026-05-19T05:21:12Z. This top-level roster intentionally shows epics only. Run `tusker list --type epic` for the live terminal view, then drill into one epic with `tusker list --epic <ACR> --type task --open`._
 
 Agents: use this page only to choose the right epic. Do not read every task file. Pick the epic whose summary best matches; if nothing fits and the work will outlive one task, propose a new epic with `tusker new epic --acronym <ACR> --title "<name>" --summary "..."`.
 
@@ -45,7 +45,7 @@ Agents: use this page only to choose the right epic. Do not read every task file
 
 **Summary:** Symphony-aligned daemon work: honest isolation, safe policy, continuation, evidence, and operator visibility.
 
-**Counts:** 19 tasks, 0 bug tasks, 0 docs (open: 13, done: 6)
+**Counts:** 20 tasks, 0 bug tasks, 0 docs (open: 14, done: 6)
 
 **Drill down:** `tusker list --epic ORC --type task --open`.
 
@@ -74,3 +74,11 @@ Agents: use this page only to choose the right epic. Do not read every task file
 **Counts:** 2 tasks, 0 bug tasks, 0 docs (open: 1, done: 1)
 
 **Drill down:** `tusker list --epic SKL --type task --open`.
+
+### [[VSK]] — V7 skill-shaped knowledge base
+
+**Summary:** Make V7 initialization, validation, documentation, and skill packaging treat repo knowledge as a first-class agent skill while preserving the Tusker operator skill.
+
+**Counts:** 10 tasks, 3 bug tasks, 0 docs (open: 0, done: 10)
+
+**Drill down:** `tusker list --epic VSK --type task --open`.

@@ -130,12 +130,24 @@ func renderCapsule(note Note) string {
 }
 
 func capsuleFrontmatterFacts(note Note) string {
-	if stringField(note.Data, "type") != "task" {
+	if noteDisplayKind(note.Data) != "task" {
 		return ""
 	}
 	var lines []string
 	if status := strings.TrimSpace(stringField(note.Data, "status")); status != "" {
 		lines = append(lines, "- Status: "+status)
+	}
+	if readiness := strings.TrimSpace(stringField(note.Data, "readiness")); readiness != "" {
+		lines = append(lines, "- Readiness: "+readiness)
+	}
+	if proofMode := strings.TrimSpace(stringField(note.Data, "proof_mode")); proofMode != "" {
+		lines = append(lines, "- Proof: "+proofMode+"/"+firstNonEmpty(stringField(note.Data, "proof_status"), "?"))
+	}
+	if nextOwner := strings.TrimSpace(stringField(note.Data, "next_owner")); nextOwner != "" {
+		lines = append(lines, "- Next owner: "+nextOwner)
+	}
+	if nextAction := strings.TrimSpace(stringField(note.Data, "next_action")); nextAction != "" {
+		lines = append(lines, "- Next action: "+nextAction)
 	}
 	if summary := strings.TrimSpace(stringField(note.Data, "verification_summary")); summary != "" {
 		lines = append(lines, "- Verification: "+summary)
@@ -148,7 +160,7 @@ func capsuleFrontmatterFacts(note Note) string {
 
 func synthesizeCapsule(note Note) string {
 	var lines []string
-	noteType := stringField(note.Data, "type")
+	noteType := noteDisplayKind(note.Data)
 	switch noteType {
 	case "task":
 		lines = append(lines,
@@ -157,6 +169,22 @@ func synthesizeCapsule(note Note) string {
 			"- Epic: "+wikiTarget(note.Data["epic"]),
 			"- Risk/priority: "+firstNonEmpty(stringField(note.Data, "risk"), "?")+"/"+firstNonEmpty(stringField(note.Data, "priority"), "?"),
 		)
+		if strings.HasSuffix(stringField(note.Data, "schema"), "/v7") {
+			lines = append(lines,
+				"- Readiness: "+firstNonEmpty(stringField(note.Data, "readiness"), "?"),
+				"- Proof: "+firstNonEmpty(stringField(note.Data, "proof_mode"), "?")+"/"+firstNonEmpty(stringField(note.Data, "proof_status"), "?"),
+				"- Next owner: "+firstNonEmpty(stringField(note.Data, "next_owner"), "?"),
+				"- Next action: "+firstNonEmpty(stringField(note.Data, "next_action"), "not recorded"),
+			)
+			if domains := normalizeList(note.Data["domains"]); len(domains) > 0 {
+				lines = append(lines, "- Domains: "+strings.Join(domains, ", "))
+				lines = append(lines, "- Project skill route: read `tusker/SKILL.md`, then `tusker/knowledge/domains/<domain>/INDEX.md` and `CANON.md`.")
+			}
+			if id := stringField(note.Data, "id"); id != "" {
+				lines = append(lines, "- Packet: `tusker packet "+id+" --for agent`")
+			}
+			lines = append(lines, "- Forbidden paths: task history, evidence, attempts, events, generated indexes, packet caches, raw logs, and local absolute paths.")
+		}
 		if intent := firstParagraph(sectionContent(note.Body, "## Intent")); intent != "" {
 			lines = append(lines, "- Intent: "+intent)
 		}
@@ -187,7 +215,14 @@ func synthesizeCapsule(note Note) string {
 }
 
 func noteHeaderLine(note Note) string {
-	return fmt.Sprintf("%s  %s  %s  %s", stringField(note.Data, "id"), stringField(note.Data, "type"), stringField(note.Data, "status"), stringField(note.Data, "title"))
+	return fmt.Sprintf("%s  %s  %s  %s", stringField(note.Data, "id"), noteDisplayKind(note.Data), stringField(note.Data, "status"), stringField(note.Data, "title"))
+}
+
+func noteDisplayKind(data map[string]any) string {
+	if strings.HasSuffix(stringField(data, "schema"), "/v7") {
+		return firstNonEmpty(stringField(data, "kind"), stringField(data, "type"))
+	}
+	return firstNonEmpty(stringField(data, "type"), stringField(data, "kind"))
 }
 
 func firstParagraph(text string) string {

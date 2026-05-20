@@ -202,8 +202,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 		notesByRecordID := map[string]Note{}
 		keep := map[string]struct{}{}
 		for _, note := range notes {
-			noteType := stringField(note.Data, "type")
-			if noteType != "task" {
+			if daemonNoteKind(note) != "task" {
 				continue
 			}
 			if id := stringField(note.Data, "id"); id != "" {
@@ -241,8 +240,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 		stateActiveRuns := countDispatchingProjectRunsByState(projectRuns, noteStatusByRecord)
 
 		for _, note := range notes {
-			noteType := stringField(note.Data, "type")
-			if noteType != "task" {
+			if daemonNoteKind(note) != "task" {
 				continue
 			}
 			status := stringField(note.Data, "status")
@@ -338,8 +336,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 		}
 
 		for _, note := range notes {
-			noteType := stringField(note.Data, "type")
-			if noteType != "task" {
+			if daemonNoteKind(note) != "task" {
 				continue
 			}
 			status := stringField(note.Data, "status")
@@ -351,7 +348,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				continue
 			}
 			current := projectRuns[recordID]
-			if !reviewDispatchAllowed(note, wfFile.Data, current) {
+			if !reviewDispatchAllowed(project.VaultRoot, note, wfFile.Data, current) {
 				continue
 			}
 			reviewerRunner := firstNonEmpty(wfFile.Data.Reviewer.Runner, wfFile.Data.Agents.Default)
@@ -596,11 +593,14 @@ func prepareRunForLaneDispatch(run RunStatus, lane, runner string) RunStatus {
 	return run
 }
 
-func reviewDispatchAllowed(note Note, wf Workflow, run RunStatus) bool {
+func reviewDispatchAllowed(vaultPath string, note Note, wf Workflow, run RunStatus) bool {
 	if !wf.Reviewer.Enabled {
 		return false
 	}
 	if stringField(note.Data, "status") != "review" {
+		return false
+	}
+	if v7TerminalHumanWait(vaultPath, note, wf) {
 		return false
 	}
 	if stringField(note.Data, "verified_at") != "" || stringField(note.Data, "closed_at") != "" {
@@ -618,6 +618,76 @@ func reviewDispatchAllowed(note Note, wf Workflow, run RunStatus) bool {
 		return false
 	}
 	return true
+}
+
+func daemonNoteKind(note Note) string {
+	return firstNonEmpty(stringField(note.Data, "type"), stringField(note.Data, "kind"))
+}
+
+func v7TerminalHumanWait(vaultPath string, note Note, wf Workflow) bool {
+	_ = wf
+	if !isV7TaskNote(note) {
+		return false
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return false
+	}
+	if task, ok := idx.Tasks[stringField(note.Data, "id")]; ok {
+		note = task
+	}
+	_, ok := v7LatestValidTerminalCloseout(vaultPath, note, idx)
+	return ok
+}
+
+func v7MachineCompleteWaitingForHuman(vaultPath string, note Note) (bool, string) {
+	if !isV7TaskNote(note) {
+		return false, ""
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return false, ""
+	}
+	task, ok := idx.Tasks[stringField(note.Data, "id")]
+	if ok {
+		note = task
+	}
+	if _, ok := v7LatestValidTerminalCloseout(vaultPath, note, idx); ok {
+		report := computeV7ProofReport(vaultPath, note, idx)
+		return true, v7HumanWaitReason(note, &report)
+	}
+	report := computeV7ProofReport(vaultPath, note, idx)
+	report, terminalWait := v7CloseoutTerminalReport(vaultPath, note, report)
+	if terminalWait {
+		return false, v7HumanWaitReason(note, &report)
+	}
+	return false, ""
+}
+
+func isV7TaskNote(note Note) bool {
+	return stringField(note.Data, "kind") == "task" && strings.HasSuffix(stringField(note.Data, "schema"), "/v7")
+}
+
+func v7HumanWaitReason(note Note, report *v7ProofReport) string {
+	taskID := stringField(note.Data, "id")
+	var parts []string
+	if report != nil {
+		if len(report.HumanMissing) > 0 {
+			parts = append(parts, "human proof missing: "+strings.Join(report.HumanMissing, ", "))
+		}
+		if len(report.OpenHumanGates) > 0 {
+			parts = append(parts, "open human gates: "+strings.Join(report.OpenHumanGates, ", "))
+		}
+	}
+	if len(parts) == 0 {
+		if refs := strings.Join(normalizeList(note.Data["next_ref"]), ", "); refs != "" {
+			parts = append(parts, "pending human refs: "+refs)
+		}
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "pending human response")
+	}
+	return taskID + ": machine work complete; " + strings.Join(parts, "; ")
 }
 
 func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus, trackerState string) (RunStatus, bool, error) {
@@ -749,6 +819,34 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			}
 			noteStatus := stringField(note.Data, "status")
 			updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, "", finished)
+			if run.Lane != runLaneReview {
+				if wait, reason := v7MachineCompleteWaitingForHuman(project.VaultRoot, note); wait {
+					parentAttemptID := run.ActiveAttemptID
+					parentSessionRef := run.SessionRef
+					run.LeaseState = string(LeaseStateReleased)
+					run.AttemptOutcome = string(AttemptOutcomeWaitingForHuman)
+					run.NextRetryAt = ""
+					run.LastError = reason
+					run.UpdatedAt = finished
+					updateRunAttemptFromRun(d.store, run, AttemptOutcomeWaitingForHuman, 0, reason, finished)
+					if strings.TrimSpace(run.SessionRef) != "" {
+						_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateReleased), "", reason, false)
+					}
+					d.emitSupervisorDecision(SupervisorDecision{
+						ProjectID:        project.ProjectID,
+						RecordID:         run.RecordID,
+						AttemptID:        parentAttemptID,
+						SessionRef:       parentSessionRef,
+						Kind:             string(SupervisorDecisionStopForHuman),
+						Reason:           reason,
+						ParentAttemptID:  parentAttemptID,
+						ParentSessionRef: parentSessionRef,
+						WorkspacePath:    run.WorkspacePath,
+					})
+					clearActiveExecution(&run)
+					return run, true, nil
+				}
+			}
 			if containsString(wfFile.Data.Tracker.ActiveStates, noteStatus) && run.Lane != runLaneReview {
 				parentAttemptID := run.ActiveAttemptID
 				parentSessionRef := run.SessionRef
@@ -1761,6 +1859,8 @@ func sessionStateForOutcome(outcome AttemptOutcome) string {
 		return "open"
 	case AttemptOutcomeAbandoned:
 		return "abandoned"
+	case AttemptOutcomeWaitingForHuman:
+		return "closed"
 	default:
 		return "open"
 	}
@@ -1807,10 +1907,12 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 		"note.risk":                   stringField(note.Data, "risk"),
 		"attempt.number":              strconv.Itoa(attemptNumber),
 		"attempt.id":                  attemptID,
-		"reviewer.actor":              wfFile.Data.Reviewer.Actor,
+		"reviewer.actor":              reviewerActorForNote(wfFile.Data.Reviewer.Actor, note),
 		"reviewer.auto_close_allowed": yesNo(reviewerMayAutoCloseRisk(wfFile.Data.Reviewer, stringField(note.Data, "risk"))),
 		"reviewer.human_required":     yesNo(reviewerRequiresHumanRisk(wfFile.Data.Reviewer, stringField(note.Data, "risk"))),
 	}
+	values["reviewer.verify_command"] = reviewerVerifyCommandForNote(note, values["reviewer.actor"])
+	values["reviewer.close_command"] = fmt.Sprintf("tusker close %s --by %s --reason \"agent review accepted\"", stringField(note.Data, "id"), values["reviewer.actor"])
 	template := wfFile.Body
 	if lane == runLaneReview {
 		template = firstNonEmpty(wfFile.Data.Reviewer.Prompt, defaultReviewerPrompt())
@@ -1827,6 +1929,25 @@ func yesNo(value bool) string {
 		return "yes"
 	}
 	return "no"
+}
+
+func reviewerActorForNote(configured string, note Note) string {
+	configured = strings.TrimSpace(configured)
+	if isV7TaskNote(note) && configured == "agent-reviewer" {
+		return "reviewer:agent"
+	}
+	return fallback(configured, "reviewer:agent")
+}
+
+func reviewerVerifyCommandForNote(note Note, actor string) string {
+	if isV7TaskNote(note) {
+		covers := strings.Join(v7AcceptanceIDs(note.Body), ",")
+		if covers == "" {
+			covers = "ALL"
+		}
+		return fmt.Sprintf("tusker verify add %s --by %s --covers %s --check \"review: acceptance, evidence, gates, and docs\" --result pass --note \"<what you verified>\"", stringField(note.Data, "id"), actor, covers)
+	}
+	return fmt.Sprintf("tusker verify %s --by %s --summary \"<what you verified>\"", stringField(note.Data, "id"), actor)
 }
 
 func renderStrictWorkflowTemplate(template string, values map[string]string) (string, error) {

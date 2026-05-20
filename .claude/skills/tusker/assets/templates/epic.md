@@ -1,14 +1,15 @@
 ---
-schema: tusker.epic/v5
+schema: tusker.epic/v7
+kind: epic
 id: "{{acronym}}"
 title: "{{title}}"
-type: epic
-status: draft
+status: ready
 owner: "{{owner}}"
 summary: "{{summary}}"
-doc_nodes: []
-created: "2026-04-29"
-updated: "2026-04-29"
+primary_domains: []
+knowledge_nodes: []
+created_at: "{{date}}"
+updated_at: "{{date}}"
 ---
 
 # {{acronym}} · {{title}}
@@ -29,11 +30,11 @@ Out:
 
 ## Canon
 
--
+Current durable truth lives in the referenced knowledge/domain files.
 
 ## Task stack
 
--
+_No open tasks yet._
 
 ## Open questions
 

@@ -1,27 +1,21 @@
-## Workflow contract
+## Tusker workflow contract
 
-Use the Obsidian workflow vault for non-trivial work.
+Use Tusker for non-trivial tracked work, durable evidence, review gates, and closeout. The task note is the unit of work.
 
-Default to the lightest Tusker lane that preserves truth:
-- Lookup/status questions: use `tusker list --type epic`, `tusker search`, one-epic `tusker list --epic <ACR> --type task --open`, and exact task files only.
-- Backlog or status bookkeeping: update the named task and reindex only if needed.
-- Implementation closeout: then use evidence, docs resolution, verification, and validation.
+Default to the lightest lane that preserves truth:
 
-For meaningful features, bug fixes, migrations, or user-visible docs changes:
+- Lookup/status: use `tusker list --type epic`, `tusker search`, one-epic task list, and exact task records only.
+- Bookkeeping: update the named task/follow-up; validate only if schema or lifecycle changed.
+- Implementation: satisfy proof mode, summarize attempt, request review.
+- Human gate: emit or reference the packet, then stop.
 
-1. Create a Tusker task note. Everything below is a section inside that note, not a separate file.
-2. Fill the contract sections: agent capsule, intent, acceptance, scope, deliverables, verification, and docs impact.
-3. Keep durable updates concise: evidence summary, verification summary, close summary, and knowledge delta when understanding changed.
-4. Create a user doc or developer doc when the work changes how the system is used or understood.
-5. After material updates, reindex and validate the vault.
+Before continuing an existing task, check whether it is already waiting on human/external action. If `agent_action: stop_until_human_response`, `readiness: held` with `next_owner: human:*`, or `next_owner: human:*` is present, do no tool work. Report the pending gates and last clean validation snapshot.
 
 Rules:
 
-- `AGENTS.md` stays short and points to deeper docs.
-- The vault README is an epic index, not a backlog dump. Read it only when the project overview is needed.
-- Do not read `tusker/Attachments/**`, `tusker/_system/generated/**`, raw runner logs, or build logs by default.
-- Run `tusker compact <ID>` as a dry-run before reading or editing old noisy task notes.
-- Raw transcripts and full logs are appendix material, not primary artifacts.
-- Save large command output to files; bring only the failure summary or a small tail into chat.
-- Reviewers start from the change note and its PR links, not from chat archaeology.
-- The human contributor must understand the final behavior and major edge cases.
+- Use the CLI before direct markdown edits.
+- Do not self-certify implementation work.
+- Do not re-run validation against an unchanged clean fingerprint.
+- Do not read attachments, generated indexes, raw runner logs, or full transcripts by default.
+- Do not paste full build/test output into chat. Save logs and read only the failure summary or small tail.
+- Put durable truth in acceptance, verification, evidence, gates, review packets, closeout checkpoints, and knowledge delta.

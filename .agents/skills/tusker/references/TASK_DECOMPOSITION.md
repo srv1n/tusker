@@ -28,7 +28,7 @@ A good task has:
 ## Decomposition flow
 
 1. Pick or create the epic.
-2. Pick canon: epic `## Design`, V5 doc under `tusker/docs/**`, or a repo file cited by doc `source_of_truth`.
+2. Pick canon: epic `## Design`, durable docs page under `tusker/docs/**`, or a repo file cited by doc `source_of_truth`.
 3. Pull out decisions that tasks must not reopen.
 4. Split by contract boundary, not by folder.
 5. Create tasks with `kind`, `risk`, `size`, `domains`, and `doc_nodes`.

@@ -76,10 +76,12 @@ func searchNotes(notes []Note, query string, filters searchFilters) []searchResu
 	needle := strings.ToLower(query)
 	var out []searchResult
 	for _, note := range notes {
-		noteType := strings.ToLower(stringField(note.Data, "type"))
+		noteType := strings.ToLower(noteDisplayKind(note.Data))
+		legacyType := strings.ToLower(stringField(note.Data, "type"))
+		kind := strings.ToLower(stringField(note.Data, "kind"))
 		status := strings.ToLower(stringField(note.Data, "status"))
 		epic := strings.ToUpper(wikiTarget(note.Data["epic"]))
-		if filters.Type != "" && noteType != filters.Type {
+		if filters.Type != "" && noteType != filters.Type && legacyType != filters.Type && kind != filters.Type {
 			continue
 		}
 		if filters.Status != "" && status != filters.Status {
@@ -102,7 +104,7 @@ func searchNotes(notes []Note, query string, filters searchFilters) []searchResu
 		}
 		out = append(out, searchResult{
 			ID:      stringField(note.Data, "id"),
-			Type:    stringField(note.Data, "type"),
+			Type:    noteDisplayKind(note.Data),
 			Kind:    stringField(note.Data, "kind"),
 			Status:  stringField(note.Data, "status"),
 			Epic:    epic,

@@ -30,12 +30,13 @@ const (
 type AttemptOutcome string
 
 const (
-	AttemptOutcomeNone      AttemptOutcome = "none"
-	AttemptOutcomeSucceeded AttemptOutcome = "succeeded"
-	AttemptOutcomeBlocked   AttemptOutcome = "blocked"
-	AttemptOutcomeFailed    AttemptOutcome = "failed"
-	AttemptOutcomeCancelled AttemptOutcome = "cancelled"
-	AttemptOutcomeAbandoned AttemptOutcome = "abandoned"
+	AttemptOutcomeNone            AttemptOutcome = "none"
+	AttemptOutcomeSucceeded       AttemptOutcome = "succeeded"
+	AttemptOutcomeBlocked         AttemptOutcome = "blocked"
+	AttemptOutcomeFailed          AttemptOutcome = "failed"
+	AttemptOutcomeCancelled       AttemptOutcome = "cancelled"
+	AttemptOutcomeAbandoned       AttemptOutcome = "abandoned"
+	AttemptOutcomeWaitingForHuman AttemptOutcome = "waiting_for_human"
 )
 
 type RunnerCapabilities struct {

@@ -47,5 +47,6 @@ Read [[skill/CANON]] first, then the narrowest reference node.
 ## Current work
 
 <!-- tusker:current-work:begin -->
+- [[SKL-T-0002]] - Import engineering discipline into Tusker skill (active)
 - [[SKL-T-0002]] - Import engineering discipline into Tusker skill (review)
 <!-- tusker:current-work:end -->

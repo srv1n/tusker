@@ -1,0 +1,16 @@
+{
+  "actor": "tusker:reconcile",
+  "at": "2026-05-18T07:20:39Z",
+  "event_kind": "updated",
+  "id": "01KRWZAMRMSQ98PP78PJC8JMFB",
+  "object": "VSD-T-0007-E-0001",
+  "object_kind": "evidence",
+  "payload": {
+    "path": "evidence/VSD-T-0007/VSD-T-0007-E-0001.md",
+    "previous_state_rev": "sha256:9db4eef6548099160ea93d0da428b806dd85fafd5132e28145d3900fbbe98467",
+    "source": "state_rev_repair",
+    "state_rev": "sha256:0689a71fef591cc1b32b01e5552fff3bdc7a015ba5e727702254a3e7e022ee1d"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

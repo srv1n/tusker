@@ -1,0 +1,13 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-19T05:18:02Z",
+  "event_kind": "created",
+  "id": "01KRZAPVAE71NGT12DPP7SJ49X",
+  "object": "git",
+  "object_kind": "domain",
+  "payload": {
+    "path": "knowledge/domains/git/INDEX.md"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

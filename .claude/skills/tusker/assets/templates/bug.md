@@ -1,23 +1,30 @@
 ---
-schema: tusker.task/v5
+schema: tusker.task/v7
+kind: task
 id: "{{id}}"
 title: "{{title}}"
-type: task
-kind: bug
 epic: "{{epic}}"
-status: draft
+task_kind: bug
+status: ready
+readiness: ready
 priority: p1
 risk: medium
 size: s
-delegation: execute
-ai_assistance: heavy
-ai_tools: []
 domains: []
-doc_nodes: []
-blocked_by: []
-block_reason: ""
-created: "2026-04-29"
-updated: "2026-04-29"
+proof_mode: inline
+proof_status: pending
+proof_required:
+  - focused_test
+evidence_budget: 0
+raw_artifacts_allowed: false
+next_owner: agent
+next_source: task
+next_ref: "{{id}}"
+next_action: "Reproduce or isolate the bug, fix the smallest cause, verify the acceptance item, and request review."
+agent_action: continue
+state_rev: 1
+created_at: "{{date}}"
+updated_at: "{{date}}"
 ---
 
 # {{id}} · {{title}}
@@ -25,17 +32,11 @@ updated: "2026-04-29"
 ## Agent capsule
 
 - Essence: {{title}}.
-- Next action: define acceptance, do the smallest scoped change, and attach concise evidence.
-- Read next: this note, then only the code/docs anchors named here.
-- Avoid: raw logs, full transcripts, generated indexes, and attachments unless doing evidence forensics.
+- Next action: reproduce/isolate, fix the smallest cause, satisfy proof mode, and request review.
+- Read next: this note, then the named code anchors.
+- Avoid: broad debugging, raw logs in the task body, and unrelated cleanup.
 
 ## Intent
-
-## Acceptance contract
-
-| # | Outcome | Proof required | Docs impact |
-|---|---|---|---|
-| 1 |  |  |  |
 
 ## Symptom
 
@@ -43,6 +44,7 @@ updated: "2026-04-29"
 
 ## Reproduction
 
+Steps:
 1.
 
 Expected:
@@ -50,6 +52,12 @@ Expected:
 
 Observed:
 -
+
+## Acceptance contract
+
+| ID | Outcome | Proof required | Owner |
+|---|---|---|---|
+| A1 | The bug no longer reproduces under the stated conditions. | focused_test or focused manual check | agent |
 
 ## Scope
 
@@ -59,14 +67,11 @@ In:
 Out:
 -
 
-## Deliverables
+## Verification
 
--
-
-## Verification plan
-
--
+| Acceptance | Check | Result | Notes |
+|---|---|---|---|
 
 ## Evidence
 
-- _No evidence yet. Attach summaries, PRs, packets, screenshots, or short log tails only._
+_No evidence yet. Add evidence only when proof mode requires a durable card or artifact._
