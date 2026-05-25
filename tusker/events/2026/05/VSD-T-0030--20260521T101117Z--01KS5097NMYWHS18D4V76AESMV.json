@@ -1,0 +1,16 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-21T10:11:17Z",
+  "event_kind": "verification_added",
+  "id": "01KS5097NMYWHS18D4V76AESMV",
+  "object": "VSD-T-0030",
+  "object_kind": "task",
+  "payload": {
+    "blocked_by": "",
+    "check": "rtk go test ./... -count=1",
+    "covers": "A1-A9",
+    "result": "pass"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

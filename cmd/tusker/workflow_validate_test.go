@@ -54,3 +54,18 @@ func TestDefaultWorkflowEnablesRiskAwareReviewer(t *testing.T) {
 		t.Fatalf("expected reviewer prompt to be substantive, got %q", wf.Reviewer.Prompt)
 	}
 }
+
+func TestDefaultWorkflowPromptIncludesCommandBudget(t *testing.T) {
+	body := defaultWorkflowMarkdown()
+	for _, expected := range []string{
+		"## Command budget",
+		"path-scoped status/search",
+		"build-lock/status commands",
+		"command + PASS/FAIL",
+		"do not paste raw transcripts",
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("default workflow missing %q:\n%s", expected, body)
+		}
+	}
+}

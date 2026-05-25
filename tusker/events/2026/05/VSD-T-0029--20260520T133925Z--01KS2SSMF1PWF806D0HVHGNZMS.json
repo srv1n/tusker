@@ -1,0 +1,15 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-20T13:39:25Z",
+  "event_kind": "verification_added",
+  "id": "01KS2SSMF1PWF806D0HVHGNZMS",
+  "object": "VSD-T-0029",
+  "object_kind": "task",
+  "payload": {
+    "check": "rtk go test ./cmd/tusker -run 'Test(V7CloseoutStatusStopsForTerminalHumanWaitWithoutCheckpoint|V7ProofStatusDefaultIsConcise|V7HighRiskDefaultsToInlineCodeProof|V7GuardrailSkillPackageEnforcesHardStopCloseoutContract)$' -count=1",
+    "covers": "A4,A5,A6",
+    "result": "pass"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

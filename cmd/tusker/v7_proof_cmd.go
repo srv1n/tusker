@@ -16,6 +16,7 @@ type v7VerificationRow struct {
 	Check     string
 	Result    string
 	Notes     string
+	BlockedBy string
 }
 
 type v7ProofReport struct {
@@ -36,6 +37,7 @@ type v7ProofReport struct {
 	OpenReviewerGates []string            `json:"open_reviewer_gates,omitempty"`
 	OpenExternalGates []string            `json:"open_external_gates"`
 	SatisfiedGates    []string            `json:"satisfied_gates"`
+	ExternalBlockers  []string            `json:"external_blockers,omitempty"`
 	TerminalWait      bool                `json:"terminal_wait"`
 	AgentAction       string              `json:"agent_action"`
 	GapOwners         map[string]string   `json:"gap_owners,omitempty"`
@@ -50,8 +52,6 @@ func defaultV7ProofMode(risk string) string {
 	switch strings.ToLower(strings.TrimSpace(risk)) {
 	case "critical":
 		return "audit"
-	case "high":
-		return "artifact"
 	default:
 		return "inline"
 	}
@@ -94,8 +94,11 @@ func proofV7Cmd(args Args) error {
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos1"))
 		args["mode"] = firstNonEmpty(args.String("mode"), args.String("_pos2"))
 		return proofV7SetModeCmd(args)
+	case "recipe":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos1"))
+		return proofV7RecipeCmd(args)
 	default:
-		return tuskerError(errorMissingArg, "Usage: tusker proof status <task-id> | tusker proof set-mode <task-id> none|inline|card|artifact|audit")
+		return tuskerError(errorMissingArg, "Usage: tusker proof status <task-id> | tusker proof set-mode <task-id> none|inline|card|artifact|audit | tusker proof recipe <task-id>")
 	}
 }
 
@@ -121,6 +124,42 @@ func proofV7StatusCmd(args Args) error {
 		emitJSON(report)
 		return nil
 	}
+	if !args.Bool("verbose") {
+		printV7ProofStatusConcise(report)
+		return nil
+	}
+	printV7ProofStatusVerbose(report)
+	return nil
+}
+
+func printV7ProofStatusConcise(report v7ProofReport) {
+	fmt.Printf("Task: %s\n", report.TaskID)
+	fmt.Printf("Proof mode: %s\n", report.Mode)
+	fmt.Printf("Proof status: %s\n\n", report.Status)
+	fmt.Println("Missing gaps:")
+	printV7OwnedProofGapGroup("machine", report.MachineMissing)
+	printV7OwnedProofGapGroup("human", report.HumanMissing)
+	printV7OwnedProofGapGroup("reviewer", report.ReviewerMissing)
+	printV7OwnedProofGapGroup("external", report.ExternalMissing)
+	fmt.Printf("\nAgent action: %s\n", fallback(report.AgentAction, "continue"))
+	fmt.Println("\nEvidence summary:")
+	fmt.Printf("  inline rows: %d\n", len(report.InlineRows))
+	fmt.Printf("  evidence records: %d\n", len(report.Evidence))
+	if len(report.Evidence) > 0 {
+		for _, line := range v7EvidenceStatusSummary(report.Evidence) {
+			fmt.Printf("  %s\n", line)
+		}
+	}
+	fmt.Println("\nOpen gates:")
+	printV7OwnedProofGateGroup("machine", report.OpenMachineGates)
+	printV7OwnedProofGateGroup("human", report.OpenHumanGates)
+	printV7OwnedProofGateGroup("reviewer", report.OpenReviewerGates)
+	printV7OwnedProofGateGroup("external", report.OpenExternalGates)
+	fmt.Println("\nExternal/shared blockers:")
+	printV7ProofBlockerGroup(report.ExternalBlockers)
+}
+
+func printV7ProofStatusVerbose(report v7ProofReport) {
 	fmt.Printf("Task: %s\n", report.TaskID)
 	fmt.Printf("Proof mode: %s\n", report.Mode)
 	fmt.Printf("Proof status: %s\n\n", report.Status)
@@ -159,7 +198,11 @@ func proofV7StatusCmd(args Args) error {
 		fmt.Println("  none")
 	} else {
 		for _, row := range report.InlineRows {
-			fmt.Printf("  %s: %s — %s\n", row.CoverText, row.Result, row.Check)
+			suffix := ""
+			if row.BlockedBy != "" {
+				suffix = " (blocked_by: " + row.BlockedBy + ")"
+			}
+			fmt.Printf("  %s: %s — %s%s\n", row.CoverText, row.Result, row.Check, suffix)
 		}
 	}
 	fmt.Println("\nEvidence:")
@@ -178,7 +221,65 @@ func proofV7StatusCmd(args Args) error {
 			fmt.Printf("  %s\n", gate)
 		}
 	}
-	return nil
+	fmt.Println("\nExternal/shared blockers:")
+	printV7ProofBlockerGroup(report.ExternalBlockers)
+}
+
+func printV7OwnedProofGapGroup(owner string, gaps []string) {
+	fmt.Printf("  %s:", owner)
+	if len(gaps) == 0 {
+		fmt.Println(" none")
+		return
+	}
+	fmt.Println()
+	for _, gap := range gaps {
+		fmt.Printf("    - %s\n", gap)
+	}
+}
+
+func printV7OwnedProofGateGroup(owner string, gates []string) {
+	fmt.Printf("  %s:", owner)
+	if len(gates) == 0 {
+		fmt.Println(" none")
+		return
+	}
+	fmt.Println()
+	for _, gate := range gates {
+		fmt.Printf("    - %s\n", gate)
+	}
+}
+
+func printV7ProofBlockerGroup(blockers []string) {
+	if len(blockers) == 0 {
+		fmt.Println("  none")
+		return
+	}
+	for _, blocker := range blockers {
+		fmt.Printf("  - %s\n", blocker)
+	}
+}
+
+func v7EvidenceStatusSummary(evidence []string) []string {
+	counts := map[string]int{}
+	for _, item := range evidence {
+		fields := strings.Fields(item)
+		status := "unknown"
+		if len(fields) >= 3 {
+			status = strings.ToLower(strings.TrimSpace(fields[len(fields)-1]))
+		}
+		counts[status]++
+	}
+	var statuses []string
+	for status := range counts {
+		statuses = append(statuses, status)
+	}
+	sort.Strings(statuses)
+	var out []string
+	for _, status := range statuses {
+		count := counts[status]
+		out = append(out, fmt.Sprintf("%s: %d", status, count))
+	}
+	return out
 }
 
 func proofV7SetModeCmd(args Args) error {
@@ -228,6 +329,9 @@ func proofV7SetModeCmd(args Args) error {
 	task.Data = data
 	task.Body = body
 	report := computeV7ProofReport(vaultPath, task, idx)
+	if report.Status == "satisfied" && len(v7PacketStubAcceptanceItems(body)) > 0 && len(v7AcceptanceWaivers(data)) == 0 {
+		report.Status = "partial"
+	}
 	data["proof_status"] = report.Status
 	data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
 	data["updated_by"] = fallback(args.String("by"), "agent:"+defaultActorName())
@@ -249,12 +353,97 @@ func verifyV7AddCmd(args Args) error {
 	if strings.TrimSpace(taskID) == "" {
 		return tuskerError(errorMissingArg, "verify add requires <task-id>")
 	}
+	rows, err := parseV7VerifyAddRows(args)
+	if err != nil {
+		return err
+	}
+	status, err := upsertV7Verifications(vaultPath, taskID, rows, fallback(args.String("by"), "agent:"+defaultActorName()), args)
+	if err != nil {
+		return err
+	}
+	if !args.Bool("quiet") {
+		fmt.Printf("Added %d verification row%s for %s; proof_status=%s\n", len(rows), plural(len(rows)), taskID, status)
+		if report, err := loadV7ProofReport(vaultPath, taskID); err == nil {
+			fmt.Printf("Remaining proof gaps: %s\n", v7ProofRemainingGapSummary(report))
+		}
+	}
+	return nil
+}
+
+func loadV7ProofReport(vaultPath, taskID string) (v7ProofReport, error) {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return v7ProofReport{}, err
+	}
+	task, ok := idx.Tasks[taskID]
+	if !ok {
+		return v7ProofReport{}, tuskerError(errorNotFound, "V7 task not found: "+taskID)
+	}
+	return computeV7ProofReport(vaultPath, task, idx), nil
+}
+
+func v7ProofRemainingGapSummary(report v7ProofReport) string {
+	var parts []string
+	add := func(owner string, gaps, gates []string) {
+		items := append([]string{}, gaps...)
+		for _, gate := range gates {
+			items = append(items, "open_gate:"+gate)
+		}
+		if len(items) > 0 {
+			parts = append(parts, owner+": "+strings.Join(items, ", "))
+		}
+	}
+	add("machine", report.MachineMissing, report.OpenMachineGates)
+	add("reviewer", report.ReviewerMissing, report.OpenReviewerGates)
+	add("human", report.HumanMissing, report.OpenHumanGates)
+	add("external", report.ExternalMissing, report.OpenExternalGates)
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, "; ")
+}
+
+func parseV7VerifyAddRows(args Args) ([]v7VerificationRow, error) {
+	if batchFile := strings.TrimSpace(args.String("batch-file")); batchFile != "" {
+		text, err := readText(batchFile)
+		if err != nil {
+			return nil, err
+		}
+		return parseV7VerificationRowsArg(text)
+	}
+	if rowsText := strings.TrimSpace(args.String("rows")); rowsText != "" {
+		return parseV7VerificationRowsArg(rowsText)
+	}
 	row := v7VerificationRow{
 		CoverText: firstNonEmpty(args.String("covers"), args.String("cover")),
 		Check:     args.String("check"),
 		Result:    strings.ToLower(fallback(args.String("result"), "pass")),
 		Notes:     firstNonEmpty(args.String("note"), args.String("notes")),
+		BlockedBy: firstNonEmpty(args.String("blocked-by"), args.String("blocked_by")),
 	}
+	if err := validateV7VerificationRow(row); err != nil {
+		return nil, err
+	}
+	return []v7VerificationRow{row}, nil
+}
+
+func parseV7VerificationRowsArg(raw string) ([]v7VerificationRow, error) {
+	rows, err := parseV7FinishVerificationRows(raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, tuskerError(errorMissingArg, "verify add batch requires at least one row")
+	}
+	for _, row := range rows {
+		if err := validateV7VerificationRow(row); err != nil {
+			return nil, err
+		}
+	}
+	return rows, nil
+}
+
+func validateV7VerificationRow(row v7VerificationRow) error {
 	if row.CoverText == "" {
 		return tuskerError(errorMissingArg, "verify add requires --covers A1 or --covers A1,A2")
 	}
@@ -264,17 +453,39 @@ func verifyV7AddCmd(args Args) error {
 	if _, ok := v7VerificationResults[row.Result]; !ok || row.Result == "pending" {
 		return tuskerError(errorInvalidField, "invalid verification result: "+row.Result)
 	}
-	status, err := upsertV7Verification(vaultPath, taskID, row, fallback(args.String("by"), "agent:"+defaultActorName()))
-	if err != nil {
-		return err
-	}
-	if !args.Bool("quiet") {
-		fmt.Printf("Added verification for %s; proof_status=%s\n", taskID, status)
+	if row.Result == "blocked" && strings.TrimSpace(row.BlockedBy) == "" {
+		return tuskerError(errorMissingArg, "verify add --result blocked requires --blocked-by <path-or-task>")
 	}
 	return nil
 }
 
 func upsertV7Verification(vaultPath, taskID string, row v7VerificationRow, actor string) (string, error) {
+	return upsertV7Verifications(vaultPath, taskID, []v7VerificationRow{row}, actor, nil)
+}
+
+func upsertV7Verifications(vaultPath, taskID string, rows []v7VerificationRow, actor string, args Args) (string, error) {
+	if len(rows) == 0 {
+		return "", tuskerError(errorMissingArg, "verify add requires at least one verification row")
+	}
+	for _, row := range rows {
+		if err := validateV7VerificationRow(row); err != nil {
+			return "", err
+		}
+	}
+	retryCommand := v7VerificationRetryCommand(taskID, rows, args)
+	var status string
+	err := withV7ProofWriteLock(vaultPath, taskID, args, retryCommand, func() error {
+		nextStatus, err := upsertV7VerificationsLocked(vaultPath, taskID, rows, actor, args)
+		status = nextStatus
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	return status, nil
+}
+
+func upsertV7VerificationsLocked(vaultPath, taskID string, rows []v7VerificationRow, actor string, args Args) (string, error) {
 	note, err := resolveV7Note(vaultPath, taskID, "task")
 	if err != nil {
 		return "", err
@@ -284,7 +495,9 @@ func upsertV7Verification(vaultPath, taskID string, row v7VerificationRow, actor
 		return "", err
 	}
 	baseRev := stringField(data, "state_rev")
-	body = upsertV7VerificationRow(body, row)
+	for _, row := range rows {
+		body = upsertV7VerificationRow(body, row)
+	}
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return "", err
@@ -293,16 +506,141 @@ func upsertV7Verification(vaultPath, taskID string, row v7VerificationRow, actor
 	task.Data = data
 	task.Body = body
 	report := computeV7ProofReport(vaultPath, task, idx)
+	if report.Status == "satisfied" && len(v7PacketStubAcceptanceItems(body)) > 0 && len(v7AcceptanceWaivers(data)) == 0 {
+		report.Status = "partial"
+	}
 	data["proof_status"] = report.Status
 	data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
 	data["updated_by"] = actor
 	if _, err := saveV7DocumentCAS(note.AbsolutePath, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
-		return "", err
+		return "", v7VerificationCASError(err, note.AbsolutePath, taskID, rows, args)
 	}
-	if err := emitV7Event(vaultPath, taskID, "task", "verification_added", actor, map[string]any{"covers": row.CoverText, "check": row.Check, "result": row.Result}); err != nil {
-		return "", err
+	for _, row := range rows {
+		if err := emitV7Event(vaultPath, taskID, "task", "verification_added", actor, map[string]any{"covers": row.CoverText, "check": row.Check, "result": row.Result, "blocked_by": row.BlockedBy}); err != nil {
+			return "", err
+		}
 	}
 	return report.Status, nil
+}
+
+func withV7ProofWriteLock(vaultPath, taskID string, args Args, retryCommand string, fn func() error) error {
+	release, err := acquireV7ProofWriteLock(vaultPath, taskID, v7ProofLockTimeout(args))
+	if err != nil {
+		if typed, ok := err.(*TuskerError); ok {
+			if typed.Code == "PROOF_WRITE_BUSY" {
+				return tuskerError(typed.Code, typed.Message, withPath(typed.Path), withHint("retry exactly: "+retryCommand), withContext(map[string]any{"retry_command": retryCommand}))
+			}
+			return typed
+		}
+		return err
+	}
+	defer release()
+	return fn()
+}
+
+func acquireV7ProofWriteLock(vaultPath, taskID string, timeout time.Duration) (func(), error) {
+	lockPath := filepath.Join(vaultPath, ".tusker", "locks", "proof-"+taskID+".lock")
+	if err := ensureDir(filepath.Dir(lockPath)); err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		file, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			_, _ = fmt.Fprintf(file, "pid=%d\nat=%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339Nano))
+			_ = file.Close()
+			return func() { _ = os.Remove(lockPath) }, nil
+		}
+		if !os.IsExist(err) {
+			return nil, err
+		}
+		if timeout <= 0 || time.Now().After(deadline) {
+			return nil, tuskerError("PROOF_WRITE_BUSY", taskID+": proof write lock is held", withPath(lockPath))
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func v7ProofLockTimeout(args Args) time.Duration {
+	if args != nil {
+		if raw := strings.TrimSpace(args.String("lock-timeout-ms")); raw != "" {
+			if ms := atoiSafe(raw); ms >= 0 {
+				return time.Duration(ms) * time.Millisecond
+			}
+		}
+	}
+	return 2 * time.Second
+}
+
+func v7VerificationCASError(err error, path, taskID string, rows []v7VerificationRow, args Args) error {
+	typed, ok := err.(*TuskerError)
+	if !ok || typed.Code != "CAS_CONFLICT" {
+		return err
+	}
+	retry := v7VerificationRetryCommand(taskID, rows, args)
+	return tuskerError("CAS_CONFLICT", taskID+": verification write conflicted with a newer proof edit", withPath(path), withHint("retry exactly: "+retry), withContext(map[string]any{"retry_command": retry, "cause": errorToIssue(err)}))
+}
+
+func v7VerificationRetryCommand(taskID string, rows []v7VerificationRow, args Args) string {
+	parts := []string{"tusker", "verify", "add", taskID}
+	if args != nil {
+		if vault := strings.TrimSpace(args.String("vault")); vault != "" {
+			parts = append(parts, "--vault", vault)
+		}
+		if batchFile := strings.TrimSpace(args.String("batch-file")); batchFile != "" {
+			parts = append(parts, "--batch-file", batchFile)
+			return v7ShellCommand(parts)
+		}
+		if rowsText := strings.TrimSpace(args.String("rows")); rowsText != "" && len(rows) != 1 {
+			parts = append(parts, "--rows", rowsText)
+			return v7ShellCommand(parts)
+		}
+	}
+	if len(rows) == 1 {
+		row := rows[0]
+		parts = append(parts, "--covers", row.CoverText, "--check", row.Check, "--result", row.Result)
+		if strings.TrimSpace(row.Notes) != "" {
+			parts = append(parts, "--note", row.Notes)
+		}
+		if strings.TrimSpace(row.BlockedBy) != "" {
+			parts = append(parts, "--blocked-by", row.BlockedBy)
+		}
+		return v7ShellCommand(parts)
+	}
+	parts = append(parts, "--rows", renderV7VerificationRowsArg(rows))
+	return v7ShellCommand(parts)
+}
+
+func renderV7VerificationRowsArg(rows []v7VerificationRow) string {
+	var lines []string
+	for _, row := range rows {
+		parts := []string{row.CoverText, row.Check, row.Result, row.Notes}
+		if strings.TrimSpace(row.BlockedBy) != "" {
+			parts = append(parts, row.BlockedBy)
+		}
+		lines = append(lines, strings.Join(parts, "|"))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func v7ShellCommand(parts []string) string {
+	quoted := make([]string, 0, len(parts))
+	for _, part := range parts {
+		quoted = append(quoted, v7ShellQuote(part))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func v7ShellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	if strings.IndexFunc(value, func(r rune) bool {
+		return !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || strings.ContainsRune("@%_+=:,./-", r))
+	}) == -1 {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func upsertV7VerificationRow(body string, row v7VerificationRow) string {
@@ -332,17 +670,34 @@ func upsertV7VerificationRow(body string, row v7VerificationRow) string {
 }
 
 func renderV7VerificationTable(rows []v7VerificationRow) string {
+	hasBlocker := false
+	for _, row := range rows {
+		if strings.TrimSpace(row.BlockedBy) != "" {
+			hasBlocker = true
+			break
+		}
+	}
 	lines := []string{
 		"| Covers | Check | Result | Notes |",
 		"|---|---|---|---|",
 	}
+	if hasBlocker {
+		lines = []string{
+			"| Covers | Check | Result | Notes | Blocked By |",
+			"|---|---|---|---|---|",
+		}
+	}
 	for _, row := range rows {
-		lines = append(lines, fmt.Sprintf("| %s | %s | %s | %s |",
+		cells := []string{
 			escapeV7TableCell(row.CoverText),
 			escapeV7TableCell(row.Check),
 			escapeV7TableCell(row.Result),
 			escapeV7TableCell(row.Notes),
-		))
+		}
+		if hasBlocker {
+			cells = append(cells, escapeV7TableCell(row.BlockedBy))
+		}
+		lines = append(lines, "| "+strings.Join(cells, " | ")+" |")
 	}
 	return strings.Join(lines, "\n")
 }
@@ -375,6 +730,13 @@ func parseV7VerificationRows(body string) []v7VerificationRow {
 		if len(cells) > 3 {
 			notes = cells[3]
 		}
+		blockedBy := ""
+		if len(cells) > 4 {
+			blockedBy = cells[4]
+			if blockedBy == "-" {
+				blockedBy = ""
+			}
+		}
 		result := strings.ToLower(strings.TrimSpace(cells[2]))
 		if result == "" {
 			result = "pending"
@@ -384,6 +746,7 @@ func parseV7VerificationRows(body string) []v7VerificationRow {
 			Check:     cells[1],
 			Result:    result,
 			Notes:     notes,
+			BlockedBy: blockedBy,
 		})
 	}
 	return rows
@@ -453,6 +816,9 @@ func computeV7ProofReport(vaultPath string, task Note, idx v7Index) v7ProofRepor
 	}
 	report.InlineRows = parseV7VerificationRows(task.Body)
 	for _, row := range report.InlineRows {
+		if strings.EqualFold(row.Result, "blocked") && strings.TrimSpace(row.BlockedBy) != "" {
+			report.ExternalBlockers = append(report.ExternalBlockers, v7VerificationBlockerSummary(row))
+		}
 		if !v7VerificationResultCovers(row.Result) {
 			continue
 		}
@@ -522,16 +888,25 @@ func classifyV7ProofReport(report *v7ProofReport, task Note, idx v7Index) {
 	report.ProofOwner = v7TaskProofOwnerHints(task)
 	taskID := stringField(task.Data, "id")
 	acceptanceIDs := v7AcceptanceIDs(task.Body)
+	blockedAcceptanceOwners := v7BlockedAcceptanceOwners(taskID, report.InlineRows, acceptanceIDs)
+	blockedRequirementOwners := v7BlockedRequirementOwners(taskID, task, report.InlineRows)
 	for _, missing := range report.Missing {
 		gap := "acceptance:" + missing
-		owner := classifyV7AcceptanceGapOwner(taskID, missing, acceptanceIDs, idx)
+		owner := blockedAcceptanceOwners[missing]
+		if owner == "" {
+			owner = classifyV7AcceptanceGapOwner(taskID, missing, acceptanceIDs, idx)
+		}
 		report.GapOwners[gap] = owner
 		appendV7OwnedProofGap(report, owner, gap)
 	}
 	for _, missing := range report.ModeMissing {
 		owner := "machine"
 		if strings.HasPrefix(missing, "proof_required:") {
-			owner = classifyProofRequirement(strings.TrimPrefix(missing, "proof_required:"), task, idx)
+			required := strings.TrimPrefix(missing, "proof_required:")
+			owner = blockedRequirementOwners[required]
+			if owner == "" {
+				owner = classifyProofRequirement(required, task, idx)
+			}
 		}
 		report.GapOwners[missing] = owner
 		appendV7OwnedProofGap(report, owner, missing)
@@ -563,6 +938,7 @@ func classifyV7ProofReport(report *v7ProofReport, task Note, idx v7Index) {
 	report.OpenHumanGates = uniqueStrings(report.OpenHumanGates)
 	report.OpenReviewerGates = uniqueStrings(report.OpenReviewerGates)
 	report.OpenExternalGates = uniqueStrings(report.OpenExternalGates)
+	report.ExternalBlockers = uniqueStrings(report.ExternalBlockers)
 	if len(report.MachineMissing) == 0 &&
 		len(report.ReviewerMissing) == 0 &&
 		len(report.ExternalMissing) == 0 &&
@@ -611,6 +987,76 @@ func classifyV7AcceptanceGapOwner(taskID, acceptance string, acceptanceIDs []str
 		}
 	}
 	return "machine"
+}
+
+func v7BlockedAcceptanceOwners(taskID string, rows []v7VerificationRow, acceptanceIDs []string) map[string]string {
+	owners := map[string]string{}
+	for _, row := range rows {
+		if !strings.EqualFold(row.Result, "blocked") || strings.TrimSpace(row.BlockedBy) == "" {
+			continue
+		}
+		owner := classifyV7VerificationBlocker(taskID, row.BlockedBy)
+		for _, acceptance := range v7CoverTextToAcceptanceIDs(row.CoverText, acceptanceIDs) {
+			if owners[acceptance] == "" || owner == "external" {
+				owners[acceptance] = owner
+			}
+		}
+	}
+	return owners
+}
+
+func v7BlockedRequirementOwners(taskID string, task Note, rows []v7VerificationRow) map[string]string {
+	owners := map[string]string{}
+	for _, row := range rows {
+		if !strings.EqualFold(row.Result, "blocked") || strings.TrimSpace(row.BlockedBy) == "" {
+			continue
+		}
+		owner := classifyV7VerificationBlocker(taskID, row.BlockedBy)
+		for _, required := range v7TaskProofRequired(task) {
+			if v7InlineVerificationSatisfies(required, row) && (owners[required] == "" || owner == "external") {
+				owners[required] = owner
+			}
+		}
+	}
+	return owners
+}
+
+func classifyV7VerificationBlocker(taskID, blocker string) string {
+	blocker = strings.TrimSpace(blocker)
+	if blocker == "" {
+		return "machine"
+	}
+	if owner := v7ProofOwnerClass(blocker); owner != "" && owner != "machine" {
+		return owner
+	}
+	upper := strings.ToUpper(blocker)
+	if v7TaskIDPattern.MatchString(upper) && upper != taskID {
+		return "external"
+	}
+	if v7GateIDPattern.MatchString(upper) {
+		return "external"
+	}
+	if strings.HasPrefix(strings.ToLower(blocker), "agent:") {
+		return "external"
+	}
+	if strings.Contains(blocker, "/") || strings.Contains(blocker, "\\") || strings.Contains(blocker, ".") {
+		return "external"
+	}
+	return "external"
+}
+
+func v7VerificationBlockerSummary(row v7VerificationRow) string {
+	parts := []string{row.BlockedBy}
+	if row.CoverText != "" {
+		parts = append(parts, "covers "+row.CoverText)
+	}
+	if row.Check != "" {
+		parts = append(parts, row.Check)
+	}
+	if row.Notes != "" && row.Notes != "-" {
+		parts = append(parts, row.Notes)
+	}
+	return strings.Join(parts, " - ")
 }
 
 func classifyProofRequirement(required string, task Note, idx v7Index) string {
@@ -1108,10 +1554,20 @@ func v7ComputedProofStatus(task Note, report v7ProofReport) string {
 			return "satisfied"
 		}
 	}
-	if len(report.Covered) > 0 || len(report.Evidence) > 0 || len(report.OpenGates) > 0 || len(report.SatisfiedGates) > 0 {
+	if len(report.Covered) > 0 || len(report.Evidence) > 0 || len(report.OpenGates) > 0 || len(report.SatisfiedGates) > 0 || v7HasSubstantiveVerificationRows(report.InlineRows) {
 		return "partial"
 	}
 	return "pending"
+}
+
+func v7HasSubstantiveVerificationRows(rows []v7VerificationRow) bool {
+	for _, row := range rows {
+		if strings.EqualFold(strings.TrimSpace(row.Check), "TBD") || strings.EqualFold(strings.TrimSpace(row.Result), "pending") {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func updateV7TaskProofStatus(vaultPath, taskID, actor string) error {
@@ -1131,6 +1587,9 @@ func updateV7TaskProofStatus(vaultPath, taskID, actor string) error {
 	task.Data = data
 	task.Body = body
 	report := computeV7ProofReport(vaultPath, task, idx)
+	if report.Status == "satisfied" && len(v7PacketStubAcceptanceItems(body)) > 0 && len(v7AcceptanceWaivers(data)) == 0 {
+		report.Status = "partial"
+	}
 	nextBody := syncV7TaskEvidenceSection(body, idx.Evidence[taskID])
 	if stringField(data, "proof_status") == report.Status && nextBody == body {
 		return nil
@@ -1245,26 +1704,52 @@ func parseV7FinishVerificationRows(raw string) ([]v7VerificationRow, error) {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 4)
-		if len(parts) < 3 {
-			return nil, tuskerError(errorInvalidArg, `--verify must look like "A1-A2|command|pass|note"`)
+		row, err := parseV7VerificationRowArg(line)
+		if err != nil {
+			return nil, err
 		}
-		note := ""
-		if len(parts) == 4 {
-			note = parts[3]
-		}
-		result := strings.ToLower(strings.TrimSpace(parts[2]))
-		if _, ok := v7VerificationResults[result]; !ok || result == "pending" {
-			return nil, tuskerError(errorInvalidField, "invalid verification result: "+result)
-		}
-		rows = append(rows, v7VerificationRow{
-			CoverText: strings.TrimSpace(parts[0]),
-			Check:     strings.TrimSpace(parts[1]),
-			Result:    result,
-			Notes:     strings.TrimSpace(note),
-		})
+		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+func parseV7VerificationRowArg(line string) (v7VerificationRow, error) {
+	parts := strings.Split(line, "|")
+	if len(parts) < 3 {
+		return v7VerificationRow{}, tuskerError(errorInvalidArg, `--verify must look like "A1-A2|command|pass|note|blocked_by"`)
+	}
+	resultIndex := -1
+	result := ""
+	for i := len(parts) - 1; i >= 2; i-- {
+		candidate := strings.ToLower(strings.TrimSpace(parts[i]))
+		if _, ok := v7VerificationResults[candidate]; ok && candidate != "pending" {
+			resultIndex = i
+			result = candidate
+			break
+		}
+	}
+	if resultIndex == -1 {
+		bad := ""
+		if len(parts) > 2 {
+			bad = strings.TrimSpace(parts[2])
+		}
+		return v7VerificationRow{}, tuskerError(errorInvalidField, "invalid verification result: "+bad)
+	}
+	note := ""
+	blockedBy := ""
+	if len(parts) > resultIndex+1 {
+		note = strings.TrimSpace(parts[resultIndex+1])
+	}
+	if len(parts) > resultIndex+2 {
+		blockedBy = strings.TrimSpace(strings.Join(parts[resultIndex+2:], "|"))
+	}
+	return v7VerificationRow{
+		CoverText: strings.TrimSpace(parts[0]),
+		Check:     strings.TrimSpace(strings.Join(parts[1:resultIndex], "|")),
+		Result:    result,
+		Notes:     note,
+		BlockedBy: blockedBy,
+	}, nil
 }
 
 func proofV7MissingForFinish(vaultPath, taskID string) ([]string, []string, error) {

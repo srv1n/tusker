@@ -1,0 +1,35 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-24T03:00:01Z",
+  "event_kind": "updated",
+  "id": "01KSBYSQG7S2F5V59PQ65QHH4N",
+  "object": "VSD-T-0031",
+  "object_kind": "task",
+  "payload": {
+    "changes": {
+      "next_action": {
+        "from": "Execute the task contract and satisfy proof mode.",
+        "to": "Review evidence and close or return to rework."
+      },
+      "next_owner": {
+        "from": "agent",
+        "to": "reviewer"
+      },
+      "next_ref": {
+        "from": "VSD-T-0031",
+        "to": ""
+      },
+      "next_source": {
+        "from": "task",
+        "to": "review_policy"
+      },
+      "readiness": {
+        "from": "ready",
+        "to": "waiting_on_review"
+      }
+    },
+    "source": "task:VSD-T-0031"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

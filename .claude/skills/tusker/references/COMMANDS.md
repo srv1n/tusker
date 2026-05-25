@@ -112,7 +112,25 @@ tusker vault repair [--force] [--json]
 tusker install [--bin-dir <path>] [--no-bin] [--codex-user] [--claude-user] [--repo <path>] [--refresh-existing-user-skills] [--json]
 tusker update [--bin-dir <path>] [--no-bin] [--repo <path>] [--repo-only] [--json]
 tusker context audit --file <session.jsonl> [--top <n>] [--json]
+tusker improve scan [--days 30|--since <YYYY-MM-DD>|--all] [--write]
+tusker improve scan --apply [--runner <name>] [--model <name>] [--reasoning low|medium|high]
 ```
+
+## Improvement scans
+
+Use `tusker improve scan` only when the user asks to mine repeated work or when
+you are deliberately maintaining the repo's reusable agent assets. It is not
+part of every task closeout.
+
+- Default mode is dry-run over the last 30 days.
+- `--write` stores the report under `tusker/feedback/improvements/`.
+- `--apply` is the opt-in mutation path and creates only high-confidence missing
+  agent runbook drafts under `tusker/docs/agents/`.
+- Provider history is disabled unless explicitly enabled with flags such as
+  `--include-codex`, `--include-claude`, `--include-memories`, or
+  `--include-chronicle`.
+- Runner/model/reasoning options describe the chosen runtime profile in the
+  report; they are not durable task truth.
 
 ## Common flows
 

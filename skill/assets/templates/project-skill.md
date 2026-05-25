@@ -38,6 +38,12 @@ Task agents must run `tusker packet <TASK-ID> --for agent`, then read only the r
 |---|---|---|---|
 <!-- tusker:domains:end -->
 
+## Repo Command Policy
+
+- Put repository-specific command rules here or in routed runbooks: validation commands, build-lock/status commands, token/noise wrappers, and forbidden expensive probes.
+- Keep root `AGENTS.md` and `CLAUDE.md` as managed Tusker bootstrap pointers; do not copy Tusker workflow mechanics there.
+- Agents should prefer path-scoped status/search, lock/status commands over process-table probes, redirected validation logs, and command + PASS/FAIL summaries.
+
 ## Updating Canon
 
 - Update the narrowest owning domain `CANON.md` when durable truth changes.

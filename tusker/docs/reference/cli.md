@@ -29,6 +29,7 @@ The public CLI is small on purpose:
 | Work items | `new`, `list`, `search`, `show`, `status`, `evidence`, `verify`, `close` |
 | Docs | `docs model`, `docs map`, `docs catalog`, `docs freshness`, `docs check`, `docs apply`, `docs noop`, `docs waive`, `docs export`, `docs dev`, `docs build` |
 | Context audit | `context audit` |
+| Improvement scans | `improve scan` |
 | Shared vaults | `vault set`, `vault status`, `vault mount`, `vault unmount`, `vault repair`, `vault move` |
 | Operator runtime | `daemon`, `projects`, `runs`, `refresh` |
 | Health | `validate`, `reindex` |
@@ -90,6 +91,38 @@ tusker context audit --file ./thread.jsonl --top 20 --json
 It reports top output categories, largest tool outputs, token totals, and
 context-reduction recommendations. This is the default path for token-burn
 forensics.
+
+## Improvement scans
+
+Use `tusker improve scan` when you want Tusker to look across recent work and
+find repeated manual workflows worth packaging:
+
+```bash
+tusker improve scan
+tusker improve scan --since 2026-05-01 --write
+tusker improve scan --apply --profile cheap-discovery --runner codex --model gpt-5.3-codex-spark
+```
+
+The command is opt-in. Dry-run is the default, scoped to the last 30 days or all
+available history if the vault is newer. Evidence is Tusker-first: task
+summaries, attempt summaries, proof/verification text, feedback notes, and the
+existing skill/doc/subagent/automation inventory.
+
+External sources are off by default:
+
+| Source | Opt-in |
+|---|---|
+| Codex sessions | `--include-codex` or `--codex-session <path>` |
+| Claude Code transcripts | `--include-claude` or `--claude-transcript <path>` |
+| Memories | `--include-memories` or `--memories-path <path>` |
+| Chronicle | `--include-chronicle` or `--chronicle-path <path>` |
+
+The shortlist reports repeated workflow, evidence dates, frequency/confidence,
+recommended form, and rationale. `--apply` intentionally has a narrow first
+slice: it creates missing agent runbook drafts under `tusker/docs/agents/` for
+high-confidence skill/playbook candidates. It reports custom subagents and
+automations for human/provider-specific follow-up instead of silently creating
+them.
 
 ## Operator/runtime commands
 

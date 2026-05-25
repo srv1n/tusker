@@ -2,7 +2,7 @@
 
 Generated catalog of published documentation routes.
 
-- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-05-20
+- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-05-25
   High-level overview of the Tusker repository, install modes, and key entry points.
   source: README.md
   tags: repository, overview
@@ -153,6 +153,26 @@ tusker validate
 
 `close` requires `review` unless forced. `propose status --status done` is
 rejected; use `propose close` or `close`.
+
+## Improvement Scans
+
+Tusker can also do an opt-in scan for repeated manual workflows worth packaging:
+
+```sh
+tusker improve scan
+tusker improve scan --since 2026-05-01 --write
+tusker improve scan --apply --profile cheap-discovery --runner codex --model gpt-5.3-codex-spark
+```
+
+The default is a dry run over the last 30 days of Tusker history. It reads task
+summaries, attempt summaries, feedback notes, and existing skills/docs before
+making recommendations. Private provider history is off unless explicitly
+enabled with flags such as `--include-codex` or `--include-claude`.
+
+`--apply` is deliberately narrow: it creates missing agent runbook drafts under
+`tusker/docs/agents/` for high-confidence repeated workflows. It does not create
+provider-specific subagents or scheduled automations without a human choosing
+that path.
 
 ## Knowledge And Docs
 
@@ -369,7 +389,7 @@ Agent action: stop_until_human_response.
 No further validation was run because the state has not changed.
 ```
 
-- Commands | /user/reference/commands/ | audience: user | updated: 2026-05-20
+- Commands | /user/reference/commands/ | audience: user | updated: 2026-05-25
   Most commands accept [--vault <path>]. Omit it unless discovery fails.
   source: skill/references/COMMANDS.md
   tags: reference
@@ -488,7 +508,25 @@ tusker vault repair [--force] [--json]
 tusker install [--bin-dir <path>] [--no-bin] [--codex-user] [--claude-user] [--repo <path>] [--refresh-existing-user-skills] [--json]
 tusker update [--bin-dir <path>] [--no-bin] [--repo <path>] [--repo-only] [--json]
 tusker context audit --file <session.jsonl> [--top <n>] [--json]
+tusker improve scan [--days 30|--since <YYYY-MM-DD>|--all] [--write]
+tusker improve scan --apply [--runner <name>] [--model <name>] [--reasoning low|medium|high]
 ```
+
+## Improvement scans
+
+Use `tusker improve scan` only when the user asks to mine repeated work or when
+you are deliberately maintaining the repo's reusable agent assets. It is not
+part of every task closeout.
+
+- Default mode is dry-run over the last 30 days.
+- `--write` stores the report under `tusker/feedback/improvements/`.
+- `--apply` is the opt-in mutation path and creates only high-confidence missing
+  agent runbook drafts under `tusker/docs/agents/`.
+- Provider history is disabled unless explicitly enabled with flags such as
+  `--include-codex`, `--include-claude`, `--include-memories`, or
+  `--include-chronicle`.
+- Runner/model/reasoning options describe the chosen runtime profile in the
+  report; they are not durable task truth.
 
 ## Common flows
 
@@ -900,7 +938,7 @@ If the closeout status says only human/reviewer gates remain, stop. Do not keep 
 - Do not paste full build/test output into chat. Save logs as files and read a tight summary or tail.
 - Do not revalidate unchanged human-wait states.
 
-- Repo Contract | /user/reference/repo-contract/ | audience: user | updated: 2026-05-18
+- Repo Contract | /user/reference/repo-contract/ | audience: user | updated: 2026-05-21
   The vault is internal working memory. The repository is still where contributors land.
   source: skill/references/REPO_CONTRACT.md
   tags: reference
@@ -976,11 +1014,17 @@ Do not turn `AGENTS.md` into an encyclopedia.
 
 Use it as:
 
-- a short map
-- a rules index
-- a pointer to deeper docs
+- a short bootstrap pointer
+- a repo-local override surface for rules that truly differ from Tusker defaults
+- a pointer to the installed Tusker operator skill and repo `tusker/SKILL.md`
 
-The vault and repo docs should carry the detail.
+The installed Tusker skill carries tracker mechanics and can be refreshed centrally.
+The repo `tusker/SKILL.md` carries project knowledge routing.
+The vault carries durable task proof and history.
+
+Put repo-specific validation commands, command wrappers, build-lock/status commands, and forbidden expensive probes in `tusker/SKILL.md` or routed runbooks. Keep root `AGENTS.md` focused on the managed bootstrap pointer.
+
+Do not copy workflow prose, command tutorials, generated indexes, task history, event paths, evidence logs, or raw terminal output into `AGENTS.md`.
 
 - Resources | /user/reference/resources/ | audience: user | updated: 2026-05-20
   Load this when inspecting, copying, repairing, or explaining bundled skill resources. Do not load for routine task logging.
@@ -1281,7 +1325,7 @@ When a task changes durable understanding, fill:
 
 `risk >= high` should require a real knowledge delta when durable understanding changed.
 
-- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-05-20
+- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-05-21
   Operating contract for agents working with Tusker in a markdown-first vault.
   source: skill/SKILL.md
   tags: start-here, workflow
@@ -1514,9 +1558,13 @@ For the fuller checklist, load `references/ENGINEERING_DISCIPLINE.md`.
 
 ## Context Budget Rules
 
+- Treat repo `AGENTS.md` / `CLAUDE.md` as bootstrap pointers only. The installed Tusker operator skill owns tracker mechanics; repo `tusker/SKILL.md` owns project knowledge routing.
 - Prefer `tusker list`, `tusker search`, `tusker show`, and `tusker compact` over raw file reads.
 - Never read attachments, generated indexes, build logs, raw runner logs, or full transcripts by default.
-- Redirect noisy command output to a file and read only the failure summary or a small tail.
+- Never read `tusker/events/**`, `tusker/_generated/**`, attempts, evidence cards, packet caches, or full task files unless a task, packet, or user explicitly asks for that artifact.
+- Use the command diet: packets/capsules before files, path-scoped status/search before whole-repo scans, and repo-provided build-lock/status commands before process-table probes.
+- If the project skill or repo guidance defines a token/noise wrapper, use it for noisy commands; otherwise redirect output to `.tusker/scratch/<TASK-ID>/` and read only the failure summary or a small tail.
+- Report validation as command + PASS/FAIL + first actionable failure. Do not paste logs, command diaries, or unchanged-state updates.
 - Use capped search: `rg -l`, `rg --count`, narrow globs, or limited output before broad `rg -n`.
 - Do not add `Execution plan`, `Work log`, or append-only diaries by default.
 - Put durable truth in capsule, acceptance, verification, evidence, review packet, closeout checkpoint, and knowledge delta.

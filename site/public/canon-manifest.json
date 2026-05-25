@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-05-20T02:08:19Z",
+  "generatedAt": "2026-05-25T02:49:48Z",
   "canon": [
     {
       "topic": "ORC",
@@ -18,7 +18,7 @@
         "start-here",
         "workflow"
       ],
-      "updated": "2026-05-20",
+      "updated": "2026-05-21",
       "summary": "Operating contract for agents working with Tusker in a markdown-first vault."
     }
   ],
@@ -35,7 +35,7 @@
         "repository",
         "overview"
       ],
-      "updated": "2026-05-20",
+      "updated": "2026-05-25",
       "summary": "High-level overview of the Tusker repository, install modes, and key entry points."
     },
     {
@@ -64,7 +64,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-20",
+      "updated": "2026-05-25",
       "summary": "Most commands accept [--vault \u003cpath\u003e]. Omit it unless discovery fails."
     },
     {
@@ -120,7 +120,7 @@
       "tags": [
         "reference"
       ],
-      "updated": "2026-05-18",
+      "updated": "2026-05-21",
       "summary": "The vault is internal working memory. The repository is still where contributors land."
     },
     {
@@ -181,7 +181,7 @@
         "start-here",
         "workflow"
       ],
-      "updated": "2026-05-20",
+      "updated": "2026-05-21",
       "summary": "Operating contract for agents working with Tusker in a markdown-first vault."
     },
     {

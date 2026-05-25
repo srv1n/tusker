@@ -231,9 +231,13 @@ For the fuller checklist, load `references/ENGINEERING_DISCIPLINE.md`.
 
 ## Context Budget Rules
 
+- Treat repo `AGENTS.md` / `CLAUDE.md` as bootstrap pointers only. The installed Tusker operator skill owns tracker mechanics; repo `tusker/SKILL.md` owns project knowledge routing.
 - Prefer `tusker list`, `tusker search`, `tusker show`, and `tusker compact` over raw file reads.
 - Never read attachments, generated indexes, build logs, raw runner logs, or full transcripts by default.
-- Redirect noisy command output to a file and read only the failure summary or a small tail.
+- Never read `tusker/events/**`, `tusker/_generated/**`, attempts, evidence cards, packet caches, or full task files unless a task, packet, or user explicitly asks for that artifact.
+- Use the command diet: packets/capsules before files, path-scoped status/search before whole-repo scans, and repo-provided build-lock/status commands before process-table probes.
+- If the project skill or repo guidance defines a token/noise wrapper, use it for noisy commands; otherwise redirect output to `.tusker/scratch/<TASK-ID>/` and read only the failure summary or a small tail.
+- Report validation as command + PASS/FAIL + first actionable failure. Do not paste logs, command diaries, or unchanged-state updates.
 - Use capped search: `rg -l`, `rg --count`, narrow globs, or limited output before broad `rg -n`.
 - Do not add `Execution plan`, `Work log`, or append-only diaries by default.
 - Put durable truth in capsule, acceptance, verification, evidence, review packet, closeout checkpoint, and knowledge delta.

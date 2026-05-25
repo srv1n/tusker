@@ -184,6 +184,9 @@ func statusV7Cmd(args Args) error {
 	}
 	nextStatus = strings.ToLower(nextStatus)
 	if _, ok := v7TaskStatuses[nextStatus]; !ok {
+		if nextStatus == "active" {
+			return tuskerError(errorInvalidField, "invalid V7 task status: "+nextStatus, withHint(v7ProtectedImplementationFlowHint(args)))
+		}
 		return tuskerError(errorInvalidField, "invalid V7 task status: "+nextStatus)
 	}
 	if nextStatus == "done" {
@@ -196,6 +199,11 @@ func statusV7Cmd(args Args) error {
 	data, body, err := parseFrontmatterMustRead(note.AbsolutePath)
 	if err != nil {
 		return err
+	}
+	note.Data = data
+	note.Body = body
+	if nextStatus == "review" && len(v7PacketStubAcceptanceItems(body)) > 0 && len(v7AcceptanceWaivers(data)) == 0 {
+		return tuskerError(errorEvidenceGate, id+": review blocked by placeholder acceptance", withHint("replace stub acceptance with observable outcomes and proof mapping, or record an explicit waiver"))
 	}
 	baseRev := stringField(data, "state_rev")
 	prev := stringField(data, "status")
@@ -341,6 +349,9 @@ func enforceV7ClosePolicy(vaultPath string, task Note, idx v7Index, actor string
 }
 
 func enforceV7AcceptanceClose(vaultPath string, task Note, idx v7Index) error {
+	if len(v7PacketStubAcceptanceItems(task.Body)) > 0 && len(v7AcceptanceWaivers(task.Data)) == 0 {
+		return tuskerError(errorEvidenceGate, stringField(task.Data, "id")+": close blocked by placeholder acceptance", withHint("replace stub acceptance with observable outcomes and proof mapping, or record an explicit waiver"))
+	}
 	report := computeV7ProofReport(vaultPath, task, idx)
 	missing := append([]string{}, report.Missing...)
 	missing = append(missing, report.ModeMissing...)

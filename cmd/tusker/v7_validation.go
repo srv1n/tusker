@@ -240,6 +240,9 @@ func validateV7TaskProofPolicy(note Note, ctx validationContext, where string, e
 	}
 	task := note
 	report := computeV7ProofReport(ctx.VaultPath, task, idx)
+	if proofStatus == "satisfied" && len(v7PacketStubAcceptanceItems(task.Body)) > 0 && len(v7AcceptanceWaivers(data)) == 0 {
+		*errors = append(*errors, issue("TASK_PROOF_STATUS_PLACEHOLDER_ACCEPTANCE", "proof_status=satisfied but acceptance is placeholder or vague", where, "replace stub acceptance with observable outcomes and proof mapping, or record an explicit waiver", nil))
+	}
 	if proofStatus == "satisfied" && (len(report.Missing) > 0 || len(report.ModeMissing) > 0) {
 		missing := append([]string{}, report.Missing...)
 		missing = append(missing, report.ModeMissing...)
@@ -442,10 +445,55 @@ func v7GateBodyHasExactVerificationProof(body string) bool {
 
 func v7TextHasExactVerificationProof(text string) bool {
 	lower := strings.ToLower(text)
-	return strings.Contains(text, "```") ||
+	if strings.Contains(text, "```") ||
 		strings.Contains(lower, "command:") ||
 		strings.Contains(lower, "manual proof") ||
-		strings.Contains(lower, "proof:")
+		strings.Contains(lower, "proof:") {
+		return true
+	}
+	for _, row := range parseV7VerificationRows("## Verification\n\n" + text) {
+		if v7VerificationCheckLooksExact(row.Check) {
+			return true
+		}
+	}
+	return false
+}
+
+func v7VerificationCheckLooksExact(check string) bool {
+	lower := strings.ToLower(strings.TrimSpace(check))
+	if lower == "" || lower == "-" {
+		return false
+	}
+	for _, marker := range []string{"command:", "manual proof", "proof:"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	for _, prefix := range []string{
+		"rtk ",
+		"go test",
+		"go run",
+		"make ",
+		"npm ",
+		"pnpm ",
+		"yarn ",
+		"npx ",
+		"node ",
+		"python ",
+		"uv ",
+		"pytest",
+		"cargo ",
+		"docker ",
+		"kubectl ",
+		"curl ",
+		"git ",
+		"tusker ",
+	} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 const v7LargeEvidenceWarnBytes = 10 * 1024 * 1024
@@ -776,6 +824,9 @@ func validateV7Closeout(note Note, ctx validationContext, where string, errors *
 	task, ok := idx.Tasks[taskID]
 	if !ok {
 		*errors = append(*errors, issue(errorNotFound, "V7 closeout references missing task "+taskID, where, "", map[string]any{"task": taskID}))
+		return
+	}
+	if latest, ok := latestV7Closeout(idx, taskID); ok && stringField(latest.Data, "id") != stringField(data, "id") {
 		return
 	}
 	report := computeV7ProofReport(ctx.VaultPath, task, idx)
@@ -1220,7 +1271,15 @@ func validateV7TaskBodyPolicy(body, vaultPath, where string, errors, warnings *[
 		*warnings = append(*warnings, issue("TASK_EVIDENCE_SECTION_LONG", fmt.Sprintf("V7 task Evidence section has %d non-empty lines; target is 8", evidenceLines), where, "keep task evidence concise", map[string]any{"lines": evidenceLines}))
 	}
 	rawHits := 0
+	section := ""
 	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") {
+			section = strings.ToLower(trimmed)
+		}
+		if section == "## verification" && strings.HasPrefix(trimmed, "|") {
+			continue
+		}
 		if v7RawLogLinePattern.MatchString(line) {
 			rawHits++
 		}
@@ -1453,7 +1512,7 @@ func v7AcceptanceOutcomeVague(item string) bool {
 	normalized = strings.Trim(normalized, ".!")
 	normalized = strings.Join(strings.Fields(normalized), " ")
 	switch normalized {
-	case "works", "it works", "tests pass", "tests passing", "tests are passing", "passes tests":
+	case "works", "it works", "tests pass", "tests passing", "tests are passing", "passes tests", "define the accepted outcome", "tbd", "todo", "placeholder":
 		return true
 	default:
 		return false

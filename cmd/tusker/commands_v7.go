@@ -642,16 +642,36 @@ func newV7Task(args Args) error {
 	}
 	id := strings.ToUpper(args.String("id"))
 	if id == "" {
-		id = fmt.Sprintf("%s-T-%s", epic, padNumber(nextV7Sequence(vaultPath, epic, "task")))
+		id = nextSafeV7TaskID(vaultPath, epic)
 	}
 	if !v7TaskIDPattern.MatchString(id) {
 		return tuskerError(errorInvalidArg, "invalid V7 task id: "+id)
 	}
-	status := strings.ToLower(fallback(args.String("status"), "ready"))
+	path := filepath.Join(vaultPath, "work", "tasks", id+".md")
+	if conflicts := v7TaskIDCollisionPaths(vaultPath, id); len(conflicts) > 0 {
+		nextSafe := nextSafeV7TaskID(vaultPath, firstNonEmpty(v7EpicFromTaskID(id), epic))
+		conflictingPaths := uniqueStrings(append([]string{v7PathForMessage(vaultPath, path) + " (new V7 task target)"}, conflicts...))
+		return tuskerError(
+			errorAlreadyExists,
+			fmt.Sprintf("Task ID %s collides before create; conflicting paths: %s; next safe candidate: %s", id, strings.Join(conflictingPaths, ", "), nextSafe),
+			withPath(path),
+			withHint(fmt.Sprintf("rerun with `--id %s` or repair the existing mixed-layout duplicate before creating this task", nextSafe)),
+			withContext(map[string]any{"id": id, "conflicting_paths": conflictingPaths, "next_safe_id": nextSafe}),
+		)
+	}
+	defaultStatus := "backlog"
+	if args.Bool("ready") || args.Bool("v7") {
+		defaultStatus = "ready"
+	}
+	status := strings.ToLower(fallback(args.String("status"), defaultStatus))
 	if _, ok := v7TaskStatuses[status]; !ok {
 		return tuskerError(errorInvalidField, "invalid V7 task status: "+status)
 	}
-	readiness := strings.ToLower(fallback(args.String("readiness"), "ready"))
+	defaultReadiness := "held"
+	if status == "ready" || status == "rework" || args.Bool("ready") || args.Bool("v7") {
+		defaultReadiness = "ready"
+	}
+	readiness := strings.ToLower(fallback(args.String("readiness"), defaultReadiness))
 	if _, ok := v7Readiness[readiness]; !ok {
 		return tuskerError(errorInvalidField, "invalid V7 readiness: "+readiness)
 	}
@@ -691,10 +711,6 @@ func newV7Task(args Args) error {
 			return tuskerError(errorInvalidArg, "--evidence-budget must be >= 0")
 		}
 	}
-	path := filepath.Join(vaultPath, "work", "tasks", id+".md")
-	if fileExists(path) {
-		return tuskerError(errorAlreadyExists, "Task already exists: "+id, withPath(path))
-	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	data := map[string]any{
 		"schema":                "tusker.task/v7",
@@ -733,6 +749,17 @@ func newV7Task(args Args) error {
 		data["raw_artifacts_reason"] = reason
 	}
 	body := v7TaskBody(id, title)
+	if status == "ready" && !args.Bool("v7") {
+		synthetic := Note{Data: data, Body: body}
+		if reasons := v7TaskDispatchBlockers(vaultPath, synthetic); len(reasons) > 0 {
+			return tuskerError(
+				errorInvalidArg,
+				"ready V7 task is not dispatchable: "+strings.Join(reasons, "; "),
+				withHint("create it as backlog/held, or pass real --intent/--acceptance/--verification support before marking ready"),
+				withContext(map[string]any{"id": id, "dispatch_blockers": reasons}),
+			)
+		}
+	}
 	data["state_rev"] = v7StateRev(data, body)
 	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
 	if err != nil {
@@ -1232,13 +1259,16 @@ func ensureV7FinishProofReady(vaultPath, taskID string) error {
 		return nil
 	}
 	report := computeV7ProofReport(vaultPath, task, idx)
+	if len(v7PacketStubAcceptanceItems(task.Body)) > 0 && len(v7AcceptanceWaivers(task.Data)) == 0 {
+		return tuskerError(errorEvidenceGate, taskID+": finish blocked by placeholder acceptance", withHint("replace stub acceptance with observable outcomes and proof mapping, or record an explicit waiver"))
+	}
 	missing := append([]string{}, report.Missing...)
 	missing = append(missing, report.ModeMissing...)
 	if len(missing) > 0 {
 		if len(report.OpenGates) > 0 {
 			return nil
 		}
-		return tuskerError(errorEvidenceGate, taskID+": finish proof incomplete: "+strings.Join(missing, ", "), withHint("use `tusker verify add` for inline proof, add required evidence, or create a blocking gate for human/device/env/CI proof"))
+		return tuskerError(errorEvidenceGate, taskID+": finish proof incomplete: "+strings.Join(missing, ", "), withHint("remaining proof gaps: "+v7ProofRemainingGapSummary(report)+"; use `tusker verify add` for inline proof, add required evidence, or create a blocking gate for human/device/env/CI proof"))
 	}
 	return nil
 }
@@ -1265,10 +1295,13 @@ func requestV7ReviewAfterHandoff(vaultPath, taskID string, args Args) error {
 		return nil
 	}
 	report := computeV7ProofReport(vaultPath, task, idx)
+	if len(v7PacketStubAcceptanceItems(task.Body)) > 0 && len(v7AcceptanceWaivers(task.Data)) == 0 {
+		return tuskerError(errorEvidenceGate, taskID+": finish blocked by placeholder acceptance", withHint("replace stub acceptance with observable outcomes and proof mapping, or record an explicit waiver"))
+	}
 	missing := append([]string{}, report.Missing...)
 	missing = append(missing, report.ModeMissing...)
 	if len(missing) > 0 {
-		return tuskerError(errorEvidenceGate, taskID+": finish proof incomplete: "+strings.Join(missing, ", "), withHint("use `tusker verify add` for inline proof, add required evidence, or create a blocking gate"))
+		return tuskerError(errorEvidenceGate, taskID+": finish proof incomplete: "+strings.Join(missing, ", "), withHint("remaining proof gaps: "+v7ProofRemainingGapSummary(report)+"; use `tusker verify add` for inline proof, add required evidence, or create a blocking gate"))
 	}
 	actor := fallback(fallback(args.String("actor"), args.String("by")), "agent:"+defaultActorName())
 	reason := firstNonEmpty(args.String("reason"), "Ready for independent review after attempt handoff.")
@@ -2146,13 +2179,15 @@ func v7Brief(task Note, idx v7Index) string {
 		}
 	}
 	sort.Strings(openGates)
-	return fmt.Sprintf("%s · %s\nStatus: %s\nReadiness: %s\nNext owner: %s\nNext action: %s\nOpen gates: %s\nAcceptance: %d item%s\nProof: %s/%s\nProof required: %s\nEvidence budget: %d\n\n",
+	attempt := fallback(v7LatestAttemptRuntimeSummary(idx, id), "none")
+	return fmt.Sprintf("%s · %s\nStatus: %s\nReadiness: %s\nNext owner: %s\nNext action: %s\nAttempt: %s\nOpen gates: %s\nAcceptance: %d item%s\nProof: %s/%s\nProof required: %s\nEvidence budget: %d\n\n",
 		id,
 		stringField(task.Data, "title"),
 		stringField(task.Data, "status"),
 		stringField(task.Data, "readiness"),
 		stringField(task.Data, "next_owner"),
 		stringField(task.Data, "next_action"),
+		attempt,
 		fallback(strings.Join(openGates, ", "), "none"),
 		v7AcceptanceCount(task.Body),
 		plural(v7AcceptanceCount(task.Body)),
@@ -2163,11 +2198,50 @@ func v7Brief(task Note, idx v7Index) string {
 	)
 }
 
+func v7TaskAttemptRuntimeLines(vaultPath string, task Note) []string {
+	if strings.TrimSpace(vaultPath) == "" || noteDisplayKind(task.Data) != "task" {
+		return nil
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return nil
+	}
+	summary := v7LatestAttemptRuntimeSummary(idx, stringField(task.Data, "id"))
+	if summary == "" {
+		return nil
+	}
+	return []string{"- Attempt: " + summary}
+}
+
+func v7LatestAttemptRuntimeSummary(idx v7Index, taskID string) string {
+	attempts := append([]Note{}, idx.Attempts[taskID]...)
+	if len(attempts) == 0 {
+		return ""
+	}
+	sort.Slice(attempts, func(i, j int) bool {
+		return stringField(attempts[i].Data, "id") < stringField(attempts[j].Data, "id")
+	})
+	latest := attempts[len(attempts)-1]
+	status := stringField(latest.Data, "status")
+	if status != "started" && status != "handoff" {
+		return ""
+	}
+	fields := []string{stringField(latest.Data, "id") + " " + status}
+	if runner := strings.TrimSpace(stringField(latest.Data, "runner")); runner != "" {
+		fields = append(fields, "runner="+runner)
+	}
+	if branch := strings.TrimSpace(stringField(latest.Data, "branch")); branch != "" {
+		fields = append(fields, "branch="+branch)
+	}
+	return strings.Join(fields, " ")
+}
+
 func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string {
 	id := stringField(task.Data, "id")
 	var b strings.Builder
 	if audience == "reviewer" {
 		fmt.Fprintf(&b, "# %s reviewer packet\n\n", id)
+		writeV7PacketWarnings(&b, vaultPath, task)
 		fmt.Fprintf(&b, "## Project skill routing\n\n%s\n\n", v7ProjectSkillRouting(vaultPath, task))
 		fmt.Fprintf(&b, "## Domain context\n\n%s\n\n", v7DomainContext(vaultPath, task))
 		fmt.Fprintf(&b, "## Intent\n\n%s\n\n", sectionContent(task.Body, "## Intent"))
@@ -2185,6 +2259,7 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 		return b.String()
 	}
 	fmt.Fprintf(&b, "# %s agent packet\n\n", id)
+	writeV7PacketWarnings(&b, vaultPath, task)
 	fmt.Fprintf(&b, "## Project skill routing\n\n%s\n\n", v7ProjectSkillRouting(vaultPath, task))
 	fmt.Fprintf(&b, "## Task contract\n\nIntent:\n%s\n\nAcceptance:\n%s\n\n", v7PacketSnippet(sectionContent(task.Body, "## Intent"), 8), v7PacketSnippet(sectionContent(task.Body, "## Acceptance"), 18))
 	fmt.Fprintf(&b, "## Open gates\n\n")
@@ -2202,12 +2277,84 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 	return b.String()
 }
 
+func writeV7PacketWarnings(b *strings.Builder, vaultPath string, task Note) {
+	warnings := v7PacketWarnings(vaultPath, task)
+	if len(warnings) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "## Packet warnings\n\n%s\n\n", v7BulletList(warnings))
+}
+
+func v7PacketWarnings(vaultPath string, task Note) []string {
+	var warnings []string
+	if !fileExists(filepath.Join(vaultPath, "SKILL.md")) {
+		if fileExists(filepath.Join(vaultPath, "README.md")) {
+			warnings = append(warnings, "`tusker/SKILL.md` is missing; use `tusker/README.md` and this task packet as the fallback project route.")
+		} else {
+			warnings = append(warnings, "`tusker/SKILL.md` is missing; rely on the task contract until project knowledge is installed.")
+		}
+	}
+	for _, warning := range v7PacketDomainRouteWarnings(vaultPath, task) {
+		warnings = append(warnings, warning)
+	}
+	for _, item := range v7PacketStubAcceptanceItems(task.Body) {
+		warnings = append(warnings, "Acceptance looks vague or placeholder: "+item)
+	}
+	return warnings
+}
+
+func v7PacketDomainRouteWarnings(vaultPath string, task Note) []string {
+	var warnings []string
+	for _, domain := range normalizeList(task.Data["domains"]) {
+		var missing []string
+		indexPath := filepath.Join(vaultPath, "knowledge", "domains", domain, "INDEX.md")
+		canonPath := filepath.Join(vaultPath, "knowledge", "domains", domain, "CANON.md")
+		if !fileExists(indexPath) {
+			missing = append(missing, "knowledge/domains/"+domain+"/INDEX.md")
+		}
+		if !fileExists(canonPath) {
+			missing = append(missing, "knowledge/domains/"+domain+"/CANON.md")
+		}
+		if len(missing) > 0 {
+			warnings = append(warnings, "`"+domain+"` domain route missing: "+strings.Join(missing, ", "))
+		}
+	}
+	return warnings
+}
+
+func v7PacketStubAcceptanceItems(body string) []string {
+	items := v7VagueAcceptanceItems(body)
+	content := sectionContent(body, "## Acceptance")
+	seen := map[string]bool{}
+	for _, item := range items {
+		seen[strings.ToLower(item)] = true
+	}
+	for _, line := range strings.Split(content, "\n") {
+		item := v7AcceptanceOutcomeFromLine(line)
+		if item == "" {
+			continue
+		}
+		normalized := strings.ToLower(strings.Trim(strings.TrimSpace(item), ".!"))
+		normalized = strings.Join(strings.Fields(normalized), " ")
+		switch normalized {
+		case "define the accepted outcome", "tbd", "todo", "placeholder":
+			if !seen[normalized] {
+				items = append(items, item)
+				seen[normalized] = true
+			}
+		}
+	}
+	return items
+}
+
 func v7ProjectSkillRouting(vaultPath string, task Note) string {
 	var lines []string
 	if fileExists(filepath.Join(vaultPath, "SKILL.md")) {
 		lines = append(lines, "- Load the repo project knowledge skill at `tusker/SKILL.md`.")
+	} else if fileExists(filepath.Join(vaultPath, "README.md")) {
+		lines = append(lines, "- `tusker/SKILL.md` is missing; use `tusker/README.md` plus this packet until the project skill is installed.")
 	} else {
-		lines = append(lines, "- Repo project knowledge skill is expected at `tusker/SKILL.md`.")
+		lines = append(lines, "- `tusker/SKILL.md` is missing; use the task contract as the project route.")
 	}
 	lines = append(lines, "- Use the installed Tusker operator skill only for task mechanics, gates, evidence, lifecycle, and CLI semantics.")
 	domains := normalizeList(task.Data["domains"])
@@ -2216,7 +2363,13 @@ func v7ProjectSkillRouting(vaultPath string, task Note) string {
 		return strings.Join(lines, "\n")
 	}
 	for _, domain := range domains {
-		lines = append(lines, fmt.Sprintf("- `%s`: read `knowledge/domains/%s/INDEX.md`, then `knowledge/domains/%s/CANON.md`.", domain, domain, domain))
+		indexPath := filepath.Join(vaultPath, "knowledge", "domains", domain, "INDEX.md")
+		canonPath := filepath.Join(vaultPath, "knowledge", "domains", domain, "CANON.md")
+		if fileExists(indexPath) && fileExists(canonPath) {
+			lines = append(lines, fmt.Sprintf("- `%s`: read `knowledge/domains/%s/INDEX.md`, then `knowledge/domains/%s/CANON.md`.", domain, domain, domain))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- `%s`: domain route is missing; use the task contract and packet warning instead of reading dead knowledge links.", domain))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -2538,6 +2691,153 @@ func nextV7Sequence(vaultPath, epic, kind string) int {
 	return maxSeq + 1
 }
 
+func nextSafeV7TaskID(vaultPath, epic string) string {
+	seq := nextV7Sequence(vaultPath, epic, "task")
+	for {
+		id := fmt.Sprintf("%s-T-%s", epic, padNumber(seq))
+		if len(v7TaskIDCollisionPaths(vaultPath, id)) == 0 {
+			return id
+		}
+		seq++
+	}
+}
+
+func v7TaskIDCollisionPaths(vaultPath, id string) []string {
+	id = strings.ToUpper(strings.TrimSpace(id))
+	if id == "" {
+		return nil
+	}
+	filename := id + ".md"
+	roots := []string{
+		filepath.Join(vaultPath, "work", "tasks"),
+		filepath.Join(vaultPath, "epics"),
+	}
+	for _, root := range configuredLegacyTaskRoots(vaultPath) {
+		roots = append(roots, root)
+	}
+	seen := map[string]bool{}
+	var paths []string
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		if root == "." || root == "" || seen[root] || !dirExists(root) {
+			continue
+		}
+		seen[root] = true
+		_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil || entry == nil {
+				return nil
+			}
+			if entry.IsDir() {
+				name := entry.Name()
+				if name == ".git" || name == "node_modules" || name == "vendor" || name == "_generated" || name == "events" || name == "attempts" || name == "evidence" || name == "Attachments" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(entry.Name(), ".md") {
+				return nil
+			}
+			if entry.Name() != filename {
+				raw, err := readText(path)
+				if err != nil {
+					return nil
+				}
+				data, _, err := parseFrontmatter(raw)
+				if err != nil || strings.ToUpper(strings.TrimSpace(stringField(data, "id"))) != id {
+					return nil
+				}
+			}
+			paths = append(paths, v7PathForMessage(vaultPath, path))
+			return nil
+		})
+	}
+	return uniqueStrings(paths)
+}
+
+func configuredLegacyTaskRoots(vaultPath string) []string {
+	var roots []string
+	configPaths := []string{
+		filepath.Join(v7RepoRoot(vaultPath), "tusker.yaml"),
+		filepath.Join(vaultPath, "_system", "config.yaml"),
+		workflowPath(vaultPath),
+	}
+	for _, configPath := range configPaths {
+		raw, err := readText(configPath)
+		if err != nil {
+			continue
+		}
+		var data map[string]any
+		if err := yaml.Unmarshal([]byte(raw), &data); err != nil {
+			continue
+		}
+		for _, rel := range legacyTaskRootsFromConfigMap(data) {
+			roots = append(roots, resolveLegacyTaskRoot(vaultPath, rel))
+		}
+	}
+	return uniqueStrings(roots)
+}
+
+func legacyTaskRootsFromConfigMap(data map[string]any) []string {
+	if data == nil {
+		return nil
+	}
+	var roots []string
+	roots = append(roots, normalizeList(data["legacy_task_roots"])...)
+	roots = append(roots, normalizeList(data["legacyTaskRoots"])...)
+	if nested, ok := data["task_roots"].(map[string]any); ok {
+		roots = append(roots, normalizeList(nested["legacy"])...)
+		roots = append(roots, normalizeList(nested["v5"])...)
+		roots = append(roots, normalizeList(nested["tasks"])...)
+	}
+	if nested, ok := data["taskRoots"].(map[string]any); ok {
+		roots = append(roots, normalizeList(nested["legacy"])...)
+		roots = append(roots, normalizeList(nested["v5"])...)
+		roots = append(roots, normalizeList(nested["tasks"])...)
+	}
+	for _, key := range []string{"legacy", "v5", "tracker"} {
+		if nested, ok := data[key].(map[string]any); ok {
+			roots = append(roots, normalizeList(nested["task_roots"])...)
+			roots = append(roots, normalizeList(nested["taskRoots"])...)
+			roots = append(roots, normalizeList(nested["tasks"])...)
+		}
+	}
+	if nested, ok := data["validation"].(map[string]any); ok {
+		roots = append(roots, legacyTaskRootsFromConfigMap(nested)...)
+	}
+	var cleaned []string
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root != "" {
+			cleaned = append(cleaned, root)
+		}
+	}
+	return cleaned
+}
+
+func resolveLegacyTaskRoot(vaultPath, root string) string {
+	root = filepath.FromSlash(strings.TrimSpace(root))
+	if root == "" {
+		return ""
+	}
+	if filepath.IsAbs(root) {
+		return filepath.Clean(root)
+	}
+	if strings.HasPrefix(root, "tusker"+string(filepath.Separator)) {
+		return filepath.Join(v7RepoRoot(vaultPath), root)
+	}
+	return filepath.Join(vaultPath, root)
+}
+
+func v7PathForMessage(vaultPath, path string) string {
+	if rel, err := filepath.Rel(v7RepoRoot(vaultPath), path); err == nil && !strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(rel)
+	}
+	if rel, err := filepath.Rel(vaultPath, path); err == nil && !strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.ToSlash(path)
+}
+
 func nextV7EvidenceSequence(vaultPath, taskID string) int {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
@@ -2575,7 +2875,7 @@ func latestV7AttemptID(vaultPath, taskID string) (string, error) {
 	}
 	attempts := idx.Attempts[taskID]
 	if len(attempts) == 0 {
-		return "", tuskerError(errorNotFound, "No attempt exists for "+taskID)
+		return "", tuskerError(errorNotFound, "No attempt exists for "+taskID, withHint("attempts are runtime/session state, not durable task status; run `tusker attempt start "+taskID+"` then retry `tusker finish "+taskID+" --request-review`"))
 	}
 	sort.Slice(attempts, func(i, j int) bool { return stringField(attempts[i].Data, "id") < stringField(attempts[j].Data, "id") })
 	return stringField(attempts[len(attempts)-1].Data, "id"), nil
@@ -2612,20 +2912,65 @@ func v7OpenHumanGates(idx v7Index) []Note {
 func v7ReadyAgentTasks(idx v7Index) []Note {
 	var tasks []Note
 	for _, task := range sortedV7Tasks(idx) {
-		status := stringField(task.Data, "status")
-		if status != "ready" && status != "rework" {
-			continue
-		}
-		if stringField(task.Data, "readiness") != "ready" {
-			continue
-		}
-		owner := stringField(task.Data, "next_owner")
-		if owner != "agent" && !strings.HasPrefix(owner, "agent:") {
+		if !isV7RunnableAgentTask(task) {
 			continue
 		}
 		tasks = append(tasks, task)
 	}
 	return tasks
+}
+
+func isV7RunnableAgentTask(task Note) bool {
+	return len(v7BasicRunnableBlockers(task)) == 0
+}
+
+func v7BasicRunnableBlockers(task Note) []string {
+	var reasons []string
+	if noteListKind(task.Data) != "task" {
+		reasons = append(reasons, "kind is not task")
+	}
+	status := stringField(task.Data, "status")
+	if status != "ready" && status != "rework" {
+		reasons = append(reasons, "status is "+fallback(status, "(missing)"))
+	}
+	if stringField(task.Data, "readiness") != "ready" {
+		reasons = append(reasons, "readiness is "+fallback(stringField(task.Data, "readiness"), "(missing)"))
+	}
+	owner := stringField(task.Data, "next_owner")
+	if owner != "agent" && !strings.HasPrefix(owner, "agent:") {
+		reasons = append(reasons, "next_owner is "+fallback(owner, "(missing)"))
+	}
+	return reasons
+}
+
+func isV7DispatchableAgentTask(vaultPath string, task Note) bool {
+	return len(v7TaskDispatchBlockers(vaultPath, task)) == 0
+}
+
+func v7TaskDispatchBlockers(vaultPath string, task Note) []string {
+	reasons := append([]string{}, v7BasicRunnableBlockers(task)...)
+	if stub := v7PacketStubAcceptanceItems(task.Body); len(stub) > 0 {
+		reasons = append(reasons, "placeholder acceptance: "+strings.Join(stub, ", "))
+	}
+	if !v7AcceptanceHasProof(task.Body) {
+		reasons = append(reasons, "acceptance missing proof mapping")
+	}
+	verification := sectionContent(task.Body, "## Verification")
+	if strings.TrimSpace(verification) == "" {
+		reasons = append(reasons, "verification missing")
+	} else if !v7TextHasExactVerificationProof(verification) {
+		reasons = append(reasons, "verification missing exact command or manual proof")
+	}
+	mode := strings.ToLower(strings.TrimSpace(stringField(task.Data, "proof_mode")))
+	if mode == "" {
+		reasons = append(reasons, "proof_mode missing")
+	} else if mode != "none" && len(normalizeList(task.Data["proof_required"])) == 0 {
+		reasons = append(reasons, "proof_required missing")
+	}
+	for _, warning := range v7PacketDomainRouteWarnings(vaultPath, task) {
+		reasons = append(reasons, warning)
+	}
+	return uniqueStrings(reasons)
 }
 
 func v7ReviewTasks(idx v7Index) []Note {
@@ -2670,22 +3015,39 @@ func pickV7Next(vaultPath, epic, owner string) (Note, bool) {
 		if epic != "" && strings.ToUpper(stringField(task.Data, "epic")) != epic {
 			continue
 		}
+		if !isV7DispatchableAgentTask(vaultPath, task) {
+			continue
+		}
 		if owner != "" && stringField(task.Data, "next_owner") != owner {
-			continue
-		}
-		status := stringField(task.Data, "status")
-		if status != "ready" && status != "rework" {
-			continue
-		}
-		if readiness := stringField(task.Data, "readiness"); readiness != "" && readiness != "ready" {
-			if owner != "" && (readiness == "blocked_by_gate" || readiness == "waiting_on_review" || readiness == "waiting_on_human") {
-				return task, true
-			}
 			continue
 		}
 		return task, true
 	}
 	return Note{}, false
+}
+
+func validateV7DispatchableTasks(vaultPath string) []Issue {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return []Issue{issue("DISPATCHABLE_INDEX_FAILED", err.Error(), "", "", nil)}
+	}
+	var errs []Issue
+	for _, task := range sortedV7Tasks(idx) {
+		status := stringField(task.Data, "status")
+		if status != "ready" && status != "rework" {
+			continue
+		}
+		if stringField(task.Data, "readiness") != "ready" {
+			continue
+		}
+		reasons := v7TaskDispatchBlockers(vaultPath, task)
+		if len(reasons) == 0 {
+			continue
+		}
+		where := task.RelativePath
+		errs = append(errs, issue("TASK_NOT_DISPATCHABLE", stringField(task.Data, "id")+" is marked ready/rework but is not dispatchable: "+strings.Join(reasons, "; "), where, "fix the task contract or move it back to backlog/held", map[string]any{"id": stringField(task.Data, "id"), "dispatch_blockers": reasons}))
+	}
+	return errs
 }
 
 func v7NotesPayload(notes []Note) []map[string]any {
@@ -2707,7 +3069,7 @@ TBD.
 
 | ID | Outcome | Proof |
 |---|---|---|
-| A1 | Define the accepted outcome. | Inline verification, evidence, gate, or waiver |
+| A1 | Complete the task contract. | Inline verification, evidence, gate, or waiver |
 
 ## Non-goals
 
@@ -2930,7 +3292,7 @@ func ensureV7ControlMutation(vaultPath string, args Args) error {
 		return tuskerError(
 			errorInvalidTransition,
 			"protected Tusker state requires a checked-out Git branch in team mode",
-			withHint("run the state transition from a configured control branch, or pass --local only for explicit single-user local work"),
+			withHint(v7ProtectedImplementationFlowHint(args)),
 			withContext(map[string]any{"repo_root": repoRoot, "branch": branch}),
 		)
 	}
@@ -2940,9 +3302,17 @@ func ensureV7ControlMutation(vaultPath string, args Args) error {
 	return tuskerError(
 		errorInvalidTransition,
 		"protected Tusker state cannot be mutated from branch "+branch,
-		withHint("use `tusker attempt handoff`, `tusker evidence add`, or run the state transition on a configured control branch"),
+		withHint(v7ProtectedImplementationFlowHint(args)),
 		withContext(map[string]any{"branch": branch}),
 	)
+}
+
+func v7ProtectedImplementationFlowHint(args Args) string {
+	taskID := firstNonEmpty(args.String("id"), args.String("_pos0"), "<TASK-ID>")
+	if strings.EqualFold(args.String("status"), "active") || strings.EqualFold(args.String("_pos1"), "active") {
+		return "V7 does not use durable `active` task status for implementation. Use `tusker attempt start " + taskID + "`, implement, `tusker verify add " + taskID + " --covers A1 --check \"<check>\" --result pass`, then `tusker attempt handoff " + taskID + "` and `tusker finish " + taskID + " --request-review`; on protected branches finish will create or reuse a review proposal."
+	}
+	return "protected V7 state changes belong on a control branch. Implementation branches should use `tusker attempt start " + taskID + "`, write proof with `tusker verify add`, hand off with `tusker attempt handoff " + taskID + "`, then `tusker finish " + taskID + " --request-review` or the proposal flow."
 }
 
 func v7SingleUserLocalMutationMode(vaultPath string) bool {

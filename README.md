@@ -145,6 +145,26 @@ tusker validate
 `close` requires `review` unless forced. `propose status --status done` is
 rejected; use `propose close` or `close`.
 
+## Improvement Scans
+
+Tusker can also do an opt-in scan for repeated manual workflows worth packaging:
+
+```sh
+tusker improve scan
+tusker improve scan --since 2026-05-01 --write
+tusker improve scan --apply --profile cheap-discovery --runner codex --model gpt-5.3-codex-spark
+```
+
+The default is a dry run over the last 30 days of Tusker history. It reads task
+summaries, attempt summaries, feedback notes, and existing skills/docs before
+making recommendations. Private provider history is off unless explicitly
+enabled with flags such as `--include-codex` or `--include-claude`.
+
+`--apply` is deliberately narrow: it creates missing agent runbook drafts under
+`tusker/docs/agents/` for high-confidence repeated workflows. It does not create
+provider-specific subagents or scheduled automations without a human choosing
+that path.
+
 ## Knowledge And Docs
 
 V7 canonical knowledge lives under `tusker/knowledge/domains/**`. Start with the

@@ -19,6 +19,11 @@ const (
 	currentSkillInstallDir = "tusker"
 )
 
+type repoPointerUpdate struct {
+	path   string
+	action string
+}
+
 func syncRepoContract(args Args) error {
 	repoPath, err := requirePathArg(args, "repo")
 	if err != nil {
@@ -29,40 +34,21 @@ func syncRepoContract(args Args) error {
 	if err := writeEmbeddedTree("repo-contract", repoPath, overwrite, &report); err != nil {
 		return err
 	}
-	var vaultPath string
-	if args.String("vault") != "" {
-		vaultPath, err = filepath.Abs(args.String("vault"))
-		if err != nil {
-			return err
-		}
-	} else {
-		if discovered, _ := discoverVault(repoPath); discovered != "" {
-			vaultPath = discovered
-		} else {
-			vaultPath = filepath.Join(repoPath, "tusker")
-		}
+	if path, created, err := ensureFeedbackReadmeForRepoVault(repoPath, args.String("vault")); err != nil {
+		return err
+	} else if created {
+		report = append(report, "Created "+path)
 	}
-	vaultRelative := "tusker"
-	if vaultPath != "" {
-		vaultRelative = relativeFromRepo(repoPath, vaultPath)
+	pointerUpdates, err := upsertRepoTuskerPointers(repoPath, args.String("vault"))
+	if err != nil {
+		return err
 	}
-	readmeLink := "README.md"
-	if vaultRelative != "" {
-		readmeLink = filepath.ToSlash(filepath.Join(vaultRelative, "README.md"))
+	if warning := repoAgentGuidanceFlatteningWarning(repoPath, args.String("vault"), pointerUpdates); warning != "" {
+		report = append(report, "Warning: "+warning)
 	}
 	var pointerReport []string
-	for _, filename := range []string{"AGENTS.md", "CLAUDE.md"} {
-		changed, err := upsertTuskerPointer(filepath.Join(repoPath, filename), readmeLink)
-		if err != nil {
-			return err
-		}
-		if changed != "" {
-			action := "Updated"
-			if changed == "created" {
-				action = "Created"
-			}
-			pointerReport = append(pointerReport, fmt.Sprintf("%s %s", action, filepath.Join(repoPath, filename)))
-		}
+	for _, update := range pointerUpdates {
+		pointerReport = append(pointerReport, fmt.Sprintf("%s %s", capitalize(update.action), update.path))
 	}
 	for _, line := range append(report, pointerReport...) {
 		fmt.Println(line)
@@ -81,11 +67,13 @@ func updateCmd(args Args) error {
 
 	updatedSkills := []string{}
 	destinations := []string{}
+	repoRoot := ""
 	if !args.Bool("repo-only") {
 		destinations = existingUserSkillDestinations()
 	}
 	if repoPath := strings.TrimSpace(args.String("repo")); repoPath != "" {
-		repoRoot, err := filepath.Abs(repoPath)
+		var err error
+		repoRoot, err = filepath.Abs(repoPath)
 		if err != nil {
 			return err
 		}
@@ -105,6 +93,25 @@ func updateCmd(args Args) error {
 		updatedSkills = append(updatedSkills, destination)
 	}
 
+	pointerUpdates := []repoPointerUpdate{}
+	feedbackReadme := ""
+	guidanceWarning := ""
+	if repoRoot != "" {
+		var err error
+		pointerUpdates, err = upsertRepoTuskerPointers(repoRoot, "")
+		if err != nil {
+			return err
+		}
+		guidanceWarning = repoAgentGuidanceFlatteningWarning(repoRoot, "", pointerUpdates)
+		path, created, err := ensureFeedbackReadmeForRepo(repoRoot)
+		if err != nil {
+			return err
+		}
+		if created {
+			feedbackReadme = path
+		}
+	}
+
 	binaryUpdated := false
 	if !args.Bool("no-bin") {
 		if err := installBinarySymlink(args); err != nil {
@@ -115,15 +122,27 @@ func updateCmd(args Args) error {
 
 	if args.Bool("json") {
 		emitJSON(map[string]any{
-			"ok":             true,
-			"binary_updated": binaryUpdated,
-			"updated_skills": updatedSkills,
+			"ok":               true,
+			"binary_updated":   binaryUpdated,
+			"updated_skills":   updatedSkills,
+			"updated_pointers": repoPointerUpdatePaths(pointerUpdates),
+			"feedback_readme":  nullIfEmptyString(feedbackReadme),
+			"guidance_warning": nullIfEmptyString(guidanceWarning),
 		})
 		return nil
 	}
 
 	for _, destination := range updatedSkills {
 		fmt.Printf("Updated Tusker skill at %s\n", destination)
+	}
+	for _, update := range pointerUpdates {
+		fmt.Printf("%s %s\n", capitalize(update.action), update.path)
+	}
+	if feedbackReadme != "" {
+		fmt.Printf("Created %s\n", feedbackReadme)
+	}
+	if guidanceWarning != "" {
+		fmt.Printf("Warning: %s\n", guidanceWarning)
 	}
 	if len(updatedSkills) == 0 {
 		fmt.Println("No existing user skill installs found to refresh. Pass `--repo <path>` for repo-local skills.")
@@ -140,6 +159,7 @@ func installCmd(args Args) error {
 	installedSkills := []string{}
 	destinations := []string{}
 	repoPath := strings.TrimSpace(args.String("repo"))
+	repoRoot := ""
 	if repoPath == "" || args.Bool("refresh-existing-user-skills") {
 		destinations = existingUserSkillDestinations()
 	}
@@ -150,7 +170,8 @@ func installCmd(args Args) error {
 		destinations = append(destinations, filepath.Join(userHomeDir(), ".claude", "skills", currentSkillInstallDir))
 	}
 	if repoPath != "" {
-		repoRoot, err := filepath.Abs(repoPath)
+		var err error
+		repoRoot, err = filepath.Abs(repoPath)
 		if err != nil {
 			return err
 		}
@@ -168,6 +189,25 @@ func installCmd(args Args) error {
 		installedSkills = append(installedSkills, destination)
 	}
 
+	pointerUpdates := []repoPointerUpdate{}
+	feedbackReadme := ""
+	guidanceWarning := ""
+	if repoRoot != "" {
+		var err error
+		pointerUpdates, err = upsertRepoTuskerPointers(repoRoot, "")
+		if err != nil {
+			return err
+		}
+		guidanceWarning = repoAgentGuidanceFlatteningWarning(repoRoot, "", pointerUpdates)
+		path, created, err := ensureFeedbackReadmeForRepo(repoRoot)
+		if err != nil {
+			return err
+		}
+		if created {
+			feedbackReadme = path
+		}
+	}
+
 	binaryInstalled := false
 	if !args.Bool("no-bin") {
 		if err := installBinarySymlink(args); err != nil {
@@ -181,12 +221,24 @@ func installCmd(args Args) error {
 			"ok":               true,
 			"binary_installed": binaryInstalled,
 			"installed_skills": installedSkills,
+			"updated_pointers": repoPointerUpdatePaths(pointerUpdates),
+			"feedback_readme":  nullIfEmptyString(feedbackReadme),
+			"guidance_warning": nullIfEmptyString(guidanceWarning),
 		})
 		return nil
 	}
 
 	for _, destination := range installedSkills {
 		fmt.Printf("Installed Tusker skill at %s\n", destination)
+	}
+	for _, update := range pointerUpdates {
+		fmt.Printf("%s %s\n", capitalize(update.action), update.path)
+	}
+	if feedbackReadme != "" {
+		fmt.Printf("Created %s\n", feedbackReadme)
+	}
+	if guidanceWarning != "" {
+		fmt.Printf("Warning: %s\n", guidanceWarning)
 	}
 	if len(installedSkills) == 0 && args.Bool("no-bin") {
 		fmt.Println("No install destinations selected.")
@@ -364,6 +416,8 @@ Behavior:
   - refreshes existing user skills in ~/.agents, ~/.codex, and ~/.claude
   - relinks tusker on PATH unless --no-bin is passed
   - with --repo, also refreshes repo-local .agents/.claude skill installs
+    and the managed AGENTS.md/CLAUDE.md Tusker bootstrap block
+    with compact proof/context guidance
   - with --repo-only, skips user skill installs and touches only the repo
 
 Examples:
@@ -385,6 +439,8 @@ Behavior:
   - --codex-user installs ~/.agents/skills/tusker
   - --claude-user installs ~/.claude/skills/tusker
   - --repo installs repo-local .agents/.claude skill bundles without ambient user skill refresh
+    and refreshes the managed AGENTS.md/CLAUDE.md Tusker bootstrap block
+    with compact proof/context guidance
   - --refresh-existing-user-skills also refreshes existing user skills when --repo is used
   - relinks tusker on PATH unless --no-bin is passed
   - --force is accepted for installer compatibility
@@ -678,19 +734,98 @@ func upsertGitignore(vaultPath string) error {
 }
 
 func renderTuskerPointerBlock(readmeLink string) string {
+	skillLink := tuskerSkillLinkFromReadme(readmeLink)
 	return strings.Join([]string{
 		tuskerPointerBegin,
-		"## Progressive Tusker context",
+		"## Tusker",
 		"",
-		fmt.Sprintf("Start with `tusker list --type epic` to see the short epic roster. Use `%s` only when the project overview is needed; it intentionally omits task lists from the top-level roster.", "`"+readmeLink+"`"),
+		"Use Tusker for tracked repo work.",
 		"",
-		"Progressive drill-down: `tusker list --epic <ACR> --type task --open` for one epic's open tasks, then `tusker show <ID> --capsule` for the selected task. Open the full task file only when the capsule is insufficient. Use `tusker search \"<term>\" --type task` before creating possible duplicates. Use `tusker compact <ID>` as a dry-run before reading or editing old noisy notes.",
-		"",
-		"For Codex transcript/token analysis, use `tusker context audit --file <jsonl>`. For broad repository search, prefer `rg -l`, `rg --count`, narrow globs, or capped output before `rg -n`.",
-		"",
-		"When logging work: pick the epic whose summary best matches, and announce the ID **plus a one-line rationale for the epic choice**. If nothing fits and the work will outlive one task, create a new epic with `tusker new epic --acronym <ACR> --title \"<name>\" --summary \"...\"`.",
+		"- Task mechanics live in the installed `tusker` skill.",
+		fmt.Sprintf("- Project knowledge starts at `%s`.", skillLink),
+		"- Start runnable work with `tusker next`; inspect named work with `tusker show <TASK-ID> --capsule`.",
+		"- Do not read `tusker/events`, `_generated`, `attempts`, `evidence`, `Attachments`, raw logs, or full task files unless the task explicitly requires it.",
+		"- Keep proof compact: use capsules, path-scoped status/search, and command + PASS/FAIL summaries; put noisy logs in `.tusker/scratch/<TASK-ID>/`.",
+		feedbackPointerInstruction(),
 		tuskerPointerEnd,
 	}, "\n")
+}
+
+func tuskerSkillLinkFromReadme(readmeLink string) string {
+	readmeLink = strings.TrimSpace(filepath.ToSlash(readmeLink))
+	if readmeLink == "" {
+		return "tusker/SKILL.md"
+	}
+	dir := filepath.ToSlash(filepath.Dir(readmeLink))
+	if dir == "." || dir == "" {
+		return "SKILL.md"
+	}
+	return filepath.ToSlash(filepath.Join(dir, "SKILL.md"))
+}
+
+func upsertRepoTuskerPointers(repoPath, vaultArg string) ([]repoPointerUpdate, error) {
+	vaultPath, err := repoTuskerVaultPath(repoPath, vaultArg)
+	if err != nil {
+		return nil, err
+	}
+	readmeLink := repoTuskerReadmeLink(repoPath, vaultPath)
+	var updates []repoPointerUpdate
+	for _, filename := range []string{"AGENTS.md", "CLAUDE.md"} {
+		filePath := filepath.Join(repoPath, filename)
+		changed, err := upsertTuskerPointer(filePath, readmeLink)
+		if err != nil {
+			return nil, err
+		}
+		if changed != "" {
+			updates = append(updates, repoPointerUpdate{path: filePath, action: changed})
+		}
+	}
+	return updates, nil
+}
+
+func repoTuskerReadmeLink(repoPath, vaultPath string) string {
+	vaultRelative := "tusker"
+	if vaultPath != "" {
+		vaultRelative = relativeFromRepo(repoPath, vaultPath)
+	}
+	readmeLink := "README.md"
+	if vaultRelative != "" {
+		readmeLink = filepath.ToSlash(filepath.Join(vaultRelative, "README.md"))
+	}
+	return readmeLink
+}
+
+func repoTuskerVaultPath(repoPath, vaultArg string) (string, error) {
+	if strings.TrimSpace(vaultArg) != "" {
+		return filepath.Abs(vaultArg)
+	}
+	if discovered, _ := discoverVault(repoPath); discovered != "" {
+		return discovered, nil
+	}
+	return filepath.Join(repoPath, "tusker"), nil
+}
+
+func repoPointerUpdatePaths(updates []repoPointerUpdate) []string {
+	paths := make([]string, 0, len(updates))
+	for _, update := range updates {
+		paths = append(paths, update.path)
+	}
+	return paths
+}
+
+func repoAgentGuidanceFlatteningWarning(repoPath, vaultArg string, updates []repoPointerUpdate) string {
+	if len(updates) == 0 {
+		return ""
+	}
+	vaultPath, err := repoTuskerVaultPath(repoPath, vaultArg)
+	if err != nil || fileExists(filepath.Join(vaultPath, "SKILL.md")) {
+		return ""
+	}
+	audit, err := auditV7AgentGuidance(repoPath, vaultPath)
+	if err != nil || len(audit.Findings) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("non-managed AGENTS/CLAUDE guidance exists but %s is missing; run `tusker skill audit-agent-guidance --repo %s --write` before flattening root guidance", filepath.ToSlash(filepath.Join(relativeFromRepo(repoPath, vaultPath), "SKILL.md")), repoPath)
 }
 
 func upsertTuskerPointer(filePath, readmeLink string) (string, error) {

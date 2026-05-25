@@ -2,13 +2,13 @@
 
 Compact catalog of exported docs.
 
-- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-05-20
+- Repository Overview | /developer/repository/repository-overview/ | audience: developer | updated: 2026-05-25
   High-level overview of the Tusker repository, install modes, and key entry points.
 
 - Closeout Protocol | /user/reference/closeout-protocol/ | audience: user | updated: 2026-05-20
   This protocol prevents token-burning loops when machine work is complete but the task still has human, reviewer, or external gates.
 
-- Commands | /user/reference/commands/ | audience: user | updated: 2026-05-20
+- Commands | /user/reference/commands/ | audience: user | updated: 2026-05-25
   Most commands accept [--vault <path>]. Omit it unless discovery fails.
 
 - Engineering Discipline | /user/reference/engineering-discipline/ | audience: user | updated: 2026-05-18
@@ -20,7 +20,7 @@ Compact catalog of exported docs.
 - Quick Mode | /user/reference/quick-mode/ | audience: user | updated: 2026-05-20
   The low-ceremony path for logging work, finding follow-ups, and closing routine tasks without burning context.
 
-- Repo Contract | /user/reference/repo-contract/ | audience: user | updated: 2026-05-18
+- Repo Contract | /user/reference/repo-contract/ | audience: user | updated: 2026-05-21
   The vault is internal working memory. The repository is still where contributors land.
 
 - Resources | /user/reference/resources/ | audience: user | updated: 2026-05-20
@@ -32,7 +32,7 @@ Compact catalog of exported docs.
 - Workflow | /user/reference/workflow/ | audience: user | updated: 2026-05-20
   Short reference for the V7 task lifecycle.
 
-- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-05-20
+- Agent Workflow | /user/start-here/agent-workflow/ | audience: user | updated: 2026-05-21
   Operating contract for agents working with Tusker in a markdown-first vault.
 
 - Skill Bundle | /user/start-here/skill-bundle/ | audience: user | updated: 2026-05-20

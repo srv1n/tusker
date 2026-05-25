@@ -137,7 +137,7 @@ func parseCLI(argv []string) (string, Args) {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "projects", "runs", "context", "migrate", "hook", "legacy":
+	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve":
 		return true
 	default:
 		return false
@@ -228,6 +228,19 @@ func run(command string, args Args) (int, error) {
 		return 0, gateV7Cmd(args)
 	case "proof":
 		return 0, proofV7Cmd(args)
+	case "feedback":
+		return 0, feedbackV7Cmd(args)
+	case "feedback add":
+		args["_pos0"] = "add"
+		return 0, feedbackV7Cmd(args)
+	case "feedback digest":
+		args["_pos0"] = "digest"
+		return 0, feedbackV7Cmd(args)
+	case "improve":
+		return 0, improveV7Cmd(args)
+	case "improve scan":
+		args["_pos0"] = "scan"
+		return 0, improveV7Cmd(args)
 	case "closeout", "closeout status":
 		return 0, closeoutV7Cmd(args)
 	case "evidence":
@@ -243,6 +256,9 @@ func run(command string, args Args) (int, error) {
 	case "verify":
 		if strings.ToLower(args.String("_pos0")) == "add" {
 			return 0, verifyV7AddCmd(args)
+		}
+		if strings.ToLower(args.String("_pos0")) == "recipe" {
+			return 0, verifyV7RecipeCmd(args)
 		}
 		return legacyOnlyCommand("verify", "legacy verify")
 	case "close":
@@ -412,6 +428,8 @@ func run(command string, args Args) (int, error) {
 		return 0, skillV7RouteCmd(args)
 	case "skill pack":
 		return 0, skillV7PackCmd(args)
+	case "skill audit-agent-guidance":
+		return skillV7AuditAgentGuidanceCmd(args)
 	case "skill":
 		printSkillHelp()
 		return 0, nil
@@ -552,6 +570,12 @@ func run(command string, args Args) (int, error) {
 	case "help handoff", "help gate", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help hook", "help hook install", "help migrate", "help migrate v7", "help migrate gates":
 		printV7Help()
 		return 0, nil
+	case "help feedback":
+		printFeedbackHelp()
+		return 0, nil
+	case "help improve", "help improve scan":
+		printImproveHelp()
+		return 0, nil
 	case "help verify":
 		printVerifyHelp()
 		return 0, nil
@@ -670,6 +694,8 @@ Commands:
   claim               create a V7 local lease
   evidence            add V7 evidence records
   gate                list/satisfy/waive/obsolete V7 gates
+  feedback            add agent feedback notes and generate digests
+  improve             opt-in scans for repeated work worth packaging
   attempt             start or hand off V7 attempts
   handoff             hand off the latest V7 attempt for a task
   brief               print V7 human briefs
@@ -704,6 +730,8 @@ Help:
   tusker status --help
   tusker install --help
   tusker gate --help
+  tusker feedback --help
+  tusker improve --help
   tusker packet --help
   tusker skill --help
   tusker legacy --help
@@ -728,6 +756,10 @@ func printCommandHelp(command string) bool {
 		printEvidenceHelp()
 	case "handoff", "finish", "gate", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
 		printV7Help()
+	case "feedback", "feedback add", "feedback digest":
+		printFeedbackHelp()
+	case "improve", "improve scan":
+		printImproveHelp()
 	case "verify":
 		printVerifyHelp()
 	case "close":
@@ -752,7 +784,7 @@ func printCommandHelp(command string) bool {
 		printDomainHelp()
 	case "knowledge", "knowledge map", "knowledge list", "knowledge show", "knowledge route", "knowledge freshness", "knowledge check", "knowledge apply", "knowledge noop", "knowledge waive", "knowledge new":
 		printKnowledgeHelp()
-	case "skill", "skill doctor", "skill route", "skill pack":
+	case "skill", "skill doctor", "skill route", "skill pack", "skill audit-agent-guidance":
 		printSkillHelp()
 	case "publish", "publish export", "publish build", "publish dev", "publish llms", "publish skill":
 		printPublishHelp()
@@ -985,6 +1017,7 @@ func printSkillHelp() {
 	fmt.Println(`Usage:
   tusker skill doctor [--strict] [--json]
   tusker skill doctor --package <path> [--strict] [--json]
+  tusker skill audit-agent-guidance [--repo <path>] [--write|--draft] [--target feedback|knowledge] [--json]
   tusker skill route "<intent>" [--json]
   tusker skill pack <TASK-ID> --budget <n> --for agent
 
@@ -993,10 +1026,13 @@ Purpose:
   package, domain routes, docs publication sources, forbidden source-truth
   paths, local absolute paths, and task-domain coverage. skill route returns the
   smallest ordered read set for an intent. skill pack is an explicit wrapper
-  over tusker packet for bounded task context.
+  over tusker packet for bounded task context. audit-agent-guidance finds
+  non-managed AGENTS.md/CLAUDE.md guidance, detects stale/missing Tusker
+  bootstrap blocks, and --write refreshes managed bootstrap guidance.
 
 Examples:
   tusker skill doctor --strict --json
+  tusker skill audit-agent-guidance --write
   tusker skill route "change provider auth refresh logic" --json
   tusker skill pack VSD-T-0010 --budget 6000 --for agent`)
 }
@@ -1202,15 +1238,17 @@ Notes:
 
 func printNextHelp() {
 	fmt.Println(`Usage:
-  tusker next [--vault <path>] [--epic <ACR>] [--owner <name>] [--json]
-  tusker next --claim --as <agent-or-person> [--vault <path>] [--epic <ACR>] [--json]
+  tusker next [--vault <path>] [--epic <ACR>] [--owner <name>] [--domain <name>] [--lane <name>] [--explain] [--json]
+  tusker next --claim --as <agent-or-person> [--vault <path>] [--epic <ACR>] [--domain <name>] [--lane <name>] [--json]
 
 Purpose:
   Return the next pickable V7 task. Pickable means status ready or rework,
-  readiness ready, and next_owner matching --owner when provided.
+  readiness ready, next_owner agent or agent:*, and exact --owner match when provided.
+  --domain matches the task domains list. --lane matches lane or lanes frontmatter.
 
 Ranking:
   priority first (p0 before p1), then risk (critical before high), then task id.
+  --explain prints the selected task plus skipped candidates and reasons.
   --claim uses the same rules, then writes a V7 local lease.`)
 }
 
@@ -1238,12 +1276,21 @@ Purpose:
 
 func printVerifyHelp() {
 	fmt.Println(`Usage:
-  tusker verify add <task-id> --covers A1,A2 --check <command-or-manual-check> --result pass [--note <text>]
+  tusker verify add <task-id> --covers A1,A2 --check <command-or-manual-check> --result pass|fail|blocked|skipped|waived [--note <text>]
+  tusker verify add <task-id> --rows "A1|go test ./pkg|pass|note"
+  tusker verify add <task-id> --batch-file <path>
+  tusker verify recipe <task-id> [--files <path[,path...]>]
   tusker verify <id> [--vault <path>] [--by <name>] [--summary <text>]
   tusker verify --id <id> [--vault <path>] [--by <name>] [--summary <text>]
 
 Purpose:
-  Add inline V7 verification rows, or record legacy V5 verification on a task in review status.`)
+  Add inline V7 verification rows, suggest scoped verification recipes, or
+  record legacy V5 verification on a task in review status.
+
+Options:
+  --blocked-by <path|task|owner>  Required with --result blocked; attributes external/shared blockers.
+  --rows <rows>                   Newline rows shaped covers|check|result|note|blocked_by.
+  --batch-file <path>             Read rows from a file using the same format.`)
 }
 
 func printCloseHelp() {
@@ -1258,15 +1305,18 @@ Purpose:
 
 func printListHelp() {
 	fmt.Println(`Usage:
-  tusker list [--vault <path>] [--json] [--type epic|task|doc] [--status <status>] [--epic <ACR>] [--open|--closed] [--limit <n>]
+  tusker list [--vault <path>] [--json] [--type epic|task|doc] [--status <status>] [--epic <ACR>] [--open|--closed] [--runnable] [--limit <n>]
 
 Purpose:
   Query V5 epics, tasks, and docs from the vault without reading note bodies.
-  Start with epics, then drill into one epic's open tasks.
+  Start with epics, then drill into one epic's open tasks. Use --runnable for
+  V7 agent-runnable tasks only: task kind, status ready/rework, readiness ready,
+  and next_owner agent or agent:*.
 
 Examples:
   tusker list --vault ./tusker
   tusker list --vault ./tusker --type epic
+  tusker list --vault ./tusker --runnable
   tusker list --vault ./tusker --epic ORC --type task --open
   tusker list --vault ./tusker --epic ORC --type task --open --limit 10
   tusker list --vault ./tusker --type task --status active

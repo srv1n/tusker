@@ -16,8 +16,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-05-15T04:45:46Z"
-updated_at: "2026-05-19T06:18:52Z"
-state_rev: "sha256:02fc002bd7d97e19f1b7464c32894246f2d6584db6a978cd679d8f485a49821e"
+updated_at: "2026-05-25T02:50:53Z"
+state_rev: "sha256:5b05c71e4d59e5928a139c6bd487f34f1c507719cbc8d44b5b33500157215af0"
 ---
 
 # VSD · Ship V7 as the default Tusker model
@@ -75,6 +75,10 @@ No backward compatibility requirement for the V7 release cut. Prefer hard deleti
 | [[VSD-T-0019]] | ready | blocked_dependency | Wait for dependency VSD-T-0016 to reach done. |
 | [[VSD-T-0020]] | ready | blocked_dependency | Wait for dependency VSD-T-0016 to reach done. |
 | [[VSD-T-0021]] | ready | blocked_dependency | Wait for dependency VSD-T-0016 to reach done. |
+| [[VSD-T-0029]] | review | reviewer | Review evidence and close or return to rework. |
+| [[VSD-T-0030]] | review | reviewer | Review evidence and close or return to rework. |
+| [[VSD-T-0031]] | review | reviewer | Review evidence and close or return to rework. |
+| [[VSD-T-0032]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 

@@ -33,51 +33,69 @@ func closeoutV7StatusCmd(args Args) error {
 	latest, hasCloseout := latestV7Closeout(idx, stringField(task.Data, "id"))
 	fingerprint := v7CloseoutFingerprint(vaultPath, task, idx, latest)
 	checkpointValid := false
+	packetExists := false
 	if hasCloseout {
 		checkpointValid = v7CloseoutCheckpointValid(vaultPath, task, idx, latest)
+		packetExists = v7CloseoutPacketExists(vaultPath, latest)
 	}
 	packetPaths := v7CloseoutPacketPaths(latest)
+	terminalHumanWait := v7CloseoutStatusTerminalHumanWait(task, report)
 	agentAction := "continue"
-	if checkpointValid {
+	if terminalHumanWait {
 		agentAction = "stop_until_human_response"
 	}
 	payload := map[string]any{
-		"ok":                  true,
-		"task":                stringField(task.Data, "id"),
-		"agent_action":        agentAction,
-		"proof_agent_action":  report.AgentAction,
-		"terminal_wait":       report.TerminalWait,
-		"fingerprint":         fingerprint,
-		"fingerprint_matches": false,
-		"checkpoint_valid":    checkpointValid,
-		"validation_clean":    false,
-		"packet_exists":       false,
-		"machine_missing":     report.MachineMissing,
-		"human_missing":       report.HumanMissing,
-		"reviewer_missing":    report.ReviewerMissing,
-		"external_missing":    report.ExternalMissing,
-		"open_human_gates":    report.OpenHumanGates,
-		"review_packets":      packetPaths,
+		"ok":                   true,
+		"task":                 stringField(task.Data, "id"),
+		"agent_action":         agentAction,
+		"proof_agent_action":   report.AgentAction,
+		"terminal_wait":        report.TerminalWait,
+		"fingerprint":          fingerprint,
+		"fingerprint_matches":  false,
+		"checkpoint_exists":    hasCloseout,
+		"checkpoint_valid":     checkpointValid,
+		"checkpoint_needed":    terminalHumanWait && !checkpointValid,
+		"validation_clean":     false,
+		"packet_exists":        packetExists,
+		"packet_needed":        terminalHumanWait && !packetExists,
+		"machine_complete":     v7ProofReportMachineComplete(report),
+		"human_action_pending": terminalHumanWait,
+		"machine_missing":      report.MachineMissing,
+		"human_missing":        report.HumanMissing,
+		"reviewer_missing":     report.ReviewerMissing,
+		"external_missing":     report.ExternalMissing,
+		"open_human_gates":     report.OpenHumanGates,
+		"review_packets":       packetPaths,
 	}
 	if hasCloseout {
 		payload["closeout"] = stringField(latest.Data, "id")
 		payload["closeout_state"] = stringField(latest.Data, "state")
 		payload["fingerprint_matches"] = stringField(latest.Data, "state_fingerprint") == fingerprint
 		payload["validation_clean"] = v7CloseoutValidationClean(latest)
-		payload["packet_exists"] = v7CloseoutPacketExists(vaultPath, latest)
 	}
 	if args.Bool("json") {
 		emitJSON(payload)
 		return nil
 	}
-	if payload["agent_action"] == "stop_until_human_response" && payload["fingerprint_matches"] == true {
+	if terminalHumanWait {
 		fmt.Printf("Machine work is complete for %s.\n", stringField(task.Data, "id"))
-		fmt.Printf("Remaining human gates: %s\n", fallback(strings.Join(report.OpenHumanGates, ", "), "none"))
+		fmt.Printf("Human action pending: %s\n", fallback(strings.Join(v7CloseoutHumanPending(report), ", "), "human review"))
 		fmt.Println("Agent action: stop_until_human_response")
-		fmt.Printf("Closeout: %s\n", payload["closeout"])
+		if checkpointValid {
+			fmt.Printf("Closeout checkpoint: valid (%s)\n", stringField(latest.Data, "id"))
+		} else if hasCloseout {
+			fmt.Printf("Closeout checkpoint: needed (latest %s is not valid for current state)\n", stringField(latest.Data, "id"))
+		} else {
+			fmt.Println("Closeout checkpoint: needed")
+		}
+		if packetExists {
+			fmt.Printf("Review packet: present (%s)\n", fallback(strings.Join(packetPaths, ", "), "recorded"))
+		} else {
+			fmt.Println("Review packet: needed")
+		}
 		return nil
 	}
-	fmt.Printf("%s closeout status: terminal_wait=%t fingerprint_matches=%t\n", stringField(task.Data, "id"), report.TerminalWait, payload["fingerprint_matches"] == true)
+	fmt.Printf("%s closeout status: terminal_wait=%t machine_complete=%t checkpoint_valid=%t\n", stringField(task.Data, "id"), report.TerminalWait, v7ProofReportMachineComplete(report), checkpointValid)
 	return nil
 }
 
@@ -439,6 +457,22 @@ func v7CloseoutTerminalReport(vaultPath string, task Note, report v7ProofReport)
 	report.AgentAction = "stop_until_human_response"
 	report.HumanMissing = uniqueStrings(append(report.HumanMissing, "close_policy:human_acceptor"))
 	return report, true
+}
+
+func v7CloseoutStatusTerminalHumanWait(task Note, report v7ProofReport) bool {
+	if !report.TerminalWait || !v7ProofReportMachineComplete(report) {
+		return false
+	}
+	switch stringField(task.Data, "status") {
+	case "rework", "done", "cancelled", "superseded":
+		return false
+	default:
+		return true
+	}
+}
+
+func v7CloseoutHumanPending(report v7ProofReport) []string {
+	return uniqueStrings(append(append([]string{}, report.HumanMissing...), report.OpenHumanGates...))
 }
 
 func v7ClosePolicyHumanWait(vaultPath string, task Note, report v7ProofReport) bool {

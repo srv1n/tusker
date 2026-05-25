@@ -1,0 +1,16 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-25T02:50:42Z",
+  "event_kind": "verification_added",
+  "id": "01KSEGNC6FHZ39J2WKAN62MCWV",
+  "object": "VSD-T-0032",
+  "object_kind": "task",
+  "payload": {
+    "blocked_by": "",
+    "check": "go test ./cmd/tusker -run 'TestImproveScan' -count=1",
+    "covers": "A1-A7",
+    "result": "pass"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

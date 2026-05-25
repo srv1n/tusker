@@ -69,8 +69,14 @@ Do not turn `AGENTS.md` into an encyclopedia.
 
 Use it as:
 
-- a short map
-- a rules index
-- a pointer to deeper docs
+- a short bootstrap pointer
+- a repo-local override surface for rules that truly differ from Tusker defaults
+- a pointer to the installed Tusker operator skill and repo `tusker/SKILL.md`
 
-The vault and repo docs should carry the detail.
+The installed Tusker skill carries tracker mechanics and can be refreshed centrally.
+The repo `tusker/SKILL.md` carries project knowledge routing.
+The vault carries durable task proof and history.
+
+Put repo-specific validation commands, command wrappers, build-lock/status commands, and forbidden expensive probes in `tusker/SKILL.md` or routed runbooks. Keep root `AGENTS.md` focused on the managed bootstrap pointer.
+
+Do not copy workflow prose, command tutorials, generated indexes, task history, event paths, evidence logs, or raw terminal output into `AGENTS.md`.

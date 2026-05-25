@@ -1,0 +1,13 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-24T03:00:01Z",
+  "event_kind": "review_requested",
+  "id": "01KSBYSQH8EMYBRE7XD4K7P0ES",
+  "object": "VSD-T-0031",
+  "object_kind": "task",
+  "payload": {
+    "reason": "Ready for independent review after attempt handoff."
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

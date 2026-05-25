@@ -57,6 +57,9 @@ gates explicitly, and request review mechanically when implementation is done.
 - Use `tusker search` before broad repository search when the question is about
   existing tracker work.
 - Use `tusker context audit --file <jsonl>` before raw-reading Codex JSONL.
+- Use `tusker improve scan` only when explicitly asked to package repeated
+  workflows or maintain reusable agent assets; it is not a routine closeout
+  step.
 - Use bounded shell reads: `rg -l`, `rg --count`, narrow globs, capped previews,
   and quiet/JSON build commands for noisy tools.
 - Treat `Attachments/**`, raw runner logs, generated packets, and full build
@@ -123,6 +126,22 @@ Use the lightest lane that preserves truth.
 Do not read attachments, generated indexes, raw runner logs, or full build logs
 unless the user is explicitly asking for evidence forensics. Save large command
 output to a file and bring back only the failure summary or a small tail.
+
+## Improvement Scan Behavior
+
+`tusker improve scan` is the supported way to turn repeated work into reusable
+agent assets.
+
+| Mode | Behavior |
+|---|---|
+| dry-run | Print a shortlist from Tusker history without mutating files. |
+| `--write` | Store the report under `tusker/feedback/improvements/`. |
+| `--apply` | Create high-confidence missing agent runbook drafts under `tusker/docs/agents/`. |
+
+Do not enable Codex sessions, Claude transcripts, Memories, or Chronicle unless
+the user explicitly opts in. When provider/model/reasoning flags are used, treat
+them as runtime profile labels only; do not copy them into task frontmatter or
+make them source truth.
 
 ## Review Lane Behavior
 

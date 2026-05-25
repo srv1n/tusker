@@ -1,0 +1,16 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-24T02:59:54Z",
+  "event_kind": "verification_added",
+  "id": "01KSBYSG61988K0F6NFEBBAYBV",
+  "object": "VSD-T-0031",
+  "object_kind": "task",
+  "payload": {
+    "blocked_by": "",
+    "check": "review tusker/feedback/reviews/2026-05-24-feedback-delivery-summary.md",
+    "covers": "A4",
+    "result": "pass"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

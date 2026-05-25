@@ -1,8 +1,8 @@
 ---
 title: "Overview"
 type: "note"
-created: "2026-05-20"
-updated: "2026-05-20"
+created: "2026-05-25"
+updated: "2026-05-25"
 tags: ["tusker-generated"]
 ---
 
@@ -35,7 +35,7 @@ The design is Codex-first, not Codex-only. Future Claude Code, OpenCode, or othe
 
 # Epic roster
 
-_Auto-generated 2026-05-20T02:08:19Z. This top-level roster intentionally shows epics only. Run `tusker list --type epic` for the live terminal view, then drill into one epic with `tusker list --epic <ACR> --type task --open`._
+_Auto-generated 2026-05-25T02:49:48Z. This top-level roster intentionally shows epics only. Run `tusker list --type epic` for the live terminal view, then drill into one epic with `tusker list --epic <ACR> --type task --open`._
 
 Agents: use this page only to choose the right epic. Do not read every task file. Pick the epic whose summary best matches; if nothing fits and the work will outlive one task, propose a new epic with `tusker new epic --acronym <ACR> --title "<name>" --summary "..."`.
 

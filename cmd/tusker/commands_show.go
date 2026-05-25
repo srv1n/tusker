@@ -40,7 +40,11 @@ func showCmd(args Args) error {
 			fmt.Println()
 		}
 	case "acceptance":
-		printSectionOrFallback(note, "## Acceptance contract")
+		if strings.HasSuffix(stringField(note.Data, "schema"), "/v7") {
+			printSectionOrFallback(note, "## Acceptance")
+		} else {
+			printSectionOrFallback(note, "## Acceptance contract")
+		}
 	case "evidence":
 		printSectionOrFallback(note, "## Evidence")
 	case "verification":
@@ -52,7 +56,7 @@ func showCmd(args Args) error {
 		}
 		printSectionOrFallback(note, heading)
 	default:
-		fmt.Print(renderCapsule(note))
+		fmt.Print(renderCapsuleWithVault(note, vaultPath))
 	}
 	return nil
 }
@@ -120,11 +124,18 @@ func printSectionOrFallback(note Note, heading string) {
 }
 
 func renderCapsule(note Note) string {
+	return renderCapsuleWithVault(note, "")
+}
+
+func renderCapsuleWithVault(note Note, vaultPath string) string {
 	content := strings.TrimSpace(sectionContent(note.Body, "## Agent capsule"))
 	if content == "" {
-		content = synthesizeCapsule(note)
+		content = synthesizeCapsuleWithVault(note, vaultPath)
 	} else if extra := capsuleFrontmatterFacts(note); extra != "" {
 		content = content + "\n" + extra
+	}
+	if attempts := strings.Join(v7TaskAttemptRuntimeLines(vaultPath, note), "\n"); attempts != "" && !strings.Contains(content, "- Attempt:") {
+		content = content + "\n" + attempts
 	}
 	return noteHeaderLine(note) + "\n\n" + content + "\n"
 }
@@ -159,6 +170,10 @@ func capsuleFrontmatterFacts(note Note) string {
 }
 
 func synthesizeCapsule(note Note) string {
+	return synthesizeCapsuleWithVault(note, "")
+}
+
+func synthesizeCapsuleWithVault(note Note, vaultPath string) string {
 	var lines []string
 	noteType := noteDisplayKind(note.Data)
 	switch noteType {
@@ -184,6 +199,7 @@ func synthesizeCapsule(note Note) string {
 				lines = append(lines, "- Packet: `tusker packet "+id+" --for agent`")
 			}
 			lines = append(lines, "- Forbidden paths: task history, evidence, attempts, events, generated indexes, packet caches, raw logs, and local absolute paths.")
+			lines = append(lines, v7TaskAttemptRuntimeLines(vaultPath, note)...)
 		}
 		if intent := firstParagraph(sectionContent(note.Body, "## Intent")); intent != "" {
 			lines = append(lines, "- Intent: "+intent)

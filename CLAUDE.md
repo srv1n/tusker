@@ -1,11 +1,12 @@
 <!-- tusker:epic-index:begin -->
-## Progressive Tusker context
+## Tusker
 
-Start with `tusker list --type epic` to see the short epic roster. Use ``tusker/README.md`` only when the project overview is needed; it intentionally omits task lists from the top-level roster.
+Use Tusker for tracked repo work.
 
-Progressive drill-down: `tusker list --epic <ACR> --type task --open` for one epic's open tasks, then `tusker show <ID> --capsule` for the selected task. Open the full task file only when the capsule is insufficient. Use `tusker search "<term>" --type task` before creating possible duplicates. Use `tusker compact <ID>` as a dry-run before reading or editing old noisy notes.
-
-For Codex transcript/token analysis, use `tusker context audit --file <jsonl>`. For broad repository search, prefer `rg -l`, `rg --count`, narrow globs, or capped output before `rg -n`.
-
-When logging work: pick the epic whose summary best matches, and announce the ID **plus a one-line rationale for the epic choice**. If nothing fits and the work will outlive one task, create a new epic with `tusker new epic --acronym <ACR> --title "<name>" --summary "..."`.
+- Task mechanics live in the installed `tusker` skill.
+- Project knowledge starts at `tusker/SKILL.md`.
+- Start runnable work with `tusker next`; inspect named work with `tusker show <TASK-ID> --capsule`.
+- Do not read `tusker/events`, `_generated`, `attempts`, `evidence`, `Attachments`, raw logs, or full task files unless the task explicitly requires it.
+- Keep proof compact: use capsules, path-scoped status/search, and command + PASS/FAIL summaries; put noisy logs in `.tusker/scratch/<TASK-ID>/`.
+- Record concise Tusker/product friction with `tusker feedback add`; skip routine progress reports.
 <!-- tusker:epic-index:end -->

@@ -288,6 +288,8 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 	runCLI("new", "task", "--epic", "APP", "--title", "Human next action", "--next-owner", "human:sarav")
 	runCLI("new", "task", "--epic", "APP", "--title", "Reviewer next action", "--next-owner", "reviewer")
 	runCLI("new", "task", "--epic", "APP", "--title", "Agent next action", "--next-owner", "agent")
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0004")
 	runCLI("new", "gate", "--blocks", "APP-T-0001", "--kind", "auth", "--owner", "human:sarav", "--action", "Complete OAuth.", "--verification", "Provider endpoint returns ready.")
 	runCLI("new", "gate", "--blocks", "APP-T-0002", "--kind", "setup", "--owner", "human:sarav", "--action", "Prepare setup.", "--verification", "Setup is available.")
 	runCLI("new", "gate", "--blocks", "APP-T-0003", "--kind", "verification", "--owner", "reviewer", "--action", "Review proof.", "--verification", "Reviewer accepts proof.")
@@ -295,8 +297,8 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 
 	runCLI("gate", "list", "--open")
 	runCLI("gate", "list", "--owner", "human:sarav")
-	runCLI("next", "--owner", "human:sarav")
-	runCLI("next", "--owner", "reviewer")
+	runCLI("list", "--runnable")
+	runCLI("next", "--owner", "agent")
 	runCLI("gate", "satisfy", "APP-G-0001", "--evidence", "Provider ready endpoint returned OpenAI model.")
 	runCLI("gate", "waive", "APP-G-0002", "--reason", "Live smoke deferred to release candidate.")
 	runCLI("gate", "obsolete", "APP-G-0003", "--reason", "Task superseded.")
@@ -310,7 +312,7 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 	runCLI("propose", "close", "APP-T-0001", "--reason", "Implementation branch is ready.")
 	runCLI("proposal", "list", "--target", "APP-T-0001")
 	runCLI("proposal", "accept", "APP-P-0001", "--by", "human:sarav")
-	runCLI("packet", "APP-T-0001", "--for", "agent")
+	runCLI("packet", "APP-T-0001", "--for", "agent", "--force")
 	runCLI("packet", "APP-T-0001", "--for", "reviewer")
 	runCLI("brief", "APP-T-0001")
 	runCLI("brief", "--owner", "human:sarav")
@@ -355,6 +357,7 @@ func TestV7TopLevelDefaultsAndLegacyRouting(t *testing.T) {
 
 	runCLI("new", "epic", "--vault", vault, "--acronym", "APP", "--title", "App V7")
 	runCLI("new", "task", "--vault", vault, "--epic", "APP", "--title", "V7 default task", "--risk", "low", "--priority", "p2", "--evidence-required", "automated_test")
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	assertExists(t, filepath.Join(vault, "work", "epics", "APP.md"))
 	assertExists(t, filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
 	for _, legacyPath := range []string{
@@ -476,6 +479,9 @@ func TestV7ProfileInitCreatesSkillShapedKnowledgeVault(t *testing.T) {
 	}
 	assertEqual(t, "tusker.project-skill/v7", stringField(data, "schema"), "project skill schema")
 	assertContainsIndexTest(t, body, "Tusker operator skill")
+	assertContainsIndexTest(t, body, "## Repo Command Policy")
+	assertContainsIndexTest(t, body, "build-lock/status commands")
+	assertContainsIndexTest(t, body, "managed Tusker bootstrap pointers")
 	assertContainsIndexTest(t, body, "knowledge/domains/project/INDEX.md")
 	assertContainsIndexTest(t, body, "knowledge/domains/project/CANON.md")
 	if code, err := validateCmd(Args{"vault": vault, "json": "true"}); err != nil || code != 0 {
@@ -546,6 +552,8 @@ func TestV7PublishSkillExportsKnowledgeBundleAndFiltersProofState(t *testing.T) 
 	}
 	assertContainsIndexTest(t, exportedBody, "knowledge/domains/providers/INDEX.md")
 	assertContainsIndexTest(t, exportedBody, "knowledge/domains/providers/CANON.md")
+	assertContainsIndexTest(t, exportedBody, "## Repo Command Policy")
+	assertContainsIndexTest(t, exportedBody, "token/noise wrappers")
 }
 
 func TestV7PublishSkillRejectsUnsafeOutputPaths(t *testing.T) {
@@ -2121,6 +2129,7 @@ func TestV7SkillKnowledgeEndToEnd(t *testing.T) {
 	runCLI("domain", "new", "providers", "--v7", "--vault", vault, "--title", "Providers", "--summary", "Provider integrations.")
 	runCLI("new", "epic", "APP", "--vault", vault, "--title", "App V7")
 	runCLI("new", "task", "--vault", vault, "--epic", "APP", "--title", "Route provider work", "--domains", "providers", "--risk", "low", "--priority", "p2")
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	agentPacket := runCLI("packet", "APP-T-0001", "--vault", vault, "--for", "agent")
 	reviewerPacket := runCLI("packet", "APP-T-0001", "--vault", vault, "--for", "reviewer")
 	out := filepath.Join(repo, "dist", "project-skill")
@@ -2204,6 +2213,7 @@ func TestV7SkillDoctorRouteAndPack(t *testing.T) {
 	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Refresh provider auth", "domains": "providers", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	if code, err := skillV7DoctorCmd(Args{"vault": vault, "strict": "true", "json": "true"}); err != nil || code != 0 {
 		t.Fatalf("skill doctor failed: code=%d err=%v", code, err)
 	}

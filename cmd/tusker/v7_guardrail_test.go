@@ -106,6 +106,55 @@ func TestV7GuardrailFailureHintsAreAgentLegible(t *testing.T) {
 	}
 }
 
+func TestV7GuardrailVerificationTablePassRowsAreStructuredProof(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "tusker")
+	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Join([]string{
+		"## Acceptance",
+		"",
+		"| ID | Outcome | Proof |",
+		"|---|---|---|",
+		"| A1 | Define the outcome. | Inline verification |",
+		"",
+		"## Verification",
+		"",
+		"| Covers | Check | Result | Notes |",
+		"|---|---|---|---|",
+		"| A1 | go test ./cmd/tusker -run TestOne -count=1 | pass | Focused proof passed. |",
+		"| A1 | go test ./cmd/tusker -run TestTwo -count=1 | pass | Focused proof passed. |",
+		"| A1 | go test ./cmd/tusker -run TestThree -count=1 | pass | Focused proof passed. |",
+		"| A1 | go test ./cmd/tusker -run TestFour -count=1 | pass | Focused proof passed. |",
+		"| A1 | go test ./cmd/tusker -run TestFive -count=1 | pass | Focused proof passed. |",
+	}, "\n")
+	note := Note{
+		Data: map[string]any{
+			"schema":      "tusker.task/v7",
+			"kind":        "task",
+			"id":          "APP-T-0001",
+			"project":     "tusker",
+			"title":       "Structured proof rows",
+			"epic":        "APP",
+			"status":      "ready",
+			"readiness":   "ready",
+			"priority":    "p2",
+			"risk":        "low",
+			"next_owner":  "agent",
+			"next_action": "Execute the task contract.",
+		},
+		Body:         body,
+		RelativePath: "work/tasks/APP-T-0001.md",
+	}
+	errs, warns := validateV7Note(note, validationContext{VaultPath: vault, RelativePath: note.RelativePath}, note.RelativePath)
+	if issuesContainCode(errs, "TASK_RAW_LOG_IN_BODY") {
+		t.Fatalf("verification table pass rows should not count as raw logs, got %#v", errs)
+	}
+	if issuesContainCode(warns, "VERIFICATION_PROOF_MISSING") {
+		t.Fatalf("command-shaped verification rows should satisfy exact proof guidance, got %#v", warns)
+	}
+}
+
 func TestV7GuardrailSkillPackageEnforcesHardStopCloseoutContract(t *testing.T) {
 	repo := repoRootForFreshCloneTest(t)
 	required := map[string][]string{
@@ -117,6 +166,9 @@ func TestV7GuardrailSkillPackageEnforcesHardStopCloseoutContract(t *testing.T) {
 			"readiness: held",
 			"Revalidation while waiting on human",
 			"Final Response Shape For Human Wait",
+			"repo `AGENTS.md` / `CLAUDE.md` as bootstrap pointers only",
+			"installed Tusker operator skill owns tracker mechanics",
+			"repo `tusker/SKILL.md` owns project knowledge routing",
 		},
 		".agents/skills/tusker/SKILL.md": {
 			"Hard Stop Rule",
@@ -126,6 +178,9 @@ func TestV7GuardrailSkillPackageEnforcesHardStopCloseoutContract(t *testing.T) {
 			"readiness: held",
 			"Revalidation while waiting on human",
 			"Final Response Shape For Human Wait",
+			"repo `AGENTS.md` / `CLAUDE.md` as bootstrap pointers only",
+			"installed Tusker operator skill owns tracker mechanics",
+			"repo `tusker/SKILL.md` owns project knowledge routing",
 		},
 		".claude/skills/tusker/SKILL.md": {
 			"Hard Stop Rule",
@@ -135,6 +190,9 @@ func TestV7GuardrailSkillPackageEnforcesHardStopCloseoutContract(t *testing.T) {
 			"readiness: held",
 			"Revalidation while waiting on human",
 			"Final Response Shape For Human Wait",
+			"repo `AGENTS.md` / `CLAUDE.md` as bootstrap pointers only",
+			"installed Tusker operator skill owns tracker mechanics",
+			"repo `tusker/SKILL.md` owns project knowledge routing",
 		},
 		"skill/references/CLOSEOUT_PROTOCOL.md": {
 			"Gap ownership",

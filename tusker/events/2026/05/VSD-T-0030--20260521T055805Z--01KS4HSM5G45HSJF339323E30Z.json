@@ -1,0 +1,15 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-21T05:58:05Z",
+  "event_kind": "verification_added",
+  "id": "01KS4HSM5G45HSJF339323E30Z",
+  "object": "VSD-T-0030",
+  "object_kind": "task",
+  "payload": {
+    "check": "go test ./cmd/tusker -run 'TestV7(NewTaskRejectsLegacyTaskIDBeforeWriting|GeneratedTaskIDSkipsConfiguredLegacyRootCollision|ValidateReportsMixedLayoutTaskCollisionRepair|ProtectedActiveStatusExplainsAttemptFlowAndCapsuleRuntime|SkillAuditAgentGuidanceClassifiesAndWritesDraft)$' -count=1",
+    "covers": "A1",
+    "result": "pass"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

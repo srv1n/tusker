@@ -854,6 +854,7 @@ func validateCmd(args Args) (int, error) {
 	v7SkillErrs, v7SkillWarns := validateV7SkillKnowledge(vaultPath)
 	errs = append(errs, v7SkillErrs...)
 	warns = append(warns, v7SkillWarns...)
+	warns = append(warns, validateV7FeedbackNotes(vaultPath)...)
 	idToPaths := map[string][]string{}
 	idCollisionLabels := map[string]string{}
 	publishPathToPaths := map[string][]string{}
@@ -879,7 +880,11 @@ func validateCmd(args Args) (int, error) {
 	for id, paths := range idToPaths {
 		if len(paths) > 1 {
 			label := firstNonEmpty(idCollisionLabels[id], id)
-			errs = append(errs, issue(errorIDCollision, fmt.Sprintf(`id "%s" declared in %d files: %s`, label, len(paths), strings.Join(paths, ", ")), paths[0], "rename one file or change one id; ids must be unique within their active schema namespace", map[string]any{"id": label, "paths": paths}))
+			hint := "rename one file or change one id; ids must be unique within their active schema namespace"
+			if v7MixedLayoutTaskIDCollision(paths) {
+				hint = fmt.Sprintf("mixed V5/V7 task collision: keep exactly one %s; move or rename the legacy tusker/epics/** task, or rename tusker/work/tasks/%s.md and update links before rerunning `tusker validate`", label, label)
+			}
+			errs = append(errs, issue(errorIDCollision, fmt.Sprintf(`id "%s" declared in %d files: %s`, label, len(paths), strings.Join(paths, ", ")), paths[0], hint, map[string]any{"id": label, "paths": paths}))
 		}
 	}
 	for publishPath, paths := range publishPathToPaths {
@@ -918,6 +923,9 @@ func validateCmd(args Args) (int, error) {
 		branchErrs, branchWarns := validateV7BranchPolicy(vaultPath, args)
 		errs = append(errs, branchErrs...)
 		warns = append(warns, branchWarns...)
+	}
+	if args.Bool("dispatchable") {
+		errs = append(errs, validateV7DispatchableTasks(vaultPath)...)
 	}
 	docsErrs, docsWarns := validateDocsPublicationState(vaultPath, notes)
 	errs = append(errs, docsErrs...)
@@ -968,6 +976,21 @@ func validationIDCollisionKey(note Note) string {
 	}
 }
 
+func v7MixedLayoutTaskIDCollision(paths []string) bool {
+	hasV7Task := false
+	hasLegacyTask := false
+	for _, path := range paths {
+		normalized := filepath.ToSlash(path)
+		if strings.Contains(normalized, "work/tasks/") {
+			hasV7Task = true
+		}
+		if strings.Contains(normalized, "epics/") && !strings.Contains(normalized, "work/epics/") {
+			hasLegacyTask = true
+		}
+	}
+	return hasV7Task && hasLegacyTask
+}
+
 func fenceLegacyV6DocsImpactForV7(errs, warns []Issue) ([]Issue, []Issue) {
 	var remaining []Issue
 	for _, current := range errs {
@@ -1002,6 +1025,7 @@ func listCmd(args Args) error {
 	assignee := args.String("assignee")
 	openOnly := args.Bool("open")
 	closedOnly := args.Bool("closed")
+	runnableOnly := args.Bool("runnable")
 	limit := atoiSafe(args.String("limit"))
 	if limit < 0 {
 		limit = 0
@@ -1040,6 +1064,9 @@ func listCmd(args Args) error {
 		if closedOnly && isOpenWorkStatus(stringField(note.Data, "status")) {
 			continue
 		}
+		if runnableOnly && !isV7RunnableAgentTask(note) {
+			continue
+		}
 		if assignee != "" && stringField(note.Data, "assignee") != assignee {
 			continue
 		}
@@ -1061,6 +1088,8 @@ func listCmd(args Args) error {
 				"title":         stringField(note.Data, "title"),
 				"type":          currentType,
 				"status":        stringField(note.Data, "status"),
+				"readiness":     stringField(note.Data, "readiness"),
+				"next_owner":    stringField(note.Data, "next_owner"),
 				"record_id":     stringField(note.Data, "record_id"),
 				"work_revision": intField(note.Data, "work_revision"),
 				"epic": func() string {
@@ -1097,7 +1126,15 @@ func listCmd(args Args) error {
 			}
 			continue
 		}
-		fmt.Printf("%-14s  %-6s  %-10s  %s\n", stringField(note.Data, "id"), currentType, stringField(note.Data, "status"), stringField(note.Data, "title"))
+		fmt.Printf(
+			"%-14s  %-6s  %-10s  %-18s  %-18s  %s\n",
+			stringField(note.Data, "id"),
+			currentType,
+			stringField(note.Data, "status"),
+			fallback(stringField(note.Data, "readiness"), "-"),
+			fallback(stringField(note.Data, "next_owner"), "-"),
+			stringField(note.Data, "title"),
+		)
 	}
 	if len(rows) == 0 && !args.Bool("quiet") {
 		fmt.Println("(no matches)")

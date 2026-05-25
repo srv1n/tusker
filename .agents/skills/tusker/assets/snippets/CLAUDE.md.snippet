@@ -9,3 +9,4 @@ Invoke the `tusker` skill when work affects planning, tracked implementation, PR
 - Revalidate only after mutation, gate/evidence/task state change, stale fingerprint, or explicit user request.
 - If only human/external gates remain, report the packet and stop. Do not inspect files, spawn subagents, or re-run validation.
 - Do not load attachments, generated indexes, raw runner logs, or full build logs unless the task specifically requires evidence forensics.
+- Prefer path-scoped status/search, repo-configured command wrappers, and lock/status commands; summarize validation as command + PASS/FAIL.

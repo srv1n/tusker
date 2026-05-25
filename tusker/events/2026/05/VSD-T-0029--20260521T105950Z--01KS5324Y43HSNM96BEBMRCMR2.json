@@ -1,0 +1,31 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-05-21T10:59:50Z",
+  "event_kind": "updated",
+  "id": "01KS5324Y43HSNM96BEBMRCMR2",
+  "object": "VSD-T-0029",
+  "object_kind": "task",
+  "payload": {
+    "changes": {
+      "next_owner": {
+        "from": "agent",
+        "to": "reviewer"
+      },
+      "next_ref": {
+        "from": "VSD-T-0029",
+        "to": ""
+      },
+      "next_source": {
+        "from": "task",
+        "to": "review_policy"
+      },
+      "readiness": {
+        "from": "ready",
+        "to": "waiting_on_review"
+      }
+    },
+    "source": "task:VSD-T-0029"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

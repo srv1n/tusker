@@ -1,0 +1,52 @@
+{
+  "actor": "tusker:reconcile",
+  "at": "2026-05-25T02:50:31Z",
+  "event_kind": "updated",
+  "id": "01KSEGN1JCTXJKG4CDF2YVFTSS",
+  "object": "VSD-T-0030",
+  "object_kind": "task",
+  "payload": {
+    "changes": {
+      "agent_action": {
+        "from": "stop_until_human_response",
+        "to": ""
+      },
+      "closeout_status": {
+        "from": "machine_complete_waiting_for_human",
+        "to": ""
+      },
+      "human_status": {
+        "from": "pending",
+        "to": ""
+      },
+      "machine_status": {
+        "from": "complete",
+        "to": ""
+      },
+      "next_action": {
+        "from": "Accept, waive, or return rework for close_policy:human_acceptor.",
+        "to": "Review evidence and close or return to rework."
+      },
+      "next_owner": {
+        "from": "human:sarav",
+        "to": "reviewer"
+      },
+      "next_ref": {
+        "from": "close_policy:human_acceptor",
+        "to": ""
+      },
+      "next_source": {
+        "from": "closeout:VSD-T-0030-C-0005",
+        "to": "review_policy"
+      },
+      "readiness": {
+        "from": "waiting_on_human",
+        "to": "waiting_on_review"
+      }
+    },
+    "source": "projection",
+    "state_rev": "sha256:c53e746ee7b2cee6d935c85ebee280452af54f9434b32790445fbb00b0864426"
+  },
+  "project": "tusker",
+  "schema": "tusker.event/v1"
+}

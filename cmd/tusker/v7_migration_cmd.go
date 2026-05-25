@@ -29,6 +29,16 @@ func packetV7Cmd(args Args) error {
 		return tuskerError(errorNotFound, "V7 task not found: "+id)
 	}
 	audience := fallback(args.String("for"), "agent")
+	if audience == "agent" && !args.Bool("force") {
+		if reasons := v7TaskDispatchBlockers(vaultPath, task); len(reasons) > 0 {
+			return tuskerError(
+				errorInvalidTransition,
+				id+": task is not dispatchable",
+				withHint("fix dispatch blockers or pass --force to inspect the packet anyway: "+strings.Join(reasons, "; ")),
+				withContext(map[string]any{"id": id, "dispatch_blockers": reasons}),
+			)
+		}
+	}
 	content := v7Packet(vaultPath, task, idx, audience)
 	if args.Bool("write") {
 		path := filepath.Join(vaultPath, "_generated", "packets", id+"."+audience+".md")

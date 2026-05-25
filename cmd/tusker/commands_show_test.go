@@ -97,6 +97,24 @@ func TestShowSynthesizesV7TaskCapsuleWithRoutingFacts(t *testing.T) {
 	}
 }
 
+func TestShowAcceptanceReadsV7AcceptanceSection(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "vault")
+	if err := bootstrapV7Profile(vault, "v7"); err != nil {
+		t.Fatal(err)
+	}
+	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App foundation", "summary": "Build the app foundation.", "v7": "true"}, newV7Epic)
+	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Capsule task", "risk": "medium", "priority": "p1", "v7": "true"}, newV7Task)
+
+	acceptance := captureStdout(t, func() {
+		if err := showCmd(Args{"vault": vault, "id": "APP-T-0001", "acceptance": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	assertContainsIndexTest(t, acceptance, "| ID | Outcome | Proof |")
+	assertContainsIndexTest(t, acceptance, "Complete the task contract")
+	assertNotContainsIndexTest(t, acceptance, "no Acceptance contract section")
+}
+
 func TestShowVerificationUsesFrontmatterSummaryWithoutLogSection(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
