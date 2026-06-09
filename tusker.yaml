@@ -3,11 +3,11 @@ project_id: tusker
 project_name: Tusker
 
 storage:
-  root: tusker
-  generated_root: tusker/_generated
-  evidence_root: tusker/evidence
-  events_root: tusker/events
-  attempts_root: tusker/attempts
+  root: .tusker
+  generated_root: .tusker/_generated
+  evidence_root: .tusker/evidence
+  events_root: .tusker/events
+  attempts_root: .tusker/attempts
 
 branches:
   default_branch: main
@@ -22,21 +22,58 @@ branches:
 validation:
   task_body_warn_lines: 120
   task_body_fail_lines: 220
+  frontmatter_warn_lines: 80
   require_acceptance_proof: true
   forbid_work_log_section: true
   forbid_raw_logs_in_task: true
   protect_state_fields: true
-  strict_proof_policy: false
+  strict_proof_policy: true
 
 runtime:
   lease_backend: local
   lease_ttl_minutes: 120
+  mutation_mode: single_user_local
 
-orchestration:
+automation:
+  enabled: true
+  trigger_states:
+    - ready
+    - rework
+  default_runner: codex_app_server
+  enabled_runners:
+    - codex_app_server
+    - codex_exec
+    - claude-code
   workspace:
-    kind: git_worktree
-    root: "../.tusker-worktrees"
-    branch_pattern: "agent/{{task_id}}"
+    strategy: worktree
+    root: ../.tusker-worktrees
+  concurrency:
+    max_active_runs: 2
+    max_active_runs_per_project: 1
+    max_concurrent_by_state:
+      rework: 1
+  runners:
+    codex_app_server:
+      kind: codex_app_server
+      command: codex app-server
+      approval_policy: on-request
+      thread_sandbox: workspace-write
+      turn_sandbox_policy: workspace-write
+      turn_timeout_ms: 600000
+      read_timeout_ms: 30000
+      stall_timeout_ms: 120000
+      max_turns: 1
+    codex_exec:
+      kind: codex_exec
+      command: codex exec --skip-git-repo-check -
+    claude-code:
+      kind: claude-code
+      command: claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions
+  fanout:
+    enabled: false
+    max_children: 0
+    allowed_child_types: []
+    merge_rule: manual_review
 
 close_policy:
   low:

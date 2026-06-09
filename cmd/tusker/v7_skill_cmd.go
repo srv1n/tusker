@@ -85,20 +85,11 @@ func skillDoctorIssues(root string, packageMode, strict bool) ([]Issue, []Issue)
 	errs = append(errs, skillDoctorLocalAbsolutePaths(root, packageMode)...)
 	if !packageMode {
 		repoRoot := v7RepoRoot(root)
-		if fileExists(filepath.Join(repoRoot, "go.mod")) || fileExists(filepath.Join(repoRoot, "skill")) || fileExists(filepath.Join(repoRoot, "docs", "publication.yaml")) {
-			for _, rel := range []string{"skill/SKILL.md", "skill/README.md", "docs/publication.yaml"} {
+		if fileExists(filepath.Join(repoRoot, "go.mod")) || fileExists(filepath.Join(repoRoot, "skill")) {
+			for _, rel := range []string{"skill/SKILL.md", "skill/README.md", "skill/references/COMMANDS.md", "skill/references/WORKFLOW.md"} {
 				if !fileExists(filepath.Join(repoRoot, rel)) {
-					errs = append(errs, issue(errorMissingField, "repo skill/docs source is missing: "+rel, rel, "", nil))
+					errs = append(errs, issue(errorMissingField, "repo skill source is missing: "+rel, rel, "", nil))
 				}
-			}
-		}
-		if fileExists(filepath.Join(repoRoot, "docs", "publication.yaml")) {
-			if notes, err := listAllNotes(root); err == nil {
-				docsErrs, docsWarns := validateDocsPublicationState(root, notes)
-				errs = append(errs, docsErrs...)
-				warns = append(warns, docsWarns...)
-			} else if strict {
-				errs = append(errs, issue(errorInvalidField, "could not inspect docs publication state: "+err.Error(), "docs/publication.yaml", "", nil))
 			}
 		}
 	}
@@ -134,7 +125,7 @@ func skillDoctorForbiddenPaths(root string, packageMode bool) []Issue {
 	}
 	for _, rel := range []string{"work", "epics", "evidence", "attempts", "events", "_generated", "_system", "dashboards", "Attachments"} {
 		if fileExists(filepath.Join(root, rel)) {
-			errs = append(errs, issue("SKILL_FORBIDDEN_PATH", "skill package includes forbidden runtime/source-history path: "+rel, rel, "export with `tusker publish skill --v7`", nil))
+			errs = append(errs, issue("SKILL_FORBIDDEN_PATH", "skill package includes forbidden runtime/source-history path: "+rel, rel, "export a package with the V7 skill exporter", nil))
 		}
 	}
 	return errs
@@ -198,7 +189,7 @@ func v7SkillDoctorScope(packageMode bool) []string {
 	if packageMode {
 		return []string{"SKILL.md", "knowledge/domains/**"}
 	}
-	return []string{"tusker/SKILL.md", "tusker/knowledge/domains/**", "docs/publication.yaml", "skill/**"}
+	return []string{defaultRepoVaultDir + "/SKILL.md", defaultRepoVaultDir + "/knowledge/domains/**", "skill/**"}
 }
 
 func skillV7RouteCmd(args Args) error {

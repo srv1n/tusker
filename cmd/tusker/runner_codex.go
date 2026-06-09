@@ -19,7 +19,7 @@ func (r *CodexRunner) Start(ctx context.Context, req StartRequest) (*StartResult
 	}
 	return executeRunnerCommand(ctx, r.Name(), runnerExecRequest{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		WorkRevision: req.WorkRevision, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
 		RepoRoot: req.RepoRoot, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath, Command: req.Command, NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy,
 	}, r.Capabilities())
 }
@@ -36,14 +36,14 @@ func (r *CodexRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeRes
 	if shouldUseLiveCodex(command) {
 		return startLiveCodex(ctx, StartRequest{
 			ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-			WorkRevision: req.WorkRevision, ActiveStates: req.ActiveStates, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
+			Lane: req.Lane, WorkRevision: req.WorkRevision, ActiveStates: req.ActiveStates, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
 			EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 			RepoRoot: req.RepoRoot, Command: command, NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy,
 		}, &req)
 	}
 	return executeRunnerCommand(ctx, r.Name(), runnerExecRequest{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		WorkRevision: req.WorkRevision, SessionRef: req.SessionRef, MessageRef: req.MessageRef, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, SessionRef: req.SessionRef, MessageRef: req.MessageRef, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath,
 		RepoRoot: req.RepoRoot, PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 		Command: command, NotePath: req.NotePath, VaultPath: req.VaultPath, ResumeMode: true, CodexPolicy: req.CodexPolicy,
 	}, r.Capabilities())
@@ -59,5 +59,71 @@ func (r *CodexRunner) Reconcile(ctx context.Context, req ReconcileRequest) (*Rec
 func (r *CodexRunner) Interrupt(ctx context.Context, req InterruptRequest) error { return nil }
 
 func (r *CodexRunner) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
+	return &CollectResult{Artifacts: map[string]string{}}, nil
+}
+
+type CodexAppServerRunner struct{ CodexRunner }
+
+func (r *CodexAppServerRunner) Name() RunnerName { return RunnerCodexAppServer }
+
+func (r *CodexAppServerRunner) Start(ctx context.Context, req StartRequest) (*StartResult, error) {
+	if strings.TrimSpace(req.Command) == "" {
+		req.Command = "codex app-server"
+	}
+	if !shouldUseLiveCodex(req.Command) {
+		return nil, tuskerError(errorConfigInvalid, "codex_app_server runner requires an app-server command")
+	}
+	return startLiveCodex(ctx, req, nil)
+}
+
+func (r *CodexAppServerRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResult, error) {
+	if strings.TrimSpace(req.Command) == "" {
+		req.Command = "codex app-server"
+	}
+	if !shouldUseLiveCodex(req.Command) {
+		return nil, tuskerError(errorConfigInvalid, "codex_app_server runner requires an app-server command")
+	}
+	return startLiveCodex(ctx, StartRequest{
+		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, ActiveStates: req.ActiveStates, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
+		EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
+		RepoRoot: req.RepoRoot, Command: req.Command, NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy,
+	}, &req)
+}
+
+type CodexExecRunner struct{}
+
+func (r *CodexExecRunner) Name() RunnerName { return RunnerCodexExec }
+
+func (r *CodexExecRunner) Capabilities() RunnerCapabilities {
+	return RunnerCapabilities{StructuredEvents: true, ResumeSession: false, MachineFinalStatus: true, UsageMetrics: true}
+}
+
+func (r *CodexExecRunner) Start(ctx context.Context, req StartRequest) (*StartResult, error) {
+	if strings.TrimSpace(req.Command) == "" {
+		req.Command = "codex exec --skip-git-repo-check -"
+	}
+	if shouldUseLiveCodex(req.Command) {
+		return nil, tuskerError(errorConfigInvalid, "codex_exec runner requires a detached codex exec command, not app-server")
+	}
+	return executeRunnerCommand(ctx, r.Name(), runnerExecRequest{
+		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
+		RepoRoot: req.RepoRoot, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath, Command: req.Command, NotePath: req.NotePath, VaultPath: req.VaultPath,
+		CodexPolicy: req.CodexPolicy,
+	}, r.Capabilities())
+}
+
+func (r *CodexExecRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResult, error) {
+	return nil, tuskerError(errorConfigInvalid, "codex_exec runner does not support local app-server session resume")
+}
+
+func (r *CodexExecRunner) Reconcile(ctx context.Context, req ReconcileRequest) (*ReconcileResult, error) {
+	return nil, nil
+}
+
+func (r *CodexExecRunner) Interrupt(ctx context.Context, req InterruptRequest) error { return nil }
+
+func (r *CodexExecRunner) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
 	return &CollectResult{Artifacts: map[string]string{}}, nil
 }

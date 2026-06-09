@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -47,11 +48,34 @@ func TestDefaultWorkflowEnablesRiskAwareReviewer(t *testing.T) {
 	if !reviewerRequiresHumanRisk(wf.Reviewer, "high") {
 		t.Fatal("expected high risk to require human close")
 	}
-	if wf.Reviewer.Actor != "agent-reviewer" {
-		t.Fatalf("expected runner-neutral reviewer actor, got %q", wf.Reviewer.Actor)
+	if wf.Reviewer.Actor != "agent:reviewer/codex" {
+		t.Fatalf("expected normalized reviewer actor, got %q", wf.Reviewer.Actor)
 	}
 	if !strings.Contains(wf.Reviewer.Prompt, "independent Tusker reviewer") {
 		t.Fatalf("expected reviewer prompt to be substantive, got %q", wf.Reviewer.Prompt)
+	}
+}
+
+func TestCodexPolicyForReviewLaneForcesReadOnlyNever(t *testing.T) {
+	policy := codexPolicyForLane(CodexPolicy{
+		ApprovalPolicy:    "on-failure",
+		ThreadSandbox:     "workspace-write",
+		TurnSandboxPolicy: "workspace-write",
+	}, runLaneReview)
+	if policy.ApprovalPolicy != "never" {
+		t.Fatalf("expected reviewer approval policy never, got %q", policy.ApprovalPolicy)
+	}
+	if policy.ThreadSandbox != "read-only" || policy.TurnSandboxPolicy != "read-only" {
+		t.Fatalf("expected reviewer sandbox read-only, got thread=%q turn=%q", policy.ThreadSandbox, policy.TurnSandboxPolicy)
+	}
+
+	executePolicy := codexPolicyForLane(CodexPolicy{
+		ApprovalPolicy:    "on-failure",
+		ThreadSandbox:     "workspace-write",
+		TurnSandboxPolicy: "workspace-write",
+	}, runLaneExecute)
+	if executePolicy.ApprovalPolicy != "on-failure" || executePolicy.TurnSandboxPolicy != "workspace-write" {
+		t.Fatalf("execute lane policy should be preserved, got %#v", executePolicy)
 	}
 }
 
@@ -67,5 +91,71 @@ func TestDefaultWorkflowPromptIncludesCommandBudget(t *testing.T) {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("default workflow missing %q:\n%s", expected, body)
 		}
+	}
+}
+
+func TestTuskerYamlAutomationOverridesWorkflowControlPlane(t *testing.T) {
+	root := t.TempDir()
+	vault := filepath.Join(root, "tusker")
+	if err := ensureDir(vault); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(root, "tusker.yaml"), strings.TrimSpace(`
+schema: tusker.config/v1
+project_id: app
+automation:
+  trigger_states: [ready, rework]
+  default_runner: codex_app_server
+  enabled_runners: [codex_app_server, codex_exec]
+  workspace:
+    strategy: clone
+  concurrency:
+    max_active_runs: 4
+    max_active_runs_per_project: 2
+    max_concurrent_by_state:
+      rework: 1
+  runners:
+    codex_app_server:
+      kind: codex_app_server
+      command: codex app-server
+    codex_exec:
+      kind: codex_exec
+      command: codex exec --skip-git-repo-check -
+`)+"\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, []string{"ready", "rework"}, wf.Data.Tracker.ActiveStates, "trigger states")
+	assertEqual(t, "codex_app_server", wf.Data.Agents.Default, "default runner")
+	assertEqual(t, []string{"codex_app_server", "codex_exec"}, wf.Data.Agents.Enabled, "enabled runners")
+	assertEqual(t, "clone", wf.Data.Workspace.Strategy, "workspace strategy")
+	assertEqual(t, 4, wf.Data.Agents.MaxConcurrentAgents, "global concurrency")
+	assertEqual(t, 2, wf.Data.Runtime.MaxActiveRunsPerProject, "project concurrency")
+	assertEqual(t, 1, wf.Data.Agents.MaxConcurrentAgentsByState["rework"], "state concurrency")
+}
+
+func TestTuskerYamlAutomationRejectsLegacyActiveWithoutProfile(t *testing.T) {
+	root := t.TempDir()
+	vault := filepath.Join(root, "tusker")
+	if err := ensureDir(vault); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nautomation:\n  trigger_states: [active, rework]\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := loadWorkflow(vault)
+	if err == nil || !strings.Contains(err.Error(), "automation.trigger_states must not include legacy active") {
+		t.Fatalf("expected legacy active automation error, got %v", err)
 	}
 }

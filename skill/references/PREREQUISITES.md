@@ -34,7 +34,7 @@ Repo-contained vault:
 repo/
   tusker/
   .agents/skills/tusker/
-  .claude/skills/tusker/
+  .claude/skills/tusker/  # generated compatibility install
 ```
 
 Repo-adjacent vault:

@@ -404,14 +404,11 @@ func validateNote(note Note, ctx validationContext) ([]Issue, []Issue) {
 	if strings.HasPrefix(schema, "tusker.") && (strings.HasSuffix(schema, "/v7") || schema == "tusker.gate/v1" || schema == "tusker.evidence/v1" || schema == "tusker.attempt/v1" || schema == "tusker.decision/v1" || schema == "tusker.proposal/v1" || schema == "tusker.closeout/v1") {
 		return validateV7Note(note, ctx, where)
 	}
-	if strings.HasSuffix(schema, "/v6") {
-		return validateV6Note(note, ctx, where)
-	}
-	if _, ok := noteTypes[noteType]; !ok {
-		errors = append(errors, issue(errorUnknownType, fmt.Sprintf(`unknown type "%s"`, noteType), where, "", nil))
+	if strings.HasSuffix(schema, "/v5") || strings.HasSuffix(schema, "/v6") {
+		errors = append(errors, issue(errorInvalidField, fmt.Sprintf(`%s uses removed legacy schema %q`, where, schema), where, "convert the record into a V7 .tusker/work/** or .tusker/knowledge/domains/** record before validating this repo", map[string]any{"field": "schema", "value": schema}))
 		return errors, warnings
 	}
-	if noteType == "note" {
+	if noteType == "note" && schema == "" {
 		for _, field := range []string{"title", "created", "updated"} {
 			if stringField(data, field) == "" {
 				errors = append(errors, issue(errorMissingField, fmt.Sprintf(`missing required frontmatter "%s"`, field), where, "", map[string]any{"field": field}))
@@ -419,11 +416,14 @@ func validateNote(note Note, ctx validationContext) ([]Issue, []Issue) {
 		}
 		return errors, warnings
 	}
-	if !strings.HasSuffix(schema, "/v5") {
-		errors = append(errors, issue(errorInvalidField, fmt.Sprintf(`%s is not a V5 or V6 note; current Tusker notes require schema "tusker.<type>/v5" or "tusker.<kind>/v6"`, where), where, "recreate the note with `tusker new` or `tusker knowledge new`", map[string]any{"field": "schema", "value": schema}))
+	if strings.HasPrefix(schema, "tusker.") {
+		errors = append(errors, issue(errorInvalidField, fmt.Sprintf(`%s is not a supported V7 Tusker note`, where), where, "use V7 schemas: tusker.task/v7, tusker.epic/v7, tusker.domain/v7, tusker.knowledge/v7, tusker.gate/v1, tusker.evidence/v1, tusker.attempt/v1, tusker.decision/v1, tusker.proposal/v1, or tusker.closeout/v1", map[string]any{"field": "schema", "value": schema}))
 		return errors, warnings
 	}
-	return validateV5Note(note, ctx, where)
+	if _, ok := noteTypes[noteType]; !ok {
+		errors = append(errors, issue(errorUnknownType, fmt.Sprintf(`unknown type "%s"`, noteType), where, "", nil))
+	}
+	return errors, warnings
 }
 
 func validateListRecordIDMirror(data map[string]any, linkField, mirrorField string, ctx validationContext, where string, errors, warnings *[]Issue) {

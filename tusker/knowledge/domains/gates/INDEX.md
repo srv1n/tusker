@@ -12,15 +12,15 @@ canonical_files:
   - "INDEX.md"
   - "CANON.md"
 created_at: "2026-05-19T05:18:02Z"
-updated_at: "2026-05-19T05:18:02Z"
-state_rev: "sha256:190b802427f770cebbbe6b0a7a57615da40a15124659e6de463e835e8909631f"
+updated_at: "2026-05-29T14:00:10Z"
+state_rev: "sha256:63a1b9c998e5698f55ca42cb7a5ffc1e1df5df390bb4047eefa5d3621b609002"
 ---
 
 # gates
 
 ## Summary
 
-Human, reviewer, CI, and external gates.
+Human, reviewer, CI, and external gates. Human/external gates require a concrete capability boundary; reviewer-capable work must not be punted to humans.
 
 ## Read This When
 
@@ -44,6 +44,8 @@ Human, reviewer, CI, and external gates.
 
 - Keep durable truth in CANON.md.
 - Put procedural guidance in runbooks/.
+- Human/external blockers need owner, action, verification, blocked task, and `why_agent_cannot`.
+- Spec/API conflict gates use `gate_kind: decision` and include a suggested resolution.
 
 ## Sources
 

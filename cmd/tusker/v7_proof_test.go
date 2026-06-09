@@ -276,7 +276,7 @@ func TestV7ProofStatusDefaultIsConcise(t *testing.T) {
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Concise proof output", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "human:sarav", "action": "Review acceptance.", "verification": "Human verifies A1.", "covers": "A1"}, newV7Gate)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "signoff", "owner": "human:sarav", "action": "Sign off on acceptance.", "verification": "Human signoff recorded for A1.", "covers": "A1", "why-agent-cannot": "Final human signoff is required by this proof policy."}, newV7Gate)
 
 	output := captureStdout(t, func() {
 		if err := proofV7StatusCmd(Args{"vault": vault, "id": "APP-T-0001"}); err != nil {
@@ -350,7 +350,7 @@ func TestV7ArtifactFinishRequiresEvidenceOrGate(t *testing.T) {
 		t.Fatalf("expected finish proof error, got %v", err)
 	}
 
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "human:sarav", "action": "Capture manual artifact proof.", "verification": "Attach screenshot/video proof for A1.", "covers": "A1"}, newV7Gate)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "human:sarav", "action": "Capture manual artifact proof.", "verification": "Attach screenshot/video proof for A1.", "covers": "A1", "why-agent-cannot": "Manual artifact capture requires human device or UI access."}, newV7Gate)
 	if err := finishV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "attempt": "APP-T-0001-A-0001", "summary": "Implementation complete; manual proof gated.", "local": "true"}); err != nil {
 		t.Fatal(err)
 	}
@@ -750,7 +750,7 @@ func TestV7CloseoutFingerprintInvalidatesGateChange(t *testing.T) {
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate stale closeout", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7CloseoutFingerprintInvalidatesGateChange -count=1", "result": "pass", "note": "Machine proof passed."}, verifyV7AddCmd)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "signoff", "owner": "human:sarav", "action": "Sign off.", "verification": "Human signoff recorded.", "covers": "A1"}, newV7Gate)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "signoff", "owner": "human:sarav", "action": "Sign off.", "verification": "Human signoff recorded.", "covers": "A1", "why-agent-cannot": "Final human signoff is required by this proof policy."}, newV7Gate)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "emit-packet": "true", "validate": "printf validation-ok"}, closeoutV7Cmd)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-G-0001", "by": "human:sarav", "evidence": "Human signed off."}, func(args Args) error {
 		return gateV7Transition(args, "satisfied")
@@ -849,7 +849,7 @@ func TestV7VerificationGateCanSatisfyManualProofRequirement(t *testing.T) {
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Verification gate smoke", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "manual_smoke", "proof-required-owner": "manual_smoke=human:sarav", "v7": "true"}, newV7Task)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "human:sarav", "action": "Run manual smoke.", "verification": "Manual smoke passed.", "covers": "A1"}, newV7Gate)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "human:sarav", "action": "Run manual smoke.", "verification": "Manual smoke passed.", "covers": "A1", "why-agent-cannot": "Manual smoke requires human device or environment access."}, newV7Gate)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-G-0001", "by": "human:sarav", "evidence": "Manual smoke passed."}, func(args Args) error {
 		return gateV7Transition(args, "satisfied")
 	})

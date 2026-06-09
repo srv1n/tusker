@@ -10,5 +10,10 @@
 | [[VSD-T-0030]] | high | Review evidence and close or return to rework. |
 | [[VSD-T-0031]] | medium | Review evidence and close or return to rework. |
 | [[VSD-T-0032]] | medium | Review evidence and close or return to rework. |
+| [[VSD-T-0033]] | medium | Review evidence and close or return to rework. |
+| [[VSD-T-0034]] | medium | Review evidence and close or return to rework. |
+| [[VSD-T-0035]] | low | Review evidence and close or return to rework. |
+| [[VSD-T-0038]] | high | Review evidence and close or return to rework. |
+| [[VSD-T-0049]] | medium | Review evidence and close or return to rework. |
 
 <!-- tusker:generated:end -->

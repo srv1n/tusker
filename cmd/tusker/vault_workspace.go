@@ -322,7 +322,7 @@ func requireWorkspaceVaultConfig() (WorkspaceVaultConfig, error) {
 		return cfg, err
 	}
 	if strings.TrimSpace(cfg.ObsidianVault) == "" {
-		return cfg, tuskerError(errorMissingArg, "No Obsidian vault configured.", withHint("Run `tusker init --vault <repo>/tusker --yes` without --mount, or configure the Obsidian vault in the workspace config file."))
+		return cfg, tuskerError(errorMissingArg, "No Obsidian vault configured.", withHint("Run `tusker init --vault <repo>/.tusker --yes` without --mount, or configure the Obsidian vault in the workspace config file."))
 	}
 	if err := ensureDir(cfg.ObsidianVault); err != nil {
 		return cfg, err
@@ -404,6 +404,12 @@ func ensureWorkspaceMount(mountPath, trackerRoot string, force bool) error {
 		if canonicalPath(resolved) == canonicalPath(trackerRoot) {
 			return nil
 		}
+		if isHistoricalTuskerMountTarget(resolved, trackerRoot) {
+			if err := os.Remove(mountPath); err != nil {
+				return err
+			}
+			return os.Symlink(trackerRoot, mountPath)
+		}
 		if !force {
 			return tuskerError(errorAlreadyExists, "mount path already points somewhere else: "+mountPath, withHint("Use --force only if replacing that symlink is intentional."), withPath(mountPath))
 		}
@@ -414,6 +420,17 @@ func ensureWorkspaceMount(mountPath, trackerRoot string, force bool) error {
 		return err
 	}
 	return os.Symlink(trackerRoot, mountPath)
+}
+
+func isHistoricalTuskerMountTarget(resolved, trackerRoot string) bool {
+	if strings.TrimSpace(resolved) == "" || strings.TrimSpace(trackerRoot) == "" {
+		return false
+	}
+	repoRoot := filepath.Dir(trackerRoot)
+	if filepath.Base(trackerRoot) != defaultRepoVaultDir {
+		return false
+	}
+	return canonicalPath(resolved) == canonicalPath(filepath.Join(repoRoot, "tusker"))
 }
 
 func removeWorkspaceMount(mountPath string) error {
@@ -432,7 +449,7 @@ func removeWorkspaceMount(mountPath string) error {
 
 func repairWorkspaceMounts(cfg WorkspaceVaultConfig, force bool) ([]MountStatus, error) {
 	if strings.TrimSpace(cfg.ObsidianVault) == "" {
-		return nil, tuskerError(errorMissingArg, "No Obsidian vault configured.", withHint("Run `tusker init --vault <repo>/tusker --yes` without --mount, or configure the Obsidian vault in the workspace config file."))
+		return nil, tuskerError(errorMissingArg, "No Obsidian vault configured.", withHint("Run `tusker init --vault <repo>/.tusker --yes` without --mount, or configure the Obsidian vault in the workspace config file."))
 	}
 	if err := ensureDir(cfg.ObsidianVault); err != nil {
 		return nil, err

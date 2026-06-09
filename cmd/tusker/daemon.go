@@ -236,6 +236,34 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				globalActiveRuns += dispatchingRunDelta(current, reconciled)
 				projectActiveRuns += dispatchingRunDelta(current, reconciled)
 			}
+			if note, ok := notesByRecordID[recordID]; ok {
+				beforeAuto := projectRuns[recordID]
+				autoAdvanced, autoChanged, err := d.autoAdvanceExternalLoop(ctx, project, wfFile, notes, note, beforeAuto)
+				if err != nil {
+					return err
+				}
+				if autoChanged {
+					if err := d.store.UpsertRun(autoAdvanced); err != nil {
+						return err
+					}
+					projectRuns[recordID] = autoAdvanced
+					globalActiveRuns += dispatchingRunDelta(beforeAuto, autoAdvanced)
+					projectActiveRuns += dispatchingRunDelta(beforeAuto, autoAdvanced)
+				}
+				beforeApplyAuto := projectRuns[recordID]
+				applyAdvanced, applyChanged, err := d.autoAdvanceExternalApplyResult(ctx, project, wfFile, notes, note, beforeApplyAuto)
+				if err != nil {
+					return err
+				}
+				if applyChanged {
+					if err := d.store.UpsertRun(applyAdvanced); err != nil {
+						return err
+					}
+					projectRuns[recordID] = applyAdvanced
+					globalActiveRuns += dispatchingRunDelta(beforeApplyAuto, applyAdvanced)
+					projectActiveRuns += dispatchingRunDelta(beforeApplyAuto, applyAdvanced)
+				}
+			}
 		}
 		stateActiveRuns := countDispatchingProjectRunsByState(projectRuns, noteStatusByRecord)
 
@@ -256,7 +284,12 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			current.ProjectID = project.ProjectID
 			current.RecordID = recordID
 			current.ItemID = stringField(note.Data, "id")
-			current.Runner = firstNonEmpty(resolveRunnerForNote(note, wfFile.Data), current.Runner, wfFile.Data.Agents.Default)
+			resolvedRunner := resolveRunnerForNote(note, wfFile.Data)
+			if isDispatchingLeaseState(current.LeaseState) {
+				current.Runner = firstNonEmpty(current.Runner, resolvedRunner, wfFile.Data.Agents.Default)
+			} else {
+				current.Runner = firstNonEmpty(resolvedRunner, current.Runner, wfFile.Data.Agents.Default)
+			}
 			current.Lane = firstNonEmpty(current.Lane, runLaneExecute)
 			current.UpdatedAt = now.Format(time.RFC3339)
 			if current.LeaseState == "" {
@@ -285,6 +318,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				current.StartedAt = ""
 				current.LastEventAt = ""
 				current.Lane = runLaneExecute
+				clearRunCloudRefs(&current)
 				clearActiveExecution(&current)
 			}
 			if current.Lane == runLaneReview && LeaseState(current.LeaseState) == LeaseStateReleased {
@@ -345,6 +379,9 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			}
 			recordID := trackerRecordID(note)
 			if recordID == "" {
+				continue
+			}
+			if externalLoopCloseTaskRecorded(d.store, project.ProjectID, recordID) {
 				continue
 			}
 			current := projectRuns[recordID]
@@ -589,6 +626,7 @@ func prepareRunForLaneDispatch(run RunStatus, lane, runner string) RunStatus {
 	run.NextRetryAt = ""
 	run.LastError = ""
 	run.SessionRef = ""
+	clearRunCloudRefs(&run)
 	clearActiveExecution(&run)
 	return run
 }
@@ -868,6 +906,34 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				run.UpdatedAt = finished
 				return run, true, nil
 			}
+			if run.Lane == runLaneReview {
+				if reason := reviewerWorkspaceDirtyReason(run.WorkspacePath); reason != "" {
+					parentAttemptID := run.ActiveAttemptID
+					parentSessionRef := run.SessionRef
+					updateRunAttemptFromRun(d.store, run, AttemptOutcomeBlocked, 1, reason, finished)
+					run.LeaseState = string(LeaseStateReleased)
+					run.AttemptOutcome = string(AttemptOutcomeBlocked)
+					run.NextRetryAt = ""
+					run.LastError = reason
+					run.UpdatedAt = finished
+					if strings.TrimSpace(run.SessionRef) != "" {
+						_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateReleased), "", reason, false)
+					}
+					d.emitSupervisorDecision(SupervisorDecision{
+						ProjectID:        project.ProjectID,
+						RecordID:         run.RecordID,
+						AttemptID:        parentAttemptID,
+						SessionRef:       parentSessionRef,
+						Kind:             string(SupervisorDecisionStopForAudit),
+						Reason:           reason,
+						ParentAttemptID:  parentAttemptID,
+						ParentSessionRef: parentSessionRef,
+						WorkspacePath:    run.WorkspacePath,
+					})
+					clearActiveExecution(&run)
+					return run, true, nil
+				}
+			}
 			if err := writeReviewPacketEvidence(project.VaultRoot, note, run, d.store); err != nil {
 				return run, changed, err
 			}
@@ -932,7 +998,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		return run, changed, err
 	}
 	result, err := runner.Reconcile(ctx, ReconcileRequest{
-		Runner: run.Runner, ProjectID: project.ProjectID, RecordID: run.RecordID, AttemptID: "", SessionRef: run.SessionRef,
+		Runner: run.Runner, ProjectID: project.ProjectID, RecordID: run.RecordID, AttemptID: run.ActiveAttemptID, SessionRef: run.SessionRef, CloudTaskID: run.CloudTaskID,
 	})
 	if err != nil {
 		return run, changed, err
@@ -944,12 +1010,20 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	run.AttemptOutcome = string(result.Outcome)
 	run.LastError = result.Reason
 	run.UpdatedAt = now
+	applyReconcileResultCloud(&run, result)
 	parentAttemptID := run.ActiveAttemptID
 	parentSessionRef := run.SessionRef
-	clearActiveExecution(&run)
 	if strings.TrimSpace(run.SessionRef) != "" {
 		_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(result.LeaseState), "", result.Reason, result.Outcome != AttemptOutcomeAbandoned && run.Lane != runLaneReview)
 	}
+	if result.LeaseState == LeaseStateClaimed || result.LeaseState == LeaseStateRunning {
+		run.AttemptOutcome = string(AttemptOutcomeNone)
+		return run, true, nil
+	}
+	if result.Outcome != AttemptOutcomeNone || result.LeaseState == LeaseStateReleased {
+		updateRunAttemptFromRun(d.store, run, result.Outcome, exitCodeForOutcome(result.Outcome), result.Reason, now)
+	}
+	clearActiveExecution(&run)
 	if result.LeaseState == LeaseStateRetryQueued && result.Outcome == AttemptOutcomeNone {
 		d.emitSupervisorDecision(SupervisorDecision{
 			ProjectID:        project.ProjectID,
@@ -982,6 +1056,13 @@ func shouldDaemonPromoteCleanExitToReview(noteStatus string) bool {
 }
 
 func resolveRunnerForNote(note Note, wf Workflow) string {
+	nextOwner := strings.TrimSpace(stringField(note.Data, "next_owner"))
+	if strings.HasPrefix(nextOwner, "agent:") {
+		candidate := strings.TrimSpace(strings.TrimPrefix(nextOwner, "agent:"))
+		if containsString(wf.Agents.Enabled, candidate) {
+			return candidate
+		}
+	}
 	assignee := strings.TrimSpace(stringField(note.Data, "assignee"))
 	for _, candidate := range wf.Agents.Enabled {
 		if assignee == candidate {
@@ -1009,6 +1090,9 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		WorkRevision: run.WorkRevision,
 	})
 	if err != nil {
+		return run, err
+	}
+	if err := mirrorApplyInputsIntoWorkspace(d.store, project, run, workspace.Path); err != nil {
 		return run, err
 	}
 
@@ -1040,10 +1124,11 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	run.EventSinkPath = eventSinkPath
 	run.RawLogPath = rawLogPath
 	run.StatusPath = statusPath
+	clearRunCloudRefs(&run)
 	run.UpdatedAt = attempt.StartedAt
 	run.LastEventAt = attempt.StartedAt
 
-	prompt, err := renderAttemptPrompt(project, wfFile, note, workspace.Path, ordinal, attemptID, lane)
+	prompt, err := renderAttemptPrompt(project, wfFile, note, workspace.Path, ordinal, attemptID, lane, run, d.store)
 	if err != nil {
 		attempt.Outcome = string(AttemptOutcomeFailed)
 		attempt.LastError = err.Error()
@@ -1071,6 +1156,11 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		return run, err
 	}
 	var start *StartResult
+	codexPolicy := codexPolicyForLane(codexPolicyFromWorkflow(wfFile.Data), lane)
+	externalLaunch := ExternalLoopLaunchContext{}
+	if externalLoopRunnerRequiresCollect(wfFile.Data, run.Runner) {
+		externalLaunch = d.externalLoopLaunchContext(project.ProjectID, run.RecordID)
+	}
 	if resume.SessionRef != "" && runner.Capabilities().ResumeSession {
 		d.emitSupervisorDecision(SupervisorDecision{
 			ProjectID:        project.ProjectID,
@@ -1085,10 +1175,10 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		})
 		start, err = runner.Resume(ctx, ResumeRequest{
 			ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID, AttemptID: attemptID,
-			WorkRevision: run.WorkRevision, ActiveStates: wfFile.Data.Tracker.ActiveStates, SessionRef: resume.SessionRef, MessageRef: resume.MessageRef, WorkingDir: workspace.Path, WorkspacePath: workspace.Path,
+			Lane: lane, WorkRevision: run.WorkRevision, ActiveStates: wfFile.Data.Tracker.ActiveStates, SessionRef: resume.SessionRef, MessageRef: resume.MessageRef, WorkingDir: workspace.Path, WorkspacePath: workspace.Path,
 			RepoRoot:   project.RepoRoot,
 			PromptPath: promptPath, EventSinkPath: eventSinkPath, RawLogPath: rawLogPath, StatusPath: statusPath, Command: command,
-			NotePath: note.AbsolutePath, VaultPath: project.VaultRoot, CodexPolicy: codexPolicyFromWorkflow(wfFile.Data),
+			NotePath: note.AbsolutePath, VaultPath: project.VaultRoot, CodexPolicy: codexPolicy, ExternalLoop: externalLaunch,
 		})
 	} else {
 		start, err = runner.Start(ctx, StartRequest{
@@ -1096,6 +1186,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 			RecordID:      run.RecordID,
 			ItemID:        run.ItemID,
 			AttemptID:     attemptID,
+			Lane:          lane,
 			WorkRevision:  run.WorkRevision,
 			ActiveStates:  wfFile.Data.Tracker.ActiveStates,
 			WorkingDir:    workspace.Path,
@@ -1108,7 +1199,8 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 			Command:       command,
 			NotePath:      note.AbsolutePath,
 			VaultPath:     project.VaultRoot,
-			CodexPolicy:   codexPolicyFromWorkflow(wfFile.Data),
+			CodexPolicy:   codexPolicy,
+			ExternalLoop:  externalLaunch,
 		})
 	}
 	if err != nil {
@@ -1120,6 +1212,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	}
 
 	run.SessionRef = start.SessionRef
+	applyStartResultCloud(&run, start)
 	run.StartedAt = start.StartedAt
 	run.ProcessPID = start.PID
 	run.StatusPath = firstNonEmpty(start.StatusPath, statusPath)
@@ -1127,6 +1220,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	run.LastEventAt = firstNonEmpty(run.LastEventAt, run.UpdatedAt)
 
 	attempt.SessionRef = start.SessionRef
+	applyStartResultCloudToAttempt(&attempt, start)
 	attempt.ProcessPID = start.PID
 	attempt.Outcome = string(start.Outcome)
 	attempt.ExitCode = start.ExitCode
@@ -1408,6 +1502,74 @@ func failureReasonIndicatesContextPressure(reason string) bool {
 	return false
 }
 
+func reviewerWorkspaceDirtyReason(workspacePath string) string {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if workspacePath == "" {
+		return "reviewer workspace cleanliness could not be verified: missing workspace path"
+	}
+	if _, err := exec.LookPath("git"); err == nil {
+		cmd := exec.Command("git", "-C", workspacePath, "status", "--porcelain=v1", "--untracked-files=all")
+		output, err := cmd.Output()
+		if err == nil {
+			if dirty := reviewerDirtyStatusLines(string(output)); len(dirty) > 0 {
+				return "reviewer workspace dirty after review run: " + strings.Join(limitStrings(dirty, 3), "; ")
+			}
+			return ""
+		}
+	}
+	entries, err := os.ReadDir(workspacePath)
+	if err != nil {
+		return "reviewer workspace cleanliness could not be verified: " + err.Error()
+	}
+	var dirty []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == ".tusker" {
+			continue
+		}
+		dirty = append(dirty, name)
+	}
+	if len(dirty) > 0 {
+		sort.Strings(dirty)
+		return "reviewer workspace dirty after review run: " + strings.Join(limitStrings(dirty, 3), "; ")
+	}
+	return ""
+}
+
+func reviewerDirtyStatusLines(output string) []string {
+	var dirty []string
+	for _, line := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		path := reviewerStatusPath(line)
+		if path == ".tusker" || strings.HasPrefix(path, ".tusker/") {
+			continue
+		}
+		dirty = append(dirty, line)
+	}
+	return dirty
+}
+
+func reviewerStatusPath(line string) string {
+	if len(line) > 3 {
+		line = line[3:]
+	}
+	line = strings.TrimSpace(line)
+	if idx := strings.LastIndex(line, " -> "); idx >= 0 {
+		line = line[idx+4:]
+	}
+	return strings.Trim(line, `"`)
+}
+
+func limitStrings(values []string, max int) []string {
+	if max <= 0 || len(values) <= max {
+		return values
+	}
+	return values[:max]
+}
+
 func clearActiveExecution(run *RunStatus) {
 	run.ActiveAttemptID = ""
 	run.ProcessPID = 0
@@ -1417,30 +1579,118 @@ func clearActiveExecution(run *RunStatus) {
 	run.StatusPath = ""
 }
 
+func clearRunCloudRefs(run *RunStatus) {
+	run.CloudTaskID = ""
+	run.CloudStatus = ""
+	run.CloudEnvironmentID = ""
+	run.CloudAttemptNumber = 0
+	run.PullRequestURL = ""
+	run.ApplyRef = ""
+	run.LogsSummary = ""
+	run.FinalSummary = ""
+}
+
+func applyStartResultCloud(run *RunStatus, start *StartResult) {
+	if run == nil || start == nil {
+		return
+	}
+	run.CloudTaskID = start.CloudTaskID
+	run.CloudStatus = start.CloudStatus
+	run.CloudEnvironmentID = start.CloudEnvironmentID
+	run.CloudAttemptNumber = start.CloudAttemptNumber
+	run.PullRequestURL = start.PullRequestURL
+	run.ApplyRef = start.ApplyRef
+	run.LogsSummary = start.LogsSummary
+	run.FinalSummary = start.FinalSummary
+}
+
+func applyStartResultCloudToAttempt(attempt *RunAttempt, start *StartResult) {
+	if attempt == nil || start == nil {
+		return
+	}
+	attempt.CloudTaskID = start.CloudTaskID
+	attempt.CloudStatus = start.CloudStatus
+	attempt.CloudEnvironmentID = start.CloudEnvironmentID
+	attempt.CloudAttemptNumber = start.CloudAttemptNumber
+	attempt.PullRequestURL = start.PullRequestURL
+	attempt.ApplyRef = start.ApplyRef
+	attempt.LogsSummary = start.LogsSummary
+	attempt.FinalSummary = start.FinalSummary
+}
+
+func applyReconcileResultCloud(run *RunStatus, result *ReconcileResult) {
+	if run == nil || result == nil {
+		return
+	}
+	if strings.TrimSpace(result.CloudTaskID) != "" {
+		run.CloudTaskID = result.CloudTaskID
+	}
+	if strings.TrimSpace(result.CloudStatus) != "" {
+		run.CloudStatus = result.CloudStatus
+	}
+	if strings.TrimSpace(result.CloudEnvironmentID) != "" {
+		run.CloudEnvironmentID = result.CloudEnvironmentID
+	}
+	if result.CloudAttemptNumber > 0 {
+		run.CloudAttemptNumber = result.CloudAttemptNumber
+	}
+	if strings.TrimSpace(result.PullRequestURL) != "" {
+		run.PullRequestURL = result.PullRequestURL
+	}
+	if strings.TrimSpace(result.ApplyRef) != "" {
+		run.ApplyRef = result.ApplyRef
+	}
+	if strings.TrimSpace(result.LogsSummary) != "" {
+		run.LogsSummary = result.LogsSummary
+	}
+	if strings.TrimSpace(result.FinalSummary) != "" {
+		run.FinalSummary = result.FinalSummary
+	}
+}
+
+func exitCodeForOutcome(outcome AttemptOutcome) int {
+	switch outcome {
+	case AttemptOutcomeSucceeded, AttemptOutcomeNone:
+		return 0
+	case AttemptOutcomeCancelled:
+		return 130
+	default:
+		return 1
+	}
+}
+
 func updateRunAttemptFromRun(store *RuntimeStore, run RunStatus, outcome AttemptOutcome, exitCode int, lastError, finishedAt string) {
 	if store == nil || strings.TrimSpace(run.ActiveAttemptID) == "" {
 		return
 	}
 	_ = store.SaveAttempt(RunAttempt{
-		AttemptID:     run.ActiveAttemptID,
-		ProjectID:     run.ProjectID,
-		RecordID:      run.RecordID,
-		ItemID:        run.ItemID,
-		Runner:        run.Runner,
-		Lane:          run.Lane,
-		WorkRevision:  run.WorkRevision,
-		WorkspacePath: run.WorkspacePath,
-		SessionRef:    run.SessionRef,
-		ProcessPID:    run.ProcessPID,
-		Outcome:       string(outcome),
-		ExitCode:      exitCode,
-		PromptPath:    run.PromptPath,
-		EventSinkPath: run.EventSinkPath,
-		RawLogPath:    run.RawLogPath,
-		StatusPath:    run.StatusPath,
-		LastError:     lastError,
-		StartedAt:     run.StartedAt,
-		FinishedAt:    finishedAt,
+		AttemptID:          run.ActiveAttemptID,
+		ProjectID:          run.ProjectID,
+		RecordID:           run.RecordID,
+		ItemID:             run.ItemID,
+		Runner:             run.Runner,
+		Lane:               run.Lane,
+		WorkRevision:       run.WorkRevision,
+		WorkspacePath:      run.WorkspacePath,
+		SessionRef:         run.SessionRef,
+		CloudTaskID:        run.CloudTaskID,
+		CloudStatus:        run.CloudStatus,
+		CloudEnvironmentID: run.CloudEnvironmentID,
+		CloudAttemptNumber: run.CloudAttemptNumber,
+		PullRequestURL:     run.PullRequestURL,
+		ApplyRef:           run.ApplyRef,
+		LogsSummary:        run.LogsSummary,
+		FinalSummary:       run.FinalSummary,
+		ProcessPID:         run.ProcessPID,
+		Outcome:            string(outcome),
+		ExitCode:           exitCode,
+		PromptPath:         run.PromptPath,
+		EventSinkPath:      run.EventSinkPath,
+		RawLogPath:         run.RawLogPath,
+		StatusPath:         run.StatusPath,
+		LastError:          lastError,
+		StartedAt:          run.StartedAt,
+		FinishedAt:         finishedAt,
 	})
 }
 
@@ -1488,13 +1738,27 @@ func writeReviewPacketEvidence(vaultPath string, note Note, run RunStatus, store
 type reviewPacketFacts struct {
 	ChangedFiles                  []string
 	ChangedFilesStatement         string
+	DiffSummary                   []string
+	DiffSummaryStatement          string
+	CommandSummaries              []string
+	CommandSummariesStatement     string
 	VerificationCommands          []string
 	VerificationCommandsStatement string
+	ValidationSummaries           []string
+	ValidationSummariesStatement  string
+	SessionRefs                   []string
+	TurnIDs                       []string
+	EventTokenTotals              runtimeTokenTotals
+	RuntimeSummaries              []string
+	OpenRisks                     []string
 }
 
 func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDecisions []RuntimeSupervisorDecision, facts reviewPacketFacts) string {
 	var out []string
 	tokenTotals := tokenTotalsForTurns(turns)
+	if tokenTotals.TotalTokens == 0 && facts.EventTokenTotals.TotalTokens > 0 {
+		tokenTotals = facts.EventTokenTotals
+	}
 	out = append(out, "# Review packet")
 	out = append(out, "")
 	out = append(out, fmt.Sprintf("- Item: %s - %s", stringField(note.Data, "id"), stringField(note.Data, "title")))
@@ -1510,6 +1774,15 @@ func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDec
 	out = append(out, fmt.Sprintf("- Started: %s", run.StartedAt))
 	out = append(out, fmt.Sprintf("- Last event: %s", run.LastEventAt))
 	out = append(out, "")
+	out = append(out, "## Runtime summary", "")
+	if len(facts.RuntimeSummaries) == 0 {
+		out = append(out, "- No normalized runtime summary was recorded for this attempt.")
+	} else {
+		for _, summary := range facts.RuntimeSummaries {
+			out = append(out, "- "+summary)
+		}
+	}
+	out = append(out, "")
 	out = append(out, "## Runtime artifacts", "")
 	for _, artifact := range []struct {
 		label string
@@ -1517,7 +1790,7 @@ func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDec
 	}{
 		{"prompt", run.PromptPath},
 		{"events", run.EventSinkPath},
-		{"raw log", run.RawLogPath},
+		{"raw log pointer", run.RawLogPath},
 		{"status", run.StatusPath},
 	} {
 		if strings.TrimSpace(artifact.path) != "" {
@@ -1529,9 +1802,22 @@ func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDec
 		out = append(out, "- No normalized turns were recorded for this attempt.")
 	} else {
 		for _, turn := range turns {
-			out = append(out, fmt.Sprintf("- #%d `%s` status=%s tokens=%d input=%d output=%d last_event=%s error=%s",
-				turn.TurnIndex, turn.TurnID, turn.Status, turn.TotalTokens, turn.InputTokens, turn.OutputTokens, turn.LastEventAt, firstNonEmpty(turn.LastError, "none")))
+			out = append(out, fmt.Sprintf("- #%d `%s` session=%s status=%s tokens=%d input=%d output=%d last_event=%s error=%s",
+				turn.TurnIndex, turn.TurnID, firstNonEmpty(turn.SessionRef, "none"), turn.Status, turn.TotalTokens, turn.InputTokens, turn.OutputTokens, turn.LastEventAt, firstNonEmpty(turn.LastError, "none")))
 		}
+	}
+	out = append(out, "", "## Sessions and turns", "")
+	sessionRefs := sessionRefsForPacket(run, turns, facts)
+	turnIDs := turnIDsForPacket(turns, facts)
+	if len(sessionRefs) == 0 {
+		out = append(out, "- Session refs: none observed.")
+	} else {
+		out = append(out, "- Session refs: "+backtickList(sessionRefs))
+	}
+	if len(turnIDs) == 0 {
+		out = append(out, "- Turn ids: none observed.")
+	} else {
+		out = append(out, "- Turn ids: "+backtickList(turnIDs))
 	}
 	out = append(out, "", "## Supervisor decisions", "")
 	if len(supervisorDecisions) == 0 {
@@ -1553,6 +1839,22 @@ func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDec
 			out = append(out, "- "+file)
 		}
 	}
+	out = append(out, "", "### Diff summary", "")
+	if len(facts.DiffSummary) == 0 {
+		out = append(out, "- "+firstNonEmpty(facts.DiffSummaryStatement, "No diff summary was observed in normalized events or workspace status."))
+	} else {
+		for _, summary := range facts.DiffSummary {
+			out = append(out, "- "+summary)
+		}
+	}
+	out = append(out, "", "## Commands and tests", "")
+	if len(facts.CommandSummaries) == 0 {
+		out = append(out, "- "+firstNonEmpty(facts.CommandSummariesStatement, "No command or test summaries were observed in normalized events."))
+	} else {
+		for _, command := range facts.CommandSummaries {
+			out = append(out, "- "+command)
+		}
+	}
 	out = append(out, "", "## Verification", "")
 	if len(facts.VerificationCommands) == 0 {
 		out = append(out, "- "+firstNonEmpty(facts.VerificationCommandsStatement, "No verification commands were observed in normalized events."))
@@ -1561,29 +1863,67 @@ func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDec
 			out = append(out, "- "+command)
 		}
 	}
-	out = append(out, "- Runner process exited cleanly before this packet was generated.")
-	out = append(out, "- Human/verifier must still check claims against the current tree before approval.")
+	out = append(out, "", "## Validation", "")
+	if len(facts.ValidationSummaries) == 0 {
+		out = append(out, "- "+firstNonEmpty(facts.ValidationSummariesStatement, "No validation results were observed in normalized events."))
+	} else {
+		for _, validation := range facts.ValidationSummaries {
+			out = append(out, "- "+validation)
+		}
+	}
 	out = append(out, "", "## Open risks", "")
-	out = append(out, "- This packet summarizes daemon-observed runtime facts. It does not prove product correctness by itself.")
+	risks := openRisksForPacket(run, turns, supervisorDecisions, facts)
+	if len(risks) == 0 {
+		out = append(out, "- No open risks were observed in normalized events or runtime status.")
+	} else {
+		for _, risk := range risks {
+			out = append(out, "- "+risk)
+		}
+	}
+	out = append(out, "- Reviewer must still check claims against the current tree before approval.")
+	out = append(out, "- This packet summarizes daemon-observed runtime facts. It does not embed raw logs or full transcripts.")
 	return strings.Join(out, "\n") + "\n"
 }
 
 func collectReviewPacketFacts(run RunStatus) reviewPacketFacts {
 	events := readReviewPacketEvents(run.EventSinkPath)
 	changed := append([]string{}, changedFilesFromEvents(events)...)
+	diffSummary := append([]string{}, diffSummariesFromEvents(events)...)
 	verification := verificationCommandsFromEvents(events)
+	commandSummaries := commandSummariesFromEvents(events)
+	validationSummaries := validationSummariesFromEvents(events)
+	openRisks := openRisksFromEvents(events)
+	openRisks = append(openRisks, openRisksFromRun(run)...)
 	gitChanged, gitStatement := changedFilesFromWorkspace(run.WorkspacePath)
+	gitDiffSummary, gitDiffStatement := diffSummaryFromWorkspace(run.WorkspacePath)
 	changed = append(changed, gitChanged...)
+	diffSummary = append(diffSummary, gitDiffSummary...)
 	changed = dedupeSortedStrings(changed)
+	diffSummary = dedupeSortedStrings(diffSummary)
 	statement := "No changed files were observed in normalized events or workspace status."
 	if gitStatement != "" {
 		statement = gitStatement
 	}
+	diffStatement := "No diff summary was observed in normalized events or workspace status."
+	if gitDiffStatement != "" {
+		diffStatement = gitDiffStatement
+	}
 	return reviewPacketFacts{
 		ChangedFiles:                  changed,
 		ChangedFilesStatement:         statement,
+		DiffSummary:                   diffSummary,
+		DiffSummaryStatement:          diffStatement,
+		CommandSummaries:              dedupeSortedStrings(commandSummaries),
+		CommandSummariesStatement:     "No command or test summaries were observed in normalized events.",
 		VerificationCommands:          dedupeSortedStrings(verification),
 		VerificationCommandsStatement: "No verification commands were observed in normalized events.",
+		ValidationSummaries:           dedupeSortedStrings(validationSummaries),
+		ValidationSummariesStatement:  "No validation results were observed in normalized events.",
+		SessionRefs:                   sessionRefsFromEvents(events),
+		TurnIDs:                       turnIDsFromEvents(events),
+		EventTokenTotals:              tokenTotalsFromEvents(events),
+		RuntimeSummaries:              runtimeSummariesFromRun(run),
+		OpenRisks:                     dedupeSortedStrings(openRisks),
 	}
 }
 
@@ -1595,6 +1935,22 @@ func readReviewPacketEvents(path string) []map[string]any {
 	content, err := readText(path)
 	if err != nil {
 		return nil
+	}
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil
+	}
+	if strings.HasPrefix(content, "[") {
+		var events []map[string]any
+		if json.Unmarshal([]byte(content), &events) == nil {
+			return events
+		}
+	}
+	if strings.HasPrefix(content, "{") {
+		var event map[string]any
+		if json.Unmarshal([]byte(content), &event) == nil {
+			return []map[string]any{event}
+		}
 	}
 	var events []map[string]any
 	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
@@ -1613,8 +1969,8 @@ func readReviewPacketEvents(path string) []map[string]any {
 func changedFilesFromEvents(events []map[string]any) []string {
 	var out []string
 	for _, event := range events {
-		kind := strings.ToLower(strings.TrimSpace(stringValue(event["kind"])))
-		payload, _ := event["payload"].(map[string]any)
+		kind := reviewPacketEventKind(event)
+		payload := reviewPacketEventPayload(event)
 		if payload == nil {
 			continue
 		}
@@ -1628,6 +1984,31 @@ func changedFilesFromEvents(events []map[string]any) []string {
 	return out
 }
 
+func diffSummariesFromEvents(events []map[string]any) []string {
+	var out []string
+	for _, event := range events {
+		kind := reviewPacketEventKind(event)
+		payload := reviewPacketEventPayload(event)
+		if payload == nil {
+			continue
+		}
+		for _, key := range []string{"diff_summary", "diff_stat", "diffstat", "stat"} {
+			if summary := safePacketText(stringValue(payload[key]), 240); summary != "" {
+				out = append(out, fmt.Sprintf("%s (event:%s)", summary, firstNonEmpty(kind, "diff_summary")))
+			}
+		}
+		out = append(out, fileDiffSummaries(payload["changed_files"], kind)...)
+		out = append(out, fileDiffSummaries(payload["files"], kind)...)
+		path := firstNonEmpty(pathValuesJoined(payload["path"]), pathValuesJoined(payload["file"]))
+		if path != "" && (payload["insertions"] != nil || payload["deletions"] != nil || payload["additions"] != nil) {
+			insertions := reviewPacketInt(firstNonEmptyAny(payload["insertions"], payload["additions"], payload["added"]))
+			deletions := reviewPacketInt(firstNonEmptyAny(payload["deletions"], payload["removals"], payload["removed"]))
+			out = append(out, fmt.Sprintf("`%s` +%d -%d (event:%s)", path, insertions, deletions, firstNonEmpty(kind, "diff_summary")))
+		}
+	}
+	return dedupeSortedStrings(out)
+}
+
 func payloadPathValues(payload map[string]any) []string {
 	var out []string
 	for _, key := range []string{"path", "file", "file_path", "filename", "relative_path", "target_path", "changed_files", "files", "paths"} {
@@ -1639,7 +2020,7 @@ func payloadPathValues(payload map[string]any) []string {
 func pathValues(value any) []string {
 	switch typed := value.(type) {
 	case string:
-		path := strings.TrimSpace(typed)
+		path := safePacketText(typed, 240)
 		if path == "" {
 			return nil
 		}
@@ -1666,23 +2047,25 @@ func pathValues(value any) []string {
 func verificationCommandsFromEvents(events []map[string]any) []string {
 	var out []string
 	for _, event := range events {
-		kind := strings.ToLower(strings.TrimSpace(stringValue(event["kind"])))
-		payload, _ := event["payload"].(map[string]any)
+		kind := reviewPacketEventKind(event)
+		payload := reviewPacketEventPayload(event)
 		if payload == nil {
 			continue
 		}
 		command := firstNonEmpty(
+			stringValue(payload["check"]),
 			stringValue(payload["command"]),
 			stringValue(payload["cmd"]),
 			stringValue(payload["argv"]),
 		)
-		if command == "" || (!strings.Contains(kind, "verification") && !strings.Contains(kind, "command")) {
+		if command == "" || (!strings.Contains(kind, "verification") && !strings.Contains(kind, "command") && !strings.Contains(kind, "test")) {
 			continue
 		}
-		result := firstNonEmpty(stringValue(payload["result"]), stringValue(payload["status"]), stringValue(payload["outcome"]), "observed")
+		command = safePacketText(command, 260)
+		result := safePacketText(firstNonEmpty(stringValue(payload["result"]), stringValue(payload["status"]), stringValue(payload["outcome"]), "observed"), 80)
 		exitCode := firstNonEmpty(stringValue(payload["exit_code"]), stringValue(payload["exitCode"]))
-		at := firstNonEmpty(stringValue(event["at"]), stringValue(payload["at"]))
-		turnID := stringValue(payload["turn_id"])
+		at := firstNonEmpty(stringValue(event["at"]), stringValue(payload["at"]), stringValue(payload["normalized_at"]))
+		turnID := firstNonEmpty(stringValue(payload["turn_id"]), stringValue(payload["turnId"]))
 		detail := fmt.Sprintf("`%s` result=%s", command, result)
 		if exitCode != "" {
 			detail += " exit_code=" + exitCode
@@ -1694,6 +2077,86 @@ func verificationCommandsFromEvents(events []map[string]any) []string {
 			detail += " at=" + at
 		}
 		out = append(out, detail)
+	}
+	return out
+}
+
+func commandSummariesFromEvents(events []map[string]any) []string {
+	var out []string
+	for _, event := range events {
+		kind := reviewPacketEventKind(event)
+		payload := reviewPacketEventPayload(event)
+		if payload == nil {
+			continue
+		}
+		command := firstNonEmpty(
+			stringValue(payload["check"]),
+			stringValue(payload["command"]),
+			stringValue(payload["cmd"]),
+			stringValue(payload["argv"]),
+		)
+		if command == "" {
+			continue
+		}
+		if !strings.Contains(kind, "attempt") && !strings.Contains(kind, "command") && !strings.Contains(kind, "test") && !strings.Contains(kind, "verification") && !strings.Contains(kind, "validation") {
+			continue
+		}
+		command = safePacketText(command, 260)
+		result := safePacketText(firstNonEmpty(stringValue(payload["result"]), stringValue(payload["status"]), stringValue(payload["outcome"]), "observed"), 80)
+		if strings.Contains(kind, "attempt_started") {
+			result = "started"
+		}
+		parts := []string{fmt.Sprintf("`%s` kind=%s result=%s", command, firstNonEmpty(kind, "command"), result)}
+		if exitCode := firstNonEmpty(stringValue(payload["exit_code"]), stringValue(payload["exitCode"])); exitCode != "" {
+			parts = append(parts, "exit_code="+exitCode)
+		}
+		if duration := commandDurationText(payload); duration != "" {
+			parts = append(parts, "duration="+duration)
+		}
+		if turnID := firstNonEmpty(stringValue(payload["turn_id"]), stringValue(payload["turnId"])); turnID != "" {
+			parts = append(parts, "turn="+safePacketText(turnID, 120))
+		}
+		if sessionRef := sessionRefFromEvent(event); sessionRef != "" {
+			parts = append(parts, "session="+sessionRef)
+		}
+		if summary := safePacketText(firstNonEmpty(stringValue(payload["summary"]), stringValue(payload["note"])), 180); summary != "" {
+			parts = append(parts, "summary="+summary)
+		}
+		out = append(out, strings.Join(parts, " "))
+	}
+	return out
+}
+
+func validationSummariesFromEvents(events []map[string]any) []string {
+	var out []string
+	for _, event := range events {
+		kind := reviewPacketEventKind(event)
+		payload := reviewPacketEventPayload(event)
+		if payload == nil {
+			continue
+		}
+		command := firstNonEmpty(
+			stringValue(payload["validation_command"]),
+			stringValue(payload["check"]),
+			stringValue(payload["command"]),
+			stringValue(payload["cmd"]),
+		)
+		result := firstNonEmpty(stringValue(payload["validation_result"]), stringValue(payload["result"]), stringValue(payload["status"]), stringValue(payload["outcome"]))
+		if !strings.Contains(kind, "validation") && !strings.Contains(strings.ToLower(command), "tusker validate") && payload["validation_result"] == nil {
+			continue
+		}
+		command = safePacketText(command, 260)
+		if command == "" {
+			command = firstNonEmpty(kind, "validation")
+		}
+		parts := []string{fmt.Sprintf("`%s` result=%s", command, safePacketText(firstNonEmpty(result, "observed"), 80))}
+		if exitCode := firstNonEmpty(stringValue(payload["exit_code"]), stringValue(payload["exitCode"])); exitCode != "" {
+			parts = append(parts, "exit_code="+exitCode)
+		}
+		if summary := safePacketText(firstNonEmpty(stringValue(payload["summary"]), stringValue(payload["note"])), 180); summary != "" {
+			parts = append(parts, "summary="+summary)
+		}
+		out = append(out, strings.Join(parts, " "))
 	}
 	return out
 }
@@ -1724,6 +2187,39 @@ func changedFilesFromWorkspace(workspacePath string) ([]string, string) {
 	return changed, ""
 }
 
+func diffSummaryFromWorkspace(workspacePath string) ([]string, string) {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if workspacePath == "" {
+		return nil, "No diff summary was observed; workspace path was not recorded."
+	}
+	info, err := os.Stat(workspacePath)
+	if err != nil || !info.IsDir() {
+		return nil, "No diff summary was observed; workspace path was unavailable."
+	}
+	var summaries []string
+	for _, args := range [][]string{
+		{"diff", "--stat", "--no-ext-diff"},
+		{"diff", "--cached", "--stat", "--no-ext-diff"},
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", workspacePath}, args...)...)
+		output, runErr := cmd.CombinedOutput()
+		timedOut := ctx.Err() != nil
+		cancel()
+		if timedOut {
+			return nil, "No diff summary was observed; git diff timed out."
+		}
+		if runErr != nil {
+			return nil, "No diff summary was observed; git diff was unavailable."
+		}
+		summaries = append(summaries, parseGitDiffStat(string(output))...)
+	}
+	if len(summaries) == 0 {
+		return nil, "No diff summary was observed by git diff in the workspace."
+	}
+	return dedupeSortedStrings(summaries), ""
+}
+
 func parseGitStatusShort(output string) []string {
 	var out []string
 	for _, line := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
@@ -1746,6 +2242,349 @@ func parseGitStatusShort(output string) []string {
 		out = append(out, fmt.Sprintf("`%s` (%s)", path, firstNonEmpty(status, "changed")))
 	}
 	return dedupeSortedStrings(out)
+}
+
+func parseGitDiffStat(output string) []string {
+	var out []string
+	for _, line := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		out = append(out, "`"+safePacketText(line, 240)+"`")
+	}
+	return dedupeSortedStrings(out)
+}
+
+func reviewPacketEventKind(event map[string]any) string {
+	return strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		stringValue(event["kind"]),
+		stringValue(event["event_kind"]),
+		stringValue(event["action"]),
+		stringValue(event["type"]),
+	)))
+}
+
+func reviewPacketEventPayload(event map[string]any) map[string]any {
+	if payload, ok := event["payload"].(map[string]any); ok {
+		return payload
+	}
+	if data, ok := event["data"].(map[string]any); ok {
+		return data
+	}
+	return event
+}
+
+func fileDiffSummaries(value any, kind string) []string {
+	var out []string
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			out = append(out, fileDiffSummaries(item, kind)...)
+		}
+	case []map[string]any:
+		for _, item := range typed {
+			out = append(out, fileDiffSummaries(item, kind)...)
+		}
+	case map[string]any:
+		path := firstNonEmpty(pathValuesJoined(typed["path"]), pathValuesJoined(typed["file"]), pathValuesJoined(typed["filename"]))
+		if path == "" {
+			return nil
+		}
+		insertions := reviewPacketInt(firstNonEmptyAny(typed["insertions"], typed["additions"], typed["added"]))
+		deletions := reviewPacketInt(firstNonEmptyAny(typed["deletions"], typed["removals"], typed["removed"]))
+		status := safePacketText(firstNonEmpty(stringValue(typed["status"]), stringValue(typed["change_type"]), "changed"), 80)
+		if insertions == 0 && deletions == 0 {
+			out = append(out, fmt.Sprintf("`%s` %s (event:%s)", path, status, firstNonEmpty(kind, "diff_summary")))
+		} else {
+			out = append(out, fmt.Sprintf("`%s` %s +%d -%d (event:%s)", path, status, insertions, deletions, firstNonEmpty(kind, "diff_summary")))
+		}
+	}
+	return out
+}
+
+func pathValuesJoined(value any) string {
+	values := pathValues(value)
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func firstNonEmptyAny(values ...any) any {
+	for _, value := range values {
+		if strings.TrimSpace(stringValue(value)) != "" {
+			return value
+		}
+	}
+	return nil
+}
+
+func sessionRefsFromEvents(events []map[string]any) []string {
+	var out []string
+	for _, event := range events {
+		if ref := sessionRefFromEvent(event); ref != "" {
+			out = append(out, ref)
+		}
+	}
+	return dedupeSortedStrings(out)
+}
+
+func sessionRefFromEvent(event map[string]any) string {
+	payload := reviewPacketEventPayload(event)
+	return safePacketText(firstNonEmpty(
+		stringValue(payload["session_ref"]),
+		stringValue(payload["session_id"]),
+		stringValue(payload["sessionId"]),
+		stringValue(payload["thread_id"]),
+		stringValue(payload["threadId"]),
+		stringValue(event["session_ref"]),
+		stringValue(event["session_id"]),
+		stringValue(event["thread_id"]),
+	), 120)
+}
+
+func turnIDsFromEvents(events []map[string]any) []string {
+	var out []string
+	for _, event := range events {
+		payload := reviewPacketEventPayload(event)
+		turnID := safePacketText(firstNonEmpty(
+			stringValue(payload["turn_id"]),
+			stringValue(payload["turnId"]),
+			stringValue(event["turn_id"]),
+			stringValue(event["turnId"]),
+		), 120)
+		if turnID != "" {
+			out = append(out, turnID)
+		}
+	}
+	return dedupeSortedStrings(out)
+}
+
+func tokenTotalsFromEvents(events []map[string]any) runtimeTokenTotals {
+	byTurn := map[string]runtimeTokenTotals{}
+	for i, event := range events {
+		kind := reviewPacketEventKind(event)
+		payload := reviewPacketEventPayload(event)
+		turnID := firstNonEmpty(stringValue(payload["turn_id"]), stringValue(payload["turnId"]))
+		if turnID == "" && !strings.Contains(kind, "turn") {
+			continue
+		}
+		totals := runtimeTokenTotals{
+			InputTokens:  reviewPacketInt(payload["input_tokens"]),
+			OutputTokens: reviewPacketInt(payload["output_tokens"]),
+			TotalTokens:  reviewPacketInt(payload["total_tokens"]),
+		}
+		if totals.TotalTokens == 0 && (totals.InputTokens > 0 || totals.OutputTokens > 0) {
+			totals.TotalTokens = totals.InputTokens + totals.OutputTokens
+		}
+		if totals.TotalTokens == 0 && totals.InputTokens == 0 && totals.OutputTokens == 0 {
+			continue
+		}
+		key := firstNonEmpty(turnID, fmt.Sprintf("event-%d", i))
+		byTurn[key] = totals
+	}
+	var out runtimeTokenTotals
+	for _, totals := range byTurn {
+		out.InputTokens += totals.InputTokens
+		out.OutputTokens += totals.OutputTokens
+		out.TotalTokens += totals.TotalTokens
+	}
+	if out.TotalTokens == 0 && (out.InputTokens > 0 || out.OutputTokens > 0) {
+		out.TotalTokens = out.InputTokens + out.OutputTokens
+	}
+	return out
+}
+
+func runtimeSummariesFromRun(run RunStatus) []string {
+	var out []string
+	parts := []string{}
+	if run.LeaseState != "" {
+		parts = append(parts, "lease="+run.LeaseState)
+	}
+	if run.AttemptOutcome != "" {
+		parts = append(parts, "outcome="+run.AttemptOutcome)
+	}
+	if run.ProcessPID > 0 {
+		parts = append(parts, fmt.Sprintf("pid=%d", run.ProcessPID))
+	}
+	status, statusOK := readReviewPacketRunnerStatus(run.StatusPath)
+	if statusOK {
+		parts = append(parts, fmt.Sprintf("exit_code=%d", status.ExitCode))
+		if status.CompletedAt != "" {
+			parts = append(parts, "completed_at="+status.CompletedAt)
+		}
+	}
+	if duration := runDurationSummary(run.StartedAt, firstNonEmpty(status.CompletedAt, run.LastEventAt, run.UpdatedAt)); duration != "" {
+		parts = append(parts, "runtime="+duration)
+	}
+	if len(parts) > 0 {
+		out = append(out, strings.Join(parts, " "))
+	}
+	return out
+}
+
+func readReviewPacketRunnerStatus(path string) (runnerProcessStatus, bool) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return runnerProcessStatus{}, false
+	}
+	status, err := readRunnerProcessStatus(path)
+	return status, err == nil
+}
+
+func runDurationSummary(startedAt, finishedAt string) string {
+	started, err := time.Parse(time.RFC3339, strings.TrimSpace(startedAt))
+	if err != nil {
+		return ""
+	}
+	finished, err := time.Parse(time.RFC3339, strings.TrimSpace(finishedAt))
+	if err != nil || finished.Before(started) {
+		return ""
+	}
+	return finished.Sub(started).Round(time.Second).String()
+}
+
+func openRisksFromEvents(events []map[string]any) []string {
+	var out []string
+	for _, event := range events {
+		kind := reviewPacketEventKind(event)
+		payload := reviewPacketEventPayload(event)
+		for _, key := range []string{"open_risks", "risks"} {
+			for _, risk := range normalizeList(payload[key]) {
+				if safe := safePacketText(risk, 220); safe != "" {
+					out = append(out, safe)
+				}
+			}
+		}
+		if risk := safePacketText(stringValue(payload["risk"]), 220); risk != "" && (strings.Contains(kind, "risk") || strings.Contains(kind, "blocked")) {
+			out = append(out, risk)
+		}
+		result := strings.ToLower(strings.TrimSpace(firstNonEmpty(stringValue(payload["result"]), stringValue(payload["status"]), stringValue(payload["outcome"]))))
+		if result == "fail" || result == "failed" || result == "error" || result == "blocked" {
+			command := safePacketText(firstNonEmpty(stringValue(payload["check"]), stringValue(payload["command"]), stringValue(payload["cmd"])), 180)
+			if command != "" {
+				out = append(out, fmt.Sprintf("`%s` result=%s", command, result))
+			}
+		}
+		if strings.Contains(kind, "denied") || strings.Contains(kind, "error") || strings.Contains(kind, "blocked") || strings.Contains(kind, "failed") {
+			reason := safePacketText(firstNonEmpty(stringValue(payload["reason"]), stringValue(payload["error"]), stringValue(payload["last_error"]), stringValue(event["message"])), 220)
+			if reason != "" {
+				out = append(out, fmt.Sprintf("%s: %s", firstNonEmpty(kind, "runtime"), reason))
+			}
+		}
+	}
+	return dedupeSortedStrings(out)
+}
+
+func openRisksFromRun(run RunStatus) []string {
+	if risk := safePacketText(run.LastError, 220); risk != "" {
+		return []string{"runtime last_error: " + risk}
+	}
+	return nil
+}
+
+func openRisksForPacket(run RunStatus, turns []RunTurn, supervisorDecisions []RuntimeSupervisorDecision, facts reviewPacketFacts) []string {
+	risks := append([]string{}, facts.OpenRisks...)
+	for _, risk := range openRisksFromRun(run) {
+		risks = append(risks, risk)
+	}
+	for _, turn := range turns {
+		if risk := safePacketText(turn.LastError, 220); risk != "" {
+			risks = append(risks, fmt.Sprintf("turn `%s`: %s", turn.TurnID, risk))
+		}
+	}
+	for _, decision := range supervisorDecisions {
+		kind := strings.ToLower(strings.TrimSpace(decision.Kind))
+		if strings.Contains(kind, "stop") || strings.Contains(kind, "human") || strings.Contains(kind, "audit") {
+			reason := safePacketText(firstNonEmpty(decision.Reason, decision.ValidationDelta, decision.ContextSignal), 220)
+			if reason != "" {
+				risks = append(risks, fmt.Sprintf("supervisor `%s`: %s", decision.Kind, reason))
+			}
+		}
+	}
+	return dedupeSortedStrings(risks)
+}
+
+func sessionRefsForPacket(run RunStatus, turns []RunTurn, facts reviewPacketFacts) []string {
+	refs := append([]string{}, facts.SessionRefs...)
+	if ref := safePacketText(run.SessionRef, 120); ref != "" {
+		refs = append(refs, ref)
+	}
+	for _, turn := range turns {
+		if ref := safePacketText(turn.SessionRef, 120); ref != "" {
+			refs = append(refs, ref)
+		}
+	}
+	return dedupeSortedStrings(refs)
+}
+
+func turnIDsForPacket(turns []RunTurn, facts reviewPacketFacts) []string {
+	ids := append([]string{}, facts.TurnIDs...)
+	for _, turn := range turns {
+		if id := safePacketText(turn.TurnID, 120); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return dedupeSortedStrings(ids)
+}
+
+func backtickList(values []string) string {
+	var out []string
+	for _, value := range values {
+		if safe := safePacketText(value, 120); safe != "" {
+			out = append(out, "`"+safe+"`")
+		}
+	}
+	return strings.Join(out, ", ")
+}
+
+func commandDurationText(payload map[string]any) string {
+	if value := reviewPacketInt(firstNonEmptyAny(payload["duration_ms"], payload["elapsed_ms"])); value > 0 {
+		return (time.Duration(value) * time.Millisecond).Round(time.Millisecond).String()
+	}
+	if value := reviewPacketInt(firstNonEmptyAny(payload["duration_seconds"], payload["elapsed_seconds"])); value > 0 {
+		return (time.Duration(value) * time.Second).String()
+	}
+	return ""
+}
+
+func reviewPacketInt(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		n, _ := typed.Int64()
+		return int(n)
+	case string:
+		return atoiSafe(strings.TrimSpace(typed))
+	default:
+		return 0
+	}
+}
+
+func safePacketText(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.Join(strings.Fields(value), " ")
+	for _, pattern := range []string{
+		`(?i)(authorization:\s*bearer\s+)[^\s]+`,
+		`(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)=)[^\s]+`,
+		`(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret):\s*)[^\s]+`,
+	} {
+		value = regexp.MustCompile(pattern).ReplaceAllString(value, "${1}[redacted]")
+	}
+	if limit > 0 && len(value) > limit {
+		value = strings.TrimSpace(value[:limit]) + "..."
+	}
+	return value
 }
 
 func dedupeSortedStrings(values []string) []string {
@@ -1841,14 +2680,59 @@ func processExists(pid int) bool {
 }
 
 func runnerForName(name string, wf Workflow) (Runner, string, error) {
-	switch RunnerName(name) {
+	definition, hasDefinition := wf.Runners[strings.TrimSpace(name)]
+	runnerKind := RunnerName(name)
+	command := ""
+	if hasDefinition {
+		command = strings.TrimSpace(definition.Command)
+		if strings.TrimSpace(definition.Kind) != "" {
+			runnerKind = RunnerName(strings.TrimSpace(definition.Kind))
+		}
+	}
+	switch runnerKind {
 	case RunnerCodex:
 		return &CodexRunner{}, wf.Codex.Command, nil
+	case RunnerCodexAppServer:
+		return &CodexAppServerRunner{}, firstNonEmpty(command, wf.Codex.Command, "codex app-server"), nil
+	case RunnerCodexExec:
+		return &CodexExecRunner{}, firstNonEmpty(command, "codex exec --skip-git-repo-check -"), nil
+	case RunnerCodexCloud:
+		config := wf.CodexCloud
+		if hasDefinition {
+			config = codexCloudConfigFromRunnerDefinition(definition, config)
+		}
+		return &CodexCloudRunner{Config: config}, firstNonEmpty(command, config.Command), nil
 	case RunnerClaude:
-		return &ClaudeRunner{}, wf.Claude.Command, nil
+		return &ClaudeRunner{}, firstNonEmpty(command, wf.Claude.Command), nil
 	default:
 		return nil, "", tuskerError(errorConfigInvalid, "unsupported runner: "+name)
 	}
+}
+
+func codexCloudConfigFromRunnerDefinition(definition RunnerDefinition, fallbackConfig CodexCloudConfig) CodexCloudConfig {
+	config := fallbackConfig
+	if strings.TrimSpace(definition.Command) != "" {
+		config.Command = definition.Command
+	}
+	if strings.TrimSpace(definition.StatusCommand) != "" {
+		config.StatusCommand = definition.StatusCommand
+	}
+	if strings.TrimSpace(definition.CollectCommand) != "" {
+		config.CollectCommand = definition.CollectCommand
+	}
+	if strings.TrimSpace(definition.EnvironmentID) != "" {
+		config.EnvironmentID = definition.EnvironmentID
+	}
+	if strings.TrimSpace(definition.ApplyMode) != "" {
+		config.ApplyMode = definition.ApplyMode
+	}
+	if strings.TrimSpace(definition.PRMode) != "" {
+		config.PRMode = definition.PRMode
+	}
+	if definition.ExternalCollect {
+		config.ExternalCollect = true
+	}
+	return config
 }
 
 func sessionStateForOutcome(outcome AttemptOutcome) string {
@@ -1890,7 +2774,7 @@ func workspaceStrategyFromWorkflow(value string) WorkspaceStrategy {
 
 var workflowTemplatePlaceholder = regexp.MustCompile(`{{\s*([A-Za-z0-9_.]+)\s*}}`)
 
-func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath string, attemptNumber int, attemptID, lane string) (string, error) {
+func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath string, attemptNumber int, attemptID, lane string, run RunStatus, store *RuntimeStore) (string, error) {
 	values := map[string]string{
 		"project.name":                project.Name,
 		"project.id":                  project.ProjectID,
@@ -1921,7 +2805,52 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 	if err != nil {
 		return "", tuskerError(errorConfigInvalid, err.Error(), withPath(wfFile.Path))
 	}
+	if runtimeContext := renderExternalLoopRuntimePromptContext(store, project.ProjectID, trackerRecordID(note), run); runtimeContext != "" {
+		rendered = strings.TrimSpace(rendered) + "\n\n" + runtimeContext
+	}
 	return strings.TrimSpace(rendered) + "\n", nil
+}
+
+func renderExternalLoopRuntimePromptContext(store *RuntimeStore, projectID, recordID string, run RunStatus) string {
+	if store == nil || strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" {
+		return ""
+	}
+	inputs, _ := store.ListApplyInputsForRun(projectID, recordID)
+	events, _ := store.ListExternalLoopEvents(projectID, recordID)
+	if len(inputs) == 0 && len(events) == 0 && strings.TrimSpace(run.LastError) == "" {
+		return ""
+	}
+	var lines []string
+	lines = append(lines, "## Tusker Runtime Context")
+	if len(events) > 0 {
+		latest := events[len(events)-1]
+		lines = append(lines, fmt.Sprintf("- Latest external-loop event: stage=%s action=%s status=%s runner=%s job=%s", latest.Stage, latest.Action, latest.Status, fallback(latest.Runner, "-"), fallback(latest.JobID, "-")))
+		if strings.TrimSpace(latest.Reason) != "" {
+			lines = append(lines, "- Latest external-loop reason: "+latest.Reason)
+		}
+	}
+	if strings.TrimSpace(run.LastError) != "" {
+		lines = append(lines, "- Previous attempt error: "+run.LastError)
+	}
+	if len(inputs) > 0 {
+		var paths []string
+		for _, input := range inputs {
+			paths = append(paths, firstNonEmpty(input.RelPath, input.Path))
+		}
+		lines = append(lines, "- External apply inputs: "+strings.Join(paths, ", "))
+	}
+	switch firstNonEmpty(strings.TrimSpace(run.Lane), runLaneExecute) {
+	case runLaneReview:
+		lines = append(lines, "- Current external-loop role: review the applied result. Return review notes and only include a patch if concrete rework is required.")
+	default:
+		for i := len(events) - 1; i >= 0; i-- {
+			if normalizeExternalLoopAction(events[i].Action) == externalLoopActionContinueThreadOnFailure {
+				lines = append(lines, "- Current external-loop role: repair continuation. Use the failure context to return a corrected patch or explicit blocker notes.")
+				break
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func yesNo(value bool) string {

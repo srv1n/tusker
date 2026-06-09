@@ -105,7 +105,7 @@ func TestV7ValidateReportsMixedLayoutTaskCollisionRepair(t *testing.T) {
 		found = true
 		assertContainsIndexTest(t, issue.Message, "APP-T-0001")
 		assertContainsIndexTest(t, issue.Hint, "mixed V5/V7 task collision")
-		assertContainsIndexTest(t, issue.Hint, "tusker/work/tasks/APP-T-0001.md")
+		assertContainsIndexTest(t, issue.Hint, ".tusker/work/tasks/APP-T-0001.md")
 		if strings.Contains(issue.Hint, "<id>") {
 			t.Fatalf("repair hint still uses placeholder id: %s", issue.Hint)
 		}
@@ -322,7 +322,7 @@ func TestV7PacketWarnsOnMissingRoutesAndStubAcceptance(t *testing.T) {
 	packet := v7Packet(vault, task, mustIndex(t, vault), "agent")
 
 	assertContainsIndexTest(t, packet, "## Packet warnings")
-	assertContainsIndexTest(t, packet, "`tusker/SKILL.md` is missing")
+	assertContainsIndexTest(t, packet, "`vault/SKILL.md` is missing")
 	assertContainsIndexTest(t, packet, "`missing` domain route missing")
 	assertContainsIndexTest(t, packet, "Acceptance looks vague or placeholder: Define the accepted outcome")
 	assertContainsIndexTest(t, packet, "`missing`: domain route is missing")

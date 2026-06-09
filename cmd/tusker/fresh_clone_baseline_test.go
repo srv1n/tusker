@@ -17,8 +17,10 @@ func TestFreshCloneBaselineHasModuleAndEmbeddedSkillAssets(t *testing.T) {
 		"skill/LICENSE",
 		"skill/references/COMMANDS.md",
 		"skill/references/WORKFLOW.md",
-		"tusker/docs/agents/use-tusker.md",
-		"tusker/docs/spec/tusker-v7-repo-local-work-tracker-spec.md",
+		"skill/references/ORCHESTRATION.md",
+		".tusker/SKILL.md",
+		".tusker/WORKFLOW.md",
+		".tusker/knowledge/domains/project/CANON.md",
 	} {
 		if !fileExists(filepath.Join(repoRoot, filepath.FromSlash(rel))) {
 			t.Fatalf("fresh clone baseline missing required file: %s", rel)
@@ -46,10 +48,37 @@ func TestFreshCloneBaselineCLIRunsHelpAndV7Init(t *testing.T) {
 	if err != nil {
 		t.Fatalf("go run ./cmd/tusker init failed: %v\n%s", err, output)
 	}
-	for _, rel := range []string{"SKILL.md", "work/tasks", "work/gates", "knowledge/domains/project/INDEX.md", "evidence", "attempts"} {
+	for _, rel := range []string{
+		"SKILL.md",
+		"Dashboard.md",
+		"work/tasks",
+		"work/gates",
+		"knowledge/domains/project/INDEX.md",
+		"evidence",
+		"attempts",
+		"dashboards/human-actions.md",
+		"dashboards/agent-ready.md",
+		"_generated/bases/tasks.base",
+		"_generated/bases/epics.base",
+		"_generated/indexes/tasks.json",
+		"_generated/indexes/summary.json",
+	} {
 		if !fileExists(filepath.Join(vault, filepath.FromSlash(rel))) {
 			t.Fatalf("V7 init missing %s", rel)
 		}
+	}
+	dashboard, err := os.ReadFile(filepath.Join(vault, "Dashboard.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(dashboard), "![[_generated/bases/tasks.base#Agent Ready]]") {
+		t.Fatalf("V7 init Dashboard.md missing generated Bases embeds:\n%s", dashboard)
+	}
+	if strings.Contains(string(dashboard), "Legacy dashboard generation was removed") {
+		t.Fatalf("V7 init Dashboard.md still contains legacy placeholder:\n%s", dashboard)
+	}
+	if strings.Contains(string(dashboard), "## Docs catalog") || strings.Contains(string(dashboard), "<!-- tusker:dashboard-runs:begin -->") {
+		t.Fatalf("V7 init Dashboard.md contains legacy dashboard scaffolding:\n%s", dashboard)
 	}
 	if fileExists(filepath.Join(vault, "_config", "docs-map.yaml")) {
 		t.Fatal("V7 init must not create legacy docs-map")
@@ -58,7 +87,7 @@ func TestFreshCloneBaselineCLIRunsHelpAndV7Init(t *testing.T) {
 
 func TestFreshCloneBaselineIgnoresTaskAttachmentGoSources(t *testing.T) {
 	repoRoot := repoRootForFreshCloneTest(t)
-	attachmentsRoot := filepath.Join(repoRoot, "tusker", "Attachments")
+	attachmentsRoot := filepath.Join(repoRoot, ".tusker", "Attachments")
 	if !fileExists(attachmentsRoot) {
 		return
 	}

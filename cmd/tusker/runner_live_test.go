@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -64,13 +66,13 @@ for line in sys.stdin:
         print(json.dumps({"jsonrpc":"2.0","method":"item/commandExecution/requestApproval","id":"approve-command","params":{"threadId":"thread-123","turnId":"turn-123","itemId":"item-1","command":"go test ./cmd/tusker","cwd":os.environ["TUSKER_WORKSPACE"]}}), flush=True)
     elif msg.get("id")=="approve-command":
         assert msg["result"]["decision"]=="accept"
-        print(json.dumps({"jsonrpc":"2.0","method":"item/fileChange/requestApproval","id":"approve-file","params":{"threadId":"thread-123","turnId":"turn-123","itemId":"item-2","reason":"write result"}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","method":"item/fileChange/requestApproval","id":"approve-file","params":{"threadId":"thread-123","turnId":"turn-123","itemId":"item-2","changes":[{"path":os.path.join(os.environ["TUSKER_WORKSPACE"],"result.txt")}],"reason":"write result"}}), flush=True)
     elif msg.get("id")=="approve-file":
         assert msg["result"]["decision"]=="accept"
         print(json.dumps({"jsonrpc":"2.0","method":"item/permissions/requestApproval","id":"approve-permissions","params":{"threadId":"thread-123","turnId":"turn-123","itemId":"item-3","cwd":os.environ["TUSKER_WORKSPACE"],"reason":"needs current workspace","permissions":{}}}), flush=True)
     elif msg.get("id")=="approve-permissions":
-        assert msg["result"]["permissions"]=={}, msg
-        assert msg["result"]["scope"]=="turn", msg
+        assert "error" in msg, msg
+        assert "permission approval requests" in msg["error"]["message"], msg
         print(json.dumps({"jsonrpc":"2.0","method":"item/tool/requestUserInput","id":"user-input","params":{"threadId":"thread-123","turnId":"turn-123","itemId":"item-4","questions":[{"id":"choice","header":"Pick","question":"Choose","isOther":False,"isSecret":False,"options":None}]}}), flush=True)
     elif msg.get("id")=="user-input":
         assert msg["result"]["answers"]["choice"]["answers"]==[], msg
@@ -144,6 +146,203 @@ for line in sys.stdin:
 	assertEqual(t, 11, turns[0].InputTokens, "stored codex input tokens")
 	assertEqual(t, 7, turns[0].OutputTokens, "stored codex output tokens")
 	assertEqual(t, 18, turns[0].TotalTokens, "stored codex total tokens")
+}
+
+func TestCodexLiveRunnerRejectsOnRequestMutatingApprovals(t *testing.T) {
+	tempRoot := t.TempDir()
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(tempRoot, "state"))
+	workspaceRoot := filepath.Join(tempRoot, "workspace")
+	if err := ensureDir(workspaceRoot); err != nil {
+		t.Fatal(err)
+	}
+	rawLogPath := filepath.Join(tempRoot, "codex.log")
+	statusPath := filepath.Join(tempRoot, "codex.status.json")
+	eventSinkPath := filepath.Join(tempRoot, "events.jsonl")
+	promptPath := filepath.Join(tempRoot, "prompt.txt")
+	scriptPath := filepath.Join(tempRoot, "fake-codex.py")
+	if err := writeText(promptPath, "Try a write.\n"); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/usr/bin/env python3
+import json,os,sys
+for line in sys.stdin:
+    msg=json.loads(line)
+    if msg.get("method")=="initialize":
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"serverInfo":{"name":"fake-codex"}}}), flush=True)
+    elif msg.get("method")=="thread/start":
+        assert msg["params"]["approvalPolicy"]=="on-request", msg["params"]
+        assert msg["params"]["sandbox"]=="workspace-write", msg["params"]
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"thread":{"id":"thread-policy"}}}), flush=True)
+    elif msg.get("method")=="turn/start":
+        assert msg["params"]["approvalPolicy"]=="on-request", msg["params"]
+        assert msg["params"]["sandboxPolicy"]["type"]=="workspaceWrite", msg["params"]
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"turn":{"id":"turn-policy","status":"inProgress","items":[]}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","method":"item/commandExecution/requestApproval","id":"approve-command","params":{"threadId":"thread-policy","turnId":"turn-policy","itemId":"item-1","command":"touch changed.txt","cwd":os.environ["TUSKER_WORKSPACE"]}}), flush=True)
+    elif msg.get("id")=="approve-command":
+        assert msg["result"]["decision"]=="reject", msg
+        assert "approval_policy=on-request" in msg["result"]["reason"], msg
+        print(json.dumps({"jsonrpc":"2.0","method":"item/fileChange/requestApproval","id":"approve-file","params":{"threadId":"thread-policy","turnId":"turn-policy","itemId":"item-2","changes":[{"path":"changed.txt"}],"cwd":os.environ["TUSKER_WORKSPACE"],"reason":"write result"}}), flush=True)
+    elif msg.get("id")=="approve-file":
+        assert msg["result"]["decision"]=="reject", msg
+        assert "approval_policy=on-request" in msg["result"]["reason"], msg
+        print(json.dumps({"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-policy","turn":{"id":"turn-policy","status":"completed","items":[]}}}), flush=True)
+        break
+`
+	if err := writeText(scriptPath, script); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := startLiveCodex(context.Background(), StartRequest{
+		ProjectID:     "project-1",
+		RecordID:      "record-1",
+		ItemID:        "ITEM-1",
+		AttemptID:     "attempt-policy",
+		WorkRevision:  0,
+		WorkspacePath: workspaceRoot,
+		PromptPath:    promptPath,
+		EventSinkPath: eventSinkPath,
+		RawLogPath:    rawLogPath,
+		StatusPath:    statusPath,
+		Command:       scriptPath,
+		VaultPath:     tempRoot,
+		CodexPolicy: CodexPolicy{
+			ApprovalPolicy:    "on-request",
+			ThreadSandbox:     "workspace-write",
+			TurnSandboxPolicy: "workspace-write",
+			TurnTimeoutMS:     5000,
+			ReadTimeoutMS:     5000,
+			StallTimeoutMS:    5000,
+			MaxTurns:          1,
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "thread-policy", result.SessionRef, "codex policy session ref")
+	waitForStatusFile(t, statusPath)
+	status, err := readRunnerProcessStatus(statusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 0, status.ExitCode, "codex policy exit code")
+	eventsText, err := readText(eventSinkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(eventsText, "\"kind\":\"codex_approval_decision\"") != 2 {
+		t.Fatalf("expected two approval decision events, got:\n%s", eventsText)
+	}
+	if !strings.Contains(eventsText, "\"decision\":\"reject\"") || !strings.Contains(eventsText, "approval_policy=on-request") {
+		t.Fatalf("expected rejected on-request approval events, got:\n%s", eventsText)
+	}
+}
+
+func TestCodexLiveRunnerReviewerLaneForcesReadOnlyAndRejectsMutatingApprovals(t *testing.T) {
+	tempRoot := t.TempDir()
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(tempRoot, "state"))
+	workspaceRoot := filepath.Join(tempRoot, "workspace")
+	if err := ensureDir(workspaceRoot); err != nil {
+		t.Fatal(err)
+	}
+	rawLogPath := filepath.Join(tempRoot, "codex.log")
+	statusPath := filepath.Join(tempRoot, "codex.status.json")
+	eventSinkPath := filepath.Join(tempRoot, "events.jsonl")
+	promptPath := filepath.Join(tempRoot, "prompt.txt")
+	scriptPath := filepath.Join(tempRoot, "fake-reviewer-codex.py")
+	if err := writeText(promptPath, "Review only.\n"); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/usr/bin/env python3
+import json,os,sys
+for line in sys.stdin:
+    msg=json.loads(line)
+    if msg.get("method")=="initialize":
+        assert os.environ["TUSKER_RUN_LANE"]=="review", os.environ.get("TUSKER_RUN_LANE")
+        assert os.environ["TUSKER_CODEX_APPROVAL_POLICY"]=="never", os.environ.get("TUSKER_CODEX_APPROVAL_POLICY")
+        assert os.environ["TUSKER_CODEX_TURN_SANDBOX_POLICY"]=="read-only", os.environ.get("TUSKER_CODEX_TURN_SANDBOX_POLICY")
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"serverInfo":{"name":"fake-codex"}}}), flush=True)
+    elif msg.get("method")=="thread/start":
+        assert msg["params"]["approvalPolicy"]=="never", msg["params"]
+        assert msg["params"]["sandbox"]=="read-only", msg["params"]
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"thread":{"id":"thread-review"}}}), flush=True)
+    elif msg.get("method")=="turn/start":
+        assert msg["params"]["approvalPolicy"]=="never", msg["params"]
+        assert msg["params"]["sandboxPolicy"]=={"type":"readOnly","networkAccess":False}, msg["params"]
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"turn":{"id":"turn-review","status":"inProgress","items":[]}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","method":"item/commandExecution/requestApproval","id":"approve-command","params":{"threadId":"thread-review","turnId":"turn-review","itemId":"item-1","command":"touch reviewed.txt","cwd":os.environ["TUSKER_WORKSPACE"]}}), flush=True)
+    elif msg.get("id")=="approve-command":
+        assert msg["result"]["decision"]=="reject", msg
+        assert "approval_policy=never" in msg["result"]["reason"], msg
+        print(json.dumps({"jsonrpc":"2.0","method":"item/fileChange/requestApproval","id":"approve-file","params":{"threadId":"thread-review","turnId":"turn-review","itemId":"item-2","changes":[{"path":"reviewed.txt"}],"cwd":os.environ["TUSKER_WORKSPACE"]}}), flush=True)
+    elif msg.get("id")=="approve-file":
+        assert msg["result"]["decision"]=="reject", msg
+        print(json.dumps({"jsonrpc":"2.0","method":"item/permissions/requestApproval","id":"approve-permissions","params":{"threadId":"thread-review","turnId":"turn-review","itemId":"item-3","cwd":os.environ["TUSKER_WORKSPACE"],"reason":"needs write permissions","permissions":{}}}), flush=True)
+    elif msg.get("id")=="approve-permissions":
+        assert "error" in msg, msg
+        assert "permission approval requests" in msg["error"]["message"], msg
+        print(json.dumps({"jsonrpc":"2.0","method":"applyPatchApproval","id":"approve-patch","params":{"cwd":os.environ["TUSKER_WORKSPACE"],"changes":[{"path":"reviewed.txt"}]}}), flush=True)
+    elif msg.get("id")=="approve-patch":
+        assert msg["result"]["decision"]=="denied", msg
+        print(json.dumps({"jsonrpc":"2.0","method":"execCommandApproval","id":"approve-exec","params":{"command":"touch other.txt","cwd":os.environ["TUSKER_WORKSPACE"]}}), flush=True)
+    elif msg.get("id")=="approve-exec":
+        assert msg["result"]["decision"]=="denied", msg
+        print(json.dumps({"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-review","turn":{"id":"turn-review","status":"completed","items":[]}}}), flush=True)
+        break
+`
+	if err := writeText(scriptPath, script); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := startLiveCodex(context.Background(), StartRequest{
+		ProjectID:     "project-1",
+		RecordID:      "record-1",
+		ItemID:        "ITEM-1",
+		AttemptID:     "attempt-review",
+		Lane:          runLaneReview,
+		WorkRevision:  0,
+		WorkspacePath: workspaceRoot,
+		PromptPath:    promptPath,
+		EventSinkPath: eventSinkPath,
+		RawLogPath:    rawLogPath,
+		StatusPath:    statusPath,
+		Command:       scriptPath,
+		VaultPath:     tempRoot,
+		CodexPolicy: CodexPolicy{
+			ApprovalPolicy:    "on-failure",
+			ThreadSandbox:     "workspace-write",
+			TurnSandboxPolicy: "workspace-write",
+			TurnTimeoutMS:     5000,
+			ReadTimeoutMS:     5000,
+			StallTimeoutMS:    5000,
+			MaxTurns:          1,
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "thread-review", result.SessionRef, "codex review session ref")
+	waitForStatusFile(t, statusPath)
+	status, err := readRunnerProcessStatus(statusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 0, status.ExitCode, "codex review exit code")
+	eventsText, err := readText(eventSinkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(eventsText, "\"kind\":\"codex_approval_decision\"") != 5 {
+		t.Fatalf("expected five reviewer approval decision events, got:\n%s", eventsText)
+	}
+	if !strings.Contains(eventsText, "\"approval_policy\":\"never\"") || !strings.Contains(eventsText, "\"turn_sandbox_policy\":\"read-only\"") {
+		t.Fatalf("expected reviewer approval events to expose enforced policy, got:\n%s", eventsText)
+	}
 }
 
 func TestCodexLiveRunnerContinuesSameThreadWhileNoteRemainsActive(t *testing.T) {
@@ -239,6 +438,137 @@ for line in sys.stdin:
 	}
 	if !strings.Contains(logText, "max turns reached") {
 		t.Fatalf("expected max-turn exhaustion to be surfaced in raw log, got:\n%s", logText)
+	}
+}
+
+func TestCodexApprovalPolicyRejectsWorkspaceEscapesSecretsAndGitMutations(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	handle := &codexLiveHandle{
+		cmd: &exec.Cmd{Dir: workspaceRoot},
+		policy: codexPolicyForLane(CodexPolicy{
+			ApprovalPolicy:    "on-failure",
+			ThreadSandbox:     "workspace-write",
+			TurnSandboxPolicy: "workspace-write",
+		}, runLaneExecute),
+	}
+
+	outside := handle.evaluateFileChangeApproval([]byte(`{"cwd":"` + filepath.ToSlash(workspaceRoot) + `","changes":[{"path":"../outside.txt"}]}`))
+	if outside.Decision != "reject" || !strings.Contains(outside.Reason, "escapes the prepared workspace") {
+		t.Fatalf("expected outside workspace write rejection, got %#v", outside)
+	}
+
+	secret := handle.evaluateFileChangeApproval([]byte(`{"cwd":"` + filepath.ToSlash(workspaceRoot) + `","changes":[{"path":".env"}]}`))
+	if secret.Decision != "reject" || !strings.Contains(secret.Reason, "secret path") {
+		t.Fatalf("expected secret path rejection, got %#v", secret)
+	}
+
+	gitMutation := handle.evaluateCommandApproval([]byte(`{"cwd":"` + filepath.ToSlash(workspaceRoot) + `","command":"git reset --hard HEAD"}`))
+	if gitMutation.Decision != "reject" || !strings.Contains(gitMutation.Reason, "unsafe git state mutation") {
+		t.Fatalf("expected unsafe git mutation rejection, got %#v", gitMutation)
+	}
+
+	inside := handle.evaluateFileChangeApproval([]byte(`{"cwd":"` + filepath.ToSlash(workspaceRoot) + `","changes":[{"path":"result.txt"}]}`))
+	if inside.Decision != "accept" {
+		t.Fatalf("expected in-workspace file change approval, got %#v", inside)
+	}
+}
+
+func TestCodexLiveRequestCleansPendingOnExitPaths(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		stdin := &recordingWriteCloser{}
+		handle := &codexLiveHandle{
+			stdin:   stdin,
+			pending: map[string]chan codexRPCResponse{},
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			waitForCodexPendingRequest(t, handle, "1")
+			handle.handleStdoutLine(`{"jsonrpc":"2.0","id":"1","result":{"ok":true}}`)
+		}()
+		var out struct {
+			OK bool `json:"ok"`
+		}
+		if err := handle.request(context.Background(), "initialize", map[string]any{}, &out); err != nil {
+			t.Fatal(err)
+		}
+		<-done
+		if !out.OK {
+			t.Fatal("expected response to unmarshal")
+		}
+		assertCodexPendingEmpty(t, handle)
+	})
+
+	t.Run("cancel", func(t *testing.T) {
+		stdin := &recordingWriteCloser{}
+		handle := &codexLiveHandle{
+			stdin:   stdin,
+			pending: map[string]chan codexRPCResponse{},
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := handle.request(ctx, "thread/start", map[string]any{}, nil)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context canceled, got %v", err)
+		}
+		assertCodexPendingEmpty(t, handle)
+		handle.handleStdoutLine(`{"jsonrpc":"2.0","id":"1","result":{"thread":{"id":"late"}}}`)
+		assertCodexPendingEmpty(t, handle)
+	})
+
+	t.Run("write error", func(t *testing.T) {
+		errWrite := errors.New("write failed")
+		stdin := &recordingWriteCloser{err: errWrite}
+		handle := &codexLiveHandle{
+			stdin:   stdin,
+			pending: map[string]chan codexRPCResponse{},
+		}
+		err := handle.request(context.Background(), "thread/start", map[string]any{}, nil)
+		if !errors.Is(err, errWrite) {
+			t.Fatalf("expected write error, got %v", err)
+		}
+		assertCodexPendingEmpty(t, handle)
+	})
+}
+
+type recordingWriteCloser struct {
+	err    error
+	writes [][]byte
+}
+
+func (w *recordingWriteCloser) Write(p []byte) (int, error) {
+	if w.err != nil {
+		return 0, w.err
+	}
+	w.writes = append(w.writes, append([]byte(nil), p...))
+	return len(p), nil
+}
+
+func (w *recordingWriteCloser) Close() error {
+	return nil
+}
+
+func waitForCodexPendingRequest(t *testing.T, handle *codexLiveHandle, id string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		handle.pendingMu.Lock()
+		_, ok := handle.pending[id]
+		handle.pendingMu.Unlock()
+		if ok {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for pending request %s", id)
+}
+
+func assertCodexPendingEmpty(t *testing.T, handle *codexLiveHandle) {
+	t.Helper()
+	handle.pendingMu.Lock()
+	defer handle.pendingMu.Unlock()
+	if len(handle.pending) != 0 {
+		t.Fatalf("expected no pending requests, got %d", len(handle.pending))
 	}
 }
 

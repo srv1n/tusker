@@ -12,8 +12,11 @@ import (
 type RunnerName string
 
 const (
-	RunnerCodex  RunnerName = "codex"
-	RunnerClaude RunnerName = "claude-code"
+	RunnerCodex          RunnerName = "codex"
+	RunnerCodexAppServer RunnerName = "codex_app_server"
+	RunnerCodexExec      RunnerName = "codex_exec"
+	RunnerCodexCloud     RunnerName = "codex_cloud"
+	RunnerClaude         RunnerName = "claude-code"
 )
 
 type LeaseState string
@@ -54,6 +57,7 @@ type StartRequest struct {
 	RecordID      string
 	ItemID        string
 	AttemptID     string
+	Lane          string
 	WorkRevision  int
 	ActiveStates  []string
 	WorkingDir    string
@@ -68,6 +72,7 @@ type StartRequest struct {
 	VaultPath     string
 	Budget        map[string]any
 	CodexPolicy   CodexPolicy
+	ExternalLoop  ExternalLoopLaunchContext
 }
 
 type ResumeRequest struct {
@@ -75,6 +80,7 @@ type ResumeRequest struct {
 	RecordID      string
 	ItemID        string
 	AttemptID     string
+	Lane          string
 	WorkRevision  int
 	ActiveStates  []string
 	SessionRef    string
@@ -90,6 +96,15 @@ type ResumeRequest struct {
 	NotePath      string
 	VaultPath     string
 	CodexPolicy   CodexPolicy
+	ExternalLoop  ExternalLoopLaunchContext
+}
+
+type ExternalLoopLaunchContext struct {
+	Stage       string
+	Action      string
+	OriginJobID string
+	EventID     string
+	Reason      string
 }
 
 type CodexPolicy struct {
@@ -101,6 +116,24 @@ type CodexPolicy struct {
 	StallTimeoutMS    int
 	MaxTurns          int
 	Extensions        ExtensionPolicy
+}
+
+type CodexCloudConfig struct {
+	Command         string `yaml:"command" json:"command"`
+	StatusCommand   string `yaml:"status_command" json:"status_command"`
+	CollectCommand  string `yaml:"collect_command" json:"collect_command"`
+	EnvironmentID   string `yaml:"environment_id" json:"environment_id"`
+	ApplyMode       string `yaml:"apply_mode" json:"apply_mode"`
+	PRMode          string `yaml:"pr_mode" json:"pr_mode"`
+	ExternalCollect bool   `yaml:"external_collect,omitempty" json:"external_collect,omitempty"`
+
+	ApprovalPolicy    string `yaml:"approval_policy,omitempty" json:"approval_policy,omitempty"`
+	ThreadSandbox     string `yaml:"thread_sandbox,omitempty" json:"thread_sandbox,omitempty"`
+	TurnSandboxPolicy string `yaml:"turn_sandbox_policy,omitempty" json:"turn_sandbox_policy,omitempty"`
+	TurnTimeoutMS     int    `yaml:"turn_timeout_ms,omitempty" json:"turn_timeout_ms,omitempty"`
+	ReadTimeoutMS     int    `yaml:"read_timeout_ms,omitempty" json:"read_timeout_ms,omitempty"`
+	StallTimeoutMS    int    `yaml:"stall_timeout_ms,omitempty" json:"stall_timeout_ms,omitempty"`
+	MaxTurns          int    `yaml:"max_turns,omitempty" json:"max_turns,omitempty"`
 }
 
 type StartResult struct {
@@ -115,22 +148,41 @@ type StartResult struct {
 	Outcome      AttemptOutcome
 	Reason       string
 	ExitCode     int
+
+	CloudTaskID        string
+	CloudStatus        string
+	CloudEnvironmentID string
+	CloudAttemptNumber int
+	PullRequestURL     string
+	ApplyRef           string
+	LogsSummary        string
+	FinalSummary       string
 }
 
 type ResumeResult = StartResult
 
 type ReconcileRequest struct {
-	Runner     string
-	ProjectID  string
-	RecordID   string
-	AttemptID  string
-	SessionRef string
+	Runner      string
+	ProjectID   string
+	RecordID    string
+	AttemptID   string
+	SessionRef  string
+	CloudTaskID string
 }
 
 type ReconcileResult struct {
 	LeaseState LeaseState
 	Outcome    AttemptOutcome
 	Reason     string
+
+	CloudTaskID        string
+	CloudStatus        string
+	CloudEnvironmentID string
+	CloudAttemptNumber int
+	PullRequestURL     string
+	ApplyRef           string
+	LogsSummary        string
+	FinalSummary       string
 }
 
 type InterruptRequest struct {
@@ -139,7 +191,8 @@ type InterruptRequest struct {
 }
 
 type CollectRequest struct {
-	AttemptID string
+	AttemptID   string
+	CloudTaskID string
 }
 
 type CollectResult struct {
@@ -196,6 +249,16 @@ func withDefaultCodexPolicy(policy CodexPolicy) CodexPolicy {
 	return policy
 }
 
+func codexPolicyForLane(policy CodexPolicy, lane string) CodexPolicy {
+	policy = withDefaultCodexPolicy(policy)
+	if strings.TrimSpace(lane) == runLaneReview {
+		policy.ApprovalPolicy = "never"
+		policy.ThreadSandbox = "read-only"
+		policy.TurnSandboxPolicy = "read-only"
+	}
+	return policy
+}
+
 func runnerWorkspaceCWD(runner RunnerName, workspacePath string) (string, error) {
 	workspacePath = strings.TrimSpace(workspacePath)
 	if workspacePath == "" {
@@ -234,6 +297,7 @@ func runnerEnv(req runnerLaunchEnv) []string {
 		"TUSKER_RECORD_ID="+req.RecordID,
 		"TUSKER_ITEM_ID="+req.ItemID,
 		"TUSKER_ATTEMPT_ID="+req.AttemptID,
+		"TUSKER_RUN_LANE="+req.Lane,
 		"TUSKER_WORK_REVISION="+fmt.Sprintf("%d", req.WorkRevision),
 		"TUSKER_WORKSPACE="+req.WorkspacePath,
 		"TUSKER_WORKING_DIR="+req.WorkspacePath,
@@ -253,6 +317,11 @@ func runnerEnv(req runnerLaunchEnv) []string {
 		"TUSKER_CODEX_READ_TIMEOUT_MS="+fmt.Sprintf("%d", req.CodexPolicy.ReadTimeoutMS),
 		"TUSKER_CODEX_STALL_TIMEOUT_MS="+fmt.Sprintf("%d", req.CodexPolicy.StallTimeoutMS),
 		"TUSKER_CODEX_MAX_TURNS="+fmt.Sprintf("%d", req.CodexPolicy.MaxTurns),
+		"TUSKER_EXTERNAL_LOOP_STAGE="+req.ExternalLoop.Stage,
+		"TUSKER_EXTERNAL_LOOP_ACTION="+req.ExternalLoop.Action,
+		"TUSKER_EXTERNAL_ORIGIN_JOB_ID="+req.ExternalLoop.OriginJobID,
+		"TUSKER_EXTERNAL_LOOP_EVENT_ID="+req.ExternalLoop.EventID,
+		"TUSKER_EXTERNAL_LOOP_REASON="+req.ExternalLoop.Reason,
 		"TUSKER_EXTENSIONS_ENABLED="+fmt.Sprintf("%t", extensionPolicy.Enabled),
 		"TUSKER_EXTENSION_ALLOWED_TOOLS="+strings.Join(extensionPolicy.AllowedTools, ","),
 		"TUSKER_EXTENSION_ALLOWED_MCPS="+strings.Join(extensionPolicy.AllowedMCPs, ","),
@@ -273,6 +342,7 @@ type runnerLaunchEnv struct {
 	RecordID      string
 	ItemID        string
 	AttemptID     string
+	Lane          string
 	WorkRevision  int
 	WorkspacePath string
 	RepoRoot      string
@@ -285,4 +355,5 @@ type runnerLaunchEnv struct {
 	SessionRef    string
 	MessageRef    string
 	CodexPolicy   CodexPolicy
+	ExternalLoop  ExternalLoopLaunchContext
 }

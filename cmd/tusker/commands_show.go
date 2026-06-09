@@ -193,7 +193,7 @@ func synthesizeCapsuleWithVault(note Note, vaultPath string) string {
 			)
 			if domains := normalizeList(note.Data["domains"]); len(domains) > 0 {
 				lines = append(lines, "- Domains: "+strings.Join(domains, ", "))
-				lines = append(lines, "- Project skill route: read `tusker/SKILL.md`, then `tusker/knowledge/domains/<domain>/INDEX.md` and `CANON.md`.")
+				lines = append(lines, "- Project skill route: read `"+vaultDisplayPath(vaultPath, "SKILL.md")+"`, then `"+vaultDisplayPath(vaultPath, "knowledge/domains/<domain>/INDEX.md")+"` and `CANON.md`.")
 			}
 			if id := stringField(note.Data, "id"); id != "" {
 				lines = append(lines, "- Packet: `tusker packet "+id+" --for agent`")

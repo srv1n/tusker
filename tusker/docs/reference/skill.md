@@ -23,7 +23,7 @@ updated: "2026-05-14"
 
 The Tusker skill bundle is the primary agent contract. It teaches Codex, Claude Code, and other compatible harnesses how to read the vault, choose epics, search for existing work, create tasks, move status, attach evidence, resolve docs impact, and close only after verification.
 
-The skill must keep context use proportional to the job. A lookup is not a closeout, and a backlog note is not a migration. Agents should use `tusker list --type epic`, `tusker search`, one-epic `tusker list --epic <ACR> --type task --open`, `tusker show <ID> --capsule`, `tusker compact <ID>` for old noisy notes, and exact task paths before broad file reads. They should not read `Attachments/**`, `_system/generated/**`, build logs, or raw runner logs unless the user is explicitly asking for evidence forensics.
+The skill must keep context use proportional to the job. A lookup is not a closeout, and a backlog note is not a migration. Agents should use `tusker list`, `tusker search`, one-epic `tusker list --epic <ACR> --type task --open`, `tusker show <ID> --capsule`, `tusker compact <ID>` for old noisy notes, and exact task paths before broad file reads. They should not read `Attachments/**`, `_system/generated/**`, build logs, or raw runner logs unless the user is explicitly asking for evidence forensics.
 
 For implementation work, the skill also carries a small engineering-discipline hook backed by `skill/references/ENGINEERING_DISCIPLINE.md`. That reference covers behavior-first tests, vertical slices, mock discipline, feedback-loop debugging, surgical diffs, deep modules, and throwaway prototypes. Keep it as synthesized Tusker guidance; do not paste external skill text into the payload.
 
@@ -34,7 +34,7 @@ For implementation work, the skill also carries a small engineering-discipline h
 | `implementation` | Make code or docs changes tied to a task | Risk-scaled evidence |
 | `closeout` | Move tracked implementation work to review or done | Docs resolution, verification, and validation |
 
-The current source of truth is `skill/SKILL.md` plus the files under `skill/references/**`, `skill/docs/**`, and `skill/assets/**`. Repo-local downstream copies live at `.agents/skills/tusker` and `.claude/skills/tusker`; refresh them from the local source payload with:
+The current source of truth is `skill/SKILL.md` plus the files under `skill/references/**`, `skill/docs/**`, and `skill/assets/**`. The checked-in repo-local downstream copy lives at `.agents/skills/tusker`; refresh it from the local source payload with:
 
 ```bash
 go run ./cmd/tusker update --repo . --repo-only --no-bin
@@ -42,7 +42,7 @@ go run ./cmd/tusker update --repo . --repo-only --no-bin
 
 Use the installed `tusker update --repo . --repo-only --no-bin` only after the installed binary has the desired embedded skill payload.
 
-User-level installs in `~/.agents/skills/tusker`, `~/.codex/skills/tusker`, and `~/.claude/skills/tusker` are refreshed by normal `tusker install` runs without `--repo`, by `make install`, and by `tusker update` when they already exist. The embedded payload is authoritative: refresh replaces the installed directory instead of only overwriting `SKILL.md`. `tusker install --repo <path>` is repo-local by default; combine it with `--refresh-existing-user-skills`, `--codex-user`, or `--claude-user` only when user-level writes are intended.
+User-level installs in `~/.agents/skills/tusker`, `~/.codex/skills/tusker`, and `~/.claude/skills/tusker` are refreshed by normal `tusker install` runs without `--repo`, by `make install`, and by `tusker update` when they already exist. The embedded payload is authoritative: refresh replaces the installed directory instead of only overwriting `SKILL.md`. `tusker install --repo <path>` is repo-local by default and also writes `.claude/skills/tusker` as a generated Claude Code compatibility install; combine it with `--refresh-existing-user-skills`, `--codex-user`, or `--claude-user` only when user-level writes are intended.
 
 ## Two-skill contract
 
@@ -67,7 +67,7 @@ project skill route.
 | Source skill | `skill/SKILL.md` and `skill/references/**` |
 | Engineering discipline reference | `skill/references/ENGINEERING_DISCIPLINE.md` |
 | Codex repo-local skill | `.agents/skills/tusker` |
-| Claude repo-local skill | `.claude/skills/tusker` |
+| Claude compatibility install | generated `.claude/skills/tusker` from `skill/**` |
 | Default worker runner | `codex` |
 | Reviewer lane | enabled by `WORKFLOW.md` |
 | Reviewer actor | `agent-reviewer` |
@@ -91,4 +91,4 @@ For low/medium risk work, the configured reviewer may run `docs check`, `verify`
 
 ## Distribution rule
 
-Do not hand-edit `.agents/skills/tusker` or `.claude/skills/tusker` as the long-term source. Patch `skill/**`, then refresh the repo-local copies. If a repo-local copy has useful divergence, first promote that guidance back into `skill/**`, then regenerate.
+Do not hand-edit `.agents/skills/tusker` or generated `.claude/skills/tusker` as the long-term source. Patch `skill/**`, then refresh generated copies. If a repo-local copy has useful divergence, first promote that guidance back into `skill/**`, then regenerate.

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestV7TaskGateEvidenceAttemptReconcileFlow(t *testing.T) {
@@ -27,7 +29,7 @@ func TestV7TaskGateEvidenceAttemptReconcileFlow(t *testing.T) {
 	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Add provider harness", "risk": "low", "priority": "p1", "evidence-required": "automated_test", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "owner": "agent:codex"}, claimCmd)
 	assertExists(t, filepath.Join(filepath.Dir(vault), ".tusker-local", "leases", "APP-T-0001.json"))
-	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "auth", "owner": "human:sarav", "action": "Complete OAuth.", "verification": "Provider endpoint returns ready."}, newV7Gate)
+	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "auth", "owner": "human:sarav", "action": "Complete OAuth.", "verification": "Provider endpoint returns ready.", "why-agent-cannot": "Human credentials or account access are required."}, newV7Gate)
 	must(Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
 
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
@@ -84,6 +86,61 @@ func TestV7TaskGateEvidenceAttemptReconcileFlow(t *testing.T) {
 	assertExists(t, filepath.Join(vault, "_generated", "indexes", "gates.json"))
 	assertExists(t, filepath.Join(vault, "_generated", "indexes", "leases.json"))
 	assertExists(t, filepath.Join(vault, "_generated", "indexes", "dashboard.json"))
+}
+
+func TestV7GateCreationRejectsVagueHumanGates(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "vault")
+	must := func(args Args, fn func(Args) error) {
+		t.Helper()
+		if err := fn(args); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
+	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Gate policy smoke.", "v7": "true"}, newV7Epic)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate policy target", "risk": "medium", "priority": "p1", "v7": "true"}, newV7Task)
+
+	err := newV7Gate(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "manual_hold", "owner": "human:sarav", "action": "Resolve this gate so blocked work can proceed.", "verification": "Owner confirms the gate is satisfied.", "why-agent-cannot": "Human decision required."})
+	if err == nil || !strings.Contains(err.Error(), "placeholder") {
+		t.Fatalf("expected placeholder human gate rejection, got %v", err)
+	}
+	err = newV7Gate(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "manual_hold", "owner": "human", "action": "Choose next product direction.", "verification": "Decision is recorded."})
+	if err == nil || !strings.Contains(err.Error(), "why-agent-cannot") {
+		t.Fatalf("expected bare human owner to require agent boundary, got %v", err)
+	}
+	err = newV7Gate(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "human:sarav", "action": "Review code diff.", "verification": "Human approves the diff.", "why-agent-cannot": "Human should review the code."})
+	if err == nil || !strings.Contains(err.Error(), "agent-capable") {
+		t.Fatalf("expected human-owned code review gate rejection, got %v", err)
+	}
+	err = newV7Gate(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "decision", "owner": "human:sarav", "action": "Human reviews code changes.", "verification": "Decision is recorded on the task.", "why-agent-cannot": "Human should review the code.", "suggestion": "Approve the diff.", "covers": "A1"})
+	if err == nil || !strings.Contains(err.Error(), "agent-capable") {
+		t.Fatalf("expected decision-gate code review loophole rejection, got %v", err)
+	}
+	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "decision", "owner": "human:sarav", "action": "Choose frontend/backend API contract.", "verification": "Decision is recorded on the task.", "why-agent-cannot": "The spec conflicts with the current backend API and the agent cannot choose product intent.", "suggestion": "Align the frontend to the backend response field names unless the API change is intentional.", "covers": "A1"}, newV7Gate)
+	if code, err := validateCmd(Args{"vault": vault, "json": "true"}); err != nil || code != 0 {
+		t.Fatalf("expected concrete decision gate to validate, code=%d err=%v", code, err)
+	}
+}
+
+func TestV7CreateGateProposalApplyRequiresHumanContext(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "vault")
+	must := func(args Args, fn func(Args) error) {
+		t.Helper()
+		if err := fn(args); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
+	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Gate proposal policy.", "v7": "true"}, newV7Epic)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate proposal target", "risk": "medium", "priority": "p1", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "_pos0": "create_gate", "_pos1": "APP-T-0001", "kind": "auth", "owner": "human:sarav", "action": "Provision staging OAuth credentials.", "verification": "Provider ready check passes."}, proposalV7Cmd)
+	must(Args{"vault": vault, "quiet": "true", "_pos0": "accept", "_pos1": "APP-P-0001", "by": "human:sarav"}, proposalV7Cmd)
+	err := proposalV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "apply", "_pos1": "APP-P-0001", "by": "human:sarav"})
+	if err == nil || !strings.Contains(err.Error(), "why-agent-cannot") {
+		t.Fatalf("expected create_gate proposal apply to require human context, got %v", err)
+	}
 }
 
 func TestV7AgentReadyDashboardExcludesHumanOwnedReadyTasks(t *testing.T) {
@@ -290,8 +347,8 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 	runCLI("new", "task", "--epic", "APP", "--title", "Agent next action", "--next-owner", "agent")
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0004")
-	runCLI("new", "gate", "--blocks", "APP-T-0001", "--kind", "auth", "--owner", "human:sarav", "--action", "Complete OAuth.", "--verification", "Provider endpoint returns ready.")
-	runCLI("new", "gate", "--blocks", "APP-T-0002", "--kind", "setup", "--owner", "human:sarav", "--action", "Prepare setup.", "--verification", "Setup is available.")
+	runCLI("new", "gate", "--blocks", "APP-T-0001", "--kind", "auth", "--owner", "human:sarav", "--action", "Complete OAuth.", "--verification", "Provider endpoint returns ready.", "--why-agent-cannot", "Human credentials or account access are required.")
+	runCLI("new", "gate", "--blocks", "APP-T-0002", "--kind", "setup", "--owner", "human:sarav", "--action", "Prepare setup.", "--verification", "Setup is available.", "--why-agent-cannot", "Human environment setup is required.")
 	runCLI("new", "gate", "--blocks", "APP-T-0003", "--kind", "verification", "--owner", "reviewer", "--action", "Review proof.", "--verification", "Reviewer accepts proof.")
 	runCLI("new", "decision", "--epic", "APP", "--title", "Use repo-local branch-safe work tracker")
 
@@ -334,73 +391,16 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 	assertExists(t, filepath.Join(vault, "attempts", "APP-T-0001", "APP-T-0001-A-0001.md"))
 }
 
-func TestV7TopLevelDefaultsAndLegacyRouting(t *testing.T) {
-	repo := t.TempDir()
-	vault := filepath.Join(repo, "tusker")
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	runCLI := func(argv ...string) string {
-		t.Helper()
-		full := append([]string{"tusker"}, argv...)
-		var code int
-		var runErr error
-		output := captureStdout(t, func() {
-			command, args := parseCLI(full)
-			code, runErr = run(command, args)
-		})
-		if runErr != nil || code != 0 {
-			t.Fatalf("%s failed: code=%d err=%v output=%s", strings.Join(full, " "), code, runErr, output)
-		}
-		return output
-	}
-
-	runCLI("new", "epic", "--vault", vault, "--acronym", "APP", "--title", "App V7")
-	runCLI("new", "task", "--vault", vault, "--epic", "APP", "--title", "V7 default task", "--risk", "low", "--priority", "p2", "--evidence-required", "automated_test")
-	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
-	assertExists(t, filepath.Join(vault, "work", "epics", "APP.md"))
-	assertExists(t, filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
-	for _, legacyPath := range []string{
-		filepath.Join(vault, "_config", "docs-map.yaml"),
-		filepath.Join(vault, "docs", "reference"),
-		filepath.Join(vault, "_system", "templates", "task.md"),
-		filepath.Join(vault, "_system", "views", "Docs.base"),
-	} {
-		if fileExists(legacyPath) {
-			t.Fatalf("default V7 bootstrap must not create legacy scaffold: %s", legacyPath)
-		}
-	}
-
-	runCLI("legacy", "new", "epic", "--vault", vault, "--acronym", "OLD", "--title", "Old tracker")
-	runCLI("legacy", "new", "task", "--vault", vault, "--epic", "OLD", "--title", "Stale V5 task", "--risk", "low", "--priority", "p0", "--size", "s")
-	assertExists(t, filepath.Join(vault, "epics", "OLD", "OLD-T-0001.md"))
-
-	nextOutput := runCLI("next", "--vault", vault, "--owner", "agent")
-	assertContainsIndexTest(t, nextOutput, "APP-T-0001")
-	if strings.Contains(nextOutput, "OLD-T-0001") {
-		t.Fatalf("top-level next must ignore V5 tasks, got:\n%s", nextOutput)
-	}
-
-	runCLI("evidence", "add", "APP-T-0001", "--vault", vault, "--kind", "automated_test", "--covers", "A1", "--summary", "Focused default routing test passed.")
-	runCLI("status", "APP-T-0001", "review", "--vault", vault, "--reason", "Ready for independent review.")
-	runCLI("close", "APP-T-0001", "--vault", vault, "--by", "reviewer:agent")
-	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "done", stringField(data, "status"), "top-level close status")
-}
-
 func TestV7ProjectIdentityAndDiscovery(t *testing.T) {
 	repo := t.TempDir()
-	vault := filepath.Join(repo, "tusker")
+	vault := filepath.Join(repo, ".tusker")
 	if err := ensureDir(filepath.Join(vault, "work", "tasks")); err != nil {
 		t.Fatal(err)
 	}
 	if err := ensureDir(filepath.Join(vault, "knowledge", "domains", "project")); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: root-project\n"); err != nil {
+	if err := writeText(filepath.Join(repo, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: root-project\nstorage:\n  root: .tusker\n"); err != nil {
 		t.Fatal(err)
 	}
 	discovered, err := discoverVault(filepath.Join(repo, "src", "pkg"))
@@ -414,9 +414,27 @@ func TestV7ProjectIdentityAndDiscovery(t *testing.T) {
 	}
 	assertEqual(t, "root-project", projectID, "root tusker.yaml project_id")
 
+	legacyVault := filepath.Join(repo, "tusker")
+	if err := ensureDir(filepath.Join(legacyVault, "work", "tasks")); err != nil {
+		t.Fatal(err)
+	}
+	discovered, err = discoverVault(filepath.Join(repo, "src", "pkg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, vault, discovered, "dot vault is preferred over legacy tusker when both exist")
+
 	if err := os.Remove(filepath.Join(repo, "tusker.yaml")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.RemoveAll(vault); err != nil {
+		t.Fatal(err)
+	}
+	discovered, err = discoverVault(filepath.Join(repo, "src", "pkg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, legacyVault, discovered, "legacy visible tusker remains discoverable")
 	if err := ensureDir(filepath.Join(vault, "_system")); err != nil {
 		t.Fatal(err)
 	}
@@ -792,7 +810,7 @@ func TestV7ValidationRejectsStaleReadyProjectionWithOpenGate(t *testing.T) {
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
 	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stale projection", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
-	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "manual_hold", "owner": "human:sarav", "action": "Decide next step.", "verification": "Decision recorded."}, newV7Gate)
+	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "manual_hold", "owner": "human:sarav", "action": "Decide next step.", "verification": "Decision recorded.", "why-agent-cannot": "Human product direction is required before the agent can continue."}, newV7Gate)
 	forceV7TaskProjection(t, vault, "APP-T-0001", "ready", "ready", "agent", "Execute the task contract.")
 
 	code, err := validateCmd(Args{"vault": vault, "json": "true"})
@@ -860,7 +878,7 @@ func TestV7ReconcileEmitsProjectionUpdateEvent(t *testing.T) {
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
 	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Projection event", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
-	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "auth", "owner": "human:sarav", "action": "Complete OAuth.", "verification": "Provider endpoint returns ready."}, newV7Gate)
+	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "auth", "owner": "human:sarav", "action": "Complete OAuth.", "verification": "Provider endpoint returns ready.", "why-agent-cannot": "Human credentials or account access are required."}, newV7Gate)
 	forceV7TaskProjection(t, vault, "APP-T-0001", "ready", "ready", "agent", "Execute the task contract.")
 	must(Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
 
@@ -1309,6 +1327,95 @@ func TestV7ValidationHardensGateEvidenceAttemptAndProposalSchema(t *testing.T) {
 	errs, _ = validateV7Note(proposal, validationContext{VaultPath: vault, RelativePath: proposal.RelativePath}, proposal.RelativePath)
 	if !issuesContainCode(errs, errorInvalidField) {
 		t.Fatalf("expected proposal schema failure, got %#v", errs)
+	}
+}
+
+func TestV7ValidationFlagsVagueAndMisroutedHumanGates(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "tusker")
+	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	cloneData := func(in map[string]any) map[string]any {
+		out := map[string]any{}
+		for key, value := range in {
+			out[key] = value
+		}
+		return out
+	}
+
+	placeholderGate := Note{
+		Data: map[string]any{
+			"schema":       "tusker.gate/v1",
+			"kind":         "gate",
+			"id":           "APP-G-0001",
+			"project":      "tusker",
+			"title":        "Resolve gate for APP-T-0001",
+			"gate_kind":    "manual_hold",
+			"status":       "open",
+			"owner":        "human:sarav",
+			"action":       "Resolve this gate so blocked work can proceed.",
+			"verification": "Owner confirms the gate is satisfied.",
+			"blocking":     true,
+			"blocks":       []string{"APP-T-0001"},
+		},
+		Body:         "# APP-G-0001\n",
+		RelativePath: "work/gates/APP-G-0001.md",
+	}
+	errs, _ := validateV7Note(placeholderGate, validationContext{VaultPath: vault, RelativePath: placeholderGate.RelativePath}, placeholderGate.RelativePath)
+	for _, code := range []string{"GATE_PLACEHOLDER_ACTION", "GATE_PLACEHOLDER_VERIFICATION", "GATE_MISSING_AGENT_BOUNDARY"} {
+		if !issuesContainCode(errs, code) {
+			t.Fatalf("expected %s for placeholder gate, got %#v", code, errs)
+		}
+	}
+
+	reviewGate := placeholderGate
+	reviewGate.Data = cloneData(placeholderGate.Data)
+	reviewGate.Data["id"] = "APP-G-0002"
+	reviewGate.Data["title"] = "Review code diff"
+	reviewGate.Data["gate_kind"] = "verification"
+	reviewGate.Data["owner"] = "human"
+	reviewGate.Data["action"] = "Review code diff."
+	reviewGate.Data["verification"] = "Human approves the diff."
+	reviewGate.Data["why_agent_cannot"] = "Human should review the code."
+	reviewGate.RelativePath = "work/gates/APP-G-0002.md"
+	errs, _ = validateV7Note(reviewGate, validationContext{VaultPath: vault, RelativePath: reviewGate.RelativePath}, reviewGate.RelativePath)
+	if !issuesContainCode(errs, "GATE_HUMAN_OWNS_AGENT_CAPABLE_WORK") {
+		t.Fatalf("expected human-owned agent-capable gate failure, got %#v", errs)
+	}
+
+	decisionReviewGate := reviewGate
+	decisionReviewGate.Data = cloneData(reviewGate.Data)
+	decisionReviewGate.Data["id"] = "APP-G-0004"
+	decisionReviewGate.Data["title"] = "Human reviews code changes"
+	decisionReviewGate.Data["gate_kind"] = "decision"
+	decisionReviewGate.Data["action"] = "Human reviews code changes."
+	decisionReviewGate.Data["verification"] = "Decision is recorded on the task."
+	decisionReviewGate.Data["suggestion"] = "Approve the diff."
+	decisionReviewGate.RelativePath = "work/gates/APP-G-0004.md"
+	errs, _ = validateV7Note(decisionReviewGate, validationContext{VaultPath: vault, RelativePath: decisionReviewGate.RelativePath}, decisionReviewGate.RelativePath)
+	if !issuesContainCode(errs, "GATE_HUMAN_OWNS_AGENT_CAPABLE_WORK") {
+		t.Fatalf("expected decision-gate code review loophole failure, got %#v", errs)
+	}
+
+	decisionGate := reviewGate
+	decisionGate.Data = cloneData(reviewGate.Data)
+	decisionGate.Data["id"] = "APP-G-0003"
+	decisionGate.Data["title"] = "Choose API contract"
+	decisionGate.Data["gate_kind"] = "decision"
+	decisionGate.Data["action"] = "Choose frontend/backend API contract."
+	decisionGate.Data["verification"] = "Decision is recorded on the task."
+	decisionGate.Data["why_agent_cannot"] = "The spec conflicts with the current backend API and the agent cannot choose product intent."
+	delete(decisionGate.Data, "suggestion")
+	decisionGate.RelativePath = "work/gates/APP-G-0003.md"
+	errs, _ = validateV7Note(decisionGate, validationContext{VaultPath: vault, RelativePath: decisionGate.RelativePath}, decisionGate.RelativePath)
+	if !issuesContainCode(errs, "GATE_DECISION_SUGGESTION_MISSING") {
+		t.Fatalf("expected decision suggestion failure, got %#v", errs)
+	}
+	decisionGate.Data["suggestion"] = "Align the frontend to the backend response field names unless the API change is intentional."
+	decisionGate.Data["covers"] = []string{"A1"}
+	errs, _ = validateV7Note(decisionGate, validationContext{VaultPath: vault, RelativePath: decisionGate.RelativePath}, decisionGate.RelativePath)
+	if len(errs) != 0 {
+		t.Fatalf("expected concrete decision gate to validate, got %#v", errs)
 	}
 }
 
@@ -1912,6 +2019,66 @@ func TestV7DashboardBuildIsDeterministicAndValidateRejectsStaleProjection(t *tes
 	}
 }
 
+func TestV7ReindexRefreshesDashboardBasesAndSummary(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "vault")
+	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Imported held task", "status": "backlog", "readiness": "held", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(vault, "Dashboard.md"), "# Dashboard\n\nLegacy dashboard generation was removed from the V7-only build.\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := reindex(Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+
+	dashboard := mustReadIndexTest(t, filepath.Join(vault, "Dashboard.md"))
+	assertContainsIndexTest(t, dashboard, "<!-- tusker:v7-dashboard:landing;")
+	assertContainsIndexTest(t, dashboard, "![[_generated/bases/tasks.base#Backlog]]")
+	assertNotContainsIndexTest(t, dashboard, "Legacy dashboard generation was removed")
+	assertNotContainsIndexTest(t, dashboard, "## Docs catalog")
+	assertNotContainsIndexTest(t, dashboard, dashboardRunsBegin)
+	assertExists(t, filepath.Join(vault, "dashboards", "human-actions.md"))
+	assertExists(t, filepath.Join(vault, "_generated", "bases", "tasks.base"))
+	assertExists(t, filepath.Join(vault, "_generated", "bases", "epics.base"))
+	assertExists(t, filepath.Join(vault, "_generated", "bases", "backlog.base"))
+	assertExists(t, filepath.Join(vault, "_generated", "indexes", "tasks.json"))
+
+	var summary map[string]any
+	rawSummary := mustReadIndexTest(t, filepath.Join(vault, "_generated", "indexes", "summary.json"))
+	if err := json.Unmarshal([]byte(rawSummary), &summary); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "tusker.summary/v7", stringValue(summary["schema"]), "summary schema")
+	counts, ok := summary["counts"].(map[string]any)
+	if !ok {
+		t.Fatalf("summary counts missing or malformed: %#v", summary["counts"])
+	}
+	assertEqual(t, "1", fmt.Sprintf("%.0f", counts["tasks"].(float64)), "summary V7 task count")
+	assertEqual(t, "1", fmt.Sprintf("%.0f", counts["epics"].(float64)), "summary V7 epic count")
+
+	for _, rel := range []string{
+		"_generated/bases/tasks.base",
+		"_generated/bases/epics.base",
+		"_generated/bases/agent-ready.base",
+		"_generated/bases/human-actions.base",
+	} {
+		var base map[string]any
+		raw := mustReadIndexTest(t, filepath.Join(vault, filepath.FromSlash(rel)))
+		if err := yaml.Unmarshal([]byte(raw), &base); err != nil {
+			t.Fatalf("%s is not valid YAML: %v\n%s", rel, err, raw)
+		}
+		if _, ok := base["views"]; !ok {
+			t.Fatalf("%s missing views section:\n%s", rel, raw)
+		}
+	}
+}
+
 func TestV7SpecObjectCreationCLIForms(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
@@ -2080,7 +2247,7 @@ func TestV7PacketIncludesDomainContextAndClosePolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	packet := v7Packet(vault, Note{AbsolutePath: taskPath, Data: taskData, Body: taskBody}, mustIndex(t, vault), "agent")
-	for _, expected := range []string{"## Project skill routing", "tusker/SKILL.md", "knowledge/domains/providers/INDEX.md", "## Domain context", "Providers", "Current truth:", "## Verification", "## Close policy", "Required acceptor: human", "Required gates: release, security"} {
+	for _, expected := range []string{"## Project skill routing", "vault/SKILL.md", "knowledge/domains/providers/INDEX.md", "## Domain context", "Providers", "Current truth:", "## Verification", "## Close policy", "Required acceptor: human", "Required gates: release, security"} {
 		assertContainsIndexTest(t, packet, expected)
 	}
 	reviewerPacket := v7Packet(vault, Note{AbsolutePath: taskPath, Data: taskData, Body: taskBody}, mustIndex(t, vault), "reviewer")
@@ -2241,27 +2408,6 @@ func TestV7SkillDoctorRouteAndPack(t *testing.T) {
 	}
 }
 
-func TestV7PublishSkillKeepsV6DefaultWhenNoV7KnowledgeExists(t *testing.T) {
-	vault := filepath.Join(t.TempDir(), "vault")
-	if err := bootstrapV6(Args{"vault": vault, "quiet": "true", "profile": "generic"}); err != nil {
-		t.Fatal(err)
-	}
-	out := filepath.Join(t.TempDir(), "project-skill")
-	if err := publishSkillCmd(Args{"vault": vault, "out": out, "quiet": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	assertExists(t, filepath.Join(out, "SKILL.md"))
-	assertExists(t, filepath.Join(out, "domains", "codebase", "CANON.md"))
-	if _, err := os.Stat(filepath.Join(out, "knowledge")); !os.IsNotExist(err) {
-		t.Fatalf("V6 project skill export unexpectedly wrote V7 knowledge tree: %v", err)
-	}
-	data, _, err := parseFrontmatterMustRead(filepath.Join(out, "SKILL.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "tusker.project-skill/v6", stringField(data, "schema"), "V6 project skill schema")
-}
-
 func TestV7ProtectedFieldDiffDetectsStateMutation(t *testing.T) {
 	before := `---
 schema: tusker.task/v7
@@ -2272,7 +2418,7 @@ status: ready
 ---
 `
 	after := strings.Replace(before, "status: ready", "status: done", 1)
-	issues := protectedFieldIssuesForDiff("tusker/work/tasks/APP-T-0001.md", "agent/APP-T-0001", before, after)
+	issues := protectedFieldIssuesForDiff(".tusker/work/tasks/APP-T-0001.md", "agent/APP-T-0001", before, after)
 	if len(issues) != 1 {
 		t.Fatalf("expected one protected field issue, got %d", len(issues))
 	}
@@ -2289,14 +2435,14 @@ func TestV7ProtectedFieldDiffCoversAllStateObjects(t *testing.T) {
 	}{
 		{
 			name:   "epic status",
-			path:   "tusker/work/epics/APP.md",
+			path:   ".tusker/work/epics/APP.md",
 			field:  "status",
 			before: "schema: tusker.epic/v7\nkind: epic\nid: APP\nproject: tusker\nstatus: active\nstate_rev: old\n",
 			after:  "schema: tusker.epic/v7\nkind: epic\nid: APP\nproject: tusker\nstatus: done\nstate_rev: old\n",
 		},
 		{
 			name:   "decision acceptance",
-			path:   "tusker/work/decisions/APP-D-0001.md",
+			path:   ".tusker/work/decisions/APP-D-0001.md",
 			field:  "decided_by",
 			before: "schema: tusker.decision/v1\nkind: decision\nid: APP-D-0001\nproject: tusker\nstatus: proposed\nstate_rev: old\n",
 			after:  "schema: tusker.decision/v1\nkind: decision\nid: APP-D-0001\nproject: tusker\nstatus: accepted\ndecided_by: human:sarav\nstate_rev: old\n",
@@ -2317,7 +2463,7 @@ func TestV7ProtectedFieldDiffCoversAllStateObjects(t *testing.T) {
 		},
 		{
 			name:   "proposal application",
-			path:   "tusker/work/inbox/APP-P-0001.md",
+			path:   ".tusker/work/inbox/APP-P-0001.md",
 			field:  "applied_at",
 			before: "schema: tusker.proposal/v1\nkind: proposal\nid: APP-P-0001\nproject: tusker\nstatus: accepted\nstate_rev: old\n",
 			after:  "schema: tusker.proposal/v1\nkind: proposal\nid: APP-P-0001\nproject: tusker\nstatus: accepted\napplied_at: 2026-05-15T00:00:00Z\nstate_rev: old\n",
@@ -2362,7 +2508,7 @@ func TestV7GateControlEagerlyReconcilesTaskProjectionAndDashboards(t *testing.T)
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
 	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate projection target", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
-	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "auth", "owner": "human:sarav", "action": "Complete setup.", "verification": "Manual proof: setup complete."}, newV7Gate)
+	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "auth", "owner": "human:sarav", "action": "Complete setup.", "verification": "Manual proof: setup complete.", "why-agent-cannot": "Human credentials or account access are required."}, newV7Gate)
 
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
 	data, _, err := parseFrontmatterMustRead(taskPath)
@@ -3315,143 +3461,6 @@ runtime:
 	assertEqual(t, []string{"main", "trunk"}, configuredV7ControlBranches(vault), "explicit control branches")
 }
 
-func TestV7MigrateGatesFromBlockedV5Tasks(t *testing.T) {
-	vault := filepath.Join(t.TempDir(), "vault")
-	must := func(args Args, fn func(Args) error) {
-		t.Helper()
-		if err := fn(args); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
-	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "App work."}, newV5Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Needs human", "status": "blocked", "block-reason": "Human must approve release.", "risk": "low", "size": "s"}, func(args Args) error {
-		return newV5Task(args, "feature")
-	})
-	must(Args{"vault": vault, "quiet": "true", "from-blocked-reason": "true", "write": "true"}, migrateV7GatesCmd)
-
-	gatePath := filepath.Join(vault, "work", "gates", "APP-G-0001.md")
-	assertExists(t, gatePath)
-	data, _, err := parseFrontmatterMustRead(gatePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "APP-T-0001", normalizeList(data["blocks"])[0], "blocked task")
-	assertEqual(t, "Human must approve release.", stringField(data, "action"), "gate action")
-}
-
-func TestV7MigrateWriteExtractsEvidenceAndAttempts(t *testing.T) {
-	vault := filepath.Join(t.TempDir(), "vault")
-	must := func(args Args, fn func(Args) error) {
-		t.Helper()
-		if err := fn(args); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
-	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "App work."}, newV5Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Has logs", "status": "blocked", "block-reason": "Human approval required.", "risk": "low", "size": "s"}, func(args Args) error {
-		return newV5Task(args, "feature")
-	})
-	taskPath := filepath.Join(vault, "epics", "APP", "APP-T-0001.md")
-	data, body, err := parseFrontmatterMustRead(taskPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body = replaceSection(body, "## Evidence", "- Manual smoke passed with enough detail to preserve as a migrated V7 evidence record.")
-	body += "\n\n## Verification log\n\n- Focused verification passed and should become migrated log evidence.\n"
-	body += "\n\n## Work log\n\n- Implemented the thing.\n- Ran focused checks.\n"
-	content, err := serializeDocument(data, body, frontmatterOrderForType("task"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writeText(taskPath, content); err != nil {
-		t.Fatal(err)
-	}
-
-	must(Args{"vault": vault, "quiet": "true", "write": "true"}, migrateV7Cmd)
-
-	v7TaskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
-	assertExists(t, v7TaskPath)
-	v7Data, v7Body, err := parseFrontmatterMustRead(v7TaskPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "tusker.task/v7", stringField(v7Data, "schema"), "migrated task schema")
-	assertEqual(t, "blocked_by_gate", stringField(v7Data, "readiness"), "migrated task readiness")
-	assertEqual(t, "APP-G-0001", normalizeList(v7Data["gates"])[0], "migrated task gate")
-	assertContainsIndexTest(t, v7Body, "[[APP-T-0001-E-0001]]")
-	assertContainsIndexTest(t, v7Body, "[[APP-T-0001-E-0002]]")
-	assertNotContainsIndexTest(t, v7Body, "## Work log")
-	assertExists(t, filepath.Join(vault, "work", "gates", "APP-G-0001.md"))
-	assertExists(t, filepath.Join(vault, "evidence", "APP-T-0001", "APP-T-0001-E-0001.md"))
-	assertExists(t, filepath.Join(vault, "evidence", "APP-T-0001", "APP-T-0001-E-0002.md"))
-	assertExists(t, filepath.Join(vault, "attempts", "APP-T-0001", "APP-T-0001-A-0001.md"))
-	sourceAfter := mustReadIndexTest(t, taskPath)
-	assertNotContainsIndexTest(t, sourceAfter, "## Work log")
-	assertNotContainsIndexTest(t, sourceAfter, "## Verification log")
-
-	must(Args{"vault": vault, "quiet": "true", "write": "true"}, migrateV7Cmd)
-	assertGlobCount(t, filepath.Join(vault, "work", "tasks", "APP-T-0001.md"), 1, "migrated task count")
-	assertGlobCount(t, filepath.Join(vault, "work", "gates", "APP-G-*.md"), 1, "migrated gate count")
-	assertGlobCount(t, filepath.Join(vault, "evidence", "APP-T-0001", "*.md"), 2, "migrated evidence count")
-	assertGlobCount(t, filepath.Join(vault, "attempts", "APP-T-0001", "*.md"), 1, "migrated attempt count")
-}
-
-func TestV7CompactArchiveLogsCreatesAttemptAndRemovesWorkLog(t *testing.T) {
-	vault := filepath.Join(t.TempDir(), "vault")
-	must := func(args Args, fn func(Args) error) {
-		t.Helper()
-		if err := fn(args); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
-	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "App work."}, newV5Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Archive logs", "risk": "low", "size": "s"}, func(args Args) error {
-		return newV5Task(args, "feature")
-	})
-	taskPath := filepath.Join(vault, "epics", "APP", "APP-T-0001.md")
-	data, body, err := parseFrontmatterMustRead(taskPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body += "\n\n## Work log\n\n- Implemented the migration.\n- Ran archive verification.\n"
-	body += "\n\n## Verification log\n\n- Focused compact verification passed and should become evidence.\n"
-	content, err := serializeDocument(data, body, frontmatterOrderForType("task"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writeText(taskPath, content); err != nil {
-		t.Fatal(err)
-	}
-
-	must(Args{"vault": vault, "all": "true", "archive-logs": "true", "write": "true", "quiet": "true"}, compactCmd)
-
-	after := mustReadIndexTest(t, taskPath)
-	assertNotContainsIndexTest(t, after, "## Work log")
-	assertNotContainsIndexTest(t, after, "## Verification log")
-	attemptPath := filepath.Join(vault, "attempts", "APP-T-0001", "APP-T-0001-A-0001.md")
-	assertExists(t, attemptPath)
-	attempt := mustReadIndexTest(t, attemptPath)
-	assertContainsIndexTest(t, attempt, "Implemented the migration.")
-	evidencePath := filepath.Join(vault, "evidence", "APP-T-0001", "APP-T-0001-E-0001.md")
-	assertExists(t, evidencePath)
-	evidence := mustReadIndexTest(t, evidencePath)
-	assertContainsIndexTest(t, evidence, "Focused compact verification passed")
-
-	must(Args{"vault": vault, "all": "true", "archive-logs": "true", "write": "true", "quiet": "true"}, compactCmd)
-	matches, err := filepath.Glob(filepath.Join(vault, "attempts", "APP-T-0001", "*.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, 1, len(matches), "archived attempt count")
-	assertGlobCount(t, filepath.Join(vault, "evidence", "APP-T-0001", "*.md"), 1, "archived verification evidence count")
-}
-
 func TestV7ReconcileMarksExpiredLeaseStale(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	must := func(args Args, fn func(Args) error) {
@@ -3714,13 +3723,13 @@ func TestV7StagedBranchPolicyRejectsProtectedStateMutation(t *testing.T) {
 	if err := writeText(taskPath, content); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, "add", "tusker/work/tasks/APP-T-0001.md")
+	runGit(t, "add", ".tusker/work/tasks/APP-T-0001.md")
 
-	changed, err := exec.Command("git", "diff", "--name-only", "--cached", "--", "tusker/work/tasks", "tusker/work/gates").Output()
+	changed, err := exec.Command("git", "diff", "--name-only", "--cached", "--", ".tusker/work/tasks", ".tusker/work/gates").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(changed), "tusker/work/tasks/APP-T-0001.md") {
+	if !strings.Contains(string(changed), ".tusker/work/tasks/APP-T-0001.md") {
 		t.Fatalf("expected staged task path, got %q", string(changed))
 	}
 	errors, _ := validateV7BranchPolicy(vault, Args{"staged": "true"})
@@ -3785,7 +3794,7 @@ func TestV7BranchPolicyRejectsTaskAndGateDeletion(t *testing.T) {
 	if err := os.Remove(gatePath); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, "add", "-u", "tusker/work/tasks/APP-T-0001.md", "tusker/work/gates/APP-G-0001.md")
+	runGit(t, "add", "-u", ".tusker/work/tasks/APP-T-0001.md", ".tusker/work/gates/APP-G-0001.md")
 	errors, _ := validateV7BranchPolicy(vault, Args{"staged": "true"})
 	if len(errors) == 0 {
 		t.Fatal("expected staged branch-policy validation to reject task/gate deletion")
@@ -3856,7 +3865,7 @@ func TestV7BranchPolicyHonorsConfiguredProtectStateFieldsFalse(t *testing.T) {
 	if err := writeText(taskPath, content); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, "add", "tusker/work/tasks/APP-T-0001.md")
+	runGit(t, "add", ".tusker/work/tasks/APP-T-0001.md")
 
 	errors, _ := validateV7BranchPolicy(vault, Args{"staged": "true"})
 	if len(errors) != 0 {

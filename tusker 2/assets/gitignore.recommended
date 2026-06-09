@@ -1,7 +1,0 @@
-# Tusker generated/runtime state
-_system/generated/
-.tusker-local/
-.tusker/scratch/
-*.log
-.DS_Store
-Thumbs.db

@@ -1,82 +1,33 @@
-# OS/editor noise
+# Legacy visible vault surface. V7 uses `.tusker/`.
+/tusker/
+
+# OS/editor noise.
 .DS_Store
-._*
-.Spotlight-V100
-.Trashes
-.vscode/*
-!.vscode/extensions.json
-!.vscode/launch.json
-.idea/
-*.swp
-*.swo
-*~
 
-# Secrets and local environment
-.env
-.env.*
-!.env.example
-*.pem
-*.key
-*.p12
-*.pfx
-*.crt
-*.csr
-
-# Logs and temporary files
-*.log
-npm-debug.log*
-yarn-debug.log*
-pnpm-debug.log*
-tmp/
-temp/
-.tmp/
-.cache/
-.parcel-cache/
-.eslintcache
-
-# Dependencies
-node_modules/
-vendor/
-
-# Build outputs and packaged releases
-dist/*
-!dist/.gitkeep
-build/
-out/
-coverage/
-/tusker-code-review*.zip
-*.test
-*.prof
-*.out
-*.bin
-*.exe
-*.dmg
-*.pkg
-*.tar
-*.tar.gz
-*.tgz
-*.zip
-*.mp4
-*.mov
-*.webm
-
-# Local tool caches and vendored machine binaries
+# Local toolchains and build outputs.
 .tools/
+.tusker-build/
 
-# Astro/Starlight generated output
-site/.astro/
-site/dist/
-site/public/generated/
-site/src/generated/
+# Generated handoff/archive artifacts.
+/artifacts/**/*.zip
+/research/*.zip
 
-# Tusker runtime/generated vault state
-.tusker-local/
-.tusker-runtime/
+# Tusker runtime noise. Durable contracts stay tracked; raw runtime output does not.
+.tusker/events/**/*.json
+.tusker/attempts/**/*.json
+.tusker/attempts/**/*.jsonl
+.tusker/attempts/**/*.log
+.tusker/_generated/**
+!.tusker/_generated/
+!.tusker/_generated/**/
+!.tusker/_generated/**/.gitkeep
+.tusker/workspaces/
+.tusker/_runtime/
 .tusker/scratch/
-tusker/.tusker/scratch/
-tusker/_system/generated/
-tusker/_system/templates.zip
-tusker/evidence/**/raw-*.log
-tusker/evidence/**/raw-*.txt
-tusker/_generated/indexes/*.json
-tusker/_generated/packets/*.tmp
+.tusker/evidence/**/artifacts/
+
+# Local daemon/runtime state.
+.tusker-runtime/
+.tusker-state/
+.tusker-worktrees/
+dist/

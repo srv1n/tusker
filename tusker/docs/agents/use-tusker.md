@@ -50,7 +50,7 @@ gates explicitly, and request review mechanically when implementation is done.
 
 ## Preconditions
 
-- Start with `tusker list --type epic`; read `tusker/README.md` only when the
+- Start with `tusker list`; read `tusker/README.md` only when the
   project overview is needed.
 - Pick an existing epic when the request fits; create a new epic only for a
   durable workstream.
@@ -77,7 +77,8 @@ gates explicitly, and request review mechanically when implementation is done.
 3. Drill into one epic with `tusker list --epic <ACR> --type task --open` only
    when open-task context is needed.
 4. Read a selected task with `tusker show <ID> --capsule` before opening the
-   full markdown.
+   full markdown. For human terminal reading, use `tusker print <ID>`; for
+   editor/Obsidian handoff, use `tusker open <ID>`.
 5. For old noisy notes, run `tusker compact <ID>` as a dry-run before opening or
    editing the full file.
 6. Create or update the narrowest relevant task with clear scope, acceptance,
@@ -91,7 +92,9 @@ gates explicitly, and request review mechanically when implementation is done.
 10. Attach evidence that covers concrete acceptance IDs.
 11. Finish with `tusker finish <TASK-ID> --summary "<what changed and where proof lives>"`.
 12. If blocked on human input, credentials, external setup, or another
-   dependency, create/propose a gate with owner, action, and verification.
+   dependency, create/propose a gate with owner, action, verification, and why
+   the agent cannot do it. Use reviewer/subagent work for code review, diffs,
+   test/log inspection, docs review, and implementation judgment.
 13. Move to close only from `review`; close policy checks gates and accepted
    evidence.
 
@@ -102,7 +105,7 @@ A worker agent may stop only in one of these states:
 | State | Required proof |
 |---|---|
 | Review requested | Evidence covers acceptance, attempt is in handoff, and task is in `review` or has a status proposal to `review` |
-| Blocked by gate | Gate exists or is proposed with owner, action, verification, and blocked task links |
+| Blocked by gate | Gate exists or is proposed with owner, action, verification, blocked task links, and `why_agent_cannot` for human/external blockers |
 | Explicit failure | Attempt is failed with summary, evidence/log pointer, and follow-up gate/task when useful |
 
 If using lower-level commands on an implementation branch, run
@@ -118,7 +121,7 @@ Use the lightest lane that preserves truth.
 
 | Lane | Use for | Context budget |
 |---|---|---|
-| Lookup | Answer status or find existing work | `tusker list --type epic`, `tusker search`, one epic's open tasks, one task capsule |
+| Lookup | Answer status or find existing work | `tusker list`, `tusker search`, one epic's open tasks, one task capsule |
 | Bookkeeping | Add notes or shape backlog | Named task plus epic roster; validate only when schema changed |
 | Implementation | Change code or docs | Task plus directly relevant files |
 | Closeout | Move/propose work to review or done | Evidence, gates, attempts, proposals, validation |
@@ -142,6 +145,20 @@ Do not enable Codex sessions, Claude transcripts, Memories, or Chronicle unless
 the user explicitly opts in. When provider/model/reasoning flags are used, treat
 them as runtime profile labels only; do not copy them into task frontmatter or
 make them source truth.
+
+## Feedback Reducer Behavior
+
+`tusker feedback signals --since <date>` turns recent events, task contracts,
+and bounded token usage into derived product facts. `--write` stores JSON under
+`tusker/feedback/signals/YYYY-MM-DD/`.
+
+`tusker feedback review --since <date>` renders the daily product packet:
+facts, likely causes, proposed actions, and human decisions. Keep raw logs and
+transcripts out of the packet.
+
+`tusker feedback promote <signal-id>` defaults to dry-run. Use `--write` only
+for one bounded action: create/update/link a task, create a decision, write a
+gate/runbook/skill/CLI proposal record, or explicitly skip weak evidence.
 
 ## Review Lane Behavior
 
@@ -170,6 +187,10 @@ and self-acceptance is blocked unless policy explicitly allows it.
 - Missing acceptance proof: add accepted evidence or a waiver before finish/close.
 - Open gate: satisfy with durable evidence, waive with reason, or leave the task
   blocked.
+- Human gate for agent-capable work: route code review, diffs, test/log
+  inspection, docs review, and implementation judgment to reviewer/subagent work.
+- Bad or unclear spec: create a human-owned `decision` gate with the agent's
+  recommended resolution in `suggestion`.
 - Attempt handoff without review request: run `tusker finish` or create the
   status proposal to `review`.
 - Generated file drift: rerun the generator instead of editing generated output.

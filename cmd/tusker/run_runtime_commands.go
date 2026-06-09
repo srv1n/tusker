@@ -35,6 +35,8 @@ type runInspection struct {
 	LatestSession            *RunnerSession              `json:"latest_session"`
 	SupervisorDecisions      []RuntimeSupervisorDecision `json:"supervisor_decisions"`
 	LatestSupervisorDecision *RuntimeSupervisorDecision  `json:"latest_supervisor_decision"`
+	ExternalLoopEvents       []ExternalLoopEvent         `json:"external_loop_events"`
+	ExternalLoopCounters     ExternalLoopCounters        `json:"external_loop_counters"`
 	LatestEvent              map[string]any              `json:"latest_event,omitempty"`
 	TokenTotals              runtimeTokenTotals          `json:"token_totals"`
 	FailureClass             string                      `json:"failure_class,omitempty"`
@@ -56,7 +58,7 @@ func (s *RuntimeStore) FindRun(identity string) (*RunStatus, error) {
 }
 
 func (s *RuntimeStore) ListAttemptsForRun(projectID, recordID string) ([]RunAttempt, error) {
-	rows, err := s.db.Query(`SELECT attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, session_ref, process_pid, outcome, exit_code, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
+	rows, err := s.db.Query(`SELECT attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, outcome, exit_code, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
 		FROM attempts
 		WHERE project_id = ? AND record_id = ?
 		ORDER BY started_at DESC, attempt_id DESC`, projectID, recordID)
@@ -67,7 +69,7 @@ func (s *RuntimeStore) ListAttemptsForRun(projectID, recordID string) ([]RunAtte
 	var out []RunAttempt
 	for rows.Next() {
 		var attempt RunAttempt
-		if err := rows.Scan(&attempt.AttemptID, &attempt.ProjectID, &attempt.RecordID, &attempt.ItemID, &attempt.Runner, &attempt.Lane, &attempt.WorkRevision, &attempt.WorkspacePath, &attempt.SessionRef, &attempt.ProcessPID, &attempt.Outcome, &attempt.ExitCode, &attempt.PromptPath, &attempt.EventSinkPath, &attempt.RawLogPath, &attempt.StatusPath, &attempt.LastError, &attempt.StartedAt, &attempt.FinishedAt); err != nil {
+		if err := rows.Scan(&attempt.AttemptID, &attempt.ProjectID, &attempt.RecordID, &attempt.ItemID, &attempt.Runner, &attempt.Lane, &attempt.WorkRevision, &attempt.WorkspacePath, &attempt.SessionRef, &attempt.ParentAttemptID, &attempt.ChildType, &attempt.BranchName, &attempt.MergeRule, &attempt.FanoutGroup, &attempt.CloudTaskID, &attempt.CloudStatus, &attempt.CloudEnvironmentID, &attempt.CloudAttemptNumber, &attempt.PullRequestURL, &attempt.ApplyRef, &attempt.LogsSummary, &attempt.FinalSummary, &attempt.ProcessPID, &attempt.Outcome, &attempt.ExitCode, &attempt.PromptPath, &attempt.EventSinkPath, &attempt.RawLogPath, &attempt.StatusPath, &attempt.LastError, &attempt.StartedAt, &attempt.FinishedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, attempt)
@@ -95,6 +97,10 @@ func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, err
 	if err != nil {
 		return runInspection{}, err
 	}
+	externalLoopEvents, err := store.ListExternalLoopEvents(run.ProjectID, run.RecordID)
+	if err != nil {
+		return runInspection{}, err
+	}
 	latestSession := latestRunnerSession(sessions)
 	eventPath := bestRunEventPath(*run, attempts)
 	return runInspection{
@@ -108,6 +114,8 @@ func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, err
 		LatestSession:            latestSession,
 		SupervisorDecisions:      supervisorDecisions,
 		LatestSupervisorDecision: latestSupervisorDecision(supervisorDecisions),
+		ExternalLoopEvents:       externalLoopEvents,
+		ExternalLoopCounters:     externalLoopCountersForEvents(externalLoopEvents),
 		LatestEvent:              latestJSONLEvent(eventPath),
 		TokenTotals:              tokenTotalsForTurns(turns),
 		FailureClass:             runtimeFailureClass(*run, attempts, turns),
@@ -166,6 +174,25 @@ func runsInspectCmd(args Args) error {
 	if run.SessionRef != "" {
 		fmt.Printf("session=%s\n", run.SessionRef)
 	}
+	if run.CloudTaskID != "" {
+		fmt.Printf("cloud_task=%s", run.CloudTaskID)
+		if run.CloudStatus != "" {
+			fmt.Printf(" status=%s", run.CloudStatus)
+		}
+		if run.CloudEnvironmentID != "" {
+			fmt.Printf(" environment=%s", run.CloudEnvironmentID)
+		}
+		if run.CloudAttemptNumber > 0 {
+			fmt.Printf(" attempt=%d", run.CloudAttemptNumber)
+		}
+		fmt.Println()
+	}
+	if run.PullRequestURL != "" {
+		fmt.Printf("pull_request=%s\n", run.PullRequestURL)
+	}
+	if run.ApplyRef != "" {
+		fmt.Printf("apply_ref=%s\n", run.ApplyRef)
+	}
 	if run.WorkspacePath != "" {
 		fmt.Printf("workspace=%s\n", run.WorkspacePath)
 	}
@@ -186,6 +213,9 @@ func runsInspectCmd(args Args) error {
 	}
 	if inspection.LatestSession != nil {
 		fmt.Printf("latest session state=%s resumable=%t last_seen=%s\n", inspection.LatestSession.State, inspection.LatestSession.Resumable, inspection.LatestSession.LastSeenAt)
+	}
+	if inspection.ExternalLoopCounters.Events > 0 {
+		fmt.Printf("external loop events=%d cycles=%d repairs=%d threads=%d\n", inspection.ExternalLoopCounters.Events, inspection.ExternalLoopCounters.Cycles, inspection.ExternalLoopCounters.RepairContinuations, inspection.ExternalLoopCounters.ExternalThreads)
 	}
 	if latest := inspection.LatestSupervisorDecision; latest != nil {
 		fmt.Printf("latest supervisor decision=%s", latest.Kind)

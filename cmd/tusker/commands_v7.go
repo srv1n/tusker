@@ -573,7 +573,7 @@ func newV7Epic(args Args) error {
 		"id":                   acronym,
 		"project":              v7ProjectID(vaultPath),
 		"title":                title,
-		"status":               fallback(args.String("status"), "active"),
+		"status":               fallback(args.String("status"), "ready"),
 		"owner":                fallback(args.String("owner"), "human:"+defaultActorName()),
 		"priority":             strings.ToLower(fallback(args.String("priority"), "p2")),
 		"domains":              splitCSV(args.String("domains")),
@@ -660,7 +660,7 @@ func newV7Task(args Args) error {
 		)
 	}
 	defaultStatus := "backlog"
-	if args.Bool("ready") || args.Bool("v7") {
+	if args.Bool("ready") {
 		defaultStatus = "ready"
 	}
 	status := strings.ToLower(fallback(args.String("status"), defaultStatus))
@@ -668,7 +668,7 @@ func newV7Task(args Args) error {
 		return tuskerError(errorInvalidField, "invalid V7 task status: "+status)
 	}
 	defaultReadiness := "held"
-	if status == "ready" || status == "rework" || args.Bool("ready") || args.Bool("v7") {
+	if status == "ready" || status == "rework" || args.Bool("ready") {
 		defaultReadiness = "ready"
 	}
 	readiness := strings.ToLower(fallback(args.String("readiness"), defaultReadiness))
@@ -749,13 +749,13 @@ func newV7Task(args Args) error {
 		data["raw_artifacts_reason"] = reason
 	}
 	body := v7TaskBody(id, title)
-	if status == "ready" && !args.Bool("v7") {
+	if status == "ready" && !args.Bool("force-ready") {
 		synthetic := Note{Data: data, Body: body}
 		if reasons := v7TaskDispatchBlockers(vaultPath, synthetic); len(reasons) > 0 {
 			return tuskerError(
 				errorInvalidArg,
 				"ready V7 task is not dispatchable: "+strings.Join(reasons, "; "),
-				withHint("create it as backlog/held, or pass real --intent/--acceptance/--verification support before marking ready"),
+				withHint("create it as backlog/held, or pass --force-ready only after replacing placeholder acceptance and verification"),
 				withContext(map[string]any{"id": id, "dispatch_blockers": reasons}),
 			)
 		}
@@ -805,6 +805,66 @@ func parseV7ProofRequiredOwnerArg(value string) map[string]string {
 	return owners
 }
 
+func v7GateWhyAgentCannotArg(args Args) string {
+	return strings.TrimSpace(firstNonEmpty(
+		args.String("why-agent-cannot"),
+		args.String("why-agent-cannot-do-this"),
+		args.String("why_agent_cannot"),
+		args.String("agent-boundary"),
+	))
+}
+
+func v7GateSuggestionArg(args Args) string {
+	return strings.TrimSpace(firstNonEmpty(
+		args.String("suggestion"),
+		args.String("recommendation"),
+		args.String("suggested-resolution"),
+		args.String("suggested_resolution"),
+	))
+}
+
+func validateV7GateCreationPolicy(gateKind, owner string, blocking bool, action, verification, whyAgentCannot, suggestion string) error {
+	if owner == "" {
+		return tuskerError(errorMissingArg, "Missing required --owner <owner>")
+	}
+	if action == "" {
+		return tuskerError(errorMissingArg, "Missing required --action <needed action>")
+	}
+	if verification == "" {
+		return tuskerError(errorMissingArg, "Missing required --verification <proof>")
+	}
+	if v7GateTextIsPlaceholder(action) {
+		return tuskerError(errorInvalidArg, "gate action is placeholder text", withHint("state the exact owner action that unblocks the task"))
+	}
+	if v7GateTextIsPlaceholder(verification) {
+		return tuskerError(errorInvalidArg, "gate verification is placeholder text", withHint("state the concrete command, artifact, or owner decision that proves the gate is satisfied"))
+	}
+	if !blocking || !v7GateOwnerNeedsAgentBoundary(owner) {
+		return nil
+	}
+	if whyAgentCannot == "" {
+		return tuskerError(errorMissingArg, "human/external blocking gate requires --why-agent-cannot", withHint("explain the capability boundary, not just that work is blocked"))
+	}
+	if v7HumanGateOwnsAgentCapableWork(gateKind, owner, action, verification, whyAgentCannot, suggestion) {
+		return tuskerError(errorInvalidArg, "human gate appears to own agent-capable review work", withHint("use an independent reviewer/subagent for code review, diffs, test inspection, or implementation judgment; use a decision gate only for a human product/spec choice and include --suggestion"))
+	}
+	if gateKind == "decision" && suggestion == "" {
+		return tuskerError(errorMissingArg, "human/external decision gate requires --suggestion", withHint("include the agent's recommended choice or repair path"))
+	}
+	return nil
+}
+
+func v7GateDefaultTitle(action string, blocks []string) string {
+	title := strings.TrimSpace(strings.TrimSuffix(action, "."))
+	if title == "" {
+		return "Gate for " + strings.Join(blocks, ", ")
+	}
+	if len(title) > 80 {
+		title = strings.TrimSpace(title[:80])
+	}
+	return title
+}
+
 func newV7Gate(args Args) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
@@ -818,7 +878,6 @@ func newV7Gate(args Args) error {
 	if epic == "" {
 		return tuskerError(errorInvalidArg, "first blocked object must look like ABC-T-0001")
 	}
-	title := fallback(args.String("title"), "Resolve gate for "+strings.Join(blocks, ", "))
 	id := strings.ToUpper(args.String("id"))
 	if id == "" {
 		id = fmt.Sprintf("%s-G-%s", epic, padNumber(nextV7Sequence(vaultPath, epic, "gate")))
@@ -826,7 +885,11 @@ func newV7Gate(args Args) error {
 	if !v7GateIDPattern.MatchString(id) {
 		return tuskerError(errorInvalidArg, "invalid gate id: "+id)
 	}
-	gateKind := strings.ToLower(fallback(firstNonEmpty(args.String("kind"), args.String("gate-kind")), "manual_hold"))
+	gateKindArg := firstNonEmpty(args.String("kind"), args.String("gate-kind"))
+	if gateKindArg == "" {
+		return tuskerError(errorMissingArg, "Missing required --kind <gate-kind>")
+	}
+	gateKind := strings.ToLower(gateKindArg)
 	if _, ok := v7GateKinds[gateKind]; !ok {
 		return tuskerError(errorInvalidField, "invalid gate kind: "+gateKind)
 	}
@@ -835,8 +898,16 @@ func newV7Gate(args Args) error {
 		return tuskerError(errorAlreadyExists, "Gate already exists: "+id, withPath(path))
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	action := fallback(args.String("action"), "Resolve this gate so blocked work can proceed.")
-	verification := fallback(args.String("verification"), "Owner confirms the gate is satisfied.")
+	owner := strings.TrimSpace(args.String("owner"))
+	action := strings.TrimSpace(args.String("action"))
+	verification := strings.TrimSpace(args.String("verification"))
+	whyAgentCannot := v7GateWhyAgentCannotArg(args)
+	suggestion := v7GateSuggestionArg(args)
+	blocking := !args.Bool("non-blocking")
+	if err := validateV7GateCreationPolicy(gateKind, owner, blocking, action, verification, whyAgentCannot, suggestion); err != nil {
+		return err
+	}
+	title := fallback(args.String("title"), v7GateDefaultTitle(action, blocks))
 	data := map[string]any{
 		"schema":       "tusker.gate/v1",
 		"kind":         "gate",
@@ -845,9 +916,9 @@ func newV7Gate(args Args) error {
 		"title":        title,
 		"gate_kind":    gateKind,
 		"status":       "open",
-		"owner":        fallback(args.String("owner"), "human:"+defaultActorName()),
+		"owner":        owner,
 		"priority":     strings.ToLower(fallback(args.String("priority"), "p2")),
-		"blocking":     !args.Bool("non-blocking"),
+		"blocking":     blocking,
 		"blocks":       blocks,
 		"covers":       normalizeV7Covers(splitCSV(args.String("covers"))),
 		"action":       action,
@@ -857,7 +928,13 @@ func newV7Gate(args Args) error {
 		"updated_at":   now,
 		"updated_by":   fallback(args.String("by"), "agent:"+defaultActorName()),
 	}
-	body := v7GateBody(id, title, action, verification, blocks, gateKind)
+	if whyAgentCannot != "" {
+		data["why_agent_cannot"] = whyAgentCannot
+	}
+	if suggestion != "" {
+		data["suggestion"] = suggestion
+	}
+	body := v7GateBody(id, title, action, verification, blocks, gateKind, whyAgentCannot, suggestion)
 	data["state_rev"] = v7StateRev(data, body)
 	content, err := serializeDocument(data, body, v7FrontmatterOrder["gate"])
 	if err != nil {
@@ -1911,15 +1988,16 @@ func migrateV7GatesCmd(args Args) error {
 			continue
 		}
 		if err := newV7Gate(Args{
-			"vault":        vaultPath,
-			"quiet":        "true",
-			"id":           current.GateID,
-			"blocks":       current.TaskID,
-			"kind":         "manual_hold",
-			"owner":        fallback(args.String("owner"), "human:"+defaultActorName()),
-			"title":        current.Title,
-			"action":       current.Action,
-			"verification": current.Verification,
+			"vault":            vaultPath,
+			"quiet":            "true",
+			"id":               current.GateID,
+			"blocks":           current.TaskID,
+			"kind":             "manual_hold",
+			"owner":            fallback(args.String("owner"), "human:"+defaultActorName()),
+			"title":            current.Title,
+			"action":           current.Action,
+			"verification":     current.Verification,
+			"why-agent-cannot": "Migrated from V5 blocked-task metadata; the agent cannot safely infer or complete the human-owned blocker without owner input.",
 		}); err != nil {
 			return err
 		}
@@ -2287,11 +2365,12 @@ func writeV7PacketWarnings(b *strings.Builder, vaultPath string, task Note) {
 
 func v7PacketWarnings(vaultPath string, task Note) []string {
 	var warnings []string
+	skillPath := vaultDisplayPath(vaultPath, "SKILL.md")
 	if !fileExists(filepath.Join(vaultPath, "SKILL.md")) {
 		if fileExists(filepath.Join(vaultPath, "README.md")) {
-			warnings = append(warnings, "`tusker/SKILL.md` is missing; use `tusker/README.md` and this task packet as the fallback project route.")
+			warnings = append(warnings, "`"+skillPath+"` is missing; use `"+vaultDisplayPath(vaultPath, "README.md")+"` and this task packet as the fallback project route.")
 		} else {
-			warnings = append(warnings, "`tusker/SKILL.md` is missing; rely on the task contract until project knowledge is installed.")
+			warnings = append(warnings, "`"+skillPath+"` is missing; rely on the task contract until project knowledge is installed.")
 		}
 	}
 	for _, warning := range v7PacketDomainRouteWarnings(vaultPath, task) {
@@ -2349,12 +2428,13 @@ func v7PacketStubAcceptanceItems(body string) []string {
 
 func v7ProjectSkillRouting(vaultPath string, task Note) string {
 	var lines []string
+	skillPath := vaultDisplayPath(vaultPath, "SKILL.md")
 	if fileExists(filepath.Join(vaultPath, "SKILL.md")) {
-		lines = append(lines, "- Load the repo project knowledge skill at `tusker/SKILL.md`.")
+		lines = append(lines, "- Load the repo project knowledge skill at `"+skillPath+"`.")
 	} else if fileExists(filepath.Join(vaultPath, "README.md")) {
-		lines = append(lines, "- `tusker/SKILL.md` is missing; use `tusker/README.md` plus this packet until the project skill is installed.")
+		lines = append(lines, "- `"+skillPath+"` is missing; use `"+vaultDisplayPath(vaultPath, "README.md")+"` plus this packet until the project skill is installed.")
 	} else {
-		lines = append(lines, "- `tusker/SKILL.md` is missing; use the task contract as the project route.")
+		lines = append(lines, "- `"+skillPath+"` is missing; use the task contract as the project route.")
 	}
 	lines = append(lines, "- Use the installed Tusker operator skill only for task mechanics, gates, evidence, lifecycle, and CLI semantics.")
 	domains := normalizeList(task.Data["domains"])
@@ -3095,21 +3175,25 @@ None expected.
 `, id, title)
 }
 
-func v7GateBody(id, title, action, verification string, blocks []string, gateKind string) string {
+func v7GateBody(id, title, action, verification string, blocks []string, gateKind, whyAgentCannot, suggestion string) string {
+	whySection := ""
+	if strings.TrimSpace(whyAgentCannot) != "" {
+		whySection = "\n## Why agent cannot do this\n\n" + strings.TrimSpace(whyAgentCannot) + "\n"
+	}
+	suggestionSection := ""
+	if strings.TrimSpace(suggestion) != "" {
+		suggestionSection = "\n## Suggested resolution\n\n" + strings.TrimSpace(suggestion) + "\n"
+	}
 	secretPolicy := ""
 	if gateKind == "auth" || gateKind == "env" {
 		secretPolicy = "\n## Secret policy\n\nDo not paste OAuth tokens, API keys, passwords, cookies, or session values into Tusker, task notes, logs, screenshots, or chat transcripts.\n"
 	}
 	return fmt.Sprintf(`# %s · %s
-
+%s
 ## Action
 
 %s
-
-## Steps
-
-1. Complete the gate action.
-2. Capture the required verification.
+%s
 
 ## Verification
 
@@ -3118,7 +3202,7 @@ func v7GateBody(id, title, action, verification string, blocks []string, gateKin
 ## Unblocks
 
 %s
-`, id, title, action, verification, secretPolicy, v7BulletList(blocks))
+`, id, title, whySection, action, suggestionSection, verification, secretPolicy, v7BulletList(blocks))
 }
 
 func v7ProjectID(vaultPath string) string {
@@ -3160,7 +3244,7 @@ func resolveV7ProjectID(vaultPath string) (string, error) {
 	if fileExists(filepath.Join(repoRoot, "tusker.yaml")) || dirExists(filepath.Join(repoRoot, ".git")) || fileExists(filepath.Join(repoRoot, ".git")) {
 		return sanitizeProjectID(filepath.Base(repoRoot)), nil
 	}
-	return "", tuskerError(errorConfigInvalid, "V7 project_id is required in tusker.yaml", withPath(filepath.Join(repoRoot, "tusker.yaml")), withHint("run `tusker init --profile v7 --yes` from the repository root or add project_id to tusker.yaml"))
+	return "", tuskerError(errorConfigInvalid, "V7 project_id is required in tusker.yaml", withPath(filepath.Join(repoRoot, "tusker.yaml")), withHint("run `tusker init --yes` from the repository root or add project_id to tusker.yaml"))
 }
 
 func v7StateRev(data map[string]any, body string) string {
@@ -3240,6 +3324,13 @@ func readV7TuskerConfig(vaultPath string) (v7TuskerConfigFile, string, error) {
 	raw, err := readText(configPath)
 	if err != nil {
 		return cfg, configPath, err
+	}
+	var top map[string]any
+	if err := yaml.Unmarshal([]byte(raw), &top); err != nil {
+		return cfg, configPath, err
+	}
+	if _, ok := top["orchestration"]; ok {
+		return cfg, configPath, tuskerError(errorConfigInvalid, "tusker.yaml uses deprecated top-level orchestration; use automation", withPath(configPath), withHint("rename orchestration: to automation: and keep trigger_states ready,rework"))
 	}
 	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
 		return cfg, configPath, err

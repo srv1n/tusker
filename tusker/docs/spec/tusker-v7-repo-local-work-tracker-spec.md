@@ -1598,7 +1598,10 @@ close_policy:
 ```sh
 tusker new epic HSP --title "First-class harness provider setup"
 tusker new task --epic HSP --title "Add direct OpenAI provider smoke harness"
-tusker new gate --blocks HSP-T-0042 --kind auth --owner human:sarav
+tusker new gate --blocks HSP-T-0042 --kind auth --owner human:sarav \
+  --action "Provision staging OAuth credentials." \
+  --verification "Provider ready endpoint returned OpenAI model." \
+  --why-agent-cannot "Human account access is required."
 tusker new decision --epic HSP --title "Use repo-local branch-safe work tracker"
 ```
 
@@ -2471,7 +2474,7 @@ Finish contract:
 6. If implementation is complete and no blocker remains, request review:
    - control branch or explicit local mode: `tusker status <task-id> review --reason "Ready for independent review."`
    - implementation branch: `tusker propose status <task-id> --status review --reason "Ready for independent review."`
-7. If blocked on human input, credentials, external setup, or another dependency, create a blocking gate when policy permits (`tusker new gate --blocks <task-id> ...`) or propose one (`tusker propose create_gate <task-id> ...`). Include owner, action, and verification.
+7. If blocked on human input, credentials, external setup, or another dependency, create a blocking gate when policy permits (`tusker new gate --blocks <task-id> ...`) or propose one (`tusker propose create_gate <task-id> ...`). Include owner, action, verification, and why the agent cannot do it. For contradictory or unusable specs, use a human-owned decision gate with the agent's suggested resolution.
 8. Never leave completed implementation work in `ready`, `active`, or `rework` with only an attempt handoff. Handoff is attempt state; task review state is the review queue.
 9. Do not mark the task done unless running on a configured control branch and close policy permits it.
 

@@ -263,7 +263,7 @@ func resolveDurableEvidenceSource(input string) (string, error) {
 		return "", tuskerError(errorInvalidArg, "temporary evidence artifact paths are not durable: "+trimmed, withHint("copy the file from a durable workspace path or use --link-only to mark it non-durable"))
 	}
 	if filepath.IsAbs(trimmed) {
-		return "", tuskerError(errorInvalidArg, "absolute local evidence artifact paths are not durable: "+trimmed, withHint("pass a repo-relative path so Tusker can copy it into tusker/evidence/<task>/artifacts/"))
+		return "", tuskerError(errorInvalidArg, "absolute local evidence artifact paths are not durable: "+trimmed, withHint("pass a repo-relative path so Tusker can copy it into .tusker/evidence/<task>/artifacts/"))
 	}
 	clean := filepath.Clean(trimmed)
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.IsAbs(clean) {

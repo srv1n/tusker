@@ -21,6 +21,8 @@ Tusker has three concerns:
 | `06-review-rework-retry.md` | Verification, rework, close, and retry semantics | `commands_v5.go`, runtime reconcile logic |
 | `07-documentation-site-and-publication.md` | Docs export and publication pipeline | docs exporter and site build |
 | `08-symphony-alignment-and-orchestration-roadmap.md` | Runtime roadmap on the V5 task model | workflow, daemon, runner, docs |
+| `09-chatgpt-pro-handoff-orchestration.md` | ChatGPT Pro artifact handoff and apply-loop orchestration | daemon, runner adapters, external collection |
+| `10-repo-bootstrap-and-existing-repo-onboarding.md` | Existing repo setup, curated onboarding packets, and conservative import | `install.go`, `cli.go`, onboarding commands, skill bundle |
 
 ## Commitments
 

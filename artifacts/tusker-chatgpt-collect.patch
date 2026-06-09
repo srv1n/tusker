@@ -1,0 +1,1062 @@
+diff --git a/cmd/tusker/automation_commands.go b/cmd/tusker/automation_commands.go
+index 092ac5b..bf202d0 100644
+--- a/cmd/tusker/automation_commands.go
++++ b/cmd/tusker/automation_commands.go
+@@ -76,6 +76,7 @@ type automationTaskExplanation struct {
+ 	ThreadSandbox     string                   `json:"thread_sandbox"`
+ 	TurnSandboxPolicy string                   `json:"turn_sandbox_policy"`
+ 	RequiredApprovals []string                 `json:"required_approvals"`
++	ApplyInputs       []RuntimeApplyInput      `json:"apply_inputs,omitempty"`
+ 	Fanout            automationFanoutSummary  `json:"fanout"`
+ 	ExistingRun       *RunStatus               `json:"existing_run,omitempty"`
+ }
+@@ -463,6 +464,12 @@ func (ctx *automationCommandContext) explainTask(note Note) automationTaskExplan
+ 	if runner != "" && !containsString(ctx.Workflow.Data.Agents.Enabled, runner) {
+ 		blockers = append(blockers, "runner "+runner+" is not enabled in workflow")
+ 	}
++	applyInputs, applyInputErr := ctx.Store.ListApplyInputsForRun(ctx.Project.ProjectID, recordID)
++	if applyInputErr != nil {
++		blockers = append(blockers, "apply input store: "+applyInputErr.Error())
++	} else if len(applyInputs) > 1 {
++		blockers = append(blockers, "multiple external apply inputs require human selection")
++	}
+ 	if reason := automationRunBlocker(run, time.Now().UTC()); reason != "" {
+ 		blockers = append(blockers, reason)
+ 	}
+@@ -505,6 +512,7 @@ func (ctx *automationCommandContext) explainTask(note Note) automationTaskExplan
+ 		ThreadSandbox:     policy.ThreadSandbox,
+ 		TurnSandboxPolicy: policy.TurnSandboxPolicy,
+ 		RequiredApprovals: uniqueStrings(requiredApprovals),
++		ApplyInputs:       applyInputs,
+ 		Fanout:            fanout,
+ 		ExistingRun:       existing,
+ 	}
+@@ -880,6 +888,13 @@ func printAutomationExplanation(explanation automationTaskExplanation) {
+ 	if len(explanation.RequiredApprovals) > 0 {
+ 		fmt.Printf("  approvals=%s\n", strings.Join(explanation.RequiredApprovals, ", "))
+ 	}
++	if len(explanation.ApplyInputs) > 0 {
++		var paths []string
++		for _, input := range explanation.ApplyInputs {
++			paths = append(paths, firstNonEmpty(input.RelPath, input.Path))
++		}
++		fmt.Printf("  apply_inputs=%s\n", strings.Join(paths, ", "))
++	}
+ 	if len(explanation.Blockers) == 0 {
+ 		fmt.Println("  blockers=none")
+ 		return
+diff --git a/cmd/tusker/automation_external_collect.go b/cmd/tusker/automation_external_collect.go
+new file mode 100644
+index 0000000..bc656ba
+--- /dev/null
++++ b/cmd/tusker/automation_external_collect.go
+@@ -0,0 +1,587 @@
++package main
++
++import (
++	"context"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"fmt"
++	"io"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"sort"
++	"strings"
++)
++
++const externalCollectSchema = "tusker.external_collect/v1"
++
++type externalCollectReport struct {
++	Schema           string              `json:"schema"`
++	TaskID           string              `json:"task_id"`
++	RecordID         string              `json:"record_id"`
++	Runner           string              `json:"runner"`
++	JobID            string              `json:"job_id"`
++	ArtifactDir      string              `json:"artifact_dir"`
++	Patches          []string            `json:"patches"`
++	ReviewPackets    []string            `json:"review_packets"`
++	Bundles          []string            `json:"bundles"`
++	RuntimeArtifacts []string            `json:"runtime_artifacts"`
++	ApplyInputs      []RuntimeApplyInput `json:"apply_inputs"`
++	EvidenceAdded    []string            `json:"evidence_added"`
++	NextAction       string              `json:"next_action"`
++	Dispatchable     bool                `json:"dispatchable"`
++	Blockers         []string            `json:"blockers,omitempty"`
++}
++
++type externalFetchResult struct {
++	JobID       string
++	ChatID      string
++	ArtifactDir string
++	Files       []string
++	Raw         map[string]any
++}
++
++type externalArtifact struct {
++	Path    string
++	RelPath string
++	Kind    string
++	Sha256  string
++}
++
++type externalCollectFetcher func(ctx context.Context, req externalFetchRequest) (externalFetchResult, error)
++
++type externalFetchRequest struct {
++	RepoRoot string
++	JobID    string
++	Runner   string
++	OutDir   string
++	Command  string
++}
++
++var runExternalCollectFetch externalCollectFetcher = defaultExternalCollectFetch
++
++func automationCollectExternalCmd(args Args) error {
++	taskID, err := requireArg(args, "id")
++	if err != nil {
++		return err
++	}
++	ctx, err := loadAutomationCommandContext(args)
++	if err != nil {
++		return err
++	}
++	defer ctx.Close()
++	note, err := ctx.findTask(taskID)
++	if err != nil {
++		return err
++	}
++	runner := firstNonEmpty(strings.TrimSpace(args.String("runner")), "chatgpt-browser")
++	run := ctx.effectiveRunForTask(note, runner)
++	jobID := firstNonEmpty(strings.TrimSpace(args.String("job")), strings.TrimSpace(args.String("cloud-task-id")), run.CloudTaskID)
++	if jobID == "" {
++		return tuskerError(errorMissingArg, "collect-external requires --job when the task runtime has no cloud_task_id", withContext(map[string]any{"task_id": stringField(note.Data, "id")}))
++	}
++	report, err := ctx.collectExternal(note, run, runner, jobID, args)
++	if err != nil {
++		return err
++	}
++	if args.Bool("json") {
++		emitJSON(map[string]any{"ok": len(report.Blockers) == 0 || report.NextAction != "escalate_human", "collection": report})
++		return nil
++	}
++	printExternalCollectReport(report)
++	if report.NextAction == "escalate_human" {
++		return tuskerError(errorInvalidTransition, stringField(note.Data, "id")+": external collection needs human escalation: "+strings.Join(report.Blockers, "; "), withContext(report))
++	}
++	return nil
++}
++
++func (ctx *automationCommandContext) collectExternal(note Note, run RunStatus, runner, jobID string, args Args) (externalCollectReport, error) {
++	taskID := stringField(note.Data, "id")
++	recordID := trackerRecordID(note)
++	artifactDirAbs := filepath.Join(ctx.Project.RepoRoot, "architect", taskID)
++	artifactDirRel := filepath.ToSlash(filepath.Join("architect", taskID))
++	fetch, err := runExternalCollectFetch(context.Background(), externalFetchRequest{
++		RepoRoot: ctx.Project.RepoRoot,
++		JobID:    jobID,
++		Runner:   runner,
++		OutDir:   artifactDirAbs,
++		Command:  strings.TrimSpace(args.String("transport")),
++	})
++	if err != nil {
++		return externalCollectReport{}, err
++	}
++	if err := ensureDir(artifactDirAbs); err != nil {
++		return externalCollectReport{}, err
++	}
++	files, err := normalizeExternalArtifacts(ctx.Project.RepoRoot, artifactDirAbs, fetch)
++	if err != nil {
++		return externalCollectReport{}, err
++	}
++	classified, err := classifyExternalArtifacts(ctx.Project.RepoRoot, files)
++	if err != nil {
++		return externalCollectReport{}, err
++	}
++	report := externalCollectReport{
++		Schema:      externalCollectSchema,
++		TaskID:      taskID,
++		RecordID:    recordID,
++		Runner:      runner,
++		JobID:       firstNonEmpty(fetch.JobID, jobID),
++		ArtifactDir: artifactDirRel,
++		NextAction:  "escalate_human",
++	}
++	for _, artifact := range classified {
++		switch artifact.Kind {
++		case "patch":
++			report.Patches = append(report.Patches, artifact.RelPath)
++		case "review_packet":
++			report.ReviewPackets = append(report.ReviewPackets, artifact.RelPath)
++		case "bundle":
++			report.Bundles = append(report.Bundles, artifact.RelPath)
++		default:
++			report.RuntimeArtifacts = append(report.RuntimeArtifacts, artifact.RelPath)
++		}
++	}
++	if len(classified) == 0 {
++		report.Blockers = append(report.Blockers, "no artifacts fetched for job "+jobID)
++	}
++	for _, artifact := range classified {
++		if artifact.Kind != "review_packet" {
++			continue
++		}
++		evidenceID, added, err := ctx.ensureExternalReviewEvidence(note, artifact, report.JobID, args)
++		if err != nil {
++			return externalCollectReport{}, err
++		}
++		if added {
++			report.EvidenceAdded = append(report.EvidenceAdded, evidenceID)
++		}
++	}
++	for _, artifact := range classified {
++		if artifact.Kind != "patch" {
++			continue
++		}
++		input := RuntimeApplyInput{
++			ProjectID: ctx.Project.ProjectID,
++			RecordID:  recordID,
++			ItemID:    taskID,
++			Runner:    runner,
++			JobID:     report.JobID,
++			AttemptID: run.ActiveAttemptID,
++			Path:      artifact.Path,
++			RelPath:   artifact.RelPath,
++			Sha256:    artifact.Sha256,
++			Kind:      "patch",
++		}
++		stored, err := ctx.Store.UpsertApplyInput(input)
++		if err != nil {
++			return externalCollectReport{}, err
++		}
++		report.ApplyInputs = append(report.ApplyInputs, stored)
++	}
++	if len(report.Patches) == 1 {
++		explanation := ctx.explainTask(note)
++		report.NextAction = "apply_patch"
++		report.Dispatchable = explanation.Dispatchable
++		report.Blockers = append(report.Blockers, explanation.Blockers...)
++	} else if len(report.Patches) > 1 {
++		report.NextAction = "escalate_human"
++		report.Dispatchable = false
++		report.Blockers = append(report.Blockers, "multiple patch artifacts require human selection")
++	} else if len(report.ReviewPackets) > 0 || len(report.Bundles) > 0 || len(report.RuntimeArtifacts) > 0 {
++		report.NextAction = "record_research_artifact"
++		report.Dispatchable = false
++	}
++	report.Blockers = uniqueStrings(report.Blockers)
++	sort.Strings(report.Patches)
++	sort.Strings(report.ReviewPackets)
++	sort.Strings(report.Bundles)
++	sort.Strings(report.RuntimeArtifacts)
++	sort.Strings(report.EvidenceAdded)
++	return report, nil
++}
++
++func defaultExternalCollectFetch(ctx context.Context, req externalFetchRequest) (externalFetchResult, error) {
++	jobID := strings.TrimSpace(req.JobID)
++	if jobID == "" {
++		return externalFetchResult{}, tuskerError(errorMissingArg, "external fetch requires a job id")
++	}
++	command := strings.TrimSpace(req.Command)
++	var cmd *exec.Cmd
++	if command == "" {
++		cmdArgs := []string{"fetch", jobID, "--json"}
++		if strings.TrimSpace(req.OutDir) != "" {
++			cmdArgs = append(cmdArgs, "--out-dir", req.OutDir)
++		}
++		cmd = exec.CommandContext(ctx, "chatgpt-handoff", cmdArgs...)
++	} else {
++		command = replaceTemplateTokens(command, map[string]string{
++			"{{job_id}}":  jobID,
++			"{{out_dir}}": req.OutDir,
++			"{{runner}}":  req.Runner,
++		})
++		cmd = exec.CommandContext(ctx, "sh", "-lc", command)
++	}
++	cmd.Dir = firstNonEmpty(req.RepoRoot, ".")
++	output, err := cmd.CombinedOutput()
++	if err != nil {
++		return externalFetchResult{}, fmt.Errorf("external fetch failed: %w: %s", err, strings.TrimSpace(string(output)))
++	}
++	return parseExternalFetchResult(output, jobID)
++}
++
++func parseExternalFetchResult(output []byte, fallbackJobID string) (externalFetchResult, error) {
++	var value any
++	if err := json.Unmarshal(output, &value); err != nil {
++		return externalFetchResult{}, tuskerError(errorConfigInvalid, "external fetch did not return JSON: "+err.Error())
++	}
++	values, ok := value.(map[string]any)
++	if !ok {
++		return externalFetchResult{}, tuskerError(errorConfigInvalid, "external fetch JSON must be an object")
++	}
++	if nested, ok := values["collection"].(map[string]any); ok {
++		values = nested
++	}
++	files := normalizeList(firstPresent(values, "files", "artifacts"))
++	return externalFetchResult{
++		JobID:       firstNonEmpty(stringValue(firstPresent(values, "job_id", "job", "id", "cloud_task_id")), fallbackJobID),
++		ChatID:      stringValue(firstPresent(values, "chat_id", "chatId")),
++		ArtifactDir: stringValue(firstPresent(values, "artifact_dir", "architect_dir", "artifacts_dir", "out_dir")),
++		Files:       files,
++		Raw:         values,
++	}, nil
++}
++
++func firstPresent(values map[string]any, keys ...string) any {
++	for _, key := range keys {
++		if value, ok := values[key]; ok {
++			return value
++		}
++	}
++	return nil
++}
++
++func normalizeExternalArtifacts(repoRoot, destDir string, fetch externalFetchResult) ([]string, error) {
++	sourceDir := strings.TrimSpace(fetch.ArtifactDir)
++	if sourceDir != "" && !filepath.IsAbs(sourceDir) {
++		sourceDir = filepath.Join(repoRoot, filepath.FromSlash(sourceDir))
++	}
++	var candidates []string
++	if sourceDir != "" && dirExists(sourceDir) {
++		if err := filepath.WalkDir(sourceDir, func(path string, entry os.DirEntry, err error) error {
++			if err != nil {
++				return err
++			}
++			if entry.IsDir() {
++				return nil
++			}
++			candidates = append(candidates, path)
++			return nil
++		}); err != nil {
++			return nil, err
++		}
++	}
++	for _, file := range fetch.Files {
++		file = strings.TrimSpace(file)
++		if file == "" {
++			continue
++		}
++		path := file
++		if !filepath.IsAbs(path) {
++			if sourceDir != "" {
++				path = filepath.Join(sourceDir, filepath.FromSlash(file))
++			} else {
++				path = filepath.Join(repoRoot, filepath.FromSlash(file))
++			}
++		}
++		if fileExists(path) {
++			candidates = append(candidates, path)
++		}
++	}
++	candidates = uniqueStrings(candidates)
++	var normalized []string
++	for _, source := range candidates {
++		if source == "" || !fileExists(source) {
++			continue
++		}
++		if samePathOrChild(source, destDir) {
++			normalized = append(normalized, source)
++			continue
++		}
++		target, err := copyExternalArtifact(source, destDir)
++		if err != nil {
++			return nil, err
++		}
++		normalized = append(normalized, target)
++	}
++	sort.Strings(normalized)
++	return uniqueStrings(normalized), nil
++}
++
++func samePathOrChild(path, dir string) bool {
++	absPath, err := filepath.Abs(path)
++	if err != nil {
++		return false
++	}
++	absDir, err := filepath.Abs(dir)
++	if err != nil {
++		return false
++	}
++	rel, err := filepath.Rel(absDir, absPath)
++	if err != nil {
++		return false
++	}
++	return rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." && !filepath.IsAbs(rel))
++}
++
++func copyExternalArtifact(source, destDir string) (string, error) {
++	base := filepath.Base(source)
++	target := filepath.Join(destDir, base)
++	sourceHash, err := sha256Path(source)
++	if err != nil {
++		return "", err
++	}
++	if fileExists(target) {
++		targetHash, err := sha256Path(target)
++		if err == nil && targetHash == sourceHash {
++			return target, nil
++		}
++		ext := filepath.Ext(base)
++		stem := strings.TrimSuffix(base, ext)
++		for i := 0; i < 100; i++ {
++			candidate := filepath.Join(destDir, fmt.Sprintf("%s-%s%s", stem, sourceHash[:12], ext))
++			if i > 0 {
++				candidate = filepath.Join(destDir, fmt.Sprintf("%s-%s-%d%s", stem, sourceHash[:12], i+1, ext))
++			}
++			if !fileExists(candidate) {
++				target = candidate
++				break
++			}
++			candidateHash, err := sha256Path(candidate)
++			if err == nil && candidateHash == sourceHash {
++				return candidate, nil
++			}
++		}
++	}
++	return target, copyFile(source, target)
++}
++
++func classifyExternalArtifacts(repoRoot string, paths []string) ([]externalArtifact, error) {
++	var out []externalArtifact
++	for _, path := range paths {
++		info, err := os.Stat(path)
++		if err != nil {
++			return nil, tuskerError(errorNotFound, "external artifact unreadable: "+path)
++		}
++		if info.IsDir() {
++			continue
++		}
++		hash, err := sha256Path(path)
++		if err != nil {
++			return nil, err
++		}
++		rel := path
++		if repoRoot != "" {
++			if computed, err := filepath.Rel(repoRoot, path); err == nil && !strings.HasPrefix(computed, "..") && !filepath.IsAbs(computed) {
++				rel = computed
++			}
++		}
++		kind := classifyExternalArtifactPath(path)
++		if kind == "patch" && info.Size() == 0 {
++			return nil, tuskerError(errorInvalidArg, "patch artifact is empty: "+rel)
++		}
++		out = append(out, externalArtifact{Path: path, RelPath: filepath.ToSlash(rel), Kind: kind, Sha256: hash})
++	}
++	sort.Slice(out, func(i, j int) bool { return out[i].RelPath < out[j].RelPath })
++	return out, nil
++}
++
++func classifyExternalArtifactPath(path string) string {
++	base := strings.ToLower(filepath.Base(path))
++	ext := strings.ToLower(filepath.Ext(base))
++	if ext == ".patch" || ext == ".diff" {
++		return "patch"
++	}
++	if strings.Contains(base, "transcript") || ext == ".json" || ext == ".jsonl" {
++		return "runtime"
++	}
++	if ext == ".md" || ext == ".txt" {
++		return "review_packet"
++	}
++	switch ext {
++	case ".zip", ".tgz", ".gz", ".tar", ".bz2", ".xz":
++		return "bundle"
++	default:
++		return "runtime"
++	}
++}
++
++func (ctx *automationCommandContext) ensureExternalReviewEvidence(note Note, artifact externalArtifact, jobID string, args Args) (string, bool, error) {
++	taskID := stringField(note.Data, "id")
++	if taskID == "" {
++		return "", false, tuskerError(errorInvalidArg, "task id is missing")
++	}
++	if existing := findExternalReviewEvidence(ctx.Project.VaultRoot, taskID, jobID, artifact.Sha256); existing != "" {
++		return existing, false, nil
++	}
++	evidenceID := fmt.Sprintf("%s-E-%s", taskID, padNumber(nextV7EvidenceSequence(ctx.Project.VaultRoot, taskID)))
++	covers := externalCollectCovers(note, args)
++	relPath, err := filepath.Rel(ctx.Project.RepoRoot, artifact.Path)
++	if err != nil || strings.HasPrefix(relPath, "..") || filepath.IsAbs(relPath) {
++		return "", false, tuskerError(errorPathEscape, "review packet artifact is outside repo root: "+artifact.Path)
++	}
++	summary := fmt.Sprintf("ChatGPT Pro handoff notes collected for %s. external_job=%s artifact_sha256=%s", jobID, jobID, artifact.Sha256)
++	cwd, _ := os.Getwd()
++	if ctx.Project.RepoRoot != "" {
++		if err := os.Chdir(ctx.Project.RepoRoot); err != nil {
++			return "", false, err
++		}
++		defer func() { _ = os.Chdir(cwd) }()
++	}
++	err = evidenceV7AddCmd(Args{
++		"vault":       ctx.Project.VaultRoot,
++		"quiet":       "true",
++		"id":          taskID,
++		"evidence-id": evidenceID,
++		"kind":        "review_packet",
++		"covers":      strings.Join(covers, ","),
++		"summary":     summary,
++		"path":        filepath.ToSlash(relPath),
++		"by":          "agent:" + firstNonEmpty(strings.TrimSpace(args.String("runner")), "chatgpt-browser"),
++	})
++	if err != nil {
++		return "", false, err
++	}
++	return evidenceID, true, nil
++}
++
++func externalCollectCovers(note Note, args Args) []string {
++	covers := normalizeV7Covers(splitCSV(args.String("covers")))
++	if len(covers) > 0 {
++		return covers
++	}
++	ids := v7AcceptanceIDs(note.Body)
++	if len(ids) == 0 {
++		return []string{"TASK:ALL"}
++	}
++	return normalizeV7Covers(ids)
++}
++
++func findExternalReviewEvidence(vaultPath, taskID, jobID, sha string) string {
++	dir := filepath.Join(vaultPath, "evidence", taskID)
++	entries, err := os.ReadDir(dir)
++	if err != nil {
++		return ""
++	}
++	for _, entry := range entries {
++		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
++			continue
++		}
++		path := filepath.Join(dir, entry.Name())
++		data, body, err := parseFrontmatterMustRead(path)
++		if err != nil {
++			continue
++		}
++		if stringField(data, "evidence_kind") != "review_packet" {
++			continue
++		}
++		if strings.Contains(body, "external_job="+jobID) && strings.Contains(body, "artifact_sha256="+sha) {
++			return stringField(data, "id")
++		}
++	}
++	return ""
++}
++
++func sha256Path(path string) (string, error) {
++	file, err := os.Open(path)
++	if err != nil {
++		return "", err
++	}
++	defer file.Close()
++	hash := sha256.New()
++	if _, err := io.Copy(hash, file); err != nil {
++		return "", err
++	}
++	return hex.EncodeToString(hash.Sum(nil)), nil
++}
++
++func printExternalCollectReport(report externalCollectReport) {
++	fmt.Printf("%s external collection: %s\n", report.TaskID, report.NextAction)
++	fmt.Printf("  runner=%s job=%s artifacts=%s\n", report.Runner, report.JobID, report.ArtifactDir)
++	if len(report.Patches) > 0 {
++		fmt.Printf("  patches=%s\n", strings.Join(report.Patches, ", "))
++	}
++	if len(report.ReviewPackets) > 0 {
++		fmt.Printf("  review_packets=%s\n", strings.Join(report.ReviewPackets, ", "))
++	}
++	if len(report.Bundles) > 0 {
++		fmt.Printf("  bundles=%s\n", strings.Join(report.Bundles, ", "))
++	}
++	if len(report.EvidenceAdded) > 0 {
++		fmt.Printf("  evidence_added=%s\n", strings.Join(report.EvidenceAdded, ", "))
++	}
++	fmt.Printf("  dispatchable=%t\n", report.Dispatchable)
++	if len(report.Blockers) == 0 {
++		fmt.Println("  blockers=none")
++		return
++	}
++	fmt.Println("  blockers:")
++	for _, blocker := range report.Blockers {
++		fmt.Println("    - " + blocker)
++	}
++}
++
++func mirrorApplyInputsIntoWorkspace(store *RuntimeStore, project RegisteredProject, run RunStatus, workspacePath string) error {
++	if store == nil || strings.TrimSpace(workspacePath) == "" {
++		return nil
++	}
++	inputs, err := store.ListApplyInputsForRun(project.ProjectID, run.RecordID)
++	if err != nil {
++		return err
++	}
++	if len(inputs) == 0 {
++		return nil
++	}
++	seenDirs := map[string]bool{}
++	for _, input := range inputs {
++		rel := filepath.ToSlash(firstNonEmpty(input.RelPath, input.Path))
++		if !strings.HasPrefix(rel, "architect/") {
++			continue
++		}
++		parts := strings.Split(rel, "/")
++		if len(parts) < 2 {
++			continue
++		}
++		sourceDir := filepath.Join(project.RepoRoot, "architect", parts[1])
++		if seenDirs[sourceDir] || !dirExists(sourceDir) {
++			continue
++		}
++		seenDirs[sourceDir] = true
++		targetDir := filepath.Join(workspacePath, "architect", parts[1])
++		if err := copyDirContents(sourceDir, targetDir); err != nil {
++			return err
++		}
++	}
++	return nil
++}
++
++func copyDirContents(sourceDir, targetDir string) error {
++	return filepath.WalkDir(sourceDir, func(path string, entry os.DirEntry, err error) error {
++		if err != nil {
++			return err
++		}
++		if entry.IsDir() {
++			return nil
++		}
++		rel, err := filepath.Rel(sourceDir, path)
++		if err != nil {
++			return err
++		}
++		clean := filepath.Clean(rel)
++		if clean == "." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.IsAbs(clean) {
++			return tuskerError(errorPathEscape, "artifact path escapes source directory: "+rel)
++		}
++		return copyFile(path, filepath.Join(targetDir, clean))
++	})
++}
+diff --git a/cmd/tusker/automation_external_collect_test.go b/cmd/tusker/automation_external_collect_test.go
+new file mode 100644
+index 0000000..fd56075
+--- /dev/null
++++ b/cmd/tusker/automation_external_collect_test.go
+@@ -0,0 +1,227 @@
++package main
++
++import (
++	"context"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++type externalCollectJSONPayload struct {
++	OK         bool                  `json:"ok"`
++	Collection externalCollectReport `json:"collection"`
++}
++
++func TestAutomationCollectExternalStoresPatchAndReviewEvidence(t *testing.T) {
++	vault := automationTestVault(t)
++	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External apply", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
++	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
++	project := registerAutomationTestProject(t, vault)
++
++	sourceDir := writeExternalFetchFiles(t, map[string]string{
++		"fix.patch":  "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\n",
++		"notes.md":   "# Review notes\n\nCollected from ChatGPT Pro.\n",
++		"bundle.zip": "fake bundle",
++	})
++	installFakeExternalCollectFetcher(t, sourceDir, []string{"fix.patch", "notes.md", "bundle.zip"})
++
++	payload := runCollectExternalJSON(t, vault, Args{"id": "APP-T-0001", "runner": "chatgpt-browser", "job": "cgpt_test", "covers": "A1"})
++	assertEqual(t, true, payload.OK, "json ok")
++	assertEqual(t, "apply_patch", payload.Collection.NextAction, "next action")
++	assertEqual(t, "architect/APP-T-0001", payload.Collection.ArtifactDir, "artifact dir")
++	assertEqual(t, []string{"architect/APP-T-0001/fix.patch"}, payload.Collection.Patches, "patches")
++	assertEqual(t, []string{"architect/APP-T-0001/notes.md"}, payload.Collection.ReviewPackets, "review packets")
++	assertEqual(t, []string{"architect/APP-T-0001/bundle.zip"}, payload.Collection.Bundles, "bundles")
++	if len(payload.Collection.EvidenceAdded) != 1 {
++		t.Fatalf("expected one evidence record, got %#v", payload.Collection.EvidenceAdded)
++	}
++	assertExists(t, filepath.Join(project.RepoRoot, "architect", "APP-T-0001", "fix.patch"))
++
++	store, err := OpenRuntimeStore(DefaultStateRoot())
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer store.Close()
++	inputs, err := store.ListApplyInputsForRun(project.ProjectID, "APP-T-0001")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(inputs) != 1 || inputs[0].RelPath != "architect/APP-T-0001/fix.patch" || inputs[0].Kind != "patch" {
++		t.Fatalf("expected one patch apply input, got %#v", inputs)
++	}
++
++	evidencePath := filepath.Join(vault, "evidence", "APP-T-0001", payload.Collection.EvidenceAdded[0]+".md")
++	data, body, err := parseFrontmatterMustRead(evidencePath)
++	if err != nil {
++		t.Fatal(err)
++	}
++	assertEqual(t, "review_packet", stringField(data, "evidence_kind"), "evidence kind")
++	if !strings.Contains(body, "external_job=cgpt_test") || !strings.Contains(body, "artifact_sha256=") {
++		t.Fatalf("expected external identity in evidence body:\n%s", body)
++	}
++}
++
++func TestAutomationCollectExternalIsIdempotent(t *testing.T) {
++	vault := automationTestVault(t)
++	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External apply", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
++	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
++	project := registerAutomationTestProject(t, vault)
++
++	sourceDir := writeExternalFetchFiles(t, map[string]string{
++		"fix.patch": "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\n",
++		"notes.md":  "# Review notes\n\nCollected from ChatGPT Pro.\n",
++	})
++	installFakeExternalCollectFetcher(t, sourceDir, []string{"fix.patch", "notes.md"})
++
++	first := runCollectExternalJSON(t, vault, Args{"id": "APP-T-0001", "runner": "chatgpt-browser", "job": "cgpt_same", "covers": "A1"})
++	second := runCollectExternalJSON(t, vault, Args{"id": "APP-T-0001", "runner": "chatgpt-browser", "job": "cgpt_same", "covers": "A1"})
++	if len(first.Collection.EvidenceAdded) != 1 {
++		t.Fatalf("expected first run to add evidence, got %#v", first.Collection.EvidenceAdded)
++	}
++	if len(second.Collection.EvidenceAdded) != 0 {
++		t.Fatalf("expected second run not to add duplicate evidence, got %#v", second.Collection.EvidenceAdded)
++	}
++	matches, err := filepath.Glob(filepath.Join(vault, "evidence", "APP-T-0001", "*.md"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(matches) != 1 {
++		t.Fatalf("expected one evidence file after repeat collection, got %d: %#v", len(matches), matches)
++	}
++
++	store, err := OpenRuntimeStore(DefaultStateRoot())
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer store.Close()
++	inputs, err := store.ListApplyInputsForRun(project.ProjectID, "APP-T-0001")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(inputs) != 1 {
++		t.Fatalf("expected one apply input after repeat collection, got %#v", inputs)
++	}
++}
++
++func TestAutomationCollectExternalNotesOnlyRecordsResearchArtifact(t *testing.T) {
++	vault := automationTestVault(t)
++	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External notes", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
++	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
++	registerAutomationTestProject(t, vault)
++
++	sourceDir := writeExternalFetchFiles(t, map[string]string{"notes.md": "# Review notes\n"})
++	installFakeExternalCollectFetcher(t, sourceDir, []string{"notes.md"})
++
++	payload := runCollectExternalJSON(t, vault, Args{"id": "APP-T-0001", "runner": "chatgpt-browser", "job": "cgpt_notes", "covers": "A1"})
++	assertEqual(t, "record_research_artifact", payload.Collection.NextAction, "next action")
++	assertEqual(t, []string{"architect/APP-T-0001/notes.md"}, payload.Collection.ReviewPackets, "review packets")
++	if payload.Collection.Dispatchable {
++		t.Fatalf("notes-only collection should not dispatch directly")
++	}
++	if len(payload.Collection.EvidenceAdded) != 1 {
++		t.Fatalf("expected notes evidence, got %#v", payload.Collection.EvidenceAdded)
++	}
++}
++
++func TestAutomationCollectExternalMultiplePatchesEscalates(t *testing.T) {
++	vault := automationTestVault(t)
++	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External apply", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
++	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
++	registerAutomationTestProject(t, vault)
++
++	sourceDir := writeExternalFetchFiles(t, map[string]string{"one.patch": "diff --git a/a b/a\n", "two.diff": "diff --git a/b b/b\n"})
++	installFakeExternalCollectFetcher(t, sourceDir, []string{"one.patch", "two.diff"})
++
++	payload := runCollectExternalJSON(t, vault, Args{"id": "APP-T-0001", "runner": "chatgpt-browser", "job": "cgpt_multi"})
++	assertEqual(t, false, payload.OK, "json ok")
++	assertEqual(t, "escalate_human", payload.Collection.NextAction, "next action")
++	if !containsString(payload.Collection.Blockers, "multiple patch artifacts require human selection") {
++		t.Fatalf("expected multiple patch blocker, got %#v", payload.Collection.Blockers)
++	}
++}
++
++func TestAutomationCollectExternalNoArtifactsEscalates(t *testing.T) {
++	vault := automationTestVault(t)
++	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External empty", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
++	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
++	registerAutomationTestProject(t, vault)
++
++	sourceDir := writeExternalFetchFiles(t, map[string]string{})
++	installFakeExternalCollectFetcher(t, sourceDir, nil)
++
++	payload := runCollectExternalJSON(t, vault, Args{"id": "APP-T-0001", "runner": "chatgpt-browser", "job": "cgpt_empty"})
++	assertEqual(t, false, payload.OK, "json ok")
++	assertEqual(t, "escalate_human", payload.Collection.NextAction, "next action")
++	if len(payload.Collection.Blockers) == 0 || !strings.Contains(payload.Collection.Blockers[0], "no artifacts fetched") {
++		t.Fatalf("expected no artifacts blocker, got %#v", payload.Collection.Blockers)
++	}
++}
++
++func TestMirrorApplyInputsIntoWorkspaceCopiesTaskArtifactDir(t *testing.T) {
++	vault := automationTestVault(t)
++	project := registerAutomationTestProject(t, vault)
++	artifactPath := filepath.Join(project.RepoRoot, "architect", "APP-T-0001", "fix.patch")
++	if err := writeText(artifactPath, "diff --git a/README.md b/README.md\n"); err != nil {
++		t.Fatal(err)
++	}
++	hash, err := sha256Path(artifactPath)
++	if err != nil {
++		t.Fatal(err)
++	}
++	store, err := OpenRuntimeStore(DefaultStateRoot())
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer store.Close()
++	_, err = store.UpsertApplyInput(RuntimeApplyInput{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: "chatgpt-browser", JobID: "cgpt", Path: artifactPath, RelPath: "architect/APP-T-0001/fix.patch", Sha256: hash, Kind: "patch"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	workspace := filepath.Join(t.TempDir(), "workspace")
++	if err := mirrorApplyInputsIntoWorkspace(store, project, RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001"}, workspace); err != nil {
++		t.Fatal(err)
++	}
++	assertExists(t, filepath.Join(workspace, "architect", "APP-T-0001", "fix.patch"))
++}
++
++func runCollectExternalJSON(t *testing.T, vault string, args Args) externalCollectJSONPayload {
++	t.Helper()
++	args["vault"] = vault
++	args["json"] = "true"
++	output := captureStdout(t, func() {
++		if err := automationCollectExternalCmd(args); err != nil {
++			t.Fatal(err)
++		}
++	})
++	var payload externalCollectJSONPayload
++	if err := json.Unmarshal([]byte(output), &payload); err != nil {
++		t.Fatalf("parse collect JSON: %v\n%s", err, output)
++	}
++	return payload
++}
++
++func installFakeExternalCollectFetcher(t *testing.T, artifactDir string, files []string) {
++	t.Helper()
++	previous := runExternalCollectFetch
++	runExternalCollectFetch = func(ctx context.Context, req externalFetchRequest) (externalFetchResult, error) {
++		return externalFetchResult{JobID: req.JobID, ArtifactDir: artifactDir, Files: files}, nil
++	}
++	t.Cleanup(func() { runExternalCollectFetch = previous })
++}
++
++func writeExternalFetchFiles(t *testing.T, files map[string]string) string {
++	t.Helper()
++	dir := t.TempDir()
++	for name, content := range files {
++		path := filepath.Join(dir, filepath.FromSlash(name))
++		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
++			t.Fatal(err)
++		}
++		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
++			t.Fatal(err)
++		}
++	}
++	return dir
++}
+diff --git a/cmd/tusker/cli.go b/cmd/tusker/cli.go
+index 851a93b..7921a39 100644
+--- a/cmd/tusker/cli.go
++++ b/cmd/tusker/cli.go
+@@ -545,6 +545,9 @@ func run(command string, args Args) (int, error) {
+ 	case "automation dispatch":
+ 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+ 		return 0, automationDispatchCmd(args)
++	case "automation collect-external":
++		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
++		return 0, automationCollectExternalCmd(args)
+ 	case "automation":
+ 		printAutomationHelp()
+ 		return 0, nil
+@@ -677,7 +680,7 @@ func run(command string, args Args) (int, error) {
+ 	case "help daemon", "help daemon run", "help daemon status", "help daemon limits":
+ 		printDaemonHelp()
+ 		return 0, nil
+-	case "help automation", "help automation status", "help automation queue", "help automation explain", "help automation plan", "help automation dispatch":
++	case "help automation", "help automation status", "help automation queue", "help automation explain", "help automation plan", "help automation dispatch", "help automation collect-external":
+ 		printAutomationHelp()
+ 		return 0, nil
+ 	case "help projects", "help projects add", "help projects list", "help projects limits", "help projects enable", "help projects disable", "help projects remove":
+@@ -855,7 +858,7 @@ func printCommandHelp(command string) bool {
+ 		printVaultHelp()
+ 	case "daemon", "daemon run", "daemon status", "daemon limits":
+ 		printDaemonHelp()
+-	case "automation", "automation status", "automation queue", "automation explain", "automation plan", "automation dispatch":
++	case "automation", "automation status", "automation queue", "automation explain", "automation plan", "automation dispatch", "automation collect-external":
+ 		printAutomationHelp()
+ 	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects remove":
+ 		printProjectsHelp()
+@@ -925,6 +928,7 @@ func printAutomationHelp() {
+   tusker automation explain <task> [--project <id>|--repo <path>|--vault <path>] [--json]
+   tusker automation plan <task> [--project <id>|--repo <path>|--vault <path>] [--json]
+   tusker automation dispatch <task> [--project <id>|--repo <path>|--vault <path>] [--json]
++  tusker automation collect-external <task> --runner chatgpt-browser --job <job-id> [--covers A1,A2] [--json]
+ 
+ Purpose:
+   Operator surface for daemon automation. Plan, explain, and queue are read-only.
+@@ -936,12 +940,14 @@ Behavior:
+   - explain shows concrete blockers, selected runner, workspace, and approvals
+   - plan is the canonical dispatch decision used by agents and operators
+   - dispatch routes through the daemon dispatch helper and existing gates
++  - collect-external fetches ChatGPT/browser artifacts, records review packets, and stores patches as apply inputs
+ 
+ Examples:
+   tusker automation queue --json
+   tusker automation explain APP-T-0001
+   tusker automation plan APP-T-0001 --json
+-  tusker automation dispatch APP-T-0001 --json`)
++  tusker automation dispatch APP-T-0001 --json
++  tusker automation collect-external APP-T-0001 --runner chatgpt-browser --job cgpt_xxx --json`)
+ }
+ 
+ func printV7Help() {
+diff --git a/cmd/tusker/daemon.go b/cmd/tusker/daemon.go
+index 574126a..8419377 100644
+--- a/cmd/tusker/daemon.go
++++ b/cmd/tusker/daemon.go
+@@ -1049,6 +1049,9 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
+ 	if err != nil {
+ 		return run, err
+ 	}
++	if err := mirrorApplyInputsIntoWorkspace(d.store, project, run, workspace.Path); err != nil {
++		return run, err
++	}
+ 
+ 	ordinal := run.AttemptCount + 1
+ 	attemptID := newRecordID()
+diff --git a/cmd/tusker/runtime_store.go b/cmd/tusker/runtime_store.go
+index 7a6f68f..bf4db9b 100644
+--- a/cmd/tusker/runtime_store.go
++++ b/cmd/tusker/runtime_store.go
+@@ -107,6 +107,20 @@ type RunAttempt struct {
+ 	FinishedAt         string
+ }
+ 
++type RuntimeApplyInput struct {
++	ProjectID string `json:"project_id"`
++	RecordID  string `json:"record_id"`
++	ItemID    string `json:"item_id"`
++	Runner    string `json:"runner"`
++	JobID     string `json:"job_id"`
++	AttemptID string `json:"attempt_id"`
++	Path      string `json:"path"`
++	RelPath   string `json:"rel_path"`
++	Sha256    string `json:"sha256"`
++	Kind      string `json:"kind"`
++	CreatedAt string `json:"created_at"`
++}
++
+ type RunTurn struct {
+ 	AttemptID    string `json:"attempt_id"`
+ 	ProjectID    string `json:"project_id"`
+@@ -360,6 +374,20 @@ func (s *RuntimeStore) Migrate() error {
+ 			last_error TEXT NOT NULL DEFAULT '',
+ 			PRIMARY KEY(project_id, session_ref)
+ 		);`,
++		`CREATE TABLE IF NOT EXISTS apply_inputs (
++			project_id TEXT NOT NULL,
++			record_id TEXT NOT NULL,
++			item_id TEXT NOT NULL DEFAULT '',
++			runner TEXT NOT NULL DEFAULT '',
++			job_id TEXT NOT NULL DEFAULT '',
++			attempt_id TEXT NOT NULL DEFAULT '',
++			path TEXT NOT NULL,
++			rel_path TEXT NOT NULL DEFAULT '',
++			sha256 TEXT NOT NULL DEFAULT '',
++			kind TEXT NOT NULL DEFAULT 'patch',
++			created_at TEXT NOT NULL DEFAULT '',
++			PRIMARY KEY(project_id, record_id, sha256, path)
++		);`,
+ 		`CREATE TABLE IF NOT EXISTS daemon_settings (
+ 			key TEXT PRIMARY KEY,
+ 			value TEXT NOT NULL DEFAULT ''
+@@ -937,6 +965,59 @@ func scanRuntimeSupervisorDecisions(rows *sql.Rows) ([]RuntimeSupervisorDecision
+ 	return out, rows.Err()
+ }
+ 
++func (s *RuntimeStore) UpsertApplyInput(input RuntimeApplyInput) (RuntimeApplyInput, error) {
++	if strings.TrimSpace(input.ProjectID) == "" {
++		return input, tuskerError(errorInvalidArg, "apply input project_id is required")
++	}
++	if strings.TrimSpace(input.RecordID) == "" {
++		return input, tuskerError(errorInvalidArg, "apply input record_id is required")
++	}
++	if strings.TrimSpace(input.Path) == "" {
++		return input, tuskerError(errorInvalidArg, "apply input path is required")
++	}
++	if strings.TrimSpace(input.Sha256) == "" {
++		return input, tuskerError(errorInvalidArg, "apply input sha256 is required")
++	}
++	if strings.TrimSpace(input.Kind) == "" {
++		input.Kind = "patch"
++	}
++	if strings.TrimSpace(input.CreatedAt) == "" {
++		input.CreatedAt = time.Now().UTC().Format(time.RFC3339)
++	}
++	_, err := s.db.Exec(`INSERT INTO apply_inputs (
++		project_id, record_id, item_id, runner, job_id, attempt_id, path, rel_path, sha256, kind, created_at
++	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++	ON CONFLICT(project_id, record_id, sha256, path) DO UPDATE SET
++		item_id=excluded.item_id,
++		runner=excluded.runner,
++		job_id=excluded.job_id,
++		attempt_id=excluded.attempt_id,
++		rel_path=excluded.rel_path,
++		kind=excluded.kind`,
++		input.ProjectID, input.RecordID, input.ItemID, input.Runner, input.JobID, input.AttemptID, input.Path, input.RelPath, input.Sha256, input.Kind, input.CreatedAt)
++	return input, err
++}
++
++func (s *RuntimeStore) ListApplyInputsForRun(projectID, recordID string) ([]RuntimeApplyInput, error) {
++	rows, err := s.db.Query(`SELECT project_id, record_id, item_id, runner, job_id, attempt_id, path, rel_path, sha256, kind, created_at
++		FROM apply_inputs
++		WHERE project_id = ? AND record_id = ?
++		ORDER BY created_at ASC, rel_path ASC, path ASC`, projectID, recordID)
++	if err != nil {
++		return nil, err
++	}
++	defer rows.Close()
++	var out []RuntimeApplyInput
++	for rows.Next() {
++		var input RuntimeApplyInput
++		if err := rows.Scan(&input.ProjectID, &input.RecordID, &input.ItemID, &input.Runner, &input.JobID, &input.AttemptID, &input.Path, &input.RelPath, &input.Sha256, &input.Kind, &input.CreatedAt); err != nil {
++			return nil, err
++		}
++		out = append(out, input)
++	}
++	return out, rows.Err()
++}
++
+ func (s *RuntimeStore) SaveSession(session RunnerSession) error {
+ 	_, err := s.db.Exec(`INSERT INTO sessions (
+ 		project_id, record_id, runner, session_ref, last_message_ref, workspace_path, current_item_id, work_revision, last_attempt_id, state, resumable, started_at, last_seen_at, ended_at, last_error
+diff --git a/cmd/tusker/workflow.go b/cmd/tusker/workflow.go
+index 3407226..4ca4cd1 100644
+--- a/cmd/tusker/workflow.go
++++ b/cmd/tusker/workflow.go
+@@ -233,7 +233,7 @@ func stringListContainsFold(values []string, target string) bool {
+ func defaultWorkflowMarkdown() string {
+ 	wf := defaultWorkflow()
+ 	raw, _ := yaml.Marshal(wf)
+-	return "---\n" + strings.TrimSpace(string(raw)) + "\n---\n\n## Routing\n\nYou are working on {{ note.id }} for {{ project.name }}. Dispatch only makes sense when this task is in a dispatch state (`ready` or `rework`) and the workspace is ready at {{ workspace.path }}.\n\n## Hard stop check\n\nBefore doing work, run `tusker closeout status {{ note.id }} --json` when the V7 closeout command is available. If it reports `agent_action=stop_until_human_response`, do not validate, inspect files, spawn subagents, or modify Tusker records. Reply with the pending human gates/proof and whether the closeout checkpoint or review packet is still needed.\n\nRevalidate only after you edited files, a task/gate/evidence state changed, the closeout fingerprint no longer matches, or the user explicitly asked for fresh validation.\n\n## Prompt\n\nUse the installed Tusker skill bundle for durable task semantics and proof discipline. Work inside {{ workspace.path }}. Treat {{ repo.root }} as the source repository root for context only unless the task explicitly requires comparing against it.\n\nItem: {{ note.title }}\nRecord: {{ note.record_id }}\nType: {{ note.type }}\nAttempt: {{ attempt.number }}\nWorkflow: {{ workflow.path }}\nVault: {{ vault.path }}\n\n## Command budget\n\nUse the smallest command that proves or locates the next fact. Prefer packets/capsules, path-scoped status/search, repo-configured wrappers and build-lock/status commands, and redirected logs with small tails. Report validation as command + PASS/FAIL plus the first actionable failure; do not paste raw transcripts or repeat unchanged-state updates.\n\n## Completion contract\n\nSatisfy the task proof mode. For proof_mode=inline, record concise verification rows with `tusker verify add`; do not create evidence files. For card/artifact/audit, create only the evidence the proof mode requires. When machine work is complete and only human-owned proof or gates remain, run `tusker closeout <task-id> --emit-packet --validate \"<command>\"`, then stop. When the work is demonstrably ready for verification, use `tusker finish <task-id> --request-review` so the task reaches `review` or a branch-safe `propose status ... --status review` proposal is created. Attempt handoff alone is not a review request. If proof is blocked, create/propose a gate with a concrete owner, action, and verification instead of appending negative evidence.\n\n## Reviewer contract\n\nIf `reviewer.enabled` is true, tasks in `review` may be dispatched to `reviewer.runner` for independent review. The reviewer must not edit implementation files. Low/medium risks can be verified and closed by `reviewer.actor` after all gates pass; high/critical risks stay in `review` for human verification and close.\n\n## Retry policy\n\nRetry only transient infrastructure failures. Human-directed rework creates a new task revision; runtime activity remains in the run/lease store.\n\n## Human override policy\n\nHumans may edit tasks directly, but runtime state belongs to the daemon store.\n"
++	return "---\n" + strings.TrimSpace(string(raw)) + "\n---\n\n## Routing\n\nYou are working on {{ note.id }} for {{ project.name }}. Dispatch only makes sense when this task is in a dispatch state (`ready` or `rework`) and the workspace is ready at {{ workspace.path }}.\n\n## Hard stop check\n\nBefore doing work, run `tusker closeout status {{ note.id }} --json` when the V7 closeout command is available. If it reports `agent_action=stop_until_human_response`, do not validate, inspect files, spawn subagents, or modify Tusker records. Reply with the pending human gates/proof and whether the closeout checkpoint or review packet is still needed.\n\nRevalidate only after you edited files, a task/gate/evidence state changed, the closeout fingerprint no longer matches, or the user explicitly asked for fresh validation.\n\n## Prompt\n\nUse the installed Tusker skill bundle for durable task semantics and proof discipline. Work inside {{ workspace.path }}. Treat {{ repo.root }} as the source repository root for context only unless the task explicitly requires comparing against it.\n\nItem: {{ note.title }}\nRecord: {{ note.record_id }}\nType: {{ note.type }}\nAttempt: {{ attempt.number }}\nWorkflow: {{ workflow.path }}\nVault: {{ vault.path }}\n\n## Command budget\n\nUse the smallest command that proves or locates the next fact. Prefer packets/capsules, path-scoped status/search, repo-configured wrappers and build-lock/status commands, and redirected logs with small tails. Report validation as command + PASS/FAIL plus the first actionable failure; do not paste raw transcripts or repeat unchanged-state updates.\n\n## External Apply Inputs\n\nSome tasks may have external apply inputs collected by Tusker under `architect/{{ note.id }}/` or a workspace-local mirror of that directory.\n\nWhen that directory contains exactly one `*.patch` or `*.diff` file:\n\n1. inspect the task acceptance and verification contract first;\n2. run `git apply --check --3way <patch>`;\n3. apply with `git apply --3way <patch>` only after the check passes;\n4. resolve conflicts only when the resolution is mechanical and clearly within the task contract;\n5. run the task verification commands;\n6. record compact verification evidence;\n7. use `tusker finish {{ note.id }} --request-review` when machine proof is complete;\n8. create a concrete gate or move to rework/blocked when proof cannot be completed.\n\nIf there are zero patches, multiple patches, a patch outside scope, or an ambiguous conflict, stop and report the blocker through Tusker. Do not invent or silently repair patches.\n\n## Completion contract\n\nSatisfy the task proof mode. For proof_mode=inline, record concise verification rows with `tusker verify add`; do not create evidence files. For card/artifact/audit, create only the evidence the proof mode requires. When machine work is complete and only human-owned proof or gates remain, run `tusker closeout <task-id> --emit-packet --validate \"<command>\"`, then stop. When the work is demonstrably ready for verification, use `tusker finish <task-id> --request-review` so the task reaches `review` or a branch-safe `propose status ... --status review` proposal is created. Attempt handoff alone is not a review request. If proof is blocked, create/propose a gate with a concrete owner, action, and verification instead of appending negative evidence.\n\n## Reviewer contract\n\nIf `reviewer.enabled` is true, tasks in `review` may be dispatched to `reviewer.runner` for independent review. The reviewer must not edit implementation files. Low/medium risks can be verified and closed by `reviewer.actor` after all gates pass; high/critical risks stay in `review` for human verification and close.\n\n## Retry policy\n\nRetry only transient infrastructure failures. Human-directed rework creates a new task revision; runtime activity remains in the run/lease store.\n\n## Human override policy\n\nHumans may edit tasks directly, but runtime state belongs to the daemon store.\n"
+ }
+ 
+ func normalizeWorkflowDispatchStates(wf *Workflow) {

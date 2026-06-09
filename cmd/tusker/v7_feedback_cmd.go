@@ -63,6 +63,12 @@ func feedbackV7Cmd(args Args) error {
 		return feedbackAddCmd(args)
 	case "digest":
 		return feedbackDigestCmd(args)
+	case "signals":
+		return feedbackSignalsCmd(args)
+	case "review":
+		return feedbackReviewCmd(args)
+	case "promote":
+		return feedbackPromoteCmd(args)
 	case "", "help":
 		printFeedbackHelp()
 		return nil
@@ -270,13 +276,20 @@ func feedbackVaultForRepoPath(path string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	if isVaultDir(abs) || filepath.Base(abs) == "tusker" && (dirExists(abs) || dirExists(filepath.Join(abs, "feedback"))) {
+	base := filepath.Base(abs)
+	if isVaultDir(abs) || base == defaultRepoVaultDir && (dirExists(abs) || dirExists(filepath.Join(abs, "feedback"))) {
 		return abs, filepath.Dir(abs), nil
 	}
 	if discovered, _ := discoverVault(abs); discovered != "" {
 		return discovered, filepath.Dir(discovered), nil
 	}
-	return filepath.Join(abs, "tusker"), abs, nil
+	for _, name := range []string{defaultRepoVaultDir} {
+		candidate := filepath.Join(abs, name)
+		if dirExists(filepath.Join(candidate, "feedback")) {
+			return candidate, abs, nil
+		}
+	}
+	return filepath.Join(abs, defaultRepoVaultDir), abs, nil
 }
 
 func feedbackFieldsFromArgs(args Args) (map[string]string, []string) {
@@ -916,6 +929,14 @@ func printFeedbackHelp() {
 Commands:
   tusker feedback add --context <text> --friction <text> --product-idea <text> --impact <text> --related <text>
   tusker feedback digest --since <YYYY-MM-DD> --repo <path[,path...]>
+  tusker feedback signals --since <YYYY-MM-DD> [--write]
+  tusker feedback review --since <YYYY-MM-DD> [--write]
+  tusker feedback promote <signal-id> [--write]
+
+Concepts:
+  Events are history: timestamped facts about what happened.
+  Feedback notes are subjective input: concise agent or human observations.
+  Signals are derived product facts stored under .tusker/feedback/signals/YYYY-MM-DD/*.json.
 
 Options:
   --repo <path>          Repo root. For digest, comma or newline separated paths are accepted.
@@ -927,6 +948,8 @@ Options:
                          Allow a note that looks like an implementation progress report.
   --dedupe-key <key>     Reject duplicate recent feedback with the same key.
   --allow-duplicate      Allow a duplicate --dedupe-key.
-  --write                Write digest to tusker/feedback/digests/<date>.md.
-  --output-vault <path>  Vault where --write should place the digest.`)
+  --write                Write digest to .tusker/feedback/digests/<date>.md.
+  --output-vault <path>  Vault where --write should place generated feedback output.
+  --review <path>        Review packet path for feedback promote.
+  --action <kind>        Promotion action, e.g. create-task, decision, skip.`)
 }

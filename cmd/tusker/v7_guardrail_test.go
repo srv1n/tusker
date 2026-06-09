@@ -12,8 +12,8 @@ func TestV7GuardrailNoDiataxisInRuntimePolicyOrProjectSkill(t *testing.T) {
 	for _, rel := range []string{
 		"cmd/tusker/commands_v7.go",
 		"cmd/tusker/v7_validation.go",
-		"tusker/SKILL.md",
-		"tusker/docs/spec/tusker-v7-repo-local-work-tracker-spec.md",
+		".tusker/SKILL.md",
+		".tusker/knowledge/domains/project/CANON.md",
 	} {
 		text := mustReadGuardrailFile(t, filepath.Join(repo, filepath.FromSlash(rel)))
 		lower := strings.ToLower(text)
@@ -163,36 +163,12 @@ func TestV7GuardrailSkillPackageEnforcesHardStopCloseoutContract(t *testing.T) {
 			"tusker closeout status <TASK-ID> --json",
 			"tusker proof status <TASK-ID>",
 			"agent_action: stop_until_human_response",
-			"readiness: held",
+			"readiness: waiting_on_human",
 			"Revalidation while waiting on human",
 			"Final Response Shape For Human Wait",
 			"repo `AGENTS.md` / `CLAUDE.md` as bootstrap pointers only",
 			"installed Tusker operator skill owns tracker mechanics",
-			"repo `tusker/SKILL.md` owns project knowledge routing",
-		},
-		".agents/skills/tusker/SKILL.md": {
-			"Hard Stop Rule",
-			"tusker closeout status <TASK-ID> --json",
-			"tusker proof status <TASK-ID>",
-			"agent_action: stop_until_human_response",
-			"readiness: held",
-			"Revalidation while waiting on human",
-			"Final Response Shape For Human Wait",
-			"repo `AGENTS.md` / `CLAUDE.md` as bootstrap pointers only",
-			"installed Tusker operator skill owns tracker mechanics",
-			"repo `tusker/SKILL.md` owns project knowledge routing",
-		},
-		".claude/skills/tusker/SKILL.md": {
-			"Hard Stop Rule",
-			"tusker closeout status <TASK-ID> --json",
-			"tusker proof status <TASK-ID>",
-			"agent_action: stop_until_human_response",
-			"readiness: held",
-			"Revalidation while waiting on human",
-			"Final Response Shape For Human Wait",
-			"repo `AGENTS.md` / `CLAUDE.md` as bootstrap pointers only",
-			"installed Tusker operator skill owns tracker mechanics",
-			"repo `tusker/SKILL.md` owns project knowledge routing",
+			"repo `.tusker/SKILL.md` owns project knowledge routing",
 		},
 		"skill/references/CLOSEOUT_PROTOCOL.md": {
 			"Gap ownership",
@@ -205,11 +181,11 @@ func TestV7GuardrailSkillPackageEnforcesHardStopCloseoutContract(t *testing.T) {
 		"skill/references/WORKFLOW.md": {
 			"idea -> backlog -> ready -> review -> done",
 			"`claimed`, `running`, `leased`, and `interrupted` are runtime states",
-			"Human-only review becomes `readiness: held`",
+			"Human-only review becomes `readiness: waiting_on_human`",
 		},
 		"skill/references/SCHEMA.md": {
 			"status: review",
-			"readiness: held",
+			"readiness: waiting_on_human",
 			"next_owner: human:sarav",
 			"agent_action: stop_until_human_response",
 			"Do not use `active` as a V7 task status",

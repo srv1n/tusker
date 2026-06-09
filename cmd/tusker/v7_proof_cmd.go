@@ -1693,7 +1693,7 @@ func limitV7EvidenceSectionLines(lines []string) []string {
 		return lines
 	}
 	kept := append([]string{}, lines[:maxLines-1]...)
-	kept = append(kept, fmt.Sprintf("- %d more evidence records; see tusker/evidence.", len(lines)-len(kept)))
+	kept = append(kept, fmt.Sprintf("- %d more evidence records; see .tusker/evidence.", len(lines)-len(kept)))
 	return kept
 }
 

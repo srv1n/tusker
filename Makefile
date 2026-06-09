@@ -10,11 +10,10 @@ RELEASE_MATRIX ?= darwin/arm64 darwin/amd64 linux/arm64 linux/amd64
 SHA256_CMD := $(shell if command -v shasum >/dev/null 2>&1; then echo "shasum -a 256"; elif command -v sha256sum >/dev/null 2>&1; then echo "sha256sum"; fi)
 GREEN := \033[32m
 RESET := \033[0m
-CHECK := ✓
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build fmt-check test vet validate check install install-bin install-user install-repo sync-repo-contract release-artifacts tag-release docs-export docs-dev docs-build docs-check codebasezip
+.PHONY: help build fmt fmt-check test vet validate check skill-doctor install install-bin install-user install-repo sync-repo-contract release-artifacts tag-release docs-export docs-dev docs-build docs-check codebasezip codebase zip
 
 help: ## Show available make targets
 	@awk 'BEGIN {FS = ":.*## "}; /^[a-zA-Z0-9_.-]+:.*## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -23,11 +22,10 @@ build: ## Build the local CLI into dist/tusker
 	@mkdir -p "$(DIST_DIR)"
 	go build -o "$(DIST_BIN)" "$(CMD_DIR)"
 
-test: ## Run Go tests
-	go test ./...
-
-vet: ## Run go vet
-	go vet ./...
+fmt: ## Format Go source files
+	@files=$$(git ls-files -c -o --exclude-standard '*.go' | while IFS= read -r file; do [ -f "$$file" ] && printf '%s\n' "$$file"; done); \
+	if [ -z "$$files" ]; then exit 0; fi; \
+	gofmt -w $$files
 
 fmt-check: ## Verify Go source is gofmt-formatted
 	@files=$$(git ls-files -c -o --exclude-standard '*.go' | while IFS= read -r file; do [ -f "$$file" ] && printf '%s\n' "$$file"; done); \
@@ -38,26 +36,35 @@ fmt-check: ## Verify Go source is gofmt-formatted
 		exit 1; \
 	fi
 
+test: ## Run Go tests
+	go test ./...
+
+vet: ## Run go vet
+	go vet ./...
+
 validate: ## Run Tusker validation with branch-policy checks
 	go run ./cmd/tusker validate --branch-policy --json
+
+skill-doctor: ## Run the strict project skill doctor
+	go run ./cmd/tusker skill doctor --strict --json
 
 check: fmt-check test vet validate build ## Run format, tests, vet, validation, and build
 
 install-bin: build ## Build/install binary and refresh existing root user skills
 	./"$(DIST_BIN)" update --bin-dir "$(BIN_DIR)"
-	@printf "$(GREEN)$(CHECK) install-bin complete$(RESET)\n"
+	@printf "$(GREEN)OK install-bin complete$(RESET)\n"
 
 install-user: build ## Build and install binary + Codex/Claude user skills
 	./"$(DIST_BIN)" install --codex-user --claude-user --bin-dir "$(BIN_DIR)" --force
-	@printf "$(GREEN)$(CHECK) install-user complete$(RESET)\n"
+	@printf "$(GREEN)OK install-user complete$(RESET)\n"
 
 install: install-user ## Default local developer install
-	@printf "$(GREEN)$(CHECK) install complete$(RESET)\n"
+	@printf "$(GREEN)OK install complete$(RESET)\n"
 
 install-repo: build ## Install repo-local skills into REPO=/abs/path
 	@test -n "$(REPO)" || (echo "REPO is required: make install-repo REPO=/abs/path/to/repo" >&2; exit 1)
 	./"$(DIST_BIN)" install --repo "$(REPO)" --bin-dir "$(BIN_DIR)" --force
-	@printf "$(GREEN)$(CHECK) install-repo complete$(RESET)\n"
+	@printf "$(GREEN)OK install-repo complete$(RESET)\n"
 
 sync-repo-contract: build ## Sync repo helper docs into REPO=/abs/path
 	@test -n "$(REPO)" || (echo "REPO is required: make sync-repo-contract REPO=/abs/path/to/repo" >&2; exit 1)
@@ -106,22 +113,77 @@ docs-check: build ## Validate the vault and build the docs pipeline end-to-end
 	./"$(DIST_BIN)" validate
 	./"$(DIST_BIN)" docs build --site ./site
 
-CODEBASEZIP_NAME ?= tusker-codebase.zip
-CODEBASEZIP_PATH ?= $(CURDIR)/$(CODEBASEZIP_NAME)
-CODEBASEZIP_EXT_PATTERN := \.(go|rs|js|jsx|mjs|cjs|ts|tsx|css|scss|less|html|htm|json|yml|yaml|toml)$$|(^|/)Makefile$|(^|/)go\.mod$|(^|/)go\.sum$
+ARTIFACTS_DIR ?= artifacts
+CODEBASEZIP_NAME ?= tusker-codebase-$(shell date -u +%Y%m%dT%H%M%SZ).zip
+CODEBASEZIP_PATH ?= $(ARTIFACTS_DIR)/$(CODEBASEZIP_NAME)
 
-codebasezip: ## Zip code-only source files; use scripts/package-code-review.sh for docs/skills review
+codebase: codebasezip ## Alias for codebasezip
+	@:
+
+zip: codebasezip ## Alias for codebasezip
+	@:
+
+codebasezip: ## Zip reviewable repository files into ARTIFACTS_DIR
+	@mkdir -p "$(ARTIFACTS_DIR)"
 	@tmp_list=$$(mktemp); \
-	git ls-files -c -o --exclude-standard -z | tr '\0' '\n' > "$$tmp_list".all; \
-	grep -E "$(CODEBASEZIP_EXT_PATTERN)" "$$tmp_list".all | sort -u > "$$tmp_list".filtered; \
-	if [ ! -s "$$tmp_list".filtered ]; then \
-		rm -f "$$tmp_list".all "$$tmp_list".filtered; \
-		echo "No source files matched the filter. Refusing to write empty zip." >&2; \
+	find . \
+		\( \
+			-path './.git' -o \
+			-path './.tools' -o \
+			-path './.tusker/events' -o \
+			-path './.tusker/attempts' -o \
+			-path './.tusker/_generated' -o \
+			-path './.tusker/_runtime' -o \
+			-path './.tusker/scratch' -o \
+			-path './.tusker/workspaces' -o \
+			-path './.tusker-runtime' -o \
+			-path './.tusker-state' -o \
+			-path './.tusker-worktrees' -o \
+			-path './artifacts' -o \
+			-path './build' -o \
+			-path './coverage' -o \
+			-path './dist' -o \
+			-path './node_modules' -o \
+			-path './out' -o \
+			-path './site/.astro' -o \
+			-path './site/dist' -o \
+			-path './site/node_modules' -o \
+			-path './tmp' -o \
+			-path './tusker/.tusker' -o \
+			-path './tusker/events' -o \
+			-path './tusker/attempts' -o \
+			-path './tusker/_generated' -o \
+			-path './tusker/evidence/*/artifacts' -o \
+			-path './.tusker/evidence/*/artifacts' -o \
+			-path './vendor' \
+		\) -prune -o \
+		-type f \
+		! -name '.DS_Store' \
+		! -name '*.bin' \
+		! -name '*.dmg' \
+		! -name '*.exe' \
+		! -name '*.log' \
+		! -name '*.mov' \
+		! -name '*.mp4' \
+		! -name '*.out' \
+		! -name '*.pkg' \
+		! -name '*.prof' \
+		! -name '*.tar' \
+		! -name '*.tar.gz' \
+		! -name '*.tgz' \
+		! -name '*.webm' \
+		! -name '*.zip' \
+		-print | sed 's#^\./##' | sort > "$$tmp_list"; \
+	if [ ! -s "$$tmp_list" ]; then \
+		rm -f "$$tmp_list"; \
+		echo "No files matched the codebase archive filter." >&2; \
 		exit 1; \
 	fi; \
 	rm -f "$(CODEBASEZIP_PATH)"; \
-	rm -f "$$tmp_list".all; \
-	zip -q -r -D "$(CODEBASEZIP_PATH)" -@ < "$$tmp_list".filtered; \
-	rm -f "$$tmp_list".filtered; \
-	echo "Created $(CODEBASEZIP_PATH)"; \
-	echo "Code-only archive. For docs/skills review use: ./scripts/package-code-review.sh"
+	zip -q -r -D "$(CODEBASEZIP_PATH)" -@ < "$$tmp_list"; \
+	file_count=$$(wc -l < "$$tmp_list" | tr -d ' '); \
+	rm -f "$$tmp_list"; \
+	echo "Created $(CODEBASEZIP_PATH) ($$file_count files)"; \
+	if [ "$${CI:-}" != "true" ] && command -v open >/dev/null 2>&1; then \
+		open "$(ARTIFACTS_DIR)" >/dev/null 2>&1 || true; \
+	fi

@@ -119,6 +119,88 @@ func TestRuntimeStoreSavesAndListsSupervisorDecisions(t *testing.T) {
 	assertEqual(t, "decision-1", attemptDecisions[0].DecisionID, "attempt decision id")
 }
 
+func TestRuntimeStorePersistsCodexCloudRefs(t *testing.T) {
+	store, err := OpenRuntimeStore(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	run := RunStatus{
+		ProjectID:          "project-1",
+		RecordID:           "record-1",
+		ItemID:             "ITEM-1",
+		Runner:             string(RunnerCodexCloud),
+		LeaseState:         string(LeaseStateRunning),
+		AttemptOutcome:     string(AttemptOutcomeNone),
+		ActiveAttemptID:    "attempt-1",
+		WorkspacePath:      "/workspace",
+		CloudTaskID:        "cloud-task-123",
+		CloudStatus:        "running",
+		CloudEnvironmentID: "env-prod",
+		CloudAttemptNumber: 3,
+		PullRequestURL:     "https://github.example/acme/repo/pull/7",
+		ApplyRef:           "apply-456",
+		LogsSummary:        "tests running",
+		FinalSummary:       "pending",
+		AttemptCount:       1,
+		StartedAt:          "2026-04-28T01:00:00Z",
+		UpdatedAt:          "2026-04-28T01:01:00Z",
+	}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAttempt(RunAttempt{
+		AttemptID:          "attempt-1",
+		ProjectID:          run.ProjectID,
+		RecordID:           run.RecordID,
+		ItemID:             run.ItemID,
+		Runner:             run.Runner,
+		WorkspacePath:      run.WorkspacePath,
+		ParentAttemptID:    "parent-attempt",
+		ChildType:          "explorer",
+		BranchName:         "agent/ITEM-1-explorer",
+		MergeRule:          "manual_review",
+		FanoutGroup:        "fanout-1",
+		CloudTaskID:        run.CloudTaskID,
+		CloudStatus:        run.CloudStatus,
+		CloudEnvironmentID: run.CloudEnvironmentID,
+		CloudAttemptNumber: run.CloudAttemptNumber,
+		PullRequestURL:     run.PullRequestURL,
+		ApplyRef:           run.ApplyRef,
+		LogsSummary:        run.LogsSummary,
+		FinalSummary:       run.FinalSummary,
+		Outcome:            run.AttemptOutcome,
+		StartedAt:          run.StartedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := store.ListRuns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 1, len(runs), "run count")
+	assertEqual(t, "cloud-task-123", runs[0].CloudTaskID, "run cloud task id")
+	assertEqual(t, "running", runs[0].CloudStatus, "run cloud status")
+	assertEqual(t, "env-prod", runs[0].CloudEnvironmentID, "run cloud environment")
+	assertEqual(t, 3, runs[0].CloudAttemptNumber, "run cloud attempt")
+	assertEqual(t, "https://github.example/acme/repo/pull/7", runs[0].PullRequestURL, "run pull request")
+	assertEqual(t, "apply-456", runs[0].ApplyRef, "run apply ref")
+
+	attempts, err := store.ListAttemptsForRun("project-1", "record-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 1, len(attempts), "attempt count")
+	assertEqual(t, "cloud-task-123", attempts[0].CloudTaskID, "attempt cloud task id")
+	assertEqual(t, "running", attempts[0].CloudStatus, "attempt cloud status")
+	assertEqual(t, "tests running", attempts[0].LogsSummary, "attempt logs summary")
+	assertEqual(t, "parent-attempt", attempts[0].ParentAttemptID, "attempt parent")
+	assertEqual(t, "explorer", attempts[0].ChildType, "attempt child type")
+	assertEqual(t, "manual_review", attempts[0].MergeRule, "attempt merge rule")
+}
+
 func TestRunsInspectIncludesTurns(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)

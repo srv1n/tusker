@@ -270,15 +270,16 @@ func migrateV7ExtractRecords(vaultPath string, notes []Note, args Args) (map[str
 			continue
 		}
 		if err := newV7Gate(Args{
-			"vault":        vaultPath,
-			"quiet":        "true",
-			"id":           proposal.GateID,
-			"blocks":       proposal.TaskID,
-			"kind":         "manual_hold",
-			"owner":        fallback(args.String("owner"), "human:"+defaultActorName()),
-			"title":        proposal.Title,
-			"action":       proposal.Action,
-			"verification": proposal.Verification,
+			"vault":            vaultPath,
+			"quiet":            "true",
+			"id":               proposal.GateID,
+			"blocks":           proposal.TaskID,
+			"kind":             "manual_hold",
+			"owner":            fallback(args.String("owner"), "human:"+defaultActorName()),
+			"title":            proposal.Title,
+			"action":           proposal.Action,
+			"verification":     proposal.Verification,
+			"why-agent-cannot": "Migrated from V5 blocked-task metadata; the agent cannot safely infer or complete the human-owned blocker without owner input.",
 		}); err != nil {
 			return created, err
 		}
@@ -374,12 +375,13 @@ func v7GateProposalsFromV5(vaultPath string, notes []Note) []v7GateMigrationProp
 		if reason == "" || !v7TaskIDPattern.MatchString(taskID) {
 			continue
 		}
+		action := v7GateMigrationAction(taskID, reason)
 		if existing := existingV7GateForMigration(idx, taskID, reason); existing != "" {
 			proposals = append(proposals, v7GateMigrationProposal{
 				TaskID:       taskID,
 				GateID:       existing,
 				Title:        "Resolve blocker for " + taskID,
-				Action:       reason,
+				Action:       action,
 				Verification: "Blocker is resolved and the task can proceed.",
 			})
 			continue
@@ -391,11 +393,18 @@ func v7GateProposalsFromV5(vaultPath string, notes []Note) []v7GateMigrationProp
 			TaskID:       taskID,
 			GateID:       gateID,
 			Title:        "Resolve blocker for " + taskID,
-			Action:       reason,
+			Action:       action,
 			Verification: "Blocker is resolved and the task can proceed.",
 		})
 	}
 	return proposals
+}
+
+func v7GateMigrationAction(taskID, reason string) string {
+	if v7GateTextIsPlaceholder(reason) {
+		return "Clarify migrated V5 blocker for " + taskID + "."
+	}
+	return reason
 }
 
 func existingV7GateForMigration(idx v7Index, taskID, action string) string {

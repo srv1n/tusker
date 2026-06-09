@@ -49,12 +49,15 @@ The command searches first-party task, epic, and doc notes. It skips attachments
 Use `tusker list` as the progressive index:
 
 ```bash
-tusker list --type epic
+tusker list
+tusker list ORC
 tusker list --epic ORC --type task --open
 tusker list --epic ORC --type task --open --limit 10
+tusker list --ready --format ids
+tusker list --running
 ```
 
-The first command prints the short epic roster with summaries and counts. The second drills into one epic's open tasks without reading note bodies.
+The first command prints a compact epic table with summaries and counts. `tusker list ORC` is the short drill-down for that epic's open tasks; the explicit `--epic ORC --type task --open` form is equivalent. `--ready` is the human-friendly alias for agent-runnable V7 tasks; `--running` reports tasks with active local leases. Human table output uses the detected terminal width and drops low-value columns before wrapping; pass `--width <cols>` when an embedded terminal reports bad dimensions.
 
 Use `tusker show` before opening a note:
 
@@ -68,6 +71,21 @@ tusker show ORC-T-0019 --evidence
 frontmatter plus a small log tail; use `--section "Verification log"` only when
 the full log is needed. `--full` is available, but it should be a deliberate
 drill-down.
+
+Use `print` and `open` for human-facing note access:
+
+```bash
+tusker print ORC-T-0019
+tusker print ORC-T-0019 --acceptance --plain
+tusker open ORC-T-0019 --path
+tusker open ORC-T-0019 --editor
+tusker open ORC-T-0019 --obsidian
+```
+
+`print` renders Markdown for terminal reading. `open` resolves the record from
+the current vault first, then registered projects from `tusker projects add`
+when run outside a repo. `--path` and `--json` report the resolved target
+without launching an external app.
 
 Use `compact` to trim old notes before they become model context:
 
@@ -124,6 +142,24 @@ high-confidence skill/playbook candidates. It reports custom subagents and
 automations for human/provider-specific follow-up instead of silently creating
 them.
 
+## Feedback reducer
+
+Use `tusker feedback signals` and `tusker feedback review` when product friction
+should come from behavior, not vibes:
+
+```bash
+tusker feedback signals --since 2026-05-01 --write
+tusker feedback review --since 2026-05-01 --write
+tusker feedback promote <signal-id> --write
+```
+
+Events are timestamped history. Feedback notes are subjective observations.
+Signals are derived product facts stored under
+`tusker/feedback/signals/YYYY-MM-DD/*.json`. Daily reviews render facts, likely
+causes, proposed actions, and human decisions under `tusker/feedback/reviews/`.
+Promotion is deliberately bounded: one signal or review action creates one task,
+decision, gate/runbook/skill draft, CLI proposal, or skip record.
+
 ## Operator/runtime commands
 
 The runtime commands are shipped as operator/internal controls. They support the local runner pickup loop while keeping task truth in markdown.
@@ -157,9 +193,9 @@ tusker init --migrate-v5 --yes --vault-only --no-mount --vault ./tusker
 tusker update --repo . --repo-only --no-bin
 ```
 
-Use this after pulling or rebuilding Tusker when the repository should carry the current agent skill bundle under `.agents/skills/tusker` and `.claude/skills/tusker`.
+Use this after pulling or rebuilding Tusker when the repository should carry the current agent skill bundle under `.agents/skills/tusker`. The command also regenerates the Claude Code compatibility install under `.claude/skills/tusker` when used against a repo.
 
-`tusker install` without `--repo`, `make install`, and `tusker update` also refresh already-installed user skill bundles under `~/.agents/skills/tusker`, `~/.codex/skills/tusker`, and `~/.claude/skills/tusker`. Refresh replaces the installed payload directory from the embedded bundle, so stale files disappear instead of hanging around beside the current `SKILL.md`. `tusker install --repo <path>` installs repo-local skill bundles without ambient user-skill refresh; pass `--refresh-existing-user-skills`, `--codex-user`, or `--claude-user` to request user-level writes too.
+`tusker install` without `--repo`, `make install`, and `tusker update` also refresh already-installed user skill bundles under `~/.agents/skills/tusker`, `~/.codex/skills/tusker`, and `~/.claude/skills/tusker`. Refresh replaces the installed payload directory from the embedded bundle, so stale files disappear instead of hanging around beside the current `SKILL.md`. `tusker install --repo <path>` installs the repo-local `.agents` bundle and generated `.claude` compatibility copy without ambient user-skill refresh; pass `--refresh-existing-user-skills`, `--codex-user`, or `--claude-user` to request user-level writes too.
 
 ## Docs pipeline
 
@@ -174,11 +210,44 @@ The site output is generated. Author source docs in `tusker/docs/**` or register
 For agent runs, prefer `docs build --quiet` or `--json`; successful Astro route
 output is suppressed, while failures include the final non-empty log tail.
 
-## Codex-first orchestration status
+## Automation Control Plane
 
-`WORKFLOW.md` currently names `codex` as the default runner and `codex app-server` as the Codex command. That is the first production path, not a permanent product boundary. The tracker and reviewer policies are runner-neutral: future adapters such as `claude-code` or `opencode` should plug into the same task lifecycle, runtime lanes, and close gates.
+`tusker.yaml` is the durable automation control plane. `WORKFLOW.md` keeps methodology and prompt text; runtime SQLite keeps ephemeral run state. New automation installs should put trigger states, workspace strategy, concurrency caps, default runner, runner definitions, and fanout policy under `automation`.
 
-The local Obsidian-to-review loop is now testable through the operator commands: register the project, move a task to `active` or `rework`, run `refresh` or `daemon run`, and inspect the run. The selected runner must still move the task to `review` when it is ready; a clean exit that leaves the task `active`/`rework` queues continuation rather than pretending the work is reviewable.
+```yaml
+automation:
+  trigger_states: [ready, rework]
+  default_runner: codex_app_server
+  enabled_runners: [codex_app_server, codex_exec]
+  workspace:
+    strategy: worktree
+  concurrency:
+    max_active_runs: 3
+    max_active_runs_per_project: 1
+    max_concurrent_by_state:
+      rework: 1
+  runners:
+    codex_app_server:
+      kind: codex_app_server
+      command: codex app-server
+    codex_exec:
+      kind: codex_exec
+      command: codex exec --skip-git-repo-check -
+    codex_cloud:
+      kind: codex_cloud
+      environment_id: env-prod
+      apply_mode: manual
+      pr_mode: none
+  fanout:
+    enabled: false
+    max_children: 0
+    allowed_child_types: []
+    merge_rule: manual_review
+```
+
+Legacy `active` trigger states are rejected unless `automation.legacy_profile` is explicit. Runner kinds are distinct: `codex_app_server` owns local JSON-RPC app-server semantics, `codex_exec` is one-shot local CLI execution, and `codex_cloud` is remote start/poll/apply/PR orchestration.
+
+The local Obsidian-to-review loop is testable through the operator commands: register the project, move a task to a configured trigger state, run `refresh` or `daemon run`, and inspect the run. The selected runner must still move the task to `review` when it is ready; a clean exit that leaves the task runnable queues continuation rather than pretending the work is reviewable.
 
 ## Reviewer close lane
 
@@ -187,7 +256,7 @@ The local Obsidian-to-review loop is now testable through the operator commands:
 ```yaml
 reviewer:
   enabled: true
-  runner: codex # current default; use another enabled runner when its adapter is ready
+  runner: codex_app_server
   actor: agent-reviewer
   auto_close_risks: [low, medium]
   human_required_risks: [high, critical]

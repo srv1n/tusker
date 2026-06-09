@@ -75,7 +75,7 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	if err != nil {
 		return nil, err
 	}
-	policy := withDefaultCodexPolicy(req.CodexPolicy)
+	policy := codexPolicyForLane(req.CodexPolicy, req.Lane)
 	cmd := exec.CommandContext(ctx, "sh", "-lc", command)
 	cmd.Dir = workspaceCWD
 	if err := assertRunnerCommandDir(RunnerCodex, cmd.Dir, req.WorkspacePath); err != nil {
@@ -88,7 +88,7 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	}
 	cmd.Env = runnerEnv(runnerLaunchEnv{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		WorkRevision: req.WorkRevision, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 		NotePath: req.NotePath, VaultPath: req.VaultPath, SessionRef: resumeSessionRef, MessageRef: resumeMessageRef, CodexPolicy: policy,
 	})
@@ -329,10 +329,12 @@ func (h *codexLiveHandle) request(ctx context.Context, method string, params any
 	h.pendingMu.Lock()
 	h.pending[id] = ch
 	h.pendingMu.Unlock()
-	if err := h.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
+	defer func() {
 		h.pendingMu.Lock()
 		delete(h.pending, id)
 		h.pendingMu.Unlock()
+	}()
+	if err := h.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
 		return err
 	}
 	select {
@@ -431,9 +433,13 @@ func (h *codexLiveHandle) handleServerRequest(method, id string, params json.Raw
 
 	switch method {
 	case "item/commandExecution/requestApproval":
-		h.writeRPCResult(id, map[string]any{"decision": "accept"})
+		decision := h.evaluateCommandApproval(params)
+		h.recordApprovalDecision(method, decision)
+		h.writeRPCResult(id, appServerApprovalResult(decision, "accept", "reject"))
 	case "item/fileChange/requestApproval":
-		h.writeRPCResult(id, map[string]any{"decision": "accept"})
+		decision := h.evaluateFileChangeApproval(params)
+		h.recordApprovalDecision(method, decision)
+		h.writeRPCResult(id, appServerApprovalResult(decision, "accept", "reject"))
 	case "item/tool/requestUserInput":
 		var payload struct {
 			Questions []struct {
@@ -451,16 +457,385 @@ func (h *codexLiveHandle) handleServerRequest(method, id string, params json.Raw
 		}
 		h.writeRPCResult(id, map[string]any{"answers": answers})
 	case "item/permissions/requestApproval":
-		h.writeRPCResult(id, map[string]any{"permissions": map[string]any{}, "scope": "turn"})
+		decision := h.rejectApproval("permissions", true, "permission approval requests require elevated or human-scoped access; Tusker rejects them instead of granting permissions", approvalSubjectFromParams(params))
+		h.recordApprovalDecision(method, decision)
+		h.writeRPCError(id, -32000, decision.Reason)
 	case "mcpServer/elicitation/request":
 		h.writeRPCResult(id, map[string]any{"action": "cancel", "content": nil, "_meta": nil})
-	case "applyPatchApproval", "execCommandApproval":
-		h.writeRPCResult(id, map[string]any{"decision": "approved"})
+	case "applyPatchApproval":
+		decision := h.evaluateFileChangeApproval(params)
+		h.recordApprovalDecision(method, decision)
+		h.writeRPCResult(id, appServerApprovalResult(decision, "approved", "denied"))
+	case "execCommandApproval":
+		decision := h.evaluateCommandApproval(params)
+		h.recordApprovalDecision(method, decision)
+		h.writeRPCResult(id, appServerApprovalResult(decision, "approved", "denied"))
 	case "account/chatgptAuthTokens/refresh":
 		h.writeRPCError(id, -32000, "chatgpt auth token refresh is not available in the Tusker runner")
 	default:
 		h.writeRPCError(id, -32601, "unsupported Codex app-server request: "+method)
 	}
+}
+
+type codexApprovalDecision struct {
+	RequestType string
+	Decision    string
+	Reason      string
+	Subject     string
+	Mutating    bool
+}
+
+func (h *codexLiveHandle) evaluateCommandApproval(params json.RawMessage) codexApprovalDecision {
+	payload := approvalPayload(params)
+	command := firstNonEmpty(
+		strings.TrimSpace(stringValue(payload["command"])),
+		strings.TrimSpace(stringValue(payload["cmd"])),
+		strings.Join(stringListFromAny(payload["argv"]), " "),
+	)
+	mutating := commandLooksMutating(command)
+	decision := codexApprovalDecision{RequestType: "command", Decision: "accept", Subject: command, Mutating: mutating}
+	if command == "" {
+		return h.rejectApproval("command", mutating, "command approval request is missing a command", "")
+	}
+	if reason := h.policyDenialReason(mutating); reason != "" {
+		return h.rejectApproval("command", mutating, reason, command)
+	}
+	cwd := approvalCWD(payload, h.workspaceRoot())
+	if ok, reason := h.pathAllowed(cwd, h.workspaceRoot()); !ok {
+		return h.rejectApproval("command", mutating, "command approval rejected: cwd "+reason, command)
+	}
+	if commandContainsUnsafeGitMutation(command) {
+		return h.rejectApproval("command", mutating, "command approval rejected: unsafe git state mutation is not allowed", command)
+	}
+	if commandMentionsSecretPath(command) {
+		return h.rejectApproval("command", mutating, "command approval rejected: command references a secret path", command)
+	}
+	return decision
+}
+
+func (h *codexLiveHandle) evaluateFileChangeApproval(params json.RawMessage) codexApprovalDecision {
+	paths := approvalPaths(params)
+	subject := strings.Join(paths, ",")
+	if subject == "" {
+		subject = approvalSubjectFromParams(params)
+	}
+	if reason := h.policyDenialReason(true); reason != "" {
+		return h.rejectApproval("file_change", true, reason, subject)
+	}
+	if len(paths) == 0 {
+		return h.rejectApproval("file_change", true, "file change approval request did not include changed paths", subject)
+	}
+	payload := approvalPayload(params)
+	cwd := approvalCWD(payload, h.workspaceRoot())
+	for _, path := range paths {
+		if approvalPathLooksSecret(path) {
+			return h.rejectApproval("file_change", true, "file change approval rejected: secret path is not writable", path)
+		}
+		checkedPath := path
+		if !filepath.IsAbs(checkedPath) {
+			checkedPath = filepath.Join(cwd, checkedPath)
+		}
+		if ok, reason := h.pathAllowed(checkedPath, h.workspaceRoot()); !ok {
+			return h.rejectApproval("file_change", true, "file change approval rejected: path "+reason, path)
+		}
+	}
+	return codexApprovalDecision{RequestType: "file_change", Decision: "accept", Subject: subject, Mutating: true}
+}
+
+func (h *codexLiveHandle) rejectApproval(requestType string, mutating bool, reason, subject string) codexApprovalDecision {
+	return codexApprovalDecision{
+		RequestType: requestType,
+		Decision:    "reject",
+		Reason:      reason,
+		Subject:     subject,
+		Mutating:    mutating,
+	}
+}
+
+func (h *codexLiveHandle) policyDenialReason(mutating bool) string {
+	approvalPolicy := strings.TrimSpace(h.policy.ApprovalPolicy)
+	if approvalPolicy == "never" {
+		return "approval_policy=never rejects Codex app-server approval requests"
+	}
+	activeSandbox := firstNonEmpty(strings.TrimSpace(h.policy.TurnSandboxPolicy), strings.TrimSpace(h.policy.ThreadSandbox))
+	if mutating && activeSandbox == "read-only" {
+		return "read-only sandbox rejects mutating approval requests"
+	}
+	if approvalPolicy == "on-request" || approvalPolicy == "untrusted" {
+		return "approval_policy=" + approvalPolicy + " requires human approval; Tusker rejects instead of silently approving"
+	}
+	return ""
+}
+
+func (h *codexLiveHandle) workspaceRoot() string {
+	if h.cmd == nil {
+		return ""
+	}
+	return h.cmd.Dir
+}
+
+func (h *codexLiveHandle) pathAllowed(path, workspaceRoot string) (bool, string) {
+	workspaceRoot = strings.TrimSpace(workspaceRoot)
+	if workspaceRoot == "" {
+		return false, "has no prepared workspace"
+	}
+	cleanRoot, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		return false, "has invalid workspace root"
+	}
+	cleanPath, err := filepath.Abs(strings.TrimSpace(path))
+	if err != nil {
+		return false, "is invalid"
+	}
+	cleanRoot = filepath.Clean(cleanRoot)
+	cleanPath = filepath.Clean(cleanPath)
+	if resolvedRoot, err := filepath.EvalSymlinks(cleanRoot); err == nil {
+		cleanRoot = filepath.Clean(resolvedRoot)
+	}
+	if resolvedPath, err := resolveExistingPath(cleanPath); err == nil {
+		cleanPath = filepath.Clean(resolvedPath)
+	}
+	rel, err := filepath.Rel(cleanRoot, cleanPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false, "escapes the prepared workspace"
+	}
+	return true, ""
+}
+
+func resolveExistingPath(path string) (string, error) {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved, nil
+	}
+	parent := filepath.Dir(path)
+	if resolvedParent, err := filepath.EvalSymlinks(parent); err == nil {
+		return filepath.Join(resolvedParent, filepath.Base(path)), nil
+	}
+	return "", fmt.Errorf("path does not exist")
+}
+
+func appServerApprovalResult(decision codexApprovalDecision, acceptValue, rejectValue string) map[string]any {
+	value := acceptValue
+	if decision.Decision != "accept" {
+		value = rejectValue
+	}
+	result := map[string]any{"decision": value}
+	if decision.Reason != "" {
+		result["reason"] = decision.Reason
+	}
+	return result
+}
+
+func approvalPayload(raw json.RawMessage) map[string]any {
+	var payload map[string]any
+	if len(raw) == 0 || json.Unmarshal(raw, &payload) != nil {
+		return map[string]any{}
+	}
+	return payload
+}
+
+func approvalCWD(payload map[string]any, fallbackCWD string) string {
+	if cwd := strings.TrimSpace(stringValue(payload["cwd"])); cwd != "" {
+		return cwd
+	}
+	return fallbackCWD
+}
+
+func approvalSubjectFromParams(raw json.RawMessage) string {
+	payload := approvalPayload(raw)
+	for _, key := range []string{"command", "cmd", "reason", "path", "filePath", "file_path", "cwd"} {
+		if value := strings.TrimSpace(stringValue(payload[key])); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func approvalPaths(raw json.RawMessage) []string {
+	var value any
+	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
+		return nil
+	}
+	var paths []string
+	collectApprovalPaths(value, &paths)
+	return uniqueNonEmptyStrings(paths)
+}
+
+func collectApprovalPaths(value any, paths *[]string) {
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			collectApprovalPaths(item, paths)
+		}
+	case map[string]any:
+		for key, nested := range typed {
+			if approvalPathKey(key) {
+				pathValues := stringsFromApprovalValue(nested)
+				for _, path := range pathValues {
+					*paths = append(*paths, path)
+				}
+				if len(pathValues) > 0 {
+					continue
+				}
+			}
+			collectApprovalPaths(nested, paths)
+		}
+	}
+}
+
+func approvalPathKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "path", "paths", "file", "files", "filepath", "file_path", "absolute_path", "relative_path":
+		return true
+	default:
+		return false
+	}
+}
+
+func stringsFromApprovalValue(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		return []string{typed}
+	case []any:
+		var out []string
+		for _, item := range typed {
+			out = append(out, stringsFromApprovalValue(item)...)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func commandLooksMutating(command string) bool {
+	lower := strings.ToLower(strings.TrimSpace(command))
+	if lower == "" {
+		return false
+	}
+	if commandContainsUnsafeGitMutation(lower) {
+		return true
+	}
+	if strings.Contains(lower, ">>") || strings.Contains(lower, " >") || strings.Contains(lower, "| tee") || strings.Contains(lower, " tee ") {
+		return true
+	}
+	for _, marker := range []string{
+		"touch ", "rm ", "rm -", "mv ", "cp ", "mkdir ", "rmdir ", "chmod ", "chown ", "ln -",
+		"apply_patch", "sed -i", "perl -pi", "go mod tidy", "npm install", "npm update", "pnpm install",
+		"yarn add", "yarn install", "bun add", "cargo update", "pip install",
+		".write(", "write_text(", "create(", "open(",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func commandContainsUnsafeGitMutation(command string) bool {
+	lower := strings.ToLower(command)
+	for _, marker := range []string{
+		"git add", "git am", "git apply", "git branch", "git checkout", "git cherry-pick", "git clean",
+		"git commit", "git merge", "git mv", "git pull", "git push", "git rebase", "git reset",
+		"git restore", "git rm", "git stash", "git switch", "git update-index",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func commandMentionsSecretPath(command string) bool {
+	for _, field := range strings.Fields(command) {
+		if approvalPathLooksSecret(strings.Trim(field, `"'`)) {
+			return true
+		}
+	}
+	return false
+}
+
+func approvalPathLooksSecret(path string) bool {
+	normalized := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if normalized == "" {
+		return false
+	}
+	base := filepath.Base(normalized)
+	if strings.HasPrefix(base, ".env") || strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".key") {
+		return true
+	}
+	switch base {
+	case "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "credentials", "credentials.json":
+		return true
+	}
+	for _, segment := range []string{"/.ssh/", "/secrets/", "/secret/"} {
+		if strings.Contains(normalized, segment) {
+			return true
+		}
+	}
+	return false
+}
+
+func stringListFromAny(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string{}, typed...)
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if value := strings.TrimSpace(stringValue(item)); value != "" {
+				out = append(out, value)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func (h *codexLiveHandle) recordApprovalDecision(method string, decision codexApprovalDecision) {
+	reason := strings.TrimSpace(decision.Reason)
+	message := fmt.Sprintf("codex approval %s: method=%s type=%s", decision.Decision, method, decision.RequestType)
+	if reason != "" {
+		message += " reason=" + reason
+	}
+	_ = appendRawLogLine(h.rawLogPath, message)
+	if h.eventLog == nil {
+		return
+	}
+	payload := map[string]any{
+		"project_id":          h.projectID,
+		"record_id":           h.recordID,
+		"item_id":             h.itemID,
+		"attempt_id":          h.attemptID,
+		"session_ref":         h.threadID,
+		"turn_id":             h.turnID,
+		"method":              method,
+		"request_type":        decision.RequestType,
+		"decision":            decision.Decision,
+		"reason":              reason,
+		"subject":             decision.Subject,
+		"mutating":            decision.Mutating,
+		"approval_policy":     h.policy.ApprovalPolicy,
+		"thread_sandbox":      h.policy.ThreadSandbox,
+		"turn_sandbox_policy": h.policy.TurnSandboxPolicy,
+	}
+	_ = h.eventLog.Append("codex_approval_decision", h.attemptID, h.runner, payload)
 }
 
 func (h *codexLiveHandle) writeRPCResult(id string, result any) {

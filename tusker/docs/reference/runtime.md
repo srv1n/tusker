@@ -92,10 +92,12 @@ If reviewer policy is enabled, the next poll can start a distinct `review` lane.
 |---|---|
 | registered project | repo root, vault root, workflow path, enabled flag, health, last poll/error |
 | run | current lease state, lane, attempt outcome, active attempt, workspace, session, pid, artifact paths, work revision, retry/error timestamps |
-| attempt | immutable-ish execution attempt snapshot with lane, outcome, exit code, artifact paths, pid, start/finish |
+| attempt | immutable-ish execution attempt snapshot with lane, outcome, exit code, artifact paths, pid, start/finish, cloud refs, and fanout parent/child metadata |
 | turn | normalized runner turn status, session, token usage, last event/error |
 | session | runner session ref, resumability, workspace, revision, current item, last seen/error |
 | supervisor decision | continuation/resume/fork/new-revision/stop decisions with reasons and context signals |
+
+Fanout is off unless `tusker.yaml` enables it. Fanout lanes use `fanout:<child-type>`, report cap/workspace conflicts in automation explain output, and record parent attempt, child type, branch, group, and merge rule on child attempts. Child work feeds back through evidence/proposals; it does not move the parent task to `review` or `done` directly.
 
 Known lease states: `unclaimed`, `claimed`, `running`, `retry_queued`, `interrupted`, `released`.
 

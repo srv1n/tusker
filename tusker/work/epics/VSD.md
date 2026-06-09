@@ -16,8 +16,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-05-15T04:45:46Z"
-updated_at: "2026-05-25T02:50:53Z"
-state_rev: "sha256:5b05c71e4d59e5928a139c6bd487f34f1c507719cbc8d44b5b33500157215af0"
+updated_at: "2026-06-01T04:39:41Z"
+state_rev: "sha256:e1c9ca6be37c424274dd181fed4a4490a8226cf920475e1cdcf25751564e731a"
 ---
 
 # VSD · Ship V7 as the default Tusker model
@@ -79,6 +79,22 @@ No backward compatibility requirement for the V7 release cut. Prefer hard deleti
 | [[VSD-T-0030]] | review | reviewer | Review evidence and close or return to rework. |
 | [[VSD-T-0031]] | review | reviewer | Review evidence and close or return to rework. |
 | [[VSD-T-0032]] | review | reviewer | Review evidence and close or return to rework. |
+| [[VSD-T-0033]] | review | reviewer | Review evidence and close or return to rework. |
+| [[VSD-T-0034]] | review | reviewer | Review evidence and close or return to rework. |
+| [[VSD-T-0035]] | review | reviewer | Review evidence and close or return to rework. |
+| [[VSD-T-0037]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[VSD-T-0038]] | review | reviewer | Review evidence and close or return to rework. |
+| [[VSD-T-0039]] | backlog | blocked_dependency | Wait for dependency VSD-T-0038 to reach done. |
+| [[VSD-T-0040]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[VSD-T-0041]] | backlog | blocked_dependency | Wait for dependency VSD-T-0039 to reach done. |
+| [[VSD-T-0042]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[VSD-T-0043]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[VSD-T-0044]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[VSD-T-0045]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[VSD-T-0046]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[VSD-T-0047]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[VSD-T-0048]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[VSD-T-0049]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 
@@ -93,3 +109,4 @@ No backward compatibility requirement for the V7 release cut. Prefer hard deleti
 | [[VSD-T-0026]] | reviewer:agent | 2026-05-19T06:18:51Z |
 | [[VSD-T-0027]] | reviewer:agent | 2026-05-19T06:18:51Z |
 | [[VSD-T-0028]] | reviewer:agent | 2026-05-19T06:18:51Z |
+| [[VSD-T-0036]] | reviewer:agent | 2026-05-31T15:06:59Z |

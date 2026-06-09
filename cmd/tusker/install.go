@@ -17,11 +17,18 @@ import (
 
 const (
 	currentSkillInstallDir = "tusker"
+	skillInstallModeCopy   = "copy"
+	skillInstallModeLink   = "symlink"
 )
 
 type repoPointerUpdate struct {
 	path   string
 	action string
+}
+
+type skillInstallResult struct {
+	path string
+	mode string
 }
 
 func syncRepoContract(args Args) error {
@@ -86,11 +93,17 @@ func updateCmd(args Args) error {
 	}
 	destinations = uniqueInstallDestinations(destinations)
 
+	installedSkillModes := map[string]string{}
 	for _, destination := range destinations {
-		if err := installSkillPayload(destination); err != nil {
+		mode, err := skillInstallModeForDestination(args, destination, repoRoot)
+		if err != nil {
+			return err
+		}
+		if err := installSkillPayloadWithModeFrom(destination, mode, args.String("source")); err != nil {
 			return err
 		}
 		updatedSkills = append(updatedSkills, destination)
+		installedSkillModes[destination] = mode
 	}
 
 	pointerUpdates := []repoPointerUpdate{}
@@ -125,6 +138,7 @@ func updateCmd(args Args) error {
 			"ok":               true,
 			"binary_updated":   binaryUpdated,
 			"updated_skills":   updatedSkills,
+			"skill_modes":      installedSkillModes,
 			"updated_pointers": repoPointerUpdatePaths(pointerUpdates),
 			"feedback_readme":  nullIfEmptyString(feedbackReadme),
 			"guidance_warning": nullIfEmptyString(guidanceWarning),
@@ -133,7 +147,7 @@ func updateCmd(args Args) error {
 	}
 
 	for _, destination := range updatedSkills {
-		fmt.Printf("Updated Tusker skill at %s\n", destination)
+		fmt.Printf("Updated Tusker skill at %s (%s)\n", destination, installedSkillModes[destination])
 	}
 	for _, update := range pointerUpdates {
 		fmt.Printf("%s %s\n", capitalize(update.action), update.path)
@@ -182,11 +196,17 @@ func installCmd(args Args) error {
 	}
 	destinations = uniqueInstallDestinations(destinations)
 
+	installedSkillModes := map[string]string{}
 	for _, destination := range destinations {
-		if err := installSkillPayload(destination); err != nil {
+		mode, err := skillInstallModeForDestination(args, destination, repoRoot)
+		if err != nil {
+			return err
+		}
+		if err := installSkillPayloadWithModeFrom(destination, mode, args.String("source")); err != nil {
 			return err
 		}
 		installedSkills = append(installedSkills, destination)
+		installedSkillModes[destination] = mode
 	}
 
 	pointerUpdates := []repoPointerUpdate{}
@@ -221,6 +241,7 @@ func installCmd(args Args) error {
 			"ok":               true,
 			"binary_installed": binaryInstalled,
 			"installed_skills": installedSkills,
+			"skill_modes":      installedSkillModes,
 			"updated_pointers": repoPointerUpdatePaths(pointerUpdates),
 			"feedback_readme":  nullIfEmptyString(feedbackReadme),
 			"guidance_warning": nullIfEmptyString(guidanceWarning),
@@ -229,7 +250,7 @@ func installCmd(args Args) error {
 	}
 
 	for _, destination := range installedSkills {
-		fmt.Printf("Installed Tusker skill at %s\n", destination)
+		fmt.Printf("Installed Tusker skill at %s (%s)\n", destination, installedSkillModes[destination])
 	}
 	for _, update := range pointerUpdates {
 		fmt.Printf("%s %s\n", capitalize(update.action), update.path)
@@ -278,6 +299,25 @@ func existingUserSkillDestinations() []string {
 }
 
 func installSkillPayload(destination string) error {
+	return installSkillPayloadWithMode(destination, skillInstallModeCopy)
+}
+
+func installSkillPayloadWithMode(destination, mode string) error {
+	return installSkillPayloadWithModeFrom(destination, mode, "")
+}
+
+func installSkillPayloadWithModeFrom(destination, mode, sourceArg string) error {
+	switch mode {
+	case skillInstallModeCopy:
+		return installSkillPayloadCopy(destination)
+	case skillInstallModeLink:
+		return installSkillPayloadSymlink(destination, sourceArg)
+	default:
+		return tuskerError(errorInvalidArg, "invalid skill install mode: "+mode, withHint("Use --skill-mode copy or --skill-mode symlink."))
+	}
+}
+
+func installSkillPayloadCopy(destination string) error {
 	entries, err := skillbundle.PayloadEntries()
 	if err != nil {
 		return err
@@ -290,6 +330,172 @@ func installSkillPayload(destination string) error {
 		if err := writeText(target, entry.Content); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func installSkillPayloadSymlink(destination, sourceArg string) error {
+	source, err := canonicalSkillSourceDir(sourceArg)
+	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(destination); err != nil {
+		return err
+	}
+	if err := ensureDir(filepath.Dir(destination)); err != nil {
+		return err
+	}
+	return os.Symlink(source, destination)
+}
+
+func canonicalSkillSourceDir(sourceArg string) (string, error) {
+	if sourceArg = firstNonEmpty(strings.TrimSpace(sourceArg), strings.TrimSpace(os.Getenv("TUSKER_SKILL_SOURCE"))); sourceArg != "" {
+		source, err := filepath.Abs(sourceArg)
+		if err != nil {
+			return "", err
+		}
+		if fileExists(filepath.Join(source, "SKILL.md")) {
+			return source, nil
+		}
+		nested := filepath.Join(source, "skill")
+		if fileExists(filepath.Join(nested, "SKILL.md")) {
+			return nested, nil
+		}
+		return "", tuskerError(errorNotFound, "canonical Tusker skill source is missing: "+source, withHint("pass --source <tusker-checkout> or --source <tusker-checkout>/skill"))
+	}
+	repoRoot, err := findRepoRoot(mustGetwd())
+	if err != nil {
+		return "", err
+	}
+	if repoRoot == "" {
+		return "", tuskerError(errorNotFound, "cannot symlink Tusker skill without a source checkout", withHint("Use --source <tusker-checkout>, set TUSKER_SKILL_SOURCE, or use --skill-mode copy for portable installs from a release binary."))
+	}
+	source := filepath.Join(repoRoot, "skill")
+	if !fileExists(filepath.Join(source, "SKILL.md")) {
+		return "", tuskerError(errorNotFound, "canonical Tusker skill source is missing: "+source)
+	}
+	return source, nil
+}
+
+func skillInstallModeForDestination(args Args, destination, repoRoot string) (string, error) {
+	if mode := strings.TrimSpace(firstNonEmpty(args.String("skill-mode"), args.String("mode"))); mode != "" {
+		return normalizeSkillInstallMode(mode)
+	}
+	if repoRoot != "" && isRepoLocalSkillDestination(destination, repoRoot) {
+		return skillInstallModeLink, nil
+	}
+	return skillInstallModeCopy, nil
+}
+
+func normalizeSkillInstallMode(mode string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", skillInstallModeCopy:
+		return skillInstallModeCopy, nil
+	case skillInstallModeLink, "link":
+		return skillInstallModeLink, nil
+	default:
+		return "", tuskerError(errorInvalidArg, "invalid skill install mode: "+mode, withHint("Use copy or symlink."))
+	}
+}
+
+func isRepoLocalSkillDestination(destination, repoRoot string) bool {
+	if repoRoot == "" {
+		return false
+	}
+	absDestination, err := filepath.Abs(destination)
+	if err != nil {
+		return false
+	}
+	absRepo, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return false
+	}
+	for _, rel := range []string{
+		filepath.Join(".agents", "skills", currentSkillInstallDir),
+		filepath.Join(".claude", "skills", currentSkillInstallDir),
+	} {
+		if absDestination == filepath.Join(absRepo, rel) {
+			return true
+		}
+	}
+	return false
+}
+
+func skillSyncCmd(args Args) error {
+	if args.Bool("help") {
+		printSkillSyncHelp()
+		return nil
+	}
+	repo := strings.TrimSpace(args.String("repo"))
+	if repo == "" {
+		repo = "."
+	}
+	mode := strings.TrimSpace(args.String("mode"))
+	if mode == "" {
+		mode = skillInstallModeLink
+	}
+	next := Args{
+		"repo":       repo,
+		"no-bin":     "true",
+		"skill-mode": mode,
+	}
+	if source := strings.TrimSpace(args.String("source")); source != "" {
+		next["source"] = source
+	}
+	if args.Bool("json") {
+		next["json"] = "true"
+	}
+	if args.Bool("quiet") {
+		next["quiet"] = "true"
+	}
+	return installCmd(next)
+}
+
+func skillBundleCmd(args Args) error {
+	if args.Bool("help") {
+		printSkillBundleHelp()
+		return nil
+	}
+	repo := strings.TrimSpace(args.String("repo"))
+	if repo == "" {
+		repo = "."
+	}
+	repoRoot, err := filepath.Abs(repo)
+	if err != nil {
+		return err
+	}
+	out := strings.TrimSpace(args.String("out"))
+	if out == "" {
+		out = filepath.Join(repoRoot, ".tusker", "_generated", "skill-bundle")
+	} else if !filepath.IsAbs(out) {
+		out = filepath.Join(repoRoot, out)
+	}
+	destinations := []string{
+		filepath.Join(out, ".agents", "skills", currentSkillInstallDir),
+		filepath.Join(out, ".claude", "skills", currentSkillInstallDir),
+	}
+	if err := os.RemoveAll(out); err != nil {
+		return err
+	}
+	for _, destination := range destinations {
+		if err := installSkillPayloadWithMode(destination, skillInstallModeCopy); err != nil {
+			return err
+		}
+	}
+	if args.Bool("json") {
+		emitJSON(map[string]any{
+			"ok":            true,
+			"mode":          skillInstallModeCopy,
+			"out":           out,
+			"installed":     destinations,
+			"dereferenced":  true,
+			"source_policy": "canonical skill source; generated bundle is not editable source",
+		})
+		return nil
+	}
+	fmt.Printf("Bundled materialized Tusker skills at %s\n", out)
+	for _, destination := range destinations {
+		fmt.Printf("Installed Tusker skill at %s (copy)\n", destination)
 	}
 	return nil
 }
@@ -405,7 +611,7 @@ func findRepoRoot(start string) (string, error) {
 
 func printUpdateHelp() {
 	fmt.Println(`Usage:
-  tusker update [--bin-dir <path>] [--no-bin] [--repo <path>] [--repo-only] [--json]
+  tusker update [--bin-dir <path>] [--no-bin] [--repo <path>] [--repo-only] [--skill-mode copy|symlink] [--source <checkout>] [--json]
 
 Purpose:
   Refresh the installed tusker binary link and all existing user skill installs
@@ -415,20 +621,25 @@ Purpose:
 Behavior:
   - refreshes existing user skills in ~/.agents, ~/.codex, and ~/.claude
   - relinks tusker on PATH unless --no-bin is passed
-  - with --repo, also refreshes repo-local .agents/.claude skill installs
-    and the managed AGENTS.md/CLAUDE.md Tusker bootstrap block
+  - with --repo, refreshes the repo-local .agents skill install and the
+    generated .claude compatibility install for Claude Code; repo-local
+    installs default to symlink mode, while user installs default to copy mode
+    and refreshes the managed AGENTS.md/CLAUDE.md Tusker bootstrap block
     with compact proof/context guidance
+  - --source points symlink mode at a canonical Tusker checkout or skill dir
   - with --repo-only, skips user skill installs and touches only the repo
 
 Examples:
   tusker update
   tusker update --bin-dir ~/.local/bin
-  tusker update --repo . --repo-only --no-bin`)
+  tusker update --repo . --repo-only --no-bin
+  tusker update --repo . --repo-only --no-bin --skill-mode copy
+  tusker update --repo . --repo-only --no-bin --skill-mode symlink --source ~/src/tusker`)
 }
 
 func printInstallHelp() {
 	fmt.Println(`Usage:
-  tusker install [--bin-dir <path>] [--no-bin] [--codex-user] [--claude-user] [--repo <path>] [--refresh-existing-user-skills] [--force] [--json]
+  tusker install [--bin-dir <path>] [--no-bin] [--codex-user] [--claude-user] [--repo <path>] [--refresh-existing-user-skills] [--skill-mode copy|symlink] [--source <checkout>] [--force] [--json]
 
 Purpose:
   Install the Tusker binary link and refresh/install skill bundles from the
@@ -438,17 +649,53 @@ Behavior:
   - refreshes already-installed user skills in ~/.agents, ~/.codex, and ~/.claude
   - --codex-user installs ~/.agents/skills/tusker
   - --claude-user installs ~/.claude/skills/tusker
-  - --repo installs repo-local .agents/.claude skill bundles without ambient user skill refresh
+  - --repo installs the repo-local .agents skill bundle and the generated
+    .claude compatibility install without ambient user skill refresh;
+    repo-local installs default to symlink mode, while user installs default
+    to copy mode
     and refreshes the managed AGENTS.md/CLAUDE.md Tusker bootstrap block
     with compact proof/context guidance
   - --refresh-existing-user-skills also refreshes existing user skills when --repo is used
   - relinks tusker on PATH unless --no-bin is passed
+  - --source points symlink mode at a canonical Tusker checkout or skill dir
   - --force is accepted for installer compatibility
 
 Examples:
   tusker install --codex-user --claude-user
   tusker install --repo . --no-bin
+  tusker install --repo . --no-bin --skill-mode copy
+  tusker install --repo . --no-bin --skill-mode symlink --source ~/src/tusker
   tusker install --no-bin`)
+}
+
+func printSkillSyncHelp() {
+	fmt.Println(`Usage:
+  tusker skill sync [--repo <path>] [--mode symlink|copy] [--source <checkout>] [--json]
+
+Purpose:
+  Refresh repo-local generated skill installs for local agents. Local sync
+  defaults to symlink mode so canonical skill source remains the source of
+  truth. Use --source when running from outside the Tusker checkout. Use
+  --mode copy only when the repo must be self-contained.
+
+Examples:
+  tusker skill sync --repo .
+  tusker skill sync --repo . --source ~/src/tusker
+  tusker skill sync --repo . --mode copy`)
+}
+
+func printSkillBundleHelp() {
+	fmt.Println(`Usage:
+  tusker skill bundle [--repo <path>] [--out <path>] [--dereference-symlinks] [--json]
+
+Purpose:
+  Create a portable materialized skill bundle for handoff packets, cloud
+  runners, or machines that cannot follow local symlinks. Generated bundle
+  copies are not editable source.
+
+Examples:
+  tusker skill bundle --repo .
+  tusker skill bundle --repo . --out .tusker/_generated/skill-bundle`)
 }
 
 func printSyncRepoContractHelp() {
@@ -463,6 +710,10 @@ func initCmd(args Args) error {
 	if args.Bool("help") {
 		printInitHelp()
 		return nil
+	}
+	profileForMode := strings.TrimSpace(args.String("profile"))
+	if args.Bool("legacy") || args.Bool("migrate-v5") || args.Bool("migrate-v6") || (profileForMode != "" && !strings.EqualFold(profileForMode, "v7")) {
+		return removedSurfaceError("non-V7 init/migration")
 	}
 	if args.Bool("migrate-v5") && args.Bool("dry-run") {
 		report, err := migrateLegacyVaultToV5(args)
@@ -482,6 +733,15 @@ func initCmd(args Args) error {
 	}
 	cwd := mustGetwd()
 	yes := args.Bool("yes")
+	if args.Bool("purge-state") {
+		purgeArgs := Args{"repo": cwd, "only-tusker-state": "true", "yes": "true"}
+		if args.Bool("quiet") {
+			purgeArgs["quiet"] = "true"
+		}
+		if err := tuskerPurgeCmd(purgeArgs); err != nil {
+			return err
+		}
+	}
 	registerDaemon := args.Bool("daemon")
 	_, mountArgPresent := args["mount"]
 	noMount := args.Bool("no-mount")
@@ -516,7 +776,7 @@ func initCmd(args Args) error {
 		}
 		return answer == "y" || answer == "yes", nil
 	}
-	vaultPath := filepath.Join(cwd, "tusker")
+	vaultPath := filepath.Join(cwd, defaultRepoVaultDir)
 	explicitVault := args.String("vault") != ""
 	if explicit := args.String("vault"); explicit != "" {
 		vaultPath, _ = filepath.Abs(explicit)
@@ -607,7 +867,7 @@ func initCmd(args Args) error {
 	}
 	vaultRelative := relativeFromRepo(cwd, effectiveVault)
 	if vaultRelative == "" {
-		vaultRelative = "tusker"
+		vaultRelative = defaultRepoVaultDir
 	}
 	if !vaultOnly && !args.Bool("no-pointers") {
 		readmeLink := filepath.ToSlash(filepath.Join(vaultRelative, "README.md"))
@@ -735,6 +995,7 @@ func upsertGitignore(vaultPath string) error {
 
 func renderTuskerPointerBlock(readmeLink string) string {
 	skillLink := tuskerSkillLinkFromReadme(readmeLink)
+	vaultRoot := tuskerVaultRootFromReadme(readmeLink)
 	return strings.Join([]string{
 		tuskerPointerBegin,
 		"## Tusker",
@@ -744,7 +1005,7 @@ func renderTuskerPointerBlock(readmeLink string) string {
 		"- Task mechanics live in the installed `tusker` skill.",
 		fmt.Sprintf("- Project knowledge starts at `%s`.", skillLink),
 		"- Start runnable work with `tusker next`; inspect named work with `tusker show <TASK-ID> --capsule`.",
-		"- Do not read `tusker/events`, `_generated`, `attempts`, `evidence`, `Attachments`, raw logs, or full task files unless the task explicitly requires it.",
+		fmt.Sprintf("- Do not read `%s/events`, `_generated`, `attempts`, `evidence`, `Attachments`, raw logs, or full task files unless the task explicitly requires it.", vaultRoot),
 		"- Keep proof compact: use capsules, path-scoped status/search, and command + PASS/FAIL summaries; put noisy logs in `.tusker/scratch/<TASK-ID>/`.",
 		feedbackPointerInstruction(),
 		tuskerPointerEnd,
@@ -754,13 +1015,25 @@ func renderTuskerPointerBlock(readmeLink string) string {
 func tuskerSkillLinkFromReadme(readmeLink string) string {
 	readmeLink = strings.TrimSpace(filepath.ToSlash(readmeLink))
 	if readmeLink == "" {
-		return "tusker/SKILL.md"
+		return filepath.ToSlash(filepath.Join(defaultRepoVaultDir, "SKILL.md"))
 	}
 	dir := filepath.ToSlash(filepath.Dir(readmeLink))
 	if dir == "." || dir == "" {
 		return "SKILL.md"
 	}
 	return filepath.ToSlash(filepath.Join(dir, "SKILL.md"))
+}
+
+func tuskerVaultRootFromReadme(readmeLink string) string {
+	readmeLink = strings.TrimSpace(filepath.ToSlash(readmeLink))
+	if readmeLink == "" {
+		return defaultRepoVaultDir
+	}
+	dir := filepath.ToSlash(filepath.Dir(readmeLink))
+	if dir == "." || dir == "" {
+		return "."
+	}
+	return dir
 }
 
 func upsertRepoTuskerPointers(repoPath, vaultArg string) ([]repoPointerUpdate, error) {
@@ -784,7 +1057,7 @@ func upsertRepoTuskerPointers(repoPath, vaultArg string) ([]repoPointerUpdate, e
 }
 
 func repoTuskerReadmeLink(repoPath, vaultPath string) string {
-	vaultRelative := "tusker"
+	vaultRelative := defaultRepoVaultDir
 	if vaultPath != "" {
 		vaultRelative = relativeFromRepo(repoPath, vaultPath)
 	}
@@ -802,7 +1075,7 @@ func repoTuskerVaultPath(repoPath, vaultArg string) (string, error) {
 	if discovered, _ := discoverVault(repoPath); discovered != "" {
 		return discovered, nil
 	}
-	return filepath.Join(repoPath, "tusker"), nil
+	return filepath.Join(repoPath, defaultRepoVaultDir), nil
 }
 
 func repoPointerUpdatePaths(updates []repoPointerUpdate) []string {

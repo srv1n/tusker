@@ -47,7 +47,7 @@ var FrontmatterOrder = map[string][]string{
 	},
 	"gate": {
 		"schema", "kind", "id", "project", "title", "gate_kind", "status", "owner", "priority", "blocking", "blocks",
-		"covers", "action", "verification", "satisfaction_evidence", "satisfaction_evidence_refs", "satisfied_by", "satisfied_at", "waived_by", "waived_at", "waive_reason", "obsolete_reason",
+		"covers", "why_agent_cannot", "action", "suggestion", "verification", "satisfaction_evidence", "satisfaction_evidence_refs", "satisfied_by", "satisfied_at", "waived_by", "waived_at", "waive_reason", "obsolete_reason",
 		"created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
 	"epic": {
@@ -79,10 +79,68 @@ var FrontmatterOrder = map[string][]string{
 	},
 }
 
+type TuskerAutomationRunnerConfig struct {
+	Kind              string `yaml:"kind"`
+	Command           string `yaml:"command"`
+	ApprovalPolicy    string `yaml:"approval_policy"`
+	ThreadSandbox     string `yaml:"thread_sandbox"`
+	TurnSandboxPolicy string `yaml:"turn_sandbox_policy"`
+	TurnTimeoutMS     int    `yaml:"turn_timeout_ms"`
+	ReadTimeoutMS     int    `yaml:"read_timeout_ms"`
+	StallTimeoutMS    int    `yaml:"stall_timeout_ms"`
+	MaxTurns          int    `yaml:"max_turns"`
+	EnvironmentID     string `yaml:"environment_id"`
+	ApplyMode         string `yaml:"apply_mode"`
+	PRMode            string `yaml:"pr_mode"`
+	ExternalCollect   bool   `yaml:"external_collect"`
+	StatusCommand     string `yaml:"status_command"`
+	CollectCommand    string `yaml:"collect_command"`
+}
+
+type TuskerExternalLoopConfig struct {
+	MaxCycles              int `yaml:"max_cycles"`
+	MaxRepairContinuations int `yaml:"max_repair_continuations"`
+	MaxExternalThreads     int `yaml:"max_external_threads"`
+	WallClockTimeoutHours  int `yaml:"wall_clock_timeout_hours"`
+}
+
+type TuskerAutomationConfig struct {
+	Enabled        *bool    `yaml:"enabled"`
+	TriggerStates  []string `yaml:"trigger_states"`
+	LegacyProfile  string   `yaml:"legacy_profile"`
+	DefaultRunner  string   `yaml:"default_runner"`
+	EnabledRunners []string `yaml:"enabled_runners"`
+	Workspace      struct {
+		Root     string `yaml:"root"`
+		Strategy string `yaml:"strategy"`
+	} `yaml:"workspace"`
+	Concurrency struct {
+		MaxActiveRuns           int            `yaml:"max_active_runs"`
+		MaxActiveRunsPerProject int            `yaml:"max_active_runs_per_project"`
+		MaxConcurrentByState    map[string]int `yaml:"max_concurrent_by_state"`
+	} `yaml:"concurrency"`
+	ExternalLoop TuskerExternalLoopConfig                `yaml:"external_loop"`
+	Runners      map[string]TuskerAutomationRunnerConfig `yaml:"runners"`
+	Fanout       struct {
+		Enabled           bool     `yaml:"enabled"`
+		MaxChildren       int      `yaml:"max_children"`
+		AllowedChildTypes []string `yaml:"allowed_child_types"`
+		MergeRule         string   `yaml:"merge_rule"`
+	} `yaml:"fanout"`
+}
+
 type TuskerConfigFile struct {
 	ProjectID    string `yaml:"project_id"`
 	MutationMode string `yaml:"mutation_mode"`
-	Branches     struct {
+	Storage      struct {
+		Root          string `yaml:"root"`
+		GeneratedRoot string `yaml:"generated_root"`
+		EvidenceRoot  string `yaml:"evidence_root"`
+		EventsRoot    string `yaml:"events_root"`
+		AttemptsRoot  string `yaml:"attempts_root"`
+	} `yaml:"storage"`
+	Automation TuskerAutomationConfig `yaml:"automation"`
+	Branches   struct {
 		DefaultBranch          string   `yaml:"default_branch"`
 		Control                []string `yaml:"control"`
 		StateBranch            string   `yaml:"state_branch"`

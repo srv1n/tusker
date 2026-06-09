@@ -1,9 +1,3 @@
-interface:
-  display_name: "Tusker"
-  short_description: "Repo-local task, evidence, and closeout protocol"
-  icon_small: "./assets/icons/tusker-small.svg"
-  icon_large: "./assets/icons/tusker-large.svg"
-  brand_color: "#374151"
-  default_prompt: "Use $tusker to plan, track, prove, review, or close repo-local work."
-policy:
-  allow_implicit_invocation: true
+name: tusker
+description: Use Tusker V7 task contracts, proof, human gates, and orchestration commands for repository work.
+entrypoint: SKILL.md

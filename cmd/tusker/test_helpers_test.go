@@ -42,4 +42,13 @@ func makeV7TaskDispatchableForTest(t *testing.T, vault, taskID string) {
 	if err := writeText(taskPath, content); err != nil {
 		t.Fatal(err)
 	}
+	if hasV7DashboardProjection(vault) {
+		idx, err := loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := buildV7Dashboards(vault, idx); err != nil {
+			t.Fatal(err)
+		}
+	}
 }

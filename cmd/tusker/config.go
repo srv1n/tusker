@@ -5,25 +5,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 func writeDefaultConfig(vaultPath string) error {
-	if err := writeDefaultWorkflow(vaultPath); err != nil {
-		return err
-	}
-	filePath := legacyConfigPath(vaultPath)
-	if fileExists(filePath) {
-		return nil
-	}
-	if err := ensureDir(filepath.Dir(filePath)); err != nil {
-		return err
-	}
-	return writeText(filePath, strings.TrimSpace(defaultConfigYAML)+"\n")
+	// V7 stores workflow policy in WORKFLOW.md and tusker.yaml. Do not create
+	// legacy _system/config.yaml during normal init; that file is only read for
+	// explicit legacy/migration flows.
+	return writeDefaultWorkflow(vaultPath)
 }
 
 func loadConfig(vaultPath string) (Config, string, bool, error) {

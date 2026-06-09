@@ -9,7 +9,8 @@ Act with defaults and show what you did. Do not escalate lookup/bookkeeping into
 ## Log one task
 
 ```bash
-tusker list --type epic
+tusker list
+tusker list <ACR>
 tusker search "<duplicate clue>" --type task
 tusker new task --epic <ACR> --title "<what happened>" \
   --kind chore --size s --risk low --priority p2 \
@@ -30,7 +31,7 @@ Then tell the user: `Logged as <EPIC>-T-NNNN under <EPIC>. Picked <EPIC> because
 
 ## Pick the epic
 
-1. Run `tusker list --type epic` and scan summaries.
+1. Run `tusker list` and scan summaries.
 2. Run `tusker search "<term>" --type task` before creating possible duplicate work.
 3. Run `tusker list --epic <ACR> --type task --open` only for the likely match.
 4. Match the work to the nearest subsystem/workstream.
@@ -73,8 +74,11 @@ Use gates for human/external blockers:
 ```bash
 tusker new gate --blocks <TASK-ID> --kind verification --owner human:<name> \
   --action "Run smoke check in <env>" \
-  --verification "Human accepts or waives the smoke result."
+  --verification "Human accepts or waives the smoke result." \
+  --why-agent-cannot "The check requires human device or environment access."
 ```
+
+Use the reviewer lane, not a human gate, for code review, diffs, test/log inspection, and implementation judgment. If a spec is contradictory or unusable, create a `decision` gate and include `--suggestion "<recommended resolution>"`.
 
 Do not hide blockers only in body text.
 

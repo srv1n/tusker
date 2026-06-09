@@ -147,9 +147,9 @@ func auditV7AgentGuidance(repoRoot, vaultPath string) (v7AgentGuidanceAudit, err
 	if len(audit.Findings) > 0 && !fileExists(filepath.Join(vaultPath, "SKILL.md")) {
 		audit.Warnings = append(audit.Warnings, issue(
 			"PROJECT_SKILL_MISSING_FOR_AGENT_GUIDANCE",
-			"repo has non-managed AGENTS/CLAUDE guidance but no tusker/SKILL.md project skill",
+			"repo has non-managed AGENTS/CLAUDE guidance but no "+vaultDisplayPath(vaultPath, "SKILL.md")+" project skill",
 			v7PathForMessage(vaultPath, filepath.Join(vaultPath, "SKILL.md")),
-			"create tusker/SKILL.md or review a migration draft before flattening root agent files",
+			"create "+vaultDisplayPath(vaultPath, "SKILL.md")+" or review a migration draft before flattening root agent files",
 			nil,
 		))
 	}

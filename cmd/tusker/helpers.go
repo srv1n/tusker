@@ -14,7 +14,10 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
+	"gopkg.in/yaml.v3"
 )
+
+const defaultRepoVaultDir = ".tusker"
 
 func replaceTemplateTokens(template string, replacements map[string]string) string {
 	output := template
@@ -156,7 +159,7 @@ func resolveVaultPath(args Args, allowCreate bool) (string, error) {
 		return found, nil
 	}
 	if allowCreate {
-		return filepath.Abs(filepath.Join(mustGetwd(), "tusker"))
+		return filepath.Abs(filepath.Join(mustGetwd(), defaultRepoVaultDir))
 	}
 	return "", tuskerError(
 		errorMissingArg,
@@ -180,7 +183,10 @@ func discoverVault(startDir string) (string, error) {
 		if isVaultDir(dir) {
 			return dir, nil
 		}
-		child := filepath.Join(dir, "tusker")
+		if configured := configuredVaultPathFromRepo(dir); configured != "" {
+			return configured, nil
+		}
+		child := filepath.Join(dir, defaultRepoVaultDir)
 		if isVaultDir(child) || (fileExists(filepath.Join(dir, "tusker.yaml")) && dirExists(child)) {
 			return child, nil
 		}
@@ -192,9 +198,67 @@ func discoverVault(startDir string) (string, error) {
 	}
 }
 
+func configuredVaultPathFromRepo(repoPath string) string {
+	configured := configuredVaultRoot(repoPath)
+	if configured == "" {
+		return ""
+	}
+	if filepath.IsAbs(configured) {
+		if isVaultDir(configured) || dirExists(configured) {
+			return configured
+		}
+		return ""
+	}
+	vaultPath := filepath.Join(repoPath, filepath.FromSlash(configured))
+	if isVaultDir(vaultPath) || dirExists(vaultPath) {
+		return vaultPath
+	}
+	return ""
+}
+
+func configuredVaultRoot(repoPath string) string {
+	configPath := filepath.Join(repoPath, "tusker.yaml")
+	if !fileExists(configPath) {
+		return ""
+	}
+	raw, err := readText(configPath)
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		Storage struct {
+			Root string `yaml:"root"`
+		} `yaml:"storage"`
+	}
+	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(filepath.ToSlash(cfg.Storage.Root))
+}
+
+func vaultDisplayRoot(vaultPath string) string {
+	if strings.TrimSpace(vaultPath) == "" {
+		return defaultRepoVaultDir
+	}
+	repoRoot := filepath.Dir(vaultPath)
+	if rel := relativeFromRepo(repoRoot, vaultPath); rel != "" {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.ToSlash(filepath.Base(vaultPath))
+}
+
+func vaultDisplayPath(vaultPath, relative string) string {
+	relative = strings.TrimLeft(filepath.ToSlash(relative), "/")
+	root := vaultDisplayRoot(vaultPath)
+	if relative == "" {
+		return root
+	}
+	return filepath.ToSlash(filepath.Join(root, relative))
+}
+
 func isVaultDir(dir string) bool {
 	return fileExists(filepath.Join(dir, "WORKFLOW.md")) ||
-		fileExists(filepath.Join(dir, "_system", "config.yaml")) ||
+		fileExists(filepath.Join(dir, "SKILL.md")) ||
 		dirExists(filepath.Join(dir, "work")) ||
 		dirExists(filepath.Join(dir, "knowledge", "domains"))
 }

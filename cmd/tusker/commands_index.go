@@ -15,6 +15,7 @@ func reindex(args Args) error {
 	if err != nil {
 		return err
 	}
+	v7Vault := isV7VaultLayout(vaultPath)
 	notes, err := listAllNotes(vaultPath)
 	if err != nil {
 		return err
@@ -241,11 +242,11 @@ func reindex(args Args) error {
 	sortByUpdatedDesc(publicationQueue)
 	sortByUpdatedDesc(publicationManifestDocs)
 	work := append([]map[string]any{}, tasks...)
-	var activeQueue, blockedQueue, verificationReviewQueue, reviewQueue, reworkQueue []map[string]any
+	var readyQueue, blockedQueue, verificationReviewQueue, reviewQueue, reworkQueue []map[string]any
 	for _, item := range work {
 		switch stringValue(item["status"]) {
-		case "active":
-			activeQueue = append(activeQueue, item)
+		case "ready":
+			readyQueue = append(readyQueue, item)
 		case "blocked":
 			blockedQueue = append(blockedQueue, item)
 		case "review":
@@ -271,11 +272,11 @@ func reindex(args Args) error {
 			"tasks":             len(tasks),
 			"bugTasks":          countKind(work, "bug"),
 			"docs":              len(docs),
-			"openWork":          len(activeQueue) + len(blockedQueue) + len(verificationReviewQueue) + len(reviewQueue) + len(reworkQueue),
+			"openWork":          len(readyQueue) + len(blockedQueue) + len(verificationReviewQueue) + len(reviewQueue) + len(reworkQueue),
 			"inReview":          countStatus(work, "review"),
 			"verificationQueue": len(verificationQueue),
 			"publicationQueue":  countNotPublished(publicationQueue),
-			"active":            len(activeQueue),
+			"ready":             len(readyQueue),
 			"blocked":           len(blockedQueue),
 			"verification":      len(verificationReviewQueue),
 			"rework":            len(reworkQueue),
@@ -286,7 +287,7 @@ func reindex(args Args) error {
 		"generatedAt": generatedAt,
 		"counts":      summary["counts"],
 		"queues": map[string]any{
-			"active":              activeQueue,
+			"ready":               readyQueue,
 			"blocked":             blockedQueue,
 			"verification":        verificationReviewQueue,
 			"review":              reviewQueue,
@@ -322,7 +323,7 @@ func reindex(args Args) error {
 			"vault_docs": publicationManifestDocs,
 		},
 	}
-	generatedDir := filepath.Join(vaultPath, "_system", "generated")
+	generatedDir := filepath.Join(vaultPath, "_generated", "indexes")
 	if err := ensureDir(generatedDir); err != nil {
 		return err
 	}
@@ -353,11 +354,27 @@ func reindex(args Args) error {
 	if err := writeVaultReadme(vaultPath, epics, tasks, docs, generatedAt); err != nil {
 		return err
 	}
-	if err := writeDashboardNote(vaultPath, runtimeSection, docsCatalog, generatedAt); err != nil {
-		return err
+	if !v7Vault {
+		if err := writeDashboardNote(vaultPath, runtimeSection, docsCatalog, generatedAt); err != nil {
+			return err
+		}
 	}
 	if err := writeDocsCatalogNote(vaultPath, docsCatalog, generatedAt); err != nil {
 		return err
+	}
+	if v7Vault {
+		idx, err := loadV7Index(vaultPath)
+		if err != nil {
+			return err
+		}
+		if err := buildV7Dashboards(vaultPath, idx); err != nil {
+			return err
+		}
+		leases, err := loadV7Leases(vaultPath)
+		if err != nil {
+			return err
+		}
+		summary = v7SummaryIndexData(idx, v7DashboardIndexData(idx, leases))
 	}
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "summary": summary, "fixed_links": fixedLinks})
@@ -368,7 +385,7 @@ func reindex(args Args) error {
 			fmt.Printf("Repaired record-id mirrors in %d note%s.\n", fixedLinks, plural(fixedLinks))
 		}
 		fmt.Printf("Indexed %d epics, %d tasks, %d docs.\n", len(epics), len(tasks), len(docs))
-		fmt.Printf("Tracker queues - active: %d, blocked: %d, verification: %d, review: %d, rework: %d\n", len(activeQueue), len(blockedQueue), len(verificationReviewQueue), len(reviewQueue), len(reworkQueue))
+		fmt.Printf("Tracker queues - ready: %d, blocked: %d, verification: %d, review: %d, rework: %d\n", len(readyQueue), len(blockedQueue), len(verificationReviewQueue), len(reviewQueue), len(reworkQueue))
 	}
 	return nil
 }
@@ -855,6 +872,7 @@ func validateCmd(args Args) (int, error) {
 	errs = append(errs, v7SkillErrs...)
 	warns = append(warns, v7SkillWarns...)
 	warns = append(warns, validateV7FeedbackNotes(vaultPath)...)
+	warns = append(warns, validateV7FeedbackSignals(vaultPath)...)
 	idToPaths := map[string][]string{}
 	idCollisionLabels := map[string]string{}
 	publishPathToPaths := map[string][]string{}
@@ -882,7 +900,7 @@ func validateCmd(args Args) (int, error) {
 			label := firstNonEmpty(idCollisionLabels[id], id)
 			hint := "rename one file or change one id; ids must be unique within their active schema namespace"
 			if v7MixedLayoutTaskIDCollision(paths) {
-				hint = fmt.Sprintf("mixed V5/V7 task collision: keep exactly one %s; move or rename the legacy tusker/epics/** task, or rename tusker/work/tasks/%s.md and update links before rerunning `tusker validate`", label, label)
+				hint = fmt.Sprintf("mixed V5/V7 task collision: keep exactly one %s; move or rename the legacy tusker/epics/** task, or rename .tusker/work/tasks/%s.md and update links before rerunning `tusker validate`", label, label)
 			}
 			errs = append(errs, issue(errorIDCollision, fmt.Sprintf(`id "%s" declared in %d files: %s`, label, len(paths), strings.Join(paths, ", ")), paths[0], hint, map[string]any{"id": label, "paths": paths}))
 		}
@@ -996,7 +1014,7 @@ func fenceLegacyV6DocsImpactForV7(errs, warns []Issue) ([]Issue, []Issue) {
 	for _, current := range errs {
 		if current.Code == errorDocsImpactUnresolved && strings.Contains(strings.ToLower(current.Message), "v6 knowledge_nodes") {
 			current.Code = "LEGACY_V6_DOCS_IMPACT_FENCED"
-			current.Hint = "legacy V6 knowledge freshness is fenced from V7 release validation; V7 project truth is tusker/SKILL.md plus tusker/knowledge/domains/**"
+			current.Hint = "legacy V6 knowledge freshness is fenced from V7 release validation; V7 project truth is " + defaultRepoVaultDir + "/SKILL.md plus " + defaultRepoVaultDir + "/knowledge/domains/**"
 			warns = append(warns, current)
 			continue
 		}
@@ -1005,27 +1023,75 @@ func fenceLegacyV6DocsImpactForV7(errs, warns []Issue) ([]Issue, []Issue) {
 	return remaining, warns
 }
 
+type listRecord struct {
+	Note        Note
+	VaultPath   string
+	Project     string
+	ActiveLease *v7LeaseRecord
+}
+
 func listCmd(args Args) error {
-	vaultPath, err := resolveVaultPath(args, false)
+	if args.String("project") != "" {
+		args["all-projects"] = "true"
+	}
+	records, err := collectListRecords(args)
 	if err != nil {
 		return err
 	}
-	notes, err := listAllNotes(vaultPath)
-	if err != nil {
-		return err
+	noteType := strings.TrimSpace(args.String("type"))
+	readyOnly := args.Bool("ready")
+	runningOnly := args.Bool("running")
+	reviewOnly := args.Bool("review")
+	mineOnly := args.Bool("mine")
+	epic := strings.ToUpper(args.String("epic"))
+	positionalEpic := strings.ToUpper(strings.TrimSpace(args.String("_pos0")))
+	if positionalEpic != "" {
+		if strings.Contains(args.String("_pos"), "\n") {
+			return tuskerError(errorInvalidArg, "tusker list accepts at most one positional epic")
+		}
+		if epic != "" && epic != positionalEpic {
+			return tuskerError(errorInvalidArg, fmt.Sprintf("positional epic %s conflicts with --epic %s", positionalEpic, epic))
+		}
+		epic = positionalEpic
 	}
-	noteType := args.String("type")
+	status := args.String("status")
+	if reviewOnly {
+		if status != "" && status != "review" {
+			return tuskerError(errorInvalidArg, "--review cannot be combined with --status "+status)
+		}
+		status = "review"
+	}
+	assignee := args.String("assignee")
+	openOnly := args.Bool("open")
+	closedOnly := args.Bool("closed")
+	runnableOnly := args.Bool("runnable") || readyOnly
+	format := strings.ToLower(strings.TrimSpace(args.String("format")))
+	if format == "" {
+		format = "table"
+	}
+	if format != "table" && format != "ids" {
+		return tuskerError(errorInvalidArg, `--format must be "table" or "ids"`, withContext(map[string]any{"arg": "--format", "value": format}))
+	}
+	if positionalEpic != "" {
+		if noteType == "" {
+			noteType = "task"
+		}
+		if noteType == "task" && !openOnly && !closedOnly && status == "" {
+			openOnly = true
+		}
+	}
+	if noteType == "" {
+		if readyOnly || runningOnly || reviewOnly || mineOnly || runnableOnly || openOnly || closedOnly || status != "" || assignee != "" {
+			noteType = "task"
+		} else if !args.Bool("json") && format == "table" {
+			noteType = "epic"
+		}
+	}
 	if noteType != "" {
 		if _, ok := makeSet("epic", "task", "doc", "note")[noteType]; !ok {
 			return tuskerError(errorInvalidArg, fmt.Sprintf(`--type must be one of epic, task, doc, note; got "%s"`, noteType), withContext(map[string]any{"arg": "--type", "value": noteType}))
 		}
 	}
-	epic := strings.ToUpper(args.String("epic"))
-	status := args.String("status")
-	assignee := args.String("assignee")
-	openOnly := args.Bool("open")
-	closedOnly := args.Bool("closed")
-	runnableOnly := args.Bool("runnable")
 	limit := atoiSafe(args.String("limit"))
 	if limit < 0 {
 		limit = 0
@@ -1033,12 +1099,13 @@ func listCmd(args Args) error {
 	if openOnly && closedOnly {
 		return tuskerError(errorInvalidArg, "--open and --closed cannot be combined")
 	}
-	if status != "" && (openOnly || closedOnly) {
+	if args.String("status") != "" && (openOnly || closedOnly) {
 		return tuskerError(errorInvalidArg, "--status cannot be combined with --open or --closed")
 	}
-	taskCounts := taskCountsByEpic(notes)
-	var rows []Note
-	for _, note := range notes {
+	taskCounts := taskCountsByScopedRecords(records)
+	var rows []listRecord
+	for _, record := range records {
+		note := record.Note
 		currentType := noteListKind(note.Data)
 		if noteType != "" && currentType != noteType {
 			continue
@@ -1067,12 +1134,18 @@ func listCmd(args Args) error {
 		if runnableOnly && !isV7RunnableAgentTask(note) {
 			continue
 		}
+		if runningOnly && record.ActiveLease == nil {
+			continue
+		}
+		if mineOnly && !listRecordMatchesMine(record) {
+			continue
+		}
 		if assignee != "" && stringField(note.Data, "assignee") != assignee {
 			continue
 		}
-		rows = append(rows, note)
+		rows = append(rows, record)
 	}
-	sortListRows(rows)
+	sortListRecords(rows)
 	totalRows := len(rows)
 	truncated := 0
 	if limit > 0 && len(rows) > limit {
@@ -1081,7 +1154,8 @@ func listCmd(args Args) error {
 	}
 	if args.Bool("json") {
 		items := make([]map[string]any, 0, len(rows))
-		for _, note := range rows {
+		for _, row := range rows {
+			note := row.Note
 			currentType := noteListKind(note.Data)
 			item := map[string]any{
 				"id":            stringField(note.Data, "id"),
@@ -1103,38 +1177,31 @@ func listCmd(args Args) error {
 				"priority": stringField(note.Data, "priority"),
 				"path":     note.RelativePath,
 				"updated":  stringField(note.Data, "updated"),
+				"project":  row.Project,
+			}
+			if row.ActiveLease != nil {
+				item["running"] = true
+				item["lease_owner"] = row.ActiveLease.Owner
+				item["lease_id"] = row.ActiveLease.ID
 			}
 			if currentType == "epic" {
 				id := stringField(note.Data, "id")
-				item["summary"] = stringField(note.Data, "summary")
-				item["counts"] = epicTaskCount(taskCounts, id)
+				item["summary"] = listEpicSummary(note)
+				item["counts"] = epicTaskCount(taskCounts, scopedEpicKey(row.Project, id))
 			}
 			items = append(items, item)
 		}
 		emitJSON(map[string]any{"ok": true, "count": len(items), "total": totalRows, "truncated": truncated, "items": items})
 		return nil
 	}
-	for _, note := range rows {
-		currentType := noteListKind(note.Data)
-		if currentType == "epic" {
-			id := stringField(note.Data, "id")
-			counts := epicTaskCount(taskCounts, id)
-			summary := strings.TrimSpace(stringField(note.Data, "summary"))
-			fmt.Printf("%-6s  %-8s  open:%-3d done:%-3d  %s\n", id, stringField(note.Data, "status"), counts["open"], counts["done"], stringField(note.Data, "title"))
-			if summary != "" {
-				fmt.Printf("  %s\n", summary)
-			}
-			continue
+	if format == "ids" {
+		for _, row := range rows {
+			fmt.Println(stringField(row.Note.Data, "id"))
 		}
-		fmt.Printf(
-			"%-14s  %-6s  %-10s  %-18s  %-18s  %s\n",
-			stringField(note.Data, "id"),
-			currentType,
-			stringField(note.Data, "status"),
-			fallback(stringField(note.Data, "readiness"), "-"),
-			fallback(stringField(note.Data, "next_owner"), "-"),
-			stringField(note.Data, "title"),
-		)
+		return nil
+	}
+	if len(rows) > 0 {
+		fmt.Print(renderListTable(rows, taskCounts, args))
 	}
 	if len(rows) == 0 && !args.Bool("quiet") {
 		fmt.Println("(no matches)")
@@ -1145,11 +1212,508 @@ func listCmd(args Args) error {
 	return nil
 }
 
+type listTableColumn struct {
+	Header       string
+	Min          int
+	Max          int
+	Shrink       bool
+	DropPriority int
+}
+
+func renderListTable(rows []listRecord, taskCounts map[string]map[string]int, args Args) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	if allListRowsAreKind(rows, "epic") {
+		return renderEpicListTable(rows, taskCounts, args)
+	}
+	return renderWorkListTable(rows, args)
+}
+
+func renderEpicListTable(rows []listRecord, taskCounts map[string]map[string]int, args Args) string {
+	showProject := args.Bool("all-projects")
+	columns := []listTableColumn{}
+	if showProject {
+		columns = append(columns, listTableColumn{Header: "Project", Min: 7, Max: 14, Shrink: true, DropPriority: 60})
+	}
+	columns = append(columns,
+		listTableColumn{Header: "ID", Min: 4, Max: 8},
+		listTableColumn{Header: "Status", Min: 6, Max: 10},
+		listTableColumn{Header: "Open", Min: 4, Max: 5},
+		listTableColumn{Header: "Done", Min: 4, Max: 5, DropPriority: 70},
+		listTableColumn{Header: "Title", Min: 16, Max: 34, Shrink: true},
+		listTableColumn{Header: "Summary", Min: 20, Max: 64, Shrink: true, DropPriority: 100},
+	)
+	tableRows := make([][]string, 0, len(rows))
+	for _, row := range rows {
+		note := row.Note
+		id := stringField(note.Data, "id")
+		counts := epicTaskCount(taskCounts, scopedEpicKey(row.Project, id))
+		cells := []string{}
+		if showProject {
+			cells = append(cells, row.Project)
+		}
+		cells = append(cells,
+			id,
+			fallback(stringField(note.Data, "status"), "-"),
+			strconv.Itoa(counts["open"]),
+			strconv.Itoa(counts["done"]),
+			stringField(note.Data, "title"),
+			listEpicSummary(note),
+		)
+		tableRows = append(tableRows, cells)
+	}
+	return renderASCIIListTable(columns, tableRows, terminalOutputWidth(args))
+}
+
+func listEpicSummary(note Note) string {
+	if summary := strings.TrimSpace(stringField(note.Data, "summary")); summary != "" {
+		return summary
+	}
+	return firstListParagraph(sectionContent(note.Body, "## Thesis"))
+}
+
+func firstListParagraph(value string) string {
+	var lines []string
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			if len(lines) > 0 {
+				break
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "#") || strings.HasPrefix(line, "<!--") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, " ")
+}
+
+func renderWorkListTable(rows []listRecord, args Args) string {
+	showProject := args.Bool("all-projects")
+	columns := []listTableColumn{}
+	if showProject {
+		columns = append(columns, listTableColumn{Header: "Project", Min: 7, Max: 14, Shrink: true, DropPriority: 60})
+	}
+	columns = append(columns,
+		listTableColumn{Header: "ID", Min: 10, Max: 14, Shrink: true},
+		listTableColumn{Header: "Type", Min: 4, Max: 6, DropPriority: 90},
+		listTableColumn{Header: "Status", Min: 6, Max: 10},
+		listTableColumn{Header: "Ready", Min: 5, Max: 16, Shrink: true, DropPriority: 70},
+		listTableColumn{Header: "Owner", Min: 8, Max: 18, Shrink: true, DropPriority: 80},
+		listTableColumn{Header: "Run", Min: 3, Max: 16, Shrink: true, DropPriority: 100},
+		listTableColumn{Header: "Title", Min: 16, Max: 64, Shrink: true},
+	)
+	tableRows := make([][]string, 0, len(rows))
+	for _, row := range rows {
+		note := row.Note
+		cells := []string{}
+		if showProject {
+			cells = append(cells, row.Project)
+		}
+		cells = append(cells,
+			stringField(note.Data, "id"),
+			noteListKind(note.Data),
+			fallback(stringField(note.Data, "status"), "-"),
+			listReadinessLabel(note.Data),
+			listOwnerLabel(note.Data),
+			listRunningLabel(row),
+			stringField(note.Data, "title"),
+		)
+		tableRows = append(tableRows, cells)
+	}
+	return renderASCIIListTable(columns, tableRows, terminalOutputWidth(args))
+}
+
+func allListRowsAreKind(rows []listRecord, kind string) bool {
+	for _, row := range rows {
+		if noteListKind(row.Note.Data) != kind {
+			return false
+		}
+	}
+	return true
+}
+
+func listReadinessLabel(data map[string]any) string {
+	switch value := strings.TrimSpace(stringField(data, "readiness")); value {
+	case "":
+		return "-"
+	case "waiting_on_review":
+		return "review"
+	case "waiting_on_human":
+		return "human"
+	case "waiting_on_dependency":
+		return "blocked"
+	default:
+		return value
+	}
+}
+
+func listOwnerLabel(data map[string]any) string {
+	return fallback(firstNonEmpty(stringField(data, "next_owner"), stringField(data, "assignee")), "-")
+}
+
+func listRunningLabel(row listRecord) string {
+	if row.ActiveLease == nil {
+		return "-"
+	}
+	return fallback(row.ActiveLease.Owner, "active")
+}
+
+func renderASCIIListTable(columns []listTableColumn, rows [][]string, maxWidth int) string {
+	maxWidth = clampTerminalWidth(maxWidth)
+	cleanRows := make([][]string, len(rows))
+	for rowIndex, row := range rows {
+		cleanRows[rowIndex] = make([]string, len(row))
+		for cellIndex, cell := range row {
+			cleanRows[rowIndex][cellIndex] = compactListCell(cell)
+		}
+	}
+	columns, cleanRows = fitListTableColumns(columns, cleanRows, maxWidth)
+	widths := listTableWidths(columns, cleanRows, maxWidth)
+	var out []string
+	out = append(out, renderListTableLine(listTableHeaders(columns), widths))
+	out = append(out, renderListTableDivider(widths))
+	for _, row := range cleanRows {
+		out = append(out, renderListTableLine(row, widths))
+	}
+	return strings.Join(out, "\n") + "\n"
+}
+
+func fitListTableColumns(columns []listTableColumn, rows [][]string, maxWidth int) ([]listTableColumn, [][]string) {
+	for listTableMinimumTotalWidth(columns) > maxWidth {
+		dropIndex := -1
+		for i, column := range columns {
+			if column.DropPriority <= 0 {
+				continue
+			}
+			if dropIndex < 0 || column.DropPriority > columns[dropIndex].DropPriority {
+				dropIndex = i
+			}
+		}
+		if dropIndex < 0 {
+			break
+		}
+		columns = append(append([]listTableColumn{}, columns[:dropIndex]...), columns[dropIndex+1:]...)
+		for i, row := range rows {
+			if dropIndex >= len(row) {
+				continue
+			}
+			rows[i] = append(append([]string{}, row[:dropIndex]...), row[dropIndex+1:]...)
+		}
+	}
+	return columns, rows
+}
+
+func listTableMinimumTotalWidth(columns []listTableColumn) int {
+	widths := make([]int, 0, len(columns))
+	for _, column := range columns {
+		widths = append(widths, clampInt(listCellWidth(column.Header), column.Min, column.Max))
+	}
+	return listTableTotalWidth(widths)
+}
+
+func listTableHeaders(columns []listTableColumn) []string {
+	headers := make([]string, 0, len(columns))
+	for _, column := range columns {
+		headers = append(headers, column.Header)
+	}
+	return headers
+}
+
+func listTableWidths(columns []listTableColumn, rows [][]string, maxWidth int) []int {
+	widths := make([]int, len(columns))
+	for i, column := range columns {
+		widths[i] = clampInt(listCellWidth(column.Header), column.Min, column.Max)
+	}
+	for _, row := range rows {
+		for i, cell := range row {
+			if i >= len(widths) {
+				continue
+			}
+			widths[i] = clampInt(maxInt(widths[i], listCellWidth(cell)), columns[i].Min, columns[i].Max)
+		}
+	}
+	total := listTableTotalWidth(widths)
+	for total > maxWidth {
+		changed := false
+		for i := len(widths) - 1; i >= 0 && total > maxWidth; i-- {
+			if !columns[i].Shrink || widths[i] <= columns[i].Min {
+				continue
+			}
+			delta := minInt(widths[i]-columns[i].Min, total-maxWidth)
+			widths[i] -= delta
+			total -= delta
+			changed = true
+		}
+		if changed {
+			continue
+		}
+		for i := len(widths) - 1; i >= 0 && total > maxWidth; i-- {
+			if widths[i] <= columns[i].Min {
+				continue
+			}
+			delta := minInt(widths[i]-columns[i].Min, total-maxWidth)
+			widths[i] -= delta
+			total -= delta
+			changed = true
+		}
+		if !changed {
+			break
+		}
+	}
+	return widths
+}
+
+func listTableTotalWidth(widths []int) int {
+	total := 0
+	for _, width := range widths {
+		total += width
+	}
+	if len(widths) > 1 {
+		total += (len(widths) - 1) * 2
+	}
+	return total
+}
+
+func renderListTableDivider(widths []int) string {
+	cells := make([]string, 0, len(widths))
+	for _, width := range widths {
+		cells = append(cells, strings.Repeat("-", width))
+	}
+	return strings.TrimRight(strings.Join(cells, "  "), " ")
+}
+
+func renderListTableLine(cells []string, widths []int) string {
+	out := make([]string, 0, len(widths))
+	for i, width := range widths {
+		cell := ""
+		if i < len(cells) {
+			cell = cells[i]
+		}
+		out = append(out, padListCell(truncateListCell(cell, width), width))
+	}
+	return strings.TrimRight(strings.Join(out, "  "), " ")
+}
+
+func compactListCell(value string) string {
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func truncateListCell(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if listCellWidth(value) <= width {
+		return value
+	}
+	marker := "..."
+	markerWidth := listCellWidth(marker)
+	if width <= markerWidth {
+		return strings.Repeat(".", width)
+	}
+	return truncateListCellToWidth(value, width-markerWidth) + marker
+}
+
+func truncateListCellToWidth(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	var out strings.Builder
+	used := 0
+	for _, r := range value {
+		part := string(r)
+		partWidth := listCellWidth(part)
+		if used+partWidth > width {
+			break
+		}
+		out.WriteRune(r)
+		used += partWidth
+	}
+	return out.String()
+}
+
+func padListCell(value string, width int) string {
+	padding := width - listCellWidth(value)
+	if padding <= 0 {
+		return value
+	}
+	return value + strings.Repeat(" ", padding)
+}
+
+func listCellWidth(value string) int {
+	return displayCellWidth(value)
+}
+
+func clampInt(value, min, max int) int {
+	if max < min {
+		max = min
+	}
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
+}
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
+}
+
+func collectListRecords(args Args) ([]listRecord, error) {
+	if args.Bool("all-projects") {
+		projects, err := registeredProjects(args.String("project"))
+		if err != nil {
+			return nil, err
+		}
+		var out []listRecord
+		for _, project := range projects {
+			notes, err := listAllNotes(project.VaultRoot)
+			if err != nil {
+				return nil, err
+			}
+			activeLeases := activeV7LeasesByTask(project.VaultRoot)
+			label := registeredProjectLabel(project)
+			for _, note := range notes {
+				record := listRecord{Note: note, VaultPath: project.VaultRoot, Project: label}
+				if lease, ok := activeLeases[stringField(note.Data, "id")]; ok {
+					record.ActiveLease = &lease
+				}
+				out = append(out, record)
+			}
+		}
+		return out, nil
+	}
+	vaultPath, err := resolveVaultPath(args, false)
+	if err != nil {
+		return nil, err
+	}
+	notes, err := listAllNotes(vaultPath)
+	if err != nil {
+		return nil, err
+	}
+	activeLeases := activeV7LeasesByTask(vaultPath)
+	project := filepath.Base(filepath.Dir(vaultPath))
+	out := make([]listRecord, 0, len(notes))
+	for _, note := range notes {
+		record := listRecord{Note: note, VaultPath: vaultPath, Project: project}
+		if lease, ok := activeLeases[stringField(note.Data, "id")]; ok {
+			record.ActiveLease = &lease
+		}
+		out = append(out, record)
+	}
+	return out, nil
+}
+
+func activeV7LeasesByTask(vaultPath string) map[string]v7LeaseRecord {
+	out := map[string]v7LeaseRecord{}
+	leases, err := loadV7Leases(vaultPath)
+	if err != nil {
+		return out
+	}
+	now := time.Now().UTC()
+	for _, lease := range leases {
+		if lease.Status != "active" || v7LeaseExpired(lease, now) {
+			continue
+		}
+		out[lease.Task] = lease
+	}
+	return out
+}
+
+func listRecordMatchesMine(record listRecord) bool {
+	actor := defaultActorName()
+	agentOwner := "agent:" + actor
+	data := record.Note.Data
+	for _, value := range []string{
+		stringField(data, "next_owner"),
+		stringField(data, "assignee"),
+	} {
+		if value == actor || value == agentOwner {
+			return true
+		}
+	}
+	if record.ActiveLease != nil && (record.ActiveLease.Owner == actor || record.ActiveLease.Owner == agentOwner) {
+		return true
+	}
+	return false
+}
+
+func sortListRecords(rows []listRecord) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Project != rows[j].Project {
+			return rows[i].Project < rows[j].Project
+		}
+		left := rows[i].Note
+		right := rows[j].Note
+		leftType := noteListKind(left.Data)
+		rightType := noteListKind(right.Data)
+		if leftType != rightType {
+			return listTypeRank(leftType) < listTypeRank(rightType)
+		}
+		if leftType == "task" {
+			leftStatus := listStatusRank(stringField(left.Data, "status"))
+			rightStatus := listStatusRank(stringField(right.Data, "status"))
+			if leftStatus != rightStatus {
+				return leftStatus < rightStatus
+			}
+			leftPriority := priorityRank(stringField(left.Data, "priority"))
+			rightPriority := priorityRank(stringField(right.Data, "priority"))
+			if leftPriority != rightPriority {
+				return leftPriority < rightPriority
+			}
+		}
+		return stringField(left.Data, "id") < stringField(right.Data, "id")
+	})
+}
+
 func epicTaskCount(counts map[string]map[string]int, epic string) map[string]int {
 	if counts[epic] != nil {
 		return counts[epic]
 	}
 	return map[string]int{"open": 0, "done": 0, "closed": 0, "total": 0}
+}
+
+func taskCountsByScopedRecords(records []listRecord) map[string]map[string]int {
+	counts := map[string]map[string]int{}
+	for _, record := range records {
+		note := record.Note
+		if noteListKind(note.Data) != "task" {
+			continue
+		}
+		epic := wikiTarget(note.Data["epic"])
+		if epic == "" {
+			epic = stringField(note.Data, "epic")
+		}
+		if epic == "" {
+			continue
+		}
+		key := scopedEpicKey(record.Project, epic)
+		if counts[key] == nil {
+			counts[key] = map[string]int{"open": 0, "done": 0, "closed": 0, "total": 0}
+		}
+		counts[key]["total"]++
+		if isOpenWorkStatus(stringField(note.Data, "status")) {
+			counts[key]["open"]++
+		} else {
+			counts[key]["closed"]++
+		}
+		if stringField(note.Data, "status") == "done" {
+			counts[key]["done"]++
+		}
+	}
+	return counts
+}
+
+func scopedEpicKey(project, epic string) string {
+	return project + "\x00" + epic
 }
 
 func taskCountsByEpic(notes []Note) map[string]map[string]int {

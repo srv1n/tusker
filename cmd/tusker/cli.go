@@ -137,7 +137,7 @@ func parseCLI(argv []string) (string, Args) {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve":
+	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve":
 		return true
 	default:
 		return false
@@ -195,6 +195,14 @@ func run(command string, args Args) (int, error) {
 			return 0, nil
 		}
 	}
+	if command == "legacy" || strings.HasPrefix(command, "legacy ") {
+		if args.Bool("json") {
+			emitJSON(map[string]any{"ok": false, "error": errorToIssue(tuskerError(errorInvalidArg, "legacy commands are disabled in the V7-only CLI surface"))})
+		} else {
+			printLegacyHelp()
+		}
+		return 1, nil
+	}
 	switch command {
 	case "new epic":
 		return 0, newV7Epic(args)
@@ -236,6 +244,18 @@ func run(command string, args Args) (int, error) {
 	case "feedback digest":
 		args["_pos0"] = "digest"
 		return 0, feedbackV7Cmd(args)
+	case "feedback signals":
+		args["_pos0"] = "signals"
+		return 0, feedbackV7Cmd(args)
+	case "feedback review":
+		args["_pos0"] = "review"
+		return 0, feedbackV7Cmd(args)
+	case "feedback promote":
+		if ref := strings.TrimSpace(args.String("_pos0")); ref != "" {
+			args["_pos1"] = ref
+		}
+		args["_pos0"] = "promote"
+		return 0, feedbackV7Cmd(args)
 	case "improve":
 		return 0, improveV7Cmd(args)
 	case "improve scan":
@@ -265,26 +285,24 @@ func run(command string, args Args) (int, error) {
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, closeV7Cmd(args)
 	case "legacy new epic":
-		return 0, newV5Epic(args)
+		return legacyOnlyCommand("legacy new epic", "")
 	case "legacy new task":
-		return 0, newV5Task(args, "feature")
+		return legacyOnlyCommand("legacy new task", "")
 	case "legacy new bug":
-		return 0, newV5Task(args, "bug")
+		return legacyOnlyCommand("legacy new bug", "")
 	case "legacy new doc":
-		return 0, newV5Doc(args)
+		return legacyOnlyCommand("legacy new doc", "")
 	case "legacy next":
-		return 0, nextV5Cmd(args)
+		return legacyOnlyCommand("legacy next", "")
 	case "legacy verify":
-		return 0, verifyCmd(args)
+		return legacyOnlyCommand("legacy verify", "")
 	case "legacy close":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, closeV5Cmd(args)
+		return legacyOnlyCommand("legacy close", "")
 	case "legacy":
 		printLegacyHelp()
 		return 0, nil
 	case "legacy init":
-		args["legacy"] = "true"
-		return 0, initCmd(args)
+		return legacyOnlyCommand("legacy init", "")
 	case "reconcile":
 		return 0, reconcileV7Cmd(args)
 	case "brief":
@@ -306,183 +324,196 @@ func run(command string, args Args) (int, error) {
 		return legacyOnlyCommand("migrate gates", "legacy migrate gates")
 	case "migrate evidence-policy":
 		return 0, migrateV7EvidencePolicyCmd(args)
+	case "migrate vault-root":
+		return 0, migrateVaultRootCmd(args)
 	case "legacy migrate v7":
-		return 0, migrateV7Cmd(args)
+		return legacyOnlyCommand("legacy migrate v7", "")
 	case "legacy migrate gates":
-		return 0, migrateV7GatesCmd(args)
+		return legacyOnlyCommand("legacy migrate gates", "")
 	case "reindex":
 		return 0, reindex(args)
 	case "validate":
 		return validateCmd(args)
+	case "purge":
+		return 0, tuskerPurgeCmd(args)
 	case "list":
 		return 0, listCmd(args)
 	case "search":
 		return 0, searchCmd(args)
 	case "show":
 		return 0, showCmd(args)
+	case "print":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, printCmd(args)
+	case "open":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, openCmd(args)
 	case "compact":
 		return 0, compactCmd(args)
 	case "context audit":
 		return 0, contextAuditCmd(args)
 	case "docs init":
-		return 0, docsInitCmd(args)
+		return legacyOnlyCommand("docs init", "legacy docs init")
 	case "docs model":
-		return 0, docsModelCmd(args)
+		return legacyOnlyCommand("docs model", "legacy docs model")
 	case "docs map":
-		return 0, docsMapCmd(args)
+		return legacyOnlyCommand("docs map", "legacy docs map")
 	case "docs catalog":
-		return 0, docsCatalogCmd(args)
+		return legacyOnlyCommand("docs catalog", "legacy docs catalog")
 	case "docs freshness":
-		return 0, docsFreshnessCmd(args)
+		return legacyOnlyCommand("docs freshness", "legacy docs freshness")
 	case "docs check":
-		return 0, docsImpactCheckCmd(args)
+		return legacyOnlyCommand("docs check", "legacy docs check")
 	case "docs apply":
-		return 0, docsImpactApplyCmd(args)
+		return legacyOnlyCommand("docs apply", "legacy docs apply")
 	case "docs noop":
-		return 0, docsImpactNoopCmd(args)
+		return legacyOnlyCommand("docs noop", "legacy docs noop")
 	case "docs waive":
-		return 0, docsImpactWaiveCmd(args)
+		return legacyOnlyCommand("docs waive", "legacy docs waive")
 	case "docs export":
-		return 0, docsExportCmd(args)
+		return legacyOnlyCommand("docs export", "legacy docs export")
 	case "docs dev":
-		return 0, docsDevCmd(args)
+		return legacyOnlyCommand("docs dev", "legacy docs dev")
 	case "docs build":
-		return 0, docsBuildCmd(args)
+		return legacyOnlyCommand("docs build", "legacy docs build")
 	case "docs":
 		return legacyOnlyCommand("docs", "legacy docs")
 	case "legacy docs init":
-		return 0, docsInitCmd(args)
+		return legacyOnlyCommand("legacy docs init", "")
 	case "legacy docs model":
-		return 0, docsModelCmd(args)
+		return legacyOnlyCommand("legacy docs model", "")
 	case "legacy docs map":
-		return 0, docsMapCmd(args)
+		return legacyOnlyCommand("legacy docs map", "")
 	case "legacy docs catalog":
-		return 0, docsCatalogCmd(args)
+		return legacyOnlyCommand("legacy docs catalog", "")
 	case "legacy docs freshness":
-		return 0, docsFreshnessCmd(args)
+		return legacyOnlyCommand("legacy docs freshness", "")
 	case "legacy docs check":
-		return 0, docsImpactCheckCmd(args)
+		return legacyOnlyCommand("legacy docs check", "")
 	case "legacy docs apply":
-		return 0, docsImpactApplyCmd(args)
+		return legacyOnlyCommand("legacy docs apply", "")
 	case "legacy docs noop":
-		return 0, docsImpactNoopCmd(args)
+		return legacyOnlyCommand("legacy docs noop", "")
 	case "legacy docs waive":
-		return 0, docsImpactWaiveCmd(args)
+		return legacyOnlyCommand("legacy docs waive", "")
 	case "legacy docs export":
-		return 0, docsExportCmd(args)
+		return legacyOnlyCommand("legacy docs export", "")
 	case "legacy docs dev":
-		return 0, docsDevCmd(args)
+		return legacyOnlyCommand("legacy docs dev", "")
 	case "legacy docs build":
-		return 0, docsBuildCmd(args)
+		return legacyOnlyCommand("legacy docs build", "")
 	case "legacy docs":
-		printDocsHelp()
-		return 0, nil
+		return legacyOnlyCommand("legacy docs", "")
 	case "domain list":
-		return 0, domainListCmd(args)
+		return 0, domainV7ListCmd(args)
 	case "domain show":
-		return 0, domainShowCmd(args)
+		return 0, domainV7ShowCmd(args)
 	case "domain new":
-		return 0, domainNewCmd(args)
+		return 0, newV7Domain(args)
 	case "domain canon":
-		return 0, domainCanonCmd(args)
+		return 0, domainV7CanonCmd(args)
 	case "domain graph":
-		return 0, domainGraphCmd(args)
+		return legacyOnlyCommand("domain graph", "")
 	case "domain":
-		return legacyOnlyCommand("domain", "legacy domain")
-	case "legacy domain list":
-		return 0, domainListCmd(args)
-	case "legacy domain show":
-		return 0, domainShowCmd(args)
-	case "legacy domain new":
-		return 0, domainNewCmd(args)
-	case "legacy domain canon":
-		return 0, domainCanonCmd(args)
-	case "legacy domain graph":
-		return 0, domainGraphCmd(args)
-	case "legacy domain":
 		printDomainHelp()
 		return 0, nil
+	case "legacy domain list":
+		return legacyOnlyCommand("legacy domain list", "")
+	case "legacy domain show":
+		return legacyOnlyCommand("legacy domain show", "")
+	case "legacy domain new":
+		return legacyOnlyCommand("legacy domain new", "")
+	case "legacy domain canon":
+		return legacyOnlyCommand("legacy domain canon", "")
+	case "legacy domain graph":
+		return legacyOnlyCommand("legacy domain graph", "")
+	case "legacy domain":
+		return legacyOnlyCommand("legacy domain", "")
 	case "knowledge map":
-		return 0, knowledgeMapCmd(args)
+		return legacyOnlyCommand("knowledge map", "legacy knowledge map")
 	case "knowledge list":
-		return 0, knowledgeListCmd(args)
+		return legacyOnlyCommand("knowledge list", "legacy knowledge list")
 	case "knowledge show":
-		return 0, knowledgeShowCmd(args)
+		return legacyOnlyCommand("knowledge show", "legacy knowledge show")
 	case "knowledge route":
-		return 0, knowledgeRouteCmd(args)
+		return legacyOnlyCommand("knowledge route", "legacy knowledge route")
 	case "knowledge freshness":
-		return 0, knowledgeFreshnessCmd(args)
+		return legacyOnlyCommand("knowledge freshness", "legacy knowledge freshness")
 	case "knowledge check":
-		return 0, knowledgeCheckCmd(args)
+		return legacyOnlyCommand("knowledge check", "legacy knowledge check")
 	case "knowledge apply":
-		return 0, knowledgeApplyCmd(args)
+		return legacyOnlyCommand("knowledge apply", "legacy knowledge apply")
 	case "knowledge noop":
-		return 0, knowledgeNoopCmd(args)
+		return legacyOnlyCommand("knowledge noop", "legacy knowledge noop")
 	case "knowledge waive":
-		return 0, knowledgeWaiveCmd(args)
+		return legacyOnlyCommand("knowledge waive", "legacy knowledge waive")
 	case "knowledge new":
-		return 0, knowledgeNewCmd(args)
+		return 0, knowledgeV7NewCmd(args)
 	case "skill doctor":
 		return skillV7DoctorCmd(args)
 	case "skill route":
 		return 0, skillV7RouteCmd(args)
 	case "skill pack":
 		return 0, skillV7PackCmd(args)
+	case "skill sync":
+		return 0, skillSyncCmd(args)
+	case "skill bundle":
+		return 0, skillBundleCmd(args)
 	case "skill audit-agent-guidance":
 		return skillV7AuditAgentGuidanceCmd(args)
 	case "skill":
 		printSkillHelp()
 		return 0, nil
 	case "knowledge":
-		return legacyOnlyCommand("knowledge", "legacy knowledge")
-	case "legacy knowledge map":
-		return 0, knowledgeMapCmd(args)
-	case "legacy knowledge list":
-		return 0, knowledgeListCmd(args)
-	case "legacy knowledge show":
-		return 0, knowledgeShowCmd(args)
-	case "legacy knowledge route":
-		return 0, knowledgeRouteCmd(args)
-	case "legacy knowledge freshness":
-		return 0, knowledgeFreshnessCmd(args)
-	case "legacy knowledge check":
-		return 0, knowledgeCheckCmd(args)
-	case "legacy knowledge apply":
-		return 0, knowledgeApplyCmd(args)
-	case "legacy knowledge noop":
-		return 0, knowledgeNoopCmd(args)
-	case "legacy knowledge waive":
-		return 0, knowledgeWaiveCmd(args)
-	case "legacy knowledge new":
-		return 0, knowledgeNewCmd(args)
-	case "legacy knowledge":
 		printKnowledgeHelp()
 		return 0, nil
+	case "legacy knowledge map":
+		return legacyOnlyCommand("legacy knowledge map", "")
+	case "legacy knowledge list":
+		return legacyOnlyCommand("legacy knowledge list", "")
+	case "legacy knowledge show":
+		return legacyOnlyCommand("legacy knowledge show", "")
+	case "legacy knowledge route":
+		return legacyOnlyCommand("legacy knowledge route", "")
+	case "legacy knowledge freshness":
+		return legacyOnlyCommand("legacy knowledge freshness", "")
+	case "legacy knowledge check":
+		return legacyOnlyCommand("legacy knowledge check", "")
+	case "legacy knowledge apply":
+		return legacyOnlyCommand("legacy knowledge apply", "")
+	case "legacy knowledge noop":
+		return legacyOnlyCommand("legacy knowledge noop", "")
+	case "legacy knowledge waive":
+		return legacyOnlyCommand("legacy knowledge waive", "")
+	case "legacy knowledge new":
+		return legacyOnlyCommand("legacy knowledge new", "")
+	case "legacy knowledge":
+		return legacyOnlyCommand("legacy knowledge", "")
 	case "publish export":
-		return 0, publishExportCmd(args)
+		return legacyOnlyCommand("publish export", "legacy publish export")
 	case "publish build":
-		return 0, publishBuildCmd(args)
+		return legacyOnlyCommand("publish build", "legacy publish build")
 	case "publish dev":
-		return 0, publishDevCmd(args)
+		return legacyOnlyCommand("publish dev", "legacy publish dev")
 	case "publish llms":
-		return 0, publishLLMSCmd(args)
+		return legacyOnlyCommand("publish llms", "legacy publish llms")
 	case "publish skill":
 		return 0, publishSkillCmd(args)
 	case "publish":
-		return legacyOnlyCommand("publish", "legacy publish")
-	case "legacy publish export":
-		return 0, publishExportCmd(args)
-	case "legacy publish build":
-		return 0, publishBuildCmd(args)
-	case "legacy publish dev":
-		return 0, publishDevCmd(args)
-	case "legacy publish llms":
-		return 0, publishLLMSCmd(args)
-	case "legacy publish skill":
-		return 0, publishSkillCmd(args)
-	case "legacy publish":
 		printPublishHelp()
 		return 0, nil
+	case "legacy publish export":
+		return legacyOnlyCommand("legacy publish export", "")
+	case "legacy publish build":
+		return legacyOnlyCommand("legacy publish build", "")
+	case "legacy publish dev":
+		return legacyOnlyCommand("legacy publish dev", "")
+	case "legacy publish llms":
+		return legacyOnlyCommand("legacy publish llms", "")
+	case "legacy publish skill":
+		return legacyOnlyCommand("legacy publish skill", "")
+	case "legacy publish":
+		return legacyOnlyCommand("legacy publish", "")
 	case "vault set":
 		return 0, vaultSetCmd(args)
 	case "vault status":
@@ -506,6 +537,31 @@ func run(command string, args Args) (int, error) {
 		return 0, daemonLimitsCmd(args)
 	case "daemon":
 		printDaemonHelp()
+		return 0, nil
+	case "automation status":
+		return 0, automationStatusCmd(args)
+	case "automation queue":
+		return 0, automationQueueCmd(args)
+	case "automation explain":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, automationExplainCmd(args)
+	case "automation plan":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, automationPlanCmd(args)
+	case "automation dispatch":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, automationDispatchCmd(args)
+	case "automation collect-external":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, automationCollectExternalCmd(args)
+	case "automation external-loop":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, automationExternalLoopCmd(args)
+	case "automation advance-external":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, automationAdvanceExternalCmd(args)
+	case "automation":
+		printAutomationHelp()
 		return 0, nil
 	case "projects add":
 		return 0, projectsAddCmd(args)
@@ -541,7 +597,7 @@ func run(command string, args Args) (int, error) {
 	case "graph":
 		return legacyOnlyCommand("graph", "legacy graph")
 	case "legacy graph":
-		return 0, graphCmd(args)
+		return legacyOnlyCommand("legacy graph", "")
 	case "refresh":
 		return 0, refreshCmd(args)
 	case "install":
@@ -567,6 +623,9 @@ func run(command string, args Args) (int, error) {
 	case "help evidence":
 		printEvidenceHelp()
 		return 0, nil
+	case "help migrate vault-root":
+		printMigrateVaultRootHelp()
+		return 0, nil
 	case "help handoff", "help gate", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help hook", "help hook install", "help migrate", "help migrate v7", "help migrate gates":
 		printV7Help()
 		return 0, nil
@@ -590,6 +649,12 @@ func run(command string, args Args) (int, error) {
 		return 0, nil
 	case "help show":
 		printShowHelp()
+		return 0, nil
+	case "help print":
+		printPrintHelp()
+		return 0, nil
+	case "help open":
+		printOpenHelp()
 		return 0, nil
 	case "help compact":
 		printCompactHelp()
@@ -627,6 +692,9 @@ func run(command string, args Args) (int, error) {
 	case "help daemon", "help daemon run", "help daemon status", "help daemon limits":
 		printDaemonHelp()
 		return 0, nil
+	case "help automation", "help automation status", "help automation queue", "help automation explain", "help automation plan", "help automation dispatch", "help automation collect-external", "help automation external-loop", "help automation advance-external":
+		printAutomationHelp()
+		return 0, nil
 	case "help projects", "help projects add", "help projects list", "help projects limits", "help projects enable", "help projects disable", "help projects remove":
 		printProjectsHelp()
 		return 0, nil
@@ -642,6 +710,9 @@ func run(command string, args Args) (int, error) {
 	case "help update":
 		printUpdateHelp()
 		return 0, nil
+	case "help purge":
+		printPurgeHelp()
+		return 0, nil
 	case "help sync-repo-contract":
 		printSyncRepoContractHelp()
 		return 0, nil
@@ -650,9 +721,6 @@ func run(command string, args Args) (int, error) {
 		return 0, nil
 	case "help", "--help", "-h", "":
 		printHelp()
-		return 0, nil
-	case "help legacy", "help legacy init", "help legacy new", "help legacy docs", "help legacy domain", "help legacy knowledge", "help legacy publish", "help legacy migrate":
-		printLegacyHelp()
 		return 0, nil
 	default:
 		if args.Bool("json") {
@@ -665,21 +733,21 @@ func run(command string, args Args) (int, error) {
 	}
 }
 
-func legacyOnlyCommand(command, replacement string) (int, error) {
-	return 1, tuskerError(errorInvalidArg, fmt.Sprintf("%s is legacy-only; use `tusker %s`", command, replacement), withHint("V7 is the default top-level CLI surface."))
+func legacyOnlyCommand(command, _ string) (int, error) {
+	return 1, removedSurfaceError(command)
 }
 
 func printHelp() {
 	fmt.Println(`Tusker - V7 repo-local work tracking
 
 Vault discovery: if [--vault] is omitted, tusker walks up from the current
-working directory looking for a repo-local tusker/ vault. V7 markers include
-tusker.yaml, tusker/work, and tusker/knowledge/domains.
+working directory looking for a repo-local .tusker/ vault. V7 markers include
+tusker.yaml, .tusker/work, and .tusker/knowledge/domains.
 
 Start here:
   tusker init --yes
-  tusker new epic --vault ./tusker --acronym APP --title "App foundation"
-  tusker new task --vault ./tusker --epic APP --title "Implement auth" --size m --risk medium
+  tusker new epic --vault ./.tusker --acronym APP --title "App foundation"
+  tusker new task --vault ./.tusker --epic APP --title "Implement auth" --size m --risk medium
 
 Commands:
   init                initialize or refresh a repo vault
@@ -687,6 +755,8 @@ Commands:
   list                list work records
   search              search tracker notes without generated files or attachments
   show                show a bounded note capsule or selected section
+  print               render a Tusker note as terminal-friendly Markdown
+  open                open a Tusker note in the OS, editor, or Obsidian
   compact             remove empty optional metadata and disposable note scaffolding
   context             audit Codex JSONL context and tool-output bloat
   status              move a V7 task through its workflow
@@ -707,34 +777,39 @@ Commands:
   hook                install optional local Git hooks
   vault               symlink repo trackers into a shared Obsidian vault
   daemon              operator loop for registered local projects
+  automation          plan, inspect, and manually dispatch daemon automation work
   projects            register repositories for daemon pickup
   runs                inspect, tail, and interrupt daemon runs
   refresh             run one daemon poll tick
   install             install binary and skill bundles
+  purge               dry-run or remove generated Tusker repo state
   close               close a V7 task after gates and evidence pass
   validate            check vault invariants
   reindex             rebuild generated indexes
   update              refresh the installed binary link and skill bundle
   skill               doctor, route, and pack V7 project skills
-  legacy              explicit access to old tracker, knowledge, docs, and migration commands
 
 Help:
   tusker new --help
   tusker vault --help
   tusker daemon --help
+  tusker automation --help
+  tusker automation plan <task> --json
   tusker runs --help
   tusker search --help
   tusker show --help
+  tusker print --help
+  tusker open --help
   tusker compact --help
   tusker context --help
   tusker status --help
   tusker install --help
+  tusker purge --help
   tusker gate --help
   tusker feedback --help
   tusker improve --help
   tusker packet --help
   tusker skill --help
-  tusker legacy --help
 
 Global flags:
   --json           Emit machine-readable output on success and error.`)
@@ -754,9 +829,11 @@ func printCommandHelp(command string) bool {
 		printClaimHelp()
 	case "evidence":
 		printEvidenceHelp()
+	case "migrate vault-root":
+		printMigrateVaultRootHelp()
 	case "handoff", "finish", "gate", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
 		printV7Help()
-	case "feedback", "feedback add", "feedback digest":
+	case "feedback", "feedback add", "feedback digest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()
 	case "improve", "improve scan":
 		printImproveHelp()
@@ -770,12 +847,18 @@ func printCommandHelp(command string) bool {
 		printSearchHelp()
 	case "show":
 		printShowHelp()
+	case "print":
+		printPrintHelp()
+	case "open":
+		printOpenHelp()
 	case "compact":
 		printCompactHelp()
 	case "context", "context audit":
 		printContextHelp()
 	case "validate":
 		printValidateHelp()
+	case "purge":
+		printPurgeHelp()
 	case "reindex":
 		printReindexHelp()
 	case "docs", "docs init", "docs model", "docs map", "docs catalog", "docs freshness", "docs check", "docs apply", "docs noop", "docs waive", "docs export", "docs dev", "docs build":
@@ -784,7 +867,7 @@ func printCommandHelp(command string) bool {
 		printDomainHelp()
 	case "knowledge", "knowledge map", "knowledge list", "knowledge show", "knowledge route", "knowledge freshness", "knowledge check", "knowledge apply", "knowledge noop", "knowledge waive", "knowledge new":
 		printKnowledgeHelp()
-	case "skill", "skill doctor", "skill route", "skill pack", "skill audit-agent-guidance":
+	case "skill", "skill doctor", "skill route", "skill pack", "skill sync", "skill bundle", "skill audit-agent-guidance":
 		printSkillHelp()
 	case "publish", "publish export", "publish build", "publish dev", "publish llms", "publish skill":
 		printPublishHelp()
@@ -794,6 +877,8 @@ func printCommandHelp(command string) bool {
 		printVaultHelp()
 	case "daemon", "daemon run", "daemon status", "daemon limits":
 		printDaemonHelp()
+	case "automation", "automation status", "automation queue", "automation explain", "automation plan", "automation dispatch", "automation collect-external", "automation external-loop", "automation advance-external":
+		printAutomationHelp()
 	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects remove":
 		printProjectsHelp()
 	case "runs", "runs inspect", "runs logs", "runs events", "runs interrupt":
@@ -815,29 +900,21 @@ func printCommandHelp(command string) bool {
 }
 
 func printLegacyHelp() {
-	fmt.Println(`Usage:
-  tusker legacy new epic --acronym <ACR> --title <title>
-  tusker legacy new task --epic <ACR> --title <title>
-  tusker legacy new bug --epic <ACR> --title <title>
-  tusker legacy new doc --node <route> --title <title>
-  tusker legacy init [--vault <path>] [--yes] [--fresh]
-  tusker legacy next [--epic <ACR>] [--json]
-  tusker legacy verify <id> [--by <name>]
-  tusker legacy close <id> [--by <name>]
-  tusker legacy docs <subcommand>
-  tusker legacy domain <subcommand>
-  tusker legacy knowledge <subcommand>
-  tusker legacy publish <subcommand>
-  tusker legacy migrate v7|gates
-  tusker legacy graph <node-or-task-or-domain>
+	fmt.Println(`Legacy V5/V6 documentation commands were removed from this build.
 
-Purpose:
-  Explicit access to the V5 tracker, V6 knowledge graph, docs-map/docs
-  publishing, and migration surfaces. Top-level commands are V7 defaults.`)
+Use the V7 surfaces instead:
+  tusker init --yes
+  tusker new epic --acronym APP --title "App foundation"
+  tusker new task --epic APP --title "Implement auth"
+  tusker domain list
+  tusker skill doctor --strict
+  tusker automation plan <TASK-ID> --json
+
+Migration work should happen out-of-band, then import only current V7 work, gates, evidence, and knowledge canon into .tusker/.`)
 }
 
-func printLegacyRedirectHelp(command, replacement string) {
-	fmt.Printf("`tusker %s` is legacy-only. Use `tusker %s`.\n", command, replacement)
+func printLegacyRedirectHelp(command, _ string) {
+	fmt.Printf("`tusker %s` was removed from the V7-only build. Use V7 work/domain/skill commands instead.\n", command)
 }
 
 func printDaemonHelp() {
@@ -848,11 +925,11 @@ func printDaemonHelp() {
 
 Purpose:
   Operator/internal runtime loop for registered local projects. The normal
-  workflow remains task-centric: edit a task, move it to active or rework, then
+  workflow remains task-centric: edit a task, move it to ready or rework, then
   verify and close after the daemon hands it to review.
 
 Behavior:
-  - daemon run polls registered projects and dispatches active/rework tasks
+  - daemon run polls registered projects and dispatches ready/rework tasks
   - --once performs one poll tick and exits
   - daemon status reports state-root, project count, and active run count
   - daemon limits reads or updates the global active-run cap
@@ -863,11 +940,50 @@ Examples:
   tusker daemon limits --max-active-runs 1`)
 }
 
+func printAutomationHelp() {
+	fmt.Println(`Usage:
+  tusker automation status [--json]
+  tusker automation queue [--project <id>|--repo <path>|--vault <path>] [--json]
+  tusker automation explain <task> [--project <id>|--repo <path>|--vault <path>] [--json]
+  tusker automation plan <task> [--project <id>|--repo <path>|--vault <path>] [--json]
+  tusker automation dispatch <task> [--project <id>|--repo <path>|--vault <path>] [--json]
+  tusker automation collect-external <task> --runner chatgpt-browser --job <job-id> [--covers A1,A2] [--json]
+  tusker automation external-loop <task> [--json]
+  tusker automation advance-external <task> --job <job-id> [--dispatch] [--json]
+  tusker automation advance-external <task> --event apply_failed|apply_succeeded|review_succeeded [--reason <text>] [--json]
+
+Purpose:
+  Operator surface for daemon automation. Plan, explain, and queue are read-only.
+  Dispatch bypasses polling only after the same eligibility checks pass.
+
+Behavior:
+  - status summarizes registered projects and runtime run counts
+  - queue splits dispatchable and blocked task candidates
+  - explain shows concrete blockers, selected runner, workspace, and approvals
+  - plan is the canonical dispatch decision used by agents and operators
+  - dispatch routes through the daemon dispatch helper and existing gates
+  - collect-external fetches ChatGPT/browser artifacts, records review packets, and stores patches as apply inputs
+  - external-loop shows durable external cycle counters and policy events
+  - advance-external records the next loop decision, enforces caps, and can dispatch the Codex apply path
+
+Examples:
+  tusker automation queue --json
+  tusker automation explain APP-T-0001
+  tusker automation plan APP-T-0001 --json
+  tusker automation dispatch APP-T-0001 --json
+  tusker automation collect-external APP-T-0001 --runner chatgpt-browser --job cgpt_xxx --json
+  tusker automation advance-external APP-T-0001 --job cgpt_xxx --dispatch --json
+  tusker automation advance-external APP-T-0001 --event apply_failed --reason "git apply conflict" --json`)
+}
+
 func printV7Help() {
 	fmt.Println(`Usage:
   tusker new epic --acronym HSP --title "First-class harness provider setup"
   tusker new task --epic HSP --title "Add provider smoke harness"
-  tusker new gate --blocks HSP-T-0001 --kind auth --owner human:sarav
+  tusker new gate --blocks HSP-T-0001 --kind auth --owner human:sarav \
+    --action "Provision staging OAuth credentials." \
+    --verification "Provider endpoint returned ready." \
+    --why-agent-cannot "Human account access is required."
   tusker new decision --epic HSP --title "Use repo-local branch-safe tracker"
 
   tusker gate list --open [--owner human:sarav]
@@ -912,11 +1028,30 @@ func printV7Help() {
   tusker migrate v7 --dry-run [--json]
   tusker migrate gates --from-blocked-reason [--write] [--json]
   tusker migrate evidence-policy [--write] [--json]
+  tusker migrate vault-root --to .tusker [--dry-run] [--json]
 
 Purpose:
   V7 repo-local, markdown-backed work records with first-class proof, gates, evidence,
   attempts, event-per-file history, generated briefs/packets/dashboards, and
   branch guards for protected task/gate state.`)
+}
+
+func printMigrateVaultRootHelp() {
+	fmt.Println(`Usage:
+  tusker migrate vault-root --to .tusker [--vault <path>] [--dry-run] [--json]
+
+Purpose:
+  Explicitly move a repo-local Tusker vault, update tusker.yaml storage roots,
+  and refresh managed AGENTS.md / CLAUDE.md pointer blocks.
+
+Behavior:
+  - never runs as part of normal commands or init
+  - warns when the Git worktree is dirty
+  - errors if the destination already exists
+
+Examples:
+  tusker migrate vault-root --to .tusker --dry-run
+  tusker migrate vault-root --to .tusker`)
 }
 
 func printProjectsHelp() {
@@ -934,7 +1069,7 @@ Purpose:
   poll.
 
 Examples:
-  tusker projects add --repo . --vault ./tusker
+  tusker projects add --repo . --vault ./.tusker
   tusker projects list
   tusker projects disable --repo .`)
 }
@@ -963,54 +1098,36 @@ func printRefreshHelp() {
 
 Purpose:
   Run one daemon poll tick for registered projects. This is the easiest local
-  smoke path for checking whether active/rework tasks are picked up.`)
+  smoke path for checking whether ready/rework tasks are picked up.`)
 }
 
 func printDomainHelp() {
 	fmt.Println(`Usage:
-  tusker domain list [--v7] [--json]
-  tusker domain show <domain-id> [--v7] [--capsule|--full|--json]
+  tusker domain list [--json]
+  tusker domain show <domain-id> [--capsule|--full|--json]
   tusker domain new <domain-id> --title "..." [--summary "..."]
-  tusker domain new <domain-id> --v7 --title "..." [--summary "..."]
-  tusker domain canon <domain-id> [--v7] [--full]
-  tusker domain graph <domain-id> [--depth 1] [--json]
+  tusker domain canon <domain-id> [--full]
 
 Purpose:
-  Inspect V6 source-truth domains, or create V7 domain canon folders under
-  tusker/knowledge/domains/** with --v7.
+  Operate V7 domain canon under .tusker/knowledge/domains/**.
 
 Examples:
   tusker domain list
   tusker domain show runtime --capsule
-  tusker domain new billing --title "Billing" --summary "Plans and invoices."
-  tusker domain new providers --v7 --title "Providers"`)
+  tusker domain new providers --title "Providers" --summary "External API integrations."`)
 }
 
 func printKnowledgeHelp() {
 	fmt.Println(`Usage:
-  tusker knowledge map [--json]
-  tusker knowledge list [--domain <id>] [--json]
-  tusker knowledge new <node> --title "..." [--kind reference] [--source <paths>]
-  tusker knowledge new <domain>/<folder>/<slug> --v7 --kind runbook|decision|invariant|interface|glossary|source --title "..."
-  tusker knowledge show <node> [--capsule|--full|--section <name>|--json]
-  tusker knowledge route "<intent>" [--limit <n>] [--json]
-  tusker knowledge freshness [--stale] [--json]
-  tusker knowledge check <TASK-ID> [--json]
-  tusker knowledge apply <TASK-ID> --node <node> --reason "..."
-  tusker knowledge noop <TASK-ID> --node <node> --reason "..."
-  tusker knowledge waive <TASK-ID> --node <node> --reason "..."
+  tusker knowledge new <domain>/<folder>/<slug> --kind runbook|decision|invariant|interface|glossary|source --title "..."
 
 Purpose:
-  Operate the legacy V6 knowledge graph, or use --v7 with knowledge new to
-  create V7 leaf nodes under tusker/knowledge/domains/**. Prefer V7 leaf
-  generation for runbooks, interfaces, invariants, decisions, glossary entries,
-  and raw source attribution under sources/.
+  Create V7 leaf nodes under .tusker/knowledge/domains/**. Routing and reading
+  should happen through ` + "`" + `tusker skill route` + "`" + ` and the project SKILL.md.
 
 Examples:
-  tusker knowledge route "reviewer lane auto close"
-  tusker knowledge show runtime/reference/reviewer-lane --capsule
-  tusker knowledge freshness --stale
-  tusker knowledge new providers/runbooks/oauth-refresh --v7 --kind runbook --title "OAuth refresh"`)
+  tusker knowledge new runtime/runbooks/dispatch-loop --kind runbook --title "Dispatch loop"
+  tusker knowledge new providers/decisions/oauth-refresh --kind decision --title "OAuth refresh policy"`)
 }
 
 func printSkillHelp() {
@@ -1020,13 +1137,18 @@ func printSkillHelp() {
   tusker skill audit-agent-guidance [--repo <path>] [--write|--draft] [--target feedback|knowledge] [--json]
   tusker skill route "<intent>" [--json]
   tusker skill pack <TASK-ID> --budget <n> --for agent
+  tusker skill sync [--repo <path>] [--mode symlink|copy] [--source <checkout>] [--json]
+  tusker skill bundle [--repo <path>] [--out <path>] [--dereference-symlinks] [--json]
 
 Purpose:
   Validate and route V7 project skills. skill doctor checks the repo skill
-  package, domain routes, docs publication sources, forbidden source-truth
-  paths, local absolute paths, and task-domain coverage. skill route returns the
+  package, domain routes, forbidden source-truth paths, local absolute paths,
+  and task-domain coverage. skill route returns the
   smallest ordered read set for an intent. skill pack is an explicit wrapper
-  over tusker packet for bounded task context. audit-agent-guidance finds
+  over tusker packet for bounded task context. skill sync refreshes repo-local
+  generated skill installs, defaulting to symlink mode. Pass --source when
+  running from outside the Tusker checkout. skill bundle creates a portable
+  materialized copy for cloud/handoff contexts. audit-agent-guidance finds
   non-managed AGENTS.md/CLAUDE.md guidance, detects stale/missing Tusker
   bootstrap blocks, and --write refreshes managed bootstrap guidance.
 
@@ -1034,30 +1156,23 @@ Examples:
   tusker skill doctor --strict --json
   tusker skill audit-agent-guidance --write
   tusker skill route "change provider auth refresh logic" --json
-  tusker skill pack VSD-T-0010 --budget 6000 --for agent`)
+  tusker skill pack VSD-T-0010 --budget 6000 --for agent
+  tusker skill sync --repo .
+  tusker skill sync --repo . --source ~/src/tusker
+  tusker skill bundle --repo . --out .tusker/_generated/skill-bundle`)
 }
 
 func printPublishHelp() {
 	fmt.Println(`Usage:
-  tusker publish export [--site ./site]
-  tusker publish build [--site ./site] [--quiet]
-  tusker publish dev [--site ./site] [--host 127.0.0.1] [--port 4321]
-  tusker publish llms [--site ./site]
-  tusker publish skill [--v7] [--out ./dist/project-skill]
+  tusker publish skill --v7 [--out ./dist/project-skill]
 
 Purpose:
-  Generate V6 projections from tusker/domains/** or V7 project-skill bundles
-  from tusker/knowledge/domains/**. Source truth stays in the vault; site, LLM
-  lanes, and project-skill packages are disposable output.`)
+  Export the V7 project skill package from .tusker/SKILL.md and
+  .tusker/knowledge/domains/**. Site export/build/dev/llms were removed.`)
 }
 
 func printGraphHelp() {
-	fmt.Println(`Usage:
-  tusker graph <node-or-task-or-domain> [--depth 1] [--json]
-
-Purpose:
-  Inspect a bounded V6 graph neighborhood across domains, knowledge nodes,
-  tasks, and epics.`)
+	fmt.Println(`Graph inspection belonged to the removed V6 knowledge graph. Use ` + "`" + `tusker skill route` + "`" + ` or domain show for V7 routing.`)
 }
 
 func printVaultHelp() {
@@ -1082,141 +1197,72 @@ Behavior:
 
 Examples:
   tusker vault set --path ~/Obsidian/Tusker
-  tusker vault mount --repo . --vault ./tusker --name my-app
+  tusker vault mount --repo . --vault ./.tusker --name my-app
   tusker vault status`)
 }
 
 func printInitHelp() {
 	fmt.Println(`Usage:
-  tusker init [--vault <path>] [--yes] [--fresh]
-  tusker init --profile generic|library|app|cli|infra|tusker|v7 [--yes] [--fresh]
-  tusker legacy init [--vault <path>] [--yes] [--fresh]
-  tusker init --migrate-v5 [--vault <path>] [--yes] [--vault-only]
-  tusker init --migrate-v6 --dry-run [--vault <path>]
+  tusker init [--vault <path>] [--yes] [--fresh] [--purge-state]
+  tusker init --profile v7 [--yes] [--fresh] [--purge-state]
 
 What it does:
-  1. initializes a fresh vault if needed
-  2. writes WORKFLOW.md
-  3. injects Tusker pointers into AGENTS.md / CLAUDE.md
-  4. installs repo-contract helper docs
-  5. reindexes the vault
+  1. initializes a V7 repo-local vault under .tusker by default
+  2. writes WORKFLOW.md with tracker_schema_version: 7
+  3. writes .tusker/SKILL.md and knowledge/domains/** starter canon
+  4. injects Tusker pointers into AGENTS.md / CLAUDE.md unless disabled
+  5. reindexes the vault and refreshes V7 dashboards/Bases
 
-Default init creates a V7 repo-local work tracker with tusker/SKILL.md,
-tusker/work/**, tusker/knowledge/domains/**, evidence, attempts, events,
-dashboards, and generated packet/index folders.
-
-tusker legacy init creates the old V5 docs/template scaffold.
-
-With --migrate-v5 it initializes the legacy scaffold, then converts legacy
-story/bug notes into V5 tasks, renames epic index files to V5 paths, adds
-schemas, refreshes templates/views, and creates a side-by-side backup before
-writing.
-
-With --profile generic|library|app|cli|infra|tusker it creates a V6
-knowledge-graph vault under tusker/domains/**. With --profile v7 or --v7 it
-creates V7 with the default V7 profile.
-
-With --migrate-v6 --dry-run it reports the clean-break V5-to-V6 path and field
-rewrites. Automated V6 apply is intentionally not hidden behind compatibility aliases.
+Removed:
+  V5 bootstrap, V6 knowledge-graph bootstrap, migration scaffolds, and site publishing
+  were removed from the default codebase. Keep conversions outside current
+  repo state and import only current V7 records.
 
 Flags:
-  --vault <path>    target vault path (default: ./tusker)
+  --vault <path>    target vault path (default: ./.tusker)
   --yes             accept defaults without prompts
   --fresh           move an existing target vault aside and recreate it cleanly
-  --profile <name>  create V6 layout for named profiles, or V7 when <name> is v7
+  --purge-state     delete generated Tusker state first; implies the same safe
+                    scope as 'tusker purge --only-tusker-state --yes'
+  --profile v7      explicit V7 profile; any other profile is rejected
   --v7              explicit alias for default V7 init
-  --legacy          create the legacy V5 docs/template scaffold
-  --migrate-v5      repair an existing legacy vault in place
-  --migrate-v6      report explicit V5-to-V6 clean-break migration plan
-  --dry-run         show the migration plan without writing
   --vault-only      update only the vault; skip AGENTS/CLAUDE and repo-contract files
-  --no-backup       skip the migration backup
   --no-pointers     skip AGENTS.md / CLAUDE.md pointer injection
   --no-contract     skip repo-contract helper docs
 
 Examples:
   tusker init --yes
-  tusker init --profile generic --yes --fresh
   tusker init --profile v7 --yes --fresh
-  tusker legacy init --yes --fresh
-  tusker init --migrate-v5 --yes --vault-only
-  tusker init --migrate-v5 --dry-run --vault ./tusker
-  tusker init --migrate-v6 --dry-run --vault ./tusker`)
+  tusker init --yes --fresh --purge-state`)
 }
 
 func printDocsHelp() {
-	fmt.Println(`Usage:
-  tusker legacy docs init [--site <path>] [--force]
-  tusker legacy docs model [--json]
-  tusker legacy docs map [<doc-node>] [--vault <path>] [--json]
-  tusker legacy docs catalog [--vault <path>] [--json]
-  tusker legacy docs freshness [--vault <path>] [--stale] [--json]
-  tusker legacy docs check <id> [--vault <path>] [--json]
-  tusker legacy docs apply <id> --node <doc-node> [--by <name>] [--reason <text>]
-  tusker legacy docs noop <id> --node <doc-node> [--by <name>] [--reason <text>]
-  tusker legacy docs waive <id> <doc-node> [--by <name>] --reason <text>
-  tusker legacy docs export [--vault <path>] [--site <path>] [--clean] [--public-only] [--json]
-  tusker legacy docs dev [--vault <path>] [--site <path>] [--watch] [--port <n>] [--host <host>]
-  tusker legacy docs build [--vault <path>] [--site <path>] [--public-only] [--quiet] [--json]
+	fmt.Println(`The V5/V6 documentation publishing system was removed.
 
-Purpose:
-  Own the documentation system from the CLI: explain the model, inspect the
-  docs-map, read the generated catalog, check freshness, resolve task docs
-  impact, and export/build the site.
-
-What it means:
-  _config/docs-map.yaml is the access layer. It maps exact doc_nodes to source
-  pages, domains, Diátaxis mode, audience, agent layer, source-of-truth files,
-  and stale_when triggers. Tasks name doc_nodes when work changes durable
-  understanding. Close requires each targeted doc node to be applied, verified
-  as no-op, or waived with a reason.
-  docs build suppresses Astro output when --quiet or --json is set; failures
-  include the final non-empty log tail.
-
-Diátaxis modes:
-  tutorial     learn by doing       -> Start here
-  how-to       complete a task      -> Guides
-  reference    look up facts        -> Reference
-  explanation  understand why       -> Concepts
-
-Agent layer:
-  none         human-facing doc only
-  capsule      human-facing doc with a compact agent note
-  standalone   agent-facing runbook or recipe
-
-Notes:
-  docs model explains the philosophy without needing a vault.
-  docs map lists controlled domains and doc_nodes.
-  docs catalog shows reader-facing IA generated from docs-map.
-  docs freshness shows stale/missing/verified docs and linked task evidence.
-  docs check is a dry-run inspection for a task's doc_nodes.
-  docs apply records that a target doc node was updated.
-  docs noop records that a target doc node was checked and already correct.
-  docs waive records an explicit no-change decision for a target doc node.
-  The site lives under ./site by default. Repo-doc publishing is configured
-  through docs/publication.yaml. Vault docs are included only when a vault is
-  discoverable or --vault is provided.
-  --watch re-exports when vault markdown, attachments, or registered repo docs
-  change while Astro serves the generated tree.
-  Export emits llms.txt, content-manifest.json, and canon-manifest.json so
-  agents can tell published canon from stale source files.`)
+Use V7 project knowledge instead:
+  tusker skill route "<intent>" --json
+  tusker domain list
+  tusker domain show <domain-id>
+  tusker knowledge new <domain>/<path>/<slug> --kind runbook --title "..."`)
 }
 
 func printNewHelp() {
 	fmt.Println(`Usage:
   tusker new epic [--vault <path>] --acronym <ACR> --title <title> [--summary <text>] [--owner <name>]
   tusker new task [--vault <path>] --epic <ACR> --title <title> [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--evidence-required automated_test]
-  tusker new gate --blocks <TASK-ID> --kind <gate-kind> --owner <owner>
+  tusker new gate --blocks <TASK-ID> --kind <gate-kind> --owner <owner> --action <text> --verification <proof>
   tusker new decision --epic <ACR> --title <title>
 
 Purpose:
-  Create V7 work objects. V5 task/doc creation is available through
-  tusker legacy new ... only.
+  Create V7 work objects only. V5 task/doc creation was removed.
 
 Examples:
-  tusker new epic --vault ./tusker --acronym APP --title "App foundation"
-  tusker new task --vault ./tusker --epic APP --title "Implement auth" --risk medium --size m
-  tusker new gate --vault ./tusker --blocks APP-T-0001 --kind auth --owner human:sarav`)
+  tusker new epic --vault ./.tusker --acronym APP --title "App foundation"
+  tusker new task --vault ./.tusker --epic APP --title "Implement auth" --risk medium --size m
+  tusker new gate --vault ./.tusker --blocks APP-T-0001 --kind auth --owner human:sarav \
+    --action "Provision staging OAuth credentials." \
+    --verification "Provider ready check passes." \
+    --why-agent-cannot "Human account access is required."`)
 }
 
 func printStatusHelp() {
@@ -1225,15 +1271,15 @@ func printStatusHelp() {
   tusker status --id <id> --status <status> [--vault <path>] [--actor <name>] [--reason <text>]
 
 Statuses:
-  draft, backlog, ready, active, blocked, review, rework, done, cancelled
+  idea, backlog, ready, review, rework, done, cancelled, superseded
   V7 task statuses: idea, backlog, ready, review, rework, done, cancelled, superseded
 
 Purpose:
-  Move a V5 task/epic/doc or V7 task through its durable workflow.
+  Move a V7 task through its durable workflow. Runtime activity is represented
+  by leases/runs, not by a durable active task status.
 
 Notes:
-  blocked requires either --blocked-by <TASK-ID[,TASK-ID]> or --block-reason <text>. Use
-  backlog for shaped future work that should not be picked up in the current release.`)
+  Use backlog for shaped future work that should not be picked up in the current release.`)
 }
 
 func printNextHelp() {
@@ -1257,8 +1303,8 @@ func printClaimHelp() {
   tusker claim <id> --as <agent-or-person> [--vault <path>] [--reason <text>] [--json]
 
 Purpose:
-  Assign one ready/rework task and move it to active. Claim rejects draft,
-  backlog, blocked, active, review, done, cancelled, and tasks with unresolved
+  Assign one ready/rework task by creating a runtime lease. Claim rejects idea,
+  backlog, review, done, cancelled, superseded, and tasks with unresolved
   blocked_by dependencies.`)
 }
 
@@ -1271,7 +1317,7 @@ func printEvidenceHelp() {
   tusker evidence prune <task-id> --dry-run
 
 Purpose:
-  Attach proof to a V5 task or add/promote/prune V7 evidence records. For V7 inline proof, prefer tusker verify add.`)
+  Add, promote, or prune V7 evidence records. For inline proof, prefer tusker verify add.`)
 }
 
 func printVerifyHelp() {
@@ -1284,8 +1330,7 @@ func printVerifyHelp() {
   tusker verify --id <id> [--vault <path>] [--by <name>] [--summary <text>]
 
 Purpose:
-  Add inline V7 verification rows, suggest scoped verification recipes, or
-  record legacy V5 verification on a task in review status.
+  Add inline V7 verification rows or suggest scoped verification recipes.
 
 Options:
   --blocked-by <path|task|owner>  Required with --result blocked; attributes external/shared blockers.
@@ -1300,27 +1345,36 @@ func printCloseHelp() {
 
 Purpose:
   Close a V7 task after required evidence is present, close policy passes, and
-  no blocking gates remain open. V5 close is tusker legacy close.`)
+  no blocking gates remain open.`)
 }
 
 func printListHelp() {
 	fmt.Println(`Usage:
-  tusker list [--vault <path>] [--json] [--type epic|task|doc] [--status <status>] [--epic <ACR>] [--open|--closed] [--runnable] [--limit <n>]
+  tusker list [<EPIC>] [--vault <path>] [--json] [--type epic|task|doc] [--status <status>] [--epic <ACR>] [--open|--closed] [--ready|--running|--review|--mine] [--format table|ids] [--limit <n>] [--width <cols>]
 
 Purpose:
-  Query V5 epics, tasks, and docs from the vault without reading note bodies.
-  Start with epics, then drill into one epic's open tasks. Use --runnable for
-  V7 agent-runnable tasks only: task kind, status ready/rework, readiness ready,
-  and next_owner agent or agent:*.
+  Query epics, tasks, and docs from the vault without dumping note bodies.
+  Bare tusker list prints a compact epic table. Task-scoped filters such as
+  --open, --ready, --running, --review, and --mine print compact task tables.
+  A positional epic, like tusker list VSD, drills into that epic's open tasks.
+  Table output sizes itself to the terminal width and drops low-value columns
+  in cramped terminals. Use --width when a terminal reports bad dimensions.
+  Use --runnable for V7 agent-runnable tasks only: task kind, status ready/rework,
+  readiness ready, and next_owner agent or agent:*. --ready is the
+  human-friendly alias. --running shows active local leases. --all-projects
+  queries registered projects from tusker projects add.
 
 Examples:
-  tusker list --vault ./tusker
-  tusker list --vault ./tusker --type epic
-  tusker list --vault ./tusker --runnable
-  tusker list --vault ./tusker --epic ORC --type task --open
-  tusker list --vault ./tusker --epic ORC --type task --open --limit 10
-  tusker list --vault ./tusker --type task --status active
-  tusker list --vault ./tusker --type doc --json`)
+  tusker list --vault ./.tusker
+  tusker list VSD
+  tusker list --vault ./.tusker --type epic
+  tusker list --vault ./.tusker --ready
+  tusker list --vault ./.tusker --running
+  tusker list --vault ./.tusker --epic ORC --type task --open
+  tusker list --all-projects --open --format ids
+  tusker list --vault ./.tusker --epic ORC --type task --open --limit 10
+  tusker list --vault ./.tusker --type task --status ready
+  tusker list --vault ./.tusker --type doc --json`)
 }
 
 func printSearchHelp() {
@@ -1354,6 +1408,39 @@ Examples:
   tusker show ORC-T-0019 --full`)
 }
 
+func printPrintHelp() {
+	fmt.Println(`Usage:
+  tusker print <ID> [--vault <path>] [--project <id|key|name>] [--capsule|--acceptance|--evidence|--verification|--full] [--section <heading>]
+  tusker print <ID> [--plain] [--style dark|light|notty|<path>] [--width <n>] [--json]
+
+Purpose:
+  Render a Tusker Markdown note for human terminal reading. Defaults to the note
+  body with Glamour Markdown styling. Use --plain for raw Markdown output.
+
+Examples:
+  tusker print ING-T-0016
+  tusker print ING-T-0016 --capsule
+  tusker print ING-T-0016 --acceptance --plain
+  tusker print ING-T-0016 --project mobile --style light`)
+}
+
+func printOpenHelp() {
+	fmt.Println(`Usage:
+  tusker open <ID> [--vault <path>] [--project <id|key|name>] [--path|--json]
+  tusker open <ID> [--editor|--obsidian|--app <name>]
+
+Purpose:
+  Resolve a Tusker record and open the underlying Markdown note. Current-vault
+  lookup wins; outside a repo, registered projects from tusker projects add are searched.
+
+Examples:
+  tusker open ING-T-0016
+  tusker open ING-T-0016 --path
+  tusker open ING-T-0016 --editor
+  tusker open ING-T-0016 --obsidian
+  tusker open ING-T-0016 --project mobile --json`)
+}
+
 func printCompactHelp() {
 	fmt.Println(`Usage:
   tusker compact <ID> [--vault <path>] [--write] [--json]
@@ -1362,10 +1449,10 @@ func printCompactHelp() {
 Purpose:
   Dry-run or apply safe note compaction: remove empty optional frontmatter and
   disposable placeholder sections such as empty Execution plan and Work log.
-  Substantive sections are preserved unless --archive-logs is set, which
-  extracts V5 Work log sections into V7 attempt records and Verification log
-  sections into V7 evidence before removing them.
-  With --all, unchanged notes are hidden unless --verbose is set.
+  Substantive sections are preserved unless --archive-logs is set, which moves
+  bulky historical log material into bounded attempt/evidence records before
+  removing it from task bodies. With --all, unchanged notes are hidden unless
+  --verbose is set.
 
 Examples:
   tusker compact ORC-T-0019

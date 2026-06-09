@@ -25,7 +25,7 @@ func TestFeedbackAddWritesStructuredNote(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	notePath := filepath.Join(repo, "tusker", "feedback", "agents", "2026-05-21-codex-feedback-loop.md")
+	notePath := filepath.Join(repo, ".tusker", "feedback", "agents", "2026-05-21-codex-feedback-loop.md")
 	text, err := readText(notePath)
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +42,7 @@ func TestFeedbackAddWritesStructuredNote(t *testing.T) {
 			t.Fatalf("feedback note missing %q:\n%s", expected, text)
 		}
 	}
-	if warnings := validateFeedbackNotes(filepath.Join(repo, "tusker")); len(warnings) != 0 {
+	if warnings := validateFeedbackNotes(filepath.Join(repo, ".tusker")); len(warnings) != 0 {
 		t.Fatalf("expected generated note to validate cleanly, got %#v", warnings)
 	}
 }
@@ -71,7 +71,7 @@ func TestFeedbackAddRejectsLongNoteUnlessAllowed(t *testing.T) {
 	if err := feedbackAddCmd(args); err != nil {
 		t.Fatal(err)
 	}
-	assertExists(t, filepath.Join(repo, "tusker", "feedback", "agents", "2026-05-21-codex-long-note.md"))
+	assertExists(t, filepath.Join(repo, ".tusker", "feedback", "agents", "2026-05-21-codex-long-note.md"))
 }
 
 func TestFeedbackAddRejectsProgressReportUnlessAllowed(t *testing.T) {
@@ -91,7 +91,7 @@ func TestFeedbackAddRejectsProgressReportUnlessAllowed(t *testing.T) {
 	if err := feedbackAddCmd(args); err == nil || !strings.Contains(err.Error(), "progress report") {
 		t.Fatalf("expected progress-report rejection, got %v", err)
 	}
-	if fileExists(filepath.Join(repo, "tusker", "feedback", "agents", "2026-05-21-codex-status-looking.md")) {
+	if fileExists(filepath.Join(repo, ".tusker", "feedback", "agents", "2026-05-21-codex-status-looking.md")) {
 		t.Fatal("progress-report-looking note was written without explicit allowance")
 	}
 
@@ -99,7 +99,7 @@ func TestFeedbackAddRejectsProgressReportUnlessAllowed(t *testing.T) {
 	if err := feedbackAddCmd(args); err != nil {
 		t.Fatal(err)
 	}
-	assertExists(t, filepath.Join(repo, "tusker", "feedback", "agents", "2026-05-21-codex-status-looking.md"))
+	assertExists(t, filepath.Join(repo, ".tusker", "feedback", "agents", "2026-05-21-codex-status-looking.md"))
 }
 
 func TestFeedbackAddRejectsRecentDuplicateDedupeKeyUnlessAllowed(t *testing.T) {

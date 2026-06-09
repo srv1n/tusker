@@ -5,7 +5,7 @@ Use this when the user wants project docs, a public docs site, a user guide, rel
 ## Read order
 
 1. `README*`, `AGENTS.md`, `CLAUDE.md`, and obvious architecture files.
-2. `tusker/README.md` and the epic roster from `tusker list --type epic`.
+2. `tusker/README.md` and the epic roster from `tusker list`.
 3. durable docs under `tusker/docs/**`.
 4. Repo docs registered through `docs/publication.yaml`.
 5. Generated manifests if present:

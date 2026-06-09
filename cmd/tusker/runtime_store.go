@@ -40,50 +40,85 @@ type RegisteredProject struct {
 }
 
 type RunStatus struct {
-	ProjectID       string `json:"project_id"`
-	RecordID        string `json:"record_id"`
-	ItemID          string `json:"item_id"`
-	Runner          string `json:"runner"`
-	Lane            string `json:"lane"`
-	LeaseState      string `json:"lease_state"`
-	AttemptOutcome  string `json:"attempt_outcome"`
-	ActiveAttemptID string `json:"active_attempt_id"`
-	WorkspacePath   string `json:"workspace_path"`
-	SessionRef      string `json:"session_ref"`
-	ProcessPID      int    `json:"process_pid"`
-	PromptPath      string `json:"prompt_path"`
-	EventSinkPath   string `json:"event_sink_path"`
-	RawLogPath      string `json:"raw_log_path"`
-	StatusPath      string `json:"status_path"`
-	WorkRevision    int    `json:"work_revision"`
-	AttemptCount    int    `json:"attempt_count"`
-	NextRetryAt     string `json:"next_retry_at"`
-	LastError       string `json:"last_error"`
-	LastEventAt     string `json:"last_event_at"`
-	StartedAt       string `json:"started_at"`
-	UpdatedAt       string `json:"updated_at"`
+	ProjectID          string `json:"project_id"`
+	RecordID           string `json:"record_id"`
+	ItemID             string `json:"item_id"`
+	Runner             string `json:"runner"`
+	Lane               string `json:"lane"`
+	LeaseState         string `json:"lease_state"`
+	AttemptOutcome     string `json:"attempt_outcome"`
+	ActiveAttemptID    string `json:"active_attempt_id"`
+	WorkspacePath      string `json:"workspace_path"`
+	SessionRef         string `json:"session_ref"`
+	CloudTaskID        string `json:"cloud_task_id"`
+	CloudStatus        string `json:"cloud_status"`
+	CloudEnvironmentID string `json:"cloud_environment_id"`
+	CloudAttemptNumber int    `json:"cloud_attempt_number"`
+	PullRequestURL     string `json:"pull_request_url"`
+	ApplyRef           string `json:"apply_ref"`
+	LogsSummary        string `json:"logs_summary"`
+	FinalSummary       string `json:"final_summary"`
+	ProcessPID         int    `json:"process_pid"`
+	PromptPath         string `json:"prompt_path"`
+	EventSinkPath      string `json:"event_sink_path"`
+	RawLogPath         string `json:"raw_log_path"`
+	StatusPath         string `json:"status_path"`
+	WorkRevision       int    `json:"work_revision"`
+	AttemptCount       int    `json:"attempt_count"`
+	NextRetryAt        string `json:"next_retry_at"`
+	LastError          string `json:"last_error"`
+	LastEventAt        string `json:"last_event_at"`
+	StartedAt          string `json:"started_at"`
+	UpdatedAt          string `json:"updated_at"`
 }
 
 type RunAttempt struct {
-	AttemptID     string
-	ProjectID     string
-	RecordID      string
-	ItemID        string
-	Runner        string
-	Lane          string
-	WorkRevision  int
-	WorkspacePath string
-	SessionRef    string
-	Outcome       string
-	ExitCode      int
-	PromptPath    string
-	EventSinkPath string
-	RawLogPath    string
-	StatusPath    string
-	ProcessPID    int
-	LastError     string
-	StartedAt     string
-	FinishedAt    string
+	AttemptID          string
+	ProjectID          string
+	RecordID           string
+	ItemID             string
+	Runner             string
+	Lane               string
+	WorkRevision       int
+	WorkspacePath      string
+	SessionRef         string
+	ParentAttemptID    string
+	ChildType          string
+	BranchName         string
+	MergeRule          string
+	FanoutGroup        string
+	CloudTaskID        string
+	CloudStatus        string
+	CloudEnvironmentID string
+	CloudAttemptNumber int
+	PullRequestURL     string
+	ApplyRef           string
+	LogsSummary        string
+	FinalSummary       string
+	Outcome            string
+	ExitCode           int
+	PromptPath         string
+	EventSinkPath      string
+	RawLogPath         string
+	StatusPath         string
+	ProcessPID         int
+	LastError          string
+	StartedAt          string
+	FinishedAt         string
+}
+
+type RuntimeApplyInput struct {
+	ProjectID string `json:"project_id"`
+	RecordID  string `json:"record_id"`
+	ItemID    string `json:"item_id"`
+	Runner    string `json:"runner"`
+	JobID     string `json:"job_id"`
+	AttemptID string `json:"attempt_id"`
+	Path      string `json:"path"`
+	RelPath   string `json:"rel_path"`
+	Sha256    string `json:"sha256"`
+	Kind      string `json:"kind"`
+	CreatedAt string `json:"created_at"`
 }
 
 type RunTurn struct {
@@ -153,6 +188,38 @@ type RuntimeSupervisorDecision struct {
 
 type SupervisorDecision = RuntimeSupervisorDecision
 
+type ExternalLoopEvent struct {
+	EventID        string `json:"event_id"`
+	ProjectID      string `json:"project_id"`
+	RecordID       string `json:"record_id"`
+	ItemID         string `json:"item_id"`
+	Runner         string `json:"runner"`
+	JobID          string `json:"job_id"`
+	AttemptID      string `json:"attempt_id"`
+	Stage          string `json:"stage"`
+	Action         string `json:"action"`
+	Status         string `json:"status"`
+	Reason         string `json:"reason"`
+	PayloadJSON    string `json:"payload_json,omitempty"`
+	IdempotencyKey string `json:"idempotency_key"`
+	CreatedAt      string `json:"created_at"`
+}
+
+type ExternalLoopCaps struct {
+	MaxCycles              int `json:"max_cycles"`
+	MaxRepairContinuations int `json:"max_repair_continuations"`
+	MaxExternalThreads     int `json:"max_external_threads"`
+	WallClockTimeoutHours  int `json:"wall_clock_timeout_hours"`
+}
+
+type ExternalLoopCounters struct {
+	Events              int      `json:"events"`
+	Cycles              int      `json:"cycles"`
+	RepairContinuations int      `json:"repair_continuations"`
+	ExternalThreads     int      `json:"external_threads"`
+	DistinctJobIDs      []string `json:"distinct_job_ids"`
+}
+
 type RunnerSession struct {
 	ProjectID      string `json:"project_id"`
 	RecordID       string `json:"record_id"`
@@ -221,6 +288,19 @@ func (s *RuntimeStore) Migrate() error {
 			active_attempt_id TEXT NOT NULL DEFAULT '',
 			workspace_path TEXT NOT NULL DEFAULT '',
 			session_ref TEXT NOT NULL DEFAULT '',
+			parent_attempt_id TEXT NOT NULL DEFAULT '',
+			child_type TEXT NOT NULL DEFAULT '',
+			branch_name TEXT NOT NULL DEFAULT '',
+			merge_rule TEXT NOT NULL DEFAULT '',
+			fanout_group TEXT NOT NULL DEFAULT '',
+			cloud_task_id TEXT NOT NULL DEFAULT '',
+			cloud_status TEXT NOT NULL DEFAULT '',
+			cloud_environment_id TEXT NOT NULL DEFAULT '',
+			cloud_attempt_number INTEGER NOT NULL DEFAULT 0,
+			pull_request_url TEXT NOT NULL DEFAULT '',
+			apply_ref TEXT NOT NULL DEFAULT '',
+			logs_summary TEXT NOT NULL DEFAULT '',
+			final_summary TEXT NOT NULL DEFAULT '',
 			process_pid INTEGER NOT NULL DEFAULT 0,
 			prompt_path TEXT NOT NULL DEFAULT '',
 			event_sink_path TEXT NOT NULL DEFAULT '',
@@ -245,6 +325,14 @@ func (s *RuntimeStore) Migrate() error {
 			work_revision INTEGER NOT NULL DEFAULT 0,
 			workspace_path TEXT NOT NULL DEFAULT '',
 			session_ref TEXT NOT NULL DEFAULT '',
+			cloud_task_id TEXT NOT NULL DEFAULT '',
+			cloud_status TEXT NOT NULL DEFAULT '',
+			cloud_environment_id TEXT NOT NULL DEFAULT '',
+			cloud_attempt_number INTEGER NOT NULL DEFAULT 0,
+			pull_request_url TEXT NOT NULL DEFAULT '',
+			apply_ref TEXT NOT NULL DEFAULT '',
+			logs_summary TEXT NOT NULL DEFAULT '',
+			final_summary TEXT NOT NULL DEFAULT '',
 			process_pid INTEGER NOT NULL DEFAULT 0,
 			outcome TEXT NOT NULL DEFAULT 'none',
 			exit_code INTEGER NOT NULL DEFAULT 0,
@@ -318,10 +406,42 @@ func (s *RuntimeStore) Migrate() error {
 			last_error TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY(project_id, session_ref)
 		);`,
+		`CREATE TABLE IF NOT EXISTS apply_inputs (
+			project_id TEXT NOT NULL,
+			record_id TEXT NOT NULL,
+			item_id TEXT NOT NULL DEFAULT '',
+			runner TEXT NOT NULL DEFAULT '',
+			job_id TEXT NOT NULL DEFAULT '',
+			attempt_id TEXT NOT NULL DEFAULT '',
+			path TEXT NOT NULL,
+			rel_path TEXT NOT NULL DEFAULT '',
+			sha256 TEXT NOT NULL DEFAULT '',
+			kind TEXT NOT NULL DEFAULT 'patch',
+			created_at TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY(project_id, record_id, sha256, path)
+		);`,
 		`CREATE TABLE IF NOT EXISTS daemon_settings (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL DEFAULT ''
 		);`,
+		`CREATE TABLE IF NOT EXISTS external_loop_events (
+			event_id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			record_id TEXT NOT NULL,
+			item_id TEXT NOT NULL DEFAULT '',
+			runner TEXT NOT NULL DEFAULT '',
+			job_id TEXT NOT NULL DEFAULT '',
+			attempt_id TEXT NOT NULL DEFAULT '',
+			stage TEXT NOT NULL DEFAULT '',
+			action TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT '',
+			reason TEXT NOT NULL DEFAULT '',
+			payload_json TEXT NOT NULL DEFAULT '',
+			idempotency_key TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS external_loop_events_idempotency
+			ON external_loop_events(project_id, record_id, idempotency_key);`,
 	}
 	for _, stmt := range statements {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -339,6 +459,23 @@ func (s *RuntimeStore) Migrate() error {
 	}
 	if err := s.ensureColumn("runs", "process_pid", `ALTER TABLE runs ADD COLUMN process_pid INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return err
+	}
+	for _, column := range []struct {
+		name string
+		stmt string
+	}{
+		{"cloud_task_id", `ALTER TABLE runs ADD COLUMN cloud_task_id TEXT NOT NULL DEFAULT ''`},
+		{"cloud_status", `ALTER TABLE runs ADD COLUMN cloud_status TEXT NOT NULL DEFAULT ''`},
+		{"cloud_environment_id", `ALTER TABLE runs ADD COLUMN cloud_environment_id TEXT NOT NULL DEFAULT ''`},
+		{"cloud_attempt_number", `ALTER TABLE runs ADD COLUMN cloud_attempt_number INTEGER NOT NULL DEFAULT 0`},
+		{"pull_request_url", `ALTER TABLE runs ADD COLUMN pull_request_url TEXT NOT NULL DEFAULT ''`},
+		{"apply_ref", `ALTER TABLE runs ADD COLUMN apply_ref TEXT NOT NULL DEFAULT ''`},
+		{"logs_summary", `ALTER TABLE runs ADD COLUMN logs_summary TEXT NOT NULL DEFAULT ''`},
+		{"final_summary", `ALTER TABLE runs ADD COLUMN final_summary TEXT NOT NULL DEFAULT ''`},
+	} {
+		if err := s.ensureColumn("runs", column.name, column.stmt); err != nil {
+			return err
+		}
 	}
 	if err := s.ensureColumn("runs", "prompt_path", `ALTER TABLE runs ADD COLUMN prompt_path TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
@@ -372,6 +509,37 @@ func (s *RuntimeStore) Migrate() error {
 	}
 	if err := s.ensureColumn("attempts", "status_path", `ALTER TABLE attempts ADD COLUMN status_path TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
+	}
+	for _, column := range []struct {
+		name string
+		stmt string
+	}{
+		{"parent_attempt_id", `ALTER TABLE attempts ADD COLUMN parent_attempt_id TEXT NOT NULL DEFAULT ''`},
+		{"child_type", `ALTER TABLE attempts ADD COLUMN child_type TEXT NOT NULL DEFAULT ''`},
+		{"branch_name", `ALTER TABLE attempts ADD COLUMN branch_name TEXT NOT NULL DEFAULT ''`},
+		{"merge_rule", `ALTER TABLE attempts ADD COLUMN merge_rule TEXT NOT NULL DEFAULT ''`},
+		{"fanout_group", `ALTER TABLE attempts ADD COLUMN fanout_group TEXT NOT NULL DEFAULT ''`},
+	} {
+		if err := s.ensureColumn("attempts", column.name, column.stmt); err != nil {
+			return err
+		}
+	}
+	for _, column := range []struct {
+		name string
+		stmt string
+	}{
+		{"cloud_task_id", `ALTER TABLE attempts ADD COLUMN cloud_task_id TEXT NOT NULL DEFAULT ''`},
+		{"cloud_status", `ALTER TABLE attempts ADD COLUMN cloud_status TEXT NOT NULL DEFAULT ''`},
+		{"cloud_environment_id", `ALTER TABLE attempts ADD COLUMN cloud_environment_id TEXT NOT NULL DEFAULT ''`},
+		{"cloud_attempt_number", `ALTER TABLE attempts ADD COLUMN cloud_attempt_number INTEGER NOT NULL DEFAULT 0`},
+		{"pull_request_url", `ALTER TABLE attempts ADD COLUMN pull_request_url TEXT NOT NULL DEFAULT ''`},
+		{"apply_ref", `ALTER TABLE attempts ADD COLUMN apply_ref TEXT NOT NULL DEFAULT ''`},
+		{"logs_summary", `ALTER TABLE attempts ADD COLUMN logs_summary TEXT NOT NULL DEFAULT ''`},
+		{"final_summary", `ALTER TABLE attempts ADD COLUMN final_summary TEXT NOT NULL DEFAULT ''`},
+	} {
+		if err := s.ensureColumn("attempts", column.name, column.stmt); err != nil {
+			return err
+		}
 	}
 	if err := s.ensureColumn("sessions", "last_message_ref", `ALTER TABLE sessions ADD COLUMN last_message_ref TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
@@ -481,6 +649,9 @@ func (s *RuntimeStore) RemoveProject(projectID string) error {
 	if _, err := s.db.Exec(`DELETE FROM turns WHERE project_id = ?`, projectID); err != nil {
 		return err
 	}
+	if _, err := s.db.Exec(`DELETE FROM external_loop_events WHERE project_id = ?`, projectID); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(`DELETE FROM supervisor_decisions WHERE project_id = ?`, projectID); err != nil {
 		return err
 	}
@@ -549,7 +720,7 @@ func (s *RuntimeStore) ListProjects() ([]RegisteredProject, error) {
 }
 
 func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
-	rows, err := s.db.Query(`SELECT project_id, record_id, item_id, runner, lane, lease_state, attempt_outcome, active_attempt_id, workspace_path, session_ref, process_pid, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, started_at, updated_at FROM runs ORDER BY updated_at DESC, project_id, item_id`)
+	rows, err := s.db.Query(`SELECT project_id, record_id, item_id, runner, lane, lease_state, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, started_at, updated_at FROM runs ORDER BY updated_at DESC, project_id, item_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -557,7 +728,7 @@ func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
 	var out []RunStatus
 	for rows.Next() {
 		var run RunStatus
-		if err := rows.Scan(&run.ProjectID, &run.RecordID, &run.ItemID, &run.Runner, &run.Lane, &run.LeaseState, &run.AttemptOutcome, &run.ActiveAttemptID, &run.WorkspacePath, &run.SessionRef, &run.ProcessPID, &run.PromptPath, &run.EventSinkPath, &run.RawLogPath, &run.StatusPath, &run.WorkRevision, &run.AttemptCount, &run.NextRetryAt, &run.LastError, &run.LastEventAt, &run.StartedAt, &run.UpdatedAt); err != nil {
+		if err := rows.Scan(&run.ProjectID, &run.RecordID, &run.ItemID, &run.Runner, &run.Lane, &run.LeaseState, &run.AttemptOutcome, &run.ActiveAttemptID, &run.WorkspacePath, &run.SessionRef, &run.CloudTaskID, &run.CloudStatus, &run.CloudEnvironmentID, &run.CloudAttemptNumber, &run.PullRequestURL, &run.ApplyRef, &run.LogsSummary, &run.FinalSummary, &run.ProcessPID, &run.PromptPath, &run.EventSinkPath, &run.RawLogPath, &run.StatusPath, &run.WorkRevision, &run.AttemptCount, &run.NextRetryAt, &run.LastError, &run.LastEventAt, &run.StartedAt, &run.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, run)
@@ -576,8 +747,8 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	_, err := s.db.Exec(`INSERT INTO runs (
-		project_id, record_id, item_id, runner, lane, lease_state, attempt_outcome, active_attempt_id, workspace_path, session_ref, process_pid, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, started_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		project_id, record_id, item_id, runner, lane, lease_state, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, started_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id, record_id) DO UPDATE SET
 		item_id=excluded.item_id,
 		runner=excluded.runner,
@@ -587,6 +758,14 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 		active_attempt_id=excluded.active_attempt_id,
 		workspace_path=excluded.workspace_path,
 		session_ref=excluded.session_ref,
+		cloud_task_id=excluded.cloud_task_id,
+		cloud_status=excluded.cloud_status,
+		cloud_environment_id=excluded.cloud_environment_id,
+		cloud_attempt_number=excluded.cloud_attempt_number,
+		pull_request_url=excluded.pull_request_url,
+		apply_ref=excluded.apply_ref,
+		logs_summary=excluded.logs_summary,
+		final_summary=excluded.final_summary,
 		process_pid=excluded.process_pid,
 		prompt_path=excluded.prompt_path,
 		event_sink_path=excluded.event_sink_path,
@@ -599,14 +778,14 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 		last_event_at=excluded.last_event_at,
 		started_at=excluded.started_at,
 		updated_at=excluded.updated_at`,
-		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.Lane, run.LeaseState, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.ProcessPID, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.StartedAt, run.UpdatedAt)
+		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.Lane, run.LeaseState, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.StartedAt, run.UpdatedAt)
 	return err
 }
 
 func (s *RuntimeStore) SaveAttempt(attempt RunAttempt) error {
 	_, err := s.db.Exec(`INSERT INTO attempts (
-		attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, session_ref, process_pid, outcome, exit_code, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, outcome, exit_code, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(attempt_id) DO UPDATE SET
 		project_id=excluded.project_id,
 		record_id=excluded.record_id,
@@ -616,6 +795,19 @@ func (s *RuntimeStore) SaveAttempt(attempt RunAttempt) error {
 		work_revision=excluded.work_revision,
 		workspace_path=excluded.workspace_path,
 		session_ref=excluded.session_ref,
+		parent_attempt_id=excluded.parent_attempt_id,
+		child_type=excluded.child_type,
+		branch_name=excluded.branch_name,
+		merge_rule=excluded.merge_rule,
+		fanout_group=excluded.fanout_group,
+		cloud_task_id=excluded.cloud_task_id,
+		cloud_status=excluded.cloud_status,
+		cloud_environment_id=excluded.cloud_environment_id,
+		cloud_attempt_number=excluded.cloud_attempt_number,
+		pull_request_url=excluded.pull_request_url,
+		apply_ref=excluded.apply_ref,
+		logs_summary=excluded.logs_summary,
+		final_summary=excluded.final_summary,
 		process_pid=excluded.process_pid,
 		outcome=excluded.outcome,
 		exit_code=excluded.exit_code,
@@ -626,7 +818,7 @@ func (s *RuntimeStore) SaveAttempt(attempt RunAttempt) error {
 		last_error=excluded.last_error,
 		started_at=excluded.started_at,
 		finished_at=excluded.finished_at`,
-		attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkRevision, attempt.WorkspacePath, attempt.SessionRef, attempt.ProcessPID, attempt.Outcome, attempt.ExitCode, attempt.PromptPath, attempt.EventSinkPath, attempt.RawLogPath, attempt.StatusPath, attempt.LastError, attempt.StartedAt, attempt.FinishedAt)
+		attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkRevision, attempt.WorkspacePath, attempt.SessionRef, attempt.ParentAttemptID, attempt.ChildType, attempt.BranchName, attempt.MergeRule, attempt.FanoutGroup, attempt.CloudTaskID, attempt.CloudStatus, attempt.CloudEnvironmentID, attempt.CloudAttemptNumber, attempt.PullRequestURL, attempt.ApplyRef, attempt.LogsSummary, attempt.FinalSummary, attempt.ProcessPID, attempt.Outcome, attempt.ExitCode, attempt.PromptPath, attempt.EventSinkPath, attempt.RawLogPath, attempt.StatusPath, attempt.LastError, attempt.StartedAt, attempt.FinishedAt)
 	return err
 }
 
@@ -826,6 +1018,134 @@ func scanRuntimeSupervisorDecisions(rows *sql.Rows) ([]RuntimeSupervisorDecision
 	return out, rows.Err()
 }
 
+func (s *RuntimeStore) UpsertApplyInput(input RuntimeApplyInput) (RuntimeApplyInput, error) {
+	if strings.TrimSpace(input.ProjectID) == "" {
+		return input, tuskerError(errorInvalidArg, "apply input project_id is required")
+	}
+	if strings.TrimSpace(input.RecordID) == "" {
+		return input, tuskerError(errorInvalidArg, "apply input record_id is required")
+	}
+	if strings.TrimSpace(input.Path) == "" {
+		return input, tuskerError(errorInvalidArg, "apply input path is required")
+	}
+	if strings.TrimSpace(input.Sha256) == "" {
+		return input, tuskerError(errorInvalidArg, "apply input sha256 is required")
+	}
+	if strings.TrimSpace(input.Kind) == "" {
+		input.Kind = "patch"
+	}
+	if strings.TrimSpace(input.CreatedAt) == "" {
+		input.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	_, err := s.db.Exec(`INSERT INTO apply_inputs (
+		project_id, record_id, item_id, runner, job_id, attempt_id, path, rel_path, sha256, kind, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(project_id, record_id, sha256, path) DO UPDATE SET
+		item_id=excluded.item_id,
+		runner=excluded.runner,
+		job_id=excluded.job_id,
+		attempt_id=excluded.attempt_id,
+		rel_path=excluded.rel_path,
+		kind=excluded.kind`,
+		input.ProjectID, input.RecordID, input.ItemID, input.Runner, input.JobID, input.AttemptID, input.Path, input.RelPath, input.Sha256, input.Kind, input.CreatedAt)
+	return input, err
+}
+
+func (s *RuntimeStore) ListApplyInputsForRun(projectID, recordID string) ([]RuntimeApplyInput, error) {
+	rows, err := s.db.Query(`SELECT project_id, record_id, item_id, runner, job_id, attempt_id, path, rel_path, sha256, kind, created_at
+		FROM apply_inputs
+		WHERE project_id = ? AND record_id = ?
+		ORDER BY created_at ASC, rel_path ASC, path ASC`, projectID, recordID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RuntimeApplyInput
+	for rows.Next() {
+		var input RuntimeApplyInput
+		if err := rows.Scan(&input.ProjectID, &input.RecordID, &input.ItemID, &input.Runner, &input.JobID, &input.AttemptID, &input.Path, &input.RelPath, &input.Sha256, &input.Kind, &input.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, input)
+	}
+	return out, rows.Err()
+}
+
+func (s *RuntimeStore) SaveExternalLoopEvent(event ExternalLoopEvent) (ExternalLoopEvent, bool, error) {
+	if strings.TrimSpace(event.ProjectID) == "" {
+		return event, false, tuskerError(errorInvalidArg, "project_id is required")
+	}
+	if strings.TrimSpace(event.RecordID) == "" {
+		return event, false, tuskerError(errorInvalidArg, "record_id is required")
+	}
+	if strings.TrimSpace(event.Stage) == "" {
+		return event, false, tuskerError(errorInvalidArg, "external loop stage is required")
+	}
+	if strings.TrimSpace(event.Action) == "" {
+		return event, false, tuskerError(errorInvalidArg, "external loop action is required")
+	}
+	if strings.TrimSpace(event.IdempotencyKey) == "" {
+		event.IdempotencyKey = strings.Join([]string{event.Stage, event.Action, event.JobID, event.AttemptID, event.Reason}, "|")
+	}
+	if existing, err := s.FindExternalLoopEventByKey(event.ProjectID, event.RecordID, event.IdempotencyKey); err != nil {
+		return event, false, err
+	} else if existing != nil {
+		return *existing, false, nil
+	}
+	if strings.TrimSpace(event.EventID) == "" {
+		event.EventID = newRecordID()
+	}
+	if strings.TrimSpace(event.CreatedAt) == "" {
+		event.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	_, err := s.db.Exec(`INSERT INTO external_loop_events (
+		event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		event.EventID, event.ProjectID, event.RecordID, event.ItemID, event.Runner, event.JobID, event.AttemptID, event.Stage, event.Action, event.Status, event.Reason, event.PayloadJSON, event.IdempotencyKey, event.CreatedAt)
+	return event, true, err
+}
+
+func (s *RuntimeStore) FindExternalLoopEventByKey(projectID, recordID, idempotencyKey string) (*ExternalLoopEvent, error) {
+	projectID = strings.TrimSpace(projectID)
+	recordID = strings.TrimSpace(recordID)
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if projectID == "" || recordID == "" || idempotencyKey == "" {
+		return nil, nil
+	}
+	row := s.db.QueryRow(`SELECT event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
+		FROM external_loop_events
+		WHERE project_id = ? AND record_id = ? AND idempotency_key = ?`, projectID, recordID, idempotencyKey)
+	var event ExternalLoopEvent
+	err := row.Scan(&event.EventID, &event.ProjectID, &event.RecordID, &event.ItemID, &event.Runner, &event.JobID, &event.AttemptID, &event.Stage, &event.Action, &event.Status, &event.Reason, &event.PayloadJSON, &event.IdempotencyKey, &event.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &event, nil
+}
+
+func (s *RuntimeStore) ListExternalLoopEvents(projectID, recordID string) ([]ExternalLoopEvent, error) {
+	rows, err := s.db.Query(`SELECT event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
+		FROM external_loop_events
+		WHERE project_id = ? AND record_id = ?
+		ORDER BY created_at ASC, event_id ASC`, projectID, recordID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ExternalLoopEvent
+	for rows.Next() {
+		var event ExternalLoopEvent
+		if err := rows.Scan(&event.EventID, &event.ProjectID, &event.RecordID, &event.ItemID, &event.Runner, &event.JobID, &event.AttemptID, &event.Stage, &event.Action, &event.Status, &event.Reason, &event.PayloadJSON, &event.IdempotencyKey, &event.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
 func (s *RuntimeStore) SaveSession(session RunnerSession) error {
 	_, err := s.db.Exec(`INSERT INTO sessions (
 		project_id, record_id, runner, session_ref, last_message_ref, workspace_path, current_item_id, work_revision, last_attempt_id, state, resumable, started_at, last_seen_at, ended_at, last_error
@@ -975,6 +1295,9 @@ func (s *RuntimeStore) DeleteRunsNotIn(projectID string, keepRecordIDs map[strin
 		}
 	}
 	for _, recordID := range stale {
+		if _, err := s.db.Exec(`DELETE FROM external_loop_events WHERE project_id = ? AND record_id = ?`, projectID, recordID); err != nil {
+			return err
+		}
 		if _, err := s.db.Exec(`DELETE FROM supervisor_decisions WHERE project_id = ? AND record_id = ?`, projectID, recordID); err != nil {
 			return err
 		}

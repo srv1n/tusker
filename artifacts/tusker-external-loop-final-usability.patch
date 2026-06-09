@@ -1,0 +1,603 @@
+diff --git a/cmd/tusker/automation_external_collect.go b/cmd/tusker/automation_external_collect.go
+index 12df58a..dc0ed78 100644
+--- a/cmd/tusker/automation_external_collect.go
++++ b/cmd/tusker/automation_external_collect.go
+@@ -10,6 +10,7 @@ import (
+ 	"os"
+ 	"os/exec"
+ 	"path/filepath"
++	"regexp"
+ 	"sort"
+ 	"strings"
+ )
+@@ -17,22 +18,31 @@ import (
+ const externalCollectSchema = "tusker.external_collect/v1"
+ 
+ type externalCollectReport struct {
+-	Schema           string              `json:"schema"`
+-	TaskID           string              `json:"task_id"`
+-	RecordID         string              `json:"record_id"`
+-	Runner           string              `json:"runner"`
+-	JobID            string              `json:"job_id"`
+-	ArtifactDir      string              `json:"artifact_dir"`
+-	Patches          []string            `json:"patches"`
+-	ReviewPackets    []string            `json:"review_packets"`
+-	Bundles          []string            `json:"bundles"`
+-	RuntimeArtifacts []string            `json:"runtime_artifacts"`
+-	ApplyInputs      []RuntimeApplyInput `json:"apply_inputs"`
+-	EvidenceAdded    []string            `json:"evidence_added"`
+-	EvidenceExisting []string            `json:"evidence_existing,omitempty"`
+-	NextAction       string              `json:"next_action"`
+-	Dispatchable     bool                `json:"dispatchable"`
+-	Blockers         []string            `json:"blockers,omitempty"`
++	Schema           string                `json:"schema"`
++	TaskID           string                `json:"task_id"`
++	RecordID         string                `json:"record_id"`
++	Runner           string                `json:"runner"`
++	JobID            string                `json:"job_id"`
++	ArtifactDir      string                `json:"artifact_dir"`
++	Patches          []string              `json:"patches"`
++	ReviewPackets    []string              `json:"review_packets"`
++	ReviewResult     *externalReviewResult `json:"review_result,omitempty"`
++	Bundles          []string              `json:"bundles"`
++	RuntimeArtifacts []string              `json:"runtime_artifacts"`
++	ApplyInputs      []RuntimeApplyInput   `json:"apply_inputs"`
++	EvidenceAdded    []string              `json:"evidence_added"`
++	EvidenceExisting []string              `json:"evidence_existing,omitempty"`
++	NextAction       string                `json:"next_action"`
++	Dispatchable     bool                  `json:"dispatchable"`
++	Blockers         []string              `json:"blockers,omitempty"`
++}
++
++type externalReviewResult struct {
++	Kind     string   `json:"kind,omitempty"`
++	Verdict  string   `json:"verdict,omitempty"`
++	Risk     string   `json:"risk,omitempty"`
++	Summary  string   `json:"summary,omitempty"`
++	Findings []string `json:"findings,omitempty"`
+ }
+ 
+ type externalFetchResult struct {
+@@ -123,14 +133,16 @@ func (ctx *automationCommandContext) collectExternal(note Note, run RunStatus, r
+ 	if err != nil {
+ 		return externalCollectReport{}, err
+ 	}
++	reviewResult := externalReviewResultFromArtifacts(classified)
+ 	report := externalCollectReport{
+-		Schema:      externalCollectSchema,
+-		TaskID:      taskID,
+-		RecordID:    recordID,
+-		Runner:      runner,
+-		JobID:       firstNonEmpty(fetch.JobID, jobID),
+-		ArtifactDir: artifactDirRel,
+-		NextAction:  "escalate_human",
++		Schema:       externalCollectSchema,
++		TaskID:       taskID,
++		RecordID:     recordID,
++		Runner:       runner,
++		JobID:        firstNonEmpty(fetch.JobID, jobID),
++		ArtifactDir:  artifactDirRel,
++		ReviewResult: reviewResult,
++		NextAction:   "escalate_human",
+ 	}
+ 	for _, artifact := range classified {
+ 		switch artifact.Kind {
+@@ -190,15 +202,19 @@ func (ctx *automationCommandContext) collectExternal(note Note, run RunStatus, r
+ 			applyRun = externalLoopApplyDispatchRun(ctx.Project, note, current, applyRunner)
+ 		}
+ 		explanation := ctx.explainTaskForRunner(note, applyRunner, &applyRun)
+-		report.NextAction = "apply_patch"
++		report.NextAction = externalLoopActionApplyPatch
+ 		report.Dispatchable = explanation.Dispatchable
+ 		report.Blockers = append(report.Blockers, explanation.Blockers...)
+ 	} else if len(report.Patches) > 1 {
+-		report.NextAction = "escalate_human"
++		report.NextAction = externalLoopActionEscalateHuman
+ 		report.Dispatchable = false
+ 		report.Blockers = append(report.Blockers, "multiple patch artifacts require human selection")
++	} else if action, blockers := externalReviewResultAction(ctx.Workflow.Data, note, run, report.ReviewResult); action != "" {
++		report.NextAction = action
++		report.Dispatchable = action == externalLoopActionContinueThreadOnFailure || action == externalLoopActionRequestReviewNext
++		report.Blockers = append(report.Blockers, blockers...)
+ 	} else if len(report.ReviewPackets) > 0 || len(report.Bundles) > 0 || len(report.RuntimeArtifacts) > 0 {
+-		report.NextAction = "record_research_artifact"
++		report.NextAction = externalLoopActionRecordResearch
+ 		report.Dispatchable = false
+ 	}
+ 	report.Blockers = uniqueStrings(report.Blockers)
+@@ -253,7 +269,7 @@ func parseExternalFetchResult(output []byte, fallbackJobID string) (externalFetc
+ 	if nested, ok := values["collection"].(map[string]any); ok {
+ 		values = nested
+ 	}
+-	files := normalizeList(firstPresent(values, "files", "artifacts"))
++	files := normalizeExternalFetchFiles(values)
+ 	return externalFetchResult{
+ 		JobID:       firstNonEmpty(stringValue(firstPresent(values, "job_id", "job", "id", "cloud_task_id")), fallbackJobID),
+ 		ChatID:      stringValue(firstPresent(values, "chat_id", "chatId")),
+@@ -263,6 +279,127 @@ func parseExternalFetchResult(output []byte, fallbackJobID string) (externalFetc
+ 	}, nil
+ }
+ 
++func normalizeExternalFetchFiles(values map[string]any) []string {
++	files := normalizeList(firstPresent(values, "files", "artifacts", "result_paths"))
++	for _, key := range []string{"patch_path", "review_path", "notes_path", "apply_ref"} {
++		if value := strings.TrimSpace(stringValue(values[key])); value != "" {
++			files = append(files, value)
++		}
++	}
++	for _, parent := range []string{"job", "result", "data"} {
++		nested, ok := values[parent].(map[string]any)
++		if !ok {
++			continue
++		}
++		files = append(files, normalizeExternalFetchFiles(nested)...)
++	}
++	return uniqueStrings(files)
++}
++
++var externalJSONFenceRE = regexp.MustCompile("(?is)```(?:json)?\\s*\\n?([\\s\\S]*?)\\n?```")
++
++func externalReviewResultFromArtifacts(artifacts []externalArtifact) *externalReviewResult {
++	for _, artifact := range artifacts {
++		if artifact.Kind != "review_packet" {
++			continue
++		}
++		text, err := readText(artifact.Path)
++		if err != nil {
++			continue
++		}
++		if result, ok := parseExternalReviewResult(text); ok {
++			return &result
++		}
++	}
++	return nil
++}
++
++func parseExternalReviewResult(text string) (externalReviewResult, bool) {
++	var candidates []string
++	trimmed := strings.TrimSpace(text)
++	if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
++		candidates = append(candidates, trimmed)
++	}
++	for _, match := range externalJSONFenceRE.FindAllStringSubmatch(text, -1) {
++		if len(match) > 1 {
++			candidates = append(candidates, strings.TrimSpace(match[1]))
++		}
++	}
++	for _, candidate := range candidates {
++		var values map[string]any
++		if err := json.Unmarshal([]byte(candidate), &values); err != nil {
++			continue
++		}
++		kind := strings.ToLower(strings.TrimSpace(stringValue(values["kind"])))
++		verdict := strings.TrimSpace(firstNonEmpty(stringValue(values["verdict"]), stringValue(values["status"]), stringValue(values["result"])))
++		if verdict == "" {
++			continue
++		}
++		if kind != "" && kind != "review" && kind != "architect" && !externalReviewVerdictKnown(verdict) {
++			continue
++		}
++		result := externalReviewResult{
++			Kind:    firstNonEmpty(kind, "review"),
++			Verdict: verdict,
++			Risk:    strings.TrimSpace(stringValue(values["risk"])),
++			Summary: strings.TrimSpace(stringValue(values["summary"])),
++		}
++		for _, item := range normalizeList(values["findings"]) {
++			result.Findings = append(result.Findings, item)
++		}
++		return result, true
++	}
++	return externalReviewResult{}, false
++}
++
++func externalReviewVerdictKnown(verdict string) bool {
++	switch externalReviewVerdictClass(verdict) {
++	case "accepted", "rework", "blocked":
++		return true
++	default:
++		return false
++	}
++}
++
++func externalReviewVerdictClass(verdict string) string {
++	value := strings.ToLower(strings.TrimSpace(verdict))
++	value = strings.ReplaceAll(value, "-", "_")
++	value = strings.ReplaceAll(value, " ", "_")
++	switch value {
++	case "approve", "approved", "approve_with_nits", "accepted", "accept", "pass", "passed", "ok", "success", "succeeded":
++		return "accepted"
++	case "request_changes", "changes_requested", "request_change", "rework", "rejected", "reject", "fail", "failed", "needs_work":
++		return "rework"
++	case "blocked", "needs_input", "needs_info", "insufficient_context":
++		return "blocked"
++	default:
++		return ""
++	}
++}
++
++func externalReviewResultAction(wf Workflow, note Note, run RunStatus, result *externalReviewResult) (string, []string) {
++	if result == nil || firstNonEmpty(strings.TrimSpace(run.Lane), runLaneExecute) != runLaneReview {
++		return "", nil
++	}
++	switch externalReviewVerdictClass(result.Verdict) {
++	case "accepted":
++		risk := strings.ToLower(strings.TrimSpace(firstNonEmpty(result.Risk, stringField(note.Data, "risk"))))
++		if reviewerMayAutoCloseRisk(wf.Reviewer, risk) {
++			return externalLoopActionCloseTask, nil
++		}
++		if reviewerRequiresHumanRisk(wf.Reviewer, risk) {
++			return externalLoopActionRecordResearch, []string{"external review accepted, but risk " + risk + " requires human close"}
++		}
++		return externalLoopActionRecordResearch, []string{"external review accepted, but reviewer auto-close is not configured for risk " + firstNonEmpty(risk, "unknown")}
++	case "rework":
++		return externalLoopActionContinueThreadOnFailure, nil
++	case "blocked":
++		return externalLoopActionEscalateHuman, []string{"external review returned blocked verdict"}
++	default:
++		return externalLoopActionRecordResearch, nil
++	}
++}
++
+ func firstPresent(values map[string]any, keys ...string) any {
+ 	for _, key := range keys {
+ 		if value, ok := values[key]; ok {
+diff --git a/cmd/tusker/automation_external_loop.go b/cmd/tusker/automation_external_loop.go
+index 7f74ca0..82e10c0 100644
+--- a/cmd/tusker/automation_external_loop.go
++++ b/cmd/tusker/automation_external_loop.go
+@@ -496,6 +496,16 @@ func externalLoopCollectReason(collect externalCollectReport) string {
+ 	switch collect.NextAction {
+ 	case externalLoopActionApplyPatch:
+ 		return "collected one external apply input"
++	case externalLoopActionCloseTask:
++		if collect.ReviewResult != nil {
++			return "external review accepted the applied result"
++		}
++		return "external loop close requested"
++	case externalLoopActionContinueThreadOnFailure:
++		if collect.ReviewResult != nil {
++			return "external review requested changes; continue the thread with rework context"
++		}
++		return "external loop requested continuation"
+ 	case externalLoopActionRecordResearch:
+ 		return "collected external review notes without an apply input"
+ 	default:
+diff --git a/cmd/tusker/daemon.go b/cmd/tusker/daemon.go
+index 0f90634..f11abc7 100644
+--- a/cmd/tusker/daemon.go
++++ b/cmd/tusker/daemon.go
+@@ -1147,6 +1147,10 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
+ 	}
+ 	var start *StartResult
+ 	codexPolicy := codexPolicyForLane(codexPolicyFromWorkflow(wfFile.Data), lane)
++	externalLaunch := ExternalLoopLaunchContext{}
++	if externalLoopRunnerRequiresCollect(wfFile.Data, run.Runner) {
++		externalLaunch = d.externalLoopLaunchContext(project.ProjectID, run.RecordID)
++	}
+ 	if resume.SessionRef != "" && runner.Capabilities().ResumeSession {
+ 		d.emitSupervisorDecision(SupervisorDecision{
+ 			ProjectID:        project.ProjectID,
+@@ -1164,7 +1168,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
+ 			Lane: lane, WorkRevision: run.WorkRevision, ActiveStates: wfFile.Data.Tracker.ActiveStates, SessionRef: resume.SessionRef, MessageRef: resume.MessageRef, WorkingDir: workspace.Path, WorkspacePath: workspace.Path,
+ 			RepoRoot:   project.RepoRoot,
+ 			PromptPath: promptPath, EventSinkPath: eventSinkPath, RawLogPath: rawLogPath, StatusPath: statusPath, Command: command,
+-			NotePath: note.AbsolutePath, VaultPath: project.VaultRoot, CodexPolicy: codexPolicy,
++			NotePath: note.AbsolutePath, VaultPath: project.VaultRoot, CodexPolicy: codexPolicy, ExternalLoop: externalLaunch,
+ 		})
+ 	} else {
+ 		start, err = runner.Start(ctx, StartRequest{
+@@ -1186,6 +1190,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
+ 			NotePath:      note.AbsolutePath,
+ 			VaultPath:     project.VaultRoot,
+ 			CodexPolicy:   codexPolicy,
++			ExternalLoop:  externalLaunch,
+ 		})
+ 	}
+ 	if err != nil {
+diff --git a/cmd/tusker/daemon_external_loop.go b/cmd/tusker/daemon_external_loop.go
+index 713139f..aebd304 100644
+--- a/cmd/tusker/daemon_external_loop.go
++++ b/cmd/tusker/daemon_external_loop.go
+@@ -109,6 +109,38 @@ func (d *Daemon) autoAdvanceExternalLoop(ctx context.Context, project Registered
+ 		result.DispatchRun = updated
+ 		return *updated, true, nil
+ 	}
++	if (result.NextAction == externalLoopActionContinueThreadOnFailure || result.NextAction == externalLoopActionRequestReviewNext) && result.EventCreated && len(result.Blockers) == 0 {
++		lane := runLaneExecute
++		if result.NextAction == externalLoopActionRequestReviewNext {
++			lane = runLaneReview
++		}
++		updated, dispatchErr := dispatchExternalLoopContinuation(policyCtx, note, run, run.Runner, lane)
++		if dispatchErr != nil {
++			run.LeaseState = string(LeaseStateReleased)
++			run.AttemptOutcome = string(AttemptOutcomeBlocked)
++			run.NextRetryAt = ""
++			run.LastError = "external loop continuation dispatch failed: " + dispatchErr.Error()
++			run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
++			return run, true, nil
++		}
++		return *updated, true, nil
++	}
++	if result.NextAction == externalLoopActionCloseTask && result.EventCreated && len(result.Blockers) == 0 {
++		if err := d.closeExternalLoopTask(project, wfFile, note, collect); err != nil {
++			run.LeaseState = string(LeaseStateReleased)
++			run.AttemptOutcome = string(AttemptOutcomeBlocked)
++			run.NextRetryAt = ""
++			run.LastError = "external loop close failed: " + err.Error()
++			run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
++			return run, true, nil
++		}
++		run.LeaseState = string(LeaseStateReleased)
++		run.AttemptOutcome = string(AttemptOutcomeSucceeded)
++		run.NextRetryAt = ""
++		run.LastError = ""
++		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
++		return run, true, nil
++	}
+ 	if result.NextAction == externalLoopActionEscalateHuman || len(result.Blockers) > 0 {
+ 		run.WorkRevision = intField(note.Data, "work_revision")
+ 		run.LastError = "external loop escalated: " + strings.Join(result.Blockers, "; ")
+@@ -370,6 +402,49 @@ func dispatchExternalLoopContinuation(ctx *automationCommandContext, note Note,
+ 	return &updated, nil
+ }
+ 
++func (d *Daemon) closeExternalLoopTask(project RegisteredProject, wfFile WorkflowFile, note Note, collect externalCollectReport) error {
++	result := collect.ReviewResult
++	taskID := stringField(note.Data, "id")
++	if result == nil || externalReviewVerdictClass(result.Verdict) != "accepted" {
++		return tuskerError(errorInvalidTransition, taskID+": external close requires an accepted review verdict")
++	}
++	risk := strings.ToLower(strings.TrimSpace(firstNonEmpty(result.Risk, stringField(note.Data, "risk"))))
++	if !reviewerMayAutoCloseRisk(wfFile.Data.Reviewer, risk) {
++		return tuskerError(errorInvalidTransition, taskID+": external review accepted but risk "+firstNonEmpty(risk, "unknown")+" is not reviewer auto-close eligible")
++	}
++	actor := reviewerActorForNote(wfFile.Data.Reviewer.Actor, note)
++	covers := strings.Join(v7AcceptanceIDs(note.Body), ",")
++	if covers == "" {
++		covers = "ALL"
++	}
++	summary := strings.TrimSpace(result.Summary)
++	if summary == "" && len(result.Findings) > 0 {
++		summary = strings.Join(result.Findings, "; ")
++	}
++	if summary == "" {
++		summary = "External ChatGPT review accepted the applied result."
++	}
++	if err := verifyV7AddCmd(Args{
++		"vault":  project.VaultRoot,
++		"quiet":  "true",
++		"id":     taskID,
++		"by":     actor,
++		"covers": covers,
++		"check":  "external ChatGPT review verdict: " + strings.TrimSpace(result.Verdict),
++		"result": "pass",
++		"note":   summary,
++	}); err != nil {
++		return err
++	}
++	return closeV7Cmd(Args{
++		"vault":  project.VaultRoot,
++		"quiet":  "true",
++		"id":     taskID,
++		"by":     actor,
++		"reason": "external ChatGPT review accepted: " + summary,
++	})
++}
++
+ func daemonShouldAutoAdvanceExternalRun(wf Workflow, note Note, run RunStatus) bool {
+ 	if daemonNoteKind(note) != "task" || strings.TrimSpace(run.RecordID) == "" {
+ 		return false
+@@ -474,6 +549,34 @@ func (d *Daemon) automationContextForDaemon(project RegisteredProject, wfFile Wo
+ 	return ctx, nil
+ }
+ 
++func (d *Daemon) externalLoopLaunchContext(projectID, recordID string) ExternalLoopLaunchContext {
++	if d == nil || d.store == nil || strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" {
++		return ExternalLoopLaunchContext{}
++	}
++	events, err := d.store.ListExternalLoopEvents(projectID, recordID)
++	if err != nil {
++		return ExternalLoopLaunchContext{}
++	}
++	for i := len(events) - 1; i >= 0; i-- {
++		event := events[i]
++		if strings.TrimSpace(event.Status) != "ok" {
++			continue
++		}
++		action := normalizeExternalLoopAction(event.Action)
++		switch action {
++		case externalLoopActionContinueThreadOnFailure, externalLoopActionRequestReviewNext:
++			return ExternalLoopLaunchContext{
++				Stage:       normalizeExternalLoopStage(event.Stage),
++				Action:      action,
++				OriginJobID: strings.TrimSpace(event.JobID),
++				EventID:     strings.TrimSpace(event.EventID),
++				Reason:      strings.TrimSpace(event.Reason),
++			}
++		}
++	}
++	return ExternalLoopLaunchContext{}
++}
++
+ func externalLoopRunnerRequiresCollect(wf Workflow, runner string) bool {
+ 	runner = strings.TrimSpace(runner)
+ 	if runner == "" {
+diff --git a/cmd/tusker/daemon_external_loop_test.go b/cmd/tusker/daemon_external_loop_test.go
+index b93e8fb..739529c 100644
+--- a/cmd/tusker/daemon_external_loop_test.go
++++ b/cmd/tusker/daemon_external_loop_test.go
+@@ -142,6 +142,45 @@ func TestDaemonAutoAdvanceExternalApplyFailureDispatchesRepairContinuation(t *te
+ 	}
+ }
+ 
++func TestDaemonAutoAdvanceExternalReviewAcceptedClosesLowRiskTask(t *testing.T) {
++	vault := automationTestVault(t)
++	writeDaemonExternalLoopConfig(t, vault, `true`)
++	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon accepted external review", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
++	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
++	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "ready", "next_owner": "reviewer:agent"})
++	project := registerAutomationTestProject(t, vault)
++	sourceDir := writeExternalFetchFiles(t, map[string]string{
++		"review.md": "# RESULT\n\n```json\n{\"kind\":\"review\",\"verdict\":\"approve\",\"risk\":\"low\",\"summary\":\"All acceptance checks pass.\",\"findings\":[]}\n```\n",
++	})
++	installFakeExternalCollectFetcher(t, sourceDir, []string{"review.md"})
++	seedReleasedExternalReviewRun(t, project, "APP-T-0001", "chatgpt-browser", "cgpt-review-accepted")
++
++	daemon, err := NewDaemon(DefaultStateRoot())
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer daemon.Close()
++	if err := daemon.PollOnce(context.Background()); err != nil {
++		t.Fatal(err)
++	}
++
++	events, err := daemon.store.ListExternalLoopEvents(project.ProjectID, "APP-T-0001")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !hasExternalLoopEvent(events, externalLoopStageCollected, externalLoopActionCloseTask) {
++		t.Fatalf("expected collected/close_task event, got %#v", events)
++	}
++	note, err := resolveNote(project.VaultRoot, "APP-T-0001")
++	if err != nil {
++		t.Fatal(err)
++	}
++	assertEqual(t, "done", stringField(note.Data, "status"), "task status")
++	if strings.TrimSpace(stringField(note.Data, "closed_at")) == "" {
++		t.Fatalf("expected task to be closed, got %#v", note.Data)
++	}
++}
++
+ func TestDaemonAutoAdvanceExternalApplySuccessDispatchesExternalReview(t *testing.T) {
+ 	vault := automationTestVault(t)
+ 	writeDaemonExternalLoopConfig(t, vault, `true`)
+@@ -237,6 +276,32 @@ func seedReleasedExternalRun(t *testing.T, project RegisteredProject, recordID,
+ 	}
+ }
+ 
++func seedReleasedExternalReviewRun(t *testing.T, project RegisteredProject, recordID, runner, jobID string) {
++	t.Helper()
++	store, err := OpenRuntimeStore(DefaultStateRoot())
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer store.Close()
++	now := time.Now().UTC().Format(time.RFC3339)
++	if err := store.UpsertRun(RunStatus{
++		ProjectID:       project.ProjectID,
++		RecordID:        recordID,
++		ItemID:          recordID,
++		Runner:          runner,
++		Lane:            runLaneReview,
++		LeaseState:      string(LeaseStateReleased),
++		AttemptOutcome:  string(AttemptOutcomeSucceeded),
++		ActiveAttemptID: "attempt-external-review-1",
++		CloudTaskID:     jobID,
++		WorkRevision:    1,
++		AttemptCount:    1,
++		UpdatedAt:       now,
++	}); err != nil {
++		t.Fatal(err)
++	}
++}
++
+ func seedCollectedExternalApplyState(t *testing.T, project RegisteredProject, taskID, jobID string) {
+ 	t.Helper()
+ 	store, err := OpenRuntimeStore(DefaultStateRoot())
+diff --git a/cmd/tusker/runner.go b/cmd/tusker/runner.go
+index ecae1ef..8f5ac15 100644
+--- a/cmd/tusker/runner.go
++++ b/cmd/tusker/runner.go
+@@ -72,6 +72,7 @@ type StartRequest struct {
+ 	VaultPath     string
+ 	Budget        map[string]any
+ 	CodexPolicy   CodexPolicy
++	ExternalLoop  ExternalLoopLaunchContext
+ }
+ 
+ type ResumeRequest struct {
+@@ -95,6 +96,15 @@ type ResumeRequest struct {
+ 	NotePath      string
+ 	VaultPath     string
+ 	CodexPolicy   CodexPolicy
++	ExternalLoop  ExternalLoopLaunchContext
++}
++
++type ExternalLoopLaunchContext struct {
++	Stage       string
++	Action      string
++	OriginJobID string
++	EventID     string
++	Reason      string
+ }
+ 
+ type CodexPolicy struct {
+@@ -307,6 +317,11 @@ func runnerEnv(req runnerLaunchEnv) []string {
+ 		"TUSKER_CODEX_READ_TIMEOUT_MS="+fmt.Sprintf("%d", req.CodexPolicy.ReadTimeoutMS),
+ 		"TUSKER_CODEX_STALL_TIMEOUT_MS="+fmt.Sprintf("%d", req.CodexPolicy.StallTimeoutMS),
+ 		"TUSKER_CODEX_MAX_TURNS="+fmt.Sprintf("%d", req.CodexPolicy.MaxTurns),
++		"TUSKER_EXTERNAL_LOOP_STAGE="+req.ExternalLoop.Stage,
++		"TUSKER_EXTERNAL_LOOP_ACTION="+req.ExternalLoop.Action,
++		"TUSKER_EXTERNAL_ORIGIN_JOB_ID="+req.ExternalLoop.OriginJobID,
++		"TUSKER_EXTERNAL_LOOP_EVENT_ID="+req.ExternalLoop.EventID,
++		"TUSKER_EXTERNAL_LOOP_REASON="+req.ExternalLoop.Reason,
+ 		"TUSKER_EXTENSIONS_ENABLED="+fmt.Sprintf("%t", extensionPolicy.Enabled),
+ 		"TUSKER_EXTENSION_ALLOWED_TOOLS="+strings.Join(extensionPolicy.AllowedTools, ","),
+ 		"TUSKER_EXTENSION_ALLOWED_MCPS="+strings.Join(extensionPolicy.AllowedMCPs, ","),
+@@ -340,4 +355,5 @@ type runnerLaunchEnv struct {
+ 	SessionRef    string
+ 	MessageRef    string
+ 	CodexPolicy   CodexPolicy
++	ExternalLoop  ExternalLoopLaunchContext
+ }
+diff --git a/cmd/tusker/runner_codex_cloud.go b/cmd/tusker/runner_codex_cloud.go
+index 4987d7b..9d9e4ea 100644
+--- a/cmd/tusker/runner_codex_cloud.go
++++ b/cmd/tusker/runner_codex_cloud.go
+@@ -225,17 +225,21 @@ func validateCodexCloudRuntimeConfig(config CodexCloudConfig) error {
+ 
+ func codexCloudCommand(command string, config CodexCloudConfig, req StartRequest, taskID string) string {
+ 	return replaceTemplateTokens(command, map[string]string{
+-		"{{workspace_path}}":  req.WorkspacePath,
+-		"{{prompt_path}}":     req.PromptPath,
+-		"{{event_sink_path}}": req.EventSinkPath,
+-		"{{raw_log_path}}":    req.RawLogPath,
+-		"{{status_path}}":     req.StatusPath,
+-		"{{note_path}}":       req.NotePath,
+-		"{{vault_path}}":      req.VaultPath,
+-		"{{environment_id}}":  config.EnvironmentID,
+-		"{{apply_mode}}":      config.ApplyMode,
+-		"{{pr_mode}}":         config.PRMode,
+-		"{{cloud_task_id}}":   taskID,
++		"{{workspace_path}}":         req.WorkspacePath,
++		"{{prompt_path}}":            req.PromptPath,
++		"{{event_sink_path}}":        req.EventSinkPath,
++		"{{raw_log_path}}":           req.RawLogPath,
++		"{{status_path}}":            req.StatusPath,
++		"{{note_path}}":              req.NotePath,
++		"{{vault_path}}":             req.VaultPath,
++		"{{environment_id}}":         config.EnvironmentID,
++		"{{apply_mode}}":             config.ApplyMode,
++		"{{pr_mode}}":                config.PRMode,
++		"{{cloud_task_id}}":          taskID,
++		"{{external_loop_stage}}":    req.ExternalLoop.Stage,
++		"{{external_loop_action}}":   req.ExternalLoop.Action,
++		"{{external_origin_job_id}}": req.ExternalLoop.OriginJobID,
++		"{{external_loop_event_id}}": req.ExternalLoop.EventID,
+ 	})
+ }
+ 
+@@ -252,6 +256,11 @@ func codexCloudEnv(req StartRequest, config CodexCloudConfig, taskID string) []s
+ 		"TUSKER_CODEX_CLOUD_PR_MODE="+config.PRMode,
+ 		"TUSKER_CODEX_CLOUD_EXTERNAL_COLLECT="+fmt.Sprintf("%t", config.ExternalCollect),
+ 		"TUSKER_CODEX_CLOUD_TASK_ID="+taskID,
++		"TUSKER_EXTERNAL_LOOP_STAGE="+req.ExternalLoop.Stage,
++		"TUSKER_EXTERNAL_LOOP_ACTION="+req.ExternalLoop.Action,
++		"TUSKER_EXTERNAL_ORIGIN_JOB_ID="+req.ExternalLoop.OriginJobID,
++		"TUSKER_EXTERNAL_LOOP_EVENT_ID="+req.ExternalLoop.EventID,
++		"TUSKER_EXTERNAL_LOOP_REASON="+req.ExternalLoop.Reason,
+ 	)
+ }
+ 

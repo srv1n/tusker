@@ -102,7 +102,7 @@ func validateV7Task(note Note, ctx validationContext, where string, errors, warn
 		*errors = append(*errors, issue(errorIDScheme, "V7 task id must match ABC-T-0001", where, "", map[string]any{"id": id}))
 	}
 	if !strings.HasSuffix(filepath.ToSlash(where), "work/tasks/"+id+".md") {
-		*errors = append(*errors, issue(errorPathMismatch, "V7 task path must be tusker/work/tasks/"+id+".md", where, "", nil))
+		*errors = append(*errors, issue(errorPathMismatch, "V7 task path must be .tusker/work/tasks/"+id+".md", where, "", nil))
 	}
 	if _, ok := v7TaskStatuses[stringField(data, "status")]; !ok {
 		*errors = append(*errors, issue(errorInvalidField, "invalid V7 task status: "+stringField(data, "status"), where, "", map[string]any{"field": "status"}))
@@ -394,7 +394,7 @@ func validateV7Gate(note Note, where string, errors, warnings *[]Issue) {
 		*errors = append(*errors, issue(errorIDScheme, "V7 gate id must match ABC-G-0001", where, "", map[string]any{"id": id}))
 	}
 	if !strings.HasSuffix(filepath.ToSlash(where), "work/gates/"+id+".md") {
-		*errors = append(*errors, issue(errorPathMismatch, "V7 gate path must be tusker/work/gates/"+id+".md", where, "", nil))
+		*errors = append(*errors, issue(errorPathMismatch, "V7 gate path must be .tusker/work/gates/"+id+".md", where, "", nil))
 	}
 	if _, ok := v7GateKinds[stringField(data, "gate_kind")]; !ok {
 		*errors = append(*errors, issue(errorInvalidField, "invalid V7 gate kind: "+stringField(data, "gate_kind"), where, "", nil))
@@ -408,6 +408,24 @@ func validateV7Gate(note Note, where string, errors, warnings *[]Issue) {
 	if boolField(data, "blocking") && stringField(data, "verification") == "" {
 		*errors = append(*errors, issue("GATE_MISSING_VERIFICATION", "blocking gate requires verification", where, "", nil))
 	}
+	if v7GateTextIsPlaceholder(stringField(data, "action")) {
+		*errors = append(*errors, issue("GATE_PLACEHOLDER_ACTION", "gate action is placeholder text", where, "state the exact owner action that unblocks the task", nil))
+	}
+	if v7GateTextIsPlaceholder(stringField(data, "verification")) {
+		*errors = append(*errors, issue("GATE_PLACEHOLDER_VERIFICATION", "gate verification is placeholder text", where, "state the concrete command, artifact, or owner decision that proves the gate is satisfied", nil))
+	}
+	if boolField(data, "blocking") && v7GateOwnerNeedsAgentBoundary(stringField(data, "owner")) && !v7GateHasAgentBoundary(note) {
+		*errors = append(*errors, issue("GATE_MISSING_AGENT_BOUNDARY", "human/external blocking gate requires why_agent_cannot or a Why agent cannot do this section", where, "", nil))
+	}
+	if boolField(data, "blocking") && v7HumanGateOwnsAgentCapableWork(stringField(data, "gate_kind"), stringField(data, "owner"), stringField(data, "action"), stringField(data, "verification"), v7GateBoundaryText(note), v7GateSuggestionText(note)) {
+		*errors = append(*errors, issue("GATE_HUMAN_OWNS_AGENT_CAPABLE_WORK", "human gate appears to own agent-capable review work", where, "use an independent reviewer/subagent for code review, diffs, test inspection, or implementation judgment", nil))
+	}
+	if boolField(data, "blocking") && v7GateOwnerNeedsAgentBoundary(stringField(data, "owner")) && stringField(data, "gate_kind") == "decision" && !v7GateHasSuggestion(note) {
+		*errors = append(*errors, issue("GATE_DECISION_SUGGESTION_MISSING", "human/external decision gate requires a suggestion or recommendation", where, "include the agent's recommended choice or repair path", nil))
+	}
+	if boolField(data, "blocking") && len(normalizeList(data["covers"])) == 0 {
+		*warnings = append(*warnings, issue("GATE_MISSING_ACCEPTANCE_COVERAGE", "blocking gate should name the acceptance/proof gap it covers", where, "", nil))
+	}
 	if stringField(data, "status") == "satisfied" && (stringField(data, "satisfied_by") == "" || stringField(data, "satisfied_at") == "") {
 		*errors = append(*errors, issue("GATE_SATISFIED_METADATA_MISSING", "satisfied gate requires satisfied_by and satisfied_at", where, "", nil))
 	}
@@ -416,9 +434,6 @@ func validateV7Gate(note Note, where string, errors, warnings *[]Issue) {
 	}
 	if stringField(data, "status") == "waived" && (stringField(data, "waived_by") == "" || stringField(data, "waived_at") == "" || stringField(data, "waive_reason") == "") {
 		*errors = append(*errors, issue("GATE_WAIVE_METADATA_MISSING", "waived gate requires waived_by, waived_at, and waive_reason", where, "", nil))
-	}
-	if strings.HasPrefix(stringField(data, "owner"), "human:") && !sectionHasSubstance(note.Body, "## Steps") {
-		*warnings = append(*warnings, issue("GATE_STEPS_MISSING", "human-owned gate should include steps", where, "", nil))
 	}
 	if (stringField(data, "gate_kind") == "auth" || stringField(data, "gate_kind") == "env") && !strings.Contains(strings.ToLower(note.Body), "secret policy") {
 		*warnings = append(*warnings, issue("GATE_SECRET_POLICY_MISSING", "auth/env gate should include secret policy", where, "", nil))
@@ -429,6 +444,114 @@ func validateV7Gate(note Note, where string, errors, warnings *[]Issue) {
 	if stringField(data, "gate_kind") == "verification" && !v7GateBodyHasExactVerificationProof(note.Body) {
 		*warnings = append(*warnings, issue("GATE_VERIFICATION_PROOF_VAGUE", "verification gate should include an exact command or manual proof", where, "", nil))
 	}
+}
+
+func v7GateOwnerNeedsAgentBoundary(owner string) bool {
+	switch v7ProofOwnerClass(owner) {
+	case "human", "external":
+		return true
+	default:
+		return false
+	}
+}
+
+func v7GateHasAgentBoundary(note Note) bool {
+	return v7GateBoundaryText(note) != ""
+}
+
+func v7GateBoundaryText(note Note) string {
+	if value := strings.TrimSpace(stringField(note.Data, "why_agent_cannot")); value != "" {
+		return value
+	}
+	return strings.TrimSpace(sectionContent(note.Body, "## Why agent cannot do this"))
+}
+
+func v7GateHasSuggestion(note Note) bool {
+	return v7GateSuggestionText(note) != ""
+}
+
+func v7GateSuggestionText(note Note) string {
+	for _, field := range []string{"suggestion", "recommendation"} {
+		if value := strings.TrimSpace(stringField(note.Data, field)); value != "" {
+			return value
+		}
+	}
+	for _, heading := range []string{"## Suggested resolution", "## Suggestion", "## Recommendation"} {
+		if value := strings.TrimSpace(sectionContent(note.Body, heading)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func v7GateTextIsPlaceholder(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	normalized = strings.Trim(normalized, ".:;! ")
+	normalized = strings.Join(strings.Fields(normalized), " ")
+	switch normalized {
+	case "",
+		"tbd",
+		"todo",
+		"resolve gate",
+		"resolve this gate",
+		"resolve this gate so blocked work can proceed",
+		"complete the gate action",
+		"capture the required verification",
+		"owner confirms",
+		"owner confirms the gate is satisfied":
+		return true
+	default:
+		return false
+	}
+}
+
+func v7HumanGateOwnsAgentCapableWork(gateKind, owner, action, verification, whyAgentCannot, suggestion string) bool {
+	if !v7GateOwnerNeedsAgentBoundary(owner) {
+		return false
+	}
+	text := strings.ToLower(strings.Join([]string{action, verification, whyAgentCannot, suggestion}, " "))
+	if gateKind == "decision" && strings.TrimSpace(suggestion) != "" && v7GateHasDecisionConflictContext(text) {
+		return false
+	}
+	if gateKind == "signoff" || gateKind == "security" || gateKind == "release" {
+		return false
+	}
+	humanOnly := []string{
+		"credential", "secret", "oauth", "api key", "payment", "billing", "account",
+		"device", "physical", "manual smoke", "browser ui", "production access",
+		"security approval", "release approval", "product decision", "legal",
+	}
+	for _, marker := range humanOnly {
+		if strings.Contains(text, marker) {
+			return false
+		}
+	}
+	agentCapable := []string{
+		"code review", "review code", "reviews code", "review code changes", "review diff", "diff review", "approve diff", "compare code",
+		"code comparison", "review branch proof", "review proof", "review acceptance", "review changes",
+		"inspect logs", "log analysis", "test inspection", "test failure", "debug test",
+		"documentation review", "implementation judgment", "audit implementation",
+	}
+	for _, marker := range agentCapable {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func v7GateHasDecisionConflictContext(text string) bool {
+	markers := []string{
+		"spec", "requirement", "acceptance", "product intent", "product decision",
+		"api", "contract", "frontend", "backend", "schema", "ux", "usability",
+		"conflict", "contradict", "mismatch", "incompatible", "unclear", "choose",
+	}
+	for _, marker := range markers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func v7GateBodyHasExternalServiceSetup(body string) bool {
@@ -517,7 +640,7 @@ func validateV7Evidence(note Note, ctx validationContext, where string, errors, 
 	}
 	task := stringField(data, "task")
 	if task != "" && !strings.HasSuffix(filepath.ToSlash(where), "evidence/"+task+"/"+id+".md") {
-		*errors = append(*errors, issue(errorPathMismatch, "V7 evidence path must be tusker/evidence/<task>/<evidence>.md", where, "", nil))
+		*errors = append(*errors, issue(errorPathMismatch, "V7 evidence path must be .tusker/evidence/<task>/<evidence>.md", where, "", nil))
 	}
 	if _, ok := v7EvidenceKinds[stringField(data, "evidence_kind")]; !ok {
 		*errors = append(*errors, issue(errorInvalidField, "invalid V7 evidence kind: "+stringField(data, "evidence_kind"), where, "", nil))
@@ -562,7 +685,7 @@ func validateV7Evidence(note Note, ctx validationContext, where string, errors, 
 			continue
 		}
 		if stringField(data, "status") == "accepted" && !v7ArtifactPathDurable(task, artifact) {
-			*errors = append(*errors, issue("EVIDENCE_ARTIFACT_NON_DURABLE", "accepted evidence artifact is not durable: "+artifact, where, "copy artifacts into tusker/evidence/<task>/artifacts/ or mark intentional external links with --external-url", map[string]any{"artifact": artifact}))
+			*errors = append(*errors, issue("EVIDENCE_ARTIFACT_NON_DURABLE", "accepted evidence artifact is not durable: "+artifact, where, "copy artifacts into .tusker/evidence/<task>/artifacts/ or mark intentional external links with --external-url", map[string]any{"artifact": artifact}))
 			continue
 		}
 		path, ok := resolveV7ArtifactPath(ctx.VaultPath, where, note.AbsolutePath, artifact)
@@ -654,7 +777,7 @@ func validateV7Attempt(note Note, where string, errors, warnings *[]Issue) {
 	}
 	task := stringField(data, "task")
 	if task != "" && id != "" && !strings.HasSuffix(filepath.ToSlash(where), "attempts/"+task+"/"+id+".md") {
-		*errors = append(*errors, issue(errorPathMismatch, "V7 attempt path must be tusker/attempts/<task>/<attempt>.md", where, "", nil))
+		*errors = append(*errors, issue(errorPathMismatch, "V7 attempt path must be .tusker/attempts/<task>/<attempt>.md", where, "", nil))
 	}
 	if _, ok := v7AttemptStatus[stringField(data, "status")]; !ok {
 		*errors = append(*errors, issue(errorInvalidField, "invalid V7 attempt status: "+stringField(data, "status"), where, "", nil))
@@ -679,7 +802,7 @@ func validateV7Decision(note Note, where string, errors, warnings *[]Issue) {
 		*errors = append(*errors, issue(errorIDScheme, "V7 decision id must match ABC-D-0001", where, "", nil))
 	}
 	if id != "" && !strings.HasSuffix(filepath.ToSlash(where), "work/decisions/"+id+".md") {
-		*errors = append(*errors, issue(errorPathMismatch, "V7 decision path must be tusker/work/decisions/"+id+".md", where, "", nil))
+		*errors = append(*errors, issue(errorPathMismatch, "V7 decision path must be .tusker/work/decisions/"+id+".md", where, "", nil))
 	}
 	if _, ok := v7DecisionStatus[stringField(data, "status")]; !ok {
 		*errors = append(*errors, issue(errorInvalidField, "invalid V7 decision status: "+stringField(data, "status"), where, "", nil))
@@ -707,7 +830,7 @@ func validateV7Epic(note Note, where string, errors, warnings *[]Issue) {
 		*errors = append(*errors, issue(errorIDScheme, "V7 epic id must match ABC", where, "", map[string]any{"id": id}))
 	}
 	if id != "" && !strings.HasSuffix(filepath.ToSlash(where), "work/epics/"+id+".md") {
-		*errors = append(*errors, issue(errorPathMismatch, "V7 epic path must be tusker/work/epics/"+id+".md", where, "", nil))
+		*errors = append(*errors, issue(errorPathMismatch, "V7 epic path must be .tusker/work/epics/"+id+".md", where, "", nil))
 	}
 }
 
@@ -729,7 +852,7 @@ func validateV7Proposal(note Note, ctx validationContext, where string, errors, 
 		*errors = append(*errors, issue(errorIDScheme, "V7 proposal id must match ABC-P-0001", where, "", map[string]any{"id": id}))
 	}
 	if !strings.HasSuffix(filepath.ToSlash(where), "work/inbox/"+id+".md") {
-		*errors = append(*errors, issue(errorPathMismatch, "V7 proposal path must be tusker/work/inbox/"+id+".md", where, "", nil))
+		*errors = append(*errors, issue(errorPathMismatch, "V7 proposal path must be .tusker/work/inbox/"+id+".md", where, "", nil))
 	}
 	if _, ok := v7ProposalStatus[stringField(data, "status")]; !ok {
 		*errors = append(*errors, issue(errorInvalidField, "invalid V7 proposal status: "+stringField(data, "status"), where, "", map[string]any{"field": "status"}))
@@ -799,7 +922,7 @@ func validateV7Closeout(note Note, ctx validationContext, where string, errors *
 		*errors = append(*errors, issue(errorIDScheme, "V7 closeout id must look like "+expectedPrefix+"0001", where, "", map[string]any{"id": id}))
 	}
 	if !strings.HasSuffix(filepath.ToSlash(where), "work/closeouts/"+id+".md") {
-		*errors = append(*errors, issue(errorPathMismatch, "V7 closeout path must be tusker/work/closeouts/"+id+".md", where, "", nil))
+		*errors = append(*errors, issue(errorPathMismatch, "V7 closeout path must be .tusker/work/closeouts/"+id+".md", where, "", nil))
 	}
 	if stringField(data, "state") != "machine_complete_waiting_for_human" {
 		*errors = append(*errors, issue(errorInvalidField, "V7 closeout state must be machine_complete_waiting_for_human", where, "", map[string]any{"field": "state"}))
@@ -867,7 +990,7 @@ func validateV7Domain(note Note, ctx validationContext, where string, errors, wa
 	}
 	validateV7DomainID(id, where, errors)
 	if id != "" && !strings.HasSuffix(filepath.ToSlash(where), "knowledge/domains/"+id+"/INDEX.md") {
-		*errors = append(*errors, issue(errorPathMismatch, "V7 domain path must be tusker/knowledge/domains/"+id+"/INDEX.md", where, "", nil))
+		*errors = append(*errors, issue(errorPathMismatch, "V7 domain path must be .tusker/knowledge/domains/"+id+"/INDEX.md", where, "", nil))
 	}
 	if _, ok := v7DomainStatus[stringField(data, "status")]; !ok {
 		*errors = append(*errors, issue(errorInvalidField, "invalid V7 domain status: "+stringField(data, "status"), where, "", map[string]any{"field": "status"}))
@@ -905,7 +1028,7 @@ func validateV7DomainCanon(note Note, ctx validationContext, where string, error
 		*errors = append(*errors, issue(errorIDScheme, "V7 domain canon id must be <domain>/canon", where, "", map[string]any{"id": id, "domain": domain}))
 	}
 	if domain != "" && !strings.HasSuffix(filepath.ToSlash(where), "knowledge/domains/"+domain+"/CANON.md") {
-		*errors = append(*errors, issue(errorPathMismatch, "V7 domain canon path must be tusker/knowledge/domains/"+domain+"/CANON.md", where, "", nil))
+		*errors = append(*errors, issue(errorPathMismatch, "V7 domain canon path must be .tusker/knowledge/domains/"+domain+"/CANON.md", where, "", nil))
 	}
 	if _, ok := v7DomainStatus[stringField(data, "status")]; !ok {
 		*errors = append(*errors, issue(errorInvalidField, "invalid V7 domain canon status: "+stringField(data, "status"), where, "", map[string]any{"field": "status"}))
@@ -950,7 +1073,7 @@ func validateV7ProjectSkill(note Note, ctx validationContext, where string, erro
 		*errors = append(*errors, issue(errorInvalidField, "V7 project skill kind must be project_skill", where, "", map[string]any{"field": "kind"}))
 	}
 	if note.RelativePath != "" && note.RelativePath != "SKILL.md" {
-		*errors = append(*errors, issue(errorPathMismatch, "V7 project skill must live at tusker/SKILL.md", where, "", map[string]any{"expected": "SKILL.md", "actual": note.RelativePath}))
+		*errors = append(*errors, issue(errorPathMismatch, "V7 project skill must live at "+vaultDisplayPath(ctx.VaultPath, "SKILL.md"), where, "", map[string]any{"expected": "SKILL.md", "actual": note.RelativePath}))
 	}
 	if stringField(data, "operator_skill") != "tusker" {
 		*errors = append(*errors, issue(errorInvalidField, "V7 project skill must name the Tusker operator skill as operator_skill: tusker", where, "", map[string]any{"field": "operator_skill"}))
@@ -1002,7 +1125,7 @@ func validateV7KnowledgeNode(note Note, ctx validationContext, where string, err
 	}
 	if ctx.VaultPath != "" && id != "" {
 		if !strings.HasPrefix(normalized, "knowledge/domains/") {
-			*warnings = append(*warnings, issue(errorPathMismatch, "V7 knowledge nodes should live under tusker/knowledge/domains/**", where, "move durable project knowledge under the owning domain folder", nil))
+			*warnings = append(*warnings, issue(errorPathMismatch, "V7 knowledge nodes should live under .tusker/knowledge/domains/**", where, "move durable project knowledge under the owning domain folder", nil))
 		}
 	}
 	validateV7KnowledgeNodePath(kind, id, normalized, where, errors)
@@ -1055,9 +1178,9 @@ func validateV7SkillKnowledge(vaultPath string) ([]Issue, []Issue) {
 	var errors []Issue
 	skillPath := filepath.Join(vaultPath, "SKILL.md")
 	if !fileExists(skillPath) {
-		errors = append(errors, issue(errorMissingField, "V7 knowledge domains require tusker/SKILL.md project knowledge skill", "SKILL.md", "run `tusker init --profile v7` or `tusker publish skill --v7` after adding V7 domains", nil))
+		errors = append(errors, issue(errorMissingField, "V7 knowledge domains require "+vaultDisplayPath(vaultPath, "SKILL.md")+" project knowledge skill", "SKILL.md", "run `tusker init --profile v7` or `tusker publish skill --v7` after adding V7 domains", nil))
 	} else if hasV7KnowledgeDomains(vaultPath) && !hasV7ProjectSkill(vaultPath) {
-		errors = append(errors, issue(errorInvalidField, "V7 knowledge domains require SKILL.md to use schema tusker.project-skill/v7", "SKILL.md", "keep V6 domains under tusker/domains/** or migrate the project skill to V7", nil))
+		errors = append(errors, issue(errorInvalidField, "V7 knowledge domains require SKILL.md to use schema tusker.project-skill/v7", "SKILL.md", "keep V6 domains under .tusker/knowledge/domains/** or migrate the project skill to V7", nil))
 	} else if hasV7KnowledgeDomains(vaultPath) {
 		_, body, err := parseFrontmatterMustRead(skillPath)
 		if err != nil {
@@ -1079,7 +1202,7 @@ func validateV7SkillKnowledge(vaultPath string) ([]Issue, []Issue) {
 				filepath.ToSlash(filepath.Join("knowledge", "domains", id, "CANON.md")),
 			} {
 				if !strings.Contains(body, rel) {
-					errors = append(errors, issue("PROJECT_SKILL_DOMAIN_ROUTE_MISSING", "V7 project skill routing omits domain route "+rel, "SKILL.md", "regenerate `tusker/SKILL.md` by running `tusker domain new <id> --v7` or `tusker init --profile v7`", map[string]any{"domain": id, "path": rel}))
+					errors = append(errors, issue("PROJECT_SKILL_DOMAIN_ROUTE_MISSING", "V7 project skill routing omits domain route "+rel, "SKILL.md", "regenerate `"+vaultDisplayPath(vaultPath, "SKILL.md")+"` by running `tusker domain new <id> --v7` or `tusker init --profile v7`", map[string]any{"domain": id, "path": rel}))
 				}
 			}
 		}
@@ -1206,7 +1329,7 @@ func validateV7Event(data map[string]any, raw, where string, errors, warnings *[
 func validateV7EventPath(data map[string]any, where string, errors *[]Issue) {
 	parts := strings.Split(filepath.ToSlash(where), "/")
 	if len(parts) != 4 || parts[0] != "events" || len(parts[1]) != 4 || len(parts[2]) != 2 || !strings.HasSuffix(parts[3], ".json") {
-		*errors = append(*errors, issue(errorPathMismatch, "V7 event path must be tusker/events/YYYY/MM/<object>--<timestamp>--<id>.json", where, "", nil))
+		*errors = append(*errors, issue(errorPathMismatch, "V7 event path must be .tusker/events/YYYY/MM/<object>--<timestamp>--<id>.json", where, "", nil))
 		return
 	}
 	id := stringField(data, "id")
@@ -1254,7 +1377,7 @@ func validateV7TaskBodyPolicy(body, vaultPath, where string, errors, warnings *[
 	policy := v7ValidationPolicyFor(vaultPath)
 	lower := strings.ToLower(body)
 	if policy.ForbidWorkLogSection && (strings.Contains(lower, "\n## work log") || strings.Contains(lower, "\n## execution diary")) {
-		*errors = append(*errors, issue("TASK_WORK_LOG_SECTION", "V7 task body must not contain Work Log or Execution Diary sections", where, "record attempts in tusker/attempts/<task>/ and durable proof in tusker/evidence/<task>/", nil))
+		*errors = append(*errors, issue("TASK_WORK_LOG_SECTION", "V7 task body must not contain Work Log or Execution Diary sections", where, "record attempts in .tusker/attempts/<task>/ and durable proof in .tusker/evidence/<task>/", nil))
 	}
 	if strings.Contains(lower, "\n## verification log") {
 		*errors = append(*errors, issue("TASK_VERIFICATION_LOG_SECTION", "V7 task body must not contain Verification log sections", where, "use the concise ## Verification table; move chronology to attempts and raw output to .tusker/scratch/<task>/", nil))
@@ -1751,7 +1874,7 @@ func validateV7BranchPolicy(vaultPath string, args Args) ([]Issue, []Issue) {
 		return errors, warnings
 	}
 	if args.Bool("staged") {
-		changes, err := gitV7NameStatusChanges(repoRoot, "diff", "--name-status", "--cached", "--", "tusker/work/tasks", "tusker/work/gates", "tusker/work/epics", "tusker/work/decisions", "tusker/work/inbox", "tusker/evidence", "tusker/attempts")
+		changes, err := gitV7NameStatusChanges(repoRoot, append([]string{"diff", "--name-status", "--cached", "--"}, v7ProtectedGitPaths(vaultPath)...)...)
 		if err != nil {
 			return errors, warnings
 		}
@@ -1771,7 +1894,7 @@ func validateV7BranchPolicy(vaultPath string, args Args) ([]Issue, []Issue) {
 		return errors, warnings
 	}
 	mergeBase := strings.TrimSpace(string(mergeBaseOut))
-	changes, err := gitV7NameStatusChanges(repoRoot, "diff", "--name-status", mergeBase+"...HEAD", "--", "tusker/work/tasks", "tusker/work/gates", "tusker/work/epics", "tusker/work/decisions", "tusker/work/inbox", "tusker/evidence", "tusker/attempts")
+	changes, err := gitV7NameStatusChanges(repoRoot, append([]string{"diff", "--name-status", mergeBase + "...HEAD", "--"}, v7ProtectedGitPaths(vaultPath)...)...)
 	if err != nil {
 		return errors, warnings
 	}
@@ -1779,6 +1902,23 @@ func validateV7BranchPolicy(vaultPath string, args Args) ([]Issue, []Issue) {
 		errors = append(errors, protectedFieldIssuesForGitChange(repoRoot, branch, change, mergeBase, "HEAD")...)
 	}
 	return errors, warnings
+}
+
+func v7ProtectedGitPaths(vaultPath string) []string {
+	root := vaultDisplayRoot(vaultPath)
+	paths := []string{
+		"work/tasks",
+		"work/gates",
+		"work/epics",
+		"work/decisions",
+		"work/inbox",
+		"evidence",
+		"attempts",
+	}
+	for i, path := range paths {
+		paths[i] = filepath.ToSlash(filepath.Join(root, path))
+	}
+	return paths
 }
 
 type v7GitNameStatusChange struct {

@@ -91,7 +91,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	}
 	cmd.Env = runnerEnv(runnerLaunchEnv{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		WorkRevision: req.WorkRevision, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 		NotePath: req.NotePath, VaultPath: req.VaultPath, SessionRef: resumeSessionRef(resume), MessageRef: resumeMessageRef(resume),
 		CodexPolicy: withDefaultCodexPolicy(req.CodexPolicy),

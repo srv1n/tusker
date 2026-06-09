@@ -361,7 +361,7 @@ func improveSummaryEvidenceFromFile(sourceName, path string) []improveEvidence {
 
 func collectImproveInventory(repoRoot, vaultPath string) improveInventory {
 	inventory := improveInventory{}
-	for _, rel := range []string{"tusker/SKILL.md", "skill/SKILL.md"} {
+	for _, rel := range []string{".tusker/SKILL.md", "skill/SKILL.md"} {
 		if fileExists(filepath.Join(repoRoot, filepath.FromSlash(rel))) {
 			inventory.Skills = append(inventory.Skills, rel)
 		}
@@ -369,7 +369,7 @@ func collectImproveInventory(repoRoot, vaultPath string) improveInventory {
 	inventory.Skills = append(inventory.Skills, improveMarkdownPaths(repoRoot, []string{".agents/skills", ".claude/skills", ".codex/skills"})...)
 	inventory.AgentDocs = append(inventory.AgentDocs, improveMarkdownPaths(vaultPath, []string{"docs/agents", "knowledge/domains"})...)
 	inventory.Subagents = append(inventory.Subagents, improveMarkdownPaths(repoRoot, []string{".agents/agents", ".claude/agents", ".codex/agents"})...)
-	inventory.Automations = append(inventory.Automations, improveMarkdownPaths(repoRoot, []string{"tusker/automations", ".codex/automations", ".github/workflows"})...)
+	inventory.Automations = append(inventory.Automations, improveMarkdownPaths(repoRoot, []string{".tusker/automations", ".codex/automations", ".github/workflows"})...)
 	sort.Strings(inventory.Skills)
 	sort.Strings(inventory.AgentDocs)
 	sort.Strings(inventory.Subagents)
@@ -904,7 +904,7 @@ Commands:
 Purpose:
   Opt-in scan for repeated manual workflows worth packaging as the smallest
   useful reusable asset. The default is a dry-run report. --apply is required
-  before Tusker creates narrow agent runbook drafts under tusker/docs/agents/.
+  before Tusker creates narrow agent runbook drafts under ..tusker/knowledge/domains/<domain>/runbooks/.
 
 Evidence order:
   1. Tusker tasks, attempts, proof summaries, and feedback notes.
@@ -916,7 +916,7 @@ Options:
   --since <YYYY-MM-DD>   Start date. Overrides --days.
   --all                  Scan all available Tusker history.
   --max-candidates <n>   Limit shortlist size. Default: 8.
-  --write                Write report to tusker/feedback/improvements/.
+  --write                Write report to .tusker/feedback/improvements/.
   --apply                Create high-confidence missing skill/runbook assets.
   --force                Allow --apply to replace an existing generated runbook.
   --profile <name>       Runtime profile label, e.g. cheap-discovery or review.

@@ -44,7 +44,7 @@ Agents do no more tool work in this state.
 ## Common commands
 
 ```bash
-tusker list --type epic
+tusker list
 tusker search "<term>" --type task
 tusker show <TASK-ID> --capsule
 tusker proof status <TASK-ID> --json

@@ -338,14 +338,20 @@ func applyV7CreateGateProposal(vaultPath, target, targetKind string, fields map[
 		"quiet":        "true",
 		"id":           gateID,
 		"blocks":       strings.Join(blocks, ","),
-		"kind":         fallback(strings.ToLower(toString(fields["kind"])), "manual_hold"),
-		"owner":        fallback(toString(fields["owner"]), "human:"+defaultActorName()),
-		"action":       fallback(toString(fields["action"]), "Resolve this gate so blocked work can proceed."),
-		"verification": fallback(toString(fields["verification"]), "Owner confirms the gate is satisfied."),
+		"kind":         strings.ToLower(toString(fields["kind"])),
+		"owner":        toString(fields["owner"]),
+		"action":       toString(fields["action"]),
+		"verification": toString(fields["verification"]),
 		"by":           actor,
 	}
 	if title := toString(fields["title"]); title != "" {
 		args["title"] = title
+	}
+	if whyAgentCannot := firstNonEmpty(toString(fields["why_agent_cannot"]), toString(fields["why-agent-cannot"]), toString(fields["why-agent-cannot-do-this"])); whyAgentCannot != "" {
+		args["why-agent-cannot"] = whyAgentCannot
+	}
+	if suggestion := firstNonEmpty(toString(fields["suggestion"]), toString(fields["recommendation"]), toString(fields["suggested-resolution"]), toString(fields["suggested_resolution"])); suggestion != "" {
+		args["suggestion"] = suggestion
 	}
 	if err := newV7Gate(args); err != nil {
 		return "", err
@@ -465,6 +471,12 @@ func v7ProposalFields(args Args, action string) (map[string]any, error) {
 			if value := args.String(key); value != "" {
 				fields[key] = value
 			}
+		}
+		if value := v7GateWhyAgentCannotArg(args); value != "" {
+			fields["why_agent_cannot"] = value
+		}
+		if value := v7GateSuggestionArg(args); value != "" {
+			fields["suggestion"] = value
 		}
 	case "create_decision":
 		for _, key := range []string{"id", "title", "decision", "summary", "status"} {

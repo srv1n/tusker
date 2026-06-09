@@ -11,7 +11,7 @@ func TestWorkspaceVaultMountUnmountAndRepair(t *testing.T) {
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(tempRoot, "state"))
 
 	repo := filepath.Join(tempRoot, "my-app")
-	tracker := filepath.Join(repo, "tusker")
+	tracker := filepath.Join(repo, ".tusker")
 	obsidian := filepath.Join(tempRoot, "obsidian-work")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -83,10 +83,32 @@ func TestInitMountsTrackerIntoConfiguredWorkspaceVault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tracker := filepath.Join(repo, "tusker")
+	tracker := filepath.Join(repo, ".tusker")
 	assertSymlinkTarget(t, filepath.Join(obsidian, "repo"), tracker)
 	assertExists(t, filepath.Join(tracker, "WORKFLOW.md"))
 	assertExists(t, filepath.Join(tracker, "_system", "project.yaml"))
+}
+
+func TestEnsureWorkspaceMountRepairsHistoricalTuskerSymlink(t *testing.T) {
+	tempRoot := t.TempDir()
+	repo := filepath.Join(tempRoot, "repo")
+	tracker := filepath.Join(repo, ".tusker")
+	mountPath := filepath.Join(tempRoot, "work", "repo")
+	if err := os.MkdirAll(tracker, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(mountPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(repo, "tusker"), mountPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureWorkspaceMount(mountPath, tracker, false); err != nil {
+		t.Fatal(err)
+	}
+
+	assertSymlinkTarget(t, mountPath, tracker)
 }
 
 func TestWorkspaceVaultMountRepoDiscoversRepoTracker(t *testing.T) {

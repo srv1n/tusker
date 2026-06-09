@@ -52,70 +52,14 @@ func TestMissingVaultGuidancePreservesStructuredContext(t *testing.T) {
 	assertEqual(t, "--vault <path>", context["existing_vault"], "missing vault existing-vault guidance")
 }
 
-func TestNewHelpListsV7Defaults(t *testing.T) {
-	output := captureStdout(t, printNewHelp)
-	for _, expected := range []string{
-		"tusker new epic",
-		"tusker new task",
-		"tusker new gate",
-		"tusker new decision",
-		"--priority p0|p1|p2|p3",
-		"--evidence-required automated_test",
-		"tusker legacy new",
-		"Examples:",
-		"tusker new task --vault ./tusker --epic APP",
-	} {
-		if !strings.Contains(output, expected) {
-			t.Fatalf("new help missing %q:\n%s", expected, output)
-		}
-	}
-	for _, legacy := range []string{"tusker new bug", "tusker new doc", "--node <route>", "--publish-lane <lane>"} {
-		if strings.Contains(output, legacy) {
-			t.Fatalf("new help should quarantine legacy surface %q:\n%s", legacy, output)
-		}
-	}
-}
-
-func TestMainHelpQuarantinesLegacySurfaces(t *testing.T) {
-	output := captureStdout(t, printHelp)
-	for _, forbidden := range []string{
-		"docs                ",
-		"domain              ",
-		"knowledge           ",
-		"publish             ",
-		"migrate             ",
-		"verify              ",
-		"V5 markdown",
-		"V6 knowledge",
-	} {
-		if strings.Contains(output, forbidden) {
-			t.Fatalf("main help should not advertise legacy surface %q:\n%s", forbidden, output)
-		}
-	}
-	for _, expected := range []string{
-		"Tusker - V7",
-		"tusker.yaml",
-		"tusker/work",
-		"legacy",
-	} {
-		if !strings.Contains(output, expected) {
-			t.Fatalf("main help missing %q:\n%s", expected, output)
-		}
-	}
-	legacyHelp := captureStdout(t, printLegacyHelp)
-	for _, expected := range []string{"V5 tracker", "V6 knowledge", "docs-map", "tusker legacy new doc"} {
-		if !strings.Contains(legacyHelp, expected) {
-			t.Fatalf("legacy help missing %q:\n%s", expected, legacyHelp)
-		}
-	}
-}
-
 func TestUpdateHelpExplainsSkillRefresh(t *testing.T) {
 	output := captureStdout(t, printUpdateHelp)
 	for _, expected := range []string{
-		"tusker update [--bin-dir <path>] [--no-bin] [--repo <path>] [--repo-only] [--json]",
+		"tusker update [--bin-dir <path>] [--no-bin] [--repo <path>] [--repo-only] [--skill-mode copy|symlink] [--source <checkout>] [--json]",
 		"refreshes existing user skills in ~/.agents, ~/.codex, and ~/.claude",
-		"with --repo, also refreshes repo-local .agents/.claude skill installs",
+		"with --repo, refreshes the repo-local .agents skill install",
+		"installs default to symlink mode",
+		"--source points symlink mode at a canonical Tusker checkout",
 		"with --repo-only, skips user skill installs and touches only the repo",
 		"from the currently running binary",
 	} {
@@ -256,9 +200,12 @@ func TestListHelpExplainsProgressiveDisclosure(t *testing.T) {
 	for _, expected := range []string{
 		"--open|--closed",
 		"--limit <n>",
-		"without reading note bodies",
-		"tusker list --vault ./tusker --type epic",
-		"tusker list --vault ./tusker --epic ORC --type task --open",
+		"--width <cols>",
+		"compact epic table",
+		"drops low-value columns",
+		"without dumping note bodies",
+		"tusker list --vault ./.tusker --type epic",
+		"tusker list --vault ./.tusker --epic ORC --type task --open",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("list help missing %q:\n%s", expected, output)
