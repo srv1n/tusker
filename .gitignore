@@ -10,7 +10,10 @@
 
 # Generated handoff/archive artifacts.
 /artifacts/**/*.zip
-/research/*.zip
+/artifacts/**/*.tar
+/artifacts/**/*.tar.gz
+/artifacts/**/*.tgz
+/research/**/*.zip
 
 # Tusker runtime noise. Durable contracts stay tracked; raw runtime output does not.
 .tusker/events/**/*.json
