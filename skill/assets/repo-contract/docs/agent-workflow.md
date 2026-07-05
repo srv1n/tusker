@@ -38,6 +38,14 @@ Before opening a PR, contributors should be able to explain:
 
 If AI was used, disclose it. If the contributor cannot explain the final behavior without leaning on the tool, the work is not ready.
 
+For broad, high-risk, or agent-heavy changes, generate an explainer packet before review:
+
+```bash
+tusker packet <TASK-ID> --for explainer --write
+```
+
+The explainer packet is for human understanding. It does not replace evidence, tests, or reviewer approval.
+
 ## What maintainers should enforce
 
 - keep new features or architecture discussion out of surprise PRs

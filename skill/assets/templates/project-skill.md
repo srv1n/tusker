@@ -23,6 +23,8 @@ source_of_truth: [knowledge/domains]
 
 Task agents must run `tusker packet <TASK-ID> --for agent`, then read only the routed domains from that packet unless the task contract names a narrower file.
 
+For broad, high-risk, or agent-heavy changes, humans and reviewers may run `tusker packet <TASK-ID> --for explainer` to build a mental model before reading the raw diff. Explainer packets are not proof, approval, or project canon.
+
 ## Routing Algorithm
 
 1. Read this `SKILL.md`.
@@ -49,7 +51,7 @@ Task agents must run `tusker packet <TASK-ID> --for agent`, then read only the r
 - Update the narrowest owning domain `CANON.md` when durable truth changes.
 - Create or update a leaf node only when the canon needs a stable runbook, interface, invariant, decision, glossary entry, or source attribution.
 - Run `tusker validate --json` after changing project knowledge.
-- Do not put proof logs, task history, attempts, event streams, generated packets, or raw terminal output in canon.
+- Do not put proof logs, task history, attempts, event streams, generated packets, explainer packets, or raw terminal output in canon.
 
 ## Forbidden Source Truth
 

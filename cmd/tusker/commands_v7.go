@@ -2317,6 +2317,10 @@ func v7LatestAttemptRuntimeSummary(idx v7Index, taskID string) string {
 func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string {
 	id := stringField(task.Data, "id")
 	var b strings.Builder
+	switch strings.ToLower(strings.TrimSpace(audience)) {
+	case "explainer", "understanding":
+		return v7ExplainerPacket(vaultPath, task, idx)
+	}
 	if audience == "reviewer" {
 		fmt.Fprintf(&b, "# %s reviewer packet\n\n", id)
 		writeV7PacketWarnings(&b, vaultPath, task)
@@ -2353,6 +2357,100 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 	fmt.Fprintf(&b, "## Branch policy\n\nProtected task/gate state fields must be changed through Tusker control operations on a control branch.\n\n")
 	fmt.Fprintf(&b, "## Close policy\n\n%s\n", v7ClosePolicySummary(vaultPath, task))
 	return b.String()
+}
+
+func v7ExplainerPacket(vaultPath string, task Note, idx v7Index) string {
+	id := stringField(task.Data, "id")
+	report := computeV7ProofReport(vaultPath, task, idx)
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s explainer packet\n\n", id)
+	fmt.Fprintf(&b, "- Purpose: help a human understand and participate in this change.\n")
+	fmt.Fprintf(&b, "- Boundary: this packet is not proof, approval, or a replacement for code review.\n")
+	fmt.Fprintf(&b, "- Task: %s\n", stringField(task.Data, "title"))
+	fmt.Fprintf(&b, "- Risk: %s\n", fallback(stringField(task.Data, "risk"), "medium"))
+	fmt.Fprintf(&b, "- Proof: %s/%s\n\n", report.Mode, report.Status)
+	writeV7PacketWarnings(&b, vaultPath, task)
+	fmt.Fprintf(&b, "## Background\n\n")
+	fmt.Fprintf(&b, "Project route:\n%s\n\n", v7ProjectSkillRouting(vaultPath, task))
+	fmt.Fprintf(&b, "Domain mental model:\n%s\n\n", v7DomainContext(vaultPath, task))
+	fmt.Fprintf(&b, "## Intuition\n\n")
+	fmt.Fprintf(&b, "%s\n\n", v7ExplainerSnippet(task.Body, "## Intent", "Understand why this task exists before reading a diff.", 8))
+	fmt.Fprintf(&b, "The acceptance contract is the anchor: every implementation detail should explain how it moves one of those outcomes from pending to proved.\n\n")
+	fmt.Fprintf(&b, "## Task Walkthrough\n\n")
+	fmt.Fprintf(&b, "### Acceptance\n\n%s\n\n", v7ExplainerSnippet(task.Body, "## Acceptance", "No acceptance section found.", 18))
+	fmt.Fprintf(&b, "### Non-goals\n\n%s\n\n", v7ExplainerSnippet(task.Body, "## Non-goals", "No non-goals section found.", 8))
+	fmt.Fprintf(&b, "### Knowledge delta\n\n%s\n\n", v7ExplainerSnippet(task.Body, "## Knowledge delta", "No durable knowledge delta declared.", 10))
+	fmt.Fprintf(&b, "## Literate Diff Guide\n\n")
+	fmt.Fprintf(&b, "- Read the current diff in conceptual order, not file-name order.\n")
+	fmt.Fprintf(&b, "- Start with the smallest changed interface or state transition.\n")
+	fmt.Fprintf(&b, "- Then inspect adapters, commands, docs, and tests that hang off that concept.\n")
+	fmt.Fprintf(&b, "- If a generated daemon review packet exists, use its changed-file and command summaries as the raw fact list.\n\n")
+	fmt.Fprintf(&b, "## Proof Map\n\n")
+	fmt.Fprintf(&b, "- Required proof: %s\n", fallback(strings.Join(normalizeList(task.Data["proof_required"]), ", "), "none"))
+	fmt.Fprintf(&b, "- Missing proof: %s\n", fallback(strings.Join(append(append([]string{}, report.Missing...), report.ModeMissing...), ", "), "none"))
+	fmt.Fprintf(&b, "- Machine gaps: %s\n", fallback(strings.Join(report.MachineMissing, ", "), "none"))
+	fmt.Fprintf(&b, "- Human gaps: %s\n", fallback(strings.Join(report.HumanMissing, ", "), "none"))
+	fmt.Fprintf(&b, "- Open gates: %s\n\n", fallback(strings.Join(report.OpenGates, ", "), "none"))
+	fmt.Fprintf(&b, "## Review Focus\n\n")
+	fmt.Fprintf(&b, "- Check whether the implementation preserves the task scope and non-goals.\n")
+	fmt.Fprintf(&b, "- Check whether each acceptance row has behavior-level proof.\n")
+	fmt.Fprintf(&b, "- Check whether any knowledge delta needs a docs/canon update before close.\n")
+	fmt.Fprintf(&b, "- For high or critical risk, leave final acceptance to the configured human owner.\n\n")
+	fmt.Fprintf(&b, "## Comprehension Check\n\n%s", v7ExplainerQuiz(task, report))
+	return b.String()
+}
+
+func v7ExplainerSnippet(body, heading, fallbackText string, maxLines int) string {
+	content := strings.TrimSpace(sectionContent(body, heading))
+	if content == "" {
+		return fallbackText
+	}
+	return v7PacketSnippet(content, maxLines)
+}
+
+func v7ExplainerQuiz(task Note, report v7ProofReport) string {
+	acceptance := v7ExplainerSnippet(task.Body, "## Acceptance", "No acceptance section found.", 8)
+	proofGaps := fallback(strings.Join(append(append([]string{}, report.Missing...), report.ModeMissing...), ", "), "none")
+	domains := fallback(strings.Join(normalizeList(task.Data["domains"]), ", "), "none declared")
+	knowledgeDelta := v7ExplainerSnippet(task.Body, "## Knowledge delta", "No durable knowledge delta declared.", 6)
+	questions := []struct {
+		Question string
+		Answer   string
+	}{
+		{
+			Question: "Which observable outcomes define success for this task?",
+			Answer:   acceptance,
+		},
+		{
+			Question: "What proof gaps, if any, still prevent confident review or close?",
+			Answer:   proofGaps,
+		},
+		{
+			Question: "Which domain canon should shape your mental model before reading the diff?",
+			Answer:   domains,
+		},
+		{
+			Question: "What durable understanding changes if this task succeeds?",
+			Answer:   knowledgeDelta,
+		},
+		{
+			Question: "Does this explainer packet count as evidence or approval?",
+			Answer:   "No. It is an understanding aid. Proof still comes from verification rows, evidence records, gates, and review/close policy.",
+		},
+	}
+	var lines []string
+	for i, question := range questions {
+		lines = append(lines, fmt.Sprintf("%d. %s", i+1, question.Question))
+		lines = append(lines, "")
+		lines = append(lines, "<details>")
+		lines = append(lines, "<summary>Answer</summary>")
+		lines = append(lines, "")
+		lines = append(lines, question.Answer)
+		lines = append(lines, "")
+		lines = append(lines, "</details>")
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func writeV7PacketWarnings(b *strings.Builder, vaultPath string, task Note) {

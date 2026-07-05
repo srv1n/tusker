@@ -30,6 +30,10 @@ ceremony unless the user explicitly asks for design alternatives.
   when the safe path is obvious. Ask when a wrong guess would be expensive.
 - Push back on unnecessary abstractions, broad rewrites, or vague goals.
 - Prefer the smallest complete change that satisfies the acceptance contract.
+- Keep code files at or below roughly 1,000 lines. Beyond that, agents and
+  reviewers lose grip on the file; prefer extracting a cohesive module.
+  Exceeding the limit is allowed as a deliberate decision with a stated reason
+  (generated code, a cohesive protocol table) recorded in the task evidence.
 - Do not improve adjacent code, comments, names, or formatting unless the task
   requires it.
 - Remove only the dead code or unused imports created by your own change.

@@ -1016,6 +1016,7 @@ func printV7Help() {
   tusker brief HSP-T-0001
   tusker packet HSP-T-0001 --for agent [--write]
   tusker packet HSP-T-0001 --for reviewer [--write]
+  tusker packet HSP-T-0001 --for explainer [--write]
   tusker closeout HSP-T-0001 --emit-packet --validate "go test ./..." --json
   tusker closeout status HSP-T-0001 --json
   tusker dashboard build

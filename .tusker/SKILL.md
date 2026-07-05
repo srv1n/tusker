@@ -44,6 +44,14 @@ tusker packet <TASK-ID> --for agent
 
 Read only the domain files named by the plan or packet.
 
+For broad, high-risk, or agent-heavy changes, generate an understanding packet before review when the human needs a mental model:
+
+```bash
+tusker packet <TASK-ID> --for explainer
+```
+
+The explainer packet is not proof, approval, or project canon.
+
 ## Routing Algorithm
 
 1. Read this file.
@@ -52,6 +60,7 @@ Read only the domain files named by the plan or packet.
 4. Read a domain `CANON.md` before implementation.
 5. Use path-scoped search after reading the routed domain; do not scan the whole repo by default.
 6. Record proof in the task or required evidence object; never paste raw logs.
+7. Use explainer packets for human understanding, not as evidence or source truth.
 
 ## Domains
 

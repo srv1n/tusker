@@ -1,19 +1,19 @@
 ---
-schema: tusker.domain-canon/v7
-kind: domain_canon
-id: project/canon
-project: tusker
-domain: project
-title: Project Canon
-status: current
+schema: "tusker.domain-canon/v7"
+kind: "domain_canon"
+id: "project/canon"
+project: "tusker"
+domain: "project"
+title: "Project Canon"
+status: "current"
 summary: "Current durable rules for Tusker's own repository."
 source_of_truth:
-  - .tusker/SKILL.md
-  - .tusker/WORKFLOW.md
-  - tusker.yaml
-created_at: 2026-06-04T00:00:00Z
-updated_at: 2026-06-04T00:00:00Z
-state_rev: 1
+  - ".tusker/SKILL.md"
+  - ".tusker/WORKFLOW.md"
+  - "tusker.yaml"
+created_at: "2026-06-04 00:00:00 +0000 UTC"
+updated_at: "2026-07-05T11:22:59Z"
+state_rev: "sha256:55a8d92d5b07acbd7eee94f41f0c95e7306163895650862dc61b197391667a55"
 ---
 
 # Project Canon

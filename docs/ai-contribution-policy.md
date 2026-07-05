@@ -21,3 +21,11 @@ What is not allowed is submitting code that the human contributor does not under
 ## Strong preference
 
 Use structured summaries instead of transcript walls.
+
+For non-trivial AI-assisted changes, prefer a Tusker explainer packet over raw transcripts:
+
+```bash
+tusker packet <TASK-ID> --for explainer --write
+```
+
+It should help the human explain the change in their own words; it is not proof by itself.

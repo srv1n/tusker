@@ -16,3 +16,4 @@
 - Store raw logs in runtime/scratch, not task markdown.
 - Promote only bounded summaries or curated artifact references.
 - High and critical risks require human acceptance unless explicitly waived by policy.
+- Explainer/understanding packets help humans build a mental model, but they do not satisfy proof by themselves.

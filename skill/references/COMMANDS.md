@@ -5,9 +5,12 @@
 ```bash
 tusker automation plan <TASK-ID> --json
 tusker packet <TASK-ID> --for agent
+tusker packet <TASK-ID> --for explainer
 ```
 
 Use `automation plan` as the canonical decision surface. It explains whether the task can dispatch, which runner/lane/workspace will be used, what blocks it, and which skill/domain files should be read.
+
+Use `packet --for explainer` when a human needs to understand a change before or during review. It is an understanding aid, not proof or approval.
 
 ## Work State
 

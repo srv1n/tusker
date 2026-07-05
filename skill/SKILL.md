@@ -25,6 +25,14 @@ tusker packet <TASK-ID> --for agent
 
 Read only the packet and its routed project-skill/domain files before touching implementation code.
 
+For broad, high-risk, or agent-heavy work where the human needs a mental model before review, generate an understanding packet:
+
+```bash
+tusker packet <TASK-ID> --for explainer
+```
+
+Read the explainer before the raw diff when the user asks for understanding, but do not treat it as proof or approval.
+
 ## Hard Rules
 
 - A task is a contract, not a chat log.
@@ -32,6 +40,7 @@ Read only the packet and its routed project-skill/domain files before touching i
 - Runtime activity lives in runs, leases, sessions, attempts, and workspaces.
 - Human gates stop the agent. Do not keep validating around them.
 - Proof must map to acceptance. A vague summary is not proof.
+- Explainer packets help humans understand and participate; they do not satisfy proof by themselves.
 - Raw logs do not belong in task markdown.
 - Tags are generated projections; typed frontmatter is source of truth.
 
@@ -73,7 +82,7 @@ When machine work is complete but a human gate remains, answer with exactly what
 ## Default Agent Loop
 
 ```text
-plan → packet → routed domain canon → scoped code search → edit → exact verification → proof → review/closeout
+plan → packet → routed domain canon → scoped code search → edit → exact verification → proof → optional explainer → review/closeout
 ```
 
 Do not replace this with broad repo scans unless the task explicitly requires discovery.

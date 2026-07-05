@@ -1,24 +1,24 @@
 ---
-schema: tusker.domain/v7
-kind: domain
-id: project
-project: tusker
-title: Project
-status: current
+schema: "tusker.domain/v7"
+kind: "domain"
+id: "project"
+project: "tusker"
+title: "Project"
+status: "current"
 summary: "Repository-wide Tusker V7 canon, orchestration, skills, and validation policy."
 source_of_truth:
-  - .tusker/SKILL.md
-  - .tusker/WORKFLOW.md
-  - tusker.yaml
+  - ".tusker/SKILL.md"
+  - ".tusker/WORKFLOW.md"
+  - "tusker.yaml"
 canonical_files:
-  - INDEX.md
-  - CANON.md
-  - cmd/tusker/**
-  - internal/**
-  - skill/**
-created_at: 2026-06-04T00:00:00Z
-updated_at: 2026-06-04T00:00:00Z
-state_rev: 1
+  - "INDEX.md"
+  - "CANON.md"
+  - "cmd/tusker/**"
+  - "internal/**"
+  - "skill/**"
+created_at: "2026-06-04 00:00:00 +0000 UTC"
+updated_at: "2026-07-05T11:22:59Z"
+state_rev: "sha256:27a83b7f2ccca47fae7cb2a9e977f0989d863fba6d87d3cc9b01f1fafd68a386"
 ---
 
 # Project Domain

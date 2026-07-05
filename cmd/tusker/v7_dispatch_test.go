@@ -35,7 +35,7 @@ func TestV7ReadyTaskWithStubAcceptanceRejected(t *testing.T) {
 
 func TestV7NextSkipsStubReadyTask(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stub ready", "status": "ready", "readiness": "ready", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stub ready", "v7": "true"}, newV7Task)
 	forceV7DispatchPlaceholderAcceptance(t, vault, "APP-T-0001")
 
 	if _, ok := pickV7Next(vault, "APP", ""); ok {
@@ -45,7 +45,7 @@ func TestV7NextSkipsStubReadyTask(t *testing.T) {
 
 func TestV7PacketAgentRequiresForceForUndispatchableStub(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stub packet", "status": "ready", "readiness": "ready", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stub packet", "v7": "true"}, newV7Task)
 	forceV7DispatchPlaceholderAcceptance(t, vault, "APP-T-0001")
 
 	err := packetV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "for": "agent"})
@@ -65,9 +65,53 @@ func TestV7PacketAgentRequiresForceForUndispatchableStub(t *testing.T) {
 	}
 }
 
+func TestV7ExplainerPacketBuildsUnderstandingScaffold(t *testing.T) {
+	vault := v7DispatchTestVault(t)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Explainer packets", "risk": "high", "domains": "project", "v7": "true"}, newV7Task)
+	replaceV7TaskSection(t, vault, "APP-T-0001", "## Intent", "Help humans understand agent-authored changes before review.")
+	replaceV7TaskSection(t, vault, "APP-T-0001", "## Acceptance", "| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Explainer packets render background, intuition, proof, and quiz sections. | Focused CLI test |")
+	replaceV7TaskSection(t, vault, "APP-T-0001", "## Knowledge delta", "| Change type | Topic | Before | After |\n|---|---|---|---|\n| added | Understanding packets | Review packets were proof-focused. | Explainer packets build human mental models. |")
+
+	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+	taskData, taskBody, err := parseFrontmatterMustRead(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet := v7Packet(vault, Note{AbsolutePath: taskPath, Data: taskData, Body: taskBody}, mustIndex(t, vault), "explainer")
+	for _, expected := range []string{
+		"# APP-T-0001 explainer packet",
+		"Purpose: help a human understand and participate in this change.",
+		"Boundary: this packet is not proof, approval, or a replacement for code review.",
+		"## Background",
+		"## Intuition",
+		"## Task Walkthrough",
+		"## Literate Diff Guide",
+		"## Proof Map",
+		"## Review Focus",
+		"## Comprehension Check",
+		"Explainer packets build human mental models.",
+		"Does this explainer packet count as evidence or approval?",
+		"No. It is an understanding aid.",
+	} {
+		assertContainsIndexTest(t, packet, expected)
+	}
+}
+
+func TestV7ExplainerPacketWriteUsesGeneratedPacketPath(t *testing.T) {
+	vault := v7DispatchTestVault(t)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Write explainer packet", "domains": "project", "v7": "true"}, newV7Task)
+
+	if err := packetV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "for": "explainer", "write": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	packetPath := filepath.Join(vault, "_generated", "packets", "APP-T-0001.explainer.md")
+	assertExists(t, packetPath)
+	assertContainsIndexTest(t, mustReadIndexTest(t, packetPath), "# APP-T-0001 explainer packet")
+}
+
 func TestV7ProofAndReviewRejectStubAcceptance(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stub proof", "status": "ready", "readiness": "ready", "proof-mode": "inline", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stub proof", "proof-mode": "inline", "v7": "true"}, newV7Task)
 	forceV7DispatchPlaceholderAcceptance(t, vault, "APP-T-0001")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestStub -count=1", "result": "pass", "note": "Focused proof passed."}, verifyV7AddCmd)
 
@@ -91,7 +135,7 @@ func TestV7ProofAndReviewRejectStubAcceptance(t *testing.T) {
 
 func TestV7ValidationErrorsOnSatisfiedStubAcceptance(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Satisfied stub", "status": "ready", "readiness": "ready", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Satisfied stub", "v7": "true"}, newV7Task)
 	forceV7DispatchPlaceholderAcceptance(t, vault, "APP-T-0001")
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
 	data, body, err := parseFrontmatterMustRead(taskPath)
@@ -133,6 +177,28 @@ func forceV7DispatchPlaceholderAcceptance(t *testing.T, vault, taskID string) {
 		t.Fatal(err)
 	}
 	body = replaceSection(body, "## Acceptance", "| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Define the accepted outcome. | Inline verification, evidence, gate, or waiver |")
+	data["status"] = "ready"
+	data["readiness"] = "ready"
+	data["next_owner"] = "agent"
+	data["next_action"] = "Execute the task contract and satisfy proof mode."
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(taskPath, content); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func replaceV7TaskSection(t *testing.T, vault, taskID, heading, newContent string) {
+	t.Helper()
+	taskPath := filepath.Join(vault, "work", "tasks", taskID+".md")
+	data, body, err := parseFrontmatterMustRead(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = replaceSection(body, heading, newContent)
 	data["state_rev"] = v7StateRev(data, body)
 	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
 	if err != nil {
