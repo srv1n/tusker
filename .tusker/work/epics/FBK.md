@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:13:34Z"
-updated_at: "2026-07-06T16:10:21Z"
-state_rev: "sha256:37b3eade2cdd8d1b831380a5ad99c02762a6173f3cb735c9946c856443d087d3"
+updated_at: "2026-07-06T16:18:32Z"
+state_rev: "sha256:983f23de8986bf47277290a4302e15f36267bb5454b26d97f07a4653a0c00285"
 ---
 
 # FBK · Feedback intake and review

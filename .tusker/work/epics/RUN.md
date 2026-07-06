@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:32:32Z"
-updated_at: "2026-07-06T16:10:21Z"
-state_rev: "sha256:bd00f1809ca34d79aecafac441f754add78664c1cb13a738bab427f16714733d"
+updated_at: "2026-07-06T16:18:32Z"
+state_rev: "sha256:3e1b7cd0c46edc462fd4f59b5a2b7fd2b4d51c8955e9ddac2b92fa8502892bfe"
 ---
 
 # RUN · Runner parity and model profiles
