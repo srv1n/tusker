@@ -210,3 +210,29 @@ we can embed); everything must work in a plain browser on localhost.
 Deliver as whatever the design tool exports best (Figma frames, HTML
 mockups, or annotated images). They will be attached as evidence to Tusker
 task SRV-T-0002 and gate the start of implementation.
+
+## 9. Addendum (2026-07-06): competitive reference — Conductor
+
+Conductor (conductor.build) is the closest shipping product to this UI: a
+macOS app orchestrating parallel coding agents in git workspaces. Full notes
+live in docs/design/competitive-notes-conductor.md. Patterns worth studying
+for this design (adapt, don't copy):
+
+- **Status-grouped navigation.** Their sidebar groups workspaces by backlog /
+  in progress / in review / done, labels each by PR title when one exists,
+  and shows counts on collapsed groups. Maps to our `/work` and `/runs`
+  navigation.
+- **Distinct waiting states.** Separate icons for "waiting on plan approval"
+  vs "waiting on user input" vs "running" — the operator can tell from the
+  sidebar *why* something needs them. Our gate kinds (clarify / provision /
+  approve-spec / review / failed) deserve equally distinct visual identities.
+- **Jump to next needs-attention.** A single shortcut cycles to the next
+  conversation requiring input, with unread tracking. Our needs-me queue
+  should support the same one-key triage loop.
+- **Merge-readiness "Checks" panel.** One card aggregates git status, CI
+  checks, review threads, and open todos, and blocks the merge action while
+  any remain unresolved. Maps to our task closeout view: acceptance rows,
+  verification results, and open gates in one glance before "close" is
+  offered.
+- **Restraint we share.** They defer almost everything to the reading
+  surface and keyboard; no dashboards, no charts. Validates §7.
