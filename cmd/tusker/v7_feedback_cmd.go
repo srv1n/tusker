@@ -277,13 +277,13 @@ func feedbackVaultForRepoPath(path string) (string, string, error) {
 		return "", "", err
 	}
 	base := filepath.Base(abs)
-	if isVaultDir(abs) || base == defaultRepoVaultDir && (dirExists(abs) || dirExists(filepath.Join(abs, "feedback"))) {
+	if isVaultDir(abs) || (base == defaultRepoVaultDir || base == legacyRepoVaultDir) && (dirExists(abs) || dirExists(filepath.Join(abs, "feedback"))) {
 		return abs, filepath.Dir(abs), nil
 	}
 	if discovered, _ := discoverVault(abs); discovered != "" {
 		return discovered, filepath.Dir(discovered), nil
 	}
-	for _, name := range []string{defaultRepoVaultDir} {
+	for _, name := range []string{defaultRepoVaultDir, legacyRepoVaultDir} {
 		candidate := filepath.Join(abs, name)
 		if dirExists(filepath.Join(candidate, "feedback")) {
 			return candidate, abs, nil

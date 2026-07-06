@@ -83,6 +83,7 @@ storage:
 runtime:
   lease_backend: local
   lease_ttl_minutes: 120
+  mutation_mode: single_user_local
 
 automation:
   enabled: true

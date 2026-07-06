@@ -760,7 +760,7 @@ func TestV7ReconcileUpdatesEpicManagedBlocks(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Managed block task", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Managed block task", "risk": "low", "priority": "p2", "status": "ready", "readiness": "ready", "force-ready": "true", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "reviewer", "action": "Review proof.", "verification": "Evidence accepted."}, newV7Gate)
 	must(Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
 
@@ -2186,7 +2186,7 @@ func TestV7FinishRequiresProofAndRequestsReview(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Finish review", "risk": "low", "priority": "p2", "evidence-required": "automated_test", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Finish review", "risk": "low", "priority": "p2", "evidence-required": "automated_test", "status": "ready", "readiness": "ready", "force-ready": "true", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 
 	err := finishV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "summary": "Implemented but proof is missing."})
@@ -3723,13 +3723,16 @@ func TestV7StagedBranchPolicyRejectsProtectedStateMutation(t *testing.T) {
 	if err := writeText(taskPath, content); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, "add", ".tusker/work/tasks/APP-T-0001.md")
+	taskRelPath := filepath.ToSlash(filepath.Join(vaultDisplayRoot(vault), "work", "tasks", "APP-T-0001.md"))
+	gateRelDir := filepath.ToSlash(filepath.Join(vaultDisplayRoot(vault), "work", "gates"))
+	taskRelDir := filepath.ToSlash(filepath.Join(vaultDisplayRoot(vault), "work", "tasks"))
+	runGit(t, "add", taskRelPath)
 
-	changed, err := exec.Command("git", "diff", "--name-only", "--cached", "--", ".tusker/work/tasks", ".tusker/work/gates").Output()
+	changed, err := exec.Command("git", "diff", "--name-only", "--cached", "--", taskRelDir, gateRelDir).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(changed), ".tusker/work/tasks/APP-T-0001.md") {
+	if !strings.Contains(string(changed), taskRelPath) {
 		t.Fatalf("expected staged task path, got %q", string(changed))
 	}
 	errors, _ := validateV7BranchPolicy(vault, Args{"staged": "true"})
@@ -3794,7 +3797,9 @@ func TestV7BranchPolicyRejectsTaskAndGateDeletion(t *testing.T) {
 	if err := os.Remove(gatePath); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, "add", "-u", ".tusker/work/tasks/APP-T-0001.md", ".tusker/work/gates/APP-G-0001.md")
+	taskRelPath := filepath.ToSlash(filepath.Join(vaultDisplayRoot(vault), "work", "tasks", "APP-T-0001.md"))
+	gateRelPath := filepath.ToSlash(filepath.Join(vaultDisplayRoot(vault), "work", "gates", "APP-G-0001.md"))
+	runGit(t, "add", "-u", taskRelPath, gateRelPath)
 	errors, _ := validateV7BranchPolicy(vault, Args{"staged": "true"})
 	if len(errors) == 0 {
 		t.Fatal("expected staged branch-policy validation to reject task/gate deletion")
@@ -3865,7 +3870,8 @@ func TestV7BranchPolicyHonorsConfiguredProtectStateFieldsFalse(t *testing.T) {
 	if err := writeText(taskPath, content); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, "add", ".tusker/work/tasks/APP-T-0001.md")
+	taskRelPath := filepath.ToSlash(filepath.Join(vaultDisplayRoot(vault), "work", "tasks", "APP-T-0001.md"))
+	runGit(t, "add", taskRelPath)
 
 	errors, _ := validateV7BranchPolicy(vault, Args{"staged": "true"})
 	if len(errors) != 0 {

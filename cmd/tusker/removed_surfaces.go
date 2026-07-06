@@ -134,6 +134,13 @@ func publishSkillCmd(args Args) error {
 	if out == "" {
 		out = filepath.Join("dist", "project-skill")
 	}
+	out, err = filepath.Abs(out)
+	if err != nil {
+		return err
+	}
+	if err := validateV7PublishSkillOutputPath(vaultPath, out); err != nil {
+		return err
+	}
 	if err := os.RemoveAll(out); err != nil {
 		return err
 	}
@@ -160,6 +167,39 @@ func publishSkillCmd(args Args) error {
 	}
 	if !args.Bool("quiet") {
 		fmt.Printf("Wrote V7 project skill package: %s\n", out)
+	}
+	return nil
+}
+
+func validateV7PublishSkillOutputPath(vaultPath, out string) error {
+	if parent := filepath.Dir(out); parent == out {
+		return tuskerError(errorInvalidArg, "unsafe publish skill output path: "+out, withHint("choose a dedicated generated output directory such as dist/project-skill"))
+	}
+	protected := map[string]string{
+		"current directory": mustGetwd(),
+		"repo root":         v7RepoRoot(vaultPath),
+		"vault root":        vaultPath,
+	}
+	for _, env := range []string{"HOME", "USERPROFILE"} {
+		if value := strings.TrimSpace(os.Getenv(env)); value != "" {
+			protected[strings.ToLower(env)] = value
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		protected["home"] = home
+	}
+	for label, path := range protected {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		if samePathOrChild(path, out) {
+			return tuskerError(
+				errorInvalidArg,
+				"unsafe publish skill output path: "+out,
+				withHint("choose a dedicated generated output directory such as dist/project-skill"),
+				withContext(map[string]any{"protected_path": label}),
+			)
+		}
 	}
 	return nil
 }

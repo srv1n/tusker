@@ -1547,6 +1547,16 @@ func reconcileV7Cmd(args Args) error {
 	changed := 0
 	revRepairs := 0
 	staleLeases := 0
+	revRepairs, err = reconcileV7ObjectStateRevs(vaultPath)
+	if err != nil {
+		return err
+	}
+	if revRepairs > 0 {
+		idx, err = loadV7Index(vaultPath)
+		if err != nil {
+			return err
+		}
+	}
 	for _, task := range idx.Tasks {
 		next := v7ProjectedTaskState(vaultPath, task, idx)
 		data, body, err := parseFrontmatterMustRead(task.AbsolutePath)
@@ -1565,7 +1575,7 @@ func reconcileV7Cmd(args Args) error {
 		}
 		if updated {
 			data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
-			data["updated_by"] = "agent:" + defaultActorName()
+			data["updated_by"] = "tusker:reconcile"
 			nextRev, err := saveV7DocumentCASRepairingStaleRev(task.AbsolutePath, data, body, v7FrontmatterOrder["task"], baseRev)
 			if err != nil {
 				return err
@@ -1585,16 +1595,6 @@ func reconcileV7Cmd(args Args) error {
 	epicBlocks, err := reconcileV7EpicManagedBlocks(vaultPath, idx)
 	if err != nil {
 		return err
-	}
-	revRepairs, err = reconcileV7ObjectStateRevs(vaultPath)
-	if err != nil {
-		return err
-	}
-	if revRepairs > 0 {
-		idx, err = loadV7Index(vaultPath)
-		if err != nil {
-			return err
-		}
 	}
 	staleLeases, err = reconcileV7Leases(vaultPath)
 	if err != nil {

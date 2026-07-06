@@ -59,8 +59,8 @@ func defaultConfig() Config {
 	cfg.HookTimeoutSeconds = 120
 	cfg.Retry.MaxAttempts = 3
 	cfg.Retry.BackoffSeconds = []int{30, 120, 600}
-	cfg.Workspace.Root = "_system/workspaces"
-	cfg.Workspace.Isolation = "worktree"
+	cfg.Workspace.Root = "."
+	cfg.Workspace.Isolation = string(WorkspaceStrategyInPlace)
 	cfg.DefinitionOfDone.RequireCodeComplete = true
 	cfg.DefinitionOfDone.RequireUserVerifiedForUI = true
 	return cfg

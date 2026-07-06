@@ -366,7 +366,7 @@ func TestV7AttemptHandoffRequiresProofBeforeReview(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Incomplete handoff", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Incomplete handoff", "risk": "low", "priority": "p2", "status": "ready", "readiness": "ready", "force-ready": "true", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 
 	err := attemptV7HandoffCmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "summary": "Implementation claims ready."})
@@ -418,7 +418,7 @@ func TestV7ValidateAllowsHandoffWaitingOnUnresolvedDependency(t *testing.T) {
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependency", "risk": "low", "priority": "p2", "proof-mode": "none", "v7": "true"}, newV7Task)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Blocked handoff", "risk": "low", "priority": "p2", "dependencies": "APP-T-0001", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Blocked handoff", "risk": "low", "priority": "p2", "dependencies": "APP-T-0001", "status": "ready", "readiness": "ready", "force-ready": "true", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0002", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7ValidateAllowsHandoff -count=1", "result": "pass", "note": "Dependent work proof passed."}, verifyV7AddCmd)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0002", "runner": "codex"}, attemptV7StartCmd)

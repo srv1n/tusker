@@ -17,7 +17,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const defaultRepoVaultDir = ".tusker"
+const (
+	defaultRepoVaultDir = ".tusker"
+	legacyRepoVaultDir  = "tusker"
+)
 
 func replaceTemplateTokens(template string, replacements map[string]string) string {
 	output := template
@@ -189,6 +192,10 @@ func discoverVault(startDir string) (string, error) {
 		child := filepath.Join(dir, defaultRepoVaultDir)
 		if isVaultDir(child) || (fileExists(filepath.Join(dir, "tusker.yaml")) && dirExists(child)) {
 			return child, nil
+		}
+		legacyChild := filepath.Join(dir, legacyRepoVaultDir)
+		if isVaultDir(legacyChild) {
+			return legacyChild, nil
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
