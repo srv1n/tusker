@@ -1,96 +1,76 @@
 ---
-schema: tusker.project_skill/v7
-kind: project_skill
-name: tusker-project
-project: tusker
-status: current
-description: "Repo-local routing skill for Tusker's own codebase."
-operator_skill: tusker
+schema: "tusker.project-skill/v7"
+kind: "project_skill"
+name: "project-knowledge"
+project: "tusker"
+status: "current"
+description: "Route agents through this repository's V7 domain canon without publishing task proof or runtime state."
+operator_skill: "tusker"
 source_of_truth:
-  - tusker.yaml
-  - .tusker/WORKFLOW.md
-  - .tusker/knowledge/domains/**
+  - "knowledge/domains"
 canonical_files:
-  - cmd/tusker/**
-  - internal/**
-  - skill/**
-created_at: 2026-06-04T00:00:00Z
-updated_at: 2026-06-04T00:00:00Z
+  - "SKILL.md"
+  - "knowledge/domains/*/INDEX.md"
+  - "knowledge/domains/*/CANON.md"
+created_at: "2026-07-05T17:58:21Z"
+updated_at: "2026-07-05T17:58:21Z"
+state_rev: "sha256:bc813d51c734c879415fcb768edac5818a2e562ee1e91d2b6e20dbbc93e7a59f"
 ---
 
-# Tusker Project Skill
+# Project Knowledge Skill
+
+This is a generated V7 project knowledge skill. Use it after the Tusker operator skill when you need repository-specific context.
 
 ## Read This When
 
-Use this file when an agent is working inside this repository and needs to decide which task, domain canon, command, or proof route to read.
+- You need durable repository-specific canon before implementing a task.
+- A task packet routes you to one or more project domains.
+- You are updating project knowledge after behavior, policy, or interfaces changed.
 
 ## Do Not Read This When
 
-Do not use this as the global Tusker operator manual. The global/operator skill lives under `skill/` and explains how to operate Tusker in any repository.
+- You only need Tusker task lifecycle, proof, gates, closeout, or CLI semantics; use the Tusker operator skill.
+- You are looking for raw proof logs, task history, attempts, events, generated packets, or local runtime state.
 
 ## First Action
 
-Run:
-
-```bash
-tusker automation plan <TASK-ID> --json
-```
-
-Then run:
-
-```bash
-tusker packet <TASK-ID> --for agent
-```
-
-Read only the domain files named by the plan or packet.
-
-For broad, high-risk, or agent-heavy changes, generate an understanding packet before review when the human needs a mental model:
-
-```bash
-tusker packet <TASK-ID> --for explainer
-```
-
-The explainer packet is not proof, approval, or project canon.
+Task agents must run `tusker packet <TASK-ID> --for agent`, then read only the routed domains from that packet unless the task contract names a narrower file.
 
 ## Routing Algorithm
 
-1. Read this file.
-2. Read the task packet for the assigned task.
-3. Read `knowledge/domains/project/INDEX.md` when the task has no narrower domain.
-4. Read a domain `CANON.md` before implementation.
-5. Use path-scoped search after reading the routed domain; do not scan the whole repo by default.
-6. Record proof in the task or required evidence object; never paste raw logs.
-7. Use explainer packets for human understanding, not as evidence or source truth.
+1. Read this `SKILL.md`.
+2. Use the task packet or intent to choose the narrowest matching domain.
+3. Read that domain `INDEX.md`.
+4. Read that domain `CANON.md`.
+5. Open deeper runbooks, decisions, interfaces, invariants, sources, or glossary entries only when the domain files route you there.
 
 ## Domains
 
-| Domain | Read when |
-|---|---|
-| `project` | Repository-wide workflow, V7-only policy, validation, skill packaging, and orchestration invariants. |
+| Intent | Read first | Canon | Notes |
+|---|---|---|---|
+| Repository-wide Tusker V7 canon, orchestration, skills, and validation policy. | `knowledge/domains/project/INDEX.md` | `knowledge/domains/project/CANON.md` | Project |
 
 ## Repo Command Policy
 
-Prefer exact commands over broad sweeps:
+- Put repository-specific command rules here or in routed runbooks: validation commands, build-lock/status commands, token/noise wrappers, and forbidden expensive probes.
+- Keep root `AGENTS.md` and `CLAUDE.md` as managed Tusker bootstrap pointers; do not copy Tusker workflow mechanics there.
+- Agents should prefer path-scoped status/search, lock/status commands over process-table probes, redirected validation logs, and command + PASS/FAIL summaries.
 
-```bash
-go test ./cmd/tusker -run <focused-test> -count=1
-go test ./internal/... -count=1
-go test ./...                # only for broad proof or pre-close validation
-```
+## Updating Canon
+
+- Update the narrowest owning domain `CANON.md` when durable truth changes.
+- Create or update a leaf node only when the canon needs a stable runbook, interface, invariant, decision, glossary entry, or source attribution.
+- Run `tusker validate --json` after changing project knowledge.
+- Do not put proof logs, task history, attempts, event streams, generated packets, or raw terminal output in canon.
 
 ## Forbidden Source Truth
 
-Do not treat these as canonical product truth:
-
-- `research/legacy/**`
-- `site/**`
-- `docs/publication.yaml`
-- old visible `tusker/` vault state
-- raw runtime logs
-- orphaned event history
-
-Those paths are intentionally absent from the V7 baseline.
+- Do not publish task records, evidence logs, attempts, event files, generated output, runtime state, or raw logs as project skill source.
+- Forbidden paths include `work/**`, `epics/**`, `evidence/**`, `attempts/**`, `events/**`, `_generated/**`, `_system/**`, `dashboards/**`, packet caches, `.tusker-*`, raw logs, and local absolute paths.
+- Raw external input belongs in `knowledge/domains/<domain>/sources/`.
+- Root `docs/` may contain optional repository engineering guardrails; it is not the V7 canonical knowledge source.
 
 ## Validation
 
-Before closing work, verify the exact acceptance contract and run the smallest command that proves it. High and critical risk tasks require human acceptance.
+- `tusker skill doctor --strict --json` checks project skill routes and package hygiene.
+- `tusker validate --json` checks V7 domain layout and task-domain coverage.
