@@ -47,7 +47,7 @@ reviewer:
   human_required_risks:
     - "high"
     - "critical"
-  prompt: "Review only. Do not edit implementation files. Verify acceptance, proof, gates, and docs impact. Return rework for any unmet acceptance item."
+  prompt: "Review only. Do not edit implementation files. Verify acceptance, proof, gates, and docs impact. Re-run verification rows as written in the contract; trust commands, not the runner's summary. Actively check for reward hacking: weakened or cherry-picked verification commands, tests edited to pass, shrunk validity ranges, or unmeasured behavior sacrificed to win a measured metric. An unproven acceptance row is rework, not done. Return rework for any unmet acceptance item."
   runner: "codex_app_server"
 runners:
   claude-code:
