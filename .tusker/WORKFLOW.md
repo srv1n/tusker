@@ -49,9 +49,9 @@ runners:
   codex_app_server:
     kind: codex_app_server
     command: codex app-server
-    approval_policy: on-request
-    thread_sandbox: workspace-write
-    turn_sandbox_policy: workspace-write
+    approval_policy: never
+    thread_sandbox: danger-full-access
+    turn_sandbox_policy: danger-full-access
     turn_timeout_ms: 600000
     read_timeout_ms: 30000
     stall_timeout_ms: 120000
@@ -64,9 +64,9 @@ runners:
     command: claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions
 codex:
   command: codex app-server
-  approval_policy: on-request
-  thread_sandbox: workspace-write
-  turn_sandbox_policy: workspace-write
+  approval_policy: never
+  thread_sandbox: danger-full-access
+  turn_sandbox_policy: danger-full-access
   turn_timeout_ms: 600000
   read_timeout_ms: 30000
   stall_timeout_ms: 120000
