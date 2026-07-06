@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:16:22Z"
-updated_at: "2026-07-06T07:09:44Z"
-state_rev: "sha256:99ccf707cbca938bd1226085f0ecac41b2268f4bce2edf690607e72a14fac83d"
+updated_at: "2026-07-06T16:03:08Z"
+state_rev: "sha256:5790755417deae1cf47951c9d53e37d4b9c41da498fad04c17262fa6daeb6799"
 ---
 
 # SRV · Tusker Serve: local control-room UI
@@ -44,10 +44,10 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[SRV-T-0001]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[SRV-T-0002]] | backlog | blocked_dependency | Wait for dependency SRV-T-0001 to reach done. |
-| [[SRV-T-0003]] | backlog | blocked_dependency | Wait for dependency SRV-T-0002 to reach done. |
+| [[SRV-T-0001]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[SRV-T-0003]] | backlog | agent | Wait for dependency SRV-T-0002 to reach done. |
 | [[SRV-T-0004]] | backlog | blocked_dependency | Wait for dependency SRV-T-0001 to reach done. |
+| [[SRV-T-0005]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 
@@ -55,4 +55,5 @@ TBD.
 
 | Task | Accepted by | Closed at |
 |---|---|---|
-| _None._ |  | |
+| [[SRV-T-0002]] | reviewer:agent | 2026-07-06T16:02:52Z |
+| [[SRV-T-0006]] | reviewer:agent | 2026-07-06T16:02:52Z |
