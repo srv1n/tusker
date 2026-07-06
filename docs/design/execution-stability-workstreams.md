@@ -90,3 +90,17 @@ Common rules for all three (include in each prompt): work in this repo (`/Users/
 ### Prompt C
 
 > Read `docs/design/execution-stability-workstreams.md` §2 and §3 Stream C. Build a black-box crash-recovery e2e suite for the tusker daemon, driven only through the public CLI (`tusker automation status/queue --json`) and real process manipulation — no imports of daemon internals. Build a fake-runner test binary that can be instructed to wedge before first event, heartbeat normally, or exit with a code. Cover at minimum: daemon kill -9 mid-run with runner survival and adoption on restart; dead runner marked interrupted on next poll; never-started runner killed at the first-event deadline; second daemon instance exiting loudly; retry cap producing a terminal run with preserved error. You own only new test files and the fixture harness; all production source is off-limits. The suite is expected red until Stream A lands — structure it so each scenario maps to one §2 decision (D1–D6). Make it compile; report your file list.
+
+## 7. Wave 2 — convergence findings and next dispatch (2026-07-06 evening)
+
+Wave-1 result at the central gate: all three streams landed in the main checkout with zero file collisions; `go build ./...` and `go vet` green; the UI production build green; `tusker serve` verified live against the real vault (honest daemon status, derived epics including TRC, 34 real tasks, 448 docs, embedded SPA). Test truth, established by running the suite in a pristine worktree at HEAD: **the 32 `cmd/tusker` failures are byte-for-byte the same set on clean HEAD and on the dirty tree — pre-existing main debt, zero stream regressions.** The stream-owned red is the five `e2e/crashrecovery` scenarios (shared symptom: `existing_run is null`), i.e. the Stream A↔C seam. One serve contract nit found on live smoke: `/api/needs` marshals empty as `null` instead of `[]`.
+
+Wave 2 is three tasks with disjoint ownership, all `ready` in the ledger:
+
+| Task | Owns | Off-limits |
+|---|---|---|
+| RUN-T-0009 (p0) — drive crash-recovery e2e green + the two failures in stream-modified workflow/runner files | daemon/runner/workflow Go files, `e2e/**` | `serve_*.go`, `internal/serve/**`, the other 30 red tests |
+| CLN-T-0008 (p1) — retire the 30 pre-existing red tests (root-cause by family; "protected Tusker state" family first) | V7 core/feedback/publish/reconcile files and their tests | daemon lifecycle files, `workflow*.go`, `runner*.go`, serve files, `e2e/**` — stop and report if a root cause lands there |
+| SRV-T-0006 (p2) — empty collections marshal as `[]` across the whole serve read surface, with regression test | `serve_*.go`, `internal/serve/**` | everything else |
+
+After all three: planner re-runs the central gate (`go build ./... && go vet ./...`, `go test ./cmd/tusker ./e2e/... -count=1`, UI build), assembles the wave-boundary review batch, then the live kill-9/adoption trial — only after that does the daemon return as executor.
