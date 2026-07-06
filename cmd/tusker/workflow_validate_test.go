@@ -115,6 +115,7 @@ automation:
   concurrency:
     max_active_runs: 4
     max_active_runs_per_project: 2
+    max_continuation_retries: 2
     max_concurrent_by_state:
       rework: 1
   runners:
@@ -138,6 +139,7 @@ automation:
 	assertEqual(t, "clone", wf.Data.Workspace.Strategy, "workspace strategy")
 	assertEqual(t, 4, wf.Data.Agents.MaxConcurrentAgents, "global concurrency")
 	assertEqual(t, 2, wf.Data.Runtime.MaxActiveRunsPerProject, "project concurrency")
+	assertEqual(t, 2, wf.Data.Runtime.MaxContinuationRetries, "continuation retries")
 	assertEqual(t, 1, wf.Data.Agents.MaxConcurrentAgentsByState["rework"], "state concurrency")
 }
 

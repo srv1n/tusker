@@ -69,6 +69,7 @@ runners:
 runtime:
   lease_ttl_ms: 900000
   max_active_runs_per_project: 5
+  max_continuation_retries: 3
   poll_interval_ms: 5000
 tracker:
   dispatch_states:

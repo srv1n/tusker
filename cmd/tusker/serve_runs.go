@@ -76,7 +76,7 @@ func serveLane(lane string) string {
 
 func serveLeaseState(state string) string {
 	switch LeaseState(strings.TrimSpace(state)) {
-	case LeaseStateReleased, LeaseStateInterrupted:
+	case LeaseStateReleased, LeaseStateInterrupted, LeaseStateParkedNoProgress:
 		return "released"
 	default:
 		return "held"
@@ -84,6 +84,9 @@ func serveLeaseState(state string) string {
 }
 
 func serveRunOutcome(run RunStatus) string {
+	if LeaseState(run.LeaseState) == LeaseStateParkedNoProgress {
+		return "parked-no-progress"
+	}
 	if LeaseState(run.LeaseState) == LeaseStateRetryQueued {
 		return "retry-queued"
 	}
@@ -102,6 +105,9 @@ func serveRunOutcomeFromAttempt(outcome, lease string) string {
 	case AttemptOutcomeCancelled:
 		return "interrupted"
 	default:
+		if LeaseState(lease) == LeaseStateParkedNoProgress {
+			return "parked-no-progress"
+		}
 		if LeaseState(lease) == LeaseStateRetryQueued {
 			return "retry-queued"
 		}

@@ -22,12 +22,13 @@ const (
 type LeaseState string
 
 const (
-	LeaseStateUnclaimed   LeaseState = "unclaimed"
-	LeaseStateClaimed     LeaseState = "claimed"
-	LeaseStateRunning     LeaseState = "running"
-	LeaseStateRetryQueued LeaseState = "retry_queued"
-	LeaseStateInterrupted LeaseState = "interrupted"
-	LeaseStateReleased    LeaseState = "released"
+	LeaseStateUnclaimed        LeaseState = "unclaimed"
+	LeaseStateClaimed          LeaseState = "claimed"
+	LeaseStateRunning          LeaseState = "running"
+	LeaseStateRetryQueued      LeaseState = "retry_queued"
+	LeaseStateParkedNoProgress LeaseState = "parked_no_progress"
+	LeaseStateInterrupted      LeaseState = "interrupted"
+	LeaseStateReleased         LeaseState = "released"
 )
 
 type AttemptOutcome string

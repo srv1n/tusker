@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestOneShotDispatchRefusesWithDaemonRequirement(t *testing.T) {
@@ -27,6 +30,93 @@ func TestOneShotDispatchRefusesWithDaemonRequirement(t *testing.T) {
 			t.Fatalf("%s: expected resident daemon refusal, got %v", name, err)
 		}
 	}
+}
+
+func TestDispatchConsultsPlanBeforeExecute(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Blocked readiness", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+		"status":     "ready",
+		"readiness":  "blocked_by_dependency",
+		"next_owner": "blocked_dependency",
+	})
+	project := registerAutomationTestProject(t, vault)
+
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+	assertEqual(t, string(LeaseStateUnclaimed), run.LeaseState, "blocked task lease state")
+	if !strings.Contains(run.LastError, "readiness is blocked_by_dependency") || !strings.Contains(run.LastError, "next_owner is blocked_dependency") {
+		t.Fatalf("expected automation-plan blockers in run error, got %#v", run)
+	}
+}
+
+func TestStaleLeaseReleaseForReviewState(t *testing.T) {
+	vault := automationTestVault(t)
+	wfFile, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wfFile.Data.Reviewer.Enabled = false
+	raw, err := yaml.Marshal(wfFile.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(workflowPath(vault), "---\n"+strings.TrimSpace(string(raw))+"\n---\n"+wfFile.Body); err != nil {
+		t.Fatal(err)
+	}
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review stale run", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+		"status":     "review",
+		"readiness":  "waiting_on_review",
+		"next_owner": "reviewer",
+	})
+	project := registerAutomationTestProject(t, vault)
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(RunStatus{
+		ProjectID:       project.ProjectID,
+		RecordID:        "APP-T-0001",
+		ItemID:          "APP-T-0001",
+		Runner:          string(RunnerCodexAppServer),
+		Lane:            runLaneExecute,
+		LeaseState:      string(LeaseStateRetryQueued),
+		AttemptOutcome:  string(AttemptOutcomeNone),
+		ActiveAttemptID: "attempt-review",
+		SessionRef:      "session-review",
+		AttemptCount:    1,
+		UpdatedAt:       "2026-07-06T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+	assertEqual(t, string(LeaseStateReleased), run.LeaseState, "review stale lease state")
+	assertEqual(t, string(AttemptOutcomeAbandoned), run.AttemptOutcome, "review stale outcome")
+	if !strings.Contains(run.LastError, "status is review") {
+		t.Fatalf("expected review blocker release reason, got %#v", run)
+	}
+	count := countDispatchCapacityProjectRuns(map[string]RunStatus{"APP-T-0001": run})
+	assertEqual(t, 0, count, "released review run capacity")
 }
 
 func TestRetryLeaseDeadPidReleasedByPollTick(t *testing.T) {
@@ -342,6 +432,120 @@ func TestRetryCircuitBreakerMarksTerminal(t *testing.T) {
 	}
 	if retried.LastError != "runner exited with code 1" {
 		t.Fatalf("expected terminal error to be preserved, got %#v", retried)
+	}
+}
+
+func TestContinuationRetryCapParksNoProgress(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	daemon := &Daemon{stateRoot: stateRoot, store: store}
+	wf := defaultWorkflow()
+	wf.Runtime.MaxContinuationRetries = 2
+	run := RunStatus{
+		ProjectID:       "project-1",
+		RecordID:        "APP-T-0001",
+		ItemID:          "APP-T-0001",
+		Runner:          string(RunnerCodexAppServer),
+		Lane:            runLaneExecute,
+		LeaseState:      string(LeaseStateRunning),
+		AttemptOutcome:  string(AttemptOutcomeNone),
+		ActiveAttemptID: "attempt-1",
+		SessionRef:      "session-1",
+		AttemptCount:    1,
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := store.SaveSupervisorDecision(SupervisorDecision{
+			ProjectID:        run.ProjectID,
+			RecordID:         run.RecordID,
+			AttemptID:        run.ActiveAttemptID,
+			SessionRef:       run.SessionRef,
+			Kind:             string(SupervisorDecisionContinueThread),
+			Reason:           "session is resumable",
+			ParentAttemptID:  run.ActiveAttemptID,
+			ParentSessionRef: run.SessionRef,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	parked, queued := daemon.scheduleContinuationRetry(run, wf, "session is resumable")
+	assertEqual(t, false, queued, "continuation queued")
+	assertEqual(t, string(LeaseStateParkedNoProgress), parked.LeaseState, "parked lease state")
+	assertEqual(t, string(AttemptOutcomeBlocked), parked.AttemptOutcome, "parked outcome")
+	assertEqual(t, true, parked.Terminal, "parked terminal")
+	assertEqual(t, false, isDispatchCapacityLeaseState(parked.LeaseState), "parked capacity")
+	if !strings.Contains(parked.LastError, "continuation retry cap reached") {
+		t.Fatalf("expected cap reason, got %#v", parked)
+	}
+	if err := store.UpsertRun(parked); err != nil {
+		t.Fatal(err)
+	}
+	status, err := store.DaemonStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 1, intFromAny(status["parkedNoProgressRuns"]), "parked status count")
+}
+
+func TestDaemonStopCommandStopsResidentDaemon(t *testing.T) {
+	stateRoot, err := os.MkdirTemp("", "tusker-stop-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(stateRoot) })
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	vault := pickupV7TestVault(t)
+	if err := writeDefaultWorkflow(vault); err != nil {
+		t.Fatal(err)
+	}
+	registerAutomationTestProject(t, vault)
+	done := make(chan error, 1)
+	go func() {
+		done <- daemonRunCmd(Args{})
+	}()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if readDaemonLiveness(stateRoot, time.Now().UTC()).Alive && fileExists(daemonSocketPath(stateRoot)) {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("daemon exited before start: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("daemon did not start")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	output := captureStdout(t, func() {
+		if err := daemonStopCmd(Args{"json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var payload struct {
+		OK      bool `json:"ok"`
+		Stopped bool `json:"stopped"`
+	}
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, true, payload.OK, "stop ok")
+	assertEqual(t, true, payload.Stopped, "stop stopped")
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("daemon stop did not end run loop")
+	}
+	if readDaemonLiveness(stateRoot, time.Now().UTC()).Alive {
+		t.Fatal("daemon still alive after stop")
 	}
 }
 

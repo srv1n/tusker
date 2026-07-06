@@ -706,6 +706,8 @@ func automationRunBlocker(run RunStatus, now time.Time) string {
 		return "existing run is " + run.LeaseState
 	case LeaseStateInterrupted:
 		return "existing run is interrupted"
+	case LeaseStateParkedNoProgress:
+		return "existing run is parked_no_progress; update the task revision before redispatch"
 	case LeaseStateReleased:
 		return "existing run is released; update the task revision before redispatch"
 	default:

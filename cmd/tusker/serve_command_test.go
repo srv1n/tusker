@@ -119,6 +119,18 @@ func TestServeFieldsRosterAndEpics(t *testing.T) {
 	if failed["terminal"] != nil || failed["lastHeartbeatAt"] != nil {
 		t.Fatalf("daemon-unlanded fields must be explicit nulls: %#v", failed)
 	}
+	var parked map[string]any
+	for _, run := range runs {
+		if run["taskId"] == "APP-T-0009" {
+			parked = run
+			break
+		}
+	}
+	if parked == nil {
+		t.Fatal("expected APP-T-0009 run")
+	}
+	assertEqual(t, "parked-no-progress", parked["outcome"], "parked run outcome")
+	assertEqual(t, "parked_no_progress", parked["leaseStateRaw"], "parked raw lease")
 
 	var epics []serveEpicSummary
 	serveDecode(t, server, "/api/epics", &epics)
@@ -180,6 +192,7 @@ func newServeFixture(t *testing.T) *serveServer {
 	writeServeTask(t, vault, serveTaskSeed{ID: "APP-T-0006", Epic: "APP", Title: "Dependency blocked", Status: "ready", Readiness: "blocked_dependency", Risk: "medium", Priority: "p2", Dependencies: []string{"APP-T-0005"}})
 	writeServeTask(t, vault, serveTaskSeed{ID: "APP-T-0007", Epic: "APP", Title: "Terminal failure", Status: "ready", Risk: "high", Priority: "p1"})
 	writeServeTask(t, vault, serveTaskSeed{ID: "APP-T-0008", Epic: "TRC", Title: "Retrying failure", Status: "ready", Risk: "high", Priority: "p1"})
+	writeServeTask(t, vault, serveTaskSeed{ID: "APP-T-0009", Epic: "TRC", Title: "Parked loop", Status: "ready", Risk: "high", Priority: "p1"})
 	writeServeGate(t, vault)
 
 	store, err := OpenRuntimeStore(DefaultStateRoot())
@@ -195,6 +208,9 @@ func newServeFixture(t *testing.T) *serveServer {
 		t.Fatal(err)
 	}
 	if err := store.UpsertRun(RunStatus{ProjectID: "app", RecordID: "APP-T-0008", ItemID: "APP-T-0008", Runner: string(RunnerCodexAppServer), Lane: runLaneExecute, LeaseState: string(LeaseStateRetryQueued), AttemptOutcome: string(AttemptOutcomeFailed), AttemptCount: 1, LastError: "retry me", NextRetryAt: "2026-07-06T06:20:00Z", StartedAt: "2026-07-06T06:00:00Z", UpdatedAt: "2026-07-06T06:10:00Z", LastEventAt: "2026-07-06T06:10:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(RunStatus{ProjectID: "app", RecordID: "APP-T-0009", ItemID: "APP-T-0009", Runner: string(RunnerCodexAppServer), Lane: runLaneExecute, LeaseState: string(LeaseStateParkedNoProgress), AttemptOutcome: string(AttemptOutcomeBlocked), AttemptCount: 3, LastError: "continuation retry cap reached", StartedAt: "2026-07-06T06:00:00Z", UpdatedAt: "2026-07-06T06:10:00Z", LastEventAt: "2026-07-06T06:10:00Z", Terminal: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.UpsertRun(RunStatus{ProjectID: "app", RecordID: "APP-T-0003", ItemID: "APP-T-0003", Runner: string(RunnerCodexAppServer), Lane: runLaneExecute, LeaseState: string(LeaseStateRunning), AttemptOutcome: string(AttemptOutcomeNone), AttemptCount: 1, WorkspacePath: "/tmp/app", StartedAt: "2026-07-06T06:00:00Z", UpdatedAt: "2026-07-06T06:10:00Z", LastEventAt: "2026-07-06T06:10:00Z"}); err != nil {

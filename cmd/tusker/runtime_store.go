@@ -1444,6 +1444,10 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 	if err := s.queryRowScan(`SELECT COUNT(*) FROM runs WHERE lease_state IN ('claimed', 'running')`, nil, &runCount); err != nil {
 		return nil, err
 	}
+	var parkedNoProgressCount int
+	if err := s.queryRowScan(`SELECT COUNT(*) FROM runs WHERE lease_state = 'parked_no_progress'`, nil, &parkedNoProgressCount); err != nil {
+		return nil, err
+	}
 	globalLimit, err := s.GlobalActiveRunLimit()
 	if err != nil {
 		return nil, err
@@ -1467,6 +1471,7 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 		"daemon_last_poll_at":   lastPollAt,
 		"projects":              projectCount,
 		"activeRuns":            runCount,
+		"parkedNoProgressRuns":  parkedNoProgressCount,
 		"max_active_runs":       globalLimit,
 		"limit_source":          source,
 		"default_limit_value":   2,

@@ -50,6 +50,7 @@ automation:
   concurrency:
     max_active_runs: 5
     max_active_runs_per_project: 5
+    max_continuation_retries: 3
     max_concurrent_by_state:
       rework: 1
   runners:

@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:32:32Z"
-updated_at: "2026-07-06T16:56:02Z"
-state_rev: "sha256:a1519aecff9a86d69eb2cf5555c91752ad5f9c0ee3bf59fbdb9453bb1245c053"
+updated_at: "2026-07-06T17:43:29Z"
+state_rev: "sha256:ad1aea0922312ba9390582e0f45c28ed7be2640d0fb4c8bccac324bb95c4f5ee"
 ---
 
 # RUN · Runner parity and model profiles
@@ -49,8 +49,7 @@ TBD.
 | [[RUN-T-0003]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach done. |
 | [[RUN-T-0005]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach done. |
 | [[RUN-T-0006]] | backlog | agent | Wait for dependency RUN-T-0004 to reach done. |
-| [[RUN-T-0010]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[RUN-T-0011]] | ready | blocked_dependency | Wait for dependency RUN-T-0010 to reach done. |
+| [[RUN-T-0011]] | ready | agent | Wait for dependency RUN-T-0010 to reach done. |
 | [[RUN-T-0012]] | ready | blocked_dependency | Wait for dependency RUN-T-0011 to reach done. |
 | [[RUN-T-0013]] | ready | blocked_dependency | Wait for dependency RUN-T-0011 to reach done. |
 
@@ -64,3 +63,4 @@ TBD.
 | [[RUN-T-0007]] | reviewer:agent | 2026-07-06T16:02:51Z |
 | [[RUN-T-0008]] | reviewer:agent | 2026-07-06T16:02:52Z |
 | [[RUN-T-0009]] | reviewer:agent | 2026-07-06T16:00:38Z |
+| [[RUN-T-0010]] | human:sarav | 2026-07-06T17:43:24Z |

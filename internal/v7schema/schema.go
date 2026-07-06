@@ -117,6 +117,7 @@ type TuskerAutomationConfig struct {
 	Concurrency struct {
 		MaxActiveRuns           int            `yaml:"max_active_runs"`
 		MaxActiveRunsPerProject int            `yaml:"max_active_runs_per_project"`
+		MaxContinuationRetries  int            `yaml:"max_continuation_retries"`
 		MaxConcurrentByState    map[string]int `yaml:"max_concurrent_by_state"`
 	} `yaml:"concurrency"`
 	ExternalLoop TuskerExternalLoopConfig                `yaml:"external_loop"`

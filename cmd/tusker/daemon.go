@@ -60,6 +60,8 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 	if once && strings.TrimSpace(d.dispatchRefusalReason) == "" {
 		d.dispatchRefusalReason = oneShotDispatchRefusal("tusker daemon run --once")
 	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var control *daemonControlServer
 	var err error
 	if !once {
@@ -70,6 +72,9 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 					return daemonControlResponse{OK: false, Message: err.Error()}
 				}
 				return daemonControlResponse{OK: true}
+			case "stop":
+				cancel()
+				return daemonControlResponse{OK: true, Message: "daemon stop requested"}
 			default:
 				return daemonControlResponse{OK: false, Message: "unknown control command"}
 			}
@@ -80,15 +85,18 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 		defer control.Close()
 	}
 	if once {
-		return d.PollOnce(ctx)
+		return d.PollOnce(runCtx)
 	}
 	for {
-		if err := d.PollOnce(ctx); err != nil {
+		if err := d.PollOnce(runCtx); err != nil {
+			if errors.Is(err, context.Canceled) && runCtx.Err() != nil {
+				return nil
+			}
 			return err
 		}
 		interval := d.nextPollInterval()
 		select {
-		case <-ctx.Done():
+		case <-runCtx.Done():
 			return nil
 		case <-time.After(interval):
 		}
@@ -314,7 +322,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 					current = normalized
 				}
 			}
-			reconciled, changed, err := d.reconcileRunWithTracker(ctx, project, wfFile, current, noteStatusByRecord[recordID])
+			reconciled, changed, err := d.reconcileRunWithTracker(ctx, project, wfFile, current, notesByRecordID[recordID], notesByID, notesByRecordID)
 			if err != nil {
 				return err
 			}
@@ -424,8 +432,8 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			projectRuns[recordID] = current
 
 			if shouldDispatchRun(current, now) {
-				if !dispatchEligibilityAllows(note, notesByID, notesByRecordID) {
-					current.LastError = dispatchEligibilityReason(note, notesByID, notesByRecordID)
+				if reason := daemonDispatchBlockedReason(project.VaultRoot, note, notesByID, notesByRecordID); reason != "" {
+					current.LastError = reason
 					current.UpdatedAt = now.Format(time.RFC3339)
 					if err := d.store.UpsertRun(current); err != nil {
 						return err
@@ -546,6 +554,13 @@ func projectActiveRunLimit(wf Workflow) int {
 	return 1
 }
 
+func maxContinuationRetries(wf Workflow) int {
+	if wf.Runtime.MaxContinuationRetries > 0 {
+		return wf.Runtime.MaxContinuationRetries
+	}
+	return 3
+}
+
 func (d *Daemon) globalActiveRunLimit() (int, error) {
 	if d != nil && d.store != nil {
 		if value, err := d.store.GlobalActiveRunLimit(); err != nil {
@@ -662,6 +677,26 @@ func dispatchEligibilityAllows(note Note, notesByID map[string]Note, notesByReco
 	return dispatchEligibilityReason(note, notesByID, notesByRecordID) == ""
 }
 
+func daemonDispatchBlockedReason(vaultPath string, note Note, notesByID map[string]Note, notesByRecordID map[string]Note) string {
+	var blockers []string
+	if isV7TaskNote(note) {
+		blockers = append(blockers, v7TaskDispatchBlockers(vaultPath, note)...)
+	} else {
+		status := stringField(note.Data, "status")
+		if status != "ready" && status != "rework" {
+			blockers = append(blockers, "status is "+fallback(status, "(missing)"))
+		}
+	}
+	if reason := dispatchEligibilityReason(note, notesByID, notesByRecordID); reason != "" {
+		blockers = append(blockers, strings.TrimPrefix(reason, "dispatch blocked: "))
+	}
+	blockers = uniqueStrings(blockers)
+	if len(blockers) == 0 {
+		return ""
+	}
+	return "dispatch blocked: " + strings.Join(blockers, "; ")
+}
+
 func trackerRecordID(note Note) string {
 	return firstNonEmpty(stringField(note.Data, "record_id"), stringField(note.Data, "id"))
 }
@@ -740,6 +775,8 @@ func shouldDispatchRun(run RunStatus, now time.Time) bool {
 		due, err := time.Parse(time.RFC3339, run.NextRetryAt)
 		return err == nil && !due.After(now)
 	case LeaseStateInterrupted:
+		return false
+	case LeaseStateParkedNoProgress:
 		return false
 	default:
 		return false
@@ -861,17 +898,26 @@ func v7HumanWaitReason(note Note, report *v7ProofReport) string {
 	return taskID + ": machine work complete; " + strings.Join(parts, "; ")
 }
 
-func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus, trackerState string) (RunStatus, bool, error) {
-	trackerState = strings.TrimSpace(trackerState)
-	if isDispatchingLeaseState(run.LeaseState) && !containsString(wfFile.Data.Tracker.ActiveStates, trackerState) {
-		if containsString(wfFile.Data.Tracker.ReviewStates, trackerState) {
-			return d.reconcileRun(ctx, project, wfFile, run)
-		}
-		if completedReviewHandoffCanReconcile(wfFile.Data, run, trackerState) {
-			return d.reconcileRun(ctx, project, wfFile, run)
-		}
-		reason := fmt.Sprintf("tracker state %q is not active; daemon released run", firstNonEmpty(trackerState, "missing"))
+func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus, note Note, notesByID map[string]Note, notesByRecordID map[string]Note) (RunStatus, bool, error) {
+	trackerState := strings.TrimSpace(stringField(note.Data, "status"))
+	if !isDispatchCapacityLeaseState(run.LeaseState) {
+		return d.reconcileRun(ctx, project, wfFile, run)
+	}
+	if run.Lane == runLaneReview && containsString(wfFile.Data.Tracker.ReviewStates, trackerState) {
+		return d.reconcileRun(ctx, project, wfFile, run)
+	}
+	if completedReviewHandoffCanReconcile(wfFile.Data, run, trackerState) {
+		return d.reconcileRun(ctx, project, wfFile, run)
+	}
+	if activeReviewHandoffCanReconcile(wfFile.Data, run, trackerState) {
+		return d.reconcileRun(ctx, project, wfFile, run)
+	}
+	if strings.TrimSpace(note.AbsolutePath) == "" {
+		reason := fmt.Sprintf("tracker state %q is not dispatchable; daemon released run", firstNonEmpty(trackerState, "missing"))
 		return d.releaseIneligibleRun(ctx, project, run, reason)
+	}
+	if reason := daemonDispatchBlockedReason(project.VaultRoot, note, notesByID, notesByRecordID); reason != "" {
+		return d.releaseIneligibleRun(ctx, project, run, reason+"; daemon released run")
 	}
 	return d.reconcileRun(ctx, project, wfFile, run)
 }
@@ -887,15 +933,29 @@ func completedReviewHandoffCanReconcile(wf Workflow, run RunStatus, trackerState
 	return statusPath != "" && fileExists(statusPath)
 }
 
+func activeReviewHandoffCanReconcile(wf Workflow, run RunStatus, trackerState string) bool {
+	if run.Lane == runLaneReview || !isDispatchingLeaseState(run.LeaseState) {
+		return false
+	}
+	if !containsString(wf.Tracker.ReviewStates, strings.TrimSpace(trackerState)) {
+		return false
+	}
+	return run.ProcessPID > 0 && processIdentityMatches(run)
+}
+
 func (d *Daemon) releaseIneligibleRun(ctx context.Context, project RegisteredProject, run RunStatus, reason string) (RunStatus, bool, error) {
-	if !isDispatchingLeaseState(run.LeaseState) {
+	if !isDispatchCapacityLeaseState(run.LeaseState) {
 		return run, false, nil
 	}
 	parentAttemptID := run.ActiveAttemptID
 	parentSessionRef := run.SessionRef
-	interrupted, interruptErr := d.stopRunExecution(ctx, run)
-	if interruptErr != nil {
-		reason = reason + ": " + interruptErr.Error()
+	interrupted := false
+	if isDispatchingLeaseState(run.LeaseState) {
+		var interruptErr error
+		interrupted, interruptErr = d.stopRunExecution(ctx, run)
+		if interruptErr != nil {
+			reason = reason + ": " + interruptErr.Error()
+		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	outcome := AttemptOutcomeAbandoned
@@ -1031,20 +1091,26 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			if containsString(wfFile.Data.Tracker.ActiveStates, noteStatus) && run.Lane != runLaneReview {
 				parentAttemptID := run.ActiveAttemptID
 				parentSessionRef := run.SessionRef
-				run = scheduleContinuationRetry(run, "runner exited cleanly while tracker state remained active; queued continuation retry")
+				run, queued := d.scheduleContinuationRetry(run, wfFile.Data, "runner exited cleanly while tracker state remained active; queued continuation retry")
 				if strings.TrimSpace(run.SessionRef) != "" {
-					_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateRetryQueued), "", run.LastError, run.Lane != runLaneReview)
+					_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", run.LastError, queued && run.Lane != runLaneReview)
+				}
+				decisionKind := string(SupervisorDecisionContinueThread)
+				if !queued {
+					updateRunAttemptFromRun(d.store, run, AttemptOutcomeBlocked, 0, run.LastError, finished)
+					decisionKind = string(SupervisorDecisionStopForAudit)
 				}
 				d.emitSupervisorDecision(SupervisorDecision{
 					ProjectID:        project.ProjectID,
 					RecordID:         run.RecordID,
 					AttemptID:        parentAttemptID,
 					SessionRef:       parentSessionRef,
-					Kind:             string(SupervisorDecisionContinueThread),
+					Kind:             decisionKind,
 					Reason:           run.LastError,
 					ParentAttemptID:  parentAttemptID,
 					ParentSessionRef: parentSessionRef,
 					WorkspacePath:    run.WorkspacePath,
+					LeaseState:       run.LeaseState,
 				})
 				run.UpdatedAt = finished
 				return run, true, nil
@@ -1176,20 +1242,31 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	if result.Outcome != AttemptOutcomeNone || result.LeaseState == LeaseStateReleased {
 		updateRunAttemptFromRun(d.store, run, result.Outcome, exitCodeForOutcome(result.Outcome), result.Reason, now)
 	}
-	clearActiveExecution(&run)
 	if result.LeaseState == LeaseStateRetryQueued && result.Outcome == AttemptOutcomeNone {
+		run, queued := d.scheduleContinuationRetry(run, wfFile.Data, firstNonEmpty(result.Reason, "runner requested continuation retry"))
+		if strings.TrimSpace(run.SessionRef) != "" {
+			_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", run.LastError, queued && run.Lane != runLaneReview)
+		}
+		decisionKind := string(SupervisorDecisionContinueThread)
+		if !queued {
+			updateRunAttemptFromRun(d.store, run, AttemptOutcomeBlocked, 0, run.LastError, now)
+			decisionKind = string(SupervisorDecisionStopForAudit)
+		}
 		d.emitSupervisorDecision(SupervisorDecision{
 			ProjectID:        project.ProjectID,
 			RecordID:         run.RecordID,
 			AttemptID:        parentAttemptID,
 			SessionRef:       parentSessionRef,
-			Kind:             string(SupervisorDecisionContinueThread),
-			Reason:           result.Reason,
+			Kind:             decisionKind,
+			Reason:           run.LastError,
 			ParentAttemptID:  parentAttemptID,
 			ParentSessionRef: parentSessionRef,
 			WorkspacePath:    run.WorkspacePath,
+			LeaseState:       run.LeaseState,
 		})
+		return run, true, nil
 	}
+	clearActiveExecution(&run)
 	return run, true, nil
 }
 
@@ -1236,7 +1313,12 @@ func (d *Daemon) normalizeDeadRetryQueuedRun(ctx context.Context, project Regist
 	return run, true, nil
 }
 
-func scheduleContinuationRetry(run RunStatus, reason string) RunStatus {
+func (d *Daemon) scheduleContinuationRetry(run RunStatus, wf Workflow, reason string) (RunStatus, bool) {
+	limit := maxContinuationRetries(wf)
+	if limit > 0 && d.continuationRetryCount(run) >= limit {
+		run = parkNoProgressRun(run, fmt.Sprintf("continuation retry cap reached (%d): %s", limit, reason))
+		return run, false
+	}
 	now := time.Now().UTC()
 	run.LeaseState = string(LeaseStateRetryQueued)
 	run.AttemptOutcome = string(AttemptOutcomeNone)
@@ -1244,6 +1326,44 @@ func scheduleContinuationRetry(run RunStatus, reason string) RunStatus {
 	run.NextRetryAt = now.Add(time.Second).Format(time.RFC3339)
 	run.UpdatedAt = now.Format(time.RFC3339)
 	run.Terminal = false
+	clearActiveExecution(&run)
+	return run, true
+}
+
+func (d *Daemon) continuationRetryCount(run RunStatus) int {
+	if d == nil || d.store == nil {
+		return 0
+	}
+	decisions, err := d.store.ListSupervisorDecisionsForRun(run.ProjectID, run.RecordID)
+	if err != nil {
+		return 0
+	}
+	attemptID := strings.TrimSpace(run.ActiveAttemptID)
+	sessionRef := strings.TrimSpace(run.SessionRef)
+	count := 0
+	for _, decision := range decisions {
+		if decision.Kind != string(SupervisorDecisionContinueThread) {
+			continue
+		}
+		if attemptID != "" && (decision.AttemptID == attemptID || decision.TargetAttemptID == attemptID || decision.ParentAttemptID == attemptID) {
+			count++
+			continue
+		}
+		if sessionRef != "" && (decision.SessionRef == sessionRef || decision.TargetSessionRef == sessionRef || decision.ParentSessionRef == sessionRef) {
+			count++
+		}
+	}
+	return count
+}
+
+func parkNoProgressRun(run RunStatus, reason string) RunStatus {
+	now := time.Now().UTC()
+	run.LeaseState = string(LeaseStateParkedNoProgress)
+	run.AttemptOutcome = string(AttemptOutcomeBlocked)
+	run.LastError = reason
+	run.NextRetryAt = ""
+	run.UpdatedAt = now.Format(time.RFC3339)
+	run.Terminal = true
 	clearActiveExecution(&run)
 	return run
 }
@@ -3143,7 +3263,7 @@ func sessionStateForOutcome(outcome AttemptOutcome) string {
 
 func sessionStateForLeaseState(state LeaseState) string {
 	switch state {
-	case LeaseStateReleased:
+	case LeaseStateReleased, LeaseStateParkedNoProgress:
 		return "closed"
 	case LeaseStateRetryQueued, LeaseStateClaimed, LeaseStateRunning, LeaseStateUnclaimed, LeaseStateInterrupted:
 		return "open"
@@ -3396,6 +3516,7 @@ func daemonStatusCmd(args Args) error {
 	}
 	fmt.Printf("Registered projects: %v\n", status["projects"])
 	fmt.Printf("Active runs: %v / %v\n", status["activeRuns"], status["max_active_runs"])
+	fmt.Printf("Parked no-progress runs: %v\n", status["parkedNoProgressRuns"])
 	return nil
 }
 
@@ -3427,6 +3548,41 @@ func daemonLimitsCmd(args Args) error {
 	}
 	fmt.Printf("Daemon max active runs: %d\n", limit)
 	return nil
+}
+
+func daemonStopCmd(args Args) error {
+	stateRoot := DefaultStateRoot()
+	before := readDaemonLiveness(stateRoot, time.Now().UTC())
+	if !before.Alive {
+		if args.Bool("json") {
+			emitJSON(map[string]any{"ok": true, "stopped": false, "message": "daemon is not running"})
+			return nil
+		}
+		fmt.Println("Daemon is not running")
+		return nil
+	}
+	resp, err := sendDaemonControl(stateRoot, daemonControlRequest{Command: "stop"})
+	if err != nil {
+		return tuskerError(errorInvalidTransition, "daemon stop failed: "+err.Error(), withHint("check `tusker daemon status`; if the control socket is stale, stop pid "+strconv.Itoa(before.PID)+" manually"))
+	}
+	if !resp.OK {
+		return tuskerError(errorInvalidTransition, "daemon stop refused: "+firstNonEmpty(resp.Message, "unknown error"))
+	}
+	deadline := time.Now().UTC().Add(5 * time.Second)
+	for {
+		if !readDaemonLiveness(stateRoot, time.Now().UTC()).Alive {
+			if args.Bool("json") {
+				emitJSON(map[string]any{"ok": true, "stopped": true, "pid": before.PID, "message": firstNonEmpty(resp.Message, "daemon stopped")})
+				return nil
+			}
+			fmt.Printf("Daemon stopped pid %d\n", before.PID)
+			return nil
+		}
+		if time.Now().UTC().After(deadline) {
+			return tuskerError(errorInvalidTransition, "daemon stop timed out", withContext(map[string]any{"pid": before.PID}))
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func projectsAddCmd(args Args) error {

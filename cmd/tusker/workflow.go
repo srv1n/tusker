@@ -36,6 +36,7 @@ type Workflow struct {
 		PollIntervalMS          int `yaml:"poll_interval_ms"`
 		LeaseTTLMS              int `yaml:"lease_ttl_ms"`
 		MaxActiveRunsPerProject int `yaml:"max_active_runs_per_project"`
+		MaxContinuationRetries  int `yaml:"max_continuation_retries"`
 	} `yaml:"runtime"`
 	Workspace struct {
 		Root     string `yaml:"root"`
@@ -134,6 +135,7 @@ func defaultWorkflow() Workflow {
 	wf.Runtime.PollIntervalMS = 5000
 	wf.Runtime.LeaseTTLMS = 900000
 	wf.Runtime.MaxActiveRunsPerProject = 1
+	wf.Runtime.MaxContinuationRetries = 3
 	wf.Workspace.Root = "."
 	wf.Workspace.Strategy = string(WorkspaceStrategyInPlace)
 	wf.Retry.MaxAttempts = 3
@@ -319,6 +321,9 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 	if cfg.Automation.Concurrency.MaxActiveRunsPerProject > 0 {
 		wf.Runtime.MaxActiveRunsPerProject = cfg.Automation.Concurrency.MaxActiveRunsPerProject
 	}
+	if cfg.Automation.Concurrency.MaxContinuationRetries > 0 {
+		wf.Runtime.MaxContinuationRetries = cfg.Automation.Concurrency.MaxContinuationRetries
+	}
 	if cfg.Automation.Concurrency.MaxConcurrentByState != nil {
 		wf.Agents.MaxConcurrentAgentsByState = cfg.Automation.Concurrency.MaxConcurrentByState
 	}
@@ -390,6 +395,7 @@ func v7AutomationConfigPresent(cfg v7TuskerConfigFile) bool {
 		strings.TrimSpace(cfg.Automation.Workspace.Strategy) != "" ||
 		cfg.Automation.Concurrency.MaxActiveRuns > 0 ||
 		cfg.Automation.Concurrency.MaxActiveRunsPerProject > 0 ||
+		cfg.Automation.Concurrency.MaxContinuationRetries > 0 ||
 		len(cfg.Automation.Concurrency.MaxConcurrentByState) > 0 ||
 		cfg.Automation.ExternalLoop.MaxCycles > 0 ||
 		cfg.Automation.ExternalLoop.MaxRepairContinuations > 0 ||
