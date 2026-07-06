@@ -1,0 +1,662 @@
+@import "tailwindcss";
+
+/*
+  Tusker Serve — design tokens.
+
+  Light values are lifted from the handed design (claude.ai/design "Tusker Serve").
+  Dark values are derived here (the design shipped light-only) to satisfy the
+  packet's light/dark, system-following, toggleable requirement.
+
+  Theming strategy (Tailwind v4): semantic CSS variables live on :root and are
+  overridden per theme; `@theme inline` maps Tailwind color utilities to those
+  variables *by reference*, so runtime theme swaps flow through every utility.
+*/
+
+@theme inline {
+  /* Surfaces & ink */
+  --color-surface: var(--k-surface);
+  --color-panel: var(--k-panel);
+  --color-raised: var(--k-raised);
+  --color-ink: var(--k-ink);
+  --color-ink-soft: var(--k-ink-soft);
+  --color-muted: var(--k-muted);
+  --color-faint: var(--k-faint);
+  --color-fainter: var(--k-fainter);
+
+  /* Lines & fills */
+  --color-line: var(--k-line);
+  --color-line-soft: var(--k-line-soft);
+  --color-hover: var(--k-hover);
+  --color-active: var(--k-active);
+
+  /* Semantic hues — one family each (packet §6) */
+  --color-fail: var(--k-fail);
+  --color-fail-soft: var(--k-fail-soft);
+  --color-pass: var(--k-pass);
+  --color-pass-soft: var(--k-pass-soft);
+  --color-warn: var(--k-warn);
+  --color-warn-soft: var(--k-warn-soft);
+  --color-info: var(--k-info);
+  --color-info-soft: var(--k-info-soft);
+  --color-accent: var(--k-accent);
+  --color-accent-soft: var(--k-accent-soft);
+
+  /* Type families — self-hosted via @fontsource (no CDN) */
+  --font-sans: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  --font-serif: "Source Serif 4", Georgia, serif;
+  --font-mono: "Source Code Pro", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Motion */
+  --animate-rise: tkIn 0.18s ease both;
+  --animate-pulse-soft: tkPulse 1.4s ease-in-out infinite;
+}
+
+/* ---- Light (from design) ---- */
+:root {
+  --k-surface: #ffffff;
+  --k-panel: #fafafa;
+  --k-raised: #ffffff;
+  --k-ink: #1a1a1a;
+  --k-ink-soft: #2a2a2a;
+  --k-muted: #565656;
+  --k-faint: #9a9a9a;
+  --k-fainter: #b0b0b0;
+
+  --k-line: #e6e6e6;
+  --k-line-soft: #f0f0f0;
+  --k-hover: #f0f0f0;
+  --k-active: #ebebeb;
+
+  --k-fail: #c63a2a;
+  --k-fail-soft: #fbecea;
+  --k-pass: #2e7d57;
+  --k-pass-soft: #e8f3ee;
+  --k-warn: #b7791f;
+  --k-warn-soft: #f8f0e0;
+  --k-info: #2d6cdf;
+  --k-info-soft: #e9f0fc;
+  --k-accent: #6b5ad1;
+  --k-accent-soft: #eeecfa;
+
+  color-scheme: light;
+}
+
+/* ---- Dark (derived) ---- */
+:root[data-theme="dark"] {
+  --k-surface: #0e0e11;
+  --k-panel: #16161a;
+  --k-raised: #1b1b20;
+  --k-ink: #f0f0f2;
+  --k-ink-soft: #d8d8dc;
+  --k-muted: #a2a2aa;
+  --k-faint: #74747e;
+  --k-fainter: #565660;
+
+  --k-line: #2a2a31;
+  --k-line-soft: #232329;
+  --k-hover: #212127;
+  --k-active: #2a2a31;
+
+  --k-fail: #e5674f;
+  --k-fail-soft: #3a1e1a;
+  --k-pass: #4cae82;
+  --k-pass-soft: #172b22;
+  --k-warn: #d9a441;
+  --k-warn-soft: #302713;
+  --k-info: #5b8def;
+  --k-info-soft: #16233d;
+  --k-accent: #8f7fea;
+  --k-accent-soft: #221f3a;
+
+  color-scheme: dark;
+}
+
+/* System-following when the user hasn't pinned a theme. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --k-surface: #0e0e11;
+    --k-panel: #16161a;
+    --k-raised: #1b1b20;
+    --k-ink: #f0f0f2;
+    --k-ink-soft: #d8d8dc;
+    --k-muted: #a2a2aa;
+    --k-faint: #74747e;
+    --k-fainter: #565660;
+
+    --k-line: #2a2a31;
+    --k-line-soft: #232329;
+    --k-hover: #212127;
+    --k-active: #2a2a31;
+
+    --k-fail: #e5674f;
+    --k-fail-soft: #3a1e1a;
+    --k-pass: #4cae82;
+    --k-pass-soft: #172b22;
+    --k-warn: #d9a441;
+    --k-warn-soft: #302713;
+    --k-info: #5b8def;
+    --k-info-soft: #16233d;
+    --k-accent: #8f7fea;
+    --k-accent-soft: #221f3a;
+
+    color-scheme: dark;
+  }
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body,
+  #root {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+  }
+  body {
+    background: var(--k-surface);
+    color: var(--k-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: var(--k-ink);
+    color: var(--k-surface);
+  }
+  button {
+    font-family: inherit;
+    cursor: pointer;
+  }
+  textarea,
+  input {
+    font-family: inherit;
+  }
+  /* Numeric UIs read better with tabular figures in mono contexts. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Thin control-room scrollbars (design: .tk-scroll). */
+.tk-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.tk-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--k-ink) 15%, transparent);
+  border: 3px solid var(--k-surface);
+  border-radius: 8px;
+}
+.tk-scroll::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--k-ink) 28%, transparent);
+}
+
+@keyframes tkIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes tkPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Doc editor (TipTap) content typography.
+
+   The inline-WYSIWYG DocEditor renders its ProseMirror surface with the class
+   `.tk-prose`. These rules port the reader's typographic scale (previously the
+   per-element classes in Markdown.tsx) onto that surface so read and edit modes
+   share one look. Colors come only from the existing design tokens — no hexes.
+   -------------------------------------------------------------------------- */
+
+.tk-prose:focus,
+.tk-prose :focus {
+  outline: none;
+}
+
+/* The leading `# Title` is rendered separately, so the body's first block sits
+   flush under the property panel. */
+.tk-prose > :first-child {
+  margin-top: 0;
+}
+
+/* Body copy */
+.tk-prose p {
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+  font-family: var(--font-serif);
+  font-size: 16.5px;
+  line-height: 1.68;
+  color: var(--color-ink-soft);
+}
+
+/* Headings */
+.tk-prose h1 {
+  margin-top: 0.5rem;
+  margin-bottom: 1rem;
+  font-family: var(--font-serif);
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--color-ink);
+}
+.tk-prose h2 {
+  margin-top: 2.25rem;
+  margin-bottom: 0.75rem;
+  font-family: var(--font-serif);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.375;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+}
+.tk-prose h3 {
+  margin-top: 1.75rem;
+  margin-bottom: 0.5rem;
+  font-family: var(--font-serif);
+  font-size: 16.5px;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+/* Lists */
+.tk-prose ul,
+.tk-prose ol {
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+  font-family: var(--font-serif);
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--color-ink-soft);
+}
+.tk-prose ul {
+  list-style-type: disc;
+}
+.tk-prose ol {
+  list-style-type: decimal;
+}
+.tk-prose li {
+  padding-left: 0.25rem;
+}
+.tk-prose li + li {
+  margin-top: 0.375rem;
+}
+.tk-prose li::marker {
+  color: var(--color-faint);
+}
+/* tiptap wraps list-item content in a paragraph — keep it tight + inherit. */
+.tk-prose li p {
+  margin: 0;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+.tk-prose li > ul,
+.tk-prose li > ol {
+  margin-top: 0.375rem;
+  margin-bottom: 0;
+}
+/* Task lists (`- [ ]`) shed the disc marker and lay the checkbox inline. */
+.tk-prose ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.15rem;
+}
+.tk-prose ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding-left: 0;
+}
+.tk-prose ul[data-type="taskList"] li > label {
+  margin-top: 0.3em;
+  flex: none;
+}
+
+/* Blockquote */
+.tk-prose blockquote {
+  margin-top: 1.25rem;
+  margin-bottom: 1.25rem;
+  border-left: 2px solid color-mix(in srgb, var(--color-accent) 50%, transparent);
+  border-top-right-radius: 6px;
+  border-bottom-right-radius: 6px;
+  background: color-mix(in srgb, var(--color-accent-soft) 40%, transparent);
+  padding: 0.25rem 0.75rem 0.25rem 1rem;
+  font-family: var(--font-serif);
+  font-size: 15.5px;
+  font-style: italic;
+  line-height: 1.6;
+  color: var(--color-muted);
+}
+.tk-prose blockquote p {
+  margin: 0.5rem 0;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  font-style: inherit;
+}
+
+/* Rule */
+.tk-prose hr {
+  margin-top: 2rem;
+  margin-bottom: 2rem;
+  border: 0;
+  border-top: 1px solid var(--color-line);
+}
+
+/* Emphasis */
+.tk-prose strong {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+.tk-prose em {
+  font-style: italic;
+}
+
+/* Inline code chip */
+.tk-prose code {
+  border-radius: 4px;
+  background: var(--color-hover);
+  padding: 0.125rem 0.375rem;
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  color: var(--color-ink-soft);
+}
+
+/* Fenced code slab */
+.tk-prose pre {
+  margin-top: 1.25rem;
+  margin-bottom: 1.25rem;
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid var(--color-line);
+  background: var(--color-panel);
+  padding: 0.75rem 1rem;
+}
+.tk-prose pre code {
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--color-ink-soft);
+}
+
+/* Tables */
+.tk-prose .tableWrapper {
+  margin-top: 1.25rem;
+  margin-bottom: 1.25rem;
+  overflow-x: auto;
+}
+.tk-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  margin: 1.25rem 0;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+}
+.tk-prose .tableWrapper table {
+  margin: 0;
+}
+.tk-prose thead {
+  background: var(--color-panel);
+}
+.tk-prose tr {
+  border-bottom: 1px solid var(--color-line-soft);
+}
+.tk-prose tr:last-child {
+  border-bottom: 0;
+}
+.tk-prose th {
+  padding: 0.5rem 0.875rem;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-muted);
+  text-align: left;
+}
+.tk-prose td {
+  padding: 0.5rem 0.875rem;
+  vertical-align: top;
+  font-size: 13.5px;
+  color: var(--color-ink-soft);
+}
+
+/* Images */
+.tk-prose img,
+.tk-prose img.tk-img {
+  display: block;
+  margin: 1.25rem 0;
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--color-line);
+}
+
+/* Standard links (StarterKit Link → `.tk-link`) */
+.tk-prose a,
+.tk-prose .tk-link {
+  color: var(--color-info);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--color-info) 40%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.tk-prose a:hover,
+.tk-prose .tk-link:hover {
+  text-decoration-color: var(--color-info);
+}
+
+/* Wiki-links (`[[…]]`) — status stamped by the OFM node's renderHTML */
+.tk-prose .tk-wikilink {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+.tk-prose .tk-wikilink[data-ofm-status="resolved"] {
+  color: var(--color-info);
+  text-decoration: underline dotted;
+  text-decoration-color: color-mix(in srgb, var(--color-info) 40%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.tk-prose .tk-wikilink[data-ofm-status="resolved"]:hover {
+  text-decoration-color: var(--color-info);
+}
+.tk-prose .tk-wikilink[data-ofm-status="broken"] {
+  color: var(--color-warn);
+  text-decoration: underline dashed;
+  text-decoration-color: color-mix(in srgb, var(--color-warn) 60%, transparent);
+  text-underline-offset: 2px;
+  cursor: help;
+}
+.tk-prose .tk-wikilink[data-ofm-status="empty"] {
+  color: var(--color-muted);
+}
+
+/* Embed chip (`![[…]]`) — non-editable inline reference */
+.tk-prose .tk-embed {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: var(--color-panel);
+  padding: 0.05rem 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  color: var(--color-faint);
+  user-select: none;
+}
+
+/* Highlight (`==…==`) */
+.tk-prose mark {
+  background: var(--color-warn-soft);
+  color: var(--color-ink);
+  padding: 0.05em 0.2em;
+  border-radius: 3px;
+}
+
+/* Placeholder shown in an empty editable doc */
+.tk-prose p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--color-faint);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* Editing chrome — the surface gets a left accent bar + a faint panel wash so
+   edit mode reads as distinct from the flat reading view. */
+.tk-doc-editing {
+  border-left: 2px solid color-mix(in srgb, var(--color-accent) 55%, transparent);
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--color-panel) 55%, transparent);
+  padding: 0.75rem 1rem 1rem;
+  min-height: 48vh;
+}
+
+/* ---------------------------------------------------------------------------
+   Fenced code — syntax highlighting (lowlight / highlight.js) + mermaid.
+
+   Appended by the rich-content editor slice. Colors resolve only through the
+   existing design tokens, so both faces stay theme-aware in light and dark.
+   -------------------------------------------------------------------------- */
+
+/* CodeBlockLowlight emits highlight.js `.hljs-*` spans inside `.tk-prose pre
+   code`. Map the token families onto the semantic hues (comment→faint,
+   keyword→accent, string→pass, number→warn, title/name→info, deletion→fail). */
+.tk-prose pre code .hljs-comment,
+.tk-prose pre code .hljs-quote {
+  color: var(--color-faint);
+  font-style: italic;
+}
+.tk-prose pre code .hljs-keyword,
+.tk-prose pre code .hljs-selector-tag,
+.tk-prose pre code .hljs-literal,
+.tk-prose pre code .hljs-type,
+.tk-prose pre code .hljs-built_in,
+.tk-prose pre code .hljs-meta,
+.tk-prose pre code .hljs-doctag {
+  color: var(--color-accent);
+}
+.tk-prose pre code .hljs-string,
+.tk-prose pre code .hljs-regexp,
+.tk-prose pre code .hljs-addition,
+.tk-prose pre code .hljs-meta .hljs-string {
+  color: var(--color-pass);
+}
+.tk-prose pre code .hljs-number,
+.tk-prose pre code .hljs-symbol,
+.tk-prose pre code .hljs-bullet,
+.tk-prose pre code .hljs-variable,
+.tk-prose pre code .hljs-template-variable,
+.tk-prose pre code .hljs-attr,
+.tk-prose pre code .hljs-attribute {
+  color: var(--color-warn);
+}
+.tk-prose pre code .hljs-title,
+.tk-prose pre code .hljs-section,
+.tk-prose pre code .hljs-name,
+.tk-prose pre code .hljs-selector-id,
+.tk-prose pre code .hljs-selector-class,
+.tk-prose pre code .hljs-tag,
+.tk-prose pre code .hljs-link {
+  color: var(--color-info);
+}
+.tk-prose pre code .hljs-deletion {
+  color: var(--color-fail);
+}
+.tk-prose pre code .hljs-property,
+.tk-prose pre code .hljs-params,
+.tk-prose pre code .hljs-punctuation,
+.tk-prose pre code .hljs-operator {
+  color: var(--color-ink-soft);
+}
+.tk-prose pre code .hljs-emphasis {
+  font-style: italic;
+}
+.tk-prose pre code .hljs-strong {
+  font-weight: 600;
+}
+
+/* Mermaid node view. `.tk-mermaid-nv` is the NodeViewWrapper; `.tk-mermaid`
+   is the rendered/preview face; `.tk-mermaid-source` the editable code, shown
+   only while the block is selected in edit mode. */
+.tk-prose .tk-mermaid-nv {
+  margin-top: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+.tk-prose .tk-mermaid {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid var(--color-line);
+  background: var(--color-panel);
+  padding: 1rem;
+}
+.tk-prose .tk-mermaid[role="button"] {
+  cursor: text;
+}
+.tk-prose .tk-mermaid:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 55%, transparent);
+  outline-offset: 2px;
+}
+.tk-prose .tk-mermaid-svg {
+  max-width: 100%;
+}
+.tk-prose .tk-mermaid-svg svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+/* Failure fallback — the block never throws; show the raw source + a note. */
+.tk-prose .tk-mermaid[data-status="error"] {
+  display: block;
+  border-color: color-mix(in srgb, var(--color-warn) 45%, var(--color-line));
+}
+.tk-prose .tk-mermaid-raw {
+  margin: 0;
+  overflow-x: auto;
+  white-space: pre;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--color-ink-soft);
+}
+.tk-prose .tk-mermaid-note {
+  margin-top: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-warn);
+}
+.tk-prose .tk-mermaid-loading {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--color-faint);
+}
+
+/* Editable mermaid source reuses the `.tk-prose pre` code-slab look; drop its
+   default block margins since `.tk-mermaid-nv` already provides them. */
+.tk-prose .tk-mermaid-source {
+  margin: 0;
+}

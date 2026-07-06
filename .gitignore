@@ -34,3 +34,5 @@
 .tusker-state/
 .tusker-worktrees/
 dist/
+!internal/serve/ui/dist/
+!internal/serve/ui/dist/**

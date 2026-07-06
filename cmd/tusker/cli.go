@@ -591,9 +591,14 @@ func run(command string, args Args) (int, error) {
 	case "runs interrupt":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, runsInterruptCmd(args)
+	case "runs release":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, runsReleaseCmd(args)
 	case "runs":
 		printRunsHelp()
 		return 0, nil
+	case "serve":
+		return 0, serveCmd(args)
 	case "graph":
 		return legacyOnlyCommand("graph", "legacy graph")
 	case "legacy graph":
@@ -698,8 +703,11 @@ func run(command string, args Args) (int, error) {
 	case "help projects", "help projects add", "help projects list", "help projects limits", "help projects enable", "help projects disable", "help projects remove":
 		printProjectsHelp()
 		return 0, nil
-	case "help runs", "help runs inspect", "help runs logs", "help runs events", "help runs interrupt":
+	case "help runs", "help runs inspect", "help runs logs", "help runs events", "help runs interrupt", "help runs release":
 		printRunsHelp()
+		return 0, nil
+	case "help serve":
+		printServeHelp()
 		return 0, nil
 	case "help refresh":
 		printRefreshHelp()
@@ -779,7 +787,8 @@ Commands:
   daemon              operator loop for registered local projects
   automation          plan, inspect, and manually dispatch daemon automation work
   projects            register repositories for daemon pickup
-  runs                inspect, tail, and interrupt daemon runs
+  runs                inspect, tail, interrupt, and release daemon runs
+  serve               serve the read-only localhost control room
   refresh             run one daemon poll tick
   install             install binary and skill bundles
   purge               dry-run or remove generated Tusker repo state
@@ -796,6 +805,7 @@ Help:
   tusker automation --help
   tusker automation plan <task> --json
   tusker runs --help
+  tusker serve --help
   tusker search --help
   tusker show --help
   tusker print --help
@@ -881,8 +891,10 @@ func printCommandHelp(command string) bool {
 		printAutomationHelp()
 	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects remove":
 		printProjectsHelp()
-	case "runs", "runs inspect", "runs logs", "runs events", "runs interrupt":
+	case "runs", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs release":
 		printRunsHelp()
+	case "serve":
+		printServeHelp()
 	case "refresh":
 		printRefreshHelp()
 	case "install":
@@ -1081,6 +1093,7 @@ func printRunsHelp() {
   tusker runs logs <task-id-or-record-id> [--lines <n>] [--follow] [--json]
   tusker runs events <task-id-or-record-id> [--lines <n>] [--follow] [--json]
   tusker runs interrupt <task-id-or-record-id> [--json]
+  tusker runs release <task-id-or-record-id> [--json]
 
 Purpose:
   Inspect and control daemon runtime state for a task. These commands expose
@@ -1090,7 +1103,8 @@ Purpose:
 Examples:
   tusker runs inspect ORC-T-0018 --json
   tusker runs events ORC-T-0018 --lines 20
-  tusker runs interrupt ORC-T-0018`)
+  tusker runs interrupt ORC-T-0018
+  tusker runs release ORC-T-0018 --json`)
 }
 
 func printRefreshHelp() {

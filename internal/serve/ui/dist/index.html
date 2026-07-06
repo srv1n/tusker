@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>tusker · serve</title>
+    <script>
+      // Set the theme attribute before first paint to avoid a flash.
+      (function () {
+        try {
+          var t = localStorage.getItem("tusker-theme");
+          if (t === "light" || t === "dark") {
+            document.documentElement.setAttribute("data-theme", t);
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-B3xDU1LM.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/rolldown-runtime-QTnfLwEv.js">
+    <link rel="modulepreload" crossorigin href="/assets/editor-B0yYHFBG.js">
+    <link rel="modulepreload" crossorigin href="/assets/react-BqpaiMD-.js">
+    <link rel="modulepreload" crossorigin href="/assets/tanstack-CCyOAB-_.js">
+    <link rel="modulepreload" crossorigin href="/assets/mermaid-BJpaH16W.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-Be9FjYXv.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
