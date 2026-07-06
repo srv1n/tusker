@@ -19,7 +19,7 @@ func (r *CodexRunner) Start(ctx context.Context, req StartRequest) (*StartResult
 	}
 	return executeRunnerCommand(ctx, r.Name(), runnerExecRequest{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		Lane: req.Lane, WorkRevision: req.WorkRevision, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
 		RepoRoot: req.RepoRoot, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath, Command: req.Command, NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy,
 	}, r.Capabilities())
 }
@@ -36,14 +36,14 @@ func (r *CodexRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeRes
 	if shouldUseLiveCodex(command) {
 		return startLiveCodex(ctx, StartRequest{
 			ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-			Lane: req.Lane, WorkRevision: req.WorkRevision, ActiveStates: req.ActiveStates, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
+			Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, ActiveStates: req.ActiveStates, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
 			EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 			RepoRoot: req.RepoRoot, Command: command, NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy,
 		}, &req)
 	}
 	return executeRunnerCommand(ctx, r.Name(), runnerExecRequest{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		Lane: req.Lane, WorkRevision: req.WorkRevision, SessionRef: req.SessionRef, MessageRef: req.MessageRef, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, SessionRef: req.SessionRef, MessageRef: req.MessageRef, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath,
 		RepoRoot: req.RepoRoot, PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 		Command: command, NotePath: req.NotePath, VaultPath: req.VaultPath, ResumeMode: true, CodexPolicy: req.CodexPolicy,
 	}, r.Capabilities())
@@ -85,7 +85,7 @@ func (r *CodexAppServerRunner) Resume(ctx context.Context, req ResumeRequest) (*
 	}
 	return startLiveCodex(ctx, StartRequest{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		Lane: req.Lane, WorkRevision: req.WorkRevision, ActiveStates: req.ActiveStates, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, ActiveStates: req.ActiveStates, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
 		EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 		RepoRoot: req.RepoRoot, Command: req.Command, NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy,
 	}, &req)
@@ -108,7 +108,7 @@ func (r *CodexExecRunner) Start(ctx context.Context, req StartRequest) (*StartRe
 	}
 	return executeRunnerCommand(ctx, r.Name(), runnerExecRequest{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		Lane: req.Lane, WorkRevision: req.WorkRevision, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
 		RepoRoot: req.RepoRoot, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath, Command: req.Command, NotePath: req.NotePath, VaultPath: req.VaultPath,
 		CodexPolicy: req.CodexPolicy,
 	}, r.Capabilities())

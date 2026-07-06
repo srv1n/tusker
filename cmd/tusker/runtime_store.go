@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -48,6 +49,10 @@ type RunStatus struct {
 	Runner             string `json:"runner"`
 	Lane               string `json:"lane"`
 	LeaseState         string `json:"lease_state"`
+	LeaseOwner         string `json:"lease_owner"`
+	LeaseGeneration    int    `json:"lease_generation"`
+	LeaseExpiresAt     string `json:"lease_expires_at"`
+	LeaseHost          string `json:"lease_host"`
 	AttemptOutcome     string `json:"attempt_outcome"`
 	ActiveAttemptID    string `json:"active_attempt_id"`
 	WorkspacePath      string `json:"workspace_path"`
@@ -139,6 +144,7 @@ type RunTurn struct {
 	InputTokens  int    `json:"input_tokens"`
 	OutputTokens int    `json:"output_tokens"`
 	TotalTokens  int    `json:"total_tokens"`
+	LeaseGeneration int `json:"lease_generation,omitempty"`
 	StartedAt    string `json:"started_at"`
 	CompletedAt  string `json:"completed_at"`
 	LastEventAt  string `json:"last_event_at"`
@@ -269,6 +275,12 @@ var (
 	runtimeStoreBusyRetryBackoff = []time.Duration{10 * time.Millisecond, 25 * time.Millisecond, 50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond}
 )
 
+const (
+	defaultRunHeartbeatInterval = 15 * time.Second
+	defaultRunLeaseTTL          = 60 * time.Second
+	defaultReconcileTick        = 30 * time.Second
+)
+
 func runtimeStoreDBPath(stateRoot string) string {
 	return filepath.Join(stateRoot, "daemon.db")
 }
@@ -282,6 +294,14 @@ func runtimeStoreSQLiteDSN(dbPath string, busyTimeout time.Duration) string {
 	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", int(busyTimeout/time.Millisecond)))
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+func runtimeLeaseHost() string {
+	host, err := os.Hostname()
+	if err != nil || strings.TrimSpace(host) == "" {
+		return "localhost"
+	}
+	return host
 }
 
 func (s *RuntimeStore) exec(query string, args ...any) (sql.Result, error) {
@@ -386,6 +406,10 @@ func (s *RuntimeStore) Migrate() error {
 			runner TEXT NOT NULL DEFAULT '',
 			lane TEXT NOT NULL DEFAULT '',
 			lease_state TEXT NOT NULL DEFAULT 'unclaimed',
+			lease_owner TEXT NOT NULL DEFAULT '',
+			lease_generation INTEGER NOT NULL DEFAULT 0,
+			lease_expires_at TEXT NOT NULL DEFAULT '',
+			lease_host TEXT NOT NULL DEFAULT '',
 			attempt_outcome TEXT NOT NULL DEFAULT 'none',
 			active_attempt_id TEXT NOT NULL DEFAULT '',
 			workspace_path TEXT NOT NULL DEFAULT '',
@@ -604,6 +628,19 @@ func (s *RuntimeStore) Migrate() error {
 	}
 	if err := s.ensureColumn("runs", "last_error", `ALTER TABLE runs ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
+	}
+	for _, column := range []struct {
+		name string
+		stmt string
+	}{
+		{"lease_owner", `ALTER TABLE runs ADD COLUMN lease_owner TEXT NOT NULL DEFAULT ''`},
+		{"lease_generation", `ALTER TABLE runs ADD COLUMN lease_generation INTEGER NOT NULL DEFAULT 0`},
+		{"lease_expires_at", `ALTER TABLE runs ADD COLUMN lease_expires_at TEXT NOT NULL DEFAULT ''`},
+		{"lease_host", `ALTER TABLE runs ADD COLUMN lease_host TEXT NOT NULL DEFAULT ''`},
+	} {
+		if err := s.ensureColumn("runs", column.name, column.stmt); err != nil {
+			return err
+		}
 	}
 	if err := s.ensureColumn("runs", "last_event_at", `ALTER TABLE runs ADD COLUMN last_event_at TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
@@ -841,7 +878,7 @@ func (s *RuntimeStore) ListProjects() ([]RegisteredProject, error) {
 }
 
 func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
-	rows, err := s.query(`SELECT project_id, record_id, item_id, runner, lane, lease_state, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at FROM runs ORDER BY updated_at DESC, project_id, item_id`)
+	rows, err := s.query(`SELECT project_id, record_id, item_id, runner, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at FROM runs ORDER BY updated_at DESC, project_id, item_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -850,7 +887,7 @@ func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
 	for rows.Next() {
 		var run RunStatus
 		var terminal int
-		if err := rows.Scan(&run.ProjectID, &run.RecordID, &run.ItemID, &run.Runner, &run.Lane, &run.LeaseState, &run.AttemptOutcome, &run.ActiveAttemptID, &run.WorkspacePath, &run.SessionRef, &run.CloudTaskID, &run.CloudStatus, &run.CloudEnvironmentID, &run.CloudAttemptNumber, &run.PullRequestURL, &run.ApplyRef, &run.LogsSummary, &run.FinalSummary, &run.ProcessPID, &run.ProcessPGID, &run.ProcessStartedAt, &run.PromptPath, &run.EventSinkPath, &run.RawLogPath, &run.StatusPath, &run.WorkRevision, &run.AttemptCount, &run.NextRetryAt, &run.LastError, &run.LastEventAt, &run.FirstEventAt, &run.LastHeartbeatAt, &terminal, &run.StartedAt, &run.UpdatedAt); err != nil {
+		if err := rows.Scan(&run.ProjectID, &run.RecordID, &run.ItemID, &run.Runner, &run.Lane, &run.LeaseState, &run.LeaseOwner, &run.LeaseGeneration, &run.LeaseExpiresAt, &run.LeaseHost, &run.AttemptOutcome, &run.ActiveAttemptID, &run.WorkspacePath, &run.SessionRef, &run.CloudTaskID, &run.CloudStatus, &run.CloudEnvironmentID, &run.CloudAttemptNumber, &run.PullRequestURL, &run.ApplyRef, &run.LogsSummary, &run.FinalSummary, &run.ProcessPID, &run.ProcessPGID, &run.ProcessStartedAt, &run.PromptPath, &run.EventSinkPath, &run.RawLogPath, &run.StatusPath, &run.WorkRevision, &run.AttemptCount, &run.NextRetryAt, &run.LastError, &run.LastEventAt, &run.FirstEventAt, &run.LastHeartbeatAt, &terminal, &run.StartedAt, &run.UpdatedAt); err != nil {
 			return nil, err
 		}
 		run.Terminal = terminal != 0
@@ -870,13 +907,17 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	_, err := s.exec(`INSERT INTO runs (
-		project_id, record_id, item_id, runner, lane, lease_state, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		project_id, record_id, item_id, runner, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id, record_id) DO UPDATE SET
 		item_id=excluded.item_id,
 		runner=excluded.runner,
 		lane=excluded.lane,
 		lease_state=excluded.lease_state,
+		lease_owner=excluded.lease_owner,
+		lease_generation=excluded.lease_generation,
+		lease_expires_at=excluded.lease_expires_at,
+		lease_host=excluded.lease_host,
 		attempt_outcome=excluded.attempt_outcome,
 		active_attempt_id=excluded.active_attempt_id,
 		workspace_path=excluded.workspace_path,
@@ -906,8 +947,127 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 		terminal=excluded.terminal,
 		started_at=excluded.started_at,
 		updated_at=excluded.updated_at`,
-		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.Lane, run.LeaseState, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.FirstEventAt, run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt)
+		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.Lane, run.LeaseState, run.LeaseOwner, run.LeaseGeneration, run.LeaseExpiresAt, run.LeaseHost, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.FirstEventAt, run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt)
 	return err
+}
+
+type RuntimeLeaseRenewal struct {
+	ProjectID      string
+	RecordID       string
+	Owner          string
+	Generation     int
+	TTL            time.Duration
+	Now            time.Time
+	Dispatchable   bool
+	ProcessPID     int
+	ProcessPGID    int
+	ProcessStarted string
+}
+
+func (s *RuntimeStore) RenewRunLease(input RuntimeLeaseRenewal) (bool, error) {
+	if strings.TrimSpace(input.ProjectID) == "" || strings.TrimSpace(input.RecordID) == "" {
+		return false, tuskerError(errorInvalidArg, "lease renewal requires project_id and record_id")
+	}
+	if strings.TrimSpace(input.Owner) == "" {
+		return false, tuskerError(errorInvalidArg, "lease renewal requires owner")
+	}
+	if input.Generation <= 0 {
+		return false, tuskerError(errorInvalidArg, "lease renewal requires generation")
+	}
+	if !input.Dispatchable {
+		return false, nil
+	}
+	now := input.Now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	ttl := input.TTL
+	if ttl <= 0 {
+		ttl = defaultRunLeaseTTL
+	}
+	host := runtimeLeaseHost()
+	result, err := s.exec(`UPDATE runs
+		SET lease_state = CASE WHEN lease_state = 'claimed' THEN 'running' ELSE lease_state END,
+			lease_expires_at = ?,
+			lease_host = ?,
+			last_heartbeat_at = ?,
+			process_pid = CASE WHEN ? > 0 THEN ? ELSE process_pid END,
+			process_pgid = CASE WHEN ? > 0 THEN ? ELSE process_pgid END,
+			process_started_at = CASE WHEN ? != '' THEN ? ELSE process_started_at END,
+			updated_at = ?
+		WHERE project_id = ? AND record_id = ?
+			AND lease_owner = ? AND lease_generation = ?
+			AND lease_state IN ('claimed', 'running')`,
+		now.Add(ttl).Format(time.RFC3339), host, now.Format(time.RFC3339),
+		input.ProcessPID, input.ProcessPID, input.ProcessPGID, input.ProcessPGID, input.ProcessStarted, input.ProcessStarted, now.Format(time.RFC3339),
+		input.ProjectID, input.RecordID, input.Owner, input.Generation)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
+func (s *RuntimeStore) ReclaimExpiredRunLease(projectID, recordID string, now time.Time, ttl time.Duration, reason string) (bool, error) {
+	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" {
+		return false, tuskerError(errorInvalidArg, "lease reclaim requires project_id and record_id")
+	}
+	if ttl <= 0 {
+		ttl = defaultRunLeaseTTL
+	}
+	now = now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	cutoff := now.Add(-2 * ttl).Format(time.RFC3339)
+	if strings.TrimSpace(reason) == "" {
+		reason = "lease expired past reclaim grace"
+	}
+	result, err := s.exec(`UPDATE runs
+		SET lease_state = 'interrupted',
+			attempt_outcome = 'cancelled',
+			next_retry_at = '',
+			last_error = ?,
+			process_pid = 0,
+			process_pgid = 0,
+			process_started_at = '',
+			lease_owner = '',
+			lease_expires_at = '',
+			updated_at = ?
+		WHERE project_id = ? AND record_id = ?
+			AND lease_state IN ('claimed', 'running')
+			AND lease_expires_at != ''
+			AND lease_expires_at < ?`,
+		reason, now.Format(time.RFC3339), projectID, recordID, cutoff)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
+func (s *RuntimeStore) CheckRunLeaseGeneration(projectID, recordID string, generation int) error {
+	if generation <= 0 {
+		return nil
+	}
+	var current int
+	err := s.queryRowScan(`SELECT lease_generation FROM runs WHERE project_id = ? AND record_id = ?`, []any{projectID, recordID}, &current)
+	if errors.Is(err, sql.ErrNoRows) {
+		return tuskerError(errorNotFound, "run not found: "+recordID)
+	}
+	if err != nil {
+		return err
+	}
+	if current != generation {
+		return tuskerError(errorInvalidTransition, fmt.Sprintf("stale lease generation: got %d, current %d", generation, current))
+	}
+	return nil
 }
 
 func (s *RuntimeStore) SaveAttempt(attempt RunAttempt) error {
@@ -956,6 +1116,11 @@ func (s *RuntimeStore) SaveTurn(turn RunTurn) error {
 	}
 	if strings.TrimSpace(turn.AttemptID) == "" {
 		return tuskerError(errorInvalidArg, "attempt_id is required")
+	}
+	if turn.LeaseGeneration > 0 {
+		if err := s.CheckRunLeaseGeneration(turn.ProjectID, turn.RecordID, turn.LeaseGeneration); err != nil {
+			return err
+		}
 	}
 	if strings.TrimSpace(turn.LastEventAt) == "" {
 		turn.LastEventAt = time.Now().UTC().Format(time.RFC3339)

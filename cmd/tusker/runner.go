@@ -60,6 +60,7 @@ type StartRequest struct {
 	AttemptID     string
 	Lane          string
 	WorkRevision  int
+	LeaseGeneration int
 	ActiveStates  []string
 	WorkingDir    string
 	WorkspacePath string
@@ -83,6 +84,7 @@ type ResumeRequest struct {
 	AttemptID     string
 	Lane          string
 	WorkRevision  int
+	LeaseGeneration int
 	ActiveStates  []string
 	SessionRef    string
 	MessageRef    string
@@ -302,6 +304,7 @@ func runnerEnv(req runnerLaunchEnv) []string {
 		"TUSKER_ATTEMPT_ID="+req.AttemptID,
 		"TUSKER_RUN_LANE="+req.Lane,
 		"TUSKER_WORK_REVISION="+fmt.Sprintf("%d", req.WorkRevision),
+		"TUSKER_LEASE_GENERATION="+fmt.Sprintf("%d", req.LeaseGeneration),
 		"TUSKER_WORKSPACE="+req.WorkspacePath,
 		"TUSKER_WORKING_DIR="+req.WorkspacePath,
 		"TUSKER_REPO_ROOT="+req.RepoRoot,
@@ -347,6 +350,7 @@ type runnerLaunchEnv struct {
 	AttemptID     string
 	Lane          string
 	WorkRevision  int
+	LeaseGeneration int
 	WorkspacePath string
 	RepoRoot      string
 	PromptPath    string

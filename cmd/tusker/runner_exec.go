@@ -19,6 +19,7 @@ type runnerExecRequest struct {
 	AttemptID     string
 	Lane          string
 	WorkRevision  int
+	LeaseGeneration int
 	SessionRef    string
 	MessageRef    string
 	WorkingDir    string
@@ -110,7 +111,7 @@ PY
 	}
 	cmd.Env = runnerEnv(runnerLaunchEnv{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		Lane: req.Lane, WorkRevision: req.WorkRevision, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 		NotePath: req.NotePath, VaultPath: req.VaultPath, SessionRef: req.SessionRef, MessageRef: req.MessageRef,
 		CodexPolicy: withDefaultCodexPolicy(req.CodexPolicy),
