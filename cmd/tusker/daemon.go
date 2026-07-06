@@ -234,7 +234,11 @@ func finishRuntimeRun(store *RuntimeStore, run *RunStatus, state LeaseState, out
 }
 
 func (d *Daemon) PollOnce(ctx context.Context) error {
-	if err := d.store.SetSetting("daemon_last_poll_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
+	nowPoll := time.Now().UTC().Format(time.RFC3339)
+	if err := d.store.SetSetting("daemon_last_poll_at", nowPoll); err != nil {
+		return err
+	}
+	if err := d.store.SetSetting("daemon_watchdog_beat_at", nowPoll); err != nil {
 		return err
 	}
 	projects, err := d.store.ListProjects()
@@ -989,6 +993,18 @@ func (d *Daemon) releaseIneligibleRun(ctx context.Context, project RegisteredPro
 	return run, true, nil
 }
 
+func (d *Daemon) runLeaseRenewalDispatchable(project RegisteredProject, wf Workflow, run RunStatus) bool {
+	note, err := resolveNote(project.VaultRoot, run.RecordID)
+	if err != nil {
+		return false
+	}
+	status := strings.TrimSpace(stringField(note.Data, "status"))
+	if run.Lane == runLaneReview {
+		return containsString(wf.Tracker.ReviewStates, status)
+	}
+	return containsString(wf.Tracker.ActiveStates, status)
+}
+
 func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus) (RunStatus, bool, error) {
 	switch LeaseState(run.LeaseState) {
 	case LeaseStateClaimed, LeaseStateRunning:
@@ -1175,6 +1191,30 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	}
 
 	if run.ProcessPID > 0 && processIdentityMatches(run) {
+		if run.LeaseGeneration > 0 && strings.TrimSpace(firstNonEmpty(run.LeaseOwner, run.ActiveAttemptID)) != "" {
+			renewDispatchable := d.runLeaseRenewalDispatchable(project, wfFile.Data, run)
+			if renewed, err := d.store.RenewRunLease(RuntimeLeaseRenewal{
+				ProjectID:      project.ProjectID,
+				RecordID:       run.RecordID,
+				Owner:          firstNonEmpty(run.LeaseOwner, run.ActiveAttemptID),
+				Generation:     run.LeaseGeneration,
+				TTL:            defaultRunLeaseTTL,
+				Now:            nowTime,
+				Dispatchable:   renewDispatchable,
+				ProcessPID:     run.ProcessPID,
+				ProcessPGID:    run.ProcessPGID,
+				ProcessStarted: run.ProcessStartedAt,
+			}); err != nil {
+				return run, changed, err
+			} else if renewed {
+				run.LeaseExpiresAt = nowTime.Add(defaultRunLeaseTTL).Format(time.RFC3339)
+				run.LeaseHost = runtimeLeaseHost()
+				if strings.TrimSpace(run.LeaseOwner) == "" {
+					run.LeaseOwner = run.ActiveAttemptID
+				}
+				changed = true
+			}
+		}
 		if stalled, reason := runStallReason(run, wfFile.Data, nowTime); stalled {
 			if _, err := d.stopRunExecution(ctx, run); err != nil {
 				reason = reason + ": " + err.Error()
@@ -1429,7 +1469,9 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	eventSinkPath := filepath.Join(runDir, attemptStem+".events.jsonl")
 	rawLogPath := filepath.Join(runDir, attemptStem+".raw.log")
 	statusPath := filepath.Join(runDir, attemptStem+".status.json")
-	startedAt := time.Now().UTC().Format(time.RFC3339)
+	started := time.Now().UTC()
+	startedAt := started.Format(time.RFC3339)
+	leaseGeneration := run.LeaseGeneration + 1
 	attempt := RunAttempt{
 		AttemptID: attemptID, ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
 		Runner: run.Runner, Lane: lane, WorkRevision: run.WorkRevision, WorkspacePath: workspace.Path,
@@ -1437,6 +1479,10 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		StartedAt: startedAt,
 	}
 	run.LeaseState = string(LeaseStateClaimed)
+	run.LeaseOwner = attemptID
+	run.LeaseGeneration = leaseGeneration
+	run.LeaseExpiresAt = started.Add(defaultRunLeaseTTL).Format(time.RFC3339)
+	run.LeaseHost = runtimeLeaseHost()
 	run.Lane = lane
 	run.AttemptCount = ordinal
 	run.WorkspacePath = workspace.Path
@@ -1502,32 +1548,33 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		})
 		start, err = runner.Resume(ctx, ResumeRequest{
 			ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID, AttemptID: attemptID,
-			Lane: lane, WorkRevision: run.WorkRevision, ActiveStates: wfFile.Data.Tracker.ActiveStates, SessionRef: resume.SessionRef, MessageRef: resume.MessageRef, WorkingDir: workspace.Path, WorkspacePath: workspace.Path,
+			Lane: lane, WorkRevision: run.WorkRevision, LeaseGeneration: run.LeaseGeneration, ActiveStates: wfFile.Data.Tracker.ActiveStates, SessionRef: resume.SessionRef, MessageRef: resume.MessageRef, WorkingDir: workspace.Path, WorkspacePath: workspace.Path,
 			RepoRoot:   project.RepoRoot,
 			PromptPath: promptPath, EventSinkPath: eventSinkPath, RawLogPath: rawLogPath, StatusPath: statusPath, Command: command,
 			NotePath: note.AbsolutePath, VaultPath: project.VaultRoot, CodexPolicy: codexPolicy, ExternalLoop: externalLaunch,
 		})
 	} else {
 		start, err = runner.Start(ctx, StartRequest{
-			ProjectID:     project.ProjectID,
-			RecordID:      run.RecordID,
-			ItemID:        run.ItemID,
-			AttemptID:     attemptID,
-			Lane:          lane,
-			WorkRevision:  run.WorkRevision,
-			ActiveStates:  wfFile.Data.Tracker.ActiveStates,
-			WorkingDir:    workspace.Path,
-			WorkspacePath: workspace.Path,
-			RepoRoot:      project.RepoRoot,
-			PromptPath:    promptPath,
-			EventSinkPath: eventSinkPath,
-			RawLogPath:    rawLogPath,
-			StatusPath:    statusPath,
-			Command:       command,
-			NotePath:      note.AbsolutePath,
-			VaultPath:     project.VaultRoot,
-			CodexPolicy:   codexPolicy,
-			ExternalLoop:  externalLaunch,
+			ProjectID:       project.ProjectID,
+			RecordID:        run.RecordID,
+			ItemID:          run.ItemID,
+			AttemptID:       attemptID,
+			Lane:            lane,
+			WorkRevision:    run.WorkRevision,
+			LeaseGeneration: run.LeaseGeneration,
+			ActiveStates:    wfFile.Data.Tracker.ActiveStates,
+			WorkingDir:      workspace.Path,
+			WorkspacePath:   workspace.Path,
+			RepoRoot:        project.RepoRoot,
+			PromptPath:      promptPath,
+			EventSinkPath:   eventSinkPath,
+			RawLogPath:      rawLogPath,
+			StatusPath:      statusPath,
+			Command:         command,
+			NotePath:        note.AbsolutePath,
+			VaultPath:       project.VaultRoot,
+			CodexPolicy:     codexPolicy,
+			ExternalLoop:    externalLaunch,
 		})
 	}
 	if err != nil {
@@ -1915,6 +1962,8 @@ func limitStrings(values []string, max int) []string {
 
 func clearActiveExecution(run *RunStatus) {
 	run.ActiveAttemptID = ""
+	run.LeaseOwner = ""
+	run.LeaseExpiresAt = ""
 	run.ProcessPID = 0
 	run.ProcessPGID = 0
 	run.ProcessStartedAt = ""

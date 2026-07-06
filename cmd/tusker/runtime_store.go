@@ -134,21 +134,21 @@ type RuntimeApplyInput struct {
 }
 
 type RunTurn struct {
-	AttemptID    string `json:"attempt_id"`
-	ProjectID    string `json:"project_id"`
-	RecordID     string `json:"record_id"`
-	TurnID       string `json:"turn_id"`
-	TurnIndex    int    `json:"turn_index"`
-	SessionRef   string `json:"session_ref"`
-	Status       string `json:"status"`
-	InputTokens  int    `json:"input_tokens"`
-	OutputTokens int    `json:"output_tokens"`
-	TotalTokens  int    `json:"total_tokens"`
-	LeaseGeneration int `json:"lease_generation,omitempty"`
-	StartedAt    string `json:"started_at"`
-	CompletedAt  string `json:"completed_at"`
-	LastEventAt  string `json:"last_event_at"`
-	LastError    string `json:"last_error"`
+	AttemptID       string `json:"attempt_id"`
+	ProjectID       string `json:"project_id"`
+	RecordID        string `json:"record_id"`
+	TurnID          string `json:"turn_id"`
+	TurnIndex       int    `json:"turn_index"`
+	SessionRef      string `json:"session_ref"`
+	Status          string `json:"status"`
+	InputTokens     int    `json:"input_tokens"`
+	OutputTokens    int    `json:"output_tokens"`
+	TotalTokens     int    `json:"total_tokens"`
+	LeaseGeneration int    `json:"lease_generation,omitempty"`
+	StartedAt       string `json:"started_at"`
+	CompletedAt     string `json:"completed_at"`
+	LastEventAt     string `json:"last_event_at"`
+	LastError       string `json:"last_error"`
 }
 
 type SupervisorDecisionKind string
@@ -964,6 +964,46 @@ type RuntimeLeaseRenewal struct {
 	ProcessStarted string
 }
 
+func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generation int, ttl time.Duration, now time.Time, dispatchable bool) (bool, error) {
+	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" {
+		return false, tuskerError(errorInvalidArg, "lease claim requires project_id and record_id")
+	}
+	if strings.TrimSpace(owner) == "" {
+		return false, tuskerError(errorInvalidArg, "lease claim requires owner")
+	}
+	if generation <= 0 {
+		return false, tuskerError(errorInvalidArg, "lease claim requires generation")
+	}
+	if !dispatchable {
+		return false, nil
+	}
+	if ttl <= 0 {
+		ttl = defaultRunLeaseTTL
+	}
+	now = now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	result, err := s.exec(`UPDATE runs
+		SET lease_state = 'claimed',
+			lease_owner = ?,
+			lease_generation = ?,
+			lease_expires_at = ?,
+			lease_host = ?,
+			updated_at = ?
+		WHERE project_id = ? AND record_id = ?
+			AND lease_state NOT IN ('claimed', 'running')`,
+		owner, generation, now.Add(ttl).Format(time.RFC3339), runtimeLeaseHost(), now.Format(time.RFC3339), projectID, recordID)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
 func (s *RuntimeStore) RenewRunLease(input RuntimeLeaseRenewal) (bool, error) {
 	if strings.TrimSpace(input.ProjectID) == "" || strings.TrimSpace(input.RecordID) == "" {
 		return false, tuskerError(errorInvalidArg, "lease renewal requires project_id and record_id")
@@ -1621,25 +1661,30 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	watchdogBeatAt, err := s.GetSetting("daemon_watchdog_beat_at")
+	if err != nil {
+		return nil, err
+	}
 	source := "daemon.db"
 	if globalLimit <= 0 {
 		globalLimit = 2
 		source = "default"
 	}
 	return map[string]any{
-		"state_root":            s.stateRoot,
-		"runtime_store_path":    liveness.RuntimeStorePath,
-		"daemon_alive":          liveness.Alive,
-		"daemon_pid":            liveness.PID,
-		"daemon_started_at":     liveness.StartedAt,
-		"daemon_uptime_seconds": liveness.UptimeSeconds,
-		"daemon_last_poll_at":   lastPollAt,
-		"projects":              projectCount,
-		"activeRuns":            runCount,
-		"parkedNoProgressRuns":  parkedNoProgressCount,
-		"max_active_runs":       globalLimit,
-		"limit_source":          source,
-		"default_limit_value":   2,
+		"state_root":              s.stateRoot,
+		"runtime_store_path":      liveness.RuntimeStorePath,
+		"daemon_alive":            liveness.Alive,
+		"daemon_pid":              liveness.PID,
+		"daemon_started_at":       liveness.StartedAt,
+		"daemon_uptime_seconds":   liveness.UptimeSeconds,
+		"daemon_last_poll_at":     lastPollAt,
+		"daemon_watchdog_beat_at": watchdogBeatAt,
+		"projects":                projectCount,
+		"activeRuns":              runCount,
+		"parkedNoProgressRuns":    parkedNoProgressCount,
+		"max_active_runs":         globalLimit,
+		"limit_source":            source,
+		"default_limit_value":     2,
 	}, nil
 }
 

@@ -23,17 +23,18 @@ type codexRPCResponse struct {
 }
 
 type codexLiveHandle struct {
-	projectID     string
-	recordID      string
-	itemID        string
-	attemptID     string
-	eventSinkPath string
-	rawLogPath    string
-	statusPath    string
-	runner        RunnerName
-	policy        CodexPolicy
-	activeStates  []string
-	notePath      string
+	projectID       string
+	recordID        string
+	itemID          string
+	attemptID       string
+	leaseGeneration int
+	eventSinkPath   string
+	rawLogPath      string
+	statusPath      string
+	runner          RunnerName
+	policy          CodexPolicy
+	activeStates    []string
+	notePath        string
 
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -88,7 +89,7 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	}
 	cmd.Env = runnerEnv(runnerLaunchEnv{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		Lane: req.Lane, WorkRevision: req.WorkRevision, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 		NotePath: req.NotePath, VaultPath: req.VaultPath, SessionRef: resumeSessionRef, MessageRef: resumeMessageRef, CodexPolicy: policy,
 	})
@@ -110,25 +111,26 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	}
 	runtimeStore, _ := OpenRuntimeStore(DefaultStateRoot())
 	handle := &codexLiveHandle{
-		projectID:     req.ProjectID,
-		recordID:      req.RecordID,
-		itemID:        req.ItemID,
-		attemptID:     req.AttemptID,
-		eventSinkPath: req.EventSinkPath,
-		rawLogPath:    req.RawLogPath,
-		statusPath:    req.StatusPath,
-		runner:        RunnerCodex,
-		policy:        policy,
-		activeStates:  append([]string{}, req.ActiveStates...),
-		notePath:      req.NotePath,
-		turnIndex:     -1,
-		eventLog:      NewEventLog(req.EventSinkPath),
-		runtimeStore:  runtimeStore,
-		cmd:           cmd,
-		stdin:         stdin,
-		stdout:        stdout,
-		stderr:        stderr,
-		pending:       map[string]chan codexRPCResponse{},
+		projectID:       req.ProjectID,
+		recordID:        req.RecordID,
+		itemID:          req.ItemID,
+		attemptID:       req.AttemptID,
+		leaseGeneration: req.LeaseGeneration,
+		eventSinkPath:   req.EventSinkPath,
+		rawLogPath:      req.RawLogPath,
+		statusPath:      req.StatusPath,
+		runner:          RunnerCodex,
+		policy:          policy,
+		activeStates:    append([]string{}, req.ActiveStates...),
+		notePath:        req.NotePath,
+		turnIndex:       -1,
+		eventLog:        NewEventLog(req.EventSinkPath),
+		runtimeStore:    runtimeStore,
+		cmd:             cmd,
+		stdin:           stdin,
+		stdout:          stdout,
+		stderr:          stderr,
+		pending:         map[string]chan codexRPCResponse{},
 	}
 	handle.nextID.Store(1)
 	liveRegistry.Register(handle)
@@ -1151,15 +1153,16 @@ func (h *codexLiveHandle) recordTurnStarted(turnID, at string, payload map[strin
 	h.ensureTurnIndex()
 	h.appendNormalizedTurnEvent("turn_started", at, payloadWithTurn(h, turnID, payload))
 	h.saveTurn(RunTurn{
-		AttemptID:   h.attemptID,
-		ProjectID:   h.projectID,
-		RecordID:    h.recordID,
-		TurnID:      turnID,
-		TurnIndex:   h.turnIndex,
-		SessionRef:  h.threadID,
-		Status:      "running",
-		StartedAt:   at,
-		LastEventAt: at,
+		AttemptID:       h.attemptID,
+		ProjectID:       h.projectID,
+		RecordID:        h.recordID,
+		TurnID:          turnID,
+		TurnIndex:       h.turnIndex,
+		SessionRef:      h.threadID,
+		Status:          "running",
+		StartedAt:       at,
+		LastEventAt:     at,
+		LeaseGeneration: h.leaseGeneration,
 	})
 }
 
@@ -1177,17 +1180,18 @@ func (h *codexLiveHandle) recordTurnUsage(source, at string, usage turnUsageCoun
 		"total_tokens":  usage.totalTokens,
 	}))
 	h.saveTurn(RunTurn{
-		AttemptID:    h.attemptID,
-		ProjectID:    h.projectID,
-		RecordID:     h.recordID,
-		TurnID:       turnID,
-		TurnIndex:    h.turnIndex,
-		SessionRef:   h.threadID,
-		Status:       "running",
-		InputTokens:  usage.inputTokens,
-		OutputTokens: usage.outputTokens,
-		TotalTokens:  usage.totalTokens,
-		LastEventAt:  at,
+		AttemptID:       h.attemptID,
+		ProjectID:       h.projectID,
+		RecordID:        h.recordID,
+		TurnID:          turnID,
+		TurnIndex:       h.turnIndex,
+		SessionRef:      h.threadID,
+		Status:          "running",
+		InputTokens:     usage.inputTokens,
+		OutputTokens:    usage.outputTokens,
+		TotalTokens:     usage.totalTokens,
+		LastEventAt:     at,
+		LeaseGeneration: h.leaseGeneration,
 	})
 }
 
@@ -1203,16 +1207,17 @@ func (h *codexLiveHandle) recordTurnCompleted(turnID, status, reason, at string)
 		"last_error": reason,
 	}))
 	h.saveTurn(RunTurn{
-		AttemptID:   h.attemptID,
-		ProjectID:   h.projectID,
-		RecordID:    h.recordID,
-		TurnID:      turnID,
-		TurnIndex:   h.turnIndex,
-		SessionRef:  h.threadID,
-		Status:      status,
-		CompletedAt: at,
-		LastEventAt: at,
-		LastError:   reason,
+		AttemptID:       h.attemptID,
+		ProjectID:       h.projectID,
+		RecordID:        h.recordID,
+		TurnID:          turnID,
+		TurnIndex:       h.turnIndex,
+		SessionRef:      h.threadID,
+		Status:          status,
+		CompletedAt:     at,
+		LastEventAt:     at,
+		LastError:       reason,
+		LeaseGeneration: h.leaseGeneration,
 	})
 }
 

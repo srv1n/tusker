@@ -16,13 +16,14 @@ import (
 )
 
 type claudeLiveHandle struct {
-	projectID  string
-	recordID   string
-	itemID     string
-	attemptID  string
-	rawLogPath string
-	statusPath string
-	runner     RunnerName
+	projectID       string
+	recordID        string
+	itemID          string
+	attemptID       string
+	leaseGeneration int
+	rawLogPath      string
+	statusPath      string
+	runner          RunnerName
 
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -91,7 +92,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	}
 	cmd.Env = runnerEnv(runnerLaunchEnv{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		Lane: req.Lane, WorkRevision: req.WorkRevision, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 		NotePath: req.NotePath, VaultPath: req.VaultPath, SessionRef: resumeSessionRef(resume), MessageRef: resumeMessageRef(resume),
 		CodexPolicy: withDefaultCodexPolicy(req.CodexPolicy),
@@ -113,17 +114,18 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		return nil, err
 	}
 	handle := &claudeLiveHandle{
-		projectID:  req.ProjectID,
-		recordID:   req.RecordID,
-		itemID:     req.ItemID,
-		attemptID:  req.AttemptID,
-		rawLogPath: req.RawLogPath,
-		statusPath: req.StatusPath,
-		runner:     RunnerClaude,
-		cmd:        cmd,
-		stdin:      stdin,
-		stdout:     stdout,
-		stderr:     stderr,
+		projectID:       req.ProjectID,
+		recordID:        req.RecordID,
+		itemID:          req.ItemID,
+		attemptID:       req.AttemptID,
+		leaseGeneration: req.LeaseGeneration,
+		rawLogPath:      req.RawLogPath,
+		statusPath:      req.StatusPath,
+		runner:          RunnerClaude,
+		cmd:             cmd,
+		stdin:           stdin,
+		stdout:          stdout,
+		stderr:          stderr,
 	}
 	handle.nextID.Store(1)
 	liveRegistry.Register(handle)

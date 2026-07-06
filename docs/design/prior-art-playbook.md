@@ -91,6 +91,21 @@ Confirmed gaps, in dependency order:
 
 Sequencing: **RUN-T-0010 → RUN-T-0011 → RUN-T-0012 → RUN-T-0013 → packaging.** 0010 is deliberately not widened — it stops the bleeding with the daemon down; 0011 subsumes its patches into the structural loop (0010's tests must keep passing unchanged, which is the proof the rewrite preserved behavior).
 
-## 5. What Tusker does that nobody surveyed does
+## 5. Operating model — how work flows through the hardened machine
+
+Source: `docs/design/research/research-operating-models.md` (Gas Town roles/convoys/Refinery + retrospectives, Ralph loop, merge-queue lineage bors→TAP→Graphite, container-use, sketch.dev, Anthropic agent-team guidance). Thesis adopted: **a Gas-Town-shaped factory run by Ralph-shaped workers, with the human as batch reviewer + on-call at wave boundaries — never an inline gate.**
+
+**Decisions:**
+
+1. **Wave (convoy) is the batch primitive.** A named batch of independent tasks dispatched together; "landed" is derived (all children closed), never a human signature; re-opens if members are added. Review batches, digests, and merge lanes all key off the wave. (Gas Town Convoy; matches our existing wave-boundary review practice — this just makes it a first-class record.)
+2. **Merge discipline: no runner ever touches main.** Integration branch per wave; runners branch *from* it (siblings see each other's landed work); a single serialized merge lane verifies the *merged* state with optimistic batching + bisect-on-red (green MRs land, the one bad MR is kicked back — never the whole batch blocked); the wave lands to main as one merge commit. Three guards: role instructions, pre-push hook, idempotent land command. (bors "Not Rocket Science Rule"; Gas Town Refinery + integration branches.)
+3. **Gate policy — soft by default, hard by blast radius.** Machine-green (build/vet/test on merged state) is the real gate; human review is async and batched at the wave boundary; rejection = revert/bisect-out, not pipeline stall. Hard human gate ONLY for the privileged tier: schema/migrations, auth, prod config, dependency bumps, deletes/force-push-class operations — because Gas Town's documented catastrophe (autonomous supervisor force-pushing/deleting; yolo overwrites) is precisely no-gate on privileged ops. RUN-T-0016's soft dependency edges implement the flow half; contract authoring assigns risk `high`+ to the privileged tier so close policy supplies the hard half.
+4. **Ralph worker protocol.** Fresh context per attempt (also kills the same-thread quadratic token burn from the 2026-07-06 incident), one task per attempt, durable plan state on disk between attempts, backpressure (compile/vet/test) as the gate the worker cannot argue with, sandboxed/worktree-isolated always. Operator "sits on the loop, not in it": a repeated failure gets a *sign* (prompt/spec rule), not a babysitter.
+5. **Concurrency band: 3–4 normal, 5 ceiling** (cap stays 5). Anthropic's measured sweet spot is 2–4 before coordination overhead outpaces gains; Gas Town's value also came from a handful. Revisit only with evidence.
+6. **Human attention is exception-routed + one morning surface.** Severity ladder (P2 → log for morning; P1 → notify; P0 → page: security, unresolvable conflict, privileged-op request), stale escalations re-escalate; the morning digest shows exactly three lists — landed, red/parked (with the failing gate), pending hard gate — then: triage escalations, batch-review landed diffs, accept/revert hard-gate items, add signs, seed the next wave. (Gas Town `gt prime`; TAP revert culture; the "6 PRs merged and I had no idea when" observability failure is why the audit trail is mandatory.)
+
+Contracts: OPS-T-0001 (wave primitive), OPS-T-0002 (merge lane), OPS-T-0003 (escalation + digest), OPS-T-0004 (fresh-context worker protocol). Runtime-hardening chain (RUN-T-0011..0017) is prerequisite plumbing for unattended overnight operation; the OPS layer is what makes the overnight output reviewable and landable.
+
+## 6. What Tusker does that nobody surveyed does
 
 Worth stating so we don't cargo-cult ourselves out of it: executable task contracts with acceptance-mapped proof, risk-tiered close policy, wave-boundary batch review, and (once RUN-T-0012 lands) real spend governance. The survey says the last one is genuinely novel in this category — vibe-kanban, claude-squad, Conductor, opencode, goose: zero spend controls. The $100/hour data point from the Gas Town research is the market's way of asking for it.

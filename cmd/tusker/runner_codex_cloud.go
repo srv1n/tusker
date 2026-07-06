@@ -246,7 +246,7 @@ func codexCloudCommand(command string, config CodexCloudConfig, req StartRequest
 func codexCloudEnv(req StartRequest, config CodexCloudConfig, taskID string) []string {
 	env := runnerEnv(runnerLaunchEnv{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		Lane: req.Lane, WorkRevision: req.WorkRevision, WorkspacePath: req.WorkspacePath, RepoRoot: req.RepoRoot,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: req.WorkspacePath, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: withDefaultCodexPolicy(req.CodexPolicy),
 	})

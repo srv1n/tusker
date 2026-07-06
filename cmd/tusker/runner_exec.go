@@ -13,27 +13,27 @@ import (
 )
 
 type runnerExecRequest struct {
-	ProjectID     string
-	RecordID      string
-	ItemID        string
-	AttemptID     string
-	Lane          string
-	WorkRevision  int
+	ProjectID       string
+	RecordID        string
+	ItemID          string
+	AttemptID       string
+	Lane            string
+	WorkRevision    int
 	LeaseGeneration int
-	SessionRef    string
-	MessageRef    string
-	WorkingDir    string
-	WorkspacePath string
-	RepoRoot      string
-	PromptPath    string
-	EventSinkPath string
-	RawLogPath    string
-	StatusPath    string
-	Command       string
-	NotePath      string
-	VaultPath     string
-	ResumeMode    bool
-	CodexPolicy   CodexPolicy
+	SessionRef      string
+	MessageRef      string
+	WorkingDir      string
+	WorkspacePath   string
+	RepoRoot        string
+	PromptPath      string
+	EventSinkPath   string
+	RawLogPath      string
+	StatusPath      string
+	Command         string
+	NotePath        string
+	VaultPath       string
+	ResumeMode      bool
+	CodexPolicy     CodexPolicy
 }
 
 type runnerProcessStatus struct {
