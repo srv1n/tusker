@@ -57,8 +57,8 @@ automation:
       kind: codex_app_server
       command: codex app-server
       approval_policy: never
-      thread_sandbox: workspace-write
-      turn_sandbox_policy: workspace-write
+      thread_sandbox: danger-full-access
+      turn_sandbox_policy: danger-full-access
       turn_timeout_ms: 600000
       read_timeout_ms: 30000
       stall_timeout_ms: 120000
