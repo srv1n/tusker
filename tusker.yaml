@@ -48,8 +48,8 @@ automation:
     strategy: worktree
     root: ../.tusker-worktrees
   concurrency:
-    max_active_runs: 2
-    max_active_runs_per_project: 1
+    max_active_runs: 4
+    max_active_runs_per_project: 4
     max_concurrent_by_state:
       rework: 1
   runners:

@@ -1,91 +1,91 @@
 ---
-workflow_version: 1
-tracker_schema_version: 7
-tracker:
-  kind: tusker_vault
-  dispatch_states:
-    - ready
-    - rework
-  review_states:
-    - review
-  terminal_states:
-    - done
-    - cancelled
-    - superseded
 agents:
-  default: codex_app_server
+  default: "codex_app_server"
   enabled:
-    - codex_app_server
-    - codex_exec
-    - claude-code
-  max_concurrent_agents: 2
+    - "codex_app_server"
+    - "codex_exec"
+    - "claude-code"
+  max_concurrent_agents: 4
   max_concurrent_agents_by_state:
     rework: 1
-runtime:
-  poll_interval_ms: 5000
-  lease_ttl_ms: 900000
-  max_active_runs_per_project: 1
-workspace:
-  root: ../.tusker-worktrees
-  strategy: worktree
+claude:
+  command: "claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions"
+codex:
+  approval_policy: "never"
+  command: "codex app-server"
+  max_turns: 1
+  read_timeout_ms: 30000
+  stall_timeout_ms: 120000
+  thread_sandbox: "danger-full-access"
+  turn_sandbox_policy: "danger-full-access"
+  turn_timeout_ms: 600000
+extensions:
+  allow_tusker_read_tools: false
+  allowed_mcps: []
+  allowed_tools: []
+  enabled: false
+fanout:
+  allowed_child_types: []
+  enabled: false
+  max_children: 0
+  merge_rule: "manual_review"
+hooks:
+  after_workspace_create: []
+  before_workspace_remove: []
 retry:
-  max_attempts: 3
   backoff_ms:
     - 30000
     - 120000
     - 600000
+  max_attempts: 3
 reviewer:
-  enabled: true
-  runner: codex_app_server
-  actor: reviewer:agent
+  actor: "reviewer:agent"
   auto_close_risks:
-    - low
-    - medium
+    - "low"
+    - "medium"
+  enabled: true
   human_required_risks:
-    - high
-    - critical
+    - "high"
+    - "critical"
   prompt: "Review only. Do not edit implementation files. Verify acceptance, proof, gates, and docs impact. Return rework for any unmet acceptance item."
+  runner: "codex_app_server"
 runners:
+  claude-code:
+    command: "claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions"
+    kind: "claude-code"
   codex_app_server:
-    kind: codex_app_server
-    command: codex app-server
-    approval_policy: never
-    thread_sandbox: danger-full-access
-    turn_sandbox_policy: danger-full-access
-    turn_timeout_ms: 600000
+    approval_policy: "never"
+    command: "codex app-server"
+    kind: "codex_app_server"
+    max_turns: 1
     read_timeout_ms: 30000
     stall_timeout_ms: 120000
-    max_turns: 1
+    thread_sandbox: "danger-full-access"
+    turn_sandbox_policy: "danger-full-access"
+    turn_timeout_ms: 600000
   codex_exec:
-    kind: codex_exec
-    command: codex exec --skip-git-repo-check -
-  claude-code:
-    kind: claude-code
-    command: claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions
-codex:
-  command: codex app-server
-  approval_policy: never
-  thread_sandbox: danger-full-access
-  turn_sandbox_policy: danger-full-access
-  turn_timeout_ms: 600000
-  read_timeout_ms: 30000
-  stall_timeout_ms: 120000
-  max_turns: 1
-claude:
-  command: claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions
-extensions:
-  enabled: false
-  allowed_tools: []
-  allowed_mcps: []
-  allow_tusker_read_tools: false
-hooks:
-  after_workspace_create: []
-  before_workspace_remove: []
-fanout:
-  enabled: false
-  max_children: 0
-  allowed_child_types: []
-  merge_rule: manual_review
+    command: "codex exec --skip-git-repo-check -"
+    kind: "codex_exec"
+runtime:
+  lease_ttl_ms: 900000
+  max_active_runs_per_project: 4
+  poll_interval_ms: 5000
+tracker:
+  dispatch_states:
+    - "ready"
+    - "rework"
+  kind: "tusker_vault"
+  review_states:
+    - "review"
+  terminal_states:
+    - "done"
+    - "cancelled"
+    - "superseded"
+tracker_schema_version: 7
+workflow_version: 1
+workspace:
+  root: "../.tusker-worktrees"
+  strategy: "worktree"
 ---
 
 ## Routing
