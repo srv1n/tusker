@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:16:22Z"
-updated_at: "2026-07-06T03:54:02Z"
-state_rev: "sha256:723302fa0f0b9ed292616c867e454cc0d377ed46c027e16180c0f68b378672c8"
+updated_at: "2026-07-06T04:37:47Z"
+state_rev: "sha256:b0b804be0c04069b9e2f65ecb2e4e1b464874e9b24b05031980d6efc8c318a0f"
 ---
 
 # SRV · Tusker Serve: local control-room UI
@@ -47,6 +47,7 @@ TBD.
 | [[SRV-T-0001]] | ready | agent | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0002]] | backlog | human:sarav | Accept, waive, or return rework for SRV-G-0001. |
 | [[SRV-T-0003]] | backlog | blocked_dependency | Wait for dependency SRV-T-0002 to reach done. |
+| [[SRV-T-0004]] | backlog | blocked_dependency | Wait for dependency SRV-T-0001 to reach done. |
 
 ## Recently completed
 
