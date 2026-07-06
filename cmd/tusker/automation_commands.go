@@ -1,10 +1,10 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -31,6 +31,7 @@ type automationCommandContext struct {
 	GlobalActiveRuns   int
 	ProjectActiveRuns  int
 	StateActiveRuns    map[string]int
+	DispatchRefusal    string
 }
 
 type automationProjectSummary struct {
@@ -118,13 +119,18 @@ type automationQueueReport struct {
 }
 
 type automationStatusReport struct {
-	Schema        string                     `json:"schema"`
-	StateRoot     string                     `json:"state_root"`
-	ProjectCount  int                        `json:"project_count"`
-	ActiveRuns    int                        `json:"active_runs"`
-	MaxActiveRuns int                        `json:"max_active_runs"`
-	LimitSource   string                     `json:"limit_source"`
-	Projects      []automationProjectSummary `json:"projects"`
+	Schema              string                     `json:"schema"`
+	StateRoot           string                     `json:"state_root"`
+	RuntimeStorePath    string                     `json:"runtime_store_path"`
+	DaemonAlive         bool                       `json:"daemon_alive"`
+	DaemonPID           int                        `json:"daemon_pid"`
+	DaemonStartedAt     string                     `json:"daemon_started_at,omitempty"`
+	DaemonUptimeSeconds int64                      `json:"daemon_uptime_seconds"`
+	ProjectCount        int                        `json:"project_count"`
+	ActiveRuns          int                        `json:"active_runs"`
+	MaxActiveRuns       int                        `json:"max_active_runs"`
+	LimitSource         string                     `json:"limit_source"`
+	Projects            []automationProjectSummary `json:"projects"`
 }
 
 func automationStatusCmd(args Args) error {
@@ -146,13 +152,18 @@ func automationStatusCmd(args Args) error {
 		return err
 	}
 	report := automationStatusReport{
-		Schema:        automationStatusSchema,
-		StateRoot:     stringValue(status["state_root"]),
-		ProjectCount:  intFromAny(status["projects"]),
-		ActiveRuns:    intFromAny(status["activeRuns"]),
-		MaxActiveRuns: intFromAny(status["max_active_runs"]),
-		LimitSource:   stringValue(status["limit_source"]),
-		Projects:      automationProjectSummaries(projects, runs),
+		Schema:              automationStatusSchema,
+		StateRoot:           stringValue(status["state_root"]),
+		RuntimeStorePath:    stringValue(status["runtime_store_path"]),
+		DaemonAlive:         boolFromAny(status["daemon_alive"]),
+		DaemonPID:           intFromAny(status["daemon_pid"]),
+		DaemonStartedAt:     stringValue(status["daemon_started_at"]),
+		DaemonUptimeSeconds: int64FromAny(status["daemon_uptime_seconds"]),
+		ProjectCount:        intFromAny(status["projects"]),
+		ActiveRuns:          intFromAny(status["activeRuns"]),
+		MaxActiveRuns:       intFromAny(status["max_active_runs"]),
+		LimitSource:         stringValue(status["limit_source"]),
+		Projects:            automationProjectSummaries(projects, runs),
 	}
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "status": report})
@@ -247,24 +258,11 @@ func automationDispatchCmd(args Args) error {
 		printAutomationExplanation(explanation)
 		return tuskerError(errorInvalidTransition, taskID+": automation dispatch blocked: "+strings.Join(explanation.Blockers, "; "), withContext(explanation))
 	}
-	run := ctx.effectiveRunForTask(note, explanation.Runner)
-	daemon := &Daemon{stateRoot: ctx.StateRoot, store: ctx.Store}
-	updated, dispatchErr := daemon.dispatchRun(context.Background(), ctx.Project, ctx.Workflow, note, run, runLaneExecute)
-	if dispatchErr != nil {
-		updated = daemon.scheduleRetry(updated, ctx.Workflow.Data, dispatchErr.Error())
-	}
-	if err := ctx.Store.UpsertRun(updated); err != nil {
-		return err
-	}
-	if dispatchErr != nil {
-		return dispatchErr
-	}
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "run": updated, "explanation": explanation})
+		emitJSON(map[string]any{"ok": false, "explanation": explanation, "error": oneShotDispatchRefusal("tusker automation dispatch")})
 		return nil
 	}
-	fmt.Printf("Dispatched %s with %s: %s\n", explanation.ID, explanation.Runner, updated.LeaseState)
-	return nil
+	return tuskerError(errorInvalidTransition, oneShotDispatchRefusal("tusker automation dispatch"), withContext(explanation))
 }
 
 func loadAutomationCommandContext(args Args) (*automationCommandContext, error) {
@@ -338,7 +336,7 @@ func loadAutomationCommandContext(args Args) (*automationCommandContext, error) 
 		_ = store.Close()
 		return nil, err
 	}
-	ctx.GlobalActiveRuns = countDispatchingRuns(ctx.Runs)
+	ctx.GlobalActiveRuns = countDispatchCapacityRuns(ctx.Runs)
 	for _, run := range ctx.Runs {
 		if ctx.ProjectRegistered && run.ProjectID != ctx.Project.ProjectID {
 			continue
@@ -347,8 +345,8 @@ func loadAutomationCommandContext(args Args) (*automationCommandContext, error) 
 			ctx.ProjectRuns[run.RecordID] = run
 		}
 	}
-	ctx.ProjectActiveRuns = countDispatchingProjectRuns(ctx.ProjectRuns)
-	ctx.StateActiveRuns = countDispatchingProjectRunsByState(ctx.ProjectRuns, ctx.NoteStatusByRecord)
+	ctx.ProjectActiveRuns = countDispatchCapacityProjectRuns(ctx.ProjectRuns)
+	ctx.StateActiveRuns = countDispatchCapacityProjectRunsByState(ctx.ProjectRuns, ctx.NoteStatusByRecord)
 	return ctx, nil
 }
 
@@ -485,7 +483,7 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 	if reason := automationRunBlocker(run, time.Now().UTC()); reason != "" {
 		blockers = append(blockers, reason)
 	}
-	blockers = append(blockers, ctx.concurrencyBlockers(note)...)
+	blockers = append(blockers, ctx.concurrencyBlockers(note, run)...)
 	fanout := ctx.fanoutSummary(recordID)
 	policy := codexPolicyFromWorkflow(ctx.Workflow.Data)
 	if strings.TrimSpace(policy.ApprovalPolicy) != "" && policy.ApprovalPolicy != "never" {
@@ -496,6 +494,7 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 		branch, _ = currentGitBranchIn(ctx.Project.RepoRoot)
 	}
 	existing := ctx.existingRunPointer(recordID)
+	workspaceStrategy := workspaceStrategyForRun(ctx.Workflow.Data, ctx.Project, run, ctx.projectRunsSlice())
 	blockers = uniqueStrings(blockers)
 	return automationTaskExplanation{
 		Schema:            automationExplainSchema,
@@ -517,8 +516,8 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 		Lane:              firstNonEmpty(run.Lane, runLaneExecute),
 		Command:           command,
 		WorkflowPath:      ctx.Workflow.Path,
-		WorkspacePath:     automationWorkspacePath(ctx.StateRoot, ctx.Project, run),
-		WorkspaceStrategy: string(workspaceStrategyFromWorkflow(ctx.Workflow.Data.Workspace.Strategy)),
+		WorkspacePath:     automationWorkspacePath(ctx.StateRoot, ctx.Project, ctx.Workflow.Data, run, workspaceStrategy),
+		WorkspaceStrategy: string(workspaceStrategy),
 		Branch:            branch,
 		ApprovalPolicy:    policy.ApprovalPolicy,
 		ThreadSandbox:     policy.ThreadSandbox,
@@ -714,7 +713,7 @@ func automationRunBlocker(run RunStatus, now time.Time) string {
 	}
 }
 
-func (ctx *automationCommandContext) concurrencyBlockers(note Note) []string {
+func (ctx *automationCommandContext) concurrencyBlockers(note Note, run RunStatus) []string {
 	if !ctx.ProjectRegistered {
 		return nil
 	}
@@ -726,31 +725,38 @@ func (ctx *automationCommandContext) concurrencyBlockers(note Note) []string {
 		if globalLimit <= 0 {
 			globalLimit = 2
 		}
-		if globalLimit > 0 && ctx.GlobalActiveRuns >= globalLimit {
+		if dispatchCapacityLimitReached(ctx.GlobalActiveRuns, globalLimit, run) {
 			blockers = append(blockers, fmt.Sprintf("global active run limit reached (%d/%d)", ctx.GlobalActiveRuns, globalLimit))
 		}
 	}
 	projectLimit := projectActiveRunLimit(ctx.Workflow.Data)
-	if ctx.ProjectActiveRuns >= projectLimit {
+	if dispatchCapacityLimitReached(ctx.ProjectActiveRuns, projectLimit, run) {
 		blockers = append(blockers, fmt.Sprintf("project active run limit reached (%d/%d)", ctx.ProjectActiveRuns, projectLimit))
 	}
 	status := stringField(note.Data, "status")
-	if stateDispatchCapReached(status, ctx.StateActiveRuns, ctx.Workflow.Data) {
+	if stateDispatchCapReachedForRun(status, ctx.StateActiveRuns, ctx.Workflow.Data, run) {
 		blockers = append(blockers, fmt.Sprintf("state %q concurrency cap reached", status))
 	}
 	return blockers
 }
 
-func automationWorkspacePath(stateRoot string, project RegisteredProject, run RunStatus) string {
+func automationWorkspacePath(stateRoot string, project RegisteredProject, wf Workflow, run RunStatus, strategy WorkspaceStrategy) string {
 	req := WorkspacePrepareRequest{
-		ProjectID:    project.ProjectID,
-		ProjectKey:   project.ProjectKey,
-		RecordID:     run.RecordID,
-		ItemID:       run.ItemID,
-		StateRoot:    stateRoot,
-		WorkRevision: run.WorkRevision,
+		ProjectID:     project.ProjectID,
+		ProjectKey:    project.ProjectKey,
+		RecordID:      run.RecordID,
+		ItemID:        run.ItemID,
+		RepoRoot:      project.RepoRoot,
+		StateRoot:     stateRoot,
+		WorkspaceRoot: wf.Workspace.Root,
+		Strategy:      strategy,
+		WorkRevision:  run.WorkRevision,
 	}
-	return filepath.Join(stateRoot, "workspaces", project.ProjectKey, workspaceKeyForRequest(req))
+	workspacePath, _, err := workspacePathForRequest(req)
+	if err != nil {
+		return ""
+	}
+	return workspacePath
 }
 
 func (ctx *automationCommandContext) existingRunPointer(recordID string) *RunStatus {
@@ -815,6 +821,12 @@ func automationSummarizeProject(project RegisteredProject, runs []RunStatus, reg
 
 func printAutomationStatus(report automationStatusReport) {
 	fmt.Printf("Automation state root: %s\n", report.StateRoot)
+	fmt.Printf("Runtime store: %s\n", report.RuntimeStorePath)
+	if report.DaemonAlive {
+		fmt.Printf("Daemon pid: %d uptime=%s\n", report.DaemonPID, (time.Duration(report.DaemonUptimeSeconds) * time.Second).String())
+	} else {
+		fmt.Println("Daemon pid: none")
+	}
 	fmt.Printf("Registered projects: %d\n", report.ProjectCount)
 	fmt.Printf("Active runs: %d / %d\n", report.ActiveRuns, report.MaxActiveRuns)
 	if len(report.Projects) == 0 {
@@ -927,5 +939,39 @@ func intFromAny(value any) int {
 		return int(typed)
 	default:
 		return atoiSafe(stringValue(value))
+	}
+}
+
+func int64FromAny(value any) int64 {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed)
+	case int64:
+		return typed
+	case float64:
+		return int64(typed)
+	default:
+		parsed, _ := strconv.ParseInt(strings.TrimSpace(stringValue(value)), 10, 64)
+		return parsed
+	}
+}
+
+func boolFromAny(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case int:
+		return typed != 0
+	case int64:
+		return typed != 0
+	case float64:
+		return typed != 0
+	default:
+		switch strings.ToLower(strings.TrimSpace(stringValue(value))) {
+		case "true", "yes", "1":
+			return true
+		default:
+			return false
+		}
 	}
 }

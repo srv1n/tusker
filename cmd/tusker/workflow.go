@@ -8,6 +8,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const defaultReviewerActor = "agent:reviewer/codex"
+
 type WorkflowFile struct {
 	Path string
 	Body string
@@ -132,13 +134,13 @@ func defaultWorkflow() Workflow {
 	wf.Runtime.PollIntervalMS = 5000
 	wf.Runtime.LeaseTTLMS = 900000
 	wf.Runtime.MaxActiveRunsPerProject = 1
-	wf.Workspace.Root = "../.tusker-worktrees"
-	wf.Workspace.Strategy = "worktree"
+	wf.Workspace.Root = "."
+	wf.Workspace.Strategy = string(WorkspaceStrategyInPlace)
 	wf.Retry.MaxAttempts = 3
 	wf.Retry.BackoffMS = []int{30000, 120000, 600000}
 	wf.Reviewer.Enabled = true
 	wf.Reviewer.Runner = string(RunnerCodexAppServer)
-	wf.Reviewer.Actor = "reviewer:agent"
+	wf.Reviewer.Actor = defaultReviewerActor
 	wf.Reviewer.AutoCloseRisks = []string{"low", "medium"}
 	wf.Reviewer.HumanRequiredRisks = []string{"high", "critical"}
 	wf.Reviewer.Prompt = defaultReviewerPrompt()

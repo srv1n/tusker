@@ -142,6 +142,8 @@ type StartResult struct {
 	StartedAt    string
 	FinishedAt   string
 	PID          int
+	PGID         int
+	ProcessStart string
 	StatusPath   string
 	Capabilities RunnerCapabilities
 	Completed    bool

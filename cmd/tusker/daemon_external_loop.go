@@ -388,7 +388,10 @@ func dispatchExternalLoopContinuation(ctx *automationCommandContext, note Note, 
 	run.ItemID = firstNonEmpty(run.ItemID, stringField(note.Data, "id"))
 	run.WorkRevision = intField(note.Data, "work_revision")
 	run = prepareRunForLaneDispatch(run, firstNonEmpty(strings.TrimSpace(lane), runLaneExecute), externalRunner)
-	daemon := &Daemon{stateRoot: ctx.StateRoot, store: ctx.Store}
+	if reason := strings.TrimSpace(ctx.DispatchRefusal); reason != "" {
+		return nil, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": run.Lane}))
+	}
+	daemon := &Daemon{stateRoot: ctx.StateRoot, store: ctx.Store, dispatchRefusalReason: ctx.DispatchRefusal}
 	updated, dispatchErr := daemon.dispatchRun(context.Background(), ctx.Project, ctx.Workflow, note, run, run.Lane)
 	if dispatchErr != nil {
 		updated = daemon.scheduleRetry(updated, ctx.Workflow.Data, dispatchErr.Error())
@@ -536,7 +539,7 @@ func (d *Daemon) automationContextForDaemon(project RegisteredProject, wfFile Wo
 		ctx.NoteStatusByRecord[recordID] = stringField(note.Data, "status")
 	}
 	ctx.Runs = runs
-	ctx.GlobalActiveRuns = countDispatchingRuns(runs)
+	ctx.GlobalActiveRuns = countDispatchCapacityRuns(runs)
 	for _, run := range runs {
 		if run.ProjectID != project.ProjectID || strings.TrimSpace(run.RecordID) == "" {
 			continue
@@ -546,8 +549,8 @@ func (d *Daemon) automationContextForDaemon(project RegisteredProject, wfFile Wo
 	if strings.TrimSpace(override.RecordID) != "" {
 		ctx.ProjectRuns[override.RecordID] = override
 	}
-	ctx.ProjectActiveRuns = countDispatchingProjectRuns(ctx.ProjectRuns)
-	ctx.StateActiveRuns = countDispatchingProjectRunsByState(ctx.ProjectRuns, ctx.NoteStatusByRecord)
+	ctx.ProjectActiveRuns = countDispatchCapacityProjectRuns(ctx.ProjectRuns)
+	ctx.StateActiveRuns = countDispatchCapacityProjectRunsByState(ctx.ProjectRuns, ctx.NoteStatusByRecord)
 	return ctx, nil
 }
 

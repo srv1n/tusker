@@ -40,6 +40,19 @@ type runnerProcessStatus struct {
 	CompletedAt string `json:"completed_at"`
 }
 
+func attachDevNullStdin(cmd *exec.Cmd) func() {
+	if cmd == nil {
+		return func() {}
+	}
+	file, err := os.Open(os.DevNull)
+	if err != nil {
+		cmd.Stdin = nil
+		return func() {}
+	}
+	cmd.Stdin = file
+	return func() { _ = file.Close() }
+}
+
 func executeRunnerCommand(ctx context.Context, runner RunnerName, req runnerExecRequest, capabilities RunnerCapabilities) (*StartResult, error) {
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
@@ -102,7 +115,8 @@ PY
 		NotePath: req.NotePath, VaultPath: req.VaultPath, SessionRef: req.SessionRef, MessageRef: req.MessageRef,
 		CodexPolicy: withDefaultCodexPolicy(req.CodexPolicy),
 	})
-	cmd.Stdin = nil
+	closeStdin := attachDevNullStdin(cmd)
+	defer closeStdin()
 	if file, err := os.OpenFile(req.RawLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
 		defer file.Close()
 		cmd.Stdout = file
@@ -113,13 +127,17 @@ PY
 		return nil, err
 	}
 	pid := cmd.Process.Pid
+	pgid := processGroupID(pid)
+	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
 	_ = cmd.Process.Release()
 
 	result := &StartResult{
 		SessionRef:   firstNonEmpty(req.SessionRef, extractSessionRef(req.RawLogPath)),
 		MessageRef:   extractMessageRef(req.RawLogPath),
-		StartedAt:    time.Now().UTC().Format(time.RFC3339),
+		StartedAt:    processStartedAt,
 		PID:          pid,
+		PGID:         pgid,
+		ProcessStart: processStartedAt,
 		StatusPath:   req.StatusPath,
 		Capabilities: capabilities,
 		Completed:    false,

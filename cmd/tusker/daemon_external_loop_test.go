@@ -407,6 +407,14 @@ func killRunProcess(run RunStatus) {
 	if run.ProcessPID <= 0 {
 		return
 	}
-	_ = syscall.Kill(-run.ProcessPID, syscall.SIGTERM)
+	pgid := processSignalGroup(run)
+	_ = syscall.Kill(-pgid, syscall.SIGTERM)
 	_ = syscall.Kill(run.ProcessPID, syscall.SIGTERM)
+	for i := 0; i < 20 && processExists(run.ProcessPID); i++ {
+		time.Sleep(25 * time.Millisecond)
+	}
+	if processExists(run.ProcessPID) {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		_ = syscall.Kill(run.ProcessPID, syscall.SIGKILL)
+	}
 }

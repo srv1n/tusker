@@ -148,11 +148,15 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	}
 	handle.waitForSession(2 * time.Second)
 
+	pid := cmd.Process.Pid
+	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
 	return &StartResult{
 		SessionRef:   firstNonEmpty(handle.SessionRef(), resumeSessionRef(resume)),
 		MessageRef:   handle.MessageRef(),
-		StartedAt:    time.Now().UTC().Format(time.RFC3339),
-		PID:          cmd.Process.Pid,
+		StartedAt:    processStartedAt,
+		PID:          pid,
+		PGID:         processGroupID(pid),
+		ProcessStart: processStartedAt,
 		StatusPath:   req.StatusPath,
 		Capabilities: RunnerCapabilities{StructuredEvents: true, ResumeSession: true, ExplicitApprovals: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true},
 		Completed:    false,

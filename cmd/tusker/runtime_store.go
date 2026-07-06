@@ -4,12 +4,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	moderncsqlite "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 type RuntimeStore struct {
@@ -59,6 +61,8 @@ type RunStatus struct {
 	LogsSummary        string `json:"logs_summary"`
 	FinalSummary       string `json:"final_summary"`
 	ProcessPID         int    `json:"process_pid"`
+	ProcessPGID        int    `json:"process_pgid"`
+	ProcessStartedAt   string `json:"process_started_at"`
 	PromptPath         string `json:"prompt_path"`
 	EventSinkPath      string `json:"event_sink_path"`
 	RawLogPath         string `json:"raw_log_path"`
@@ -68,6 +72,9 @@ type RunStatus struct {
 	NextRetryAt        string `json:"next_retry_at"`
 	LastError          string `json:"last_error"`
 	LastEventAt        string `json:"last_event_at"`
+	FirstEventAt       string `json:"first_event_at"`
+	LastHeartbeatAt    string `json:"last_heartbeat_at"`
+	Terminal           bool   `json:"terminal"`
 	StartedAt          string `json:"started_at"`
 	UpdatedAt          string `json:"updated_at"`
 }
@@ -242,17 +249,112 @@ func OpenRuntimeStore(stateRoot string) (*RuntimeStore, error) {
 	if err := ensureDir(stateRoot); err != nil {
 		return nil, err
 	}
-	dbPath := filepath.Join(stateRoot, "daemon.db")
-	db, err := sql.Open("sqlite", dbPath)
+	dbPath := runtimeStoreDBPath(stateRoot)
+	db, err := sql.Open("sqlite", runtimeStoreSQLiteDSN(dbPath, runtimeStoreBusyTimeout))
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
 	store := &RuntimeStore{db: db, stateRoot: stateRoot}
 	if err := store.Migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return store, nil
+}
+
+var (
+	runtimeStoreBusyTimeout      = 1500 * time.Millisecond
+	runtimeStoreBusyRetryLimit   = 5 * time.Second
+	runtimeStoreBusyRetryBackoff = []time.Duration{10 * time.Millisecond, 25 * time.Millisecond, 50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond}
+)
+
+func runtimeStoreDBPath(stateRoot string) string {
+	return filepath.Join(stateRoot, "daemon.db")
+}
+
+func runtimeStoreSQLiteDSN(dbPath string, busyTimeout time.Duration) string {
+	if abs, err := filepath.Abs(dbPath); err == nil {
+		dbPath = abs
+	}
+	u := url.URL{Scheme: "file", Path: dbPath}
+	q := u.Query()
+	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", int(busyTimeout/time.Millisecond)))
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+func (s *RuntimeStore) exec(query string, args ...any) (sql.Result, error) {
+	var result sql.Result
+	err := s.withBusyRetry(func() error {
+		var err error
+		result, err = s.db.Exec(query, args...)
+		return err
+	})
+	return result, err
+}
+
+func (s *RuntimeStore) query(query string, args ...any) (*sql.Rows, error) {
+	var rows *sql.Rows
+	err := s.withBusyRetry(func() error {
+		var err error
+		rows, err = s.db.Query(query, args...)
+		return err
+	})
+	return rows, err
+}
+
+func (s *RuntimeStore) queryRowScan(query string, args []any, dest ...any) error {
+	return s.withBusyRetry(func() error {
+		return s.db.QueryRow(query, args...).Scan(dest...)
+	})
+}
+
+func (s *RuntimeStore) withBusyRetry(op func() error) error {
+	deadline := time.Now().Add(runtimeStoreBusyRetryLimit)
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		err := op()
+		if !isRuntimeStoreBusy(err) {
+			return err
+		}
+		lastErr = err
+		if runtimeStoreBusyRetryLimit <= 0 || !time.Now().Before(deadline) {
+			return lastErr
+		}
+		backoff := runtimeStoreBusyRetryDelay(attempt)
+		if remaining := time.Until(deadline); remaining <= 0 {
+			return lastErr
+		} else if backoff > remaining {
+			backoff = remaining
+		}
+		time.Sleep(backoff)
+	}
+}
+
+func runtimeStoreBusyRetryDelay(attempt int) time.Duration {
+	if len(runtimeStoreBusyRetryBackoff) == 0 {
+		return 10 * time.Millisecond
+	}
+	if attempt < len(runtimeStoreBusyRetryBackoff) {
+		return runtimeStoreBusyRetryBackoff[attempt]
+	}
+	return runtimeStoreBusyRetryBackoff[len(runtimeStoreBusyRetryBackoff)-1]
+}
+
+func isRuntimeStoreBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	var sqliteErr *moderncsqlite.Error
+	if errors.As(err, &sqliteErr) {
+		switch sqliteErr.Code() & 0xff {
+		case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
+			return true
+		}
+	}
+	text := err.Error()
+	return strings.Contains(text, "SQLITE_BUSY") || strings.Contains(text, "database is locked")
 }
 
 func (s *RuntimeStore) Close() error {
@@ -302,6 +404,8 @@ func (s *RuntimeStore) Migrate() error {
 			logs_summary TEXT NOT NULL DEFAULT '',
 			final_summary TEXT NOT NULL DEFAULT '',
 			process_pid INTEGER NOT NULL DEFAULT 0,
+			process_pgid INTEGER NOT NULL DEFAULT 0,
+			process_started_at TEXT NOT NULL DEFAULT '',
 			prompt_path TEXT NOT NULL DEFAULT '',
 			event_sink_path TEXT NOT NULL DEFAULT '',
 			raw_log_path TEXT NOT NULL DEFAULT '',
@@ -311,6 +415,9 @@ func (s *RuntimeStore) Migrate() error {
 			next_retry_at TEXT NOT NULL DEFAULT '',
 			last_error TEXT NOT NULL DEFAULT '',
 			last_event_at TEXT NOT NULL DEFAULT '',
+			first_event_at TEXT NOT NULL DEFAULT '',
+			last_heartbeat_at TEXT NOT NULL DEFAULT '',
+			terminal INTEGER NOT NULL DEFAULT 0,
 			started_at TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY(project_id, record_id)
@@ -444,7 +551,7 @@ func (s *RuntimeStore) Migrate() error {
 			ON external_loop_events(project_id, record_id, idempotency_key);`,
 	}
 	for _, stmt := range statements {
-		if _, err := s.db.Exec(stmt); err != nil {
+		if _, err := s.exec(stmt); err != nil {
 			return err
 		}
 	}
@@ -500,6 +607,20 @@ func (s *RuntimeStore) Migrate() error {
 	}
 	if err := s.ensureColumn("runs", "last_event_at", `ALTER TABLE runs ADD COLUMN last_event_at TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
+	}
+	for _, column := range []struct {
+		name string
+		stmt string
+	}{
+		{"process_pgid", `ALTER TABLE runs ADD COLUMN process_pgid INTEGER NOT NULL DEFAULT 0`},
+		{"process_started_at", `ALTER TABLE runs ADD COLUMN process_started_at TEXT NOT NULL DEFAULT ''`},
+		{"first_event_at", `ALTER TABLE runs ADD COLUMN first_event_at TEXT NOT NULL DEFAULT ''`},
+		{"last_heartbeat_at", `ALTER TABLE runs ADD COLUMN last_heartbeat_at TEXT NOT NULL DEFAULT ''`},
+		{"terminal", `ALTER TABLE runs ADD COLUMN terminal INTEGER NOT NULL DEFAULT 0`},
+	} {
+		if err := s.ensureColumn("runs", column.name, column.stmt); err != nil {
+			return err
+		}
 	}
 	if err := s.ensureColumn("attempts", "process_pid", `ALTER TABLE attempts ADD COLUMN process_pid INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return err
@@ -598,7 +719,7 @@ func (s *RuntimeStore) Migrate() error {
 }
 
 func (s *RuntimeStore) ensureColumn(tableName, columnName, stmt string) error {
-	rows, err := s.db.Query(`PRAGMA table_info(` + tableName + `)`)
+	rows, err := s.query(`PRAGMA table_info(` + tableName + `)`)
 	if err != nil {
 		return err
 	}
@@ -619,7 +740,7 @@ func (s *RuntimeStore) ensureColumn(tableName, columnName, stmt string) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	_, err = s.db.Exec(stmt)
+	_, err = s.exec(stmt)
 	return err
 }
 
@@ -627,7 +748,7 @@ func (s *RuntimeStore) UpsertProject(project RegisteredProject) error {
 	if project.Health == "" {
 		project.Health = projectHealthHealthy
 	}
-	_, err := s.db.Exec(`INSERT INTO projects (
+	_, err := s.exec(`INSERT INTO projects (
 		project_id, project_key, name, repo_root, vault_root, workflow_path, enabled, health, last_poll_at, last_error
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id) DO UPDATE SET
@@ -646,25 +767,25 @@ func (s *RuntimeStore) UpsertProject(project RegisteredProject) error {
 }
 
 func (s *RuntimeStore) RemoveProject(projectID string) error {
-	if _, err := s.db.Exec(`DELETE FROM turns WHERE project_id = ?`, projectID); err != nil {
+	if _, err := s.exec(`DELETE FROM turns WHERE project_id = ?`, projectID); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM external_loop_events WHERE project_id = ?`, projectID); err != nil {
+	if _, err := s.exec(`DELETE FROM external_loop_events WHERE project_id = ?`, projectID); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM supervisor_decisions WHERE project_id = ?`, projectID); err != nil {
+	if _, err := s.exec(`DELETE FROM supervisor_decisions WHERE project_id = ?`, projectID); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM attempts WHERE project_id = ?`, projectID); err != nil {
+	if _, err := s.exec(`DELETE FROM attempts WHERE project_id = ?`, projectID); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM sessions WHERE project_id = ?`, projectID); err != nil {
+	if _, err := s.exec(`DELETE FROM sessions WHERE project_id = ?`, projectID); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM runs WHERE project_id = ?`, projectID); err != nil {
+	if _, err := s.exec(`DELETE FROM runs WHERE project_id = ?`, projectID); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`DELETE FROM projects WHERE project_id = ?`, projectID)
+	_, err := s.exec(`DELETE FROM projects WHERE project_id = ?`, projectID)
 	return err
 }
 
@@ -673,7 +794,7 @@ func (s *RuntimeStore) SetProjectEnabled(projectID string, enabled bool) error {
 	if enabled {
 		health = projectHealthHealthy
 	}
-	result, err := s.db.Exec(`UPDATE projects
+	result, err := s.exec(`UPDATE projects
 		SET enabled = ?, health = ?, last_error = CASE WHEN ? = 1 THEN last_error ELSE '' END
 		WHERE project_id = ?`,
 		boolToInt(enabled), string(health), boolToInt(enabled), projectID)
@@ -692,14 +813,14 @@ func (s *RuntimeStore) SetProjectEnabled(projectID string, enabled bool) error {
 
 func (s *RuntimeStore) CountProjectActiveRuns(projectID string) (int, error) {
 	var count int
-	err := s.db.QueryRow(`SELECT COUNT(*)
+	err := s.queryRowScan(`SELECT COUNT(*)
 		FROM runs
-		WHERE project_id = ? AND lease_state IN ('claimed', 'running', 'retry_queued')`, projectID).Scan(&count)
+		WHERE project_id = ? AND lease_state IN ('claimed', 'running')`, []any{projectID}, &count)
 	return count, err
 }
 
 func (s *RuntimeStore) ListProjects() ([]RegisteredProject, error) {
-	rows, err := s.db.Query(`SELECT project_id, project_key, name, repo_root, vault_root, workflow_path, enabled, health, last_poll_at, last_error FROM projects ORDER BY name, repo_root`)
+	rows, err := s.query(`SELECT project_id, project_key, name, repo_root, vault_root, workflow_path, enabled, health, last_poll_at, last_error FROM projects ORDER BY name, repo_root`)
 	if err != nil {
 		return nil, err
 	}
@@ -720,7 +841,7 @@ func (s *RuntimeStore) ListProjects() ([]RegisteredProject, error) {
 }
 
 func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
-	rows, err := s.db.Query(`SELECT project_id, record_id, item_id, runner, lane, lease_state, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, started_at, updated_at FROM runs ORDER BY updated_at DESC, project_id, item_id`)
+	rows, err := s.query(`SELECT project_id, record_id, item_id, runner, lane, lease_state, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at FROM runs ORDER BY updated_at DESC, project_id, item_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -728,9 +849,11 @@ func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
 	var out []RunStatus
 	for rows.Next() {
 		var run RunStatus
-		if err := rows.Scan(&run.ProjectID, &run.RecordID, &run.ItemID, &run.Runner, &run.Lane, &run.LeaseState, &run.AttemptOutcome, &run.ActiveAttemptID, &run.WorkspacePath, &run.SessionRef, &run.CloudTaskID, &run.CloudStatus, &run.CloudEnvironmentID, &run.CloudAttemptNumber, &run.PullRequestURL, &run.ApplyRef, &run.LogsSummary, &run.FinalSummary, &run.ProcessPID, &run.PromptPath, &run.EventSinkPath, &run.RawLogPath, &run.StatusPath, &run.WorkRevision, &run.AttemptCount, &run.NextRetryAt, &run.LastError, &run.LastEventAt, &run.StartedAt, &run.UpdatedAt); err != nil {
+		var terminal int
+		if err := rows.Scan(&run.ProjectID, &run.RecordID, &run.ItemID, &run.Runner, &run.Lane, &run.LeaseState, &run.AttemptOutcome, &run.ActiveAttemptID, &run.WorkspacePath, &run.SessionRef, &run.CloudTaskID, &run.CloudStatus, &run.CloudEnvironmentID, &run.CloudAttemptNumber, &run.PullRequestURL, &run.ApplyRef, &run.LogsSummary, &run.FinalSummary, &run.ProcessPID, &run.ProcessPGID, &run.ProcessStartedAt, &run.PromptPath, &run.EventSinkPath, &run.RawLogPath, &run.StatusPath, &run.WorkRevision, &run.AttemptCount, &run.NextRetryAt, &run.LastError, &run.LastEventAt, &run.FirstEventAt, &run.LastHeartbeatAt, &terminal, &run.StartedAt, &run.UpdatedAt); err != nil {
 			return nil, err
 		}
+		run.Terminal = terminal != 0
 		out = append(out, run)
 	}
 	return out, rows.Err()
@@ -746,9 +869,9 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 	if strings.TrimSpace(run.UpdatedAt) == "" {
 		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	_, err := s.db.Exec(`INSERT INTO runs (
-		project_id, record_id, item_id, runner, lane, lease_state, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, started_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err := s.exec(`INSERT INTO runs (
+		project_id, record_id, item_id, runner, lane, lease_state, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id, record_id) DO UPDATE SET
 		item_id=excluded.item_id,
 		runner=excluded.runner,
@@ -767,6 +890,8 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 		logs_summary=excluded.logs_summary,
 		final_summary=excluded.final_summary,
 		process_pid=excluded.process_pid,
+		process_pgid=excluded.process_pgid,
+		process_started_at=excluded.process_started_at,
 		prompt_path=excluded.prompt_path,
 		event_sink_path=excluded.event_sink_path,
 		raw_log_path=excluded.raw_log_path,
@@ -776,14 +901,17 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 		next_retry_at=excluded.next_retry_at,
 		last_error=excluded.last_error,
 		last_event_at=excluded.last_event_at,
+		first_event_at=excluded.first_event_at,
+		last_heartbeat_at=excluded.last_heartbeat_at,
+		terminal=excluded.terminal,
 		started_at=excluded.started_at,
 		updated_at=excluded.updated_at`,
-		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.Lane, run.LeaseState, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.StartedAt, run.UpdatedAt)
+		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.Lane, run.LeaseState, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.FirstEventAt, run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt)
 	return err
 }
 
 func (s *RuntimeStore) SaveAttempt(attempt RunAttempt) error {
-	_, err := s.db.Exec(`INSERT INTO attempts (
+	_, err := s.exec(`INSERT INTO attempts (
 		attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, outcome, exit_code, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(attempt_id) DO UPDATE SET
@@ -832,7 +960,7 @@ func (s *RuntimeStore) SaveTurn(turn RunTurn) error {
 	if strings.TrimSpace(turn.LastEventAt) == "" {
 		turn.LastEventAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	_, err := s.db.Exec(`INSERT INTO turns (
+	_, err := s.exec(`INSERT INTO turns (
 		attempt_id, project_id, record_id, turn_id, turn_index, session_ref, status, input_tokens, output_tokens, total_tokens, started_at, completed_at, last_event_at, last_error
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(attempt_id, turn_id) DO UPDATE SET
@@ -862,14 +990,14 @@ func (s *RuntimeStore) SaveTurn(turn RunTurn) error {
 
 func (s *RuntimeStore) NextTurnIndex(projectID, recordID, attemptID string) (int, error) {
 	var index int
-	err := s.db.QueryRow(`SELECT COALESCE(MAX(turn_index) + 1, 0)
+	err := s.queryRowScan(`SELECT COALESCE(MAX(turn_index) + 1, 0)
 		FROM turns
-		WHERE project_id = ? AND record_id = ? AND attempt_id = ?`, projectID, recordID, attemptID).Scan(&index)
+		WHERE project_id = ? AND record_id = ? AND attempt_id = ?`, []any{projectID, recordID, attemptID}, &index)
 	return index, err
 }
 
 func (s *RuntimeStore) ListTurnsForRun(projectID, recordID string) ([]RunTurn, error) {
-	rows, err := s.db.Query(`SELECT attempt_id, project_id, record_id, turn_id, turn_index, session_ref, status, input_tokens, output_tokens, total_tokens, started_at, completed_at, last_event_at, last_error
+	rows, err := s.query(`SELECT attempt_id, project_id, record_id, turn_id, turn_index, session_ref, status, input_tokens, output_tokens, total_tokens, started_at, completed_at, last_event_at, last_error
 		FROM turns
 		WHERE project_id = ? AND record_id = ?
 		ORDER BY turn_index ASC, started_at ASC, last_event_at ASC, turn_id ASC`, projectID, recordID)
@@ -889,7 +1017,7 @@ func (s *RuntimeStore) ListTurnsForRun(projectID, recordID string) ([]RunTurn, e
 }
 
 func (s *RuntimeStore) ListTurnsForAttempt(attemptID string) ([]RunTurn, error) {
-	rows, err := s.db.Query(`SELECT attempt_id, project_id, record_id, turn_id, turn_index, session_ref, status, input_tokens, output_tokens, total_tokens, started_at, completed_at, last_event_at, last_error
+	rows, err := s.query(`SELECT attempt_id, project_id, record_id, turn_id, turn_index, session_ref, status, input_tokens, output_tokens, total_tokens, started_at, completed_at, last_event_at, last_error
 		FROM turns
 		WHERE attempt_id = ?
 		ORDER BY turn_index ASC, started_at ASC, last_event_at ASC, turn_id ASC`, attemptID)
@@ -936,7 +1064,7 @@ func (s *RuntimeStore) SaveRuntimeSupervisorDecision(decision RuntimeSupervisorD
 	if decision.SessionRef == "" {
 		decision.SessionRef = decision.TargetSessionRef
 	}
-	_, err := s.db.Exec(`INSERT INTO supervisor_decisions (
+	_, err := s.exec(`INSERT INTO supervisor_decisions (
 		decision_id, project_id, record_id, item_id, runner, work_revision, attempt_id, parent_attempt_id, session_ref, parent_session_ref, target_attempt_id, target_session_ref, kind, reason, branch_name, workspace_path, validation_delta, merge_rule, lease_state, context_signal, input_tokens, output_tokens, total_tokens, context_window_tokens, created_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(decision_id) DO UPDATE SET
@@ -973,7 +1101,7 @@ func (s *RuntimeStore) SaveSupervisorDecision(decision SupervisorDecision) (Supe
 }
 
 func (s *RuntimeStore) ListRuntimeSupervisorDecisionsForRun(projectID, recordID string) ([]RuntimeSupervisorDecision, error) {
-	rows, err := s.db.Query(`SELECT decision_id, project_id, record_id, item_id, runner, work_revision, attempt_id, parent_attempt_id, session_ref, parent_session_ref, target_attempt_id, target_session_ref, kind, reason, branch_name, workspace_path, validation_delta, merge_rule, lease_state, context_signal, input_tokens, output_tokens, total_tokens, context_window_tokens, created_at
+	rows, err := s.query(`SELECT decision_id, project_id, record_id, item_id, runner, work_revision, attempt_id, parent_attempt_id, session_ref, parent_session_ref, target_attempt_id, target_session_ref, kind, reason, branch_name, workspace_path, validation_delta, merge_rule, lease_state, context_signal, input_tokens, output_tokens, total_tokens, context_window_tokens, created_at
 		FROM supervisor_decisions
 		WHERE project_id = ? AND record_id = ?
 		ORDER BY created_at ASC, decision_id ASC`, projectID, recordID)
@@ -989,7 +1117,7 @@ func (s *RuntimeStore) ListSupervisorDecisionsForRun(projectID, recordID string)
 }
 
 func (s *RuntimeStore) ListRuntimeSupervisorDecisionsForAttempt(attemptID string) ([]RuntimeSupervisorDecision, error) {
-	rows, err := s.db.Query(`SELECT decision_id, project_id, record_id, item_id, runner, work_revision, attempt_id, parent_attempt_id, session_ref, parent_session_ref, target_attempt_id, target_session_ref, kind, reason, branch_name, workspace_path, validation_delta, merge_rule, lease_state, context_signal, input_tokens, output_tokens, total_tokens, context_window_tokens, created_at
+	rows, err := s.query(`SELECT decision_id, project_id, record_id, item_id, runner, work_revision, attempt_id, parent_attempt_id, session_ref, parent_session_ref, target_attempt_id, target_session_ref, kind, reason, branch_name, workspace_path, validation_delta, merge_rule, lease_state, context_signal, input_tokens, output_tokens, total_tokens, context_window_tokens, created_at
 		FROM supervisor_decisions
 		WHERE attempt_id = ? OR target_attempt_id = ?
 		ORDER BY created_at ASC, decision_id ASC`, attemptID, attemptID)
@@ -1037,7 +1165,7 @@ func (s *RuntimeStore) UpsertApplyInput(input RuntimeApplyInput) (RuntimeApplyIn
 	if strings.TrimSpace(input.CreatedAt) == "" {
 		input.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	_, err := s.db.Exec(`INSERT INTO apply_inputs (
+	_, err := s.exec(`INSERT INTO apply_inputs (
 		project_id, record_id, item_id, runner, job_id, attempt_id, path, rel_path, sha256, kind, created_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id, record_id, sha256, path) DO UPDATE SET
@@ -1052,7 +1180,7 @@ func (s *RuntimeStore) UpsertApplyInput(input RuntimeApplyInput) (RuntimeApplyIn
 }
 
 func (s *RuntimeStore) ListApplyInputsForRun(projectID, recordID string) ([]RuntimeApplyInput, error) {
-	rows, err := s.db.Query(`SELECT project_id, record_id, item_id, runner, job_id, attempt_id, path, rel_path, sha256, kind, created_at
+	rows, err := s.query(`SELECT project_id, record_id, item_id, runner, job_id, attempt_id, path, rel_path, sha256, kind, created_at
 		FROM apply_inputs
 		WHERE project_id = ? AND record_id = ?
 		ORDER BY created_at ASC, rel_path ASC, path ASC`, projectID, recordID)
@@ -1098,7 +1226,7 @@ func (s *RuntimeStore) SaveExternalLoopEvent(event ExternalLoopEvent) (ExternalL
 	if strings.TrimSpace(event.CreatedAt) == "" {
 		event.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	_, err := s.db.Exec(`INSERT INTO external_loop_events (
+	_, err := s.exec(`INSERT INTO external_loop_events (
 		event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.EventID, event.ProjectID, event.RecordID, event.ItemID, event.Runner, event.JobID, event.AttemptID, event.Stage, event.Action, event.Status, event.Reason, event.PayloadJSON, event.IdempotencyKey, event.CreatedAt)
@@ -1112,11 +1240,10 @@ func (s *RuntimeStore) FindExternalLoopEventByKey(projectID, recordID, idempoten
 	if projectID == "" || recordID == "" || idempotencyKey == "" {
 		return nil, nil
 	}
-	row := s.db.QueryRow(`SELECT event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
-		FROM external_loop_events
-		WHERE project_id = ? AND record_id = ? AND idempotency_key = ?`, projectID, recordID, idempotencyKey)
 	var event ExternalLoopEvent
-	err := row.Scan(&event.EventID, &event.ProjectID, &event.RecordID, &event.ItemID, &event.Runner, &event.JobID, &event.AttemptID, &event.Stage, &event.Action, &event.Status, &event.Reason, &event.PayloadJSON, &event.IdempotencyKey, &event.CreatedAt)
+	err := s.queryRowScan(`SELECT event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
+		FROM external_loop_events
+		WHERE project_id = ? AND record_id = ? AND idempotency_key = ?`, []any{projectID, recordID, idempotencyKey}, &event.EventID, &event.ProjectID, &event.RecordID, &event.ItemID, &event.Runner, &event.JobID, &event.AttemptID, &event.Stage, &event.Action, &event.Status, &event.Reason, &event.PayloadJSON, &event.IdempotencyKey, &event.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -1127,7 +1254,7 @@ func (s *RuntimeStore) FindExternalLoopEventByKey(projectID, recordID, idempoten
 }
 
 func (s *RuntimeStore) ListExternalLoopEvents(projectID, recordID string) ([]ExternalLoopEvent, error) {
-	rows, err := s.db.Query(`SELECT event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
+	rows, err := s.query(`SELECT event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
 		FROM external_loop_events
 		WHERE project_id = ? AND record_id = ?
 		ORDER BY created_at ASC, event_id ASC`, projectID, recordID)
@@ -1147,7 +1274,7 @@ func (s *RuntimeStore) ListExternalLoopEvents(projectID, recordID string) ([]Ext
 }
 
 func (s *RuntimeStore) SaveSession(session RunnerSession) error {
-	_, err := s.db.Exec(`INSERT INTO sessions (
+	_, err := s.exec(`INSERT INTO sessions (
 		project_id, record_id, runner, session_ref, last_message_ref, workspace_path, current_item_id, work_revision, last_attempt_id, state, resumable, started_at, last_seen_at, ended_at, last_error
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id, session_ref) DO UPDATE SET
@@ -1169,14 +1296,13 @@ func (s *RuntimeStore) SaveSession(session RunnerSession) error {
 }
 
 func (s *RuntimeStore) LatestSession(projectID, recordID, runner string) (*RunnerSession, error) {
-	row := s.db.QueryRow(`SELECT project_id, record_id, runner, session_ref, last_message_ref, workspace_path, current_item_id, work_revision, last_attempt_id, state, resumable, started_at, last_seen_at, ended_at, last_error
+	var session RunnerSession
+	var resumable int
+	err := s.queryRowScan(`SELECT project_id, record_id, runner, session_ref, last_message_ref, workspace_path, current_item_id, work_revision, last_attempt_id, state, resumable, started_at, last_seen_at, ended_at, last_error
 		FROM sessions
 		WHERE project_id = ? AND record_id = ? AND runner = ?
 		ORDER BY last_seen_at DESC, started_at DESC
-		LIMIT 1`, projectID, recordID, runner)
-	var session RunnerSession
-	var resumable int
-	err := row.Scan(&session.ProjectID, &session.RecordID, &session.Runner, &session.SessionRef, &session.LastMessageRef, &session.WorkspacePath, &session.CurrentItemID, &session.WorkRevision, &session.LastAttemptID, &session.State, &resumable, &session.StartedAt, &session.LastSeenAt, &session.EndedAt, &session.LastError)
+		LIMIT 1`, []any{projectID, recordID, runner}, &session.ProjectID, &session.RecordID, &session.Runner, &session.SessionRef, &session.LastMessageRef, &session.WorkspacePath, &session.CurrentItemID, &session.WorkRevision, &session.LastAttemptID, &session.State, &resumable, &session.StartedAt, &session.LastSeenAt, &session.EndedAt, &session.LastError)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -1197,7 +1323,7 @@ func (s *RuntimeStore) ListSessionsForRun(projectID, recordID, runner string) ([
 		args = append(args, runner)
 	}
 	query += ` ORDER BY last_seen_at DESC, started_at DESC, session_ref DESC`
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1216,7 +1342,7 @@ func (s *RuntimeStore) ListSessionsForRun(projectID, recordID, runner string) ([
 }
 
 func (s *RuntimeStore) MarkSessionState(projectID, sessionRef, state, endedAt, lastError string, resumable bool) error {
-	_, err := s.db.Exec(`UPDATE sessions
+	_, err := s.exec(`UPDATE sessions
 		SET state = ?, ended_at = ?, last_error = ?, resumable = ?, last_seen_at = ?
 		WHERE project_id = ? AND session_ref = ?`,
 		state, endedAt, lastError, boolToInt(resumable), time.Now().UTC().Format(time.RFC3339), projectID, sessionRef)
@@ -1225,7 +1351,7 @@ func (s *RuntimeStore) MarkSessionState(projectID, sessionRef, state, endedAt, l
 
 func (s *RuntimeStore) ForceRetryNow(identity string) (bool, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	result, err := s.db.Exec(`UPDATE runs SET lease_state = ?, next_retry_at = ?, updated_at = ? WHERE item_id = ? OR record_id = ?`, string(LeaseStateRetryQueued), now, now, identity, identity)
+	result, err := s.exec(`UPDATE runs SET lease_state = ?, next_retry_at = ?, updated_at = ? WHERE item_id = ? OR record_id = ?`, string(LeaseStateRetryQueued), now, now, identity, identity)
 	if err != nil {
 		return false, err
 	}
@@ -1238,7 +1364,7 @@ func (s *RuntimeStore) ForceRetryNow(identity string) (bool, error) {
 
 func (s *RuntimeStore) GetSetting(key string) (string, error) {
 	var value string
-	err := s.db.QueryRow(`SELECT value FROM daemon_settings WHERE key = ?`, key).Scan(&value)
+	err := s.queryRowScan(`SELECT value FROM daemon_settings WHERE key = ?`, []any{key}, &value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -1246,7 +1372,7 @@ func (s *RuntimeStore) GetSetting(key string) (string, error) {
 }
 
 func (s *RuntimeStore) SetSetting(key, value string) error {
-	_, err := s.db.Exec(`INSERT INTO daemon_settings (key, value)
+	_, err := s.exec(`INSERT INTO daemon_settings (key, value)
 		VALUES (?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
@@ -1279,7 +1405,7 @@ func (s *RuntimeStore) SetGlobalActiveRunLimit(limit int) error {
 }
 
 func (s *RuntimeStore) DeleteRunsNotIn(projectID string, keepRecordIDs map[string]struct{}) error {
-	rows, err := s.db.Query(`SELECT record_id FROM runs WHERE project_id = ?`, projectID)
+	rows, err := s.query(`SELECT record_id FROM runs WHERE project_id = ?`, projectID)
 	if err != nil {
 		return err
 	}
@@ -1295,13 +1421,13 @@ func (s *RuntimeStore) DeleteRunsNotIn(projectID string, keepRecordIDs map[strin
 		}
 	}
 	for _, recordID := range stale {
-		if _, err := s.db.Exec(`DELETE FROM external_loop_events WHERE project_id = ? AND record_id = ?`, projectID, recordID); err != nil {
+		if _, err := s.exec(`DELETE FROM external_loop_events WHERE project_id = ? AND record_id = ?`, projectID, recordID); err != nil {
 			return err
 		}
-		if _, err := s.db.Exec(`DELETE FROM supervisor_decisions WHERE project_id = ? AND record_id = ?`, projectID, recordID); err != nil {
+		if _, err := s.exec(`DELETE FROM supervisor_decisions WHERE project_id = ? AND record_id = ?`, projectID, recordID); err != nil {
 			return err
 		}
-		if _, err := s.db.Exec(`DELETE FROM runs WHERE project_id = ? AND record_id = ?`, projectID, recordID); err != nil {
+		if _, err := s.exec(`DELETE FROM runs WHERE project_id = ? AND record_id = ?`, projectID, recordID); err != nil {
 			return err
 		}
 	}
@@ -1309,15 +1435,20 @@ func (s *RuntimeStore) DeleteRunsNotIn(projectID string, keepRecordIDs map[strin
 }
 
 func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
+	liveness := readDaemonLiveness(s.stateRoot, time.Now().UTC())
 	var projectCount int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM projects`).Scan(&projectCount); err != nil {
+	if err := s.queryRowScan(`SELECT COUNT(*) FROM projects`, nil, &projectCount); err != nil {
 		return nil, err
 	}
 	var runCount int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM runs WHERE lease_state IN ('claimed', 'running', 'retry_queued')`).Scan(&runCount); err != nil {
+	if err := s.queryRowScan(`SELECT COUNT(*) FROM runs WHERE lease_state IN ('claimed', 'running')`, nil, &runCount); err != nil {
 		return nil, err
 	}
 	globalLimit, err := s.GlobalActiveRunLimit()
+	if err != nil {
+		return nil, err
+	}
+	lastPollAt, err := s.GetSetting("daemon_last_poll_at")
 	if err != nil {
 		return nil, err
 	}
@@ -1327,17 +1458,23 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 		source = "default"
 	}
 	return map[string]any{
-		"state_root":          s.stateRoot,
-		"projects":            projectCount,
-		"activeRuns":          runCount,
-		"max_active_runs":     globalLimit,
-		"limit_source":        source,
-		"default_limit_value": 2,
+		"state_root":            s.stateRoot,
+		"runtime_store_path":    liveness.RuntimeStorePath,
+		"daemon_alive":          liveness.Alive,
+		"daemon_pid":            liveness.PID,
+		"daemon_started_at":     liveness.StartedAt,
+		"daemon_uptime_seconds": liveness.UptimeSeconds,
+		"daemon_last_poll_at":   lastPollAt,
+		"projects":              projectCount,
+		"activeRuns":            runCount,
+		"max_active_runs":       globalLimit,
+		"limit_source":          source,
+		"default_limit_value":   2,
 	}, nil
 }
 
 func (s *RuntimeStore) TouchProjectPoll(projectID string) error {
-	_, err := s.db.Exec(`UPDATE projects SET last_poll_at = ?, last_error = '' WHERE project_id = ?`, time.Now().UTC().Format(time.RFC3339), projectID)
+	_, err := s.exec(`UPDATE projects SET last_poll_at = ?, last_error = '' WHERE project_id = ?`, time.Now().UTC().Format(time.RFC3339), projectID)
 	return err
 }
 

@@ -165,11 +165,15 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	}
 	handle.turnID = turnID
 
+	pid := cmd.Process.Pid
+	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
 	return &StartResult{
 		SessionRef:   threadID,
 		MessageRef:   handle.messageRef,
-		StartedAt:    time.Now().UTC().Format(time.RFC3339),
-		PID:          cmd.Process.Pid,
+		StartedAt:    processStartedAt,
+		PID:          pid,
+		PGID:         processGroupID(pid),
+		ProcessStart: processStartedAt,
 		StatusPath:   req.StatusPath,
 		Capabilities: RunnerCapabilities{StructuredEvents: true, ResumeSession: true, ExplicitApprovals: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true},
 		Completed:    false,
@@ -554,14 +558,11 @@ func (h *codexLiveHandle) rejectApproval(requestType string, mutating bool, reas
 
 func (h *codexLiveHandle) policyDenialReason(mutating bool) string {
 	approvalPolicy := strings.TrimSpace(h.policy.ApprovalPolicy)
-	if approvalPolicy == "never" {
-		return "approval_policy=never rejects Codex app-server approval requests"
-	}
 	activeSandbox := firstNonEmpty(strings.TrimSpace(h.policy.TurnSandboxPolicy), strings.TrimSpace(h.policy.ThreadSandbox))
 	if mutating && activeSandbox == "read-only" {
 		return "read-only sandbox rejects mutating approval requests"
 	}
-	if approvalPolicy == "on-request" || approvalPolicy == "untrusted" {
+	if approvalPolicy == "untrusted" {
 		return "approval_policy=" + approvalPolicy + " requires human approval; Tusker rejects instead of silently approving"
 	}
 	return ""
