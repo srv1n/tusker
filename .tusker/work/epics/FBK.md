@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:13:34Z"
-updated_at: "2026-07-07T07:38:45Z"
-state_rev: "sha256:a5d1c88eb25fdf253c72748eff4db242737bbfe6a17863aeabb1713c3160debe"
+updated_at: "2026-07-07T08:58:56Z"
+state_rev: "sha256:df23eac33f21326f489c0046d5d193c0fd5d3c1014cb8b5eb08d7d2ef41e7198"
 ---
 
 # FBK · Feedback intake and review
@@ -47,11 +47,11 @@ Start from the 2026-07-05 feedback intake: 4 explicit notes collapsed to 2 produ
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[FBK-T-0001]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[FBK-T-0002]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[FBK-T-0003]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[FBK-T-0004]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[FBK-T-0005]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[FBK-T-0001]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[FBK-T-0002]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[FBK-T-0003]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[FBK-T-0004]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[FBK-T-0005]] | ready | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 
