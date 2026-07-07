@@ -203,8 +203,8 @@ func runnerWrapperHeartbeat(ctx context.Context, req StartRequest, stop chan<- s
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		if ok := runnerWrapperBeat(store, req); !ok {
-			nonBlockingWrapperStop(stop, "lease heartbeat stopped")
+		if decision := runnerWrapperBeat(store, req); !decision.Continue {
+			nonBlockingWrapperStop(stop, decision.StopReason)
 			return
 		}
 		select {
@@ -215,11 +215,26 @@ func runnerWrapperHeartbeat(ctx context.Context, req StartRequest, stop chan<- s
 	}
 }
 
-func runnerWrapperBeat(store *RuntimeStore, req StartRequest) bool {
-	if store == nil {
-		return false
+type runnerWrapperLeaseDecision struct {
+	Continue   bool
+	StopReason string
+}
+
+func runnerWrapperContinue() runnerWrapperLeaseDecision {
+	return runnerWrapperLeaseDecision{Continue: true}
+}
+
+func runnerWrapperStop(reason string) runnerWrapperLeaseDecision {
+	if strings.TrimSpace(reason) == "" {
+		reason = "lease stop signal"
 	}
-	dispatchable := runnerWrapperDispatchable(req)
+	return runnerWrapperLeaseDecision{StopReason: reason}
+}
+
+func runnerWrapperBeat(store *RuntimeStore, req StartRequest) runnerWrapperLeaseDecision {
+	if store == nil {
+		return runnerWrapperStop("lease store unavailable")
+	}
 	renewed, err := store.RenewRunLease(RuntimeLeaseRenewal{
 		ProjectID:      req.ProjectID,
 		RecordID:       req.RecordID,
@@ -227,27 +242,45 @@ func runnerWrapperBeat(store *RuntimeStore, req StartRequest) bool {
 		Generation:     req.LeaseGeneration,
 		TTL:            defaultRunLeaseTTL,
 		Now:            time.Now().UTC(),
-		Dispatchable:   dispatchable,
+		Dispatchable:   true,
 		ProcessPID:     os.Getpid(),
 		ProcessPGID:    processGroupID(os.Getpid()),
 		ProcessStarted: recordedProcessStartTime(os.Getpid(), time.Now().UTC().Format(time.RFC3339)),
 	})
-	return err == nil && renewed
+	if err != nil {
+		return runnerWrapperStop("lease heartbeat error: " + err.Error())
+	}
+	if renewed {
+		return runnerWrapperContinue()
+	}
+	return runnerWrapperStopSignal(store, req)
 }
 
-func runnerWrapperDispatchable(req StartRequest) bool {
-	if strings.TrimSpace(req.NotePath) == "" {
-		return true
-	}
-	data, _, err := parseFrontmatterMustRead(req.NotePath)
+func runnerWrapperStopSignal(store *RuntimeStore, req StartRequest) runnerWrapperLeaseDecision {
+	run, err := store.FindRun(req.RecordID)
 	if err != nil {
-		return false
+		return runnerWrapperStop("lease state unavailable: " + err.Error())
 	}
-	status := stringField(data, "status")
-	if strings.TrimSpace(req.Lane) == runLaneReview {
-		return status == "review"
+	if run == nil {
+		return runnerWrapperStop("lease row missing")
 	}
-	return containsString(req.ActiveStates, status)
+	if run.LeaseGeneration > req.LeaseGeneration {
+		return runnerWrapperStop(fmt.Sprintf("lease generation advanced from %d to %d", req.LeaseGeneration, run.LeaseGeneration))
+	}
+	if run.LeaseGeneration > 0 && run.LeaseGeneration != req.LeaseGeneration {
+		return runnerWrapperStop(fmt.Sprintf("lease generation changed from %d to %d", req.LeaseGeneration, run.LeaseGeneration))
+	}
+	if owner := strings.TrimSpace(run.LeaseOwner); owner != "" && owner != req.AttemptID {
+		return runnerWrapperStop("lease owner changed from " + req.AttemptID + " to " + owner)
+	}
+	switch LeaseState(strings.TrimSpace(run.LeaseState)) {
+	case LeaseStateClaimed, LeaseStateRunning:
+		return runnerWrapperContinue()
+	case "":
+		return runnerWrapperStop("lease state cleared")
+	default:
+		return runnerWrapperStop("lease state changed to " + run.LeaseState)
+	}
 }
 
 func nonBlockingWrapperStop(stop chan<- string, reason string) {
