@@ -13,7 +13,7 @@ claude:
 codex:
   approval_policy: "never"
   command: "codex app-server"
-  max_turns: 1
+  max_turns: 30
   read_timeout_ms: 30000
   stall_timeout_ms: 120000
   thread_sandbox: "danger-full-access"
@@ -57,7 +57,7 @@ runners:
     approval_policy: "never"
     command: "codex app-server"
     kind: "codex_app_server"
-    max_turns: 1
+    max_turns: 30
     read_timeout_ms: 30000
     stall_timeout_ms: 120000
     thread_sandbox: "danger-full-access"
