@@ -93,6 +93,8 @@ workspace:
 
 Dispatch only from durable task states `ready` and `rework`. Do not create or use a durable `active` task status. Runtime activity belongs to run leases and attempts.
 
+Dependency edges may be explicit `TASK-ID:hard` or `TASK-ID:soft`; plain `TASK-ID` stays valid and defaults by the dependency's risk. Dependencies on high/critical tasks default hard and require `done`. Dependencies on low/medium tasks default soft and may dispatch once the dependency is in `review` with `proof_status: satisfied`, or `done`. Review gates are for closing, not flowing: soft edges can unblock dispatch, but `tusker close` still requires every dependency to be `done`.
+
 ## Hard stop check
 
 Before doing work, run `tusker closeout status {{ note.id }} --json` when closeout data exists. If it reports `agent_action=stop_until_human_response`, stop. Do not validate again, inspect unrelated files, spawn agents, or mutate Tusker records. Reply with the pending human gate or proof item.

@@ -267,6 +267,9 @@ func closeV7Cmd(args Args) error {
 			return tuskerError(errorInvalidTransition, id+": close blocked by open gate "+stringField(gate.Data, "id"))
 		}
 	}
+	if dep, blocked := v7UnclosedDependency(note, idx); blocked {
+		return tuskerError(errorInvalidTransition, id+": close blocked by unfinished dependency "+dep.ID)
+	}
 	if missing := missingRequiredEvidence(vaultPath, id, normalizeList(note.Data["evidence_required"])); len(missing) > 0 {
 		return tuskerError(errorEvidenceGate, id+": close missing required evidence: "+strings.Join(missing, ", "))
 	}

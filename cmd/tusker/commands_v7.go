@@ -1699,7 +1699,7 @@ func v7TaskIDsForTaskControl(vaultPath, taskID string) ([]string, error) {
 	ids := []string{taskID}
 	for _, task := range idx.Tasks {
 		currentID := stringField(task.Data, "id")
-		if currentID != taskID && containsString(normalizeList(task.Data["dependencies"]), taskID) {
+		if currentID != taskID && v7TaskDependsOnID(task, taskID, idx) {
 			ids = append(ids, currentID)
 		}
 	}
@@ -2156,15 +2156,13 @@ func v7ProjectedTaskState(vaultPath string, task Note, idx v7Index) map[string]a
 			return finalizeV7ProjectedTaskState(projected, task)
 		}
 	}
-	for _, depID := range normalizeList(task.Data["dependencies"]) {
-		if dep, ok := idx.Tasks[depID]; ok && stringField(dep.Data, "status") != "done" {
-			projected["readiness"] = "blocked_by_dependency"
-			projected["next_owner"] = "blocked_dependency"
-			projected["next_source"] = "dependency"
-			projected["next_ref"] = depID
-			projected["next_action"] = "Wait for dependency " + depID + " to reach done."
-			return finalizeV7ProjectedTaskState(projected, task)
-		}
+	if edge, blocked := v7BlockingDependencyForReadiness(task, idx); blocked {
+		projected["readiness"] = "blocked_by_dependency"
+		projected["next_owner"] = "blocked_dependency"
+		projected["next_source"] = "dependency"
+		projected["next_ref"] = edge.ID
+		projected["next_action"] = v7DependencyWaitAction(edge)
+		return finalizeV7ProjectedTaskState(projected, task)
 	}
 	if status == "review" {
 		projected["readiness"] = "waiting_on_review"
@@ -2337,6 +2335,7 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 			fmt.Fprintf(&b, "- [[%s]] %s\n", stringField(ev.Data, "id"), stringField(ev.Data, "evidence_kind"))
 		}
 		fmt.Fprintf(&b, "\n## Known gates / waivers\n\n%s\n\n", v7GateSummaryForTask(idx, id))
+		fmt.Fprintf(&b, "## Soft dependency blast radius\n\n%s\n\n", v7SoftDependencyBlastRadius(idx, id))
 		fmt.Fprintf(&b, "## Risk policy\n\n%s\n", v7ClosePolicySummary(vaultPath, task))
 		return b.String()
 	}
