@@ -24,7 +24,7 @@
 | [[SRV-T-0008]] | p2 | Wait for dependency SRV-T-0007 to reach done. |
 | [[SRV-T-0009]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0010]] | p1 | Execute the task contract and satisfy proof mode. |
-| [[TRC-T-0001]] | p1 | Execute the task contract and satisfy proof mode. |
+| [[TRC-T-0002]] | p1 | Wait for dependency TRC-T-0001 to reach review with satisfied proof or done. |
 | [[TRC-T-0003]] | p2 | Review evidence and close or return to rework. |
 
 <!-- tusker:generated:end -->

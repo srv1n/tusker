@@ -1140,6 +1140,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			changed = true
 		}
 	}
+	if err := recordRunBoundaryTraces(project, run); err != nil {
+		return run, changed, err
+	}
 	messageRef := ""
 	if strings.TrimSpace(run.RawLogPath) != "" {
 		messageRef = extractMessageRef(run.RawLogPath)
