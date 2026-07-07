@@ -532,6 +532,18 @@
   min-height: 48vh;
 }
 
+.tk-task-prose-editing {
+  border-left: 2px solid color-mix(in srgb, var(--color-accent) 55%, transparent);
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--color-panel) 55%, transparent);
+  padding: 0.75rem 1rem 1rem;
+  min-height: 8rem;
+}
+
+.tk-task-prose-compact {
+  min-height: 4rem;
+}
+
 /* ---------------------------------------------------------------------------
    Fenced code — syntax highlighting (lowlight / highlight.js) + mermaid.
 

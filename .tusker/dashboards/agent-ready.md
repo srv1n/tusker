@@ -23,7 +23,6 @@
 | [[RUN-T-0034]] | p2 | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0008]] | p2 | Wait for dependency SRV-T-0007 to reach done. |
 | [[SRV-T-0009]] | p1 | Execute the task contract and satisfy proof mode. |
-| [[SRV-T-0010]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[TRC-T-0001]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[TRC-T-0003]] | p2 | Review evidence and close or return to rework. |
 
