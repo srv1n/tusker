@@ -19,6 +19,7 @@ const (
 type automationCommandContext struct {
 	StateRoot          string
 	Store              *RuntimeStore
+	CloseStore         bool
 	Project            RegisteredProject
 	ProjectRegistered  bool
 	Workflow           WorkflowFile
@@ -275,6 +276,17 @@ func loadAutomationCommandContext(args Args) (*automationCommandContext, error) 
 	if err != nil {
 		return nil, err
 	}
+	ctx, err := loadAutomationCommandContextWithStore(args, stateRoot, store)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	ctx.CloseStore = true
+	return ctx, nil
+}
+
+func loadAutomationCommandContextWithStore(args Args, stateRoot string, store *RuntimeStore) (*automationCommandContext, error) {
+	var err error
 	ctx := &automationCommandContext{
 		StateRoot:          stateRoot,
 		Store:              store,
@@ -286,7 +298,6 @@ func loadAutomationCommandContext(args Args) (*automationCommandContext, error) 
 	}
 	project, registered, projectErr := resolveAutomationRegisteredProject(store, args)
 	if projectErr != nil && strings.TrimSpace(firstNonEmpty(args.String("project"), args.String("project-id"))) != "" {
-		_ = store.Close()
 		return nil, projectErr
 	}
 	if registered {
@@ -295,7 +306,6 @@ func loadAutomationCommandContext(args Args) (*automationCommandContext, error) 
 	} else {
 		vaultPath, err := resolveAutomationVaultPath(args)
 		if err != nil {
-			_ = store.Close()
 			return nil, err
 		}
 		repoRoot := strings.TrimSpace(args.String("repo"))
@@ -315,12 +325,10 @@ func loadAutomationCommandContext(args Args) (*automationCommandContext, error) 
 	}
 	ctx.Workflow, err = loadWorkflow(ctx.Project.VaultRoot)
 	if err != nil {
-		_ = store.Close()
 		return nil, err
 	}
 	ctx.Notes, err = listAllNotes(ctx.Project.VaultRoot)
 	if err != nil {
-		_ = store.Close()
 		return nil, err
 	}
 	lookup := buildNoteLookup(ctx.Notes)
@@ -337,7 +345,6 @@ func loadAutomationCommandContext(args Args) (*automationCommandContext, error) 
 	}
 	ctx.Runs, err = store.ListRuns()
 	if err != nil {
-		_ = store.Close()
 		return nil, err
 	}
 	ctx.GlobalActiveRuns = countDispatchCapacityRuns(ctx.Runs)
@@ -355,7 +362,7 @@ func loadAutomationCommandContext(args Args) (*automationCommandContext, error) 
 }
 
 func (ctx *automationCommandContext) Close() {
-	if ctx != nil && ctx.Store != nil {
+	if ctx != nil && ctx.Store != nil && ctx.CloseStore {
 		_ = ctx.Store.Close()
 	}
 }

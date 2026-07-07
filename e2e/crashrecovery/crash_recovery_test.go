@@ -386,6 +386,7 @@ automation:
 	workflow := h.readFile(filepath.Join(h.vaultDir, "WORKFLOW.md"))
 	workflow = replaceYAMLScalarUnder(workflow, "runtime:", "  poll_interval_ms:", "  poll_interval_ms: 100")
 	workflow = replaceYAMLScalarUnder(workflow, "runtime:", "  max_active_runs_per_project:", "  max_active_runs_per_project: 1")
+	workflow = replaceYAMLScalarUnder(workflow, "serve:", "    enabled:", "    enabled: false")
 	workflow = replaceYAMLScalarUnder(workflow, "retry:", "  max_attempts:", fmt.Sprintf("  max_attempts: %d", cfg.MaxAttempts))
 	workflow = replaceYAMLListUnder(workflow, "retry:", "  backoff_ms:", cfg.BackoffMS)
 	h.writeFile(filepath.Join(h.vaultDir, "WORKFLOW.md"), workflow)

@@ -55,6 +55,10 @@ type serveDaemonStatus struct {
 	ProjectCount     int    `json:"projectCount"`
 	ParkedBudgetRuns int    `json:"parkedBudgetRuns"`
 	BudgetCircuit    any    `json:"budgetCircuit"`
+	DaemonAlive      bool   `json:"daemonAlive"`
+	DaemonPID        int    `json:"daemonPid"`
+	DaemonStartedAt  any    `json:"daemonStartedAt"`
+	DaemonLastPollAt any    `json:"daemonLastPollAt"`
 }
 
 type serveEpicSummary struct {
