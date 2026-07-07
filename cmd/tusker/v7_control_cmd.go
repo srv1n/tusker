@@ -314,6 +314,9 @@ func closeV7Cmd(args Args) error {
 	if err := emitV7Event(vaultPath, id, "task", "closed", actor, map[string]any{"from": prev, "reason": args.String("reason")}); err != nil {
 		return err
 	}
+	if err := removeTaskPlanFile(vaultPath, id); err != nil {
+		return err
+	}
 	affected, err := v7TaskIDsForTaskControl(vaultPath, id)
 	if err != nil {
 		return err

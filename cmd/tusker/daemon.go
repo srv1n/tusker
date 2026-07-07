@@ -29,6 +29,7 @@ const (
 
 	daemonFirstEventDeadline     = 5 * time.Minute
 	daemonHeartbeatDeadThreshold = 120 * time.Second
+	tuskerSignsWarnLineLimit     = 60
 )
 
 func DefaultStateRoot() string {
@@ -1056,6 +1057,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	changed := false
 	nowTime := time.Now().UTC()
 	now := nowTime.Format(time.RFC3339)
+	sessionResumable := runSessionResumable(wfFile.Data, run)
 
 	if strings.TrimSpace(run.RawLogPath) != "" {
 		if sessionRef := extractSessionRef(run.RawLogPath); sessionRef != "" && sessionRef != run.SessionRef {
@@ -1094,7 +1096,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			WorkRevision:   run.WorkRevision,
 			LastAttemptID:  run.ActiveAttemptID,
 			State:          sessionStateForLeaseState(LeaseState(run.LeaseState)),
-			Resumable:      run.Lane != runLaneReview,
+			Resumable:      sessionResumable,
 			StartedAt:      run.StartedAt,
 			LastSeenAt:     now,
 			LastError:      run.LastError,
@@ -1150,9 +1152,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				parentSessionRef := run.SessionRef
 				run, queued := d.scheduleContinuationRetry(run, wfFile.Data, "runner exited cleanly while tracker state remained active; queued continuation retry")
 				if strings.TrimSpace(run.SessionRef) != "" {
-					_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", run.LastError, queued && run.Lane != runLaneReview)
+					_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", run.LastError, queued && sessionResumable)
 				}
-				decisionKind := string(SupervisorDecisionContinueThread)
+				decisionKind := string(SupervisorDecisionContinueAttempt)
 				if !queued {
 					updateRunAttemptFromRun(d.store, run, AttemptOutcomeBlocked, 0, run.LastError, finished)
 					decisionKind = string(SupervisorDecisionStopForAudit)
@@ -1215,7 +1217,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			run.LastError = ""
 			run.Terminal = false
 			if strings.TrimSpace(run.SessionRef) != "" {
-				_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForOutcome(AttemptOutcomeSucceeded), "", "", run.Lane != runLaneReview)
+				_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForOutcome(AttemptOutcomeSucceeded), "", "", sessionResumable)
 			}
 			clearActiveExecution(&run)
 			return run, true, nil
@@ -1224,7 +1226,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, status.ExitCode, reason, finished)
 		run = d.scheduleRetry(run, wfFile.Data, reason)
 		if strings.TrimSpace(run.SessionRef) != "" {
-			_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", reason, run.Lane != runLaneReview)
+			_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", reason, sessionResumable)
 		}
 		clearActiveExecution(&run)
 		run.UpdatedAt = finished
@@ -1264,7 +1266,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			run = d.scheduleRetry(run, wfFile.Data, reason)
 			run.UpdatedAt = now
 			if strings.TrimSpace(run.SessionRef) != "" {
-				_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", reason, run.Lane != runLaneReview)
+				_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", reason, sessionResumable)
 			}
 			return run, true, nil
 		}
@@ -1314,7 +1316,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	parentAttemptID := run.ActiveAttemptID
 	parentSessionRef := run.SessionRef
 	if strings.TrimSpace(run.SessionRef) != "" {
-		_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(result.LeaseState), "", result.Reason, result.Outcome != AttemptOutcomeAbandoned && run.Lane != runLaneReview)
+		_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(result.LeaseState), "", result.Reason, result.Outcome != AttemptOutcomeAbandoned && sessionResumable)
 	}
 	if result.LeaseState == LeaseStateClaimed || result.LeaseState == LeaseStateRunning {
 		run.AttemptOutcome = string(AttemptOutcomeNone)
@@ -1326,9 +1328,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	if result.LeaseState == LeaseStateRetryQueued && result.Outcome == AttemptOutcomeNone {
 		run, queued := d.scheduleContinuationRetry(run, wfFile.Data, firstNonEmpty(result.Reason, "runner requested continuation retry"))
 		if strings.TrimSpace(run.SessionRef) != "" {
-			_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", run.LastError, queued && run.Lane != runLaneReview)
+			_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", run.LastError, queued && sessionResumable)
 		}
-		decisionKind := string(SupervisorDecisionContinueThread)
+		decisionKind := string(SupervisorDecisionContinueAttempt)
 		if !queued {
 			updateRunAttemptFromRun(d.store, run, AttemptOutcomeBlocked, 0, run.LastError, now)
 			decisionKind = string(SupervisorDecisionStopForAudit)
@@ -1377,7 +1379,7 @@ func (d *Daemon) normalizeDeadRetryQueuedRun(ctx context.Context, project Regist
 				d.emitSupervisorDecision(SupervisorDecision{
 					ProjectID:        project.ProjectID,
 					RecordID:         run.RecordID,
-					Kind:             string(SupervisorDecisionContinueThread),
+					Kind:             string(SupervisorDecisionContinueAttempt),
 					Reason:           run.LastError,
 					ParentAttemptID:  session.LastAttemptID,
 					ParentSessionRef: run.SessionRef,
@@ -1411,6 +1413,17 @@ func (d *Daemon) scheduleContinuationRetry(run RunStatus, wf Workflow, reason st
 	return run, true
 }
 
+func runSessionResumable(wf Workflow, run RunStatus) bool {
+	if run.Lane == runLaneReview {
+		return false
+	}
+	runner, _, err := runnerForName(run.Runner, wf)
+	if err != nil {
+		return false
+	}
+	return runner.Capabilities().ResumeSession
+}
+
 func (d *Daemon) continuationRetryCount(run RunStatus) int {
 	if d == nil || d.store == nil {
 		return 0
@@ -1423,7 +1436,7 @@ func (d *Daemon) continuationRetryCount(run RunStatus) int {
 	sessionRef := strings.TrimSpace(run.SessionRef)
 	count := 0
 	for _, decision := range decisions {
-		if decision.Kind != string(SupervisorDecisionContinueThread) {
+		if decision.Kind != string(SupervisorDecisionContinueThread) && decision.Kind != string(SupervisorDecisionContinueAttempt) {
 			continue
 		}
 		if attemptID != "" && (decision.AttemptID == attemptID || decision.TargetAttemptID == attemptID || decision.ParentAttemptID == attemptID) {
@@ -1475,6 +1488,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 		return run, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": lane}))
 	}
+	previousRun := run
 	runner, command, err := runnerForName(run.Runner, wfFile.Data)
 	if err != nil {
 		return run, err
@@ -1517,7 +1531,8 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		AttemptID: attemptID, ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
 		Runner: run.Runner, Lane: lane, WorkRevision: run.WorkRevision, WorkspacePath: workspace.Path,
 		PromptPath: promptPath, EventSinkPath: eventSinkPath, RawLogPath: rawLogPath, StatusPath: statusPath,
-		StartedAt: startedAt,
+		ParentAttemptID: previousRun.ActiveAttemptID,
+		StartedAt:       startedAt,
 	}
 	run.LeaseState = string(LeaseStateClaimed)
 	run.LeaseOwner = attemptID
@@ -1528,6 +1543,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	run.AttemptCount = ordinal
 	run.WorkspacePath = workspace.Path
 	run.ActiveAttemptID = attemptID
+	run.SessionRef = ""
 	run.ProcessPID = 0
 	run.ProcessPGID = 0
 	run.ProcessStartedAt = ""
@@ -1542,7 +1558,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	run.UpdatedAt = attempt.StartedAt
 	run.LastEventAt = attempt.StartedAt
 
-	prompt, err := renderAttemptPrompt(project, wfFile, note, workspace.Path, ordinal, attemptID, lane, run, d.store)
+	prompt, err := renderAttemptPrompt(project, wfFile, note, workspace.Path, ordinal, attemptID, lane, run, previousRun, d.store)
 	if err != nil {
 		attempt.Outcome = string(AttemptOutcomeFailed)
 		attempt.LastError = err.Error()
@@ -1565,59 +1581,47 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		return run, err
 	}
 
-	resume, err := d.resolveResumeSession(project, note, run)
-	if err != nil {
-		return run, err
-	}
 	var start *StartResult
 	codexPolicy := codexPolicyForLane(codexPolicyFromWorkflow(wfFile.Data), lane)
 	externalLaunch := ExternalLoopLaunchContext{}
 	if externalLoopRunnerRequiresCollect(wfFile.Data, run.Runner) {
 		externalLaunch = d.externalLoopLaunchContext(project.ProjectID, run.RecordID)
 	}
-	if resume.SessionRef != "" && runner.Capabilities().ResumeSession {
+	if previousRunHasStructuredOutcome(previousRun) {
 		d.emitSupervisorDecision(SupervisorDecision{
 			ProjectID:        project.ProjectID,
 			RecordID:         run.RecordID,
 			AttemptID:        attemptID,
-			SessionRef:       resume.SessionRef,
-			Kind:             resume.DecisionKind,
-			Reason:           resume.Reason,
-			ParentAttemptID:  resume.ParentAttemptID,
-			ParentSessionRef: resume.SessionRef,
+			Kind:             string(SupervisorDecisionContinueAttempt),
+			Reason:           previousStructuredOutcomeReason(previousRun),
+			ParentAttemptID:  previousRun.ActiveAttemptID,
+			ParentSessionRef: previousRun.SessionRef,
+			TargetAttemptID:  attemptID,
 			WorkspacePath:    workspace.Path,
 		})
-		start, err = runner.Resume(ctx, ResumeRequest{
-			ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID, AttemptID: attemptID,
-			Lane: lane, WorkRevision: run.WorkRevision, LeaseGeneration: run.LeaseGeneration, ActiveStates: wfFile.Data.Tracker.ActiveStates, SessionRef: resume.SessionRef, MessageRef: resume.MessageRef, WorkingDir: workspace.Path, WorkspacePath: workspace.Path,
-			RepoRoot:   project.RepoRoot,
-			PromptPath: promptPath, EventSinkPath: eventSinkPath, RawLogPath: rawLogPath, StatusPath: statusPath, Command: command,
-			NotePath: note.AbsolutePath, VaultPath: project.VaultRoot, CodexPolicy: codexPolicy, ExternalLoop: externalLaunch,
-		})
-	} else {
-		start, err = runner.Start(ctx, StartRequest{
-			ProjectID:       project.ProjectID,
-			RecordID:        run.RecordID,
-			ItemID:          run.ItemID,
-			AttemptID:       attemptID,
-			Lane:            lane,
-			WorkRevision:    run.WorkRevision,
-			LeaseGeneration: run.LeaseGeneration,
-			ActiveStates:    wfFile.Data.Tracker.ActiveStates,
-			WorkingDir:      workspace.Path,
-			WorkspacePath:   workspace.Path,
-			RepoRoot:        project.RepoRoot,
-			PromptPath:      promptPath,
-			EventSinkPath:   eventSinkPath,
-			RawLogPath:      rawLogPath,
-			StatusPath:      statusPath,
-			Command:         command,
-			NotePath:        note.AbsolutePath,
-			VaultPath:       project.VaultRoot,
-			CodexPolicy:     codexPolicy,
-			ExternalLoop:    externalLaunch,
-		})
 	}
+	start, err = runner.Start(ctx, StartRequest{
+		ProjectID:       project.ProjectID,
+		RecordID:        run.RecordID,
+		ItemID:          run.ItemID,
+		AttemptID:       attemptID,
+		Lane:            lane,
+		WorkRevision:    run.WorkRevision,
+		LeaseGeneration: run.LeaseGeneration,
+		ActiveStates:    wfFile.Data.Tracker.ActiveStates,
+		WorkingDir:      workspace.Path,
+		WorkspacePath:   workspace.Path,
+		RepoRoot:        project.RepoRoot,
+		PromptPath:      promptPath,
+		EventSinkPath:   eventSinkPath,
+		RawLogPath:      rawLogPath,
+		StatusPath:      statusPath,
+		Command:         command,
+		NotePath:        note.AbsolutePath,
+		VaultPath:       project.VaultRoot,
+		CodexPolicy:     codexPolicy,
+		ExternalLoop:    externalLaunch,
+	})
 	if err != nil {
 		attempt.Outcome = string(AttemptOutcomeFailed)
 		attempt.LastError = err.Error()
@@ -3402,7 +3406,7 @@ func workspaceStrategyForRun(wf Workflow, project RegisteredProject, run RunStat
 
 var workflowTemplatePlaceholder = regexp.MustCompile(`{{\s*([A-Za-z0-9_.]+)\s*}}`)
 
-func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath string, attemptNumber int, attemptID, lane string, run RunStatus, store *RuntimeStore) (string, error) {
+func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath string, attemptNumber int, attemptID, lane string, run RunStatus, previousRun RunStatus, store *RuntimeStore) (string, error) {
 	values := map[string]string{
 		"project.name":                project.Name,
 		"project.id":                  project.ProjectID,
@@ -3433,10 +3437,206 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 	if err != nil {
 		return "", tuskerError(errorConfigInvalid, err.Error(), withPath(wfFile.Path))
 	}
+	if ralphContext, err := renderRalphAttemptPromptContext(project, wfFile, note, attemptNumber, attemptID, lane, previousRun); err != nil {
+		return "", err
+	} else if ralphContext != "" {
+		rendered = strings.TrimSpace(rendered) + "\n\n" + ralphContext
+	}
 	if runtimeContext := renderExternalLoopRuntimePromptContext(store, project.ProjectID, trackerRecordID(note), run); runtimeContext != "" {
 		rendered = strings.TrimSpace(rendered) + "\n\n" + runtimeContext
 	}
 	return strings.TrimSpace(rendered) + "\n", nil
+}
+
+type taskPlanSnapshot struct {
+	Path     string
+	Display  string
+	Contents string
+	Created  bool
+}
+
+func renderRalphAttemptPromptContext(project RegisteredProject, wfFile WorkflowFile, note Note, attemptNumber int, attemptID, lane string, previousRun RunStatus) (string, error) {
+	if !isV7TaskNote(note) || strings.TrimSpace(project.VaultRoot) == "" || !fileExists(project.VaultRoot) {
+		return "", nil
+	}
+	taskID := stringField(note.Data, "id")
+	if taskID == "" {
+		return "", nil
+	}
+	idx, err := loadV7Index(project.VaultRoot)
+	if err != nil {
+		return "", err
+	}
+	plan, err := ensureTaskPlanFile(project.VaultRoot, taskID, stringField(note.Data, "title"))
+	if err != nil {
+		return "", err
+	}
+	signs, signsLines, signsPresent, err := readTuskerSigns(project.VaultRoot)
+	if err != nil {
+		return "", err
+	}
+	audience := "agent"
+	if lane == runLaneReview {
+		audience = "reviewer"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "## Tusker Attempt Context\n\n")
+	fmt.Fprintf(&b, "- Attempt: %d (%s)\n", attemptNumber, attemptID)
+	fmt.Fprintf(&b, "- Fresh context rule: this attempt is a new runner session/thread. Do not query or append to predecessor transcripts.\n")
+	fmt.Fprintf(&b, "- Durable state rule: use the plan file below as disposable cross-attempt state; do not cite it as proof or add it to task markdown.\n\n")
+	fmt.Fprintf(&b, "### Task Packet\n\n%s\n", strings.TrimSpace(v7Packet(project.VaultRoot, note, idx, audience)))
+	fmt.Fprintf(&b, "\n### Durable Plan File\n\n")
+	fmt.Fprintf(&b, "- Path: `%s`\n", plan.Display)
+	if plan.Created {
+		fmt.Fprintf(&b, "- Lifecycle: created for this first attempt; it survives retries and is removed when the task closes.\n")
+	} else {
+		fmt.Fprintf(&b, "- Lifecycle: existing file loaded from a prior attempt; update it before finishing or stopping.\n")
+	}
+	fmt.Fprintf(&b, "\n```markdown\n%s\n```\n", strings.TrimSpace(plan.Contents))
+	fmt.Fprintf(&b, "\n### Previous Structured Outcome\n\n%s\n", renderPreviousStructuredOutcome(previousRun))
+	fmt.Fprintf(&b, "\n### Backpressure\n\n")
+	fmt.Fprintf(&b, "- Source: %s\n", backpressureCommandSource(project.VaultRoot))
+	fmt.Fprintf(&b, "- Run validation serially. One build/test invocation at a time; no parallel validation storms.\n\n")
+	fmt.Fprintf(&b, "```bash\n%s\n```\n", strings.Join(backpressureCommands(project.VaultRoot), "\n"))
+	fmt.Fprintf(&b, "\n### Ralph Rules\n\n")
+	fmt.Fprintf(&b, "- Work exactly one task contract in this attempt.\n")
+	fmt.Fprintf(&b, "- Search before implementing; do not create duplicate implementations because a first `rg` missed something.\n")
+	fmt.Fprintf(&b, "- Do not add placeholder, stub, or fake-simple implementations to satisfy a compiler.\n")
+	fmt.Fprintf(&b, "- Read the plan, do the next undone item, update the plan, verify, then finish or park with a concrete reason.\n")
+	if signsPresent {
+		fmt.Fprintf(&b, "\n### Repo Signs\n\n")
+		if signsLines > tuskerSignsWarnLineLimit {
+			fmt.Fprintf(&b, "- Warning: `%s` has %d lines; cap is %d. Trim it before adding more signs.\n\n", tuskerSignsDisplayPath(project.VaultRoot), signsLines, tuskerSignsWarnLineLimit)
+		}
+		fmt.Fprintf(&b, "```markdown\n%s\n```\n", strings.TrimSpace(signs))
+	}
+	return strings.TrimSpace(b.String()), nil
+}
+
+func ensureTaskPlanFile(vaultPath, taskID, title string) (taskPlanSnapshot, error) {
+	path := taskPlanPath(vaultPath, taskID)
+	display := taskPlanDisplayPath(taskID)
+	if strings.TrimSpace(path) == "" {
+		return taskPlanSnapshot{}, nil
+	}
+	created := false
+	if !fileExists(path) {
+		if err := ensureDir(filepath.Dir(path)); err != nil {
+			return taskPlanSnapshot{}, err
+		}
+		if err := writeText(path, defaultTaskPlanContents(taskID, title)); err != nil {
+			return taskPlanSnapshot{}, err
+		}
+		created = true
+	}
+	contents, err := readText(path)
+	if err != nil {
+		return taskPlanSnapshot{}, err
+	}
+	return taskPlanSnapshot{Path: path, Display: display, Contents: contents, Created: created}, nil
+}
+
+func taskPlanPath(vaultPath, taskID string) string {
+	vaultPath = strings.TrimSpace(vaultPath)
+	taskID = strings.TrimSpace(taskID)
+	if vaultPath == "" || taskID == "" {
+		return ""
+	}
+	return filepath.Join(vaultPath, "scratch", taskID, "PLAN.md")
+}
+
+func taskPlanDisplayPath(taskID string) string {
+	return filepath.ToSlash(filepath.Join(".tusker", "scratch", strings.TrimSpace(taskID), "PLAN.md"))
+}
+
+func defaultTaskPlanContents(taskID, title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		title = taskID
+	}
+	return fmt.Sprintf(`# %s Plan
+
+- [ ] Read this plan, the task packet, and the previous structured outcome.
+- [ ] Search for existing implementation before editing.
+- [ ] Do the next undone implementation or verification item.
+- [ ] Update this plan before finishing, parking, or responding to a stop signal.
+- [ ] Run the configured backpressure commands and record concise proof.
+`, title)
+}
+
+func removeTaskPlanFile(vaultPath, taskID string) error {
+	path := taskPlanPath(vaultPath, taskID)
+	if strings.TrimSpace(path) == "" || !fileExists(path) {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	_ = os.Remove(filepath.Dir(path))
+	return nil
+}
+
+func renderPreviousStructuredOutcome(run RunStatus) string {
+	if !previousRunHasStructuredOutcome(run) {
+		return "- Previous attempt: none"
+	}
+	lines := []string{
+		"- Previous attempt: " + fallback(strings.TrimSpace(run.ActiveAttemptID), "unknown"),
+		"- Previous lease state: " + fallback(strings.TrimSpace(run.LeaseState), "unknown"),
+		"- Previous outcome: " + fallback(strings.TrimSpace(run.AttemptOutcome), "unknown"),
+	}
+	if reason := previousStructuredOutcomeReason(run); reason != "" {
+		lines = append(lines, "- Previous reason: "+reason)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func previousRunHasStructuredOutcome(run RunStatus) bool {
+	return run.AttemptCount > 0 ||
+		strings.TrimSpace(run.ActiveAttemptID) != "" ||
+		strings.TrimSpace(run.SessionRef) != "" ||
+		strings.TrimSpace(run.LastError) != "" ||
+		strings.TrimSpace(run.FinalSummary) != "" ||
+		strings.TrimSpace(run.LogsSummary) != ""
+}
+
+func previousStructuredOutcomeReason(run RunStatus) string {
+	return safePacketText(firstNonEmpty(run.LastError, run.FinalSummary, run.LogsSummary), 480)
+}
+
+func backpressureCommands(vaultPath string) []string {
+	cfg, _, err := readV7TuskerConfig(vaultPath)
+	if err == nil {
+		if commands := normalizeList(cfg.Automation.Validation.Commands); len(commands) > 0 {
+			return commands
+		}
+	}
+	return []string{"go build ./...", "go vet ./...", "go test ./... -count=1"}
+}
+
+func backpressureCommandSource(vaultPath string) string {
+	cfg, _, err := readV7TuskerConfig(vaultPath)
+	if err == nil && len(normalizeList(cfg.Automation.Validation.Commands)) > 0 {
+		return "`tusker.yaml` automation.validation.commands"
+	}
+	return "built-in default gate"
+}
+
+func readTuskerSigns(vaultPath string) (string, int, bool, error) {
+	path := filepath.Join(strings.TrimSpace(vaultPath), "signs.md")
+	if strings.TrimSpace(vaultPath) == "" || !fileExists(path) {
+		return "", 0, false, nil
+	}
+	text, err := readText(path)
+	if err != nil {
+		return "", 0, false, err
+	}
+	return text, countNonEmptyLines(text), true, nil
+}
+
+func tuskerSignsDisplayPath(vaultPath string) string {
+	_ = vaultPath
+	return ".tusker/signs.md"
 }
 
 func renderExternalLoopRuntimePromptContext(store *RuntimeStore, projectID, recordID string, run RunStatus) string {

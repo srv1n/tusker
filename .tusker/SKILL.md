@@ -56,6 +56,12 @@ Task agents must run `tusker packet <TASK-ID> --for agent`, then read only the r
 - Keep root `AGENTS.md` and `CLAUDE.md` as managed Tusker bootstrap pointers; do not copy Tusker workflow mechanics there.
 - Agents should prefer path-scoped status/search, lock/status commands over process-table probes, redirected validation logs, and command + PASS/FAIL summaries.
 
+## Prompt Signs
+
+- `.tusker/signs.md` is the operator-maintained corrective prompt file injected into every dispatched attempt when present.
+- Keep signs operational, terse, and durable: recurring mistakes, repo-specific traps, and validation habits belong there; task progress, proof logs, and transcripts do not.
+- Keep the file near 60 lines or less. V7 validation warns when it bloats because every future attempt pays for it in context.
+
 ## Updating Canon
 
 - Update the narrowest owning domain `CANON.md` when durable truth changes.

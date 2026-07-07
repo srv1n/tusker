@@ -570,7 +570,7 @@ func assertCodexPendingEmpty(t *testing.T, handle *codexLiveHandle) {
 	}
 }
 
-func TestCodexLiveRunnerResumesThreadViaProtocolAfterRestart(t *testing.T) {
+func TestCodexLiveRunnerStartsFreshThreadAfterRestart(t *testing.T) {
 	tempRoot := t.TempDir()
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(tempRoot, "state"))
 	workspaceRoot := filepath.Join(tempRoot, "workspace")
@@ -592,25 +592,24 @@ for line in sys.stdin:
     if msg.get("method")=="initialize":
         print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"serverInfo":{"name":"fake-codex"}}}), flush=True)
     elif msg.get("method")=="thread/start":
-        raise AssertionError("restart recovery must not start a fresh thread")
-    elif msg.get("method")=="thread/fork":
-        raise AssertionError("restart recovery must not fork when thread/resume is supported")
-    elif msg.get("method")=="thread/resume":
-        assert os.environ["TUSKER_SESSION_REF"]=="thread-before-restart", os.environ.get("TUSKER_SESSION_REF")
-        assert msg["params"]["threadId"]=="thread-before-restart", msg["params"]
+        assert os.environ.get("TUSKER_SESSION_REF","")=="", os.environ.get("TUSKER_SESSION_REF")
+        assert os.environ.get("TUSKER_MESSAGE_REF","")=="", os.environ.get("TUSKER_MESSAGE_REF")
         assert msg["params"]["cwd"]==os.environ["TUSKER_WORKSPACE"], msg["params"]
         assert msg["params"]["approvalPolicy"]=="never", msg["params"]
         assert msg["params"]["sandbox"]=="read-only", msg["params"]
-        assert msg["params"]["excludeTurns"] is True, msg["params"]
-        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"thread":{"id":"thread-before-restart"}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"thread":{"id":"thread-after-restart"}}}), flush=True)
+    elif msg.get("method")=="thread/fork":
+        raise AssertionError("restart recovery must not fork predecessor thread")
+    elif msg.get("method")=="thread/resume":
+        raise AssertionError("restart recovery must not resume predecessor thread")
     elif msg.get("method")=="turn/start":
-        assert msg["params"]["threadId"]=="thread-before-restart", msg["params"]
+        assert msg["params"]["threadId"]=="thread-after-restart", msg["params"]
         assert msg["params"]["sandboxPolicy"]=={"type":"readOnly","networkAccess":False}, msg["params"]
         assert msg["params"]["input"][0]["text"]=="Resume prompt.\n", msg["params"]
         assert msg["params"]["input"][0]["text_elements"]==[], msg["params"]
-        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"turn":{"id":"turn-resumed","status":"inProgress","items":[]}}}), flush=True)
-        print(json.dumps({"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-before-restart","turn":{"id":"turn-resumed","status":"inProgress","items":[]}}}), flush=True)
-        print(json.dumps({"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-before-restart","turn":{"id":"turn-resumed","status":"completed","items":[]}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"turn":{"id":"turn-after-restart","status":"inProgress","items":[]}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-after-restart","turn":{"id":"turn-after-restart","status":"inProgress","items":[]}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-after-restart","turn":{"id":"turn-after-restart","status":"completed","items":[]}}}), flush=True)
         break
 `
 	if err := writeText(scriptPath, script); err != nil {
@@ -646,18 +645,18 @@ for line in sys.stdin:
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, "thread-before-restart", result.SessionRef, "resumed codex session ref")
+	assertEqual(t, "thread-after-restart", result.SessionRef, "fresh codex session ref after restart")
 	waitForStatusFile(t, statusPath)
 	status, err := readRunnerProcessStatus(statusPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, 0, status.ExitCode, "codex resumed exit code")
+	assertEqual(t, 0, status.ExitCode, "codex fresh restart exit code")
 	store := openRuntimeStoreEventually(t)
 	defer store.Close()
 	turns := waitForStoredTurnCount(t, store, "project-1", "record-1", 1)
-	assertEqual(t, "turn-resumed", turns[0].TurnID, "resumed turn id")
-	assertEqual(t, "thread-before-restart", turns[0].SessionRef, "resumed turn session ref")
+	assertEqual(t, "turn-after-restart", turns[0].TurnID, "fresh restart turn id")
+	assertEqual(t, "thread-after-restart", turns[0].SessionRef, "fresh restart turn session ref")
 }
 
 func TestClaudeLiveRunnerSupportsInterrupt(t *testing.T) {

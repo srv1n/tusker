@@ -200,12 +200,19 @@ func runnerWrapperHeartbeat(ctx context.Context, req StartRequest, stop chan<- s
 	}
 	defer store.Close()
 	interval := runnerWrapperHeartbeatInterval()
+	missLimit := runnerWrapperHeartbeatMissLimit()
+	misses := 0
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		if ok := runnerWrapperBeat(store, req); !ok {
-			nonBlockingWrapperStop(stop, "lease heartbeat stopped")
-			return
+			misses++
+			if misses >= missLimit {
+				nonBlockingWrapperStop(stop, "lease heartbeat stopped")
+				return
+			}
+		} else {
+			misses = 0
 		}
 		select {
 		case <-ctx.Done():
@@ -264,6 +271,15 @@ func runnerWrapperHeartbeatInterval() time.Duration {
 		}
 	}
 	return defaultRunHeartbeatInterval
+}
+
+func runnerWrapperHeartbeatMissLimit() int {
+	if raw := strings.TrimSpace(os.Getenv("TUSKER_WRAPPER_HEARTBEAT_MISSES")); raw != "" {
+		if misses := atoiSafe(raw); misses > 0 {
+			return misses
+		}
+	}
+	return 10
 }
 
 func runnerWrapperStopTimeout() time.Duration {
