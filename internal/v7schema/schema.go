@@ -12,12 +12,14 @@ import (
 var (
 	TaskIDPattern     = regexp.MustCompile(`^([A-Z]{3})-T-(\d{4})$`)
 	GateIDPattern     = regexp.MustCompile(`^([A-Z]{3})-G-(\d{4})$`)
+	WaveIDPattern     = regexp.MustCompile(`^W-(\d{4})$`)
 	DecisionIDPattern = regexp.MustCompile(`^([A-Z]{3})-D-(\d{4})$`)
 	ProposalIDPattern = regexp.MustCompile(`^([A-Z]{3})-P-(\d{4})$`)
 	EvidenceIDPattern = regexp.MustCompile(`^([A-Z]{3})-T-(\d{4})-E-(\d{4})$`)
 	AttemptIDPattern  = regexp.MustCompile(`^([A-Z]{3})-T-(\d{4})-A-(\d{4})$`)
 
 	TaskStatuses   = makeSet("idea", "backlog", "ready", "review", "rework", "done", "cancelled", "superseded")
+	WaveStatuses   = makeSet("open", "landed")
 	Readiness      = makeSet("ready", "blocked_by_gate", "blocked_by_dependency", "waiting_on_review", "waiting_on_human", "waiting_on_ci", "held", "done", "cancelled", "superseded")
 	GateKinds      = makeSet("auth", "env", "setup", "dev_host", "ci", "verification", "signoff", "decision", "quota", "external_service", "manual_hold", "security", "release")
 	GateStatuses   = makeSet("open", "satisfied", "waived", "obsolete")
@@ -35,6 +37,7 @@ var (
 var FrontmatterOrder = map[string][]string{
 	"task": {
 		"schema", "kind", "id", "project", "title", "epic", "status", "readiness", "priority", "risk", "size",
+		"wave",
 		"proof_mode", "proof_status", "proof_required", "proof_required_owner", "evidence_budget", "raw_artifacts_allowed", "raw_artifacts_reason",
 		"machine_status", "human_status", "closeout_status", "agent_action",
 		"next_owner", "next_source", "next_ref", "next_action", "domains", "gates", "dependencies", "evidence_required",
@@ -52,6 +55,9 @@ var FrontmatterOrder = map[string][]string{
 	},
 	"epic": {
 		"schema", "kind", "id", "project", "title", "status", "owner", "priority", "domains", "next_task_number", "next_gate_number", "next_decision_number", "created_at", "updated_at", "state_rev",
+	},
+	"wave": {
+		"schema", "kind", "id", "project", "title", "status", "members", "landed_at", "created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
 	"decision": {
 		"schema", "kind", "id", "project", "epic", "title", "status", "decided_by", "decided_at", "supersedes", "created_at", "created_by", "updated_at", "updated_by", "state_rev",

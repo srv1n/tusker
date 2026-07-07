@@ -137,7 +137,7 @@ func parseCLI(argv []string) (string, Args) {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve":
+	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave":
 		return true
 	default:
 		return false
@@ -236,6 +236,16 @@ func run(command string, args Args) (int, error) {
 		return 0, finishV7Cmd(args)
 	case "gate":
 		return 0, gateV7Cmd(args)
+	case "wave":
+		return 0, waveV7Cmd(args)
+	case "wave create":
+		return 0, waveV7CreateCmd(args)
+	case "wave add":
+		return 0, waveV7AddCmd(args)
+	case "wave remove":
+		return 0, waveV7RemoveCmd(args)
+	case "wave show":
+		return 0, waveV7ShowCmd(args)
 	case "proof":
 		return 0, proofV7Cmd(args)
 	case "feedback":
@@ -641,7 +651,7 @@ func run(command string, args Args) (int, error) {
 	case "help migrate vault-root":
 		printMigrateVaultRootHelp()
 		return 0, nil
-	case "help handoff", "help gate", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help hook", "help hook install", "help migrate", "help migrate v7", "help migrate gates":
+	case "help handoff", "help gate", "help wave", "help wave create", "help wave add", "help wave remove", "help wave show", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help hook", "help hook install", "help migrate", "help migrate v7", "help migrate gates":
 		printV7Help()
 		return 0, nil
 	case "help feedback":
@@ -782,6 +792,7 @@ Commands:
   claim               create a V7 local lease
   evidence            add V7 evidence records
   gate                list/satisfy/waive/obsolete V7 gates
+  wave                create, edit, and show named task batches
   feedback            add agent feedback notes and generate digests
   improve             opt-in scans for repeated work worth packaging
   attempt             start or hand off V7 attempts
@@ -851,7 +862,7 @@ func printCommandHelp(command string) bool {
 		printEvidenceHelp()
 	case "migrate vault-root":
 		printMigrateVaultRootHelp()
-	case "handoff", "finish", "gate", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
+	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
 		printV7Help()
 	case "feedback", "feedback add", "feedback digest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()
@@ -1382,7 +1393,7 @@ Purpose:
 
 func printListHelp() {
 	fmt.Println(`Usage:
-  tusker list [<EPIC>] [--vault <path>] [--json] [--type epic|task|doc] [--status <status>] [--epic <ACR>] [--open|--closed] [--ready|--running|--review|--mine] [--format table|ids] [--limit <n>] [--width <cols>]
+  tusker list [<EPIC>] [--vault <path>] [--json] [--type epic|task|wave|doc] [--status <status>] [--epic <ACR>] [--wave <W-0001>] [--open|--closed] [--ready|--running|--review|--mine] [--format table|ids] [--limit <n>] [--width <cols>]
 
 Purpose:
   Query epics, tasks, and docs from the vault without dumping note bodies.
@@ -1403,6 +1414,7 @@ Examples:
   tusker list --vault ./.tusker --ready
   tusker list --vault ./.tusker --running
   tusker list --vault ./.tusker --epic ORC --type task --open
+  tusker list --vault ./.tusker --wave W-0001 --type task
   tusker list --all-projects --open --format ids
   tusker list --vault ./.tusker --epic ORC --type task --open --limit 10
   tusker list --vault ./.tusker --type task --status ready

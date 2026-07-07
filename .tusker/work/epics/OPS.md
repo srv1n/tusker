@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-06T17:50:21Z"
-updated_at: "2026-07-07T02:53:01Z"
-state_rev: "sha256:1df808528f31cb6cd1fa2ea9c196ff14484d5c3a07c9a08fefe75fa6b20fcbc1"
+updated_at: "2026-07-07T03:31:36Z"
+state_rev: "sha256:57bd7dfe143f218c4d53db146530f63ae4405db5cbc4cf54a7484662b18c1454"
 ---
 
 # OPS · Operating model: waves, merge lane, escalation, worker protocol
@@ -44,7 +44,7 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[OPS-T-0001]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[OPS-T-0001]] | review | reviewer | Review evidence and close or return to rework. |
 | [[OPS-T-0002]] | ready | blocked_dependency | Wait for dependency OPS-T-0001 to reach done. |
 | [[OPS-T-0003]] | ready | blocked_dependency | Wait for dependency OPS-T-0001 to reach done. |
 | [[OPS-T-0004]] | ready | agent | Execute the task contract and satisfy proof mode. |

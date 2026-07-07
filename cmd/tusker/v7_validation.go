@@ -17,8 +17,9 @@ var (
 	v7AcceptanceIDLine      = regexp.MustCompile(`(?i)^A\d+\s*:\s*(.+)$`)
 	v7ProtectedCommonFields = makeSet("schema", "kind", "id", "project", "state_rev")
 	v7ProtectedFieldsByKind = map[string]map[string]struct{}{
-		"task":          makeSet("status", "readiness", "next_owner", "next_source", "next_ref", "next_action", "accepted_by", "accepted_at", "closed_at", "superseded_by"),
+		"task":          makeSet("status", "readiness", "wave", "next_owner", "next_source", "next_ref", "next_action", "accepted_by", "accepted_at", "closed_at", "superseded_by"),
 		"gate":          makeSet("status", "owner", "blocking", "blocks", "satisfaction_evidence", "satisfaction_evidence_refs", "satisfied_by", "satisfied_at", "waived_by", "waived_at", "waive_reason", "obsolete_reason"),
+		"wave":          makeSet("status", "landed_at"),
 		"epic":          makeSet("status", "owner", "priority", "next_task_number", "next_gate_number", "next_decision_number"),
 		"decision":      makeSet("status", "decided_by", "decided_at", "supersedes"),
 		"evidence":      makeSet("task", "status", "accepted_by", "accepted_at", "screenshot_checked_by", "screenshot_checked_at", "redacted", "redaction_note"),
@@ -29,7 +30,7 @@ var (
 		"project_skill": makeSet("status"),
 	}
 	v7EventKinds       = makeSet("created", "updated", "status_changed", "gate_added", "gate_satisfied", "gate_waived", "gate_obsoleted", "claimed", "claim_released", "attempt_started", "attempt_handoff", "attempt_failed", "verification_added", "evidence_added", "review_requested", "review_passed", "review_failed", "closed", "reopened", "superseded", "cancelled", "decision_accepted", "lease_stale", "redaction", "redacted_replacement")
-	v7EventObjectKinds = makeSet("task", "gate", "epic", "decision", "evidence", "attempt", "proposal", "domain", "closeout")
+	v7EventObjectKinds = makeSet("task", "gate", "wave", "epic", "decision", "evidence", "attempt", "proposal", "domain", "closeout")
 	v7KnowledgeKinds   = makeSet("runbook", "decision", "invariant", "interface", "glossary", "source")
 )
 
@@ -48,6 +49,8 @@ func validateV7Note(note Note, ctx validationContext, where string) ([]Issue, []
 		validateV7Task(note, ctx, where, &errors, &warnings)
 	case "gate":
 		validateV7Gate(note, where, &errors, &warnings)
+	case "wave":
+		validateV7Wave(note, ctx, where, &errors, &warnings)
 	case "evidence":
 		validateV7Evidence(note, ctx, where, &errors, &warnings)
 	case "attempt":
@@ -100,6 +103,9 @@ func validateV7Task(note Note, ctx validationContext, where string, errors, warn
 	}
 	if !v7TaskIDPattern.MatchString(id) {
 		*errors = append(*errors, issue(errorIDScheme, "V7 task id must match ABC-T-0001", where, "", map[string]any{"id": id}))
+	}
+	if wave := stringField(data, "wave"); wave != "" && !v7WaveIDPattern.MatchString(wave) {
+		*errors = append(*errors, issue(errorInvalidField, "invalid V7 task wave: "+wave, where, "", map[string]any{"field": "wave"}))
 	}
 	if !strings.HasSuffix(filepath.ToSlash(where), "work/tasks/"+id+".md") {
 		*errors = append(*errors, issue(errorPathMismatch, "V7 task path must be .tusker/work/tasks/"+id+".md", where, "", nil))
@@ -374,6 +380,76 @@ func findV7BlockingGates(vaultPath, taskID string, gateIDs []string) []Note {
 		}
 	}
 	return gates
+}
+
+func validateV7Wave(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
+	data := note.Data
+	id := stringField(data, "id")
+	for _, field := range []string{"schema", "kind", "id", "project", "title", "status", "members", "created_at", "created_by", "updated_at", "updated_by", "state_rev"} {
+		if field == "members" {
+			if len(normalizeList(data[field])) == 0 {
+				*errors = append(*errors, issue(errorMissingField, `missing required frontmatter "members"`, where, "", map[string]any{"field": field}))
+			}
+			continue
+		}
+		if stringField(data, field) == "" {
+			*errors = append(*errors, issue(errorMissingField, fmt.Sprintf(`missing required frontmatter "%s"`, field), where, "", map[string]any{"field": field}))
+		}
+	}
+	if stringField(data, "schema") != "tusker.wave/v7" {
+		*errors = append(*errors, issue(errorInvalidField, "V7 wave schema must be tusker.wave/v7", where, "", map[string]any{"field": "schema"}))
+	}
+	if stringField(data, "kind") != "wave" {
+		*errors = append(*errors, issue(errorInvalidField, "V7 wave kind must be wave", where, "", map[string]any{"field": "kind"}))
+	}
+	if !v7WaveIDPattern.MatchString(id) {
+		*errors = append(*errors, issue(errorIDScheme, "V7 wave id must match W-0001", where, "", map[string]any{"id": id}))
+	}
+	if !strings.HasSuffix(filepath.ToSlash(where), "work/waves/"+id+".md") {
+		*errors = append(*errors, issue(errorPathMismatch, "V7 wave path must be .tusker/work/waves/"+id+".md", where, "", nil))
+	}
+	status := stringField(data, "status")
+	if _, ok := v7WaveStatuses[status]; !ok {
+		*errors = append(*errors, issue(errorInvalidField, "invalid V7 wave status: "+status, where, "", map[string]any{"field": "status"}))
+	}
+	if status == "landed" && stringField(data, "landed_at") == "" {
+		*errors = append(*errors, issue(errorInvalidField, "landed V7 wave requires landed_at", where, "run `tusker reconcile`", map[string]any{"field": "landed_at"}))
+	}
+	if status == "open" && stringField(data, "landed_at") != "" {
+		*warnings = append(*warnings, issue("WAVE_OPEN_LANDED_AT_STALE", "open V7 wave should not have landed_at", where, "run `tusker reconcile`", map[string]any{"field": "landed_at"}))
+	}
+	members := normalizeList(data["members"])
+	seen := map[string]bool{}
+	idx, _ := loadV7Index(ctx.VaultPath)
+	for _, member := range members {
+		if !v7TaskIDPattern.MatchString(member) {
+			*errors = append(*errors, issue(errorInvalidField, "invalid V7 wave member task id: "+member, where, "", map[string]any{"member": member}))
+			continue
+		}
+		if seen[member] {
+			*errors = append(*errors, issue("WAVE_DUPLICATE_MEMBER", "V7 wave lists duplicate member "+member, where, "", map[string]any{"member": member}))
+		}
+		seen[member] = true
+		if ctx.VaultPath != "" {
+			if _, ok := idx.Tasks[member]; !ok {
+				*errors = append(*errors, issue("WAVE_UNKNOWN_MEMBER", "V7 wave references unknown task "+member, where, "", map[string]any{"member": member}))
+			}
+		}
+	}
+	if status != "open" || ctx.VaultPath == "" {
+		return
+	}
+	for _, other := range idx.Waves {
+		otherID := stringField(other.Data, "id")
+		if otherID == id || stringField(other.Data, "status") != "open" {
+			continue
+		}
+		for _, member := range members {
+			if containsString(normalizeList(other.Data["members"]), member) {
+				*errors = append(*errors, issue("WAVE_OPEN_MEMBER_CONFLICT", fmt.Sprintf("%s belongs to multiple open waves: %s and %s", member, id, otherID), where, "", map[string]any{"member": member, "other_wave": otherID}))
+			}
+		}
+	}
 }
 
 func validateV7Gate(note Note, where string, errors, warnings *[]Issue) {

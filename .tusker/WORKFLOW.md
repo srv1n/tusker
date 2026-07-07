@@ -101,6 +101,12 @@ workspace:
 
 Dispatch only from durable task states `ready` and `rework`. Do not create or use a durable `active` task status. Runtime activity belongs to run leases and attempts.
 
+## Waves
+
+Use `tusker wave create "<title>" <TASK-ID>...` to record a named dispatch/review batch. Wave membership is canonical on the `kind: wave` record under `work/waves/`; task `wave:` fields are generated back-pointers maintained by `tusker reconcile`.
+
+Wave state is derived, not hand-set. A wave is `open` while any member task is not `done`; it becomes `landed` when every member task is `done`, stamped with the latest member `closed_at`. Adding a non-done member reopens the wave. Review the batch boundary with `tusker wave show <W-####>` and filter task views with `tusker list --wave <W-####>`.
+
 ## Hard stop check
 
 Before doing work, run `tusker closeout status {{ note.id }} --json` when closeout data exists. If it reports `agent_action=stop_until_human_response`, stop. Do not validate again, inspect unrelated files, spawn agents, or mutate Tusker records. Reply with the pending human gate or proof item.

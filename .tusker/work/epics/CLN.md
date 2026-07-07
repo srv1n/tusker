@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:16:22Z"
-updated_at: "2026-07-07T02:53:01Z"
-state_rev: "sha256:7b88e6c15079bb05b6baf7ece18af22ad408d24d3e9fa43bd4c78f5bb8102297"
+updated_at: "2026-07-07T03:26:01Z"
+state_rev: "sha256:d4ebb3b6f235621bc78664356b9e5b74c842cfb24d0ed5de29ee8c9a94b31b70"
 ---
 
 # CLN · One model, one vault: legacy deletion and solo ergonomics

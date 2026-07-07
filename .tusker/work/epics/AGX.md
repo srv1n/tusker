@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:17:22Z"
-updated_at: "2026-07-07T02:53:01Z"
-state_rev: "sha256:7e9595fd1d7d3e29a23cd1d1474367cb5ba3dba30ab724f04372364e4c323b5a"
+updated_at: "2026-07-07T03:26:01Z"
+state_rev: "sha256:b0d8fc81c71e16d9ca99364bef4360db4543aeb66ed7c1afd8750c2d8facc211"
 ---
 
 # AGX · Agent experience: token economy and CLI ergonomics

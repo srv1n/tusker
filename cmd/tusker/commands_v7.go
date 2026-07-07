@@ -22,12 +22,14 @@ import (
 var (
 	v7TaskIDPattern     = v7schema.TaskIDPattern
 	v7GateIDPattern     = v7schema.GateIDPattern
+	v7WaveIDPattern     = v7schema.WaveIDPattern
 	v7DecisionIDPattern = v7schema.DecisionIDPattern
 	v7ProposalIDPattern = v7schema.ProposalIDPattern
 	v7EvidenceIDPattern = v7schema.EvidenceIDPattern
 	v7AttemptIDPattern  = v7schema.AttemptIDPattern
 
 	v7TaskStatuses   = v7schema.TaskStatuses
+	v7WaveStatuses   = v7schema.WaveStatuses
 	v7Readiness      = v7schema.Readiness
 	v7GateKinds      = v7schema.GateKinds
 	v7GateStatuses   = v7schema.GateStatuses
@@ -47,6 +49,7 @@ var v7FrontmatterOrder = v7schema.FrontmatterOrder
 type v7Index struct {
 	Tasks     map[string]Note
 	Gates     map[string]Note
+	Waves     map[string]Note
 	Evidence  map[string][]Note
 	Attempts  map[string][]Note
 	Decisions map[string]Note
@@ -1546,12 +1549,24 @@ func reconcileV7Cmd(args Args) error {
 	}
 	changed := 0
 	revRepairs := 0
+	waveChanges := 0
+	taskWavePointers := 0
 	staleLeases := 0
 	revRepairs, err = reconcileV7ObjectStateRevs(vaultPath)
 	if err != nil {
 		return err
 	}
 	if revRepairs > 0 {
+		idx, err = loadV7Index(vaultPath)
+		if err != nil {
+			return err
+		}
+	}
+	waveChanges, taskWavePointers, err = reconcileV7WaveProjections(vaultPath, idx, "tusker:reconcile", "reconcile")
+	if err != nil {
+		return err
+	}
+	if waveChanges > 0 || taskWavePointers > 0 {
 		idx, err = loadV7Index(vaultPath)
 		if err != nil {
 			return err
@@ -1605,7 +1620,7 @@ func reconcileV7Cmd(args Args) error {
 	}
 	if !args.Bool("quiet") {
 		openDoneGates := len(v7DoneTaskOpenGateViolations(idx))
-		fmt.Printf("Reconciled %d V7 task projection%s, repaired %d stale object rev%s, %d epic managed block%s, %d stale lease%s, and detected %d done/open-gate violation%s.\n", changed, plural(changed), revRepairs, plural(revRepairs), epicBlocks, plural(epicBlocks), staleLeases, plural(staleLeases), openDoneGates, plural(openDoneGates))
+		fmt.Printf("Reconciled %d V7 task projection%s, %d wave projection%s, %d task wave pointer%s, repaired %d stale object rev%s, %d epic managed block%s, %d stale lease%s, and detected %d done/open-gate violation%s.\n", changed, plural(changed), waveChanges, plural(waveChanges), taskWavePointers, plural(taskWavePointers), revRepairs, plural(revRepairs), epicBlocks, plural(epicBlocks), staleLeases, plural(staleLeases), openDoneGates, plural(openDoneGates))
 	}
 	return nil
 }
@@ -1626,6 +1641,17 @@ func reconcileV7ControlProjections(vaultPath string, taskIDs []string, actor, so
 		return 0, err
 	}
 	changed := 0
+	waveChanges, taskWavePointers, err := reconcileV7WaveProjections(vaultPath, idx, actor, source)
+	if err != nil {
+		return changed, err
+	}
+	changed += taskWavePointers
+	if waveChanges > 0 || taskWavePointers > 0 {
+		idx, err = loadV7Index(vaultPath)
+		if err != nil {
+			return changed, err
+		}
+	}
 	for _, taskID := range uniqueStrings(taskIDs) {
 		task, ok := idx.Tasks[taskID]
 		if !ok {
@@ -1718,7 +1744,7 @@ func reconcileV7EpicManagedBlocks(vaultPath string, idx v7Index) (int, error) {
 		nextBody := replaceSection(body, "## Open gates", v7EpicOpenGatesBlock(idx, epicID))
 		nextBody = replaceSection(nextBody, "## Active work", v7EpicActiveWorkBlock(idx, epicID))
 		nextBody = replaceSection(nextBody, "## Recently completed", v7EpicRecentlyCompletedBlock(idx, epicID))
-		if nextBody == body {
+		if v7CanonicalBody(nextBody) == v7CanonicalBody(body) {
 			continue
 		}
 		data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
@@ -2013,7 +2039,7 @@ func migrateV7GatesCmd(args Args) error {
 
 func bootstrapV7Dirs(vaultPath string) error {
 	for _, relative := range []string{
-		"work/epics", "work/tasks", "work/gates", "work/decisions", "work/inbox", "work/closeouts", "work/archive",
+		"work/epics", "work/tasks", "work/gates", "work/waves", "work/decisions", "work/inbox", "work/closeouts", "work/archive",
 		"knowledge/domains", "evidence", "events", "attempts", "dashboards",
 		"_generated/indexes", "_generated/packets", "_generated/bases",
 	} {
@@ -2032,6 +2058,7 @@ func loadV7Index(vaultPath string) (v7Index, error) {
 	idx := v7Index{
 		Tasks:     map[string]Note{},
 		Gates:     map[string]Note{},
+		Waves:     map[string]Note{},
 		Evidence:  map[string][]Note{},
 		Attempts:  map[string][]Note{},
 		Decisions: map[string]Note{},
@@ -2049,6 +2076,10 @@ func loadV7Index(vaultPath string) (v7Index, error) {
 			}
 		case "gate":
 			idx.Gates[id] = note
+		case "wave":
+			if strings.HasSuffix(stringField(note.Data, "schema"), "/v7") {
+				idx.Waves[id] = note
+			}
 		case "evidence":
 			idx.Evidence[stringField(note.Data, "task")] = append(idx.Evidence[stringField(note.Data, "task")], note)
 		case "attempt":
@@ -2080,6 +2111,10 @@ func resolveV7Note(vaultPath, id, kind string) (Note, error) {
 		}
 	case "gate":
 		if note, ok := idx.Gates[id]; ok {
+			return note, nil
+		}
+	case "wave":
+		if note, ok := idx.Waves[id]; ok {
 			return note, nil
 		}
 	case "decision":
@@ -3347,6 +3382,10 @@ func resolveV7ProjectID(vaultPath string) (string, error) {
 
 func v7StateRev(data map[string]any, body string) string {
 	return v7schema.StateRev(data, body)
+}
+
+func v7CanonicalBody(body string) string {
+	return strings.TrimRight(strings.TrimLeft(body, "\n"), "\n\t ")
 }
 
 func v7StateRevMatches(data map[string]any, body, rev string) bool {

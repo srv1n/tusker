@@ -131,6 +131,10 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleRun(w, r, strings.TrimPrefix(path, "/api/runs/"))
 	case path == "/api/epics":
 		s.handleEpics(w, r)
+	case path == "/api/waves":
+		s.handleWaves(w, r)
+	case strings.HasPrefix(path, "/api/waves/"):
+		s.handleWave(w, r, strings.TrimPrefix(path, "/api/waves/"))
 	case path == "/api/tasks":
 		s.handleTasks(w, r)
 	case strings.HasPrefix(path, "/api/tasks/"):
@@ -227,6 +231,8 @@ func (s *serveServer) loadSnapshot() (serveSnapshot, error) {
 			snap.epics = append(snap.epics, note)
 		case "gate":
 			snap.gates = append(snap.gates, note)
+		case "wave":
+			snap.waves = append(snap.waves, note)
 		case "evidence":
 			snap.evidence = append(snap.evidence, note)
 		}
@@ -430,6 +436,35 @@ func (s *serveServer) handleEpics(w http.ResponseWriter, r *http.Request) {
 	serveJSON(w, http.StatusOK, serveEpics(snap))
 }
 
+func (s *serveServer) handleWaves(w http.ResponseWriter, r *http.Request) {
+	snap, err := s.loadSnapshot()
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if project := strings.TrimSpace(r.URL.Query().Get("project")); project != "" && project != snap.projectID {
+		serveJSON(w, http.StatusOK, []serveWaveSummary{})
+		return
+	}
+	serveJSON(w, http.StatusOK, serveWaves(snap))
+}
+
+func (s *serveServer) handleWave(w http.ResponseWriter, _ *http.Request, id string) {
+	snap, err := s.loadSnapshot()
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	id = strings.TrimSpace(id)
+	for _, wave := range snap.waves {
+		if stringField(wave.Data, "id") == id {
+			serveJSON(w, http.StatusOK, serveWaveSummaryFor(snap, wave))
+			return
+		}
+	}
+	serveJSON(w, http.StatusNotFound, map[string]any{"error": "wave not found"})
+}
+
 func (s *serveServer) handleTasks(w http.ResponseWriter, r *http.Request) {
 	snap, err := s.loadSnapshot()
 	if err != nil {
@@ -543,17 +578,80 @@ func serveEpics(snap serveSnapshot) []serveEpicSummary {
 	return out
 }
 
+func serveWaves(snap serveSnapshot) []serveWaveSummary {
+	out := []serveWaveSummary{}
+	for _, wave := range snap.waves {
+		out = append(out, serveWaveSummaryFor(snap, wave))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func serveWaveSummaryFor(snap serveSnapshot, wave Note) serveWaveSummary {
+	counts := serveEmptyStatusCounts()
+	members := []serveWaveTaskSummary{}
+	for _, taskID := range normalizeList(wave.Data["members"]) {
+		task, ok := snap.notesByID[taskID]
+		if !ok || serveNoteKind(task) != "task" {
+			continue
+		}
+		group := serveWaveTaskGroup(snap, task)
+		counts[group]++
+		members = append(members, serveWaveTaskSummary{
+			ID:     taskID,
+			Title:  stringField(task.Data, "title"),
+			Group:  group,
+			Status: stringField(task.Data, "status"),
+			Proof:  firstNonEmpty(stringField(task.Data, "proof_status"), "pending"),
+		})
+	}
+	sort.Slice(members, func(i, j int) bool { return members[i].ID < members[j].ID })
+	return serveWaveSummary{
+		ID:        stringField(wave.Data, "id"),
+		Title:     stringField(wave.Data, "title"),
+		Status:    stringField(wave.Data, "status"),
+		LandedAt:  nullIfBlank(stringField(wave.Data, "landed_at")),
+		MemberIDs: normalizeList(wave.Data["members"]),
+		Members:   members,
+		Counts:    counts,
+	}
+}
+
+func serveWaveTaskGroup(snap serveSnapshot, task Note) string {
+	status := serveTaskStatus(snap, task)
+	switch status {
+	case "done", "review":
+		return status
+	case "in_progress":
+		return "running"
+	case "blocked":
+		return "blocked"
+	}
+	rawStatus := strings.ToLower(strings.TrimSpace(stringField(task.Data, "status")))
+	readiness := strings.ToLower(strings.TrimSpace(stringField(task.Data, "readiness")))
+	if rawStatus == "cancelled" || rawStatus == "superseded" || readiness == "held" {
+		return "parked"
+	}
+	if strings.HasPrefix(readiness, "blocked") || strings.HasPrefix(readiness, "waiting_on") {
+		return "blocked"
+	}
+	return "ready"
+}
+
 func serveEmptyStatusCounts() map[string]int {
-	return map[string]int{"backlog": 0, "ready": 0, "in_progress": 0, "review": 0, "blocked": 0, "done": 0}
+	return map[string]int{"backlog": 0, "ready": 0, "in_progress": 0, "running": 0, "review": 0, "blocked": 0, "parked": 0, "done": 0}
 }
 
 func serveTaskCapsuleFor(snap serveSnapshot, task Note) serveTaskCapsule {
 	id := stringField(task.Data, "id")
 	epicID := stringField(task.Data, "epic")
+	waveID := stringField(task.Data, "wave")
 	explanation := snap.queue[id]
 	return serveTaskCapsule{
 		ID:              id,
 		Title:           stringField(task.Data, "title"),
+		WaveID:          waveID,
+		WaveTitle:       serveWaveTitle(snap, waveID),
 		EpicID:          epicID,
 		EpicTitle:       serveEpicTitle(snap, epicID),
 		Status:          serveTaskStatus(snap, task),
@@ -617,6 +715,16 @@ func serveEpicTitle(snap serveSnapshot, epicID string) string {
 		return firstNonEmpty(stringField(epic.Data, "title"), epicID)
 	}
 	return epicID
+}
+
+func serveWaveTitle(snap serveSnapshot, waveID string) string {
+	if waveID == "" {
+		return ""
+	}
+	if wave, ok := snap.notesByID[waveID]; ok {
+		return firstNonEmpty(stringField(wave.Data, "title"), waveID)
+	}
+	return waveID
 }
 
 func serveUpdatedAt(note Note) string {
@@ -870,6 +978,8 @@ Endpoints:
   GET /api/runs?project=<id>
   GET /api/runs/<task-id>
   GET /api/epics?project=<id>
+  GET /api/waves?project=<id>
+  GET /api/waves/<wave-id>
   GET /api/tasks?project=<id>
   GET /api/tasks/<task-id>
   GET /api/docs?project=<id>
