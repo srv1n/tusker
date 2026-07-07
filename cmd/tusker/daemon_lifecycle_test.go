@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -128,6 +129,108 @@ func TestDaemonQuarantineBrokenProject(t *testing.T) {
 	}
 	if len(payload.Projects) != 2 {
 		t.Fatalf("/api/daemon must expose project health rows, got %#v", payload)
+	}
+}
+
+func TestResumeQuarantinesBrokenRegistration(t *testing.T) {
+	vault := automationTestVault(t)
+	healthyRoot := filepath.Dir(vault)
+	brokenRoot := filepath.Join(t.TempDir(), "broken")
+	brokenVault := filepath.Join(brokenRoot, ".tusker")
+	if err := ensureDir(brokenVault); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	broken := RegisteredProject{ProjectID: "aaa-broken", ProjectKey: "broken", Name: "broken", RepoRoot: brokenRoot, VaultRoot: brokenVault, WorkflowPath: workflowPath(brokenVault), Enabled: true, Health: projectHealthHealthy}
+	healthy := RegisteredProject{ProjectID: "zzz-healthy", ProjectKey: "healthy", Name: "healthy", RepoRoot: healthyRoot, VaultRoot: vault, WorkflowPath: workflowPath(vault), Enabled: true, Health: projectHealthHealthy}
+	if err := store.UpsertProject(broken); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertProject(healthy); err != nil {
+		t.Fatal(err)
+	}
+
+	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
+	if _, err := daemon.ResumeInvariantCircuit(); err != nil {
+		t.Fatalf("resume should skip unrelated broken registration: %v", err)
+	}
+
+	projects, err := store.ListProjects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]RegisteredProject{}
+	for _, project := range projects {
+		byID[project.ProjectID] = project
+	}
+	assertEqual(t, projectHealthError, byID[broken.ProjectID].Health, "broken project quarantined by resume")
+	if !strings.Contains(byID[broken.ProjectID].LastError, "WORKFLOW.md not found") {
+		t.Fatalf("expected recorded workflow load error, got %#v", byID[broken.ProjectID])
+	}
+	assertEqual(t, projectHealthHealthy, byID[healthy.ProjectID].Health, "healthy project remains healthy")
+
+	output := captureStdout(t, func() {
+		if err := projectsListCmd(Args{}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(output, broken.ProjectID) || !strings.Contains(output, "error") || !strings.Contains(output, "WORKFLOW.md not found") {
+		t.Fatalf("projects list must surface quarantined error, got:\n%s", output)
+	}
+}
+
+func TestSharedProjectLoaderAllEntryPoints(t *testing.T) {
+	requiredSites := []string{
+		"automation_commands.go",
+		"commands_index.go",
+		"commands_open_print.go",
+		"daemon.go",
+		"daemon_serve.go",
+		"sentinel.go",
+		"serve_command.go",
+	}
+	for _, path := range requiredSites {
+		body, err := readText(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(body, "loadRegisteredProjects(") {
+			t.Fatalf("%s must route registration loading through loadRegisteredProjects", path)
+		}
+	}
+
+	allowedRawListProjects := map[string]bool{
+		"project_loader.go": true,
+		"runtime_store.go":  true,
+	}
+	if err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		base := filepath.Base(path)
+		body, err := readText(path)
+		if err != nil {
+			return err
+		}
+		if !allowedRawListProjects[base] && strings.Contains(body, "ListProjects(") {
+			t.Fatalf("%s directly enumerates project registrations instead of using loadRegisteredProjects", path)
+		}
+		if base != "project_loader.go" && strings.Contains(body, "loadWorkflow(project.VaultRoot)") {
+			t.Fatalf("%s directly loads a registered project workflow instead of using loadRegisteredProjects", path)
+		}
+		if base != "project_loader.go" && strings.Contains(body, "listAllNotes(project.VaultRoot)") {
+			t.Fatalf("%s directly loads registered project notes instead of using loadRegisteredProjects", path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -679,14 +782,114 @@ func TestRetryCircuitBreakerMarksTerminal(t *testing.T) {
 		AttemptCount:    3,
 	}
 	retried := daemon.scheduleRetry(run, wf, "runner exited with code 1")
-	if retried.LeaseState != string(LeaseStateReleased) {
-		t.Fatalf("expected retry cap to release run, got %#v", retried)
+	if retried.LeaseState != string(LeaseStateParkedNoProgress) {
+		t.Fatalf("expected retry cap to park run, got %#v", retried)
 	}
 	if !retried.Terminal {
 		t.Fatalf("expected terminal retry circuit breaker, got %#v", retried)
 	}
-	if retried.LastError != "runner exited with code 1" {
+	if !strings.Contains(retried.LastError, "attempt cap reached (3): runner exited with code 1") {
 		t.Fatalf("expected terminal error to be preserved, got %#v", retried)
+	}
+}
+
+func TestReclaimParksAtCap(t *testing.T) {
+	vault := automationTestVault(t)
+	disableReviewerForTest(t, vault)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dead capped retry", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	project := registerAutomationTestProject(t, vault)
+	workspacePath := t.TempDir()
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(RunStatus{
+		ProjectID:        project.ProjectID,
+		RecordID:         "APP-T-0001",
+		ItemID:           "APP-T-0001",
+		Runner:           string(RunnerCodexAppServer),
+		Lane:             runLaneExecute,
+		LeaseState:       string(LeaseStateRetryQueued),
+		AttemptOutcome:   string(AttemptOutcomeNone),
+		ActiveAttemptID:  "attempt-3",
+		SessionRef:       "session-3",
+		WorkspacePath:    workspacePath,
+		ProcessPID:       deadPIDForTest(),
+		ProcessStartedAt: "1900-01-01T00:00:00Z",
+		AttemptCount:     3,
+		NextRetryAt:      "2026-07-06T00:00:00Z",
+		UpdatedAt:        "2026-07-06T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSession(RunnerSession{
+		ProjectID:     project.ProjectID,
+		RecordID:      "APP-T-0001",
+		Runner:        string(RunnerCodexAppServer),
+		SessionRef:    "session-3",
+		WorkspacePath: workspacePath,
+		WorkRevision:  0,
+		LastAttemptID: "attempt-3",
+		State:         string(LeaseStateRetryQueued),
+		Resumable:     true,
+		StartedAt:     "2026-07-06T00:00:00Z",
+		LastSeenAt:    "2026-07-06T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+	assertEqual(t, string(LeaseStateParkedNoProgress), run.LeaseState, "reclaim cap lease")
+	assertEqual(t, string(AttemptOutcomeBlocked), run.AttemptOutcome, "reclaim cap outcome")
+	assertEqual(t, true, run.Terminal, "reclaim cap terminal")
+	assertEqual(t, 3, run.AttemptCount, "reclaim must not create attempt")
+	if !strings.Contains(run.LastError, "attempt cap reached (3)") || !strings.Contains(run.LastError, "reclaim would create another attempt") {
+		t.Fatalf("expected reclaim cap reason, got %#v", run)
+	}
+	violations := sentinelAttemptCountWithinCaps(runtimeSentinelProjectSnapshot{Project: project, Workflow: defaultWorkflow()}, []RunStatus{run})
+	if len(violations) != 0 {
+		t.Fatalf("expected sentinel to stay green, got %#v", violations)
+	}
+	decisions, err := daemon.store.ListSupervisorDecisionsForRun(project.ProjectID, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decisions) == 0 || decisions[len(decisions)-1].Kind != string(SupervisorDecisionStopForAudit) {
+		t.Fatalf("expected stop-for-audit decision, got %#v", decisions)
+	}
+}
+
+func TestSingleCapCheckAllPaths(t *testing.T) {
+	raw, err := os.ReadFile("daemon.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	assertContainsIndexTest(t, source, "func (d *Daemon) enforceAttemptCreationCap(")
+	for _, marker := range []string{
+		"attemptCreationKindForDispatch(run), \"dispatch would create another attempt\"",
+		"attemptCreationReclaim, reason+\"; reclaim would create another attempt\"",
+		"attemptCreationContinuation, reason",
+		"attemptCreationRetry, reason",
+		"attemptCreationRedrive",
+	} {
+		if !strings.Contains(source, marker) {
+			t.Fatalf("missing shared cap check marker %q", marker)
+		}
+	}
+	if strings.Contains(source, "run.AttemptCount >= wf.Retry.MaxAttempts") ||
+		strings.Contains(source, "run.AttemptCount < wfFile.Data.Retry.MaxAttempts") {
+		t.Fatalf("attempt creation cap checks must route through enforceAttemptCreationCap")
 	}
 }
 
@@ -810,6 +1013,88 @@ func TestCleanFinishReleasesLeaseBothRunnerLanes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEarlyExitClassification(t *testing.T) {
+	vault := automationTestVault(t)
+	disableReviewerForTest(t, vault)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Early exit", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	wf := defaultWorkflow()
+	wf.Runtime.MaxContinuationRetries = 1
+	raw, err := yaml.Marshal(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(workflowPath(vault), "---\n"+strings.TrimSpace(string(raw))+"\n---\n\n## Routing\n\nTest.\n\n## Prompt\n\nTest prompt.\n\n## Retry policy\n\nRetry transient failures.\n\n## Human override policy\n\nHumans may override.\n"); err != nil {
+		t.Fatal(err)
+	}
+	project := registerAutomationTestProject(t, vault)
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusPath := filepath.Join(t.TempDir(), "runner.status.json")
+	if err := writeRunnerStatusFile(statusPath, 0); err != nil {
+		t.Fatal(err)
+	}
+	workspacePath := t.TempDir()
+	if err := store.UpsertRun(RunStatus{
+		ProjectID:       project.ProjectID,
+		RecordID:        "APP-T-0001",
+		ItemID:          "APP-T-0001",
+		Runner:          string(RunnerCodexAppServer),
+		Lane:            runLaneExecute,
+		LeaseState:      string(LeaseStateRunning),
+		AttemptOutcome:  string(AttemptOutcomeNone),
+		ActiveAttemptID: "attempt-early",
+		SessionRef:      "session-early",
+		WorkspacePath:   workspacePath,
+		StatusPath:      statusPath,
+		AttemptCount:    2,
+		UpdatedAt:       "2026-07-06T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+	assertEqual(t, string(LeaseStateParkedNoProgress), run.LeaseState, "early exit cap lease")
+	assertEqual(t, string(AttemptOutcomeBlocked), run.AttemptOutcome, "early exit cap outcome")
+	assertEqual(t, true, run.Terminal, "early exit cap terminal")
+	if !strings.Contains(run.LastError, "continuation retry cap reached (1): "+runnerEarlyExitActiveTrackerReason) {
+		t.Fatalf("expected early-exit cap reason, got %#v", run)
+	}
+	attempts, err := daemon.store.ListAttemptsForRun(project.ProjectID, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("expected one attempt, got %#v", attempts)
+	}
+	assertEqual(t, "attempt-early", attempts[0].AttemptID, "early exit attempt id")
+	assertEqual(t, string(AttemptOutcomeEarlyExit), attempts[0].Outcome, "early exit attempt outcome")
+	assertEqual(t, 0, attempts[0].ExitCode, "early exit process code")
+	if attempts[0].LastError != runnerEarlyExitActiveTrackerReason {
+		t.Fatalf("expected early-exit attempt reason, got %#v", attempts[0])
+	}
+	decisions, err := daemon.store.ListSupervisorDecisionsForRun(project.ProjectID, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decisions) == 0 || decisions[len(decisions)-1].Kind != string(SupervisorDecisionStopForAudit) {
+		t.Fatalf("expected cap to stop for audit, got %#v", decisions)
+	}
+	if !strings.Contains(decisions[len(decisions)-1].Reason, runnerEarlyExitActiveTrackerReason) {
+		t.Fatalf("expected early-exit decision reason, got %#v", decisions[len(decisions)-1])
 	}
 }
 

@@ -66,7 +66,7 @@ func (d *Daemon) startServe(_ context.Context) (*daemonServeServer, error) {
 }
 
 func (d *Daemon) serveTarget() (daemonServeTarget, bool, error) {
-	projects, err := d.store.ListProjects()
+	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{})
 	if err != nil {
 		return daemonServeTarget{}, false, err
 	}
@@ -74,14 +74,14 @@ func (d *Daemon) serveTarget() (daemonServeTarget, bool, error) {
 		return daemonServeTarget{}, false, nil
 	}
 	sort.Slice(projects, func(i, j int) bool {
-		left := firstNonEmpty(projects[i].ProjectID, projects[i].Name, projects[i].RepoRoot)
-		right := firstNonEmpty(projects[j].ProjectID, projects[j].Name, projects[j].RepoRoot)
+		left := firstNonEmpty(projects[i].Project.ProjectID, projects[i].Project.Name, projects[i].Project.RepoRoot)
+		right := firstNonEmpty(projects[j].Project.ProjectID, projects[j].Project.Name, projects[j].Project.RepoRoot)
 		return left < right
 	})
 	var selected *RegisteredProject
 	for _, candidate := range projects {
-		if candidate.Enabled {
-			copy := candidate
+		if candidate.Project.Enabled {
+			copy := candidate.Project
 			selected = &copy
 			break
 		}
@@ -91,15 +91,10 @@ func (d *Daemon) serveTarget() (daemonServeTarget, bool, error) {
 	}
 	for i := range projects {
 		candidate := projects[i]
-		if !candidate.Enabled {
+		if !candidate.Loadable() {
 			continue
 		}
-		wfFile, err := loadWorkflow(candidate.VaultRoot)
-		if err != nil {
-			_ = d.markProjectLoadError(candidate, err)
-			continue
-		}
-		cfg := wfFile.Data.Runtime.Serve
+		cfg := candidate.Workflow.Data.Runtime.Serve
 		if !cfg.Enabled {
 			return daemonServeTarget{}, false, nil
 		}
@@ -107,7 +102,7 @@ func (d *Daemon) serveTarget() (daemonServeTarget, bool, error) {
 		if err != nil {
 			return daemonServeTarget{}, false, err
 		}
-		return daemonServeTarget{project: candidate, addr: addr}, true, nil
+		return daemonServeTarget{project: candidate.Project, addr: addr}, true, nil
 	}
 	return daemonServeTarget{}, false, nil
 }

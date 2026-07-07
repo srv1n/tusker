@@ -117,21 +117,17 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 }
 
 func (d *Daemon) nextPollInterval() time.Duration {
-	projects, err := d.store.ListProjects()
+	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{})
 	if err != nil || len(projects) == 0 {
 		return 30 * time.Second
 	}
 	minInterval := 30 * time.Second
 	found := false
 	for _, project := range projects {
-		if !project.Enabled {
+		if !project.Loadable() {
 			continue
 		}
-		wf, err := loadWorkflow(project.VaultRoot)
-		if err != nil {
-			continue
-		}
-		ms := wf.Data.Runtime.PollIntervalMS
+		ms := project.Workflow.Data.Runtime.PollIntervalMS
 		if ms <= 0 {
 			continue
 		}
@@ -255,7 +251,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 	if err := d.store.SetSetting("daemon_watchdog_beat_at", nowPoll); err != nil {
 		return err
 	}
-	projects, err := d.store.ListProjects()
+	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{Notes: true})
 	if err != nil {
 		return err
 	}
@@ -277,29 +273,22 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 		return err
 	}
 
-	for _, project := range projects {
+	for _, loaded := range projects {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
-		if !project.Enabled {
+		if !loaded.Loadable() {
 			continue
 		}
 
-		wfFile, err := loadWorkflow(project.VaultRoot)
-		if err != nil {
-			_ = d.markProjectLoadError(project, err)
-			continue
-		}
+		project := loaded.Project
+		wfFile := loaded.Workflow
 		if _, err := d.refreshBudgetCircuitStatus(wfFile.Data, time.Now().UTC()); err != nil {
 			return err
 		}
-		notes, err := listAllNotes(project.VaultRoot)
-		if err != nil {
-			_ = d.markProjectLoadError(project, err)
-			continue
-		}
+		notes := loaded.Notes
 		sortDispatchCandidates(notes)
 		noteStatusByRecord := map[string]string{}
 		notesByID, notesByRecordID := daemonNoteMaps(notes)
@@ -355,7 +344,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				projectActiveRuns += dispatchCapacityRunDelta(current, reconciled)
 				current = reconciled
 			}
-			capped, capChanged := d.parkRetryQueuedContinuationAtCap(project, wfFile.Data, current, "queued continuation retry would exceed cap")
+			capped, capChanged := d.parkRetryQueuedRunAtAttemptCap(project, wfFile.Data, current, "queued continuation retry would exceed cap")
 			if capChanged {
 				if err := d.store.UpsertRun(capped); err != nil {
 					return err
@@ -657,15 +646,6 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 		return err
 	}
 	return nil
-}
-
-func (d *Daemon) markProjectLoadError(project RegisteredProject, loadErr error) error {
-	if d == nil || d.store == nil || loadErr == nil {
-		return nil
-	}
-	project.Health = projectHealthError
-	project.LastError = loadErr.Error()
-	return d.store.UpsertProject(project)
 }
 
 func projectActiveRunLimit(wf Workflow) int {
@@ -1197,7 +1177,6 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				return run, changed, err
 			}
 			noteStatus := stringField(note.Data, "status")
-			updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, "", finished)
 			if run.Lane != runLaneReview {
 				if wait, reason := v7MachineCompleteWaitingForHuman(project.VaultRoot, note); wait {
 					parentAttemptID := run.ActiveAttemptID
@@ -1230,7 +1209,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			if containsString(wfFile.Data.Tracker.ActiveStates, noteStatus) && run.Lane != runLaneReview {
 				parentAttemptID := run.ActiveAttemptID
 				parentSessionRef := run.SessionRef
-				run, queued := d.scheduleContinuationRetry(run, wfFile.Data, "runner exited cleanly while tracker state remained active; queued continuation retry")
+				reason := runnerEarlyExitActiveTrackerReason
+				updateRunAttemptFromRun(d.store, run, AttemptOutcomeEarlyExit, 0, reason, finished)
+				run, queued := d.scheduleContinuationRetry(run, wfFile.Data, reason)
 				if strings.TrimSpace(run.SessionRef) != "" {
 					_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", run.LastError, queued && sessionResumable)
 				}
@@ -1296,6 +1277,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			run.NextRetryAt = ""
 			run.LastError = ""
 			run.Terminal = false
+			updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, "", finished)
 			if strings.TrimSpace(run.SessionRef) != "" {
 				_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForOutcome(AttemptOutcomeSucceeded), "", "", sessionResumable)
 			}
@@ -1374,16 +1356,30 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 
 	if run.ProcessPID > 0 {
 		reason := fmt.Sprintf("runner process no longer matches recorded identity pid=%d pgid=%d start_time=%s", run.ProcessPID, run.ProcessPGID, firstNonEmpty(run.ProcessStartedAt, "unknown"))
-		if wfFile.Data.Retry.MaxAttempts > 0 && run.AttemptCount < wfFile.Data.Retry.MaxAttempts {
-			updateRunAttemptFromRun(d.store, run, AttemptOutcomeCancelled, 130, reason, now)
-			run = d.scheduleRetry(run, wfFile.Data, reason)
-			if strings.TrimSpace(run.SessionRef) != "" {
-				_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", reason, sessionResumable)
+		parentAttemptID := run.ActiveAttemptID
+		parentSessionRef := run.SessionRef
+		workspacePath := run.WorkspacePath
+		updateRunAttemptFromRun(d.store, run, AttemptOutcomeCancelled, 130, reason, now)
+		if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationReclaim, reason+"; reclaim would create another attempt"); capReached {
+			run = capped
+			if strings.TrimSpace(parentSessionRef) != "" {
+				_ = d.store.MarkSessionState(project.ProjectID, parentSessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", run.LastError, false)
 			}
+			d.emitSupervisorDecision(SupervisorDecision{
+				ProjectID:        project.ProjectID,
+				RecordID:         run.RecordID,
+				Kind:             string(SupervisorDecisionStopForAudit),
+				Reason:           run.LastError,
+				ParentAttemptID:  parentAttemptID,
+				ParentSessionRef: parentSessionRef,
+				WorkspacePath:    workspacePath,
+				LeaseState:       run.LeaseState,
+			})
 			return run, true, nil
 		}
-		if err := finishRuntimeRun(d.store, &run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, reason, sessionResumable); err != nil {
-			return run, changed, err
+		run = d.scheduleRetry(run, wfFile.Data, reason)
+		if strings.TrimSpace(run.SessionRef) != "" {
+			_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", reason, sessionResumable)
 		}
 		return run, true, nil
 	}
@@ -1518,6 +1514,25 @@ func (d *Daemon) normalizeDeadRetryQueuedRun(ctx context.Context, project Regist
 		return run, false, nil
 	}
 	reason := fmt.Sprintf("retry_queued run pid %d is dead", run.ProcessPID)
+	if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationReclaim, reason+"; reclaim would create another attempt"); capReached {
+		parentAttemptID := run.ActiveAttemptID
+		parentSessionRef := run.SessionRef
+		run = capped
+		if strings.TrimSpace(parentSessionRef) != "" {
+			_ = d.store.MarkSessionState(project.ProjectID, parentSessionRef, sessionStateForLeaseState(LeaseStateParkedNoProgress), "", run.LastError, false)
+		}
+		d.emitSupervisorDecision(SupervisorDecision{
+			ProjectID:        project.ProjectID,
+			RecordID:         run.RecordID,
+			Kind:             string(SupervisorDecisionStopForAudit),
+			Reason:           run.LastError,
+			ParentAttemptID:  parentAttemptID,
+			ParentSessionRef: parentSessionRef,
+			WorkspacePath:    run.WorkspacePath,
+			LeaseState:       run.LeaseState,
+		})
+		return run, true, nil
+	}
 	if strings.TrimSpace(run.SessionRef) != "" {
 		runner, _, err := runnerForName(run.Runner, wfFile.Data)
 		if err != nil {
@@ -1553,9 +1568,8 @@ func (d *Daemon) normalizeDeadRetryQueuedRun(ctx context.Context, project Regist
 }
 
 func (d *Daemon) scheduleContinuationRetry(run RunStatus, wf Workflow, reason string) (RunStatus, bool) {
-	limit := maxContinuationRetries(wf)
-	if limit > 0 && d.continuationRetryCount(run) >= limit {
-		run = parkNoProgressRun(run, fmt.Sprintf("continuation retry cap reached (%d): %s", limit, reason))
+	if capped, capReached := d.enforceAttemptCreationCap(wf, run, attemptCreationContinuation, reason); capReached {
+		run = capped
 		return run, false
 	}
 	now := time.Now().UTC()
@@ -1569,17 +1583,20 @@ func (d *Daemon) scheduleContinuationRetry(run RunStatus, wf Workflow, reason st
 	return run, true
 }
 
-func (d *Daemon) parkRetryQueuedContinuationAtCap(project RegisteredProject, wf Workflow, run RunStatus, reason string) (RunStatus, bool) {
+const runnerEarlyExitActiveTrackerReason = "runner early exit while tracker state remained active"
+
+func (d *Daemon) parkRetryQueuedRunAtAttemptCap(project RegisteredProject, wf Workflow, run RunStatus, reason string) (RunStatus, bool) {
 	if LeaseState(strings.TrimSpace(run.LeaseState)) != LeaseStateRetryQueued {
 		return run, false
 	}
-	limit := maxContinuationRetries(wf)
-	if limit <= 0 || d.continuationRetryCount(run) < limit {
+	kind := attemptCreationKindForDispatch(run)
+	capped, capReached := d.enforceAttemptCreationCap(wf, run, kind, reason)
+	if !capReached {
 		return run, false
 	}
 	parentAttemptID := run.ActiveAttemptID
 	parentSessionRef := run.SessionRef
-	run = parkNoProgressRun(run, fmt.Sprintf("continuation retry cap reached (%d): %s", limit, reason))
+	run = capped
 	if strings.TrimSpace(parentSessionRef) != "" {
 		_ = d.store.MarkSessionState(project.ProjectID, parentSessionRef, sessionStateForLeaseState(LeaseStateParkedNoProgress), "", run.LastError, false)
 	}
@@ -1594,6 +1611,59 @@ func (d *Daemon) parkRetryQueuedContinuationAtCap(project RegisteredProject, wf 
 		LeaseState:       run.LeaseState,
 	})
 	return run, true
+}
+
+type attemptCreationKind string
+
+const (
+	attemptCreationFreshDispatch attemptCreationKind = "fresh dispatch"
+	attemptCreationContinuation  attemptCreationKind = "continuation"
+	attemptCreationReclaim       attemptCreationKind = "reclaim"
+	attemptCreationRedrive       attemptCreationKind = "redrive"
+	attemptCreationRetry         attemptCreationKind = "retry"
+)
+
+func (d *Daemon) enforceAttemptCreationCap(wf Workflow, run RunStatus, kind attemptCreationKind, reason string) (RunStatus, bool) {
+	if kind == attemptCreationContinuation {
+		limit := maxContinuationRetries(wf)
+		if limit > 0 && d.continuationRetryCount(run) >= limit {
+			return parkNoProgressRun(run, fmt.Sprintf("continuation retry cap reached (%d): %s", limit, firstNonEmpty(reason, "continuation would create another attempt"))), true
+		}
+	}
+	limit := attemptCreationCap(wf, kind)
+	if limit <= 0 || run.AttemptCount < limit {
+		return run, false
+	}
+	return parkNoProgressRun(run, fmt.Sprintf("attempt cap reached (%d): %s", limit, attemptCreationCapReason(kind, reason))), true
+}
+
+func attemptCreationCap(wf Workflow, kind attemptCreationKind) int {
+	if kind == attemptCreationContinuation {
+		return maxContinuationRetries(wf)
+	}
+	return wf.Retry.MaxAttempts
+}
+
+func attemptCreationCapReason(kind attemptCreationKind, reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = string(kind) + " would create another attempt"
+	}
+	return reason
+}
+
+func attemptCreationKindForDispatch(run RunStatus) attemptCreationKind {
+	if LeaseState(strings.TrimSpace(run.LeaseState)) != LeaseStateRetryQueued {
+		return attemptCreationFreshDispatch
+	}
+	if strings.HasPrefix(strings.TrimSpace(run.LastError), "redriven by ") ||
+		(run.AttemptCount == 0 && strings.TrimSpace(run.ActiveAttemptID) == "") {
+		return attemptCreationRedrive
+	}
+	if strings.TrimSpace(run.SessionRef) != "" || strings.Contains(strings.ToLower(run.LastError), "continuation") {
+		return attemptCreationContinuation
+	}
+	return attemptCreationRetry
 }
 
 func runSessionResumable(wf Workflow, run RunStatus) bool {
@@ -1679,6 +1749,9 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	lane = firstNonEmpty(strings.TrimSpace(lane), runLaneExecute)
 	if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 		return run, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": lane}))
+	}
+	if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached {
+		return capped, nil
 	}
 	previousRun := run
 	runner, command, err := runnerForName(run.Runner, wfFile.Data)
@@ -2049,29 +2122,40 @@ func (d *Daemon) scheduleRetry(run RunStatus, wf Workflow, reason string) RunSta
 	run.LastError = reason
 	run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	clearActiveExecution(&run)
-	if !classification.retryable || run.AttemptCount >= wf.Retry.MaxAttempts {
+	if !classification.retryable {
 		run.LeaseState = string(LeaseStateReleased)
 		run.NextRetryAt = ""
 		run.Terminal = true
-		if !classification.retryable {
-			decisionKind := string(SupervisorDecisionStopForAudit)
-			contextSignal := ""
-			if failureReasonIndicatesContextPressure(reason) {
-				decisionKind = string(SupervisorDecisionForkThread)
-				contextSignal = "context_pressure"
-			}
-			d.emitSupervisorDecision(SupervisorDecision{
-				ProjectID:        run.ProjectID,
-				RecordID:         run.RecordID,
-				Kind:             decisionKind,
-				Reason:           reason,
-				ParentAttemptID:  parentAttemptID,
-				ParentSessionRef: parentSessionRef,
-				WorkspacePath:    run.WorkspacePath,
-				ContextSignal:    contextSignal,
-			})
+		decisionKind := string(SupervisorDecisionStopForAudit)
+		contextSignal := ""
+		if failureReasonIndicatesContextPressure(reason) {
+			decisionKind = string(SupervisorDecisionForkThread)
+			contextSignal = "context_pressure"
 		}
+		d.emitSupervisorDecision(SupervisorDecision{
+			ProjectID:        run.ProjectID,
+			RecordID:         run.RecordID,
+			Kind:             decisionKind,
+			Reason:           reason,
+			ParentAttemptID:  parentAttemptID,
+			ParentSessionRef: parentSessionRef,
+			WorkspacePath:    run.WorkspacePath,
+			ContextSignal:    contextSignal,
+		})
 		return run
+	}
+	if capped, capReached := d.enforceAttemptCreationCap(wf, run, attemptCreationRetry, reason); capReached {
+		d.emitSupervisorDecision(SupervisorDecision{
+			ProjectID:        run.ProjectID,
+			RecordID:         run.RecordID,
+			Kind:             string(SupervisorDecisionStopForAudit),
+			Reason:           capped.LastError,
+			ParentAttemptID:  parentAttemptID,
+			ParentSessionRef: parentSessionRef,
+			WorkspacePath:    run.WorkspacePath,
+			LeaseState:       capped.LeaseState,
+		})
+		return capped
 	}
 	if len(wf.Retry.BackoffMS) == 0 {
 		run.LeaseState = string(LeaseStateRetryQueued)
@@ -2284,7 +2368,7 @@ func applyReconcileResultCloud(run *RunStatus, result *ReconcileResult) {
 
 func exitCodeForOutcome(outcome AttemptOutcome) int {
 	switch outcome {
-	case AttemptOutcomeSucceeded, AttemptOutcomeNone:
+	case AttemptOutcomeSucceeded, AttemptOutcomeNone, AttemptOutcomeEarlyExit:
 		return 0
 	case AttemptOutcomeCancelled:
 		return 130
@@ -4000,6 +4084,9 @@ func daemonStatusCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
+	if _, err := loadRegisteredProjects(store, registeredProjectLoadOptions{}); err != nil {
+		return err
+	}
 	status, err := store.DaemonStatus()
 	if err != nil {
 		return err
@@ -4066,6 +4153,9 @@ func daemonLimitsCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
+	if _, err := loadRegisteredProjects(store, registeredProjectLoadOptions{}); err != nil {
+		return err
+	}
 	if raw := strings.TrimSpace(args.String("max-active-runs")); raw != "" {
 		limit := atoiSafe(raw)
 		if limit <= 0 {
@@ -4092,6 +4182,15 @@ func daemonLimitsCmd(args Args) error {
 
 func daemonStopCmd(args Args) error {
 	stateRoot := DefaultStateRoot()
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		return err
+	}
+	if _, err := loadRegisteredProjects(store, registeredProjectLoadOptions{}); err != nil {
+		_ = store.Close()
+		return err
+	}
+	_ = store.Close()
 	drain := args.Bool("drain")
 	before := readDaemonLiveness(stateRoot, time.Now().UTC())
 	if !before.Alive {
@@ -4211,10 +4310,11 @@ func projectsListCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
-	projects, err := store.ListProjects()
+	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{})
 	if err != nil {
 		return err
 	}
+	projects := loadedRegisteredProjects(loaded)
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "count": len(projects), "projects": projects})
 		return nil
@@ -4228,7 +4328,11 @@ func projectsListCmd(args Args) error {
 		if !project.Enabled {
 			state = "disabled"
 		}
-		fmt.Printf("%s %-8s %-8s %s\n", project.ProjectID, state, project.Health, project.RepoRoot)
+		line := fmt.Sprintf("%s %-8s %-8s %s", project.ProjectID, state, project.Health, project.RepoRoot)
+		if strings.TrimSpace(project.LastError) != "" {
+			line += " (" + project.LastError + ")"
+		}
+		fmt.Println(line)
 	}
 	return nil
 }
@@ -4239,24 +4343,26 @@ func projectsLimitsCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
-	project, err := resolveRegisteredProject(store, args)
+	loaded, err := resolveLoadedRegisteredProject(store, args, registeredProjectLoadOptions{})
 	if err != nil {
 		return err
 	}
+	project := loaded.Project
 	if raw := strings.TrimSpace(args.String("max-active-runs")); raw != "" {
 		limit := atoiSafe(raw)
 		if limit <= 0 {
 			return tuskerError(errorInvalidArg, "--max-active-runs must be > 0", withContext(map[string]any{"arg": "--max-active-runs", "value": raw}))
 		}
-		if _, err := setWorkflowProjectRunLimit(project.VaultRoot, limit); err != nil {
+		wfFile, err := setWorkflowProjectRunLimit(project.VaultRoot, limit)
+		if err != nil {
 			return err
 		}
+		loaded.Workflow = wfFile
+		loaded.LoadError = nil
+	} else if loaded.LoadError != nil {
+		return projectQuarantinedError(project)
 	}
-	wfFile, err := loadWorkflow(project.VaultRoot)
-	if err != nil {
-		return err
-	}
-	limit := projectActiveRunLimit(wfFile.Data)
+	limit := projectActiveRunLimit(loaded.Workflow.Data)
 	if args.Bool("json") {
 		emitJSON(map[string]any{
 			"ok": true,
@@ -4377,16 +4483,25 @@ func refreshCmd(args Args) error {
 }
 
 func resolveRegisteredProject(store *RuntimeStore, args Args) (*RegisteredProject, error) {
-	projects, err := store.ListProjects()
+	loaded, err := resolveLoadedRegisteredProject(store, args, registeredProjectLoadOptions{})
 	if err != nil {
 		return nil, err
 	}
-	if len(projects) == 0 {
+	project := loaded.Project
+	return &project, nil
+}
+
+func resolveLoadedRegisteredProject(store *RuntimeStore, args Args, opts registeredProjectLoadOptions) (*loadedRegisteredProject, error) {
+	loaded, err := loadRegisteredProjects(store, opts)
+	if err != nil {
+		return nil, err
+	}
+	if len(loaded) == 0 {
 		return nil, tuskerError(errorNotFound, "no registered projects")
 	}
 	if projectID := strings.TrimSpace(args.String("id")); projectID != "" {
-		for _, project := range projects {
-			if project.ProjectID == projectID {
+		for _, project := range loaded {
+			if project.Project.ProjectID == projectID {
 				copy := project
 				return &copy, nil
 			}
@@ -4410,10 +4525,10 @@ func resolveRegisteredProject(store *RuntimeStore, args Args) (*RegisteredProjec
 	bestIndex := -1
 	bestScore := -1
 	ambiguous := false
-	for i, project := range projects {
+	for i, project := range loaded {
 		score := 0
 		for _, target := range targets {
-			score = maxInt(score, projectPathMatchScore(project, target))
+			score = maxInt(score, projectPathMatchScore(project.Project, target))
 		}
 		if score == 0 {
 			continue
@@ -4434,7 +4549,7 @@ func resolveRegisteredProject(store *RuntimeStore, args Args) (*RegisteredProjec
 	if ambiguous {
 		return nil, tuskerError(errorInvalidArg, "multiple registered projects match this path; use --id")
 	}
-	copy := projects[bestIndex]
+	copy := loaded[bestIndex]
 	return &copy, nil
 }
 

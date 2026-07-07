@@ -12,8 +12,8 @@ source_of_truth:
   - ".tusker/WORKFLOW.md"
   - "tusker.yaml"
 created_at: "2026-06-04 00:00:00 +0000 UTC"
-updated_at: "2026-07-07T03:23:47Z"
-state_rev: "sha256:2311f0c8dc0b78fa6da1dd37c520806989fedb2a352f69e91ba28e0825741fc5"
+updated_at: "2026-07-07T12:16:50Z"
+state_rev: "sha256:dd2a05b279907bbca5b453663a74050d8875037775bae6530cc8d3cdaa3e7253"
 ---
 
 # Project Canon
@@ -24,20 +24,25 @@ state_rev: "sha256:2311f0c8dc0b78fa6da1dd37c520806989fedb2a352f69e91ba28e0825741
 - Durable task status never uses `active`.
 - Dispatchable task states are `ready` and `rework`.
 - Runtime activity is represented by run leases, attempts, sessions, and workspaces.
+- Every attempt-creating path uses the shared attempt-cap guard before dispatch. Fresh dispatch, failure retry, continuation retry, reclaim replacement, and redriven retry-queued dispatch all count against the active redrive window; reclaim-caused replacements are not free attempts.
+- Runner exit classification is tracker-aware: exit code 0 with tracker state still in `ready` or `rework` is attempt outcome `early_exit`, not clean completion, and counts against the no-progress continuation cap.
 - Human-owned gates set `agent_action: stop_until_human_response` and `readiness: waiting_on_human`.
 - Tags are projections; typed frontmatter is source of truth.
 - Obsidian Bases and dashboards are generated views, not canonical state.
 - Browser-backed ChatGPT work is a runner result source, not a direct state writer.
 - Waves are first-class V7 batch records; membership is canonical on `kind: wave`, task `wave:` is a reconcile-maintained back-pointer, and wave `status` is derived from member task closure.
+- Project registration quarantine is a loader property: entry points that scan registered projects use the shared loader, which records failed enabled registrations as `health: error` with `last_error` and continues loading unrelated healthy projects.
 
 ## Invariants
 
 - A ready/rework task must have concrete acceptance and verification proof.
 - Placeholder acceptance must block dispatch.
+- A run at its attempt cap parks before any new attempt is created. `attempt_count_within_caps` is a corruption/operator-surgery sentinel, not a normal dispatch control path.
 - Raw CLI output belongs in runtime scratch/logs, not task markdown.
 - `tusker automation plan <task> --json` is the canonical pre-dispatch explanation.
 - High and critical risk closeout requires human acceptance.
 - Legacy V5/V6 docs, publication manifests, site export state, and checked-in event history are not default read paths.
+- Targeting a quarantined project may fail loudly, but unrelated quarantined registrations must not fatal daemon run/resume, status/list, automation, all-project listing, or serve paths.
 
 ## Verification
 

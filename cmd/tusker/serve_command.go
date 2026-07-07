@@ -287,13 +287,13 @@ func (s *serveServer) loadSnapshot() (serveSnapshot, error) {
 			snap.evidence = append(snap.evidence, note)
 		}
 	}
-	if projects, err := s.store.ListProjects(); err == nil {
+	if projects, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{}); err == nil {
 		for _, project := range projects {
-			if project.ProjectID == snap.projectID || sameCleanPath(project.VaultRoot, s.vaultPath) || sameCleanPath(project.RepoRoot, s.repoRoot) {
-				snap.project = project
+			if project.Project.ProjectID == snap.projectID || sameCleanPath(project.Project.VaultRoot, s.vaultPath) || sameCleanPath(project.Project.RepoRoot, s.repoRoot) {
+				snap.project = project.Project
 				snap.projectRegistered = true
-				snap.projectID = firstNonEmpty(project.ProjectID, snap.projectID)
-				snap.projectName = firstNonEmpty(project.Name, snap.projectName)
+				snap.projectID = firstNonEmpty(project.Project.ProjectID, snap.projectID)
+				snap.projectName = firstNonEmpty(project.Project.Name, snap.projectName)
 				break
 			}
 		}
@@ -367,7 +367,8 @@ func (s *serveServer) handleDaemon(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	daemonStatus, _ := s.store.DaemonStatus()
-	projects, _ := s.store.ListProjects()
+	loadedProjects, _ := loadRegisteredProjects(s.store, registeredProjectLoadOptions{})
+	projects := loadedRegisteredProjects(loadedProjects)
 	serveJSON(w, http.StatusOK, serveDaemonStatus{
 		Connected:        true,
 		Addr:             s.addr,

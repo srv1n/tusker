@@ -103,6 +103,14 @@ Dispatch only from durable task states `ready` and `rework`. Do not create or us
 
 Dependency edges may be explicit `TASK-ID:hard` or `TASK-ID:soft`; plain `TASK-ID` stays valid and defaults by the dependency's risk. Dependencies on high/critical tasks default hard and require `done`. Dependencies on low/medium tasks default soft and may dispatch once the dependency is in `review` with `proof_status: satisfied`, or `done`. Review gates are for closing, not flowing: soft edges can unblock dispatch, but `tusker close` still requires every dependency to be `done`.
 
+## Runner Exit Classification
+
+| Class | Detection | Runtime result | Continuation |
+|---|---|---|---|
+| Completion | Runner exits 0 after the tracker leaves `ready`/`rework`, or reaches a human-wait state. | Attempt is `succeeded` or `waiting_for_human`; run releases. | No retry. |
+| Declined dispatch | Plan/eligibility gate says no before an attempt is created. | No new attempt; blocker is recorded on the run/plan. | No automatic retry. |
+| Early exit | Runner exits, including exit 0, while tracker state is still active. | Attempt is `early_exit`; run queues continuation or parks at `max_continuation_retries`. | Counts against the no-progress cap. |
+
 ## Waves
 
 Use `tusker wave create "<title>" <TASK-ID>...` to record a named dispatch/review batch. Wave membership is canonical on the `kind: wave` record under `work/waves/`; task `wave:` fields are generated back-pointers maintained by `tusker reconcile`.

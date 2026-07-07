@@ -147,10 +147,11 @@ func automationStatusCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	projects, err := store.ListProjects()
+	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{})
 	if err != nil {
 		return err
 	}
+	projects := loadedRegisteredProjects(loaded)
 	runs, err := store.ListRuns()
 	if err != nil {
 		return err
@@ -303,7 +304,12 @@ func loadAutomationCommandContextWithStore(args Args, stateRoot string, store *R
 		return nil, projectErr
 	}
 	if registered {
-		ctx.Project = *project
+		if project.LoadError != nil {
+			return nil, projectQuarantinedError(project.Project)
+		}
+		ctx.Project = project.Project
+		ctx.Workflow = project.Workflow
+		ctx.Notes = project.Notes
 		ctx.ProjectRegistered = true
 	} else {
 		vaultPath, err := resolveAutomationVaultPath(args)
@@ -324,14 +330,14 @@ func loadAutomationCommandContextWithStore(args Args, stateRoot string, store *R
 			Enabled:      false,
 			Health:       projectHealthDisabled,
 		}
-	}
-	ctx.Workflow, err = loadWorkflow(ctx.Project.VaultRoot)
-	if err != nil {
-		return nil, err
-	}
-	ctx.Notes, err = listAllNotes(ctx.Project.VaultRoot)
-	if err != nil {
-		return nil, err
+		ctx.Workflow, err = loadWorkflow(ctx.Project.VaultRoot)
+		if err != nil {
+			return nil, err
+		}
+		ctx.Notes, err = listAllNotes(ctx.Project.VaultRoot)
+		if err != nil {
+			return nil, err
+		}
 	}
 	lookup := buildNoteLookup(ctx.Notes)
 	ctx.NotesByID = lookup.ByID
@@ -369,7 +375,7 @@ func (ctx *automationCommandContext) Close() {
 	}
 }
 
-func resolveAutomationRegisteredProject(store *RuntimeStore, args Args) (*RegisteredProject, bool, error) {
+func resolveAutomationRegisteredProject(store *RuntimeStore, args Args) (*loadedRegisteredProject, bool, error) {
 	projectArgs := Args{}
 	if projectID := firstNonEmpty(args.String("project"), args.String("project-id")); projectID != "" {
 		projectArgs["id"] = projectID
@@ -380,7 +386,7 @@ func resolveAutomationRegisteredProject(store *RuntimeStore, args Args) (*Regist
 	if vault := strings.TrimSpace(args.String("vault")); vault != "" {
 		projectArgs["vault"] = vault
 	}
-	project, err := resolveRegisteredProject(store, projectArgs)
+	project, err := resolveLoadedRegisteredProject(store, projectArgs, registeredProjectLoadOptions{Notes: true})
 	if err != nil {
 		return nil, false, err
 	}
@@ -496,12 +502,16 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 	if reason := automationRunBlocker(run, time.Now().UTC()); reason != "" {
 		blockers = append(blockers, reason)
 	}
-	if _, reason, _, err := (&Daemon{stateRoot: ctx.StateRoot, store: ctx.Store}).budgetDispatchBlocker(ctx.Project, ctx.Workflow.Data, note, run, time.Now().UTC()); err != nil {
+	daemon := &Daemon{stateRoot: ctx.StateRoot, store: ctx.Store}
+	if capped, capReached := daemon.enforceAttemptCreationCap(ctx.Workflow.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached {
+		blockers = append(blockers, capped.LastError)
+	}
+	if _, reason, _, err := daemon.budgetDispatchBlocker(ctx.Project, ctx.Workflow.Data, note, run, time.Now().UTC()); err != nil {
 		blockers = append(blockers, "budget: "+err.Error())
 	} else if reason != "" {
 		blockers = append(blockers, reason)
 	}
-	if reason, err := (&Daemon{stateRoot: ctx.StateRoot, store: ctx.Store}).invariantDispatchBlocker(); err != nil {
+	if reason, err := daemon.invariantDispatchBlocker(); err != nil {
 		blockers = append(blockers, "invariant sentinel: "+err.Error())
 	} else if reason != "" {
 		blockers = append(blockers, reason)
@@ -730,6 +740,9 @@ func automationRunBlocker(run RunStatus, now time.Time) string {
 	case LeaseStateInterrupted:
 		return "existing run is interrupted"
 	case LeaseStateParkedNoProgress:
+		if strings.Contains(strings.ToLower(run.LastError), "cap reached") {
+			return "existing run is parked_no_progress at attempt cap; run `tusker redrive " + firstNonEmpty(run.ItemID, run.RecordID) + " --reason <why>` before redispatch"
+		}
 		return "existing run is parked_no_progress; update the task revision before redispatch"
 	case LeaseStateParkedBudget:
 		return "existing run is parked_budget; run `tusker redrive " + firstNonEmpty(run.ItemID, run.RecordID) + " --reason <why>` before redispatch"

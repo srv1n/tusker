@@ -213,7 +213,7 @@ func (d *Daemon) ResumeInvariantCircuit() (invariantCircuitStatus, error) {
 	if err != nil {
 		return invariantCircuitStatus{}, err
 	}
-	projects, err := d.store.ListProjects()
+	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{Notes: true})
 	if err != nil {
 		return invariantCircuitStatus{}, err
 	}
@@ -234,22 +234,14 @@ func (d *Daemon) ResumeInvariantCircuit() (invariantCircuitStatus, error) {
 		Resume:         true,
 		Liveness:       processIdentityMatches,
 	}
-	for _, project := range projects {
-		if !project.Enabled {
+	for _, loaded := range projects {
+		if !loaded.Loadable() {
 			continue
 		}
-		wfFile, err := loadWorkflow(project.VaultRoot)
-		if err != nil {
-			return invariantCircuitStatus{}, err
-		}
-		notes, err := listAllNotes(project.VaultRoot)
-		if err != nil {
-			return invariantCircuitStatus{}, err
-		}
-		notesByID, notesByRecordID := daemonNoteMaps(notes)
+		notesByID, notesByRecordID := daemonNoteMaps(loaded.Notes)
 		snapshot.Projects = append(snapshot.Projects, runtimeSentinelProjectSnapshot{
-			Project:         project,
-			Workflow:        wfFile.Data,
+			Project:         loaded.Project,
+			Workflow:        loaded.Workflow.Data,
 			NotesByID:       notesByID,
 			NotesByRecordID: notesByRecordID,
 		})
@@ -423,6 +415,9 @@ func sentinelFreshHeartbeatPidLive(project runtimeSentinelProjectSnapshot, runs 
 	var violations []runtimeInvariantViolation
 	for _, run := range runs {
 		if !isDispatchingLeaseState(run.LeaseState) {
+			continue
+		}
+		if runnerStatusReadyForReconcile(run) {
 			continue
 		}
 		heartbeatAt, ok := parseSentinelTimestamp(run.LastHeartbeatAt)

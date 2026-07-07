@@ -1584,20 +1584,16 @@ func minInt(left, right int) int {
 
 func collectListRecords(args Args) ([]listRecord, error) {
 	if args.Bool("all-projects") {
-		projects, err := registeredProjects(args.String("project"))
+		projects, err := registeredProjectLoads(args.String("project"), registeredProjectLoadOptions{Notes: true})
 		if err != nil {
 			return nil, err
 		}
 		var out []listRecord
 		for _, project := range projects {
-			notes, err := listAllNotes(project.VaultRoot)
-			if err != nil {
-				return nil, err
-			}
-			activeLeases := activeV7LeasesByTask(project.VaultRoot)
-			label := registeredProjectLabel(project)
-			for _, note := range notes {
-				record := listRecord{Note: note, VaultPath: project.VaultRoot, Project: label}
+			activeLeases := activeV7LeasesByTask(project.Project.VaultRoot)
+			label := registeredProjectLabel(project.Project)
+			for _, note := range project.Notes {
+				record := listRecord{Note: note, VaultPath: project.Project.VaultRoot, Project: label}
 				if lease, ok := activeLeases[stringField(note.Data, "id")]; ok {
 					record.ActiveLease = &lease
 				}
@@ -1982,7 +1978,7 @@ func loadDashboardRuntime(vaultPath string) map[string]any {
 		return section
 	}
 	defer store.Close()
-	projects, err := store.ListProjects()
+	projects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{})
 	if err != nil {
 		return section
 	}
@@ -1992,13 +1988,13 @@ func loadDashboardRuntime(vaultPath string) map[string]any {
 	}
 	projectIDs := map[string]struct{}{}
 	for _, project := range projects {
-		projectVault, err := filepath.Abs(project.VaultRoot)
+		projectVault, err := filepath.Abs(project.Project.VaultRoot)
 		if err != nil {
-			projectVault = project.VaultRoot
+			projectVault = project.Project.VaultRoot
 		}
 		if projectVault == absVault {
-			projectIDs[project.ProjectID] = struct{}{}
-			section["project_id"] = project.ProjectID
+			projectIDs[project.Project.ProjectID] = struct{}{}
+			section["project_id"] = project.Project.ProjectID
 		}
 	}
 	if len(projectIDs) == 0 {

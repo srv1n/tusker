@@ -11,6 +11,89 @@ import (
 	"time"
 )
 
+const runnerLiveTestWait = 15 * time.Second
+
+func TestMaxTurnsReachesRunnerSession(t *testing.T) {
+	tempRoot := t.TempDir()
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(tempRoot, "state"))
+	workspaceRoot := filepath.Join(tempRoot, "workspace")
+	if err := ensureDir(workspaceRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(workflowPath(tempRoot), "---\ncodex:\n  max_turns: 30\n  turn_timeout_ms: 5000\n  read_timeout_ms: 5000\n  stall_timeout_ms: 5000\n---\n\n## Routing\n\nTest.\n\n## Prompt\n\nTest prompt.\n\n## Retry policy\n\nRetry transient failures.\n\n## Human override policy\n\nHumans may override.\n"); err != nil {
+		t.Fatal(err)
+	}
+	wfFile, err := loadWorkflow(tempRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := codexPolicyFromWorkflow(wfFile.Data)
+	assertEqual(t, 30, policy.MaxTurns, "workflow max_turns")
+
+	rawLogPath := filepath.Join(tempRoot, "codex.log")
+	statusPath := filepath.Join(tempRoot, "codex.status.json")
+	eventSinkPath := filepath.Join(tempRoot, "events.jsonl")
+	promptPath := filepath.Join(tempRoot, "prompt.txt")
+	scriptPath := filepath.Join(tempRoot, "fake-codex.py")
+	if err := writeText(promptPath, "Check policy.\n"); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/usr/bin/env python3
+import json,os,sys
+for line in sys.stdin:
+    msg=json.loads(line)
+    if msg.get("method")=="initialize":
+        assert os.environ["TUSKER_CODEX_MAX_TURNS"]=="30", os.environ.get("TUSKER_CODEX_MAX_TURNS")
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"serverInfo":{"name":"fake-codex"}}}), flush=True)
+    elif msg.get("method")=="thread/start":
+        assert "maxTurns" not in msg["params"], msg["params"]
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"thread":{"id":"thread-max-turns"}}}), flush=True)
+    elif msg.get("method")=="turn/start":
+        print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"turn":{"id":"turn-max-turns","status":"inProgress","items":[]}}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-max-turns","turn":{"id":"turn-max-turns","status":"completed","items":[]}}}), flush=True)
+        break
+`
+	if err := writeText(scriptPath, script); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := startLiveCodex(context.Background(), StartRequest{
+		ProjectID:     "project-1",
+		RecordID:      "record-1",
+		ItemID:        "ITEM-1",
+		AttemptID:     "attempt-max-turns",
+		WorkRevision:  0,
+		WorkspacePath: workspaceRoot,
+		PromptPath:    promptPath,
+		EventSinkPath: eventSinkPath,
+		RawLogPath:    rawLogPath,
+		StatusPath:    statusPath,
+		Command:       scriptPath,
+		VaultPath:     tempRoot,
+		CodexPolicy:   policy,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "thread-max-turns", result.SessionRef, "codex live session ref")
+	waitForStatusFile(t, statusPath)
+	status, err := readRunnerProcessStatus(statusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 0, status.ExitCode, "codex policy exit code")
+	logText, err := readText(rawLogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logText, "codex app-server dispatch policy: max_turns=30") {
+		t.Fatalf("expected max_turns dispatch log, got:\n%s", logText)
+	}
+}
+
 func TestCodexLiveRunnerHandlesAppServerFlow(t *testing.T) {
 	tempRoot := t.TempDir()
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(tempRoot, "state"))
@@ -815,7 +898,7 @@ func TestRunnerRejectsMissingWorkspacePath(t *testing.T) {
 
 func waitForStatusFile(t *testing.T, path string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(runnerLiveTestWait)
 	for time.Now().Before(deadline) {
 		if fileExists(path) {
 			return
@@ -827,7 +910,7 @@ func waitForStatusFile(t *testing.T, path string) {
 
 func waitForFileText(t *testing.T, path, needle string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(runnerLiveTestWait)
 	for time.Now().Before(deadline) {
 		if text, err := readText(path); err == nil && strings.Contains(text, needle) {
 			return
@@ -839,7 +922,7 @@ func waitForFileText(t *testing.T, path, needle string) {
 
 func waitForStoredTurnStatus(t *testing.T, store *RuntimeStore, projectID, recordID, status string) []RunTurn {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(runnerLiveTestWait)
 	var last []RunTurn
 	for time.Now().Before(deadline) {
 		turns, err := store.ListTurnsForRun(projectID, recordID)
@@ -860,7 +943,7 @@ func waitForStoredTurnStatus(t *testing.T, store *RuntimeStore, projectID, recor
 
 func openRuntimeStoreEventually(t *testing.T) *RuntimeStore {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(runnerLiveTestWait)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		store, err := OpenRuntimeStore(DefaultStateRoot())
@@ -876,7 +959,7 @@ func openRuntimeStoreEventually(t *testing.T) *RuntimeStore {
 
 func waitForStoredTurnCount(t *testing.T, store *RuntimeStore, projectID, recordID string, count int) []RunTurn {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(runnerLiveTestWait)
 	var last []RunTurn
 	for time.Now().Before(deadline) {
 		turns, err := store.ListTurnsForRun(projectID, recordID)

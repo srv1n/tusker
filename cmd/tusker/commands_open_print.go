@@ -256,12 +256,20 @@ func resolveRecordForCLI(args Args, id string) (resolvedRecord, error) {
 }
 
 func registeredProjects(selector string) ([]RegisteredProject, error) {
+	loaded, err := registeredProjectLoads(selector, registeredProjectLoadOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return loadedRegisteredProjects(loaded), nil
+}
+
+func registeredProjectLoads(selector string, opts registeredProjectLoadOptions) ([]loadedRegisteredProject, error) {
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return nil, err
 	}
 	defer store.Close()
-	projects, err := store.ListProjects()
+	projects, err := loadRegisteredProjects(store, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -270,11 +278,23 @@ func registeredProjects(selector string) ([]RegisteredProject, error) {
 		if len(projects) == 0 {
 			return nil, tuskerError(errorNotFound, "no registered projects", withHint("run `tusker projects add --repo <repo> --vault <repo>/.tusker`"))
 		}
-		return projects, nil
+		loadable := make([]loadedRegisteredProject, 0, len(projects))
+		for _, project := range projects {
+			if project.Loadable() {
+				loadable = append(loadable, project)
+			}
+		}
+		if len(loadable) == 0 {
+			return nil, tuskerError(errorNotFound, "no loadable registered projects", withHint("run `tusker projects list` to inspect quarantined registrations"))
+		}
+		return loadable, nil
 	}
-	var matches []RegisteredProject
+	var matches []loadedRegisteredProject
 	for _, project := range projects {
-		if registeredProjectMatches(project, selector) {
+		if registeredProjectMatches(project.Project, selector) {
+			if project.LoadError != nil {
+				return nil, projectQuarantinedError(project.Project)
+			}
 			matches = append(matches, project)
 		}
 	}

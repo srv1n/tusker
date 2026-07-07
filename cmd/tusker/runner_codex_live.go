@@ -82,6 +82,7 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	if err := assertRunnerCommandDir(RunnerCodex, cmd.Dir, req.WorkspacePath); err != nil {
 		return nil, err
 	}
+	logCodexDispatchPolicy(req.RawLogPath, policy)
 	cmd.Env = runnerEnv(runnerLaunchEnv{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
@@ -299,6 +300,14 @@ func codexTurnSandboxPolicy(policy, cwd string) map[string]any {
 			"excludeSlashTmp":     false,
 		}
 	}
+}
+
+func logCodexDispatchPolicy(rawLogPath string, policy CodexPolicy) {
+	if strings.TrimSpace(rawLogPath) == "" {
+		return
+	}
+	_ = appendRawLogLine(rawLogPath, fmt.Sprintf("codex app-server dispatch policy: max_turns=%d turn_timeout_ms=%d read_timeout_ms=%d stall_timeout_ms=%d approval_policy=%s thread_sandbox=%s turn_sandbox_policy=%s",
+		policy.MaxTurns, policy.TurnTimeoutMS, policy.ReadTimeoutMS, policy.StallTimeoutMS, policy.ApprovalPolicy, policy.ThreadSandbox, policy.TurnSandboxPolicy))
 }
 
 func (h *codexLiveHandle) readTimeout() time.Duration {

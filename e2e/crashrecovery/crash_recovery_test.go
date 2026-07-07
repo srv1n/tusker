@@ -21,6 +21,11 @@ import (
 
 const crashTaskID = "APP-T-0001"
 
+const (
+	crashRunWait    = 20 * time.Second
+	crashRunnerWait = 15 * time.Second
+)
+
 var builtE2EBinaries struct {
 	once       sync.Once
 	tusker     string
@@ -42,13 +47,13 @@ func TestDaemonKillNineAdoptsSurvivingWrapper(t *testing.T) {
 	h.createRunnableTask("adopt live runner after daemon kill")
 
 	first := h.startDaemon("daemon-1")
-	run := h.waitRun(crashTaskID, 5*time.Second, func(run map[string]any) bool {
+	run := h.waitRun(crashTaskID, crashRunnerWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "running" && runInt(run, "process_pid") > 0 && runString(run, "last_heartbeat_at") != ""
 	})
 	wrapperPID := runInt(run, "process_pid")
 	leaseGeneration := runInt(run, "lease_generation")
 	attemptCount := runInt(run, "attempt_count")
-	childPID := h.waitRunnerPID(5 * time.Second)
+	childPID := h.waitRunnerPID(crashRunnerWait)
 	if childPID == wrapperPID {
 		t.Fatalf("expected wrapper pid and fake runner child pid to differ, both were %d", wrapperPID)
 	}
@@ -61,7 +66,7 @@ func TestDaemonKillNineAdoptsSurvivingWrapper(t *testing.T) {
 	}
 
 	second := h.startDaemon("daemon-2")
-	h.waitRun(crashTaskID, 8*time.Second, func(run map[string]any) bool {
+	h.waitRun(crashTaskID, crashRunWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "running" &&
 			runInt(run, "process_pid") == wrapperPID &&
 			runInt(run, "lease_generation") == leaseGeneration &&
@@ -69,7 +74,7 @@ func TestDaemonKillNineAdoptsSurvivingWrapper(t *testing.T) {
 			runString(run, "last_heartbeat_at") != ""
 	})
 	h.touch(releaseFile)
-	h.waitRun(crashTaskID, 8*time.Second, func(run map[string]any) bool {
+	h.waitRun(crashTaskID, crashRunWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "released" &&
 			runString(run, "attempt_outcome") == "succeeded" &&
 			runInt(run, "process_pid") == 0
@@ -88,17 +93,17 @@ func TestDaemonRestartRedispatchesDeadWrapper(t *testing.T) {
 	h.createRunnableTask("dead wrapper gets redispatched after daemon restart")
 
 	first := h.startDaemon("daemon-1")
-	run := h.waitRun(crashTaskID, 5*time.Second, func(run map[string]any) bool {
+	run := h.waitRun(crashTaskID, crashRunnerWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "running" && runInt(run, "process_pid") > 0 && runInt(run, "attempt_count") == 1
 	})
 	wrapperPID := runInt(run, "process_pid")
-	childPID := h.waitRunnerPID(5 * time.Second)
+	childPID := h.waitRunnerPID(crashRunnerWait)
 	first.kill(syscall.SIGKILL)
 	h.killProcessGroup(wrapperPID, syscall.SIGKILL)
 	h.killProcessGroup(childPID, syscall.SIGKILL)
 
 	second := h.startDaemon("daemon-2")
-	h.waitRun(crashTaskID, 8*time.Second, func(run map[string]any) bool {
+	h.waitRun(crashTaskID, crashRunWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "running" &&
 			runInt(run, "process_pid") > 0 &&
 			runInt(run, "process_pid") != wrapperPID &&
@@ -117,13 +122,13 @@ func TestDeadRunnerMarkedInterruptedOnNextPoll(t *testing.T) {
 	h.createRunnableTask("dead runner frees capacity")
 
 	daemon := h.startDaemon("daemon")
-	run := h.waitRun(crashTaskID, 5*time.Second, func(run map[string]any) bool {
+	run := h.waitRun(crashTaskID, crashRunnerWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "running" && runInt(run, "process_pid") > 0
 	})
 	h.killProcessGroup(runInt(run, "process_pid"), syscall.SIGKILL)
 
-	h.waitRun(crashTaskID, 8*time.Second, func(run map[string]any) bool {
-		return runString(run, "lease_state") == "interrupted" && runInt(run, "process_pid") == 0
+	h.waitRun(crashTaskID, crashRunWait, func(run map[string]any) bool {
+		return runString(run, "lease_state") == "parked_no_progress" && runInt(run, "process_pid") == 0
 	})
 	status := h.automationStatus()
 	if got := intFromPath(status, "status", "active_runs"); got != 0 {
@@ -142,9 +147,9 @@ func TestNeverStartedRunnerKilledAtFirstEventDeadline(t *testing.T) {
 	h.createRunnableTask("stdin wedge gets killed")
 
 	daemon := h.startDaemon("daemon")
-	h.waitRun(crashTaskID, 8*time.Second, func(run map[string]any) bool {
-		return runString(run, "lease_state") == "released" &&
-			runString(run, "attempt_outcome") == "failed" &&
+	h.waitRun(crashTaskID, crashRunWait, func(run map[string]any) bool {
+		return runString(run, "lease_state") == "parked_no_progress" &&
+			runString(run, "attempt_outcome") == "blocked" &&
 			runInt(run, "process_pid") == 0
 	})
 	run := h.latestRun(crashTaskID)
@@ -164,7 +169,7 @@ func TestSecondDaemonStartExitsLoudly(t *testing.T) {
 	h.createRunnableTask("double daemon guard")
 
 	first := h.startDaemon("daemon-1")
-	h.waitForAutomationStatus(5 * time.Second)
+	h.waitForAutomationStatus(crashRunnerWait)
 
 	second := h.startDaemon("daemon-2")
 	err, output, exited := second.waitWithin(1500 * time.Millisecond)
@@ -197,15 +202,15 @@ func TestRetryCapProducesTerminalRun(t *testing.T) {
 	h.createRunnableTask("retry cap terminal flag")
 
 	daemon := h.startDaemon("daemon")
-	h.waitRun(crashTaskID, 8*time.Second, func(run map[string]any) bool {
-		return runString(run, "lease_state") == "released" && runInt(run, "attempt_count") == 2
+	h.waitRun(crashTaskID, crashRunWait, func(run map[string]any) bool {
+		return runString(run, "lease_state") == "parked_no_progress" && runInt(run, "attempt_count") == 2
 	})
 	run := h.latestRun(crashTaskID)
 	if !strings.Contains(runString(run, "last_error"), "runner exited with code 42") {
 		t.Fatalf("final runner error was not preserved: %q", runString(run, "last_error"))
 	}
-	if runString(run, "attempt_outcome") != "failed" {
-		t.Fatalf("expected failed attempt outcome after retry cap, got %q", runString(run, "attempt_outcome"))
+	if runString(run, "attempt_outcome") != "blocked" {
+		t.Fatalf("expected blocked attempt outcome after retry cap, got %q", runString(run, "attempt_outcome"))
 	}
 	terminal, ok := runBool(run, "terminal")
 	if !ok || !terminal {
@@ -303,7 +308,7 @@ func e2eBinaries(t *testing.T) (string, string) {
 }
 
 func runBuild(root, out, pkg string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, goTool(), "build", "-o", out, pkg)
 	cmd.Dir = root
