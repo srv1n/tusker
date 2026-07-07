@@ -12,8 +12,8 @@ source_of_truth:
   - ".tusker/WORKFLOW.md"
   - "tusker.yaml"
 created_at: "2026-06-04 00:00:00 +0000 UTC"
-updated_at: "2026-07-05T11:22:59Z"
-state_rev: "sha256:55a8d92d5b07acbd7eee94f41f0c95e7306163895650862dc61b197391667a55"
+updated_at: "2026-07-07T03:23:47Z"
+state_rev: "sha256:2311f0c8dc0b78fa6da1dd37c520806989fedb2a352f69e91ba28e0825741fc5"
 ---
 
 # Project Canon
@@ -28,6 +28,7 @@ state_rev: "sha256:55a8d92d5b07acbd7eee94f41f0c95e7306163895650862dc61b197391667
 - Tags are projections; typed frontmatter is source of truth.
 - Obsidian Bases and dashboards are generated views, not canonical state.
 - Browser-backed ChatGPT work is a runner result source, not a direct state writer.
+- Waves are first-class V7 batch records; membership is canonical on `kind: wave`, task `wave:` is a reconcile-maintained back-pointer, and wave `status` is derived from member task closure.
 
 ## Invariants
 

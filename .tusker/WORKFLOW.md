@@ -103,6 +103,12 @@ Dispatch only from durable task states `ready` and `rework`. Do not create or us
 
 Dependency edges may be explicit `TASK-ID:hard` or `TASK-ID:soft`; plain `TASK-ID` stays valid and defaults by the dependency's risk. Dependencies on high/critical tasks default hard and require `done`. Dependencies on low/medium tasks default soft and may dispatch once the dependency is in `review` with `proof_status: satisfied`, or `done`. Review gates are for closing, not flowing: soft edges can unblock dispatch, but `tusker close` still requires every dependency to be `done`.
 
+## Waves
+
+Use `tusker wave create "<title>" <TASK-ID>...` to record a named dispatch/review batch. Wave membership is canonical on the `kind: wave` record under `work/waves/`; task `wave:` fields are generated back-pointers maintained by `tusker reconcile`.
+
+Wave state is derived, not hand-set. A wave is `open` while any member task is not `done`; it becomes `landed` when every member task is `done`, stamped with the latest member `closed_at`. Adding a non-done member reopens the wave. Review the batch boundary with `tusker wave show <W-####>` and filter task views with `tusker list --wave <W-####>`.
+
 ## Hard stop check
 
 Before doing work, run `tusker closeout status {{ note.id }} --json` when closeout data exists. If it reports `agent_action=stop_until_human_response`, stop. Do not validate again, inspect unrelated files, spawn agents, or mutate Tusker records. Reply with the pending human gate or proof item.

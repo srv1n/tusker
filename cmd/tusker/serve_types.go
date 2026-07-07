@@ -23,6 +23,7 @@ type serveSnapshot struct {
 	tasks             []Note
 	epics             []Note
 	gates             []Note
+	waves             []Note
 	evidence          []Note
 	notesByID         map[string]Note
 	runs              []RunStatus
@@ -62,9 +63,29 @@ type serveEpicSummary struct {
 	Counts map[string]int `json:"counts"`
 }
 
+type serveWaveSummary struct {
+	ID        string                 `json:"id"`
+	Title     string                 `json:"title"`
+	Status    string                 `json:"status"`
+	LandedAt  any                    `json:"landedAt"`
+	MemberIDs []string               `json:"memberIds"`
+	Members   []serveWaveTaskSummary `json:"members"`
+	Counts    map[string]int         `json:"counts"`
+}
+
+type serveWaveTaskSummary struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Group  string `json:"group"`
+	Status string `json:"status"`
+	Proof  string `json:"proof"`
+}
+
 type serveTaskCapsule struct {
 	ID              string   `json:"id"`
 	Title           string   `json:"title"`
+	WaveID          string   `json:"waveId,omitempty"`
+	WaveTitle       string   `json:"waveTitle,omitempty"`
 	EpicID          string   `json:"epicId"`
 	EpicTitle       string   `json:"epicTitle"`
 	Status          string   `json:"status"`

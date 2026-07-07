@@ -22,6 +22,8 @@ func inferV7ObjectKind(id string) string {
 		return "task"
 	case v7GateIDPattern.MatchString(id):
 		return "gate"
+	case v7WaveIDPattern.MatchString(id):
+		return "wave"
 	case v7DecisionIDPattern.MatchString(id):
 		return "decision"
 	case v7ProposalIDPattern.MatchString(id):

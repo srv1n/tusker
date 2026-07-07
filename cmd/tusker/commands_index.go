@@ -1061,6 +1061,10 @@ func listCmd(args Args) error {
 		}
 		status = "review"
 	}
+	waveID := strings.ToUpper(strings.TrimSpace(args.String("wave")))
+	if waveID != "" && !v7WaveIDPattern.MatchString(waveID) {
+		return tuskerError(errorInvalidArg, "invalid V7 wave id: "+waveID)
+	}
 	assignee := args.String("assignee")
 	openOnly := args.Bool("open")
 	closedOnly := args.Bool("closed")
@@ -1081,15 +1085,15 @@ func listCmd(args Args) error {
 		}
 	}
 	if noteType == "" {
-		if readyOnly || runningOnly || reviewOnly || mineOnly || runnableOnly || openOnly || closedOnly || status != "" || assignee != "" {
+		if readyOnly || runningOnly || reviewOnly || mineOnly || runnableOnly || openOnly || closedOnly || status != "" || assignee != "" || waveID != "" {
 			noteType = "task"
 		} else if !args.Bool("json") && format == "table" {
 			noteType = "epic"
 		}
 	}
 	if noteType != "" {
-		if _, ok := makeSet("epic", "task", "doc", "note")[noteType]; !ok {
-			return tuskerError(errorInvalidArg, fmt.Sprintf(`--type must be one of epic, task, doc, note; got "%s"`, noteType), withContext(map[string]any{"arg": "--type", "value": noteType}))
+		if _, ok := makeSet("epic", "task", "wave", "doc", "note")[noteType]; !ok {
+			return tuskerError(errorInvalidArg, fmt.Sprintf(`--type must be one of epic, task, wave, doc, note; got "%s"`, noteType), withContext(map[string]any{"arg": "--type", "value": noteType}))
 		}
 	}
 	limit := atoiSafe(args.String("limit"))
@@ -1103,6 +1107,7 @@ func listCmd(args Args) error {
 		return tuskerError(errorInvalidArg, "--status cannot be combined with --open or --closed")
 	}
 	taskCounts := taskCountsByScopedRecords(records)
+	waveMembers := listWaveMemberKeys(records, waveID)
 	var rows []listRecord
 	for _, record := range records {
 		note := record.Note
@@ -1124,6 +1129,15 @@ func listCmd(args Args) error {
 		}
 		if status != "" && stringField(note.Data, "status") != status {
 			continue
+		}
+		if waveID != "" {
+			if currentType != "task" {
+				continue
+			}
+			taskID := stringField(note.Data, "id")
+			if stringField(note.Data, "wave") != waveID && !waveMembers[scopedTaskKey(record.Project, taskID)] {
+				continue
+			}
 		}
 		if openOnly && !isOpenWorkStatus(stringField(note.Data, "status")) {
 			continue
@@ -1165,6 +1179,7 @@ func listCmd(args Args) error {
 				"readiness":     stringField(note.Data, "readiness"),
 				"next_owner":    stringField(note.Data, "next_owner"),
 				"record_id":     stringField(note.Data, "record_id"),
+				"wave":          stringField(note.Data, "wave"),
 				"work_revision": intField(note.Data, "work_revision"),
 				"epic": func() string {
 					if currentType == "epic" {
@@ -1712,8 +1727,28 @@ func taskCountsByScopedRecords(records []listRecord) map[string]map[string]int {
 	return counts
 }
 
+func listWaveMemberKeys(records []listRecord, waveID string) map[string]bool {
+	out := map[string]bool{}
+	if waveID == "" {
+		return out
+	}
+	for _, record := range records {
+		if noteListKind(record.Note.Data) != "wave" || stringField(record.Note.Data, "id") != waveID {
+			continue
+		}
+		for _, taskID := range normalizeList(record.Note.Data["members"]) {
+			out[scopedTaskKey(record.Project, taskID)] = true
+		}
+	}
+	return out
+}
+
 func scopedEpicKey(project, epic string) string {
 	return project + "\x00" + epic
+}
+
+func scopedTaskKey(project, taskID string) string {
+	return project + "\x00" + taskID
 }
 
 func taskCountsByEpic(notes []Note) map[string]map[string]int {
@@ -1793,12 +1828,14 @@ func listTypeRank(noteType string) int {
 	switch noteType {
 	case "epic":
 		return 0
-	case "task":
+	case "wave":
 		return 1
-	case "doc":
+	case "task":
 		return 2
-	default:
+	case "doc":
 		return 3
+	default:
+		return 4
 	}
 }
 

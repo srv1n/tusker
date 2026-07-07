@@ -236,6 +236,8 @@ func v7TasksBase() string {
 		`    displayName: Title`,
 		`  epic:`,
 		`    displayName: Epic`,
+		`  wave:`,
+		`    displayName: Wave`,
 		`  status:`,
 		`    displayName: Status`,
 		`  readiness:`,
@@ -256,7 +258,7 @@ func v7TasksBase() string {
 		`        - 'readiness == "ready"'`,
 		`        - 'status == "ready" || status == "rework"'`,
 		`        - 'next_owner == "agent" || next_owner.startsWith("agent:")'`,
-		`    order: [id, title, epic, priority, risk, next_action]`,
+		`    order: [id, title, wave, epic, priority, risk, next_action]`,
 		`  - type: table`,
 		`    name: Backlog`,
 		`    filters:`,
@@ -264,14 +266,14 @@ func v7TasksBase() string {
 		`        - 'status == "idea"'`,
 		`        - 'status == "backlog"'`,
 		`        - 'readiness == "held"'`,
-		`    order: [id, title, epic, priority, risk, next_owner, next_action]`,
+		`    order: [id, title, wave, epic, priority, risk, next_owner, next_action]`,
 		`  - type: table`,
 		`    name: Review`,
 		`    filters:`,
 		`      and:`,
 		`        - 'status == "review"'`,
 		`        - 'readiness != "waiting_on_human"'`,
-		`    order: [id, title, epic, risk, next_action]`,
+		`    order: [id, title, wave, epic, risk, next_action]`,
 		`  - type: table`,
 		`    name: Human Wait`,
 		`    filters:`,
@@ -285,13 +287,13 @@ func v7TasksBase() string {
 		`      or:`,
 		`        - 'readiness.startsWith("blocked")'`,
 		`        - 'readiness == "waiting_on_ci"'`,
-		`    order: [id, title, epic, readiness, next_owner, next_action]`,
+		`    order: [id, title, wave, epic, readiness, next_owner, next_action]`,
 		`  - type: table`,
 		`    name: Done`,
 		`    filters:`,
 		`      and:`,
 		`        - 'status == "done"'`,
-		`    order: [id, title, epic, accepted_by, closed_at]`,
+		`    order: [id, title, wave, epic, accepted_by, closed_at]`,
 		``,
 	}, "\n")
 }
@@ -337,38 +339,38 @@ func v7AgentReadyBase() string {
 		`        - 'readiness == "ready"'`,
 		`        - 'status == "ready" || status == "rework"'`,
 		`        - 'next_owner == "agent" || next_owner.startsWith("agent:")'`,
-	}, `[id, title, epic, priority, risk, next_action]`)
+	}, `[id, title, wave, epic, priority, risk, next_action]`)
 }
 
 func v7BacklogBase() string {
 	return v7SingleTaskBase("Backlog", []string{
 		`        - 'status == "idea" || status == "backlog" || readiness == "held"'`,
-	}, `[id, title, epic, priority, risk, next_owner, next_action]`)
+	}, `[id, title, wave, epic, priority, risk, next_owner, next_action]`)
 }
 
 func v7ReviewQueueBase() string {
 	return v7SingleTaskBase("Review Queue", []string{
 		`        - 'status == "review"'`,
 		`        - 'readiness != "waiting_on_human"'`,
-	}, `[id, title, epic, risk, next_action]`)
+	}, `[id, title, wave, epic, risk, next_action]`)
 }
 
 func v7BlockedBase() string {
 	return v7SingleTaskBase("Blocked", []string{
 		`        - 'readiness.startsWith("blocked") || readiness == "waiting_on_ci"'`,
-	}, `[id, title, epic, readiness, next_owner, next_action]`)
+	}, `[id, title, wave, epic, readiness, next_owner, next_action]`)
 }
 
 func v7RecentlyDoneBase() string {
 	return v7SingleTaskBase("Recently Done", []string{
 		`        - 'status == "done"'`,
-	}, `[id, title, epic, accepted_by, closed_at]`)
+	}, `[id, title, wave, epic, accepted_by, closed_at]`)
 }
 
 func v7CIWaitingBase() string {
 	return v7SingleTaskBase("CI Waiting", []string{
 		`        - 'readiness == "waiting_on_ci"'`,
-	}, `[id, title, epic, next_action]`)
+	}, `[id, title, wave, epic, next_action]`)
 }
 
 func v7SingleTaskBase(name string, viewFilters []string, order string) string {
@@ -384,6 +386,8 @@ func v7SingleTaskBase(name string, viewFilters []string, order string) string {
 		`    displayName: Title`,
 		`  epic:`,
 		`    displayName: Epic`,
+		`  wave:`,
+		`    displayName: Wave`,
 		`  status:`,
 		`    displayName: Status`,
 		`  readiness:`,
@@ -570,10 +574,10 @@ func v7AgentReadyDashboard(idx v7Index) string {
 func v7ReviewQueueDashboard(idx v7Index) string {
 	var rows []string
 	for _, task := range v7ReviewTasks(idx) {
-		rows = append(rows, fmt.Sprintf("| [[%s]] | %s | %s |", stringField(task.Data, "id"), stringField(task.Data, "risk"), stringField(task.Data, "next_action")))
+		rows = append(rows, fmt.Sprintf("| [[%s]] | %s | %s | %s |", stringField(task.Data, "id"), stringField(task.Data, "wave"), stringField(task.Data, "risk"), stringField(task.Data, "next_action")))
 	}
 	sort.Strings(rows)
-	return v7GeneratedDashboardHeader() + "# Review Queue\n\n<!-- tusker:generated:start review-queue -->\n\n| Task | Risk | Next action |\n|---|---|---|\n" + strings.Join(rows, "\n") + "\n\n<!-- tusker:generated:end -->\n"
+	return v7GeneratedDashboardHeader() + "# Review Queue\n\n<!-- tusker:generated:start review-queue -->\n\n| Task | Wave | Risk | Next action |\n|---|---|---|---|\n" + strings.Join(rows, "\n") + "\n\n<!-- tusker:generated:end -->\n"
 }
 
 func v7CIWaitingDashboard(idx v7Index) string {

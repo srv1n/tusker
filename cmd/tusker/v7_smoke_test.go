@@ -259,6 +259,35 @@ func TestV7ReconcileRepairsStaleObjectStateRevAndEmitsEvent(t *testing.T) {
 	}
 }
 
+func TestV7ReconcileEpicManagedBlocksAreStable(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "vault")
+	must := func(args Args, fn func(Args) error) {
+		t.Helper()
+		if err := fn(args); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
+	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Epic reconcile stability.", "v7": "true"}, newV7Epic)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stable managed block", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+
+	epicPath := filepath.Join(vault, "work", "epics", "APP.md")
+	must(Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
+	firstData, firstBody, err := parseFrontmatterMustRead(epicPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
+	secondData, secondBody, err := parseFrontmatterMustRead(epicPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, stringField(firstData, "updated_at"), stringField(secondData, "updated_at"), "epic updated_at")
+	assertEqual(t, stringField(firstData, "state_rev"), stringField(secondData, "state_rev"), "epic state_rev")
+	assertEqual(t, v7CanonicalBody(firstBody), v7CanonicalBody(secondBody), "epic body")
+}
+
 func TestV7EvidenceAddUpdatesProofStatusAndTaskEvidenceSection(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	must := func(args Args, fn func(Args) error) {
