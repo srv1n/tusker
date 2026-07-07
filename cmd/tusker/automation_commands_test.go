@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -116,6 +117,98 @@ func TestAutomationQueueTextShowsEligibleAndBlocked(t *testing.T) {
 	for _, expected := range []string{"Eligible:", "APP-T-0001", "Blocked:", "APP-T-0002", "readiness is held"} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("queue text missing %q:\n%s", expected, output)
+		}
+	}
+}
+
+func TestPlanGateUsesCanonicalStateFromRunnerWorkspace(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Canonical ready", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	project := registerAutomationTestProject(t, vault)
+
+	workspace := t.TempDir()
+	staleVault := filepath.Join(workspace, ".tusker")
+	if err := ensureDir(filepath.Join(staleVault, "work", "tasks")); err != nil {
+		t.Fatal(err)
+	}
+	workflow, err := readText(workflowPath(vault))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(staleVault, "WORKFLOW.md"), workflow); err != nil {
+		t.Fatal(err)
+	}
+	staleData, staleBody, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleData["status"] = "review"
+	staleData["readiness"] = "waiting_on_review"
+	staleData["next_owner"] = "reviewer"
+	staleData["state_rev"] = v7StateRev(staleData, staleBody)
+	staleTask, err := serializeDocument(staleData, staleBody, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(staleVault, "work", "tasks", "APP-T-0001.md"), staleTask); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(RunStatus{
+		ProjectID:       project.ProjectID,
+		RecordID:        "APP-T-0001",
+		ItemID:          "APP-T-0001",
+		Runner:          string(RunnerCodexExec),
+		Lane:            runLaneExecute,
+		LeaseState:      string(LeaseStateRunning),
+		AttemptOutcome:  string(AttemptOutcomeNone),
+		ActiveAttemptID: "attempt-self",
+		WorkspacePath:   workspace,
+		AttemptCount:    1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	previousWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workspace); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(previousWD); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	t.Setenv("TUSKER_ATTEMPT_ID", "attempt-self")
+	t.Setenv("TUSKER_WORKSPACE", workspace)
+
+	output := captureStdout(t, func() {
+		if err := automationPlanCmd(Args{"id": "APP-T-0001", "json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var payload struct {
+		OK   bool                   `json:"ok"`
+		Plan automationDispatchPlan `json:"plan"`
+	}
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, true, payload.OK, "canonical plan ok")
+	assertEqual(t, "dispatch", payload.Plan.Decision, "canonical plan decision")
+	assertEqual(t, vault, payload.Plan.Project.VaultRoot, "canonical vault")
+	assertEqual(t, true, payload.Plan.Project.Registered, "registered project")
+	for _, blocker := range payload.Plan.Blockers {
+		if strings.Contains(blocker, "status is review") || strings.Contains(blocker, "waiting_on_review") || strings.Contains(blocker, "existing run is running") {
+			t.Fatalf("plan used stale worktree/self-run blocker: %#v", payload.Plan.Blockers)
 		}
 	}
 }

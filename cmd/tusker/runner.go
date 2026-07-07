@@ -42,6 +42,7 @@ const (
 	AttemptOutcomeCancelled        AttemptOutcome = "cancelled"
 	AttemptOutcomeAbandoned        AttemptOutcome = "abandoned"
 	AttemptOutcomeEarlyExit        AttemptOutcome = "early_exit"
+	AttemptOutcomeDispatchDeclined AttemptOutcome = "dispatch_declined"
 	AttemptOutcomeTurnCapExhausted AttemptOutcome = "turn_cap_exhausted"
 	AttemptOutcomeWaitingForHuman  AttemptOutcome = "waiting_for_human"
 	AttemptOutcomeBudgetExceeded   AttemptOutcome = "budget_exceeded"
