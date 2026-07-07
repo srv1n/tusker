@@ -101,20 +101,28 @@ export const readinessLabel: Record<Readiness, string> = {
 };
 
 export const outcomeTone: Record<RunOutcome, Tone> = {
+  idle: "muted",
   running: "info",
+  stale: "warn",
   succeeded: "pass",
   failed: "fail",
   interrupted: "warn",
+  released: "muted",
+  terminal: "muted",
   "retry-queued": "accent",
   "parked-no-progress": "warn",
   "parked-budget": "fail",
 };
 
 export const outcomeLabel: Record<RunOutcome, string> = {
+  idle: "Idle",
   running: "Running",
+  stale: "Stale",
   succeeded: "Succeeded",
   failed: "Failed",
   interrupted: "Interrupted",
+  released: "Released",
+  terminal: "Terminal",
   "retry-queued": "Retry queued",
   "parked-no-progress": "Parked",
   "parked-budget": "Budget parked",

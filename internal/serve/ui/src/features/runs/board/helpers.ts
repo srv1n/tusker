@@ -65,11 +65,11 @@ export function laneTextClass(lane: Lane): string {
   return lane === "review" ? "text-info" : "text-muted";
 }
 
-/** Lease state: expired is alarming, released is spent, held is normal-quiet. */
+/** Lease state: expired is alarming, released/unclaimed are non-active, held is normal-quiet. */
 export function leaseTextClass(lease: RunSummary["leaseState"]): string {
   return lease === "expired"
     ? "text-fail"
-    : lease === "released"
+    : lease === "released" || lease === "unclaimed"
       ? "text-muted"
       : "text-faint";
 }

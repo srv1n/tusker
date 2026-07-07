@@ -13,8 +13,8 @@ canonical_files:
   - "knowledge/domains/*/INDEX.md"
   - "knowledge/domains/*/CANON.md"
 created_at: "2026-07-05T17:58:21Z"
-updated_at: "2026-07-07T07:26:43Z"
-state_rev: "sha256:4b8fb2b1dbfb6d366416e63314d37ad188bd8aa24865c74e6804aa54b09a8b2d"
+updated_at: "2026-07-07T10:40:35Z"
+state_rev: "sha256:de58933ddce32e98bba70739b8a39af909d4dd5ca813def31f18e78893b9025f"
 ---
 
 # Project Knowledge Skill
@@ -55,6 +55,10 @@ Task agents must run `tusker packet <TASK-ID> --for agent`, then read only the r
 - Put repository-specific command rules here or in routed runbooks: validation commands, build-lock/status commands, token/noise wrappers, and forbidden expensive probes.
 - Keep root `AGENTS.md` and `CLAUDE.md` as managed Tusker bootstrap pointers; do not copy Tusker workflow mechanics there.
 - Agents should prefer path-scoped status/search, lock/status commands over process-table probes, redirected validation logs, and command + PASS/FAIL summaries.
+
+## Serve/API Routing
+
+- Run display is liveness-derived, never row-derived. `/api/runs` omits `unclaimed` zero-attempt placeholders by default; `?all=true` may expose them as `leaseState: "unclaimed"` with `outcome: "idle"`. `outcome: "running"` requires a held lease and a heartbeat fresher than the reclaim grace window; stale held leases are labeled `stale`.
 
 ## Prompt Signs
 

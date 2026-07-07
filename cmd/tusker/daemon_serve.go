@@ -78,26 +78,38 @@ func (d *Daemon) serveTarget() (daemonServeTarget, bool, error) {
 		right := firstNonEmpty(projects[j].ProjectID, projects[j].Name, projects[j].RepoRoot)
 		return left < right
 	})
-	project := projects[0]
+	var selected *RegisteredProject
 	for _, candidate := range projects {
 		if candidate.Enabled {
-			project = candidate
+			copy := candidate
+			selected = &copy
 			break
 		}
 	}
-	wfFile, err := loadWorkflow(project.VaultRoot)
-	if err != nil {
-		return daemonServeTarget{}, false, err
-	}
-	cfg := wfFile.Data.Runtime.Serve
-	if !cfg.Enabled {
+	if selected == nil {
 		return daemonServeTarget{}, false, nil
 	}
-	addr, err := serveNormalizeAddr(firstNonEmpty(strings.TrimSpace(cfg.Addr), defaultServeAddr))
-	if err != nil {
-		return daemonServeTarget{}, false, err
+	for i := range projects {
+		candidate := projects[i]
+		if !candidate.Enabled {
+			continue
+		}
+		wfFile, err := loadWorkflow(candidate.VaultRoot)
+		if err != nil {
+			_ = d.markProjectLoadError(candidate, err)
+			continue
+		}
+		cfg := wfFile.Data.Runtime.Serve
+		if !cfg.Enabled {
+			return daemonServeTarget{}, false, nil
+		}
+		addr, err := serveNormalizeAddr(firstNonEmpty(strings.TrimSpace(cfg.Addr), defaultServeAddr))
+		if err != nil {
+			return daemonServeTarget{}, false, err
+		}
+		return daemonServeTarget{project: candidate, addr: addr}, true, nil
 	}
-	return daemonServeTarget{project: project, addr: addr}, true, nil
+	return daemonServeTarget{}, false, nil
 }
 
 func (d *Daemon) updateServePIDFile(enabled bool, addr string) error {

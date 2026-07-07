@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -605,6 +606,124 @@ func runsReleaseCmd(args Args) error {
 	return nil
 }
 
+func runsRetireCmd(args Args) error {
+	identity, err := requireArg(args, "id")
+	if err != nil {
+		return err
+	}
+	reason := strings.TrimSpace(args.String("reason"))
+	if reason == "" {
+		return tuskerError(errorMissingArg, "runs retire requires --reason <text>", withHint("retirement is terminal operator action; record why the run is being retired"))
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	run, err := store.FindRun(identity)
+	if err != nil {
+		return err
+	}
+	if run == nil {
+		return tuskerError(errorNotFound, "run not found: "+identity)
+	}
+	now := time.Now().UTC()
+	if !args.Bool("force") && runHasFreshLiveHeartbeat(*run, now) {
+		return tuskerError(errorInvalidTransition, "run has a fresh heartbeat and verified-live pid; use tusker runs interrupt before retire, or pass --force for an explicit operator retirement", withContext(map[string]any{"pid": run.ProcessPID, "last_heartbeat_at": run.LastHeartbeatAt}))
+	}
+	actor := firstNonEmpty(strings.TrimSpace(args.String("by")), strings.TrimSpace(args.String("actor")), defaultActorName())
+	previousLease := run.LeaseState
+	previousOutcome := run.AttemptOutcome
+	outcome := retiredRunOutcome(run.AttemptOutcome)
+	nowText := now.Format(time.RFC3339)
+	attempts, _ := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	eventPath := bestRunEventPath(*run, attempts)
+	if eventPath == "" {
+		eventPath = fallbackRetireEventPath(DefaultStateRoot(), *run, now)
+	}
+	if eventPath != "" {
+		run.EventSinkPath = eventPath
+		if err := appendRunRetiredEvent(eventPath, *run, actor, reason, previousLease, previousOutcome, args.Bool("force")); err != nil {
+			return err
+		}
+	}
+	updateRunAttemptFromRun(store, *run, outcome, exitCodeForOutcome(outcome), "retired by "+actor+": "+reason, nowText)
+	run.LeaseState = string(LeaseStateReleased)
+	run.AttemptOutcome = string(outcome)
+	run.NextRetryAt = ""
+	run.LastError = "retired by " + actor + ": " + reason
+	run.UpdatedAt = nowText
+	run.Terminal = true
+	run.ActiveAttemptID = ""
+	run.LeaseOwner = ""
+	run.LeaseExpiresAt = ""
+	run.ProcessPID = 0
+	run.ProcessPGID = 0
+	run.ProcessStartedAt = ""
+	if strings.TrimSpace(run.SessionRef) != "" {
+		_ = store.MarkSessionState(run.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateReleased), nowText, run.LastError, false)
+	}
+	if err := store.UpsertRun(*run); err != nil {
+		return err
+	}
+	if args.Bool("json") {
+		emitJSON(map[string]any{
+			"ok":               true,
+			"retired":          true,
+			"item_id":          run.ItemID,
+			"record_id":        run.RecordID,
+			"actor":            actor,
+			"reason":           reason,
+			"lease_state":      run.LeaseState,
+			"attempt_outcome":  run.AttemptOutcome,
+			"terminal":         run.Terminal,
+			"event_sink_path":  run.EventSinkPath,
+			"previous_lease":   previousLease,
+			"previous_outcome": previousOutcome,
+			"force":            args.Bool("force"),
+		})
+		return nil
+	}
+	fmt.Printf("Retired %s by %s: %s\n", firstNonEmpty(run.ItemID, run.RecordID), actor, reason)
+	return nil
+}
+
+func retiredRunOutcome(outcome string) AttemptOutcome {
+	trimmed := AttemptOutcome(strings.TrimSpace(outcome))
+	if trimmed == "" || trimmed == AttemptOutcomeNone {
+		return AttemptOutcomeAbandoned
+	}
+	return trimmed
+}
+
+func runHasFreshLiveHeartbeat(run RunStatus, now time.Time) bool {
+	heartbeatAt, ok := parseRunTimestamp(run.LastHeartbeatAt)
+	return ok && now.Sub(heartbeatAt) <= daemonHeartbeatDeadThreshold && processIdentityMatches(run)
+}
+
+func fallbackRetireEventPath(stateRoot string, run RunStatus, now time.Time) string {
+	project := sanitizeProjectID(firstNonEmpty(run.ProjectID, "project"))
+	record := sanitizeProjectID(firstNonEmpty(run.RecordID, run.ItemID, "run"))
+	dir := filepath.Join(stateRoot, "runs", project, record)
+	if err := ensureDir(dir); err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "retire-"+now.Format("20060102T150405Z")+".events.jsonl")
+}
+
+func appendRunRetiredEvent(path string, run RunStatus, actor, reason, previousLease, previousOutcome string, forced bool) error {
+	return NewEventLog(path).Append("run_retired", firstNonEmpty(run.ActiveAttemptID, run.RecordID), RunnerName(run.Runner), map[string]any{
+		"project_id":       run.ProjectID,
+		"record_id":        run.RecordID,
+		"item_id":          run.ItemID,
+		"actor":            actor,
+		"reason":           reason,
+		"previous_lease":   previousLease,
+		"previous_outcome": previousOutcome,
+		"force":            forced,
+	})
+}
+
 func redriveCmd(args Args) error {
 	identity, err := requireArg(args, "id")
 	if err != nil {
@@ -628,18 +747,58 @@ func redriveCmd(args Args) error {
 	now := time.Now().UTC()
 	actor := firstNonEmpty(strings.TrimSpace(args.String("by")), strings.TrimSpace(args.String("actor")), defaultActorName())
 	reason := firstNonEmpty(strings.TrimSpace(args.String("reason")), "operator redrive")
+	previousAttemptCount := run.AttemptCount
+	previousLeaseState := run.LeaseState
+	previousAttemptOutcome := run.AttemptOutcome
+	previousAttemptID := run.ActiveAttemptID
+	previousSessionRef := run.SessionRef
+	previousWorkspacePath := run.WorkspacePath
 	reset, err := store.RecordBudgetRedrive(run.ProjectID, run.RecordID, actor, reason, now)
 	if err != nil {
 		return err
 	}
 	run.LeaseState = string(LeaseStateRetryQueued)
 	run.AttemptOutcome = string(AttemptOutcomeNone)
+	run.AttemptCount = 0
 	run.NextRetryAt = now.Format(time.RFC3339)
 	run.LastError = "redriven by " + actor + ": " + reason
+	run.LastEventAt = now.Format(time.RFC3339)
 	run.UpdatedAt = now.Format(time.RFC3339)
 	run.Terminal = false
 	clearActiveExecution(run)
+	clearRunCloudRefs(run)
 	if err := store.UpsertRun(*run); err != nil {
+		return err
+	}
+	auditPayload, err := json.Marshal(map[string]any{
+		"actor":                    actor,
+		"reason":                   reason,
+		"reset_at":                 reset.ResetAt,
+		"previous_attempt_count":   previousAttemptCount,
+		"previous_lease_state":     previousLeaseState,
+		"previous_attempt_outcome": previousAttemptOutcome,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := store.SaveSupervisorDecision(SupervisorDecision{
+		ProjectID:        run.ProjectID,
+		RecordID:         run.RecordID,
+		ItemID:           run.ItemID,
+		Runner:           run.Runner,
+		WorkRevision:     run.WorkRevision,
+		AttemptID:        previousAttemptID,
+		ParentAttemptID:  previousAttemptID,
+		SessionRef:       previousSessionRef,
+		ParentSessionRef: previousSessionRef,
+		Kind:             string(SupervisorDecisionRedrive),
+		Reason:           reason,
+		WorkspacePath:    previousWorkspacePath,
+		ValidationDelta:  string(auditPayload),
+		LeaseState:       run.LeaseState,
+		ContextSignal:    "operator_redrive",
+		CreatedAt:        now.Format(time.RFC3339),
+	}); err != nil {
 		return err
 	}
 	if args.Bool("json") {

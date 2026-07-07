@@ -588,15 +588,26 @@ func sentinelRunParked(run RunStatus) bool {
 
 func invariantCircuitSummary(status invariantCircuitStatus) string {
 	if strings.TrimSpace(status.Summary) != "" {
-		return status.Summary
+		if !status.Open && len(status.Violations) == 0 {
+			return status.Summary
+		}
+		return invariantCircuitSummaryWithRepair(status.Summary)
 	}
 	if len(status.Violations) > 0 {
-		return invariantViolationReason + ": " + status.Violations[0].Detail
+		return invariantCircuitSummaryWithRepair(invariantViolationReason + ": " + status.Violations[0].Detail)
 	}
 	if strings.TrimSpace(status.Reason) != "" {
-		return status.Reason
+		return invariantCircuitSummaryWithRepair(status.Reason)
 	}
-	return invariantViolationReason
+	return invariantCircuitSummaryWithRepair(invariantViolationReason)
+}
+
+func invariantCircuitSummaryWithRepair(summary string) string {
+	summary = strings.TrimSpace(summary)
+	if summary == "" || strings.Contains(summary, "tusker runs retire") {
+		return summary
+	}
+	return summary + "; repair stale terminal records with `tusker runs retire <task-id-or-record-id> --reason <why>`"
 }
 
 func parseSentinelTimestamp(value string) (time.Time, bool) {

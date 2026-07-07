@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -164,6 +166,104 @@ func TestPidReuseGuardBootAdoptionVerified(t *testing.T) {
 	if processIdentityMatches(reused) {
 		t.Fatalf("pid reuse guard accepted mismatched start time: %#v", reused)
 	}
+}
+
+func TestAdoptVerifiedLivenessPrefersWrapperIdentityOverLiveChildPID(t *testing.T) {
+	vault := automationTestVault(t)
+	disableReviewerForTest(t, vault)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Adopt wrapper", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	project := registerAutomationTestProject(t, vault)
+
+	wrapper := exec.Command("sleep", "30")
+	wrapper.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := wrapper.Start(); err != nil {
+		t.Fatal(err)
+	}
+	wrapperPID := wrapper.Process.Pid
+	wrapperPGID := processGroupID(wrapperPID)
+	wrapperStart := recordedProcessStartTime(wrapperPID, time.Now().UTC().Format(time.RFC3339))
+	t.Cleanup(func() {
+		_ = syscall.Kill(-wrapperPGID, syscall.SIGKILL)
+		_ = wrapper.Process.Kill()
+		_, _ = wrapper.Process.Wait()
+	})
+
+	child := exec.Command("sleep", "30")
+	child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	childPID := child.Process.Pid
+	childPGID := processGroupID(childPID)
+	childStart := recordedProcessStartTime(childPID, time.Now().UTC().Format(time.RFC3339))
+	t.Cleanup(func() {
+		_ = syscall.Kill(-childPGID, syscall.SIGKILL)
+		_ = child.Process.Kill()
+		_, _ = child.Process.Wait()
+	})
+
+	dir := t.TempDir()
+	eventPath := filepath.Join(dir, "events.jsonl")
+	rawLogPath := filepath.Join(dir, "raw.log")
+	statusPath := filepath.Join(dir, "status.json")
+	promptPath := filepath.Join(dir, "prompt.md")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := NewEventLog(eventPath).Append("attempt_wrapper_spawned", "attempt-wrapper", RunnerCodexExec, map[string]any{
+		"pid":           wrapperPID,
+		"pgid":          wrapperPGID,
+		"process_start": wrapperStart,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(RunStatus{
+		ProjectID:        project.ProjectID,
+		RecordID:         "APP-T-0001",
+		ItemID:           "APP-T-0001",
+		Runner:           string(RunnerCodexExec),
+		Lane:             runLaneExecute,
+		LeaseState:       string(LeaseStateRunning),
+		LeaseOwner:       "attempt-wrapper",
+		LeaseGeneration:  7,
+		AttemptOutcome:   string(AttemptOutcomeNone),
+		ActiveAttemptID:  "attempt-wrapper",
+		WorkspacePath:    dir,
+		PromptPath:       promptPath,
+		EventSinkPath:    eventPath,
+		RawLogPath:       rawLogPath,
+		StatusPath:       statusPath,
+		WorkRevision:     0,
+		AttemptCount:     1,
+		ProcessPID:       childPID,
+		ProcessPGID:      childPGID,
+		ProcessStartedAt: childStart,
+		LastHeartbeatAt:  now,
+		UpdatedAt:        now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+	assertEqual(t, string(LeaseStateRunning), run.LeaseState, "lease state")
+	assertEqual(t, 7, run.LeaseGeneration, "lease generation")
+	assertEqual(t, 1, run.AttemptCount, "attempt count")
+	assertEqual(t, wrapperPID, run.ProcessPID, "adopted wrapper pid")
+	assertEqual(t, wrapperPGID, run.ProcessPGID, "adopted wrapper pgid")
+	assertEqual(t, wrapperStart, run.ProcessStartedAt, "adopted wrapper start")
 }
 
 func TestReconcileIdempotentReconcileConverges(t *testing.T) {

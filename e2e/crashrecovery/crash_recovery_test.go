@@ -46,6 +46,8 @@ func TestDaemonKillNineAdoptsSurvivingWrapper(t *testing.T) {
 		return runString(run, "lease_state") == "running" && runInt(run, "process_pid") > 0 && runString(run, "last_heartbeat_at") != ""
 	})
 	wrapperPID := runInt(run, "process_pid")
+	leaseGeneration := runInt(run, "lease_generation")
+	attemptCount := runInt(run, "attempt_count")
 	childPID := h.waitRunnerPID(5 * time.Second)
 	if childPID == wrapperPID {
 		t.Fatalf("expected wrapper pid and fake runner child pid to differ, both were %d", wrapperPID)
@@ -62,6 +64,8 @@ func TestDaemonKillNineAdoptsSurvivingWrapper(t *testing.T) {
 	h.waitRun(crashTaskID, 8*time.Second, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "running" &&
 			runInt(run, "process_pid") == wrapperPID &&
+			runInt(run, "lease_generation") == leaseGeneration &&
+			runInt(run, "attempt_count") == attemptCount &&
 			runString(run, "last_heartbeat_at") != ""
 	})
 	h.touch(releaseFile)
@@ -69,6 +73,36 @@ func TestDaemonKillNineAdoptsSurvivingWrapper(t *testing.T) {
 		return runString(run, "lease_state") == "released" &&
 			runString(run, "attempt_outcome") == "succeeded" &&
 			runInt(run, "process_pid") == 0
+	})
+	second.stop()
+}
+
+func TestDaemonRestartRedispatchesDeadWrapper(t *testing.T) {
+	h := newHarness(t, "daemon-restart-dead-wrapper")
+	h.configureFakeRunner(fakeRunnerConfig{
+		Mode:           "hold",
+		RunnerKind:     "codex_exec",
+		StallTimeoutMS: 5000,
+		MaxAttempts:    2,
+	})
+	h.createRunnableTask("dead wrapper gets redispatched after daemon restart")
+
+	first := h.startDaemon("daemon-1")
+	run := h.waitRun(crashTaskID, 5*time.Second, func(run map[string]any) bool {
+		return runString(run, "lease_state") == "running" && runInt(run, "process_pid") > 0 && runInt(run, "attempt_count") == 1
+	})
+	wrapperPID := runInt(run, "process_pid")
+	childPID := h.waitRunnerPID(5 * time.Second)
+	first.kill(syscall.SIGKILL)
+	h.killProcessGroup(wrapperPID, syscall.SIGKILL)
+	h.killProcessGroup(childPID, syscall.SIGKILL)
+
+	second := h.startDaemon("daemon-2")
+	h.waitRun(crashTaskID, 8*time.Second, func(run map[string]any) bool {
+		return runString(run, "lease_state") == "running" &&
+			runInt(run, "process_pid") > 0 &&
+			runInt(run, "process_pid") != wrapperPID &&
+			runInt(run, "attempt_count") == 2
 	})
 	second.stop()
 }

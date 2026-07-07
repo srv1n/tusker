@@ -162,6 +162,64 @@ func TestServeFieldsRosterAndEpics(t *testing.T) {
 	}
 }
 
+func TestServeRunsHonest(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	now := time.Date(2026, 7, 6, 6, 11, 0, 0, time.UTC)
+	server.now = func() time.Time { return now }
+	if err := server.store.UpsertRun(RunStatus{ProjectID: "app", RecordID: "APP-T-LIVE", ItemID: "APP-T-LIVE", Runner: string(RunnerCodexAppServer), Lane: runLaneExecute, LeaseState: string(LeaseStateRunning), AttemptOutcome: string(AttemptOutcomeNone), AttemptCount: 1, LastHeartbeatAt: now.Add(-10 * time.Second).Format(time.RFC3339), StartedAt: now.Add(-2 * time.Minute).Format(time.RFC3339), UpdatedAt: now.Add(-10 * time.Second).Format(time.RFC3339), LastEventAt: now.Add(-10 * time.Second).Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"APP-T-EMPTY-1", "APP-T-EMPTY-2", "APP-T-EMPTY-3"} {
+		if err := server.store.UpsertRun(RunStatus{ProjectID: "app", RecordID: id, ItemID: id, Runner: string(RunnerCodexAppServer), Lane: runLaneExecute, LeaseState: string(LeaseStateUnclaimed), AttemptOutcome: string(AttemptOutcomeNone), AttemptCount: 0, UpdatedAt: now.Format(time.RFC3339)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var runs []map[string]any
+	serveDecode(t, server, "/api/runs", &runs)
+	assertEqual(t, 1, len(runs), "default runs omit placeholders")
+	assertEqual(t, "APP-T-LIVE", runs[0]["taskId"], "live task id")
+	assertEqual(t, "running", runs[0]["outcome"], "live run outcome")
+
+	var all []map[string]any
+	serveDecode(t, server, "/api/runs?all=true", &all)
+	assertEqual(t, 4, len(all), "all runs include placeholders")
+	var unclaimed map[string]any
+	for _, run := range all {
+		if run["taskId"] == "APP-T-EMPTY-1" {
+			unclaimed = run
+			break
+		}
+	}
+	if unclaimed == nil {
+		t.Fatalf("expected explicit unclaimed row in all=true payload: %#v", all)
+	}
+	assertEqual(t, "unclaimed", unclaimed["leaseState"], "unclaimed lease label")
+	assertEqual(t, "idle", unclaimed["outcome"], "unclaimed outcome")
+}
+
+func TestServeRunsOutcomeLabels(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	now := time.Date(2026, 7, 6, 6, 11, 0, 0, time.UTC)
+	server.now = func() time.Time { return now }
+	if err := server.store.UpsertRun(RunStatus{ProjectID: "app", RecordID: "APP-T-STALE", ItemID: "APP-T-STALE", Runner: string(RunnerCodexAppServer), Lane: runLaneExecute, LeaseState: string(LeaseStateRunning), AttemptOutcome: string(AttemptOutcomeNone), AttemptCount: 1, LastHeartbeatAt: now.Add(-5 * time.Minute).Format(time.RFC3339), StartedAt: now.Add(-10 * time.Minute).Format(time.RFC3339), UpdatedAt: now.Add(-5 * time.Minute).Format(time.RFC3339), LastEventAt: now.Add(-5 * time.Minute).Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.store.UpsertRun(RunStatus{ProjectID: "app", RecordID: "APP-T-DONE", ItemID: "APP-T-DONE", Runner: string(RunnerCodexAppServer), Lane: runLaneExecute, LeaseState: string(LeaseStateReleased), AttemptOutcome: string(AttemptOutcomeAbandoned), AttemptCount: 7, Terminal: true, UpdatedAt: now.Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+
+	var runs []map[string]any
+	serveDecode(t, server, "/api/runs?all=true", &runs)
+	byID := map[string]map[string]any{}
+	for _, run := range runs {
+		byID[run["taskId"].(string)] = run
+	}
+	assertEqual(t, "stale", byID["APP-T-STALE"]["outcome"], "stale held lease outcome")
+	assertEqual(t, "held", byID["APP-T-STALE"]["leaseState"], "stale held lease state")
+	assertEqual(t, "terminal", byID["APP-T-DONE"]["outcome"], "abandoned terminal outcome")
+}
+
 func newServeFixture(t *testing.T) *serveServer {
 	t.Helper()
 	root := t.TempDir()

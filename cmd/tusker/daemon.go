@@ -289,11 +289,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 
 		wfFile, err := loadWorkflow(project.VaultRoot)
 		if err != nil {
-			_ = d.store.UpsertProject(RegisteredProject{
-				ProjectID: project.ProjectID, ProjectKey: project.ProjectKey, Name: project.Name,
-				RepoRoot: project.RepoRoot, VaultRoot: project.VaultRoot, WorkflowPath: project.WorkflowPath,
-				Enabled: project.Enabled, Health: projectHealthError, LastError: err.Error(), LastPollAt: project.LastPollAt,
-			})
+			_ = d.markProjectLoadError(project, err)
 			continue
 		}
 		if _, err := d.refreshBudgetCircuitStatus(wfFile.Data, time.Now().UTC()); err != nil {
@@ -301,7 +297,8 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 		}
 		notes, err := listAllNotes(project.VaultRoot)
 		if err != nil {
-			return err
+			_ = d.markProjectLoadError(project, err)
+			continue
 		}
 		sortDispatchCandidates(notes)
 		noteStatusByRecord := map[string]string{}
@@ -356,6 +353,16 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				projectRuns[recordID] = reconciled
 				globalActiveRuns += dispatchCapacityRunDelta(current, reconciled)
 				projectActiveRuns += dispatchCapacityRunDelta(current, reconciled)
+				current = reconciled
+			}
+			capped, capChanged := d.parkRetryQueuedContinuationAtCap(project, wfFile.Data, current, "queued continuation retry would exceed cap")
+			if capChanged {
+				if err := d.store.UpsertRun(capped); err != nil {
+					return err
+				}
+				projectRuns[recordID] = capped
+				globalActiveRuns += dispatchCapacityRunDelta(current, capped)
+				projectActiveRuns += dispatchCapacityRunDelta(current, capped)
 			}
 			if note, ok := notesByRecordID[recordID]; ok {
 				beforeAuto := projectRuns[recordID]
@@ -650,6 +657,15 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+func (d *Daemon) markProjectLoadError(project RegisteredProject, loadErr error) error {
+	if d == nil || d.store == nil || loadErr == nil {
+		return nil
+	}
+	project.Health = projectHealthError
+	project.LastError = loadErr.Error()
+	return d.store.UpsertProject(project)
 }
 
 func projectActiveRunLimit(wf Workflow) int {
@@ -1297,6 +1313,11 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		return run, true, nil
 	}
 
+	if recovered, recoveredChanged := recoverWrapperLeaseIdentity(run); recoveredChanged {
+		run = recovered
+		changed = true
+	}
+
 	if run.ProcessPID > 0 && processIdentityMatches(run) {
 		if run.LeaseGeneration > 0 && strings.TrimSpace(firstNonEmpty(run.LeaseOwner, run.ActiveAttemptID)) != "" {
 			renewDispatchable := d.runLeaseRenewalDispatchable(project, wfFile.Data, run)
@@ -1353,7 +1374,15 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 
 	if run.ProcessPID > 0 {
 		reason := fmt.Sprintf("runner process no longer matches recorded identity pid=%d pgid=%d start_time=%s", run.ProcessPID, run.ProcessPGID, firstNonEmpty(run.ProcessStartedAt, "unknown"))
-		if err := finishRuntimeRun(d.store, &run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, reason, false); err != nil {
+		if wfFile.Data.Retry.MaxAttempts > 0 && run.AttemptCount < wfFile.Data.Retry.MaxAttempts {
+			updateRunAttemptFromRun(d.store, run, AttemptOutcomeCancelled, 130, reason, now)
+			run = d.scheduleRetry(run, wfFile.Data, reason)
+			if strings.TrimSpace(run.SessionRef) != "" {
+				_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", reason, sessionResumable)
+			}
+			return run, true, nil
+		}
+		if err := finishRuntimeRun(d.store, &run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, reason, sessionResumable); err != nil {
 			return run, changed, err
 		}
 		return run, true, nil
@@ -1417,6 +1446,69 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	return run, true, nil
 }
 
+func recoverWrapperLeaseIdentity(run RunStatus) (RunStatus, bool) {
+	wrapper, ok := wrapperLeaseIdentityFromEvents(run)
+	if !ok {
+		return run, false
+	}
+	if run.ProcessPID == wrapper.ProcessPID &&
+		run.ProcessPGID == wrapper.ProcessPGID &&
+		strings.TrimSpace(run.ProcessStartedAt) == strings.TrimSpace(wrapper.ProcessStartedAt) {
+		return run, false
+	}
+	run.ProcessPID = wrapper.ProcessPID
+	run.ProcessPGID = wrapper.ProcessPGID
+	run.ProcessStartedAt = wrapper.ProcessStartedAt
+	return run, true
+}
+
+func wrapperLeaseIdentityFromEvents(run RunStatus) (RunStatus, bool) {
+	path := strings.TrimSpace(run.EventSinkPath)
+	if path == "" {
+		return RunStatus{}, false
+	}
+	text, err := readText(path)
+	if err != nil {
+		return RunStatus{}, false
+	}
+	attemptID := strings.TrimSpace(run.ActiveAttemptID)
+	var latest RunStatus
+	found := false
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		if strings.TrimSpace(stringValue(event["kind"])) != "attempt_wrapper_spawned" {
+			continue
+		}
+		if attemptID != "" && strings.TrimSpace(stringValue(event["attempt_id"])) != attemptID {
+			continue
+		}
+		payload, _ := event["payload"].(map[string]any)
+		pid := intFromAny(payload["pid"])
+		processStart := strings.TrimSpace(stringValue(payload["process_start"]))
+		if pid <= 0 || processStart == "" {
+			continue
+		}
+		candidate := RunStatus{
+			ProcessPID:       pid,
+			ProcessPGID:      intFromAny(payload["pgid"]),
+			ProcessStartedAt: processStart,
+		}
+		if !processIdentityMatches(candidate) {
+			continue
+		}
+		latest = candidate
+		found = true
+	}
+	return latest, found
+}
+
 func (d *Daemon) normalizeDeadRetryQueuedRun(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus, note Note) (RunStatus, bool, error) {
 	_ = ctx
 	if LeaseState(strings.TrimSpace(run.LeaseState)) != LeaseStateRetryQueued {
@@ -1477,6 +1569,33 @@ func (d *Daemon) scheduleContinuationRetry(run RunStatus, wf Workflow, reason st
 	return run, true
 }
 
+func (d *Daemon) parkRetryQueuedContinuationAtCap(project RegisteredProject, wf Workflow, run RunStatus, reason string) (RunStatus, bool) {
+	if LeaseState(strings.TrimSpace(run.LeaseState)) != LeaseStateRetryQueued {
+		return run, false
+	}
+	limit := maxContinuationRetries(wf)
+	if limit <= 0 || d.continuationRetryCount(run) < limit {
+		return run, false
+	}
+	parentAttemptID := run.ActiveAttemptID
+	parentSessionRef := run.SessionRef
+	run = parkNoProgressRun(run, fmt.Sprintf("continuation retry cap reached (%d): %s", limit, reason))
+	if strings.TrimSpace(parentSessionRef) != "" {
+		_ = d.store.MarkSessionState(project.ProjectID, parentSessionRef, sessionStateForLeaseState(LeaseStateParkedNoProgress), "", run.LastError, false)
+	}
+	d.emitSupervisorDecision(SupervisorDecision{
+		ProjectID:        project.ProjectID,
+		RecordID:         run.RecordID,
+		Kind:             string(SupervisorDecisionStopForAudit),
+		Reason:           run.LastError,
+		ParentAttemptID:  parentAttemptID,
+		ParentSessionRef: parentSessionRef,
+		WorkspacePath:    run.WorkspacePath,
+		LeaseState:       run.LeaseState,
+	})
+	return run, true
+}
+
 func runSessionResumable(wf Workflow, run RunStatus) bool {
 	if run.Lane == runLaneReview {
 		return false
@@ -1490,10 +1609,16 @@ func runSessionResumable(wf Workflow, run RunStatus) bool {
 
 func (d *Daemon) continuationRetryCount(run RunStatus) int {
 	if d == nil || d.store == nil {
+		if run.AttemptCount > 0 {
+			return run.AttemptCount - 1
+		}
 		return 0
 	}
 	decisions, err := d.store.ListSupervisorDecisionsForRun(run.ProjectID, run.RecordID)
 	if err != nil {
+		if run.AttemptCount > 0 {
+			return run.AttemptCount - 1
+		}
 		return 0
 	}
 	attemptID := strings.TrimSpace(run.ActiveAttemptID)
@@ -1510,6 +1635,9 @@ func (d *Daemon) continuationRetryCount(run RunStatus) int {
 		if sessionRef != "" && (decision.SessionRef == sessionRef || decision.TargetSessionRef == sessionRef || decision.ParentSessionRef == sessionRef) {
 			count++
 		}
+	}
+	if attemptDerived := run.AttemptCount - 1; attemptDerived > count {
+		count = attemptDerived
 	}
 	return count
 }
@@ -1973,6 +2101,9 @@ func classifyRetryFailure(reason string) retryFailureClassification {
 	text := strings.ToLower(strings.TrimSpace(reason))
 	if text == "" {
 		return retryFailureClassification{retryable: true, outcome: AttemptOutcomeFailed}
+	}
+	if strings.Contains(text, "runner process no longer matches recorded identity") {
+		return retryFailureClassification{retryable: true, outcome: AttemptOutcomeCancelled}
 	}
 	nonRetryable := []string{
 		"auth", "authentication", "authorization", "unauthorized", "forbidden", "permission denied",
@@ -3885,6 +4016,19 @@ func daemonStatusCmd(args Args) error {
 		fmt.Println("Daemon pid: none")
 	}
 	fmt.Printf("Registered projects: %v\n", status["projects"])
+	if projects, ok := status["project_health"].([]RegisteredProject); ok {
+		for _, project := range projects {
+			state := "enabled"
+			if !project.Enabled {
+				state = "disabled"
+			}
+			line := fmt.Sprintf("  %-12s %-8s %-8s %s", firstNonEmpty(project.ProjectKey, project.ProjectID), state, project.Health, project.RepoRoot)
+			if strings.TrimSpace(project.LastError) != "" {
+				line += " (" + project.LastError + ")"
+			}
+			fmt.Println(line)
+		}
+	}
 	fmt.Printf("Active runs: %v / %v\n", status["activeRuns"], status["max_active_runs"])
 	fmt.Printf("Parked no-progress runs: %v\n", status["parkedNoProgressRuns"])
 	fmt.Printf("Parked budget runs: %v\n", status["parkedBudgetRuns"])

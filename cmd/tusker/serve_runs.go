@@ -36,7 +36,7 @@ func (s *serveServer) runSummary(snap serveSnapshot, run RunStatus) serveRunSumm
 		Lane:              serveLane(run.Lane),
 		LeaseState:        serveLeaseState(run.LeaseState),
 		LeaseStateRaw:     run.LeaseState,
-		Outcome:           serveRunOutcome(run),
+		Outcome:           serveRunOutcome(run, s.now()),
 		ElapsedSec:        serveDurationSec(run.StartedAt, run.UpdatedAt, s.now()),
 		SinceLastEventSec: serveSinceSec(firstNonEmpty(run.LastEventAt, run.UpdatedAt), s.now()),
 		Liveness:          serveRunLiveness(run, s.now()),
@@ -76,6 +76,8 @@ func serveLane(lane string) string {
 
 func serveLeaseState(state string) string {
 	switch LeaseState(strings.TrimSpace(state)) {
+	case LeaseStateUnclaimed:
+		return "unclaimed"
 	case LeaseStateReleased, LeaseStateInterrupted, LeaseStateParkedNoProgress, LeaseStateParkedBudget:
 		return "released"
 	default:
@@ -83,18 +85,30 @@ func serveLeaseState(state string) string {
 	}
 }
 
-func serveRunOutcome(run RunStatus) string {
-	if LeaseState(run.LeaseState) == LeaseStateParkedNoProgress {
+func serveRunOutcome(run RunStatus, now time.Time) string {
+	switch LeaseState(strings.TrimSpace(run.LeaseState)) {
+	case LeaseStateUnclaimed:
+		return "idle"
+	case LeaseStateParkedNoProgress:
 		return "parked-no-progress"
-	}
-	if LeaseState(run.LeaseState) == LeaseStateParkedBudget {
+	case LeaseStateParkedBudget:
 		return "parked-budget"
-	}
-	if LeaseState(run.LeaseState) == LeaseStateRetryQueued {
+	case LeaseStateRetryQueued:
 		return "retry-queued"
-	}
-	if isDispatchingLeaseState(run.LeaseState) {
-		return "running"
+	case LeaseStateClaimed, LeaseStateRunning:
+		if serveRunHeartbeatFresh(run, now) {
+			return "running"
+		}
+		return "stale"
+	case LeaseStateReleased:
+		if run.Terminal {
+			switch AttemptOutcome(strings.TrimSpace(run.AttemptOutcome)) {
+			case AttemptOutcomeSucceeded, AttemptOutcomeFailed, AttemptOutcomeBlocked, AttemptOutcomeBudgetExceeded, AttemptOutcomeCancelled:
+				outcome := serveRunOutcomeFromAttempt(run.AttemptOutcome, run.LeaseState)
+				return outcome
+			}
+			return "terminal"
+		}
 	}
 	return serveRunOutcomeFromAttempt(run.AttemptOutcome, run.LeaseState)
 }
@@ -108,6 +122,9 @@ func serveRunOutcomeFromAttempt(outcome, lease string) string {
 	case AttemptOutcomeCancelled:
 		return "interrupted"
 	default:
+		if LeaseState(lease) == LeaseStateUnclaimed {
+			return "idle"
+		}
 		if LeaseState(lease) == LeaseStateParkedNoProgress {
 			return "parked-no-progress"
 		}
@@ -117,8 +134,17 @@ func serveRunOutcomeFromAttempt(outcome, lease string) string {
 		if LeaseState(lease) == LeaseStateRetryQueued {
 			return "retry-queued"
 		}
-		return "running"
+		return "released"
 	}
+}
+
+func serveRunHeartbeatFresh(run RunStatus, now time.Time) bool {
+	heartbeatAt, ok := parseRunTimestamp(run.LastHeartbeatAt)
+	return ok && now.Sub(heartbeatAt) <= daemonHeartbeatDeadThreshold
+}
+
+func serveRunHiddenByDefault(run RunStatus) bool {
+	return LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateUnclaimed && run.AttemptCount == 0
 }
 
 func serveRunLiveness(run RunStatus, now time.Time) string {

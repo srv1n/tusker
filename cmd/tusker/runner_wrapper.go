@@ -64,11 +64,12 @@ func startDetachedRunnerWrapper(ctx context.Context, runner RunnerName, req Star
 	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
 	_ = cmd.Process.Release()
 	_ = NewEventLog(req.EventSinkPath).Append("attempt_wrapper_spawned", req.AttemptID, runner, map[string]any{
-		"pid":          pid,
-		"pgid":         pgid,
-		"request_path": requestPath,
-		"log_path":     wrapperLogPath,
-		"status_path":  req.StatusPath,
+		"pid":           pid,
+		"pgid":          pgid,
+		"process_start": processStartedAt,
+		"request_path":  requestPath,
+		"log_path":      wrapperLogPath,
+		"status_path":   req.StatusPath,
 	})
 	return &StartResult{
 		StartedAt:    processStartedAt,

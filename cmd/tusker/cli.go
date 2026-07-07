@@ -613,6 +613,9 @@ func run(command string, args Args) (int, error) {
 	case "runs release":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, runsReleaseCmd(args)
+	case "runs retire":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, runsRetireCmd(args)
 	case "runs redrive":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, redriveCmd(args)
@@ -725,7 +728,7 @@ func run(command string, args Args) (int, error) {
 	case "help projects", "help projects add", "help projects list", "help projects limits", "help projects enable", "help projects disable", "help projects remove":
 		printProjectsHelp()
 		return 0, nil
-	case "help runs", "help runs inspect", "help runs logs", "help runs events", "help runs interrupt", "help runs release", "help runs redrive", "help redrive":
+	case "help runs", "help runs inspect", "help runs logs", "help runs events", "help runs interrupt", "help runs release", "help runs retire", "help runs redrive", "help redrive":
 		printRunsHelp()
 		return 0, nil
 	case "help serve":
@@ -810,7 +813,7 @@ Commands:
   daemon              operator loop for registered local projects
   automation          plan, inspect, and manually dispatch daemon automation work
   projects            register repositories for daemon pickup
-  runs                inspect, tail, interrupt, and release daemon runs
+  runs                inspect, tail, interrupt, release, and retire daemon runs
   serve               serve the read-only localhost control room
   refresh             run one daemon poll tick
   install             install binary and skill bundles
@@ -914,7 +917,7 @@ func printCommandHelp(command string) bool {
 		printAutomationHelp()
 	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects remove":
 		printProjectsHelp()
-	case "runs", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs release", "runs redrive", "redrive":
+	case "runs", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs release", "runs retire", "runs redrive", "redrive":
 		printRunsHelp()
 	case "serve":
 		printServeHelp()
@@ -1124,19 +1127,23 @@ func printRunsHelp() {
   tusker runs events <task-id-or-record-id> [--lines <n>] [--follow] [--json]
   tusker runs interrupt <task-id-or-record-id> [--json]
   tusker runs release <task-id-or-record-id> [--json]
+  tusker runs retire <task-id-or-record-id> --reason <text> [--by <actor>] [--force] [--json]
   tusker redrive <task-id-or-record-id> --reason <text> [--by <actor>] [--json]
 
 Purpose:
   Inspect and control daemon runtime state for a task. These commands expose
   attempts, turns, sessions, event tails, logs, and interrupts without making
   runtime state part of task frontmatter. Redrive resets the budget window for
-  parked budget runs and queues them for the resident daemon.
+  parked budget runs and queues them for the resident daemon. Retire is the
+  terminal operator path for stale, broken runtime records that must stop
+  tripping daemon invariant circuits.
 
 Examples:
   tusker runs inspect ORC-T-0018 --json
   tusker runs events ORC-T-0018 --lines 20
   tusker runs interrupt ORC-T-0018
   tusker runs release ORC-T-0018 --json
+  tusker runs retire ORC-T-0018 --reason "legacy over retry cap" --json
   tusker redrive ORC-T-0018 --reason "operator reviewed spend" --json`)
 }
 

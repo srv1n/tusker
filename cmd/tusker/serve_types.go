@@ -38,6 +38,8 @@ type serveTokenTotals struct {
 type serveProjectSummary struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
+	Health          string `json:"health"`
+	LastError       any    `json:"lastError"`
 	NeedsCount      int    `json:"needsCount"`
 	ActiveRuns      int    `json:"activeRuns"`
 	WorstLiveness   any    `json:"worstLiveness"`
@@ -46,20 +48,21 @@ type serveProjectSummary struct {
 }
 
 type serveDaemonStatus struct {
-	Connected        bool   `json:"connected"`
-	Addr             string `json:"addr"`
-	ActiveRuns       int    `json:"activeRuns"`
-	QueuedTasks      int    `json:"queuedTasks"`
-	LastPollAt       any    `json:"lastPollAt"`
-	StateRoot        string `json:"stateRoot"`
-	ProjectCount     int    `json:"projectCount"`
-	ParkedBudgetRuns int    `json:"parkedBudgetRuns"`
-	BudgetCircuit    any    `json:"budgetCircuit"`
-	InvariantCircuit any    `json:"invariantCircuit"`
-	DaemonAlive      bool   `json:"daemonAlive"`
-	DaemonPID        int    `json:"daemonPid"`
-	DaemonStartedAt  any    `json:"daemonStartedAt"`
-	DaemonLastPollAt any    `json:"daemonLastPollAt"`
+	Connected        bool                `json:"connected"`
+	Addr             string              `json:"addr"`
+	ActiveRuns       int                 `json:"activeRuns"`
+	QueuedTasks      int                 `json:"queuedTasks"`
+	LastPollAt       any                 `json:"lastPollAt"`
+	StateRoot        string              `json:"stateRoot"`
+	ProjectCount     int                 `json:"projectCount"`
+	Projects         []RegisteredProject `json:"projects"`
+	ParkedBudgetRuns int                 `json:"parkedBudgetRuns"`
+	BudgetCircuit    any                 `json:"budgetCircuit"`
+	InvariantCircuit any                 `json:"invariantCircuit"`
+	DaemonAlive      bool                `json:"daemonAlive"`
+	DaemonPID        int                 `json:"daemonPid"`
+	DaemonStartedAt  any                 `json:"daemonStartedAt"`
+	DaemonLastPollAt any                 `json:"daemonLastPollAt"`
 }
 
 type serveEpicSummary struct {

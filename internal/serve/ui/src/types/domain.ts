@@ -43,10 +43,14 @@ export type GateKind =
 export type Liveness = "fresh" | "stale" | "dead";
 
 export type RunOutcome =
+  | "idle"
   | "running"
+  | "stale"
   | "succeeded"
   | "failed"
   | "interrupted"
+  | "released"
+  | "terminal"
   | "retry-queued"
   | "parked-no-progress"
   | "parked-budget";
@@ -137,7 +141,7 @@ export interface RunSummary {
   runner: Runner;
   model: string;
   lane: Lane;
-  leaseState: "held" | "released" | "expired";
+  leaseState: "held" | "released" | "expired" | "unclaimed";
   outcome: RunOutcome;
   /** Elapsed wall-clock seconds for the active/last attempt. */
   elapsedSec: number;

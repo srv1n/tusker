@@ -160,6 +160,7 @@ const (
 	SupervisorDecisionForkThread      SupervisorDecisionKind = "fork_thread"
 	SupervisorDecisionNewBranch       SupervisorDecisionKind = "new_branch"
 	SupervisorDecisionNewRevision     SupervisorDecisionKind = "new_revision"
+	SupervisorDecisionRedrive         SupervisorDecisionKind = "redrive"
 	SupervisorDecisionStopForAudit    SupervisorDecisionKind = "stop_for_audit"
 	SupervisorDecisionStopForHuman    SupervisorDecisionKind = "stop_for_human"
 
@@ -169,6 +170,7 @@ const (
 	supervisorDecisionForkThread      = string(SupervisorDecisionForkThread)
 	supervisorDecisionNewBranch       = string(SupervisorDecisionNewBranch)
 	supervisorDecisionNewRevision     = string(SupervisorDecisionNewRevision)
+	supervisorDecisionRedrive         = string(SupervisorDecisionRedrive)
 	supervisorDecisionStopForAudit    = string(SupervisorDecisionStopForAudit)
 	supervisorDecisionStopForHuman    = string(SupervisorDecisionStopForHuman)
 )
@@ -1647,6 +1649,10 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 	if err := s.queryRowScan(`SELECT COUNT(*) FROM projects`, nil, &projectCount); err != nil {
 		return nil, err
 	}
+	projects, err := s.ListProjects()
+	if err != nil {
+		return nil, err
+	}
 	var runCount int
 	if err := s.queryRowScan(`SELECT COUNT(*) FROM runs WHERE lease_state IN ('claimed', 'running')`, nil, &runCount); err != nil {
 		return nil, err
@@ -1689,36 +1695,37 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 		source = "default"
 	}
 	return map[string]any{
-		"state_root":              s.stateRoot,
-		"runtime_store_path":      liveness.RuntimeStorePath,
-		"daemon_alive":            liveness.Alive,
-		"daemon_pid":              liveness.PID,
-		"daemon_started_at":       liveness.StartedAt,
-		"daemon_uptime_seconds":   liveness.UptimeSeconds,
-		"daemon_serve_enabled":    liveness.ServeEnabled,
-		"daemon_serve_addr":       liveness.ServeAddr,
-		"daemon_serve_url":        daemonServeURL(liveness.ServeAddr),
-		"daemon_last_poll_at":     lastPollAt,
-		"daemon_watchdog_beat_at": watchdogBeatAt,
-		"projects":                projectCount,
-		"activeRuns":              runCount,
-		"parkedNoProgressRuns":    parkedNoProgressCount,
-		"parkedBudgetRuns":        parkedBudgetCount,
-		"max_active_runs":         globalLimit,
-		"limit_source":            source,
-		"default_limit_value":     2,
-		"budgetCircuit":           budgetCircuit,
-		"budget_circuit_open":     budgetCircuit.Open,
-		"budget_circuit_reset_at": budgetCircuit.ResetAt,
-		"budget_circuit_reason":   budgetCircuit.Reason,
-		"invariantCircuit":        invariantCircuit,
-		"invariant_circuit_open":  invariantCircuit.Open,
+		"state_root":               s.stateRoot,
+		"runtime_store_path":       liveness.RuntimeStorePath,
+		"daemon_alive":             liveness.Alive,
+		"daemon_pid":               liveness.PID,
+		"daemon_started_at":        liveness.StartedAt,
+		"daemon_uptime_seconds":    liveness.UptimeSeconds,
+		"daemon_serve_enabled":     liveness.ServeEnabled,
+		"daemon_serve_addr":        liveness.ServeAddr,
+		"daemon_serve_url":         daemonServeURL(liveness.ServeAddr),
+		"daemon_last_poll_at":      lastPollAt,
+		"daemon_watchdog_beat_at":  watchdogBeatAt,
+		"projects":                 projectCount,
+		"activeRuns":               runCount,
+		"parkedNoProgressRuns":     parkedNoProgressCount,
+		"parkedBudgetRuns":         parkedBudgetCount,
+		"max_active_runs":          globalLimit,
+		"limit_source":             source,
+		"default_limit_value":      2,
+		"project_health":           projects,
+		"budgetCircuit":            budgetCircuit,
+		"budget_circuit_open":      budgetCircuit.Open,
+		"budget_circuit_reset_at":  budgetCircuit.ResetAt,
+		"budget_circuit_reason":    budgetCircuit.Reason,
+		"invariantCircuit":         invariantCircuit,
+		"invariant_circuit_open":   invariantCircuit.Open,
 		"invariant_circuit_reason": invariantCircuitReason,
 	}, nil
 }
 
 func (s *RuntimeStore) TouchProjectPoll(projectID string) error {
-	_, err := s.exec(`UPDATE projects SET last_poll_at = ?, last_error = '' WHERE project_id = ?`, time.Now().UTC().Format(time.RFC3339), projectID)
+	_, err := s.exec(`UPDATE projects SET last_poll_at = ?, health = ?, last_error = '' WHERE project_id = ?`, time.Now().UTC().Format(time.RFC3339), string(projectHealthHealthy), projectID)
 	return err
 }
 

@@ -277,10 +277,14 @@ export function synthRunDetail(s: RunSummary): RunDetail {
     { ts: isoBefore(Math.round(s.elapsedSec * 0.3)), kind: "tool.call", text: "edit internal/agent/lease.go (+18 −4)" },
   ];
   const tail: Record<RunSummary["outcome"], RunEvent> = {
+    idle: { ts: isoBefore(s.sinceLastEventSec), kind: "lease.unclaimed", text: "waiting for dispatch" },
     running: { ts: isoBefore(s.sinceLastEventSec), kind: "turn.complete", text: "turn complete · working" },
+    stale: { ts: isoBefore(s.sinceLastEventSec), kind: "heartbeat.stale", text: "heartbeat stale", level: "warn" },
     succeeded: { ts: isoBefore(s.sinceLastEventSec), kind: "session.end", text: "attempt succeeded", level: "info" },
     failed: { ts: isoBefore(s.sinceLastEventSec), kind: "attempt.failed", text: "exit 1: run exhausted retries", level: "error" },
     interrupted: { ts: isoBefore(s.sinceLastEventSec), kind: "session.interrupt", text: "interrupted by operator", level: "warn" },
+    released: { ts: isoBefore(s.sinceLastEventSec), kind: "lease.released", text: "lease released" },
+    terminal: { ts: isoBefore(s.sinceLastEventSec), kind: "run.terminal", text: "terminal record" },
     "retry-queued": { ts: isoBefore(s.sinceLastEventSec), kind: "lease.released", text: "retry queued", level: "warn" },
     "parked-no-progress": { ts: isoBefore(s.sinceLastEventSec), kind: "lease.parked", text: "parked: no progress", level: "warn" },
     "parked-budget": { ts: isoBefore(s.sinceLastEventSec), kind: "lease.parked", text: "parked: budget exceeded", level: "error" },

@@ -135,6 +135,15 @@ func serveIsLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+func parseTruthyQuery(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "t", "yes", "y", "on", "all":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *serveServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -358,6 +367,7 @@ func (s *serveServer) handleDaemon(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	daemonStatus, _ := s.store.DaemonStatus()
+	projects, _ := s.store.ListProjects()
 	serveJSON(w, http.StatusOK, serveDaemonStatus{
 		Connected:        true,
 		Addr:             s.addr,
@@ -366,6 +376,7 @@ func (s *serveServer) handleDaemon(w http.ResponseWriter, _ *http.Request) {
 		LastPollAt:       nullIfBlank(snap.project.LastPollAt),
 		StateRoot:        DefaultStateRoot(),
 		ProjectCount:     intFromAny(daemonStatus["projects"]),
+		Projects:         projects,
 		ParkedBudgetRuns: intFromAny(daemonStatus["parkedBudgetRuns"]),
 		BudgetCircuit:    daemonStatus["budgetCircuit"],
 		InvariantCircuit: daemonStatus["invariantCircuit"],
@@ -396,6 +407,8 @@ func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 	item := serveProjectSummary{
 		ID:              snap.projectID,
 		Name:            snap.projectName,
+		Health:          string(snap.project.Health),
+		LastError:       nullIfBlank(snap.project.LastError),
 		NeedsCount:      len(needs),
 		ActiveRuns:      active,
 		WorstLiveness:   worst,
@@ -433,7 +446,11 @@ func (s *serveServer) handleRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := []serveRunSummary{}
+	includeAll := parseTruthyQuery(r.URL.Query().Get("all"))
 	for _, run := range snap.runs {
+		if !includeAll && serveRunHiddenByDefault(run) {
+			continue
+		}
 		out = append(out, s.runSummary(snap, run))
 	}
 	serveJSON(w, http.StatusOK, out)
@@ -588,7 +605,7 @@ func (s *serveServer) handleRoster(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(run.LastError) != "" && !isDispatchingLeaseState(run.LeaseState) {
 			row["blockedOn"] = taskID
 		}
-		if serveLane(run.Lane) == "execute" && serveRunOutcome(run) == "succeeded" {
+		if serveLane(run.Lane) == "execute" && serveRunOutcome(run, s.now()) == "succeeded" {
 			row["handingOffTo"] = "reviewer"
 			edges = append(edges, map[string]any{"from": row["id"], "to": "reviewer:" + taskID, "kind": "runner-reviewer"})
 		}

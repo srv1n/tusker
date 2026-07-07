@@ -144,6 +144,8 @@ If `reviewer.enabled` is true, review tasks may dispatch to `reviewer.runner`. T
 
 Retry only transient infrastructure failures. Human-directed rework creates a new ready/rework task revision.
 
+`tusker redrive <TASK-ID>` is the operator reset for parked or terminal runtime rows. It starts a fresh counting window by resetting `runs.attempt_count` to `0`, clearing cooldown/active execution state, resetting the budget window, and queueing the run for the daemon while preserving prior attempts, turns, sessions, and event history. Each redrive records who/why in runtime audit state; if the task loops again, it must hit the normal caps again and require another explicit redrive.
+
 ## Human override policy
 
 Humans may edit task contracts. Runtime state belongs to the daemon/runtime store.
