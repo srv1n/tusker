@@ -61,6 +61,11 @@ automation:
     per_task_output_tokens: 2500000
     daily_input_tokens: 10000000000
     daily_output_tokens: 100000000
+  validation:
+    commands:
+      - go build ./...
+      - go vet ./...
+      - go test ./... -count=1
   runners:
     codex_app_server:
       kind: codex_app_server

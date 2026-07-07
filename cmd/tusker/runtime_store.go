@@ -154,21 +154,23 @@ type RunTurn struct {
 type SupervisorDecisionKind string
 
 const (
-	SupervisorDecisionContinueThread SupervisorDecisionKind = "continue_thread"
-	SupervisorDecisionResumeSession  SupervisorDecisionKind = "resume_session"
-	SupervisorDecisionForkThread     SupervisorDecisionKind = "fork_thread"
-	SupervisorDecisionNewBranch      SupervisorDecisionKind = "new_branch"
-	SupervisorDecisionNewRevision    SupervisorDecisionKind = "new_revision"
-	SupervisorDecisionStopForAudit   SupervisorDecisionKind = "stop_for_audit"
-	SupervisorDecisionStopForHuman   SupervisorDecisionKind = "stop_for_human"
+	SupervisorDecisionContinueThread  SupervisorDecisionKind = "continue_thread"
+	SupervisorDecisionContinueAttempt SupervisorDecisionKind = "continue_attempt"
+	SupervisorDecisionResumeSession   SupervisorDecisionKind = "resume_session"
+	SupervisorDecisionForkThread      SupervisorDecisionKind = "fork_thread"
+	SupervisorDecisionNewBranch       SupervisorDecisionKind = "new_branch"
+	SupervisorDecisionNewRevision     SupervisorDecisionKind = "new_revision"
+	SupervisorDecisionStopForAudit    SupervisorDecisionKind = "stop_for_audit"
+	SupervisorDecisionStopForHuman    SupervisorDecisionKind = "stop_for_human"
 
-	supervisorDecisionContinueThread = string(SupervisorDecisionContinueThread)
-	supervisorDecisionResumeSession  = string(SupervisorDecisionResumeSession)
-	supervisorDecisionForkThread     = string(SupervisorDecisionForkThread)
-	supervisorDecisionNewBranch      = string(SupervisorDecisionNewBranch)
-	supervisorDecisionNewRevision    = string(SupervisorDecisionNewRevision)
-	supervisorDecisionStopForAudit   = string(SupervisorDecisionStopForAudit)
-	supervisorDecisionStopForHuman   = string(SupervisorDecisionStopForHuman)
+	supervisorDecisionContinueThread  = string(SupervisorDecisionContinueThread)
+	supervisorDecisionContinueAttempt = string(SupervisorDecisionContinueAttempt)
+	supervisorDecisionResumeSession   = string(SupervisorDecisionResumeSession)
+	supervisorDecisionForkThread      = string(SupervisorDecisionForkThread)
+	supervisorDecisionNewBranch       = string(SupervisorDecisionNewBranch)
+	supervisorDecisionNewRevision     = string(SupervisorDecisionNewRevision)
+	supervisorDecisionStopForAudit    = string(SupervisorDecisionStopForAudit)
+	supervisorDecisionStopForHuman    = string(SupervisorDecisionStopForHuman)
 )
 
 type RuntimeSupervisorDecision struct {

@@ -120,6 +120,10 @@ type TuskerAutomationBudgetConfig struct {
 	DailyOutputTokens      int   `yaml:"daily_output_tokens"`
 }
 
+type TuskerAutomationValidationConfig struct {
+	Commands []string `yaml:"commands"`
+}
+
 type TuskerAutomationConfig struct {
 	Enabled        *bool    `yaml:"enabled"`
 	TriggerStates  []string `yaml:"trigger_states"`
@@ -138,6 +142,7 @@ type TuskerAutomationConfig struct {
 	} `yaml:"concurrency"`
 	ExternalLoop TuskerExternalLoopConfig                `yaml:"external_loop"`
 	Budget       TuskerAutomationBudgetConfig            `yaml:"budget"`
+	Validation   TuskerAutomationValidationConfig        `yaml:"validation"`
 	Runners      map[string]TuskerAutomationRunnerConfig `yaml:"runners"`
 	Fanout       struct {
 		Enabled           bool     `yaml:"enabled"`

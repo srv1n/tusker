@@ -368,6 +368,7 @@ func (s *serveServer) handleDaemon(w http.ResponseWriter, _ *http.Request) {
 		ProjectCount:     intFromAny(daemonStatus["projects"]),
 		ParkedBudgetRuns: intFromAny(daemonStatus["parkedBudgetRuns"]),
 		BudgetCircuit:    daemonStatus["budgetCircuit"],
+		InvariantCircuit: daemonStatus["invariantCircuit"],
 		DaemonAlive:      boolFromAny(daemonStatus["daemon_alive"]),
 		DaemonPID:        intFromAny(daemonStatus["daemon_pid"]),
 		DaemonStartedAt:  nullIfBlank(stringValue(daemonStatus["daemon_started_at"])),

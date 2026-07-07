@@ -25,7 +25,7 @@ func TestRenderAttemptPromptUsesWorkflowBodyTemplate(t *testing.T) {
 		"type":      "task",
 	}}
 
-	prompt, err := renderAttemptPrompt(project, wfFile, note, "/workspace/path", 3, "attempt-123", runLaneExecute, RunStatus{}, nil)
+	prompt, err := renderAttemptPrompt(project, wfFile, note, "/workspace/path", 3, "attempt-123", runLaneExecute, RunStatus{}, RunStatus{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +53,7 @@ func TestRenderAttemptPromptRejectsUnknownPlaceholder(t *testing.T) {
 		1,
 		"attempt-1",
 		runLaneExecute,
+		RunStatus{},
 		RunStatus{},
 		nil,
 	)
@@ -83,7 +84,7 @@ func TestRenderAttemptPromptUsesReviewerTemplateForReviewLane(t *testing.T) {
 		"type":   "task",
 	}}
 
-	prompt, err := renderAttemptPrompt(project, wfFile, note, "/workspace/path", 4, "attempt-review", runLaneReview, RunStatus{}, nil)
+	prompt, err := renderAttemptPrompt(project, wfFile, note, "/workspace/path", 4, "attempt-review", runLaneReview, RunStatus{}, RunStatus{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +127,7 @@ func TestRenderAttemptPromptUsesV7ReviewerActorShape(t *testing.T) {
 		Body: "## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | First. | Review |\n| A2 | Second. | Review |\n",
 	}
 
-	prompt, err := renderAttemptPrompt(project, wfFile, note, "/workspace/path", 4, "attempt-review", runLaneReview, RunStatus{}, nil)
+	prompt, err := renderAttemptPrompt(project, wfFile, note, "/workspace/path", 4, "attempt-review", runLaneReview, RunStatus{}, RunStatus{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

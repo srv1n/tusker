@@ -10,7 +10,7 @@ type CodexRunner struct{}
 func (r *CodexRunner) Name() RunnerName { return RunnerCodex }
 
 func (r *CodexRunner) Capabilities() RunnerCapabilities {
-	return RunnerCapabilities{StructuredEvents: true, ResumeSession: true, ExplicitApprovals: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true}
+	return RunnerCapabilities{StructuredEvents: true, ResumeSession: false, ExplicitApprovals: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true}
 }
 
 func (r *CodexRunner) Start(ctx context.Context, req StartRequest) (*StartResult, error) {
@@ -29,33 +29,21 @@ func (r *CodexRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeRes
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
 		command = "codex app-server"
-	} else if strings.Contains(command, "{{session_ref}}") {
-		// user-provided resume-aware command
-	} else if strings.HasPrefix(command, "codex exec ") {
-		command = "codex exec resume --skip-git-repo-check --json {{session_ref}} -"
 	}
-	if shouldUseLiveCodex(command) {
-		startReq := StartRequest{
-			ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-			Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, ActiveStates: req.ActiveStates, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
-			EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-			RepoRoot: req.RepoRoot, Command: command, NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy, ExternalLoop: req.ExternalLoop,
-		}
-		return startDetachedRunnerWrapper(ctx, RunnerCodexAppServer, startReq, &req, r.Capabilities())
-	}
-	return executeRunnerCommand(ctx, r.Name(), runnerExecRequest{
+	startReq := StartRequest{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, SessionRef: req.SessionRef, MessageRef: req.MessageRef, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath,
-		RepoRoot: req.RepoRoot, PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-		Command: command, NotePath: req.NotePath, VaultPath: req.VaultPath, ResumeMode: true, CodexPolicy: req.CodexPolicy, ExternalLoop: req.ExternalLoop,
-	}, r.Capabilities())
+		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, ActiveStates: req.ActiveStates, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
+		EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
+		RepoRoot: req.RepoRoot, Command: command, NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy, ExternalLoop: req.ExternalLoop,
+	}
+	return r.Start(ctx, startReq)
 }
 
 func (r *CodexRunner) Reconcile(ctx context.Context, req ReconcileRequest) (*ReconcileResult, error) {
 	if strings.TrimSpace(req.SessionRef) == "" {
 		return &ReconcileResult{LeaseState: LeaseStateReleased, Outcome: AttemptOutcomeAbandoned, Reason: "missing session ref"}, nil
 	}
-	return &ReconcileResult{LeaseState: LeaseStateRetryQueued, Outcome: AttemptOutcomeNone, Reason: "session is resumable"}, nil
+	return &ReconcileResult{LeaseState: LeaseStateRetryQueued, Outcome: AttemptOutcomeNone, Reason: "previous session exists; queued fresh continuation attempt"}, nil
 }
 
 func (r *CodexRunner) Interrupt(ctx context.Context, req InterruptRequest) error { return nil }
@@ -91,7 +79,7 @@ func (r *CodexAppServerRunner) Resume(ctx context.Context, req ResumeRequest) (*
 		EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 		RepoRoot: req.RepoRoot, Command: req.Command, NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy, ExternalLoop: req.ExternalLoop,
 	}
-	return startDetachedRunnerWrapper(ctx, r.Name(), startReq, &req, r.Capabilities())
+	return r.Start(ctx, startReq)
 }
 
 type CodexExecRunner struct{}

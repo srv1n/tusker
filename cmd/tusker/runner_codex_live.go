@@ -82,16 +82,11 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	if err := assertRunnerCommandDir(RunnerCodex, cmd.Dir, req.WorkspacePath); err != nil {
 		return nil, err
 	}
-	resumeSessionRef, resumeMessageRef := "", ""
-	if resume != nil {
-		resumeSessionRef = resume.SessionRef
-		resumeMessageRef = resume.MessageRef
-	}
 	cmd.Env = runnerEnv(runnerLaunchEnv{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-		NotePath: req.NotePath, VaultPath: req.VaultPath, SessionRef: resumeSessionRef, MessageRef: resumeMessageRef, CodexPolicy: policy,
+		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: policy,
 	})
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
@@ -144,12 +139,7 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 		return nil, err
 	}
 
-	var threadID string
-	if resume != nil && strings.TrimSpace(resume.SessionRef) != "" {
-		threadID, err = handle.threadResume(resume.SessionRef, workspaceCWD)
-	} else {
-		threadID, err = handle.threadStart(workspaceCWD)
-	}
+	threadID, err := handle.threadStart(workspaceCWD)
 	if err != nil {
 		_ = handle.Interrupt(context.Background())
 		liveRegistry.Unregister(handle.attemptID)
@@ -177,7 +167,7 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 		PGID:         processGroupID(pid),
 		ProcessStart: processStartedAt,
 		StatusPath:   req.StatusPath,
-		Capabilities: RunnerCapabilities{StructuredEvents: true, ResumeSession: true, ExplicitApprovals: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true},
+		Capabilities: RunnerCapabilities{StructuredEvents: true, ResumeSession: false, ExplicitApprovals: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true},
 		Completed:    false,
 		Outcome:      AttemptOutcomeNone,
 	}, nil

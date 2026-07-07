@@ -55,6 +55,7 @@ type serveDaemonStatus struct {
 	ProjectCount     int    `json:"projectCount"`
 	ParkedBudgetRuns int    `json:"parkedBudgetRuns"`
 	BudgetCircuit    any    `json:"budgetCircuit"`
+	InvariantCircuit any    `json:"invariantCircuit"`
 	DaemonAlive      bool   `json:"daemonAlive"`
 	DaemonPID        int    `json:"daemonPid"`
 	DaemonStartedAt  any    `json:"daemonStartedAt"`

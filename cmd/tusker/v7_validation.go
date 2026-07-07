@@ -1250,6 +1250,10 @@ func validateV7SkillKnowledge(vaultPath string) ([]Issue, []Issue) {
 		return nil, nil
 	}
 	var errors []Issue
+	var warnings []Issue
+	if warning := validateTuskerSignsFile(vaultPath); warning != nil {
+		warnings = append(warnings, *warning)
+	}
 	skillPath := filepath.Join(vaultPath, "SKILL.md")
 	if !fileExists(skillPath) {
 		errors = append(errors, issue(errorMissingField, "V7 knowledge domains require "+vaultDisplayPath(vaultPath, "SKILL.md")+" project knowledge skill", "SKILL.md", "run `tusker init --profile v7` or `tusker publish skill --v7` after adding V7 domains", nil))
@@ -1259,12 +1263,12 @@ func validateV7SkillKnowledge(vaultPath string) ([]Issue, []Issue) {
 		_, body, err := parseFrontmatterMustRead(skillPath)
 		if err != nil {
 			errors = append(errors, issue(errorInvalidField, "could not read V7 project skill: "+err.Error(), "SKILL.md", "", nil))
-			return errors, nil
+			return errors, warnings
 		}
 		domains, err := listV7ProjectSkillDomains(vaultPath)
 		if err != nil {
 			errors = append(errors, issue(errorInvalidField, "could not list V7 project skill domains: "+err.Error(), "knowledge/domains", "", nil))
-			return errors, nil
+			return errors, warnings
 		}
 		for _, domain := range domains {
 			id := stringField(domain.Data, "id")
@@ -1300,7 +1304,16 @@ func validateV7SkillKnowledge(vaultPath string) ([]Issue, []Issue) {
 			errors = append(errors, issue(errorInvalidField, "could not inspect V7 task domain routes: "+err.Error(), "work/tasks", "", nil))
 		}
 	}
-	return errors, nil
+	return errors, warnings
+}
+
+func validateTuskerSignsFile(vaultPath string) *Issue {
+	_, lines, ok, err := readTuskerSigns(vaultPath)
+	if err != nil || !ok || lines <= tuskerSignsWarnLineLimit {
+		return nil
+	}
+	warning := issue("SIGNS_FILE_BLOATED", fmt.Sprintf("V7 signs.md has %d non-empty lines; warning cap is %d", lines, tuskerSignsWarnLineLimit), "signs.md", "trim corrective signs so every future attempt prompt stays small", map[string]any{"lines": lines, "limit": tuskerSignsWarnLineLimit})
+	return &warning
 }
 
 func validateV7DomainID(id, where string, errors *[]Issue) {

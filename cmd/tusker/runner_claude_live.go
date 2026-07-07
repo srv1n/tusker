@@ -58,12 +58,6 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
 		command = "claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions"
-		if resume != nil && strings.TrimSpace(resume.SessionRef) != "" {
-			command += " --resume {{session_ref}}"
-			if strings.TrimSpace(resume.MessageRef) != "" {
-				command += " --resume-session-at {{message_ref}}"
-			}
-		}
 	}
 	if err := ensureDir(filepath.Dir(req.RawLogPath)); err != nil {
 		return nil, err
@@ -82,8 +76,8 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		"{{status_path}}":    req.StatusPath,
 		"{{note_path}}":      req.NotePath,
 		"{{vault_path}}":     req.VaultPath,
-		"{{session_ref}}":    firstNonEmpty(resumeSessionRef(resume), ""),
-		"{{message_ref}}":    firstNonEmpty(resumeMessageRef(resume), ""),
+		"{{session_ref}}":    "",
+		"{{message_ref}}":    "",
 	})
 	cmd := exec.CommandContext(ctx, "sh", "-lc", command)
 	cmd.Dir = workspaceCWD
@@ -94,7 +88,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-		NotePath: req.NotePath, VaultPath: req.VaultPath, SessionRef: resumeSessionRef(resume), MessageRef: resumeMessageRef(resume),
+		NotePath: req.NotePath, VaultPath: req.VaultPath,
 		CodexPolicy: withDefaultCodexPolicy(req.CodexPolicy),
 	})
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -153,14 +147,14 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	pid := cmd.Process.Pid
 	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
 	return &StartResult{
-		SessionRef:   firstNonEmpty(handle.SessionRef(), resumeSessionRef(resume)),
+		SessionRef:   handle.SessionRef(),
 		MessageRef:   handle.MessageRef(),
 		StartedAt:    processStartedAt,
 		PID:          pid,
 		PGID:         processGroupID(pid),
 		ProcessStart: processStartedAt,
 		StatusPath:   req.StatusPath,
-		Capabilities: RunnerCapabilities{StructuredEvents: true, ResumeSession: true, ExplicitApprovals: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true},
+		Capabilities: RunnerCapabilities{StructuredEvents: true, ResumeSession: false, ExplicitApprovals: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true},
 		Completed:    false,
 		Outcome:      AttemptOutcomeNone,
 	}, nil
