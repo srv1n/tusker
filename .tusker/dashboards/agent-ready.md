@@ -20,7 +20,6 @@
 | [[RUN-T-0014]] | p1 | Wait for dependency RUN-T-0011 to reach done. |
 | [[RUN-T-0015]] | p2 | Wait for dependency RUN-T-0011 to reach done. |
 | [[RUN-T-0016]] | p1 | Execute the task contract and satisfy proof mode. |
-| [[RUN-T-0018]] | p0 | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0007]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0009]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0010]] | p1 | Execute the task contract and satisfy proof mode. |

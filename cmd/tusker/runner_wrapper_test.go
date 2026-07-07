@@ -75,6 +75,56 @@ func TestWrapperStopSignal(t *testing.T) {
 	waitForFileText(t, req.Start.RawLogPath, "runner wrapper stopping:")
 }
 
+func TestWrapperStopSignalDaemonAbsenceContinuesHeartbeat(t *testing.T) {
+	store, req := setupRunnerWrapperRuntime(t)
+	if err := writeText(req.Start.NotePath, "---\nid: APP-T-0001\nstatus: review\n---\n"); err != nil {
+		t.Fatal(err)
+	}
+	decision := runnerWrapperBeat(store, req.Start)
+	if !decision.Continue {
+		t.Fatalf("daemon absence/non-dispatchable note must not stop wrapper heartbeat: %#v", decision)
+	}
+	run, err := store.FindRun(req.Start.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run == nil || run.LeaseState != string(LeaseStateRunning) || strings.TrimSpace(run.LastHeartbeatAt) == "" {
+		t.Fatalf("wrapper should renew its own lease heartbeat, got %#v", run)
+	}
+}
+
+func TestWrapperStopSignalOwnerChangeStopsWrapper(t *testing.T) {
+	store, req := setupRunnerWrapperRuntime(t)
+	run, err := store.FindRun(req.Start.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.LeaseOwner = "other-attempt"
+	if err := store.UpsertRun(*run); err != nil {
+		t.Fatal(err)
+	}
+	decision := runnerWrapperBeat(store, req.Start)
+	if decision.Continue || !strings.Contains(decision.StopReason, "lease owner changed") {
+		t.Fatalf("expected owner-change stop signal, got %#v", decision)
+	}
+}
+
+func TestWrapperStopSignalLeaseStateStopsWrapper(t *testing.T) {
+	store, req := setupRunnerWrapperRuntime(t)
+	run, err := store.FindRun(req.Start.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.LeaseState = string(LeaseStateInterrupted)
+	if err := store.UpsertRun(*run); err != nil {
+		t.Fatal(err)
+	}
+	decision := runnerWrapperBeat(store, req.Start)
+	if decision.Continue || !strings.Contains(decision.StopReason, "lease state changed to interrupted") {
+		t.Fatalf("expected lease-state stop signal, got %#v", decision)
+	}
+}
+
 func TestWrapperFenced(t *testing.T) {
 	store, req := setupRunnerWrapperRuntime(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -93,7 +143,7 @@ func TestWrapperFenced(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertRunnerStatusExitCode(t, req.Start.StatusPath, 130)
-	waitForFileText(t, req.Start.RawLogPath, "lease heartbeat stopped")
+	waitForFileText(t, req.Start.RawLogPath, "lease generation advanced")
 }
 
 func TestDaemonStopDrain(t *testing.T) {
