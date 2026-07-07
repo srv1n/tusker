@@ -278,6 +278,7 @@ export interface DaemonStatus {
   activeRuns: number;
   queuedTasks: number;
   parkedBudgetRuns?: number;
+  persistentEscalationBanner?: boolean;
   budgetCircuit?: {
     open: boolean;
     reason?: string;

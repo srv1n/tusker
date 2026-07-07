@@ -1362,6 +1362,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		updateRunAttemptFromRun(d.store, run, AttemptOutcomeCancelled, 130, reason, now)
 		if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationReclaim, reason+"; reclaim would create another attempt"); capReached {
 			run = capped
+			recordDaemonEscalationForRun(project, run, "park", run.LastError)
 			if strings.TrimSpace(parentSessionRef) != "" {
 				_ = d.store.MarkSessionState(project.ProjectID, parentSessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", run.LastError, false)
 			}
@@ -1518,6 +1519,7 @@ func (d *Daemon) normalizeDeadRetryQueuedRun(ctx context.Context, project Regist
 		parentAttemptID := run.ActiveAttemptID
 		parentSessionRef := run.SessionRef
 		run = capped
+		recordDaemonEscalationForRun(project, run, "park", run.LastError)
 		if strings.TrimSpace(parentSessionRef) != "" {
 			_ = d.store.MarkSessionState(project.ProjectID, parentSessionRef, sessionStateForLeaseState(LeaseStateParkedNoProgress), "", run.LastError, false)
 		}
@@ -1597,6 +1599,7 @@ func (d *Daemon) parkRetryQueuedRunAtAttemptCap(project RegisteredProject, wf Wo
 	parentAttemptID := run.ActiveAttemptID
 	parentSessionRef := run.SessionRef
 	run = capped
+	recordDaemonEscalationForRun(project, run, "park", run.LastError)
 	if strings.TrimSpace(parentSessionRef) != "" {
 		_ = d.store.MarkSessionState(project.ProjectID, parentSessionRef, sessionStateForLeaseState(LeaseStateParkedNoProgress), "", run.LastError, false)
 	}
@@ -1751,6 +1754,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		return run, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": lane}))
 	}
 	if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached {
+		recordDaemonEscalationForRun(project, capped, "park", capped.LastError)
 		return capped, nil
 	}
 	previousRun := run
@@ -2145,6 +2149,7 @@ func (d *Daemon) scheduleRetry(run RunStatus, wf Workflow, reason string) RunSta
 		return run
 	}
 	if capped, capReached := d.enforceAttemptCreationCap(wf, run, attemptCreationRetry, reason); capReached {
+		d.recordDaemonEscalationForStoredRun(capped, "park", capped.LastError)
 		d.emitSupervisorDecision(SupervisorDecision{
 			ProjectID:        run.ProjectID,
 			RecordID:         run.RecordID,

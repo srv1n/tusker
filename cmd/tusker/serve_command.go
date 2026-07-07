@@ -175,6 +175,8 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleProjects(w, r)
 	case path == "/api/needs":
 		s.handleNeeds(w, r)
+	case path == "/api/digest":
+		s.handleDigest(w, r)
 	case path == "/api/runs":
 		s.handleRuns(w, r)
 	case strings.HasPrefix(path, "/api/runs/"):
@@ -370,22 +372,41 @@ func (s *serveServer) handleDaemon(w http.ResponseWriter, _ *http.Request) {
 	loadedProjects, _ := loadRegisteredProjects(s.store, registeredProjectLoadOptions{})
 	projects := loadedRegisteredProjects(loadedProjects)
 	serveJSON(w, http.StatusOK, serveDaemonStatus{
-		Connected:        true,
-		Addr:             s.addr,
-		ActiveRuns:       active,
-		QueuedTasks:      queued,
-		LastPollAt:       nullIfBlank(snap.project.LastPollAt),
-		StateRoot:        DefaultStateRoot(),
-		ProjectCount:     intFromAny(daemonStatus["projects"]),
-		Projects:         projects,
-		ParkedBudgetRuns: intFromAny(daemonStatus["parkedBudgetRuns"]),
-		BudgetCircuit:    daemonStatus["budgetCircuit"],
-		InvariantCircuit: daemonStatus["invariantCircuit"],
-		DaemonAlive:      boolFromAny(daemonStatus["daemon_alive"]),
-		DaemonPID:        intFromAny(daemonStatus["daemon_pid"]),
-		DaemonStartedAt:  nullIfBlank(stringValue(daemonStatus["daemon_started_at"])),
-		DaemonLastPollAt: nullIfBlank(stringValue(daemonStatus["daemon_last_poll_at"])),
+		Connected:                  true,
+		Addr:                       s.addr,
+		ActiveRuns:                 active,
+		QueuedTasks:                queued,
+		LastPollAt:                 nullIfBlank(snap.project.LastPollAt),
+		StateRoot:                  DefaultStateRoot(),
+		ProjectCount:               intFromAny(daemonStatus["projects"]),
+		Projects:                   projects,
+		ParkedBudgetRuns:           intFromAny(daemonStatus["parkedBudgetRuns"]),
+		PersistentEscalationBanner: hasOpenP0Escalation(s.vaultPath),
+		BudgetCircuit:              daemonStatus["budgetCircuit"],
+		InvariantCircuit:           daemonStatus["invariantCircuit"],
+		DaemonAlive:                boolFromAny(daemonStatus["daemon_alive"]),
+		DaemonPID:                  intFromAny(daemonStatus["daemon_pid"]),
+		DaemonStartedAt:            nullIfBlank(stringValue(daemonStatus["daemon_started_at"])),
+		DaemonLastPollAt:           nullIfBlank(stringValue(daemonStatus["daemon_last_poll_at"])),
 	})
+}
+
+func (s *serveServer) handleDigest(w http.ResponseWriter, r *http.Request) {
+	since, sinceOverride, err := digestSinceFromQuery(r.URL.Query().Get("since"))
+	if err != nil {
+		serveJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	digest, err := buildTuskerDigest(s.vaultPath, s.store, digestBuildOptions{
+		Since:         since,
+		SinceOverride: sinceOverride,
+		Now:           s.now(),
+	})
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	serveJSON(w, http.StatusOK, digest)
 }
 
 func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {

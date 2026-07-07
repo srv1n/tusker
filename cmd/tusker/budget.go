@@ -318,6 +318,7 @@ func (d *Daemon) budgetDispatchBlocker(project RegisteredProject, wf Workflow, n
 	}
 	if breached, reason := budgetLimitBreached("task", totals, budget.PerTaskInputTokens, budget.PerTaskOutputTokens); breached {
 		run = parkBudgetRun(run, reason+"; redrive required")
+		recordDaemonEscalationForRun(project, run, "park", run.LastError)
 		return run, run.LastError, true, nil
 	}
 	return run, "", false, nil
@@ -348,6 +349,7 @@ func (d *Daemon) enforceBudgetForRun(ctx context.Context, project RegisteredProj
 		now := time.Now().UTC().Format(time.RFC3339)
 		updateRunAttemptFromRun(d.store, run, AttemptOutcomeBudgetExceeded, exitCodeForOutcome(AttemptOutcomeBudgetExceeded), reason, now)
 		run = parkBudgetRun(run, reason+"; redrive required")
+		recordDaemonEscalationForRun(project, run, "park", run.LastError)
 		if strings.TrimSpace(run.SessionRef) != "" {
 			_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateParkedBudget), "", run.LastError, false)
 		}

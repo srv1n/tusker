@@ -10,28 +10,31 @@ import (
 )
 
 var (
-	TaskIDPattern     = regexp.MustCompile(`^([A-Z]{3})-T-(\d{4})$`)
-	GateIDPattern     = regexp.MustCompile(`^([A-Z]{3})-G-(\d{4})$`)
-	WaveIDPattern     = regexp.MustCompile(`^W-(\d{4})$`)
-	DecisionIDPattern = regexp.MustCompile(`^([A-Z]{3})-D-(\d{4})$`)
-	ProposalIDPattern = regexp.MustCompile(`^([A-Z]{3})-P-(\d{4})$`)
-	EvidenceIDPattern = regexp.MustCompile(`^([A-Z]{3})-T-(\d{4})-E-(\d{4})$`)
-	AttemptIDPattern  = regexp.MustCompile(`^([A-Z]{3})-T-(\d{4})-A-(\d{4})$`)
+	TaskIDPattern       = regexp.MustCompile(`^([A-Z]{3})-T-(\d{4})$`)
+	GateIDPattern       = regexp.MustCompile(`^([A-Z]{3})-G-(\d{4})$`)
+	WaveIDPattern       = regexp.MustCompile(`^W-(\d{4})$`)
+	EscalationIDPattern = regexp.MustCompile(`^ESC-(\d{4})$`)
+	DecisionIDPattern   = regexp.MustCompile(`^([A-Z]{3})-D-(\d{4})$`)
+	ProposalIDPattern   = regexp.MustCompile(`^([A-Z]{3})-P-(\d{4})$`)
+	EvidenceIDPattern   = regexp.MustCompile(`^([A-Z]{3})-T-(\d{4})-E-(\d{4})$`)
+	AttemptIDPattern    = regexp.MustCompile(`^([A-Z]{3})-T-(\d{4})-A-(\d{4})$`)
 
-	TaskStatuses   = makeSet("idea", "backlog", "ready", "review", "rework", "done", "cancelled", "superseded")
-	WaveStatuses   = makeSet("open", "landed")
-	Readiness      = makeSet("ready", "blocked_by_gate", "blocked_by_dependency", "waiting_on_review", "waiting_on_human", "waiting_on_ci", "held", "done", "cancelled", "superseded")
-	GateKinds      = makeSet("auth", "env", "setup", "dev_host", "ci", "verification", "signoff", "decision", "quota", "external_service", "manual_hold", "security", "release")
-	GateStatuses   = makeSet("open", "satisfied", "waived", "obsolete")
-	ProofModes     = makeSet("none", "inline", "card", "artifact", "audit")
-	ProofStatuses  = makeSet("pending", "partial", "satisfied", "waived")
-	EvidenceKinds  = makeSet("automated_test", "unit_test", "integration_test", "e2e_test", "verification_summary", "screenshot", "video", "trace", "log_excerpt", "manual_smoke", "physical_smoke", "ci_run", "provider_probe", "benchmark", "review_packet", "security_review", "privacy_review", "accessibility_review", "performance_profile", "release_smoke", "human_review")
-	EvidenceStatus = makeSet("pending_review", "accepted", "rejected", "superseded", "historical")
-	AttemptStatus  = makeSet("started", "handoff", "failed")
-	DecisionStatus = makeSet("proposed", "accepted", "superseded")
-	ProposalStatus = makeSet("proposed", "accepted", "rejected", "superseded")
-	ProposalAction = makeSet("close", "status", "change", "create_task", "create_gate", "create_decision")
-	DomainStatus   = makeSet("draft", "current", "deprecated")
+	TaskStatuses         = makeSet("idea", "backlog", "ready", "review", "rework", "done", "cancelled", "superseded")
+	WaveStatuses         = makeSet("open", "landed")
+	EscalationSeverities = makeSet("P0", "P1", "P2")
+	EscalationStatuses   = makeSet("open", "acknowledged")
+	Readiness            = makeSet("ready", "blocked_by_gate", "blocked_by_dependency", "waiting_on_review", "waiting_on_human", "waiting_on_ci", "held", "done", "cancelled", "superseded")
+	GateKinds            = makeSet("auth", "env", "setup", "dev_host", "ci", "verification", "signoff", "decision", "quota", "external_service", "manual_hold", "security", "release")
+	GateStatuses         = makeSet("open", "satisfied", "waived", "obsolete")
+	ProofModes           = makeSet("none", "inline", "card", "artifact", "audit")
+	ProofStatuses        = makeSet("pending", "partial", "satisfied", "waived")
+	EvidenceKinds        = makeSet("automated_test", "unit_test", "integration_test", "e2e_test", "verification_summary", "screenshot", "video", "trace", "log_excerpt", "manual_smoke", "physical_smoke", "ci_run", "provider_probe", "benchmark", "review_packet", "security_review", "privacy_review", "accessibility_review", "performance_profile", "release_smoke", "human_review")
+	EvidenceStatus       = makeSet("pending_review", "accepted", "rejected", "superseded", "historical")
+	AttemptStatus        = makeSet("started", "handoff", "failed")
+	DecisionStatus       = makeSet("proposed", "accepted", "superseded")
+	ProposalStatus       = makeSet("proposed", "accepted", "rejected", "superseded")
+	ProposalAction       = makeSet("close", "status", "change", "create_task", "create_gate", "create_decision")
+	DomainStatus         = makeSet("draft", "current", "deprecated")
 )
 
 var FrontmatterOrder = map[string][]string{
@@ -58,6 +61,11 @@ var FrontmatterOrder = map[string][]string{
 	},
 	"wave": {
 		"schema", "kind", "id", "project", "title", "status", "members", "landed_at", "created_at", "created_by", "updated_at", "updated_by", "state_rev",
+	},
+	"escalation": {
+		"schema", "kind", "id", "project", "severity", "status", "task", "source", "reason", "description", "dedupe_key",
+		"last_seen_at", "stale_threshold_hours", "stale_bumped_from", "stale_bumped_at", "notified_at", "notification_error",
+		"acknowledged_by", "acknowledged_at", "created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
 	"decision": {
 		"schema", "kind", "id", "project", "epic", "title", "status", "decided_by", "decided_at", "supersedes", "created_at", "created_by", "updated_at", "updated_by", "state_rev",
@@ -152,6 +160,11 @@ type TuskerAutomationConfig struct {
 	} `yaml:"fanout"`
 }
 
+type TuskerEscalationConfig struct {
+	NotificationsEnabled *bool `yaml:"notifications_enabled"`
+	StaleThresholdHours  int   `yaml:"stale_threshold_hours"`
+}
+
 type TuskerConfigFile struct {
 	ProjectID    string `yaml:"project_id"`
 	MutationMode string `yaml:"mutation_mode"`
@@ -163,6 +176,7 @@ type TuskerConfigFile struct {
 		AttemptsRoot  string `yaml:"attempts_root"`
 	} `yaml:"storage"`
 	Automation TuskerAutomationConfig `yaml:"automation"`
+	Escalation TuskerEscalationConfig `yaml:"escalation"`
 	Branches   struct {
 		DefaultBranch          string   `yaml:"default_branch"`
 		Control                []string `yaml:"control"`

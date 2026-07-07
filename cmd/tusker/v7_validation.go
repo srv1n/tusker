@@ -20,6 +20,7 @@ var (
 		"task":          makeSet("status", "readiness", "wave", "next_owner", "next_source", "next_ref", "next_action", "accepted_by", "accepted_at", "closed_at", "superseded_by"),
 		"gate":          makeSet("status", "owner", "blocking", "blocks", "satisfaction_evidence", "satisfaction_evidence_refs", "satisfied_by", "satisfied_at", "waived_by", "waived_at", "waive_reason", "obsolete_reason"),
 		"wave":          makeSet("status", "landed_at"),
+		"escalation":    makeSet("severity", "status", "stale_bumped_from", "stale_bumped_at", "notified_at", "notification_error", "acknowledged_by", "acknowledged_at"),
 		"epic":          makeSet("status", "owner", "priority", "next_task_number", "next_gate_number", "next_decision_number"),
 		"decision":      makeSet("status", "decided_by", "decided_at", "supersedes"),
 		"evidence":      makeSet("task", "status", "accepted_by", "accepted_at", "screenshot_checked_by", "screenshot_checked_at", "redacted", "redaction_note"),
@@ -29,8 +30,8 @@ var (
 		"domain":        makeSet("status"),
 		"project_skill": makeSet("status"),
 	}
-	v7EventKinds       = makeSet("created", "updated", "status_changed", "gate_added", "gate_satisfied", "gate_waived", "gate_obsoleted", "claimed", "claim_released", "attempt_started", "attempt_handoff", "attempt_failed", "verification_added", "evidence_added", "review_requested", "review_passed", "review_failed", "closed", "reopened", "superseded", "cancelled", "decision_accepted", "lease_stale", "redaction", "redacted_replacement")
-	v7EventObjectKinds = makeSet("task", "gate", "wave", "epic", "decision", "evidence", "attempt", "proposal", "domain", "closeout")
+	v7EventKinds       = makeSet("created", "updated", "status_changed", "gate_added", "gate_satisfied", "gate_waived", "gate_obsoleted", "claimed", "claim_released", "attempt_started", "attempt_handoff", "attempt_failed", "verification_added", "evidence_added", "review_requested", "review_passed", "review_failed", "closed", "reopened", "superseded", "cancelled", "decision_accepted", "lease_stale", "redaction", "redacted_replacement", "acknowledged", "stale_bumped", "notified")
+	v7EventObjectKinds = makeSet("task", "gate", "wave", "escalation", "epic", "decision", "evidence", "attempt", "proposal", "domain", "closeout")
 	v7KnowledgeKinds   = makeSet("runbook", "decision", "invariant", "interface", "glossary", "source")
 )
 
@@ -51,6 +52,8 @@ func validateV7Note(note Note, ctx validationContext, where string) ([]Issue, []
 		validateV7Gate(note, where, &errors, &warnings)
 	case "wave":
 		validateV7Wave(note, ctx, where, &errors, &warnings)
+	case "escalation":
+		validateV7Escalation(note, ctx, where, &errors)
 	case "evidence":
 		validateV7Evidence(note, ctx, where, &errors, &warnings)
 	case "attempt":
@@ -446,6 +449,48 @@ func validateV7Wave(note Note, ctx validationContext, where string, errors, warn
 			if containsString(normalizeList(other.Data["members"]), member) {
 				*errors = append(*errors, issue("WAVE_OPEN_MEMBER_CONFLICT", fmt.Sprintf("%s belongs to multiple open waves: %s and %s", member, id, otherID), where, "", map[string]any{"member": member, "other_wave": otherID}))
 			}
+		}
+	}
+}
+
+func validateV7Escalation(note Note, ctx validationContext, where string, errors *[]Issue) {
+	data := note.Data
+	id := stringField(data, "id")
+	for _, field := range []string{"schema", "kind", "id", "project", "severity", "status", "source", "reason", "description", "created_at", "created_by"} {
+		if stringField(data, field) == "" {
+			*errors = append(*errors, issue(errorMissingField, fmt.Sprintf(`missing required frontmatter "%s"`, field), where, "", map[string]any{"field": field}))
+		}
+	}
+	if stringField(data, "schema") != "tusker.escalation/v7" {
+		*errors = append(*errors, issue(errorInvalidField, "V7 escalation schema must be tusker.escalation/v7", where, "", map[string]any{"field": "schema"}))
+	}
+	if stringField(data, "kind") != "escalation" {
+		*errors = append(*errors, issue(errorInvalidField, "V7 escalation kind must be escalation", where, "", map[string]any{"field": "kind"}))
+	}
+	if !v7EscalationIDPattern.MatchString(id) {
+		*errors = append(*errors, issue(errorIDScheme, "V7 escalation id must match ESC-0001", where, "", map[string]any{"id": id}))
+	}
+	if !strings.HasSuffix(filepath.ToSlash(where), "work/escalations/"+id+".md") {
+		*errors = append(*errors, issue(errorPathMismatch, "V7 escalation path must be .tusker/work/escalations/"+id+".md", where, "", nil))
+	}
+	if _, ok := v7EscalationSeverities[stringField(data, "severity")]; !ok {
+		*errors = append(*errors, issue(errorInvalidField, "invalid V7 escalation severity: "+stringField(data, "severity"), where, "", map[string]any{"field": "severity"}))
+	}
+	if _, ok := v7EscalationStatuses[stringField(data, "status")]; !ok {
+		*errors = append(*errors, issue(errorInvalidField, "invalid V7 escalation status: "+stringField(data, "status"), where, "", map[string]any{"field": "status"}))
+	}
+	taskID := stringField(data, "task")
+	if taskID == "" {
+		return
+	}
+	if !v7TaskIDPattern.MatchString(taskID) {
+		*errors = append(*errors, issue(errorInvalidField, "invalid V7 escalation task id: "+taskID, where, "", map[string]any{"field": "task"}))
+		return
+	}
+	if ctx.VaultPath != "" {
+		idx, _ := loadV7Index(ctx.VaultPath)
+		if _, ok := idx.Tasks[taskID]; !ok {
+			*errors = append(*errors, issue("ESCALATION_UNKNOWN_TASK", "V7 escalation references unknown task "+taskID, where, "", map[string]any{"task": taskID}))
 		}
 	}
 }

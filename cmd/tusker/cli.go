@@ -107,24 +107,24 @@ func parseCLI(argv []string) (string, Args) {
 	var command string
 	if len(argv) > 1 {
 		command = argv[1]
-		if command == "help" && len(argv) > 2 && !strings.HasPrefix(argv[2], "--") {
+		if command == "help" && len(argv) > 2 && !isCLIFlag(argv[2]) {
 			command = "help " + argv[2]
-			if len(argv) > 3 && !strings.HasPrefix(argv[3], "--") && commandTakesSubcommand(argv[2]) {
+			if len(argv) > 3 && !isCLIFlag(argv[3]) && commandTakesSubcommand(argv[2]) {
 				command = command + " " + argv[3]
 				return command, parseArgs(argv[4:])
 			}
 			return command, parseArgs(argv[3:])
 		}
-		if command == "legacy" && len(argv) > 2 && !strings.HasPrefix(argv[2], "--") {
+		if command == "legacy" && len(argv) > 2 && !isCLIFlag(argv[2]) {
 			legacyCommand := argv[2]
 			command = "legacy " + legacyCommand
-			if len(argv) > 3 && !strings.HasPrefix(argv[3], "--") && commandTakesSubcommand(legacyCommand) {
+			if len(argv) > 3 && !isCLIFlag(argv[3]) && commandTakesSubcommand(legacyCommand) {
 				command = command + " " + argv[3]
 				return command, parseArgs(argv[4:])
 			}
 			return command, parseArgs(argv[3:])
 		}
-		if len(argv) > 2 && !strings.HasPrefix(argv[2], "--") && commandTakesSubcommand(command) {
+		if len(argv) > 2 && !isCLIFlag(argv[2]) && commandTakesSubcommand(command) {
 			command = command + " " + argv[2]
 			return command, parseArgs(argv[3:])
 		}
@@ -135,9 +135,13 @@ func parseCLI(argv []string) (string, Args) {
 	return command, parseArgs(argv[2:])
 }
 
+func isCLIFlag(value string) bool {
+	return strings.HasPrefix(value, "-")
+}
+
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave":
+	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "escalate":
 		return true
 	default:
 		return false
@@ -246,6 +250,12 @@ func run(command string, args Args) (int, error) {
 		return 0, waveV7RemoveCmd(args)
 	case "wave show":
 		return 0, waveV7ShowCmd(args)
+	case "escalate":
+		return 0, escalationV7Cmd(args)
+	case "escalate ack":
+		return 0, escalationV7AckCmd(args)
+	case "digest":
+		return 0, digestCmd(args)
 	case "proof":
 		return 0, proofV7Cmd(args)
 	case "feedback":
@@ -656,7 +666,7 @@ func run(command string, args Args) (int, error) {
 	case "help migrate vault-root":
 		printMigrateVaultRootHelp()
 		return 0, nil
-	case "help handoff", "help gate", "help wave", "help wave create", "help wave add", "help wave remove", "help wave show", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help hook", "help hook install", "help migrate", "help migrate v7", "help migrate gates":
+	case "help handoff", "help gate", "help wave", "help wave create", "help wave add", "help wave remove", "help wave show", "help escalate", "help escalate ack", "help digest", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help hook", "help hook install", "help migrate", "help migrate v7", "help migrate gates":
 		printV7Help()
 		return 0, nil
 	case "help feedback":
@@ -798,6 +808,8 @@ Commands:
   evidence            add V7 evidence records
   gate                list/satisfy/waive/obsolete V7 gates
   wave                create, edit, and show named task batches
+  escalate            record or acknowledge severity-routed escalations
+  digest              render the morning operations digest
   feedback            add agent feedback notes and generate digests
   improve             opt-in scans for repeated work worth packaging
   attempt             start or hand off V7 attempts
@@ -867,7 +879,7 @@ func printCommandHelp(command string) bool {
 		printEvidenceHelp()
 	case "migrate vault-root":
 		printMigrateVaultRootHelp()
-	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
+	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "escalate", "escalate ack", "digest", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
 		printV7Help()
 	case "feedback", "feedback add", "feedback digest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()
@@ -1057,6 +1069,9 @@ func printV7Help() {
   tusker proposal apply HSP-P-0001 --by human:sarav
   tusker proposal reject HSP-P-0002 --reason "Superseded."
   tusker redact HSP-T-0001 --reason "Removed leaked token from evidence." --replacement "Redacted summary retained."
+  tusker escalate -s P1 --task HSP-T-0001 --reason system_error "Runner is stuck in a no-progress loop."
+  tusker escalate ack ESC-0001 --by human:sarav
+  tusker digest [--since 2026-07-07T00:00:00Z] [--json]
 
   tusker brief HSP-T-0001
   tusker packet HSP-T-0001 --for agent [--write]
