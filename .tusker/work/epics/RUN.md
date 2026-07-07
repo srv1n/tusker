@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:32:32Z"
-updated_at: "2026-07-07T16:28:17Z"
-state_rev: "sha256:6341473b2fac4166c08f400f087bb5f7bb910f82c9ee6c1542767d054a04a89c"
+updated_at: "2026-07-07T16:56:07Z"
+state_rev: "sha256:08173c200f33384b41df1980db0676800cf5f5b63886952a636a05d81344bf5c"
 ---
 
 # RUN · Runner parity and model profiles
@@ -80,3 +80,4 @@ TBD.
 | [[RUN-T-0029]] | human:sarav | 2026-07-07T13:08:12Z |
 | [[RUN-T-0030]] | human:sarav | 2026-07-07T13:06:33Z |
 | [[RUN-T-0035]] | human:sarav | 2026-07-07T16:28:17Z |
+| [[RUN-T-0036]] | human:sarav | 2026-07-07T16:56:07Z |

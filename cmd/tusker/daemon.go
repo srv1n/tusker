@@ -673,10 +673,15 @@ func (d *Daemon) globalActiveRunLimit() (int, error) {
 	return 2, nil
 }
 
+// countDispatchCapacityRuns counts the runs that consume active-run capacity:
+// leases in claimed or running state (matching RuntimeStore.CountProjectActiveRuns).
+// retry_queued, released, interrupted, parked_*, and unclaimed rows wait for
+// slots without consuming them; counting queued rows live-locks dispatch once
+// the queue is longer than the cap (RUN-T-0036).
 func countDispatchCapacityRuns(runs []RunStatus) int {
 	count := 0
 	for _, run := range runs {
-		if isDispatchCapacityLeaseState(run.LeaseState) {
+		if isDispatchingLeaseState(run.LeaseState) {
 			count++
 		}
 	}
@@ -686,7 +691,7 @@ func countDispatchCapacityRuns(runs []RunStatus) int {
 func countDispatchCapacityProjectRuns(runs map[string]RunStatus) int {
 	count := 0
 	for _, run := range runs {
-		if isDispatchCapacityLeaseState(run.LeaseState) {
+		if isDispatchingLeaseState(run.LeaseState) {
 			count++
 		}
 	}
@@ -696,7 +701,7 @@ func countDispatchCapacityProjectRuns(runs map[string]RunStatus) int {
 func countDispatchCapacityProjectRunsByState(runs map[string]RunStatus, stateByRecord map[string]string) map[string]int {
 	counts := map[string]int{}
 	for recordID, run := range runs {
-		if !isDispatchCapacityLeaseState(run.LeaseState) {
+		if !isDispatchingLeaseState(run.LeaseState) {
 			continue
 		}
 		state := strings.TrimSpace(stateByRecord[recordID])
@@ -821,12 +826,16 @@ func blockerResolved(note Note) bool {
 	}
 }
 
+// dispatchCapacityRunDelta reports how a lease-state transition changes the
+// in-tick active-run tally. Only claimed/running rows consume capacity, so a
+// successful dispatch of a queued row (retry_queued -> claimed) increments the
+// tally by one and a single tick cannot dispatch past the cap (RUN-T-0036).
 func dispatchCapacityRunDelta(before, after RunStatus) int {
 	delta := 0
-	if isDispatchCapacityLeaseState(after.LeaseState) {
+	if isDispatchingLeaseState(after.LeaseState) {
 		delta++
 	}
-	if isDispatchCapacityLeaseState(before.LeaseState) {
+	if isDispatchingLeaseState(before.LeaseState) {
 		delta--
 	}
 	return delta
@@ -845,6 +854,13 @@ func isDispatchingLeaseState(state string) bool {
 	}
 }
 
+// isDispatchCapacityLeaseState reports whether a run row still holds live
+// attempt/session state that the daemon must reconcile, budget-meter, or
+// release, and that the sentinel treats as a held lease: a dispatching lease
+// (claimed/running) or a queued retry that still owns its attempt refs.
+// Despite the name it is NOT the active-run capacity predicate: capacity
+// counts only claimed/running via isDispatchingLeaseState, so retry_queued
+// rows wait for slots without consuming them (RUN-T-0036).
 func isDispatchCapacityLeaseState(state string) bool {
 	switch LeaseState(strings.TrimSpace(state)) {
 	case LeaseStateClaimed, LeaseStateRunning, LeaseStateRetryQueued:
@@ -855,7 +871,7 @@ func isDispatchCapacityLeaseState(state string) bool {
 }
 
 func dispatchCapacityCountExcludingRun(count int, run RunStatus) int {
-	if isDispatchCapacityLeaseState(run.LeaseState) && count > 0 {
+	if isDispatchingLeaseState(run.LeaseState) && count > 0 {
 		return count - 1
 	}
 	return count
