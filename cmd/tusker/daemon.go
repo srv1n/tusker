@@ -1760,11 +1760,17 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	}
 	workspaceManager := NewWorkspaceManager()
 	workspaceStrategy := d.workspaceStrategyForDispatch(project, wfFile.Data, run)
+	branchName, branchBase, err := v7WorkspaceBranchForTask(project.VaultRoot, note)
+	if err != nil {
+		return run, err
+	}
 	workspace, err := workspaceManager.Prepare(WorkspacePrepareRequest{
 		ProjectID:     project.ProjectID,
 		ProjectKey:    project.ProjectKey,
 		RecordID:      run.RecordID,
 		ItemID:        run.ItemID,
+		BranchName:    branchName,
+		BranchBase:    branchBase,
 		RepoRoot:      project.RepoRoot,
 		StateRoot:     d.stateRoot,
 		WorkspaceRoot: wfFile.Data.Workspace.Root,
@@ -1795,6 +1801,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	attempt := RunAttempt{
 		AttemptID: attemptID, ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
 		Runner: run.Runner, Lane: lane, WorkRevision: run.WorkRevision, WorkspacePath: workspace.Path,
+		BranchName: branchName,
 		PromptPath: promptPath, EventSinkPath: eventSinkPath, RawLogPath: rawLogPath, StatusPath: statusPath,
 		ParentAttemptID: previousRun.ActiveAttemptID,
 		StartedAt:       startedAt,

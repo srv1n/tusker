@@ -6,6 +6,6 @@
 
 | Task | Wave | Risk | Next action |
 |---|---|---|---|
-
+| [[OPS-T-0002]] |  | high | Review evidence and close or return to rework. |
 
 <!-- tusker:generated:end -->

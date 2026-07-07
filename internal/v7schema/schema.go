@@ -57,7 +57,7 @@ var FrontmatterOrder = map[string][]string{
 		"schema", "kind", "id", "project", "title", "status", "owner", "priority", "domains", "next_task_number", "next_gate_number", "next_decision_number", "created_at", "updated_at", "state_rev",
 	},
 	"wave": {
-		"schema", "kind", "id", "project", "title", "status", "members", "landed_at", "created_at", "created_by", "updated_at", "updated_by", "state_rev",
+		"schema", "kind", "id", "project", "title", "status", "members", "integration_branch", "landings", "landed_at", "created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
 	"decision": {
 		"schema", "kind", "id", "project", "epic", "title", "status", "decided_by", "decided_at", "supersedes", "created_at", "created_by", "updated_at", "updated_by", "state_rev",

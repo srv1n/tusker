@@ -403,6 +403,9 @@ func validateV7Wave(note Note, ctx validationContext, where string, errors, warn
 	if !v7WaveIDPattern.MatchString(id) {
 		*errors = append(*errors, issue(errorIDScheme, "V7 wave id must match W-0001", where, "", map[string]any{"id": id}))
 	}
+	if branch := stringField(data, "integration_branch"); branch != "" && branch != v7IntegrationBranchName(id) {
+		*errors = append(*errors, issue(errorInvalidField, "V7 wave integration_branch must be "+v7IntegrationBranchName(id), where, "", map[string]any{"field": "integration_branch"}))
+	}
 	if !strings.HasSuffix(filepath.ToSlash(where), "work/waves/"+id+".md") {
 		*errors = append(*errors, issue(errorPathMismatch, "V7 wave path must be .tusker/work/waves/"+id+".md", where, "", nil))
 	}
