@@ -1042,6 +1042,9 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 		reason := fmt.Sprintf("tracker state %q is not dispatchable; daemon released run", firstNonEmpty(trackerState, "missing"))
 		return d.releaseIneligibleRun(ctx, project, run, reason)
 	}
+	if reason, finished, ok := completedRunnerDispatchDecline(run); ok {
+		return d.finishDispatchDeclinedRun(project, wfFile.Data, note, run, reason, finished)
+	}
 	if reason := daemonDispatchBlockedReason(project.VaultRoot, note, notesByID, notesByRecordID); reason != "" {
 		return d.releaseIneligibleRun(ctx, project, run, reason+"; daemon released run")
 	}
@@ -1209,6 +1212,11 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				}
 				run.UpdatedAt = finished
 				return run, true, nil
+			}
+			if run.Lane != runLaneReview {
+				if reason, ok := runnerStatusDispatchDeclineReason(status, run.RawLogPath); ok {
+					return d.finishDispatchDeclinedRun(project, wfFile.Data, note, run, reason, finished)
+				}
 			}
 			if run.Lane != runLaneReview {
 				if wait, reason := v7MachineCompleteWaitingForHuman(project.VaultRoot, note); wait {
@@ -1617,6 +1625,189 @@ func (d *Daemon) scheduleContinuationRetry(run RunStatus, wf Workflow, reason st
 }
 
 const runnerEarlyExitActiveTrackerReason = "runner early exit while tracker state remained active"
+
+func completedRunnerDispatchDecline(run RunStatus) (string, string, bool) {
+	statusPath := strings.TrimSpace(run.StatusPath)
+	if statusPath == "" || !fileExists(statusPath) {
+		return "", "", false
+	}
+	status, err := readRunnerProcessStatus(statusPath)
+	if err != nil || status.ExitCode != 0 {
+		return "", "", false
+	}
+	reason, ok := runnerStatusDispatchDeclineReason(status, run.RawLogPath)
+	if !ok {
+		return "", "", false
+	}
+	return reason, firstNonEmpty(status.CompletedAt, time.Now().UTC().Format(time.RFC3339)), true
+}
+
+func runnerStatusDispatchDeclineReason(status runnerProcessStatus, rawLogPath string) (string, bool) {
+	if AttemptOutcome(strings.TrimSpace(status.Outcome)) == AttemptOutcomeDispatchDeclined {
+		return firstNonEmpty(strings.TrimSpace(status.Reason), "runner dispatch declined"), true
+	}
+	return runnerRawLogDispatchDeclineReason(rawLogPath)
+}
+
+func runnerRawLogDispatchDeclineReason(rawLogPath string) (string, bool) {
+	rawLogPath = strings.TrimSpace(rawLogPath)
+	if rawLogPath == "" {
+		return "", false
+	}
+	text, err := readText(rawLogPath)
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		command, output, ok := rawLogCommandExecution(line)
+		if !ok {
+			continue
+		}
+		if !strings.Contains(command, "tusker automation plan") {
+			continue
+		}
+		if reason, ok := automationPlanDeclineReason(output); ok {
+			return reason, true
+		}
+	}
+	return "", false
+}
+
+func rawLogCommandExecution(line string) (string, string, bool) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "", "", false
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(line), &payload); err != nil {
+		return "", "", false
+	}
+	item, itemOK := rawLogMapStringAny(payload["item"])
+	if !itemOK {
+		if params, paramsOK := rawLogMapStringAny(payload["params"]); paramsOK {
+			item, itemOK = rawLogMapStringAny(params["item"])
+		}
+	}
+	if !itemOK {
+		return "", "", false
+	}
+	command := strings.TrimSpace(rawLogStringField(item, "command"))
+	output := firstNonEmpty(rawLogStringField(item, "aggregated_output"), rawLogStringField(item, "aggregatedOutput"), rawLogStringField(item, "output"))
+	if command == "" || strings.TrimSpace(output) == "" {
+		return "", "", false
+	}
+	return command, output, true
+}
+
+func rawLogStringField(data map[string]any, key string) string {
+	if data == nil {
+		return ""
+	}
+	value, ok := data[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return stringValue(value)
+}
+
+func rawLogMapStringAny(value any) (map[string]any, bool) {
+	out, ok := value.(map[string]any)
+	return out, ok
+}
+
+func automationPlanDeclineReason(output string) (string, bool) {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return "", false
+	}
+	for _, candidate := range jsonObjectCandidates(output) {
+		var payload struct {
+			Plan struct {
+				Decision string   `json:"decision"`
+				Blockers []string `json:"blockers"`
+			} `json:"plan"`
+		}
+		if err := json.Unmarshal([]byte(candidate), &payload); err != nil {
+			continue
+		}
+		if strings.TrimSpace(payload.Plan.Decision) == "do_not_dispatch" {
+			return dispatchDeclinedReason(payload.Plan.Blockers), true
+		}
+	}
+	if strings.Contains(output, `"decision":"do_not_dispatch"`) || strings.Contains(output, `"decision": "do_not_dispatch"`) {
+		return "runner dispatch declined", true
+	}
+	return "", false
+}
+
+func jsonObjectCandidates(text string) []string {
+	text = strings.TrimSpace(text)
+	candidates := []string{text}
+	start := strings.Index(text, "{")
+	end := strings.LastIndex(text, "}")
+	if start >= 0 && end > start {
+		candidate := strings.TrimSpace(text[start : end+1])
+		if candidate != text {
+			candidates = append(candidates, candidate)
+		}
+	}
+	return candidates
+}
+
+func dispatchDeclinedReason(blockers []string) string {
+	blockers = uniqueStrings(blockers)
+	if len(blockers) == 0 {
+		return "runner dispatch declined"
+	}
+	return "runner dispatch declined: " + strings.Join(blockers, "; ")
+}
+
+func (d *Daemon) finishDispatchDeclinedRun(project RegisteredProject, wf Workflow, note Note, run RunStatus, reason, finished string) (RunStatus, bool, error) {
+	parentAttemptID := run.ActiveAttemptID
+	parentSessionRef := run.SessionRef
+	reason = firstNonEmpty(strings.TrimSpace(reason), "runner dispatch declined")
+	finished = firstNonEmpty(strings.TrimSpace(finished), time.Now().UTC().Format(time.RFC3339))
+	updateRunAttemptFromRun(d.store, run, AttemptOutcomeDispatchDeclined, 0, reason, finished)
+	run.LeaseState = string(LeaseStateReleased)
+	run.AttemptOutcome = string(AttemptOutcomeDispatchDeclined)
+	run.NextRetryAt = ""
+	run.LastError = reason
+	run.UpdatedAt = finished
+	run.Terminal = trackerStateTerminal(wf, stringField(note.Data, "status"))
+	clearActiveExecution(&run)
+	if strings.TrimSpace(parentSessionRef) != "" {
+		_ = d.store.MarkSessionState(project.ProjectID, parentSessionRef, sessionStateForLeaseState(LeaseStateReleased), finished, reason, false)
+	}
+	d.emitSupervisorDecision(SupervisorDecision{
+		ProjectID:        project.ProjectID,
+		RecordID:         run.RecordID,
+		AttemptID:        parentAttemptID,
+		SessionRef:       parentSessionRef,
+		Kind:             string(SupervisorDecisionStopForAudit),
+		Reason:           reason,
+		ParentAttemptID:  parentAttemptID,
+		ParentSessionRef: parentSessionRef,
+		WorkspacePath:    run.WorkspacePath,
+		LeaseState:       run.LeaseState,
+	})
+	return run, true, nil
+}
+
+func trackerStateTerminal(wf Workflow, status string) bool {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return false
+	}
+	if containsString(wf.Tracker.TerminalStates, status) {
+		return true
+	}
+	switch status {
+	case "done", "cancelled", "superseded":
+		return true
+	default:
+		return false
+	}
+}
 
 func (d *Daemon) parkRetryQueuedRunAtAttemptCap(project RegisteredProject, wf Workflow, run RunStatus, reason string) (RunStatus, bool) {
 	if LeaseState(strings.TrimSpace(run.LeaseState)) != LeaseStateRetryQueued {
@@ -2463,7 +2654,7 @@ func applyReconcileResultCloud(run *RunStatus, result *ReconcileResult) {
 
 func exitCodeForOutcome(outcome AttemptOutcome) int {
 	switch outcome {
-	case AttemptOutcomeSucceeded, AttemptOutcomeNone, AttemptOutcomeEarlyExit:
+	case AttemptOutcomeSucceeded, AttemptOutcomeNone, AttemptOutcomeEarlyExit, AttemptOutcomeDispatchDeclined:
 		return 0
 	case AttemptOutcomeCancelled:
 		return 130
@@ -3749,6 +3940,8 @@ func sessionStateForOutcome(outcome AttemptOutcome) string {
 		return "open"
 	case AttemptOutcomeAbandoned:
 		return "abandoned"
+	case AttemptOutcomeDispatchDeclined:
+		return "closed"
 	case AttemptOutcomeWaitingForHuman:
 		return "closed"
 	case AttemptOutcomeBudgetExceeded:
@@ -4621,7 +4814,9 @@ func resolveLoadedRegisteredProject(store *RuntimeStore, args Args, opts registe
 	}
 
 	targets := []string{}
-	for _, raw := range []string{args.String("repo"), args.String("vault"), mustGetwd()} {
+	explicitPathSelector := strings.TrimSpace(args.String("repo")) != "" || strings.TrimSpace(args.String("vault")) != ""
+	cwdTarget := ""
+	for i, raw := range []string{args.String("repo"), args.String("vault"), mustGetwd()} {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			continue
@@ -4631,7 +4826,11 @@ func resolveLoadedRegisteredProject(store *RuntimeStore, args Args, opts registe
 			return nil, err
 		}
 		targets = append(targets, abs)
+		if i == 2 {
+			cwdTarget = abs
+		}
 	}
+	runs, _ := store.ListRuns()
 
 	bestIndex := -1
 	bestScore := -1
@@ -4640,6 +4839,9 @@ func resolveLoadedRegisteredProject(store *RuntimeStore, args Args, opts registe
 		score := 0
 		for _, target := range targets {
 			score = maxInt(score, projectPathMatchScore(project.Project, target))
+		}
+		if !explicitPathSelector && cwdTarget != "" {
+			score = maxInt(score, projectWorkspaceMatchScore(project.Project, runs, cwdTarget))
 		}
 		if score == 0 {
 			continue
@@ -4662,6 +4864,23 @@ func resolveLoadedRegisteredProject(store *RuntimeStore, args Args, opts registe
 	}
 	copy := loaded[bestIndex]
 	return &copy, nil
+}
+
+func projectWorkspaceMatchScore(project RegisteredProject, runs []RunStatus, target string) int {
+	score := 0
+	for _, run := range runs {
+		if strings.TrimSpace(run.ProjectID) != strings.TrimSpace(project.ProjectID) {
+			continue
+		}
+		workspace := strings.TrimSpace(run.WorkspacePath)
+		if workspace == "" {
+			continue
+		}
+		if pathWithin(workspace, target) {
+			score = maxInt(score, len(canonicalPath(workspace)))
+		}
+	}
+	return score
 }
 
 func projectPathMatchScore(project RegisteredProject, target string) int {

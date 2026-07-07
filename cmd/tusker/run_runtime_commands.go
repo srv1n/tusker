@@ -406,6 +406,8 @@ func runtimeFailureClass(run RunStatus, attempts []RunAttempt, turns []RunTurn) 
 		return "operator_interrupt"
 	case strings.Contains(text, "early exit") || outcome == string(AttemptOutcomeEarlyExit):
 		return "runner_early_exit"
+	case strings.Contains(text, "dispatch declined") || outcome == string(AttemptOutcomeDispatchDeclined):
+		return "dispatch_declined"
 	case strings.Contains(text, "turn cap exhausted") || outcome == string(AttemptOutcomeTurnCapExhausted):
 		return "turn_cap_exhausted"
 	case strings.Contains(text, "missing session") || strings.Contains(text, "resume"):

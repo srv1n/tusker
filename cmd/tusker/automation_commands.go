@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -499,12 +500,15 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 	} else if len(applyInputs) > 1 {
 		blockers = append(blockers, "multiple external apply inputs require human selection")
 	}
-	if reason := automationRunBlocker(run, time.Now().UTC()); reason != "" {
-		blockers = append(blockers, reason)
-	}
+	selfRun := automationRunIsCurrentAttempt(run)
 	daemon := &Daemon{stateRoot: ctx.StateRoot, store: ctx.Store}
-	if capped, capReached := daemon.enforceAttemptCreationCap(ctx.Workflow.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached {
-		blockers = append(blockers, capped.LastError)
+	if !selfRun {
+		if reason := automationRunBlocker(run, time.Now().UTC()); reason != "" {
+			blockers = append(blockers, reason)
+		}
+		if capped, capReached := daemon.enforceAttemptCreationCap(ctx.Workflow.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached {
+			blockers = append(blockers, capped.LastError)
+		}
 	}
 	if _, reason, _, err := daemon.budgetDispatchBlocker(ctx.Project, ctx.Workflow.Data, note, run, time.Now().UTC()); err != nil {
 		blockers = append(blockers, "budget: "+err.Error())
@@ -751,6 +755,11 @@ func automationRunBlocker(run RunStatus, now time.Time) string {
 	default:
 		return "existing run lease_state " + fallback(run.LeaseState, "(missing)") + " is not dispatchable"
 	}
+}
+
+func automationRunIsCurrentAttempt(run RunStatus) bool {
+	attemptID := strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID"))
+	return attemptID != "" && attemptID == strings.TrimSpace(run.ActiveAttemptID)
 }
 
 func (ctx *automationCommandContext) concurrencyBlockers(note Note, run RunStatus) []string {
