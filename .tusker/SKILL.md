@@ -13,8 +13,8 @@ canonical_files:
   - "knowledge/domains/*/INDEX.md"
   - "knowledge/domains/*/CANON.md"
 created_at: "2026-07-05T17:58:21Z"
-updated_at: "2026-07-05T17:58:21Z"
-state_rev: "sha256:bc813d51c734c879415fcb768edac5818a2e562ee1e91d2b6e20dbbc93e7a59f"
+updated_at: "2026-07-07T07:26:43Z"
+state_rev: "sha256:4b8fb2b1dbfb6d366416e63314d37ad188bd8aa24865c74e6804aa54b09a8b2d"
 ---
 
 # Project Knowledge Skill

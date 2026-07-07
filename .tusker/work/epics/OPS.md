@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-06T17:50:21Z"
-updated_at: "2026-07-07T03:10:01Z"
-state_rev: "sha256:7ae0d0fdfd45e35896d12101419fa0bc3b1c8360b846fb4cd84d79f80609309b"
+updated_at: "2026-07-07T07:28:08Z"
+state_rev: "sha256:7055050667d8ae69cc2549f852098a016c73bbdb782fba5c854e59860b1d67c9"
 ---
 
 # OPS · Operating model: waves, merge lane, escalation, worker protocol
@@ -44,10 +44,8 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[OPS-T-0001]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[OPS-T-0002]] | ready | blocked_dependency | Wait for dependency OPS-T-0001 to reach done. |
-| [[OPS-T-0003]] | ready | blocked_dependency | Wait for dependency OPS-T-0001 to reach done. |
-| [[OPS-T-0004]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[OPS-T-0002]] | ready | agent | Wait for dependency OPS-T-0001 to reach done. |
+| [[OPS-T-0003]] | ready | agent | Wait for dependency OPS-T-0001 to reach done. |
 
 ## Recently completed
 
@@ -55,4 +53,5 @@ TBD.
 
 | Task | Accepted by | Closed at |
 |---|---|---|
-| _None._ |  | |
+| [[OPS-T-0001]] | human:sarav | 2026-07-07T07:28:00Z |
+| [[OPS-T-0004]] | human:sarav | 2026-07-07T07:28:00Z |

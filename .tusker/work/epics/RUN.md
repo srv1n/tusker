@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:32:32Z"
-updated_at: "2026-07-07T03:10:01Z"
-state_rev: "sha256:4cd8a78e4d675c213e5852812648201b3e92869048fb81abff79dc421b3615c3"
+updated_at: "2026-07-07T07:28:08Z"
+state_rev: "sha256:e80f8e1c0d94ed1abf2179ed81a7ba652e9fc3fea7f1bcb31b4166dc0c445453"
 ---
 
 # RUN · Runner parity and model profiles
@@ -49,11 +49,8 @@ TBD.
 | [[RUN-T-0003]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach done. |
 | [[RUN-T-0005]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach done. |
 | [[RUN-T-0006]] | backlog | agent | Wait for dependency RUN-T-0004 to reach done. |
-| [[RUN-T-0014]] | ready | agent | Wait for dependency RUN-T-0011 to reach done. |
 | [[RUN-T-0015]] | ready | agent | Wait for dependency RUN-T-0011 to reach done. |
-| [[RUN-T-0016]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[RUN-T-0017]] | ready | blocked_dependency | Wait for dependency RUN-T-0014 to reach done. |
-| [[RUN-T-0018]] | review | reviewer | Review evidence and close or return to rework. |
+| [[RUN-T-0017]] | ready | agent | Wait for dependency RUN-T-0014 to reach done. |
 
 ## Recently completed
 
@@ -69,3 +66,6 @@ TBD.
 | [[RUN-T-0011]] | human:sarav | 2026-07-07T02:43:21Z |
 | [[RUN-T-0012]] | reviewer:agent | 2026-07-07T02:49:09Z |
 | [[RUN-T-0013]] | reviewer:agent | 2026-07-07T02:49:26Z |
+| [[RUN-T-0014]] | human:sarav | 2026-07-07T07:28:00Z |
+| [[RUN-T-0016]] | human:sarav | 2026-07-07T07:28:00Z |
+| [[RUN-T-0018]] | human:sarav | 2026-07-07T07:28:00Z |
