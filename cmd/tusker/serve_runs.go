@@ -103,7 +103,7 @@ func serveRunOutcome(run RunStatus, now time.Time) string {
 	case LeaseStateReleased:
 		if run.Terminal {
 			switch AttemptOutcome(strings.TrimSpace(run.AttemptOutcome)) {
-			case AttemptOutcomeSucceeded, AttemptOutcomeFailed, AttemptOutcomeBlocked, AttemptOutcomeEarlyExit, AttemptOutcomeTurnCapExhausted, AttemptOutcomeBudgetExceeded, AttemptOutcomeCancelled:
+			case AttemptOutcomeSucceeded, AttemptOutcomeFailed, AttemptOutcomeBlocked, AttemptOutcomeEarlyExit, AttemptOutcomeDispatchDeclined, AttemptOutcomeTurnCapExhausted, AttemptOutcomeBudgetExceeded, AttemptOutcomeCancelled:
 				outcome := serveRunOutcomeFromAttempt(run.AttemptOutcome, run.LeaseState)
 				return outcome
 			}
@@ -119,6 +119,8 @@ func serveRunOutcomeFromAttempt(outcome, lease string) string {
 		return "succeeded"
 	case AttemptOutcomeFailed, AttemptOutcomeBlocked, AttemptOutcomeAbandoned, AttemptOutcomeEarlyExit, AttemptOutcomeTurnCapExhausted, AttemptOutcomeBudgetExceeded:
 		return "failed"
+	case AttemptOutcomeDispatchDeclined:
+		return "dispatch-declined"
 	case AttemptOutcomeCancelled:
 		return "interrupted"
 	default:

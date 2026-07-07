@@ -1098,6 +1098,167 @@ func TestEarlyExitClassification(t *testing.T) {
 	}
 }
 
+func TestDispatchDeclinedOutcomeReleasesWithoutContinuation(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		fields        map[string]any
+		blockers      []string
+		wantTerminal  bool
+		wantInLastErr string
+	}{
+		{
+			name:          "active task",
+			blockers:      []string{"status is review", "readiness is waiting_on_review", "next_owner is reviewer"},
+			wantInLastErr: "status is review",
+		},
+		{
+			name: "canonical terminal",
+			fields: map[string]any{
+				"status":     "done",
+				"readiness":  "done",
+				"next_owner": "none",
+			},
+			blockers:      []string{"status is done", "readiness is done", "next_owner is none"},
+			wantTerminal:  true,
+			wantInLastErr: "status is done",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vault := automationTestVault(t)
+			disableReviewerForTest(t, vault)
+			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Declined", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+			makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+			if len(tc.fields) > 0 {
+				setAutomationV7TaskFields(t, vault, "APP-T-0001", tc.fields)
+			}
+			project := registerAutomationTestProject(t, vault)
+			store, err := OpenRuntimeStore(DefaultStateRoot())
+			if err != nil {
+				t.Fatal(err)
+			}
+			runDir := t.TempDir()
+			statusPath := filepath.Join(runDir, "runner.status.json")
+			rawLogPath := filepath.Join(runDir, "runner.raw.log")
+			if err := writeRunnerStatusFile(statusPath, 0); err != nil {
+				t.Fatal(err)
+			}
+			writeAutomationPlanDeclineRawLog(t, rawLogPath, "APP-T-0001", tc.blockers)
+			rawLine, err := readText(rawLogPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			command, output, ok := rawLogCommandExecution(strings.TrimSpace(rawLine))
+			if !ok {
+				t.Fatalf("decline fixture command did not parse: line=%s", strings.TrimSpace(rawLine))
+			}
+			if !strings.Contains(command, "tusker automation plan") || !strings.Contains(output, "do_not_dispatch") {
+				t.Fatalf("decline fixture command/output mismatch: command=%q output=%q", command, output)
+			}
+			if reason, ok := runnerRawLogDispatchDeclineReason(rawLogPath); !ok || !strings.Contains(reason, tc.wantInLastErr) {
+				t.Fatalf("decline fixture did not parse: ok=%t reason=%q", ok, reason)
+			}
+			if err := store.UpsertRun(RunStatus{
+				ProjectID:       project.ProjectID,
+				RecordID:        "APP-T-0001",
+				ItemID:          "APP-T-0001",
+				Runner:          string(RunnerCodexExec),
+				Lane:            runLaneExecute,
+				LeaseState:      string(LeaseStateRunning),
+				AttemptOutcome:  string(AttemptOutcomeNone),
+				ActiveAttemptID: "attempt-declined",
+				SessionRef:      "session-declined",
+				WorkspacePath:   t.TempDir(),
+				StatusPath:      statusPath,
+				RawLogPath:      rawLogPath,
+				AttemptCount:    1,
+				UpdatedAt:       "2026-07-06T00:00:00Z",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			_ = store.Close()
+
+			daemon, err := NewDaemon(DefaultStateRoot())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer daemon.Close()
+			if err := daemon.PollOnce(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+			assertEqual(t, string(LeaseStateReleased), run.LeaseState, "declined lease")
+			assertEqual(t, string(AttemptOutcomeDispatchDeclined), run.AttemptOutcome, "declined outcome")
+			assertEqual(t, "", run.NextRetryAt, "declined retry")
+			assertEqual(t, 1, run.AttemptCount, "declined attempt count")
+			assertEqual(t, tc.wantTerminal, run.Terminal, "declined terminal")
+			if !strings.Contains(run.LastError, tc.wantInLastErr) {
+				t.Fatalf("expected blocker text %q in run error, got %#v", tc.wantInLastErr, run)
+			}
+			attempts, err := daemon.store.ListAttemptsForRun(project.ProjectID, "APP-T-0001")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(attempts) != 1 {
+				t.Fatalf("expected one declined attempt, got %#v", attempts)
+			}
+			assertEqual(t, string(AttemptOutcomeDispatchDeclined), attempts[0].Outcome, "declined attempt outcome")
+			assertEqual(t, 0, attempts[0].ExitCode, "declined exit code")
+			if !strings.Contains(attempts[0].LastError, tc.wantInLastErr) {
+				t.Fatalf("expected blocker text %q in attempt error, got %#v", tc.wantInLastErr, attempts[0])
+			}
+			decisions, err := daemon.store.ListSupervisorDecisionsForRun(project.ProjectID, "APP-T-0001")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(decisions) == 0 || decisions[len(decisions)-1].Kind != string(SupervisorDecisionStopForAudit) {
+				t.Fatalf("expected declined stop-for-audit decision, got %#v", decisions)
+			}
+			for _, decision := range decisions {
+				if decision.Kind == string(SupervisorDecisionContinueAttempt) || decision.Kind == string(SupervisorDecisionContinueThread) {
+					t.Fatalf("declined dispatch queued continuation: %#v", decisions)
+				}
+			}
+		})
+	}
+}
+
+func writeAutomationPlanDeclineRawLog(t *testing.T, rawLogPath, taskID string, blockers []string) {
+	t.Helper()
+	planPayload := map[string]any{
+		"ok": false,
+		"plan": map[string]any{
+			"schema":    automationPlanSchema,
+			"task":      taskID,
+			"record_id": taskID,
+			"decision":  "do_not_dispatch",
+			"blockers":  blockers,
+		},
+	}
+	planRaw, err := json.Marshal(planPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linePayload := map[string]any{
+		"method": "item/completed",
+		"params": map[string]any{
+			"item": map[string]any{
+				"type":             "commandExecution",
+				"command":          "/bin/zsh -lc 'rtk tusker automation plan " + taskID + " --json'",
+				"aggregatedOutput": string(planRaw) + "\n",
+				"exitCode":         0,
+				"status":           "completed",
+			},
+		},
+	}
+	lineRaw, err := json.Marshal(linePayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(rawLogPath, string(lineRaw)+"\n"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestContinuationCapParksAllLanes(t *testing.T) {
 	for _, runner := range []RunnerName{RunnerCodexAppServer, RunnerCodexExec, RunnerClaude} {
 		t.Run(string(runner), func(t *testing.T) {
