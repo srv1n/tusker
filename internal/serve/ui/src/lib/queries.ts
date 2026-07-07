@@ -2,14 +2,13 @@
   TanStack Query hooks. One hook per read; all keys funnel through `qk` so
   invalidation after an action (resolve a need, retry a run) is centralized.
 
-  Live views (needs, runs) poll on an interval to approximate the push updates
-  the daemon will eventually stream — see BACKEND-GAPS.md (SSE/websocket).
+  Live views are invalidated by /api/stream. The interval remains only as a
+  degraded fallback while the stream is disconnected.
 */
 
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-
-const LIVE_REFETCH_MS = 4000;
+import { liveRefetchInterval } from "@/lib/stream";
 
 /** Query-key factory. */
 export const qk = {
@@ -26,43 +25,43 @@ export const qk = {
 };
 
 export const useDaemon = () =>
-  useQuery({ queryKey: qk.daemon, queryFn: api.daemon, refetchInterval: LIVE_REFETCH_MS });
+  useQuery({ queryKey: qk.daemon, queryFn: api.daemon, refetchInterval: liveRefetchInterval });
 
 export const useProjects = () =>
-  useQuery({ queryKey: qk.projects, queryFn: api.projects });
+  useQuery({ queryKey: qk.projects, queryFn: api.projects, refetchInterval: liveRefetchInterval });
 
 export const useNeeds = (projectId?: string) =>
   useQuery({
     queryKey: qk.needs(projectId),
     queryFn: () => api.needs(projectId),
-    refetchInterval: LIVE_REFETCH_MS,
+    refetchInterval: liveRefetchInterval,
   });
 
 export const useRuns = (projectId?: string) =>
   useQuery({
     queryKey: qk.runs(projectId),
     queryFn: () => api.runs(projectId),
-    refetchInterval: LIVE_REFETCH_MS,
+    refetchInterval: liveRefetchInterval,
   });
 
 export const useRun = (taskId: string) =>
   useQuery({
     queryKey: qk.run(taskId),
     queryFn: () => api.run(taskId),
-    refetchInterval: LIVE_REFETCH_MS,
+    refetchInterval: liveRefetchInterval,
   });
 
 export const useEpics = (projectId?: string) =>
-  useQuery({ queryKey: qk.epics(projectId), queryFn: () => api.epics(projectId) });
+  useQuery({ queryKey: qk.epics(projectId), queryFn: () => api.epics(projectId), refetchInterval: liveRefetchInterval });
 
 export const useTasks = (projectId?: string) =>
-  useQuery({ queryKey: qk.tasks(projectId), queryFn: () => api.tasks(projectId) });
+  useQuery({ queryKey: qk.tasks(projectId), queryFn: () => api.tasks(projectId), refetchInterval: liveRefetchInterval });
 
 export const useTask = (id: string) =>
-  useQuery({ queryKey: qk.task(id), queryFn: () => api.task(id) });
+  useQuery({ queryKey: qk.task(id), queryFn: () => api.task(id), refetchInterval: liveRefetchInterval });
 
 export const useDocList = (projectId?: string) =>
-  useQuery({ queryKey: qk.docs(projectId), queryFn: () => api.docs(projectId) });
+  useQuery({ queryKey: qk.docs(projectId), queryFn: () => api.docs(projectId), refetchInterval: liveRefetchInterval });
 
 export const useDoc = (path: string) =>
-  useQuery({ queryKey: qk.doc(path), queryFn: () => api.doc(path), enabled: path.length > 0 });
+  useQuery({ queryKey: qk.doc(path), queryFn: () => api.doc(path), enabled: path.length > 0, refetchInterval: liveRefetchInterval });

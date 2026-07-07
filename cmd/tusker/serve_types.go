@@ -12,6 +12,7 @@ type serveServer struct {
 	store     *RuntimeStore
 	assets    fs.FS
 	now       func() time.Time
+	stream    *serveStreamBroker
 }
 
 type serveSnapshot struct {

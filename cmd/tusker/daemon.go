@@ -22,6 +22,8 @@ type Daemon struct {
 	store                 *RuntimeStore
 	guard                 *daemonGuard
 	dispatchRefusalReason string
+	stream                *serveStreamBroker
+	pollTaskStatuses      map[string]string
 }
 
 const (
@@ -301,6 +303,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			if recordID == "" {
 				continue
 			}
+			d.observeTaskStatusForStream(project.ProjectID, recordID, stringField(note.Data, "status"))
 			noteStatusByRecord[recordID] = stringField(note.Data, "status")
 			keep[recordID] = struct{}{}
 		}
@@ -324,7 +327,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 					return err
 				}
 				if changed {
-					if err := d.store.UpsertRun(normalized); err != nil {
+					if err := d.upsertRunWithStream(current, normalized); err != nil {
 						return err
 					}
 					projectRuns[recordID] = normalized
@@ -336,7 +339,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				return err
 			}
 			if changed {
-				if err := d.store.UpsertRun(reconciled); err != nil {
+				if err := d.upsertRunWithStream(current, reconciled); err != nil {
 					return err
 				}
 				projectRuns[recordID] = reconciled
@@ -346,7 +349,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			}
 			capped, capChanged := d.parkRetryQueuedRunAtAttemptCap(project, wfFile.Data, current, "queued continuation retry would exceed cap")
 			if capChanged {
-				if err := d.store.UpsertRun(capped); err != nil {
+				if err := d.upsertRunWithStream(current, capped); err != nil {
 					return err
 				}
 				projectRuns[recordID] = capped
@@ -360,7 +363,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 					return err
 				}
 				if autoChanged {
-					if err := d.store.UpsertRun(autoAdvanced); err != nil {
+					if err := d.upsertRunWithStream(beforeAuto, autoAdvanced); err != nil {
 						return err
 					}
 					projectRuns[recordID] = autoAdvanced
@@ -373,7 +376,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 					return err
 				}
 				if applyChanged {
-					if err := d.store.UpsertRun(applyAdvanced); err != nil {
+					if err := d.upsertRunWithStream(beforeApplyAuto, applyAdvanced); err != nil {
 						return err
 					}
 					projectRuns[recordID] = applyAdvanced
@@ -445,7 +448,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				current = prepareRunForLaneDispatch(current, runLaneExecute, current.Runner)
 				current.UpdatedAt = now.Format(time.RFC3339)
 			}
-			if err := d.store.UpsertRun(current); err != nil {
+			if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 				return err
 			}
 			projectRuns[recordID] = current
@@ -454,7 +457,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				if reason := daemonDispatchBlockedReason(project.VaultRoot, note, notesByID, notesByRecordID); reason != "" {
 					current.LastError = reason
 					current.UpdatedAt = now.Format(time.RFC3339)
-					if err := d.store.UpsertRun(current); err != nil {
+					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 						return err
 					}
 					projectRuns[recordID] = current
@@ -475,7 +478,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 					current = budgeted
 					current.LastError = budgetReason
 					current.UpdatedAt = now.Format(time.RFC3339)
-					if err := d.store.UpsertRun(current); err != nil {
+					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 						return err
 					}
 					projectRuns[recordID] = current
@@ -492,7 +495,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				if invariantReason != "" {
 					current.LastError = invariantReason
 					current.UpdatedAt = now.Format(time.RFC3339)
-					if err := d.store.UpsertRun(current); err != nil {
+					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 						return err
 					}
 					projectRuns[recordID] = current
@@ -501,7 +504,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				if stateDispatchCapReachedForRun(status, stateActiveRuns, wfFile.Data, current) {
 					current.LastError = fmt.Sprintf("dispatch blocked: state %q concurrency cap reached", status)
 					current.UpdatedAt = now.Format(time.RFC3339)
-					if err := d.store.UpsertRun(current); err != nil {
+					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 						return err
 					}
 					projectRuns[recordID] = current
@@ -514,9 +517,10 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				if err != nil {
 					updated = d.scheduleRetry(updated, wfFile.Data, err.Error())
 				}
-				if err := d.store.UpsertRun(updated); err != nil {
+				if err := d.upsertRunWithStream(current, updated); err != nil {
 					return err
 				}
+				d.emitDispatchStreamEvent(updated)
 				projectRuns[recordID] = updated
 				globalActiveRuns += dispatchCapacityRunDelta(current, updated)
 				projectActiveRuns += dispatchCapacityRunDelta(current, updated)
@@ -550,9 +554,10 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			current.WorkRevision = intField(note.Data, "work_revision")
 			current = prepareRunForLaneDispatch(current, runLaneReview, reviewerRunner)
 			current.UpdatedAt = now.Format(time.RFC3339)
-			if err := d.store.UpsertRun(current); err != nil {
+			if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 				return err
 			}
+			d.emitStreamEvent(serveStreamKindReviewBatch, "review:batch", "needs", "tasks", "runs", "projects")
 			projectRuns[recordID] = current
 			if !shouldDispatchRun(current, now) {
 				continue
@@ -571,7 +576,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				current = budgeted
 				current.LastError = budgetReason
 				current.UpdatedAt = now.Format(time.RFC3339)
-				if err := d.store.UpsertRun(current); err != nil {
+				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 					return err
 				}
 				projectRuns[recordID] = current
@@ -584,7 +589,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			if invariantReason != "" {
 				current.LastError = invariantReason
 				current.UpdatedAt = now.Format(time.RFC3339)
-				if err := d.store.UpsertRun(current); err != nil {
+				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 					return err
 				}
 				projectRuns[recordID] = current
@@ -593,7 +598,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			if stateDispatchCapReachedForRun(status, stateActiveRuns, wfFile.Data, current) {
 				current.LastError = fmt.Sprintf("dispatch blocked: state %q concurrency cap reached", status)
 				current.UpdatedAt = now.Format(time.RFC3339)
-				if err := d.store.UpsertRun(current); err != nil {
+				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 					return err
 				}
 				projectRuns[recordID] = current
@@ -606,9 +611,10 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			if err != nil {
 				updated = d.scheduleRetry(updated, wfFile.Data, err.Error())
 			}
-			if err := d.store.UpsertRun(updated); err != nil {
+			if err := d.upsertRunWithStream(current, updated); err != nil {
 				return err
 			}
+			d.emitDispatchStreamEvent(updated)
 			projectRuns[recordID] = updated
 			globalActiveRuns += dispatchCapacityRunDelta(current, updated)
 			projectActiveRuns += dispatchCapacityRunDelta(current, updated)
@@ -645,6 +651,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	d.emitPollTickStreamEvent()
 	return nil
 }
 

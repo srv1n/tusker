@@ -1,9 +1,11 @@
+import { useSyncExternalStore } from "react";
 import { Link, useParams, useRouterState } from "@tanstack/react-router";
 import { ChevronDown, ChevronRight, Monitor, Moon, Search, Sun } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { CountBadge, Dot, Mono } from "@/components/ui/primitives";
 import { SectionLabel } from "@/components/ui/page";
 import { useDaemon, useNeeds, useProjects } from "@/lib/queries";
+import { formatStreamAge, getStreamStatus, subscribeStreamStatus } from "@/lib/stream";
 import { useTheme } from "@/lib/theme";
 import { USE_MOCK } from "@/lib/api";
 import type { ProjectSummary } from "@/types/domain";
@@ -22,10 +24,12 @@ export function Sidebar() {
   const projects = useProjects();
   const daemon = useDaemon();
   const globalNeeds = useNeeds();
+  const stream = useSyncExternalStore(subscribeStreamStatus, getStreamStatus, getStreamStatus);
   const activeProject = useParams({ strict: false }).projectId as string | undefined;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   const needsCount = globalNeeds.data?.length ?? 0;
+  const daemonLive = !!daemon.data?.connected && stream.connected;
   const budgetCircuitOpen = daemon.data?.budgetCircuit?.open === true;
   const invariantCircuitOpen = daemon.data?.invariantCircuit?.open === true;
 
@@ -122,10 +126,17 @@ export function Sidebar() {
           )}
           <div className="flex items-center gap-1.5">
             daemon
-            <span className={daemon.data?.connected ? "text-pass" : "text-fail"}>
-              {daemon.data?.connected ? "● live" : "● down"}
+            <span className={daemonLive ? "text-pass" : "text-fail"}>
+              {daemonLive ? "● live" : "● down"}
             </span>
           </div>
+          <div className="flex items-center gap-1.5">
+            stream
+            <span className={stream.connected ? "text-pass" : "text-fail"}>
+              {stream.connected ? "● connected" : "● disconnected"}
+            </span>
+          </div>
+          <div>last event {formatStreamAge(stream.lastEventAt)}</div>
           <div>{daemon.data?.addr ?? "localhost:7420"}</div>
         </div>
         <ThemeToggle />
