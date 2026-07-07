@@ -298,11 +298,9 @@ func validateV7TaskReadiness(note Note, ctx validationContext, where string, err
 		}
 	}
 	hasUnresolvedDep := false
-	for _, depID := range normalizeList(data["dependencies"]) {
-		dep, err := resolveV7Note(ctx.VaultPath, depID, "task")
-		if err == nil && stringField(dep.Data, "status") != "done" {
+	if idx, err := loadV7Index(ctx.VaultPath); err == nil {
+		if _, blocked := v7BlockingDependencyForReadiness(note, idx); blocked {
 			hasUnresolvedDep = true
-			break
 		}
 	}
 	switch readiness {

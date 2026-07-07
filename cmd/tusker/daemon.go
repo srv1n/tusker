@@ -2151,6 +2151,9 @@ func writeReviewPacketEvidence(vaultPath string, note Note, run RunStatus, store
 		}
 	}
 	facts := collectReviewPacketFacts(run)
+	if idx, err := loadV7Index(vaultPath); err == nil {
+		facts.SoftDependencyDependents = v7SoftDependencyDependentLines(idx, itemID)
+	}
 	if err := writeText(packetPath, renderReviewPacket(note, run, turns, supervisorDecisions, facts)); err != nil {
 		return err
 	}
@@ -2188,6 +2191,7 @@ type reviewPacketFacts struct {
 	EventTokenTotals              runtimeTokenTotals
 	RuntimeSummaries              []string
 	OpenRisks                     []string
+	SoftDependencyDependents      []string
 }
 
 func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDecisions []RuntimeSupervisorDecision, facts reviewPacketFacts) string {
@@ -2218,6 +2222,13 @@ func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDec
 		for _, summary := range facts.RuntimeSummaries {
 			out = append(out, "- "+summary)
 		}
+	}
+	out = append(out, "")
+	out = append(out, "## Soft dependency blast radius", "")
+	if len(facts.SoftDependencyDependents) == 0 {
+		out = append(out, "- No soft-edge dependents were found for this task.")
+	} else {
+		out = append(out, facts.SoftDependencyDependents...)
 	}
 	out = append(out, "")
 	out = append(out, "## Runtime artifacts", "")
