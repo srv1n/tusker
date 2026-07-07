@@ -1263,8 +1263,8 @@ Use V7 project knowledge instead:
 
 func printNewHelp() {
 	fmt.Println(`Usage:
-  tusker new epic [--vault <path>] --acronym <ACR> --title <title> [--summary <text>] [--owner <name>]
-  tusker new task [--vault <path>] --epic <ACR> --title <title> [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--evidence-required automated_test]
+  tusker new epic [--vault <path>] --acronym <ACR> --title <title> [--summary <text>] [--owner <name>] [--spec-refs <csv>]
+  tusker new task [--vault <path>] --epic <ACR> --title <title> [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--spec-refs <csv>] [--evidence-required automated_test]
   tusker new gate --blocks <TASK-ID> --kind <gate-kind> --owner <owner> --action <text> --verification <proof>
   tusker new decision --epic <ACR> --title <title>
 

@@ -562,6 +562,7 @@ func automationPlanRequiredReads(vaultPath string, note Note) []string {
 	if strings.TrimSpace(note.RelativePath) != "" {
 		reads = append(reads, filepath.ToSlash(filepath.Join(vaultRoot, note.RelativePath)))
 	}
+	reads = append(reads, v7SpecRefRequiredReads(vaultPath, note)...)
 	domains := normalizeList(note.Data["domains"])
 	if len(domains) == 0 {
 		domains = []string{"project"}
