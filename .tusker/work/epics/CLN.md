@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:16:22Z"
-updated_at: "2026-07-07T07:28:08Z"
-state_rev: "sha256:1e377d02024553aca854ce533dcc624235f1604168ddc53d301b8381c1532f85"
+updated_at: "2026-07-07T07:39:05Z"
+state_rev: "sha256:36e3e9118252708902f50d310751bc64b2df4f150cecf26d37734c27acd33196"
 ---
 
 # CLN · One model, one vault: legacy deletion and solo ergonomics
@@ -45,11 +45,11 @@ TBD.
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
 | [[CLN-T-0002]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[CLN-T-0003]] | backlog | blocked_dependency | Wait for dependency CLN-T-0002 to reach done. |
-| [[CLN-T-0004]] | backlog | blocked_dependency | Wait for dependency CLN-T-0003 to reach done. |
+| [[CLN-T-0003]] | backlog | blocked_dependency | Wait for dependency CLN-T-0002 to reach review with satisfied proof or done. |
+| [[CLN-T-0004]] | backlog | blocked_dependency | Wait for dependency CLN-T-0003 to reach review with satisfied proof or done. |
 | [[CLN-T-0005]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[CLN-T-0006]] | ready | agent:claude-code | Execute the task contract and satisfy proof mode. |
-| [[CLN-T-0007]] | backlog | blocked_dependency | Wait for dependency CLN-T-0006 to reach done. |
+| [[CLN-T-0007]] | backlog | blocked_dependency | Wait for dependency CLN-T-0006 to reach review with satisfied proof or done. |
 
 ## Recently completed
 

@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:32:32Z"
-updated_at: "2026-07-07T07:28:08Z"
-state_rev: "sha256:e80f8e1c0d94ed1abf2179ed81a7ba652e9fc3fea7f1bcb31b4166dc0c445453"
+updated_at: "2026-07-07T07:38:45Z"
+state_rev: "sha256:083aff9fcb5e645e4a7b98e83a8a021d92a219f8bc73d734f12925ded6164c00"
 ---
 
 # RUN · Runner parity and model profiles
@@ -45,12 +45,14 @@ TBD.
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
 | [[RUN-T-0001]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[RUN-T-0002]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[RUN-T-0003]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach done. |
-| [[RUN-T-0005]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach done. |
+| [[RUN-T-0002]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[RUN-T-0003]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach review with satisfied proof or done. |
+| [[RUN-T-0005]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach review with satisfied proof or done. |
 | [[RUN-T-0006]] | backlog | agent | Wait for dependency RUN-T-0004 to reach done. |
-| [[RUN-T-0015]] | ready | agent | Wait for dependency RUN-T-0011 to reach done. |
-| [[RUN-T-0017]] | ready | agent | Wait for dependency RUN-T-0014 to reach done. |
+| [[RUN-T-0015]] | backlog | agent | Wait for dependency RUN-T-0011 to reach done. |
+| [[RUN-T-0017]] | backlog | agent | Wait for dependency RUN-T-0014 to reach done. |
+| [[RUN-T-0019]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[RUN-T-0020]] | ready | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 

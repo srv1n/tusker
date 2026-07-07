@@ -76,7 +76,7 @@ runtime:
     per_task_input_tokens: 250000000
     per_task_output_tokens: 2500000
   lease_ttl_ms: 900000
-  max_active_runs_per_project: 5
+  max_active_runs_per_project: 2
   max_continuation_retries: 3
   poll_interval_ms: 5000
 tracker:
