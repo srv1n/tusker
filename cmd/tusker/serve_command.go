@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"mime"
 	"net"
 	"net/http"
@@ -21,6 +22,9 @@ import (
 const defaultServeAddr = "127.0.0.1:7420"
 
 func serveCmd(args Args) error {
+	if deferred, err := serveDeferToIncumbentDaemon(args, DefaultStateRoot()); deferred || err != nil {
+		return err
+	}
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err
@@ -54,6 +58,33 @@ func serveCmd(args Args) error {
 	return err
 }
 
+func serveDeferToIncumbentDaemon(args Args, stateRoot string) (bool, error) {
+	liveness := readDaemonLiveness(stateRoot, time.Now().UTC())
+	if !liveness.Alive {
+		return false, nil
+	}
+	addr := strings.TrimSpace(liveness.ServeAddr)
+	if !liveness.ServeEnabled || addr == "" {
+		if args.Bool("json") {
+			emitJSON(map[string]any{"ok": true, "daemon_alive": true, "daemon_pid": liveness.PID, "serve_enabled": false})
+			return true, nil
+		}
+		if !args.Bool("quiet") {
+			fmt.Printf("Tusker daemon is running with embedded serve disabled (pid %d)\n", liveness.PID)
+		}
+		return true, nil
+	}
+	url := "http://" + addr
+	if args.Bool("json") {
+		emitJSON(map[string]any{"ok": true, "daemon_alive": true, "daemon_pid": liveness.PID, "serve_enabled": true, "addr": addr, "url": url})
+		return true, nil
+	}
+	if !args.Bool("quiet") {
+		fmt.Printf("Tusker daemon already serving on %s (pid %d)\n", url, liveness.PID)
+	}
+	return true, nil
+}
+
 func newServeServer(vaultPath, repoRoot, addr string, store *RuntimeStore, assets fs.FS) *serveServer {
 	return &serveServer{
 		vaultPath: vaultPath,
@@ -70,6 +101,10 @@ func serveBindAddr(args Args) (string, error) {
 	if port := strings.TrimSpace(args.String("port")); port != "" && raw == defaultServeAddr {
 		raw = "127.0.0.1:" + strings.TrimPrefix(port, ":")
 	}
+	return serveNormalizeAddr(raw)
+}
+
+func serveNormalizeAddr(raw string) (string, error) {
 	host, port, err := net.SplitHostPort(raw)
 	if err != nil {
 		if strings.Count(raw, ":") == 0 {
@@ -101,6 +136,12 @@ func serveIsLoopbackHost(host string) bool {
 }
 
 func (s *serveServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("tusker serve recovered handler panic: path=%s panic=%v", r.URL.Path, recovered)
+			serveJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+		}
+	}()
 	if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api" {
 		s.handleAPI(w, r)
 		return
@@ -266,7 +307,7 @@ func (s *serveServer) loadSnapshot() (serveSnapshot, error) {
 }
 
 func (s *serveServer) loadQueueExplanations() map[string]automationTaskExplanation {
-	ctx, err := loadAutomationCommandContext(Args{"vault": s.vaultPath, "repo": s.repoRoot})
+	ctx, err := loadAutomationCommandContextWithStore(Args{"vault": s.vaultPath, "repo": s.repoRoot}, DefaultStateRoot(), s.store)
 	if err != nil {
 		return map[string]automationTaskExplanation{}
 	}
@@ -318,9 +359,13 @@ func (s *serveServer) handleDaemon(w http.ResponseWriter, _ *http.Request) {
 		QueuedTasks:      queued,
 		LastPollAt:       nullIfBlank(snap.project.LastPollAt),
 		StateRoot:        DefaultStateRoot(),
-		ProjectCount:     1,
+		ProjectCount:     intFromAny(daemonStatus["projects"]),
 		ParkedBudgetRuns: intFromAny(daemonStatus["parkedBudgetRuns"]),
 		BudgetCircuit:    daemonStatus["budgetCircuit"],
+		DaemonAlive:      boolFromAny(daemonStatus["daemon_alive"]),
+		DaemonPID:        intFromAny(daemonStatus["daemon_pid"]),
+		DaemonStartedAt:  nullIfBlank(stringValue(daemonStatus["daemon_started_at"])),
+		DaemonLastPollAt: nullIfBlank(stringValue(daemonStatus["daemon_last_poll_at"])),
 	})
 }
 

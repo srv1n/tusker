@@ -48,6 +48,9 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	if wf.Runtime.MaxActiveRunsPerProject <= 0 {
 		return tuskerError(errorConfigInvalid, "runtime.max_active_runs_per_project must be > 0", withPath(filePath))
 	}
+	if _, err := serveNormalizeAddr(firstNonEmpty(strings.TrimSpace(wf.Runtime.Serve.Addr), defaultServeAddr)); err != nil {
+		return tuskerError(errorConfigInvalid, "runtime.serve.addr must be a localhost address", withPath(filePath), withContext(map[string]any{"addr": wf.Runtime.Serve.Addr}))
+	}
 	if strings.TrimSpace(wf.Workspace.Strategy) == "" {
 		return tuskerError(errorConfigInvalid, "workspace.strategy is required", withPath(filePath))
 	}

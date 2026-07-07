@@ -499,9 +499,7 @@ func TestDaemonStopCommandStopsResidentDaemon(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(stateRoot) })
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
 	vault := pickupV7TestVault(t)
-	if err := writeDefaultWorkflow(vault); err != nil {
-		t.Fatal(err)
-	}
+	writeDaemonServeWorkflow(t, vault, false, defaultServeAddr)
 	registerAutomationTestProject(t, vault)
 	done := make(chan error, 1)
 	go func() {

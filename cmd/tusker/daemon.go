@@ -20,6 +20,7 @@ import (
 type Daemon struct {
 	stateRoot             string
 	store                 *RuntimeStore
+	guard                 *daemonGuard
 	dispatchRefusalReason string
 }
 
@@ -86,6 +87,17 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 	}
 	if once {
 		return d.PollOnce(runCtx)
+	}
+	serveServer, err := d.startServe(runCtx)
+	if err != nil {
+		return err
+	}
+	if serveServer != nil {
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			_ = serveServer.Close(shutdownCtx)
+		}()
 	}
 	for {
 		if err := d.PollOnce(runCtx); err != nil {
@@ -3580,6 +3592,7 @@ func daemonRunCmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	daemon.guard = guard
 	defer daemon.Close()
 	if args.Bool("once") {
 		daemon.dispatchRefusalReason = oneShotDispatchRefusal("tusker daemon run --once")
