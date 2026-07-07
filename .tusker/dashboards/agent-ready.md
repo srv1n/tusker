@@ -16,7 +16,6 @@
 | [[FBK-T-0005]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[OPS-T-0004]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[RUN-T-0002]] | p1 | Execute the task contract and satisfy proof mode. |
-| [[RUN-T-0014]] | p1 | Wait for dependency RUN-T-0011 to reach done. |
 | [[RUN-T-0015]] | p2 | Wait for dependency RUN-T-0011 to reach done. |
 | [[RUN-T-0016]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0007]] | p1 | Execute the task contract and satisfy proof mode. |

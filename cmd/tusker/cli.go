@@ -550,6 +550,8 @@ func run(command string, args Args) (int, error) {
 		return 0, daemonStatusCmd(args)
 	case "daemon limits":
 		return 0, daemonLimitsCmd(args)
+	case "daemon resume":
+		return 0, daemonResumeCmd(args)
 	case "daemon stop":
 		return 0, daemonStopCmd(args)
 	case "daemon":
@@ -714,7 +716,7 @@ func run(command string, args Args) (int, error) {
 	case "help vault", "help vault set", "help vault status", "help vault mount", "help vault unmount", "help vault repair", "help vault move":
 		printVaultHelp()
 		return 0, nil
-	case "help daemon", "help daemon run", "help daemon status", "help daemon limits", "help daemon stop":
+	case "help daemon", "help daemon run", "help daemon status", "help daemon limits", "help daemon resume", "help daemon stop":
 		printDaemonHelp()
 		return 0, nil
 	case "help automation", "help automation status", "help automation queue", "help automation explain", "help automation plan", "help automation dispatch", "help automation collect-external", "help automation external-loop", "help automation advance-external":
@@ -906,7 +908,7 @@ func printCommandHelp(command string) bool {
 		printGraphHelp()
 	case "vault", "vault set", "vault status", "vault mount", "vault unmount", "vault repair", "vault move":
 		printVaultHelp()
-	case "daemon", "daemon run", "daemon status", "daemon limits", "daemon stop":
+	case "daemon", "daemon run", "daemon status", "daemon limits", "daemon resume", "daemon stop":
 		printDaemonHelp()
 	case "automation", "automation status", "automation queue", "automation explain", "automation plan", "automation dispatch", "automation collect-external", "automation external-loop", "automation advance-external":
 		printAutomationHelp()
@@ -955,6 +957,7 @@ func printDaemonHelp() {
   tusker daemon run [--once]
   tusker daemon status [--json]
   tusker daemon limits [--max-active-runs <n>] [--json]
+  tusker daemon resume [--json]
   tusker daemon stop [--drain] [--json]
 
 Purpose:
@@ -967,6 +970,7 @@ Behavior:
   - --once performs one poll tick and exits
   - daemon status reports state-root, project count, and active run count
   - daemon limits reads or updates the global active-run cap
+  - daemon resume closes the invariant circuit only after violations are cleared
   - daemon stop asks the resident daemon to shut down and leaves detached wrappers alive
   - daemon stop --drain waits bounded for detached wrappers to finish
 
@@ -974,6 +978,7 @@ Examples:
   tusker daemon status
   tusker daemon run --once
   tusker daemon limits --max-active-runs 1
+  tusker daemon resume
   tusker daemon stop --drain`)
 }
 

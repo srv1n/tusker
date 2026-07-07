@@ -133,6 +133,7 @@ type automationStatusReport struct {
 	LimitSource         string                     `json:"limit_source"`
 	ParkedBudgetRuns    int                        `json:"parked_budget_runs"`
 	BudgetCircuit       any                        `json:"budget_circuit"`
+	InvariantCircuit    any                        `json:"invariant_circuit"`
 	Projects            []automationProjectSummary `json:"projects"`
 }
 
@@ -168,6 +169,7 @@ func automationStatusCmd(args Args) error {
 		LimitSource:         stringValue(status["limit_source"]),
 		ParkedBudgetRuns:    intFromAny(status["parkedBudgetRuns"]),
 		BudgetCircuit:       status["budgetCircuit"],
+		InvariantCircuit:    status["invariantCircuit"],
 		Projects:            automationProjectSummaries(projects, runs),
 	}
 	if args.Bool("json") {
@@ -496,6 +498,11 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 	}
 	if _, reason, _, err := (&Daemon{stateRoot: ctx.StateRoot, store: ctx.Store}).budgetDispatchBlocker(ctx.Project, ctx.Workflow.Data, note, run, time.Now().UTC()); err != nil {
 		blockers = append(blockers, "budget: "+err.Error())
+	} else if reason != "" {
+		blockers = append(blockers, reason)
+	}
+	if reason, err := (&Daemon{stateRoot: ctx.StateRoot, store: ctx.Store}).invariantDispatchBlocker(); err != nil {
+		blockers = append(blockers, "invariant sentinel: "+err.Error())
 	} else if reason != "" {
 		blockers = append(blockers, reason)
 	}
@@ -849,6 +856,9 @@ func printAutomationStatus(report automationStatusReport) {
 	}
 	fmt.Printf("Registered projects: %d\n", report.ProjectCount)
 	fmt.Printf("Active runs: %d / %d\n", report.ActiveRuns, report.MaxActiveRuns)
+	if status, ok := report.InvariantCircuit.(invariantCircuitStatus); ok && status.Open {
+		fmt.Printf("Invariant circuit: open (%s)\n", invariantCircuitSummary(status))
+	}
 	if len(report.Projects) == 0 {
 		fmt.Println("Projects: none")
 		return
