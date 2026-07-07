@@ -65,6 +65,7 @@ export const daemon: DaemonStatus = {
   queuedTasks: 11,
   parkedBudgetRuns: 0,
   budgetCircuit: { open: false },
+  invariantCircuit: { open: false },
 };
 
 // ----------------------------------------------------------------------------

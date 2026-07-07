@@ -54,6 +54,7 @@ type serveDaemonStatus struct {
 	ProjectCount     int    `json:"projectCount"`
 	ParkedBudgetRuns int    `json:"parkedBudgetRuns"`
 	BudgetCircuit    any    `json:"budgetCircuit"`
+	InvariantCircuit any    `json:"invariantCircuit"`
 }
 
 type serveEpicSummary struct {

@@ -321,6 +321,7 @@ func (s *serveServer) handleDaemon(w http.ResponseWriter, _ *http.Request) {
 		ProjectCount:     1,
 		ParkedBudgetRuns: intFromAny(daemonStatus["parkedBudgetRuns"]),
 		BudgetCircuit:    daemonStatus["budgetCircuit"],
+		InvariantCircuit: daemonStatus["invariantCircuit"],
 	})
 }
 

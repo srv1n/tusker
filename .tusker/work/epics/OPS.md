@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-06T17:50:21Z"
-updated_at: "2026-07-07T02:53:01Z"
-state_rev: "sha256:1df808528f31cb6cd1fa2ea9c196ff14484d5c3a07c9a08fefe75fa6b20fcbc1"
+updated_at: "2026-07-07T03:23:57Z"
+state_rev: "sha256:64a0c53e89f3c8f6c40b14e8a5ec529dfa6989d86fa02e2e4c1bd328966c58f2"
 ---
 
 # OPS · Operating model: waves, merge lane, escalation, worker protocol

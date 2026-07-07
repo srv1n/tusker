@@ -38,6 +38,7 @@ type Workflow struct {
 		MaxActiveRunsPerProject int                 `yaml:"max_active_runs_per_project"`
 		MaxContinuationRetries  int                 `yaml:"max_continuation_retries"`
 		Budget                  RuntimeBudgetConfig `yaml:"budget"`
+		Sentinel                RuntimeSentinelConfig `yaml:"sentinel"`
 	} `yaml:"runtime"`
 	Workspace struct {
 		Root     string `yaml:"root"`
@@ -138,6 +139,7 @@ func defaultWorkflow() Workflow {
 	wf.Runtime.MaxActiveRunsPerProject = 1
 	wf.Runtime.MaxContinuationRetries = 3
 	wf.Runtime.Budget = defaultRuntimeBudgetConfig()
+	wf.Runtime.Sentinel = defaultRuntimeSentinelConfig()
 	wf.Workspace.Root = "."
 	wf.Workspace.Strategy = string(WorkspaceStrategyInPlace)
 	wf.Retry.MaxAttempts = 3

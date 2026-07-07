@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-06T06:38:56Z"
-updated_at: "2026-07-07T02:53:01Z"
-state_rev: "sha256:cff6db9f009361e159c4c93e914fb6cd066e8cd4c89fb94f296e63165ce49bd9"
+updated_at: "2026-07-07T03:23:57Z"
+state_rev: "sha256:e27f76fd27f200807f40c68f409dde71e94fa797c32dc8ee62e36d470c7b73f2"
 ---
 
 # TRC · Trace and replay: boundary traces, deterministic replay, trace-backed verification

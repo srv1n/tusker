@@ -91,6 +91,7 @@ func TestRuntimeCommandParsingIncludesOperatorGroups(t *testing.T) {
 	}{
 		{[]string{"tusker", "daemon", "status"}, "daemon status", ""},
 		{[]string{"tusker", "daemon", "run", "--once"}, "daemon run", ""},
+		{[]string{"tusker", "daemon", "resume"}, "daemon resume", ""},
 		{[]string{"tusker", "projects", "add", "--repo", "."}, "projects add", ""},
 		{[]string{"tusker", "runs", "inspect", "ORC-T-0018"}, "runs inspect", "ORC-T-0018"},
 		{[]string{"tusker", "help", "runs", "events"}, "help runs events", ""},

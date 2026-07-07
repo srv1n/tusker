@@ -234,10 +234,11 @@ func finishRuntimeRun(store *RuntimeStore, run *RunStatus, state LeaseState, out
 }
 
 func (d *Daemon) PollOnce(ctx context.Context) error {
-	nowPoll := time.Now().UTC().Format(time.RFC3339)
-	if err := d.store.SetSetting("daemon_last_poll_at", nowPoll); err != nil {
+	previousPollAt, err := d.store.GetSetting("daemon_last_poll_at")
+	if err != nil {
 		return err
 	}
+	nowPoll := time.Now().UTC().Format(time.RFC3339Nano)
 	if err := d.store.SetSetting("daemon_watchdog_beat_at", nowPoll); err != nil {
 		return err
 	}
@@ -249,6 +250,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	sentinelProjects := []runtimeSentinelProjectSnapshot{}
 	runsByProject := map[string]map[string]RunStatus{}
 	for _, run := range allRuns {
 		if runsByProject[run.ProjectID] == nil {
@@ -290,24 +292,25 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 		}
 		sortDispatchCandidates(notes)
 		noteStatusByRecord := map[string]string{}
-		notesByID := map[string]Note{}
-		notesByRecordID := map[string]Note{}
+		notesByID, notesByRecordID := daemonNoteMaps(notes)
 		keep := map[string]struct{}{}
 		for _, note := range notes {
 			if daemonNoteKind(note) != "task" {
 				continue
 			}
-			if id := stringField(note.Data, "id"); id != "" {
-				notesByID[id] = note
-			}
 			recordID := trackerRecordID(note)
 			if recordID == "" {
 				continue
 			}
-			notesByRecordID[recordID] = note
 			noteStatusByRecord[recordID] = stringField(note.Data, "status")
 			keep[recordID] = struct{}{}
 		}
+		sentinelProjects = append(sentinelProjects, runtimeSentinelProjectSnapshot{
+			Project:         project,
+			Workflow:        wfFile.Data,
+			NotesByID:       notesByID,
+			NotesByRecordID: notesByRecordID,
+		})
 
 		projectRuns := runsByProject[project.ProjectID]
 		if projectRuns == nil {
@@ -473,6 +476,19 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 					}
 					continue
 				}
+				invariantReason, err := d.invariantDispatchBlocker()
+				if err != nil {
+					return err
+				}
+				if invariantReason != "" {
+					current.LastError = invariantReason
+					current.UpdatedAt = now.Format(time.RFC3339)
+					if err := d.store.UpsertRun(current); err != nil {
+						return err
+					}
+					projectRuns[recordID] = current
+					continue
+				}
 				if stateDispatchCapReachedForRun(status, stateActiveRuns, wfFile.Data, current) {
 					current.LastError = fmt.Sprintf("dispatch blocked: state %q concurrency cap reached", status)
 					current.UpdatedAt = now.Format(time.RFC3339)
@@ -552,6 +568,19 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				projectRuns[recordID] = current
 				continue
 			}
+			invariantReason, err := d.invariantDispatchBlocker()
+			if err != nil {
+				return err
+			}
+			if invariantReason != "" {
+				current.LastError = invariantReason
+				current.UpdatedAt = now.Format(time.RFC3339)
+				if err := d.store.UpsertRun(current); err != nil {
+					return err
+				}
+				projectRuns[recordID] = current
+				continue
+			}
 			if stateDispatchCapReachedForRun(status, stateActiveRuns, wfFile.Data, current) {
 				current.LastError = fmt.Sprintf("dispatch blocked: state %q concurrency cap reached", status)
 				current.UpdatedAt = now.Format(time.RFC3339)
@@ -583,6 +612,29 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 		if err := d.store.TouchProjectPoll(project.ProjectID); err != nil {
 			return err
 		}
+	}
+	currentPollAt := time.Now().UTC().Format(time.RFC3339Nano)
+	if err := d.store.SetSetting("daemon_last_poll_at", currentPollAt); err != nil {
+		return err
+	}
+	finalRuns, err := d.store.ListRuns()
+	if err != nil {
+		return err
+	}
+	tokenTotals, err := d.store.RunTokenTotalsByRun()
+	if err != nil {
+		return err
+	}
+	if _, err := d.refreshInvariantCircuitStatus(runtimeSentinelSnapshot{
+		Projects:       sentinelProjects,
+		Runs:           finalRuns,
+		TokenTotals:    tokenTotals,
+		PreviousPollAt: previousPollAt,
+		CurrentPollAt:  currentPollAt,
+		Now:            time.Now().UTC(),
+		Liveness:       processIdentityMatches,
+	}); err != nil {
+		return err
 	}
 	return nil
 }
@@ -3612,9 +3664,31 @@ func daemonStatusCmd(args Args) error {
 	fmt.Printf("Active runs: %v / %v\n", status["activeRuns"], status["max_active_runs"])
 	fmt.Printf("Parked no-progress runs: %v\n", status["parkedNoProgressRuns"])
 	fmt.Printf("Parked budget runs: %v\n", status["parkedBudgetRuns"])
+	if boolFromAny(status["invariant_circuit_open"]) {
+		fmt.Printf("Invariant circuit: open (%s)\n", stringValue(status["invariant_circuit_reason"]))
+	}
 	if boolFromAny(status["budget_circuit_open"]) {
 		fmt.Printf("Budget circuit: open until %s (%s)\n", stringValue(status["budget_circuit_reset_at"]), stringValue(status["budget_circuit_reason"]))
 	}
+	return nil
+}
+
+func daemonResumeCmd(args Args) error {
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
+	status, err := daemon.ResumeInvariantCircuit()
+	if err != nil {
+		return err
+	}
+	if args.Bool("json") {
+		emitJSON(map[string]any{"ok": true, "resumed": true, "status": status})
+		return nil
+	}
+	fmt.Println("Invariant circuit closed; daemon dispatch may resume.")
 	return nil
 }
 

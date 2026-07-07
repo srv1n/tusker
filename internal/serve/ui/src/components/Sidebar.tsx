@@ -27,6 +27,7 @@ export function Sidebar() {
 
   const needsCount = globalNeeds.data?.length ?? 0;
   const budgetCircuitOpen = daemon.data?.budgetCircuit?.open === true;
+  const invariantCircuitOpen = daemon.data?.invariantCircuit?.open === true;
 
   return (
     <aside className="flex w-[246px] flex-none flex-col border-r border-line bg-panel py-4">
@@ -109,6 +110,14 @@ export function Sidebar() {
               title={daemon.data?.budgetCircuit?.reason ?? "Budget circuit is open"}
             >
               budget circuit open
+            </div>
+          )}
+          {invariantCircuitOpen && (
+            <div
+              className="mb-1 inline-flex items-center gap-1 rounded bg-fail-soft px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.12em] text-fail"
+              title={daemon.data?.invariantCircuit?.summary ?? "Invariant circuit is open"}
+            >
+              invariant circuit open
             </div>
           )}
           <div className="flex items-center gap-1.5">

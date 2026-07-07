@@ -1673,6 +1673,14 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	invariantCircuit, err := s.ReadInvariantCircuitStatus()
+	if err != nil {
+		return nil, err
+	}
+	invariantCircuitReason := ""
+	if invariantCircuit.Open {
+		invariantCircuitReason = invariantCircuitSummary(invariantCircuit)
+	}
 	source := "daemon.db"
 	if globalLimit <= 0 {
 		globalLimit = 2
@@ -1698,6 +1706,9 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 		"budget_circuit_open":     budgetCircuit.Open,
 		"budget_circuit_reset_at": budgetCircuit.ResetAt,
 		"budget_circuit_reason":   budgetCircuit.Reason,
+		"invariantCircuit":        invariantCircuit,
+		"invariant_circuit_open":  invariantCircuit.Open,
+		"invariant_circuit_reason": invariantCircuitReason,
 	}, nil
 }
 
