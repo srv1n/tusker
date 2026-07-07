@@ -7,6 +7,22 @@ import (
 	"testing"
 )
 
+func TestMain(m *testing.M) {
+	notificationRoot, err := os.MkdirTemp("", "tusker-test-notifications-*")
+	if err != nil {
+		panic(err)
+	}
+	notificationPath := filepath.Join(notificationRoot, "notifications.tsv")
+	_ = os.Setenv(escalationNotifierModeEnv, "record")
+	_ = os.Setenv(escalationNotifierRecordEnv, notificationPath)
+	notifyEscalationUser = func(title, message string) error {
+		return recordEscalationNotification(title, message)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(notificationRoot)
+	os.Exit(code)
+}
+
 func assertExists(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); err != nil {

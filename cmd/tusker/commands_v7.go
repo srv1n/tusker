@@ -20,42 +20,46 @@ import (
 )
 
 var (
-	v7TaskIDPattern     = v7schema.TaskIDPattern
-	v7GateIDPattern     = v7schema.GateIDPattern
-	v7WaveIDPattern     = v7schema.WaveIDPattern
-	v7DecisionIDPattern = v7schema.DecisionIDPattern
-	v7ProposalIDPattern = v7schema.ProposalIDPattern
-	v7EvidenceIDPattern = v7schema.EvidenceIDPattern
-	v7AttemptIDPattern  = v7schema.AttemptIDPattern
+	v7TaskIDPattern       = v7schema.TaskIDPattern
+	v7GateIDPattern       = v7schema.GateIDPattern
+	v7WaveIDPattern       = v7schema.WaveIDPattern
+	v7EscalationIDPattern = v7schema.EscalationIDPattern
+	v7DecisionIDPattern   = v7schema.DecisionIDPattern
+	v7ProposalIDPattern   = v7schema.ProposalIDPattern
+	v7EvidenceIDPattern   = v7schema.EvidenceIDPattern
+	v7AttemptIDPattern    = v7schema.AttemptIDPattern
 
-	v7TaskStatuses   = v7schema.TaskStatuses
-	v7WaveStatuses   = v7schema.WaveStatuses
-	v7Readiness      = v7schema.Readiness
-	v7GateKinds      = v7schema.GateKinds
-	v7GateStatuses   = v7schema.GateStatuses
-	v7ProofModes     = v7schema.ProofModes
-	v7ProofStatuses  = v7schema.ProofStatuses
-	v7EvidenceKinds  = v7schema.EvidenceKinds
-	v7EvidenceStatus = v7schema.EvidenceStatus
-	v7AttemptStatus  = v7schema.AttemptStatus
-	v7DecisionStatus = v7schema.DecisionStatus
-	v7ProposalStatus = v7schema.ProposalStatus
-	v7ProposalAction = v7schema.ProposalAction
-	v7DomainStatus   = v7schema.DomainStatus
+	v7TaskStatuses         = v7schema.TaskStatuses
+	v7WaveStatuses         = v7schema.WaveStatuses
+	v7EscalationSeverities = v7schema.EscalationSeverities
+	v7EscalationStatuses   = v7schema.EscalationStatuses
+	v7Readiness            = v7schema.Readiness
+	v7GateKinds            = v7schema.GateKinds
+	v7GateStatuses         = v7schema.GateStatuses
+	v7ProofModes           = v7schema.ProofModes
+	v7ProofStatuses        = v7schema.ProofStatuses
+	v7EvidenceKinds        = v7schema.EvidenceKinds
+	v7EvidenceStatus       = v7schema.EvidenceStatus
+	v7AttemptStatus        = v7schema.AttemptStatus
+	v7DecisionStatus       = v7schema.DecisionStatus
+	v7ProposalStatus       = v7schema.ProposalStatus
+	v7ProposalAction       = v7schema.ProposalAction
+	v7DomainStatus         = v7schema.DomainStatus
 )
 
 var v7FrontmatterOrder = v7schema.FrontmatterOrder
 
 type v7Index struct {
-	Tasks     map[string]Note
-	Gates     map[string]Note
-	Waves     map[string]Note
-	Evidence  map[string][]Note
-	Attempts  map[string][]Note
-	Decisions map[string]Note
-	Epics     map[string]Note
-	Proposals map[string]Note
-	Closeouts map[string][]Note
+	Tasks       map[string]Note
+	Gates       map[string]Note
+	Waves       map[string]Note
+	Escalations map[string]Note
+	Evidence    map[string][]Note
+	Attempts    map[string][]Note
+	Decisions   map[string]Note
+	Epics       map[string]Note
+	Proposals   map[string]Note
+	Closeouts   map[string][]Note
 }
 
 type v7LeaseRecord struct {
@@ -2072,15 +2076,16 @@ func loadV7Index(vaultPath string) (v7Index, error) {
 		return v7Index{}, err
 	}
 	idx := v7Index{
-		Tasks:     map[string]Note{},
-		Gates:     map[string]Note{},
-		Waves:     map[string]Note{},
-		Evidence:  map[string][]Note{},
-		Attempts:  map[string][]Note{},
-		Decisions: map[string]Note{},
-		Epics:     map[string]Note{},
-		Proposals: map[string]Note{},
-		Closeouts: map[string][]Note{},
+		Tasks:       map[string]Note{},
+		Gates:       map[string]Note{},
+		Waves:       map[string]Note{},
+		Escalations: map[string]Note{},
+		Evidence:    map[string][]Note{},
+		Attempts:    map[string][]Note{},
+		Decisions:   map[string]Note{},
+		Epics:       map[string]Note{},
+		Proposals:   map[string]Note{},
+		Closeouts:   map[string][]Note{},
 	}
 	for _, note := range notes {
 		kind := effectiveV7Kind(note.Data)
@@ -2095,6 +2100,10 @@ func loadV7Index(vaultPath string) (v7Index, error) {
 		case "wave":
 			if strings.HasSuffix(stringField(note.Data, "schema"), "/v7") {
 				idx.Waves[id] = note
+			}
+		case "escalation":
+			if strings.HasSuffix(stringField(note.Data, "schema"), "/v7") {
+				idx.Escalations[id] = note
 			}
 		case "evidence":
 			idx.Evidence[stringField(note.Data, "task")] = append(idx.Evidence[stringField(note.Data, "task")], note)
@@ -2131,6 +2140,10 @@ func resolveV7Note(vaultPath, id, kind string) (Note, error) {
 		}
 	case "wave":
 		if note, ok := idx.Waves[id]; ok {
+			return note, nil
+		}
+	case "escalation":
+		if note, ok := idx.Escalations[id]; ok {
 			return note, nil
 		}
 	case "decision":

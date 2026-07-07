@@ -206,6 +206,7 @@ func (d *Daemon) refreshInvariantCircuitStatus(snapshot runtimeSentinelSnapshot)
 	if err := d.store.SetInvariantCircuitStatus(status); err != nil {
 		return status, err
 	}
+	d.recordInvariantEscalations(snapshot, status)
 	fmt.Fprintf(os.Stderr, "%s: %s\n", invariantViolationReason, invariantCircuitSummary(status))
 	return status, nil
 }

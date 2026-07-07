@@ -521,6 +521,7 @@ export interface DaemonStatus {
   daemonLastPollAt?: string | null;
   diskPressure?: DiskPressureStatus;
   parkedBudgetRuns?: number;
+  persistentEscalationBanner?: boolean;
   budgetCircuit?: {
     open: boolean;
     reason?: string;

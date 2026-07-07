@@ -107,24 +107,24 @@ func parseCLI(argv []string) (string, Args) {
 	var command string
 	if len(argv) > 1 {
 		command = argv[1]
-		if command == "help" && len(argv) > 2 && !strings.HasPrefix(argv[2], "--") {
+		if command == "help" && len(argv) > 2 && !isCLIFlag(argv[2]) {
 			command = "help " + argv[2]
-			if len(argv) > 3 && !strings.HasPrefix(argv[3], "--") && commandTakesSubcommand(argv[2]) {
+			if len(argv) > 3 && !isCLIFlag(argv[3]) && commandTakesSubcommand(argv[2]) {
 				command = command + " " + argv[3]
 				return command, parseArgs(argv[4:])
 			}
 			return command, parseArgs(argv[3:])
 		}
-		if command == "legacy" && len(argv) > 2 && !strings.HasPrefix(argv[2], "--") {
+		if command == "legacy" && len(argv) > 2 && !isCLIFlag(argv[2]) {
 			legacyCommand := argv[2]
 			command = "legacy " + legacyCommand
-			if len(argv) > 3 && !strings.HasPrefix(argv[3], "--") && commandTakesSubcommand(legacyCommand) {
+			if len(argv) > 3 && !isCLIFlag(argv[3]) && commandTakesSubcommand(legacyCommand) {
 				command = command + " " + argv[3]
 				return command, parseArgs(argv[4:])
 			}
 			return command, parseArgs(argv[3:])
 		}
-		if len(argv) > 2 && !strings.HasPrefix(argv[2], "--") && commandTakesSubcommand(command) {
+		if len(argv) > 2 && !isCLIFlag(argv[2]) && commandTakesSubcommand(command) {
 			command = command + " " + argv[2]
 			return command, parseArgs(argv[3:])
 		}
@@ -133,6 +133,10 @@ func parseCLI(argv []string) (string, Args) {
 		return command, parseArgs(nil)
 	}
 	return command, parseArgs(argv[2:])
+}
+
+func isCLIFlag(value string) bool {
+	return strings.HasPrefix(value, "-")
 }
 
 func commandTakesSubcommand(command string) bool {
@@ -1083,6 +1087,9 @@ func printV7Help() {
   tusker proposal apply HSP-P-0001 --by human:sarav
   tusker proposal reject HSP-P-0002 --reason "Superseded."
   tusker redact HSP-T-0001 --reason "Removed leaked token from evidence." --replacement "Redacted summary retained."
+  tusker escalate -s P1 --task HSP-T-0001 --reason system_error "Runner is stuck in a no-progress loop."
+  tusker escalate ack ESC-0001 --by human:sarav
+  tusker digest [--since 2026-07-07T00:00:00Z] [--json]
 
   tusker brief HSP-T-0001
   tusker packet HSP-T-0001 --for agent [--write]

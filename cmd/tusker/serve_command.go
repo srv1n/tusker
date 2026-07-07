@@ -716,6 +716,24 @@ func (s *serveServer) daemonStatusFromSnapshot(snap serveSnapshot) *serveDaemonS
 	}
 }
 
+func (s *serveServer) handleDigest(w http.ResponseWriter, r *http.Request) {
+	since, sinceOverride, err := digestSinceFromQuery(r.URL.Query().Get("since"))
+	if err != nil {
+		serveJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	digest, err := buildTuskerDigest(s.vaultPath, s.store, digestBuildOptions{
+		Since:         since,
+		SinceOverride: sinceOverride,
+		Now:           s.now(),
+	})
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	serveJSON(w, http.StatusOK, digest)
+}
+
 func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 	loadedProjects, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true})
 	if err != nil {

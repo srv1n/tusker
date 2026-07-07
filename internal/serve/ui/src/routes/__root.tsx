@@ -94,3 +94,17 @@ function InvariantCircuitBanner() {
     </div>
   );
 }
+
+function EscalationBanner() {
+  const daemon = useDaemon();
+  if (daemon.data?.persistentEscalationBanner !== true) {
+    return null;
+  }
+  return (
+    <div className="flex flex-none items-center gap-2 border-b border-fail/40 bg-fail px-4 py-2 text-[13px] font-semibold text-white">
+      <AlertTriangle size={15} aria-hidden="true" />
+      <span>P0 escalation open</span>
+      <span className="min-w-0 truncate font-medium text-white/90">Open the morning digest for details.</span>
+    </div>
+  );
+}
