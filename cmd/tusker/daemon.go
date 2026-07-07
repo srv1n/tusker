@@ -1004,9 +1004,13 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 	if !isDispatchCapacityLeaseState(run.LeaseState) {
 		return d.reconcileRun(ctx, project, wfFile, run)
 	}
+	_ = d.ingestCodexExecRawLog(run)
 	if strings.TrimSpace(note.AbsolutePath) != "" {
 		if budgeted, changed, err := d.enforceBudgetForRun(ctx, project, wfFile.Data, note, run); err != nil || changed {
 			return budgeted, changed, err
+		}
+		if turnCapped, changed, err := d.enforceTurnCapForRun(ctx, project, wfFile.Data, run); err != nil || changed {
+			return turnCapped, changed, err
 		}
 	}
 	if run.Lane == runLaneReview && containsString(wfFile.Data.Tracker.ReviewStates, trackerState) {
@@ -1119,6 +1123,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	now := nowTime.Format(time.RFC3339)
 	sessionResumable := runSessionResumable(wfFile.Data, run)
 
+	if d.ingestCodexExecRawLog(run) {
+		changed = true
+	}
 	if strings.TrimSpace(run.RawLogPath) != "" {
 		if sessionRef := extractSessionRef(run.RawLogPath); sessionRef != "" && sessionRef != run.SessionRef {
 			run.SessionRef = sessionRef
@@ -1177,6 +1184,16 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				return run, changed, err
 			}
 			noteStatus := stringField(note.Data, "status")
+			if AttemptOutcome(strings.TrimSpace(status.Outcome)) == AttemptOutcomeTurnCapExhausted && containsString(wfFile.Data.Tracker.ActiveStates, noteStatus) && run.Lane != runLaneReview {
+				reason := firstNonEmpty(strings.TrimSpace(status.Reason), fmt.Sprintf("turn cap exhausted for attempt %s", run.ActiveAttemptID))
+				updateRunAttemptFromRun(d.store, run, AttemptOutcomeTurnCapExhausted, 0, reason, finished)
+				run = d.scheduleRetry(run, wfFile.Data, reason)
+				if strings.TrimSpace(run.SessionRef) != "" {
+					_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", reason, sessionResumable)
+				}
+				run.UpdatedAt = finished
+				return run, true, nil
+			}
 			if run.Lane != runLaneReview {
 				if wait, reason := v7MachineCompleteWaitingForHuman(project.VaultRoot, note); wait {
 					parentAttemptID := run.ActiveAttemptID
@@ -1865,7 +1882,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 			WorkspacePath:    workspace.Path,
 		})
 	}
-	start, err = runner.Start(ctx, StartRequest{
+	startReq := StartRequest{
 		ProjectID:       project.ProjectID,
 		RecordID:        run.RecordID,
 		ItemID:          run.ItemID,
@@ -1886,13 +1903,69 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		VaultPath:       project.VaultRoot,
 		CodexPolicy:     codexPolicy,
 		ExternalLoop:    externalLaunch,
-	})
+	}
+	resumeSession := resolvedResumeSession{}
+	if runner.Capabilities().ResumeSession {
+		resumeRun := run
+		resumeRun.SessionRef = previousRun.SessionRef
+		resumeRun.AttemptOutcome = previousRun.AttemptOutcome
+		resumeRun.LastError = previousRun.LastError
+		resumeRun.LeaseState = previousRun.LeaseState
+		resumeSession, err = d.resolveResumeSession(project, note, resumeRun)
+		if err != nil {
+			return run, err
+		}
+	}
+	if strings.TrimSpace(resumeSession.SessionRef) != "" {
+		d.emitSupervisorDecision(SupervisorDecision{
+			ProjectID:        project.ProjectID,
+			RecordID:         run.RecordID,
+			AttemptID:        attemptID,
+			Kind:             resumeSession.DecisionKind,
+			Reason:           resumeSession.Reason,
+			ParentAttemptID:  resumeSession.ParentAttemptID,
+			ParentSessionRef: resumeSession.SessionRef,
+			TargetAttemptID:  attemptID,
+			TargetSessionRef: resumeSession.SessionRef,
+			WorkspacePath:    workspace.Path,
+		})
+		start, err = runner.Resume(ctx, ResumeRequest{
+			ProjectID:       startReq.ProjectID,
+			RecordID:        startReq.RecordID,
+			ItemID:          startReq.ItemID,
+			AttemptID:       startReq.AttemptID,
+			Lane:            startReq.Lane,
+			WorkRevision:    startReq.WorkRevision,
+			LeaseGeneration: startReq.LeaseGeneration,
+			ActiveStates:    startReq.ActiveStates,
+			SessionRef:      resumeSession.SessionRef,
+			MessageRef:      resumeSession.MessageRef,
+			WorkingDir:      startReq.WorkingDir,
+			WorkspacePath:   startReq.WorkspacePath,
+			RepoRoot:        startReq.RepoRoot,
+			PromptPath:      startReq.PromptPath,
+			EventSinkPath:   startReq.EventSinkPath,
+			RawLogPath:      startReq.RawLogPath,
+			StatusPath:      startReq.StatusPath,
+			Command:         startReq.Command,
+			NotePath:        startReq.NotePath,
+			VaultPath:       startReq.VaultPath,
+			CodexPolicy:     startReq.CodexPolicy,
+			ExternalLoop:    startReq.ExternalLoop,
+		})
+	} else {
+		start, err = runner.Start(ctx, startReq)
+	}
 	if err != nil {
 		attempt.Outcome = string(AttemptOutcomeFailed)
 		attempt.LastError = err.Error()
 		attempt.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 		_ = d.store.SaveAttempt(attempt)
 		return run, err
+	}
+	if strings.TrimSpace(start.SessionRef) == "" && strings.TrimSpace(resumeSession.SessionRef) != "" {
+		start.SessionRef = resumeSession.SessionRef
+		start.MessageRef = resumeSession.MessageRef
 	}
 
 	run.SessionRef = start.SessionRef
@@ -2001,6 +2074,9 @@ func (d *Daemon) resolveResumeSession(project RegisteredProject, note Note, run 
 func incompatibleResumeSessionReason(project RegisteredProject, run RunStatus, session *RunnerSession) string {
 	if session == nil {
 		return "missing stored session"
+	}
+	if AttemptOutcome(strings.TrimSpace(run.AttemptOutcome)) == AttemptOutcomeBudgetExceeded || strings.Contains(strings.ToLower(run.LastError), "budget") {
+		return "prior attempt was budget-killed"
 	}
 	if session.ProjectID != project.ProjectID {
 		return "stored session project_id does not match"
@@ -2185,6 +2261,9 @@ func classifyRetryFailure(reason string) retryFailureClassification {
 	text := strings.ToLower(strings.TrimSpace(reason))
 	if text == "" {
 		return retryFailureClassification{retryable: true, outcome: AttemptOutcomeFailed}
+	}
+	if strings.Contains(text, "turn cap exhausted") {
+		return retryFailureClassification{retryable: true, outcome: AttemptOutcomeTurnCapExhausted}
 	}
 	if strings.Contains(text, "runner process no longer matches recorded identity") {
 		return retryFailureClassification{retryable: true, outcome: AttemptOutcomeCancelled}
@@ -2372,6 +2451,8 @@ func exitCodeForOutcome(outcome AttemptOutcome) int {
 		return 0
 	case AttemptOutcomeCancelled:
 		return 130
+	case AttemptOutcomeTurnCapExhausted:
+		return 124
 	case AttemptOutcomeBudgetExceeded:
 		return 75
 	default:
@@ -2404,6 +2485,7 @@ func updateRunAttemptFromRun(store *RuntimeStore, run RunStatus, outcome Attempt
 		ProcessPID:         run.ProcessPID,
 		Outcome:            string(outcome),
 		ExitCode:           exitCode,
+		TurnsUsed:          turnsUsedForAttempt(store, run.ActiveAttemptID),
 		PromptPath:         run.PromptPath,
 		EventSinkPath:      run.EventSinkPath,
 		RawLogPath:         run.RawLogPath,
@@ -2412,6 +2494,17 @@ func updateRunAttemptFromRun(store *RuntimeStore, run RunStatus, outcome Attempt
 		StartedAt:          run.StartedAt,
 		FinishedAt:         finishedAt,
 	})
+}
+
+func turnsUsedForAttempt(store *RuntimeStore, attemptID string) int {
+	if store == nil || strings.TrimSpace(attemptID) == "" {
+		return 0
+	}
+	turns, err := store.ListTurnsForAttempt(attemptID)
+	if err != nil {
+		return 0
+	}
+	return len(turns)
 }
 
 func writeReviewPacketEvidence(vaultPath string, note Note, run RunStatus, store *RuntimeStore) error {
@@ -3592,7 +3685,7 @@ func runnerForName(name string, wf Workflow) (Runner, string, error) {
 	case RunnerCodexAppServer:
 		return &CodexAppServerRunner{}, firstNonEmpty(command, wf.Codex.Command, "codex app-server"), nil
 	case RunnerCodexExec:
-		return &CodexExecRunner{}, firstNonEmpty(command, "codex exec --skip-git-repo-check -"), nil
+		return &CodexExecRunner{}, firstNonEmpty(command, defaultCodexExecCommand()), nil
 	case RunnerCodexCloud:
 		config := wf.CodexCloud
 		if hasDefinition {
@@ -3644,6 +3737,8 @@ func sessionStateForOutcome(outcome AttemptOutcome) string {
 		return "closed"
 	case AttemptOutcomeBudgetExceeded:
 		return "closed"
+	case AttemptOutcomeTurnCapExhausted:
+		return "open"
 	default:
 		return "open"
 	}

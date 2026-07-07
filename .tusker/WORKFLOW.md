@@ -1,8 +1,7 @@
 ---
 agents:
-  default: "codex_app_server"
+  default: "codex_exec"
   enabled:
-    - "codex_app_server"
     - "codex_exec"
     - "claude-code"
   max_concurrent_agents: 4
@@ -12,7 +11,7 @@ claude:
   command: "claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions"
 codex:
   approval_policy: "never"
-  command: "codex app-server"
+  command: "codex exec --json --skip-git-repo-check -"
   max_turns: 30
   read_timeout_ms: 30000
   stall_timeout_ms: 120000
@@ -48,23 +47,13 @@ reviewer:
     - "high"
     - "critical"
   prompt: "Review only. Do not edit implementation files. Verify acceptance, proof, gates, and docs impact. Re-run verification rows as written in the contract; trust commands, not the runner's summary. Actively check for reward hacking: weakened or cherry-picked verification commands, tests edited to pass, shrunk validity ranges, or unmeasured behavior sacrificed to win a measured metric. An unproven acceptance row is rework, not done. Return rework for any unmet acceptance item."
-  runner: "codex_app_server"
+  runner: "codex_exec"
 runners:
   claude-code:
     command: "claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions"
     kind: "claude-code"
-  codex_app_server:
-    approval_policy: "never"
-    command: "codex app-server"
-    kind: "codex_app_server"
-    max_turns: 30
-    read_timeout_ms: 30000
-    stall_timeout_ms: 120000
-    thread_sandbox: "danger-full-access"
-    turn_sandbox_policy: "danger-full-access"
-    turn_timeout_ms: 600000
   codex_exec:
-    command: "codex exec --skip-git-repo-check -"
+    command: "codex exec --json --skip-git-repo-check -"
     kind: "codex_exec"
 runtime:
   budget:
@@ -109,7 +98,8 @@ Dependency edges may be explicit `TASK-ID:hard` or `TASK-ID:soft`; plain `TASK-I
 |---|---|---|---|
 | Completion | Runner exits 0 after the tracker leaves `ready`/`rework`, or reaches a human-wait state. | Attempt is `succeeded` or `waiting_for_human`; run releases. | No retry. |
 | Declined dispatch | Plan/eligibility gate says no before an attempt is created. | No new attempt; blocker is recorded on the run/plan. | No automatic retry. |
-| Early exit | Runner exits, including exit 0, while tracker state is still active. | Attempt is `early_exit`; run queues continuation or parks at `max_continuation_retries`. | Counts against the no-progress cap. |
+| Turn cap exhausted | Codex exec emits more than `max_turns` `turn.started` events in one attempt. | Tusker kills the process and records attempt outcome `turn_cap_exhausted`. | Distinct from no-progress early exit. |
+| Early exit | Runner exits, including exit 0, while tracker state is still active and the per-attempt turn cap was not exhausted. | Attempt is `early_exit`; run queues continuation or parks at `max_continuation_retries`. | Counts against the no-progress cap. |
 
 ## Waves
 
@@ -151,6 +141,8 @@ If `reviewer.enabled` is true, review tasks may dispatch to `reviewer.runner`. T
 ## Retry policy
 
 Retry only transient infrastructure failures. Human-directed rework creates a new ready/rework task revision.
+
+Codex exec owns the inner agent loop. Tusker spawns one `codex exec --json` process per attempt, records JSONL `thread.started` and `turn.*` events, enforces budget and `max_turns` as process governors, and uses `codex exec resume <session-id>` only when creating a later continuation attempt. App-server is not part of the normal dispatch path.
 
 `tusker redrive <TASK-ID>` is the operator reset for parked or terminal runtime rows. It starts a fresh counting window by resetting `runs.attempt_count` to `0`, clearing cooldown/active execution state, resetting the budget window, and queueing the run for the daemon while preserving prior attempts, turns, sessions, and event history. Each redrive records who/why in runtime audit state; if the task loops again, it must hit the normal caps again and require another explicit redrive.
 

@@ -109,6 +109,7 @@ type RunAttempt struct {
 	FinalSummary       string
 	Outcome            string
 	ExitCode           int
+	TurnsUsed          int
 	PromptPath         string
 	EventSinkPath      string
 	RawLogPath         string
@@ -471,6 +472,7 @@ func (s *RuntimeStore) Migrate() error {
 			process_pid INTEGER NOT NULL DEFAULT 0,
 			outcome TEXT NOT NULL DEFAULT 'none',
 			exit_code INTEGER NOT NULL DEFAULT 0,
+			turns_used INTEGER NOT NULL DEFAULT 0,
 			prompt_path TEXT NOT NULL DEFAULT '',
 			event_sink_path TEXT NOT NULL DEFAULT '',
 			raw_log_path TEXT NOT NULL DEFAULT '',
@@ -670,6 +672,9 @@ func (s *RuntimeStore) Migrate() error {
 		return err
 	}
 	if err := s.ensureColumn("attempts", "status_path", `ALTER TABLE attempts ADD COLUMN status_path TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("attempts", "turns_used", `ALTER TABLE attempts ADD COLUMN turns_used INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return err
 	}
 	for _, column := range []struct {
@@ -1116,8 +1121,8 @@ func (s *RuntimeStore) CheckRunLeaseGeneration(projectID, recordID string, gener
 
 func (s *RuntimeStore) SaveAttempt(attempt RunAttempt) error {
 	_, err := s.exec(`INSERT INTO attempts (
-		attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, outcome, exit_code, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, outcome, exit_code, turns_used, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(attempt_id) DO UPDATE SET
 		project_id=excluded.project_id,
 		record_id=excluded.record_id,
@@ -1143,6 +1148,7 @@ func (s *RuntimeStore) SaveAttempt(attempt RunAttempt) error {
 		process_pid=excluded.process_pid,
 		outcome=excluded.outcome,
 		exit_code=excluded.exit_code,
+		turns_used=excluded.turns_used,
 		prompt_path=excluded.prompt_path,
 		event_sink_path=excluded.event_sink_path,
 		raw_log_path=excluded.raw_log_path,
@@ -1150,7 +1156,7 @@ func (s *RuntimeStore) SaveAttempt(attempt RunAttempt) error {
 		last_error=excluded.last_error,
 		started_at=excluded.started_at,
 		finished_at=excluded.finished_at`,
-		attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkRevision, attempt.WorkspacePath, attempt.SessionRef, attempt.ParentAttemptID, attempt.ChildType, attempt.BranchName, attempt.MergeRule, attempt.FanoutGroup, attempt.CloudTaskID, attempt.CloudStatus, attempt.CloudEnvironmentID, attempt.CloudAttemptNumber, attempt.PullRequestURL, attempt.ApplyRef, attempt.LogsSummary, attempt.FinalSummary, attempt.ProcessPID, attempt.Outcome, attempt.ExitCode, attempt.PromptPath, attempt.EventSinkPath, attempt.RawLogPath, attempt.StatusPath, attempt.LastError, attempt.StartedAt, attempt.FinishedAt)
+		attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkRevision, attempt.WorkspacePath, attempt.SessionRef, attempt.ParentAttemptID, attempt.ChildType, attempt.BranchName, attempt.MergeRule, attempt.FanoutGroup, attempt.CloudTaskID, attempt.CloudStatus, attempt.CloudEnvironmentID, attempt.CloudAttemptNumber, attempt.PullRequestURL, attempt.ApplyRef, attempt.LogsSummary, attempt.FinalSummary, attempt.ProcessPID, attempt.Outcome, attempt.ExitCode, attempt.TurnsUsed, attempt.PromptPath, attempt.EventSinkPath, attempt.RawLogPath, attempt.StatusPath, attempt.LastError, attempt.StartedAt, attempt.FinishedAt)
 	return err
 }
 

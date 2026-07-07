@@ -136,8 +136,8 @@ func defaultWorkflow() Workflow {
 	wf.Tracker.ActiveStates = []string{"ready", "rework"}
 	wf.Tracker.ReviewStates = []string{"review"}
 	wf.Tracker.TerminalStates = []string{"done", "cancelled", "superseded"}
-	wf.Agents.Default = string(RunnerCodexAppServer)
-	wf.Agents.Enabled = []string{string(RunnerCodexAppServer), string(RunnerCodexExec), string(RunnerClaude)}
+	wf.Agents.Default = string(RunnerCodexExec)
+	wf.Agents.Enabled = []string{string(RunnerCodexExec), string(RunnerClaude)}
 	wf.Agents.MaxConcurrentAgents = 2
 	wf.Agents.MaxConcurrentAgentsByState = map[string]int{"rework": 1}
 	wf.Runtime.PollIntervalMS = 5000
@@ -152,7 +152,7 @@ func defaultWorkflow() Workflow {
 	wf.Retry.MaxAttempts = 3
 	wf.Retry.BackoffMS = []int{30000, 120000, 600000}
 	wf.Reviewer.Enabled = true
-	wf.Reviewer.Runner = string(RunnerCodexAppServer)
+	wf.Reviewer.Runner = string(RunnerCodexExec)
 	wf.Reviewer.Actor = defaultReviewerActor
 	wf.Reviewer.AutoCloseRisks = []string{"low", "medium"}
 	wf.Reviewer.HumanRequiredRisks = []string{"high", "critical"}
@@ -164,11 +164,10 @@ func defaultWorkflow() Workflow {
 		WallClockTimeoutHours:  externalLoopDefaultWallClockTimeoutHours,
 	}
 	wf.Runners = map[string]RunnerDefinition{
-		string(RunnerCodexAppServer): {Kind: string(RunnerCodexAppServer), Command: "codex app-server"},
-		string(RunnerCodexExec):      {Kind: string(RunnerCodexExec), Command: "codex exec --skip-git-repo-check -"},
-		string(RunnerClaude):         {Kind: string(RunnerClaude), Command: "claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions"},
+		string(RunnerCodexExec): {Kind: string(RunnerCodexExec), Command: defaultCodexExecCommand()},
+		string(RunnerClaude):    {Kind: string(RunnerClaude), Command: "claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions"},
 	}
-	wf.Codex.Command = "codex app-server"
+	wf.Codex.Command = defaultCodexExecCommand()
 	wf.Codex.ApprovalPolicy = "on-request"
 	wf.Codex.ThreadSandbox = "workspace-write"
 	wf.Codex.TurnSandboxPolicy = "workspace-write"

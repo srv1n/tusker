@@ -381,6 +381,35 @@ func (d *Daemon) enforceBudgetForRun(ctx context.Context, project RegisteredProj
 	return run, false, nil
 }
 
+func (d *Daemon) enforceTurnCapForRun(ctx context.Context, project RegisteredProject, wf Workflow, run RunStatus) (RunStatus, bool, error) {
+	if d == nil || d.store == nil || RunnerName(strings.TrimSpace(run.Runner)) != RunnerCodexExec || !isDispatchingLeaseState(run.LeaseState) {
+		return run, false, nil
+	}
+	maxTurns := codexPolicyForLane(codexPolicyFromWorkflow(wf), run.Lane).MaxTurns
+	if maxTurns <= 0 {
+		return run, false, nil
+	}
+	turns, err := d.store.ListTurnsForAttempt(run.ActiveAttemptID)
+	if err != nil {
+		return run, false, err
+	}
+	if len(turns) <= maxTurns {
+		return run, false, nil
+	}
+	reason := fmt.Sprintf("turn cap exhausted for attempt %s: observed %d/%d turns", run.ActiveAttemptID, len(turns), maxTurns)
+	if _, stopErr := d.stopRunExecution(ctx, run); stopErr != nil {
+		reason += ": " + stopErr.Error()
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	updateRunAttemptFromRun(d.store, run, AttemptOutcomeTurnCapExhausted, exitCodeForOutcome(AttemptOutcomeTurnCapExhausted), reason, now)
+	run = d.scheduleRetry(run, wf, reason)
+	if strings.TrimSpace(run.SessionRef) != "" {
+		_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", reason, runSessionResumable(wf, run))
+	}
+	run.UpdatedAt = now
+	return run, true, nil
+}
+
 func parkBudgetRun(run RunStatus, reason string) RunStatus {
 	now := time.Now().UTC()
 	run.LeaseState = string(LeaseStateParkedBudget)

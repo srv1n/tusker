@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestBudgetAttemptBreach(t *testing.T) {
+func TestBudgetAcrossTurnsAttemptBreach(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	store, err := OpenRuntimeStore(stateRoot)
 	if err != nil {
@@ -41,7 +41,10 @@ func TestBudgetAttemptBreach(t *testing.T) {
 	if err := store.SaveAttempt(RunAttempt{AttemptID: run.ActiveAttemptID, ProjectID: run.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID, Outcome: string(AttemptOutcomeNone)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveTurn(RunTurn{ProjectID: run.ProjectID, RecordID: run.RecordID, AttemptID: run.ActiveAttemptID, TurnID: "turn-1", InputTokens: 11, OutputTokens: 1, TotalTokens: 12, LastEventAt: "2026-07-06T12:00:00Z"}); err != nil {
+	if err := store.SaveTurn(RunTurn{ProjectID: run.ProjectID, RecordID: run.RecordID, AttemptID: run.ActiveAttemptID, TurnID: "turn-1", TurnIndex: 0, InputTokens: 6, OutputTokens: 1, TotalTokens: 7, LastEventAt: "2026-07-06T12:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveTurn(RunTurn{ProjectID: run.ProjectID, RecordID: run.RecordID, AttemptID: run.ActiveAttemptID, TurnID: "turn-2", TurnIndex: 1, InputTokens: 5, OutputTokens: 1, TotalTokens: 6, LastEventAt: "2026-07-06T12:01:00Z"}); err != nil {
 		t.Fatal(err)
 	}
 	updated, changed, err := daemon.enforceBudgetForRun(context.Background(), project, wf, note, run)
@@ -57,6 +60,7 @@ func TestBudgetAttemptBreach(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEqual(t, string(AttemptOutcomeBudgetExceeded), attempts[0].Outcome, "attempt persisted budget outcome")
+	assertEqual(t, 2, attempts[0].TurnsUsed, "attempt persisted budget turns used")
 }
 
 func TestBudgetTaskParkedBudgetRedrive(t *testing.T) {

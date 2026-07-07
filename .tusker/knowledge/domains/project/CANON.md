@@ -12,8 +12,8 @@ source_of_truth:
   - ".tusker/WORKFLOW.md"
   - "tusker.yaml"
 created_at: "2026-06-04 00:00:00 +0000 UTC"
-updated_at: "2026-07-07T13:10:51Z"
-state_rev: "sha256:9b890d27fe41209766e5318b8ea602256bfb9dc4eb4a7f743ab4aa49c50b569b"
+updated_at: "2026-07-07T14:22:04Z"
+state_rev: "sha256:23ace50d3586a7308e45d58d6640af4ff47ad92123f1c82a868df02b7b44b5d4"
 ---
 
 # Project Canon
@@ -26,6 +26,7 @@ state_rev: "sha256:9b890d27fe41209766e5318b8ea602256bfb9dc4eb4a7f743ab4aa49c50b5
 - Runtime activity is represented by run leases, attempts, sessions, and workspaces.
 - Every attempt-creating path uses the shared attempt-cap guard before dispatch. Fresh dispatch, failure retry, continuation retry, reclaim replacement, and redriven retry-queued dispatch all count against the active redrive window; reclaim-caused replacements are not free attempts.
 - Runner exit classification is tracker-aware: exit code 0 with tracker state still in `ready` or `rework` is attempt outcome `early_exit`, not clean completion, and counts against the no-progress continuation cap.
+- Codex exec owns the inner agent loop for the local Codex lane: Tusker launches one `codex exec --json` process per attempt, ingests `thread.started` and `turn.*` JSONL events, resumes later attempts with `codex exec resume <session-id>` when safe, and treats `max_turns` and budget as process governors.
 - Human-owned gates set `agent_action: stop_until_human_response` and `readiness: waiting_on_human`.
 - Tags are projections; typed frontmatter is source of truth.
 - Obsidian Bases and dashboards are generated views, not canonical state.

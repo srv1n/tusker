@@ -1412,9 +1412,22 @@ func appendRawLogLine(path, line string) error {
 }
 
 func writeRunnerStatusFile(path string, exitCode int) error {
+	return writeRunnerStatusFileWithOutcome(path, exitCode, AttemptOutcomeNone, "", 0)
+}
+
+func writeRunnerStatusFileWithOutcome(path string, exitCode int, outcome AttemptOutcome, reason string, turnsUsed int) error {
 	payload := runnerProcessStatus{
 		ExitCode:    exitCode,
 		CompletedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if outcome != "" && outcome != AttemptOutcomeNone {
+		payload.Outcome = string(outcome)
+	}
+	if strings.TrimSpace(reason) != "" {
+		payload.Reason = strings.TrimSpace(reason)
+	}
+	if turnsUsed > 0 {
+		payload.TurnsUsed = turnsUsed
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

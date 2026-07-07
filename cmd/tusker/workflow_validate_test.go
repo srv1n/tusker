@@ -108,8 +108,8 @@ schema: tusker.config/v1
 project_id: app
 automation:
   trigger_states: [ready, rework]
-  default_runner: codex_app_server
-  enabled_runners: [codex_app_server, codex_exec]
+  default_runner: codex_exec
+  enabled_runners: [codex_exec]
   workspace:
     strategy: clone
   concurrency:
@@ -119,12 +119,9 @@ automation:
     max_concurrent_by_state:
       rework: 1
   runners:
-    codex_app_server:
-      kind: codex_app_server
-      command: codex app-server
     codex_exec:
       kind: codex_exec
-      command: codex exec --skip-git-repo-check -
+      command: codex exec --json --skip-git-repo-check -
 `)+"\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -134,8 +131,8 @@ automation:
 		t.Fatal(err)
 	}
 	assertEqual(t, []string{"ready", "rework"}, wf.Data.Tracker.ActiveStates, "trigger states")
-	assertEqual(t, "codex_app_server", wf.Data.Agents.Default, "default runner")
-	assertEqual(t, []string{"codex_app_server", "codex_exec"}, wf.Data.Agents.Enabled, "enabled runners")
+	assertEqual(t, "codex_exec", wf.Data.Agents.Default, "default runner")
+	assertEqual(t, []string{"codex_exec"}, wf.Data.Agents.Enabled, "enabled runners")
 	assertEqual(t, "clone", wf.Data.Workspace.Strategy, "workspace strategy")
 	assertEqual(t, 4, wf.Data.Agents.MaxConcurrentAgents, "global concurrency")
 	assertEqual(t, 2, wf.Data.Runtime.MaxActiveRunsPerProject, "project concurrency")

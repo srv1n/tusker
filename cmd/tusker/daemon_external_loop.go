@@ -617,7 +617,7 @@ func externalLoopCollectCommandForRunner(wf Workflow, runner string) string {
 
 func externalLoopDefaultApplyRunner(wf Workflow, externalRunner string) string {
 	externalRunner = strings.TrimSpace(externalRunner)
-	preferred := []string{strings.TrimSpace(wf.Agents.Default), string(RunnerCodexAppServer), string(RunnerCodexExec), string(RunnerClaude)}
+	preferred := []string{strings.TrimSpace(wf.Agents.Default), string(RunnerCodexExec), string(RunnerClaude)}
 	for _, candidate := range preferred {
 		if externalLoopApplyRunnerCandidate(wf, externalRunner, candidate) {
 			return candidate
@@ -628,7 +628,7 @@ func externalLoopDefaultApplyRunner(wf Workflow, externalRunner string) string {
 			return strings.TrimSpace(candidate)
 		}
 	}
-	for _, candidate := range []string{string(RunnerCodexAppServer), string(RunnerCodexExec), string(RunnerCodex), string(RunnerClaude)} {
+	for _, candidate := range []string{string(RunnerCodexExec), string(RunnerCodex), string(RunnerClaude)} {
 		if strings.TrimSpace(candidate) != externalRunner {
 			return candidate
 		}

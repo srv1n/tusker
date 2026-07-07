@@ -40,6 +40,9 @@ type runnerExecRequest struct {
 type runnerProcessStatus struct {
 	ExitCode    int    `json:"exit_code"`
 	CompletedAt string `json:"completed_at"`
+	Outcome     string `json:"outcome,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	TurnsUsed   int    `json:"turns_used,omitempty"`
 }
 
 func attachDevNullStdin(cmd *exec.Cmd) func() {

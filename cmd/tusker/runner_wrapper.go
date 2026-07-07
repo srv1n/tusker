@@ -134,12 +134,19 @@ func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*St
 		}
 		return startLiveCodex(ctx, req.Start, nil)
 	case RunnerCodexExec:
-		return executeRunnerCommand(ctx, runner, runnerExecRequest{
+		execReq := runnerExecRequest{
 			ProjectID: req.Start.ProjectID, RecordID: req.Start.RecordID, ItemID: req.Start.ItemID, AttemptID: req.Start.AttemptID,
 			Lane: req.Start.Lane, WorkRevision: req.Start.WorkRevision, LeaseGeneration: req.Start.LeaseGeneration, WorkingDir: req.Start.WorkingDir, WorkspacePath: req.Start.WorkspacePath,
 			RepoRoot: req.Start.RepoRoot, PromptPath: req.Start.PromptPath, EventSinkPath: req.Start.EventSinkPath, RawLogPath: req.Start.RawLogPath, StatusPath: req.Start.StatusPath,
 			Command: req.Start.Command, NotePath: req.Start.NotePath, VaultPath: req.Start.VaultPath, CodexPolicy: req.Start.CodexPolicy, ExternalLoop: req.Start.ExternalLoop,
-		}, RunnerCapabilities{StructuredEvents: true, MachineFinalStatus: true, UsageMetrics: true})
+		}
+		if req.Resume != nil {
+			execReq.SessionRef = req.Resume.SessionRef
+			execReq.MessageRef = req.Resume.MessageRef
+			execReq.Command = firstNonEmpty(req.Resume.Command, req.Start.Command)
+			execReq.ResumeMode = true
+		}
+		return executeRunnerCommand(ctx, runner, execReq, RunnerCapabilities{StructuredEvents: true, ResumeSession: true, MachineFinalStatus: true, UsageMetrics: true})
 	default:
 		return nil, tuskerError(errorConfigInvalid, "runner wrapper does not support runner "+string(runner))
 	}

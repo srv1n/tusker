@@ -88,8 +88,8 @@ runtime:
 automation:
   enabled: true
   trigger_states: [ready, rework]
-  default_runner: codex_app_server
-  enabled_runners: [codex_app_server, codex_exec, claude-code]
+  default_runner: codex_exec
+  enabled_runners: [codex_exec, claude-code]
   workspace:
     strategy: worktree
     root: ../.tusker-worktrees
@@ -99,12 +99,9 @@ automation:
     max_concurrent_by_state:
       rework: 1
   runners:
-    codex_app_server:
-      kind: codex_app_server
-      command: codex app-server
     codex_exec:
       kind: codex_exec
-      command: codex exec --skip-git-repo-check -
+      command: codex exec --json --skip-git-repo-check -
     claude-code:
       kind: claude-code
       command: claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions
