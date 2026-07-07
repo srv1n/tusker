@@ -53,6 +53,14 @@ With a violation live and unrepaired: `tusker daemon resume` must refuse, naming
 3. Kill e2e leftovers: `pkill -f tusker-crash` (the crash-recovery suite leaks `fake-runner --mode hold` processes on red runs).
 4. File every deviation as a task with the step's evidence; the trial repeats after fixes until a clean pass. Only then: `tusker daemon limits --max-active-runs 5` and record the authorization in RUN-T-0017's closeout.
 
+## Trial run #2 verdict (2026-07-07, after the six-fix wave)
+
+Materially better; still not clean. **PASSED live:** quarantine boot (daemon served the healthy project with a deliberately broken registration enabled — RUN-T-0021 fix proven), wrapper adoption (surviving wrapper adopted across SIGKILL+restart: same generation, same attempt count, same pid, work uninterrupted — RUN-T-0025 fix proven; dead wrapper correctly fenced and re-dispatched), park-at-cap engages (`parked_no_progress`, terminal, redrivable — the 88-attempt failure mode is structurally dead), `runs retire` live-run guard (refused with fresh heartbeat + verified pid, named `interrupt`/`--force`), circuit-open blocker text names the repair command, drain stop consistent (bounded, honest `drained: false`).
+
+**Remaining deviations:** RUN-T-0028 (reclaim/continuation re-dispatch creates the over-cap attempt first, sentinel flags it, park engages only after that attempt runs — dispatch must consult the cap and park pre-dispatch); `daemon resume` CLI still fatals on a broken registration (`WORKFLOW.md not found`) — same class RUN-T-0021 fixed for `daemon run`, needs the quarantine treatment on every entry point; short clean-exit continuation churn on real multi-turn codex work persists (attempts climbing in ~15s cycles — audit whether `max_turns` config actually reaches the runner session and why mid-task exits read as clean completion; evidence on FBK-T-0005/RUN-T-0002 rows).
+
+**Trial hygiene lessons (operator):** never swallow output when fencing (`tusker status X backlog` failed silently for all 15 tasks — run #2 executed unfenced; verify the fence with a list query before starting); probes cannot dispatch while the circuit is open — clear violations before expecting probe evidence.
+
 ## Trial run #1 verdict (2026-07-07)
 
 Not clean — re-trial required after fixes. Deviations: RUN-T-0021 (fatal boot on broken registration), RUN-T-0022 (no `runs retire`), RUN-T-0023 (p0 — clean-finish lease leak + cap queues instead of parking, both lanes), RUN-T-0024 (redrive doesn't reset attempt window), RUN-T-0025 (adoption fence-and-replaces), SRV-T-0013 (phantom "running" rows). Validated live: spend governor, sentinel + gated resume, wrapper survival + direct heartbeats, drain stop, Ralph worker protocol (fresh sessions, flat per-attempt input, PLAN.md continuity), plan-gated dispatch honesty.
