@@ -6,6 +6,6 @@
 
 | Task | Wave | Risk | Next action |
 |---|---|---|---|
-
+| [[RUN-T-0034]] |  | medium | Review evidence and close or return to rework. |
 
 <!-- tusker:generated:end -->

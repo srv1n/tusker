@@ -25,7 +25,7 @@ state_rev: "sha256:23ace50d3586a7308e45d58d6640af4ff47ad92123f1c82a868df02b7b44b
 - Dispatchable task states are `ready` and `rework`.
 - Runtime activity is represented by run leases, attempts, sessions, and workspaces.
 - Every attempt-creating path uses the shared attempt-cap guard before dispatch. Fresh dispatch, failure retry, continuation retry, reclaim replacement, and redriven retry-queued dispatch all count against the active redrive window; reclaim-caused replacements are not free attempts.
-- Runner exit classification is tracker-aware: exit code 0 with tracker state still in `ready` or `rework` is attempt outcome `early_exit`, not clean completion, and counts against the no-progress continuation cap.
+- Runner exit classification is tracker-aware on every outcome write path, including daemon status observation and wrapper direct-store recording: exit code 0 with tracker state still in `ready` or `rework` is attempt outcome `early_exit`, not clean completion, and counts against the no-progress continuation cap.
 - Codex exec owns the inner agent loop for the local Codex lane: Tusker launches one `codex exec --json` process per attempt, ingests `thread.started` and `turn.*` JSONL events, resumes later attempts with `codex exec resume <session-id>` when safe, and treats `max_turns` and budget as process governors.
 - Human-owned gates set `agent_action: stop_until_human_response` and `readiness: waiting_on_human`.
 - Tags are projections; typed frontmatter is source of truth.

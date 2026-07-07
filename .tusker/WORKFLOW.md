@@ -101,6 +101,8 @@ Dependency edges may be explicit `TASK-ID:hard` or `TASK-ID:soft`; plain `TASK-I
 | Turn cap exhausted | Codex exec emits more than `max_turns` `turn.started` events in one attempt. | Tusker kills the process and records attempt outcome `turn_cap_exhausted`. | Distinct from no-progress early exit. |
 | Early exit | Runner exits, including exit 0, while tracker state is still active and the per-attempt turn cap was not exhausted. | Attempt is `early_exit`; run queues continuation or parks at `max_continuation_retries`. | Counts against the no-progress cap. |
 
+The same tracker-aware classifier applies on every outcome write path, including daemon status observation and wrapper direct-store recording when a wrapper outlives the daemon.
+
 ## Waves
 
 Use `tusker wave create "<title>" <TASK-ID>...` to record a named dispatch/review batch. Wave membership is canonical on the `kind: wave` record under `work/waves/`; task `wave:` fields are generated back-pointers maintained by `tusker reconcile`.
