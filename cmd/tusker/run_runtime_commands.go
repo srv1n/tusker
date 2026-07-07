@@ -411,6 +411,8 @@ func runtimeFailureClass(run RunStatus, attempts []RunAttempt, turns []RunTurn) 
 		return "blocked"
 	case outcome == string(AttemptOutcomeWaitingForHuman):
 		return "waiting_for_human"
+	case outcome == string(AttemptOutcomeBudgetExceeded):
+		return "budget"
 	case outcome == string(AttemptOutcomeAbandoned):
 		return "abandoned"
 	default:
@@ -600,6 +602,51 @@ func runsReleaseCmd(args Args) error {
 		return nil
 	}
 	fmt.Printf("Released %s\n", firstNonEmpty(run.ItemID, run.RecordID))
+	return nil
+}
+
+func redriveCmd(args Args) error {
+	identity, err := requireArg(args, "id")
+	if err != nil {
+		return err
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	run, err := store.FindRun(identity)
+	if err != nil {
+		return err
+	}
+	if run == nil {
+		return tuskerError(errorNotFound, "run not found: "+identity)
+	}
+	if run.ProcessPID > 0 && processIdentityMatches(*run) {
+		return tuskerError(errorInvalidTransition, "run process is still running; interrupt it before redrive", withContext(map[string]any{"pid": run.ProcessPID}))
+	}
+	now := time.Now().UTC()
+	actor := firstNonEmpty(strings.TrimSpace(args.String("by")), strings.TrimSpace(args.String("actor")), defaultActorName())
+	reason := firstNonEmpty(strings.TrimSpace(args.String("reason")), "operator redrive")
+	reset, err := store.RecordBudgetRedrive(run.ProjectID, run.RecordID, actor, reason, now)
+	if err != nil {
+		return err
+	}
+	run.LeaseState = string(LeaseStateRetryQueued)
+	run.AttemptOutcome = string(AttemptOutcomeNone)
+	run.NextRetryAt = now.Format(time.RFC3339)
+	run.LastError = "redriven by " + actor + ": " + reason
+	run.UpdatedAt = now.Format(time.RFC3339)
+	run.Terminal = false
+	clearActiveExecution(run)
+	if err := store.UpsertRun(*run); err != nil {
+		return err
+	}
+	if args.Bool("json") {
+		emitJSON(map[string]any{"ok": true, "redriven": true, "item_id": run.ItemID, "record_id": run.RecordID, "reset": reset, "lease_state": run.LeaseState})
+		return nil
+	}
+	fmt.Printf("Redriven %s; budget window reset at %s\n", firstNonEmpty(run.ItemID, run.RecordID), reset.ResetAt)
 	return nil
 }
 

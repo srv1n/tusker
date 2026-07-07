@@ -204,6 +204,8 @@ func run(command string, args Args) (int, error) {
 		return 1, nil
 	}
 	switch command {
+	case "runner-wrapper":
+		return 0, runnerWrapperCmd(args)
 	case "new epic":
 		return 0, newV7Epic(args)
 	case "new task":
@@ -284,6 +286,9 @@ func run(command string, args Args) (int, error) {
 	case "close":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, closeV7Cmd(args)
+	case "redrive":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, redriveCmd(args)
 	case "legacy new epic":
 		return legacyOnlyCommand("legacy new epic", "")
 	case "legacy new task":
@@ -596,6 +601,9 @@ func run(command string, args Args) (int, error) {
 	case "runs release":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, runsReleaseCmd(args)
+	case "runs redrive":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, redriveCmd(args)
 	case "runs":
 		printRunsHelp()
 		return 0, nil
@@ -705,7 +713,7 @@ func run(command string, args Args) (int, error) {
 	case "help projects", "help projects add", "help projects list", "help projects limits", "help projects enable", "help projects disable", "help projects remove":
 		printProjectsHelp()
 		return 0, nil
-	case "help runs", "help runs inspect", "help runs logs", "help runs events", "help runs interrupt", "help runs release":
+	case "help runs", "help runs inspect", "help runs logs", "help runs events", "help runs interrupt", "help runs release", "help runs redrive", "help redrive":
 		printRunsHelp()
 		return 0, nil
 	case "help serve":
@@ -893,7 +901,7 @@ func printCommandHelp(command string) bool {
 		printAutomationHelp()
 	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects remove":
 		printProjectsHelp()
-	case "runs", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs release":
+	case "runs", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs release", "runs redrive", "redrive":
 		printRunsHelp()
 	case "serve":
 		printServeHelp()
@@ -936,7 +944,7 @@ func printDaemonHelp() {
   tusker daemon run [--once]
   tusker daemon status [--json]
   tusker daemon limits [--max-active-runs <n>] [--json]
-  tusker daemon stop [--json]
+  tusker daemon stop [--drain] [--json]
 
 Purpose:
   Operator/internal runtime loop for registered local projects. The normal
@@ -948,13 +956,14 @@ Behavior:
   - --once performs one poll tick and exits
   - daemon status reports state-root, project count, and active run count
   - daemon limits reads or updates the global active-run cap
-  - daemon stop asks the resident daemon to shut down and waits bounded
+  - daemon stop asks the resident daemon to shut down and leaves detached wrappers alive
+  - daemon stop --drain waits bounded for detached wrappers to finish
 
 Examples:
   tusker daemon status
   tusker daemon run --once
   tusker daemon limits --max-active-runs 1
-  tusker daemon stop`)
+  tusker daemon stop --drain`)
 }
 
 func printAutomationHelp() {
@@ -1099,17 +1108,20 @@ func printRunsHelp() {
   tusker runs events <task-id-or-record-id> [--lines <n>] [--follow] [--json]
   tusker runs interrupt <task-id-or-record-id> [--json]
   tusker runs release <task-id-or-record-id> [--json]
+  tusker redrive <task-id-or-record-id> --reason <text> [--by <actor>] [--json]
 
 Purpose:
   Inspect and control daemon runtime state for a task. These commands expose
   attempts, turns, sessions, event tails, logs, and interrupts without making
-  runtime state part of task frontmatter.
+  runtime state part of task frontmatter. Redrive resets the budget window for
+  parked budget runs and queues them for the resident daemon.
 
 Examples:
   tusker runs inspect ORC-T-0018 --json
   tusker runs events ORC-T-0018 --lines 20
   tusker runs interrupt ORC-T-0018
-  tusker runs release ORC-T-0018 --json`)
+  tusker runs release ORC-T-0018 --json
+  tusker redrive ORC-T-0018 --reason "operator reviewed spend" --json`)
 }
 
 func printRefreshHelp() {

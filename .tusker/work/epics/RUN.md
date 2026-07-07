@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:32:32Z"
-updated_at: "2026-07-06T17:52:52Z"
-state_rev: "sha256:57f4cc77b6378deea3ec9cab97ca5a4cafed207719162e473c807b9ac71b870f"
+updated_at: "2026-07-07T02:53:01Z"
+state_rev: "sha256:29be0167fbbcb73fda6cbf21181af1a5c4e6b6a6836c8d27efaa014a725d328c"
 ---
 
 # RUN · Runner parity and model profiles
@@ -49,13 +49,11 @@ TBD.
 | [[RUN-T-0003]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach done. |
 | [[RUN-T-0005]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach done. |
 | [[RUN-T-0006]] | backlog | agent | Wait for dependency RUN-T-0004 to reach done. |
-| [[RUN-T-0011]] | ready | agent | Wait for dependency RUN-T-0010 to reach done. |
-| [[RUN-T-0012]] | ready | blocked_dependency | Wait for dependency RUN-T-0011 to reach done. |
-| [[RUN-T-0013]] | ready | blocked_dependency | Wait for dependency RUN-T-0011 to reach done. |
-| [[RUN-T-0014]] | ready | blocked_dependency | Wait for dependency RUN-T-0011 to reach done. |
-| [[RUN-T-0015]] | ready | blocked_dependency | Wait for dependency RUN-T-0011 to reach done. |
+| [[RUN-T-0014]] | ready | agent | Wait for dependency RUN-T-0011 to reach done. |
+| [[RUN-T-0015]] | ready | agent | Wait for dependency RUN-T-0011 to reach done. |
 | [[RUN-T-0016]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[RUN-T-0017]] | ready | blocked_dependency | Wait for dependency RUN-T-0012 to reach done. |
+| [[RUN-T-0017]] | ready | blocked_dependency | Wait for dependency RUN-T-0014 to reach done. |
+| [[RUN-T-0018]] | ready | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 
@@ -68,3 +66,6 @@ TBD.
 | [[RUN-T-0008]] | reviewer:agent | 2026-07-06T16:02:52Z |
 | [[RUN-T-0009]] | reviewer:agent | 2026-07-06T16:00:38Z |
 | [[RUN-T-0010]] | human:sarav | 2026-07-06T17:43:24Z |
+| [[RUN-T-0011]] | human:sarav | 2026-07-07T02:43:21Z |
+| [[RUN-T-0012]] | reviewer:agent | 2026-07-07T02:49:09Z |
+| [[RUN-T-0013]] | reviewer:agent | 2026-07-07T02:49:26Z |

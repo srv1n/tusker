@@ -63,6 +63,8 @@ export const daemon: DaemonStatus = {
   addr: "localhost:7420",
   activeRuns: 5,
   queuedTasks: 11,
+  parkedBudgetRuns: 0,
+  budgetCircuit: { open: false },
 };
 
 // ----------------------------------------------------------------------------
@@ -279,6 +281,8 @@ export function synthRunDetail(s: RunSummary): RunDetail {
     failed: { ts: isoBefore(s.sinceLastEventSec), kind: "attempt.failed", text: "exit 1: run exhausted retries", level: "error" },
     interrupted: { ts: isoBefore(s.sinceLastEventSec), kind: "session.interrupt", text: "interrupted by operator", level: "warn" },
     "retry-queued": { ts: isoBefore(s.sinceLastEventSec), kind: "lease.released", text: "retry queued", level: "warn" },
+    "parked-no-progress": { ts: isoBefore(s.sinceLastEventSec), kind: "lease.parked", text: "parked: no progress", level: "warn" },
+    "parked-budget": { ts: isoBefore(s.sinceLastEventSec), kind: "lease.parked", text: "parked: budget exceeded", level: "error" },
   };
   events.push(tail[s.outcome]);
 

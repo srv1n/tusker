@@ -1653,6 +1653,10 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 	if err := s.queryRowScan(`SELECT COUNT(*) FROM runs WHERE lease_state = 'parked_no_progress'`, nil, &parkedNoProgressCount); err != nil {
 		return nil, err
 	}
+	var parkedBudgetCount int
+	if err := s.queryRowScan(`SELECT COUNT(*) FROM runs WHERE lease_state = 'parked_budget'`, nil, &parkedBudgetCount); err != nil {
+		return nil, err
+	}
 	globalLimit, err := s.GlobalActiveRunLimit()
 	if err != nil {
 		return nil, err
@@ -1662,6 +1666,10 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 		return nil, err
 	}
 	watchdogBeatAt, err := s.GetSetting("daemon_watchdog_beat_at")
+	if err != nil {
+		return nil, err
+	}
+	budgetCircuit, err := s.ReadBudgetCircuitStatus()
 	if err != nil {
 		return nil, err
 	}
@@ -1682,9 +1690,14 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 		"projects":                projectCount,
 		"activeRuns":              runCount,
 		"parkedNoProgressRuns":    parkedNoProgressCount,
+		"parkedBudgetRuns":        parkedBudgetCount,
 		"max_active_runs":         globalLimit,
 		"limit_source":            source,
 		"default_limit_value":     2,
+		"budgetCircuit":           budgetCircuit,
+		"budget_circuit_open":     budgetCircuit.Open,
+		"budget_circuit_reset_at": budgetCircuit.ResetAt,
+		"budget_circuit_reason":   budgetCircuit.Reason,
 	}, nil
 }
 

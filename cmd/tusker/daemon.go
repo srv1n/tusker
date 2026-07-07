@@ -281,6 +281,9 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			})
 			continue
 		}
+		if _, err := d.refreshBudgetCircuitStatus(wfFile.Data, time.Now().UTC()); err != nil {
+			return err
+		}
 		notes, err := listAllNotes(project.VaultRoot)
 		if err != nil {
 			return err
@@ -451,6 +454,25 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				if dispatchCapacityLimitReached(projectActiveRuns, projectActiveRunLimit(wfFile.Data), current) {
 					continue
 				}
+				beforeBudget := current
+				budgeted, budgetReason, budgetChanged, err := d.budgetDispatchBlocker(project, wfFile.Data, note, current, now)
+				if err != nil {
+					return err
+				}
+				if budgetReason != "" {
+					current = budgeted
+					current.LastError = budgetReason
+					current.UpdatedAt = now.Format(time.RFC3339)
+					if err := d.store.UpsertRun(current); err != nil {
+						return err
+					}
+					projectRuns[recordID] = current
+					if budgetChanged {
+						globalActiveRuns += dispatchCapacityRunDelta(beforeBudget, current)
+						projectActiveRuns += dispatchCapacityRunDelta(beforeBudget, current)
+					}
+					continue
+				}
 				if stateDispatchCapReachedForRun(status, stateActiveRuns, wfFile.Data, current) {
 					current.LastError = fmt.Sprintf("dispatch blocked: state %q concurrency cap reached", status)
 					current.UpdatedAt = now.Format(time.RFC3339)
@@ -514,6 +536,20 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				continue
 			}
 			if dispatchCapacityLimitReached(projectActiveRuns, projectActiveRunLimit(wfFile.Data), current) {
+				continue
+			}
+			budgeted, budgetReason, _, err := d.budgetDispatchBlocker(project, wfFile.Data, note, current, now)
+			if err != nil {
+				return err
+			}
+			if budgetReason != "" {
+				current = budgeted
+				current.LastError = budgetReason
+				current.UpdatedAt = now.Format(time.RFC3339)
+				if err := d.store.UpsertRun(current); err != nil {
+					return err
+				}
+				projectRuns[recordID] = current
 				continue
 			}
 			if stateDispatchCapReachedForRun(status, stateActiveRuns, wfFile.Data, current) {
@@ -780,7 +816,7 @@ func shouldDispatchRun(run RunStatus, now time.Time) bool {
 		return err == nil && !due.After(now)
 	case LeaseStateInterrupted:
 		return false
-	case LeaseStateParkedNoProgress:
+	case LeaseStateParkedNoProgress, LeaseStateParkedBudget:
 		return false
 	default:
 		return false
@@ -906,6 +942,11 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 	trackerState := strings.TrimSpace(stringField(note.Data, "status"))
 	if !isDispatchCapacityLeaseState(run.LeaseState) {
 		return d.reconcileRun(ctx, project, wfFile, run)
+	}
+	if strings.TrimSpace(note.AbsolutePath) != "" {
+		if budgeted, changed, err := d.enforceBudgetForRun(ctx, project, wfFile.Data, note, run); err != nil || changed {
+			return budgeted, changed, err
+		}
 	}
 	if run.Lane == runLaneReview && containsString(wfFile.Data.Tracker.ReviewStates, trackerState) {
 		return d.reconcileRun(ctx, project, wfFile, run)
@@ -2048,6 +2089,8 @@ func exitCodeForOutcome(outcome AttemptOutcome) int {
 		return 0
 	case AttemptOutcomeCancelled:
 		return 130
+	case AttemptOutcomeBudgetExceeded:
+		return 75
 	default:
 		return 1
 	}
@@ -3305,6 +3348,8 @@ func sessionStateForOutcome(outcome AttemptOutcome) string {
 		return "abandoned"
 	case AttemptOutcomeWaitingForHuman:
 		return "closed"
+	case AttemptOutcomeBudgetExceeded:
+		return "closed"
 	default:
 		return "open"
 	}
@@ -3312,7 +3357,7 @@ func sessionStateForOutcome(outcome AttemptOutcome) string {
 
 func sessionStateForLeaseState(state LeaseState) string {
 	switch state {
-	case LeaseStateReleased, LeaseStateParkedNoProgress:
+	case LeaseStateReleased, LeaseStateParkedNoProgress, LeaseStateParkedBudget:
 		return "closed"
 	case LeaseStateRetryQueued, LeaseStateClaimed, LeaseStateRunning, LeaseStateUnclaimed, LeaseStateInterrupted:
 		return "open"
@@ -3566,6 +3611,10 @@ func daemonStatusCmd(args Args) error {
 	fmt.Printf("Registered projects: %v\n", status["projects"])
 	fmt.Printf("Active runs: %v / %v\n", status["activeRuns"], status["max_active_runs"])
 	fmt.Printf("Parked no-progress runs: %v\n", status["parkedNoProgressRuns"])
+	fmt.Printf("Parked budget runs: %v\n", status["parkedBudgetRuns"])
+	if boolFromAny(status["budget_circuit_open"]) {
+		fmt.Printf("Budget circuit: open until %s (%s)\n", stringValue(status["budget_circuit_reset_at"]), stringValue(status["budget_circuit_reason"]))
+	}
 	return nil
 }
 
@@ -3601,8 +3650,25 @@ func daemonLimitsCmd(args Args) error {
 
 func daemonStopCmd(args Args) error {
 	stateRoot := DefaultStateRoot()
+	drain := args.Bool("drain")
 	before := readDaemonLiveness(stateRoot, time.Now().UTC())
 	if !before.Alive {
+		if drain {
+			drained, err := daemonDrainWrappers(stateRoot, daemonStopDrainTimeout(args))
+			if err != nil {
+				return err
+			}
+			if args.Bool("json") {
+				emitJSON(map[string]any{"ok": true, "stopped": false, "drained": drained, "message": "daemon is not running"})
+				return nil
+			}
+			if drained {
+				fmt.Println("Daemon is not running; wrapper drain complete")
+			} else {
+				fmt.Println("Daemon is not running; wrapper drain timed out")
+			}
+			return nil
+		}
 		if args.Bool("json") {
 			emitJSON(map[string]any{"ok": true, "stopped": false, "message": "daemon is not running"})
 			return nil
@@ -3620,11 +3686,29 @@ func daemonStopCmd(args Args) error {
 	deadline := time.Now().UTC().Add(5 * time.Second)
 	for {
 		if !readDaemonLiveness(stateRoot, time.Now().UTC()).Alive {
+			drained := false
+			if drain {
+				var drainErr error
+				drained, drainErr = daemonDrainWrappers(stateRoot, daemonStopDrainTimeout(args))
+				if drainErr != nil {
+					return drainErr
+				}
+			}
 			if args.Bool("json") {
-				emitJSON(map[string]any{"ok": true, "stopped": true, "pid": before.PID, "message": firstNonEmpty(resp.Message, "daemon stopped")})
+				payload := map[string]any{"ok": true, "stopped": true, "pid": before.PID, "message": firstNonEmpty(resp.Message, "daemon stopped")}
+				if drain {
+					payload["drained"] = drained
+				}
+				emitJSON(payload)
 				return nil
 			}
-			fmt.Printf("Daemon stopped pid %d\n", before.PID)
+			if drain && !drained {
+				fmt.Printf("Daemon stopped pid %d; wrapper drain timed out\n", before.PID)
+			} else if drain {
+				fmt.Printf("Daemon stopped pid %d; wrapper drain complete\n", before.PID)
+			} else {
+				fmt.Printf("Daemon stopped pid %d\n", before.PID)
+			}
 			return nil
 		}
 		if time.Now().UTC().After(deadline) {
@@ -3632,6 +3716,22 @@ func daemonStopCmd(args Args) error {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+func daemonStopDrainTimeout(args Args) time.Duration {
+	if ms := atoiSafe(strings.TrimSpace(args.String("drain-timeout-ms"))); ms > 0 {
+		return time.Duration(ms) * time.Millisecond
+	}
+	return 30 * time.Second
+}
+
+func daemonDrainWrappers(stateRoot string, timeout time.Duration) (bool, error) {
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		return false, err
+	}
+	defer store.Close()
+	return waitForWrapperDrain(store, timeout)
 }
 
 func projectsAddCmd(args Args) error {

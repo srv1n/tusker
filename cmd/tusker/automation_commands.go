@@ -130,6 +130,8 @@ type automationStatusReport struct {
 	ActiveRuns          int                        `json:"active_runs"`
 	MaxActiveRuns       int                        `json:"max_active_runs"`
 	LimitSource         string                     `json:"limit_source"`
+	ParkedBudgetRuns    int                        `json:"parked_budget_runs"`
+	BudgetCircuit       any                        `json:"budget_circuit"`
 	Projects            []automationProjectSummary `json:"projects"`
 }
 
@@ -163,6 +165,8 @@ func automationStatusCmd(args Args) error {
 		ActiveRuns:          intFromAny(status["activeRuns"]),
 		MaxActiveRuns:       intFromAny(status["max_active_runs"]),
 		LimitSource:         stringValue(status["limit_source"]),
+		ParkedBudgetRuns:    intFromAny(status["parkedBudgetRuns"]),
+		BudgetCircuit:       status["budgetCircuit"],
 		Projects:            automationProjectSummaries(projects, runs),
 	}
 	if args.Bool("json") {
@@ -483,6 +487,11 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 	if reason := automationRunBlocker(run, time.Now().UTC()); reason != "" {
 		blockers = append(blockers, reason)
 	}
+	if _, reason, _, err := (&Daemon{stateRoot: ctx.StateRoot, store: ctx.Store}).budgetDispatchBlocker(ctx.Project, ctx.Workflow.Data, note, run, time.Now().UTC()); err != nil {
+		blockers = append(blockers, "budget: "+err.Error())
+	} else if reason != "" {
+		blockers = append(blockers, reason)
+	}
 	blockers = append(blockers, ctx.concurrencyBlockers(note, run)...)
 	fanout := ctx.fanoutSummary(recordID)
 	policy := codexPolicyFromWorkflow(ctx.Workflow.Data)
@@ -708,6 +717,8 @@ func automationRunBlocker(run RunStatus, now time.Time) string {
 		return "existing run is interrupted"
 	case LeaseStateParkedNoProgress:
 		return "existing run is parked_no_progress; update the task revision before redispatch"
+	case LeaseStateParkedBudget:
+		return "existing run is parked_budget; run `tusker redrive " + firstNonEmpty(run.ItemID, run.RecordID) + " --reason <why>` before redispatch"
 	case LeaseStateReleased:
 		return "existing run is released; update the task revision before redispatch"
 	default:

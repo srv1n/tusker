@@ -53,6 +53,14 @@ automation:
     max_continuation_retries: 3
     max_concurrent_by_state:
       rework: 1
+  budget:
+    enabled: true
+    per_attempt_input_tokens: 50000000
+    per_attempt_output_tokens: 500000
+    per_task_input_tokens: 250000000
+    per_task_output_tokens: 2500000
+    daily_input_tokens: 10000000000
+    daily_output_tokens: 100000000
   runners:
     codex_app_server:
       kind: codex_app_server

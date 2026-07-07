@@ -45,13 +45,15 @@ type serveProjectSummary struct {
 }
 
 type serveDaemonStatus struct {
-	Connected    bool   `json:"connected"`
-	Addr         string `json:"addr"`
-	ActiveRuns   int    `json:"activeRuns"`
-	QueuedTasks  int    `json:"queuedTasks"`
-	LastPollAt   any    `json:"lastPollAt"`
-	StateRoot    string `json:"stateRoot"`
-	ProjectCount int    `json:"projectCount"`
+	Connected        bool   `json:"connected"`
+	Addr             string `json:"addr"`
+	ActiveRuns       int    `json:"activeRuns"`
+	QueuedTasks      int    `json:"queuedTasks"`
+	LastPollAt       any    `json:"lastPollAt"`
+	StateRoot        string `json:"stateRoot"`
+	ProjectCount     int    `json:"projectCount"`
+	ParkedBudgetRuns int    `json:"parkedBudgetRuns"`
+	BudgetCircuit    any    `json:"budgetCircuit"`
 }
 
 type serveEpicSummary struct {

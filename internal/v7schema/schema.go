@@ -104,6 +104,16 @@ type TuskerExternalLoopConfig struct {
 	WallClockTimeoutHours  int `yaml:"wall_clock_timeout_hours"`
 }
 
+type TuskerAutomationBudgetConfig struct {
+	Enabled                *bool `yaml:"enabled"`
+	PerAttemptInputTokens  int   `yaml:"per_attempt_input_tokens"`
+	PerAttemptOutputTokens int   `yaml:"per_attempt_output_tokens"`
+	PerTaskInputTokens     int   `yaml:"per_task_input_tokens"`
+	PerTaskOutputTokens    int   `yaml:"per_task_output_tokens"`
+	DailyInputTokens       int   `yaml:"daily_input_tokens"`
+	DailyOutputTokens      int   `yaml:"daily_output_tokens"`
+}
+
 type TuskerAutomationConfig struct {
 	Enabled        *bool    `yaml:"enabled"`
 	TriggerStates  []string `yaml:"trigger_states"`
@@ -121,6 +131,7 @@ type TuskerAutomationConfig struct {
 		MaxConcurrentByState    map[string]int `yaml:"max_concurrent_by_state"`
 	} `yaml:"concurrency"`
 	ExternalLoop TuskerExternalLoopConfig                `yaml:"external_loop"`
+	Budget       TuskerAutomationBudgetConfig            `yaml:"budget"`
 	Runners      map[string]TuskerAutomationRunnerConfig `yaml:"runners"`
 	Fanout       struct {
 		Enabled           bool     `yaml:"enabled"`

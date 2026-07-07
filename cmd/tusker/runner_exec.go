@@ -34,6 +34,7 @@ type runnerExecRequest struct {
 	VaultPath       string
 	ResumeMode      bool
 	CodexPolicy     CodexPolicy
+	ExternalLoop    ExternalLoopLaunchContext
 }
 
 type runnerProcessStatus struct {
@@ -114,7 +115,8 @@ PY
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 		NotePath: req.NotePath, VaultPath: req.VaultPath, SessionRef: req.SessionRef, MessageRef: req.MessageRef,
-		CodexPolicy: withDefaultCodexPolicy(req.CodexPolicy),
+		CodexPolicy:  withDefaultCodexPolicy(req.CodexPolicy),
+		ExternalLoop: req.ExternalLoop,
 	})
 	closeStdin := attachDevNullStdin(cmd)
 	defer closeStdin()

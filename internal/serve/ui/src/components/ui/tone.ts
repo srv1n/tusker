@@ -106,6 +106,8 @@ export const outcomeTone: Record<RunOutcome, Tone> = {
   failed: "fail",
   interrupted: "warn",
   "retry-queued": "accent",
+  "parked-no-progress": "warn",
+  "parked-budget": "fail",
 };
 
 export const outcomeLabel: Record<RunOutcome, string> = {
@@ -114,6 +116,8 @@ export const outcomeLabel: Record<RunOutcome, string> = {
   failed: "Failed",
   interrupted: "Interrupted",
   "retry-queued": "Retry queued",
+  "parked-no-progress": "Parked",
+  "parked-budget": "Budget parked",
 };
 
 export const livenessTone: Record<Liveness, Tone> = {

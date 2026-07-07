@@ -67,6 +67,14 @@ runners:
     command: "codex exec --skip-git-repo-check -"
     kind: "codex_exec"
 runtime:
+  budget:
+    daily_input_tokens: 10000000000
+    daily_output_tokens: 100000000
+    enabled: true
+    per_attempt_input_tokens: 50000000
+    per_attempt_output_tokens: 500000
+    per_task_input_tokens: 250000000
+    per_task_output_tokens: 2500000
   lease_ttl_ms: 900000
   max_active_runs_per_project: 5
   max_continuation_retries: 3

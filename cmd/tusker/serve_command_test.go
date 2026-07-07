@@ -116,8 +116,9 @@ func TestServeFieldsRosterAndEpics(t *testing.T) {
 		t.Fatal("expected APP-T-0007 run")
 	}
 	assertEqual(t, "boom", failed["error"], "terminal error text")
-	if failed["terminal"] != nil || failed["lastHeartbeatAt"] != nil {
-		t.Fatalf("daemon-unlanded fields must be explicit nulls: %#v", failed)
+	assertEqual(t, false, failed["terminal"], "terminal flag")
+	if failed["lastHeartbeatAt"] != nil {
+		t.Fatalf("empty heartbeat must be explicit null: %#v", failed)
 	}
 	var parked map[string]any
 	for _, run := range runs {

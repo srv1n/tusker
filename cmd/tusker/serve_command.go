@@ -310,14 +310,17 @@ func (s *serveServer) handleDaemon(w http.ResponseWriter, _ *http.Request) {
 			queued++
 		}
 	}
+	daemonStatus, _ := s.store.DaemonStatus()
 	serveJSON(w, http.StatusOK, serveDaemonStatus{
-		Connected:    true,
-		Addr:         s.addr,
-		ActiveRuns:   active,
-		QueuedTasks:  queued,
-		LastPollAt:   nullIfBlank(snap.project.LastPollAt),
-		StateRoot:    DefaultStateRoot(),
-		ProjectCount: 1,
+		Connected:        true,
+		Addr:             s.addr,
+		ActiveRuns:       active,
+		QueuedTasks:      queued,
+		LastPollAt:       nullIfBlank(snap.project.LastPollAt),
+		StateRoot:        DefaultStateRoot(),
+		ProjectCount:     1,
+		ParkedBudgetRuns: intFromAny(daemonStatus["parkedBudgetRuns"]),
+		BudgetCircuit:    daemonStatus["budgetCircuit"],
 	})
 }
 

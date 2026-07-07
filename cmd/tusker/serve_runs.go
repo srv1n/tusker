@@ -42,9 +42,9 @@ func (s *serveServer) runSummary(snap serveSnapshot, run RunStatus) serveRunSumm
 		Liveness:          serveRunLiveness(run, s.now()),
 		Tokens:            serveTokenTotalsForTurns(turns),
 		AttemptCount:      maxInt(run.AttemptCount, len(turnsByAttempt(turns))),
-		Terminal:          nil,
+		Terminal:          run.Terminal,
 		Error:             nullIfBlank(run.LastError),
-		LastHeartbeatAt:   nil,
+		LastHeartbeatAt:   nullIfBlank(run.LastHeartbeatAt),
 		NextWakeAt:        nullIfBlank(run.NextRetryAt),
 	}
 }
@@ -76,7 +76,7 @@ func serveLane(lane string) string {
 
 func serveLeaseState(state string) string {
 	switch LeaseState(strings.TrimSpace(state)) {
-	case LeaseStateReleased, LeaseStateInterrupted, LeaseStateParkedNoProgress:
+	case LeaseStateReleased, LeaseStateInterrupted, LeaseStateParkedNoProgress, LeaseStateParkedBudget:
 		return "released"
 	default:
 		return "held"
@@ -86,6 +86,9 @@ func serveLeaseState(state string) string {
 func serveRunOutcome(run RunStatus) string {
 	if LeaseState(run.LeaseState) == LeaseStateParkedNoProgress {
 		return "parked-no-progress"
+	}
+	if LeaseState(run.LeaseState) == LeaseStateParkedBudget {
+		return "parked-budget"
 	}
 	if LeaseState(run.LeaseState) == LeaseStateRetryQueued {
 		return "retry-queued"
@@ -100,13 +103,16 @@ func serveRunOutcomeFromAttempt(outcome, lease string) string {
 	switch AttemptOutcome(strings.TrimSpace(outcome)) {
 	case AttemptOutcomeSucceeded:
 		return "succeeded"
-	case AttemptOutcomeFailed, AttemptOutcomeBlocked, AttemptOutcomeAbandoned:
+	case AttemptOutcomeFailed, AttemptOutcomeBlocked, AttemptOutcomeAbandoned, AttemptOutcomeBudgetExceeded:
 		return "failed"
 	case AttemptOutcomeCancelled:
 		return "interrupted"
 	default:
 		if LeaseState(lease) == LeaseStateParkedNoProgress {
 			return "parked-no-progress"
+		}
+		if LeaseState(lease) == LeaseStateParkedBudget {
+			return "parked-budget"
 		}
 		if LeaseState(lease) == LeaseStateRetryQueued {
 			return "retry-queued"

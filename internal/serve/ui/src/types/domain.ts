@@ -47,7 +47,9 @@ export type RunOutcome =
   | "succeeded"
   | "failed"
   | "interrupted"
-  | "retry-queued";
+  | "retry-queued"
+  | "parked-no-progress"
+  | "parked-budget";
 
 export type DocKind = "spec" | "decision" | "knowledge" | "task" | "epic" | "dashboard";
 
@@ -144,6 +146,10 @@ export interface RunSummary {
   liveness: Liveness;
   tokens: TokenTotals;
   attemptCount: number;
+  terminal?: boolean;
+  error?: string | null;
+  lastHeartbeatAt?: string | null;
+  nextWakeAt?: string | null;
 }
 
 export interface Attempt {
@@ -267,4 +273,14 @@ export interface DaemonStatus {
   addr: string;
   activeRuns: number;
   queuedTasks: number;
+  parkedBudgetRuns?: number;
+  budgetCircuit?: {
+    open: boolean;
+    reason?: string;
+    reset_at?: string;
+    input_tokens?: number;
+    output_tokens?: number;
+    input_token_limit?: number;
+    output_token_limit?: number;
+  } | null;
 }

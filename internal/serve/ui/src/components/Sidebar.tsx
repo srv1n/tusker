@@ -26,6 +26,7 @@ export function Sidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   const needsCount = globalNeeds.data?.length ?? 0;
+  const budgetCircuitOpen = daemon.data?.budgetCircuit?.open === true;
 
   return (
     <aside className="flex w-[246px] flex-none flex-col border-r border-line bg-panel py-4">
@@ -100,6 +101,14 @@ export function Sidebar() {
               title="Screens render mock fixtures, not live vault data. IDs and counts are illustrative until the serve API lands."
             >
               fixture data
+            </div>
+          )}
+          {budgetCircuitOpen && (
+            <div
+              className="mb-1 inline-flex items-center gap-1 rounded bg-fail-soft px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.12em] text-fail"
+              title={daemon.data?.budgetCircuit?.reason ?? "Budget circuit is open"}
+            >
+              budget circuit open
             </div>
           )}
           <div className="flex items-center gap-1.5">

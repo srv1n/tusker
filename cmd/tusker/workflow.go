@@ -33,10 +33,11 @@ type Workflow struct {
 		MaxConcurrentAgentsByState map[string]int `yaml:"max_concurrent_agents_by_state"`
 	} `yaml:"agents"`
 	Runtime struct {
-		PollIntervalMS          int `yaml:"poll_interval_ms"`
-		LeaseTTLMS              int `yaml:"lease_ttl_ms"`
-		MaxActiveRunsPerProject int `yaml:"max_active_runs_per_project"`
-		MaxContinuationRetries  int `yaml:"max_continuation_retries"`
+		PollIntervalMS          int                 `yaml:"poll_interval_ms"`
+		LeaseTTLMS              int                 `yaml:"lease_ttl_ms"`
+		MaxActiveRunsPerProject int                 `yaml:"max_active_runs_per_project"`
+		MaxContinuationRetries  int                 `yaml:"max_continuation_retries"`
+		Budget                  RuntimeBudgetConfig `yaml:"budget"`
 	} `yaml:"runtime"`
 	Workspace struct {
 		Root     string `yaml:"root"`
@@ -136,6 +137,7 @@ func defaultWorkflow() Workflow {
 	wf.Runtime.LeaseTTLMS = 900000
 	wf.Runtime.MaxActiveRunsPerProject = 1
 	wf.Runtime.MaxContinuationRetries = 3
+	wf.Runtime.Budget = defaultRuntimeBudgetConfig()
 	wf.Workspace.Root = "."
 	wf.Workspace.Strategy = string(WorkspaceStrategyInPlace)
 	wf.Retry.MaxAttempts = 3
@@ -327,6 +329,28 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 	if cfg.Automation.Concurrency.MaxConcurrentByState != nil {
 		wf.Agents.MaxConcurrentAgentsByState = cfg.Automation.Concurrency.MaxConcurrentByState
 	}
+	if cfg.Automation.Budget.Enabled != nil {
+		wf.Runtime.Budget.Enabled = *cfg.Automation.Budget.Enabled
+	}
+	if cfg.Automation.Budget.PerAttemptInputTokens > 0 {
+		wf.Runtime.Budget.PerAttemptInputTokens = cfg.Automation.Budget.PerAttemptInputTokens
+	}
+	if cfg.Automation.Budget.PerAttemptOutputTokens > 0 {
+		wf.Runtime.Budget.PerAttemptOutputTokens = cfg.Automation.Budget.PerAttemptOutputTokens
+	}
+	if cfg.Automation.Budget.PerTaskInputTokens > 0 {
+		wf.Runtime.Budget.PerTaskInputTokens = cfg.Automation.Budget.PerTaskInputTokens
+	}
+	if cfg.Automation.Budget.PerTaskOutputTokens > 0 {
+		wf.Runtime.Budget.PerTaskOutputTokens = cfg.Automation.Budget.PerTaskOutputTokens
+	}
+	if cfg.Automation.Budget.DailyInputTokens > 0 {
+		wf.Runtime.Budget.DailyInputTokens = cfg.Automation.Budget.DailyInputTokens
+	}
+	if cfg.Automation.Budget.DailyOutputTokens > 0 {
+		wf.Runtime.Budget.DailyOutputTokens = cfg.Automation.Budget.DailyOutputTokens
+	}
+	wf.Runtime.Budget = withDefaultRuntimeBudgetConfig(wf.Runtime.Budget)
 	if cfg.Automation.ExternalLoop.MaxCycles > 0 {
 		wf.ExternalLoop.MaxCycles = cfg.Automation.ExternalLoop.MaxCycles
 	}
@@ -397,6 +421,13 @@ func v7AutomationConfigPresent(cfg v7TuskerConfigFile) bool {
 		cfg.Automation.Concurrency.MaxActiveRunsPerProject > 0 ||
 		cfg.Automation.Concurrency.MaxContinuationRetries > 0 ||
 		len(cfg.Automation.Concurrency.MaxConcurrentByState) > 0 ||
+		cfg.Automation.Budget.Enabled != nil ||
+		cfg.Automation.Budget.PerAttemptInputTokens > 0 ||
+		cfg.Automation.Budget.PerAttemptOutputTokens > 0 ||
+		cfg.Automation.Budget.PerTaskInputTokens > 0 ||
+		cfg.Automation.Budget.PerTaskOutputTokens > 0 ||
+		cfg.Automation.Budget.DailyInputTokens > 0 ||
+		cfg.Automation.Budget.DailyOutputTokens > 0 ||
 		cfg.Automation.ExternalLoop.MaxCycles > 0 ||
 		cfg.Automation.ExternalLoop.MaxRepairContinuations > 0 ||
 		cfg.Automation.ExternalLoop.MaxExternalThreads > 0 ||

@@ -27,6 +27,7 @@ const (
 	LeaseStateRunning          LeaseState = "running"
 	LeaseStateRetryQueued      LeaseState = "retry_queued"
 	LeaseStateParkedNoProgress LeaseState = "parked_no_progress"
+	LeaseStateParkedBudget     LeaseState = "parked_budget"
 	LeaseStateInterrupted      LeaseState = "interrupted"
 	LeaseStateReleased         LeaseState = "released"
 )
@@ -41,6 +42,7 @@ const (
 	AttemptOutcomeCancelled       AttemptOutcome = "cancelled"
 	AttemptOutcomeAbandoned       AttemptOutcome = "abandoned"
 	AttemptOutcomeWaitingForHuman AttemptOutcome = "waiting_for_human"
+	AttemptOutcomeBudgetExceeded  AttemptOutcome = "budget_exceeded"
 )
 
 type RunnerCapabilities struct {

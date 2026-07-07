@@ -28,11 +28,12 @@ var builtE2EBinaries struct {
 	err        error
 }
 
-func TestDaemonKillNineAdoptsSurvivingRunner(t *testing.T) {
+func TestDaemonKillNineAdoptsSurvivingWrapper(t *testing.T) {
 	h := newHarness(t, "daemon-kill-adoption")
 	releaseFile := filepath.Join(h.tempRoot, "release")
 	h.configureFakeRunner(fakeRunnerConfig{
 		Mode:           "hold-success",
+		RunnerKind:     "codex_exec",
 		ReleaseFile:    releaseFile,
 		CompleteStatus: "review",
 		StallTimeoutMS: 5000,
@@ -42,15 +43,27 @@ func TestDaemonKillNineAdoptsSurvivingRunner(t *testing.T) {
 
 	first := h.startDaemon("daemon-1")
 	run := h.waitRun(crashTaskID, 5*time.Second, func(run map[string]any) bool {
-		return runString(run, "lease_state") == "running" && runInt(run, "process_pid") > 0
+		return runString(run, "lease_state") == "running" && runInt(run, "process_pid") > 0 && runString(run, "last_heartbeat_at") != ""
 	})
-	runnerPID := runInt(run, "process_pid")
+	wrapperPID := runInt(run, "process_pid")
+	childPID := h.waitRunnerPID(5 * time.Second)
+	if childPID == wrapperPID {
+		t.Fatalf("expected wrapper pid and fake runner child pid to differ, both were %d", wrapperPID)
+	}
 	first.kill(syscall.SIGKILL)
-	if !processAlive(runnerPID) {
-		t.Fatalf("runner pid %d died with daemon; D2 requires runner survival", runnerPID)
+	if !processAlive(wrapperPID) {
+		t.Fatalf("wrapper pid %d died with daemon; D2 requires runner survival", wrapperPID)
+	}
+	if !processAlive(childPID) {
+		t.Fatalf("runner child pid %d died with daemon; wrapper must preserve the child", childPID)
 	}
 
 	second := h.startDaemon("daemon-2")
+	h.waitRun(crashTaskID, 8*time.Second, func(run map[string]any) bool {
+		return runString(run, "lease_state") == "running" &&
+			runInt(run, "process_pid") == wrapperPID &&
+			runString(run, "last_heartbeat_at") != ""
+	})
 	h.touch(releaseFile)
 	h.waitRun(crashTaskID, 8*time.Second, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "released" &&
@@ -173,6 +186,7 @@ func TestRetryCapProducesTerminalRun(t *testing.T) {
 
 type fakeRunnerConfig struct {
 	Mode           string
+	RunnerKind     string
 	ReleaseFile    string
 	CompleteStatus string
 	ExitCode       int
@@ -303,6 +317,9 @@ func (h *harness) configureFakeRunner(cfg fakeRunnerConfig) {
 	if cfg.MaxAttempts <= 0 {
 		cfg.MaxAttempts = 1
 	}
+	if cfg.RunnerKind == "" {
+		cfg.RunnerKind = "codex"
+	}
 	if len(cfg.BackoffMS) == 0 {
 		cfg.BackoffMS = []int{1}
 	}
@@ -353,7 +370,7 @@ automation:
     max_concurrent_by_state: {}
   runners:
     codex:
-      kind: codex
+      kind: %s
       command: >-
         %s
       approval_policy: never
@@ -363,7 +380,7 @@ automation:
       read_timeout_ms: 100
       stall_timeout_ms: %d
       max_turns: 1
-`, command, cfg.StallTimeoutMS)
+`, cfg.RunnerKind, command, cfg.StallTimeoutMS)
 	h.writeFile(filepath.Join(h.repoDir, "tusker.yaml"), config)
 
 	workflow := h.readFile(filepath.Join(h.vaultDir, "WORKFLOW.md"))
@@ -537,7 +554,26 @@ func (h *harness) startDaemon(name string) *daemonProcess {
 }
 
 func (h *harness) env() []string {
-	return append(os.Environ(), "TUSKER_STATE_ROOT="+h.stateRoot)
+	return append(os.Environ(), "TUSKER_STATE_ROOT="+h.stateRoot, "TUSKER_WRAPPER_HEARTBEAT_MS=100", "TUSKER_WRAPPER_STOP_TIMEOUT_MS=1000")
+}
+
+func (h *harness) waitRunnerPID(timeout time.Duration) int {
+	h.t.Helper()
+	pidPath := filepath.Join(h.tempRoot, "runner.pid")
+	var pid int
+	eventually(h.t, timeout, 100*time.Millisecond, func() (bool, string) {
+		raw, err := os.ReadFile(pidPath)
+		if err != nil {
+			return false, err.Error()
+		}
+		parsed, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+		if err != nil || parsed <= 0 {
+			return false, strings.TrimSpace(string(raw))
+		}
+		pid = parsed
+		return true, ""
+	})
+	return pid
 }
 
 func (h *harness) touch(path string) {
