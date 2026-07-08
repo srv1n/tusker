@@ -311,6 +311,35 @@ func TestCodexExecIdleHeartbeatReason(t *testing.T) {
 	}
 }
 
+func TestFirstEventDeadlineToleratesFreshWrapperHeartbeat(t *testing.T) {
+	started := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	run := RunStatus{
+		Runner:           string(RunnerCodexExec),
+		StartedAt:        started.Format(time.RFC3339),
+		ProcessStartedAt: started.Format(time.RFC3339),
+		LastHeartbeatAt:  started.Add(10 * time.Minute).Format(time.RFC3339),
+	}
+	stalled, reason := runStallReason(run, defaultWorkflow(), started.Add(10*time.Minute+time.Second))
+	assertEqual(t, false, stalled, "fresh wrapper heartbeat without first event stalled")
+	assertEqual(t, "", reason, "fresh wrapper heartbeat without first event reason")
+}
+
+func TestFirstEventDeadlineReportsDeadWrapperHeartbeat(t *testing.T) {
+	started := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	heartbeatAt := started.Add(daemonFirstEventDeadline + time.Minute)
+	run := RunStatus{
+		Runner:           string(RunnerCodexExec),
+		StartedAt:        started.Format(time.RFC3339),
+		ProcessStartedAt: started.Format(time.RFC3339),
+		LastHeartbeatAt:  heartbeatAt.Format(time.RFC3339),
+	}
+	stalled, reason := runStallReason(run, defaultWorkflow(), heartbeatAt.Add(daemonHeartbeatDeadThreshold+time.Second))
+	assertEqual(t, true, stalled, "dead wrapper heartbeat before first event stalled")
+	if !strings.Contains(reason, "runner heartbeat dead before first event") {
+		t.Fatalf("expected dead heartbeat reason, got %q", reason)
+	}
+}
+
 func TestCodexExecCompletionRecordsSucceeded(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)

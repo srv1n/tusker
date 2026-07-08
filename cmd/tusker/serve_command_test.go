@@ -24,7 +24,7 @@ func TestServeReadOnlyAndLocalhost(t *testing.T) {
 	}
 
 	server := newServeFixture(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks", nil)
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/tasks", nil)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	assertEqual(t, http.StatusMethodNotAllowed, rec.Code, "mutating API route status")
@@ -317,6 +317,31 @@ func TestServeReadParityEndpointsSerialize(t *testing.T) {
 	assertEqual(t, 2, daemon.MaxActiveRuns, "daemon active limit default")
 }
 
+func TestServeMutationRejectsCrossOrigin(t *testing.T) {
+	server := newServeFixture(t)
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/tasks/APP-T-0001/status", bytes.NewBufferString(`{"status":"active"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://attacker.example")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	assertEqual(t, http.StatusForbidden, rec.Code, "cross-origin mutation status")
+	if !strings.Contains(rec.Body.String(), "refused cross-origin mutation") {
+		t.Fatalf("expected cross-origin refusal, got %q", rec.Body.String())
+	}
+}
+
+func TestServeMutationRejectsNonLoopbackHost(t *testing.T) {
+	server := newServeFixture(t)
+	req := httptest.NewRequest(http.MethodPost, "http://evil.example/api/tasks/APP-T-0001/status", bytes.NewBufferString(`{"status":"active"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	assertEqual(t, http.StatusForbidden, rec.Code, "non-loopback host mutation status")
+	if !strings.Contains(rec.Body.String(), "non-loopback Host") {
+		t.Fatalf("expected host refusal, got %q", rec.Body.String())
+	}
+}
+
 func TestServeMutationEndpointsReturnVisibleRefusals(t *testing.T) {
 	server := newServeFixture(t)
 	cases := []struct {
@@ -552,7 +577,7 @@ func serveDecode(t *testing.T, server *serveServer, path string, out any) {
 
 func servePost(t *testing.T, server *serveServer, path, body string, out any) {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420"+path, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
