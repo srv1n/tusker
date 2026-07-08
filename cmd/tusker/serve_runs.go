@@ -131,6 +131,10 @@ func serveRunOutcomeFromAttempt(outcome, lease string) string {
 		return "dispatch-declined"
 	case AttemptOutcomeCancelled:
 		return "interrupted"
+	case AttemptOutcomeWaitingForReview:
+		return "review-complete"
+	case AttemptOutcomeWaitingForHuman:
+		return "awaiting-human"
 	default:
 		if LeaseState(lease) == LeaseStateUnclaimed {
 			return "idle"

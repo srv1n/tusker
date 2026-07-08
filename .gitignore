@@ -33,6 +33,7 @@
 .tusker-runtime/
 .tusker-state/
 .tusker-worktrees/
+.claude/worktrees/
 dist/
 !internal/serve/ui/dist/
 !internal/serve/ui/dist/**
