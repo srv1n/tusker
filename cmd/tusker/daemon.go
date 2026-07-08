@@ -1215,6 +1215,16 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			return run, changed, err
 		}
 		classification := classifyRunnerProcessExit(run, status, note, project.VaultRoot, wfFile.Data.Tracker.ActiveStates)
+		if canonicalStatusRetiresRuntimeRows(wfFile.Data, classification.trackerState) {
+			outcome := classification.outcome
+			if status.ExitCode != 0 {
+				outcome = AttemptOutcomeFailed
+			}
+			run.AttemptOutcome = string(outcome)
+			run.LastError = classification.reason
+			updateRunAttemptFromRun(d.store, run, outcome, status.ExitCode, classification.reason, finished)
+			return d.retireCanonicalRuntimeRun(ctx, project, run, classification.trackerState, "daemon:reconcile", "status-ready")
+		}
 		if status.ExitCode == 0 {
 			if classification.outcome == AttemptOutcomeTurnCapExhausted {
 				reason := classification.reason
@@ -3854,25 +3864,33 @@ func latestRunEventAt(run RunStatus) (time.Time, bool) {
 }
 
 func runStallReason(run RunStatus, wf Workflow, now time.Time) (bool, string) {
+	runner, _, err := runnerForName(run.Runner, wf)
+	heartbeatCapable := err == nil && runner.Capabilities().Heartbeats
+	timeout := heartbeatDeadThresholdForRun(run, wf)
 	if strings.TrimSpace(run.FirstEventAt) == "" {
-		startedAt, ok := parseRunTimestamp(firstNonEmpty(run.ProcessStartedAt, run.StartedAt, run.UpdatedAt))
+		startedAt, startedOK := parseRunTimestamp(firstNonEmpty(run.ProcessStartedAt, run.StartedAt, run.UpdatedAt))
+		if heartbeatCapable {
+			if lastHeartbeatAt, heartbeatOK := parseRunTimestamp(run.LastHeartbeatAt); heartbeatOK {
+				if now.Sub(lastHeartbeatAt) <= timeout {
+					return false, ""
+				}
+				if !startedOK || lastHeartbeatAt.After(startedAt) || lastHeartbeatAt.Equal(startedAt) {
+					return true, fmt.Sprintf("runner heartbeat dead before first event: no heartbeat since %s", lastHeartbeatAt.Format(time.RFC3339))
+				}
+			}
+		}
 		deadline := firstEventDeadlineForRun(run, wf)
-		if ok && now.Sub(startedAt) > deadline {
+		if startedOK && now.Sub(startedAt) > deadline {
 			return true, fmt.Sprintf("runner never started: no first event within %s of spawn", deadline)
 		}
 		return false, ""
 	}
-	runner, _, err := runnerForName(run.Runner, wf)
-	if err != nil || !runner.Capabilities().Heartbeats {
+	if !heartbeatCapable {
 		return false, ""
 	}
 	lastHeartbeatAt, ok := parseRunTimestamp(firstNonEmpty(run.LastHeartbeatAt, run.LastEventAt, run.FirstEventAt))
 	if !ok {
 		return false, ""
-	}
-	timeout := daemonHeartbeatDeadThreshold
-	if wf.Codex.StallTimeoutMS > 0 && RunnerName(run.Runner) == RunnerCodex {
-		timeout = time.Duration(wf.Codex.StallTimeoutMS) * time.Millisecond
 	}
 	if now.Sub(lastHeartbeatAt) <= timeout {
 		return false, ""
@@ -3894,6 +3912,13 @@ func firstEventDeadlineForRun(run RunStatus, wf Workflow) time.Duration {
 		return time.Duration(wf.Codex.StallTimeoutMS) * time.Millisecond
 	}
 	return daemonFirstEventDeadline
+}
+
+func heartbeatDeadThresholdForRun(run RunStatus, wf Workflow) time.Duration {
+	if wf.Codex.StallTimeoutMS > 0 && RunnerName(run.Runner) == RunnerCodex {
+		return time.Duration(wf.Codex.StallTimeoutMS) * time.Millisecond
+	}
+	return daemonHeartbeatDeadThreshold
 }
 
 func codexExecInFlightCommandTimeout(wf Workflow) time.Duration {

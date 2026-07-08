@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -135,6 +136,64 @@ func serveIsLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+func serveMutationOriginRefusal(r *http.Request) string {
+	if !serveRequestHostIsLoopback(r.Host) {
+		return "refused mutation for non-loopback Host header"
+	}
+	for _, header := range []string{"Origin", "Referer"} {
+		raw := strings.TrimSpace(r.Header.Get(header))
+		if raw == "" {
+			continue
+		}
+		if !serveSameOrigin(raw, r.Host) {
+			return "refused cross-origin mutation"
+		}
+	}
+	return ""
+}
+
+func serveRequestHostIsLoopback(hostport string) bool {
+	host := strings.TrimSpace(hostport)
+	if host == "" {
+		return false
+	}
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	}
+	return serveIsLoopbackHost(host)
+}
+
+func serveSameOrigin(rawOrigin, requestHost string) bool {
+	u, err := url.Parse(rawOrigin)
+	if err != nil || u == nil || strings.TrimSpace(u.Host) == "" {
+		return false
+	}
+	return serveCanonicalOriginHost(u.Host, u.Scheme) == serveCanonicalOriginHost(requestHost, "http")
+}
+
+func serveCanonicalOriginHost(hostport, scheme string) string {
+	host := strings.TrimSpace(hostport)
+	port := ""
+	normalizedScheme := strings.ToLower(strings.TrimSpace(scheme))
+	if normalizedScheme == "" {
+		normalizedScheme = "http"
+	}
+	if parsedHost, parsedPort, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+		port = parsedPort
+	}
+	host = strings.ToLower(strings.Trim(host, "[] "))
+	if port == "" {
+		switch normalizedScheme {
+		case "https":
+			port = "443"
+		default:
+			port = "80"
+		}
+	}
+	return normalizedScheme + "://" + net.JoinHostPort(host, port)
+}
+
 func parseTruthyQuery(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1", "true", "t", "yes", "y", "on", "all":
@@ -162,6 +221,12 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimSuffix(r.URL.Path, "/")
 	if path == "" {
 		path = "/"
+	}
+	if r.Method == http.MethodPost {
+		if reason := serveMutationOriginRefusal(r); reason != "" {
+			serveJSON(w, http.StatusForbidden, serveActionResult{OK: false, Refused: true, Reason: reason})
+			return
+		}
 	}
 	if s.handleAPIMutation(w, r, path) {
 		return

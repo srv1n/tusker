@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -77,25 +78,34 @@ func serveBaseArgs(s *serveServer) Args {
 	return Args{"vault": s.vaultPath, "repo": s.repoRoot}
 }
 
-func serveInvokeCommand(args Args, fn func(Args) error) (string, error) {
+func serveInvokeCommand(args Args, fn func(Args) error) (output string, runErr error) {
 	serveCommandStdoutMu.Lock()
 	defer serveCommandStdoutMu.Unlock()
 
 	previous := os.Stdout
-	reader, writer, err := os.Pipe()
+	tmp, err := os.CreateTemp("", "tusker-serve-stdout-*")
 	if err != nil {
 		return "", err
 	}
-	os.Stdout = writer
-	runErr := fn(args)
-	_ = writer.Close()
-	os.Stdout = previous
-	out, readErr := io.ReadAll(reader)
-	_ = reader.Close()
-	if readErr != nil && runErr == nil {
-		runErr = readErr
-	}
-	return strings.TrimSpace(string(out)), runErr
+	tmpPath := tmp.Name()
+	defer func() {
+		os.Stdout = previous
+		_, _ = tmp.Seek(0, 0)
+		out, readErr := io.ReadAll(tmp)
+		output = strings.TrimSpace(string(out))
+		if readErr != nil && runErr == nil {
+			runErr = readErr
+		}
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		if recovered := recover(); recovered != nil {
+			runErr = tuskerError(errorHookFailed, fmt.Sprintf("serve command panic: %v", recovered))
+		}
+	}()
+
+	os.Stdout = tmp
+	runErr = fn(args)
+	return output, runErr
 }
 
 func serveCommandResult(command, output string, err error) serveActionResult {
