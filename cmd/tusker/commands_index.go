@@ -928,6 +928,7 @@ func validateCmd(args Args) (int, error) {
 		errs = append(errs, noteErrs...)
 		warns = append(warns, noteWarns...)
 	}
+	warns = append(warns, validateV7SpecTraceability(vaultPath, notes)...)
 	eventErrs, eventWarns, eventCount := validateV7Events(vaultPath)
 	errs = append(errs, eventErrs...)
 	warns = append(warns, eventWarns...)

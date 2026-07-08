@@ -36,3 +36,23 @@ concurrency/workspace limits allow dispatch
 ```
 
 Use `tusker automation plan <task> --json` instead of guessing.
+
+## Design Traceability
+
+For non-trivial design work, run the interactive planning session first, then
+write the durable spec or design note under `docs/specs/` or `docs/design/`.
+Use Mermaid diagrams in the spec when state flow, routing, or ownership is
+easier to inspect visually than in prose.
+
+Link the plan to execution in both directions:
+
+- Add `spec_refs` to each governing epic or task. Values are repo-relative spec
+  paths such as `docs/specs/10-runtime.md`, repo-relative decision paths, or V7
+  decision ids such as `RUN-D-0001`.
+- Add a `## Work streams` section to the spec or decision, linking the epics and
+  tasks that implement it, for example `[[RUN]]` and `[[RUN-T-0004]]`.
+- `tusker validate` warns when `spec_refs` points at a missing spec/decision, or
+  when a `Work streams` section names an unknown epic/task id.
+- `tusker show <TASK-ID> --capsule`, `tusker packet <TASK-ID> --for agent`, and
+  `tusker automation plan <TASK-ID> --json` surface `spec_refs` as read-next
+  targets so execution reads governing design before code.
