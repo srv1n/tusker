@@ -24,6 +24,7 @@ state_rev: "sha256:5642e342ad3eeebc43701eb5a5022479ecc5d21658a402978aade68e6a52f
 - Durable task status never uses `active`.
 - Dispatchable task states are `ready` and `rework`.
 - Runtime activity is represented by run leases, attempts, sessions, and workspaces.
+- Canonical task state owns runtime liveness: when a task is closed, cancelled, superseded, or moved back to backlog, every non-terminal runtime row for that task is retired with an actor/reason audit stamp.
 - Every attempt-creating path uses the shared attempt-cap guard before dispatch. Fresh dispatch, failure retry, continuation retry, reclaim replacement, and redriven retry-queued dispatch all count against the active redrive window; reclaim-caused replacements are not free attempts.
 - Runner exit classification is tracker-aware on every outcome write path, including daemon status observation and wrapper direct-store recording: exit code 0 with tracker state still in `ready` or `rework` is attempt outcome `early_exit`, not clean completion, and counts against the no-progress continuation cap.
 - Codex exec owns the inner agent loop for the local Codex lane: Tusker launches one `codex exec --json` process per attempt, ingests `thread.started` and `turn.*` JSONL events, resumes later attempts with `codex exec resume <session-id>` when safe, and treats `max_turns` and budget as process governors.
@@ -40,6 +41,7 @@ state_rev: "sha256:5642e342ad3eeebc43701eb5a5022479ecc5d21658a402978aade68e6a52f
 
 - A ready/rework task must have concrete acceptance and verification proof.
 - Placeholder acceptance must block dispatch.
+- A task in canonical terminal/backlog state must not retain a non-terminal runtime row; the invariant circuit is last-resort containment for rows the close/status/reconcile retirement sweep failed to reach.
 - A run at its attempt cap parks before any new attempt is created. `attempt_count_within_caps` is a corruption/operator-surgery sentinel, not a normal dispatch control path.
 - Raw CLI output belongs in runtime scratch/logs, not task markdown.
 - `tusker automation plan <task> --json` is the canonical pre-dispatch explanation.

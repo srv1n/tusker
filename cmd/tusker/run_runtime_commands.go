@@ -640,38 +640,11 @@ func runsRetireCmd(args Args) error {
 	actor := firstNonEmpty(strings.TrimSpace(args.String("by")), strings.TrimSpace(args.String("actor")), defaultActorName())
 	previousLease := run.LeaseState
 	previousOutcome := run.AttemptOutcome
-	outcome := retiredRunOutcome(run.AttemptOutcome)
-	nowText := now.Format(time.RFC3339)
-	attempts, _ := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
-	eventPath := bestRunEventPath(*run, attempts)
-	if eventPath == "" {
-		eventPath = fallbackRetireEventPath(DefaultStateRoot(), *run, now)
-	}
-	if eventPath != "" {
-		run.EventSinkPath = eventPath
-		if err := appendRunRetiredEvent(eventPath, *run, actor, reason, previousLease, previousOutcome, args.Bool("force")); err != nil {
-			return err
-		}
-	}
-	updateRunAttemptFromRun(store, *run, outcome, exitCodeForOutcome(outcome), "retired by "+actor+": "+reason, nowText)
-	run.LeaseState = string(LeaseStateReleased)
-	run.AttemptOutcome = string(outcome)
-	run.NextRetryAt = ""
-	run.LastError = "retired by " + actor + ": " + reason
-	run.UpdatedAt = nowText
-	run.Terminal = true
-	run.ActiveAttemptID = ""
-	run.LeaseOwner = ""
-	run.LeaseExpiresAt = ""
-	run.ProcessPID = 0
-	run.ProcessPGID = 0
-	run.ProcessStartedAt = ""
-	if strings.TrimSpace(run.SessionRef) != "" {
-		_ = store.MarkSessionState(run.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateReleased), nowText, run.LastError, false)
-	}
-	if err := store.UpsertRun(*run); err != nil {
+	retired, err := retireRuntimeRun(store, DefaultStateRoot(), *run, actor, reason, now, args.Bool("force"))
+	if err != nil {
 		return err
 	}
+	run = &retired
 	if args.Bool("json") {
 		emitJSON(map[string]any{
 			"ok":               true,
@@ -692,6 +665,56 @@ func runsRetireCmd(args Args) error {
 	}
 	fmt.Printf("Retired %s by %s: %s\n", firstNonEmpty(run.ItemID, run.RecordID), actor, reason)
 	return nil
+}
+
+func retireRuntimeRun(store *RuntimeStore, stateRoot string, run RunStatus, actor, reason string, now time.Time, forced bool) (RunStatus, error) {
+	if store == nil {
+		return run, tuskerError(errorConfigInvalid, "runtime store is required")
+	}
+	actor = firstNonEmpty(strings.TrimSpace(actor), defaultActorName())
+	reason = firstNonEmpty(strings.TrimSpace(reason), "runtime row retired")
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+	previousLease := run.LeaseState
+	previousOutcome := run.AttemptOutcome
+	outcome := retiredRunOutcome(run.AttemptOutcome)
+	nowText := now.Format(time.RFC3339)
+	attempts, _ := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	eventPath := bestRunEventPath(run, attempts)
+	if eventPath == "" {
+		eventPath = fallbackRetireEventPath(stateRoot, run, now)
+	}
+	if eventPath != "" {
+		run.EventSinkPath = eventPath
+		if err := appendRunRetiredEvent(eventPath, run, actor, reason, previousLease, previousOutcome, forced); err != nil {
+			return run, err
+		}
+	}
+	updateRunAttemptFromRun(store, run, outcome, exitCodeForOutcome(outcome), "retired by "+actor+": "+reason, nowText)
+	run.LeaseState = string(LeaseStateReleased)
+	run.AttemptOutcome = string(outcome)
+	run.NextRetryAt = ""
+	run.LastError = "retired by " + actor + ": " + reason
+	run.UpdatedAt = nowText
+	run.Terminal = true
+	clearRetiredRunExecution(&run)
+	run.EventSinkPath = eventPath
+	if strings.TrimSpace(run.SessionRef) != "" {
+		_ = store.MarkSessionState(run.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateReleased), nowText, run.LastError, false)
+	}
+	return run, store.UpsertRun(run)
+}
+
+func clearRetiredRunExecution(run *RunStatus) {
+	run.ActiveAttemptID = ""
+	run.LeaseOwner = ""
+	run.LeaseExpiresAt = ""
+	run.ProcessPID = 0
+	run.ProcessPGID = 0
+	run.ProcessStartedAt = ""
 }
 
 func retiredRunOutcome(outcome string) AttemptOutcome {
