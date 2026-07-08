@@ -1194,17 +1194,17 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		if err != nil {
 			return run, changed, err
 		}
-		finished := firstNonEmpty(status.CompletedAt, now)
+		finished := runnerProcessFinishedAt(status)
 		run.ProcessPID = 0
 		run.UpdatedAt = finished
+		note, err := resolveNote(project.VaultRoot, run.RecordID)
+		if err != nil {
+			return run, changed, err
+		}
+		classification := classifyRunnerProcessExit(run, status, note, project.VaultRoot, wfFile.Data.Tracker.ActiveStates)
 		if status.ExitCode == 0 {
-			note, err := resolveNote(project.VaultRoot, run.RecordID)
-			if err != nil {
-				return run, changed, err
-			}
-			noteStatus := stringField(note.Data, "status")
-			if AttemptOutcome(strings.TrimSpace(status.Outcome)) == AttemptOutcomeTurnCapExhausted && containsString(wfFile.Data.Tracker.ActiveStates, noteStatus) && run.Lane != runLaneReview {
-				reason := firstNonEmpty(strings.TrimSpace(status.Reason), fmt.Sprintf("turn cap exhausted for attempt %s", run.ActiveAttemptID))
+			if classification.outcome == AttemptOutcomeTurnCapExhausted {
+				reason := classification.reason
 				updateRunAttemptFromRun(d.store, run, AttemptOutcomeTurnCapExhausted, 0, reason, finished)
 				run = d.scheduleRetry(run, wfFile.Data, reason)
 				if strings.TrimSpace(run.SessionRef) != "" {
@@ -1218,39 +1218,38 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 					return d.finishDispatchDeclinedRun(project, wfFile.Data, note, run, reason, finished)
 				}
 			}
-			if run.Lane != runLaneReview {
-				if wait, reason := v7MachineCompleteWaitingForHuman(project.VaultRoot, note); wait {
-					parentAttemptID := run.ActiveAttemptID
-					parentSessionRef := run.SessionRef
-					run.LeaseState = string(LeaseStateReleased)
-					run.AttemptOutcome = string(AttemptOutcomeWaitingForHuman)
-					run.NextRetryAt = ""
-					run.LastError = reason
-					run.UpdatedAt = finished
-					run.Terminal = false
-					updateRunAttemptFromRun(d.store, run, AttemptOutcomeWaitingForHuman, 0, reason, finished)
-					if strings.TrimSpace(run.SessionRef) != "" {
-						_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateReleased), "", reason, false)
-					}
-					d.emitSupervisorDecision(SupervisorDecision{
-						ProjectID:        project.ProjectID,
-						RecordID:         run.RecordID,
-						AttemptID:        parentAttemptID,
-						SessionRef:       parentSessionRef,
-						Kind:             string(SupervisorDecisionStopForHuman),
-						Reason:           reason,
-						ParentAttemptID:  parentAttemptID,
-						ParentSessionRef: parentSessionRef,
-						WorkspacePath:    run.WorkspacePath,
-					})
-					clearActiveExecution(&run)
-					return run, true, nil
-				}
-			}
-			if containsString(wfFile.Data.Tracker.ActiveStates, noteStatus) && run.Lane != runLaneReview {
+			if classification.outcome == AttemptOutcomeWaitingForHuman {
+				reason := classification.reason
 				parentAttemptID := run.ActiveAttemptID
 				parentSessionRef := run.SessionRef
-				reason := runnerEarlyExitActiveTrackerReason
+				run.LeaseState = string(LeaseStateReleased)
+				run.AttemptOutcome = string(AttemptOutcomeWaitingForHuman)
+				run.NextRetryAt = ""
+				run.LastError = reason
+				run.UpdatedAt = finished
+				run.Terminal = false
+				updateRunAttemptFromRun(d.store, run, AttemptOutcomeWaitingForHuman, 0, reason, finished)
+				if strings.TrimSpace(run.SessionRef) != "" {
+					_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateReleased), "", reason, false)
+				}
+				d.emitSupervisorDecision(SupervisorDecision{
+					ProjectID:        project.ProjectID,
+					RecordID:         run.RecordID,
+					AttemptID:        parentAttemptID,
+					SessionRef:       parentSessionRef,
+					Kind:             string(SupervisorDecisionStopForHuman),
+					Reason:           reason,
+					ParentAttemptID:  parentAttemptID,
+					ParentSessionRef: parentSessionRef,
+					WorkspacePath:    run.WorkspacePath,
+				})
+				clearActiveExecution(&run)
+				return run, true, nil
+			}
+			if classification.outcome == AttemptOutcomeEarlyExit {
+				parentAttemptID := run.ActiveAttemptID
+				parentSessionRef := run.SessionRef
+				reason := classification.reason
 				updateRunAttemptFromRun(d.store, run, AttemptOutcomeEarlyExit, 0, reason, finished)
 				run, queued := d.scheduleContinuationRetry(run, wfFile.Data, reason)
 				if strings.TrimSpace(run.SessionRef) != "" {
@@ -1305,6 +1304,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 					return run, true, nil
 				}
 			}
+			noteStatus := classification.trackerState
 			if err := writeReviewPacketEvidence(project.VaultRoot, note, run, d.store); err != nil {
 				return run, changed, err
 			}
@@ -1325,8 +1325,8 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			clearActiveExecution(&run)
 			return run, true, nil
 		}
-		reason := fmt.Sprintf("runner exited with code %d", status.ExitCode)
-		updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, status.ExitCode, reason, finished)
+		reason := classification.reason
+		updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, classification.exitCode, reason, finished)
 		run = d.scheduleRetry(run, wfFile.Data, reason)
 		if strings.TrimSpace(run.SessionRef) != "" {
 			_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", reason, sessionResumable)

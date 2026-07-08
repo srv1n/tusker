@@ -93,6 +93,28 @@ func TestWrapperStopSignalDaemonAbsenceContinuesHeartbeat(t *testing.T) {
 	}
 }
 
+func TestWrapperDaemonlessExitClassification(t *testing.T) {
+	store, req := setupRunnerWrapperRuntime(t)
+	req.Start.Command = "sh -c 'exit 0'"
+	done := make(chan error, 1)
+	go func() { done <- runRunnerWrapper(context.Background(), req) }()
+	if err := waitForWrapperDone(t, done); err != nil {
+		t.Fatal(err)
+	}
+	assertRunnerStatusExitCode(t, req.Start.StatusPath, 0)
+	attempts, err := store.ListAttemptsForRun(req.Start.ProjectID, req.Start.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("expected one direct attempt record, got %#v", attempts)
+	}
+	assertEqual(t, string(AttemptOutcomeEarlyExit), attempts[0].Outcome, "daemon-less wrapper attempt outcome")
+	if attempts[0].Outcome == string(AttemptOutcomeSucceeded) {
+		t.Fatalf("daemon-less active-tracker exit must not record succeeded: %#v", attempts[0])
+	}
+}
+
 func TestWrapperStopSignalOwnerChangeStopsWrapper(t *testing.T) {
 	store, req := setupRunnerWrapperRuntime(t)
 	run, err := store.FindRun(req.Start.RecordID)

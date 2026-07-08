@@ -157,17 +157,68 @@ func runnerWrapperWait(ctx context.Context, req runnerWrapperRequest, result *St
 	defer ticker.Stop()
 	for {
 		if fileExists(req.Start.StatusPath) {
+			runnerWrapperRecordDirectOutcome(req.Start)
 			return nil
 		}
 		select {
 		case reason := <-stopHeartbeat:
 			runnerWrapperInterrupt(req, result, reason)
-			return runnerWrapperWaitForStatus(req.Start.StatusPath, runnerWrapperStopTimeout())
+			err := runnerWrapperWaitForStatus(req.Start.StatusPath, runnerWrapperStopTimeout())
+			runnerWrapperRecordDirectOutcome(req.Start)
+			return err
 		case <-ctx.Done():
 			runnerWrapperInterrupt(req, result, ctx.Err().Error())
-			return runnerWrapperWaitForStatus(req.Start.StatusPath, runnerWrapperStopTimeout())
+			err := runnerWrapperWaitForStatus(req.Start.StatusPath, runnerWrapperStopTimeout())
+			runnerWrapperRecordDirectOutcome(req.Start)
+			return err
 		case <-ticker.C:
 		}
+	}
+}
+
+func runnerWrapperRecordDirectOutcome(req StartRequest) {
+	if strings.TrimSpace(req.StatusPath) == "" || !fileExists(req.StatusPath) {
+		return
+	}
+	status, err := readRunnerProcessStatus(req.StatusPath)
+	if err != nil {
+		return
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		return
+	}
+	defer store.Close()
+	run, err := store.FindRun(req.RecordID)
+	if err != nil || run == nil || !runnerWrapperOwnsRun(*run, req) {
+		return
+	}
+	note, err := resolveRunnerExitNote(req)
+	if err != nil {
+		return
+	}
+	classification := classifyRunnerProcessExit(*run, status, note, req.VaultPath, req.ActiveStates)
+	updateRunAttemptFromRun(store, *run, classification.outcome, classification.exitCode, classification.reason, runnerProcessFinishedAt(status))
+}
+
+func runnerWrapperOwnsRun(run RunStatus, req StartRequest) bool {
+	if strings.TrimSpace(req.ProjectID) != "" && run.ProjectID != req.ProjectID {
+		return false
+	}
+	if strings.TrimSpace(run.ActiveAttemptID) != "" && run.ActiveAttemptID != req.AttemptID {
+		return false
+	}
+	if strings.TrimSpace(run.LeaseOwner) != "" && run.LeaseOwner != req.AttemptID {
+		return false
+	}
+	if req.LeaseGeneration > 0 && run.LeaseGeneration != req.LeaseGeneration {
+		return false
+	}
+	switch LeaseState(strings.TrimSpace(run.LeaseState)) {
+	case LeaseStateClaimed, LeaseStateRunning:
+		return true
+	default:
+		return false
 	}
 }
 
