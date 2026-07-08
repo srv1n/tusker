@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:17:22Z"
-updated_at: "2026-07-07T13:24:56Z"
-state_rev: "sha256:a8b0a8a308600aa52607a7fefd2d7f4318013c22300624ce19b2e8d101ab8f3e"
+updated_at: "2026-07-08T02:58:07Z"
+state_rev: "sha256:c3e91230640a6cdd86e858712ce2092fa6d086cd8919a868cebb040e0b7e3da5"
 ---
 
 # AGX · Agent experience: token economy and CLI ergonomics
@@ -48,7 +48,6 @@ TBD.
 | [[AGX-T-0002]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[AGX-T-0004]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[AGX-T-0005]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[AGX-T-0006]] | ready | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 
@@ -57,3 +56,4 @@ TBD.
 | Task | Accepted by | Closed at |
 |---|---|---|
 | [[AGX-T-0003]] | reviewer:agent | 2026-07-06T06:37:08Z |
+| [[AGX-T-0006]] | reviewer:agent | 2026-07-07T08:58:17Z |
