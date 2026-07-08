@@ -17,8 +17,10 @@
 | [[RUN-T-0002]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[RUN-T-0015]] | p2 | Wait for dependency RUN-T-0011 to reach done. |
 | [[RUN-T-0033]] | p2 | Execute the task contract and satisfy proof mode. |
+| [[RUN-T-0038]] | p1 | Execute the task contract and satisfy proof mode. |
+| [[RUN-T-0039]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0009]] | p1 | Execute the task contract and satisfy proof mode. |
-| [[TRC-T-0002]] | p1 | Wait for dependency TRC-T-0001 to reach review with satisfied proof or done. |
+| [[SRV-T-0014]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[TRC-T-0003]] | p2 | Review evidence and close or return to rework. |
 
 <!-- tusker:generated:end -->

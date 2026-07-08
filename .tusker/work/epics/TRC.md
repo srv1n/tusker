@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-06T06:38:56Z"
-updated_at: "2026-07-07T16:59:16Z"
-state_rev: "sha256:0534dfea1779bae340a19768182c5eaa73f33b82a54c4bed774544ccbed1c486"
+updated_at: "2026-07-08T03:10:15Z"
+state_rev: "sha256:4ce236d9c4a17eff5e0fb44fb79e3ccdcb9f992721dd8793267e046141027ba0"
 ---
 
 # TRC · Trace and replay: boundary traces, deterministic replay, trace-backed verification
@@ -44,7 +44,7 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[TRC-T-0002]] | ready | agent | Wait for dependency TRC-T-0001 to reach review with satisfied proof or done. |
+| [[TRC-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
 | [[TRC-T-0003]] | ready | agent | Review evidence and close or return to rework. |
 
 ## Recently completed
