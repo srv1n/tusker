@@ -155,7 +155,15 @@ codebasezip: ## Zip reviewable repository files into ARTIFACTS_DIR
 			-path './tusker/_generated' -o \
 			-path './tusker/evidence/*/artifacts' -o \
 			-path './.tusker/evidence/*/artifacts' -o \
-			-path './vendor' \
+			-path './vendor' -o \
+			-name 'node_modules' -o \
+			-name 'dist' -o \
+			-name '.vite' -o \
+			-name '.astro' -o \
+			-name '.cache' -o \
+			-name '.turbo' -o \
+			-name '.next' -o \
+			-name '.svelte-kit' \
 		\) -prune -o \
 		-type f \
 		! -name '.DS_Store' \

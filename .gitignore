@@ -37,3 +37,8 @@
 dist/
 !internal/serve/ui/dist/
 !internal/serve/ui/dist/**
+# ChatGPT browser handoff local state
+.chatgpt-handoff/*
+!.chatgpt-handoff/
+!.chatgpt-handoff/profile.md
+.chatgpt-handoff.json
