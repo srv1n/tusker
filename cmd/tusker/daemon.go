@@ -3769,7 +3769,16 @@ func runStallReason(run RunStatus, wf Workflow, now time.Time) (bool, string) {
 	if now.Sub(lastHeartbeatAt) <= timeout {
 		return false, ""
 	}
-	return true, fmt.Sprintf("runner heartbeat dead: no events since %s", lastHeartbeatAt.Format(time.RFC3339))
+	if RunnerName(run.Runner) == RunnerCodexExec {
+		if commandStartedAt, ok := codexExecInFlightCommandStartedAt(run, lastHeartbeatAt); ok {
+			commandTimeout := codexExecInFlightCommandTimeout(wf)
+			if !now.After(commandStartedAt.Add(commandTimeout)) {
+				return false, ""
+			}
+			return true, fmt.Sprintf("runner in-flight command exceeded cap %s: command started %s; no events since %s", commandTimeout, commandStartedAt.Format(time.RFC3339), lastHeartbeatAt.Format(time.RFC3339))
+		}
+	}
+	return true, fmt.Sprintf("runner heartbeat dead (idle): no events since %s", lastHeartbeatAt.Format(time.RFC3339))
 }
 
 func firstEventDeadlineForRun(run RunStatus, wf Workflow) time.Duration {
@@ -3777,6 +3786,17 @@ func firstEventDeadlineForRun(run RunStatus, wf Workflow) time.Duration {
 		return time.Duration(wf.Codex.StallTimeoutMS) * time.Millisecond
 	}
 	return daemonFirstEventDeadline
+}
+
+func codexExecInFlightCommandTimeout(wf Workflow) time.Duration {
+	if wf.Codex.TurnTimeoutMS > 0 {
+		return time.Duration(wf.Codex.TurnTimeoutMS) * time.Millisecond
+	}
+	defaults := defaultWorkflow()
+	if defaults.Codex.TurnTimeoutMS > 0 {
+		return time.Duration(defaults.Codex.TurnTimeoutMS) * time.Millisecond
+	}
+	return 10 * time.Minute
 }
 
 func parseRunTimestamp(value string) (time.Time, bool) {
