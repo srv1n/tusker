@@ -10,8 +10,16 @@ import (
 	"time"
 )
 
+type feedbackSignalDerivation struct {
+	Signals              []feedbackSignal
+	SourceCounts         map[string]int
+	RawEmitted           int
+	Skipped              int
+	NoExplicitNoteVaults []string
+}
+
 func feedbackSignalsCmd(args Args) error {
-	vaultPath, err := resolveVaultPath(args, false)
+	targets, err := feedbackDigestTargets(args)
 	if err != nil {
 		return err
 	}
@@ -23,14 +31,18 @@ func feedbackSignalsCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	signals, sourceCounts, err := deriveFeedbackSignalsForVault(vaultPath, date, sinceDate)
+	derivation, err := deriveFeedbackSignalsForTargets(targets, date, sinceDate)
+	if err != nil {
+		return err
+	}
+	outputVault, err := feedbackGeneratedOutputVault(args, targets)
 	if err != nil {
 		return err
 	}
 	var written []string
 	if args.Bool("write") {
-		for _, signal := range signals {
-			path, err := writeFeedbackSignal(vaultPath, signal)
+		for _, signal := range derivation.Signals {
+			path, err := writeFeedbackSignal(outputVault, signal)
 			if err != nil {
 				return err
 			}
@@ -42,18 +54,18 @@ func feedbackSignalsCmd(args Args) error {
 			"ok":            true,
 			"date":          date,
 			"since":         since,
-			"counts":        map[string]any{"signals": len(signals), "written": len(written), "sources": sourceCounts},
+			"counts":        feedbackSignalCountPayload(derivation, len(written)),
 			"written_paths": written,
-			"signals":       signals,
+			"signals":       derivation.Signals,
 		})
 		return nil
 	}
-	fmt.Print(renderFeedbackSignalsCommandMarkdown(date, since, signals, sourceCounts, written))
+	fmt.Print(renderFeedbackSignalsCommandMarkdown(date, since, derivation, written))
 	return nil
 }
 
 func feedbackReviewCmd(args Args) error {
-	vaultPath, err := resolveVaultPath(args, false)
+	targets, err := feedbackDigestTargets(args)
 	if err != nil {
 		return err
 	}
@@ -65,20 +77,28 @@ func feedbackReviewCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	persisted, err := feedbackReviewSignalsForVault(vaultPath, sinceDate, date)
+	persisted, err := feedbackReviewSignalsForTargets(targets, sinceDate, date)
 	if err != nil {
 		return err
 	}
-	derived, _, err := deriveFeedbackSignalsForVault(vaultPath, date, sinceDate)
+	derivation, err := deriveFeedbackSignalsForTargets(targets, date, sinceDate)
 	if err != nil {
 		return err
 	}
-	signals := append(persisted, feedbackReviewSignalsFromFeedbackSignals(derived)...)
-	packet := buildFeedbackReviewPacket(date, since, signals)
+	signals := append(persisted, feedbackReviewSignalsFromFeedbackSignals(derivation.Signals)...)
+	packet := buildFeedbackReviewPacketWithDiagnostics(date, since, signals, feedbackReviewDiagnostics{
+		RawSignals:           derivation.RawEmitted + len(persisted),
+		SkippedSignals:       derivation.Skipped,
+		NoExplicitNoteVaults: derivation.NoExplicitNoteVaults,
+	})
 	markdown := renderFeedbackReviewPacketMarkdown(packet)
 	outputPath := ""
 	if args.Bool("write") {
-		outputPath = feedbackReviewOutputPath(vaultPath, date)
+		outputVault, err := feedbackGeneratedOutputVault(args, targets)
+		if err != nil {
+			return err
+		}
+		outputPath = feedbackReviewOutputPath(outputVault, date)
 		if err := writeText(outputPath, markdown); err != nil {
 			return err
 		}
@@ -88,7 +108,7 @@ func feedbackReviewCmd(args Args) error {
 			"ok":          true,
 			"date":        date,
 			"since":       since,
-			"counts":      map[string]any{"signals": len(packet.Signals), "actionable": len(packet.Actionable), "ignored": len(packet.Ignored)},
+			"counts":      feedbackReviewCountPayload(packet),
 			"output_path": nullIfEmptyString(outputPath),
 		})
 		return nil
@@ -164,6 +184,46 @@ func feedbackReviewOutputPath(vaultPath, date string) string {
 }
 
 func deriveFeedbackSignalsForVault(vaultPath, date string, sinceDate time.Time) ([]feedbackSignal, map[string]int, error) {
+	derivation, err := deriveFeedbackSignalsForTargets([]feedbackTarget{{vaultPath: vaultPath, repoRoot: filepath.Dir(vaultPath)}}, date, sinceDate)
+	if err != nil {
+		return nil, nil, err
+	}
+	return derivation.Signals, derivation.SourceCounts, nil
+}
+
+func deriveFeedbackSignalsForTargets(targets []feedbackTarget, date string, sinceDate time.Time) (feedbackSignalDerivation, error) {
+	derivation := feedbackSignalDerivation{SourceCounts: map[string]int{}}
+	var emissions []feedbackSignal
+	for _, target := range targets {
+		targetEmissions, sourceCounts, err := deriveFeedbackSignalEmissionsForVault(target.vaultPath, date, sinceDate)
+		if err != nil {
+			return feedbackSignalDerivation{}, err
+		}
+		for key, count := range sourceCounts {
+			derivation.SourceCounts[key] += count
+		}
+		records, err := feedbackRecordsForVault(target.vaultPath, target.repoRoot, sinceDate)
+		if err != nil {
+			return feedbackSignalDerivation{}, err
+		}
+		derivation.SourceCounts["feedback_notes"] += len(records)
+		if len(records) == 0 {
+			derivation.NoExplicitNoteVaults = append(derivation.NoExplicitNoteVaults, feedbackTargetLabel(target))
+		}
+		for _, signal := range targetEmissions {
+			emissions = append(emissions, withFeedbackSignalOccurrence(signal, target.vaultPath))
+		}
+	}
+	collapsed := collapseFeedbackSignals(emissions)
+	derivation.Signals = collapsed.Signals
+	derivation.RawEmitted = collapsed.RawEmitted
+	derivation.Skipped = collapsed.Skipped
+	derivation.NoExplicitNoteVaults = uniqueStrings(feedbackReviewCleanList(derivation.NoExplicitNoteVaults))
+	sortFeedbackSignalsForReview(derivation.Signals)
+	return derivation, nil
+}
+
+func deriveFeedbackSignalEmissionsForVault(vaultPath, date string, sinceDate time.Time) ([]feedbackSignal, map[string]int, error) {
 	events, err := feedbackSignalEventsForVault(vaultPath, sinceDate)
 	if err != nil {
 		return nil, nil, err
@@ -179,9 +239,12 @@ func deriveFeedbackSignalsForVault(vaultPath, date string, sinceDate time.Time) 
 		Tasks:   tasks,
 		Events:  events,
 	}
-	signals := deriveFeedbackSignals(input)
-	signals = append(signals, feedbackContractSignalsFromTasks(date, tasks)...)
-	signals = dedupeFeedbackCommandSignals(signals)
+	signals := deriveFeedbackSignalEmissions(input)
+	counts := map[string]int{"events": len(events), "tasks": len(tasks)}
+	return signals, counts, nil
+}
+
+func sortFeedbackSignalsForReview(signals []feedbackSignal) {
 	sort.SliceStable(signals, func(i, j int) bool {
 		if feedbackReviewSeverityRank(signals[i].Severity) != feedbackReviewSeverityRank(signals[j].Severity) {
 			return feedbackReviewSeverityRank(signals[i].Severity) > feedbackReviewSeverityRank(signals[j].Severity)
@@ -191,8 +254,62 @@ func deriveFeedbackSignalsForVault(vaultPath, date string, sinceDate time.Time) 
 		}
 		return signals[i].ID < signals[j].ID
 	})
-	counts := map[string]int{"events": len(events), "tasks": len(tasks)}
-	return signals, counts, nil
+}
+
+func feedbackReviewSignalsForTargets(targets []feedbackTarget, sinceDate time.Time, reviewDate string) ([]feedbackReviewSignal, error) {
+	var out []feedbackReviewSignal
+	for _, target := range targets {
+		signals, err := feedbackReviewSignalsForVault(target.vaultPath, sinceDate, reviewDate)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, signals...)
+	}
+	return out, nil
+}
+
+func feedbackGeneratedOutputVault(args Args, targets []feedbackTarget) (string, error) {
+	if outputVault := strings.TrimSpace(args.String("output-vault")); outputVault != "" {
+		return filepath.Abs(outputVault)
+	}
+	if vaultArg := strings.TrimSpace(args.String("vault")); vaultArg != "" {
+		return filepath.Abs(vaultArg)
+	}
+	if len(targets) == 0 {
+		return "", tuskerError(errorMissingArg, "feedback output needs --repo, --vault, or --output-vault")
+	}
+	return targets[0].vaultPath, nil
+}
+
+func feedbackTargetLabel(target feedbackTarget) string {
+	if target.repoRoot != "" {
+		return filepath.Base(target.repoRoot) + ":" + filepath.ToSlash(target.vaultPath)
+	}
+	return filepath.ToSlash(target.vaultPath)
+}
+
+func feedbackSignalCountPayload(derivation feedbackSignalDerivation, written int) map[string]any {
+	return map[string]any{
+		"signals":          len(derivation.Signals),
+		"raw_emitted":      derivation.RawEmitted,
+		"collapsed":        len(derivation.Signals),
+		"skipped":          derivation.Skipped,
+		"written":          written,
+		"sources":          derivation.SourceCounts,
+		"no_explicit_note": derivation.NoExplicitNoteVaults,
+	}
+}
+
+func feedbackReviewCountPayload(packet feedbackReviewPacket) map[string]any {
+	return map[string]any{
+		"signals":          len(packet.Signals),
+		"raw_emitted":      packet.RawSignalCount,
+		"collapsed":        packet.CollapsedSignalCount,
+		"skipped":          packet.SkippedSignalCount,
+		"actionable":       len(packet.Actionable),
+		"ignored":          len(packet.Ignored),
+		"no_explicit_note": packet.NoExplicitNoteVaults,
+	}
 }
 
 func feedbackSignalEventsForVault(vaultPath string, sinceDate time.Time) ([]feedbackSignalEventInput, error) {
@@ -364,8 +481,17 @@ func feedbackContractLabels(task feedbackSignalTaskInput) []string {
 	if task.AcceptanceTotal == 0 {
 		labels = append(labels, "thin", "unverifiable")
 	}
-	if len(task.MissingAcceptance) > 0 || len(task.MissingProof) > 0 {
+	if len(task.MissingAcceptance) > 0 {
+		labels = append(labels, "missing-acceptance")
+	}
+	if len(task.ProofMapGaps) > 0 || containsString(task.MissingAcceptance, "proof-map") {
 		labels = append(labels, "missing-proof-map")
+	}
+	if len(task.ProofEvidenceGaps) > 0 || len(task.MissingProof) > 0 {
+		labels = append(labels, "missing-proof-evidence")
+	}
+	if strings.EqualFold(task.Status, "done") && (len(task.MissingAcceptance) > 0 || len(task.ProofMapGaps) > 0 || len(task.ProofEvidenceGaps) > 0 || len(task.MissingProof) > 0) {
+		labels = append(labels, "done-with-gaps")
 	}
 	if strings.EqualFold(task.Title, "TBD") {
 		labels = append(labels, "thin")
@@ -417,26 +543,43 @@ func dedupeFeedbackCommandSignals(signals []feedbackSignal) []feedbackSignal {
 func feedbackReviewSignalsFromFeedbackSignals(signals []feedbackSignal) []feedbackReviewSignal {
 	var out []feedbackReviewSignal
 	for _, signal := range signals {
+		occurrenceVaults, occurrenceProjects, occurrenceSources := feedbackSignalOccurrenceLists(signal.Occurrences)
 		out = append(out, feedbackReviewSignal{
-			Schema:         signal.Schema,
-			ID:             signal.ID,
-			Date:           signal.Date,
-			Project:        signal.Project,
-			Task:           signal.TaskID,
-			Attempt:        signal.AttemptID,
-			Source:         signal.Source,
-			Category:       signal.Category,
-			Severity:       signal.Severity,
-			Confidence:     signal.Confidence,
-			DedupeKey:      signal.DedupeKey,
-			Summary:        signal.Summary,
-			ObservedFacts:  feedbackSignalFactsList(signal.ObservedFacts),
-			Recommendation: signal.Recommendation,
-			Frequency:      feedbackSignalFrequency(signal),
-			SourcePath:     feedbackSignalRelativePath(signal),
+			Schema:             signal.Schema,
+			ID:                 signal.ID,
+			Date:               signal.Date,
+			Project:            signal.Project,
+			Task:               signal.TaskID,
+			Attempt:            signal.AttemptID,
+			Source:             signal.Source,
+			Category:           signal.Category,
+			Severity:           signal.Severity,
+			Confidence:         signal.Confidence,
+			DedupeKey:          signal.DedupeKey,
+			Summary:            signal.Summary,
+			ObservedFacts:      feedbackSignalFactsList(signal.ObservedFacts),
+			Recommendation:     signal.Recommendation,
+			Frequency:          feedbackSignalFrequency(signal),
+			Occurrences:        len(signal.Occurrences),
+			OccurrenceVaults:   occurrenceVaults,
+			OccurrenceProjects: occurrenceProjects,
+			OccurrenceSources:  occurrenceSources,
+			SourcePath:         feedbackSignalRelativePath(signal),
 		})
 	}
 	return out
+}
+
+func feedbackSignalOccurrenceLists(occurrences []feedbackSignalOccurrence) ([]string, []string, []string) {
+	var vaults []string
+	var projects []string
+	var sources []string
+	for _, occurrence := range occurrences {
+		vaults = append(vaults, occurrence.Vault)
+		projects = append(projects, occurrence.Project)
+		sources = append(sources, occurrence.Source)
+	}
+	return uniqueStrings(feedbackReviewCleanList(vaults)), uniqueStrings(feedbackReviewCleanList(projects)), uniqueStrings(feedbackReviewCleanList(sources))
 }
 
 func feedbackSignalFactsList(facts map[string]any) []string {
@@ -462,7 +605,10 @@ func feedbackSignalFactsList(facts map[string]any) []string {
 }
 
 func feedbackSignalFrequency(signal feedbackSignal) int {
-	for _, key := range []string{"review_transitions", "rework_transitions", "review_requests", "handoff_count", "turns", "total_tokens"} {
+	if len(signal.Occurrences) > 1 {
+		return len(signal.Occurrences)
+	}
+	for _, key := range []string{"occurrence_count", "review_transitions", "rework_transitions", "review_requests", "handoff_count", "turns", "total_tokens"} {
 		if value := intValue(signal.ObservedFacts[key]); value > 1 {
 			if key == "total_tokens" {
 				return 1
@@ -473,18 +619,22 @@ func feedbackSignalFrequency(signal feedbackSignal) int {
 	return 1
 }
 
-func renderFeedbackSignalsCommandMarkdown(date, since string, signals []feedbackSignal, sourceCounts map[string]int, written []string) string {
+func renderFeedbackSignalsCommandMarkdown(date, since string, derivation feedbackSignalDerivation, written []string) string {
 	var b strings.Builder
 	b.WriteString("# Tusker Feedback Signals - " + date + "\n\n")
 	b.WriteString("- Since: " + since + "\n")
-	b.WriteString(fmt.Sprintf("- Sources: events=%d tasks=%d\n", sourceCounts["events"], sourceCounts["tasks"]))
-	b.WriteString(fmt.Sprintf("- Signals: %d\n\n", len(signals)))
+	b.WriteString(fmt.Sprintf("- Sources: events=%d tasks=%d feedback_notes=%d\n", derivation.SourceCounts["events"], derivation.SourceCounts["tasks"], derivation.SourceCounts["feedback_notes"]))
+	b.WriteString(fmt.Sprintf("- Raw signals emitted: %d\n", derivation.RawEmitted))
+	b.WriteString(fmt.Sprintf("- Collapsed signals: %d\n", len(derivation.Signals)))
+	b.WriteString(fmt.Sprintf("- Signals skipped: %d\n", derivation.Skipped))
+	b.WriteString("- No explicit feedback notes: " + feedbackReviewList(derivation.NoExplicitNoteVaults) + "\n")
+	b.WriteString(fmt.Sprintf("- Signals: %d\n\n", len(derivation.Signals)))
 	b.WriteString("| Severity | Confidence | Category | Task | Signal | Summary |\n")
 	b.WriteString("|---|---|---|---|---|---|\n")
-	if len(signals) == 0 {
+	if len(derivation.Signals) == 0 {
 		b.WriteString("| - | - | - | - | - | No feedback signals found for this window. |\n")
 	} else {
-		for _, signal := range signals {
+		for _, signal := range derivation.Signals {
 			b.WriteString("| " + signal.Severity + " | " + signal.Confidence + " | " + signal.Category + " | " + firstNonEmpty(signal.TaskID, "-") + " | `" + signal.ID + "` | " + markdownCell(signal.Summary) + " |\n")
 		}
 	}

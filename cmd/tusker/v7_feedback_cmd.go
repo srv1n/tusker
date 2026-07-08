@@ -929,8 +929,8 @@ func printFeedbackHelp() {
 Commands:
   tusker feedback add --context <text> --friction <text> --product-idea <text> --impact <text> --related <text>
   tusker feedback digest --since <YYYY-MM-DD> --repo <path[,path...]>
-  tusker feedback signals --since <YYYY-MM-DD> [--write]
-  tusker feedback review --since <YYYY-MM-DD> [--write]
+  tusker feedback signals --since <YYYY-MM-DD> [--repo <path[,path...]>] [--write]
+  tusker feedback review --since <YYYY-MM-DD> [--repo <path[,path...]>] [--write]
   tusker feedback promote <signal-id> [--write]
 
 Concepts:
@@ -939,7 +939,7 @@ Concepts:
   Signals are derived product facts stored under .tusker/feedback/signals/YYYY-MM-DD/*.json.
 
 Options:
-  --repo <path>          Repo root. For digest, comma or newline separated paths are accepted.
+  --repo <path>          Repo root. For digest/signals/review, comma or newline separated paths are accepted.
   --vault <path>         Tusker vault path.
   --actor <name>         Feedback actor for generated filenames.
   --slug <slug>          Feedback filename slug.

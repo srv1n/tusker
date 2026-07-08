@@ -36,21 +36,38 @@ var (
 )
 
 type feedbackSignal struct {
-	Schema         string         `json:"schema"`
-	ID             string         `json:"id"`
-	Date           string         `json:"date"`
-	Project        string         `json:"project"`
-	TaskID         string         `json:"task,omitempty"`
-	AttemptID      string         `json:"attempt,omitempty"`
-	Source         string         `json:"source"`
-	Category       string         `json:"category"`
-	Severity       string         `json:"severity"`
-	Confidence     string         `json:"confidence"`
-	DedupeKey      string         `json:"dedupe_key"`
-	Summary        string         `json:"summary"`
-	ObservedFacts  map[string]any `json:"observed_facts"`
-	Recommendation string         `json:"recommendation,omitempty"`
-	RawPayload     map[string]any `json:"raw_payload,omitempty"`
+	Schema         string                     `json:"schema"`
+	ID             string                     `json:"id"`
+	Date           string                     `json:"date"`
+	Project        string                     `json:"project"`
+	TaskID         string                     `json:"task,omitempty"`
+	AttemptID      string                     `json:"attempt,omitempty"`
+	Source         string                     `json:"source"`
+	Category       string                     `json:"category"`
+	Severity       string                     `json:"severity"`
+	Confidence     string                     `json:"confidence"`
+	DedupeKey      string                     `json:"dedupe_key"`
+	Summary        string                     `json:"summary"`
+	ObservedFacts  map[string]any             `json:"observed_facts"`
+	Occurrences    []feedbackSignalOccurrence `json:"occurrences,omitempty"`
+	Recommendation string                     `json:"recommendation,omitempty"`
+	RawPayload     map[string]any             `json:"raw_payload,omitempty"`
+}
+
+type feedbackSignalOccurrence struct {
+	Vault      string `json:"vault,omitempty"`
+	Project    string `json:"project,omitempty"`
+	Source     string `json:"source,omitempty"`
+	TaskID     string `json:"task,omitempty"`
+	AttemptID  string `json:"attempt,omitempty"`
+	SignalID   string `json:"signal,omitempty"`
+	SourcePath string `json:"source_path,omitempty"`
+}
+
+type feedbackSignalCollapseResult struct {
+	Signals    []feedbackSignal
+	RawEmitted int
+	Skipped    int
 }
 
 type feedbackSignalReducerInput struct {
@@ -70,9 +87,12 @@ type feedbackSignalTaskInput struct {
 	Readiness            string
 	NextOwner            string
 	Source               string
+	AcceptanceIDs        []string
 	AcceptanceTotal      int
 	AcceptanceSatisfied  int
 	MissingAcceptance    []string
+	ProofMapGaps         []string
+	ProofEvidenceGaps    []string
 	MissingProof         []string
 	ReviewTransitions    int
 	ReworkTransitions    int
@@ -210,11 +230,17 @@ func feedbackSignalRelativePath(signal feedbackSignal) string {
 }
 
 func deriveFeedbackSignals(input feedbackSignalReducerInput) []feedbackSignal {
+	result := collapseFeedbackSignals(deriveFeedbackSignalEmissions(input))
+	sortFeedbackSignals(result.Signals)
+	return result.Signals
+}
+
+func deriveFeedbackSignalEmissions(input feedbackSignalReducerInput) []feedbackSignal {
 	date := firstNonEmpty(strings.TrimSpace(input.Date), todayISO())
 	project := strings.ToUpper(strings.TrimSpace(input.Project))
 	source := feedbackCleanValue(firstNonEmpty(input.Source, "reducer"))
 	var signals []feedbackSignal
-	seen := map[string]bool{}
+	taskReviewRollups := map[string]bool{}
 
 	for _, task := range input.Tasks {
 		if task.Project == "" {
@@ -224,18 +250,22 @@ func deriveFeedbackSignals(input feedbackSignalReducerInput) []feedbackSignal {
 			task.Source = source
 		}
 		if sig, ok := feedbackSignalFromAcceptanceTask(date, task); ok {
-			signals = appendFeedbackSignal(signals, seen, sig)
+			signals = appendFeedbackSignalEmission(signals, sig)
 		}
 		if sig, ok := feedbackSignalFromReviewTask(date, task); ok {
-			signals = appendFeedbackSignal(signals, seen, sig)
+			signals = appendFeedbackSignalEmission(signals, sig)
+			taskReviewRollups[sig.TaskID] = true
 		}
 		if sig, ok := feedbackSignalFromTaskTokenBurn(date, task); ok {
-			signals = appendFeedbackSignal(signals, seen, sig)
+			signals = appendFeedbackSignalEmission(signals, sig)
 		}
 	}
 
 	for _, sig := range feedbackSignalsFromReviewEvents(date, project, source, input.Events) {
-		signals = appendFeedbackSignal(signals, seen, sig)
+		if taskReviewRollups[sig.TaskID] {
+			continue
+		}
+		signals = appendFeedbackSignalEmission(signals, sig)
 	}
 	for _, event := range input.Events {
 		if event.Project == "" {
@@ -245,17 +275,20 @@ func deriveFeedbackSignals(input feedbackSignalReducerInput) []feedbackSignal {
 			event.Source = source
 		}
 		if sig, ok := feedbackSignalFromTokenEvent(date, event); ok {
-			signals = appendFeedbackSignal(signals, seen, sig)
+			signals = appendFeedbackSignalEmission(signals, sig)
 		}
 	}
 
+	return signals
+}
+
+func sortFeedbackSignals(signals []feedbackSignal) {
 	sort.SliceStable(signals, func(i, j int) bool {
 		if signals[i].Category != signals[j].Category {
 			return signals[i].Category < signals[j].Category
 		}
 		return signals[i].DedupeKey < signals[j].DedupeKey
 	})
-	return signals
 }
 
 func feedbackSignalTaskInputFromNote(note Note) feedbackSignalTaskInput {
@@ -264,8 +297,9 @@ func feedbackSignalTaskInputFromNote(note Note) feedbackSignalTaskInput {
 	if idx := strings.Index(taskID, "-T-"); idx > 0 {
 		project = taskID[:idx]
 	}
-	acceptanceTotal := len(v7AcceptanceIDs(note.Body))
-	missingAcceptance := feedbackSignalAcceptanceGaps(note.Body)
+	acceptanceFacts := feedbackSignalAcceptanceFacts(note.Body)
+	acceptanceTotal := len(acceptanceFacts.AcceptanceIDs)
+	proofEvidenceGaps := normalizeList(note.Data["proof_missing"])
 	return feedbackSignalTaskInput{
 		Project:             project,
 		ID:                  taskID,
@@ -274,10 +308,13 @@ func feedbackSignalTaskInputFromNote(note Note) feedbackSignalTaskInput {
 		Readiness:           stringField(note.Data, "readiness"),
 		NextOwner:           stringField(note.Data, "next_owner"),
 		Source:              firstNonEmpty(note.RelativePath, "task_note"),
+		AcceptanceIDs:       acceptanceFacts.AcceptanceIDs,
 		AcceptanceTotal:     acceptanceTotal,
-		AcceptanceSatisfied: maxInt(0, acceptanceTotal-len(missingAcceptance)),
-		MissingAcceptance:   missingAcceptance,
-		MissingProof:        normalizeList(note.Data["proof_missing"]),
+		AcceptanceSatisfied: maxInt(0, acceptanceTotal-len(acceptanceFacts.AcceptanceGaps)),
+		MissingAcceptance:   acceptanceFacts.AcceptanceGaps,
+		ProofMapGaps:        acceptanceFacts.ProofMapGaps,
+		ProofEvidenceGaps:   proofEvidenceGaps,
+		MissingProof:        proofEvidenceGaps,
 	}
 }
 
@@ -286,27 +323,34 @@ func feedbackSignalFromAcceptanceTask(date string, task feedbackSignalTaskInput)
 	if task.ID == "" {
 		return feedbackSignal{}, false
 	}
+	task.AcceptanceIDs = feedbackSignalShortList(task.AcceptanceIDs)
+	task.MissingAcceptance = feedbackSignalShortList(task.MissingAcceptance)
+	task.ProofMapGaps = feedbackSignalShortList(task.ProofMapGaps)
+	task.ProofEvidenceGaps = feedbackSignalShortList(append(task.ProofEvidenceGaps, task.MissingProof...))
 	total := maxInt(task.AcceptanceTotal, task.AcceptanceSatisfied+len(task.MissingAcceptance))
-	missingCount := maxInt(0, total-task.AcceptanceSatisfied)
-	if len(task.MissingAcceptance) > 0 {
-		missingCount = maxInt(missingCount, len(task.MissingAcceptance))
+	gapCount := len(task.MissingAcceptance) + len(task.ProofMapGaps) + len(task.ProofEvidenceGaps)
+	missingCount := maxInt(maxInt(0, total-task.AcceptanceSatisfied), gapCount)
+	source := strings.ToLower(strings.TrimSpace(task.Source))
+	if source == "events" && total == 0 && gapCount == 0 && len(task.AcceptanceIDs) == 0 {
+		return feedbackSignal{}, false
 	}
-	if len(task.MissingProof) > 0 {
-		missingCount = maxInt(missingCount, len(task.MissingProof))
-	}
-	if total == 0 && len(task.MissingProof) == 0 {
+	labels := feedbackContractLabels(task)
+	if total == 0 && len(labels) == 0 {
 		return feedbackSignal{}, false
 	}
 	status := strings.ToLower(strings.TrimSpace(task.Status))
-	if missingCount == 0 || !feedbackSignalTaskIsQualityRelevant(status, task.Readiness, task.AttemptID) {
+	if missingCount == 0 && len(labels) == 0 {
 		return feedbackSignal{}, false
 	}
-	severity := "medium"
-	if missingCount >= 4 || status == "done" {
-		severity = "high"
+	if len(labels) == 0 && !feedbackSignalTaskIsQualityRelevant(status, task.Readiness, task.AttemptID) {
+		return feedbackSignal{}, false
+	}
+	severity := "P2"
+	if missingCount >= 4 || status == "done" || containsString(labels, "thin") || containsString(labels, "unverifiable") || containsString(labels, "missing-proof-map") || containsString(labels, "done-with-gaps") {
+		severity = "P1"
 	}
 	confidence := "medium"
-	if len(task.MissingAcceptance) > 0 || len(task.MissingProof) > 0 {
+	if len(task.MissingAcceptance) > 0 || len(task.ProofMapGaps) > 0 || len(task.ProofEvidenceGaps) > 0 {
 		confidence = "high"
 	}
 	project := strings.ToUpper(strings.TrimSpace(task.Project))
@@ -324,10 +368,13 @@ func feedbackSignalFromAcceptanceTask(date string, task feedbackSignalTaskInput)
 		ObservedFacts: map[string]any{
 			"task":                 task.ID,
 			"status":               firstNonEmpty(status, "unknown"),
+			"reason_labels":        labels,
 			"acceptance_total":     total,
 			"acceptance_satisfied": task.AcceptanceSatisfied,
-			"missing_acceptance":   feedbackSignalShortList(task.MissingAcceptance),
-			"missing_proof":        feedbackSignalShortList(task.MissingProof),
+			"acceptance_ids":       task.AcceptanceIDs,
+			"acceptance_gaps":      task.MissingAcceptance,
+			"proof_map_gaps":       task.ProofMapGaps,
+			"proof_evidence_gaps":  task.ProofEvidenceGaps,
 		},
 		Recommendation: "Tighten acceptance proof before requesting another review.",
 	})
@@ -492,6 +539,197 @@ func appendFeedbackSignal(signals []feedbackSignal, seen map[string]bool, signal
 	return append(signals, signal)
 }
 
+func appendFeedbackSignalEmission(signals []feedbackSignal, signal feedbackSignal) []feedbackSignal {
+	signal = completeFeedbackSignal(signal)
+	if len(validateFeedbackSignal(signal)) > 0 {
+		return signals
+	}
+	return append(signals, signal)
+}
+
+func collapseFeedbackSignals(signals []feedbackSignal) feedbackSignalCollapseResult {
+	result := feedbackSignalCollapseResult{RawEmitted: len(signals)}
+	byKey := map[string]feedbackSignal{}
+	for _, signal := range signals {
+		signal = completeFeedbackSignal(signal)
+		if len(validateFeedbackSignal(signal)) > 0 {
+			result.Skipped++
+			continue
+		}
+		key := feedbackSignalCollapseKey(signal)
+		if key == "" {
+			result.Skipped++
+			continue
+		}
+		signal.DedupeKey = key
+		signal.Occurrences = feedbackSignalOccurrences(signal)
+		current, ok := byKey[key]
+		if !ok {
+			byKey[key] = signal
+			continue
+		}
+		byKey[key] = mergeFeedbackSignals(current, signal)
+	}
+	for _, signal := range byKey {
+		signal.ObservedFacts = mergeFeedbackSignalFacts(signal.ObservedFacts, map[string]any{
+			"occurrence_count": len(feedbackSignalOccurrences(signal)),
+		})
+		result.Signals = append(result.Signals, signal)
+	}
+	sortFeedbackSignals(result.Signals)
+	return result
+}
+
+func feedbackSignalCollapseKey(signal feedbackSignal) string {
+	project := strings.ToUpper(strings.TrimSpace(signal.Project))
+	taskID := strings.ToUpper(strings.TrimSpace(signal.TaskID))
+	attemptID := strings.TrimSpace(signal.AttemptID)
+	category := strings.ToLower(strings.TrimSpace(signal.Category))
+	if project != "" && taskID != "" && (category == "acceptance_quality" || category == "review_loop") {
+		return feedbackSignalDedupeKey(project, category, taskID)
+	}
+	if project != "" && category == "token_burn" && (taskID != "" || attemptID != "") {
+		return feedbackSignalDedupeKey(project, category, taskID, attemptID)
+	}
+	return signal.DedupeKey
+}
+
+func feedbackSignalTaskKey(project, taskID string) string {
+	return feedbackSignalDedupeKey(project, taskID)
+}
+
+func mergeFeedbackSignals(left, right feedbackSignal) feedbackSignal {
+	primary, secondary := left, right
+	if feedbackSignalBetterPrimary(right, left) {
+		primary, secondary = right, left
+	}
+	primary.Occurrences = mergeFeedbackSignalOccurrences(feedbackSignalOccurrences(primary), feedbackSignalOccurrences(secondary))
+	primary.ObservedFacts = mergeFeedbackSignalFacts(primary.ObservedFacts, secondary.ObservedFacts)
+	primary.Project = firstNonEmpty(primary.Project, secondary.Project)
+	primary.TaskID = firstNonEmpty(primary.TaskID, secondary.TaskID)
+	primary.AttemptID = firstNonEmpty(primary.AttemptID, secondary.AttemptID)
+	primary.Source = firstNonEmpty(primary.Source, secondary.Source)
+	primary.Summary = firstNonEmpty(primary.Summary, secondary.Summary)
+	primary.Recommendation = firstNonEmpty(primary.Recommendation, secondary.Recommendation)
+	return completeFeedbackSignal(primary)
+}
+
+func feedbackSignalBetterPrimary(left, right feedbackSignal) bool {
+	if feedbackReviewSeverityRank(left.Severity) != feedbackReviewSeverityRank(right.Severity) {
+		return feedbackReviewSeverityRank(left.Severity) > feedbackReviewSeverityRank(right.Severity)
+	}
+	if feedbackReviewConfidenceRank(left.Confidence) != feedbackReviewConfidenceRank(right.Confidence) {
+		return feedbackReviewConfidenceRank(left.Confidence) > feedbackReviewConfidenceRank(right.Confidence)
+	}
+	if left.Date != right.Date {
+		return left.Date > right.Date
+	}
+	return left.ID < right.ID
+}
+
+func mergeFeedbackSignalFacts(left, right map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range left {
+		out[key] = value
+	}
+	for key, value := range right {
+		if existing, ok := out[key]; ok {
+			out[key] = mergeFeedbackSignalFactValue(existing, value)
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func mergeFeedbackSignalFactValue(left, right any) any {
+	leftList, leftIsList := feedbackSignalFactList(left)
+	rightList, rightIsList := feedbackSignalFactList(right)
+	if leftIsList || rightIsList {
+		return feedbackSignalShortList(append(leftList, rightList...))
+	}
+	leftInt := intValue(left)
+	rightInt := intValue(right)
+	if leftInt > 0 || rightInt > 0 {
+		return maxInt(leftInt, rightInt)
+	}
+	if strings.TrimSpace(toString(left)) == "" {
+		return right
+	}
+	return left
+}
+
+func feedbackSignalFactList(value any) ([]string, bool) {
+	switch typed := value.(type) {
+	case []string:
+		return typed, true
+	case []any:
+		var out []string
+		for _, item := range typed {
+			if text := feedbackCleanValue(toString(item)); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
+func feedbackSignalOccurrences(signal feedbackSignal) []feedbackSignalOccurrence {
+	if len(signal.Occurrences) > 0 {
+		return mergeFeedbackSignalOccurrences(signal.Occurrences, nil)
+	}
+	occurrence := feedbackSignalOccurrence{
+		Project:   signal.Project,
+		Source:    signal.Source,
+		TaskID:    signal.TaskID,
+		AttemptID: signal.AttemptID,
+		SignalID:  signal.ID,
+	}
+	return mergeFeedbackSignalOccurrences([]feedbackSignalOccurrence{occurrence}, nil)
+}
+
+func withFeedbackSignalOccurrence(signal feedbackSignal, vaultPath string) feedbackSignal {
+	signal = completeFeedbackSignal(signal)
+	occurrence := feedbackSignalOccurrence{
+		Vault:     filepath.ToSlash(vaultPath),
+		Project:   signal.Project,
+		Source:    signal.Source,
+		TaskID:    signal.TaskID,
+		AttemptID: signal.AttemptID,
+		SignalID:  signal.ID,
+	}
+	signal.Occurrences = mergeFeedbackSignalOccurrences(signal.Occurrences, []feedbackSignalOccurrence{occurrence})
+	return signal
+}
+
+func mergeFeedbackSignalOccurrences(left, right []feedbackSignalOccurrence) []feedbackSignalOccurrence {
+	seen := map[string]bool{}
+	var out []feedbackSignalOccurrence
+	for _, occurrence := range append(left, right...) {
+		occurrence.Vault = filepath.ToSlash(strings.TrimSpace(occurrence.Vault))
+		occurrence.Project = strings.ToUpper(strings.TrimSpace(occurrence.Project))
+		occurrence.Source = feedbackCleanValue(occurrence.Source)
+		occurrence.TaskID = strings.ToUpper(strings.TrimSpace(occurrence.TaskID))
+		occurrence.AttemptID = strings.TrimSpace(occurrence.AttemptID)
+		occurrence.SignalID = strings.TrimSpace(occurrence.SignalID)
+		occurrence.SourcePath = filepath.ToSlash(strings.TrimSpace(occurrence.SourcePath))
+		key := strings.Join([]string{occurrence.Vault, occurrence.Project, occurrence.Source, occurrence.TaskID, occurrence.AttemptID, occurrence.SignalID, occurrence.SourcePath}, "|")
+		if key == "||||||" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, occurrence)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		leftKey := strings.Join([]string{out[i].Vault, out[i].Project, out[i].Source, out[i].TaskID, out[i].AttemptID, out[i].SignalID, out[i].SourcePath}, "|")
+		rightKey := strings.Join([]string{out[j].Vault, out[j].Project, out[j].Source, out[j].TaskID, out[j].AttemptID, out[j].SignalID, out[j].SourcePath}, "|")
+		return leftKey < rightKey
+	})
+	return out
+}
+
 func feedbackSignalTokenTotal(payload map[string]any) int {
 	if len(payload) == 0 {
 		return 0
@@ -545,27 +783,44 @@ func feedbackSignalTaskIsQualityRelevant(status, readiness, attemptID string) bo
 		strings.TrimSpace(attemptID) != ""
 }
 
+type feedbackSignalAcceptanceFactSet struct {
+	AcceptanceIDs  []string
+	AcceptanceGaps []string
+	ProofMapGaps   []string
+}
+
 func feedbackSignalAcceptanceGaps(body string) []string {
+	facts := feedbackSignalAcceptanceFacts(body)
+	return uniqueStringsPreserveOrder(append(facts.AcceptanceGaps, facts.ProofMapGaps...))
+}
+
+func feedbackSignalAcceptanceFacts(body string) feedbackSignalAcceptanceFactSet {
 	acceptanceIDs := v7AcceptanceIDs(body)
 	acceptance := strings.ToLower(sectionPreview(body, "## Acceptance", 2400))
+	facts := feedbackSignalAcceptanceFactSet{AcceptanceIDs: feedbackSignalShortList(acceptanceIDs)}
 	if strings.TrimSpace(acceptance) == "" {
-		return []string{"acceptance-section"}
+		facts.AcceptanceGaps = []string{"acceptance-section"}
+		return facts
 	}
-	var gaps []string
 	if strings.Contains(acceptance, "complete the task contract") ||
 		strings.Contains(acceptance, "define the accepted outcome") ||
 		strings.Contains(acceptance, " tbd") ||
 		strings.Contains(acceptance, "| tbd |") {
-		gaps = append(gaps, acceptanceIDs...)
-		if len(gaps) == 0 {
-			gaps = append(gaps, "acceptance-placeholder")
+		facts.AcceptanceGaps = append(facts.AcceptanceGaps, acceptanceIDs...)
+		if len(facts.AcceptanceGaps) == 0 {
+			facts.AcceptanceGaps = append(facts.AcceptanceGaps, "acceptance-placeholder")
 		}
 	}
 	if strings.Contains(acceptance, "inline verification, evidence, gate, or waiver") ||
 		!strings.Contains(acceptance, "proof") {
-		gaps = append(gaps, "proof-map")
+		facts.ProofMapGaps = append(facts.ProofMapGaps, acceptanceIDs...)
+		if len(facts.ProofMapGaps) == 0 {
+			facts.ProofMapGaps = append(facts.ProofMapGaps, "proof-map")
+		}
 	}
-	return uniqueStringsPreserveOrder(gaps)
+	facts.AcceptanceGaps = feedbackSignalShortList(uniqueStringsPreserveOrder(facts.AcceptanceGaps))
+	facts.ProofMapGaps = feedbackSignalShortList(uniqueStringsPreserveOrder(facts.ProofMapGaps))
+	return facts
 }
 
 func feedbackSignalDedupeKey(parts ...string) string {
