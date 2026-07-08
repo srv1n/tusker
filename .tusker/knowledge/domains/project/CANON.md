@@ -32,6 +32,7 @@ state_rev: "sha256:23ace50d3586a7308e45d58d6640af4ff47ad92123f1c82a868df02b7b44b
 - Obsidian Bases and dashboards are generated views, not canonical state.
 - Browser-backed ChatGPT work is a runner result source, not a direct state writer.
 - Waves are first-class V7 batch records; membership is canonical on `kind: wave`, task `wave:` is a reconcile-maintained back-pointer, and wave `status` is derived from member task closure.
+- Merge landing is wave-scoped: `tusker wave create` cuts `integration/W-####`, wave task worktrees branch from that integration branch as `task/<TASK-ID>`, `tusker land` serializes batch merges through a gated staging worktree, and completed waves land to the configured default branch as one merge commit.
 - Project registration quarantine is a loader property: entry points that scan registered projects use the shared loader, which records failed enabled registrations as `health: error` with `last_error` and continues loading unrelated healthy projects.
 
 ## Invariants

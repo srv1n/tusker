@@ -143,7 +143,10 @@ func hookInstallCmd(args Args) error {
 	if hookName == "" || hookName == "pre-commit" {
 		return installV7PreCommitHook(args)
 	}
-	return tuskerError(errorInvalidArg, "unsupported Tusker hook: "+hookName, withHint("supported hook: pre-commit"))
+	if hookName == "pre-push" {
+		return installV7PrePushHook(args)
+	}
+	return tuskerError(errorInvalidArg, "unsupported Tusker hook: "+hookName, withHint("supported hooks: pre-commit, pre-push"))
 }
 
 func installV7PreCommitHook(args Args) error {
@@ -195,6 +198,70 @@ exec "$TUSKER_BIN" validate --staged --branch-policy
 	}
 	if !args.Bool("quiet") {
 		fmt.Printf("Installed Tusker pre-commit hook at %s\n", hookPath)
+	}
+	return nil
+}
+
+func installV7PrePushHook(args Args) error {
+	vaultPath, err := resolveVaultPath(args, false)
+	if err != nil {
+		return err
+	}
+	repoRoot := filepath.Dir(vaultPath)
+	if err := exec.Command("git", "-C", repoRoot, "rev-parse", "--git-dir").Run(); err != nil {
+		return tuskerError(errorInvalidArg, "Tusker hook install requires a Git repository", withPath(repoRoot))
+	}
+	out, err := exec.Command("git", "-C", repoRoot, "rev-parse", "--git-path", "hooks/pre-push").Output()
+	if err != nil {
+		return err
+	}
+	hookPath := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(hookPath) {
+		hookPath = filepath.Join(repoRoot, hookPath)
+	}
+	const marker = "tusker:pre-push-main-guard"
+	if fileExists(hookPath) && !args.Bool("force") {
+		existing, err := readText(hookPath)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(existing, marker) {
+			return tuskerError(errorAlreadyExists, "refusing to overwrite existing pre-push hook", withPath(hookPath), withHint("rerun with --force to replace it"))
+		}
+	}
+	defaultBranch := v7DefaultBranch(vaultPath)
+	content := fmt.Sprintf(`#!/bin/sh
+set -eu
+
+# %s
+DEFAULT_BRANCH=%q
+if [ "${%s:-}" = "1" ]; then
+  exit 0
+fi
+
+while read local_ref local_sha remote_ref remote_sha
+do
+  case "$remote_ref" in
+    refs/heads/$DEFAULT_BRANCH)
+      echo "Tusker blocks direct pushes to $DEFAULT_BRANCH; use tusker land." >&2
+      exit 1
+      ;;
+  esac
+done
+exit 0
+`, marker, defaultBranch, tuskerLandMainGuardEnv)
+	if err := writeText(hookPath, content); err != nil {
+		return err
+	}
+	if err := os.Chmod(hookPath, 0o755); err != nil {
+		return err
+	}
+	if args.Bool("json") {
+		emitJSON(map[string]any{"ok": true, "hook": "pre-push", "path": hookPath})
+		return nil
+	}
+	if !args.Bool("quiet") {
+		fmt.Printf("Installed Tusker pre-push hook at %s\n", hookPath)
 	}
 	return nil
 }

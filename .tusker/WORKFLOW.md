@@ -109,6 +109,10 @@ Use `tusker wave create "<title>" <TASK-ID>...` to record a named dispatch/revie
 
 Wave state is derived, not hand-set. A wave is `open` while any member task is not `done`; it becomes `landed` when every member task is `done`, stamped with the latest member `closed_at`. Adding a non-done member reopens the wave. Review the batch boundary with `tusker wave show <W-####>` and filter task views with `tusker list --wave <W-####>`.
 
+## Merge Lane
+
+Do not push or merge directly to the default branch/main from runner worktrees. Use `tusker land <TASK-ID>` to queue task branches into the serialized wave lane; the lane gates the merged staging state, lands green branches into `integration/W-####`, kicks red branches back to `rework`, and lands a completed wave to main as one merge commit.
+
 ## Hard stop check
 
 Before doing work, run `tusker closeout status {{ note.id }} --json` when closeout data exists. If it reports `agent_action=stop_until_human_response`, stop. Do not validate again, inspect unrelated files, spawn agents, or mutate Tusker records. Reply with the pending human gate or proof item.

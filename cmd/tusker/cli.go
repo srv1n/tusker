@@ -252,6 +252,8 @@ func run(command string, args Args) (int, error) {
 		return 0, traceListCmd(args)
 	case "trace show":
 		return 0, traceShowCmd(args)
+	case "land":
+		return 0, landV7Cmd(args)
 	case "proof":
 		return 0, proofV7Cmd(args)
 	case "feedback":
@@ -662,7 +664,7 @@ func run(command string, args Args) (int, error) {
 	case "help migrate vault-root":
 		printMigrateVaultRootHelp()
 		return 0, nil
-	case "help handoff", "help gate", "help wave", "help wave create", "help wave add", "help wave remove", "help wave show", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help hook", "help hook install", "help migrate", "help migrate v7", "help migrate gates":
+	case "help handoff", "help gate", "help wave", "help wave create", "help wave add", "help wave remove", "help wave show", "help land", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help hook", "help hook install", "help migrate", "help migrate v7", "help migrate gates":
 		printV7Help()
 		return 0, nil
 	case "help feedback":
@@ -804,6 +806,7 @@ Commands:
   evidence            add V7 evidence records
   gate                list/satisfy/waive/obsolete V7 gates
   wave                create, edit, and show named task batches
+  land                run the serialized wave merge lane
   feedback            add agent feedback notes and generate digests
   improve             opt-in scans for repeated work worth packaging
   attempt             start or hand off V7 attempts
@@ -873,7 +876,7 @@ func printCommandHelp(command string) bool {
 		printEvidenceHelp()
 	case "migrate vault-root":
 		printMigrateVaultRootHelp()
-	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "trace", "trace list", "trace show", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
+	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "trace", "trace list", "trace show", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
 		printV7Help()
 	case "feedback", "feedback add", "feedback digest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()
@@ -1046,6 +1049,8 @@ func printV7Help() {
   tusker heartbeat HSP-T-0001
   tusker release HSP-T-0001
   tusker attempt start HSP-T-0001
+  tusker land HSP-T-0001
+  tusker land W-0001
   tusker verify add HSP-T-0001 --covers A1,A2 --check "go test ./cmd/tusker -count=1" --result pass
   tusker proof status HSP-T-0001
   tusker proof set-mode HSP-T-0001 inline
@@ -1076,6 +1081,7 @@ func printV7Help() {
   tusker state import [--branch tusker/state] [--fetch] [--remote origin]
   tusker state export [--dir .tusker-runtime/state]
   tusker hook install pre-commit [--force]
+  tusker hook install pre-push [--force]
   tusker validate --branch-policy [--staged]
   tusker migrate v7 --dry-run [--json]
   tusker migrate gates --from-blocked-reason [--write] [--json]
