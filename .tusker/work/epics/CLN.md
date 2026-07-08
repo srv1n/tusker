@@ -8,12 +8,16 @@ status: "ready"
 owner: "human:sarav"
 priority: "p2"
 domains: []
+capsule:
+  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
+  use_when: "Use to triage cleanup, migration removal, state model, and solo-operator ergonomics work."
+  what: "CLN epic for deleting legacy surfaces and simplifying the single V7 vault model."
 next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:16:22Z"
-updated_at: "2026-07-06T16:10:21Z"
-state_rev: "sha256:0d04ba3bdf884e52022daf7ac2184626cf4a8d17d6325b25a6235cdbbe20f724"
+updated_at: "2026-07-07T13:26:53Z"
+state_rev: "sha256:870a1671ed99ecf7f75c4d931e7798552ca05843416cf8b3b95d4c7ab585c59a"
 ---
 
 # CLN · One model, one vault: legacy deletion and solo ergonomics

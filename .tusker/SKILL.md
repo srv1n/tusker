@@ -13,8 +13,12 @@ canonical_files:
   - "knowledge/domains/*/INDEX.md"
   - "knowledge/domains/*/CANON.md"
 created_at: "2026-07-05T17:58:21Z"
-updated_at: "2026-07-05T17:58:21Z"
-state_rev: "sha256:bc813d51c734c879415fcb768edac5818a2e562ee1e91d2b6e20dbbc93e7a59f"
+updated_at: "2026-07-06T16:21:59Z"
+state_rev: "sha256:e568c4f9128b830ae02e330813465324a1be624b84fb181f0a7f84f3eea92cfb"
+capsule:
+  skip_when: "Skip for lifecycle, gates, proof, closeout, or generic CLI mechanics; use the operator skill."
+  use_when: "Use before choosing domain INDEX/CANON files or updating durable project knowledge."
+  what: "Repo project skill that routes agents through Tusker V7 domain canon."
 ---
 
 # Project Knowledge Skill

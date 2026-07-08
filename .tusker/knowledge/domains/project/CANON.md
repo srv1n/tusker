@@ -12,8 +12,12 @@ source_of_truth:
   - ".tusker/WORKFLOW.md"
   - "tusker.yaml"
 created_at: "2026-06-04 00:00:00 +0000 UTC"
-updated_at: "2026-07-05T11:22:59Z"
-state_rev: "sha256:55a8d92d5b07acbd7eee94f41f0c95e7306163895650862dc61b197391667a55"
+updated_at: "2026-07-06T16:21:59Z"
+state_rev: "sha256:2ebbe08cc18ae6e24579d605882a17fad5961f8f4e328f7a95144c2d4278185e"
+capsule:
+  skip_when: "Skip for raw attempts, events, generated dashboards, or task-specific proof details."
+  use_when: "Use before changing workflow semantics, automation dispatch, proof policy, or project skill behavior."
+  what: "Current durable rules for Tusker V7 lifecycle, routing, proof, and project validation."
 ---
 
 # Project Canon

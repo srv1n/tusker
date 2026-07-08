@@ -568,15 +568,20 @@ func newV7Epic(args Args) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	data := map[string]any{
-		"schema":               "tusker.epic/v7",
-		"kind":                 "epic",
-		"id":                   acronym,
-		"project":              v7ProjectID(vaultPath),
-		"title":                title,
-		"status":               fallback(args.String("status"), "ready"),
-		"owner":                fallback(args.String("owner"), "human:"+defaultActorName()),
-		"priority":             strings.ToLower(fallback(args.String("priority"), "p2")),
-		"domains":              splitCSV(args.String("domains")),
+		"schema":   "tusker.epic/v7",
+		"kind":     "epic",
+		"id":       acronym,
+		"project":  v7ProjectID(vaultPath),
+		"title":    title,
+		"status":   fallback(args.String("status"), "ready"),
+		"owner":    fallback(args.String("owner"), "human:"+defaultActorName()),
+		"priority": strings.ToLower(fallback(args.String("priority"), "p2")),
+		"domains":  splitCSV(args.String("domains")),
+		"capsule": v7CapsuleOrdered(
+			acronym+" epic: "+title+".",
+			"Use to triage this workstream's scope, active tasks, and durable direction.",
+			"Skip when you need a specific task contract, proof row, gate, or attempt.",
+		),
 		"next_task_number":     1,
 		"next_gate_number":     1,
 		"next_decision_number": 1,
@@ -2325,6 +2330,7 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 		fmt.Fprintf(&b, "# %s reviewer packet\n\n", id)
 		writeV7PacketWarnings(&b, vaultPath, task)
 		fmt.Fprintf(&b, "## Project skill routing\n\n%s\n\n", v7ProjectSkillRouting(vaultPath, task))
+		fmt.Fprintf(&b, "## Routed file capsules\n\n%s\n\n", v7RoutedFileCapsules(vaultPath, task))
 		fmt.Fprintf(&b, "## Domain context\n\n%s\n\n", v7DomainContext(vaultPath, task))
 		fmt.Fprintf(&b, "## Intent\n\n%s\n\n", sectionContent(task.Body, "## Intent"))
 		fmt.Fprintf(&b, "## Acceptance\n\n%s\n\n", sectionContent(task.Body, "## Acceptance"))
@@ -2343,6 +2349,7 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 	fmt.Fprintf(&b, "# %s agent packet\n\n", id)
 	writeV7PacketWarnings(&b, vaultPath, task)
 	fmt.Fprintf(&b, "## Project skill routing\n\n%s\n\n", v7ProjectSkillRouting(vaultPath, task))
+	fmt.Fprintf(&b, "## Routed file capsules\n\n%s\n\n", v7RoutedFileCapsules(vaultPath, task))
 	fmt.Fprintf(&b, "## Task contract\n\nIntent:\n%s\n\nAcceptance:\n%s\n\n", v7PacketSnippet(sectionContent(task.Body, "## Intent"), 8), v7PacketSnippet(sectionContent(task.Body, "## Acceptance"), 18))
 	fmt.Fprintf(&b, "## Open gates\n\n")
 	for _, gate := range idx.Gates {
@@ -2372,6 +2379,7 @@ func v7ExplainerPacket(vaultPath string, task Note, idx v7Index) string {
 	writeV7PacketWarnings(&b, vaultPath, task)
 	fmt.Fprintf(&b, "## Background\n\n")
 	fmt.Fprintf(&b, "Project route:\n%s\n\n", v7ProjectSkillRouting(vaultPath, task))
+	fmt.Fprintf(&b, "Routed file capsules:\n%s\n\n", v7RoutedFileCapsules(vaultPath, task))
 	fmt.Fprintf(&b, "Domain mental model:\n%s\n\n", v7DomainContext(vaultPath, task))
 	fmt.Fprintf(&b, "## Intuition\n\n")
 	fmt.Fprintf(&b, "%s\n\n", v7ExplainerSnippet(task.Body, "## Intent", "Understand why this task exists before reading a diff.", 8))
@@ -2535,9 +2543,16 @@ func v7ProjectSkillRouting(vaultPath string, task Note) string {
 		lines = append(lines, "- `"+skillPath+"` is missing; use the task contract as the project route.")
 	}
 	lines = append(lines, "- Use the installed Tusker operator skill only for task mechanics, gates, evidence, lifecycle, and CLI semantics.")
-	domains := normalizeList(task.Data["domains"])
-	if len(domains) == 0 {
-		lines = append(lines, "- No task domains declared; use the task contract and add a domain when the work creates durable canon.")
+	declaredDomains := normalizeList(task.Data["domains"])
+	domains := v7PacketDomains(vaultPath, task)
+	if len(declaredDomains) == 0 {
+		if len(domains) == 0 {
+			lines = append(lines, "- No task domains declared; use the task contract and add a domain when the work creates durable canon.")
+			return strings.Join(lines, "\n")
+		}
+		lines = append(lines, "- No task domains declared; default to the `project` domain route for repo-wide canon.")
+	} else if len(domains) == 0 {
+		lines = append(lines, "- Task domains were declared, but no routed domain files are available; use the task contract and packet warnings.")
 		return strings.Join(lines, "\n")
 	}
 	for _, domain := range domains {
@@ -2573,7 +2588,7 @@ func v7GateSummaryForTask(idx v7Index, taskID string) string {
 }
 
 func v7DomainContext(vaultPath string, task Note) string {
-	domains := normalizeList(task.Data["domains"])
+	domains := v7PacketDomains(vaultPath, task)
 	if len(domains) == 0 {
 		return "- None declared."
 	}

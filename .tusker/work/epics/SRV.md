@@ -8,12 +8,16 @@ status: "ready"
 owner: "human:sarav"
 priority: "p2"
 domains: []
+capsule:
+  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
+  use_when: "Use to triage needs-me queue, read/edit UI, runtime-store API, and embedded SPA work."
+  what: "SRV epic for the local Tusker Serve control-room UI and JSON API."
 next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:16:22Z"
-updated_at: "2026-07-06T16:10:21Z"
-state_rev: "sha256:d75bdadd3e2839d94c371982a74cb3f91876b57971cefb91e19c954a639cca13"
+updated_at: "2026-07-07T13:26:53Z"
+state_rev: "sha256:ab45c85e14b241d742d5dc9f6ffa1e34653d57900148502034def037e34c62c0"
 ---
 
 # SRV · Tusker Serve: local control-room UI

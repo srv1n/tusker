@@ -17,8 +17,12 @@ canonical_files:
   - "internal/**"
   - "skill/**"
 created_at: "2026-06-04 00:00:00 +0000 UTC"
-updated_at: "2026-07-05T11:22:59Z"
-state_rev: "sha256:27a83b7f2ccca47fae7cb2a9e977f0989d863fba6d87d3cc9b01f1fafd68a386"
+updated_at: "2026-07-06T16:21:59Z"
+state_rev: "sha256:bc79651cee71f1185e66548c1c36a39fb3210657e15bf51fae13b6e3c42ad992"
+capsule:
+  skip_when: "Skip when the task packet names exact files or you only need task proof/runtime state."
+  use_when: "Use when no narrower domain is declared or work changes workflow, automation, validation, or skills."
+  what: "Project domain index routing repo-wide Tusker V7 canon and implementation areas."
 ---
 
 # Project Domain

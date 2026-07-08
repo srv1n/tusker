@@ -8,12 +8,16 @@ status: "ready"
 owner: "agent:codex"
 priority: "p2"
 domains: []
+capsule:
+  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
+  use_when: "Use to triage feedback signals, review findings, promotion rules, and cross-vault health."
+  what: "FBK epic for structured feedback intake, review, dedupe, and promotion."
 next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:13:34Z"
-updated_at: "2026-07-06T16:10:21Z"
-state_rev: "sha256:37b3eade2cdd8d1b831380a5ad99c02762a6173f3cb735c9946c856443d087d3"
+updated_at: "2026-07-07T13:26:53Z"
+state_rev: "sha256:801a2a23cb7a528715e5af5ccda1b9546545f4dc9ecf0c8414712ec13d6c10d7"
 ---
 
 # FBK · Feedback intake and review
