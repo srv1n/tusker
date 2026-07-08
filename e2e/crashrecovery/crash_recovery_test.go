@@ -28,9 +28,118 @@ const (
 
 var builtE2EBinaries struct {
 	once       sync.Once
+	dir        string
 	tusker     string
 	fakeRunner string
 	err        error
+}
+
+func TestMain(m *testing.M) {
+	if stale := fixtureProcesses(""); len(stale) > 0 {
+		fmt.Fprintf(os.Stderr, "crashrecovery preflight reaping stale fixture processes:\n%s\n", summarizeFixtureProcesses(stale))
+		reapFixtureProcesses("")
+		if survivors := waitForNoFixtureProcesses("", 5*time.Second); len(survivors) > 0 {
+			fmt.Fprintf(os.Stderr, "crashrecovery preflight could not reap fixture processes:\n%s\n", summarizeFixtureProcesses(survivors))
+			os.Exit(1)
+		}
+	}
+	code := m.Run()
+	if survivors := fixtureProcesses(""); len(survivors) > 0 {
+		fmt.Fprintf(os.Stderr, "crashrecovery suite leaked fixture processes:\n%s\n", summarizeFixtureProcesses(survivors))
+		reapFixtureProcesses("")
+		code = 1
+	}
+	cleanupE2EBinaries()
+	os.Exit(code)
+}
+
+func TestFixtureProcessCleanupReapsWrapperAndRunner(t *testing.T) {
+	h := newHarness(t, "fixture-process-cleanup")
+	h.configureFakeRunner(fakeRunnerConfig{
+		Mode:           "hold",
+		RunnerKind:     "codex_exec",
+		StallTimeoutMS: 5000,
+		MaxAttempts:    1,
+	})
+	h.createRunnableTask("fixture cleanup reaps wrapper and runner")
+
+	daemon := h.startDaemon("daemon")
+	run := h.waitRun(crashTaskID, crashRunnerWait, func(run map[string]any) bool {
+		return runString(run, "lease_state") == "running" && runInt(run, "process_pid") > 0
+	})
+	wrapperPID := runInt(run, "process_pid")
+	childPID := h.waitRunnerPID(crashRunnerWait)
+	daemon.kill(syscall.SIGKILL)
+	if !processAlive(wrapperPID) {
+		t.Fatalf("wrapper pid %d died before fixture cleanup could reap it", wrapperPID)
+	}
+	if !processAlive(childPID) {
+		t.Fatalf("fake runner pid %d died before fixture cleanup could reap it", childPID)
+	}
+
+	h.reapFixtureProcesses()
+	assertNoFixtureProcesses(t, h.tempRoot)
+}
+
+func TestHoldModeFakeRunnerSelfExpires(t *testing.T) {
+	_, fakeRunner := e2eBinaries(t)
+	tempRoot, err := os.MkdirTemp(shortTempParent(), "tusker-crash-hold-self-expire-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		reapFixtureProcesses(tempRoot)
+		_ = os.RemoveAll(tempRoot)
+	})
+	readyFile := filepath.Join(tempRoot, "runner-ready")
+	pidFile := filepath.Join(tempRoot, "runner.pid")
+	var output bytes.Buffer
+	cmd := exec.Command(fakeRunner,
+		"--mode", "hold",
+		"--ready-file", readyFile,
+		"--pid-file", pidFile,
+		"--heartbeat-every", "25ms",
+		"--hold-timeout", "250ms",
+	)
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start fake runner: %v", err)
+	}
+	t.Cleanup(func() {
+		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+			return
+		}
+		killProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
+	})
+	eventually(t, 2*time.Second, 25*time.Millisecond, func() (bool, string) {
+		if _, err := os.Stat(readyFile); err != nil {
+			return false, err.Error()
+		}
+		return true, ""
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	select {
+	case err := <-done:
+		exitErr, ok := err.(*exec.ExitError)
+		if !ok || exitErr.ExitCode() != 124 {
+			t.Fatalf("hold fake runner should exit 124 after timeout, got err=%v output=%s", err, strings.TrimSpace(output.String()))
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("hold fake runner did not self-expire; output=%s", strings.TrimSpace(output.String()))
+	}
+	if !strings.Contains(output.String(), "hold timeout") {
+		t.Fatalf("hold timeout exit should explain itself, output=%s", strings.TrimSpace(output.String()))
+	}
+	assertNoFixtureProcesses(t, tempRoot)
+}
+
+func TestNoSurvivingFixtureProcesses(t *testing.T) {
+	assertNoFixtureProcesses(t, "")
 }
 
 func TestDaemonKillNineAdoptsSurvivingWrapper(t *testing.T) {
@@ -229,6 +338,7 @@ type fakeRunnerConfig struct {
 	ReleaseFile    string
 	CompleteStatus string
 	ExitCode       int
+	HoldTimeout    time.Duration
 	StallTimeoutMS int
 	MaxAttempts    int
 	BackoffMS      []int
@@ -252,9 +362,6 @@ func newHarness(t *testing.T, name string) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_ = os.RemoveAll(tempRoot)
-	})
 	h := &harness{
 		t:          t,
 		repoRoot:   repoRoot(t),
@@ -264,6 +371,10 @@ func newHarness(t *testing.T, name string) *harness {
 		stateRoot:  filepath.Join(tempRoot, "state"),
 		repoDir:    filepath.Join(tempRoot, "repo"),
 	}
+	t.Cleanup(func() {
+		h.reapFixtureProcesses()
+		_ = os.RemoveAll(tempRoot)
+	})
 	h.vaultDir = filepath.Join(h.repoDir, ".tusker")
 	h.mustMkdir(h.repoDir)
 	h.cliOK(h.repoDir, "init", "--yes", "--vault", h.vaultDir, "--quiet")
@@ -288,6 +399,7 @@ func e2eBinaries(t *testing.T) (string, string) {
 			builtE2EBinaries.err = err
 			return
 		}
+		builtE2EBinaries.dir = dir
 		tuskerBin := filepath.Join(dir, "tusker")
 		fakeRunner := filepath.Join(dir, "fake-runner")
 		if err := runBuild(root, tuskerBin, "./cmd/tusker"); err != nil {
@@ -379,6 +491,9 @@ func (h *harness) configureFakeRunner(cfg fakeRunnerConfig) {
 	}
 	if cfg.ExitCode != 0 {
 		parts = append(parts, "--exit-code", strconv.Itoa(cfg.ExitCode))
+	}
+	if cfg.HoldTimeout > 0 {
+		parts = append(parts, "--hold-timeout", cfg.HoldTimeout.String())
 	}
 	command := strings.Join(parts, " ")
 	config := fmt.Sprintf(`schema: tusker.config/v1
@@ -629,8 +744,15 @@ func (h *harness) killProcessGroup(pid int, sig syscall.Signal) {
 	if pid <= 0 {
 		h.t.Fatalf("invalid process pid %d", pid)
 	}
-	_ = syscall.Kill(-pid, sig)
-	_ = syscall.Kill(pid, sig)
+	killProcessGroup(pid, sig)
+}
+
+func (h *harness) reapFixtureProcesses() {
+	h.t.Helper()
+	reapFixtureProcesses(h.tempRoot)
+	if survivors := waitForNoFixtureProcesses(h.tempRoot, 3*time.Second); len(survivors) > 0 {
+		h.t.Fatalf("surviving fixture processes:\n%s", summarizeFixtureProcesses(survivors))
+	}
 }
 
 func (h *harness) readFile(path string) string {
@@ -844,6 +966,139 @@ func processAlive(pid int) bool {
 	}
 	err := syscall.Kill(pid, 0)
 	return err == nil || err == syscall.EPERM
+}
+
+type fixtureProcess struct {
+	PID     int
+	PGID    int
+	Command string
+}
+
+func fixtureProcesses(marker string) []fixtureProcess {
+	out, err := exec.Command("ps", "-axo", "pid=,pgid=,command=").Output()
+	if err != nil {
+		return nil
+	}
+	self := os.Getpid()
+	var procs []fixtureProcess
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		pid, pidErr := strconv.Atoi(fields[0])
+		pgid, pgidErr := strconv.Atoi(fields[1])
+		if pidErr != nil || pgidErr != nil || pid == self {
+			continue
+		}
+		command := strings.Join(fields[2:], " ")
+		if isFixtureProcessCommand(command, marker) {
+			procs = append(procs, fixtureProcess{PID: pid, PGID: pgid, Command: command})
+		}
+	}
+	return procs
+}
+
+func isFixtureProcessCommand(command, marker string) bool {
+	if !strings.Contains(command, "tusker-crash-") {
+		return false
+	}
+	if marker != "" && !strings.Contains(command, marker) {
+		return false
+	}
+	return strings.Contains(command, "fake-runner") || strings.Contains(command, "runner-wrapper")
+}
+
+func reapFixtureProcesses(marker string) {
+	procs := fixtureProcesses(marker)
+	if len(procs) == 0 {
+		return
+	}
+	signalFixtureProcesses(procs, syscall.SIGTERM)
+	survivors := waitForNoFixtureProcesses(marker, time.Second)
+	if len(survivors) == 0 {
+		return
+	}
+	signalFixtureProcesses(survivors, syscall.SIGKILL)
+	_ = waitForNoFixtureProcesses(marker, 2*time.Second)
+}
+
+func signalFixtureProcesses(procs []fixtureProcess, sig syscall.Signal) {
+	selfGroup := syscall.Getpgrp()
+	groups := map[int]bool{}
+	pids := map[int]bool{}
+	for _, proc := range procs {
+		if proc.PGID > 0 && proc.PGID != selfGroup {
+			groups[proc.PGID] = true
+		}
+		if proc.PID > 0 && proc.PID != os.Getpid() {
+			pids[proc.PID] = true
+		}
+	}
+	for pgid := range groups {
+		_ = syscall.Kill(-pgid, sig)
+	}
+	for pid := range pids {
+		_ = syscall.Kill(pid, sig)
+	}
+}
+
+func waitForNoFixtureProcesses(marker string, timeout time.Duration) []fixtureProcess {
+	deadline := time.Now().Add(timeout)
+	var procs []fixtureProcess
+	for time.Now().Before(deadline) {
+		procs = fixtureProcesses(marker)
+		if len(procs) == 0 {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return fixtureProcesses(marker)
+}
+
+func assertNoFixtureProcesses(t *testing.T, marker string) {
+	t.Helper()
+	if survivors := fixtureProcesses(marker); len(survivors) > 0 {
+		t.Fatalf("surviving fixture processes:\n%s", summarizeFixtureProcesses(survivors))
+	}
+}
+
+func summarizeFixtureProcesses(procs []fixtureProcess) string {
+	const maxProcesses = 8
+	var b strings.Builder
+	for i, proc := range procs {
+		if i >= maxProcesses {
+			fmt.Fprintf(&b, "... and %d more\n", len(procs)-i)
+			break
+		}
+		fmt.Fprintf(&b, "pid=%d pgid=%d cmd=%s\n", proc.PID, proc.PGID, trimProcessCommand(proc.Command))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func trimProcessCommand(command string) string {
+	const maxCommand = 240
+	if len(command) <= maxCommand {
+		return command
+	}
+	return command[:maxCommand] + "..."
+}
+
+func killProcessGroup(pid int, sig syscall.Signal) {
+	if pid <= 0 {
+		return
+	}
+	selfGroup := syscall.Getpgrp()
+	if pgid, err := syscall.Getpgid(pid); err == nil && pgid > 0 && pgid != selfGroup {
+		_ = syscall.Kill(-pgid, sig)
+	}
+	_ = syscall.Kill(pid, sig)
+}
+
+func cleanupE2EBinaries() {
+	if builtE2EBinaries.dir != "" {
+		_ = os.RemoveAll(builtE2EBinaries.dir)
+	}
 }
 
 func prettyJSON(value any) string {

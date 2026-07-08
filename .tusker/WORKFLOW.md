@@ -144,6 +144,10 @@ Vault: {{ vault.path }}
 
 Use the smallest command that proves or locates the next fact. Prefer `tusker automation plan`, `tusker packet`, path-scoped search, and exact verification commands. Report validation as command + PASS/FAIL plus the first actionable failure. Never paste raw transcripts into task markdown.
 
+## Test Hygiene
+
+E2E fixtures that spawn long-lived subprocesses must reap the whole process group during cleanup, give intentional hold modes a hard self-expiring timeout, and assert at suite teardown that no marker-matched fixture process survived.
+
 ## Completion contract
 
 Satisfy the task proof mode. For `proof_mode=inline`, record concise verification rows with `tusker verify add`; do not create evidence files. For `card`, `artifact`, or `audit`, create only the evidence records required by the task.

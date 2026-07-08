@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+const defaultHoldTimeout = 2 * time.Minute
+
 func main() {
 	mode := flag.String("mode", "hold-success", "runner behavior: hold-success, hold, wedge, fail")
 	readyFile := flag.String("ready-file", "", "path touched after fake runner starts")
@@ -19,6 +21,7 @@ func main() {
 	tuskerBin := flag.String("tusker-bin", "tusker", "tusker binary used for public-CLI task transitions")
 	exitCode := flag.Int("exit-code", 1, "exit code for fail mode")
 	heartbeatEvery := flag.Duration("heartbeat-every", 100*time.Millisecond, "heartbeat interval")
+	holdTimeout := flag.Duration("hold-timeout", defaultHoldTimeout, "hard wall-clock timeout for hold modes")
 	flag.Parse()
 
 	mustWrite(*pidFile, fmt.Sprintf("%d\n", os.Getpid()))
@@ -34,15 +37,16 @@ func main() {
 		os.Exit(*exitCode)
 	case "hold":
 		emitFirstEvent()
-		for {
-			emitHeartbeat()
-			time.Sleep(*heartbeatEvery)
+		if !runHoldLoop(*heartbeatEvery, *holdTimeout, nil) {
+			os.Exit(124)
 		}
 	case "hold-success":
 		emitFirstEvent()
-		for *releaseFile == "" || !exists(*releaseFile) {
-			emitHeartbeat()
-			time.Sleep(*heartbeatEvery)
+		released := runHoldLoop(*heartbeatEvery, *holdTimeout, func() bool {
+			return *releaseFile != "" && exists(*releaseFile)
+		})
+		if !released {
+			os.Exit(124)
 		}
 		if *completeStatus != "" {
 			if err := setTaskStatus(*tuskerBin, *completeStatus); err != nil {
@@ -55,6 +59,31 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "unknown fake-runner mode %q\n", *mode)
 		os.Exit(64)
+	}
+}
+
+func runHoldLoop(heartbeatEvery, holdTimeout time.Duration, released func() bool) bool {
+	if heartbeatEvery <= 0 {
+		heartbeatEvery = 100 * time.Millisecond
+	}
+	if holdTimeout <= 0 {
+		holdTimeout = defaultHoldTimeout
+	}
+	timeout := time.NewTimer(holdTimeout)
+	defer timeout.Stop()
+	ticker := time.NewTicker(heartbeatEvery)
+	defer ticker.Stop()
+	for {
+		if released != nil && released() {
+			return true
+		}
+		emitHeartbeat()
+		select {
+		case <-timeout.C:
+			fmt.Fprintf(os.Stderr, "fake-runner hold timeout after %s\n", holdTimeout)
+			return false
+		case <-ticker.C:
+		}
 	}
 }
 
