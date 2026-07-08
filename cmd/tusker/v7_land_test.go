@@ -74,6 +74,42 @@ func TestLandBatchGreen(t *testing.T) {
 	}
 }
 
+func TestLandTerminalStateMonotonic(t *testing.T) {
+	repo, vault := newLandTestRepo(t, 1, "true")
+	taskRel := ".tusker/work/tasks/APP-T-0001.md"
+	reviewContent, err := readText(filepath.Join(repo, taskRel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-08T02:30:00Z")
+	runGitDir(t, repo, "add", taskRel)
+	runGitDir(t, repo, "commit", "-m", "close task")
+	runGitDir(t, repo, "branch", "-f", "integration/W-0001", "main")
+	commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{
+		taskRel:     reviewContent,
+		"stale.txt": "stale branch content\n",
+	})
+
+	err = landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001"})
+	if err == nil {
+		t.Fatal("expected terminal task rewind to fail landing")
+	}
+	if !strings.Contains(err.Error(), "terminal task state rewind refused") {
+		t.Fatalf("expected terminal rewind conflict, got %v", err)
+	}
+	integrationData, _, err := parseFrontmatter(gitShowFile(t, repo, "integration/W-0001", taskRel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "done", stringField(integrationData, "status"), "integration task status")
+	canonicalData, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "done", stringField(canonicalData, "status"), "canonical task status")
+	assertEqual(t, "2026-07-08T02:30:00Z", stringField(canonicalData, "closed_at"), "canonical closed_at")
+}
+
 func TestLandBisectKicksBad(t *testing.T) {
 	repo, vault := newLandTestRepo(t, 2, "if [ -f good.txt ] && [ -f bad.txt ]; then echo semantic conflict; exit 1; fi")
 	commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"good.txt": "good\n"})

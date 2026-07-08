@@ -205,6 +205,9 @@ func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandT
 		if output, err := gitCombined(tmp, "merge", "--no-ff", "--no-edit", task.Branch); err != nil {
 			return false, "", landingFailureSummary("merge "+task.Branch, output, err), nil
 		}
+		if err := guardV7LandingTerminalTaskRewinds(tmp, baseBranch); err != nil {
+			return false, "", "", err
+		}
 	}
 	pass, summary := runV7LandingGate(vaultPath, tmp)
 	if !pass {
@@ -215,6 +218,30 @@ func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandT
 		return false, "", "", err
 	}
 	return true, commit, summary, nil
+}
+
+func guardV7LandingTerminalTaskRewinds(workDir, baseRef string) error {
+	output, err := gitCombined(workDir, "diff", "--name-only", baseRef+"..HEAD", "--", ".tusker/work/tasks")
+	if err != nil {
+		return err
+	}
+	for _, rel := range strings.Fields(output) {
+		if !strings.HasSuffix(rel, ".md") {
+			continue
+		}
+		baseData, ok, err := v7GitFrontmatterAtRef(workDir, baseRef, rel)
+		if err != nil || !ok {
+			return err
+		}
+		headData, ok, err := v7GitFrontmatterAtRef(workDir, "HEAD", rel)
+		if err != nil || !ok {
+			return err
+		}
+		if err := guardV7TerminalTaskRewind(filepath.Join(workDir, filepath.FromSlash(rel)), "land:"+baseRef, baseData, headData); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func runV7LandingGate(vaultPath, workDir string) (bool, string) {

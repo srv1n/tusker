@@ -1782,6 +1782,9 @@ func reconcileV7ObjectStateRevs(vaultPath string) (int, error) {
 		if storedRev == "" || v7StateRevMatches(data, body, storedRev) {
 			continue
 		}
+		if err := guardV7ReconcileTerminalTaskStateRevRepair(vaultPath, note, data); err != nil {
+			return repaired, err
+		}
 		if _, ok := data["updated_at"]; ok {
 			data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
 		}
@@ -3408,6 +3411,83 @@ func v7StateRevMatches(data map[string]any, body, rev string) bool {
 		return true
 	}
 	return false
+}
+
+func v7TerminalTaskStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "done", "cancelled", "superseded":
+		return true
+	default:
+		return false
+	}
+}
+
+func guardV7TerminalTaskRewind(filePath, source string, before, after map[string]any) error {
+	if effectiveV7Kind(before) != "task" || effectiveV7Kind(after) != "task" {
+		return nil
+	}
+	taskID := stringField(after, "id")
+	if taskID == "" || stringField(before, "id") != taskID {
+		return nil
+	}
+	fromStatus := stringField(before, "status")
+	toStatus := stringField(after, "status")
+	if !v7TerminalTaskStatus(fromStatus) || v7TerminalTaskStatus(toStatus) {
+		return nil
+	}
+	return tuskerError("CAS_CONFLICT",
+		fmt.Sprintf("terminal task state rewind refused for %s: %s -> %s", taskID, fromStatus, toStatus),
+		withPath(filePath),
+		withHint("resolve the task-file conflict explicitly with a Tusker control operation; merge and reconcile never rewind terminal task state"),
+		withContext(map[string]any{
+			"task":   taskID,
+			"from":   fromStatus,
+			"to":     toStatus,
+			"source": source,
+		}),
+	)
+}
+
+func guardV7ReconcileTerminalTaskStateRevRepair(vaultPath string, note Note, data map[string]any) error {
+	if effectiveV7Kind(data) != "task" || v7TerminalTaskStatus(stringField(data, "status")) {
+		return nil
+	}
+	if stringField(data, "closed_at") != "" || stringField(data, "accepted_at") != "" || stringField(data, "accepted_by") != "" {
+		return tuskerError("CAS_CONFLICT",
+			fmt.Sprintf("terminal task metadata conflicts with non-terminal status during reconcile for %s", stringField(data, "id")),
+			withPath(note.AbsolutePath),
+			withHint("resolve the task-file conflict explicitly; reconcile will not certify mixed terminal/non-terminal task metadata"),
+		)
+	}
+	repoRoot := filepath.Dir(vaultPath)
+	if _, err := gitCombined(repoRoot, "rev-parse", "--is-inside-work-tree"); err != nil {
+		return nil
+	}
+	rel, err := filepath.Rel(repoRoot, note.AbsolutePath)
+	if err != nil {
+		return err
+	}
+	headData, ok, err := v7GitFrontmatterAtRef(repoRoot, "HEAD", filepath.ToSlash(rel))
+	if err != nil || !ok {
+		return err
+	}
+	return guardV7TerminalTaskRewind(note.AbsolutePath, "reconcile:state_rev_repair", headData, data)
+}
+
+func v7GitFrontmatterAtRef(repoRoot, ref, rel string) (map[string]any, bool, error) {
+	object := ref + ":" + rel
+	if _, err := gitCombined(repoRoot, "cat-file", "-e", object); err != nil {
+		return nil, false, nil
+	}
+	raw, err := gitCombined(repoRoot, "show", object)
+	if err != nil {
+		return nil, false, err
+	}
+	data, _, err := parseFrontmatter(raw)
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
 }
 
 func saveV7DocumentCAS(filePath string, data map[string]any, body string, order []string, baseRev string) (string, error) {
