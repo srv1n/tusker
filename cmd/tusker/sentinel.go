@@ -300,7 +300,7 @@ func (d *Daemon) evaluateInvariantSentinel(snapshot runtimeSentinelSnapshot) (in
 			var violations []runtimeInvariantViolation
 			switch check {
 			case invariantCheckHeldLeaseDispatchEligible:
-				violations = sentinelHeldLeaseDispatchEligible(project, runsByProject[project.Project.ProjectID])
+				violations = sentinelHeldLeaseDispatchEligible(project, runsByProject[project.Project.ProjectID], snapshot.Now)
 			case invariantCheckAttemptCountWithinCaps:
 				violations = sentinelAttemptCountWithinCaps(project, runsByProject[project.Project.ProjectID])
 			case invariantCheckFreshHeartbeatPidLive:
@@ -351,7 +351,7 @@ func (d *Daemon) evaluateInvariantSentinel(snapshot runtimeSentinelSnapshot) (in
 	return status, nil
 }
 
-func sentinelHeldLeaseDispatchEligible(project runtimeSentinelProjectSnapshot, runs []RunStatus) []runtimeInvariantViolation {
+func sentinelHeldLeaseDispatchEligible(project runtimeSentinelProjectSnapshot, runs []RunStatus, now time.Time) []runtimeInvariantViolation {
 	var violations []runtimeInvariantViolation
 	for _, run := range runs {
 		if !isDispatchCapacityLeaseState(run.LeaseState) {
@@ -374,6 +374,9 @@ func sentinelHeldLeaseDispatchEligible(project runtimeSentinelProjectSnapshot, r
 			allowed = containsString(project.Workflow.Tracker.ReviewStates, status)
 		}
 		if !allowed {
+			if sentinelHeldLeaseWithinConvergenceGrace(project.Workflow, note, status, now) {
+				continue
+			}
 			violations = append(violations, runViolation(run, invariantCheckHeldLeaseDispatchEligible, "held lease task is not dispatch-eligible", map[string]any{
 				"task_status":   status,
 				"active_states": project.Workflow.Tracker.ActiveStates,
@@ -382,6 +385,34 @@ func sentinelHeldLeaseDispatchEligible(project runtimeSentinelProjectSnapshot, r
 		}
 	}
 	return violations
+}
+
+func sentinelHeldLeaseWithinConvergenceGrace(wf Workflow, note Note, status string, now time.Time) bool {
+	status = strings.TrimSpace(status)
+	if status == "" || status == "done" || status == "cancelled" {
+		return false
+	}
+	updatedAt, ok := parseSentinelTimestamp(stringField(note.Data, "updated_at"))
+	if !ok {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	grace := sentinelHeldLeaseConvergenceGrace(wf)
+	return now.Before(updatedAt) || now.Sub(updatedAt) <= grace
+}
+
+func sentinelHeldLeaseConvergenceGrace(wf Workflow) time.Duration {
+	interval := time.Duration(wf.Runtime.PollIntervalMS) * time.Millisecond
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	grace := 2 * interval
+	if grace < interval {
+		return interval
+	}
+	return grace
 }
 
 func runnerStatusReadyForReconcile(run RunStatus) bool {
