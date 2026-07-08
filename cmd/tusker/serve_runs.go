@@ -37,7 +37,7 @@ func (s *serveServer) runSummary(snap serveSnapshot, run RunStatus) serveRunSumm
 		LeaseState:        serveLeaseState(run.LeaseState),
 		LeaseStateRaw:     run.LeaseState,
 		Outcome:           serveRunOutcome(run, s.now()),
-		ElapsedSec:        serveDurationSec(run.StartedAt, run.UpdatedAt, s.now()),
+		ElapsedSec:        serveRunElapsedSec(run, s.now()),
 		SinceLastEventSec: serveSinceSec(firstNonEmpty(run.LastEventAt, run.UpdatedAt), s.now()),
 		Liveness:          serveRunLiveness(run, s.now()),
 		Tokens:            serveTokenTotalsForTurns(turns),
@@ -51,7 +51,12 @@ func (s *serveServer) runSummary(snap serveSnapshot, run RunStatus) serveRunSumm
 
 func serveFindRun(runs []RunStatus, id string) (RunStatus, bool) {
 	for _, run := range runs {
-		if run.ItemID == id || run.RecordID == id {
+		if run.RecordID == id {
+			return run, true
+		}
+	}
+	for _, run := range runs {
+		if run.ItemID == id {
 			return run, true
 		}
 	}
@@ -88,6 +93,9 @@ func serveLeaseState(state string) string {
 func serveRunOutcome(run RunStatus, now time.Time) string {
 	switch LeaseState(strings.TrimSpace(run.LeaseState)) {
 	case LeaseStateUnclaimed:
+		if run.AttemptCount > 0 || strings.TrimSpace(run.AttemptOutcome) != "" && AttemptOutcome(strings.TrimSpace(run.AttemptOutcome)) != AttemptOutcomeNone {
+			return serveRunOutcomeFromAttempt(run.AttemptOutcome, run.LeaseState)
+		}
 		return "idle"
 	case LeaseStateParkedNoProgress:
 		return "parked-no-progress"
@@ -180,6 +188,15 @@ func serveSinceSec(value string, now time.Time) int {
 		return maxInt(0, int(now.Sub(ts).Seconds()))
 	}
 	return 0
+}
+
+func serveRunElapsedSec(run RunStatus, now time.Time) int {
+	switch LeaseState(strings.TrimSpace(run.LeaseState)) {
+	case LeaseStateClaimed, LeaseStateRunning:
+		return serveDurationSec(run.StartedAt, "", now)
+	default:
+		return serveDurationSec(run.StartedAt, firstNonEmpty(run.UpdatedAt, run.LastEventAt, run.LastHeartbeatAt), now)
+	}
 }
 
 func serveDurationSec(start, end string, now time.Time) int {
