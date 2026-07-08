@@ -19,7 +19,6 @@
 | [[RUN-T-0033]] | p2 | Execute the task contract and satisfy proof mode. |
 | [[RUN-T-0039]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0009]] | p1 | Execute the task contract and satisfy proof mode. |
-| [[SRV-T-0014]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[TRC-T-0003]] | p2 | Review evidence and close or return to rework. |
 
 <!-- tusker:generated:end -->

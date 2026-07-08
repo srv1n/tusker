@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/controls";
 import { OutcomeChip, RunnerBadge } from "@/components/ui/chips";
 import { CapsuleChips } from "@/components/ui/capsule";
 import { LivenessIndicator } from "@/components/ui/liveness";
+import { isLiveHeaderRun } from "@/features/runs/detail/helpers";
 
 /**
  * Run-detail header (design §07): task id + serif title, the task capsule chips,
@@ -23,7 +24,8 @@ export function RunHeader({
   onInterrupt: () => void;
   onRetry: () => void;
 }) {
-  const active = run.outcome === "running" || run.outcome === "retry-queued";
+  const live = isLiveHeaderRun(run);
+  const active = live || run.outcome === "retry-queued";
   return (
     <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0">
@@ -45,8 +47,12 @@ export function RunHeader({
           <Mono className="text-muted">lane {run.lane}</Mono>
           <span className="text-fainter">·</span>
           <OutcomeChip outcome={run.outcome} />
-          <LivenessIndicator liveness={run.liveness} sinceSec={run.sinceLastEventSec} />
-          <span className="text-fainter">·</span>
+          {live && (
+            <>
+              <LivenessIndicator liveness={run.liveness} sinceSec={run.sinceLastEventSec} />
+              <span className="text-fainter">·</span>
+            </>
+          )}
           <Mono className={cn(run.leaseState === "expired" ? "text-fail" : "text-muted")}>
             lease {run.leaseState}
           </Mono>

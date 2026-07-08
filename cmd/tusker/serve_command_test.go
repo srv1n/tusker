@@ -220,6 +220,46 @@ func TestServeRunsOutcomeLabels(t *testing.T) {
 	assertEqual(t, "terminal", byID["APP-T-DONE"]["outcome"], "abandoned terminal outcome")
 }
 
+func TestServeRunDetailUsesCanonicalCompletedRunRow(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	now := time.Date(2026, 7, 6, 6, 30, 0, 0, time.UTC)
+	server.now = func() time.Time { return now }
+	started := "2026-07-06T06:00:00Z"
+	released := "2026-07-06T06:14:46Z"
+	recent := now.Add(-6 * time.Second).Format(time.RFC3339)
+
+	if err := server.store.UpsertRun(RunStatus{ProjectID: "app", RecordID: "APP-T-0001#worker", ItemID: "APP-T-0001", Runner: string(RunnerCodexAppServer), Lane: runLaneExecute, LeaseState: string(LeaseStateRunning), AttemptOutcome: string(AttemptOutcomeNone), AttemptCount: 1, LastHeartbeatAt: recent, StartedAt: started, UpdatedAt: recent, LastEventAt: recent}); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.store.UpsertRun(RunStatus{ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: string(RunnerCodexAppServer), Lane: runLaneExecute, LeaseState: string(LeaseStateUnclaimed), AttemptOutcome: string(AttemptOutcomeSucceeded), ActiveAttemptID: "attempt-done", AttemptCount: 1, WorkspacePath: "/tmp/app", StartedAt: started, UpdatedAt: released, LastEventAt: released, Terminal: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.store.SaveAttempt(RunAttempt{AttemptID: "attempt-done", ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: string(RunnerCodexAppServer), Lane: runLaneExecute, Outcome: string(AttemptOutcomeSucceeded), StartedAt: started, FinishedAt: released}); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.store.SaveTurn(RunTurn{AttemptID: "attempt-done", ProjectID: "app", RecordID: "APP-T-0001", TurnID: "turn-1", TurnIndex: 0, Status: "completed", InputTokens: 120, OutputTokens: 34, TotalTokens: 154, StartedAt: started, CompletedAt: released, LastEventAt: released}); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.store.SaveTurn(RunTurn{AttemptID: "attempt-done", ProjectID: "app", RecordID: "APP-T-0001", TurnID: "turn-2", TurnIndex: 1, Status: "completed", InputTokens: 30, OutputTokens: 6, TotalTokens: 36, StartedAt: started, CompletedAt: released, LastEventAt: released}); err != nil {
+		t.Fatal(err)
+	}
+
+	var detail serveRunDetail
+	serveDecode(t, server, "/api/runs/APP-T-0001", &detail)
+	assertEqual(t, "APP-T-0001", detail.TaskID, "detail task id")
+	assertEqual(t, "succeeded", detail.Outcome, "completed detail outcome")
+	assertEqual(t, "unclaimed", detail.LeaseState, "completed detail lease")
+	assertEqual(t, 886, detail.ElapsedSec, "completed detail elapsed freezes at release")
+	assertEqual(t, 914, detail.SinceLastEventSec, "detail did not use newer child liveness")
+	assertEqual(t, 150, detail.Tokens.Input, "detail input tokens from recorded turns")
+	assertEqual(t, 40, detail.Tokens.Output, "detail output tokens from recorded turns")
+	assertEqual(t, 1, len(detail.Attempts), "detail attempts")
+	assertEqual(t, "succeeded", detail.Attempts[0].Outcome, "attempt outcome")
+	assertEqual(t, 886, detail.Attempts[0].DurationSec, "attempt elapsed freezes at finish")
+	assertEqual(t, 150, detail.Attempts[0].Tokens.Input, "attempt input tokens")
+	assertEqual(t, 40, detail.Attempts[0].Tokens.Output, "attempt output tokens")
+}
+
 func newServeFixture(t *testing.T) *serveServer {
 	t.Helper()
 	root := t.TempDir()

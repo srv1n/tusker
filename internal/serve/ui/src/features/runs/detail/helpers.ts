@@ -23,6 +23,10 @@ export function runStats(run: RunDetail): RunStat[] {
   ];
 }
 
+export function isLiveHeaderRun(run: Pick<RunDetail, "leaseState" | "outcome">): boolean {
+  return run.leaseState === "held" && (run.outcome === "running" || run.outcome === "stale");
+}
+
 /** Compact "1m 04s · 21.1k→1.5k tok" attempt meta line. */
 export function attemptMeta(a: Attempt): string {
   return `${duration(a.durationSec)} · ${compactNumber(a.tokens.input)}→${compactNumber(
