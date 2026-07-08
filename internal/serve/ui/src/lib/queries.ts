@@ -6,7 +6,7 @@
   degraded fallback while the stream is disconnected.
 */
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { liveRefetchInterval } from "@/lib/stream";
 
@@ -65,3 +65,21 @@ export const useDocList = (projectId?: string) =>
 
 export const useDoc = (path: string) =>
   useQuery({ queryKey: qk.doc(path), queryFn: () => api.doc(path), enabled: path.length > 0, refetchInterval: liveRefetchInterval });
+
+/**
+ * Redrive (Retry) a run. The mutation resolves with the API's result — a
+ * requeue or a refusal reason — which the caller surfaces; on any resolution we
+ * refresh the run, the runs list, and the tasks (canonical status may change),
+ * so the badge and board never lag behind the action.
+ */
+export const useRedrive = (taskId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.redrive(taskId),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.run(taskId) });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+      void qc.invalidateQueries({ queryKey: ["tasks"] });
+    },
+  });
+};

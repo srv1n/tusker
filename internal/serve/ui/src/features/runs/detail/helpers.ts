@@ -4,7 +4,7 @@
   today, it is marked `// TODO(api)` at the call site.
 */
 
-import type { Attempt, RunDetail, RunEvent } from "@/types/domain";
+import type { Attempt, RunDetail, RunEvent, TaskStatus } from "@/types/domain";
 import { compactNumber, duration } from "@/lib/time";
 
 /** A derived stat cell for the run summary grid (design §07 — four headline numbers). */
@@ -49,9 +49,34 @@ export function eventToneClasses(level: RunEvent["level"]): { kind: string; text
   }
 }
 
-/** ISO → "18:22:05" wall clock (UTC, to stay consistent with the frozen mock timeline). */
+/**
+ * ISO → "18:22:05" wall clock (UTC, to stay consistent with the frozen mock
+ * timeline). Defensive on purpose: a missing or unparseable timestamp renders
+ * as "--:--:--", never "NaN:NaN:NaN" (SRV-T-0015 A1). The event tail should
+ * degrade to a placeholder, not shout NaN at the operator, if the API ever
+ * emits a timestamp shape this can't parse.
+ */
 export function clockTime(iso: string): string {
   const d = new Date(iso);
+  if (!iso || Number.isNaN(d.getTime())) return "--:--:--";
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+
+/**
+ * When redrive (Retry) is meaningless for the task's canonical status, return
+ * the operator-facing reason to show inline and disable the control; otherwise
+ * null (redrive is allowed). A review/done task has no execution to redrive —
+ * clicking Retry there previously requeued into a silent daemon retire behind a
+ * stale "Ready" badge (SRV-T-0016 A3). Point the operator at the real lane.
+ */
+export function redriveDisabledReason(status: TaskStatus | undefined): string | null {
+  switch (status) {
+    case "review":
+      return "Task is in review — resolve it in the review/land lane; there is no run to redrive.";
+    case "done":
+      return "Task is done — nothing to redrive.";
+    default:
+      return null;
+  }
 }

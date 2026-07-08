@@ -2,7 +2,7 @@ import type { Attempt } from "@/types/domain";
 import { cn } from "@/lib/cn";
 import { Mono } from "@/components/ui/primitives";
 import { OutcomeChip } from "@/components/ui/chips";
-import { outcomeTone, tone } from "@/components/ui/tone";
+import { outcomeToneOf, tone } from "@/components/ui/tone";
 import { relativeTime } from "@/lib/time";
 import { attemptMeta } from "@/features/runs/detail/helpers";
 
@@ -19,7 +19,7 @@ export function AttemptTimeline({ attempts }: { attempts: Attempt[] }) {
     <ol className="flex flex-col">
       {ordered.map((a, i) => {
         const isLast = i === ordered.length - 1;
-        const t = tone[outcomeTone[a.outcome]];
+        const t = tone[outcomeToneOf(a.outcome)];
         return (
           <li key={a.n} className="flex gap-3 pb-[18px] last:pb-0">
             <div className="flex flex-none flex-col items-center">

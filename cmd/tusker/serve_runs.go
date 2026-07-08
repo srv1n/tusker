@@ -263,12 +263,113 @@ func serveRunEvents(run RunStatus, attempts []RunAttempt) []serveRunEvent {
 		if json.Unmarshal([]byte(line), &payload) != nil {
 			continue
 		}
-		out = append(out, serveRunEvent{
-			TS:    firstNonEmpty(toString(payload["ts"]), toString(payload["timestamp"]), toString(payload["time"])),
-			Kind:  firstNonEmpty(toString(payload["kind"]), toString(payload["event"]), "event"),
-			Text:  firstNonEmpty(toString(payload["text"]), toString(payload["message"]), toString(payload["summary"])),
-			Level: firstNonEmpty(toString(payload["level"]), toString(payload["severity"])),
-		})
+		out = append(out, serveRunEventFromPayload(payload))
 	}
 	return out
+}
+
+// serveRunEventFromPayload flattens one JSONL event line into the shape the run
+// event tail reads. The runtime EventLog (see event_log.go) writes the
+// timestamp under the top-level "at" key (RFC3339) and nests the human-readable
+// fields under a "payload" object. The UI parser only knew "ts"/"timestamp",
+// so every row rendered NaN:NaN:NaN — read "at" first (the field the API
+// actually emits) and dig into the nested payload for text/level.
+func serveRunEventFromPayload(payload map[string]any) serveRunEvent {
+	nested, _ := payload["payload"].(map[string]any)
+	field := func(keys ...string) string {
+		for _, k := range keys {
+			if v := toString(payload[k]); v != "" {
+				return v
+			}
+			if nested != nil {
+				if v := toString(nested[k]); v != "" {
+					return v
+				}
+			}
+		}
+		return ""
+	}
+	return serveRunEvent{
+		TS:    field("at", "ts", "timestamp", "time"),
+		Kind:  firstNonEmpty(field("kind", "event"), "event"),
+		Text:  field("text", "message", "summary", "detail"),
+		Level: field("level", "severity"),
+	}
+}
+
+// serveRedriveResult is the response body for POST /api/runs/:taskId/redrive.
+// It always carries a human-readable reason so the UI can surface both a
+// successful requeue and a refusal — a redrive must never be silent.
+type serveRedriveResult struct {
+	OK              bool   `json:"ok"`
+	Refused         bool   `json:"refused"`
+	Requeued        bool   `json:"requeued"`
+	Reason          string `json:"reason"`
+	TaskID          string `json:"taskId"`
+	CanonicalStatus string `json:"canonicalStatus"`
+	LeaseState      string `json:"leaseState"`
+}
+
+// serveRedriveRefusal decides whether a redrive is meaningless for the task's
+// canonical (frontmatter) status. Redrive resets the attempt window and
+// requeues so the daemon spawns a fresh attempt; when the task is already in
+// review or done there is no execution to redrive — the daemon would refuse and
+// (the observed bug) silently retire the run behind a stale badge. We surface
+// that refusal synchronously instead of requeuing into a silent retire.
+func serveRedriveRefusal(rawStatus string, run RunStatus) (bool, string) {
+	switch strings.ToLower(strings.TrimSpace(rawStatus)) {
+	case "review":
+		return true, "task is in review — no execution to redrive; use the review/land lane, not retry"
+	case "done", "closed":
+		return true, "task is done — no execution to redrive; nothing to retry"
+	}
+	if run.ProcessPID > 0 && processIdentityMatches(run) {
+		return true, "run is still executing; interrupt it before redrive"
+	}
+	return false, ""
+}
+
+// serveRedriveRun mirrors the state transition of `tusker redrive` (redriveCmd)
+// using the shared runtime store: it resets the budget/attempt window and
+// requeues the run so the daemon spawns a fresh codex-exec attempt. The
+// attempt-window rules themselves are owned by RUN-T-0028; keep this in sync
+// with redriveCmd.
+func serveRedriveRun(store *RuntimeStore, run *RunStatus, actor, reason string, now time.Time) error {
+	if _, err := store.RecordBudgetRedrive(run.ProjectID, run.RecordID, actor, reason, now); err != nil {
+		return err
+	}
+	previousAttemptID := run.ActiveAttemptID
+	previousSessionRef := run.SessionRef
+	previousWorkspacePath := run.WorkspacePath
+	run.LeaseState = string(LeaseStateRetryQueued)
+	run.AttemptOutcome = string(AttemptOutcomeNone)
+	run.AttemptCount = 0
+	run.NextRetryAt = now.Format(time.RFC3339)
+	run.LastError = "redriven by " + actor + ": " + reason
+	run.LastEventAt = now.Format(time.RFC3339)
+	run.UpdatedAt = now.Format(time.RFC3339)
+	run.Terminal = false
+	clearActiveExecution(run)
+	clearRunCloudRefs(run)
+	if err := store.UpsertRun(*run); err != nil {
+		return err
+	}
+	_, err := store.SaveSupervisorDecision(SupervisorDecision{
+		ProjectID:        run.ProjectID,
+		RecordID:         run.RecordID,
+		ItemID:           run.ItemID,
+		Runner:           run.Runner,
+		WorkRevision:     run.WorkRevision,
+		AttemptID:        previousAttemptID,
+		ParentAttemptID:  previousAttemptID,
+		SessionRef:       previousSessionRef,
+		ParentSessionRef: previousSessionRef,
+		Kind:             string(SupervisorDecisionRedrive),
+		Reason:           reason,
+		WorkspacePath:    previousWorkspacePath,
+		LeaseState:       run.LeaseState,
+		ContextSignal:    "operator_redrive_serve",
+		CreatedAt:        now.Format(time.RFC3339),
+	})
+	return err
 }

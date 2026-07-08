@@ -42,7 +42,15 @@ export type GateKind =
 /** Run liveness derived from time-since-last-event (packet §4.2). */
 export type Liveness = "fresh" | "stale" | "dead";
 
-export type RunOutcome =
+/**
+ * The run outcomes we style with a known hue/label. The trailing `(string & {})`
+ * makes this an OPEN enum: the API may add outcomes (e.g. a review-complete /
+ * awaiting-land state) that must still render — as a humanized label with a
+ * neutral tone — rather than break a closed switch. Keep every consumer routing
+ * through the tone helpers (`outcomeLabelOf` / `outcomeToneOf`) so a new value
+ * never renders blank or throws.
+ */
+export type KnownRunOutcome =
   | "idle"
   | "running"
   | "stale"
@@ -54,6 +62,22 @@ export type RunOutcome =
   | "retry-queued"
   | "parked-no-progress"
   | "parked-budget";
+
+export type RunOutcome = KnownRunOutcome | (string & {});
+
+/** Lease state, likewise an open enum so new daemon lease states still display. */
+export type LeaseState = "held" | "released" | "expired" | "unclaimed" | (string & {});
+
+/** Result of POST /api/runs/:taskId/redrive — a redrive must never be silent. */
+export interface RedriveResult {
+  ok: boolean;
+  refused?: boolean;
+  requeued?: boolean;
+  reason: string;
+  taskId?: string;
+  canonicalStatus?: string;
+  leaseState?: string;
+}
 
 export type DocKind = "spec" | "decision" | "knowledge" | "task" | "epic" | "dashboard";
 
@@ -141,7 +165,7 @@ export interface RunSummary {
   runner: Runner;
   model: string;
   lane: Lane;
-  leaseState: "held" | "released" | "expired" | "unclaimed";
+  leaseState: LeaseState;
   outcome: RunOutcome;
   /** Elapsed wall-clock seconds for the active/last attempt. */
   elapsedSec: number;

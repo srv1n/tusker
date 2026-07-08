@@ -93,7 +93,7 @@ export function ProjectRuns() {
             const { active, recent } = partitionRuns(runs);
             return (
               <>
-                <SectionLabel className="mb-2">Active</SectionLabel>
+                <SectionLabel className="mb-2">Active · live</SectionLabel>
                 <div className="mb-6">
                   {active.length === 0 ? (
                     <EmptyBoard>No active runs.</EmptyBoard>
@@ -107,11 +107,12 @@ export function ProjectRuns() {
                   )}
                 </div>
 
-                <SectionLabel className="mb-2">Recent</SectionLabel>
+                <SectionLabel className="mb-2">Recent · settled</SectionLabel>
                 {recent.length === 0 ? (
                   <EmptyBoard>No finished runs yet.</EmptyBoard>
                 ) : (
                   <Board>
+                    <RunsTableHeader />
                     {recent.map((run) => (
                       <RecentRunRow key={run.taskId} run={run} />
                     ))}
