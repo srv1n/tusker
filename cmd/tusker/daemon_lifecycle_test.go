@@ -1378,3 +1378,254 @@ func deadPIDForTest() int {
 	}
 	return 999999
 }
+
+// writeWorktreeReviewFlipForTest builds a worktree-local Tusker vault at the same
+// repo-relative location the daemon resolves for a runner workspace, and flips
+// the task to review there — mimicking a runner that ran
+// `tusker finish --request-review` in its worktree while the canonical vault
+// still reads ready (RUN-T-0042). Returns the worktree vault path.
+func writeWorktreeReviewFlipForTest(t *testing.T, canonicalVault, workspace, taskID string) string {
+	t.Helper()
+	worktreeVault := runnerWorktreeVaultPath(workspace, canonicalVault)
+	if err := ensureDir(filepath.Join(worktreeVault, "work", "tasks")); err != nil {
+		t.Fatal(err)
+	}
+	workflow, err := readText(workflowPath(canonicalVault))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(workflowPath(worktreeVault), workflow); err != nil {
+		t.Fatal(err)
+	}
+	data, body, err := parseFrontmatterMustRead(filepath.Join(canonicalVault, "work", "tasks", taskID+".md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["status"] = "review"
+	data["readiness"] = "waiting_on_review"
+	data["next_owner"] = "reviewer"
+	data["proof_status"] = "satisfied"
+	data["review_requested_at"] = "2026-07-08T00:00:00Z"
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(worktreeVault, "work", "tasks", taskID+".md"), content); err != nil {
+		t.Fatal(err)
+	}
+	return worktreeVault
+}
+
+func writeReviewCompleteWorkflowForTest(t *testing.T, vault string, maxContinuation int) {
+	t.Helper()
+	wf := defaultWorkflow()
+	wf.Runtime.MaxContinuationRetries = maxContinuation
+	raw, err := yaml.Marshal(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(workflowPath(vault), "---\n"+strings.TrimSpace(string(raw))+"\n---\n\n## Routing\n\nTest.\n\n## Prompt\n\nTest prompt.\n\n## Retry policy\n\nRetry transient failures.\n\n## Human override policy\n\nHumans may override.\n"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestReviewCompleteExitTerminal covers RUN-T-0042 A1: a runner that exits clean
+// after flipping its worktree tracker to review while canonical is still ready
+// scores a terminal review-complete outcome (not early_exit) and queues no
+// continuation, even sitting at/above the continuation cap.
+func TestReviewCompleteExitTerminal(t *testing.T) {
+	vault := automationTestVault(t)
+	disableReviewerForTest(t, vault)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review complete", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	writeReviewCompleteWorkflowForTest(t, vault, 1)
+	project := registerAutomationTestProject(t, vault)
+
+	workspace := t.TempDir()
+	writeWorktreeReviewFlipForTest(t, vault, workspace, "APP-T-0001")
+
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusPath := filepath.Join(t.TempDir(), "runner.status.json")
+	if err := writeRunnerStatusFile(statusPath, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(RunStatus{
+		ProjectID:       project.ProjectID,
+		RecordID:        "APP-T-0001",
+		ItemID:          "APP-T-0001",
+		Runner:          string(RunnerCodexExec),
+		Lane:            runLaneExecute,
+		LeaseState:      string(LeaseStateRunning),
+		AttemptOutcome:  string(AttemptOutcomeNone),
+		ActiveAttemptID: "attempt-review",
+		SessionRef:      "session-review",
+		WorkspacePath:   workspace,
+		StatusPath:      statusPath,
+		AttemptCount:    2,
+		UpdatedAt:       "2026-07-06T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+	assertEqual(t, string(LeaseStateReleased), run.LeaseState, "review-complete lease released")
+	assertEqual(t, string(AttemptOutcomeWaitingForReview), run.AttemptOutcome, "review-complete outcome")
+	assertEqual(t, "", run.NextRetryAt, "review-complete no retry")
+	assertEqual(t, false, run.Terminal, "review-complete not terminal")
+	if strings.Contains(run.LastError, runnerEarlyExitActiveTrackerReason) {
+		t.Fatalf("review-complete run misclassified as early exit: %#v", run)
+	}
+	if !strings.Contains(run.LastError, "awaiting land") {
+		t.Fatalf("expected awaiting-land reason, got %#v", run)
+	}
+
+	attempts, err := daemon.store.ListAttemptsForRun(project.ProjectID, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("expected one attempt, got %#v", attempts)
+	}
+	assertEqual(t, string(AttemptOutcomeWaitingForReview), attempts[0].Outcome, "review-complete attempt outcome")
+	assertEqual(t, 0, attempts[0].ExitCode, "review-complete attempt exit code")
+	if attempts[0].Outcome == string(AttemptOutcomeEarlyExit) {
+		t.Fatalf("review-complete attempt scored early_exit: %#v", attempts[0])
+	}
+
+	decisions, err := daemon.store.ListSupervisorDecisionsForRun(project.ProjectID, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, decision := range decisions {
+		if decision.Kind == string(SupervisorDecisionContinueAttempt) || decision.Kind == string(SupervisorDecisionContinueThread) {
+			t.Fatalf("review-complete queued a continuation: %#v", decisions)
+		}
+	}
+	if len(decisions) == 0 || decisions[len(decisions)-1].Kind != string(SupervisorDecisionStopForHuman) {
+		t.Fatalf("expected review-complete stop-for-human decision, got %#v", decisions)
+	}
+}
+
+// TestPendingReviewNotRedispatched covers RUN-T-0042 A2: a task whose worktree
+// holds a pending, unlanded review flip releases its lease terminally and is not
+// re-dispatched across subsequent polls, so the row never churns to the park
+// guard while canonical stays ready.
+func TestPendingReviewNotRedispatched(t *testing.T) {
+	vault := automationTestVault(t)
+	disableReviewerForTest(t, vault)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Pending review", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	writeReviewCompleteWorkflowForTest(t, vault, 1)
+	project := registerAutomationTestProject(t, vault)
+
+	workspace := t.TempDir()
+	writeWorktreeReviewFlipForTest(t, vault, workspace, "APP-T-0001")
+
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusPath := filepath.Join(t.TempDir(), "runner.status.json")
+	if err := writeRunnerStatusFile(statusPath, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(RunStatus{
+		ProjectID:       project.ProjectID,
+		RecordID:        "APP-T-0001",
+		ItemID:          "APP-T-0001",
+		Runner:          string(RunnerCodexExec),
+		Lane:            runLaneExecute,
+		LeaseState:      string(LeaseStateRunning),
+		AttemptOutcome:  string(AttemptOutcomeNone),
+		ActiveAttemptID: "attempt-pending",
+		SessionRef:      "session-pending",
+		WorkspacePath:   workspace,
+		StatusPath:      statusPath,
+		AttemptCount:    1,
+		UpdatedAt:       "2026-07-06T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+
+	for i := 0; i < 3; i++ {
+		if err := daemon.PollOnce(context.Background()); err != nil {
+			t.Fatalf("poll %d: %v", i, err)
+		}
+		run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+		assertEqual(t, string(LeaseStateReleased), run.LeaseState, "pending-review lease stays released")
+		assertEqual(t, string(AttemptOutcomeWaitingForReview), run.AttemptOutcome, "pending-review outcome stays terminal")
+		if run.LeaseState == string(LeaseStateParkedNoProgress) || run.LeaseState == string(LeaseStateParkedBudget) {
+			t.Fatalf("pending-review row churned to park guard on poll %d: %#v", i, run)
+		}
+		assertEqual(t, 1, run.AttemptCount, "pending-review attempt count unchanged")
+	}
+
+	attempts, err := daemon.store.ListAttemptsForRun(project.ProjectID, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("expected exactly one attempt with no re-dispatch, got %#v", attempts)
+	}
+	decisions, err := daemon.store.ListSupervisorDecisionsForRun(project.ProjectID, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, decision := range decisions {
+		switch decision.Kind {
+		case string(SupervisorDecisionContinueAttempt), string(SupervisorDecisionContinueThread), string(SupervisorDecisionResumeSession), string(SupervisorDecisionRedrive):
+			t.Fatalf("pending-review row was re-dispatched/continued: %#v", decisions)
+		}
+	}
+}
+
+// TestOutcomeTextDistinguishesAwaitingLand covers RUN-T-0042 A3: the failure
+// classifier separates a review-complete-awaiting-land exit from a genuine
+// no-progress early_exit so the UI and post-mortems never read "finished" work
+// as "failed".
+func TestOutcomeTextDistinguishesAwaitingLand(t *testing.T) {
+	reviewRun := RunStatus{
+		AttemptOutcome: string(AttemptOutcomeWaitingForReview),
+		LastError:      runnerReviewCompleteAwaitingLandReason + " (worktree tracker=review)",
+	}
+	earlyRun := RunStatus{
+		AttemptOutcome: string(AttemptOutcomeEarlyExit),
+		LastError:      runnerEarlyExitActiveTrackerReason,
+	}
+
+	reviewClass := runtimeFailureClass(reviewRun, nil, nil)
+	earlyClass := runtimeFailureClass(earlyRun, nil, nil)
+
+	assertEqual(t, "review_complete", reviewClass, "review-complete failure class")
+	assertEqual(t, "runner_early_exit", earlyClass, "early-exit failure class")
+	if reviewClass == earlyClass {
+		t.Fatalf("review-complete and early_exit share a failure class: %q", reviewClass)
+	}
+	if reviewRun.LastError == earlyRun.LastError {
+		t.Fatalf("review-complete and early_exit share reason text: %q", reviewRun.LastError)
+	}
+	if strings.Contains(reviewRun.LastError, "early exit") {
+		t.Fatalf("review-complete reason still reads as early exit: %q", reviewRun.LastError)
+	}
+}

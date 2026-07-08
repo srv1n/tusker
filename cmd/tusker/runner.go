@@ -45,6 +45,7 @@ const (
 	AttemptOutcomeDispatchDeclined AttemptOutcome = "dispatch_declined"
 	AttemptOutcomeTurnCapExhausted AttemptOutcome = "turn_cap_exhausted"
 	AttemptOutcomeWaitingForHuman  AttemptOutcome = "waiting_for_human"
+	AttemptOutcomeWaitingForReview AttemptOutcome = "waiting_for_review"
 	AttemptOutcomeBudgetExceeded   AttemptOutcome = "budget_exceeded"
 )
 
