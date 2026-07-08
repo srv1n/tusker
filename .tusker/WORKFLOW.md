@@ -101,6 +101,8 @@ Dependency edges may be explicit `TASK-ID:hard` or `TASK-ID:soft`; plain `TASK-I
 | Turn cap exhausted | Codex exec emits more than `max_turns` `turn.started` events in one attempt. | Tusker kills the process and records attempt outcome `turn_cap_exhausted`. | Distinct from no-progress early exit. |
 | Early exit | Runner exits, including exit 0, while tracker state is still active and the per-attempt turn cap was not exhausted. | Attempt is `early_exit`; run queues continuation or parks at `max_continuation_retries`. | Counts against the no-progress cap. |
 
+The live heartbeat watchdog distinguishes true idle silence from Codex exec in-flight command silence. If the raw JSONL stream shows a command execution started and not completed, the idle heartbeat window is suspended and `codex.turn_timeout_ms` is the command cap; if that cap fires, the run error says `runner in-flight command exceeded cap`. With no in-flight command, the existing idle heartbeat window and retry/park behavior stay unchanged, and the run error says `runner heartbeat dead (idle)`.
+
 The same tracker-aware classifier applies on every outcome write path, including daemon status observation and wrapper direct-store recording when a wrapper outlives the daemon.
 
 ## Waves
@@ -148,7 +150,7 @@ If `reviewer.enabled` is true, review tasks may dispatch to `reviewer.runner`. T
 
 Retry only transient infrastructure failures. Human-directed rework creates a new ready/rework task revision.
 
-Codex exec owns the inner agent loop. Tusker spawns one `codex exec --json` process per attempt, records JSONL `thread.started` and `turn.*` events, enforces budget and `max_turns` as process governors, and uses `codex exec resume <session-id>` only when creating a later continuation attempt. App-server is not part of the normal dispatch path.
+Codex exec owns the inner agent loop. Tusker spawns one `codex exec --json` process per attempt, records JSONL `thread.started` and `turn.*` events, treats unmatched command-execution JSONL as live in-flight work until `codex.turn_timeout_ms`, enforces budget and `max_turns` as process governors, and uses `codex exec resume <session-id>` only when creating a later continuation attempt. App-server is not part of the normal dispatch path.
 
 `tusker redrive <TASK-ID>` is the operator reset for parked or terminal runtime rows. It starts a fresh counting window by resetting `runs.attempt_count` to `0`, clearing cooldown/active execution state, resetting the budget window, and queueing the run for the daemon while preserving prior attempts, turns, sessions, and event history. Each redrive records who/why in runtime audit state; if the task loops again, it must hit the normal caps again and require another explicit redrive.
 

@@ -249,6 +249,68 @@ func TestCodexExecIngestReplayKeepsCompletedTurns(t *testing.T) {
 	assertEqual(t, 2, strings.Count(eventText, `"kind":"turn_completed"`), "turn_completed event count after replay")
 }
 
+func TestCodexExecInFlightSilenceUsesCommandCap(t *testing.T) {
+	started := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	wf := defaultWorkflow()
+	wf.Codex.TurnTimeoutMS = int((10 * time.Minute) / time.Millisecond)
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "command execution item",
+			raw:  `{"method":"item/started","timestamp":"` + started.Format(time.RFC3339) + `","params":{"item":{"id":"cmd-1","type":"commandExecution","command":"go test ./..."}}}` + "\n",
+		},
+		{
+			name: "response function call",
+			raw:  `{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"go test ./...\"}","call_id":"call-1"}}` + "\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rawLogPath := filepath.Join(t.TempDir(), "codex.raw.log")
+			if err := writeText(rawLogPath, tc.raw); err != nil {
+				t.Fatal(err)
+			}
+			run := codexExecHeartbeatRunForTest(rawLogPath, started)
+			stalled, reason := runStallReason(run, wf, started.Add(daemonHeartbeatDeadThreshold+time.Second))
+			assertEqual(t, false, stalled, "in-flight silence stalled")
+			assertEqual(t, "", reason, "in-flight silence reason")
+		})
+	}
+}
+
+func TestCodexExecInFlightCommandCap(t *testing.T) {
+	started := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	rawLogPath := filepath.Join(t.TempDir(), "codex.raw.log")
+	if err := writeText(rawLogPath, `{"method":"item/started","timestamp":"`+started.Format(time.RFC3339)+`","params":{"item":{"id":"cmd-1","type":"commandExecution","command":"go test ./..."}}}`+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	wf := defaultWorkflow()
+	wf.Codex.TurnTimeoutMS = int((3 * time.Minute) / time.Millisecond)
+	stalled, reason := runStallReason(codexExecHeartbeatRunForTest(rawLogPath, started), wf, started.Add(3*time.Minute+time.Second))
+	assertEqual(t, true, stalled, "in-flight cap stalled")
+	if !strings.Contains(reason, "runner in-flight command exceeded cap") || !strings.Contains(reason, "command started 2026-07-08T12:00:00Z") {
+		t.Fatalf("expected in-flight cap reason, got %q", reason)
+	}
+}
+
+func TestCodexExecIdleHeartbeatReason(t *testing.T) {
+	started := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	rawLogPath := filepath.Join(t.TempDir(), "codex.raw.log")
+	if err := writeText(rawLogPath, strings.Join([]string{
+		`{"method":"item/started","timestamp":"` + started.Format(time.RFC3339) + `","params":{"item":{"id":"cmd-1","type":"commandExecution","command":"go test ./..."}}}`,
+		`{"method":"item/completed","timestamp":"` + started.Add(time.Second).Format(time.RFC3339) + `","params":{"item":{"id":"cmd-1","type":"commandExecution","status":"completed","exitCode":0}}}`,
+		"",
+	}, "\n")); err != nil {
+		t.Fatal(err)
+	}
+	stalled, reason := runStallReason(codexExecHeartbeatRunForTest(rawLogPath, started), defaultWorkflow(), started.Add(daemonHeartbeatDeadThreshold+time.Second))
+	assertEqual(t, true, stalled, "idle silence stalled")
+	if !strings.Contains(reason, "runner heartbeat dead (idle)") || strings.Contains(reason, "in-flight") {
+		t.Fatalf("expected idle heartbeat reason, got %q", reason)
+	}
+}
+
 func TestCodexExecCompletionRecordsSucceeded(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
@@ -323,6 +385,16 @@ func TestCodexExecCompletionRecordsSucceeded(t *testing.T) {
 	}
 	assertEqual(t, string(AttemptOutcomeSucceeded), attempts[0].Outcome, "completion attempt outcome")
 	assertEqual(t, 2, attempts[0].TurnsUsed, "completion turns used")
+}
+
+func codexExecHeartbeatRunForTest(rawLogPath string, at time.Time) RunStatus {
+	return RunStatus{
+		Runner:          string(RunnerCodexExec),
+		RawLogPath:      rawLogPath,
+		FirstEventAt:    at.Add(-time.Second).Format(time.RFC3339),
+		LastEventAt:     at.Format(time.RFC3339),
+		LastHeartbeatAt: at.Format(time.RFC3339),
+	}
 }
 
 func codexExecGovernorFixture(t *testing.T) (*RuntimeStore, *Daemon, RunStatus, RegisteredProject) {

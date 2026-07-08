@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -12,6 +13,11 @@ type codexExecTurnSnapshot struct {
 	inputTokens  int
 	outputTokens int
 	totalTokens  int
+}
+
+type codexExecCommandSnapshot struct {
+	id        string
+	startedAt time.Time
 }
 
 func (d *Daemon) ingestCodexExecRawLog(run RunStatus) bool {
@@ -259,8 +265,200 @@ func codexExecTurnStatus(value any) string {
 	return "completed"
 }
 
+func codexExecInFlightCommandStartedAt(run RunStatus, fallback time.Time) (time.Time, bool) {
+	if RunnerName(strings.TrimSpace(run.Runner)) != RunnerCodexExec || strings.TrimSpace(run.RawLogPath) == "" {
+		return time.Time{}, false
+	}
+	text, err := readText(run.RawLogPath)
+	if err != nil || strings.TrimSpace(text) == "" {
+		return time.Time{}, false
+	}
+	byID := map[string]codexExecCommandSnapshot{}
+	var anonymous []codexExecCommandSnapshot
+	sequence := 0
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var value any
+		if json.Unmarshal([]byte(line), &value) != nil {
+			continue
+		}
+		state, id, at, ok := codexExecRawCommandEvent(value)
+		if !ok {
+			continue
+		}
+		if at.IsZero() {
+			at = fallback
+		}
+		switch state {
+		case "started":
+			if id == "" {
+				sequence++
+				anonymous = append(anonymous, codexExecCommandSnapshot{id: "anonymous-" + strconv.Itoa(sequence), startedAt: at})
+				continue
+			}
+			byID[id] = codexExecCommandSnapshot{id: id, startedAt: at}
+		case "completed":
+			if id != "" {
+				delete(byID, id)
+				continue
+			}
+			if len(anonymous) > 0 {
+				anonymous = anonymous[:len(anonymous)-1]
+			}
+		}
+	}
+	var oldest time.Time
+	found := false
+	for _, command := range byID {
+		if command.startedAt.IsZero() {
+			continue
+		}
+		if !found || command.startedAt.Before(oldest) {
+			oldest = command.startedAt
+			found = true
+		}
+	}
+	for _, command := range anonymous {
+		if command.startedAt.IsZero() {
+			continue
+		}
+		if !found || command.startedAt.Before(oldest) {
+			oldest = command.startedAt
+			found = true
+		}
+	}
+	return oldest, found
+}
+
+func codexExecRawCommandEvent(value any) (state, id string, at time.Time, ok bool) {
+	payload, ok := value.(map[string]any)
+	if !ok {
+		return "", "", time.Time{}, false
+	}
+	if when, found := codexExecRawEventTimestamp(payload); found {
+		at = when
+	}
+	if response := codexExecResponseItemPayload(payload); response != nil {
+		responseType := normalizeCodexExecEventKind(stringValue(response["type"]))
+		callID := firstNonEmpty(strings.TrimSpace(stringValue(response["call_id"])), strings.TrimSpace(stringValue(response["callId"])))
+		switch responseType {
+		case "functioncall":
+			if codexExecFunctionCallIsCommand(response) {
+				return "started", callID, at, true
+			}
+		case "functioncalloutput":
+			return "completed", callID, at, true
+		}
+	}
+	item := codexExecCommandItem(payload)
+	if item == nil {
+		return "", "", time.Time{}, false
+	}
+	itemID := codexExecCommandItemID(payload, item)
+	eventKind := normalizeCodexExecEventKind(firstNonEmpty(stringValue(payload["type"]), stringValue(payload["event"]), stringValue(payload["method"])))
+	status := normalizeCodexExecEventKind(firstNonEmpty(stringValue(item["status"]), stringValue(payload["status"])))
+	if codexExecCommandEventStarted(eventKind, status) {
+		return "started", itemID, at, true
+	}
+	if codexExecCommandEventCompleted(eventKind, status) {
+		return "completed", itemID, at, true
+	}
+	return "", "", time.Time{}, false
+}
+
+func codexExecRawEventTimestamp(payload map[string]any) (time.Time, bool) {
+	if parsed, ok := parseEventTimestamp(codexExecEventTime(payload)); ok {
+		return parsed, true
+	}
+	for _, key := range []string{"payload", "params"} {
+		if nested, ok := payload[key].(map[string]any); ok {
+			if parsed, ok := parseEventTimestamp(codexExecEventTime(nested)); ok {
+				return parsed, true
+			}
+		}
+	}
+	return time.Time{}, false
+}
+
+func codexExecResponseItemPayload(payload map[string]any) map[string]any {
+	if normalizeCodexExecEventKind(stringValue(payload["type"])) == "responseitem" {
+		if nested, ok := payload["payload"].(map[string]any); ok {
+			return nested
+		}
+		return payload
+	}
+	responseType := normalizeCodexExecEventKind(stringValue(payload["type"]))
+	if responseType == "functioncall" || responseType == "functioncalloutput" {
+		return payload
+	}
+	return nil
+}
+
+func codexExecFunctionCallIsCommand(response map[string]any) bool {
+	name := normalizeCodexExecEventKind(stringValue(response["name"]))
+	return name == "execcommand" || name == "functionsexeccommand" || strings.Contains(name, "execcommand")
+}
+
+func codexExecCommandItem(payload map[string]any) map[string]any {
+	for _, path := range [][]string{
+		{"params", "item"},
+		{"payload", "item"},
+		{"item"},
+	} {
+		if item := codexExecNestedMap(payload, path...); item != nil && codexExecItemIsCommandExecution(item) {
+			return item
+		}
+	}
+	if codexExecItemIsCommandExecution(payload) {
+		return payload
+	}
+	return nil
+}
+
+func codexExecNestedMap(payload map[string]any, path ...string) map[string]any {
+	current := payload
+	for _, key := range path {
+		next, ok := current[key].(map[string]any)
+		if !ok {
+			return nil
+		}
+		current = next
+	}
+	return current
+}
+
+func codexExecItemIsCommandExecution(item map[string]any) bool {
+	itemType := normalizeCodexExecEventKind(stringValue(item["type"]))
+	if itemType == "commandexecution" {
+		return true
+	}
+	return strings.TrimSpace(stringValue(item["command"])) != "" || strings.TrimSpace(stringValue(item["cmd"])) != ""
+}
+
+func codexExecCommandItemID(payload, item map[string]any) string {
+	for _, current := range []map[string]any{item, payload} {
+		for _, key := range []string{"id", "item_id", "itemId", "call_id", "callId"} {
+			if value := strings.TrimSpace(stringValue(current[key])); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func codexExecCommandEventStarted(eventKind, status string) bool {
+	return strings.Contains(eventKind, "started") || status == "inprogress" || status == "running" || status == "started"
+}
+
+func codexExecCommandEventCompleted(eventKind, status string) bool {
+	return strings.Contains(eventKind, "completed") || status == "completed" || status == "failed" || status == "cancelled" || status == "canceled"
+}
+
 func codexExecEventTime(payload map[string]any) string {
-	for _, key := range []string{"timestamp", "time", "created_at", "createdAt"} {
+	for _, key := range []string{"timestamp", "time", "created_at", "createdAt", "at"} {
 		if value := strings.TrimSpace(stringValue(payload[key])); value != "" {
 			return value
 		}
