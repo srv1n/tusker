@@ -12,8 +12,8 @@ source_of_truth:
   - ".tusker/WORKFLOW.md"
   - "tusker.yaml"
 created_at: "2026-06-04 00:00:00 +0000 UTC"
-updated_at: "2026-07-08T02:58:07Z"
-state_rev: "sha256:5642e342ad3eeebc43701eb5a5022479ecc5d21658a402978aade68e6a52ff86"
+updated_at: "2026-07-08T03:56:45Z"
+state_rev: "sha256:af28a18c937ca3a6ece1c7ed97f47ce752ad0f128cb10b4d8a82f24f7e85bad9"
 ---
 
 # Project Canon
@@ -33,6 +33,7 @@ state_rev: "sha256:5642e342ad3eeebc43701eb5a5022479ecc5d21658a402978aade68e6a52f
 - Browser-backed ChatGPT work is a runner result source, not a direct state writer.
 - Waves are first-class V7 batch records; membership is canonical on `kind: wave`, task `wave:` is a reconcile-maintained back-pointer, and wave `status` is derived from member task closure.
 - Merge landing is wave-scoped: `tusker wave create` cuts `integration/W-####`, wave task worktrees branch from that integration branch as `task/<TASK-ID>`, `tusker land` serializes batch merges through a gated staging worktree, and completed waves land to the configured default branch as one merge commit.
+- Terminal task state is monotone under merge and reconcile. A task in `done`, `cancelled`, or `superseded` may leave terminal state only through an explicit Tusker control operation that mints a fresh `state_rev`; stale branch content or stale object-rev repair must fail with a CAS conflict instead of certifying a non-terminal rewind.
 - Project registration quarantine is a loader property: entry points that scan registered projects use the shared loader, which records failed enabled registrations as `health: error` with `last_error` and continues loading unrelated healthy projects.
 
 ## Invariants

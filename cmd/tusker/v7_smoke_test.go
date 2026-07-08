@@ -259,6 +259,72 @@ func TestV7ReconcileRepairsStaleObjectStateRevAndEmitsEvent(t *testing.T) {
 	}
 }
 
+func TestV7ReconcileRefusesTerminalRewindFromStaleObjectRev(t *testing.T) {
+	repo := t.TempDir()
+	runGitDir(t, repo, "init", "-b", "main")
+	runGitDir(t, repo, "config", "user.email", "test@example.com")
+	runGitDir(t, repo, "config", "user.name", "Test User")
+	if err := writeText(filepath.Join(repo, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\n"); err != nil {
+		t.Fatal(err)
+	}
+	vault := filepath.Join(repo, ".tusker")
+	must := func(args Args, fn func(Args) error) {
+		t.Helper()
+		if err := fn(args); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
+	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Terminal stale rev", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+
+	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+	reviewData, reviewBody, err := parseFrontmatterMustRead(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewData["status"] = "review"
+	reviewData["readiness"] = "waiting_on_review"
+	reviewData["proof_status"] = "satisfied"
+	reviewData["next_owner"] = "reviewer"
+	reviewData["next_source"] = "review_policy"
+	reviewData["next_ref"] = ""
+	reviewData["next_action"] = "Review evidence and close or return to rework."
+	reviewData["updated_at"] = "2026-07-08T02:00:00Z"
+	reviewData["updated_by"] = "agent:stale"
+	staleReviewRev := v7StateRev(reviewData, reviewBody)
+
+	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-08T02:30:00Z")
+	runGitDir(t, repo, "add", ".")
+	runGitDir(t, repo, "commit", "-m", "close task")
+
+	reviewData["next_action"] = "Stale branch review copy."
+	reviewData["state_rev"] = staleReviewRev
+	staleContent, err := serializeDocument(reviewData, reviewBody, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(taskPath, staleContent); err != nil {
+		t.Fatal(err)
+	}
+
+	err = reconcileV7Cmd(Args{"vault": vault, "quiet": "true"})
+	if err == nil {
+		t.Fatal("expected terminal task stale-rev repair to fail")
+	}
+	if !strings.Contains(err.Error(), "terminal task state rewind refused") {
+		t.Fatalf("expected terminal rewind conflict, got %v", err)
+	}
+	afterData, afterBody, err := parseFrontmatterMustRead(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, staleReviewRev, stringField(afterData, "state_rev"), "refused reconcile must not certify stale review content")
+	if v7StateRevMatches(afterData, afterBody, stringField(afterData, "state_rev")) {
+		t.Fatal("refused reconcile should leave the stale review object rev unrepaired")
+	}
+}
+
 func TestV7ReconcileEpicManagedBlocksAreStable(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	must := func(args Args, fn func(Args) error) {

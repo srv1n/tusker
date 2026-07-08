@@ -113,6 +113,8 @@ Wave state is derived, not hand-set. A wave is `open` while any member task is n
 
 Do not push or merge directly to the default branch/main from runner worktrees. Use `tusker land <TASK-ID>` to queue task branches into the serialized wave lane; the lane gates the merged staging state, lands green branches into `integration/W-####`, kicks red branches back to `rework`, and lands a completed wave to main as one merge commit.
 
+Terminal task-file conflicts are human/operator conflicts, not auto-repair fodder. If a task is already `done`, `cancelled`, or `superseded`, `tusker land` and `tusker reconcile` must preserve that terminal state or refuse with a CAS conflict; they must never silently merge or repair stale branch content back to a non-terminal status.
+
 ## Hard stop check
 
 Before doing work, run `tusker closeout status {{ note.id }} --json` when closeout data exists. If it reports `agent_action=stop_until_human_response`, stop. Do not validate again, inspect unrelated files, spawn agents, or mutate Tusker records. Reply with the pending human gate or proof item.
