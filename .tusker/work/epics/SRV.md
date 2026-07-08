@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:16:22Z"
-updated_at: "2026-07-08T05:45:10Z"
-state_rev: "sha256:781decb57ae554df501b66e5a28f52fff56eb8c5e21a1c0922ae3dbf331cc387"
+updated_at: "2026-07-08T06:14:48Z"
+state_rev: "sha256:4da64c54339e1c97d739ec1e2217816d94646ad4555390e93102eea722b75bc7"
 ---
 
 # SRV · Tusker Serve: local control-room UI
@@ -51,8 +51,6 @@ TBD.
 | [[SRV-T-0009]] | ready | agent | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0011]] | backlog | blocked_dependency | Wait for dependency SRV-T-0004 to reach review with satisfied proof or done. |
 | [[SRV-T-0012]] | backlog | blocked_dependency | Wait for dependency SRV-T-0011 to reach review with satisfied proof or done. |
-| [[SRV-T-0015]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[SRV-T-0016]] | ready | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 
@@ -67,3 +65,5 @@ TBD.
 | [[SRV-T-0010]] | reviewer:codex | 2026-07-07T16:33:21Z |
 | [[SRV-T-0013]] | human:sarav | 2026-07-07T10:40:35Z |
 | [[SRV-T-0014]] | human:sarav | 2026-07-08T05:10:07Z |
+| [[SRV-T-0015]] | human:sarav | 2026-07-08T06:14:48Z |
+| [[SRV-T-0016]] | human:sarav | 2026-07-08T06:14:48Z |
