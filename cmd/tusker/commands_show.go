@@ -128,9 +128,14 @@ func renderCapsule(note Note) string {
 }
 
 func renderCapsuleWithVault(note Note, vaultPath string) string {
-	content := strings.TrimSpace(sectionContent(note.Body, "## Agent capsule"))
-	if content == "" {
-		content = synthesizeCapsuleWithVault(note, vaultPath)
+	content, hasFrontmatterCapsule := renderV7FrontmatterCapsule(note)
+	if !hasFrontmatterCapsule {
+		content = strings.TrimSpace(sectionContent(note.Body, "## Agent capsule"))
+		if content == "" {
+			content = synthesizeCapsuleWithVault(note, vaultPath)
+		} else if extra := capsuleFrontmatterFacts(note); extra != "" {
+			content = content + "\n" + extra
+		}
 	} else if extra := capsuleFrontmatterFacts(note); extra != "" {
 		content = content + "\n" + extra
 	}

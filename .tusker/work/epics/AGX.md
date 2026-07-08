@@ -8,6 +8,10 @@ status: "ready"
 owner: "human:sarav"
 priority: "p2"
 domains: []
+capsule:
+  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
+  use_when: "Use to triage work on packets, capsules, command budgets, and agent-facing task flow."
+  what: "AGX epic for reducing agent token burn and improving CLI ergonomics."
 next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1

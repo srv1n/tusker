@@ -6,6 +6,10 @@ project: "{{project}}"
 title: "{{title}}"
 status: draft
 summary: "{{summary}}"
+capsule:
+  what: ""
+  use_when: ""
+  skip_when: ""
 source_of_truth:
   - tusker/knowledge/domains/{{domain}}/CANON.md
 canonical_files:

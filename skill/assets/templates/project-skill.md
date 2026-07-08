@@ -3,6 +3,10 @@ schema: tusker.project-skill/v7
 name: project-knowledge
 kind: project_skill
 description: "Route through this repository using V7 domain canon without treating task proof or runtime state as source truth."
+capsule:
+  what: ""
+  use_when: ""
+  skip_when: ""
 source_of_truth: [knowledge/domains]
 ---
 

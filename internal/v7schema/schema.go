@@ -72,16 +72,22 @@ var FrontmatterOrder = map[string][]string{
 		"schema", "kind", "id", "project", "title", "status", "action", "target_kind", "target", "proposed_fields", "proposed_by", "source_branch", "reviewed_by", "reviewed_at", "review_reason", "applying_by", "applying_at", "apply_transaction", "applied_by", "applied_at", "applied_target", "applied_target_rev", "created_at", "updated_at", "updated_by", "state_rev",
 	},
 	"domain": {
-		"schema", "kind", "id", "project", "title", "status", "summary", "source_of_truth", "canonical_files", "created_at", "updated_at", "state_rev",
+		"schema", "kind", "id", "project", "title", "status", "summary", "capsule", "source_of_truth", "canonical_files", "created_at", "updated_at", "state_rev",
 	},
 	"domain_canon": {
-		"schema", "kind", "id", "project", "domain", "title", "status", "summary", "source_of_truth", "created_at", "updated_at", "state_rev",
+		"schema", "kind", "id", "project", "domain", "title", "status", "summary", "capsule", "source_of_truth", "created_at", "updated_at", "state_rev",
 	},
 	"knowledge": {
-		"schema", "kind", "id", "project", "domain", "title", "status", "summary", "source_of_truth", "related", "created_at", "updated_at", "state_rev",
+		"schema", "kind", "id", "project", "domain", "title", "status", "summary", "capsule", "source_of_truth", "related", "created_at", "updated_at", "state_rev",
 	},
 	"project_skill": {
-		"schema", "kind", "name", "project", "status", "description", "operator_skill", "source_of_truth", "canonical_files", "created_at", "updated_at", "state_rev",
+		"schema", "kind", "name", "project", "status", "description", "capsule", "operator_skill", "source_of_truth", "canonical_files", "created_at", "updated_at", "state_rev",
+	},
+	"doc": {
+		"schema", "kind", "id", "project", "title", "node", "status", "summary", "capsule", "audience", "mode", "agent_layer", "doc_kind", "domains", "source_of_truth", "stale_when_paths", "canonical_status", "publish", "publish_lane", "publish_path", "publish_description", "created_at", "updated_at", "state_rev",
+	},
+	"spec": {
+		"schema", "kind", "id", "project", "title", "status", "summary", "capsule", "source_of_truth", "domains", "created_at", "updated_at", "state_rev",
 	},
 }
 
@@ -179,6 +185,7 @@ type TuskerConfigFile struct {
 		TaskBodyWarnLines      int   `yaml:"task_body_warn_lines"`
 		TaskBodyFailLines      int   `yaml:"task_body_fail_lines"`
 		FrontmatterWarnLines   int   `yaml:"frontmatter_warn_lines"`
+		CapsuleTokenBudget     int   `yaml:"capsule_token_budget"`
 		RequireAcceptanceProof *bool `yaml:"require_acceptance_proof"`
 		ForbidWorkLogSection   *bool `yaml:"forbid_work_log_section"`
 		ForbidRawLogsInTask    *bool `yaml:"forbid_raw_logs_in_task"`

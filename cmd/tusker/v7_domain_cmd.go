@@ -50,13 +50,18 @@ func newV7Domain(args Args) error {
 		sourceOfTruth = []string{filepath.ToSlash(filepath.Join("knowledge", "domains", id, "CANON.md"))}
 	}
 	indexData := map[string]any{
-		"schema":          "tusker.domain/v7",
-		"kind":            "domain",
-		"id":              id,
-		"project":         v7ProjectID(vaultPath),
-		"title":           title,
-		"status":          status,
-		"summary":         summary,
+		"schema":  "tusker.domain/v7",
+		"kind":    "domain",
+		"id":      id,
+		"project": v7ProjectID(vaultPath),
+		"title":   title,
+		"status":  status,
+		"summary": summary,
+		"capsule": v7CapsuleOrdered(
+			"Domain index for "+title+"; routes agents to canon and owned knowledge files.",
+			"Use when a task touches "+id+" behavior or needs the domain reading order.",
+			"Skip when another domain is narrower or task proof/gates are the target.",
+		),
 		"source_of_truth": sourceOfTruth,
 		"canonical_files": []string{"INDEX.md", "CANON.md"},
 		"created_at":      now,
@@ -69,14 +74,19 @@ func newV7Domain(args Args) error {
 		return err
 	}
 	canonData := map[string]any{
-		"schema":          "tusker.domain-canon/v7",
-		"kind":            "domain_canon",
-		"id":              id + "/canon",
-		"project":         v7ProjectID(vaultPath),
-		"domain":          id,
-		"title":           title + " Canon",
-		"status":          status,
-		"summary":         "Current durable truth for " + title + ".",
+		"schema":  "tusker.domain-canon/v7",
+		"kind":    "domain_canon",
+		"id":      id + "/canon",
+		"project": v7ProjectID(vaultPath),
+		"domain":  id,
+		"title":   title + " Canon",
+		"status":  status,
+		"summary": "Current durable truth for " + title + ".",
+		"capsule": v7CapsuleOrdered(
+			"Current durable truth, invariants, and constraints for "+title+".",
+			"Use before changing behavior owned by "+id+" or reviewing a domain-impacting task.",
+			"Skip when you only need task proof, runtime events, or generated packets.",
+		),
 		"source_of_truth": sourceOfTruth,
 		"created_at":      now,
 		"updated_at":      now,
@@ -181,14 +191,18 @@ func domainV7CanonCmd(args Args) error {
 		return err
 	}
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "canon": map[string]any{
+		item := map[string]any{
 			"id":      stringField(note.Data, "id"),
 			"domain":  stringField(note.Data, "domain"),
 			"title":   stringField(note.Data, "title"),
 			"status":  stringField(note.Data, "status"),
 			"summary": stringField(note.Data, "summary"),
 			"path":    note.RelativePath,
-		}})
+		}
+		if capsule := v7CapsuleMap(note); len(capsule) > 0 {
+			item["capsule"] = capsule
+		}
+		emitJSON(map[string]any{"ok": true, "canon": item})
 		return nil
 	}
 	if args.Bool("full") {
@@ -241,7 +255,7 @@ func readV7DomainCanon(vaultPath, id string) (Note, error) {
 func v7DomainPayload(notes []Note) []map[string]any {
 	payload := make([]map[string]any, 0, len(notes))
 	for _, note := range notes {
-		payload = append(payload, map[string]any{
+		item := map[string]any{
 			"id":              stringField(note.Data, "id"),
 			"title":           stringField(note.Data, "title"),
 			"status":          stringField(note.Data, "status"),
@@ -249,7 +263,11 @@ func v7DomainPayload(notes []Note) []map[string]any {
 			"source_of_truth": normalizeList(note.Data["source_of_truth"]),
 			"canonical_files": normalizeList(note.Data["canonical_files"]),
 			"path":            note.RelativePath,
-		})
+		}
+		if capsule := v7CapsuleMap(note); len(capsule) > 0 {
+			item["capsule"] = capsule
+		}
+		payload = append(payload, item)
 	}
 	return payload
 }
@@ -457,14 +475,19 @@ func knowledgeV7NewCmd(args Args) error {
 		sourceOfTruth = []string{filepath.ToSlash(filepath.Join("knowledge", "domains", domain, "CANON.md"))}
 	}
 	data := map[string]any{
-		"schema":          "tusker.knowledge/v7",
-		"kind":            kind,
-		"id":              node,
-		"project":         v7ProjectID(vaultPath),
-		"domain":          domain,
-		"title":           title,
-		"status":          "current",
-		"summary":         summary,
+		"schema":  "tusker.knowledge/v7",
+		"kind":    kind,
+		"id":      node,
+		"project": v7ProjectID(vaultPath),
+		"domain":  domain,
+		"title":   title,
+		"status":  "current",
+		"summary": summary,
+		"capsule": v7CapsuleOrdered(
+			title+" "+kind+" for "+domain+".",
+			"Use when this is the narrowest matching "+kind+" for the task.",
+			"Skip when the domain INDEX or CANON already answers the question.",
+		),
 		"source_of_truth": sourceOfTruth,
 		"related":         []string{domain + "/canon"},
 		"created_at":      now,
@@ -594,12 +617,17 @@ func writeV7ProjectSkill(vaultPath, path string) error {
 		createdAt = fallback(stringField(existing, "created_at"), now)
 	}
 	data := map[string]any{
-		"schema":          "tusker.project-skill/v7",
-		"kind":            "project_skill",
-		"name":            "project-knowledge",
-		"project":         v7ProjectID(vaultPath),
-		"status":          "current",
-		"description":     "Route agents through this repository's V7 domain canon without publishing task proof or runtime state.",
+		"schema":      "tusker.project-skill/v7",
+		"kind":        "project_skill",
+		"name":        "project-knowledge",
+		"project":     v7ProjectID(vaultPath),
+		"status":      "current",
+		"description": "Route agents through this repository's V7 domain canon without publishing task proof or runtime state.",
+		"capsule": v7CapsuleOrdered(
+			"Repository project skill that routes agents through V7 domain canon.",
+			"Use before choosing domain INDEX/CANON files or updating project knowledge.",
+			"Skip when you only need Tusker lifecycle, gates, proof, closeout, or CLI mechanics.",
+		),
 		"operator_skill":  "tusker",
 		"source_of_truth": []string{"knowledge/domains"},
 		"canonical_files": []string{"SKILL.md", "knowledge/domains/*/INDEX.md", "knowledge/domains/*/CANON.md"},

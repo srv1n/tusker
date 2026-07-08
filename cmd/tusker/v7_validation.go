@@ -38,6 +38,7 @@ func validateV7Note(note Note, ctx validationContext, where string) ([]Issue, []
 	var errors, warnings []Issue
 	if stringField(note.Data, "schema") == "tusker.knowledge/v7" {
 		validateV7KnowledgeNode(note, ctx, where, &errors, &warnings)
+		validateV7Capsule(note, ctx, where, &errors, &warnings)
 		validateV7BodyBudget(note, ctx.VaultPath, where, &errors, &warnings)
 		validateV7FrontmatterSize(note, ctx, where, &warnings)
 		validateV7RecordSecrets(note, where, &errors)
@@ -69,9 +70,12 @@ func validateV7Note(note Note, ctx validationContext, where string) ([]Issue, []
 		validateV7DomainCanon(note, ctx, where, &errors, &warnings)
 	case "project_skill":
 		validateV7ProjectSkill(note, ctx, where, &errors, &warnings)
+	case "doc", "spec":
+		validateV7Doc(note, ctx, where, &errors, &warnings)
 	default:
 		errors = append(errors, issue(errorUnknownType, fmt.Sprintf(`unknown V7 object kind "%s"`, kind), where, "", map[string]any{"kind": kind}))
 	}
+	validateV7Capsule(note, ctx, where, &errors, &warnings)
 	validateV7BodyBudget(note, ctx.VaultPath, where, &errors, &warnings)
 	validateV7FrontmatterSize(note, ctx, where, &warnings)
 	validateV7RecordSecrets(note, where, &errors)
@@ -1222,6 +1226,29 @@ func validateV7ProjectSkill(note Note, ctx validationContext, where string, erro
 	}
 	if !strings.Contains(body, "do not publish") || !strings.Contains(body, "task records") || !strings.Contains(body, "evidence") || !strings.Contains(body, "generated") {
 		*errors = append(*errors, issue("PROJECT_SKILL_BOUNDARY_MISSING", "V7 project skill must state the publication boundary for tasks, evidence, generated output, runtime state, and raw logs", where, "", nil))
+	}
+}
+
+func validateV7Doc(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
+	data := note.Data
+	schema := stringField(data, "schema")
+	kind := stringField(data, "kind")
+	switch schema {
+	case "tusker.doc/v7":
+		if kind != "doc" && kind != "spec" {
+			*errors = append(*errors, issue(errorInvalidField, "V7 doc kind must be doc or spec", where, "", map[string]any{"field": "kind"}))
+		}
+	case "tusker.spec/v7":
+		if kind != "spec" {
+			*errors = append(*errors, issue(errorInvalidField, "V7 spec kind must be spec", where, "", map[string]any{"field": "kind"}))
+		}
+	default:
+		*errors = append(*errors, issue(errorInvalidField, "V7 doc/spec schema must be tusker.doc/v7 or tusker.spec/v7", where, "", map[string]any{"field": "schema"}))
+	}
+	for _, field := range []string{"schema", "kind", "id", "title"} {
+		if stringField(data, field) == "" {
+			*errors = append(*errors, issue(errorMissingField, fmt.Sprintf(`missing required frontmatter "%s"`, field), where, "", map[string]any{"field": field}))
+		}
 	}
 }
 

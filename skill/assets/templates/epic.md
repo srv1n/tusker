@@ -6,6 +6,10 @@ title: "{{title}}"
 status: ready
 owner: "{{owner}}"
 summary: "{{summary}}"
+capsule:
+  what: ""
+  use_when: ""
+  skip_when: ""
 primary_domains: []
 knowledge_nodes: []
 created_at: "{{date}}"

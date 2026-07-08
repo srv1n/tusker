@@ -8,6 +8,10 @@ status: "ready"
 owner: "human:sarav"
 priority: "p2"
 domains: []
+capsule:
+  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
+  use_when: "Use to triage needs-me queue, read/edit UI, runtime-store API, and embedded SPA work."
+  what: "SRV epic for the local Tusker Serve control-room UI and JSON API."
 next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1

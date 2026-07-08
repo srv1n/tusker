@@ -1205,6 +1205,9 @@ func listCmd(args Args) error {
 				item["summary"] = listEpicSummary(note)
 				item["counts"] = epicTaskCount(taskCounts, scopedEpicKey(row.Project, id))
 			}
+			if capsule := v7CapsuleMap(note); len(capsule) > 0 {
+				item["capsule"] = capsule
+			}
 			items = append(items, item)
 		}
 		emitJSON(map[string]any{"ok": true, "count": len(items), "total": totalRows, "truncated": truncated, "items": items})

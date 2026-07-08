@@ -23,6 +23,7 @@ validation:
   task_body_warn_lines: 120
   task_body_fail_lines: 220
   frontmatter_warn_lines: 80
+  capsule_token_budget: 80
   require_acceptance_proof: true
   forbid_work_log_section: true
   forbid_raw_logs_in_task: true

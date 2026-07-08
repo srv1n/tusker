@@ -7,14 +7,15 @@ import (
 )
 
 type searchResult struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Kind    string `json:"kind,omitempty"`
-	Status  string `json:"status,omitempty"`
-	Epic    string `json:"epic,omitempty"`
-	Title   string `json:"title"`
-	Path    string `json:"path"`
-	Snippet string `json:"snippet,omitempty"`
+	ID      string            `json:"id"`
+	Type    string            `json:"type"`
+	Kind    string            `json:"kind,omitempty"`
+	Status  string            `json:"status,omitempty"`
+	Epic    string            `json:"epic,omitempty"`
+	Title   string            `json:"title"`
+	Path    string            `json:"path"`
+	Capsule map[string]string `json:"capsule,omitempty"`
+	Snippet string            `json:"snippet,omitempty"`
 }
 
 func searchCmd(args Args) error {
@@ -61,6 +62,9 @@ func searchCmd(args Args) error {
 		if item.Snippet != "" {
 			fmt.Printf("  %s\n", item.Snippet)
 		}
+		if what := item.Capsule["what"]; what != "" {
+			fmt.Printf("  capsule.what: %s\n", what)
+		}
 	}
 	return nil
 }
@@ -97,6 +101,7 @@ func searchNotes(notes []Note, query string, filters searchFilters) []searchResu
 			stringField(note.Data, "status"),
 			epic,
 			note.RelativePath,
+			v7CapsuleSearchText(note),
 			note.Body,
 		}, "\n")
 		if !strings.Contains(strings.ToLower(searchText), needle) {
@@ -110,6 +115,7 @@ func searchNotes(notes []Note, query string, filters searchFilters) []searchResu
 			Epic:    epic,
 			Title:   stringField(note.Data, "title"),
 			Path:    note.RelativePath,
+			Capsule: v7CapsuleMap(note),
 			Snippet: compactSnippet(searchText, needle, 180),
 		})
 	}

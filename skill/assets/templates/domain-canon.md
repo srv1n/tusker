@@ -7,6 +7,10 @@ domain: "{{domain}}"
 title: "{{title}} canon"
 status: draft
 summary: "{{summary}}"
+capsule:
+  what: ""
+  use_when: ""
+  skip_when: ""
 source_of_truth:
   - tusker/knowledge/domains/{{domain}}/INDEX.md
 created_at: "{{date}}"

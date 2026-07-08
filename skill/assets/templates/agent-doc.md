@@ -4,6 +4,10 @@ kind: doc
 id: "{{node}}"
 title: "{{title}}"
 node: "{{node}}"
+capsule:
+  what: ""
+  use_when: ""
+  skip_when: ""
 audience: agent
 mode: how-to
 agent_layer: standalone

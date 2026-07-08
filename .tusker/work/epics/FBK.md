@@ -8,6 +8,10 @@ status: "ready"
 owner: "agent:codex"
 priority: "p2"
 domains: []
+capsule:
+  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
+  use_when: "Use to triage feedback signals, review findings, promotion rules, and cross-vault health."
+  what: "FBK epic for structured feedback intake, review, dedupe, and promotion."
 next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
