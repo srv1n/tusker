@@ -61,6 +61,9 @@ func TestLandDetachedRecovery(t *testing.T) {
 	}
 	runGitDir(t, worktree, "add", ".")
 	runGitDir(t, worktree, "commit", "-m", "runner completed work")
+	// Real runner workspaces carry .tusker/workspace.json; auto-discovery now
+	// binds on an exact record_id match (not the worktree path substring).
+	writeWorkspaceRecordID(t, worktree, "APP-T-0001")
 	if gitBranchExists(repo, "task/APP-T-0001") {
 		t.Fatal("precondition: task/APP-T-0001 must not exist yet")
 	}
@@ -96,6 +99,9 @@ func TestLandDetachedRecoveryFromFlag(t *testing.T) {
 	}
 	runGitDir(t, worktree, "add", ".")
 	runGitDir(t, worktree, "commit", "-m", "runner completed work")
+	// The worktree proves it belongs to APP-T-0001 via its workspace record_id,
+	// so an explicit --from binds without the --trust-from override.
+	writeWorkspaceRecordID(t, worktree, "APP-T-0001")
 
 	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "from": worktree}); err != nil {
 		t.Fatalf("recovery land with --from failed: %v", err)
