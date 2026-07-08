@@ -16,38 +16,51 @@ const (
 )
 
 type feedbackReviewSignal struct {
-	Schema         string
-	ID             string
-	Date           string
-	Project        string
-	Task           string
-	TaskIDs        []string
-	Attempt        string
-	AttemptIDs     []string
-	Source         string
-	Category       string
-	Severity       string
-	Confidence     string
-	DedupeKey      string
-	Summary        string
-	ObservedFacts  []string
-	LikelyCause    string
-	Recommendation string
-	ActionType     string
-	Prevention     string
-	Frequency      int
-	Occurrences    int
-	LastSeen       string
-	SourcePath     string
+	Schema             string
+	ID                 string
+	Date               string
+	Project            string
+	Task               string
+	TaskIDs            []string
+	Attempt            string
+	AttemptIDs         []string
+	Source             string
+	Category           string
+	Severity           string
+	Confidence         string
+	DedupeKey          string
+	Summary            string
+	ObservedFacts      []string
+	LikelyCause        string
+	Recommendation     string
+	ActionType         string
+	Prevention         string
+	Frequency          int
+	Occurrences        int
+	OccurrenceVaults   []string
+	OccurrenceProjects []string
+	OccurrenceSources  []string
+	LastSeen           string
+	SourcePath         string
+}
+
+type feedbackReviewDiagnostics struct {
+	RawSignals           int
+	SkippedSignals       int
+	NoExplicitNoteVaults []string
 }
 
 type feedbackReviewPacket struct {
-	Date       string
-	Since      string
-	Signals    []feedbackReviewSignal
-	Findings   []feedbackReviewFinding
-	Actionable []feedbackReviewFinding
-	Ignored    []feedbackReviewFinding
+	Date                 string
+	Since                string
+	Signals              []feedbackReviewSignal
+	Findings             []feedbackReviewFinding
+	Actionable           []feedbackReviewFinding
+	Ignored              []feedbackReviewFinding
+	RawSignalCount       int
+	CollapsedSignalCount int
+	SkippedSignalCount   int
+	NoExplicitNoteVaults []string
 }
 
 type feedbackReviewFinding struct {
@@ -177,30 +190,34 @@ func feedbackReviewSignalsFromJSON(raw []byte, sourcePath string) ([]feedbackRev
 }
 
 func feedbackReviewSignalFromMap(raw map[string]any, sourcePath string) feedbackReviewSignal {
+	occurrenceCount, occurrenceVaults, occurrenceProjects, occurrenceSources := feedbackReviewOccurrenceFacts(raw)
 	signal := feedbackReviewSignal{
-		Schema:         feedbackReviewMapString(raw, "schema"),
-		ID:             feedbackReviewMapString(raw, "id", "signal_id", "signal"),
-		Date:           feedbackReviewDateOnly(feedbackReviewMapString(raw, "date", "created_at", "updated_at")),
-		Project:        feedbackReviewMapString(raw, "project"),
-		Task:           feedbackReviewMapString(raw, "task", "task_id"),
-		TaskIDs:        feedbackReviewMapList(raw, "task_ids", "tasks", "related_tasks"),
-		Attempt:        feedbackReviewMapString(raw, "attempt", "attempt_id"),
-		AttemptIDs:     feedbackReviewMapList(raw, "attempt_ids", "attempts"),
-		Source:         feedbackReviewMapString(raw, "source", "source_kind"),
-		Category:       feedbackReviewMapString(raw, "category", "kind"),
-		Severity:       feedbackReviewMapString(raw, "severity", "priority"),
-		Confidence:     feedbackReviewMapString(raw, "confidence"),
-		DedupeKey:      feedbackReviewMapString(raw, "dedupe_key", "dedupe-key", "key"),
-		Summary:        feedbackReviewMapString(raw, "summary", "title"),
-		ObservedFacts:  feedbackReviewMapList(raw, "observed_facts", "observed-facts", "facts", "observed", "evidence"),
-		LikelyCause:    feedbackReviewMapString(raw, "likely_cause", "likely-cause", "cause"),
-		Recommendation: feedbackReviewMapString(raw, "recommendation", "recommended_action", "recommended-action", "action", "proposed_action"),
-		ActionType:     feedbackReviewMapString(raw, "action_type", "action-type", "classification"),
-		Prevention:     feedbackReviewMapString(raw, "prevention", "prevents", "prevent_recurrence"),
-		Frequency:      feedbackReviewMapInt(raw, "frequency", "count"),
-		Occurrences:    feedbackReviewMapInt(raw, "occurrences", "occurrence_count"),
-		LastSeen:       feedbackReviewDateOnly(feedbackReviewMapString(raw, "last_seen", "last-seen", "seen_at")),
-		SourcePath:     sourcePath,
+		Schema:             feedbackReviewMapString(raw, "schema"),
+		ID:                 feedbackReviewMapString(raw, "id", "signal_id", "signal"),
+		Date:               feedbackReviewDateOnly(feedbackReviewMapString(raw, "date", "created_at", "updated_at")),
+		Project:            feedbackReviewMapString(raw, "project"),
+		Task:               feedbackReviewMapString(raw, "task", "task_id"),
+		TaskIDs:            feedbackReviewMapList(raw, "task_ids", "tasks", "related_tasks"),
+		Attempt:            feedbackReviewMapString(raw, "attempt", "attempt_id"),
+		AttemptIDs:         feedbackReviewMapList(raw, "attempt_ids", "attempts"),
+		Source:             feedbackReviewMapString(raw, "source", "source_kind"),
+		Category:           feedbackReviewMapString(raw, "category", "kind"),
+		Severity:           feedbackReviewMapString(raw, "severity", "priority"),
+		Confidence:         feedbackReviewMapString(raw, "confidence"),
+		DedupeKey:          feedbackReviewMapString(raw, "dedupe_key", "dedupe-key", "key"),
+		Summary:            feedbackReviewMapString(raw, "summary", "title"),
+		ObservedFacts:      feedbackReviewMapList(raw, "observed_facts", "observed-facts", "facts", "observed", "evidence"),
+		LikelyCause:        feedbackReviewMapString(raw, "likely_cause", "likely-cause", "cause"),
+		Recommendation:     feedbackReviewMapString(raw, "recommendation", "recommended_action", "recommended-action", "action", "proposed_action"),
+		ActionType:         feedbackReviewMapString(raw, "action_type", "action-type", "classification"),
+		Prevention:         feedbackReviewMapString(raw, "prevention", "prevents", "prevent_recurrence"),
+		Frequency:          feedbackReviewMapInt(raw, "frequency", "count"),
+		Occurrences:        maxInt(feedbackReviewMapInt(raw, "occurrences", "occurrence_count"), occurrenceCount),
+		OccurrenceVaults:   occurrenceVaults,
+		OccurrenceProjects: occurrenceProjects,
+		OccurrenceSources:  occurrenceSources,
+		LastSeen:           feedbackReviewDateOnly(feedbackReviewMapString(raw, "last_seen", "last-seen", "seen_at")),
+		SourcePath:         sourcePath,
 	}
 	if signal.Date == "" {
 		signal.Date = signal.LastSeen
@@ -212,16 +229,30 @@ func feedbackReviewSignalFromMap(raw map[string]any, sourcePath string) feedback
 }
 
 func buildFeedbackReviewPacket(date, since string, signals []feedbackReviewSignal) feedbackReviewPacket {
+	return buildFeedbackReviewPacketWithDiagnostics(date, since, signals, feedbackReviewDiagnostics{})
+}
+
+func buildFeedbackReviewPacketWithDiagnostics(date, since string, signals []feedbackReviewSignal, diagnostics feedbackReviewDiagnostics) feedbackReviewPacket {
 	date = feedbackReviewDateOnly(firstNonEmpty(date, todayISO()))
 	since = feedbackReviewDateOnly(since)
-	packet := feedbackReviewPacket{Date: date, Since: since}
+	packet := feedbackReviewPacket{
+		Date:                 date,
+		Since:                since,
+		SkippedSignalCount:   diagnostics.SkippedSignals,
+		NoExplicitNoteVaults: uniqueStrings(feedbackReviewCleanList(diagnostics.NoExplicitNoteVaults)),
+	}
 	for _, signal := range signals {
 		if !feedbackReviewSignalInWindow(signal, feedbackReviewParseDate(since), date) {
 			continue
 		}
 		packet.Signals = append(packet.Signals, signal)
 	}
+	packet.RawSignalCount = diagnostics.RawSignals
+	if packet.RawSignalCount == 0 {
+		packet.RawSignalCount = len(packet.Signals)
+	}
 	packet.Findings = feedbackReviewFindings(packet.Signals)
+	packet.CollapsedSignalCount = len(packet.Findings)
 	for _, finding := range packet.Findings {
 		if feedbackReviewFindingIsNoise(finding) {
 			packet.Ignored = append(packet.Ignored, finding)
@@ -239,6 +270,10 @@ func renderFeedbackReviewPacketMarkdown(packet feedbackReviewPacket) string {
 		b.WriteString("- Since: " + packet.Since + "\n")
 	}
 	b.WriteString(fmt.Sprintf("- Signals reviewed: %d\n", len(packet.Signals)))
+	b.WriteString(fmt.Sprintf("- Raw signals emitted: %d\n", packet.RawSignalCount))
+	b.WriteString(fmt.Sprintf("- Collapsed findings: %d\n", packet.CollapsedSignalCount))
+	b.WriteString(fmt.Sprintf("- Signals skipped: %d\n", packet.SkippedSignalCount))
+	b.WriteString("- No explicit feedback notes: " + feedbackReviewList(packet.NoExplicitNoteVaults) + "\n")
 	b.WriteString(fmt.Sprintf("- Actionable friction groups: %d\n", len(packet.Actionable)))
 	if len(packet.Actionable) == 0 {
 		b.WriteString("- Recommendation: no product action recommended\n")
@@ -427,10 +462,17 @@ func renderFeedbackReviewHumanDecisions(b *strings.Builder, packet feedbackRevie
 }
 
 func feedbackReviewSignalGroupKey(signal feedbackReviewSignal) string {
+	category := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(signal.Category), "-", "_"))
+	taskIDs := feedbackReviewTaskIDs(signal)
+	if len(taskIDs) > 0 && (category == "acceptance_quality" || category == "review_loop") {
+		return "task:" + category + ":" + strings.Join(taskIDs, ",")
+	}
+	if category == "token_burn" && (len(taskIDs) > 0 || strings.TrimSpace(signal.Attempt) != "") {
+		return "task:" + category + ":" + strings.Join(taskIDs, ",") + ":" + strings.TrimSpace(signal.Attempt)
+	}
 	if key := strings.ToLower(feedbackReviewCleanText(signal.DedupeKey, 120)); key != "" {
 		return "dedupe:" + key
 	}
-	taskIDs := feedbackReviewTaskIDs(signal)
 	taskPart := strings.Join(taskIDs, ",")
 	summary := strings.Join(improveSignificantTokens(signal.Summary+" "+signal.Recommendation), " ")
 	if summary == "" {
@@ -837,4 +879,24 @@ func feedbackReviewListOfMaps(value any) []map[string]any {
 	default:
 		return nil
 	}
+}
+
+func feedbackReviewOccurrenceFacts(raw map[string]any) (int, []string, []string, []string) {
+	value := feedbackReviewMapValue(raw, "occurrences")
+	var maps []map[string]any
+	switch typed := value.(type) {
+	case []any, []map[string]any, map[string]any:
+		maps = feedbackReviewListOfMaps(typed)
+	default:
+		return 0, nil, nil, nil
+	}
+	var vaults []string
+	var projects []string
+	var sources []string
+	for _, occurrence := range maps {
+		vaults = append(vaults, feedbackReviewMapString(occurrence, "vault"))
+		projects = append(projects, strings.ToUpper(feedbackReviewMapString(occurrence, "project")))
+		sources = append(sources, feedbackReviewMapString(occurrence, "source"))
+	}
+	return len(maps), uniqueStrings(feedbackReviewCleanList(vaults)), uniqueStrings(feedbackReviewCleanList(projects)), uniqueStrings(feedbackReviewCleanList(sources))
 }
