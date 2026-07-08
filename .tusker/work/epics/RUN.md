@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:32:32Z"
-updated_at: "2026-07-08T06:14:48Z"
-state_rev: "sha256:1343a9ff21d90140f78601e31f9c0c01bec8c88ee1669e2cfed5cbb87d5852df"
+updated_at: "2026-07-08T06:16:59Z"
+state_rev: "sha256:53dd6afd5da945cb54fd3a77d41ff036a5f1e39c52e3e2f19ceb9e67b3f41a2c"
 ---
 
 # RUN · Runner parity and model profiles
@@ -49,7 +49,7 @@ TBD.
 | [[RUN-T-0003]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach review with satisfied proof or done. |
 | [[RUN-T-0005]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach review with satisfied proof or done. |
 | [[RUN-T-0006]] | backlog | agent | Wait for dependency RUN-T-0004 to reach done. |
-| [[RUN-T-0015]] | ready | agent | Wait for dependency RUN-T-0011 to reach done. |
+| [[RUN-T-0015]] | backlog | agent | Wait for dependency RUN-T-0011 to reach done. |
 
 ## Recently completed
 
