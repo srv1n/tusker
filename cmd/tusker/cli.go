@@ -137,7 +137,7 @@ func parseCLI(argv []string) (string, Args) {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave":
+	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "config", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave":
 		return true
 	default:
 		return false
@@ -557,6 +557,12 @@ func run(command string, args Args) (int, error) {
 	case "daemon":
 		printDaemonHelp()
 		return 0, nil
+	case "config resolve":
+		args["key"] = firstNonEmpty(args.String("key"), args.String("_pos0"))
+		return 0, configResolveCmd(args)
+	case "config":
+		printConfigHelp()
+		return 0, nil
 	case "automation status":
 		return 0, automationStatusCmd(args)
 	case "automation queue":
@@ -725,6 +731,9 @@ func run(command string, args Args) (int, error) {
 	case "help automation", "help automation status", "help automation queue", "help automation explain", "help automation plan", "help automation dispatch", "help automation collect-external", "help automation external-loop", "help automation advance-external":
 		printAutomationHelp()
 		return 0, nil
+	case "help config", "help config resolve":
+		printConfigHelp()
+		return 0, nil
 	case "help projects", "help projects add", "help projects list", "help projects limits", "help projects enable", "help projects disable", "help projects remove":
 		printProjectsHelp()
 		return 0, nil
@@ -811,6 +820,7 @@ Commands:
   hook                install optional local Git hooks
   vault               symlink repo trackers into a shared Obsidian vault
   daemon              operator loop for registered local projects
+  config              inspect resolved Tusker configuration with provenance
   automation          plan, inspect, and manually dispatch daemon automation work
   projects            register repositories for daemon pickup
   runs                inspect, tail, interrupt, release, and retire daemon runs
@@ -828,6 +838,7 @@ Help:
   tusker new --help
   tusker vault --help
   tusker daemon --help
+  tusker config --help
   tusker automation --help
   tusker automation plan <task> --json
   tusker runs --help
@@ -913,6 +924,8 @@ func printCommandHelp(command string) bool {
 		printVaultHelp()
 	case "daemon", "daemon run", "daemon status", "daemon limits", "daemon resume", "daemon stop":
 		printDaemonHelp()
+	case "config", "config resolve":
+		printConfigHelp()
 	case "automation", "automation status", "automation queue", "automation explain", "automation plan", "automation dispatch", "automation collect-external", "automation external-loop", "automation advance-external":
 		printAutomationHelp()
 	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects remove":
@@ -1118,6 +1131,20 @@ Examples:
   tusker projects add --repo . --vault ./.tusker
   tusker projects list
   tusker projects disable --repo .`)
+}
+
+func printConfigHelp() {
+	fmt.Println(`Usage:
+  tusker config resolve <key> [--vault <path>] [--json]
+
+Purpose:
+  Show the effective value for a Tusker config key, the winning source, and
+  each lower-precedence source value. Supported resolver keys include runner
+  profiles, routing, denylist, and runtime concurrency limits.
+
+Examples:
+  tusker config resolve runtime.max_active_runs_per_project
+  tusker config resolve automation.profiles --json`)
 }
 
 func printRunsHelp() {

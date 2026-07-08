@@ -30,6 +30,10 @@ type runnerExecRequest struct {
 	RawLogPath      string
 	StatusPath      string
 	Command         string
+	RunnerProfile   string
+	RunnerHarness   string
+	RunnerModel     string
+	RunnerEffort    string
 	NotePath        string
 	VaultPath       string
 	ResumeMode      bool
@@ -115,6 +119,7 @@ PY
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 		NotePath: req.NotePath, VaultPath: req.VaultPath, SessionRef: req.SessionRef, MessageRef: req.MessageRef,
+		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		CodexPolicy:  withDefaultCodexPolicy(req.CodexPolicy),
 		ExternalLoop: req.ExternalLoop,
 	})

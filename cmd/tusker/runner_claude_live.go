@@ -89,6 +89,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 		NotePath: req.NotePath, VaultPath: req.VaultPath,
+		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		CodexPolicy: withDefaultCodexPolicy(req.CodexPolicy),
 	})
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

@@ -589,7 +589,12 @@ func (h *harness) startDaemon(name string) *daemonProcess {
 }
 
 func (h *harness) env() []string {
-	return append(os.Environ(), "TUSKER_STATE_ROOT="+h.stateRoot, "TUSKER_WRAPPER_HEARTBEAT_MS=100", "TUSKER_WRAPPER_STOP_TIMEOUT_MS=1000")
+	return append(os.Environ(),
+		"TUSKER_STATE_ROOT="+h.stateRoot,
+		"TUSKER_CONFIG="+filepath.Join(h.tempRoot, "config", "tusker", "config.yaml"),
+		"TUSKER_WRAPPER_HEARTBEAT_MS=100",
+		"TUSKER_WRAPPER_STOP_TIMEOUT_MS=1000",
+	)
 }
 
 func (h *harness) waitRunnerPID(timeout time.Duration) int {

@@ -54,10 +54,15 @@ type Workflow struct {
 		MaxAttempts int   `yaml:"max_attempts"`
 		BackoffMS   []int `yaml:"backoff_ms"`
 	} `yaml:"retry"`
-	Reviewer     ReviewerPolicy              `yaml:"reviewer"`
-	ExternalLoop ExternalLoopCaps            `yaml:"external_loop"`
-	Runners      map[string]RunnerDefinition `yaml:"runners"`
-	Codex        struct {
+	Reviewer             ReviewerPolicy                     `yaml:"reviewer"`
+	ExternalLoop         ExternalLoopCaps                   `yaml:"external_loop"`
+	Runners              map[string]RunnerDefinition        `yaml:"runners"`
+	RunnerProfiles       map[string]RunnerProfileDefinition `yaml:"runner_profiles,omitempty"`
+	RunnerDefaultProfile string                             `yaml:"runner_default_profile,omitempty"`
+	RunnerLaneProfiles   map[string]string                  `yaml:"runner_lane_profiles,omitempty"`
+	RunnerRouting        []RunnerRoutingRule                `yaml:"runner_routing,omitempty"`
+	RunnerDenylist       []RunnerDenyRule                   `yaml:"runner_denylist,omitempty"`
+	Codex                struct {
 		Command           string `yaml:"command"`
 		ApprovalPolicy    string `yaml:"approval_policy"`
 		ThreadSandbox     string `yaml:"thread_sandbox"`
@@ -301,10 +306,11 @@ func loadWorkflow(vaultPath string) (WorkflowFile, error) {
 }
 
 func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (WorkflowFile, error) {
-	cfg, configPath, err := readV7TuskerConfig(vaultPath)
+	resolved, err := resolveTuskerConfig(vaultPath)
 	if err != nil {
-		return wfFile, tuskerError(errorConfigInvalid, "failed to parse tusker.yaml automation config: "+err.Error(), withPath(configPath))
+		return wfFile, err
 	}
+	cfg := resolved.Config
 	if !v7AutomationConfigPresent(cfg) {
 		return wfFile, nil
 	}
@@ -314,6 +320,7 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 		triggerStates = []string{"ready", "rework"}
 	}
 	if containsString(triggerStates, "active") && strings.TrimSpace(cfg.Automation.LegacyProfile) == "" {
+		configPath := sourcePathForConfigKey(resolved.Layers, "automation.trigger_states")
 		return wfFile, tuskerError(errorConfigInvalid, "automation.trigger_states must not include legacy active without automation.legacy_profile", withPath(configPath), withHint("use ready,rework or set automation.legacy_profile: legacy_active"))
 	}
 	wf.Tracker.ActiveStates = triggerStates
@@ -323,6 +330,17 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 	if len(cfg.Automation.EnabledRunners) > 0 {
 		wf.Agents.Enabled = normalizeList(cfg.Automation.EnabledRunners)
 	}
+	wf.RunnerProfiles = runnerProfilesFromSchema(cfg.Automation.Profiles)
+	wf.RunnerDefaultProfile = strings.TrimSpace(cfg.Automation.DefaultProfile)
+	wf.RunnerLaneProfiles = map[string]string{}
+	for lane, profile := range cfg.Automation.LaneProfiles {
+		wf.RunnerLaneProfiles[strings.TrimSpace(lane)] = strings.TrimSpace(profile)
+	}
+	if len(wf.RunnerLaneProfiles) == 0 {
+		wf.RunnerLaneProfiles = nil
+	}
+	wf.RunnerRouting = runnerRoutingFromSchema(cfg.Automation.Routing)
+	wf.RunnerDenylist = runnerDenylistFromSchema(cfg.Automation.Denylist)
 	if wf.Reviewer.Enabled && !stringListContainsFold(wf.Agents.Enabled, wf.Reviewer.Runner) {
 		wf.Reviewer.Runner = wf.Agents.Default
 	}
@@ -424,6 +442,11 @@ func v7AutomationConfigPresent(cfg v7TuskerConfigFile) bool {
 		len(cfg.Automation.TriggerStates) > 0 ||
 		strings.TrimSpace(cfg.Automation.DefaultRunner) != "" ||
 		len(cfg.Automation.EnabledRunners) > 0 ||
+		strings.TrimSpace(cfg.Automation.DefaultProfile) != "" ||
+		len(cfg.Automation.LaneProfiles) > 0 ||
+		len(cfg.Automation.Profiles) > 0 ||
+		len(cfg.Automation.Routing) > 0 ||
+		len(cfg.Automation.Denylist) > 0 ||
 		strings.TrimSpace(cfg.Automation.Workspace.Root) != "" ||
 		strings.TrimSpace(cfg.Automation.Workspace.Strategy) != "" ||
 		cfg.Automation.Concurrency.MaxActiveRuns > 0 ||

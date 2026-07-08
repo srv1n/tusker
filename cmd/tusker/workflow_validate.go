@@ -69,6 +69,9 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	if err := validateRunnerDefinitions(wf, filePath); err != nil {
 		return err
 	}
+	if err := validateWorkflowRunnerProfiles(wf, filePath); err != nil {
+		return err
+	}
 	if strings.TrimSpace(wf.Codex.Command) == "" {
 		return tuskerError(errorConfigInvalid, "codex.command is required", withPath(filePath))
 	}
@@ -100,6 +103,33 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	}
 	if strings.TrimSpace(wf.Agents.Default) == "" {
 		return tuskerError(errorConfigInvalid, "agents.default is required", withPath(filePath))
+	}
+	return nil
+}
+
+func validateWorkflowRunnerProfiles(wf Workflow, filePath string) error {
+	for name, profile := range wf.RunnerProfiles {
+		if err := validateRunnerProfileDefinition(strings.TrimSpace(name), profile, filePath); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(wf.RunnerDefaultProfile) != "" {
+		if _, ok := wf.RunnerProfiles[strings.TrimSpace(wf.RunnerDefaultProfile)]; !ok {
+			return tuskerError(errorConfigInvalid, "runner_default_profile references unknown profile "+wf.RunnerDefaultProfile, withPath(filePath))
+		}
+	}
+	for lane, profile := range wf.RunnerLaneProfiles {
+		if _, ok := wf.RunnerProfiles[strings.TrimSpace(profile)]; !ok {
+			return tuskerError(errorConfigInvalid, "runner_lane_profiles."+lane+" references unknown profile "+profile, withPath(filePath))
+		}
+	}
+	for _, rule := range wf.RunnerRouting {
+		if strings.TrimSpace(rule.Profile) == "" {
+			return tuskerError(errorConfigInvalid, "runner_routing rule "+rule.Name+" is missing profile", withPath(filePath))
+		}
+		if _, ok := wf.RunnerProfiles[strings.TrimSpace(rule.Profile)]; !ok {
+			return tuskerError(errorConfigInvalid, "runner_routing rule "+rule.Name+" references unknown profile "+rule.Profile, withPath(filePath))
+		}
 	}
 	return nil
 }
