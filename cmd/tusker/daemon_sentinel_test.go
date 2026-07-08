@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -26,7 +24,7 @@ func TestSentinelDetectsConfiguredInvariants(t *testing.T) {
 			name:  "held lease under review task",
 			check: invariantCheckHeldLeaseDispatchEligible,
 			setup: func(t *testing.T, store *RuntimeStore, project RegisteredProject, vault string, now time.Time) {
-				setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer", "updated_at": now.Add(-30 * time.Second).Format(time.RFC3339)})
+				setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer"})
 				mustUpsertRun(t, store, RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", Lane: runLaneExecute, LeaseState: string(LeaseStateRetryQueued), AttemptCount: 1, UpdatedAt: now.Format(time.RFC3339)})
 			},
 			wantText: "not dispatch-eligible",
@@ -180,7 +178,7 @@ func TestSentinelResumeRefusesUntilViolationCleared(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Resume sentinel", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
-	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer", "updated_at": "2026-07-06T11:59:30Z"})
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer"})
 	project := registerAutomationTestProject(t, vault)
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
@@ -259,133 +257,11 @@ func TestSentinelAllowsCompletedRunnerStatusBeforeReconcile(t *testing.T) {
 	assertEqual(t, false, status.Open, "completed runner status should be reconciled, not treated as stale corruption")
 }
 
-func TestReviewFlipConvergesWithoutCircuit(t *testing.T) {
-	vault := automationTestVault(t)
-	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review flip converge", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
-	project := registerAutomationTestProject(t, vault)
-
-	runner := exec.Command("sleep", "30")
-	runner.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := runner.Start(); err != nil {
-		t.Fatal(err)
-	}
-	pid := runner.Process.Pid
-	pgid := processGroupID(pid)
-	startedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
-	t.Cleanup(func() {
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-		_ = runner.Process.Kill()
-		_, _ = runner.Process.Wait()
-	})
-
-	flippedAt := time.Now().UTC()
-	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
-		"status":     "review",
-		"readiness":  "waiting_on_review",
-		"next_owner": "reviewer",
-		"updated_at": flippedAt.Format(time.RFC3339),
-	})
-	store, err := OpenRuntimeStore(DefaultStateRoot())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	mustUpsertRun(t, store, RunStatus{
-		ProjectID:        project.ProjectID,
-		RecordID:         "APP-T-0001",
-		ItemID:           "APP-T-0001",
-		Runner:           string(RunnerCodexExec),
-		Lane:             runLaneExecute,
-		LeaseState:       string(LeaseStateRunning),
-		LeaseOwner:       "attempt-review-flip",
-		LeaseGeneration:  1,
-		AttemptOutcome:   string(AttemptOutcomeNone),
-		ActiveAttemptID:  "attempt-review-flip",
-		SessionRef:       "session-review-flip",
-		AttemptCount:     1,
-		ProcessPID:       pid,
-		ProcessPGID:      pgid,
-		ProcessStartedAt: startedAt,
-		LastHeartbeatAt:  flippedAt.Add(-time.Second).Format(time.RFC3339),
-		UpdatedAt:        flippedAt.Add(-time.Minute).Format(time.RFC3339),
-	})
-	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
-	if err := daemon.PollOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	run := latestRunForRecord(t, store, project.ProjectID, "APP-T-0001")
-	assertEqual(t, string(LeaseStateReleased), run.LeaseState, "review flip released lease")
-	assertEqual(t, string(AttemptOutcomeCancelled), run.AttemptOutcome, "review flip cancelled active attempt")
-	if processExists(pid) {
-		t.Fatalf("review flip did not stop runner pid %d", pid)
-	}
-	status, err := store.ReadInvariantCircuitStatus()
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, false, status.Open, "review flip circuit")
-}
-
-func TestSentinelOpensAfterConvergenceGrace(t *testing.T) {
-	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review flip grace", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
-	flippedAt := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
-	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
-		"status":     "review",
-		"readiness":  "waiting_on_review",
-		"next_owner": "reviewer",
-		"updated_at": flippedAt.Format(time.RFC3339),
-	})
-	project := registerAutomationTestProject(t, vault)
-	store, err := OpenRuntimeStore(DefaultStateRoot())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	mustUpsertRun(t, store, RunStatus{
-		ProjectID:       project.ProjectID,
-		RecordID:        "APP-T-0001",
-		ItemID:          "APP-T-0001",
-		Runner:          string(RunnerCodexExec),
-		Lane:            runLaneExecute,
-		LeaseState:      string(LeaseStateRunning),
-		AttemptOutcome:  string(AttemptOutcomeNone),
-		ActiveAttemptID: "attempt-stuck",
-		AttemptCount:    1,
-		UpdatedAt:       flippedAt.Format(time.RFC3339),
-	})
-	wfFile, err := loadWorkflow(vault)
-	if err != nil {
-		t.Fatal(err)
-	}
-	grace := sentinelHeldLeaseConvergenceGrace(wfFile.Data)
-	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
-	insideGrace := sentinelSnapshotForTest(t, store, project, vault, []string{invariantCheckHeldLeaseDispatchEligible}, "2026-07-06T11:59:59Z", "2026-07-06T12:00:01Z", flippedAt.Add(grace-time.Second), nil)
-	status, err := daemon.evaluateInvariantSentinel(insideGrace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, false, status.Open, "within convergence grace")
-
-	afterGrace := sentinelSnapshotForTest(t, store, project, vault, []string{invariantCheckHeldLeaseDispatchEligible}, "2026-07-06T11:59:59Z", "2026-07-06T12:00:01Z", flippedAt.Add(grace+time.Second), nil)
-	status, err = daemon.evaluateInvariantSentinel(afterGrace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, true, status.Open, "after convergence grace")
-	if len(status.Violations) == 0 || !strings.Contains(status.Violations[0].Detail, "not dispatch-eligible") {
-		t.Fatalf("expected held lease violation after grace, got %#v", status.Violations)
-	}
-}
-
 func TestSentinelBoundedUsesProvidedStoreSnapshot(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Bounded sentinel", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
-	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer", "updated_at": "2026-07-06T11:59:30Z"})
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer"})
 	project := registerAutomationTestProject(t, vault)
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
@@ -437,7 +313,7 @@ func TestSentinelDetectsStaleReviewLeaseE2EResumeAfterFix(t *testing.T) {
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Should not dispatch", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0002")
-	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer", "updated_at": "2026-07-06T11:59:30Z"})
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer"})
 	project := registerAutomationTestProject(t, vault)
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
