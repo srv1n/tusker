@@ -554,6 +554,10 @@ func run(command string, args Args) (int, error) {
 		return 0, daemonResumeCmd(args)
 	case "daemon stop":
 		return 0, daemonStopCmd(args)
+	case "daemon install":
+		return 0, daemonInstallCmd(args)
+	case "daemon uninstall":
+		return 0, daemonUninstallCmd(args)
 	case "daemon":
 		printDaemonHelp()
 		return 0, nil
@@ -719,7 +723,7 @@ func run(command string, args Args) (int, error) {
 	case "help vault", "help vault set", "help vault status", "help vault mount", "help vault unmount", "help vault repair", "help vault move":
 		printVaultHelp()
 		return 0, nil
-	case "help daemon", "help daemon run", "help daemon status", "help daemon limits", "help daemon resume", "help daemon stop":
+	case "help daemon", "help daemon run", "help daemon status", "help daemon limits", "help daemon resume", "help daemon stop", "help daemon install", "help daemon uninstall":
 		printDaemonHelp()
 		return 0, nil
 	case "help automation", "help automation status", "help automation queue", "help automation explain", "help automation plan", "help automation dispatch", "help automation collect-external", "help automation external-loop", "help automation advance-external":
@@ -911,7 +915,7 @@ func printCommandHelp(command string) bool {
 		printGraphHelp()
 	case "vault", "vault set", "vault status", "vault mount", "vault unmount", "vault repair", "vault move":
 		printVaultHelp()
-	case "daemon", "daemon run", "daemon status", "daemon limits", "daemon resume", "daemon stop":
+	case "daemon", "daemon run", "daemon status", "daemon limits", "daemon resume", "daemon stop", "daemon install", "daemon uninstall":
 		printDaemonHelp()
 	case "automation", "automation status", "automation queue", "automation explain", "automation plan", "automation dispatch", "automation collect-external", "automation external-loop", "automation advance-external":
 		printAutomationHelp()
@@ -962,6 +966,8 @@ func printDaemonHelp() {
   tusker daemon limits [--max-active-runs <n>] [--json]
   tusker daemon resume [--json]
   tusker daemon stop [--drain] [--json]
+  tusker daemon install [--json]
+  tusker daemon uninstall [--json]
 
 Purpose:
   Operator/internal runtime loop for registered local projects. The normal
@@ -972,17 +978,21 @@ Behavior:
   - daemon run polls registered projects and dispatches ready/rework tasks
   - --once performs one poll tick and exits
   - daemon status reports state-root, project count, and active run count
+  - daemon install writes and starts a per-user launchd LaunchAgent
+  - daemon uninstall stops and removes the per-user launchd LaunchAgent
   - daemon limits reads or updates the global active-run cap
-  - daemon resume closes the invariant circuit only after violations are cleared
+  - daemon resume closes invariant/crash-loop circuits after operator repair
   - daemon stop asks the resident daemon to shut down and leaves detached wrappers alive
   - daemon stop --drain waits bounded for detached wrappers to finish
 
 Examples:
   tusker daemon status
+  tusker daemon install
   tusker daemon run --once
   tusker daemon limits --max-active-runs 1
   tusker daemon resume
-  tusker daemon stop --drain`)
+  tusker daemon stop --drain
+  tusker daemon uninstall`)
 }
 
 func printAutomationHelp() {

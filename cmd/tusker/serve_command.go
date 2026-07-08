@@ -380,11 +380,16 @@ func (s *serveServer) handleDaemon(w http.ResponseWriter, _ *http.Request) {
 		Projects:         projects,
 		ParkedBudgetRuns: intFromAny(daemonStatus["parkedBudgetRuns"]),
 		BudgetCircuit:    daemonStatus["budgetCircuit"],
+		CrashLoop:        daemonStatus["crashLoop"],
 		InvariantCircuit: daemonStatus["invariantCircuit"],
 		DaemonAlive:      boolFromAny(daemonStatus["daemon_alive"]),
 		DaemonPID:        intFromAny(daemonStatus["daemon_pid"]),
 		DaemonStartedAt:  nullIfBlank(stringValue(daemonStatus["daemon_started_at"])),
 		DaemonLastPollAt: nullIfBlank(stringValue(daemonStatus["daemon_last_poll_at"])),
+		ManagedByLaunchd: boolFromAny(daemonStatus["daemon_managed_by_launchd"]),
+		LaunchdInstalled: boolFromAny(daemonStatus["launchd_installed"]),
+		DaemonRunMode:    stringValue(daemonStatus["daemon_run_mode"]),
+		LastRestartCause: stringValue(daemonStatus["daemon_last_restart_cause"]),
 	})
 }
 

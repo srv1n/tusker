@@ -26,11 +26,12 @@ type daemonGuard struct {
 }
 
 type daemonPIDFile struct {
-	PID          int    `json:"pid"`
-	StartedAt    string `json:"started_at"`
-	StateRoot    string `json:"state_root,omitempty"`
-	ServeEnabled bool   `json:"serve_enabled"`
-	ServeAddr    string `json:"serve_addr,omitempty"`
+	PID              int    `json:"pid"`
+	StartedAt        string `json:"started_at"`
+	StateRoot        string `json:"state_root,omitempty"`
+	ServeEnabled     bool   `json:"serve_enabled"`
+	ServeAddr        string `json:"serve_addr,omitempty"`
+	ManagedByLaunchd bool   `json:"managed_by_launchd"`
 }
 
 type daemonLiveness struct {
@@ -41,6 +42,7 @@ type daemonLiveness struct {
 	RuntimeStorePath string
 	ServeEnabled     bool
 	ServeAddr        string
+	ManagedByLaunchd bool
 }
 
 type daemonAlreadyRunningError struct {
@@ -83,11 +85,12 @@ func acquireDaemonGuard(stateRoot string) (*daemonGuard, error) {
 
 func (g *daemonGuard) writePIDFile(startedAt time.Time) error {
 	pidFile := daemonPIDFile{
-		PID:          os.Getpid(),
-		StartedAt:    startedAt.Format(time.RFC3339Nano),
-		StateRoot:    g.stateRoot,
-		ServeEnabled: true,
-		ServeAddr:    defaultServeAddr,
+		PID:              os.Getpid(),
+		StartedAt:        startedAt.Format(time.RFC3339Nano),
+		StateRoot:        g.stateRoot,
+		ServeEnabled:     true,
+		ServeAddr:        defaultServeAddr,
+		ManagedByLaunchd: daemonRunningUnderLaunchd(),
 	}
 	return g.writePIDFileData(pidFile)
 }
@@ -102,9 +105,10 @@ func (g *daemonGuard) updateServePIDFile(enabled bool, addr string) error {
 	}
 	if !ok {
 		pidFile = daemonPIDFile{
-			PID:       os.Getpid(),
-			StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
-			StateRoot: g.stateRoot,
+			PID:              os.Getpid(),
+			StartedAt:        time.Now().UTC().Format(time.RFC3339Nano),
+			StateRoot:        g.stateRoot,
+			ManagedByLaunchd: daemonRunningUnderLaunchd(),
 		}
 	}
 	pidFile.ServeEnabled = enabled
@@ -160,6 +164,7 @@ func readDaemonLiveness(stateRoot string, now time.Time) daemonLiveness {
 	status.Alive = true
 	status.ServeEnabled = pidFile.ServeEnabled
 	status.ServeAddr = pidFile.ServeAddr
+	status.ManagedByLaunchd = pidFile.ManagedByLaunchd
 	if startedAt, err := time.Parse(time.RFC3339Nano, pidFile.StartedAt); err == nil {
 		uptime := now.Sub(startedAt)
 		if uptime < 0 {

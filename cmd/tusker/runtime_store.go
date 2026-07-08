@@ -1691,9 +1691,29 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	crashLoop, err := s.ReadCrashLoopStatus()
+	if err != nil {
+		return nil, err
+	}
+	lastRestartCause, err := s.GetSetting(daemonLastRestartCauseKey)
+	if err != nil {
+		return nil, err
+	}
+	launchdInstalled, launchdPlistPath := false, ""
+	if installed, path, err := daemonLaunchdInstalled(); err == nil {
+		launchdInstalled = installed
+		launchdPlistPath = path
+	}
 	invariantCircuitReason := ""
 	if invariantCircuit.Open {
 		invariantCircuitReason = invariantCircuitSummary(invariantCircuit)
+	}
+	runMode := "stopped"
+	if liveness.Alive {
+		runMode = "manual"
+		if liveness.ManagedByLaunchd {
+			runMode = "launchd"
+		}
 	}
 	source := "daemon.db"
 	if globalLimit <= 0 {
@@ -1701,32 +1721,40 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 		source = "default"
 	}
 	return map[string]any{
-		"state_root":               s.stateRoot,
-		"runtime_store_path":       liveness.RuntimeStorePath,
-		"daemon_alive":             liveness.Alive,
-		"daemon_pid":               liveness.PID,
-		"daemon_started_at":        liveness.StartedAt,
-		"daemon_uptime_seconds":    liveness.UptimeSeconds,
-		"daemon_serve_enabled":     liveness.ServeEnabled,
-		"daemon_serve_addr":        liveness.ServeAddr,
-		"daemon_serve_url":         daemonServeURL(liveness.ServeAddr),
-		"daemon_last_poll_at":      lastPollAt,
-		"daemon_watchdog_beat_at":  watchdogBeatAt,
-		"projects":                 projectCount,
-		"activeRuns":               runCount,
-		"parkedNoProgressRuns":     parkedNoProgressCount,
-		"parkedBudgetRuns":         parkedBudgetCount,
-		"max_active_runs":          globalLimit,
-		"limit_source":             source,
-		"default_limit_value":      2,
-		"project_health":           projects,
-		"budgetCircuit":            budgetCircuit,
-		"budget_circuit_open":      budgetCircuit.Open,
-		"budget_circuit_reset_at":  budgetCircuit.ResetAt,
-		"budget_circuit_reason":    budgetCircuit.Reason,
-		"invariantCircuit":         invariantCircuit,
-		"invariant_circuit_open":   invariantCircuit.Open,
-		"invariant_circuit_reason": invariantCircuitReason,
+		"state_root":                s.stateRoot,
+		"runtime_store_path":        liveness.RuntimeStorePath,
+		"daemon_alive":              liveness.Alive,
+		"daemon_pid":                liveness.PID,
+		"daemon_started_at":         liveness.StartedAt,
+		"daemon_uptime_seconds":     liveness.UptimeSeconds,
+		"daemon_serve_enabled":      liveness.ServeEnabled,
+		"daemon_serve_addr":         liveness.ServeAddr,
+		"daemon_serve_url":          daemonServeURL(liveness.ServeAddr),
+		"daemon_managed_by_launchd": liveness.ManagedByLaunchd,
+		"daemon_run_mode":           runMode,
+		"daemon_last_restart_cause": strings.TrimSpace(lastRestartCause),
+		"launchd_installed":         launchdInstalled,
+		"launchd_plist_path":        launchdPlistPath,
+		"daemon_last_poll_at":       lastPollAt,
+		"daemon_watchdog_beat_at":   watchdogBeatAt,
+		"projects":                  projectCount,
+		"activeRuns":                runCount,
+		"parkedNoProgressRuns":      parkedNoProgressCount,
+		"parkedBudgetRuns":          parkedBudgetCount,
+		"max_active_runs":           globalLimit,
+		"limit_source":              source,
+		"default_limit_value":       2,
+		"project_health":            projects,
+		"budgetCircuit":             budgetCircuit,
+		"budget_circuit_open":       budgetCircuit.Open,
+		"budget_circuit_reset_at":   budgetCircuit.ResetAt,
+		"budget_circuit_reason":     budgetCircuit.Reason,
+		"crashLoop":                 crashLoop,
+		"crash_loop_open":           crashLoop.Open,
+		"crash_loop_reason":         crashLoop.Reason,
+		"invariantCircuit":          invariantCircuit,
+		"invariant_circuit_open":    invariantCircuit.Open,
+		"invariant_circuit_reason":  invariantCircuitReason,
 	}, nil
 }
 
