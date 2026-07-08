@@ -2,8 +2,10 @@
   Project Runs board — table header + row components.
 
   Active rows link to run detail and read alarming when a "running" process has
-  gone silent (amber → red). Recent rows are quiet and end in an outcome chip
-  (the design keeps them non-interactive).
+  gone silent (amber → red). Recent rows are quiet, settled, and end in an
+  outcome chip — styled distinctly (muted wash, "terminal" tag, attempt count)
+  so a finished 15-attempt churn row can never be mistaken for a live runner
+  (SRV-T-0015 A3). The header is labeled and shared by both tables (A2).
 */
 
 import { Link } from "@tanstack/react-router";
@@ -25,7 +27,7 @@ import {
 
 const ROW_BORDER = "border-b border-line-soft last:border-b-0";
 
-/** Column headings for the active table (design: mono micro-caps). */
+/** Column headings, shared by the active and recent tables (design: mono micro-caps). */
 export function RunsTableHeader() {
   return (
     <div
@@ -37,20 +39,30 @@ export function RunsTableHeader() {
       <span>Task</span>
       <span>Runner</span>
       <span>Lane</span>
+      <span>Lease</span>
       <span>Tokens</span>
-      <span>Liveness</span>
+      <span>State</span>
     </div>
   );
 }
 
-/** Task id over its (truncated) title — shared by both row kinds. */
-function TaskCell({ run, titleClass }: { run: RunSummary; titleClass: string }) {
+/** Task id over its (truncated) title, with an optional churn subtitle. */
+function TaskCell({
+  run,
+  titleClass,
+  subtitle,
+}: {
+  run: RunSummary;
+  titleClass: string;
+  subtitle?: string;
+}) {
   return (
     <span className="min-w-0">
       <Mono className="block text-[10px] text-faint">{run.taskId}</Mono>
       <span className={cn("block truncate text-[13px] font-medium", titleClass)}>
         {run.taskTitle}
       </span>
+      {subtitle && <Mono className="block text-[9px] text-fainter">{subtitle}</Mono>}
     </span>
   );
 }
@@ -68,9 +80,10 @@ function RunnerCell({ run }: { run: RunSummary }) {
 }
 
 /**
- * Active run row. Links to run detail; the liveness column pairs a prominent
+ * Active run row. Links to run detail; the State column pairs a prominent
  * elapsed clock (coloured by liveness) with the shared <LivenessIndicator>
- * (dot + time-since-last-event) so a dead process reads as alarming.
+ * (dot + time-since-last-event) so a dead process reads as alarming. Lane and
+ * lease_state are their own labeled columns.
  */
 export function ActiveRunRow({ run }: { run: RunSummary }) {
   const dead = run.liveness === "dead";
@@ -87,13 +100,13 @@ export function ActiveRunRow({ run }: { run: RunSummary }) {
     >
       <TaskCell run={run} titleClass="text-ink" />
       <RunnerCell run={run} />
-      <span className="flex flex-col gap-0.5">
-        <Mono className={cn("text-[11px]", laneTextClass(run.lane))}>{run.lane}</Mono>
-        <Mono className={cn("text-[9.5px]", leaseTextClass(run.leaseState))}>
-          {run.leaseState}
-        </Mono>
-      </span>
-      <Mono className="text-[11px] text-ink-soft">{compactNumber(tokenTotal(run))}</Mono>
+      <Mono className={cn("self-center text-[11px]", laneTextClass(run.lane))}>{run.lane}</Mono>
+      <Mono className={cn("self-center text-[10px]", leaseTextClass(run.leaseState))}>
+        {run.leaseState}
+      </Mono>
+      <Mono className="self-center text-[11px] text-ink-soft">
+        {compactNumber(tokenTotal(run))}
+      </Mono>
       <span className="flex flex-col items-start gap-1">
         <Mono
           className={cn(
@@ -110,18 +123,32 @@ export function ActiveRunRow({ run }: { run: RunSummary }) {
   );
 }
 
-/** Recent (finished) run row — quiet, non-interactive, ends in an outcome chip. */
+/**
+ * Recent (finished) run row — quiet, non-interactive, visually settled. The
+ * muted wash, the "terminal" tag, and the attempt-count subtitle make a settled
+ * churn row unmistakably distinct from a live run (SRV-T-0015 A3). Ends in the
+ * outcome chip.
+ */
 export function RecentRunRow({ run }: { run: RunSummary }) {
+  const churn = run.attemptCount > 1 ? `${run.attemptCount} attempts` : undefined;
   return (
-    <div className={cn(RUNS_GRID, "items-center px-4 py-[11px]", ROW_BORDER)}>
-      <TaskCell run={run} titleClass="text-ink-soft" />
+    <div
+      className={cn(RUNS_GRID, "items-center bg-panel/40 px-4 py-[11px] opacity-90", ROW_BORDER)}
+    >
+      <TaskCell run={run} titleClass="text-ink-soft" subtitle={churn} />
       <span className="justify-self-start">
         <RunnerBadge runner={run.runner} />
       </span>
-      <Mono className="text-[11px] text-faint">{run.lane}</Mono>
-      <Mono className="text-[11px] text-muted">{compactNumber(tokenTotal(run))}</Mono>
-      <span className="justify-self-start">
+      <Mono className="self-center text-[11px] text-faint">{run.lane}</Mono>
+      <Mono className={cn("self-center text-[10px]", leaseTextClass(run.leaseState))}>
+        {run.leaseState}
+      </Mono>
+      <Mono className="self-center text-[11px] text-muted">{compactNumber(tokenTotal(run))}</Mono>
+      <span className="flex items-center gap-1.5 justify-self-start">
         <OutcomeChip outcome={run.outcome} />
+        {run.terminal && (
+          <Mono className="text-[8.5px] uppercase tracking-[0.08em] text-fainter">terminal</Mono>
+        )}
       </span>
     </div>
   );
@@ -138,6 +165,7 @@ export function RunsBoardSkeleton() {
             <Skeleton className="h-3 w-3/4" />
           </div>
           <Skeleton className="h-4 w-16" />
+          <Skeleton className="h-3 w-10" />
           <Skeleton className="h-3 w-10" />
           <Skeleton className="h-3 w-12" />
           <Skeleton className="h-4 w-20" />

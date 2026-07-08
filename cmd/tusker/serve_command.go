@@ -159,14 +159,21 @@ func (s *serveServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimSuffix(r.URL.Path, "/")
+	if path == "" {
+		path = "/"
+	}
+	// The read surface is GET-only; the sole mutation is the run redrive action,
+	// which must POST so the browser cannot trigger it as a plain navigation.
+	if r.Method == http.MethodPost && strings.HasPrefix(path, "/api/runs/") && strings.HasSuffix(path, "/redrive") {
+		taskID := strings.TrimSuffix(strings.TrimPrefix(path, "/api/runs/"), "/redrive")
+		s.handleRunRedrive(w, r, taskID)
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		serveJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "read-only API"})
 		return
-	}
-	path := strings.TrimSuffix(r.URL.Path, "/")
-	if path == "" {
-		path = "/"
 	}
 	switch {
 	case path == "/api/stream":
@@ -487,6 +494,51 @@ func (s *serveServer) handleRun(w http.ResponseWriter, _ *http.Request, taskID s
 	}
 	detail.Events = serveRunEvents(run, attempts)
 	serveJSON(w, http.StatusOK, detail)
+}
+
+// handleRunRedrive maps the run-detail Retry control to `tusker redrive`. It
+// guards on canonical task status first: a review/done task has no execution to
+// redrive, so it returns a visible refusal instead of requeuing into the
+// daemon's silent retire. A redrivable task is requeued and reported as such.
+// The response always carries a reason so the UI can never swallow the result.
+func (s *serveServer) handleRunRedrive(w http.ResponseWriter, _ *http.Request, taskID string) {
+	snap, err := s.loadSnapshot()
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	taskID = strings.TrimSpace(taskID)
+	run, ok := serveFindRun(snap.runs, taskID)
+	if !ok {
+		serveJSON(w, http.StatusNotFound, serveRedriveResult{TaskID: taskID, Reason: "no run found for this task"})
+		return
+	}
+	rawStatus := ""
+	if task, ok := snap.notesByID[taskID]; ok {
+		rawStatus = stringField(task.Data, "status")
+	}
+	result := serveRedriveResult{
+		TaskID:          taskID,
+		CanonicalStatus: strings.ToLower(strings.TrimSpace(rawStatus)),
+		LeaseState:      run.LeaseState,
+	}
+	if refused, reason := serveRedriveRefusal(rawStatus, run); refused {
+		result.Refused = true
+		result.Reason = reason
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
+	actor := defaultActorName()
+	reason := "operator redrive from serve"
+	if err := serveRedriveRun(s.store, &run, actor, reason, s.now()); err != nil {
+		serveJSON(w, http.StatusInternalServerError, serveRedriveResult{TaskID: taskID, Reason: "redrive failed: " + err.Error()})
+		return
+	}
+	result.OK = true
+	result.Requeued = true
+	result.LeaseState = run.LeaseState
+	result.Reason = "redrive requested — attempt window reset; the daemon will spawn a fresh attempt"
+	serveJSON(w, http.StatusOK, result)
 }
 
 func (s *serveServer) handleEpics(w http.ResponseWriter, r *http.Request) {

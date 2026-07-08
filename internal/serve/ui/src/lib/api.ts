@@ -17,6 +17,7 @@ import type {
   EpicSummary,
   NeedItem,
   ProjectSummary,
+  RedriveResult,
   RunDetail,
   RunSummary,
   TaskCapsule,
@@ -36,6 +37,20 @@ function delay<T>(value: T, ms = LATENCY_MS): Promise<T> {
 async function real<T>(path: string): Promise<T> {
   const res = await fetch(`/api${path}`, { headers: { accept: "application/json" } });
   if (!res.ok) throw new ApiError(res.status, `GET /api${path} → ${res.status}`);
+  return (await res.json()) as T;
+}
+
+/**
+ * The one mutating call: POST an action and return its JSON body. A refusal is
+ * carried in the body (ok/refused/reason), NOT a non-2xx, so the caller can
+ * surface the reason; only transport/5xx failures throw.
+ */
+async function post<T>(path: string): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    method: "POST",
+    headers: { accept: "application/json" },
+  });
+  if (!res.ok) throw new ApiError(res.status, `POST /api${path} → ${res.status}`);
   return (await res.json()) as T;
 }
 
@@ -102,6 +117,14 @@ export const api = {
     if (!detail) return Promise.reject(new ApiError(404, `No run for ${taskId} yet.`));
     return delay(detail);
   },
+
+  // POST /api/runs/:taskId/redrive — maps the Retry control to `tusker redrive`.
+  // The result (requeue or refusal reason) is always returned so the UI can
+  // surface it; the daemon must never retire a run behind a stale badge.
+  redrive: (taskId: string): Promise<RedriveResult> =>
+    USE_MOCK
+      ? delay({ ok: true, requeued: true, reason: "redrive requested (mock)", taskId })
+      : post(`/runs/${taskId}/redrive`),
 
   // GET /api/epics?project=
   epics: (projectId?: string): Promise<EpicSummary[]> =>

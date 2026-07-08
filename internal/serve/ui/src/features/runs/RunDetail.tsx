@@ -1,7 +1,7 @@
 import { getRouteApi, Link } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import type { RunDetail as RunDetailData } from "@/types/domain";
-import { useRun, useTasks } from "@/lib/queries";
+import { useRedrive, useRun, useTasks } from "@/lib/queries";
 import { QueryBoundary, Skeleton, SkeletonRows } from "@/components/ui/states";
 import { SectionLabel } from "@/components/ui/page";
 import { RunHeader } from "@/features/runs/detail/RunHeader";
@@ -21,6 +21,7 @@ export function RunDetail() {
   const { projectId, taskId } = route.useParams();
   const run = useRun(taskId);
   const tasks = useTasks(projectId);
+  const redrive = useRedrive(taskId);
 
   return (
     <div className="tk-scroll h-full overflow-y-auto">
@@ -45,10 +46,8 @@ export function RunDetail() {
                     // TODO(api): POST /api/runs/:taskId/interrupt
                     console.info("interrupt", data.taskId);
                   }}
-                  onRetry={() => {
-                    // TODO(api): POST /api/runs/:taskId/retry
-                    console.info("retry", data.taskId);
-                  }}
+                  onRetry={() => redrive.mutate()}
+                  retry={{ pending: redrive.isPending, result: redrive.data ?? null }}
                 />
 
                 <RunStats run={data} />

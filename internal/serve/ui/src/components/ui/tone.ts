@@ -7,12 +7,12 @@
 
 import type {
   GateKind,
+  KnownRunOutcome,
   Liveness,
   Priority,
   ProofStatus,
   Readiness,
   Risk,
-  RunOutcome,
   TaskStatus,
 } from "@/types/domain";
 
@@ -100,7 +100,7 @@ export const readinessLabel: Record<Readiness, string> = {
   draft: "Draft",
 };
 
-export const outcomeTone: Record<RunOutcome, Tone> = {
+export const outcomeTone: Record<KnownRunOutcome, Tone> = {
   idle: "muted",
   running: "info",
   stale: "warn",
@@ -114,7 +114,7 @@ export const outcomeTone: Record<RunOutcome, Tone> = {
   "parked-budget": "fail",
 };
 
-export const outcomeLabel: Record<RunOutcome, string> = {
+export const outcomeLabel: Record<KnownRunOutcome, string> = {
   idle: "Idle",
   running: "Running",
   stale: "Stale",
@@ -127,6 +127,31 @@ export const outcomeLabel: Record<RunOutcome, string> = {
   "parked-no-progress": "Parked",
   "parked-budget": "Budget parked",
 };
+
+/**
+ * Humanize an unknown enum token — "review-complete" / "awaiting_land" →
+ * "Review complete" / "Awaiting land". Used as the fallback label so a run
+ * outcome (or lease state) the API adds later still reads sensibly.
+ */
+export function humanizeToken(token: string): string {
+  const cleaned = token.replace(/[_-]+/g, " ").trim();
+  if (cleaned === "") return token;
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+/**
+ * Tone for any run outcome, known or not. An open-enum value the daemon adds
+ * later resolves to a neutral tone rather than an undefined class (packet §6:
+ * color carries meaning; the absence of a known meaning is neutral, not blank).
+ */
+export function outcomeToneOf(outcome: string): Tone {
+  return (outcomeTone as Record<string, Tone>)[outcome] ?? "neutral";
+}
+
+/** Label for any run outcome, known or not (falls back to a humanized token). */
+export function outcomeLabelOf(outcome: string): string {
+  return (outcomeLabel as Record<string, string>)[outcome] ?? humanizeToken(outcome);
+}
 
 export const livenessTone: Record<Liveness, Tone> = {
   fresh: "pass",
