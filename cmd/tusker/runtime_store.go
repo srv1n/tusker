@@ -49,6 +49,10 @@ type RunStatus struct {
 	RecordID           string `json:"record_id"`
 	ItemID             string `json:"item_id"`
 	Runner             string `json:"runner"`
+	RunnerProfile      string `json:"runner_profile"`
+	RunnerHarness      string `json:"runner_harness"`
+	RunnerModel        string `json:"runner_model"`
+	RunnerEffort       string `json:"runner_effort"`
 	Lane               string `json:"lane"`
 	LeaseState         string `json:"lease_state"`
 	LeaseOwner         string `json:"lease_owner"`
@@ -411,6 +415,10 @@ func (s *RuntimeStore) Migrate() error {
 			record_id TEXT NOT NULL,
 			item_id TEXT NOT NULL DEFAULT '',
 			runner TEXT NOT NULL DEFAULT '',
+			runner_profile TEXT NOT NULL DEFAULT '',
+			runner_harness TEXT NOT NULL DEFAULT '',
+			runner_model TEXT NOT NULL DEFAULT '',
+			runner_effort TEXT NOT NULL DEFAULT '',
 			lane TEXT NOT NULL DEFAULT '',
 			lease_state TEXT NOT NULL DEFAULT 'unclaimed',
 			lease_owner TEXT NOT NULL DEFAULT '',
@@ -592,6 +600,19 @@ func (s *RuntimeStore) Migrate() error {
 	}
 	if err := s.ensureColumn("runs", "lane", `ALTER TABLE runs ADD COLUMN lane TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
+	}
+	for _, column := range []struct {
+		name string
+		stmt string
+	}{
+		{"runner_profile", `ALTER TABLE runs ADD COLUMN runner_profile TEXT NOT NULL DEFAULT ''`},
+		{"runner_harness", `ALTER TABLE runs ADD COLUMN runner_harness TEXT NOT NULL DEFAULT ''`},
+		{"runner_model", `ALTER TABLE runs ADD COLUMN runner_model TEXT NOT NULL DEFAULT ''`},
+		{"runner_effort", `ALTER TABLE runs ADD COLUMN runner_effort TEXT NOT NULL DEFAULT ''`},
+	} {
+		if err := s.ensureColumn("runs", column.name, column.stmt); err != nil {
+			return err
+		}
 	}
 	if err := s.ensureColumn("runs", "active_attempt_id", `ALTER TABLE runs ADD COLUMN active_attempt_id TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
@@ -889,7 +910,7 @@ func (s *RuntimeStore) ListProjects() ([]RegisteredProject, error) {
 }
 
 func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
-	rows, err := s.query(`SELECT project_id, record_id, item_id, runner, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at FROM runs ORDER BY updated_at DESC, project_id, item_id`)
+	rows, err := s.query(`SELECT project_id, record_id, item_id, runner, runner_profile, runner_harness, runner_model, runner_effort, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at FROM runs ORDER BY updated_at DESC, project_id, item_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -898,7 +919,7 @@ func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
 	for rows.Next() {
 		var run RunStatus
 		var terminal int
-		if err := rows.Scan(&run.ProjectID, &run.RecordID, &run.ItemID, &run.Runner, &run.Lane, &run.LeaseState, &run.LeaseOwner, &run.LeaseGeneration, &run.LeaseExpiresAt, &run.LeaseHost, &run.AttemptOutcome, &run.ActiveAttemptID, &run.WorkspacePath, &run.SessionRef, &run.CloudTaskID, &run.CloudStatus, &run.CloudEnvironmentID, &run.CloudAttemptNumber, &run.PullRequestURL, &run.ApplyRef, &run.LogsSummary, &run.FinalSummary, &run.ProcessPID, &run.ProcessPGID, &run.ProcessStartedAt, &run.PromptPath, &run.EventSinkPath, &run.RawLogPath, &run.StatusPath, &run.WorkRevision, &run.AttemptCount, &run.NextRetryAt, &run.LastError, &run.LastEventAt, &run.FirstEventAt, &run.LastHeartbeatAt, &terminal, &run.StartedAt, &run.UpdatedAt); err != nil {
+		if err := rows.Scan(&run.ProjectID, &run.RecordID, &run.ItemID, &run.Runner, &run.RunnerProfile, &run.RunnerHarness, &run.RunnerModel, &run.RunnerEffort, &run.Lane, &run.LeaseState, &run.LeaseOwner, &run.LeaseGeneration, &run.LeaseExpiresAt, &run.LeaseHost, &run.AttemptOutcome, &run.ActiveAttemptID, &run.WorkspacePath, &run.SessionRef, &run.CloudTaskID, &run.CloudStatus, &run.CloudEnvironmentID, &run.CloudAttemptNumber, &run.PullRequestURL, &run.ApplyRef, &run.LogsSummary, &run.FinalSummary, &run.ProcessPID, &run.ProcessPGID, &run.ProcessStartedAt, &run.PromptPath, &run.EventSinkPath, &run.RawLogPath, &run.StatusPath, &run.WorkRevision, &run.AttemptCount, &run.NextRetryAt, &run.LastError, &run.LastEventAt, &run.FirstEventAt, &run.LastHeartbeatAt, &terminal, &run.StartedAt, &run.UpdatedAt); err != nil {
 			return nil, err
 		}
 		run.Terminal = terminal != 0
@@ -918,11 +939,15 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	_, err := s.exec(`INSERT INTO runs (
-		project_id, record_id, item_id, runner, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		project_id, record_id, item_id, runner, runner_profile, runner_harness, runner_model, runner_effort, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id, record_id) DO UPDATE SET
 		item_id=excluded.item_id,
 		runner=excluded.runner,
+		runner_profile=excluded.runner_profile,
+		runner_harness=excluded.runner_harness,
+		runner_model=excluded.runner_model,
+		runner_effort=excluded.runner_effort,
 		lane=excluded.lane,
 		lease_state=excluded.lease_state,
 		lease_owner=excluded.lease_owner,
@@ -958,7 +983,7 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 		terminal=excluded.terminal,
 		started_at=excluded.started_at,
 		updated_at=excluded.updated_at`,
-		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.Lane, run.LeaseState, run.LeaseOwner, run.LeaseGeneration, run.LeaseExpiresAt, run.LeaseHost, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.FirstEventAt, run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt)
+		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.RunnerProfile, run.RunnerHarness, run.RunnerModel, run.RunnerEffort, run.Lane, run.LeaseState, run.LeaseOwner, run.LeaseGeneration, run.LeaseExpiresAt, run.LeaseHost, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.FirstEventAt, run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt)
 	return err
 }
 
@@ -2041,10 +2066,11 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 	if err := s.queryRowScan(`SELECT COUNT(*) FROM runs WHERE lease_state = 'parked_budget'`, nil, &parkedBudgetCount); err != nil {
 		return nil, err
 	}
-	globalLimit, err := s.GlobalActiveRunLimit()
+	globalReport, err := configResolveForRepo("", false, "runtime.max_active_runs")
 	if err != nil {
 		return nil, err
 	}
+	globalLimit := intFromAny(globalReport.Value)
 	lastPollAt, err := s.GetSetting("daemon_last_poll_at")
 	if err != nil {
 		return nil, err
@@ -2072,7 +2098,7 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 	source := "daemon.db"
 	if globalLimit <= 0 {
 		globalLimit = 2
-		source = "default"
+		source = configSourceBuiltIn
 	}
 	return map[string]any{
 		"state_root":               s.stateRoot,

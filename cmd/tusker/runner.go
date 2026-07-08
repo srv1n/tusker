@@ -75,6 +75,10 @@ type StartRequest struct {
 	RawLogPath      string
 	StatusPath      string
 	Command         string
+	RunnerProfile   string
+	RunnerHarness   string
+	RunnerModel     string
+	RunnerEffort    string
 	NotePath        string
 	VaultPath       string
 	Budget          map[string]any
@@ -101,6 +105,10 @@ type ResumeRequest struct {
 	RawLogPath      string
 	StatusPath      string
 	Command         string
+	RunnerProfile   string
+	RunnerHarness   string
+	RunnerModel     string
+	RunnerEffort    string
 	NotePath        string
 	VaultPath       string
 	CodexPolicy     CodexPolicy
@@ -116,14 +124,15 @@ type ExternalLoopLaunchContext struct {
 }
 
 type CodexPolicy struct {
-	ApprovalPolicy    string
-	ThreadSandbox     string
-	TurnSandboxPolicy string
-	TurnTimeoutMS     int
-	ReadTimeoutMS     int
-	StallTimeoutMS    int
-	MaxTurns          int
-	Extensions        ExtensionPolicy
+	ApprovalPolicy     string
+	ThreadSandbox      string
+	TurnSandboxPolicy  string
+	TurnSandboxNetwork *bool
+	TurnTimeoutMS      int
+	ReadTimeoutMS      int
+	StallTimeoutMS     int
+	MaxTurns           int
+	Extensions         ExtensionPolicy
 }
 
 type CodexCloudConfig struct {
@@ -221,14 +230,15 @@ type Runner interface {
 
 func codexPolicyFromWorkflow(wf Workflow) CodexPolicy {
 	return CodexPolicy{
-		ApprovalPolicy:    wf.Codex.ApprovalPolicy,
-		ThreadSandbox:     wf.Codex.ThreadSandbox,
-		TurnSandboxPolicy: wf.Codex.TurnSandboxPolicy,
-		TurnTimeoutMS:     wf.Codex.TurnTimeoutMS,
-		ReadTimeoutMS:     wf.Codex.ReadTimeoutMS,
-		StallTimeoutMS:    wf.Codex.StallTimeoutMS,
-		MaxTurns:          wf.Codex.MaxTurns,
-		Extensions:        wf.Extensions,
+		ApprovalPolicy:     wf.Codex.ApprovalPolicy,
+		ThreadSandbox:      wf.Codex.ThreadSandbox,
+		TurnSandboxPolicy:  wf.Codex.TurnSandboxPolicy,
+		TurnSandboxNetwork: nil,
+		TurnTimeoutMS:      wf.Codex.TurnTimeoutMS,
+		ReadTimeoutMS:      wf.Codex.ReadTimeoutMS,
+		StallTimeoutMS:     wf.Codex.StallTimeoutMS,
+		MaxTurns:           wf.Codex.MaxTurns,
+		Extensions:         wf.Extensions,
 	}
 }
 
@@ -324,10 +334,15 @@ func runnerEnv(req runnerLaunchEnv) []string {
 		"TUSKER_CODEX_APPROVAL_POLICY="+req.CodexPolicy.ApprovalPolicy,
 		"TUSKER_CODEX_THREAD_SANDBOX="+req.CodexPolicy.ThreadSandbox,
 		"TUSKER_CODEX_TURN_SANDBOX_POLICY="+req.CodexPolicy.TurnSandboxPolicy,
+		"TUSKER_CODEX_TURN_NETWORK_ACCESS="+networkAccessEnvValue(req.CodexPolicy.TurnSandboxNetwork),
 		"TUSKER_CODEX_TURN_TIMEOUT_MS="+fmt.Sprintf("%d", req.CodexPolicy.TurnTimeoutMS),
 		"TUSKER_CODEX_READ_TIMEOUT_MS="+fmt.Sprintf("%d", req.CodexPolicy.ReadTimeoutMS),
 		"TUSKER_CODEX_STALL_TIMEOUT_MS="+fmt.Sprintf("%d", req.CodexPolicy.StallTimeoutMS),
 		"TUSKER_CODEX_MAX_TURNS="+fmt.Sprintf("%d", req.CodexPolicy.MaxTurns),
+		"TUSKER_RUNNER_PROFILE="+req.RunnerProfile,
+		"TUSKER_RUNNER_HARNESS="+req.RunnerHarness,
+		"TUSKER_RUNNER_MODEL="+req.RunnerModel,
+		"TUSKER_RUNNER_EFFORT="+req.RunnerEffort,
 		"TUSKER_EXTERNAL_LOOP_STAGE="+req.ExternalLoop.Stage,
 		"TUSKER_EXTERNAL_LOOP_ACTION="+req.ExternalLoop.Action,
 		"TUSKER_EXTERNAL_ORIGIN_JOB_ID="+req.ExternalLoop.OriginJobID,
@@ -366,6 +381,17 @@ type runnerLaunchEnv struct {
 	VaultPath       string
 	SessionRef      string
 	MessageRef      string
+	RunnerProfile   string
+	RunnerHarness   string
+	RunnerModel     string
+	RunnerEffort    string
 	CodexPolicy     CodexPolicy
 	ExternalLoop    ExternalLoopLaunchContext
+}
+
+func networkAccessEnvValue(value *bool) string {
+	if value == nil {
+		return ""
+	}
+	return fmt.Sprintf("%t", *value)
 }

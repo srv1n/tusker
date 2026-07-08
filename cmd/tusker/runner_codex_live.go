@@ -92,7 +92,9 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: policy,
+		NotePath: req.NotePath, VaultPath: req.VaultPath,
+		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
+		CodexPolicy: policy,
 	})
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
@@ -326,7 +328,7 @@ func (h *codexLiveHandle) turnStart(threadID, prompt string) (string, error) {
 		"threadId":       threadID,
 		"cwd":            h.cmd.Dir,
 		"approvalPolicy": h.policy.ApprovalPolicy,
-		"sandboxPolicy":  codexTurnSandboxPolicy(h.policy.TurnSandboxPolicy, h.cmd.Dir),
+		"sandboxPolicy":  codexTurnSandboxPolicy(h.policy, h.cmd.Dir),
 		"input": []map[string]any{
 			{"type": "text", "text": prompt, "text_elements": []any{}},
 		},
@@ -334,17 +336,22 @@ func (h *codexLiveHandle) turnStart(threadID, prompt string) (string, error) {
 	return resp.Turn.ID, err
 }
 
-func codexTurnSandboxPolicy(policy, cwd string) map[string]any {
-	switch strings.TrimSpace(policy) {
+func codexTurnSandboxPolicy(policy CodexPolicy, cwd string) map[string]any {
+	policy = withDefaultCodexPolicy(policy)
+	switch strings.TrimSpace(policy.TurnSandboxPolicy) {
 	case "danger-full-access":
 		return map[string]any{"type": "dangerFullAccess"}
 	case "read-only":
 		return map[string]any{"type": "readOnly", "networkAccess": false}
 	default:
+		networkAccess := false
+		if policy.TurnSandboxNetwork != nil {
+			networkAccess = *policy.TurnSandboxNetwork
+		}
 		return map[string]any{
 			"type":                "workspaceWrite",
 			"writableRoots":       []string{cwd},
-			"networkAccess":       false,
+			"networkAccess":       networkAccess,
 			"excludeTmpdirEnvVar": false,
 			"excludeSlashTmp":     false,
 		}

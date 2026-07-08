@@ -69,6 +69,12 @@ type automationTaskExplanation struct {
 	Blockers          []string                 `json:"blockers"`
 	Project           automationProjectSummary `json:"project"`
 	Runner            string                   `json:"runner"`
+	RunnerProfile     string                   `json:"runner_profile"`
+	RunnerHarness     string                   `json:"runner_harness"`
+	RunnerModel       string                   `json:"runner_model"`
+	RunnerEffort      string                   `json:"runner_effort"`
+	ProfileSource     string                   `json:"profile_source"`
+	ProfileRule       string                   `json:"profile_rule,omitempty"`
 	Lane              string                   `json:"lane"`
 	Command           string                   `json:"command"`
 	WorkflowPath      string                   `json:"workflow_path"`
@@ -100,6 +106,12 @@ type automationDispatchPlan struct {
 	Decision          string                   `json:"decision"`
 	Lane              string                   `json:"lane"`
 	Runner            string                   `json:"runner"`
+	RunnerProfile     string                   `json:"runner_profile"`
+	RunnerHarness     string                   `json:"runner_harness"`
+	RunnerModel       string                   `json:"runner_model"`
+	RunnerEffort      string                   `json:"runner_effort"`
+	ProfileSource     string                   `json:"profile_source"`
+	ProfileRule       string                   `json:"profile_rule,omitempty"`
 	Command           string                   `json:"command"`
 	WorkspacePath     string                   `json:"workspace_path"`
 	WorkspaceStrategy string                   `json:"workspace_strategy"`
@@ -468,9 +480,18 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 		run.Runner = firstNonEmpty(strings.TrimSpace(runner), run.Runner, ctx.Workflow.Data.Agents.Default)
 		run.Lane = firstNonEmpty(run.Lane, runLaneExecute)
 	}
+	lane := firstNonEmpty(run.Lane, runLaneExecute)
+	selectedProfile, profileErr := resolveRunProfileForLane(note, ctx.Workflow.Data, lane, runner)
+	if profileErr == nil {
+		run = applyResolvedProfileToRun(run, selectedProfile)
+		runner = firstNonEmpty(run.Runner, runner)
+	}
 	command := ""
 	requiredApprovals := []string{}
 	var blockers []string
+	if profileErr != nil {
+		blockers = append(blockers, "runner profile: "+profileErr.Error())
+	}
 	if !ctx.ProjectRegistered {
 		blockers = append(blockers, "project is not registered for automation")
 	} else if !ctx.Project.Enabled {
@@ -488,7 +509,7 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 	if err != nil {
 		blockers = append(blockers, "runner config: "+err.Error())
 	} else {
-		command = configuredCommand
+		command = commandForRunnerProfile(configuredCommand, selectedProfile)
 		if runnerObj.Capabilities().ExplicitApprovals {
 			requiredApprovals = append(requiredApprovals, "runner explicit approvals")
 		}
@@ -524,7 +545,7 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 	}
 	blockers = append(blockers, ctx.concurrencyBlockers(note, run)...)
 	fanout := ctx.fanoutSummary(recordID)
-	policy := codexPolicyFromWorkflow(ctx.Workflow.Data)
+	policy := codexPolicyForResolvedProfile(codexPolicyFromWorkflow(ctx.Workflow.Data), lane, selectedProfile)
 	if strings.TrimSpace(policy.ApprovalPolicy) != "" && policy.ApprovalPolicy != "never" {
 		requiredApprovals = append(requiredApprovals, "codex approval_policy="+policy.ApprovalPolicy)
 	}
@@ -552,7 +573,13 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 		Blockers:          blockers,
 		Project:           automationSummarizeProject(ctx.Project, ctx.projectRunsSlice(), ctx.ProjectRegistered),
 		Runner:            runner,
-		Lane:              firstNonEmpty(run.Lane, runLaneExecute),
+		RunnerProfile:     run.RunnerProfile,
+		RunnerHarness:     firstNonEmpty(run.RunnerHarness, runner),
+		RunnerModel:       run.RunnerModel,
+		RunnerEffort:      run.RunnerEffort,
+		ProfileSource:     selectedProfile.Source,
+		ProfileRule:       selectedProfile.RuleName,
+		Lane:              lane,
 		Command:           command,
 		WorkflowPath:      ctx.Workflow.Path,
 		WorkspacePath:     automationWorkspacePath(ctx.StateRoot, ctx.Project, ctx.Workflow.Data, run, workspaceStrategy),
@@ -580,6 +607,12 @@ func automationPlanFromExplanation(vaultPath string, note Note, explanation auto
 		Decision:          decision,
 		Lane:              explanation.Lane,
 		Runner:            explanation.Runner,
+		RunnerProfile:     explanation.RunnerProfile,
+		RunnerHarness:     explanation.RunnerHarness,
+		RunnerModel:       explanation.RunnerModel,
+		RunnerEffort:      explanation.RunnerEffort,
+		ProfileSource:     explanation.ProfileSource,
+		ProfileRule:       explanation.ProfileRule,
 		Command:           explanation.Command,
 		WorkspacePath:     explanation.WorkspacePath,
 		WorkspaceStrategy: explanation.WorkspaceStrategy,
@@ -773,10 +806,11 @@ func (ctx *automationCommandContext) concurrencyBlockers(note Note, run RunStatu
 		return nil
 	}
 	var blockers []string
-	globalLimit, err := ctx.Store.GlobalActiveRunLimit()
+	globalReport, err := configResolve(ctx.Project.VaultRoot, "runtime.max_active_runs")
 	if err != nil {
 		blockers = append(blockers, "global active run limit is invalid: "+err.Error())
 	} else {
+		globalLimit := intFromAny(globalReport.Value)
 		if globalLimit <= 0 {
 			globalLimit = 2
 		}
@@ -925,6 +959,7 @@ func printAutomationQueue(report automationQueueReport) {
 func printAutomationPlan(plan automationDispatchPlan) {
 	fmt.Printf("%s automation plan: %s\n", plan.Task, plan.Decision)
 	fmt.Printf("  runner=%s lane=%s workspace=%s\n", fallback(plan.Runner, "-"), fallback(plan.Lane, "-"), fallback(plan.WorkspacePath, "-"))
+	fmt.Printf("  profile=%s harness=%s model=%s effort=%s source=%s\n", fallback(plan.RunnerProfile, "-"), fallback(plan.RunnerHarness, plan.Runner), fallback(plan.RunnerModel, "-"), fallback(plan.RunnerEffort, "-"), fallback(plan.ProfileSource, "-"))
 	if len(plan.RequiredReads) > 0 {
 		fmt.Println("  required_reads:")
 		for _, read := range plan.RequiredReads {
@@ -959,6 +994,7 @@ func printAutomationExplanation(explanation automationTaskExplanation) {
 		fallback(explanation.ProofStatus, "-"),
 	)
 	fmt.Printf("  runner=%s lane=%s workspace=%s\n", fallback(explanation.Runner, "-"), fallback(explanation.Lane, "-"), fallback(explanation.WorkspacePath, "-"))
+	fmt.Printf("  profile=%s harness=%s model=%s effort=%s source=%s\n", fallback(explanation.RunnerProfile, "-"), fallback(explanation.RunnerHarness, explanation.Runner), fallback(explanation.RunnerModel, "-"), fallback(explanation.RunnerEffort, "-"), fallback(explanation.ProfileSource, "-"))
 	fmt.Printf("  fanout enabled=%t active=%d max=%d merge_rule=%s\n",
 		explanation.Fanout.Enabled,
 		explanation.Fanout.ActiveChildren,

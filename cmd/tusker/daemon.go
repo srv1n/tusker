@@ -509,11 +509,25 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 			current.ProjectID = project.ProjectID
 			current.RecordID = recordID
 			current.ItemID = stringField(note.Data, "id")
-			resolvedRunner := resolveRunnerForNote(note, wfFile.Data)
-			if isDispatchingLeaseState(current.LeaseState) {
-				current.Runner = firstNonEmpty(current.Runner, resolvedRunner, wfFile.Data.Agents.Default)
+			legacyRunner := resolveRunnerForNote(note, wfFile.Data)
+			if !isDispatchCapacityLeaseState(current.LeaseState) {
+				selectedProfile, profileErr := resolveRunProfileForLane(note, wfFile.Data, runLaneExecute, legacyRunner)
+				if profileErr != nil {
+					current.LastError = "dispatch blocked: runner profile: " + profileErr.Error()
+					current.UpdatedAt = now.Format(time.RFC3339)
+					if current.LeaseState == "" {
+						current.LeaseState = string(LeaseStateUnclaimed)
+					}
+					if err := d.store.UpsertRun(current); err != nil {
+						return err
+					}
+					projectRuns[recordID] = current
+					continue
+				}
+				current = applyResolvedProfileToRun(current, selectedProfile)
+				current.Runner = firstNonEmpty(current.Runner, legacyRunner, wfFile.Data.Agents.Default)
 			} else {
-				current.Runner = firstNonEmpty(resolvedRunner, current.Runner, wfFile.Data.Agents.Default)
+				current.Runner = firstNonEmpty(current.Runner, legacyRunner, wfFile.Data.Agents.Default)
 			}
 			current.Lane = firstNonEmpty(current.Lane, runLaneExecute)
 			current.UpdatedAt = now.Format(time.RFC3339)
@@ -659,11 +673,22 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 				continue
 			}
 			reviewerRunner := firstNonEmpty(wfFile.Data.Reviewer.Runner, wfFile.Data.Agents.Default)
+			selectedProfile, profileErr := resolveRunProfileForLane(note, wfFile.Data, runLaneReview, reviewerRunner)
+			if profileErr != nil {
+				current.LastError = "review dispatch blocked: runner profile: " + profileErr.Error()
+				current.UpdatedAt = now.Format(time.RFC3339)
+				if err := d.store.UpsertRun(current); err != nil {
+					return err
+				}
+				projectRuns[recordID] = current
+				continue
+			}
 			current.ProjectID = project.ProjectID
 			current.RecordID = recordID
 			current.ItemID = stringField(note.Data, "id")
 			current.WorkRevision = intField(note.Data, "work_revision")
-			current = prepareRunForLaneDispatch(current, runLaneReview, reviewerRunner)
+			current = prepareRunForLaneDispatch(current, runLaneReview, firstNonEmpty(selectedProfile.Definition.Harness, reviewerRunner))
+			current = applyResolvedProfileToRun(current, selectedProfile)
 			current.UpdatedAt = now.Format(time.RFC3339)
 			if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 				return err
@@ -787,12 +812,12 @@ func maxContinuationRetries(wf Workflow) int {
 }
 
 func (d *Daemon) globalActiveRunLimit() (int, error) {
-	if d != nil && d.store != nil {
-		if value, err := d.store.GlobalActiveRunLimit(); err != nil {
-			return 0, err
-		} else if value > 0 {
-			return value, nil
-		}
+	report, err := configResolveForRepo("", false, "runtime.max_active_runs")
+	if err != nil {
+		return 0, err
+	}
+	if value := intFromAny(report.Value); value > 0 {
+		return value, nil
 	}
 	return 2, nil
 }
@@ -2254,10 +2279,16 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		return capped, false, nil
 	}
 	previousRun := run
+	selectedProfile, err := resolveRunProfileForLane(note, wfFile.Data, lane, run.Runner)
+	if err != nil {
+		return run, err
+	}
+	run = applyResolvedProfileToRun(run, selectedProfile)
 	runner, command, err := runnerForName(run.Runner, wfFile.Data)
 	if err != nil {
 		return run, false, err
 	}
+	command = commandForRunnerProfile(command, selectedProfile)
 	workspaceManager := NewWorkspaceManager()
 	workspaceStrategy := d.workspaceStrategyForDispatch(project, wfFile.Data, run)
 	branchName, branchBase, err := v7WorkspaceBranchForTask(project.VaultRoot, note)
@@ -2327,6 +2358,10 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	run.LeaseExpiresAt = started.Add(defaultRunLeaseTTL).Format(time.RFC3339)
 	run.LeaseHost = runtimeLeaseHost()
 	run.Lane = lane
+	run.RunnerProfile = strings.TrimSpace(selectedProfile.Name)
+	run.RunnerHarness = firstNonEmpty(strings.TrimSpace(selectedProfile.Definition.Harness), run.Runner)
+	run.RunnerModel = strings.TrimSpace(selectedProfile.Definition.Model)
+	run.RunnerEffort = strings.TrimSpace(selectedProfile.Definition.Effort)
 	run.AttemptCount = ordinal
 	run.ActiveAttemptID = attemptID
 	run.SessionRef = ""
@@ -2403,7 +2438,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	}
 
 	var start *StartResult
-	codexPolicy := codexPolicyForLane(codexPolicyFromWorkflow(wfFile.Data), lane)
+	codexPolicy := codexPolicyForResolvedProfile(codexPolicyFromWorkflow(wfFile.Data), lane, selectedProfile)
 	externalLaunch := ExternalLoopLaunchContext{}
 	if externalLoopRunnerRequiresCollect(wfFile.Data, run.Runner) {
 		externalLaunch = d.externalLoopLaunchContext(project.ProjectID, run.RecordID)
@@ -2444,6 +2479,10 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		RawLogPath:      rawLogPath,
 		StatusPath:      statusPath,
 		Command:         command,
+		RunnerProfile:   run.RunnerProfile,
+		RunnerHarness:   run.RunnerHarness,
+		RunnerModel:     run.RunnerModel,
+		RunnerEffort:    run.RunnerEffort,
 		NotePath:        note.AbsolutePath,
 		VaultPath:       project.VaultRoot,
 		CodexPolicy:     codexPolicy,
@@ -3207,6 +3246,10 @@ func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDec
 	out = append(out, fmt.Sprintf("- Record: %s", run.RecordID))
 	out = append(out, fmt.Sprintf("- Attempt: %s", run.ActiveAttemptID))
 	out = append(out, fmt.Sprintf("- Runner: %s", run.Runner))
+	out = append(out, fmt.Sprintf("- Runner profile: %s", fallback(run.RunnerProfile, "(none)")))
+	out = append(out, fmt.Sprintf("- Harness: %s", fallback(run.RunnerHarness, run.Runner)))
+	out = append(out, fmt.Sprintf("- Model: %s", fallback(run.RunnerModel, "(unknown)")))
+	out = append(out, fmt.Sprintf("- Effort: %s", fallback(run.RunnerEffort, "(unknown)")))
 	out = append(out, fmt.Sprintf("- Lane: %s", firstNonEmpty(run.Lane, runLaneExecute)))
 	out = append(out, fmt.Sprintf("- Work revision: %d", run.WorkRevision))
 	out = append(out, fmt.Sprintf("- Turns: %d", len(turns)))
@@ -4923,7 +4966,13 @@ func daemonLimitsCmd(args Args) error {
 		if limit <= 0 {
 			return tuskerError(errorInvalidArg, "--max-active-runs must be > 0", withContext(map[string]any{"arg": "--max-active-runs", "value": raw}))
 		}
-		if err := store.SetGlobalActiveRunLimit(limit); err != nil {
+		report, err = setUserGlobalConfigWithReadback("runtime.max_active_runs", limit)
+		if err != nil {
+			return err
+		}
+	} else {
+		report, err = configResolveForRepo("", false, "runtime.max_active_runs")
+		if err != nil {
 			return err
 		}
 	}
@@ -5183,11 +5232,13 @@ func projectsLimitsCmd(args Args) error {
 				"repo_root":       project.RepoRoot,
 				"vault_root":      project.VaultRoot,
 				"max_active_runs": limit,
+				"source":          report.Source,
+				"path":            report.Path,
 			},
 		})
 		return nil
 	}
-	fmt.Printf("Project %s max active runs: %d\n", project.Name, limit)
+	fmt.Printf("Project %s max active runs: %d (%s)\n", project.Name, limit, report.Source)
 	return nil
 }
 

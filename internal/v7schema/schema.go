@@ -117,6 +117,49 @@ type TuskerAutomationRunnerConfig struct {
 	CollectCommand    string `yaml:"collect_command"`
 }
 
+type TuskerRunnerSandboxConfig struct {
+	Mode    string `yaml:"mode"`
+	Network *bool  `yaml:"network"`
+}
+
+type TuskerRunnerSubagentPolicyConfig struct {
+	Allowed       *bool `yaml:"allowed"`
+	MaxConcurrent int   `yaml:"max_concurrent"`
+}
+
+type TuskerRunnerProfileConfig struct {
+	Harness          string                           `yaml:"harness"`
+	Model            string                           `yaml:"model"`
+	Effort           string                           `yaml:"effort"`
+	PermissionPreset string                           `yaml:"permission_preset"`
+	Command          string                           `yaml:"command"`
+	Sandbox          TuskerRunnerSandboxConfig        `yaml:"sandbox"`
+	Subagents        TuskerRunnerSubagentPolicyConfig `yaml:"subagents"`
+}
+
+type TuskerAutomationRoutingMatchConfig struct {
+	Epic          any `yaml:"epic"`
+	Risk          any `yaml:"risk"`
+	Size          any `yaml:"size"`
+	Domains       any `yaml:"domains"`
+	TitleKeywords any `yaml:"title_keywords"`
+}
+
+type TuskerAutomationRoutingRuleConfig struct {
+	Name    string                             `yaml:"name"`
+	Profile string                             `yaml:"profile"`
+	Match   TuskerAutomationRoutingMatchConfig `yaml:"match"`
+}
+
+type TuskerAutomationDenyRuleConfig struct {
+	ID                   string `yaml:"id"`
+	Pattern              string `yaml:"pattern"`
+	Description          string `yaml:"description"`
+	CodexExecPolicy      string `yaml:"codex_execpolicy"`
+	ClaudePermissionRule string `yaml:"claude_permission_rule"`
+	PreToolUse           string `yaml:"pre_tool_use"`
+}
+
 type TuskerExternalLoopConfig struct {
 	MaxCycles              int `yaml:"max_cycles"`
 	MaxRepairContinuations int `yaml:"max_repair_continuations"`
@@ -139,11 +182,16 @@ type TuskerAutomationValidationConfig struct {
 }
 
 type TuskerAutomationConfig struct {
-	Enabled        *bool    `yaml:"enabled"`
-	TriggerStates  []string `yaml:"trigger_states"`
-	LegacyProfile  string   `yaml:"legacy_profile"`
-	DefaultRunner  string   `yaml:"default_runner"`
-	EnabledRunners []string `yaml:"enabled_runners"`
+	Enabled        *bool                                `yaml:"enabled"`
+	TriggerStates  []string                             `yaml:"trigger_states"`
+	LegacyProfile  string                               `yaml:"legacy_profile"`
+	DefaultRunner  string                               `yaml:"default_runner"`
+	EnabledRunners []string                             `yaml:"enabled_runners"`
+	DefaultProfile string                               `yaml:"default_profile"`
+	LaneProfiles   map[string]string                    `yaml:"lane_profiles"`
+	Profiles       map[string]TuskerRunnerProfileConfig `yaml:"profiles"`
+	Routing        []TuskerAutomationRoutingRuleConfig  `yaml:"routing"`
+	Denylist       []TuskerAutomationDenyRuleConfig     `yaml:"denylist"`
 	Workspace      struct {
 		Root     string `yaml:"root"`
 		Strategy string `yaml:"strategy"`

@@ -266,7 +266,9 @@ func codexCloudEnv(req StartRequest, config CodexCloudConfig, taskID string) []s
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: req.WorkspacePath, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: withDefaultCodexPolicy(req.CodexPolicy),
+		NotePath: req.NotePath, VaultPath: req.VaultPath,
+		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
+		CodexPolicy: withDefaultCodexPolicy(req.CodexPolicy),
 	})
 	return append(env,
 		"TUSKER_CODEX_CLOUD_ENVIRONMENT_ID="+config.EnvironmentID,
