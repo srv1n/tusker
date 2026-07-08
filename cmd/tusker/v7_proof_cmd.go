@@ -814,7 +814,9 @@ func computeV7ProofReport(vaultPath string, task Note, idx v7Index) v7ProofRepor
 		Acceptance: acceptanceIDs,
 		Covered:    map[string][]string{},
 	}
-	report.InlineRows = parseV7VerificationRows(task.Body)
+	for _, row := range parseV7VerificationRows(task.Body) {
+		report.InlineRows = append(report.InlineRows, evaluateV7ReplayVerificationRow(vaultPath, row))
+	}
 	for _, row := range report.InlineRows {
 		if strings.EqualFold(row.Result, "blocked") && strings.TrimSpace(row.BlockedBy) != "" {
 			report.ExternalBlockers = append(report.ExternalBlockers, v7VerificationBlockerSummary(row))

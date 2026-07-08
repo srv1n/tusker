@@ -137,7 +137,7 @@ func parseCLI(argv []string) (string, Args) {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave":
+	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "trace":
 		return true
 	default:
 		return false
@@ -246,6 +246,14 @@ func run(command string, args Args) (int, error) {
 		return 0, waveV7RemoveCmd(args)
 	case "wave show":
 		return 0, waveV7ShowCmd(args)
+	case "trace":
+		return 0, traceV7Cmd(args)
+	case "trace list":
+		return 0, traceListCmd(args)
+	case "trace show":
+		return 0, traceShowCmd(args)
+	case "trace replay":
+		return 0, traceReplayCmd(args)
 	case "proof":
 		return 0, proofV7Cmd(args)
 	case "feedback":
@@ -867,7 +875,7 @@ func printCommandHelp(command string) bool {
 		printEvidenceHelp()
 	case "migrate vault-root":
 		printMigrateVaultRootHelp()
-	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
+	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "trace", "trace list", "trace show", "trace replay", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
 		printV7Help()
 	case "feedback", "feedback add", "feedback digest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()
