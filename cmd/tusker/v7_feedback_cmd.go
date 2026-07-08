@@ -63,6 +63,8 @@ func feedbackV7Cmd(args Args) error {
 		return feedbackAddCmd(args)
 	case "digest":
 		return feedbackDigestCmd(args)
+	case "candidates":
+		return feedbackCandidatesCmd(args)
 	case "signals":
 		return feedbackSignalsCmd(args)
 	case "review":
@@ -928,10 +930,11 @@ func printFeedbackHelp() {
 
 Commands:
   tusker feedback add --context <text> --friction <text> --product-idea <text> --impact <text> --related <text>
+  tusker feedback candidates [--threshold 3]
   tusker feedback digest --since <YYYY-MM-DD> --repo <path[,path...]>
   tusker feedback signals --since <YYYY-MM-DD> [--repo <path[,path...]>] [--write]
   tusker feedback review --since <YYYY-MM-DD> [--repo <path[,path...]>] [--write]
-  tusker feedback promote <signal-id> [--write]
+  tusker feedback promote --candidate <id> --domain <domain> --class <prohibition|pattern|preference>
 
 Concepts:
   Events are history: timestamped facts about what happened.

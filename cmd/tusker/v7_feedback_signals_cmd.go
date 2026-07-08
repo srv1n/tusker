@@ -121,6 +121,9 @@ func feedbackReviewCmd(args Args) error {
 }
 
 func feedbackPromoteCmd(args Args) error {
+	if feedbackPromoteCanonRequested(args) {
+		return feedbackPromoteCanonCmd(args)
+	}
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err
