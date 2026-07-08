@@ -79,6 +79,28 @@ export interface RedriveResult {
   leaseState?: string;
 }
 
+export interface ActionIssue {
+  code: string;
+  message: string;
+  path?: string | null;
+  hint?: string | null;
+  context?: unknown;
+}
+
+export interface ActionResult {
+  ok: boolean;
+  refused?: boolean;
+  reason: string;
+  command?: string;
+  output?: string;
+  issue?: ActionIssue;
+  taskId?: string;
+  gateId?: string;
+  evidenceId?: string;
+  feedbackPath?: string;
+  canonicalStatus?: string;
+}
+
 export type DocKind = "spec" | "decision" | "knowledge" | "task" | "epic" | "dashboard";
 
 // ----------------------------------------------------------------------------
@@ -212,6 +234,24 @@ export interface EpicSummary {
   counts: Record<TaskStatus, number>;
 }
 
+export interface WaveTaskSummary {
+  id: string;
+  title: string;
+  group: string;
+  status: string;
+  proof: string;
+}
+
+export interface WaveSummary {
+  id: string;
+  title: string;
+  status: string;
+  landedAt?: string | null;
+  memberIds: string[];
+  members: WaveTaskSummary[];
+  counts: Record<string, number>;
+}
+
 export interface TaskCapsule {
   id: string;
   title: string;
@@ -258,6 +298,113 @@ export interface TaskDetail extends TaskCapsule {
   runHistory: RunSummary[];
 }
 
+export interface GateDetail {
+  id: string;
+  kind: GateKind;
+  rawKind: string;
+  title: string;
+  status: string;
+  owner: string;
+  satisfied: boolean;
+  blocking: boolean;
+  blocks: string[];
+  reason?: string;
+  updatedAt?: string;
+  question?: string | null;
+  ask?: string | null;
+  path?: string | null;
+  specTitle?: string | null;
+  specPath?: string | null;
+}
+
+export interface EvidenceDoc {
+  id: string;
+  taskId: string;
+  title: string;
+  kind: string;
+  status: string;
+  covers: string[];
+  artifactPaths: string[];
+  createdBy: string;
+  createdAt: string;
+  acceptedBy?: string;
+  acceptedAt?: string;
+  summary?: string;
+  relativePath: string;
+}
+
+export interface DecisionDoc {
+  id: string;
+  title: string;
+  epicId: string;
+  status: string;
+  decision: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  workStreams: string[];
+  relativePath: string;
+}
+
+export interface FeedbackDoc {
+  id: string;
+  date: string;
+  actor: string;
+  slug: string;
+  relativePath: string;
+  context: string;
+  friction: string;
+  productIdea: string;
+  impact: string;
+  related: string[];
+  theme?: string;
+  priorityHint?: string;
+  affectedCommand?: string;
+  fields: Record<string, string>;
+}
+
+export interface RunTurn {
+  attempt_id: string;
+  project_id: string;
+  record_id: string;
+  turn_id: string;
+  turn_index: number;
+  session_ref: string;
+  status: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  lease_generation?: number;
+  started_at: string;
+  completed_at: string;
+  last_event_at: string;
+  last_error: string;
+}
+
+export interface AttemptDetail {
+  id: string;
+  taskId: string;
+  projectId: string;
+  runner: string;
+  lane: string;
+  outcome: RunOutcome;
+  startedAt: string;
+  finishedAt?: string;
+  durationSec: number;
+  tokens: TokenTotals;
+  workspacePath?: string;
+  branchName?: string;
+  pullRequestUrl?: string;
+  promptPath?: string;
+  eventSinkPath?: string;
+  rawLogPath?: string;
+  statusPath?: string;
+  lastError?: string;
+  logsSummary?: string;
+  finalSummary?: string;
+  turns: RunTurn[];
+  events: RunEvent[];
+}
+
 // ----------------------------------------------------------------------------
 // Docs / reader-editor
 // ----------------------------------------------------------------------------
@@ -300,6 +447,7 @@ export interface DaemonStatus {
   connected: boolean;
   addr: string;
   activeRuns: number;
+  maxActiveRuns?: number;
   queuedTasks: number;
   parkedBudgetRuns?: number;
   budgetCircuit?: {

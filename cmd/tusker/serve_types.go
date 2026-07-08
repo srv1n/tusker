@@ -26,6 +26,8 @@ type serveSnapshot struct {
 	gates             []Note
 	waves             []Note
 	evidence          []Note
+	decisions         []Note
+	attemptNotes      []Note
 	notesByID         map[string]Note
 	runs              []RunStatus
 	queue             map[string]automationTaskExplanation
@@ -52,6 +54,7 @@ type serveDaemonStatus struct {
 	Connected        bool                `json:"connected"`
 	Addr             string              `json:"addr"`
 	ActiveRuns       int                 `json:"activeRuns"`
+	MaxActiveRuns    int                 `json:"maxActiveRuns"`
 	QueuedTasks      int                 `json:"queuedTasks"`
 	LastPollAt       any                 `json:"lastPollAt"`
 	StateRoot        string              `json:"stateRoot"`
@@ -64,6 +67,24 @@ type serveDaemonStatus struct {
 	DaemonPID        int                 `json:"daemonPid"`
 	DaemonStartedAt  any                 `json:"daemonStartedAt"`
 	DaemonLastPollAt any                 `json:"daemonLastPollAt"`
+}
+
+type serveActionResult struct {
+	OK              bool               `json:"ok"`
+	Refused         bool               `json:"refused,omitempty"`
+	Reason          string             `json:"reason"`
+	Command         string             `json:"command,omitempty"`
+	Output          string             `json:"output,omitempty"`
+	Issue           *Issue             `json:"issue,omitempty"`
+	TaskID          string             `json:"taskId,omitempty"`
+	GateID          string             `json:"gateId,omitempty"`
+	EvidenceID      string             `json:"evidenceId,omitempty"`
+	FeedbackPath    string             `json:"feedbackPath,omitempty"`
+	CanonicalStatus string             `json:"canonicalStatus,omitempty"`
+	Task            *serveTaskDetail   `json:"task,omitempty"`
+	Gate            *serveGateDetail   `json:"gate,omitempty"`
+	Evidence        *serveEvidenceDoc  `json:"evidence,omitempty"`
+	Daemon          *serveDaemonStatus `json:"daemon,omitempty"`
 }
 
 type serveEpicSummary struct {
@@ -148,6 +169,45 @@ type serveGate struct {
 	SpecPath  any    `json:"specPath"`
 }
 
+type serveGateDetail struct {
+	serveGate
+	Title     string   `json:"title"`
+	Status    string   `json:"status"`
+	Blocking  bool     `json:"blocking"`
+	Blocks    []string `json:"blocks"`
+	Reason    string   `json:"reason,omitempty"`
+	UpdatedAt string   `json:"updatedAt,omitempty"`
+	Body      string   `json:"body,omitempty"`
+}
+
+type serveEvidenceDoc struct {
+	ID            string   `json:"id"`
+	TaskID        string   `json:"taskId"`
+	Title         string   `json:"title"`
+	Kind          string   `json:"kind"`
+	Status        string   `json:"status"`
+	Covers        []string `json:"covers"`
+	ArtifactPaths []string `json:"artifactPaths"`
+	CreatedBy     string   `json:"createdBy"`
+	CreatedAt     string   `json:"createdAt"`
+	AcceptedBy    string   `json:"acceptedBy,omitempty"`
+	AcceptedAt    string   `json:"acceptedAt,omitempty"`
+	Summary       string   `json:"summary,omitempty"`
+	RelativePath  string   `json:"relativePath"`
+}
+
+type serveDecisionDoc struct {
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	EpicID       string   `json:"epicId"`
+	Status       string   `json:"status"`
+	Decision     string   `json:"decision"`
+	DecidedBy    string   `json:"decidedBy,omitempty"`
+	DecidedAt    string   `json:"decidedAt,omitempty"`
+	WorkStreams  []string `json:"workStreams"`
+	RelativePath string   `json:"relativePath"`
+}
+
 type serveTaskDependency struct {
 	ID     string `json:"id"`
 	Title  string `json:"title"`
@@ -209,6 +269,49 @@ type serveRunDetail struct {
 	WorkspacePath string          `json:"workspacePath"`
 	Attempts      []serveAttempt  `json:"attempts"`
 	Events        []serveRunEvent `json:"events"`
+}
+
+type serveAttemptDetail struct {
+	ID             string           `json:"id"`
+	TaskID         string           `json:"taskId"`
+	ProjectID      string           `json:"projectId"`
+	Runner         string           `json:"runner"`
+	Lane           string           `json:"lane"`
+	Outcome        string           `json:"outcome"`
+	StartedAt      string           `json:"startedAt"`
+	FinishedAt     string           `json:"finishedAt,omitempty"`
+	DurationSec    int              `json:"durationSec"`
+	Tokens         serveTokenTotals `json:"tokens"`
+	WorkspacePath  string           `json:"workspacePath,omitempty"`
+	BranchName     string           `json:"branchName,omitempty"`
+	PullRequestURL string           `json:"pullRequestUrl,omitempty"`
+	PromptPath     string           `json:"promptPath,omitempty"`
+	EventSinkPath  string           `json:"eventSinkPath,omitempty"`
+	RawLogPath     string           `json:"rawLogPath,omitempty"`
+	StatusPath     string           `json:"statusPath,omitempty"`
+	LastError      string           `json:"lastError,omitempty"`
+	LogsSummary    string           `json:"logsSummary,omitempty"`
+	FinalSummary   string           `json:"finalSummary,omitempty"`
+	Turns          []RunTurn        `json:"turns"`
+	Events         []serveRunEvent  `json:"events"`
+}
+
+type serveFeedbackDoc struct {
+	ID              string            `json:"id"`
+	Date            string            `json:"date"`
+	Actor           string            `json:"actor"`
+	Slug            string            `json:"slug"`
+	RelativePath    string            `json:"relativePath"`
+	Context         string            `json:"context"`
+	Friction        string            `json:"friction"`
+	ProductIdea     string            `json:"productIdea"`
+	Impact          string            `json:"impact"`
+	Related         []string          `json:"related"`
+	Theme           string            `json:"theme,omitempty"`
+	PriorityHint    string            `json:"priorityHint,omitempty"`
+	AffectedCommand string            `json:"affectedCommand,omitempty"`
+	Fields          map[string]string `json:"fields"`
+	Issues          []Issue           `json:"issues,omitempty"`
 }
 
 type serveNeedBase struct {

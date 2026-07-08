@@ -23,6 +23,7 @@ import { RouteFallback } from "@/components/RouteFallback";
     '/p/$projectId/runs'         Project runs
     '/p/$projectId/runs/$taskId' Run detail          (params: projectId, taskId)
     '/p/$projectId/work'         Project work
+    '/p/$projectId/ops'          Operator controls
     '/p/$projectId/docs'         Library / document  (search: { path?: string })
     '/p/$projectId/settings'     Project settings
 */
@@ -98,6 +99,15 @@ const workRoute = createRoute({
   ),
 });
 
+const opsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "ops",
+  component: lazyRouteComponent(
+    () => import("@/features/ops/ProjectOps"),
+    "ProjectOps",
+  ),
+});
+
 const docsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "docs",
@@ -129,6 +139,7 @@ const routeTree = rootRoute.addChildren([
     runsRoute,
     runDetailRoute,
     workRoute,
+    opsRoute,
     docsRoute,
     projectSettingsRoute,
   ]),

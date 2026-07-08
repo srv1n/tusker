@@ -163,16 +163,12 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = "/"
 	}
-	// The read surface is GET-only; the sole mutation is the run redrive action,
-	// which must POST so the browser cannot trigger it as a plain navigation.
-	if r.Method == http.MethodPost && strings.HasPrefix(path, "/api/runs/") && strings.HasSuffix(path, "/redrive") {
-		taskID := strings.TrimSuffix(strings.TrimPrefix(path, "/api/runs/"), "/redrive")
-		s.handleRunRedrive(w, r, taskID)
+	if s.handleAPIMutation(w, r, path) {
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
-		serveJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "read-only API"})
+		serveJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "unsupported API method"})
 		return
 	}
 	switch {
@@ -194,6 +190,26 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleWaves(w, r)
 	case strings.HasPrefix(path, "/api/waves/"):
 		s.handleWave(w, r, strings.TrimPrefix(path, "/api/waves/"))
+	case path == "/api/gates":
+		s.handleGates(w, r)
+	case strings.HasPrefix(path, "/api/gates/"):
+		s.handleGate(w, r, strings.TrimPrefix(path, "/api/gates/"))
+	case path == "/api/evidence":
+		s.handleEvidence(w, r)
+	case strings.HasPrefix(path, "/api/evidence/"):
+		s.handleEvidenceDoc(w, r, strings.TrimPrefix(path, "/api/evidence/"))
+	case path == "/api/decisions":
+		s.handleDecisions(w, r)
+	case strings.HasPrefix(path, "/api/decisions/"):
+		s.handleDecision(w, r, strings.TrimPrefix(path, "/api/decisions/"))
+	case path == "/api/feedback":
+		s.handleFeedback(w, r)
+	case strings.HasPrefix(path, "/api/feedback/"):
+		s.handleFeedbackDoc(w, r, strings.TrimPrefix(path, "/api/feedback/"))
+	case path == "/api/attempts":
+		s.handleAttempts(w, r)
+	case strings.HasPrefix(path, "/api/attempts/"):
+		s.handleAttempt(w, r, strings.TrimPrefix(path, "/api/attempts/"))
 	case path == "/api/tasks":
 		s.handleTasks(w, r)
 	case strings.HasPrefix(path, "/api/tasks/"):
@@ -294,6 +310,10 @@ func (s *serveServer) loadSnapshot() (serveSnapshot, error) {
 			snap.waves = append(snap.waves, note)
 		case "evidence":
 			snap.evidence = append(snap.evidence, note)
+		case "decision":
+			snap.decisions = append(snap.decisions, note)
+		case "attempt":
+			snap.attemptNotes = append(snap.attemptNotes, note)
 		}
 	}
 	if projects, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{}); err == nil {
@@ -363,6 +383,10 @@ func (s *serveServer) handleDaemon(w http.ResponseWriter, _ *http.Request) {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	serveJSON(w, http.StatusOK, s.daemonStatusFromSnapshot(snap))
+}
+
+func (s *serveServer) daemonStatusFromSnapshot(snap serveSnapshot) *serveDaemonStatus {
 	active := 0
 	for _, run := range snap.runs {
 		if isDispatchingLeaseState(run.LeaseState) {
@@ -378,10 +402,15 @@ func (s *serveServer) handleDaemon(w http.ResponseWriter, _ *http.Request) {
 	daemonStatus, _ := s.store.DaemonStatus()
 	loadedProjects, _ := loadRegisteredProjects(s.store, registeredProjectLoadOptions{})
 	projects := loadedRegisteredProjects(loadedProjects)
-	serveJSON(w, http.StatusOK, serveDaemonStatus{
+	limit, _ := s.store.GlobalActiveRunLimit()
+	if limit <= 0 {
+		limit = 2
+	}
+	return &serveDaemonStatus{
 		Connected:        true,
 		Addr:             s.addr,
 		ActiveRuns:       active,
+		MaxActiveRuns:    limit,
 		QueuedTasks:      queued,
 		LastPollAt:       nullIfBlank(snap.project.LastPollAt),
 		StateRoot:        DefaultStateRoot(),
@@ -394,7 +423,7 @@ func (s *serveServer) handleDaemon(w http.ResponseWriter, _ *http.Request) {
 		DaemonPID:        intFromAny(daemonStatus["daemon_pid"]),
 		DaemonStartedAt:  nullIfBlank(stringValue(daemonStatus["daemon_started_at"])),
 		DaemonLastPollAt: nullIfBlank(stringValue(daemonStatus["daemon_last_poll_at"])),
-	})
+	}
 }
 
 func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -1085,21 +1114,32 @@ func printServeHelp() {
   tusker serve [--addr 127.0.0.1:7420] [--vault <path>]
 
 Purpose:
-  Serve the embedded read-only Tusker control room and JSON API over the
-  repo-local vault plus daemon runtime store. The server is localhost-only and
-  exposes no mutating API routes.
+  Serve the embedded Tusker operator control room and JSON API over the
+  repo-local vault plus daemon runtime store. The server is localhost-only.
 
 Endpoints:
   GET /api/daemon
+  POST /api/daemon/(start|stop|resume|limits)
   GET /api/projects
   GET /api/needs?project=<id>
   GET /api/runs?project=<id>
   GET /api/runs/<task-id>
+  POST /api/runs/<task-id>/redrive
   GET /api/epics?project=<id>
   GET /api/waves?project=<id>
   GET /api/waves/<wave-id>
+  POST /api/waves/<wave-id>/land
   GET /api/tasks?project=<id>
   GET /api/tasks/<task-id>
+  POST /api/tasks/<task-id>/(status|close|land)
+  GET /api/gates[?task=<id>]
+  POST /api/gates/<gate-id>/(satisfy|waive|obsolete)
+  GET /api/evidence[?task=<id>]
+  POST /api/evidence
+  GET /api/decisions[?epic=<id>]
+  GET /api/feedback
+  POST /api/feedback
+  GET /api/attempts[?task=<id>]
   GET /api/docs?project=<id>
   GET /api/docs/<repo-path>`)
 }

@@ -63,6 +63,16 @@ export function streamKeyToQueryKeys(key: string): QueryKey[] {
       return [["docs"], ["doc"]];
     case "waves":
       return [["waves"], ["tasks"], ["needs"]];
+    case "gates":
+      return id ? [["gates"], ["gates", id], ["tasks"], ["needs"]] : [["gates"], ["tasks"], ["needs"]];
+    case "evidence":
+      return id ? [["evidence"], ["evidence", id], ["tasks"]] : [["evidence"], ["tasks"]];
+    case "decisions":
+      return id ? [["decisions"], ["decisions", id], ["docs"]] : [["decisions"], ["docs"]];
+    case "feedback":
+      return [["feedback"]];
+    case "attempts":
+      return id ? [["attempts"], ["attempts", id], ["runs"], ["run", id]] : [["attempts"], ["runs"]];
     case "review":
       return id === "batch" ? [["needs"], ["tasks"], ["runs"], ["projects"]] : [];
     default:
@@ -96,7 +106,7 @@ export function connectLiveStream(
     setStreamStatus({ ...status, connected: true });
     invalidateStreamEvent(queryClient, {
       kind: "stream_open",
-      keys: ["daemon", "projects", "needs", "runs", "tasks", "epics", "docs", "waves", "review:batch"],
+      keys: ["daemon", "projects", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch"],
     });
   };
   source.onmessage = (message) => {
@@ -108,7 +118,7 @@ export function connectLiveStream(
     setStreamStatus({ ...status, connected: false, lastErrorAt: now() });
     invalidateStreamEvent(queryClient, {
       kind: "stream_error",
-      keys: ["daemon", "projects", "needs", "runs", "tasks", "epics", "docs", "waves", "review:batch"],
+      keys: ["daemon", "projects", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch"],
     });
   };
   return () => {

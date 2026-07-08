@@ -17,6 +17,7 @@ const SUBSECTIONS = [
   { key: "needs", label: "Needs me", to: "/p/$projectId/needs" as const },
   { key: "runs", label: "Runs", to: "/p/$projectId/runs" as const },
   { key: "work", label: "Work", to: "/p/$projectId/work" as const },
+  { key: "ops", label: "Ops", to: "/p/$projectId/ops" as const },
   { key: "docs", label: "Library", to: "/p/$projectId/docs" as const },
 ];
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -260,6 +261,98 @@ func TestServeRunDetailUsesCanonicalCompletedRunRow(t *testing.T) {
 	assertEqual(t, 40, detail.Attempts[0].Tokens.Output, "attempt output tokens")
 }
 
+func TestServeReadParityEndpointsSerialize(t *testing.T) {
+	server := newServeFixture(t)
+	writeServeEvidence(t, server.vaultPath)
+	writeServeDecision(t, server.vaultPath)
+	writeServeFeedback(t, server.vaultPath)
+	if err := server.store.SaveAttempt(RunAttempt{AttemptID: "attempt-1", ProjectID: "app", RecordID: "APP-T-0007", ItemID: "APP-T-0007", Runner: string(RunnerCodexAppServer), Lane: runLaneExecute, Outcome: string(AttemptOutcomeFailed), StartedAt: "2026-07-06T06:00:00Z", FinishedAt: "2026-07-06T06:05:00Z", WorkspacePath: "/tmp/app", LastError: "boom"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.store.SaveTurn(RunTurn{AttemptID: "attempt-1", ProjectID: "app", RecordID: "APP-T-0007", TurnID: "turn-1", TurnIndex: 0, Status: "completed", InputTokens: 10, OutputTokens: 4, StartedAt: "2026-07-06T06:00:00Z", CompletedAt: "2026-07-06T06:05:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var gates []serveGateDetail
+	serveDecode(t, server, "/api/gates?task=APP-T-0003", &gates)
+	assertEqual(t, 1, len(gates), "gate list count")
+	assertEqual(t, "APP-G-0001", gates[0].ID, "gate id")
+	assertEqual(t, []string{"APP-T-0003"}, gates[0].Blocks, "gate blocks")
+
+	var gate serveGateDetail
+	serveDecode(t, server, "/api/gates/APP-G-0001", &gate)
+	assertEqual(t, "open", gate.Status, "gate detail status")
+
+	var evidence []serveEvidenceDoc
+	serveDecode(t, server, "/api/evidence?task=APP-T-0001", &evidence)
+	assertEqual(t, 1, len(evidence), "evidence list count")
+	assertEqual(t, "accepted", evidence[0].Status, "evidence status")
+
+	var evidenceDoc serveEvidenceDoc
+	serveDecode(t, server, "/api/evidence/APP-T-0001-E-0001", &evidenceDoc)
+	assertEqual(t, "Focused proof passed.", evidenceDoc.Summary, "evidence summary")
+
+	var decisions []serveDecisionDoc
+	serveDecode(t, server, "/api/decisions?epic=APP", &decisions)
+	assertEqual(t, 1, len(decisions), "decision count")
+	assertEqual(t, "Use serve parity.", decisions[0].Decision, "decision text")
+
+	var feedback []serveFeedbackDoc
+	serveDecode(t, server, "/api/feedback", &feedback)
+	assertEqual(t, 1, len(feedback), "feedback count")
+	assertEqual(t, "Serve lacks controls.", feedback[0].Friction, "feedback friction")
+
+	var attempts []serveAttemptDetail
+	serveDecode(t, server, "/api/attempts?task=APP-T-0007", &attempts)
+	assertEqual(t, 1, len(attempts), "attempt count")
+	assertEqual(t, "attempt-1", attempts[0].ID, "attempt id")
+	assertEqual(t, 10, attempts[0].Tokens.Input, "attempt tokens")
+
+	var attempt serveAttemptDetail
+	serveDecode(t, server, "/api/attempts/attempt-1", &attempt)
+	assertEqual(t, "failed", attempt.Outcome, "attempt outcome")
+
+	var daemon serveDaemonStatus
+	serveDecode(t, server, "/api/daemon", &daemon)
+	assertEqual(t, 2, daemon.MaxActiveRuns, "daemon active limit default")
+}
+
+func TestServeMutationEndpointsReturnVisibleRefusals(t *testing.T) {
+	server := newServeFixture(t)
+	cases := []struct {
+		name       string
+		path       string
+		body       string
+		wantReason string
+	}{
+		{name: "task status", path: "/api/tasks/APP-T-0001/status", body: `{"status":"done"}`, wantReason: "status cannot set done directly"},
+		{name: "task close", path: "/api/tasks/APP-T-0002/close", body: `{}`, wantReason: "close blocked by placeholder acceptance"},
+		{name: "task land", path: "/api/tasks/APP-T-0001/land", body: `{}`, wantReason: "is not in a wave"},
+		{name: "wave land", path: "/api/waves/W-0001/land", body: `{}`, wantReason: "V7 wave not found"},
+		{name: "gate satisfy", path: "/api/gates/APP-G-0001/satisfy", body: `{}`, wantReason: "satisfy requires --evidence"},
+		{name: "gate waive", path: "/api/gates/APP-G-0001/waive", body: `{}`, wantReason: "waive requires --reason"},
+		{name: "gate obsolete", path: "/api/gates/APP-G-0001/obsolete", body: `{}`, wantReason: "obsolete requires --reason"},
+		{name: "evidence add", path: "/api/evidence", body: `{}`, wantReason: "Missing required argument --id"},
+		{name: "feedback add", path: "/api/feedback", body: `{}`, wantReason: "feedback note missing required fields"},
+		{name: "daemon limits", path: "/api/daemon/limits", body: `{"maxActiveRuns":0}`, wantReason: "--max-active-runs must be > 0"},
+		{name: "daemon start malformed", path: "/api/daemon/start", body: `{`, wantReason: "invalid JSON body"},
+		{name: "daemon stop malformed", path: "/api/daemon/stop", body: `{`, wantReason: "invalid JSON body"},
+		{name: "daemon resume malformed", path: "/api/daemon/resume", body: `{`, wantReason: "invalid JSON body"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var result serveActionResult
+			servePost(t, server, tc.path, tc.body, &result)
+			if !result.Refused || result.OK {
+				t.Fatalf("expected visible refusal, got %#v", result)
+			}
+			if !strings.Contains(result.Reason, tc.wantReason) {
+				t.Fatalf("expected reason containing %q, got %#v", tc.wantReason, result)
+			}
+		})
+	}
+}
+
 func newServeFixture(t *testing.T) *serveServer {
 	t.Helper()
 	root := t.TempDir()
@@ -270,12 +363,15 @@ func newServeFixture(t *testing.T) *serveServer {
 		filepath.Join(vault, "work", "tasks"),
 		filepath.Join(vault, "work", "epics"),
 		filepath.Join(vault, "work", "gates"),
+		filepath.Join(vault, "work", "decisions"),
+		filepath.Join(vault, "evidence", "APP-T-0001"),
+		filepath.Join(vault, "feedback", "agents"),
 	} {
 		if err := ensureDir(dir); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nstorage:\n  root: .tusker\n"); err != nil {
+	if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nstorage:\n  root: .tusker\nruntime:\n  mutation_mode: single_user_local\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
@@ -338,7 +434,7 @@ func newServeEmptyNeedsFixture(t *testing.T) *serveServer {
 			t.Fatal(err)
 		}
 	}
-	if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nstorage:\n  root: .tusker\n"); err != nil {
+	if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nstorage:\n  root: .tusker\nruntime:\n  mutation_mode: single_user_local\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
@@ -417,9 +513,47 @@ func writeServeGate(t *testing.T, vault string) {
 	}
 }
 
+func writeServeEvidence(t *testing.T, vault string) {
+	t.Helper()
+	body := "---\nschema: \"tusker.evidence/v1\"\nkind: \"evidence\"\nid: \"APP-T-0001-E-0001\"\nproject: \"app\"\ntask: \"APP-T-0001\"\nepic: \"APP\"\nevidence_kind: \"automated_test\"\nstatus: \"accepted\"\ncovers:\n  - \"A1\"\nartifact_paths:\n  - \"external:https://ci.example.test/run/1\"\ncreated_by: \"agent:codex\"\ncreated_at: \"2026-07-06T06:00:00Z\"\naccepted_by: \"agent:codex\"\naccepted_at: \"2026-07-06T06:00:00Z\"\n---\n\n# APP-T-0001-E-0001 - evidence\n\n## Summary\n\nFocused proof passed.\n"
+	if err := writeText(filepath.Join(vault, "evidence", "APP-T-0001", "APP-T-0001-E-0001.md"), body); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeServeDecision(t *testing.T, vault string) {
+	t.Helper()
+	body := "---\nschema: \"tusker.decision/v1\"\nkind: \"decision\"\nid: \"APP-D-0001\"\nproject: \"app\"\nepic: \"APP\"\ntitle: \"Serve parity\"\nstatus: \"accepted\"\ndecision: \"Use serve parity.\"\ndecided_by: \"human:sarav\"\ndecided_at: \"2026-07-06T06:00:00Z\"\n---\n\n# APP-D-0001 - Serve parity\n\n## Decision\n\nUse serve parity.\n\n## Work streams\n\n- SRV\n"
+	if err := writeText(filepath.Join(vault, "work", "decisions", "APP-D-0001.md"), body); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeServeFeedback(t *testing.T, vault string) {
+	t.Helper()
+	body := "# Agent Feedback\n\n- context: Serve parity audit.\n- friction: Serve lacks controls.\n- product-idea: Add write actions.\n- impact: Operators stop shelling out.\n- related: SRV-T-0017\n- theme: serve\n- priority-hint: p1\n- affected-command: tusker serve\n"
+	if err := writeText(filepath.Join(vault, "feedback", "agents", "2026-07-06-codex-serve-controls.md"), body); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func serveDecode(t *testing.T, server *serveServer, path string, out any) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s returned %d: %s", path, rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), out); err != nil {
+		t.Fatalf("decode %s: %v\n%s", path, err, rec.Body.String())
+	}
+}
+
+func servePost(t *testing.T, server *serveServer, path, body string, out any) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

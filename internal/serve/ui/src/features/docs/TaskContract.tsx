@@ -16,6 +16,7 @@ import {
   Link2,
   Lock,
   ScrollText,
+  GitMerge,
   X,
 } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -32,9 +33,19 @@ import {
 import { SectionLabel } from "@/components/ui/page";
 import { Skeleton, ErrorState } from "@/components/ui/states";
 import { statusTone } from "@/components/ui/tone";
-import { useDoc, useTask } from "@/lib/queries";
+import {
+  useCloseTask,
+  useDoc,
+  useEvidenceAdd,
+  useFeedbackAdd,
+  useGateAction,
+  useLandTask,
+  useTask,
+  useTaskStatusAction,
+} from "@/lib/queries";
+import { Button, Select, TextInput } from "@/components/ui/controls";
 import { relativeTime } from "@/lib/time";
-import type { EvidenceCard, TaskDetail } from "@/types/domain";
+import type { ActionResult, EvidenceCard, TaskDetail } from "@/types/domain";
 import { DocEditor, type EditorRuntimeConfig } from "@/features/editor";
 import { DocShell } from "./DocShell";
 import { PropertyPanel } from "./PropertyPanel";
@@ -345,12 +356,7 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
           )}
 
           <div className="flex flex-col gap-2">
-            <button
-              className="w-full rounded-lg bg-ink py-2.5 text-[13px] font-semibold text-surface transition-opacity hover:opacity-90"
-              // TODO(api): POST /api/tasks/:id/transition (promote / rework / accept)
-            >
-              {stateAction(task.status)}
-            </button>
+            <TaskActionPanel task={task} />
             {task.runHistory.length > 0 && (
               <Link
                 to="/p/$projectId/runs/$taskId"
@@ -435,19 +441,123 @@ function TaskProseBlock({
   );
 }
 
-function stateAction(status: TaskDetail["status"]): string {
-  switch (status) {
-    case "review":
-      return "Send to rework";
-    case "ready":
-      return "Promote to in progress";
-    case "in_progress":
-      return "Request review";
-    case "blocked":
-      return "Clear blocker";
-    default:
-      return "Promote to ready";
-  }
+function TaskActionPanel({ task }: { task: TaskDetail }) {
+  const statusAction = useTaskStatusAction(task.id);
+  const closeTask = useCloseTask(task.id);
+  const landTask = useLandTask(task.id);
+  const gateAction = useGateAction();
+  const evidenceAdd = useEvidenceAdd(task.id);
+  const feedbackAdd = useFeedbackAdd();
+
+  const [last, setLast] = useState<ActionResult | null>(null);
+  const [reason, setReason] = useState("");
+  const [actor, setActor] = useState("");
+  const [gateText, setGateText] = useState("");
+  const [gateID, setGateID] = useState(task.gates[0]?.id ?? "");
+  const [evidenceSummary, setEvidenceSummary] = useState("");
+  const [feedbackFriction, setFeedbackFriction] = useState("");
+
+  const busy =
+    statusAction.isPending ||
+    closeTask.isPending ||
+    landTask.isPending ||
+    gateAction.isPending ||
+    evidenceAdd.isPending ||
+    feedbackAdd.isPending;
+
+  const mutateStatus = (status: string) =>
+    statusAction.mutate({ status, reason: reason || undefined, actor: actor || undefined }, { onSuccess: setLast });
+
+  return (
+    <div className="space-y-3 rounded-xl border border-line bg-raised p-3">
+      <div className="grid grid-cols-2 gap-1.5">
+        {[
+          ["ready", "Ready"],
+          ["review", "Review"],
+          ["rework", "Rework"],
+          ["backlog", "Backlog"],
+          ["cancelled", "Cancel"],
+        ].map(([status, label]) => (
+          <Button key={status} type="button" size="sm" variant={status === "cancelled" ? "danger" : "default"} disabled={busy} onClick={() => mutateStatus(status)}>
+            {label}
+          </Button>
+        ))}
+        <Button type="button" size="sm" disabled={busy} onClick={() => closeTask.mutate({ reason: reason || undefined, actor: actor || undefined }, { onSuccess: setLast })}>
+          Accept
+        </Button>
+        <Button type="button" size="sm" disabled={busy} onClick={() => landTask.mutate({}, { onSuccess: setLast })}>
+          <GitMerge size={12} />
+          Land
+        </Button>
+      </div>
+
+      <TextInput value={reason} onChange={(e) => setReason(e.target.value)} placeholder="reason" className="w-full" />
+      <TextInput value={actor} onChange={(e) => setActor(e.target.value)} placeholder="actor" className="w-full" />
+
+      {task.gates.length > 0 && (
+        <div className="space-y-1.5 border-t border-line-soft pt-3">
+          <Select value={gateID} onChange={(e) => setGateID(e.target.value)} className="w-full">
+            {task.gates.map((gate) => (
+              <option key={gate.id} value={gate.id}>
+                {gate.id}
+              </option>
+            ))}
+          </Select>
+          <TextInput value={gateText} onChange={(e) => setGateText(e.target.value)} placeholder="gate evidence or reason" className="w-full" />
+          <div className="grid grid-cols-3 gap-1.5">
+            <Button type="button" size="sm" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "satisfy", body: { evidence: gateText, actor: actor || undefined }, taskId: task.id }, { onSuccess: setLast })}>
+              Satisfy
+            </Button>
+            <Button type="button" size="sm" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "waive", body: { reason: gateText, actor: actor || undefined }, taskId: task.id }, { onSuccess: setLast })}>
+              Waive
+            </Button>
+            <Button type="button" size="sm" variant="danger" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "obsolete", body: { reason: gateText, actor: actor || undefined }, taskId: task.id }, { onSuccess: setLast })}>
+              Obsolete
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-1.5 border-t border-line-soft pt-3">
+        <TextInput value={evidenceSummary} onChange={(e) => setEvidenceSummary(e.target.value)} placeholder="evidence summary" className="w-full" />
+        <Button type="button" size="sm" disabled={busy} onClick={() => evidenceAdd.mutate({ kind: "automated_test", covers: "A1", status: "accepted", summary: evidenceSummary }, { onSuccess: setLast })}>
+          Add evidence
+        </Button>
+      </div>
+
+      <div className="space-y-1.5 border-t border-line-soft pt-3">
+        <TextInput value={feedbackFriction} onChange={(e) => setFeedbackFriction(e.target.value)} placeholder="feedback friction" className="w-full" />
+        <Button
+          type="button"
+          size="sm"
+          disabled={busy}
+          onClick={() =>
+            feedbackAdd.mutate(
+              {
+                context: task.id,
+                friction: feedbackFriction,
+                productIdea: "Improve serve operator flow.",
+                impact: "Reduce CLI/UI switching.",
+                related: task.id,
+              },
+              { onSuccess: setLast },
+            )
+          }
+        >
+          Add feedback
+        </Button>
+      </div>
+
+      <ActionResultLine pending={busy} result={last} />
+    </div>
+  );
+}
+
+function ActionResultLine({ pending, result }: { pending: boolean; result: ActionResult | null }) {
+  if (pending) return <div className="text-[12px] text-faint">Working...</div>;
+  if (!result) return null;
+  const refused = result.refused || !result.ok;
+  return <div className={cn("text-[12px] leading-snug", refused ? "text-fail" : "text-pass")}>{result.reason}</div>;
 }
 
 function Section({ label, children }: { label: string; children: ReactNode }) {
