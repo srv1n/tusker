@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-06T17:50:21Z"
-updated_at: "2026-07-07T13:55:06Z"
-state_rev: "sha256:513ac2f0fb959b323dea53d4f7431c23e30b733a0a0390de8a98d17366b4edf5"
+updated_at: "2026-07-08T03:01:48Z"
+state_rev: "sha256:a223e4c6351f0ecd6b23696e1826bc393e4e40a70cceaf9a33c79723d25cd3d3"
 ---
 
 # OPS · Operating model: waves, merge lane, escalation, worker protocol
@@ -44,7 +44,6 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[OPS-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
 | [[OPS-T-0003]] | ready | agent | Wait for dependency OPS-T-0001 to reach done. |
 
 ## Recently completed
@@ -54,4 +53,5 @@ TBD.
 | Task | Accepted by | Closed at |
 |---|---|---|
 | [[OPS-T-0001]] | human:sarav | 2026-07-07T07:28:00Z |
+| [[OPS-T-0002]] | human:sarav | 2026-07-08T03:01:48Z |
 | [[OPS-T-0004]] | human:sarav | 2026-07-07T07:28:00Z |
