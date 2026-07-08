@@ -15,6 +15,7 @@ import "@fontsource/source-code-pro/600.css";
 
 import "@/styles/app.css";
 import { ThemeProvider } from "@/lib/theme";
+import { ConfirmProvider } from "@/components/ui/action-feedback";
 import { router } from "@/router";
 import { USE_MOCK } from "@/lib/api";
 import { connectLiveStream } from "@/lib/stream";
@@ -41,7 +42,9 @@ createRoot(rootEl).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <RouterProvider router={router} />
+        <ConfirmProvider>
+          <RouterProvider router={router} />
+        </ConfirmProvider>
       </ThemeProvider>
     </QueryClientProvider>
   </StrictMode>,

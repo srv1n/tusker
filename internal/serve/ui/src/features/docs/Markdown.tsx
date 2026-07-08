@@ -3,7 +3,24 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Link } from "@tanstack/react-router";
 import { cn } from "@/lib/cn";
+import { USE_MOCK } from "@/lib/api";
+import { useDocList } from "@/lib/queries";
+import type { DocListEntry } from "@/types/domain";
 import { resolveWikilink, slugify } from "./mock";
+
+/** The subset a rendered wikilink needs (from the live vault index or mock). */
+type ResolvedLink = { path: string; title: string; kind: string };
+
+/** Resolve a `[[id]]` against the live doc list — by task path or file basename. */
+function resolveFromDocs(id: string, docs: DocListEntry[]): ResolvedLink | undefined {
+  const key = id.trim();
+  const hit = docs.find((d) => {
+    if (d.path === key) return true;
+    const base = d.path.replace(/\.md$/i, "").split("/").pop();
+    return base === key;
+  });
+  return hit ? { path: hit.path, title: hit.title, kind: hit.kind } : undefined;
+}
 
 /** Flatten a React children tree to its plain text (for slugs + code). */
 function toText(children: ReactNode): string {
@@ -21,9 +38,22 @@ function toText(children: ReactNode): string {
  * links into the reader; an unresolved id renders as a warn-tinted broken link,
  * which doubles as the inline validation annotation the packet asks for.
  */
-function WikiLink({ id, projectId, label }: { id: string; projectId: string; label: ReactNode }) {
-  const target = resolveWikilink(id);
+function WikiLink({
+  id,
+  projectId,
+  label,
+  resolve,
+}: {
+  id: string;
+  projectId: string;
+  label: ReactNode;
+  resolve: (id: string) => ResolvedLink | undefined;
+}) {
+  const target = resolve(id);
   if (!target) {
+    // Live mode: an unknown reference is plain text, never a dead link. In mock
+    // mode keep the warn-tinted annotation the validation demo depends on.
+    if (!USE_MOCK) return <>{label}</>;
     return (
       <span
         className="cursor-help font-mono text-[0.92em] text-warn decoration-warn/60 underline decoration-dashed underline-offset-2"
@@ -37,7 +67,7 @@ function WikiLink({ id, projectId, label }: { id: string; projectId: string; lab
     <Link
       to="/p/$projectId/docs"
       params={{ projectId }}
-      search={{ path: target.path ?? target.id }}
+      search={{ path: target.path }}
       className="font-mono text-[0.92em] text-info decoration-info/40 underline decoration-dotted underline-offset-2 hover:decoration-info"
       title={`${target.kind} · ${target.title}`}
     >
@@ -62,7 +92,10 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
   );
 }
 
-function markdownComponents(projectId: string): Components {
+function markdownComponents(
+  projectId: string,
+  resolve: (id: string) => ResolvedLink | undefined,
+): Components {
   return {
     h1: ({ children }) => {
       const slug = slugify(toText(children));
@@ -105,7 +138,14 @@ function markdownComponents(projectId: string): Components {
     ),
     a: ({ href, children }) => {
       if (href && href.startsWith("wikilink:")) {
-        return <WikiLink id={href.slice("wikilink:".length)} projectId={projectId} label={children} />;
+        return (
+          <WikiLink
+            id={href.slice("wikilink:".length)}
+            projectId={projectId}
+            label={children}
+            resolve={resolve}
+          />
+        );
       }
       const external = !!href && /^https?:/.test(href);
       return (
@@ -187,9 +227,21 @@ export function Markdown({
   projectId: string;
   className?: string;
 }) {
+  // Wikilinks resolve against the live vault index; fixtures only in USE_MOCK.
+  // Prop signature is intentionally unchanged — resolution is internal so
+  // sibling callers (TaskContract, DocReader) don't need to thread an index.
+  const docsQ = useDocList(projectId);
+  const docs = docsQ.data ?? [];
+  const resolve = (id: string): ResolvedLink | undefined => {
+    if (USE_MOCK) {
+      const t = resolveWikilink(id);
+      return t ? { path: t.path ?? t.id, title: t.title, kind: t.kind } : undefined;
+    }
+    return resolveFromDocs(id, docs);
+  };
   return (
     <div className={cn("[&>*:first-child]:mt-0", className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents(projectId)}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents(projectId, resolve)}>
         {preprocessWikilinks(markdown)}
       </ReactMarkdown>
     </div>

@@ -4,12 +4,13 @@ import { Mono } from "@/components/ui/primitives";
 import { ErrorState, Skeleton } from "@/components/ui/states";
 import { useDoc } from "@/lib/queries";
 import { DocShell } from "./DocShell";
-import { localDocContents } from "./mock";
 import { taskIdFromDocPath } from "./taskMarkdown";
 
 export function DocSourceView({ projectId, path }: { projectId: string; path: string }) {
   const q = useDoc(path);
-  const doc = q.data ?? localDocContents[path];
+  // Live mode never falls back to a fixture body: an absent doc is an error/empty
+  // state (below), never fabricated source.
+  const doc = q.data;
   const taskId = taskIdFromDocPath(path);
 
   if (!doc) {

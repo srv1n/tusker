@@ -2,27 +2,37 @@ import { useMemo, useRef, useState } from "react";
 import { Pencil } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { cn } from "@/lib/cn";
+import { USE_MOCK } from "@/lib/api";
 import { Mono } from "@/components/ui/primitives";
 import { Skeleton, ErrorState } from "@/components/ui/states";
-import { useDoc } from "@/lib/queries";
+import { useDoc, useDocList } from "@/lib/queries";
 import { relativeTime } from "@/lib/time";
-import type { DocContent } from "@/types/domain";
-import { DocEditor, type EditorRuntimeConfig } from "@/features/editor";
+import type { DocContent, DocListEntry } from "@/types/domain";
+import { DocEditor, type EditorRuntimeConfig, type WikilinkTargetLite } from "@/features/editor";
 import { DocShell } from "./DocShell";
 import { Outline } from "./Outline";
 import { PropertyPanel } from "./PropertyPanel";
 import { KindEyebrow } from "./bits";
 import { ApproveBanner, ConflictBanner, SavedBanner, ValidationStrip } from "./banners";
 import { useDocEditor } from "./editor";
-import { approvalContextFor, localDocContents, resolveWikilink, wikilinkTargets } from "./mock";
+import { approvalContextFor, resolveWikilink, wikilinkTargets } from "./mock";
 
 const barBtn =
   "rounded-lg px-3.5 py-1.5 text-[12.5px] font-semibold leading-none transition-colors";
 
+/** A live vault entry → the lite wikilink target the editor resolves/links. */
+function docToWikilink(d: DocListEntry): WikilinkTargetLite {
+  const isFile = d.path.includes("/") || /\.md$/i.test(d.path);
+  const id = isFile ? d.path.replace(/\.md$/i, "").split("/").pop() ?? d.path : d.path;
+  // A bare id (task path) leaves `path` absent so the editor treats it as a task.
+  return isFile ? { id, title: d.title, kind: d.kind, path: d.path } : { id, title: d.title, kind: d.kind };
+}
+
 export function DocReader({ projectId, path }: { projectId: string; path: string }) {
   const q = useDoc(path);
-  const local = localDocContents[path];
-  const doc = q.data ?? local;
+  // Live mode never substitutes a fixture body — an absent doc is a loading or
+  // error state below, never fabricated content.
+  const doc = q.data;
 
   if (!doc) {
     if (q.isLoading) return <ReaderSkeleton />;
@@ -70,6 +80,8 @@ function joinLeadingH1(prefix: string, body: string): string {
 function ReaderBody({ projectId, doc }: { projectId: string; doc: DocContent }) {
   const ed = useDocEditor(doc);
   const navigate = useNavigate();
+  const docsQ = useDocList(projectId);
+  const liveDocs = docsQ.data;
   const [approved, setApproved] = useState(false);
   const editorHostRef = useRef<HTMLDivElement>(null);
 
@@ -83,10 +95,19 @@ function ReaderBody({ projectId, doc }: { projectId: string; doc: DocContent }) 
   // editor so it isn't duplicated, and re-attach it on every change.
   const { prefix, body } = useMemo(() => splitLeadingH1(ed.content), [ed.content]);
 
-  const editorConfig = useMemo<EditorRuntimeConfig>(
-    () => ({
-      resolveWikilink,
-      wikilinkIndex: Object.values(wikilinkTargets),
+  const editorConfig = useMemo<EditorRuntimeConfig>(() => {
+    // Wikilinks resolve against the live vault index; fixtures only in USE_MOCK.
+    const index: WikilinkTargetLite[] = USE_MOCK
+      ? Object.values(wikilinkTargets)
+      : (liveDocs ?? []).map(docToWikilink);
+    const resolve = (id: string): WikilinkTargetLite | undefined => {
+      const key = id.trim();
+      if (USE_MOCK) return resolveWikilink(key);
+      return index.find((t) => t.id === key || t.path === key);
+    };
+    return {
+      resolveWikilink: resolve,
+      wikilinkIndex: index,
       placeholder: "Write…",
       onOpenWikilink: ({ target, resolved }) =>
         navigate({
@@ -94,9 +115,8 @@ function ReaderBody({ projectId, doc }: { projectId: string; doc: DocContent }) 
           params: { projectId },
           search: { path: resolved?.path ?? resolved?.id ?? target },
         }),
-    }),
-    [projectId, navigate],
-  );
+    };
+  }, [projectId, navigate, liveDocs]);
 
   // Focus the ProseMirror surface (e.g. the validation strip's "Fix errors").
   const focusEditor = () =>

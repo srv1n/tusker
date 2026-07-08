@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { getRouteApi, Link } from "@tanstack/react-router";
 import { CheckCircle2, CircleSlash, Flag, GitMerge, Play, RotateCcw, Square, Upload } from "lucide-react";
 import { Button, Select, TextInput } from "@/components/ui/controls";
+import { ActionResultLine, useConfirm } from "@/components/ui/action-feedback";
 import { GateKindChip } from "@/components/ui/chips";
 import { Mono } from "@/components/ui/primitives";
 import { PageScroll, SectionLabel } from "@/components/ui/page";
@@ -20,7 +21,7 @@ import {
   useLandWave,
   useWaves,
 } from "@/lib/queries";
-import type { ActionResult, AttemptDetail, GateDetail, WaveSummary } from "@/types/domain";
+import type { AttemptDetail, GateDetail, WaveSummary } from "@/types/domain";
 
 const route = getRouteApi("/p/$projectId/ops");
 
@@ -84,7 +85,21 @@ export function ProjectOps() {
 
 function WavePanel({ waves, projectId }: { waves: WaveSummary[]; projectId: string }) {
   const landWave = useLandWave();
-  const [last, setLast] = useState<ActionResult | null>(null);
+  const confirm = useConfirm();
+
+  // Landing a wave merges every member task into the default branch — gate it
+  // behind a type-the-wave-id confirm.
+  const onLand = async (wave: WaveSummary) => {
+    const ok = await confirm({
+      title: `Land wave ${wave.id}`,
+      body: "This lands every task in the wave to the default branch. Irreversible.",
+      confirmLabel: "Land wave",
+      tone: "danger",
+      typeToConfirm: wave.id,
+    });
+    if (ok) landWave.mutate(wave.id);
+  };
+
   return (
     <section>
       <SectionLabel className="mb-2.5">Waves</SectionLabel>
@@ -117,7 +132,7 @@ function WavePanel({ waves, projectId }: { waves: WaveSummary[]; projectId: stri
               <Button
                 type="button"
                 size="sm"
-                onClick={() => landWave.mutate(wave.id, { onSuccess: setLast })}
+                onClick={() => onLand(wave)}
                 disabled={landWave.isPending}
               >
                 <GitMerge size={12} />
@@ -127,16 +142,40 @@ function WavePanel({ waves, projectId }: { waves: WaveSummary[]; projectId: stri
           </div>
         ))}
       </div>
-      <ActionLine pending={landWave.isPending} result={last} />
+      <ActionResultLine className="mt-2" pending={landWave.isPending} error={landWave.error} result={landWave.data} />
     </section>
   );
 }
 
 function GatePanel({ gates }: { gates: GateDetail[] }) {
   const [inputs, setInputs] = useState<Record<string, string>>({});
-  const [last, setLast] = useState<ActionResult | null>(null);
   const valueFor = (gate: string) => inputs[gate] ?? "";
   const setValue = (gate: string, value: string) => setInputs((prev) => ({ ...prev, [gate]: value }));
+
+  // One mutation shared across every gate in the panel, so its `isPending`
+  // disables the whole group while any single gate action is in flight — no
+  // double-fire of satisfy/waive/obsolete.
+  const gateAction = useGateAction();
+  const confirm = useConfirm();
+
+  const runGate = async (gate: GateDetail, action: "satisfy" | "waive" | "obsolete") => {
+    const text = valueFor(gate.id);
+    // Waive and obsolete DISCARD a gate — confirm before firing. Satisfy does not.
+    if (action === "waive" || action === "obsolete") {
+      const ok = await confirm({
+        title: `${action === "waive" ? "Waive" : "Obsolete"} ${gate.id}`,
+        body:
+          action === "waive"
+            ? "Waiving discards this gate without satisfying it."
+            : "Marking this gate obsolete discards it.",
+        confirmLabel: action === "waive" ? "Waive gate" : "Obsolete gate",
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
+    const body = action === "satisfy" ? { evidence: text } : { reason: text };
+    gateAction.mutate({ gateId: gate.id, action, body, taskId: gate.blocks[0] });
+  };
 
   return (
     <section>
@@ -158,39 +197,35 @@ function GatePanel({ gates }: { gates: GateDetail[] }) {
                 placeholder="evidence or reason"
                 className="min-w-[220px] flex-1"
               />
-              <GateButton gate={gate} action="satisfy" text={valueFor(gate.id)} onResult={setLast} />
-              <GateButton gate={gate} action="waive" text={valueFor(gate.id)} onResult={setLast} />
-              <GateButton gate={gate} action="obsolete" text={valueFor(gate.id)} onResult={setLast} />
+              <GateButton action="satisfy" disabled={gateAction.isPending} onClick={() => runGate(gate, "satisfy")} />
+              <GateButton action="waive" disabled={gateAction.isPending} onClick={() => runGate(gate, "waive")} />
+              <GateButton action="obsolete" disabled={gateAction.isPending} onClick={() => runGate(gate, "obsolete")} />
             </div>
           </div>
         ))}
       </div>
-      <ActionLine pending={false} result={last} />
+      <ActionResultLine className="mt-2" pending={gateAction.isPending} error={gateAction.error} result={gateAction.data} />
     </section>
   );
 }
 
 function GateButton({
-  gate,
   action,
-  text,
-  onResult,
+  disabled,
+  onClick,
 }: {
-  gate: GateDetail;
   action: "satisfy" | "waive" | "obsolete";
-  text: string;
-  onResult: (result: ActionResult) => void;
+  disabled: boolean;
+  onClick: () => void;
 }) {
-  const mutation = useGateAction();
-  const body = action === "satisfy" ? { evidence: text } : { reason: text };
   const Icon = action === "satisfy" ? CheckCircle2 : action === "waive" ? RotateCcw : CircleSlash;
   return (
     <Button
       type="button"
       size="sm"
       variant={action === "obsolete" ? "danger" : "default"}
-      onClick={() => mutation.mutate({ gateId: gate.id, action, body, taskId: gate.blocks[0] }, { onSuccess: onResult })}
-      disabled={mutation.isPending}
+      onClick={onClick}
+      disabled={disabled}
     >
       <Icon size={12} />
       {action}
@@ -200,8 +235,23 @@ function GateButton({
 
 function DaemonPanel({ status }: { status: { connected: boolean; addr: string; activeRuns: number; queuedTasks: number; maxActiveRuns?: number } }) {
   const daemonAction = useDaemonAction();
+  const confirm = useConfirm();
   const [limit, setLimit] = useState(String(status.maxActiveRuns ?? 2));
-  const [last, setLast] = useState<ActionResult | null>(null);
+
+  // One mutation for the whole control group → its `isPending` disables every
+  // button while any one is in flight.
+  const busy = daemonAction.isPending;
+
+  const onStop = async () => {
+    const ok = await confirm({
+      title: "Stop the daemon",
+      body: "Stopping the daemon kills active runs in flight.",
+      confirmLabel: "Stop daemon",
+      tone: "danger",
+    });
+    if (ok) daemonAction.mutate({ action: "stop" });
+  };
+
   return (
     <section>
       <SectionLabel className="mb-2.5">Daemon</SectionLabel>
@@ -213,22 +263,22 @@ function DaemonPanel({ status }: { status: { connected: boolean; addr: string; a
           <span className="text-right">queued {status.queuedTasks}</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" size="sm" onClick={() => daemonAction.mutate({ action: "start" }, { onSuccess: setLast })}>
+          <Button type="button" size="sm" disabled={busy} onClick={() => daemonAction.mutate({ action: "start" })}>
             <Play size={12} /> Start
           </Button>
-          <Button type="button" size="sm" onClick={() => daemonAction.mutate({ action: "stop" }, { onSuccess: setLast })}>
+          <Button type="button" size="sm" disabled={busy} onClick={onStop}>
             <Square size={12} /> Stop
           </Button>
-          <Button type="button" size="sm" onClick={() => daemonAction.mutate({ action: "resume" }, { onSuccess: setLast })}>
+          <Button type="button" size="sm" disabled={busy} onClick={() => daemonAction.mutate({ action: "resume" })}>
             <RotateCcw size={12} /> Resume
           </Button>
           <TextInput value={limit} onChange={(e) => setLimit(e.target.value)} className="w-20" />
-          <Button type="button" size="sm" onClick={() => daemonAction.mutate({ action: "limits", body: { maxActiveRuns: Number(limit) } }, { onSuccess: setLast })}>
+          <Button type="button" size="sm" disabled={busy} onClick={() => daemonAction.mutate({ action: "limits", body: { maxActiveRuns: Number(limit) } })}>
             Set limit
           </Button>
         </div>
       </div>
-      <ActionLine pending={daemonAction.isPending} result={last} />
+      <ActionResultLine className="mt-2" pending={daemonAction.isPending} error={daemonAction.error} result={daemonAction.data} />
     </section>
   );
 }
@@ -265,7 +315,7 @@ function EvidenceForm() {
           <Upload size={12} /> Add
         </Button>
       </div>
-      <ActionLine pending={add.isPending} result={add.data ?? null} />
+      <ActionResultLine className="mt-2" pending={add.isPending} error={add.error} result={add.data} />
     </section>
   );
 }
@@ -290,7 +340,7 @@ function FeedbackForm() {
           <Flag size={12} /> Add
         </Button>
       </div>
-      <ActionLine pending={add.isPending} result={add.data ?? null} />
+      <ActionResultLine className="mt-2" pending={add.isPending} error={add.error} result={add.data} />
     </section>
   );
 }
@@ -362,17 +412,6 @@ function MiniTable({ title, rows }: { title: string; rows: string[][] }) {
           </div>
         ))
       )}
-    </div>
-  );
-}
-
-function ActionLine({ pending, result }: { pending: boolean; result: ActionResult | null }) {
-  if (pending) return <div className="mt-2 text-[12px] text-faint">Working...</div>;
-  if (!result) return null;
-  const refused = result.refused || !result.ok;
-  return (
-    <div className={refused ? "mt-2 text-[12px] text-fail" : "mt-2 text-[12px] text-pass"}>
-      {result.reason}
     </div>
   );
 }

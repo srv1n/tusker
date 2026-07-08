@@ -33,6 +33,28 @@ export const STATUS_RANK: Record<TaskStatus, number> = {
 export const RISK_VALUES: Risk[] = ["low", "medium", "high", "critical"];
 
 // ----------------------------------------------------------------------------
+// Batch review selectability
+// ----------------------------------------------------------------------------
+
+/**
+ * Statuses whose work is completed enough to accept/land in a wave batch.
+ * `review` = submitted, awaiting acceptance; `done` = accepted, awaiting land.
+ * Deliberately conservative — backlog/ready/in_progress/blocked are never
+ * offered for batch accept or land.
+ */
+export const BATCH_SELECTABLE_STATUSES: TaskStatus[] = ["review", "done"];
+
+/** Whether a task may join a batch accept/land selection. */
+export function isBatchSelectable(task: TaskCapsule): boolean {
+  return BATCH_SELECTABLE_STATUSES.includes(task.status);
+}
+
+/** Selectable ids within a task list, preserving order. */
+export function selectableIds(tasks: TaskCapsule[]): string[] {
+  return tasks.filter(isBatchSelectable).map((t) => t.id);
+}
+
+// ----------------------------------------------------------------------------
 // Filters
 // ----------------------------------------------------------------------------
 

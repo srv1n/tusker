@@ -101,6 +101,10 @@ export function Sidebar() {
       {/* Footer: fixture flag (mock only) + daemon status + theme */}
       <div className="mx-5 mt-2.5 flex items-end justify-between border-t border-line pt-3">
         <div className="font-mono text-[10.5px] leading-[1.7] text-faint">
+          {/* Honest badge: the live views (LibraryList / DocReader / DocSourceView /
+              Markdown) are now purged of fixture fallbacks, so fixtures can only
+              render when USE_MOCK is on — exactly when this badge shows. Keep it
+              tied to USE_MOCK; do not surface it in live mode. */}
           {USE_MOCK && (
             <div
               className="mb-1 inline-flex items-center gap-1 rounded bg-warn-soft px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.12em] text-warn"

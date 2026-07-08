@@ -13,7 +13,14 @@ import { Mono } from "@/components/ui/primitives";
 import { ProofChip } from "@/components/ui/chips";
 import { relativeTime } from "@/lib/time";
 import { gateKindLabel, gateKindTone } from "@/components/ui/tone";
-import type { GateKind, NeedItem } from "@/types/domain";
+import { useConfirm, ActionResultLine } from "@/components/ui/action-feedback";
+import {
+  useCloseTask,
+  useGateAction,
+  useRedrive,
+  useTaskStatusAction,
+} from "@/lib/queries";
+import type { ActionResult, GateKind, NeedItem, RedriveResult } from "@/types/domain";
 
 const kindIcon: Record<GateKind, LucideIcon> = {
   clarify: HelpCircle,
@@ -35,10 +42,36 @@ export function rankNeeds(needs: NeedItem[]): NeedItem[] {
   );
 }
 
+const GATE_NEED_ID_PREFIX = "need-gate-";
+
+/**
+ * The backing gate id for clarify/provision/approve-spec needs.
+ *
+ * SEAM / BACKEND-GAP: `NeedItem` does not yet carry a first-class `gateId`
+ * field (see types/domain.ts). The needs feed encodes it into the need id as
+ * `need-gate-<gateId>` (features/inbox/deriveNeeds.ts), so we parse it back out
+ * here. When /api/needs surfaces `gateId` directly on the gate-kind variants,
+ * read that field instead and delete this parse. If the id is not in that
+ * shape we return null and the action refuses visibly rather than firing a
+ * satisfy against the wrong gate.
+ */
+function gateIdOf(need: NeedItem): string | null {
+  return need.id.startsWith(GATE_NEED_ID_PREFIX)
+    ? need.id.slice(GATE_NEED_ID_PREFIX.length)
+    : null;
+}
+
+const NO_GATE_ERROR = () =>
+  new Error("This item has no gate id — resolve it from the task page.");
+
 /**
  * A single needs-me card (packet §4.1). One human gate, actionable on the card:
  * the operator should clear most items without navigating. Renders per gate
  * kind; the left rail shows how much work it blocks (the primary ranking key).
+ *
+ * Every action calls the real mutation in lib/queries. The card only slides away
+ * on a genuine success (ok && !refused); a refusal keeps the card and surfaces
+ * the reason, a transport error keeps the card and shows the error.
  */
 export function NeedCard({ need, showProject = false }: { need: NeedItem; showProject?: boolean }) {
   const [resolving, setResolving] = useState(false);
@@ -46,22 +79,158 @@ export function NeedCard({ need, showProject = false }: { need: NeedItem; showPr
   const [checked, setChecked] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  const [pending, setPending] = useState(false);
+  const [result, setResult] = useState<ActionResult | RedriveResult | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+
+  const askConfirm = useConfirm();
+  const closeTask = useCloseTask(need.taskId);
+  const statusAction = useTaskStatusAction(need.taskId);
+  const redrive = useRedrive(need.taskId);
+  const gateAction = useGateAction();
 
   if (gone) return null;
 
   const t = gateKindTone[need.kind];
   const Icon = kindIcon[need.kind];
   const colorVar = `var(--k-${t === "neutral" ? "faint" : t})`;
+  const gateId = gateIdOf(need);
 
-  function resolve() {
+  /** Trigger the existing slide-away animation, then unmount the card. */
+  function slideAway() {
     setResolving(true);
     setTimeout(() => setGone(true), 380);
   }
 
+  /**
+   * Run a mutation and route its outcome: transport failure → error, in-body
+   * refusal → keep card + show reason, real success → slide away.
+   */
+  async function run(action: () => Promise<ActionResult | RedriveResult>) {
+    if (pending) return;
+    setError(null);
+    setResult(null);
+    setPending(true);
+    try {
+      const res = await action();
+      setResult(res);
+      if (res.ok && !res.refused) slideAway();
+    } catch (e) {
+      setError(e instanceof Error ? e : new Error(String(e)));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function onPrimary() {
+    if (pending) return;
+    switch (need.kind) {
+      case "review": {
+        const ok = await askConfirm({
+          title: "Accept & close this task?",
+          body: `${need.taskId} — ${need.taskTitle}. This closes the task as accepted.`,
+          confirmLabel: "Accept & close",
+          cancelLabel: "Keep reviewing",
+        });
+        if (!ok) return;
+        await run(() => closeTask.mutateAsync({ reason: "Accepted from the needs-me review inbox." }));
+        return;
+      }
+      case "approve-spec": {
+        if (!gateId) return void setError(NO_GATE_ERROR());
+        await run(() =>
+          gateAction.mutateAsync({
+            gateId,
+            action: "satisfy",
+            body: { evidence: `Spec approved: ${need.specTitle}` },
+            taskId: need.taskId,
+          }),
+        );
+        return;
+      }
+      case "provision": {
+        if (!checked) return; // primary is disabled until "I've set it" is ticked
+        if (!gateId) return void setError(NO_GATE_ERROR());
+        await run(() =>
+          gateAction.mutateAsync({
+            gateId,
+            action: "satisfy",
+            body: { evidence: "Provisioned by operator; resuming." },
+            taskId: need.taskId,
+          }),
+        );
+        return;
+      }
+      case "clarify":
+        // Primary just opens the answer box; the send button runs the mutation.
+        setComposeOpen((v) => !v);
+        return;
+      case "failed":
+        await run(() => redrive.mutateAsync());
+        return;
+    }
+  }
+
+  /** Secondary for review / approve-spec: open the note box; send runs the bounce. */
+  function onSecondary() {
+    if (pending) return;
+    setComposeOpen((v) => !v);
+  }
+
+  /** The compose box send button — clarify answer, or a review/spec send-back. */
+  async function onSendCompose() {
+    if (pending) return;
+    if (need.kind === "clarify") {
+      const answer = draft.trim();
+      if (!answer) return;
+      if (!gateId) return void setError(NO_GATE_ERROR());
+      await run(() =>
+        gateAction.mutateAsync({
+          gateId,
+          action: "satisfy",
+          body: { evidence: answer },
+          taskId: need.taskId,
+        }),
+      );
+      return;
+    }
+
+    // review "Send back" / approve-spec "Request changes" → bounce to rework.
+    const note = draft.trim();
+    const isSpec = need.kind === "approve-spec";
+    const ok = await askConfirm({
+      title: isSpec ? "Request changes on this spec?" : "Send this task back for rework?",
+      body: note ? undefined : "No note added — send it back anyway?",
+      confirmLabel: isSpec ? "Request changes" : "Send back",
+      cancelLabel: "Keep reviewing",
+    });
+    if (!ok) return;
+    await run(() =>
+      statusAction.mutateAsync({
+        status: "rework",
+        reason: note || (isSpec ? "Changes requested on spec." : "Sent back for rework."),
+      }),
+    );
+  }
+
+  const primaryDisabled = pending || (need.kind === "provision" && !checked);
+  const sendDisabled = pending || (need.kind === "clarify" && draft.trim() === "");
+
   return (
     <div
+      data-need-card
+      role="article"
+      aria-label={`${gateKindLabel[need.kind]} · ${need.taskId} · ${need.taskTitle}`}
+      tabIndex={0}
+      onKeyDown={(e) => {
+        // Enter on a roving-focused card fires its primary action (with confirm).
+        if (e.key === "Enter" && e.target === e.currentTarget && !pending) {
+          e.preventDefault();
+          void onPrimary();
+        }
+      }}
       className={cn(
-        "grid grid-cols-[92px_1fr] gap-6 rounded-lg border-b border-line px-3 pb-6 pt-[22px] transition-all duration-[380ms] ease-out",
+        "grid grid-cols-[92px_1fr] gap-6 rounded-lg border-b border-line px-3 pb-6 pt-[22px] outline-none transition-all duration-[380ms] ease-out focus-visible:ring-2 focus-visible:ring-accent/40",
         resolving && "pointer-events-none translate-y-[-6px] opacity-0",
       )}
     >
@@ -125,11 +294,10 @@ export function NeedCard({ need, showProject = false }: { need: NeedItem; showPr
           <PrimaryAction
             need={need}
             colorVar={colorVar}
-            disabled={need.kind === "provision" && !checked}
-            onResolve={resolve}
-            onCompose={() => setComposeOpen((v) => !v)}
+            disabled={primaryDisabled}
+            onClick={onPrimary}
           />
-          <SecondaryAction need={need} onCompose={() => setComposeOpen((v) => !v)} />
+          <SecondaryAction need={need} disabled={pending} onClick={onSecondary} />
         </div>
 
         {composeOpen && (
@@ -146,8 +314,9 @@ export function NeedCard({ need, showProject = false }: { need: NeedItem; showPr
             />
             <div className="mt-2.5">
               <button
-                onClick={resolve}
-                className="rounded-lg px-3.5 py-2 text-[12.5px] font-semibold text-surface"
+                onClick={() => void onSendCompose()}
+                disabled={sendDisabled}
+                className="rounded-lg px-3.5 py-2 text-[12.5px] font-semibold text-surface transition-opacity disabled:opacity-40"
                 style={{ backgroundColor: colorVar }}
               >
                 {need.kind === "clarify" ? "Send answer" : "Send back with note"}
@@ -155,6 +324,13 @@ export function NeedCard({ need, showProject = false }: { need: NeedItem; showPr
             </div>
           </div>
         )}
+
+        <ActionResultLine
+          pending={pending}
+          error={error ?? undefined}
+          result={result ?? undefined}
+          className="mt-2.5"
+        />
       </div>
     </div>
   );
@@ -220,14 +396,12 @@ function PrimaryAction({
   need,
   colorVar,
   disabled,
-  onResolve,
-  onCompose,
+  onClick,
 }: {
   need: NeedItem;
   colorVar: string;
   disabled: boolean;
-  onResolve: () => void;
-  onCompose: () => void;
+  onClick: () => void;
 }) {
   const label =
     need.kind === "clarify"
@@ -239,10 +413,9 @@ function PrimaryAction({
           : need.kind === "review"
             ? "Accept & close"
             : "Retry";
-  const onClick = need.kind === "clarify" ? onCompose : onResolve;
   return (
     <button
-      onClick={onClick}
+      onClick={() => void onClick()}
       disabled={disabled}
       className="rounded-lg px-4 py-2 text-[13px] font-semibold text-surface transition-opacity disabled:opacity-40"
       style={{ backgroundColor: colorVar }}
@@ -252,12 +425,21 @@ function PrimaryAction({
   );
 }
 
-function SecondaryAction({ need, onCompose }: { need: NeedItem; onCompose: () => void }) {
+function SecondaryAction({
+  need,
+  disabled,
+  onClick,
+}: {
+  need: NeedItem;
+  disabled: boolean;
+  onClick: () => void;
+}) {
   if (need.kind === "review" || need.kind === "approve-spec") {
     return (
       <button
-        onClick={onCompose}
-        className="rounded-lg border border-line px-3.5 py-2 text-[13px] font-medium text-ink-soft transition-colors hover:border-fainter"
+        onClick={() => void onClick()}
+        disabled={disabled}
+        className="rounded-lg border border-line px-3.5 py-2 text-[13px] font-medium text-ink-soft transition-colors hover:border-fainter disabled:opacity-40"
       >
         {need.kind === "review" ? "Send back" : "Request changes"}
       </button>

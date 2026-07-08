@@ -1,5 +1,6 @@
 import { getRouteApi } from "@tanstack/react-router";
 import { NeedCard, rankNeeds } from "@/components/needs/NeedCard";
+import { useRovingNeedFocus } from "@/features/inbox/GlobalInbox";
 import { QueryBoundary } from "@/components/ui/states";
 import { Kbd } from "@/components/ui/primitives";
 import { useNeeds, useProjects } from "@/lib/queries";
@@ -12,6 +13,7 @@ export function ProjectNeeds() {
   const needsQ = useNeeds(projectId);
   const projects = useProjects();
   const projectName = projects.data?.find((p) => p.id === projectId)?.name ?? projectId;
+  const listRef = useRovingNeedFocus();
 
   return (
     <div className="tk-scroll h-full overflow-y-auto">
@@ -29,7 +31,7 @@ export function ProjectNeeds() {
                 Nothing needs you on this project.
               </div>
             ) : (
-              <div className="border-t border-line-soft">
+              <div ref={listRef} className="border-t border-line-soft">
                 {rankNeeds(needs).map((need) => (
                   <NeedCard key={need.id} need={need} />
                 ))}

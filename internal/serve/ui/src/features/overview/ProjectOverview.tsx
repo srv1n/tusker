@@ -41,7 +41,6 @@ import type {
   TaskCapsule,
   TaskStatus,
 } from "@/types/domain";
-import { projectMeta } from "./mock";
 
 const route = getRouteApi("/p/$projectId/");
 
@@ -117,7 +116,6 @@ function OverviewContent({ project, projectId }: { project: ProjectSummary; proj
   const tasksQ = useTasks(projectId);
   const daemonQ = useDaemon();
 
-  const meta = projectMeta(projectId);
   const daemon = daemonQ.data;
 
   const runs = runsQ.data ?? [];
@@ -143,9 +141,10 @@ function OverviewContent({ project, projectId }: { project: ProjectSummary; proj
         <div className="min-w-0">
           <div className="mb-1.5 flex flex-wrap items-center gap-2.5">
             <Diamond size={11} strokeWidth={1.5} className="text-fainter" />
-            <Mono className="text-[11px] text-faint">
-              {meta.path} · {meta.branch}
-            </Mono>
+            {/* Real identifier from /api/projects. The checkout path/branch aren't
+                carried by ProjectSummary, so we show only what the payload has —
+                no synthesized path/branch. */}
+            <Mono className="text-[11px] text-faint">{project.id}</Mono>
             {daemon && (
               <>
                 <span className="text-fainter">·</span>

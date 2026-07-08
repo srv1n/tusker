@@ -44,15 +44,17 @@ import {
   useTaskStatusAction,
 } from "@/lib/queries";
 import { Button, Select, TextInput } from "@/components/ui/controls";
+import { ActionResultLine, useConfirm } from "@/components/ui/action-feedback";
 import { relativeTime } from "@/lib/time";
-import type { ActionResult, EvidenceCard, TaskDetail } from "@/types/domain";
+import type { EvidenceCard, TaskDetail } from "@/types/domain";
 import { DocEditor, type EditorRuntimeConfig } from "@/features/editor";
 import { DocShell } from "./DocShell";
 import { PropertyPanel } from "./PropertyPanel";
 import { KindEyebrow, ResultChip } from "./bits";
 import { ConflictBanner, MergeReadiness, SavedBanner, ValidationStrip } from "./banners";
 import { useDocEditor, type DocEditor as DocEditorState } from "./editor";
-import { localDocContents, localTaskDetails, mergeChecksFor, resolveWikilink, wikilinkTargets } from "./mock";
+import { resolveWikilink, wikilinkTargets } from "./mock";
+import type { MergeCheck } from "./types";
 import {
   readMarkdownSection,
   replaceMarkdownSection,
@@ -65,7 +67,7 @@ const barBtn =
 
 export function TaskContract({ projectId, taskId }: { projectId: string; taskId: string }) {
   const q = useTask(taskId);
-  const task = q.data ?? localTaskDetails[taskId];
+  const task = q.data;
 
   if (!task) {
     if (q.isLoading) return <ContractSkeleton />;
@@ -81,7 +83,7 @@ export function TaskContract({ projectId, taskId }: { projectId: string; taskId:
 function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail }) {
   const docPath = taskDocPath(task.id);
   const docQuery = useDoc(docPath);
-  const doc = docQuery.data ?? localDocContents[docPath] ?? taskDetailToDocContent(task);
+  const doc = docQuery.data ?? taskDetailToDocContent(task);
   const ed = useDocEditor(doc);
   const navigate = useNavigate();
   const editorHostRef = useRef<HTMLDivElement>(null);
@@ -90,7 +92,31 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
   const [focusAt, setFocusAt] = useState<{ x: number; y: number } | null>(null);
 
   const editing = ed.phase === "editing";
-  const checks = task.status === "review" ? mergeChecksFor(task.id) : [];
+  const confirm = useConfirm();
+  const closeReview = useCloseTask(task.id);
+
+  // Merge-readiness checklist, derived from the real acceptance criteria + their
+  // proof state — never a fixture. A criterion that isn't passing is a blocker,
+  // and MergeReadiness gates "Accept & close" on all-green.
+  const checks: MergeCheck[] =
+    task.status === "review"
+      ? task.acceptance.map((row) => ({
+          id: row.id,
+          label: row.id.toUpperCase(),
+          detail: row.text,
+          state: row.proof,
+        }))
+      : [];
+
+  const onAcceptClose = async () => {
+    const ok = await confirm({
+      title: `Accept & close ${task.id}`,
+      confirmLabel: "Accept & close",
+      tone: "default",
+    });
+    if (ok) closeReview.mutate({});
+  };
+
   const frontmatter = [
     { key: "id", value: task.id, locked: true },
     { key: "status", value: task.status, locked: true },
@@ -179,12 +205,15 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
       <div className="mx-auto grid w-full max-w-[1080px] grid-cols-1 gap-9 px-11 pb-24 pt-7 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div ref={editorHostRef} className="min-w-0">
           {checks.length > 0 && (
-            <MergeReadiness
-              checks={checks}
-              onAccept={() => {
-                /* TODO(api): POST /api/tasks/:id/close */
-              }}
-            />
+            <>
+              <MergeReadiness checks={checks} onAccept={onAcceptClose} />
+              <ActionResultLine
+                pending={closeReview.isPending}
+                error={closeReview.error}
+                result={closeReview.data}
+                className="mb-6 -mt-4"
+              />
+            </>
           )}
           {ed.banner.type === "conflict" && (
             <ConflictBanner conflict={ed.banner.conflict} onReconcile={ed.reconcile} />
@@ -265,7 +294,7 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
             <Section label="Evidence">
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {task.evidence.map((e) => (
-                  <EvidenceItem key={e.id} evidence={e} />
+                  <EvidenceItem key={e.id} evidence={e} projectId={projectId} />
                 ))}
               </div>
             </Section>
@@ -448,15 +477,21 @@ function TaskActionPanel({ task }: { task: TaskDetail }) {
   const gateAction = useGateAction();
   const evidenceAdd = useEvidenceAdd(task.id);
   const feedbackAdd = useFeedbackAdd();
+  const confirm = useConfirm();
 
-  const [last, setLast] = useState<ActionResult | null>(null);
   const [reason, setReason] = useState("");
   const [actor, setActor] = useState("");
   const [gateText, setGateText] = useState("");
   const [gateID, setGateID] = useState(task.gates[0]?.id ?? "");
+  const [evidenceKind, setEvidenceKind] = useState("automated_test");
+  const [evidenceCovers, setEvidenceCovers] = useState(task.acceptance[0]?.id ?? "");
   const [evidenceSummary, setEvidenceSummary] = useState("");
   const [feedbackFriction, setFeedbackFriction] = useState("");
+  const [feedbackIdea, setFeedbackIdea] = useState("");
+  const [feedbackImpact, setFeedbackImpact] = useState("");
 
+  // Shared busy flag: the whole panel disables while any one action is in
+  // flight, so a slow POST can't be double-fired from another button.
   const busy =
     statusAction.isPending ||
     closeTask.isPending ||
@@ -466,7 +501,20 @@ function TaskActionPanel({ task }: { task: TaskDetail }) {
     feedbackAdd.isPending;
 
   const mutateStatus = (status: string) =>
-    statusAction.mutate({ status, reason: reason || undefined, actor: actor || undefined }, { onSuccess: setLast });
+    statusAction.mutate({ status, reason: reason || undefined, actor: actor || undefined });
+
+  // Land is irreversible git surgery — merges the task branch into main. Gate it
+  // behind a type-the-id confirm before firing.
+  const onLand = async () => {
+    const ok = await confirm({
+      title: `Land ${task.id} to main`,
+      body: "This merges the task branch into the default branch.",
+      confirmLabel: "Land",
+      tone: "danger",
+      typeToConfirm: task.id,
+    });
+    if (ok) landTask.mutate({});
+  };
 
   return (
     <div className="space-y-3 rounded-xl border border-line bg-raised p-3">
@@ -482,17 +530,23 @@ function TaskActionPanel({ task }: { task: TaskDetail }) {
             {label}
           </Button>
         ))}
-        <Button type="button" size="sm" disabled={busy} onClick={() => closeTask.mutate({ reason: reason || undefined, actor: actor || undefined }, { onSuccess: setLast })}>
+      </div>
+      <ActionResultLine pending={statusAction.isPending} error={statusAction.error} result={statusAction.data} />
+
+      <TextInput value={reason} onChange={(e) => setReason(e.target.value)} placeholder="reason" className="w-full" />
+      <TextInput value={actor} onChange={(e) => setActor(e.target.value)} placeholder="actor" className="w-full" />
+
+      <div className="grid grid-cols-2 gap-1.5">
+        <Button type="button" size="sm" disabled={busy} onClick={() => closeTask.mutate({ reason: reason || undefined, actor: actor || undefined })}>
           Accept
         </Button>
-        <Button type="button" size="sm" disabled={busy} onClick={() => landTask.mutate({}, { onSuccess: setLast })}>
+        <Button type="button" size="sm" variant="danger" disabled={busy} onClick={onLand}>
           <GitMerge size={12} />
           Land
         </Button>
       </div>
-
-      <TextInput value={reason} onChange={(e) => setReason(e.target.value)} placeholder="reason" className="w-full" />
-      <TextInput value={actor} onChange={(e) => setActor(e.target.value)} placeholder="actor" className="w-full" />
+      <ActionResultLine pending={closeTask.isPending} error={closeTask.error} result={closeTask.data} />
+      <ActionResultLine pending={landTask.isPending} error={landTask.error} result={landTask.data} />
 
       {task.gates.length > 0 && (
         <div className="space-y-1.5 border-t border-line-soft pt-3">
@@ -505,59 +559,71 @@ function TaskActionPanel({ task }: { task: TaskDetail }) {
           </Select>
           <TextInput value={gateText} onChange={(e) => setGateText(e.target.value)} placeholder="gate evidence or reason" className="w-full" />
           <div className="grid grid-cols-3 gap-1.5">
-            <Button type="button" size="sm" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "satisfy", body: { evidence: gateText, actor: actor || undefined }, taskId: task.id }, { onSuccess: setLast })}>
+            <Button type="button" size="sm" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "satisfy", body: { evidence: gateText, actor: actor || undefined }, taskId: task.id })}>
               Satisfy
             </Button>
-            <Button type="button" size="sm" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "waive", body: { reason: gateText, actor: actor || undefined }, taskId: task.id }, { onSuccess: setLast })}>
+            <Button type="button" size="sm" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "waive", body: { reason: gateText, actor: actor || undefined }, taskId: task.id })}>
               Waive
             </Button>
-            <Button type="button" size="sm" variant="danger" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "obsolete", body: { reason: gateText, actor: actor || undefined }, taskId: task.id }, { onSuccess: setLast })}>
+            <Button type="button" size="sm" variant="danger" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "obsolete", body: { reason: gateText, actor: actor || undefined }, taskId: task.id })}>
               Obsolete
             </Button>
           </div>
+          <ActionResultLine pending={gateAction.isPending} error={gateAction.error} result={gateAction.data} />
         </div>
       )}
 
       <div className="space-y-1.5 border-t border-line-soft pt-3">
+        <div className="flex gap-1.5">
+          <Select value={evidenceKind} onChange={(e) => setEvidenceKind(e.target.value)} className="min-w-0 flex-1">
+            <option value="automated_test">automated_test</option>
+            <option value="manual_smoke">manual_smoke</option>
+            <option value="human_review">human_review</option>
+            <option value="verification_summary">verification_summary</option>
+          </Select>
+          {task.acceptance.length > 0 ? (
+            <Select value={evidenceCovers} onChange={(e) => setEvidenceCovers(e.target.value)} className="min-w-0 flex-1">
+              {task.acceptance.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.id}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <TextInput value={evidenceCovers} onChange={(e) => setEvidenceCovers(e.target.value)} placeholder="covers" className="min-w-0 flex-1" />
+          )}
+        </div>
         <TextInput value={evidenceSummary} onChange={(e) => setEvidenceSummary(e.target.value)} placeholder="evidence summary" className="w-full" />
-        <Button type="button" size="sm" disabled={busy} onClick={() => evidenceAdd.mutate({ kind: "automated_test", covers: "A1", status: "accepted", summary: evidenceSummary }, { onSuccess: setLast })}>
+        <Button type="button" size="sm" disabled={busy || !evidenceSummary.trim()} onClick={() => evidenceAdd.mutate({ kind: evidenceKind, covers: evidenceCovers, status: "accepted", summary: evidenceSummary })}>
           Add evidence
         </Button>
+        <ActionResultLine pending={evidenceAdd.isPending} error={evidenceAdd.error} result={evidenceAdd.data} />
       </div>
 
       <div className="space-y-1.5 border-t border-line-soft pt-3">
         <TextInput value={feedbackFriction} onChange={(e) => setFeedbackFriction(e.target.value)} placeholder="feedback friction" className="w-full" />
+        <TextInput value={feedbackIdea} onChange={(e) => setFeedbackIdea(e.target.value)} placeholder="product idea" className="w-full" />
+        <TextInput value={feedbackImpact} onChange={(e) => setFeedbackImpact(e.target.value)} placeholder="impact" className="w-full" />
         <Button
           type="button"
           size="sm"
-          disabled={busy}
+          disabled={busy || !feedbackFriction.trim()}
           onClick={() =>
-            feedbackAdd.mutate(
-              {
-                context: task.id,
-                friction: feedbackFriction,
-                productIdea: "Improve serve operator flow.",
-                impact: "Reduce CLI/UI switching.",
-                related: task.id,
-              },
-              { onSuccess: setLast },
-            )
+            feedbackAdd.mutate({
+              context: task.id,
+              friction: feedbackFriction,
+              productIdea: feedbackIdea,
+              impact: feedbackImpact,
+              related: task.id,
+            })
           }
         >
           Add feedback
         </Button>
+        <ActionResultLine pending={feedbackAdd.isPending} error={feedbackAdd.error} result={feedbackAdd.data} />
       </div>
-
-      <ActionResultLine pending={busy} result={last} />
     </div>
   );
-}
-
-function ActionResultLine({ pending, result }: { pending: boolean; result: ActionResult | null }) {
-  if (pending) return <div className="text-[12px] text-faint">Working...</div>;
-  if (!result) return null;
-  const refused = result.refused || !result.ok;
-  return <div className={cn("text-[12px] leading-snug", refused ? "text-fail" : "text-pass")}>{result.reason}</div>;
 }
 
 function Section({ label, children }: { label: string; children: ReactNode }) {
@@ -612,19 +678,23 @@ const evidenceIcon: Record<EvidenceCard["kind"], ComponentType<{ size?: number; 
   diff: FileDiff,
 };
 
-function EvidenceItem({ evidence }: { evidence: EvidenceCard }) {
+function EvidenceItem({ evidence, projectId }: { evidence: EvidenceCard; projectId: string }) {
   const Icon = evidenceIcon[evidence.kind];
+  // Open the artifact in the reader by its ref/path; the reader surfaces a real
+  // not-found state if the path doesn't resolve — never a dead no-op button.
   return (
-    <button
+    <Link
+      to="/p/$projectId/docs"
+      params={{ projectId }}
+      search={{ path: evidence.ref }}
       className="flex items-center gap-2.5 rounded-lg border border-line bg-raised px-3 py-2.5 text-left transition-colors hover:border-line-soft hover:bg-hover"
-      // TODO(api): open evidence artifact (GET /api/tasks/:id/evidence/:ref)
     >
       <Icon size={15} strokeWidth={1.75} className="flex-none text-muted" />
       <div className="min-w-0">
         <div className="truncate text-[12.5px] font-medium text-ink-soft">{evidence.label}</div>
         <Mono className="truncate text-[10px] text-faint">{evidence.ref}</Mono>
       </div>
-    </button>
+    </Link>
   );
 }
 
