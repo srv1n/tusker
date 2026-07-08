@@ -302,7 +302,7 @@ export const localDocContents: Record<string, DocContent> = {
     markdown: retentionMd,
   },
 
-  // Task contracts, round-tripped to markdown (target of "Open markdown").
+  // Task contracts, round-tripped to markdown (target of the read-only source view).
   ".tusker/work/tasks/AGX-T-0003.md": {
     path: ".tusker/work/tasks/AGX-T-0003.md",
     title: "AGX-T-0003 · Workflow runner lease + liveness protocol",
@@ -556,10 +556,4 @@ export function mockValidate(markdown: string): ValidationIssue[] {
   }
 
   return issues;
-}
-
-/** Where a task's markdown contract lives (for "open in editor"). */
-export function taskDocPath(taskId: string): string {
-  // TODO(api): the daemon exposes the contract's real vault path.
-  return `.tusker/work/tasks/${taskId}.md`;
 }

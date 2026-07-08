@@ -47,6 +47,23 @@ func TestDaemonServeInProcessReportsPidAndPollData(t *testing.T) {
 	}
 }
 
+func TestDaemonServeStreamEmitsPollTick(t *testing.T) {
+	stateRoot := setupDaemonServeProject(t, true, "127.0.0.1:0")
+	errCh := startDaemonRunForTest(t, stateRoot)
+	addr := waitForDaemonServeAddr(t, stateRoot, errCh)
+	defer stopDaemonRunForTest(t, stateRoot, errCh)
+
+	reader, closeStream := openServeStreamURL(t, http.DefaultClient, "http://"+addr+"/api/stream")
+	defer closeStream()
+	got, _ := readServeStreamEvent(t, reader)
+	if got.Kind != serveStreamKindPollTick {
+		t.Fatalf("expected live daemon poll tick event, got %#v", got)
+	}
+	if !containsString(got.Keys, "daemon") || !containsString(got.Keys, "runs") {
+		t.Fatalf("expected poll tick invalidation keys, got %#v", got.Keys)
+	}
+}
+
 func TestServePanicRecoveryKeepsDaemonPollUsable(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)

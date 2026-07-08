@@ -12,8 +12,8 @@ source_of_truth:
   - ".tusker/WORKFLOW.md"
   - "tusker.yaml"
 created_at: "2026-06-04 00:00:00 +0000 UTC"
-updated_at: "2026-07-07T14:22:04Z"
-state_rev: "sha256:23ace50d3586a7308e45d58d6640af4ff47ad92123f1c82a868df02b7b44b5d4"
+updated_at: "2026-07-08T02:58:07Z"
+state_rev: "sha256:5642e342ad3eeebc43701eb5a5022479ecc5d21658a402978aade68e6a52ff86"
 ---
 
 # Project Canon
@@ -32,6 +32,7 @@ state_rev: "sha256:23ace50d3586a7308e45d58d6640af4ff47ad92123f1c82a868df02b7b44b
 - Obsidian Bases and dashboards are generated views, not canonical state.
 - Browser-backed ChatGPT work is a runner result source, not a direct state writer.
 - Waves are first-class V7 batch records; membership is canonical on `kind: wave`, task `wave:` is a reconcile-maintained back-pointer, and wave `status` is derived from member task closure.
+- Merge landing is wave-scoped: `tusker wave create` cuts `integration/W-####`, wave task worktrees branch from that integration branch as `task/<TASK-ID>`, `tusker land` serializes batch merges through a gated staging worktree, and completed waves land to the configured default branch as one merge commit.
 - Project registration quarantine is a loader property: entry points that scan registered projects use the shared loader, which records failed enabled registrations as `health: error` with `last_error` and continues loading unrelated healthy projects.
 
 ## Invariants

@@ -16,6 +16,8 @@ import "@fontsource/source-code-pro/600.css";
 import "@/styles/app.css";
 import { ThemeProvider } from "@/lib/theme";
 import { router } from "@/router";
+import { USE_MOCK } from "@/lib/api";
+import { connectLiveStream } from "@/lib/stream";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -29,6 +31,11 @@ const queryClient = new QueryClient({
 
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("#root not found");
+
+const disconnectLiveStream = connectLiveStream(queryClient, { enabled: !USE_MOCK });
+if (import.meta.hot) {
+  import.meta.hot.dispose(disconnectLiveStream);
+}
 
 createRoot(rootEl).render(
   <StrictMode>

@@ -24,6 +24,7 @@ type WorkspacePrepareRequest struct {
 	RecordID      string
 	ItemID        string
 	BranchName    string
+	BranchBase    string
 	RepoRoot      string
 	StateRoot     string
 	WorkspaceRoot string
@@ -41,6 +42,7 @@ type WorkspaceMetadata struct {
 	RecordID     string `json:"record_id"`
 	ItemID       string `json:"item_id"`
 	BranchName   string `json:"branch_name"`
+	BranchBase   string `json:"branch_base,omitempty"`
 	RepoRoot     string `json:"repo_root"`
 	Strategy     string `json:"strategy"`
 	WorkRevision int    `json:"work_revision"`
@@ -130,7 +132,7 @@ func (m *FSWorkspaceManager) prepareAtPath(workspacePath string, req WorkspacePr
 	now := time.Now().UTC().Format(time.RFC3339)
 	metadata := WorkspaceMetadata{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID,
-		BranchName: req.BranchName, RepoRoot: req.RepoRoot, Strategy: string(req.Strategy), WorkRevision: req.WorkRevision, CreatedAt: now, PreparedAt: now,
+		BranchName: req.BranchName, BranchBase: req.BranchBase, RepoRoot: req.RepoRoot, Strategy: string(req.Strategy), WorkRevision: req.WorkRevision, CreatedAt: now, PreparedAt: now,
 	}
 	if !created && fileExists(metadataPath) {
 		text, err := readText(metadataPath)
@@ -241,6 +243,9 @@ func validateWorkspaceMetadata(metadata WorkspaceMetadata, req WorkspacePrepareR
 	if strings.TrimSpace(metadata.BranchName) != strings.TrimSpace(req.BranchName) {
 		return tuskerError(errorConfigInvalid, "workspace metadata branch_name does not match requested branch", withPath(req.RecordID))
 	}
+	if strings.TrimSpace(metadata.BranchBase) != strings.TrimSpace(req.BranchBase) {
+		return tuskerError(errorConfigInvalid, "workspace metadata branch_base does not match requested branch base", withPath(req.RecordID))
+	}
 	return nil
 }
 
@@ -325,7 +330,13 @@ func (m *FSWorkspaceManager) materializeWorkspace(workspacePath string, req Work
 		switch req.Strategy {
 		case WorkspaceStrategyWorktree:
 			if strings.TrimSpace(req.BranchName) != "" {
-				if err := exec.Command("git", "-C", req.RepoRoot, "worktree", "add", "-b", req.BranchName, workspacePath, "HEAD").Run(); err == nil {
+				base := firstNonEmpty(strings.TrimSpace(req.BranchBase), "HEAD")
+				if gitBranchExists(req.RepoRoot, req.BranchName) {
+					if err := exec.Command("git", "-C", req.RepoRoot, "worktree", "add", workspacePath, req.BranchName).Run(); err == nil {
+						return nil
+					}
+				}
+				if err := exec.Command("git", "-C", req.RepoRoot, "worktree", "add", "-b", req.BranchName, workspacePath, base).Run(); err == nil {
 					return nil
 				}
 			} else {

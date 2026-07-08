@@ -160,6 +160,9 @@ func capsuleFrontmatterFacts(note Note) string {
 	if nextAction := strings.TrimSpace(stringField(note.Data, "next_action")); nextAction != "" {
 		lines = append(lines, "- Next action: "+nextAction)
 	}
+	if specRefs := v7SpecRefsCapsuleLine("", note); specRefs != "" {
+		lines = append(lines, specRefs)
+	}
 	if summary := strings.TrimSpace(stringField(note.Data, "verification_summary")); summary != "" {
 		lines = append(lines, "- Verification: "+summary)
 	}
@@ -195,6 +198,9 @@ func synthesizeCapsuleWithVault(note Note, vaultPath string) string {
 				lines = append(lines, "- Domains: "+strings.Join(domains, ", "))
 				lines = append(lines, "- Project skill route: read `"+vaultDisplayPath(vaultPath, "SKILL.md")+"`, then `"+vaultDisplayPath(vaultPath, "knowledge/domains/<domain>/INDEX.md")+"` and `CANON.md`.")
 			}
+			if specRefs := v7SpecRefsCapsuleLine(vaultPath, note); specRefs != "" {
+				lines = append(lines, specRefs)
+			}
 			if id := stringField(note.Data, "id"); id != "" {
 				lines = append(lines, "- Packet: `tusker packet "+id+" --for agent`")
 			}
@@ -217,6 +223,9 @@ func synthesizeCapsuleWithVault(note Note, vaultPath string) string {
 			"- Status: "+stringField(note.Data, "status"),
 			"- Drill down: `tusker list --epic "+stringField(note.Data, "id")+" --type task --open --limit 10`.",
 		)
+		if specRefs := v7SpecRefsCapsuleLine(vaultPath, note); specRefs != "" {
+			lines = append(lines, specRefs)
+		}
 	case "doc":
 		lines = append(lines,
 			"- Summary: "+firstNonEmpty(strings.TrimSpace(sectionContent(note.Body, "## Summary")), stringField(note.Data, "title")),

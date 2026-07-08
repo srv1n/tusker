@@ -1,4 +1,13 @@
-import { useState, type ComponentType, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import {
   ExternalLink,
   FileDiff,
@@ -6,11 +15,10 @@ import {
   Image as ImageIcon,
   Link2,
   Lock,
-  Pencil,
   ScrollText,
   X,
 } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { cn } from "@/lib/cn";
 import { Dot, Mono } from "@/components/ui/primitives";
 import {
@@ -24,16 +32,25 @@ import {
 import { SectionLabel } from "@/components/ui/page";
 import { Skeleton, ErrorState } from "@/components/ui/states";
 import { statusTone } from "@/components/ui/tone";
-import { useTask } from "@/lib/queries";
+import { useDoc, useTask } from "@/lib/queries";
 import { relativeTime } from "@/lib/time";
 import type { EvidenceCard, TaskDetail } from "@/types/domain";
-import type { ValidationIssue } from "./types";
+import { DocEditor, type EditorRuntimeConfig } from "@/features/editor";
 import { DocShell } from "./DocShell";
-import { Markdown } from "./Markdown";
 import { PropertyPanel } from "./PropertyPanel";
 import { KindEyebrow, ResultChip } from "./bits";
-import { MergeReadiness } from "./banners";
-import { localTaskDetails, mergeChecksFor, mockValidate, taskDocPath } from "./mock";
+import { ConflictBanner, MergeReadiness, SavedBanner, ValidationStrip } from "./banners";
+import { useDocEditor, type DocEditor as DocEditorState } from "./editor";
+import { localDocContents, localTaskDetails, mergeChecksFor, resolveWikilink, wikilinkTargets } from "./mock";
+import {
+  readMarkdownSection,
+  replaceMarkdownSection,
+  taskDetailToDocContent,
+  taskDocPath,
+} from "./taskMarkdown";
+
+const barBtn =
+  "rounded-lg px-3.5 py-1.5 text-[12.5px] font-semibold leading-none transition-colors";
 
 export function TaskContract({ projectId, taskId }: { projectId: string; taskId: string }) {
   const q = useTask(taskId);
@@ -51,6 +68,17 @@ export function TaskContract({ projectId, taskId }: { projectId: string; taskId:
 }
 
 function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail }) {
+  const docPath = taskDocPath(task.id);
+  const docQuery = useDoc(docPath);
+  const doc = docQuery.data ?? localDocContents[docPath] ?? taskDetailToDocContent(task);
+  const ed = useDocEditor(doc);
+  const navigate = useNavigate();
+  const editorHostRef = useRef<HTMLDivElement>(null);
+  const draftRef = useRef(ed.draft);
+  const [activeProse, setActiveProse] = useState<string | null>(null);
+  const [focusAt, setFocusAt] = useState<{ x: number; y: number } | null>(null);
+
+  const editing = ed.phase === "editing";
   const checks = task.status === "review" ? mergeChecksFor(task.id) : [];
   const frontmatter = [
     { key: "id", value: task.id, locked: true },
@@ -61,24 +89,84 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
     { key: "epic", value: task.epicId, locked: true },
   ];
 
+  useEffect(() => {
+    draftRef.current = ed.draft;
+  }, [ed.draft]);
+
+  useEffect(() => {
+    if (editing) return;
+    setActiveProse(null);
+    setFocusAt(null);
+  }, [editing]);
+
+  const editorConfig = useMemo<EditorRuntimeConfig>(
+    () => ({
+      resolveWikilink,
+      wikilinkIndex: Object.values(wikilinkTargets),
+      placeholder: "Write...",
+      onOpenWikilink: ({ target, resolved }) =>
+        navigate({
+          to: "/p/$projectId/docs",
+          params: { projectId },
+          search: { path: resolved?.path ?? resolved?.id ?? target },
+        }),
+    }),
+    [projectId, navigate],
+  );
+
+  const startProseEdit = (heading: string, point: { x: number; y: number } | null) => {
+    if (editing) return;
+    setActiveProse(heading);
+    setFocusAt(point);
+    ed.startEdit();
+  };
+
+  const updateProseSection = (heading: string, markdown: string) => {
+    const next = replaceMarkdownSection(draftRef.current, heading, markdown);
+    draftRef.current = next;
+    ed.setDraft(next);
+  };
+
+  const cancelEdit = () => {
+    ed.cancelEdit();
+    setActiveProse(null);
+    setFocusAt(null);
+  };
+
+  const focusEditor = () =>
+    editorHostRef.current?.querySelector<HTMLElement>(".tk-prose")?.focus();
+
+  const actions = editing ? (
+    <>
+      <Mono className="mr-1 text-[10.5px] text-warn">editing</Mono>
+      {ed.isDirty && <Mono className="text-[10px] text-warn">unsaved</Mono>}
+      <button className={cn(barBtn, "border border-line text-muted hover:bg-hover")} onClick={cancelEdit}>
+        Cancel
+      </button>
+      <button className={cn(barBtn, "bg-pass text-surface hover:opacity-90")} onClick={ed.save}>
+        Save
+      </button>
+    </>
+  ) : (
+    <Link
+      to="/p/$projectId/docs"
+      params={{ projectId }}
+      search={{ path: doc.path, view: "source" }}
+      className="flex items-center gap-1.5 rounded-lg border border-line bg-raised px-3.5 py-1.5 text-[12.5px] font-semibold text-ink-soft transition-colors hover:border-line-soft hover:bg-hover"
+    >
+      <FileText size={13} strokeWidth={2} />
+      View source
+    </Link>
+  );
+
   return (
     <DocShell
       projectId={projectId}
       path={task.id}
-      actions={
-        <Link
-          to="/p/$projectId/docs"
-          params={{ projectId }}
-          search={{ path: taskDocPath(task.id) }}
-          className="flex items-center gap-1.5 rounded-lg border border-line bg-raised px-3.5 py-1.5 text-[12.5px] font-semibold text-ink-soft transition-colors hover:border-line-soft hover:bg-hover"
-        >
-          <ExternalLink size={13} strokeWidth={2} />
-          Open markdown
-        </Link>
-      }
+      actions={actions}
     >
       <div className="mx-auto grid w-full max-w-[1080px] grid-cols-1 gap-9 px-11 pb-24 pt-7 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <div className="min-w-0">
+        <div ref={editorHostRef} className="min-w-0">
           {checks.length > 0 && (
             <MergeReadiness
               checks={checks}
@@ -87,6 +175,13 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
               }}
             />
           )}
+          {ed.banner.type === "conflict" && (
+            <ConflictBanner conflict={ed.banner.conflict} onReconcile={ed.reconcile} />
+          )}
+          {ed.banner.type === "invalid" && (
+            <ValidationStrip issues={ed.banner.issues} onFix={focusEditor} onDiscard={cancelEdit} />
+          )}
+          {ed.banner.type === "saved" && <SavedBanner rev={String(ed.banner.rev)} />}
 
           <KindEyebrow kind="task" className="mb-1.5" />
           <Mono className="mb-1 block text-[11.5px] text-faint">{task.id}</Mono>
@@ -97,7 +192,17 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
           <PropertyPanel frontmatter={frontmatter} />
 
           <Section label="Intent">
-            <EditableProse text={task.intent} projectId={projectId} />
+            <TaskProseBlock
+              heading="Intent"
+              fallbackMarkdown={task.intent}
+              ed={ed}
+              config={editorConfig}
+              editing={editing}
+              active={activeProse === "Intent"}
+              focusAt={activeProse === "Intent" ? focusAt : undefined}
+              onStart={startProseEdit}
+              onChange={updateProseSection}
+            />
           </Section>
 
           <Section label="Acceptance">
@@ -159,8 +264,19 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
             <Section label="Knowledge delta">
               <div className="flex gap-3 rounded-xl border border-accent/25 bg-accent-soft/40 px-4 py-3">
                 <Link2 size={15} strokeWidth={2} className="mt-1 flex-none text-accent" />
-                <div className="min-w-0 [&_p]:my-0 [&_p]:text-[13.5px] [&_p]:leading-[1.55] [&_p]:text-muted">
-                  <Markdown markdown={task.knowledgeDelta} projectId={projectId} />
+                <div className="min-w-0 flex-1 [&_.tk-prose_p]:my-0 [&_.tk-prose_p]:text-[13.5px] [&_.tk-prose_p]:leading-[1.55] [&_.tk-prose_p]:text-muted">
+                  <TaskProseBlock
+                    heading="Knowledge delta"
+                    fallbackMarkdown={task.knowledgeDelta}
+                    ed={ed}
+                    config={editorConfig}
+                    editing={editing}
+                    active={activeProse === "Knowledge delta"}
+                    focusAt={activeProse === "Knowledge delta" ? focusAt : undefined}
+                    onStart={startProseEdit}
+                    onChange={updateProseSection}
+                    compact
+                  />
                 </div>
               </div>
             </Section>
@@ -257,6 +373,68 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
   );
 }
 
+function TaskProseBlock({
+  heading,
+  fallbackMarkdown,
+  ed,
+  config,
+  editing,
+  active,
+  focusAt,
+  onStart,
+  onChange,
+  compact = false,
+}: {
+  heading: string;
+  fallbackMarkdown: string;
+  ed: DocEditorState;
+  config: EditorRuntimeConfig;
+  editing: boolean;
+  active: boolean;
+  focusAt?: { x: number; y: number } | null;
+  onStart: (heading: string, point: { x: number; y: number } | null) => void;
+  onChange: (heading: string, markdown: string) => void;
+  compact?: boolean;
+}) {
+  const activeEditing = editing && active;
+  const source = readMarkdownSection(activeEditing ? ed.draft : ed.content, heading) ?? fallbackMarkdown;
+
+  const startFromPointer = (event: MouseEvent<HTMLDivElement>) => {
+    if (editing) return;
+    onStart(heading, { x: event.clientX, y: event.clientY });
+  };
+
+  const startFromKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (editing || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    onStart(heading, null);
+  };
+
+  return (
+    <div
+      data-task-prose-section={heading}
+      tabIndex={editing ? undefined : 0}
+      onMouseDown={startFromPointer}
+      onKeyDown={startFromKeyboard}
+      className={cn(
+        "rounded-lg transition-colors",
+        !editing && "cursor-text hover:bg-hover",
+        activeEditing && "animate-rise",
+      )}
+    >
+      <DocEditor
+        key={`${heading}:${ed.stateRev}:${activeEditing ? "edit" : "read"}`}
+        initialMarkdown={source}
+        editable={activeEditing}
+        config={config}
+        focusAt={activeEditing ? focusAt : undefined}
+        onChange={activeEditing ? (markdown) => onChange(heading, markdown) : undefined}
+        className={cn(activeEditing && "tk-task-prose-editing", compact && "tk-task-prose-compact")}
+      />
+    </div>
+  );
+}
+
 function stateAction(status: TaskDetail["status"]): string {
   switch (status) {
     case "review":
@@ -337,85 +515,6 @@ function EvidenceItem({ evidence }: { evidence: EvidenceCard }) {
         <Mono className="truncate text-[10px] text-faint">{evidence.ref}</Mono>
       </div>
     </button>
-  );
-}
-
-/**
- * In-place body editor (packet §4.5: body sections editable, frontmatter locked).
- * A pencil reveals a markdown textarea; save runs the same mock validation.
- * TODO(api): TipTap markdown surface + CAS save (shared with the doc reader).
- */
-function EditableProse({ text, projectId }: { text: string; projectId: string }) {
-  const [editing, setEditing] = useState(false);
-  const [saved, setSaved] = useState(text);
-  const [draft, setDraft] = useState(text);
-  const [issues, setIssues] = useState<ValidationIssue[]>([]);
-
-  const errors = issues.filter((i) => i.severity === "error");
-
-  const save = () => {
-    const found = mockValidate(draft);
-    setIssues(found);
-    if (found.some((i) => i.severity === "error")) return; // reject
-    setSaved(draft);
-    setEditing(false);
-  };
-
-  if (!editing) {
-    return (
-      <div className="group relative">
-        <div className="[&>*:first-child]:mt-0 [&_p:last-child]:mb-0">
-          <Markdown markdown={saved} projectId={projectId} />
-        </div>
-        <button
-          onClick={() => {
-            setDraft(saved);
-            setIssues([]);
-            setEditing(true);
-          }}
-          className="absolute -top-1 right-0 flex items-center gap-1 rounded-md border border-line bg-raised px-2 py-1 text-[11px] font-medium text-muted opacity-0 transition-opacity hover:bg-hover group-hover:opacity-100"
-        >
-          <Pencil size={11} strokeWidth={2} />
-          Edit
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-l-2 border-line border-l-accent/60 bg-panel">
-      <textarea
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        spellCheck={false}
-        className="tk-scroll block min-h-[8rem] w-full resize-y bg-transparent px-4 py-3 font-mono text-[13px] leading-[1.65] text-ink-soft focus:outline-none"
-      />
-      {errors.length > 0 && (
-        <div className="border-t border-line-soft bg-fail-soft px-4 py-2">
-          {errors.map((e, i) => (
-            <div key={i} className="flex gap-2 text-[12px]">
-              <Mono className="font-semibold text-fail">error</Mono>
-              <span className="text-ink-soft">{e.message}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="flex items-center gap-2 border-t border-line-soft px-4 py-2">
-        <button
-          className="rounded-md bg-pass px-3 py-1.5 text-[12px] font-semibold text-surface transition-opacity hover:opacity-90"
-          onClick={save}
-        >
-          Save
-        </button>
-        <button
-          className="rounded-md border border-line px-3 py-1.5 text-[12px] font-medium text-muted transition-colors hover:bg-hover"
-          onClick={() => setEditing(false)}
-        >
-          Cancel
-        </button>
-        <Mono className="ml-auto text-[10px] text-warn">editing · markdown</Mono>
-      </div>
-    </div>
   );
 }
 

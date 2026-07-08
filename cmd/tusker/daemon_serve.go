@@ -19,6 +19,7 @@ type daemonServeServer struct {
 	addr       string
 	httpServer *http.Server
 	done       chan error
+	stream     *serveStreamBroker
 }
 
 type daemonServeTarget struct {
@@ -45,12 +46,16 @@ func (d *Daemon) startServe(_ context.Context) (*daemonServeServer, error) {
 	}
 	actualAddr := ln.Addr().String()
 	_ = d.updateServePIDFile(true, actualAddr)
+	stream := newServeStreamBroker()
+	d.stream = stream
 	server := newServeServer(target.project.VaultRoot, target.project.RepoRoot, actualAddr, d.store, dist)
+	server.stream = stream
 	httpServer := &http.Server{Addr: actualAddr, Handler: server, ReadHeaderTimeout: 5 * time.Second}
 	daemonServer := &daemonServeServer{
 		addr:       actualAddr,
 		httpServer: httpServer,
 		done:       make(chan error, 1),
+		stream:     stream,
 	}
 	go func() {
 		err := httpServer.Serve(ln)
@@ -117,6 +122,9 @@ func (d *Daemon) updateServePIDFile(enabled bool, addr string) error {
 func (s *daemonServeServer) Close(ctx context.Context) error {
 	if s == nil || s.httpServer == nil {
 		return nil
+	}
+	if s.stream != nil {
+		s.stream.Close()
 	}
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		_ = s.httpServer.Close()

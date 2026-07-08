@@ -40,7 +40,7 @@ var FrontmatterOrder = map[string][]string{
 		"wave",
 		"proof_mode", "proof_status", "proof_required", "proof_required_owner", "evidence_budget", "raw_artifacts_allowed", "raw_artifacts_reason",
 		"machine_status", "human_status", "closeout_status", "agent_action",
-		"next_owner", "next_source", "next_ref", "next_action", "domains", "gates", "dependencies", "evidence_required",
+		"next_owner", "next_source", "next_ref", "next_action", "domains", "spec_refs", "gates", "dependencies", "evidence_required",
 		"accepted_by", "accepted_at", "closed_at", "superseded_by", "created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
 	"closeout": {
@@ -54,10 +54,10 @@ var FrontmatterOrder = map[string][]string{
 		"created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
 	"epic": {
-		"schema", "kind", "id", "project", "title", "status", "owner", "priority", "domains", "next_task_number", "next_gate_number", "next_decision_number", "created_at", "updated_at", "state_rev",
+		"schema", "kind", "id", "project", "title", "status", "owner", "priority", "domains", "spec_refs", "next_task_number", "next_gate_number", "next_decision_number", "created_at", "updated_at", "state_rev",
 	},
 	"wave": {
-		"schema", "kind", "id", "project", "title", "status", "members", "landed_at", "created_at", "created_by", "updated_at", "updated_by", "state_rev",
+		"schema", "kind", "id", "project", "title", "status", "members", "integration_branch", "landings", "landed_at", "created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
 	"decision": {
 		"schema", "kind", "id", "project", "epic", "title", "status", "decided_by", "decided_at", "supersedes", "created_at", "created_by", "updated_at", "updated_by", "state_rev",

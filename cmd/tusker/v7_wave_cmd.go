@@ -74,20 +74,25 @@ func waveV7CreateCmd(args Args) error {
 	if fileExists(path) {
 		return tuskerError(errorAlreadyExists, "V7 wave already exists: "+id, withPath(path))
 	}
+	integrationBranch := v7IntegrationBranchName(id)
+	if err := ensureV7IntegrationBranch(vaultPath, integrationBranch); err != nil {
+		return err
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	actor := fallback(fallback(args.String("actor"), args.String("by")), "agent:"+defaultActorName())
 	data := map[string]any{
-		"schema":     "tusker.wave/v7",
-		"kind":       "wave",
-		"id":         id,
-		"project":    v7ProjectID(vaultPath),
-		"title":      title,
-		"status":     "open",
-		"members":    members,
-		"created_at": now,
-		"created_by": actor,
-		"updated_at": now,
-		"updated_by": actor,
+		"schema":             "tusker.wave/v7",
+		"kind":               "wave",
+		"id":                 id,
+		"project":            v7ProjectID(vaultPath),
+		"title":              title,
+		"status":             "open",
+		"members":            members,
+		"integration_branch": integrationBranch,
+		"created_at":         now,
+		"created_by":         actor,
+		"updated_at":         now,
+		"updated_by":         actor,
 	}
 	body := fmt.Sprintf(`# %s · %s
 

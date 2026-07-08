@@ -24,6 +24,8 @@ export interface DocEditorProps {
   config: EditorRuntimeConfig;
   /** Fires with serialized markdown on every edit. */
   onChange?: (markdown: string) => void;
+  /** Focus request from a click/keyboard action that toggled read mode into edit mode. */
+  focusAt?: { x: number; y: number } | null;
   className?: string;
 }
 
@@ -32,6 +34,7 @@ export function DocEditor({
   editable,
   config,
   onChange,
+  focusAt,
   className,
 }: DocEditorProps) {
   const onChangeRef = useRef(onChange);
@@ -51,6 +54,17 @@ export function DocEditor({
   useEffect(() => {
     editor?.setEditable(editable);
   }, [editable, editor]);
+
+  useEffect(() => {
+    if (!editor || !editable || focusAt === undefined) return;
+    const hit = focusAt ? editor.view.posAtCoords({ left: focusAt.x, top: focusAt.y }) : null;
+    if (hit) {
+      editor.commands.setTextSelection(hit.pos);
+      editor.commands.focus();
+      return;
+    }
+    editor.commands.focus("end");
+  }, [editable, editor, focusAt]);
 
   useEffect(() => {
     if (!editor) return;

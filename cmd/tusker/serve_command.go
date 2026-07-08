@@ -169,6 +169,8 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		path = "/"
 	}
 	switch {
+	case path == "/api/stream":
+		s.handleStream(w, r)
 	case path == "/api/daemon":
 		s.handleDaemon(w, r)
 	case path == "/api/projects":
