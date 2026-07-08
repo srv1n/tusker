@@ -103,6 +103,12 @@ Dependency edges may be explicit `TASK-ID:hard` or `TASK-ID:soft`; plain `TASK-I
 
 The same tracker-aware classifier applies on every outcome write path, including daemon status observation and wrapper direct-store recording when a wrapper outlives the daemon.
 
+## Runtime Retirement
+
+Canonical task state owns runtime rows. Closing a task, cancelling/superseding it, moving it back to backlog, or observing that state during the daemon reconcile tick retires any non-terminal runtime row for that task with an auditable actor/reason stamp such as `retired by close ceremony: canonical status done`.
+
+The invariant circuit remains containment of last resort for stale rows the retirement sweep failed to reach; it is not routine close-ceremony repair.
+
 ## Waves
 
 Use `tusker wave create "<title>" <TASK-ID>...` to record a named dispatch/review batch. Wave membership is canonical on the `kind: wave` record under `work/waves/`; task `wave:` fields are generated back-pointers maintained by `tusker reconcile`.

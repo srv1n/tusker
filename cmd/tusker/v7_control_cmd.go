@@ -228,6 +228,11 @@ func statusV7Cmd(args Args) error {
 	if err := emitV7Event(vaultPath, id, "task", "status_changed", actor, map[string]any{"from": prev, "to": nextStatus, "reason": args.String("reason")}); err != nil {
 		return err
 	}
+	if canonicalStatusRetiresRuntimeRows(defaultWorkflow(), nextStatus) {
+		if _, err := retireCanonicalRuntimeRowsForTask(vaultPath, id, nextStatus, actor, "status change"); err != nil {
+			return err
+		}
+	}
 	affected, err := v7TaskIDsForTaskControl(vaultPath, id)
 	if err != nil {
 		return err
@@ -317,6 +322,9 @@ func closeV7Cmd(args Args) error {
 		fmt.Printf("%s: %s -> done\n", id, prev)
 	}
 	if err := emitV7Event(vaultPath, id, "task", "closed", actor, map[string]any{"from": prev, "reason": args.String("reason")}); err != nil {
+		return err
+	}
+	if _, err := retireCanonicalRuntimeRowsForTask(vaultPath, id, "done", "close ceremony", ""); err != nil {
 		return err
 	}
 	if err := removeTaskPlanFile(vaultPath, id); err != nil {

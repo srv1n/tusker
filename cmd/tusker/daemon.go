@@ -1024,6 +1024,9 @@ func v7HumanWaitReason(note Note, report *v7ProofReport) string {
 
 func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus, note Note, notesByID map[string]Note, notesByRecordID map[string]Note) (RunStatus, bool, error) {
 	trackerState := strings.TrimSpace(stringField(note.Data, "status"))
+	if canonicalStatusRetiresRuntimeRows(wfFile.Data, trackerState) && !runnerStatusReadyForReconcile(run) {
+		return d.retireCanonicalRuntimeRun(ctx, project, run, trackerState, "daemon:reconcile", "")
+	}
 	if !isDispatchCapacityLeaseState(run.LeaseState) {
 		return d.reconcileRun(ctx, project, wfFile, run)
 	}
