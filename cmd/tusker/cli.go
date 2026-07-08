@@ -252,6 +252,8 @@ func run(command string, args Args) (int, error) {
 		return 0, traceListCmd(args)
 	case "trace show":
 		return 0, traceShowCmd(args)
+	case "trace replay":
+		return 0, traceReplayCmd(args)
 	case "land":
 		return 0, landV7Cmd(args)
 	case "proof":
@@ -876,7 +878,7 @@ func printCommandHelp(command string) bool {
 		printEvidenceHelp()
 	case "migrate vault-root":
 		printMigrateVaultRootHelp()
-	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "trace", "trace list", "trace show", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
+	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "trace", "trace list", "trace show", "trace replay", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
 		printV7Help()
 	case "feedback", "feedback add", "feedback digest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()

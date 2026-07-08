@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -208,6 +210,164 @@ func TestTraceCLIListShowEmptyAttempt(t *testing.T) {
 	})
 	if !strings.Contains(emptyOutput, "NO-T-0001 traces: no attempts") {
 		t.Fatalf("empty trace list should not error, got:\n%s", emptyOutput)
+	}
+}
+
+func TestTraceReplayMock(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), ".tusker")
+	writeReplayTraceFixture(t, vault, []TraceRecord{
+		replayTraceRecord("trace-replay-model", "turn-1", "model", "", `{
+			"expected_transitions":[{"type":"lease_change","subject":"APP-T-0001","from":"ready","to":"review"}],
+			"state_transitions":[{"type":"lease_change","subject":"APP-T-0001","from":"ready","to":"review"}],
+			"text":"model text is not the comparison target"
+		}`),
+		replayTraceRecord("trace-replay-tool", "tool-1", "tool", `{"command":"printf should-not-run"}`, `{
+			"expected_transitions":[{"type":"file_touch_set","files":["cmd/tusker/trace.go","cmd/tusker/trace_test.go"]}],
+			"state_transitions":[{"type":"file_touch_set","files":["cmd/tusker/trace_test.go","cmd/tusker/trace.go"]}]
+		}`),
+	})
+
+	report, err := ReplayTrace(context.Background(), TraceReplayOptions{
+		VaultPath: vault,
+		TraceID:   "trace-replay-model",
+		Mode:      traceReplayModeMock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Passed {
+		t.Fatalf("expected mock replay pass, got %#v", report)
+	}
+	assertEqual(t, 0, report.ModelCalls, "mock model calls")
+	assertEqual(t, 0, report.LiveToolCalls, "mock live tool calls")
+	assertEqual(t, 0, report.NetworkCalls, "mock network calls")
+	assertEqual(t, 2, len(report.ActualTransitions), "mock transition count")
+
+	output := captureStdout(t, func() {
+		if err := traceReplayCmd(Args{"vault": vault, "id": "trace-replay-model", "mode": traceReplayModeMock}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(output, "trace replay trace-replay-model mode=mock PASS") {
+		t.Fatalf("trace replay CLI did not report PASS:\n%s", output)
+	}
+}
+
+func TestTraceReplayLiveTools(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), ".tusker")
+	writeReplayTraceFixture(t, vault, []TraceRecord{
+		replayTraceRecord("trace-live-model", "turn-1", "model", "", `{"state_transitions":[]}`),
+		replayTraceRecord("trace-live-tool", "tool-1", "tool", `{"command":"printf live"}`, `{"command":"printf recorded","exit_code":0,"stdout":"recorded","status":"success"}`),
+	})
+
+	report, err := ReplayTrace(context.Background(), TraceReplayOptions{
+		VaultPath: vault,
+		TraceID:   "trace-live-model",
+		Mode:      traceReplayModeLiveTools,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Passed {
+		t.Fatalf("expected live-tools replay to report drift")
+	}
+	assertEqual(t, 1, report.LiveToolCalls, "live tool calls")
+	if !containsString(report.DivergentBoundaries, "trace-live-tool") {
+		t.Fatalf("expected divergent tool boundary, got %#v", report.DivergentBoundaries)
+	}
+	if !strings.Contains(report.FirstDivergence, "trace-live-tool") {
+		t.Fatalf("expected first divergence to name live tool boundary, got %q", report.FirstDivergence)
+	}
+}
+
+func TestTraceReplayVerifyRow(t *testing.T) {
+	vault := pickupV7TestVault(t)
+	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Replay row", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "focused_test", "v7": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	writeReplayTraceFixture(t, vault, []TraceRecord{
+		replayTraceRecord("trace-bad-row", "turn-1", "model", "", `{
+			"expected_transitions":[{"type":"verify_row","subject":"APP-T-0001","covers":"A1","check":"go test ./cmd/tusker -run ReplayVerifyRow -count=1","result":"pass"}],
+			"state_transitions":[{"type":"verify_row","subject":"APP-T-0001","covers":"A1","check":"go test ./cmd/tusker -run ReplayVerifyRow -count=1","result":"fail"}]
+		}`),
+	})
+	if err := verifyV7AddCmd(Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "replay:trace-bad-row", "result": "pass", "note": "Pinned replay row."}); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := loadV7ProofReport(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Status == "satisfied" {
+		t.Fatalf("divergent replay row must not satisfy proof: %#v", report)
+	}
+	if len(report.InlineRows) != 1 {
+		t.Fatalf("expected one inline row, got %#v", report.InlineRows)
+	}
+	row := report.InlineRows[0]
+	assertEqual(t, "fail", row.Result, "evaluated replay row result")
+	if !strings.Contains(row.Notes, "first divergent transition") || !strings.Contains(row.Notes, "transition #1") {
+		t.Fatalf("expected first divergent transition in row notes, got %q", row.Notes)
+	}
+}
+
+func TestTraceReplayStrippedEnv(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := ensureDir(filepath.Join(repo, ".git", "objects")); err != nil {
+		t.Fatal(err)
+	}
+	vault := filepath.Join(root, ".tusker")
+	writeReplayTraceFixture(t, vault, []TraceRecord{
+		replayTraceRecord("trace-stripped", "turn-1", "model", "", `{"state_transitions":[]}`),
+	})
+
+	report, err := ReplayTrace(context.Background(), TraceReplayOptions{
+		VaultPath:       vault,
+		TraceID:         "trace-stripped",
+		Mode:            traceReplayModeMock,
+		RepoRoot:        repo,
+		KeepEnvironment: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(report.Environment.WorktreePath)) })
+	if report.Environment.GitHistoryPresent {
+		t.Fatalf("mock replay worktree must not expose git history: %#v", report.Environment)
+	}
+	if dirExists(filepath.Join(report.Environment.WorktreePath, ".git")) {
+		t.Fatalf("mock replay worktree contains .git: %s", report.Environment.WorktreePath)
+	}
+	assertEqual(t, "off", report.Environment.NetworkAccess, "mock network access")
+	assertEqual(t, false, report.Environment.NetworkEnabled, "mock network enabled")
+	assertEqual(t, 0, report.NetworkCalls, "mock network calls")
+}
+
+func replayTraceRecord(traceID, nodeID, nodeType, input, output string) TraceRecord {
+	record := TraceRecord{
+		SchemaVersion: traceRecordSchemaVersion,
+		TraceID:       traceID,
+		WorkItemID:    "APP-T-0001",
+		NodeID:        nodeID,
+		NodeType:      nodeType,
+		CodeSHA:       "sha-fixture",
+		CreatedAt:     "2026-07-07T00:00:00Z",
+	}
+	if strings.TrimSpace(input) != "" {
+		record.Input = json.RawMessage(input)
+	}
+	if strings.TrimSpace(output) != "" {
+		record.Output = json.RawMessage(output)
+	}
+	return record
+}
+
+func writeReplayTraceFixture(t *testing.T, vault string, records []TraceRecord) {
+	t.Helper()
+	if err := appendTraceRecords(traceAttemptPath(vault, "APP-T-0001", "attempt-replay"), records); err != nil {
+		t.Fatal(err)
 	}
 }
 
