@@ -30,6 +30,7 @@ const (
 
 	daemonFirstEventDeadline     = 5 * time.Minute
 	daemonHeartbeatDeadThreshold = 120 * time.Second
+	reviewHandoffStatusGrace     = 2 * time.Second
 	tuskerSignsWarnLineLimit     = 60
 )
 
@@ -1035,8 +1036,14 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 	if completedReviewHandoffCanReconcile(wfFile.Data, run, trackerState) {
 		return d.reconcileRun(ctx, project, wfFile, run)
 	}
-	if activeReviewHandoffCanReconcile(wfFile.Data, run, trackerState) {
-		return d.reconcileRun(ctx, project, wfFile, run)
+	if pendingReviewHandoffStatusCanReconcile(wfFile.Data, run, trackerState) {
+		ready, err := waitForRunnerStatusFile(ctx, run.StatusPath, reviewHandoffStatusGrace)
+		if err != nil {
+			return run, false, err
+		}
+		if ready {
+			return d.reconcileRun(ctx, project, wfFile, run)
+		}
 	}
 	if strings.TrimSpace(note.AbsolutePath) == "" {
 		reason := fmt.Sprintf("tracker state %q is not dispatchable; daemon released run", firstNonEmpty(trackerState, "missing"))
@@ -1059,14 +1066,46 @@ func completedReviewHandoffCanReconcile(wf Workflow, run RunStatus, trackerState
 	return statusPath != "" && fileExists(statusPath)
 }
 
-func activeReviewHandoffCanReconcile(wf Workflow, run RunStatus, trackerState string) bool {
+func pendingReviewHandoffStatusCanReconcile(wf Workflow, run RunStatus, trackerState string) bool {
 	if run.Lane == runLaneReview || !isDispatchingLeaseState(run.LeaseState) {
 		return false
 	}
 	if !containsString(wf.Tracker.ReviewStates, strings.TrimSpace(trackerState)) {
 		return false
 	}
+	if strings.TrimSpace(run.StatusPath) == "" || fileExists(run.StatusPath) {
+		return false
+	}
 	return run.ProcessPID > 0 && processIdentityMatches(run)
+}
+
+func waitForRunnerStatusFile(ctx context.Context, statusPath string, timeout time.Duration) (bool, error) {
+	statusPath = strings.TrimSpace(statusPath)
+	if statusPath == "" {
+		return false, nil
+	}
+	if fileExists(statusPath) {
+		return true, nil
+	}
+	if timeout <= 0 {
+		return false, nil
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-ticker.C:
+			if fileExists(statusPath) {
+				return true, nil
+			}
+		case <-timer.C:
+			return fileExists(statusPath), nil
+		}
+	}
 }
 
 func (d *Daemon) releaseIneligibleRun(ctx context.Context, project RegisteredProject, run RunStatus, reason string) (RunStatus, bool, error) {
@@ -1089,10 +1128,8 @@ func (d *Daemon) releaseIneligibleRun(ctx context.Context, project RegisteredPro
 	if interrupted {
 		outcome = AttemptOutcomeCancelled
 		exitCode = 130
-		run.LeaseState = string(LeaseStateInterrupted)
-	} else {
-		run.LeaseState = string(LeaseStateReleased)
 	}
+	run.LeaseState = string(LeaseStateReleased)
 	run.AttemptOutcome = string(outcome)
 	run.NextRetryAt = ""
 	run.LastError = reason

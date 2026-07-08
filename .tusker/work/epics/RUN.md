@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:32:32Z"
-updated_at: "2026-07-07T16:56:07Z"
-state_rev: "sha256:08173c200f33384b41df1980db0676800cf5f5b63886952a636a05d81344bf5c"
+updated_at: "2026-07-07T17:14:50Z"
+state_rev: "sha256:e38bfd730df23062a0d4376c41c6e9b95766e79b7d04906d0716d4aacdec3ef5"
 ---
 
 # RUN · Runner parity and model profiles
@@ -50,7 +50,7 @@ TBD.
 | [[RUN-T-0005]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach review with satisfied proof or done. |
 | [[RUN-T-0006]] | backlog | agent | Wait for dependency RUN-T-0004 to reach done. |
 | [[RUN-T-0015]] | ready | agent | Wait for dependency RUN-T-0011 to reach done. |
-| [[RUN-T-0033]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[RUN-T-0033]] | review | reviewer | Review evidence and close or return to rework. |
 | [[RUN-T-0034]] | ready | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
