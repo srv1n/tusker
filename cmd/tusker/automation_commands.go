@@ -146,6 +146,7 @@ type automationStatusReport struct {
 	LimitSource         string                     `json:"limit_source"`
 	ParkedBudgetRuns    int                        `json:"parked_budget_runs"`
 	BudgetCircuit       any                        `json:"budget_circuit"`
+	CrashLoop           any                        `json:"crash_loop"`
 	InvariantCircuit    any                        `json:"invariant_circuit"`
 	DiskPressure        DiskPressureStatus         `json:"disk_pressure"`
 	Projects            []automationProjectSummary `json:"projects"`
@@ -184,6 +185,7 @@ func automationStatusCmd(args Args) error {
 		LimitSource:         stringValue(status["limit_source"]),
 		ParkedBudgetRuns:    intFromAny(status["parkedBudgetRuns"]),
 		BudgetCircuit:       status["budgetCircuit"],
+		CrashLoop:           status["crashLoop"],
 		InvariantCircuit:    status["invariantCircuit"],
 		DiskPressure:        diskPressureStatusFromAny(status["disk_pressure"]),
 		Projects:            automationProjectSummaries(projects, runs),
@@ -532,6 +534,11 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 		if capped, capReached := daemon.enforceAttemptCreationCap(ctx.Workflow.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached {
 			blockers = append(blockers, capped.LastError)
 		}
+	}
+	if reason, err := daemon.crashLoopDispatchBlocker(); err != nil {
+		blockers = append(blockers, "crash loop: "+err.Error())
+	} else if reason != "" {
+		blockers = append(blockers, reason)
 	}
 	if _, reason, _, err := daemon.budgetDispatchBlocker(ctx.Project, ctx.Workflow.Data, note, run, time.Now().UTC()); err != nil {
 		blockers = append(blockers, "budget: "+err.Error())
@@ -918,6 +925,13 @@ func printAutomationStatus(report automationStatusReport) {
 	}
 	fmt.Printf("Registered projects: %d\n", report.ProjectCount)
 	fmt.Printf("Active runs: %d / %d\n", report.ActiveRuns, report.MaxActiveRuns)
+	fmt.Printf("Launchd: installed=%v managed=%v mode=%s\n", report.LaunchdInstalled, report.ManagedByLaunchd, report.DaemonRunMode)
+	if report.LastRestartCause != "" {
+		fmt.Printf("Last restart cause: %s\n", report.LastRestartCause)
+	}
+	if status, ok := report.CrashLoop.(daemonCrashLoopStatus); ok && status.Open {
+		fmt.Printf("Crash loop: open (%s)\n", firstNonEmpty(status.Summary, status.Reason))
+	}
 	if status, ok := report.InvariantCircuit.(invariantCircuitStatus); ok && status.Open {
 		fmt.Printf("Invariant circuit: open (%s)\n", invariantCircuitSummary(status))
 	}

@@ -706,6 +706,7 @@ func (s *serveServer) daemonStatusFromSnapshot(snap serveSnapshot) *serveDaemonS
 		Projects:         projects,
 		ParkedBudgetRuns: intFromAny(daemonStatus["parkedBudgetRuns"]),
 		BudgetCircuit:    daemonStatus["budgetCircuit"],
+		CrashLoop:        daemonStatus["crashLoop"],
 		InvariantCircuit: daemonStatus["invariantCircuit"],
 		DiskPressure:     diskPressureStatusFromAny(daemonStatus["disk_pressure"]),
 		DaemonAlive:      daemonAlive,

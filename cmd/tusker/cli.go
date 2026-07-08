@@ -1004,8 +1004,10 @@ Behavior:
   - daemon run polls registered projects and dispatches ready/rework tasks
   - --once performs one poll tick and exits
   - daemon status reports state-root, project count, and active run count
+  - daemon install writes and starts a per-user launchd LaunchAgent
+  - daemon uninstall stops and removes the per-user launchd LaunchAgent
   - daemon limits reads or updates the global active-run cap
-  - daemon resume closes the invariant circuit only after violations are cleared
+  - daemon resume closes invariant/crash-loop circuits after operator repair
   - daemon stop asks the resident daemon to shut down and leaves detached wrappers alive
   - daemon stop --drain waits bounded for detached wrappers to finish
   - daemon service manages the macOS per-user launchd agent for daemon run
@@ -1017,6 +1019,7 @@ Behavior:
 
 Examples:
   tusker daemon status
+  tusker daemon install
   tusker daemon run --once
   tusker daemon limits --max-active-runs 1
   tusker daemon resume

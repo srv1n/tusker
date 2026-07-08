@@ -41,6 +41,14 @@ const (
 	tuskerSignsWarnLineLimit     = 60
 )
 
+var (
+	daemonWatchdogCheckInterval = 5 * time.Second
+	daemonWatchdogExit          = func(reason string) {
+		fmt.Fprintf(os.Stderr, "daemon watchdog exiting abnormally: %s\n", reason)
+		os.Exit(70)
+	}
+)
+
 func DefaultStateRoot() string {
 	if explicit := strings.TrimSpace(os.Getenv("TUSKER_STATE_ROOT")); explicit != "" {
 		return explicit
@@ -108,6 +116,8 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 			_ = serveServer.Close(shutdownCtx)
 		}()
 	}
+	stopWatchdog := d.startWatchdog(runCtx)
+	defer stopWatchdog()
 	for {
 		if err := d.PollOnce(runCtx); err != nil {
 			if errors.Is(err, context.Canceled) && runCtx.Err() != nil {
@@ -125,6 +135,68 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 		case <-time.After(interval):
 		}
 	}
+}
+
+func (d *Daemon) feedWatchdogBeat(now time.Time) error {
+	if d == nil || d.store == nil {
+		return nil
+	}
+	return d.store.SetSetting("daemon_watchdog_beat_at", now.UTC().Format(time.RFC3339Nano))
+}
+
+func (d *Daemon) startWatchdog(ctx context.Context) func() {
+	if d == nil || d.store == nil {
+		return func() {}
+	}
+	watchdogCtx, cancel := context.WithCancel(ctx)
+	ticker := time.NewTicker(daemonWatchdogCheckInterval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-watchdogCtx.Done():
+				return
+			case <-ticker.C:
+				d.checkWatchdogOrExit(time.Now().UTC(), d.nextPollInterval())
+			}
+		}
+	}()
+	return cancel
+}
+
+func (d *Daemon) checkWatchdogOrExit(now time.Time, tick time.Duration) {
+	stale, reason, err := d.watchdogStale(now, tick)
+	if err != nil || !stale {
+		return
+	}
+	_ = d.store.SetSetting(daemonLastRestartCauseKey, daemonRestartCauseWatchdog)
+	daemonWatchdogExit(reason)
+}
+
+func (d *Daemon) watchdogStale(now time.Time, tick time.Duration) (bool, string, error) {
+	if d == nil || d.store == nil {
+		return false, "", nil
+	}
+	if tick <= 0 {
+		tick = defaultReconcileTick
+	}
+	beatRaw, err := d.store.GetSetting("daemon_watchdog_beat_at")
+	if err != nil {
+		return false, "", err
+	}
+	if strings.TrimSpace(beatRaw) == "" {
+		return false, "", nil
+	}
+	beatAt, err := time.Parse(time.RFC3339Nano, beatRaw)
+	if err != nil {
+		return true, "watchdog beat is invalid: " + beatRaw, nil
+	}
+	threshold := 3 * tick
+	age := now.UTC().Sub(beatAt)
+	if age <= threshold {
+		return false, "", nil
+	}
+	return true, fmt.Sprintf("watchdog beat stale: age=%s threshold=%s last_beat=%s", age.Round(time.Second), threshold, beatAt.UTC().Format(time.RFC3339Nano)), nil
 }
 
 func (d *Daemon) nextPollInterval() time.Duration {
@@ -350,8 +422,7 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	nowPoll := time.Now().UTC().Format(time.RFC3339Nano)
-	if err := d.store.SetSetting("daemon_watchdog_beat_at", nowPoll); err != nil {
+	if err := d.feedWatchdogBeat(time.Now().UTC()); err != nil {
 		return err
 	}
 	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{Notes: true})
@@ -588,6 +659,19 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 				if dispatchCapacityLimitReached(projectActiveRuns, projectActiveRunLimit(wfFile.Data), current) {
 					continue
 				}
+				crashLoopReason, err := d.crashLoopDispatchBlocker()
+				if err != nil {
+					return err
+				}
+				if crashLoopReason != "" {
+					current.LastError = crashLoopReason
+					current.UpdatedAt = now.Format(time.RFC3339)
+					if err := d.store.UpsertRun(current); err != nil {
+						return err
+					}
+					projectRuns[recordID] = current
+					continue
+				}
 				beforeBudget := current
 				budgeted, budgetReason, budgetChanged, err := d.budgetDispatchBlocker(project, wfFile.Data, note, current, now)
 				if err != nil {
@@ -702,6 +786,19 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 				continue
 			}
 			if dispatchCapacityLimitReached(projectActiveRuns, projectActiveRunLimit(wfFile.Data), current) {
+				continue
+			}
+			crashLoopReason, err := d.crashLoopDispatchBlocker()
+			if err != nil {
+				return err
+			}
+			if crashLoopReason != "" {
+				current.LastError = crashLoopReason
+				current.UpdatedAt = now.Format(time.RFC3339)
+				if err := d.store.UpsertRun(current); err != nil {
+					return err
+				}
+				projectRuns[recordID] = current
 				continue
 			}
 			budgeted, budgetReason, _, err := d.budgetDispatchBlocker(project, wfFile.Data, note, current, now)
@@ -4863,6 +4960,8 @@ func markNoteReadyForReview(vaultPath, notePath string) error {
 
 func daemonRunCmd(args Args) error {
 	stateRoot := DefaultStateRoot()
+	once := args.Bool("once")
+	stalePIDFile := !once && daemonStalePIDFileExists(stateRoot)
 	guard, err := acquireDaemonGuard(stateRoot)
 	if err != nil {
 		return err
@@ -4874,10 +4973,23 @@ func daemonRunCmd(args Args) error {
 	}
 	daemon.guard = guard
 	defer daemon.Close()
-	if args.Bool("once") {
+	if !once {
+		if stalePIDFile {
+			if _, err := daemon.store.recordDaemonAbnormalStart(daemonRestartCauseStalePID, time.Now().UTC()); err != nil {
+				return err
+			}
+		} else if err := daemon.store.SetSetting(daemonLastRestartCauseKey, daemonRestartCauseCleanStartup); err != nil {
+			return err
+		}
+	}
+	if once {
 		daemon.dispatchRefusalReason = oneShotDispatchRefusal("tusker daemon run --once")
 	}
-	return daemon.Run(context.Background(), args.Bool("once"))
+	err = daemon.Run(context.Background(), once)
+	if err != nil && !once {
+		_, _ = daemon.store.recordDaemonAbnormalStart(daemonRestartCauseRunError, time.Now().UTC())
+	}
+	return err
 }
 
 func daemonStatusCmd(args Args) error {
@@ -4921,6 +5033,13 @@ func daemonStatusCmd(args Args) error {
 	fmt.Printf("Active runs: %v / %v\n", status["activeRuns"], status["max_active_runs"])
 	fmt.Printf("Parked no-progress runs: %v\n", status["parkedNoProgressRuns"])
 	fmt.Printf("Parked budget runs: %v\n", status["parkedBudgetRuns"])
+	fmt.Printf("Launchd: installed=%v managed=%v mode=%s\n", status["launchd_installed"], status["daemon_managed_by_launchd"], status["daemon_run_mode"])
+	if cause := stringValue(status["daemon_last_restart_cause"]); cause != "" {
+		fmt.Printf("Last restart cause: %s\n", cause)
+	}
+	if crashLoop, ok := status["crashLoop"].(daemonCrashLoopStatus); ok && crashLoop.Open {
+		fmt.Printf("Crash loop: open (%s)\n", firstNonEmpty(crashLoop.Summary, crashLoop.Reason))
+	}
 	if boolFromAny(status["invariant_circuit_open"]) {
 		fmt.Printf("Invariant circuit: open (%s)\n", stringValue(status["invariant_circuit_reason"]))
 	}
@@ -4944,11 +5063,18 @@ func daemonResumeCmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	crashLoop, crashLoopClosed, err := daemon.ResumeCrashLoopCircuit()
+	if err != nil {
+		return err
+	}
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "resumed": true, "status": status})
+		emitJSON(map[string]any{"ok": true, "resumed": true, "status": status, "crash_loop": crashLoop, "crash_loop_closed": crashLoopClosed})
 		return nil
 	}
-	fmt.Println("Invariant circuit closed; daemon dispatch may resume.")
+	if crashLoopClosed {
+		fmt.Println("Crash loop circuit closed.")
+	}
+	fmt.Println("Daemon dispatch may resume.")
 	return nil
 }
 

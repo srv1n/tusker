@@ -2087,6 +2087,19 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	crashLoop, err := s.ReadCrashLoopStatus()
+	if err != nil {
+		return nil, err
+	}
+	lastRestartCause, err := s.GetSetting(daemonLastRestartCauseKey)
+	if err != nil {
+		return nil, err
+	}
+	launchdInstalled, launchdPlistPath := false, ""
+	if installed, path, err := daemonLaunchdInstalled(); err == nil {
+		launchdInstalled = installed
+		launchdPlistPath = path
+	}
 	invariantCircuitReason := ""
 	if invariantCircuit.Open {
 		invariantCircuitReason = invariantCircuitSummary(invariantCircuit)

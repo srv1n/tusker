@@ -531,6 +531,17 @@ export interface DaemonStatus {
     input_token_limit?: number;
     output_token_limit?: number;
   } | null;
+  crashLoop?: {
+    open: boolean;
+    reason?: string;
+    summary?: string;
+    opened_at?: string;
+    last_checked_at?: string;
+    last_restart_cause?: string;
+    restart_count?: number;
+    window_seconds?: number;
+    burst?: number;
+  } | null;
   invariantCircuit?: {
     open: boolean;
     reason?: string;

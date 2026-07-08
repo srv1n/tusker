@@ -85,6 +85,7 @@ type serveDaemonStatus struct {
 	Projects         []RegisteredProject `json:"projects"`
 	ParkedBudgetRuns int                 `json:"parkedBudgetRuns"`
 	BudgetCircuit    any                 `json:"budgetCircuit"`
+	CrashLoop        any                 `json:"crashLoop"`
 	InvariantCircuit any                 `json:"invariantCircuit"`
 	DiskPressure     DiskPressureStatus  `json:"diskPressure"`
 	DaemonAlive      bool                `json:"daemonAlive"`
@@ -92,6 +93,10 @@ type serveDaemonStatus struct {
 	DaemonPID        int                 `json:"daemonPid"`
 	DaemonStartedAt  any                 `json:"daemonStartedAt"`
 	DaemonLastPollAt any                 `json:"daemonLastPollAt"`
+	ManagedByLaunchd bool                `json:"managedByLaunchd"`
+	LaunchdInstalled bool                `json:"launchdInstalled"`
+	DaemonRunMode    string              `json:"daemonRunMode"`
+	LastRestartCause string              `json:"lastRestartCause,omitempty"`
 }
 
 type serveActionResult struct {
