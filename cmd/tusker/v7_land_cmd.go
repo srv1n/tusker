@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,6 +29,43 @@ type v7LandingAuditEntry struct {
 	Timestamp   string
 }
 
+// v7LandedEntry pairs a landing audit row with the wave it belongs to so the
+// batch accumulator can defer both audit writes and rework transitions until
+// after the whole batch has been evaluated (see A5).
+type v7LandedEntry struct {
+	WaveID string
+	Entry  v7LandingAuditEntry
+}
+
+type v7LandFailure struct {
+	WaveID  string
+	Task    v7LandTask
+	Summary string
+}
+
+// v7BatchAccumulator collects the outcome of staging tasks into integration
+// branches without applying any side effects to the tracker (rework/audit).
+type v7BatchAccumulator struct {
+	Landed []v7LandedEntry
+	Failed []v7LandFailure
+}
+
+// v7LandSummary accumulates the human-facing landing summary printed on a
+// successful land (A4).
+type v7LandSummary struct {
+	Landed    []v7LandSummaryRow
+	Reworked  []v7LandSummaryRow
+	MainNotes []string
+}
+
+type v7LandSummaryRow struct {
+	Task       string
+	Branch     string
+	Target     string
+	GateResult string
+	Commit     string
+}
+
 func landV7Cmd(args Args) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
@@ -43,10 +81,16 @@ func landV7Cmd(args Args) error {
 	}
 	defer release()
 
+	summary := &v7LandSummary{}
 	if len(targets) == 1 && v7WaveIDPattern.MatchString(targets[0]) {
-		return landV7WaveToMain(vaultPath, targets[0], args)
+		if err := landV7WaveToMain(vaultPath, targets[0], args, summary); err != nil {
+			return err
+		}
+	} else if err := landV7TaskTargets(vaultPath, targets, args, summary); err != nil {
+		return err
 	}
-	return landV7TaskTargets(vaultPath, targets, args)
+	printV7LandingSummary(summary, args)
+	return nil
 }
 
 func landTargets(args Args) []string {
@@ -83,11 +127,12 @@ func acquireV7LandingLock(vaultPath string) (func(), error) {
 	return func() { _ = os.Remove(lockPath) }, nil
 }
 
-func landV7TaskTargets(vaultPath string, targets []string, args Args) error {
+func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v7LandSummary) error {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return err
 	}
+	repoRoot := v7RepoRoot(vaultPath)
 	byWave := map[string][]v7LandTask{}
 	for _, taskID := range targets {
 		task, ok := idx.Tasks[taskID]
@@ -96,7 +141,7 @@ func landV7TaskTargets(vaultPath string, targets []string, args Args) error {
 		}
 		waveID := stringField(task.Data, "wave")
 		if waveID == "" {
-			return tuskerError(errorInvalidTransition, taskID+" is not in a wave; merge-lane land requires wave membership")
+			return tuskerError(errorInvalidTransition, v7NoWaveRefusal(taskID))
 		}
 		if _, ok := idx.Waves[waveID]; !ok {
 			return tuskerError(errorNotFound, "V7 wave not found: "+waveID)
@@ -105,6 +150,11 @@ func landV7TaskTargets(vaultPath string, targets []string, args Args) error {
 		if len(targets) == 1 {
 			branch = firstNonEmpty(strings.TrimSpace(args.String("branch")), branch)
 		}
+		if v7GitRepo(repoRoot) && !gitBranchExists(repoRoot, branch) {
+			if err := ensureV7TaskLandingBranch(repoRoot, taskID, branch, args); err != nil {
+				return err
+			}
+		}
 		byWave[waveID] = append(byWave[waveID], v7LandTask{ID: taskID, Branch: branch})
 	}
 	waveIDs := make([]string, 0, len(byWave))
@@ -112,18 +162,217 @@ func landV7TaskTargets(vaultPath string, targets []string, args Args) error {
 		waveIDs = append(waveIDs, waveID)
 	}
 	sort.Strings(waveIDs)
+
+	// Phase 1: stage every wave's batch into integration. Passing tasks move
+	// the integration ref forward; rework/audit side effects are deferred.
+	acc := &v7BatchAccumulator{}
 	for _, waveID := range waveIDs {
-		if err := landV7WaveTaskBatch(vaultPath, waveID, byWave[waveID], args); err != nil {
+		if err := stageV7WaveBatch(vaultPath, repoRoot, waveID, byWave[waveID], acc); err != nil {
 			return err
 		}
-		if err := landV7WaveToMainIfReady(vaultPath, waveID, args); err != nil {
+	}
+
+	// A5: if nothing landed at all, exit non-zero with an unmistakable
+	// failed-batch summary BEFORE touching any task state.
+	if len(acc.Landed) == 0 {
+		return tuskerError(errorInvalidTransition, v7FailedBatchSummary(acc))
+	}
+
+	// Phase 2: apply rework transitions, write landing audit, and build the
+	// human-facing summary now that we know the batch produced real landings.
+	actor := landV7Actor(args)
+	for _, waveID := range waveIDs {
+		var entries []v7LandingAuditEntry
+		for _, landed := range acc.Landed {
+			if landed.WaveID != waveID {
+				continue
+			}
+			entry := landed.Entry
+			entry.Actor = actor
+			entries = append(entries, entry)
+			summary.Landed = append(summary.Landed, v7LandSummaryRow{
+				Task: entry.Task, Branch: entry.Branch, Target: entry.Target,
+				GateResult: entry.GateResult, Commit: entry.Commit,
+			})
+		}
+		for _, failure := range acc.Failed {
+			if failure.WaveID != waveID {
+				continue
+			}
+			if err := kickV7LandingTaskToRework(vaultPath, failure.Task.ID, failure.Summary, actor); err != nil {
+				return err
+			}
+			entries = append(entries, v7LandingAuditEntry{
+				Task: failure.Task.ID, Branch: failure.Task.Branch,
+				Target: v7IntegrationBranchName(waveID), GateResult: "fail",
+				GateSummary: failure.Summary, Actor: actor,
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+			})
+			summary.Reworked = append(summary.Reworked, v7LandSummaryRow{
+				Task: failure.Task.ID, Branch: failure.Task.Branch,
+				Target: v7IntegrationBranchName(waveID), GateResult: "fail",
+			})
+		}
+		if err := appendV7WaveLandingAudit(vaultPath, waveID, entries, actor); err != nil {
+			return err
+		}
+		if err := landV7WaveToMainIfReady(vaultPath, waveID, args, summary); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func landV7WaveTaskBatch(vaultPath, waveID string, tasks []v7LandTask, args Args) error {
+// v7NoWaveRefusal renders the actionable A1 refusal for a task with no wave.
+func v7NoWaveRefusal(taskID string) string {
+	return taskID + " is not in a wave; merge-lane land requires wave membership. " +
+		"Create one and retry: tusker wave create \"<title>\" " + taskID +
+		"  (then: tusker land " + taskID + ")"
+}
+
+// v7FailedBatchSummary renders the A5 failed-batch summary for a batch where
+// no requested task landed.
+func v7FailedBatchSummary(acc *v7BatchAccumulator) string {
+	total := len(acc.Failed)
+	target := "integration"
+	if total > 0 {
+		target = v7IntegrationBranchName(acc.Failed[0].WaveID)
+	}
+	first := ""
+	if total > 0 {
+		first = "; first failure: " + acc.Failed[0].Task.ID + ": " + acc.Failed[0].Summary
+	}
+	return fmt.Sprintf("land batch failed: 0 of %d task%s landed to %s%s", total, plural(total), target, first)
+}
+
+func landV7Actor(args Args) string {
+	return fallback(fallback(args.String("actor"), args.String("by")), "agent:"+defaultActorName())
+}
+
+// ensureV7TaskLandingBranch materializes the task/<ID> branch for a detached
+// completed worktree (A2). It prefers an explicit --from ref, otherwise
+// auto-discovers a single detached worktree associated with the task. When no
+// source can be resolved it returns an actionable refusal naming the exact
+// branch command to run before retry.
+func ensureV7TaskLandingBranch(repoRoot, taskID, branch string, args Args) error {
+	commit, source, err := discoverV7TaskLandingCommit(repoRoot, taskID, branch, args)
+	if err != nil {
+		return err
+	}
+	if _, err := gitCombined(repoRoot, "branch", branch, commit); err != nil {
+		return tuskerError(errorInvalidTransition, "failed to create "+branch+" from "+source+": "+firstActionableLine(err.Error(), err.Error()))
+	}
+	return nil
+}
+
+func discoverV7TaskLandingCommit(repoRoot, taskID, branch string, args Args) (string, string, error) {
+	if from := strings.TrimSpace(args.String("from")); from != "" {
+		commit, err := resolveV7LandingRef(repoRoot, from)
+		if err != nil {
+			return "", "", tuskerError(errorInvalidArg, "cannot resolve --from "+from+" for "+taskID+": "+firstActionableLine(err.Error(), err.Error()))
+		}
+		return commit, from, nil
+	}
+	matches := v7DetachedWorktreesForTask(repoRoot, taskID)
+	if len(matches) == 1 {
+		return matches[0].HEAD, matches[0].Path, nil
+	}
+	if len(matches) > 1 {
+		paths := make([]string, 0, len(matches))
+		for _, m := range matches {
+			paths = append(paths, m.Path)
+		}
+		return "", "", tuskerError(errorInvalidTransition, taskID+" has no "+branch+" branch and multiple detached worktrees match ("+strings.Join(paths, ", ")+"); pick one with: tusker land "+taskID+" --from <worktree-path-or-commit>")
+	}
+	return "", "", tuskerError(errorInvalidTransition, taskID+" has no "+branch+" branch and no detached completed worktree to branch from. Create it and retry: git branch "+branch+" <commit>  (or: tusker land "+taskID+" --from <worktree-path-or-commit>)")
+}
+
+func resolveV7LandingRef(repoRoot, ref string) (string, error) {
+	if info, err := os.Stat(ref); err == nil && info.IsDir() {
+		if commit, err := gitOutputTrim(ref, "rev-parse", "HEAD"); err == nil {
+			return commit, nil
+		}
+	}
+	return gitOutputTrim(repoRoot, "rev-parse", ref+"^{commit}")
+}
+
+type v7Worktree struct {
+	Path     string
+	HEAD     string
+	Detached bool
+}
+
+// v7DetachedWorktreesForTask returns detached git worktrees that look like the
+// runner's completed workspace for taskID, matched either by the workspace
+// metadata record id or by the task id appearing in the worktree path.
+func v7DetachedWorktreesForTask(repoRoot, taskID string) []v7Worktree {
+	var matches []v7Worktree
+	root, _ := filepath.Abs(repoRoot)
+	upperID := strings.ToUpper(strings.TrimSpace(taskID))
+	for _, wt := range v7ListWorktrees(repoRoot) {
+		if !wt.Detached || wt.HEAD == "" {
+			continue
+		}
+		abs, _ := filepath.Abs(wt.Path)
+		if abs == root {
+			continue
+		}
+		if v7WorkspaceRecordID(wt.Path) == upperID || strings.Contains(strings.ToUpper(abs), upperID) {
+			matches = append(matches, wt)
+		}
+	}
+	return matches
+}
+
+func v7ListWorktrees(repoRoot string) []v7Worktree {
+	output, err := gitCombined(repoRoot, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil
+	}
+	var worktrees []v7Worktree
+	var current v7Worktree
+	flush := func() {
+		if current.Path != "" {
+			worktrees = append(worktrees, current)
+		}
+		current = v7Worktree{}
+	}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimRight(line, "\r")
+		switch {
+		case strings.TrimSpace(line) == "":
+			flush()
+		case strings.HasPrefix(line, "worktree "):
+			flush()
+			current.Path = strings.TrimSpace(strings.TrimPrefix(line, "worktree "))
+		case strings.HasPrefix(line, "HEAD "):
+			current.HEAD = strings.TrimSpace(strings.TrimPrefix(line, "HEAD "))
+		case strings.TrimSpace(line) == "detached":
+			current.Detached = true
+		}
+	}
+	flush()
+	return worktrees
+}
+
+func v7WorkspaceRecordID(worktreePath string) string {
+	raw, err := os.ReadFile(filepath.Join(worktreePath, ".tusker", "workspace.json"))
+	if err != nil {
+		return ""
+	}
+	var meta struct {
+		RecordID string `json:"record_id"`
+	}
+	if json.Unmarshal(raw, &meta) != nil {
+		return ""
+	}
+	return strings.ToUpper(strings.TrimSpace(meta.RecordID))
+}
+
+func stageV7WaveBatch(vaultPath, repoRoot, waveID string, tasks []v7LandTask, acc *v7BatchAccumulator) error {
+	if len(tasks) == 0 {
+		return nil
+	}
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return err
@@ -132,7 +381,6 @@ func landV7WaveTaskBatch(vaultPath, waveID string, tasks []v7LandTask, args Args
 	if !ok {
 		return tuskerError(errorNotFound, "V7 wave not found: "+waveID)
 	}
-	repoRoot := v7RepoRoot(vaultPath)
 	if !v7GitRepo(repoRoot) {
 		return tuskerError(errorInvalidTransition, "tusker land requires a Git repository", withPath(repoRoot))
 	}
@@ -140,10 +388,10 @@ func landV7WaveTaskBatch(vaultPath, waveID string, tasks []v7LandTask, args Args
 	if err := ensureV7IntegrationBranch(vaultPath, integrationBranch); err != nil {
 		return err
 	}
-	return landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks, args)
+	return landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks, acc)
 }
 
-func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string, tasks []v7LandTask, args Args) error {
+func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string, tasks []v7LandTask, acc *v7BatchAccumulator) error {
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -151,37 +399,28 @@ func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string,
 	if err != nil {
 		return err
 	}
-	actor := fallback(fallback(args.String("actor"), args.String("by")), "agent:"+defaultActorName())
 	if pass {
 		if err := updateGitRef(repoRoot, "refs/heads/"+integrationBranch, commit, ""); err != nil {
 			return err
 		}
-		entries := make([]v7LandingAuditEntry, 0, len(tasks))
+		now := time.Now().UTC().Format(time.RFC3339)
 		for _, task := range tasks {
-			entries = append(entries, v7LandingAuditEntry{
+			acc.Landed = append(acc.Landed, v7LandedEntry{WaveID: waveID, Entry: v7LandingAuditEntry{
 				Task: task.ID, Branch: task.Branch, Target: integrationBranch,
-				GateResult: "pass", GateSummary: summary, Commit: commit,
-				Actor: actor, Timestamp: time.Now().UTC().Format(time.RFC3339),
-			})
+				GateResult: "pass", GateSummary: summary, Commit: commit, Timestamp: now,
+			}})
 		}
-		return appendV7WaveLandingAudit(vaultPath, waveID, entries, actor)
+		return nil
 	}
 	if len(tasks) == 1 {
-		task := tasks[0]
-		if err := kickV7LandingTaskToRework(vaultPath, task.ID, summary, actor); err != nil {
-			return err
-		}
-		return appendV7WaveLandingAudit(vaultPath, waveID, []v7LandingAuditEntry{{
-			Task: task.ID, Branch: task.Branch, Target: integrationBranch,
-			GateResult: "fail", GateSummary: summary, Actor: actor,
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-		}}, actor)
+		acc.Failed = append(acc.Failed, v7LandFailure{WaveID: waveID, Task: tasks[0], Summary: summary})
+		return nil
 	}
 	mid := len(tasks) / 2
-	if err := landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks[:mid], args); err != nil {
+	if err := landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks[:mid], acc); err != nil {
 		return err
 	}
-	return landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks[mid:], args)
+	return landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks[mid:], acc)
 }
 
 func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandTask) (bool, string, string, error) {
@@ -279,14 +518,67 @@ func limitLandingSummary(value string, max int) string {
 	return strings.TrimSpace(value[:max-3]) + "..."
 }
 
+// firstActionableLine returns the most useful line from command output for a
+// failure summary. It prefers a line that clearly names a conflict or error and
+// otherwise skips progress chatter such as `Auto-merging ...` so the actionable
+// conflict/error line (with its path) survives in the summary (A6).
 func firstActionableLine(output, fallbackLine string) string {
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
+	lines := strings.Split(output, "\n")
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line != "" && isActionableFailureLine(line) {
+			return line
+		}
+	}
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line != "" && !isMergeProgressChatter(line) {
+			return line
+		}
+	}
+	for _, raw := range lines {
+		if line := strings.TrimSpace(raw); line != "" {
 			return line
 		}
 	}
 	return strings.TrimSpace(fallbackLine)
+}
+
+func isActionableFailureLine(line string) bool {
+	lower := strings.ToLower(line)
+	switch {
+	case strings.HasPrefix(line, "CONFLICT"),
+		strings.Contains(line, "Merge conflict in "),
+		strings.Contains(line, "needs merge"),
+		strings.Contains(line, "would be overwritten"),
+		strings.HasPrefix(lower, "error:"),
+		strings.HasPrefix(lower, "fatal:"),
+		strings.HasPrefix(lower, "panic:"),
+		strings.HasPrefix(line, "--- FAIL"),
+		strings.HasPrefix(line, "FAIL\t"),
+		strings.HasPrefix(line, "FAIL "):
+		return true
+	}
+	return false
+}
+
+func isMergeProgressChatter(line string) bool {
+	for _, prefix := range []string{
+		"Auto-merging",
+		"Removing ",
+		"Adding ",
+		"Merge made by",
+		"Fast-forward",
+		"Already up to date",
+		"Performing inexact rename detection",
+		"Updating ",
+		"# ",
+	} {
+		if strings.HasPrefix(line, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func kickV7LandingTaskToRework(vaultPath, taskID, summary, actor string) error {
@@ -316,7 +608,7 @@ func kickV7LandingTaskToRework(vaultPath, taskID, summary, actor string) error {
 	return err
 }
 
-func landV7WaveToMainIfReady(vaultPath, waveID string, args Args) error {
+func landV7WaveToMainIfReady(vaultPath, waveID string, args Args, summary *v7LandSummary) error {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return err
@@ -325,16 +617,21 @@ func landV7WaveToMainIfReady(vaultPath, waveID string, args Args) error {
 	if !ok {
 		return tuskerError(errorNotFound, "V7 wave not found: "+waveID)
 	}
+	open := 0
 	for _, member := range normalizeList(wave.Data["members"]) {
 		task, ok := idx.Tasks[member]
 		if !ok || stringField(task.Data, "status") != "done" {
-			return nil
+			open++
 		}
 	}
-	return landV7WaveToMain(vaultPath, waveID, args)
+	if open > 0 {
+		summary.MainNotes = append(summary.MainNotes, fmt.Sprintf("main: waiting on %d open task%s in %s", open, plural(open), waveID))
+		return nil
+	}
+	return landV7WaveToMain(vaultPath, waveID, args, summary)
 }
 
-func landV7WaveToMain(vaultPath, waveID string, args Args) error {
+func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummary) error {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return err
@@ -357,6 +654,7 @@ func landV7WaveToMain(vaultPath, waveID string, args Args) error {
 	defaultBranch := v7DefaultBranch(vaultPath)
 	integrationExists := gitRefExists(repoRoot, "refs/heads/"+integrationBranch)
 	if !integrationExists {
+		summary.MainNotes = append(summary.MainNotes, "main: "+waveID+" has no integration branch to land")
 		return nil
 	}
 	integrationRev, err := gitOutputTrim(repoRoot, "rev-parse", integrationBranch)
@@ -368,7 +666,8 @@ func landV7WaveToMain(vaultPath, waveID string, args Args) error {
 		if err := deleteGitBranch(repoRoot, integrationBranch); err != nil {
 			return err
 		}
-		actor := fallback(fallback(args.String("actor"), args.String("by")), "agent:"+defaultActorName())
+		actor := landV7Actor(args)
+		summary.MainNotes = append(summary.MainNotes, "main: "+waveID+" already landed at "+shortCommit(mainRev)+"; cleaned up integration branch")
 		return appendV7WaveLandingAudit(vaultPath, waveID, []v7LandingAuditEntry{{
 			Task: "wave", Branch: integrationBranch, Target: defaultBranch,
 			GateResult: "pass", GateSummary: "already landed; cleaned up integration branch",
@@ -378,9 +677,9 @@ func landV7WaveToMain(vaultPath, waveID string, args Args) error {
 	if !gitMergeBaseAncestor(repoRoot, defaultBranch, integrationBranch) {
 		return tuskerError(errorInvalidTransition, defaultBranch+" is not an ancestor of "+integrationBranch+"; rebase or merge main before wave landing")
 	}
-	pass, summary := runV7LandingGateOnRef(vaultPath, repoRoot, integrationBranch)
+	pass, summaryText := runV7LandingGateOnRef(vaultPath, repoRoot, integrationBranch)
 	if !pass {
-		return tuskerError(errorInvalidTransition, waveID+" integration branch is red: "+summary)
+		return tuskerError(errorInvalidTransition, waveID+" integration branch is red: "+summaryText)
 	}
 	mainRev, err := gitOutputTrim(repoRoot, "rev-parse", defaultBranch)
 	if err != nil {
@@ -398,12 +697,50 @@ func landV7WaveToMain(vaultPath, waveID string, args Args) error {
 	if err := deleteGitBranch(repoRoot, integrationBranch); err != nil {
 		return err
 	}
-	actor := fallback(fallback(args.String("actor"), args.String("by")), "agent:"+defaultActorName())
+	actor := landV7Actor(args)
+	summary.MainNotes = append(summary.MainNotes, "main: moved to "+shortCommit(mergeCommit)+" ("+message+")")
 	return appendV7WaveLandingAudit(vaultPath, waveID, []v7LandingAuditEntry{{
 		Task: "wave", Branch: integrationBranch, Target: defaultBranch,
-		GateResult: "pass", GateSummary: summary, Commit: mergeCommit,
+		GateResult: "pass", GateSummary: summaryText, Commit: mergeCommit,
 		Actor: actor, Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}}, actor)
+}
+
+// printV7LandingSummary renders the concise landing summary for a successful
+// land (A4): task, source branch, target, gate result, commit, and whether main
+// moved or is waiting on open wave tasks.
+func printV7LandingSummary(summary *v7LandSummary, args Args) {
+	if summary == nil || args.Bool("json") || args.Bool("quiet") {
+		return
+	}
+	if len(summary.Landed) == 0 && len(summary.Reworked) == 0 && len(summary.MainNotes) == 0 {
+		return
+	}
+	var b strings.Builder
+	if len(summary.Landed) > 0 {
+		b.WriteString(fmt.Sprintf("Landed %d task%s:\n", len(summary.Landed), plural(len(summary.Landed))))
+		for _, row := range summary.Landed {
+			b.WriteString(fmt.Sprintf("  %s  %s -> %s  gate:%s  %s\n", row.Task, row.Branch, row.Target, row.GateResult, shortCommit(row.Commit)))
+		}
+	}
+	if len(summary.Reworked) > 0 {
+		b.WriteString(fmt.Sprintf("Returned %d task%s to rework:\n", len(summary.Reworked), plural(len(summary.Reworked))))
+		for _, row := range summary.Reworked {
+			b.WriteString(fmt.Sprintf("  %s  %s -> %s  gate:%s\n", row.Task, row.Branch, row.Target, row.GateResult))
+		}
+	}
+	for _, note := range summary.MainNotes {
+		b.WriteString(note + "\n")
+	}
+	fmt.Print(b.String())
+}
+
+func shortCommit(commit string) string {
+	commit = strings.TrimSpace(commit)
+	if len(commit) > 12 {
+		return commit[:12]
+	}
+	return commit
 }
 
 func runV7LandingGateOnRef(vaultPath, repoRoot, ref string) (bool, string) {
