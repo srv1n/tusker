@@ -43,6 +43,22 @@ func (d *Daemon) upsertRunWithStream(before, after RunStatus) error {
 	return nil
 }
 
+// upsertRunPreservingLeaseWithStream syncs a run row's routing/status columns
+// without overwriting the stored lease columns. The poll loop uses it for its
+// pre-dispatch writes so a concurrent operator interrupt/park that lands after
+// the poll snapshot is never re-armed by that stale snapshot; the dispatch
+// claim's CAS then backs off against the real stored lease (RUN-T-0043).
+func (d *Daemon) upsertRunPreservingLeaseWithStream(before, after RunStatus) error {
+	if d == nil || d.store == nil {
+		return nil
+	}
+	if err := d.store.UpsertRunPreservingLease(after); err != nil {
+		return err
+	}
+	d.emitLeaseTransitionStreamEvent(before, after)
+	return nil
+}
+
 func (d *Daemon) observeTaskStatusForStream(projectID, recordID, status string) {
 	if d == nil {
 		return
