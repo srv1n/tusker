@@ -408,6 +408,8 @@ func runtimeFailureClass(run RunStatus, attempts []RunAttempt, turns []RunTurn) 
 		return "runner_early_exit"
 	case strings.Contains(text, "dispatch declined") || outcome == string(AttemptOutcomeDispatchDeclined):
 		return "dispatch_declined"
+	case strings.Contains(text, "awaiting land") || outcome == string(AttemptOutcomeWaitingForReview):
+		return "review_complete"
 	case strings.Contains(text, "turn cap exhausted") || outcome == string(AttemptOutcomeTurnCapExhausted):
 		return "turn_cap_exhausted"
 	case strings.Contains(text, "missing session") || strings.Contains(text, "resume"):

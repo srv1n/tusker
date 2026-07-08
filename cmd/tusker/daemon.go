@@ -1231,6 +1231,11 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 					return d.finishDispatchDeclinedRun(project, wfFile.Data, note, run, reason, finished)
 				}
 			}
+			if run.Lane != runLaneReview {
+				if reason, ok := completedRunnerReviewRequest(run, project.VaultRoot, wfFile.Data); ok {
+					return d.finishReviewCompleteRun(project, run, reason, finished)
+				}
+			}
 			if classification.outcome == AttemptOutcomeWaitingForHuman {
 				reason := classification.reason
 				parentAttemptID := run.ActiveAttemptID
@@ -1639,6 +1644,68 @@ func (d *Daemon) scheduleContinuationRetry(run RunStatus, wf Workflow, reason st
 
 const runnerEarlyExitActiveTrackerReason = "runner early exit while tracker state remained active"
 
+const runnerReviewCompleteAwaitingLandReason = "runner requested review; work complete in worktree, awaiting land"
+
+// completedRunnerReviewRequest reports whether a clean-exited runner flipped its
+// worktree-local tracker into a review/terminal state during this attempt — the
+// review-request signal the runner itself controls at exit via
+// `tusker finish --request-review`. This is the write-side mirror of RUN-T-0037:
+// the worktree tracker is attempt-local scratch that has not yet reached the
+// canonical vault, so the daemon must read the runner's own worktree copy to see
+// the completion signal instead of requiring the flip to land in canonical
+// first. When the workspace is the canonical repo (in-place), the flip is already
+// visible via canonical state and the normal success path handles it, so this
+// returns false to avoid double-handling.
+func completedRunnerReviewRequest(run RunStatus, canonicalVaultPath string, wf Workflow) (string, bool) {
+	if run.Lane == runLaneReview {
+		return "", false
+	}
+	statusPath := strings.TrimSpace(run.StatusPath)
+	if statusPath == "" || !fileExists(statusPath) {
+		return "", false
+	}
+	status, err := readRunnerProcessStatus(statusPath)
+	if err != nil || status.ExitCode != 0 {
+		return "", false
+	}
+	worktreeVault := runnerWorktreeVaultPath(run.WorkspacePath, canonicalVaultPath)
+	if worktreeVault == "" || workspacePathsCompatible(worktreeVault, canonicalVaultPath) {
+		return "", false
+	}
+	note, err := resolveNote(worktreeVault, run.RecordID)
+	if err != nil {
+		return "", false
+	}
+	worktreeStatus := strings.TrimSpace(stringField(note.Data, "status"))
+	if worktreeStatus == "" {
+		return "", false
+	}
+	if !containsString(wf.Tracker.ReviewStates, worktreeStatus) && !trackerStateTerminal(wf, worktreeStatus) {
+		return "", false
+	}
+	return fmt.Sprintf("%s (worktree tracker=%s)", runnerReviewCompleteAwaitingLandReason, worktreeStatus), true
+}
+
+// runnerWorktreeVaultPath resolves the worktree-local Tusker vault directory for
+// a runner workspace given the canonical vault path. The vault sits at the same
+// repo-relative location inside the runner's worktree as the canonical vault does
+// inside the control repo (typically `.tusker`).
+func runnerWorktreeVaultPath(workspacePath, canonicalVaultPath string) string {
+	workspacePath = strings.TrimSpace(workspacePath)
+	canonicalVaultPath = strings.TrimSpace(canonicalVaultPath)
+	if workspacePath == "" || canonicalVaultPath == "" {
+		return ""
+	}
+	rel := relativeFromRepo(v7RepoRoot(canonicalVaultPath), canonicalVaultPath)
+	if rel == "" || rel == "." || filepath.IsAbs(rel) {
+		rel = filepath.Base(canonicalVaultPath)
+	}
+	if strings.TrimSpace(rel) == "" {
+		rel = defaultRepoVaultDir
+	}
+	return filepath.Join(workspacePath, filepath.FromSlash(rel))
+}
+
 func completedRunnerDispatchDecline(run RunStatus) (string, string, bool) {
 	statusPath := strings.TrimSpace(run.StatusPath)
 	if statusPath == "" || !fileExists(statusPath) {
@@ -1797,6 +1864,44 @@ func (d *Daemon) finishDispatchDeclinedRun(project RegisteredProject, wf Workflo
 		AttemptID:        parentAttemptID,
 		SessionRef:       parentSessionRef,
 		Kind:             string(SupervisorDecisionStopForAudit),
+		Reason:           reason,
+		ParentAttemptID:  parentAttemptID,
+		ParentSessionRef: parentSessionRef,
+		WorkspacePath:    run.WorkspacePath,
+		LeaseState:       run.LeaseState,
+	})
+	return run, true, nil
+}
+
+// finishReviewCompleteRun terminates a run whose runner completed its work and
+// requested review in its worktree. The completion signal is the runner's own
+// review flip (see completedRunnerReviewRequest), so the attempt scores a
+// terminal review-complete outcome — never early_exit — and the lease releases
+// without queuing a continuation. Re-dispatch is prevented because
+// shouldDispatchRun declines released runs, so the row waits for the landing
+// lane instead of churning to the park guard.
+func (d *Daemon) finishReviewCompleteRun(project RegisteredProject, run RunStatus, reason, finished string) (RunStatus, bool, error) {
+	parentAttemptID := run.ActiveAttemptID
+	parentSessionRef := run.SessionRef
+	reason = firstNonEmpty(strings.TrimSpace(reason), runnerReviewCompleteAwaitingLandReason)
+	finished = firstNonEmpty(strings.TrimSpace(finished), time.Now().UTC().Format(time.RFC3339))
+	updateRunAttemptFromRun(d.store, run, AttemptOutcomeWaitingForReview, 0, reason, finished)
+	run.LeaseState = string(LeaseStateReleased)
+	run.AttemptOutcome = string(AttemptOutcomeWaitingForReview)
+	run.NextRetryAt = ""
+	run.LastError = reason
+	run.UpdatedAt = finished
+	run.Terminal = false
+	clearActiveExecution(&run)
+	if strings.TrimSpace(parentSessionRef) != "" {
+		_ = d.store.MarkSessionState(project.ProjectID, parentSessionRef, sessionStateForLeaseState(LeaseStateReleased), finished, reason, false)
+	}
+	d.emitSupervisorDecision(SupervisorDecision{
+		ProjectID:        project.ProjectID,
+		RecordID:         run.RecordID,
+		AttemptID:        parentAttemptID,
+		SessionRef:       parentSessionRef,
+		Kind:             string(SupervisorDecisionStopForHuman),
 		Reason:           reason,
 		ParentAttemptID:  parentAttemptID,
 		ParentSessionRef: parentSessionRef,
@@ -3983,6 +4088,8 @@ func sessionStateForOutcome(outcome AttemptOutcome) string {
 	case AttemptOutcomeDispatchDeclined:
 		return "closed"
 	case AttemptOutcomeWaitingForHuman:
+		return "closed"
+	case AttemptOutcomeWaitingForReview:
 		return "closed"
 	case AttemptOutcomeBudgetExceeded:
 		return "closed"
