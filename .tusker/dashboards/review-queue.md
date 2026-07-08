@@ -6,7 +6,6 @@
 
 | Task | Wave | Risk | Next action |
 |---|---|---|---|
-| [[RUN-T-0038]] |  | high | Review evidence and close or return to rework. |
-| [[TRC-T-0002]] |  | medium | Review evidence and close or return to rework. |
+
 
 <!-- tusker:generated:end -->

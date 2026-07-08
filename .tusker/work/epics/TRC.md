@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-06T06:38:56Z"
-updated_at: "2026-07-08T03:10:15Z"
-state_rev: "sha256:4ce236d9c4a17eff5e0fb44fb79e3ccdcb9f992721dd8793267e046141027ba0"
+updated_at: "2026-07-08T05:10:08Z"
+state_rev: "sha256:2a7837a17b3705cb81dcb0ed3a58c1e5c56c07e9425aae3ee1e36cecbe29d85f"
 ---
 
 # TRC · Trace and replay: boundary traces, deterministic replay, trace-backed verification
@@ -44,8 +44,8 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[TRC-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
-| [[TRC-T-0003]] | ready | agent | Review evidence and close or return to rework. |
+| [[TRC-T-0004]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[TRC-T-0005]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 
@@ -54,3 +54,5 @@ TBD.
 | Task | Accepted by | Closed at |
 |---|---|---|
 | [[TRC-T-0001]] | reviewer:agent | 2026-07-07T16:59:16Z |
+| [[TRC-T-0002]] | human:sarav | 2026-07-08T05:10:07Z |
+| [[TRC-T-0003]] | reviewer:agent | 2026-07-07T08:16:40Z |
