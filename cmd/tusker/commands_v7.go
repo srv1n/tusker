@@ -2619,13 +2619,17 @@ func v7DomainContext(vaultPath string, task Note) string {
 			sections = append(sections, fmt.Sprintf("### %s\n\n- Domain context not found in V7 knowledge/domains.", domain))
 			continue
 		}
-		sections = append(sections, fmt.Sprintf("### %s · %s\n\nSummary: %s\n\nRead this when:\n%s\n\nCurrent truth:\n%s",
+		section := fmt.Sprintf("### %s · %s\n\nSummary: %s\n\nRead this when:\n%s",
 			domain,
 			stringField(index.Data, "title"),
 			stringField(index.Data, "summary"),
 			v7PacketSnippet(sectionContent(index.Body, "## Read This When"), 8),
-			v7PacketSnippet(sectionContent(canon.Body, "## Current Truth"), 8),
-		))
+		)
+		if prohibitions := renderV7DomainCanonProhibitions(canon.Body); prohibitions != "" {
+			section += "\n\nProhibitions:\n" + v7PacketSnippet(prohibitions, 8)
+		}
+		section += "\n\nCurrent truth:\n" + v7PacketSnippet(sectionContent(canon.Body, "## Current Truth"), 8)
+		sections = append(sections, section)
 	}
 	return strings.Join(sections, "\n\n")
 }

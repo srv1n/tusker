@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:13:34Z"
-updated_at: "2026-07-07T08:58:56Z"
-state_rev: "sha256:df23eac33f21326f489c0046d5d193c0fd5d3c1014cb8b5eb08d7d2ef41e7198"
+updated_at: "2026-07-07T11:13:41Z"
+state_rev: "sha256:dcf95c81f5ed76f79e8039a734552c24da659ea7d1b19ac3a4d527753aabb7fb"
 ---
 
 # FBK · Feedback intake and review
@@ -51,7 +51,6 @@ Start from the 2026-07-05 feedback intake: 4 explicit notes collapsed to 2 produ
 | [[FBK-T-0002]] | ready | agent | Execute the task contract and satisfy proof mode. |
 | [[FBK-T-0003]] | ready | agent | Execute the task contract and satisfy proof mode. |
 | [[FBK-T-0004]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[FBK-T-0005]] | ready | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 
@@ -59,4 +58,4 @@ Start from the 2026-07-05 feedback intake: 4 explicit notes collapsed to 2 produ
 
 | Task | Accepted by | Closed at |
 |---|---|---|
-| _None._ |  | |
+| [[FBK-T-0005]] | reviewer:agent | 2026-07-07T11:13:41Z |
