@@ -391,13 +391,22 @@ func dispatchExternalLoopContinuation(ctx *automationCommandContext, note Note, 
 	if reason := strings.TrimSpace(ctx.DispatchRefusal); reason != "" {
 		return nil, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": run.Lane}))
 	}
-	daemon := &Daemon{stateRoot: ctx.StateRoot, store: ctx.Store, dispatchRefusalReason: ctx.DispatchRefusal}
-	updated, dispatchErr := daemon.dispatchRun(context.Background(), ctx.Project, ctx.Workflow, note, run, run.Lane)
-	if dispatchErr != nil {
-		updated = daemon.scheduleRetry(updated, ctx.Workflow.Data, dispatchErr.Error())
-	}
-	if err := ctx.Store.UpsertRun(updated); err != nil {
+	// Ensure the run row exists and reflects the current dispatch intent
+	// (runner/lane/work_revision) WITHOUT overwriting the live lease/process
+	// columns, so dispatchRun's ClaimRunLease CAS still validates against the
+	// true stored lease generation and a concurrent operator stop is not clobbered.
+	if err := ctx.Store.UpsertRunPreservingLease(run); err != nil {
 		return nil, err
+	}
+	daemon := &Daemon{stateRoot: ctx.StateRoot, store: ctx.Store, dispatchRefusalReason: ctx.DispatchRefusal}
+	updated, persisted, dispatchErr := daemon.dispatchRun(context.Background(), ctx.Project, ctx.Workflow, note, run, run.Lane)
+	if !persisted {
+		if dispatchErr != nil {
+			updated = daemon.scheduleRetry(updated, ctx.Workflow.Data, dispatchErr.Error())
+		}
+		if err := ctx.Store.UpsertRun(updated); err != nil {
+			return nil, err
+		}
 	}
 	if dispatchErr != nil {
 		return &updated, dispatchErr

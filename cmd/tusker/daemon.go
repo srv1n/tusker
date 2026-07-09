@@ -24,13 +24,6 @@ type Daemon struct {
 	dispatchRefusalReason string
 	stream                *serveStreamBroker
 	pollTaskStatuses      map[string]string
-
-	// afterPollSnapshotHook, when set, fires once per PollOnce immediately after
-	// the run snapshot is loaded from the store, before any per-task processing.
-	// It exists only for tests that need to land a concurrent mutation (an
-	// operator interrupt/park) inside the ListRuns -> pre-dispatch-upsert window
-	// to exercise the dispatch claim's back-off (RUN-T-0043). Nil in production.
-	afterPollSnapshotHook func()
 }
 
 const (
@@ -228,6 +221,28 @@ func interruptRunProcess(store *RuntimeStore, run *RunStatus) error {
 	return finishRuntimeRun(store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "interrupt requested by operator", true)
 }
 
+// killSpawnedRunProcess terminates the process group of a run whose child was
+// already spawned but whose lease was lost (revoked by a concurrent operator
+// stop/interrupt) before the post-spawn row write landed. The stop's own
+// interrupt saw ProcessPID=0 in the store and killed nothing, so without this
+// the spawned group would run forever while the store shows the run stopped.
+// It MUST be called with the local run value that still carries the live
+// ProcessPID/ProcessPGID, never the store-fetched row (which has PID=0).
+// Signalling an already-exited group is harmless (ESRCH).
+func killSpawnedRunProcess(run RunStatus) {
+	if run.ProcessPID <= 0 {
+		return
+	}
+	pgid := processSignalGroup(run)
+	_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	for i := 0; i < 4 && processExists(run.ProcessPID); i++ {
+		time.Sleep(150 * time.Millisecond)
+	}
+	if processExists(run.ProcessPID) {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	}
+}
+
 func finishRuntimeRun(store *RuntimeStore, run *RunStatus, state LeaseState, outcome AttemptOutcome, exitCode int, reason string, resumable bool) error {
 	if store == nil || run == nil {
 		return nil
@@ -267,10 +282,6 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 	allRuns, err := d.store.ListRuns()
 	if err != nil {
 		return err
-	}
-	if d.afterPollSnapshotHook != nil {
-		// Test seam: model a concurrent stop landing after the poll snapshot.
-		d.afterPollSnapshotHook()
 	}
 	sentinelProjects := []runtimeSentinelProjectSnapshot{}
 	runsByProject := map[string]map[string]RunStatus{}
@@ -459,10 +470,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				current = prepareRunForLaneDispatch(current, runLaneExecute, current.Runner)
 				current.UpdatedAt = now.Format(time.RFC3339)
 			}
-			// Pre-dispatch sync: never re-arm the lease from the poll snapshot; a
-			// concurrent interrupt/park that landed after ListRuns must survive so
-			// the claim CAS can back off (RUN-T-0043).
-			if err := d.upsertRunPreservingLeaseWithStream(projectRuns[recordID], current); err != nil {
+			if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 				return err
 			}
 			projectRuns[recordID] = current
@@ -471,7 +479,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				if reason := daemonDispatchBlockedReason(project.VaultRoot, note, notesByID, notesByRecordID); reason != "" {
 					current.LastError = reason
 					current.UpdatedAt = now.Format(time.RFC3339)
-					if err := d.upsertRunPreservingLeaseWithStream(projectRuns[recordID], current); err != nil {
+					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 						return err
 					}
 					projectRuns[recordID] = current
@@ -492,19 +500,14 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 					current = budgeted
 					current.LastError = budgetReason
 					current.UpdatedAt = now.Format(time.RFC3339)
-					// budgetChanged means the blocker deliberately parked the run
-					// (a real lease transition to persist); otherwise it only
-					// recorded a block reason and must not re-arm a concurrent stop.
-					if budgetChanged {
-						if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
-							return err
-						}
-						globalActiveRuns += dispatchCapacityRunDelta(beforeBudget, current)
-						projectActiveRuns += dispatchCapacityRunDelta(beforeBudget, current)
-					} else if err := d.upsertRunPreservingLeaseWithStream(projectRuns[recordID], current); err != nil {
+					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 						return err
 					}
 					projectRuns[recordID] = current
+					if budgetChanged {
+						globalActiveRuns += dispatchCapacityRunDelta(beforeBudget, current)
+						projectActiveRuns += dispatchCapacityRunDelta(beforeBudget, current)
+					}
 					continue
 				}
 				invariantReason, err := d.invariantDispatchBlocker()
@@ -514,7 +517,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				if invariantReason != "" {
 					current.LastError = invariantReason
 					current.UpdatedAt = now.Format(time.RFC3339)
-					if err := d.upsertRunPreservingLeaseWithStream(projectRuns[recordID], current); err != nil {
+					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 						return err
 					}
 					projectRuns[recordID] = current
@@ -523,7 +526,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				if stateDispatchCapReachedForRun(status, stateActiveRuns, wfFile.Data, current) {
 					current.LastError = fmt.Sprintf("dispatch blocked: state %q concurrency cap reached", status)
 					current.UpdatedAt = now.Format(time.RFC3339)
-					if err := d.upsertRunPreservingLeaseWithStream(projectRuns[recordID], current); err != nil {
+					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 						return err
 					}
 					projectRuns[recordID] = current
@@ -532,18 +535,18 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 					return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneExecute}))
 				}
-				updated, err := d.dispatchRun(ctx, project, wfFile, note, current, runLaneExecute)
-				if errors.Is(err, errDispatchClaimLost) {
-					// Another actor won the row between poll and claim; leave it
-					// as the winner left it rather than clobbering with our stale
-					// snapshot, and re-read it on the next poll.
-					continue
-				}
-				if err != nil {
-					updated = d.scheduleRetry(updated, wfFile.Data, err.Error())
-				}
-				if err := d.upsertRunWithStream(current, updated); err != nil {
+				updated, persisted, err := d.dispatchRun(ctx, project, wfFile, note, current, runLaneExecute)
+				if !persisted {
+					if err != nil {
+						updated = d.scheduleRetry(updated, wfFile.Data, err.Error())
+					}
+					if err := d.upsertRunWithStream(current, updated); err != nil {
+						return err
+					}
+				} else if err != nil {
 					return err
+				} else {
+					d.emitLeaseTransitionStreamEvent(current, updated)
 				}
 				d.emitDispatchStreamEvent(updated)
 				projectRuns[recordID] = updated
@@ -579,9 +582,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			current.WorkRevision = intField(note.Data, "work_revision")
 			current = prepareRunForLaneDispatch(current, runLaneReview, reviewerRunner)
 			current.UpdatedAt = now.Format(time.RFC3339)
-			// Pre-dispatch sync: preserve the stored lease so a concurrent stop
-			// isn't re-armed before the review claim CAS runs (RUN-T-0043).
-			if err := d.upsertRunPreservingLeaseWithStream(projectRuns[recordID], current); err != nil {
+			if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 				return err
 			}
 			d.emitStreamEvent(serveStreamKindReviewBatch, "review:batch", "needs", "tasks", "runs", "projects")
@@ -595,7 +596,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			if dispatchCapacityLimitReached(projectActiveRuns, projectActiveRunLimit(wfFile.Data), current) {
 				continue
 			}
-			budgeted, budgetReason, budgetChanged, err := d.budgetDispatchBlocker(project, wfFile.Data, note, current, now)
+			budgeted, budgetReason, _, err := d.budgetDispatchBlocker(project, wfFile.Data, note, current, now)
 			if err != nil {
 				return err
 			}
@@ -603,13 +604,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				current = budgeted
 				current.LastError = budgetReason
 				current.UpdatedAt = now.Format(time.RFC3339)
-				// A park (budgetChanged) is a real lease transition to persist;
-				// otherwise only record the reason without re-arming a stop.
-				if budgetChanged {
-					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
-						return err
-					}
-				} else if err := d.upsertRunPreservingLeaseWithStream(projectRuns[recordID], current); err != nil {
+				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 					return err
 				}
 				projectRuns[recordID] = current
@@ -622,7 +617,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			if invariantReason != "" {
 				current.LastError = invariantReason
 				current.UpdatedAt = now.Format(time.RFC3339)
-				if err := d.upsertRunPreservingLeaseWithStream(projectRuns[recordID], current); err != nil {
+				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 					return err
 				}
 				projectRuns[recordID] = current
@@ -631,7 +626,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			if stateDispatchCapReachedForRun(status, stateActiveRuns, wfFile.Data, current) {
 				current.LastError = fmt.Sprintf("dispatch blocked: state %q concurrency cap reached", status)
 				current.UpdatedAt = now.Format(time.RFC3339)
-				if err := d.upsertRunPreservingLeaseWithStream(projectRuns[recordID], current); err != nil {
+				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 					return err
 				}
 				projectRuns[recordID] = current
@@ -640,18 +635,18 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 				return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneReview}))
 			}
-			updated, err := d.dispatchRun(ctx, project, wfFile, note, current, runLaneReview)
-			if errors.Is(err, errDispatchClaimLost) {
-				// Another actor won the row between poll and claim; leave it as
-				// the winner left it rather than clobbering with our stale
-				// snapshot, and re-read it on the next poll.
-				continue
-			}
-			if err != nil {
-				updated = d.scheduleRetry(updated, wfFile.Data, err.Error())
-			}
-			if err := d.upsertRunWithStream(current, updated); err != nil {
+			updated, persisted, err := d.dispatchRun(ctx, project, wfFile, note, current, runLaneReview)
+			if !persisted {
+				if err != nil {
+					updated = d.scheduleRetry(updated, wfFile.Data, err.Error())
+				}
+				if err := d.upsertRunWithStream(current, updated); err != nil {
+					return err
+				}
+			} else if err != nil {
 				return err
+			} else {
+				d.emitLeaseTransitionStreamEvent(current, updated)
 			}
 			d.emitDispatchStreamEvent(updated)
 			projectRuns[recordID] = updated
@@ -2136,59 +2131,66 @@ func resolveRunnerForNote(note Note, wf Workflow) string {
 	return wf.Agents.Default
 }
 
-// errDispatchClaimLost signals that dispatchRun aborted because its atomic lease
-// claim (or a subsequent lease-guarded write) lost to a concurrent actor that
-// won the run row between poll and claim. Callers must not persist their stale
-// snapshot over the winner: they skip retry scheduling and the post-dispatch
-// upsert, leaving the row as the winning actor left it.
-var errDispatchClaimLost = errors.New("dispatch aborted: run lease claimed by another actor")
-
-func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane string) (RunStatus, error) {
+func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane string) (RunStatus, bool, error) {
 	lane = firstNonEmpty(strings.TrimSpace(lane), runLaneExecute)
 	if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
-		return run, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": lane}))
+		return run, false, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": lane}))
 	}
 	if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached {
-		return capped, nil
+		return capped, false, nil
 	}
 	previousRun := run
 	runner, command, err := runnerForName(run.Runner, wfFile.Data)
 	if err != nil {
-		return run, err
+		return run, false, err
 	}
 	workspaceManager := NewWorkspaceManager()
 	workspaceStrategy := d.workspaceStrategyForDispatch(project, wfFile.Data, run)
 	branchName, branchBase, err := v7WorkspaceBranchForTask(project.VaultRoot, note)
 	if err != nil {
-		return run, err
+		return run, false, err
 	}
 
-	// Atomically claim the run lease BEFORE any external side effect (workspace
-	// prep, spawn). The claim is a compare-and-swap against the row as read at
-	// poll start: EnsureRunRow guarantees a row to swap against on a first-ever
-	// dispatch without clobbering a concurrently changed row, and ClaimRunLease
-	// only succeeds while the row is still claimable and its lease_generation
-	// still matches the snapshot. If a control action (cancel/park) or a second
-	// daemon won the row between poll and claim, the CAS fails and we abort with
-	// no side effects rather than overwriting the winner.
 	ordinal := run.AttemptCount + 1
 	attemptID := newRecordID()
-	leaseGeneration := run.LeaseGeneration + 1
 	started := time.Now().UTC()
 	startedAt := started.Format(time.RFC3339)
-	if err := d.store.EnsureRunRow(previousRun); err != nil {
-		return run, err
-	}
-	claimed, err := d.store.ClaimRunLease(project.ProjectID, run.RecordID, attemptID, leaseGeneration, defaultRunLeaseTTL, started, true, RunLeaseClaimGuard{
-		Enforce:          true,
-		ExpectGeneration: previousRun.LeaseGeneration,
+	leaseGeneration := run.LeaseGeneration + 1
+	claimed, err := d.store.ClaimRunLease(project.ProjectID, run.RecordID, attemptID, leaseGeneration, defaultRunLeaseTTL, started, true, RuntimeLeaseClaimPrecondition{
+		ExpectedOwner:           run.LeaseOwner,
+		ExpectedLeaseGeneration: run.LeaseGeneration,
+		ExpectedWorkRevision:    run.WorkRevision,
 	})
 	if err != nil {
-		return run, err
+		return run, false, err
 	}
 	if !claimed {
-		return run, errDispatchClaimLost
+		latest, err := d.latestDispatchRun(run)
+		return latest, true, err
 	}
+
+	run.LeaseState = string(LeaseStateClaimed)
+	run.LeaseOwner = attemptID
+	run.LeaseGeneration = leaseGeneration
+	run.LeaseExpiresAt = started.Add(defaultRunLeaseTTL).Format(time.RFC3339)
+	run.LeaseHost = runtimeLeaseHost()
+	run.Lane = lane
+	run.AttemptCount = ordinal
+	run.ActiveAttemptID = attemptID
+	run.SessionRef = ""
+	run.ProcessPID = 0
+	run.ProcessPGID = 0
+	run.ProcessStartedAt = ""
+	run.PromptPath = ""
+	run.EventSinkPath = ""
+	run.RawLogPath = ""
+	run.StatusPath = ""
+	run.FirstEventAt = ""
+	run.LastHeartbeatAt = ""
+	run.Terminal = false
+	clearRunCloudRefs(&run)
+	run.UpdatedAt = startedAt
+	run.LastEventAt = startedAt
 
 	workspace, err := workspaceManager.Prepare(WorkspacePrepareRequest{
 		ProjectID:     project.ProjectID,
@@ -2204,15 +2206,15 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		WorkRevision:  run.WorkRevision,
 	})
 	if err != nil {
-		return run, err
+		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 	}
 	if err := mirrorApplyInputsIntoWorkspace(d.store, project, run, workspace.Path); err != nil {
-		return run, err
+		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 	}
 
 	runDir := filepath.Join(d.stateRoot, "runs", project.ProjectKey, run.RecordID)
 	if err := ensureDir(runDir); err != nil {
-		return run, err
+		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 	}
 	attemptStem := fmt.Sprintf("rev-%02d-%s-attempt-%04d-%s", run.WorkRevision, lane, ordinal, strings.ToLower(attemptID))
 	promptPath := filepath.Join(runDir, attemptStem+".prompt.md")
@@ -2227,59 +2229,37 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		ParentAttemptID: previousRun.ActiveAttemptID,
 		StartedAt:       startedAt,
 	}
-	run.LeaseState = string(LeaseStateClaimed)
-	run.LeaseOwner = attemptID
-	run.LeaseGeneration = leaseGeneration
-	run.LeaseExpiresAt = started.Add(defaultRunLeaseTTL).Format(time.RFC3339)
-	run.LeaseHost = runtimeLeaseHost()
-	run.Lane = lane
-	run.AttemptCount = ordinal
 	run.WorkspacePath = workspace.Path
-	run.ActiveAttemptID = attemptID
-	run.SessionRef = ""
-	run.ProcessPID = 0
-	run.ProcessPGID = 0
-	run.ProcessStartedAt = ""
 	run.PromptPath = promptPath
 	run.EventSinkPath = eventSinkPath
 	run.RawLogPath = rawLogPath
 	run.StatusPath = statusPath
-	run.FirstEventAt = ""
-	run.LastHeartbeatAt = ""
-	run.Terminal = false
-	clearRunCloudRefs(&run)
-	run.UpdatedAt = attempt.StartedAt
-	run.LastEventAt = attempt.StartedAt
+	updated, persisted, err := d.updateDispatchRunIfLease(run, attemptID, leaseGeneration)
+	if err != nil || !persisted {
+		return updated, true, err
+	}
+	run = updated
 
 	prompt, err := renderAttemptPrompt(project, wfFile, note, workspace.Path, ordinal, attemptID, lane, run, previousRun, d.store)
 	if err != nil {
 		attempt.Outcome = string(AttemptOutcomeFailed)
 		attempt.LastError = err.Error()
 		attempt.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		_ = d.store.SaveAttempt(attempt)
-		return run, err
+		_, _ = d.store.SaveAttemptIfRunLease(attempt, attemptID, leaseGeneration)
+		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 	}
 	if err := writeText(promptPath, prompt); err != nil {
 		attempt.Outcome = string(AttemptOutcomeFailed)
 		attempt.LastError = err.Error()
 		attempt.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		_ = d.store.SaveAttempt(attempt)
-		return run, err
+		_, _ = d.store.SaveAttemptIfRunLease(attempt, attemptID, leaseGeneration)
+		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 	}
-	if err := d.store.SaveAttempt(attempt); err != nil {
-		return run, err
-	}
-
-	// Persist the claimed run's workspace/attempt refs, but only while we still
-	// hold the lease we claimed. If another actor won the row after the claim
-	// (during workspace prep or prompt render), abort before spawn instead of
-	// clobbering the winner.
-	held, err := d.store.UpsertRunIfLeaseHeld(run)
-	if err != nil {
-		return run, err
-	}
-	if !held {
-		return run, errDispatchClaimLost
+	if ok, err := d.store.SaveAttemptIfRunLease(attempt, attemptID, leaseGeneration); err != nil {
+		return run, true, err
+	} else if !ok {
+		latest, err := d.latestDispatchRun(run)
+		return latest, true, err
 	}
 
 	var start *StartResult
@@ -2289,6 +2269,12 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		externalLaunch = d.externalLoopLaunchContext(project.ProjectID, run.RecordID)
 	}
 	if previousRunHasStructuredOutcome(previousRun) {
+		if ok, err := d.store.RunLeaseMatches(project.ProjectID, run.RecordID, attemptID, leaseGeneration); err != nil {
+			return run, true, err
+		} else if !ok {
+			latest, err := d.latestDispatchRun(run)
+			return latest, true, err
+		}
 		d.emitSupervisorDecision(SupervisorDecision{
 			ProjectID:        project.ProjectID,
 			RecordID:         run.RecordID,
@@ -2332,8 +2318,14 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		resumeRun.LeaseState = previousRun.LeaseState
 		resumeSession, err = d.resolveResumeSession(project, note, resumeRun)
 		if err != nil {
-			return run, err
+			return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 		}
+	}
+	if ok, err := d.store.RunLeaseMatches(project.ProjectID, run.RecordID, attemptID, leaseGeneration); err != nil {
+		return run, true, err
+	} else if !ok {
+		latest, err := d.latestDispatchRun(run)
+		return latest, true, err
 	}
 	if strings.TrimSpace(resumeSession.SessionRef) != "" {
 		d.emitSupervisorDecision(SupervisorDecision{
@@ -2379,8 +2371,8 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		attempt.Outcome = string(AttemptOutcomeFailed)
 		attempt.LastError = err.Error()
 		attempt.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		_ = d.store.SaveAttempt(attempt)
-		return run, err
+		_, _ = d.store.SaveAttemptIfRunLease(attempt, attemptID, leaseGeneration)
+		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 	}
 	if strings.TrimSpace(start.SessionRef) == "" && strings.TrimSpace(resumeSession.SessionRef) != "" {
 		start.SessionRef = resumeSession.SessionRef
@@ -2405,30 +2397,93 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	attempt.LastError = start.Reason
 	attempt.StartedAt = start.StartedAt
 	attempt.FinishedAt = start.FinishedAt
-	_ = d.store.SaveAttempt(attempt)
+	_, _ = d.store.SaveAttemptIfRunLease(attempt, attemptID, leaseGeneration)
 	if strings.TrimSpace(start.SessionRef) != "" {
-		_ = d.store.SaveSession(RunnerSession{
-			ProjectID: project.ProjectID, RecordID: run.RecordID, Runner: run.Runner, SessionRef: start.SessionRef,
-			LastMessageRef: start.MessageRef,
-			WorkspacePath:  workspace.Path, CurrentItemID: run.ItemID, WorkRevision: run.WorkRevision, LastAttemptID: attemptID,
-			State: sessionStateForOutcome(start.Outcome), Resumable: runner.Capabilities().ResumeSession && lane != runLaneReview,
-			StartedAt: firstNonEmpty(run.StartedAt, start.StartedAt), LastSeenAt: time.Now().UTC().Format(time.RFC3339),
-			EndedAt: firstNonEmpty(start.FinishedAt, ""), LastError: start.Reason,
-		})
+		if ok, err := d.store.RunLeaseMatches(project.ProjectID, run.RecordID, attemptID, leaseGeneration); err == nil && ok {
+			_ = d.store.SaveSession(RunnerSession{
+				ProjectID: project.ProjectID, RecordID: run.RecordID, Runner: run.Runner, SessionRef: start.SessionRef,
+				LastMessageRef: start.MessageRef,
+				WorkspacePath:  workspace.Path, CurrentItemID: run.ItemID, WorkRevision: run.WorkRevision, LastAttemptID: attemptID,
+				State: sessionStateForOutcome(start.Outcome), Resumable: runner.Capabilities().ResumeSession && lane != runLaneReview,
+				StartedAt: firstNonEmpty(run.StartedAt, start.StartedAt), LastSeenAt: time.Now().UTC().Format(time.RFC3339),
+				EndedAt: firstNonEmpty(start.FinishedAt, ""), LastError: start.Reason,
+			})
+		}
 	}
 
 	run.LeaseState = string(LeaseStateRunning)
 	run.AttemptOutcome = string(AttemptOutcomeNone)
 	run.NextRetryAt = ""
 	run.LastError = ""
+	updated, persisted, err = d.updateDispatchRunIfLease(run, attemptID, leaseGeneration)
+	if err != nil || !persisted {
+		if err == nil && !persisted {
+			// The lease was revoked by a concurrent operator stop/interrupt
+			// between claim and this write. That interrupt ran while the stored
+			// row still had ProcessPID=0, so it killed nothing; reap the child we
+			// just spawned (whose live PGID lives on the local run, not on the
+			// store-fetched `updated`) so it is not orphaned.
+			killSpawnedRunProcess(run)
+		}
+		return updated, true, err
+	}
+	run = updated
 	reconciled, changed, err := d.reconcileRun(ctx, project, wfFile, run)
 	if err != nil {
-		return run, err
+		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 	}
 	if changed {
-		return reconciled, nil
+		reconciledRun, reconciledPersisted, reconciledErr := d.updateDispatchRunIfLease(reconciled, attemptID, leaseGeneration)
+		if reconciledErr == nil && !reconciledPersisted {
+			// Same lease-lost fence after reconcile: kill from the local
+			// `reconciled` run that carries the live PGID (the returned row has
+			// ProcessPID=0). Killing an already-exited group is harmless (ESRCH).
+			killSpawnedRunProcess(reconciled)
+		}
+		return reconciledRun, reconciledPersisted, reconciledErr
 	}
-	return run, nil
+	return run, true, nil
+}
+
+func (d *Daemon) latestDispatchRun(fallback RunStatus) (RunStatus, error) {
+	if d == nil || d.store == nil || strings.TrimSpace(fallback.RecordID) == "" {
+		return fallback, nil
+	}
+	latest, err := d.store.FindRun(fallback.RecordID)
+	if err != nil || latest == nil {
+		return fallback, err
+	}
+	return *latest, nil
+}
+
+func (d *Daemon) updateDispatchRunIfLease(run RunStatus, owner string, generation int) (RunStatus, bool, error) {
+	ok, err := d.store.UpdateRunIfLease(run, owner, generation)
+	if err != nil {
+		return run, true, err
+	}
+	if !ok {
+		latest, err := d.latestDispatchRun(run)
+		return latest, false, err
+	}
+	return run, true, nil
+}
+
+func (d *Daemon) persistClaimedDispatchFailure(project RegisteredProject, wf Workflow, run RunStatus, owner string, generation int, cause error) (RunStatus, bool, error) {
+	if cause == nil {
+		return run, true, nil
+	}
+	if ok, err := d.store.RunLeaseMatches(run.ProjectID, run.RecordID, owner, generation); err != nil {
+		return run, true, err
+	} else if !ok {
+		latest, err := d.latestDispatchRun(run)
+		return latest, true, err
+	}
+	run = d.scheduleRetry(run, wf, cause.Error())
+	updated, persisted, err := d.updateDispatchRunIfLease(run, owner, generation)
+	if err != nil || !persisted {
+		return updated, true, err
+	}
+	return updated, true, nil
 }
 
 func (d *Daemon) workspaceStrategyForDispatch(project RegisteredProject, wf Workflow, run RunStatus) WorkspaceStrategy {

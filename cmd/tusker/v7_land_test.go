@@ -163,6 +163,100 @@ func TestWaveLandToMain(t *testing.T) {
 	assertEqual(t, "shipped\n", gitShowFile(t, repo, "main", "shipped.txt"), "main has wave content")
 }
 
+func TestWaveLandCheckedOutCleanMainSyncsWorktree(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "checked-out.txt", "checked out\n")
+
+	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"}); err != nil {
+		t.Fatalf("wave land with checked-out clean main failed: %v", err)
+	}
+	mainRev := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
+	headRev := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "HEAD"))
+	assertEqual(t, mainRev, headRev, "checked-out main HEAD must advance with branch ref")
+	assertEqual(t, "checked out\n", mustReadIndexTest(t, filepath.Join(repo, "checked-out.txt")), "checked-out main worktree has landed file")
+	dirty, err := inPlaceDirtyPaths(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirty) > 0 {
+		t.Fatalf("checked-out main should not be stale or dirty outside .tusker after land: %v", dirty)
+	}
+	if gitBranchExists(repo, "integration/W-0001") {
+		t.Fatal("integration branch should be deleted after checked-out main land")
+	}
+}
+
+func TestWaveLandCheckedOutDirtyMainRefusesBeforeMove(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "dirty-main.txt", "dirty main land\n")
+	mainBefore := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
+	if err := writeText(filepath.Join(repo, "operator.txt"), "operator local change\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"})
+	if err == nil {
+		t.Fatal("expected dirty checked-out main to refuse wave land")
+	}
+	msg := err.Error()
+	for _, want := range []string{"main is checked out", "dirty paths", "operator.txt"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("dirty main refusal missing %q in %v", want, err)
+		}
+	}
+	assertEqual(t, mainBefore, strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")), "dirty refusal must not move main ref")
+	if !gitBranchExists(repo, "integration/W-0001") {
+		t.Fatal("dirty refusal must leave integration branch intact")
+	}
+}
+
+func TestWaveLandDefaultBranchNotCheckedOutUsesUpdateRefFastPath(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "fast-path.txt", "fast path\n")
+	runGitDir(t, repo, "checkout", "-b", "operator-work", "main")
+	operatorHead := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "HEAD"))
+
+	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"}); err != nil {
+		t.Fatalf("wave land with main not checked out failed: %v", err)
+	}
+	assertEqual(t, operatorHead, strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "HEAD")), "non-main checkout must not be reset by fast path")
+	assertEqual(t, "operator-work", strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "--abbrev-ref", "HEAD")), "operator branch remains checked out")
+	assertEqual(t, "fast path\n", gitShowFile(t, repo, "main", "fast-path.txt"), "main advanced through update-ref fast path")
+	if gitBranchExists(repo, "integration/W-0001") {
+		t.Fatal("integration branch should be deleted after fast-path land")
+	}
+}
+
+func TestWaveLandSummaryStillReportsMainMove(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "summary-main.txt", "summary\n")
+
+	var landErr error
+	output := captureStdout(t, func() {
+		landErr = landV7Cmd(Args{"vault": vault, "_pos0": "W-0001"})
+	})
+	if landErr != nil {
+		t.Fatal(landErr)
+	}
+	for _, want := range []string{"main: moved to", "Wave W-0001: Landing batch"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("wave landing summary missing %q in:\n%s", want, output)
+		}
+	}
+	assertEqual(t, "summary\n", gitShowFile(t, repo, "main", "summary-main.txt"), "summary path still lands content")
+}
+
+func newLandReadyForMainAdvanceTest(t *testing.T, fileName, content string) (string, string) {
+	t.Helper()
+	repo, vault := newLandTestRepo(t, 1, "test -f "+yamlQuoteForShellTest(fileName))
+	commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{fileName: content})
+	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001"}); err != nil {
+		t.Fatalf("task land setup failed: %v", err)
+	}
+	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-07T02:00:00Z")
+	return repo, vault
+}
+
+func yamlQuoteForShellTest(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
 func TestLandIdempotent(t *testing.T) {
 	repo, vault := newLandTestRepo(t, 1, "test -f shipped.txt")
 	commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"shipped.txt": "shipped\n"})

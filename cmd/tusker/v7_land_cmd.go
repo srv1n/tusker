@@ -266,18 +266,14 @@ func ensureV7TaskLandingBranch(repoRoot, taskID, branch string, args Args) error
 }
 
 func discoverV7TaskLandingCommit(repoRoot, taskID, branch string, args Args) (string, string, error) {
-	upperID := strings.ToUpper(strings.TrimSpace(taskID))
 	if from := strings.TrimSpace(args.String("from")); from != "" {
-		commit, worktreePath, err := resolveV7LandingRef(repoRoot, from)
+		commit, source, err := resolveV7LandingSource(repoRoot, taskID, from, args)
 		if err != nil {
-			return "", "", tuskerError(errorInvalidArg, "cannot resolve --from "+from+" for "+taskID+": "+firstActionableLine(err.Error(), err.Error()))
-		}
-		if err := verifyV7LandingSourceProvenance(repoRoot, upperID, from, commit, worktreePath, args); err != nil {
 			return "", "", err
 		}
-		return commit, from, nil
+		return commit, source, nil
 	}
-	matches := v7DetachedWorktreesForTask(repoRoot, upperID)
+	matches := v7DetachedWorktreesForTask(repoRoot, taskID)
 	if len(matches) == 1 {
 		return matches[0].HEAD, matches[0].Path, nil
 	}
@@ -291,65 +287,89 @@ func discoverV7TaskLandingCommit(repoRoot, taskID, branch string, args Args) (st
 	return "", "", tuskerError(errorInvalidTransition, taskID+" has no "+branch+" branch and no detached completed worktree to branch from. Create it and retry: git branch "+branch+" <commit>  (or: tusker land "+taskID+" --from <worktree-path-or-commit>)")
 }
 
-// resolveV7LandingRef resolves a --from value to a commit. When the value is a
-// worktree directory it also returns that directory path so provenance can be
-// bound against the worktree's .tusker/workspace.json record id; for a bare ref
-// or commit the returned path is empty.
-func resolveV7LandingRef(repoRoot, ref string) (string, string, error) {
+func resolveV7LandingSource(repoRoot, taskID, ref string, args Args) (string, string, error) {
 	if info, err := os.Stat(ref); err == nil && info.IsDir() {
-		if commit, err := gitOutputTrim(ref, "rev-parse", "HEAD"); err == nil {
-			return commit, ref, nil
+		recordID := v7WorkspaceRecordID(ref)
+		if recordID != strings.ToUpper(strings.TrimSpace(taskID)) {
+			return "", "", tuskerError(errorInvalidTransition, "refused --from "+ref+" for "+taskID+": worktree metadata record_id "+firstNonEmpty(recordID, "<missing>")+" does not match "+taskID+". Use the task's runner worktree, or rerun with --from pointing at a source whose .tusker/workspace.json record_id is "+taskID)
 		}
+		commit, err := gitOutputTrim(ref, "rev-parse", "HEAD")
+		if err != nil {
+			return "", "", tuskerError(errorInvalidArg, "cannot resolve --from "+ref+" for "+taskID+": "+firstActionableLine(err.Error(), err.Error()))
+		}
+		return commit, ref, nil
 	}
 	commit, err := gitOutputTrim(repoRoot, "rev-parse", ref+"^{commit}")
-	return commit, "", err
+	if err != nil {
+		return "", "", tuskerError(errorInvalidArg, "cannot resolve --from "+ref+" for "+taskID+": "+firstActionableLine(err.Error(), err.Error()))
+	}
+	if err := validateV7LandingCommitSource(repoRoot, taskID, ref, commit, args); err != nil {
+		return "", "", err
+	}
+	return commit, ref, nil
 }
 
-// verifyV7LandingSourceProvenance refuses to branchify a task from a source that
-// cannot be proven to belong to it (OPS-T-0007). Provenance is an exact
-// .tusker/workspace.json record_id match: either the worktree the operator
-// pointed --from at, or a registered worktree whose HEAD is the resolved commit.
-// A source whose record_id names a different task is refused outright. A raw
-// commit ref with no workspace metadata is refused unless the operator passes the
-// explicit, logged --trust-from override.
-func verifyV7LandingSourceProvenance(repoRoot, taskID, from, commit, worktreePath string, args Args) error {
-	if recordID := v7LandingSourceRecordID(repoRoot, commit, worktreePath); recordID != "" {
-		if recordID == taskID {
+func validateV7LandingCommitSource(repoRoot, taskID, ref, commit string, args Args) error {
+	upperID := strings.ToUpper(strings.TrimSpace(taskID))
+	if recordID := v7CommitWorkspaceRecordID(repoRoot, commit); recordID != "" {
+		if recordID == upperID {
 			return nil
 		}
-		return tuskerError(errorInvalidTransition, "refusing to land "+taskID+" from "+from+
-			": that source belongs to "+recordID+" (its .tusker/workspace.json record_id), not "+taskID+
-			". Point --from at "+taskID+"'s own completed worktree.")
+		if args.Bool("trust-from") || args.Bool("trusted-from") {
+			_, _ = fmt.Fprintf(os.Stderr, "tusker land: trusted --from override for %s using %s (%s; workspace record_id %s)\n", upperID, ref, shortCommit(commit), recordID)
+			return nil
+		}
+		return tuskerError(errorInvalidTransition, "refused --from "+ref+" for "+upperID+": source commit workspace record_id "+recordID+" does not match "+upperID+". Use the task runner worktree, pass a task-local tracker commit, or rerun with --trust-from to record an explicit trusted override")
 	}
-	if args.Bool("trust-from") {
-		fmt.Fprintln(os.Stderr, "tusker land: --trust-from override: branchifying "+taskID+
-			" from unverified source "+from+" ("+shortCommit(commit)+")")
+	if v7CommitTouchesTaskTracker(repoRoot, commit, upperID) {
 		return nil
 	}
-	return tuskerError(errorInvalidTransition, "refusing to land "+taskID+" from "+from+
-		": no .tusker/workspace.json proves it belongs to "+taskID+". Point --from at "+taskID+
-		"'s completed worktree, or re-run with --trust-from once you have verified the source belongs to "+taskID+".")
+	if args.Bool("trust-from") || args.Bool("trusted-from") {
+		_, _ = fmt.Fprintf(os.Stderr, "tusker land: trusted --from override for %s using %s (%s)\n", upperID, ref, shortCommit(commit))
+		return nil
+	}
+	return tuskerError(errorInvalidTransition, "refused --from "+ref+" for "+upperID+": source commit lacks task-owned provenance. Use the task runner worktree with .tusker/workspace.json record_id "+upperID+", pass a commit that touches .tusker/work/tasks/"+upperID+".md, or rerun with --trust-from to record an explicit trusted override")
 }
 
-// v7LandingSourceRecordID resolves the workspace record id that owns a landing
-// source. A worktree directory named by --from consults its own workspace.json
-// first; otherwise any registered worktree whose HEAD matches the resolved commit
-// is consulted so a bare commit ref that is really a live runner worktree still
-// binds. Returns "" when no workspace metadata is available.
-func v7LandingSourceRecordID(repoRoot, commit, worktreePath string) string {
-	if worktreePath != "" {
-		if id := v7WorkspaceRecordID(worktreePath); id != "" {
-			return id
+func v7CommitWorkspaceRecordID(repoRoot, commit string) string {
+	raw, err := gitOutputTrim(repoRoot, "show", commit+":.tusker/workspace.json")
+	if err != nil {
+		return ""
+	}
+	var meta struct {
+		RecordID string `json:"record_id"`
+	}
+	if json.Unmarshal([]byte(raw), &meta) != nil {
+		return ""
+	}
+	return strings.ToUpper(strings.TrimSpace(meta.RecordID))
+}
+
+func v7CommitTouchesTaskTracker(repoRoot, commit, taskID string) bool {
+	path := filepath.ToSlash(filepath.Join(".tusker", "work", "tasks", taskID+".md"))
+	changed, err := gitOutputTrim(repoRoot, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", commit)
+	if err != nil {
+		return false
+	}
+	found := false
+	for _, line := range strings.Split(changed, "\n") {
+		if strings.TrimSpace(filepath.ToSlash(line)) == path {
+			found = true
+			break
 		}
 	}
-	for _, wt := range v7ListWorktrees(repoRoot) {
-		if wt.HEAD != "" && wt.HEAD == commit {
-			if id := v7WorkspaceRecordID(wt.Path); id != "" {
-				return id
-			}
-		}
+	if !found {
+		return false
 	}
-	return ""
+	content, err := gitOutputTrim(repoRoot, "show", commit+":"+path)
+	if err != nil {
+		return false
+	}
+	data, _, err := parseFrontmatter(content)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(stringField(data, "id"), taskID)
 }
 
 type v7Worktree struct {
@@ -359,11 +379,8 @@ type v7Worktree struct {
 	Detached bool
 }
 
-// v7DetachedWorktreesForTask returns detached git worktrees proven to be the
-// runner's completed workspace for taskID by an exact .tusker/workspace.json
-// record_id match. A substring path match is deliberately NOT used: it would let
-// APP-T-0001 select APP-T-0001x, a scratch path, or an unrelated worktree and
-// land the wrong diff (OPS-T-0007 A2).
+// v7DetachedWorktreesForTask returns detached git worktrees whose workspace
+// metadata record id exactly matches taskID.
 func v7DetachedWorktreesForTask(repoRoot, taskID string) []v7Worktree {
 	var matches []v7Worktree
 	root, _ := filepath.Abs(repoRoot)
@@ -414,20 +431,6 @@ func v7ListWorktrees(repoRoot string) []v7Worktree {
 	}
 	flush()
 	return worktrees
-}
-
-// v7DefaultBranchWorktree reports the worktree that currently has defaultBranch
-// checked out, if any, so the final main advance can be routed through it (or
-// refused) instead of moving the ref out from under a live working tree
-// (OPS-T-0008).
-func v7DefaultBranchWorktree(repoRoot, defaultBranch string) (string, bool) {
-	want := "refs/heads/" + strings.TrimSpace(defaultBranch)
-	for _, wt := range v7ListWorktrees(repoRoot) {
-		if wt.Branch == want && strings.TrimSpace(wt.Path) != "" {
-			return wt.Path, true
-		}
-	}
-	return "", false
 }
 
 func v7WorkspaceRecordID(worktreePath string) string {
@@ -766,20 +769,7 @@ func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummar
 	if err != nil {
 		return err
 	}
-	// Advance the default branch. When it is checked out in a worktree, route the
-	// advance THROUGH that worktree so its HEAD/index/working tree stay synced to
-	// the new ref (OPS-T-0008 A1). A fast-forward is atomic: if the worktree
-	// carries uncommitted changes the advance would overwrite, it refuses and
-	// leaves the ref untouched (A2, no partial/wedged state) rather than moving
-	// the ref out from under a live working tree. When the branch is not checked
-	// out anywhere, the plain update-ref fast path is unchanged (A3).
-	if defaultWorktree, ok := v7DefaultBranchWorktree(repoRoot, defaultBranch); ok {
-		if output, err := gitCombined(defaultWorktree, "merge", "--ff-only", mergeCommit); err != nil {
-			return tuskerError(errorInvalidTransition, defaultBranch+" is checked out in "+defaultWorktree+
-				" and cannot be safely advanced to "+shortCommit(mergeCommit)+": "+firstActionableLine(output, err.Error())+
-				". Commit or stash changes there (or check out another branch) and re-run tusker land "+waveID+".")
-		}
-	} else if err := updateGitRef(repoRoot, "refs/heads/"+defaultBranch, mergeCommit, mainRev); err != nil {
+	if err := advanceV7DefaultBranch(repoRoot, defaultBranch, mergeCommit, mainRev); err != nil {
 		return err
 	}
 	if err := deleteGitBranch(repoRoot, integrationBranch); err != nil {
@@ -792,6 +782,61 @@ func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummar
 		GateResult: "pass", GateSummary: summaryText, Commit: mergeCommit,
 		Actor: actor, Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}}, actor)
+}
+
+func advanceV7DefaultBranch(repoRoot, defaultBranch, newRev, oldRev string) error {
+	checkouts := v7DefaultBranchCheckouts(repoRoot, defaultBranch)
+	if len(checkouts) == 0 {
+		return updateGitRef(repoRoot, "refs/heads/"+defaultBranch, newRev, oldRev)
+	}
+	for _, wt := range checkouts {
+		dirty, err := inPlaceDirtyPaths(wt.Path)
+		if err != nil {
+			return err
+		}
+		if len(dirty) > 0 {
+			return tuskerError(errorInvalidTransition, defaultBranch+" is checked out in "+wt.Path+" with dirty paths: "+strings.Join(limitStrings(dirty, 5), ", ")+". Commit, stash, or clean those paths before running tusker land.", withPath(wt.Path))
+		}
+	}
+	currentRev, err := gitOutputTrim(repoRoot, "rev-parse", "refs/heads/"+defaultBranch)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(currentRev) != strings.TrimSpace(oldRev) {
+		return tuskerError(errorInvalidTransition, defaultBranch+" changed while preparing wave land; retry tusker land so the default-branch advance can be checked against the current ref")
+	}
+	for _, wt := range checkouts {
+		// Fast-forward-only merge advances the checked-out branch without
+		// discarding local work: if local changes would be overwritten it fails
+		// (safe refusal) instead of destroying them, unlike `reset --merge`
+		// which silently drops staged/modified tracked files (including
+		// tusker-owned .tusker/* files that the dirty-path guard skips).
+		if output, err := gitCombined(wt.Path, "merge", "--ff-only", newRev); err != nil {
+			return tuskerError(errorInvalidTransition, "failed to advance checked-out "+defaultBranch+" worktree at "+wt.Path+": "+firstActionableLine(output, err.Error()), withPath(wt.Path))
+		}
+		head, err := gitOutputTrim(wt.Path, "rev-parse", "HEAD")
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(head) != strings.TrimSpace(newRev) {
+			return tuskerError(errorInvalidTransition, "checked-out "+defaultBranch+" worktree did not advance to "+shortCommit(newRev), withPath(wt.Path))
+		}
+	}
+	return nil
+}
+
+func v7DefaultBranchCheckouts(repoRoot, defaultBranch string) []v7Worktree {
+	branchRef := "refs/heads/" + strings.TrimSpace(defaultBranch)
+	if branchRef == "refs/heads/" {
+		return nil
+	}
+	var out []v7Worktree
+	for _, wt := range v7ListWorktrees(repoRoot) {
+		if strings.TrimSpace(wt.Branch) == branchRef {
+			out = append(out, wt)
+		}
+	}
+	return out
 }
 
 // printV7LandingSummary renders the concise landing summary for a successful

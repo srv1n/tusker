@@ -7,6 +7,100 @@ import (
 	"testing"
 )
 
+// F2 (store contract): UpsertRunPreservingLease must INSERT an absent row but,
+// on an existing row, update ONLY the dispatch-intent columns
+// (item_id/runner/lane/work_revision/updated_at) while preserving the live
+// lease/process/session columns. A blind UpsertRun would overwrite all columns,
+// clobbering a concurrent operator stop or a bumped lease generation; this
+// method must not.
+func TestUpsertRunPreservingLeaseCreatesThenPreservesLeaseColumns(t *testing.T) {
+	store, err := OpenRuntimeStore(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	// (1) Absent row: the preserving upsert must INSERT it.
+	if err := store.UpsertRunPreservingLease(RunStatus{
+		ProjectID:      "project-1",
+		RecordID:       "APP-T-0001",
+		ItemID:         "APP-T-0001",
+		Runner:         "codex_exec",
+		Lane:           runLaneExecute,
+		LeaseState:     string(LeaseStateReleased),
+		AttemptOutcome: string(AttemptOutcomeNone),
+		WorkRevision:   0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.FindRun("APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created == nil {
+		t.Fatal("UpsertRunPreservingLease must create an absent run row")
+	}
+	assertEqual(t, "codex_exec", created.Runner, "created runner")
+
+	// Establish a live claimed lease + process/attempt/session state.
+	if err := store.UpsertRun(RunStatus{
+		ProjectID:       "project-1",
+		RecordID:        "APP-T-0001",
+		ItemID:          "APP-T-0001",
+		Runner:          "codex_exec",
+		Lane:            runLaneExecute,
+		LeaseState:      string(LeaseStateRunning),
+		LeaseOwner:      "attempt-live",
+		LeaseGeneration: 5,
+		AttemptOutcome:  string(AttemptOutcomeNone),
+		ActiveAttemptID: "attempt-live",
+		SessionRef:      "session-live",
+		ProcessPID:      4242,
+		ProcessPGID:     4242,
+		WorkRevision:    0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// (2) A stale prepped run publishes a new dispatch intent AND carries stale
+	// lease/process fields that a blind UpsertRun would drag back over the live
+	// row. UpsertRunPreservingLease must update only the intent columns.
+	if err := store.UpsertRunPreservingLease(RunStatus{
+		ProjectID:       "project-1",
+		RecordID:        "APP-T-0001",
+		ItemID:          "APP-T-0001",
+		Runner:          "chatgpt-browser", // intent — must update
+		Lane:            runLaneReview,     // intent — must update
+		LeaseState:      string(LeaseStateReleased),
+		LeaseOwner:      "attempt-stale",
+		LeaseGeneration: 1,
+		AttemptOutcome:  string(AttemptOutcomeNone),
+		ActiveAttemptID: "attempt-stale",
+		SessionRef:      "session-stale",
+		ProcessPID:      0,
+		ProcessPGID:     0,
+		WorkRevision:    9, // intent — must update
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.FindRun("APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Dispatch-intent columns updated:
+	assertEqual(t, "chatgpt-browser", got.Runner, "runner intent updated")
+	assertEqual(t, runLaneReview, got.Lane, "lane intent updated")
+	assertEqual(t, 9, got.WorkRevision, "work_revision intent updated")
+	// Live lease/process/session columns preserved:
+	assertEqual(t, string(LeaseStateRunning), got.LeaseState, "lease_state preserved")
+	assertEqual(t, "attempt-live", got.LeaseOwner, "lease_owner preserved")
+	assertEqual(t, 5, got.LeaseGeneration, "lease_generation preserved")
+	assertEqual(t, "attempt-live", got.ActiveAttemptID, "active_attempt_id preserved")
+	assertEqual(t, "session-live", got.SessionRef, "session_ref preserved")
+	assertEqual(t, 4242, got.ProcessPID, "process_pid preserved")
+	assertEqual(t, 4242, got.ProcessPGID, "process_pgid preserved")
+}
+
 func TestRuntimeStoreSavesAndListsTurns(t *testing.T) {
 	store, err := OpenRuntimeStore(filepath.Join(t.TempDir(), "state"))
 	if err != nil {

@@ -418,3 +418,94 @@ func killRunProcess(run RunStatus) {
 		_ = syscall.Kill(run.ProcessPID, syscall.SIGKILL)
 	}
 }
+
+// F2 (end-to-end): dispatchExternalApplyInput publishes the prepared dispatch
+// intent before claiming, and MUST do so without clobbering the live stored
+// lease. Here a concurrent advance has bumped the stored lease_generation past
+// the caller's hydrated ProjectRuns snapshot; the pre-dispatch upsert must leave
+// the stored generation intact so dispatchRun's ClaimRunLease CAS misses and the
+// concurrent state survives (the row is not re-claimed / re-dispatched over).
+// On the old blind-UpsertRun code the pre-upsert forced the row back to the
+// stale gen=1/owner-A snapshot, the claim then succeeded, and this assertion set
+// fails (owner/lease_state change to a fresh claim).
+func TestDispatchExternalApplyInputPreservesConcurrentLeaseAdvance(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Preserve concurrent advance", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	project := registerAutomationTestProject(t, vault)
+	wfFile, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Benign apply runner: if a (buggy) claim were to succeed, the spawned child
+	// is a harmless sleep that the deferred killRunProcess reaps.
+	wfFile.Data.Agents.Default = "test-dispatch"
+	wfFile.Data.Agents.Enabled = append(wfFile.Data.Agents.Enabled, "test-dispatch")
+	wfFile.Data.Runners["test-dispatch"] = RunnerDefinition{Kind: string(RunnerCodexExec), Command: "sleep 30"}
+	note, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	workRevision := intField(note.Data, "work_revision")
+	// Caller's hydrated view: gen=1, owner "A", released (claimable). Keeping the
+	// snapshot work_revision equal to the note's avoids effectiveRunForTask's
+	// revision-change reset, so run.LeaseGeneration stays 1 into the CAS.
+	snapshot := RunStatus{
+		ProjectID:       project.ProjectID,
+		RecordID:        "APP-T-0001",
+		ItemID:          "APP-T-0001",
+		Runner:          "test-dispatch",
+		Lane:            runLaneExecute,
+		LeaseState:      string(LeaseStateReleased),
+		LeaseOwner:      "A",
+		LeaseGeneration: 1,
+		AttemptOutcome:  string(AttemptOutcomeNone),
+		WorkRevision:    workRevision,
+		AttemptCount:    1,
+	}
+	if err := store.UpsertRun(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	// Concurrent advance bumps the STORED generation to 2 (still claimable); the
+	// caller's ProjectRuns snapshot below is deliberately left at gen=1.
+	concurrent := snapshot
+	concurrent.LeaseGeneration = 2
+	if err := store.UpsertRun(concurrent); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &automationCommandContext{
+		StateRoot:         DefaultStateRoot(),
+		Store:             store,
+		Project:           project,
+		ProjectRegistered: true,
+		Workflow:          wfFile,
+		ProjectRuns:       map[string]RunStatus{"APP-T-0001": snapshot},
+	}
+	explanation := automationTaskExplanation{Dispatchable: true, ID: "APP-T-0001", RecordID: "APP-T-0001", Runner: "test-dispatch"}
+
+	result, dispatchErr := dispatchExternalApplyInput(ctx, note, explanation, "test-dispatch")
+	if result != nil {
+		defer killRunProcess(*result)
+	}
+	if dispatchErr != nil {
+		t.Fatalf("dispatch should not error when the CAS misses on a concurrent advance: %v", dispatchErr)
+	}
+
+	current, err := store.FindRun("APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current == nil {
+		t.Fatal("run row missing after dispatch")
+	}
+	assertEqual(t, 2, current.LeaseGeneration, "concurrent lease generation preserved")
+	assertEqual(t, "A", current.LeaseOwner, "row not reclaimed by this dispatch")
+	assertEqual(t, string(LeaseStateReleased), current.LeaseState, "row not claimed by this dispatch")
+}

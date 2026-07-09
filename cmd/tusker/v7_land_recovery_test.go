@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -56,14 +57,12 @@ func TestLandDetachedRecovery(t *testing.T) {
 	// worktree path carries the record id like real runner workspaces do.
 	worktree := filepath.Join(t.TempDir(), "APP-T-0001__task")
 	runGitDir(t, repo, "worktree", "add", "--detach", worktree, "integration/W-0001")
+	writeWorkspaceRecordForLandTest(t, worktree, "APP-T-0001")
 	if err := writeText(filepath.Join(worktree, "recovered.txt"), "recovered\n"); err != nil {
 		t.Fatal(err)
 	}
-	runGitDir(t, worktree, "add", ".")
+	runGitDir(t, worktree, "add", "recovered.txt")
 	runGitDir(t, worktree, "commit", "-m", "runner completed work")
-	// Real runner workspaces carry .tusker/workspace.json; auto-discovery now
-	// binds on an exact record_id match (not the worktree path substring).
-	writeWorkspaceRecordID(t, worktree, "APP-T-0001")
 	if gitBranchExists(repo, "task/APP-T-0001") {
 		t.Fatal("precondition: task/APP-T-0001 must not exist yet")
 	}
@@ -94,14 +93,12 @@ func TestLandDetachedRecoveryFromFlag(t *testing.T) {
 
 	worktree := filepath.Join(t.TempDir(), "unrelated-name")
 	runGitDir(t, repo, "worktree", "add", "--detach", worktree, "integration/W-0001")
+	writeWorkspaceRecordForLandTest(t, worktree, "APP-T-0001")
 	if err := writeText(filepath.Join(worktree, "recovered.txt"), "recovered\n"); err != nil {
 		t.Fatal(err)
 	}
-	runGitDir(t, worktree, "add", ".")
+	runGitDir(t, worktree, "add", "recovered.txt")
 	runGitDir(t, worktree, "commit", "-m", "runner completed work")
-	// The worktree proves it belongs to APP-T-0001 via its workspace record_id,
-	// so an explicit --from binds without the --trust-from override.
-	writeWorkspaceRecordID(t, worktree, "APP-T-0001")
 
 	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "from": worktree}); err != nil {
 		t.Fatalf("recovery land with --from failed: %v", err)
@@ -110,6 +107,204 @@ func TestLandDetachedRecoveryFromFlag(t *testing.T) {
 		t.Fatal("--from should have created task/APP-T-0001")
 	}
 	assertEqual(t, "recovered\n", gitShowFile(t, repo, "integration/W-0001", "recovered.txt"), "integration has the recovered work")
+}
+
+func TestLandFromRefRequiresExactWorkspaceRecordID(t *testing.T) {
+	repo, vault := newLandTestRepo(t, 1, "test -f recovered.txt")
+	wrong := filepath.Join(t.TempDir(), "APP-T-0001-wrong-record")
+	runGitDir(t, repo, "worktree", "add", "--detach", wrong, "integration/W-0001")
+	writeWorkspaceRecordForLandTest(t, wrong, "APP-T-0002")
+	if err := writeText(filepath.Join(wrong, "recovered.txt"), "wrong\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, wrong, "add", "recovered.txt")
+	runGitDir(t, wrong, "commit", "-m", "wrong task work")
+
+	err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "from": wrong})
+	if err == nil {
+		t.Fatal("expected --from worktree with mismatched record_id to be refused")
+	}
+	msg := err.Error()
+	for _, want := range []string{"refused --from", "record_id", "APP-T-0001"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected actionable provenance refusal containing %q, got %v", want, err)
+		}
+	}
+	if gitBranchExists(repo, "task/APP-T-0001") {
+		t.Fatal("mismatched --from source must not create task branch")
+	}
+
+	matching := filepath.Join(t.TempDir(), "APP-T-0001-matching-record")
+	runGitDir(t, repo, "worktree", "add", "--detach", matching, "integration/W-0001")
+	writeWorkspaceRecordForLandTest(t, matching, "APP-T-0001")
+	if err := writeText(filepath.Join(matching, "recovered.txt"), "matching\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, matching, "add", "recovered.txt")
+	runGitDir(t, matching, "commit", "-m", "matching task work")
+
+	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "from": matching}); err != nil {
+		t.Fatalf("matching --from source should land: %v", err)
+	}
+	assertEqual(t, "matching\n", gitShowFile(t, repo, "integration/W-0001", "recovered.txt"), "matching worktree source landed")
+}
+
+func TestLandFromRawCommitRequiresTaskTrackerProvenance(t *testing.T) {
+	repo, vault := newLandTestRepo(t, 1, "test -f raw.txt")
+	unowned := filepath.Join(t.TempDir(), "raw-unowned")
+	runGitDir(t, repo, "worktree", "add", "--detach", unowned, "integration/W-0001")
+	if err := writeText(filepath.Join(unowned, "raw.txt"), "unowned\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, unowned, "add", "raw.txt")
+	runGitDir(t, unowned, "commit", "-m", "unowned raw commit")
+	unownedRev := strings.TrimSpace(gitDirOutput(t, unowned, "rev-parse", "HEAD"))
+	runGitDir(t, repo, "worktree", "remove", "--force", unowned)
+
+	err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "from": unownedRev})
+	if err == nil {
+		t.Fatal("expected raw commit with no task provenance to be refused")
+	}
+	msg := err.Error()
+	for _, want := range []string{"source commit lacks task-owned provenance", "--trust-from", "APP-T-0001.md"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("raw commit refusal missing %q in %v", want, err)
+		}
+	}
+	if gitBranchExists(repo, "task/APP-T-0001") {
+		t.Fatal("unowned raw commit must not create task branch")
+	}
+
+	owned := filepath.Join(t.TempDir(), "raw-owned")
+	runGitDir(t, repo, "worktree", "add", "--detach", owned, "integration/W-0001")
+	if err := writeText(filepath.Join(owned, "raw.txt"), "owned\n"); err != nil {
+		t.Fatal(err)
+	}
+	taskPath := filepath.Join(owned, ".tusker", "work", "tasks", "APP-T-0001.md")
+	taskContent, err := readText(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(taskPath, taskContent+"\nProvenance touch.\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, owned, "add", "raw.txt", ".tusker/work/tasks/APP-T-0001.md")
+	runGitDir(t, owned, "commit", "-m", "owned raw commit")
+	ownedRev := strings.TrimSpace(gitDirOutput(t, owned, "rev-parse", "HEAD"))
+	runGitDir(t, repo, "worktree", "remove", "--force", owned)
+
+	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "from": ownedRev}); err != nil {
+		t.Fatalf("raw commit touching the task tracker should land: %v", err)
+	}
+	assertEqual(t, "owned\n", gitShowFile(t, repo, "integration/W-0001", "raw.txt"), "task-local raw commit landed")
+}
+
+func TestLandAutoDiscoveryRequiresExactRecordIDNotSubstringPath(t *testing.T) {
+	repo, vault := newLandTestRepo(t, 1, "test -f recovered.txt")
+	substring := filepath.Join(t.TempDir(), "APP-T-0001x-scratch")
+	runGitDir(t, repo, "worktree", "add", "--detach", substring, "integration/W-0001")
+	writeWorkspaceRecordForLandTest(t, substring, "APP-T-0001X")
+	if err := writeText(filepath.Join(substring, "recovered.txt"), "substring\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, substring, "add", "recovered.txt")
+	runGitDir(t, substring, "commit", "-m", "substring path work")
+
+	err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001"})
+	if err == nil {
+		t.Fatal("expected substring path worktree to be ignored")
+	}
+	msg := err.Error()
+	for _, want := range []string{"no task/APP-T-0001 branch", "no detached completed worktree"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected auto-discovery refusal containing %q, got %v", want, err)
+		}
+	}
+	if gitBranchExists(repo, "task/APP-T-0001") {
+		t.Fatal("substring path must not create task branch")
+	}
+
+	exact := filepath.Join(t.TempDir(), "unrelated-path")
+	runGitDir(t, repo, "worktree", "add", "--detach", exact, "integration/W-0001")
+	writeWorkspaceRecordForLandTest(t, exact, "APP-T-0001")
+	if err := writeText(filepath.Join(exact, "recovered.txt"), "exact\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, exact, "add", "recovered.txt")
+	runGitDir(t, exact, "commit", "-m", "exact record work")
+
+	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001"}); err != nil {
+		t.Fatalf("exact record_id auto-discovery should land: %v", err)
+	}
+	assertEqual(t, "exact\n", gitShowFile(t, repo, "integration/W-0001", "recovered.txt"), "exact record_id source landed")
+}
+
+// F1: advancing the default branch in a checked-out worktree must NOT discard
+// local work under .tusker/*. Those paths pass the dirty guard (they are treated
+// as tusker bookkeeping), so a staged conflicting change to a tracked .tusker/*
+// file reaches the branch-advance step. `git reset --merge` silently overwrote
+// such staged work; `git merge --ff-only` must refuse (safe) and leave it intact.
+func TestAdvanceDefaultBranchFfOnlyPreservesStagedTuskerWork(t *testing.T) {
+	repo, _ := newLandTestRepo(t, 1, "true")
+
+	// Seed a tracked file under .tusker/ on main that newRev will also modify.
+	probeRel := ".tusker/land-ff-probe.txt"
+	if err := writeText(filepath.Join(repo, probeRel), "base\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "add", probeRel)
+	runGitDir(t, repo, "commit", "-m", "seed ff probe")
+	oldRev := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
+
+	// newRev: a descendant of main (valid fast-forward) that modifies the same
+	// tracked .tusker/* file, anchored by branch probe/ff-new so it stays live.
+	newRev := commitLandBranch(t, repo, "probe/ff-new", "main", map[string]string{probeRel: "newrev-content\n"})
+
+	// Free main from the coordination root so it can be checked out in a worktree.
+	runGitDir(t, repo, "checkout", "-b", "coord")
+	wt := filepath.Join(t.TempDir(), "main-wt")
+	runGitDir(t, repo, "worktree", "add", wt, "main")
+
+	// Stage a CONFLICTING modification to the tracked .tusker/* file. It differs
+	// from HEAD and from newRev, so the advance is a real conflict; it passes the
+	// dirty guard because it lives under .tusker/.
+	probeInWt := filepath.Join(wt, probeRel)
+	if err := writeText(probeInWt, "local-work\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, wt, "add", probeRel)
+
+	err := advanceV7DefaultBranch(repo, "main", newRev, oldRev)
+	if err == nil {
+		t.Fatal("advanceV7DefaultBranch must refuse a conflicting fast-forward instead of discarding staged .tusker work")
+	}
+	if !strings.Contains(err.Error(), "failed to advance checked-out main worktree") {
+		t.Fatalf("expected a checked-out advance-failure refusal, got %v", err)
+	}
+	got, readErr := readText(probeInWt)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	assertEqual(t, "local-work\n", got, "staged .tusker work must survive a refused default-branch advance")
+	// The worktree branch must not have moved onto newRev.
+	if head := strings.TrimSpace(gitDirOutput(t, wt, "rev-parse", "HEAD")); head == strings.TrimSpace(newRev) {
+		t.Fatalf("refused advance must leave the worktree at %s, not newRev %s", oldRev, newRev)
+	}
+}
+
+func writeWorkspaceRecordForLandTest(t *testing.T, worktree, recordID string) {
+	t.Helper()
+	metaDir := filepath.Join(worktree, ".tusker")
+	if err := ensureDir(metaDir); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]string{"record_id": recordID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(metaDir, "workspace.json"), string(raw)+"\n"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // A4: a successful land prints a concise summary naming task, source branch,

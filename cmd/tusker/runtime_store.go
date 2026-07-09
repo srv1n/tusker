@@ -960,23 +960,13 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 	return err
 }
 
-// UpsertRunPreservingLease writes the run's routing/stream/status columns but,
-// when the row already exists, deliberately leaves the stored lease columns
-// (lease_state, lease_owner, lease_generation, lease_expires_at, lease_host)
-// untouched. It is the lease-safe counterpart to UpsertRun used by the poll
-// loop's pre-dispatch writes: the daemon syncs a run row from a snapshot it read
-// at poll start, and a plain UpsertRun would clobber the lease columns with that
-// stale snapshot — re-arming a row a concurrent operator interrupt/park moved to
-// a non-dispatchable state after the snapshot was taken, and defeating the
-// dispatch claim's generation/state CAS. By preserving the stored lease, a stop
-// that lands anywhere between the poll snapshot and the claim survives: the row
-// is never re-armed, and ClaimRunLease then backs off against the real lease.
-//
-// On a first-ever insert there is no stored lease to preserve, so the INSERT
-// seeds the lease columns from the supplied run (an unclaimed row for a fresh
-// dispatch candidate). Any deliberate lease transition (claim, renew, park,
-// release) must still go through its dedicated store method or a plain UpsertRun.
-// The non-lease SET column list must stay in sync with UpsertRun.
+// UpsertRunPreservingLease inserts the run row if it is absent (same columns and
+// defaults as UpsertRun) but, on conflict, updates ONLY the dispatch-intent
+// columns (item_id, runner, lane, work_revision, updated_at). It deliberately
+// leaves the live lease/process/session/outcome/cloud/summary columns of the
+// stored row untouched so a pre-dispatch publish of a (possibly stale) prepped
+// run cannot clobber a concurrent operator stop or a bumped lease generation,
+// keeping dispatchRun's ClaimRunLease CAS honest against the true stored lease.
 func (s *RuntimeStore) UpsertRunPreservingLease(run RunStatus) error {
 	if run.LeaseState == "" {
 		run.LeaseState = string(LeaseStateUnclaimed)
@@ -994,34 +984,7 @@ func (s *RuntimeStore) UpsertRunPreservingLease(run RunStatus) error {
 		item_id=excluded.item_id,
 		runner=excluded.runner,
 		lane=excluded.lane,
-		attempt_outcome=excluded.attempt_outcome,
-		active_attempt_id=excluded.active_attempt_id,
-		workspace_path=excluded.workspace_path,
-		session_ref=excluded.session_ref,
-		cloud_task_id=excluded.cloud_task_id,
-		cloud_status=excluded.cloud_status,
-		cloud_environment_id=excluded.cloud_environment_id,
-		cloud_attempt_number=excluded.cloud_attempt_number,
-		pull_request_url=excluded.pull_request_url,
-		apply_ref=excluded.apply_ref,
-		logs_summary=excluded.logs_summary,
-		final_summary=excluded.final_summary,
-		process_pid=excluded.process_pid,
-		process_pgid=excluded.process_pgid,
-		process_started_at=excluded.process_started_at,
-		prompt_path=excluded.prompt_path,
-		event_sink_path=excluded.event_sink_path,
-		raw_log_path=excluded.raw_log_path,
-		status_path=excluded.status_path,
 		work_revision=excluded.work_revision,
-		attempt_count=excluded.attempt_count,
-		next_retry_at=excluded.next_retry_at,
-		last_error=excluded.last_error,
-		last_event_at=excluded.last_event_at,
-		first_event_at=excluded.first_event_at,
-		last_heartbeat_at=excluded.last_heartbeat_at,
-		terminal=excluded.terminal,
-		started_at=excluded.started_at,
 		updated_at=excluded.updated_at`,
 		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.Lane, run.LeaseState, run.LeaseOwner, run.LeaseGeneration, run.LeaseExpiresAt, run.LeaseHost, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.FirstEventAt, run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt)
 	return err
@@ -1040,27 +1003,13 @@ type RuntimeLeaseRenewal struct {
 	ProcessStarted string
 }
 
-// RunLeaseClaimGuard carries optimistic-concurrency preconditions for a dispatch
-// claim. When Enforce is true, the claim is a compare-and-swap against the run
-// row as the daemon observed it at poll start: the row must still be in a
-// claimable lease state (not already claimed/running and not an
-// operator/supervisor-stopped state) and its lease_generation must still match
-// the snapshot, or the claim backs off because another actor — a control action
-// (cancel/park) or a second daemon — won the row between poll and claim. The
-// zero value applies no snapshot precondition and preserves the legacy
-// claim-from-idle behavior used by the lease reconcile tests.
-//
-// work_revision is deliberately NOT a precondition: dispatch re-syncs it from
-// the task note (the external-loop re-dispatch path intentionally carries a
-// note-derived revision that differs from the stored row), and any revision
-// change that matters resets the run to unclaimed, after which the generation
-// fence still prevents a double claim.
-type RunLeaseClaimGuard struct {
-	Enforce          bool
-	ExpectGeneration int
+type RuntimeLeaseClaimPrecondition struct {
+	ExpectedOwner           string
+	ExpectedLeaseGeneration int
+	ExpectedWorkRevision    int
 }
 
-func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generation int, ttl time.Duration, now time.Time, dispatchable bool, guard RunLeaseClaimGuard) (bool, error) {
+func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generation int, ttl time.Duration, now time.Time, dispatchable bool, preconditions ...RuntimeLeaseClaimPrecondition) (bool, error) {
 	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" {
 		return false, tuskerError(errorInvalidArg, "lease claim requires project_id and record_id")
 	}
@@ -1089,17 +1038,16 @@ func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generati
 			updated_at = ?
 		WHERE project_id = ? AND record_id = ?
 			AND lease_state NOT IN ('claimed', 'running')`
-	args := []any{owner, generation, now.Add(ttl).Format(time.RFC3339), runtimeLeaseHost(), now.Format(time.RFC3339), projectID, recordID}
-	if guard.Enforce {
-		// Optimistic CAS against the poll-start snapshot: refuse to claim over a
-		// row an operator/supervisor deliberately stopped, or one whose
-		// generation advanced since the daemon observed it.
+	params := []any{owner, generation, now.Add(ttl).Format(time.RFC3339), runtimeLeaseHost(), now.Format(time.RFC3339), projectID, recordID}
+	if len(preconditions) > 0 {
+		pre := preconditions[0]
 		query += `
-			AND lease_state NOT IN ('interrupted', 'parked_no_progress', 'parked_budget')
-			AND lease_generation = ?`
-		args = append(args, guard.ExpectGeneration)
+			AND lease_owner = ?
+			AND lease_generation = ?
+			AND work_revision = ?`
+		params = append(params, pre.ExpectedOwner, pre.ExpectedLeaseGeneration, pre.ExpectedWorkRevision)
 	}
-	result, err := s.exec(query, args...)
+	result, err := s.exec(query, params...)
 	if err != nil {
 		return false, err
 	}
@@ -1110,44 +1058,34 @@ func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generati
 	return affected > 0, nil
 }
 
-// EnsureRunRow inserts the run row if it does not yet exist and otherwise leaves
-// the stored row untouched. Dispatch calls it before an atomic ClaimRunLease so
-// the claim's compare-and-swap has a row to swap against even on a first-ever
-// dispatch, without ever clobbering a row a concurrent actor already changed
-// (the ON CONFLICT DO NOTHING keeps this a no-op when the row is present).
-func (s *RuntimeStore) EnsureRunRow(run RunStatus) error {
-	if strings.TrimSpace(run.ProjectID) == "" || strings.TrimSpace(run.RecordID) == "" {
-		return tuskerError(errorInvalidArg, "run row requires project_id and record_id")
+func (s *RuntimeStore) RunLeaseMatches(projectID, recordID, owner string, generation int) (bool, error) {
+	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" || strings.TrimSpace(owner) == "" || generation <= 0 {
+		return false, nil
 	}
-	if run.LeaseState == "" {
-		run.LeaseState = string(LeaseStateUnclaimed)
+	var count int
+	if err := s.queryRowScan(`SELECT COUNT(1) FROM runs WHERE project_id = ? AND record_id = ? AND lease_owner = ? AND lease_generation = ?`, []any{projectID, recordID, owner, generation}, &count); err != nil {
+		return false, err
 	}
-	if run.AttemptOutcome == "" {
-		run.AttemptOutcome = string(AttemptOutcomeNone)
-	}
-	if strings.TrimSpace(run.UpdatedAt) == "" {
-		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	}
-	_, err := s.exec(`INSERT INTO runs (
-		project_id, record_id, item_id, runner, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(project_id, record_id) DO NOTHING`,
-		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.Lane, run.LeaseState, run.LeaseOwner, run.LeaseGeneration, run.LeaseExpiresAt, run.LeaseHost, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.FirstEventAt, run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt)
-	return err
+	return count > 0, nil
 }
 
-// UpsertRunIfLeaseHeld persists the full run row only while the caller still
-// holds the lease it claimed (matching lease_owner + lease_generation). It is
-// the lease-guarded counterpart to UpsertRun used for dispatch's post-claim
-// writes: it returns false (without writing) when another actor won the row
-// after the claim, so the dispatcher can abort before spawning instead of
-// clobbering the winner. The SET column list must stay in sync with UpsertRun.
-func (s *RuntimeStore) UpsertRunIfLeaseHeld(run RunStatus) (bool, error) {
-	if strings.TrimSpace(run.ProjectID) == "" || strings.TrimSpace(run.RecordID) == "" {
-		return false, tuskerError(errorInvalidArg, "lease-guarded upsert requires project_id and record_id")
+func (s *RuntimeStore) SaveAttemptIfRunLease(attempt RunAttempt, owner string, generation int) (bool, error) {
+	matched, err := s.RunLeaseMatches(attempt.ProjectID, attempt.RecordID, owner, generation)
+	if err != nil || !matched {
+		return false, err
 	}
-	if strings.TrimSpace(run.LeaseOwner) == "" || run.LeaseGeneration <= 0 {
-		return false, tuskerError(errorInvalidArg, "lease-guarded upsert requires lease_owner and lease_generation")
+	if err := s.SaveAttempt(attempt); err != nil {
+		return false, err
+	}
+	return s.RunLeaseMatches(attempt.ProjectID, attempt.RecordID, owner, generation)
+}
+
+func (s *RuntimeStore) UpdateRunIfLease(run RunStatus, owner string, generation int) (bool, error) {
+	if strings.TrimSpace(run.ProjectID) == "" || strings.TrimSpace(run.RecordID) == "" {
+		return false, tuskerError(errorInvalidArg, "conditional run update requires project_id and record_id")
+	}
+	if strings.TrimSpace(owner) == "" || generation <= 0 {
+		return false, tuskerError(errorInvalidArg, "conditional run update requires lease owner and generation")
 	}
 	if run.LeaseState == "" {
 		run.LeaseState = string(LeaseStateUnclaimed)
@@ -1159,10 +1097,45 @@ func (s *RuntimeStore) UpsertRunIfLeaseHeld(run RunStatus) (bool, error) {
 		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	result, err := s.exec(`UPDATE runs SET
-		item_id = ?, runner = ?, lane = ?, lease_state = ?, lease_owner = ?, lease_generation = ?, lease_expires_at = ?, lease_host = ?, attempt_outcome = ?, active_attempt_id = ?, workspace_path = ?, session_ref = ?, cloud_task_id = ?, cloud_status = ?, cloud_environment_id = ?, cloud_attempt_number = ?, pull_request_url = ?, apply_ref = ?, logs_summary = ?, final_summary = ?, process_pid = ?, process_pgid = ?, process_started_at = ?, prompt_path = ?, event_sink_path = ?, raw_log_path = ?, status_path = ?, work_revision = ?, attempt_count = ?, next_retry_at = ?, last_error = ?, last_event_at = ?, first_event_at = ?, last_heartbeat_at = ?, terminal = ?, started_at = ?, updated_at = ?
+		item_id = ?,
+		runner = ?,
+		lane = ?,
+		lease_state = ?,
+		lease_owner = ?,
+		lease_generation = ?,
+		lease_expires_at = ?,
+		lease_host = ?,
+		attempt_outcome = ?,
+		active_attempt_id = ?,
+		workspace_path = ?,
+		session_ref = ?,
+		cloud_task_id = ?,
+		cloud_status = ?,
+		cloud_environment_id = ?,
+		cloud_attempt_number = ?,
+		pull_request_url = ?,
+		apply_ref = ?,
+		logs_summary = ?,
+		final_summary = ?,
+		process_pid = ?,
+		process_pgid = ?,
+		process_started_at = ?,
+		prompt_path = ?,
+		event_sink_path = ?,
+		raw_log_path = ?,
+		status_path = ?,
+		work_revision = ?,
+		attempt_count = ?,
+		next_retry_at = ?,
+		last_error = ?,
+		last_event_at = ?,
+		first_event_at = ?,
+		last_heartbeat_at = ?,
+		terminal = ?,
+		started_at = ?,
+		updated_at = ?
 		WHERE project_id = ? AND record_id = ? AND lease_owner = ? AND lease_generation = ?`,
-		run.ItemID, run.Runner, run.Lane, run.LeaseState, run.LeaseOwner, run.LeaseGeneration, run.LeaseExpiresAt, run.LeaseHost, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.FirstEventAt, run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt,
-		run.ProjectID, run.RecordID, run.LeaseOwner, run.LeaseGeneration)
+		run.ItemID, run.Runner, run.Lane, run.LeaseState, run.LeaseOwner, run.LeaseGeneration, run.LeaseExpiresAt, run.LeaseHost, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.FirstEventAt, run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt, run.ProjectID, run.RecordID, owner, generation)
 	if err != nil {
 		return false, err
 	}
