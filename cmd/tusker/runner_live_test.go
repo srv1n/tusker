@@ -902,16 +902,18 @@ for line in sys.stdin:
 	defer store.Close()
 	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
 	executeRun := RunStatus{
-		ProjectID: project.ProjectID,
-		RecordID:  "APP-T-0001",
-		ItemID:    "APP-T-0001",
-		Runner:    string(RunnerClaude),
+		ProjectID:  project.ProjectID,
+		RecordID:   "APP-T-0001",
+		ItemID:     "APP-T-0001",
+		Runner:     string(RunnerClaude),
+		LeaseState: string(LeaseStateUnclaimed),
 	}
+	mustUpsertRun(t, store, executeRun)
 	note, err := resolveNote(vault, "APP-T-0001")
 	if err != nil {
 		t.Fatal(err)
 	}
-	executeRun, err = daemon.dispatchRun(context.Background(), project, wfFile, note, executeRun, runLaneExecute)
+	executeRun, _, err = daemon.dispatchRun(context.Background(), project, wfFile, note, executeRun, runLaneExecute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -924,7 +926,7 @@ for line in sys.stdin:
 	}
 	assertEqual(t, "review", stringField(updatedNote.Data, "status"), "fixture promoted to review")
 
-	reviewRun, err := daemon.dispatchRun(context.Background(), project, wfFile, updatedNote, executeRun, runLaneReview)
+	reviewRun, _, err := daemon.dispatchRun(context.Background(), project, wfFile, updatedNote, executeRun, runLaneReview)
 	if err != nil {
 		t.Fatal(err)
 	}

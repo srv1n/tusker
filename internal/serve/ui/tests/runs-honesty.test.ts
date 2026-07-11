@@ -32,7 +32,7 @@ test("clockTime degrades to a placeholder instead of NaN:NaN:NaN", () => {
 test("runs board header labels every column including lease and state", () => {
   const src = readFileSync("src/features/runs/board/rows.tsx", "utf8");
   for (const label of ["Task", "Runner", "Lane", "Lease", "Tokens", "State"]) {
-    expect(src).toContain(`<span>${label}</span>`);
+    expect(src).toMatch(new RegExp(`<span(?: className="[^"]*")?>${label}</span>`));
   }
 });
 

@@ -244,15 +244,17 @@ type TuskerConfigFile struct {
 		MutationMode    string `yaml:"mutation_mode"`
 	} `yaml:"runtime"`
 	Validation struct {
-		TaskBodyWarnLines      int   `yaml:"task_body_warn_lines"`
-		TaskBodyFailLines      int   `yaml:"task_body_fail_lines"`
-		FrontmatterWarnLines   int   `yaml:"frontmatter_warn_lines"`
-		CapsuleTokenBudget     int   `yaml:"capsule_token_budget"`
-		RequireAcceptanceProof *bool `yaml:"require_acceptance_proof"`
-		ForbidWorkLogSection   *bool `yaml:"forbid_work_log_section"`
-		ForbidRawLogsInTask    *bool `yaml:"forbid_raw_logs_in_task"`
-		ProtectStateFields     *bool `yaml:"protect_state_fields"`
-		StrictProofPolicy      *bool `yaml:"strict_proof_policy"`
+		TaskBodyWarnLines       int   `yaml:"task_body_warn_lines"`
+		TaskBodyFailLines       int   `yaml:"task_body_fail_lines"`
+		KnowledgeDeltaWarnLines int   `yaml:"knowledge_delta_warn_lines"`
+		KnowledgeDeltaFailLines int   `yaml:"knowledge_delta_fail_lines"`
+		FrontmatterWarnLines    int   `yaml:"frontmatter_warn_lines"`
+		CapsuleTokenBudget      int   `yaml:"capsule_token_budget"`
+		RequireAcceptanceProof  *bool `yaml:"require_acceptance_proof"`
+		ForbidWorkLogSection    *bool `yaml:"forbid_work_log_section"`
+		ForbidRawLogsInTask     *bool `yaml:"forbid_raw_logs_in_task"`
+		ProtectStateFields      *bool `yaml:"protect_state_fields"`
+		StrictProofPolicy       *bool `yaml:"strict_proof_policy"`
 	} `yaml:"validation"`
 }
 

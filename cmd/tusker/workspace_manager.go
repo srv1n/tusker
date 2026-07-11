@@ -108,7 +108,9 @@ func workspaceRootForRequest(req WorkspacePrepareRequest) (string, error) {
 	sharedRoot := filepath.Join(stateRoot, "workspaces")
 	root := sharedRoot
 	if configured := strings.TrimSpace(req.WorkspaceRoot); configured != "" {
-		if filepath.IsAbs(configured) {
+		if filepath.Clean(configured) == "." {
+			root = sharedRoot
+		} else if filepath.IsAbs(configured) {
 			root = filepath.Clean(configured)
 		} else {
 			root = filepath.Join(stateRoot, configured)

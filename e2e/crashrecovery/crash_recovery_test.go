@@ -370,15 +370,16 @@ func TestCleanExitContinuationLoopParksAtCap(t *testing.T) {
 }
 
 type fakeRunnerConfig struct {
-	Mode           string
-	RunnerKind     string
-	ReleaseFile    string
-	CompleteStatus string
-	ExitCode       int
-	HoldTimeout    time.Duration
-	StallTimeoutMS int
-	MaxAttempts    int
-	BackoffMS      []int
+	Mode                   string
+	RunnerKind             string
+	ReleaseFile            string
+	CompleteStatus         string
+	ExitCode               int
+	HoldTimeout            time.Duration
+	StallTimeoutMS         int
+	MaxAttempts            int
+	MaxContinuationRetries int
+	BackoffMS              []int
 }
 
 type harness struct {
@@ -577,6 +578,9 @@ automation:
 	workflow := h.readFile(filepath.Join(h.vaultDir, "WORKFLOW.md"))
 	workflow = replaceYAMLScalarUnder(workflow, "runtime:", "  poll_interval_ms:", "  poll_interval_ms: 100")
 	workflow = replaceYAMLScalarUnder(workflow, "runtime:", "  max_active_runs_per_project:", "  max_active_runs_per_project: 1")
+	if cfg.MaxContinuationRetries > 0 {
+		workflow = replaceYAMLScalarUnder(workflow, "runtime:", "  max_continuation_retries:", fmt.Sprintf("  max_continuation_retries: %d", cfg.MaxContinuationRetries))
+	}
 	workflow = replaceYAMLScalarUnder(workflow, "serve:", "    enabled:", "    enabled: false")
 	workflow = replaceYAMLScalarUnder(workflow, "retry:", "  max_attempts:", fmt.Sprintf("  max_attempts: %d", cfg.MaxAttempts))
 	workflow = replaceYAMLListUnder(workflow, "retry:", "  backoff_ms:", cfg.BackoffMS)

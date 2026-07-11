@@ -150,13 +150,6 @@ func TestServeFieldsRosterAndEpics(t *testing.T) {
 	if failed["lastHeartbeatAt"] != nil {
 		t.Fatalf("empty heartbeat must be explicit null: %#v", failed)
 	}
-	var parked map[string]any
-	for _, run := range runs {
-		if run["taskId"] == "APP-T-0009" {
-			parked = run
-			break
-		}
-	}
 	if parked == nil {
 		t.Fatal("expected APP-T-0009 run")
 	}

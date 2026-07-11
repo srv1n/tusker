@@ -2416,6 +2416,7 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 		}
 	}
 	fmt.Fprintf(&b, "\n## Dependencies\n\n%s\n\n", v7BulletList(normalizeList(task.Data["dependencies"])))
+	fmt.Fprintf(&b, "## Routed file capsules\n\n%s\n\n", v7RoutedFileCapsules(vaultPath, task))
 	fmt.Fprintf(&b, "## Domain context\n\n%s\n\n", v7DomainContext(vaultPath, task))
 	fmt.Fprintf(&b, "## Verification\n\n%s\n\n", v7PacketSnippet(sectionContent(task.Body, "## Verification"), 12))
 	fmt.Fprintf(&b, "## Proof requirements\n\nMode: %s\nRequired:\n%s\n\n", fallback(stringField(task.Data, "proof_mode"), defaultV7ProofMode(stringField(task.Data, "risk"))), v7BulletList(normalizeList(task.Data["proof_required"])))
@@ -2674,7 +2675,18 @@ func v7DomainContext(vaultPath string, task Note) string {
 			sections = append(sections, fmt.Sprintf("### %s\n\n- Domain context not found in V7 knowledge/domains.", domain))
 			continue
 		}
-		section := fmt.Sprintf("### %s · %s\n\nSummary: %s\n\nRead this when:\n%s",
+		var capsuleLines []string
+		if capsule := capsuleOneLine(index); capsule != "" {
+			capsuleLines = append(capsuleLines, "- INDEX: "+capsule)
+		}
+		if capsule := capsuleOneLine(canon); capsule != "" {
+			capsuleLines = append(capsuleLines, "- CANON: "+capsule)
+		}
+		capsules := ""
+		if len(capsuleLines) > 0 {
+			capsules = "\n\nCapsules:\n" + strings.Join(capsuleLines, "\n")
+		}
+		section := fmt.Sprintf("### %s · %s\n\nSummary: %s%s\n\nRead this when:\n%s",
 			domain,
 			stringField(index.Data, "title"),
 			stringField(index.Data, "summary"),

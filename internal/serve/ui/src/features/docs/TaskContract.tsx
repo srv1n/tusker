@@ -97,6 +97,17 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
   const editing = ed.phase === "editing";
   const confirm = useConfirm();
   const closeReview = useCloseTask(task.id, projectId);
+  const frontmatterUpdate = useFrontmatterUpdate();
+  const pendingFrontmatterKey = frontmatterUpdate.isPending ? frontmatterUpdate.variables?.key : null;
+  const rawStatus =
+    task.rawStatus ?? (task.status === "in_progress" || task.status === "blocked" ? "ready" : task.status);
+  const rawReadiness =
+    task.rawReadiness ??
+    (task.readiness === "blocked_dependency"
+      ? "blocked_by_dependency"
+      : task.readiness === "blocked_gate"
+        ? "blocked_by_gate"
+        : task.readiness);
 
   // Merge-readiness checklist, derived from the real acceptance criteria + their
   // proof state — never a fixture. A criterion that isn't passing is a blocker,
@@ -690,6 +701,30 @@ function RailLabel({ children }: { children: ReactNode }) {
     <div className="mb-1.5 ml-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-fainter">
       {children}
     </div>
+  );
+}
+
+function EditableFact({
+  field,
+  onCommit,
+  pending,
+  children,
+}: {
+  field: { key: string; value: string; locked: boolean; lockReason?: string };
+  onCommit: (key: string, value: string) => void;
+  pending: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <FrontmatterInlineControl
+      field={field}
+      onCommit={onCommit}
+      pending={pending}
+      showChevron={false}
+      className="border-0 bg-transparent p-0 hover:bg-transparent"
+    >
+      {children}
+    </FrontmatterInlineControl>
   );
 }
 

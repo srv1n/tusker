@@ -33,6 +33,7 @@ export function RootLayout() {
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {!embedded && <MobileTopBar onMenuOpen={() => setNavOpen(true)} />}
         {!embedded && <InvariantCircuitBanner />}
+        {!embedded && <EscalationBanner />}
         <div className="min-h-0 flex-1 overflow-hidden">
           <Outlet />
         </div>

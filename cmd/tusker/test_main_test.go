@@ -19,8 +19,16 @@ import (
 const validationLockHeldEnv = "TUSKER_VALIDATION_LOCK_HELD"
 
 func TestMain(m *testing.M) {
+	cleanupNotifications, err := installEscalationTestNotifications()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cmd/tusker test suite: configure escalation notifications: %v\n", err)
+		os.Exit(1)
+	}
+
 	if os.Getenv(validationLockHeldEnv) != "" {
-		os.Exit(m.Run())
+		code := m.Run()
+		cleanupNotifications()
+		os.Exit(code)
 	}
 
 	release, err := acquireValidationTestLock()
@@ -37,6 +45,7 @@ func TestMain(m *testing.M) {
 		}
 	}
 	stopSignalCleanup()
+	cleanupNotifications()
 	os.Exit(code)
 }
 

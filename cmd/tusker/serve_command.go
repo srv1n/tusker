@@ -252,6 +252,8 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleProjects(w, r)
 	case path == "/api/needs":
 		s.handleNeeds(w, r)
+	case path == "/api/digest":
+		s.handleDigest(w, r)
 	case path == "/api/summary":
 		s.handleSummary(w, r)
 	case path == "/api/runs":
@@ -535,10 +537,12 @@ func (s *serveServer) buildSnapshot(includeQueue bool) (serveSnapshot, error) {
 }
 
 func (s *serveServer) buildSnapshotForProject(project RegisteredProject, includeQueue bool) (serveSnapshot, error) {
-	notes, err := listAllNotes(project.VaultRoot)
+	loaded, err := loadProjectContents(s.store, project, true)
 	if err != nil {
 		return serveSnapshot{}, err
 	}
+	project = loaded.Project
+	notes := loaded.Notes
 	projectID, err := resolveV7ProjectID(project.VaultRoot)
 	if err != nil {
 		projectID = firstNonEmpty(project.ProjectID, sanitizeProjectID(filepath.Base(project.RepoRoot)))
@@ -551,11 +555,7 @@ func (s *serveServer) buildSnapshotForProject(project RegisteredProject, include
 		notesByID:         map[string]Note{},
 		queue:             map[string]automationTaskExplanation{},
 	}
-	if wfFile, err := loadWorkflow(project.VaultRoot); err == nil {
-		snap.workflow = wfFile.Data
-	} else {
-		snap.workflow = defaultWorkflow()
-	}
+	snap.workflow = loaded.Workflow.Data
 	for _, note := range notes {
 		id := stringField(note.Data, "id")
 		if id != "" {
@@ -699,25 +699,26 @@ func (s *serveServer) daemonStatusFromSnapshot(snap serveSnapshot) *serveDaemonS
 		daemonDownReason = "Daemon process is not running. Start the daemon to dispatch queued work."
 	}
 	return &serveDaemonStatus{
-		Connected:        true,
-		Addr:             s.addr,
-		ActiveRuns:       active,
-		MaxActiveRuns:    limit,
-		QueuedTasks:      queued,
-		LastPollAt:       nullIfBlank(snap.project.LastPollAt),
-		StateRoot:        DefaultStateRoot(),
-		ProjectCount:     intFromAny(daemonStatus["projects"]),
-		Projects:         projects,
-		ParkedBudgetRuns: intFromAny(daemonStatus["parkedBudgetRuns"]),
-		BudgetCircuit:    daemonStatus["budgetCircuit"],
-		CrashLoop:        daemonStatus["crashLoop"],
-		InvariantCircuit: daemonStatus["invariantCircuit"],
-		DiskPressure:     diskPressureStatusFromAny(daemonStatus["disk_pressure"]),
-		DaemonAlive:      daemonAlive,
-		DaemonDownReason: daemonDownReason,
-		DaemonPID:        intFromAny(daemonStatus["daemon_pid"]),
-		DaemonStartedAt:  nullIfBlank(stringValue(daemonStatus["daemon_started_at"])),
-		DaemonLastPollAt: nullIfBlank(stringValue(daemonStatus["daemon_last_poll_at"])),
+		Connected:                  true,
+		Addr:                       s.addr,
+		ActiveRuns:                 active,
+		MaxActiveRuns:              limit,
+		QueuedTasks:                queued,
+		LastPollAt:                 nullIfBlank(snap.project.LastPollAt),
+		StateRoot:                  DefaultStateRoot(),
+		ProjectCount:               intFromAny(daemonStatus["projects"]),
+		Projects:                   projects,
+		ParkedBudgetRuns:           intFromAny(daemonStatus["parkedBudgetRuns"]),
+		BudgetCircuit:              daemonStatus["budgetCircuit"],
+		CrashLoop:                  daemonStatus["crashLoop"],
+		InvariantCircuit:           daemonStatus["invariantCircuit"],
+		DiskPressure:               diskPressureStatusFromAny(daemonStatus["disk_pressure"]),
+		DaemonAlive:                daemonAlive,
+		DaemonDownReason:           daemonDownReason,
+		DaemonPID:                  intFromAny(daemonStatus["daemon_pid"]),
+		DaemonStartedAt:            nullIfBlank(stringValue(daemonStatus["daemon_started_at"])),
+		DaemonLastPollAt:           nullIfBlank(stringValue(daemonStatus["daemon_last_poll_at"])),
+		PersistentEscalationBanner: hasOpenP0Escalation(s.vaultPath),
 	}
 }
 

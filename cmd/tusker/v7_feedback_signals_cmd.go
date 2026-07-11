@@ -65,10 +65,11 @@ func feedbackSignalsCmd(args Args) error {
 }
 
 func feedbackReviewCmd(args Args) error {
-	targets, err := feedbackDigestTargets(args)
+	resolution, err := feedbackResolveTargets(args, true)
 	if err != nil {
 		return err
 	}
+	targets := resolution.Targets
 	date := feedbackCommandDate(args, "feedback review")
 	if date == "" {
 		return tuskerError(errorInvalidArg, "feedback review --date must be YYYY-MM-DD: "+args.String("date"))
@@ -219,6 +220,10 @@ func deriveFeedbackSignalsForTargets(targets []feedbackTarget, date string, sinc
 		if len(records) == 0 {
 			derivation.NoExplicitNoteVaults = append(derivation.NoExplicitNoteVaults, feedbackTargetLabel(target))
 		}
+		for _, record := range records {
+			signal := feedbackSignalFromFeedbackRecord(target, record, date, "review-"+date)
+			emissions = append(emissions, withFeedbackSignalOccurrence(signal, target.vaultPath))
+		}
 		for _, signal := range targetEmissions {
 			emissions = append(emissions, withFeedbackSignalOccurrence(signal, target.vaultPath))
 		}
@@ -243,7 +248,7 @@ func deriveFeedbackSignalEmissionsForVault(vaultPath, date string, sinceDate tim
 	}
 	input := feedbackSignalReducerInput{
 		Date:    date,
-		Project: firstNonEmpty(target.projectKey, v7ProjectID(vaultPath)),
+		Project: v7ProjectID(vaultPath),
 		Source:  "event_reducer",
 		Tasks:   tasks,
 		Events:  events,
@@ -574,6 +579,7 @@ func feedbackReviewSignalsFromFeedbackSignals(signals []feedbackSignal) []feedba
 			OccurrenceProjects: occurrenceProjects,
 			OccurrenceSources:  occurrenceSources,
 			SourcePath:         feedbackSignalRelativePath(signal),
+			SourceRefs:         feedbackSignalSourceRefs(signal),
 		})
 	}
 	return out
@@ -730,6 +736,17 @@ func feedbackPromoteSourceFromSignal(signal feedbackSignal) feedbackPromoteSourc
 	})
 }
 
+func feedbackSignalSourceRefs(signal feedbackSignal) []string {
+	var refs []string
+	for _, key := range []string{"source_ref", "source_note", "source_path"} {
+		if value := toString(signal.ObservedFacts[key]); strings.TrimSpace(value) != "" {
+			refs = append(refs, value)
+		}
+	}
+	refs = append(refs, feedbackSignalRelativePath(signal))
+	return uniqueStrings(feedbackReviewCleanList(refs))
+}
+
 func feedbackReviewFindingByRef(vaultPath string, args Args, ref string) (feedbackReviewFinding, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
@@ -749,10 +766,15 @@ func feedbackReviewFindingByRef(vaultPath string, args Args, ref string) (feedba
 		sinceDate = parsed
 	}
 	target := normalizeFeedbackTarget(feedbackTarget{vaultPath: vaultPath, repoRoot: filepath.Dir(vaultPath), enabled: true})
-	signals, err := feedbackReviewSignalsForTargets([]feedbackTarget{target}, sinceDate, date, feedbackImportRunID(args, date, since, []feedbackTarget{target}))
+	signals, err := feedbackReviewSignalsForTargets([]feedbackTarget{target}, sinceDate, date)
 	if err != nil {
 		return feedbackReviewFinding{}, err
 	}
+	derivation, err := deriveFeedbackSignalsForTargets([]feedbackTarget{target}, date, sinceDate)
+	if err != nil {
+		return feedbackReviewFinding{}, err
+	}
+	signals = append(signals, feedbackReviewSignalsFromFeedbackSignals(derivation.Signals)...)
 	packet := buildFeedbackReviewPacket(date, since, signals)
 	for _, finding := range packet.Findings {
 		if feedbackReviewFindingMatchesRef(finding, ref) {

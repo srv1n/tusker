@@ -120,7 +120,6 @@ func searchNotes(notes []Note, query string, filters searchFilters) []searchResu
 			Path:    note.RelativePath,
 			Capsule: v7CapsuleMap(note),
 			Snippet: compactSnippet(searchText, needle, 180),
-			Capsule: capsulePayload(note),
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {

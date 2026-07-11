@@ -36,8 +36,8 @@ func TestCapsuleTemplatesCreateScaffolds(t *testing.T) {
 		if !capsule.Present {
 			t.Fatalf("%s missing capsule scaffold", rel)
 		}
-		if capsule.What != "" || len(capsule.UseWhen) != 0 || len(capsule.SkipWhen) != 0 {
-			t.Fatalf("%s scaffold should be empty, got %#v", rel, capsule)
+		if rel != "SKILL.md" && !capsuleHasContent(capsule) {
+			t.Fatalf("%s capsule should provide useful routing, got %#v", rel, capsule)
 		}
 	}
 }

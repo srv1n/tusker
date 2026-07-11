@@ -69,6 +69,43 @@ func loadRegisteredProjects(store *RuntimeStore, opts registeredProjectLoadOptio
 	return out, nil
 }
 
+// loadProjectContents keeps every project-backed workflow/note read behind the
+// same loader boundary. Registered projects retain quarantine semantics; the
+// implicit single-repo project used by `tusker serve --repo` remains loadable.
+func loadProjectContents(store *RuntimeStore, project RegisteredProject, notes bool) (loadedRegisteredProject, error) {
+	if strings.TrimSpace(project.ProjectID) != "" {
+		loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{
+			Notes:        notes,
+			LoadDisabled: true,
+			ProjectID:    project.ProjectID,
+		})
+		if err != nil {
+			return loadedRegisteredProject{}, err
+		}
+		if len(loaded) == 0 {
+			return loadedRegisteredProject{}, tuskerError(errorConfigInvalid, "registered project was not found")
+		}
+		if loaded[0].LoadError != nil {
+			return loaded[0], loaded[0].LoadError
+		}
+		return loaded[0], nil
+	}
+
+	loaded := loadedRegisteredProject{Project: project}
+	wfFile, err := loadWorkflow(project.VaultRoot)
+	if err != nil {
+		return loaded, err
+	}
+	loaded.Workflow = wfFile
+	if notes {
+		loaded.Notes, err = listAllNotes(project.VaultRoot)
+		if err != nil {
+			return loaded, err
+		}
+	}
+	return loaded, nil
+}
+
 func quarantineRegisteredProjectLoadError(store *RuntimeStore, project RegisteredProject, loadErr error) (RegisteredProject, error) {
 	if loadErr == nil {
 		return project, nil

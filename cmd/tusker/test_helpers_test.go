@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-func TestMain(m *testing.M) {
+func installEscalationTestNotifications() (func(), error) {
 	notificationRoot, err := os.MkdirTemp("", "tusker-test-notifications-*")
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	notificationPath := filepath.Join(notificationRoot, "notifications.tsv")
 	_ = os.Setenv(escalationNotifierModeEnv, "record")
@@ -18,9 +18,7 @@ func TestMain(m *testing.M) {
 	notifyEscalationUser = func(title, message string) error {
 		return recordEscalationNotification(title, message)
 	}
-	code := m.Run()
-	_ = os.RemoveAll(notificationRoot)
-	os.Exit(code)
+	return func() { _ = os.RemoveAll(notificationRoot) }, nil
 }
 
 func assertExists(t *testing.T, path string) {

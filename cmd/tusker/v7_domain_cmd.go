@@ -277,8 +277,13 @@ func v7DomainCapsule(note Note) string {
 		return fmt.Sprintf(`%s  domain  %s
 
 %s
+Status: %s
+Summary: %s
 Path: %s
-`, stringField(note.Data, "id"), stringField(note.Data, "title"), capsule, note.RelativePath)
+
+Read this when:
+%s
+`, stringField(note.Data, "id"), stringField(note.Data, "title"), capsule, stringField(note.Data, "status"), stringField(note.Data, "summary"), note.RelativePath, sectionContent(note.Body, "## Read This When"))
 	}
 	return fmt.Sprintf(`%s  domain  %s
 
@@ -628,17 +633,13 @@ func writeV7ProjectSkill(vaultPath, path string) error {
 		}
 	}
 	data := map[string]any{
-		"schema":      "tusker.project-skill/v7",
-		"kind":        "project_skill",
-		"name":        "project-knowledge",
-		"project":     v7ProjectID(vaultPath),
-		"status":      "current",
-		"description": "Route agents through this repository's V7 domain canon without publishing task proof or runtime state.",
-		"capsule": v7CapsuleOrdered(
-			"Repository project skill that routes agents through V7 domain canon.",
-			"Use before choosing domain INDEX/CANON files or updating project knowledge.",
-			"Skip when you only need Tusker lifecycle, gates, proof, closeout, or CLI mechanics.",
-		),
+		"schema":          "tusker.project-skill/v7",
+		"kind":            "project_skill",
+		"name":            "project-knowledge",
+		"project":         v7ProjectID(vaultPath),
+		"status":          "current",
+		"description":     "Route agents through this repository's V7 domain canon without publishing task proof or runtime state.",
+		"capsule":         capsule,
 		"operator_skill":  "tusker",
 		"source_of_truth": []string{"knowledge/domains"},
 		"canonical_files": []string{"SKILL.md", "knowledge/domains/*/INDEX.md", "knowledge/domains/*/CANON.md"},

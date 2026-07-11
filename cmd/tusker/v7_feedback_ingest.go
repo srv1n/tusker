@@ -285,10 +285,11 @@ func feedbackRegisteredProjectTargets(selectors []string) ([]feedbackTarget, err
 		return nil, err
 	}
 	defer store.Close()
-	projects, err := store.ListProjects()
+	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
 	if err != nil {
 		return nil, err
 	}
+	projects := loadedRegisteredProjects(loaded)
 	var targets []feedbackTarget
 	for _, selector := range selectors {
 		selector = strings.TrimSpace(selector)

@@ -141,7 +141,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "trace":
+	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "trace", "escalate":
 		return true
 	default:
 		return false
@@ -250,6 +250,12 @@ func run(command string, args Args) (int, error) {
 		return 0, waveV7RemoveCmd(args)
 	case "wave show":
 		return 0, waveV7ShowCmd(args)
+	case "escalate":
+		return 0, escalationV7Cmd(args)
+	case "escalate ack":
+		return 0, escalationV7AckCmd(args)
+	case "digest":
+		return 0, digestCmd(args)
 	case "trace":
 		return 0, traceV7Cmd(args)
 	case "trace list":
@@ -576,8 +582,6 @@ func run(command string, args Args) (int, error) {
 		return 0, daemonLimitsCmd(args)
 	case "daemon resume":
 		return 0, daemonResumeCmd(args)
-	case "daemon stop":
-		return 0, daemonStopCmd(args)
 	case "daemon service":
 		return 0, daemonServiceCmd(args)
 	case "daemon":

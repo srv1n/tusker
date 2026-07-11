@@ -22,9 +22,11 @@ type claudeLiveHandle struct {
 	itemID          string
 	attemptID       string
 	leaseGeneration int
+	eventSinkPath   string
 	rawLogPath      string
 	statusPath      string
 	runner          RunnerName
+	policy          CodexPolicy
 
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -32,14 +34,19 @@ type claudeLiveHandle struct {
 	stderr io.ReadCloser
 	ioWG   sync.WaitGroup
 
-	writeMu      sync.Mutex
-	nextID       atomic.Int64
-	sessionMu    sync.RWMutex
-	sessionRef   string
-	messageRef   string
-	interrupted  atomic.Bool
-	criticalOnce sync.Once
-	doneOnce     sync.Once
+	writeMu       sync.Mutex
+	nextID        atomic.Int64
+	sessionMu     sync.RWMutex
+	sessionRef    string
+	messageRef    string
+	turnID        string
+	turnIndex     int
+	eventLog      *EventLog
+	runtimeStore  *RuntimeStore
+	interrupted   atomic.Bool
+	turnCompleted atomic.Bool
+	criticalOnce  sync.Once
+	doneOnce      sync.Once
 }
 
 func shouldUseLiveClaude(command string) bool {
@@ -63,6 +70,12 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
 		command = "claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions"
+		if resume != nil && strings.TrimSpace(resume.SessionRef) != "" {
+			command += " --resume {{session_ref}}"
+			if strings.TrimSpace(resume.MessageRef) != "" {
+				command += " --resume-session-at {{message_ref}}"
+			}
+		}
 	}
 	if err := ensureDir(filepath.Dir(req.RawLogPath)); err != nil {
 		return nil, err
@@ -81,8 +94,8 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		"{{status_path}}":    req.StatusPath,
 		"{{note_path}}":      req.NotePath,
 		"{{vault_path}}":     req.VaultPath,
-		"{{session_ref}}":    "",
-		"{{message_ref}}":    "",
+		"{{session_ref}}":    resumeSessionRef(resume),
+		"{{message_ref}}":    resumeMessageRef(resume),
 	})
 	policy := codexPolicyForLane(req.CodexPolicy, req.Lane)
 	cmd := exec.CommandContext(ctx, "sh", "-lc", command)
@@ -94,9 +107,9 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-		NotePath: req.NotePath, VaultPath: req.VaultPath,
+		NotePath: req.NotePath, VaultPath: req.VaultPath, SessionRef: resumeSessionRef(resume), MessageRef: resumeMessageRef(resume),
 		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
-		CodexPolicy: withDefaultCodexPolicy(req.CodexPolicy),
+		CodexPolicy: policy,
 	})
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
@@ -121,9 +134,14 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		itemID:          req.ItemID,
 		attemptID:       req.AttemptID,
 		leaseGeneration: req.LeaseGeneration,
+		eventSinkPath:   req.EventSinkPath,
 		rawLogPath:      req.RawLogPath,
 		statusPath:      req.StatusPath,
 		runner:          RunnerClaude,
+		policy:          policy,
+		turnIndex:       -1,
+		eventLog:        NewEventLog(req.EventSinkPath),
+		runtimeStore:    runtimeStore,
 		cmd:             cmd,
 		stdin:           stdin,
 		stdout:          stdout,
@@ -156,8 +174,8 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	pid := cmd.Process.Pid
 	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
 	return &StartResult{
-		SessionRef:   handle.SessionRef(),
-		MessageRef:   handle.MessageRef(),
+		SessionRef:   firstNonEmpty(handle.SessionRef(), resumeSessionRef(resume)),
+		MessageRef:   firstNonEmpty(handle.MessageRef(), resumeMessageRef(resume)),
 		StartedAt:    processStartedAt,
 		PID:          pid,
 		PGID:         processGroupID(pid),

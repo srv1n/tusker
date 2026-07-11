@@ -42,6 +42,37 @@ type feedbackReviewSignal struct {
 	OccurrenceSources  []string
 	LastSeen           string
 	SourcePath         string
+	SourceRefs         []string
+}
+
+func feedbackReviewSignalsJSON(signals []feedbackReviewSignal) []map[string]any {
+	out := make([]map[string]any, 0, len(signals))
+	for _, signal := range signals {
+		out = append(out, map[string]any{
+			"id": feedbackReviewSignalID(signal), "date": signal.Date, "project": signal.Project,
+			"task": signal.Task, "task_ids": feedbackReviewTaskIDs(signal), "source": signal.Source,
+			"source_path": signal.SourcePath, "source_refs": signal.SourceRefs, "category": signal.Category,
+			"severity": signal.Severity, "confidence": signal.Confidence, "dedupe_key": signal.DedupeKey,
+			"summary": signal.Summary, "observed_facts": signal.ObservedFacts,
+			"recommendation": signal.Recommendation, "frequency": feedbackReviewSignalFrequency(signal),
+		})
+	}
+	return out
+}
+
+func feedbackReviewFindingsJSON(findings []feedbackReviewFinding) []map[string]any {
+	out := make([]map[string]any, 0, len(findings))
+	for _, finding := range findings {
+		out = append(out, map[string]any{
+			"id": finding.ID, "key": finding.Key, "category": finding.Category,
+			"severity": finding.Severity, "confidence": finding.Confidence, "summary": finding.Summary,
+			"likely_cause": finding.LikelyCause, "recommendation": finding.Recommendation,
+			"action_type": finding.ActionType, "prevention": finding.Prevention,
+			"signal_ids": finding.SignalIDs, "task_ids": finding.TaskIDs, "source_refs": finding.SourceRefs,
+			"dates": finding.Dates, "frequency": finding.Frequency, "latest_date": finding.LatestDate,
+		})
+	}
+	return out
 }
 
 type feedbackReviewDiagnostics struct {

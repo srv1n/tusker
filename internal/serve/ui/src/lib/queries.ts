@@ -14,7 +14,7 @@ import {
   type FrontmatterUpdateInput,
 } from "@/lib/frontmatter";
 import { liveRefetchInterval } from "@/lib/stream";
-import type { RunDetail } from "@/types/domain";
+import type { DocContent, DocListEntry, RunDetail, TaskCapsule, TaskDetail } from "@/types/domain";
 
 /** Query-key factory. */
 export const qk = {

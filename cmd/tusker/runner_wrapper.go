@@ -127,6 +127,11 @@ func runRunnerWrapper(parent context.Context, req runnerWrapperRequest) error {
 
 	result, err := runnerWrapperStartChild(ctx, req)
 	if err != nil {
+		if ctx.Err() != nil {
+			_ = appendRawLogLine(req.Start.RawLogPath, "runner wrapper stopping: "+ctx.Err().Error())
+			_ = writeRunnerStatusFile(req.Start.StatusPath, 130)
+			return nil
+		}
 		_ = writeRunnerStatusFile(req.Start.StatusPath, 1)
 		return err
 	}

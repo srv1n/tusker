@@ -85,7 +85,7 @@ func serveLeaseState(state string) string {
 	switch LeaseState(strings.TrimSpace(state)) {
 	case LeaseStateUnclaimed, LeaseStateRetryQueued:
 		return "unclaimed"
-	case LeaseStateReleased, LeaseStateInterrupted, LeaseStateParkedNoProgress, LeaseStateParkedBudget:
+	case LeaseStateReleased, LeaseStateInterrupted, LeaseStateParkedBudget:
 		return "released"
 	case LeaseStateParkedNoProgress:
 		return "parked"

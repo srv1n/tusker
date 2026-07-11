@@ -94,6 +94,9 @@ func (d *Daemon) retireCanonicalRuntimeRun(ctx context.Context, project Register
 		return run, false, nil
 	}
 	reason := canonicalRuntimeRetirementReason(source, status)
+	if strings.Contains(run.LastError, "automation plan do_not_dispatch") {
+		reason += "; " + run.LastError
+	}
 	if isDispatchingLeaseState(run.LeaseState) {
 		if interrupted, err := d.stopRunExecution(ctx, run); err != nil {
 			reason = fmt.Sprintf("%s: %s", reason, err.Error())

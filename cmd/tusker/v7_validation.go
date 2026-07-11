@@ -1004,7 +1004,6 @@ func validateV7Decision(note Note, ctx validationContext, where string, errors, 
 	if stringField(data, "status") == "accepted" && (stringField(data, "decided_by") == "" || stringField(data, "decided_at") == "") {
 		*errors = append(*errors, issue("DECISION_ACCEPTED_METADATA_MISSING", "accepted decision requires decided_by and decided_at", where, "", nil))
 	}
-	validateV7WorkStreams(note, ctx, where, warnings)
 }
 
 func validateV7Epic(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
@@ -1027,7 +1026,6 @@ func validateV7Epic(note Note, ctx validationContext, where string, errors, warn
 	if id != "" && !strings.HasSuffix(filepath.ToSlash(where), "work/epics/"+id+".md") {
 		*errors = append(*errors, issue(errorPathMismatch, "V7 epic path must be .tusker/work/epics/"+id+".md", where, "", nil))
 	}
-	validateV7SpecRefs(note, ctx, where, warnings)
 }
 
 func validateV7Proposal(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {

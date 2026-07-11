@@ -140,6 +140,10 @@ type automationStatusReport struct {
 	DaemonPID           int                        `json:"daemon_pid"`
 	DaemonStartedAt     string                     `json:"daemon_started_at,omitempty"`
 	DaemonUptimeSeconds int64                      `json:"daemon_uptime_seconds"`
+	LaunchdInstalled    bool                       `json:"launchd_installed"`
+	ManagedByLaunchd    bool                       `json:"managed_by_launchd"`
+	DaemonRunMode       string                     `json:"daemon_run_mode"`
+	LastRestartCause    string                     `json:"last_restart_cause,omitempty"`
 	ProjectCount        int                        `json:"project_count"`
 	ActiveRuns          int                        `json:"active_runs"`
 	ParkedRuns          int                        `json:"parked_runs"`
@@ -180,9 +184,13 @@ func automationStatusCmd(args Args) error {
 		DaemonPID:           intFromAny(status["daemon_pid"]),
 		DaemonStartedAt:     stringValue(status["daemon_started_at"]),
 		DaemonUptimeSeconds: int64FromAny(status["daemon_uptime_seconds"]),
+		LaunchdInstalled:    boolFromAny(status["launchd_installed"]),
+		ManagedByLaunchd:    boolFromAny(status["daemon_managed_by_launchd"]),
+		DaemonRunMode:       stringValue(status["daemon_run_mode"]),
+		LastRestartCause:    stringValue(status["daemon_last_restart_cause"]),
 		ProjectCount:        intFromAny(status["projects"]),
 		ActiveRuns:          intFromAny(status["activeRuns"]),
-		ParkedRuns:          intFromAny(status["parkedRuns"]),
+		ParkedRuns:          intFromAny(status["parkedNoProgressRuns"]),
 		MaxActiveRuns:       intFromAny(status["max_active_runs"]),
 		LimitSource:         stringValue(status["limit_source"]),
 		ParkedBudgetRuns:    intFromAny(status["parkedBudgetRuns"]),
@@ -772,7 +780,7 @@ func (ctx *automationCommandContext) effectiveRunForTask(note Note, runner strin
 }
 
 func automationRunBlocker(run RunStatus, now time.Time) string {
-	if run.Terminal {
+	if run.Terminal && LeaseState(strings.TrimSpace(run.LeaseState)) != LeaseStateParkedNoProgress {
 		return "existing run is terminal; update the task revision before redispatch"
 	}
 	switch LeaseState(strings.TrimSpace(run.LeaseState)) {

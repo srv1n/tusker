@@ -74,29 +74,30 @@ type serveProjectSummary struct {
 }
 
 type serveDaemonStatus struct {
-	Connected        bool                `json:"connected"`
-	Addr             string              `json:"addr"`
-	ActiveRuns       int                 `json:"activeRuns"`
-	MaxActiveRuns    int                 `json:"maxActiveRuns"`
-	QueuedTasks      int                 `json:"queuedTasks"`
-	LastPollAt       any                 `json:"lastPollAt"`
-	StateRoot        string              `json:"stateRoot"`
-	ProjectCount     int                 `json:"projectCount"`
-	Projects         []RegisteredProject `json:"projects"`
-	ParkedBudgetRuns int                 `json:"parkedBudgetRuns"`
-	BudgetCircuit    any                 `json:"budgetCircuit"`
-	CrashLoop        any                 `json:"crashLoop"`
-	InvariantCircuit any                 `json:"invariantCircuit"`
-	DiskPressure     DiskPressureStatus  `json:"diskPressure"`
-	DaemonAlive      bool                `json:"daemonAlive"`
-	DaemonDownReason any                 `json:"daemonDownReason"`
-	DaemonPID        int                 `json:"daemonPid"`
-	DaemonStartedAt  any                 `json:"daemonStartedAt"`
-	DaemonLastPollAt any                 `json:"daemonLastPollAt"`
-	ManagedByLaunchd bool                `json:"managedByLaunchd"`
-	LaunchdInstalled bool                `json:"launchdInstalled"`
-	DaemonRunMode    string              `json:"daemonRunMode"`
-	LastRestartCause string              `json:"lastRestartCause,omitempty"`
+	Connected                  bool                `json:"connected"`
+	Addr                       string              `json:"addr"`
+	ActiveRuns                 int                 `json:"activeRuns"`
+	MaxActiveRuns              int                 `json:"maxActiveRuns"`
+	QueuedTasks                int                 `json:"queuedTasks"`
+	LastPollAt                 any                 `json:"lastPollAt"`
+	StateRoot                  string              `json:"stateRoot"`
+	ProjectCount               int                 `json:"projectCount"`
+	Projects                   []RegisteredProject `json:"projects"`
+	ParkedBudgetRuns           int                 `json:"parkedBudgetRuns"`
+	BudgetCircuit              any                 `json:"budgetCircuit"`
+	CrashLoop                  any                 `json:"crashLoop"`
+	InvariantCircuit           any                 `json:"invariantCircuit"`
+	DiskPressure               DiskPressureStatus  `json:"diskPressure"`
+	DaemonAlive                bool                `json:"daemonAlive"`
+	DaemonDownReason           any                 `json:"daemonDownReason"`
+	DaemonPID                  int                 `json:"daemonPid"`
+	DaemonStartedAt            any                 `json:"daemonStartedAt"`
+	DaemonLastPollAt           any                 `json:"daemonLastPollAt"`
+	ManagedByLaunchd           bool                `json:"managedByLaunchd"`
+	LaunchdInstalled           bool                `json:"launchdInstalled"`
+	DaemonRunMode              string              `json:"daemonRunMode"`
+	LastRestartCause           string              `json:"lastRestartCause,omitempty"`
+	PersistentEscalationBanner bool                `json:"persistentEscalationBanner"`
 }
 
 type serveActionResult struct {

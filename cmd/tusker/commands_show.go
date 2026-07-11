@@ -159,7 +159,7 @@ func capsuleFrontmatterFacts(note Note) string {
 	if proofMode := strings.TrimSpace(stringField(note.Data, "proof_mode")); proofMode != "" {
 		lines = append(lines, "- Proof: "+proofMode+"/"+firstNonEmpty(stringField(note.Data, "proof_status"), "?"))
 	}
-	if refs := v7SpecRefs(note.Data); len(refs) > 0 {
+	if refs := normalizeList(note.Data["spec_refs"]); len(refs) > 0 {
 		lines = append(lines, "- spec_refs: "+strings.Join(refs, ", "))
 	}
 	if nextOwner := strings.TrimSpace(stringField(note.Data, "next_owner")); nextOwner != "" {

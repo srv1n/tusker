@@ -115,6 +115,7 @@ for line in sys.stdin:
 		t.Fatal(err)
 	}
 	assertEqual(t, "claude-fresh", result.SessionRef, "fresh claude session")
+	waitForStatusFile(t, filepath.Join(tempRoot, "claude.status.json"))
 }
 
 func TestPlanFileLifecycle(t *testing.T) {

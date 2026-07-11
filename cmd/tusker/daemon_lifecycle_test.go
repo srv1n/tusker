@@ -1478,6 +1478,27 @@ func deadPIDForTest() int {
 	return 999999
 }
 
+func setV7TaskStateForDaemonTest(t *testing.T, vault, taskID, status, readiness, owner string) {
+	t.Helper()
+	taskPath := filepath.Join(vault, "work", "tasks", taskID+".md")
+	data, body, err := parseFrontmatterMustRead(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["status"] = status
+	data["readiness"] = readiness
+	data["next_owner"] = owner
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(taskPath, content); err != nil {
+		t.Fatal(err)
+	}
+	autoReindex(vault)
+}
+
 // writeWorktreeReviewFlipForTest builds a worktree-local Tusker vault at the same
 // repo-relative location the daemon resolves for a runner workspace, and flips
 // the task to review there — mimicking a runner that ran
