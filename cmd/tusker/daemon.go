@@ -2777,6 +2777,18 @@ func (d *Daemon) workspaceStrategyForDispatch(project RegisteredProject, wf Work
 	return workspaceStrategyForRun(wf, project, run, runs)
 }
 
+func (d *Daemon) workspaceStrategyForDispatch(project RegisteredProject, wf Workflow, run RunStatus) WorkspaceStrategy {
+	configured := workspaceStrategyFromWorkflow(wf.Workspace.Strategy)
+	if configured != WorkspaceStrategyInPlace || d == nil || d.store == nil {
+		return configured
+	}
+	runs, err := d.store.ListRuns()
+	if err != nil {
+		return configured
+	}
+	return workspaceStrategyForRun(wf, project, run, runs)
+}
+
 type resolvedResumeSession struct {
 	SessionRef      string
 	MessageRef      string
