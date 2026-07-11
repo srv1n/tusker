@@ -4,8 +4,8 @@
 
 <!-- tusker:generated:start review-queue -->
 
-| Task | Risk | Next action |
-|---|---|---|
+| Task | Wave | Risk | Next action |
+|---|---|---|---|
 
 
 <!-- tusker:generated:end -->
