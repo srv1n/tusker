@@ -351,39 +351,37 @@ func reconcileV7WaveStates(vaultPath string, idx v7Index, actor, source string) 
 	changed := 0
 	for _, wave := range sortedV7Waves(idx) {
 		nextStatus, nextLandedAt := v7DerivedWaveState(idx, wave)
-		data, body, err := parseFrontmatterMustRead(wave.AbsolutePath)
+		changes := map[string]any{}
+		waveID := ""
+		nextRev, updated, err := mutateV7DocumentLocked(wave.AbsolutePath, v7FrontmatterOrder["wave"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
+			waveID = stringField(data, "id")
+			if stringField(data, "status") != nextStatus {
+				changes["status"] = map[string]any{"from": stringField(data, "status"), "to": nextStatus}
+				data["status"] = nextStatus
+			}
+			if nextLandedAt == "" {
+				if stringField(data, "landed_at") != "" {
+					changes["landed_at"] = map[string]any{"from": stringField(data, "landed_at"), "to": ""}
+					delete(data, "landed_at")
+				}
+			} else if stringField(data, "landed_at") != nextLandedAt {
+				changes["landed_at"] = map[string]any{"from": stringField(data, "landed_at"), "to": nextLandedAt}
+				data["landed_at"] = nextLandedAt
+			}
+			if len(changes) == 0 {
+				return data, body, false, nil
+			}
+			data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+			data["updated_by"] = actor
+			return data, body, true, nil
+		})
 		if err != nil {
 			return changed, err
-		}
-		baseRev := stringField(data, "state_rev")
-		updated := false
-		changes := map[string]any{}
-		if stringField(data, "status") != nextStatus {
-			changes["status"] = map[string]any{"from": stringField(data, "status"), "to": nextStatus}
-			data["status"] = nextStatus
-			updated = true
-		}
-		if nextLandedAt == "" {
-			if stringField(data, "landed_at") != "" {
-				changes["landed_at"] = map[string]any{"from": stringField(data, "landed_at"), "to": ""}
-				delete(data, "landed_at")
-				updated = true
-			}
-		} else if stringField(data, "landed_at") != nextLandedAt {
-			changes["landed_at"] = map[string]any{"from": stringField(data, "landed_at"), "to": nextLandedAt}
-			data["landed_at"] = nextLandedAt
-			updated = true
 		}
 		if !updated {
 			continue
 		}
-		data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
-		data["updated_by"] = actor
-		nextRev, err := saveV7DocumentCASRepairingStaleRev(wave.AbsolutePath, data, body, v7FrontmatterOrder["wave"], baseRev)
-		if err != nil {
-			return changed, err
-		}
-		if err := emitV7Event(vaultPath, stringField(data, "id"), "wave", "updated", actor, map[string]any{"changes": changes, "source": source, "state_rev": nextRev}); err != nil {
+		if err := emitV7Event(vaultPath, waveID, "wave", "updated", actor, map[string]any{"changes": changes, "source": source, "state_rev": nextRev}); err != nil {
 			return changed, err
 		}
 		changed++
@@ -397,24 +395,26 @@ func reconcileV7TaskWaveBackPointers(vaultPath string, idx v7Index, actor, sourc
 	for _, task := range sortedV7Tasks(idx) {
 		taskID := stringField(task.Data, "id")
 		want := desired[taskID]
-		have := stringField(task.Data, "wave")
-		if have == want {
-			continue
-		}
-		data, body, err := parseFrontmatterMustRead(task.AbsolutePath)
+		have := ""
+		_, updated, err := mutateV7DocumentLocked(task.AbsolutePath, v7FrontmatterOrder["task"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
+			have = stringField(data, "wave")
+			if have == want {
+				return data, body, false, nil
+			}
+			if want == "" {
+				delete(data, "wave")
+			} else {
+				data["wave"] = want
+			}
+			data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+			data["updated_by"] = actor
+			return data, body, true, nil
+		})
 		if err != nil {
 			return changed, err
 		}
-		baseRev := stringField(data, "state_rev")
-		if want == "" {
-			delete(data, "wave")
-		} else {
-			data["wave"] = want
-		}
-		data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
-		data["updated_by"] = actor
-		if _, err := saveV7DocumentCASRepairingStaleRev(task.AbsolutePath, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
-			return changed, err
+		if !updated {
+			continue
 		}
 		if err := emitV7Event(vaultPath, taskID, "task", "updated", actor, map[string]any{"changes": map[string]any{"wave": map[string]any{"from": have, "to": want}}, "source": source}); err != nil {
 			return changed, err

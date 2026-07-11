@@ -259,6 +259,58 @@ func TestV7ReconcileRepairsStaleObjectStateRevAndEmitsEvent(t *testing.T) {
 	}
 }
 
+func TestV7ReconcileNeverOverwritesSameMtimeCachedBody(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "vault")
+	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Cache safety.", "v7": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual body edit", "risk": "low", "priority": "p1", "v7": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+	stamp := time.Now().Truncate(time.Second)
+	if err := os.Chtimes(taskPath, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := listAllNotes(vault); err != nil {
+		t.Fatal(err)
+	}
+	data, body, err := parseFrontmatterMustRead(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedBody := strings.Replace(body, "Manual body edit", "Edited body edit", 1)
+	if changedBody == body || len(changedBody) != len(body) {
+		t.Fatal("same-size body edit fixture did not change as expected")
+	}
+	content, err := serializeDocument(data, changedBody, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(taskPath, content); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(taskPath, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconcileV7ObjectStateRevs(vault); err != nil {
+		t.Fatal(err)
+	}
+	afterData, afterBody, err := parseFrontmatterMustRead(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(afterBody, "Edited body edit") {
+		t.Fatalf("reconcile overwrote current Markdown body:\n%s", afterBody)
+	}
+	if stringField(afterData, "state_rev") != v7StateRev(afterData, afterBody) {
+		t.Fatal("reconcile did not repair state_rev from current Markdown")
+	}
+}
+
 func TestV7ReconcileRefusesTerminalRewindFromStaleObjectRev(t *testing.T) {
 	repo := t.TempDir()
 	runGitDir(t, repo, "init", "-b", "main")

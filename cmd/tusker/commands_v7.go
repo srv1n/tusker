@@ -1595,29 +1595,33 @@ func reconcileV7Cmd(args Args) error {
 	}
 	for _, task := range idx.Tasks {
 		next := v7ProjectedTaskState(vaultPath, task, idx)
-		data, body := cloneNoteData(task.Data), task.Body
-		baseRev := stringField(data, "state_rev")
-		updated := false
 		projectionChanges := map[string]any{}
-		for key, value := range next {
-			if toString(data[key]) != toString(value) {
-				projectionChanges[key] = map[string]any{"from": data[key], "to": value}
-				data[key] = value
-				updated = true
+		taskID := ""
+		nextRev, updated, err := mutateV7DocumentLocked(task.AbsolutePath, v7FrontmatterOrder["task"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
+			taskID = stringField(data, "id")
+			for key, value := range next {
+				if toString(data[key]) != toString(value) {
+					projectionChanges[key] = map[string]any{"from": data[key], "to": value}
+					data[key] = value
+				}
 			}
-		}
-		if updated {
+			if len(projectionChanges) == 0 {
+				return data, body, false, nil
+			}
 			data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
 			data["updated_by"] = "tusker:reconcile"
-			nextRev, err := saveV7DocumentCASRepairingStaleRev(task.AbsolutePath, data, body, v7FrontmatterOrder["task"], baseRev)
-			if err != nil {
-				return err
-			}
-			if err := emitV7Event(vaultPath, stringField(data, "id"), "task", "updated", "tusker:reconcile", map[string]any{"changes": projectionChanges, "source": "projection", "state_rev": nextRev}); err != nil {
-				return err
-			}
-			changed++
+			return data, body, true, nil
+		})
+		if err != nil {
+			return err
 		}
+		if !updated {
+			continue
+		}
+		if err := emitV7Event(vaultPath, taskID, "task", "updated", "tusker:reconcile", map[string]any{"changes": projectionChanges, "source": "projection", "state_rev": nextRev}); err != nil {
+			return err
+		}
+		changed++
 	}
 	if changed > 0 {
 		idx, err = loadV7Index(vaultPath)
@@ -1750,20 +1754,23 @@ func v7TaskIDsForTaskControl(vaultPath, taskID string) ([]string, error) {
 func reconcileV7EpicManagedBlocks(vaultPath string, idx v7Index) (int, error) {
 	changed := 0
 	for _, epic := range sortedV7Epics(idx) {
-		data, body := cloneNoteData(epic.Data), epic.Body
-		baseRev := stringField(data, "state_rev")
-		epicID := stringField(data, "id")
-		nextBody := replaceSection(body, "## Open gates", v7EpicOpenGatesBlock(idx, epicID))
-		nextBody = replaceSection(nextBody, "## Active work", v7EpicActiveWorkBlock(idx, epicID))
-		nextBody = replaceSection(nextBody, "## Recently completed", v7EpicRecentlyCompletedBlock(idx, epicID))
-		if v7CanonicalBody(nextBody) == v7CanonicalBody(body) {
-			continue
-		}
-		data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
-		if _, err := saveV7DocumentCASRepairingStaleRev(epic.AbsolutePath, data, nextBody, v7FrontmatterOrder["epic"], baseRev); err != nil {
+		_, updated, err := mutateV7DocumentLocked(epic.AbsolutePath, v7FrontmatterOrder["epic"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
+			epicID := stringField(data, "id")
+			nextBody := replaceSection(body, "## Open gates", v7EpicOpenGatesBlock(idx, epicID))
+			nextBody = replaceSection(nextBody, "## Active work", v7EpicActiveWorkBlock(idx, epicID))
+			nextBody = replaceSection(nextBody, "## Recently completed", v7EpicRecentlyCompletedBlock(idx, epicID))
+			if v7CanonicalBody(nextBody) == v7CanonicalBody(body) {
+				return data, body, false, nil
+			}
+			data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+			return data, nextBody, true, nil
+		})
+		if err != nil {
 			return changed, err
 		}
-		changed++
+		if updated {
+			changed++
+		}
 	}
 	return changed, nil
 }
@@ -1778,31 +1785,46 @@ func reconcileV7ObjectStateRevs(vaultPath string) (int, error) {
 		if !isV7StoreObject(note.Data) {
 			continue
 		}
-		data, body := cloneNoteData(note.Data), note.Body
-		storedRev := stringField(data, "state_rev")
-		if storedRev == "" || v7StateRevMatches(data, body, storedRev) {
+		storedRev := stringField(note.Data, "state_rev")
+		if storedRev == "" || v7StateRevMatches(note.Data, note.Body, storedRev) {
 			continue
 		}
-		if err := guardV7ReconcileTerminalTaskStateRevRepair(vaultPath, note, data); err != nil {
-			return repaired, err
-		}
-		if _, ok := data["updated_at"]; ok {
-			data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
-		}
-		if _, ok := data["updated_by"]; ok {
-			data["updated_by"] = "tusker:reconcile"
-		}
-		kind := effectiveV7Kind(data)
+		kind := effectiveV7Kind(note.Data)
 		order := v7FrontmatterOrder[kind]
 		if len(order) == 0 {
 			order = frontmatterOrderForType(kind)
 		}
-		nextRev, err := saveV7DocumentCASRepairingStaleRev(note.AbsolutePath, data, body, order, storedRev)
+		currentID := ""
+		previousRev := ""
+		nextRev, updated, err := mutateV7DocumentLocked(note.AbsolutePath, order, func(data map[string]any, body string) (map[string]any, string, bool, error) {
+			previousRev = stringField(data, "state_rev")
+			if previousRev == "" || v7StateRevMatches(data, body, previousRev) {
+				return data, body, false, nil
+			}
+			currentNote := note
+			currentNote.Data = data
+			currentNote.Body = body
+			if err := guardV7ReconcileTerminalTaskStateRevRepair(vaultPath, currentNote, data); err != nil {
+				return nil, "", false, err
+			}
+			if _, ok := data["updated_at"]; ok {
+				data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+			}
+			if _, ok := data["updated_by"]; ok {
+				data["updated_by"] = "tusker:reconcile"
+			}
+			currentID = stringField(data, "id")
+			kind = effectiveV7Kind(data)
+			return data, body, true, nil
+		})
 		if err != nil {
 			return repaired, err
 		}
+		if !updated {
+			continue
+		}
 		if _, ok := v7EventObjectKinds[kind]; ok {
-			if err := emitV7Event(vaultPath, stringField(data, "id"), kind, "updated", "tusker:reconcile", map[string]any{"source": "state_rev_repair", "previous_state_rev": storedRev, "state_rev": nextRev, "path": note.RelativePath}); err != nil {
+			if err := emitV7Event(vaultPath, currentID, kind, "updated", "tusker:reconcile", map[string]any{"source": "state_rev_repair", "previous_state_rev": previousRev, "state_rev": nextRev, "path": note.RelativePath}); err != nil {
 				return repaired, err
 			}
 		}
@@ -3546,15 +3568,40 @@ func v7GitFrontmatterAtRef(repoRoot, ref, rel string) (map[string]any, bool, err
 	return data, true, nil
 }
 
+type v7LockedDocumentMutation func(data map[string]any, body string) (map[string]any, string, bool, error)
+
+// mutateV7DocumentLocked reloads Markdown only after acquiring the document
+// lock, then computes the reconciliation change from that current content.
+// Cached Note values are discovery hints and never become write authority.
+func mutateV7DocumentLocked(filePath string, order []string, mutate v7LockedDocumentMutation) (string, bool, error) {
+	lock, err := acquireV7DocumentLock(filePath, v7DocumentLockTimeout)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = lock.Close() }()
+
+	currentData, currentBody, err := parseFrontmatterMustRead(filePath)
+	if err != nil {
+		return "", false, err
+	}
+	nextData, nextBody, changed, err := mutate(currentData, currentBody)
+	if err != nil || !changed {
+		return stringField(currentData, "state_rev"), false, err
+	}
+	nextRev := v7StateRev(nextData, nextBody)
+	nextData["state_rev"] = nextRev
+	content, err := serializeDocument(nextData, nextBody, order)
+	if err != nil {
+		return "", false, err
+	}
+	if err := atomicReplaceV7Document(filePath, content); err != nil {
+		return "", false, err
+	}
+	invalidateCachedNote(filePath)
+	return nextRev, true, nil
+}
+
 func saveV7DocumentCAS(filePath string, data map[string]any, body string, order []string, baseRev string) (string, error) {
-	return saveV7DocumentCASWithOptions(filePath, data, body, order, baseRev, false)
-}
-
-func saveV7DocumentCASRepairingStaleRev(filePath string, data map[string]any, body string, order []string, baseRev string) (string, error) {
-	return saveV7DocumentCASWithOptions(filePath, data, body, order, baseRev, true)
-}
-
-func saveV7DocumentCASWithOptions(filePath string, data map[string]any, body string, order []string, baseRev string, allowStaleCurrentRev bool) (string, error) {
 	lock, err := acquireV7DocumentLock(filePath, v7DocumentLockTimeout)
 	if err != nil {
 		return "", err
@@ -3568,7 +3615,7 @@ func saveV7DocumentCASWithOptions(filePath string, data map[string]any, body str
 	currentRev := stringField(currentData, "state_rev")
 	if strings.TrimSpace(currentRev) != "" {
 		actualRev := v7StateRev(currentData, currentBody)
-		if !v7StateRevMatches(currentData, currentBody, currentRev) && !allowStaleCurrentRev {
+		if !v7StateRevMatches(currentData, currentBody, currentRev) {
 			return "", tuskerError("CAS_CONFLICT", "V7 object content changed without a refreshed state_rev: "+filepath.Base(filePath), withPath(filePath), withHint("run `tusker reconcile` to repair the object metadata before retrying the control operation"), withContext(map[string]any{"current_rev": currentRev, "actual_rev": actualRev}))
 		}
 	}

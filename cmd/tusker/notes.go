@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"errors"
 	"io/fs"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	skillbundle "tusker/skill"
 )
@@ -23,9 +25,10 @@ type noteFileVersion struct {
 }
 
 type cachedNote struct {
-	version noteFileVersion
-	note    Note
-	hasBody bool
+	version     noteFileVersion
+	contentHash [sha256.Size]byte
+	note        Note
+	hasBody     bool
 }
 
 type vaultNoteCache struct {
@@ -109,15 +112,17 @@ func (cache *vaultNoteCache) list(vaultPath string, opts noteLoadOptions) ([]Not
 	}
 
 	type result struct {
-		index int
-		note  Note
-		err   error
+		index       int
+		note        Note
+		contentHash [sha256.Size]byte
+		err         error
 	}
 
 	type job struct {
 		index   int
 		path    string
 		version noteFileVersion
+		text    string
 	}
 	jobs := make([]job, 0)
 	versions := make(map[int]noteFileVersion)
@@ -131,6 +136,17 @@ func (cache *vaultNoteCache) list(vaultPath string, opts noteLoadOptions) ([]Not
 		version := noteFileVersion{modTime: info.ModTime().UnixNano(), size: info.Size()}
 		seen[filePath] = struct{}{}
 		if entry, ok := cache.entries[filePath]; ok && entry.version == version && (opts.FrontmatterOnly || entry.hasBody) {
+			if noteCacheNeedsCoarseMtimeHashCheck(info.ModTime()) {
+				text, err := readNoteTextForCache(filePath)
+				if err != nil {
+					return nil, err
+				}
+				if sha256.Sum256([]byte(text)) != entry.contentHash {
+					jobs = append(jobs, job{index: index, path: filePath, version: version, text: text})
+					versions[index] = version
+					continue
+				}
+			}
 			notes[index] = cloneNoteForLoad(entry.note, opts.FrontmatterOnly)
 			continue
 		}
@@ -142,15 +158,16 @@ func (cache *vaultNoteCache) list(vaultPath string, opts noteLoadOptions) ([]Not
 	done := make(chan result, len(jobs))
 	for _, job := range jobs {
 		sem <- struct{}{}
-		go func(i int, current string) {
+		go func(i int, current, preloaded string) {
 			defer func() { <-sem }()
-			if noteCacheReadObserver != nil {
-				noteCacheReadObserver()
-			}
-			text, err := readText(current)
-			if err != nil {
-				done <- result{index: i, err: err}
-				return
+			text := preloaded
+			if text == "" {
+				var err error
+				text, err = readNoteTextForCache(current)
+				if err != nil {
+					done <- result{index: i, err: err}
+					return
+				}
 			}
 			if noteCacheParseObserver != nil {
 				noteCacheParseObserver()
@@ -166,7 +183,8 @@ func (cache *vaultNoteCache) list(vaultPath string, opts noteLoadOptions) ([]Not
 				return
 			}
 			done <- result{
-				index: i,
+				index:       i,
+				contentHash: sha256.Sum256([]byte(text)),
 				note: Note{
 					AbsolutePath: current,
 					RelativePath: filepath.ToSlash(rel),
@@ -174,7 +192,7 @@ func (cache *vaultNoteCache) list(vaultPath string, opts noteLoadOptions) ([]Not
 					Body:         body,
 				},
 			}
-		}(job.index, job.path)
+		}(job.index, job.path, job.text)
 	}
 
 	for range jobs {
@@ -182,7 +200,7 @@ func (cache *vaultNoteCache) list(vaultPath string, opts noteLoadOptions) ([]Not
 		if current.err != nil {
 			return nil, current.err
 		}
-		entry := cachedNote{version: versions[current.index], note: current.note, hasBody: true}
+		entry := cachedNote{version: versions[current.index], contentHash: current.contentHash, note: current.note, hasBody: true}
 		if opts.FrontmatterOnly {
 			entry.note.Body = ""
 			entry.hasBody = false
@@ -196,6 +214,21 @@ func (cache *vaultNoteCache) list(vaultPath string, opts noteLoadOptions) ([]Not
 		}
 	}
 	return notes, nil
+}
+
+func readNoteTextForCache(filePath string) (string, error) {
+	if noteCacheReadObserver != nil {
+		noteCacheReadObserver()
+	}
+	return readText(filePath)
+}
+
+func noteCacheNeedsCoarseMtimeHashCheck(modTime time.Time) bool {
+	if modTime.Nanosecond() != 0 {
+		return false
+	}
+	age := time.Since(modTime)
+	return age >= -2*time.Second && age <= 2*time.Second
 }
 
 func cloneNoteForLoad(note Note, frontmatterOnly bool) Note {

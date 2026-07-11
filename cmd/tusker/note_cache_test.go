@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestNoteCacheUnchangedRescanDoesNotReadOrParse(t *testing.T) {
@@ -38,6 +40,28 @@ func TestNoteCacheUnchangedRescanDoesNotReadOrParse(t *testing.T) {
 	}
 	if len(notes) != 1 || notes[0].Body != "" || stringField(notes[0].Data, "id") != "APP-T-0001" {
 		t.Fatalf("frontmatter-only note = %#v", notes)
+	}
+}
+
+func TestNoteCacheFrontmatterWarmHitStillAllowsFullBodyLoad(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "vault")
+	path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+	if err := writeText(path, "---\nid: APP-T-0001\nkind: task\n---\n\n# full body\n\nContract detail.\n"); err != nil {
+		t.Fatal(err)
+	}
+	frontmatter, err := listAllNotesFrontmatter(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frontmatter) != 1 || frontmatter[0].Body != "" {
+		t.Fatalf("frontmatter-only load leaked body: %#v", frontmatter)
+	}
+	full, err := listAllNotes(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(full) != 1 || !strings.Contains(full[0].Body, "Contract detail.") {
+		t.Fatalf("full-body load reused incomplete cache entry: %#v", full)
 	}
 }
 
@@ -94,6 +118,50 @@ func TestNoteCacheInvalidatesChangedAndDeletedNotes(t *testing.T) {
 	}
 	if len(notes) != 1 || !boolField(notes[0].Data, "changed") {
 		t.Fatalf("cache did not apply change/delete: %#v", notes)
+	}
+}
+
+func TestNoteCacheHashFallbackDetectsSameSizeCoarseMtimeEdit(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "vault")
+	path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+	original := "---\nid: APP-T-0001\nkind: task\nflag: one\n---\n\n# task\n"
+	changed := "---\nid: APP-T-0001\nkind: task\nflag: two\n---\n\n# task\n"
+	if len(original) != len(changed) {
+		t.Fatal("test fixture must preserve file size")
+	}
+	if err := writeText(path, original); err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Now().Truncate(time.Second)
+	if err := os.Chtimes(path, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := listAllNotesFrontmatter(vault); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, changed); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+
+	var reads, parses atomic.Int64
+	noteCacheReadObserver = func() { reads.Add(1) }
+	noteCacheParseObserver = func() { parses.Add(1) }
+	t.Cleanup(func() {
+		noteCacheReadObserver = nil
+		noteCacheParseObserver = nil
+	})
+	notes, err := listAllNotesFrontmatter(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 || stringField(notes[0].Data, "flag") != "two" {
+		t.Fatalf("coarse-mtime cache returned stale note: %#v", notes)
+	}
+	if reads.Load() != 1 || parses.Load() != 1 {
+		t.Fatalf("hash fallback reads=%d parses=%d, want one changed-file reload", reads.Load(), parses.Load())
 	}
 }
 
