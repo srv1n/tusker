@@ -9,6 +9,17 @@ import (
 	"time"
 )
 
+func TestDefaultRuntimeBudgetConfigIsBoundedForUnattendedOperation(t *testing.T) {
+	budget := defaultRuntimeBudgetConfig()
+	assertEqual(t, true, budget.Enabled, "budget enabled")
+	assertEqual(t, 2_000_000, budget.PerAttemptInputTokens, "attempt input cap")
+	assertEqual(t, 100_000, budget.PerAttemptOutputTokens, "attempt output cap")
+	assertEqual(t, 6_000_000, budget.PerTaskInputTokens, "task input cap")
+	assertEqual(t, 300_000, budget.PerTaskOutputTokens, "task output cap")
+	assertEqual(t, 20_000_000, budget.DailyInputTokens, "daily input cap")
+	assertEqual(t, 1_000_000, budget.DailyOutputTokens, "daily output cap")
+}
+
 func TestBudgetAcrossTurnsAttemptBreach(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	store, err := OpenRuntimeStore(stateRoot)
@@ -210,6 +221,10 @@ func TestBudgetSingleEnforcementSiteBudgetOverrideCap(t *testing.T) {
 	budget := resolveRunBudget(ctx.Workflow.Data, note)
 	assertEqual(t, ctx.Workflow.Data.Runtime.Budget.PerAttemptInputTokens*4, budget.PerAttemptInputTokens, "attempt override capped")
 	assertEqual(t, ctx.Workflow.Data.Runtime.Budget.PerTaskInputTokens*4, budget.PerTaskInputTokens, "task override capped")
+	// Keep the daily circuit out of this fixture: it verifies the task-level
+	// cap, which must win only when the daily ceiling has not already opened.
+	ctx.Workflow.Data.Runtime.Budget.DailyInputTokens = budget.PerTaskInputTokens * 2
+	ctx.Workflow.Data.Runtime.Budget.DailyOutputTokens = budget.PerTaskOutputTokens * 2
 	if err := ctx.Store.SaveTurn(RunTurn{ProjectID: project.ProjectID, RecordID: "APP-T-0001", AttemptID: "attempt-1", TurnID: "turn-1", InputTokens: budget.PerTaskInputTokens + 1, TotalTokens: budget.PerTaskInputTokens + 1, LastEventAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
 		t.Fatal(err)
 	}

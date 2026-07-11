@@ -24,15 +24,17 @@ import { cn } from "@/lib/cn";
 import { Dot, Mono } from "@/components/ui/primitives";
 import {
   GateKindChip,
+  OutcomeChip,
   PriorityChip,
   ProofChip,
   ReadinessChip,
   RiskChip,
+  RunnerBadge,
   StatusChip,
 } from "@/components/ui/chips";
 import { SectionLabel } from "@/components/ui/page";
 import { Skeleton, ErrorState } from "@/components/ui/states";
-import { statusTone } from "@/components/ui/tone";
+import { livenessTone, statusTone } from "@/components/ui/tone";
 import {
   useCloseTask,
   useDoc,
@@ -45,8 +47,8 @@ import {
 } from "@/lib/queries";
 import { Button, Select, TextInput } from "@/components/ui/controls";
 import { ActionResultLine, useConfirm } from "@/components/ui/action-feedback";
-import { relativeTime } from "@/lib/time";
-import type { EvidenceCard, TaskDetail } from "@/types/domain";
+import { compactNumber, duration, relativeTime } from "@/lib/time";
+import type { EvidenceCard, RunSummary, TaskDetail } from "@/types/domain";
 import { DocEditor, type EditorRuntimeConfig } from "@/features/editor";
 import { DocShell } from "./DocShell";
 import { PropertyPanel } from "./PropertyPanel";
@@ -66,7 +68,7 @@ const barBtn =
   "rounded-lg px-3.5 py-1.5 text-[12.5px] font-semibold leading-none transition-colors";
 
 export function TaskContract({ projectId, taskId }: { projectId: string; taskId: string }) {
-  const q = useTask(taskId);
+  const q = useTask(taskId, projectId);
   const task = q.data;
 
   if (!task) {
@@ -82,7 +84,7 @@ export function TaskContract({ projectId, taskId }: { projectId: string; taskId:
 
 function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail }) {
   const docPath = taskDocPath(task.id);
-  const docQuery = useDoc(docPath);
+  const docQuery = useDoc(docPath, projectId);
   const doc = docQuery.data ?? taskDetailToDocContent(task);
   const ed = useDocEditor(doc);
   const navigate = useNavigate();
@@ -93,7 +95,7 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
 
   const editing = ed.phase === "editing";
   const confirm = useConfirm();
-  const closeReview = useCloseTask(task.id);
+  const closeReview = useCloseTask(task.id, projectId);
 
   // Merge-readiness checklist, derived from the real acceptance criteria + their
   // proof state — never a fixture. A criterion that isn't passing is a blocker,
@@ -202,7 +204,7 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
       path={task.id}
       actions={actions}
     >
-      <div className="mx-auto grid w-full max-w-[1080px] grid-cols-1 gap-9 px-11 pb-24 pt-7 lg:grid-cols-[minmax(0,1fr)_280px]">
+      <div className="mx-auto grid w-full max-w-[1080px] grid-cols-1 gap-9 px-4 pb-24 pt-7 sm:px-6 lg:grid-cols-[minmax(0,1fr)_280px] lg:px-11">
         <div ref={editorHostRef} className="min-w-0">
           {checks.length > 0 && (
             <>
@@ -300,6 +302,20 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
             </Section>
           )}
 
+          {task.runHistory.length > 0 && (
+            <Section label="Run history">
+              <div className="flex flex-col gap-2">
+                {task.runHistory.map((run) => (
+                  <RunHistoryItem
+                    key={`${run.taskId}:${run.lane}:${run.attemptCount}:${run.outcome}`}
+                    run={run}
+                    projectId={projectId}
+                  />
+                ))}
+              </div>
+            </Section>
+          )}
+
           {task.knowledgeDelta && (
             <Section label="Knowledge delta">
               <div className="flex gap-3 rounded-xl border border-accent/25 bg-accent-soft/40 px-4 py-3">
@@ -385,7 +401,7 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
           )}
 
           <div className="flex flex-col gap-2">
-            <TaskActionPanel task={task} />
+            <TaskActionPanel task={task} projectId={projectId} />
             {task.runHistory.length > 0 && (
               <Link
                 to="/p/$projectId/runs/$taskId"
@@ -470,13 +486,13 @@ function TaskProseBlock({
   );
 }
 
-function TaskActionPanel({ task }: { task: TaskDetail }) {
-  const statusAction = useTaskStatusAction(task.id);
-  const closeTask = useCloseTask(task.id);
-  const landTask = useLandTask(task.id);
+function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: string }) {
+  const statusAction = useTaskStatusAction(task.id, projectId);
+  const closeTask = useCloseTask(task.id, projectId);
+  const landTask = useLandTask(task.id, projectId);
   const gateAction = useGateAction();
-  const evidenceAdd = useEvidenceAdd(task.id);
-  const feedbackAdd = useFeedbackAdd();
+  const evidenceAdd = useEvidenceAdd(task.id, projectId);
+  const feedbackAdd = useFeedbackAdd(projectId);
   const confirm = useConfirm();
 
   const [reason, setReason] = useState("");
@@ -559,13 +575,13 @@ function TaskActionPanel({ task }: { task: TaskDetail }) {
           </Select>
           <TextInput value={gateText} onChange={(e) => setGateText(e.target.value)} placeholder="gate evidence or reason" className="w-full" />
           <div className="grid grid-cols-3 gap-1.5">
-            <Button type="button" size="sm" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "satisfy", body: { evidence: gateText, actor: actor || undefined }, taskId: task.id })}>
+            <Button type="button" size="sm" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "satisfy", body: { evidence: gateText, actor: actor || undefined }, taskId: task.id, projectId })}>
               Satisfy
             </Button>
-            <Button type="button" size="sm" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "waive", body: { reason: gateText, actor: actor || undefined }, taskId: task.id })}>
+            <Button type="button" size="sm" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "waive", body: { reason: gateText, actor: actor || undefined }, taskId: task.id, projectId })}>
               Waive
             </Button>
-            <Button type="button" size="sm" variant="danger" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "obsolete", body: { reason: gateText, actor: actor || undefined }, taskId: task.id })}>
+            <Button type="button" size="sm" variant="danger" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "obsolete", body: { reason: gateText, actor: actor || undefined }, taskId: task.id, projectId })}>
               Obsolete
             </Button>
           </div>
@@ -643,6 +659,37 @@ function RailLabel({ children }: { children: ReactNode }) {
   );
 }
 
+function RunHistoryItem({ run, projectId }: { run: RunSummary; projectId: string }) {
+  const tokens = compactNumber(run.tokens.input + run.tokens.output);
+  return (
+    <Link
+      to="/p/$projectId/runs/$taskId"
+      params={{ projectId, taskId: run.taskId }}
+      className="rounded-xl border border-line bg-raised px-3.5 py-3 transition-colors hover:border-line-soft hover:bg-hover"
+    >
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <RunnerBadge runner={run.runner} />
+        <OutcomeChip outcome={run.outcome} />
+        <Mono className="text-[10.5px] text-faint">{run.lane}</Mono>
+        <span className="ml-auto flex items-center gap-1.5">
+          <Dot tone={livenessTone[run.liveness]} size={6} />
+          <Mono className="text-[10.5px] text-faint">{run.liveness}</Mono>
+        </span>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted">
+        <span>{plural(run.attemptCount, "attempt")}</span>
+        <span>{duration(run.elapsedSec)}</span>
+        <span>{tokens} tokens</span>
+        <span>last event {duration(run.sinceLastEventSec)} ago</span>
+      </div>
+    </Link>
+  );
+}
+
+function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
 function FactRow({
   k,
   locked = false,
@@ -701,10 +748,10 @@ function EvidenceItem({ evidence, projectId }: { evidence: EvidenceCard; project
 function ContractSkeleton() {
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-line px-11 py-3.5">
+      <div className="border-b border-line px-4 py-3.5 sm:px-6 lg:px-11">
         <Skeleton className="h-4 w-52" />
       </div>
-      <div className="mx-auto grid w-full max-w-[1080px] grid-cols-1 gap-9 px-11 pt-7 lg:grid-cols-[minmax(0,1fr)_280px]">
+      <div className="mx-auto grid w-full max-w-[1080px] grid-cols-1 gap-9 px-4 pt-7 sm:px-6 lg:grid-cols-[minmax(0,1fr)_280px] lg:px-11">
         <div className="min-w-0">
           <Skeleton className="mb-3 h-3 w-16" />
           <Skeleton className="mb-5 h-9 w-2/3" />

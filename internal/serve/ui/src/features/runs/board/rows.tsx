@@ -37,10 +37,10 @@ export function RunsTableHeader() {
       )}
     >
       <span>Task</span>
-      <span>Runner</span>
-      <span>Lane</span>
-      <span>Lease</span>
-      <span>Tokens</span>
+      <span className="hidden md:block">Runner</span>
+      <span className="hidden md:block">Lane</span>
+      <span className="hidden md:block">Lease</span>
+      <span className="hidden md:block">Tokens</span>
       <span>State</span>
     </div>
   );
@@ -70,7 +70,7 @@ function TaskCell({
 /** Runner badge over the model id (both mono). */
 function RunnerCell({ run }: { run: RunSummary }) {
   return (
-    <span className="flex min-w-0 flex-col items-start gap-1">
+    <span className="hidden min-w-0 flex-col items-start gap-1 md:flex">
       <RunnerBadge runner={run.runner} />
       <Mono className="block w-full truncate text-[9.5px] text-faint" title={run.model}>
         {run.model}
@@ -100,11 +100,13 @@ export function ActiveRunRow({ run }: { run: RunSummary }) {
     >
       <TaskCell run={run} titleClass="text-ink" />
       <RunnerCell run={run} />
-      <Mono className={cn("self-center text-[11px]", laneTextClass(run.lane))}>{run.lane}</Mono>
-      <Mono className={cn("self-center text-[10px]", leaseTextClass(run.leaseState))}>
+      <Mono className={cn("hidden self-center text-[11px] md:block", laneTextClass(run.lane))}>
+        {run.lane}
+      </Mono>
+      <Mono className={cn("hidden self-center text-[10px] md:block", leaseTextClass(run.leaseState))}>
         {run.leaseState}
       </Mono>
-      <Mono className="self-center text-[11px] text-ink-soft">
+      <Mono className="hidden self-center text-[11px] text-ink-soft md:block">
         {compactNumber(tokenTotal(run))}
       </Mono>
       <span className="flex flex-col items-start gap-1">
@@ -136,14 +138,16 @@ export function RecentRunRow({ run }: { run: RunSummary }) {
       className={cn(RUNS_GRID, "items-center bg-panel/40 px-4 py-[11px] opacity-90", ROW_BORDER)}
     >
       <TaskCell run={run} titleClass="text-ink-soft" subtitle={churn} />
-      <span className="justify-self-start">
+      <span className="hidden justify-self-start md:block">
         <RunnerBadge runner={run.runner} />
       </span>
-      <Mono className="self-center text-[11px] text-faint">{run.lane}</Mono>
-      <Mono className={cn("self-center text-[10px]", leaseTextClass(run.leaseState))}>
+      <Mono className="hidden self-center text-[11px] text-faint md:block">{run.lane}</Mono>
+      <Mono className={cn("hidden self-center text-[10px] md:block", leaseTextClass(run.leaseState))}>
         {run.leaseState}
       </Mono>
-      <Mono className="self-center text-[11px] text-muted">{compactNumber(tokenTotal(run))}</Mono>
+      <Mono className="hidden self-center text-[11px] text-muted md:block">
+        {compactNumber(tokenTotal(run))}
+      </Mono>
       <span className="flex items-center gap-1.5 justify-self-start">
         <OutcomeChip outcome={run.outcome} />
         {run.terminal && (
@@ -164,10 +168,10 @@ export function RunsBoardSkeleton() {
             <Skeleton className="h-2 w-16" />
             <Skeleton className="h-3 w-3/4" />
           </div>
-          <Skeleton className="h-4 w-16" />
-          <Skeleton className="h-3 w-10" />
-          <Skeleton className="h-3 w-10" />
-          <Skeleton className="h-3 w-12" />
+          <Skeleton className="hidden h-4 w-16 md:block" />
+          <Skeleton className="hidden h-3 w-10 md:block" />
+          <Skeleton className="hidden h-3 w-10 md:block" />
+          <Skeleton className="hidden h-3 w-12 md:block" />
           <Skeleton className="h-4 w-20" />
         </div>
       ))}

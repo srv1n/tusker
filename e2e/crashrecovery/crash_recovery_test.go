@@ -517,7 +517,7 @@ automation:
   enabled_runners: [codex]
   workspace:
     strategy: copy
-    root: ../.tusker-e2e-workspaces
+    root: workspaces
   concurrency:
     max_active_runs: 1
     max_active_runs_per_project: 1

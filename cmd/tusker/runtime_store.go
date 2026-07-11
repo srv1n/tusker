@@ -2,11 +2,13 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -960,6 +962,187 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 	return err
 }
 
+var runtimeRunMutableColumns = []string{
+	"item_id", "runner", "lane", "lease_state", "lease_owner", "lease_generation",
+	"lease_expires_at", "lease_host", "attempt_outcome", "active_attempt_id",
+	"workspace_path", "session_ref", "cloud_task_id", "cloud_status",
+	"cloud_environment_id", "cloud_attempt_number", "pull_request_url", "apply_ref",
+	"logs_summary", "final_summary", "process_pid", "process_pgid", "process_started_at",
+	"prompt_path", "event_sink_path", "raw_log_path", "status_path", "work_revision",
+	"attempt_count", "next_retry_at", "last_error", "last_event_at", "first_event_at",
+	"last_heartbeat_at", "terminal", "started_at", "updated_at",
+}
+
+func normalizeRuntimeRunWrite(run RunStatus) RunStatus {
+	if run.LeaseState == "" {
+		run.LeaseState = string(LeaseStateUnclaimed)
+	}
+	if run.AttemptOutcome == "" {
+		run.AttemptOutcome = string(AttemptOutcomeNone)
+	}
+	if strings.TrimSpace(run.UpdatedAt) == "" {
+		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	return run
+}
+
+func runtimeRunMutableValues(run RunStatus) []any {
+	return []any{
+		run.ItemID, run.Runner, run.Lane, run.LeaseState, run.LeaseOwner, run.LeaseGeneration,
+		run.LeaseExpiresAt, run.LeaseHost, run.AttemptOutcome, run.ActiveAttemptID,
+		run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus,
+		run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef,
+		run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt,
+		run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision,
+		run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.FirstEventAt,
+		run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt,
+	}
+}
+
+func runtimeRunChangedColumns(expected, actual RunStatus) []string {
+	expectedValues := runtimeRunMutableValues(expected)
+	actualValues := runtimeRunMutableValues(actual)
+	changed := make([]string, 0)
+	for index, column := range runtimeRunMutableColumns {
+		if !reflect.DeepEqual(expectedValues[index], actualValues[index]) {
+			changed = append(changed, column)
+		}
+	}
+	return changed
+}
+
+func runtimeRunChangesCompatible(before, intended, current RunStatus) bool {
+	beforeValues := runtimeRunMutableValues(before)
+	intendedValues := runtimeRunMutableValues(intended)
+	currentValues := runtimeRunMutableValues(current)
+	changed := false
+	for index := range runtimeRunMutableColumns {
+		if reflect.DeepEqual(beforeValues[index], currentValues[index]) {
+			continue
+		}
+		changed = true
+		if !reflect.DeepEqual(intendedValues[index], currentValues[index]) {
+			return false
+		}
+	}
+	return changed
+}
+
+func runtimeRunSnapshotUpdate(expected, updated RunStatus) (string, []any) {
+	assignments := make([]string, 0, len(runtimeRunMutableColumns))
+	predicates := make([]string, 0, len(runtimeRunMutableColumns))
+	for _, column := range runtimeRunMutableColumns {
+		assignments = append(assignments, column+" = ?")
+		predicates = append(predicates, column+" = ?")
+	}
+	query := `UPDATE runs SET ` + strings.Join(assignments, ", ") +
+		` WHERE project_id = ? AND record_id = ? AND ` + strings.Join(predicates, " AND ")
+	args := runtimeRunMutableValues(updated)
+	args = append(args, expected.ProjectID, expected.RecordID)
+	args = append(args, runtimeRunMutableValues(expected)...)
+	return query, args
+}
+
+func runtimeRunInsert(run RunStatus) (string, []any) {
+	columns := append([]string{"project_id", "record_id"}, runtimeRunMutableColumns...)
+	placeholders := make([]string, len(columns))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	query := `INSERT INTO runs (` + strings.Join(columns, ", ") + `) VALUES (` +
+		strings.Join(placeholders, ", ") + `) ON CONFLICT(project_id, record_id) DO NOTHING`
+	args := []any{run.ProjectID, run.RecordID}
+	args = append(args, runtimeRunMutableValues(run)...)
+	return query, args
+}
+
+// UpsertRunIfSnapshot is the daemon-poll write path. Existing rows are updated
+// only when every stored field still matches the row PollOnce read; absent rows
+// are inserted only if no concurrent writer created them first.
+func (s *RuntimeStore) UpsertRunIfSnapshot(expected, updated RunStatus) (bool, error) {
+	updated = normalizeRuntimeRunWrite(updated)
+	if strings.TrimSpace(updated.ProjectID) == "" || strings.TrimSpace(updated.RecordID) == "" {
+		return false, tuskerError(errorInvalidArg, "conditional run update requires project_id and record_id")
+	}
+	var query string
+	var args []any
+	if strings.TrimSpace(expected.ProjectID) == "" && strings.TrimSpace(expected.RecordID) == "" {
+		query, args = runtimeRunInsert(updated)
+	} else {
+		query, args = runtimeRunSnapshotUpdate(expected, updated)
+	}
+	result, err := s.exec(query, args...)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
+func (s *RuntimeStore) RunMatchesSnapshot(run RunStatus) (bool, error) {
+	predicates := make([]string, 0, len(runtimeRunMutableColumns))
+	for _, column := range runtimeRunMutableColumns {
+		predicates = append(predicates, column+" = ?")
+	}
+	query := `SELECT COUNT(1) FROM runs WHERE project_id = ? AND record_id = ? AND ` + strings.Join(predicates, " AND ")
+	args := []any{run.ProjectID, run.RecordID}
+	args = append(args, runtimeRunMutableValues(run)...)
+	var count int
+	if err := s.queryRowScan(query, args, &count); err != nil {
+		return false, err
+	}
+	return count == 1, nil
+}
+
+// RedriveRunIfSnapshot commits the queued run transition and budget-window
+// reset in one transaction. A concurrent claim makes the snapshot update miss,
+// and neither half of the redrive is persisted.
+func (s *RuntimeStore) RedriveRunIfSnapshot(expected, redriven RunStatus, reset BudgetRedriveRecord) (bool, error) {
+	if strings.TrimSpace(expected.ProjectID) == "" || strings.TrimSpace(expected.RecordID) == "" {
+		return false, tuskerError(errorInvalidArg, "conditional redrive requires project_id and record_id")
+	}
+	redriven = normalizeRuntimeRunWrite(redriven)
+	raw, err := json.Marshal(reset)
+	if err != nil {
+		return false, err
+	}
+	query, args := runtimeRunSnapshotUpdate(expected, redriven)
+	matched := false
+	err = s.withBusyRetry(func() error {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		result, err := tx.Exec(query, args...)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			matched = false
+			return nil
+		}
+		if _, err := tx.Exec(`INSERT INTO daemon_settings (key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+			budgetRedriveSettingKey(expected.ProjectID, expected.RecordID), string(raw)); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		matched = true
+		return nil
+	})
+	return matched, err
+}
+
 // UpsertRunPreservingLease inserts the run row if it is absent (same columns and
 // defaults as UpsertRun) but, on conflict, updates ONLY the dispatch-intent
 // columns (item_id, runner, lane, work_revision, updated_at). It deliberately
@@ -1004,12 +1187,13 @@ type RuntimeLeaseRenewal struct {
 }
 
 type RuntimeLeaseClaimPrecondition struct {
+	ExpectedLeaseState      LeaseState
 	ExpectedOwner           string
 	ExpectedLeaseGeneration int
 	ExpectedWorkRevision    int
 }
 
-func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generation int, ttl time.Duration, now time.Time, dispatchable bool, preconditions ...RuntimeLeaseClaimPrecondition) (bool, error) {
+func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generation int, ttl time.Duration, now time.Time, dispatchable bool, precondition RuntimeLeaseClaimPrecondition) (bool, error) {
 	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" {
 		return false, tuskerError(errorInvalidArg, "lease claim requires project_id and record_id")
 	}
@@ -1021,6 +1205,10 @@ func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generati
 	}
 	if !dispatchable {
 		return false, nil
+	}
+	expectedLeaseState := strings.TrimSpace(string(precondition.ExpectedLeaseState))
+	if expectedLeaseState == "" {
+		return false, tuskerError(errorInvalidArg, "lease claim requires expected lease state")
 	}
 	if ttl <= 0 {
 		ttl = defaultRunLeaseTTL
@@ -1037,15 +1225,15 @@ func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generati
 			lease_host = ?,
 			updated_at = ?
 		WHERE project_id = ? AND record_id = ?
-			AND lease_state NOT IN ('claimed', 'running')`
-	params := []any{owner, generation, now.Add(ttl).Format(time.RFC3339), runtimeLeaseHost(), now.Format(time.RFC3339), projectID, recordID}
-	if len(preconditions) > 0 {
-		pre := preconditions[0]
-		query += `
+			AND lease_state NOT IN ('claimed', 'running')
+			AND lease_state = ?
 			AND lease_owner = ?
 			AND lease_generation = ?
 			AND work_revision = ?`
-		params = append(params, pre.ExpectedOwner, pre.ExpectedLeaseGeneration, pre.ExpectedWorkRevision)
+	params := []any{
+		owner, generation, now.Add(ttl).Format(time.RFC3339), runtimeLeaseHost(), now.Format(time.RFC3339),
+		projectID, recordID, expectedLeaseState, precondition.ExpectedOwner,
+		precondition.ExpectedLeaseGeneration, precondition.ExpectedWorkRevision,
 	}
 	result, err := s.exec(query, params...)
 	if err != nil {
@@ -1136,6 +1324,55 @@ func (s *RuntimeStore) UpdateRunIfLease(run RunStatus, owner string, generation 
 		updated_at = ?
 		WHERE project_id = ? AND record_id = ? AND lease_owner = ? AND lease_generation = ?`,
 		run.ItemID, run.Runner, run.Lane, run.LeaseState, run.LeaseOwner, run.LeaseGeneration, run.LeaseExpiresAt, run.LeaseHost, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.FirstEventAt, run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt, run.ProjectID, run.RecordID, owner, generation)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
+func (s *RuntimeStore) InterruptRunIfSnapshot(expected, interrupted RunStatus) (bool, error) {
+	if strings.TrimSpace(expected.ProjectID) == "" || strings.TrimSpace(expected.RecordID) == "" {
+		return false, tuskerError(errorInvalidArg, "conditional interrupt requires project_id and record_id")
+	}
+	result, err := s.exec(`UPDATE runs SET
+		lease_state = ?,
+		lease_owner = ?,
+		lease_expires_at = ?,
+		attempt_outcome = ?,
+		active_attempt_id = ?,
+		process_pid = ?,
+		process_pgid = ?,
+		process_started_at = ?,
+		prompt_path = ?,
+		event_sink_path = ?,
+		raw_log_path = ?,
+		status_path = ?,
+		next_retry_at = ?,
+		last_error = ?,
+		terminal = ?,
+		updated_at = ?
+		WHERE project_id = ? AND record_id = ?
+			AND lease_state = ?
+			AND lease_owner = ?
+			AND lease_generation = ?
+			AND active_attempt_id = ?
+			AND work_revision = ?
+			AND process_pid = ?
+			AND process_pgid = ?
+			AND process_started_at = ?`,
+		interrupted.LeaseState, interrupted.LeaseOwner, interrupted.LeaseExpiresAt,
+		interrupted.AttemptOutcome, interrupted.ActiveAttemptID,
+		interrupted.ProcessPID, interrupted.ProcessPGID, interrupted.ProcessStartedAt,
+		interrupted.PromptPath, interrupted.EventSinkPath, interrupted.RawLogPath, interrupted.StatusPath,
+		interrupted.NextRetryAt, interrupted.LastError, boolToInt(interrupted.Terminal), interrupted.UpdatedAt,
+		expected.ProjectID, expected.RecordID,
+		expected.LeaseState, expected.LeaseOwner, expected.LeaseGeneration,
+		expected.ActiveAttemptID, expected.WorkRevision,
+		expected.ProcessPID, expected.ProcessPGID, expected.ProcessStartedAt)
 	if err != nil {
 		return false, err
 	}
@@ -1828,6 +2065,10 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 	if invariantCircuit.Open {
 		invariantCircuitReason = invariantCircuitSummary(invariantCircuit)
 	}
+	diskPressure, err := s.DiskPressureStatus()
+	if err != nil {
+		return nil, err
+	}
 	source := "daemon.db"
 	if globalLimit <= 0 {
 		globalLimit = 2
@@ -1860,6 +2101,9 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 		"invariantCircuit":         invariantCircuit,
 		"invariant_circuit_open":   invariantCircuit.Open,
 		"invariant_circuit_reason": invariantCircuitReason,
+		"disk_pressure":            diskPressure,
+		"disk_pressure_state":      diskPressure.State,
+		"disk_pressure_paused":     diskPressure.DispatchPaused,
 	}, nil
 }
 

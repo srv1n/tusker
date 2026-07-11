@@ -57,6 +57,25 @@ tusker proof status <TASK-ID>
 
 Use inline verification for normal code tasks. Use evidence cards/artifacts/audit only when the task proof mode requires them.
 
+### Verification "Check" grammar
+
+A task cannot go `ready` (and will not dispatch) until every row in its `## Verification` table names an exact proof. A `Check` cell is exact when it starts with one of two markers:
+
+- `command: <exact shell command>` — anything runnable, tool-agnostic. Compound commands are fine: `command: cd internal/serve/ui && bun test`, `command: swift build -c release`, `command: go test ./cmd/tusker -run TestFoo -count=1`.
+- `manual proof: <exact steps a human runs>` — for outcomes only a human can confirm: `manual proof: launch the bundle and confirm the menu item opens the browser`.
+
+Passing vs failing:
+
+| Check cell | Exact? | Why |
+|---|---|---|
+| `command: cd apps/mac && swift build -c release` | ✅ | starts with `command:`, real command |
+| `manual proof: open /panel at 420×640 and confirm no horizontal scroll` | ✅ | starts with `manual proof:`, real steps |
+| `bun test` | ✅ | bare command still accepted (legacy), but prefer the `command:` marker |
+| `command: <exact command that proves A1>` | ❌ | unfilled `<...>` placeholder |
+| `TBD` / `Run the tests` | ❌ | no marker, no exact command |
+
+The marker must be in the **Check** column, not Notes. Freshly created tasks (`tusker new task`) ship a placeholder row in this grammar; replace the `<...>` before promoting to `ready`. Run `tusker validate` to lint rows before promotion — the warning and the dispatch blocker both restate this grammar with an example.
+
 ## Human Stop
 
 ```bash

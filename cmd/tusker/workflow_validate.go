@@ -60,6 +60,9 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	if workspaceStrategyFromWorkflow(wf.Workspace.Strategy) != WorkspaceStrategyInPlace && strings.TrimSpace(wf.Workspace.Root) == "" {
 		return tuskerError(errorConfigInvalid, "workspace.root is required unless workspace.strategy is in_place", withPath(filePath))
 	}
+	if workspaceStrategyFromWorkflow(wf.Workspace.Strategy) != WorkspaceStrategyInPlace && !validSharedWorkspaceRootConfig(wf.Workspace.Root) {
+		return tuskerError(errorConfigInvalid, "workspace.root must be workspaces or a relative subdirectory under workspaces", withPath(filePath))
+	}
 	if wf.Retry.MaxAttempts <= 0 || len(wf.Retry.BackoffMS) == 0 {
 		return tuskerError(errorConfigInvalid, "retry.max_attempts and retry.backoff_ms are required", withPath(filePath))
 	}

@@ -45,6 +45,10 @@ type runnerProcessStatus struct {
 	TurnsUsed   int    `json:"turns_used,omitempty"`
 }
 
+type runnerEventLog interface {
+	Append(kind string, attemptID string, runner RunnerName, payload map[string]any) error
+}
+
 func attachDevNullStdin(cmd *exec.Cmd) func() {
 	if cmd == nil {
 		return func() {}
@@ -59,6 +63,10 @@ func attachDevNullStdin(cmd *exec.Cmd) func() {
 }
 
 func executeRunnerCommand(ctx context.Context, runner RunnerName, req runnerExecRequest, capabilities RunnerCapabilities) (*StartResult, error) {
+	return executeRunnerCommandWithEventLog(ctx, runner, req, capabilities, NewEventLog(req.EventSinkPath))
+}
+
+func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, req runnerExecRequest, capabilities RunnerCapabilities, eventLog runnerEventLog) (*StartResult, error) {
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
 		return nil, tuskerError(errorConfigInvalid, fmt.Sprintf("%s runner command is empty", runner))
@@ -100,13 +108,14 @@ open(path,"w",encoding="utf-8").write(json.dumps(payload)+"\n")
 PY
 `, expanded)
 
-	eventLog := NewEventLog(req.EventSinkPath)
-	_ = eventLog.Append("attempt_started", req.AttemptID, runner, map[string]any{
+	if err := eventLog.Append("attempt_started", req.AttemptID, runner, map[string]any{
 		"command":     command,
 		"item_id":     req.ItemID,
 		"resume_mode": req.ResumeMode,
 		"session_ref": req.SessionRef,
-	})
+	}); err != nil {
+		return nil, fmt.Errorf("record %s attempt_started event: %w", runner, err)
+	}
 
 	cmd := exec.CommandContext(ctx, "sh", "-lc", script)
 	cmd.Dir = workspaceCWD
@@ -135,9 +144,15 @@ PY
 	pid := cmd.Process.Pid
 	pgid := processGroupID(pid)
 	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
+	if err := eventLog.Append("attempt_spawned", req.AttemptID, runner, map[string]any{
+		"pid": pid, "status_path": req.StatusPath,
+	}); err != nil {
+		terminateAndReapRunnerCommand(cmd, pgid)
+		return nil, fmt.Errorf("record %s attempt_spawned event for pid %d; launched process was terminated: %w", runner, pid, err)
+	}
 	_ = cmd.Process.Release()
 
-	result := &StartResult{
+	return &StartResult{
 		SessionRef:   firstNonEmpty(req.SessionRef, extractSessionRef(req.RawLogPath)),
 		MessageRef:   extractMessageRef(req.RawLogPath),
 		StartedAt:    processStartedAt,
@@ -148,11 +163,21 @@ PY
 		Capabilities: capabilities,
 		Completed:    false,
 		Outcome:      AttemptOutcomeNone,
+	}, nil
+}
+
+func terminateAndReapRunnerCommand(cmd *exec.Cmd, pgid int) {
+	if cmd == nil || cmd.Process == nil {
+		return
 	}
-	_ = eventLog.Append("attempt_spawned", req.AttemptID, runner, map[string]any{
-		"pid": pid, "status_path": req.StatusPath,
-	})
-	return result, nil
+	if pgid > 0 {
+		if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
+			_ = cmd.Process.Kill()
+		}
+	} else {
+		_ = cmd.Process.Kill()
+	}
+	_ = cmd.Wait()
 }
 
 func readRunnerProcessStatus(statusPath string) (runnerProcessStatus, error) {

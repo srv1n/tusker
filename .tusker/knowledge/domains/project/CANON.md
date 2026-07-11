@@ -12,8 +12,8 @@ source_of_truth:
   - ".tusker/WORKFLOW.md"
   - "tusker.yaml"
 created_at: "2026-06-04 00:00:00 +0000 UTC"
-updated_at: "2026-07-08T05:06:10Z"
-state_rev: "sha256:13e058a91464f4b80d56bcbf02b7f9978194d2bf4513063d434cee564c5c5168"
+updated_at: "2026-07-10T04:45:40Z"
+state_rev: "sha256:dc7c3334d4cc2ed5aab79acf0f3560b29f4223eecb52b3d94e26646f7ecb29ba"
 ---
 
 # Project Canon
@@ -37,6 +37,7 @@ state_rev: "sha256:13e058a91464f4b80d56bcbf02b7f9978194d2bf4513063d434cee564c5c5
 - Merge landing is wave-scoped: `tusker wave create` cuts `integration/W-####`, wave task worktrees branch from that integration branch as `task/<TASK-ID>`, `tusker land` serializes batch merges through a gated staging worktree, and completed waves land to the configured default branch as one merge commit.
 - Terminal task state is monotone under merge and reconcile. A task in `done`, `cancelled`, or `superseded` may leave terminal state only through an explicit Tusker control operation that mints a fresh `state_rev`; stale branch content or stale object-rev repair must fail with a CAS conflict instead of certifying a non-terminal rewind.
 - Project registration quarantine is a loader property: entry points that scan registered projects use the shared loader, which records failed enabled registrations as `health: error` with `last_error` and continues loading unrelated healthy projects.
+- Repository validation is serialized across linked worktrees by one validation gate. Makefile Go build, vet, and test phases default to two Go scheduler threads and one package/test lane; the `cmd/tusker` TestMain also acquires the gate so raw focused tests cannot overlap a broad shared-state suite. Helper test re-execs inherit the held lease.
 
 ## Invariants
 
@@ -61,5 +62,5 @@ go test ./cmd/tusker -run <test-name> -count=1
 Use broad proof before closing cross-cutting changes:
 
 ```bash
-go test ./...
+make test
 ```

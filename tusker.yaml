@@ -45,26 +45,26 @@ automation:
     - claude-code
   workspace:
     strategy: worktree
-    root: ../.tusker-worktrees
+    root: workspaces
   concurrency:
-    max_active_runs: 5
-    max_active_runs_per_project: 5
+    max_active_runs: 2
+    max_active_runs_per_project: 2
     max_continuation_retries: 3
     max_concurrent_by_state:
       rework: 1
   budget:
     enabled: true
-    per_attempt_input_tokens: 50000000
-    per_attempt_output_tokens: 500000
-    per_task_input_tokens: 250000000
-    per_task_output_tokens: 2500000
-    daily_input_tokens: 10000000000
-    daily_output_tokens: 100000000
+    per_attempt_input_tokens: 2000000
+    per_attempt_output_tokens: 100000
+    per_task_input_tokens: 6000000
+    per_task_output_tokens: 300000
+    daily_input_tokens: 20000000
+    daily_output_tokens: 1000000
   validation:
     commands:
-      - go build ./...
-      - go vet ./...
-      - go test ./... -count=1
+      - make build-go
+      - make vet
+      - make test
   runners:
     codex_exec:
       kind: codex_exec

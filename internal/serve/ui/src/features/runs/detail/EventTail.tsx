@@ -4,6 +4,7 @@ import { cn } from "@/lib/cn";
 import { Toggle } from "@/components/ui/controls";
 import { LivenessIndicator } from "@/components/ui/liveness";
 import { SectionLabel } from "@/components/ui/page";
+import { Mono } from "@/components/ui/primitives";
 import { clockTime, eventToneClasses } from "@/features/runs/detail/helpers";
 
 /**
@@ -21,10 +22,12 @@ export function EventTail({
   events,
   liveness,
   sinceLastEventSec,
+  waitingForDaemonReason,
 }: {
   events: RunEvent[];
   liveness: Liveness;
   sinceLastEventSec: number;
+  waitingForDaemonReason?: string | null;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoFollow, setAutoFollow] = useState(true);
@@ -47,7 +50,13 @@ export function EventTail({
       <div className="mb-3 flex items-center justify-between gap-3">
         <SectionLabel>Event tail</SectionLabel>
         <div className="flex items-center gap-3.5">
-          <LivenessIndicator liveness={liveness} sinceSec={sinceLastEventSec} />
+          {waitingForDaemonReason ? (
+            <Mono className="text-[11px] text-warn" title={waitingForDaemonReason}>
+              Waiting for daemon
+            </Mono>
+          ) : (
+            <LivenessIndicator liveness={liveness} sinceSec={sinceLastEventSec} />
+          )}
           <Toggle checked={autoFollow} onChange={setAutoFollow} label="auto-follow" />
         </div>
       </div>
@@ -58,7 +67,9 @@ export function EventTail({
       >
         {events.length === 0 ? (
           <div className="flex h-full items-center justify-center text-center text-[12px] text-faint">
-            No events yet — waiting for the first protocol event.
+            {waitingForDaemonReason
+              ? "No new events while the daemon is down."
+              : "No events yet — waiting for the first protocol event."}
           </div>
         ) : (
           events.map((ev, i) => {

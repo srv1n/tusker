@@ -21,8 +21,10 @@ import type {
   EvidenceDoc,
   FeedbackDoc,
   GateDetail,
+  InterruptResult,
   NeedItem,
   ProjectSummary,
+  ProjectRegistrationResult,
   RedriveResult,
   RunDetail,
   RunSummary,
@@ -62,6 +64,11 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+function withProject(path: string, projectId?: string): string {
+  if (!projectId) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}project=${encodeURIComponent(projectId)}`;
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -98,6 +105,16 @@ export const api = {
     return delay(withCounts);
   },
 
+  registerProject: (body: { repoRoot: string; vaultRoot?: string }): Promise<ProjectRegistrationResult> =>
+    USE_MOCK
+      ? delay({ ok: true, reason: "Project registered (mock)", projectId: "mock-project" })
+      : post("/projects", body),
+
+  setProjectAutomation: (projectId: string, enabled: boolean): Promise<ActionResult> =>
+    USE_MOCK
+      ? delay({ ok: true, reason: `Daemon automation ${enabled ? "enabled" : "disabled"}`, projectId })
+      : post(`/projects/${projectId}/automation`, { enabled }),
+
   // GET /api/needs  (DERIVED, ranked) — optional ?project=
   // Computed from the board via the closed five-signal rule (deriveNeeds); never
   // a stored or hand-flagged list. This derivation should move server-side once
@@ -118,9 +135,12 @@ export const api = {
       ? delay(projectId ? fx.runs.filter((r) => r.projectId === projectId) : fx.runs)
       : real(`/runs${projectId ? `?project=${projectId}` : ""}`),
 
+  reviewBatch: (projectId?: string): Promise<TaskCapsule[]> =>
+    USE_MOCK ? delay(fx.taskCapsules.filter((task) => task.status === "review")) : real(withProject("/review/batch", projectId)),
+
   // GET /api/runs/:taskId
-  run: (taskId: string): Promise<RunDetail> => {
-    if (!USE_MOCK) return real(`/runs/${taskId}`);
+  run: (taskId: string, projectId?: string): Promise<RunDetail> => {
+    if (!USE_MOCK) return real(withProject(`/runs/${taskId}`, projectId));
     const detail = fx.runDetailFor(taskId);
     if (!detail) return Promise.reject(new ApiError(404, `No run for ${taskId} yet.`));
     return delay(detail);
@@ -129,35 +149,51 @@ export const api = {
   // POST /api/runs/:taskId/redrive — maps the Retry control to `tusker redrive`.
   // The result (requeue or refusal reason) is always returned so the UI can
   // surface it; the daemon must never retire a run behind a stale badge.
-  redrive: (taskId: string): Promise<RedriveResult> =>
+  redrive: (taskId: string, projectId?: string): Promise<RedriveResult> =>
     USE_MOCK
       ? delay({ ok: true, requeued: true, reason: "redrive requested (mock)", taskId })
-      : post(`/runs/${taskId}/redrive`),
+      : post(withProject(`/runs/${taskId}/redrive`, projectId)),
 
-  taskStatus: (taskId: string, body: { status: string; reason?: string; actor?: string; force?: boolean }): Promise<ActionResult> =>
-    USE_MOCK ? delay({ ok: true, reason: `status -> ${body.status}`, taskId }) : post(`/tasks/${taskId}/status`, body),
+  // POST /api/runs/:taskId/interrupt — shares `tusker runs interrupt` and
+  // returns canonical lease/process readback rather than optimistic UI state.
+  interrupt: (taskId: string, projectId?: string): Promise<InterruptResult> =>
+    USE_MOCK
+      ? delay({
+          ok: true,
+          interrupted: true,
+          reason: "run interrupted (mock)",
+          taskId,
+          leaseState: "released",
+          leaseStateRaw: "interrupted",
+          processRunning: false,
+        })
+      : post(withProject(`/runs/${taskId}/interrupt`, projectId)),
 
-  closeTask: (taskId: string, body: { reason?: string; actor?: string; force?: boolean }): Promise<ActionResult> =>
-    USE_MOCK ? delay({ ok: true, reason: "task accepted", taskId }) : post(`/tasks/${taskId}/close`, body),
+  taskStatus: (taskId: string, body: { status: string; reason?: string; actor?: string; force?: boolean }, projectId?: string): Promise<ActionResult> =>
+    USE_MOCK ? delay({ ok: true, reason: `status -> ${body.status}`, taskId }) : post(withProject(`/tasks/${taskId}/status`, projectId), body),
 
-  landTask: (taskId: string, body: { branch?: string; from?: string } = {}): Promise<ActionResult> =>
-    USE_MOCK ? delay({ ok: true, reason: "landed task", taskId }) : post(`/tasks/${taskId}/land`, body),
+  closeTask: (taskId: string, body: { reason?: string; actor?: string; force?: boolean }, projectId?: string): Promise<ActionResult> =>
+    USE_MOCK ? delay({ ok: true, reason: "task accepted", taskId }) : post(withProject(`/tasks/${taskId}/close`, projectId), body),
 
-  landWave: (waveId: string): Promise<ActionResult> =>
-    USE_MOCK ? delay({ ok: true, reason: "landed wave" }) : post(`/waves/${waveId}/land`, {}),
+  landTask: (taskId: string, body: { branch?: string; from?: string } = {}, projectId?: string): Promise<ActionResult> =>
+    USE_MOCK ? delay({ ok: true, reason: "landed task", taskId }) : post(withProject(`/tasks/${taskId}/land`, projectId), body),
+
+  landWave: (waveId: string, projectId?: string): Promise<ActionResult> =>
+    USE_MOCK ? delay({ ok: true, reason: "landed wave" }) : post(withProject(`/waves/${waveId}/land`, projectId), {}),
 
   gateAction: (
     gateId: string,
     action: "satisfy" | "waive" | "obsolete",
     body: { reason?: string; evidence?: string; evidenceRefs?: string[]; actor?: string; force?: boolean },
+    projectId?: string,
   ): Promise<ActionResult> =>
-    USE_MOCK ? delay({ ok: true, reason: `${gateId} ${action}`, gateId }) : post(`/gates/${gateId}/${action}`, body),
+    USE_MOCK ? delay({ ok: true, reason: `${gateId} ${action}`, gateId }) : post(withProject(`/gates/${gateId}/${action}`, projectId), body),
 
-  addEvidence: (body: Record<string, unknown>): Promise<ActionResult> =>
-    USE_MOCK ? delay({ ok: true, reason: "evidence added" }) : post("/evidence", body),
+  addEvidence: (body: Record<string, unknown>, projectId?: string): Promise<ActionResult> =>
+    USE_MOCK ? delay({ ok: true, reason: "evidence added" }) : post(withProject("/evidence", projectId), body),
 
-  addFeedback: (body: Record<string, unknown>): Promise<ActionResult> =>
-    USE_MOCK ? delay({ ok: true, reason: "feedback added" }) : post("/feedback", body),
+  addFeedback: (body: Record<string, unknown>, projectId?: string): Promise<ActionResult> =>
+    USE_MOCK ? delay({ ok: true, reason: "feedback added" }) : post(withProject("/feedback", projectId), body),
 
   daemonAction: (action: "start" | "stop" | "resume" | "limits", body: Record<string, unknown> = {}): Promise<ActionResult> =>
     USE_MOCK ? delay({ ok: true, reason: `daemon ${action}` }) : post(`/daemon/${action}`, body),
@@ -169,28 +205,28 @@ export const api = {
   waves: (projectId?: string): Promise<WaveSummary[]> =>
     USE_MOCK ? delay([]) : real(`/waves${projectId ? `?project=${projectId}` : ""}`),
 
-  gates: (taskId?: string): Promise<GateDetail[]> =>
-    USE_MOCK ? delay([]) : real(`/gates${taskId ? `?task=${taskId}` : ""}`),
+  gates: (taskId?: string, projectId?: string): Promise<GateDetail[]> =>
+    USE_MOCK ? delay([]) : real(withProject(`/gates${taskId ? `?task=${taskId}` : ""}`, projectId)),
 
-  evidence: (taskId?: string): Promise<EvidenceDoc[]> =>
-    USE_MOCK ? delay([]) : real(`/evidence${taskId ? `?task=${taskId}` : ""}`),
+  evidence: (taskId?: string, projectId?: string): Promise<EvidenceDoc[]> =>
+    USE_MOCK ? delay([]) : real(withProject(`/evidence${taskId ? `?task=${taskId}` : ""}`, projectId)),
 
-  decisions: (epicId?: string): Promise<DecisionDoc[]> =>
-    USE_MOCK ? delay([]) : real(`/decisions${epicId ? `?epic=${epicId}` : ""}`),
+  decisions: (epicId?: string, projectId?: string): Promise<DecisionDoc[]> =>
+    USE_MOCK ? delay([]) : real(withProject(`/decisions${epicId ? `?epic=${epicId}` : ""}`, projectId)),
 
-  feedback: (): Promise<FeedbackDoc[]> =>
-    USE_MOCK ? delay([]) : real("/feedback"),
+  feedback: (projectId?: string): Promise<FeedbackDoc[]> =>
+    USE_MOCK ? delay([]) : real(withProject("/feedback", projectId)),
 
-  attempts: (taskId?: string): Promise<AttemptDetail[]> =>
-    USE_MOCK ? delay([]) : real(`/attempts${taskId ? `?task=${taskId}` : ""}`),
+  attempts: (taskId?: string, projectId?: string): Promise<AttemptDetail[]> =>
+    USE_MOCK ? delay([]) : real(withProject(`/attempts${taskId ? `?task=${taskId}` : ""}`, projectId)),
 
   // GET /api/tasks?project=
   tasks: (projectId?: string): Promise<TaskCapsule[]> =>
     USE_MOCK ? delay(fx.taskCapsules) : real(`/tasks${projectId ? `?project=${projectId}` : ""}`),
 
   // GET /api/tasks/:id
-  task: (id: string): Promise<TaskDetail> => {
-    if (!USE_MOCK) return real(`/tasks/${id}`);
+  task: (id: string, projectId?: string): Promise<TaskDetail> => {
+    if (!USE_MOCK) return real(withProject(`/tasks/${id}`, projectId));
     const detail = fx.taskDetails[id];
     if (!detail) return Promise.reject(new ApiError(404, `no task detail for ${id}`));
     return delay(detail);
@@ -201,8 +237,8 @@ export const api = {
     USE_MOCK ? delay(fx.docList) : real(`/docs${projectId ? `?project=${projectId}` : ""}`),
 
   // GET /api/docs/*path
-  doc: (path: string): Promise<DocContent> => {
-    if (!USE_MOCK) return real(`/docs/${encodeURI(path)}`);
+  doc: (path: string, projectId?: string): Promise<DocContent> => {
+    if (!USE_MOCK) return real(withProject(`/docs/${encodeURI(path)}`, projectId));
     const content = fx.docContents[path];
     if (!content) return Promise.reject(new ApiError(404, `no doc at ${path}`));
     return delay(content);

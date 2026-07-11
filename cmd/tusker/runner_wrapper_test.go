@@ -61,6 +61,79 @@ func TestWrapperDetached(t *testing.T) {
 	assertEqual(t, string(RunnerCodexAppServer), request.Runner, "wrapper request runner")
 }
 
+func TestRunnerWrapperSpawnEventErrorStopsDetachedProcess(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(dir, "state"))
+	helperPath := filepath.Join(dir, "wrapper-helper.sh")
+	helperPIDPath := filepath.Join(dir, "wrapper-helper.pid")
+	if err := writeText(helperPath, "#!/bin/sh\n"+"echo \"$$\" > \"$TUSKER_HELPER_PID\"\n"+"sleep 30\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(helperPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TUSKER_WRAPPER_EXE", helperPath)
+	t.Setenv("TUSKER_HELPER_PID", helperPIDPath)
+
+	req, err := runnerWrapperRequestForTest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(req.Start.EventSinkPath, []byte("{\"seq\":1}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lockFile, err := os.OpenFile(req.Start.EventSinkPath+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockFile.Close()
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	locked := true
+	defer func() {
+		if locked {
+			_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+		}
+	}()
+
+	type startResponse struct {
+		result *StartResult
+		err    error
+	}
+	done := make(chan startResponse, 1)
+	go func() {
+		result, startErr := startDetachedRunnerWrapper(context.Background(), RunnerCodexExec, req.Start, nil, RunnerCapabilities{})
+		done <- startResponse{result: result, err: startErr}
+	}()
+	pid := waitForPIDFile(t, helperPIDPath)
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	locked = false
+
+	var response startResponse
+	select {
+	case response = <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for detached wrapper event error")
+	}
+	if response.err == nil || !strings.Contains(response.err.Error(), "partial trailing record") {
+		t.Fatalf("expected detached wrapper spawn event error, got result=%#v err=%v", response.result, response.err)
+	}
+	if response.result != nil {
+		t.Fatalf("failed spawn event must not return a live result: %#v", response.result)
+	}
+	deadline := time.Now().Add(time.Second)
+	for processExists(pid) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if processExists(pid) {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+		t.Fatalf("wrapper process %d survived failed spawn event", pid)
+	}
+}
+
 func TestWrapperStopSignal(t *testing.T) {
 	store, req := setupRunnerWrapperRuntime(t)
 	ctx, cancel := context.WithCancel(context.Background())

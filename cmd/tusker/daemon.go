@@ -18,12 +18,18 @@ import (
 )
 
 type Daemon struct {
-	stateRoot             string
-	store                 *RuntimeStore
-	guard                 *daemonGuard
-	dispatchRefusalReason string
-	stream                *serveStreamBroker
-	pollTaskStatuses      map[string]string
+	stateRoot              string
+	store                  *RuntimeStore
+	guard                  *daemonGuard
+	dispatchRefusalReason  string
+	stream                 *serveStreamBroker
+	serve                  *serveServer
+	pollTaskStatuses       map[string]string
+	pollTaskMeta           map[string]serveStreamTaskMeta
+	postSpawnBeforePersist func(RunStatus)
+	beforePollRunPersist   func(RunStatus, RunStatus)
+	beforeRunLeaseClaim    func(RunStatus)
+	diskStat               diskStatFunc
 }
 
 const (
@@ -107,7 +113,10 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 			if errors.Is(err, context.Canceled) && runCtx.Err() != nil {
 				return nil
 			}
-			return err
+			var typed *TuskerError
+			if !errors.As(err, &typed) || typed.Code != "CAS_CONFLICT" {
+				return err
+			}
 		}
 		interval := d.nextPollInterval()
 		select {
@@ -153,32 +162,17 @@ func (d *Daemon) InterruptRun(ctx context.Context, identity string) error {
 	if run == nil {
 		return tuskerError(errorNotFound, "run not found: "+identity)
 	}
-	handle := liveRegistry.Find(firstNonEmpty(run.ActiveAttemptID, identity))
+	handle := matchingLiveRunHandle(*run)
 	if handle == nil {
-		if run.ProcessPID > 0 && processIdentityMatches(*run) {
-			return interruptRunProcess(d.store, run)
+		if !runProcessGroupAlive(*run) {
+			return finishRuntimeRunIfSnapshot(d.store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "interrupt requested by operator; live runner handle not found and process is not running", false)
 		}
-		reason := "interrupt requested by operator; live runner handle not found and process is not running"
-		return finishRuntimeRun(d.store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, reason, false)
+		return interruptRunProcess(d.store, run, false)
 	}
 	if err := handle.Interrupt(ctx); err != nil {
 		return err
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	updateRunAttemptFromRun(d.store, *run, AttemptOutcomeCancelled, 130, "interrupt requested by operator", now)
-	run.LeaseState = string(LeaseStateInterrupted)
-	run.AttemptOutcome = string(AttemptOutcomeCancelled)
-	run.NextRetryAt = ""
-	run.LastError = "interrupt requested by operator"
-	run.UpdatedAt = now
-	clearActiveExecution(run)
-	if err := d.store.UpsertRun(*run); err != nil {
-		return err
-	}
-	if strings.TrimSpace(run.SessionRef) != "" {
-		_ = d.store.MarkSessionState(run.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateInterrupted), "", run.LastError, run.Lane != runLaneReview)
-	}
-	return nil
+	return interruptRunProcess(d.store, run, true)
 }
 
 func (d *Daemon) ReleaseRun(ctx context.Context, identity string) error {
@@ -196,29 +190,79 @@ func (d *Daemon) ReleaseRun(ctx context.Context, identity string) error {
 	return finishRuntimeRun(d.store, run, LeaseStateReleased, AttemptOutcomeAbandoned, 0, "released dead run by operator", false)
 }
 
-func interruptRunProcess(store *RuntimeStore, run *RunStatus) error {
+func interruptRunProcess(store *RuntimeStore, run *RunStatus, liveHandleVerified bool) error {
 	if run == nil {
 		return tuskerError(errorNotFound, "run not found")
 	}
-	if run.ProcessPID > 0 {
-		pgid := processSignalGroup(*run)
+	pgid := processSignalGroup(*run)
+	if !liveHandleVerified && !processIdentityMatches(*run) && pgid > 0 && processGroupExists(pgid) {
+		return tuskerError(errorInvalidTransition,
+			fmt.Sprintf("refusing to signal process group %d because recorded leader PID %d no longer matches; ownership cannot be verified", pgid, run.ProcessPID),
+			withHint("inspect and stop the process group manually, then retry after no Tusker-owned process remains"),
+			withContext(map[string]any{"pid": run.ProcessPID, "pgid": pgid, "manual_cleanup_required": true}))
+	}
+	if pgid > 0 && processGroupExists(pgid) {
 		if err := syscall.Kill(-pgid, syscall.SIGINT); err != nil && !strings.Contains(err.Error(), "no such process") {
 			return err
 		}
-		for i := 0; i < 6 && processExists(run.ProcessPID); i++ {
-			time.Sleep(150 * time.Millisecond)
-		}
-		if processExists(run.ProcessPID) {
+		if !waitForProcessGroupStop(pgid, 900*time.Millisecond) {
 			_ = syscall.Kill(-pgid, syscall.SIGTERM)
-			for i := 0; i < 4 && processExists(run.ProcessPID); i++ {
-				time.Sleep(150 * time.Millisecond)
+		}
+		if !waitForProcessGroupStop(pgid, 600*time.Millisecond) {
+			if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				return err
 			}
 		}
-		if processExists(run.ProcessPID) {
-			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		if !waitForProcessGroupStop(pgid, 2*time.Second) {
+			return tuskerError(errorHookFailed, fmt.Sprintf("runner process group %d remained alive after interrupt escalation", pgid), withHint("inspect the process group before retrying the interrupt"))
 		}
 	}
-	return finishRuntimeRun(store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "interrupt requested by operator", true)
+	return finishRuntimeRunIfSnapshot(store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "interrupt requested by operator", true)
+}
+
+func matchingLiveRunHandle(run RunStatus) LiveRunnerHandle {
+	attemptID := strings.TrimSpace(run.ActiveAttemptID)
+	if attemptID == "" {
+		return nil
+	}
+	handle := liveRegistry.Find(attemptID)
+	if handle == nil || strings.TrimSpace(handle.AttemptID()) != attemptID {
+		return nil
+	}
+	if strings.TrimSpace(handle.ProjectID()) != strings.TrimSpace(run.ProjectID) ||
+		strings.TrimSpace(handle.RecordID()) != strings.TrimSpace(run.RecordID) {
+		return nil
+	}
+	if itemID := strings.TrimSpace(run.ItemID); itemID != "" && strings.TrimSpace(handle.ItemID()) != itemID {
+		return nil
+	}
+	return handle
+}
+
+func waitForProcessGroupStop(pgid int, timeout time.Duration) bool {
+	if pgid <= 0 || !processGroupExists(pgid) {
+		return true
+	}
+	deadline := time.Now().Add(timeout)
+	for processGroupExists(pgid) && time.Now().Before(deadline) {
+		time.Sleep(25 * time.Millisecond)
+	}
+	return !processGroupExists(pgid)
+}
+
+func processGroupExists(pgid int) bool {
+	if pgid <= 0 {
+		return false
+	}
+	err := syscall.Kill(-pgid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+func runProcessGroupAlive(run RunStatus) bool {
+	if processIdentityMatches(run) {
+		return true
+	}
+	return run.ProcessPGID > 0 && processGroupExists(run.ProcessPGID)
 }
 
 // killSpawnedRunProcess terminates the process group of a run whose child was
@@ -235,12 +279,38 @@ func killSpawnedRunProcess(run RunStatus) {
 	}
 	pgid := processSignalGroup(run)
 	_ = syscall.Kill(-pgid, syscall.SIGTERM)
-	for i := 0; i < 4 && processExists(run.ProcessPID); i++ {
-		time.Sleep(150 * time.Millisecond)
-	}
-	if processExists(run.ProcessPID) {
+	if !waitForProcessGroupStop(pgid, 600*time.Millisecond) {
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	}
+}
+
+func finishRuntimeRunIfSnapshot(store *RuntimeStore, run *RunStatus, state LeaseState, outcome AttemptOutcome, exitCode int, reason string, resumable bool) error {
+	if store == nil || run == nil {
+		return nil
+	}
+	expected := *run
+	interrupted := expected
+	now := time.Now().UTC().Format(time.RFC3339)
+	interrupted.LeaseState = string(state)
+	interrupted.AttemptOutcome = string(outcome)
+	interrupted.NextRetryAt = ""
+	interrupted.LastError = reason
+	interrupted.UpdatedAt = now
+	interrupted.Terminal = false
+	clearActiveExecution(&interrupted)
+	ok, err := store.InterruptRunIfSnapshot(expected, interrupted)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return tuskerError("CAS_CONFLICT", "run changed while interrupt was being applied: "+firstNonEmpty(expected.ItemID, expected.RecordID), withHint("reload the run and retry; Tusker did not overwrite the newer lease or process state"))
+	}
+	updateRunAttemptFromRun(store, expected, outcome, exitCode, reason, now)
+	if strings.TrimSpace(expected.SessionRef) != "" {
+		_ = store.MarkSessionState(expected.ProjectID, expected.SessionRef, sessionStateForLeaseState(state), "", reason, resumable)
+	}
+	*run = interrupted
+	return nil
 }
 
 func finishRuntimeRun(store *RuntimeStore, run *RunStatus, state LeaseState, outcome AttemptOutcome, exitCode int, reason string, resumable bool) error {
@@ -267,6 +337,15 @@ func finishRuntimeRun(store *RuntimeStore, run *RunStatus, state LeaseState, out
 }
 
 func (d *Daemon) PollOnce(ctx context.Context) error {
+	err := d.pollOnce(ctx)
+	var typed *TuskerError
+	if errors.As(err, &typed) && typed.Code == "CAS_CONFLICT" && strings.Contains(err.Error(), "run changed while daemon poll was applying its snapshot") {
+		return nil
+	}
+	return err
+}
+
+func (d *Daemon) pollOnce(ctx context.Context) error {
 	previousPollAt, err := d.store.GetSetting("daemon_last_poll_at")
 	if err != nil {
 		return err
@@ -315,6 +394,9 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 		notes := loaded.Notes
 		sortDispatchCandidates(notes)
 		noteStatusByRecord := map[string]string{}
+		if d.pollTaskMeta == nil {
+			d.pollTaskMeta = map[string]serveStreamTaskMeta{}
+		}
 		notesByID, notesByRecordID := daemonNoteMaps(notes)
 		keep := map[string]struct{}{}
 		for _, note := range notes {
@@ -325,6 +407,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 			if recordID == "" {
 				continue
 			}
+			d.pollTaskMeta[project.ProjectID+"\x00"+recordID] = serveStreamTaskMeta{Project: project.ProjectID, TaskID: firstNonEmpty(stringField(note.Data, "id"), recordID), Title: stringField(note.Data, "title"), Status: stringField(note.Data, "status")}
 			d.observeTaskStatusForStream(project.ProjectID, recordID, stringField(note.Data, "status"))
 			noteStatusByRecord[recordID] = stringField(note.Data, "status")
 			keep[recordID] = struct{}{}
@@ -1064,7 +1147,9 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 	if !isDispatchCapacityLeaseState(run.LeaseState) {
 		return d.reconcileRun(ctx, project, wfFile, run)
 	}
-	_ = d.ingestCodexExecRawLog(run)
+	if _, err := d.ingestCodexExecRawLog(run); err != nil {
+		return run, false, err
+	}
 	if strings.TrimSpace(note.AbsolutePath) != "" {
 		if budgeted, changed, err := d.enforceBudgetForRun(ctx, project, wfFile.Data, note, run); err != nil || changed {
 			return budgeted, changed, err
@@ -1186,7 +1271,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	now := nowTime.Format(time.RFC3339)
 	sessionResumable := runSessionResumable(wfFile.Data, run)
 
-	if d.ingestCodexExecRawLog(run) {
+	if ingested, err := d.ingestCodexExecRawLog(run); err != nil {
+		return run, false, err
+	} else if ingested {
 		changed = true
 	}
 	if strings.TrimSpace(run.RawLogPath) != "" {
@@ -2110,6 +2197,30 @@ func parkNoProgressRun(run RunStatus, reason string) RunStatus {
 	return run
 }
 
+func (d *Daemon) parkRunnerPreflightFailure(project RegisteredProject, run RunStatus, reason string) RunStatus {
+	parentAttemptID := run.ActiveAttemptID
+	parentSessionRef := run.SessionRef
+	run = parkNoProgressRun(run, reason)
+	if d != nil && d.store != nil && strings.TrimSpace(parentSessionRef) != "" {
+		_ = d.store.MarkSessionState(project.ProjectID, parentSessionRef, sessionStateForLeaseState(LeaseStateParkedNoProgress), "", run.LastError, false)
+	}
+	if d != nil {
+		d.emitSupervisorDecision(SupervisorDecision{
+			ProjectID:        project.ProjectID,
+			RecordID:         run.RecordID,
+			AttemptID:        parentAttemptID,
+			SessionRef:       parentSessionRef,
+			Kind:             string(SupervisorDecisionStopForAudit),
+			Reason:           run.LastError,
+			ParentAttemptID:  parentAttemptID,
+			ParentSessionRef: parentSessionRef,
+			WorkspacePath:    run.WorkspacePath,
+			LeaseState:       run.LeaseState,
+		})
+	}
+	return run
+}
+
 func shouldDaemonPromoteCleanExitToReview(noteStatus string) bool {
 	return strings.TrimSpace(noteStatus) == ""
 }
@@ -2150,13 +2261,45 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	if err != nil {
 		return run, false, err
 	}
-
+	workspaceRequest := WorkspacePrepareRequest{
+		ProjectID:     project.ProjectID,
+		ProjectKey:    project.ProjectKey,
+		RecordID:      run.RecordID,
+		ItemID:        run.ItemID,
+		BranchName:    branchName,
+		BranchBase:    branchBase,
+		RepoRoot:      project.RepoRoot,
+		StateRoot:     d.stateRoot,
+		WorkspaceRoot: wfFile.Data.Workspace.Root,
+		Strategy:      workspaceStrategy,
+		WorkRevision:  run.WorkRevision,
+	}
+	selectedWorkspacePath, _, err := workspacePathForRequest(workspaceRequest)
+	if err != nil {
+		return run, false, err
+	}
+	diskPressure, err := d.checkDiskPressureForDispatch(selectedWorkspacePath)
+	if err != nil {
+		return run, false, err
+	}
+	if diskPressure.DispatchPaused {
+		run.LastError = diskPressureDispatchReason(diskPressure)
+		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		return run, false, nil
+	}
+	if isDiskPressureDispatchReason(run.LastError) {
+		run.LastError = ""
+	}
 	ordinal := run.AttemptCount + 1
 	attemptID := newRecordID()
 	started := time.Now().UTC()
 	startedAt := started.Format(time.RFC3339)
 	leaseGeneration := run.LeaseGeneration + 1
+	if d.beforeRunLeaseClaim != nil {
+		d.beforeRunLeaseClaim(run)
+	}
 	claimed, err := d.store.ClaimRunLease(project.ProjectID, run.RecordID, attemptID, leaseGeneration, defaultRunLeaseTTL, started, true, RuntimeLeaseClaimPrecondition{
+		ExpectedLeaseState:      LeaseState(run.LeaseState),
 		ExpectedOwner:           run.LeaseOwner,
 		ExpectedLeaseGeneration: run.LeaseGeneration,
 		ExpectedWorkRevision:    run.WorkRevision,
@@ -2167,6 +2310,12 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	if !claimed {
 		latest, err := d.latestDispatchRun(run)
 		return latest, true, err
+	}
+	if reason := runnerCommandPreflightBlocker(runner.Name(), command); reason != "" {
+		run.LeaseGeneration = leaseGeneration
+		run.LeaseHost = runtimeLeaseHost()
+		parked := d.parkRunnerPreflightFailure(project, run, reason)
+		return d.updateDispatchRunIfLease(parked, attemptID, leaseGeneration)
 	}
 
 	run.LeaseState = string(LeaseStateClaimed)
@@ -2192,19 +2341,7 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	run.UpdatedAt = startedAt
 	run.LastEventAt = startedAt
 
-	workspace, err := workspaceManager.Prepare(WorkspacePrepareRequest{
-		ProjectID:     project.ProjectID,
-		ProjectKey:    project.ProjectKey,
-		RecordID:      run.RecordID,
-		ItemID:        run.ItemID,
-		BranchName:    branchName,
-		BranchBase:    branchBase,
-		RepoRoot:      project.RepoRoot,
-		StateRoot:     d.stateRoot,
-		WorkspaceRoot: wfFile.Data.Workspace.Root,
-		Strategy:      workspaceStrategy,
-		WorkRevision:  run.WorkRevision,
-	})
+	workspace, err := workspaceManager.Prepare(workspaceRequest)
 	if err != nil {
 		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 	}
@@ -2415,6 +2552,9 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	run.AttemptOutcome = string(AttemptOutcomeNone)
 	run.NextRetryAt = ""
 	run.LastError = ""
+	if d.postSpawnBeforePersist != nil {
+		d.postSpawnBeforePersist(run)
+	}
 	updated, persisted, err = d.updateDispatchRunIfLease(run, attemptID, leaseGeneration)
 	if err != nil || !persisted {
 		if err == nil && !persisted {
@@ -2609,13 +2749,18 @@ func (d *Daemon) emitSupervisorDecision(decision SupervisorDecision) {
 	}
 	saved, err := d.store.SaveSupervisorDecision(decision)
 	if err != nil {
+		d.tripEventLogPersistenceCircuit("supervisor_decision_store", firstNonEmpty(decision.RecordID, decision.ItemID), err)
 		return
 	}
 	run, err := d.store.FindRun(firstNonEmpty(saved.RecordID, saved.ItemID))
-	if err != nil || run == nil || strings.TrimSpace(run.EventSinkPath) == "" {
+	if err != nil {
+		d.tripEventLogPersistenceCircuit("supervisor_decision_lookup", firstNonEmpty(saved.RecordID, saved.ItemID), err)
 		return
 	}
-	_ = NewEventLog(run.EventSinkPath).Append("supervisor_decision", saved.AttemptID, RunnerName(saved.Runner), map[string]any{
+	if run == nil || strings.TrimSpace(run.EventSinkPath) == "" {
+		return
+	}
+	if err := NewEventLog(run.EventSinkPath).Append("supervisor_decision", saved.AttemptID, RunnerName(saved.Runner), map[string]any{
 		"decision_id":           saved.DecisionID,
 		"project_id":            saved.ProjectID,
 		"record_id":             saved.RecordID,
@@ -2641,7 +2786,9 @@ func (d *Daemon) emitSupervisorDecision(decision SupervisorDecision) {
 		"total_tokens":          saved.TotalTokens,
 		"context_window_tokens": saved.ContextWindowTokens,
 		"created_at":            saved.CreatedAt,
-	})
+	}); err != nil {
+		d.tripEventLogPersistenceCircuit("supervisor_decision", firstNonEmpty(saved.RecordID, saved.ItemID), err)
+	}
 }
 
 func (s *RuntimeStore) FindSessionByRef(projectID, sessionRef string) (*RunnerSession, error) {
@@ -4733,6 +4880,9 @@ func daemonStatusCmd(args Args) error {
 	if boolFromAny(status["budget_circuit_open"]) {
 		fmt.Printf("Budget circuit: open until %s (%s)\n", stringValue(status["budget_circuit_reset_at"]), stringValue(status["budget_circuit_reason"]))
 	}
+	if diskPressure, ok := status["disk_pressure"].(DiskPressureStatus); ok {
+		fmt.Printf("Disk pressure: %s (bytes=%d percent=%.2f paused=%t)\n", diskPressure.State, diskPressure.MinFreeBytes, diskPressure.MinFreePercent, diskPressure.DispatchPaused)
+	}
 	return nil
 }
 
@@ -4773,6 +4923,44 @@ func daemonLimitsCmd(args Args) error {
 			return err
 		}
 	}
+	diskPressure, err := store.DiskPressureConfig()
+	if err != nil {
+		return err
+	}
+	diskPressureChanged := false
+	if raw := strings.TrimSpace(args.String("disk-pressure-enabled")); raw != "" {
+		enabled, err := parseDiskPressureEnabled(raw)
+		if err != nil {
+			return err
+		}
+		diskPressure.Enabled = enabled
+		diskPressureChanged = true
+	}
+	if raw := strings.TrimSpace(args.String("disk-pressure-min-free-bytes")); raw != "" {
+		value, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			return tuskerError(errorInvalidArg, "--disk-pressure-min-free-bytes must be a non-negative integer")
+		}
+		diskPressure.MinFreeBytes = value
+		diskPressureChanged = true
+	}
+	if raw := strings.TrimSpace(args.String("disk-pressure-min-free-percent")); raw != "" {
+		value, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return tuskerError(errorInvalidArg, "--disk-pressure-min-free-percent must be a number between 0 and 100")
+		}
+		diskPressure.MinFreePercent = value
+		diskPressureChanged = true
+	}
+	if diskPressureChanged {
+		if err := store.SetDiskPressureConfig(diskPressure); err != nil {
+			return err
+		}
+		diskPressure, err = store.DiskPressureConfig()
+		if err != nil {
+			return err
+		}
+	}
 	limit, err := store.GlobalActiveRunLimit()
 	if err != nil {
 		return err
@@ -4781,10 +4969,11 @@ func daemonLimitsCmd(args Args) error {
 		limit = 2
 	}
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "max_active_runs": limit})
+		emitJSON(map[string]any{"ok": true, "max_active_runs": limit, "disk_pressure": diskPressure})
 		return nil
 	}
 	fmt.Printf("Daemon max active runs: %d\n", limit)
+	fmt.Printf("Daemon disk pressure: enabled=%t min-free-bytes=%d min-free-percent=%.2f\n", diskPressure.Enabled, diskPressure.MinFreeBytes, diskPressure.MinFreePercent)
 	return nil
 }
 
@@ -4892,6 +5081,9 @@ func projectsAddCmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	if err := validateProjectStorageBoundary(repoRoot, vaultPath); err != nil {
+		return err
+	}
 	if _, err := loadWorkflow(vaultPath); err != nil {
 		return err
 	}
@@ -4904,11 +5096,18 @@ func projectsAddCmd(args Args) error {
 	if err := store.UpsertProject(project); err != nil {
 		return err
 	}
+	warnings := []string{}
+	if warning := macOSProtectedProjectWarning(project); warning != "" {
+		warnings = append(warnings, warning)
+	}
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "project": project})
+		emitJSON(map[string]any{"ok": true, "project": project, "warnings": warnings})
 		return nil
 	}
 	fmt.Printf("Registered project %s (%s)\n", project.Name, project.ProjectID)
+	for _, warning := range warnings {
+		fmt.Println("Warning: " + warning)
+	}
 	return nil
 }
 
@@ -5016,6 +5215,11 @@ func setProjectEnabledCmd(args Args, enabled bool) error {
 		}
 		return err
 	}
+	if enabled {
+		if err := validateProjectStorageBoundary(project.RepoRoot, project.VaultRoot); err != nil {
+			return err
+		}
+	}
 	activeRuns, err := store.CountProjectActiveRuns(project.ProjectID)
 	if err != nil {
 		return err
@@ -5031,11 +5235,18 @@ func setProjectEnabledCmd(args Args, enabled bool) error {
 		updated.Health = projectHealthDisabled
 		updated.LastError = ""
 	}
+	warnings := []string{}
+	if enabled {
+		if warning := macOSProtectedProjectWarning(updated); warning != "" {
+			warnings = append(warnings, warning)
+		}
+	}
 	if args.Bool("json") {
 		emitJSON(map[string]any{
 			"ok":               true,
 			"project":          updated,
 			"active_run_count": activeRuns,
+			"warnings":         warnings,
 		})
 		return nil
 	}
@@ -5046,6 +5257,9 @@ func setProjectEnabledCmd(args Args, enabled bool) error {
 	fmt.Printf("%s project %s (%s)\n", verb, updated.Name, updated.ProjectID)
 	if !enabled && activeRuns > 0 {
 		fmt.Printf("Warning: %d active run(s) still exist for this project. They will not be redispatched, but they are still in runtime state.\n", activeRuns)
+	}
+	for _, warning := range warnings {
+		fmt.Println("Warning: " + warning)
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -40,8 +41,10 @@ type codexLiveHandle struct {
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
 	stderr io.ReadCloser
+	ioWG   sync.WaitGroup
 
 	writeMu   sync.Mutex
+	stateMu   sync.RWMutex
 	pendingMu sync.Mutex
 	pending   map[string]chan codexRPCResponse
 	nextID    atomic.Int64
@@ -53,6 +56,8 @@ type codexLiveHandle struct {
 	eventLog     *EventLog
 	runtimeStore *RuntimeStore
 	interrupted  atomic.Bool
+	eventFailed  atomic.Bool
+	criticalOnce sync.Once
 	doneOnce     sync.Once
 }
 
@@ -130,6 +135,7 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	}
 	handle.nextID.Store(1)
 	liveRegistry.Register(handle)
+	handle.ioWG.Add(2)
 	go handle.readStdout()
 	go handle.readStderr()
 	go handle.waitForExit()
@@ -146,7 +152,7 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 		liveRegistry.Unregister(handle.attemptID)
 		return nil, err
 	}
-	handle.threadID = threadID
+	handle.setThreadID(threadID)
 
 	prompt, err := readText(req.PromptPath)
 	if err != nil {
@@ -156,13 +162,14 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	if err != nil {
 		return nil, err
 	}
-	handle.turnID = turnID
+	handle.setTurnID(turnID)
 
 	pid := cmd.Process.Pid
 	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
+	_, messageRef, _, _ := handle.liveState()
 	return &StartResult{
 		SessionRef:   threadID,
-		MessageRef:   handle.messageRef,
+		MessageRef:   messageRef,
 		StartedAt:    processStartedAt,
 		PID:          pid,
 		PGID:         processGroupID(pid),
@@ -180,20 +187,62 @@ func (h *codexLiveHandle) RecordID() string   { return h.recordID }
 func (h *codexLiveHandle) ItemID() string     { return h.itemID }
 func (h *codexLiveHandle) Runner() RunnerName { return h.runner }
 
+func (h *codexLiveHandle) liveState() (threadID, messageRef, turnID string, turnIndex int) {
+	h.stateMu.RLock()
+	defer h.stateMu.RUnlock()
+	return h.threadID, h.messageRef, h.turnID, h.turnIndex
+}
+
+func (h *codexLiveHandle) setThreadID(value string) {
+	h.stateMu.Lock()
+	h.threadID = value
+	h.stateMu.Unlock()
+}
+
+func (h *codexLiveHandle) setMessageRef(value string) {
+	h.stateMu.Lock()
+	h.messageRef = value
+	h.stateMu.Unlock()
+}
+
+func (h *codexLiveHandle) setTurnID(value string) {
+	h.stateMu.Lock()
+	h.turnID = value
+	h.stateMu.Unlock()
+}
+
+func (h *codexLiveHandle) resetTurnState() {
+	h.stateMu.Lock()
+	h.turnID = ""
+	h.turnIndex = -1
+	h.stateMu.Unlock()
+}
+
+func (h *codexLiveHandle) setTurnIndexIfUnset(value int) {
+	h.stateMu.Lock()
+	if h.turnIndex < 0 {
+		h.turnIndex = value
+	}
+	h.stateMu.Unlock()
+}
+
 func (h *codexLiveHandle) Interrupt(ctx context.Context) error {
 	h.interrupted.Store(true)
-	if h.threadID != "" && h.turnID != "" {
-		if err := h.request(ctx, "turn/interrupt", map[string]any{
-			"threadId": h.threadID,
-			"turnId":   h.turnID,
-		}, nil); err == nil {
-			return nil
-		}
+	threadID, _, turnID, _ := h.liveState()
+	var requestErr error
+	if threadID != "" && turnID != "" {
+		requestErr = h.request(ctx, "turn/interrupt", map[string]any{
+			"threadId": threadID,
+			"turnId":   turnID,
+		}, nil)
 	}
 	if h.cmd != nil && h.cmd.Process != nil {
-		return syscall.Kill(-h.cmd.Process.Pid, syscall.SIGINT)
+		if err := syscall.Kill(-h.cmd.Process.Pid, syscall.SIGINT); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return err
+		}
+		return nil
 	}
-	return nil
+	return requestErr
 }
 
 func (h *codexLiveHandle) initialize() error {
@@ -368,7 +417,9 @@ func (h *codexLiveHandle) writeJSON(payload any) error {
 }
 
 func (h *codexLiveHandle) readStdout() {
+	defer h.ioWG.Done()
 	defer h.closeRuntimeStore()
+	defer h.stdout.Close()
 	scanner := bufio.NewScanner(h.stdout)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 4*1024*1024)
@@ -377,23 +428,31 @@ func (h *codexLiveHandle) readStdout() {
 		_ = appendRawLogLine(h.rawLogPath, line)
 		h.handleStdoutLine(line)
 	}
+	if err := scanner.Err(); err != nil {
+		h.failCriticalRunnerIO("stdout scan failed", err)
+	}
 }
 
 func (h *codexLiveHandle) readStderr() {
+	defer h.ioWG.Done()
+	defer h.stderr.Close()
 	scanner := bufio.NewScanner(h.stderr)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 4*1024*1024)
 	for scanner.Scan() {
 		_ = appendRawLogLine(h.rawLogPath, scanner.Text())
 	}
+	if err := scanner.Err(); err != nil {
+		h.failCriticalRunnerIO("stderr scan failed", err)
+	}
 }
 
 func (h *codexLiveHandle) handleStdoutLine(line string) {
 	if sessionRef := extractSessionRefFromJSON(line); sessionRef != "" {
-		h.threadID = sessionRef
+		h.setThreadID(sessionRef)
 	}
 	if messageRef := extractMessageRefFromJSON(line); messageRef != "" {
-		h.messageRef = messageRef
+		h.setMessageRef(messageRef)
 	}
 	var msg map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(line), &msg); err != nil {
@@ -820,13 +879,14 @@ func (h *codexLiveHandle) recordApprovalDecision(method string, decision codexAp
 	if h.eventLog == nil {
 		return
 	}
+	threadID, _, turnID, _ := h.liveState()
 	payload := map[string]any{
 		"project_id":          h.projectID,
 		"record_id":           h.recordID,
 		"item_id":             h.itemID,
 		"attempt_id":          h.attemptID,
-		"session_ref":         h.threadID,
-		"turn_id":             h.turnID,
+		"session_ref":         threadID,
+		"turn_id":             turnID,
 		"method":              method,
 		"request_type":        decision.RequestType,
 		"decision":            decision.Decision,
@@ -837,7 +897,7 @@ func (h *codexLiveHandle) recordApprovalDecision(method string, decision codexAp
 		"thread_sandbox":      h.policy.ThreadSandbox,
 		"turn_sandbox_policy": h.policy.TurnSandboxPolicy,
 	}
-	_ = h.eventLog.Append("codex_approval_decision", h.attemptID, h.runner, payload)
+	h.appendCriticalEvent("codex_approval_decision", payload)
 }
 
 func (h *codexLiveHandle) writeRPCResult(id string, result any) {
@@ -1026,7 +1086,7 @@ func (h *codexLiveHandle) recordExtensionToolDispatch(method string, dispatch co
 	if h.eventLog == nil {
 		return
 	}
-	_ = h.eventLog.Append("extension_tool_"+outcome, h.attemptID, h.runner, map[string]any{
+	h.appendCriticalEvent("extension_tool_"+outcome, map[string]any{
 		"project_id": h.projectID,
 		"record_id":  h.recordID,
 		"item_id":    h.itemID,
@@ -1051,10 +1111,10 @@ func (h *codexLiveHandle) handleNotification(method string, params json.RawMessa
 		}
 		if json.Unmarshal(params, &payload) == nil {
 			if payload.ThreadID != "" {
-				h.threadID = payload.ThreadID
+				h.setThreadID(payload.ThreadID)
 			}
 			if payload.Turn.ID != "" {
-				h.turnID = payload.Turn.ID
+				h.setTurnID(payload.Turn.ID)
 			}
 			h.recordTurnStarted(payload.Turn.ID, time.Now().UTC().Format(time.RFC3339), map[string]any{"source": method})
 		}
@@ -1092,30 +1152,30 @@ func (h *codexLiveHandle) handleNotification(method string, params json.RawMessa
 
 func (h *codexLiveHandle) continueOrFinalize() {
 	if !h.shouldContinueTurns() {
-		if h.policy.MaxTurns > 1 && h.turnIndex+1 >= h.policy.MaxTurns {
-			_ = appendRawLogLine(h.rawLogPath, fmt.Sprintf("max turns reached for attempt %s: completed %d/%d turns", h.attemptID, h.turnIndex+1, h.policy.MaxTurns))
+		_, _, _, turnIndex := h.liveState()
+		if h.policy.MaxTurns > 1 && turnIndex+1 >= h.policy.MaxTurns {
+			_ = appendRawLogLine(h.rawLogPath, fmt.Sprintf("max turns reached for attempt %s: completed %d/%d turns", h.attemptID, turnIndex+1, h.policy.MaxTurns))
 		}
 		h.finalize(0)
 		return
 	}
-	h.writeMu.Lock()
-	h.turnID = ""
-	h.turnIndex = -1
-	h.writeMu.Unlock()
-	turnID, err := h.turnStart(h.threadID, h.continuationPrompt())
+	h.resetTurnState()
+	threadID, _, _, _ := h.liveState()
+	turnID, err := h.turnStart(threadID, h.continuationPrompt())
 	if err != nil {
 		_ = appendRawLogLine(h.rawLogPath, "continuation turn failed: "+err.Error())
 		h.finalize(1)
 		return
 	}
-	h.turnID = turnID
+	h.setTurnID(turnID)
 }
 
 func (h *codexLiveHandle) shouldContinueTurns() bool {
 	if h.interrupted.Load() || h.policy.MaxTurns <= 1 {
 		return false
 	}
-	if h.turnIndex+1 >= h.policy.MaxTurns {
+	_, _, _, turnIndex := h.liveState()
+	if turnIndex+1 >= h.policy.MaxTurns {
 		return false
 	}
 	if strings.TrimSpace(h.notePath) == "" || len(h.activeStates) == 0 {
@@ -1130,6 +1190,7 @@ func (h *codexLiveHandle) shouldContinueTurns() bool {
 }
 
 func (h *codexLiveHandle) continuationPrompt() string {
+	_, _, _, turnIndex := h.liveState()
 	return strings.TrimSpace(fmt.Sprintf(`The tracker item is still in an active state.
 
 Continue on the same Codex thread. Do not re-plan from scratch unless the current proof changes the prior plan.
@@ -1140,24 +1201,28 @@ Current item:
 - Attempt: %s
 - Completed turns in this attempt: %d
 
-Re-read the note and workspace, satisfy the task proof mode, and continue until the item is ready for review or blocked. When it is ready, use tusker finish or move/propose the task to review; attempt handoff alone is not the review queue.`, h.itemID, h.recordID, h.attemptID, h.turnIndex+1)) + "\n"
+Re-read the note and workspace, satisfy the task proof mode, and continue until the item is ready for review or blocked. When it is ready, use tusker finish or move/propose the task to review; attempt handoff alone is not the review queue.`, h.itemID, h.recordID, h.attemptID, turnIndex+1)) + "\n"
 }
 
 func (h *codexLiveHandle) recordTurnStarted(turnID, at string, payload map[string]any) {
-	turnID = firstNonEmpty(strings.TrimSpace(turnID), h.turnID)
+	_, _, currentTurnID, _ := h.liveState()
+	turnID = firstNonEmpty(strings.TrimSpace(turnID), currentTurnID)
 	if turnID == "" {
 		return
 	}
-	h.turnID = turnID
+	h.setTurnID(turnID)
 	h.ensureTurnIndex()
-	h.appendNormalizedTurnEvent("turn_started", at, payloadWithTurn(h, turnID, payload))
+	threadID, _, _, turnIndex := h.liveState()
+	if !h.appendNormalizedTurnEvent("turn_started", at, payloadWithTurn(h, turnID, payload)) {
+		return
+	}
 	h.saveTurn(RunTurn{
 		AttemptID:       h.attemptID,
 		ProjectID:       h.projectID,
 		RecordID:        h.recordID,
 		TurnID:          turnID,
-		TurnIndex:       h.turnIndex,
-		SessionRef:      h.threadID,
+		TurnIndex:       turnIndex,
+		SessionRef:      threadID,
 		Status:          "running",
 		StartedAt:       at,
 		LastEventAt:     at,
@@ -1166,25 +1231,29 @@ func (h *codexLiveHandle) recordTurnStarted(turnID, at string, payload map[strin
 }
 
 func (h *codexLiveHandle) recordTurnUsage(source, at string, usage turnUsageCounters) {
-	turnID := firstNonEmpty(usage.turnID, h.turnID)
+	_, _, currentTurnID, _ := h.liveState()
+	turnID := firstNonEmpty(usage.turnID, currentTurnID)
 	if turnID == "" {
 		return
 	}
-	h.turnID = turnID
+	h.setTurnID(turnID)
 	h.ensureTurnIndex()
-	h.appendNormalizedTurnEvent("turn_usage_updated", at, payloadWithTurn(h, turnID, map[string]any{
+	threadID, _, _, turnIndex := h.liveState()
+	if !h.appendNormalizedTurnEvent("turn_usage_updated", at, payloadWithTurn(h, turnID, map[string]any{
 		"source":        source,
 		"input_tokens":  usage.inputTokens,
 		"output_tokens": usage.outputTokens,
 		"total_tokens":  usage.totalTokens,
-	}))
+	})) {
+		return
+	}
 	h.saveTurn(RunTurn{
 		AttemptID:       h.attemptID,
 		ProjectID:       h.projectID,
 		RecordID:        h.recordID,
 		TurnID:          turnID,
-		TurnIndex:       h.turnIndex,
-		SessionRef:      h.threadID,
+		TurnIndex:       turnIndex,
+		SessionRef:      threadID,
 		Status:          "running",
 		InputTokens:     usage.inputTokens,
 		OutputTokens:    usage.outputTokens,
@@ -1195,23 +1264,27 @@ func (h *codexLiveHandle) recordTurnUsage(source, at string, usage turnUsageCoun
 }
 
 func (h *codexLiveHandle) recordTurnCompleted(turnID, status, reason, at string) {
-	turnID = firstNonEmpty(strings.TrimSpace(turnID), h.turnID)
+	_, _, currentTurnID, _ := h.liveState()
+	turnID = firstNonEmpty(strings.TrimSpace(turnID), currentTurnID)
 	if turnID == "" {
 		return
 	}
-	h.turnID = turnID
+	h.setTurnID(turnID)
 	h.ensureTurnIndex()
-	h.appendNormalizedTurnEvent("turn_completed", at, payloadWithTurn(h, turnID, map[string]any{
+	threadID, _, _, turnIndex := h.liveState()
+	if !h.appendNormalizedTurnEvent("turn_completed", at, payloadWithTurn(h, turnID, map[string]any{
 		"status":     status,
 		"last_error": reason,
-	}))
+	})) {
+		return
+	}
 	h.saveTurn(RunTurn{
 		AttemptID:       h.attemptID,
 		ProjectID:       h.projectID,
 		RecordID:        h.recordID,
 		TurnID:          turnID,
-		TurnIndex:       h.turnIndex,
-		SessionRef:      h.threadID,
+		TurnIndex:       turnIndex,
+		SessionRef:      threadID,
 		Status:          status,
 		CompletedAt:     at,
 		LastEventAt:     at,
@@ -1220,15 +1293,49 @@ func (h *codexLiveHandle) recordTurnCompleted(turnID, status, reason, at string)
 	})
 }
 
-func (h *codexLiveHandle) appendNormalizedTurnEvent(kind, at string, payload map[string]any) {
+func (h *codexLiveHandle) appendNormalizedTurnEvent(kind, at string, payload map[string]any) bool {
 	if h.eventLog == nil || strings.TrimSpace(h.eventSinkPath) == "" {
-		return
+		return true
 	}
 	if payload == nil {
 		payload = map[string]any{}
 	}
 	payload["normalized_at"] = at
-	_ = h.eventLog.Append(kind, h.attemptID, h.runner, payload)
+	return h.appendCriticalEvent(kind, payload)
+}
+
+func (h *codexLiveHandle) appendCriticalEvent(kind string, payload map[string]any) bool {
+	if h.eventLog == nil || strings.TrimSpace(h.eventSinkPath) == "" {
+		return true
+	}
+	if err := h.eventLog.Append(kind, h.attemptID, h.runner, payload); err != nil {
+		h.failEventLog(err)
+		return false
+	}
+	return true
+}
+
+func (h *codexLiveHandle) failEventLog(err error) {
+	if err == nil {
+		return
+	}
+	h.eventFailed.Store(true)
+	h.failCriticalRunnerIO("critical event log failure", err)
+}
+
+func (h *codexLiveHandle) failCriticalRunnerIO(message string, err error) {
+	if err == nil {
+		return
+	}
+	h.criticalOnce.Do(func() {
+		_ = appendRawLogLine(h.rawLogPath, message+": "+err.Error())
+		if h.cmd != nil && h.cmd.Process != nil {
+			_ = syscall.Kill(-h.cmd.Process.Pid, syscall.SIGKILL)
+		}
+		h.doneOnce.Do(func() {})
+		_ = writeRunnerStatusFile(h.statusPath, 1)
+		liveRegistry.Unregister(h.attemptID)
+	})
 }
 
 func (h *codexLiveHandle) saveTurn(turn RunTurn) {
@@ -1239,30 +1346,32 @@ func (h *codexLiveHandle) saveTurn(turn RunTurn) {
 }
 
 func (h *codexLiveHandle) ensureTurnIndex() {
-	if h.turnIndex >= 0 {
+	_, _, _, turnIndex := h.liveState()
+	if turnIndex >= 0 {
 		return
 	}
 	if h.runtimeStore == nil {
-		h.turnIndex = 0
+		h.setTurnIndexIfUnset(0)
 		return
 	}
 	index, err := h.runtimeStore.NextTurnIndex(h.projectID, h.recordID, h.attemptID)
 	if err != nil {
-		h.turnIndex = 0
+		h.setTurnIndexIfUnset(0)
 		return
 	}
-	h.turnIndex = index
+	h.setTurnIndexIfUnset(index)
 }
 
 func payloadWithTurn(h *codexLiveHandle, turnID string, payload map[string]any) map[string]any {
+	threadID, _, _, turnIndex := h.liveState()
 	out := map[string]any{
 		"project_id":  h.projectID,
 		"record_id":   h.recordID,
 		"item_id":     h.itemID,
 		"attempt_id":  h.attemptID,
-		"session_ref": h.threadID,
+		"session_ref": threadID,
 		"turn_id":     turnID,
-		"turn_index":  h.turnIndex,
+		"turn_index":  turnIndex,
 	}
 	for key, value := range payload {
 		if key == "last_error" && strings.TrimSpace(stringValue(value)) == "" {
@@ -1301,6 +1410,7 @@ func (h *codexLiveHandle) closeRuntimeStore() {
 }
 
 func (h *codexLiveHandle) waitForExit() {
+	h.ioWG.Wait()
 	err := h.cmd.Wait()
 	exitCode := 0
 	if err != nil {

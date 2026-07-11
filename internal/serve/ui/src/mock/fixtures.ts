@@ -35,6 +35,10 @@ export const projects: ProjectSummary[] = [
   {
     id: "tusker",
     name: "tusker",
+    repoRoot: "~/Downloads/side/tusker",
+    vaultRoot: "~/Downloads/side/tusker/.tusker",
+    automationEnabled: true,
+    health: "healthy",
     needsCount: 3,
     activeRuns: 4,
     worstLiveness: "stale",
@@ -43,6 +47,10 @@ export const projects: ProjectSummary[] = [
   {
     id: "rzn-browser",
     name: "rzn-browser",
+    repoRoot: "~/Downloads/side/rzn-browser",
+    vaultRoot: "~/Downloads/side/rzn-browser/.tusker",
+    automationEnabled: true,
+    health: "healthy",
     needsCount: 1,
     activeRuns: 1,
     worstLiveness: "fresh",
@@ -51,6 +59,10 @@ export const projects: ProjectSummary[] = [
   {
     id: "headroom",
     name: "headroom",
+    repoRoot: "~/Downloads/side/headroom",
+    vaultRoot: "~/Downloads/side/headroom/.tusker",
+    automationEnabled: false,
+    health: "disabled",
     needsCount: 0,
     activeRuns: 0,
     worstLiveness: null,

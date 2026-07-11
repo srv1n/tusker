@@ -51,26 +51,28 @@ function recorder() {
 }
 
 test("stream keys map to live query invalidations", () => {
-  expect(streamKeyToQueryKeys("tasks:AGX-T-0005")).toEqual([
-    ["tasks"],
-    ["task", "AGX-T-0005"],
-    ["needs"],
+  expect(streamKeyToQueryKeys("tasks:AGX-T-0005", "tusker")).toEqual([
+    ["tasks", "tusker"],
+    ["task", "tusker", "AGX-T-0005"],
+    ["needs", "tusker"],
     ["projects"],
   ]);
-  expect(streamKeyToQueryKeys("runs:AGX-T-0005")).toEqual([["runs"], ["run", "AGX-T-0005"]]);
-  expect(streamKeyToQueryKeys("review:batch")).toEqual([["needs"], ["tasks"], ["runs"], ["projects"]]);
+  expect(streamKeyToQueryKeys("runs:AGX-T-0005", "tusker")).toEqual([["runs", "tusker"], ["run", "tusker", "AGX-T-0005"]]);
+  expect(streamKeyToQueryKeys("review:batch", "tusker")).toEqual([["needs", "tusker"], ["tasks", "tusker"], ["runs", "tusker"], ["projects"], ["review", "batch", "tusker"]]);
 
   const { client, invalidations } = recorder();
   invalidateStreamEvent(client, {
     kind: "task_status_change",
     keys: ["tasks:AGX-T-0005", "tasks:AGX-T-0005", "runs"],
+    project: "tusker",
   });
   expect(invalidations).toEqual([
-    { queryKey: ["tasks"], exact: false },
-    { queryKey: ["task", "AGX-T-0005"], exact: false },
-    { queryKey: ["needs"], exact: false },
+    { queryKey: ["tasks", "tusker"], exact: false },
+    { queryKey: ["task", "tusker", "AGX-T-0005"], exact: false },
+    { queryKey: ["needs", "tusker"], exact: false },
     { queryKey: ["projects"], exact: false },
-    { queryKey: ["runs"], exact: false },
+    { queryKey: ["runs", "tusker"], exact: false },
+    { queryKey: ["run"], exact: false },
   ]);
 });
 
@@ -89,14 +91,25 @@ test("stream connection disables fast polling, falls back on error, and recovers
   expect(getStreamStatus().connected).toBe(true);
   expect(liveRefetchInterval()).toBe(false);
 
-  source.message({ kind: "lease_transition", keys: ["runs:SRV-T-0008"] });
+  source.message({ kind: "lease_transition", keys: ["runs:SRV-T-0008"], project: "tusker" });
   expect(getStreamStatus().lastEventAt).toBe(1_000);
-  expect(invalidations).toContainEqual({ queryKey: ["run", "SRV-T-0008"], exact: false });
+  expect(invalidations).toContainEqual({ queryKey: ["run", "tusker", "SRV-T-0008"], exact: false });
+  const taskInvalidationsBeforeError = invalidations.filter(
+    (entry) => JSON.stringify(entry) === JSON.stringify({ queryKey: ["tasks"], exact: false }),
+  ).length;
 
   now = 2_000;
   source.error();
   expect(getStreamStatus().connected).toBe(false);
   expect(liveRefetchInterval()).toBe(LIVE_STREAM_FALLBACK_MS);
+  expect(invalidations.slice(-2)).toEqual([
+    { queryKey: ["daemon"], exact: false },
+    { queryKey: ["projects"], exact: false },
+  ]);
+  expect(
+    invalidations.filter((entry) => JSON.stringify(entry) === JSON.stringify({ queryKey: ["tasks"], exact: false }))
+      .length,
+  ).toBe(taskInvalidationsBeforeError);
   expect(source.closed).toBe(false);
 
   source.open();
@@ -106,4 +119,3 @@ test("stream connection disables fast polling, falls back on error, and recovers
   disconnect();
   expect(source.closed).toBe(true);
 });
-

@@ -12,6 +12,7 @@ Re-certification procedure for the resident daemon after any change to the dispa
 3. Caps: `max_active_runs_per_project: 2` in `.tusker/WORKFLOW.md`, **and** `tusker daemon limits --max-active-runs 2` — the global limit is separate and wins silently (observed: a leftover global cap of 1 serialized all dispatch; only the plan-gate blocker text revealed it).
 4. Config sanity: `codex.max_turns` must allow real work (observed: `max_turns: 1` manufactures continuation loops by construction).
 5. Check `tusker projects list --json` for stale registrations first. Broken registrations are quarantined instead of fatal (RUN-T-0021), but a clean trial should still fix or disable them before starting.
+6. On macOS, run `tusker daemon service status --json` and inspect `project_storage.protected_projects`. Move listed roots to `~/Developer`/`~/Projects`, or grant Full Disk Access to the reported service executable and use `--allow-protected-projects` explicitly.
 
 ## Steps
 

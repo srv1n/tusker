@@ -7,6 +7,7 @@ import { GateKindChip } from "@/components/ui/chips";
 import { Mono } from "@/components/ui/primitives";
 import { PageScroll, SectionLabel } from "@/components/ui/page";
 import { QueryBoundary, SkeletonRows } from "@/components/ui/states";
+import { diskPressurePresentation } from "./daemonStatus";
 import {
   useAttempts,
   useDaemon,
@@ -21,18 +22,18 @@ import {
   useLandWave,
   useWaves,
 } from "@/lib/queries";
-import type { AttemptDetail, GateDetail, WaveSummary } from "@/types/domain";
+import type { AttemptDetail, DaemonStatus, GateDetail, WaveSummary } from "@/types/domain";
 
 const route = getRouteApi("/p/$projectId/ops");
 
 export function ProjectOps() {
   const { projectId } = route.useParams();
   const waves = useWaves(projectId);
-  const gates = useGates();
-  const evidence = useEvidence();
-  const decisions = useDecisions();
-  const feedback = useFeedback();
-  const attempts = useAttempts();
+  const gates = useGates(undefined, projectId);
+  const evidence = useEvidence(undefined, projectId);
+  const decisions = useDecisions(undefined, projectId);
+  const feedback = useFeedback(projectId);
+  const attempts = useAttempts(undefined, projectId);
   const daemon = useDaemon();
 
   return (
@@ -59,7 +60,7 @@ export function ProjectOps() {
             </QueryBoundary>
 
             <QueryBoundary q={gates} loading={<SkeletonRows rows={3} />}>
-              {(items) => <GatePanel gates={items} />}
+              {(items) => <GatePanel gates={items} projectId={projectId} />}
             </QueryBoundary>
 
             <ReadTables
@@ -74,8 +75,8 @@ export function ProjectOps() {
             <QueryBoundary q={daemon} loading={<SkeletonRows rows={2} />}>
               {(status) => <DaemonPanel status={status} />}
             </QueryBoundary>
-            <EvidenceForm />
-            <FeedbackForm />
+            <EvidenceForm projectId={projectId} />
+            <FeedbackForm projectId={projectId} />
           </aside>
         </div>
       </div>
@@ -84,7 +85,7 @@ export function ProjectOps() {
 }
 
 function WavePanel({ waves, projectId }: { waves: WaveSummary[]; projectId: string }) {
-  const landWave = useLandWave();
+  const landWave = useLandWave(projectId);
   const confirm = useConfirm();
 
   // Landing a wave merges every member task into the default branch — gate it
@@ -111,7 +112,7 @@ function WavePanel({ waves, projectId }: { waves: WaveSummary[]; projectId: stri
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <Mono className="text-[11px] text-faint">{wave.id}</Mono>
-                  <span className="truncate text-[13px] font-semibold text-ink-soft">{wave.title}</span>
+                  <span className="min-w-0 truncate text-[13px] font-semibold text-ink-soft">{wave.title}</span>
                   <Mono className="text-[10.5px] text-faint">{wave.status || "unlanded"}</Mono>
                   {wave.landedAt ? <Mono className="text-[10.5px] text-pass">landed {wave.landedAt}</Mono> : null}
                 </div>
@@ -147,7 +148,7 @@ function WavePanel({ waves, projectId }: { waves: WaveSummary[]; projectId: stri
   );
 }
 
-function GatePanel({ gates }: { gates: GateDetail[] }) {
+function GatePanel({ gates, projectId }: { gates: GateDetail[]; projectId: string }) {
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const valueFor = (gate: string) => inputs[gate] ?? "";
   const setValue = (gate: string, value: string) => setInputs((prev) => ({ ...prev, [gate]: value }));
@@ -174,7 +175,7 @@ function GatePanel({ gates }: { gates: GateDetail[] }) {
       if (!ok) return;
     }
     const body = action === "satisfy" ? { evidence: text } : { reason: text };
-    gateAction.mutate({ gateId: gate.id, action, body, taskId: gate.blocks[0] });
+    gateAction.mutate({ gateId: gate.id, action, body, taskId: gate.blocks[0], projectId });
   };
 
   return (
@@ -233,10 +234,11 @@ function GateButton({
   );
 }
 
-function DaemonPanel({ status }: { status: { connected: boolean; addr: string; activeRuns: number; queuedTasks: number; maxActiveRuns?: number } }) {
+function DaemonPanel({ status }: { status: DaemonStatus }) {
   const daemonAction = useDaemonAction();
   const confirm = useConfirm();
   const [limit, setLimit] = useState(String(status.maxActiveRuns ?? 2));
+  const diskPressure = diskPressurePresentation(status.diskPressure);
 
   // One mutation for the whole control group → its `isPending` disables every
   // button while any one is in flight.
@@ -258,10 +260,27 @@ function DaemonPanel({ status }: { status: { connected: boolean; addr: string; a
       <div className="rounded-lg border border-line bg-raised px-3.5 py-3">
         <div className="mb-3 grid grid-cols-2 gap-2 font-mono text-[11px] text-faint">
           <span>{status.connected ? "connected" : "offline"}</span>
-          <span className="text-right">{status.addr}</span>
+          <span className="truncate text-right">{status.addr}</span>
           <span>active {status.activeRuns}</span>
           <span className="text-right">queued {status.queuedTasks}</span>
         </div>
+        {diskPressure ? (
+          <div
+            data-daemon-disk-pressure={status.diskPressure?.state}
+            className={`mb-3 text-[11px] ${
+              diskPressure.tone === "fail"
+                ? "text-fail"
+                : diskPressure.tone === "warn"
+                  ? "text-warn"
+                  : diskPressure.tone === "pass"
+                    ? "text-pass"
+                    : "text-faint"
+            }`}
+          >
+            <span className="font-medium">{diskPressure.label}</span>
+            {diskPressure.reason ? <span className="ml-1 text-faint">{diskPressure.reason}</span> : null}
+          </div>
+        ) : null}
         <div className="flex flex-wrap gap-2">
           <Button type="button" size="sm" disabled={busy} onClick={() => daemonAction.mutate({ action: "start" })}>
             <Play size={12} /> Start
@@ -283,8 +302,8 @@ function DaemonPanel({ status }: { status: { connected: boolean; addr: string; a
   );
 }
 
-function EvidenceForm() {
-  const add = useEvidenceAdd();
+function EvidenceForm({ projectId }: { projectId: string }) {
+  const add = useEvidenceAdd(undefined, projectId);
   const [taskId, setTaskId] = useState("");
   const [covers, setCovers] = useState("A1");
   const [summary, setSummary] = useState("");
@@ -320,8 +339,8 @@ function EvidenceForm() {
   );
 }
 
-function FeedbackForm() {
-  const add = useFeedbackAdd();
+function FeedbackForm({ projectId }: { projectId: string }) {
+  const add = useFeedbackAdd(projectId);
   const [context, setContext] = useState("");
   const [friction, setFriction] = useState("");
   const [idea, setIdea] = useState("");

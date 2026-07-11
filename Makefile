@@ -2,7 +2,9 @@ BIN_NAME := tusker
 CMD_DIR := ./cmd/tusker
 DIST_DIR := dist
 DIST_BIN := $(DIST_DIR)/$(BIN_NAME)
+UI_DIR := internal/serve/ui
 BIN_DIR ?= $(HOME)/.local/bin
+MAC_APP_DIR ?= $(HOME)/Applications
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 RELEASE_VERSION ?= $(VERSION)
 RELEASES_DIR := $(DIST_DIR)/releases/$(RELEASE_VERSION)
@@ -10,17 +12,58 @@ RELEASE_MATRIX ?= darwin/arm64 darwin/amd64 linux/arm64 linux/amd64
 SHA256_CMD := $(shell if command -v shasum >/dev/null 2>&1; then echo "shasum -a 256"; elif command -v sha256sum >/dev/null 2>&1; then echo "sha256sum"; fi)
 GREEN := \033[32m
 RESET := \033[0m
+GO_MAX_PROCS ?= 2
+GO_PACKAGE_PARALLELISM ?= 1
+GO_TEST_PARALLELISM ?= 1
+VALIDATION_GATE := sh scripts/with-validation-lock.sh --
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build fmt fmt-check test vet validate check skill-doctor install install-bin install-user install-repo sync-repo-contract release-artifacts tag-release docs-export docs-dev docs-build docs-check codebasezip codebase zip
+.NOTPARALLEL: check-unlocked ui-check-unlocked
+.PHONY: help build build-go build-go-unlocked mac-app mac-install mac-uninstall mac-open mac-preview ui-install ui-test ui-build ui-check ui-check-unlocked fmt fmt-check test test-unlocked vet vet-unlocked validate validate-unlocked check check-unlocked skill-doctor install install-bin install-user install-repo sync-repo-contract release-artifacts tag-release docs-export docs-dev docs-build docs-check codebasezip codebase zip
 
 help: ## Show available make targets
 	@awk 'BEGIN {FS = ":.*## "}; /^[a-zA-Z0-9_.-]+:.*## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-build: ## Build the local CLI into dist/tusker
+build: ui-build ## Build fresh embedded UI assets and the local CLI
+	$(MAKE) build-go
+
+build-go: ## Build the Go binary from the prepared embedded assets
+	$(VALIDATION_GATE) $(MAKE) build-go-unlocked
+
+build-go-unlocked:
 	@mkdir -p "$(DIST_DIR)"
-	go build -o "$(DIST_BIN)" "$(CMD_DIR)"
+	GOMAXPROCS=$(GO_MAX_PROCS) go build -p=$(GO_PACKAGE_PARALLELISM) -o "$(DIST_BIN)" "$(CMD_DIR)"
+
+mac-app: build ## Build and sign TuskerBar with the current embedded CLI/Serve runtime
+	apps/mac/TuskerBar/scripts/build-app.sh
+
+mac-install: mac-app ## Install TuskerBar in ~/Applications (override with MAC_APP_DIR=...)
+	MAC_APP_DIR="$(MAC_APP_DIR)" apps/mac/TuskerBar/scripts/install-app.sh
+
+mac-uninstall: ## Remove TuskerBar from ~/Applications
+	MAC_APP_DIR="$(MAC_APP_DIR)" apps/mac/TuskerBar/scripts/uninstall-app.sh
+
+mac-open: ## Open the installed TuskerBar app
+	open "$(MAC_APP_DIR)/TuskerBar.app"
+
+mac-preview: install ## Build, install, and open the self-starting Tusker Mac app
+	@echo "Tusker is open; the app starts or reuses its bundled daemon automatically."
+
+ui-install: ## Install the pinned Serve UI dependency graph
+	cd "$(UI_DIR)" && bun install --frozen-lockfile
+
+ui-test: ui-install ## Typecheck and test the Serve UI
+	cd "$(UI_DIR)" && bun run typecheck
+	cd "$(UI_DIR)" && bun test
+
+ui-build: ui-install ## Build the Serve UI assets embedded by the Go binary
+	cd "$(UI_DIR)" && bun run build
+
+ui-check: ## Run the complete Serve UI release gate
+	$(VALIDATION_GATE) $(MAKE) ui-check-unlocked
+
+ui-check-unlocked: ui-test ui-build
 
 fmt: ## Format Go source files
 	@files=$$(git ls-files -c -o --exclude-standard '*.go' | while IFS= read -r file; do [ -f "$$file" ] && printf '%s\n' "$$file"; done); \
@@ -37,18 +80,31 @@ fmt-check: ## Verify Go source is gofmt-formatted
 	fi
 
 test: ## Run Go tests
-	go test ./...
+	$(VALIDATION_GATE) $(MAKE) test-unlocked
+
+test-unlocked:
+	GOMAXPROCS=$(GO_MAX_PROCS) go test -p=$(GO_PACKAGE_PARALLELISM) -parallel=$(GO_TEST_PARALLELISM) ./...
 
 vet: ## Run go vet
-	go vet ./...
+	$(VALIDATION_GATE) $(MAKE) vet-unlocked
+
+vet-unlocked:
+	GOMAXPROCS=$(GO_MAX_PROCS) go vet -p=$(GO_PACKAGE_PARALLELISM) ./...
 
 validate: ## Run Tusker validation with branch-policy checks
-	go run ./cmd/tusker validate --branch-policy --json
+	$(VALIDATION_GATE) $(MAKE) validate-unlocked
+
+validate-unlocked:
+	GOMAXPROCS=$(GO_MAX_PROCS) go run -p=$(GO_PACKAGE_PARALLELISM) ./cmd/tusker validate --branch-policy --json
 
 skill-doctor: ## Run the strict project skill doctor
 	go run ./cmd/tusker skill doctor --strict --json
 
-check: fmt-check test vet validate build ## Run format, tests, vet, validation, and build
+check: ## Run the serialized UI + Go release-candidate gate
+	$(VALIDATION_GATE) $(MAKE) check-unlocked
+
+check-unlocked: ui-check-unlocked
+	$(MAKE) fmt-check test-unlocked vet-unlocked validate-unlocked build-go-unlocked
 
 install-bin: build ## Build/install binary and refresh existing root user skills
 	./"$(DIST_BIN)" update --bin-dir "$(BIN_DIR)"
@@ -58,7 +114,7 @@ install-user: build ## Build and install binary + Codex/Claude user skills
 	./"$(DIST_BIN)" install --codex-user --claude-user --bin-dir "$(BIN_DIR)" --force
 	@printf "$(GREEN)OK install-user complete$(RESET)\n"
 
-install: install-user ## Default local developer install
+install: install-user mac-install ## Install the CLI/skills and the TuskerBar app
 	@printf "$(GREEN)OK install complete$(RESET)\n"
 
 install-repo: build ## Install repo-local skills into REPO=/abs/path

@@ -4,7 +4,7 @@
   today, it is marked `// TODO(api)` at the call site.
 */
 
-import type { Attempt, RunDetail, RunEvent, TaskStatus } from "@/types/domain";
+import type { Attempt, DaemonStatus, RunDetail, RunEvent, TaskStatus } from "@/types/domain";
 import { compactNumber, duration } from "@/lib/time";
 
 /** A derived stat cell for the run summary grid (design §07 — four headline numbers). */
@@ -14,9 +14,9 @@ export interface RunStat {
 }
 
 /** The four headline numbers shown above the run body. */
-export function runStats(run: RunDetail): RunStat[] {
+export function runStats(run: RunDetail, waitingForDaemon = false): RunStat[] {
   return [
-    { label: "Elapsed", value: duration(run.elapsedSec) },
+    { label: "Elapsed", value: waitingForDaemon ? "Paused" : duration(run.elapsedSec) },
     { label: "Input", value: compactNumber(run.tokens.input) },
     { label: "Output", value: compactNumber(run.tokens.output) },
     { label: "Attempts", value: String(run.attemptCount) },
@@ -25,6 +25,31 @@ export function runStats(run: RunDetail): RunStat[] {
 
 export function isLiveHeaderRun(run: Pick<RunDetail, "leaseState" | "outcome">): boolean {
   return run.leaseState === "held" && (run.outcome === "running" || run.outcome === "stale");
+}
+
+export function isInterruptibleRun(
+  run: Pick<RunDetail, "leaseState" | "leaseStateRaw" | "outcome" | "processRunning">,
+): boolean {
+  const raw = run.leaseStateRaw;
+  return (
+    run.processRunning === true ||
+    raw === "claimed" ||
+    raw === "running" ||
+    raw === "retry_queued" ||
+    isLiveHeaderRun(run) ||
+    run.outcome === "retry-queued"
+  );
+}
+
+export function waitingForDaemonReason(
+  run: Pick<RunDetail, "outcome">,
+  daemon: Pick<DaemonStatus, "daemonAlive" | "daemonDownReason"> | undefined,
+): string | null {
+  if (run.outcome !== "retry-queued" || daemon?.daemonAlive !== false) return null;
+  return (
+    daemon.daemonDownReason ??
+    "Daemon process is not running. Start the daemon to dispatch this queued run."
+  );
 }
 
 /** Compact "1m 04s · 21.1k→1.5k tok" attempt meta line. */
@@ -70,13 +95,26 @@ export function clockTime(iso: string): string {
  * clicking Retry there previously requeued into a silent daemon retire behind a
  * stale "Ready" badge (SRV-T-0016 A3). Point the operator at the real lane.
  */
-export function redriveDisabledReason(status: TaskStatus | undefined): string | null {
+export function redriveDisabledReason(
+  status: TaskStatus | undefined,
+  run?: Pick<RunDetail, "leaseState" | "leaseStateRaw" | "outcome" | "processRunning">,
+  daemonDownReason?: string | null,
+): string | null {
   switch (status) {
     case "review":
       return "Task is in review — resolve it in the review/land lane; there is no run to redrive.";
     case "done":
       return "Task is done — nothing to redrive.";
     default:
-      return null;
+      break;
   }
+  if (run?.outcome === "retry-queued" || run?.leaseStateRaw === "retry_queued") {
+    return daemonDownReason
+      ? `Redrive is already queued. ${daemonDownReason}`
+      : "Redrive is already queued. Wait for the daemon to claim it, or interrupt the queued run first.";
+  }
+  if (run && isInterruptibleRun(run)) {
+    return "Interrupt the current run and wait for canonical lease/process readback before redriving.";
+  }
+  return null;
 }

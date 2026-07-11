@@ -564,6 +564,8 @@ func run(command string, args Args) (int, error) {
 		return 0, daemonResumeCmd(args)
 	case "daemon stop":
 		return 0, daemonStopCmd(args)
+	case "daemon service":
+		return 0, daemonServiceCmd(args)
 	case "daemon":
 		printDaemonHelp()
 		return 0, nil
@@ -729,7 +731,7 @@ func run(command string, args Args) (int, error) {
 	case "help vault", "help vault set", "help vault status", "help vault mount", "help vault unmount", "help vault repair", "help vault move":
 		printVaultHelp()
 		return 0, nil
-	case "help daemon", "help daemon run", "help daemon status", "help daemon limits", "help daemon resume", "help daemon stop":
+	case "help daemon", "help daemon run", "help daemon status", "help daemon limits", "help daemon resume", "help daemon stop", "help daemon service":
 		printDaemonHelp()
 		return 0, nil
 	case "help automation", "help automation status", "help automation queue", "help automation explain", "help automation plan", "help automation dispatch", "help automation collect-external", "help automation external-loop", "help automation advance-external":
@@ -922,7 +924,7 @@ func printCommandHelp(command string) bool {
 		printGraphHelp()
 	case "vault", "vault set", "vault status", "vault mount", "vault unmount", "vault repair", "vault move":
 		printVaultHelp()
-	case "daemon", "daemon run", "daemon status", "daemon limits", "daemon resume", "daemon stop":
+	case "daemon", "daemon run", "daemon status", "daemon limits", "daemon resume", "daemon stop", "daemon service":
 		printDaemonHelp()
 	case "automation", "automation status", "automation queue", "automation explain", "automation plan", "automation dispatch", "automation collect-external", "automation external-loop", "automation advance-external":
 		printAutomationHelp()
@@ -973,6 +975,8 @@ func printDaemonHelp() {
   tusker daemon limits [--max-active-runs <n>] [--json]
   tusker daemon resume [--json]
   tusker daemon stop [--drain] [--json]
+  tusker daemon service install|start [--allow-protected-projects] [--json]
+  tusker daemon service stop|status|uninstall [--json]
 
 Purpose:
   Operator/internal runtime loop for registered local projects. The normal
@@ -987,13 +991,22 @@ Behavior:
   - daemon resume closes the invariant circuit only after violations are cleared
   - daemon stop asks the resident daemon to shut down and leaves detached wrappers alive
   - daemon stop --drain waits bounded for detached wrappers to finish
+  - daemon service manages the macOS per-user launchd agent for daemon run
+  - service install/start blocks before launch when enabled projects are under
+    macOS-protected folders; --allow-protected-projects is the explicit override
+    after Full Disk Access has been granted
+  - shared daemon runtime lives under Application Support; each project keeps
+    its WORKFLOW.md, tasks, knowledge, and source inside the repository
 
 Examples:
   tusker daemon status
   tusker daemon run --once
   tusker daemon limits --max-active-runs 1
   tusker daemon resume
-  tusker daemon stop --drain`)
+  tusker daemon stop --drain
+  tusker daemon service install
+  tusker daemon service install --allow-protected-projects
+  tusker daemon service status`)
 }
 
 func printAutomationHelp() {
@@ -1127,6 +1140,12 @@ Purpose:
   Register repo-local Tusker vaults for daemon pickup. Obsidian remains the
   editing surface; project registration only tells the local runtime what to
   poll.
+
+Behavior:
+  - project WORKFLOW.md, tasks, knowledge, and source remain repo-local
+  - shared daemon state, logs, limits, and runtime metadata live outside repos
+  - on macOS, projects under Desktop, Documents, Downloads, or iCloud Drive
+    receive a launchd access warning during add/enable
 
 Examples:
   tusker projects add --repo . --vault ./.tusker

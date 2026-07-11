@@ -24,16 +24,16 @@ export function DocShell({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-line bg-surface/85 px-11 py-3 backdrop-blur-md">
+      <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-line bg-surface/85 px-4 py-3 backdrop-blur-md sm:px-6 lg:px-11">
         <Link
           to="/p/$projectId"
           params={{ projectId }}
-          className="flex items-center gap-1.5 font-mono text-[11.5px] text-faint transition-colors hover:text-ink"
+          className="flex flex-none items-center gap-1.5 font-mono text-[11.5px] text-faint transition-colors hover:text-ink"
         >
           <ArrowLeft size={13} strokeWidth={2} />
           {projectName}
         </Link>
-        <Mono className="truncate text-[11px] text-fainter">/ {path}</Mono>
+        <Mono className="min-w-0 flex-1 truncate text-[11px] text-fainter">/ {path}</Mono>
         {actions && <div className="ml-auto flex flex-none items-center gap-2.5">{actions}</div>}
       </header>
       <div className="tk-scroll flex-1 overflow-y-auto">{children}</div>

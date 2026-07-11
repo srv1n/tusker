@@ -48,6 +48,12 @@ const appSettingsRoute = createRoute({
   ),
 });
 
+const panelRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "panel",
+  component: lazyRouteComponent(() => import("@/features/panel/Panel"), "Panel"),
+});
+
 const projectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "p/$projectId",
@@ -133,6 +139,7 @@ const projectSettingsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   appSettingsRoute,
+  panelRoute,
   projectRoute.addChildren([
     overviewRoute,
     needsRoute,

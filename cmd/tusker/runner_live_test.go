@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -229,6 +232,90 @@ for line in sys.stdin:
 	assertEqual(t, 11, turns[0].InputTokens, "stored codex input tokens")
 	assertEqual(t, 7, turns[0].OutputTokens, "stored codex output tokens")
 	assertEqual(t, 18, turns[0].TotalTokens, "stored codex total tokens")
+}
+
+func TestCodexLiveEventLogFailureStopsRunner(t *testing.T) {
+	tempRoot := t.TempDir()
+	eventSinkPath := filepath.Join(tempRoot, "events.jsonl")
+	rawLogPath := filepath.Join(tempRoot, "raw.log")
+	statusPath := filepath.Join(tempRoot, "status.json")
+	if err := writeText(eventSinkPath, `{"seq":1}`); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", "sleep 30")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	handle := &codexLiveHandle{
+		attemptID: "attempt-live-event-failure", eventSinkPath: eventSinkPath,
+		rawLogPath: rawLogPath, statusPath: statusPath, runner: RunnerCodex,
+		eventLog: NewEventLog(eventSinkPath), cmd: cmd,
+	}
+	if handle.appendCriticalEvent("turn_started", map[string]any{"turn_id": "turn-1"}) {
+		t.Fatal("critical append unexpectedly succeeded")
+	}
+	if !handle.eventFailed.Load() {
+		t.Fatal("live handle did not record event-log failure")
+	}
+	waitForStatusFile(t, statusPath)
+	status, err := readRunnerProcessStatus(statusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 1, status.ExitCode, "event-log failure exit code")
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		t.Fatal("live runner survived critical event-log failure")
+	}
+	raw, err := readText(rawLogPath)
+	if err != nil || !strings.Contains(raw, "critical event log failure") {
+		t.Fatalf("event-log failure was not surfaced in raw log: %q err=%v", raw, err)
+	}
+}
+
+func TestCodexLiveScannerFailureStopsAndReapsRunner(t *testing.T) {
+	tempRoot := t.TempDir()
+	cmd := exec.Command("sh", "-c", "sleep 30")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	stdout, writer := io.Pipe()
+	handle := &codexLiveHandle{
+		attemptID: "attempt-codex-scan-failure", rawLogPath: filepath.Join(tempRoot, "raw.log"),
+		statusPath: filepath.Join(tempRoot, "status.json"), runner: RunnerCodex, cmd: cmd, stdout: stdout,
+	}
+	handle.ioWG.Add(1)
+	go handle.readStdout()
+	go handle.waitForExit()
+	writeDone := make(chan struct{})
+	go func() {
+		_, _ = writer.Write(bytes.Repeat([]byte{'x'}, 4*1024*1024+1))
+		_ = writer.Close()
+		close(writeDone)
+	}()
+
+	waitForStatusFile(t, handle.statusPath)
+	status, err := readRunnerProcessStatus(handle.statusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 1, status.ExitCode, "codex scanner failure exit code")
+	waitForProcessGone(t, cmd.Process.Pid, "codex scanner failure")
+	select {
+	case <-writeDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("oversized codex stdout writer remained blocked")
+	}
+	raw, err := readText(handle.rawLogPath)
+	if err != nil || !strings.Contains(raw, "stdout scan failed") {
+		t.Fatalf("codex scanner failure was not surfaced: %q err=%v", raw, err)
+	}
 }
 
 func TestApprovalPolicyOnRequestAllowsWorkspaceVerificationCommands(t *testing.T) {
@@ -832,6 +919,79 @@ while running:
 	}
 }
 
+func TestClaudeLiveWaitDrainsFinalResultBeforeProcessExit(t *testing.T) {
+	tempRoot := t.TempDir()
+	cmd := exec.Command("sh", "-c", "exit 7")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	stdout, writer := io.Pipe()
+	handle := &claudeLiveHandle{
+		attemptID: "attempt-claude-drain", rawLogPath: filepath.Join(tempRoot, "raw.log"),
+		statusPath: filepath.Join(tempRoot, "status.json"), runner: RunnerClaude, cmd: cmd, stdout: stdout,
+	}
+	handle.ioWG.Add(1)
+	go handle.readStdout()
+	go handle.waitForExit()
+	time.Sleep(100 * time.Millisecond)
+	if _, err := os.Stat(handle.statusPath); !os.IsNotExist(err) {
+		t.Fatalf("process exit was classified before stdout drained: %v", err)
+	}
+	if _, err := writer.Write([]byte(`{"type":"result","subtype":"success","is_error":false}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitForStatusFile(t, handle.statusPath)
+	status, err := readRunnerProcessStatus(handle.statusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 0, status.ExitCode, "final buffered Claude result wins over process exit")
+	waitForProcessGone(t, cmd.Process.Pid, "claude drain")
+}
+
+func TestClaudeLiveScannerFailureStopsAndReapsRunner(t *testing.T) {
+	tempRoot := t.TempDir()
+	cmd := exec.Command("sh", "-c", "sleep 30")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	stdout, writer := io.Pipe()
+	handle := &claudeLiveHandle{
+		attemptID: "attempt-claude-scan-failure", rawLogPath: filepath.Join(tempRoot, "raw.log"),
+		statusPath: filepath.Join(tempRoot, "status.json"), runner: RunnerClaude, cmd: cmd, stdout: stdout,
+	}
+	handle.ioWG.Add(1)
+	go handle.readStdout()
+	go handle.waitForExit()
+	writeDone := make(chan struct{})
+	go func() {
+		_, _ = writer.Write(bytes.Repeat([]byte{'x'}, 4*1024*1024+1))
+		_ = writer.Close()
+		close(writeDone)
+	}()
+
+	waitForStatusFile(t, handle.statusPath)
+	status, err := readRunnerProcessStatus(handle.statusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 1, status.ExitCode, "claude scanner failure exit code")
+	waitForProcessGone(t, cmd.Process.Pid, "claude scanner failure")
+	select {
+	case <-writeDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("oversized Claude stdout writer remained blocked")
+	}
+	raw, err := readText(handle.rawLogPath)
+	if err != nil || !strings.Contains(raw, "stdout scan failed") {
+		t.Fatalf("Claude scanner failure was not surfaced: %q err=%v", raw, err)
+	}
+}
+
 func TestDetachedRunnerUsesWorkspaceCWDAndRepoRootEnv(t *testing.T) {
 	tempRoot := t.TempDir()
 	workspaceRoot := filepath.Join(tempRoot, "workspace")
@@ -911,13 +1071,17 @@ func waitForStatusFile(t *testing.T, path string) {
 func waitForFileText(t *testing.T, path, needle string) {
 	t.Helper()
 	deadline := time.Now().Add(runnerLiveTestWait)
+	lastText := ""
+	lastErr := error(nil)
 	for time.Now().Before(deadline) {
-		if text, err := readText(path); err == nil && strings.Contains(text, needle) {
+		text, err := readText(path)
+		lastText, lastErr = text, err
+		if err == nil && strings.Contains(text, needle) {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for %q in %s", needle, path)
+	t.Fatalf("timed out waiting for %q in %s (last error: %v)\nlast contents:\n%s", needle, path, lastErr, lastText)
 }
 
 func waitForStoredTurnStatus(t *testing.T, store *RuntimeStore, projectID, recordID, status string) []RunTurn {

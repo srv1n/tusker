@@ -154,12 +154,24 @@
     padding: 0;
     height: 100%;
   }
+  html {
+    /* Phones in landscape inflate text without this. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
   body {
     background: var(--k-surface);
     color: var(--k-ink);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    -webkit-tap-highlight-color: transparent;
+  }
+  a,
+  button,
+  [role="button"] {
+    /* Kills the double-tap-to-zoom delay on touch without disabling pinch. */
+    touch-action: manipulation;
   }
   ::selection {
     background: var(--k-ink);
@@ -176,6 +188,19 @@
   /* Numeric UIs read better with tabular figures in mono contexts. */
   .tabular {
     font-variant-numeric: tabular-nums;
+  }
+}
+
+/* iOS Safari force-zooms the page when a focused field's font-size is under
+   16px. The control-room type scale is far denser than that, so on small
+   coarse-pointer screens (phones — the drawer breakpoint is 1024px) bump form
+   fields to 16px. Deliberately outside @layer: unlayered rules beat Tailwind's
+   layered utilities without needing !important. Desktop density is untouched. */
+@media (pointer: coarse) and (max-width: 1023px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px;
   }
 }
 

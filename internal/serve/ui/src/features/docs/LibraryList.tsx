@@ -36,13 +36,13 @@ export function LibraryList({ projectId }: { projectId: string }) {
         title="Documents & contracts"
         subtitle="Specs, decisions, knowledge, and task contracts in the vault."
         actions={
-          <label className="flex h-8.5 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 focus-within:border-accent/50 focus-within:ring-2 focus-within:ring-accent/20">
-            <Search size={14} className="text-faint" />
+          <label className="flex h-8.5 w-full items-center gap-2 rounded-lg border border-line bg-surface px-2.5 focus-within:border-accent/50 focus-within:ring-2 focus-within:ring-accent/20 sm:w-auto">
+            <Search size={14} className="flex-none text-faint" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Filter by title or path…"
-              className="w-52 bg-transparent text-[13px] text-ink placeholder:text-faint focus:outline-none"
+              className="w-full min-w-0 bg-transparent text-[13px] text-ink placeholder:text-faint focus:outline-none sm:w-52"
             />
           </label>
         }
@@ -113,7 +113,7 @@ function DocRow({ doc, projectId }: { doc: DocListEntry; projectId: string }) {
         <Mono className="truncate text-[11px] text-faint">{doc.path}</Mono>
       </div>
       <span className="flex-none text-[11.5px] text-faint tabular">{relativeTime(doc.updatedAt)}</span>
-      <ChevronRight size={15} className="flex-none text-fainter transition-colors group-hover:text-muted" />
+      <ChevronRight size={15} className="flex-none text-fainter transition-colors group-hover:text-muted max-lg:text-muted" />
     </Link>
   );
 }

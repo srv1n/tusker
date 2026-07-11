@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -83,33 +85,49 @@ func (r *CodexCloudRunner) Start(ctx context.Context, req StartRequest) (*StartR
 	if err != nil {
 		return nil, err
 	}
+	eventLog := NewEventLog(req.EventSinkPath)
+	if err := eventLog.Validate(); err != nil {
+		return nil, fmt.Errorf("preflight codex cloud event sink: %w", err)
+	}
+	if err := preflightCodexCloudRawLog(req.RawLogPath); err != nil {
+		return nil, fmt.Errorf("preflight codex cloud raw log: %w", err)
+	}
 	command := codexCloudCommand(config.Command, config, req, "")
-	output, err := r.executor().RunCodexCloud(ctx, codexCloudExecRequest{
+	output, launchErr := r.executor().RunCodexCloud(ctx, codexCloudExecRequest{
 		Command: command,
 		Stdin:   prompt,
 		Dir:     workspaceCWD,
 		Env:     codexCloudEnv(req, config, ""),
 	})
-	_ = appendCodexCloudRawLog(req.RawLogPath, output)
-	if err != nil {
-		return nil, fmt.Errorf("codex cloud start failed: %w", err)
-	}
-	snapshot, err := parseCodexCloudOutput(output)
-	if err != nil {
-		return nil, err
+	rawLogErr := appendCodexCloudRawLog(req.RawLogPath, output)
+	snapshot, parseErr := parseCodexCloudOutput(output)
+	if parseErr != nil {
+		return nil, codexCloudLaunchError(req.RawLogPath, "parse codex cloud start output", parseErr, launchErr, rawLogErr)
 	}
 	snapshot.EnvironmentID = firstNonEmpty(snapshot.EnvironmentID, config.EnvironmentID)
 	if strings.TrimSpace(snapshot.TaskID) == "" {
-		return nil, tuskerError(errorConfigInvalid, "codex cloud start output did not include a task id")
+		return nil, codexCloudLaunchError(req.RawLogPath, "codex cloud start output did not include a task id", nil, launchErr, rawLogErr)
 	}
 	result := codexCloudRuntimeResult(snapshot, config)
+	if launchErr != nil {
+		result.Reason += "; start command reported: " + launchErr.Error()
+	}
 	startedAt := time.Now().UTC().Format(time.RFC3339)
-	_ = NewEventLog(req.EventSinkPath).Append("codex_cloud_task_started", req.AttemptID, r.Name(), map[string]any{
+	payload := map[string]any{
 		"cloud_task_id":  snapshot.TaskID,
 		"remote_status":  snapshot.Status,
 		"environment_id": snapshot.EnvironmentID,
 		"attempt_number": snapshot.AttemptNumber,
-	})
+	}
+	if launchErr != nil {
+		payload["start_command_error"] = launchErr.Error()
+	}
+	if rawLogErr != nil {
+		payload["raw_log_error"] = rawLogErr.Error()
+	}
+	if err := eventLog.Append("codex_cloud_task_started", req.AttemptID, r.Name(), payload); err != nil {
+		return nil, codexCloudTrackingError(snapshot.TaskID, req.RawLogPath, err, rawLogErr)
+	}
 	return &StartResult{
 		StartedAt:          startedAt,
 		StatusPath:         req.StatusPath,
@@ -265,24 +283,91 @@ func codexCloudEnv(req StartRequest, config CodexCloudConfig, taskID string) []s
 }
 
 func appendCodexCloudRawLog(path string, output []byte) error {
-	if strings.TrimSpace(path) == "" || len(output) == 0 {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("codex cloud raw log path is empty")
+	}
+	if len(output) == 0 {
 		return nil
 	}
 	if err := ensureDir(filepath.Dir(path)); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	if _, err := file.Write(output); err != nil {
+	record := append([]byte{}, output...)
+	if record[len(record)-1] != '\n' {
+		record = append(record, '\n')
+	}
+	n, writeErr := file.Write(record)
+	if writeErr != nil {
+		_ = file.Close()
+		return writeErr
+	}
+	if n != len(record) {
+		_ = file.Close()
+		return fmt.Errorf("wrote %d of %d bytes: %w", n, len(record), io.ErrShortWrite)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
 		return err
 	}
-	if len(output) > 0 && output[len(output)-1] != '\n' {
-		_, err = file.WriteString("\n")
+	return file.Close()
+}
+
+func preflightCodexCloudRawLog(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("codex cloud raw log path is empty")
 	}
-	return err
+	if err := ensureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if info, statErr := file.Stat(); statErr != nil {
+		_ = file.Close()
+		return statErr
+	} else if !info.Mode().IsRegular() {
+		_ = file.Close()
+		return fmt.Errorf("raw log %q is not a regular file", path)
+	}
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
+func codexCloudTrackingError(taskID, rawLogPath string, eventErr, rawLogErr error) error {
+	err := fmt.Errorf("record codex cloud task start %s: %w", taskID, eventErr)
+	if rawLogErr == nil {
+		return fmt.Errorf("%w; remote task id is preserved in raw log %q", err, rawLogPath)
+	}
+	return fmt.Errorf("%w; raw log also failed: %v; preserve remote task id %s from this error", err, rawLogErr, taskID)
+}
+
+func codexCloudLaunchError(rawLogPath, message string, primaryErr, launchErr, rawLogErr error) error {
+	parts := []error{}
+	if primaryErr != nil {
+		parts = append(parts, primaryErr)
+	}
+	if launchErr != nil {
+		parts = append(parts, fmt.Errorf("start command: %w", launchErr))
+	}
+	if rawLogErr != nil {
+		parts = append(parts, fmt.Errorf("raw log: %w", rawLogErr))
+	}
+	if len(parts) == 0 {
+		return tuskerError(errorConfigInvalid, message)
+	}
+	joined := errors.Join(parts...)
+	if rawLogErr == nil {
+		return fmt.Errorf("%s (raw output preserved at %q): %w", message, rawLogPath, joined)
+	}
+	return fmt.Errorf("%s: %w", message, joined)
 }
 
 func parseCodexCloudOutput(output []byte) (codexCloudSnapshot, error) {

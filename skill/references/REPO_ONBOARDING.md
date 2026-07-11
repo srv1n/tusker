@@ -28,6 +28,28 @@ The remote model proposes. Tusker writes valid state.
 Global install may install user-level skills and the binary. It must not mutate
 the current repo unless the user passes an explicit repo target.
 
+## Storage Boundary
+
+Machine-shared runtime and portable project truth have different owners:
+
+| Location | Contents |
+|---|---|
+| `~/Library/Application Support/tusker/` on macOS | Daemon database, project registry, global limits, logs, runtime workspaces, and the managed daemon binary. |
+| `<repo>/.tusker/` | `WORKFLOW.md`, task contracts, gates, curated evidence, project knowledge, and generated project views. |
+| `<repo>/tusker.yaml` | Repo-level agent and runner configuration where present. |
+
+Do not copy a project's `WORKFLOW.md` into the shared state root. The daemon,
+agents, worktrees, and reviewers must all observe the same repo-local contract.
+
+On macOS, prefer `~/Developer`, `~/Code`, or `~/Projects` for repositories.
+LaunchAgents may not inherit Terminal access to `Desktop`, `Documents`,
+`Downloads`, or iCloud Drive. Project add and enable warn for those known
+protected roots. `tusker daemon service install|start` refuses before launch
+unless the project is moved, or the operator grants Full Disk Access to the
+reported service executable and explicitly passes `--allow-protected-projects`.
+Other cloud, network, and removable volumes may also require access; the
+service startup health check remains authoritative for those environments.
+
 ## Target Setup Command
 
 Planned:

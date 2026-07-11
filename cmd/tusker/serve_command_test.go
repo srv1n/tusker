@@ -91,6 +91,32 @@ func TestServeNeedsEmptyReturnsArray(t *testing.T) {
 	}
 }
 
+func TestServeSummaryProjectsBadgeCounts(t *testing.T) {
+	server := newServeFixture(t)
+	var summary serveSummary
+	serveDecode(t, server, "/api/summary", &summary)
+	if summary.Attention == 0 || summary.Review == 0 {
+		t.Fatalf("expected attention and review counts from fixture, got %#v", summary)
+	}
+	if summary.GeneratedAt == "" {
+		t.Fatal("summary must include generated_at")
+	}
+	snap, err := server.loadSummarySnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.queue) != 0 {
+		t.Fatalf("summary must not compute automation queue explanations, got %d", len(snap.queue))
+	}
+	full, err := server.loadSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := len(serveNeeds(full, server.now())); summary.Attention != want {
+		t.Fatalf("summary attention=%d, want canonical needs count %d", summary.Attention, want)
+	}
+}
+
 func TestServeFieldsRosterAndEpics(t *testing.T) {
 	server := newServeFixture(t)
 
@@ -378,6 +404,24 @@ func TestServeMutationEndpointsReturnVisibleRefusals(t *testing.T) {
 	}
 }
 
+func TestServeCloseDefaultsHumanActorForHumanRequiredRisk(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	writeServeCloseableReviewTask(t, server.vaultPath, "APP-T-0001", "high")
+
+	var result serveActionResult
+	servePost(t, server, "/api/tasks/APP-T-0001/close", `{}`, &result)
+	if !result.OK || result.Refused {
+		t.Fatalf("expected serve close to accept high-risk task as human actor, got %#v", result)
+	}
+
+	data, _, err := parseFrontmatterMustRead(filepath.Join(server.vaultPath, "work", "tasks", "APP-T-0001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "done", stringField(data, "status"), "closed task status")
+	assertEqual(t, "human:"+defaultActorName(), stringField(data, "accepted_by"), "serve close default acceptor")
+}
+
 func newServeFixture(t *testing.T) *serveServer {
 	t.Helper()
 	root := t.TempDir()
@@ -526,6 +570,14 @@ func writeServeTask(t *testing.T, vault string, seed serveTaskSeed) {
 	}
 	body := "---\nschema: \"tusker.task/v7\"\nkind: \"task\"\nid: \"" + seed.ID + "\"\nproject: \"app\"\ntitle: \"" + seed.Title + "\"\nepic: \"" + seed.Epic + "\"\nstatus: \"" + seed.Status + "\"\nreadiness: \"" + readiness + "\"\npriority: \"" + seed.Priority + "\"\nrisk: \"" + seed.Risk + "\"\nsize: \"m\"\nproof_mode: \"inline\"\nproof_status: \"pending\"\nproof_required:\n  - \"focused_test\"\n" + deps + "gates: []\ncreated_at: \"2026-07-06T06:00:00Z\"\nupdated_at: \"2026-07-06T06:00:00Z\"\nnext_owner: \"agent\"\nnext_action: \"Execute.\"\n" + transitions + "---\n\n# " + seed.ID + " - " + seed.Title + "\n\n## Intent\n\nDo the work.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Works. | Inline verification |\n\n## Non-goals\n\n- None.\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | go test ./cmd/tusker -run TestServe -count=1 | pending | Focused. |\n\n## Evidence\n\nAccepted:\n- None.\n\nPending:\n- None.\n\n## Knowledge delta\n\nNone expected.\n"
 	if err := writeText(filepath.Join(vault, "work", "tasks", seed.ID+".md"), body); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeServeCloseableReviewTask(t *testing.T, vault, id, risk string) {
+	t.Helper()
+	body := "---\nschema: \"tusker.task/v7\"\nkind: \"task\"\nid: \"" + id + "\"\nproject: \"app\"\ntitle: \"Closeable high-risk review\"\nepic: \"APP\"\nstatus: \"review\"\nreadiness: \"waiting_on_review\"\npriority: \"p1\"\nrisk: \"" + risk + "\"\nsize: \"m\"\nproof_mode: \"inline\"\nproof_status: \"satisfied\"\nproof_required:\n  - \"focused_test\"\ndependencies: []\ngates: []\ncreated_at: \"2026-07-06T06:00:00Z\"\nupdated_at: \"2026-07-06T06:00:00Z\"\nnext_owner: \"human:sarav\"\nnext_source: \"close_policy\"\nnext_ref: \"close_policy:human_acceptor\"\nnext_action: \"Accept, waive, or return rework for close_policy:human_acceptor.\"\n---\n\n# " + id + " - Closeable high-risk review\n\n## Intent\n\nExercise the serve review close path for human-required risk.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | The serve review action records a human acceptor when close policy requires human signoff. | focused_test |\n\n## Non-goals\n\n- No runner or daemon behavior.\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | go test ./cmd/tusker -run TestServeCloseDefaultsHumanActorForHumanRequiredRisk -count=1 | pass | Serve close actor proof. |\n\n## Evidence\n\nAccepted:\n- None.\n\nPending:\n- None.\n\n## Knowledge delta\n\nNone expected.\n"
+	if err := writeText(filepath.Join(vault, "work", "tasks", id+".md"), body); err != nil {
 		t.Fatal(err)
 	}
 }

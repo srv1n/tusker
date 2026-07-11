@@ -29,7 +29,7 @@ function docToWikilink(d: DocListEntry): WikilinkTargetLite {
 }
 
 export function DocReader({ projectId, path }: { projectId: string; path: string }) {
-  const q = useDoc(path);
+  const q = useDoc(path, projectId);
   // Live mode never substitutes a fixture body — an absent doc is a loading or
   // error state below, never fabricated content.
   const doc = q.data;
@@ -155,7 +155,7 @@ function ReaderBody({ projectId, doc }: { projectId: string; doc: DocContent }) 
 
   return (
     <DocShell projectId={projectId} path={doc.path} actions={actions}>
-      <div className="mx-auto flex w-full max-w-[1180px] gap-9 px-11 pb-24 pt-7">
+      <div className="mx-auto flex w-full max-w-[1180px] gap-9 px-4 pb-24 pt-7 sm:px-6 lg:px-11">
         <div className="hidden w-[188px] flex-none xl:block">
           {!editing && <Outline entries={doc.outline} />}
         </div>
@@ -277,10 +277,10 @@ function MetaRow({ k, v, last = false }: { k: string; v: string; last?: boolean 
 function ReaderSkeleton() {
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-line px-11 py-3.5">
+      <div className="border-b border-line px-4 py-3.5 sm:px-6 lg:px-11">
         <Skeleton className="h-4 w-52" />
       </div>
-      <div className="mx-auto flex w-full max-w-[1180px] gap-9 px-11 pt-7">
+      <div className="mx-auto flex w-full max-w-[1180px] gap-9 px-4 pt-7 sm:px-6 lg:px-11">
         <div className="hidden w-[188px] flex-none xl:block">
           <Skeleton className="h-40 w-full" />
         </div>

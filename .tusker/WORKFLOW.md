@@ -4,7 +4,7 @@ agents:
   enabled:
     - "codex_exec"
     - "claude-code"
-  max_concurrent_agents: 4
+  max_concurrent_agents: 2
   max_concurrent_agents_by_state:
     rework: 1
 claude:
@@ -57,17 +57,17 @@ runners:
     kind: "codex_exec"
 runtime:
   budget:
-    daily_input_tokens: 10000000000
-    daily_output_tokens: 100000000
+    daily_input_tokens: 20000000
+    daily_output_tokens: 1000000
     enabled: true
-    per_attempt_input_tokens: 50000000
-    per_attempt_output_tokens: 500000
-    per_task_input_tokens: 250000000
-    per_task_output_tokens: 2500000
+    per_attempt_input_tokens: 2000000
+    per_attempt_output_tokens: 100000
+    per_task_input_tokens: 6000000
+    per_task_output_tokens: 300000
   lease_ttl_ms: 900000
-  max_active_runs_per_project: 5
+  max_active_runs_per_project: 2
   max_continuation_retries: 3
-  poll_interval_ms: 5000
+  poll_interval_ms: 30000
 tracker:
   dispatch_states:
     - "ready"
@@ -82,7 +82,7 @@ tracker:
 tracker_schema_version: 7
 workflow_version: 1
 workspace:
-  root: "../.tusker-worktrees"
+  root: "workspaces"
   strategy: "worktree"
 ---
 

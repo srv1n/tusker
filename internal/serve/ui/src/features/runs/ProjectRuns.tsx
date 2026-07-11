@@ -63,7 +63,7 @@ export function ProjectRuns() {
 
   return (
     <div className="tk-scroll h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-[1120px] px-11 pb-20 pt-[30px]">
+      <div className="mx-auto w-full max-w-[1120px] px-4 pb-20 pt-[30px] sm:px-11">
         <div className="mb-1.5 font-mono text-[11px] text-faint">◇ {projectName}</div>
         <header className="mb-5 flex items-end justify-between gap-4">
           <h1 className="font-serif text-[30px] font-semibold tracking-[-0.02em] text-ink">

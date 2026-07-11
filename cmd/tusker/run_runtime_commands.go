@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -472,7 +473,7 @@ func runsLogsCmd(args Args) error {
 	}
 	tail := tailText(content, lines)
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "path": logPath, "tail": tail, "running": run.ProcessPID > 0 && processIdentityMatches(*run)})
+		emitJSON(map[string]any{"ok": true, "path": logPath, "tail": tail, "running": runProcessGroupAlive(*run)})
 		return nil
 	}
 	fmt.Print(tail)
@@ -531,7 +532,7 @@ func runsEventsCmd(args Args) error {
 			"latest_event": latestJSONLEvent(eventPath),
 			"events":       events,
 			"tail":         tail,
-			"running":      run.ProcessPID > 0 && processIdentityMatches(*run),
+			"running":      runProcessGroupAlive(*run),
 		})
 		return nil
 	}
@@ -544,42 +545,108 @@ func runsInterruptCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	if resp, err := sendDaemonControl(DefaultStateRoot(), daemonControlRequest{Command: "interrupt", Identity: identity}); err == nil {
-		if !resp.OK {
-			return tuskerError(errorHookFailed, firstNonEmpty(resp.Message, "daemon interrupt failed"))
-		}
-		if args.Bool("json") {
-			emitJSON(map[string]any{"ok": true, "interrupted": true, "item_id": identity})
-			return nil
-		}
-		fmt.Printf("Sent interrupt to %s via daemon control\n", identity)
-		return nil
-	}
-	store, err := OpenRuntimeStore(DefaultStateRoot())
+	run, viaDaemon, err := interruptRuntimeRun(DefaultStateRoot(), nil, identity)
 	if err != nil {
-		return err
-	}
-	defer store.Close()
-	run, err := store.FindRun(identity)
-	if err != nil {
-		return err
-	}
-	if run == nil {
-		return tuskerError(errorNotFound, "run not found: "+identity)
-	}
-	if run.ProcessPID <= 0 || !processIdentityMatches(*run) {
-		if err := finishRuntimeRun(store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "interrupt requested by operator; process is not running", true); err != nil {
-			return err
-		}
-	} else if err := interruptRunProcess(store, run); err != nil {
 		return err
 	}
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "interrupted": true, "item_id": run.ItemID, "record_id": run.RecordID, "pid": run.ProcessPID})
+		emitJSON(map[string]any{
+			"ok":              true,
+			"interrupted":     true,
+			"item_id":         run.ItemID,
+			"record_id":       run.RecordID,
+			"lease_state":     run.LeaseState,
+			"process_running": runProcessGroupAlive(*run),
+			"via_daemon":      viaDaemon,
+		})
 		return nil
 	}
-	fmt.Printf("Sent interrupt to %s (pid %d)\n", firstNonEmpty(run.ItemID, run.RecordID), run.ProcessPID)
+	if viaDaemon {
+		fmt.Printf("Sent interrupt to %s via daemon control\n", firstNonEmpty(run.ItemID, run.RecordID, identity))
+		return nil
+	}
+	fmt.Printf("Sent interrupt to %s\n", firstNonEmpty(run.ItemID, run.RecordID, identity))
 	return nil
+}
+
+// interruptRuntimeRun is the single operator interrupt path shared by the CLI
+// and Serve. A live daemon gets first ownership of its in-memory runner handle;
+// otherwise the runtime store path signals a verified process or retires a dead
+// process row with the same canonical interrupted outcome.
+func interruptRuntimeRun(stateRoot string, store *RuntimeStore, identity string) (*RunStatus, bool, error) {
+	return interruptRuntimeRunWithHook(stateRoot, store, identity, nil)
+}
+
+func interruptRuntimeRunWithHook(stateRoot string, store *RuntimeStore, identity string, afterRead func()) (*RunStatus, bool, error) {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return nil, false, tuskerError(errorInvalidArg, "run identity is required")
+	}
+
+	if readDaemonLiveness(stateRoot, time.Now().UTC()).Alive {
+		if resp, err := sendDaemonControl(stateRoot, daemonControlRequest{Command: "interrupt", Identity: identity}); err == nil {
+			if !resp.OK {
+				return nil, true, tuskerError(errorHookFailed, firstNonEmpty(resp.Message, "daemon interrupt failed"))
+			}
+			run, err := findInterruptRun(stateRoot, store, identity)
+			return run, true, err
+		}
+	}
+
+	run, ownedStore, err := findInterruptRunWithStore(stateRoot, store, identity)
+	if err != nil {
+		return nil, false, err
+	}
+	if ownedStore != nil {
+		defer ownedStore.Close()
+		store = ownedStore
+	}
+	if afterRead != nil {
+		afterRead()
+	}
+	handle := matchingLiveRunHandle(*run)
+	if handle != nil {
+		if err = handle.Interrupt(context.Background()); err == nil {
+			err = interruptRunProcess(store, run, true)
+		}
+	} else {
+		err = interruptRunProcess(store, run, false)
+	}
+	return run, false, err
+}
+
+func findInterruptRun(stateRoot string, store *RuntimeStore, identity string) (*RunStatus, error) {
+	run, ownedStore, err := findInterruptRunWithStore(stateRoot, store, identity)
+	if ownedStore != nil {
+		defer ownedStore.Close()
+	}
+	return run, err
+}
+
+func findInterruptRunWithStore(stateRoot string, store *RuntimeStore, identity string) (*RunStatus, *RuntimeStore, error) {
+	ownedStore := (*RuntimeStore)(nil)
+	if store == nil {
+		var err error
+		ownedStore, err = OpenRuntimeStore(stateRoot)
+		if err != nil {
+			return nil, nil, err
+		}
+		store = ownedStore
+	}
+	run, err := store.FindRun(identity)
+	if err != nil {
+		if ownedStore != nil {
+			_ = ownedStore.Close()
+		}
+		return nil, nil, err
+	}
+	if run == nil {
+		if ownedStore != nil {
+			_ = ownedStore.Close()
+		}
+		return nil, nil, tuskerError(errorNotFound, "run not found: "+identity)
+	}
+	return run, ownedStore, nil
 }
 
 func runsReleaseCmd(args Args) error {
@@ -599,7 +666,7 @@ func runsReleaseCmd(args Args) error {
 	if run == nil {
 		return tuskerError(errorNotFound, "run not found: "+identity)
 	}
-	if run.ProcessPID > 0 && processIdentityMatches(*run) {
+	if runProcessGroupAlive(*run) {
 		return tuskerError(errorInvalidTransition, "run process is still running; use tusker runs interrupt before release", withContext(map[string]any{"pid": run.ProcessPID}))
 	}
 	reason := firstNonEmpty(strings.TrimSpace(args.String("reason")), "released dead run by operator")
@@ -772,7 +839,7 @@ func redriveCmd(args Args) error {
 	if run == nil {
 		return tuskerError(errorNotFound, "run not found: "+identity)
 	}
-	if run.ProcessPID > 0 && processIdentityMatches(*run) {
+	if runProcessGroupAlive(*run) {
 		return tuskerError(errorInvalidTransition, "run process is still running; interrupt it before redrive", withContext(map[string]any{"pid": run.ProcessPID}))
 	}
 	now := time.Now().UTC()
@@ -784,21 +851,8 @@ func redriveCmd(args Args) error {
 	previousAttemptID := run.ActiveAttemptID
 	previousSessionRef := run.SessionRef
 	previousWorkspacePath := run.WorkspacePath
-	reset, err := store.RecordBudgetRedrive(run.ProjectID, run.RecordID, actor, reason, now)
+	reset, err := redriveRuntimeRun(store, run, actor, reason, now)
 	if err != nil {
-		return err
-	}
-	run.LeaseState = string(LeaseStateRetryQueued)
-	run.AttemptOutcome = string(AttemptOutcomeNone)
-	run.AttemptCount = 0
-	run.NextRetryAt = now.Format(time.RFC3339)
-	run.LastError = "redriven by " + actor + ": " + reason
-	run.LastEventAt = now.Format(time.RFC3339)
-	run.UpdatedAt = now.Format(time.RFC3339)
-	run.Terminal = false
-	clearActiveExecution(run)
-	clearRunCloudRefs(run)
-	if err := store.UpsertRun(*run); err != nil {
 		return err
 	}
 	auditPayload, err := json.Marshal(map[string]any{
@@ -838,6 +892,47 @@ func redriveCmd(args Args) error {
 	}
 	fmt.Printf("Redriven %s; budget window reset at %s\n", firstNonEmpty(run.ItemID, run.RecordID), reset.ResetAt)
 	return nil
+}
+
+func redriveRuntimeRun(store *RuntimeStore, run *RunStatus, actor, reason string, now time.Time) (BudgetRedriveRecord, error) {
+	return redriveRuntimeRunWithHook(store, run, actor, reason, now, nil)
+}
+
+func redriveRuntimeRunWithHook(store *RuntimeStore, run *RunStatus, actor, reason string, now time.Time, afterRead func()) (BudgetRedriveRecord, error) {
+	if store == nil || run == nil {
+		return BudgetRedriveRecord{}, tuskerError(errorNotFound, "run not found")
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	actor = firstNonEmpty(strings.TrimSpace(actor), defaultActorName())
+	reason = firstNonEmpty(strings.TrimSpace(reason), "operator redrive")
+	expected := *run
+	if afterRead != nil {
+		afterRead()
+	}
+	redriven := expected
+	redriven.LeaseState = string(LeaseStateRetryQueued)
+	redriven.AttemptOutcome = string(AttemptOutcomeNone)
+	redriven.AttemptCount = 0
+	redriven.NextRetryAt = now.Format(time.RFC3339)
+	redriven.LastError = "redriven by " + actor + ": " + reason
+	redriven.LastEventAt = now.Format(time.RFC3339)
+	redriven.UpdatedAt = now.Format(time.RFC3339)
+	redriven.Terminal = false
+	clearActiveExecution(&redriven)
+	clearRunCloudRefs(&redriven)
+	reset := BudgetRedriveRecord{Actor: actor, Reason: reason, ResetAt: now.Format(time.RFC3339)}
+	updated, err := store.RedriveRunIfSnapshot(expected, redriven, reset)
+	if err != nil {
+		return BudgetRedriveRecord{}, err
+	}
+	if !updated {
+		return BudgetRedriveRecord{}, tuskerError("CAS_CONFLICT", "run changed while redrive was being applied: "+firstNonEmpty(expected.ItemID, expected.RecordID), withHint("reload the run and retry; Tusker did not clear the newer lease or reset its budget window"))
+	}
+	*run = redriven
+	return reset, nil
 }
 
 func parseEventTail(tail string) []map[string]any {

@@ -70,10 +70,14 @@ func TestCodexExecAttemptRecordsJSONLTurnsAndSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
-	if !daemon.ingestCodexExecRawLog(run) {
+	if changed, err := daemon.ingestCodexExecRawLog(run); err != nil {
+		t.Fatal(err)
+	} else if !changed {
 		t.Fatal("expected codex exec raw log ingestion to record events")
 	}
-	if daemon.ingestCodexExecRawLog(run) {
+	if changed, err := daemon.ingestCodexExecRawLog(run); err != nil {
+		t.Fatal(err)
+	} else if changed {
 		t.Fatal("expected second codex exec raw log ingestion to be idempotent")
 	}
 	eventText, err := readText(eventSinkPath)
@@ -176,7 +180,9 @@ func TestCodexExecBudgetAcrossJSONLTurnsAndTurnCap(t *testing.T) {
 		wf := defaultWorkflow()
 		wf.Runtime.Budget.PerAttemptInputTokens = 10
 		wf.Runtime.Budget.PerAttemptOutputTokens = 100
-		if !daemon.ingestCodexExecRawLog(run) {
+		if changed, err := daemon.ingestCodexExecRawLog(run); err != nil {
+			t.Fatal(err)
+		} else if !changed {
 			t.Fatal("expected raw log ingestion")
 		}
 		updated, changed, err := daemon.enforceBudgetForRun(context.Background(), project, wf, note, run)
@@ -198,7 +204,9 @@ func TestCodexExecBudgetAcrossJSONLTurnsAndTurnCap(t *testing.T) {
 		defer store.Close()
 		wf := defaultWorkflow()
 		wf.Codex.MaxTurns = 1
-		if !daemon.ingestCodexExecRawLog(run) {
+		if changed, err := daemon.ingestCodexExecRawLog(run); err != nil {
+			t.Fatal(err)
+		} else if !changed {
 			t.Fatal("expected raw log ingestion")
 		}
 		updated, changed, err := daemon.enforceTurnCapForRun(context.Background(), project, wf, run)
@@ -221,10 +229,14 @@ func TestCodexExecBudgetAcrossJSONLTurnsAndTurnCap(t *testing.T) {
 func TestCodexExecIngestReplayKeepsCompletedTurns(t *testing.T) {
 	store, daemon, run, _ := codexExecGovernorFixture(t)
 	defer store.Close()
-	if !daemon.ingestCodexExecRawLog(run) {
+	if changed, err := daemon.ingestCodexExecRawLog(run); err != nil {
+		t.Fatal(err)
+	} else if !changed {
 		t.Fatal("expected first codex exec raw log ingestion to record events")
 	}
-	if daemon.ingestCodexExecRawLog(run) {
+	if changed, err := daemon.ingestCodexExecRawLog(run); err != nil {
+		t.Fatal(err)
+	} else if changed {
 		t.Fatal("expected replay of the same raw log to be idempotent")
 	}
 	turns, err := store.ListTurnsForAttempt(run.ActiveAttemptID)
@@ -247,6 +259,49 @@ func TestCodexExecIngestReplayKeepsCompletedTurns(t *testing.T) {
 	}
 	assertEqual(t, 2, strings.Count(eventText, `"kind":"turn_started"`), "turn_started event count after replay")
 	assertEqual(t, 2, strings.Count(eventText, `"kind":"turn_completed"`), "turn_completed event count after replay")
+}
+
+func TestCodexExecIngestSurfacesEventLogAppendFailure(t *testing.T) {
+	store, daemon, run, _ := codexExecGovernorFixture(t)
+	defer store.Close()
+	if err := writeText(run.EventSinkPath, `{"seq":1}`); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := daemon.ingestCodexExecRawLog(run)
+	if err == nil || !strings.Contains(err.Error(), "validate codex-exec event log before replay") || !strings.Contains(err.Error(), "partial trailing record") {
+		t.Fatalf("expected surfaced codex-exec event-log failure, got changed=%t err=%v", changed, err)
+	}
+}
+
+func TestCodexExecIngestValidatesTailBeforeDedupMatch(t *testing.T) {
+	store, daemon, run, _ := codexExecGovernorFixture(t)
+	defer store.Close()
+	if err := writeText(run.RawLogPath, `{"type":"thread.started","thread_id":"session-start"}`+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	eventLog := NewEventLog(run.EventSinkPath)
+	if err := eventLog.Append("thread_started", run.ActiveAttemptID, RunnerCodexExec, map[string]any{"session_ref": "session-start"}); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(run.EventSinkPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(`{"seq":2`); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := daemon.ingestCodexExecRawLog(run)
+	if err == nil || !strings.Contains(err.Error(), "validate codex-exec event log before replay") || !strings.Contains(err.Error(), "partial trailing record") {
+		t.Fatalf("expected malformed tail to fail before prefix dedup, got changed=%t err=%v", changed, err)
+	}
+	if changed {
+		t.Fatal("malformed event log must not mutate replay state")
+	}
 }
 
 func TestCodexExecInFlightSilenceUsesCommandCap(t *testing.T) {

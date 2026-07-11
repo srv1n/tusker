@@ -3188,7 +3188,7 @@ func v7TaskDispatchBlockers(vaultPath string, task Note) []string {
 	if strings.TrimSpace(verification) == "" {
 		reasons = append(reasons, "verification missing")
 	} else if !v7TextHasExactVerificationProof(verification) {
-		reasons = append(reasons, "verification missing exact command or manual proof")
+		reasons = append(reasons, "verification missing exact command or manual proof ("+v7VerificationGrammarHint+")")
 	}
 	mode := strings.ToLower(strings.TrimSpace(stringField(task.Data, "proof_mode")))
 	if mode == "" {
@@ -3306,9 +3306,11 @@ TBD.
 
 ## Verification
 
+Each Check must start with %s or %s.
+
 | Covers | Check | Result | Notes |
 |---|---|---|---|
-| A1 | TBD | pending | Define the smallest proof that proves acceptance. |
+| A1 | command: <exact command that proves A1> | pending | Replace the placeholder with a real command or "manual proof: <steps>" before promoting to ready. |
 
 ## Evidence
 
@@ -3321,7 +3323,7 @@ Pending:
 ## Knowledge delta
 
 None expected.
-`, id, title)
+`, id, title, "`command: <exact shell command>`", "`manual proof: <exact steps a human runs>`")
 }
 
 func v7GateBody(id, title, action, verification string, blocks []string, gateKind, whyAgentCannot, suggestion string) string {
@@ -3503,6 +3505,12 @@ func saveV7DocumentCASRepairingStaleRev(filePath string, data map[string]any, bo
 }
 
 func saveV7DocumentCASWithOptions(filePath string, data map[string]any, body string, order []string, baseRev string, allowStaleCurrentRev bool) (string, error) {
+	lock, err := acquireV7DocumentLock(filePath, v7DocumentLockTimeout)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = lock.Close() }()
+
 	currentData, currentBody, err := parseFrontmatterMustRead(filePath)
 	if err != nil {
 		return "", err
@@ -3514,18 +3522,23 @@ func saveV7DocumentCASWithOptions(filePath string, data map[string]any, body str
 			return "", tuskerError("CAS_CONFLICT", "V7 object content changed without a refreshed state_rev: "+filepath.Base(filePath), withPath(filePath), withHint("run `tusker reconcile` to repair the object metadata before retrying the control operation"), withContext(map[string]any{"current_rev": currentRev, "actual_rev": actualRev}))
 		}
 	}
-	if strings.TrimSpace(baseRev) != "" && strings.TrimSpace(currentRev) != "" && currentRev != baseRev {
+	if strings.TrimSpace(currentRev) != strings.TrimSpace(baseRev) {
 		return "", tuskerError("CAS_CONFLICT", "V7 object changed since it was loaded: "+filepath.Base(filePath), withPath(filePath), withHint("reload the object and retry the Tusker control operation"), withContext(map[string]any{"base_rev": baseRev, "current_rev": currentRev}))
 	}
-	nextRev := v7StateRev(data, body)
-	data["state_rev"] = nextRev
-	content, err := serializeDocument(data, body, order)
+	nextData := make(map[string]any, len(data)+1)
+	for key, value := range data {
+		nextData[key] = value
+	}
+	nextRev := v7StateRev(nextData, body)
+	nextData["state_rev"] = nextRev
+	content, err := serializeDocument(nextData, body, order)
 	if err != nil {
 		return "", err
 	}
-	if err := writeText(filePath, content); err != nil {
+	if err := atomicReplaceV7Document(filePath, content); err != nil {
 		return "", err
 	}
+	data["state_rev"] = nextRev
 	return nextRev, nil
 }
 

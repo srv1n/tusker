@@ -12,8 +12,14 @@ import type { Lane, Liveness, RunSummary } from "@/types/domain";
  * Task · Runner · Lane · Lease · Tokens · State. Lease_state is its own labeled
  * column; the State column carries liveness (active) or the outcome chip
  * (recent), so both lease_state and outcome are surfaced per row (SRV-T-0015 A2).
+ *
+ * Below `md` the four secondary cells (Runner/Lane/Lease/Tokens) hide themselves
+ * (`hidden md:*` in rows.tsx), so the grid collapses to Task + State — task id,
+ * title, and liveness/outcome stay visible on a phone without page scroll. At
+ * `md`+ the full 6-column desktop layout is pixel-identical to before.
  */
-export const RUNS_GRID = "grid grid-cols-[1fr_104px_64px_88px_72px_128px] gap-3";
+export const RUNS_GRID =
+  "grid grid-cols-[minmax(0,1fr)_auto] gap-3 md:grid-cols-[1fr_104px_64px_88px_72px_128px]";
 
 /** Total tokens for a run — the board shows one compact figure per run. */
 export function tokenTotal(run: RunSummary): number {

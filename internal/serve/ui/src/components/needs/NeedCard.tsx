@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useState, type KeyboardEvent, type MouseEvent } from "react";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   ClipboardCheck,
   FileCheck2,
@@ -20,7 +20,15 @@ import {
   useRedrive,
   useTaskStatusAction,
 } from "@/lib/queries";
-import type { ActionResult, GateKind, NeedItem, RedriveResult } from "@/types/domain";
+import type {
+  AcceptanceRow,
+  ActionResult,
+  FailedNeed,
+  GateKind,
+  NeedItem,
+  RedriveResult,
+  ReviewNeed,
+} from "@/types/domain";
 
 const kindIcon: Record<GateKind, LucideIcon> = {
   clarify: HelpCircle,
@@ -43,6 +51,7 @@ export function rankNeeds(needs: NeedItem[]): NeedItem[] {
 }
 
 const GATE_NEED_ID_PREFIX = "need-gate-";
+const CARD_INTERACTIVE_TARGET = "a,button,input,textarea,select,label,[contenteditable='true']";
 
 /**
  * The backing gate id for clarify/provision/approve-spec needs.
@@ -64,16 +73,58 @@ function gateIdOf(need: NeedItem): string | null {
 const NO_GATE_ERROR = () =>
   new Error("This item has no gate id — resolve it from the task page.");
 
+function countProof(rows: AcceptanceRow[], proof: AcceptanceRow["proof"]): number {
+  return rows.filter((row) => row.proof === proof).length;
+}
+
+function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
+export function reviewProofSummary(rows: AcceptanceRow[]): string {
+  if (rows.length === 0) return "No acceptance proof rows yet";
+  const passed = countProof(rows, "pass");
+  const failed = countProof(rows, "fail");
+  const pending = countProof(rows, "pending");
+  return [
+    passed > 0 ? plural(passed, "passing check") : "",
+    failed > 0 ? plural(failed, "failed check") : "",
+    pending > 0 ? plural(pending, "pending check") : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+export function reviewDecisionLine(need: Pick<ReviewNeed, "acceptance">): string {
+  const failed = countProof(need.acceptance, "fail");
+  if (failed > 0) {
+    return `${plural(failed, "acceptance check")} still failed. Send it back unless the detail page explains why that is acceptable.`;
+  }
+  const pending = countProof(need.acceptance, "pending");
+  if (pending > 0) {
+    return `${plural(pending, "acceptance check")} still needs proof. Inspect the task before accepting.`;
+  }
+  if (need.acceptance.length > 0) {
+    return "All acceptance proof is passing. Inspect the task detail if you need the full context before accepting.";
+  }
+  return "No acceptance proof is attached yet. Inspect the task before closing it.";
+}
+
+export function failedNeedNextAction(need: Pick<FailedNeed, "attempts">): string {
+  return `The latest run failed after ${plural(need.attempts, "attempt")}. Redrive only if the failure is understood; inspect the run or task detail first if it is not.`;
+}
+
 /**
- * A single needs-me card (packet §4.1). One human gate, actionable on the card:
- * the operator should clear most items without navigating. Renders per gate
- * kind; the left rail shows how much work it blocks (the primary ranking key).
+ * A single needs-me card (packet §4.1). The card body opens the canonical task
+ * detail; the action row keeps the fast-path gate/review mutations available.
+ * Renders per gate kind; the left rail shows how much work it blocks.
  *
  * Every action calls the real mutation in lib/queries. The card only slides away
  * on a genuine success (ok && !refused); a refusal keeps the card and surfaces
  * the reason, a transport error keeps the card and shows the error.
  */
 export function NeedCard({ need, showProject = false }: { need: NeedItem; showProject?: boolean }) {
+  const navigate = useNavigate();
   const [resolving, setResolving] = useState(false);
   const [gone, setGone] = useState(false);
   const [checked, setChecked] = useState(false);
@@ -84,9 +135,9 @@ export function NeedCard({ need, showProject = false }: { need: NeedItem; showPr
   const [error, setError] = useState<Error | null>(null);
 
   const askConfirm = useConfirm();
-  const closeTask = useCloseTask(need.taskId);
-  const statusAction = useTaskStatusAction(need.taskId);
-  const redrive = useRedrive(need.taskId);
+  const closeTask = useCloseTask(need.taskId, need.projectId);
+  const statusAction = useTaskStatusAction(need.taskId, need.projectId);
+  const redrive = useRedrive(need.taskId, need.projectId);
   const gateAction = useGateAction();
 
   if (gone) return null;
@@ -144,6 +195,7 @@ export function NeedCard({ need, showProject = false }: { need: NeedItem; showPr
             action: "satisfy",
             body: { evidence: `Spec approved: ${need.specTitle}` },
             taskId: need.taskId,
+            projectId: need.projectId,
           }),
         );
         return;
@@ -157,6 +209,7 @@ export function NeedCard({ need, showProject = false }: { need: NeedItem; showPr
             action: "satisfy",
             body: { evidence: "Provisioned by operator; resuming." },
             taskId: need.taskId,
+            projectId: need.projectId,
           }),
         );
         return;
@@ -190,6 +243,7 @@ export function NeedCard({ need, showProject = false }: { need: NeedItem; showPr
           action: "satisfy",
           body: { evidence: answer },
           taskId: need.taskId,
+          projectId: need.projectId,
         }),
       );
       return;
@@ -216,26 +270,47 @@ export function NeedCard({ need, showProject = false }: { need: NeedItem; showPr
   const primaryDisabled = pending || (need.kind === "provision" && !checked);
   const sendDisabled = pending || (need.kind === "clarify" && draft.trim() === "");
 
+  function openTaskDetail() {
+    void navigate({
+      to: "/p/$projectId/docs",
+      params: { projectId: need.projectId },
+      search: { path: need.taskId },
+    });
+  }
+
+  function onCardClick(event: MouseEvent<HTMLDivElement>) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest(CARD_INTERACTIVE_TARGET)) return;
+    if (window.getSelection()?.toString()) return;
+    openTaskDetail();
+  }
+
+  function onCardKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    openTaskDetail();
+  }
+
   return (
     <div
       data-need-card
+      data-need-focus-target
       role="article"
-      aria-label={`${gateKindLabel[need.kind]} · ${need.taskId} · ${need.taskTitle}`}
       tabIndex={0}
-      onKeyDown={(e) => {
-        // Enter on a roving-focused card fires its primary action (with confirm).
-        if (e.key === "Enter" && e.target === e.currentTarget && !pending) {
-          e.preventDefault();
-          void onPrimary();
-        }
-      }}
+      aria-label={`${gateKindLabel[need.kind]} · ${need.taskId} · ${need.taskTitle}`}
+      aria-keyshortcuts="Enter Space"
+      onClick={onCardClick}
+      onKeyDown={onCardKeyDown}
       className={cn(
-        "grid grid-cols-[92px_1fr] gap-6 rounded-lg border-b border-line px-3 pb-6 pt-[22px] outline-none transition-all duration-[380ms] ease-out focus-visible:ring-2 focus-visible:ring-accent/40",
+        "grid cursor-pointer grid-cols-[92px_1fr] gap-4 rounded-lg border-b border-line px-3 pb-6 pt-[22px] outline-none transition-all duration-[380ms] ease-out hover:bg-hover/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 sm:gap-6",
         resolving && "pointer-events-none translate-y-[-6px] opacity-0",
       )}
     >
       {/* Left rail: how much this blocks + kind */}
-      <div className="border-l-[3px] pl-[15px]" style={{ borderColor: colorVar }}>
+      <div
+        className="block border-l-[3px] pl-[15px]"
+        style={{ borderColor: colorVar }}
+      >
         <div
           className="font-serif text-[38px] font-semibold leading-[0.9] tracking-[-0.03em]"
           style={{ color: need.blocking > 0 ? colorVar : "var(--k-faint)" }}
@@ -256,27 +331,25 @@ export function NeedCard({ need, showProject = false }: { need: NeedItem; showPr
 
       {/* Right: meta, title, body, actions */}
       <div className="min-w-0">
-        <div className="mb-1 flex items-center gap-2.5">
-          {showProject && (
-            <Link
-              to="/p/$projectId/needs"
-              params={{ projectId: need.projectId }}
-              className="rounded-md bg-hover px-1.5 py-0.5 font-mono text-[10px] font-semibold text-ink-soft transition-colors hover:bg-active"
-            >
-              ◇ {need.projectName}
-            </Link>
-          )}
-          <Mono className="text-[11px] text-faint">{need.taskId}</Mono>
-          <Mono className="ml-auto text-[11px] text-faint">
-            {relativeTime(need.since)} · {need.priority}
-          </Mono>
+        <div className="-m-2 rounded-lg p-2">
+          <div className="mb-1 flex flex-wrap items-center gap-2.5">
+            {showProject && (
+              <span className="rounded-md bg-hover px-1.5 py-0.5 font-mono text-[10px] font-semibold text-ink-soft">
+                ◇ {need.projectName}
+              </span>
+            )}
+            <Mono className="text-[11px] text-faint">{need.taskId}</Mono>
+            <Mono className="text-[11px] text-faint">
+              {relativeTime(need.since)} · {need.priority}
+            </Mono>
+          </div>
+
+          <h3 className="mb-2 font-serif text-[20px] font-semibold leading-tight tracking-[-0.015em] text-ink">
+            {need.taskTitle}
+          </h3>
+
+          <NeedBody need={need} />
         </div>
-
-        <h3 className="mb-2 font-serif text-[20px] font-semibold leading-tight tracking-[-0.015em] text-ink">
-          {need.taskTitle}
-        </h3>
-
-        <NeedBody need={need} />
 
         {need.kind === "provision" && (
           <label className="mt-3 flex cursor-pointer items-center gap-2.5 text-[13px] text-ink-soft">
@@ -290,7 +363,7 @@ export function NeedCard({ need, showProject = false }: { need: NeedItem; showPr
           </label>
         )}
 
-        <div className="mt-4 flex items-center gap-3">
+        <div className="mt-4 flex flex-wrap items-center gap-3">
           <PrimaryAction
             need={need}
             colorVar={colorVar}
@@ -363,29 +436,36 @@ function NeedBody({ need }: { need: NeedItem }) {
       );
     case "review":
       return (
-        <div className="mt-1 max-w-[66ch] overflow-hidden rounded-lg border border-line">
-          {need.acceptance.map((a, i) => (
-            <div
-              key={a.id}
-              className={cn(
-                "flex items-center justify-between gap-3 px-3 py-2 text-[13px] text-ink-soft",
-                i > 0 && "border-t border-line-soft",
-              )}
-            >
-              <span>{a.text}</span>
-              <ProofChip proof={a.proof} />
-            </div>
-          ))}
+        <div className="max-w-[66ch]">
+          <p className={bodyCls}>Review whether this task is ready to close. {reviewDecisionLine(need)}</p>
+          <div className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.1em] text-fainter">
+            Proof detail · {reviewProofSummary(need.acceptance)}
+          </div>
+          <div className="mt-2 overflow-hidden rounded-lg border border-line bg-panel/35">
+            {need.acceptance.map((a, i) => (
+              <div
+                key={a.id}
+                className={cn(
+                  "flex items-start justify-between gap-3 px-3 py-2 text-[12.5px] leading-[1.45] text-muted",
+                  i > 0 && "border-t border-line-soft",
+                )}
+              >
+                <span>{a.text}</span>
+                <ProofChip proof={a.proof} />
+              </div>
+            ))}
+          </div>
         </div>
       );
     case "failed":
       return (
         <div className="max-w-[66ch]">
-          <div className="rounded-lg border border-fail/30 bg-fail-soft px-3 py-2 font-mono text-[12px] leading-relaxed text-fail">
+          <p className={bodyCls}>{failedNeedNextAction(need)}</p>
+          <div className="mt-2 rounded-lg border border-fail/30 bg-fail-soft px-3 py-2 font-mono text-[12px] leading-relaxed text-fail">
             {need.lastError}
           </div>
           <p className="mt-2 text-[13px] text-muted">
-            Exhausted after <Mono className="text-ink-soft">{need.attempts}</Mono> attempts.
+            Next action: redrive the task, inspect the failed run, or open the task detail before deciding.
           </p>
         </div>
       );
@@ -412,7 +492,7 @@ function PrimaryAction({
           ? "Approve spec"
           : need.kind === "review"
             ? "Accept & close"
-            : "Retry";
+            : "Redrive";
   return (
     <button
       onClick={() => void onClick()}
@@ -456,13 +536,5 @@ function SecondaryAction({
       </Link>
     );
   }
-  return (
-    <Link
-      to="/p/$projectId/runs/$taskId"
-      params={{ projectId: need.projectId, taskId: need.taskId }}
-      className="rounded-lg border border-line px-3.5 py-2 text-[13px] font-medium text-ink-soft transition-colors hover:border-fainter"
-    >
-      Open task
-    </Link>
-  );
+  return null;
 }

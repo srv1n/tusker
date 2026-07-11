@@ -13,6 +13,7 @@ import {
 } from "@/lib/queries";
 import {
   EmptyState,
+  ErrorState,
   QueryBoundary,
   Skeleton,
   SkeletonRows,
@@ -80,30 +81,46 @@ export function ProjectOverview() {
   const { projectId } = route.useParams();
   const projectsQ = useProjects();
 
+  if (projectsQ.isError) {
+    return <ErrorState error={projectsQ.error} onRetry={() => projectsQ.refetch()} />;
+  }
+
+  const project = projectsQ.data?.find((item) => item.id === projectId);
+  if (projectsQ.data && !project) {
+    return (
+      <PageScroll>
+        <EmptyState
+          title="Project not found"
+          hint={`No project “${projectId}” is registered with the daemon.`}
+          action={
+            <Link
+              to="/"
+              className="rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-medium text-ink-soft transition-colors hover:bg-hover"
+            >
+              Back to all projects
+            </Link>
+          }
+        />
+      </PageScroll>
+    );
+  }
+
+  const immediateProject: ProjectSummary = project ?? {
+    id: projectId,
+    name: projectId,
+    repoRoot: "",
+    vaultRoot: "",
+    automationEnabled: false,
+    health: "loading",
+    needsCount: 0,
+    activeRuns: 0,
+    worstLiveness: null,
+    daemonConnected: true,
+  };
+
   return (
     <PageScroll>
-      <QueryBoundary q={projectsQ} loading={<OverviewSkeleton />}>
-        {(projects) => {
-          const project = projects.find((p) => p.id === projectId);
-          if (!project) {
-            return (
-              <EmptyState
-                title="Project not found"
-                hint={`No project “${projectId}” is registered with the daemon.`}
-                action={
-                  <Link
-                    to="/"
-                    className="rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-medium text-ink-soft transition-colors hover:bg-hover"
-                  >
-                    Back to all projects
-                  </Link>
-                }
-              />
-            );
-          }
-          return <OverviewContent project={project} projectId={projectId} />;
-        }}
-      </QueryBoundary>
+      <OverviewContent project={immediateProject} projectId={projectId} />
     </PageScroll>
   );
 }
@@ -548,37 +565,6 @@ function BoardSkeleton() {
           </div>
         </div>
       ))}
-    </div>
-  );
-}
-
-function OverviewSkeleton() {
-  return (
-    <div className="animate-rise">
-      <div className="mb-6 flex items-end justify-between gap-6">
-        <div className="space-y-2">
-          <Skeleton className="h-3 w-40" />
-          <Skeleton className="h-8 w-48" />
-        </div>
-        <div className="flex gap-2.5">
-          <Skeleton className="h-9 w-24 rounded-lg" />
-          <Skeleton className="h-9 w-28 rounded-lg" />
-        </div>
-      </div>
-      <div className="mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="bg-raised px-4 py-3.5">
-            <Skeleton className="h-2.5 w-16" />
-            <Skeleton className="mt-2 h-6 w-12" />
-          </div>
-        ))}
-      </div>
-      <div className="mb-5 flex gap-2">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-6 w-16 rounded-full" />
-        ))}
-      </div>
-      <BoardSkeleton />
     </div>
   );
 }

@@ -1,11 +1,258 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestUpdateRefusesSelfReferentialBinaryWithoutMutation(t *testing.T) {
+	binDir := t.TempDir()
+	target := filepath.Join(binDir, "tusker")
+	original := []byte{0x7f, 'T', 'U', 'S', 'K', 'E', 'R', 0x00, 0xff}
+	if err := os.WriteFile(target, original, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Lstat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = installBinarySymlinkFrom(Args{"bin-dir": binDir}, target)
+	if err == nil {
+		t.Fatal("expected self-referential binary update to be refused")
+	}
+	issue := errorToIssue(err)
+	if !strings.Contains(issue.Message, "release-installed Tusker binaries") {
+		t.Fatalf("expected release-install explanation, got %q", issue.Message)
+	}
+	if !strings.Contains(issue.Hint, "scripts/install.sh") || !strings.Contains(issue.Hint, "tusker update --no-bin") {
+		t.Fatalf("expected actionable release-install guidance, got %q", issue.Hint)
+	}
+
+	after, err := os.Lstat(target)
+	if err != nil {
+		t.Fatalf("installed binary was removed: %v", err)
+	}
+	if after.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("installed binary was replaced by a symlink: %s", after.Mode())
+	}
+	if before.Mode() != after.Mode() {
+		t.Fatalf("installed binary mode changed: before=%s after=%s", before.Mode(), after.Mode())
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatalf("installed binary content changed: got %v want %v", got, original)
+	}
+}
+
+func TestBinaryInstallPlanRefusesHardLinkedSourceAndTarget(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.WriteFile(source, []byte("release binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(binDir, "tusker")
+	if err := os.Link(source, target); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := binaryInstallPlanForSource(Args{"bin-dir": binDir}, source)
+	if err == nil {
+		t.Fatal("expected hard-linked binary source and target to be refused")
+	}
+	if !strings.Contains(errorToIssue(err).Message, "same file") {
+		t.Fatalf("expected same-file error, got %v", err)
+	}
+}
+
+func TestUpdatePreflightsBinaryBeforeRefreshingSkillsOrRepoPointers(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	repo := t.TempDir()
+	skillDestination := filepath.Join(repo, ".agents", "skills", "tusker")
+	staleSkill := filepath.Join(skillDestination, "stale.txt")
+	if err := writeText(staleSkill, "must survive refusal\n"); err != nil {
+		t.Fatal(err)
+	}
+	pointerPath := filepath.Join(repo, "AGENTS.md")
+	if err := writeText(pointerPath, "existing operator instructions\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	preflightErr := tuskerError(errorInvalidArg, "refusing to update: source and target are the same file")
+	err := updateCmdWithBinaryPreflight(Args{"repo": repo, "repo-only": "true", "quiet": "true"}, func(Args) error {
+		return preflightErr
+	})
+	if !errors.Is(err, preflightErr) {
+		t.Fatalf("expected preflight error, got %v", err)
+	}
+	if got, err := readText(staleSkill); err != nil || got != "must survive refusal\n" {
+		t.Fatalf("skill destination changed before refusal: text=%q err=%v", got, err)
+	}
+	if got, err := readText(pointerPath); err != nil || got != "existing operator instructions\n" {
+		t.Fatalf("repo pointer changed before refusal: text=%q err=%v", got, err)
+	}
+}
+
+func TestInstallBinaryReplacementIsAtomic(t *testing.T) {
+	root := t.TempDir()
+	binarySource := filepath.Join(root, "checkout", "dist", "tusker")
+	if err := os.MkdirAll(filepath.Dir(binarySource), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binarySource, []byte("new checkout binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolvedSource, err := filepath.EvalSymlinks(binarySource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(binDir, "tusker")
+	oldBinary := []byte("old installed binary")
+	if err := os.WriteFile(target, oldBinary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	commitObserved := false
+	err = installBinarySymlinkFromWithRename(Args{"bin-dir": binDir}, binarySource, func(staged, destination string) error {
+		commitObserved = true
+		if destination != target {
+			t.Fatalf("rename destination = %s, want %s", destination, target)
+		}
+		current, err := os.ReadFile(destination)
+		if err != nil {
+			t.Fatalf("destination disappeared before atomic commit: %v", err)
+		}
+		if !bytes.Equal(current, oldBinary) {
+			t.Fatalf("destination changed before atomic commit: got %q want %q", current, oldBinary)
+		}
+		stagedTarget, err := os.Readlink(staged)
+		if err != nil {
+			t.Fatalf("staged replacement is not a symlink: %v", err)
+		}
+		if stagedTarget != resolvedSource {
+			t.Fatalf("staged symlink target = %s, want %s", stagedTarget, resolvedSource)
+		}
+		return os.Rename(staged, destination)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !commitObserved {
+		t.Fatal("atomic rename was not attempted")
+	}
+	installedSource, err := os.Readlink(target)
+	if err != nil {
+		t.Fatalf("installed destination is not a symlink: %v", err)
+	}
+	if installedSource != resolvedSource {
+		t.Fatalf("installed symlink target = %s, want %s", installedSource, resolvedSource)
+	}
+	stages, err := filepath.Glob(filepath.Join(binDir, ".tusker-install-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stages) != 0 {
+		t.Fatalf("staging directories were not cleaned up: %v", stages)
+	}
+}
+
+func TestInstallBinaryAllowsExistingSymlinkToSource(t *testing.T) {
+	root := t.TempDir()
+	binarySource := filepath.Join(root, "checkout", "tusker")
+	if err := os.MkdirAll(filepath.Dir(binarySource), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binarySource, []byte("checkout binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(binDir, "tusker")
+	if err := os.Symlink(binarySource, target); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := installBinarySymlinkFrom(Args{"bin-dir": binDir}, target); err != nil {
+		t.Fatalf("existing checkout symlink was treated as self-source: %v", err)
+	}
+	installedSource, err := os.Readlink(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedSource, err := filepath.EvalSymlinks(binarySource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if installedSource != resolvedSource {
+		t.Fatalf("installed symlink target = %s, want %s", installedSource, resolvedSource)
+	}
+}
+
+func TestInstallBinaryAtomicRenameFailurePreservesDestination(t *testing.T) {
+	root := t.TempDir()
+	binarySource := filepath.Join(root, "checkout", "tusker")
+	if err := os.MkdirAll(filepath.Dir(binarySource), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binarySource, []byte("new binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(binDir, "tusker")
+	original := []byte("existing binary")
+	if err := os.WriteFile(target, original, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	commitErr := errors.New("rename refused")
+	err := installBinarySymlinkFromWithRename(Args{"bin-dir": binDir}, binarySource, func(_, _ string) error {
+		return commitErr
+	})
+	if !errors.Is(err, commitErr) {
+		t.Fatalf("expected rename error, got %v", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("destination disappeared after rename failure: %v", err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatalf("destination changed after rename failure: got %q want %q", got, original)
+	}
+	if info, err := os.Lstat(target); err != nil {
+		t.Fatal(err)
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("destination became a symlink after rename failure: %s", info.Mode())
+	}
+	stages, err := filepath.Glob(filepath.Join(binDir, ".tusker-install-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stages) != 0 {
+		t.Fatalf("staging directories were not cleaned up after rename failure: %v", stages)
+	}
+}
 
 func TestInstallSkillPayloadRemovesStaleFiles(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "tusker")

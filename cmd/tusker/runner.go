@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -303,7 +302,7 @@ func assertRunnerCommandDir(runner RunnerName, cmdDir, workspacePath string) err
 func runnerEnv(req runnerLaunchEnv) []string {
 	extensionPolicy := withDefaultExtensionPolicy(req.CodexPolicy.Extensions)
 	extensionPolicyJSON, _ := json.Marshal(extensionPolicy)
-	return append(os.Environ(),
+	return append(runnerBaseEnv(),
 		"TUSKER_PROJECT_ID="+req.ProjectID,
 		"TUSKER_RECORD_ID="+req.RecordID,
 		"TUSKER_ITEM_ID="+req.ItemID,

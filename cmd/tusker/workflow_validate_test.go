@@ -37,6 +37,19 @@ func TestValidateWorkflowRejectsReviewerRunnerOutsideEnabledAgents(t *testing.T)
 	}
 }
 
+func TestValidateWorkflowRejectsWorkspaceRootOutsideSharedRuntime(t *testing.T) {
+	for _, root := range []string{"../.tusker-worktrees", "/tmp/tusker-worktrees", "workspaces-old"} {
+		wfFile := WorkflowFile{Path: "WORKFLOW.md", Body: defaultWorkflowMarkdown()}
+		wfFile.Data = defaultWorkflow()
+		wfFile.Data.Workspace.Strategy = string(WorkspaceStrategyWorktree)
+		wfFile.Data.Workspace.Root = root
+		err := validateWorkflowFile(wfFile)
+		if err == nil || !strings.Contains(err.Error(), "workspace.root must be workspaces") {
+			t.Fatalf("workspace root %q should be rejected, got %v", root, err)
+		}
+	}
+}
+
 func TestDefaultWorkflowEnablesRiskAwareReviewer(t *testing.T) {
 	wf := defaultWorkflow()
 	if !wf.Reviewer.Enabled {

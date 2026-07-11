@@ -38,8 +38,9 @@ export function useRovingNeedFocus() {
             ? cards.length - 1
             : Math.max(curr - 1, 0);
       const target = cards[next];
-      target.focus();
-      target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      const focusTarget = target.querySelector<HTMLElement>("[data-need-focus-target]") ?? target;
+      focusTarget.focus();
+      focusTarget.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -60,7 +61,7 @@ export function GlobalInbox() {
 
   return (
     <div className="tk-scroll h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-[960px] px-11 pb-20 pt-[34px]">
+      <div className="mx-auto w-full max-w-[960px] px-4 pb-20 pt-[34px] sm:px-11">
         <header className="mb-6">
           <h1 className="font-serif text-[34px] font-semibold leading-none tracking-[-0.02em] text-ink">
             Needs me

@@ -13,6 +13,129 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestPollOnceDoesNotResurrectConcurrentInterrupt(t *testing.T) {
+	vault := automationTestVault(t)
+	disableReviewerForTest(t, vault)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Poll interrupt fence", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	project := registerAutomationTestProject(t, vault)
+
+	seed, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.UpsertRun(RunStatus{
+		ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		Runner: string(RunnerCodexExec), Lane: runLaneExecute,
+		LeaseState: string(LeaseStateUnclaimed), WorkRevision: 0,
+		UpdatedAt: "2026-07-10T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	operatorStore, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer operatorStore.Close()
+
+	interrupted := false
+	daemon.beforePollRunPersist = func(before, _ RunStatus) {
+		if interrupted || before.RecordID != "APP-T-0001" {
+			return
+		}
+		interrupted = true
+		current, readErr := operatorStore.FindRun("APP-T-0001")
+		if readErr != nil || current == nil {
+			t.Fatalf("load run for concurrent interrupt: %#v %v", current, readErr)
+		}
+		if finishErr := finishRuntimeRunIfSnapshot(operatorStore, current, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "concurrent operator interrupt", true); finishErr != nil {
+			t.Fatal(finishErr)
+		}
+	}
+
+	err = daemon.PollOnce(context.Background())
+	if err != nil {
+		t.Fatalf("poll should treat a fenced concurrent interrupt as a clean retry boundary: %v", err)
+	}
+	if !interrupted {
+		t.Fatal("poll persistence hook did not execute")
+	}
+	stored, err := operatorStore.FindRun("APP-T-0001")
+	if err != nil || stored == nil {
+		t.Fatalf("load interrupted run: %#v %v", stored, err)
+	}
+	assertEqual(t, string(LeaseStateInterrupted), stored.LeaseState, "concurrent interrupt survives stale poll")
+	assertEqual(t, string(AttemptOutcomeCancelled), stored.AttemptOutcome, "concurrent outcome survives stale poll")
+	assertEqual(t, "", stored.LeaseOwner, "stale poll does not restore lease owner")
+}
+
+func TestPollOnceAbsentInsertRaceLeavesConcurrentLiveClaimUntouched(t *testing.T) {
+	vault := automationTestVault(t)
+	disableReviewerForTest(t, vault)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Absent insert claim fence", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	project := registerAutomationTestProject(t, vault)
+
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	operatorStore, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer operatorStore.Close()
+
+	raced := false
+	daemon.beforePollRunPersist = func(before, after RunStatus) {
+		if raced || before.ProjectID != "" || before.RecordID != "" || after.RecordID != "APP-T-0001" {
+			return
+		}
+		raced = true
+		if err := operatorStore.UpsertRun(RunStatus{
+			ProjectID:       project.ProjectID,
+			RecordID:        "APP-T-0001",
+			ItemID:          "APP-T-0001",
+			Runner:          "concurrent-live-runner",
+			Lane:            runLaneReview,
+			LeaseState:      string(LeaseStateClaimed),
+			LeaseOwner:      "concurrent-live-attempt",
+			LeaseGeneration: 7,
+			ActiveAttemptID: "concurrent-live-attempt",
+			WorkRevision:    99,
+			UpdatedAt:       "2026-07-10T05:00:00Z",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatalf("poll should treat the lost absent-row insert as a clean retry boundary: %v", err)
+	}
+	if !raced {
+		t.Fatal("absent-row persist hook did not execute")
+	}
+	stored, err := operatorStore.FindRun("APP-T-0001")
+	if err != nil || stored == nil {
+		t.Fatalf("load concurrently claimed row: %#v %v", stored, err)
+	}
+	assertEqual(t, string(LeaseStateClaimed), stored.LeaseState, "concurrent live lease survives insert race")
+	assertEqual(t, "concurrent-live-attempt", stored.LeaseOwner, "concurrent live owner survives insert race")
+	assertEqual(t, "concurrent-live-runner", stored.Runner, "poll does not overwrite concurrent runner")
+	assertEqual(t, runLaneReview, stored.Lane, "poll does not overwrite concurrent lane")
+	assertEqual(t, 99, stored.WorkRevision, "poll does not overwrite concurrent work revision")
+}
+
 func TestEligibilityFunctionReconcileDesiredSet(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
@@ -76,12 +199,16 @@ func TestLeaseClaimCASLeaseRenewReclaimLeaseGenerationFence(t *testing.T) {
 	if err := store.UpsertRun(run); err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := store.ClaimRunLease("project-1", "APP-T-0001", "owner-1", 1, defaultRunLeaseTTL, now, true)
+	claimed, err := store.ClaimRunLease("project-1", "APP-T-0001", "owner-1", 1, defaultRunLeaseTTL, now, true, RuntimeLeaseClaimPrecondition{
+		ExpectedLeaseState: LeaseStateUnclaimed,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertEqual(t, true, claimed, "first claim")
-	claimed, err = store.ClaimRunLease("project-1", "APP-T-0001", "owner-2", 2, defaultRunLeaseTTL, now, true)
+	claimed, err = store.ClaimRunLease("project-1", "APP-T-0001", "owner-2", 2, defaultRunLeaseTTL, now, true, RuntimeLeaseClaimPrecondition{
+		ExpectedLeaseState: LeaseStateUnclaimed,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,6 +281,7 @@ func TestLeaseClaimCASWorkRevisionFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	claimed, err := store.ClaimRunLease("project-1", "APP-T-0001", "owner-stale", 1, defaultRunLeaseTTL, now, true, RuntimeLeaseClaimPrecondition{
+		ExpectedLeaseState:      LeaseStateUnclaimed,
 		ExpectedOwner:           "",
 		ExpectedLeaseGeneration: 0,
 		ExpectedWorkRevision:    1,
@@ -170,6 +298,7 @@ func TestLeaseClaimCASWorkRevisionFence(t *testing.T) {
 	assertEqual(t, "", current.LeaseOwner, "stale claim does not set owner")
 
 	claimed, err = store.ClaimRunLease("project-1", "APP-T-0001", "owner-current", 1, defaultRunLeaseTTL, now, true, RuntimeLeaseClaimPrecondition{
+		ExpectedLeaseState:      LeaseStateUnclaimed,
 		ExpectedOwner:           "",
 		ExpectedLeaseGeneration: 0,
 		ExpectedWorkRevision:    2,
@@ -185,6 +314,81 @@ func TestLeaseClaimCASWorkRevisionFence(t *testing.T) {
 	assertEqual(t, "owner-current", current.LeaseOwner, "current claim sets owner")
 }
 
+func TestDispatchLeaseClaimRejectsConcurrentInterruptState(t *testing.T) {
+	vault := automationTestVault(t)
+	disableReviewerForTest(t, vault)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Interrupt before claim", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	project := registerAutomationTestProject(t, vault)
+	wfFile, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wfFile.Data.Agents.Default = "test-interrupt-fence"
+	wfFile.Data.Agents.Enabled = append(wfFile.Data.Agents.Enabled, "test-interrupt-fence")
+	wfFile.Data.Runners["test-interrupt-fence"] = RunnerDefinition{Kind: string(RunnerCodexExec), Command: "sleep 30"}
+	wfFile.Data.Workspace.Root = filepath.Join(DefaultStateRoot(), "workspaces", "interrupt-fence", newRecordID())
+	note, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := RunStatus{
+		ProjectID:      project.ProjectID,
+		RecordID:       "APP-T-0001",
+		ItemID:         "APP-T-0001",
+		Runner:         "test-interrupt-fence",
+		Lane:           runLaneExecute,
+		LeaseState:     string(LeaseStateUnclaimed),
+		AttemptOutcome: string(AttemptOutcomeNone),
+		WorkRevision:   intField(note.Data, "work_revision"),
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+
+	interrupted := false
+	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
+	daemon.beforeRunLeaseClaim = func(planned RunStatus) {
+		if interrupted || planned.RecordID != run.RecordID {
+			return
+		}
+		interrupted = true
+		current, readErr := store.FindRun(run.RecordID)
+		if readErr != nil || current == nil {
+			t.Fatalf("load run before concurrent interrupt: %#v %v", current, readErr)
+		}
+		if err := finishRuntimeRunIfSnapshot(store, current, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "concurrent operator interrupt", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	updated, persisted, err := daemon.dispatchRun(context.Background(), project, wfFile, note, run, runLaneExecute)
+	if updated.ProcessPGID > 0 {
+		t.Cleanup(func() { _ = syscall.Kill(-updated.ProcessPGID, syscall.SIGKILL) })
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !interrupted {
+		t.Fatal("pre-claim interrupt hook did not execute")
+	}
+	assertEqual(t, true, persisted, "lost claim returns canonical stored row")
+	assertEqual(t, string(LeaseStateInterrupted), updated.LeaseState, "interrupt-before-claim remains interrupted")
+	stored := latestRunForRecord(t, store, project.ProjectID, run.RecordID)
+	assertEqual(t, string(LeaseStateInterrupted), stored.LeaseState, "claim CAS does not reclaim interrupted row")
+	assertEqual(t, "", stored.LeaseOwner, "interrupted row remains ownerless")
+	attempts, err := store.ListAttemptsForRun(project.ProjectID, run.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 0, len(attempts), "interrupt-before-claim creates no attempt")
+}
+
 func TestDispatchLostCASAbortsBeforeWorkspacePrepAndPreservesControlMutation(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
@@ -195,7 +399,7 @@ func TestDispatchLostCASAbortsBeforeWorkspacePrepAndPreservesControlMutation(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspaceRoot := filepath.Join(t.TempDir(), "workspaces")
+	workspaceRoot := filepath.Join(DefaultStateRoot(), "workspaces", "lost-cas", newRecordID())
 	wfFile.Data.Workspace.Strategy = string(WorkspaceStrategyWorktree)
 	wfFile.Data.Workspace.Root = workspaceRoot
 	note, err := resolveNote(vault, "APP-T-0001")
@@ -323,6 +527,96 @@ func TestDispatchCASHappyPathStillDispatches(t *testing.T) {
 	}
 }
 
+func TestDispatchPostSpawnLeaseLossReapsSpawnedProcess(t *testing.T) {
+	vault := automationTestVault(t)
+	disableReviewerForTest(t, vault)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Post spawn reap", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	project := registerAutomationTestProject(t, vault)
+	wfFile, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := "tusker-f3-post-spawn-test"
+	command := "echo marker=" + marker + "; sleep 600"
+	wfFile.Data.Agents.Default = "test-dispatch"
+	wfFile.Data.Agents.Enabled = append(wfFile.Data.Agents.Enabled, "test-dispatch")
+	wfFile.Data.Codex.Command = command
+	wfFile.Data.Runners["test-dispatch"] = RunnerDefinition{Kind: string(RunnerCodex), Command: command}
+	note, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := RunStatus{
+		ProjectID:      project.ProjectID,
+		RecordID:       "APP-T-0001",
+		ItemID:         "APP-T-0001",
+		Runner:         "test-dispatch",
+		Lane:           runLaneExecute,
+		LeaseState:     string(LeaseStateUnclaimed),
+		AttemptOutcome: string(AttemptOutcomeNone),
+		WorkRevision:   intField(note.Data, "work_revision"),
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
+	spawnedPID := 0
+	hookCalled := false
+	daemon.postSpawnBeforePersist = func(spawned RunStatus) {
+		hookCalled = true
+		spawnedPID = spawned.ProcessPID
+		if spawned.ProcessPGID > 0 {
+			t.Cleanup(func() { _ = syscall.Kill(-spawned.ProcessPGID, syscall.SIGKILL) })
+		}
+		if spawnedPID <= 0 || !processExists(spawnedPID) {
+			t.Fatalf("expected spawned process to be alive before lease loss, pid=%d", spawnedPID)
+		}
+		current, err := store.FindRun(spawned.RecordID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current == nil {
+			t.Fatal("expected current run row")
+		}
+		current.LeaseState = string(LeaseStateInterrupted)
+		current.AttemptOutcome = string(AttemptOutcomeCancelled)
+		current.LastError = "operator stop before post-spawn persist"
+		current.NextRetryAt = ""
+		current.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		clearActiveExecution(current)
+		if err := store.UpsertRun(*current); err != nil {
+			t.Fatal(err)
+		}
+	}
+	updated, _, err := daemon.dispatchRun(context.Background(), project, wfFile, note, run, runLaneExecute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hookCalled {
+		t.Fatal("expected post-spawn hook to run")
+	}
+	assertEqual(t, string(LeaseStateInterrupted), updated.LeaseState, "post-spawn lease loss keeps operator stop")
+	assertEqual(t, "operator stop before post-spawn persist", updated.LastError, "post-spawn lease loss reason")
+	waitForProcessGone(t, spawnedPID, "spawned")
+}
+
+func waitForProcessGone(t *testing.T, pid int, label string) {
+	t.Helper()
+	for i := 0; i < 60; i++ {
+		if pid <= 0 || !processExists(pid) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("%s process pid %d still alive", label, pid)
+}
+
 func TestHeartbeatStopSignal(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	store, err := OpenRuntimeStore(stateRoot)
@@ -334,7 +628,7 @@ func TestHeartbeatStopSignal(t *testing.T) {
 	if err := store.UpsertRun(RunStatus{ProjectID: "project-1", RecordID: "APP-T-0001", ItemID: "APP-T-0001", LeaseState: string(LeaseStateUnclaimed)}); err != nil {
 		t.Fatal(err)
 	}
-	if claimed, err := store.ClaimRunLease("project-1", "APP-T-0001", "owner-1", 1, defaultRunLeaseTTL, now, true); err != nil || !claimed {
+	if claimed, err := store.ClaimRunLease("project-1", "APP-T-0001", "owner-1", 1, defaultRunLeaseTTL, now, true, RuntimeLeaseClaimPrecondition{ExpectedLeaseState: LeaseStateUnclaimed}); err != nil || !claimed {
 		t.Fatalf("claim failed claimed=%v err=%v", claimed, err)
 	}
 	renewed, err := store.RenewRunLease(RuntimeLeaseRenewal{ProjectID: "project-1", RecordID: "APP-T-0001", Owner: "owner-1", Generation: 1, TTL: defaultRunLeaseTTL, Now: now.Add(defaultRunHeartbeatInterval), Dispatchable: false})

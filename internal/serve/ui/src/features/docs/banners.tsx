@@ -34,9 +34,9 @@ export function ApproveBanner({
   onRequestChanges: () => void;
 }) {
   return (
-    <div className="mb-6 flex animate-rise items-center gap-3.5 rounded-xl border border-info/30 bg-info-soft px-4 py-3.5">
+    <div className="mb-6 flex animate-rise flex-wrap items-center gap-3.5 rounded-xl border border-info/30 bg-info-soft px-4 py-3.5">
       <span className="h-2 w-2 flex-none rounded-full bg-info" />
-      <span className="flex-1 text-[13.5px] text-ink-soft">
+      <span className="min-w-0 flex-1 text-[13.5px] text-ink-soft">
         This spec is awaiting your approval.{" "}
         <span className="font-medium text-ink">{blocked} downstream tasks are blocked.</span>
       </span>
@@ -92,7 +92,7 @@ export function ConflictBanner({
         revision {conflict.agoLabel} (state_rev {conflict.fromRev} → {conflict.toRev}). Your save was
         rejected — nothing is lost.
       </p>
-      <div className="mb-3 grid grid-cols-2 gap-3">
+      <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <DiffColumn title="Yours" spans={conflict.yours} />
         <DiffColumn title={`Theirs · rev ${conflict.toRev}`} spans={conflict.theirs} />
       </div>
@@ -150,7 +150,7 @@ export function ValidationStrip({
         ))}
       </div>
       {errors > 0 && (
-        <div className="mt-3 flex gap-2.5">
+        <div className="mt-3 flex flex-wrap gap-2.5">
           <button className={cn(btn, outline.fail)} onClick={onFix}>
             Fix errors
           </button>
@@ -221,7 +221,7 @@ export function MergeReadiness({
               )}
             </span>
             <span className="w-[116px] flex-none text-[13px] text-ink-soft">{c.label}</span>
-            <Mono className="text-[11px] text-faint">{c.detail}</Mono>
+            <Mono className="min-w-0 flex-1 truncate text-[11px] text-faint">{c.detail}</Mono>
           </div>
         );
       })}

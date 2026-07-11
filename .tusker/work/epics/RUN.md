@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:32:32Z"
-updated_at: "2026-07-09T03:08:44Z"
-state_rev: "sha256:7480d6582091b7e06d4c6c5100436164030f97676c688986224c8cc67b509e12"
+updated_at: "2026-07-10T04:47:13Z"
+state_rev: "sha256:d172d99ad9df5f19b1eb6f1375ea1c3666cff1ec856ede0a6f3106212ec46ab5"
 ---
 
 # RUN · Runner parity and model profiles
@@ -50,7 +50,8 @@ TBD.
 | [[RUN-T-0005]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach review with satisfied proof or done. |
 | [[RUN-T-0006]] | backlog | agent | Wait for dependency RUN-T-0004 to reach done. |
 | [[RUN-T-0015]] | backlog | agent | Wait for dependency RUN-T-0011 to reach done. |
-| [[RUN-T-0043]] | review | reviewer | Review evidence and close or return to rework. |
+| [[RUN-T-0045]] | review | reviewer | Review evidence and close or return to rework. |
+| [[RUN-T-0046]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 
@@ -87,3 +88,4 @@ TBD.
 | [[RUN-T-0040]] | human:sarav | 2026-07-08T05:10:07Z |
 | [[RUN-T-0041]] | human:sarav | 2026-07-08T05:10:07Z |
 | [[RUN-T-0042]] | human:sarav | 2026-07-08T06:14:48Z |
+| [[RUN-T-0043]] | reviewer:agent | 2026-07-09T11:02:34Z |

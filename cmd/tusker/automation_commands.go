@@ -135,6 +135,7 @@ type automationStatusReport struct {
 	ParkedBudgetRuns    int                        `json:"parked_budget_runs"`
 	BudgetCircuit       any                        `json:"budget_circuit"`
 	InvariantCircuit    any                        `json:"invariant_circuit"`
+	DiskPressure        DiskPressureStatus         `json:"disk_pressure"`
 	Projects            []automationProjectSummary `json:"projects"`
 }
 
@@ -172,6 +173,7 @@ func automationStatusCmd(args Args) error {
 		ParkedBudgetRuns:    intFromAny(status["parkedBudgetRuns"]),
 		BudgetCircuit:       status["budgetCircuit"],
 		InvariantCircuit:    status["invariantCircuit"],
+		DiskPressure:        diskPressureStatusFromAny(status["disk_pressure"]),
 		Projects:            automationProjectSummaries(projects, runs),
 	}
 	if args.Bool("json") {
@@ -745,6 +747,9 @@ func automationRunBlocker(run RunStatus, now time.Time) string {
 	case LeaseStateInterrupted:
 		return "existing run is interrupted"
 	case LeaseStateParkedNoProgress:
+		if strings.Contains(strings.ToLower(run.LastError), "runner preflight blocked") {
+			return "existing run is parked_no_progress by runner preflight; fix the runner command/PATH, then run `tusker redrive " + firstNonEmpty(run.ItemID, run.RecordID) + " --reason <why>` before redispatch"
+		}
 		if strings.Contains(strings.ToLower(run.LastError), "cap reached") {
 			return "existing run is parked_no_progress at attempt cap; run `tusker redrive " + firstNonEmpty(run.ItemID, run.RecordID) + " --reason <why>` before redispatch"
 		}
@@ -882,6 +887,7 @@ func printAutomationStatus(report automationStatusReport) {
 	if status, ok := report.InvariantCircuit.(invariantCircuitStatus); ok && status.Open {
 		fmt.Printf("Invariant circuit: open (%s)\n", invariantCircuitSummary(status))
 	}
+	fmt.Printf("Disk pressure: %s (bytes=%d percent=%.2f paused=%t)\n", report.DiskPressure.State, report.DiskPressure.MinFreeBytes, report.DiskPressure.MinFreePercent, report.DiskPressure.DispatchPaused)
 	if len(report.Projects) == 0 {
 		fmt.Println("Projects: none")
 		return

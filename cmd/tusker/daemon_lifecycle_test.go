@@ -616,9 +616,7 @@ func TestInterruptDeadRunWithoutLiveHandleReleases(t *testing.T) {
 	}
 	assertEqual(t, string(LeaseStateInterrupted), run.LeaseState, "interrupted dead run state")
 	assertEqual(t, 0, run.ProcessPID, "interrupted dead pid")
-	if !strings.Contains(run.LastError, "live runner handle not found") {
-		t.Fatalf("expected missing handle reason, got %#v", run)
-	}
+	assertEqual(t, "interrupt requested by operator; live runner handle not found and process is not running", run.LastError, "interrupted dead run reason")
 }
 
 func TestWorkspaceStrategyInPlaceDefaultUsesRepoRootAndExemptsTuskerBookkeeping(t *testing.T) {
@@ -668,10 +666,11 @@ func TestWorkspaceRootHonoredForWorktreeStrategy(t *testing.T) {
 	if _, err := exec.Command("git", "-C", repo, "init").CombinedOutput(); err != nil {
 		t.Fatal(err)
 	}
-	root := filepath.Join(t.TempDir(), "configured-workspaces")
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	root := filepath.Join(stateRoot, "workspaces", "configured")
 	req := WorkspacePrepareRequest{
 		ProjectID: "project-1", ProjectKey: "APP", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
-		RepoRoot: repo, StateRoot: filepath.Join(t.TempDir(), "state"), WorkspaceRoot: root, Strategy: WorkspaceStrategyWorktree,
+		RepoRoot: repo, StateRoot: stateRoot, WorkspaceRoot: root, Strategy: WorkspaceStrategyWorktree,
 	}
 	workspacePath, workspaceRoot, err := workspacePathForRequest(req)
 	if err != nil {

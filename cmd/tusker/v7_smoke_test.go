@@ -3974,6 +3974,78 @@ func TestV7BranchPolicyHonorsConfiguredProtectStateFieldsFalse(t *testing.T) {
 	}
 }
 
+func TestV7BranchPolicyAllowsExplicitSingleUserLocalMode(t *testing.T) {
+	previousWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previousWD); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+	repo := filepath.Join(t.TempDir(), "repo")
+	vault := filepath.Join(repo, "tusker")
+	if err := ensureDir(repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "init", "-b", "main")
+	runGit(t, "config", "user.email", "test@example.com")
+	runGit(t, "config", "user.name", "Tusker Test")
+	if err := writeText(filepath.Join(repo, "tusker.yaml"), strings.Join([]string{
+		"branches:",
+		"  control:",
+		"    - main",
+		"runtime:",
+		"  mutation_mode: single_user_local",
+	}, "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Local branch policy", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "add", ".")
+	runGit(t, "commit", "-m", "seed")
+	runGit(t, "checkout", "-b", "agent/APP-T-0001")
+
+	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+	data, body, err := parseFrontmatterMustRead(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["status"] = "done"
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(taskPath, content); err != nil {
+		t.Fatal(err)
+	}
+	taskRelPath := filepath.ToSlash(filepath.Join(vaultDisplayRoot(vault), "work", "tasks", "APP-T-0001.md"))
+	runGit(t, "add", taskRelPath)
+
+	errors, _ := validateV7BranchPolicy(vault, Args{"staged": "true"})
+	if len(errors) != 0 {
+		t.Fatalf("expected single_user_local to disable branch-policy errors, got %#v", errors)
+	}
+	code, err := validateCmd(Args{"vault": vault, "staged": "true", "branch-policy-only": "true", "json": "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 {
+		t.Fatal("expected branch-policy-only validate to pass in single_user_local mode")
+	}
+}
+
 func TestV7ControlMutationAllowsExplicitSingleUserLocalMode(t *testing.T) {
 	previousWD, err := os.Getwd()
 	if err != nil {
@@ -4131,8 +4203,8 @@ func TestV7BranchPolicyRejectsDetachedAndNonGitState(t *testing.T) {
 		t.Fatal(err)
 	}
 	errors, _ = validateV7BranchPolicy(nonGitVault, Args{"staged": "true"})
-	if len(errors) == 0 || errors[0].Code != "BRANCH_POLICY_BRANCH_UNAVAILABLE" {
-		t.Fatalf("expected non-git branch-policy error, got %#v", errors)
+	if len(errors) != 0 {
+		t.Fatalf("expected local non-git branch-policy validation to pass, got %#v", errors)
 	}
 }
 

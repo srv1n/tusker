@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,6 +32,48 @@ func TestAssertWorkspaceWithinRootRejectsEscapes(t *testing.T) {
 	err := assertWorkspaceWithinRoot(filepath.Join(root, "..", "OTHER", "record-1"), root)
 	if err == nil || !strings.Contains(err.Error(), "escapes workspace root") {
 		t.Fatalf("expected workspace root escape error, got %v", err)
+	}
+}
+
+func TestWorkspaceRootRejectsSharedRuntimeEscapes(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	for _, configured := range []string{"../repo-worktrees", filepath.Join(t.TempDir(), "absolute-worktrees"), "workspaces-old"} {
+		_, _, err := workspacePathForRequest(WorkspacePrepareRequest{
+			ProjectKey: "APP", RecordID: "APP-T-0001", RepoRoot: t.TempDir(), StateRoot: stateRoot,
+			WorkspaceRoot: configured, Strategy: WorkspaceStrategyWorktree,
+		})
+		if err == nil || !strings.Contains(err.Error(), "shared runtime workspace directory") {
+			t.Fatalf("workspace root %q should be rejected: %v", configured, err)
+		}
+	}
+	path, root, err := workspacePathForRequest(WorkspacePrepareRequest{
+		ProjectKey: "APP", RecordID: "APP-T-0001", RepoRoot: t.TempDir(), StateRoot: stateRoot,
+		WorkspaceRoot: filepath.Join("workspaces", "team"), Strategy: WorkspaceStrategyWorktree,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRoot := filepath.Join(stateRoot, "workspaces", "team", "APP")
+	if root != wantRoot || path != filepath.Join(wantRoot, "APP-T-0001") {
+		t.Fatalf("workspace path/root = %q / %q, want %q", path, root, wantRoot)
+	}
+}
+
+func TestWorkspaceRootRejectsSymlinkEscapeWithMissingTail(t *testing.T) {
+	stateRoot := t.TempDir()
+	sharedRoot := filepath.Join(stateRoot, "workspaces")
+	if err := os.MkdirAll(sharedRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(sharedRoot, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := workspacePathForRequest(WorkspacePrepareRequest{
+		ProjectKey: "APP", RecordID: "APP-T-0001", RepoRoot: t.TempDir(), StateRoot: stateRoot,
+		WorkspaceRoot: filepath.Join("workspaces", "linked", "not-created-yet"), Strategy: WorkspaceStrategyWorktree,
+	})
+	if err == nil || !strings.Contains(err.Error(), "shared runtime workspace directory") {
+		t.Fatalf("expected missing-tail workspace symlink escape rejection, got %v", err)
 	}
 }
 

@@ -115,7 +115,7 @@ export function SettingRow({
   control?: ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 px-4 py-[13px]">
+    <div className="flex flex-col gap-2 px-4 py-[13px] sm:flex-row sm:items-center sm:justify-between sm:gap-3">
       <div className="flex min-w-0 items-start gap-2">
         {locked && (
           <Lock

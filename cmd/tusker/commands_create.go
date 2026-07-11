@@ -92,7 +92,7 @@ automation:
   enabled_runners: [codex_exec, claude-code]
   workspace:
     strategy: worktree
-    root: ../.tusker-worktrees
+    root: workspaces
   concurrency:
     max_active_runs: 2
     max_active_runs_per_project: 1

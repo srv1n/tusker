@@ -5,7 +5,10 @@ import (
 )
 
 type registeredProjectLoadOptions struct {
-	Notes bool
+	Notes        bool
+	MetadataOnly bool
+	LoadDisabled bool
+	ProjectID    string
 }
 
 type loadedRegisteredProject struct {
@@ -29,8 +32,11 @@ func loadRegisteredProjects(store *RuntimeStore, opts registeredProjectLoadOptio
 	}
 	out := make([]loadedRegisteredProject, 0, len(projects))
 	for _, project := range projects {
+		if opts.ProjectID != "" && project.ProjectID != opts.ProjectID {
+			continue
+		}
 		loaded := loadedRegisteredProject{Project: project}
-		if !project.Enabled {
+		if (!project.Enabled && !opts.LoadDisabled) || opts.MetadataOnly {
 			out = append(out, loaded)
 			continue
 		}

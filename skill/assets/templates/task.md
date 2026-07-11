@@ -21,6 +21,8 @@ Replace this with the exact outcome.
 
 ## Verification
 
+Each Check must start with `command: <exact shell command>` or `manual proof: <exact steps a human runs>`.
+
 | Covers | Check | Result | Notes |
 |---|---|---|---|
-| A1 | Replace with exact command or manual proof. | pending | Replace before ready. |
+| A1 | command: <exact command that proves A1> | pending | Replace the placeholder before ready. |

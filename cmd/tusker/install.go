@@ -67,9 +67,18 @@ func syncRepoContract(args Args) error {
 }
 
 func updateCmd(args Args) error {
+	return updateCmdWithBinaryPreflight(args, preflightInstallBinary)
+}
+
+func updateCmdWithBinaryPreflight(args Args, preflight func(Args) error) error {
 	if args.Bool("help") {
 		printUpdateHelp()
 		return nil
+	}
+	if !args.Bool("no-bin") {
+		if err := preflight(args); err != nil {
+			return err
+		}
 	}
 
 	updatedSkills := []string{}
@@ -505,31 +514,137 @@ func installBinarySymlink(args Args) error {
 	if err != nil {
 		return err
 	}
+	return installBinarySymlinkFrom(args, binarySource)
+}
 
+func preflightInstallBinary(args Args) error {
+	binarySource, err := ensureInstallBinarySource()
+	if err != nil {
+		return err
+	}
+	_, err = binaryInstallPlanForSource(args, binarySource)
+	return err
+}
+
+func installBinarySymlinkFrom(args Args, binarySource string) error {
+	return installBinarySymlinkFromWithRename(args, binarySource, os.Rename)
+}
+
+func installBinarySymlinkFromWithRename(args Args, binarySource string, rename func(string, string) error) error {
+	plan, err := binaryInstallPlanForSource(args, binarySource)
+	if err != nil {
+		return err
+	}
+	if err := ensureDir(filepath.Dir(plan.target)); err != nil {
+		return err
+	}
+	if err := replaceBinarySymlinkAtomically(plan.source, plan.target, rename); err != nil {
+		return err
+	}
+	fmt.Printf("Symlinked %s -> %s\n", plan.target, plan.source)
+
+	pathParts := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))
+	if !containsString(pathParts, filepath.Dir(plan.target)) {
+		fmt.Printf("Note: %s is not on your PATH. Add it to your shell rc to call `tusker` directly.\n", filepath.Dir(plan.target))
+	}
+	return nil
+}
+
+type binaryInstallPlan struct {
+	source string
+	target string
+}
+
+func binaryInstallPlanForSource(args Args, binarySource string) (binaryInstallPlan, error) {
 	binDir := args.String("bin-dir")
 	if binDir == "" {
 		binDir = pickBinDir()
 	}
 	if binDir == "" {
-		return tuskerError(errorInvalidArg, "No writable bin dir found on PATH. Pass --bin-dir <path> (e.g. ~/.local/bin), or --no-bin to skip.")
+		return binaryInstallPlan{}, tuskerError(errorInvalidArg, "No writable bin dir found on PATH. Pass --bin-dir <path> (e.g. ~/.local/bin), or --no-bin to skip.")
 	}
-	binDir, err = filepath.Abs(binDir)
+	binDir, err := filepath.Abs(binDir)
+	if err != nil {
+		return binaryInstallPlan{}, err
+	}
+	binarySource, err = filepath.Abs(binarySource)
+	if err != nil {
+		return binaryInstallPlan{}, err
+	}
+	if evaluated, evalErr := filepath.EvalSymlinks(binarySource); evalErr != nil {
+		return binaryInstallPlan{}, fmt.Errorf("resolve binary install source %s: %w", binarySource, evalErr)
+	} else {
+		binarySource = evaluated
+	}
+	target := filepath.Join(binDir, "tusker")
+	same, err := binaryInstallSourceMatchesTarget(binarySource, target)
+	if err != nil {
+		return binaryInstallPlan{}, err
+	}
+	if same {
+		return binaryInstallPlan{}, tuskerError(
+			errorInvalidArg,
+			fmt.Sprintf("refusing to update %s: the binary source and destination are the same file; release-installed Tusker binaries must be updated by rerunning the release installer", target),
+			withHint("Run `curl -fsSL https://raw.githubusercontent.com/srv1n/tusker/main/scripts/install.sh | sh` to install the latest release, or use `tusker update --no-bin` to refresh skills only."),
+		)
+	}
+	return binaryInstallPlan{source: binarySource, target: target}, nil
+}
+
+func binaryInstallSourceMatchesTarget(binarySource, target string) (bool, error) {
+	targetEndpoint, err := canonicalInstallEndpoint(target)
+	if err != nil {
+		return false, err
+	}
+	if filepath.Clean(binarySource) == targetEndpoint {
+		return true, nil
+	}
+
+	sourceInfo, err := os.Stat(binarySource)
+	if err != nil {
+		return false, err
+	}
+	targetInfo, err := os.Lstat(target)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if targetInfo.Mode()&os.ModeSymlink != 0 {
+		return false, nil
+	}
+	return os.SameFile(sourceInfo, targetInfo), nil
+}
+
+func canonicalInstallEndpoint(path string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	parent := filepath.Dir(absPath)
+	evaluatedParent, err := filepath.EvalSymlinks(parent)
+	if err == nil {
+		parent = evaluatedParent
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	return filepath.Clean(filepath.Join(parent, filepath.Base(absPath))), nil
+}
+
+func replaceBinarySymlinkAtomically(binarySource, target string, rename func(string, string) error) error {
+	stageDir, err := os.MkdirTemp(filepath.Dir(target), ".tusker-install-*")
 	if err != nil {
 		return err
 	}
-	if err := ensureDir(binDir); err != nil {
-		return err
-	}
-	target := filepath.Join(binDir, "tusker")
-	_ = os.Remove(target)
-	if err := os.Symlink(binarySource, target); err != nil {
-		return err
-	}
-	fmt.Printf("Symlinked %s -> %s\n", target, binarySource)
+	defer os.RemoveAll(stageDir)
 
-	pathParts := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))
-	if !containsString(pathParts, binDir) {
-		fmt.Printf("Note: %s is not on your PATH. Add it to your shell rc to call `tusker` directly.\n", binDir)
+	staged := filepath.Join(stageDir, filepath.Base(target))
+	if err := os.Symlink(binarySource, staged); err != nil {
+		return err
+	}
+	if err := rename(staged, target); err != nil {
+		return fmt.Errorf("atomically replace %s: %w", target, err)
 	}
 	return nil
 }

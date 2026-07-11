@@ -158,9 +158,9 @@ func validateV7Task(note Note, ctx validationContext, where string, errors, warn
 	}
 	verification := sectionContent(note.Body, "## Verification")
 	if strings.TrimSpace(verification) == "" {
-		*warnings = append(*warnings, issue("VERIFICATION_MISSING", "V7 task verification should name exact commands or manual proof", where, "", nil))
+		*warnings = append(*warnings, issue("VERIFICATION_MISSING", "V7 task verification should name exact commands or manual proof", where, v7VerificationGrammarHint, nil))
 	} else if !v7TextHasExactVerificationProof(verification) {
-		*warnings = append(*warnings, issue("VERIFICATION_PROOF_MISSING", "V7 task verification should name exact commands or manual proof", where, "", nil))
+		*warnings = append(*warnings, issue("VERIFICATION_PROOF_MISSING", "V7 task verification should name exact commands or manual proof", where, v7VerificationGrammarHint, nil))
 	}
 	if len(normalizeList(data["domains"])) > 5 {
 		*warnings = append(*warnings, issue("TASK_TOO_MANY_DOMAINS", "V7 task should stay focused on a small number of domains", where, "", map[string]any{"count": len(normalizeList(data["domains"]))}))
@@ -519,7 +519,7 @@ func validateV7Gate(note Note, where string, errors, warnings *[]Issue) {
 		*warnings = append(*warnings, issue("GATE_EXTERNAL_SERVICE_SETUP_MISSING", "external_service gate should include an official documentation link or setup notes", where, "", nil))
 	}
 	if stringField(data, "gate_kind") == "verification" && !v7GateBodyHasExactVerificationProof(note.Body) {
-		*warnings = append(*warnings, issue("GATE_VERIFICATION_PROOF_VAGUE", "verification gate should include an exact command or manual proof", where, "", nil))
+		*warnings = append(*warnings, issue("GATE_VERIFICATION_PROOF_VAGUE", "verification gate should include an exact command or manual proof", where, v7VerificationGrammarHint, nil))
 	}
 }
 
@@ -643,12 +643,27 @@ func v7GateBodyHasExactVerificationProof(body string) bool {
 	return v7TextHasExactVerificationProof(body)
 }
 
+// v7VerificationGrammarHint states the accepted Verification "Check" grammar.
+// It is surfaced verbatim in validate warnings and the dispatch blocker so an
+// authoring agent can fix a row without reading this source.
+const v7VerificationGrammarHint = `each Verification "Check" cell must start with "command: <exact shell command>" or "manual proof: <exact steps a human runs>", e.g. command: go test ./cmd/tusker -run TestFoo -count=1`
+
+// v7VerificationMarkers are the canonical exactness markers, longest-first so
+// "manual proof:" is matched before the generic "proof:".
+var v7VerificationMarkers = []string{"command:", "manual proof:", "manual proof", "proof:"}
+
+// v7VerificationLegacyPrefixes keep pre-grammar bare-command rows valid. The
+// grammar markers above are canonical; prefer "command: <cmd>" for new rows and
+// do not grow this list — a per-tool allowlist rots against new toolchains.
+var v7VerificationLegacyPrefixes = []string{
+	"rtk ", "go test", "go run", "make ", "npm ", "pnpm ", "yarn ", "npx ",
+	"node ", "bun ", "bunx ", "deno ", "python ", "uv ", "pytest", "cargo ",
+	"swift ", "swiftc ", "xcodebuild ", "docker ", "kubectl ", "curl ",
+	"git ", "tusker ", "cd ",
+}
+
 func v7TextHasExactVerificationProof(text string) bool {
-	lower := strings.ToLower(text)
-	if strings.Contains(text, "```") ||
-		strings.Contains(lower, "command:") ||
-		strings.Contains(lower, "manual proof") ||
-		strings.Contains(lower, "proof:") {
+	if strings.Contains(text, "```") {
 		return true
 	}
 	for _, row := range parseV7VerificationRows("## Verification\n\n" + text) {
@@ -656,44 +671,81 @@ func v7TextHasExactVerificationProof(text string) bool {
 			return true
 		}
 	}
+	// Non-table fallback: a marker at the start of a prose line with real
+	// content. Skip table rows and HTML comments so guidance text and Notes
+	// cells that merely mention a marker are not mistaken for proof.
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "|") || strings.HasPrefix(trimmed, "<!--") {
+			continue
+		}
+		if v7LineStartsWithExactMarker(strings.TrimLeft(trimmed, "-*0123456789. ")) {
+			return true
+		}
+	}
 	return false
 }
 
 func v7VerificationCheckLooksExact(check string) bool {
-	lower := strings.ToLower(strings.TrimSpace(check))
-	if lower == "" || lower == "-" {
+	trimmed := strings.TrimSpace(check)
+	if trimmed == "" || trimmed == "-" {
 		return false
 	}
-	for _, marker := range []string{"command:", "manual proof", "proof:"} {
-		if strings.Contains(lower, marker) {
-			return true
-		}
+	if v7CheckHasExactMarker(trimmed) {
+		return true
 	}
-	for _, prefix := range []string{
-		"rtk ",
-		"go test",
-		"go run",
-		"make ",
-		"npm ",
-		"pnpm ",
-		"yarn ",
-		"npx ",
-		"node ",
-		"python ",
-		"uv ",
-		"pytest",
-		"cargo ",
-		"docker ",
-		"kubectl ",
-		"curl ",
-		"git ",
-		"tusker ",
-	} {
-		if strings.HasPrefix(lower, prefix) {
+	lower := strings.ToLower(trimmed)
+	for _, prefix := range v7VerificationLegacyPrefixes {
+		if strings.HasPrefix(lower, prefix) && v7VerificationValueIsExact(trimmed) {
 			return true
 		}
 	}
 	return false
+}
+
+// v7CheckHasExactMarker reports whether a Check cell carries a grammar marker
+// followed by real, non-placeholder content.
+func v7CheckHasExactMarker(check string) bool {
+	lower := strings.ToLower(check)
+	for _, marker := range v7VerificationMarkers {
+		idx := strings.Index(lower, marker)
+		if idx < 0 {
+			continue
+		}
+		rest := strings.TrimPrefix(strings.TrimSpace(check[idx+len(marker):]), ":")
+		if v7VerificationValueIsExact(rest) {
+			return true
+		}
+	}
+	return false
+}
+
+// v7LineStartsWithExactMarker is the start-anchored form used for prose lines.
+func v7LineStartsWithExactMarker(line string) bool {
+	lower := strings.ToLower(line)
+	for _, marker := range v7VerificationMarkers {
+		if !strings.HasPrefix(lower, marker) {
+			continue
+		}
+		rest := strings.TrimPrefix(strings.TrimSpace(line[len(marker):]), ":")
+		if v7VerificationValueIsExact(rest) {
+			return true
+		}
+	}
+	return false
+}
+
+// v7VerificationValueIsExact rejects empty cells and unfilled "<...>"
+// placeholders so a grammar-shaped template row is not mistaken for real proof.
+func v7VerificationValueIsExact(value string) bool {
+	v := strings.TrimSpace(strings.Trim(strings.TrimSpace(value), "`"))
+	if v == "" || v == "-" {
+		return false
+	}
+	if strings.HasPrefix(v, "<") && strings.HasSuffix(v, ">") && !strings.Contains(v[1:len(v)-1], "<") {
+		return false
+	}
+	return true
 }
 
 const v7LargeEvidenceWarnBytes = 10 * 1024 * 1024
@@ -1952,6 +2004,9 @@ func v7AcceptanceIDFromCover(cover string) string {
 func validateV7BranchPolicy(vaultPath string, args Args) ([]Issue, []Issue) {
 	var errors, warnings []Issue
 	if !v7ValidationPolicyFor(vaultPath).ProtectStateFields {
+		return errors, warnings
+	}
+	if v7SingleUserLocalMutationMode(vaultPath) {
 		return errors, warnings
 	}
 	repoRoot := v7RepoRoot(vaultPath)

@@ -16,13 +16,22 @@ const (
 )
 
 type serveStreamEvent struct {
-	Kind string   `json:"kind"`
-	Keys []string `json:"keys"`
+	ID           int64    `json:"id"`
+	Kind         string   `json:"kind"`
+	Project      string   `json:"project,omitempty"`
+	TaskID       string   `json:"task_id,omitempty"`
+	Title        string   `json:"title,omitempty"`
+	Status       string   `json:"status,omitempty"`
+	Urgency      string   `json:"urgency,omitempty"`
+	DeepLinkPath string   `json:"deep_link_path,omitempty"`
+	OccurredAt   string   `json:"occurred_at,omitempty"`
+	Keys         []string `json:"keys"`
 }
 
 type serveStreamBroker struct {
 	mu                sync.Mutex
 	nextID            int
+	nextEventID       int64
 	clients           map[int]chan serveStreamEvent
 	closed            bool
 	heartbeatInterval time.Duration
@@ -64,6 +73,11 @@ func (b *serveStreamBroker) Broadcast(event serveStreamEvent) {
 	defer b.mu.Unlock()
 	if b.closed {
 		return
+	}
+	b.nextEventID++
+	event.ID = b.nextEventID
+	if strings.TrimSpace(event.OccurredAt) == "" {
+		event.OccurredAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	for id, ch := range b.clients {
 		select {

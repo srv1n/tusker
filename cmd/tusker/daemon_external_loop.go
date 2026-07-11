@@ -99,6 +99,7 @@ func (d *Daemon) autoAdvanceExternalLoop(ctx context.Context, project Registered
 		result.DispatchCommand = []string{"tusker", "automation", "dispatch", result.TaskID, "--json"}
 	}
 	if result.NextAction == externalLoopActionApplyPatch && result.Dispatchable && result.EventCreated {
+		policyCtx.ProjectRuns[trackerRecordID(note)] = externalLoopDispatchLeaseSnapshot(run, externalLoopApplyDispatchRun(project, note, run, applyRunner))
 		updated, dispatchErr := dispatchExternalApplyInput(policyCtx, note, dispatchExplanation, applyRunner)
 		if dispatchErr != nil {
 			run.LastError = "external loop auto-dispatch failed: " + dispatchErr.Error()
@@ -388,6 +389,7 @@ func dispatchExternalLoopContinuation(ctx *automationCommandContext, note Note, 
 	run.ItemID = firstNonEmpty(run.ItemID, stringField(note.Data, "id"))
 	run.WorkRevision = intField(note.Data, "work_revision")
 	run = prepareRunForLaneDispatch(run, firstNonEmpty(strings.TrimSpace(lane), runLaneExecute), externalRunner)
+	run = externalLoopDispatchLeaseSnapshot(base, run)
 	if reason := strings.TrimSpace(ctx.DispatchRefusal); reason != "" {
 		return nil, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": run.Lane}))
 	}
@@ -664,6 +666,18 @@ func externalLoopApplyDispatchRun(project RegisteredProject, note Note, base Run
 	run.WorkRevision = intField(note.Data, "work_revision")
 	run = prepareRunForLaneDispatch(run, runLaneExecute, applyRunner)
 	return run
+}
+
+func externalLoopDispatchLeaseSnapshot(base, prepared RunStatus) RunStatus {
+	// The intent upsert preserves these fields in storage, so the following
+	// ClaimRunLease must compare against the source snapshot rather than the
+	// unclaimed transition view used for dispatch eligibility.
+	prepared.LeaseState = base.LeaseState
+	prepared.LeaseOwner = base.LeaseOwner
+	prepared.LeaseGeneration = base.LeaseGeneration
+	prepared.LeaseExpiresAt = base.LeaseExpiresAt
+	prepared.LeaseHost = base.LeaseHost
+	return prepared
 }
 
 func externalLoopJobAlreadyHandled(store *RuntimeStore, projectID, recordID, jobID string) (bool, error) {

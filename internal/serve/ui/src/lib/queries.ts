@@ -9,6 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { liveRefetchInterval } from "@/lib/stream";
+import type { RunDetail } from "@/types/domain";
 
 /** Query-key factory. */
 export const qk = {
@@ -16,18 +17,19 @@ export const qk = {
   projects: ["projects"] as const,
   needs: (projectId?: string) => ["needs", projectId ?? "all"] as const,
   runs: (projectId?: string) => ["runs", projectId ?? "all"] as const,
-  run: (taskId: string) => ["run", taskId] as const,
+  reviewBatch: (projectId?: string) => ["review", "batch", projectId ?? "all"] as const,
+  run: (taskId: string, projectId?: string) => ["run", projectId ?? "all", taskId] as const,
   epics: (projectId?: string) => ["epics", projectId ?? "all"] as const,
   waves: (projectId?: string) => ["waves", projectId ?? "all"] as const,
-  gates: (taskId?: string) => ["gates", taskId ?? "all"] as const,
-  evidence: (taskId?: string) => ["evidence", taskId ?? "all"] as const,
-  decisions: (epicId?: string) => ["decisions", epicId ?? "all"] as const,
-  feedback: ["feedback"] as const,
-  attempts: (taskId?: string) => ["attempts", taskId ?? "all"] as const,
+  gates: (taskId?: string, projectId?: string) => ["gates", projectId ?? "all", taskId ?? "all"] as const,
+  evidence: (taskId?: string, projectId?: string) => ["evidence", projectId ?? "all", taskId ?? "all"] as const,
+  decisions: (epicId?: string, projectId?: string) => ["decisions", projectId ?? "all", epicId ?? "all"] as const,
+  feedback: (projectId?: string) => ["feedback", projectId ?? "all"] as const,
+  attempts: (taskId?: string, projectId?: string) => ["attempts", projectId ?? "all", taskId ?? "all"] as const,
   tasks: (projectId?: string) => ["tasks", projectId ?? "all"] as const,
-  task: (id: string) => ["task", id] as const,
+  task: (id: string, projectId?: string) => ["task", projectId ?? "all", id] as const,
   docs: (projectId?: string) => ["docs", projectId ?? "all"] as const,
-  doc: (path: string) => ["doc", path] as const,
+  doc: (path: string, projectId?: string) => ["doc", projectId ?? "all", path] as const,
 };
 
 export const useDaemon = () =>
@@ -35,6 +37,28 @@ export const useDaemon = () =>
 
 export const useProjects = () =>
   useQuery({ queryKey: qk.projects, queryFn: api.projects, refetchInterval: liveRefetchInterval });
+
+export const useRegisterProject = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { repoRoot: string; vaultRoot?: string }) => api.registerProject(body),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.projects });
+      void qc.invalidateQueries({ queryKey: qk.daemon });
+    },
+  });
+};
+
+export const useProjectAutomation = (projectId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) => api.setProjectAutomation(projectId, enabled),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.projects });
+      void qc.invalidateQueries({ queryKey: qk.daemon });
+    },
+  });
+};
 
 export const useNeeds = (projectId?: string) =>
   useQuery({
@@ -50,11 +74,35 @@ export const useRuns = (projectId?: string) =>
     refetchInterval: liveRefetchInterval,
   });
 
-export const useRun = (taskId: string) =>
+export const useReviewBatch = (projectId?: string) =>
+  useQuery({ queryKey: qk.reviewBatch(projectId), queryFn: () => api.reviewBatch(projectId), refetchInterval: liveRefetchInterval });
+
+export function interruptedRunReadbackComplete(run: RunDetail | undefined): boolean {
+  return run?.leaseStateRaw === "interrupted" && run.processRunning === false;
+}
+
+export function runRefetchInterval(
+  refreshUntilInterrupted: boolean,
+  run: RunDetail | undefined,
+  hasQueryError: boolean,
+  fallbackInterval: number | false,
+): number | false {
+  if (hasQueryError) return false;
+  if (refreshUntilInterrupted && !interruptedRunReadbackComplete(run)) return 400;
+  return fallbackInterval;
+}
+
+export const useRun = (taskId: string, refreshUntilInterrupted = false, projectId?: string) =>
   useQuery({
-    queryKey: qk.run(taskId),
-    queryFn: () => api.run(taskId),
-    refetchInterval: liveRefetchInterval,
+    queryKey: qk.run(taskId, projectId),
+    queryFn: () => api.run(taskId, projectId),
+    refetchInterval: (query) =>
+      runRefetchInterval(
+        refreshUntilInterrupted,
+        query.state.data,
+        query.state.error !== null,
+        liveRefetchInterval(),
+      ),
   });
 
 export const useEpics = (projectId?: string) =>
@@ -63,32 +111,32 @@ export const useEpics = (projectId?: string) =>
 export const useWaves = (projectId?: string) =>
   useQuery({ queryKey: qk.waves(projectId), queryFn: () => api.waves(projectId), refetchInterval: liveRefetchInterval });
 
-export const useGates = (taskId?: string) =>
-  useQuery({ queryKey: qk.gates(taskId), queryFn: () => api.gates(taskId), refetchInterval: liveRefetchInterval });
+export const useGates = (taskId?: string, projectId?: string) =>
+  useQuery({ queryKey: qk.gates(taskId, projectId), queryFn: () => api.gates(taskId, projectId), refetchInterval: liveRefetchInterval });
 
-export const useEvidence = (taskId?: string) =>
-  useQuery({ queryKey: qk.evidence(taskId), queryFn: () => api.evidence(taskId), refetchInterval: liveRefetchInterval });
+export const useEvidence = (taskId?: string, projectId?: string) =>
+  useQuery({ queryKey: qk.evidence(taskId, projectId), queryFn: () => api.evidence(taskId, projectId), refetchInterval: liveRefetchInterval });
 
-export const useDecisions = (epicId?: string) =>
-  useQuery({ queryKey: qk.decisions(epicId), queryFn: () => api.decisions(epicId), refetchInterval: liveRefetchInterval });
+export const useDecisions = (epicId?: string, projectId?: string) =>
+  useQuery({ queryKey: qk.decisions(epicId, projectId), queryFn: () => api.decisions(epicId, projectId), refetchInterval: liveRefetchInterval });
 
-export const useFeedback = () =>
-  useQuery({ queryKey: qk.feedback, queryFn: api.feedback, refetchInterval: liveRefetchInterval });
+export const useFeedback = (projectId?: string) =>
+  useQuery({ queryKey: qk.feedback(projectId), queryFn: () => api.feedback(projectId), refetchInterval: liveRefetchInterval });
 
-export const useAttempts = (taskId?: string) =>
-  useQuery({ queryKey: qk.attempts(taskId), queryFn: () => api.attempts(taskId), refetchInterval: liveRefetchInterval });
+export const useAttempts = (taskId?: string, projectId?: string) =>
+  useQuery({ queryKey: qk.attempts(taskId, projectId), queryFn: () => api.attempts(taskId, projectId), refetchInterval: liveRefetchInterval });
 
 export const useTasks = (projectId?: string) =>
   useQuery({ queryKey: qk.tasks(projectId), queryFn: () => api.tasks(projectId), refetchInterval: liveRefetchInterval });
 
-export const useTask = (id: string) =>
-  useQuery({ queryKey: qk.task(id), queryFn: () => api.task(id), refetchInterval: liveRefetchInterval });
+export const useTask = (id: string, projectId?: string) =>
+  useQuery({ queryKey: qk.task(id, projectId), queryFn: () => api.task(id, projectId), refetchInterval: liveRefetchInterval });
 
 export const useDocList = (projectId?: string) =>
   useQuery({ queryKey: qk.docs(projectId), queryFn: () => api.docs(projectId), refetchInterval: liveRefetchInterval });
 
-export const useDoc = (path: string) =>
-  useQuery({ queryKey: qk.doc(path), queryFn: () => api.doc(path), enabled: path.length > 0, refetchInterval: liveRefetchInterval });
+export const useDoc = (path: string, projectId?: string) =>
+  useQuery({ queryKey: qk.doc(path, projectId), queryFn: () => api.doc(path, projectId), enabled: path.length > 0, refetchInterval: liveRefetchInterval });
 
 /**
  * Redrive (Retry) a run. The mutation resolves with the API's result — a
@@ -96,19 +144,42 @@ export const useDoc = (path: string) =>
  * refresh the run, the runs list, and the tasks (canonical status may change),
  * so the badge and board never lag behind the action.
  */
-export const useRedrive = (taskId: string) => {
+export const useRedrive = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.redrive(taskId),
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: qk.run(taskId) });
-      void qc.invalidateQueries({ queryKey: ["runs"] });
-      void qc.invalidateQueries({ queryKey: ["tasks"] });
-    },
+    mutationKey: ["redrive", taskId],
+    mutationFn: () => api.redrive(taskId, projectId),
+    onSettled: () => invalidateRunActionQueries(qc, taskId, projectId),
   });
 };
 
-function invalidateOperatorState(qc: ReturnType<typeof useQueryClient>, taskId?: string) {
+/**
+ * Interrupt a run through the shared CLI transition. The detail read is
+ * invalidated immediately; Run Detail then polls until raw lease + verified
+ * process state prove the stop instead of trusting the mutation response.
+ */
+export const useInterrupt = (taskId: string, projectId?: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationKey: ["interrupt", taskId],
+    mutationFn: () => api.interrupt(taskId, projectId),
+    onSettled: () => invalidateRunActionQueries(qc, taskId, projectId),
+  });
+};
+
+export async function invalidateRunActionQueries(
+  qc: Pick<ReturnType<typeof useQueryClient>, "invalidateQueries">,
+  taskId: string,
+  projectId?: string,
+): Promise<void> {
+  await Promise.all([
+    qc.invalidateQueries({ queryKey: qk.run(taskId, projectId) }),
+    qc.invalidateQueries({ queryKey: ["runs"] }),
+    qc.invalidateQueries({ queryKey: ["tasks"] }),
+  ]);
+}
+
+function invalidateOperatorState(qc: ReturnType<typeof useQueryClient>, taskId?: string, projectId?: string) {
   void qc.invalidateQueries({ queryKey: ["projects"] });
   void qc.invalidateQueries({ queryKey: ["needs"] });
   void qc.invalidateQueries({ queryKey: ["tasks"] });
@@ -117,69 +188,69 @@ function invalidateOperatorState(qc: ReturnType<typeof useQueryClient>, taskId?:
   void qc.invalidateQueries({ queryKey: ["gates"] });
   void qc.invalidateQueries({ queryKey: ["evidence"] });
   void qc.invalidateQueries({ queryKey: ["decisions"] });
-  void qc.invalidateQueries({ queryKey: qk.feedback });
+  void qc.invalidateQueries({ queryKey: ["feedback"] });
   void qc.invalidateQueries({ queryKey: qk.daemon });
   if (taskId) {
-    void qc.invalidateQueries({ queryKey: qk.task(taskId) });
-    void qc.invalidateQueries({ queryKey: qk.run(taskId) });
-    void qc.invalidateQueries({ queryKey: qk.attempts(taskId) });
+    void qc.invalidateQueries({ queryKey: qk.task(taskId, projectId) });
+    void qc.invalidateQueries({ queryKey: qk.run(taskId, projectId) });
+    void qc.invalidateQueries({ queryKey: qk.attempts(taskId, projectId) });
   }
 }
 
-export const useTaskStatusAction = (taskId: string) => {
+export const useTaskStatusAction = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { status: string; reason?: string; actor?: string; force?: boolean }) => api.taskStatus(taskId, body),
-    onSettled: () => invalidateOperatorState(qc, taskId),
+    mutationFn: (body: { status: string; reason?: string; actor?: string; force?: boolean }) => api.taskStatus(taskId, body, projectId),
+    onSettled: () => invalidateOperatorState(qc, taskId, projectId),
   });
 };
 
-export const useCloseTask = (taskId: string) => {
+export const useCloseTask = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { reason?: string; actor?: string; force?: boolean }) => api.closeTask(taskId, body),
-    onSettled: () => invalidateOperatorState(qc, taskId),
+    mutationFn: (body: { reason?: string; actor?: string; force?: boolean }) => api.closeTask(taskId, body, projectId),
+    onSettled: () => invalidateOperatorState(qc, taskId, projectId),
   });
 };
 
-export const useLandTask = (taskId: string) => {
+export const useLandTask = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body?: { branch?: string; from?: string }) => api.landTask(taskId, body ?? {}),
-    onSettled: () => invalidateOperatorState(qc, taskId),
+    mutationFn: (body?: { branch?: string; from?: string }) => api.landTask(taskId, body ?? {}, projectId),
+    onSettled: () => invalidateOperatorState(qc, taskId, projectId),
   });
 };
 
 export const useGateAction = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { gateId: string; action: "satisfy" | "waive" | "obsolete"; body: { reason?: string; evidence?: string; evidenceRefs?: string[]; actor?: string; force?: boolean }; taskId?: string }) =>
-      api.gateAction(input.gateId, input.action, input.body),
-    onSettled: (_data, _err, input) => invalidateOperatorState(qc, input?.taskId),
+    mutationFn: (input: { gateId: string; action: "satisfy" | "waive" | "obsolete"; body: { reason?: string; evidence?: string; evidenceRefs?: string[]; actor?: string; force?: boolean }; taskId?: string; projectId?: string }) =>
+      api.gateAction(input.gateId, input.action, input.body, input.projectId),
+    onSettled: (_data, _err, input) => invalidateOperatorState(qc, input?.taskId, input?.projectId),
   });
 };
 
-export const useEvidenceAdd = (taskId?: string) => {
+export const useEvidenceAdd = (taskId?: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.addEvidence(taskId ? { ...body, taskId } : body),
-    onSettled: () => invalidateOperatorState(qc, taskId),
+    mutationFn: (body: Record<string, unknown>) => api.addEvidence(taskId ? { ...body, taskId } : body, projectId),
+    onSettled: () => invalidateOperatorState(qc, taskId, projectId),
   });
 };
 
-export const useFeedbackAdd = () => {
+export const useFeedbackAdd = (projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.addFeedback(body),
-    onSettled: () => invalidateOperatorState(qc),
+    mutationFn: (body: Record<string, unknown>) => api.addFeedback(body, projectId),
+    onSettled: () => invalidateOperatorState(qc, undefined, projectId),
   });
 };
 
-export const useLandWave = () => {
+export const useLandWave = (projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (waveId: string) => api.landWave(waveId),
-    onSettled: () => invalidateOperatorState(qc),
+    mutationFn: (waveId: string) => api.landWave(waveId, projectId),
+    onSettled: () => invalidateOperatorState(qc, undefined, projectId),
   });
 };
 

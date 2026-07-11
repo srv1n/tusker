@@ -14,7 +14,7 @@
 
 import { useState } from "react";
 import { getRouteApi, Link } from "@tanstack/react-router";
-import { useDaemon, useProjects } from "@/lib/queries";
+import { useDaemon, useProjectAutomation, useProjects } from "@/lib/queries";
 import { PageScroll, SectionLabel } from "@/components/ui/page";
 import { EmptyState, QueryBoundary, Skeleton } from "@/components/ui/states";
 import type { ProjectSummary } from "@/types/domain";
@@ -23,7 +23,6 @@ import {
   landingRows,
   overlapNote,
   portRange,
-  projectMeta,
   repositoryRows,
   routingFallthrough,
   routingRules,
@@ -85,6 +84,7 @@ function SettingsBody({ project, projectId }: { project: ProjectSummary; project
   const [tab, setTab] = useState<SettingsTab>("details");
   const daemonQ = useDaemon();
   const daemon = daemonQ.data;
+  const automation = useProjectAutomation(projectId);
 
   // Three independent override write-paths (edits → local, reset → inherited).
   const repo = useConfigRows(repositoryRows);
@@ -105,7 +105,7 @@ function SettingsBody({ project, projectId }: { project: ProjectSummary; project
         Details &amp; settings
       </h1>
       <p className="mb-6 mt-1 font-mono text-[11.5px] text-faint">
-        {projectMeta.path} · {projectMeta.branch}
+        {project.repoRoot}
       </p>
 
       <SettingsTabs tabs={settingsTabs} active={tab} onChange={setTab} />
@@ -113,12 +113,44 @@ function SettingsBody({ project, projectId }: { project: ProjectSummary; project
       <div key={tab} className="mt-6 animate-rise">
         {tab === "details" && (
           <>
+            <SectionLabel className="mb-2.5">Daemon automation</SectionLabel>
+            <div className="mb-7 flex items-start justify-between gap-5 rounded-lg border border-line bg-panel px-4 py-3.5" data-project-automation>
+              <div>
+                <div className="text-[13px] font-semibold text-ink">Auto-spawn eligible tasks</div>
+                <p className="mt-1 max-w-[590px] text-[12px] leading-relaxed text-muted">
+                  When enabled, the daemon polls this project and dispatches eligible ready or rework tasks. Registration alone never enables it.
+                </p>
+                {(automation.error || automation.data?.ok === false) && (
+                  <p className="mt-2 text-[11.5px] text-fail">
+                    {automation.error instanceof Error ? automation.error.message : automation.data?.reason}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={project.automationEnabled}
+                disabled={automation.isPending}
+                onClick={() => automation.mutate(!project.automationEnabled)}
+                className={`relative mt-0.5 h-6 w-11 flex-none rounded-full transition-colors disabled:opacity-50 ${
+                  project.automationEnabled ? "bg-pass" : "bg-line-strong"
+                }`}
+              >
+                <span
+                  className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                    project.automationEnabled ? "translate-x-5" : "translate-x-1"
+                  }`}
+                />
+                <span className="sr-only">{project.automationEnabled ? "Disable" : "Enable"} daemon automation</span>
+              </button>
+            </div>
+
             <SectionLabel className="mb-2.5">Repository</SectionLabel>
             <div className="mb-7">
               <SettingList rows={repo.rows} onChange={repo.setValue} onReset={repo.reset} />
             </div>
 
-            <div className="mb-2.5 flex items-center justify-between">
+            <div className="mb-2.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
               <SectionLabel>Worktrees</SectionLabel>
               {daemon && (
                 <LiveMeta

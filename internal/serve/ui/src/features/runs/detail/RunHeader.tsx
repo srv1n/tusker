@@ -1,18 +1,31 @@
 import type { ReactNode } from "react";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
-import type { RedriveResult, RunDetail, TaskCapsule } from "@/types/domain";
+import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
+import type { InterruptResult, RedriveResult, RunDetail, TaskCapsule } from "@/types/domain";
 import { cn } from "@/lib/cn";
 import { Mono } from "@/components/ui/primitives";
 import { Button } from "@/components/ui/controls";
 import { OutcomeChip, RunnerBadge } from "@/components/ui/chips";
 import { CapsuleChips } from "@/components/ui/capsule";
 import { LivenessIndicator } from "@/components/ui/liveness";
-import { isLiveHeaderRun, redriveDisabledReason } from "@/features/runs/detail/helpers";
+import {
+  isInterruptibleRun,
+  isLiveHeaderRun,
+  redriveDisabledReason,
+} from "@/features/runs/detail/helpers";
 
 /** State of the in-flight / last redrive, surfaced inline under the actions. */
 export interface RetryState {
   pending: boolean;
   result: RedriveResult | null;
+  error?: unknown;
+}
+
+export interface InterruptState {
+  confirming: boolean;
+  pending: boolean;
+  awaitingReadback: boolean;
+  result: InterruptResult | null;
+  error?: unknown;
 }
 
 /**
@@ -30,18 +43,24 @@ export function RunHeader({
   onInterrupt,
   onRetry,
   retry,
+  interrupt,
+  waitingForDaemonReason,
 }: {
   run: RunDetail;
   capsule?: TaskCapsule;
   onInterrupt: () => void;
   onRetry: () => void;
   retry: RetryState;
+  interrupt: InterruptState;
+  waitingForDaemonReason?: string | null;
 }) {
   const live = isLiveHeaderRun(run);
-  const active = live || run.outcome === "retry-queued";
+  const active = isInterruptibleRun(run);
+  const interruptBusy = interrupt.confirming || interrupt.pending || interrupt.awaitingReadback;
+  const actionBusy = interruptBusy || retry.pending;
   // Canonical task status drives whether redrive is allowed — never the run row.
-  const disabledReason = redriveDisabledReason(capsule?.status);
-  const redriveDisabled = disabledReason !== null || retry.pending;
+  const disabledReason = redriveDisabledReason(capsule?.status, run, waitingForDaemonReason);
+  const redriveDisabled = disabledReason !== null || actionBusy;
   return (
     <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0">
@@ -64,22 +83,29 @@ export function RunHeader({
           <span className="text-fainter">·</span>
           <Mono className="text-fainter">run</Mono>
           <OutcomeChip outcome={run.outcome} />
+          {waitingForDaemonReason && (
+            <Mono className="font-semibold text-warn" title={waitingForDaemonReason}>
+              Waiting for daemon
+            </Mono>
+          )}
           {live && (
             <>
               <LivenessIndicator liveness={run.liveness} sinceSec={run.sinceLastEventSec} />
               <span className="text-fainter">·</span>
             </>
           )}
-          <Mono className={cn(run.leaseState === "expired" ? "text-fail" : "text-muted")}>
-            lease {run.leaseState}
-          </Mono>
+          {!waitingForDaemonReason && (
+            <Mono className={cn(run.leaseState === "expired" ? "text-fail" : "text-muted")}>
+              lease {run.leaseState}
+            </Mono>
+          )}
         </div>
       </div>
 
       <div className="flex flex-none flex-col items-stretch gap-2 sm:items-end">
         <div className="flex items-center gap-2.5">
-          <Button variant="danger" onClick={onInterrupt} disabled={!active}>
-            Interrupt
+          <Button variant="danger" onClick={onInterrupt} disabled={!active || actionBusy}>
+            {interrupt.pending || interrupt.awaitingReadback ? "Interrupting…" : "Interrupt"}
           </Button>
           <Button
             variant="primary"
@@ -93,6 +119,7 @@ export function RunHeader({
             {retry.pending ? "Redriving…" : "Redrive"}
           </Button>
         </div>
+        <InterruptFeedback interrupt={interrupt} />
         <RedriveFeedback disabledReason={disabledReason} retry={retry} />
       </div>
     </header>
@@ -123,6 +150,14 @@ function RedriveFeedback({
   if (retry.pending) {
     return <FeedbackLine tone="muted">Requesting redrive…</FeedbackLine>;
   }
+  if (retry.error) {
+    return (
+      <FeedbackLine tone="warn">
+        <AlertTriangle size={12.5} strokeWidth={2.2} className="mt-px flex-none" />
+        <span>{errorMessage(retry.error)}</span>
+      </FeedbackLine>
+    );
+  }
   if (retry.result) {
     const refused = retry.result.refused || !retry.result.ok;
     return (
@@ -137,6 +172,52 @@ function RedriveFeedback({
     );
   }
   return null;
+}
+
+function InterruptFeedback({ interrupt }: { interrupt: InterruptState }) {
+  if (interrupt.confirming) {
+    return <FeedbackLine tone="muted">Waiting for interrupt confirmation…</FeedbackLine>;
+  }
+  if (interrupt.pending) {
+    return (
+      <FeedbackLine tone="muted">
+        <Loader2 size={12.5} className="mt-px flex-none animate-spin" />
+        <span>Sending interrupt…</span>
+      </FeedbackLine>
+    );
+  }
+  if (interrupt.awaitingReadback) {
+    return (
+      <FeedbackLine tone="info">
+        <Loader2 size={12.5} className="mt-px flex-none animate-spin" />
+        <span>Interrupt accepted; waiting for canonical lease/process readback…</span>
+      </FeedbackLine>
+    );
+  }
+  if (interrupt.error) {
+    return (
+      <FeedbackLine tone="warn">
+        <AlertTriangle size={12.5} strokeWidth={2.2} className="mt-px flex-none" />
+        <span>{errorMessage(interrupt.error)}</span>
+      </FeedbackLine>
+    );
+  }
+  if (!interrupt.result) return null;
+  const refused = interrupt.result.refused || !interrupt.result.ok;
+  return (
+    <FeedbackLine tone={refused ? "warn" : "pass"}>
+      {refused ? (
+        <AlertTriangle size={12.5} strokeWidth={2.2} className="mt-px flex-none" />
+      ) : (
+        <CheckCircle2 size={12.5} strokeWidth={2.2} className="mt-px flex-none" />
+      )}
+      <span>{interrupt.result.reason}</span>
+    </FeedbackLine>
+  );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function FeedbackLine({

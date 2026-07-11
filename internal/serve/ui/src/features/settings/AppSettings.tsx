@@ -28,27 +28,29 @@ const TABS: { key: AppTab; label: string }[] = [
 
 function SectionTabs({ value, onChange }: { value: AppTab; onChange: (t: AppTab) => void }) {
   return (
-    <div className="mb-[26px] inline-flex overflow-hidden rounded-lg border border-line bg-surface">
-      {TABS.map((t, i) => {
-        const active = t.key === value;
-        return (
-          <button
-            key={t.key}
-            type="button"
-            aria-current={active ? "page" : undefined}
-            onClick={() => onChange(t.key)}
-            className={cn(
-              "px-[14px] py-[7px] text-[12.5px] transition-colors",
-              i > 0 && "border-l border-line-soft",
-              active
-                ? "bg-ink font-semibold text-surface"
-                : "font-medium text-muted hover:bg-hover hover:text-ink-soft",
-            )}
-          >
-            {t.label}
-          </button>
-        );
-      })}
+    <div className="mb-[26px] max-w-full overflow-x-auto overflow-y-hidden tk-scroll">
+      <div className="inline-flex overflow-hidden rounded-lg border border-line bg-surface">
+        {TABS.map((t, i) => {
+          const active = t.key === value;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              aria-current={active ? "page" : undefined}
+              onClick={() => onChange(t.key)}
+              className={cn(
+                "whitespace-nowrap px-[14px] py-[7px] text-[12.5px] transition-colors",
+                i > 0 && "border-l border-line-soft",
+                active
+                  ? "bg-ink font-semibold text-surface"
+                  : "font-medium text-muted hover:bg-hover hover:text-ink-soft",
+              )}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -58,7 +60,7 @@ export function AppSettings() {
 
   return (
     <div className="tk-scroll h-full overflow-y-auto">
-      <div className="mx-auto max-w-[820px] px-11 pb-20 pt-[30px]">
+      <div className="mx-auto max-w-[820px] px-4 pb-20 pt-[30px] sm:px-11">
         <h1 className="font-serif text-[30px] font-semibold tracking-[-0.02em] text-ink">Settings</h1>
         <p className="mb-[18px] mt-1 text-[13.5px] text-muted">
           Applies across all projects. Each value shows its source; projects can override under their

@@ -20,7 +20,7 @@ func TestServeStreamEmitsInvalidationEvents(t *testing.T) {
 	defer closeStream()
 
 	events := []serveStreamEvent{
-		{Kind: serveStreamKindPollTick, Keys: []string{"daemon", "runs"}},
+		{Kind: serveStreamKindPollTick, Keys: []string{"daemon", "projects"}},
 		{Kind: serveStreamKindDispatch, Keys: serveStreamRunKeys("APP-T-0001")},
 		{Kind: serveStreamKindLeaseTransition, Keys: serveStreamRunKeys("APP-T-0001")},
 		{Kind: serveStreamKindTaskStatusChange, Keys: serveStreamTaskKeys("APP-T-0001")},
@@ -33,8 +33,8 @@ func TestServeStreamEmitsInvalidationEvents(t *testing.T) {
 		if len(got.Keys) == 0 {
 			t.Fatalf("expected invalidation keys for %s", event.Kind)
 		}
-		if len(raw) != 2 || raw["kind"] == nil || raw["keys"] == nil {
-			t.Fatalf("stream event must contain only kind and keys, got %s", raw)
+		if raw["kind"] == nil || raw["keys"] == nil || raw["id"] == nil {
+			t.Fatalf("stream event must contain id, kind, and keys, got %s", raw)
 		}
 	}
 
@@ -73,6 +73,49 @@ func TestStreamReconnectUsesFreshSubscription(t *testing.T) {
 	broker.Broadcast(serveStreamEvent{Kind: serveStreamKindPollTick, Keys: []string{"daemon"}})
 	got, _ := readServeStreamEvent(t, reader)
 	assertEqual(t, serveStreamKindPollTick, got.Kind, "reconnected stream event kind")
+}
+
+func TestStreamBrokerAssignsMonotonicNotificationIDs(t *testing.T) {
+	broker := newServeStreamBroker()
+	first, unsubscribeFirst, ok := broker.Subscribe()
+	if !ok {
+		t.Fatal("expected first subscription")
+	}
+	defer unsubscribeFirst()
+	second, unsubscribeSecond, ok := broker.Subscribe()
+	if !ok {
+		t.Fatal("expected second subscription")
+	}
+	defer unsubscribeSecond()
+	broker.Broadcast(serveStreamEvent{Kind: "task_review", Keys: []string{"needs"}})
+	broker.Broadcast(serveStreamEvent{Kind: "run_failed", Keys: []string{"runs"}})
+	for name, ch := range map[string]<-chan serveStreamEvent{"first": first, "second": second} {
+		if got := (<-ch).ID; got != 1 {
+			t.Fatalf("%s subscriber first event id=%d, want 1", name, got)
+		}
+		if got := (<-ch).ID; got != 2 {
+			t.Fatalf("%s subscriber second event id=%d, want 2", name, got)
+		}
+	}
+}
+
+func TestStandaloneServeStreamAvailable(t *testing.T) {
+	stateRoot := t.TempDir()
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	assets := fstest.MapFS{"index.html": {Data: []byte("stream fixture")}}
+	handler := newServeServer(t.TempDir(), t.TempDir(), "127.0.0.1:0", store, assets)
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.stream.Close()
+
+	_, closeStream := openServeStream(t, server)
+	defer closeStream()
 }
 
 func TestStreamShutdownAndSlowClient(t *testing.T) {

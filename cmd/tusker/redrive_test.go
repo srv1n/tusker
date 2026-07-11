@@ -2,11 +2,66 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestRedriveCASDoesNotClearConcurrentClaimOrResetBudget(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 7, 10, 5, 0, 0, 0, time.UTC)
+	original := RunStatus{
+		ProjectID: "project-1", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		Runner: string(RunnerCodexExec), Lane: runLaneExecute,
+		LeaseState: string(LeaseStateReleased), WorkRevision: 4, AttemptCount: 3,
+		AttemptOutcome: string(AttemptOutcomeFailed), UpdatedAt: now.Add(-time.Minute).Format(time.RFC3339),
+	}
+	if err := store.UpsertRun(original); err != nil {
+		t.Fatal(err)
+	}
+	oldReset, err := store.RecordBudgetRedrive(original.ProjectID, original.RecordID, "human:old", "old window", now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run := original
+	var claimErr error
+	_, err = redriveRuntimeRunWithHook(store, &run, "human:new", "new window", now, func() {
+		var claimed bool
+		claimed, claimErr = store.ClaimRunLease(original.ProjectID, original.RecordID, "concurrent-attempt", 1, defaultRunLeaseTTL, now, true, RuntimeLeaseClaimPrecondition{
+			ExpectedLeaseState: LeaseStateReleased, ExpectedOwner: "", ExpectedLeaseGeneration: 0, ExpectedWorkRevision: original.WorkRevision,
+		})
+		if claimErr == nil && !claimed {
+			claimErr = errors.New("concurrent lease claim did not match original snapshot")
+		}
+	})
+	if claimErr != nil {
+		t.Fatal(claimErr)
+	}
+	var typed *TuskerError
+	if !errors.As(err, &typed) || typed.Code != "CAS_CONFLICT" {
+		t.Fatalf("expected redrive snapshot conflict, got %v", err)
+	}
+	stored, err := store.FindRun(original.RecordID)
+	if err != nil || stored == nil {
+		t.Fatalf("load concurrently claimed run: %#v %v", stored, err)
+	}
+	assertEqual(t, string(LeaseStateClaimed), stored.LeaseState, "redrive does not clear concurrent claim")
+	assertEqual(t, "concurrent-attempt", stored.LeaseOwner, "redrive preserves concurrent owner")
+	assertEqual(t, 1, stored.LeaseGeneration, "redrive preserves concurrent generation")
+	window, err := store.BudgetWindowStart(original.ProjectID, original.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, oldReset, window, "failed redrive leaves budget window unchanged")
+}
 
 func TestRedriveResetsAttemptWindow(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")

@@ -2,17 +2,35 @@ package main
 
 import (
 	"io/fs"
+	"sync"
 	"time"
 )
 
 type serveServer struct {
-	vaultPath string
-	repoRoot  string
-	addr      string
-	store     *RuntimeStore
-	assets    fs.FS
-	now       func() time.Time
-	stream    *serveStreamBroker
+	vaultPath  string
+	repoRoot   string
+	addr       string
+	store      *RuntimeStore
+	assets     fs.FS
+	now        func() time.Time
+	stream     *serveStreamBroker
+	snapshotMu sync.Mutex
+	snapshots  map[string]*serveSnapshotEntry
+	summaryMu  sync.Mutex
+	summary    *serveSnapshot
+	summaryAt  time.Time
+}
+
+type serveSnapshotEntry struct {
+	project    RegisteredProject
+	snapshot   serveSnapshot
+	err        error
+	ready      bool
+	building   bool
+	invalid    bool
+	done       chan struct{}
+	builtAt    time.Time
+	buildCount uint64
 }
 
 type serveSnapshot struct {
@@ -28,6 +46,8 @@ type serveSnapshot struct {
 	evidence          []Note
 	decisions         []Note
 	attemptNotes      []Note
+	docs              []serveDocListEntry
+	needs             []serveNeedItem
 	notesByID         map[string]Note
 	runs              []RunStatus
 	queue             map[string]automationTaskExplanation
@@ -39,15 +59,18 @@ type serveTokenTotals struct {
 }
 
 type serveProjectSummary struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Health          string `json:"health"`
-	LastError       any    `json:"lastError"`
-	NeedsCount      int    `json:"needsCount"`
-	ActiveRuns      int    `json:"activeRuns"`
-	WorstLiveness   any    `json:"worstLiveness"`
-	DaemonConnected bool   `json:"daemonConnected"`
-	LastPollAt      any    `json:"lastPollAt"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	RepoRoot          string `json:"repoRoot"`
+	VaultRoot         string `json:"vaultRoot"`
+	AutomationEnabled bool   `json:"automationEnabled"`
+	Health            string `json:"health"`
+	LastError         any    `json:"lastError"`
+	NeedsCount        int    `json:"needsCount"`
+	ActiveRuns        int    `json:"activeRuns"`
+	WorstLiveness     any    `json:"worstLiveness"`
+	DaemonConnected   bool   `json:"daemonConnected"`
+	LastPollAt        any    `json:"lastPollAt"`
 }
 
 type serveDaemonStatus struct {
@@ -63,7 +86,9 @@ type serveDaemonStatus struct {
 	ParkedBudgetRuns int                 `json:"parkedBudgetRuns"`
 	BudgetCircuit    any                 `json:"budgetCircuit"`
 	InvariantCircuit any                 `json:"invariantCircuit"`
+	DiskPressure     DiskPressureStatus  `json:"diskPressure"`
 	DaemonAlive      bool                `json:"daemonAlive"`
+	DaemonDownReason any                 `json:"daemonDownReason"`
 	DaemonPID        int                 `json:"daemonPid"`
 	DaemonStartedAt  any                 `json:"daemonStartedAt"`
 	DaemonLastPollAt any                 `json:"daemonLastPollAt"`
@@ -80,6 +105,7 @@ type serveActionResult struct {
 	GateID          string             `json:"gateId,omitempty"`
 	EvidenceID      string             `json:"evidenceId,omitempty"`
 	FeedbackPath    string             `json:"feedbackPath,omitempty"`
+	ProjectID       string             `json:"projectId,omitempty"`
 	CanonicalStatus string             `json:"canonicalStatus,omitempty"`
 	Task            *serveTaskDetail   `json:"task,omitempty"`
 	Gate            *serveGateDetail   `json:"gate,omitempty"`
@@ -237,6 +263,7 @@ type serveRunSummary struct {
 	Lane              string           `json:"lane"`
 	LeaseState        string           `json:"leaseState"`
 	LeaseStateRaw     string           `json:"leaseStateRaw"`
+	ProcessRunning    bool             `json:"processRunning"`
 	Outcome           string           `json:"outcome"`
 	ElapsedSec        int              `json:"elapsedSec"`
 	SinceLastEventSec int              `json:"sinceLastEventSec"`

@@ -244,18 +244,31 @@ func writeCodexSleepWorkflowForCapacityTest(t *testing.T, vault string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	command := "python3 -c 'import time; time.sleep(5)'"
 	wf := wfFile.Data
 	wf.Agents.Default = string(RunnerCodex)
 	if !containsString(wf.Agents.Enabled, string(RunnerCodex)) {
 		wf.Agents.Enabled = append(wf.Agents.Enabled, string(RunnerCodex))
 	}
-	wf.Codex.Command = "python3 -c 'import time; time.sleep(5)'"
+	wf.Codex.Command = command
 	raw, err := yaml.Marshal(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := writeText(workflowPath(vault), "---\n"+strings.TrimSpace(string(raw))+"\n---\n"+wfFile.Body); err != nil {
 		t.Fatal(err)
+	}
+	configPath := filepath.Join(filepath.Dir(vault), "tusker.yaml")
+	text, err := readText(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const defaultCommand = "command: codex exec --json --skip-git-repo-check -"
+	if strings.Contains(text, defaultCommand) {
+		text = strings.Replace(text, defaultCommand, "command: "+command, 1)
+		if err := writeText(configPath, text); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

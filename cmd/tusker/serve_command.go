@@ -45,6 +45,7 @@ func serveCmd(args Args) error {
 	}
 	defer store.Close()
 	server := newServeServer(vaultPath, repoRoot, addr, store, dist)
+	go server.warmRegisteredProjectSnapshots()
 	httpServer := &http.Server{Addr: addr, Handler: server, ReadHeaderTimeout: 5 * time.Second}
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "addr": addr, "vault": vaultPath})
@@ -93,7 +94,9 @@ func newServeServer(vaultPath, repoRoot, addr string, store *RuntimeStore, asset
 		addr:      addr,
 		store:     store,
 		assets:    assets,
+		stream:    newServeStreamBroker(),
 		now:       func() time.Time { return time.Now().UTC() },
+		snapshots: map[string]*serveSnapshotEntry{},
 	}
 }
 
@@ -227,6 +230,10 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 			serveJSON(w, http.StatusForbidden, serveActionResult{OK: false, Refused: true, Reason: reason})
 			return
 		}
+		if taskID, ok := serveRunInterruptTaskID(path); ok {
+			s.handleRunInterrupt(w, r, taskID)
+			return
+		}
 	}
 	if s.handleAPIMutation(w, r, path) {
 		return
@@ -245,6 +252,8 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleProjects(w, r)
 	case path == "/api/needs":
 		s.handleNeeds(w, r)
+	case path == "/api/summary":
+		s.handleSummary(w, r)
 	case path == "/api/runs":
 		s.handleRuns(w, r)
 	case strings.HasPrefix(path, "/api/runs/"):
@@ -286,10 +295,38 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/roster":
 		s.handleRoster(w, r)
 	case path == "/api/review/batch":
-		serveJSON(w, http.StatusOK, []any{})
+		s.handleReviewBatch(w, r)
 	default:
 		serveJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
 	}
+}
+
+func (s *serveServer) handleReviewBatch(w http.ResponseWriter, r *http.Request) {
+	snap, err := s.loadSnapshotForRequest(r)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	items := make([]serveTaskCapsule, 0)
+	for _, task := range snap.tasks {
+		if strings.EqualFold(stringField(task.Data, "status"), "review") {
+			items = append(items, serveTaskCapsuleFor(snap, task))
+		}
+	}
+	serveJSON(w, http.StatusOK, items)
+}
+
+func serveRunInterruptTaskID(path string) (string, bool) {
+	const prefix = "/api/runs/"
+	const suffix = "/interrupt"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return "", false
+	}
+	taskID := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	if taskID == "" || strings.Contains(taskID, "/") {
+		return "", false
+	}
+	return taskID, true
 }
 
 func (s *serveServer) handleAssets(w http.ResponseWriter, r *http.Request) {
@@ -339,22 +376,182 @@ func serveJSON(w http.ResponseWriter, status int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
+const serveSnapshotBackgroundRefresh = 30 * time.Second
+
+// loadSnapshot retains the launch project's compatibility path for callers
+// without a project selector. All HTTP reads use loadSnapshotForProject.
 func (s *serveServer) loadSnapshot() (serveSnapshot, error) {
-	notes, err := listAllNotes(s.vaultPath)
+	return s.loadSnapshotForProject("")
+}
+
+func (s *serveServer) projectForSnapshot(projectID string) (RegisteredProject, error) {
+	projectID = strings.TrimSpace(projectID)
+	loaded, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
+	if err == nil {
+		for _, item := range loaded {
+			project := item.Project
+			if projectID != "" && project.ProjectID == projectID {
+				return project, nil
+			}
+			if projectID == "" && (sameCleanPath(project.VaultRoot, s.vaultPath) || sameCleanPath(project.RepoRoot, s.repoRoot)) {
+				return project, nil
+			}
+		}
+	}
+	if projectID != "" {
+		return RegisteredProject{}, tuskerError(errorNotFound, "registered project not found: "+projectID)
+	}
+	resolvedID, resolveErr := resolveV7ProjectID(s.vaultPath)
+	if resolveErr != nil {
+		resolvedID = sanitizeProjectID(filepath.Base(s.repoRoot))
+	}
+	return RegisteredProject{
+		ProjectID: resolvedID, ProjectKey: projectKeyFromPath(s.repoRoot), Name: filepath.Base(s.repoRoot),
+		RepoRoot: s.repoRoot, VaultRoot: s.vaultPath, WorkflowPath: workflowPath(s.vaultPath), Enabled: true, Health: projectHealthHealthy,
+	}, nil
+}
+
+func serveSnapshotKey(project RegisteredProject) string {
+	return firstNonEmpty(project.ProjectID, filepath.Clean(project.VaultRoot), filepath.Clean(project.RepoRoot))
+}
+
+func (s *serveServer) loadSnapshotForRequest(r *http.Request) (serveSnapshot, error) {
+	return s.loadSnapshotForProject(strings.TrimSpace(r.URL.Query().Get("project")))
+}
+
+func (s *serveServer) loadSnapshotForProject(projectID string) (serveSnapshot, error) {
+	return s.loadSnapshotForProjectMode(projectID, false)
+}
+
+func (s *serveServer) loadFreshSnapshotForProject(projectID string) (serveSnapshot, error) {
+	return s.loadSnapshotForProjectMode(projectID, true)
+}
+
+func (s *serveServer) loadSnapshotForProjectMode(projectID string, waitFresh bool) (serveSnapshot, error) {
+	project, err := s.projectForSnapshot(projectID)
 	if err != nil {
 		return serveSnapshot{}, err
 	}
-	projectID, err := resolveV7ProjectID(s.vaultPath)
+	key := serveSnapshotKey(project)
+	for {
+		now := s.now()
+		s.snapshotMu.Lock()
+		if s.snapshots == nil {
+			s.snapshots = map[string]*serveSnapshotEntry{}
+		}
+		entry := s.snapshots[key]
+		if entry == nil {
+			entry = &serveSnapshotEntry{project: project}
+			s.snapshots[key] = entry
+		} else {
+			entry.project = project
+		}
+		if entry.ready && !entry.invalid {
+			snap, cachedErr := entry.snapshot, entry.err
+			if now.Sub(entry.builtAt) >= serveSnapshotBackgroundRefresh && !entry.building {
+				entry.invalid = true
+				go s.warmSnapshot(project.ProjectID)
+			}
+			s.snapshotMu.Unlock()
+			return snap, cachedErr
+		}
+		if entry.ready && entry.invalid && !waitFresh {
+			snap, cachedErr := entry.snapshot, entry.err
+			if !entry.building {
+				go s.warmSnapshot(project.ProjectID)
+			}
+			s.snapshotMu.Unlock()
+			return snap, cachedErr
+		}
+		if entry.building {
+			if entry.ready && !waitFresh {
+				snap, cachedErr := entry.snapshot, entry.err
+				s.snapshotMu.Unlock()
+				return snap, cachedErr
+			}
+			done := entry.done
+			s.snapshotMu.Unlock()
+			<-done
+			continue
+		}
+		entry.building = true
+		entry.done = make(chan struct{})
+		wasReady := entry.ready
+		s.snapshotMu.Unlock()
+
+		snap, buildErr := s.buildSnapshotForProject(project, true)
+		s.snapshotMu.Lock()
+		entry.snapshot = snap
+		entry.err = buildErr
+		entry.ready = buildErr == nil
+		entry.invalid = false
+		entry.building = false
+		entry.builtAt = s.now()
+		entry.buildCount++
+		close(entry.done)
+		s.snapshotMu.Unlock()
+		if wasReady && buildErr == nil && s.stream != nil {
+			s.stream.Broadcast(serveStreamEvent{
+				Kind: "projection_refreshed", Project: snap.projectID,
+				Keys: []string{"projects", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch"},
+			})
+		}
+		return snap, buildErr
+	}
+}
+
+func (s *serveServer) warmSnapshot(projectID string) {
+	_, _ = s.loadFreshSnapshotForProject(projectID)
+}
+
+func (s *serveServer) warmRegisteredProjectSnapshots() {
+	loaded, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
+	if err != nil || len(loaded) == 0 {
+		s.warmSnapshot("")
+		return
+	}
+	for _, item := range loaded {
+		projectID := item.Project.ProjectID
+		go s.warmSnapshot(projectID)
+	}
+}
+
+func (s *serveServer) refreshProjectSnapshot(projectID string) {
+	s.invalidateProjectSnapshot(projectID)
+	go s.warmSnapshot(projectID)
+}
+
+func (s *serveServer) refreshRegisteredProjectSnapshots() {
+	s.invalidateProjectSnapshot("")
+	go s.warmRegisteredProjectSnapshots()
+}
+
+func (s *serveServer) buildSnapshot(includeQueue bool) (serveSnapshot, error) {
+	project, err := s.projectForSnapshot("")
 	if err != nil {
-		projectID = sanitizeProjectID(filepath.Base(s.repoRoot))
+		return serveSnapshot{}, err
+	}
+	return s.buildSnapshotForProject(project, includeQueue)
+}
+
+func (s *serveServer) buildSnapshotForProject(project RegisteredProject, includeQueue bool) (serveSnapshot, error) {
+	notes, err := listAllNotes(project.VaultRoot)
+	if err != nil {
+		return serveSnapshot{}, err
+	}
+	projectID, err := resolveV7ProjectID(project.VaultRoot)
+	if err != nil {
+		projectID = firstNonEmpty(project.ProjectID, sanitizeProjectID(filepath.Base(project.RepoRoot)))
 	}
 	snap := serveSnapshot{
-		projectID:   projectID,
-		projectName: filepath.Base(s.repoRoot),
-		notesByID:   map[string]Note{},
-		queue:       map[string]automationTaskExplanation{},
+		projectID:         projectID,
+		projectName:       firstNonEmpty(project.Name, filepath.Base(project.RepoRoot)),
+		project:           project,
+		projectRegistered: project.ProjectID != "",
+		notesByID:         map[string]Note{},
+		queue:             map[string]automationTaskExplanation{},
 	}
-	if wfFile, err := loadWorkflow(s.vaultPath); err == nil {
+	if wfFile, err := loadWorkflow(project.VaultRoot); err == nil {
 		snap.workflow = wfFile.Data
 	} else {
 		snap.workflow = defaultWorkflow()
@@ -381,25 +578,15 @@ func (s *serveServer) loadSnapshot() (serveSnapshot, error) {
 			snap.attemptNotes = append(snap.attemptNotes, note)
 		}
 	}
-	if projects, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{}); err == nil {
-		for _, project := range projects {
-			if project.Project.ProjectID == snap.projectID || sameCleanPath(project.Project.VaultRoot, s.vaultPath) || sameCleanPath(project.Project.RepoRoot, s.repoRoot) {
-				snap.project = project.Project
-				snap.projectRegistered = true
-				snap.projectID = firstNonEmpty(project.Project.ProjectID, snap.projectID)
-				snap.projectName = firstNonEmpty(project.Project.Name, snap.projectName)
-				break
-			}
-		}
-	}
+	snap.projectID = firstNonEmpty(project.ProjectID, snap.projectID)
 	if snap.project.ProjectID == "" {
 		snap.project = RegisteredProject{
 			ProjectID:    snap.projectID,
-			ProjectKey:   projectKeyFromPath(s.repoRoot),
+			ProjectKey:   projectKeyFromPath(project.RepoRoot),
 			Name:         snap.projectName,
-			RepoRoot:     s.repoRoot,
-			VaultRoot:    s.vaultPath,
-			WorkflowPath: workflowPath(s.vaultPath),
+			RepoRoot:     project.RepoRoot,
+			VaultRoot:    project.VaultRoot,
+			WorkflowPath: workflowPath(project.VaultRoot),
 			Enabled:      true,
 			Health:       projectHealthHealthy,
 		}
@@ -411,12 +598,43 @@ func (s *serveServer) loadSnapshot() (serveSnapshot, error) {
 			}
 		}
 	}
-	snap.queue = s.loadQueueExplanations()
+	if includeQueue {
+		snap.queue = s.loadQueueExplanationsForProject(project)
+	}
+	snap.docs, _ = serveDocList(project.RepoRoot, project.VaultRoot)
+	snap.needs = serveNeeds(snap, s.now())
 	return snap, nil
 }
 
+func (s *serveServer) invalidateSnapshotCaches() {
+	s.invalidateProjectSnapshot("")
+}
+
+func (s *serveServer) invalidateProjectSnapshot(projectID string) {
+	projectID = strings.TrimSpace(projectID)
+	s.snapshotMu.Lock()
+	for key, entry := range s.snapshots {
+		if projectID == "" || entry.project.ProjectID == projectID || key == projectID {
+			entry.invalid = true
+		}
+	}
+	s.snapshotMu.Unlock()
+	s.summaryMu.Lock()
+	s.summary = nil
+	s.summaryAt = time.Time{}
+	s.summaryMu.Unlock()
+}
+
 func (s *serveServer) loadQueueExplanations() map[string]automationTaskExplanation {
-	ctx, err := loadAutomationCommandContextWithStore(Args{"vault": s.vaultPath, "repo": s.repoRoot}, DefaultStateRoot(), s.store)
+	project, err := s.projectForSnapshot("")
+	if err != nil {
+		return map[string]automationTaskExplanation{}
+	}
+	return s.loadQueueExplanationsForProject(project)
+}
+
+func (s *serveServer) loadQueueExplanationsForProject(project RegisteredProject) map[string]automationTaskExplanation {
+	ctx, err := loadAutomationCommandContextWithStore(Args{"vault": project.VaultRoot, "repo": project.RepoRoot}, DefaultStateRoot(), s.store)
 	if err != nil {
 		return map[string]automationTaskExplanation{}
 	}
@@ -471,6 +689,11 @@ func (s *serveServer) daemonStatusFromSnapshot(snap serveSnapshot) *serveDaemonS
 	if limit <= 0 {
 		limit = 2
 	}
+	daemonAlive := boolFromAny(daemonStatus["daemon_alive"])
+	var daemonDownReason any
+	if !daemonAlive {
+		daemonDownReason = "Daemon process is not running. Start the daemon to dispatch queued work."
+	}
 	return &serveDaemonStatus{
 		Connected:        true,
 		Addr:             s.addr,
@@ -484,7 +707,9 @@ func (s *serveServer) daemonStatusFromSnapshot(snap serveSnapshot) *serveDaemonS
 		ParkedBudgetRuns: intFromAny(daemonStatus["parkedBudgetRuns"]),
 		BudgetCircuit:    daemonStatus["budgetCircuit"],
 		InvariantCircuit: daemonStatus["invariantCircuit"],
-		DaemonAlive:      boolFromAny(daemonStatus["daemon_alive"]),
+		DiskPressure:     diskPressureStatusFromAny(daemonStatus["disk_pressure"]),
+		DaemonAlive:      daemonAlive,
+		DaemonDownReason: daemonDownReason,
 		DaemonPID:        intFromAny(daemonStatus["daemon_pid"]),
 		DaemonStartedAt:  nullIfBlank(stringValue(daemonStatus["daemon_started_at"])),
 		DaemonLastPollAt: nullIfBlank(stringValue(daemonStatus["daemon_last_poll_at"])),
@@ -492,61 +717,153 @@ func (s *serveServer) daemonStatusFromSnapshot(snap serveSnapshot) *serveDaemonS
 }
 
 func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
-	snap, err := s.loadSnapshot()
+	loadedProjects, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true})
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	needs := serveNeeds(snap, s.now())
-	active := 0
-	var worst any
-	for _, run := range snap.runs {
-		if !isDispatchingLeaseState(run.LeaseState) {
+	projects := loadedRegisteredProjects(loadedProjects)
+	if len(projects) == 0 {
+		project, projectErr := s.projectForSnapshot("")
+		if projectErr != nil {
+			serveJSON(w, http.StatusInternalServerError, map[string]any{"error": projectErr.Error()})
+			return
+		}
+		projects = []RegisteredProject{project}
+	}
+	allRuns, _ := s.store.ListRuns()
+	target := strings.TrimSpace(r.URL.Query().Get("project"))
+	items := make([]serveProjectSummary, 0, len(projects))
+	for _, project := range projects {
+		if target != "" && target != project.ProjectID {
 			continue
 		}
-		active++
-		liveness := serveRunLiveness(run, s.now())
-		worst = serveWorstLiveness(worst, liveness)
+		active := 0
+		var worst any
+		for _, run := range allRuns {
+			if run.ProjectID != project.ProjectID || !isDispatchingLeaseState(run.LeaseState) {
+				continue
+			}
+			active++
+			worst = serveWorstLiveness(worst, serveRunLiveness(run, s.now()))
+		}
+		needsCount := 0
+		if snap, snapshotErr := s.loadSnapshotForProject(project.ProjectID); snapshotErr == nil {
+			needsCount = len(snap.needs)
+		}
+		items = append(items, serveProjectSummary{
+			ID: project.ProjectID, Name: project.Name,
+			RepoRoot: project.RepoRoot, VaultRoot: project.VaultRoot,
+			AutomationEnabled: project.Enabled,
+			Health:            string(project.Health), LastError: nullIfBlank(project.LastError),
+			NeedsCount: needsCount, ActiveRuns: active, WorstLiveness: worst,
+			DaemonConnected: true, LastPollAt: nullIfBlank(project.LastPollAt),
+		})
 	}
-	item := serveProjectSummary{
-		ID:              snap.projectID,
-		Name:            snap.projectName,
-		Health:          string(snap.project.Health),
-		LastError:       nullIfBlank(snap.project.LastError),
-		NeedsCount:      len(needs),
-		ActiveRuns:      active,
-		WorstLiveness:   worst,
-		DaemonConnected: true,
-		LastPollAt:      nullIfBlank(snap.project.LastPollAt),
-	}
-	if project := strings.TrimSpace(r.URL.Query().Get("project")); project != "" && project != item.ID {
-		serveJSON(w, http.StatusOK, []serveProjectSummary{})
-		return
-	}
-	serveJSON(w, http.StatusOK, []serveProjectSummary{item})
+	serveJSON(w, http.StatusOK, items)
 }
 
 func (s *serveServer) handleNeeds(w http.ResponseWriter, r *http.Request) {
-	snap, err := s.loadSnapshot()
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	if project := strings.TrimSpace(r.URL.Query().Get("project")); project != "" && project != snap.projectID {
-		serveJSON(w, http.StatusOK, []serveNeedItem{})
+	serveJSON(w, http.StatusOK, snap.needs)
+}
+
+type serveSummary struct {
+	Attention    int    `json:"attention"`
+	Review       int    `json:"review"`
+	Running      int    `json:"running"`
+	FailedRecent int    `json:"failed_recent"`
+	GeneratedAt  string `json:"generated_at"`
+}
+
+func (s *serveServer) handleSummary(w http.ResponseWriter, r *http.Request) {
+	snap, err := s.loadSnapshotForRequest(r)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	serveJSON(w, http.StatusOK, serveNeeds(snap, s.now()))
+	maxAttempts := snap.workflow.Retry.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	review := 0
+	running := 0
+	failed := 0
+	for _, task := range snap.tasks {
+		if strings.EqualFold(stringField(task.Data, "status"), "review") {
+			review++
+		}
+	}
+	for _, run := range snap.runs {
+		if isDispatchingLeaseState(run.LeaseState) {
+			running++
+		}
+		if serveTerminalFailure(run, maxAttempts) {
+			failed++
+		}
+	}
+	serveJSON(w, http.StatusOK, serveSummary{
+		Attention: serveAttentionCount(snap), Review: review, Running: running,
+		FailedRecent: failed, GeneratedAt: s.now().Format(time.RFC3339Nano),
+	})
+}
+
+// loadSummarySnapshot keeps repeated badge refreshes on the warm in-memory
+// projection. Stream-driven clients may request this endpoint several times in
+// a burst; avoid a full vault walk for every one of those requests.
+func (s *serveServer) loadSummarySnapshot() (serveSnapshot, error) {
+	now := s.now()
+	s.summaryMu.Lock()
+	defer s.summaryMu.Unlock()
+	if s.summary != nil && now.Sub(s.summaryAt) < time.Second {
+		return *s.summary, nil
+	}
+	snap, err := s.buildSnapshot(false)
+	if err != nil {
+		return serveSnapshot{}, err
+	}
+	s.summary = &snap
+	s.summaryAt = now
+	return snap, nil
+}
+
+func serveAttentionCount(snap serveSnapshot) int {
+	count := 0
+	for _, task := range snap.tasks {
+		status := strings.ToLower(stringField(task.Data, "status"))
+		risk := strings.ToLower(firstNonEmpty(stringField(task.Data, "risk"), "medium"))
+		if status == "review" && (risk == "high" || risk == "critical") {
+			count++
+		}
+		for _, gate := range serveUnsatisfiedGatesForTask(snap, stringField(task.Data, "id")) {
+			if serveHumanOwner(gate.Owner) {
+				count++
+			}
+		}
+		if serveReworkCount(task) >= 2 {
+			count++
+		}
+	}
+	maxAttempts := snap.workflow.Retry.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	for _, run := range snap.runs {
+		if serveTerminalFailure(run, maxAttempts) {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *serveServer) handleRuns(w http.ResponseWriter, r *http.Request) {
-	snap, err := s.loadSnapshot()
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
-	}
-	if project := strings.TrimSpace(r.URL.Query().Get("project")); project != "" && project != snap.projectID {
-		serveJSON(w, http.StatusOK, []serveRunSummary{})
 		return
 	}
 	out := []serveRunSummary{}
@@ -560,8 +877,8 @@ func (s *serveServer) handleRuns(w http.ResponseWriter, r *http.Request) {
 	serveJSON(w, http.StatusOK, out)
 }
 
-func (s *serveServer) handleRun(w http.ResponseWriter, _ *http.Request, taskID string) {
-	snap, err := s.loadSnapshot()
+func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID string) {
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -595,8 +912,8 @@ func (s *serveServer) handleRun(w http.ResponseWriter, _ *http.Request, taskID s
 // redrive, so it returns a visible refusal instead of requeuing into the
 // daemon's silent retire. A redrivable task is requeued and reported as such.
 // The response always carries a reason so the UI can never swallow the result.
-func (s *serveServer) handleRunRedrive(w http.ResponseWriter, _ *http.Request, taskID string) {
-	snap, err := s.loadSnapshot()
+func (s *serveServer) handleRunRedrive(w http.ResponseWriter, r *http.Request, taskID string) {
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -632,37 +949,30 @@ func (s *serveServer) handleRunRedrive(w http.ResponseWriter, _ *http.Request, t
 	result.Requeued = true
 	result.LeaseState = run.LeaseState
 	result.Reason = "redrive requested — attempt window reset; the daemon will spawn a fresh attempt"
+	s.refreshProjectSnapshot(snap.projectID)
 	serveJSON(w, http.StatusOK, result)
 }
 
 func (s *serveServer) handleEpics(w http.ResponseWriter, r *http.Request) {
-	snap, err := s.loadSnapshot()
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
-	}
-	if project := strings.TrimSpace(r.URL.Query().Get("project")); project != "" && project != snap.projectID {
-		serveJSON(w, http.StatusOK, []serveEpicSummary{})
 		return
 	}
 	serveJSON(w, http.StatusOK, serveEpics(snap))
 }
 
 func (s *serveServer) handleWaves(w http.ResponseWriter, r *http.Request) {
-	snap, err := s.loadSnapshot()
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
-	}
-	if project := strings.TrimSpace(r.URL.Query().Get("project")); project != "" && project != snap.projectID {
-		serveJSON(w, http.StatusOK, []serveWaveSummary{})
 		return
 	}
 	serveJSON(w, http.StatusOK, serveWaves(snap))
 }
 
-func (s *serveServer) handleWave(w http.ResponseWriter, _ *http.Request, id string) {
-	snap, err := s.loadSnapshot()
+func (s *serveServer) handleWave(w http.ResponseWriter, r *http.Request, id string) {
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -678,13 +988,9 @@ func (s *serveServer) handleWave(w http.ResponseWriter, _ *http.Request, id stri
 }
 
 func (s *serveServer) handleTasks(w http.ResponseWriter, r *http.Request) {
-	snap, err := s.loadSnapshot()
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
-	}
-	if project := strings.TrimSpace(r.URL.Query().Get("project")); project != "" && project != snap.projectID {
-		serveJSON(w, http.StatusOK, []serveTaskCapsule{})
 		return
 	}
 	out := []serveTaskCapsule{}
@@ -695,8 +1001,8 @@ func (s *serveServer) handleTasks(w http.ResponseWriter, r *http.Request) {
 	serveJSON(w, http.StatusOK, out)
 }
 
-func (s *serveServer) handleTask(w http.ResponseWriter, _ *http.Request, id string) {
-	snap, err := s.loadSnapshot()
+func (s *serveServer) handleTask(w http.ResponseWriter, r *http.Request, id string) {
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -722,13 +1028,9 @@ func (s *serveServer) handleTask(w http.ResponseWriter, _ *http.Request, id stri
 }
 
 func (s *serveServer) handleRoster(w http.ResponseWriter, r *http.Request) {
-	snap, err := s.loadSnapshot()
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
-	}
-	if project := strings.TrimSpace(r.URL.Query().Get("project")); project != "" && project != snap.projectID {
-		serveJSON(w, http.StatusOK, map[string]any{"rows": []any{}, "edges": []any{}})
 		return
 	}
 	rows := []map[string]any{}
@@ -1187,6 +1489,7 @@ Endpoints:
   POST /api/daemon/(start|stop|resume|limits)
   GET /api/projects
   GET /api/needs?project=<id>
+  GET /api/summary?project=<id>
   GET /api/runs?project=<id>
   GET /api/runs/<task-id>
   POST /api/runs/<task-id>/redrive

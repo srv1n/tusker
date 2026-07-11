@@ -166,26 +166,28 @@ export function SettingsTabs({
   onChange: (key: SettingsTab) => void;
 }) {
   return (
-    <div className="inline-flex overflow-hidden rounded-lg border border-line bg-raised">
-      {tabs.map((t, i) => {
-        const on = t.key === active;
-        return (
-          <button
-            key={t.key}
-            onClick={() => onChange(t.key)}
-            aria-current={on ? "page" : undefined}
-            className={cn(
-              "px-3.5 py-[7px] text-[12.5px] transition-colors",
-              i > 0 && "border-l border-line-soft",
-              on
-                ? "bg-hover font-semibold text-ink"
-                : "font-medium text-muted hover:bg-hover hover:text-ink-soft",
-            )}
-          >
-            {t.label}
-          </button>
-        );
-      })}
+    <div className="max-w-full overflow-x-auto overflow-y-hidden tk-scroll">
+      <div className="inline-flex overflow-hidden rounded-lg border border-line bg-raised">
+        {tabs.map((t, i) => {
+          const on = t.key === active;
+          return (
+            <button
+              key={t.key}
+              onClick={() => onChange(t.key)}
+              aria-current={on ? "page" : undefined}
+              className={cn(
+                "whitespace-nowrap px-3.5 py-[7px] text-[12.5px] transition-colors",
+                i > 0 && "border-l border-line-soft",
+                on
+                  ? "bg-hover font-semibold text-ink"
+                  : "font-medium text-muted hover:bg-hover hover:text-ink-soft",
+              )}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -240,7 +242,7 @@ export function SettingRow({
 }) {
   const readonly = row.control.kind === "readonly";
   return (
-    <div className="flex items-center justify-between gap-4 px-4 py-3">
+    <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
       <div className="flex min-w-0 flex-col gap-0.5">
         <span className="text-[13px] text-ink-soft">{row.label}</span>
         {row.desc && (
@@ -338,7 +340,7 @@ export function RoutingList({
             <button
               onClick={() => remove(r.id)}
               title="Remove rule"
-              className="flex-none text-fainter opacity-0 transition-opacity hover:text-fail group-hover:opacity-100"
+              className="flex-none text-fainter opacity-0 transition-opacity hover:text-fail group-hover:opacity-100 max-lg:opacity-100"
             >
               ✕
             </button>

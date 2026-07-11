@@ -2,8 +2,8 @@ import type { RunDetail } from "@/types/domain";
 import { runStats } from "@/features/runs/detail/helpers";
 
 /** Four-cell headline stat grid — hairline-separated serif numbers (design §07). */
-export function RunStats({ run }: { run: RunDetail }) {
-  const stats = runStats(run);
+export function RunStats({ run, waitingForDaemon = false }: { run: RunDetail; waitingForDaemon?: boolean }) {
+  const stats = runStats(run, waitingForDaemon);
   return (
     <div className="mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border border-line bg-line sm:grid-cols-4">
       {stats.map((s) => (

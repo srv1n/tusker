@@ -3,8 +3,15 @@ import type { QueryClient, QueryKey } from "@tanstack/react-query";
 export const LIVE_STREAM_FALLBACK_MS = 45_000;
 
 export interface StreamEvent {
+  id?: number;
   kind: string;
   keys: string[];
+  project?: string;
+  task_id?: string;
+  title?: string;
+  urgency?: "info" | "attention" | "critical";
+  deep_link_path?: string;
+  occurred_at?: string;
 }
 
 export interface StreamStatus {
@@ -44,37 +51,44 @@ function setStreamStatus(next: StreamStatus) {
   for (const listener of listeners) listener();
 }
 
-export function streamKeyToQueryKeys(key: string): QueryKey[] {
+export function streamKeyToQueryKeys(key: string, project?: string): QueryKey[] {
   const [kind, id] = key.split(":", 2);
+  const scoped = (name: string): QueryKey => project ? [name, project] : [name];
   switch (kind) {
     case "daemon":
       return [["daemon"]];
     case "projects":
       return [["projects"]];
     case "needs":
-      return [["needs"]];
+      return [scoped("needs")];
     case "runs":
-      return id ? [["runs"], ["run", id]] : [["runs"]];
+      return id && project ? [["runs", project], ["run", project, id]] : [scoped("runs"), ["run"]];
     case "tasks":
-      return id ? [["tasks"], ["task", id], ["needs"], ["projects"]] : [["tasks"], ["needs"], ["projects"]];
+      return id && project
+        ? [["tasks", project], ["task", project, id], ["needs", project], ["projects"]]
+        : [scoped("tasks"), ["task"], scoped("needs"), ["projects"]];
     case "epics":
-      return [["epics"]];
+      return [scoped("epics")];
     case "docs":
-      return [["docs"], ["doc"]];
+      return [scoped("docs"), project ? ["doc", project] : ["doc"]];
     case "waves":
-      return [["waves"], ["tasks"], ["needs"]];
+      return [scoped("waves"), scoped("tasks"), scoped("needs")];
     case "gates":
-      return id ? [["gates"], ["gates", id], ["tasks"], ["needs"]] : [["gates"], ["tasks"], ["needs"]];
+      return [scoped("gates"), scoped("tasks"), scoped("needs")];
     case "evidence":
-      return id ? [["evidence"], ["evidence", id], ["tasks"]] : [["evidence"], ["tasks"]];
+      return [scoped("evidence"), scoped("tasks")];
     case "decisions":
-      return id ? [["decisions"], ["decisions", id], ["docs"]] : [["decisions"], ["docs"]];
+      return [scoped("decisions"), scoped("docs")];
     case "feedback":
-      return [["feedback"]];
+      return [scoped("feedback")];
     case "attempts":
-      return id ? [["attempts"], ["attempts", id], ["runs"], ["run", id]] : [["attempts"], ["runs"]];
+      return id && project
+        ? [["attempts", project], ["runs", project], ["run", project, id]]
+        : [scoped("attempts"), scoped("runs"), ["run"]];
     case "review":
-      return id === "batch" ? [["needs"], ["tasks"], ["runs"], ["projects"]] : [];
+      return id === "batch"
+        ? [scoped("needs"), scoped("tasks"), scoped("runs"), ["projects"], project ? ["review", "batch", project] : ["review", "batch"]]
+        : [];
     default:
       return [];
   }
@@ -83,7 +97,7 @@ export function streamKeyToQueryKeys(key: string): QueryKey[] {
 export function invalidateStreamEvent(queryClient: QueryInvalidator, event: StreamEvent) {
   const seen = new Set<string>();
   for (const key of event.keys) {
-    for (const queryKey of streamKeyToQueryKeys(key)) {
+    for (const queryKey of streamKeyToQueryKeys(key, event.project)) {
       const signature = JSON.stringify(queryKey);
       if (seen.has(signature)) continue;
       seen.add(signature);
@@ -118,7 +132,7 @@ export function connectLiveStream(
     setStreamStatus({ ...status, connected: false, lastErrorAt: now() });
     invalidateStreamEvent(queryClient, {
       kind: "stream_error",
-      keys: ["daemon", "projects", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch"],
+      keys: ["daemon", "projects"],
     });
   };
   return () => {

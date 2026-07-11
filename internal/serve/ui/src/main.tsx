@@ -23,7 +23,9 @@ import { connectLiveStream } from "@/lib/stream";
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 2000,
+      // The SSE stream owns freshness. Keep visited project projections warm so
+      // switching back is an immediate cache read, not another loading cycle.
+      staleTime: 30_000,
       retry: 1,
       refetchOnWindowFocus: false,
     },

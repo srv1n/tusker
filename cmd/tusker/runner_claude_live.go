@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os/exec"
 	"path/filepath"
@@ -29,14 +30,16 @@ type claudeLiveHandle struct {
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
 	stderr io.ReadCloser
+	ioWG   sync.WaitGroup
 
-	writeMu     sync.Mutex
-	nextID      atomic.Int64
-	sessionMu   sync.RWMutex
-	sessionRef  string
-	messageRef  string
-	interrupted atomic.Bool
-	doneOnce    sync.Once
+	writeMu      sync.Mutex
+	nextID       atomic.Int64
+	sessionMu    sync.RWMutex
+	sessionRef   string
+	messageRef   string
+	interrupted  atomic.Bool
+	criticalOnce sync.Once
+	doneOnce     sync.Once
 }
 
 func shouldUseLiveClaude(command string) bool {
@@ -49,9 +52,11 @@ func shouldUseLiveClaude(command string) bool {
 
 func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeRequest) (*StartResult, error) {
 	if extensionPolicyRequestsNativeBridge(req.CodexPolicy.Extensions) {
-		_ = NewEventLog(req.EventSinkPath).Append("extension_bridge_unsupported", req.AttemptID, RunnerClaude, map[string]any{
+		if err := NewEventLog(req.EventSinkPath).Append("extension_bridge_unsupported", req.AttemptID, RunnerClaude, map[string]any{
 			"reason": "claude-code native extension bridge is not implemented",
-		})
+		}); err != nil {
+			return nil, fmt.Errorf("record unsupported Claude extension bridge: %w", err)
+		}
 		return nil, tuskerError(errorConfigInvalid, "claude-code extension bridge is unsupported; disable workflow extensions or use the Codex runner for extension tools")
 	}
 
@@ -123,6 +128,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	}
 	handle.nextID.Store(1)
 	liveRegistry.Register(handle)
+	handle.ioWG.Add(2)
 	go handle.readStdout()
 	go handle.readStderr()
 	go handle.waitForExit()
@@ -142,7 +148,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	if err := handle.sendUserMessage(prompt); err != nil {
 		return nil, err
 	}
-	handle.waitForSession(2 * time.Second)
+	handle.waitForSession(5 * time.Second)
 
 	pid := cmd.Process.Pid
 	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
@@ -279,6 +285,8 @@ func (h *claudeLiveHandle) writeJSON(payload any) error {
 }
 
 func (h *claudeLiveHandle) readStdout() {
+	defer h.ioWG.Done()
+	defer h.stdout.Close()
 	scanner := bufio.NewScanner(h.stdout)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 4*1024*1024)
@@ -287,14 +295,22 @@ func (h *claudeLiveHandle) readStdout() {
 		_ = appendRawLogLine(h.rawLogPath, line)
 		h.handleStdoutLine(line)
 	}
+	if err := scanner.Err(); err != nil {
+		h.failCriticalRunnerIO("stdout scan failed", err)
+	}
 }
 
 func (h *claudeLiveHandle) readStderr() {
+	defer h.ioWG.Done()
+	defer h.stderr.Close()
 	scanner := bufio.NewScanner(h.stderr)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 4*1024*1024)
 	for scanner.Scan() {
 		_ = appendRawLogLine(h.rawLogPath, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		h.failCriticalRunnerIO("stderr scan failed", err)
 	}
 }
 
@@ -360,7 +376,23 @@ func (h *claudeLiveHandle) finalize(exitCode int) {
 	})
 }
 
+func (h *claudeLiveHandle) failCriticalRunnerIO(message string, err error) {
+	if err == nil {
+		return
+	}
+	h.criticalOnce.Do(func() {
+		_ = appendRawLogLine(h.rawLogPath, message+": "+err.Error())
+		if h.cmd != nil && h.cmd.Process != nil {
+			_ = syscall.Kill(-h.cmd.Process.Pid, syscall.SIGKILL)
+		}
+		h.doneOnce.Do(func() {})
+		_ = writeRunnerStatusFile(h.statusPath, 1)
+		liveRegistry.Unregister(h.attemptID)
+	})
+}
+
 func (h *claudeLiveHandle) waitForExit() {
+	h.ioWG.Wait()
 	err := h.cmd.Wait()
 	exitCode := 0
 	if err != nil {

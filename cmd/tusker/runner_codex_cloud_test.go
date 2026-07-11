@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -74,6 +75,108 @@ func TestCodexCloudRunnerStartStoresCloudRefsWithoutSessionRef(t *testing.T) {
 	}
 	if !strings.Contains(eventText, "codex_cloud_task_started") || !strings.Contains(eventText, "cloud-task-123") {
 		t.Fatalf("expected cloud start event, got:\n%s", eventText)
+	}
+}
+
+func TestCodexCloudRunnerStartSurfacesEventLogFailure(t *testing.T) {
+	tempRoot := t.TempDir()
+	workspaceRoot := filepath.Join(tempRoot, "workspace")
+	if err := ensureDir(workspaceRoot); err != nil {
+		t.Fatal(err)
+	}
+	promptPath := filepath.Join(tempRoot, "prompt.md")
+	eventSinkPath := filepath.Join(tempRoot, "events.jsonl")
+	if err := writeText(promptPath, "Run cloud task.\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(eventSinkPath, `{"seq":1}`); err != nil {
+		t.Fatal(err)
+	}
+	executor := &fakeCodexCloudExecutor{outputs: [][]byte{
+		[]byte(`{"task_id":"cloud-task-123","status":"queued"}`),
+	}}
+	runner := &CodexCloudRunner{
+		Config:   codexCloudTestConfig("manual", "none"),
+		Executor: executor,
+	}
+	result, err := runner.Start(context.Background(), StartRequest{
+		ProjectID: "project-1", RecordID: "record-1", ItemID: "APP-T-0001", AttemptID: "attempt-1",
+		WorkspacePath: workspaceRoot, PromptPath: promptPath,
+		RawLogPath: filepath.Join(tempRoot, "raw.log"), EventSinkPath: eventSinkPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "preflight codex cloud event sink") || !strings.Contains(err.Error(), "partial trailing record") {
+		t.Fatalf("expected surfaced cloud event-log failure, got result=%#v err=%v", result, err)
+	}
+	assertEqual(t, 0, len(executor.requests), "cloud launch count after failed event preflight")
+}
+
+func TestCodexCloudRunnerPreservesTaskIDWhenPostLaunchEventAppendFails(t *testing.T) {
+	tempRoot := t.TempDir()
+	workspaceRoot := filepath.Join(tempRoot, "workspace")
+	if err := ensureDir(workspaceRoot); err != nil {
+		t.Fatal(err)
+	}
+	promptPath := filepath.Join(tempRoot, "prompt.md")
+	eventSinkPath := filepath.Join(tempRoot, "events.jsonl")
+	rawLogPath := filepath.Join(tempRoot, "raw.log")
+	if err := writeText(promptPath, "Run cloud task.\n"); err != nil {
+		t.Fatal(err)
+	}
+	executor := &fakeCodexCloudExecutor{runFn: func(codexCloudExecRequest) ([]byte, error) {
+		if err := writeText(eventSinkPath, `{"seq":1}`); err != nil {
+			return nil, err
+		}
+		return []byte(`{"task_id":"cloud-task-preserved","status":"queued"}`), nil
+	}}
+	runner := &CodexCloudRunner{Config: codexCloudTestConfig("manual", "none"), Executor: executor}
+
+	result, err := runner.Start(context.Background(), StartRequest{
+		ProjectID: "project-1", RecordID: "record-1", ItemID: "APP-T-0001", AttemptID: "attempt-1",
+		WorkspacePath: workspaceRoot, PromptPath: promptPath, RawLogPath: rawLogPath, EventSinkPath: eventSinkPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "cloud-task-preserved") || !strings.Contains(err.Error(), rawLogPath) {
+		t.Fatalf("expected durable recovery details for post-launch event failure, got result=%#v err=%v", result, err)
+	}
+	raw, readErr := readText(rawLogPath)
+	if readErr != nil || !strings.Contains(raw, "cloud-task-preserved") {
+		t.Fatalf("cloud task id was not preserved in raw log: %q err=%v", raw, readErr)
+	}
+}
+
+func TestCodexCloudRunnerTracksTaskWhenRawLogFailsAfterLaunch(t *testing.T) {
+	tempRoot := t.TempDir()
+	workspaceRoot := filepath.Join(tempRoot, "workspace")
+	if err := ensureDir(workspaceRoot); err != nil {
+		t.Fatal(err)
+	}
+	promptPath := filepath.Join(tempRoot, "prompt.md")
+	eventSinkPath := filepath.Join(tempRoot, "events.jsonl")
+	rawLogPath := filepath.Join(tempRoot, "raw.log")
+	if err := writeText(promptPath, "Run cloud task.\n"); err != nil {
+		t.Fatal(err)
+	}
+	executor := &fakeCodexCloudExecutor{runFn: func(codexCloudExecRequest) ([]byte, error) {
+		if err := os.Remove(rawLogPath); err != nil {
+			return nil, err
+		}
+		if err := os.Mkdir(rawLogPath, 0o700); err != nil {
+			return nil, err
+		}
+		return []byte(`{"task_id":"cloud-task-event-tracked","status":"queued"}`), nil
+	}}
+	runner := &CodexCloudRunner{Config: codexCloudTestConfig("manual", "none"), Executor: executor}
+
+	result, err := runner.Start(context.Background(), StartRequest{
+		ProjectID: "project-1", RecordID: "record-1", ItemID: "APP-T-0001", AttemptID: "attempt-1",
+		WorkspacePath: workspaceRoot, PromptPath: promptPath, RawLogPath: rawLogPath, EventSinkPath: eventSinkPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "cloud-task-event-tracked", result.CloudTaskID, "cloud task tracked after raw log failure")
+	events, readErr := readText(eventSinkPath)
+	if readErr != nil || !strings.Contains(events, "cloud-task-event-tracked") || !strings.Contains(events, "raw_log_error") {
+		t.Fatalf("event log did not surface raw-log failure with task id: %q err=%v", events, readErr)
 	}
 }
 
@@ -260,11 +363,15 @@ func TestCodexCloudRunnerSurfacesExecutorErrors(t *testing.T) {
 type fakeCodexCloudExecutor struct {
 	outputs  [][]byte
 	err      error
+	runFn    func(codexCloudExecRequest) ([]byte, error)
 	requests []codexCloudExecRequest
 }
 
 func (f *fakeCodexCloudExecutor) RunCodexCloud(ctx context.Context, req codexCloudExecRequest) ([]byte, error) {
 	f.requests = append(f.requests, req)
+	if f.runFn != nil {
+		return f.runFn(req)
+	}
 	if f.err != nil {
 		return nil, f.err
 	}

@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:16:22Z"
-updated_at: "2026-07-09T03:07:16Z"
-state_rev: "sha256:9bc8faca2187c568541da230a36332fa1e1c1b5c6b7f65c0436c943daf4b78d5"
+updated_at: "2026-07-11T01:54:12Z"
+state_rev: "sha256:ce68868dbdc1f86e0bbe1a681483ca362af5440bb5e336541a5808bafc946354"
 ---
 
 # SRV · Tusker Serve: local control-room UI
@@ -36,7 +36,7 @@ TBD.
 
 | Gate | Owner | Blocks | Action |
 |---|---|---|---|
-| _None._ |  |  |  |
+| [[SRV-G-0002]] | human:sarav | [[SRV-T-0023]] | Open /panel?shell=1 at 420x640 and verify sections, stream refresh, no horizontal scroll, chrome hiding, client-side navigation, and the Open Tusker header shortcut. |
 
 ## Active work
 
@@ -52,6 +52,13 @@ TBD.
 | [[SRV-T-0011]] | backlog | blocked_dependency | Wait for dependency SRV-T-0004 to reach review with satisfied proof or done. |
 | [[SRV-T-0012]] | backlog | blocked_dependency | Wait for dependency SRV-T-0011 to reach review with satisfied proof or done. |
 | [[SRV-T-0018]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[SRV-T-0019]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[SRV-T-0020]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[SRV-T-0021]] | review | reviewer | Review evidence and close or return to rework. |
+| [[SRV-T-0022]] | review | reviewer | Review evidence and close or return to rework. |
+| [[SRV-T-0023]] | ready | human:sarav | Accept, waive, or return rework for SRV-G-0002. |
+| [[SRV-T-0024]] | review | reviewer | Review evidence and close or return to rework. |
+| [[SRV-T-0025]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 

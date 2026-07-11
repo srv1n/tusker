@@ -1,10 +1,10 @@
-import { useSyncExternalStore } from "react";
-import { Link, useParams, useRouterState } from "@tanstack/react-router";
-import { ChevronDown, ChevronRight, Monitor, Moon, Search, Sun } from "lucide-react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Link, useNavigate, useParams, useRouterState } from "@tanstack/react-router";
+import { ChevronDown, ChevronRight, Monitor, Moon, Plus, Search, Sun, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { CountBadge, Dot, Mono } from "@/components/ui/primitives";
 import { SectionLabel } from "@/components/ui/page";
-import { useDaemon, useNeeds, useProjects } from "@/lib/queries";
+import { useDaemon, useNeeds, useProjects, useRegisterProject } from "@/lib/queries";
 import { formatStreamAge, getStreamStatus, subscribeStreamStatus } from "@/lib/stream";
 import { useTheme } from "@/lib/theme";
 import { USE_MOCK } from "@/lib/api";
@@ -21,21 +21,59 @@ const SUBSECTIONS = [
   { key: "docs", label: "Library", to: "/p/$projectId/docs" as const },
 ];
 
-export function Sidebar() {
+export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
   const projects = useProjects();
   const daemon = useDaemon();
   const globalNeeds = useNeeds();
   const stream = useSyncExternalStore(subscribeStreamStatus, getStreamStatus, getStreamStatus);
   const activeProject = useParams({ strict: false }).projectId as string | undefined;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const [addingProject, setAddingProject] = useState(false);
+  const asideRef = useRef<HTMLElement>(null);
 
   const needsCount = globalNeeds.data?.length ?? 0;
   const daemonLive = !!daemon.data?.connected && stream.connected;
   const budgetCircuitOpen = daemon.data?.budgetCircuit?.open === true;
   const invariantCircuitOpen = daemon.data?.invariantCircuit?.open === true;
 
+  // Drawer keyboard/focus contract: Escape closes; opening moves focus into
+  // the drawer so keyboard and screen-reader users land where the tap went.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose?.();
+    };
+    window.addEventListener("keydown", onKey);
+    if (window.matchMedia("(max-width: 1023px)").matches) {
+      asideRef.current?.focus();
+    }
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   return (
-    <aside className="flex w-[246px] flex-none flex-col border-r border-line bg-panel py-4">
+    <>
+      {/* Mobile scrim — tap to dismiss. Hidden ≥lg where the rail is static. */}
+      {open && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      )}
+      <aside
+        ref={asideRef}
+        tabIndex={-1}
+        aria-label="Navigation"
+        className={cn(
+          // <lg: off-canvas drawer. `invisible` (not display:none) keeps the
+          // slide-out animation and removes the closed drawer from the focus
+          // order and accessibility tree.
+          "fixed inset-y-0 left-0 z-50 flex w-[264px] max-w-[85vw] flex-none flex-col border-r border-line bg-panel pb-4 pl-[env(safe-area-inset-left)] pt-[max(1rem,env(safe-area-inset-top))] transition-[transform,visibility] duration-200 ease-out focus-visible:outline-none",
+          // ≥lg: the original static 246px rail, always visible, no animation.
+          "lg:static lg:z-auto lg:w-[246px] lg:max-w-none lg:translate-x-0 lg:pl-0 lg:pt-4 lg:transition-none lg:visible",
+          open ? "translate-x-0" : "-translate-x-full max-lg:invisible",
+        )}
+      >
       {/* Brand */}
       <div className="flex items-center gap-2.5 px-[18px] pb-4">
         <span className="flex h-[22px] w-[22px] items-center justify-center rounded-md bg-ink font-serif text-[13px] font-semibold text-surface">
@@ -43,6 +81,16 @@ export function Sidebar() {
         </span>
         <span className="font-serif text-[17px] font-semibold tracking-[-0.01em] text-ink">tusker</span>
         <SectionLabel className="mt-[3px] tracking-[0.18em]">serve</SectionLabel>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close navigation"
+            className="ml-auto flex h-9 w-9 items-center justify-center rounded-lg text-faint transition-colors hover:bg-hover hover:text-ink lg:hidden"
+          >
+            <X size={16} />
+          </button>
+        )}
       </div>
 
       {/* Global */}
@@ -70,10 +118,22 @@ export function Sidebar() {
       {/* Projects */}
       <div className="flex items-center justify-between px-5 pb-1.5 pt-[18px]">
         <SectionLabel>Projects</SectionLabel>
-        <Mono className="text-[10.5px] text-fainter">{projects.data?.length ?? 0}</Mono>
+        <div className="flex items-center gap-2">
+          <Mono className="text-[10.5px] text-fainter">{projects.data?.length ?? 0}</Mono>
+          <button
+            type="button"
+            onClick={() => setAddingProject((open) => !open)}
+            className="flex h-5 w-5 items-center justify-center rounded text-faint transition-colors hover:bg-hover hover:text-ink"
+            aria-label={addingProject ? "Close add project form" : "Add project"}
+            title="Add project"
+          >
+            {addingProject ? <X size={12} /> : <Plus size={12} />}
+          </button>
+        </div>
       </div>
 
       <div className="tk-scroll flex-1 overflow-y-auto px-3 pb-2">
+        {addingProject && <AddProjectForm onDone={() => setAddingProject(false)} />}
         {projects.data?.map((p) => (
           <ProjectRailItem
             key={p.id}
@@ -146,7 +206,66 @@ export function Sidebar() {
         </div>
         <ThemeToggle />
       </div>
-    </aside>
+      </aside>
+    </>
+  );
+}
+
+function AddProjectForm({ onDone }: { onDone: () => void }) {
+  const [repoRoot, setRepoRoot] = useState("");
+  const [vaultRoot, setVaultRoot] = useState("");
+  const register = useRegisterProject();
+  const navigate = useNavigate();
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const result = await register.mutateAsync({
+      repoRoot: repoRoot.trim(),
+      ...(vaultRoot.trim() ? { vaultRoot: vaultRoot.trim() } : {}),
+    });
+    if (result.ok && result.projectId) {
+      onDone();
+      await navigate({ to: "/p/$projectId/settings", params: { projectId: result.projectId } });
+    }
+  };
+
+  const message = register.error instanceof Error ? register.error.message : register.data?.reason;
+  const failed = !!register.error || register.data?.ok === false;
+
+  return (
+    <form onSubmit={submit} className="mb-2 rounded-lg border border-line bg-surface p-2.5" data-add-project-form>
+      <label className="block font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">
+        Repository path
+        <input
+          autoFocus
+          required
+          value={repoRoot}
+          onChange={(event) => setRepoRoot(event.target.value)}
+          placeholder="/Users/me/code/project"
+          className="mt-1 w-full rounded-md border border-line bg-panel px-2 py-1.5 font-mono text-[11px] normal-case tracking-normal text-ink outline-none focus:border-accent"
+        />
+      </label>
+      <label className="mt-2 block font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">
+        Vault path <span className="font-normal normal-case tracking-normal">(optional)</span>
+        <input
+          value={vaultRoot}
+          onChange={(event) => setVaultRoot(event.target.value)}
+          placeholder="defaults to .tusker"
+          className="mt-1 w-full rounded-md border border-line bg-panel px-2 py-1.5 font-mono text-[11px] normal-case tracking-normal text-ink outline-none focus:border-accent"
+        />
+      </label>
+      <p className="mt-2 text-[10.5px] leading-snug text-faint">Registers only. Daemon automation stays off.</p>
+      {message && (
+        <p className={cn("mt-2 text-[10.5px] leading-snug", failed ? "text-fail" : "text-pass")}>{message}</p>
+      )}
+      <button
+        type="submit"
+        disabled={!repoRoot.trim() || register.isPending}
+        className="mt-2 w-full rounded-md bg-ink px-2 py-1.5 text-[11px] font-semibold text-surface disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {register.isPending ? "Registering…" : "Register project"}
+      </button>
+    </form>
   );
 }
 

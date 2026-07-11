@@ -254,7 +254,7 @@ function BatchBar({
 
   return (
     <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2">
-      <div className="animate-rise flex items-center gap-2.5 rounded-xl border border-line bg-raised px-3 py-2 shadow-lg">
+      <div className="animate-rise flex max-w-[calc(100vw-1.5rem)] flex-wrap items-center justify-center gap-2.5 rounded-xl border border-line bg-raised px-3 py-2 shadow-lg">
         <Mono className="pl-1 text-[12px] text-ink-soft">
           {count} selected
         </Mono>
@@ -330,7 +330,7 @@ export function ProjectWork() {
 
   return (
     <div className="tk-scroll h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-[1240px] px-11 pb-20 pt-[30px]">
+      <div className="mx-auto w-full max-w-[1240px] px-4 pb-20 pt-[30px] sm:px-8 lg:px-11">
         <div className="mb-1.5 font-mono text-[11px] text-faint">◇ {projectName}</div>
         <header className="mb-5 flex items-end justify-between gap-4">
           <h1 className="font-serif text-[30px] font-semibold tracking-[-0.02em] text-ink">Work</h1>

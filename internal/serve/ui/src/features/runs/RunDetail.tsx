@@ -1,13 +1,24 @@
+import { useRef, useState } from "react";
 import { getRouteApi, Link } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import type { RunDetail as RunDetailData } from "@/types/domain";
-import { useRedrive, useRun, useTasks } from "@/lib/queries";
+import {
+  interruptedRunReadbackComplete,
+  useDaemon,
+  useInterrupt,
+  useRedrive,
+  useRun,
+  useTasks,
+} from "@/lib/queries";
 import { QueryBoundary, Skeleton, SkeletonRows } from "@/components/ui/states";
 import { SectionLabel } from "@/components/ui/page";
 import { RunHeader } from "@/features/runs/detail/RunHeader";
 import { RunStats } from "@/features/runs/detail/RunStats";
 import { AttemptTimeline } from "@/features/runs/detail/AttemptTimeline";
 import { EventTail } from "@/features/runs/detail/EventTail";
+import { waitingForDaemonReason } from "@/features/runs/detail/helpers";
+import { createRunActionLock } from "@/features/runs/detail/actionLock";
+import { useConfirm } from "@/components/ui/action-feedback";
 
 const route = getRouteApi("/p/$projectId/runs/$taskId");
 
@@ -19,9 +30,59 @@ const route = getRouteApi("/p/$projectId/runs/$taskId");
  */
 export function RunDetail() {
   const { projectId, taskId } = route.useParams();
-  const run = useRun(taskId);
+  return <TaskRunDetail key={taskId} projectId={projectId} taskId={taskId} />;
+}
+
+function TaskRunDetail({ projectId, taskId }: { projectId: string; taskId: string }) {
+  const interrupt = useInterrupt(taskId, projectId);
+  const run = useRun(taskId, interrupt.data?.ok === true, projectId);
   const tasks = useTasks(projectId);
-  const redrive = useRedrive(taskId);
+  const daemon = useDaemon();
+  const redrive = useRedrive(taskId, projectId);
+  const confirm = useConfirm();
+  const [interruptConfirming, setInterruptConfirming] = useState(false);
+  const runActionLock = useRef(createRunActionLock()).current;
+  const awaitingInterruptReadback =
+    interrupt.data?.ok === true && !interruptedRunReadbackComplete(run.data);
+  const interruptBusy =
+    interruptConfirming || interrupt.isPending || awaitingInterruptReadback;
+  const actionBusy = interruptBusy || redrive.isPending;
+
+  const onInterrupt = async () => {
+    if (actionBusy || !runActionLock.tryAcquire("interrupt")) return;
+    let submitted = false;
+    setInterruptConfirming(true);
+    try {
+      const ok = await confirm({
+        title: `Interrupt ${taskId}`,
+        body: "Stops the current runner or cancels queued execution. Redrive stays disabled until canonical lease and process readback confirms the stop.",
+        confirmLabel: "Interrupt run",
+        tone: "danger",
+      });
+      if (ok) {
+        submitted = true;
+        interrupt.reset();
+        interrupt.mutate(undefined, {
+          onSettled: () => {
+            runActionLock.release("interrupt");
+          },
+        });
+      }
+    } finally {
+      if (!submitted) runActionLock.release("interrupt");
+      setInterruptConfirming(false);
+    }
+  };
+
+  const onRedrive = () => {
+    if (actionBusy || !runActionLock.tryAcquire("redrive")) return;
+    interrupt.reset();
+    redrive.mutate(undefined, {
+      onSettled: () => {
+        runActionLock.release("redrive");
+      },
+    });
+  };
 
   return (
     <div className="tk-scroll h-full overflow-y-auto">
@@ -37,20 +98,26 @@ export function RunDetail() {
         <QueryBoundary q={run} loading={<RunDetailSkeleton />}>
           {(data: RunDetailData) => {
             const capsule = tasks.data?.find((t) => t.id === data.taskId);
+            const daemonWaitReason = waitingForDaemonReason(data, daemon.data);
             return (
               <div className="animate-rise">
                 <RunHeader
                   run={data}
                   capsule={capsule}
-                  onInterrupt={() => {
-                    // TODO(api): POST /api/runs/:taskId/interrupt
-                    console.info("interrupt", data.taskId);
+                  onInterrupt={onInterrupt}
+                  onRetry={onRedrive}
+                  retry={{ pending: redrive.isPending, result: redrive.data ?? null, error: redrive.error }}
+                  interrupt={{
+                    confirming: interruptConfirming,
+                    pending: interrupt.isPending,
+                    awaitingReadback: awaitingInterruptReadback,
+                    result: interrupt.data ?? null,
+                    error: interrupt.error,
                   }}
-                  onRetry={() => redrive.mutate()}
-                  retry={{ pending: redrive.isPending, result: redrive.data ?? null }}
+                  waitingForDaemonReason={daemonWaitReason}
                 />
 
-                <RunStats run={data} />
+                <RunStats run={data} waitingForDaemon={daemonWaitReason !== null} />
 
                 <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-[300px_1fr]">
                   <div className="min-w-0">
@@ -62,6 +129,7 @@ export function RunDetail() {
                     events={data.events}
                     liveness={data.liveness}
                     sinceLastEventSec={data.sinceLastEventSec}
+                    waitingForDaemonReason={daemonWaitReason}
                   />
                 </div>
               </div>

@@ -371,11 +371,15 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 	if cfg.Automation.ExternalLoop.WallClockTimeoutHours > 0 {
 		wf.ExternalLoop.WallClockTimeoutHours = cfg.Automation.ExternalLoop.WallClockTimeoutHours
 	}
-	if strings.TrimSpace(cfg.Automation.Workspace.Root) != "" {
-		wf.Workspace.Root = strings.TrimSpace(cfg.Automation.Workspace.Root)
+	workspaceRootOverride := strings.TrimSpace(cfg.Automation.Workspace.Root)
+	if workspaceRootOverride != "" {
+		wf.Workspace.Root = workspaceRootOverride
 	}
 	if strings.TrimSpace(cfg.Automation.Workspace.Strategy) != "" {
 		wf.Workspace.Strategy = strings.TrimSpace(cfg.Automation.Workspace.Strategy)
+		if workspaceStrategyFromWorkflow(wf.Workspace.Strategy) != WorkspaceStrategyInPlace && workspaceRootOverride == "" && strings.TrimSpace(wf.Workspace.Root) == "." {
+			wf.Workspace.Root = "workspaces"
+		}
 	}
 	if wf.Runners == nil {
 		wf.Runners = map[string]RunnerDefinition{}

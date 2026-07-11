@@ -78,6 +78,14 @@ func serveBaseArgs(s *serveServer) Args {
 	return Args{"vault": s.vaultPath, "repo": s.repoRoot}
 }
 
+func serveBaseArgsForBody(s *serveServer, body serveActionBody) (Args, RegisteredProject, error) {
+	project, err := s.projectForSnapshot(body.string("projectId", "project_id", "project"))
+	if err != nil {
+		return nil, RegisteredProject{}, err
+	}
+	return Args{"vault": project.VaultRoot, "repo": project.RepoRoot}, project, nil
+}
+
 func serveInvokeCommand(args Args, fn func(Args) error) (output string, runErr error) {
 	serveCommandStdoutMu.Lock()
 	defer serveCommandStdoutMu.Unlock()
@@ -136,7 +144,16 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: issue.Message, Issue: &issue})
 		return true
 	}
+	if _, exists := body["projectId"]; !exists {
+		if projectID := strings.TrimSpace(r.URL.Query().Get("project")); projectID != "" {
+			body["projectId"] = projectID
+		}
+	}
 	switch {
+	case len(parts) == 2 && parts[1] == "projects":
+		s.handleProjectRegisterAction(w, body)
+	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "automation":
+		s.handleProjectAutomationAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "redrive":
 		s.handleRunRedrive(w, r, parts[2])
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "status":
@@ -161,6 +178,107 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 	return true
 }
 
+func (s *serveServer) handleProjectRegisterAction(w http.ResponseWriter, body serveActionBody) {
+	repoRoot := body.string("repoRoot", "repo_root", "repo", "path")
+	if repoRoot == "" {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "project registration requires a repository path"})
+		return
+	}
+	absRepo, err := filepath.Abs(repoRoot)
+	if err != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker projects add", "", err))
+		return
+	}
+	vaultRoot := body.string("vaultRoot", "vault_root", "vault")
+	if vaultRoot == "" {
+		vaultRoot = filepath.Join(absRepo, ".tusker")
+	}
+	absVault, err := filepath.Abs(vaultRoot)
+	if err == nil {
+		err = validateProjectStorageBoundary(absRepo, absVault)
+	}
+	if err == nil {
+		_, err = loadWorkflow(absVault)
+	}
+	if err == nil {
+		var loaded []loadedRegisteredProject
+		loaded, err = loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true})
+		if err == nil {
+			for _, item := range loaded {
+				existing := item.Project
+				if sameCleanPath(existing.RepoRoot, absRepo) || sameCleanPath(existing.VaultRoot, absVault) {
+					err = tuskerError(errorInvalidArg, "project is already registered: "+existing.Name)
+					break
+				}
+			}
+		}
+	}
+	if err != nil {
+		result := serveCommandResult("tusker projects add", "", err)
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
+	project := newRegisteredProject(absRepo, absVault)
+	project.Enabled = false
+	project.Health = projectHealthDisabled
+	if err := s.store.UpsertProject(project); err != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker projects add", "", err))
+		return
+	}
+	go s.warmSnapshot(project.ProjectID)
+	serveJSON(w, http.StatusOK, serveActionResult{
+		OK: true, ProjectID: project.ProjectID,
+		Reason:  "Project registered. Daemon automation is off until enabled in project settings.",
+		Command: "tusker projects add",
+	})
+}
+
+func (s *serveServer) handleProjectAutomationAction(w http.ResponseWriter, projectID string, body serveActionBody) {
+	raw, present := body["enabled"]
+	if !present {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "project automation action requires enabled"})
+		return
+	}
+	enabled := serveActionBody{"enabled": raw}.bool("enabled")
+	loaded, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{
+		MetadataOnly: !enabled,
+		LoadDisabled: enabled,
+		ProjectID:    projectID,
+	})
+	var project *RegisteredProject
+	if err == nil {
+		if len(loaded) == 1 {
+			project = &loaded[0].Project
+		}
+		if project == nil {
+			err = tuskerError(errorNotFound, "project not found: "+projectID)
+		} else if enabled && loaded[0].LoadError != nil {
+			err = loaded[0].LoadError
+		}
+	}
+	if err == nil && enabled {
+		err = validateProjectStorageBoundary(project.RepoRoot, project.VaultRoot)
+	}
+	if err == nil {
+		err = s.store.SetProjectEnabled(projectID, enabled)
+	}
+	if err != nil {
+		result := serveCommandResult("tusker projects automation", "", err)
+		result.ProjectID = projectID
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
+	state := "disabled"
+	if enabled {
+		state = "enabled"
+		go s.warmSnapshot(projectID)
+	}
+	serveJSON(w, http.StatusOK, serveActionResult{
+		OK: true, ProjectID: projectID, Reason: "Daemon automation " + state + " for " + project.Name,
+		Command: "tusker projects " + state,
+	})
+}
+
 func (s *serveServer) handleTaskStatusAction(w http.ResponseWriter, taskID string, body serveActionBody) {
 	status := strings.ToLower(firstNonEmpty(body.string("status"), body.string("to")))
 	if status == "" {
@@ -168,7 +286,11 @@ func (s *serveServer) handleTaskStatusAction(w http.ResponseWriter, taskID strin
 		serveJSON(w, http.StatusOK, result)
 		return
 	}
-	args := serveBaseArgs(s)
+	args, project, projectErr := serveBaseArgsForBody(s, body)
+	if projectErr != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker status", "", projectErr))
+		return
+	}
 	args["id"] = strings.ToUpper(strings.TrimSpace(taskID))
 	args["status"] = status
 	args["reason"] = firstNonEmpty(body.string("reason"), "operator action from serve")
@@ -181,15 +303,24 @@ func (s *serveServer) handleTaskStatusAction(w http.ResponseWriter, taskID strin
 	output, err := serveInvokeCommand(args, statusV7Cmd)
 	result := serveCommandResult("tusker status "+args["id"]+" "+status, output, err)
 	result.TaskID = args["id"]
-	s.decorateTaskActionResult(&result, args["id"])
+	s.invalidateProjectSnapshot(project.ProjectID)
+	s.decorateTaskActionResultForProject(&result, args["id"], project.ProjectID)
 	serveJSON(w, http.StatusOK, result)
 }
 
 func (s *serveServer) handleTaskCloseAction(w http.ResponseWriter, taskID string, body serveActionBody) {
-	args := serveBaseArgs(s)
+	args, project, projectErr := serveBaseArgsForBody(s, body)
+	if projectErr != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker close", "", projectErr))
+		return
+	}
 	args["id"] = strings.ToUpper(strings.TrimSpace(taskID))
 	args["reason"] = firstNonEmpty(body.string("reason"), "accepted from serve")
-	if actor := body.string("actor", "by", "acceptedBy", "accepted_by"); actor != "" {
+	actor := body.string("actor", "by", "acceptedBy", "accepted_by")
+	if actor == "" {
+		actor = serveDefaultCloseActor(project.VaultRoot, args["id"])
+	}
+	if actor != "" {
 		args["by"] = actor
 	}
 	if body.bool("force") {
@@ -198,13 +329,38 @@ func (s *serveServer) handleTaskCloseAction(w http.ResponseWriter, taskID string
 	output, err := serveInvokeCommand(args, closeV7Cmd)
 	result := serveCommandResult("tusker close "+args["id"], output, err)
 	result.TaskID = args["id"]
-	s.decorateTaskActionResult(&result, args["id"])
+	s.invalidateProjectSnapshot(project.ProjectID)
+	s.decorateTaskActionResultForProject(&result, args["id"], project.ProjectID)
 	serveJSON(w, http.StatusOK, result)
+}
+
+func serveDefaultCloseActor(vaultPath, taskID string) string {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return ""
+	}
+	task, ok := idx.Tasks[strings.ToUpper(strings.TrimSpace(taskID))]
+	if !ok {
+		return ""
+	}
+	risk := strings.ToLower(fallback(stringField(task.Data, "risk"), "medium"))
+	policy, err := v7ClosePolicyFor(vaultPath, risk)
+	if err != nil {
+		return ""
+	}
+	if policy.RequiredAcceptor == "human" {
+		return "human:" + defaultActorName()
+	}
+	return ""
 }
 
 func (s *serveServer) handleLandAction(w http.ResponseWriter, target string, body serveActionBody) {
 	target = strings.ToUpper(strings.TrimSpace(target))
-	args := serveBaseArgs(s)
+	args, project, projectErr := serveBaseArgsForBody(s, body)
+	if projectErr != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker land", "", projectErr))
+		return
+	}
 	args["_pos0"] = target
 	if from := body.string("from", "branch", "source"); from != "" {
 		args["from"] = from
@@ -215,14 +371,19 @@ func (s *serveServer) handleLandAction(w http.ResponseWriter, target string, bod
 	output, err := serveInvokeCommand(args, landV7Cmd)
 	result := serveCommandResult("tusker land "+target, output, err)
 	result.TaskID = target
+	s.invalidateProjectSnapshot(project.ProjectID)
 	if v7TaskIDPattern.MatchString(target) {
-		s.decorateTaskActionResult(&result, target)
+		s.decorateTaskActionResultForProject(&result, target, project.ProjectID)
 	}
 	serveJSON(w, http.StatusOK, result)
 }
 
 func (s *serveServer) handleGateAction(w http.ResponseWriter, gateID, action string, body serveActionBody) {
-	args := serveBaseArgs(s)
+	args, project, projectErr := serveBaseArgsForBody(s, body)
+	if projectErr != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker gate", "", projectErr))
+		return
+	}
 	args["_pos0"] = action
 	args["id"] = strings.ToUpper(strings.TrimSpace(gateID))
 	if reason := body.string("reason"); reason != "" {
@@ -243,7 +404,8 @@ func (s *serveServer) handleGateAction(w http.ResponseWriter, gateID, action str
 	output, err := serveInvokeCommand(args, gateV7Cmd)
 	result := serveCommandResult("tusker gate "+action+" "+args["id"], output, err)
 	result.GateID = args["id"]
-	if gate := s.findGateDetail(args["id"]); gate != nil {
+	s.invalidateProjectSnapshot(project.ProjectID)
+	if gate := s.findGateDetailForProject(args["id"], project.ProjectID); gate != nil {
 		result.Gate = gate
 	}
 	serveJSON(w, http.StatusOK, result)
@@ -251,7 +413,11 @@ func (s *serveServer) handleGateAction(w http.ResponseWriter, gateID, action str
 
 func (s *serveServer) handleEvidenceAddAction(w http.ResponseWriter, body serveActionBody) {
 	taskID := strings.ToUpper(firstNonEmpty(body.string("taskId", "task_id", "id"), body.string("task")))
-	args := serveBaseArgs(s)
+	args, project, projectErr := serveBaseArgsForBody(s, body)
+	if projectErr != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker evidence add", "", projectErr))
+		return
+	}
 	args["id"] = taskID
 	for _, pair := range []struct{ arg, key string }{
 		{"kind", "kind"},
@@ -289,18 +455,23 @@ func (s *serveServer) handleEvidenceAddAction(w http.ResponseWriter, body serveA
 	result := serveCommandResult("tusker evidence add "+taskID, output, err)
 	result.TaskID = taskID
 	result.EvidenceID = firstNonEmpty(args["evidence-id"], serveEvidenceIDFromOutput(output))
+	s.invalidateProjectSnapshot(project.ProjectID)
 	if result.EvidenceID != "" {
-		if evidence := s.findEvidenceDoc(result.EvidenceID); evidence != nil {
+		if evidence := s.findEvidenceDocForProject(result.EvidenceID, project.ProjectID); evidence != nil {
 			result.Evidence = evidence
 			result.EvidenceID = evidence.ID
 		}
 	}
-	s.decorateTaskActionResult(&result, taskID)
+	s.decorateTaskActionResultForProject(&result, taskID, project.ProjectID)
 	serveJSON(w, http.StatusOK, result)
 }
 
 func (s *serveServer) handleFeedbackAddAction(w http.ResponseWriter, body serveActionBody) {
-	args := serveBaseArgs(s)
+	args, project, projectErr := serveBaseArgsForBody(s, body)
+	if projectErr != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker feedback add", "", projectErr))
+		return
+	}
 	args["_pos0"] = "add"
 	for _, key := range []string{"context", "friction", "product-idea", "productIdea", "impact", "related", "theme", "priority-hint", "priorityHint", "affected-command", "affectedCommand", "dedupe-key", "dedupeKey", "actor", "slug", "date"} {
 		if value := body.string(key); value != "" {
@@ -315,6 +486,7 @@ func (s *serveServer) handleFeedbackAddAction(w http.ResponseWriter, body serveA
 	output, err := serveInvokeCommand(args, feedbackV7Cmd)
 	result := serveCommandResult("tusker feedback add", output, err)
 	result.FeedbackPath = serveFeedbackPathFromOutput(output)
+	s.invalidateProjectSnapshot(project.ProjectID)
 	serveJSON(w, http.StatusOK, result)
 }
 
@@ -340,6 +512,18 @@ func (s *serveServer) handleDaemonAction(w http.ResponseWriter, action string, b
 		command, fn = "tusker daemon limits", daemonLimitsCmd
 		if limit := firstNonEmpty(body.string("maxActiveRuns", "max_active_runs"), body.string("limit")); limit != "" {
 			args["max-active-runs"] = limit
+		}
+		for _, mapping := range []struct {
+			arg  string
+			keys []string
+		}{
+			{arg: "disk-pressure-enabled", keys: []string{"diskPressureEnabled", "disk_pressure_enabled"}},
+			{arg: "disk-pressure-min-free-bytes", keys: []string{"diskPressureMinFreeBytes", "disk_pressure_min_free_bytes"}},
+			{arg: "disk-pressure-min-free-percent", keys: []string{"diskPressureMinFreePercent", "disk_pressure_min_free_percent"}},
+		} {
+			if value := body.string(mapping.keys...); value != "" {
+				args[mapping.arg] = value
+			}
 		}
 	default:
 		result := serveActionResult{Refused: true, Reason: "unknown daemon action: " + action}
@@ -382,10 +566,14 @@ func (s *serveServer) handleDaemonStartAction(w http.ResponseWriter, body serveA
 }
 
 func (s *serveServer) decorateTaskActionResult(result *serveActionResult, taskID string) {
+	s.decorateTaskActionResultForProject(result, taskID, "")
+}
+
+func (s *serveServer) decorateTaskActionResultForProject(result *serveActionResult, taskID, projectID string) {
 	if taskID == "" {
 		return
 	}
-	snap, err := s.loadSnapshot()
+	snap, err := s.loadFreshSnapshotForProject(projectID)
 	if err != nil {
 		return
 	}
@@ -418,7 +606,11 @@ func (s *serveServer) currentDaemonStatus() *serveDaemonStatus {
 }
 
 func (s *serveServer) findGateDetail(id string) *serveGateDetail {
-	snap, err := s.loadSnapshot()
+	return s.findGateDetailForProject(id, "")
+}
+
+func (s *serveServer) findGateDetailForProject(id, projectID string) *serveGateDetail {
+	snap, err := s.loadFreshSnapshotForProject(projectID)
 	if err != nil {
 		return nil
 	}
@@ -432,7 +624,11 @@ func (s *serveServer) findGateDetail(id string) *serveGateDetail {
 }
 
 func (s *serveServer) findEvidenceDoc(id string) *serveEvidenceDoc {
-	snap, err := s.loadSnapshot()
+	return s.findEvidenceDocForProject(id, "")
+}
+
+func (s *serveServer) findEvidenceDocForProject(id, projectID string) *serveEvidenceDoc {
+	snap, err := s.loadFreshSnapshotForProject(projectID)
 	if err != nil {
 		return nil
 	}
@@ -486,7 +682,7 @@ func serveFeedbackArgName(key string) string {
 }
 
 func (s *serveServer) handleGates(w http.ResponseWriter, r *http.Request) {
-	snap, err := s.loadSnapshot()
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -503,16 +699,22 @@ func (s *serveServer) handleGates(w http.ResponseWriter, r *http.Request) {
 	serveJSON(w, http.StatusOK, out)
 }
 
-func (s *serveServer) handleGate(w http.ResponseWriter, _ *http.Request, id string) {
-	if gate := s.findGateDetail(strings.TrimSpace(id)); gate != nil {
-		serveJSON(w, http.StatusOK, gate)
-		return
+func (s *serveServer) handleGate(w http.ResponseWriter, r *http.Request, id string) {
+	snap, err := s.loadSnapshotForRequest(r)
+	if err == nil {
+		for _, gate := range snap.gates {
+			if stringField(gate.Data, "id") == strings.TrimSpace(id) {
+				detail := serveGateDetailFromNote(gate)
+				serveJSON(w, http.StatusOK, &detail)
+				return
+			}
+		}
 	}
 	serveJSON(w, http.StatusNotFound, map[string]any{"error": "gate not found"})
 }
 
 func (s *serveServer) handleEvidence(w http.ResponseWriter, r *http.Request) {
-	snap, err := s.loadSnapshot()
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -529,16 +731,22 @@ func (s *serveServer) handleEvidence(w http.ResponseWriter, r *http.Request) {
 	serveJSON(w, http.StatusOK, out)
 }
 
-func (s *serveServer) handleEvidenceDoc(w http.ResponseWriter, _ *http.Request, id string) {
-	if evidence := s.findEvidenceDoc(strings.TrimSpace(id)); evidence != nil {
-		serveJSON(w, http.StatusOK, evidence)
-		return
+func (s *serveServer) handleEvidenceDoc(w http.ResponseWriter, r *http.Request, id string) {
+	snap, err := s.loadSnapshotForRequest(r)
+	if err == nil {
+		for _, evidence := range snap.evidence {
+			if stringField(evidence.Data, "id") == strings.TrimSpace(id) {
+				doc := serveEvidenceDocFromNote(evidence)
+				serveJSON(w, http.StatusOK, &doc)
+				return
+			}
+		}
 	}
 	serveJSON(w, http.StatusNotFound, map[string]any{"error": "evidence not found"})
 }
 
 func (s *serveServer) handleDecisions(w http.ResponseWriter, r *http.Request) {
-	snap, err := s.loadSnapshot()
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -555,8 +763,8 @@ func (s *serveServer) handleDecisions(w http.ResponseWriter, r *http.Request) {
 	serveJSON(w, http.StatusOK, out)
 }
 
-func (s *serveServer) handleDecision(w http.ResponseWriter, _ *http.Request, id string) {
-	snap, err := s.loadSnapshot()
+func (s *serveServer) handleDecision(w http.ResponseWriter, r *http.Request, id string) {
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -570,8 +778,13 @@ func (s *serveServer) handleDecision(w http.ResponseWriter, _ *http.Request, id 
 	serveJSON(w, http.StatusNotFound, map[string]any{"error": "decision not found"})
 }
 
-func (s *serveServer) handleFeedback(w http.ResponseWriter, _ *http.Request) {
-	records, err := feedbackRecordsForVault(s.vaultPath, s.repoRoot, time.Time{})
+func (s *serveServer) handleFeedback(w http.ResponseWriter, r *http.Request) {
+	project, err := s.projectForSnapshot(strings.TrimSpace(r.URL.Query().Get("project")))
+	if err != nil {
+		serveJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	records, err := feedbackRecordsForVault(project.VaultRoot, project.RepoRoot, time.Time{})
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -584,9 +797,14 @@ func (s *serveServer) handleFeedback(w http.ResponseWriter, _ *http.Request) {
 	serveJSON(w, http.StatusOK, out)
 }
 
-func (s *serveServer) handleFeedbackDoc(w http.ResponseWriter, _ *http.Request, ref string) {
+func (s *serveServer) handleFeedbackDoc(w http.ResponseWriter, r *http.Request, ref string) {
 	ref = strings.TrimPrefix(strings.TrimSpace(ref), "/")
-	records, err := feedbackRecordsForVault(s.vaultPath, s.repoRoot, time.Time{})
+	project, err := s.projectForSnapshot(strings.TrimSpace(r.URL.Query().Get("project")))
+	if err != nil {
+		serveJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	records, err := feedbackRecordsForVault(project.VaultRoot, project.RepoRoot, time.Time{})
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -602,7 +820,7 @@ func (s *serveServer) handleFeedbackDoc(w http.ResponseWriter, _ *http.Request, 
 
 func (s *serveServer) handleAttempts(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(r.URL.Query().Get("task"))
-	snap, err := s.loadSnapshot()
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -621,9 +839,9 @@ func (s *serveServer) handleAttempts(w http.ResponseWriter, r *http.Request) {
 	serveJSON(w, http.StatusOK, out)
 }
 
-func (s *serveServer) handleAttempt(w http.ResponseWriter, _ *http.Request, id string) {
+func (s *serveServer) handleAttempt(w http.ResponseWriter, r *http.Request, id string) {
 	id = strings.TrimSpace(id)
-	snap, err := s.loadSnapshot()
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return

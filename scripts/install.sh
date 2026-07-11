@@ -76,9 +76,27 @@ need_cmd() {
 	}
 }
 
+is_sha256() {
+	[ "${#1}" -eq 64 ] || return 1
+	case "$1" in
+		*[!0123456789abcdefABCDEF]*) return 1 ;;
+	esac
+	return 0
+}
+
 need_cmd curl
 need_cmd tar
 need_cmd install
+need_cmd awk
+
+if command -v shasum >/dev/null 2>&1; then
+	checksum_tool="shasum"
+elif command -v sha256sum >/dev/null 2>&1; then
+	checksum_tool="sha256sum"
+else
+	printf 'Missing required checksum command: install shasum (macOS) or sha256sum (Linux).\n' >&2
+	exit 1
+fi
 
 uname_s="$(uname -s)"
 case "$uname_s" in
@@ -131,16 +149,95 @@ printf 'Downloading %s from %s...\n' "$asset" "$TUSKER_REPO"
 curl -fsSL -o "$archive_path" "${download_root}/${TUSKER_VERSION}/${asset}"
 curl -fsSL -o "$checksums_path" "${download_root}/${TUSKER_VERSION}/checksums.txt"
 
-if command -v shasum >/dev/null 2>&1; then
-	actual_checksum="$(shasum -a 256 "$archive_path" | awk '{print $1}')"
-elif command -v sha256sum >/dev/null 2>&1; then
-	actual_checksum="$(sha256sum "$archive_path" | awk '{print $1}')"
-else
-	actual_checksum=""
+case "$checksum_tool" in
+	shasum)
+		if ! checksum_output="$(shasum -a 256 "$archive_path")"; then
+			printf 'Failed to compute SHA-256 for %s using shasum.\n' "$asset" >&2
+			exit 1
+		fi
+		;;
+	sha256sum)
+		if ! checksum_output="$(sha256sum "$archive_path")"; then
+			printf 'Failed to compute SHA-256 for %s using sha256sum.\n' "$asset" >&2
+			exit 1
+		fi
+		;;
+esac
+
+actual_checksum="$(printf '%s\n' "$checksum_output" | awk 'NR == 1 { print tolower($1); exit }')"
+if [ -z "$actual_checksum" ]; then
+	printf 'Failed to compute SHA-256 for %s using %s: command returned an empty checksum.\n' "$asset" "$checksum_tool" >&2
+	exit 1
+fi
+if ! is_sha256 "$actual_checksum"; then
+	printf 'Failed to compute SHA-256 for %s using %s: command returned a malformed checksum.\n' "$asset" "$checksum_tool" >&2
+	exit 1
 fi
 
-expected_checksum="$(awk -v name="$asset" '$2 == name {print $1}' "$checksums_path" | head -n 1)"
-if [ -n "$actual_checksum" ] && [ -n "$expected_checksum" ] && [ "$actual_checksum" != "$expected_checksum" ]; then
+checksum_entry="$(
+	awk -v name="$asset" '
+		{
+			line = $0
+			sub(/\r$/, "", line)
+			checksum = ""
+			filename = line
+			if (line ~ /^[^[:space:]]+[[:space:]]+/) {
+				checksum = line
+				sub(/[[:space:]].*$/, "", checksum)
+				sub(/^[^[:space:]]+[[:space:]]+/, "", filename)
+			} else {
+				sub(/^[[:space:]]+/, "", filename)
+			}
+			if (substr(filename, 1, 1) == "*") {
+				filename = substr(filename, 2)
+			}
+			if (filename == name) {
+				matches++
+				expected = tolower(checksum)
+			}
+		}
+		END {
+			if (matches == 0) {
+				print "missing"
+			} else if (matches > 1) {
+				print "duplicate"
+			} else if (expected == "") {
+				print "empty"
+			} else {
+				print "ok " expected
+			}
+		}
+	' "$checksums_path"
+)"
+
+case "$checksum_entry" in
+	missing)
+		printf 'Checksum entry missing for %s in checksums.txt.\n' "$asset" >&2
+		exit 1
+		;;
+	duplicate)
+		printf 'Duplicate checksum entries for %s in checksums.txt.\n' "$asset" >&2
+		exit 1
+		;;
+	empty)
+		printf 'Checksum entry for %s has an empty SHA-256 value.\n' "$asset" >&2
+		exit 1
+		;;
+	ok\ *)
+		expected_checksum="${checksum_entry#ok }"
+		;;
+	*)
+		printf 'Failed to parse checksum entry for %s.\n' "$asset" >&2
+		exit 1
+		;;
+esac
+
+if ! is_sha256 "$expected_checksum"; then
+	printf 'Checksum entry for %s has a malformed SHA-256 value.\n' "$asset" >&2
+	exit 1
+fi
+
+if [ "$actual_checksum" != "$expected_checksum" ]; then
 	printf 'Checksum mismatch for %s\nexpected: %s\nactual:   %s\n' "$asset" "$expected_checksum" "$actual_checksum" >&2
 	exit 1
 fi

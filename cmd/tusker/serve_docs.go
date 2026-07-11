@@ -12,18 +12,23 @@ import (
 	"time"
 )
 
-func (s *serveServer) handleDocs(w http.ResponseWriter, _ *http.Request) {
-	docs, err := serveDocList(s.repoRoot, s.vaultPath)
+func (s *serveServer) handleDocs(w http.ResponseWriter, r *http.Request) {
+	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	serveJSON(w, http.StatusOK, docs)
+	serveJSON(w, http.StatusOK, snap.docs)
 }
 
-func (s *serveServer) handleDoc(w http.ResponseWriter, _ *http.Request, rawPath string) {
+func (s *serveServer) handleDoc(w http.ResponseWriter, r *http.Request, rawPath string) {
+	project, err := s.projectForSnapshot(strings.TrimSpace(r.URL.Query().Get("project")))
+	if err != nil {
+		serveJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
 	rel := filepath.ToSlash(strings.TrimPrefix(rawPath, "/"))
-	full, ok := safeRepoPath(s.repoRoot, rel)
+	full, ok := safeRepoPath(project.RepoRoot, rel)
 	if !ok {
 		serveJSON(w, http.StatusBadRequest, map[string]any{"error": "path escapes repository"})
 		return

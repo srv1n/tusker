@@ -93,26 +93,48 @@ func workspacePathForRequest(req WorkspacePrepareRequest) (string, string, error
 		return abs, abs, nil
 	}
 	workspaceKey := workspaceKeyForRequest(req)
-	root := workspaceRootForRequest(req)
+	root, err := workspaceRootForRequest(req)
+	if err != nil {
+		return "", "", err
+	}
 	return filepath.Join(root, workspaceKey), root, nil
 }
 
-func workspaceRootForRequest(req WorkspacePrepareRequest) string {
-	root := strings.TrimSpace(req.WorkspaceRoot)
-	if root == "" {
-		root = filepath.Join(req.StateRoot, "workspaces")
-	} else if !filepath.IsAbs(root) {
-		base := strings.TrimSpace(req.RepoRoot)
-		if base == "" {
-			base = req.StateRoot
+func workspaceRootForRequest(req WorkspacePrepareRequest) (string, error) {
+	stateRoot := strings.TrimSpace(req.StateRoot)
+	if stateRoot == "" {
+		return "", tuskerError(errorConfigInvalid, "workspace preparation requires state_root")
+	}
+	sharedRoot := filepath.Join(stateRoot, "workspaces")
+	root := sharedRoot
+	if configured := strings.TrimSpace(req.WorkspaceRoot); configured != "" {
+		if filepath.IsAbs(configured) {
+			root = filepath.Clean(configured)
+		} else {
+			root = filepath.Join(stateRoot, configured)
 		}
-		root = filepath.Join(base, root)
+	}
+	if !pathWithinLexical(sharedRoot, root) || !pathWithinResolved(sharedRoot, root) {
+		return "", tuskerError(errorConfigInvalid,
+			"workspace.root must stay under the shared runtime workspace directory",
+			withPath(root),
+			withHint("use workspace.root: workspaces or a subdirectory such as workspaces/team"),
+			withContext(map[string]any{"state_root": stateRoot, "workspace_root": root, "required_prefix": sharedRoot}))
 	}
 	projectKey := strings.TrimSpace(req.ProjectKey)
 	if projectKey == "" {
 		projectKey = "project"
 	}
-	return filepath.Join(root, projectKey)
+	return filepath.Join(root, projectKey), nil
+}
+
+func validSharedWorkspaceRootConfig(root string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" || filepath.IsAbs(root) {
+		return false
+	}
+	clean := filepath.Clean(root)
+	return clean == "workspaces" || strings.HasPrefix(clean, "workspaces"+string(filepath.Separator))
 }
 
 func (m *FSWorkspaceManager) prepareAtPath(workspacePath string, req WorkspacePrepareRequest) (WorkspacePrepareResult, error) {

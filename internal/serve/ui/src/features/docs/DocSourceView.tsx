@@ -7,7 +7,7 @@ import { DocShell } from "./DocShell";
 import { taskIdFromDocPath } from "./taskMarkdown";
 
 export function DocSourceView({ projectId, path }: { projectId: string; path: string }) {
-  const q = useDoc(path);
+  const q = useDoc(path, projectId);
   // Live mode never falls back to a fixture body: an absent doc is an error/empty
   // state (below), never fabricated source.
   const doc = q.data;
@@ -40,7 +40,7 @@ export function DocSourceView({ projectId, path }: { projectId: string; path: st
         ) : undefined
       }
     >
-      <div className="mx-auto w-full max-w-[980px] px-11 pb-24 pt-7">
+      <div className="mx-auto w-full max-w-[980px] px-4 pb-24 pt-7 sm:px-6 lg:px-11">
         <div className="mb-2 flex items-center justify-between">
           <Mono className="text-[9.5px] uppercase tracking-[0.12em] text-fainter">
             Source
@@ -58,7 +58,7 @@ export function DocSourceView({ projectId, path }: { projectId: string; path: st
 function SourceSkeleton({ projectId, path }: { projectId: string; path: string }) {
   return (
     <DocShell projectId={projectId} path={path}>
-      <div className="mx-auto w-full max-w-[980px] px-11 pt-7">
+      <div className="mx-auto w-full max-w-[980px] px-4 pt-7 sm:px-6 lg:px-11">
         <Skeleton className="mb-3 h-3 w-24" />
         <Skeleton className="h-96 w-full" />
       </div>

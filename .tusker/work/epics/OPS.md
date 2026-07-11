@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-06T17:50:21Z"
-updated_at: "2026-07-09T03:08:44Z"
-state_rev: "sha256:dd66abf12e246a20cc025f487b4cdfc8550983825bd5e36bb983acb7f176a227"
+updated_at: "2026-07-10T03:29:01Z"
+state_rev: "sha256:7e356197935d0e9175febfeb2533eca8fb03d36252055a43339b1b790e66cb84"
 ---
 
 # OPS · Operating model: waves, merge lane, escalation, worker protocol
@@ -36,7 +36,7 @@ TBD.
 
 | Gate | Owner | Blocks | Action |
 |---|---|---|---|
-| _None._ |  |  |  |
+| [[OPS-G-0002]] | human:sarav | [[OPS-T-0009]] | Authorize a stabilization commit and push of the current production slice to a remote branch. |
 
 ## Active work
 
@@ -46,8 +46,9 @@ TBD.
 |---|---|---|---|
 | [[OPS-T-0003]] | backlog | agent | Wait for dependency OPS-T-0001 to reach done. |
 | [[OPS-T-0005]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[OPS-T-0007]] | review | reviewer | Review evidence and close or return to rework. |
-| [[OPS-T-0008]] | review | reviewer | Review evidence and close or return to rework. |
+| [[OPS-T-0009]] | review | human:sarav | Accept, waive, or return rework for OPS-G-0002. |
+| [[OPS-T-0010]] | review | reviewer | Review evidence and close or return to rework. |
+| [[OPS-T-0011]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 
@@ -59,3 +60,5 @@ TBD.
 | [[OPS-T-0002]] | human:sarav | 2026-07-08T03:01:48Z |
 | [[OPS-T-0004]] | human:sarav | 2026-07-07T07:28:00Z |
 | [[OPS-T-0006]] | human:sarav | 2026-07-08T06:14:48Z |
+| [[OPS-T-0007]] | human:sarav | 2026-07-09T12:56:00Z |
+| [[OPS-T-0008]] | human:sarav | 2026-07-09T12:56:03Z |

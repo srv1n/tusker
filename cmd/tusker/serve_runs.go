@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -36,6 +37,7 @@ func (s *serveServer) runSummary(snap serveSnapshot, run RunStatus) serveRunSumm
 		Lane:              serveLane(run.Lane),
 		LeaseState:        serveLeaseState(run.LeaseState),
 		LeaseStateRaw:     run.LeaseState,
+		ProcessRunning:    runProcessGroupAlive(run),
 		Outcome:           serveRunOutcome(run, s.now()),
 		ElapsedSec:        serveRunElapsedSec(run, s.now()),
 		SinceLastEventSec: serveSinceSec(firstNonEmpty(run.LastEventAt, run.UpdatedAt), s.now()),
@@ -81,13 +83,69 @@ func serveLane(lane string) string {
 
 func serveLeaseState(state string) string {
 	switch LeaseState(strings.TrimSpace(state)) {
-	case LeaseStateUnclaimed:
+	case LeaseStateUnclaimed, LeaseStateRetryQueued:
 		return "unclaimed"
 	case LeaseStateReleased, LeaseStateInterrupted, LeaseStateParkedNoProgress, LeaseStateParkedBudget:
 		return "released"
 	default:
 		return "held"
 	}
+}
+
+type serveInterruptResult struct {
+	OK             bool   `json:"ok"`
+	Refused        bool   `json:"refused,omitempty"`
+	Interrupted    bool   `json:"interrupted"`
+	Reason         string `json:"reason"`
+	TaskID         string `json:"taskId"`
+	LeaseState     string `json:"leaseState,omitempty"`
+	LeaseStateRaw  string `json:"leaseStateRaw,omitempty"`
+	ProcessRunning bool   `json:"processRunning"`
+}
+
+// handleRunInterrupt shares the exact runtime transition used by
+// `tusker runs interrupt`, then returns canonical store readback so the UI does
+// not enable Redrive based only on a successful HTTP response.
+func (s *serveServer) handleRunInterrupt(w http.ResponseWriter, r *http.Request, taskID string) {
+	taskID = strings.ToUpper(strings.TrimSpace(taskID))
+	projectID := strings.TrimSpace(r.URL.Query().Get("project"))
+	if projectID != "" {
+		if snap, err := s.loadSnapshotForProject(projectID); err != nil {
+			serveJSON(w, http.StatusNotFound, serveInterruptResult{Refused: true, Reason: "run not found in project", TaskID: taskID})
+			return
+		} else if _, ok := serveFindRun(snap.runs, taskID); !ok {
+			serveJSON(w, http.StatusNotFound, serveInterruptResult{Refused: true, Reason: "run not found in project", TaskID: taskID})
+			return
+		}
+	}
+	run, _, err := interruptRuntimeRun(DefaultStateRoot(), s.store, taskID)
+	if err != nil {
+		issue := errorToIssue(err)
+		reason := issue.Message
+		if issue.Hint != "" {
+			reason += " Hint: " + issue.Hint
+		}
+		serveJSON(w, http.StatusOK, serveInterruptResult{Refused: true, Reason: reason, TaskID: taskID})
+		return
+	}
+	processRunning := runProcessGroupAlive(*run)
+	confirmed := LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateInterrupted && !processRunning
+	result := serveInterruptResult{
+		OK:             confirmed,
+		Refused:        !confirmed,
+		Interrupted:    confirmed,
+		TaskID:         firstNonEmpty(run.ItemID, taskID),
+		LeaseState:     serveLeaseState(run.LeaseState),
+		LeaseStateRaw:  run.LeaseState,
+		ProcessRunning: processRunning,
+	}
+	if confirmed {
+		result.Reason = "run interrupted; canonical lease is interrupted and no process is running"
+	} else {
+		result.Reason = "interrupt returned before canonical lease/process state confirmed the stop"
+	}
+	s.refreshProjectSnapshot(firstNonEmpty(run.ProjectID, projectID))
+	serveJSON(w, http.StatusOK, result)
 }
 
 func serveRunOutcome(run RunStatus, now time.Time) string {
@@ -327,7 +385,10 @@ func serveRedriveRefusal(rawStatus string, run RunStatus) (bool, string) {
 	case "done", "closed":
 		return true, "task is done — no execution to redrive; nothing to retry"
 	}
-	if run.ProcessPID > 0 && processIdentityMatches(run) {
+	if LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateRetryQueued {
+		return true, "redrive is already queued; wait for the daemon to claim it or interrupt the queued run first"
+	}
+	if runProcessGroupAlive(run) {
 		return true, "run is still executing; interrupt it before redrive"
 	}
 	return false, ""
@@ -339,23 +400,10 @@ func serveRedriveRefusal(rawStatus string, run RunStatus) (bool, string) {
 // attempt-window rules themselves are owned by RUN-T-0028; keep this in sync
 // with redriveCmd.
 func serveRedriveRun(store *RuntimeStore, run *RunStatus, actor, reason string, now time.Time) error {
-	if _, err := store.RecordBudgetRedrive(run.ProjectID, run.RecordID, actor, reason, now); err != nil {
-		return err
-	}
 	previousAttemptID := run.ActiveAttemptID
 	previousSessionRef := run.SessionRef
 	previousWorkspacePath := run.WorkspacePath
-	run.LeaseState = string(LeaseStateRetryQueued)
-	run.AttemptOutcome = string(AttemptOutcomeNone)
-	run.AttemptCount = 0
-	run.NextRetryAt = now.Format(time.RFC3339)
-	run.LastError = "redriven by " + actor + ": " + reason
-	run.LastEventAt = now.Format(time.RFC3339)
-	run.UpdatedAt = now.Format(time.RFC3339)
-	run.Terminal = false
-	clearActiveExecution(run)
-	clearRunCloudRefs(run)
-	if err := store.UpsertRun(*run); err != nil {
+	if _, err := redriveRuntimeRun(store, run, actor, reason, now); err != nil {
 		return err
 	}
 	_, err := store.SaveSupervisorDecision(SupervisorDecision{

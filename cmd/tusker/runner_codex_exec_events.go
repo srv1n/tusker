@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -20,13 +21,13 @@ type codexExecCommandSnapshot struct {
 	startedAt time.Time
 }
 
-func (d *Daemon) ingestCodexExecRawLog(run RunStatus) bool {
+func (d *Daemon) ingestCodexExecRawLog(run RunStatus) (bool, error) {
 	if d == nil || d.store == nil || RunnerName(strings.TrimSpace(run.Runner)) != RunnerCodexExec || strings.TrimSpace(run.RawLogPath) == "" {
-		return false
+		return false, nil
 	}
 	text, err := readText(run.RawLogPath)
 	if err != nil || strings.TrimSpace(text) == "" {
-		return false
+		return false, nil
 	}
 	turns, _ := d.store.ListTurnsForAttempt(run.ActiveAttemptID)
 	known := map[string]codexExecTurnSnapshot{}
@@ -43,8 +44,21 @@ func (d *Daemon) ingestCodexExecRawLog(run RunStatus) bool {
 			nextIndex = turn.TurnIndex + 1
 		}
 	}
-	eventLog := NewEventLog(run.EventSinkPath)
-	threadStartedRecorded := codexExecEventRecorded(run.EventSinkPath, run.ActiveAttemptID, "thread_started")
+	var eventLog *EventLog
+	threadStartedRecorded := false
+	if strings.TrimSpace(run.EventSinkPath) != "" {
+		eventLog = NewEventLog(run.EventSinkPath)
+		threadStartedRecorded, err = eventLog.Contains(run.ActiveAttemptID, "thread_started")
+		if err != nil {
+			return false, fmt.Errorf("validate codex-exec event log before replay: %w", err)
+		}
+	}
+	appendEvent := func(kind string, payload map[string]any) error {
+		if eventLog == nil {
+			return nil
+		}
+		return eventLog.Append(kind, run.ActiveAttemptID, RunnerCodexExec, payload)
+	}
 	changed := false
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
@@ -73,13 +87,15 @@ func (d *Daemon) ingestCodexExecRawLog(run RunStatus) bool {
 		switch kind {
 		case "threadstarted", "sessionstarted":
 			if !threadStartedRecorded {
-				_ = eventLog.Append("thread_started", run.ActiveAttemptID, RunnerCodexExec, map[string]any{
+				if err := appendEvent("thread_started", map[string]any{
 					"project_id":  run.ProjectID,
 					"record_id":   run.RecordID,
 					"item_id":     run.ItemID,
 					"attempt_id":  run.ActiveAttemptID,
 					"session_ref": sessionRef,
-				})
+				}); err != nil {
+					return changed, fmt.Errorf("record codex-exec thread_started event: %w", err)
+				}
 				threadStartedRecorded = true
 				changed = true
 			}
@@ -93,7 +109,9 @@ func (d *Daemon) ingestCodexExecRawLog(run RunStatus) bool {
 				nextIndex++
 			}
 			if snapshot.status == "" {
-				_ = eventLog.Append("turn_started", run.ActiveAttemptID, RunnerCodexExec, codexExecTurnPayload(run, sessionRef, turnID, snapshot.index, map[string]any{"source": "codex_exec"}))
+				if err := appendEvent("turn_started", codexExecTurnPayload(run, sessionRef, turnID, snapshot.index, map[string]any{"source": "codex_exec"})); err != nil {
+					return changed, fmt.Errorf("record codex-exec turn_started event: %w", err)
+				}
 				changed = true
 				_ = d.store.SaveTurn(RunTurn{
 					AttemptID:       run.ActiveAttemptID,
@@ -126,12 +144,14 @@ func (d *Daemon) ingestCodexExecRawLog(run RunStatus) bool {
 				snapshot.totalTokens = maxInt(snapshot.totalTokens, usage.totalTokens)
 			}
 			if snapshot.status != status {
-				_ = eventLog.Append("turn_completed", run.ActiveAttemptID, RunnerCodexExec, codexExecTurnPayload(run, sessionRef, turnID, snapshot.index, map[string]any{
+				if err := appendEvent("turn_completed", codexExecTurnPayload(run, sessionRef, turnID, snapshot.index, map[string]any{
 					"status":        status,
 					"input_tokens":  snapshot.inputTokens,
 					"output_tokens": snapshot.outputTokens,
 					"total_tokens":  snapshot.totalTokens,
-				}))
+				})); err != nil {
+					return changed, fmt.Errorf("record codex-exec turn_completed event: %w", err)
+				}
 				changed = true
 			}
 			_ = d.store.SaveTurn(RunTurn{
@@ -164,12 +184,14 @@ func (d *Daemon) ingestCodexExecRawLog(run RunStatus) bool {
 				snapshot.inputTokens = maxInt(snapshot.inputTokens, usage.inputTokens)
 				snapshot.outputTokens = maxInt(snapshot.outputTokens, usage.outputTokens)
 				snapshot.totalTokens = maxInt(snapshot.totalTokens, usage.totalTokens)
-				_ = eventLog.Append("turn_usage_updated", run.ActiveAttemptID, RunnerCodexExec, codexExecTurnPayload(run, sessionRef, turnID, snapshot.index, map[string]any{
+				if err := appendEvent("turn_usage_updated", codexExecTurnPayload(run, sessionRef, turnID, snapshot.index, map[string]any{
 					"source":        "codex_exec",
 					"input_tokens":  snapshot.inputTokens,
 					"output_tokens": snapshot.outputTokens,
 					"total_tokens":  snapshot.totalTokens,
-				}))
+				})); err != nil {
+					return changed, fmt.Errorf("record codex-exec turn_usage_updated event: %w", err)
+				}
 				changed = true
 			}
 			_ = d.store.SaveTurn(RunTurn{
@@ -189,31 +211,7 @@ func (d *Daemon) ingestCodexExecRawLog(run RunStatus) bool {
 			known[turnID] = snapshot
 		}
 	}
-	return changed
-}
-
-func codexExecEventRecorded(path, attemptID, kind string) bool {
-	if strings.TrimSpace(path) == "" {
-		return false
-	}
-	text, err := readText(path)
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var event Event
-		if json.Unmarshal([]byte(line), &event) != nil {
-			continue
-		}
-		if event.AttemptID == attemptID && event.Kind == kind {
-			return true
-		}
-	}
-	return false
+	return changed, nil
 }
 
 func normalizeCodexExecEventKind(kind string) string {

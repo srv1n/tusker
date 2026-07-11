@@ -59,8 +59,11 @@ func TestDaemonServeStreamEmitsPollTick(t *testing.T) {
 	if got.Kind != serveStreamKindPollTick {
 		t.Fatalf("expected live daemon poll tick event, got %#v", got)
 	}
-	if !containsString(got.Keys, "daemon") || !containsString(got.Keys, "runs") {
-		t.Fatalf("expected poll tick invalidation keys, got %#v", got.Keys)
+	if !containsString(got.Keys, "daemon") || !containsString(got.Keys, "projects") {
+		t.Fatalf("expected liveness poll tick invalidation keys, got %#v", got.Keys)
+	}
+	if containsString(got.Keys, "runs") || containsString(got.Keys, "tasks") || containsString(got.Keys, "needs") {
+		t.Fatalf("poll tick must not invalidate heavy task/run queries, got %#v", got.Keys)
 	}
 }
 

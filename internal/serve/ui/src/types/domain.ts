@@ -79,6 +79,18 @@ export interface RedriveResult {
   leaseState?: string;
 }
 
+/** Result of POST /api/runs/:taskId/interrupt with canonical store readback. */
+export interface InterruptResult {
+  ok: boolean;
+  refused?: boolean;
+  interrupted: boolean;
+  reason: string;
+  taskId: string;
+  leaseState?: LeaseState;
+  leaseStateRaw?: string;
+  processRunning: boolean;
+}
+
 export interface ActionIssue {
   code: string;
   message: string;
@@ -99,6 +111,7 @@ export interface ActionResult {
   evidenceId?: string;
   feedbackPath?: string;
   canonicalStatus?: string;
+  projectId?: string;
 }
 
 export type DocKind = "spec" | "decision" | "knowledge" | "task" | "epic" | "dashboard";
@@ -110,6 +123,11 @@ export type DocKind = "spec" | "decision" | "knowledge" | "task" | "epic" | "das
 export interface ProjectSummary {
   id: string;
   name: string;
+  repoRoot: string;
+  vaultRoot: string;
+  automationEnabled: boolean;
+  health: string;
+  lastError?: string | null;
   /** Items in this project waiting on the human. Drives the sidebar badge. */
   needsCount: number;
   /** Live agent activity: any active runs? drives the pulse dot. */
@@ -117,6 +135,10 @@ export interface ProjectSummary {
   /** Highest-severity liveness across this project's active runs. */
   worstLiveness: Liveness | null;
   daemonConnected: boolean;
+}
+
+export interface ProjectRegistrationResult extends ActionResult {
+  projectId?: string;
 }
 
 // ----------------------------------------------------------------------------
@@ -188,6 +210,10 @@ export interface RunSummary {
   model: string;
   lane: Lane;
   leaseState: LeaseState;
+  /** Canonical runtime-store state, before the display lease is normalized. */
+  leaseStateRaw?: string;
+  /** Verified OS process identity, not inferred from the lease row. */
+  processRunning?: boolean;
   outcome: RunOutcome;
   /** Elapsed wall-clock seconds for the active/last attempt. */
   elapsedSec: number;
@@ -254,6 +280,7 @@ export interface WaveSummary {
 
 export interface TaskCapsule {
   id: string;
+  projectId?: string;
   title: string;
   epicId: string;
   epicTitle: string;
@@ -443,12 +470,56 @@ export interface DocListEntry {
 // Daemon / global status
 // ----------------------------------------------------------------------------
 
+export interface DiskPressureConfig {
+  enabled: boolean;
+  min_free_bytes: number;
+  min_free_percent: number;
+  source: string;
+}
+
+export interface DiskPressureFilesystem {
+  kind: string;
+  path: string;
+  filesystem_path: string;
+  filesystem_id?: string;
+  available_bytes: number;
+  available_percent: number;
+  total_bytes: number;
+  effective_threshold_bytes: number;
+  warning_threshold_bytes: number;
+  state: string;
+  checked_at?: string;
+  error?: string;
+}
+
+export interface DiskPressureStatus {
+  state: string;
+  enabled: boolean;
+  dispatch_paused: boolean;
+  warning: boolean;
+  recovered: boolean;
+  checked_at?: string;
+  reason?: string;
+  min_free_bytes: number;
+  min_free_percent: number;
+  effective_threshold_bytes: number;
+  warning_threshold_bytes: number;
+  filesystems: DiskPressureFilesystem[];
+  config: DiskPressureConfig;
+}
+
 export interface DaemonStatus {
   connected: boolean;
   addr: string;
   activeRuns: number;
   maxActiveRuns?: number;
   queuedTasks: number;
+  daemonAlive?: boolean;
+  daemonDownReason?: string | null;
+  daemonPid?: number;
+  daemonStartedAt?: string | null;
+  daemonLastPollAt?: string | null;
+  diskPressure?: DiskPressureStatus;
   parkedBudgetRuns?: number;
   budgetCircuit?: {
     open: boolean;

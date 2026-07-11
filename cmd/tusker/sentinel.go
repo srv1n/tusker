@@ -179,6 +179,11 @@ func (d *Daemon) refreshInvariantCircuitStatus(snapshot runtimeSentinelSnapshot)
 	if err != nil {
 		return status, err
 	}
+	failures, err := d.store.ReadEventLogPersistenceFailures()
+	if err != nil {
+		return status, err
+	}
+	status = mergeEventLogPersistenceFailures(status, failures)
 	current, err := d.store.ReadInvariantCircuitStatus()
 	if err != nil {
 		return status, err
@@ -249,6 +254,57 @@ func (d *Daemon) ResumeInvariantCircuit() (invariantCircuitStatus, error) {
 	status, err := d.evaluateInvariantSentinel(snapshot)
 	if err != nil {
 		return status, err
+	}
+	failureRegistry, failureRegistryRaw, err := d.store.readEventLogPersistenceFailureRegistry()
+	if err != nil {
+		return status, err
+	}
+	if len(failureRegistry.Failures) > 0 {
+		probeErrors := d.probeEventLogPersistenceFailures(failureRegistry.Failures)
+		probeFailed := false
+		failedAt := time.Now().UTC().Format(time.RFC3339Nano)
+		for index, probeErr := range probeErrors {
+			if probeErr == nil {
+				continue
+			}
+			probeFailed = true
+			failureRegistry.Failures[index].Reason = probeErr.Error()
+			failureRegistry.Failures[index].LastFailedAt = failedAt
+		}
+		remaining := failureRegistry.Failures
+		if !probeFailed {
+			remaining = nil
+		}
+		updated, updateErr := d.store.compareAndSwapEventLogPersistenceFailureRegistry(failureRegistryRaw, remaining)
+		if updateErr != nil {
+			return status, updateErr
+		}
+		if !updated {
+			latest, readErr := d.store.ReadEventLogPersistenceFailures()
+			if readErr != nil {
+				return status, readErr
+			}
+			status = mergeEventLogPersistenceFailures(status, latest)
+			current, _ := d.store.ReadInvariantCircuitStatus()
+			if strings.TrimSpace(current.OpenedAt) != "" {
+				status.OpenedAt = current.OpenedAt
+			}
+			if err := d.store.SetInvariantCircuitStatus(status); err != nil {
+				return status, err
+			}
+			return status, tuskerError(errorInvalidTransition, "cannot resume daemon: event-log failure registry changed during recovery; retry after dispatch is quiescent", withContext(map[string]any{"reason": "event_log_persistence_failure"}))
+		}
+		if probeFailed {
+			status = mergeEventLogPersistenceFailures(status, failureRegistry.Failures)
+			current, _ := d.store.ReadInvariantCircuitStatus()
+			if strings.TrimSpace(current.OpenedAt) != "" {
+				status.OpenedAt = current.OpenedAt
+			}
+			if err := d.store.SetInvariantCircuitStatus(status); err != nil {
+				return status, err
+			}
+			return status, tuskerError(errorInvalidTransition, "cannot resume daemon: "+invariantCircuitSummary(status), withContext(map[string]any{"reason": "event_log_persistence_failure", "violations": status.Violations}))
+		}
 	}
 	if len(status.Violations) > 0 {
 		current, _ := d.store.ReadInvariantCircuitStatus()
@@ -582,6 +638,13 @@ func sentinelRunParked(run RunStatus) bool {
 }
 
 func invariantCircuitSummary(status invariantCircuitStatus) string {
+	if status.Reason == "event_log_persistence_failure" {
+		summary := strings.TrimSpace(status.Summary)
+		if summary == "" {
+			summary = status.Reason
+		}
+		return summary + "; repair event-log storage, then run `tusker daemon resume`"
+	}
 	if strings.TrimSpace(status.Summary) != "" {
 		if !status.Open && len(status.Violations) == 0 {
 			return status.Summary

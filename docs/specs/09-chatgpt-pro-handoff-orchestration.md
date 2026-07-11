@@ -185,7 +185,7 @@ automation:
   default_runner: codex_app_server
   enabled_runners: [codex_app_server, codex_exec, codex_cloud, claude-code]
   workspace:
-    root: "../.tusker-worktrees"
+    root: "workspaces"
     strategy: worktree
 ```
 

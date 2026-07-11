@@ -55,4 +55,9 @@ func TestServeRedriveRefusalGuardsCanonicalStatus(t *testing.T) {
 	if refused, _ := serveRedriveRefusal("rework", idle); refused {
 		t.Fatal("a rework task with no live process must be redrivable, not refused")
 	}
+	queued := idle
+	queued.LeaseState = string(LeaseStateRetryQueued)
+	if refused, reason := serveRedriveRefusal("ready", queued); !refused || reason == "" {
+		t.Fatalf("an already queued redrive must be refused visibly, got refused=%v reason=%q", refused, reason)
+	}
 }

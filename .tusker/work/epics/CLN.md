@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:16:22Z"
-updated_at: "2026-07-07T13:24:57Z"
-state_rev: "sha256:dbb87c3e11a124a7a19a61f81a04c3de73823e9750938d71d4cb31dede6c8e7d"
+updated_at: "2026-07-10T16:06:52Z"
+state_rev: "sha256:6edeea2d3c5591810c2b7b8b700a036ae6914e789315e764544b973259c87ddc"
 ---
 
 # CLN · One model, one vault: legacy deletion and solo ergonomics
@@ -50,6 +50,7 @@ TBD.
 | [[CLN-T-0005]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[CLN-T-0006]] | ready | agent:claude-code | Execute the task contract and satisfy proof mode. |
 | [[CLN-T-0007]] | backlog | blocked_dependency | Wait for dependency CLN-T-0006 to reach review with satisfied proof or done. |
+| [[CLN-T-0009]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 

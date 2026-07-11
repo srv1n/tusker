@@ -138,7 +138,7 @@ function Column({
 }) {
   const colSelectableIds = selectableIds(tasks);
   return (
-    <div>
+    <div className="min-w-[260px] flex-none lg:min-w-0">
       <div className="mb-3 flex items-center gap-2 px-0.5">
         <span className={cn("h-2 w-2 flex-none rounded-sm", tone[statusTone[status]].dot)} />
         <span className="text-[12.5px] font-semibold text-ink">{statusLabel[status]}</span>
@@ -191,7 +191,9 @@ export function WorkBoard({
   for (const t of tasks) byStatus.get(t.status)?.push(t);
 
   return (
-    <div className="grid animate-rise grid-cols-2 items-start gap-3 sm:grid-cols-3 xl:grid-cols-6">
+    // Below lg: horizontal-scroll kanban with fixed ~260px columns. lg+ restores
+    // the desktop grid (3 cols, then 6 at xl) unchanged.
+    <div className="flex animate-rise items-start gap-3 overflow-x-auto tk-scroll pb-2 lg:grid lg:grid-cols-3 lg:overflow-visible lg:pb-0 xl:grid-cols-6">
       {STATUS_COLUMNS.map((status) => (
         <Column
           key={status}

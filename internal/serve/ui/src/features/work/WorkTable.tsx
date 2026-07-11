@@ -33,9 +33,16 @@ import {
 import type { Selection } from "@/features/work/selection";
 import { GateMarker, SortIcon } from "@/features/work/WorkParts";
 
-/** Shared 7-track grid so header and every row column-align. */
+/**
+ * Shared column grid so header and every row column-align. Below md the table
+ * folds to three tracks (Task · Status · Updated); md+ restores the full
+ * 7-track template unchanged, so desktop renders identically.
+ */
 const GRID =
-  "grid grid-cols-[minmax(190px,1fr)_112px_88px_80px_60px_76px_92px] items-center gap-3";
+  "grid grid-cols-[minmax(0,1fr)_112px_92px] items-center gap-3 md:grid-cols-[minmax(190px,1fr)_112px_88px_80px_60px_76px_92px]";
+
+/** Column ids folded away below md (kept in the DOM, hidden via display:none). */
+const HIDE_ON_MOBILE = new Set(["priority", "risk", "gate", "epic"]);
 
 /** Fixed-width checkbox gutter kept identical across header, epic rows, and task rows. */
 const GUTTER = "flex w-6 flex-none items-center justify-center";
@@ -178,16 +185,16 @@ function TaskRow({
         <div className="flex justify-start">
           <StatusChip status={task.status} />
         </div>
-        <div className="flex justify-start">
+        <div className="hidden justify-start md:flex">
           <PriorityChip priority={task.priority} />
         </div>
-        <div className="flex justify-start">
+        <div className="hidden justify-start md:flex">
           <RiskChip risk={task.risk} />
         </div>
-        <div className="flex justify-center">
+        <div className="hidden justify-center md:flex">
           {task.hasGate ? <GateMarker /> : <span className="text-fainter">·</span>}
         </div>
-        <div className="flex min-w-0 justify-start">
+        <div className="hidden min-w-0 justify-start md:flex">
           {grouped ? null : <Mono className="truncate text-[10.5px] text-faint">{task.epicId}</Mono>}
         </div>
         <div className="flex justify-end">
@@ -288,7 +295,7 @@ export function WorkTable({
 
   return (
     <div className="tk-scroll animate-rise overflow-x-auto">
-      <div className="min-w-[864px]">
+      <div className="min-w-0 md:min-w-[864px]">
         {/* Sortable header */}
         <div className="flex items-center gap-2 border-b border-line pb-2">
           <div className={GUTTER}>
@@ -304,7 +311,14 @@ export function WorkTable({
               const id = header.column.id;
               const dir = header.column.getIsSorted();
               return (
-                <div key={header.id} className={cn("flex min-w-0 items-center", alignFor(id))}>
+                <div
+                  key={header.id}
+                  className={cn(
+                    "min-w-0 items-center",
+                    HIDE_ON_MOBILE.has(id) ? "hidden md:flex" : "flex",
+                    alignFor(id),
+                  )}
+                >
                   <button
                     type="button"
                     onClick={header.column.getToggleSortingHandler()}

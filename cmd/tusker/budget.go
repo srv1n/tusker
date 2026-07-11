@@ -9,11 +9,13 @@ import (
 )
 
 const (
-	defaultBudgetPerAttemptInputTokens  = 50_000_000
-	defaultBudgetPerAttemptOutputTokens = 500_000
-	defaultBudgetPerTaskMultiplier      = 5
-	defaultBudgetDailyInputTokens       = 10_000_000_000
-	defaultBudgetDailyOutputTokens      = 100_000_000
+	// These limits are conservative enough for unattended local operation while
+	// still allowing an agent to complete a meaningful implementation attempt.
+	defaultBudgetPerAttemptInputTokens  = 2_000_000
+	defaultBudgetPerAttemptOutputTokens = 100_000
+	defaultBudgetPerTaskMultiplier      = 3
+	defaultBudgetDailyInputTokens       = 20_000_000
+	defaultBudgetDailyOutputTokens      = 1_000_000
 
 	budgetCircuitSettingKey = "budget_circuit_status"
 )
