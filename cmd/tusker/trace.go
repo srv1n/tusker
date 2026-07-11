@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -470,18 +469,7 @@ func traceRootPath(vaultPath string) string {
 }
 
 func resolveTraceCodeSHA(repoRoot string) string {
-	repoRoot = strings.TrimSpace(repoRoot)
-	if repoRoot == "" {
-		return "unknown"
-	}
-	out, err := exec.Command("git", "-C", repoRoot, "rev-parse", "HEAD").Output()
-	if err != nil {
-		return "unknown"
-	}
-	if sha := strings.TrimSpace(string(out)); sha != "" {
-		return sha
-	}
-	return "unknown"
+	return sharedTraceGitHeadCache.resolve(repoRoot)
 }
 
 type TraceAttemptSummary struct {

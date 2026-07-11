@@ -35,6 +35,8 @@ type Daemon struct {
 	notifyTimers           map[string]*time.Timer
 	notifyWake             chan string
 	attentionLastPoll      map[string]time.Time
+	processIdentityProbe   func(RunStatus) bool
+	pollProcessIdentity    func(RunStatus) bool
 }
 
 const (
@@ -537,6 +539,8 @@ func (d *Daemon) stopNotifyTimers() {
 }
 
 func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
+	restoreProcessIdentity := d.beginPollProcessIdentityCache()
+	defer restoreProcessIdentity()
 	previousPollAt, err := d.store.GetSetting("daemon_last_poll_at")
 	if err != nil {
 		return err
@@ -1090,7 +1094,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		PreviousPollAt: previousPollAt,
 		CurrentPollAt:  currentPollAt,
 		Now:            time.Now().UTC(),
-		Liveness:       processIdentityMatches,
+		Liveness:       d.processIdentityMatchesForPoll,
 	}); err != nil {
 		return err
 	}
@@ -1588,7 +1592,7 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 	if completedReviewHandoffCanReconcile(wfFile.Data, run, trackerState) {
 		return d.reconcileRun(ctx, project, wfFile, run)
 	}
-	if activeReviewHandoffCanReconcile(wfFile.Data, run, trackerState) {
+	if d.activeReviewHandoffCanReconcile(wfFile.Data, run, trackerState) {
 		return d.reconcileRun(ctx, project, wfFile, run)
 	}
 	if strings.TrimSpace(note.AbsolutePath) == "" {
@@ -1647,14 +1651,14 @@ func waitForRunnerStatusFile(statusPath string) bool {
 	return fileExists(statusPath)
 }
 
-func activeReviewHandoffCanReconcile(wf Workflow, run RunStatus, trackerState string) bool {
+func (d *Daemon) activeReviewHandoffCanReconcile(wf Workflow, run RunStatus, trackerState string) bool {
 	if run.Lane == runLaneReview || !isDispatchingLeaseState(run.LeaseState) {
 		return false
 	}
 	if !containsString(wf.Tracker.ReviewStates, strings.TrimSpace(trackerState)) {
 		return false
 	}
-	return run.ProcessPID > 0 && processIdentityMatches(run)
+	return run.ProcessPID > 0 && d.processIdentityMatchesForPoll(run)
 }
 
 func (d *Daemon) releaseIneligibleRun(ctx context.Context, project RegisteredProject, run RunStatus, reason string) (RunStatus, bool, error) {
@@ -1945,12 +1949,12 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		return run, true, nil
 	}
 
-	if recovered, recoveredChanged := recoverWrapperLeaseIdentity(run); recoveredChanged {
+	if recovered, recoveredChanged := d.recoverWrapperLeaseIdentity(run); recoveredChanged {
 		run = recovered
 		changed = true
 	}
 
-	if run.ProcessPID > 0 && processIdentityMatches(run) {
+	if run.ProcessPID > 0 && d.processIdentityMatchesForPoll(run) {
 		if run.LeaseGeneration > 0 && strings.TrimSpace(firstNonEmpty(run.LeaseOwner, run.ActiveAttemptID)) != "" {
 			renewDispatchable := d.runLeaseRenewalDispatchable(project, wfFile.Data, run)
 			if renewed, err := d.store.RenewRunLease(RuntimeLeaseRenewal{
@@ -2091,8 +2095,8 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	return run, true, nil
 }
 
-func recoverWrapperLeaseIdentity(run RunStatus) (RunStatus, bool) {
-	wrapper, ok := wrapperLeaseIdentityFromEvents(run)
+func (d *Daemon) recoverWrapperLeaseIdentity(run RunStatus) (RunStatus, bool) {
+	wrapper, ok := d.wrapperLeaseIdentityFromEvents(run)
 	if !ok {
 		return run, false
 	}
@@ -2107,7 +2111,7 @@ func recoverWrapperLeaseIdentity(run RunStatus) (RunStatus, bool) {
 	return run, true
 }
 
-func wrapperLeaseIdentityFromEvents(run RunStatus) (RunStatus, bool) {
+func (d *Daemon) wrapperLeaseIdentityFromEvents(run RunStatus) (RunStatus, bool) {
 	path := strings.TrimSpace(run.EventSinkPath)
 	if path == "" {
 		return RunStatus{}, false
@@ -2145,7 +2149,7 @@ func wrapperLeaseIdentityFromEvents(run RunStatus) (RunStatus, bool) {
 			ProcessPGID:      intFromAny(payload["pgid"]),
 			ProcessStartedAt: processStart,
 		}
-		if !processIdentityMatches(candidate) {
+		if !d.processIdentityMatchesForPoll(candidate) {
 			continue
 		}
 		latest = candidate
@@ -2159,7 +2163,7 @@ func (d *Daemon) normalizeDeadRetryQueuedRun(ctx context.Context, project Regist
 	if LeaseState(strings.TrimSpace(run.LeaseState)) != LeaseStateRetryQueued {
 		return run, false, nil
 	}
-	if run.ProcessPID <= 0 || processIdentityMatches(run) {
+	if run.ProcessPID <= 0 || d.processIdentityMatchesForPoll(run) {
 		return run, false, nil
 	}
 	reason := fmt.Sprintf("retry_queued run pid %d is dead", run.ProcessPID)
@@ -4750,7 +4754,7 @@ func (d *Daemon) stopRunExecution(ctx context.Context, run RunStatus) (bool, err
 	if handle := liveRegistry.Find(firstNonEmpty(run.ActiveAttemptID, run.ItemID, run.RecordID)); handle != nil {
 		return true, handle.Interrupt(ctx)
 	}
-	if run.ProcessPID <= 0 || !processIdentityMatches(run) {
+	if run.ProcessPID <= 0 || !d.processIdentityMatchesForPoll(run) {
 		return false, nil
 	}
 	pgid := processSignalGroup(run)
@@ -4850,6 +4854,45 @@ func processIdentityMatches(run RunStatus) bool {
 		}
 	}
 	return true
+}
+
+func (d *Daemon) beginPollProcessIdentityCache() func() {
+	if d == nil {
+		return func() {}
+	}
+	previous := d.pollProcessIdentity
+	probe := d.processIdentityProbe
+	if probe == nil {
+		probe = processIdentityMatches
+	}
+	d.pollProcessIdentity = memoizedProcessIdentityProbe(probe)
+	return func() { d.pollProcessIdentity = previous }
+}
+
+func (d *Daemon) processIdentityMatchesForPoll(run RunStatus) bool {
+	if d != nil && d.pollProcessIdentity != nil {
+		return d.pollProcessIdentity(run)
+	}
+	if d != nil && d.processIdentityProbe != nil {
+		return d.processIdentityProbe(run)
+	}
+	return processIdentityMatches(run)
+}
+
+func memoizedProcessIdentityProbe(probe func(RunStatus) bool) func(RunStatus) bool {
+	type result struct {
+		matches bool
+	}
+	cache := map[string]result{}
+	return func(run RunStatus) bool {
+		key := fmt.Sprintf("%d\x00%d\x00%s", run.ProcessPID, run.ProcessPGID, strings.TrimSpace(run.ProcessStartedAt))
+		if cached, ok := cache[key]; ok {
+			return cached.matches
+		}
+		matches := probe(run)
+		cache[key] = result{matches: matches}
+		return matches
+	}
 }
 
 func runnerForName(name string, wf Workflow) (Runner, string, error) {
