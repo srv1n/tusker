@@ -1,3 +1,12 @@
+---
+capsule:
+  what: "Documentation-site and publication pipeline spec for legacy docs export."
+  use_when:
+    - "Work touches docs-map publication or historical site export behavior."
+  skip_when:
+    - "Changing V7 project knowledge routing."
+---
+
 # 07 - Documentation Site And Publication
 
 Tusker V5 treats docs as durable pages, not work items.

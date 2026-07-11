@@ -200,21 +200,21 @@ var statusTransitionDateFields = map[string]string{
 
 var frontmatterOrder = map[string][]string{
 	"epic": {
-		"schema", "id", "title", "type", "status", "owner", "summary", "doc_nodes",
+		"schema", "id", "title", "type", "capsule", "status", "owner", "summary", "doc_nodes",
 		"created", "updated", "started", "blocked_since", "completed", "cancelled_at", "transitions", "tags",
 	},
 	"task": {
-		"schema", "id", "title", "type", "kind", "epic", "status", "priority", "risk", "size",
+		"schema", "id", "title", "type", "kind", "capsule", "epic", "status", "priority", "risk", "size",
 		"delegation", "ai_assistance", "ai_tools", "assignee", "domains", "doc_nodes", "knowledge_nodes", "blocked_by", "block_reason", "blocks", "created", "updated", "started",
 		"review_requested_at", "completed", "cancelled_at", "blocked_since", "verified_by", "verified_at",
 		"verification_summary", "closed_by", "closed_at", "close_summary", "docs_resolution", "knowledge_resolution", "transitions", "tags",
 	},
 	"doc": {
-		"schema", "id", "title", "type", "node", "status", "epic", "doc_intent", "canon_for",
+		"schema", "id", "title", "type", "node", "capsule", "status", "epic", "doc_intent", "canon_for",
 		"audience", "mode", "agent_layer", "kind", "domains", "source_of_truth", "stale_when_paths", "canonical_status", "last_verified_at", "owner_epic", "verified_at", "deprecated", "superseded_by",
 		"publish", "publish_lane", "publish_path", "publish_description", "publish_order", "publish_section_title", "redirect_from", "publish_url", "published_at", "created", "updated", "tags",
 	},
-	"note": {"title", "type", "created", "updated", "tags"},
+	"note": {"title", "type", "capsule", "created", "updated", "tags"},
 	"proposal": {
 		"schema", "kind", "id", "project", "title", "status", "action", "target_kind", "target", "proposed_fields", "proposed_by", "source_branch", "created_at", "updated_at", "state_rev",
 	},

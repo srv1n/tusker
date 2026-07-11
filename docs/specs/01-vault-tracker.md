@@ -1,3 +1,12 @@
+---
+capsule:
+  what: "V5 vault tracker spec covering note model, indexes, and validation."
+  use_when:
+    - "Comparing legacy tracker assumptions with current V7 behavior."
+  skip_when:
+    - "Implementing current V7 task/domain schema."
+---
+
 # 01 - Vault Tracker
 
 Tusker V5 stores durable work in Markdown. Frontmatter is the machine-readable current state; body sections are the human-readable contract and proof.

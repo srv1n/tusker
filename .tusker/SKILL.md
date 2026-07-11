@@ -3,6 +3,12 @@ schema: "tusker.project-skill/v7"
 kind: "project_skill"
 name: "project-knowledge"
 project: "tusker"
+capsule:
+  skip_when:
+    - "You only need task lifecycle, proof, gates, or closeout mechanics."
+  use_when:
+    - "Choosing project/domain context before implementation."
+  what: "Repo project knowledge router for Tusker V7 domain canon."
 status: "current"
 description: "Route agents through this repository's V7 domain canon without publishing task proof or runtime state."
 operator_skill: "tusker"

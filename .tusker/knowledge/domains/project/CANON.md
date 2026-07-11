@@ -5,6 +5,12 @@ id: "project/canon"
 project: "tusker"
 domain: "project"
 title: "Project Canon"
+capsule:
+  skip_when:
+    - "You only need a task contract or runtime log."
+  use_when:
+    - "Changing dispatch states, proof policy, automation, or project knowledge rules."
+  what: "Current durable project rules for Tusker V7 lifecycle, routing, and validation."
 status: "current"
 summary: "Current durable rules for Tusker's own repository."
 source_of_truth:

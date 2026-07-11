@@ -1,3 +1,12 @@
+---
+capsule:
+  what: "V5 product-mode spec for Tusker packaging and public CLI boundaries."
+  use_when:
+    - "Inspecting historical V5 product shape or command-surface constraints."
+  skip_when:
+    - "You need current V7 lifecycle canon; read .tusker project canon."
+---
+
 # 00 - Product Modes
 
 Tusker V5 is one binary with one public workflow: a markdown-first task and docs tracker for agent-heavy software work.

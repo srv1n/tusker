@@ -1,3 +1,12 @@
+---
+capsule:
+  what: "Glossary of project/control-plane terms used by Tusker V7 canon."
+  use_when:
+    - "A Tusker project or runtime term is ambiguous."
+  skip_when:
+    - "You need lifecycle rules; read project CANON instead."
+---
+
 # Project glossary
 
 | Term | Meaning |

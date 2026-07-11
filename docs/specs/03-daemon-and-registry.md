@@ -1,3 +1,12 @@
+---
+capsule:
+  what: "V5 runtime daemon and registry spec for task execution orchestration."
+  use_when:
+    - "Researching legacy runtime registry and daemon behavior."
+  skip_when:
+    - "Changing current run leases, attempts, or V7 automation planning."
+---
+
 # 03 - Runtime And Registry
 
 Runtime orchestration is internal implementation. It executes eligible V5 tasks and records attempts, turns, sessions, events, and artifacts outside canonical markdown.

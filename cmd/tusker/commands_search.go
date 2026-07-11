@@ -59,6 +59,9 @@ func searchCmd(args Args) error {
 	for _, item := range matches {
 		fmt.Printf("%-14s  %-5s  %-8s  %-6s  %s\n", item.ID, item.Type, item.Status, item.Epic, item.Title)
 		fmt.Printf("  %s\n", item.Path)
+		if capsule := capsuleOneLine(Note{Data: map[string]any{"capsule": item.Capsule}}); capsule != "" {
+			fmt.Printf("  Capsule: %s\n", capsule)
+		}
 		if item.Snippet != "" {
 			fmt.Printf("  %s\n", item.Snippet)
 		}
@@ -117,6 +120,7 @@ func searchNotes(notes []Note, query string, filters searchFilters) []searchResu
 			Path:    note.RelativePath,
 			Capsule: v7CapsuleMap(note),
 			Snippet: compactSnippet(searchText, needle, 180),
+			Capsule: capsulePayload(note),
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {

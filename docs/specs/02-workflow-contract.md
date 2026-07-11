@@ -1,3 +1,12 @@
+---
+capsule:
+  what: "V5 workflow contract spec for task states, agents, gates, and close."
+  use_when:
+    - "Understanding legacy workflow semantics or migration history."
+  skip_when:
+    - "Changing current V7 dispatch/readiness rules."
+---
+
 # 02 - Workflow Contract
 
 `WORKFLOW.md` is the project-level policy and prompt contract. It is V5 by default and lives at the vault root.

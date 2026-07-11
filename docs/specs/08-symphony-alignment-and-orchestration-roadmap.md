@@ -1,3 +1,12 @@
+---
+capsule:
+  what: "Orchestration roadmap spec for Symphony alignment and runtime direction."
+  use_when:
+    - "Researching older orchestration goals and alignment rationale."
+  skip_when:
+    - "Implementing current V7 automation commands."
+---
+
 # 08 - Orchestration Roadmap
 
 Tusker V5 keeps Symphony-style orchestration as an internal runtime layer on top of a task-native markdown tracker.

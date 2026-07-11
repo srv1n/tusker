@@ -80,6 +80,7 @@ func validateV7Note(note Note, ctx validationContext, where string) ([]Issue, []
 	}
 	validateV7Capsule(note, ctx, where, &errors, &warnings)
 	validateV7BodyBudget(note, ctx.VaultPath, where, &errors, &warnings)
+	validateCapsule(note, ctx.VaultPath, where, capsuleRequiredForNote(note), &errors, &warnings)
 	validateV7FrontmatterSize(note, ctx, where, &warnings)
 	validateV7RecordSecrets(note, where, &errors)
 	return errors, warnings

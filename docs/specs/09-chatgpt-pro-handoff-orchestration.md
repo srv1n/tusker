@@ -1,3 +1,12 @@
+---
+capsule:
+  what: "ChatGPT Pro handoff orchestration spec for external review/apply loops."
+  use_when:
+    - "Work changes external handoff, collection, review packets, or apply inputs."
+  skip_when:
+    - "The task is local-only runner or tracker behavior."
+---
+
 # 09 - ChatGPT Pro Handoff Orchestration
 
 Date: 2026-06-04

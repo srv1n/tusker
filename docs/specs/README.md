@@ -1,3 +1,12 @@
+---
+capsule:
+  what: "Index for the historical Tusker V5 spec set."
+  use_when:
+    - "Choosing which legacy spec file to inspect."
+  skip_when:
+    - "You need current V7 repo knowledge; start with .tusker/SKILL.md."
+---
+
 # Tusker V5 Spec Set
 
 This directory is the implementation spec set for Tusker V5.

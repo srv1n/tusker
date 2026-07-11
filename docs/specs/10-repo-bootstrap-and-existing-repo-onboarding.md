@@ -1,3 +1,12 @@
+---
+capsule:
+  what: "Repo bootstrap and existing-repo onboarding spec for Tusker installs."
+  use_when:
+    - "Work changes init/update/install or repo onboarding behavior."
+  skip_when:
+    - "The task only changes runtime dispatch or proof validation."
+---
+
 # 10 - Repo Bootstrap and Existing-Repo Onboarding
 
 Date: 2026-06-05

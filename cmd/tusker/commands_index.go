@@ -949,6 +949,9 @@ func validateCmd(args Args) (int, error) {
 	docsErrs, docsWarns := validateDocsPublicationState(vaultPath, notes)
 	errs = append(errs, docsErrs...)
 	warns = append(warns, docsWarns...)
+	specErrs, specWarns := validateSpecCapsules(vaultPath)
+	errs = append(errs, specErrs...)
+	warns = append(warns, specWarns...)
 	if hasV7ProjectSkill(vaultPath) && hasV7KnowledgeDomains(vaultPath) {
 		errs, warns = fenceLegacyV6DocsImpactForV7(errs, warns)
 	}
@@ -1022,6 +1025,45 @@ func fenceLegacyV6DocsImpactForV7(errs, warns []Issue) ([]Issue, []Issue) {
 		remaining = append(remaining, current)
 	}
 	return remaining, warns
+}
+
+func validateSpecCapsules(vaultPath string) ([]Issue, []Issue) {
+	repoRoot := filepath.Dir(vaultPath)
+	specsDir := filepath.Join(repoRoot, "docs", "specs")
+	entries, err := os.ReadDir(specsDir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return []Issue{issue(errorInvalidField, "could not read specs for capsule validation: "+err.Error(), filepath.ToSlash(filepath.Join("docs", "specs")), "", nil)}, nil
+	}
+	var errors, warnings []Issue
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		path := filepath.Join(specsDir, entry.Name())
+		rel, relErr := filepath.Rel(repoRoot, path)
+		if relErr != nil {
+			rel = path
+		}
+		rel = filepath.ToSlash(rel)
+		if !capsuleRequiredForSpecPath(rel) {
+			continue
+		}
+		raw, err := readText(path)
+		if err != nil {
+			errors = append(errors, issue(errorInvalidField, "could not read spec for capsule validation: "+err.Error(), rel, "", nil))
+			continue
+		}
+		data, body, err := parseFrontmatter(raw)
+		if err != nil {
+			errors = append(errors, issue(errorInvalidField, "could not parse spec frontmatter: "+err.Error(), rel, "", nil))
+			continue
+		}
+		validateCapsule(Note{AbsolutePath: path, RelativePath: rel, Data: data, Body: body}, vaultPath, rel, true, &errors, &warnings)
+	}
+	return errors, warnings
 }
 
 type listRecord struct {
@@ -1194,6 +1236,7 @@ func listCmd(args Args) error {
 				"path":     note.RelativePath,
 				"updated":  stringField(note.Data, "updated"),
 				"project":  row.Project,
+				"capsule":  capsulePayload(note),
 			}
 			if row.ActiveLease != nil {
 				item["running"] = true

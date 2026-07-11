@@ -1,3 +1,12 @@
+---
+capsule:
+  what: "V5 review, rework, retry, verification, and close semantics spec."
+  use_when:
+    - "Comparing legacy close/retry behavior with V7 proof rules."
+  skip_when:
+    - "You need current closeout or reviewer policy."
+---
+
 # 06 - Verification, Rework, And Close
 
 V5 uses a simple lifecycle:

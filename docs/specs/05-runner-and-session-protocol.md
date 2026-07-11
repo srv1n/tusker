@@ -1,3 +1,12 @@
+---
+capsule:
+  what: "Runner/session protocol spec for attempts, turns, and runtime events."
+  use_when:
+    - "Work changes runner adapters, sessions, turns, or event recording."
+  skip_when:
+    - "You only need task contract validation."
+---
+
 # 05. Runner And Session Protocol
 
 Status: Draft

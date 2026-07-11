@@ -273,6 +273,13 @@ func v7DomainPayload(notes []Note) []map[string]any {
 }
 
 func v7DomainCapsule(note Note) string {
+	if capsule := strings.TrimSpace(renderFrontmatterCapsule(note)); capsule != "" {
+		return fmt.Sprintf(`%s  domain  %s
+
+%s
+Path: %s
+`, stringField(note.Data, "id"), stringField(note.Data, "title"), capsule, note.RelativePath)
+	}
 	return fmt.Sprintf(`%s  domain  %s
 
 Status: %s
@@ -613,8 +620,12 @@ func writeV7ProjectSkill(vaultPath, path string) error {
 	body := renderV7ProjectSkillBody(domains)
 	now := time.Now().UTC().Format(time.RFC3339)
 	createdAt := now
+	capsule := any(capsuleScaffold())
 	if existing, _, err := parseFrontmatterMustRead(path); err == nil && stringField(existing, "schema") == "tusker.project-skill/v7" {
 		createdAt = fallback(stringField(existing, "created_at"), now)
+		if existingCapsule, ok := existing["capsule"]; ok {
+			capsule = existingCapsule
+		}
 	}
 	data := map[string]any{
 		"schema":      "tusker.project-skill/v7",

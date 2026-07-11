@@ -1,3 +1,12 @@
+---
+capsule:
+  what: "Workspace manager spec for isolated task checkouts and cleanup."
+  use_when:
+    - "Work touches workspace creation, reuse, or removal behavior."
+  skip_when:
+    - "The task only changes tracker frontmatter or proof policy."
+---
+
 # Spec 04: Workspace Manager
 
 ## Purpose

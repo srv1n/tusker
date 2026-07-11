@@ -4,6 +4,12 @@ kind: "domain"
 id: "project"
 project: "tusker"
 title: "Project"
+capsule:
+  skip_when:
+    - "A task packet names a narrower implementation file."
+  use_when:
+    - "Work touches V7 workflow, automation, proof, skills, or validation policy."
+  what: "Project domain index routing agents to repository-wide Tusker V7 canon."
 status: "current"
 summary: "Repository-wide Tusker V7 canon, orchestration, skills, and validation policy."
 source_of_truth:

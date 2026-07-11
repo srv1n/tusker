@@ -2595,6 +2595,12 @@ func v7ProjectSkillRouting(vaultPath string, task Note) string {
 	skillPath := vaultDisplayPath(vaultPath, "SKILL.md")
 	if fileExists(filepath.Join(vaultPath, "SKILL.md")) {
 		lines = append(lines, "- Load the repo project knowledge skill at `"+skillPath+"`.")
+		if data, body, err := parseFrontmatterMustRead(filepath.Join(vaultPath, "SKILL.md")); err == nil {
+			note := Note{AbsolutePath: filepath.Join(vaultPath, "SKILL.md"), RelativePath: "SKILL.md", Data: data, Body: body}
+			if capsule := capsuleOneLine(note); capsule != "" {
+				lines = append(lines, "- Project skill capsule: "+capsule)
+			}
+		}
 	} else if fileExists(filepath.Join(vaultPath, "README.md")) {
 		lines = append(lines, "- `"+skillPath+"` is missing; use `"+vaultDisplayPath(vaultPath, "README.md")+"` plus this packet until the project skill is installed.")
 	} else {
@@ -2618,6 +2624,16 @@ func v7ProjectSkillRouting(vaultPath string, task Note) string {
 		canonPath := filepath.Join(vaultPath, "knowledge", "domains", domain, "CANON.md")
 		if fileExists(indexPath) && fileExists(canonPath) {
 			lines = append(lines, fmt.Sprintf("- `%s`: read `knowledge/domains/%s/INDEX.md`, then `knowledge/domains/%s/CANON.md`.", domain, domain, domain))
+			if index, indexErr := readV7DomainIndex(vaultPath, domain); indexErr == nil {
+				if capsule := capsuleOneLine(index); capsule != "" {
+					lines = append(lines, fmt.Sprintf("- `%s` INDEX capsule: %s", domain, capsule))
+				}
+			}
+			if canon, canonErr := readV7DomainCanon(vaultPath, domain); canonErr == nil {
+				if capsule := capsuleOneLine(canon); capsule != "" {
+					lines = append(lines, fmt.Sprintf("- `%s` CANON capsule: %s", domain, capsule))
+				}
+			}
 			continue
 		}
 		lines = append(lines, fmt.Sprintf("- `%s`: domain route is missing; use the task contract and packet warning instead of reading dead knowledge links.", domain))
@@ -2662,6 +2678,7 @@ func v7DomainContext(vaultPath string, task Note) string {
 			domain,
 			stringField(index.Data, "title"),
 			stringField(index.Data, "summary"),
+			capsules,
 			v7PacketSnippet(sectionContent(index.Body, "## Read This When"), 8),
 		)
 		if prohibitions := renderV7DomainCanonProhibitions(canon.Body); prohibitions != "" {
