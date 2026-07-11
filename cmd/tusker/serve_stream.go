@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,19 +33,28 @@ type serveStreamBroker struct {
 	mu                sync.Mutex
 	nextID            int
 	nextEventID       int64
-	clients           map[int]chan serveStreamEvent
+	clients           map[int]serveStreamClient
 	closed            bool
 	heartbeatInterval time.Duration
 }
 
+type serveStreamClient struct {
+	events  chan serveStreamEvent
+	project string
+}
+
 func newServeStreamBroker() *serveStreamBroker {
 	return &serveStreamBroker{
-		clients:           map[int]chan serveStreamEvent{},
+		clients:           map[int]serveStreamClient{},
 		heartbeatInterval: serveStreamHeartbeatInterval,
 	}
 }
 
 func (b *serveStreamBroker) Subscribe() (<-chan serveStreamEvent, func(), bool) {
+	return b.SubscribeProject("")
+}
+
+func (b *serveStreamBroker) SubscribeProject(projectID string) (<-chan serveStreamEvent, func(), bool) {
 	if b == nil {
 		return nil, func() {}, false
 	}
@@ -56,7 +66,7 @@ func (b *serveStreamBroker) Subscribe() (<-chan serveStreamEvent, func(), bool) 
 	b.nextID++
 	id := b.nextID
 	ch := make(chan serveStreamEvent, serveStreamClientBuffer)
-	b.clients[id] = ch
+	b.clients[id] = serveStreamClient{events: ch, project: strings.TrimSpace(projectID)}
 	return ch, func() { b.remove(id) }, true
 }
 
@@ -79,11 +89,14 @@ func (b *serveStreamBroker) Broadcast(event serveStreamEvent) {
 	if strings.TrimSpace(event.OccurredAt) == "" {
 		event.OccurredAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	for id, ch := range b.clients {
+	for id, client := range b.clients {
+		if client.project != "" && event.Project != "" && client.project != event.Project {
+			continue
+		}
 		select {
-		case ch <- event:
+		case client.events <- event:
 		default:
-			close(ch)
+			close(client.events)
 			delete(b.clients, id)
 		}
 	}
@@ -99,8 +112,8 @@ func (b *serveStreamBroker) Close() {
 		return
 	}
 	b.closed = true
-	for id, ch := range b.clients {
-		close(ch)
+	for id, client := range b.clients {
+		close(client.events)
 		delete(b.clients, id)
 	}
 }
@@ -108,12 +121,32 @@ func (b *serveStreamBroker) Close() {
 func (b *serveStreamBroker) remove(id int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	ch, ok := b.clients[id]
+	client, ok := b.clients[id]
 	if !ok {
 		return
 	}
-	close(ch)
+	close(client.events)
 	delete(b.clients, id)
+}
+
+func (b *serveStreamBroker) attendedProjects() []string {
+	if b == nil {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	seen := map[string]struct{}{}
+	for _, client := range b.clients {
+		if client.project != "" {
+			seen[client.project] = struct{}{}
+		}
+	}
+	projects := make([]string, 0, len(seen))
+	for projectID := range seen {
+		projects = append(projects, projectID)
+	}
+	sort.Strings(projects)
+	return projects
 }
 
 func (b *serveStreamBroker) clientCount() int {
@@ -147,7 +180,7 @@ func (s *serveServer) handleStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	ch, unsubscribe, ok := s.stream.Subscribe()
+	ch, unsubscribe, ok := s.stream.SubscribeProject(r.URL.Query().Get("project"))
 	if !ok {
 		http.Error(w, "stream closed", http.StatusServiceUnavailable)
 		return

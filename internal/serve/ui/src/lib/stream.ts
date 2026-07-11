@@ -168,6 +168,17 @@ export function connectLiveStream(
   };
 }
 
+export function connectProjectAttention(
+  projectId: string,
+  options: { enabled?: boolean; EventSourceImpl?: EventSourceCtor } = {},
+): () => void {
+  if (options.enabled === false || projectId.trim() === "") return () => {};
+  const EventSourceImpl = options.EventSourceImpl ?? globalThis.EventSource;
+  if (!EventSourceImpl) return () => {};
+  const source = new EventSourceImpl(`/api/stream?project=${encodeURIComponent(projectId)}`);
+  return () => source.close();
+}
+
 export function formatStreamAge(at: number | null, now = Date.now()): string {
   if (at === null) return "no events yet";
   const seconds = Math.max(0, Math.floor((now - at) / 1000));

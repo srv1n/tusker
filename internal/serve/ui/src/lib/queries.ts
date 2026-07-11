@@ -65,6 +65,11 @@ export const useProjectAutomation = (projectId: string) => {
   });
 };
 
+export const useProjectRefresh = (projectId: string) =>
+  useMutation({
+    mutationFn: () => api.refreshProject(projectId),
+  });
+
 export const useNeeds = (projectId?: string) =>
   useQuery({
     queryKey: qk.needs(projectId),

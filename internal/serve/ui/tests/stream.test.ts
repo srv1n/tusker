@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   LIVE_STREAM_FALLBACK_MS,
   connectLiveStream,
+  connectProjectAttention,
   getStreamStatus,
   invalidateStreamEvent,
   liveRefetchInterval,
@@ -136,4 +137,14 @@ test("stream connection debounces and deduplicates burst invalidations", async (
   expect(invalidations.filter((entry) => JSON.stringify(entry) === JSON.stringify({ queryKey: ["tasks", "app"], exact: false }))).toHaveLength(1);
   expect(invalidations.filter((entry) => JSON.stringify(entry) === JSON.stringify({ queryKey: ["needs", "app"], exact: false }))).toHaveLength(1);
   disconnect();
+});
+
+test("project attention scopes SSE lifetime to the active project", () => {
+  FakeEventSource.instances = [];
+  const disconnect = connectProjectAttention("alpha beta", { EventSourceImpl: FakeEventSource });
+  const source = FakeEventSource.instances[0];
+  expect(source.url).toBe("/api/stream?project=alpha%20beta");
+  expect(source.closed).toBe(false);
+  disconnect();
+  expect(source.closed).toBe(true);
 });

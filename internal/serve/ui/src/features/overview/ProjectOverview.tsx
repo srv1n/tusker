@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowRight, Diamond, Flag, Settings } from "lucide-react";
+import { ArrowRight, Diamond, Flag, RefreshCw, Settings } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { compactNumber, sinceLabel } from "@/lib/time";
 import {
@@ -8,6 +8,7 @@ import {
   useEpics,
   useNeeds,
   useProjects,
+  useProjectRefresh,
   useRuns,
   useTasks,
 } from "@/lib/queries";
@@ -132,6 +133,7 @@ function OverviewContent({ project, projectId }: { project: ProjectSummary; proj
   const epicsQ = useEpics(projectId);
   const tasksQ = useTasks(projectId);
   const daemonQ = useDaemon();
+	const refresh = useProjectRefresh(projectId);
 
   const daemon = daemonQ.data;
 
@@ -179,6 +181,14 @@ function OverviewContent({ project, projectId }: { project: ProjectSummary; proj
           </h1>
         </div>
         <div className="flex flex-none items-center gap-2.5">
+			<Button
+				variant="default"
+				disabled={refresh.isPending}
+				onClick={() => refresh.mutate()}
+			>
+				<RefreshCw size={14} strokeWidth={1.75} className={refresh.isPending ? "animate-spin" : undefined} />
+				{refresh.isPending ? "Refreshing…" : "Refresh now"}
+			</Button>
           <Button
             variant="default"
             onClick={() => navigate({ to: "/p/$projectId/settings", params: { projectId } })}

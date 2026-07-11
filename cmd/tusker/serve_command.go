@@ -230,6 +230,10 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 			serveJSON(w, http.StatusForbidden, serveActionResult{OK: false, Refused: true, Reason: reason})
 			return
 		}
+		if projectID, ok := serveProjectRefreshID(path); ok {
+			s.handleProjectRefresh(w, projectID)
+			return
+		}
 		if taskID, ok := serveRunInterruptTaskID(path); ok {
 			s.handleRunInterrupt(w, r, taskID)
 			return

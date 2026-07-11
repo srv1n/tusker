@@ -116,6 +116,11 @@ export const api = {
       ? delay({ ok: true, reason: `Daemon automation ${enabled ? "enabled" : "disabled"}`, projectId })
       : post(`/projects/${projectId}/automation`, { enabled }),
 
+  refreshProject: (projectId: string): Promise<ActionResult> =>
+    USE_MOCK
+      ? delay({ ok: true, reason: "Targeted project refresh queued (mock).", projectId })
+      : post(`/projects/${projectId}/refresh`),
+
   // GET /api/needs  (DERIVED, ranked) — optional ?project=
   // Computed from the board via the closed five-signal rule (deriveNeeds); never
   // a stored or hand-flagged list. This derivation should move server-side once

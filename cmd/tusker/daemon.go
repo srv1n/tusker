@@ -34,6 +34,7 @@ type Daemon struct {
 	notifyMu               sync.Mutex
 	notifyTimers           map[string]*time.Timer
 	notifyWake             chan string
+	attentionLastPoll      map[string]time.Time
 }
 
 const (
@@ -46,6 +47,8 @@ const (
 	tuskerSignsWarnLineLimit     = 60
 	daemonPollIntervalEnv        = "TUSKER_POLL_INTERVAL_MS"
 	minimumReconcileTick         = 5 * time.Second
+	attentionProjectPollCadence  = 20 * time.Second
+	attentionProjectCheckCadence = time.Second
 )
 
 var (
@@ -137,6 +140,13 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 	}
 	pollTimer := time.NewTimer(d.nextPollInterval())
 	defer pollTimer.Stop()
+	var attentionC <-chan time.Time
+	var attentionTicker *time.Ticker
+	if d.stream != nil {
+		attentionTicker = time.NewTicker(attentionProjectCheckCadence)
+		attentionC = attentionTicker.C
+		defer attentionTicker.Stop()
+	}
 	for {
 		select {
 		case <-runCtx.Done():
@@ -150,8 +160,39 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 				return err
 			}
 			pollTimer.Reset(d.nextPollInterval())
+		case now := <-attentionC:
+			for _, attendedProjectID := range d.attentionProjectsDue(now) {
+				if err := d.runPoll(runCtx, attendedProjectID); err != nil {
+					return err
+				}
+				d.attentionLastPoll[attendedProjectID] = now
+			}
 		}
 	}
+}
+
+func (d *Daemon) attentionProjectsDue(now time.Time) []string {
+	if d == nil || d.stream == nil {
+		return nil
+	}
+	if d.attentionLastPoll == nil {
+		d.attentionLastPoll = map[string]time.Time{}
+	}
+	attended := d.stream.attendedProjects()
+	active := makeSet(attended...)
+	for projectID := range d.attentionLastPoll {
+		if _, ok := active[projectID]; !ok {
+			delete(d.attentionLastPoll, projectID)
+		}
+	}
+	due := make([]string, 0, len(attended))
+	for _, projectID := range attended {
+		last := d.attentionLastPoll[projectID]
+		if last.IsZero() || now.Sub(last) >= attentionProjectPollCadence {
+			due = append(due, projectID)
+		}
+	}
+	return due
 }
 
 func (d *Daemon) runPoll(ctx context.Context, projectID string) error {

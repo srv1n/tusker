@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { Link, Outlet, useLocation } from "@tanstack/react-router";
+import { Link, Outlet, useLocation, useParams } from "@tanstack/react-router";
 import { AlertTriangle, Menu } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { CountBadge } from "@/components/ui/primitives";
 import { useDaemon, useNeeds } from "@/lib/queries";
+import { connectProjectAttention } from "@/lib/stream";
+import { USE_MOCK } from "@/lib/api";
 
 let shellMode = typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).get("shell") === "1";
@@ -44,7 +46,12 @@ export function RootLayout() {
 
 /** Pass-through layout for project-scoped routes. */
 export function ProjectLayout() {
-  return <Outlet />;
+	const projectId = useParams({ strict: false }).projectId as string | undefined;
+	useEffect(() => {
+		if (!projectId) return;
+		return connectProjectAttention(projectId, { enabled: !USE_MOCK });
+	}, [projectId]);
+	return <Outlet />;
 }
 
 /** <lg only: hamburger + brand, with a needs-me shortcut when items are waiting. */
