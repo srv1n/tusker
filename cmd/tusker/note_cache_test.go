@@ -94,6 +94,45 @@ func TestNoteCacheIdlePollDoesNotReadOrParseNotes(t *testing.T) {
 	}
 }
 
+func TestDaemonFrontmatterPollPromotesTaskContractsToWarmBodyCache(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Body-backed proof", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	project := registerAutomationTestProject(t, vault)
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	if err := daemon.store.SetInvariantCircuitStatus(invariantCircuitStatus{Open: true, Reason: invariantViolationReason, OpenedAt: "2026-07-11T12:00:00Z", Summary: "test body-cache circuit"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+	if strings.Contains(run.LastError, "acceptance missing proof mapping") || strings.Contains(run.LastError, "verification missing") {
+		t.Fatalf("frontmatter-only poll lost task contract body: %#v", run)
+	}
+
+	var reads, parses atomic.Int64
+	noteCacheReadObserver = func() { reads.Add(1) }
+	noteCacheParseObserver = func() { parses.Add(1) }
+	t.Cleanup(func() {
+		noteCacheReadObserver = nil
+		noteCacheParseObserver = nil
+	})
+	if err := daemon.store.SetInvariantCircuitStatus(invariantCircuitStatus{Open: true, Reason: invariantViolationReason, OpenedAt: "2026-07-11T12:00:00Z", Summary: "test body-cache circuit"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if reads.Load() != 0 || parses.Load() != 0 {
+		t.Fatalf("warm body-backed poll reads=%d parses=%d, want zero", reads.Load(), parses.Load())
+	}
+}
+
 func TestNoteCacheInvalidatesChangedAndDeletedNotes(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	first := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")

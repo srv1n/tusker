@@ -565,6 +565,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		if !loaded.Loadable() {
 			continue
 		}
+		bodiesLoaded := false
 		for _, run := range runsByProject[loaded.Project.ProjectID] {
 			requiresBodies := externalLoopRunnerRequiresCollect(loaded.Workflow.Data, run.Runner)
 			if !requiresBodies {
@@ -582,8 +583,20 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				return err
 			}
 			loaded.Notes = notes
+			bodiesLoaded = true
 			break
 		}
+		if bodiesLoaded || !daemonProjectNeedsTaskBodies(loaded.Notes) {
+			continue
+		}
+		// Dispatch proof, gates, and dependency checks read task contract bodies.
+		// Promote only projects with live task work to the shared full-body cache;
+		// subsequent ticks remain zero-read warm hits.
+		notes, err := listAllNotes(loaded.Project.VaultRoot)
+		if err != nil {
+			return err
+		}
+		loaded.Notes = notes
 	}
 	globalActiveRuns := countDispatchCapacityRuns(allRuns)
 	globalLimit, err := d.globalActiveRunLimit()
@@ -1085,6 +1098,18 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		d.serve.refreshProjectSnapshot(projectID)
 	}
 	return nil
+}
+
+func daemonProjectNeedsTaskBodies(notes []Note) bool {
+	for _, note := range notes {
+		if daemonNoteKind(note) != "task" {
+			continue
+		}
+		if !v7TerminalTaskStatus(stringField(note.Data, "status")) {
+			return true
+		}
+	}
+	return false
 }
 
 func projectActiveRunLimit(wf Workflow) int {
