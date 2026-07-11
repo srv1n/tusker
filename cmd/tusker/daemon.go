@@ -40,6 +40,8 @@ const (
 	daemonHeartbeatDeadThreshold = 120 * time.Second
 	cleanExitContinuationReason  = "runner exited cleanly while tracker state remained active; queued continuation retry"
 	tuskerSignsWarnLineLimit     = 60
+	daemonPollIntervalEnv        = "TUSKER_POLL_INTERVAL_MS"
+	minimumReconcileTick         = 5 * time.Second
 )
 
 var (
@@ -201,30 +203,27 @@ func (d *Daemon) watchdogStale(now time.Time, tick time.Duration) (bool, string,
 }
 
 func (d *Daemon) nextPollInterval() time.Duration {
-	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{})
-	if err != nil || len(projects) == 0 {
-		return 30 * time.Second
+	// Reconciliation is a daemon-wide safety net, not a per-project
+	// responsiveness control. Reading every workflow here made one old 5s
+	// project force fast full scans and made the watchdog reload registrations
+	// every five seconds. Targeted notifications handle responsiveness instead.
+	return configuredReconcileInterval(os.Getenv(daemonPollIntervalEnv))
+}
+
+func configuredReconcileInterval(raw string) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultReconcileTick
 	}
-	minInterval := 30 * time.Second
-	found := false
-	for _, project := range projects {
-		if !project.Loadable() {
-			continue
-		}
-		ms := project.Workflow.Data.Runtime.PollIntervalMS
-		if ms <= 0 {
-			continue
-		}
-		dur := time.Duration(ms) * time.Millisecond
-		if !found || dur < minInterval {
-			minInterval = dur
-			found = true
-		}
+	milliseconds, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || milliseconds <= 0 || milliseconds > int64((1<<63-1)/int64(time.Millisecond)) {
+		return defaultReconcileTick
 	}
-	if !found {
-		return 30 * time.Second
+	interval := time.Duration(milliseconds) * time.Millisecond
+	if interval < minimumReconcileTick {
+		return minimumReconcileTick
 	}
-	return minInterval
+	return interval
 }
 
 func (d *Daemon) InterruptRun(ctx context.Context, identity string) error {

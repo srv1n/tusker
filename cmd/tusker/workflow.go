@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -145,7 +146,7 @@ func defaultWorkflow() Workflow {
 	wf.Agents.Enabled = []string{string(RunnerCodexExec), string(RunnerClaude)}
 	wf.Agents.MaxConcurrentAgents = 2
 	wf.Agents.MaxConcurrentAgentsByState = map[string]int{"rework": 1}
-	wf.Runtime.PollIntervalMS = 5000
+	wf.Runtime.PollIntervalMS = int(defaultReconcileTick / time.Millisecond)
 	wf.Runtime.LeaseTTLMS = 900000
 	wf.Runtime.MaxActiveRunsPerProject = 1
 	wf.Runtime.MaxContinuationRetries = 3

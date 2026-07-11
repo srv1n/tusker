@@ -289,7 +289,7 @@ var (
 const (
 	defaultRunHeartbeatInterval = 15 * time.Second
 	defaultRunLeaseTTL          = 60 * time.Second
-	defaultReconcileTick        = 30 * time.Second
+	defaultReconcileTick        = 60 * time.Second
 )
 
 func runtimeStoreDBPath(stateRoot string) string {
