@@ -19,6 +19,17 @@ import (
 const validationLockHeldEnv = "TUSKER_VALIDATION_LOCK_HELD"
 
 func TestMain(m *testing.M) {
+	stateRoot, err := os.MkdirTemp("", "tusker-test-state-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cmd/tusker test suite: create isolated state root: %v\n", err)
+		os.Exit(1)
+	}
+	defer os.RemoveAll(stateRoot)
+	if err := os.Setenv("TUSKER_STATE_ROOT", stateRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "cmd/tusker test suite: isolate state root: %v\n", err)
+		os.Exit(1)
+	}
+
 	cleanupNotifications, err := installEscalationTestNotifications()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cmd/tusker test suite: configure escalation notifications: %v\n", err)

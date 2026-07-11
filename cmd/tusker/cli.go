@@ -631,6 +631,8 @@ func run(command string, args Args) (int, error) {
 	case "projects remove":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, projectsRemoveCmd(args)
+	case "projects prune":
+		return 0, projectsPruneCmd(args)
 	case "projects":
 		printProjectsHelp()
 		return 0, nil
@@ -767,7 +769,7 @@ func run(command string, args Args) (int, error) {
 	case "help config", "help config resolve":
 		printConfigHelp()
 		return 0, nil
-	case "help projects", "help projects add", "help projects list", "help projects limits", "help projects enable", "help projects disable", "help projects remove":
+	case "help projects", "help projects add", "help projects list", "help projects limits", "help projects enable", "help projects disable", "help projects remove", "help projects prune":
 		printProjectsHelp()
 		return 0, nil
 	case "help runs", "help runs inspect", "help runs logs", "help runs events", "help runs interrupt", "help runs release", "help runs retire", "help runs redrive", "help redrive":
@@ -966,7 +968,7 @@ func printCommandHelp(command string) bool {
 		printConfigHelp()
 	case "automation", "automation status", "automation queue", "automation explain", "automation plan", "automation dispatch", "automation collect-external", "automation external-loop", "automation advance-external":
 		printAutomationHelp()
-	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects remove":
+	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects remove", "projects prune":
 		printProjectsHelp()
 	case "runs", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs release", "runs retire", "runs redrive", "redrive":
 		printRunsHelp()
@@ -1181,6 +1183,7 @@ func printProjectsHelp() {
   tusker projects enable [--id <project-id>|--repo <path>|--vault <path>] [--json]
   tusker projects disable [--id <project-id>|--repo <path>|--vault <path>] [--json]
   tusker projects remove <project-id> [--json]
+  tusker projects prune [--dry-run] [--json]
 
 Purpose:
   Register repo-local Tusker vaults for daemon pickup. Obsidian remains the
@@ -1190,13 +1193,16 @@ Purpose:
 Behavior:
   - project WORKFLOW.md, tasks, knowledge, and source remain repo-local
   - shared daemon state, logs, limits, and runtime metadata live outside repos
+  - prune removes registrations whose tracker roots no longer exist and their
+    matching dangling Obsidian-vault symlinks
   - on macOS, projects under Desktop, Documents, Downloads, or iCloud Drive
     receive a launchd access warning during add/enable
 
 Examples:
   tusker projects add --repo . --vault ./.tusker
   tusker projects list
-  tusker projects disable --repo .`)
+  tusker projects disable --repo .
+  tusker projects prune --dry-run`)
 }
 
 func printConfigHelp() {

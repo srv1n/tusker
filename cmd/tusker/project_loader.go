@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"strings"
 )
 
@@ -37,6 +39,15 @@ func loadRegisteredProjects(store *RuntimeStore, opts registeredProjectLoadOptio
 		}
 		loaded := loadedRegisteredProject{Project: project}
 		if (!project.Enabled && !opts.LoadDisabled) || opts.MetadataOnly {
+			out = append(out, loaded)
+			continue
+		}
+		if err := requireRegisteredProjectTrackerRoot(project); err != nil {
+			loaded.Project, err = quarantineRegisteredProjectLoadError(store, project, err)
+			if err != nil {
+				return nil, err
+			}
+			loaded.LoadError = loaded.Project.LastErrorAsError()
 			out = append(out, loaded)
 			continue
 		}
@@ -110,6 +121,9 @@ func quarantineRegisteredProjectLoadError(store *RuntimeStore, project Registere
 	if loadErr == nil {
 		return project, nil
 	}
+	if !registeredProjectLoadErrorNeedsQuarantineWrite(project, loadErr) {
+		return project, nil
+	}
 	project.Health = projectHealthError
 	project.LastError = loadErr.Error()
 	if store == nil {
@@ -119,6 +133,30 @@ func quarantineRegisteredProjectLoadError(store *RuntimeStore, project Registere
 		return project, err
 	}
 	return project, nil
+}
+
+// requireRegisteredProjectTrackerRoot keeps a missing registration from
+// falling through to workflow/note loading on every daemon sweep. A root that
+// cannot be statted for another reason is deliberately not treated as dead.
+func requireRegisteredProjectTrackerRoot(project RegisteredProject) error {
+	root := strings.TrimSpace(project.VaultRoot)
+	if root == "" {
+		return tuskerError(errorConfigInvalid, "registered project tracker root is empty", withContext(map[string]any{"project_id": project.ProjectID}))
+	}
+	if _, err := os.Stat(root); err == nil {
+		return nil
+	} else if os.IsNotExist(err) {
+		return tuskerError(errorNotFound, "registered project tracker root is missing: "+root, withPath(root), withContext(map[string]any{"project_id": project.ProjectID, "vault_root": root}))
+	} else {
+		return fmt.Errorf("stat registered project tracker root %s: %w", root, err)
+	}
+}
+
+func registeredProjectLoadErrorNeedsQuarantineWrite(project RegisteredProject, loadErr error) bool {
+	if loadErr == nil {
+		return false
+	}
+	return project.Health != projectHealthError || project.LastError != loadErr.Error()
 }
 
 func loadedRegisteredProjects(loaded []loadedRegisteredProject) []RegisteredProject {

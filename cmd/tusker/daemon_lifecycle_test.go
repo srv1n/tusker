@@ -205,6 +205,7 @@ func TestSharedProjectLoaderAllEntryPoints(t *testing.T) {
 
 	allowedRawListProjects := map[string]bool{
 		"project_loader.go": true,
+		"project_prune.go":  true,
 		"runtime_store.go":  true,
 	}
 	if err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, err error) error {
