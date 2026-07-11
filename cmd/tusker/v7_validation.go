@@ -60,9 +60,9 @@ func validateV7Note(note Note, ctx validationContext, where string) ([]Issue, []
 	case "attempt":
 		validateV7Attempt(note, where, &errors, &warnings)
 	case "decision":
-		validateV7Decision(note, where, &errors, &warnings)
+		validateV7Decision(note, ctx, where, &errors, &warnings)
 	case "epic":
-		validateV7Epic(note, where, &errors, &warnings)
+		validateV7Epic(note, ctx, where, &errors, &warnings)
 	case "proposal":
 		validateV7Proposal(note, ctx, where, &errors, &warnings)
 	case "closeout":
@@ -978,7 +978,7 @@ func validateV7Attempt(note Note, where string, errors, warnings *[]Issue) {
 	}
 }
 
-func validateV7Decision(note Note, where string, errors, warnings *[]Issue) {
+func validateV7Decision(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
 	data := note.Data
 	id := stringField(data, "id")
 	for _, field := range []string{"schema", "kind", "id", "project", "epic", "title", "status"} {
@@ -1004,9 +1004,10 @@ func validateV7Decision(note Note, where string, errors, warnings *[]Issue) {
 	if stringField(data, "status") == "accepted" && (stringField(data, "decided_by") == "" || stringField(data, "decided_at") == "") {
 		*errors = append(*errors, issue("DECISION_ACCEPTED_METADATA_MISSING", "accepted decision requires decided_by and decided_at", where, "", nil))
 	}
+	validateV7WorkStreams(note, ctx, where, warnings)
 }
 
-func validateV7Epic(note Note, where string, errors, warnings *[]Issue) {
+func validateV7Epic(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
 	data := note.Data
 	id := stringField(data, "id")
 	for _, field := range []string{"schema", "kind", "id", "project", "title", "status", "owner", "priority", "created_at", "updated_at", "state_rev"} {
@@ -1026,6 +1027,7 @@ func validateV7Epic(note Note, where string, errors, warnings *[]Issue) {
 	if id != "" && !strings.HasSuffix(filepath.ToSlash(where), "work/epics/"+id+".md") {
 		*errors = append(*errors, issue(errorPathMismatch, "V7 epic path must be .tusker/work/epics/"+id+".md", where, "", nil))
 	}
+	validateV7SpecRefs(note, ctx, where, warnings)
 }
 
 func validateV7Proposal(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {

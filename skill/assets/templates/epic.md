@@ -12,6 +12,7 @@ capsule:
   skip_when: ""
 primary_domains: []
 knowledge_nodes: []
+spec_refs: []
 created_at: "{{date}}"
 updated_at: "{{date}}"
 ---

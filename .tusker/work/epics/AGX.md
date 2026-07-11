@@ -40,7 +40,7 @@ TBD.
 
 | Gate | Owner | Blocks | Action |
 |---|---|---|---|
-| _None._ |  |  |  |
+| [[AGX-G-0001]] | human:sarav | [[AGX-T-0006]] | Decide whether AGX-T-0006 may proceed with targeted traceability proof despite the existing go test ./... baseline failures, or send a separate repair/rework task for those broad-suite failures. |
 
 ## Active work
 
