@@ -33,7 +33,7 @@ If any required fields are missing at current work, validation should block the 
 | `## Escalate if` | yes | yes | yes |
 | `## Deliverables` | yes | yes | yes |
 | `## Verification plan` | yes | yes | yes |
-| `## Knowledge delta` | when docs/understanding changes | yes | yes |
+| `## Knowledge delta` | only when `doc_nodes` is set | yes, concise | yes, concise |
 | `## Evidence` | yes | yes | yes |
 | `## Verification log` | no | yes | yes |
 | `## Rollback` | no | no | yes |
@@ -52,7 +52,7 @@ Substance is checked, not presence. `TODO` is not a contract.
 - **Escalate if** — stop conditions.
 - **Deliverables** — concrete artifacts expected from the work.
 - **Verification plan** — tests/manual checks/benchmarks before work starts.
-- **Knowledge delta** — what durable understanding changed.
+- **Knowledge delta** — concise durable understanding for high/critical work or tasks with `doc_nodes`; not a changelog. Repeated lessons go through `tusker feedback promote`.
 - **Evidence** — concise proof after execution: PRs, packets, screenshots, or short log tails.
 - **Verification log** — high/critical-only detail when a frontmatter summary is not enough.
 - **Verification/close summaries** — concise frontmatter truth for what was checked and why it closed.

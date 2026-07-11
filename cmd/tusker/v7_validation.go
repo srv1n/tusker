@@ -172,7 +172,7 @@ func validateV7Task(note Note, ctx validationContext, where string, errors, warn
 	if len(normalizeList(data["domains"])) > 5 {
 		*warnings = append(*warnings, issue("TASK_TOO_MANY_DOMAINS", "V7 task should stay focused on a small number of domains", where, "", map[string]any{"count": len(normalizeList(data["domains"]))}))
 	}
-	validateV7KnowledgeDelta(note.Body, where, warnings)
+	validateV7KnowledgeDelta(note, ctx, where, errors, warnings)
 }
 
 func validateV7DoneTaskClosePolicy(note Note, ctx validationContext, where string, errors *[]Issue) {
@@ -204,9 +204,16 @@ func validateV7DoneTaskClosePolicy(note Note, ctx validationContext, where strin
 	}
 }
 
-func validateV7KnowledgeDelta(body, where string, warnings *[]Issue) {
-	content := strings.TrimSpace(sectionContent(body, "## Knowledge delta"))
-	if content == "" {
+func validateV7KnowledgeDelta(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
+	data := note.Data
+	content := strings.TrimSpace(sectionContent(note.Body, "## Knowledge delta"))
+	risk := strings.ToLower(fallback(stringField(data, "risk"), "medium"))
+	hasDocNodes := len(normalizeList(data["doc_nodes"])) > 0
+	requiresDelta := hasDocNodes || risk == "high" || risk == "critical"
+	if requiresDelta && v7KnowledgeDeltaEmpty(content) {
+		*warnings = append(*warnings, issue("KNOWLEDGE_DELTA_REQUIRED", "V7 high/critical or doc_nodes tasks should record a concise knowledge delta", where, "write a bounded delta, or remove doc_nodes if no docs/canon target is in scope", map[string]any{"risk": risk, "doc_nodes": normalizeList(data["doc_nodes"])}))
+	}
+	if v7KnowledgeDeltaEmpty(content) {
 		return
 	}
 	lines := 0
@@ -215,9 +222,17 @@ func validateV7KnowledgeDelta(body, where string, warnings *[]Issue) {
 			lines++
 		}
 	}
-	if lines > 20 || len(content) > 1500 {
-		*warnings = append(*warnings, issue("KNOWLEDGE_DELTA_TOO_LONG", "V7 task knowledge delta should stay concise; move durable truth to domain canon/docs", where, "", map[string]any{"lines": lines, "bytes": len(content)}))
+	warnLimit, failLimit := v7KnowledgeDeltaLineLimits(ctx.VaultPath)
+	if failLimit > 0 && lines > failLimit {
+		*errors = append(*errors, issue("KNOWLEDGE_DELTA_TOO_LONG", fmt.Sprintf("V7 task Knowledge delta has %d non-empty lines; hard limit is %d", lines, failLimit), where, "move repeated lessons to `tusker feedback promote` or durable domain canon/docs", map[string]any{"lines": lines, "limit": failLimit}))
+	} else if warnLimit > 0 && lines > warnLimit {
+		*warnings = append(*warnings, issue("KNOWLEDGE_DELTA_LONG", fmt.Sprintf("V7 task Knowledge delta has %d non-empty lines; warning limit is %d", lines, warnLimit), where, "keep the task delta concise; promote repeated lessons with `tusker feedback promote`", map[string]any{"lines": lines, "limit": warnLimit}))
 	}
+}
+
+func v7KnowledgeDeltaEmpty(content string) bool {
+	normalized := strings.ToLower(strings.Trim(strings.TrimSpace(content), "."))
+	return normalized == "" || normalized == "none expected" || normalized == "none" || normalized == "n/a"
 }
 
 func validateV7TaskProofPolicy(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
@@ -1734,6 +1749,27 @@ func v7BodyLineLimitsFor(vaultPath, objectType string) (int, int) {
 		if cfg.Validation.TaskBodyFailLines > 0 {
 			failLimit = cfg.Validation.TaskBodyFailLines
 		}
+	}
+	if failLimit > 0 && warnLimit > failLimit {
+		warnLimit = failLimit
+	}
+	return warnLimit, failLimit
+}
+
+func v7KnowledgeDeltaLineLimits(vaultPath string) (int, int) {
+	warnLimit, failLimit := 8, 10
+	if strings.TrimSpace(vaultPath) == "" {
+		return warnLimit, failLimit
+	}
+	cfg, _, err := readV7TuskerConfig(vaultPath)
+	if err != nil {
+		return warnLimit, failLimit
+	}
+	if cfg.Validation.KnowledgeDeltaWarnLines > 0 {
+		warnLimit = cfg.Validation.KnowledgeDeltaWarnLines
+	}
+	if cfg.Validation.KnowledgeDeltaFailLines > 0 {
+		failLimit = cfg.Validation.KnowledgeDeltaFailLines
 	}
 	if failLimit > 0 && warnLimit > failLimit {
 		warnLimit = failLimit

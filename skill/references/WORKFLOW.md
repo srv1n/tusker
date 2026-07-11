@@ -15,6 +15,10 @@ Do not use `active` as a durable task state. `claimed`, `running`, `leased`, and
 
 Human-only review becomes `readiness: waiting_on_human` with `next_owner: human:<name>` and `agent_action: stop_until_human_response`.
 
+## Documentation Churn
+
+Low/medium tasks without `doc_nodes` default to `Knowledge delta: None expected.` Do not ask agents for changelog, docs, or canon updates unless the task contract names `doc_nodes`; repeated lessons belong in `tusker feedback promote`, not per-task prose.
+
 ## Dispatch Predicate
 
 A task can dispatch only when all are true:

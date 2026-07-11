@@ -24,7 +24,7 @@ Tasks carry:
 
 - `domains`: broad areas the work touches
 - `doc_nodes`: exact docs targets from `_config/docs-map.yaml`
-- `## Knowledge delta`: what changed in the reader's mental model
+- `## Knowledge delta`: concise high/critical or doc-targeted change in durable understanding
 
 If `doc_nodes` is non-empty, close must prove one of three things:
 
@@ -137,9 +137,9 @@ tusker docs noop <TASK-ID> --node <DOC-NODE> --reason "<why already current>"
 tusker docs waive <TASK-ID> <DOC-NODE> --reason "<why no doc change>"
 ```
 
-Run this before `tusker close` when `doc_nodes` exists or when the task's knowledge delta says docs changed.
+Run this before `tusker close` when `doc_nodes` exists.
 
-High-risk tasks that affect durable understanding need a useful knowledge delta:
+High-risk tasks that affect durable understanding need a useful knowledge delta, but docs/changelog work still requires explicit `doc_nodes`:
 
 | Change type | Topic | Before | After | Audience | Target doc nodes | Mode | Status |
 |---|---|---|---|---|---|---|---|
@@ -245,4 +245,4 @@ Published docs may reference selected local assets, and the exporter can copy/re
 - Treat `_system/generated/**` as generated indexes.
 - Use `tusker/docs/**` for durable vault docs.
 - Use `docs/publication.yaml` for repo docs.
-- If docs impact is real, set `doc_nodes` and fill knowledge delta.
+- If docs impact is real, set `doc_nodes` and fill knowledge delta. If the same lesson repeats across tasks, use `tusker feedback promote` instead of per-task appends.

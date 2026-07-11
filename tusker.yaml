@@ -22,6 +22,8 @@ branches:
 validation:
   task_body_warn_lines: 120
   task_body_fail_lines: 220
+  knowledge_delta_warn_lines: 8
+  knowledge_delta_fail_lines: 10
   frontmatter_warn_lines: 80
   capsule_token_budget: 80
   require_acceptance_proof: true

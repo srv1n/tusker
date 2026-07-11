@@ -21,6 +21,8 @@ state_rev: "sha256:de58933ddce32e98bba70739b8a39af909d4dd5ca813def31f18e78893b90
 
 This is a generated V7 project knowledge skill. Use it after the Tusker operator skill when you need repository-specific context.
 
+This is the project knowledge skill for this repository. Use it after the Tusker operator skill when repository-specific canon is needed.
+
 ## Read This When
 
 - You need durable repository-specific canon before implementing a task.

@@ -1039,7 +1039,7 @@ func TestV7ValidationWarnsOnLargeKnowledgeDeltaAndManyDomains(t *testing.T) {
 	}
 	body := v7TaskBody("APP-T-0001", "Warn on broad task")
 	var longDelta []string
-	for i := 0; i < 21; i++ {
+	for i := 0; i < 9; i++ {
 		longDelta = append(longDelta, fmt.Sprintf("- Durable fact %02d that belongs in domain canon.", i+1))
 	}
 	body = replaceSection(body, "## Knowledge delta", strings.Join(longDelta, "\n"))
@@ -1054,8 +1054,95 @@ func TestV7ValidationWarnsOnLargeKnowledgeDeltaAndManyDomains(t *testing.T) {
 	for _, warning := range warns {
 		codes[warning.Code] = true
 	}
-	if !codes["TASK_TOO_MANY_DOMAINS"] || !codes["KNOWLEDGE_DELTA_TOO_LONG"] {
+	if !codes["TASK_TOO_MANY_DOMAINS"] || !codes["KNOWLEDGE_DELTA_LONG"] {
 		t.Fatalf("expected domain and knowledge delta warnings, got %#v", warns)
+	}
+}
+
+func TestV7ValidationKnowledgeDeltaRiskGate(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "vault")
+	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	data := map[string]any{
+		"schema":                "tusker.task/v7",
+		"kind":                  "task",
+		"id":                    "APP-T-0001",
+		"project":               "tusker",
+		"title":                 "Risk-gated knowledge delta",
+		"epic":                  "APP",
+		"status":                "ready",
+		"readiness":             "ready",
+		"priority":              "p2",
+		"risk":                  "medium",
+		"proof_mode":            "inline",
+		"proof_status":          "pending",
+		"proof_required":        []string{"focused_test"},
+		"evidence_budget":       0,
+		"raw_artifacts_allowed": false,
+		"next_owner":            "agent",
+		"next_action":           "Execute the task contract.",
+	}
+	body := v7TaskBody("APP-T-0001", "Risk-gated knowledge delta")
+	data["state_rev"] = v7StateRev(data, body)
+	note := Note{Data: data, Body: body, RelativePath: "work/tasks/APP-T-0001.md"}
+
+	errs, warns := validateV7Note(note, validationContext{VaultPath: vault, RelativePath: note.RelativePath}, note.RelativePath)
+	if issuesContainCode(errs, "KNOWLEDGE_DELTA_REQUIRED") || issuesContainCode(warns, "KNOWLEDGE_DELTA_REQUIRED") || issuesContainCode(warns, "KNOWLEDGE_DELTA_LONG") {
+		t.Fatalf("medium task without doc_nodes should not nag for knowledge delta, errs=%#v warns=%#v", errs, warns)
+	}
+
+	data["risk"] = "high"
+	data["state_rev"] = v7StateRev(data, body)
+	note = Note{Data: data, Body: body, RelativePath: "work/tasks/APP-T-0001.md"}
+	errs, warns = validateV7Note(note, validationContext{VaultPath: vault, RelativePath: note.RelativePath}, note.RelativePath)
+	if len(errs) != 0 || !issuesContainCode(warns, "KNOWLEDGE_DELTA_REQUIRED") {
+		t.Fatalf("high-risk task should warn for missing knowledge delta, errs=%#v warns=%#v", errs, warns)
+	}
+}
+
+func TestV7ValidationKnowledgeDeltaLineBudgetWarnsAndFails(t *testing.T) {
+	repo := t.TempDir()
+	vault := filepath.Join(repo, "vault")
+	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(repo, "tusker.yaml"), "validation:\n  knowledge_delta_warn_lines: 2\n  knowledge_delta_fail_lines: 4\n"); err != nil {
+		t.Fatal(err)
+	}
+	data := map[string]any{
+		"schema":                "tusker.task/v7",
+		"kind":                  "task",
+		"id":                    "APP-T-0001",
+		"project":               "tusker",
+		"title":                 "Budgeted knowledge delta",
+		"epic":                  "APP",
+		"status":                "ready",
+		"readiness":             "ready",
+		"priority":              "p2",
+		"risk":                  "medium",
+		"proof_mode":            "inline",
+		"proof_status":          "pending",
+		"proof_required":        []string{"focused_test"},
+		"evidence_budget":       0,
+		"raw_artifacts_allowed": false,
+		"next_owner":            "agent",
+		"next_action":           "Execute the task contract.",
+	}
+	body := replaceSection(v7TaskBody("APP-T-0001", "Budgeted knowledge delta"), "## Knowledge delta", "- One\n- Two\n- Three")
+	data["state_rev"] = v7StateRev(data, body)
+	note := Note{Data: data, Body: body, RelativePath: "work/tasks/APP-T-0001.md"}
+	errs, warns := validateV7Note(note, validationContext{VaultPath: vault, RelativePath: note.RelativePath}, note.RelativePath)
+	if len(errs) != 0 || !issuesContainCode(warns, "KNOWLEDGE_DELTA_LONG") {
+		t.Fatalf("expected knowledge delta warning only, errs=%#v warns=%#v", errs, warns)
+	}
+
+	body = replaceSection(v7TaskBody("APP-T-0001", "Budgeted knowledge delta"), "## Knowledge delta", "- One\n- Two\n- Three\n- Four\n- Five")
+	data["state_rev"] = v7StateRev(data, body)
+	note = Note{Data: data, Body: body, RelativePath: "work/tasks/APP-T-0001.md"}
+	errs, warns = validateV7Note(note, validationContext{VaultPath: vault, RelativePath: note.RelativePath}, note.RelativePath)
+	if !issuesContainCode(errs, "KNOWLEDGE_DELTA_TOO_LONG") {
+		t.Fatalf("expected knowledge delta hard cap error, errs=%#v warns=%#v", errs, warns)
 	}
 }
 

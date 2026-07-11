@@ -23,7 +23,7 @@ A good task has:
 - explicit `domains`,
 - exact `doc_nodes` when docs are affected,
 - a risk level that matches blast radius,
-- a knowledge delta when future readers need to understand something differently.
+- a concise knowledge delta for high/critical work or when `doc_nodes` names docs/canon targets.
 
 ## Decomposition flow
 
@@ -72,9 +72,9 @@ blocks:
 
 Wire both sides when practical. `blocked_by` tells the scheduler the truth; `blocks` makes the graph readable.
 
-## Docs impact
+## Docs Impact
 
-Every task that changes durable understanding should carry:
+Every task that changes durable docs/canon should carry:
 
 ```yaml
 domains: [runtime, docs]
@@ -86,7 +86,7 @@ And body:
 | Topic | Before | After | Audience | Target doc nodes |
 |---|---|---|---|---|
 
-Do not hide docs work in a final "update docs" task unless the implementation tasks genuinely cannot know the docs delta yet. Most of the time, docs belong with the change that makes them true.
+Do not hide docs work in a final "update docs" task unless the implementation tasks genuinely cannot know the docs delta yet. Low/medium tasks without `doc_nodes` should not grow changelog/doc chores; route repeated lessons through `tusker feedback promote`.
 
 ## Example stack
 
