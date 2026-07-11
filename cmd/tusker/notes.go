@@ -8,11 +8,101 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	skillbundle "tusker/skill"
 )
 
+type noteLoadOptions struct {
+	FrontmatterOnly bool
+}
+
+type noteFileVersion struct {
+	modTime int64
+	size    int64
+}
+
+type cachedNote struct {
+	version noteFileVersion
+	note    Note
+	hasBody bool
+}
+
+type vaultNoteCache struct {
+	mu      sync.Mutex
+	entries map[string]cachedNote
+}
+
+var sharedVaultNoteCaches = struct {
+	mu     sync.Mutex
+	vaults map[string]*vaultNoteCache
+}{vaults: map[string]*vaultNoteCache{}}
+
+// Test-only observers are deliberately functions so production does no counter
+// bookkeeping. Callers must use atomics if they install an observer: changed
+// files are loaded concurrently.
+var (
+	noteCacheReadObserver  func()
+	noteCacheParseObserver func()
+)
+
 func listAllNotes(vaultPath string) ([]Note, error) {
+	return listAllNotesWithOptions(vaultPath, noteLoadOptions{})
+}
+
+func listAllNotesFrontmatter(vaultPath string) ([]Note, error) {
+	return listAllNotesWithOptions(vaultPath, noteLoadOptions{FrontmatterOnly: true})
+}
+
+func listAllNotesWithOptions(vaultPath string, opts noteLoadOptions) ([]Note, error) {
+	absVaultPath, err := filepath.Abs(vaultPath)
+	if err != nil {
+		return nil, err
+	}
+	cache, err := noteCacheForVault(absVaultPath)
+	if err != nil {
+		return nil, err
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return cache.list(absVaultPath, opts)
+}
+
+func noteCacheForVault(vaultPath string) (*vaultNoteCache, error) {
+	abs, err := filepath.Abs(vaultPath)
+	if err != nil {
+		return nil, err
+	}
+	key := filepath.Clean(abs)
+	sharedVaultNoteCaches.mu.Lock()
+	defer sharedVaultNoteCaches.mu.Unlock()
+	cache := sharedVaultNoteCaches.vaults[key]
+	if cache == nil {
+		cache = &vaultNoteCache{entries: map[string]cachedNote{}}
+		sharedVaultNoteCaches.vaults[key] = cache
+	}
+	return cache, nil
+}
+
+func invalidateCachedNote(filePath string) {
+	abs, err := filepath.Abs(filePath)
+	if err != nil {
+		return
+	}
+	sharedVaultNoteCaches.mu.Lock()
+	caches := make([]*vaultNoteCache, 0, len(sharedVaultNoteCaches.vaults))
+	for _, cache := range sharedVaultNoteCaches.vaults {
+		caches = append(caches, cache)
+	}
+	sharedVaultNoteCaches.mu.Unlock()
+	for _, cache := range caches {
+		cache.mu.Lock()
+		delete(cache.entries, filepath.Clean(abs))
+		cache.mu.Unlock()
+	}
+}
+
+func (cache *vaultNoteCache) list(vaultPath string, opts noteLoadOptions) ([]Note, error) {
 	paths, err := walkNoteFiles(vaultPath)
 	if err != nil {
 		return nil, err
@@ -24,17 +114,46 @@ func listAllNotes(vaultPath string) ([]Note, error) {
 		err   error
 	}
 
-	sem := make(chan struct{}, 8)
-	done := make(chan result, len(paths))
-
+	type job struct {
+		index   int
+		path    string
+		version noteFileVersion
+	}
+	jobs := make([]job, 0)
+	versions := make(map[int]noteFileVersion)
+	notes := make([]Note, len(paths))
+	seen := make(map[string]struct{}, len(paths))
 	for index, filePath := range paths {
+		info, err := os.Stat(filePath)
+		if err != nil {
+			return nil, err
+		}
+		version := noteFileVersion{modTime: info.ModTime().UnixNano(), size: info.Size()}
+		seen[filePath] = struct{}{}
+		if entry, ok := cache.entries[filePath]; ok && entry.version == version && (opts.FrontmatterOnly || entry.hasBody) {
+			notes[index] = cloneNoteForLoad(entry.note, opts.FrontmatterOnly)
+			continue
+		}
+		jobs = append(jobs, job{index: index, path: filePath, version: version})
+		versions[index] = version
+	}
+
+	sem := make(chan struct{}, 8)
+	done := make(chan result, len(jobs))
+	for _, job := range jobs {
 		sem <- struct{}{}
 		go func(i int, current string) {
 			defer func() { <-sem }()
+			if noteCacheReadObserver != nil {
+				noteCacheReadObserver()
+			}
 			text, err := readText(current)
 			if err != nil {
 				done <- result{index: i, err: err}
 				return
+			}
+			if noteCacheParseObserver != nil {
+				noteCacheParseObserver()
 			}
 			data, body, err := parseFrontmatter(text)
 			if err != nil {
@@ -55,18 +174,64 @@ func listAllNotes(vaultPath string) ([]Note, error) {
 					Body:         body,
 				},
 			}
-		}(index, filePath)
+		}(job.index, job.path)
 	}
 
-	notes := make([]Note, len(paths))
-	for range paths {
+	for range jobs {
 		current := <-done
 		if current.err != nil {
 			return nil, current.err
 		}
-		notes[current.index] = current.note
+		entry := cachedNote{version: versions[current.index], note: current.note, hasBody: true}
+		if opts.FrontmatterOnly {
+			entry.note.Body = ""
+			entry.hasBody = false
+		}
+		cache.entries[current.note.AbsolutePath] = entry
+		notes[current.index] = cloneNoteForLoad(entry.note, opts.FrontmatterOnly)
+	}
+	for path := range cache.entries {
+		if _, ok := seen[path]; !ok {
+			delete(cache.entries, path)
+		}
 	}
 	return notes, nil
+}
+
+func cloneNoteForLoad(note Note, frontmatterOnly bool) Note {
+	copy := Note{AbsolutePath: note.AbsolutePath, RelativePath: note.RelativePath, Data: cloneNoteData(note.Data)}
+	if !frontmatterOnly {
+		copy.Body = note.Body
+	}
+	return copy
+}
+
+func cloneNoteData(data map[string]any) map[string]any {
+	if data == nil {
+		return nil
+	}
+	copy := make(map[string]any, len(data))
+	for key, value := range data {
+		copy[key] = cloneNoteValue(value)
+	}
+	return copy
+}
+
+func cloneNoteValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneNoteData(typed)
+	case []any:
+		copy := make([]any, len(typed))
+		for i, item := range typed {
+			copy[i] = cloneNoteValue(item)
+		}
+		return copy
+	case []string:
+		return append([]string(nil), typed...)
+	default:
+		return value
+	}
 }
 
 func walkNoteFiles(vaultPath string) ([]string, error) {

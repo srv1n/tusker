@@ -7,10 +7,11 @@ import (
 )
 
 type registeredProjectLoadOptions struct {
-	Notes        bool
-	MetadataOnly bool
-	LoadDisabled bool
-	ProjectID    string
+	Notes           bool
+	FrontmatterOnly bool
+	MetadataOnly    bool
+	LoadDisabled    bool
+	ProjectID       string
 }
 
 type loadedRegisteredProject struct {
@@ -63,7 +64,12 @@ func loadRegisteredProjects(store *RuntimeStore, opts registeredProjectLoadOptio
 		}
 		loaded.Workflow = wfFile
 		if opts.Notes {
-			notes, err := listAllNotes(project.VaultRoot)
+			var notes []Note
+			if opts.FrontmatterOnly {
+				notes, err = listAllNotesFrontmatter(project.VaultRoot)
+			} else {
+				notes, err = listAllNotes(project.VaultRoot)
+			}
 			if err != nil {
 				loaded.Project, err = quarantineRegisteredProjectLoadError(store, project, err)
 				if err != nil {

@@ -49,6 +49,10 @@ var (
 
 var v7FrontmatterOrder = v7schema.FrontmatterOrder
 
+// Used by focused tests to assert that one command invocation shares its
+// index work. Production leaves this nil.
+var loadV7IndexObserver func()
+
 type v7Index struct {
 	Tasks       map[string]Note
 	Gates       map[string]Note
@@ -1591,10 +1595,7 @@ func reconcileV7Cmd(args Args) error {
 	}
 	for _, task := range idx.Tasks {
 		next := v7ProjectedTaskState(vaultPath, task, idx)
-		data, body, err := parseFrontmatterMustRead(task.AbsolutePath)
-		if err != nil {
-			return err
-		}
+		data, body := cloneNoteData(task.Data), task.Body
 		baseRev := stringField(data, "state_rev")
 		updated := false
 		projectionChanges := map[string]any{}
@@ -1675,10 +1676,7 @@ func reconcileV7ControlProjections(vaultPath string, taskIDs []string, actor, so
 			continue
 		}
 		next := v7ProjectedTaskState(vaultPath, task, idx)
-		data, body, err := parseFrontmatterMustRead(task.AbsolutePath)
-		if err != nil {
-			return changed, err
-		}
+		data, body := cloneNoteData(task.Data), task.Body
 		baseRev := stringField(data, "state_rev")
 		updated := false
 		projectionChanges := map[string]any{}
@@ -1752,10 +1750,7 @@ func v7TaskIDsForTaskControl(vaultPath, taskID string) ([]string, error) {
 func reconcileV7EpicManagedBlocks(vaultPath string, idx v7Index) (int, error) {
 	changed := 0
 	for _, epic := range sortedV7Epics(idx) {
-		data, body, err := parseFrontmatterMustRead(epic.AbsolutePath)
-		if err != nil {
-			return changed, err
-		}
+		data, body := cloneNoteData(epic.Data), epic.Body
 		baseRev := stringField(data, "state_rev")
 		epicID := stringField(data, "id")
 		nextBody := replaceSection(body, "## Open gates", v7EpicOpenGatesBlock(idx, epicID))
@@ -1783,10 +1778,7 @@ func reconcileV7ObjectStateRevs(vaultPath string) (int, error) {
 		if !isV7StoreObject(note.Data) {
 			continue
 		}
-		data, body, err := parseFrontmatterMustRead(note.AbsolutePath)
-		if err != nil {
-			return repaired, err
-		}
+		data, body := cloneNoteData(note.Data), note.Body
 		storedRev := stringField(data, "state_rev")
 		if storedRev == "" || v7StateRevMatches(data, body, storedRev) {
 			continue
@@ -2071,6 +2063,9 @@ func bootstrapV7Dirs(vaultPath string) error {
 }
 
 func loadV7Index(vaultPath string) (v7Index, error) {
+	if loadV7IndexObserver != nil {
+		loadV7IndexObserver()
+	}
 	notes, err := listAllNotes(vaultPath)
 	if err != nil {
 		return v7Index{}, err
@@ -3593,6 +3588,7 @@ func saveV7DocumentCASWithOptions(filePath string, data map[string]any, body str
 	if err := atomicReplaceV7Document(filePath, content); err != nil {
 		return "", err
 	}
+	invalidateCachedNote(filePath)
 	data["state_rev"] = nextRev
 	return nextRev, nil
 }

@@ -303,7 +303,11 @@ func writeText(filePath, content string) error {
 	if err := ensureDir(filepath.Dir(filePath)); err != nil {
 		return err
 	}
-	return os.WriteFile(filePath, []byte(content), 0o644)
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		return err
+	}
+	invalidateCachedNote(filePath)
+	return nil
 }
 
 func writeJSON(filePath string, payload any) error {

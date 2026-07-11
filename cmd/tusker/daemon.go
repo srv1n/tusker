@@ -425,7 +425,7 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	if err := d.feedWatchdogBeat(time.Now().UTC()); err != nil {
 		return err
 	}
-	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{Notes: true})
+	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{Notes: true, FrontmatterOnly: true})
 	if err != nil {
 		return err
 	}
@@ -440,6 +440,31 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 			runsByProject[run.ProjectID] = map[string]RunStatus{}
 		}
 		runsByProject[run.ProjectID][run.RecordID] = run
+	}
+	for i := range projects {
+		loaded := &projects[i]
+		if !loaded.Loadable() {
+			continue
+		}
+		for _, run := range runsByProject[loaded.Project.ProjectID] {
+			requiresBodies := externalLoopRunnerRequiresCollect(loaded.Workflow.Data, run.Runner)
+			if !requiresBodies {
+				inputs, err := d.store.ListApplyInputsForRun(loaded.Project.ProjectID, run.RecordID)
+				if err != nil {
+					return err
+				}
+				requiresBodies = len(inputs) > 0
+			}
+			if !requiresBodies {
+				continue
+			}
+			notes, err := listAllNotes(loaded.Project.VaultRoot)
+			if err != nil {
+				return err
+			}
+			loaded.Notes = notes
+			break
+		}
 	}
 	globalActiveRuns := countDispatchCapacityRuns(allRuns)
 	globalLimit, err := d.globalActiveRunLimit()
