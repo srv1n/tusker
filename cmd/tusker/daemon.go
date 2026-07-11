@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -30,6 +31,9 @@ type Daemon struct {
 	beforePollRunPersist   func(RunStatus, RunStatus)
 	beforeRunLeaseClaim    func(RunStatus)
 	diskStat               diskStatFunc
+	notifyMu               sync.Mutex
+	notifyTimers           map[string]*time.Timer
+	notifyWake             chan string
 }
 
 const (
@@ -67,10 +71,11 @@ func NewDaemon(stateRoot string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Daemon{stateRoot: stateRoot, store: store}, nil
+	return &Daemon{stateRoot: stateRoot, store: store, notifyWake: make(chan string, 256)}, nil
 }
 
 func (d *Daemon) Close() error {
+	d.stopNotifyTimers()
 	if d == nil || d.store == nil {
 		return nil
 	}
@@ -96,6 +101,12 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 			case "stop":
 				cancel()
 				return daemonControlResponse{OK: true, Message: "daemon stop requested"}
+			case "reconcile_project":
+				if strings.TrimSpace(req.ProjectID) == "" {
+					return daemonControlResponse{OK: false, Message: "project_id is required"}
+				}
+				d.scheduleProjectReconcile(req.ProjectID)
+				return daemonControlResponse{OK: true}
 			default:
 				return daemonControlResponse{OK: false, Message: "unknown control command"}
 			}
@@ -121,23 +132,43 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 	}
 	stopWatchdog := d.startWatchdog(runCtx)
 	defer stopWatchdog()
+	if err := d.runPoll(runCtx, ""); err != nil {
+		return err
+	}
+	pollTimer := time.NewTimer(d.nextPollInterval())
+	defer pollTimer.Stop()
 	for {
-		if err := d.PollOnce(runCtx); err != nil {
-			if errors.Is(err, context.Canceled) && runCtx.Err() != nil {
-				return nil
-			}
-			var typed *TuskerError
-			if !errors.As(err, &typed) || typed.Code != "CAS_CONFLICT" {
-				return err
-			}
-		}
-		interval := d.nextPollInterval()
 		select {
 		case <-runCtx.Done():
 			return nil
-		case <-time.After(interval):
+		case projectID := <-d.notifyWake:
+			if err := d.runPoll(runCtx, projectID); err != nil {
+				return err
+			}
+		case <-pollTimer.C:
+			if err := d.runPoll(runCtx, ""); err != nil {
+				return err
+			}
+			pollTimer.Reset(d.nextPollInterval())
 		}
 	}
+}
+
+func (d *Daemon) runPoll(ctx context.Context, projectID string) error {
+	var err error
+	if projectID == "" {
+		err = d.PollOnce(ctx)
+	} else {
+		err = d.PollProjectOnce(ctx, projectID)
+	}
+	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+		return nil
+	}
+	var typed *TuskerError
+	if errors.As(err, &typed) && typed.Code == "CAS_CONFLICT" {
+		return nil
+	}
+	return err
 }
 
 func (d *Daemon) feedWatchdogBeat(now time.Time) error {
@@ -409,7 +440,7 @@ func finishRuntimeRun(store *RuntimeStore, run *RunStatus, state LeaseState, out
 }
 
 func (d *Daemon) PollOnce(ctx context.Context) error {
-	err := d.pollOnce(ctx)
+	err := d.pollOnce(ctx, "")
 	var typed *TuskerError
 	if errors.As(err, &typed) && typed.Code == "CAS_CONFLICT" && strings.Contains(err.Error(), "run changed while daemon poll was applying its snapshot") {
 		return nil
@@ -417,7 +448,54 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 	return err
 }
 
-func (d *Daemon) pollOnce(ctx context.Context) error {
+func (d *Daemon) PollProjectOnce(ctx context.Context, projectID string) error {
+	return d.pollOnce(ctx, projectID)
+}
+
+func (d *Daemon) scheduleProjectReconcile(projectID string) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return
+	}
+	d.notifyMu.Lock()
+	defer d.notifyMu.Unlock()
+	if d.notifyTimers == nil {
+		d.notifyTimers = map[string]*time.Timer{}
+	}
+	if timer := d.notifyTimers[projectID]; timer != nil {
+		timer.Stop()
+	}
+	if d.notifyWake == nil {
+		d.notifyWake = make(chan string, 256)
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(350*time.Millisecond, func() {
+		d.notifyMu.Lock()
+		if d.notifyTimers[projectID] == timer {
+			delete(d.notifyTimers, projectID)
+		}
+		d.notifyMu.Unlock()
+		select {
+		case d.notifyWake <- projectID:
+		default:
+		}
+	})
+	d.notifyTimers[projectID] = timer
+}
+
+func (d *Daemon) stopNotifyTimers() {
+	if d == nil {
+		return
+	}
+	d.notifyMu.Lock()
+	defer d.notifyMu.Unlock()
+	for projectID, timer := range d.notifyTimers {
+		timer.Stop()
+		delete(d.notifyTimers, projectID)
+	}
+}
+
+func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 	previousPollAt, err := d.store.GetSetting("daemon_last_poll_at")
 	if err != nil {
 		return err
@@ -425,7 +503,7 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	if err := d.feedWatchdogBeat(time.Now().UTC()); err != nil {
 		return err
 	}
-	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{Notes: true, FrontmatterOnly: true})
+	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{Notes: true, FrontmatterOnly: true, ProjectID: projectID})
 	if err != nil {
 		return err
 	}

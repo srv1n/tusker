@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -194,6 +195,35 @@ func (a Args) Bool(key string) bool {
 }
 
 func run(command string, args Args) (int, error) {
+	code, err := runInner(command, args)
+	if code == 0 && err == nil && cliCommandMutatesVault(command) {
+		notifyDaemonForVault(args)
+	}
+	return code, err
+}
+
+func cliCommandMutatesVault(command string) bool {
+	switch command {
+	case "status", "verify add", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "reconcile", "finish", "close", "handoff":
+		return true
+	default:
+		return false
+	}
+}
+
+func notifyDaemonForVault(args Args) {
+	vaultPath, err := resolveVaultPath(args, false)
+	if err != nil {
+		return
+	}
+	projectID, err := resolveV7ProjectID(vaultPath)
+	if err != nil {
+		return
+	}
+	_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: projectID}, 250*time.Millisecond)
+}
+
+func runInner(command string, args Args) (int, error) {
 	if args.Bool("help") && command != "" {
 		if printCommandHelp(command) {
 			return 0, nil

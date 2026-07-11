@@ -14,8 +14,9 @@ import (
 )
 
 type daemonControlRequest struct {
-	Command  string `json:"command"`
-	Identity string `json:"identity"`
+	Command   string `json:"command"`
+	Identity  string `json:"identity"`
+	ProjectID string `json:"project_id,omitempty"`
 }
 
 type daemonControlResponse struct {
@@ -112,4 +113,21 @@ func sendDaemonControl(stateRoot string, req daemonControlRequest) (daemonContro
 		return daemonControlResponse{}, err
 	}
 	return resp, nil
+}
+
+// sendDaemonControlOneWay delivers a best-effort notification without waiting
+// for a response. CLI mutation commands call this synchronously so the write is
+// complete before main can os.Exit, while a missing daemon only costs the
+// bounded dial timeout.
+func sendDaemonControlOneWay(stateRoot string, req daemonControlRequest, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = 250 * time.Millisecond
+	}
+	conn, err := net.DialTimeout("unix", daemonSocketPath(stateRoot), timeout)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_ = conn.SetWriteDeadline(time.Now().Add(timeout))
+	return json.NewEncoder(conn).Encode(req)
 }
