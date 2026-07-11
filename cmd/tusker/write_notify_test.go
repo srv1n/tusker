@@ -93,6 +93,11 @@ func TestWriteNotifyTargetedLoadDoesNotReadOtherProjects(t *testing.T) {
 
 	vaultA := pickupV7TestVault(t)
 	vaultB := pickupV7TestVault(t)
+	for _, vault := range []string{vaultA, vaultB} {
+		if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
+			t.Fatal(err)
+		}
+	}
 	projects := []RegisteredProject{
 		{ProjectID: "alpha", ProjectKey: "alpha", Name: "alpha", RepoRoot: filepath.Dir(vaultA), VaultRoot: vaultA, WorkflowPath: workflowPath(vaultA), Enabled: true, Health: projectHealthHealthy},
 		{ProjectID: "beta", ProjectKey: "beta", Name: "beta", RepoRoot: filepath.Dir(vaultB), VaultRoot: vaultB, WorkflowPath: workflowPath(vaultB), Enabled: true, Health: projectHealthHealthy},
@@ -114,18 +119,17 @@ func TestWriteNotifyTargetedLoadDoesNotReadOtherProjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded) != 1 || loaded[0].Project.ProjectID != "alpha" {
+	if len(loaded) != 1 || loaded[0].Project.ProjectID != "alpha" || loaded[0].LoadError != nil || len(loaded[0].Notes) == 0 {
 		t.Fatalf("targeted load returned %#v", loaded)
 	}
-	alphaReads := reads.Load()
-	if alphaReads == 0 {
+	if reads.Load() == 0 {
 		t.Fatal("target project notes were not read")
 	}
-	if _, err := os.Stat(filepath.Join(vaultB, "work", "epics", "APP.md")); err != nil {
-		t.Fatal(err)
+	if !writeNotifyNoteCacheExists(vaultA) {
+		t.Fatal("target project did not populate its note cache")
 	}
-	if reads.Load() != alphaReads {
-		t.Fatal("non-target project notes were read")
+	if writeNotifyNoteCacheExists(vaultB) {
+		t.Fatal("non-target project note cache was populated")
 	}
 }
 
@@ -137,4 +141,15 @@ func forgetNoteCacheForWriteNotifyTest(vault string) {
 	sharedVaultNoteCaches.mu.Lock()
 	delete(sharedVaultNoteCaches.vaults, filepath.Clean(abs))
 	sharedVaultNoteCaches.mu.Unlock()
+}
+
+func writeNotifyNoteCacheExists(vault string) bool {
+	abs, err := filepath.Abs(vault)
+	if err != nil {
+		return false
+	}
+	sharedVaultNoteCaches.mu.Lock()
+	defer sharedVaultNoteCaches.mu.Unlock()
+	_, ok := sharedVaultNoteCaches.vaults[filepath.Clean(abs)]
+	return ok
 }
