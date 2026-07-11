@@ -94,6 +94,9 @@ func automationExternalLoopCmd(args Args) error {
 		return err
 	}
 	defer ctx.Close()
+	if args.Bool("dispatch") {
+		ctx.DispatchRefusal = oneShotDispatchRefusal("tusker automation advance-external --dispatch")
+	}
 	note, err := ctx.findTask(taskID)
 	if err != nil {
 		return err
@@ -617,7 +620,10 @@ func dispatchExternalApplyInput(ctx *automationCommandContext, note Note, explan
 	if current, ok := ctx.ProjectRuns[recordID]; ok && externalLoopRunnerRequiresCollect(ctx.Workflow.Data, current.Runner) && LeaseState(strings.TrimSpace(current.LeaseState)) == LeaseStateReleased {
 		run = externalLoopApplyDispatchRun(ctx.Project, note, current, applyRunner)
 	}
-	daemon := &Daemon{stateRoot: ctx.StateRoot, store: ctx.Store}
+	if reason := strings.TrimSpace(ctx.DispatchRefusal); reason != "" {
+		return nil, tuskerError(errorInvalidTransition, reason, withContext(explanation))
+	}
+	daemon := &Daemon{stateRoot: ctx.StateRoot, store: ctx.Store, dispatchRefusalReason: ctx.DispatchRefusal}
 	updated, dispatchErr := daemon.dispatchRun(context.Background(), ctx.Project, ctx.Workflow, note, run, runLaneExecute)
 	if dispatchErr != nil {
 		updated = daemon.scheduleRetry(updated, ctx.Workflow.Data, dispatchErr.Error())

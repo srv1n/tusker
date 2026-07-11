@@ -388,7 +388,10 @@ func dispatchExternalLoopContinuation(ctx *automationCommandContext, note Note, 
 	run.ItemID = firstNonEmpty(run.ItemID, stringField(note.Data, "id"))
 	run.WorkRevision = intField(note.Data, "work_revision")
 	run = prepareRunForLaneDispatch(run, firstNonEmpty(strings.TrimSpace(lane), runLaneExecute), externalRunner)
-	daemon := &Daemon{stateRoot: ctx.StateRoot, store: ctx.Store}
+	if reason := strings.TrimSpace(ctx.DispatchRefusal); reason != "" {
+		return nil, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": run.Lane}))
+	}
+	daemon := &Daemon{stateRoot: ctx.StateRoot, store: ctx.Store, dispatchRefusalReason: ctx.DispatchRefusal}
 	updated, dispatchErr := daemon.dispatchRun(context.Background(), ctx.Project, ctx.Workflow, note, run, run.Lane)
 	if dispatchErr != nil {
 		updated = daemon.scheduleRetry(updated, ctx.Workflow.Data, dispatchErr.Error())

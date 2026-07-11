@@ -148,7 +148,7 @@ for line in sys.stdin:
 	assertEqual(t, 18, turns[0].TotalTokens, "stored codex total tokens")
 }
 
-func TestCodexLiveRunnerRejectsOnRequestMutatingApprovals(t *testing.T) {
+func TestApprovalPolicyOnRequestAllowsWorkspaceVerificationCommands(t *testing.T) {
 	tempRoot := t.TempDir()
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(tempRoot, "state"))
 	workspaceRoot := filepath.Join(tempRoot, "workspace")
@@ -160,7 +160,7 @@ func TestCodexLiveRunnerRejectsOnRequestMutatingApprovals(t *testing.T) {
 	eventSinkPath := filepath.Join(tempRoot, "events.jsonl")
 	promptPath := filepath.Join(tempRoot, "prompt.txt")
 	scriptPath := filepath.Join(tempRoot, "fake-codex.py")
-	if err := writeText(promptPath, "Try a write.\n"); err != nil {
+	if err := writeText(promptPath, "Run verification.\n"); err != nil {
 		t.Fatal(err)
 	}
 	script := `#!/usr/bin/env python3
@@ -177,14 +177,12 @@ for line in sys.stdin:
         assert msg["params"]["approvalPolicy"]=="on-request", msg["params"]
         assert msg["params"]["sandboxPolicy"]["type"]=="workspaceWrite", msg["params"]
         print(json.dumps({"jsonrpc":"2.0","id":msg["id"],"result":{"turn":{"id":"turn-policy","status":"inProgress","items":[]}}}), flush=True)
-        print(json.dumps({"jsonrpc":"2.0","method":"item/commandExecution/requestApproval","id":"approve-command","params":{"threadId":"thread-policy","turnId":"turn-policy","itemId":"item-1","command":"touch changed.txt","cwd":os.environ["TUSKER_WORKSPACE"]}}), flush=True)
+        print(json.dumps({"jsonrpc":"2.0","method":"item/commandExecution/requestApproval","id":"approve-command","params":{"threadId":"thread-policy","turnId":"turn-policy","itemId":"item-1","command":"rtk go test ./cmd/tusker -run TestStub -count=1","cwd":os.environ["TUSKER_WORKSPACE"]}}), flush=True)
     elif msg.get("id")=="approve-command":
-        assert msg["result"]["decision"]=="reject", msg
-        assert "approval_policy=on-request" in msg["result"]["reason"], msg
+        assert msg["result"]["decision"]=="accept", msg
         print(json.dumps({"jsonrpc":"2.0","method":"item/fileChange/requestApproval","id":"approve-file","params":{"threadId":"thread-policy","turnId":"turn-policy","itemId":"item-2","changes":[{"path":"changed.txt"}],"cwd":os.environ["TUSKER_WORKSPACE"],"reason":"write result"}}), flush=True)
     elif msg.get("id")=="approve-file":
-        assert msg["result"]["decision"]=="reject", msg
-        assert "approval_policy=on-request" in msg["result"]["reason"], msg
+        assert msg["result"]["decision"]=="accept", msg
         print(json.dumps({"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-policy","turn":{"id":"turn-policy","status":"completed","items":[]}}}), flush=True)
         break
 `
@@ -235,8 +233,8 @@ for line in sys.stdin:
 	if strings.Count(eventsText, "\"kind\":\"codex_approval_decision\"") != 2 {
 		t.Fatalf("expected two approval decision events, got:\n%s", eventsText)
 	}
-	if !strings.Contains(eventsText, "\"decision\":\"reject\"") || !strings.Contains(eventsText, "approval_policy=on-request") {
-		t.Fatalf("expected rejected on-request approval events, got:\n%s", eventsText)
+	if strings.Count(eventsText, "\"decision\":\"accept\"") != 2 || !strings.Contains(eventsText, "\"approval_policy\":\"on-request\"") {
+		t.Fatalf("expected accepted on-request approval events, got:\n%s", eventsText)
 	}
 }
 
@@ -275,7 +273,7 @@ for line in sys.stdin:
         print(json.dumps({"jsonrpc":"2.0","method":"item/commandExecution/requestApproval","id":"approve-command","params":{"threadId":"thread-review","turnId":"turn-review","itemId":"item-1","command":"touch reviewed.txt","cwd":os.environ["TUSKER_WORKSPACE"]}}), flush=True)
     elif msg.get("id")=="approve-command":
         assert msg["result"]["decision"]=="reject", msg
-        assert "approval_policy=never" in msg["result"]["reason"], msg
+        assert "read-only sandbox" in msg["result"]["reason"], msg
         print(json.dumps({"jsonrpc":"2.0","method":"item/fileChange/requestApproval","id":"approve-file","params":{"threadId":"thread-review","turnId":"turn-review","itemId":"item-2","changes":[{"path":"reviewed.txt"}],"cwd":os.environ["TUSKER_WORKSPACE"]}}), flush=True)
     elif msg.get("id")=="approve-file":
         assert msg["result"]["decision"]=="reject", msg

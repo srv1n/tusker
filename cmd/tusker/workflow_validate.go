@@ -48,8 +48,14 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	if wf.Runtime.MaxActiveRunsPerProject <= 0 {
 		return tuskerError(errorConfigInvalid, "runtime.max_active_runs_per_project must be > 0", withPath(filePath))
 	}
-	if wf.Workspace.Root == "" || wf.Workspace.Strategy == "" {
-		return tuskerError(errorConfigInvalid, "workspace.root and workspace.strategy are required", withPath(filePath))
+	if strings.TrimSpace(wf.Workspace.Strategy) == "" {
+		return tuskerError(errorConfigInvalid, "workspace.strategy is required", withPath(filePath))
+	}
+	if !validWorkspaceStrategy(wf.Workspace.Strategy) {
+		return tuskerError(errorConfigInvalid, "workspace.strategy must be one of in_place, worktree, clone, copy", withPath(filePath))
+	}
+	if workspaceStrategyFromWorkflow(wf.Workspace.Strategy) != WorkspaceStrategyInPlace && strings.TrimSpace(wf.Workspace.Root) == "" {
+		return tuskerError(errorConfigInvalid, "workspace.root is required unless workspace.strategy is in_place", withPath(filePath))
 	}
 	if wf.Retry.MaxAttempts <= 0 || len(wf.Retry.BackoffMS) == 0 {
 		return tuskerError(errorConfigInvalid, "retry.max_attempts and retry.backoff_ms are required", withPath(filePath))
@@ -313,6 +319,15 @@ func validCodexApprovalPolicy(value string) bool {
 func validCodexSandbox(value string) bool {
 	switch strings.TrimSpace(value) {
 	case "read-only", "workspace-write", "danger-full-access":
+		return true
+	default:
+		return false
+	}
+}
+
+func validWorkspaceStrategy(value string) bool {
+	switch strings.TrimSpace(value) {
+	case string(WorkspaceStrategyInPlace), string(WorkspaceStrategyWorktree), string(WorkspaceStrategyClone), string(WorkspaceStrategyCopy):
 		return true
 	default:
 		return false

@@ -554,14 +554,11 @@ func (h *codexLiveHandle) rejectApproval(requestType string, mutating bool, reas
 
 func (h *codexLiveHandle) policyDenialReason(mutating bool) string {
 	approvalPolicy := strings.TrimSpace(h.policy.ApprovalPolicy)
-	if approvalPolicy == "never" {
-		return "approval_policy=never rejects Codex app-server approval requests"
-	}
 	activeSandbox := firstNonEmpty(strings.TrimSpace(h.policy.TurnSandboxPolicy), strings.TrimSpace(h.policy.ThreadSandbox))
 	if mutating && activeSandbox == "read-only" {
 		return "read-only sandbox rejects mutating approval requests"
 	}
-	if approvalPolicy == "on-request" || approvalPolicy == "untrusted" {
+	if approvalPolicy == "untrusted" {
 		return "approval_policy=" + approvalPolicy + " requires human approval; Tusker rejects instead of silently approving"
 	}
 	return ""

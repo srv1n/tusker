@@ -26,8 +26,8 @@ runtime:
   lease_ttl_ms: 900000
   max_active_runs_per_project: 1
 workspace:
-  root: ../.tusker-worktrees
-  strategy: worktree
+  root: .
+  strategy: in_place
 retry:
   max_attempts: 3
   backoff_ms:

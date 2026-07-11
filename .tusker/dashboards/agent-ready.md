@@ -6,7 +6,6 @@
 
 | Task | Priority | Next action |
 |---|---|---|
-| [[AGX-T-0003]] | p0 | Execute the task contract and satisfy proof mode. |
 | [[AGX-T-0005]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[AGX-T-0006]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[CLN-T-0002]] | p0 | Execute the task contract and satisfy proof mode. |
@@ -17,7 +16,9 @@
 | [[FBK-T-0004]] | p3 | Execute the task contract and satisfy proof mode. |
 | [[RUN-T-0001]] | p0 | Execute the task contract and satisfy proof mode. |
 | [[RUN-T-0002]] | p1 | Execute the task contract and satisfy proof mode. |
-| [[RUN-T-0004]] | p0 | Execute the task contract and satisfy proof mode. |
+| [[RUN-T-0007]] | p0 | Execute the task contract and satisfy proof mode. |
+| [[RUN-T-0008]] | p0 | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0001]] | p1 | Execute the task contract and satisfy proof mode. |
+| [[TRC-T-0001]] | p1 | Execute the task contract and satisfy proof mode. |
 
 <!-- tusker:generated:end -->

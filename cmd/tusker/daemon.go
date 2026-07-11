@@ -18,8 +18,9 @@ import (
 )
 
 type Daemon struct {
-	stateRoot string
-	store     *RuntimeStore
+	stateRoot             string
+	store                 *RuntimeStore
+	dispatchRefusalReason string
 }
 
 const (
@@ -53,6 +54,9 @@ func (d *Daemon) Close() error {
 }
 
 func (d *Daemon) Run(ctx context.Context, once bool) error {
+	if once && strings.TrimSpace(d.dispatchRefusalReason) == "" {
+		d.dispatchRefusalReason = oneShotDispatchRefusal("tusker daemon run --once")
+	}
 	var control *daemonControlServer
 	var err error
 	if !once {
@@ -129,7 +133,11 @@ func (d *Daemon) InterruptRun(ctx context.Context, identity string) error {
 	}
 	handle := liveRegistry.Find(firstNonEmpty(run.ActiveAttemptID, identity))
 	if handle == nil {
-		return errLiveHandleNotFound
+		if run.ProcessPID > 0 && processExists(run.ProcessPID) {
+			return interruptRunProcess(d.store, run)
+		}
+		reason := "interrupt requested by operator; live runner handle not found and process is not running"
+		return finishRuntimeRun(d.store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, reason, false)
 	}
 	if err := handle.Interrupt(ctx); err != nil {
 		return err
@@ -149,6 +157,67 @@ func (d *Daemon) InterruptRun(ctx context.Context, identity string) error {
 		_ = d.store.MarkSessionState(run.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateInterrupted), "", run.LastError, run.Lane != runLaneReview)
 	}
 	return nil
+}
+
+func (d *Daemon) ReleaseRun(ctx context.Context, identity string) error {
+	_ = ctx
+	run, err := d.store.FindRun(identity)
+	if err != nil {
+		return err
+	}
+	if run == nil {
+		return tuskerError(errorNotFound, "run not found: "+identity)
+	}
+	if run.ProcessPID > 0 && processExists(run.ProcessPID) {
+		return tuskerError(errorInvalidTransition, "run process is still running; use tusker runs interrupt before release", withContext(map[string]any{"pid": run.ProcessPID}))
+	}
+	return finishRuntimeRun(d.store, run, LeaseStateReleased, AttemptOutcomeAbandoned, 0, "released dead run by operator", false)
+}
+
+func interruptRunProcess(store *RuntimeStore, run *RunStatus) error {
+	if run == nil {
+		return tuskerError(errorNotFound, "run not found")
+	}
+	if run.ProcessPID > 0 {
+		if err := syscall.Kill(-run.ProcessPID, syscall.SIGINT); err != nil && !strings.Contains(err.Error(), "no such process") {
+			return err
+		}
+		for i := 0; i < 6 && processExists(run.ProcessPID); i++ {
+			time.Sleep(150 * time.Millisecond)
+		}
+		if processExists(run.ProcessPID) {
+			_ = syscall.Kill(-run.ProcessPID, syscall.SIGTERM)
+			for i := 0; i < 4 && processExists(run.ProcessPID); i++ {
+				time.Sleep(150 * time.Millisecond)
+			}
+		}
+		if processExists(run.ProcessPID) {
+			_ = syscall.Kill(-run.ProcessPID, syscall.SIGKILL)
+		}
+	}
+	return finishRuntimeRun(store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "interrupt requested by operator", true)
+}
+
+func finishRuntimeRun(store *RuntimeStore, run *RunStatus, state LeaseState, outcome AttemptOutcome, exitCode int, reason string, resumable bool) error {
+	if store == nil || run == nil {
+		return nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	updateRunAttemptFromRun(store, *run, outcome, exitCode, reason, now)
+	run.LeaseState = string(state)
+	run.AttemptOutcome = string(outcome)
+	run.NextRetryAt = ""
+	run.LastError = reason
+	run.UpdatedAt = now
+	clearActiveExecution(run)
+	if strings.TrimSpace(run.SessionRef) != "" {
+		endedAt := ""
+		if state == LeaseStateReleased {
+			endedAt = now
+		}
+		_ = store.MarkSessionState(run.ProjectID, run.SessionRef, sessionStateForLeaseState(state), endedAt, reason, resumable)
+	}
+	return store.UpsertRun(*run)
 }
 
 func (d *Daemon) PollOnce(ctx context.Context) error {
@@ -224,6 +293,19 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 		projectActiveRuns := countDispatchingProjectRuns(projectRuns)
 		now := time.Now().UTC()
 		for recordID, current := range projectRuns {
+			if note, ok := notesByRecordID[recordID]; ok {
+				normalized, changed, err := d.normalizeDeadRetryQueuedRun(ctx, project, wfFile, current, note)
+				if err != nil {
+					return err
+				}
+				if changed {
+					if err := d.store.UpsertRun(normalized); err != nil {
+						return err
+					}
+					projectRuns[recordID] = normalized
+					current = normalized
+				}
+			}
 			reconciled, changed, err := d.reconcileRunWithTracker(ctx, project, wfFile, current, noteStatusByRecord[recordID])
 			if err != nil {
 				return err
@@ -355,6 +437,9 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 					projectRuns[recordID] = current
 					continue
 				}
+				if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
+					return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneExecute}))
+				}
 				updated, err := d.dispatchRun(ctx, project, wfFile, note, current, runLaneExecute)
 				if err != nil {
 					updated = d.scheduleRetry(updated, wfFile.Data, err.Error())
@@ -416,6 +501,9 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 				}
 				projectRuns[recordID] = current
 				continue
+			}
+			if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
+				return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneReview}))
 			}
 			updated, err := d.dispatchRun(ctx, project, wfFile, note, current, runLaneReview)
 			if err != nil {
@@ -586,6 +674,10 @@ func dispatchingRunDelta(before, after RunStatus) int {
 		delta--
 	}
 	return delta
+}
+
+func oneShotDispatchRefusal(command string) string {
+	return strings.TrimSpace(command) + " cannot dispatch local runners from a one-shot CLI process; start the resident daemon with `tusker daemon run` and let it pick up ready/rework tasks"
 }
 
 func isDispatchingLeaseState(state string) bool {
@@ -1040,6 +1132,49 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	return run, true, nil
 }
 
+func (d *Daemon) normalizeDeadRetryQueuedRun(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus, note Note) (RunStatus, bool, error) {
+	_ = ctx
+	if LeaseState(strings.TrimSpace(run.LeaseState)) != LeaseStateRetryQueued {
+		return run, false, nil
+	}
+	if run.ProcessPID <= 0 || processExists(run.ProcessPID) {
+		return run, false, nil
+	}
+	reason := fmt.Sprintf("retry_queued run pid %d is dead", run.ProcessPID)
+	if strings.TrimSpace(run.SessionRef) != "" {
+		runner, _, err := runnerForName(run.Runner, wfFile.Data)
+		if err != nil {
+			return run, false, err
+		}
+		if runner.Capabilities().ResumeSession {
+			if session, err := d.store.FindSessionByRef(project.ProjectID, run.SessionRef); err != nil {
+				return run, false, err
+			} else if session != nil && incompatibleResumeSessionReason(project, run, session) == "" {
+				run.NextRetryAt = time.Now().UTC().Format(time.RFC3339)
+				run.LastError = reason + "; queued resident daemon resume"
+				run.UpdatedAt = run.NextRetryAt
+				clearActiveExecution(&run)
+				_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateRetryQueued), "", run.LastError, run.Lane != runLaneReview)
+				d.emitSupervisorDecision(SupervisorDecision{
+					ProjectID:        project.ProjectID,
+					RecordID:         run.RecordID,
+					Kind:             string(SupervisorDecisionContinueThread),
+					Reason:           run.LastError,
+					ParentAttemptID:  session.LastAttemptID,
+					ParentSessionRef: run.SessionRef,
+					WorkspacePath:    run.WorkspacePath,
+				})
+				return run, true, nil
+			}
+		}
+	}
+	_ = note
+	if err := finishRuntimeRun(d.store, &run, LeaseStateReleased, AttemptOutcomeAbandoned, 0, reason+"; released dead retry lease", false); err != nil {
+		return run, false, err
+	}
+	return run, true, nil
+}
+
 func scheduleContinuationRetry(run RunStatus, reason string) RunStatus {
 	now := time.Now().UTC()
 	run.LeaseState = string(LeaseStateRetryQueued)
@@ -1074,20 +1209,25 @@ func resolveRunnerForNote(note Note, wf Workflow) string {
 
 func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane string) (RunStatus, error) {
 	lane = firstNonEmpty(strings.TrimSpace(lane), runLaneExecute)
+	if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
+		return run, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": lane}))
+	}
 	runner, command, err := runnerForName(run.Runner, wfFile.Data)
 	if err != nil {
 		return run, err
 	}
 	workspaceManager := NewWorkspaceManager()
+	workspaceStrategy := d.workspaceStrategyForDispatch(project, wfFile.Data, run)
 	workspace, err := workspaceManager.Prepare(WorkspacePrepareRequest{
-		ProjectID:    project.ProjectID,
-		ProjectKey:   project.ProjectKey,
-		RecordID:     run.RecordID,
-		ItemID:       run.ItemID,
-		RepoRoot:     project.RepoRoot,
-		StateRoot:    d.stateRoot,
-		Strategy:     workspaceStrategyFromWorkflow(wfFile.Data.Workspace.Strategy),
-		WorkRevision: run.WorkRevision,
+		ProjectID:     project.ProjectID,
+		ProjectKey:    project.ProjectKey,
+		RecordID:      run.RecordID,
+		ItemID:        run.ItemID,
+		RepoRoot:      project.RepoRoot,
+		StateRoot:     d.stateRoot,
+		WorkspaceRoot: wfFile.Data.Workspace.Root,
+		Strategy:      workspaceStrategy,
+		WorkRevision:  run.WorkRevision,
 	})
 	if err != nil {
 		return run, err
@@ -1251,6 +1391,18 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		return reconciled, nil
 	}
 	return run, nil
+}
+
+func (d *Daemon) workspaceStrategyForDispatch(project RegisteredProject, wf Workflow, run RunStatus) WorkspaceStrategy {
+	configured := workspaceStrategyFromWorkflow(wf.Workspace.Strategy)
+	if configured != WorkspaceStrategyInPlace || d == nil || d.store == nil {
+		return configured
+	}
+	runs, err := d.store.ListRuns()
+	if err != nil {
+		return configured
+	}
+	return workspaceStrategyForRun(wf, project, run, runs)
 }
 
 type resolvedResumeSession struct {
@@ -2763,13 +2915,36 @@ func sessionStateForLeaseState(state LeaseState) string {
 
 func workspaceStrategyFromWorkflow(value string) WorkspaceStrategy {
 	switch strings.TrimSpace(value) {
+	case "", string(WorkspaceStrategyInPlace):
+		return WorkspaceStrategyInPlace
+	case string(WorkspaceStrategyWorktree):
+		return WorkspaceStrategyWorktree
 	case string(WorkspaceStrategyClone):
 		return WorkspaceStrategyClone
 	case string(WorkspaceStrategyCopy):
 		return WorkspaceStrategyCopy
 	default:
-		return WorkspaceStrategyWorktree
+		return WorkspaceStrategyInPlace
 	}
+}
+
+func workspaceStrategyForRun(wf Workflow, project RegisteredProject, run RunStatus, runs []RunStatus) WorkspaceStrategy {
+	configured := workspaceStrategyFromWorkflow(wf.Workspace.Strategy)
+	if configured != WorkspaceStrategyInPlace {
+		return configured
+	}
+	for _, other := range runs {
+		if project.ProjectID != "" && other.ProjectID != project.ProjectID {
+			continue
+		}
+		if other.RecordID == run.RecordID {
+			continue
+		}
+		if isDispatchingLeaseState(other.LeaseState) {
+			return WorkspaceStrategyWorktree
+		}
+	}
+	return configured
 }
 
 var workflowTemplatePlaceholder = regexp.MustCompile(`{{\s*([A-Za-z0-9_.]+)\s*}}`)
@@ -2937,6 +3112,9 @@ func daemonRunCmd(args Args) error {
 		return err
 	}
 	defer daemon.Close()
+	if args.Bool("once") {
+		daemon.dispatchRefusalReason = oneShotDispatchRefusal("tusker daemon run --once")
+	}
 	return daemon.Run(context.Background(), args.Bool("once"))
 }
 
@@ -3177,6 +3355,7 @@ func refreshCmd(args Args) error {
 		return err
 	}
 	defer daemon.Close()
+	daemon.dispatchRefusalReason = oneShotDispatchRefusal("tusker refresh")
 	if err := daemon.PollOnce(context.Background()); err != nil {
 		return err
 	}

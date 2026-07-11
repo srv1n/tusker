@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -31,6 +30,7 @@ type automationCommandContext struct {
 	GlobalActiveRuns   int
 	ProjectActiveRuns  int
 	StateActiveRuns    map[string]int
+	DispatchRefusal    string
 }
 
 type automationProjectSummary struct {
@@ -247,24 +247,11 @@ func automationDispatchCmd(args Args) error {
 		printAutomationExplanation(explanation)
 		return tuskerError(errorInvalidTransition, taskID+": automation dispatch blocked: "+strings.Join(explanation.Blockers, "; "), withContext(explanation))
 	}
-	run := ctx.effectiveRunForTask(note, explanation.Runner)
-	daemon := &Daemon{stateRoot: ctx.StateRoot, store: ctx.Store}
-	updated, dispatchErr := daemon.dispatchRun(context.Background(), ctx.Project, ctx.Workflow, note, run, runLaneExecute)
-	if dispatchErr != nil {
-		updated = daemon.scheduleRetry(updated, ctx.Workflow.Data, dispatchErr.Error())
-	}
-	if err := ctx.Store.UpsertRun(updated); err != nil {
-		return err
-	}
-	if dispatchErr != nil {
-		return dispatchErr
-	}
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "run": updated, "explanation": explanation})
+		emitJSON(map[string]any{"ok": false, "explanation": explanation, "error": oneShotDispatchRefusal("tusker automation dispatch")})
 		return nil
 	}
-	fmt.Printf("Dispatched %s with %s: %s\n", explanation.ID, explanation.Runner, updated.LeaseState)
-	return nil
+	return tuskerError(errorInvalidTransition, oneShotDispatchRefusal("tusker automation dispatch"), withContext(explanation))
 }
 
 func loadAutomationCommandContext(args Args) (*automationCommandContext, error) {
@@ -496,6 +483,7 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 		branch, _ = currentGitBranchIn(ctx.Project.RepoRoot)
 	}
 	existing := ctx.existingRunPointer(recordID)
+	workspaceStrategy := workspaceStrategyForRun(ctx.Workflow.Data, ctx.Project, run, ctx.projectRunsSlice())
 	blockers = uniqueStrings(blockers)
 	return automationTaskExplanation{
 		Schema:            automationExplainSchema,
@@ -517,8 +505,8 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 		Lane:              firstNonEmpty(run.Lane, runLaneExecute),
 		Command:           command,
 		WorkflowPath:      ctx.Workflow.Path,
-		WorkspacePath:     automationWorkspacePath(ctx.StateRoot, ctx.Project, run),
-		WorkspaceStrategy: string(workspaceStrategyFromWorkflow(ctx.Workflow.Data.Workspace.Strategy)),
+		WorkspacePath:     automationWorkspacePath(ctx.StateRoot, ctx.Project, ctx.Workflow.Data, run, workspaceStrategy),
+		WorkspaceStrategy: string(workspaceStrategy),
 		Branch:            branch,
 		ApprovalPolicy:    policy.ApprovalPolicy,
 		ThreadSandbox:     policy.ThreadSandbox,
@@ -741,16 +729,23 @@ func (ctx *automationCommandContext) concurrencyBlockers(note Note) []string {
 	return blockers
 }
 
-func automationWorkspacePath(stateRoot string, project RegisteredProject, run RunStatus) string {
+func automationWorkspacePath(stateRoot string, project RegisteredProject, wf Workflow, run RunStatus, strategy WorkspaceStrategy) string {
 	req := WorkspacePrepareRequest{
-		ProjectID:    project.ProjectID,
-		ProjectKey:   project.ProjectKey,
-		RecordID:     run.RecordID,
-		ItemID:       run.ItemID,
-		StateRoot:    stateRoot,
-		WorkRevision: run.WorkRevision,
+		ProjectID:     project.ProjectID,
+		ProjectKey:    project.ProjectKey,
+		RecordID:      run.RecordID,
+		ItemID:        run.ItemID,
+		RepoRoot:      project.RepoRoot,
+		StateRoot:     stateRoot,
+		WorkspaceRoot: wf.Workspace.Root,
+		Strategy:      strategy,
+		WorkRevision:  run.WorkRevision,
 	}
-	return filepath.Join(stateRoot, "workspaces", project.ProjectKey, workspaceKeyForRequest(req))
+	workspacePath, _, err := workspacePathForRequest(req)
+	if err != nil {
+		return ""
+	}
+	return workspacePath
 }
 
 func (ctx *automationCommandContext) existingRunPointer(recordID string) *RunStatus {

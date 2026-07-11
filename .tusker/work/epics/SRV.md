@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:16:22Z"
-updated_at: "2026-07-06T06:39:40Z"
-state_rev: "sha256:9636be35ed914f09b1c79f800cbadb70579c85291262d8548e799b0b13a35c3a"
+updated_at: "2026-07-06T07:18:11Z"
+state_rev: "sha256:5e6a09ecd671dca0730f6c1b1add3be7e32fff6c8380d4da179f8fd01712002c"
 ---
 
 # SRV · Tusker Serve: local control-room UI

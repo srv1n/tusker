@@ -12,21 +12,23 @@ import (
 type WorkspaceStrategy string
 
 const (
+	WorkspaceStrategyInPlace  WorkspaceStrategy = "in_place"
 	WorkspaceStrategyWorktree WorkspaceStrategy = "worktree"
 	WorkspaceStrategyClone    WorkspaceStrategy = "clone"
 	WorkspaceStrategyCopy     WorkspaceStrategy = "copy"
 )
 
 type WorkspacePrepareRequest struct {
-	ProjectID    string
-	ProjectKey   string
-	RecordID     string
-	ItemID       string
-	BranchName   string
-	RepoRoot     string
-	StateRoot    string
-	Strategy     WorkspaceStrategy
-	WorkRevision int
+	ProjectID     string
+	ProjectKey    string
+	RecordID      string
+	ItemID        string
+	BranchName    string
+	RepoRoot      string
+	StateRoot     string
+	WorkspaceRoot string
+	Strategy      WorkspaceStrategy
+	WorkRevision  int
 }
 
 type WorkspacePrepareResult struct {
@@ -59,17 +61,66 @@ func NewWorkspaceManager() WorkspaceManager {
 }
 
 func (m *FSWorkspaceManager) Prepare(req WorkspacePrepareRequest) (WorkspacePrepareResult, error) {
-	workspaceKey := workspaceKeyForRequest(req)
-	workspacePath := filepath.Join(req.StateRoot, "workspaces", req.ProjectKey, workspaceKey)
-	root := filepath.Join(req.StateRoot, "workspaces", req.ProjectKey)
-	if err := assertWorkspaceWithinRoot(workspacePath, root); err != nil {
+	if req.Strategy == "" {
+		req.Strategy = WorkspaceStrategyInPlace
+	}
+	workspacePath, root, err := workspacePathForRequest(req)
+	if err != nil {
 		return WorkspacePrepareResult{}, err
 	}
+	if req.Strategy == WorkspaceStrategyInPlace {
+		if err := assertInPlaceWorkspaceReady(req.RepoRoot); err != nil {
+			return WorkspacePrepareResult{}, err
+		}
+	} else if err := assertWorkspaceWithinRoot(workspacePath, root); err != nil {
+		return WorkspacePrepareResult{}, err
+	}
+	return m.prepareAtPath(workspacePath, req)
+}
+
+func workspacePathForRequest(req WorkspacePrepareRequest) (string, string, error) {
+	if req.Strategy == WorkspaceStrategyInPlace {
+		repoRoot := strings.TrimSpace(req.RepoRoot)
+		if repoRoot == "" {
+			return "", "", tuskerError(errorConfigInvalid, "in_place workspace requires repo_root")
+		}
+		abs, err := filepath.Abs(repoRoot)
+		if err != nil {
+			return "", "", err
+		}
+		return abs, abs, nil
+	}
+	workspaceKey := workspaceKeyForRequest(req)
+	root := workspaceRootForRequest(req)
+	return filepath.Join(root, workspaceKey), root, nil
+}
+
+func workspaceRootForRequest(req WorkspacePrepareRequest) string {
+	root := strings.TrimSpace(req.WorkspaceRoot)
+	if root == "" {
+		root = filepath.Join(req.StateRoot, "workspaces")
+	} else if !filepath.IsAbs(root) {
+		base := strings.TrimSpace(req.RepoRoot)
+		if base == "" {
+			base = req.StateRoot
+		}
+		root = filepath.Join(base, root)
+	}
+	projectKey := strings.TrimSpace(req.ProjectKey)
+	if projectKey == "" {
+		projectKey = "project"
+	}
+	return filepath.Join(root, projectKey)
+}
+
+func (m *FSWorkspaceManager) prepareAtPath(workspacePath string, req WorkspacePrepareRequest) (WorkspacePrepareResult, error) {
 	metadataPath := filepath.Join(workspacePath, ".tusker", "workspace.json")
 	created := false
 	if !fileExists(metadataPath) {
-		if err := m.materializeWorkspace(workspacePath, req); err != nil {
-			return WorkspacePrepareResult{}, err
+		if req.Strategy != WorkspaceStrategyInPlace {
+			if err := m.materializeWorkspace(workspacePath, req); err != nil {
+				return WorkspacePrepareResult{}, err
+			}
 		}
 		created = true
 	}
@@ -120,6 +171,64 @@ func assertWorkspaceWithinRoot(workspacePath, root string) error {
 		return tuskerError(errorConfigInvalid, "workspace path escapes workspace root", withPath(workspacePath))
 	}
 	return nil
+}
+
+func assertInPlaceWorkspaceReady(repoRoot string) error {
+	repoRoot = strings.TrimSpace(repoRoot)
+	if repoRoot == "" || !fileExists(repoRoot) {
+		return tuskerError(errorConfigInvalid, "in_place workspace requires an existing repo root", withPath(repoRoot))
+	}
+	dirty, err := inPlaceDirtyPaths(repoRoot)
+	if err != nil {
+		return err
+	}
+	if len(dirty) > 0 {
+		return tuskerError(errorInvalidTransition, "in_place workspace requires a clean working tree outside .tusker; dirty paths: "+strings.Join(limitStrings(dirty, 5), ", "), withPath(repoRoot))
+	}
+	return nil
+}
+
+func inPlaceDirtyPaths(repoRoot string) ([]string, error) {
+	if _, err := exec.LookPath("git"); err != nil || !fileExists(filepath.Join(repoRoot, ".git")) {
+		return nil, nil
+	}
+	out, err := exec.Command("git", "-C", repoRoot, "status", "--porcelain", "--untracked-files=all").Output()
+	if err != nil {
+		return nil, err
+	}
+	var dirty []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		for _, path := range porcelainDirtyPaths(line) {
+			if !workspacePathIsTuskerBookkeeping(path) {
+				dirty = append(dirty, path)
+			}
+		}
+	}
+	return dirty, nil
+}
+
+func porcelainDirtyPaths(line string) []string {
+	if len(line) > 3 {
+		line = line[3:]
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+	parts := strings.Split(line, " -> ")
+	for i, part := range parts {
+		parts[i] = strings.Trim(strings.TrimSpace(part), `"`)
+	}
+	return parts
+}
+
+func workspacePathIsTuskerBookkeeping(path string) bool {
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	return path == ".tusker" || strings.HasPrefix(path, ".tusker/")
 }
 
 func validateWorkspaceMetadata(metadata WorkspaceMetadata, req WorkspacePrepareRequest) error {

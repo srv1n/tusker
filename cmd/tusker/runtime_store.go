@@ -694,7 +694,7 @@ func (s *RuntimeStore) CountProjectActiveRuns(projectID string) (int, error) {
 	var count int
 	err := s.db.QueryRow(`SELECT COUNT(*)
 		FROM runs
-		WHERE project_id = ? AND lease_state IN ('claimed', 'running', 'retry_queued')`, projectID).Scan(&count)
+		WHERE project_id = ? AND lease_state IN ('claimed', 'running')`, projectID).Scan(&count)
 	return count, err
 }
 
@@ -1314,7 +1314,7 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 		return nil, err
 	}
 	var runCount int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM runs WHERE lease_state IN ('claimed', 'running', 'retry_queued')`).Scan(&runCount); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM runs WHERE lease_state IN ('claimed', 'running')`).Scan(&runCount); err != nil {
 		return nil, err
 	}
 	globalLimit, err := s.GlobalActiveRunLimit()

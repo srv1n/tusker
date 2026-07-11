@@ -7,5 +7,6 @@
 | Task | Risk | Next action |
 |---|---|---|
 | [[CLN-T-0001]] | low | Review evidence and close or return to rework. |
+| [[RUN-T-0004]] | medium | Review evidence and close or return to rework. |
 
 <!-- tusker:generated:end -->

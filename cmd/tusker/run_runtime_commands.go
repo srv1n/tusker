@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -558,47 +557,49 @@ func runsInterruptCmd(args Args) error {
 		return tuskerError(errorNotFound, "run not found: "+identity)
 	}
 	if run.ProcessPID <= 0 || !processExists(run.ProcessPID) {
-		if args.Bool("json") {
-			emitJSON(map[string]any{"ok": true, "interrupted": false, "reason": "process not running"})
-			return nil
+		if err := finishRuntimeRun(store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "interrupt requested by operator; process is not running", true); err != nil {
+			return err
 		}
-		fmt.Println("Process is not running")
-		return nil
-	}
-	if err := syscall.Kill(-run.ProcessPID, syscall.SIGINT); err != nil && !strings.Contains(err.Error(), "no such process") {
+	} else if err := interruptRunProcess(store, run); err != nil {
 		return err
-	}
-	for i := 0; i < 6 && processExists(run.ProcessPID); i++ {
-		time.Sleep(150 * time.Millisecond)
-	}
-	if processExists(run.ProcessPID) {
-		_ = syscall.Kill(-run.ProcessPID, syscall.SIGTERM)
-		for i := 0; i < 4 && processExists(run.ProcessPID); i++ {
-			time.Sleep(150 * time.Millisecond)
-		}
-	}
-	if processExists(run.ProcessPID) {
-		_ = syscall.Kill(-run.ProcessPID, syscall.SIGKILL)
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	updateRunAttemptFromRun(store, *run, AttemptOutcomeCancelled, 130, "interrupt requested by operator", now)
-	run.LeaseState = string(LeaseStateInterrupted)
-	run.AttemptOutcome = string(AttemptOutcomeCancelled)
-	run.NextRetryAt = ""
-	run.LastError = "interrupt requested by operator"
-	run.UpdatedAt = now
-	clearActiveExecution(run)
-	if err := store.UpsertRun(*run); err != nil {
-		return err
-	}
-	if strings.TrimSpace(run.SessionRef) != "" {
-		_ = store.MarkSessionState(run.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateInterrupted), "", run.LastError, true)
 	}
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "interrupted": true, "item_id": run.ItemID, "record_id": run.RecordID, "pid": run.ProcessPID})
 		return nil
 	}
 	fmt.Printf("Sent interrupt to %s (pid %d)\n", firstNonEmpty(run.ItemID, run.RecordID), run.ProcessPID)
+	return nil
+}
+
+func runsReleaseCmd(args Args) error {
+	identity, err := requireArg(args, "id")
+	if err != nil {
+		return err
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	run, err := store.FindRun(identity)
+	if err != nil {
+		return err
+	}
+	if run == nil {
+		return tuskerError(errorNotFound, "run not found: "+identity)
+	}
+	if run.ProcessPID > 0 && processExists(run.ProcessPID) {
+		return tuskerError(errorInvalidTransition, "run process is still running; use tusker runs interrupt before release", withContext(map[string]any{"pid": run.ProcessPID}))
+	}
+	reason := firstNonEmpty(strings.TrimSpace(args.String("reason")), "released dead run by operator")
+	if err := finishRuntimeRun(store, run, LeaseStateReleased, AttemptOutcomeAbandoned, 0, reason, false); err != nil {
+		return err
+	}
+	if args.Bool("json") {
+		emitJSON(map[string]any{"ok": true, "released": true, "item_id": run.ItemID, "record_id": run.RecordID})
+		return nil
+	}
+	fmt.Printf("Released %s\n", firstNonEmpty(run.ItemID, run.RecordID))
 	return nil
 }
 
