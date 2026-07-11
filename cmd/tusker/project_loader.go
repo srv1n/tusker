@@ -21,11 +21,18 @@ type loadedRegisteredProject struct {
 	LoadError error
 }
 
+// Test-only observer for proving warm serve cache hits do not touch registry
+// metadata. Tests installing it must not run in parallel.
+var registeredProjectLoadObserver func(registeredProjectLoadOptions)
+
 func (p loadedRegisteredProject) Loadable() bool {
 	return p.Project.Enabled && p.LoadError == nil
 }
 
 func loadRegisteredProjects(store *RuntimeStore, opts registeredProjectLoadOptions) ([]loadedRegisteredProject, error) {
+	if registeredProjectLoadObserver != nil {
+		registeredProjectLoadObserver(opts)
+	}
 	if store == nil {
 		return nil, tuskerError(errorConfigInvalid, "runtime store is required")
 	}

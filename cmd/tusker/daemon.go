@@ -927,7 +927,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 				return err
 			}
-			d.emitStreamEvent(serveStreamKindReviewBatch, "review:batch", "needs", "tasks", "runs", "projects")
+			d.emitProjectStreamEvent(project.ProjectID, serveStreamKindReviewBatch, "review:batch", "needs", "tasks", "runs", "projects")
 			projectRuns[recordID] = current
 			if !shouldDispatchRun(current, now) {
 				continue
@@ -1040,7 +1040,9 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 	}); err != nil {
 		return err
 	}
-	d.emitPollTickStreamEvent()
+	if projectID != "" && d.serve != nil {
+		d.serve.refreshProjectSnapshot(projectID)
+	}
 	return nil
 }
 

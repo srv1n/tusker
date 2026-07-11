@@ -22,15 +22,16 @@ type serveServer struct {
 }
 
 type serveSnapshotEntry struct {
-	project    RegisteredProject
-	snapshot   serveSnapshot
-	err        error
-	ready      bool
-	building   bool
-	invalid    bool
-	done       chan struct{}
-	builtAt    time.Time
-	buildCount uint64
+	project     RegisteredProject
+	snapshot    serveSnapshot
+	contentHash string
+	err         error
+	ready       bool
+	building    bool
+	invalid     bool
+	done        chan struct{}
+	builtAt     time.Time
+	buildCount  uint64
 }
 
 type serveSnapshot struct {
@@ -51,6 +52,7 @@ type serveSnapshot struct {
 	notesByID         map[string]Note
 	runs              []RunStatus
 	queue             map[string]automationTaskExplanation
+	openP0Escalation  bool
 }
 
 type serveTokenTotals struct {

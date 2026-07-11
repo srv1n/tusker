@@ -1,7 +1,9 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -168,4 +170,126 @@ func TestServeSnapshotCacheEagerlyWarmsRegisteredProjects(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("registered project projections did not warm")
+}
+
+func TestServeSnapshotCacheWarmHitSkipsRegistryMetadataReload(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	if _, err := server.loadSnapshotForProject("app"); err != nil {
+		t.Fatal(err)
+	}
+	loads := 0
+	registeredProjectLoadObserver = func(registeredProjectLoadOptions) { loads++ }
+	t.Cleanup(func() { registeredProjectLoadObserver = nil })
+	for range 5 {
+		if _, err := server.loadSnapshotForProject("app"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if loads != 0 {
+		t.Fatalf("warm snapshot hits reloaded project metadata %d times", loads)
+	}
+}
+
+func TestServeSnapshotIdenticalRefreshEmitsNoProjectionEvent(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	server.stream = newServeStreamBroker()
+	if _, err := server.loadSnapshotForProject("app"); err != nil {
+		t.Fatal(err)
+	}
+	ch, unsubscribe, ok := server.stream.Subscribe()
+	if !ok {
+		t.Fatal("expected stream subscription")
+	}
+	defer unsubscribe()
+
+	server.invalidateProjectSnapshot("app")
+	if _, err := server.loadFreshSnapshotForProject("app"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-ch:
+		t.Fatalf("byte-identical snapshot emitted %#v", event)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	writeServeTask(t, server.vaultPath, serveTaskSeed{ID: "APP-T-0002", Epic: "APP", Title: "Changed snapshot", Status: "ready", Risk: "medium", Priority: "p1"})
+	server.invalidateProjectSnapshot("app")
+	if _, err := server.loadFreshSnapshotForProject("app"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-ch:
+		if event.Kind != "projection_refreshed" || event.Project != "app" {
+			t.Fatalf("changed snapshot event lacks project scope: %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("changed snapshot did not emit projection refresh")
+	}
+}
+
+func TestDaemonStatusUsesSnapshotEscalationWithoutVaultReload(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	escalationPath := filepath.Join(server.vaultPath, "work", "escalations", "APP-X-0001.md")
+	if err := writeText(escalationPath, "---\nkind: escalation\nid: APP-X-0001\nstatus: open\nseverity: P0\n---\n\n# Critical\n"); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := server.loadFreshSnapshotForProject("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snap.openP0Escalation {
+		t.Fatal("snapshot did not carry open P0 escalation state")
+	}
+	indexLoads := 0
+	loadV7IndexObserver = func() { indexLoads++ }
+	t.Cleanup(func() { loadV7IndexObserver = nil })
+	status := server.daemonStatusFromSnapshot(snap)
+	if !status.PersistentEscalationBanner {
+		t.Fatal("daemon status lost cached escalation state")
+	}
+	if indexLoads != 0 {
+		t.Fatalf("daemon status walked vault %d times", indexLoads)
+	}
+}
+
+func TestServeDocListScopesWalkToVaultAndConfiguredDirs(t *testing.T) {
+	repo := t.TempDir()
+	vault := filepath.Join(repo, ".tusker")
+	paths := map[string]string{
+		filepath.Join(vault, "knowledge", "CANON.md"):               "# Canon\n",
+		filepath.Join(repo, "docs", "guide.md"):                     "# Guide\n",
+		filepath.Join(repo, "docs", "node_modules", "noise.md"):     "# Noise\n",
+		filepath.Join(repo, "vendor", "vendored.md"):                "# Vendor\n",
+		filepath.Join(repo, "unconfigured", "should-not-appear.md"): "# Outside\n",
+	}
+	for path, body := range paths {
+		if err := writeText(path, body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	visited := []string{}
+	serveDocWalkObserver = func(path string) { visited = append(visited, path) }
+	t.Cleanup(func() { serveDocWalkObserver = nil })
+	docs, err := serveDocList(repo, vault, []string{"docs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := []string{}
+	for _, doc := range docs {
+		listed = append(listed, doc.Path)
+	}
+	joined := strings.Join(listed, "\n")
+	if !strings.Contains(joined, ".tusker/knowledge/CANON.md") || !strings.Contains(joined, "docs/guide.md") {
+		t.Fatalf("scoped docs missing expected files: %v", listed)
+	}
+	for _, forbidden := range []string{"node_modules", "vendor", "unconfigured"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("docs list escaped scope into %s: %v", forbidden, listed)
+		}
+	}
+	for _, path := range visited {
+		if !sameCleanPath(path, vault) && !strings.HasPrefix(filepath.Clean(path), filepath.Clean(vault)+string(os.PathSeparator)) && !sameCleanPath(path, filepath.Join(repo, "docs")) && !strings.HasPrefix(filepath.Clean(path), filepath.Join(repo, "docs")+string(os.PathSeparator)) {
+			t.Fatalf("docs walker visited out-of-scope path %s", path)
+		}
+	}
 }

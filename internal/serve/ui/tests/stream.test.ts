@@ -83,6 +83,7 @@ test("stream connection disables fast polling, falls back on error, and recovers
   const disconnect = connectLiveStream(client, {
     EventSourceImpl: FakeEventSource,
     now: () => now,
+    debounceMs: 0,
   });
   const source = FakeEventSource.instances[0];
 
@@ -118,4 +119,21 @@ test("stream connection disables fast polling, falls back on error, and recovers
 
   disconnect();
   expect(source.closed).toBe(true);
+});
+
+test("stream connection debounces and deduplicates burst invalidations", async () => {
+  FakeEventSource.instances = [];
+  const { client, invalidations } = recorder();
+  const disconnect = connectLiveStream(client, {
+    EventSourceImpl: FakeEventSource,
+    debounceMs: 20,
+  });
+  const source = FakeEventSource.instances[0];
+  source.message({ kind: "task_status_change", keys: ["tasks:APP-T-0001"], project: "app" });
+  source.message({ kind: "projection_refreshed", keys: ["tasks", "needs"], project: "app" });
+  expect(invalidations).toHaveLength(0);
+  await Bun.sleep(35);
+  expect(invalidations.filter((entry) => JSON.stringify(entry) === JSON.stringify({ queryKey: ["tasks", "app"], exact: false }))).toHaveLength(1);
+  expect(invalidations.filter((entry) => JSON.stringify(entry) === JSON.stringify({ queryKey: ["needs", "app"], exact: false }))).toHaveLength(1);
+  disconnect();
 });

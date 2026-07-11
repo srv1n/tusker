@@ -1,6 +1,7 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 
 export const LIVE_STREAM_FALLBACK_MS = 45_000;
+export const STREAM_INVALIDATION_DEBOUNCE_MS = 75;
 
 export interface StreamEvent {
   id?: number;
@@ -108,13 +109,37 @@ export function invalidateStreamEvent(queryClient: QueryInvalidator, event: Stre
 
 export function connectLiveStream(
   queryClient: QueryInvalidator,
-  options: { enabled?: boolean; EventSourceImpl?: EventSourceCtor; url?: string; now?: () => number } = {},
+  options: { enabled?: boolean; EventSourceImpl?: EventSourceCtor; url?: string; now?: () => number; debounceMs?: number } = {},
 ): () => void {
   if (options.enabled === false) return () => {};
   const EventSourceImpl = options.EventSourceImpl ?? globalThis.EventSource;
   if (!EventSourceImpl) return () => {};
 
   const now = options.now ?? (() => Date.now());
+  const debounceMs = options.debounceMs ?? STREAM_INVALIDATION_DEBOUNCE_MS;
+  const pending = new Map<string, QueryKey>();
+  let invalidationTimer: ReturnType<typeof setTimeout> | null = null;
+  const flushInvalidations = () => {
+    invalidationTimer = null;
+    for (const queryKey of pending.values()) {
+      void queryClient.invalidateQueries({ queryKey, exact: false });
+    }
+    pending.clear();
+  };
+  const enqueueInvalidation = (event: StreamEvent) => {
+    if (debounceMs <= 0) {
+      invalidateStreamEvent(queryClient, event);
+      return;
+    }
+    for (const key of event.keys) {
+      for (const queryKey of streamKeyToQueryKeys(key, event.project)) {
+        pending.set(JSON.stringify(queryKey), queryKey);
+      }
+    }
+    if (invalidationTimer === null) {
+      invalidationTimer = setTimeout(flushInvalidations, debounceMs);
+    }
+  };
   const source = new EventSourceImpl(options.url ?? "/api/stream");
   source.onopen = () => {
     setStreamStatus({ ...status, connected: true });
@@ -126,7 +151,7 @@ export function connectLiveStream(
   source.onmessage = (message) => {
     const event = JSON.parse(message.data) as StreamEvent;
     setStreamStatus({ connected: true, lastEventAt: now(), lastErrorAt: status.lastErrorAt });
-    invalidateStreamEvent(queryClient, event);
+    enqueueInvalidation(event);
   };
   source.onerror = () => {
     setStreamStatus({ ...status, connected: false, lastErrorAt: now() });
@@ -136,6 +161,8 @@ export function connectLiveStream(
     });
   };
   return () => {
+    if (invalidationTimer !== null) clearTimeout(invalidationTimer);
+    pending.clear();
     source.close();
     setStreamStatus({ ...status, connected: false });
   };

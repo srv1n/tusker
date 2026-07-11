@@ -417,6 +417,27 @@ func serveSnapshotKey(project RegisteredProject) string {
 	return firstNonEmpty(project.ProjectID, filepath.Clean(project.VaultRoot), filepath.Clean(project.RepoRoot))
 }
 
+func (s *serveServer) cachedProjectForSnapshot(projectID string) (RegisteredProject, bool) {
+	projectID = strings.TrimSpace(projectID)
+	s.snapshotMu.Lock()
+	defer s.snapshotMu.Unlock()
+	if entry := s.snapshots[projectID]; projectID != "" && entry != nil {
+		return entry.project, true
+	}
+	for _, entry := range s.snapshots {
+		if entry == nil {
+			continue
+		}
+		if projectID != "" && entry.project.ProjectID == projectID {
+			return entry.project, true
+		}
+		if projectID == "" && (sameCleanPath(entry.project.VaultRoot, s.vaultPath) || sameCleanPath(entry.project.RepoRoot, s.repoRoot)) {
+			return entry.project, true
+		}
+	}
+	return RegisteredProject{}, false
+}
+
 func (s *serveServer) loadSnapshotForRequest(r *http.Request) (serveSnapshot, error) {
 	return s.loadSnapshotForProject(strings.TrimSpace(r.URL.Query().Get("project")))
 }
@@ -430,9 +451,13 @@ func (s *serveServer) loadFreshSnapshotForProject(projectID string) (serveSnapsh
 }
 
 func (s *serveServer) loadSnapshotForProjectMode(projectID string, waitFresh bool) (serveSnapshot, error) {
-	project, err := s.projectForSnapshot(projectID)
-	if err != nil {
-		return serveSnapshot{}, err
+	project, cached := s.cachedProjectForSnapshot(projectID)
+	if !cached {
+		var err error
+		project, err = s.projectForSnapshot(projectID)
+		if err != nil {
+			return serveSnapshot{}, err
+		}
 	}
 	key := serveSnapshotKey(project)
 	for {
@@ -482,8 +507,14 @@ func (s *serveServer) loadSnapshotForProjectMode(projectID string, waitFresh boo
 		s.snapshotMu.Unlock()
 
 		snap, buildErr := s.buildSnapshotForProject(project, true)
+		contentHash := ""
+		if buildErr == nil {
+			contentHash = serveSnapshotContentHash(snap)
+		}
 		s.snapshotMu.Lock()
+		previousHash := entry.contentHash
 		entry.snapshot = snap
+		entry.contentHash = contentHash
 		entry.err = buildErr
 		entry.ready = buildErr == nil
 		entry.invalid = false
@@ -492,7 +523,7 @@ func (s *serveServer) loadSnapshotForProjectMode(projectID string, waitFresh boo
 		entry.buildCount++
 		close(entry.done)
 		s.snapshotMu.Unlock()
-		if wasReady && buildErr == nil && s.stream != nil {
+		if wasReady && buildErr == nil && contentHash != previousHash && s.stream != nil {
 			s.stream.Broadcast(serveStreamEvent{
 				Kind: "projection_refreshed", Project: snap.projectID,
 				Keys: []string{"projects", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch"},
@@ -576,6 +607,10 @@ func (s *serveServer) buildSnapshotForProject(project RegisteredProject, include
 			snap.decisions = append(snap.decisions, note)
 		case "attempt":
 			snap.attemptNotes = append(snap.attemptNotes, note)
+		case "escalation":
+			if strings.EqualFold(stringField(note.Data, "status"), escalationStatusOpen) && strings.EqualFold(stringField(note.Data, "severity"), "P0") {
+				snap.openP0Escalation = true
+			}
 		}
 	}
 	snap.projectID = firstNonEmpty(project.ProjectID, snap.projectID)
@@ -601,7 +636,10 @@ func (s *serveServer) buildSnapshotForProject(project RegisteredProject, include
 	if includeQueue {
 		snap.queue = s.loadQueueExplanationsForProject(project)
 	}
-	snap.docs, _ = serveDocList(project.RepoRoot, project.VaultRoot)
+	snap.docs, err = serveDocList(project.RepoRoot, project.VaultRoot, snap.workflow.Runtime.Serve.DocsDirs)
+	if err != nil {
+		return serveSnapshot{}, err
+	}
 	snap.needs = serveNeeds(snap, s.now())
 	return snap, nil
 }
@@ -687,7 +725,7 @@ func (s *serveServer) daemonStatusFromSnapshot(snap serveSnapshot) *serveDaemonS
 		}
 	}
 	daemonStatus, _ := s.store.DaemonStatus()
-	loadedProjects, _ := loadRegisteredProjects(s.store, registeredProjectLoadOptions{})
+	loadedProjects, _ := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
 	projects := loadedRegisteredProjects(loadedProjects)
 	limit, _ := s.store.GlobalActiveRunLimit()
 	if limit <= 0 {
@@ -718,7 +756,7 @@ func (s *serveServer) daemonStatusFromSnapshot(snap serveSnapshot) *serveDaemonS
 		DaemonPID:                  intFromAny(daemonStatus["daemon_pid"]),
 		DaemonStartedAt:            nullIfBlank(stringValue(daemonStatus["daemon_started_at"])),
 		DaemonLastPollAt:           nullIfBlank(stringValue(daemonStatus["daemon_last_poll_at"])),
-		PersistentEscalationBanner: hasOpenP0Escalation(s.vaultPath),
+		PersistentEscalationBanner: snap.openP0Escalation,
 	}
 }
 

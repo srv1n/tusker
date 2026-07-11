@@ -37,15 +37,11 @@ func (d *Daemon) streamEvent(kind string, keys []string, meta serveStreamTaskMet
 	return serveStreamEvent{Kind: kind, Keys: keys, Project: meta.Project, TaskID: meta.TaskID, Title: meta.Title, Status: meta.Status, Urgency: urgency, DeepLinkPath: serveStreamDeepLink(meta)}
 }
 
-func (d *Daemon) emitStreamEvent(kind string, keys ...string) {
+func (d *Daemon) emitProjectStreamEvent(projectID, kind string, keys ...string) {
 	if d == nil || d.stream == nil {
 		return
 	}
-	d.stream.Broadcast(serveStreamEvent{Kind: kind, Keys: keys})
-}
-
-func (d *Daemon) emitPollTickStreamEvent() {
-	d.emitStreamEvent(serveStreamKindPollTick, "daemon", "projects")
+	d.stream.Broadcast(d.streamEvent(kind, keys, serveStreamTaskMeta{Project: projectID}, ""))
 }
 
 func (d *Daemon) emitDispatchStreamEvent(run RunStatus) {

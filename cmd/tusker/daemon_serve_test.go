@@ -47,23 +47,26 @@ func TestDaemonServeInProcessReportsPidAndPollData(t *testing.T) {
 	}
 }
 
-func TestDaemonServeStreamEmitsPollTick(t *testing.T) {
-	stateRoot := setupDaemonServeProject(t, true, "127.0.0.1:0")
-	errCh := startDaemonRunForTest(t, stateRoot)
-	addr := waitForDaemonServeAddr(t, stateRoot, errCh)
-	defer stopDaemonRunForTest(t, stateRoot, errCh)
-
-	reader, closeStream := openServeStreamURL(t, http.DefaultClient, "http://"+addr+"/api/stream")
-	defer closeStream()
-	got, _ := readServeStreamEvent(t, reader)
-	if got.Kind != serveStreamKindPollTick {
-		t.Fatalf("expected live daemon poll tick event, got %#v", got)
+func TestDaemonServeStreamIdlePollEmitsNoInvalidation(t *testing.T) {
+	stateRoot := setupDaemonServeProject(t, false, "127.0.0.1:0")
+	daemon, err := NewDaemon(stateRoot)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !containsString(got.Keys, "daemon") || !containsString(got.Keys, "projects") {
-		t.Fatalf("expected liveness poll tick invalidation keys, got %#v", got.Keys)
+	defer daemon.Close()
+	daemon.stream = newServeStreamBroker()
+	ch, unsubscribe, ok := daemon.stream.Subscribe()
+	if !ok {
+		t.Fatal("expected stream subscription")
 	}
-	if containsString(got.Keys, "runs") || containsString(got.Keys, "tasks") || containsString(got.Keys, "needs") {
-		t.Fatalf("poll tick must not invalidate heavy task/run queries, got %#v", got.Keys)
+	defer unsubscribe()
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-ch:
+		t.Fatalf("idle poll emitted client invalidation: %#v", event)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

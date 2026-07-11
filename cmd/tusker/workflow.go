@@ -18,8 +18,9 @@ type WorkflowFile struct {
 }
 
 type RuntimeServeConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Addr    string `yaml:"addr"`
+	Enabled  bool     `yaml:"enabled"`
+	Addr     string   `yaml:"addr"`
+	DocsDirs []string `yaml:"docs_dirs,omitempty"`
 }
 
 type Workflow struct {

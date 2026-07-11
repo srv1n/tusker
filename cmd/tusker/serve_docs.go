@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -59,44 +60,89 @@ func (s *serveServer) handleDoc(w http.ResponseWriter, r *http.Request, rawPath 
 	})
 }
 
-func serveDocList(repoRoot, vaultPath string) ([]serveDocListEntry, error) {
+var serveDocWalkObserver func(string)
+
+func serveDocList(repoRoot, vaultPath string, configuredDirs []string) ([]serveDocListEntry, error) {
 	out := []serveDocListEntry{}
-	err := filepath.WalkDir(repoRoot, func(path string, entry fs.DirEntry, err error) error {
+	seen := map[string]struct{}{}
+	roots := []string{vaultPath}
+	for _, configured := range configuredDirs {
+		configured = strings.TrimSpace(configured)
+		if configured == "" {
+			continue
+		}
+		root, ok := safeRepoPath(repoRoot, filepath.ToSlash(configured))
+		if !ok {
+			return nil, fmt.Errorf("configured docs directory escapes repository: %s", configured)
+		}
+		roots = append(roots, root)
+	}
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		if _, duplicate := seen[root]; duplicate {
+			continue
+		}
+		seen[root] = struct{}{}
+		info, err := os.Stat(root)
+		if os.IsNotExist(err) {
+			continue
+		}
 		if err != nil {
-			return err
+			return nil, err
 		}
-		rel, relErr := filepath.Rel(repoRoot, path)
-		if relErr != nil {
-			return relErr
+		if !info.IsDir() {
+			return nil, fmt.Errorf("configured docs path is not a directory: %s", root)
 		}
-		rel = filepath.ToSlash(rel)
-		if entry.IsDir() {
-			if serveSkipDocDir(rel, vaultPath, repoRoot) {
-				return fs.SkipDir
+		err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
 			}
+			if serveDocWalkObserver != nil {
+				serveDocWalkObserver(path)
+			}
+			rel, relErr := filepath.Rel(repoRoot, path)
+			if relErr != nil {
+				return relErr
+			}
+			rel = filepath.ToSlash(rel)
+			if entry.IsDir() {
+				if sameCleanPath(path, root) {
+					return nil
+				}
+				if serveSkipDocDir(rel, vaultPath, repoRoot) {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(entry.Name(), ".md") {
+				return nil
+			}
+			text, readErr := readText(path)
+			if readErr != nil {
+				return nil
+			}
+			data, body, parseErr := parseFrontmatter(text)
+			if parseErr != nil {
+				return nil
+			}
+			if _, duplicate := seen[path]; duplicate {
+				return nil
+			}
+			seen[path] = struct{}{}
+			out = append(out, serveDocListEntry{
+				Path:      rel,
+				Title:     serveDocTitle(rel, data, body),
+				Kind:      serveDocKind(rel, data),
+				UpdatedAt: serveDocUpdatedAt(path, data),
+			})
 			return nil
-		}
-		if !strings.HasSuffix(entry.Name(), ".md") {
-			return nil
-		}
-		text, readErr := readText(path)
-		if readErr != nil {
-			return nil
-		}
-		data, body, parseErr := parseFrontmatter(text)
-		if parseErr != nil {
-			return nil
-		}
-		out = append(out, serveDocListEntry{
-			Path:      rel,
-			Title:     serveDocTitle(rel, data, body),
-			Kind:      serveDocKind(rel, data),
-			UpdatedAt: serveDocUpdatedAt(path, data),
 		})
-		return nil
-	})
+		if err != nil {
+			return nil, err
+		}
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	return out, err
+	return out, nil
 }
 
 func serveSkipDocDir(rel, vaultPath, repoRoot string) bool {
@@ -107,7 +153,7 @@ func serveSkipDocDir(rel, vaultPath, repoRoot string) bool {
 	if strings.HasPrefix(base, ".") && rel != ".tusker" {
 		return true
 	}
-	if base == "node_modules" || base == "dist" || base == "artifacts" || base == "site" || base == "tmp" {
+	if base == "node_modules" || base == "vendor" || base == "dist" || base == "artifacts" || base == "site" || base == "tmp" {
 		return true
 	}
 	if strings.HasPrefix(rel, ".tusker/attempts") || strings.HasPrefix(rel, ".tusker/events") || strings.HasPrefix(rel, ".tusker/evidence") || strings.HasPrefix(rel, ".tusker/_generated") || strings.HasPrefix(rel, ".tusker/scratch") {
