@@ -6,7 +6,6 @@
 
 | Task | Priority | Next action |
 |---|---|---|
-| [[AGX-T-0005]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[AGX-T-0006]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[CLN-T-0006]] | p2 | Execute the task contract and satisfy proof mode. |
 | [[FBK-T-0001]] | p1 | Execute the task contract and satisfy proof mode. |
