@@ -116,6 +116,15 @@ After the loop exists:
 If no correct test seam exists, record that as architecture debt. A shallow test
 that cannot reproduce the real bug pattern is not a regression test.
 
+## Xcode Build-State Failures
+
+When an Xcode build fails before reaching meaningful code or test execution,
+run `tusker xcode doctor` against the project or workspace and the recent log or
+result bundle. If it reports `likely_infrastructure`, do not claim code validation
+from that failed build. Record the proof as blocked by generated Xcode state,
+apply only the scoped cleanup recipe it prints, then rerun the exact build/test
+command before marking acceptance as validated.
+
 ## Architecture Language
 
 Use consistent terms when discussing refactors:

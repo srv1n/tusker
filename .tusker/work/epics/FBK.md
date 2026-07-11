@@ -43,7 +43,7 @@ Start from the 2026-07-05 feedback intake: 4 explicit notes collapsed to 2 produ
 
 | Gate | Owner | Blocks | Action |
 |---|---|---|---|
-| _None._ |  |  |  |
+| [[FBK-G-0001]] | human:sarav | [[FBK-T-0002]] | Resolve required broad_test proof: fix the existing red go test ./... baseline or amend/waive FBK-T-0002 broad_test proof. |
 
 ## Active work
 

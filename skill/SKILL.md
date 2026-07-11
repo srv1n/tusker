@@ -40,6 +40,7 @@ Read the explainer before the raw diff when the user asks for understanding, but
 - Runtime activity lives in runs, leases, sessions, attempts, and workspaces.
 - Human gates stop the agent. Do not keep validating around them.
 - Proof must map to acceptance. A vague summary is not proof.
+- When Xcode fails from generated build-state corruption, run `tusker xcode doctor`; if it reports `likely_infrastructure`, do not claim code validation from that failed build.
 - Explainer packets help humans understand and participate; they do not satisfy proof by themselves.
 - Raw logs do not belong in task markdown.
 - Tags are generated projections; typed frontmatter is source of truth.

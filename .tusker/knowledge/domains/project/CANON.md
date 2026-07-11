@@ -53,6 +53,7 @@ state_rev: "sha256:dc7c3334d4cc2ed5aab79acf0f3560b29f4223eecb52b3d94e26646f7ecb2
 - A run at its attempt cap parks before any new attempt is created. `attempt_count_within_caps` is a corruption/operator-surgery sentinel, not a normal dispatch control path.
 - Raw CLI output belongs in runtime scratch/logs, not task markdown.
 - `tusker automation plan <task> --json` is the canonical pre-dispatch explanation.
+- `tusker xcode doctor` classifies generated Xcode build-state failures; when it reports `likely_infrastructure`, agents must record proof as blocked by infrastructure and do not claim code validation from the failed Xcode build.
 - High and critical risk closeout requires human acceptance.
 - Legacy V5/V6 docs, publication manifests, site export state, and checked-in event history are not default read paths.
 - Targeting a quarantined project may fail loudly, but unrelated quarantined registrations must not fatal daemon run/resume, status/list, automation, all-project listing, or serve paths.
