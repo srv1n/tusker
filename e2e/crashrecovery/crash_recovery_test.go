@@ -332,6 +332,43 @@ func TestRetryCapProducesTerminalRun(t *testing.T) {
 	daemon.stop()
 }
 
+func TestCleanExitContinuationLoopParksAtCap(t *testing.T) {
+	h := newHarness(t, "clean-exit-continuation-cap")
+	h.configureFakeRunner(fakeRunnerConfig{
+		Mode:                   "success",
+		StallTimeoutMS:         5000,
+		MaxAttempts:            5,
+		BackoffMS:              []int{1, 1, 1},
+		MaxContinuationRetries: 2,
+	})
+	h.createRunnableTask("clean exit loop parks")
+
+	daemon := h.startDaemon("daemon")
+	h.waitRun(crashTaskID, 8*time.Second, func(run map[string]any) bool {
+		return runString(run, "lease_state") == "parked_no_progress" &&
+			runInt(run, "attempt_count") == 3
+	})
+	run := h.latestRun(crashTaskID)
+	if runString(run, "attempt_outcome") != "blocked" {
+		t.Fatalf("expected blocked no-progress outcome, got %q", runString(run, "attempt_outcome"))
+	}
+	terminal, ok := runBool(run, "terminal")
+	if !ok || !terminal {
+		t.Fatalf("parked continuation cap should set terminal=true; run=%s", prettyJSON(run))
+	}
+	if !strings.Contains(runString(run, "last_error"), "continuation retry cap reached") {
+		t.Fatalf("parked run should preserve cap reason, got %q", runString(run, "last_error"))
+	}
+	status := h.automationStatus()
+	if got := intFromPath(status, "status", "active_runs"); got != 0 {
+		t.Fatalf("parked no-progress run left active capacity occupied: active_runs=%d", got)
+	}
+	if got := intFromPath(status, "status", "parked_runs"); got != 1 {
+		t.Fatalf("expected parked run in daemon status, got parked_runs=%d", got)
+	}
+	daemon.stop()
+}
+
 type fakeRunnerConfig struct {
 	Mode           string
 	RunnerKind     string

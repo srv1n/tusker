@@ -13,7 +13,7 @@ import (
 const defaultHoldTimeout = 2 * time.Minute
 
 func main() {
-	mode := flag.String("mode", "hold-success", "runner behavior: hold-success, hold, wedge, fail")
+	mode := flag.String("mode", "hold-success", "runner behavior: success, hold-success, hold, wedge, fail")
 	readyFile := flag.String("ready-file", "", "path touched after fake runner starts")
 	pidFile := flag.String("pid-file", "", "path receiving the fake runner pid")
 	releaseFile := flag.String("release-file", "", "path that releases hold-success mode")
@@ -28,6 +28,9 @@ func main() {
 	touch(*readyFile)
 
 	switch *mode {
+	case "success":
+		emitFirstEvent()
+		os.Exit(0)
 	case "wedge":
 		for {
 			time.Sleep(time.Hour)

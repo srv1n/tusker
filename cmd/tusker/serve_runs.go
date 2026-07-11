@@ -87,6 +87,8 @@ func serveLeaseState(state string) string {
 		return "unclaimed"
 	case LeaseStateReleased, LeaseStateInterrupted, LeaseStateParkedNoProgress, LeaseStateParkedBudget:
 		return "released"
+	case LeaseStateParkedNoProgress:
+		return "parked"
 	default:
 		return "held"
 	}

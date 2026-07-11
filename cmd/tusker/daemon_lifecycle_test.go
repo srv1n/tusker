@@ -396,6 +396,106 @@ func TestRetryLeaseDeadPidReleasedByPollTick(t *testing.T) {
 	assertEqual(t, 0, intFromAny(status["activeRuns"]), "daemon active run count")
 }
 
+func TestDispatchConsultsPlanBeforeExecuteContinuation(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Plan gated", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	setV7TaskStateForDaemonTest(t, vault, "APP-T-0001", "review", "waiting_on_review", "reviewer")
+	project := registerAutomationTestProject(t, vault)
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	if err := store.UpsertRun(RunStatus{
+		ProjectID:      project.ProjectID,
+		RecordID:       "APP-T-0001",
+		ItemID:         "APP-T-0001",
+		Runner:         string(RunnerCodex),
+		Lane:           runLaneExecute,
+		LeaseState:     string(LeaseStateRetryQueued),
+		AttemptOutcome: string(AttemptOutcomeNone),
+		SessionRef:     "session-plan-gated",
+		AttemptCount:   1,
+		NextRetryAt:    now,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+	assertEqual(t, string(LeaseStateReleased), run.LeaseState, "plan-gated review continuation lease")
+	if !strings.Contains(run.LastError, "automation plan do_not_dispatch") || !strings.Contains(run.LastError, "status is review") {
+		t.Fatalf("expected automation-plan skip reason, got %#v", run)
+	}
+}
+
+func TestStaleLeaseReleaseForNonDispatchableTaskStates(t *testing.T) {
+	cases := []struct {
+		name      string
+		status    string
+		readiness string
+		owner     string
+	}{
+		{name: "done", status: "done", readiness: "done", owner: "human"},
+		{name: "backlog", status: "backlog", readiness: "not_ready", owner: "human"},
+		{name: "blocked", status: "ready", readiness: "blocked_dependency", owner: "agent:codex"},
+		{name: "review reviewer", status: "review", readiness: "waiting_on_review", owner: "reviewer"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			vault := automationTestVault(t)
+			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stale lease", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+			makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+			setV7TaskStateForDaemonTest(t, vault, "APP-T-0001", tc.status, tc.readiness, tc.owner)
+			project := registerAutomationTestProject(t, vault)
+			store, err := OpenRuntimeStore(DefaultStateRoot())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.UpsertRun(RunStatus{
+				ProjectID:       project.ProjectID,
+				RecordID:        "APP-T-0001",
+				ItemID:          "APP-T-0001",
+				Runner:          string(RunnerCodex),
+				Lane:            runLaneExecute,
+				LeaseState:      string(LeaseStateRunning),
+				AttemptOutcome:  string(AttemptOutcomeNone),
+				ActiveAttemptID: "attempt-stale",
+				AttemptCount:    1,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			_ = store.Close()
+
+			daemon, err := NewDaemon(DefaultStateRoot())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer daemon.Close()
+			if err := daemon.PollOnce(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+			if isDispatchCapacityLeaseState(run.LeaseState) {
+				t.Fatalf("expected stale %s lease to leave capacity, got %#v", tc.name, run)
+			}
+			if !strings.Contains(run.LastError, "automation plan do_not_dispatch") {
+				t.Fatalf("expected stale release to name automation plan, got %#v", run)
+			}
+		})
+	}
+}
+
 func TestRunsReleaseClearsDeadRun(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)

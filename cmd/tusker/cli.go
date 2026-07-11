@@ -570,6 +570,8 @@ func run(command string, args Args) (int, error) {
 		return 0, daemonRunCmd(args)
 	case "daemon status":
 		return 0, daemonStatusCmd(args)
+	case "daemon stop":
+		return 0, daemonStopCmd(args)
 	case "daemon limits":
 		return 0, daemonLimitsCmd(args)
 	case "daemon resume":
@@ -1004,6 +1006,7 @@ func printDaemonHelp() {
 	fmt.Println(`Usage:
   tusker daemon run [--once]
   tusker daemon status [--json]
+  tusker daemon stop [--json]
   tusker daemon limits [--max-active-runs <n>] [--json]
   tusker daemon resume [--json]
   tusker daemon stop [--drain] [--json]
@@ -1018,6 +1021,7 @@ Purpose:
 Behavior:
   - daemon run polls registered projects and dispatches ready/rework tasks
   - --once performs one poll tick and exits
+  - daemon stop asks the incumbent daemon to exit and waits briefly
   - daemon status reports state-root, project count, and active run count
   - daemon install writes and starts a per-user launchd LaunchAgent
   - daemon uninstall stops and removes the per-user launchd LaunchAgent

@@ -671,9 +671,13 @@ func (s *serveServer) handleDaemon(w http.ResponseWriter, _ *http.Request) {
 
 func (s *serveServer) daemonStatusFromSnapshot(snap serveSnapshot) *serveDaemonStatus {
 	active := 0
+	parked := 0
 	for _, run := range snap.runs {
-		if isDispatchingLeaseState(run.LeaseState) {
+		if !run.Terminal && isDispatchingLeaseState(run.LeaseState) {
 			active++
+		}
+		if LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateParkedNoProgress {
+			parked++
 		}
 	}
 	queued := 0

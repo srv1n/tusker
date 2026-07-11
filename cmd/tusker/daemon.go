@@ -496,6 +496,7 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		}
 		projectActiveRuns := countDispatchCapacityProjectRuns(projectRuns)
 		now := time.Now().UTC()
+		skipReviewDispatch := map[string]struct{}{}
 		for recordID, current := range projectRuns {
 			if note, ok := notesByRecordID[recordID]; ok {
 				normalized, changed, err := d.normalizeDeadRetryQueuedRun(ctx, project, wfFile, current, note)
@@ -508,6 +509,22 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 					}
 					projectRuns[recordID] = normalized
 					current = normalized
+				}
+				eligible, eligibleChanged, err := d.reconcileExecuteRunWithPlan(ctx, project, wfFile, notes, note, current)
+				if err != nil {
+					return err
+				}
+				if eligibleChanged {
+					if err := d.store.UpsertRun(eligible); err != nil {
+						return err
+					}
+					projectRuns[recordID] = eligible
+					globalActiveRuns += dispatchCapacityRunDelta(current, eligible)
+					projectActiveRuns += dispatchCapacityRunDelta(current, eligible)
+					if strings.Contains(eligible.LastError, "automation plan do_not_dispatch") {
+						skipReviewDispatch[recordID] = struct{}{}
+					}
+					current = eligible
 				}
 			}
 			reconciled, changed, err := d.reconcileRunWithTracker(ctx, project, wfFile, current, notesByRecordID[recordID], notesByID, notesByRecordID)
@@ -713,6 +730,23 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 					projectRuns[recordID] = current
 					continue
 				}
+				if blocked, err := d.executePlanBlockedReason(project, wfFile, notes, note, current); err != nil {
+					return err
+				} else if blocked != "" {
+					current.LastError = "automation plan do_not_dispatch: " + blocked
+					current.UpdatedAt = now.Format(time.RFC3339)
+					if LeaseState(strings.TrimSpace(current.LeaseState)) == LeaseStateRetryQueued {
+						current.LeaseState = string(LeaseStateUnclaimed)
+						current.NextRetryAt = ""
+						current.Terminal = false
+						clearActiveExecution(&current)
+					}
+					if err := d.store.UpsertRun(current); err != nil {
+						return err
+					}
+					projectRuns[recordID] = current
+					continue
+				}
 				if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 					return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneExecute}))
 				}
@@ -747,6 +781,9 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 			}
 			recordID := trackerRecordID(note)
 			if recordID == "" {
+				continue
+			}
+			if _, skipped := skipReviewDispatch[recordID]; skipped {
 				continue
 			}
 			if externalLoopCloseTaskRecorded(d.store, project.ProjectID, recordID) {
@@ -927,7 +964,7 @@ func (d *Daemon) globalActiveRunLimit() (int, error) {
 func countDispatchCapacityRuns(runs []RunStatus) int {
 	count := 0
 	for _, run := range runs {
-		if isDispatchCapacityLeaseState(run.LeaseState) {
+		if runConsumesDispatchCapacity(run) {
 			count++
 		}
 	}
@@ -937,7 +974,7 @@ func countDispatchCapacityRuns(runs []RunStatus) int {
 func countDispatchCapacityProjectRuns(runs map[string]RunStatus) int {
 	count := 0
 	for _, run := range runs {
-		if isDispatchCapacityLeaseState(run.LeaseState) {
+		if runConsumesDispatchCapacity(run) {
 			count++
 		}
 	}
@@ -947,7 +984,7 @@ func countDispatchCapacityProjectRuns(runs map[string]RunStatus) int {
 func countDispatchCapacityProjectRunsByState(runs map[string]RunStatus, stateByRecord map[string]string) map[string]int {
 	counts := map[string]int{}
 	for recordID, run := range runs {
-		if !isDispatchCapacityLeaseState(run.LeaseState) {
+		if !runConsumesDispatchCapacity(run) {
 			continue
 		}
 		state := strings.TrimSpace(stateByRecord[recordID])
@@ -1078,10 +1115,10 @@ func blockerResolved(note Note) bool {
 // tally by one and a single tick cannot dispatch past the cap (RUN-T-0036).
 func dispatchCapacityRunDelta(before, after RunStatus) int {
 	delta := 0
-	if isDispatchCapacityLeaseState(after.LeaseState) {
+	if runConsumesDispatchCapacity(after) {
 		delta++
 	}
-	if isDispatchCapacityLeaseState(before.LeaseState) {
+	if runConsumesDispatchCapacity(before) {
 		delta--
 	}
 	return delta
@@ -1116,6 +1153,10 @@ func isDispatchCapacityLeaseState(state string) bool {
 	}
 }
 
+func runConsumesDispatchCapacity(run RunStatus) bool {
+	return !run.Terminal && isDispatchCapacityLeaseState(run.LeaseState)
+}
+
 func dispatchCapacityCountExcludingRun(count int, run RunStatus) int {
 	if isDispatchingLeaseState(run.LeaseState) && count > 0 {
 		return count - 1
@@ -1128,6 +1169,9 @@ func dispatchCapacityLimitReached(active, limit int, run RunStatus) bool {
 }
 
 func shouldDispatchRun(run RunStatus, now time.Time) bool {
+	if run.Terminal {
+		return false
+	}
 	switch LeaseState(run.LeaseState) {
 	case LeaseStateUnclaimed:
 		return true
@@ -1182,6 +1226,9 @@ func reviewDispatchAllowed(vaultPath string, note Note, wf Workflow, run RunStat
 		return false
 	}
 	if isDispatchingLeaseState(run.LeaseState) {
+		return false
+	}
+	if run.Terminal || LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateParkedNoProgress {
 		return false
 	}
 	workRevision := intField(note.Data, "work_revision")
@@ -1309,7 +1356,7 @@ func completedReviewHandoffCanReconcile(wf Workflow, run RunStatus, trackerState
 	if !containsString(wf.Tracker.ReviewStates, strings.TrimSpace(trackerState)) {
 		return false
 	}
-	statusPath := strings.TrimSpace(run.StatusPath)
+	statusPath := runnerStatusPathForRun(run)
 	return statusPath != "" && fileExists(statusPath)
 }
 
@@ -1445,8 +1492,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		})
 	}
 
-	if strings.TrimSpace(run.StatusPath) != "" && fileExists(run.StatusPath) {
-		status, err := readRunnerProcessStatus(run.StatusPath)
+	if statusPath := runnerStatusPathForRun(run); statusPath != "" && fileExists(statusPath) {
+		run.StatusPath = statusPath
+		status, err := readRunnerProcessStatus(statusPath)
 		if err != nil {
 			return run, changed, err
 		}
@@ -1506,6 +1554,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				d.emitSupervisorDecision(SupervisorDecision{
 					ProjectID:        project.ProjectID,
 					RecordID:         run.RecordID,
+					ItemID:           run.ItemID,
+					Runner:           run.Runner,
+					WorkRevision:     run.WorkRevision,
 					AttemptID:        parentAttemptID,
 					SessionRef:       parentSessionRef,
 					Kind:             string(SupervisorDecisionStopForHuman),
@@ -1657,16 +1708,11 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		return run, changed, nil
 	}
 
-	if run.ProcessPID > 0 && strings.TrimSpace(run.StatusPath) != "" && !fileExists(run.StatusPath) {
-		for i := 0; i < 10 && !fileExists(run.StatusPath); i++ {
-			time.Sleep(50 * time.Millisecond)
-		}
-		if fileExists(run.StatusPath) {
+	if run.ProcessPID > 0 {
+		if statusPath := runnerStatusPathForRun(run); statusPath != "" && waitForRunnerStatusFile(statusPath) {
+			run.StatusPath = statusPath
 			return d.reconcileRun(ctx, project, wfFile, run)
 		}
-	}
-
-	if run.ProcessPID > 0 {
 		reason := fmt.Sprintf("runner process no longer matches recorded identity pid=%d pgid=%d start_time=%s", run.ProcessPID, run.ProcessPGID, firstNonEmpty(run.ProcessStartedAt, "unknown"))
 		parentAttemptID := run.ActiveAttemptID
 		parentSessionRef := run.SessionRef
@@ -2344,6 +2390,52 @@ func (d *Daemon) parkRunnerPreflightFailure(project RegisteredProject, run RunSt
 		})
 	}
 	return run
+}
+
+func parkNoProgressContinuation(run RunStatus, reason, updatedAt string) RunStatus {
+	if strings.TrimSpace(updatedAt) == "" {
+		updatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	run.LeaseState = string(LeaseStateParkedNoProgress)
+	run.AttemptOutcome = string(AttemptOutcomeBlocked)
+	run.LastError = reason
+	run.NextRetryAt = ""
+	run.UpdatedAt = updatedAt
+	run.Terminal = true
+	clearActiveExecution(&run)
+	return run
+}
+
+func (d *Daemon) continuationRetryCapReached(run RunStatus, wf Workflow) (bool, int, int) {
+	capValue := wf.Runtime.MaxContinuationRetries
+	if capValue < 0 {
+		capValue = 0
+	}
+	count := d.cleanExitContinuationCount(run)
+	return count >= capValue, count, capValue
+}
+
+func (d *Daemon) cleanExitContinuationCount(run RunStatus) int {
+	if d == nil || d.store == nil || strings.TrimSpace(run.ProjectID) == "" || strings.TrimSpace(run.RecordID) == "" {
+		return 0
+	}
+	decisions, err := d.store.ListRuntimeSupervisorDecisionsForRun(run.ProjectID, run.RecordID)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, decision := range decisions {
+		if decision.Kind != string(SupervisorDecisionContinueThread) {
+			continue
+		}
+		if decision.WorkRevision != run.WorkRevision {
+			continue
+		}
+		if strings.Contains(decision.Reason, cleanExitContinuationReason) || decision.ContextSignal == "no_progress" {
+			count++
+		}
+	}
+	return count
 }
 
 func shouldDaemonPromoteCleanExitToReview(noteStatus string) bool {
@@ -5088,6 +5180,59 @@ func daemonResumeCmd(args Args) error {
 	}
 	fmt.Println("Daemon dispatch may resume.")
 	return nil
+}
+
+func daemonStopCmd(args Args) error {
+	stateRoot := DefaultStateRoot()
+	liveness := readDaemonLiveness(stateRoot, time.Now().UTC())
+	if !liveness.Alive {
+		if args.Bool("json") {
+			emitJSON(map[string]any{"ok": true, "stopped": false, "already_stopped": true})
+			return nil
+		}
+		fmt.Println("Daemon is not running")
+		return nil
+	}
+	resp, err := sendDaemonControl(stateRoot, daemonControlRequest{Command: "stop"})
+	if err != nil {
+		if liveness.PID == os.Getpid() {
+			return err
+		}
+		if killErr := syscall.Kill(liveness.PID, syscall.SIGTERM); killErr != nil && !strings.Contains(killErr.Error(), "no such process") {
+			return killErr
+		}
+	} else if !resp.OK {
+		return tuskerError(errorHookFailed, firstNonEmpty(resp.Message, "daemon stop failed"))
+	}
+	stopped := waitDaemonStopped(stateRoot, liveness.PID, 5*time.Second)
+	if args.Bool("json") {
+		emitJSON(map[string]any{"ok": stopped, "stopped": stopped, "pid": liveness.PID})
+		if stopped {
+			return nil
+		}
+		return tuskerError(errorHookFailed, "daemon stop timed out", withContext(map[string]any{"pid": liveness.PID}))
+	}
+	if !stopped {
+		return tuskerError(errorHookFailed, "daemon stop timed out", withContext(map[string]any{"pid": liveness.PID}))
+	}
+	fmt.Printf("Stopped daemon pid %d\n", liveness.PID)
+	return nil
+}
+
+func waitDaemonStopped(stateRoot string, pid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if pid <= 0 || !processAlive(pid) {
+			return true
+		}
+		if _, ok, err := readDaemonPIDFile(filepath.Join(stateRoot, daemonPIDFileName)); err == nil && !ok {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func daemonLimitsCmd(args Args) error {

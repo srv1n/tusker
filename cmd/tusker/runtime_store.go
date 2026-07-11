@@ -884,7 +884,7 @@ func (s *RuntimeStore) CountProjectActiveRuns(projectID string) (int, error) {
 	var count int
 	err := s.queryRowScan(`SELECT COUNT(*)
 		FROM runs
-		WHERE project_id = ? AND lease_state IN ('claimed', 'running')`, []any{projectID}, &count)
+		WHERE project_id = ? AND terminal = 0 AND lease_state IN ('claimed', 'running')`, []any{projectID}, &count)
 	return count, err
 }
 
@@ -2055,7 +2055,11 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 		return nil, err
 	}
 	var runCount int
-	if err := s.queryRowScan(`SELECT COUNT(*) FROM runs WHERE lease_state IN ('claimed', 'running')`, nil, &runCount); err != nil {
+	if err := s.queryRowScan(`SELECT COUNT(*) FROM runs WHERE terminal = 0 AND lease_state IN ('claimed', 'running')`, nil, &runCount); err != nil {
+		return nil, err
+	}
+	var parkedRunCount int
+	if err := s.queryRowScan(`SELECT COUNT(*) FROM runs WHERE lease_state = ?`, []any{string(LeaseStateParkedNoProgress)}, &parkedRunCount); err != nil {
 		return nil, err
 	}
 	var parkedNoProgressCount int

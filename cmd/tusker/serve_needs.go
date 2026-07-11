@@ -131,6 +131,9 @@ func serveHumanOwner(owner string) bool {
 }
 
 func serveTerminalFailure(run RunStatus, maxAttempts int) bool {
+	if LeaseState(run.LeaseState) == LeaseStateParkedNoProgress {
+		return true
+	}
 	if LeaseState(run.LeaseState) == LeaseStateRetryQueued || isDispatchingLeaseState(run.LeaseState) {
 		return false
 	}

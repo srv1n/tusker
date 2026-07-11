@@ -142,6 +142,7 @@ type automationStatusReport struct {
 	DaemonUptimeSeconds int64                      `json:"daemon_uptime_seconds"`
 	ProjectCount        int                        `json:"project_count"`
 	ActiveRuns          int                        `json:"active_runs"`
+	ParkedRuns          int                        `json:"parked_runs"`
 	MaxActiveRuns       int                        `json:"max_active_runs"`
 	LimitSource         string                     `json:"limit_source"`
 	ParkedBudgetRuns    int                        `json:"parked_budget_runs"`
@@ -181,6 +182,7 @@ func automationStatusCmd(args Args) error {
 		DaemonUptimeSeconds: int64FromAny(status["daemon_uptime_seconds"]),
 		ProjectCount:        intFromAny(status["projects"]),
 		ActiveRuns:          intFromAny(status["activeRuns"]),
+		ParkedRuns:          intFromAny(status["parkedRuns"]),
 		MaxActiveRuns:       intFromAny(status["max_active_runs"]),
 		LimitSource:         stringValue(status["limit_source"]),
 		ParkedBudgetRuns:    intFromAny(status["parkedBudgetRuns"]),
@@ -770,6 +772,9 @@ func (ctx *automationCommandContext) effectiveRunForTask(note Note, runner strin
 }
 
 func automationRunBlocker(run RunStatus, now time.Time) string {
+	if run.Terminal {
+		return "existing run is terminal; update the task revision before redispatch"
+	}
 	switch LeaseState(strings.TrimSpace(run.LeaseState)) {
 	case "", LeaseStateUnclaimed:
 		return ""
@@ -905,6 +910,9 @@ func automationSummarizeProject(project RegisteredProject, runs []RunStatus, reg
 		LastError:    project.LastError,
 	}
 	for _, run := range runs {
+		if run.Terminal {
+			continue
+		}
 		switch LeaseState(run.LeaseState) {
 		case LeaseStateClaimed, LeaseStateRunning:
 			summary.ActiveRuns++

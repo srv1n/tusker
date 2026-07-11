@@ -133,10 +133,13 @@ func TestServeFieldsRosterAndEpics(t *testing.T) {
 	var runs []map[string]any
 	serveDecode(t, server, "/api/runs", &runs)
 	var failed map[string]any
+	var parked map[string]any
 	for _, run := range runs {
 		if run["taskId"] == "APP-T-0007" {
 			failed = run
-			break
+		}
+		if run["taskId"] == "APP-T-0009" {
+			parked = run
 		}
 	}
 	if failed == nil {

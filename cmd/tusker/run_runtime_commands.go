@@ -387,6 +387,8 @@ func runtimeFailureClass(run RunStatus, attempts []RunAttempt, turns []RunTurn) 
 	}
 	text := strings.ToLower(reason)
 	switch {
+	case LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateParkedNoProgress:
+		return "no_progress"
 	case text == "" && (outcome == "" || outcome == string(AttemptOutcomeNone) || outcome == string(AttemptOutcomeSucceeded)):
 		return ""
 	case strings.Contains(text, "context window") || strings.Contains(text, "context-window") || strings.Contains(text, "context length") || strings.Contains(text, "maximum context") || strings.Contains(text, "context limit"):
