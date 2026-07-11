@@ -77,6 +77,7 @@ When machine work is complete but a human gate remains, answer with exactly what
 | Existing repo setup/onboarding | `references/REPO_ONBOARDING.md` |
 | Human gates and closeout | `references/CLOSEOUT_PROTOCOL.md` |
 | Proof modes and evidence | `references/RISK_AND_EVIDENCE.md` |
+| Xcode generated build-state failures | `references/XCODE_BUILD_STATE.md` |
 | Obsidian/Bases projections | `references/OBSIDIAN_BASES.md` |
 
 ## Default Agent Loop

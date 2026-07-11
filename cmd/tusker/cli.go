@@ -290,6 +290,11 @@ func run(command string, args Args) (int, error) {
 	case "improve scan":
 		args["_pos0"] = "scan"
 		return 0, improveV7Cmd(args)
+	case "xcode doctor":
+		return 0, xcodeDoctorCmd(args)
+	case "xcode":
+		printXcodeHelp()
+		return 0, nil
 	case "closeout", "closeout status":
 		return 0, closeoutV7Cmd(args)
 	case "evidence":
@@ -690,6 +695,9 @@ func run(command string, args Args) (int, error) {
 	case "help improve", "help improve scan":
 		printImproveHelp()
 		return 0, nil
+	case "help xcode", "help xcode doctor":
+		printXcodeHelp()
+		return 0, nil
 	case "help verify":
 		printVerifyHelp()
 		return 0, nil
@@ -829,6 +837,7 @@ Commands:
   land                run the serialized wave merge lane
   feedback            add agent feedback notes and generate digests
   improve             opt-in scans for repeated work worth packaging
+  xcode               diagnose Xcode generated build-state failures
   attempt             start or hand off V7 attempts
   handoff             hand off the latest V7 attempt for a task
   brief               print V7 human briefs
@@ -875,6 +884,7 @@ Help:
   tusker gate --help
   tusker feedback --help
   tusker improve --help
+  tusker xcode --help
   tusker packet --help
   tusker skill --help
 
@@ -904,6 +914,8 @@ func printCommandHelp(command string) bool {
 		printFeedbackHelp()
 	case "improve", "improve scan":
 		printImproveHelp()
+	case "xcode", "xcode doctor":
+		printXcodeHelp()
 	case "verify":
 		printVerifyHelp()
 	case "close":
