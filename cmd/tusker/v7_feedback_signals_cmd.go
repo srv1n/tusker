@@ -110,6 +110,12 @@ func feedbackReviewCmd(args Args) error {
 			"since":       since,
 			"counts":      feedbackReviewCountPayload(packet),
 			"output_path": nullIfEmptyString(outputPath),
+			"targets":     feedbackTargetsJSON(resolution.Targets),
+			"warnings":    feedbackTargetWarningsJSON(resolution.Warnings),
+			"signals":     feedbackReviewSignalsJSON(packet.Signals),
+			"findings":    feedbackReviewFindingsJSON(packet.Findings),
+			"actionable":  feedbackReviewFindingsJSON(packet.Actionable),
+			"ignored":     feedbackReviewFindingsJSON(packet.Ignored),
 		})
 		return nil
 	}
@@ -237,7 +243,7 @@ func deriveFeedbackSignalEmissionsForVault(vaultPath, date string, sinceDate tim
 	}
 	input := feedbackSignalReducerInput{
 		Date:    date,
-		Project: v7ProjectID(vaultPath),
+		Project: firstNonEmpty(target.projectKey, v7ProjectID(vaultPath)),
 		Source:  "event_reducer",
 		Tasks:   tasks,
 		Events:  events,
@@ -651,7 +657,17 @@ func renderFeedbackSignalsCommandMarkdown(date, since string, derivation feedbac
 }
 
 func feedbackPromoteSourceFromArgs(vaultPath string, args Args) (feedbackPromoteSource, error) {
+	ref := strings.TrimSpace(firstNonEmpty(args.String("finding"), args.String("signal"), args.String("id"), args.String("_pos1")))
 	if reviewPath := strings.TrimSpace(args.String("review")); reviewPath != "" {
+		if ref != "" {
+			finding, err := feedbackReviewFindingByRef(vaultPath, args, ref)
+			if err != nil {
+				return feedbackPromoteSource{}, err
+			}
+			source := feedbackPromoteSourceFromReviewFinding(finding)
+			source.Path = filepath.ToSlash(reviewPath) + "#" + finding.ID
+			return source, nil
+		}
 		abs, err := filepath.Abs(reviewPath)
 		if err != nil {
 			return feedbackPromoteSource{}, err
@@ -671,22 +687,35 @@ func feedbackPromoteSourceFromArgs(vaultPath string, args Args) (feedbackPromote
 			RepeatCount:  2,
 		}), nil
 	}
-	ref := strings.TrimSpace(firstNonEmpty(args.String("signal"), args.String("id"), args.String("_pos1")))
 	if ref == "" {
-		return feedbackPromoteSource{}, tuskerError(errorMissingArg, "feedback promote requires <signal-id>, --signal <id>, or --review <path>")
+		return feedbackPromoteSource{}, tuskerError(errorMissingArg, "feedback promote requires <signal-id>, <finding-id>, --signal <id>, --finding <id>, or --review <path>")
 	}
 	signal, err := feedbackSignalByRef(vaultPath, ref)
-	if err != nil {
-		return feedbackPromoteSource{}, err
+	if err == nil {
+		return feedbackPromoteSourceFromSignal(signal), nil
 	}
-	return feedbackPromoteSourceFromSignal(signal), nil
+	finding, findingErr := feedbackReviewFindingByRef(vaultPath, args, ref)
+	if findingErr == nil {
+		return feedbackPromoteSourceFromReviewFinding(finding), nil
+	}
+	return feedbackPromoteSource{}, err
 }
 
 func feedbackPromoteSourceFromSignal(signal feedbackSignal) feedbackPromoteSource {
+	sourceRefs := feedbackSignalSourceRefs(signal)
+	evidence := []feedbackPromoteEvidence{{
+		Source: "feedback_signal",
+		Ref:    signal.ID,
+		Title:  signal.Summary,
+		Date:   signal.Date,
+	}}
+	for _, ref := range sourceRefs {
+		evidence = append(evidence, feedbackPromoteEvidence{Source: "feedback_note", Ref: ref, Title: signal.Summary, Date: signal.Date})
+	}
 	return normalizeFeedbackPromoteSource(feedbackPromoteSource{
 		Kind:         "feedback_signal",
 		ID:           signal.ID,
-		Path:         feedbackSignalRelativePath(signal),
+		Path:         firstNonEmpty(append(sourceRefs, feedbackSignalRelativePath(signal))...),
 		Title:        firstNonEmpty(signal.Recommendation, signal.Summary),
 		Summary:      signal.Summary,
 		Friction:     signal.Summary,
@@ -697,13 +726,109 @@ func feedbackPromoteSourceFromSignal(signal feedbackSignal) feedbackPromoteSourc
 		RelatedTask:  signal.TaskID,
 		Prevention:   signal.Recommendation,
 		RepeatCount:  feedbackSignalFrequency(signal),
-		Evidence: []feedbackPromoteEvidence{{
-			Source: "feedback_signal",
-			Ref:    signal.ID,
-			Title:  signal.Summary,
-			Date:   signal.Date,
-		}},
+		Evidence:     evidence,
 	})
+}
+
+func feedbackReviewFindingByRef(vaultPath string, args Args, ref string) (feedbackReviewFinding, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return feedbackReviewFinding{}, tuskerError(errorMissingArg, "feedback finding id is required")
+	}
+	date := feedbackCommandDate(args, "feedback promote")
+	if date == "" {
+		date = todayISO()
+	}
+	sinceDate := time.Time{}
+	since := strings.TrimSpace(args.String("since"))
+	if since != "" {
+		parsed, err := time.Parse("2006-01-02", since)
+		if err != nil {
+			return feedbackReviewFinding{}, tuskerError(errorInvalidArg, "feedback promote --since must be YYYY-MM-DD: "+since)
+		}
+		sinceDate = parsed
+	}
+	target := normalizeFeedbackTarget(feedbackTarget{vaultPath: vaultPath, repoRoot: filepath.Dir(vaultPath), enabled: true})
+	signals, err := feedbackReviewSignalsForTargets([]feedbackTarget{target}, sinceDate, date, feedbackImportRunID(args, date, since, []feedbackTarget{target}))
+	if err != nil {
+		return feedbackReviewFinding{}, err
+	}
+	packet := buildFeedbackReviewPacket(date, since, signals)
+	for _, finding := range packet.Findings {
+		if feedbackReviewFindingMatchesRef(finding, ref) {
+			return finding, nil
+		}
+	}
+	return feedbackReviewFinding{}, tuskerError(errorNotFound, "feedback finding not found: "+ref)
+}
+
+func feedbackReviewFindingMatchesRef(finding feedbackReviewFinding, ref string) bool {
+	for _, candidate := range append([]string{finding.ID, finding.Key, feedbackSlug(finding.Summary, "")}, finding.SignalIDs...) {
+		if strings.EqualFold(strings.TrimSpace(candidate), ref) {
+			return true
+		}
+	}
+	return false
+}
+
+func feedbackPromoteSourceFromReviewFinding(finding feedbackReviewFinding) feedbackPromoteSource {
+	sourceRef := firstNonEmpty(finding.ID, finding.Key)
+	var evidence []feedbackPromoteEvidence
+	for _, ref := range finding.SourceRefs {
+		evidence = append(evidence, feedbackPromoteEvidence{Source: "feedback_note", Ref: ref, Title: finding.Summary, Date: finding.LatestDate})
+	}
+	for _, signalID := range finding.SignalIDs {
+		evidence = append(evidence, feedbackPromoteEvidence{Source: "feedback_signal", Ref: signalID, Title: finding.Summary, Date: finding.LatestDate})
+	}
+	return normalizeFeedbackPromoteSource(feedbackPromoteSource{
+		Kind:         "feedback_finding",
+		ID:           sourceRef,
+		Path:         "feedback/reviews/" + firstNonEmpty(finding.LatestDate, todayISO()) + ".md#" + firstNonEmpty(finding.ID, sourceRef),
+		Title:        firstNonEmpty(finding.Recommendation, finding.Summary),
+		Summary:      finding.Summary,
+		Friction:     finding.Summary,
+		ProductIdea:  firstNonEmpty(finding.Recommendation, finding.Summary),
+		Severity:     finding.Severity,
+		DedupeKey:    feedbackReviewFindingDedupeKey(finding),
+		SourceSignal: sourceRef,
+		RelatedTask:  firstNonEmpty(finding.TaskIDs...),
+		Prevention:   finding.Prevention,
+		OutcomeHint:  feedbackPromoteOutcomeHintFromActionType(finding.ActionType),
+		RepeatCount:  finding.Frequency,
+		Evidence:     evidence,
+	})
+}
+
+func feedbackReviewFindingDedupeKey(finding feedbackReviewFinding) string {
+	if strings.HasPrefix(finding.Key, "dedupe:") {
+		return strings.TrimPrefix(finding.Key, "dedupe:")
+	}
+	return firstNonEmpty(finding.Key, finding.ID)
+}
+
+func feedbackPromoteOutcomeHintFromActionType(actionType string) string {
+	switch strings.ToLower(strings.TrimSpace(actionType)) {
+	case "decision":
+		return "decision"
+	case "skill/runbook update":
+		return "runbook"
+	case "cli hint":
+		return "cli_proposal"
+	case "ignore-as-noise":
+		return "skip"
+	}
+	switch feedbackReviewNormalizeActionType(actionType) {
+	case "decision":
+		return "decision"
+	case "skill/runbook update":
+		return "runbook"
+	case "CLI hint":
+		return "cli_proposal"
+	case "ignore-as-noise":
+		return "skip"
+	default:
+		return "task"
+	}
 }
 
 func feedbackSignalByRef(vaultPath, ref string) (feedbackSignal, error) {
@@ -831,6 +956,11 @@ func applyFeedbackPromoteTask(vaultPath string, plan *feedbackPromotePlan, outco
 	body = replaceSection(body, "## Acceptance", "| ID | Outcome | Proof |\n|---|---|---|\n| A1 | The feedback recurrence path is removed or explicitly guarded. | Focused regression or documented behavior proof |\n| A2 | The task links the source feedback signal/review and states how recurrence is prevented. | Task/evidence review |")
 	body = replaceSection(body, "## Verification", "| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1-A2 | go test ./cmd/tusker -run '<focused-regression>' -count=1 | pending | Replace with the exact regression when implementing. |")
 	body = replaceSection(body, "## Knowledge delta", "Promoted from feedback: "+strings.Join(outcome.SourceRefs, ", ")+". Prevention: "+outcome.Prevention)
+	data["source_refs"] = outcome.SourceRefs
+	data["related_tasks"] = outcome.RelatedTasks
+	if outcome.DedupeKey != "" {
+		data["dedupe_key"] = outcome.DedupeKey
+	}
 	data["state_rev"] = v7StateRev(data, body)
 	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
 	if err != nil {

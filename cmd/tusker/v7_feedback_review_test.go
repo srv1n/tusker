@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -82,7 +83,9 @@ func TestFeedbackReviewRanksAndRendersPacket(t *testing.T) {
 		"**acceptance-criteria fix** - Require concrete acceptance and proof rows before dispatch.",
 		"**CLI hint** - Show the retry command next to validation failures.",
 		"bad task contract, not implementation alone",
-		"Citation: signals SIG-ACCEPT; tasks APP-T-0002; dates 2026-05-22.",
+		"signals SIG-ACCEPT",
+		"tasks APP-T-0002",
+		"dates 2026-05-22",
 		"Prevents recurrence by requiring observable acceptance criteria and a proof map before the task is runnable.",
 	} {
 		assertContainsIndexTest(t, got, expected)
@@ -277,8 +280,64 @@ func TestFeedbackReviewEmptyAndNoiseDaysRecommendNoProductAction(t *testing.T) {
 		"Recommendation: no product action recommended",
 		"Only low-confidence or one-off noise was present",
 		"**ignore-as-noise**",
-		"Citation: signals SIG-NOISE; tasks APP-T-0999; dates 2026-05-23.",
+		"signals SIG-NOISE",
+		"tasks APP-T-0999",
+		"dates 2026-05-23",
 	} {
 		assertContainsIndexTest(t, noise, expected)
+	}
+}
+
+func TestFeedbackReviewJSONIncludesNoteDerivedFindingsAndSourceCitations(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "tusker")
+	if err := writeText(filepath.Join(vault, "feedback", "agents", "2026-05-21-codex-feedback-review.md"), strings.Join([]string{
+		"# Agent Feedback",
+		"",
+		"- context: Multi-repo feedback notes were imported into Tusker.",
+		"- friction: Feedback note signals were hidden behind markdown digests.",
+		"- product-idea: Put note-derived signals in JSON review output with source citations.",
+		"- impact: Operators can select and promote a specific feedback finding.",
+		"- related: tusker feedback review",
+		"- affected-command: tusker feedback review",
+		"- priority-hint: P1",
+		"- dedupe-key: feedback-review-json",
+		"",
+	}, "\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := feedbackReviewCmd(Args{
+			"vault": vault,
+			"since": "2026-05-20",
+			"date":  "2026-05-22",
+			"json":  "true",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var payload struct {
+		Signals  []map[string]any `json:"signals"`
+		Findings []map[string]any `json:"findings"`
+	}
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Signals) == 0 || len(payload.Findings) == 0 {
+		t.Fatalf("expected note-derived review signals and findings, got %s", output)
+	}
+	finding := payload.Findings[0]
+	if id := toString(finding["id"]); !strings.HasPrefix(id, "FR-") {
+		t.Fatalf("finding id should be stable and structured, got %#v", finding)
+	}
+	sourceRefs := normalizeList(finding["source_refs"])
+	if len(sourceRefs) == 0 || !strings.Contains(strings.Join(sourceRefs, "\n"), "feedback-note:") || !strings.Contains(strings.Join(sourceRefs, "\n"), "feedback/agents/2026-05-21-codex-feedback-review.md") {
+		t.Fatalf("finding missing source note citations: %#v", finding)
+	}
+	if toString(finding["dedupe_key"]) != "" {
+		t.Fatalf("dedupe key should stay on signals and finding key, not surprise-map here: %#v", finding)
+	}
+	if signalSource := toString(payload.Signals[0]["source"]); signalSource != "feedback_note" {
+		t.Fatalf("expected feedback_note signal source, got %#v", payload.Signals[0])
 	}
 }

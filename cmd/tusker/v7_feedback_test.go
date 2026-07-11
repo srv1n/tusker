@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -228,6 +229,137 @@ func TestFeedbackDigestGroupsAndFlagsNotes(t *testing.T) {
 	}
 }
 
+func TestFeedbackIngestResolvesExplicitReposAndRegisteredProjectsWithWarnings(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(root, "state"))
+	alpha := filepath.Join(root, "alpha")
+	beta := filepath.Join(root, "beta")
+	outputVault := filepath.Join(root, "output", ".tusker")
+	writeFeedbackNoteForIngestTest(t, alpha, "2026-05-21-codex-same.md", "alpha-dedupe", "Alpha command friction repeats.")
+	writeFeedbackNoteForIngestTest(t, beta, "2026-05-21-codex-same.md", "beta-dedupe", "Beta command friction repeats.")
+
+	explicit, err := buildFeedbackIngest(Args{
+		"repo":         alpha + "," + beta + "," + alpha,
+		"since":        "2026-05-20",
+		"date":         "2026-05-22",
+		"output-vault": outputVault,
+		"run-id":       "explicit-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(explicit.Targets) != 2 {
+		t.Fatalf("expected duplicate explicit repos to resolve to two healthy targets, got %#v", explicit.Targets)
+	}
+	if len(explicit.Items) != 2 {
+		t.Fatalf("expected two unique imported notes, got %#v", explicit.Items)
+	}
+
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.UpsertProject(RegisteredProject{
+		ProjectID:    "alpha-id",
+		ProjectKey:   "alpha",
+		Name:         "alpha",
+		RepoRoot:     alpha,
+		VaultRoot:    filepath.Join(alpha, "tusker"),
+		WorkflowPath: workflowPath(filepath.Join(alpha, "tusker")),
+		Enabled:      true,
+		Health:       projectHealthHealthy,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertProject(RegisteredProject{
+		ProjectID:    "kurpod-id",
+		ProjectKey:   "kurpod",
+		Name:         "kurpod",
+		RepoRoot:     filepath.Join(root, "kurpod"),
+		VaultRoot:    filepath.Join(root, "kurpod", ".missing-tusker"),
+		WorkflowPath: workflowPath(filepath.Join(root, "kurpod", ".missing-tusker")),
+		Enabled:      true,
+		Health:       projectHealthHealthy,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	registered, err := buildFeedbackIngest(Args{
+		"project":      "alpha,kurpod",
+		"since":        "2026-05-20",
+		"date":         "2026-05-22",
+		"output-vault": outputVault,
+		"run-id":       "registered-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(registered.Targets) != 1 || registered.Targets[0].projectKey != "alpha" {
+		t.Fatalf("expected healthy registered alpha target, got %#v", registered.Targets)
+	}
+	if len(registered.Warnings) != 1 || registered.Warnings[0].Code != "FEEDBACK_TARGET_STALE_VAULT_ROOT" || registered.Warnings[0].ProjectKey != "kurpod" {
+		t.Fatalf("expected stale kurpod vault warning, got %#v", registered.Warnings)
+	}
+	if len(registered.Items) != 1 || !strings.Contains(registered.Items[0].SourceRef, "alpha") {
+		t.Fatalf("healthy registered target was lost: %#v", registered.Items)
+	}
+}
+
+func TestFeedbackIngestWritesOutputVaultMetadataAndSignals(t *testing.T) {
+	root := t.TempDir()
+	alpha := filepath.Join(root, "alpha")
+	beta := filepath.Join(root, "beta")
+	outputVault := filepath.Join(root, "output", ".tusker")
+	writeFeedbackNoteForIngestTest(t, alpha, "2026-05-21-codex-collision.md", "shared-product-friction", "Alpha agents hit repeated command friction.")
+	writeFeedbackNoteForIngestTest(t, beta, "2026-05-21-codex-collision.md", "shared-product-friction", "Beta agents hit repeated command friction.")
+
+	result, err := buildFeedbackIngest(Args{
+		"repo":         alpha + "\n" + beta + "\n" + alpha,
+		"since":        "2026-05-20",
+		"date":         "2026-05-22",
+		"output-vault": outputVault,
+		"run-id":       "intake-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFeedbackIngestResult(&result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 2 || len(result.WrittenImports) != 2 || len(result.WrittenSignals) != 2 {
+		t.Fatalf("expected two imported notes/signals after duplicate repo collapse, got %#v", result)
+	}
+	if result.Items[0].ImportPath == result.Items[1].ImportPath {
+		t.Fatalf("basename collision reused import path: %#v", result.Items)
+	}
+	for _, item := range result.Items {
+		if !strings.HasPrefix(item.ImportPath, "feedback/imports/intake-1/") {
+			t.Fatalf("import not placed under output vault import run: %#v", item)
+		}
+		assertExists(t, filepath.Join(outputVault, item.ImportPath))
+		assertExists(t, filepath.Join(outputVault, item.SignalPath))
+		raw, err := readText(filepath.Join(outputVault, item.ImportPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var imported feedbackNoteImportRecord
+		if err := json.Unmarshal([]byte(raw), &imported); err != nil {
+			t.Fatal(err)
+		}
+		if imported.Schema != feedbackNoteImportSchema ||
+			imported.ImportRunID != "intake-1" ||
+			imported.SourceRef == "" ||
+			imported.SourceProjectKey == "" ||
+			imported.SourceRepoRoot == "" ||
+			imported.SourceVaultRoot == "" ||
+			imported.DedupeKey != "shared-product-friction" ||
+			imported.SignalID == "" {
+			t.Fatalf("import metadata missing stable provenance: %#v", imported)
+		}
+	}
+}
+
 func TestFeedbackValidationHelperWarnsOnMalformedProgressReports(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "tusker")
 	if err := writeText(filepath.Join(vault, "feedback", "agents", "2026-05-21-codex-progress.md"), strings.Join([]string{
@@ -339,4 +471,23 @@ func feedbackIssuesContainCode(issues []Issue, code string) bool {
 		}
 	}
 	return false
+}
+
+func writeFeedbackNoteForIngestTest(t *testing.T, repo, basename, dedupeKey, friction string) {
+	t.Helper()
+	if err := writeText(filepath.Join(repo, "tusker", "feedback", "agents", basename), strings.Join([]string{
+		"# Agent Feedback",
+		"",
+		"- context: Agents finished a Tusker turn with reusable product feedback.",
+		"- friction: " + friction,
+		"- product-idea: Add structured feedback intake and review.",
+		"- impact: Feedback can be promoted without markdown-only digests.",
+		"- related: tusker feedback ingest",
+		"- affected-command: tusker feedback ingest",
+		"- priority-hint: P1",
+		"- dedupe-key: " + dedupeKey,
+		"",
+	}, "\n")); err != nil {
+		t.Fatal(err)
+	}
 }

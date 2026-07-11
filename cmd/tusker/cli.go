@@ -270,6 +270,9 @@ func run(command string, args Args) (int, error) {
 	case "feedback digest":
 		args["_pos0"] = "digest"
 		return 0, feedbackV7Cmd(args)
+	case "feedback ingest":
+		args["_pos0"] = "ingest"
+		return 0, feedbackV7Cmd(args)
 	case "feedback signals":
 		args["_pos0"] = "signals"
 		return 0, feedbackV7Cmd(args)
@@ -897,7 +900,7 @@ func printCommandHelp(command string) bool {
 		printMigrateVaultRootHelp()
 	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "trace", "trace list", "trace show", "trace replay", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
 		printV7Help()
-	case "feedback", "feedback add", "feedback digest", "feedback signals", "feedback review", "feedback promote":
+	case "feedback", "feedback add", "feedback digest", "feedback ingest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()
 	case "improve", "improve scan":
 		printImproveHelp()

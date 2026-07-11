@@ -55,6 +55,7 @@ type feedbackDigest struct {
 	Actionable []feedbackRecord
 	Flagged    []feedbackRecord
 	OutputPath string
+	Warnings   []feedbackTargetWarning
 }
 
 func feedbackV7Cmd(args Args) error {
@@ -163,6 +164,7 @@ func feedbackDigestCmd(args Args) error {
 			"repos":       digest.Repos,
 			"counts":      map[string]any{"notes": len(digest.Records), "actionable": len(digest.Actionable), "flagged": len(digest.Flagged)},
 			"output_path": nullIfEmptyString(digest.OutputPath),
+			"warnings":    feedbackTargetWarningsJSON(digest.Warnings),
 		})
 		return nil
 	}
@@ -190,11 +192,12 @@ func buildFeedbackDigest(args Args) (feedbackDigest, error) {
 		return feedbackDigest{}, tuskerError(errorInvalidArg, "feedback digest --date must be YYYY-MM-DD: "+date)
 	}
 
-	targets, err := feedbackDigestTargets(args)
+	resolution, err := feedbackResolveTargets(args, true)
 	if err != nil {
 		return feedbackDigest{}, err
 	}
-	digest := feedbackDigest{Date: date, Since: since}
+	digest := feedbackDigest{Date: date, Since: since, Warnings: resolution.Warnings}
+	targets := resolution.Targets
 	for _, target := range targets {
 		digest.Repos = append(digest.Repos, target.repoRoot)
 		records, err := feedbackRecordsForVault(target.vaultPath, target.repoRoot, sinceDate)
@@ -220,35 +223,20 @@ func buildFeedbackDigest(args Args) (feedbackDigest, error) {
 }
 
 type feedbackTarget struct {
-	vaultPath string
-	repoRoot  string
+	vaultPath  string
+	repoRoot   string
+	projectKey string
+	projectID  string
+	name       string
+	selector   string
+	registered bool
+	enabled    bool
+	health     ProjectHealth
 }
 
 func feedbackDigestTargets(args Args) ([]feedbackTarget, error) {
-	repos := splitFeedbackList(args.String("repo"))
-	if len(repos) == 0 {
-		if vaultArg := strings.TrimSpace(args.String("vault")); vaultArg != "" {
-			vaultPath, err := filepath.Abs(vaultArg)
-			if err != nil {
-				return nil, err
-			}
-			return []feedbackTarget{{vaultPath: vaultPath, repoRoot: filepath.Dir(vaultPath)}}, nil
-		}
-		vaultPath, err := resolveVaultPath(args, false)
-		if err != nil {
-			return nil, err
-		}
-		return []feedbackTarget{{vaultPath: vaultPath, repoRoot: filepath.Dir(vaultPath)}}, nil
-	}
-	var targets []feedbackTarget
-	for _, repo := range repos {
-		vaultPath, repoRoot, err := feedbackVaultForRepoPath(repo)
-		if err != nil {
-			return nil, err
-		}
-		targets = append(targets, feedbackTarget{vaultPath: vaultPath, repoRoot: repoRoot})
-	}
-	return targets, nil
+	resolution, err := feedbackResolveTargets(args, true)
+	return resolution.Targets, err
 }
 
 func feedbackSingleTarget(args Args) (string, string, error) {
@@ -694,6 +682,7 @@ func renderFeedbackDigestMarkdown(digest feedbackDigest) string {
 	b.WriteString(fmt.Sprintf("- Repos: %d\n", len(digest.Repos)))
 	b.WriteString(fmt.Sprintf("- Actionable notes: %d\n", len(digest.Actionable)))
 	b.WriteString(fmt.Sprintf("- Flagged notes: %d\n\n", len(digest.Flagged)))
+	renderFeedbackTargetWarnings(&b, digest.Warnings)
 	renderFeedbackGroupedSection(&b, "By Theme", digest.Actionable, func(record feedbackRecord) string { return record.Theme })
 	renderFeedbackGroupedSection(&b, "By Source Repo", digest.Actionable, func(record feedbackRecord) string { return record.SourceRepo })
 	renderFeedbackGroupedSection(&b, "By Priority Hint", digest.Actionable, func(record feedbackRecord) string { return record.PriorityHint })
@@ -940,6 +929,8 @@ Concepts:
   Events are history: timestamped facts about what happened.
   Feedback notes are subjective input: concise agent or human observations.
   Signals are derived product facts stored under .tusker/feedback/signals/YYYY-MM-DD/*.json.
+  Intake -> review -> promote -> fanout: ingest explicit notes into an output vault, review note/task/event signals together, promote one finding, and dispatch only if fanout is explicitly enabled.
+  Explicit feedback notes are human/agent product observations; mechanical task/event signals are reducer facts from Tusker state.
 
 Options:
   --repo <path>          Repo root. For digest/signals/review, comma or newline separated paths are accepted.
@@ -952,7 +943,8 @@ Options:
   --dedupe-key <key>     Reject duplicate recent feedback with the same key.
   --allow-duplicate      Allow a duplicate --dedupe-key.
   --write                Write digest to .tusker/feedback/digests/<date>.md.
-  --output-vault <path>  Vault where --write should place generated feedback output.
+  --output-vault <path>  Vault where --write should place generated feedback output, imports, signals, and reviews.
   --review <path>        Review packet path for feedback promote.
+  --finding <id>         Select one structured review finding for feedback promote.
   --action <kind>        Promotion action, e.g. create-task, decision, skip.`)
 }

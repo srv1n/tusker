@@ -196,6 +196,100 @@ func TestFeedbackPromoteCommandDefaultsDryRunAndWritesOneTask(t *testing.T) {
 	}
 }
 
+func TestFeedbackPromoteCommandSelectsFindingPreservesSourceRefsAndDoesNotDispatch(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(root, "state"))
+	vault := filepath.Join(root, "tusker")
+	if err := writeText(filepath.Join(vault, "feedback", "agents", "2026-05-21-codex-promote-finding.md"), strings.Join([]string{
+		"# Agent Feedback",
+		"",
+		"- context: Review produced a selectable finding from a feedback note.",
+		"- friction: Promotion could only target generic review files.",
+		"- product-idea: Promote one structured finding while preserving source refs.",
+		"- impact: Feedback creates visible Tusker work without hidden fanout.",
+		"- related: tusker feedback promote",
+		"- affected-command: tusker feedback promote",
+		"- priority-hint: P1",
+		"- dedupe-key: feedback-promote-finding",
+		"",
+	}, "\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	reviewJSON := captureStdout(t, func() {
+		if err := feedbackReviewCmd(Args{"vault": vault, "since": "2026-05-20", "date": "2026-05-22", "json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var reviewPayload struct {
+		Findings []map[string]any `json:"findings"`
+	}
+	if err := json.Unmarshal([]byte(reviewJSON), &reviewPayload); err != nil {
+		t.Fatal(err)
+	}
+	if len(reviewPayload.Findings) == 0 {
+		t.Fatalf("expected a selectable finding, got %s", reviewJSON)
+	}
+	findingID := toString(reviewPayload.Findings[0]["id"])
+
+	promoteJSON := captureStdout(t, func() {
+		if err := feedbackPromoteCmd(Args{"vault": vault, "finding": findingID, "since": "2026-05-20", "date": "2026-05-22", "json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var promotePayload struct {
+		Mode     string `json:"mode"`
+		Outcomes []struct {
+			Operation  string   `json:"Operation"`
+			SourceRefs []string `json:"SourceRefs"`
+			DedupeKey  string   `json:"DedupeKey"`
+		} `json:"outcomes"`
+	}
+	if err := json.Unmarshal([]byte(promoteJSON), &promotePayload); err != nil {
+		t.Fatal(err)
+	}
+	if promotePayload.Mode != feedbackPromoteModeDryRun || len(promotePayload.Outcomes) != 1 || promotePayload.Outcomes[0].Operation != "create" {
+		t.Fatalf("expected dry-run create outcome, got %s", promoteJSON)
+	}
+	if fileExists(filepath.Join(vault, "work", "tasks", "FBK-T-0001.md")) {
+		t.Fatal("dry-run selected finding promotion created a task")
+	}
+	if !containsString(promotePayload.Outcomes[0].SourceRefs, "feedback-note:"+filepath.Base(root)+":feedback/agents/2026-05-21-codex-promote-finding.md") &&
+		!strings.Contains(strings.Join(promotePayload.Outcomes[0].SourceRefs, "\n"), "feedback/agents/2026-05-21-codex-promote-finding.md") {
+		t.Fatalf("promotion did not preserve source note refs: %#v", promotePayload.Outcomes[0].SourceRefs)
+	}
+
+	if err := feedbackPromoteCmd(Args{"vault": vault, "finding": findingID, "since": "2026-05-20", "date": "2026-05-22", "write": "true", "epic": "FBK", "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	taskPath := filepath.Join(vault, "work", "tasks", "FBK-T-0001.md")
+	task, err := readText(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`dedupe_key: "feedback-promote-finding"`,
+		"source_refs:",
+		"feedback/agents/2026-05-21-codex-promote-finding.md",
+		"Source feedback:",
+		"Prevention statement:",
+	} {
+		assertContainsIndexTest(t, task, expected)
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	runs, err := store.ListRuns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("promotion should not auto-dispatch fanout runs, got %#v", runs)
+	}
+}
+
 func writeFeedbackReducerTaskFixture(t *testing.T, vault, id string) {
 	t.Helper()
 	writeFeedbackReducerTaskFixtureWithStatus(t, vault, id, "review")

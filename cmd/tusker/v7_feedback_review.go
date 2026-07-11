@@ -64,6 +64,7 @@ type feedbackReviewPacket struct {
 }
 
 type feedbackReviewFinding struct {
+	ID             string
 	Key            string
 	Category       string
 	Severity       string
@@ -76,6 +77,7 @@ type feedbackReviewFinding struct {
 	Signals        []feedbackReviewSignal
 	SignalIDs      []string
 	TaskIDs        []string
+	SourceRefs     []string
 	Dates          []string
 	Frequency      int
 	LatestDate     string
@@ -225,6 +227,7 @@ func feedbackReviewSignalFromMap(raw map[string]any, sourcePath string) feedback
 	signal.TaskIDs = uniqueStrings(feedbackReviewTaskIDs(signal))
 	signal.AttemptIDs = uniqueStrings(feedbackReviewCleanList(append(signal.AttemptIDs, signal.Attempt)))
 	signal.ObservedFacts = feedbackReviewCleanList(signal.ObservedFacts)
+	signal.SourceRefs = uniqueStrings(feedbackReviewCleanList(append(signal.SourceRefs, signal.SourcePath)))
 	return signal
 }
 
@@ -319,6 +322,7 @@ func feedbackReviewFindings(signals []feedbackReviewSignal) []feedbackReviewFind
 		for _, signal := range group {
 			finding.SignalIDs = append(finding.SignalIDs, feedbackReviewSignalID(signal))
 			finding.TaskIDs = append(finding.TaskIDs, feedbackReviewTaskIDs(signal)...)
+			finding.SourceRefs = append(finding.SourceRefs, signal.SourceRefs...)
 			if date := feedbackReviewSignalDate(signal); date != "" {
 				finding.Dates = append(finding.Dates, date)
 				if finding.LatestDate == "" || date > finding.LatestDate {
@@ -344,6 +348,7 @@ func feedbackReviewFindings(signals []feedbackReviewSignal) []feedbackReviewFind
 		}
 		finding.SignalIDs = uniqueStrings(feedbackReviewCleanList(finding.SignalIDs))
 		finding.TaskIDs = uniqueStrings(feedbackReviewCleanList(finding.TaskIDs))
+		finding.SourceRefs = uniqueStrings(feedbackReviewCleanList(finding.SourceRefs))
 		finding.Dates = uniqueStrings(feedbackReviewCleanList(finding.Dates))
 		finding.severityRank = feedbackReviewSeverityRank(finding.Severity)
 		finding.confidenceRank = feedbackReviewConfidenceRank(finding.Confidence)
@@ -351,6 +356,7 @@ func feedbackReviewFindings(signals []feedbackReviewSignal) []feedbackReviewFind
 		if finding.Prevention == "" {
 			finding.Prevention = feedbackReviewPrevention(finding)
 		}
+		finding.ID = feedbackReviewFindingID(finding)
 		findings = append(findings, finding)
 	}
 	sort.SliceStable(findings, func(i, j int) bool {
@@ -660,7 +666,17 @@ func feedbackReviewFindingFacts(finding feedbackReviewFinding) []string {
 }
 
 func feedbackReviewCitation(finding feedbackReviewFinding) string {
-	return "Citation: signals " + feedbackReviewList(finding.SignalIDs) + "; tasks " + feedbackReviewList(finding.TaskIDs) + "; dates " + feedbackReviewList(finding.Dates) + "."
+	return "Citation: findings " + firstNonEmpty(finding.ID, "n/a") + "; signals " + feedbackReviewList(finding.SignalIDs) + "; sources " + feedbackReviewList(finding.SourceRefs) + "; tasks " + feedbackReviewList(finding.TaskIDs) + "; dates " + feedbackReviewList(finding.Dates) + "."
+}
+
+func feedbackReviewFindingID(finding feedbackReviewFinding) string {
+	base := strings.Join([]string{
+		finding.Key,
+		finding.Category,
+		strings.Join(finding.SignalIDs, ","),
+		strings.Join(finding.SourceRefs, ","),
+	}, "|")
+	return "FR-" + feedbackSignalHash(base)[:12]
 }
 
 func feedbackReviewList(values []string) string {
