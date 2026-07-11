@@ -84,6 +84,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		"{{session_ref}}":    "",
 		"{{message_ref}}":    "",
 	})
+	policy := codexPolicyForLane(req.CodexPolicy, req.Lane)
 	cmd := exec.CommandContext(ctx, "sh", "-lc", command)
 	cmd.Dir = workspaceCWD
 	if err := assertRunnerCommandDir(RunnerClaude, cmd.Dir, req.WorkspacePath); err != nil {
@@ -113,6 +114,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
+	runtimeStore, _ := OpenRuntimeStore(DefaultStateRoot())
 	handle := &claudeLiveHandle{
 		projectID:       req.ProjectID,
 		recordID:        req.RecordID,
@@ -321,18 +323,28 @@ func (h *claudeLiveHandle) handleStdoutLine(line string) {
 	if json.Unmarshal([]byte(line), &payload) != nil {
 		return
 	}
+	h.observeStreamPayload(payload)
 	switch strings.TrimSpace(stringValue(payload["type"])) {
 	case "control_request":
 		h.handleControlRequest(payload)
 	case "result":
 		isError, _ := payload["is_error"].(bool)
 		subtype := strings.TrimSpace(stringValue(payload["subtype"]))
+		status := "completed"
+		reason := ""
 		switch {
 		case subtype == "interrupted" || h.interrupted.Load():
+			status = "interrupted"
+			reason = "interrupted"
+			h.recordTurnCompleted(h.ensureTurnID(payload), status, reason, time.Now().UTC().Format(time.RFC3339))
 			h.finalize(130)
 		case isError || strings.Contains(subtype, "error"):
+			status = "failed"
+			reason = firstNonEmpty(strings.TrimSpace(stringValue(payload["error"])), subtype)
+			h.recordTurnCompleted(h.ensureTurnID(payload), status, reason, time.Now().UTC().Format(time.RFC3339))
 			h.finalize(1)
 		default:
+			h.recordTurnCompleted(h.ensureTurnID(payload), status, reason, time.Now().UTC().Format(time.RFC3339))
 			h.finalize(0)
 		}
 	}
@@ -345,16 +357,31 @@ func (h *claudeLiveHandle) handleControlRequest(payload map[string]any) {
 	var response any
 	switch subtype {
 	case "can_use_tool":
-		response = map[string]any{
-			"behavior":     "allow",
-			"updatedInput": request["input"],
+		decision := h.evaluateToolApproval(request)
+		h.recordApprovalDecision("can_use_tool", decision)
+		if decision.Decision == "accept" {
+			response = map[string]any{
+				"behavior":     "allow",
+				"updatedInput": request["input"],
+			}
+		} else {
+			response = map[string]any{
+				"behavior": "deny",
+				"message":  decision.Reason,
+			}
 		}
 	case "hook_callback":
+		decision := h.evaluateToolApproval(request)
+		h.recordApprovalDecision("hook_callback", decision)
+		permissionDecision := "allow"
+		if decision.Decision != "accept" {
+			permissionDecision = "deny"
+		}
 		response = map[string]any{
 			"hookSpecificOutput": map[string]any{
 				"hookEventName":            "PreToolUse",
-				"permissionDecision":       "allow",
-				"permissionDecisionReason": "Auto-approved by Tusker",
+				"permissionDecision":       permissionDecision,
+				"permissionDecisionReason": firstNonEmpty(decision.Reason, "Evaluated by Tusker"),
 			},
 		}
 	default:
@@ -370,8 +397,285 @@ func (h *claudeLiveHandle) handleControlRequest(payload map[string]any) {
 	})
 }
 
+func (h *claudeLiveHandle) observeStreamPayload(payload map[string]any) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if turnID := h.turnRefFromPayload(payload); turnID != "" {
+		h.recordTurnStarted(turnID, now, map[string]any{
+			"source":      "claude_stream_json",
+			"stream_type": strings.TrimSpace(stringValue(payload["type"])),
+		})
+	}
+	var usage turnUsageCounters
+	collectUsageCounters(payload, &usage)
+	if usage.totalTokens == 0 && (usage.inputTokens > 0 || usage.outputTokens > 0) {
+		usage.totalTokens = usage.inputTokens + usage.outputTokens
+	}
+	if usage.hasAny() {
+		h.recordTurnUsage("claude_stream_json", now, usage)
+	}
+}
+
+func (h *claudeLiveHandle) evaluateToolApproval(request map[string]any) codexApprovalDecision {
+	input, _ := request["input"].(map[string]any)
+	toolName := firstNonEmpty(
+		strings.TrimSpace(stringValue(request["name"])),
+		strings.TrimSpace(stringValue(request["tool_name"])),
+		strings.TrimSpace(stringValue(request["toolName"])),
+		strings.TrimSpace(stringValue(request["tool"])),
+	)
+	command := firstNonEmpty(
+		strings.TrimSpace(stringValue(input["command"])),
+		strings.TrimSpace(stringValue(input["cmd"])),
+		strings.Join(stringListFromAny(input["argv"]), " "),
+	)
+	subject := firstNonEmpty(command, toolName)
+	mutating := claudeToolLooksMutating(toolName, command)
+	decision := codexApprovalDecision{RequestType: "tool", Decision: "accept", Subject: subject, Mutating: mutating}
+	if reason := h.policyDenialReason(mutating); reason != "" {
+		return codexApprovalDecision{RequestType: "tool", Decision: "reject", Reason: reason, Subject: subject, Mutating: mutating}
+	}
+	if commandContainsUnsafeGitMutation(command) {
+		return codexApprovalDecision{RequestType: "tool", Decision: "reject", Reason: "tool approval rejected: unsafe git state mutation is not allowed", Subject: subject, Mutating: true}
+	}
+	if commandMentionsSecretPath(command) {
+		return codexApprovalDecision{RequestType: "tool", Decision: "reject", Reason: "tool approval rejected: command references a secret path", Subject: subject, Mutating: true}
+	}
+	return decision
+}
+
+func claudeToolLooksMutating(toolName, command string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(toolName))
+	switch normalized {
+	case "read", "grep", "glob", "ls", "webfetch", "websearch":
+		return false
+	case "bash":
+		return commandLooksMutating(command)
+	case "write", "edit", "multiedit", "notebookedit", "todowrite":
+		return true
+	default:
+		return true
+	}
+}
+
+func (h *claudeLiveHandle) policyDenialReason(mutating bool) string {
+	approvalPolicy := strings.TrimSpace(h.policy.ApprovalPolicy)
+	if approvalPolicy == "never" {
+		return "approval_policy=never rejects Claude Code tool approval requests"
+	}
+	activeSandbox := firstNonEmpty(strings.TrimSpace(h.policy.TurnSandboxPolicy), strings.TrimSpace(h.policy.ThreadSandbox))
+	if mutating && activeSandbox == "read-only" {
+		return "read-only sandbox rejects mutating Claude Code tool approval requests"
+	}
+	if approvalPolicy == "on-request" || approvalPolicy == "untrusted" {
+		return "approval_policy=" + approvalPolicy + " requires human approval; Tusker rejects instead of silently approving"
+	}
+	return ""
+}
+
+func (h *claudeLiveHandle) recordApprovalDecision(method string, decision codexApprovalDecision) {
+	reason := strings.TrimSpace(decision.Reason)
+	message := "claude approval " + decision.Decision + ": method=" + method + " type=" + decision.RequestType
+	if reason != "" {
+		message += " reason=" + reason
+	}
+	_ = appendRawLogLine(h.rawLogPath, message)
+	if h.eventLog == nil || strings.TrimSpace(h.eventSinkPath) == "" {
+		return
+	}
+	_ = h.eventLog.Append("claude_approval_decision", h.attemptID, h.runner, map[string]any{
+		"project_id":          h.projectID,
+		"record_id":           h.recordID,
+		"item_id":             h.itemID,
+		"attempt_id":          h.attemptID,
+		"session_ref":         h.SessionRef(),
+		"turn_id":             h.turnID,
+		"method":              method,
+		"request_type":        decision.RequestType,
+		"decision":            decision.Decision,
+		"reason":              reason,
+		"subject":             decision.Subject,
+		"mutating":            decision.Mutating,
+		"approval_policy":     h.policy.ApprovalPolicy,
+		"thread_sandbox":      h.policy.ThreadSandbox,
+		"turn_sandbox_policy": h.policy.TurnSandboxPolicy,
+	})
+}
+
+func (h *claudeLiveHandle) recordTurnStarted(turnID, at string, payload map[string]any) {
+	turnID = firstNonEmpty(strings.TrimSpace(turnID), h.turnID)
+	if turnID == "" {
+		return
+	}
+	h.turnID = turnID
+	h.ensureTurnIndex()
+	h.appendNormalizedTurnEvent("turn_started", at, h.payloadWithTurn(turnID, payload))
+	h.saveTurn(RunTurn{
+		AttemptID:   h.attemptID,
+		ProjectID:   h.projectID,
+		RecordID:    h.recordID,
+		TurnID:      turnID,
+		TurnIndex:   h.turnIndex,
+		SessionRef:  h.SessionRef(),
+		Status:      "running",
+		StartedAt:   at,
+		LastEventAt: at,
+	})
+}
+
+func (h *claudeLiveHandle) recordTurnUsage(source, at string, usage turnUsageCounters) {
+	turnID := firstNonEmpty(usage.turnID, h.turnID, h.MessageRef(), h.ensureTurnID(nil))
+	if turnID == "" {
+		return
+	}
+	h.turnID = turnID
+	h.ensureTurnIndex()
+	h.appendNormalizedTurnEvent("turn_usage_updated", at, h.payloadWithTurn(turnID, map[string]any{
+		"source":        source,
+		"input_tokens":  usage.inputTokens,
+		"output_tokens": usage.outputTokens,
+		"total_tokens":  usage.totalTokens,
+	}))
+	h.saveTurn(RunTurn{
+		AttemptID:    h.attemptID,
+		ProjectID:    h.projectID,
+		RecordID:     h.recordID,
+		TurnID:       turnID,
+		TurnIndex:    h.turnIndex,
+		SessionRef:   h.SessionRef(),
+		Status:       "running",
+		InputTokens:  usage.inputTokens,
+		OutputTokens: usage.outputTokens,
+		TotalTokens:  usage.totalTokens,
+		LastEventAt:  at,
+	})
+}
+
+func (h *claudeLiveHandle) recordTurnCompleted(turnID, status, reason, at string) {
+	if !h.turnCompleted.CompareAndSwap(false, true) {
+		return
+	}
+	turnID = firstNonEmpty(strings.TrimSpace(turnID), h.ensureTurnID(nil))
+	if turnID == "" {
+		return
+	}
+	h.turnID = turnID
+	h.ensureTurnIndex()
+	h.appendNormalizedTurnEvent("turn_completed", at, h.payloadWithTurn(turnID, map[string]any{
+		"status":     status,
+		"last_error": reason,
+	}))
+	h.saveTurn(RunTurn{
+		AttemptID:   h.attemptID,
+		ProjectID:   h.projectID,
+		RecordID:    h.recordID,
+		TurnID:      turnID,
+		TurnIndex:   h.turnIndex,
+		SessionRef:  h.SessionRef(),
+		Status:      status,
+		CompletedAt: at,
+		LastEventAt: at,
+		LastError:   reason,
+	})
+}
+
+func (h *claudeLiveHandle) appendNormalizedTurnEvent(kind, at string, payload map[string]any) {
+	if h.eventLog == nil || strings.TrimSpace(h.eventSinkPath) == "" {
+		return
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["normalized_at"] = at
+	_ = h.eventLog.Append(kind, h.attemptID, h.runner, payload)
+}
+
+func (h *claudeLiveHandle) saveTurn(turn RunTurn) {
+	if h.runtimeStore == nil {
+		return
+	}
+	_ = h.runtimeStore.SaveTurn(turn)
+}
+
+func (h *claudeLiveHandle) ensureTurnIndex() {
+	if h.turnIndex >= 0 {
+		return
+	}
+	if h.runtimeStore == nil {
+		h.turnIndex = 0
+		return
+	}
+	index, err := h.runtimeStore.NextTurnIndex(h.projectID, h.recordID, h.attemptID)
+	if err != nil {
+		h.turnIndex = 0
+		return
+	}
+	h.turnIndex = index
+}
+
+func (h *claudeLiveHandle) payloadWithTurn(turnID string, payload map[string]any) map[string]any {
+	out := map[string]any{
+		"project_id":  h.projectID,
+		"record_id":   h.recordID,
+		"item_id":     h.itemID,
+		"attempt_id":  h.attemptID,
+		"session_ref": h.SessionRef(),
+		"turn_id":     turnID,
+		"turn_index":  h.turnIndex,
+	}
+	for key, value := range payload {
+		if key == "last_error" && strings.TrimSpace(stringValue(value)) == "" {
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func (h *claudeLiveHandle) turnRefFromPayload(payload map[string]any) string {
+	return firstNonEmpty(
+		findMessageRef(payload),
+		strings.TrimSpace(stringValue(payload["message_id"])),
+		strings.TrimSpace(stringValue(payload["messageId"])),
+		strings.TrimSpace(stringValue(payload["uuid"])),
+	)
+}
+
+func (h *claudeLiveHandle) ensureTurnID(payload map[string]any) string {
+	if strings.TrimSpace(h.turnID) != "" {
+		return h.turnID
+	}
+	if payload != nil {
+		if turnID := h.turnRefFromPayload(payload); turnID != "" {
+			h.turnID = turnID
+			return h.turnID
+		}
+	}
+	if messageRef := h.MessageRef(); messageRef != "" {
+		h.turnID = messageRef
+		return h.turnID
+	}
+	if sessionRef := h.SessionRef(); sessionRef != "" {
+		h.turnID = sessionRef + "-turn"
+		return h.turnID
+	}
+	h.turnID = h.attemptID + "-turn"
+	return h.turnID
+}
+
 func (h *claudeLiveHandle) finalize(exitCode int) {
 	h.doneOnce.Do(func() {
+		now := time.Now().UTC().Format(time.RFC3339)
+		status := "completed"
+		reason := ""
+		switch {
+		case exitCode == 130:
+			status = "interrupted"
+			reason = "interrupted"
+		case exitCode != 0:
+			status = "failed"
+			reason = "runner exited with code " + strconv.Itoa(exitCode)
+		}
+		h.recordTurnCompleted(h.ensureTurnID(nil), status, reason, now)
 		_ = writeRunnerStatusFile(h.statusPath, exitCode)
 		liveRegistry.Unregister(h.attemptID)
 	})

@@ -1550,5 +1550,12 @@ func writeRunnerStatusFileWithOutcome(path string, exitCode int, outcome Attempt
 	if err != nil {
 		return err
 	}
-	return writeText(path, string(raw)+"\n")
+	if err := ensureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, append(raw, '\n'), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }

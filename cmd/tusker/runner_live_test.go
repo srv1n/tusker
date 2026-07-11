@@ -829,8 +829,280 @@ for line in sys.stdin:
 	assertEqual(t, "thread-after-restart", turns[0].SessionRef, "fresh restart turn session ref")
 }
 
-func TestClaudeLiveRunnerSupportsInterrupt(t *testing.T) {
+func TestClaudeLiveRunnerCapabilityMatrixMatchesCodexAppServer(t *testing.T) {
+	codex := (&CodexAppServerRunner{}).Capabilities()
+	claude := (&ClaudeRunner{}).Capabilities()
+	if codex.StructuredEvents != claude.StructuredEvents ||
+		codex.ResumeSession != claude.ResumeSession ||
+		codex.ExplicitApprovals != claude.ExplicitApprovals ||
+		codex.Heartbeats != claude.Heartbeats ||
+		codex.MachineFinalStatus != claude.MachineFinalStatus ||
+		codex.UsageMetrics != claude.UsageMetrics {
+		t.Fatalf("claude-code capability matrix must match codex_app_server for daemon-used capabilities: codex=%#v claude=%#v", codex, claude)
+	}
+}
+
+func TestClaudeLiveRunnerCompletesFixtureThroughReviewLane(t *testing.T) {
+	vault := automationTestVault(t)
+	project := registerAutomationTestProject(t, vault)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Claude fixture", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+
+	scriptPath := filepath.Join(filepath.Dir(vault), "fake-claude.py")
+	script := `#!/usr/bin/env python3
+import json, os, pathlib, sys
+def promote_note_to_review():
+    path = pathlib.Path(os.environ["TUSKER_NOTE_PATH"])
+    text = path.read_text()
+    text = text.replace('status: "ready"', 'status: "review"')
+    text = text.replace('readiness: "ready"', 'readiness: "ready"')
+    text = text.replace('next_owner: "agent"', 'next_owner: "reviewer:agent"')
+    path.write_text(text)
+for line in sys.stdin:
+    msg=json.loads(line)
+    if msg.get("type")=="control_request":
+        continue
+    if msg.get("type")=="user":
+        lane=os.environ["TUSKER_RUN_LANE"]
+        assert os.path.isdir(os.environ["TUSKER_WORKSPACE"]), os.environ["TUSKER_WORKSPACE"]
+        if lane=="execute":
+            promote_note_to_review()
+        elif lane=="review":
+            assert 'status: "review"' in pathlib.Path(os.environ["TUSKER_NOTE_PATH"]).read_text()
+        else:
+            raise AssertionError(lane)
+        print(json.dumps({"type":"assistant","session_id":"claude-fixture-session","message":{"id":"msg-"+lane,"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":4,"output_tokens":2}}}), flush=True)
+        print(json.dumps({"type":"result","subtype":"success","is_error":False,"session_id":"claude-fixture-session","usage":{"input_tokens":4,"output_tokens":2}}), flush=True)
+        break
+`
+	if err := writeText(scriptPath, script); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	wf := defaultWorkflow()
+	wf.Agents.Default = string(RunnerClaude)
+	wf.Agents.Enabled = []string{string(RunnerClaude), string(RunnerCodexAppServer)}
+	wf.Workspace.Strategy = string(WorkspaceStrategyCopy)
+	wf.Claude.Command = scriptPath + " --input-format stream-json"
+	wf.Runners[string(RunnerClaude)] = RunnerDefinition{Kind: string(RunnerClaude), Command: wf.Claude.Command}
+	wf.Codex.ApprovalPolicy = "on-failure"
+	wf.Codex.ThreadSandbox = "workspace-write"
+	wf.Codex.TurnSandboxPolicy = "workspace-write"
+	wf.Codex.ReadTimeoutMS = 5000
+	wf.Codex.TurnTimeoutMS = 5000
+	wfFile := WorkflowFile{Path: workflowPath(vault), Data: wf}
+
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
+	executeRun := RunStatus{
+		ProjectID: project.ProjectID,
+		RecordID:  "APP-T-0001",
+		ItemID:    "APP-T-0001",
+		Runner:    string(RunnerClaude),
+	}
+	note, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executeRun, err = daemon.dispatchRun(context.Background(), project, wfFile, note, executeRun, runLaneExecute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executeRun = finishDaemonRunForTest(t, daemon, project, wfFile, executeRun)
+	assertEqual(t, string(LeaseStateReleased), executeRun.LeaseState, "execute lease")
+	assertEqual(t, string(AttemptOutcomeSucceeded), executeRun.AttemptOutcome, "execute outcome")
+	updatedNote, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "review", stringField(updatedNote.Data, "status"), "fixture promoted to review")
+
+	reviewRun, err := daemon.dispatchRun(context.Background(), project, wfFile, updatedNote, executeRun, runLaneReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewRun = finishDaemonRunForTest(t, daemon, project, wfFile, reviewRun)
+	assertEqual(t, runLaneReview, reviewRun.Lane, "review lane")
+	assertEqual(t, string(LeaseStateReleased), reviewRun.LeaseState, "review lease")
+	assertEqual(t, string(AttemptOutcomeSucceeded), reviewRun.AttemptOutcome, "review outcome")
+	turns, err := store.ListTurnsForRun(project.ProjectID, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) < 2 {
+		t.Fatalf("expected execute and review turns, got %#v", turns)
+	}
+}
+
+func TestClaudeResumeLiveRunnerUsesSessionRefAfterRestart(t *testing.T) {
 	tempRoot := t.TempDir()
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(tempRoot, "state"))
+	workspaceRoot := filepath.Join(tempRoot, "workspace")
+	if err := ensureDir(workspaceRoot); err != nil {
+		t.Fatal(err)
+	}
+	rawLogPath := filepath.Join(tempRoot, "claude.log")
+	statusPath := filepath.Join(tempRoot, "claude.status.json")
+	eventSinkPath := filepath.Join(tempRoot, "events.jsonl")
+	promptPath := filepath.Join(tempRoot, "prompt.txt")
+	scriptPath := filepath.Join(tempRoot, "fake-claude.py")
+	if err := writeText(promptPath, "Resume prompt.\n"); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/usr/bin/env python3
+import json,os,sys
+assert "--resume claude-session-before-restart" in " ".join(sys.argv), sys.argv
+for line in sys.stdin:
+    msg=json.loads(line)
+    if msg.get("type")=="control_request":
+        continue
+    if msg.get("type")=="user":
+        assert os.environ["TUSKER_SESSION_REF"]=="claude-session-before-restart", os.environ.get("TUSKER_SESSION_REF")
+        print(json.dumps({"type":"assistant","session_id":"claude-session-before-restart","message":{"id":"msg-resumed","role":"assistant","content":[{"type":"text","text":"resumed"}],"usage":{"input_tokens":5,"output_tokens":3}}}), flush=True)
+        print(json.dumps({"type":"result","subtype":"success","is_error":False,"session_id":"claude-session-before-restart","usage":{"input_tokens":5,"output_tokens":3}}), flush=True)
+        break
+`
+	if err := writeText(scriptPath, script); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := (&ClaudeRunner{}).Resume(context.Background(), ResumeRequest{
+		ProjectID:     "project-1",
+		RecordID:      "record-1",
+		ItemID:        "ITEM-1",
+		AttemptID:     "attempt-resume",
+		WorkRevision:  0,
+		SessionRef:    "claude-session-before-restart",
+		WorkspacePath: workspaceRoot,
+		PromptPath:    promptPath,
+		EventSinkPath: eventSinkPath,
+		RawLogPath:    rawLogPath,
+		StatusPath:    statusPath,
+		Command:       scriptPath + " --input-format stream-json --resume {{session_ref}}",
+		VaultPath:     tempRoot,
+		CodexPolicy:   CodexPolicy{ApprovalPolicy: "never", ThreadSandbox: "read-only", TurnSandboxPolicy: "read-only"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "claude-session-before-restart", result.SessionRef, "resumed claude session ref")
+	waitForStatusFile(t, statusPath)
+	status, err := readRunnerProcessStatus(statusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 0, status.ExitCode, "claude resumed exit code")
+	store := openRuntimeStoreEventually(t)
+	defer store.Close()
+	turns := waitForStoredTurnStatus(t, store, "project-1", "record-1", "completed")
+	assertEqual(t, "claude-session-before-restart", turns[0].SessionRef, "resumed turn session ref")
+	reconciled, err := (&ClaudeRunner{}).Reconcile(context.Background(), ReconcileRequest{SessionRef: "claude-session-before-restart"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, LeaseStateRetryQueued, reconciled.LeaseState, "reconcile lease")
+	assertEqual(t, AttemptOutcomeNone, reconciled.Outcome, "reconcile outcome")
+	assertEqual(t, "session is resumable", reconciled.Reason, "reconcile reason")
+}
+
+func TestClaudeUsageLiveRunnerRecordsTokensAndReviewPacket(t *testing.T) {
+	tempRoot := t.TempDir()
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(tempRoot, "state"))
+	workspaceRoot := filepath.Join(tempRoot, "workspace")
+	if err := ensureDir(workspaceRoot); err != nil {
+		t.Fatal(err)
+	}
+	rawLogPath := filepath.Join(tempRoot, "claude.log")
+	statusPath := filepath.Join(tempRoot, "claude.status.json")
+	eventSinkPath := filepath.Join(tempRoot, "events.jsonl")
+	promptPath := filepath.Join(tempRoot, "prompt.txt")
+	scriptPath := filepath.Join(tempRoot, "fake-claude.py")
+	if err := writeText(promptPath, "Count tokens.\n"); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/usr/bin/env python3
+import json,sys
+for line in sys.stdin:
+    msg=json.loads(line)
+    if msg.get("type")=="control_request":
+        continue
+    if msg.get("type")=="user":
+        print(json.dumps({"type":"assistant","session_id":"claude-usage-session","message":{"id":"msg-usage","role":"assistant","content":[{"type":"text","text":"usage"}],"usage":{"input_tokens":17,"output_tokens":9}}}), flush=True)
+        print(json.dumps({"type":"result","subtype":"success","is_error":False,"session_id":"claude-usage-session","usage":{"input_tokens":17,"output_tokens":9}}), flush=True)
+        break
+`
+	if err := writeText(scriptPath, script); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := startLiveClaude(context.Background(), StartRequest{
+		ProjectID:     "project-1",
+		RecordID:      "record-1",
+		ItemID:        "ITEM-1",
+		AttemptID:     "attempt-usage",
+		WorkRevision:  0,
+		WorkspacePath: workspaceRoot,
+		PromptPath:    promptPath,
+		EventSinkPath: eventSinkPath,
+		RawLogPath:    rawLogPath,
+		StatusPath:    statusPath,
+		Command:       scriptPath,
+		VaultPath:     tempRoot,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "claude-usage-session", result.SessionRef, "claude usage session ref")
+	waitForStatusFile(t, statusPath)
+	store := openRuntimeStoreEventually(t)
+	defer store.Close()
+	turns := waitForStoredTurnStatus(t, store, "project-1", "record-1", "completed")
+	assertEqual(t, 17, turns[0].InputTokens, "stored claude input tokens")
+	assertEqual(t, 9, turns[0].OutputTokens, "stored claude output tokens")
+	assertEqual(t, 26, turns[0].TotalTokens, "stored claude total tokens")
+	eventsText, err := readText(eventSinkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"\"kind\":\"turn_started\"", "\"kind\":\"turn_usage_updated\"", "\"kind\":\"turn_completed\""} {
+		if !strings.Contains(eventsText, expected) {
+			t.Fatalf("expected normalized claude events to include %s, got:\n%s", expected, eventsText)
+		}
+	}
+	packet := renderReviewPacket(Note{Data: map[string]any{"id": "ITEM-1", "title": "Claude usage"}}, RunStatus{
+		ProjectID:       "project-1",
+		RecordID:        "record-1",
+		ItemID:          "ITEM-1",
+		Runner:          string(RunnerClaude),
+		Lane:            runLaneExecute,
+		ActiveAttemptID: "attempt-usage",
+		WorkspacePath:   workspaceRoot,
+		SessionRef:      "claude-usage-session",
+		EventSinkPath:   eventSinkPath,
+		RawLogPath:      rawLogPath,
+		StatusPath:      statusPath,
+	}, turns, nil, collectReviewPacketFacts(RunStatus{EventSinkPath: eventSinkPath, WorkspacePath: workspaceRoot, StatusPath: statusPath}))
+	if !strings.Contains(packet, "Token totals: total=26 input=17 output=9") {
+		t.Fatalf("expected review packet token totals, got:\n%s", packet)
+	}
+}
+
+func TestClaudeInterruptLiveRunnerSupportsInterrupt(t *testing.T) {
+	tempRoot := t.TempDir()
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(tempRoot, "state"))
 	workspaceRoot := filepath.Join(tempRoot, "workspace")
 	repoRoot := filepath.Join(tempRoot, "repo")
 	if err := ensureDir(workspaceRoot); err != nil {
@@ -917,6 +1189,10 @@ while running:
 	if !strings.Contains(logText, "claude-msg-1") {
 		t.Fatalf("expected claude raw log to include message id, got:\n%s", logText)
 	}
+	store := openRuntimeStoreEventually(t)
+	defer store.Close()
+	turns := waitForStoredTurnStatus(t, store, "project-1", "record-1", "interrupted")
+	assertEqual(t, "interrupted", turns[0].Status, "stored claude interrupted turn")
 }
 
 func TestClaudeLiveWaitDrainsFinalResultBeforeProcessExit(t *testing.T) {
@@ -1138,4 +1414,23 @@ func waitForStoredTurnCount(t *testing.T, store *RuntimeStore, projectID, record
 	}
 	t.Fatalf("timed out waiting for %d stored turns; latest=%v", count, last)
 	return nil
+}
+
+func finishDaemonRunForTest(t *testing.T, daemon *Daemon, project RegisteredProject, wfFile WorkflowFile, run RunStatus) RunStatus {
+	t.Helper()
+	if strings.TrimSpace(run.StatusPath) == "" {
+		if LeaseState(run.LeaseState) == LeaseStateReleased || LeaseState(run.LeaseState) == LeaseStateRetryQueued {
+			return run
+		}
+		t.Fatalf("run has no status path and is not terminal: %#v", run)
+	}
+	waitForStatusFile(t, run.StatusPath)
+	reconciled, _, err := daemon.reconcileRun(context.Background(), project, wfFile, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.store.UpsertRun(reconciled); err != nil {
+		t.Fatal(err)
+	}
+	return reconciled
 }
