@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:32:32Z"
-updated_at: "2026-07-07T17:11:16Z"
-state_rev: "sha256:85d1fe25f45994dad1261c2522fa51a770dd1ee617c45591e86e638592743017"
+updated_at: "2026-07-08T02:53:49Z"
+state_rev: "sha256:744ac08ee6649474dcfcd6f54f469008a3e833844d4ed228715d9f175cbf3158"
 ---
 
 # RUN · Runner parity and model profiles
@@ -51,7 +51,6 @@ TBD.
 | [[RUN-T-0006]] | backlog | agent | Wait for dependency RUN-T-0004 to reach done. |
 | [[RUN-T-0015]] | ready | agent | Wait for dependency RUN-T-0011 to reach done. |
 | [[RUN-T-0033]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[RUN-T-0034]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 
@@ -79,5 +78,6 @@ TBD.
 | [[RUN-T-0028]] | human:sarav | 2026-07-07T13:08:12Z |
 | [[RUN-T-0029]] | human:sarav | 2026-07-07T13:08:12Z |
 | [[RUN-T-0030]] | human:sarav | 2026-07-07T13:06:33Z |
+| [[RUN-T-0034]] | reviewer:agent | 2026-07-08T02:53:49Z |
 | [[RUN-T-0035]] | human:sarav | 2026-07-07T16:28:17Z |
 | [[RUN-T-0036]] | human:sarav | 2026-07-07T16:56:07Z |
