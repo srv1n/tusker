@@ -7,27 +7,25 @@ import {
   outcomeToneOf,
   priorityTone,
   proofTone,
-  readinessLabel,
-  readinessTone,
+  readinessLabelOf,
+  readinessToneOf,
   riskTone,
-  statusLabel,
-  statusTone,
+  statusLabelOf,
+  statusToneOf,
 } from "@/components/ui/tone";
 import type {
   GateKind,
   Priority,
   ProofStatus,
-  Readiness,
   Risk,
   RunOutcome,
   Runner,
-  TaskStatus,
 } from "@/types/domain";
 
-export function StatusChip({ status }: { status: TaskStatus }) {
+export function StatusChip({ status }: { status: string }) {
   return (
-    <Chip tone={statusTone[status]} variant="soft">
-      {statusLabel[status]}
+    <Chip tone={statusToneOf(status)} variant="soft">
+      {statusLabelOf(status)}
     </Chip>
   );
 }
@@ -48,10 +46,10 @@ export function PriorityChip({ priority }: { priority: Priority }) {
   );
 }
 
-export function ReadinessChip({ readiness }: { readiness: Readiness }) {
+export function ReadinessChip({ readiness }: { readiness: string }) {
   return (
-    <Chip tone={readinessTone[readiness]} variant="soft">
-      {readinessLabel[readiness]}
+    <Chip tone={readinessToneOf(readiness)} variant="soft">
+      {readinessLabelOf(readiness)}
     </Chip>
   );
 }

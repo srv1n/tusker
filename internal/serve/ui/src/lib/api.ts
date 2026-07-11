@@ -10,6 +10,7 @@
 
 import * as fx from "@/mock/fixtures";
 import { deriveNeeds } from "@/features/inbox/deriveNeeds";
+import type { FrontmatterUpdateInput } from "@/lib/frontmatter";
 import type {
   DaemonStatus,
   ActionResult,
@@ -197,6 +198,15 @@ export const api = {
 
   daemonAction: (action: "start" | "stop" | "resume" | "limits", body: Record<string, unknown> = {}): Promise<ActionResult> =>
     USE_MOCK ? delay({ ok: true, reason: `daemon ${action}` }) : post(`/daemon/${action}`, body),
+
+  // POST /api/frontmatter/update — structured frontmatter action.
+  // TODO(api SRV-T-0004): swap this mock action to post("/frontmatter/update", body).
+  updateFrontmatter: (body: FrontmatterUpdateInput): Promise<ActionResult> =>
+    delay({
+      ok: true,
+      reason: `${body.key} -> ${body.value}`,
+      taskId: body.target.kind === "task" ? body.target.id : undefined,
+    }),
 
   // GET /api/epics?project=
   epics: (projectId?: string): Promise<EpicSummary[]> =>

@@ -40,6 +40,7 @@ import {
   useDoc,
   useEvidenceAdd,
   useFeedbackAdd,
+  useFrontmatterUpdate,
   useGateAction,
   useLandTask,
   useTask,
@@ -51,7 +52,7 @@ import { compactNumber, duration, relativeTime } from "@/lib/time";
 import type { EvidenceCard, RunSummary, TaskDetail } from "@/types/domain";
 import { DocEditor, type EditorRuntimeConfig } from "@/features/editor";
 import { DocShell } from "./DocShell";
-import { PropertyPanel } from "./PropertyPanel";
+import { FrontmatterInlineControl, PropertyPanel } from "./PropertyPanel";
 import { KindEyebrow, ResultChip } from "./bits";
 import { ConflictBanner, MergeReadiness, SavedBanner, ValidationStrip } from "./banners";
 import { useDocEditor, type DocEditor as DocEditorState } from "./editor";
@@ -120,13 +121,18 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
   };
 
   const frontmatter = [
-    { key: "id", value: task.id, locked: true },
-    { key: "status", value: task.status, locked: true },
-    { key: "readiness", value: task.readiness, locked: true },
-    { key: "priority", value: task.priority, locked: true },
-    { key: "risk", value: task.risk, locked: true },
-    { key: "epic", value: task.epicId, locked: true },
+    { key: "title", value: task.title, locked: false },
+    { key: "id", value: task.id, locked: true, lockReason: "Task id is the record key. Rename by creating or superseding the task." },
+    { key: "status", value: rawStatus, locked: false },
+    { key: "readiness", value: rawReadiness, locked: false },
+    { key: "priority", value: task.priority, locked: false },
+    { key: "risk", value: task.risk, locked: false },
+    { key: "epic", value: task.epicId, locked: true, lockReason: "Epic membership is managed by task planning controls." },
+    { key: "updated_at", value: task.updatedAt.slice(0, 10), locked: true, lockReason: "updated_at is stamped by successful structured actions." },
   ];
+  const frontmatterByKey = Object.fromEntries(frontmatter.map((field) => [field.key, field]));
+  const commitFrontmatter = (key: string, value: string) =>
+    frontmatterUpdate.mutate({ target: { kind: "task", id: task.id }, key, value });
 
   useEffect(() => {
     draftRef.current = ed.draft;
@@ -231,7 +237,11 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
             {task.title}
           </h1>
 
-          <PropertyPanel frontmatter={frontmatter} />
+          <PropertyPanel
+            frontmatter={frontmatter}
+            onCommit={commitFrontmatter}
+            pendingKey={pendingFrontmatterKey}
+          />
 
           <Section label="Intent">
             <TaskProseBlock
@@ -342,17 +352,41 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
         {/* Right rail: locked facts + deps + gates + actions */}
         <aside className="lg:sticky lg:top-6 lg:self-start">
           <div className="mb-4 overflow-hidden rounded-xl border border-line">
-            <FactRow k="status" locked>
-              <StatusChip status={task.status} />
+            <FactRow k="status">
+              <EditableFact
+                field={frontmatterByKey.status}
+                onCommit={commitFrontmatter}
+                pending={pendingFrontmatterKey === "status"}
+              >
+                <StatusChip status={frontmatterByKey.status.value} />
+              </EditableFact>
             </FactRow>
-            <FactRow k="readiness" locked>
-              <ReadinessChip readiness={task.readiness} />
+            <FactRow k="readiness">
+              <EditableFact
+                field={frontmatterByKey.readiness}
+                onCommit={commitFrontmatter}
+                pending={pendingFrontmatterKey === "readiness"}
+              >
+                <ReadinessChip readiness={frontmatterByKey.readiness.value} />
+              </EditableFact>
             </FactRow>
-            <FactRow k="priority" locked>
-              <PriorityChip priority={task.priority} />
+            <FactRow k="priority">
+              <EditableFact
+                field={frontmatterByKey.priority}
+                onCommit={commitFrontmatter}
+                pending={pendingFrontmatterKey === "priority"}
+              >
+                <PriorityChip priority={frontmatterByKey.priority.value as typeof task.priority} />
+              </EditableFact>
             </FactRow>
-            <FactRow k="risk" locked>
-              <RiskChip risk={task.risk} />
+            <FactRow k="risk">
+              <EditableFact
+                field={frontmatterByKey.risk}
+                onCommit={commitFrontmatter}
+                pending={pendingFrontmatterKey === "risk"}
+              >
+                <RiskChip risk={frontmatterByKey.risk.value as typeof task.risk} />
+              </EditableFact>
             </FactRow>
             <FactRow k="epic">
               <Mono className="text-[11.5px] text-ink-soft">{task.epicId}</Mono>

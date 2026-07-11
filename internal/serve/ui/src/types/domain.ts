@@ -290,6 +290,8 @@ export interface TaskCapsule {
   risk: Risk;
   hasGate: boolean;
   updatedAt: string;
+  rawStatus?: string;
+  rawReadiness?: string;
 }
 
 export interface AcceptanceRow {
@@ -447,8 +449,8 @@ export interface DocMeta {
   title: string;
   kind: DocKind;
   updatedAt: string;
-  /** Locked frontmatter facts, shown in the property panel (never raw YAML). */
-  frontmatter: Array<{ key: string; value: string; locked: boolean }>;
+  /** Structured frontmatter facts, shown as typed controls (never raw YAML). */
+  frontmatter: Array<{ key: string; value: string; locked: boolean; lockReason?: string }>;
 }
 
 export interface DocContent extends DocMeta {

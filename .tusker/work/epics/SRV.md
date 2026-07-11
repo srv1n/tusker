@@ -52,7 +52,7 @@ TBD.
 | [[SRV-T-0003]] | backlog | agent | Wait for dependency SRV-T-0002 to reach done. |
 | [[SRV-T-0004]] | backlog | blocked_dependency | Wait for dependency SRV-T-0001 to reach review with satisfied proof or done. |
 | [[SRV-T-0005]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[SRV-T-0009]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[SRV-T-0009]] | review | reviewer | Review evidence and close or return to rework. |
 | [[SRV-T-0011]] | backlog | blocked_dependency | Wait for dependency SRV-T-0004 to reach review with satisfied proof or done. |
 | [[SRV-T-0012]] | backlog | blocked_dependency | Wait for dependency SRV-T-0011 to reach review with satisfied proof or done. |
 | [[SRV-T-0018]] | backlog | agent | Execute the task contract and satisfy proof mode. |

@@ -72,6 +72,28 @@ export const statusLabel: Record<TaskStatus, string> = {
   done: "Done",
 };
 
+const extraStatusTone: Record<string, Tone> = {
+  idea: "neutral",
+  rework: "warn",
+  cancelled: "muted",
+  superseded: "muted",
+};
+
+const extraStatusLabel: Record<string, string> = {
+  idea: "Idea",
+  rework: "Rework",
+  cancelled: "Cancelled",
+  superseded: "Superseded",
+};
+
+export function statusToneOf(status: string): Tone {
+  return (statusTone as Record<string, Tone>)[status] ?? extraStatusTone[status] ?? "neutral";
+}
+
+export function statusLabelOf(status: string): string {
+  return (statusLabel as Record<string, string>)[status] ?? extraStatusLabel[status] ?? humanizeToken(status);
+}
+
 export const riskTone: Record<Risk, Tone> = {
   low: "muted",
   medium: "warn",
@@ -99,6 +121,38 @@ export const readinessLabel: Record<Readiness, string> = {
   blocked_gate: "Blocked · gate",
   draft: "Draft",
 };
+
+const extraReadinessTone: Record<string, Tone> = {
+  blocked_by_dependency: "warn",
+  blocked_by_gate: "fail",
+  waiting_on_review: "warn",
+  waiting_on_human: "fail",
+  waiting_on_ci: "warn",
+  held: "neutral",
+  done: "pass",
+  cancelled: "muted",
+  superseded: "muted",
+};
+
+const extraReadinessLabel: Record<string, string> = {
+  blocked_by_dependency: "Blocked · dep",
+  blocked_by_gate: "Blocked · gate",
+  waiting_on_review: "Waiting · review",
+  waiting_on_human: "Waiting · human",
+  waiting_on_ci: "Waiting · CI",
+  held: "Held",
+  done: "Done",
+  cancelled: "Cancelled",
+  superseded: "Superseded",
+};
+
+export function readinessToneOf(readiness: string): Tone {
+  return (readinessTone as Record<string, Tone>)[readiness] ?? extraReadinessTone[readiness] ?? "neutral";
+}
+
+export function readinessLabelOf(readiness: string): string {
+  return (readinessLabel as Record<string, string>)[readiness] ?? extraReadinessLabel[readiness] ?? humanizeToken(readiness);
+}
 
 export const outcomeTone: Record<KnownRunOutcome, Tone> = {
   idle: "muted",

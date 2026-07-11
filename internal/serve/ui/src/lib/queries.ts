@@ -8,6 +8,11 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import {
+  patchDocFrontmatter,
+  patchTaskFrontmatter,
+  type FrontmatterUpdateInput,
+} from "@/lib/frontmatter";
 import { liveRefetchInterval } from "@/lib/stream";
 import type { RunDetail } from "@/types/domain";
 
@@ -259,5 +264,46 @@ export const useDaemonAction = () => {
   return useMutation({
     mutationFn: (input: { action: "start" | "stop" | "resume" | "limits"; body?: Record<string, unknown> }) => api.daemonAction(input.action, input.body ?? {}),
     onSettled: () => invalidateOperatorState(qc),
+  });
+};
+
+export const useFrontmatterUpdate = () => {
+  const qc = useQueryClient();
+
+  const apply = (input: FrontmatterUpdateInput) => {
+    if (input.target.kind === "task") {
+      const taskId = input.target.id;
+      qc.setQueryData<TaskDetail>(qk.task(taskId), (task) =>
+        task ? patchTaskFrontmatter(task, input.key, input.value) : task,
+      );
+      qc.setQueriesData<TaskCapsule[]>({ queryKey: ["tasks"] }, (tasks) =>
+        tasks?.map((task) =>
+          task.id === taskId ? patchTaskFrontmatter(task, input.key, input.value) : task,
+        ),
+      );
+      qc.setQueryData<DocContent>(qk.doc(`.tusker/work/tasks/${taskId}.md`), (doc) =>
+        doc ? patchDocFrontmatter(doc, input.key, input.value) : doc,
+      );
+      return;
+    }
+
+    const docPath = input.target.path;
+    qc.setQueryData<DocContent>(qk.doc(docPath), (doc) =>
+      doc ? patchDocFrontmatter(doc, input.key, input.value) : doc,
+    );
+    if (input.key === "title") {
+      qc.setQueriesData<DocListEntry[]>({ queryKey: ["docs"] }, (docs) =>
+        docs?.map((doc) =>
+          doc.path === docPath ? { ...doc, title: input.value } : doc,
+        ),
+      );
+    }
+  };
+
+  return useMutation({
+    mutationFn: (input: FrontmatterUpdateInput) => api.updateFrontmatter(input),
+    onSuccess: (result, input) => {
+      if (result.ok) apply(input);
+    },
   });
 };

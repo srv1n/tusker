@@ -1,46 +1,209 @@
+import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { ChevronDown, Lock } from "lucide-react";
+import { cn } from "@/lib/cn";
+import {
+  frontmatterControlValue,
+  frontmatterFieldDefinition,
+  lockedFrontmatterReason,
+  validateFrontmatterValue,
+} from "@/lib/frontmatter";
+import { Select, TextInput } from "@/components/ui/controls";
 import type { DocMeta } from "@/types/domain";
 
 type Frontmatter = DocMeta["frontmatter"];
+type FrontmatterField = Frontmatter[number];
+
+export type FrontmatterCommit = (key: string, value: string) => void | Promise<void>;
 
 /**
- * The locked property panel (packet §4.6). Frontmatter is shown as controls,
- * never raw YAML; state fields (`status`, `state_rev`, …) are visibly
- * read-only. Free fields carry an affordance but editing them is a follow-up.
+ * Frontmatter is structured data. This panel edits free fields through typed
+ * controls only; locked fields explain their owner instead of dead-clicking.
  */
-export function PropertyPanel({ frontmatter }: { frontmatter: Frontmatter }) {
+export function PropertyPanel({
+  frontmatter,
+  onCommit,
+  pendingKey,
+}: {
+  frontmatter: Frontmatter;
+  onCommit?: FrontmatterCommit;
+  pendingKey?: string | null;
+}) {
   if (frontmatter.length === 0) return null;
   return (
     <div className="mb-7 rounded-lg border border-line bg-panel px-4 py-3">
       <div className="mb-2.5 font-mono text-[9px] uppercase tracking-[0.1em] text-faint">
-        Properties <span className="text-fainter">· state fields locked</span>
+        Properties <span className="text-fainter">· structured fields</span>
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-2">
-        {frontmatter.map((p) => (
-          <div key={p.key} className="flex items-center gap-1.5">
-            <span className="font-mono text-[10.5px] text-faint">{p.key}</span>
-            {p.locked ? (
-              <span
-                className="inline-flex items-center gap-1 rounded-md bg-hover px-2 py-[3px] font-mono text-[11px] text-muted"
-                title="Read-only state field — managed by tusker"
-              >
-                {p.value}
-                <Lock size={9} strokeWidth={2.25} className="text-fainter" />
-              </span>
-            ) : (
-              <button
-                type="button"
-                // TODO(api): free-field editor (title/priority) via structured control.
-                className="inline-flex items-center gap-1 rounded-md border border-line bg-raised px-2 py-[3px] font-mono text-[11px] text-ink-soft transition-colors hover:border-line-soft hover:bg-hover"
-                title="Editable field"
-              >
-                {p.value}
-                <ChevronDown size={11} strokeWidth={2} className="text-faint" />
-              </button>
-            )}
+        {frontmatter.map((field) => (
+          <div key={field.key} className="flex items-center gap-1.5">
+            <span className="font-mono text-[10.5px] text-faint">{field.key}</span>
+            <FrontmatterInlineControl
+              field={field}
+              onCommit={onCommit}
+              pending={pendingKey === field.key}
+              className="font-mono text-[11px]"
+            >
+              <span>{field.value}</span>
+            </FrontmatterInlineControl>
           </div>
         ))}
       </div>
     </div>
+  );
+}
+
+export function FrontmatterInlineControl({
+  field,
+  onCommit,
+  pending = false,
+  showChevron = true,
+  className,
+  children,
+}: {
+  field: FrontmatterField;
+  onCommit?: FrontmatterCommit;
+  pending?: boolean;
+  showChevron?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(frontmatterControlValue(field.key, field.value));
+  const [message, setMessage] = useState<string | null>(null);
+  const def = frontmatterFieldDefinition(field.key);
+
+  const cancel = () => {
+    setEditing(false);
+    setMessage(null);
+    setDraft(frontmatterControlValue(field.key, field.value));
+  };
+
+  const commit = (nextValue: string) => {
+    const result = validateFrontmatterValue(field.key, nextValue);
+    if (!result.ok) {
+      setMessage(result.reason);
+      return;
+    }
+    if (!onCommit) {
+      setMessage("No structured action is wired for this field yet.");
+      return;
+    }
+    setMessage(null);
+    setEditing(false);
+    void Promise.resolve(onCommit(field.key, result.value)).catch((err: unknown) => {
+      setEditing(true);
+      setMessage(err instanceof Error ? err.message : "Structured action failed.");
+    });
+  };
+
+  const onInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancel();
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commit(draft);
+    }
+  };
+
+  const onLockedClick = () => {
+    setEditing(false);
+    setMessage(lockedFrontmatterReason(field));
+  };
+
+  if (field.locked) {
+    return (
+      <span className="relative inline-flex">
+        <button
+          type="button"
+          className={cn(
+            "inline-flex items-center gap-1 rounded-md bg-hover px-2 py-[3px] text-muted transition-colors hover:bg-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30",
+            className,
+          )}
+          onClick={onLockedClick}
+        >
+          {children}
+          <Lock size={9} strokeWidth={2.25} className="text-fainter" />
+        </button>
+        {message && <InlineMessage>{message}</InlineMessage>}
+      </span>
+    );
+  }
+
+  return (
+    <span className="relative inline-flex">
+      <button
+        type="button"
+        disabled={pending}
+        className={cn(
+          "inline-flex items-center gap-1 rounded-md border border-line bg-raised px-2 py-[3px] text-ink-soft transition-colors hover:border-line-soft hover:bg-hover disabled:cursor-wait disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30",
+          className,
+        )}
+        onClick={() => {
+          setMessage(null);
+          setDraft(frontmatterControlValue(field.key, field.value));
+          setEditing((open) => !open);
+        }}
+      >
+        {children}
+        {pending ? (
+          <span className="text-faint">saving</span>
+        ) : (
+          showChevron && <ChevronDown size={11} strokeWidth={2} className="text-faint" />
+        )}
+      </button>
+      {editing && (
+        <span className="absolute left-0 top-[calc(100%+6px)] z-30 min-w-[210px] rounded-lg border border-line bg-surface p-2 shadow-xl">
+          {def.kind === "enum" && def.options ? (
+            <Select
+              autoFocus
+              value={field.value}
+              onChange={(event) => commit(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  cancel();
+                }
+              }}
+              className="w-full"
+            >
+              {def.options.map((option) => (
+                <option key={option} value={option}>
+                  {def.labels?.[option] ?? option}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <TextInput
+              autoFocus
+              type={def.kind === "date" ? "date" : "text"}
+              value={draft}
+              onChange={(event) => {
+                setDraft(event.target.value);
+                if (def.kind === "date") commit(event.target.value);
+              }}
+              onKeyDown={onInputKeyDown}
+              className="w-full"
+            />
+          )}
+          {message && <div className="mt-1.5 text-[11px] leading-snug text-fail">{message}</div>}
+        </span>
+      )}
+      {message && !editing && <InlineMessage>{message}</InlineMessage>}
+    </span>
+  );
+}
+
+function InlineMessage({ children }: { children: ReactNode }) {
+  return (
+    <span
+      role="status"
+      className="absolute left-0 top-[calc(100%+6px)] z-30 w-[230px] rounded-lg border border-line bg-surface px-2.5 py-2 text-[11px] leading-snug text-muted shadow-xl"
+    >
+      {children}
+    </span>
   );
 }

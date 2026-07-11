@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn";
 import { USE_MOCK } from "@/lib/api";
 import { Mono } from "@/components/ui/primitives";
 import { Skeleton, ErrorState } from "@/components/ui/states";
-import { useDoc, useDocList } from "@/lib/queries";
+import { useDoc, useDocList, useFrontmatterUpdate } from "@/lib/queries";
 import { relativeTime } from "@/lib/time";
 import type { DocContent, DocListEntry } from "@/types/domain";
 import { DocEditor, type EditorRuntimeConfig, type WikilinkTargetLite } from "@/features/editor";
@@ -81,6 +81,7 @@ function ReaderBody({ projectId, doc }: { projectId: string; doc: DocContent }) 
   const ed = useDocEditor(doc);
   const navigate = useNavigate();
   const docsQ = useDocList(projectId);
+  const frontmatterUpdate = useFrontmatterUpdate();
   const liveDocs = docsQ.data;
   const [approved, setApproved] = useState(false);
   const editorHostRef = useRef<HTMLDivElement>(null);
@@ -197,7 +198,13 @@ function ReaderBody({ projectId, doc }: { projectId: string; doc: DocContent }) 
               {doc.title}
             </h1>
 
-            <PropertyPanel frontmatter={doc.frontmatter} />
+            <PropertyPanel
+              frontmatter={doc.frontmatter}
+              onCommit={(key, value) =>
+                frontmatterUpdate.mutate({ target: { kind: "doc", path: doc.path }, key, value })
+              }
+              pendingKey={frontmatterUpdate.isPending ? frontmatterUpdate.variables?.key : null}
+            />
 
             {/* Body — one inline-WYSIWYG surface for both reading and editing.
                 Markdown stays the source of truth; the editor round-trips it. */}
