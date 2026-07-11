@@ -1213,7 +1213,7 @@ func printProjectsHelp() {
   tusker projects enable [--id <project-id>|--repo <path>|--vault <path>] [--json]
   tusker projects disable [--id <project-id>|--repo <path>|--vault <path>] [--json]
   tusker projects remove <project-id> [--json]
-  tusker projects prune [--dry-run] [--json]
+  tusker projects prune [--apply] [--dry-run] [--json]
 
 Purpose:
   Register repo-local Tusker vaults for daemon pickup. Obsidian remains the
@@ -1223,8 +1223,8 @@ Purpose:
 Behavior:
   - project WORKFLOW.md, tasks, knowledge, and source remain repo-local
   - shared daemon state, logs, limits, and runtime metadata live outside repos
-  - prune removes registrations whose tracker roots no longer exist and their
-    matching dangling Obsidian-vault symlinks
+  - prune previews registrations whose tracker roots no longer exist and their
+    matching dangling Obsidian-vault symlinks; --apply performs the removal
   - on macOS, projects under Desktop, Documents, Downloads, or iCloud Drive
     receive a launchd access warning during add/enable
 
@@ -1232,7 +1232,8 @@ Examples:
   tusker projects add --repo . --vault ./.tusker
   tusker projects list
   tusker projects disable --repo .
-  tusker projects prune --dry-run`)
+  tusker projects prune
+  tusker projects prune --apply`)
 }
 
 func printConfigHelp() {

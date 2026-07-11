@@ -858,6 +858,14 @@ func (s *RuntimeStore) RemoveProject(projectID string) error {
 	return err
 }
 
+// UnregisterProject removes only daemon discovery metadata. Historical runs,
+// attempts, sessions, decisions, and turns remain available for inspection.
+// Explicit `projects remove` retains the stronger RemoveProject purge behavior.
+func (s *RuntimeStore) UnregisterProject(projectID string) error {
+	_, err := s.exec(`DELETE FROM projects WHERE project_id = ?`, projectID)
+	return err
+}
+
 func (s *RuntimeStore) SetProjectEnabled(projectID string, enabled bool) error {
 	health := projectHealthDisabled
 	if enabled {

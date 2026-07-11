@@ -13,9 +13,8 @@ type projectPruneReport struct {
 	RemovedMounts   []string `json:"removed_mounts"`
 }
 
-// projectsPruneCmd removes registrations whose tracker roots no longer exist.
-// It also clears matching workspace configuration and only removes a vault
-// mount when that mount is a symlink to the vanished tracker root.
+// projectsPruneCmd previews registrations whose tracker roots no longer exist.
+// --apply is required to mutate the registry or workspace mounts.
 func projectsPruneCmd(args Args) error {
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
@@ -23,7 +22,8 @@ func projectsPruneCmd(args Args) error {
 	}
 	defer store.Close()
 
-	report, err := pruneMissingRegisteredProjects(store, args.Bool("dry-run"))
+	dryRun := !args.Bool("apply") || args.Bool("dry-run")
+	report, err := pruneMissingRegisteredProjects(store, dryRun)
 	if err != nil {
 		return err
 	}
@@ -57,11 +57,15 @@ func pruneMissingRegisteredProjects(store *RuntimeStore, dryRun bool) (projectPr
 		}
 		if isMissing {
 			missing = append(missing, project)
-			report.RemovedProjects = append(report.RemovedProjects, project.ProjectID)
 		}
 	}
 	if len(missing) == 0 {
 		return report, nil
+	}
+	if dryRun {
+		for _, project := range missing {
+			report.RemovedProjects = append(report.RemovedProjects, project.ProjectID)
+		}
 	}
 
 	workspace, err := loadWorkspaceVaultConfig()
@@ -77,6 +81,14 @@ func pruneMissingRegisteredProjects(store *RuntimeStore, dryRun bool) (projectPr
 	for _, mount := range workspace.Projects {
 		project, matched := missingProjectForWorkspaceMount(missing, mount)
 		if !matched {
+			retained = append(retained, mount)
+			continue
+		}
+		stillMissing, err := registeredProjectTrackerRootMissing(project)
+		if err != nil {
+			return report, err
+		}
+		if !stillMissing {
 			retained = append(retained, mount)
 			continue
 		}
@@ -101,9 +113,17 @@ func pruneMissingRegisteredProjects(store *RuntimeStore, dryRun bool) (projectPr
 		return report, nil
 	}
 	for _, project := range missing {
-		if err := store.RemoveProject(project.ProjectID); err != nil {
+		stillMissing, err := registeredProjectTrackerRootMissing(project)
+		if err != nil {
 			return report, err
 		}
+		if !stillMissing {
+			continue
+		}
+		if err := store.UnregisterProject(project.ProjectID); err != nil {
+			return report, err
+		}
+		report.RemovedProjects = append(report.RemovedProjects, project.ProjectID)
 	}
 	return report, nil
 }
@@ -136,6 +156,11 @@ func missingProjectForWorkspaceMount(missing []RegisteredProject, mount Workspac
 }
 
 func removeDanglingWorkspaceMount(mountPath, trackerRoot string, dryRun bool) (bool, error) {
+	if _, err := os.Stat(trackerRoot); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("stat registered project tracker root %s: %w", trackerRoot, err)
+	}
 	info, err := os.Lstat(mountPath)
 	if os.IsNotExist(err) {
 		return false, nil
