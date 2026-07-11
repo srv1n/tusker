@@ -2113,6 +2113,7 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 		globalLimit = 2
 		source = configSourceBuiltIn
 	}
+	liveness := readDaemonLiveness(s.stateRoot, time.Now().UTC())
 	return map[string]any{
 		"state_root":               s.stateRoot,
 		"runtime_store_path":       liveness.RuntimeStorePath,
