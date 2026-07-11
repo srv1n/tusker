@@ -18,6 +18,16 @@ What is not allowed is submitting code that the human contributor does not under
 - giant prompt dumps
 - performative process theater
 
+## Code file size
+
+Keep code files at or below roughly 1,000 lines. Past that, humans and agents
+lose grip on the file; prefer extracting a cohesive module.
+
+Exceeding the limit is allowed as a deliberate decision with a stated reason
+(generated code, a cohesive protocol or lookup table) recorded in the change or
+task evidence. `make check` runs an advisory (non-fatal) scan that lists code
+files over the limit that are not on the allowlist.
+
 ## Strong preference
 
 Use structured summaries instead of transcript walls.

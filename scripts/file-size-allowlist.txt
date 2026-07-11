@@ -1,0 +1,27 @@
+# Code file size allowlist (advisory check: scripts/check-file-size.sh).
+#
+# Files listed here are known to exceed the ~1,000-line guideline
+# (skill/references/ENGINEERING_DISCIPLINE.md, Operating Posture;
+# docs/ai-contribution-policy.md, Code file size). They are grandfathered so the
+# advisory check does not flag them on every run.
+#
+# Burn-down is tracked by CLN-T-0007: split these into cohesive modules and drop
+# each entry as its file falls under the limit. Do not add a new entry without a
+# deliberate, stated reason (generated code, a cohesive protocol/lookup table).
+#
+# One repo-relative path per line. Blank lines and lines starting with '#' are
+# ignored.
+
+cmd/tusker/daemon.go
+cmd/tusker/v7_smoke_test.go
+cmd/tusker/commands_v7.go
+cmd/tusker/commands_index.go
+cmd/tusker/v7_validation.go
+cmd/tusker/v7_proof_cmd.go
+cmd/tusker/runtime_store.go
+cmd/tusker/cli.go
+cmd/tusker/runner_codex_live.go
+cmd/tusker/install.go
+cmd/tusker/serve_command.go
+cmd/tusker/v7_feedback_promote_plan.go
+cmd/tusker/automation_commands.go
