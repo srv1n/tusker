@@ -927,7 +927,7 @@ func (d *Daemon) globalActiveRunLimit() (int, error) {
 func countDispatchCapacityRuns(runs []RunStatus) int {
 	count := 0
 	for _, run := range runs {
-		if isDispatchingLeaseState(run.LeaseState) {
+		if isDispatchCapacityLeaseState(run.LeaseState) {
 			count++
 		}
 	}
@@ -937,7 +937,7 @@ func countDispatchCapacityRuns(runs []RunStatus) int {
 func countDispatchCapacityProjectRuns(runs map[string]RunStatus) int {
 	count := 0
 	for _, run := range runs {
-		if isDispatchingLeaseState(run.LeaseState) {
+		if isDispatchCapacityLeaseState(run.LeaseState) {
 			count++
 		}
 	}
@@ -947,7 +947,7 @@ func countDispatchCapacityProjectRuns(runs map[string]RunStatus) int {
 func countDispatchCapacityProjectRunsByState(runs map[string]RunStatus, stateByRecord map[string]string) map[string]int {
 	counts := map[string]int{}
 	for recordID, run := range runs {
-		if !isDispatchingLeaseState(run.LeaseState) {
+		if !isDispatchCapacityLeaseState(run.LeaseState) {
 			continue
 		}
 		state := strings.TrimSpace(stateByRecord[recordID])
@@ -1078,10 +1078,10 @@ func blockerResolved(note Note) bool {
 // tally by one and a single tick cannot dispatch past the cap (RUN-T-0036).
 func dispatchCapacityRunDelta(before, after RunStatus) int {
 	delta := 0
-	if isDispatchingLeaseState(after.LeaseState) {
+	if isDispatchCapacityLeaseState(after.LeaseState) {
 		delta++
 	}
-	if isDispatchingLeaseState(before.LeaseState) {
+	if isDispatchCapacityLeaseState(before.LeaseState) {
 		delta--
 	}
 	return delta
