@@ -195,9 +195,12 @@ func TestObjectiveClosePolicyContract(t *testing.T) {
 				return err
 			}
 			if info.IsDir() {
-				if info.Name() == "dist" || info.Name() == "artifacts" {
+				if containsString([]string{"dist", "artifacts", "node_modules", ".git", "_generated", "coverage"}, info.Name()) {
 					return filepath.SkipDir
 				}
+				return nil
+			}
+			if !info.Mode().IsRegular() {
 				return nil
 			}
 			return check(path)
