@@ -44,6 +44,7 @@ var FrontmatterOrder = map[string][]string{
 		"proof_mode", "proof_status", "proof_required", "proof_required_owner", "evidence_budget", "raw_artifacts_allowed", "raw_artifacts_reason",
 		"machine_status", "human_status", "closeout_status", "agent_action",
 		"next_owner", "next_source", "next_ref", "next_action", "domains", "spec_refs", "gates", "dependencies", "evidence_required",
+		"delivery_source_key", "delivery_plan_scope", "delivery_contract_fingerprint", "artifact_contract", "owned_paths", "runner_profile", "concurrency_group", "knowledge_nodes",
 		"accepted_by", "accepted_at", "closed_at", "superseded_by", "discarded_by", "discarded_at", "discard_reason",
 		"created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
@@ -61,7 +62,7 @@ var FrontmatterOrder = map[string][]string{
 		"schema", "kind", "id", "project", "title", "status", "owner", "priority", "domains", "spec_refs", "next_task_number", "next_gate_number", "next_decision_number", "created_at", "updated_at", "state_rev",
 	},
 	"wave": {
-		"schema", "kind", "id", "project", "title", "status", "members", "integration_branch", "landings", "landed_at", "created_at", "created_by", "updated_at", "updated_by", "state_rev",
+		"schema", "kind", "id", "project", "title", "status", "members", "integration_branch", "spec_refs", "delivery_plan_scope", "delivery_plan_fingerprint", "concurrency", "runner_profile", "landings", "landed_at", "created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
 	"escalation": {
 		"schema", "kind", "id", "project", "severity", "status", "task", "source", "reason", "description", "dedupe_key",

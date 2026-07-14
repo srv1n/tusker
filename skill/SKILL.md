@@ -11,6 +11,16 @@ Use this skill when a repository contains a Tusker vault or a task asks you to c
 
 ## Execution Modes
 
+### Spec-to-wave planning
+
+Models may propose a versioned delivery plan with an explicit stable scope,
+source-keyed tasks, acceptance,
+exact verification, dependencies, artifacts, owned paths, runner/concurrency
+hints, and knowledge nodes. Tusker owns the final records: use `tusker delivery
+import --plan <path> --dry-run` to validate the graph and mapping, then import it
+atomically. Planning and import create held work and never dispatch, promote, or
+authorize execution.
+
 ### Interactive work
 
 A Codex or Claude session opened directly by the user implements the requested

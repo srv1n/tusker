@@ -142,7 +142,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "trace", "escalate":
+	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "trace", "escalate":
 		return true
 	default:
 		return false
@@ -204,7 +204,7 @@ func run(command string, args Args) (int, error) {
 
 func cliCommandMutatesVault(command string) bool {
 	switch command {
-	case "status", "discard", "verify add", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "reconcile", "finish", "close", "handoff":
+	case "status", "discard", "verify add", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "delivery import", "reconcile", "finish", "close", "handoff":
 		return true
 	default:
 		return false
@@ -283,6 +283,10 @@ func runInner(command string, args Args) (int, error) {
 		return 0, waveV7RemoveCmd(args)
 	case "wave show":
 		return 0, waveV7ShowCmd(args)
+	case "delivery plan":
+		return 0, deliveryPlanCmd(args)
+	case "delivery import":
+		return 0, deliveryImportCmd(args)
 	case "escalate":
 		return 0, escalationV7Cmd(args)
 	case "escalate ack":
@@ -962,7 +966,7 @@ func printCommandHelp(command string) bool {
 		printEvidenceHelp()
 	case "migrate vault-root":
 		printMigrateVaultRootHelp()
-	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "trace", "trace list", "trace show", "trace replay", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
+	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "delivery", "delivery plan", "delivery import", "trace", "trace list", "trace show", "trace replay", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
 		printV7Help()
 	case "feedback", "feedback add", "feedback digest", "feedback ingest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()
@@ -1146,6 +1150,10 @@ func printV7Help() {
     --why-agent-cannot "Human account access is required."
   tusker new decision --epic HSP --title "Use repo-local branch-safe tracker"
 
+  tusker delivery plan --spec docs/specs/example.md --out .tusker/scratch/delivery-plan.yaml
+  tusker delivery import --plan .tusker/scratch/delivery-plan.yaml --wave "Example delivery" --dry-run
+  tusker delivery import --plan .tusker/scratch/delivery-plan.yaml --wave "Example delivery"
+
   tusker gate list --open [--owner human:sarav]
   tusker gate satisfy HSP-G-0001 --evidence "Provider endpoint returned ready."
   tusker gate waive HSP-G-0002 --reason "Live smoke deferred."
@@ -1200,7 +1208,9 @@ func printV7Help() {
 Purpose:
   V7 repo-local, markdown-backed work records with first-class proof, gates, evidence,
   attempts, event-per-file history, generated briefs/packets/dashboards, and
-  branch guards for protected task/gate state.`)
+  branch guards for protected task/gate state. Delivery planning and import are inert:
+  models propose source-keyed plans, while Tusker validates and atomically owns final
+  task IDs, revisions, relations, and wave records; neither command dispatches work.`)
 }
 
 func printMigrateVaultRootHelp() {
