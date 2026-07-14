@@ -55,6 +55,8 @@ const (
 
 var (
 	daemonWatchdogCheckInterval = 5 * time.Second
+	daemonGuardAcquire          = acquireDaemonGuard
+	daemonCreate                = NewDaemon
 	daemonWatchdogExit          = func(reason string) {
 		fmt.Fprintf(os.Stderr, "daemon watchdog exiting abnormally: %s\n", reason)
 		os.Exit(70)
@@ -246,7 +248,11 @@ func (d *Daemon) checkWatchdogOrExit(now time.Time, tick time.Duration) {
 	if err != nil || !stale {
 		return
 	}
-	_ = d.store.SetSetting(daemonLastRestartCauseKey, daemonRestartCauseWatchdog)
+	if daemonRunningUnderLaunchd() {
+		_ = d.store.markManagedDaemonAbnormalExit(daemonRestartCauseWatchdog)
+	} else {
+		_ = d.store.SetSetting(daemonLastRestartCauseKey, daemonRestartCauseWatchdog)
+	}
 	daemonWatchdogExit(reason)
 }
 
@@ -5470,41 +5476,71 @@ func markNoteReadyForReview(vaultPath, notePath string) error {
 	return nil
 }
 
-func daemonRunCmd(args Args) error {
+func daemonRunCmd(args Args) (returnErr error) {
 	if err := rejectAgentSpawn("tusker daemon run"); err != nil {
 		return err
 	}
 	stateRoot := DefaultStateRoot()
 	once := args.Bool("once")
-	stalePIDFile := !once && daemonStalePIDFileExists(stateRoot)
-	guard, err := acquireDaemonGuard(stateRoot)
+	managed := !once && daemonRunningUnderLaunchd()
+	stalePIDFile := managed && daemonStalePIDFileExists(stateRoot)
+	guard, err := daemonGuardAcquire(stateRoot)
 	if err != nil {
 		return err
 	}
 	defer guard.Close()
-	daemon, err := NewDaemon(stateRoot)
-	if err != nil {
-		return err
-	}
-	daemon.guard = guard
-	defer daemon.Close()
-	if !once {
-		if stalePIDFile {
-			if _, err := daemon.store.recordDaemonAbnormalStart(daemonRestartCauseStalePID, time.Now().UTC()); err != nil {
-				return err
-			}
-		} else if err := daemon.store.SetSetting(daemonLastRestartCauseKey, daemonRestartCauseCleanStartup); err != nil {
+	if managed {
+		store, err := OpenRuntimeStore(stateRoot)
+		if err != nil {
+			markManagedDaemonProcessFailure(stateRoot, managed, daemonRestartCauseRunError)
+			return err
+		}
+		if _, err := store.beginManagedDaemonStart(stalePIDFile, time.Now().UTC()); err != nil {
+			_ = store.markManagedDaemonAbnormalExit(daemonRestartCauseRunError)
+			_ = store.Close()
+			return err
+		}
+		if err := store.Close(); err != nil {
+			markManagedDaemonProcessFailure(stateRoot, managed, daemonRestartCauseRunError)
 			return err
 		}
 	}
+	daemon, err := daemonCreate(stateRoot)
+	if err != nil {
+		markManagedDaemonProcessFailure(stateRoot, managed, daemonRestartCauseRunError)
+		return err
+	}
+	daemon.guard = guard
+	defer func() {
+		if closeErr := daemon.Close(); closeErr != nil {
+			markManagedDaemonProcessFailure(stateRoot, managed, daemonRestartCauseRunError)
+			if returnErr == nil {
+				returnErr = closeErr
+			}
+		}
+	}()
 	if once {
 		daemon.dispatchRefusalReason = oneShotDispatchRefusal("tusker daemon run --once")
 	}
 	err = daemon.Run(context.Background(), once)
-	if err != nil && !once {
-		_, _ = daemon.store.recordDaemonAbnormalStart(daemonRestartCauseRunError, time.Now().UTC())
+	if err != nil {
+		if managed {
+			_ = daemon.store.markManagedDaemonAbnormalExit(daemonRestartCauseRunError)
+		}
 	}
 	return err
+}
+
+func markManagedDaemonProcessFailure(stateRoot string, managed bool, cause string) {
+	if !managed {
+		return
+	}
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		return
+	}
+	defer store.Close()
+	_ = store.markManagedDaemonAbnormalExit(cause)
 }
 
 func daemonStatusCmd(args Args) error {

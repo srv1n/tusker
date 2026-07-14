@@ -21,6 +21,13 @@ const (
 	daemonServiceBootstrapRetries = 60
 )
 
+var (
+	daemonServiceGOOS          = runtime.GOOS
+	daemonServiceConfigCurrent = currentDaemonServiceConfig
+	daemonServiceCommandRun    = runDaemonServiceCommandReal
+	daemonServiceWaitReady     = waitForDaemonServiceReady
+)
+
 type daemonServiceConfig struct {
 	Label            string
 	SourceExecutable string
@@ -67,11 +74,11 @@ func (c daemonServiceConfig) binaryDir() string {
 }
 
 func (c daemonServiceConfig) stdoutPath() string {
-	return filepath.Join(c.logDir(), "daemon-service.stdout.log")
+	return filepath.Join(c.logDir(), "daemon.log")
 }
 
 func (c daemonServiceConfig) stderrPath() string {
-	return filepath.Join(c.logDir(), "daemon-service.stderr.log")
+	return c.stdoutPath()
 }
 
 func (c daemonServiceConfig) domainTarget() string {
@@ -166,6 +173,7 @@ func renderDaemonServicePlist(c daemonServiceConfig) string {
 	b.WriteString("<key>EnvironmentVariables</key>\n<dict>\n")
 	writeDaemonServicePlistString(&b, "PATH", c.Path)
 	writeDaemonServicePlistString(&b, "TUSKER_STATE_ROOT", c.StateRoot)
+	writeDaemonServicePlistString(&b, daemonLaunchdEnvKey, "1")
 	b.WriteString("</dict>\n")
 	writeDaemonServicePlistString(&b, "StandardOutPath", c.stdoutPath())
 	writeDaemonServicePlistString(&b, "StandardErrorPath", c.stderrPath())
@@ -216,10 +224,10 @@ func planDaemonService(action string, c daemonServiceConfig) ([]daemonServiceCom
 }
 
 func daemonServiceCmd(args Args) error {
-	if runtime.GOOS != "darwin" {
-		return fmt.Errorf("tusker daemon service is supported only on macOS; use your platform service manager to run `tusker daemon run` on %s", runtime.GOOS)
+	if daemonServiceGOOS != "darwin" {
+		return fmt.Errorf("tusker daemon service is supported only on macOS; use your platform service manager to run `tusker daemon run` on %s", daemonServiceGOOS)
 	}
-	config, err := currentDaemonServiceConfig()
+	config, err := daemonServiceConfigCurrent()
 	if err != nil {
 		return err
 	}
@@ -274,7 +282,7 @@ func daemonServiceInstall(args Args, config daemonServiceConfig) error {
 	if err := bootstrapDaemonService(commands[1], config); err != nil {
 		return fmt.Errorf("install daemon service: %w", err)
 	}
-	if err := waitForDaemonServiceReady(config, startedAt, daemonServiceStartupTimeout); err != nil {
+	if err := daemonServiceWaitReady(config, startedAt, daemonServiceStartupTimeout); err != nil {
 		return err
 	}
 	displayDaemonServiceResult(args, map[string]any{
@@ -307,7 +315,7 @@ func daemonServiceStart(args Args, config daemonServiceConfig) error {
 	if err := bootstrapDaemonService(command, config); err != nil {
 		return fmt.Errorf("start daemon service: %w", err)
 	}
-	if err := waitForDaemonServiceReady(config, startedAt, daemonServiceStartupTimeout); err != nil {
+	if err := daemonServiceWaitReady(config, startedAt, daemonServiceStartupTimeout); err != nil {
 		return err
 	}
 	displayDaemonServiceResult(args, map[string]any{"ok": true, "action": "start", "label": config.Label}, "Started daemon service: "+config.Label)
@@ -419,6 +427,10 @@ func daemonServiceLoaded(config daemonServiceConfig) (bool, error) {
 }
 
 func runDaemonServiceCommand(command daemonServiceCommand, config daemonServiceConfig) ([]byte, error) {
+	return daemonServiceCommandRun(command, config)
+}
+
+func runDaemonServiceCommandReal(command daemonServiceCommand, config daemonServiceConfig) ([]byte, error) {
 	cmd := exec.Command(command.Name, command.Args...)
 	cmd.Env = environmentWith(os.Environ(), "TUSKER_STATE_ROOT", config.StateRoot)
 	output, err := cmd.CombinedOutput()

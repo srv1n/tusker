@@ -40,8 +40,9 @@ func TestRenderDaemonServicePlist(t *testing.T) {
 		"<key>ThrottleInterval</key>\n<integer>10</integer>",
 		"<key>PATH</key>\n<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin</string>",
 		"<key>TUSKER_STATE_ROOT</key>\n<string>/tmp/tusker &amp; state</string>",
-		"<key>StandardOutPath</key>\n<string>/tmp/tusker &amp; state/logs/daemon-service.stdout.log</string>",
-		"<key>StandardErrorPath</key>\n<string>/tmp/tusker &amp; state/logs/daemon-service.stderr.log</string>",
+		"<key>" + daemonLaunchdEnvKey + "</key>\n<string>1</string>",
+		"<key>StandardOutPath</key>\n<string>/tmp/tusker &amp; state/logs/daemon.log</string>",
+		"<key>StandardErrorPath</key>\n<string>/tmp/tusker &amp; state/logs/daemon.log</string>",
 	} {
 		if !strings.Contains(plist, expected) {
 			t.Fatalf("plist missing %q:\n%s", expected, plist)
@@ -49,6 +50,60 @@ func TestRenderDaemonServicePlist(t *testing.T) {
 	}
 	if strings.Contains(plist, "<key>SuccessfulExit</key>\n<true/>") {
 		t.Fatalf("plist must restart only after abnormal exits:\n%s", plist)
+	}
+}
+
+func TestLaunchdInstallUninstallIdempotentPublicCommands(t *testing.T) {
+	clearAgentSessionEnvForTest(t)
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source-tusker")
+	if err := os.WriteFile(source, []byte("fixture executable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := daemonServiceConfig{
+		Label: daemonServiceLabel, SourceExecutable: source,
+		Executable: filepath.Join(dir, "state", "bin", "tusker-daemon"),
+		StateRoot:  filepath.Join(dir, "state"), Home: filepath.Join(dir, "home"),
+		Path: "/usr/bin:/bin", LaunchAgentDir: filepath.Join(dir, "home", "Library", "LaunchAgents"),
+	}
+	originalGOOS, originalConfig := daemonServiceGOOS, daemonServiceConfigCurrent
+	originalRun, originalWait := daemonServiceCommandRun, daemonServiceWaitReady
+	t.Cleanup(func() {
+		daemonServiceGOOS, daemonServiceConfigCurrent = originalGOOS, originalConfig
+		daemonServiceCommandRun, daemonServiceWaitReady = originalRun, originalWait
+	})
+	daemonServiceGOOS = "darwin"
+	daemonServiceConfigCurrent = func() (daemonServiceConfig, error) { return config, nil }
+	daemonServiceWaitReady = func(daemonServiceConfig, time.Time, time.Duration) error { return nil }
+	var commands []string
+	daemonServiceCommandRun = func(command daemonServiceCommand, _ daemonServiceConfig) ([]byte, error) {
+		commands = append(commands, command.String())
+		return nil, nil
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := run("daemon install", Args{"json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plist, err := os.ReadFile(config.plistPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(plist), daemonLaunchdEnvKey) {
+		t.Fatalf("managed marker missing from plist:\n%s", plist)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := run("daemon uninstall", Args{"json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(config.plistPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("plist survived idempotent uninstall: %v", err)
+	}
+	joined := strings.Join(commands, "\n")
+	if strings.Count(joined, " bootstrap ") != 2 || strings.Count(joined, " bootout ") != 4 {
+		t.Fatalf("unexpected fixture lifecycle commands:\n%s", joined)
 	}
 }
 

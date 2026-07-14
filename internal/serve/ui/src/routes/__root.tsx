@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useParams } from "@tanstack/react-router";
 import { AlertTriangle, Menu, Search } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
+import { CrashLoopCircuitBanner } from "@/components/CrashLoopCircuitBanner";
 import { openTaskSearch, TaskSearch } from "@/features/search/TaskSearch";
 import { CountBadge } from "@/components/ui/primitives";
 import { useDaemon, useNeeds } from "@/lib/queries";
@@ -36,6 +37,7 @@ export function RootLayout() {
       <TaskSearch />
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {!embedded && <MobileTopBar onMenuOpen={() => setNavOpen(true)} />}
+		<CrashLoopCircuitBannerFromDaemon embedded={embedded} />
         {!embedded && <InvariantCircuitBanner />}
         {!embedded && <EscalationBanner />}
         <div className="min-h-0 flex-1 overflow-hidden">
@@ -95,6 +97,11 @@ function MobileTopBar({ onMenuOpen }: { onMenuOpen: () => void }) {
       </button>
     </header>
   );
+}
+
+function CrashLoopCircuitBannerFromDaemon({ embedded }: { embedded: boolean }) {
+  const daemon = useDaemon();
+  return <CrashLoopCircuitBanner circuit={daemon.data?.crashLoop} embedded={embedded} />;
 }
 
 function InvariantCircuitBanner() {

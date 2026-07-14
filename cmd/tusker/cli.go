@@ -632,6 +632,12 @@ func runInner(command string, args Args) (int, error) {
 		return 0, nil
 	case "daemon run":
 		return 0, daemonRunCmd(args)
+	case "daemon install":
+		args["_pos0"] = "install"
+		return 0, daemonServiceCmd(args)
+	case "daemon uninstall":
+		args["_pos0"] = "uninstall"
+		return 0, daemonServiceCmd(args)
 	case "daemon status":
 		return 0, daemonStatusCmd(args)
 	case "daemon stop":

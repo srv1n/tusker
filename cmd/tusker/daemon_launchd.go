@@ -1,14 +1,13 @@
 package main
 
 import (
-	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
-	"encoding/xml"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 )
@@ -16,11 +15,11 @@ import (
 const (
 	daemonLaunchdLabel             = "com.tusker.daemon"
 	daemonLaunchdEnvKey            = "TUSKER_LAUNCHD"
-	daemonLaunchdThrottleSeconds   = 10
 	daemonCrashLoopReason          = "crash_loop"
 	daemonCrashLoopSettingKey      = "daemon_crash_loop_status"
 	daemonRestartTimestampsKey     = "daemon_abnormal_restart_timestamps"
 	daemonLastRestartCauseKey      = "daemon_last_restart_cause"
+	daemonPendingRestartCauseKey   = "daemon_pending_abnormal_restart_cause"
 	daemonCrashLoopBurst           = 5
 	daemonCrashLoopWindowSeconds   = 10 * 60
 	daemonRestartCauseStalePID     = "stale_pid"
@@ -29,19 +28,6 @@ const (
 	daemonRestartCauseCircuitOpen  = "crash_loop_open"
 	daemonRestartCauseCleanStartup = "clean_start"
 )
-
-var launchctlRun = func(args ...string) error {
-	cmd := exec.Command("launchctl", args...)
-	output, err := cmd.CombinedOutput()
-	if err == nil {
-		return nil
-	}
-	detail := strings.TrimSpace(string(output))
-	if detail != "" {
-		return fmt.Errorf("launchctl %s: %w: %s", strings.Join(args, " "), err, detail)
-	}
-	return fmt.Errorf("launchctl %s: %w", strings.Join(args, " "), err)
-}
 
 type daemonCrashLoopStatus struct {
 	Open             bool     `json:"open"`
@@ -54,10 +40,6 @@ type daemonCrashLoopStatus struct {
 	WindowSeconds    int      `json:"window_seconds"`
 	Burst            int      `json:"burst"`
 	Summary          string   `json:"summary,omitempty"`
-}
-
-func daemonLogPath(stateRoot string) string {
-	return filepath.Join(stateRoot, "daemon.log")
 }
 
 func daemonLaunchdAgentDir() (string, error) {
@@ -76,14 +58,6 @@ func daemonLaunchdPlistPath() (string, error) {
 	return filepath.Join(dir, daemonLaunchdLabel+".plist"), nil
 }
 
-func daemonLaunchdDomainTarget() string {
-	return fmt.Sprintf("gui/%d", os.Getuid())
-}
-
-func daemonLaunchdServiceTarget() string {
-	return daemonLaunchdDomainTarget() + "/" + daemonLaunchdLabel
-}
-
 func daemonLaunchdInstalled() (bool, string, error) {
 	path, err := daemonLaunchdPlistPath()
 	if err != nil {
@@ -98,68 +72,6 @@ func daemonLaunchdInstalled() (bool, string, error) {
 	}
 }
 
-func daemonLaunchdPlist(stateRoot, executable string) string {
-	args := []string{executable, "daemon", "run"}
-	env := map[string]string{
-		daemonLaunchdEnvKey: "1",
-		"TUSKER_STATE_ROOT": stateRoot,
-	}
-	var b strings.Builder
-	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
-	b.WriteString(`<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">` + "\n")
-	b.WriteString(`<plist version="1.0">` + "\n")
-	b.WriteString("<dict>\n")
-	plistKeyString(&b, "Label", daemonLaunchdLabel)
-	plistKeyArray(&b, "ProgramArguments", args)
-	b.WriteString("\t<key>RunAtLoad</key>\n\t<true/>\n")
-	b.WriteString("\t<key>KeepAlive</key>\n\t<dict>\n\t\t<key>SuccessfulExit</key>\n\t\t<false/>\n\t</dict>\n")
-	b.WriteString(fmt.Sprintf("\t<key>ThrottleInterval</key>\n\t<integer>%d</integer>\n", daemonLaunchdThrottleSeconds))
-	plistKeyString(&b, "StandardOutPath", daemonLogPath(stateRoot))
-	plistKeyString(&b, "StandardErrorPath", daemonLogPath(stateRoot))
-	plistKeyDict(&b, "EnvironmentVariables", env)
-	b.WriteString("</dict>\n</plist>\n")
-	return b.String()
-}
-
-func plistKeyString(b *strings.Builder, key, value string) {
-	b.WriteString("\t<key>" + plistEscape(key) + "</key>\n")
-	b.WriteString("\t<string>" + plistEscape(value) + "</string>\n")
-}
-
-func plistKeyArray(b *strings.Builder, key string, values []string) {
-	b.WriteString("\t<key>" + plistEscape(key) + "</key>\n")
-	b.WriteString("\t<array>\n")
-	for _, value := range values {
-		b.WriteString("\t\t<string>" + plistEscape(value) + "</string>\n")
-	}
-	b.WriteString("\t</array>\n")
-}
-
-func plistKeyDict(b *strings.Builder, key string, values map[string]string) {
-	b.WriteString("\t<key>" + plistEscape(key) + "</key>\n")
-	b.WriteString("\t<dict>\n")
-	for _, dictKey := range sortedStringMapKeys(values) {
-		b.WriteString("\t\t<key>" + plistEscape(dictKey) + "</key>\n")
-		b.WriteString("\t\t<string>" + plistEscape(values[dictKey]) + "</string>\n")
-	}
-	b.WriteString("\t</dict>\n")
-}
-
-func sortedStringMapKeys(values map[string]string) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func plistEscape(value string) string {
-	var b bytes.Buffer
-	_ = xml.EscapeText(&b, []byte(value))
-	return b.String()
-}
-
 func daemonRunningUnderLaunchd() bool {
 	return strings.TrimSpace(os.Getenv(daemonLaunchdEnvKey)) != ""
 }
@@ -170,62 +82,6 @@ func daemonStalePIDFileExists(stateRoot string) bool {
 		return false
 	}
 	return !processAlive(pidFile.PID)
-}
-
-func daemonInstallCmd(args Args) error {
-	stateRoot := DefaultStateRoot()
-	if err := ensureDir(stateRoot); err != nil {
-		return err
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	if resolved, err := filepath.EvalSymlinks(executable); err == nil && strings.TrimSpace(resolved) != "" {
-		executable = resolved
-	}
-	plistPath, err := daemonLaunchdPlistPath()
-	if err != nil {
-		return err
-	}
-	if err := ensureDir(filepath.Dir(plistPath)); err != nil {
-		return err
-	}
-	if err := writeText(plistPath, daemonLaunchdPlist(stateRoot, executable)); err != nil {
-		return err
-	}
-	_ = launchctlRun("bootout", daemonLaunchdDomainTarget(), plistPath)
-	if err := launchctlRun("bootstrap", daemonLaunchdDomainTarget(), plistPath); err != nil {
-		return err
-	}
-	if err := launchctlRun("kickstart", "-k", daemonLaunchdServiceTarget()); err != nil {
-		return err
-	}
-	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "installed": true, "label": daemonLaunchdLabel, "plist": plistPath, "state_root": stateRoot, "log_path": daemonLogPath(stateRoot)})
-		return nil
-	}
-	fmt.Printf("Installed launchd agent %s\n", daemonLaunchdLabel)
-	fmt.Printf("Plist: %s\n", plistPath)
-	fmt.Printf("Log: %s\n", daemonLogPath(stateRoot))
-	return nil
-}
-
-func daemonUninstallCmd(args Args) error {
-	plistPath, err := daemonLaunchdPlistPath()
-	if err != nil {
-		return err
-	}
-	_ = launchctlRun("bootout", daemonLaunchdDomainTarget(), plistPath)
-	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "installed": false, "label": daemonLaunchdLabel, "plist": plistPath})
-		return nil
-	}
-	fmt.Printf("Uninstalled launchd agent %s\n", daemonLaunchdLabel)
-	return nil
 }
 
 func (s *RuntimeStore) ReadCrashLoopStatus() (daemonCrashLoopStatus, error) {
@@ -319,6 +175,131 @@ func (s *RuntimeStore) recordDaemonAbnormalStart(cause string, now time.Time) (d
 		return daemonCrashLoopStatus{}, err
 	}
 	return status, nil
+}
+
+// beginManagedDaemonStart consumes exactly one abnormal predecessor marker.
+// A graceful run error can persist its cause before guard cleanup removes the
+// pid file; SIGKILL is inferred from the stale pid file. Manual runs do not
+// participate in the launchd restart circuit.
+func (s *RuntimeStore) beginManagedDaemonStart(stalePID bool, now time.Time) (daemonCrashLoopStatus, error) {
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return daemonCrashLoopStatus{}, err
+	}
+	defer tx.Rollback()
+	setting := func(key string) (string, error) {
+		var value string
+		err := tx.QueryRow(`SELECT value FROM daemon_settings WHERE key = ?`, key).Scan(&value)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return value, err
+	}
+	setSetting := func(key, value string) error {
+		_, err := tx.Exec(`INSERT INTO daemon_settings (key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+		return err
+	}
+
+	status := defaultCrashLoopStatus()
+	rawStatus, err := setting(daemonCrashLoopSettingKey)
+	if err != nil {
+		return daemonCrashLoopStatus{}, err
+	}
+	if strings.TrimSpace(rawStatus) != "" {
+		if err := json.Unmarshal([]byte(rawStatus), &status); err != nil {
+			return daemonCrashLoopStatus{}, err
+		}
+	}
+	status.WindowSeconds = daemonCrashLoopWindowSeconds
+	status.Burst = daemonCrashLoopBurst
+	pending, err := setting(daemonPendingRestartCauseKey)
+	if err != nil {
+		return daemonCrashLoopStatus{}, err
+	}
+	cause := strings.TrimSpace(pending)
+	if cause == "" && stalePID {
+		cause = daemonRestartCauseStalePID
+	}
+	if cause == "" {
+		if err := setSetting(daemonLastRestartCauseKey, daemonRestartCauseCleanStartup); err != nil {
+			return daemonCrashLoopStatus{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return daemonCrashLoopStatus{}, err
+		}
+		return status, nil
+	}
+
+	rawRestarts, err := setting(daemonRestartTimestampsKey)
+	if err != nil {
+		return daemonCrashLoopStatus{}, err
+	}
+	var stored []string
+	if strings.TrimSpace(rawRestarts) != "" {
+		if err := json.Unmarshal([]byte(rawRestarts), &stored); err != nil {
+			return daemonCrashLoopStatus{}, err
+		}
+	}
+	cutoff := now.UTC().Add(-time.Duration(daemonCrashLoopWindowSeconds) * time.Second)
+	restarts := make([]string, 0, len(stored)+1)
+	for _, stamp := range stored {
+		parsed, err := time.Parse(time.RFC3339Nano, stamp)
+		if err == nil && !parsed.Before(cutoff) {
+			restarts = append(restarts, parsed.UTC().Format(time.RFC3339Nano))
+		}
+	}
+	restarts = append(restarts, now.UTC().Format(time.RFC3339Nano))
+	status.LastCheckedAt = now.UTC().Format(time.RFC3339Nano)
+	status.LastRestartCause = cause
+	status.RestartCount = len(restarts)
+	status.RestartedAt = append([]string{}, restarts...)
+	if len(restarts) > daemonCrashLoopBurst {
+		status.Open = true
+		status.Reason = daemonCrashLoopReason
+		if strings.TrimSpace(status.OpenedAt) == "" {
+			status.OpenedAt = now.UTC().Format(time.RFC3339Nano)
+		}
+		status.Summary = fmt.Sprintf("%s: %d abnormal daemon starts within %s; run `tusker daemon resume` after repair", daemonCrashLoopReason, len(restarts), (time.Duration(daemonCrashLoopWindowSeconds) * time.Second).String())
+	}
+	restartsJSON, err := json.Marshal(restarts)
+	if err != nil {
+		return daemonCrashLoopStatus{}, err
+	}
+	statusJSON, err := json.Marshal(status)
+	if err != nil {
+		return daemonCrashLoopStatus{}, err
+	}
+	for key, value := range map[string]string{
+		daemonRestartTimestampsKey:   string(restartsJSON),
+		daemonLastRestartCauseKey:    cause,
+		daemonCrashLoopSettingKey:    string(statusJSON),
+		daemonPendingRestartCauseKey: "",
+	} {
+		if err := setSetting(key, value); err != nil {
+			return daemonCrashLoopStatus{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return daemonCrashLoopStatus{}, err
+	}
+	return status, nil
+}
+
+func (s *RuntimeStore) markManagedDaemonAbnormalExit(cause string) error {
+	cause = firstNonEmpty(strings.TrimSpace(cause), daemonRestartCauseRunError)
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, key := range []string{daemonLastRestartCauseKey, daemonPendingRestartCauseKey} {
+		if _, err := tx.Exec(`INSERT INTO daemon_settings (key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, cause); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *RuntimeStore) readDaemonRestartTimestamps(now time.Time) ([]string, error) {
