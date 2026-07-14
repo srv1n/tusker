@@ -8,14 +8,22 @@ import (
 func TestSessionMetadataWorkspaceIdentityResume(t *testing.T) {
 	store, run := ownershipStoreFixture(t, "APP-T-IDENTITY")
 	identity := RunIdentityMetadata{ProjectID: run.ProjectID, RecordID: run.RecordID, RepoRoot: "/registered/repo", WorkspacePath: "/physical/worktree", WorkspaceMode: "worktree", Runner: run.Runner, Branch: "task/APP-T-IDENTITY", Head: "abc123"}
-	if err := store.SaveRunIdentity(identity); err != nil { t.Fatal(err) }
-	if err := store.SaveSession(RunnerSession{ProjectID: run.ProjectID, RecordID: run.RecordID, Runner: run.Runner, SessionRef: "session-1", WorkspacePath: identity.WorkspacePath, Resumable: true, State: "open"}); err != nil { t.Fatal(err) }
+	if err := store.SaveRunIdentity(identity); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSession(RunnerSession{ProjectID: run.ProjectID, RecordID: run.RecordID, Runner: run.Runner, SessionRef: "session-1", WorkspacePath: identity.WorkspacePath, Resumable: true, State: "open"}); err != nil {
+		t.Fatal(err)
+	}
 	inspection, err := buildRunInspection(store, &run)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	assertEqual(t, identity.RepoRoot, inspection.Identity.RepoRoot, "registered repo")
 	assertEqual(t, identity.WorkspacePath, inspection.Identity.WorkspacePath, "physical workspace")
 	assertEqual(t, identity.WorkspaceMode, inspection.Identity.WorkspaceMode, "workspace mode")
-	if !inspection.Resume.Supported || !strings.Contains(inspection.Resume.Command, "session-1") { t.Fatalf("resume: %#v", inspection.Resume) }
+	if !inspection.Resume.Supported || !strings.Contains(inspection.Resume.Command, "session-1") {
+		t.Fatalf("resume: %#v", inspection.Resume)
+	}
 }
 
 func TestCodexSessionIdentityIgnoresNestedSubagentAndMessageIDs(t *testing.T) {
@@ -37,7 +45,9 @@ func TestResumeCommandEscapesSessionAndReportsUnsupported(t *testing.T) {
 	claude := resumeCapability(&RunStatus{Runner: string(RunnerClaude)}, session)
 	assertEqual(t, "claude --resume 'session with '\"'\"' quote'", claude.Command, "escaped claude resume")
 	unsupported := resumeCapability(&RunStatus{Runner: string(RunnerCodexCloud)}, session)
-	if unsupported.Supported || unsupported.Reason == "" { t.Fatalf("unsupported resume: %#v", unsupported) }
+	if unsupported.Supported || unsupported.Reason == "" {
+		t.Fatalf("unsupported resume: %#v", unsupported)
+	}
 	expired := resumeCapability(&RunStatus{Runner: string(RunnerCodexExec)}, &RunnerSession{SessionRef: "old", Resumable: false, LastError: "expired"})
 	assertEqual(t, "expired", expired.Reason, "expired reason")
 }

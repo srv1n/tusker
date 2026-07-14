@@ -12,7 +12,7 @@ import (
 type WorkspaceStrategy string
 
 const (
-	WorkspaceStrategyShared   WorkspaceStrategy = "shared"
+	WorkspaceStrategyShared WorkspaceStrategy = "shared"
 	// WorkspaceStrategyInPlace is accepted as a legacy configuration value.
 	// New configuration and persisted metadata use "shared".
 	WorkspaceStrategyInPlace  WorkspaceStrategy = "in_place"
