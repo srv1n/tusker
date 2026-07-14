@@ -63,6 +63,7 @@ func TestDeliveryImportAtomicDedupeAndRollback(t *testing.T) {
 	assertEqual(t, "backlog", stringField(first, "status"), "held task status")
 	assertEqual(t, "held", stringField(first, "readiness"), "held task readiness")
 	assertEqual(t, "W-0001", stringField(first, "wave"), "wave back pointer")
+	assertEqual(t, []string{"A1"}, normalizeList(mapField(first, "artifact_contract")["acceptance_ids"]), "artifact acceptance round trip")
 	specBody := mustReadIndexTest(t, filepath.Join(v7RepoRoot(vault), "docs", "specs", "delivery.md"))
 	for _, want := range []string{"tusker:delivery-import:", "[[APP-T-0001]]", "[[APP-T-0002]]", "[[W-0001]]"} {
 		assertContainsIndexTest(t, specBody, want)
@@ -198,6 +199,8 @@ func TestDeliveryManifestRejectsInvalidMatrixWithoutWrites(t *testing.T) {
 		{"placeholder acceptance", func(p *deliveryPlan) { p.Tasks[0].Acceptance[0].Outcome = "TBD" }, "acceptance"},
 		{"placeholder proof", func(p *deliveryPlan) { p.Tasks[0].Verification[0].Check = "command: <...>" }, "verification"},
 		{"artifact", func(p *deliveryPlan) { p.Tasks[0].Artifact.Path = ".tusker/scratch/fake.png" }, "artifact"},
+		{"artifact acceptance missing", func(p *deliveryPlan) { p.Tasks[0].Artifact.AcceptanceIDs = nil }, "acceptance_ids"},
+		{"artifact acceptance unknown", func(p *deliveryPlan) { p.Tasks[0].Artifact.AcceptanceIDs = []string{"A9"} }, "unknown acceptance"},
 		{"outside spec", func(p *deliveryPlan) { p.SpecRefs = []string{"../outside.md"} }, "spec_ref"},
 	}
 	for _, tc := range tests {
@@ -224,7 +227,7 @@ func TestDeliveryDAGFrontiersAndMapping(t *testing.T) {
 		Acceptance:   []deliveryAcceptance{{ID: "A1", Outcome: "Canon names the delivery behavior."}},
 		Verification: []deliveryVerification{{Covers: "A1", Check: "command: go test ./cmd/tusker -run TestDeliverySkillContract -count=1"}},
 		Dependencies: []deliveryDependency{{Task: "schema", Kind: "soft"}},
-		Artifact:     deliveryArtifactContract{Kind: "document", Path: "skill/SKILL.md", Summary: "Rendered operator contract."},
+		Artifact:     deliveryArtifactContract{Kind: "document", Path: "skill/SKILL.md", Summary: "Rendered operator contract.", AcceptanceIDs: []string{"A1"}},
 	})
 	frontiers, cycle := deliveryFrontiers(plan)
 	if cycle {
@@ -316,7 +319,7 @@ func validDeliveryPlan() deliveryPlan {
 				SourceKey: "schema", Title: "Define schema", Outcome: "A versioned delivery schema round-trips.",
 				Acceptance:   []deliveryAcceptance{{ID: "A1", Outcome: "All required delivery fields survive round-trip."}},
 				Verification: []deliveryVerification{{Covers: "A1", Check: "command: go test ./cmd/tusker -run TestDeliveryPlanSchemaRoundTrip -count=1"}},
-				Artifact:     deliveryArtifactContract{Kind: "diff_summary", Path: "cmd/tusker/delivery_cmd.go", Summary: "Schema and validation implementation."},
+				Artifact:     deliveryArtifactContract{Kind: "diff_summary", Path: "cmd/tusker/delivery_cmd.go", Summary: "Schema and validation implementation.", AcceptanceIDs: []string{"A1"}},
 				OwnedPaths:   []string{"cmd/tusker/delivery_cmd.go"}, KnowledgeNodes: []string{"project/CANON.md"}, Risk: "medium", Priority: "p1", Domains: []string{"project"},
 			},
 			{
@@ -324,7 +327,7 @@ func validDeliveryPlan() deliveryPlan {
 				Acceptance:   []deliveryAcceptance{{ID: "A1", Outcome: "Repeated imports preserve stable task IDs."}},
 				Verification: []deliveryVerification{{Covers: "A1", Check: "command: go test ./cmd/tusker -run TestDeliveryImportAtomicDedupeAndRollback -count=1"}},
 				Dependencies: []deliveryDependency{{Task: "schema", Kind: "hard"}},
-				Artifact:     deliveryArtifactContract{Kind: "behavior_matrix", Path: "cmd/tusker/delivery_cmd_test.go", Summary: "Import behavior matrix."},
+				Artifact:     deliveryArtifactContract{Kind: "behavior_matrix", Path: "cmd/tusker/delivery_cmd_test.go", Summary: "Import behavior matrix.", AcceptanceIDs: []string{"A1"}},
 				OwnedPaths:   []string{"cmd/tusker/delivery_cmd_test.go"}, Risk: "medium", Priority: "p1", Domains: []string{"project"},
 			},
 		},

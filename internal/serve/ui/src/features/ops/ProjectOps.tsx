@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { getRouteApi, Link } from "@tanstack/react-router";
 import { CheckCircle2, CircleSlash, Flag, GitMerge, Play, RotateCcw, Square, Upload } from "lucide-react";
 import { Button, Select, TextInput } from "@/components/ui/controls";
@@ -9,7 +9,6 @@ import { PageScroll, SectionLabel } from "@/components/ui/page";
 import { QueryBoundary, SkeletonRows } from "@/components/ui/states";
 import { diskPressurePresentation } from "./daemonStatus";
 import {
-  useAttempts,
   useDaemon,
   useDaemonAction,
   useDecisions,
@@ -22,7 +21,7 @@ import {
   useLandWave,
   useWaves,
 } from "@/lib/queries";
-import type { AttemptDetail, DaemonStatus, GateDetail, WaveBrief as WaveBriefContract, WaveSummary } from "@/types/domain";
+import type { DaemonStatus, GateDetail, WaveBrief as WaveBriefContract, WaveSummary } from "@/types/domain";
 
 const route = getRouteApi("/p/$projectId/ops");
 
@@ -33,7 +32,6 @@ export function ProjectOps() {
   const evidence = useEvidence(undefined, projectId);
   const decisions = useDecisions(undefined, projectId);
   const feedback = useFeedback(projectId);
-  const attempts = useAttempts(undefined, projectId);
   const daemon = useDaemon();
 
   return (
@@ -67,7 +65,6 @@ export function ProjectOps() {
               evidence={evidence.data ?? []}
               decisions={decisions.data ?? []}
               feedback={feedback.data ?? []}
-              attempts={attempts.data ?? []}
             />
           </div>
 
@@ -107,7 +104,7 @@ function WavePanel({ waves, projectId }: { waves: WaveSummary[]; projectId: stri
       <div className="grid grid-cols-1 gap-2">
         {waves.length === 0 && <EmptyLine text="No waves" />}
         {waves.map((wave) => (
-          <div key={wave.id} className="rounded-lg border border-line bg-raised px-3.5 py-3">
+          <div id={`wave-${wave.id}`} key={wave.id} className="rounded-lg border border-line bg-raised px-3.5 py-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -133,7 +130,7 @@ function WavePanel({ waves, projectId }: { waves: WaveSummary[]; projectId: stri
                   ))}
                 </div>
                 {wave.authorization.action !== "none" ? <Mono className="mt-1 block text-[10px] text-warn">{wave.authorization.action}</Mono> : null}
-                <WaveBriefView brief={wave.brief} projectId={projectId} />
+                <WaveBriefView brief={wave.brief} />
               </div>
               <Button
                 type="button"
@@ -153,21 +150,20 @@ function WavePanel({ waves, projectId }: { waves: WaveSummary[]; projectId: stri
   );
 }
 
-export function WaveBriefView({ brief, projectId }: { brief: WaveBriefContract; projectId: string }) {
-  const docLink = (path: string) => ({ to: "/p/$projectId/docs" as const, params: { projectId }, search: { path } });
+export function WaveBriefView({ brief }: { brief: WaveBriefContract }) {
   return (
     <div className="mt-3 space-y-3 border-t border-line pt-3" data-testid="wave-brief">
       <section>
         <div className="flex items-center justify-between gap-2">
           <SectionLabel>Outcome</SectionLabel>
-          <Link {...docLink(brief.waveId)} className="font-mono text-[10px] text-faint hover:text-ink">{brief.waveId}</Link>
+          <a href={brief.waveHref} className="font-mono text-[10px] text-faint hover:text-ink">{brief.waveId}</a>
         </div>
         <p className="mt-1 text-[12px] text-ink-soft">{brief.outcome.summary}</p>
         <div className="mt-1 flex flex-wrap gap-1">
           {brief.outcome.tasks.map((task) => (
-            <Link key={task.taskId} {...docLink(task.taskId)} className="rounded border border-line px-1.5 py-0.5 font-mono text-[10px] text-faint hover:bg-hover">
+            <a key={task.taskId} href={task.taskHref} className="rounded border border-line px-1.5 py-0.5 font-mono text-[10px] text-faint hover:bg-hover">
               {task.taskId} · impl:{task.implementation} proof:{task.proof} review:{task.review} land:{task.landing} docs:{task.documentation}
-            </Link>
+            </a>
           ))}
         </div>
       </section>
@@ -176,25 +172,25 @@ export function WaveBriefView({ brief, projectId }: { brief: WaveBriefContract; 
         {brief.seeIt.length === 0 ? <EmptyLine text="None" /> : (
           <div className="mt-1 grid gap-1.5 sm:grid-cols-2">
             {brief.seeIt.map((artifact, index) => (
-              <Link key={`${artifact.evidenceRef}-${index}`} {...docLink(artifact.evidenceRef)} className="rounded-md border border-line bg-surface px-2.5 py-2 hover:bg-hover">
+              <a key={`${artifact.evidenceRef}-${index}`} href={artifact.evidenceHref} className="rounded-md border border-line bg-surface px-2.5 py-2 hover:bg-hover">
                 <div className="flex justify-between gap-2"><Mono className="text-[10px] text-accent">{artifact.kind}</Mono><Mono className="text-[9px] text-faint">{artifact.acceptanceIds.join(",")}</Mono></div>
                 <p className="mt-1 text-[11.5px] text-ink-soft">{artifact.summary}</p>
                 {artifact.artifactRef ? <Mono className="mt-1 block truncate text-[9.5px] text-faint">{artifact.artifactRef}</Mono> : null}
-              </Link>
+              </a>
             ))}
           </div>
         )}
       </section>
-      <BriefRows title="Landed" empty="None" rows={brief.landed.map((x) => ({ id: x.taskId, text: `${x.title}${x.commit ? ` · ${x.commit}` : ""}`, link: x.taskId }))} projectId={projectId} />
-      <BriefRows title="Rework/parked" empty="None" rows={brief.reworkParked.map((x) => ({ id: x.taskId, text: x.firstActionableFailure, link: x.taskId }))} projectId={projectId} />
-      <BriefRows title="Human action" empty="None" rows={brief.humanAction.map((x) => ({ id: x.gateId, text: `${x.action} · resume ${x.resumeId}`, link: x.gateId }))} projectId={projectId} />
-      <BriefRows title="Documentation" empty="None" rows={brief.documentation.map((x) => ({ id: x.taskId, text: `${x.node} · ${x.state}`, link: x.node }))} projectId={projectId} />
+      <BriefRows title="Landed" empty="None" rows={brief.landed.map((x) => ({ id: x.taskId, text: `${x.title}${x.commit ? ` · ${x.commit}` : ""}`, href: x.taskHref }))} />
+      <BriefRows title="Rework/parked" empty="None" rows={brief.reworkParked.map((x) => ({ id: x.taskId, text: x.firstActionableFailure, href: x.taskHref }))} />
+      <BriefRows title="Human action" empty="None" rows={brief.humanAction.map((x) => ({ id: x.gateId, text: `${x.action} · resume ${x.resumeId}`, href: x.gateHref }))} />
+      <BriefRows title="Documentation" empty="None" rows={brief.documentation.map((x) => ({ id: x.taskId, text: `${x.node} · ${x.state}`, href: x.nodeHref }))} />
     </div>
   );
 }
 
-function BriefRows({ title, empty, rows, projectId }: { title: string; empty: string; rows: Array<{ id: string; text: string; link: string }>; projectId: string }) {
-  return <section><SectionLabel>{title}</SectionLabel>{rows.length === 0 ? <EmptyLine text={empty} /> : <div className="mt-1 space-y-1">{rows.map((row, index) => <Link key={`${row.id}-${index}`} to="/p/$projectId/docs" params={{ projectId }} search={{ path: row.link }} className="block text-[11px] text-ink-soft hover:text-ink"><Mono className="mr-1 text-[10px] text-faint">{row.id}</Mono>{row.text}</Link>)}</div>}</section>;
+function BriefRows({ title, empty, rows }: { title: string; empty: string; rows: Array<{ id: string; text: string; href: string }> }) {
+  return <section><SectionLabel>{title}</SectionLabel>{rows.length === 0 ? <EmptyLine text={empty} /> : <div className="mt-1 space-y-1">{rows.map((row, index) => <a key={`${row.id}-${index}`} href={row.href} className="block text-[11px] text-ink-soft hover:text-ink"><Mono className="mr-1 text-[10px] text-faint">{row.id}</Mono>{row.text}</a>)}</div>}</section>;
 }
 
 function GatePanel({ gates, projectId }: { gates: GateDetail[]; projectId: string }) {
@@ -417,15 +413,11 @@ function ReadTables({
   evidence,
   decisions,
   feedback,
-  attempts,
 }: {
   evidence: Array<{ id: string; taskId: string; status: string; kind: string; summary?: string }>;
   decisions: Array<{ id: string; title: string; status: string; decision: string }>;
   feedback: Array<{ id: string; friction: string; productIdea: string; related: string[] }>;
-  attempts: AttemptDetail[];
 }) {
-  const totalAttempts = useMemo(() => attempts.length, [attempts]);
-  const latestAttempt = attempts[0];
   return (
     <section>
       <SectionLabel className="mb-2.5">Read views</SectionLabel>
@@ -433,34 +425,8 @@ function ReadTables({
         <MiniTable title="Evidence" rows={evidence.map((e) => [e.id, e.taskId, `${e.kind}/${e.status}`, e.summary ?? ""])} />
         <MiniTable title="Decisions" rows={decisions.map((d) => [d.id, d.status, d.title, d.decision])} />
         <MiniTable title="Feedback" rows={feedback.map((f) => [f.id, f.friction, f.productIdea, f.related.join(", ")])} />
-        <MiniTable title={`Attempts ${totalAttempts}`} rows={attempts.map((a) => [a.id, a.taskId, a.outcome])} />
       </div>
-      {latestAttempt ? <AttemptDetailPanel attempt={latestAttempt} /> : null}
     </section>
-  );
-}
-
-function AttemptDetailPanel({ attempt }: { attempt: AttemptDetail }) {
-  const path = attempt.workspacePath || attempt.rawLogPath || attempt.statusPath || "";
-  return (
-    <div className="mt-3 rounded-lg border border-line bg-raised p-3.5">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <SectionLabel>Latest attempt</SectionLabel>
-        <Mono className="text-[10.5px] text-faint">{attempt.id}</Mono>
-        <Mono className="text-[10.5px] text-faint">{attempt.runner || "runner unknown"}</Mono>
-        <Mono className="text-[10.5px] text-faint">{attempt.outcome || "pending"}</Mono>
-      </div>
-      <div className="grid gap-2 text-[12.5px] text-ink-soft md:grid-cols-2">
-        <span className="truncate">Task {attempt.taskId}</span>
-        <span className="truncate">Lane {attempt.lane || "default"}</span>
-        <span className="truncate">Branch {attempt.branchName || "none"}</span>
-        <span className="truncate">Turns {attempt.turns.length} / events {attempt.events.length}</span>
-        {path ? <Mono className="truncate text-[10.5px] text-faint md:col-span-2">{path}</Mono> : null}
-      </div>
-      {attempt.lastError ? <p className="mt-2 text-[12.5px] text-fail">{attempt.lastError}</p> : null}
-      {attempt.finalSummary ? <p className="mt-2 line-clamp-3 text-[12.5px] text-ink-soft">{attempt.finalSummary}</p> : null}
-      {!attempt.finalSummary && attempt.logsSummary ? <p className="mt-2 line-clamp-3 text-[12.5px] text-faint">{attempt.logsSummary}</p> : null}
-    </div>
   );
 }
 

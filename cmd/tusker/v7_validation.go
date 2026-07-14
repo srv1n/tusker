@@ -348,7 +348,11 @@ func validateV7ArtifactContract(note Note, where string, errors *[]Issue) {
 		*errors = append(*errors, issue("TASK_ARTIFACT_PATH_INVALID", "operator artifact production path must be durable and repo-relative: "+path, where, "use a production/documentation path, not scratch, raw logs, or a local absolute path", nil))
 	}
 	acceptance := v7AcceptanceIDs(note.Body)
-	for _, id := range normalizeList(firstPresent(contract, "acceptance_ids", "acceptance")) {
+	acceptanceIDs := normalizeList(firstPresent(contract, "acceptance_ids", "acceptance"))
+	if len(acceptanceIDs) == 0 {
+		*errors = append(*errors, issue("TASK_ARTIFACT_ACCEPTANCE_MISSING", "operator artifact contract requires acceptance_ids", where, "tie the artifact to at least one acceptance ID declared by this task", nil))
+	}
+	for _, id := range acceptanceIDs {
 		if !containsString(acceptance, id) {
 			*errors = append(*errors, issue("TASK_ARTIFACT_ACCEPTANCE_UNKNOWN", "operator artifact references unknown acceptance id: "+id, where, "tie the contract only to acceptance IDs declared by this task", nil))
 		}

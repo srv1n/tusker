@@ -62,9 +62,10 @@ type deliveryDependency struct {
 }
 
 type deliveryArtifactContract struct {
-	Kind    string `yaml:"kind" json:"kind"`
-	Path    string `yaml:"path" json:"path"`
-	Summary string `yaml:"summary" json:"summary"`
+	Kind          string   `yaml:"kind" json:"kind"`
+	Path          string   `yaml:"path" json:"path"`
+	Summary       string   `yaml:"summary" json:"summary"`
+	AcceptanceIDs []string `yaml:"acceptance_ids" json:"acceptance_ids"`
 }
 
 type deliveryImportReport struct {
@@ -99,7 +100,7 @@ func deliveryPlanCmd(args Args) error {
 			SourceKey: "replace-me", Title: "Replace with an observable task", Outcome: "Replace with an observable outcome.",
 			Acceptance:   []deliveryAcceptance{{ID: "A1", Outcome: "Replace with a concrete acceptance outcome."}},
 			Verification: []deliveryVerification{{Covers: "A1", Check: "command: replace-with-an-exact-command"}},
-			Artifact:     deliveryArtifactContract{Kind: "diff_summary", Path: "replace/with/production/path", Summary: "Explain the compact operator artifact."},
+			Artifact:     deliveryArtifactContract{Kind: "diff_summary", Path: "replace/with/production/path", Summary: "Explain the compact operator artifact.", AcceptanceIDs: []string{"A1"}},
 		}},
 	}
 	raw, err := yaml.Marshal(plan)
@@ -267,6 +268,15 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]st
 			issues = append(issues, key+": artifact requires kind, summary, and a repo-relative production path")
 		} else if _, ok := v7OperatorArtifactKinds[strings.ToLower(strings.TrimSpace(task.Artifact.Kind))]; !ok {
 			issues = append(issues, key+": artifact kind is not an operator-facing visual, performance, behavior, reliability, security, diff, or knowledge artifact")
+		}
+		if len(task.Artifact.AcceptanceIDs) == 0 {
+			issues = append(issues, key+": artifact acceptance_ids must name at least one task acceptance outcome")
+		} else {
+			for _, id := range task.Artifact.AcceptanceIDs {
+				if !acceptance[strings.ToUpper(strings.TrimSpace(id))] {
+					issues = append(issues, key+": artifact acceptance_ids references unknown acceptance "+id)
+				}
+			}
 		}
 		if task.Risk != "" {
 			if _, ok := risks[strings.ToLower(task.Risk)]; !ok {
@@ -451,7 +461,7 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 			"raw_artifacts_allowed": false, "next_owner": "agent", "next_source": "task", "next_ref": id,
 			"next_action": "Execute the imported delivery contract and satisfy proof mode.", "domains": task.Domains,
 			"spec_refs": plan.SpecRefs, "dependencies": deps, "delivery_source_key": task.SourceKey, "delivery_plan_scope": report.PlanScope, "delivery_contract_fingerprint": contractFingerprint,
-			"artifact_contract": map[string]any{"kind": task.Artifact.Kind, "path": task.Artifact.Path, "summary": task.Artifact.Summary},
+			"artifact_contract": map[string]any{"kind": task.Artifact.Kind, "path": task.Artifact.Path, "summary": task.Artifact.Summary, "acceptance_ids": task.Artifact.AcceptanceIDs},
 			"owned_paths":       task.OwnedPaths, "runner_profile": firstNonEmpty(task.RunnerProfile, plan.RunnerProfile),
 			"concurrency_group": task.ConcurrencyGroup, "knowledge_nodes": task.KnowledgeNodes, "wave": report.WaveID,
 			"created_at": createdAt, "created_by": createdBy, "updated_at": now, "updated_by": actor,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 )
@@ -116,8 +117,12 @@ func waveV7BriefCmd(args Args) error {
 
 func buildWaveBrief(idx v7Index, wave Note) waveBrief {
 	waveID := stringField(wave.Data, "id")
-	b := waveBrief{Schema: waveBriefSchema, WaveID: waveID, Title: stringField(wave.Data, "title"), WaveHref: waveDeepLink(waveID), SectionOrder: append([]string{}, waveBriefSectionOrder...)}
-	b.Outcome.Counts = map[string]int{"implemented": 0, "proven": 0, "reviewed": 0, "landed": 0, "documented": 0, "reworkParked": 0, "humanAction": 0}
+	b := waveBrief{
+		Schema: waveBriefSchema, WaveID: waveID, Title: stringField(wave.Data, "title"),
+		WaveHref: waveDeepLink(stringField(wave.Data, "project"), waveID), SectionOrder: append([]string{}, waveBriefSectionOrder...),
+		Outcome: waveBriefOutcome{Counts: map[string]int{"implemented": 0, "proven": 0, "reviewed": 0, "landed": 0, "documented": 0, "reworkParked": 0, "humanAction": 0}, Tasks: []waveTaskState{}},
+		SeeIt:   []waveBriefArtifact{}, Landed: []waveBriefTask{}, Rework: []waveBriefRework{}, HumanAction: []waveBriefHumanAction{}, Docs: []waveBriefDocumentation{},
+	}
 	landing := successfulWaveLandings(wave)
 	members := normalizeList(wave.Data["members"])
 	for _, taskID := range members {
@@ -144,13 +149,14 @@ func buildWaveBrief(idx v7Index, wave Note) waveBrief {
 		}
 		b.SeeIt = append(b.SeeIt, normalizeWaveArtifacts(idx, task)...)
 		if row := landing[taskID]; row != nil {
-			b.Landed = append(b.Landed, waveBriefTask{TaskID: taskID, Title: stringField(task.Data, "title"), TaskHref: taskDeepLink(taskID), Commit: stringField(row, "commit"), Target: stringField(row, "target")})
+			b.Landed = append(b.Landed, waveBriefTask{TaskID: taskID, Title: stringField(task.Data, "title"), TaskHref: taskDeepLink(stringField(task.Data, "project"), taskID), Commit: stringField(row, "commit"), Target: stringField(row, "target")})
 		}
 		if item, ok := waveReworkItem(idx, task, state); ok {
 			b.Rework = append(b.Rework, item)
 		}
 		for _, node := range normalizeList(task.Data["knowledge_nodes"]) {
-			b.Docs = append(b.Docs, waveBriefDocumentation{TaskID: taskID, TaskHref: taskDeepLink(taskID), Node: node, NodeHref: docDeepLink(node), State: state.Documentation})
+			project := stringField(task.Data, "project")
+			b.Docs = append(b.Docs, waveBriefDocumentation{TaskID: taskID, TaskHref: taskDeepLink(project, taskID), Node: node, NodeHref: docDeepLink(project, node), State: state.Documentation})
 		}
 	}
 	b.HumanAction = validWaveHumanActions(idx, members)
@@ -175,7 +181,7 @@ func waveBriefState(idx v7Index, task Note, landed bool) waveTaskState {
 	status := strings.ToLower(stringField(task.Data, "status"))
 	proof := strings.ToLower(fallback(stringField(task.Data, "proof_status"), "pending"))
 	implemented := "absent"
-	if status == "review" || status == "rework" || status == "done" || len(idx.Attempts[stringField(task.Data, "id")]) > 0 || len(parseV7VerificationRows(task.Body)) > 0 {
+	if status == "review" || status == "rework" || status == "done" || waveTaskHasExecutedProof(idx, task) {
 		implemented = "present"
 	}
 	review := "not_started"
@@ -199,7 +205,22 @@ func waveBriefState(idx v7Index, task Note, landed bool) waveTaskState {
 	if landed {
 		landingState = "landed"
 	}
-	return waveTaskState{TaskID: stringField(task.Data, "id"), Title: stringField(task.Data, "title"), TaskHref: taskDeepLink(stringField(task.Data, "id")), Implementation: implemented, Proof: proof, Review: review, Landing: landingState, Documentation: doc, FirstFailure: firstWaveTaskFailure(task)}
+	taskID := stringField(task.Data, "id")
+	return waveTaskState{TaskID: taskID, Title: stringField(task.Data, "title"), TaskHref: taskDeepLink(stringField(task.Data, "project"), taskID), Implementation: implemented, Proof: proof, Review: review, Landing: landingState, Documentation: doc, FirstFailure: firstWaveTaskFailure(task)}
+}
+
+func waveTaskHasExecutedProof(idx v7Index, task Note) bool {
+	for _, row := range parseV7VerificationRows(task.Body) {
+		if result := serveProofResult(row.Result); result == "pass" || result == "fail" {
+			return true
+		}
+	}
+	for _, evidence := range idx.Evidence[stringField(task.Data, "id")] {
+		if v7EvidenceUsableForProof(evidence) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstWaveTaskFailure(task Note) string {
@@ -229,7 +250,7 @@ func waveReworkItem(idx v7Index, task Note, state waveTaskState) (waveBriefRewor
 
 func invalidWaveGateFailure(idx v7Index, taskID string) string {
 	for _, gate := range idx.Gates {
-		if !strings.EqualFold(stringField(gate.Data, "status"), "open") || !serveGateBlocksTask(gate, taskID) {
+		if !strings.EqualFold(stringField(gate.Data, "status"), "open") || !boolField(gate.Data, "blocking") || !serveGateBlocksTask(gate, taskID) {
 			continue
 		}
 		owner := stringField(gate.Data, "owner")
@@ -290,7 +311,7 @@ func normalizeWaveArtifacts(idx v7Index, task Note) []waveBriefArtifact {
 	contractKind := canonicalWaveArtifactKind(stringField(mapField(task.Data, "artifact_contract"), "kind"))
 	out := []waveBriefArtifact{}
 	for _, evidence := range idx.Evidence[taskID] {
-		if strings.EqualFold(stringField(evidence.Data, "status"), "rejected") || strings.EqualFold(stringField(evidence.Data, "status"), "superseded") {
+		if !v7EvidenceUsableForProof(evidence) {
 			continue
 		}
 		kind := waveArtifactKind(stringField(evidence.Data, "evidence_kind"))
@@ -302,7 +323,7 @@ func normalizeWaveArtifacts(idx v7Index, task Note) []waveBriefArtifact {
 		}
 		covers := v7CoversToAcceptanceIDs(normalizeList(evidence.Data["covers"]), acceptance)
 		if len(covers) == 0 {
-			covers = append(covers, acceptance...)
+			continue
 		}
 		summary := firstNonEmpty(strings.TrimSpace(sectionContent(evidence.Body, "## Summary")), stringField(evidence.Data, "title"), stringField(evidence.Data, "id"))
 		paths := normalizeList(evidence.Data["artifact_paths"])
@@ -310,7 +331,8 @@ func normalizeWaveArtifacts(idx v7Index, task Note) []waveBriefArtifact {
 			paths = []string{""}
 		}
 		for _, path := range paths {
-			out = append(out, waveBriefArtifact{TaskID: taskID, TaskHref: taskDeepLink(taskID), Kind: kind, Priority: waveArtifactPriority(kind), Summary: summary, AcceptanceIDs: covers, EvidenceRef: stringField(evidence.Data, "id"), ArtifactRef: path, EvidenceHref: evidenceDeepLink(stringField(evidence.Data, "id"))})
+			project := stringField(task.Data, "project")
+			out = append(out, waveBriefArtifact{TaskID: taskID, TaskHref: taskDeepLink(project, taskID), Kind: kind, Priority: waveArtifactPriority(kind), Summary: summary, AcceptanceIDs: covers, EvidenceRef: stringField(evidence.Data, "id"), ArtifactRef: path, EvidenceHref: evidenceDeepLink(project, stringField(evidence.Data, "id"))})
 		}
 	}
 	return out
@@ -388,7 +410,7 @@ func validWaveHumanActions(idx v7Index, members []string) []waveBriefHumanAction
 	}
 	out := []waveBriefHumanAction{}
 	for _, gate := range idx.Gates {
-		if !strings.EqualFold(stringField(gate.Data, "status"), "open") || !serveHumanOwner(stringField(gate.Data, "owner")) {
+		if !strings.EqualFold(stringField(gate.Data, "status"), "open") || !boolField(gate.Data, "blocking") || !serveHumanOwner(stringField(gate.Data, "owner")) {
 			continue
 		}
 		blocks := []string{}
@@ -403,13 +425,13 @@ func validWaveHumanActions(idx v7Index, members []string) []waveBriefHumanAction
 		kind := strings.ToLower(stringField(gate.Data, "gate_kind"))
 		action := strings.TrimSpace(stringField(gate.Data, "action"))
 		verification := strings.TrimSpace(stringField(gate.Data, "verification"))
-		why := strings.TrimSpace(stringField(gate.Data, "why_agent_cannot"))
-		if action == "" || verification == "" || why == "" || v7HumanGateOwnsAgentCapableWork(kind, stringField(gate.Data, "owner"), action, verification, why, stringField(gate.Data, "suggestion")) {
+		why := v7GateBoundaryText(gate)
+		if action == "" || verification == "" || why == "" || v7HumanGateOwnsAgentCapableWork(kind, stringField(gate.Data, "owner"), action, verification, why, v7GateSuggestionText(gate)) {
 			continue
 		}
 		sort.Strings(blocks)
 		id := stringField(gate.Data, "id")
-		out = append(out, waveBriefHumanAction{GateID: id, GateHref: gateDeepLink(id), Action: action, ResumeID: id, BlockedTaskIDs: blocks})
+		out = append(out, waveBriefHumanAction{GateID: id, GateHref: gateDeepLink(stringField(gate.Data, "project"), blocks[0], id), Action: action, ResumeID: id, BlockedTaskIDs: blocks})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].GateID < out[j].GateID })
 	return out
@@ -497,8 +519,16 @@ func renderWaveBrief(b waveBrief) string {
 	return s.String()
 }
 
-func waveDeepLink(id string) string     { return "/waves/" + id }
-func taskDeepLink(id string) string     { return "/tasks/" + id }
-func gateDeepLink(id string) string     { return "/gates/" + id }
-func evidenceDeepLink(id string) string { return "/evidence/" + id }
-func docDeepLink(path string) string    { return "/docs?path=" + path }
+func waveDeepLink(project, id string) string {
+	return projectOpsDeepLink(project) + "#wave-" + url.PathEscape(id)
+}
+func taskDeepLink(project, id string) string     { return projectDocsDeepLink(project, id) }
+func evidenceDeepLink(project, id string) string { return projectDocsDeepLink(project, id) }
+func gateDeepLink(project, taskID, gateID string) string {
+	return projectDocsDeepLink(project, taskID) + "&gate=" + url.QueryEscape(gateID)
+}
+func docDeepLink(project, path string) string  { return projectDocsDeepLink(project, path) }
+func projectOpsDeepLink(project string) string { return "/p/" + url.PathEscape(project) + "/ops" }
+func projectDocsDeepLink(project, path string) string {
+	return "/p/" + url.PathEscape(project) + "/docs?path=" + url.QueryEscape(path)
+}

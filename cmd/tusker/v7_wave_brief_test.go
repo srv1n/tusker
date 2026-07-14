@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -24,6 +25,29 @@ func TestWaveBriefArtifactContract(t *testing.T) {
 	validateV7ArtifactContract(bad, "task.md", &issues)
 	if len(issues) != 4 {
 		t.Fatalf("expected kind/summary/path/acceptance findings, got %#v", issues)
+	}
+	missing := briefTask("APP-T-0001", "ready", "pending")
+	missing.Data["artifact_contract"] = map[string]any{"kind": "diff_summary", "path": "cmd/tusker", "summary": "Focused change summary."}
+	issues = nil
+	validateV7ArtifactContract(missing, "task.md", &issues)
+	if len(issues) != 1 || issues[0].Code != "TASK_ARTIFACT_ACCEPTANCE_MISSING" {
+		t.Fatalf("missing acceptance mapping was not rejected: %#v", issues)
+	}
+}
+
+func TestWaveBriefEmptySectionsEncodeAsArrays(t *testing.T) {
+	idx, wave := briefFixture()
+	delete(idx.Evidence, "APP-T-0001")
+	delete(wave.Data, "landings")
+	brief := buildWaveBrief(idx, wave)
+	raw, err := json.Marshal(brief)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"seeIt":[]`, `"landed":[]`, `"reworkParked":[]`, `"humanAction":[]`, `"documentation":[]`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("empty section is not a JSON array (%s): %s", want, raw)
+		}
 	}
 }
 
@@ -53,6 +77,11 @@ func TestWaveBriefGolden(t *testing.T) {
 
 func TestWaveBriefHonesty(t *testing.T) {
 	idx, wave := briefFixture()
+	untouched := briefTask("APP-T-0000", "ready", "pending")
+	untouched.Body += "| A1 | command: go test ./... | pending | Contract only. |\n"
+	if state := waveBriefState(idx, untouched, false); state.Implementation != "absent" {
+		t.Fatalf("pending contract row was presented as implementation: %#v", state)
+	}
 	partial := briefTask("APP-T-0002", "review", "satisfied")
 	partial.Data["knowledge_nodes"] = []string{"knowledge/domains/project/CANON.md"}
 	idx.Tasks["APP-T-0002"] = partial
@@ -80,8 +109,11 @@ func TestWaveBriefHumanAction(t *testing.T) {
 	idx, wave := briefFixture()
 	valid := briefGate("APP-G-0001", "auth", "Provision the staging OAuth secret.", "A successful authenticated probe resumes the task.", "The credential belongs to the human account owner.")
 	invalid := briefGate("APP-G-0002", "verification", "Run tests and inspect the logs.", "Tests pass.", "Risk is high.")
+	nonblocking := briefGate("APP-G-0003", "auth", "Provision an optional OAuth secret.", "The optional probe succeeds.", "The credential belongs to the human account owner.")
+	nonblocking.Data["blocking"] = false
 	idx.Gates["APP-G-0001"] = valid
 	idx.Gates["APP-G-0002"] = invalid
+	idx.Gates["APP-G-0003"] = nonblocking
 	brief := buildWaveBrief(idx, wave)
 	if len(brief.HumanAction) != 1 {
 		t.Fatalf("ordinary objective work leaked into human action: %#v", brief.HumanAction)
@@ -90,24 +122,42 @@ func TestWaveBriefHumanAction(t *testing.T) {
 		t.Fatalf("invalid human gate did not return to rework: %#v", brief.Rework)
 	}
 	action := brief.HumanAction[0]
-	if action.GateID != "APP-G-0001" || action.ResumeID != "APP-G-0001" || action.Action != "Provision the staging OAuth secret." || action.GateHref != "/gates/APP-G-0001" {
+	if action.GateID != "APP-G-0001" || action.ResumeID != "APP-G-0001" || action.Action != "Provision the staging OAuth secret." || action.GateHref != "/p/app/docs?path=APP-T-0001&gate=APP-G-0001" {
 		t.Fatalf("human action is not exact/resumable: %#v", action)
+	}
+}
+
+func TestWaveBriefArtifactsRequireAcceptedDurableMappedEvidence(t *testing.T) {
+	idx, wave := briefFixture()
+	task := idx.Tasks["APP-T-0001"]
+	pending := idx.Evidence["APP-T-0001"][0]
+	pending.Data = cloneMap(pending.Data)
+	pending.Data["id"] = "APP-T-0001-E-0002"
+	pending.Data["status"] = "pending_review"
+	unknown := idx.Evidence["APP-T-0001"][0]
+	unknown.Data = cloneMap(unknown.Data)
+	unknown.Data["id"] = "APP-T-0001-E-0003"
+	unknown.Data["covers"] = []string{"A9"}
+	idx.Evidence["APP-T-0001"] = append(idx.Evidence["APP-T-0001"], pending, unknown)
+	brief := buildWaveBrief(idx, wave)
+	if len(brief.SeeIt) != 1 || brief.SeeIt[0].EvidenceRef != "APP-T-0001-E-0001" {
+		t.Fatalf("unaccepted or unmapped evidence leaked into See it: %#v (task %#v)", brief.SeeIt, task.Data)
 	}
 }
 
 func briefFixture() (v7Index, Note) {
 	task := briefTask("APP-T-0001", "done", "satisfied")
-	task.Data["artifact_contract"] = map[string]any{"kind": "screenshot_set", "path": "internal/serve/ui", "summary": "Final interaction state."}
-	evidence := Note{Data: map[string]any{"schema": "tusker.evidence/v1", "kind": "evidence", "id": "APP-T-0001-E-0001", "task": "APP-T-0001", "status": "accepted", "evidence_kind": "screenshot", "covers": []string{"A1"}, "artifact_paths": []string{"evidence/APP-T-0001/artifacts/result.png"}}, Body: "## Summary\n\nFinal interaction state."}
-	wave := Note{Data: map[string]any{"schema": "tusker.wave/v7", "kind": "wave", "id": "W-0001", "title": "Morning delivery", "members": []string{"APP-T-0001"}, "landings": []any{map[string]any{"task": "APP-T-0001", "gate_result": "pass", "commit": "abc123", "target": "integration/W-0001"}}}}
+	task.Data["artifact_contract"] = map[string]any{"kind": "screenshot_set", "path": "internal/serve/ui", "summary": "Final interaction state.", "acceptance_ids": []string{"A1"}}
+	evidence := Note{Data: map[string]any{"schema": "tusker.evidence/v1", "kind": "evidence", "id": "APP-T-0001-E-0001", "task": "APP-T-0001", "status": "accepted", "evidence_kind": "screenshot", "covers": []string{"A1"}, "artifact_paths": []string{"evidence/APP-T-0001/artifacts/result.png"}, "screenshot_checked_by": "reviewer:test", "screenshot_checked_at": "2026-07-14T00:00:00Z"}, Body: "## Summary\n\nFinal interaction state."}
+	wave := Note{Data: map[string]any{"schema": "tusker.wave/v7", "kind": "wave", "id": "W-0001", "project": "app", "title": "Morning delivery", "members": []string{"APP-T-0001"}, "landings": []any{map[string]any{"task": "APP-T-0001", "gate_result": "pass", "commit": "abc123", "target": "integration/W-0001"}}}}
 	idx := v7Index{Tasks: map[string]Note{"APP-T-0001": task}, Gates: map[string]Note{}, Waves: map[string]Note{"W-0001": wave}, Evidence: map[string][]Note{"APP-T-0001": {evidence}}, Attempts: map[string][]Note{}}
 	return idx, wave
 }
 
 func briefTask(id, status, proof string) Note {
-	return Note{Data: map[string]any{"schema": "tusker.task/v7", "kind": "task", "id": id, "title": "Task " + id, "status": status, "readiness": "ready", "proof_status": proof, "next_action": ""}, Body: "## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Observable result. | Focused proof. |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n"}
+	return Note{Data: map[string]any{"schema": "tusker.task/v7", "kind": "task", "id": id, "project": "app", "title": "Task " + id, "status": status, "readiness": "ready", "proof_status": proof, "next_action": ""}, Body: "## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Observable result. | Focused proof. |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n"}
 }
 
 func briefGate(id, kind, action, verification, why string) Note {
-	return Note{Data: map[string]any{"schema": "tusker.gate/v7", "kind": "gate", "id": id, "title": "Gate " + id, "gate_kind": kind, "status": "open", "owner": "human:sarav", "blocking": true, "blocks": []string{"APP-T-0001"}, "action": action, "verification": verification, "why_agent_cannot": why}}
+	return Note{Data: map[string]any{"schema": "tusker.gate/v7", "kind": "gate", "id": id, "project": "app", "title": "Gate " + id, "gate_kind": kind, "status": "open", "owner": "human:sarav", "blocking": true, "blocks": []string{"APP-T-0001"}, "action": action, "verification": verification, "why_agent_cannot": why}}
 }
