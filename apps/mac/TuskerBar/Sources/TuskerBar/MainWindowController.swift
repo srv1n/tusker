@@ -2,7 +2,7 @@ import AppKit
 import WebKit
 
 @MainActor
-final class MainWindowController: NSObject, WKNavigationDelegate, NSWindowDelegate {
+final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessageHandler, NSWindowDelegate {
     private let config: AppConfig
     private let window: NSWindow
     private let webView: WKWebView
@@ -15,8 +15,13 @@ final class MainWindowController: NSObject, WKNavigationDelegate, NSWindowDelega
         self.config = config
         let frame = NSRect(x: 0, y: 0, width: 1180, height: 780)
         window = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        webView = WKWebView(frame: frame)
+        let content = WKUserContentController()
+        content.addUserScript(WKUserScript(source: PanelController.folderPickerScript(origin: PanelController.configuredOrigin(config.baseURL) ?? ""), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let webConfig = WKWebViewConfiguration()
+        webConfig.userContentController = content
+        webView = WKWebView(frame: frame, configuration: webConfig)
         super.init()
+        content.add(self, name: "tuskerShell")
         window.title = "Tusker"
         window.collectionBehavior = [.fullScreenPrimary]
         window.isReleasedWhenClosed = false
@@ -138,5 +143,19 @@ final class MainWindowController: NSObject, WKNavigationDelegate, NSWindowDelega
         let runtime = RuntimeSupervisor.shared
         runtime.ensureRunning(force: true)
         showState(title: runtime.title, hint: runtime.hint)
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "tuskerShell", isConfiguredOrigin(webView.url), let payload = message.body as? [String: Any], payload["method"] as? String == "pickFolder", let requestID = payload["requestId"] as? String else { return }
+        let picker = NSOpenPanel()
+        PanelController.configureFolderPicker(picker)
+        picker.beginSheetModal(for: window) { [weak self] response in
+            self?.webView.evaluateJavaScript(PanelController.folderPickerResponseScript(requestID: requestID, path: response == .OK ? picker.url?.path : nil))
+        }
+    }
+
+    private func isConfiguredOrigin(_ url: URL?) -> Bool {
+        guard let url, let configuredOrigin = PanelController.configuredOrigin(config.baseURL) else { return false }
+        return PanelController.configuredOrigin(url) == configuredOrigin
     }
 }

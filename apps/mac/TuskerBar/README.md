@@ -81,6 +81,7 @@ When the panel is on its configured base URL, it exposes a deliberately small
 | `closePanel()` | Hides the floating panel. |
 | `notify({title, body, path})` | Posts a local notification when permission is available. |
 | `setBadge(count)` | Sets an advisory native badge; `/api/summary` wins on the next refresh. |
+| `pickFolder()` | Opens a single-selection directory picker and resolves with the selected absolute path, or `undefined` after cancellation. |
 | `version` | Read-only bundle version string. |
 | `onNavigate(path)` | Optional web-provided hook used by native deep links to avoid reloading the SPA. Return `true` when handled. |
 

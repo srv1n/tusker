@@ -26,7 +26,7 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         )
         panel = NSPanel(contentRect: frame, styleMask: [.titled, .closable, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
         let content = WKUserContentController()
-        content.addUserScript(WKUserScript(source: PanelController.bridgeScript(appVersion: config.appVersion), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        content.addUserScript(WKUserScript(source: PanelController.bridgeScript(appVersion: config.appVersion, origin: PanelController.configuredOrigin(config.baseURL) ?? ""), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let webConfig = WKWebViewConfiguration()
         webConfig.userContentController = content
         webView = WKWebView(frame: frame, configuration: webConfig)
@@ -158,6 +158,8 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
             if let count = payload["count"] as? Int { ShellRouter.shared.setBadge(count) }
         case "notify":
             onBridgeNotify(payload["title"] as? String ?? "Tusker", payload["body"] as? String ?? "", payload["path"] as? String)
+        case "pickFolder":
+            if let requestID = payload["requestId"] as? String { presentFolderPicker(requestID: requestID) }
         default: break
         }
     }
@@ -222,19 +224,76 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         retryDelay = min(retryDelay * 2, 30)
     }
 
-    private func isConfiguredOrigin(_ url: URL?) -> Bool {
-        guard let url else { return false }
-        return url.scheme == config.baseURL.scheme && url.host == config.baseURL.host && url.port == config.baseURL.port
+    private func presentFolderPicker(requestID: String) {
+        let picker = NSOpenPanel()
+        Self.configureFolderPicker(picker)
+        picker.beginSheetModal(for: panel) { [weak self] response in
+            self?.webView.evaluateJavaScript(Self.folderPickerResponseScript(requestID: requestID, path: response == .OK ? picker.url?.path : nil))
+        }
     }
 
-    private static func bridgeScript(appVersion: String) -> String {
+    private func isConfiguredOrigin(_ url: URL?) -> Bool {
+        guard let url, let configuredOrigin = Self.configuredOrigin(config.baseURL) else { return false }
+        return Self.configuredOrigin(url) == configuredOrigin
+    }
+
+    static func configuredOrigin(_ url: URL) -> String? {
+        guard let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased() else { return nil }
+        if let port = url.port, !(scheme == "http" && port == 80), !(scheme == "https" && port == 443) { return "\(scheme)://\(host):\(port)" }
+        return "\(scheme)://\(host)"
+    }
+
+    static func configureFolderPicker(_ picker: NSOpenPanel) {
+        picker.canChooseFiles = false
+        picker.canChooseDirectories = true
+        picker.allowsMultipleSelection = false
+        picker.prompt = "Choose"
+    }
+
+    static func folderPickerResponseScript(requestID: String, path: String?) -> String {
+        let payload: [String: Any] = ["requestId": requestID, "path": path ?? NSNull()]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload), let json = String(data: data, encoding: .utf8) else { return "" }
+        return "window.tuskerShell?.receiveFolderPick(\(json));"
+    }
+
+    static func bridgeScript(appVersion: String, origin: String) -> String {
+        let configuration: [String: String] = ["appVersion": appVersion, "origin": origin]
+        guard let data = try? JSONSerialization.data(withJSONObject: configuration), let json = String(data: data, encoding: .utf8) else { return "" }
         return """
-        window.tuskerShell = window.tuskerShell || {};
-        window.tuskerShell.openFull = (path) => window.webkit.messageHandlers.tuskerShell.postMessage({method:'openFull', path});
-        window.tuskerShell.closePanel = () => window.webkit.messageHandlers.tuskerShell.postMessage({method:'closePanel'});
-        window.tuskerShell.notify = (payload) => window.webkit.messageHandlers.tuskerShell.postMessage({method:'notify', ...payload});
-        window.tuskerShell.setBadge = (count) => window.webkit.messageHandlers.tuskerShell.postMessage({method:'setBadge', count});
-        window.tuskerShell.version = '\(appVersion)';
+        \(folderPickerScript(origin: origin))
+        (() => {
+          const config = \(json);
+          if (window.location.origin !== config.origin) return;
+          const shell = window.tuskerShell = window.tuskerShell || {};
+          shell.openFull = (path) => window.webkit.messageHandlers.tuskerShell.postMessage({method:'openFull', path});
+          shell.closePanel = () => window.webkit.messageHandlers.tuskerShell.postMessage({method:'closePanel'});
+          shell.notify = (payload) => window.webkit.messageHandlers.tuskerShell.postMessage({method:'notify', ...payload});
+          shell.setBadge = (count) => window.webkit.messageHandlers.tuskerShell.postMessage({method:'setBadge', count});
+          shell.version = config.appVersion;
+        })();
+        """
+    }
+
+    static func folderPickerScript(origin: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: ["origin": origin]), let json = String(data: data, encoding: .utf8) else { return "" }
+        return """
+        (() => {
+          const config = \(json);
+          if (window.location.origin !== config.origin) return;
+          const shell = window.tuskerShell = window.tuskerShell || {};
+          const folderRequests = new Map();
+          shell.pickFolder = () => new Promise((resolve) => {
+            const requestId = window.crypto?.randomUUID?.() || `folder-${Date.now()}-${Math.random()}`;
+            folderRequests.set(requestId, resolve);
+            window.webkit.messageHandlers.tuskerShell.postMessage({method:'pickFolder', requestId});
+          });
+          shell.receiveFolderPick = ({requestId, path}) => {
+            const resolve = folderRequests.get(requestId);
+            if (!resolve) return;
+            folderRequests.delete(requestId);
+            resolve(typeof path === 'string' && path.length > 0 ? path : undefined);
+          };
+        })();
         """
     }
 }

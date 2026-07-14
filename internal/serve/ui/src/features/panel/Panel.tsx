@@ -22,7 +22,11 @@ import { openTaskSearch } from "@/features/search/TaskSearch";
 
 declare global {
   interface Window {
-    tuskerShell?: { openFull?: (path: string) => void; onNavigate?: (path: string) => boolean };
+    tuskerShell?: {
+      openFull?: (path: string) => void;
+      onNavigate?: (path: string) => boolean;
+      pickFolder?: () => Promise<string | undefined>;
+    };
   }
 }
 

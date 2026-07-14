@@ -14,6 +14,18 @@ test("project registration is available in the sidebar and defaults automation o
   expect(api).toContain('post("/projects", body)');
 });
 
+test("project registration offers native folder browsing without pretending browsers reveal paths", () => {
+  const sidebar = source("src/components/Sidebar.tsx");
+  const panel = source("src/features/panel/Panel.tsx");
+
+  expect(sidebar).toContain('aria-label="Browse repository folder"');
+  expect(sidebar).toContain('aria-label="Browse vault folder"');
+  expect(sidebar).toContain("const path = await pickFolder()");
+  expect(sidebar).toContain("if (path) setValue(path);");
+  expect(sidebar).toContain("enter the absolute path manually");
+  expect(panel).toContain("pickFolder?: () => Promise<string | undefined>");
+});
+
 test("project settings own the explicit daemon automation choice", () => {
   const settings = source("src/features/settings/ProjectSettings.tsx");
   const api = source("src/lib/api.ts");
