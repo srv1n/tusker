@@ -9,15 +9,10 @@
 | [[AGX-T-0005]] | W-0001 | medium | Review evidence and close or return to rework. |
 | [[CLN-T-0006]] |  | low | Review evidence and close or return to rework. |
 | [[CLN-T-0009]] |  | low | Review evidence and close or return to rework. |
-| [[DEL-T-0001]] |  | medium | Review evidence and close or return to rework. |
-| [[DEL-T-0002]] |  | high | Review evidence and close or return to rework. |
-| [[DEL-T-0003]] |  | high | Review evidence and close or return to rework. |
-| [[DEL-T-0005]] |  | medium | Review evidence and close or return to rework. |
 | [[LIF-T-0012]] |  | medium | Review evidence and close or return to rework. |
 | [[LIF-T-0013]] |  | high | Review evidence and close or return to rework. |
 | [[MAC-T-0002]] |  | low | Wait for dependency MAC-T-0001 to reach review with satisfied proof or done. |
 | [[MAC-T-0006]] |  | low | Review evidence and close or return to rework. |
-| [[OPS-T-0003]] |  | medium | Review evidence and close or return to rework. |
 | [[OPS-T-0010]] |  | high | Review evidence and close or return to rework. |
 | [[OPS-T-0011]] |  | high | Review evidence and close or return to rework. |
 | [[PRF-T-0001]] |  | low | Review evidence and close or return to rework. |

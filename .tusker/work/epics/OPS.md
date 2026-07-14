@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-06T17:50:21Z"
-updated_at: "2026-07-12T18:05:49Z"
-state_rev: "sha256:e90eb091c3e030b947cd2277af69ff14b38d62db3fe5bdcd2ebd14f9a65c13a7"
+updated_at: "2026-07-14T15:24:02Z"
+state_rev: "sha256:40487c467fc5d0ec670227ee39811f726adc2b222cfe13465806c7d5918ec40f"
 ---
 
 # OPS · Operating model: waves, merge lane, escalation, worker protocol
@@ -44,7 +44,6 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[OPS-T-0003]] | review | reviewer | Review evidence and close or return to rework. |
 | [[OPS-T-0005]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[OPS-T-0009]] | review | human:sarav | Accept, waive, or return rework for OPS-G-0002. |
 | [[OPS-T-0010]] | review | reviewer | Review evidence and close or return to rework. |
@@ -58,6 +57,7 @@ TBD.
 |---|---|---|
 | [[OPS-T-0001]] | human:sarav | 2026-07-07T07:28:00Z |
 | [[OPS-T-0002]] | human:sarav | 2026-07-08T03:01:48Z |
+| [[OPS-T-0003]] | reviewer:codex-chain | 2026-07-14T15:24:02Z |
 | [[OPS-T-0004]] | human:sarav | 2026-07-07T07:28:00Z |
 | [[OPS-T-0006]] | human:sarav | 2026-07-08T06:14:48Z |
 | [[OPS-T-0007]] | human:sarav | 2026-07-09T12:56:00Z |

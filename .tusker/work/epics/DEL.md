@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-14T11:20:08Z"
-updated_at: "2026-07-14T14:20:32Z"
-state_rev: "sha256:2545ecec489f3c0bf31a9a86fa4c260a683449c3a49dcad3f4f0c7165f6380ef"
+updated_at: "2026-07-14T15:24:26Z"
+state_rev: "sha256:0b2c7b2ca8e846743abc005e32f4b63c1d2a6a22322ed0f6404eed76afd07f39"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -58,11 +58,7 @@ external authority, unresolved intent, or explicitly subjective acceptance.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[DEL-T-0001]] | review | reviewer | Review evidence and close or return to rework. |
-| [[DEL-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
-| [[DEL-T-0003]] | review | reviewer | Review evidence and close or return to rework. |
-| [[DEL-T-0005]] | review | reviewer | Review evidence and close or return to rework. |
-| [[DEL-T-0006]] | backlog | blocked_dependency | Wait for dependency DEL-T-0003 to reach done. |
+| [[DEL-T-0006]] | ready | agent | Wait for dependency DEL-T-0005 to reach done. |
 
 ## Recently completed
 
@@ -70,4 +66,8 @@ external authority, unresolved intent, or explicitly subjective acceptance.
 
 | Task | Accepted by | Closed at |
 |---|---|---|
+| [[DEL-T-0001]] | reviewer:codex-chain | 2026-07-14T15:23:03Z |
+| [[DEL-T-0002]] | reviewer:codex-chain | 2026-07-14T15:23:12Z |
+| [[DEL-T-0003]] | reviewer:codex-chain | 2026-07-14T15:23:21Z |
 | [[DEL-T-0004]] | reviewer:codex-reviewer | 2026-07-14T13:05:05Z |
+| [[DEL-T-0005]] | reviewer:codex-chain | 2026-07-14T15:24:02Z |

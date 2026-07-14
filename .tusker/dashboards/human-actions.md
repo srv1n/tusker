@@ -6,8 +6,6 @@
 
 | Item | Owner | Blocks / refs | Action |
 |---|---|---|---|
-| [[AGX-G-0001]] | human:sarav | [[AGX-T-0006]] | Decide whether AGX-T-0006 may proceed with targeted traceability proof despite the existing go test ./... baseline failures, or send a separate repair/rework task for those broad-suite failures. |
-| [[AGX-T-0006]] | human:sarav | AGX-G-0001 | Accept, waive, or return rework for AGX-G-0001. |
 | [[FBK-G-0001]] | human:sarav | [[FBK-T-0002]] | Resolve required broad_test proof: fix the existing red go test ./... baseline or amend/waive FBK-T-0002 broad_test proof. |
 | [[FBK-T-0002]] | human:sarav | FBK-G-0001 | Accept, waive, or return rework for FBK-G-0001. |
 | [[MAC-G-0004]] | human:sarav | [[MAC-T-0003]] | Drive an attention event through the signed bundle; verify notification click-through, badge sync, and reconnect behavior. |
