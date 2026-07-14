@@ -311,6 +311,32 @@ func OpenRuntimeStore(stateRoot string) (*RuntimeStore, error) {
 	return store, nil
 }
 
+// OpenRuntimeStoreReadOnly opens an existing runtime database without creating
+// directories, running migrations, reconciling rows, or taking a write lock.
+// Diagnostic commands must use this path so observation cannot change state.
+func OpenRuntimeStoreReadOnly(stateRoot string) (*RuntimeStore, error) {
+	dbPath := runtimeStoreDBPath(stateRoot)
+	if !fileExists(dbPath) {
+		return nil, os.ErrNotExist
+	}
+	u := url.URL{Scheme: "file", Path: dbPath}
+	q := u.Query()
+	q.Set("mode", "ro")
+	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", int(runtimeStoreBusyTimeout/time.Millisecond)))
+	q.Add("_pragma", "query_only(1)")
+	u.RawQuery = q.Encode()
+	db, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return &RuntimeStore{db: db, stateRoot: stateRoot}, nil
+}
+
 var (
 	runtimeStoreBusyTimeout      = 1500 * time.Millisecond
 	runtimeStoreBusyRetryLimit   = 5 * time.Second

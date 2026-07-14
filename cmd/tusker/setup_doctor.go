@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -31,11 +34,12 @@ type setupDoctorReport struct {
 }
 
 type setupDoctorInput struct {
-	RepoRoot       string
-	Store          *RuntimeStore
-	Source         string
-	ExecutablePath string
-	InstalledPath  string
+	RepoRoot        string
+	Store           *RuntimeStore
+	Source          string
+	ExecutablePath  string
+	InstalledPath   string
+	WorkflowInspect func(system, workflow string) ([]byte, error)
 }
 
 func setupDoctorCmd(args Args, apply bool) error {
@@ -48,12 +52,20 @@ func setupDoctorCmd(args Args, apply bool) error {
 	if err != nil {
 		return err
 	}
-	store, err := OpenRuntimeStore(DefaultStateRoot())
-	if err != nil {
-		return err
+	stateRoot := firstNonEmpty(strings.TrimSpace(args.String("state-root")), DefaultStateRoot())
+	var store *RuntimeStore
+	if fileExists(runtimeStoreDBPath(stateRoot)) {
+		if apply && !args.Bool("dry-run") {
+			store, err = OpenRuntimeStore(stateRoot)
+		} else {
+			store, err = OpenRuntimeStoreReadOnly(stateRoot)
+		}
+		if err != nil {
+			return err
+		}
+		defer store.Close()
 	}
-	defer store.Close()
-	report, err := runSetupDoctor(setupDoctorInput{RepoRoot: absRepo, Store: store, Source: args.String("source")}, apply && !args.Bool("dry-run"))
+	report, err := runSetupDoctor(setupDoctorInput{RepoRoot: absRepo, Store: store, Source: args.String("source"), WorkflowInspect: inspectRZNWorkflow}, apply && !args.Bool("dry-run"))
 	if err != nil {
 		return err
 	}
@@ -98,8 +110,11 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 				continue
 			}
 			expectedVault := filepath.Join(project.RepoRoot, ".tusker")
-			currentMissing := !fileExists(project.VaultRoot)
-			if currentMissing && fileExists(expectedVault) && !sameCleanPath(project.VaultRoot, expectedVault) {
+			legacyVault := filepath.Join(project.RepoRoot, "tusker")
+			canonicalExists := pathExistsIncludingSymlink(expectedVault)
+			legacyRegistration := sameCleanPath(project.VaultRoot, legacyVault)
+			missingRegistration := !pathExistsIncludingSymlink(project.VaultRoot)
+			if canonicalExists && !sameCleanPath(project.VaultRoot, expectedVault) && (legacyRegistration || missingRegistration) {
 				finding := setupFinding{Code: "stale_vault_root", Status: "error", Path: project.VaultRoot, Repairable: true,
 					Message: fmt.Sprintf("registered project %s points at %s instead of %s", project.ProjectID, project.VaultRoot, expectedVault),
 					Action:  "update the registration to the repository's .tusker root"}
@@ -133,8 +148,11 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 
 	localVault := filepath.Join(repo, ".tusker")
 	if info, err := os.Lstat(localVault); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		if _, err := filepath.EvalSymlinks(localVault); err != nil {
+		resolved, resolveErr := filepath.EvalSymlinks(localVault)
+		if resolveErr != nil {
 			add(setupFinding{Code: "broken_vault_symlink", Status: "error", Path: localVault, Message: "repo-local .tusker symlink is broken", Action: "recreate the vault link with tusker vault mount", Repairable: false})
+		} else if sameCleanPath(resolved, filepath.Join(repo, "tusker")) {
+			add(setupFinding{Code: "stale_vault_symlink", Status: "warning", Path: localVault, Message: "repo-local .tusker symlink still targets the legacy repo/tusker vault", Action: "run tusker migrate vault-root --to .tusker and replace the legacy link after verification", Repairable: false})
 		}
 	}
 
@@ -168,48 +186,35 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 	}
 
 	configPath := filepath.Join(repo, ".chatgpt-handoff.json")
-	config, _, err := readHandoffConfig(configPath)
+	config, configExists, err := readHandoffConfig(configPath)
 	if err != nil {
 		add(setupFinding{Code: "handoff_config_invalid", Status: "error", Path: configPath, Message: err.Error(), Action: "repair the JSON without removing project-specific routing", Repairable: false})
 	} else {
-		if !handoffProfilePresent(repo, config) {
-			add(setupFinding{Code: "handoff_profile_missing", Status: "warning", Path: configPath, Message: "ChatGPT handoff profile is not configured", Action: "set profile in .chatgpt-handoff.json or add .chatgpt-handoff/profile.md", Repairable: false})
-		}
-		if !handoffRoutingPresent(config) {
-			add(setupFinding{Code: "handoff_routing_missing", Status: "warning", Path: configPath, Message: "ChatGPT Project routing is not configured", Action: "set project_id or routing in .chatgpt-handoff.json", Repairable: false})
-		}
-		pattern := handoffAttachmentPattern(config)
-		patternCode := ""
-		patternMessage := ""
-		if pattern == "" {
-			patternCode = "handoff_zip_pattern_missing"
-			patternMessage = "zip attachment matching is unspecified; safe default is *.zip"
-		} else if matched, matchErr := filepath.Match(pattern, "handoff-result.zip"); matchErr != nil || !matched {
-			patternCode = "handoff_zip_pattern_invalid"
-			patternMessage = fmt.Sprintf("zip attachment pattern %q does not match handoff-result.zip", pattern)
-		}
-		if patternCode != "" {
-			finding := setupFinding{Code: patternCode, Status: "warning", Path: configPath, Message: patternMessage, Action: "set attachments.zip_pattern to *.zip", Repairable: true}
-			if apply {
-				attachments, _ := config["attachments"].(map[string]any)
-				if attachments == nil {
-					attachments = map[string]any{}
-				}
-				attachments["zip_pattern"] = "*.zip"
-				config["attachments"] = attachments
-				if err := writeHandoffConfig(configPath, config); err != nil {
-					return report, err
-				}
-				finding.Changed = true
+		if !configExists {
+			add(setupFinding{Code: "handoff_config_missing", Status: "warning", Path: configPath, Message: "ChatGPT handoff config is missing", Action: "run chatgpt-handoff init --project <url-or-id>", Repairable: false})
+		} else if schema := mapString(config, "schema"); schema != "rzn.chatgpt_handoff.config/v1" {
+			add(setupFinding{Code: "handoff_config_schema", Status: "error", Path: configPath, Message: fmt.Sprintf("unsupported ChatGPT handoff schema %q", schema), Action: "run chatgpt-handoff init and preserve project-specific values", Repairable: false})
+		} else {
+			if !handoffProfilePresent(repo, config) {
+				add(setupFinding{Code: "handoff_profile_missing", Status: "warning", Path: filepath.Join(repo, ".chatgpt-handoff", "profile.md"), Message: "ChatGPT handoff profile is not configured", Action: "run chatgpt-handoff init or add .chatgpt-handoff/profile.md", Repairable: false})
 			}
-			add(finding)
-		}
-		installedVersion := mapString(config, "browser_workflow_version")
-		requiredVersion := mapString(config, "required_browser_workflow_version")
-		if installedVersion != "" && requiredVersion != "" && installedVersion != requiredVersion {
-			add(setupFinding{Code: "handoff_browser_workflow_stale", Status: "error", Path: configPath,
-				Message: fmt.Sprintf("browser workflow %s does not match required %s", installedVersion, requiredVersion),
-				Action:  "run rzn-browser workflow pull --repo-root <canonical-rzn-browser-checkout>", Repairable: false})
+			if !handoffRoutingPresent(config) {
+				add(setupFinding{Code: "handoff_routing_missing", Status: "warning", Path: configPath, Message: "ChatGPT Project routing is not configured", Action: "set project_id or project_url in .chatgpt-handoff.json", Repairable: false})
+			}
+			zipFinding, nextConfig := diagnoseHandoffZip(repo, config, configPath)
+			if zipFinding != nil {
+				if apply && zipFinding.Repairable {
+					if err := writeHandoffConfig(configPath, nextConfig); err != nil {
+						return report, err
+					}
+					zipFinding.Changed = true
+					config = nextConfig
+				}
+				add(*zipFinding)
+			}
+			for _, finding := range diagnoseHandoffWorkflows(config, configPath, input.WorkflowInspect) {
+				add(finding)
+			}
 		}
 	}
 
@@ -256,7 +261,34 @@ func classifySkillSyncSource(sourceArg, repo string) skillSourceReport {
 	if strings.Contains(clean, "/.agents/skills/") || strings.Contains(clean, "/.claude/skills/") || strings.Contains(clean, "/_generated/") {
 		return skillSourceReport{Kind: "generated", Path: path}
 	}
+	if !isCanonicalTuskerSkillPackage(path) {
+		return skillSourceReport{Kind: "invalid", Path: path}
+	}
 	return skillSourceReport{Kind: "canonical", Path: path}
+}
+
+func isCanonicalTuskerSkillPackage(path string) bool {
+	raw, err := os.ReadFile(filepath.Join(path, "SKILL.md"))
+	if err != nil {
+		return false
+	}
+	frontmatter, body, err := parseFrontmatter(string(raw))
+	if err != nil || stringField(frontmatter, "name") != "tusker" {
+		return false
+	}
+	metadata, ok := frontmatter["metadata"].(map[string]any)
+	if !ok || stringField(metadata, "wave_authorization_schema") != "tusker.wave-authorization/v1" || intField(metadata, "workflow_version") != 1 || intField(metadata, "tracker_schema_version") != 7 {
+		return false
+	}
+	if !strings.Contains(body, "# Tusker Operator Skill") {
+		return false
+	}
+	for _, rel := range []string{filepath.Join("references", "COMMANDS.md"), filepath.Join("references", "REPO_CONTRACT.md"), filepath.Join("references", "WORKFLOW.md")} {
+		if !fileExists(filepath.Join(path, rel)) {
+			return false
+		}
+	}
+	return true
 }
 
 func installedSkillStatus(destination, canonicalSource string) (string, string) {
@@ -312,30 +344,226 @@ func writeHandoffConfig(path string, config map[string]any) error {
 	return writeText(path, string(raw)+"\n")
 }
 
-func handoffProfilePresent(repo string, config map[string]any) bool {
-	if strings.TrimSpace(mapString(config, "profile")) != "" || fileExists(filepath.Join(repo, ".chatgpt-handoff", "profile.md")) {
-		return true
-	}
-	profile, ok := config["profile"].(map[string]any)
-	return ok && len(profile) > 0
+func handoffProfilePresent(repo string, _ map[string]any) bool {
+	return fileExists(filepath.Join(repo, ".chatgpt-handoff", "profile.md"))
 }
 
 func handoffRoutingPresent(config map[string]any) bool {
-	if mapString(config, "project_id") != "" {
-		return true
-	}
-	routing, ok := config["routing"].(map[string]any)
-	return ok && (mapString(routing, "project_id") != "" || mapString(routing, "project") != "")
+	return mapString(config, "project_id") != "" || mapString(config, "project_url") != ""
 }
 
-func handoffAttachmentPattern(config map[string]any) string {
-	for _, key := range []string{"zip_attachment_pattern", "attachment_pattern"} {
-		if value := mapString(config, key); value != "" {
-			return value
+func diagnoseHandoffZip(repo string, config map[string]any, configPath string) (*setupFinding, map[string]any) {
+	zipConfig, _ := config["zip"].(map[string]any)
+	artifactsDir := firstNonEmpty(mapString(zipConfig, "artifacts_dir"), "artifacts")
+	pattern := firstNonEmpty(mapString(zipConfig, "pattern"), "-codebase-")
+	configuredRoot := filepath.Join(repo, filepath.FromSlash(artifactsDir))
+	if handoffZipExists(configuredRoot, pattern) {
+		return nil, config
+	}
+
+	if artifact, ok := newestZip(filepath.Join(repo, "artifacts")); ok {
+		relDir, err := filepath.Rel(repo, filepath.Dir(artifact))
+		if err == nil && relDir != "." && !strings.HasPrefix(relDir, "..") {
+			next := cloneStringMap(config)
+			nextZip, _ := next["zip"].(map[string]any)
+			if nextZip == nil {
+				nextZip = map[string]any{}
+				next["zip"] = nextZip
+			}
+			changed := false
+			if detectedDir := filepath.ToSlash(relDir); mapString(nextZip, "artifacts_dir") != detectedDir {
+				nextZip["artifacts_dir"] = detectedDir
+				changed = true
+			}
+			if detectedPattern := inferHandoffZipPattern(filepath.Base(artifact)); detectedPattern != "" && mapString(nextZip, "pattern") != detectedPattern {
+				nextZip["pattern"] = detectedPattern
+				changed = true
+			}
+			if changed {
+				return &setupFinding{Code: "handoff_zip_config_stale", Status: "error", Path: configPath, Message: "configured zip artifact selector does not match the available handoff artifact", Action: "update zip.artifacts_dir and zip.pattern to the detected artifact", Repairable: true}, next
+			}
 		}
 	}
-	attachments, _ := config["attachments"].(map[string]any)
-	return firstNonEmpty(mapString(attachments, "zip_pattern"), mapString(attachments, "pattern"))
+
+	makeTarget := firstNonEmpty(mapString(zipConfig, "make_target"), "codebasezip")
+	if makefileHasTarget(filepath.Join(repo, "Makefile"), makeTarget) {
+		return nil, config
+	}
+	return &setupFinding{Code: "handoff_zip_unavailable", Status: "error", Path: configuredRoot, Message: "no matching handoff zip or configured build target is available", Action: "add the configured Make target or pass an explicit --zip artifact", Repairable: false}, config
+}
+
+func handoffZipExists(root, pattern string) bool {
+	_, ok := newestZipMatching(root, pattern)
+	return ok
+}
+
+func newestZip(root string) (string, bool) { return newestZipMatching(root, "") }
+
+func newestZipMatching(root, pattern string) (string, bool) {
+	newest := ""
+	var newestMod int64
+	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".zip") || !strings.Contains(entry.Name(), pattern) {
+			return nil
+		}
+		info, statErr := entry.Info()
+		if statErr == nil && (newest == "" || info.ModTime().UnixNano() > newestMod || (info.ModTime().UnixNano() == newestMod && path > newest)) {
+			newest, newestMod = path, info.ModTime().UnixNano()
+		}
+		return nil
+	})
+	return newest, newest != ""
+}
+
+var (
+	handoffTimestampPattern  = regexp.MustCompile(`^(.+?)(\d{8}[-_]\d{6})(.*)\.zip$`)
+	handoffRepoPrefixPattern = regexp.MustCompile(`^[A-Za-z0-9_.]+-`)
+)
+
+func inferHandoffZipPattern(name string) string {
+	for _, marker := range []string{"-codebase-", "-source-review-"} {
+		if strings.Contains(name, marker) {
+			return marker
+		}
+	}
+	if match := handoffTimestampPattern.FindStringSubmatch(name); len(match) == 4 {
+		if generic := handoffRepoPrefixPattern.ReplaceAllString(match[1], "-"); generic != "" {
+			return generic
+		}
+		return match[3]
+	}
+	return ""
+}
+
+func makefileHasTarget(path, target string) bool {
+	raw, err := os.ReadFile(path)
+	if err != nil || target == "" {
+		return false
+	}
+	needle := []byte("\n" + target + ":")
+	return bytes.HasPrefix(raw, []byte(target+":")) || bytes.Contains(raw, needle)
+}
+
+func cloneStringMap(values map[string]any) map[string]any {
+	raw, _ := json.Marshal(values)
+	var clone map[string]any
+	_ = json.Unmarshal(raw, &clone)
+	return clone
+}
+
+func diagnoseHandoffWorkflows(config map[string]any, configPath string, inspect func(system, workflow string) ([]byte, error)) []setupFinding {
+	rzn, _ := config["rzn"].(map[string]any)
+	system := firstNonEmpty(mapString(rzn, "system"), "chatgpt")
+	roles := []struct {
+		name     string
+		workflow string
+		required []string
+	}{
+		{name: "send", workflow: firstNonEmpty(mapString(rzn, "send_workflow"), "send"), required: []string{"project_id", "message_text", "model_slug", "model_effort"}},
+		{name: "read", workflow: firstNonEmpty(mapString(rzn, "read_workflow"), "read"), required: []string{"chat_id", "download_attachments", "attachments_scroll"}},
+		{name: "projects", workflow: firstNonEmpty(mapString(rzn, "projects_workflow"), "projects")},
+	}
+	if boolWithDefault(rzn, "include_model_version_param", true) {
+		roles[0].required = append(roles[0].required, "model_version")
+	}
+	if boolWithDefault(rzn, "include_require_exact_model_param", true) {
+		roles[0].required = append(roles[0].required, "require_exact_model")
+	}
+
+	findings := []setupFinding{}
+	for _, role := range roles {
+		raw, err := loadHandoffWorkflow(rzn, filepath.Dir(configPath), system, role.workflow, inspect)
+		if err != nil {
+			findings = append(findings, setupFinding{Code: "handoff_workflow_" + role.name + "_missing", Status: "error", Path: configPath, Message: fmt.Sprintf("cannot inspect configured %s workflow %s/%s: %v", role.name, system, role.workflow, err), Action: "refresh the installed rzn-browser workflow catalog", Repairable: false})
+			continue
+		}
+		id, inputs, err := parseHandoffWorkflowContract(raw)
+		expectedID := system + "/" + role.workflow
+		missing := []string{}
+		for _, required := range role.required {
+			if !inputs[required] {
+				missing = append(missing, required)
+			}
+		}
+		if err != nil || id != expectedID || len(missing) > 0 {
+			detail := firstNonEmpty(errorString(err), fmt.Sprintf("id=%q missing_inputs=%s", id, strings.Join(missing, ",")))
+			findings = append(findings, setupFinding{Code: "handoff_workflow_" + role.name + "_stale", Status: "error", Path: configPath, Message: fmt.Sprintf("configured %s workflow contract is stale: %s", role.name, detail), Action: "refresh the installed rzn-browser workflow catalog", Repairable: false})
+		}
+	}
+	return findings
+}
+
+func loadHandoffWorkflow(rzn map[string]any, configDir, system, workflow string, inspect func(system, workflow string) ([]byte, error)) ([]byte, error) {
+	if dir := mapString(rzn, "workflows_dir"); dir != "" {
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(configDir, dir)
+		}
+		for _, candidate := range []string{
+			filepath.Join(dir, system, system+"_"+workflow+".json"),
+			filepath.Join(dir, system, workflow+".json"),
+			filepath.Join(dir, system+"_"+workflow+".json"),
+		} {
+			if raw, err := os.ReadFile(candidate); err == nil {
+				return raw, nil
+			}
+		}
+		return nil, fmt.Errorf("workflow manifest not found under %s", dir)
+	}
+	if inspect == nil {
+		return nil, fmt.Errorf("rzn-browser workflow inspector unavailable")
+	}
+	return inspect(system, workflow)
+}
+
+func parseHandoffWorkflowContract(raw []byte) (string, map[string]bool, error) {
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", nil, err
+	}
+	inputs := map[string]bool{}
+	if list, ok := payload["inputs"].([]any); ok {
+		for _, item := range list {
+			if value, ok := item.(map[string]any); ok {
+				inputs[mapString(value, "name")] = true
+			}
+		}
+	}
+	if params, ok := payload["params"].(map[string]any); ok {
+		if properties, ok := params["properties"].(map[string]any); ok {
+			for name := range properties {
+				inputs[name] = true
+			}
+		}
+	}
+	id := mapString(payload, "id")
+	if id == "" {
+		return "", inputs, fmt.Errorf("workflow contract has no id")
+	}
+	return id, inputs, nil
+}
+
+func boolWithDefault(values map[string]any, key string, fallback bool) bool {
+	value, ok := values[key].(bool)
+	if !ok {
+		return fallback
+	}
+	return value
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func inspectRZNWorkflow(system, workflow string) ([]byte, error) {
+	return exec.Command("rzn-browser", "workflow", "inspect", system, workflow, "--json").CombinedOutput()
+}
+
+func pathExistsIncludingSymlink(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
 }
 
 func mapString(values map[string]any, key string) string {
@@ -345,13 +573,13 @@ func mapString(values map[string]any, key string) string {
 
 func printSetupHelp() {
 	fmt.Println(`Usage:
-  tusker setup doctor [--repo <path>] [--source <canonical-tusker-checkout>] [--json]
-  tusker setup repair [--repo <path>] [--source <canonical-tusker-checkout>] [--dry-run] [--json]
+  tusker setup doctor [--repo <path>] [--state-root <path>] [--source <canonical-tusker-checkout>] [--json]
+  tusker setup repair [--repo <path>] [--state-root <path>] [--source <canonical-tusker-checkout>] [--dry-run] [--json]
 
 Purpose:
   Diagnose onboarding drift across registered vault roots, WORKFLOW.md paths,
   Tusker binaries and generated skills, plus offline ChatGPT handoff routing,
-  zip attachment matching, and browser workflow versions. Doctor never writes.
+  zip artifact matching, and installed rzn-browser workflow contracts. Doctor never writes.
   Repair applies only deterministic local fixes and is idempotent; credentials,
   project routing, and browser workflow refreshes remain explicit actions.`)
 }

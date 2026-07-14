@@ -87,6 +87,27 @@ tusker skill sync --repo . --mode symlink --source /path/to/tusker
 must not remove product code. `--source` keeps repo-local skill symlinks pointed
 at the canonical Tusker checkout even when the command is run from another repo.
 
+Audit an existing setup without mutating repository or runtime state:
+
+```bash
+tusker setup doctor --repo . --source /path/to/tusker --json
+```
+
+Apply only deterministic local repairs, then rerun until the report is stable:
+
+```bash
+tusker setup repair --repo . --source /path/to/tusker --json
+```
+
+The doctor recognizes the canonical Tusker package by its manifest contract,
+not merely by finding a `SKILL.md`. For ChatGPT handoff it validates the
+`rzn.chatgpt_handoff.config/v1` shape, nested `zip.artifacts_dir` and
+`zip.pattern` selector, and the installed `chatgpt/send`, `chatgpt/read`, and
+`chatgpt/projects` workflow input contracts. It does not access browser state,
+credentials, or the network. Repair may correct a registered legacy vault root,
+canonical skill links, and a zip selector inferred from a real local artifact;
+project routing and provider workflow refresh remain explicit operator actions.
+
 ## Existing Repo Packet
 
 Do not upload the whole repository by default. Build a packet that contains

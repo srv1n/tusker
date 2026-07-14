@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -56,9 +60,7 @@ func TestSetupDoctorRepairsStaleKurpodVaultRootIdempotently(t *testing.T) {
 
 func TestSetupDoctorRepairsGeneratedSkillInstallsFromCanonicalSource(t *testing.T) {
 	sourceRoot := t.TempDir()
-	if err := writeText(filepath.Join(sourceRoot, "skill", "SKILL.md"), "canonical\n"); err != nil {
-		t.Fatal(err)
-	}
+	writeCanonicalTuskerSkillFixture(t, sourceRoot)
 	repo := t.TempDir()
 	if err := writeText(filepath.Join(repo, ".agents", "skills", "tusker", "SKILL.md"), "stale copy\n"); err != nil {
 		t.Fatal(err)
@@ -94,18 +96,28 @@ func TestSetupDoctorRepairsGeneratedSkillInstallsFromCanonicalSource(t *testing.
 
 func TestSkillSyncSourceClassificationRejectsGeneratedAndInvalidSources(t *testing.T) {
 	canonical := t.TempDir()
-	if err := writeText(filepath.Join(canonical, "skill", "SKILL.md"), "canonical\n"); err != nil {
-		t.Fatal(err)
-	}
+	writeCanonicalTuskerSkillFixture(t, canonical)
 	generated := filepath.Join(t.TempDir(), ".agents", "skills", "tusker")
-	if err := writeText(filepath.Join(generated, "SKILL.md"), "generated\n"); err != nil {
+	writeCanonicalTuskerSkillPackage(t, generated)
+	invalid := t.TempDir()
+	if err := writeText(filepath.Join(invalid, "SKILL.md"), "---\nname: chatgpt-handoff\n---\n# ChatGPT handoff\n"); err != nil {
 		t.Fatal(err)
 	}
-	invalid := t.TempDir()
+	arbitrary := t.TempDir()
+	spoofed := `---
+name: another-skill
+---
+# Tusker Operator Skill
+<!-- name: tusker; wave_authorization_schema: "tusker.wave-authorization/v1"; workflow_version: 1; tracker_schema_version: 7 -->
+`
+	if err := writeText(filepath.Join(arbitrary, "SKILL.md"), spoofed); err != nil {
+		t.Fatal(err)
+	}
 
 	assertEqual(t, "canonical", classifySkillSyncSource(canonical, "").Kind, "canonical source kind")
 	assertEqual(t, "generated", classifySkillSyncSource(generated, "").Kind, "generated source kind")
 	assertEqual(t, "invalid", classifySkillSyncSource(invalid, "").Kind, "invalid source kind")
+	assertEqual(t, "invalid", classifySkillSyncSource(arbitrary, "").Kind, "arbitrary SKILL.md source kind")
 
 	repo := t.TempDir()
 	for _, source := range []string{generated, invalid} {
@@ -159,15 +171,23 @@ func TestSkillSyncCopyUsesEmbeddedCanonicalPayloadOutsideCheckout(t *testing.T) 
 	}
 }
 
-func TestSetupDoctorDiagnosesOfflineHandoffAndRepairsZipPatternOnly(t *testing.T) {
+func TestSetupDoctorUsesActualHandoffSchemaAndRepairsDetectedZipSelector(t *testing.T) {
 	repo := t.TempDir()
+	writeHandoffProviderFixtures(t, repo)
+	if err := writeText(filepath.Join(repo, ".chatgpt-handoff", "profile.md"), "# profile\n"); err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(repo, "artifacts", "reviews", "app-source-review-20260714-120000.zip")
+	if err := writeText(artifact, "zip"); err != nil {
+		t.Fatal(err)
+	}
 	configPath := filepath.Join(repo, ".chatgpt-handoff.json")
 	config := map[string]any{
-		"profile":                           "architect",
-		"project_id":                        "project-123",
-		"browser_workflow_version":          "v1",
-		"required_browser_workflow_version": "v2",
-		"preserve_me":                       "yes",
+		"schema":      "rzn.chatgpt_handoff.config/v1",
+		"project_id":  "project-123",
+		"preserve_me": "yes",
+		"zip":         map[string]any{"artifacts_dir": "artifacts", "pattern": "-codebase-", "make_target": "codebasezip"},
+		"rzn":         map[string]any{"system": "chatgpt", "send_workflow": "send", "read_workflow": "read", "projects_workflow": "projects", "workflows_dir": filepath.Join(repo, "workflows")},
 	}
 	if err := writeHandoffConfig(configPath, config); err != nil {
 		t.Fatal(err)
@@ -177,17 +197,13 @@ func TestSetupDoctorDiagnosesOfflineHandoffAndRepairsZipPatternOnly(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSetupFinding(t, dry, "handoff_zip_pattern_missing", false)
-	stale := findingByCode(dry, "handoff_browser_workflow_stale")
-	if stale == nil || stale.Repairable || stale.Action == "" {
-		t.Fatalf("stale browser workflow must be actionable but not forged as repaired: %#v", stale)
-	}
+	assertSetupFinding(t, dry, "handoff_zip_config_stale", false)
 
 	first, err := runSetupDoctor(setupDoctorInput{RepoRoot: repo}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSetupFinding(t, first, "handoff_zip_pattern_missing", true)
+	assertSetupFinding(t, first, "handoff_zip_config_stale", true)
 	raw, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -197,34 +213,173 @@ func TestSetupDoctorDiagnosesOfflineHandoffAndRepairsZipPatternOnly(t *testing.T
 		t.Fatal(err)
 	}
 	assertEqual(t, "yes", mapString(repaired, "preserve_me"), "unknown handoff config preserved")
-	assertEqual(t, "*.zip", handoffAttachmentPattern(repaired), "safe zip default")
+	zipConfig := repaired["zip"].(map[string]any)
+	assertEqual(t, "artifacts/reviews", mapString(zipConfig, "artifacts_dir"), "detected artifact directory")
+	assertEqual(t, "-source-review-", mapString(zipConfig, "pattern"), "detected artifact pattern")
 
 	second, err := runSetupDoctor(setupDoctorInput{RepoRoot: repo}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if findingByCode(second, "handoff_zip_pattern_missing") != nil {
-		t.Fatalf("second repair rewrote zip pattern: %#v", second.Findings)
+	if findingByCode(second, "handoff_zip_config_stale") != nil {
+		t.Fatalf("second repair rewrote zip selector: %#v", second.Findings)
 	}
 }
 
-func TestSetupDoctorRejectsInvalidZipAttachmentPatternOffline(t *testing.T) {
+func TestSetupDoctorDiagnosesActualProviderContractDrift(t *testing.T) {
 	repo := t.TempDir()
+	if err := writeText(filepath.Join(repo, ".chatgpt-handoff", "profile.md"), "# profile\n"); err != nil {
+		t.Fatal(err)
+	}
 	config := map[string]any{
-		"profile":    "architect",
+		"schema":     "rzn.chatgpt_handoff.config/v1",
 		"project_id": "project-123",
-		"attachments": map[string]any{
-			"zip_pattern": "*.patch",
-		},
+		"zip":        map[string]any{"make_target": "codebasezip"},
+	}
+	if err := writeText(filepath.Join(repo, "Makefile"), "codebasezip:\n\t@true\n"); err != nil {
+		t.Fatal(err)
 	}
 	if err := writeHandoffConfig(filepath.Join(repo, ".chatgpt-handoff.json"), config); err != nil {
 		t.Fatal(err)
 	}
-	report, err := runSetupDoctor(setupDoctorInput{RepoRoot: repo}, false)
+	inspect := func(system, workflow string) ([]byte, error) {
+		return []byte(`{"id":"chatgpt/` + workflow + `","inputs":[{"name":"project_id"}]}`), nil
+	}
+	report, err := runSetupDoctor(setupDoctorInput{RepoRoot: repo, WorkflowInspect: inspect}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSetupFinding(t, report, "handoff_zip_pattern_invalid", false)
+	assertSetupFinding(t, report, "handoff_workflow_send_stale", false)
+	assertSetupFinding(t, report, "handoff_workflow_read_stale", false)
+	if finding := findingByCode(report, "handoff_workflow_projects_stale"); finding != nil {
+		t.Fatalf("projects contract only requires the correct installed identity: %#v", finding)
+	}
+}
+
+func TestSetupDoctorReadOnlyCommandDoesNotChangeRuntimeOrRepoBytes(t *testing.T) {
+	stateRoot := t.TempDir()
+	repo := t.TempDir()
+	canonical := t.TempDir()
+	writeCanonicalTuskerSkillFixture(t, canonical)
+	installCanonicalSkillLinks(t, repo, filepath.Join(canonical, "skill"))
+	writeValidHandoffFixture(t, repo)
+	vault := filepath.Join(repo, ".tusker")
+	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertProject(RegisteredProject{ProjectID: "app", ProjectKey: "app", Name: "app", RepoRoot: repo, VaultRoot: vault, WorkflowPath: workflowPath(vault), Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	beforeState := snapshotTree(t, stateRoot)
+	beforeRepo := snapshotTree(t, repo)
+	args := Args{"repo": repo, "state-root": stateRoot, "source": canonical, "json": "true"}
+	first := captureStdout(t, func() {
+		if err := setupDoctorCmd(args, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	second := captureStdout(t, func() {
+		if err := setupDoctorCmd(args, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if first != second {
+		t.Fatalf("doctor output changed between identical runs\nfirst=%s\nsecond=%s", first, second)
+	}
+	assertSnapshotEqual(t, beforeState, snapshotTree(t, stateRoot), "runtime state")
+	assertSnapshotEqual(t, beforeRepo, snapshotTree(t, repo), "repository")
+}
+
+func TestRuntimeStoreReadOnlyRejectsWrites(t *testing.T) {
+	stateRoot := t.TempDir()
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertProject(RegisteredProject{ProjectID: "before", RepoRoot: "/tmp/before", VaultRoot: "/tmp/before/.tusker", WorkflowPath: "/tmp/before/.tusker/WORKFLOW.md", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotTree(t, stateRoot)
+	readOnly, err := OpenRuntimeStoreReadOnly(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := readOnly.UpsertProject(RegisteredProject{ProjectID: "forbidden", RepoRoot: "/tmp/forbidden", VaultRoot: "/tmp/forbidden/.tusker", WorkflowPath: "/tmp/forbidden/.tusker/WORKFLOW.md", Enabled: true}); err == nil {
+		t.Fatal("read-only runtime store accepted a write")
+	}
+	if err := readOnly.Close(); err != nil {
+		t.Fatal(err)
+	}
+	assertSnapshotEqual(t, before, snapshotTree(t, stateRoot), "read-only runtime database")
+}
+
+func TestSetupRepairConvergesForWrongRootValidStaleSymlinkAndZip(t *testing.T) {
+	stateRoot := t.TempDir()
+	repo := t.TempDir()
+	canonical := t.TempDir()
+	writeCanonicalTuskerSkillFixture(t, canonical)
+	installCanonicalSkillLinks(t, repo, filepath.Join(canonical, "skill"))
+	writeValidHandoffFixture(t, repo)
+	legacy := filepath.Join(repo, "tusker")
+	if err := writeText(workflowPath(legacy), defaultWorkflowMarkdown()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("tusker", filepath.Join(repo, ".tusker")); err != nil {
+		t.Fatal(err)
+	}
+	config, _, err := readHandoffConfig(filepath.Join(repo, ".chatgpt-handoff.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config["zip"] = map[string]any{"artifacts_dir": "artifacts", "pattern": "-codebase-"}
+	if err := writeHandoffConfig(filepath.Join(repo, ".chatgpt-handoff.json"), config); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(repo, "artifacts", "review", "app-source-review-20260714-120000.zip"), "zip"); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertProject(RegisteredProject{ProjectID: "app", ProjectKey: "app", Name: "app", RepoRoot: repo, VaultRoot: legacy, WorkflowPath: workflowPath(legacy), Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+	args := Args{"repo": repo, "state-root": stateRoot, "source": canonical, "json": "true"}
+	first := captureStdout(t, func() { mustSetupCommand(t, args, true) })
+	if !bytes.Contains([]byte(first), []byte(`"changed":true`)) {
+		t.Fatalf("first repair did not report deterministic changes: %s", first)
+	}
+	second := captureStdout(t, func() { mustSetupCommand(t, args, true) })
+	afterSecondState, afterSecondRepo := snapshotTree(t, stateRoot), snapshotTree(t, repo)
+	third := captureStdout(t, func() { mustSetupCommand(t, args, true) })
+	if second != third {
+		t.Fatalf("second and third repair output differ\nsecond=%s\nthird=%s", second, third)
+	}
+	assertSnapshotEqual(t, afterSecondState, snapshotTree(t, stateRoot), "runtime state after convergence")
+	assertSnapshotEqual(t, afterSecondRepo, snapshotTree(t, repo), "repository after convergence")
+	if bytes.Contains([]byte(second), []byte(`"changed":true`)) {
+		t.Fatalf("converged repair still reports a change: %s", second)
+	}
+	var report setupDoctorReport
+	if err := json.Unmarshal([]byte(second), &report); err != nil {
+		t.Fatal(err)
+	}
+	assertSetupFinding(t, report, "stale_vault_symlink", false)
+	if findingByCode(report, "stale_vault_root") != nil || findingByCode(report, "handoff_zip_config_stale") != nil {
+		t.Fatalf("repairable drift survived convergence: %#v", report.Findings)
+	}
 }
 
 func TestSetupDoctorReportsWorkflowAndBinaryMismatch(t *testing.T) {
@@ -281,4 +436,147 @@ func findingByCode(report setupDoctorReport, code string) *setupFinding {
 		}
 	}
 	return nil
+}
+
+func writeCanonicalTuskerSkillFixture(t *testing.T, root string) {
+	t.Helper()
+	writeCanonicalTuskerSkillPackage(t, filepath.Join(root, "skill"))
+}
+
+func writeCanonicalTuskerSkillPackage(t *testing.T, root string) {
+	t.Helper()
+	body := `---
+name: tusker
+metadata:
+  wave_authorization_schema: "tusker.wave-authorization/v1"
+  workflow_version: 1
+  tracker_schema_version: 7
+---
+# Tusker Operator Skill
+`
+	if err := writeText(filepath.Join(root, "SKILL.md"), body); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"COMMANDS.md", "REPO_CONTRACT.md", "WORKFLOW.md"} {
+		if err := writeText(filepath.Join(root, "references", name), "# "+name+"\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func installCanonicalSkillLinks(t *testing.T, repo, source string) {
+	t.Helper()
+	for _, destination := range []string{filepath.Join(repo, ".agents", "skills", "tusker"), filepath.Join(repo, ".claude", "skills", "tusker")} {
+		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(source, destination); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func writeHandoffProviderFixtures(t *testing.T, repo string) {
+	t.Helper()
+	contracts := map[string][]string{
+		"send":     {"project_id", "message_text", "model_slug", "model_effort", "model_version", "require_exact_model"},
+		"read":     {"chat_id", "download_attachments", "attachments_scroll"},
+		"projects": {},
+	}
+	for workflow, names := range contracts {
+		properties := map[string]any{}
+		for _, name := range names {
+			properties[name] = map[string]any{"type": "string"}
+		}
+		payload := map[string]any{"schema_version": "rzn.workflow_manifest", "id": "chatgpt/" + workflow, "version": "1.0.0", "params": map[string]any{"properties": properties}}
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writeText(filepath.Join(repo, "workflows", "chatgpt", "chatgpt_"+workflow+".json"), string(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func writeValidHandoffFixture(t *testing.T, repo string) {
+	t.Helper()
+	writeHandoffProviderFixtures(t, repo)
+	if err := writeText(filepath.Join(repo, ".chatgpt-handoff", "profile.md"), "# project profile\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(repo, "Makefile"), "codebasezip:\n\t@true\n"); err != nil {
+		t.Fatal(err)
+	}
+	config := map[string]any{
+		"schema":     "rzn.chatgpt_handoff.config/v1",
+		"project_id": "project-123",
+		"model":      map[string]any{"slug": "GPT-5.6 Sol", "version": "5.6", "effort": "Pro", "fail_on_downgrade": true},
+		"rzn": map[string]any{
+			"system": "chatgpt", "send_workflow": "send", "read_workflow": "read", "read_fallback_workflow": "read_root", "projects_workflow": "projects",
+			"workflows_dir": filepath.Join(repo, "workflows"), "include_model_version_param": true, "include_require_exact_model_param": true,
+		},
+		"zip": map[string]any{"make_target": "codebasezip", "artifacts_dir": "artifacts", "pattern": "-codebase-", "build_by_default": true},
+	}
+	if err := writeHandoffConfig(filepath.Join(repo, ".chatgpt-handoff.json"), config); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustSetupCommand(t *testing.T, args Args, apply bool) {
+	t.Helper()
+	if err := setupDoctorCmd(args, apply); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func snapshotTree(t *testing.T, root string) map[string][]byte {
+	t.Helper()
+	snapshot := map[string][]byte{}
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil || rel == "." {
+			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			snapshot[filepath.ToSlash(rel)] = []byte("symlink:" + target)
+			return nil
+		}
+		if entry.IsDir() || strings.HasSuffix(path, "-wal") || strings.HasSuffix(path, "-shm") {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		snapshot[filepath.ToSlash(rel)] = raw
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
+}
+
+func assertSnapshotEqual(t *testing.T, want, got map[string][]byte, label string) {
+	t.Helper()
+	if !reflect.DeepEqual(want, got) {
+		t.Fatalf("%s changed\nwant=%v\ngot=%v", label, snapshotKeys(want), snapshotKeys(got))
+	}
+}
+
+func snapshotKeys(snapshot map[string][]byte) []string {
+	keys := make([]string, 0, len(snapshot))
+	for key := range snapshot {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
