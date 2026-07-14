@@ -44,7 +44,7 @@ func TestWorktreeFromIntegration(t *testing.T) {
 	assertEqual(t, "task/APP-T-0002", strings.TrimSpace(gitDirOutput(t, workspace.Path, "rev-parse", "--abbrev-ref", "HEAD")), "worktree task branch")
 }
 
-func TestLandBatchGreen(t *testing.T) {
+func TestArmedWaveLanding(t *testing.T) {
 	repo, vault := newLandTestRepo(t, 2, "test -f a.txt && test -f b.txt")
 	commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"a.txt": "a\n"})
 	commitLandBranch(t, repo, "task/APP-T-0002", "integration/W-0001", map[string]string{"b.txt": "b\n"})
@@ -110,7 +110,7 @@ func TestLandTerminalStateMonotonic(t *testing.T) {
 	assertEqual(t, "2026-07-08T02:30:00Z", stringField(canonicalData, "closed_at"), "canonical closed_at")
 }
 
-func TestLandBisectKicksBad(t *testing.T) {
+func TestArmedWaveBisect(t *testing.T) {
 	repo, vault := newLandTestRepo(t, 2, "if [ -f good.txt ] && [ -f bad.txt ]; then echo semantic conflict; exit 1; fi")
 	commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"good.txt": "good\n"})
 	commitLandBranch(t, repo, "task/APP-T-0002", "integration/W-0001", map[string]string{"bad.txt": "bad\n"})

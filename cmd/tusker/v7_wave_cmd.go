@@ -8,7 +8,13 @@ import (
 	"time"
 )
 
-var v7WaveGroupOrder = []string{"done", "review", "parked", "running", "ready", "blocked"}
+var v7WaveGroupOrder = []string{
+	armedWaveRunnable, armedWaveRunning, armedWaveReview, armedWaveLanded,
+	armedWaveMachineParked, armedWaveHumanBlocked, armedWaveStaleAuthorization,
+	armedWaveDependencyWaiting,
+	// Retain the old empty headings for scripts parsing the pre-DAG display.
+	"done", "parked", "ready", "blocked",
+}
 
 func waveV7Cmd(args Args) error {
 	switch strings.ToLower(args.String("_pos0")) {
@@ -522,7 +528,7 @@ func renderV7WaveShow(vaultPath string, idx v7Index, wave Note) string {
 			continue
 		}
 		for _, row := range rows {
-			b.WriteString(fmt.Sprintf("- %s | %s | proof: %s | %s\n", row.ID, row.Status, row.Proof, row.Title))
+			b.WriteString(fmt.Sprintf("- %s | state: %s | task: %s | proof: %s | %s\n", row.ID, row.State, row.Status, row.Proof, row.Title))
 		}
 		b.WriteString("\n")
 	}
@@ -534,22 +540,29 @@ type v7WaveMemberRow struct {
 	Title  string
 	Status string
 	Proof  string
+	State  string
 }
 
 func v7WaveMemberGroups(vaultPath string, idx v7Index, wave Note) map[string][]v7WaveMemberRow {
-	active := activeV7LeasesByTask(vaultPath)
+	runs := v7WaveRuntimeRuns(stringField(wave.Data, "project"))
+	snapshot := buildArmedWaveSnapshot(vaultPath, idx, wave, runs, time.Now().UTC())
+	states := map[string]string{}
+	for _, member := range snapshot.Members {
+		states[member.ID] = member.State
+	}
 	groups := map[string][]v7WaveMemberRow{}
 	for _, member := range normalizeList(wave.Data["members"]) {
 		task, ok := idx.Tasks[member]
 		if !ok {
 			continue
 		}
-		group := v7WaveTaskGroup(task, active)
+		group := fallback(states[member], armedWaveDependencyWaiting)
 		groups[group] = append(groups[group], v7WaveMemberRow{
 			ID:     member,
 			Title:  stringField(task.Data, "title"),
 			Status: stringField(task.Data, "status"),
 			Proof:  v7WaveProofLine(vaultPath, idx, task),
+			State:  group,
 		})
 	}
 	for _, group := range groups {
@@ -558,6 +571,25 @@ func v7WaveMemberGroups(vaultPath string, idx v7Index, wave Note) map[string][]v
 		})
 	}
 	return groups
+}
+
+func v7WaveRuntimeRuns(projectID string) map[string]RunStatus {
+	out := map[string]RunStatus{}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		return out
+	}
+	defer store.Close()
+	runs, err := store.ListRuns()
+	if err != nil {
+		return out
+	}
+	for _, run := range runs {
+		if projectID == "" || run.ProjectID == projectID {
+			out[firstNonEmpty(run.ItemID, run.RecordID)] = run
+		}
+	}
+	return out
 }
 
 func v7WaveTaskGroup(task Note, active map[string]v7LeaseRecord) string {
@@ -613,6 +645,7 @@ func v7WavePayload(vaultPath string, idx v7Index, wave Note) map[string]any {
 				"group":  group,
 				"status": row.Status,
 				"proof":  row.Proof,
+				"state":  row.State,
 			})
 		}
 	}

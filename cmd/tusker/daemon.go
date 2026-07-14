@@ -843,6 +843,15 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			projectRuns[recordID] = current
 
 			if shouldDispatchRun(current, now) {
+				if reason := armedWaveDispatchBlocker(project.VaultRoot, note, wfFile.Data, projectRuns); reason != "" {
+					current.LastError = "dispatch blocked: " + reason
+					current.UpdatedAt = now.Format(time.RFC3339)
+					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
+						return err
+					}
+					projectRuns[recordID] = current
+					continue
+				}
 				if reason := daemonDispatchBlockedReason(project.VaultRoot, note, notesByID, notesByRecordID); reason != "" {
 					current.LastError = reason
 					current.UpdatedAt = now.Format(time.RFC3339)
@@ -1017,6 +1026,15 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			d.emitProjectStreamEvent(project.ProjectID, serveStreamKindReviewBatch, "review:batch", "needs", "tasks", "runs", "projects")
 			projectRuns[recordID] = current
 			if !shouldDispatchRun(current, now) {
+				continue
+			}
+			if reason := armedWaveDispatchBlocker(project.VaultRoot, note, wfFile.Data, projectRuns); reason != "" {
+				current.LastError = "review dispatch blocked: " + reason
+				current.UpdatedAt = now.Format(time.RFC3339)
+				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
+					return err
+				}
+				projectRuns[recordID] = current
 				continue
 			}
 			if dispatchCapacityLimitReached(globalActiveRuns, globalLimit, current) {
@@ -5079,10 +5097,15 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 		"reviewer.auto_close_allowed": yesNo(reviewerMayAutoCloseRisk(wfFile.Data.Reviewer, stringField(note.Data, "risk"))),
 	}
 	values["reviewer.verify_command"] = reviewerVerifyCommandForNote(note, values["reviewer.actor"])
+	values["reviewer.land_command"] = fmt.Sprintf("tusker land %s --by %s", stringField(note.Data, "id"), values["reviewer.actor"])
+	values["reviewer.finalize_command"] = values["reviewer.land_command"]
 	values["reviewer.close_command"] = fmt.Sprintf("tusker close %s --by %s --reason \"agent review accepted\"", stringField(note.Data, "id"), values["reviewer.actor"])
 	template := wfFile.Body
 	if lane == runLaneReview {
 		template = firstNonEmpty(wfFile.Data.Reviewer.Prompt, defaultReviewerPrompt())
+		if stringField(note.Data, "wave") != "" && !strings.Contains(template, "reviewer.land_command") {
+			template = strings.TrimSpace(template) + "\n\nArmed-wave landing contract: after objective verification passes, run {{ reviewer.land_command }} before {{ reviewer.close_command }}. A landing gate failure returns the isolated task to rework; do not close it. After close, run {{ reviewer.finalize_command }} so the final member advances the integrated wave to the default branch.\n"
+		}
 	}
 	rendered, err := renderStrictWorkflowTemplate(template, values)
 	if err != nil {

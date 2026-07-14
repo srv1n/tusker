@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -566,6 +567,10 @@ func runV7LandingGate(vaultPath, workDir string) (bool, string) {
 	if len(commands) == 0 {
 		commands = []string{"go build ./...", "go vet ./...", "go test ./... -count=1"}
 	}
+	fingerprint := v7LandingGateFingerprint(workDir, commands)
+	if fingerprint != "" && v7LandingGateCacheHit(vaultPath, fingerprint) {
+		return true, "gate cached: " + fingerprint
+	}
 	for _, command := range commands {
 		cmd := exec.Command("sh", "-c", command)
 		cmd.Dir = workDir
@@ -574,7 +579,64 @@ func runV7LandingGate(vaultPath, workDir string) (bool, string) {
 			return false, landingFailureSummary(command, string(output), err)
 		}
 	}
+	if fingerprint != "" {
+		_ = writeV7LandingGateCache(vaultPath, fingerprint, commands)
+	}
 	return true, "gate passed: " + strings.Join(commands, " && ")
+}
+
+type v7LandingGateCacheRecord struct {
+	Schema      string   `json:"schema"`
+	Fingerprint string   `json:"fingerprint"`
+	Commands    []string `json:"commands"`
+	PassedAt    string   `json:"passed_at"`
+}
+
+func v7LandingGateFingerprint(workDir string, commands []string) string {
+	head, err := gitOutputTrim(workDir, "rev-parse", "HEAD")
+	if err != nil || head == "" {
+		return ""
+	}
+	toolchain := "unknown"
+	if output, err := exec.Command("go", "version").CombinedOutput(); err == nil {
+		toolchain = strings.TrimSpace(string(output))
+	}
+	sum := sha256.Sum256([]byte(strings.Join(append([]string{"tusker.landing-gate/v1", head, toolchain}, commands...), "\x00")))
+	return fmt.Sprintf("%x", sum)
+}
+
+func v7LandingGateCachePath(vaultPath, fingerprint string) string {
+	project := fallback(v7ProjectID(vaultPath), "project")
+	return filepath.Join(DefaultStateRoot(), "landing-cache", sanitizeWorkspaceKey(project), fingerprint+".json")
+}
+
+func v7LandingGateCacheHit(vaultPath, fingerprint string) bool {
+	raw, err := os.ReadFile(v7LandingGateCachePath(vaultPath, fingerprint))
+	if err != nil {
+		return false
+	}
+	var record v7LandingGateCacheRecord
+	return json.Unmarshal(raw, &record) == nil && record.Schema == "tusker.landing-gate-cache/v1" && record.Fingerprint == fingerprint
+}
+
+func writeV7LandingGateCache(vaultPath, fingerprint string, commands []string) error {
+	path := v7LandingGateCachePath(vaultPath, fingerprint)
+	if err := ensureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(v7LandingGateCacheRecord{Schema: "tusker.landing-gate-cache/v1", Fingerprint: fingerprint, Commands: commands, PassedAt: time.Now().UTC().Format(time.RFC3339)}, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp-" + newRecordID()
+	if err := os.WriteFile(tmp, append(raw, '\n'), 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func landingFailureSummary(command, output string, err error) string {

@@ -231,7 +231,9 @@ tusker status {{ note.id }} rework --by {{ reviewer.actor }} --reason "<specific
 
 If auto-close is allowed and every check passes, run:
 {{ reviewer.verify_command }}
+{{ reviewer.land_command }}
 {{ reviewer.close_command }}
+{{ reviewer.finalize_command }}
 
 Explicit blocking gates still prevent close until they are satisfied or waived by their authorized owner.`)
 }
