@@ -20,6 +20,8 @@ const (
 	daemonRestartTimestampsKey     = "daemon_abnormal_restart_timestamps"
 	daemonLastRestartCauseKey      = "daemon_last_restart_cause"
 	daemonPendingRestartCauseKey   = "daemon_pending_abnormal_restart_cause"
+	daemonCorruptRestartHistoryKey = "daemon_corrupt_abnormal_restart_timestamps"
+	daemonCorruptCrashStatusKey    = "daemon_corrupt_crash_loop_status"
 	daemonCrashLoopBurst           = 5
 	daemonCrashLoopWindowSeconds   = 10 * 60
 	daemonRestartCauseStalePID     = "stale_pid"
@@ -202,13 +204,15 @@ func (s *RuntimeStore) beginManagedDaemonStart(stalePID bool, now time.Time) (da
 	}
 
 	status := defaultCrashLoopStatus()
+	quarantined := map[string]string{}
 	rawStatus, err := setting(daemonCrashLoopSettingKey)
 	if err != nil {
 		return daemonCrashLoopStatus{}, err
 	}
 	if strings.TrimSpace(rawStatus) != "" {
 		if err := json.Unmarshal([]byte(rawStatus), &status); err != nil {
-			return daemonCrashLoopStatus{}, err
+			quarantined[daemonCorruptCrashStatusKey] = rawStatus
+			status = defaultCrashLoopStatus()
 		}
 	}
 	status.WindowSeconds = daemonCrashLoopWindowSeconds
@@ -217,13 +221,18 @@ func (s *RuntimeStore) beginManagedDaemonStart(stalePID bool, now time.Time) (da
 	if err != nil {
 		return daemonCrashLoopStatus{}, err
 	}
-	cause := strings.TrimSpace(pending)
-	if cause == "" && stalePID {
-		cause = daemonRestartCauseStalePID
+	causes := decodePendingRestartCauses(pending)
+	if len(causes) == 0 && stalePID {
+		causes = append(causes, daemonRestartCauseStalePID)
 	}
-	if cause == "" {
+	if len(causes) == 0 {
 		if err := setSetting(daemonLastRestartCauseKey, daemonRestartCauseCleanStartup); err != nil {
 			return daemonCrashLoopStatus{}, err
+		}
+		for key, value := range quarantined {
+			if err := setSetting(key, value); err != nil {
+				return daemonCrashLoopStatus{}, err
+			}
 		}
 		if err := tx.Commit(); err != nil {
 			return daemonCrashLoopStatus{}, err
@@ -238,7 +247,8 @@ func (s *RuntimeStore) beginManagedDaemonStart(stalePID bool, now time.Time) (da
 	var stored []string
 	if strings.TrimSpace(rawRestarts) != "" {
 		if err := json.Unmarshal([]byte(rawRestarts), &stored); err != nil {
-			return daemonCrashLoopStatus{}, err
+			quarantined[daemonCorruptRestartHistoryKey] = rawRestarts
+			stored = nil
 		}
 	}
 	cutoff := now.UTC().Add(-time.Duration(daemonCrashLoopWindowSeconds) * time.Second)
@@ -249,7 +259,10 @@ func (s *RuntimeStore) beginManagedDaemonStart(stalePID bool, now time.Time) (da
 			restarts = append(restarts, parsed.UTC().Format(time.RFC3339Nano))
 		}
 	}
-	restarts = append(restarts, now.UTC().Format(time.RFC3339Nano))
+	for range causes {
+		restarts = append(restarts, now.UTC().Format(time.RFC3339Nano))
+	}
+	cause := causes[len(causes)-1]
 	status.LastCheckedAt = now.UTC().Format(time.RFC3339Nano)
 	status.LastRestartCause = cause
 	status.RestartCount = len(restarts)
@@ -270,12 +283,16 @@ func (s *RuntimeStore) beginManagedDaemonStart(stalePID bool, now time.Time) (da
 	if err != nil {
 		return daemonCrashLoopStatus{}, err
 	}
-	for key, value := range map[string]string{
+	updates := map[string]string{
 		daemonRestartTimestampsKey:   string(restartsJSON),
 		daemonLastRestartCauseKey:    cause,
 		daemonCrashLoopSettingKey:    string(statusJSON),
 		daemonPendingRestartCauseKey: "",
-	} {
+	}
+	for key, value := range quarantined {
+		updates[key] = value
+	}
+	for key, value := range updates {
 		if err := setSetting(key, value); err != nil {
 			return daemonCrashLoopStatus{}, err
 		}
@@ -293,13 +310,43 @@ func (s *RuntimeStore) markManagedDaemonAbnormalExit(cause string) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, key := range []string{daemonLastRestartCauseKey, daemonPendingRestartCauseKey} {
+	var pending string
+	if err := tx.QueryRow(`SELECT value FROM daemon_settings WHERE key = ?`, daemonPendingRestartCauseKey).Scan(&pending); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	causes := append(decodePendingRestartCauses(pending), cause)
+	pendingJSON, err := json.Marshal(causes)
+	if err != nil {
+		return err
+	}
+	for key, value := range map[string]string{
+		daemonLastRestartCauseKey:    cause,
+		daemonPendingRestartCauseKey: string(pendingJSON),
+	} {
 		if _, err := tx.Exec(`INSERT INTO daemon_settings (key, value) VALUES (?, ?)
-			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, cause); err != nil {
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+func decodePendingRestartCauses(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var causes []string
+	if json.Unmarshal([]byte(raw), &causes) != nil {
+		causes = []string{raw}
+	}
+	filtered := causes[:0]
+	for _, cause := range causes {
+		if cause = strings.TrimSpace(cause); cause != "" {
+			filtered = append(filtered, cause)
+		}
+	}
+	return filtered
 }
 
 func (s *RuntimeStore) readDaemonRestartTimestamps(now time.Time) ([]string, error) {

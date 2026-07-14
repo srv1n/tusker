@@ -226,6 +226,15 @@ func TestCrashLoopPreRunFailuresLeaveSixthReplacementServingReads(t *testing.T) 
 	if err := store.SetGlobalActiveRunLimit(1); err != nil {
 		t.Fatal(err)
 	}
+	// The first of six abnormal generations is an unconsumed watchdog exit.
+	// Corrupt history must be quarantined without dropping that debt; five
+	// subsequent guarded startup failures complete the six-start burst.
+	if err := store.markManagedDaemonAbnormalExit(daemonRestartCauseWatchdog); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetSetting(daemonRestartTimestampsKey, "not-json"); err != nil {
+		t.Fatal(err)
+	}
 	_ = store.Close()
 
 	fixtureCommand := func(failBeforeRun bool) *exec.Cmd {
@@ -242,7 +251,7 @@ func TestCrashLoopPreRunFailuresLeaveSixthReplacementServingReads(t *testing.T) 
 		cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 		return cmd
 	}
-	for generation := 1; generation <= 6; generation++ {
+	for generation := 1; generation <= 5; generation++ {
 		err := fixtureCommand(true).Run()
 		exitErr, ok := err.(*exec.ExitError)
 		if !ok || exitErr.ExitCode() != 42 {
@@ -307,6 +316,12 @@ func TestCrashLoopPreRunFailuresLeaveSixthReplacementServingReads(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer store.Close()
+	if quarantined, err := store.GetSetting(daemonCorruptRestartHistoryKey); err != nil || quarantined != "not-json" {
+		t.Fatalf("malformed restart history was not quarantined: value=%q err=%v", quarantined, err)
+	}
+	if pending, err := store.GetSetting(daemonPendingRestartCauseKey); err != nil || pending != "" {
+		t.Fatalf("sixth replacement left consumed restart debt: value=%q err=%v", pending, err)
+	}
 	var blocked RunStatus
 	deadline = time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -468,7 +483,7 @@ func TestManagedGuardLoserDoesNotPoisonRestartAccounting(t *testing.T) {
 	}
 }
 
-func TestManagedStartAccountingRollsBackWithoutLosingPendingCause(t *testing.T) {
+func TestManagedStartAccountingQuarantinesMalformedHistoryWithoutLosingPendingCause(t *testing.T) {
 	store, err := OpenRuntimeStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -480,12 +495,41 @@ func TestManagedStartAccountingRollsBackWithoutLosingPendingCause(t *testing.T) 
 	if err := store.SetSetting(daemonRestartTimestampsKey, "not-json"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.beginManagedDaemonStart(false, time.Now().UTC()); err == nil {
-		t.Fatal("expected invalid history to abort start accounting")
+	status, err := store.beginManagedDaemonStart(false, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
 	}
 	pending, err := store.GetSetting(daemonPendingRestartCauseKey)
-	if err != nil || pending != daemonRestartCauseWatchdog {
-		t.Fatalf("failed accounting lost predecessor cause: pending=%q err=%v", pending, err)
+	if err != nil || pending != "" || status.RestartCount != 1 || status.LastRestartCause != daemonRestartCauseWatchdog {
+		t.Fatalf("recovered accounting did not consume predecessor once: pending=%q status=%#v err=%v", pending, status, err)
+	}
+	quarantined, err := store.GetSetting(daemonCorruptRestartHistoryKey)
+	if err != nil || quarantined != "not-json" {
+		t.Fatalf("malformed history was not quarantined transactionally: value=%q err=%v", quarantined, err)
+	}
+}
+
+func TestManagedExitJournalPreservesEveryUnconsumedCause(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, cause := range []string{daemonRestartCauseWatchdog, daemonRestartCauseRunError} {
+		if err := store.markManagedDaemonAbnormalExit(cause); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status, err := store.beginManagedDaemonStart(false, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.RestartCount != 2 || status.LastRestartCause != daemonRestartCauseRunError {
+		t.Fatalf("unconsumed predecessor was overwritten: %#v", status)
+	}
+	pending, err := store.GetSetting(daemonPendingRestartCauseKey)
+	if err != nil || pending != "" {
+		t.Fatalf("consumed restart journal was not cleared: pending=%q err=%v", pending, err)
 	}
 }
 
