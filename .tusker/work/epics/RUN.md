@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:32:32Z"
-updated_at: "2026-07-14T14:05:06Z"
-state_rev: "sha256:750a79754fdeac9f8de3a440ebb532c5b38603393e6e667dd2d8862d3527c77e"
+updated_at: "2026-07-14T15:17:22Z"
+state_rev: "sha256:5f179c6a7b6847e4b7e99f396428dabad332922cb585029d5704f6dab45dac47"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
   use_when: "Use to triage Codex/Claude runner behavior, profile policy, leases, and runner integration."
@@ -53,7 +53,6 @@ TBD.
 | [[RUN-T-0003]] | backlog | agent | Wait for dependency RUN-T-0002 to reach review with satisfied proof or done. |
 | [[RUN-T-0005]] | backlog | agent | Wait for dependency RUN-T-0002 to reach review with satisfied proof or done. |
 | [[RUN-T-0006]] | backlog | agent | Wait for dependency RUN-T-0004 to reach done. |
-| [[RUN-T-0015]] | ready | agent | Wait for dependency RUN-T-0011 to reach done. |
 | [[RUN-T-0045]] | review | reviewer | Review evidence and close or return to rework. |
 | [[RUN-T-0046]] | review | reviewer | Review evidence and close or return to rework. |
 
@@ -72,6 +71,7 @@ TBD.
 | [[RUN-T-0012]] | reviewer:agent | 2026-07-07T02:49:09Z |
 | [[RUN-T-0013]] | reviewer:agent | 2026-07-07T02:49:26Z |
 | [[RUN-T-0014]] | human:sarav | 2026-07-07T07:28:00Z |
+| [[RUN-T-0015]] | reviewer:codex-run15 | 2026-07-14T15:17:21Z |
 | [[RUN-T-0016]] | human:sarav | 2026-07-07T07:28:00Z |
 | [[RUN-T-0017]] | human:sarav | 2026-07-07T13:32:52Z |
 | [[RUN-T-0018]] | human:sarav | 2026-07-07T07:28:00Z |

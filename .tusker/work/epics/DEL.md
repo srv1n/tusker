@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-14T11:20:08Z"
-updated_at: "2026-07-14T14:05:45Z"
-state_rev: "sha256:6998c780bbf3fda0b179ae8260e59b9a2738459d4200b7615be63ca98735696d"
+updated_at: "2026-07-14T14:20:32Z"
+state_rev: "sha256:2545ecec489f3c0bf31a9a86fa4c260a683449c3a49dcad3f4f0c7165f6380ef"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -60,7 +60,7 @@ external authority, unresolved intent, or explicitly subjective acceptance.
 |---|---|---|---|
 | [[DEL-T-0001]] | review | reviewer | Review evidence and close or return to rework. |
 | [[DEL-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
-| [[DEL-T-0003]] | rework | agent | Review evidence and close or return to rework. |
+| [[DEL-T-0003]] | review | reviewer | Review evidence and close or return to rework. |
 | [[DEL-T-0005]] | review | reviewer | Review evidence and close or return to rework. |
 | [[DEL-T-0006]] | backlog | blocked_dependency | Wait for dependency DEL-T-0003 to reach done. |
 
