@@ -260,8 +260,9 @@ func invalidWaveGateFailure(idx v7Index, taskID string) string {
 		kind := strings.ToLower(stringField(gate.Data, "gate_kind"))
 		action := strings.TrimSpace(stringField(gate.Data, "action"))
 		verification := strings.TrimSpace(stringField(gate.Data, "verification"))
-		why := strings.TrimSpace(stringField(gate.Data, "why_agent_cannot"))
-		if action == "" || verification == "" || why == "" || v7HumanGateOwnsAgentCapableWork(kind, owner, action, verification, why, stringField(gate.Data, "suggestion")) {
+		why := v7GateBoundaryText(gate)
+		_, knownKind := v7GateKinds[kind]
+		if !knownKind || action == "" || verification == "" || why == "" || v7HumanGateOwnsAgentCapableWork(kind, owner, action, verification, why, v7GateSuggestionText(gate)) {
 			return "Return invalid human gate " + stringField(gate.Data, "id") + " to agent rework."
 		}
 	}
@@ -426,7 +427,7 @@ func validWaveHumanActions(idx v7Index, members []string) []waveBriefHumanAction
 		action := strings.TrimSpace(stringField(gate.Data, "action"))
 		verification := strings.TrimSpace(stringField(gate.Data, "verification"))
 		why := v7GateBoundaryText(gate)
-		if action == "" || verification == "" || why == "" || v7HumanGateOwnsAgentCapableWork(kind, stringField(gate.Data, "owner"), action, verification, why, v7GateSuggestionText(gate)) {
+		if _, knownKind := v7GateKinds[kind]; !knownKind || action == "" || verification == "" || why == "" || v7HumanGateOwnsAgentCapableWork(kind, stringField(gate.Data, "owner"), action, verification, why, v7GateSuggestionText(gate)) {
 			continue
 		}
 		sort.Strings(blocks)

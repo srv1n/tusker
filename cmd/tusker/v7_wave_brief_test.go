@@ -127,6 +127,31 @@ func TestWaveBriefHumanAction(t *testing.T) {
 	}
 }
 
+func TestWaveBriefHumanActionUsesCanonicalBodyAwareGateValidation(t *testing.T) {
+	idx, wave := briefFixture()
+	bodyBacked := briefGate("APP-G-0001", "auth", "Provision the staging OAuth secret.", "A successful authenticated probe resumes the task.", "")
+	bodyBacked.Data["schema"] = "tusker.gate/v1"
+	delete(bodyBacked.Data, "why_agent_cannot")
+	bodyBacked.Body = "## Why agent cannot do this\n\nThe credential belongs to the human account owner.\n\n## Secret policy\n\nDo not store the secret in the repository.\n"
+	bodyBacked.RelativePath = "work/gates/APP-G-0001.md"
+	var validationErrors, validationWarnings []Issue
+	validateV7Gate(bodyBacked, bodyBacked.RelativePath, &validationErrors, &validationWarnings)
+	if len(validationErrors) != 0 {
+		t.Fatalf("body-backed human gate is not schema-valid: %#v", validationErrors)
+	}
+
+	unknown := briefGate("APP-G-0002", "unknown_authority", "Provide an operator response.", "The response is recorded.", "Only the account owner can respond.")
+	idx.Gates["APP-G-0001"] = bodyBacked
+	idx.Gates["APP-G-0002"] = unknown
+	brief := buildWaveBrief(idx, wave)
+	if len(brief.HumanAction) != 1 || brief.HumanAction[0].GateID != "APP-G-0001" {
+		t.Fatalf("schema-valid body-backed gate was not isolated to Human action: %#v", brief.HumanAction)
+	}
+	if len(brief.Rework) != 1 || !strings.Contains(brief.Rework[0].Failure, "APP-G-0002") {
+		t.Fatalf("unknown gate kind did not route only to rework: %#v", brief.Rework)
+	}
+}
+
 func TestWaveBriefArtifactsRequireAcceptedDurableMappedEvidence(t *testing.T) {
 	idx, wave := briefFixture()
 	task := idx.Tasks["APP-T-0001"]
