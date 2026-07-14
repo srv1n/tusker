@@ -3256,9 +3256,13 @@ func v7TaskDispatchBlockers(vaultPath string, task Note) []string {
 	if waveID := strings.TrimSpace(stringField(task.Data, "wave")); waveID != "" {
 		if idx, err := loadV7Index(vaultPath); err == nil {
 			if wave, ok := idx.Waves[waveID]; ok {
-				auth := waveAuthorizationProjection(vaultPath, idx, wave)
-				if state := stringField(auth, "state"); state != "armed" {
-					reasons = append(reasons, "wave "+waveID+" authorization is "+state+"; "+stringField(auth, "action"))
+				if !containsString(normalizeList(wave.Data["members"]), stringField(task.Data, "id")) {
+					reasons = append(reasons, stringField(task.Data, "id")+" is not an authorized member of wave "+waveID)
+				} else {
+					auth := waveAuthorizationProjection(vaultPath, idx, wave)
+					if state := stringField(auth, "state"); state != "armed" {
+						reasons = append(reasons, "wave "+waveID+" authorization is "+state+"; "+stringField(auth, "action"))
+					}
 				}
 			} else {
 				reasons = append(reasons, "wave does not resolve: "+waveID)

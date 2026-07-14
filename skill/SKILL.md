@@ -1,6 +1,10 @@
 ---
 name: tusker
 description: "Operate Tusker repo-local task contracts, proof, review, human gates, and agent orchestration."
+metadata:
+  wave_authorization_schema: "tusker.wave-authorization/v1"
+  workflow_version: 1
+  tracker_schema_version: 7
 ---
 
 # Tusker Operator Skill
@@ -25,7 +29,9 @@ Before unattended delivery, run `tusker wave preflight <WAVE> --json`, then
 arm once with `tusker wave arm <WAVE> --by human:<name>`. Authorization is
 bound to the material spec/task/gate/dependency fingerprint. A stale, paused,
 or disarmed wave cannot produce new daemon claims; proof/evidence progress
-alone does not invalidate authorization.
+alone does not invalidate authorization. The arm actor's consent also satisfies
+critical-risk explicit-dispatch policy for members of that exact fingerprint;
+it is not followed by a second per-task authorization prompt.
 
 ### Interactive work
 

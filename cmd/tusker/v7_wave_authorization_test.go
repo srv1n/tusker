@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestWavePreflight(t *testing.T) {
@@ -15,7 +18,7 @@ func TestWavePreflight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	green := wavePreflightEnvironment{true, true, true, true, true, true, true, true, true}
+	green := greenWaveEnvironment()
 	report := buildWavePreflight(vault, idx, wave, green)
 	if !report.OK || !report.ReadOnly || len(report.Frontiers) != 2 || len(report.Artifacts) != 2 {
 		t.Fatalf("unexpected green preflight: %#v", report)
@@ -32,6 +35,8 @@ func TestWavePreflight(t *testing.T) {
 		{"project", func(e *wavePreflightEnvironment) { e.ProjectRegistered = false }, "project"},
 		{"daemon", func(e *wavePreflightEnvironment) { e.DaemonAlive = false }, "daemon"},
 		{"runner", func(e *wavePreflightEnvironment) { e.RunnerCompatible = false }, "runner"},
+		{"skill", func(e *wavePreflightEnvironment) { e.SkillCompatible = false }, "operator skill"},
+		{"workflow", func(e *wavePreflightEnvironment) { e.WorkflowCompatible = false }, "workflow"},
 		{"approval", func(e *wavePreflightEnvironment) { e.ApprovalFree = false }, "approval"},
 		{"workspace", func(e *wavePreflightEnvironment) { e.IsolatedWorkspace = false }, "workspace"},
 	}
@@ -61,6 +66,88 @@ func TestWavePreflight(t *testing.T) {
 	brokenIdx.Tasks["APP-T-0001"] = broken
 	if got := buildWavePreflight(vault, brokenIdx, wave, green); got.OK || !hasWaveBlocker(got.Blockers, "cycle") {
 		t.Fatalf("missing cycle blocker: %#v", got.Blockers)
+	}
+
+	artifactIdx := idx
+	artifactIdx.Tasks = cloneNoteMap(idx.Tasks)
+	artifactTask := artifactIdx.Tasks["APP-T-0001"]
+	artifactTask.Data = cloneMap(artifactTask.Data)
+	artifactTask.Data["artifact_contract"] = map[string]any{"kind": "log", "path": ".tusker/scratch/output.log", "summary": "Invalid scratch artifact."}
+	artifactIdx.Tasks["APP-T-0001"] = artifactTask
+	if got := buildWavePreflight(vault, artifactIdx, wave, green); got.OK || !hasWaveBlocker(got.Blockers, "artifact contract") {
+		t.Fatalf("scratch artifact escaped canonical validation: %#v", got.Blockers)
+	}
+
+	specIdx := idx
+	specIdx.Tasks = cloneNoteMap(idx.Tasks)
+	specTask := specIdx.Tasks["APP-T-0001"]
+	specTask.Data = cloneMap(specTask.Data)
+	specTask.Data["spec_refs"] = []string{"docs/specs/missing.md"}
+	specIdx.Tasks["APP-T-0001"] = specTask
+	if got := buildWavePreflight(vault, specIdx, wave, green); got.OK || !hasWaveBlocker(got.Blockers, "spec_ref does not resolve") {
+		t.Fatalf("missing member spec_ref was not rejected: %#v", got.Blockers)
+	}
+
+	externalIdx := idx
+	externalIdx.Tasks = cloneNoteMap(idx.Tasks)
+	external := externalIdx.Tasks["APP-T-0002"]
+	external.Data = cloneMap(external.Data)
+	external.Data["id"], external.Data["status"], external.Data["readiness"] = "APP-T-0003", "backlog", "held"
+	externalIdx.Tasks["APP-T-0003"] = external
+	externalTask := externalIdx.Tasks["APP-T-0001"]
+	externalTask.Data = cloneMap(externalTask.Data)
+	externalTask.Data["dependencies"] = []string{"APP-T-0003:hard"}
+	externalIdx.Tasks["APP-T-0001"] = externalTask
+	gotExternal := buildWavePreflight(vault, externalIdx, wave, green)
+	if gotExternal.OK || gotExternal.ExternalDependencies["APP-T-0001"] == nil || !hasWaveBlocker(gotExternal.Blockers, "external dependency APP-T-0003") {
+		t.Fatalf("external dependency was not explained and blocked: %#v %#v", gotExternal.ExternalDependencies, gotExternal.Blockers)
+	}
+}
+
+func TestWavePreflightSkillAndIntegrationCompatibility(t *testing.T) {
+	vault := deliveryTestVault(t)
+	repo := v7RepoRoot(vault)
+	operatorPath := filepath.Join(repo, "skill", "SKILL.md")
+	compatibleSkill := "---\nname: tusker\ndescription: test\nmetadata:\n  wave_authorization_schema: tusker.wave-authorization/v1\n  workflow_version: 1\n  tracker_schema_version: 7\n---\n"
+	if err := writeText(operatorPath, compatibleSkill); err != nil {
+		t.Fatal(err)
+	}
+	if !waveSkillCompatible(vault) {
+		t.Fatal("current wave-aware operator skill was rejected")
+	}
+	if err := writeText(operatorPath, strings.Replace(compatibleSkill, "tusker.wave-authorization/v1", "tusker.wave-authorization/v0", 1)); err != nil {
+		t.Fatal(err)
+	}
+	if waveSkillCompatible(vault) {
+		t.Fatal("stale operator skill was accepted")
+	}
+
+	gitRepo, gitVault := newLandTestRepo(t, 1, "true")
+	gitIdx, _ := loadV7Index(gitVault)
+	gitWave := gitIdx.Waves["W-0001"]
+	if !waveIntegrationBaseClean(gitVault, gitWave) {
+		t.Fatal("clean integration base was rejected")
+	}
+	worktree := filepath.Join(t.TempDir(), "integration")
+	runGitDir(t, gitRepo, "worktree", "add", worktree, "integration/W-0001")
+	t.Cleanup(func() { _ = exec.Command("git", "-C", gitRepo, "worktree", "remove", "--force", worktree).Run() })
+	if err := writeText(filepath.Join(worktree, "dirty.txt"), "dirty\n"); err != nil {
+		t.Fatal(err)
+	}
+	if waveIntegrationBaseClean(gitVault, gitWave) {
+		t.Fatal("dirty integration worktree was accepted")
+	}
+	_ = os.Remove(filepath.Join(worktree, "dirty.txt"))
+	runGitDir(t, gitRepo, "worktree", "remove", "--force", worktree)
+	commitLandBranch(t, gitRepo, "task/unrelated", "integration/W-0001", map[string]string{"ahead.txt": "ahead\n"})
+	runGitDir(t, gitRepo, "branch", "-f", "integration/W-0001", "task/unrelated")
+	if waveIntegrationBaseClean(gitVault, gitWave) {
+		t.Fatal("integration branch ahead of its clean base was accepted")
+	}
+	gitWave.Data = cloneMap(gitWave.Data)
+	gitWave.Data["authorized_at"] = "2026-07-14T00:00:00Z"
+	if !waveIntegrationBaseClean(gitVault, gitWave) {
+		t.Fatal("clean progressed integration branch could not resume")
 	}
 }
 
@@ -132,6 +219,36 @@ func TestWaveArm(t *testing.T) {
 	}
 }
 
+func TestWaveArmAuthorizesCriticalMemberDispatch(t *testing.T) {
+	vault := deliveryTestVault(t)
+	plan := validDeliveryPlan()
+	plan.Tasks[0].Risk = "critical"
+	planPath := writeDeliveryTestPlan(t, vault, plan)
+	if err := deliveryImportCmd(Args{"vault": vault, "plan": planPath, "wave": "Critical", "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	armWaveForTest(t, vault)
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes, err := listAllNotes(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := buildNoteLookup(notes)
+	task := idx.Tasks["APP-T-0001"]
+	if blocker := daemonDispatchBlockedReason(vault, task, lookup.ByID, lookup.ByRecordID); blocker != "" {
+		t.Fatalf("armed critical member still requires a second authorization: %s", blocker)
+	}
+	impostor := task
+	impostor.Data = cloneMap(task.Data)
+	impostor.Data["id"] = "APP-T-9999"
+	if armedWaveExplicitlyAuthorizes(impostor, lookup.ByID) {
+		t.Fatal("armed wave authorized a critical task outside its exact member set")
+	}
+}
+
 func TestWavePause(t *testing.T) {
 	vault := authorizedWaveTestVault(t)
 	armWaveForTest(t, vault)
@@ -155,6 +272,54 @@ func TestWavePause(t *testing.T) {
 	idx, _ = loadV7Index(vault)
 	if got := stringField(waveAuthorizationProjection(vault, idx, idx.Waves["W-0001"]), "state"); got != "armed" {
 		t.Fatalf("resume=%s", got)
+	}
+}
+
+func TestWavePauseAndDisarmPreserveLiveDaemonRuns(t *testing.T) {
+	for _, authorization := range []string{"paused", "disarmed"} {
+		t.Run(authorization, func(t *testing.T) {
+			t.Setenv("TUSKER_STATE_ROOT", t.TempDir())
+			vault := authorizedWaveTestVault(t)
+			armWaveForTest(t, vault)
+			args := Args{"vault": vault, "_pos0": "W-0001", "by": "human:test", "reason": "lifecycle test", "quiet": "true"}
+			if err := mutateWaveAuthorization(args, authorization, nil); err != nil {
+				t.Fatal(err)
+			}
+			wfFile := WorkflowFile{Path: workflowPath(vault), Data: defaultWorkflow()}
+			notes, err := listAllNotes(vault)
+			if err != nil {
+				t.Fatal(err)
+			}
+			note, err := resolveNote(vault, "APP-T-0001")
+			if err != nil {
+				t.Fatal(err)
+			}
+			store, err := OpenRuntimeStore(DefaultStateRoot())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
+			project := RegisteredProject{ProjectID: "app", ProjectKey: "app", Name: "app", RepoRoot: v7RepoRoot(vault), VaultRoot: vault, Enabled: true, Health: projectHealthHealthy}
+			for _, lease := range []LeaseState{LeaseStateClaimed, LeaseStateRunning} {
+				live := RunStatus{ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: wfFile.Data.Agents.Default, Lane: runLaneExecute, LeaseState: string(lease), LeaseOwner: "attempt-live", LeaseGeneration: 7, ActiveAttemptID: "attempt-live", ProcessPID: 1234, ProcessPGID: 1234}
+				updated, persisted, err := daemon.reconcileExecuteRunWithPlan(context.Background(), project, wfFile, notes, note, live)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if persisted || updated.LeaseState != string(lease) || updated.LeaseOwner != "attempt-live" || updated.LeaseGeneration != 7 || updated.ActiveAttemptID != "attempt-live" || updated.ProcessPID != 1234 {
+					t.Fatalf("%s forged a terminal/released live run: before=%#v after=%#v persisted=%t", authorization, live, updated, persisted)
+				}
+			}
+			retry := RunStatus{ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: wfFile.Data.Agents.Default, Lane: runLaneExecute, LeaseState: string(LeaseStateRetryQueued), NextRetryAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)}
+			updated, persisted, err := daemon.reconcileExecuteRunWithPlan(context.Background(), project, wfFile, notes, note, retry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !persisted || updated.LeaseState != string(LeaseStateUnclaimed) || !strings.Contains(updated.LastError, "wave W-0001 authorization") {
+				t.Fatalf("%s did not suppress the future retry: %#v persisted=%t", authorization, updated, persisted)
+			}
+		})
 	}
 }
 
@@ -201,6 +366,16 @@ func TestWaveAuthorizationFingerprint(t *testing.T) {
 	changedTask.Data["title"] = "Materially changed task intent"
 	taskChanged.Tasks["APP-T-0001"] = changedTask
 	assertWaveFingerprintChanged(t, vault, taskChanged, taskChanged.Waves["W-0001"], original, "task")
+	proofContractChanged := idx
+	proofContractChanged.Tasks = cloneNoteMap(idx.Tasks)
+	proofTask := proofContractChanged.Tasks["APP-T-0001"]
+	proofTask.Data = cloneMap(proofTask.Data)
+	proofTask.Data["proof_mode"] = "card"
+	proofTask.Data["proof_required"] = []string{"focused_test", "artifact"}
+	proofTask.Data["proof_required_owner"] = []string{"agent", "reviewer"}
+	proofTask.Data["evidence_budget"] = 2
+	proofContractChanged.Tasks["APP-T-0001"] = proofTask
+	assertWaveFingerprintChanged(t, vault, proofContractChanged, proofContractChanged.Waves["W-0001"], original, "proof contract")
 	memberWave := idx.Waves["W-0001"]
 	memberWave.Data = cloneMap(memberWave.Data)
 	memberWave.Data["members"] = []string{"APP-T-0001"}
@@ -208,6 +383,16 @@ func TestWaveAuthorizationFingerprint(t *testing.T) {
 	gateChanged := idx
 	gateChanged.Gates = map[string]Note{"APP-G-0001": {Data: map[string]any{"id": "APP-G-0001", "status": "open", "owner": "human:test", "blocking": true, "blocks": []string{"APP-T-0001"}, "action": "Supply a credential.", "verification": "Credential works.", "why_agent_cannot": "The credential is unavailable to agents."}}}
 	assertWaveFingerprintChanged(t, vault, gateChanged, gateChanged.Waves["W-0001"], original, "gate")
+	gateAuthorityChanged := gateChanged
+	gateAuthorityChanged.Gates = cloneNoteMap(gateChanged.Gates)
+	authorityGate := gateAuthorityChanged.Gates["APP-G-0001"]
+	authorityGate.Data = cloneMap(authorityGate.Data)
+	authorityGate.Data["gate_kind"] = "decision"
+	authorityGate.Data["suggestion"] = "Use the non-destructive option."
+	authorityGate.Data["why_agent_cannot"] = "The approved spec leaves two incompatible product choices."
+	gateAuthorityChanged.Gates["APP-G-0001"] = authorityGate
+	gateFingerprint, _ := waveMaterialFingerprint(vault, gateChanged, gateChanged.Waves["W-0001"])
+	assertWaveFingerprintChanged(t, vault, gateAuthorityChanged, gateAuthorityChanged.Waves["W-0001"], gateFingerprint, "gate authority boundary")
 	specPath := filepath.Join(v7RepoRoot(vault), "docs", "specs", "delivery.md")
 	specBefore := mustReadIndexTest(t, specPath)
 	if err := writeText(specPath, specBefore+"\nMaterial intent change.\n"); err != nil {
@@ -217,6 +402,21 @@ func TestWaveAuthorizationFingerprint(t *testing.T) {
 	if err := writeText(specPath, specBefore); err != nil {
 		t.Fatal(err)
 	}
+	memberSpecPath := filepath.Join(v7RepoRoot(vault), "docs", "specs", "member-only.md")
+	if err := writeText(memberSpecPath, "# Member contract\n"); err != nil {
+		t.Fatal(err)
+	}
+	memberSpecIdx := idx
+	memberSpecIdx.Tasks = cloneNoteMap(idx.Tasks)
+	memberSpecTask := memberSpecIdx.Tasks["APP-T-0001"]
+	memberSpecTask.Data = cloneMap(memberSpecTask.Data)
+	memberSpecTask.Data["spec_refs"] = append(normalizeList(memberSpecTask.Data["spec_refs"]), "docs/specs/member-only.md")
+	memberSpecIdx.Tasks["APP-T-0001"] = memberSpecTask
+	memberSpecFingerprint, _ := waveMaterialFingerprint(vault, memberSpecIdx, memberSpecIdx.Waves["W-0001"])
+	if err := writeText(memberSpecPath, "# Member contract\n\nChanged intent.\n"); err != nil {
+		t.Fatal(err)
+	}
+	assertWaveFingerprintChanged(t, vault, memberSpecIdx, memberSpecIdx.Waves["W-0001"], memberSpecFingerprint, "member task spec")
 	data, body, _ = parseFrontmatterMustRead(path)
 	data["dependencies"] = []string{"APP-T-0002:hard"}
 	data["state_rev"] = v7StateRev(data, body)
@@ -286,7 +486,7 @@ func armWaveForTest(t *testing.T, vault string) {
 }
 
 func greenWaveEnvironment() wavePreflightEnvironment {
-	return wavePreflightEnvironment{true, true, true, true, true, true, true, true, true}
+	return wavePreflightEnvironment{ProjectRegistered: true, ProjectEnabled: true, ProjectHealthy: true, DaemonAlive: true, DaemonReconciling: true, RunnerCompatible: true, SkillCompatible: true, WorkflowCompatible: true, ApprovalFree: true, IsolatedWorkspace: true, IntegrationClean: true}
 }
 func mapsEqualString(a, b map[string]string) bool {
 	if len(a) != len(b) {

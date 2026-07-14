@@ -1300,13 +1300,22 @@ func trackerRecordID(note Note) string {
 }
 
 func dispatchEligibilityReason(note Note, notesByID map[string]Note, notesByRecordID map[string]Note) string {
-	if strings.EqualFold(stringField(note.Data, "risk"), "critical") {
+	if strings.EqualFold(stringField(note.Data, "risk"), "critical") && !armedWaveExplicitlyAuthorizes(note, notesByID) {
 		return "dispatch blocked: critical risk requires explicit human dispatch"
 	}
 	if reason := unresolvedBlockerReason(note, notesByID, notesByRecordID); reason != "" {
 		return "dispatch blocked: " + reason
 	}
 	return ""
+}
+
+func armedWaveExplicitlyAuthorizes(note Note, notesByID map[string]Note) bool {
+	waveID := strings.TrimSpace(stringField(note.Data, "wave"))
+	if waveID == "" {
+		return false
+	}
+	wave, ok := notesByID[waveID]
+	return ok && effectiveV7Kind(wave.Data) == "wave" && stringField(wave.Data, "authorization") == "armed" && containsString(normalizeList(wave.Data["members"]), stringField(note.Data, "id"))
 }
 
 func blockerResolved(note Note) bool {

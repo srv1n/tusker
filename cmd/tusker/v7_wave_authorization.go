@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -15,38 +16,41 @@ import (
 const waveAuthorizationSchema = "tusker.wave-authorization/v1"
 
 type wavePreflightEnvironment struct {
-	ProjectRegistered bool
-	ProjectEnabled    bool
-	ProjectHealthy    bool
-	DaemonAlive       bool
-	DaemonReconciling bool
-	RunnerCompatible  bool
-	ApprovalFree      bool
-	IsolatedWorkspace bool
-	IntegrationClean  bool
+	ProjectRegistered  bool
+	ProjectEnabled     bool
+	ProjectHealthy     bool
+	DaemonAlive        bool
+	DaemonReconciling  bool
+	RunnerCompatible   bool
+	SkillCompatible    bool
+	WorkflowCompatible bool
+	ApprovalFree       bool
+	IsolatedWorkspace  bool
+	IntegrationClean   bool
 }
 
 type wavePreflightReport struct {
-	Schema              string           `json:"schema"`
-	WaveID              string           `json:"waveId"`
-	OK                  bool             `json:"ok"`
-	ReadOnly            bool             `json:"readOnly"`
-	Fingerprint         string           `json:"fingerprint"`
-	StoredFingerprint   string           `json:"storedFingerprint,omitempty"`
-	Authorization       string           `json:"authorization"`
-	AuthorizationStale  bool             `json:"authorizationStale"`
-	Action              string           `json:"action"`
-	Members             []string         `json:"members"`
-	Frontiers           [][]string       `json:"frontiers"`
-	TaskProof           map[string]any   `json:"taskProof"`
-	Artifacts           map[string]any   `json:"artifacts"`
-	HumanGates          []map[string]any `json:"humanGates"`
-	ExpectedConcurrency int              `json:"expectedConcurrency"`
-	ValidationLane      string           `json:"validationLane"`
-	IntegrationBranch   string           `json:"integrationBranch"`
-	LandingPolicy       string           `json:"landingPolicy"`
-	Checks              map[string]bool  `json:"checks"`
-	Blockers            []string         `json:"blockers"`
+	Schema               string           `json:"schema"`
+	WaveID               string           `json:"waveId"`
+	OK                   bool             `json:"ok"`
+	ReadOnly             bool             `json:"readOnly"`
+	Fingerprint          string           `json:"fingerprint"`
+	StoredFingerprint    string           `json:"storedFingerprint,omitempty"`
+	Authorization        string           `json:"authorization"`
+	AuthorizationStale   bool             `json:"authorizationStale"`
+	Action               string           `json:"action"`
+	Members              []string         `json:"members"`
+	Frontiers            [][]string       `json:"frontiers"`
+	TaskProof            map[string]any   `json:"taskProof"`
+	Artifacts            map[string]any   `json:"artifacts"`
+	ExternalDependencies map[string]any   `json:"externalDependencies"`
+	HumanGates           []map[string]any `json:"humanGates"`
+	ExpectedConcurrency  int              `json:"expectedConcurrency"`
+	ValidationLane       string           `json:"validationLane"`
+	IntegrationBranch    string           `json:"integrationBranch"`
+	LandingPolicy        string           `json:"landingPolicy"`
+	Checks               map[string]bool  `json:"checks"`
+	Blockers             []string         `json:"blockers"`
 }
 
 func waveV7PreflightCmd(args Args) error {
@@ -127,14 +131,13 @@ func inspectWavePreflightEnvironment(vaultPath string, wave Note) wavePreflightE
 	} else if wf, workflowErr := loadWorkflow(vaultPath); workflowErr == nil {
 		applyWaveWorkflowEnvironment(&env, wave, wf.Data)
 	}
-	repoRoot := v7RepoRoot(vaultPath)
-	branch := firstNonEmpty(stringField(wave.Data, "integration_branch"), v7IntegrationBranchName(stringField(wave.Data, "id")))
-	_, branchErr := gitCombined(repoRoot, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
-	env.IntegrationClean = branchErr == nil
+	env.SkillCompatible = waveSkillCompatible(vaultPath)
+	env.IntegrationClean = waveIntegrationBaseClean(vaultPath, wave)
 	return env
 }
 
 func applyWaveWorkflowEnvironment(env *wavePreflightEnvironment, wave Note, wf Workflow) {
+	env.WorkflowCompatible = wf.WorkflowVersion == 1 && wf.TrackerSchemaVersion == 7
 	profileName := stringField(wave.Data, "runner_profile")
 	if profileName != "" {
 		profile, ok := wf.RunnerProfiles[profileName]
@@ -147,6 +150,54 @@ func applyWaveWorkflowEnvironment(env *wavePreflightEnvironment, wave Note, wf W
 	env.IsolatedWorkspace = workspaceStrategyFromWorkflow(wf.Workspace.Strategy) != WorkspaceStrategyShared
 }
 
+func waveSkillCompatible(vaultPath string) bool {
+	projectSkill, _, err := parseFrontmatterMustRead(filepath.Join(vaultPath, "SKILL.md"))
+	if err != nil || stringField(projectSkill, "schema") != "tusker.project-skill/v7" || stringField(projectSkill, "operator_skill") != "tusker" {
+		return false
+	}
+	repoRoot := v7RepoRoot(vaultPath)
+	for _, path := range []string{filepath.Join(repoRoot, ".agents", "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, ".claude", "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, "skill", "SKILL.md")} {
+		data, _, readErr := parseFrontmatterMustRead(path)
+		metadata := mapField(data, "metadata")
+		if readErr == nil && stringField(metadata, "wave_authorization_schema") == waveAuthorizationSchema && intField(metadata, "workflow_version") == 1 && intField(metadata, "tracker_schema_version") == 7 {
+			return true
+		}
+	}
+	return false
+}
+
+func waveIntegrationBaseClean(vaultPath string, wave Note) bool {
+	repoRoot := v7RepoRoot(vaultPath)
+	branch := firstNonEmpty(stringField(wave.Data, "integration_branch"), v7IntegrationBranchName(stringField(wave.Data, "id")))
+	if !v7GitRepo(repoRoot) || !gitRefExists(repoRoot, "refs/heads/"+branch) {
+		return false
+	}
+	defaultBranch := v7DefaultBranch(vaultPath)
+	integrationRev, integrationErr := gitCombined(repoRoot, "rev-parse", "refs/heads/"+branch)
+	baseRev, baseErr := gitCombined(repoRoot, "rev-parse", "refs/heads/"+defaultBranch)
+	if integrationErr != nil || baseErr != nil {
+		return false
+	}
+	if stringField(wave.Data, "authorized_at") == "" {
+		if strings.TrimSpace(integrationRev) != strings.TrimSpace(baseRev) {
+			return false
+		}
+	} else if _, err := gitCombined(repoRoot, "merge-base", "--is-ancestor", strings.TrimSpace(baseRev), strings.TrimSpace(integrationRev)); err != nil {
+		return false
+	}
+	branchRef := "refs/heads/" + branch
+	for _, worktree := range v7ListWorktrees(repoRoot) {
+		if worktree.Branch != branchRef {
+			continue
+		}
+		dirty, err := inPlaceDirtyPaths(worktree.Path)
+		if err != nil || len(dirty) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePreflightEnvironment) wavePreflightReport {
 	members := uniqueStrings(normalizeList(wave.Data["members"]))
 	sort.Strings(members)
@@ -155,10 +206,10 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 		Schema: waveAuthorizationSchema, WaveID: stringField(wave.Data, "id"), ReadOnly: true,
 		Fingerprint: fingerprint, StoredFingerprint: stringField(wave.Data, "authorization_fingerprint"),
 		Authorization: fallback(stringField(wave.Data, "authorization"), "disarmed"), Members: members,
-		TaskProof: map[string]any{}, Artifacts: map[string]any{}, ExpectedConcurrency: maxInt(1, intField(wave.Data, "concurrency")),
+		TaskProof: map[string]any{}, Artifacts: map[string]any{}, ExternalDependencies: map[string]any{}, ExpectedConcurrency: maxInt(1, intField(wave.Data, "concurrency")),
 		ValidationLane: "serialized integration validation", IntegrationBranch: stringField(wave.Data, "integration_branch"),
 		LandingPolicy: "task branches -> wave integration branch -> configured default branch",
-		Checks:        map[string]bool{"specDag": true, "taskContracts": true, "artifacts": true, "project": env.ProjectRegistered && env.ProjectEnabled && env.ProjectHealthy, "daemon": env.DaemonAlive && env.DaemonReconciling, "runnerSkill": env.RunnerCompatible, "approvalPolicy": env.ApprovalFree, "workspaceIsolation": env.IsolatedWorkspace && env.IntegrationClean},
+		Checks:        map[string]bool{"specDag": true, "taskContracts": true, "artifacts": true, "project": env.ProjectRegistered && env.ProjectEnabled && env.ProjectHealthy, "daemon": env.DaemonAlive && env.DaemonReconciling, "runner": env.RunnerCompatible, "skill": env.SkillCompatible, "workflow": env.WorkflowCompatible, "approvalPolicy": env.ApprovalFree, "workspaceIsolation": env.IsolatedWorkspace && env.IntegrationClean},
 	}
 	report.Blockers = append(report.Blockers, fpIssues...)
 	graph := map[string][]string{}
@@ -179,13 +230,18 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 			"proofMode":    stringField(task.Data, "proof_mode"), "proofRequired": normalizeList(task.Data["proof_required"]),
 		}
 		artifact := mapField(task.Data, "artifact_contract")
-		if stringField(artifact, "kind") == "" || stringField(artifact, "path") == "" || stringField(artifact, "summary") == "" {
+		if deliveryPlaceholder(stringField(artifact, "kind")) || deliveryInvalidProductionPath(stringField(artifact, "path")) || deliveryPlaceholder(stringField(artifact, "summary")) {
 			report.Blockers = append(report.Blockers, id+": artifact contract requires kind, path, and summary")
 		} else {
 			report.Artifacts[id] = artifact
 		}
-		for _, dep := range normalizeList(task.Data["dependencies"]) {
-			depID := waveDependencyID(dep)
+		for _, ref := range normalizeList(task.Data["spec_refs"]) {
+			if !deliverySpecRefExists(vaultPath, ref) {
+				report.Blockers = append(report.Blockers, id+": spec_ref does not resolve: "+ref)
+			}
+		}
+		for _, edge := range v7TaskDependencyEdges(task, idx) {
+			depID := edge.ID
 			if depID == "" {
 				continue
 			}
@@ -195,6 +251,13 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 			}
 			if _, inside := memberSet[depID]; inside {
 				graph[id] = append(graph[id], depID)
+			} else {
+				depNote := idx.Tasks[depID]
+				satisfied := v7DependencySatisfiedForReadiness(edge, depNote, true)
+				report.ExternalDependencies[id] = appendAny(report.ExternalDependencies[id], map[string]any{"id": depID, "hardness": edge.Hardness, "status": stringField(depNote.Data, "status"), "proof": stringField(depNote.Data, "proof_status"), "satisfied": satisfied})
+				if !satisfied {
+					report.Blockers = append(report.Blockers, id+": external dependency "+depID+" is not satisfied or authorized by this wave")
+				}
 			}
 		}
 	}
@@ -281,13 +344,20 @@ func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, 
 			"dependencies": sortedStrings(normalizeList(task.Data["dependencies"])), "spec_refs": sortedStrings(normalizeList(task.Data["spec_refs"])),
 			"delivery_contract_fingerprint": stringField(task.Data, "delivery_contract_fingerprint"), "artifact_contract": task.Data["artifact_contract"],
 			"owned_paths": sortedStrings(normalizeList(task.Data["owned_paths"])), "runner_profile": stringField(task.Data, "runner_profile"),
-			"acceptance":   waveMaterialTable(sectionContent(task.Body, "## Acceptance"), []int{0, 1}),
-			"verification": waveMaterialTable(sectionContent(task.Body, "## Verification"), []int{0, 1}),
-			"gates":        waveMaterialGates(idx, id),
+			"proof_contract": map[string]any{"mode": stringField(task.Data, "proof_mode"), "required": sortedStrings(normalizeList(task.Data["proof_required"])), "required_owner": task.Data["proof_required_owner"], "evidence_budget": intField(task.Data, "evidence_budget"), "evidence_required": sortedStrings(normalizeList(task.Data["evidence_required"]))},
+			"acceptance":     waveMaterialTable(sectionContent(task.Body, "## Acceptance"), []int{0, 1}),
+			"verification":   waveMaterialTable(sectionContent(task.Body, "## Verification"), []int{0, 1}),
+			"gates":          waveMaterialGates(idx, id),
 		})
 	}
 	material["members"] = rows
-	for _, ref := range sortedStrings(normalizeList(wave.Data["spec_refs"])) {
+	allSpecRefs := append([]string{}, normalizeList(wave.Data["spec_refs"])...)
+	for _, id := range members {
+		if task, ok := idx.Tasks[id]; ok {
+			allSpecRefs = append(allSpecRefs, normalizeList(task.Data["spec_refs"])...)
+		}
+	}
+	for _, ref := range sortedStrings(allSpecRefs) {
 		path := deliverySpecRefPath(vaultPath, ref)
 		if path == "" || !fileExists(path) {
 			issues = append(issues, "spec_ref does not resolve: "+ref)
@@ -312,7 +382,7 @@ func waveMaterialGates(idx v7Index, taskID string) []any {
 		if !containsString(normalizeList(gate.Data["blocks"]), taskID) && !containsString(normalizeList(idx.Tasks[taskID].Data["gates"]), stringField(gate.Data, "id")) {
 			continue
 		}
-		out = append(out, map[string]any{"id": stringField(gate.Data, "id"), "status": stringField(gate.Data, "status"), "owner": stringField(gate.Data, "owner"), "blocking": boolField(gate.Data, "blocking"), "action": stringField(gate.Data, "action"), "verification": stringField(gate.Data, "verification")})
+		out = append(out, map[string]any{"id": stringField(gate.Data, "id"), "status": stringField(gate.Data, "status"), "gate_kind": stringField(gate.Data, "gate_kind"), "owner": stringField(gate.Data, "owner"), "blocking": boolField(gate.Data, "blocking"), "blocks": sortedStrings(normalizeList(gate.Data["blocks"])), "covers": sortedStrings(normalizeList(gate.Data["covers"])), "action": stringField(gate.Data, "action"), "verification": stringField(gate.Data, "verification"), "why_agent_cannot": v7GateBoundaryText(gate), "suggestion": v7GateSuggestionText(gate)})
 	}
 	return out
 }
@@ -545,7 +615,7 @@ func waveAuthorizationAction(report wavePreflightReport) string {
 }
 
 func waveEnvironmentBlocker(key string) string {
-	return map[string]string{"project": "project must be registered, automation-enabled, and healthy", "daemon": "managed daemon must be alive and reconciling", "runnerSkill": "runner/profile and installed skill/workflow must be compatible", "approvalPolicy": "unattended runner approval policy must not pause for routine approvals", "workspaceIsolation": "multi-task wave requires isolated workspaces and an existing clean integration branch"}[key]
+	return map[string]string{"project": "project must be registered, automation-enabled, and healthy", "daemon": "managed daemon must be alive and reconciling", "runner": "runner/profile must resolve to a supported unattended harness", "skill": "installed Tusker operator skill does not support wave authorization", "workflow": "workflow and tracker schema versions are incompatible with wave authorization", "approvalPolicy": "unattended runner approval policy must not pause for routine approvals", "workspaceIsolation": "multi-task wave requires isolated workspaces and a clean integration branch/worktree/base"}[key]
 }
 func hasWaveBlocker(blockers []string, needles ...string) bool {
 	for _, b := range blockers {
@@ -582,6 +652,12 @@ func cloneNoteMap(src map[string]Note) map[string]Note {
 		out[k] = v
 	}
 	return out
+}
+func appendAny(current any, value any) []any {
+	if values, ok := current.([]any); ok {
+		return append(values, value)
+	}
+	return []any{value}
 }
 func waveDependencyFrontiers(members []string, deps map[string][]string) ([][]string, bool) {
 	remaining := map[string]int{}
