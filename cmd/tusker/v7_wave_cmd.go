@@ -534,6 +534,13 @@ func renderV7WaveShow(vaultPath string, idx v7Index, wave Note) string {
 		}
 		b.WriteString("\n")
 	}
+	b.WriteString("## timeline\n\n")
+	sequence := 0
+	for _, member := range buildArmedWaveSnapshot(vaultPath, idx, wave, v7WaveRuntimeRuns(stringField(wave.Data, "project")), time.Now().UTC()).Members {
+		sequence++
+		b.WriteString(fmt.Sprintf("- %d | %s | %s | %s\n", sequence, member.ID, member.State, fallback(member.Reason, "no blocker")))
+	}
+	b.WriteString("\n")
 	return b.String()
 }
 
@@ -543,14 +550,17 @@ type v7WaveMemberRow struct {
 	Status string
 	Proof  string
 	State  string
+	Reason string
 }
 
 func v7WaveMemberGroups(vaultPath string, idx v7Index, wave Note) map[string][]v7WaveMemberRow {
 	runs := v7WaveRuntimeRuns(stringField(wave.Data, "project"))
 	snapshot := buildArmedWaveSnapshot(vaultPath, idx, wave, runs, time.Now().UTC())
 	states := map[string]string{}
+	reasons := map[string]string{}
 	for _, member := range snapshot.Members {
 		states[member.ID] = member.State
+		reasons[member.ID] = member.Reason
 	}
 	groups := map[string][]v7WaveMemberRow{}
 	for _, member := range normalizeList(wave.Data["members"]) {
@@ -565,6 +575,7 @@ func v7WaveMemberGroups(vaultPath string, idx v7Index, wave Note) map[string][]v
 			Status: stringField(task.Data, "status"),
 			Proof:  v7WaveProofLine(vaultPath, idx, task),
 			State:  group,
+			Reason: reasons[member],
 		})
 	}
 	for _, group := range groups {
@@ -648,8 +659,13 @@ func v7WavePayload(vaultPath string, idx v7Index, wave Note) map[string]any {
 				"status": row.Status,
 				"proof":  row.Proof,
 				"state":  row.State,
+				"reason": nullIfBlank(row.Reason),
 			})
 		}
+	}
+	timeline := []map[string]any{}
+	for i, member := range buildArmedWaveSnapshot(vaultPath, idx, wave, v7WaveRuntimeRuns(stringField(wave.Data, "project")), time.Now().UTC()).Members {
+		timeline = append(timeline, map[string]any{"sequence": i + 1, "task": member.ID, "state": member.State, "reason": nullIfBlank(member.Reason)})
 	}
 	return map[string]any{
 		"id":            stringField(wave.Data, "id"),
@@ -659,5 +675,6 @@ func v7WavePayload(vaultPath string, idx v7Index, wave Note) map[string]any {
 		"members":       members,
 		"memberIds":     normalizeList(wave.Data["members"]),
 		"authorization": waveAuthorizationProjection(vaultPath, idx, wave),
+		"timeline":      timeline,
 	}
 }

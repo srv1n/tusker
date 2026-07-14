@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -527,7 +528,7 @@ func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandT
 			return false, "", "", err
 		}
 	}
-	pass, summary := runV7LandingGate(vaultPath, tmp)
+	pass, summary := runV7LandingGate(vaultPath, tmp, v7LandingBatchIdentity(tasks))
 	if !pass {
 		return false, "", summary, nil
 	}
@@ -562,12 +563,12 @@ func guardV7LandingTerminalTaskRewinds(workDir, baseRef string) error {
 	return nil
 }
 
-func runV7LandingGate(vaultPath, workDir string) (bool, string) {
+func runV7LandingGate(vaultPath, workDir, laneIdentity string) (bool, string) {
 	commands := backpressureCommands(vaultPath)
 	if len(commands) == 0 {
 		commands = []string{"go build ./...", "go vet ./...", "go test ./... -count=1"}
 	}
-	fingerprint := v7LandingGateFingerprint(workDir, commands)
+	fingerprint := v7LandingGateFingerprint(workDir, laneIdentity, commands)
 	if fingerprint != "" && v7LandingGateCacheHit(vaultPath, fingerprint) {
 		return true, "gate cached: " + fingerprint
 	}
@@ -592,17 +593,77 @@ type v7LandingGateCacheRecord struct {
 	PassedAt    string   `json:"passed_at"`
 }
 
-func v7LandingGateFingerprint(workDir string, commands []string) string {
+var landingToolchainProbe = v7LandingToolchainFingerprints
+
+func v7LandingGateFingerprint(workDir, laneIdentity string, commands []string) string {
 	head, err := gitOutputTrim(workDir, "rev-parse", "HEAD")
 	if err != nil || head == "" {
 		return ""
 	}
-	toolchain := "unknown"
-	if output, err := exec.Command("go", "version").CombinedOutput(); err == nil {
-		toolchain = strings.TrimSpace(string(output))
+	parts := []string{"tusker.landing-gate/v2", head, strings.TrimSpace(laneIdentity)}
+	toolchains := landingToolchainProbe(commands)
+	keys := make([]string, 0, len(toolchains))
+	for key := range toolchains {
+		keys = append(keys, key)
 	}
-	sum := sha256.Sum256([]byte(strings.Join(append([]string{"tusker.landing-gate/v1", head, toolchain}, commands...), "\x00")))
+	sort.Strings(keys)
+	for _, key := range keys {
+		parts = append(parts, key+"="+toolchains[key])
+	}
+	parts = append(parts, commands...)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return fmt.Sprintf("%x", sum)
+}
+
+func v7LandingBatchIdentity(tasks []v7LandTask) string {
+	parts := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		parts = append(parts, task.ID+"@"+task.Branch)
+	}
+	sort.Strings(parts)
+	return "task-batch:" + strings.Join(parts, ",")
+}
+
+var landingToolchainTokens = map[string]*regexp.Regexp{
+	"go":    regexp.MustCompile(`(^|[^A-Za-z0-9_.-])(go|gofmt)([^A-Za-z0-9_.-]|$)`),
+	"node":  regexp.MustCompile(`(^|[^A-Za-z0-9_.-])(node|npm|npx|pnpm|yarn)([^A-Za-z0-9_.-]|$)`),
+	"bun":   regexp.MustCompile(`(^|[^A-Za-z0-9_.-])bun([^A-Za-z0-9_.-]|$)`),
+	"swift": regexp.MustCompile(`(^|[^A-Za-z0-9_.-])(swift|swiftc|xcodebuild)([^A-Za-z0-9_.-]|$)`),
+	"rust":  regexp.MustCompile(`(^|[^A-Za-z0-9_.-])(cargo|rustc|rustup)([^A-Za-z0-9_.-]|$)`),
+}
+
+func v7LandingToolchainFingerprints(commands []string) map[string]string {
+	joined := strings.Join(commands, "\n")
+	probes := map[string][]string{
+		"go": {"go", "version"}, "node": {"node", "--version"}, "bun": {"bun", "--version"},
+		"swift": {"swift", "--version"}, "rust": {"rustc", "--version", "--verbose"},
+	}
+	out := map[string]string{}
+	for key, pattern := range landingToolchainTokens {
+		if !pattern.MatchString(joined) {
+			continue
+		}
+		probe := probes[key]
+		path, err := exec.LookPath(probe[0])
+		if err != nil {
+			out[key] = "missing"
+			continue
+		}
+		resolved, _ := filepath.EvalSymlinks(path)
+		if resolved == "" {
+			resolved = path
+		}
+		version := "version-unavailable"
+		if output, err := exec.Command(path, probe[1:]...).CombinedOutput(); err == nil {
+			version = strings.TrimSpace(string(output))
+		}
+		binary := resolved
+		if info, err := os.Stat(resolved); err == nil {
+			binary = fmt.Sprintf("%s|%d|%d", resolved, info.Size(), info.ModTime().UnixNano())
+		}
+		out[key] = binary + "|" + version
+	}
+	return out
 }
 
 func v7LandingGateCachePath(vaultPath, fingerprint string) string {
@@ -955,7 +1016,7 @@ func runV7LandingGateOnRef(vaultPath, repoRoot, ref string) (bool, string) {
 		return false, "failed to create gate worktree: " + firstActionableLine(output, err.Error())
 	}
 	removeWorktree = true
-	return runV7LandingGate(vaultPath, tmp)
+	return runV7LandingGate(vaultPath, tmp, "wave-ref:"+ref)
 }
 
 func appendV7WaveLandingAudit(vaultPath, waveID string, entries []v7LandingAuditEntry, actor string) error {

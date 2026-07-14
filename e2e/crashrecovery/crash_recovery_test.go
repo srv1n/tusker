@@ -232,6 +232,75 @@ func TestDaemonRestartRedispatchesDeadWrapper(t *testing.T) {
 	second.stop()
 }
 
+func TestArmedWaveCrashRestartConverges(t *testing.T) {
+	h := newHarness(t, "armed-wave-crash-restart")
+	releasePattern := filepath.Join(h.tempRoot, "release-{task}")
+	h.configureFakeRunner(fakeRunnerConfig{
+		Mode: "hold-success", RunnerKind: "codex_exec", ReleaseFile: releasePattern,
+		CompleteStatus: "review", StallTimeoutMS: 5000, MaxAttempts: 2,
+	})
+	h.createRunnableTaskID("APP-T-0001", "armed root", "")
+	h.createRunnableTaskID("APP-T-0002", "armed next frontier", "APP-T-0001:soft")
+	h.gitOK("init", "-b", "main")
+	h.gitOK("config", "user.email", "crash@example.com")
+	h.gitOK("config", "user.name", "Crash Recovery")
+	h.gitOK("add", "-A")
+	h.gitOK("commit", "-m", "armed wave fixture")
+	h.cliOK(h.repoDir, "wave", "create", "Durable crash wave", "APP-T-0001", "APP-T-0002", "--vault", h.vaultDir, "--quiet")
+
+	first := h.startDaemon("armed-daemon-1")
+	h.waitForAutomationStatus(crashRunWait)
+	arm := parseJSON(t, h.cliOK(h.repoDir, "wave", "arm", "W-0001", "--vault", h.vaultDir, "--by", "human:e2e", "--json"))
+	armWave := mapAtPath(t, arm, "preflight")
+	armFingerprint := runString(armWave, "fingerprint")
+	if armFingerprint == "" {
+		t.Fatalf("arm did not persist a material fingerprint: %s", prettyJSON(arm))
+	}
+
+	root := h.waitRun("APP-T-0001", crashRunWait, func(run map[string]any) bool {
+		return runString(run, "lease_state") == "running" && runInt(run, "attempt_count") == 1
+	})
+	rootPID, rootGeneration := runInt(root, "process_pid"), runInt(root, "lease_generation")
+	first.kill(syscall.SIGKILL)
+	second := h.startDaemon("armed-daemon-2")
+	h.waitRun("APP-T-0001", crashRunWait, func(run map[string]any) bool {
+		return runString(run, "lease_state") == "running" && runInt(run, "process_pid") == rootPID &&
+			runInt(run, "lease_generation") == rootGeneration && runInt(run, "attempt_count") == 1
+	})
+
+	h.touch(filepath.Join(h.tempRoot, "release-APP-T-0001"))
+	next := h.waitRun("APP-T-0002", crashRunWait, func(run map[string]any) bool {
+		return runString(run, "lease_state") == "running" && runInt(run, "attempt_count") == 1
+	})
+	nextPID := runInt(next, "process_pid")
+	if nextPID <= 0 {
+		t.Fatalf("next frontier did not receive exactly one claim: %s", prettyJSON(next))
+	}
+	second.kill(syscall.SIGKILL)
+	h.killProcessGroup(nextPID, syscall.SIGKILL)
+	third := h.startDaemon("armed-daemon-3")
+	reclaimed := h.waitRun("APP-T-0002", crashRunWait, func(run map[string]any) bool {
+		return runString(run, "lease_state") == "running" && runInt(run, "attempt_count") == 2 && runInt(run, "process_pid") != nextPID
+	})
+	reclaimGeneration := runInt(reclaimed, "lease_generation")
+	time.Sleep(350 * time.Millisecond)
+	stable := h.latestRun("APP-T-0002")
+	if runInt(stable, "attempt_count") != 2 || runInt(stable, "lease_generation") != reclaimGeneration {
+		t.Fatalf("restart duplicated the reclaimed claim: %s", prettyJSON(stable))
+	}
+
+	wave := parseJSON(t, h.cliOK(h.repoDir, "wave", "show", "W-0001", "--vault", h.vaultDir, "--json"))
+	authorization := mapAtPath(t, mapAtPath(t, wave, "wave"), "authorization")
+	if runString(authorization, "state") != "armed" || runString(authorization, "authorizedFingerprint") != armFingerprint || runString(authorization, "actor") != "human:e2e" {
+		t.Fatalf("restart lost or repeated wave authorization: %s", prettyJSON(wave))
+	}
+	h.touch(filepath.Join(h.tempRoot, "release-APP-T-0002"))
+	h.waitRun("APP-T-0002", crashRunWait, func(run map[string]any) bool {
+		return runString(run, "lease_state") == "released" && runInt(run, "attempt_count") == 2
+	})
+	third.stop()
+}
+
 func TestDeadRunnerMarkedInterruptedOnNextPoll(t *testing.T) {
 	h := newHarness(t, "dead-runner-interrupted")
 	h.configureFakeRunner(fakeRunnerConfig{
@@ -613,7 +682,13 @@ automation:
 
 func (h *harness) createRunnableTask(title string) {
 	h.t.Helper()
-	h.cliOK(h.repoDir, "new", "task",
+	h.createRunnableTaskID(crashTaskID, title, "")
+}
+
+func (h *harness) createRunnableTaskID(expectedID, title, dependencies string) {
+	h.t.Helper()
+	args := []string{
+		"new", "task",
 		"--vault", h.vaultDir,
 		"--epic", "APP",
 		"--title", title,
@@ -627,8 +702,12 @@ func (h *harness) createRunnableTask(title string) {
 		"--force-ready",
 		"--v7",
 		"--quiet",
-	)
-	taskPath := filepath.Join(h.vaultDir, "work", "tasks", crashTaskID+".md")
+	}
+	if dependencies != "" {
+		args = append(args, "--dependencies", dependencies)
+	}
+	h.cliOK(h.repoDir, args...)
+	taskPath := filepath.Join(h.vaultDir, "work", "tasks", expectedID+".md")
 	body := h.readFile(taskPath)
 	body = replaceSection(body, "## Acceptance", strings.TrimSpace(`| ID | Outcome | Proof |
 |---|---|---|
@@ -636,8 +715,26 @@ func (h *harness) createRunnableTask(title string) {
 	body = replaceSection(body, "## Verification", strings.TrimSpace(`| Covers | Check | Result | Notes |
 |---|---|---|---|
 | A1 | go test ./e2e/crashrecovery | pending | Crash-recovery e2e scenario observes daemon state through the public CLI. |`))
+	end := strings.Index(body[4:], "\n---")
+	if end < 0 {
+		h.t.Fatalf("task %s has no frontmatter end", expectedID)
+	}
+	end += 4
+	body = body[:end] + "\nartifact_contract:\n  kind: reliability_timeline\n  path: e2e/crashrecovery/crash_recovery_test.go\n  summary: Process-boundary crash and convergence timeline.\n" + body[end:]
 	h.writeFile(taskPath, body)
 	h.cliOK(h.repoDir, "reconcile", "--vault", h.vaultDir, "--local", "--quiet")
+}
+
+func (h *harness) gitOK(args ...string) []byte {
+	h.t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = h.repoDir
+	cmd.Env = h.env()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		h.t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return out
 }
 
 func (h *harness) disableReviewer() {

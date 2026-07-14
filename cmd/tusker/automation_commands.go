@@ -88,6 +88,9 @@ type automationTaskExplanation struct {
 	ApplyInputs       []RuntimeApplyInput      `json:"apply_inputs,omitempty"`
 	Fanout            automationFanoutSummary  `json:"fanout"`
 	ExistingRun       *RunStatus               `json:"existing_run,omitempty"`
+	WaveID            string                   `json:"wave_id,omitempty"`
+	ArmedWaveState    string                   `json:"armed_wave_state,omitempty"`
+	ArmedWaveReason   string                   `json:"armed_wave_reason,omitempty"`
 }
 
 type automationFanoutSummary struct {
@@ -153,6 +156,7 @@ type automationStatusReport struct {
 	InvariantCircuit    any                        `json:"invariant_circuit"`
 	DiskPressure        DiskPressureStatus         `json:"disk_pressure"`
 	Projects            []automationProjectSummary `json:"projects"`
+	ArmedWaves          []armedWaveSnapshot        `json:"armed_waves"`
 }
 
 func automationStatusCmd(args Args) error {
@@ -195,6 +199,7 @@ func automationStatusCmd(args Args) error {
 		InvariantCircuit:    status["invariantCircuit"],
 		DiskPressure:        diskPressureStatusFromAny(status["disk_pressure"]),
 		Projects:            automationProjectSummaries(projects, runs),
+		ArmedWaves:          automationStatusArmedWaves(projects, runs),
 	}
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "status": report})
@@ -438,7 +443,7 @@ func (ctx *automationCommandContext) automationQueueReport() automationQueueRepo
 		Project: automationSummarizeProject(ctx.Project, ctx.projectRunsSlice(), ctx.ProjectRegistered),
 	}
 	for _, note := range notes {
-		if !automationQueueIncludes(note) {
+		if !ctx.automationQueueIncludes(note) {
 			continue
 		}
 		explanation := ctx.explainTask(note)
@@ -450,6 +455,21 @@ func (ctx *automationCommandContext) automationQueueReport() automationQueueRepo
 	}
 	report.Count = len(report.Eligible) + len(report.Blocked)
 	return report
+}
+
+func (ctx *automationCommandContext) automationQueueIncludes(note Note) bool {
+	if automationQueueIncludes(note) {
+		return true
+	}
+	if stringField(note.Data, "status") != "done" || stringField(note.Data, "wave") == "" {
+		return false
+	}
+	idx, err := loadV7Index(ctx.Project.VaultRoot)
+	if err != nil {
+		return true
+	}
+	wave, ok := idx.Waves[stringField(note.Data, "wave")]
+	return !ok || !armedWaveLandedMembers(wave)[stringField(note.Data, "id")]
 }
 
 func automationQueueIncludes(note Note) bool {
@@ -572,6 +592,7 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 	existing := ctx.existingRunPointer(recordID)
 	workspaceStrategy := workspaceStrategyForRun(ctx.Workflow.Data, ctx.Project, run, ctx.projectRunsSlice())
 	blockers = uniqueStrings(blockers)
+	waveID, waveState, waveReason := ctx.armedWaveTaskProjection(note)
 	return automationTaskExplanation{
 		Schema:            automationExplainSchema,
 		ID:                stringField(note.Data, "id"),
@@ -608,7 +629,56 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 		ApplyInputs:       applyInputs,
 		Fanout:            fanout,
 		ExistingRun:       existing,
+		WaveID:            waveID,
+		ArmedWaveState:    waveState,
+		ArmedWaveReason:   waveReason,
 	}
+}
+
+func (ctx *automationCommandContext) armedWaveTaskProjection(note Note) (string, string, string) {
+	waveID := stringField(note.Data, "wave")
+	if waveID == "" {
+		return "", "", ""
+	}
+	idx, err := loadV7Index(ctx.Project.VaultRoot)
+	if err != nil {
+		return waveID, armedWaveMachineParked, "wave projection failed: " + err.Error()
+	}
+	wave, ok := idx.Waves[waveID]
+	if !ok {
+		return waveID, armedWaveMachineParked, "wave record is missing"
+	}
+	snapshot := buildArmedWaveSnapshot(ctx.Project.VaultRoot, idx, wave, ctx.ProjectRuns, time.Now().UTC())
+	for _, member := range snapshot.Members {
+		if member.ID == stringField(note.Data, "id") {
+			return waveID, member.State, member.Reason
+		}
+	}
+	return waveID, armedWaveMachineParked, "task is not a canonical wave member"
+}
+
+func automationStatusArmedWaves(projects []RegisteredProject, runs []RunStatus) []armedWaveSnapshot {
+	var out []armedWaveSnapshot
+	for _, project := range projects {
+		idx, err := loadV7Index(project.VaultRoot)
+		if err != nil {
+			continue
+		}
+		projectRuns := map[string]RunStatus{}
+		for _, run := range runs {
+			if run.ProjectID == project.ProjectID {
+				projectRuns[firstNonEmpty(run.ItemID, run.RecordID)] = run
+			}
+		}
+		for _, wave := range sortedV7Waves(idx) {
+			if stringField(wave.Data, "status") == "landed" {
+				continue
+			}
+			out = append(out, buildArmedWaveSnapshot(project.VaultRoot, idx, wave, projectRuns, time.Now().UTC()))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].WaveID < out[j].WaveID })
+	return out
 }
 
 func automationPlanFromExplanation(vaultPath string, note Note, explanation automationTaskExplanation) automationDispatchPlan {
@@ -963,6 +1033,15 @@ func printAutomationStatus(report automationStatusReport) {
 		}
 		fmt.Printf("  %-12s %-8s %-8s active=%d queued=%d %s\n", project.ProjectKey, state, project.Health, project.ActiveRuns, project.QueuedRuns, project.RepoRoot)
 	}
+	if len(report.ArmedWaves) > 0 {
+		fmt.Println("Armed waves:")
+		for _, wave := range report.ArmedWaves {
+			fmt.Printf("  %s authorization=%s frontier=%s\n", wave.WaveID, wave.Authorization, strings.Join(wave.Frontier, ","))
+			for _, member := range wave.Members {
+				fmt.Printf("    %s state=%s reason=%s\n", member.ID, member.State, fallback(member.Reason, "-"))
+			}
+		}
+	}
 }
 
 func printAutomationQueue(report automationQueueReport) {
@@ -972,7 +1051,7 @@ func printAutomationQueue(report automationQueueReport) {
 		fmt.Println("  none")
 	} else {
 		for _, item := range report.Eligible {
-			fmt.Printf("  %-14s %-8s %-8s %s\n", item.ID, item.Status, item.Runner, item.Title)
+			fmt.Printf("  %-14s %-8s %-8s wave=%s state=%s %s\n", item.ID, item.Status, item.Runner, fallback(item.WaveID, "-"), fallback(item.ArmedWaveState, "-"), item.Title)
 		}
 	}
 	fmt.Println("Blocked:")
@@ -981,7 +1060,8 @@ func printAutomationQueue(report automationQueueReport) {
 		return
 	}
 	for _, item := range report.Blocked {
-		fmt.Printf("  %-14s %-8s %s\n", item.ID, item.Status, strings.Join(item.Blockers, "; "))
+		reason := strings.Join(filterStrings([]string{item.ArmedWaveReason, strings.Join(item.Blockers, "; ")}), "; ")
+		fmt.Printf("  %-14s %-8s wave=%s state=%s %s\n", item.ID, item.Status, fallback(item.WaveID, "-"), fallback(item.ArmedWaveState, "-"), reason)
 	}
 }
 

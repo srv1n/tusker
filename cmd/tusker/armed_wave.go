@@ -137,6 +137,16 @@ func armedWaveLandedMembers(wave Note) map[string]bool {
 	return out
 }
 
+func armedWaveIntegrated(wave Note) bool {
+	landed := false
+	for _, row := range normalizeLandingAudit(wave.Data["landings"]) {
+		if stringField(row, "task") == "wave" {
+			landed = stringField(row, "gate_result") == "pass"
+		}
+	}
+	return landed
+}
+
 func armedWaveTaskHumanBlocked(idx v7Index, task Note) bool {
 	if strings.HasPrefix(stringField(task.Data, "readiness"), "waiting_on_human") {
 		return true

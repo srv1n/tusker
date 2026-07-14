@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -115,6 +116,78 @@ func TestArmedWaveProjection(t *testing.T) {
 	assertEqual(t, armedWaveStaleAuthorization, armedWaveStateMap(stale)["APP-T-0006"], "stale authorization")
 }
 
+func TestArmedWaveProjectionSurfaces(t *testing.T) {
+	vault, idx, wave := armedWaveTestFixture(t)
+	if err := writeText(filepath.Join(vault, "WORKFLOW.md"), defaultWorkflowMarkdown()); err != nil {
+		t.Fatal(err)
+	}
+	registerAutomationTestProject(t, vault)
+	queueOutput := captureStdout(t, func() {
+		if err := automationQueueCmd(Args{"vault": vault, "json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var queuePayload struct {
+		Queue automationQueueReport `json:"queue"`
+	}
+	if err := json.Unmarshal([]byte(queueOutput), &queuePayload); err != nil {
+		t.Fatal(err)
+	}
+	var root, waiting automationTaskExplanation
+	for _, item := range append(queuePayload.Queue.Eligible, queuePayload.Queue.Blocked...) {
+		switch item.ID {
+		case "APP-T-0001":
+			root = item
+		case "APP-T-0002":
+			waiting = item
+		}
+	}
+	assertEqual(t, armedWaveRunnable, root.ArmedWaveState, "queue runnable state")
+	assertEqual(t, armedWaveDependencyWaiting, waiting.ArmedWaveState, "queue dependency state")
+	if !strings.Contains(waiting.ArmedWaveReason, "APP-T-0001") {
+		t.Fatalf("queue lost dependency reason: %#v", waiting)
+	}
+
+	payload := v7WavePayload(vault, idx, wave)
+	if len(payload["timeline"].([]map[string]any)) != 6 {
+		t.Fatalf("wave JSON timeline missing members: %#v", payload["timeline"])
+	}
+	text := renderV7WaveShow(vault, idx, wave)
+	for _, want := range []string{"## timeline", "APP-T-0001", armedWaveRunnable, armedWaveDependencyWaiting} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("wave timeline missing %q:\n%s", want, text)
+		}
+	}
+
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "done", "readiness": "done", "proof_status": "satisfied", "closed_at": "2026-07-14T10:00:00Z"})
+	idx, _ = loadV7Index(vault)
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	digest, err := buildTuskerDigest(vault, store, digestBuildOptions{Now: time.Unix(100, 0).UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(digest.ArmedWaves) != 1 || armedWaveStateMap(digest.ArmedWaves[0])["APP-T-0001"] != armedWaveReview {
+		t.Fatalf("digest did not show done-but-unlanded as review: %#v", digest.ArmedWaves)
+	}
+	for _, row := range digest.Landed {
+		if row.ID == "APP-T-0001" {
+			t.Fatal("digest mislabeled done-but-unlanded task as landed")
+		}
+	}
+	statusOutput := captureStdout(t, func() {
+		if err := automationStatusCmd(Args{"json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(statusOutput, `"armed_waves"`) || !strings.Contains(statusOutput, `"state":"review"`) {
+		t.Fatalf("automation status lost armed-wave projection: %s", statusOutput)
+	}
+}
+
 func TestArmedWaveWorkspaceIsolation(t *testing.T) {
 	vault, idx, _ := armedWaveTestFixture(t)
 	task := idx.Tasks["APP-T-0001"]
@@ -154,7 +227,7 @@ func TestArmedWaveLandingCache(t *testing.T) {
 	}
 	gitDirOutput(t, repo, "add", "a.txt")
 	gitDirOutput(t, repo, "commit", "-m", "base")
-	fp := v7LandingGateFingerprint(repo, []string{"go test ./..."})
+	fp := v7LandingGateFingerprint(repo, "task-batch:APP-T-0001@task/APP-T-0001", []string{"go test ./..."})
 	if fp == "" {
 		t.Fatal("landing fingerprint is empty")
 	}
@@ -164,6 +237,19 @@ func TestArmedWaveLandingCache(t *testing.T) {
 	}
 	if !v7LandingGateCacheHit(vault, fp) {
 		t.Fatal("durable merged-state validation cache missed")
+	}
+	originalProbe := landingToolchainProbe
+	t.Cleanup(func() { landingToolchainProbe = originalProbe })
+	landingToolchainProbe = func([]string) map[string]string { return map[string]string{"go": "go1"} }
+	taskOne := v7LandingGateFingerprint(repo, "task-batch:APP-T-0001@task/APP-T-0001", []string{"go test ./..."})
+	taskTwo := v7LandingGateFingerprint(repo, "task-batch:APP-T-0002@task/APP-T-0002", []string{"go test ./..."})
+	if taskOne == taskTwo {
+		t.Fatal("task/lane identity did not invalidate landing validation cache")
+	}
+	landingToolchainProbe = func([]string) map[string]string { return map[string]string{"go": "go2"} }
+	toolchainTwo := v7LandingGateFingerprint(repo, "task-batch:APP-T-0001@task/APP-T-0001", []string{"go test ./..."})
+	if taskOne == toolchainTwo {
+		t.Fatal("toolchain change did not invalidate landing validation cache")
 	}
 }
 

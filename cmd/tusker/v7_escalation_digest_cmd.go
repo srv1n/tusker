@@ -60,6 +60,7 @@ type tuskerDigest struct {
 	Landed                     []digestLanded          `json:"landed"`
 	RedParked                  []digestRedParked       `json:"redParked"`
 	PendingHardGates           []digestPendingHardGate `json:"pendingHardGates"`
+	ArmedWaves                 []armedWaveSnapshot     `json:"armedWaves"`
 }
 
 type digestEscalation struct {
@@ -450,6 +451,7 @@ func buildTuskerDigest(vaultPath string, store *RuntimeStore, opts digestBuildOp
 		Landed:           []digestLanded{},
 		RedParked:        []digestRedParked{},
 		PendingHardGates: []digestPendingHardGate{},
+		ArmedWaves:       []armedWaveSnapshot{},
 	}
 	digest.OpenEscalations = digestOpenEscalations(idx)
 	for _, escalation := range digest.OpenEscalations {
@@ -462,6 +464,9 @@ func buildTuskerDigest(vaultPath string, store *RuntimeStore, opts digestBuildOp
 	if store != nil {
 		runs, _ := store.ListRuns()
 		digest.RedParked = digestRedParkedItems(idx, runs, projectID)
+		digest.ArmedWaves = digestArmedWaveItems(vaultPath, idx, runs, projectID, now)
+	} else {
+		digest.ArmedWaves = digestArmedWaveItems(vaultPath, idx, nil, projectID, now)
 	}
 	digest.PendingHardGates = digestPendingHardGates(idx)
 	if opts.MarkWatermark && store != nil {
@@ -486,7 +491,40 @@ func renderTuskerDigestMarkdown(d tuskerDigest) string {
 	renderDigestLanded(&b, d.Landed)
 	renderDigestRedParked(&b, d.RedParked)
 	renderDigestHardGates(&b, d.PendingHardGates)
+	renderDigestArmedWaves(&b, d.ArmedWaves)
 	return b.String()
+}
+
+func renderDigestArmedWaves(b *strings.Builder, waves []armedWaveSnapshot) {
+	b.WriteString("## Armed wave timeline\n\n")
+	if len(waves) == 0 {
+		b.WriteString("- None.\n\n")
+		return
+	}
+	for _, wave := range waves {
+		b.WriteString(fmt.Sprintf("- `%s` authorization=%s frontier=%s\n", wave.WaveID, wave.Authorization, fallback(strings.Join(wave.Frontier, ","), "none")))
+		for _, member := range wave.Members {
+			b.WriteString(fmt.Sprintf("  - `%s` state=%s reason=%s\n", member.ID, member.State, fallback(member.Reason, "none")))
+		}
+	}
+	b.WriteString("\n")
+}
+
+func digestArmedWaveItems(vaultPath string, idx v7Index, runs []RunStatus, projectID string, now time.Time) []armedWaveSnapshot {
+	projectRuns := map[string]RunStatus{}
+	for _, run := range runs {
+		if projectID == "" || run.ProjectID == "" || run.ProjectID == projectID {
+			projectRuns[firstNonEmpty(run.ItemID, run.RecordID)] = run
+		}
+	}
+	var out []armedWaveSnapshot
+	for _, wave := range sortedV7Waves(idx) {
+		if stringField(wave.Data, "status") == "landed" {
+			continue
+		}
+		out = append(out, buildArmedWaveSnapshot(vaultPath, idx, wave, projectRuns, now))
+	}
+	return out
 }
 
 func renderDigestEscalations(b *strings.Builder, rows []digestEscalation) {
@@ -576,7 +614,7 @@ func digestOpenEscalations(idx v7Index) []digestEscalation {
 func digestLandedItems(idx v7Index, since time.Time) []digestLanded {
 	out := []digestLanded{}
 	for _, wave := range sortedV7Waves(idx) {
-		if stringField(wave.Data, "status") != "landed" {
+		if stringField(wave.Data, "status") != "landed" || !armedWaveIntegrated(wave) {
 			continue
 		}
 		landedAt := stringField(wave.Data, "landed_at")
@@ -599,6 +637,12 @@ func digestLandedItems(idx v7Index, since time.Time) []digestLanded {
 	for _, task := range tasks {
 		if stringField(task.Data, "status") != "done" {
 			continue
+		}
+		if waveID := stringField(task.Data, "wave"); waveID != "" {
+			wave, ok := idx.Waves[waveID]
+			if !ok || !armedWaveLandedMembers(wave)[stringField(task.Data, "id")] {
+				continue
+			}
 		}
 		closedAt := stringField(task.Data, "closed_at")
 		if !digestTimeInWindow(closedAt, since) {

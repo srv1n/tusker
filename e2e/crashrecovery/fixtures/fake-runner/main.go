@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -45,13 +46,20 @@ func main() {
 		}
 	case "hold-success":
 		emitFirstEvent()
+		resolvedReleaseFile := strings.ReplaceAll(*releaseFile, "{task}", os.Getenv("TUSKER_ITEM_ID"))
 		released := runHoldLoop(*heartbeatEvery, *holdTimeout, func() bool {
-			return *releaseFile != "" && exists(*releaseFile)
+			return resolvedReleaseFile != "" && exists(resolvedReleaseFile)
 		})
 		if !released {
 			os.Exit(124)
 		}
 		if *completeStatus != "" {
+			if *completeStatus == "review" {
+				if err := recordTaskProof(*tuskerBin); err != nil {
+					fmt.Fprintf(os.Stderr, "fake-runner proof transition failed: %v\n", err)
+					os.Exit(16)
+				}
+			}
 			if err := setTaskStatus(*tuskerBin, *completeStatus); err != nil {
 				fmt.Fprintf(os.Stderr, "fake-runner status transition failed: %v\n", err)
 				os.Exit(17)
@@ -63,6 +71,31 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown fake-runner mode %q\n", *mode)
 		os.Exit(64)
 	}
+}
+
+func recordTaskProof(tuskerBin string) error {
+	taskID := os.Getenv("TUSKER_ITEM_ID")
+	vault := os.Getenv("TUSKER_VAULT")
+	if taskID == "" || vault == "" {
+		return fmt.Errorf("missing TUSKER_ITEM_ID or TUSKER_VAULT")
+	}
+	cmd := exec.Command(tuskerBin,
+		"verify", "add", taskID,
+		"--vault", vault,
+		"--covers", "A1",
+		"--check", "go test ./e2e/crashrecovery",
+		"--result", "pass",
+		"--note", "fake runner e2e completion proof",
+		"--by", "agent:fake-runner",
+		"--local",
+		"--quiet",
+	)
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, out)
+	}
+	return nil
 }
 
 func runHoldLoop(heartbeatEvery, holdTimeout time.Duration, released func() bool) bool {

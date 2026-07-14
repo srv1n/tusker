@@ -366,6 +366,15 @@ func writeDigestTask(t *testing.T, vault, id, title, status, risk, proofStatus, 
 
 func writeDigestWave(t *testing.T, vault, id, title string, members []string, landedAt string) {
 	t.Helper()
+	landings := make([]map[string]any, 0, len(members)+1)
+	for _, member := range members {
+		landings = append(landings, map[string]any{
+			"task": member, "gate_result": "pass", "timestamp": landedAt,
+		})
+	}
+	landings = append(landings, map[string]any{
+		"task": "wave", "gate_result": "pass", "timestamp": landedAt,
+	})
 	data := map[string]any{
 		"schema":     "tusker.wave/v7",
 		"kind":       "wave",
@@ -374,6 +383,7 @@ func writeDigestWave(t *testing.T, vault, id, title string, members []string, la
 		"title":      title,
 		"status":     "landed",
 		"members":    members,
+		"landings":   landings,
 		"landed_at":  landedAt,
 		"created_at": "2026-07-06T06:00:00Z",
 		"created_by": "agent:test",
