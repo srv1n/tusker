@@ -914,11 +914,6 @@ func (s *serveServer) loadSummarySnapshot() (serveSnapshot, error) {
 func serveAttentionCount(snap serveSnapshot) int {
 	count := 0
 	for _, task := range snap.tasks {
-		status := strings.ToLower(stringField(task.Data, "status"))
-		risk := strings.ToLower(firstNonEmpty(stringField(task.Data, "risk"), "medium"))
-		if status == "review" && (risk == "high" || risk == "critical") {
-			count++
-		}
 		for _, gate := range serveUnsatisfiedGatesForTask(snap, stringField(task.Data, "id")) {
 			if serveHumanOwner(gate.Owner) {
 				count++

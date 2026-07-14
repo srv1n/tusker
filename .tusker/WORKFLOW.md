@@ -42,10 +42,9 @@ reviewer:
   auto_close_risks:
     - "low"
     - "medium"
-  enabled: true
-  human_required_risks:
     - "high"
     - "critical"
+  enabled: true
   prompt: "Review only. Do not edit implementation files. Verify acceptance, proof, gates, and docs impact. Re-run verification rows as written in the contract; trust commands, not the runner's summary. Actively check for reward hacking: weakened or cherry-picked verification commands, tests edited to pass, shrunk validity ranges, or unmeasured behavior sacrificed to win a measured metric. An unproven acceptance row is rework, not done. Return rework for any unmet acceptance item."
   runner: "codex_exec"
 runners:
@@ -156,7 +155,7 @@ When machine work is complete and only human-owned proof or gates remain, run `t
 
 ## Reviewer contract
 
-If `reviewer.enabled` is true, review tasks may dispatch to `reviewer.runner`. The reviewer must not edit implementation files. Low/medium risks can close after all gates pass. High/critical risks stay in `review` for human acceptance.
+If `reviewer.enabled` is true, review tasks may dispatch to `reviewer.runner`. The reviewer must not edit implementation files. Independent reviewers may close every risk tier after objective proof and explicit gates pass. High/critical risk strengthens proof and landing safeguards; it does not imply human authority.
 
 ## Retry policy
 

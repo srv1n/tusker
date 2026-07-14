@@ -16,14 +16,14 @@ func TestValidateWorkflowRejectsUnknownPerStateCap(t *testing.T) {
 	}
 }
 
-func TestValidateWorkflowRejectsReviewerRiskOverlap(t *testing.T) {
+func TestValidateWorkflowRejectsLegacyHumanRequiredRisks(t *testing.T) {
 	wfFile := WorkflowFile{Path: "WORKFLOW.md", Body: defaultWorkflowMarkdown()}
 	wfFile.Data = defaultWorkflow()
 	wfFile.Data.Reviewer.AutoCloseRisks = []string{"low", "high"}
 	wfFile.Data.Reviewer.HumanRequiredRisks = []string{"high", "critical"}
 	err := validateWorkflowFile(wfFile)
-	if err == nil || !strings.Contains(err.Error(), "appears in both") {
-		t.Fatalf("expected reviewer risk overlap error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "treats risk as human authority") {
+		t.Fatalf("expected legacy human-required diagnostic, got %v", err)
 	}
 }
 
@@ -58,8 +58,8 @@ func TestDefaultWorkflowEnablesRiskAwareReviewer(t *testing.T) {
 	if !reviewerMayAutoCloseRisk(wf.Reviewer, "medium") {
 		t.Fatal("expected medium risk to be reviewer auto-closeable")
 	}
-	if !reviewerRequiresHumanRisk(wf.Reviewer, "high") {
-		t.Fatal("expected high risk to require human close")
+	if !reviewerMayAutoCloseRisk(wf.Reviewer, "high") || !reviewerMayAutoCloseRisk(wf.Reviewer, "critical") {
+		t.Fatal("expected every objective risk tier to be reviewer closeable")
 	}
 	if wf.Reviewer.Actor != "agent:reviewer/codex" {
 		t.Fatalf("expected normalized reviewer actor, got %q", wf.Reviewer.Actor)

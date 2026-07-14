@@ -30,19 +30,10 @@ func AcceptorAllowed(actor, requiredAcceptor string) bool {
 }
 
 func DefaultClosePolicy(risk string) ClosePolicy {
-	switch risk {
-	case "high", "critical":
-		return ClosePolicy{
-			RequiredAcceptor: "human",
-			RequiredEvidence: RequiredEvidence(risk),
-			RequiredGates:    RequiredGateKinds(risk),
-		}
-	default:
-		return ClosePolicy{
-			RequiredAcceptor: "reviewer_agent",
-			RequiredEvidence: RequiredEvidence(risk),
-			RequiredGates:    RequiredGateKinds(risk),
-		}
+	return ClosePolicy{
+		RequiredAcceptor: "reviewer_agent",
+		RequiredEvidence: RequiredEvidence(risk),
+		RequiredGates:    RequiredGateKinds(risk),
 	}
 }
 
@@ -51,8 +42,5 @@ func RequiredEvidence(risk string) []string {
 }
 
 func RequiredGateKinds(risk string) []string {
-	if risk == "critical" {
-		return []string{"release", "security"}
-	}
 	return nil
 }

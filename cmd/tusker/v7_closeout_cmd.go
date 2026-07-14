@@ -151,7 +151,6 @@ func closeoutV7CreateCmd(args Args) error {
 			"open_external_gates":  report.OpenExternalGates,
 			"human_missing":        report.HumanMissing,
 			"open_human_gates":     report.OpenHumanGates,
-			"close_policy_human":   v7ClosePolicyHumanWait(vaultPath, task, report),
 			"validation_command":   validateCommand,
 			"validation_succeeded": true,
 		}))
@@ -450,13 +449,7 @@ func v7CloseoutTerminalReport(vaultPath string, task Note, report v7ProofReport)
 	if report.TerminalWait {
 		return report, true
 	}
-	if !v7ClosePolicyHumanWait(vaultPath, task, report) {
-		return report, false
-	}
-	report.TerminalWait = true
-	report.AgentAction = "stop_until_human_response"
-	report.HumanMissing = uniqueStrings(append(report.HumanMissing, "close_policy:human_acceptor"))
-	return report, true
+	return report, false
 }
 
 func v7CloseoutStatusTerminalHumanWait(task Note, report v7ProofReport) bool {
@@ -473,17 +466,6 @@ func v7CloseoutStatusTerminalHumanWait(task Note, report v7ProofReport) bool {
 
 func v7CloseoutHumanPending(report v7ProofReport) []string {
 	return uniqueStrings(append(append([]string{}, report.HumanMissing...), report.OpenHumanGates...))
-}
-
-func v7ClosePolicyHumanWait(vaultPath string, task Note, report v7ProofReport) bool {
-	if stringField(task.Data, "status") != "review" || !v7ProofReportMachineComplete(report) {
-		return false
-	}
-	policy, err := v7ClosePolicyFor(vaultPath, strings.ToLower(fallback(stringField(task.Data, "risk"), "medium")))
-	if err != nil {
-		policy = defaultV7ClosePolicy(strings.ToLower(fallback(stringField(task.Data, "risk"), "medium")))
-	}
-	return policy.RequiredAcceptor == "human"
 }
 
 func v7LatestValidTerminalCloseout(vaultPath string, task Note, idx v7Index) (Note, bool) {

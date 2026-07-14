@@ -625,24 +625,16 @@ func TestV7ValidateIgnoresSupersededCloseoutFingerprint(t *testing.T) {
 	}
 }
 
-func TestV7CloseoutAllowsHumanClosePolicyCheckpoint(t *testing.T) {
+func TestV7CloseoutRejectsRiskOnlyHumanCheckpoint(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Human close policy", "risk": "high", "priority": "p1", "status": "review", "proof-mode": "inline", "proof-required": "focused_test", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7CloseoutAllowsHumanClosePolicyCheckpoint -count=1", "result": "pass", "note": "Machine proof passed."}, verifyV7AddCmd)
 
-	if err := closeoutV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "emit-packet": "true", "validate": "printf validation-ok"}); err != nil {
-		t.Fatal(err)
-	}
-	idx := mustIndex(t, vault)
-	closeout, ok := latestV7Closeout(idx, "APP-T-0001")
-	if !ok {
-		t.Fatal("expected closeout")
-	}
-	assertEqual(t, []string{"close_policy:human_acceptor"}, normalizeList(closeout.Data["human_missing"]), "human close policy blocker")
-	if !v7CloseoutCheckpointValid(vault, mustV7Task(t, vault, "APP-T-0001"), idx, closeout) {
-		t.Fatal("expected human close policy checkpoint to be valid")
+	err := closeoutV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "emit-packet": "true", "validate": "printf validation-ok"})
+	if err == nil || !strings.Contains(err.Error(), "requires human-owned pending proof, gates, or human close policy") {
+		t.Fatalf("expected risk-only human checkpoint rejection, got %v", err)
 	}
 }
 

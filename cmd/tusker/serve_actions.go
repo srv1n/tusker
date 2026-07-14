@@ -407,9 +407,6 @@ func (s *serveServer) handleTaskCloseAction(w http.ResponseWriter, taskID string
 	args["id"] = strings.ToUpper(strings.TrimSpace(taskID))
 	args["reason"] = firstNonEmpty(body.string("reason"), "accepted from serve")
 	actor := body.string("actor", "by", "acceptedBy", "accepted_by")
-	if actor == "" {
-		actor = serveDefaultCloseActor(project.VaultRoot, args["id"])
-	}
 	if actor != "" {
 		args["by"] = actor
 	}
@@ -422,26 +419,6 @@ func (s *serveServer) handleTaskCloseAction(w http.ResponseWriter, taskID string
 	s.invalidateProjectSnapshot(project.ProjectID)
 	s.decorateTaskActionResultForProject(&result, args["id"], project.ProjectID)
 	serveJSON(w, http.StatusOK, result)
-}
-
-func serveDefaultCloseActor(vaultPath, taskID string) string {
-	idx, err := loadV7Index(vaultPath)
-	if err != nil {
-		return ""
-	}
-	task, ok := idx.Tasks[strings.ToUpper(strings.TrimSpace(taskID))]
-	if !ok {
-		return ""
-	}
-	risk := strings.ToLower(fallback(stringField(task.Data, "risk"), "medium"))
-	policy, err := v7ClosePolicyFor(vaultPath, risk)
-	if err != nil {
-		return ""
-	}
-	if policy.RequiredAcceptor == "human" {
-		return "human:" + defaultActorName()
-	}
-	return ""
 }
 
 func (s *serveServer) handleLandAction(w http.ResponseWriter, target string, body serveActionBody) {

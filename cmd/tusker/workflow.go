@@ -118,7 +118,7 @@ type ReviewerPolicy struct {
 	Actor              string   `yaml:"actor" json:"actor"`
 	MaxCycles          int      `yaml:"max_cycles" json:"max_cycles"`
 	AutoCloseRisks     []string `yaml:"auto_close_risks" json:"auto_close_risks"`
-	HumanRequiredRisks []string `yaml:"human_required_risks" json:"human_required_risks"`
+	HumanRequiredRisks []string `yaml:"human_required_risks,omitempty" json:"human_required_risks,omitempty"`
 	Prompt             string   `yaml:"prompt" json:"prompt"`
 }
 
@@ -165,8 +165,7 @@ func defaultWorkflow() Workflow {
 	wf.Reviewer.Runner = string(RunnerCodexExec)
 	wf.Reviewer.Actor = defaultReviewerActor
 	wf.Reviewer.MaxCycles = 3
-	wf.Reviewer.AutoCloseRisks = []string{"low", "medium"}
-	wf.Reviewer.HumanRequiredRisks = []string{"high", "critical"}
+	wf.Reviewer.AutoCloseRisks = []string{"low", "medium", "high", "critical"}
 	wf.Reviewer.Prompt = defaultReviewerPrompt()
 	wf.ExternalLoop = ExternalLoopCaps{
 		MaxCycles:              externalLoopDefaultMaxCycles,
@@ -218,14 +217,13 @@ Task:
 Policy:
 - Reviewer actor: {{ reviewer.actor }}
 - Auto-close allowed: {{ reviewer.auto_close_allowed }}
-- Human close required: {{ reviewer.human_required }}
 
 Checklist:
 1. Read the task acceptance contract, proof mode, verification rows, evidence cards, and gates.
 2. Inspect the current diff against the task scope. Call out surprise files or drive-by refactors.
 3. Run the smallest verification commands needed to prove the acceptance contract.
 4. Confirm project skill/domain canon changes only when the task changed durable project knowledge.
-5. For high or critical risk, leave the task in review with one bounded human-actionable close recommendation. Risk alone does not justify a human gate or a request to re-approve implementation choices already settled by the task/spec.
+5. Risk alone does not justify a human gate. Treat risk as proof depth and landing safeguards, never as implicit human authority. Create or honor a human gate only for a named capability, external authority, unresolved product fact, or contractually subjective acceptance; do not re-approve choices already settled by the task/spec.
 6. If a caveat changes scope, decide whether it is acceptable or requires rework.
 
 If the task fails review, run:
@@ -235,19 +233,15 @@ If auto-close is allowed and every check passes, run:
 {{ reviewer.verify_command }}
 {{ reviewer.close_command }}
 
-If human close is required and every check passes, do not run ` + "`verify`" + ` or ` + "`close`" + `. Leave the task in ` + "`review`" + ` and state the human-review recommendation in your final response.`)
+Explicit blocking gates still prevent close until they are satisfied or waived by their authorized owner.`)
 }
 
 func reviewerPolicyCoversRisk(policy ReviewerPolicy, risk string) bool {
-	return reviewerMayAutoCloseRisk(policy, risk) || reviewerRequiresHumanRisk(policy, risk)
+	return reviewerMayAutoCloseRisk(policy, risk)
 }
 
 func reviewerMayAutoCloseRisk(policy ReviewerPolicy, risk string) bool {
 	return stringListContainsFold(policy.AutoCloseRisks, risk)
-}
-
-func reviewerRequiresHumanRisk(policy ReviewerPolicy, risk string) bool {
-	return stringListContainsFold(policy.HumanRequiredRisks, risk)
 }
 
 func stringListContainsFold(values []string, target string) bool {
@@ -267,7 +261,7 @@ func defaultWorkflowMarkdown() string {
 	wf := defaultWorkflow()
 	raw, _ := yaml.Marshal(wf)
 	raw = append(raw, []byte("# runner escalation reasons: system_error|security_concern|unresolvable_conflict|stuck_loop\n")...)
-	return "---\n" + strings.TrimSpace(string(raw)) + "\n---\n\n## Routing\n\nYou are working on {{ note.id }} for {{ project.name }}. Dispatch only makes sense when this task is in a dispatch state (`ready` or `rework`) and the workspace is ready at {{ workspace.path }}.\n\n## Hard stop check\n\nBefore doing work, run `tusker closeout status {{ note.id }} --json` when the V7 closeout command is available. If it reports `agent_action=stop_until_human_response`, do not validate, inspect files, spawn subagents, or modify Tusker records. Reply with the pending human gates/proof and whether the closeout checkpoint or review packet is still needed.\n\nRevalidate only after you edited files, a task/gate/evidence state changed, the closeout fingerprint no longer matches, or the user explicitly asked for fresh validation.\n\n## Prompt\n\nUse the installed Tusker skill bundle for durable task semantics and proof discipline. Work inside {{ workspace.path }}. Treat {{ repo.root }} as the source repository root for context only unless the task explicitly requires comparing against it.\n\nItem: {{ note.title }}\nRecord: {{ note.record_id }}\nType: {{ note.type }}\nAttempt: {{ attempt.number }}\nWorkflow: {{ workflow.path }}\nVault: {{ vault.path }}\n\n## Command budget\n\nUse the smallest command that proves or locates the next fact. Prefer packets/capsules, path-scoped status/search, repo-configured wrappers and build-lock/status commands, and redirected logs with small tails. Report validation as command + PASS/FAIL plus the first actionable failure; do not paste raw transcripts or repeat unchanged-state updates.\n\n## Worker protocol\n\nEach dispatched attempt starts with fresh runner context. Use the injected task packet, `.tusker/scratch/<TASK-ID>/PLAN.md`, and previous structured outcome as the handoff; do not query or replay predecessor transcripts. Work one task only. Search before implementing, do not add placeholders or stubs, and run the configured backpressure commands serially.\n\n## Merge lane guard\n\nDo not push or merge directly to the default branch/main. Finish the task proof, then use `tusker land {{ note.id }}`; the serialized landing lane is the only authorized path from task branches into integration branches and main.\n\n## External Apply Inputs\n\nSome tasks may have external apply inputs collected by Tusker under `architect/{{ note.id }}/` or a workspace-local mirror of that directory.\n\nWhen that directory contains exactly one `*.patch` or `*.diff` file:\n\n1. inspect the task acceptance and verification contract first;\n2. run `git apply --check --3way <patch>`;\n3. apply with `git apply --3way <patch>` only after the check passes;\n4. resolve conflicts only when the resolution is mechanical and clearly within the task contract;\n5. run the task verification commands;\n6. record compact verification evidence;\n7. use `tusker finish {{ note.id }} --request-review` when machine proof is complete;\n8. create a concrete gate or move to rework/blocked when proof cannot be completed.\n\nIf there are zero patches, multiple patches, a patch outside scope, or an ambiguous conflict, stop and report the blocker through Tusker. Do not invent or silently repair patches.\n\n## Completion contract\n\nSatisfy the task proof mode. For proof_mode=inline, record concise verification rows with `tusker verify add`; do not create evidence files. For card/artifact/audit, create only the evidence the proof mode requires. When machine work is complete and only human-owned proof or gates remain, run `tusker closeout <task-id> --emit-packet --validate \"<command>\"`, then stop. When the work is demonstrably ready for verification, use `tusker finish <task-id> --request-review` so the task reaches `review` or a branch-safe `propose status ... --status review` proposal is created. Attempt handoff alone is not a review request. If proof is blocked, create/propose a gate with a concrete owner, action, and verification instead of appending negative evidence.\n\n## Reviewer contract\n\nIf `reviewer.enabled` is true, tasks in `review` may be dispatched to `reviewer.runner` for independent review. The reviewer must not edit implementation files. Low/medium risks can be verified and closed by `reviewer.actor` after all gates pass; high/critical risks stay in `review` for human verification and close.\n\n## Retry policy\n\nRetry only transient infrastructure failures. Human-directed rework creates a new task revision; runtime activity remains in the run/lease store.\n\n## Human override policy\n\nHumans may edit tasks directly, but runtime state belongs to the daemon store.\n"
+	return "---\n" + strings.TrimSpace(string(raw)) + "\n---\n\n## Routing\n\nYou are working on {{ note.id }} for {{ project.name }}. Dispatch only makes sense when this task is in a dispatch state (`ready` or `rework`) and the workspace is ready at {{ workspace.path }}.\n\n## Hard stop check\n\nBefore doing work, run `tusker closeout status {{ note.id }} --json` when the V7 closeout command is available. If it reports `agent_action=stop_until_human_response`, do not validate, inspect files, spawn subagents, or modify Tusker records. Reply with the pending human gates/proof and whether the closeout checkpoint or review packet is still needed.\n\nRevalidate only after you edited files, a task/gate/evidence state changed, the closeout fingerprint no longer matches, or the user explicitly asked for fresh validation.\n\n## Prompt\n\nUse the installed Tusker skill bundle for durable task semantics and proof discipline. Work inside {{ workspace.path }}. Treat {{ repo.root }} as the source repository root for context only unless the task explicitly requires comparing against it.\n\nItem: {{ note.title }}\nRecord: {{ note.record_id }}\nType: {{ note.type }}\nAttempt: {{ attempt.number }}\nWorkflow: {{ workflow.path }}\nVault: {{ vault.path }}\n\n## Command budget\n\nUse the smallest command that proves or locates the next fact. Prefer packets/capsules, path-scoped status/search, repo-configured wrappers and build-lock/status commands, and redirected validation logs with small tails. Report validation as command + PASS/FAIL plus the first actionable failure; do not paste raw transcripts or repeat unchanged-state updates.\n\n## Worker protocol\n\nEach dispatched attempt starts with fresh runner context. Use the injected task packet, `.tusker/scratch/<TASK-ID>/PLAN.md`, and previous structured outcome as the handoff; do not query or replay predecessor transcripts. Work one task only. Search before implementing, do not add placeholders or stubs, and run the configured backpressure commands serially.\n\n## Merge lane guard\n\nDo not push or merge directly to the default branch/main. Finish the task proof, then use `tusker land {{ note.id }}`; the serialized landing lane is the only authorized path from task branches into integration branches and main.\n\n## External Apply Inputs\n\nSome tasks may have external apply inputs collected by Tusker under `architect/{{ note.id }}/` or a workspace-local mirror of that directory.\n\nWhen that directory contains exactly one `*.patch` or `*.diff` file:\n\n1. inspect the task acceptance and verification contract first;\n2. run `git apply --check --3way <patch>`;\n3. apply with `git apply --3way <patch>` only after the check passes;\n4. resolve conflicts only when the resolution is mechanical and clearly within the task contract;\n5. run the task verification commands;\n6. record compact verification evidence;\n7. use `tusker finish {{ note.id }} --request-review` when machine proof is complete;\n8. create a concrete gate or move to rework/blocked when proof cannot be completed.\n\nIf there are zero patches, multiple patches, a patch outside scope, or an ambiguous conflict, stop and report the blocker through Tusker. Do not invent or silently repair patches.\n\n## Completion contract\n\nSatisfy the task proof mode. For proof_mode=inline, record concise verification rows with `tusker verify add`; do not create evidence files. For card/artifact/audit, create only the evidence the proof mode requires. When machine work is complete and only human-owned proof or gates remain, run `tusker closeout <task-id> --emit-packet --validate \"<command>\"`, then stop. When the work is demonstrably ready for verification, use `tusker finish <task-id> --request-review` so the task reaches `review` or a branch-safe `propose status ... --status review` proposal is created. Attempt handoff alone is not a review request. If proof is blocked, create/propose a gate with a concrete owner, action, and verification instead of appending negative evidence.\n\n## Reviewer contract\n\nIf `reviewer.enabled` is true, tasks in `review` may be dispatched to `reviewer.runner` for independent review. The reviewer must not edit implementation files. Independent reviewers may verify and close every risk tier after required objective proof and explicit gates pass. High and critical risk increase proof depth and landing safeguards; they do not imply human authority.\n\n## Retry policy\n\nRetry only transient infrastructure failures. Human-directed rework creates a new task revision; runtime activity remains in the run/lease store.\n\n## Human override policy\n\nHumans may edit tasks directly, but runtime state belongs to the daemon store.\n"
 }
 
 func normalizeWorkflowDispatchStates(wf *Workflow) {

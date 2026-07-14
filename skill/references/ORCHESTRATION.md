@@ -29,7 +29,7 @@ background worker, and only when project automation is enabled.
 
 ## Runner Rule
 
-Runners return normalized results: summary, patch/diff/artifacts, verification rows, questions, usage, and outcome. Runners should not directly close high/critical tasks.
+Runners return normalized results: summary, patch/diff/artifacts, verification rows, questions, usage, and outcome. Independent reviewer runners may close every risk tier after objective proof and explicit gates pass.
 
 ## Browser-backed ChatGPT Rule
 

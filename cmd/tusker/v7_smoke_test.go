@@ -2515,11 +2515,11 @@ func TestV7PacketIncludesDomainContextAndClosePolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	packet := v7Packet(vault, Note{AbsolutePath: taskPath, Data: taskData, Body: taskBody}, mustIndex(t, vault), "agent")
-	for _, expected := range []string{"## Project skill routing", "vault/SKILL.md", "knowledge/domains/providers/INDEX.md", "## Domain context", "Providers", "Current truth:", "## Verification", "## Close policy", "Required acceptor: human", "Required gates: release, security"} {
+	for _, expected := range []string{"## Project skill routing", "vault/SKILL.md", "knowledge/domains/providers/INDEX.md", "## Domain context", "Providers", "Current truth:", "## Verification", "## Close policy", "Required acceptor: reviewer_agent", "Required gates: none"} {
 		assertContainsIndexTest(t, packet, expected)
 	}
 	reviewerPacket := v7Packet(vault, Note{AbsolutePath: taskPath, Data: taskData, Body: taskBody}, mustIndex(t, vault), "reviewer")
-	for _, expected := range []string{"reviewer packet", "## Project skill routing", "## Domain context", "knowledge/domains/providers/CANON.md", "## Risk policy", "Required acceptor: human"} {
+	for _, expected := range []string{"reviewer packet", "## Project skill routing", "## Domain context", "knowledge/domains/providers/CANON.md", "## Risk policy", "Required acceptor: reviewer_agent"} {
 		assertContainsIndexTest(t, reviewerPacket, expected)
 	}
 	for _, forbidden := range []string{"## Stable Interfaces", "## Deprecated Or Stale"} {
@@ -3539,14 +3539,7 @@ func TestV7ClosePolicyRequiresRiskEvidenceAndAcceptor(t *testing.T) {
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0002", "kind": "automated_test", "covers": "A1", "summary": "Focused tests passed."}, evidenceV7AddCmd)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0002", "kind": "human_review", "status": "accepted", "accepted-by": "human:sarav", "covers": "A1", "summary": "Human reviewed and accepted."}, evidenceV7AddCmd)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0002", "status": "review", "by": "agent:codex"}, statusV7Cmd)
-	err = closeV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0002", "by": "reviewer:agent"})
-	if err == nil {
-		t.Fatal("expected high close to require human acceptor")
-	}
-	if !strings.Contains(err.Error(), "requires human acceptor") {
-		t.Fatalf("expected human acceptor error, got %v", err)
-	}
-	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0002", "by": "human:sarav"}, closeV7Cmd)
+	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0002", "by": "reviewer:agent"}, closeV7Cmd)
 }
 
 func TestV7CloseRequiresAcceptanceCoverageOrWaiver(t *testing.T) {
@@ -3620,7 +3613,7 @@ func TestV7ValidationRejectsDoneTaskViolatingClosePolicy(t *testing.T) {
 	data["next_source"] = "status"
 	data["next_ref"] = ""
 	data["next_action"] = ""
-	data["accepted_by"] = "reviewer:agent"
+	data["accepted_by"] = "agent:codex"
 	data["accepted_at"] = "2026-05-13T05:00:00Z"
 	data["closed_at"] = "2026-05-13T05:00:00Z"
 	data["state_rev"] = v7StateRev(data, body)

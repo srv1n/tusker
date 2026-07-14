@@ -355,9 +355,6 @@ func enforceV7ClosePolicy(vaultPath string, task Note, idx v7Index, actor string
 	}
 	requiredAcceptor := policy.RequiredAcceptor
 	if !v7CloseAcceptorAllowed(actor, requiredAcceptor) {
-		if requiredAcceptor == "human" {
-			return tuskerError(errorInvalidTransition, id+": close requires human acceptor for "+risk+" risk", withContext(map[string]any{"risk": risk, "actor": actor, "required_acceptor": requiredAcceptor}))
-		}
 		return tuskerError(errorInvalidTransition, id+": close requires reviewer or human acceptor for "+risk+" risk", withContext(map[string]any{"risk": risk, "actor": actor, "required_acceptor": requiredAcceptor}))
 	}
 	requiredEvidence := mergeUniqueStrings(normalizeList(task.Data["evidence_required"]), policy.RequiredEvidence)

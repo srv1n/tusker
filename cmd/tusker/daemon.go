@@ -5068,7 +5068,6 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 		"attempt.id":                  attemptID,
 		"reviewer.actor":              reviewerActorForNote(wfFile.Data.Reviewer.Actor, note),
 		"reviewer.auto_close_allowed": yesNo(reviewerMayAutoCloseRisk(wfFile.Data.Reviewer, stringField(note.Data, "risk"))),
-		"reviewer.human_required":     yesNo(reviewerRequiresHumanRisk(wfFile.Data.Reviewer, stringField(note.Data, "risk"))),
 	}
 	values["reviewer.verify_command"] = reviewerVerifyCommandForNote(note, values["reviewer.actor"])
 	values["reviewer.close_command"] = fmt.Sprintf("tusker close %s --by %s --reason \"agent review accepted\"", stringField(note.Data, "id"), values["reviewer.actor"])

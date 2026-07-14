@@ -36,7 +36,7 @@ Default reviewer policy:
 | Risk | Reviewer behavior |
 |---|---|
 | `low`, `medium` | agent reviewer may verify and close when all gates pass |
-| `high`, `critical` | agent reviewer may advise only; human verification and close are required |
+| `high`, `critical` | agent reviewer may verify and close after stronger objective proof and all explicit gates pass |
 
 ## Verify
 
@@ -48,7 +48,7 @@ Default reviewer policy:
 
 Verification does not close the task.
 
-The configured reviewer actor is blocked from verifying human-required risk tiers.
+Risk never synthesizes a human acceptor. Human authority exists only through an explicit capability, external-authority, unresolved-intent, or contractually subjective gate.
 
 ## Rework
 

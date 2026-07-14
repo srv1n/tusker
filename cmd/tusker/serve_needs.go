@@ -13,9 +13,6 @@ func serveNeeds(snap serveSnapshot, now time.Time) []serveNeedItem {
 	for _, task := range snap.tasks {
 		cap := serveTaskCapsuleFor(snap, task)
 		blocking := serveBlockingCount(snap, cap.ID)
-		if strings.ToLower(stringField(task.Data, "status")) == "review" && (cap.Risk == "high" || cap.Risk == "critical") {
-			needs = append(needs, serveReviewNeed(snap, task, cap, blocking))
-		}
 		for _, gate := range serveUnsatisfiedGatesForTask(snap, cap.ID) {
 			if !serveHumanOwner(gate.Owner) {
 				continue

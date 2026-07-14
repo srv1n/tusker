@@ -222,6 +222,9 @@ func TestDigestRender(t *testing.T) {
 	writeDigestTask(t, vault, "APP-T-0001", "Closed task", "done", "medium", "satisfied", "2026-07-06T07:00:00Z")
 	writeDigestTask(t, vault, "APP-T-0002", "Human acceptance", "review", "high", "satisfied", "")
 	writeDigestTask(t, vault, "APP-T-0003", "Parked task", "ready", "medium", "pending", "")
+	if err := newV7Gate(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0002", "kind": "release", "owner": "human:release", "action": "Authorize the production release.", "verification": "Release authority records approval.", "why-agent-cannot": "Only the production release authority can deploy.", "covers": "A1"}); err != nil {
+		t.Fatal(err)
+	}
 	writeDigestWave(t, vault, "W-0001", "Morning wave", []string{"APP-T-0001"}, "2026-07-06T08:00:00Z")
 	if _, _, err := createV7Escalation(vault, escalationCreateRequest{Severity: "P2", TaskID: "APP-T-0003", Description: "digest escalation", Source: "runner", Reason: "system_error", Actor: "agent:test", ValidateTask: true}); err != nil {
 		t.Fatal(err)

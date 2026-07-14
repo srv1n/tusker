@@ -66,7 +66,7 @@ func defaultV7ProofRequired(mode string) []string {
 	case "artifact":
 		return []string{"build", "manual_smoke", "screenshot"}
 	case "audit":
-		return []string{"focused_test", "broad_test", "human_signoff"}
+		return []string{"focused_test", "broad_test", "independent_review"}
 	default:
 		return []string{"focused_test", "broad_test"}
 	}
@@ -1135,7 +1135,7 @@ func classifyV7GateOwner(gate Note) string {
 	switch strings.ToLower(stringField(gate.Data, "gate_kind")) {
 	case "ci", "external_service", "quota":
 		return "external"
-	case "auth", "env", "setup", "dev_host", "verification", "signoff", "manual_hold", "security", "release":
+	case "auth", "env", "setup", "dev_host", "verification", "signoff", "manual_hold", "security", "privacy", "legal", "billing", "release", "destructive_external_action", "subjective_acceptance":
 		return "human"
 	default:
 		return "machine"

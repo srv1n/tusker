@@ -387,9 +387,6 @@ func externalReviewResultAction(wf Workflow, note Note, run RunStatus, result *e
 		if reviewerMayAutoCloseRisk(wf.Reviewer, risk) {
 			return externalLoopActionCloseTask, nil
 		}
-		if reviewerRequiresHumanRisk(wf.Reviewer, risk) {
-			return externalLoopActionRecordResearch, []string{"external review accepted, but risk " + risk + " requires human close"}
-		}
 		return externalLoopActionRecordResearch, []string{"external review accepted, but reviewer auto-close is not configured for risk " + firstNonEmpty(risk, "unknown")}
 	case "rework":
 		return externalLoopActionContinueThreadOnFailure, nil

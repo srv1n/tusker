@@ -404,6 +404,8 @@ func runInner(command string, args Args) (int, error) {
 		return legacyOnlyCommand("migrate gates", "legacy migrate gates")
 	case "migrate evidence-policy":
 		return 0, migrateV7EvidencePolicyCmd(args)
+	case "migrate close-policy":
+		return 0, migrateClosePolicyCmd(args)
 	case "migrate vault-root":
 		return 0, migrateVaultRootCmd(args)
 	case "legacy migrate v7":
@@ -966,7 +968,7 @@ func printCommandHelp(command string) bool {
 		printEvidenceHelp()
 	case "migrate vault-root":
 		printMigrateVaultRootHelp()
-	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "delivery", "delivery plan", "delivery import", "trace", "trace list", "trace show", "trace replay", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy":
+	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "delivery", "delivery plan", "delivery import", "trace", "trace list", "trace show", "trace replay", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy", "migrate close-policy":
 		printV7Help()
 	case "feedback", "feedback add", "feedback digest", "feedback ingest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()
@@ -1203,6 +1205,7 @@ func printV7Help() {
   tusker migrate v7 --dry-run [--json]
   tusker migrate gates --from-blocked-reason [--write] [--json]
   tusker migrate evidence-policy [--write] [--json]
+  tusker migrate close-policy [--write] [--json]
   tusker migrate vault-root --to .tusker [--dry-run] [--json]
 
 Purpose:

@@ -54,8 +54,8 @@ func TestSkillReservesHumanApprovalForHumanOnlyBoundaries(t *testing.T) {
 		"## Human Approval Boundary",
 		"Everything already decided by the task, acceptance criteria, governing spec, or",
 		"final human acceptance of screenshots, recordings, UX feel, brand quality",
-		"Risk changes proof depth and close policy; risk alone does not justify an ad hoc",
-		"Do not ask the human to re-decide implementation",
+		"Risk changes proof depth, reviewer strength, and landing safeguards; risk alone",
+		"Independent reviewers may",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("canonical skill missing human-approval rule %q", required)

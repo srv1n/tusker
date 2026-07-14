@@ -58,6 +58,6 @@ tusker validate --json
 tusker close <TASK-ID> --by reviewer:<name> --reason "<acceptance/proof summary>"
 ```
 
-Low/medium work may be closed by an allowed independent reviewer. High/critical work follows the configured human/reviewer policy.
+Every risk tier may be closed by an allowed independent reviewer after objective proof and explicit gates pass.
 
 Never delete prior evidence or summaries just to make the task look cleaner. Supersede stale evidence and keep the current truth obvious.

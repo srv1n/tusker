@@ -92,7 +92,7 @@ func TestRenderAttemptPromptUsesReviewerTemplateForReviewLane(t *testing.T) {
 		"independent Tusker reviewer",
 		"ID: MEM-T-0001",
 		"Auto-close allowed: yes",
-		"Human close required: no",
+		"Risk alone does not justify a human gate",
 		"tusker close MEM-T-0001 --by agent-reviewer",
 	} {
 		if !strings.Contains(prompt, expected) {

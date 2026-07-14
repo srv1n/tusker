@@ -44,7 +44,7 @@ state_rev: "sha256:d960174286d6367574b1092873fed0bbc8d575da1c9327f50878ee849fab3
 - The resolved Codex runner policy is enforced with real `codex exec` CLI arguments. Full-access plus approval-free execution uses the CLI bypass flag; sandboxed profiles use the matching `--sandbox` mode. Tusker-specific environment variables are diagnostic metadata, not enforcement.
 - Codex exec event-stream silence is not evidence of runner death while raw JSONL shows a command execution started and not completed; the heartbeat watchdog uses `codex.turn_timeout_ms` as the in-flight command cap and reserves the shorter idle heartbeat reap for true silence.
 - Human-owned gates set `agent_action: stop_until_human_response` and `readiness: waiting_on_human`.
-- Human gates are reserved for human capability/authority, genuinely unresolved contract intent, or explicitly subjective final-artifact acceptance. Approved task/spec decisions are already accepted; agents must not turn their implementation into new human approval questions. Risk controls proof depth and configured close policy, not ad hoc gate creation.
+- Human gates are reserved for human capability/authority, genuinely unresolved contract intent, or explicitly subjective final-artifact acceptance. Approved task/spec decisions are already accepted; agents must not turn their implementation into new human approval questions. Risk controls proof depth, reviewer strength, and landing safeguards; independent reviewers may close objective work at every risk tier.
 - Tags are projections; typed frontmatter is source of truth.
 - Obsidian Bases and dashboards are generated views, not canonical state.
 - Browser-backed ChatGPT work is a runner result source, not a direct state writer.
@@ -66,7 +66,7 @@ state_rev: "sha256:d960174286d6367574b1092873fed0bbc8d575da1c9327f50878ee849fab3
 - `tusker automation plan <task> --json` is the canonical pre-dispatch explanation.
 - `tusker daemon run` and `tusker automation dispatch` fail closed when invoked from a detected Codex/Claude or dispatched-worker environment; a model session may inspect plans/status and manage records, but cannot recursively create model workers.
 - `tusker xcode doctor` classifies generated Xcode build-state failures; when it reports `likely_infrastructure`, agents must record proof as blocked by infrastructure and do not claim code validation from the failed Xcode build.
-- High and critical risk closeout requires human acceptance.
+- High and critical risk closeout requires stronger objective proof, not implicit human acceptance. Only explicit gates reserve human authority.
 - Legacy V5/V6 docs, publication manifests, site export state, and checked-in event history are not default read paths.
 - Targeting a quarantined project may fail loudly, but unrelated quarantined registrations must not fatal daemon run/resume, status/list, automation, all-project listing, or serve paths.
 

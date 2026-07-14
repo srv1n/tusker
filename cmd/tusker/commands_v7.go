@@ -1169,7 +1169,10 @@ func redactV7Cmd(args Args) error {
 }
 
 func validateV7ClosePolicyConfig(configPath, risk string, policy v7ClosePolicy) error {
-	if policy.RequiredAcceptor != "human" && policy.RequiredAcceptor != "reviewer_agent" {
+	if policy.RequiredAcceptor == "human" {
+		return tuskerError(errorConfigInvalid, "legacy close_policy."+risk+".required_acceptor: human treats risk as human authority", withPath(configPath), withHint("run `tusker migrate close-policy --write`; preserve genuine authority and subjective acceptance as explicit gates"))
+	}
+	if policy.RequiredAcceptor != "reviewer_agent" {
 		return tuskerError(errorConfigInvalid, "invalid close_policy."+risk+".required_acceptor: "+policy.RequiredAcceptor, withPath(configPath))
 	}
 	for _, kind := range policy.RequiredEvidence {
@@ -2479,7 +2482,7 @@ func v7ExplainerPacket(vaultPath string, task Note, idx v7Index) string {
 	fmt.Fprintf(&b, "- Check whether the implementation preserves the task scope and non-goals.\n")
 	fmt.Fprintf(&b, "- Check whether each acceptance row has behavior-level proof.\n")
 	fmt.Fprintf(&b, "- Check whether any knowledge delta needs a docs/canon update before close.\n")
-	fmt.Fprintf(&b, "- For high or critical risk, leave final acceptance to the configured human owner.\n\n")
+	fmt.Fprintf(&b, "- Independent reviewers may close every risk tier after objective proof and explicit gates pass.\n\n")
 	fmt.Fprintf(&b, "## Comprehension Check\n\n%s", v7ExplainerQuiz(task, report))
 	return b.String()
 }

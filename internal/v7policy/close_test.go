@@ -8,7 +8,7 @@ func TestDefaultClosePolicy(t *testing.T) {
 		t.Fatalf("unexpected low-risk policy: %#v", low)
 	}
 	high := DefaultClosePolicy("high")
-	if high.RequiredAcceptor != "human" || len(high.RequiredEvidence) != 0 {
+	if high.RequiredAcceptor != "reviewer_agent" || len(high.RequiredEvidence) != 0 {
 		t.Fatalf("unexpected high-risk policy: %#v", high)
 	}
 	medium := DefaultClosePolicy("medium")
@@ -16,7 +16,7 @@ func TestDefaultClosePolicy(t *testing.T) {
 		t.Fatalf("unexpected medium-risk policy: %#v", medium)
 	}
 	critical := DefaultClosePolicy("critical")
-	if critical.RequiredAcceptor != "human" || len(critical.RequiredGates) != 2 {
+	if critical.RequiredAcceptor != "reviewer_agent" || len(critical.RequiredGates) != 0 {
 		t.Fatalf("unexpected critical-risk policy: %#v", critical)
 	}
 }

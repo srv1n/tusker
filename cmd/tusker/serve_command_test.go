@@ -48,7 +48,6 @@ func TestServeNeedsSignals(t *testing.T) {
 		byID[need["id"].(string)] = need
 	}
 	for _, id := range []string{
-		"need-review-APP-T-0001",
 		"need-gate-APP-G-0001",
 		"need-review-APP-T-0004",
 		"need-failed-APP-T-0007",
@@ -60,10 +59,12 @@ func TestServeNeedsSignals(t *testing.T) {
 	if _, ok := byID["need-review-APP-T-0002"]; ok {
 		t.Fatal("low-risk review task must not enter needs")
 	}
+	if _, ok := byID["need-review-APP-T-0001"]; ok {
+		t.Fatal("risk alone must not create a human review need")
+	}
 	if _, ok := byID["need-failed-APP-T-0008"]; ok {
 		t.Fatal("retry-queued failure must not enter needs")
 	}
-	assertEqual(t, "p0", byID["need-review-APP-T-0001"]["priority"], "critical review priority")
 	var criticalTask serveTaskDetail
 	serveDecode(t, server, "/api/tasks/APP-T-0001", &criticalTask)
 	assertEqual(t, "critical", criticalTask.Risk, "critical risk passthrough")
@@ -554,14 +555,14 @@ func TestServeMutationEndpointsReturnVisibleRefusals(t *testing.T) {
 	}
 }
 
-func TestServeCloseDefaultsHumanActorForHumanRequiredRisk(t *testing.T) {
+func TestServeCloseDefaultsReviewerActorForHighRisk(t *testing.T) {
 	server := newServeEmptyNeedsFixture(t)
 	writeServeCloseableReviewTask(t, server.vaultPath, "APP-T-0001", "high")
 
 	var result serveActionResult
 	servePost(t, server, "/api/tasks/APP-T-0001/close", `{}`, &result)
 	if !result.OK || result.Refused {
-		t.Fatalf("expected serve close to accept high-risk task as human actor, got %#v", result)
+		t.Fatalf("expected serve close to accept high-risk task as reviewer, got %#v", result)
 	}
 
 	data, _, err := parseFrontmatterMustRead(filepath.Join(server.vaultPath, "work", "tasks", "APP-T-0001.md"))
@@ -569,7 +570,7 @@ func TestServeCloseDefaultsHumanActorForHumanRequiredRisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEqual(t, "done", stringField(data, "status"), "closed task status")
-	assertEqual(t, "human:"+defaultActorName(), stringField(data, "accepted_by"), "serve close default acceptor")
+	assertEqual(t, "reviewer:agent", stringField(data, "accepted_by"), "serve close default acceptor")
 }
 
 func newServeFixture(t *testing.T) *serveServer {

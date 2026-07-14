@@ -24,7 +24,7 @@ var (
 	EscalationSeverities = makeSet("P0", "P1", "P2")
 	EscalationStatuses   = makeSet("open", "acknowledged")
 	Readiness            = makeSet("ready", "blocked_by_gate", "blocked_by_dependency", "waiting_on_review", "waiting_on_human", "waiting_on_ci", "held", "done", "cancelled", "superseded")
-	GateKinds            = makeSet("auth", "env", "setup", "dev_host", "ci", "verification", "signoff", "decision", "quota", "external_service", "manual_hold", "security", "release")
+	GateKinds            = makeSet("auth", "env", "setup", "dev_host", "ci", "verification", "signoff", "decision", "quota", "external_service", "manual_hold", "security", "privacy", "legal", "billing", "release", "destructive_external_action", "subjective_acceptance")
 	GateStatuses         = makeSet("open", "satisfied", "waived", "obsolete")
 	ProofModes           = makeSet("none", "inline", "card", "artifact", "audit")
 	ProofStatuses        = makeSet("pending", "partial", "satisfied", "waived")

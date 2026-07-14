@@ -84,8 +84,8 @@ classify proof/gates by owner
 
 Reviewer lanes are independent from implementation workers.
 
-- Low/medium risk may be closed by an allowed reviewer when proof, gates, docs impact, and policy pass.
-- High/critical risk may get advisory reviewer output, but final close follows human/reviewer policy.
+- Every risk tier may be closed by an allowed independent reviewer when proof, gates, docs impact, and policy pass.
+- High/critical risk strengthens proof, reviewer, and landing safeguards; it does not synthesize human acceptance.
 - If review fails, move to `rework` with exact acceptance gaps.
 - If review leaves only human gates, set/recognize human-wait and stop.
 - Dispatch at most one reviewer per handoff and three automated review cycles per task. At the cap, leave the task in review for operator intervention.

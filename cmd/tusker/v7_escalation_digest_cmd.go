@@ -653,25 +653,31 @@ func digestRedParkedItems(idx v7Index, runs []RunStatus, projectID string) []dig
 
 func digestPendingHardGates(idx v7Index) []digestPendingHardGate {
 	out := []digestPendingHardGate{}
-	tasks := make([]Note, 0, len(idx.Tasks))
-	for _, task := range idx.Tasks {
-		tasks = append(tasks, task)
-	}
-	sort.Slice(tasks, func(i, j int) bool { return stringField(tasks[i].Data, "id") < stringField(tasks[j].Data, "id") })
-	for _, task := range tasks {
-		risk := stringField(task.Data, "risk")
-		if stringField(task.Data, "status") != "review" || (risk != "high" && risk != "critical") {
+	for _, gate := range sortedV7Gates(idx) {
+		if stringField(gate.Data, "status") != "open" || !boolField(gate.Data, "blocking") || !v7GateOwnerNeedsAgentBoundary(stringField(gate.Data, "owner")) {
 			continue
 		}
-		out = append(out, digestPendingHardGate{
-			TaskID:    stringField(task.Data, "id"),
-			TaskTitle: stringField(task.Data, "title"),
-			Risk:      risk,
-			Status:    stringField(task.Data, "status"),
-			Proof:     firstNonEmpty(stringField(task.Data, "proof_status"), "pending"),
-			UpdatedAt: stringField(task.Data, "updated_at"),
-		})
+		for _, taskID := range normalizeList(gate.Data["blocks"]) {
+			task, ok := idx.Tasks[taskID]
+			if !ok {
+				continue
+			}
+			out = append(out, digestPendingHardGate{
+				TaskID:    taskID,
+				TaskTitle: stringField(task.Data, "title"),
+				Risk:      stringField(gate.Data, "gate_kind"),
+				Status:    stringField(task.Data, "status"),
+				Proof:     firstNonEmpty(stringField(task.Data, "proof_status"), "pending"),
+				UpdatedAt: firstNonEmpty(stringField(gate.Data, "updated_at"), stringField(task.Data, "updated_at")),
+			})
+		}
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].TaskID != out[j].TaskID {
+			return out[i].TaskID < out[j].TaskID
+		}
+		return out[i].Risk < out[j].Risk
+	})
 	return out
 }
 

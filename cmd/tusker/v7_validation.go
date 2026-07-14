@@ -662,9 +662,6 @@ func v7HumanGateOwnsAgentCapableWork(gateKind, owner, action, verification, whyA
 		return false
 	}
 	text := strings.ToLower(strings.Join([]string{action, verification, whyAgentCannot, suggestion}, " "))
-	if gateKind == "security" || gateKind == "release" {
-		return false
-	}
 	agentCapable := []string{
 		"code review", "review code", "reviews code", "review code changes", "review diff", "diff review", "approve diff", "compare code",
 		"code comparison", "review branch proof", "review proof", "review acceptance", "review changes",
@@ -673,29 +670,38 @@ func v7HumanGateOwnsAgentCapableWork(gateKind, owner, action, verification, whyA
 		"approve implementation", "accept implementation", "confirm implementation",
 		"approve removal", "accept removal", "confirm removal", "legacy mapping",
 		"approve mapping", "accept mapping", "confirm mapping", "approve behavior", "accept behavior",
+		"screenshot", "screen recording", "video recording", "benchmark", "performance result",
+		"choose implementation", "implementation choice", "select implementation", "basic test", "run tests",
+	}
+	subjective := []string{"subjective", "look and feel", "brand quality", "visual acceptance", "ux acceptance", "feels right", "on-brand", "required by this proof policy"}
+	for _, marker := range subjective {
+		if strings.Contains(text, marker) {
+			return false
+		}
+	}
+	authority := []string{
+		"credential", "secret", "oauth", "api key", "billing authority", "account owner",
+		"production release", "release authority", "destructive external", "legal authority",
+		"privacy authority", "security authority", "security approval", "release approval", "production access", "inaccessible environment",
+		"physical device", "device unavailable", "device or ui access", "human device", "cannot access",
+	}
+	for _, marker := range authority {
+		if strings.Contains(text, marker) {
+			return false
+		}
 	}
 	for _, marker := range agentCapable {
 		if strings.Contains(text, marker) {
 			return true
 		}
 	}
-	humanOnly := []string{
-		"credential", "secret", "oauth", "api key", "payment", "billing", "account",
-		"device", "physical", "manual smoke", "browser ui", "production access",
-		"security approval", "release approval", "product decision", "legal",
-		"screenshot", "screen recording", "video recording", "final artifact", "end artifact",
-		"subjective", "look and feel", "brand quality", "visual acceptance", "ux acceptance",
-		"proof policy", "close policy",
-	}
-	for _, marker := range humanOnly {
-		if strings.Contains(text, marker) {
-			return false
-		}
-	}
 	if gateKind == "decision" {
 		return strings.TrimSpace(suggestion) == "" || !v7GateHasDecisionConflictContext(text)
 	}
 	if gateKind == "signoff" {
+		return true
+	}
+	if gateKind == "security" || gateKind == "privacy" || gateKind == "legal" || gateKind == "billing" || gateKind == "release" || gateKind == "destructive_external_action" {
 		return true
 	}
 	return false
@@ -1176,7 +1182,6 @@ func validateV7Closeout(note Note, ctx validationContext, where string, errors *
 			"open_external_gates":   report.OpenExternalGates,
 			"human_missing":         report.HumanMissing,
 			"open_human_gates":      report.OpenHumanGates,
-			"close_policy_human":    v7ClosePolicyHumanWait(ctx.VaultPath, task, report),
 			"closeout_agent_action": stringField(data, "agent_action"),
 		}))
 	}

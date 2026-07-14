@@ -87,9 +87,6 @@ close_policy:
   medium:
     required_acceptor: reviewer_agent
   high:
-    required_acceptor: human
+    required_acceptor: reviewer_agent
   critical:
-    required_acceptor: human
-    required_gates:
-      - release
-      - security
+    required_acceptor: reviewer_agent

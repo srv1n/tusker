@@ -115,11 +115,11 @@ lane. Agents own objective inspection of diffs, code, tests, logs, screenshots,
 recordings, and artifacts. A human may receive those artifacts for explicitly
 subjective final acceptance, not as a substitute for agent verification.
 
-Risk changes proof depth and close policy; risk alone does not justify an ad hoc
-human gate or a new implementation question. When configured policy reserves
-high/critical final close for a human, present one bounded acceptance packet and
-the reviewer recommendation. Do not ask the human to re-decide implementation
-details one by one.
+Risk changes proof depth, reviewer strength, and landing safeguards; risk alone
+does not justify a human gate or human close policy. Independent reviewers may
+close objectively proven work at every tier. Explicit human gates remain binding
+for capability, external authority, unresolved intent, and contractually
+subjective acceptance.
 
 ## Hard Rules
 
