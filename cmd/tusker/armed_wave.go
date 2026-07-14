@@ -48,12 +48,12 @@ func buildArmedWaveSnapshot(vaultPath string, idx v7Index, wave Note, runs map[s
 
 	for _, id := range members {
 		task, ok := idx.Tasks[id]
-		member := armedWaveMember{ID: id, State: armedWaveRunnable}
+		member := armedWaveMember{ID: id, State: armedWaveRunnable, Reason: "eligible in current armed-wave frontier"}
 		switch {
 		case !ok:
 			member.State, member.Reason = armedWaveMachineParked, "task record is missing"
 		case landed[id]:
-			member.State = armedWaveLanded
+			member.State, member.Reason = armedWaveLanded, "landed on wave integration branch"
 		case stale || authState != "armed":
 			member.State, member.Reason = armedWaveStaleAuthorization, "wave authorization is "+fallback(authState, "disarmed")
 		case armedWaveTaskHumanBlocked(idx, task):
@@ -61,9 +61,9 @@ func buildArmedWaveSnapshot(vaultPath string, idx v7Index, wave Note, runs map[s
 		case armedWaveRunMachineParked(runs[id]):
 			member.State, member.Reason = armedWaveMachineParked, firstNonEmpty(runs[id].LastError, "attempt policy exhausted")
 		case runConsumesDispatchCapacity(runs[id]):
-			member.State = armedWaveRunning
+			member.State, member.Reason = armedWaveRunning, "live implementation or review lease"
 		case stringField(task.Data, "status") == "review" || stringField(task.Data, "status") == "done":
-			member.State = armedWaveReview
+			member.State, member.Reason = armedWaveReview, "awaiting objective review and landing"
 		case !isV7RunnableAgentTask(task):
 			if edge, blocked := v7BlockingDependencyForReadiness(task, idx); blocked {
 				member.State, member.Reason = armedWaveDependencyWaiting, "waiting for dependency "+edge.ID
@@ -117,6 +117,8 @@ func buildArmedWaveSnapshot(vaultPath string, idx v7Index, wave Note, runs map[s
 				member.State, member.Reason = armedWaveDependencyWaiting, "waiting for dependency "+edge.ID
 			} else if len(snapshot.Frontier) < remaining {
 				snapshot.Frontier = append(snapshot.Frontier, id)
+			} else {
+				member.Reason = "waiting for wave concurrency capacity"
 			}
 		}
 		snapshot.Members = append(snapshot.Members, member)

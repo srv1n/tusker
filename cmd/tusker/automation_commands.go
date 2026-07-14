@@ -469,7 +469,7 @@ func (ctx *automationCommandContext) automationQueueIncludes(note Note) bool {
 		return true
 	}
 	wave, ok := idx.Waves[stringField(note.Data, "wave")]
-	return !ok || !armedWaveLandedMembers(wave)[stringField(note.Data, "id")]
+	return !ok || stringField(wave.Data, "status") != "landed"
 }
 
 func automationQueueIncludes(note Note) bool {

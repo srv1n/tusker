@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -121,7 +122,58 @@ func TestArmedWaveProjectionSurfaces(t *testing.T) {
 	if err := writeText(filepath.Join(vault, "WORKFLOW.md"), defaultWorkflowMarkdown()); err != nil {
 		t.Fatal(err)
 	}
-	registerAutomationTestProject(t, vault)
+	project := registerAutomationTestProject(t, vault)
+	setAutomationV7TaskFields(t, vault, "APP-T-0003", map[string]any{"status": "review", "readiness": "waiting_on_review", "proof_status": "satisfied", "next_owner": "reviewer"})
+	setAutomationV7TaskFields(t, vault, "APP-T-0004", map[string]any{"status": "done", "readiness": "done", "proof_status": "satisfied", "closed_at": "2026-07-14T10:00:00Z"})
+	setAutomationV7TaskFields(t, vault, "APP-T-0005", map[string]any{"readiness": "waiting_on_human", "next_action": "human approval required"})
+	writeArmedWaveTestFields(t, vault, map[string]any{"landings": []map[string]any{{"task": "APP-T-0004", "gate_result": "pass"}}})
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, run := range []RunStatus{
+		{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", LeaseState: string(LeaseStateRunning), AttemptCount: 1},
+		{ProjectID: project.ProjectID, RecordID: "APP-T-0002", ItemID: "APP-T-0002", LeaseState: string(LeaseStateParkedNoProgress), AttemptCount: 3, LastError: "attempt cap reached", Terminal: true},
+	} {
+		if err := store.UpsertRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	golden := map[string]armedWaveMember{
+		"APP-T-0001": {ID: "APP-T-0001", State: armedWaveRunning, Reason: "live implementation or review lease"},
+		"APP-T-0002": {ID: "APP-T-0002", State: armedWaveMachineParked, Reason: "attempt cap reached"},
+		"APP-T-0003": {ID: "APP-T-0003", State: armedWaveReview, Reason: "awaiting objective review and landing"},
+		"APP-T-0004": {ID: "APP-T-0004", State: armedWaveLanded, Reason: "landed on wave integration branch"},
+		"APP-T-0005": {ID: "APP-T-0005", State: armedWaveHumanBlocked, Reason: "human approval required"},
+		"APP-T-0006": {ID: "APP-T-0006", State: armedWaveRunnable, Reason: "eligible in current armed-wave frontier"},
+	}
+	assertArmedWavePublicSurfaceGolden(t, vault, store, golden)
+
+	writeArmedWaveTestFields(t, vault, map[string]any{"authorization_fingerprint": "sha256:stale"})
+	staleGolden := map[string]armedWaveMember{}
+	for id := range golden {
+		state, reason := armedWaveStaleAuthorization, "wave authorization is stale"
+		if id == "APP-T-0004" {
+			state, reason = armedWaveLanded, "landed on wave integration branch"
+		}
+		staleGolden[id] = armedWaveMember{ID: id, State: state, Reason: reason}
+	}
+	assertArmedWavePublicSurfaceGolden(t, vault, store, staleGolden)
+
+	idx, _ = loadV7Index(vault)
+	wave = idx.Waves["W-0001"]
+	text := renderV7WaveShow(vault, idx, wave)
+	for _, want := range []string{"## timeline", "APP-T-0001", armedWaveStaleAuthorization, "wave authorization is stale", armedWaveLanded} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("wave timeline missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func assertArmedWavePublicSurfaceGolden(t *testing.T, vault string, store *RuntimeStore, want map[string]armedWaveMember) {
+	t.Helper()
 	queueOutput := captureStdout(t, func() {
 		if err := automationQueueCmd(Args{"vault": vault, "json": "true"}); err != nil {
 			t.Fatal(err)
@@ -133,58 +185,81 @@ func TestArmedWaveProjectionSurfaces(t *testing.T) {
 	if err := json.Unmarshal([]byte(queueOutput), &queuePayload); err != nil {
 		t.Fatal(err)
 	}
-	var root, waiting automationTaskExplanation
+	queue := map[string]armedWaveMember{}
 	for _, item := range append(queuePayload.Queue.Eligible, queuePayload.Queue.Blocked...) {
-		switch item.ID {
-		case "APP-T-0001":
-			root = item
-		case "APP-T-0002":
-			waiting = item
+		if item.WaveID == "W-0001" {
+			queue[item.ID] = armedWaveMember{ID: item.ID, State: item.ArmedWaveState, Reason: item.ArmedWaveReason}
 		}
 	}
-	assertEqual(t, armedWaveRunnable, root.ArmedWaveState, "queue runnable state")
-	assertEqual(t, armedWaveDependencyWaiting, waiting.ArmedWaveState, "queue dependency state")
-	if !strings.Contains(waiting.ArmedWaveReason, "APP-T-0001") {
-		t.Fatalf("queue lost dependency reason: %#v", waiting)
-	}
+	assertEqual(t, want, queue, "automation queue wave state/reason golden")
 
-	payload := v7WavePayload(vault, idx, wave)
-	if len(payload["timeline"].([]map[string]any)) != 6 {
-		t.Fatalf("wave JSON timeline missing members: %#v", payload["timeline"])
-	}
-	text := renderV7WaveShow(vault, idx, wave)
-	for _, want := range []string{"## timeline", "APP-T-0001", armedWaveRunnable, armedWaveDependencyWaiting} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("wave timeline missing %q:\n%s", want, text)
-		}
-	}
-
-	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "done", "readiness": "done", "proof_status": "satisfied", "closed_at": "2026-07-14T10:00:00Z"})
-	idx, _ = loadV7Index(vault)
-	store, err := OpenRuntimeStore(DefaultStateRoot())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	digest, err := buildTuskerDigest(vault, store, digestBuildOptions{Now: time.Unix(100, 0).UTC()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(digest.ArmedWaves) != 1 || armedWaveStateMap(digest.ArmedWaves[0])["APP-T-0001"] != armedWaveReview {
-		t.Fatalf("digest did not show done-but-unlanded as review: %#v", digest.ArmedWaves)
-	}
-	for _, row := range digest.Landed {
-		if row.ID == "APP-T-0001" {
-			t.Fatal("digest mislabeled done-but-unlanded task as landed")
-		}
-	}
 	statusOutput := captureStdout(t, func() {
 		if err := automationStatusCmd(Args{"json": "true"}); err != nil {
 			t.Fatal(err)
 		}
 	})
-	if !strings.Contains(statusOutput, `"armed_waves"`) || !strings.Contains(statusOutput, `"state":"review"`) {
-		t.Fatalf("automation status lost armed-wave projection: %s", statusOutput)
+	var statusPayload struct {
+		Status automationStatusReport `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(statusOutput), &statusPayload); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, want, armedWaveMemberMap(findArmedWaveSnapshot(t, statusPayload.Status.ArmedWaves, "W-0001")), "automation status wave state/reason golden")
+
+	digest, err := buildTuskerDigest(vault, store, digestBuildOptions{Now: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, want, armedWaveMemberMap(findArmedWaveSnapshot(t, digest.ArmedWaves, "W-0001")), "digest wave state/reason golden")
+
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	timeline := map[string]armedWaveMember{}
+	for _, row := range v7WavePayload(vault, idx, idx.Waves["W-0001"])["timeline"].([]map[string]any) {
+		id := stringField(row, "task")
+		timeline[id] = armedWaveMember{ID: id, State: stringField(row, "state"), Reason: stringField(row, "reason")}
+	}
+	assertEqual(t, want, timeline, "wave timeline state/reason golden")
+}
+
+func findArmedWaveSnapshot(t *testing.T, waves []armedWaveSnapshot, id string) armedWaveSnapshot {
+	t.Helper()
+	for _, wave := range waves {
+		if wave.WaveID == id {
+			return wave
+		}
+	}
+	t.Fatalf("wave %s missing from projection: %#v", id, waves)
+	return armedWaveSnapshot{}
+}
+
+func armedWaveMemberMap(snapshot armedWaveSnapshot) map[string]armedWaveMember {
+	out := map[string]armedWaveMember{}
+	for _, member := range snapshot.Members {
+		out[member.ID] = member
+	}
+	return out
+}
+
+func writeArmedWaveTestFields(t *testing.T, vault string, fields map[string]any) {
+	t.Helper()
+	path := filepath.Join(vault, "work", "waves", "W-0001.md")
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range fields {
+		data[key] = value
+	}
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["wave"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, content); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -240,16 +315,26 @@ func TestArmedWaveLandingCache(t *testing.T) {
 	}
 	originalProbe := landingToolchainProbe
 	t.Cleanup(func() { landingToolchainProbe = originalProbe })
-	landingToolchainProbe = func([]string) map[string]string { return map[string]string{"go": "go1"} }
+	landingToolchainProbe = func(string, []string) map[string]string { return map[string]string{"go": "go1"} }
 	taskOne := v7LandingGateFingerprint(repo, "task-batch:APP-T-0001@task/APP-T-0001", []string{"go test ./..."})
 	taskTwo := v7LandingGateFingerprint(repo, "task-batch:APP-T-0002@task/APP-T-0002", []string{"go test ./..."})
 	if taskOne == taskTwo {
 		t.Fatal("task/lane identity did not invalidate landing validation cache")
 	}
-	landingToolchainProbe = func([]string) map[string]string { return map[string]string{"go": "go2"} }
+	landingToolchainProbe = func(string, []string) map[string]string { return map[string]string{"go": "go2"} }
 	toolchainTwo := v7LandingGateFingerprint(repo, "task-batch:APP-T-0001@task/APP-T-0001", []string{"go test ./..."})
 	if taskOne == toolchainTwo {
 		t.Fatal("toolchain change did not invalidate landing validation cache")
+	}
+	if err := writeText(filepath.Join(repo, "Makefile"), "build-go:\n\tgo build ./...\nvet:\n\tgo vet ./...\ntest:\n\tgo test ./...\n"); err != nil {
+		t.Fatal(err)
+	}
+	toolchains := v7LandingToolchainFingerprints(repo, []string{"make build-go", "make vet", "make test"})
+	if !strings.Contains(toolchains["go"], runtime.Version()) {
+		t.Fatalf("make-backed Go validation did not bind the actual Go binary/version: %#v", toolchains)
+	}
+	if toolchains["make"] == "" {
+		t.Fatalf("make-backed validation did not bind the make executable: %#v", toolchains)
 	}
 }
 

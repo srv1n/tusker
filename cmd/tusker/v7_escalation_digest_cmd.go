@@ -463,8 +463,9 @@ func buildTuskerDigest(vaultPath string, store *RuntimeStore, opts digestBuildOp
 	digest.Landed = digestLandedItems(idx, since)
 	if store != nil {
 		runs, _ := store.ListRuns()
-		digest.RedParked = digestRedParkedItems(idx, runs, projectID)
-		digest.ArmedWaves = digestArmedWaveItems(vaultPath, idx, runs, projectID, now)
+		runtimeProjectID := digestRuntimeProjectID(store, vaultPath, projectID)
+		digest.RedParked = digestRedParkedItems(idx, runs, runtimeProjectID)
+		digest.ArmedWaves = digestArmedWaveItems(vaultPath, idx, runs, runtimeProjectID, now)
 	} else {
 		digest.ArmedWaves = digestArmedWaveItems(vaultPath, idx, nil, projectID, now)
 	}
@@ -476,6 +477,20 @@ func buildTuskerDigest(vaultPath string, store *RuntimeStore, opts digestBuildOp
 		digest.Watermark = generatedAt
 	}
 	return digest, nil
+}
+
+func digestRuntimeProjectID(store *RuntimeStore, vaultPath, fallbackID string) string {
+	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
+	if err != nil {
+		return fallbackID
+	}
+	want := canonicalProjectPath(vaultPath)
+	for _, project := range loadedRegisteredProjects(loaded) {
+		if canonicalProjectPath(project.VaultRoot) == want {
+			return project.ProjectID
+		}
+	}
+	return fallbackID
 }
 
 func renderTuskerDigestMarkdown(d tuskerDigest) string {

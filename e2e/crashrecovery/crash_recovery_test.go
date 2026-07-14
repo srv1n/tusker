@@ -241,6 +241,7 @@ func TestArmedWaveCrashRestartConverges(t *testing.T) {
 	})
 	h.createRunnableTaskID("APP-T-0001", "armed root", "")
 	h.createRunnableTaskID("APP-T-0002", "armed next frontier", "APP-T-0001:soft")
+	h.installWaveCompatibleOperatorSkill()
 	h.gitOK("init", "-b", "main")
 	h.gitOK("config", "user.email", "crash@example.com")
 	h.gitOK("config", "user.name", "Crash Recovery")
@@ -299,6 +300,19 @@ func TestArmedWaveCrashRestartConverges(t *testing.T) {
 		return runString(run, "lease_state") == "released" && runInt(run, "attempt_count") == 2
 	})
 	third.stop()
+}
+
+func (h *harness) installWaveCompatibleOperatorSkill() {
+	h.t.Helper()
+	h.writeFile(filepath.Join(h.repoDir, "skill", "SKILL.md"), `---
+name: tusker
+description: Crash recovery fixture operator contract.
+metadata:
+  wave_authorization_schema: tusker.wave-authorization/v1
+  workflow_version: 1
+  tracker_schema_version: 7
+---
+`)
 }
 
 func TestDeadRunnerMarkedInterruptedOnNextPoll(t *testing.T) {

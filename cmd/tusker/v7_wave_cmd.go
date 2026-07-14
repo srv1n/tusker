@@ -536,7 +536,7 @@ func renderV7WaveShow(vaultPath string, idx v7Index, wave Note) string {
 	}
 	b.WriteString("## timeline\n\n")
 	sequence := 0
-	for _, member := range buildArmedWaveSnapshot(vaultPath, idx, wave, v7WaveRuntimeRuns(stringField(wave.Data, "project")), time.Now().UTC()).Members {
+	for _, member := range buildArmedWaveSnapshot(vaultPath, idx, wave, v7WaveRuntimeRuns(vaultPath, stringField(wave.Data, "project")), time.Now().UTC()).Members {
 		sequence++
 		b.WriteString(fmt.Sprintf("- %d | %s | %s | %s\n", sequence, member.ID, member.State, fallback(member.Reason, "no blocker")))
 	}
@@ -554,7 +554,7 @@ type v7WaveMemberRow struct {
 }
 
 func v7WaveMemberGroups(vaultPath string, idx v7Index, wave Note) map[string][]v7WaveMemberRow {
-	runs := v7WaveRuntimeRuns(stringField(wave.Data, "project"))
+	runs := v7WaveRuntimeRuns(vaultPath, stringField(wave.Data, "project"))
 	snapshot := buildArmedWaveSnapshot(vaultPath, idx, wave, runs, time.Now().UTC())
 	states := map[string]string{}
 	reasons := map[string]string{}
@@ -586,13 +586,14 @@ func v7WaveMemberGroups(vaultPath string, idx v7Index, wave Note) map[string][]v
 	return groups
 }
 
-func v7WaveRuntimeRuns(projectID string) map[string]RunStatus {
+func v7WaveRuntimeRuns(vaultPath, projectID string) map[string]RunStatus {
 	out := map[string]RunStatus{}
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return out
 	}
 	defer store.Close()
+	projectID = digestRuntimeProjectID(store, vaultPath, projectID)
 	runs, err := store.ListRuns()
 	if err != nil {
 		return out
@@ -664,7 +665,7 @@ func v7WavePayload(vaultPath string, idx v7Index, wave Note) map[string]any {
 		}
 	}
 	timeline := []map[string]any{}
-	for i, member := range buildArmedWaveSnapshot(vaultPath, idx, wave, v7WaveRuntimeRuns(stringField(wave.Data, "project")), time.Now().UTC()).Members {
+	for i, member := range buildArmedWaveSnapshot(vaultPath, idx, wave, v7WaveRuntimeRuns(vaultPath, stringField(wave.Data, "project")), time.Now().UTC()).Members {
 		timeline = append(timeline, map[string]any{"sequence": i + 1, "task": member.ID, "state": member.State, "reason": nullIfBlank(member.Reason)})
 	}
 	return map[string]any{

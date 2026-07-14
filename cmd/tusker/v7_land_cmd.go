@@ -601,7 +601,7 @@ func v7LandingGateFingerprint(workDir, laneIdentity string, commands []string) s
 		return ""
 	}
 	parts := []string{"tusker.landing-gate/v2", head, strings.TrimSpace(laneIdentity)}
-	toolchains := landingToolchainProbe(commands)
+	toolchains := landingToolchainProbe(workDir, commands)
 	keys := make([]string, 0, len(toolchains))
 	for key := range toolchains {
 		keys = append(keys, key)
@@ -630,13 +630,14 @@ var landingToolchainTokens = map[string]*regexp.Regexp{
 	"bun":   regexp.MustCompile(`(^|[^A-Za-z0-9_.-])bun([^A-Za-z0-9_.-]|$)`),
 	"swift": regexp.MustCompile(`(^|[^A-Za-z0-9_.-])(swift|swiftc|xcodebuild)([^A-Za-z0-9_.-]|$)`),
 	"rust":  regexp.MustCompile(`(^|[^A-Za-z0-9_.-])(cargo|rustc|rustup)([^A-Za-z0-9_.-]|$)`),
+	"make":  regexp.MustCompile(`(^|[^A-Za-z0-9_.-])(make|gmake)([^A-Za-z0-9_.-]|$)`),
 }
 
-func v7LandingToolchainFingerprints(commands []string) map[string]string {
-	joined := strings.Join(commands, "\n")
+func v7LandingToolchainFingerprints(workDir string, commands []string) map[string]string {
+	joined := v7LandingToolchainCorpus(workDir, commands)
 	probes := map[string][]string{
 		"go": {"go", "version"}, "node": {"node", "--version"}, "bun": {"bun", "--version"},
-		"swift": {"swift", "--version"}, "rust": {"rustc", "--version", "--verbose"},
+		"swift": {"swift", "--version"}, "rust": {"rustc", "--version", "--verbose"}, "make": {"make", "--version"},
 	}
 	out := map[string]string{}
 	for key, pattern := range landingToolchainTokens {
@@ -662,6 +663,47 @@ func v7LandingToolchainFingerprints(commands []string) map[string]string {
 			binary = fmt.Sprintf("%s|%d|%d", resolved, info.Size(), info.ModTime().UnixNano())
 		}
 		out[key] = binary + "|" + version
+	}
+	return out
+}
+
+func v7LandingToolchainCorpus(workDir string, commands []string) string {
+	joined := strings.Join(commands, "\n")
+	if !landingToolchainTokens["make"].MatchString(joined) {
+		return joined
+	}
+	candidates := []string{"GNUmakefile", "makefile", "Makefile"}
+	for _, fields := range commandFields(commands) {
+		for i := 0; i < len(fields)-1; i++ {
+			if fields[i] == "-f" || fields[i] == "--file" || fields[i] == "--makefile" {
+				candidates = append([]string{fields[i+1]}, candidates...)
+			}
+		}
+	}
+	seen := map[string]bool{}
+	for _, candidate := range candidates {
+		path := candidate
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(workDir, path)
+		}
+		path = filepath.Clean(path)
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		raw, err := os.ReadFile(path)
+		if err == nil {
+			joined += "\n" + string(raw)
+			break
+		}
+	}
+	return joined
+}
+
+func commandFields(commands []string) [][]string {
+	out := make([][]string, 0, len(commands))
+	for _, command := range commands {
+		out = append(out, strings.Fields(command))
 	}
 	return out
 }
