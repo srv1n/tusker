@@ -146,13 +146,14 @@ type serveEpicSummary struct {
 }
 
 type serveWaveSummary struct {
-	ID        string                 `json:"id"`
-	Title     string                 `json:"title"`
-	Status    string                 `json:"status"`
-	LandedAt  any                    `json:"landedAt"`
-	MemberIDs []string               `json:"memberIds"`
-	Members   []serveWaveTaskSummary `json:"members"`
-	Counts    map[string]int         `json:"counts"`
+	ID            string                 `json:"id"`
+	Title         string                 `json:"title"`
+	Status        string                 `json:"status"`
+	LandedAt      any                    `json:"landedAt"`
+	MemberIDs     []string               `json:"memberIds"`
+	Members       []serveWaveTaskSummary `json:"members"`
+	Counts        map[string]int         `json:"counts"`
+	Authorization map[string]any         `json:"authorization"`
 }
 
 type serveWaveTaskSummary struct {

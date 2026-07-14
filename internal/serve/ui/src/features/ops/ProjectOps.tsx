@@ -114,6 +114,9 @@ function WavePanel({ waves, projectId }: { waves: WaveSummary[]; projectId: stri
                   <Mono className="text-[11px] text-faint">{wave.id}</Mono>
                   <span className="min-w-0 truncate text-[13px] font-semibold text-ink-soft">{wave.title}</span>
                   <Mono className="text-[10.5px] text-faint">{wave.status || "unlanded"}</Mono>
+                  <Mono className={wave.authorization.state === "armed" ? "text-[10.5px] text-pass" : "text-[10.5px] text-warn"}>
+                    auth:{wave.authorization.state}
+                  </Mono>
                   {wave.landedAt ? <Mono className="text-[10.5px] text-pass">landed {wave.landedAt}</Mono> : null}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-1.5">
@@ -129,6 +132,7 @@ function WavePanel({ waves, projectId }: { waves: WaveSummary[]; projectId: stri
                     </Link>
                   ))}
                 </div>
+                {wave.authorization.action !== "none" ? <Mono className="mt-1 block text-[10px] text-warn">{wave.authorization.action}</Mono> : null}
               </div>
               <Button
                 type="button"

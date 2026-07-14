@@ -12,6 +12,21 @@ Use `automation plan` as the canonical decision surface. It explains whether the
 
 Use `packet --for explainer` when a human needs to understand a change before or during review. It is an understanding aid, not proof or approval.
 
+## Wave authorization
+
+```bash
+tusker wave preflight W-0001 --json
+tusker wave arm W-0001 --by human:<name>
+tusker wave pause W-0001 --reason "<reason>"
+tusker wave resume W-0001 --by human:<name>
+tusker wave disarm W-0001 --reason "<reason>"
+```
+
+Preflight reads the whole batch without changing it. Arm fingerprints the
+governing specs and material task/gate/dependency contracts, then promotes only
+held wave members. Proof progress does not stale authorization; an intent change
+does. Pause and disarm stop future daemon claims without terminating live work.
+
 ## Work State
 
 ```bash

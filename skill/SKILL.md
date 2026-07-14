@@ -21,6 +21,12 @@ import --plan <path> --dry-run` to validate the graph and mapping, then import i
 atomically. Planning and import create held work and never dispatch, promote, or
 authorize execution.
 
+Before unattended delivery, run `tusker wave preflight <WAVE> --json`, then
+arm once with `tusker wave arm <WAVE> --by human:<name>`. Authorization is
+bound to the material spec/task/gate/dependency fingerprint. A stale, paused,
+or disarmed wave cannot produce new daemon claims; proof/evidence progress
+alone does not invalidate authorization.
+
 ### Interactive work
 
 A Codex or Claude session opened directly by the user implements the requested
@@ -35,6 +41,9 @@ or updating a ready task is inert. Background execution belongs only to an
 independently running resident daemon for projects with automation enabled.
 The interactive session may inspect or change task/project settings, but it
 implements the current user's coding request with its own tools.
+Direct interactive work does not require daemon enablement or a daemon
+lifecycle claim. It checks for a live automated owner before taking over the
+same tracked task, then works directly without manufacturing a daemon claim.
 
 ### Automated work
 

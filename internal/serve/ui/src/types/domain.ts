@@ -303,6 +303,7 @@ export interface WaveSummary {
   memberIds: string[];
   members: WaveTaskSummary[];
   counts: Record<string, number>;
+  authorization: { state: "disarmed" | "armed" | "paused" | "stale"; stale: boolean; action: string; actor?: string | null; at?: string | null };
 }
 
 export interface TaskCapsule {

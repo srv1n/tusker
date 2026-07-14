@@ -3253,6 +3253,20 @@ func isV7DispatchableAgentTask(vaultPath string, task Note) bool {
 
 func v7TaskDispatchBlockers(vaultPath string, task Note) []string {
 	reasons := append([]string{}, v7BasicRunnableBlockers(task)...)
+	if waveID := strings.TrimSpace(stringField(task.Data, "wave")); waveID != "" {
+		if idx, err := loadV7Index(vaultPath); err == nil {
+			if wave, ok := idx.Waves[waveID]; ok {
+				auth := waveAuthorizationProjection(vaultPath, idx, wave)
+				if state := stringField(auth, "state"); state != "armed" {
+					reasons = append(reasons, "wave "+waveID+" authorization is "+state+"; "+stringField(auth, "action"))
+				}
+			} else {
+				reasons = append(reasons, "wave does not resolve: "+waveID)
+			}
+		} else {
+			reasons = append(reasons, "wave authorization cannot be verified: "+err.Error())
+		}
+	}
 	if stub := v7PacketStubAcceptanceItems(task.Body); len(stub) > 0 {
 		reasons = append(reasons, "placeholder acceptance: "+strings.Join(stub, ", "))
 	}

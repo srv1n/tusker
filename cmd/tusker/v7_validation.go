@@ -19,7 +19,7 @@ var (
 	v7ProtectedFieldsByKind = map[string]map[string]struct{}{
 		"task":          makeSet("status", "readiness", "wave", "next_owner", "next_source", "next_ref", "next_action", "accepted_by", "accepted_at", "closed_at", "superseded_by", "discarded_by", "discarded_at", "discard_reason"),
 		"gate":          makeSet("status", "owner", "blocking", "blocks", "satisfaction_evidence", "satisfaction_evidence_refs", "satisfied_by", "satisfied_at", "waived_by", "waived_at", "waive_reason", "obsolete_reason"),
-		"wave":          makeSet("status", "landed_at"),
+		"wave":          makeSet("status", "landed_at", "authorization", "authorization_fingerprint", "authorized_by", "authorized_at", "authorization_reason", "authorization_updated_by", "authorization_updated_at"),
 		"escalation":    makeSet("severity", "status", "stale_bumped_from", "stale_bumped_at", "notified_at", "notification_error", "acknowledged_by", "acknowledged_at"),
 		"epic":          makeSet("status", "owner", "priority", "next_task_number", "next_gate_number", "next_decision_number"),
 		"decision":      makeSet("status", "decided_by", "decided_at", "supersedes"),
@@ -451,6 +451,13 @@ func validateV7Wave(note Note, ctx validationContext, where string, errors, warn
 	}
 	if status == "open" && stringField(data, "landed_at") != "" {
 		*warnings = append(*warnings, issue("WAVE_OPEN_LANDED_AT_STALE", "open V7 wave should not have landed_at", where, "run `tusker reconcile`", map[string]any{"field": "landed_at"}))
+	}
+	authorization := fallback(stringField(data, "authorization"), "disarmed")
+	if authorization != "disarmed" && authorization != "armed" && authorization != "paused" {
+		*errors = append(*errors, issue(errorInvalidField, "invalid V7 wave authorization: "+authorization, where, "use `tusker wave arm|pause|resume|disarm`", map[string]any{"field": "authorization"}))
+	}
+	if (authorization == "armed" || authorization == "paused") && stringField(data, "authorization_fingerprint") == "" {
+		*errors = append(*errors, issue(errorMissingField, authorization+" V7 wave requires authorization_fingerprint", where, "re-run wave preflight and arm", map[string]any{"field": "authorization_fingerprint"}))
 	}
 	members := normalizeList(data["members"])
 	seen := map[string]bool{}

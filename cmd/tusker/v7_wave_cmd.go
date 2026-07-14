@@ -20,8 +20,18 @@ func waveV7Cmd(args Args) error {
 		return waveV7RemoveCmd(shiftV7WaveArgs(args, 1))
 	case "show":
 		return waveV7ShowCmd(shiftV7WaveArgs(args, 1))
+	case "preflight":
+		return waveV7PreflightCmd(shiftV7WaveArgs(args, 1))
+	case "arm":
+		return waveV7ArmCmd(shiftV7WaveArgs(args, 1))
+	case "pause":
+		return waveV7PauseCmd(shiftV7WaveArgs(args, 1))
+	case "resume":
+		return waveV7ResumeCmd(shiftV7WaveArgs(args, 1))
+	case "disarm":
+		return waveV7DisarmCmd(shiftV7WaveArgs(args, 1))
 	default:
-		return tuskerError(errorMissingArg, "Usage: tusker wave create|add|remove|show ...")
+		return tuskerError(errorMissingArg, "Usage: tusker wave create|add|remove|show|preflight|arm|pause|resume|disarm ...")
 	}
 }
 
@@ -87,6 +97,7 @@ func waveV7CreateCmd(args Args) error {
 		"project":            v7ProjectID(vaultPath),
 		"title":              title,
 		"status":             "open",
+		"authorization":      "disarmed",
 		"members":            members,
 		"integration_branch": integrationBranch,
 		"created_at":         now,
@@ -501,6 +512,8 @@ func renderV7WaveShow(vaultPath string, idx v7Index, wave Note) string {
 		b.WriteString(" (landed " + landed + ")")
 	}
 	b.WriteString("\n\n")
+	auth := waveAuthorizationProjection(vaultPath, idx, wave)
+	b.WriteString(fmt.Sprintf("Authorization: %s | action: %s\n\n", stringField(auth, "state"), stringField(auth, "action")))
 	for _, group := range v7WaveGroupOrder {
 		b.WriteString("## " + group + "\n\n")
 		rows := groups[group]
@@ -604,11 +617,12 @@ func v7WavePayload(vaultPath string, idx v7Index, wave Note) map[string]any {
 		}
 	}
 	return map[string]any{
-		"id":        stringField(wave.Data, "id"),
-		"title":     stringField(wave.Data, "title"),
-		"status":    stringField(wave.Data, "status"),
-		"landedAt":  nullIfBlank(stringField(wave.Data, "landed_at")),
-		"members":   members,
-		"memberIds": normalizeList(wave.Data["members"]),
+		"id":            stringField(wave.Data, "id"),
+		"title":         stringField(wave.Data, "title"),
+		"status":        stringField(wave.Data, "status"),
+		"landedAt":      nullIfBlank(stringField(wave.Data, "landed_at")),
+		"members":       members,
+		"memberIds":     normalizeList(wave.Data["members"]),
+		"authorization": waveAuthorizationProjection(vaultPath, idx, wave),
 	}
 }

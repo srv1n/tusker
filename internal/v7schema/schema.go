@@ -62,7 +62,9 @@ var FrontmatterOrder = map[string][]string{
 		"schema", "kind", "id", "project", "title", "status", "owner", "priority", "domains", "spec_refs", "next_task_number", "next_gate_number", "next_decision_number", "created_at", "updated_at", "state_rev",
 	},
 	"wave": {
-		"schema", "kind", "id", "project", "title", "status", "members", "integration_branch", "spec_refs", "delivery_plan_scope", "delivery_plan_fingerprint", "concurrency", "runner_profile", "landings", "landed_at", "created_at", "created_by", "updated_at", "updated_by", "state_rev",
+		"schema", "kind", "id", "project", "title", "status", "members", "integration_branch", "spec_refs", "delivery_plan_scope", "delivery_plan_fingerprint", "concurrency", "runner_profile", "landings", "landed_at",
+		"authorization", "authorization_fingerprint", "authorized_by", "authorized_at", "authorization_reason", "authorization_updated_by", "authorization_updated_at",
+		"created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
 	"escalation": {
 		"schema", "kind", "id", "project", "severity", "status", "task", "source", "reason", "description", "dedupe_key",

@@ -283,6 +283,16 @@ func runInner(command string, args Args) (int, error) {
 		return 0, waveV7RemoveCmd(args)
 	case "wave show":
 		return 0, waveV7ShowCmd(args)
+	case "wave preflight":
+		return 0, waveV7PreflightCmd(args)
+	case "wave arm":
+		return 0, waveV7ArmCmd(args)
+	case "wave pause":
+		return 0, waveV7PauseCmd(args)
+	case "wave resume":
+		return 0, waveV7ResumeCmd(args)
+	case "wave disarm":
+		return 0, waveV7DisarmCmd(args)
 	case "delivery plan":
 		return 0, deliveryPlanCmd(args)
 	case "delivery import":
@@ -968,7 +978,7 @@ func printCommandHelp(command string) bool {
 		printEvidenceHelp()
 	case "migrate vault-root":
 		printMigrateVaultRootHelp()
-	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "delivery", "delivery plan", "delivery import", "trace", "trace list", "trace show", "trace replay", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy", "migrate close-policy":
+	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "wave preflight", "wave arm", "wave pause", "wave resume", "wave disarm", "delivery", "delivery plan", "delivery import", "trace", "trace list", "trace show", "trace replay", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy", "migrate close-policy":
 		printV7Help()
 	case "feedback", "feedback add", "feedback digest", "feedback ingest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()
@@ -1167,6 +1177,11 @@ func printV7Help() {
   tusker attempt start HSP-T-0001
   tusker land HSP-T-0001
   tusker land W-0001
+  tusker wave preflight W-0001 --json
+  tusker wave arm W-0001 --by human:sarav
+  tusker wave pause W-0001 --reason "operator-requested pause"
+  tusker wave resume W-0001 --by human:sarav
+  tusker wave disarm W-0001 --reason "scope withdrawn"
   tusker verify add HSP-T-0001 --covers A1,A2 --check "go test ./cmd/tusker -count=1" --result pass
   tusker proof status HSP-T-0001
   tusker proof set-mode HSP-T-0001 inline
@@ -1213,7 +1228,9 @@ Purpose:
   attempts, event-per-file history, generated briefs/packets/dashboards, and
   branch guards for protected task/gate state. Delivery planning and import are inert:
   models propose source-keyed plans, while Tusker validates and atomically owns final
-  task IDs, revisions, relations, and wave records; neither command dispatches work.`)
+  task IDs, revisions, relations, and wave records; neither command dispatches work.
+  Wave preflight is read-only. Arm records exact batch authorization and atomically
+  promotes held members; pause/resume/disarm only control future claims.`)
 }
 
 func printMigrateVaultRootHelp() {

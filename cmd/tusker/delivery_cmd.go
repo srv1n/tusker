@@ -513,9 +513,17 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 	}
 	waveData := map[string]any{
 		"schema": "tusker.wave/v7", "kind": "wave", "id": report.WaveID, "project": v7ProjectID(vaultPath),
-		"title": report.WaveTitle, "status": "open", "members": members, "integration_branch": v7IntegrationBranchName(report.WaveID),
+		"title": report.WaveTitle, "status": "open", "authorization": "disarmed", "members": members, "integration_branch": v7IntegrationBranchName(report.WaveID),
 		"spec_refs": plan.SpecRefs, "delivery_plan_scope": report.PlanScope, "delivery_plan_fingerprint": report.PlanFingerprint, "concurrency": report.ExpectedConcurrency,
 		"runner_profile": plan.RunnerProfile, "created_at": waveCreatedAt, "created_by": waveCreatedBy, "updated_at": now, "updated_by": actor,
+	}
+	if fileExists(wavePath) {
+		previous, _, _ := parseFrontmatterMustRead(wavePath)
+		for _, field := range []string{"authorization", "authorization_fingerprint", "authorized_by", "authorized_at", "authorization_reason", "authorization_updated_by", "authorization_updated_at"} {
+			if value, ok := previous[field]; ok {
+				waveData[field] = value
+			}
+		}
 	}
 	waveBody := fmt.Sprintf("# %s · %s\n\n## Members\n\nImported atomically from delivery plan `%s`. Members remain held until wave preflight and authorization.\n", report.WaveID, report.WaveTitle, report.PlanFingerprint)
 	waveData["state_rev"] = v7StateRev(waveData, waveBody)
@@ -556,10 +564,23 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 		}
 		writes[specPath] = content
 	}
-	if args.Bool("fail-after-first-write") {
-		return commitDeliveryWrites(writes, 1)
+	branch := v7IntegrationBranchName(report.WaveID)
+	repoRoot := v7RepoRoot(vaultPath)
+	branchExisted := !v7GitRepo(repoRoot) || gitRefExists(repoRoot, "refs/heads/"+branch)
+	if err := ensureV7IntegrationBranch(vaultPath, branch); err != nil {
+		return err
 	}
-	return commitDeliveryWrites(writes, 0)
+	failAfter := 0
+	if args.Bool("fail-after-first-write") {
+		failAfter = 1
+	}
+	if err := commitDeliveryWrites(writes, failAfter); err != nil {
+		if !branchExisted {
+			_, _ = gitCombined(repoRoot, "update-ref", "-d", "refs/heads/"+branch)
+		}
+		return err
+	}
+	return nil
 }
 
 func commitDeliveryWrites(writes map[string]string, failAfter int) error {
