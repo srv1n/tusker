@@ -190,6 +190,18 @@ verification is concrete.
 
 ## ChatGPT Handoff Usage
 
+Run the combined local setup diagnostic before invoking browser transport:
+
+```bash
+tusker setup doctor --repo . --source /path/to/canonical/tusker --json
+tusker setup repair --repo . --source /path/to/canonical/tusker --dry-run --json
+```
+
+The repair command handles deterministic vault/workflow pointers, generated
+skill links, and a missing zip attachment default. It deliberately does not
+invent ChatGPT Project routing, credentials, or claim that a stale browser
+workflow was refreshed; those findings include the exact external action.
+
 The ChatGPT handoff skill is transport. Use it to submit and collect:
 
 ```bash

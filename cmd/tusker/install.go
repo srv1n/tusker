@@ -144,13 +144,15 @@ func updateCmdWithBinaryPreflight(args Args, preflight func(Args) error) error {
 
 	if args.Bool("json") {
 		emitJSON(map[string]any{
-			"ok":               true,
-			"binary_updated":   binaryUpdated,
-			"updated_skills":   updatedSkills,
-			"skill_modes":      installedSkillModes,
-			"updated_pointers": repoPointerUpdatePaths(pointerUpdates),
-			"feedback_readme":  nullIfEmptyString(feedbackReadme),
-			"guidance_warning": nullIfEmptyString(guidanceWarning),
+			"ok":                true,
+			"binary_updated":    binaryUpdated,
+			"updated_skills":    updatedSkills,
+			"skill_modes":       installedSkillModes,
+			"updated_pointers":  repoPointerUpdatePaths(pointerUpdates),
+			"feedback_readme":   nullIfEmptyString(feedbackReadme),
+			"guidance_warning":  nullIfEmptyString(guidanceWarning),
+			"skill_source":      nullIfEmptyString(args.String("skill-source")),
+			"skill_source_kind": nullIfEmptyString(args.String("skill-source-kind")),
 		})
 		return nil
 	}
@@ -247,13 +249,15 @@ func installCmd(args Args) error {
 
 	if args.Bool("json") {
 		emitJSON(map[string]any{
-			"ok":               true,
-			"binary_installed": binaryInstalled,
-			"installed_skills": installedSkills,
-			"skill_modes":      installedSkillModes,
-			"updated_pointers": repoPointerUpdatePaths(pointerUpdates),
-			"feedback_readme":  nullIfEmptyString(feedbackReadme),
-			"guidance_warning": nullIfEmptyString(guidanceWarning),
+			"ok":                true,
+			"binary_installed":  binaryInstalled,
+			"installed_skills":  installedSkills,
+			"skill_modes":       installedSkillModes,
+			"updated_pointers":  repoPointerUpdatePaths(pointerUpdates),
+			"feedback_readme":   nullIfEmptyString(feedbackReadme),
+			"guidance_warning":  nullIfEmptyString(guidanceWarning),
+			"skill_source":      nullIfEmptyString(args.String("skill-source")),
+			"skill_source_kind": nullIfEmptyString(args.String("skill-source-kind")),
 		})
 		return nil
 	}
@@ -443,13 +447,25 @@ func skillSyncCmd(args Args) error {
 	if mode == "" {
 		mode = skillInstallModeLink
 	}
-	next := Args{
-		"repo":       repo,
-		"no-bin":     "true",
-		"skill-mode": mode,
+	sourceArg := firstNonEmpty(args.String("source"), os.Getenv("TUSKER_SKILL_SOURCE"))
+	source := skillSourceReport{Kind: "embedded", Path: "embedded://tusker/skill"}
+	if mode != skillInstallModeCopy || strings.TrimSpace(sourceArg) != "" {
+		source = classifySkillSyncSource(sourceArg, "")
 	}
-	if source := strings.TrimSpace(args.String("source")); source != "" {
-		next["source"] = source
+	if source.Kind != "canonical" && source.Kind != "embedded" {
+		return tuskerError(errorInvalidArg, "skill sync source is "+source.Kind+": "+source.Path,
+			withHint("Pass --source <canonical-tusker-checkout>; generated installs are outputs, not editable source."),
+			withContext(map[string]any{"source_kind": source.Kind, "source": source.Path}))
+	}
+	next := Args{
+		"repo":              repo,
+		"no-bin":            "true",
+		"skill-mode":        mode,
+		"skill-source":      source.Path,
+		"skill-source-kind": source.Kind,
+	}
+	if source.Kind == "canonical" {
+		next["source"] = source.Path
 	}
 	if args.Bool("json") {
 		next["json"] = "true"
@@ -790,8 +806,10 @@ func printSkillSyncHelp() {
 Purpose:
   Refresh repo-local generated skill installs for local agents. Local sync
   defaults to symlink mode so canonical skill source remains the source of
-  truth. Use --source when running from outside the Tusker checkout. Use
-  --mode copy only when the repo must be self-contained.
+  truth. The command reports canonical source provenance and rejects generated
+  install output or invalid paths as source. Use --source when running from
+  outside the Tusker checkout. Use --mode copy only when the repo must be
+  self-contained.
 
 Examples:
   tusker skill sync --repo .

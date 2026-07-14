@@ -142,7 +142,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "new", "vault", "daemon", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "trace", "escalate":
+	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "trace", "escalate":
 		return true
 	default:
 		return false
@@ -555,6 +555,13 @@ func runInner(command string, args Args) (int, error) {
 		return 0, skillBundleCmd(args)
 	case "skill audit-agent-guidance":
 		return skillV7AuditAgentGuidanceCmd(args)
+	case "setup doctor":
+		return 0, setupDoctorCmd(args, false)
+	case "setup repair":
+		return 0, setupDoctorCmd(args, true)
+	case "setup":
+		printSetupHelp()
+		return 0, nil
 	case "skill":
 		printSkillHelp()
 		return 0, nil
@@ -931,6 +938,7 @@ Commands:
   reindex             rebuild generated indexes
   update              refresh the installed binary link and skill bundle
   skill               doctor, route, and pack V7 project skills
+  setup               diagnose and repair local onboarding drift
 
 Help:
   tusker new --help
@@ -1020,6 +1028,8 @@ func printCommandHelp(command string) bool {
 		printKnowledgeHelp()
 	case "skill", "skill doctor", "skill route", "skill pack", "skill sync", "skill bundle", "skill audit-agent-guidance":
 		printSkillHelp()
+	case "setup", "setup doctor", "setup repair":
+		printSetupHelp()
 	case "publish", "publish export", "publish build", "publish dev", "publish llms", "publish skill":
 		printPublishHelp()
 	case "graph":
