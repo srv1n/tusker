@@ -6,7 +6,11 @@ import type { NeedItem, RunSummary, TaskCapsule } from "@/types/domain";
 
 declare global {
   interface Window {
-    tuskerShell?: { openFull?: (path: string) => void; onNavigate?: (path: string) => boolean };
+    tuskerShell?: {
+      openFull?: (path: string) => void;
+      onNavigate?: (path: string) => boolean;
+      pickFolder?: () => Promise<string | undefined>;
+    };
   }
 }
 

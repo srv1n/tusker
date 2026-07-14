@@ -34,4 +34,31 @@ final class TuskerBarTests: XCTestCase {
         XCTAssertTrue(path.hasPrefix("/Users/test/.local/bin:/opt/homebrew/bin"))
         XCTAssertEqual(path.components(separatedBy: ":").filter { $0 == "/usr/bin" }.count, 1)
     }
+
+    @MainActor
+    func testFolderPickerIsDirectoryOnlyAndSingleSelection() {
+        let picker = NSOpenPanel()
+        PanelController.configureFolderPicker(picker)
+        XCTAssertTrue(picker.canChooseDirectories)
+        XCTAssertFalse(picker.canChooseFiles)
+        XCTAssertFalse(picker.allowsMultipleSelection)
+        XCTAssertEqual(picker.prompt, "Choose")
+    }
+
+    @MainActor
+    func testFolderPickerBridgeScopesToOriginAndRepliesForSelectionOrCancellation() {
+        XCTAssertEqual(PanelController.configuredOrigin(URL(string: "https://TUSKER.example:443")!), "https://tusker.example")
+        let bridge = PanelController.bridgeScript(appVersion: "1.2.3", origin: "http://127.0.0.1:7420")
+        XCTAssertTrue(bridge.contains("window.location.origin !== config.origin"))
+        XCTAssertTrue(bridge.contains("shell.pickFolder"))
+        XCTAssertTrue(bridge.contains("shell.receiveFolderPick"))
+
+        let selected = PanelController.folderPickerResponseScript(requestID: "request-1", path: "/Users/me/project")
+        XCTAssertTrue(selected.contains("request-1"))
+        XCTAssertTrue(selected.contains("\\/Users\\/me\\/project"))
+
+        let cancelled = PanelController.folderPickerResponseScript(requestID: "request-2", path: nil)
+        XCTAssertTrue(cancelled.contains("request-2"))
+        XCTAssertTrue(cancelled.contains("\"path\":null"))
+    }
 }

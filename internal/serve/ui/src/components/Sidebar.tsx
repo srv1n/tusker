@@ -214,8 +214,27 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
 function AddProjectForm({ onDone }: { onDone: () => void }) {
   const [repoRoot, setRepoRoot] = useState("");
   const [vaultRoot, setVaultRoot] = useState("");
+  const [browsing, setBrowsing] = useState(false);
+  const [browseHint, setBrowseHint] = useState<string | null>(null);
   const register = useRegisterProject();
   const navigate = useNavigate();
+  const canBrowseFolders = typeof window.tuskerShell?.pickFolder === "function";
+
+  const browseForFolder = async (setValue: (path: string) => void) => {
+    const pickFolder = window.tuskerShell?.pickFolder;
+    if (!pickFolder) {
+      setBrowseHint("Browse is available in the Tusker macOS app. In a browser, enter the absolute path manually.");
+      return;
+    }
+    setBrowseHint(null);
+    setBrowsing(true);
+    try {
+      const path = await pickFolder();
+      if (path) setValue(path);
+    } finally {
+      setBrowsing(false);
+    }
+  };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -236,24 +255,47 @@ function AddProjectForm({ onDone }: { onDone: () => void }) {
     <form onSubmit={submit} className="mb-2 rounded-lg border border-line bg-surface p-2.5" data-add-project-form>
       <label className="block font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">
         Repository path
-        <input
-          autoFocus
-          required
-          value={repoRoot}
-          onChange={(event) => setRepoRoot(event.target.value)}
-          placeholder="/Users/me/code/project"
-          className="mt-1 w-full rounded-md border border-line bg-panel px-2 py-1.5 font-mono text-[11px] normal-case tracking-normal text-ink outline-none focus:border-accent"
-        />
+        <div className="mt-1 flex gap-1">
+          <input
+            autoFocus
+            required
+            value={repoRoot}
+            onChange={(event) => setRepoRoot(event.target.value)}
+            placeholder="/Users/me/code/project"
+            className="min-w-0 flex-1 rounded-md border border-line bg-panel px-2 py-1.5 font-mono text-[11px] normal-case tracking-normal text-ink outline-none focus:border-accent"
+          />
+          <button
+            type="button"
+            onClick={() => void browseForFolder(setRepoRoot)}
+            disabled={browsing}
+            aria-label="Browse repository folder"
+            className="rounded-md border border-line px-2 py-1.5 text-[10px] font-semibold normal-case tracking-normal text-ink-soft hover:bg-hover disabled:cursor-wait disabled:opacity-50"
+          >
+            Browse
+          </button>
+        </div>
       </label>
       <label className="mt-2 block font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">
         Vault path <span className="font-normal normal-case tracking-normal">(optional)</span>
-        <input
-          value={vaultRoot}
-          onChange={(event) => setVaultRoot(event.target.value)}
-          placeholder="defaults to .tusker"
-          className="mt-1 w-full rounded-md border border-line bg-panel px-2 py-1.5 font-mono text-[11px] normal-case tracking-normal text-ink outline-none focus:border-accent"
-        />
+        <div className="mt-1 flex gap-1">
+          <input
+            value={vaultRoot}
+            onChange={(event) => setVaultRoot(event.target.value)}
+            placeholder="defaults to .tusker"
+            className="min-w-0 flex-1 rounded-md border border-line bg-panel px-2 py-1.5 font-mono text-[11px] normal-case tracking-normal text-ink outline-none focus:border-accent"
+          />
+          <button
+            type="button"
+            onClick={() => void browseForFolder(setVaultRoot)}
+            disabled={browsing}
+            aria-label="Browse vault folder"
+            className="rounded-md border border-line px-2 py-1.5 text-[10px] font-semibold normal-case tracking-normal text-ink-soft hover:bg-hover disabled:cursor-wait disabled:opacity-50"
+          >
+            Browse
+          </button>
+        </div>
       </label>
+      {(!canBrowseFolders || browseHint) && <p className="mt-2 text-[10.5px] leading-snug text-faint" data-folder-browse-help>{browseHint ?? "Browse is available in the Tusker macOS app. In a browser, enter the absolute path manually."}</p>}
       <p className="mt-2 text-[10.5px] leading-snug text-faint">Registers only. Daemon automation stays off.</p>
       {message && (
         <p className={cn("mt-2 text-[10.5px] leading-snug", failed ? "text-fail" : "text-pass")}>{message}</p>
