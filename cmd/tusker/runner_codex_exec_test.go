@@ -11,6 +11,86 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestCodexExecCommandWithPolicy(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		policy  CodexPolicy
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "full access bypasses sandbox and approvals",
+			command: defaultCodexExecCommand(),
+			policy:  CodexPolicy{ApprovalPolicy: "never", TurnSandboxPolicy: "danger-full-access"},
+			want:    "codex exec --dangerously-bypass-approvals-and-sandbox --json --skip-git-repo-check -",
+		},
+		{
+			name:    "workspace policy becomes a real CLI flag",
+			command: defaultCodexExecCommand(),
+			policy:  CodexPolicy{ApprovalPolicy: "never", TurnSandboxPolicy: "workspace-write"},
+			want:    "codex exec --sandbox workspace-write --json --skip-git-repo-check -",
+		},
+		{
+			name:    "tab-separated direct command still receives policy",
+			command: "codex\texec\t--json -",
+			policy:  CodexPolicy{ApprovalPolicy: "never", TurnSandboxPolicy: "workspace-write"},
+			want:    "codex exec --sandbox workspace-write --json -",
+		},
+		{
+			name:    "conflicting explicit command policy is rejected",
+			command: "codex exec --sandbox read-only --json -",
+			policy:  CodexPolicy{ApprovalPolicy: "never", TurnSandboxPolicy: "danger-full-access"},
+			wantErr: true,
+		},
+		{
+			name:    "equals-form conflict is rejected",
+			command: "codex exec --sandbox=workspace-write --json -",
+			policy:  CodexPolicy{ApprovalPolicy: "never", TurnSandboxPolicy: "read-only"},
+			wantErr: true,
+		},
+		{
+			name:    "matching compact sandbox is accepted",
+			command: "codex exec -s=workspace-write --json -",
+			policy:  CodexPolicy{ApprovalPolicy: "never", TurnSandboxPolicy: "workspace-write"},
+			want:    "codex exec -s=workspace-write --json -",
+		},
+		{
+			name:    "matching sandbox cannot be followed by bypass",
+			command: "codex exec --sandbox workspace-write --dangerously-bypass-approvals-and-sandbox --json -",
+			policy:  CodexPolicy{ApprovalPolicy: "never", TurnSandboxPolicy: "workspace-write"},
+			wantErr: true,
+		},
+		{
+			name:    "full access policy requires its approval bypass",
+			command: "codex exec --sandbox danger-full-access --json -",
+			policy:  CodexPolicy{ApprovalPolicy: "never", TurnSandboxPolicy: "danger-full-access"},
+			wantErr: true,
+		},
+		{
+			name:    "custom wrapper cannot bypass policy",
+			command: "tusker-codex-wrapper -",
+			policy:  CodexPolicy{ApprovalPolicy: "never", TurnSandboxPolicy: "danger-full-access"},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := codexExecCommandWithPolicy(tt.command, tt.policy)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected policy error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertEqual(t, tt.want, got, "effective command")
+		})
+	}
+}
+
 func TestCodexExecAttemptRecordsJSONLTurnsAndSession(t *testing.T) {
 	tempRoot := t.TempDir()
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(tempRoot, "state"))
@@ -189,14 +269,20 @@ func TestCodexExecBudgetAcrossJSONLTurnsAndTurnCap(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		assertEqual(t, true, changed, "budget changed")
-		assertEqual(t, string(AttemptOutcomeBudgetExceeded), updated.AttemptOutcome, "budget outcome")
+		assertEqual(t, false, changed, "usage telemetry does not stop the runner")
+		assertEqual(t, string(AttemptOutcomeNone), updated.AttemptOutcome, "usage does not set a budget outcome")
 		attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		assertEqual(t, string(AttemptOutcomeBudgetExceeded), attempts[0].Outcome, "budget attempt outcome")
-		assertEqual(t, 2, attempts[0].TurnsUsed, "budget turns used")
+		if attempts[0].Outcome == string(AttemptOutcomeBudgetExceeded) {
+			t.Fatalf("usage telemetry must not set a budget outcome: %#v", attempts[0])
+		}
+		turns, err := store.ListTurnsForAttempt(run.ActiveAttemptID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertEqual(t, 2, len(turns), "turns remain recorded diagnostically")
 	})
 
 	t.Run("turn cap", func(t *testing.T) {
@@ -224,6 +310,33 @@ func TestCodexExecBudgetAcrossJSONLTurnsAndTurnCap(t *testing.T) {
 			t.Fatalf("turn cap must not record early_exit: %#v", attempts[0])
 		}
 	})
+}
+
+func TestUsageTelemetryIsOptionalAndCannotPauseCodexExec(t *testing.T) {
+	store, daemon, run, project := codexExecGovernorFixture(t)
+	defer store.Close()
+	if err := writeText(run.RawLogPath, strings.Join([]string{
+		`not json`,
+		`{"type":"turn.completed","turn_id":"nested","token_usage":{"total":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}`,
+		`{"type":"turn.completed","turn_id":"oversized","token_usage":{"input_tokens":1e100,"output_tokens":1e100,"total_tokens":1e100}}`,
+		``,
+	}, "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := daemon.ingestCodexExecRawLog(run); err != nil {
+		t.Fatalf("usage telemetry must not fail a valid run: %v", err)
+	}
+	updated, changed, err := daemon.enforceBudgetForRun(context.Background(), project, defaultWorkflow(), Note{}, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, false, changed, "optional usage telemetry does not pause the run")
+	assertEqual(t, run.LeaseState, updated.LeaseState, "run remains live with malformed or oversized usage")
+	turns, err := store.ListTurnsForAttempt(run.ActiveAttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 2, len(turns), "nested and oversized usage remain diagnostic rows")
 }
 
 func TestCodexExecIngestReplayKeepsCompletedTurns(t *testing.T) {

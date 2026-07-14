@@ -315,7 +315,7 @@ func (s *serveServer) handleReviewBatch(w http.ResponseWriter, r *http.Request) 
 	}
 	items := make([]serveTaskCapsule, 0)
 	for _, task := range snap.tasks {
-		if strings.EqualFold(stringField(task.Data, "status"), "review") {
+		if serveTaskStatus(snap, task) == "review" {
 			items = append(items, serveTaskCapsuleFor(snap, task))
 		}
 	}
@@ -399,7 +399,7 @@ func (s *serveServer) projectForSnapshot(projectID string) (RegisteredProject, e
 			if projectID != "" && project.ProjectID == projectID {
 				return project, nil
 			}
-			if projectID == "" && (sameCleanPath(project.VaultRoot, s.vaultPath) || sameCleanPath(project.RepoRoot, s.repoRoot)) {
+			if projectID == "" && (sameCanonicalProjectPath(project.VaultRoot, s.vaultPath) || sameCanonicalProjectPath(project.RepoRoot, s.repoRoot)) {
 				return project, nil
 			}
 		}
@@ -435,7 +435,7 @@ func (s *serveServer) cachedProjectForSnapshot(projectID string) (RegisteredProj
 		if projectID != "" && entry.project.ProjectID == projectID {
 			return entry.project, true
 		}
-		if projectID == "" && (sameCleanPath(entry.project.VaultRoot, s.vaultPath) || sameCleanPath(entry.project.RepoRoot, s.repoRoot)) {
+		if projectID == "" && (sameCanonicalProjectPath(entry.project.VaultRoot, s.vaultPath) || sameCanonicalProjectPath(entry.project.RepoRoot, s.repoRoot)) {
 			return entry.project, true
 		}
 	}
@@ -750,8 +750,6 @@ func (s *serveServer) daemonStatusFromSnapshot(snap serveSnapshot) *serveDaemonS
 		StateRoot:                  DefaultStateRoot(),
 		ProjectCount:               intFromAny(daemonStatus["projects"]),
 		Projects:                   projects,
-		ParkedBudgetRuns:           intFromAny(daemonStatus["parkedBudgetRuns"]),
-		BudgetCircuit:              daemonStatus["budgetCircuit"],
 		CrashLoop:                  daemonStatus["crashLoop"],
 		InvariantCircuit:           daemonStatus["invariantCircuit"],
 		DiskPressure:               diskPressureStatusFromAny(daemonStatus["disk_pressure"]),
@@ -783,7 +781,7 @@ func (s *serveServer) handleDigest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
-	loadedProjects, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true})
+	loadedProjects, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{LoadDisabled: true})
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -798,6 +796,12 @@ func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 		projects = []RegisteredProject{project}
 	}
 	allRuns, _ := s.store.ListRuns()
+	workflowByProject := make(map[string]WorkflowFile, len(loadedProjects))
+	for _, loaded := range loadedProjects {
+		if loaded.LoadError == nil {
+			workflowByProject[loaded.Project.ProjectID] = loaded.Workflow
+		}
+	}
 	target := strings.TrimSpace(r.URL.Query().Get("project"))
 	items := make([]serveProjectSummary, 0, len(projects))
 	for _, project := range projects {
@@ -814,14 +818,24 @@ func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 			worst = serveWorstLiveness(worst, serveRunLiveness(run, s.now()))
 		}
 		needsCount := 0
+		wf, ok := workflowByProject[project.ProjectID]
+		if !ok {
+			continue
+		}
+		autoReport, _ := configResolveForRepo(project.RepoRoot, true, "automation.enabled")
+		workspaceReport, _ := configResolveForRepo(project.RepoRoot, true, "workspace.strategy")
+		concurrencyReport, _ := configResolveForRepo(project.RepoRoot, true, "runtime.max_active_runs_per_project")
 		if snap, snapshotErr := s.loadSnapshotForProject(project.ProjectID); snapshotErr == nil {
 			needsCount = len(snap.needs)
 		}
 		items = append(items, serveProjectSummary{
 			ID: project.ProjectID, Name: project.Name,
 			RepoRoot: project.RepoRoot, VaultRoot: project.VaultRoot,
-			AutomationEnabled: project.Enabled,
-			Health:            string(project.Health), LastError: nullIfBlank(project.LastError),
+			AutomationEnabled: wf.Data.AutomationEnabled,
+			AutomationSource:  autoReport.Source,
+			WorkspaceMode:     string(workspaceStrategyFromWorkflow(wf.Data.Workspace.Strategy)), WorkspaceSource: workspaceReport.Source,
+			MaxActiveRunsPerProject: wf.Data.Runtime.MaxActiveRunsPerProject, ConcurrencySource: concurrencyReport.Source,
+			Health: string(project.Health), LastError: nullIfBlank(project.LastError),
 			NeedsCount: needsCount, ActiveRuns: active, WorstLiveness: worst,
 			DaemonConnected: true, LastPollAt: nullIfBlank(project.LastPollAt),
 		})
@@ -958,14 +972,19 @@ func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID s
 	summary := s.runSummary(snap, run)
 	attempts, _ := s.store.ListAttemptsForRun(run.ProjectID, run.RecordID)
 	sort.Slice(attempts, func(i, j int) bool { return attempts[i].StartedAt < attempts[j].StartedAt })
-	detail := serveRunDetail{serveRunSummary: summary, WorkspacePath: run.WorkspacePath, Attempts: []serveAttempt{}}
+	auth, _ := s.store.LatestRunAuthorization(run.ProjectID, run.RecordID)
+	identity, _ := s.store.RunIdentity(run.ProjectID, run.RecordID)
+	session, _ := s.store.LatestSession(run.ProjectID, run.RecordID, run.Runner)
+	delivery := serveRunDelivery{Summary: run.FinalSummary, Verification: run.LogsSummary, ProofStatus: "pending", Artifact: run.ApplyRef}
+	if task, found := snap.notesByID[taskID]; found {
+		delivery.ProofStatus = firstNonEmpty(stringField(task.Data, "proof_status"), "pending")
+	}
+	detail := serveRunDetail{serveRunSummary: summary, WorkspacePath: summary.WorkspacePath, Attempts: []serveAttempt{}, Authorization: auth, Identity: identity, Session: session, Resume: resumeCapability(&run, session), Delivery: delivery}
 	for i, attempt := range attempts {
-		turns, _ := s.store.ListTurnsForAttempt(attempt.AttemptID)
 		detail.Attempts = append(detail.Attempts, serveAttempt{
 			N:           i + 1,
 			Outcome:     serveRunOutcomeFromAttempt(attempt.Outcome, run.LeaseState),
 			DurationSec: serveDurationSec(attempt.StartedAt, firstNonEmpty(attempt.FinishedAt, run.UpdatedAt), s.now()),
-			Tokens:      serveTokenTotalsForTurns(turns),
 			StartedAt:   attempt.StartedAt,
 		})
 	}
@@ -1088,6 +1107,8 @@ func (s *serveServer) handleTask(w http.ResponseWriter, r *http.Request, id stri
 		KnowledgeDelta:   sectionContent(task.Body, "## Knowledge delta"),
 		Deps:             serveTaskDeps(snap, task),
 		Gates:            serveGatesForTask(snap, stringField(task.Data, "id")),
+		HumanAction:      serveHumanActionForTask(snap, task),
+		HumanActions:     serveHumanActionsForTask(snap, task),
 		RunHistory:       serveRunHistory(s, snap, stringField(task.Data, "id")),
 	}
 	serveJSON(w, http.StatusOK, detail)
@@ -1227,6 +1248,7 @@ func serveTaskCapsuleFor(snap serveSnapshot, task Note) serveTaskCapsule {
 	epicID := stringField(task.Data, "epic")
 	waveID := stringField(task.Data, "wave")
 	explanation := snap.queue[id]
+	openGates := serveOpenHumanGatesForTask(snap, id)
 	return serveTaskCapsule{
 		ID:              id,
 		Title:           stringField(task.Data, "title"),
@@ -1238,7 +1260,8 @@ func serveTaskCapsuleFor(snap serveSnapshot, task Note) serveTaskCapsule {
 		Readiness:       serveReadiness(task),
 		Priority:        strings.ToLower(firstNonEmpty(stringField(task.Data, "priority"), "p2")),
 		Risk:            strings.ToLower(firstNonEmpty(stringField(task.Data, "risk"), "medium")),
-		HasGate:         len(serveUnsatisfiedGatesForTask(snap, id)) > 0,
+		HasGate:         len(openGates) > 0,
+		OpenGates:       openGates,
 		UpdatedAt:       serveUpdatedAt(task),
 		ProjectID:       snap.projectID,
 		RawStatus:       stringField(task.Data, "status"),
@@ -1260,7 +1283,14 @@ func serveTaskStatus(snap serveSnapshot, task Note) string {
 			return "in_progress"
 		}
 	}
-	switch strings.ToLower(stringField(task.Data, "status")) {
+	rawStatus := strings.ToLower(stringField(task.Data, "status"))
+	// Human-owned work that has reached its gate is review work even when the
+	// canonical task row still says backlog. The raw status remains exposed for
+	// traceability; this is the operator-facing lifecycle projection.
+	if rawStatus != "rework" && serveHumanActionForTask(snap, task) != nil {
+		return "review"
+	}
+	switch rawStatus {
 	case "done", "closed":
 		return "done"
 	case "review":
@@ -1277,8 +1307,15 @@ func serveTaskStatus(snap serveSnapshot, task Note) string {
 }
 
 func serveReadiness(task Note) string {
+	if strings.EqualFold(stringField(task.Data, "status"), "rework") {
+		return "ready"
+	}
 	raw := strings.ToLower(firstNonEmpty(stringField(task.Data, "readiness"), stringField(task.Data, "status")))
 	switch {
+	case raw == "waiting_on_human":
+		return "waiting_on_human"
+	case raw == "waiting_on_review":
+		return "waiting_on_review"
 	case strings.Contains(raw, "dep"):
 		return "blocked_dependency"
 	case strings.Contains(raw, "gate"), strings.Contains(raw, "human"), strings.Contains(raw, "review"):
@@ -1446,20 +1483,83 @@ func serveGatesForTask(snap serveSnapshot, taskID string) []serveGate {
 func serveUnsatisfiedGatesForTask(snap serveSnapshot, taskID string) []serveGate {
 	out := []serveGate{}
 	for _, gate := range serveGatesForTask(snap, taskID) {
-		if !gate.Satisfied {
+		if !gate.Satisfied && strings.EqualFold(gateStatusForServe(snap, gate.ID), "open") {
 			out = append(out, gate)
 		}
 	}
 	return out
 }
 
+func serveOpenHumanGatesForTask(snap serveSnapshot, taskID string) []serveGateDetail {
+	out := []serveGateDetail{}
+	for _, gate := range snap.gates {
+		if !strings.EqualFold(stringField(gate.Data, "status"), "open") ||
+			!serveHumanOwner(stringField(gate.Data, "owner")) ||
+			!serveGateBlocksTask(gate, taskID) {
+			continue
+		}
+		detail := serveGateDetailFromNote(gate)
+		detail.Body = ""
+		out = append(out, detail)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func gateStatusForServe(snap serveSnapshot, gateID string) string {
+	for _, gate := range snap.gates {
+		if stringField(gate.Data, "id") == gateID {
+			return stringField(gate.Data, "status")
+		}
+	}
+	return ""
+}
+
 func serveGateBlocksTask(gate Note, taskID string) bool {
 	for _, block := range normalizeList(gate.Data["blocks"]) {
-		if wikiTarget(block) == taskID {
+		if strings.EqualFold(wikiTarget(block), taskID) {
+			return true
+		}
+	}
+	for _, cover := range normalizeList(gate.Data["covers"]) {
+		cover = strings.ToUpper(strings.TrimSpace(cover))
+		if strings.HasPrefix(cover, strings.ToUpper(taskID)+":") {
 			return true
 		}
 	}
 	return false
+}
+
+func serveGateBlockIDs(gate Note) []string {
+	blocks := make([]string, 0)
+	for _, block := range normalizeList(gate.Data["blocks"]) {
+		if id := wikiTarget(block); id != "" {
+			blocks = append(blocks, id)
+		}
+	}
+	return uniqueStrings(blocks)
+}
+
+func serveGateBlockedTaskIDs(snap serveSnapshot, gateID string) []string {
+	var gateNote Note
+	for _, gate := range snap.gates {
+		if stringField(gate.Data, "id") == gateID {
+			gateNote = gate
+			break
+		}
+	}
+	if len(gateNote.Data) == 0 {
+		return []string{}
+	}
+	ids := make([]string, 0)
+	for _, task := range snap.tasks {
+		id := stringField(task.Data, "id")
+		if id != "" && serveGateBlocksTask(gateNote, id) {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return uniqueStrings(ids)
 }
 
 func serveGateFromNote(gate Note) serveGate {
@@ -1509,7 +1609,7 @@ func serveGateKind(raw string) string {
 
 func serveGateSatisfied(gate Note) bool {
 	status := strings.ToLower(stringField(gate.Data, "status"))
-	return status == "satisfied" || status == "closed" || stringField(gate.Data, "satisfied_at") != ""
+	return status == "satisfied" || status == "closed" || status == "waived" || status == "obsolete" || stringField(gate.Data, "satisfied_at") != ""
 }
 
 func serveFirstMarkdownPath(text string) string {
@@ -1565,7 +1665,7 @@ Endpoints:
   POST /api/waves/<wave-id>/land
   GET /api/tasks?project=<id>
   GET /api/tasks/<task-id>
-  POST /api/tasks/<task-id>/(status|close|land)
+  POST /api/tasks/<task-id>/(status|discard|close|land)
   GET /api/gates[?task=<id>]
   POST /api/gates/<gate-id>/(satisfy|waive|obsolete)
   GET /api/evidence[?task=<id>]

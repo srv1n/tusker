@@ -9,6 +9,7 @@ import { formatStreamAge, getStreamStatus, subscribeStreamStatus } from "@/lib/s
 import { useTheme } from "@/lib/theme";
 import { USE_MOCK } from "@/lib/api";
 import type { ProjectSummary } from "@/types/domain";
+import { openTaskSearch } from "@/features/search/TaskSearch";
 
 // Project settings live behind the "Details" button on the Overview, not as a
 // separate rail item — keeps the sidebar minimal.
@@ -33,7 +34,6 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
 
   const needsCount = globalNeeds.data?.length ?? 0;
   const daemonLive = !!daemon.data?.connected && stream.connected;
-  const budgetCircuitOpen = daemon.data?.budgetCircuit?.open === true;
   const invariantCircuitOpen = daemon.data?.invariantCircuit?.open === true;
 
   // Drawer keyboard/focus contract: Escape closes; opening moves focus into
@@ -108,7 +108,7 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
           </span>
           {needsCount > 0 && <CountBadge count={needsCount} tone="fail" />}
         </Link>
-        <button className="flex items-center gap-2.5 rounded-lg px-2.5 py-[9px] text-left text-[13.5px] font-medium text-muted transition-colors hover:bg-hover">
+        <button type="button" onClick={openTaskSearch} className="flex items-center gap-2.5 rounded-lg px-2.5 py-[9px] text-left text-[13.5px] font-medium text-muted transition-colors hover:bg-hover">
           <Search size={13} className="text-faint" />
           Search
           <Mono className="ml-auto text-[10px] text-fainter">⌘K</Mono>
@@ -171,14 +171,6 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
               title="Screens render mock fixtures, not live vault data. IDs and counts are illustrative until the serve API lands."
             >
               fixture data
-            </div>
-          )}
-          {budgetCircuitOpen && (
-            <div
-              className="mb-1 inline-flex items-center gap-1 rounded bg-fail-soft px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.12em] text-fail"
-              title={daemon.data?.budgetCircuit?.reason ?? "Budget circuit is open"}
-            >
-              budget circuit open
             </div>
           )}
           {invariantCircuitOpen && (

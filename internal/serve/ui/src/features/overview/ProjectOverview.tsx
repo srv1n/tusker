@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowRight, Diamond, Flag, RefreshCw, Settings } from "lucide-react";
+import { ArrowRight, Diamond, Flag, RefreshCw, Search, Settings } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { compactNumber, sinceLabel } from "@/lib/time";
+import { sinceLabel } from "@/lib/time";
 import {
   useDaemon,
   useEpics,
@@ -43,6 +43,7 @@ import type {
   TaskCapsule,
   TaskStatus,
 } from "@/types/domain";
+import { openTaskSearch } from "@/features/search/TaskSearch";
 
 const route = getRouteApi("/p/$projectId/");
 
@@ -139,14 +140,13 @@ function OverviewContent({ project, projectId }: { project: ProjectSummary; proj
 
   const runs = runsQ.data ?? [];
   const activeRuns = runs
-    .filter((r) => r.outcome === "running")
+    .filter((r) => !r.terminal && r.liveness === "fresh" && ["claimed", "starting", "running"].includes(r.leaseStateRaw ?? ""))
     .sort((a, b) => livenessRank[a.liveness] - livenessRank[b.liveness]);
   const tasks = tasksQ.data ?? [];
 
   // Prefer the live queue length, falling back to the project summary count.
   const needsCount = needsQ.data ? needsQ.data.length : project.needsCount;
-  const totalTokens = runs.reduce((sum, r) => sum + r.tokens.input + r.tokens.output, 0);
-  const inProgressCount = tasks.filter((t) => t.status === "in_progress").length;
+  const inProgressCount = activeRuns.length;
 
   // A task whose latest run took more than one attempt reads as "rework".
   const reworkIds = new Set(runs.filter((r) => r.attemptCount > 1).map((r) => r.taskId));
@@ -181,6 +181,10 @@ function OverviewContent({ project, projectId }: { project: ProjectSummary; proj
           </h1>
         </div>
         <div className="flex flex-none items-center gap-2.5">
+			<Button variant="default" onClick={openTaskSearch}>
+				<Search size={14} strokeWidth={1.75} />
+				Search tasks
+			</Button>
 			<Button
 				variant="default"
 				disabled={refresh.isPending}
@@ -221,10 +225,7 @@ function OverviewContent({ project, projectId }: { project: ProjectSummary; proj
           label="In progress"
           value={statsLoading ? <StatSkeleton /> : String(inProgressCount)}
         />
-        <StatCell
-          label="Tokens"
-          value={statsLoading ? <StatSkeleton /> : compactNumber(totalTokens)}
-        />
+        <StatCell label="Runs" value={statsLoading ? <StatSkeleton /> : String(runs.length)} />
       </div>
 
       {/* Epic rollups */}
@@ -455,8 +456,9 @@ function TaskMiniCard({
   const rskTone = riskTone[task.risk];
   return (
     <Link
-      to="/p/$projectId/runs/$taskId"
-      params={{ projectId, taskId: task.id }}
+      to="/p/$projectId/docs"
+      params={{ projectId }}
+      search={{ path: task.id }}
       className="block rounded-lg border border-line bg-raised px-3 py-2.5 transition-colors hover:border-fainter"
     >
       <div className="mb-1.5 flex items-center justify-between gap-2">

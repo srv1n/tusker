@@ -2,10 +2,25 @@ package main
 
 import (
 	"encoding/json"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestGeneratedCodexProfileArgumentsPassInstalledCLIParser(t *testing.T) {
+	_, err := exec.LookPath("codex")
+	if err != nil {
+		t.Skip("codex CLI is not installed")
+	}
+	selected := ResolvedRunnerProfile{Definition: RunnerProfileDefinition{
+		Harness: string(RunnerCodexExec), Model: "gpt-5.x", Effort: "medium",
+	}}
+	command := strings.TrimSuffix(commandForRunnerProfile(defaultCodexExecCommand(), selected), " -") + " --help"
+	if output, err := exec.Command("sh", "-c", command).CombinedOutput(); err != nil {
+		t.Fatalf("generated codex arguments failed the installed CLI parser: %v\n%s", err, output)
+	}
+}
 
 func TestProfileConfigParsesAndRejectsUnknownValues(t *testing.T) {
 	vault := automationTestVault(t)
@@ -46,8 +61,10 @@ automation:
 		want string
 	}{
 		{"harness", "harness: opencode\n      model: gpt-5.x\n      effort: low", "harness"},
+		{"retired app server", "harness: codex_app_server\n      model: gpt-5.x\n      effort: low", "retired"},
 		{"model", "harness: codex_exec\n      model: mystery-model\n      effort: low", "model"},
 		{"effort", "harness: codex_exec\n      model: gpt-5.x\n      effort: turbo", "effort"},
+		{"unenforced guarded preset", "harness: codex_exec\n      model: gpt-5.x\n      effort: high\n      permission_preset: guarded-yolo", "permission_preset"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,7 +101,7 @@ func TestProfileResolvePrecedenceAndDispatchCommand(t *testing.T) {
 			Sandbox: RunnerSandboxDefinition{Mode: "workspace-write", Network: boolPtr(true)},
 		},
 		"task-yolo": {
-			Harness: string(RunnerCodexExec), Model: "gpt-5.2", Effort: "high", PermissionPreset: "guarded-yolo",
+			Harness: string(RunnerCodexExec), Model: "gpt-5.2", Effort: "high", PermissionPreset: "danger-full-access",
 			Sandbox: RunnerSandboxDefinition{Mode: "danger-full-access", Network: boolPtr(true)},
 		},
 		"risk-review": {
@@ -118,12 +135,12 @@ func TestProfileResolvePrecedenceAndDispatchCommand(t *testing.T) {
 	}
 	assertEqual(t, "task-yolo", selected.Name, "task override beats routing")
 	command := commandForRunnerProfile("codex exec --skip-git-repo-check -", selected)
-	if !strings.Contains(command, "--model gpt-5.2") || !strings.Contains(command, "--reasoning-effort high") {
+	if !strings.Contains(command, "--model gpt-5.2") || !strings.Contains(command, `-c 'model_reasoning_effort="high"'`) {
 		t.Fatalf("expected codex exec command to include model and effort, got %q", command)
 	}
 	policy := codexPolicyForResolvedProfile(codexPolicyFromWorkflow(wf), runLaneExecute, selected)
 	sandbox := codexTurnSandboxPolicy(policy, "/tmp/workspace")
-	assertEqual(t, "dangerFullAccess", stringValue(sandbox["type"]), "guarded yolo sandbox")
+	assertEqual(t, "dangerFullAccess", stringValue(sandbox["type"]), "full access sandbox")
 	env := runnerEnv(runnerLaunchEnv{RunnerProfile: selected.Name, RunnerHarness: selected.Definition.Harness, RunnerModel: selected.Definition.Model, RunnerEffort: selected.Definition.Effort, CodexPolicy: policy})
 	assertContainsEnv(t, env, "TUSKER_RUNNER_PROFILE=task-yolo")
 	assertContainsEnv(t, env, "TUSKER_RUNNER_MODEL=gpt-5.2")

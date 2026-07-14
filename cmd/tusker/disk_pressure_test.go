@@ -86,6 +86,7 @@ func TestDiskPressureDefaultsEffectiveFloorWarningAndDisable(t *testing.T) {
 
 func TestDispatchDiskPressurePausesBeforeClaimPreservesActiveRunAndRecovers(t *testing.T) {
 	vault := automationTestVault(t)
+	installCodexSleepShimForTest(t)
 	disableReviewerForTest(t, vault)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Disk pressure", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
@@ -94,12 +95,13 @@ func TestDispatchDiskPressurePausesBeforeClaimPreservesActiveRunAndRecovers(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
+	wfFile.Data.Runtime.MaxActiveRunsPerProject = 2
 	workspaceRoot := filepath.Join(DefaultStateRoot(), "workspaces", "disk-pressure", newRecordID())
 	wfFile.Data.Workspace.Root = workspaceRoot
 	wfFile.Data.Workspace.Strategy = string(WorkspaceStrategyCopy)
 	wfFile.Data.Agents.Default = "test-disk-pressure"
 	wfFile.Data.Agents.Enabled = append(wfFile.Data.Agents.Enabled, "test-disk-pressure")
-	wfFile.Data.Runners["test-disk-pressure"] = RunnerDefinition{Kind: string(RunnerCodexExec), Command: "sleep 30"}
+	wfFile.Data.Runners["test-disk-pressure"] = RunnerDefinition{Kind: string(RunnerCodexExec), Command: defaultCodexExecCommand()}
 	note, err := resolveNote(vault, "APP-T-0001")
 	if err != nil {
 		t.Fatal(err)
@@ -240,6 +242,7 @@ func TestDispatchDiskPressurePausesBeforeClaimPreservesActiveRunAndRecovers(t *t
 
 func TestDispatchDiskPressureMeasuresExistingTaskWorkspaceBeforeLeaseClaim(t *testing.T) {
 	vault := automationTestVault(t)
+	installCodexSleepShimForTest(t)
 	disableReviewerForTest(t, vault)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Mounted workspace", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
@@ -252,7 +255,7 @@ func TestDispatchDiskPressureMeasuresExistingTaskWorkspaceBeforeLeaseClaim(t *te
 	wfFile.Data.Workspace.Strategy = string(WorkspaceStrategyCopy)
 	wfFile.Data.Agents.Default = "test-disk-pressure"
 	wfFile.Data.Agents.Enabled = append(wfFile.Data.Agents.Enabled, "test-disk-pressure")
-	wfFile.Data.Runners["test-disk-pressure"] = RunnerDefinition{Kind: string(RunnerCodexExec), Command: "true"}
+	wfFile.Data.Runners["test-disk-pressure"] = RunnerDefinition{Kind: string(RunnerCodexExec), Command: defaultCodexExecCommand()}
 	note, err := resolveNote(vault, "APP-T-0001")
 	if err != nil {
 		t.Fatal(err)

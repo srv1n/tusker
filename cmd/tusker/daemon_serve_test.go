@@ -238,6 +238,7 @@ func writeDaemonServeWorkflow(t *testing.T, vault string, serveEnabled bool, ser
 func startDaemonRunForTest(t *testing.T, stateRoot string) <-chan error {
 	t.Helper()
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	clearAgentSessionEnvForTest(t)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- daemonRunCmd(Args{})

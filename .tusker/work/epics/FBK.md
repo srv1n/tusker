@@ -8,16 +8,16 @@ status: "ready"
 owner: "agent:codex"
 priority: "p2"
 domains: []
-capsule:
-  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
-  use_when: "Use to triage feedback signals, review findings, promotion rules, and cross-vault health."
-  what: "FBK epic for structured feedback intake, review, dedupe, and promotion."
 next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:13:34Z"
-updated_at: "2026-07-08T06:16:59Z"
-state_rev: "sha256:4a48d7f17c121f78760ba0f3a49b0d283a7b817d5e0d3e3482887e48584e6f0e"
+updated_at: "2026-07-12T18:05:50Z"
+state_rev: "sha256:98e586d0e91fa0dba3b3fc0c0277fbcb7ce928db45a09b7df6612b7333a565ea"
+capsule:
+  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
+  use_when: "Use to triage feedback signals, review findings, promotion rules, and cross-vault health."
+  what: "FBK epic for structured feedback intake, review, dedupe, and promotion."
 ---
 
 # FBK · Feedback intake and review
@@ -52,7 +52,7 @@ Start from the 2026-07-05 feedback intake: 4 explicit notes collapsed to 2 produ
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
 | [[FBK-T-0001]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[FBK-T-0002]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[FBK-T-0002]] | backlog | human:sarav | Accept, waive, or return rework for FBK-G-0001. |
 | [[FBK-T-0004]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed

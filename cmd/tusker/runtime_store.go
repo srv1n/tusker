@@ -90,6 +90,29 @@ type RunStatus struct {
 	UpdatedAt          string `json:"updated_at"`
 }
 
+type RunAuthorization struct {
+	ProjectID                string `json:"project_id"`
+	RecordID                 string `json:"record_id"`
+	LeaseGeneration          int    `json:"lease_generation"`
+	Source                   string `json:"source"`
+	Actor                    string `json:"actor"`
+	Trigger                  string `json:"trigger"`
+	ProjectAutomationEnabled bool   `json:"project_automation_enabled"`
+	CreatedAt                string `json:"created_at"`
+}
+
+type RunIdentityMetadata struct {
+	ProjectID     string `json:"project_id"`
+	RecordID      string `json:"record_id"`
+	RepoRoot      string `json:"registered_repo_path"`
+	WorkspacePath string `json:"workspace_path"`
+	WorkspaceMode string `json:"workspace_mode"`
+	Runner        string `json:"runner"`
+	Branch        string `json:"branch,omitempty"`
+	Head          string `json:"head,omitempty"`
+	CreatedAt     string `json:"created_at"`
+}
+
 type RunAttempt struct {
 	AttemptID          string
 	ProjectID          string
@@ -277,6 +300,14 @@ func OpenRuntimeStore(stateRoot string) (*RuntimeStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if _, err := store.ReconcileDuplicateProjects(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.EnsureProjectUniqueness(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return store, nil
 }
 
@@ -459,6 +490,29 @@ func (s *RuntimeStore) Migrate() error {
 			terminal INTEGER NOT NULL DEFAULT 0,
 			started_at TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY(project_id, record_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS run_authorizations (
+			project_id TEXT NOT NULL,
+			record_id TEXT NOT NULL,
+			lease_generation INTEGER NOT NULL,
+			source TEXT NOT NULL,
+			actor TEXT NOT NULL,
+			trigger TEXT NOT NULL DEFAULT '',
+			project_automation_enabled INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY(project_id, record_id, lease_generation)
+		);`,
+		`CREATE TABLE IF NOT EXISTS run_identity_metadata (
+			project_id TEXT NOT NULL,
+			record_id TEXT NOT NULL,
+			repo_root TEXT NOT NULL,
+			workspace_path TEXT NOT NULL,
+			workspace_mode TEXT NOT NULL,
+			runner TEXT NOT NULL,
+			branch TEXT NOT NULL DEFAULT '',
+			head TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
 			PRIMARY KEY(project_id, record_id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS attempts (
@@ -833,6 +887,110 @@ func (s *RuntimeStore) UpsertProject(project RegisteredProject) error {
 		project.ProjectID, project.ProjectKey, project.Name, project.RepoRoot, project.VaultRoot, project.WorkflowPath,
 		boolToInt(project.Enabled), string(project.Health), project.LastPollAt, project.LastError)
 	return err
+}
+
+// RegisterProject is the idempotent registration boundary. UpsertProject stays
+// available for restoring a known project ID and for fixtures, but user-facing
+// registration must not mint a second identity for the same checkout.
+func (s *RuntimeStore) RegisterProject(project RegisteredProject) (RegisteredProject, bool, error) {
+	project.RepoRoot = canonicalProjectPath(project.RepoRoot)
+	project.VaultRoot = canonicalProjectPath(project.VaultRoot)
+	project.WorkflowPath = workflowPath(project.VaultRoot)
+	projects, err := s.ListProjects()
+	if err != nil {
+		return RegisteredProject{}, false, err
+	}
+	for _, existing := range projects {
+		if sameCanonicalProjectPath(existing.RepoRoot, project.RepoRoot) || sameCanonicalProjectPath(existing.VaultRoot, project.VaultRoot) {
+			return existing, false, nil
+		}
+	}
+	if err := s.UpsertProject(project); err != nil {
+		return RegisteredProject{}, false, err
+	}
+	return project, true, nil
+}
+
+func (s *RuntimeStore) EnsureProjectUniqueness() error {
+	if _, err := s.exec(`CREATE UNIQUE INDEX IF NOT EXISTS projects_repo_root_unique ON projects(repo_root)`); err != nil {
+		return err
+	}
+	_, err := s.exec(`CREATE UNIQUE INDEX IF NOT EXISTS projects_vault_root_unique ON projects(vault_root)`)
+	return err
+}
+
+// ReconcileDuplicateProjects removes duplicate discovery metadata left by old
+// registration paths. Runtime rows are deliberately retained under their
+// original project IDs: cleanup must never destroy execution history merely to
+// tidy the sidebar.
+func (s *RuntimeStore) ReconcileDuplicateProjects() ([]string, error) {
+	projects, err := s.ListProjects()
+	if err != nil {
+		return nil, err
+	}
+	removed := make([]string, 0)
+	for i := 0; i < len(projects); i++ {
+		keeper := projects[i]
+		if keeper.ProjectID == "" {
+			continue
+		}
+		for j := i + 1; j < len(projects); j++ {
+			candidate := projects[j]
+			if candidate.ProjectID == "" || (!sameCanonicalProjectPath(keeper.RepoRoot, candidate.RepoRoot) && !sameCanonicalProjectPath(keeper.VaultRoot, candidate.VaultRoot)) {
+				continue
+			}
+			if preferRegisteredProject(candidate, keeper) {
+				keeper, candidate = candidate, keeper
+				projects[i] = keeper
+			}
+			if err := s.UnregisterProject(candidate.ProjectID); err != nil {
+				return removed, err
+			}
+			removed = append(removed, candidate.ProjectID)
+			projects[j].ProjectID = ""
+		}
+	}
+	return removed, nil
+}
+
+func preferRegisteredProject(left, right RegisteredProject) bool {
+	if left.Enabled != right.Enabled {
+		return left.Enabled
+	}
+	leftHealthy := left.Health == projectHealthHealthy
+	rightHealthy := right.Health == projectHealthHealthy
+	if leftHealthy != rightHealthy {
+		return leftHealthy
+	}
+	if (left.LastPollAt != "") != (right.LastPollAt != "") {
+		return left.LastPollAt != ""
+	}
+	if left.LastPollAt != right.LastPollAt {
+		return left.LastPollAt > right.LastPollAt
+	}
+	return left.ProjectID < right.ProjectID
+}
+
+func sameCanonicalProjectPath(left, right string) bool {
+	left = canonicalProjectPath(left)
+	right = canonicalProjectPath(right)
+	return left != "" && right != "" && left == right
+}
+
+func canonicalProjectPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(path)
+	if err == nil {
+		path = abs
+	}
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = filepath.Clean(resolved)
+	}
+	return path
 }
 
 func (s *RuntimeStore) RemoveProject(projectID string) error {
@@ -1224,6 +1382,7 @@ type RuntimeLeaseClaimPrecondition struct {
 	ExpectedOwner           string
 	ExpectedLeaseGeneration int
 	ExpectedWorkRevision    int
+	ProjectConcurrencyLimit int
 }
 
 func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generation int, ttl time.Duration, now time.Time, dispatchable bool, precondition RuntimeLeaseClaimPrecondition) (bool, error) {
@@ -1256,17 +1415,20 @@ func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generati
 			lease_generation = ?,
 			lease_expires_at = ?,
 			lease_host = ?,
+			last_heartbeat_at = ?,
 			updated_at = ?
 		WHERE project_id = ? AND record_id = ?
 			AND lease_state NOT IN ('claimed', 'running')
 			AND lease_state = ?
 			AND lease_owner = ?
 			AND lease_generation = ?
-			AND work_revision = ?`
+			AND work_revision = ?
+			AND (? <= 0 OR (SELECT COUNT(1) FROM runs active WHERE active.project_id = ? AND active.lease_state IN ('claimed','running')) < ?)`
 	params := []any{
-		owner, generation, now.Add(ttl).Format(time.RFC3339), runtimeLeaseHost(), now.Format(time.RFC3339),
+		owner, generation, now.Add(ttl).Format(time.RFC3339), runtimeLeaseHost(), now.Format(time.RFC3339), now.Format(time.RFC3339),
 		projectID, recordID, expectedLeaseState, precondition.ExpectedOwner,
 		precondition.ExpectedLeaseGeneration, precondition.ExpectedWorkRevision,
+		precondition.ProjectConcurrencyLimit, projectID, precondition.ProjectConcurrencyLimit,
 	}
 	result, err := s.exec(query, params...)
 	if err != nil {
@@ -1480,7 +1642,7 @@ func (s *RuntimeStore) ReclaimExpiredRunLease(projectID, recordID string, now ti
 	}
 	result, err := s.exec(`UPDATE runs
 		SET lease_state = 'interrupted',
-			attempt_outcome = 'cancelled',
+			attempt_outcome = 'interrupted',
 			next_retry_at = '',
 			last_error = ?,
 			process_pid = 0,
@@ -2074,10 +2236,6 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 	if err := s.queryRowScan(`SELECT COUNT(*) FROM runs WHERE lease_state = 'parked_no_progress'`, nil, &parkedNoProgressCount); err != nil {
 		return nil, err
 	}
-	var parkedBudgetCount int
-	if err := s.queryRowScan(`SELECT COUNT(*) FROM runs WHERE lease_state = 'parked_budget'`, nil, &parkedBudgetCount); err != nil {
-		return nil, err
-	}
 	globalReport, err := configResolveForRepo("", false, "runtime.max_active_runs")
 	if err != nil {
 		return nil, err
@@ -2088,10 +2246,6 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 		return nil, err
 	}
 	watchdogBeatAt, err := s.GetSetting("daemon_watchdog_beat_at")
-	if err != nil {
-		return nil, err
-	}
-	budgetCircuit, err := s.ReadBudgetCircuitStatus()
 	if err != nil {
 		return nil, err
 	}
@@ -2149,16 +2303,11 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 		"projects":                  projectCount,
 		"activeRuns":                runCount,
 		"parkedNoProgressRuns":      parkedNoProgressCount,
-		"parkedBudgetRuns":          parkedBudgetCount,
 		"max_active_runs":           globalLimit,
 		"limit_source":              source,
 		"default_limit_value":       2,
 		"project_health":            projects,
-		"budgetCircuit":             budgetCircuit,
 		"crashLoop":                 crashLoop,
-		"budget_circuit_open":       budgetCircuit.Open,
-		"budget_circuit_reset_at":   budgetCircuit.ResetAt,
-		"budget_circuit_reason":     budgetCircuit.Reason,
 		"invariantCircuit":          invariantCircuit,
 		"invariant_circuit_open":    invariantCircuit.Open,
 		"invariant_circuit_reason":  invariantCircuitReason,
@@ -2189,6 +2338,8 @@ func projectKeyFromPath(repoRoot string) string {
 }
 
 func newRegisteredProject(repoRoot, vaultRoot string) RegisteredProject {
+	repoRoot = canonicalProjectPath(repoRoot)
+	vaultRoot = canonicalProjectPath(vaultRoot)
 	return RegisteredProject{
 		ProjectID:    newRecordID(),
 		ProjectKey:   projectKeyFromPath(repoRoot),
@@ -2199,6 +2350,62 @@ func newRegisteredProject(repoRoot, vaultRoot string) RegisteredProject {
 		Enabled:      true,
 		Health:       projectHealthHealthy,
 	}
+}
+
+func (s *RuntimeStore) SaveRunAuthorization(auth RunAuthorization) error {
+	if auth.ProjectID == "" || auth.RecordID == "" || auth.LeaseGeneration <= 0 || auth.Source == "" || auth.Actor == "" {
+		return tuskerError(errorInvalidArg, "run authorization requires project, task, generation, source, and actor")
+	}
+	if auth.CreatedAt == "" {
+		auth.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	_, err := s.exec(`INSERT INTO run_authorizations(project_id, record_id, lease_generation, source, actor, trigger, project_automation_enabled, created_at)
+		VALUES(?,?,?,?,?,?,?,?)
+		ON CONFLICT(project_id, record_id, lease_generation) DO UPDATE SET source=excluded.source, actor=excluded.actor, trigger=excluded.trigger, project_automation_enabled=excluded.project_automation_enabled, created_at=excluded.created_at`,
+		auth.ProjectID, auth.RecordID, auth.LeaseGeneration, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt)
+	return err
+}
+
+func (s *RuntimeStore) LatestRunAuthorization(projectID, recordID string) (*RunAuthorization, error) {
+	var auth RunAuthorization
+	var enabled int
+	err := s.queryRowScan(`SELECT project_id, record_id, lease_generation, source, actor, trigger, project_automation_enabled, created_at
+		FROM run_authorizations WHERE project_id=? AND record_id=? ORDER BY lease_generation DESC LIMIT 1`, []any{projectID, recordID},
+		&auth.ProjectID, &auth.RecordID, &auth.LeaseGeneration, &auth.Source, &auth.Actor, &auth.Trigger, &enabled, &auth.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	auth.ProjectAutomationEnabled = enabled != 0
+	return &auth, nil
+}
+
+func (s *RuntimeStore) SaveRunIdentity(identity RunIdentityMetadata) error {
+	if identity.ProjectID == "" || identity.RecordID == "" || identity.RepoRoot == "" || identity.WorkspacePath == "" || identity.WorkspaceMode == "" || identity.Runner == "" {
+		return tuskerError(errorInvalidArg, "run identity requires project, task, repository, workspace, mode, and runner")
+	}
+	if identity.CreatedAt == "" {
+		identity.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	_, err := s.exec(`INSERT INTO run_identity_metadata(project_id,record_id,repo_root,workspace_path,workspace_mode,runner,branch,head,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(project_id,record_id) DO UPDATE SET repo_root=excluded.repo_root, workspace_path=excluded.workspace_path, workspace_mode=excluded.workspace_mode, runner=excluded.runner, branch=excluded.branch, head=excluded.head`,
+		identity.ProjectID, identity.RecordID, identity.RepoRoot, identity.WorkspacePath, identity.WorkspaceMode, identity.Runner, identity.Branch, identity.Head, identity.CreatedAt)
+	return err
+}
+
+func (s *RuntimeStore) RunIdentity(projectID, recordID string) (*RunIdentityMetadata, error) {
+	var identity RunIdentityMetadata
+	err := s.queryRowScan(`SELECT project_id,record_id,repo_root,workspace_path,workspace_mode,runner,branch,head,created_at FROM run_identity_metadata WHERE project_id=? AND record_id=?`, []any{projectID, recordID},
+		&identity.ProjectID, &identity.RecordID, &identity.RepoRoot, &identity.WorkspacePath, &identity.WorkspaceMode, &identity.Runner, &identity.Branch, &identity.Head, &identity.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &identity, nil
 }
 
 func runsCmd(args Args) error {

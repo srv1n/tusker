@@ -12,6 +12,7 @@ import {
 } from "@/lib/queries";
 import { QueryBoundary, Skeleton, SkeletonRows } from "@/components/ui/states";
 import { SectionLabel } from "@/components/ui/page";
+import { Mono } from "@/components/ui/primitives";
 import { RunHeader } from "@/features/runs/detail/RunHeader";
 import { RunStats } from "@/features/runs/detail/RunStats";
 import { AttemptTimeline } from "@/features/runs/detail/AttemptTimeline";
@@ -119,6 +120,9 @@ function TaskRunDetail({ projectId, taskId }: { projectId: string; taskId: strin
 
                 <RunStats run={data} waitingForDaemon={daemonWaitReason !== null} />
 
+                <OperatorFacts run={data} />
+                <Delivery run={data} />
+
                 <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-[300px_1fr]">
                   <div className="min-w-0">
                     <SectionLabel className="mb-3">Attempts</SectionLabel>
@@ -138,6 +142,38 @@ function TaskRunDetail({ projectId, taskId }: { projectId: string; taskId: strin
         </QueryBoundary>
       </div>
     </div>
+  );
+}
+
+function OperatorFacts({ run }: { run: RunDetailData }) {
+  const command = run.resume?.command;
+  return (
+    <section className="mb-6 rounded-[10px] border border-line bg-raised p-4" data-run-operator-facts>
+      <SectionLabel className="mb-3">Ownership &amp; resume</SectionLabel>
+      <dl className="grid gap-3 text-[11px] sm:grid-cols-2 lg:grid-cols-4">
+        <div><dt className="text-faint">authorized by</dt><dd className="font-mono text-ink">{run.authorization ? `${run.authorization.source} · ${run.authorization.actor}` : "authorization unavailable"}</dd></div>
+        <div><dt className="text-faint">repository</dt><dd className="break-all font-mono text-ink">{run.identity?.repo_root ?? "registered repository unavailable"}</dd></div>
+        <div><dt className="text-faint">workspace mode</dt><dd className="font-mono text-ink">{run.identity?.workspace_mode ?? run.workspaceMode ?? "unknown"}</dd></div>
+        <div><dt className="text-faint">session</dt><dd className="break-all font-mono text-ink">{run.session?.session_ref ?? "session unavailable"}</dd></div>
+      </dl>
+      {command ? (
+        <button type="button" onClick={() => void navigator.clipboard?.writeText(command)} className="mt-3 break-all rounded border border-line px-2 py-1 font-mono text-[10.5px] text-info" title="Copy resume command">{command}</button>
+      ) : <p className="mt-3 text-[11px] text-faint">Resume unavailable: {run.resume?.reason ?? "session metadata is missing"}</p>}
+    </section>
+  );
+}
+
+function Delivery({ run }: { run: RunDetailData }) {
+  const delivery = run.delivery;
+  return (
+    <section className="mb-6 rounded-[10px] border border-line bg-raised p-4" data-run-delivery>
+      <SectionLabel className="mb-3">Delivery</SectionLabel>
+      {!delivery?.summary && !delivery?.artifact ? <p className="text-[12px] text-faint">No deliverable recorded.</p> : (
+        <><p className="text-[12px] text-ink">{delivery.summary || delivery.artifact}</p>{delivery.artifact && <Mono className="mt-2 block break-all text-[10.5px] text-info">{delivery.artifact}</Mono>}</>
+      )}
+      <div className="mt-3 border-t border-line-soft pt-3 text-[11px]"><span className="text-faint">acceptance verification · </span><span className="text-ink">{delivery?.verification || "not recorded"}</span><Mono className="ml-2 text-faint">proof {delivery?.proofStatus ?? "pending"}</Mono></div>
+      {(run.outcome === "failed" || run.outcome === "interrupted") && <p className="mt-3 line-clamp-3 text-[11px] text-fail">{run.error || `${run.outcome}; retry or reclaim depends on current ownership policy`}</p>}
+    </section>
   );
 }
 

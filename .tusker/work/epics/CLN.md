@@ -8,16 +8,16 @@ status: "ready"
 owner: "human:sarav"
 priority: "p2"
 domains: []
-capsule:
-  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
-  use_when: "Use to triage cleanup, migration removal, state model, and solo-operator ergonomics work."
-  what: "CLN epic for deleting legacy surfaces and simplifying the single V7 vault model."
 next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:16:22Z"
-updated_at: "2026-07-10T16:06:52Z"
-state_rev: "sha256:6edeea2d3c5591810c2b7b8b700a036ae6914e789315e764544b973259c87ddc"
+updated_at: "2026-07-11T06:39:31Z"
+state_rev: "sha256:82b746b21df1b1498a8e71fdedf86a031c1a05cb1afc54b7679bc79131043976"
+capsule:
+  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
+  use_when: "Use to triage cleanup, migration removal, state model, and solo-operator ergonomics work."
+  what: "CLN epic for deleting legacy surfaces and simplifying the single V7 vault model."
 ---
 
 # CLN · One model, one vault: legacy deletion and solo ergonomics
@@ -52,8 +52,8 @@ TBD.
 | [[CLN-T-0003]] | backlog | blocked_dependency | Wait for dependency CLN-T-0002 to reach review with satisfied proof or done. |
 | [[CLN-T-0004]] | backlog | blocked_dependency | Wait for dependency CLN-T-0003 to reach review with satisfied proof or done. |
 | [[CLN-T-0005]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[CLN-T-0006]] | ready | agent:claude-code | Execute the task contract and satisfy proof mode. |
-| [[CLN-T-0007]] | backlog | blocked_dependency | Wait for dependency CLN-T-0006 to reach review with satisfied proof or done. |
+| [[CLN-T-0006]] | review | reviewer | Review evidence and close or return to rework. |
+| [[CLN-T-0007]] | backlog | agent | Wait for dependency CLN-T-0006 to reach review with satisfied proof or done. |
 | [[CLN-T-0009]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed

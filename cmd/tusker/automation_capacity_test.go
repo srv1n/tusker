@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 func TestAutomationPlanRetryQueuedSelfBlockAllowsContinuationCapacity(t *testing.T) {
@@ -32,7 +31,7 @@ func TestAutomationPlanRetryQueuedSelfBlockAllowsContinuationCapacity(t *testing
 
 func TestDaemonRetryQueuedSelfBlockDispatchesContinuationAtProjectLimit(t *testing.T) {
 	vault := automationTestVault(t)
-	writeCodexSleepWorkflowForCapacityTest(t, vault)
+	installCodexSleepShimForTest(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Self parked daemon retry", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
@@ -238,38 +237,20 @@ func seedCapacityRunForTest(t *testing.T, project RegisteredProject, recordID st
 	}
 }
 
-func writeCodexSleepWorkflowForCapacityTest(t *testing.T, vault string) {
+func installCodexSleepShimForTest(t *testing.T) {
 	t.Helper()
-	wfFile, err := loadWorkflow(vault)
-	if err != nil {
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := ensureDir(binDir); err != nil {
 		t.Fatal(err)
 	}
-	command := "python3 -c 'import time; time.sleep(5)'"
-	wf := wfFile.Data
-	wf.Agents.Default = string(RunnerCodex)
-	if !containsString(wf.Agents.Enabled, string(RunnerCodex)) {
-		wf.Agents.Enabled = append(wf.Agents.Enabled, string(RunnerCodex))
-	}
-	wf.Codex.Command = command
-	raw, err := yaml.Marshal(wf)
-	if err != nil {
+	shim := filepath.Join(binDir, "codex")
+	if err := writeText(shim, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo codex-test-shim\n  exit 0\nfi\nexec sleep 5\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(workflowPath(vault), "---\n"+strings.TrimSpace(string(raw))+"\n---\n"+wfFile.Body); err != nil {
+	if err := os.Chmod(shim, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	configPath := filepath.Join(filepath.Dir(vault), "tusker.yaml")
-	text, err := readText(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	const defaultCommand = "command: codex exec --json --skip-git-repo-check -"
-	if strings.Contains(text, defaultCommand) {
-		text = strings.Replace(text, defaultCommand, "command: "+command, 1)
-		if err := writeText(configPath, text); err != nil {
-			t.Fatal(err)
-		}
-	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func setProjectActiveRunCapForCapacityTest(t *testing.T, vault string, limit int) {

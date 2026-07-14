@@ -204,7 +204,7 @@ func run(command string, args Args) (int, error) {
 
 func cliCommandMutatesVault(command string) bool {
 	switch command {
-	case "status", "verify add", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "reconcile", "finish", "close", "handoff":
+	case "status", "discard", "verify add", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "reconcile", "finish", "close", "handoff":
 		return true
 	default:
 		return false
@@ -254,6 +254,9 @@ func runInner(command string, args Args) (int, error) {
 		return 0, newV7Decision(args)
 	case "status":
 		return 0, statusCmd(args)
+	case "discard":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, discardV7Cmd(args)
 	case "next":
 		return 0, nextCmd(args)
 	case "claim":
@@ -669,6 +672,12 @@ func runInner(command string, args Args) (int, error) {
 	case "runs inspect":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, runsInspectCmd(args)
+	case "runs claim":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, runsClaimCmd(args)
+	case "runs start", "runs heartbeat", "runs submit", "runs fail", "runs reclaim":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, runsLifecycleCmd(args, strings.TrimPrefix(command, "runs "))
 	case "runs logs":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, runsLogsCmd(args)
@@ -711,6 +720,9 @@ func runInner(command string, args Args) (int, error) {
 		return 0, nil
 	case "help status":
 		printStatusHelp()
+		return 0, nil
+	case "help discard":
+		printDiscardHelp()
 		return 0, nil
 	case "help next":
 		printNextHelp()
@@ -867,6 +879,7 @@ Commands:
   compact             remove empty optional metadata and disposable note scaffolding
   context             audit Codex JSONL context and tool-output bloat
   status              move a V7 task through its workflow
+  discard             abandon work safely while preserving its history
   next                show the next pickable V7 task
   claim               create a V7 local lease
   evidence            add V7 evidence records
@@ -903,6 +916,7 @@ Commands:
 
 Help:
   tusker new --help
+  tusker discard --help
   tusker vault --help
   tusker daemon --help
   tusker config --help
@@ -938,6 +952,8 @@ func printCommandHelp(command string) bool {
 		printNewHelp()
 	case "status":
 		printStatusHelp()
+	case "discard":
+		printDiscardHelp()
 	case "next":
 		printNextHelp()
 	case "claim":
@@ -1000,7 +1016,7 @@ func printCommandHelp(command string) bool {
 		printAutomationHelp()
 	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects remove", "projects prune":
 		printProjectsHelp()
-	case "runs", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs release", "runs retire", "runs redrive", "redrive":
+	case "runs", "runs claim", "runs start", "runs heartbeat", "runs submit", "runs fail", "runs reclaim", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs release", "runs retire", "runs redrive", "redrive":
 		printRunsHelp()
 	case "serve":
 		printServeHelp()
@@ -1252,6 +1268,12 @@ Examples:
 
 func printRunsHelp() {
 	fmt.Println(`Usage:
+	  tusker runs claim <task-id> --owner <actor> [--project <id>] [--json]
+	  tusker runs start <task-id> --owner <actor> [--session <id>] [--pid <n>] [--pgid <n>] [--json]
+	  tusker runs heartbeat <task-id> --owner <actor> [--json]
+	  tusker runs submit <task-id> --owner <actor> --deliverable <summary> --verification <summary> [--json]
+	  tusker runs fail <task-id> --owner <actor> --reason <text> [--json]
+	  tusker runs reclaim <task-id> --owner <actor> --reason <text> [--json]
   tusker runs inspect <task-id-or-record-id> [--json]
   tusker runs logs <task-id-or-record-id> [--lines <n>] [--follow] [--json]
   tusker runs events <task-id-or-record-id> [--lines <n>] [--follow] [--json]
@@ -1456,15 +1478,33 @@ func printStatusHelp() {
   tusker status --id <id> --status <status> [--vault <path>] [--actor <name>] [--reason <text>]
 
 Statuses:
-  idea, backlog, ready, review, rework, done, cancelled, superseded
-  V7 task statuses: idea, backlog, ready, review, rework, done, cancelled, superseded
+  idea, backlog, ready, review, rework, superseded
+  Use tusker close for done and tusker discard for cancelled.
 
 Purpose:
   Move a V7 task through its durable workflow. Runtime activity is represented
   by leases/runs, not by a durable active task status.
 
 Notes:
-  Use backlog for shaped future work that should not be picked up in the current release.`)
+	Use backlog for shaped future work that should not be picked up in the current release.
+	Use tusker discard instead of setting cancelled directly so dependencies,
+	gates, runtime rows, and discard metadata are handled together.`)
+}
+
+func printDiscardHelp() {
+	fmt.Println(`Usage:
+  tusker discard <task-id> --reason <text> [--dependents detach|discard] [--by <actor>] [--json]
+  tusker discard <task-id> --dry-run [--json]
+
+Purpose:
+  Remove abandoned work from active views without deleting its durable task,
+  attempt, evidence, or event history.
+
+Dependency policy:
+  Discard refuses when active downstream tasks depend on the target unless
+  --dependents explicitly chooses detach (remove the target edge) or discard
+  (cancel the complete downstream dependency closure). Use --dry-run first to
+  inspect the exact impact. No dependency edge is removed silently.`)
 }
 
 func printNextHelp() {

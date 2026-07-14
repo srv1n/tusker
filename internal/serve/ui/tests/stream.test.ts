@@ -8,6 +8,7 @@ import {
   liveRefetchInterval,
   streamKeyToQueryKeys,
 } from "../src/lib/stream";
+import { qk } from "../src/lib/queries";
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
@@ -55,11 +56,11 @@ test("stream keys map to live query invalidations", () => {
   expect(streamKeyToQueryKeys("tasks:AGX-T-0005", "tusker")).toEqual([
     ["tasks", "tusker"],
     ["task", "tusker", "AGX-T-0005"],
-    ["needs", "tusker"],
+    qk.needs("tusker"),
     ["projects"],
   ]);
-  expect(streamKeyToQueryKeys("runs:AGX-T-0005", "tusker")).toEqual([["runs", "tusker"], ["run", "tusker", "AGX-T-0005"]]);
-  expect(streamKeyToQueryKeys("review:batch", "tusker")).toEqual([["needs", "tusker"], ["tasks", "tusker"], ["runs", "tusker"], ["projects"], ["review", "batch", "tusker"]]);
+  expect(streamKeyToQueryKeys("runs:AGX-T-0005", "tusker")).toEqual([qk.runs("tusker"), ["run", "tusker", "AGX-T-0005"]]);
+  expect(streamKeyToQueryKeys("review:batch", "tusker")).toEqual([qk.needs("tusker"), ["tasks", "tusker"], qk.runs("tusker"), ["projects"], qk.reviewBatch("tusker")]);
 
   const { client, invalidations } = recorder();
   invalidateStreamEvent(client, {
@@ -70,9 +71,9 @@ test("stream keys map to live query invalidations", () => {
   expect(invalidations).toEqual([
     { queryKey: ["tasks", "tusker"], exact: false },
     { queryKey: ["task", "tusker", "AGX-T-0005"], exact: false },
-    { queryKey: ["needs", "tusker"], exact: false },
+    { queryKey: qk.needs("tusker"), exact: false },
     { queryKey: ["projects"], exact: false },
-    { queryKey: ["runs", "tusker"], exact: false },
+    { queryKey: qk.runs("tusker"), exact: false },
     { queryKey: ["run"], exact: false },
   ]);
 });
@@ -135,8 +136,39 @@ test("stream connection debounces and deduplicates burst invalidations", async (
   expect(invalidations).toHaveLength(0);
   await Bun.sleep(35);
   expect(invalidations.filter((entry) => JSON.stringify(entry) === JSON.stringify({ queryKey: ["tasks", "app"], exact: false }))).toHaveLength(1);
-  expect(invalidations.filter((entry) => JSON.stringify(entry) === JSON.stringify({ queryKey: ["needs", "app"], exact: false }))).toHaveLength(1);
+  expect(invalidations.filter((entry) => JSON.stringify(entry) === JSON.stringify({ queryKey: qk.needs("app"), exact: false }))).toHaveLength(1);
   disconnect();
+});
+
+test("literal project all invalidates only its scoped panel caches", () => {
+  expect(qk.needs()).not.toEqual(qk.needs("all"));
+  expect(qk.runs()).not.toEqual(qk.runs("all"));
+  expect(qk.reviewBatch()).not.toEqual(qk.reviewBatch("all"));
+
+  const projectKeys = streamKeyToQueryKeys("review:batch", "all");
+  expect(projectKeys).toContainEqual(qk.needs("all"));
+  expect(projectKeys).toContainEqual(qk.runs("all"));
+  expect(projectKeys).toContainEqual(qk.reviewBatch("all"));
+  expect(projectKeys).not.toContainEqual(qk.needs());
+  expect(projectKeys).not.toContainEqual(qk.runs());
+  expect(projectKeys).not.toContainEqual(qk.reviewBatch());
+
+  const { client, invalidations } = recorder();
+  invalidateStreamEvent(client, { kind: "review_changed", keys: ["review:batch"], project: "all" });
+  expect(invalidations).toContainEqual({ queryKey: qk.reviewBatch("all"), exact: false });
+  expect(invalidations).not.toContainEqual({ queryKey: qk.reviewBatch(), exact: false });
+});
+
+test("unscoped stream events retain family-wide invalidation for warm project caches", () => {
+  expect(streamKeyToQueryKeys("needs")).toEqual([["needs"]]);
+  expect(streamKeyToQueryKeys("runs")).toEqual([["runs"], ["run"]]);
+  expect(streamKeyToQueryKeys("review:batch")).toEqual([
+    ["needs"],
+    ["tasks"],
+    ["runs"],
+    ["projects"],
+    ["review", "batch"],
+  ]);
 });
 
 test("project attention scopes SSE lifetime to the active project", () => {

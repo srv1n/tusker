@@ -229,8 +229,14 @@ func daemonServiceCmd(args Args) error {
 	action := strings.TrimSpace(args.String("_pos0"))
 	switch action {
 	case "install":
+		if err := rejectAgentSpawn("tusker daemon service install"); err != nil {
+			return err
+		}
 		return daemonServiceInstall(args, config)
 	case "start":
+		if err := rejectAgentSpawn("tusker daemon service start"); err != nil {
+			return err
+		}
 		return daemonServiceStart(args, config)
 	case "stop":
 		return daemonServiceStop(args, config)

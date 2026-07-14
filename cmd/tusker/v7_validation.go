@@ -17,7 +17,7 @@ var (
 	v7AcceptanceIDLine      = regexp.MustCompile(`(?i)^A\d+\s*:\s*(.+)$`)
 	v7ProtectedCommonFields = makeSet("schema", "kind", "id", "project", "state_rev")
 	v7ProtectedFieldsByKind = map[string]map[string]struct{}{
-		"task":          makeSet("status", "readiness", "wave", "next_owner", "next_source", "next_ref", "next_action", "accepted_by", "accepted_at", "closed_at", "superseded_by"),
+		"task":          makeSet("status", "readiness", "wave", "next_owner", "next_source", "next_ref", "next_action", "accepted_by", "accepted_at", "closed_at", "superseded_by", "discarded_by", "discarded_at", "discard_reason"),
 		"gate":          makeSet("status", "owner", "blocking", "blocks", "satisfaction_evidence", "satisfaction_evidence_refs", "satisfied_by", "satisfied_at", "waived_by", "waived_at", "waive_reason", "obsolete_reason"),
 		"wave":          makeSet("status", "landed_at"),
 		"escalation":    makeSet("severity", "status", "stale_bumped_from", "stale_bumped_at", "notified_at", "notification_error", "acknowledged_by", "acknowledged_at"),
@@ -156,6 +156,16 @@ func validateV7Task(note Note, ctx validationContext, where string, errors, warn
 			}
 		}
 		validateV7DoneTaskClosePolicy(note, ctx, where, errors)
+	}
+	if stringField(data, "status") == "cancelled" && stringField(data, "discarded_at") != "" {
+		if stringField(data, "discarded_by") == "" || stringField(data, "discard_reason") == "" {
+			*errors = append(*errors, issue("DISCARDED_TASK_METADATA_MISSING", "discarded V7 task requires discarded_by, discarded_at, and discard_reason", where, "use `tusker discard` instead of editing cancelled status directly", nil))
+		}
+		for _, gate := range findV7BlockingGates(ctx.VaultPath, id, normalizeList(data["gates"])) {
+			if stringField(gate.Data, "status") == "open" {
+				*errors = append(*errors, issue("DISCARDED_TASK_OPEN_GATE", "discarded V7 task has open gate "+stringField(gate.Data, "id"), where, "obsolete the gate through the discard ceremony", nil))
+			}
+		}
 	}
 	validateV7TaskBodyPolicy(note.Body, ctx.VaultPath, where, errors, warnings)
 	if policy.RequireAcceptanceProof && !v7AcceptanceHasProof(note.Body) {
@@ -652,41 +662,49 @@ func v7HumanGateOwnsAgentCapableWork(gateKind, owner, action, verification, whyA
 		return false
 	}
 	text := strings.ToLower(strings.Join([]string{action, verification, whyAgentCannot, suggestion}, " "))
-	if gateKind == "decision" && strings.TrimSpace(suggestion) != "" && v7GateHasDecisionConflictContext(text) {
+	if gateKind == "security" || gateKind == "release" {
 		return false
-	}
-	if gateKind == "signoff" || gateKind == "security" || gateKind == "release" {
-		return false
-	}
-	humanOnly := []string{
-		"credential", "secret", "oauth", "api key", "payment", "billing", "account",
-		"device", "physical", "manual smoke", "browser ui", "production access",
-		"security approval", "release approval", "product decision", "legal",
-	}
-	for _, marker := range humanOnly {
-		if strings.Contains(text, marker) {
-			return false
-		}
 	}
 	agentCapable := []string{
 		"code review", "review code", "reviews code", "review code changes", "review diff", "diff review", "approve diff", "compare code",
 		"code comparison", "review branch proof", "review proof", "review acceptance", "review changes",
 		"inspect logs", "log analysis", "test inspection", "test failure", "debug test",
 		"documentation review", "implementation judgment", "audit implementation",
+		"approve implementation", "accept implementation", "confirm implementation",
+		"approve removal", "accept removal", "confirm removal", "legacy mapping",
+		"approve mapping", "accept mapping", "confirm mapping", "approve behavior", "accept behavior",
 	}
 	for _, marker := range agentCapable {
 		if strings.Contains(text, marker) {
 			return true
 		}
 	}
+	humanOnly := []string{
+		"credential", "secret", "oauth", "api key", "payment", "billing", "account",
+		"device", "physical", "manual smoke", "browser ui", "production access",
+		"security approval", "release approval", "product decision", "legal",
+		"screenshot", "screen recording", "video recording", "final artifact", "end artifact",
+		"subjective", "look and feel", "brand quality", "visual acceptance", "ux acceptance",
+		"proof policy", "close policy",
+	}
+	for _, marker := range humanOnly {
+		if strings.Contains(text, marker) {
+			return false
+		}
+	}
+	if gateKind == "decision" {
+		return strings.TrimSpace(suggestion) == "" || !v7GateHasDecisionConflictContext(text)
+	}
+	if gateKind == "signoff" {
+		return true
+	}
 	return false
 }
 
 func v7GateHasDecisionConflictContext(text string) bool {
 	markers := []string{
-		"spec", "requirement", "acceptance", "product intent", "product decision",
-		"api", "contract", "frontend", "backend", "schema", "ux", "usability",
-		"conflict", "contradict", "mismatch", "incompatible", "unclear", "choose",
+		"conflict", "contradict", "mismatch", "incompatible", "unclear", "ambiguous",
+		"not specified", "unspecified", "missing requirement", "underdetermined",
 	}
 	for _, marker := range markers {
 		if strings.Contains(text, marker) {

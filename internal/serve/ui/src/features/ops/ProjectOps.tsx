@@ -384,7 +384,7 @@ function ReadTables({
         <MiniTable title="Evidence" rows={evidence.map((e) => [e.id, e.taskId, `${e.kind}/${e.status}`, e.summary ?? ""])} />
         <MiniTable title="Decisions" rows={decisions.map((d) => [d.id, d.status, d.title, d.decision])} />
         <MiniTable title="Feedback" rows={feedback.map((f) => [f.id, f.friction, f.productIdea, f.related.join(", ")])} />
-        <MiniTable title={`Attempts ${totalAttempts}`} rows={attempts.map((a) => [a.id, a.taskId, a.outcome, `${a.tokens.input}/${a.tokens.output}`])} />
+        <MiniTable title={`Attempts ${totalAttempts}`} rows={attempts.map((a) => [a.id, a.taskId, a.outcome])} />
       </div>
       {latestAttempt ? <AttemptDetailPanel attempt={latestAttempt} /> : null}
     </section>

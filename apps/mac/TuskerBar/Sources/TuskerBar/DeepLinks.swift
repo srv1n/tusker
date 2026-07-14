@@ -3,6 +3,7 @@ import Foundation
 enum TuskerDeepLink: Equatable {
     case open(path: String)
     case task(id: String)
+    case spotlight(identifier: String)
 
     static func parse(_ url: URL) -> TuskerDeepLink? {
         guard url.scheme?.lowercased() == "tusker" else { return nil }
@@ -18,6 +19,11 @@ enum TuskerDeepLink: Equatable {
             guard id.range(of: "^[A-Za-z][A-Za-z0-9]*-T-[0-9]+$", options: .regularExpression) != nil else { return nil }
             return .task(id: id)
         }
+        if host == "spotlight" {
+            let identifier = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard SpotlightRoute.from(identifier: identifier) != nil else { return nil }
+            return .spotlight(identifier: identifier)
+        }
         return nil
     }
 
@@ -26,6 +32,18 @@ enum TuskerDeepLink: Equatable {
         components.path = "/p/\(projectID)/work"
         components.queryItems = [URLQueryItem(name: "task", value: taskID)]
         return components.string ?? "/panel?shell=1"
+    }
+
+    /// The document route is the canonical full-window task destination.
+    static func mainTaskPath(projectID: String, taskID: String) -> String {
+        var components = URLComponents()
+        components.path = "/p/\(projectID)/docs"
+        components.queryItems = [URLQueryItem(name: "path", value: taskID)]
+        return components.string ?? "/"
+    }
+
+    static func projectPath(projectID: String) -> String {
+        "/p/\(projectID)/"
     }
 }
 

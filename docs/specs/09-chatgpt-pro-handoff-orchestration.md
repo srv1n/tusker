@@ -49,7 +49,7 @@ Do not build a second Tusker-flavored control plane in `chatgpt-handoff`.
 | Live proof case | Kurpod produced a real ChatGPT Pro result with patch, notes, and bundle attachments. Those files were fetched successfully. |
 | Tusker task | Kurpod task `KCR-T-0012` was created under epic `KCR` for "Fix iOS Open Vault crash + streaming encryption perf". It is intentionally backlog until acceptance and verification are added. |
 | Tusker runtime | This checkout contains the V7 automation command surface (`go run ./cmd/tusker automation --help`), but the installed `tusker` on PATH may lag and not expose `automation`. Update/install before relying on PATH. |
-| Codex dispatch | Tusker already has a guarded Codex app-server runner path: workspace prep, cwd invariant, runtime store, attempts, events, logs, review packet, and review/rework handling. Use it. |
+| Codex dispatch | Tusker dispatches one detached `codex exec` process per attempt with workspace prep, cwd invariants, runtime state, events, logs, review packets, and review/rework handling. |
 
 ## Decisions
 
@@ -105,8 +105,8 @@ Use this mapping:
 
 ### 4. No Direct Codex Shell-Out
 
-Do not run `codex app-server` directly from the handoff package or a loose
-orchestrator script. That bypasses Tusker's workspace, runtime store, evidence,
+Do not run Codex directly from the handoff package or a loose orchestrator
+script. That bypasses Tusker's workspace, runtime store, evidence,
 review packet, retry, and inspection machinery.
 
 The apply path should go through:
@@ -160,7 +160,7 @@ Tusker collect/resolve step
   |
   v
 Tusker automation dispatch
-  - existing Codex app-server runner
+  - detached `codex_exec` runner
   - isolated workspace/worktree
   - apply/check/test
   |
@@ -191,8 +191,8 @@ Recommended `tusker.yaml` automation overlay shape:
 ```yaml
 automation:
   trigger_states: [ready, rework]
-  default_runner: codex_app_server
-  enabled_runners: [codex_app_server, codex_exec, codex_cloud, claude-code]
+  default_runner: codex_exec
+  enabled_runners: [codex_exec, codex_cloud, claude-code]
   workspace:
     root: "workspaces"
     strategy: worktree
@@ -325,7 +325,7 @@ go run ./cmd/tusker automation dispatch KCR-T-0012 --json
 go run ./cmd/tusker runs inspect KCR-T-0012 --json
 ```
 
-Do not use raw `codex app-server`.
+Use Tusker's detached `codex_exec` runner rather than spawning Codex outside the run ledger.
 
 #### Apply Input Visibility
 
@@ -539,7 +539,7 @@ If the installed binary has been updated, replace `go run ./cmd/tusker` with
 
 - Do not implement ChatGPT DOM handling in Tusker.
 - Do not create a Tusker lifecycle command inside `chatgpt-handoff`.
-- Do not directly spawn `codex app-server`.
+- Do not spawn Codex outside Tusker's detached runner.
 - Do not auto-close tasks.
 - Do not silently repair malformed patches.
 - Do not attach raw patches as evidence.

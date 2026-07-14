@@ -114,7 +114,11 @@ func (l *EventLog) Append(kind string, attemptID string, runner RunnerName, payl
 			return err
 		}
 		expectedSize := before.Size + int64(len(raw))
-		if after.Device != before.Device || after.Inode != before.Inode || after.Size != expectedSize {
+		// Runner processes also append unsequenced protocol events to this sink.
+		// O_APPEND keeps each JSONL record atomic; growth beyond our own record is
+		// therefore valid concurrent telemetry, while replacement or truncation is
+		// still corruption.
+		if after.Device != before.Device || after.Inode != before.Inode || after.Size < expectedSize {
 			return fmt.Errorf("event log %q changed outside the locked append: expected identity %d:%d and size %d, got %d:%d and size %d", l.path, before.Device, before.Inode, expectedSize, after.Device, after.Inode, after.Size)
 		}
 		if err := locked.verifyPathIdentities(); err != nil {

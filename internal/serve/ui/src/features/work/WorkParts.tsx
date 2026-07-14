@@ -7,6 +7,8 @@
 import type { ReactNode } from "react";
 import { ChevronDown, ChevronsUpDown, ChevronUp, Flag } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { Mono } from "@/components/ui/primitives";
+import type { GateDetail } from "@/types/domain";
 
 /**
  * Human-gate marker (packet §4.4: "show a gate marker when task.hasGate").
@@ -24,6 +26,21 @@ export function GateMarker({ label = false }: { label?: boolean }) {
         <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.08em]">gate</span>
       )}
     </span>
+  );
+}
+
+export function GateSummary({ gate, compact = false }: { gate: GateDetail; compact?: boolean }) {
+  return (
+    <div className={cn("min-w-0 rounded-md border border-warn/25 bg-warn-soft/45", compact ? "px-2 py-1" : "px-2.5 py-2")}>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <Flag size={10} strokeWidth={2.25} className="flex-none text-warn" aria-hidden="true" />
+        <Mono className="flex-none text-[9.5px] font-semibold text-warn">{gate.id}</Mono>
+        <span className="truncate text-[10.5px] font-medium text-ink-soft">{gate.title || gate.action || "Human action"}</span>
+      </div>
+      {!compact && gate.action && gate.action !== gate.title && (
+        <div className="mt-1 line-clamp-2 text-[10.5px] leading-snug text-muted">{gate.action}</div>
+      )}
+    </div>
   );
 }
 

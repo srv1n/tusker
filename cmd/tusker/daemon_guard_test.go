@@ -13,6 +13,7 @@ import (
 )
 
 func TestDaemonSingleInstanceGuardRejectsSecondStartBeforeStoreOpen(t *testing.T) {
+	clearAgentSessionEnvForTest(t)
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
 	guard, err := acquireDaemonGuard(stateRoot)

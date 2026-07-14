@@ -202,6 +202,7 @@ func TestCrashLoopBreakerBlocksDispatchUntilResume(t *testing.T) {
 func TestDaemonManualModeUnaffectedByLaunchd(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	clearAgentSessionEnvForTest(t)
 	t.Setenv(daemonLaunchdEnvKey, "")
 	oldLaunchctl := launchctlRun
 	launchctlRun = func(args ...string) error {

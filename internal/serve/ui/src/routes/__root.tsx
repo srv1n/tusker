@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useParams } from "@tanstack/react-router";
-import { AlertTriangle, Menu } from "lucide-react";
+import { AlertTriangle, Menu, Search } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
+import { openTaskSearch, TaskSearch } from "@/features/search/TaskSearch";
 import { CountBadge } from "@/components/ui/primitives";
 import { useDaemon, useNeeds } from "@/lib/queries";
 import { connectProjectAttention } from "@/lib/stream";
@@ -32,6 +33,7 @@ export function RootLayout() {
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-surface text-ink">
       {!embedded && <Sidebar open={navOpen} onClose={() => setNavOpen(false)} />}
+      <TaskSearch />
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {!embedded && <MobileTopBar onMenuOpen={() => setNavOpen(true)} />}
         {!embedded && <InvariantCircuitBanner />}
@@ -83,6 +85,14 @@ function MobileTopBar({ onMenuOpen }: { onMenuOpen: () => void }) {
           <CountBadge count={needsCount} tone="fail" />
         </Link>
       )}
+      <button
+        type="button"
+        onClick={openTaskSearch}
+        aria-label="Search tasks"
+        className={`${needsCount > 0 ? "" : "ml-auto "}flex h-10 w-10 items-center justify-center rounded-lg text-ink-soft hover:bg-hover`}
+      >
+        <Search size={17} />
+      </button>
     </header>
   );
 }

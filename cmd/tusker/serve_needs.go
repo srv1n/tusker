@@ -9,6 +9,7 @@ import (
 
 func serveNeeds(snap serveSnapshot, now time.Time) []serveNeedItem {
 	needs := []serveNeedItem{}
+	seenHumanGates := map[string]bool{}
 	for _, task := range snap.tasks {
 		cap := serveTaskCapsuleFor(snap, task)
 		blocking := serveBlockingCount(snap, cap.ID)
@@ -19,6 +20,13 @@ func serveNeeds(snap serveSnapshot, now time.Time) []serveNeedItem {
 			if !serveHumanOwner(gate.Owner) {
 				continue
 			}
+			if seenHumanGates[gate.ID] {
+				continue
+			}
+			if strings.EqualFold(stringField(task.Data, "status"), "rework") {
+				continue
+			}
+			seenHumanGates[gate.ID] = true
 			needs = append(needs, serveGateNeed(snap, task, cap, gate, blocking))
 		}
 		if cap.ReworkCount >= 2 {
@@ -87,6 +95,15 @@ func serveReworkNeed(snap serveSnapshot, task Note, cap serveTaskCapsule, blocki
 func serveGateNeed(snap serveSnapshot, task Note, cap serveTaskCapsule, gate serveGate, blocking int) serveNeedItem {
 	need := serveNeedBaseMap(snap, task, cap, gate.Kind, blocking)
 	need["id"] = "need-gate-" + gate.ID
+	need["gateId"] = gate.ID
+	blockedTaskIDs := serveGateBlockedTaskIDs(snap, gate.ID)
+	if len(blockedTaskIDs) == 0 {
+		blockedTaskIDs = []string{cap.ID}
+	}
+	need["blockedTaskIds"] = blockedTaskIDs
+	if action := serveHumanActionForTaskGate(snap, task, gate.ID); action != nil {
+		need["humanAction"] = action
+	}
 	switch gate.Kind {
 	case "clarify":
 		need["question"] = firstNonEmpty(serveAnyString(gate.Question), "Human input needed on "+cap.Title+".")
@@ -100,6 +117,19 @@ func serveGateNeed(snap serveSnapshot, task Note, cap serveTaskCapsule, gate ser
 		need["specPath"] = firstNonEmpty(serveAnyString(gate.SpecPath), "")
 	}
 	return need
+}
+
+func serveHumanActionForTaskGate(snap serveSnapshot, task Note, gateID string) *serveHumanAction {
+	if strings.EqualFold(stringField(task.Data, "status"), "rework") {
+		return nil
+	}
+	for _, gate := range snap.gates {
+		if stringField(gate.Data, "id") != gateID || !strings.EqualFold(stringField(gate.Data, "status"), "open") || !serveHumanOwner(stringField(gate.Data, "owner")) {
+			continue
+		}
+		return serveHumanActionForGate(task, gate)
+	}
+	return nil
 }
 
 func serveAnyString(value any) string {

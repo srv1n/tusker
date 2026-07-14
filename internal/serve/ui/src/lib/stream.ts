@@ -1,4 +1,5 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
+import { scopedProjectQueryKey } from "@/lib/queryScope";
 
 export const LIVE_STREAM_FALLBACK_MS = 45_000;
 export const STREAM_INVALIDATION_DEBOUNCE_MS = 75;
@@ -55,27 +56,30 @@ function setStreamStatus(next: StreamStatus) {
 export function streamKeyToQueryKeys(key: string, project?: string): QueryKey[] {
   const [kind, id] = key.split(":", 2);
   const scoped = (name: string): QueryKey => project ? [name, project] : [name];
+  const panelScoped = (...prefix: string[]): QueryKey => project === undefined
+    ? prefix
+    : scopedProjectQueryKey(prefix, project);
   switch (kind) {
     case "daemon":
       return [["daemon"]];
     case "projects":
       return [["projects"]];
     case "needs":
-      return [scoped("needs")];
+      return [panelScoped("needs")];
     case "runs":
-      return id && project ? [["runs", project], ["run", project, id]] : [scoped("runs"), ["run"]];
+      return id && project ? [panelScoped("runs"), ["run", project, id]] : [panelScoped("runs"), ["run"]];
     case "tasks":
       return id && project
-        ? [["tasks", project], ["task", project, id], ["needs", project], ["projects"]]
-        : [scoped("tasks"), ["task"], scoped("needs"), ["projects"]];
+        ? [["tasks", project], ["task", project, id], panelScoped("needs"), ["projects"]]
+        : [scoped("tasks"), ["task"], panelScoped("needs"), ["projects"]];
     case "epics":
       return [scoped("epics")];
     case "docs":
       return [scoped("docs"), project ? ["doc", project] : ["doc"]];
     case "waves":
-      return [scoped("waves"), scoped("tasks"), scoped("needs")];
+      return [scoped("waves"), scoped("tasks"), panelScoped("needs")];
     case "gates":
-      return [scoped("gates"), scoped("tasks"), scoped("needs")];
+      return [scoped("gates"), scoped("tasks"), panelScoped("needs")];
     case "evidence":
       return [scoped("evidence"), scoped("tasks")];
     case "decisions":
@@ -84,11 +88,11 @@ export function streamKeyToQueryKeys(key: string, project?: string): QueryKey[] 
       return [scoped("feedback")];
     case "attempts":
       return id && project
-        ? [["attempts", project], ["runs", project], ["run", project, id]]
-        : [scoped("attempts"), scoped("runs"), ["run"]];
+        ? [["attempts", project], panelScoped("runs"), ["run", project, id]]
+        : [scoped("attempts"), panelScoped("runs"), ["run"]];
     case "review":
       return id === "batch"
-        ? [scoped("needs"), scoped("tasks"), scoped("runs"), ["projects"], project ? ["review", "batch", project] : ["review", "batch"]]
+        ? [panelScoped("needs"), scoped("tasks"), panelScoped("runs"), ["projects"], panelScoped("review", "batch")]
         : [];
     default:
       return [];

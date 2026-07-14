@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -38,6 +39,7 @@ const (
 	AttemptOutcomeSucceeded        AttemptOutcome = "succeeded"
 	AttemptOutcomeBlocked          AttemptOutcome = "blocked"
 	AttemptOutcomeFailed           AttemptOutcome = "failed"
+	AttemptOutcomeInterrupted      AttemptOutcome = "interrupted"
 	AttemptOutcomeCancelled        AttemptOutcome = "cancelled"
 	AttemptOutcomeAbandoned        AttemptOutcome = "abandoned"
 	AttemptOutcomeEarlyExit        AttemptOutcome = "early_exit"
@@ -283,6 +285,13 @@ func runnerWorkspaceCWD(runner RunnerName, workspacePath string) (string, error)
 	workspacePath = strings.TrimSpace(workspacePath)
 	if workspacePath == "" {
 		return "", tuskerError(errorConfigInvalid, fmt.Sprintf("%s runner requires workspace_path", runner))
+	}
+	if workspacePath == "~" || strings.HasPrefix(workspacePath, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		workspacePath = filepath.Join(home, strings.TrimPrefix(workspacePath, "~/"))
 	}
 	abs, err := filepath.Abs(workspacePath)
 	if err != nil {

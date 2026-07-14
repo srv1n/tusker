@@ -24,8 +24,9 @@ type RuntimeServeConfig struct {
 }
 
 type Workflow struct {
-	WorkflowVersion      int `yaml:"workflow_version"`
-	TrackerSchemaVersion int `yaml:"tracker_schema_version"`
+	WorkflowVersion      int  `yaml:"workflow_version"`
+	TrackerSchemaVersion int  `yaml:"tracker_schema_version"`
+	AutomationEnabled    bool `yaml:"automation_enabled"`
 	Tracker              struct {
 		Kind               string   `yaml:"kind"`
 		ActiveStates       []string `yaml:"dispatch_states"`
@@ -115,6 +116,7 @@ type ReviewerPolicy struct {
 	Enabled            bool     `yaml:"enabled" json:"enabled"`
 	Runner             string   `yaml:"runner" json:"runner"`
 	Actor              string   `yaml:"actor" json:"actor"`
+	MaxCycles          int      `yaml:"max_cycles" json:"max_cycles"`
 	AutoCloseRisks     []string `yaml:"auto_close_risks" json:"auto_close_risks"`
 	HumanRequiredRisks []string `yaml:"human_required_risks" json:"human_required_risks"`
 	Prompt             string   `yaml:"prompt" json:"prompt"`
@@ -139,6 +141,7 @@ func defaultWorkflow() Workflow {
 	var wf Workflow
 	wf.WorkflowVersion = 1
 	wf.TrackerSchemaVersion = 7
+	wf.AutomationEnabled = false
 	wf.Tracker.Kind = "tusker_vault"
 	wf.Tracker.ActiveStates = []string{"ready", "rework"}
 	wf.Tracker.ReviewStates = []string{"review"}
@@ -155,12 +158,13 @@ func defaultWorkflow() Workflow {
 	wf.Runtime.Serve = RuntimeServeConfig{Enabled: true, Addr: defaultServeAddr}
 	wf.Runtime.Sentinel = defaultRuntimeSentinelConfig()
 	wf.Workspace.Root = "."
-	wf.Workspace.Strategy = string(WorkspaceStrategyInPlace)
+	wf.Workspace.Strategy = string(WorkspaceStrategyShared)
 	wf.Retry.MaxAttempts = 3
 	wf.Retry.BackoffMS = []int{30000, 120000, 600000}
 	wf.Reviewer.Enabled = true
 	wf.Reviewer.Runner = string(RunnerCodexExec)
 	wf.Reviewer.Actor = defaultReviewerActor
+	wf.Reviewer.MaxCycles = 3
 	wf.Reviewer.AutoCloseRisks = []string{"low", "medium"}
 	wf.Reviewer.HumanRequiredRisks = []string{"high", "critical"}
 	wf.Reviewer.Prompt = defaultReviewerPrompt()
@@ -221,7 +225,7 @@ Checklist:
 2. Inspect the current diff against the task scope. Call out surprise files or drive-by refactors.
 3. Run the smallest verification commands needed to prove the acceptance contract.
 4. Confirm project skill/domain canon changes only when the task changed durable project knowledge.
-5. For high or critical risk, leave the task in review with a human-actionable recommendation.
+5. For high or critical risk, leave the task in review with one bounded human-actionable close recommendation. Risk alone does not justify a human gate or a request to re-approve implementation choices already settled by the task/spec.
 6. If a caveat changes scope, decide whether it is acceptable or requires rework.
 
 If the task fails review, run:
@@ -317,6 +321,9 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 		return wfFile, nil
 	}
 	wf := wfFile.Data
+	if cfg.Automation.Enabled != nil {
+		wf.AutomationEnabled = *cfg.Automation.Enabled
+	}
 	triggerStates := normalizeList(cfg.Automation.TriggerStates)
 	if len(triggerStates) == 0 {
 		triggerStates = []string{"ready", "rework"}
@@ -398,7 +405,7 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 	}
 	if strings.TrimSpace(cfg.Automation.Workspace.Strategy) != "" {
 		wf.Workspace.Strategy = strings.TrimSpace(cfg.Automation.Workspace.Strategy)
-		if workspaceStrategyFromWorkflow(wf.Workspace.Strategy) != WorkspaceStrategyInPlace && workspaceRootOverride == "" && strings.TrimSpace(wf.Workspace.Root) == "." {
+		if workspaceStrategyFromWorkflow(wf.Workspace.Strategy) != WorkspaceStrategyShared && workspaceRootOverride == "" && strings.TrimSpace(wf.Workspace.Root) == "." {
 			wf.Workspace.Root = "workspaces"
 		}
 	}

@@ -112,6 +112,24 @@ export interface ActionResult {
   feedbackPath?: string;
   canonicalStatus?: string;
   projectId?: string;
+  discard?: DiscardImpact;
+}
+
+export interface DiscardDependent {
+  id: string;
+  title: string;
+  status: string;
+}
+
+export interface DiscardImpact {
+  taskId: string;
+  title: string;
+  status: string;
+  directDependents: DiscardDependent[];
+  cascadeDependents: DiscardDependent[];
+  openGates: string[];
+  requiresResolution: boolean;
+  preservesHistory: boolean;
 }
 
 export type DocKind = "spec" | "decision" | "knowledge" | "task" | "epic" | "dashboard";
@@ -126,6 +144,11 @@ export interface ProjectSummary {
   repoRoot: string;
   vaultRoot: string;
   automationEnabled: boolean;
+  automationSource?: string;
+  workspaceMode?: string;
+  workspaceSource?: string;
+  maxActiveRunsPerProject?: number;
+  concurrencySource?: string;
   health: string;
   lastError?: string | null;
   /** Items in this project waiting on the human. Drives the sidebar badge. */
@@ -152,11 +175,15 @@ export interface NeedBase {
   projectName: string;
   taskId: string;
   taskTitle: string;
+  /** Present when this need is backed by a first-class human gate. */
+  gateId?: string;
+  blockedTaskIds?: string[];
   /** How much downstream work this item blocks — primary ranking key. */
   blocking: number;
   priority: Priority;
   /** ISO timestamp the item entered the human's queue. */
   since: string;
+  humanAction?: HumanAction;
 }
 
 export interface ClarifyNeed extends NeedBase {
@@ -196,11 +223,6 @@ export type NeedItem =
 // Runs
 // ----------------------------------------------------------------------------
 
-export interface TokenTotals {
-  input: number;
-  output: number;
-}
-
 export interface RunSummary {
   /** Runs are keyed by the task they execute. */
   taskId: string;
@@ -220,19 +242,19 @@ export interface RunSummary {
   /** Seconds since the last protocol event — feeds the liveness indicator. */
   sinceLastEventSec: number;
   liveness: Liveness;
-  tokens: TokenTotals;
   attemptCount: number;
   terminal?: boolean;
   error?: string | null;
   lastHeartbeatAt?: string | null;
   nextWakeAt?: string | null;
+  workspacePath?: string;
+  workspaceMode?: string;
 }
 
 export interface Attempt {
   n: number;
   outcome: RunOutcome;
   durationSec: number;
-  tokens: TokenTotals;
   startedAt: string;
 }
 
@@ -248,6 +270,11 @@ export interface RunDetail extends RunSummary {
   workspacePath: string;
   attempts: Attempt[];
   events: RunEvent[];
+  authorization?: { source: string; actor: string; trigger: string; project_automation_enabled: boolean };
+  identity?: { repo_root: string; workspace_path: string; workspace_mode: string; runner: string; branch?: string; head?: string };
+  session?: { session_ref: string; state: string; resumable: boolean; last_seen_at: string; last_error?: string };
+  resume?: { supported: boolean; command?: string; reason?: string };
+  delivery?: { summary?: string; verification?: string; proofStatus: string; artifact?: string };
 }
 
 // ----------------------------------------------------------------------------
@@ -289,15 +316,35 @@ export interface TaskCapsule {
   priority: Priority;
   risk: Risk;
   hasGate: boolean;
+  /** Open human-owned gates only; task status remains independent. */
+  openGates?: GateDetail[];
   updatedAt: string;
   rawStatus?: string;
   rawReadiness?: string;
+  /** Board-only projection; durable status remains in rawStatus. */
+  liveRun?: boolean;
+  latestAttemptOutcome?: RunOutcome;
+  latestAttemptAt?: string | null;
 }
 
 export interface AcceptanceRow {
   id: string;
   text: string;
   proof: ProofStatus;
+}
+
+/** Server-derived contract for one open human-owned V7 gate. */
+export interface HumanAction {
+  kind: string;
+  rawKind: string;
+  title: string;
+  action: string;
+  whyAgentCannot: string;
+  completionCondition: string;
+  gateId: string;
+  blockedTaskIds?: string[];
+  covers: string[];
+  acceptance: AcceptanceRow[];
 }
 
 export interface VerificationRow {
@@ -324,6 +371,8 @@ export interface TaskDetail extends TaskCapsule {
   knowledgeDelta?: string;
   deps: Array<{ id: string; title: string; status: TaskStatus }>;
   gates: Array<{ id: string; kind: GateKind; owner: string }>;
+  humanAction?: HumanAction;
+  humanActions?: HumanAction[];
   runHistory: RunSummary[];
 }
 
@@ -344,6 +393,10 @@ export interface GateDetail {
   path?: string | null;
   specTitle?: string | null;
   specPath?: string | null;
+  action?: string;
+  whyAgentCannot?: string;
+  completionCondition?: string;
+  humanOwned?: boolean;
 }
 
 export interface EvidenceDoc {
@@ -419,7 +472,6 @@ export interface AttemptDetail {
   startedAt: string;
   finishedAt?: string;
   durationSec: number;
-  tokens: TokenTotals;
   workspacePath?: string;
   branchName?: string;
   pullRequestUrl?: string;
@@ -522,17 +574,7 @@ export interface DaemonStatus {
   daemonStartedAt?: string | null;
   daemonLastPollAt?: string | null;
   diskPressure?: DiskPressureStatus;
-  parkedBudgetRuns?: number;
   persistentEscalationBanner?: boolean;
-  budgetCircuit?: {
-    open: boolean;
-    reason?: string;
-    reset_at?: string;
-    input_tokens?: number;
-    output_tokens?: number;
-    input_token_limit?: number;
-    output_token_limit?: number;
-  } | null;
   crashLoop?: {
     open: boolean;
     reason?: string;

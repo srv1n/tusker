@@ -19,7 +19,7 @@ Do not use `active` as a V7 task status. Runtime activity is represented by run 
 ```yaml
 status: ready
 readiness: ready
-next_owner: agent:codex_app_server
+next_owner: agent:codex_exec
 proof_mode: inline
 proof_status: pending
 ```

@@ -25,7 +25,6 @@ const completedRun = {
   elapsedSec: 886,
   sinceLastEventSec: 6,
   liveness: "fresh",
-  tokens: { input: 150, output: 40 },
   attemptCount: 1,
   terminal: true,
   workspacePath: "/tmp/TRC-T-0002",
@@ -34,7 +33,6 @@ const completedRun = {
       n: 1,
       outcome: "succeeded",
       durationSec: 886,
-      tokens: { input: 150, output: 40 },
       startedAt: "2026-07-08T03:00:00Z",
     },
   ],
@@ -50,12 +48,11 @@ test("runs-detail header derives live state from terminal lease/outcome", () => 
   expect(source.indexOf("<LivenessIndicator")).toBeGreaterThan(source.indexOf("{live && ("));
 });
 
-test("runs-detail stats freeze released elapsed and show recorded turn tokens", () => {
+test("runs-detail stats freeze released elapsed without presenting usage totals", () => {
   expect(runStats(completedRun)).toEqual([
     { label: "Elapsed", value: "14m 46s" },
-    { label: "Input", value: "150" },
-    { label: "Output", value: "40" },
     { label: "Attempts", value: "1" },
+    { label: "Liveness", value: "fresh" },
   ]);
 });
 
@@ -164,4 +161,31 @@ test("runs-detail action lock prevents interrupt and redrive from overlapping", 
   expect(lock.tryAcquire("redrive")).toBe(false);
   lock.release("interrupt");
   expect(lock.active()).toBe(null);
+});
+
+test("run inspector separates ownership, resume, delivery, and bounded failure", () => {
+  const detail = readFileSync("src/features/runs/RunDetail.tsx", "utf8");
+  expect(detail).toContain("data-run-operator-facts");
+  expect(detail).toContain("run.authorization.source");
+  expect(detail).toContain("run.identity?.repo_root");
+  expect(detail).toContain("run.session?.session_ref");
+  expect(detail).toContain("Copy resume command");
+  expect(detail).toContain("Resume unavailable:");
+  expect(detail).toContain("data-run-delivery");
+  expect(detail).toContain("No deliverable recorded.");
+  expect(detail).toContain("acceptance verification");
+  expect(detail).toContain("line-clamp-3");
+  expect(detail).not.toContain("token");
+});
+
+test("run inspector links to the current task contract", () => {
+  const header = readFileSync("src/features/runs/detail/RunHeader.tsx", "utf8");
+  const docShell = readFileSync("src/features/docs/DocShell.tsx", "utf8");
+
+  expect(header).toContain('to="/p/$projectId/docs"');
+  expect(header).toContain("params={{ projectId: run.projectId }}");
+  expect(header).toContain("search={{ path: run.taskId }}");
+  expect(header).toContain("View ticket");
+  expect(docShell).toContain('to="/p/$projectId"');
+  expect(docShell).toContain("<ArrowLeft");
 });

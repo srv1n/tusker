@@ -56,20 +56,6 @@ func TestSentinelDetectsConfiguredInvariants(t *testing.T) {
 			wantText: "multiple active leases",
 		},
 		{
-			name:  "active spend decreases",
-			check: invariantCheckActiveSpendMonotonic,
-			setup: func(t *testing.T, store *RuntimeStore, project RegisteredProject, vault string, now time.Time) {
-				mustUpsertRun(t, store, RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", Lane: runLaneExecute, LeaseState: string(LeaseStateRunning), AttemptCount: 1, UpdatedAt: now.Format(time.RFC3339)})
-				if err := store.SaveTurn(RunTurn{ProjectID: project.ProjectID, RecordID: "APP-T-0001", AttemptID: "attempt-1", TurnID: "turn-1", InputTokens: 5, OutputTokens: 1, TotalTokens: 6, LastEventAt: now.Format(time.RFC3339)}); err != nil {
-					t.Fatal(err)
-				}
-				if err := store.SetInvariantSpendSnapshot(runtimeSpendSnapshot{runtimeRunKey(project.ProjectID, "APP-T-0001"): {InputTokens: 10, OutputTokens: 1, TotalTokens: 11}}); err != nil {
-					t.Fatal(err)
-				}
-			},
-			wantText: "spend decreased",
-		},
-		{
 			name:     "last poll did not advance",
 			check:    invariantCheckLastPollAdvanced,
 			previous: "2026-07-06T12:00:00Z",

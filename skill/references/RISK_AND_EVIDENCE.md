@@ -18,5 +18,5 @@
 - Keep evidence, verification rows, and attempt summaries terse: command plus PASS/FAIL and the first actionable failure. Task contracts and specs stay in full prose.
 - Do not require changelog/docs/canon updates unless the task contract names `doc_nodes`; low/medium tasks with no `doc_nodes` should keep `Knowledge delta: None expected.`
 - Route repeated lessons through `tusker feedback promote` instead of appending long per-task knowledge deltas.
-- High and critical risks require human acceptance unless explicitly waived by policy.
+- High and critical risks require stronger proof and follow configured close policy. Risk alone does not justify an ad hoc human gate or a request to re-approve implementation choices already settled by the contract.
 - Explainer/understanding packets help humans build a mental model, but they do not satisfy proof by themselves.

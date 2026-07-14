@@ -194,6 +194,9 @@ func statusV7Cmd(args Args) error {
 	if nextStatus == "done" {
 		return tuskerError(errorInvalidTransition, "status cannot set done directly; use tusker close so close policy, gates, evidence, and acceptance metadata are enforced")
 	}
+	if nextStatus == "cancelled" {
+		return tuskerError(errorInvalidTransition, "status cannot set cancelled directly; use tusker discard so dependencies, gates, runtime rows, and discard history are handled together")
+	}
 	note, err := resolveV7Note(vaultPath, id, "task")
 	if err != nil {
 		return err
@@ -218,6 +221,11 @@ func statusV7Cmd(args Args) error {
 		delete(data, "accepted_by")
 		delete(data, "accepted_at")
 		delete(data, "closed_at")
+	}
+	if nextStatus != "cancelled" {
+		delete(data, "discarded_by")
+		delete(data, "discarded_at")
+		delete(data, "discard_reason")
 	}
 	if _, err := saveV7DocumentCAS(note.AbsolutePath, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
 		return err

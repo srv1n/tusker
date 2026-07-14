@@ -8,16 +8,16 @@ status: "ready"
 owner: "human:sarav"
 priority: "p2"
 domains: []
-capsule:
-  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
-  use_when: "Use to triage tracing, replay, and verification work across runtime boundaries."
-  what: "TRC epic for boundary traces, deterministic replay, and trace-backed verification."
 next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-06T06:38:56Z"
-updated_at: "2026-07-10T03:28:27Z"
-state_rev: "sha256:3f9136f095b927818cc335b837af37b10f7ab9a27059e314240aa9fd45c13d2e"
+updated_at: "2026-07-11T08:46:17Z"
+state_rev: "sha256:fc867918579d72970fd0b15968dfd21162c69af22f0f8bcd95a2fcb734971542"
+capsule:
+  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
+  use_when: "Use to triage tracing, replay, and verification work across runtime boundaries."
+  what: "TRC epic for boundary traces, deterministic replay, and trace-backed verification."
 ---
 
 # TRC · Trace and replay: boundary traces, deterministic replay, trace-backed verification

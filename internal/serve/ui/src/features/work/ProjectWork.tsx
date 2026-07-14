@@ -13,7 +13,7 @@ import { EmptyState, QueryBoundary } from "@/components/ui/states";
 import { statusLabel } from "@/components/ui/tone";
 import { useConfirm } from "@/components/ui/action-feedback";
 import { api } from "@/lib/api";
-import { useEpics, useProjects, useTasks } from "@/lib/queries";
+import { useEpics, useProjects, useRuns, useTasks } from "@/lib/queries";
 import type { Risk, TaskCapsule } from "@/types/domain";
 import {
   applyFilters,
@@ -22,6 +22,7 @@ import {
   filtersActive,
   isBatchSelectable,
   RISK_VALUES,
+  projectLiveExecution,
   STATUS_COLUMNS,
   type RiskFilter,
   type StatusFilter,
@@ -107,6 +108,15 @@ function FilterBar({
       </div>
 
       <div className="ml-auto flex flex-wrap items-center gap-2">
+        <Select
+          aria-label="Choose active or discarded work"
+          value={filters.visibility}
+          onChange={(e) => setFilters({ ...filters, visibility: e.target.value as WorkFilters["visibility"] })}
+        >
+          <option value="active">Active work</option>
+          <option value="discarded">Discarded history</option>
+        </Select>
+
         <Select
           aria-label="Filter by status"
           value={filters.status}
@@ -278,6 +288,7 @@ function BatchBar({
 export function ProjectWork() {
   const { projectId } = route.useParams();
   const tasksQ = useTasks(projectId);
+  const runsQ = useRuns(projectId);
   const epicsQ = useEpics(projectId);
   const projectsQ = useProjects();
   const qc = useQueryClient();
@@ -361,7 +372,8 @@ export function ProjectWork() {
         </header>
 
         <QueryBoundary q={tasksQ}>
-          {(allTasks) => {
+          {(durableTasks) => {
+            const allTasks = projectLiveExecution(durableTasks, runsQ.data ?? []);
             const filtered = applyFilters(allTasks, filters);
             // The batch acts on every selected task still in a landable state,
             // even one currently filtered out of view (a wave can span epics).
@@ -393,7 +405,7 @@ export function ProjectWork() {
                       </Button>
                     }
                   />
-                ) : view === "board" ? (
+                ) : view === "board" && filters.visibility === "active" ? (
                   <WorkBoard
                     tasks={filtered}
                     projectId={projectId}

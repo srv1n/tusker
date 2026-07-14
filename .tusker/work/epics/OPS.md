@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-06T17:50:21Z"
-updated_at: "2026-07-10T03:29:01Z"
-state_rev: "sha256:7e356197935d0e9175febfeb2533eca8fb03d36252055a43339b1b790e66cb84"
+updated_at: "2026-07-12T18:05:49Z"
+state_rev: "sha256:e90eb091c3e030b947cd2277af69ff14b38d62db3fe5bdcd2ebd14f9a65c13a7"
 ---
 
 # OPS · Operating model: waves, merge lane, escalation, worker protocol
@@ -44,7 +44,7 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[OPS-T-0003]] | backlog | agent | Wait for dependency OPS-T-0001 to reach done. |
+| [[OPS-T-0003]] | review | reviewer | Review evidence and close or return to rework. |
 | [[OPS-T-0005]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[OPS-T-0009]] | review | human:sarav | Accept, waive, or return rework for OPS-G-0002. |
 | [[OPS-T-0010]] | review | reviewer | Review evidence and close or return to rework. |

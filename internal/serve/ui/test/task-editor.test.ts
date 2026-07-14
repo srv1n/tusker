@@ -88,4 +88,13 @@ describe("TaskContract editor surface", () => {
     expect(documentView).toContain('view === "source"');
     expect(documentView).toContain("DocSourceView");
   });
+
+  test("uses the dedicated discard preflight instead of a raw cancelled status", () => {
+    expect(source).toContain("Review discard impact");
+    expect(source).toContain("Resolve downstream dependencies");
+    expect(source).toContain("typeToConfirm: task.id");
+    expect(source).toContain("useDiscardTask");
+    expect(source).toContain('Status is managed by lifecycle actions; use Discard task for cancelled work.');
+    expect(source).not.toContain('["cancelled", "Cancelled"]');
+  });
 });

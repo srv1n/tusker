@@ -137,8 +137,11 @@ export function deriveNeeds(input: DeriveNeedsInput): NeedItem[] {
   }
 
   // SIGNAL 4 — terminal run failure (exhausted retries; not retry-queued/parked).
+  const failedTasks = new Set<string>();
   for (const run of input.runs) {
-    if (run.outcome !== "failed") continue; // interrupted/retry-queued → non-signal
+	if (run.outcome !== "failed") continue; // interrupted/retry-queued → non-signal
+	if (failedTasks.has(run.taskId)) continue;
+	failedTasks.add(run.taskId);
     const cap = capById.get(run.taskId);
     needs.push({
       id: `need-failed-${run.taskId}`,

@@ -256,17 +256,6 @@ func findSessionRef(value any) string {
 				return candidate
 			}
 		}
-		for _, nested := range current {
-			if candidate := findSessionRef(nested); candidate != "" {
-				return candidate
-			}
-		}
-	case []any:
-		for _, nested := range current {
-			if candidate := findSessionRef(nested); candidate != "" {
-				return candidate
-			}
-		}
 	}
 	return ""
 }

@@ -10,6 +10,24 @@ enum ManagedRuntimeState: Equatable {
 }
 
 enum RuntimeLaunchPlan {
+    enum TerminationAction: Equatable {
+        case ignore
+        case finishStartup
+        case restart
+    }
+
+    static let healthTimeout: TimeInterval = 0.25
+    static let startupProbeDelay = Duration.milliseconds(100)
+    static let startupProbeCount = 20
+
+    static func terminationAction(for state: ManagedRuntimeState) -> TerminationAction {
+        switch state {
+        case .starting: return .finishStartup
+        case .running: return .restart
+        default: return .ignore
+        }
+    }
+
     static func manages(_ baseURL: URL) -> Bool {
         guard baseURL.scheme?.lowercased() == "http" else { return false }
         let host = baseURL.host?.lowercased()
@@ -47,6 +65,13 @@ final class RuntimeSupervisor {
     private var process: Process?
     private var logHandle: FileHandle?
     private var lastExitCode: Int32?
+    private lazy var healthSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = RuntimeLaunchPlan.healthTimeout
+        configuration.timeoutIntervalForResource = RuntimeLaunchPlan.healthTimeout
+        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        return URLSession(configuration: configuration)
+    }()
 
     private(set) var state: ManagedRuntimeState = .idle {
         didSet {
@@ -101,15 +126,15 @@ final class RuntimeSupervisor {
                 self.startMonitoring()
                 return
             }
+            self.state = .starting
             do {
                 try self.launchBundledDaemon()
-                self.state = .starting
             } catch {
                 self.state = .failed(error.localizedDescription)
                 self.startupTask = nil
                 return
             }
-            for _ in 0..<40 {
+            for _ in 0..<RuntimeLaunchPlan.startupProbeCount {
                 guard !Task.isCancelled else { return }
                 if await self.isHealthy() {
                     self.state = .running
@@ -117,25 +142,19 @@ final class RuntimeSupervisor {
                     self.startMonitoring()
                     return
                 }
-                try? await Task.sleep(for: .milliseconds(250))
+                try? await Task.sleep(for: RuntimeLaunchPlan.startupProbeDelay)
             }
             self.state = .failed(self.startupFailureMessage())
             self.startupTask = nil
         }
     }
 
-    private func isHealthy(timeout: TimeInterval = 1) async -> Bool {
+    private func isHealthy(timeout: TimeInterval = RuntimeLaunchPlan.healthTimeout) async -> Bool {
         let url = config.baseURL.appendingPathComponent("api/summary")
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = timeout
-        configuration.timeoutIntervalForResource = timeout
-        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        let session = URLSession(configuration: configuration)
-        defer { session.invalidateAndCancel() }
         do {
-            let (_, response) = try await session.data(for: request)
+            let (_, response) = try await healthSession.data(for: request)
             return (response as? HTTPURLResponse)?.statusCode == 200
         } catch {
             return false
@@ -185,16 +204,44 @@ final class RuntimeSupervisor {
         process.standardError = handle
         process.terminationHandler = { [weak self] process in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.process === process else { return }
                 self.lastExitCode = process.terminationStatus
-                if self.state == .running {
+                self.process = nil
+                try? self.logHandle?.close()
+                self.logHandle = nil
+                switch RuntimeLaunchPlan.terminationAction(for: self.state) {
+                case .restart:
                     self.ensureRunning(force: true)
+                case .finishStartup:
+                    self.startupTask?.cancel()
+                    self.startupTask = Task { [weak self] in
+                        guard let self else { return }
+                        // A competing daemon may have won the startup race. Give
+                        // it one final probe before surfacing the child exit.
+                        if await self.isHealthy() {
+                            self.state = .running
+                            self.startupTask = nil
+                            self.startMonitoring()
+                        } else {
+                            self.state = .failed(self.startupFailureMessage())
+                            self.startupTask = nil
+                        }
+                    }
+                case .ignore:
+                    break
                 }
             }
         }
-        try process.run()
         self.process = process
         logHandle = handle
+        do {
+            try process.run()
+        } catch {
+            if self.process === process { self.process = nil }
+            if self.logHandle === handle { self.logHandle = nil }
+            try? handle.close()
+            throw error
+        }
     }
 
     private func daemonLogHandle(home: String) throws -> FileHandle {

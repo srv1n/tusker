@@ -15,7 +15,38 @@ final class TuskerBarTests: XCTestCase {
         XCTAssertEqual(TuskerDeepLink.parse(URL(string: "tusker://task/RUN-T-0043")!), .task(id: "RUN-T-0043"))
         XCTAssertEqual(TuskerDeepLink.parse(URL(string: "tusker://open?path=%2Fp%2Ftusker%2Fwork")!), .open(path: "/p/tusker/work"))
         XCTAssertNil(TuskerDeepLink.parse(URL(string: "tusker://task/not-a-task")!))
+        XCTAssertEqual(TuskerDeepLink.parse(URL(string: "tusker://spotlight/task%3Atusker%3AMAC-T-0001")!), .spotlight(identifier: "task:tusker:MAC-T-0001"))
         XCTAssertEqual(TuskerDeepLink.taskPath(projectID: "01ABC", taskID: "MAC-T-0001"), "/p/01ABC/work?task=MAC-T-0001")
+    }
+
+    func testSpotlightRoutesAreProjectQualifiedAndReversible() {
+        let task = SpotlightRoute.task(projectID: "tusker", taskID: "MAC-T-0001")
+        XCTAssertEqual(SpotlightRoute.from(identifier: task.identifier), task)
+        XCTAssertEqual(task.path, "/p/tusker/docs?path=MAC-T-0001")
+        XCTAssertEqual(SpotlightRoute.from(identifier: "project:tusker"), .project("tusker"))
+        XCTAssertNil(SpotlightRoute.from(identifier: "task:MAC-T-0001"))
+        let gate = SpotlightRoute.gate(projectID: "tusker", gateID: "MAC-G-0007", taskID: "MAC-T-0008")
+        XCTAssertEqual(SpotlightRoute.from(identifier: gate.identifier), gate)
+        XCTAssertEqual(gate.path, "/p/tusker/docs?path=MAC-T-0008&gate=MAC-G-0007")
+    }
+
+    func testSpotlightRecordIncludesTypeAheadMetadata() {
+        let record = SpotlightRecordBuilder.task(SpotlightTask(
+            id: "MAC-T-0001", title: "Floating panel", projectID: "tusker",
+            status: "ready", readiness: "dispatchable", epicTitle: "Tusker Mac shell"
+        ))
+        XCTAssertEqual(record.route, .task(projectID: "tusker", taskID: "MAC-T-0001"))
+        XCTAssertTrue(record.keywords.contains("Floating panel"))
+        XCTAssertTrue(record.keywords.contains("MAC-T-0001"))
+        XCTAssertTrue(record.title.hasPrefix("MAC-T-0001 —"))
+        XCTAssertTrue(record.description.contains("Tusker Mac shell"))
+
+        let gate = SpotlightRecordBuilder.gate(
+            SpotlightGate(id: "MAC-G-0007", title: "Spotlight verification", status: "open", blocks: ["MAC-T-0008"]),
+            projectID: "tusker"
+        )
+        XCTAssertTrue(gate.title.hasPrefix("MAC-G-0007 —"))
+        XCTAssertTrue(gate.keywords.contains("MAC G007"))
     }
 
     func testNotificationPlanUsesTaskThreadAndCriticalInterruption() {
@@ -33,5 +64,11 @@ final class TuskerBarTests: XCTestCase {
         let path = RuntimeLaunchPlan.path(home: "/Users/test", inherited: "/custom/bin:/usr/bin")
         XCTAssertTrue(path.hasPrefix("/Users/test/.local/bin:/opt/homebrew/bin"))
         XCTAssertEqual(path.components(separatedBy: ":").filter { $0 == "/usr/bin" }.count, 1)
+        XCTAssertEqual(RuntimeLaunchPlan.healthTimeout, 0.25)
+        XCTAssertEqual(RuntimeLaunchPlan.startupProbeCount, 20)
+        XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .starting), .finishStartup)
+        XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .running), .restart)
+        XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .checking), .ignore)
+        XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .failed("boom")), .ignore)
     }
 }

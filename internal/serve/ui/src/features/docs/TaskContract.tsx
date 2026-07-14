@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  ChevronDown,
   ExternalLink,
   FileDiff,
   FileText,
@@ -37,6 +38,7 @@ import { Skeleton, ErrorState } from "@/components/ui/states";
 import { livenessTone, statusTone } from "@/components/ui/tone";
 import {
   useCloseTask,
+  useDiscardTask,
   useDoc,
   useEvidenceAdd,
   useFeedbackAdd,
@@ -48,8 +50,8 @@ import {
 } from "@/lib/queries";
 import { Button, Select, TextInput } from "@/components/ui/controls";
 import { ActionResultLine, useConfirm } from "@/components/ui/action-feedback";
-import { compactNumber, duration, relativeTime } from "@/lib/time";
-import type { EvidenceCard, RunSummary, TaskDetail } from "@/types/domain";
+import { duration, relativeTime } from "@/lib/time";
+import type { DiscardImpact, EvidenceCard, RunSummary, TaskDetail } from "@/types/domain";
 import { DocEditor, type EditorRuntimeConfig } from "@/features/editor";
 import { DocShell } from "./DocShell";
 import { FrontmatterInlineControl, PropertyPanel } from "./PropertyPanel";
@@ -57,6 +59,7 @@ import { KindEyebrow, ResultChip } from "./bits";
 import { ConflictBanner, MergeReadiness, SavedBanner, ValidationStrip } from "./banners";
 import { useDocEditor, type DocEditor as DocEditorState } from "./editor";
 import { resolveWikilink, wikilinkTargets } from "./mock";
+import { HumanActionCard } from "@/features/human-action/HumanActionCard";
 import type { MergeCheck } from "./types";
 import {
   readMarkdownSection,
@@ -68,7 +71,7 @@ import {
 const barBtn =
   "rounded-lg px-3.5 py-1.5 text-[12.5px] font-semibold leading-none transition-colors";
 
-export function TaskContract({ projectId, taskId }: { projectId: string; taskId: string }) {
+export function TaskContract({ projectId, taskId, focusGateId }: { projectId: string; taskId: string; focusGateId?: string }) {
   const q = useTask(taskId, projectId);
   const task = q.data;
 
@@ -80,10 +83,10 @@ export function TaskContract({ projectId, taskId }: { projectId: string; taskId:
       </div>
     );
   }
-  return <ContractBody key={task.id} projectId={projectId} task={task} />;
+  return <ContractBody key={task.id} projectId={projectId} task={task} focusGateId={focusGateId} />;
 }
 
-function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail }) {
+function ContractBody({ projectId, task, focusGateId }: { projectId: string; task: TaskDetail; focusGateId?: string }) {
   const docPath = taskDocPath(task.id);
   const docQuery = useDoc(docPath, projectId);
   const doc = docQuery.data ?? taskDetailToDocContent(task);
@@ -93,6 +96,8 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
   const draftRef = useRef(ed.draft);
   const [activeProse, setActiveProse] = useState<string | null>(null);
   const [focusAt, setFocusAt] = useState<{ x: number; y: number } | null>(null);
+  const humanActions = [...(task.humanActions?.length ? task.humanActions : task.humanAction ? [task.humanAction] : [])]
+    .sort((a, b) => Number(b.gateId === focusGateId) - Number(a.gateId === focusGateId));
 
   const editing = ed.phase === "editing";
   const confirm = useConfirm();
@@ -134,8 +139,8 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
   const frontmatter = [
     { key: "title", value: task.title, locked: false },
     { key: "id", value: task.id, locked: true, lockReason: "Task id is the record key. Rename by creating or superseding the task." },
-    { key: "status", value: rawStatus, locked: false },
-    { key: "readiness", value: rawReadiness, locked: false },
+    { key: "status", value: rawStatus, locked: true, lockReason: "Status is managed by lifecycle actions; use Discard task for cancelled work." },
+    { key: "readiness", value: rawReadiness, locked: true, lockReason: "Readiness is derived from status, gates, dependencies, and runtime ownership." },
     { key: "priority", value: task.priority, locked: false },
     { key: "risk", value: task.risk, locked: false },
     { key: "epic", value: task.epicId, locked: true, lockReason: "Epic membership is managed by task planning controls." },
@@ -254,6 +259,16 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
             pendingKey={pendingFrontmatterKey}
           />
 
+          {humanActions.map((action) => (
+            <HumanActionCard
+              key={action.gateId}
+              action={action}
+              taskId={task.id}
+              taskTitle={task.title}
+              projectId={projectId}
+            />
+          ))}
+
           <Section label="Intent">
             <TaskProseBlock
               heading="Intent"
@@ -369,7 +384,7 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
                 onCommit={commitFrontmatter}
                 pending={pendingFrontmatterKey === "status"}
               >
-                <StatusChip status={frontmatterByKey.status.value} />
+                <StatusChip status={task.rawStatus ?? task.status} />
               </EditableFact>
             </FactRow>
             <FactRow k="readiness">
@@ -446,7 +461,7 @@ function ContractBody({ projectId, task }: { projectId: string; task: TaskDetail
           )}
 
           <div className="flex flex-col gap-2">
-            <TaskActionPanel task={task} projectId={projectId} />
+            {humanActions.length === 0 && <TaskActionPanel task={task} projectId={projectId} />}
             {task.runHistory.length > 0 && (
               <Link
                 to="/p/$projectId/runs/$taskId"
@@ -534,12 +549,16 @@ function TaskProseBlock({
 function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: string }) {
   const statusAction = useTaskStatusAction(task.id, projectId);
   const closeTask = useCloseTask(task.id, projectId);
+  const discardTask = useDiscardTask(task.id, projectId);
   const landTask = useLandTask(task.id, projectId);
   const gateAction = useGateAction();
   const evidenceAdd = useEvidenceAdd(task.id, projectId);
   const feedbackAdd = useFeedbackAdd(projectId);
   const confirm = useConfirm();
 
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [selectedStatus, setSelectedStatus] = useState("");
+  const [activeAction, setActiveAction] = useState("");
   const [reason, setReason] = useState("");
   const [actor, setActor] = useState("");
   const [gateText, setGateText] = useState("");
@@ -550,19 +569,85 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
   const [feedbackFriction, setFeedbackFriction] = useState("");
   const [feedbackIdea, setFeedbackIdea] = useState("");
   const [feedbackImpact, setFeedbackImpact] = useState("");
+  const [discardImpact, setDiscardImpact] = useState<DiscardImpact | null>(null);
+  const [discardResolution, setDiscardResolution] = useState<"" | "detach" | "discard">("");
 
   // Shared busy flag: the whole panel disables while any one action is in
   // flight, so a slow POST can't be double-fired from another button.
   const busy =
     statusAction.isPending ||
     closeTask.isPending ||
+    discardTask.isPending ||
     landTask.isPending ||
     gateAction.isPending ||
     evidenceAdd.isPending ||
     feedbackAdd.isPending;
 
-  const mutateStatus = (status: string) =>
-    statusAction.mutate({ status, reason: reason || undefined, actor: actor || undefined });
+  const currentStatus =
+    task.rawStatus ??
+    (task.status === "in_progress" || task.status === "blocked" ? "ready" : task.status);
+  const statusOptions = [
+    ["ready", "Ready"],
+    ["review", "Review"],
+    ["rework", "Rework"],
+    ["backlog", "Backlog"],
+  ].filter(([status]) => status !== currentStatus);
+  const selectedStatusLabel = statusOptions.find(([status]) => status === selectedStatus)?.[1];
+
+  const mutateStatus = () => {
+    if (!selectedStatus) return;
+    statusAction.mutate(
+      { status: selectedStatus, reason: reason || undefined, actor: actor || undefined },
+      { onSuccess: () => setSelectedStatus("") },
+    );
+  };
+
+  const previewDiscard = async () => {
+    const result = await discardTask.mutateAsync({ dryRun: true });
+    if (result.ok && result.discard) {
+      setDiscardImpact(result.discard);
+      if (!result.discard.requiresResolution) setDiscardResolution("");
+    }
+  };
+
+  const onDiscard = async () => {
+    if (!discardImpact || !reason.trim()) return;
+    if (discardImpact.requiresResolution && !discardResolution) return;
+    const direct = discardImpact.directDependents.length;
+    const cascade = discardImpact.cascadeDependents.length;
+    const dependencySummary = !direct
+      ? "No active downstream tasks depend on it."
+      : discardResolution === "detach"
+        ? `${direct} direct dependent${direct === 1 ? "" : "s"} will have this prerequisite explicitly detached.`
+        : `${cascade} downstream task${cascade === 1 ? "" : "s"} will also be discarded.`;
+    const gateSummary = discardImpact.openGates.length
+      ? ` ${discardImpact.openGates.length} open gate${discardImpact.openGates.length === 1 ? "" : "s"} will be made obsolete.`
+      : "";
+    const ok = await confirm({
+      title: `Discard ${task.id}`,
+      body: `${dependencySummary}${gateSummary} Task, attempt, evidence, and event history will be preserved.`,
+      confirmLabel: "Discard task",
+      tone: "danger",
+      typeToConfirm: task.id,
+    });
+    if (!ok) return;
+    discardTask.mutate(
+      {
+        reason: reason.trim(),
+        actor: actor || undefined,
+        dependents: discardResolution || undefined,
+      },
+      {
+        onSuccess: (result) => {
+          if (result.ok) {
+            setDiscardImpact(null);
+            setDiscardResolution("");
+            setActiveAction("");
+          }
+        },
+      },
+    );
+  };
 
   // Land is irreversible git surgery — merges the task branch into main. Gate it
   // behind a type-the-id confirm before firing.
@@ -578,111 +663,227 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
   };
 
   return (
-    <div className="space-y-3 rounded-xl border border-line bg-raised p-3">
-      <div className="grid grid-cols-2 gap-1.5">
-        {[
-          ["ready", "Ready"],
-          ["review", "Review"],
-          ["rework", "Rework"],
-          ["backlog", "Backlog"],
-          ["cancelled", "Cancel"],
-        ].map(([status, label]) => (
-          <Button key={status} type="button" size="sm" variant={status === "cancelled" ? "danger" : "default"} disabled={busy} onClick={() => mutateStatus(status)}>
-            {label}
-          </Button>
-        ))}
-      </div>
-      <ActionResultLine pending={statusAction.isPending} error={statusAction.error} result={statusAction.data} />
-
-      <TextInput value={reason} onChange={(e) => setReason(e.target.value)} placeholder="reason" className="w-full" />
-      <TextInput value={actor} onChange={(e) => setActor(e.target.value)} placeholder="actor" className="w-full" />
-
-      <div className="grid grid-cols-2 gap-1.5">
-        <Button type="button" size="sm" disabled={busy} onClick={() => closeTask.mutate({ reason: reason || undefined, actor: actor || undefined })}>
-          Accept
-        </Button>
-        <Button type="button" size="sm" variant="danger" disabled={busy} onClick={onLand}>
-          <GitMerge size={12} />
-          Land
-        </Button>
-      </div>
-      <ActionResultLine pending={closeTask.isPending} error={closeTask.error} result={closeTask.data} />
-      <ActionResultLine pending={landTask.isPending} error={landTask.error} result={landTask.data} />
-
-      {task.gates.length > 0 && (
-        <div className="space-y-1.5 border-t border-line-soft pt-3">
-          <Select value={gateID} onChange={(e) => setGateID(e.target.value)} className="w-full">
-            {task.gates.map((gate) => (
-              <option key={gate.id} value={gate.id}>
-                {gate.id}
+    <div className="overflow-hidden rounded-xl border border-line bg-raised">
+      <div className="space-y-2.5 p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em] text-fainter">
+              Current state
+            </div>
+            <StatusChip status={task.rawStatus ?? task.status} />
+          </div>
+          <Select
+            aria-label="Move task to another state"
+            value={selectedStatus}
+            disabled={busy}
+            onChange={(event) => setSelectedStatus(event.target.value)}
+            className="w-[138px]"
+          >
+            <option value="">Move to...</option>
+            {statusOptions.map(([status, label]) => (
+              <option key={status} value={status}>
+                {label}
               </option>
             ))}
           </Select>
-          <TextInput value={gateText} onChange={(e) => setGateText(e.target.value)} placeholder="gate evidence or reason" className="w-full" />
-          <div className="grid grid-cols-3 gap-1.5">
-            <Button type="button" size="sm" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "satisfy", body: { evidence: gateText, actor: actor || undefined }, taskId: task.id, projectId })}>
-              Satisfy
-            </Button>
-            <Button type="button" size="sm" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "waive", body: { reason: gateText, actor: actor || undefined }, taskId: task.id, projectId })}>
-              Waive
-            </Button>
-            <Button type="button" size="sm" variant="danger" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "obsolete", body: { reason: gateText, actor: actor || undefined }, taskId: task.id, projectId })}>
-              Obsolete
+        </div>
+
+        {selectedStatus && (
+          <div className="space-y-2 border-t border-line-soft pt-2.5 animate-rise">
+            <TextInput
+              aria-label="Reason for status change"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Reason (optional)"
+              className="w-full"
+            />
+            <TextInput
+              aria-label="Actor for status change"
+              value={actor}
+              onChange={(event) => setActor(event.target.value)}
+              placeholder="Actor (optional)"
+              className="w-full"
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant={selectedStatus === "cancelled" ? "danger" : "primary"}
+              className="w-full"
+              disabled={busy}
+              onClick={mutateStatus}
+            >
+              Move to {selectedStatusLabel}
             </Button>
           </div>
-          <ActionResultLine pending={gateAction.isPending} error={gateAction.error} result={gateAction.data} />
-        </div>
-      )}
+        )}
+        <ActionResultLine pending={statusAction.isPending} error={statusAction.error} result={statusAction.data} />
+      </div>
 
-      <div className="space-y-1.5 border-t border-line-soft pt-3">
-        <div className="flex gap-1.5">
-          <Select value={evidenceKind} onChange={(e) => setEvidenceKind(e.target.value)} className="min-w-0 flex-1">
-            <option value="automated_test">automated_test</option>
-            <option value="manual_smoke">manual_smoke</option>
-            <option value="human_review">human_review</option>
-            <option value="verification_summary">verification_summary</option>
+      <button
+        type="button"
+        aria-expanded={moreOpen}
+        onClick={() => {
+          setMoreOpen((open) => !open);
+          if (moreOpen) setActiveAction("");
+        }}
+        className="flex w-full items-center justify-between border-t border-line-soft px-3 py-2.5 text-left text-[12.5px] font-medium text-ink-soft transition-colors hover:bg-hover"
+      >
+        More actions
+        <ChevronDown
+          size={14}
+          strokeWidth={2}
+          className={cn("text-faint transition-transform", moreOpen && "rotate-180")}
+        />
+      </button>
+
+      {moreOpen && (
+        <div className="space-y-2.5 border-t border-line-soft p-3 animate-rise">
+          <Select
+            aria-label="Choose another task action"
+            value={activeAction}
+            onChange={(event) => setActiveAction(event.target.value)}
+            disabled={busy}
+            className="w-full"
+          >
+            <option value="">Choose an action...</option>
+            <option value="close">Accept &amp; close</option>
+            <option value="land">Land task branch</option>
+            <option value="discard">Discard task</option>
+            {task.gates.length > 0 && <option value="gate">Manage gate</option>}
+            <option value="evidence">Add evidence</option>
+            <option value="feedback">Send feedback</option>
           </Select>
-          {task.acceptance.length > 0 ? (
-            <Select value={evidenceCovers} onChange={(e) => setEvidenceCovers(e.target.value)} className="min-w-0 flex-1">
-              {task.acceptance.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.id}
-                </option>
-              ))}
-            </Select>
-          ) : (
-            <TextInput value={evidenceCovers} onChange={(e) => setEvidenceCovers(e.target.value)} placeholder="covers" className="min-w-0 flex-1" />
+
+          {activeAction === "close" && (
+            <div className="space-y-2 animate-rise">
+              <TextInput aria-label="Close reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (optional)" className="w-full" />
+              <TextInput aria-label="Close actor" value={actor} onChange={(e) => setActor(e.target.value)} placeholder="Actor (optional)" className="w-full" />
+              <Button type="button" size="sm" variant="primary" className="w-full" disabled={busy} onClick={() => closeTask.mutate({ reason: reason || undefined, actor: actor || undefined })}>
+                Accept &amp; close
+              </Button>
+              <ActionResultLine pending={closeTask.isPending} error={closeTask.error} result={closeTask.data} />
+            </div>
+          )}
+
+          {activeAction === "land" && (
+            <div className="space-y-2 animate-rise">
+              <p className="text-[12px] leading-relaxed text-muted">
+                Merge this task branch into the default branch. You will confirm the task ID next.
+              </p>
+              <Button type="button" size="sm" variant="danger" className="w-full" disabled={busy} onClick={onLand}>
+                <GitMerge size={12} />
+                Land task branch
+              </Button>
+              <ActionResultLine pending={landTask.isPending} error={landTask.error} result={landTask.data} />
+            </div>
+          )}
+
+          {activeAction === "discard" && (
+            <div className="space-y-2 animate-rise">
+              <p className="text-[12px] leading-relaxed text-muted">
+                Remove this task from active work without deleting its audit history. Tusker will inspect downstream dependencies before changing anything.
+              </p>
+              <TextInput
+                aria-label="Discard reason"
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                placeholder="Why is this work being discarded?"
+                className="w-full"
+              />
+              {!discardImpact ? (
+                <Button type="button" size="sm" variant="danger" className="w-full" disabled={busy || !reason.trim()} onClick={previewDiscard}>
+                  Review discard impact
+                </Button>
+              ) : (
+                <div className="space-y-2 rounded-lg border border-line-soft bg-hover/40 p-2.5">
+                  <div className="font-mono text-[10.5px] text-faint">
+                    {discardImpact.directDependents.length} direct dependent{discardImpact.directDependents.length === 1 ? "" : "s"} · {discardImpact.openGates.length} open gate{discardImpact.openGates.length === 1 ? "" : "s"}
+                  </div>
+                  {discardImpact.directDependents.length > 0 && (
+                    <div className="text-[11.5px] leading-relaxed text-muted">
+                      {discardImpact.directDependents.map((dependent) => dependent.id).join(", ")}
+                    </div>
+                  )}
+                  {discardImpact.requiresResolution && (
+                    <Select
+                      aria-label="Resolve downstream dependencies"
+                      value={discardResolution}
+                      onChange={(event) => setDiscardResolution(event.target.value as "" | "detach" | "discard")}
+                      className="w-full"
+                    >
+                      <option value="">Resolve downstream tasks...</option>
+                      <option value="detach">Detach this prerequisite</option>
+                      <option value="discard">Discard downstream closure</option>
+                    </Select>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="danger"
+                    className="w-full"
+                    disabled={busy || !reason.trim() || (discardImpact.requiresResolution && !discardResolution)}
+                    onClick={onDiscard}
+                  >
+                    Discard task
+                  </Button>
+                </div>
+              )}
+              <ActionResultLine pending={discardTask.isPending} error={discardTask.error} result={discardTask.data} />
+            </div>
+          )}
+
+          {activeAction === "gate" && (
+            <div className="space-y-2 animate-rise">
+              <Select aria-label="Gate" value={gateID} onChange={(e) => setGateID(e.target.value)} className="w-full">
+                {task.gates.map((gate) => (
+                  <option key={gate.id} value={gate.id}>{gate.id}</option>
+                ))}
+              </Select>
+              <TextInput aria-label="Gate evidence or reason" value={gateText} onChange={(e) => setGateText(e.target.value)} placeholder="Evidence or reason" className="w-full" />
+              <TextInput aria-label="Gate actor" value={actor} onChange={(e) => setActor(e.target.value)} placeholder="Actor (optional)" className="w-full" />
+              <div className="grid grid-cols-3 gap-1.5">
+                <Button type="button" size="sm" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "satisfy", body: { evidence: gateText, actor: actor || undefined }, taskId: task.id, projectId })}>Satisfy</Button>
+                <Button type="button" size="sm" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "waive", body: { reason: gateText, actor: actor || undefined }, taskId: task.id, projectId })}>Waive</Button>
+                <Button type="button" size="sm" variant="danger" disabled={busy} onClick={() => gateAction.mutate({ gateId: gateID, action: "obsolete", body: { reason: gateText, actor: actor || undefined }, taskId: task.id, projectId })}>Obsolete</Button>
+              </div>
+              <ActionResultLine pending={gateAction.isPending} error={gateAction.error} result={gateAction.data} />
+            </div>
+          )}
+
+          {activeAction === "evidence" && (
+            <div className="space-y-2 animate-rise">
+              <div className="flex gap-1.5">
+                <Select aria-label="Evidence kind" value={evidenceKind} onChange={(e) => setEvidenceKind(e.target.value)} className="min-w-0 flex-1">
+                  <option value="automated_test">automated_test</option>
+                  <option value="manual_smoke">manual_smoke</option>
+                  <option value="human_review">human_review</option>
+                  <option value="verification_summary">verification_summary</option>
+                </Select>
+                {task.acceptance.length > 0 ? (
+                  <Select aria-label="Acceptance covered" value={evidenceCovers} onChange={(e) => setEvidenceCovers(e.target.value)} className="min-w-0 flex-1">
+                    {task.acceptance.map((row) => <option key={row.id} value={row.id}>{row.id}</option>)}
+                  </Select>
+                ) : (
+                  <TextInput aria-label="Acceptance covered" value={evidenceCovers} onChange={(e) => setEvidenceCovers(e.target.value)} placeholder="Covers" className="min-w-0 flex-1" />
+                )}
+              </div>
+              <TextInput aria-label="Evidence summary" value={evidenceSummary} onChange={(e) => setEvidenceSummary(e.target.value)} placeholder="Evidence summary" className="w-full" />
+              <Button type="button" size="sm" className="w-full" disabled={busy || !evidenceSummary.trim()} onClick={() => evidenceAdd.mutate({ kind: evidenceKind, covers: evidenceCovers, status: "accepted", summary: evidenceSummary })}>Add evidence</Button>
+              <ActionResultLine pending={evidenceAdd.isPending} error={evidenceAdd.error} result={evidenceAdd.data} />
+            </div>
+          )}
+
+          {activeAction === "feedback" && (
+            <div className="space-y-2 animate-rise">
+              <TextInput aria-label="Feedback friction" value={feedbackFriction} onChange={(e) => setFeedbackFriction(e.target.value)} placeholder="What got in the way?" className="w-full" />
+              <TextInput aria-label="Product idea" value={feedbackIdea} onChange={(e) => setFeedbackIdea(e.target.value)} placeholder="Product idea (optional)" className="w-full" />
+              <TextInput aria-label="Feedback impact" value={feedbackImpact} onChange={(e) => setFeedbackImpact(e.target.value)} placeholder="Impact (optional)" className="w-full" />
+              <Button type="button" size="sm" className="w-full" disabled={busy || !feedbackFriction.trim()} onClick={() => feedbackAdd.mutate({ context: task.id, friction: feedbackFriction, productIdea: feedbackIdea, impact: feedbackImpact, related: task.id })}>Send feedback</Button>
+              <ActionResultLine pending={feedbackAdd.isPending} error={feedbackAdd.error} result={feedbackAdd.data} />
+            </div>
           )}
         </div>
-        <TextInput value={evidenceSummary} onChange={(e) => setEvidenceSummary(e.target.value)} placeholder="evidence summary" className="w-full" />
-        <Button type="button" size="sm" disabled={busy || !evidenceSummary.trim()} onClick={() => evidenceAdd.mutate({ kind: evidenceKind, covers: evidenceCovers, status: "accepted", summary: evidenceSummary })}>
-          Add evidence
-        </Button>
-        <ActionResultLine pending={evidenceAdd.isPending} error={evidenceAdd.error} result={evidenceAdd.data} />
-      </div>
-
-      <div className="space-y-1.5 border-t border-line-soft pt-3">
-        <TextInput value={feedbackFriction} onChange={(e) => setFeedbackFriction(e.target.value)} placeholder="feedback friction" className="w-full" />
-        <TextInput value={feedbackIdea} onChange={(e) => setFeedbackIdea(e.target.value)} placeholder="product idea" className="w-full" />
-        <TextInput value={feedbackImpact} onChange={(e) => setFeedbackImpact(e.target.value)} placeholder="impact" className="w-full" />
-        <Button
-          type="button"
-          size="sm"
-          disabled={busy || !feedbackFriction.trim()}
-          onClick={() =>
-            feedbackAdd.mutate({
-              context: task.id,
-              friction: feedbackFriction,
-              productIdea: feedbackIdea,
-              impact: feedbackImpact,
-              related: task.id,
-            })
-          }
-        >
-          Add feedback
-        </Button>
-        <ActionResultLine pending={feedbackAdd.isPending} error={feedbackAdd.error} result={feedbackAdd.data} />
-      </div>
+      )}
     </div>
   );
 }
@@ -729,7 +930,6 @@ function EditableFact({
 }
 
 function RunHistoryItem({ run, projectId }: { run: RunSummary; projectId: string }) {
-  const tokens = compactNumber(run.tokens.input + run.tokens.output);
   return (
     <Link
       to="/p/$projectId/runs/$taskId"
@@ -748,7 +948,6 @@ function RunHistoryItem({ run, projectId }: { run: RunSummary; projectId: string
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted">
         <span>{plural(run.attemptCount, "attempt")}</span>
         <span>{duration(run.elapsedSec)}</span>
-        <span>{tokens} tokens</span>
         <span>last event {duration(run.sinceLastEventSec)} ago</span>
       </div>
     </Link>

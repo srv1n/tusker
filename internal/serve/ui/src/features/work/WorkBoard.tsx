@@ -13,7 +13,7 @@ import { statusLabel, statusTone, tone } from "@/components/ui/tone";
 import type { TaskCapsule, TaskStatus } from "@/types/domain";
 import { STATUS_COLUMNS, isBatchSelectable, selectableIds } from "@/features/work/work-utils";
 import type { Selection } from "@/features/work/selection";
-import { GateMarker } from "@/features/work/WorkParts";
+import { GateMarker, GateSummary } from "@/features/work/WorkParts";
 
 const CHECK =
   "h-3.5 w-3.5 flex-none cursor-pointer accent-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-40";
@@ -118,6 +118,16 @@ function TaskCard({
           {task.readiness !== "ready" && <ReadinessChip readiness={task.readiness} />}
           <Mono className="ml-auto text-[10px] text-faint">{task.epicId}</Mono>
         </div>
+        {task.latestAttemptOutcome && (
+          <Mono className="mt-2 block text-[10px] text-faint">
+            latest attempt: {task.latestAttemptOutcome}{task.liveRun ? " · live" : ""}
+          </Mono>
+        )}
+        {(task.openGates?.length ?? 0) > 0 && (
+          <div className="mt-2.5 space-y-1.5 border-t border-line-soft pt-2.5">
+            {task.openGates!.map((gate) => <GateSummary key={gate.id} gate={gate} />)}
+          </div>
+        )}
       </Link>
     </div>
   );

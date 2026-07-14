@@ -19,8 +19,9 @@ import type {
   SettingSource,
   SettingsTab,
   WorkspaceScript,
-  WorktreeInfo,
 } from "./mock";
+
+export interface RuntimeWorkspaceInfo { task: string; path: string; lease: string; mode: string }
 
 // ----------------------------------------------------------------------------
 // Override write-path — edits become `local`, reset restores inherited.
@@ -281,11 +282,11 @@ export function SettingList({
 // Worktrees (live, read-only)
 // ----------------------------------------------------------------------------
 
-export function WorktreeList({ worktrees }: { worktrees: WorktreeInfo[] }) {
+export function WorktreeList({ worktrees }: { worktrees: RuntimeWorkspaceInfo[] }) {
   if (worktrees.length === 0) {
     return (
       <SectionCard>
-        <div className="px-4 py-6 text-center text-[12.5px] text-faint">No active worktrees.</div>
+        <div className="px-4 py-6 text-center text-[12.5px] text-faint">No active execution workspaces.</div>
       </SectionCard>
     );
   }
@@ -295,6 +296,7 @@ export function WorktreeList({ worktrees }: { worktrees: WorktreeInfo[] }) {
         <div key={w.task} className="flex items-center gap-3 px-4 py-2.5">
           <Mono className="w-24 flex-none text-[11px] text-faint">{w.task}</Mono>
           <Mono className="min-w-0 flex-1 truncate text-[11.5px] text-ink-soft">{w.path}</Mono>
+          <Mono className="flex-none text-[10.5px] text-faint">{w.mode}</Mono>
           <Mono className="flex-none text-[10.5px] text-pass">{w.lease}</Mono>
         </div>
       ))}

@@ -57,10 +57,10 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	if !validWorkspaceStrategy(wf.Workspace.Strategy) {
 		return tuskerError(errorConfigInvalid, "workspace.strategy must be one of in_place, worktree, clone, copy", withPath(filePath))
 	}
-	if workspaceStrategyFromWorkflow(wf.Workspace.Strategy) != WorkspaceStrategyInPlace && strings.TrimSpace(wf.Workspace.Root) == "" {
+	if workspaceStrategyFromWorkflow(wf.Workspace.Strategy) != WorkspaceStrategyShared && strings.TrimSpace(wf.Workspace.Root) == "" {
 		return tuskerError(errorConfigInvalid, "workspace.root is required unless workspace.strategy is in_place", withPath(filePath))
 	}
-	if workspaceStrategyFromWorkflow(wf.Workspace.Strategy) != WorkspaceStrategyInPlace && !validSharedWorkspaceRootConfig(wf.Workspace.Root) {
+	if workspaceStrategyFromWorkflow(wf.Workspace.Strategy) != WorkspaceStrategyShared && !validSharedWorkspaceRootConfig(wf.Workspace.Root) {
 		return tuskerError(errorConfigInvalid, "workspace.root must be workspaces or a relative subdirectory under workspaces", withPath(filePath))
 	}
 	if wf.Retry.MaxAttempts <= 0 || len(wf.Retry.BackoffMS) == 0 {
@@ -267,6 +267,9 @@ func validateReviewerPolicy(policy ReviewerPolicy, enabledAgents []string, fileP
 	if strings.TrimSpace(policy.Actor) == "" {
 		return tuskerError(errorConfigInvalid, "reviewer.actor is required when reviewer.enabled is true", withPath(filePath))
 	}
+	if policy.MaxCycles < 1 {
+		return tuskerError(errorConfigInvalid, "reviewer.max_cycles must be at least 1", withPath(filePath))
+	}
 	if len(policy.AutoCloseRisks) == 0 && len(policy.HumanRequiredRisks) == 0 {
 		return tuskerError(errorConfigInvalid, "reviewer must define auto_close_risks or human_required_risks", withPath(filePath))
 	}
@@ -363,7 +366,7 @@ func validCodexSandbox(value string) bool {
 
 func validWorkspaceStrategy(value string) bool {
 	switch strings.TrimSpace(value) {
-	case string(WorkspaceStrategyInPlace), string(WorkspaceStrategyWorktree), string(WorkspaceStrategyClone), string(WorkspaceStrategyCopy):
+	case string(WorkspaceStrategyShared), string(WorkspaceStrategyInPlace), string(WorkspaceStrategyWorktree), string(WorkspaceStrategyClone), string(WorkspaceStrategyCopy):
 		return true
 	default:
 		return false

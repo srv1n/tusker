@@ -29,11 +29,12 @@ test("clockTime degrades to a placeholder instead of NaN:NaN:NaN", () => {
 // SRV-T-0015 A2/A3 — labeled columns incl. lease/outcome, terminal distinction
 // ---------------------------------------------------------------------------
 
-test("runs board header labels every column including lease and state", () => {
+test("runs board header labels every non-usage column including lease and state", () => {
   const src = readFileSync("src/features/runs/board/rows.tsx", "utf8");
-  for (const label of ["Task", "Runner", "Lane", "Lease", "Tokens", "State"]) {
+  for (const label of ["Task", "Runner", "Lane", "Lease", "State"]) {
     expect(src).toMatch(new RegExp(`<span(?: className="[^"]*")?>${label}</span>`));
   }
+  expect(src).not.toContain(">Tokens<");
 });
 
 test("recent rows are visually distinct from live runs (terminal tag + attempt count)", () => {
@@ -115,7 +116,6 @@ test("retry queued plus daemon down pauses timing and disables duplicate redrive
     elapsedSec: 90,
     sinceLastEventSec: 600,
     liveness: "dead",
-    tokens: { input: 10, output: 5 },
     attemptCount: 1,
     workspacePath: "/tmp/SRV-T-0021",
     attempts: [],

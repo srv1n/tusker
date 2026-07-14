@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileText, Loader2 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import type { InterruptResult, RedriveResult, RunDetail, TaskCapsule } from "@/types/domain";
 import { cn } from "@/lib/cn";
 import { Mono } from "@/components/ui/primitives";
@@ -104,6 +105,15 @@ export function RunHeader({
 
       <div className="flex flex-none flex-col items-stretch gap-2 sm:items-end">
         <div className="flex items-center gap-2.5">
+          <Link
+            to="/p/$projectId/docs"
+            params={{ projectId: run.projectId }}
+            search={{ path: run.taskId }}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-raised px-3.5 py-1.5 text-[12.5px] font-semibold text-ink-soft transition-colors hover:border-line-soft hover:bg-hover"
+          >
+            <FileText size={13} strokeWidth={2} />
+            View ticket
+          </Link>
           <Button variant="danger" onClick={onInterrupt} disabled={!active || actionBusy}>
             {interrupt.pending || interrupt.awaitingReadback ? "Interrupting…" : "Interrupt"}
           </Button>

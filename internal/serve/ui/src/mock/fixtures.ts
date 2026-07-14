@@ -75,8 +75,6 @@ export const daemon: DaemonStatus = {
   addr: "localhost:7420",
   activeRuns: 5,
   queuedTasks: 11,
-  parkedBudgetRuns: 0,
-  budgetCircuit: { open: false },
   invariantCircuit: { open: false },
 };
 
@@ -109,7 +107,6 @@ export const runs: RunSummary[] = [
     elapsedSec: 512,
     sinceLastEventSec: 7,
     liveness: "fresh",
-    tokens: { input: 184320, output: 22140 },
     attemptCount: 1,
   },
   {
@@ -124,7 +121,6 @@ export const runs: RunSummary[] = [
     elapsedSec: 143,
     sinceLastEventSec: 96,
     liveness: "stale",
-    tokens: { input: 96010, output: 8820 },
     attemptCount: 1,
   },
   {
@@ -139,7 +135,6 @@ export const runs: RunSummary[] = [
     elapsedSec: 331,
     sinceLastEventSec: 214,
     liveness: "dead",
-    tokens: { input: 42110, output: 3010 },
     attemptCount: 2,
   },
   {
@@ -154,7 +149,6 @@ export const runs: RunSummary[] = [
     elapsedSec: 58,
     sinceLastEventSec: 3,
     liveness: "fresh",
-    tokens: { input: 12040, output: 990 },
     attemptCount: 1,
   },
   {
@@ -169,7 +163,6 @@ export const runs: RunSummary[] = [
     elapsedSec: 289,
     sinceLastEventSec: 640,
     liveness: "fresh",
-    tokens: { input: 71200, output: 9130 },
     attemptCount: 1,
   },
   {
@@ -184,7 +177,6 @@ export const runs: RunSummary[] = [
     elapsedSec: 122,
     sinceLastEventSec: 1980,
     liveness: "fresh",
-    tokens: { input: 33900, output: 4120 },
     attemptCount: 3,
   },
   {
@@ -199,7 +191,6 @@ export const runs: RunSummary[] = [
     elapsedSec: 47,
     sinceLastEventSec: 5400,
     liveness: "fresh",
-    tokens: { input: 8800, output: 610 },
     attemptCount: 1,
   },
 ];
@@ -213,7 +204,6 @@ export const runDetails: Record<string, RunDetail> = {
         n: 1,
         outcome: "running",
         durationSec: 512,
-        tokens: { input: 184320, output: 22140 },
         startedAt: "2026-07-06T18:21:28Z",
       },
     ],
@@ -234,14 +224,12 @@ export const runDetails: Record<string, RunDetail> = {
         n: 1,
         outcome: "failed",
         durationSec: 96,
-        tokens: { input: 21050, output: 1450 },
         startedAt: "2026-07-06T18:19:02Z",
       },
       {
         n: 2,
         outcome: "running",
         durationSec: 331,
-        tokens: { input: 42110, output: 3010 },
         startedAt: "2026-07-06T18:22:40Z",
       },
     ],
@@ -274,10 +262,6 @@ export function synthRunDetail(s: RunSummary): RunDetail {
       n: i + 1,
       outcome: isLast ? s.outcome : "failed",
       durationSec: perDur,
-      tokens: {
-        input: Math.round(s.tokens.input / n),
-        output: Math.round(s.tokens.output / n),
-      },
       startedAt: isoBefore(s.elapsedSec + (n - 1 - i) * perDur),
     };
   });

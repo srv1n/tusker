@@ -45,13 +45,15 @@ func retireCanonicalRuntimeRowsForTask(vaultPath, taskID, status, actor, source 
 }
 
 func registeredProjectIDForVault(store *RuntimeStore, vaultPath string) (string, bool, error) {
-	projects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{})
+	// Canonical terminal state must retire runtime rows even when automation is
+	// disabled for the project. Disabled controls polling, not lifecycle truth.
+	projects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
 	if err != nil {
 		return "", false, err
 	}
 	for _, loaded := range projects {
 		project := loaded.Project
-		if sameCleanPath(project.VaultRoot, vaultPath) {
+		if sameCanonicalProjectPath(project.VaultRoot, vaultPath) {
 			return project.ProjectID, true, nil
 		}
 	}

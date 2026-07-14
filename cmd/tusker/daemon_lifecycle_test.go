@@ -17,6 +17,7 @@ import (
 )
 
 func TestOneShotDispatchRefusesWithDaemonRequirement(t *testing.T) {
+	clearAgentSessionEnvForTest(t)
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "One shot", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
@@ -720,9 +721,9 @@ func TestInterruptDeadRunWithoutLiveHandleReleases(t *testing.T) {
 	assertEqual(t, "interrupt requested by operator; live runner handle not found and process is not running", run.LastError, "interrupted dead run reason")
 }
 
-func TestWorkspaceStrategyInPlaceDefaultUsesRepoRootAndExemptsTuskerBookkeeping(t *testing.T) {
+func TestWorkspaceStrategySharedDefaultUsesRepoRootAndExemptsTuskerBookkeeping(t *testing.T) {
 	wf := defaultWorkflow()
-	assertEqual(t, string(WorkspaceStrategyInPlace), wf.Workspace.Strategy, "default workspace strategy")
+	assertEqual(t, string(WorkspaceStrategyShared), wf.Workspace.Strategy, "default workspace strategy")
 
 	repo := t.TempDir()
 	if _, err := exec.Command("git", "-C", repo, "init").CombinedOutput(); err != nil {
@@ -737,13 +738,13 @@ func TestWorkspaceStrategyInPlaceDefaultUsesRepoRootAndExemptsTuskerBookkeeping(
 	manager := NewWorkspaceManager()
 	result, err := manager.Prepare(WorkspacePrepareRequest{
 		ProjectID: "project-1", ProjectKey: "APP", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
-		RepoRoot: repo, StateRoot: filepath.Join(t.TempDir(), "state"), Strategy: WorkspaceStrategyInPlace,
+		RepoRoot: repo, StateRoot: filepath.Join(t.TempDir(), "state"), Strategy: WorkspaceStrategyShared,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, repo, result.Path, "in_place path")
-	assertEqual(t, string(WorkspaceStrategyInPlace), result.Metadata.Strategy, "in_place metadata")
+	assertEqual(t, repo, result.Path, "shared path")
+	assertEqual(t, string(WorkspaceStrategyShared), result.Metadata.Strategy, "shared metadata")
 	assertExists(t, filepath.Join(repo, ".tusker", "work", "runtime.md"))
 
 	dirtyRepo := t.TempDir()
@@ -755,11 +756,13 @@ func TestWorkspaceStrategyInPlaceDefaultUsesRepoRootAndExemptsTuskerBookkeeping(
 	}
 	_, err = manager.Prepare(WorkspacePrepareRequest{
 		ProjectID: "project-1", ProjectKey: "APP", RecordID: "APP-T-0002", ItemID: "APP-T-0002",
-		RepoRoot: dirtyRepo, StateRoot: filepath.Join(t.TempDir(), "state"), Strategy: WorkspaceStrategyInPlace,
+		RepoRoot: dirtyRepo, StateRoot: filepath.Join(t.TempDir(), "state"), Strategy: WorkspaceStrategyShared,
 	})
 	if err == nil || !strings.Contains(err.Error(), "clean working tree outside .tusker") {
-		t.Fatalf("expected dirty in_place refusal, got %v", err)
+		t.Fatalf("expected dirty shared refusal, got %v", err)
 	}
+
+	assertEqual(t, WorkspaceStrategyShared, normalizeWorkspaceStrategy(WorkspaceStrategyInPlace), "legacy in_place migrates to shared")
 }
 
 func TestWorkspaceRootHonoredForWorktreeStrategy(t *testing.T) {
@@ -783,7 +786,7 @@ func TestWorkspaceRootHonoredForWorktreeStrategy(t *testing.T) {
 
 func TestDispatchRecordsProcessIdentity(t *testing.T) {
 	vault := automationTestVault(t)
-	writeCodexSleepWorkflowForCapacityTest(t, vault)
+	installCodexSleepShimForTest(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Identity", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
@@ -1415,6 +1418,7 @@ func TestContinuationCapParksAllLanes(t *testing.T) {
 }
 
 func TestDaemonStopCommandStopsResidentDaemon(t *testing.T) {
+	clearAgentSessionEnvForTest(t)
 	stateRoot, err := os.MkdirTemp("", "tusker-stop-*")
 	if err != nil {
 		t.Fatal(err)

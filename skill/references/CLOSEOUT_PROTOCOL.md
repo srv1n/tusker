@@ -10,6 +10,25 @@ Stop and wait for a human when:
 - Manual smoke/physical verification is required and no agent can perform it.
 - `closeout status` reports `agent_action=stop_until_human_response`.
 
+Do not stop for a question already answered by the approved task, acceptance
+criteria, governing spec, or linked decision. That is implementation work, not
+a human gate.
+
+## Approval Boundary
+
+Human gates are limited to:
+
+- capability: credentials, login/account ownership, unavailable devices or environments;
+- authority: security, privacy, legal, billing, production release, or destructive external actions;
+- unresolved intent: a concrete contradiction or omission in the approved contract, with the agent's recommended resolution;
+- subjective acceptance: explicitly requested human review of screenshots, recordings, UX/brand feel, or final artifacts.
+
+Agents and reviewer lanes own code/diff review, test and log inspection,
+implementation judgment, objective artifact checks, and every choice already
+entailed by the contract. Do not create `decision` or `signoff` gates to ask a
+human to accept removal, migration, mapping, naming, compatibility, or other
+implementation behavior the contract already specifies.
+
 ## Required Human Gate Fields
 
 A useful gate states:
@@ -26,6 +45,11 @@ verification: "how completion is known"
 ## Gap ownership
 
 The agent owns machine-fixable gaps. Humans own gates that require credentials, product calls, signoff, or external systems the agent cannot access.
+
+`why_agent_cannot` must name the actual capability or authority boundary. “The
+human should approve this,” “this is high risk,” and “human review is safer” are
+not boundaries. Risk may reserve final close through configured policy without
+creating a per-task approval gate.
 
 ## Validation cache rule
 

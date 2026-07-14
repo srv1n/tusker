@@ -111,7 +111,7 @@ func builtInTuskerConfig() v7TuskerConfigFile {
 	cfg.Automation.DefaultProfile = "default"
 	cfg.Automation.Profiles = map[string]v7schema.TuskerRunnerProfileConfig{
 		"default": {
-			Harness:          string(RunnerCodexAppServer),
+			Harness:          string(RunnerCodexExec),
 			Model:            "gpt-5.x",
 			Effort:           "medium",
 			PermissionPreset: "danger-full-access",
@@ -134,11 +134,11 @@ func builtInTuskerConfig() v7TuskerConfigFile {
 			Sandbox:          v7schema.TuskerRunnerSandboxConfig{Mode: "read-only", Network: boolPtr(false)},
 			Subagents:        v7schema.TuskerRunnerSubagentPolicyConfig{Allowed: boolPtr(false), MaxConcurrent: 0},
 		},
-		"guarded-yolo": {
-			Harness:          string(RunnerCodexAppServer),
+		"unrestricted-high": {
+			Harness:          string(RunnerCodexExec),
 			Model:            "gpt-5.x",
 			Effort:           "high",
-			PermissionPreset: "guarded-yolo",
+			PermissionPreset: "danger-full-access",
 			Sandbox:          v7schema.TuskerRunnerSandboxConfig{Mode: "danger-full-access", Network: boolPtr(true)},
 			Subagents:        v7schema.TuskerRunnerSubagentPolicyConfig{Allowed: boolPtr(true), MaxConcurrent: 2},
 		},
@@ -405,9 +405,11 @@ func validateRunnerProfileDefinition(name string, profile RunnerProfileDefinitio
 	}
 	harness := RunnerName(strings.TrimSpace(profile.Harness))
 	switch harness {
-	case RunnerCodex, RunnerCodexAppServer, RunnerCodexExec, RunnerCodexCloud, RunnerClaude:
+	case RunnerCodexAppServer:
+		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness uses retired value %q", name, profile.Harness), withPath(path), withHint("migrate the profile harness to codex_exec"))
+	case RunnerCodex, RunnerCodexExec, RunnerCodexCloud, RunnerClaude:
 	default:
-		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness has unsupported value %q", name, profile.Harness), withPath(path), withHint("use codex_app_server, codex_exec, or claude-code"))
+		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness has unsupported value %q", name, profile.Harness), withPath(path), withHint("use codex_exec or claude-code"))
 	}
 	if !validRunnerModelName(profile.Model) {
 		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.model has unsupported value %q", name, profile.Model), withPath(path), withHint("use a known model family such as gpt-5.x, claude-opus-4-8, claude-fable-5, sonnet-4.6, or glm-5.2"))
@@ -460,7 +462,7 @@ func validRunnerSandboxMode(mode string) bool {
 
 func validPermissionPreset(preset string) bool {
 	switch strings.TrimSpace(preset) {
-	case "", "read-only", "workspace-write-network", "workspace-write-offline", "danger-full-access", "guarded-yolo":
+	case "", "read-only", "workspace-write-network", "workspace-write-offline", "danger-full-access":
 		return true
 	default:
 		return false
@@ -622,8 +624,8 @@ func commandForRunnerProfile(baseCommand string, selected ResolvedRunnerProfile)
 		if model != "" && !commandHasFlag(command, "--model") && !commandHasFlag(command, "-m") {
 			command += " --model " + model
 		}
-		if effort != "" && !commandHasFlag(command, "--reasoning-effort") {
-			command += " --reasoning-effort " + effort
+		if effort != "" && !commandHasCodexConfig(command, "model_reasoning_effort") {
+			command += ` -c 'model_reasoning_effort="` + effort + `"'`
 		}
 	case RunnerClaude:
 		if model != "" && !commandHasFlag(command, "--model") {
@@ -631,6 +633,19 @@ func commandForRunnerProfile(baseCommand string, selected ResolvedRunnerProfile)
 		}
 	}
 	return command
+}
+
+func commandHasCodexConfig(command, key string) bool {
+	fields := strings.Fields(command)
+	for i, field := range fields {
+		if (field == "-c" || field == "--config") && i+1 < len(fields) && strings.HasPrefix(fields[i+1], key+"=") {
+			return true
+		}
+		if strings.HasPrefix(field, "--config="+key+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func commandHasFlag(command, flag string) bool {
@@ -661,7 +676,7 @@ func codexPolicyForResolvedProfile(base CodexPolicy, lane string, selected Resol
 		policy.TurnSandboxNetwork = profile.Sandbox.Network
 	}
 	switch strings.TrimSpace(profile.PermissionPreset) {
-	case "guarded-yolo", "danger-full-access":
+	case "danger-full-access":
 		policy.ApprovalPolicy = "never"
 		if strings.TrimSpace(profile.Sandbox.Mode) == "" {
 			policy.ThreadSandbox = "danger-full-access"
@@ -880,6 +895,8 @@ func canonicalConfigLookupKey(key string) string {
 		return "automation.concurrency.max_active_runs"
 	case "runtime.max_active_runs_per_project":
 		return "automation.concurrency.max_active_runs_per_project"
+	case "workspace.strategy":
+		return "automation.workspace.strategy"
 	default:
 		return key
 	}

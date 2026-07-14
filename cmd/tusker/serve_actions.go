@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -154,10 +155,14 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleProjectRegisterAction(w, body)
 	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "automation":
 		s.handleProjectAutomationAction(w, parts[2], body)
+	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "settings":
+		s.handleProjectSettingsAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "redrive":
 		s.handleRunRedrive(w, r, parts[2])
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "status":
 		s.handleTaskStatusAction(w, parts[2], body)
+	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "discard":
+		s.handleTaskDiscardAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "close":
 		s.handleTaskCloseAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "land":
@@ -200,19 +205,6 @@ func (s *serveServer) handleProjectRegisterAction(w http.ResponseWriter, body se
 	if err == nil {
 		_, err = loadWorkflow(absVault)
 	}
-	if err == nil {
-		var loaded []loadedRegisteredProject
-		loaded, err = loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true})
-		if err == nil {
-			for _, item := range loaded {
-				existing := item.Project
-				if sameCleanPath(existing.RepoRoot, absRepo) || sameCleanPath(existing.VaultRoot, absVault) {
-					err = tuskerError(errorInvalidArg, "project is already registered: "+existing.Name)
-					break
-				}
-			}
-		}
-	}
 	if err != nil {
 		result := serveCommandResult("tusker projects add", "", err)
 		serveJSON(w, http.StatusOK, result)
@@ -221,8 +213,17 @@ func (s *serveServer) handleProjectRegisterAction(w http.ResponseWriter, body se
 	project := newRegisteredProject(absRepo, absVault)
 	project.Enabled = false
 	project.Health = projectHealthDisabled
-	if err := s.store.UpsertProject(project); err != nil {
+	project, created, err := s.store.RegisterProject(project)
+	if err != nil {
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker projects add", "", err))
+		return
+	}
+	if !created {
+		serveJSON(w, http.StatusOK, serveActionResult{
+			OK: true, ProjectID: project.ProjectID,
+			Reason:  "Project already registered; using the existing registration.",
+			Command: "tusker projects add",
+		})
 		return
 	}
 	go s.warmSnapshot(project.ProjectID)
@@ -260,6 +261,9 @@ func (s *serveServer) handleProjectAutomationAction(w http.ResponseWriter, proje
 		err = validateProjectStorageBoundary(project.RepoRoot, project.VaultRoot)
 	}
 	if err == nil {
+		_, err = setProjectLocalConfigWithReadback(project.VaultRoot, "automation.enabled", enabled)
+	}
+	if err == nil {
 		err = s.store.SetProjectEnabled(projectID, enabled)
 	}
 	if err != nil {
@@ -279,6 +283,39 @@ func (s *serveServer) handleProjectAutomationAction(w http.ResponseWriter, proje
 	})
 }
 
+func (s *serveServer) handleProjectSettingsAction(w http.ResponseWriter, projectID string, body serveActionBody) {
+	loaded, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true, ProjectID: projectID})
+	if err != nil || len(loaded) != 1 {
+		if err == nil {
+			err = tuskerError(errorNotFound, "project not found: "+projectID)
+		}
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker projects settings", "", err))
+		return
+	}
+	project := loaded[0].Project
+	var key string
+	var value any
+	if mode := body.string("workspaceMode"); mode != "" {
+		if !validWorkspaceStrategy(mode) {
+			serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "invalid workspace mode"})
+			return
+		}
+		key, value = "workspace.strategy", mode
+	} else if limit := body.string("maxActiveRunsPerProject"); limit != "" {
+		n, parseErr := strconv.Atoi(limit)
+		if parseErr != nil || n < 1 {
+			serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "concurrency must be positive"})
+			return
+		}
+		key, value = "runtime.max_active_runs_per_project", n
+	} else {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "no supported setting supplied"})
+		return
+	}
+	_, err = setProjectLocalConfigWithReadback(project.VaultRoot, key, value)
+	serveJSON(w, http.StatusOK, serveCommandResult("tusker projects settings", "", err))
+}
+
 func (s *serveServer) handleTaskStatusAction(w http.ResponseWriter, taskID string, body serveActionBody) {
 	status := strings.ToLower(firstNonEmpty(body.string("status"), body.string("to")))
 	if status == "" {
@@ -296,6 +333,10 @@ func (s *serveServer) handleTaskStatusAction(w http.ResponseWriter, taskID strin
 	args["reason"] = firstNonEmpty(body.string("reason"), "operator action from serve")
 	if actor := body.string("actor", "by"); actor != "" {
 		args["by"] = actor
+	} else if status == "rework" {
+		if action := s.humanActionForTask(project.ProjectID, args["id"]); action != nil {
+			args["by"] = s.humanActionOwner(project.ProjectID, action.GateID)
+		}
 	}
 	if body.bool("force") {
 		args["force"] = "true"
@@ -306,6 +347,55 @@ func (s *serveServer) handleTaskStatusAction(w http.ResponseWriter, taskID strin
 	s.invalidateProjectSnapshot(project.ProjectID)
 	s.decorateTaskActionResultForProject(&result, args["id"], project.ProjectID)
 	serveJSON(w, http.StatusOK, result)
+}
+
+func (s *serveServer) handleTaskDiscardAction(w http.ResponseWriter, taskID string, body serveActionBody) {
+	args, project, projectErr := serveBaseArgsForBody(s, body)
+	if projectErr != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker discard", "", projectErr))
+		return
+	}
+	args["id"] = strings.ToUpper(strings.TrimSpace(taskID))
+	impact, err := v7DiscardImpactForTask(project.VaultRoot, args["id"])
+	if err != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker discard "+args["id"]+" --dry-run", "", err))
+		return
+	}
+	servedImpact := serveDiscardImpactFromV7(impact)
+	if body.bool("dryRun") || body.bool("dry_run") {
+		serveJSON(w, http.StatusOK, serveActionResult{
+			OK: true, Reason: "discard impact calculated", TaskID: args["id"], Discard: &servedImpact,
+		})
+		return
+	}
+	args["reason"] = body.string("reason")
+	args["dependents"] = body.string("dependents")
+	if actor := body.string("actor", "by"); actor != "" {
+		args["by"] = actor
+	}
+	output, err := serveInvokeCommand(args, discardV7Cmd)
+	result := serveCommandResult("tusker discard "+args["id"], output, err)
+	result.TaskID = args["id"]
+	result.Discard = &servedImpact
+	s.invalidateProjectSnapshot(project.ProjectID)
+	s.decorateTaskActionResultForProject(&result, args["id"], project.ProjectID)
+	serveJSON(w, http.StatusOK, result)
+}
+
+func serveDiscardImpactFromV7(impact v7DiscardImpact) serveDiscardImpact {
+	convert := func(rows []v7DiscardDependent) []serveDiscardDependent {
+		out := make([]serveDiscardDependent, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, serveDiscardDependent{ID: row.ID, Title: row.Title, Status: row.Status})
+		}
+		return out
+	}
+	return serveDiscardImpact{
+		TaskID: impact.TaskID, Title: impact.Title, Status: impact.Status,
+		DirectDependents: convert(impact.DirectDependents), CascadeDependents: convert(impact.CascadeDependents),
+		OpenGates: append([]string{}, impact.OpenGates...), RequiresResolution: impact.RequiresResolution,
+		PreservesHistory: impact.PreservesHistory,
+	}
 }
 
 func (s *serveServer) handleTaskCloseAction(w http.ResponseWriter, taskID string, body serveActionBody) {
@@ -397,6 +487,10 @@ func (s *serveServer) handleGateAction(w http.ResponseWriter, gateID, action str
 	}
 	if actor := body.string("actor", "by"); actor != "" {
 		args["by"] = actor
+	} else if owner := s.humanActionOwner(project.ProjectID, args["id"]); owner != "" {
+		// Completing an owner action must be recorded as that human owner, not
+		// silently attributed to the default agent actor.
+		args["by"] = owner
 	}
 	if body.bool("force") {
 		args["force"] = "true"
@@ -407,8 +501,31 @@ func (s *serveServer) handleGateAction(w http.ResponseWriter, gateID, action str
 	s.invalidateProjectSnapshot(project.ProjectID)
 	if gate := s.findGateDetailForProject(args["id"], project.ProjectID); gate != nil {
 		result.Gate = gate
+		taskIDParts := append([]string{body.string("taskId", "task_id", "task")}, gate.Blocks...)
+		taskID := firstNonEmpty(taskIDParts...)
+		s.decorateTaskActionResultForProject(&result, taskID, project.ProjectID)
 	}
 	serveJSON(w, http.StatusOK, result)
+}
+
+func (s *serveServer) humanActionForTask(projectID, taskID string) *serveHumanAction {
+	snap, err := s.loadFreshSnapshotForProject(projectID)
+	if err != nil {
+		return nil
+	}
+	task, ok := snap.notesByID[taskID]
+	if !ok || serveNoteKind(task) != "task" {
+		return nil
+	}
+	return serveHumanActionForTask(snap, task)
+}
+
+func (s *serveServer) humanActionOwner(projectID, gateID string) string {
+	detail := s.findGateDetailForProject(gateID, projectID)
+	if detail == nil || !serveHumanOwner(detail.Owner) {
+		return ""
+	}
+	return detail.Owner
 }
 
 func (s *serveServer) handleEvidenceAddAction(w http.ResponseWriter, body serveActionBody) {
@@ -591,6 +708,7 @@ func (s *serveServer) decorateTaskActionResultForProject(result *serveActionResu
 		KnowledgeDelta:   sectionContent(task.Body, "## Knowledge delta"),
 		Deps:             serveTaskDeps(snap, task),
 		Gates:            serveGatesForTask(snap, taskID),
+		HumanAction:      serveHumanActionForTask(snap, task),
 		RunHistory:       serveRunHistory(s, snap, taskID),
 	}
 	result.Task = &detail
@@ -870,7 +988,6 @@ func (s *serveServer) serveAttemptDetail(run RunStatus, attempt RunAttempt) serv
 		StartedAt:      attempt.StartedAt,
 		FinishedAt:     attempt.FinishedAt,
 		DurationSec:    serveDurationSec(attempt.StartedAt, firstNonEmpty(attempt.FinishedAt, run.UpdatedAt), s.now()),
-		Tokens:         serveTokenTotalsForTurns(turns),
 		WorkspacePath:  attempt.WorkspacePath,
 		BranchName:     attempt.BranchName,
 		PullRequestURL: attempt.PullRequestURL,
@@ -890,15 +1007,20 @@ func serveGateDetailFromNote(gate Note) serveGateDetail {
 	base := serveGateFromNote(gate)
 	status := stringField(gate.Data, "status")
 	reason := firstNonEmpty(stringField(gate.Data, "waive_reason"), stringField(gate.Data, "obsolete_reason"))
+	title := stringField(gate.Data, "title")
 	return serveGateDetail{
-		serveGate: base,
-		Title:     stringField(gate.Data, "title"),
-		Status:    status,
-		Blocking:  boolField(gate.Data, "blocking"),
-		Blocks:    normalizeList(gate.Data["blocks"]),
-		Reason:    reason,
-		UpdatedAt: stringField(gate.Data, "updated_at"),
-		Body:      gate.Body,
+		serveGate:           base,
+		Title:               title,
+		Status:              status,
+		Blocking:            boolField(gate.Data, "blocking"),
+		Blocks:              serveGateBlockIDs(gate),
+		Reason:              reason,
+		UpdatedAt:           stringField(gate.Data, "updated_at"),
+		Body:                gate.Body,
+		Action:              firstNonEmpty(stringField(gate.Data, "action"), sectionContent(gate.Body, "## Action"), title),
+		WhyAgentCannot:      firstNonEmpty(stringField(gate.Data, "why_agent_cannot"), sectionContent(gate.Body, "## Why agent cannot do this")),
+		CompletionCondition: firstNonEmpty(stringField(gate.Data, "verification"), sectionContent(gate.Body, "## Verification")),
+		HumanOwned:          serveHumanOwner(stringField(gate.Data, "owner")),
 	}
 }
 

@@ -3,14 +3,14 @@ schema: "tusker.project-skill/v7"
 kind: "project_skill"
 name: "project-knowledge"
 project: "tusker"
+status: "current"
+description: "Route agents through this repository's V7 domain canon without publishing task proof or runtime state."
 capsule:
   skip_when:
     - "You only need task lifecycle, proof, gates, or closeout mechanics."
   use_when:
     - "Choosing project/domain context before implementation."
   what: "Repo project knowledge router for Tusker V7 domain canon."
-status: "current"
-description: "Route agents through this repository's V7 domain canon without publishing task proof or runtime state."
 operator_skill: "tusker"
 source_of_truth:
   - "knowledge/domains"
@@ -19,8 +19,8 @@ canonical_files:
   - "knowledge/domains/*/INDEX.md"
   - "knowledge/domains/*/CANON.md"
 created_at: "2026-07-05T17:58:21Z"
-updated_at: "2026-07-07T10:40:35Z"
-state_rev: "sha256:de58933ddce32e98bba70739b8a39af909d4dd5ca813def31f18e78893b9025f"
+updated_at: "2026-07-11T08:46:17Z"
+state_rev: "sha256:65c6b2064f05880704c755de9b98a738ed09a1ff6fa48d77fce52fef0f31a73a"
 ---
 
 # Project Knowledge Skill

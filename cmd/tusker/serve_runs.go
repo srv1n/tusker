@@ -27,12 +27,18 @@ func (s *serveServer) runSummary(snap serveSnapshot, run RunStatus) serveRunSumm
 		taskTitle = firstNonEmpty(stringField(task.Data, "title"), taskID)
 	}
 	turns, _ := s.store.ListTurnsForRun(run.ProjectID, run.RecordID)
+	identity, _ := s.store.RunIdentity(run.ProjectID, run.RecordID)
+	workspacePath, workspaceMode := run.WorkspacePath, "shared"
+	if identity != nil {
+		workspacePath, workspaceMode = identity.WorkspacePath, identity.WorkspaceMode
+	}
 	return serveRunSummary{
 		TaskID:            taskID,
 		TaskTitle:         taskTitle,
 		ProjectID:         firstNonEmpty(run.ProjectID, snap.projectID),
 		Runner:            serveRunner(run.Runner),
 		RunnerName:        run.Runner,
+		RunnerProfile:     run.RunnerProfile,
 		Model:             nil,
 		Lane:              serveLane(run.Lane),
 		LeaseState:        serveLeaseState(run.LeaseState),
@@ -42,12 +48,15 @@ func (s *serveServer) runSummary(snap serveSnapshot, run RunStatus) serveRunSumm
 		ElapsedSec:        serveRunElapsedSec(run, s.now()),
 		SinceLastEventSec: serveSinceSec(firstNonEmpty(run.LastEventAt, run.UpdatedAt), s.now()),
 		Liveness:          serveRunLiveness(run, s.now()),
-		Tokens:            serveTokenTotalsForTurns(turns),
 		AttemptCount:      maxInt(run.AttemptCount, len(turnsByAttempt(turns))),
 		Terminal:          run.Terminal,
 		Error:             nullIfBlank(run.LastError),
 		LastHeartbeatAt:   nullIfBlank(run.LastHeartbeatAt),
 		NextWakeAt:        nullIfBlank(run.NextRetryAt),
+		WorkspacePath:     workspacePath,
+		WorkspaceMode:     workspaceMode,
+		StartedAt:         run.StartedAt,
+		UpdatedAt:         run.UpdatedAt,
 	}
 }
 
@@ -278,15 +287,6 @@ func serveDurationSec(start, end string, now time.Time) int {
 		}
 	}
 	return maxInt(0, int(endAt.Sub(startAt).Seconds()))
-}
-
-func serveTokenTotalsForTurns(turns []RunTurn) serveTokenTotals {
-	var total serveTokenTotals
-	for _, turn := range turns {
-		total.Input += turn.InputTokens
-		total.Output += turn.OutputTokens
-	}
-	return total
 }
 
 func turnsByAttempt(turns []RunTurn) map[string]struct{} {

@@ -14,6 +14,7 @@ import { ProofChip } from "@/components/ui/chips";
 import { relativeTime } from "@/lib/time";
 import { gateKindLabel, gateKindTone } from "@/components/ui/tone";
 import { useConfirm, ActionResultLine } from "@/components/ui/action-feedback";
+import { HumanActionCard } from "@/features/human-action/HumanActionCard";
 import {
   useCloseTask,
   useGateAction,
@@ -56,18 +57,13 @@ const CARD_INTERACTIVE_TARGET = "a,button,input,textarea,select,label,[contented
 /**
  * The backing gate id for clarify/provision/approve-spec needs.
  *
- * SEAM / BACKEND-GAP: `NeedItem` does not yet carry a first-class `gateId`
- * field (see types/domain.ts). The needs feed encodes it into the need id as
- * `need-gate-<gateId>` (features/inbox/deriveNeeds.ts), so we parse it back out
- * here. When /api/needs surfaces `gateId` directly on the gate-kind variants,
- * read that field instead and delete this parse. If the id is not in that
- * shape we return null and the action refuses visibly rather than firing a
- * satisfy against the wrong gate.
+ * Live needs carry gateId directly. The encoded-id fallback keeps old cached
+ * payloads actionable across a rolling daemon/UI restart.
  */
 function gateIdOf(need: NeedItem): string | null {
-  return need.id.startsWith(GATE_NEED_ID_PREFIX)
+  return need.gateId ?? (need.id.startsWith(GATE_NEED_ID_PREFIX)
     ? need.id.slice(GATE_NEED_ID_PREFIX.length)
-    : null;
+    : null);
 }
 
 const NO_GATE_ERROR = () =>
@@ -141,6 +137,18 @@ export function NeedCard({ need, showProject = false }: { need: NeedItem; showPr
   const gateAction = useGateAction();
 
   if (gone) return null;
+
+  if (need.humanAction) {
+    return (
+      <HumanActionCard
+        action={need.humanAction}
+        taskId={need.taskId}
+        taskTitle={need.taskTitle}
+        projectId={need.projectId}
+        blockedTaskIds={need.blockedTaskIds}
+      />
+    );
+  }
 
   const t = gateKindTone[need.kind];
   const Icon = kindIcon[need.kind];

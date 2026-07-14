@@ -65,7 +65,7 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
-function withProject(path: string, projectId?: string): string {
+export function withProject(path: string, projectId?: string): string {
   if (!projectId) return path;
   return `${path}${path.includes("?") ? "&" : "?"}project=${encodeURIComponent(projectId)}`;
 }
@@ -116,6 +116,9 @@ export const api = {
       ? delay({ ok: true, reason: `Daemon automation ${enabled ? "enabled" : "disabled"}`, projectId })
       : post(`/projects/${projectId}/automation`, { enabled }),
 
+  setProjectSettings: (projectId: string, body: { workspaceMode?: string; maxActiveRunsPerProject?: number }): Promise<ActionResult> =>
+    USE_MOCK ? delay({ ok: true, reason: "Project settings saved", projectId }) : post(`/projects/${projectId}/settings`, body),
+
   refreshProject: (projectId: string): Promise<ActionResult> =>
     USE_MOCK
       ? delay({ ok: true, reason: "Targeted project refresh queued (mock).", projectId })
@@ -126,7 +129,7 @@ export const api = {
   // a stored or hand-flagged list. This derivation should move server-side once
   // the daemon exposes gates/rework/wave-boundary state (SRV-T-0002; BACKEND-GAPS).
   needs: (projectId?: string): Promise<NeedItem[]> => {
-    if (!USE_MOCK) return real(`/needs${projectId ? `?project=${projectId}` : ""}`);
+    if (!USE_MOCK) return real(withProject("/needs", projectId));
     const all = deriveNeeds({
       capsules: fx.taskCapsules,
       details: fx.taskDetails,
@@ -139,10 +142,14 @@ export const api = {
   runs: (projectId?: string): Promise<RunSummary[]> =>
     USE_MOCK
       ? delay(projectId ? fx.runs.filter((r) => r.projectId === projectId) : fx.runs)
-      : real(`/runs${projectId ? `?project=${projectId}` : ""}`),
+      : real(withProject("/runs", projectId)),
 
-  reviewBatch: (projectId?: string): Promise<TaskCapsule[]> =>
-    USE_MOCK ? delay(fx.taskCapsules.filter((task) => task.status === "review")) : real(withProject("/review/batch", projectId)),
+  reviewBatch: (projectId?: string): Promise<TaskCapsule[]> => {
+    const review = fx.taskCapsules.filter((task) => task.status === "review");
+    return USE_MOCK
+      ? delay(projectId ? review.filter((task) => task.projectId === projectId) : review)
+      : real(withProject("/review/batch", projectId));
+  },
 
   // GET /api/runs/:taskId
   run: (taskId: string, projectId?: string): Promise<RunDetail> => {
@@ -177,6 +184,23 @@ export const api = {
 
   taskStatus: (taskId: string, body: { status: string; reason?: string; actor?: string; force?: boolean }, projectId?: string): Promise<ActionResult> =>
     USE_MOCK ? delay({ ok: true, reason: `status -> ${body.status}`, taskId }) : post(withProject(`/tasks/${taskId}/status`, projectId), body),
+
+  discardTask: (
+    taskId: string,
+    body: { dryRun?: boolean; reason?: string; actor?: string; dependents?: "detach" | "discard" },
+    projectId?: string,
+  ): Promise<ActionResult> =>
+    USE_MOCK
+      ? delay({
+          ok: true,
+          reason: body.dryRun ? "discard impact calculated" : "task discarded",
+          taskId,
+          discard: {
+            taskId, title: taskId, status: "ready", directDependents: [], cascadeDependents: [],
+            openGates: [], requiresResolution: false, preservesHistory: true,
+          },
+        })
+      : post(withProject(`/tasks/${taskId}/discard`, projectId), body),
 
   closeTask: (taskId: string, body: { reason?: string; actor?: string; force?: boolean }, projectId?: string): Promise<ActionResult> =>
     USE_MOCK ? delay({ ok: true, reason: "task accepted", taskId }) : post(withProject(`/tasks/${taskId}/close`, projectId), body),

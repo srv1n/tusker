@@ -204,7 +204,7 @@ func TestPlanGateUsesCanonicalStateFromRunnerWorkspace(t *testing.T) {
 	}
 	assertEqual(t, true, payload.OK, "canonical plan ok")
 	assertEqual(t, "dispatch", payload.Plan.Decision, "canonical plan decision")
-	assertEqual(t, vault, payload.Plan.Project.VaultRoot, "canonical vault")
+	assertEqual(t, canonicalProjectPath(vault), payload.Plan.Project.VaultRoot, "canonical vault")
 	assertEqual(t, true, payload.Plan.Project.Registered, "registered project")
 	for _, blocker := range payload.Plan.Blockers {
 		if strings.Contains(blocker, "status is review") || strings.Contains(blocker, "waiting_on_review") || strings.Contains(blocker, "existing run is running") {

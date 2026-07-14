@@ -8,16 +8,16 @@ status: "ready"
 owner: "human:sarav"
 priority: "p2"
 domains: []
-capsule:
-  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
-  use_when: "Use to triage needs-me queue, read/edit UI, runtime-store API, and embedded SPA work."
-  what: "SRV epic for the local Tusker Serve control-room UI and JSON API."
 next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:16:22Z"
-updated_at: "2026-07-11T01:54:12Z"
-state_rev: "sha256:ce68868dbdc1f86e0bbe1a681483ca362af5440bb5e336541a5808bafc946354"
+updated_at: "2026-07-14T07:00:05Z"
+state_rev: "sha256:a8c5c049c5cad673abdf2cab3560548f752fe42666c0f589fcf198ccb36467cd"
+capsule:
+  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
+  use_when: "Use to triage needs-me queue, read/edit UI, runtime-store API, and embedded SPA work."
+  what: "SRV epic for the local Tusker Serve control-room UI and JSON API."
 ---
 
 # SRV · Tusker Serve: local control-room UI
@@ -40,7 +40,7 @@ TBD.
 
 | Gate | Owner | Blocks | Action |
 |---|---|---|---|
-| [[SRV-G-0002]] | human:sarav | [[SRV-T-0023]] | Open /panel?shell=1 at 420x640 and verify sections, stream refresh, no horizontal scroll, chrome hiding, client-side navigation, and the Open Tusker header shortcut. |
+| _None._ |  |  |  |
 
 ## Active work
 
@@ -60,9 +60,16 @@ TBD.
 | [[SRV-T-0020]] | ready | agent | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0021]] | review | reviewer | Review evidence and close or return to rework. |
 | [[SRV-T-0022]] | review | reviewer | Review evidence and close or return to rework. |
-| [[SRV-T-0023]] | ready | human:sarav | Accept, waive, or return rework for SRV-G-0002. |
+| [[SRV-T-0023]] | review | reviewer | Review evidence and close or return to rework. |
 | [[SRV-T-0024]] | review | reviewer | Review evidence and close or return to rework. |
 | [[SRV-T-0025]] | review | reviewer | Review evidence and close or return to rework. |
+| [[SRV-T-0026]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[SRV-T-0027]] | backlog | blocked_dependency | Wait for dependency SRV-T-0026 to reach review with satisfied proof or done. |
+| [[SRV-T-0028]] | review | reviewer | Review evidence and close or return to rework. |
+| [[SRV-T-0029]] | review | reviewer | Review evidence and close or return to rework. |
+| [[SRV-T-0031]] | review | reviewer | Review evidence and close or return to rework. |
+| [[SRV-T-0032]] | review | reviewer | Review evidence and close or return to rework. |
+| [[SRV-T-0033]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 
@@ -80,3 +87,4 @@ TBD.
 | [[SRV-T-0015]] | human:sarav | 2026-07-08T06:14:48Z |
 | [[SRV-T-0016]] | human:sarav | 2026-07-08T06:14:48Z |
 | [[SRV-T-0017]] | human:sarav | 2026-07-08T07:12:47Z |
+| [[SRV-T-0030]] | reviewer:agent | 2026-07-14T04:59:28Z |

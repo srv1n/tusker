@@ -31,7 +31,7 @@ import {
   selectableIds,
 } from "@/features/work/work-utils";
 import type { Selection } from "@/features/work/selection";
-import { GateMarker, SortIcon } from "@/features/work/WorkParts";
+import { GateMarker, GateSummary, SortIcon } from "@/features/work/WorkParts";
 
 /**
  * Shared column grid so header and every row column-align. Below md the table
@@ -178,12 +178,20 @@ function TaskRow({
           "group min-w-0 flex-1 rounded-md border-b border-line-soft px-2.5 py-2 transition-colors last:border-b-0 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/30",
         )}
       >
-        <div className="flex min-w-0 items-baseline gap-2">
-          <Mono className="flex-none text-[10.5px] text-faint">{task.id}</Mono>
-          <span className="truncate text-[13.5px] font-medium text-ink">{task.title}</span>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <Mono className="flex-none text-[10.5px] text-faint">{task.id}</Mono>
+            <span className="truncate text-[13.5px] font-medium text-ink">{task.title}</span>
+            {task.latestAttemptOutcome && <Mono className="flex-none text-[9.5px] text-faint">{task.latestAttemptOutcome}{task.liveRun ? " · live" : ""}</Mono>}
+          </div>
+          {(task.openGates?.length ?? 0) > 0 && (
+            <div className="mt-1.5 space-y-1">
+              {task.openGates!.map((gate) => <GateSummary key={gate.id} gate={gate} compact />)}
+            </div>
+          )}
         </div>
         <div className="flex justify-start">
-          <StatusChip status={task.status} />
+          <StatusChip status={task.rawStatus ?? task.status} />
         </div>
         <div className="hidden justify-start md:flex">
           <PriorityChip priority={task.priority} />
@@ -192,7 +200,7 @@ function TaskRow({
           <RiskChip risk={task.risk} />
         </div>
         <div className="hidden justify-center md:flex">
-          {task.hasGate ? <GateMarker /> : <span className="text-fainter">·</span>}
+          {task.hasGate ? <span className="inline-flex items-center gap-1"><GateMarker /><Mono className="text-[9px] text-warn">{task.openGates?.length ?? 1}</Mono></span> : <span className="text-fainter">·</span>}
         </div>
         <div className="hidden min-w-0 justify-start md:flex">
           {grouped ? null : <Mono className="truncate text-[10.5px] text-faint">{task.epicId}</Mono>}

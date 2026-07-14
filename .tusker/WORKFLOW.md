@@ -59,13 +59,13 @@ runtime:
   budget:
     daily_input_tokens: 20000000
     daily_output_tokens: 1000000
-    enabled: true
+    enabled: false
     per_attempt_input_tokens: 2000000
     per_attempt_output_tokens: 100000
     per_task_input_tokens: 6000000
     per_task_output_tokens: 300000
   lease_ttl_ms: 900000
-  max_active_runs_per_project: 2
+  max_active_runs_per_project: 1
   max_continuation_retries: 3
   poll_interval_ms: 30000
 tracker:
@@ -82,8 +82,8 @@ tracker:
 tracker_schema_version: 7
 workflow_version: 1
 workspace:
-  root: "workspaces"
-  strategy: "worktree"
+  root: "."
+  strategy: "shared"
 ---
 
 ## Routing

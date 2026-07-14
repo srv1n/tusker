@@ -14,15 +14,16 @@ import {
   type FrontmatterUpdateInput,
 } from "@/lib/frontmatter";
 import { liveRefetchInterval } from "@/lib/stream";
+import { projectQueryScope } from "@/lib/queryScope";
 import type { DocContent, DocListEntry, RunDetail, TaskCapsule, TaskDetail } from "@/types/domain";
 
 /** Query-key factory. */
 export const qk = {
   daemon: ["daemon"] as const,
   projects: ["projects"] as const,
-  needs: (projectId?: string) => ["needs", projectId ?? "all"] as const,
-  runs: (projectId?: string) => ["runs", projectId ?? "all"] as const,
-  reviewBatch: (projectId?: string) => ["review", "batch", projectId ?? "all"] as const,
+  needs: (projectId?: string) => ["needs", ...projectQueryScope(projectId)] as const,
+  runs: (projectId?: string) => ["runs", ...projectQueryScope(projectId)] as const,
+  reviewBatch: (projectId?: string) => ["review", "batch", ...projectQueryScope(projectId)] as const,
   run: (taskId: string, projectId?: string) => ["run", projectId ?? "all", taskId] as const,
   epics: (projectId?: string) => ["epics", projectId ?? "all"] as const,
   waves: (projectId?: string) => ["waves", projectId ?? "all"] as const,
@@ -65,27 +66,37 @@ export const useProjectAutomation = (projectId: string) => {
   });
 };
 
+export const useProjectSettings = (projectId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { workspaceMode?: string; maxActiveRunsPerProject?: number }) => api.setProjectSettings(projectId, body),
+    onSettled: () => void qc.invalidateQueries({ queryKey: qk.projects }),
+  });
+};
+
 export const useProjectRefresh = (projectId: string) =>
   useMutation({
     mutationFn: () => api.refreshProject(projectId),
   });
 
-export const useNeeds = (projectId?: string) =>
+export const useNeeds = (projectId?: string, enabled = true) =>
   useQuery({
     queryKey: qk.needs(projectId),
     queryFn: () => api.needs(projectId),
+    enabled,
     refetchInterval: liveRefetchInterval,
   });
 
-export const useRuns = (projectId?: string) =>
+export const useRuns = (projectId?: string, enabled = true) =>
   useQuery({
     queryKey: qk.runs(projectId),
     queryFn: () => api.runs(projectId),
+    enabled,
     refetchInterval: liveRefetchInterval,
   });
 
-export const useReviewBatch = (projectId?: string) =>
-  useQuery({ queryKey: qk.reviewBatch(projectId), queryFn: () => api.reviewBatch(projectId), refetchInterval: liveRefetchInterval });
+export const useReviewBatch = (projectId?: string, enabled = true) =>
+  useQuery({ queryKey: qk.reviewBatch(projectId), queryFn: () => api.reviewBatch(projectId), enabled, refetchInterval: liveRefetchInterval });
 
 export function interruptedRunReadbackComplete(run: RunDetail | undefined): boolean {
   return run?.leaseStateRaw === "interrupted" && run.processRunning === false;
@@ -211,6 +222,15 @@ export const useTaskStatusAction = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { status: string; reason?: string; actor?: string; force?: boolean }) => api.taskStatus(taskId, body, projectId),
+    onSettled: () => invalidateOperatorState(qc, taskId, projectId),
+  });
+};
+
+export const useDiscardTask = (taskId: string, projectId?: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { dryRun?: boolean; reason?: string; actor?: string; dependents?: "detach" | "discard" }) =>
+      api.discardTask(taskId, body, projectId),
     onSettled: () => invalidateOperatorState(qc, taskId, projectId),
   });
 };

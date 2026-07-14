@@ -15,12 +15,20 @@ Use `packet --for explainer` when a human needs to understand a change before or
 ## Work State
 
 ```bash
-tusker status <TASK-ID> ready|review|rework|done|cancelled|superseded --by <actor> --reason "<reason>"
+tusker status <TASK-ID> idea|backlog|ready|review|rework|superseded --by <actor> --reason "<reason>"
+tusker discard <TASK-ID> --dry-run
+tusker discard <TASK-ID> --reason "<reason>" [--dependents detach|discard] --by <actor>
 tusker finish <TASK-ID> --request-review
 tusker reconcile
 ```
 
 Do not set a V7 task to `active`. That is legacy vocabulary and must not be reintroduced.
+
+Do not set `cancelled` directly. `tusker discard` is the abandonment ceremony:
+it preserves the tombstone and history, retires runtime execution, obsoletes
+open gates, and refuses unresolved downstream dependencies until the operator
+explicitly detaches them or discards the downstream closure. Run `--dry-run`
+before committing when a task may have dependents.
 
 ## Skill Installs
 

@@ -11,6 +11,24 @@ idea -> backlog -> ready -> review -> done
 
 Terminal statuses are `done`, `cancelled`, and `superseded`.
 
+## Discarding Abandoned Work
+
+`cancelled` is the durable tombstone for work an operator no longer intends to
+execute. Use `tusker discard <TASK-ID> --dry-run` to inspect open gates and the
+downstream dependency closure, then discard with a required reason.
+
+Discard preserves the task, attempts, evidence, events, and IDs; retires live
+runtime rows; obsoletes open gates; and removes the task from active work views.
+It never physically deletes tracker history.
+
+When active tasks depend on the target, discard refuses until the operator
+explicitly chooses one resolution:
+
+- `--dependents detach` removes the target prerequisite from each direct dependent;
+- `--dependents discard` cancels the complete downstream dependency closure.
+
+Never remove dependency edges or cascade cancellation implicitly.
+
 Do not use `active` as a durable task state. `claimed`, `running`, `leased`, and `interrupted` are runtime states on runs, leases, sessions, attempts, and workspaces.
 
 Human-only review becomes `readiness: waiting_on_human` with `next_owner: human:<name>` and `agent_action: stop_until_human_response`.

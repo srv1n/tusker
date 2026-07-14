@@ -14,7 +14,8 @@ import (
 
 func TestDaemonAutoAdvanceExternalCollectsAndDispatchesApplyInput(t *testing.T) {
 	vault := automationTestVault(t)
-	writeDaemonExternalLoopConfig(t, vault, `python3 -c 'import time; time.sleep(5)'`)
+	installCodexSleepShimForTest(t)
+	writeDaemonExternalLoopConfig(t, vault, defaultCodexExecCommand())
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon auto advance", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
@@ -441,7 +442,7 @@ func TestDispatchExternalApplyInputPreservesConcurrentLeaseAdvance(t *testing.T)
 	// is a harmless sleep that the deferred killRunProcess reaps.
 	wfFile.Data.Agents.Default = "test-dispatch"
 	wfFile.Data.Agents.Enabled = append(wfFile.Data.Agents.Enabled, "test-dispatch")
-	wfFile.Data.Runners["test-dispatch"] = RunnerDefinition{Kind: string(RunnerCodexExec), Command: "sleep 30"}
+	wfFile.Data.Runners["test-dispatch"] = RunnerDefinition{Kind: string(RunnerCodexExec), Command: defaultCodexExecCommand()}
 	note, err := resolveNote(vault, "APP-T-0001")
 	if err != nil {
 		t.Fatal(err)

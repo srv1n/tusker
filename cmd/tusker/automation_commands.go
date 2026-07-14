@@ -149,8 +149,6 @@ type automationStatusReport struct {
 	ParkedRuns          int                        `json:"parked_runs"`
 	MaxActiveRuns       int                        `json:"max_active_runs"`
 	LimitSource         string                     `json:"limit_source"`
-	ParkedBudgetRuns    int                        `json:"parked_budget_runs"`
-	BudgetCircuit       any                        `json:"budget_circuit"`
 	CrashLoop           any                        `json:"crash_loop"`
 	InvariantCircuit    any                        `json:"invariant_circuit"`
 	DiskPressure        DiskPressureStatus         `json:"disk_pressure"`
@@ -193,8 +191,6 @@ func automationStatusCmd(args Args) error {
 		ParkedRuns:          intFromAny(status["parkedNoProgressRuns"]),
 		MaxActiveRuns:       intFromAny(status["max_active_runs"]),
 		LimitSource:         stringValue(status["limit_source"]),
-		ParkedBudgetRuns:    intFromAny(status["parkedBudgetRuns"]),
-		BudgetCircuit:       status["budgetCircuit"],
 		CrashLoop:           status["crashLoop"],
 		InvariantCircuit:    status["invariantCircuit"],
 		DiskPressure:        diskPressureStatusFromAny(status["disk_pressure"]),
@@ -271,6 +267,9 @@ func automationPlanCmd(args Args) error {
 }
 
 func automationDispatchCmd(args Args) error {
+	if err := rejectAgentSpawn("tusker automation dispatch"); err != nil {
+		return err
+	}
 	taskID, err := requireArg(args, "id")
 	if err != nil {
 		return err
@@ -808,7 +807,7 @@ func automationRunBlocker(run RunStatus, now time.Time) string {
 		}
 		return "existing run is parked_no_progress; update the task revision before redispatch"
 	case LeaseStateParkedBudget:
-		return "existing run is parked_budget; run `tusker redrive " + firstNonEmpty(run.ItemID, run.RecordID) + " --reason <why>` before redispatch"
+		return ""
 	case LeaseStateReleased:
 		return "existing run is released; update the task revision before redispatch"
 	default:

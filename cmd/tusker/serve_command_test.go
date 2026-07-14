@@ -68,6 +68,7 @@ func TestServeNeedsSignals(t *testing.T) {
 	serveDecode(t, server, "/api/tasks/APP-T-0001", &criticalTask)
 	assertEqual(t, "critical", criticalTask.Risk, "critical risk passthrough")
 	assertEqual(t, "provision", byID["need-gate-APP-G-0001"]["kind"], "gate need kind")
+	assertEqual(t, "APP-G-0001", byID["need-gate-APP-G-0001"]["gateId"], "gate need identity")
 	assertEqual(t, float64(2), byID["need-review-APP-T-0004"]["reworkCount"], "rework bounce count")
 }
 
@@ -89,6 +90,58 @@ func TestServeNeedsEmptyReturnsArray(t *testing.T) {
 	if needs == nil || len(needs) != 0 {
 		t.Fatalf("expected decoded empty needs slice, got %#v", needs)
 	}
+}
+
+func TestServeGateNeedAppearsOnceWithEveryBlockedTask(t *testing.T) {
+	tasks := []Note{
+		{Data: map[string]any{"kind": "task", "id": "APP-T-0001", "title": "First", "status": "ready", "priority": "p1", "risk": "medium"}},
+		{Data: map[string]any{"kind": "task", "id": "APP-T-0002", "title": "Second", "status": "ready", "priority": "p1", "risk": "medium"}},
+	}
+	gate := Note{Data: map[string]any{
+		"kind": "gate", "id": "APP-G-0001", "title": "Approve both", "gate_kind": "signoff",
+		"status": "open", "owner": "human:sarav", "blocking": true,
+		"blocks": []any{"APP-T-0001", "[[APP-T-0002]]"}, "action": "Review both tasks.",
+	}}
+	snap := serveSnapshot{projectID: "app", projectName: "App", tasks: tasks, gates: []Note{gate}, queue: map[string]automationTaskExplanation{}}
+	needs := serveNeeds(snap, time.Now())
+	if len(needs) != 1 {
+		t.Fatalf("expected one need for one gate, got %#v", needs)
+	}
+	assertEqual(t, "APP-G-0001", needs[0]["gateId"], "first-class gate identity")
+	assertEqual(t, []string{"APP-T-0001", "APP-T-0002"}, needs[0]["blockedTaskIds"], "all blocked tasks")
+}
+
+func TestServeDiscardPreflightAndDetachFlow(t *testing.T) {
+	server := newServeFixture(t)
+	var preview serveActionResult
+	servePost(t, server, "/api/tasks/APP-T-0005/discard?project=app", `{"dryRun":true}`, &preview)
+	if !preview.OK || preview.Discard == nil {
+		t.Fatalf("expected discard impact, got %#v", preview)
+	}
+	assertEqual(t, true, preview.Discard.RequiresResolution, "serve discard dependency resolution")
+	assertEqual(t, "APP-T-0006", preview.Discard.DirectDependents[0].ID, "serve discard dependent")
+
+	var refused serveActionResult
+	servePost(t, server, "/api/tasks/APP-T-0005/discard?project=app", `{"reason":"No longer planned."}`, &refused)
+	if !refused.Refused {
+		t.Fatalf("expected unresolved discard refusal, got %#v", refused)
+	}
+
+	var discarded serveActionResult
+	servePost(t, server, "/api/tasks/APP-T-0005/discard?project=app", `{"reason":"No longer planned.","dependents":"detach"}`, &discarded)
+	if !discarded.OK || discarded.Refused {
+		t.Fatalf("expected discard success, got %#v", discarded)
+	}
+	data, _, err := parseFrontmatterMustRead(filepath.Join(server.vaultPath, "work", "tasks", "APP-T-0005.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "cancelled", stringField(data, "status"), "serve discarded task status")
+	dependent, _, err := parseFrontmatterMustRead(filepath.Join(server.vaultPath, "work", "tasks", "APP-T-0006.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, []string{}, normalizeList(dependent["dependencies"]), "serve detached dependency")
 }
 
 func TestServeSummaryProjectsBadgeCounts(t *testing.T) {
@@ -129,6 +182,13 @@ func TestServeFieldsRosterAndEpics(t *testing.T) {
 	assertEqual(t, false, task.Gates[0].Satisfied, "gate satisfied flag")
 	assertEqual(t, "provision", task.Gates[0].Kind, "gate kind payload")
 	assertEqual(t, "Provision test credentials.", task.Gates[0].Ask, "gate ask")
+	if len(task.OpenGates) != 1 || task.OpenGates[0].ID != "APP-G-0001" {
+		t.Fatalf("expected open human gate capsule, got %#v", task.OpenGates)
+	}
+	assertEqual(t, "Provision test credentials.", task.OpenGates[0].Action, "gate action summary")
+	if len(task.HumanActions) != 1 || task.HumanActions[0].GateID != "APP-G-0001" {
+		t.Fatalf("expected every human action in task detail, got %#v", task.HumanActions)
+	}
 
 	var runs []map[string]any
 	serveDecode(t, server, "/api/runs", &runs)
@@ -182,6 +242,86 @@ func TestServeFieldsRosterAndEpics(t *testing.T) {
 		if _, ok := row[key]; !ok {
 			t.Fatalf("roster row missing %s: %#v", key, row)
 		}
+	}
+}
+
+func TestServeHumanActionContractAndReviewProjection(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	writeServeTask(t, server.vaultPath, serveTaskSeed{ID: "APP-T-0010", Epic: "APP", Title: "Panel review", Status: "backlog", Readiness: "waiting_on_human", Risk: "medium", Priority: "p1"})
+	writeServeAcceptanceRows(t, server.vaultPath, "APP-T-0010")
+	writeServeHumanVerificationGate(t, server.vaultPath, "APP-G-0010", "APP-T-0010", "A1,A3")
+
+	var task serveTaskDetail
+	serveDecode(t, server, "/api/tasks/APP-T-0010", &task)
+	assertEqual(t, "review", task.Status, "human-wait projected status")
+	assertEqual(t, "backlog", task.RawStatus, "human-wait raw status")
+	assertEqual(t, "waiting_on_human", task.Readiness, "human-wait projected readiness")
+	if task.HumanAction == nil {
+		t.Fatal("expected server-derived human action")
+	}
+	assertEqual(t, "manual-verification", task.HumanAction.Kind, "human action kind")
+	assertEqual(t, "verification", task.HumanAction.RawKind, "human action raw kind")
+	assertEqual(t, "APP-G-0010", task.HumanAction.GateID, "human action gate id")
+	assertEqual(t, "Exercise the panel.", task.HumanAction.Action, "human action text")
+	assertEqual(t, "Requires visual macOS interaction.", task.HumanAction.WhyAgentCannot, "human boundary")
+	assertEqual(t, "The panel behavior is confirmed.", task.HumanAction.CompletionCondition, "completion condition")
+	assertEqual(t, []string{"A1", "A3"}, task.HumanAction.Covers, "covered acceptance ids")
+	if len(task.HumanAction.Acceptance) != 2 || task.HumanAction.Acceptance[0].ID != "A1" || task.HumanAction.Acceptance[1].ID != "A3" {
+		t.Fatalf("expected only covered acceptance rows, got %#v", task.HumanAction.Acceptance)
+	}
+	var review []serveTaskCapsule
+	serveDecode(t, server, "/api/review/batch", &review)
+	if len(review) != 1 || review[0].ID != "APP-T-0010" || review[0].Status != "review" {
+		t.Fatalf("review batch must use the human-wait projection, got %#v", review)
+	}
+
+	var refused serveActionResult
+	servePost(t, server, "/api/gates/APP-G-0010/satisfy", `{"projectId":"app","taskId":"APP-T-0010"}`, &refused)
+	if !refused.Refused || refused.Task == nil || refused.Task.HumanAction == nil {
+		t.Fatalf("refused completion must keep human action readback visible, got %#v", refused)
+	}
+
+	var completed serveActionResult
+	servePost(t, server, "/api/gates/APP-G-0010/satisfy", `{"projectId":"app","taskId":"APP-T-0010","evidence":"Panel behavior confirmed."}`, &completed)
+	if !completed.OK || completed.Refused || completed.Task == nil {
+		t.Fatalf("expected successful human action completion readback, got %#v", completed)
+	}
+	if completed.Task.HumanAction != nil {
+		t.Fatalf("human action must disappear after gate completion, got %#v", completed.Task.HumanAction)
+	}
+	assertEqual(t, "satisfied", completed.Gate.Status, "completed gate status")
+}
+
+func TestServeHumanActionKindMappingAndReworkProjection(t *testing.T) {
+	cases := map[string]string{
+		"verification": "manual-verification",
+		"decision":     "decision",
+		"signoff":      "signoff",
+		"release":      "release",
+		"provision":    "provision",
+		"auth":         "provision",
+		"env":          "provision",
+		"unknown_kind": "human-action",
+	}
+	for raw, want := range cases {
+		if got := serveHumanActionKind(raw); got != want {
+			t.Fatalf("serveHumanActionKind(%q)=%q, want %q", raw, got, want)
+		}
+	}
+
+	server := newServeEmptyNeedsFixture(t)
+	writeServeTask(t, server.vaultPath, serveTaskSeed{ID: "APP-T-0011", Epic: "APP", Title: "Returned panel review", Status: "backlog", Readiness: "waiting_on_human", Risk: "medium", Priority: "p1"})
+	writeServeHumanVerificationGate(t, server.vaultPath, "APP-G-0011", "APP-T-0011", "A1")
+
+	var result serveActionResult
+	servePost(t, server, "/api/tasks/APP-T-0011/status", `{"projectId":"app","status":"rework","reason":"Fix the panel spacing."}`, &result)
+	if !result.OK || result.Refused || result.Task == nil {
+		t.Fatalf("expected rework readback, got %#v", result)
+	}
+	assertEqual(t, "rework", result.Task.RawStatus, "rework raw status")
+	assertEqual(t, "ready", result.Task.Status, "rework operator status")
+	if result.Task.HumanAction != nil {
+		t.Fatalf("human action must not remain after rework, got %#v", result.Task.HumanAction)
 	}
 }
 
@@ -260,6 +400,15 @@ func TestServeRunDetailUsesCanonicalCompletedRunRow(t *testing.T) {
 	if err := server.store.SaveAttempt(RunAttempt{AttemptID: "attempt-done", ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: string(RunnerCodexAppServer), Lane: runLaneExecute, Outcome: string(AttemptOutcomeSucceeded), StartedAt: started, FinishedAt: released}); err != nil {
 		t.Fatal(err)
 	}
+	if err := server.store.SaveRunAuthorization(RunAuthorization{ProjectID: "app", RecordID: "APP-T-0001", LeaseGeneration: 1, Source: "tusker_cli", Actor: "operator", Trigger: "pickup", CreatedAt: started}); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.store.SaveRunIdentity(RunIdentityMetadata{ProjectID: "app", RecordID: "APP-T-0001", RepoRoot: "/repo/app", WorkspacePath: "/tmp/app", WorkspaceMode: "shared", Runner: string(RunnerCodexAppServer)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.store.SaveSession(RunnerSession{ProjectID: "app", RecordID: "APP-T-0001", Runner: string(RunnerCodexAppServer), SessionRef: "session-1", Resumable: true, State: "open", StartedAt: started, LastSeenAt: released}); err != nil {
+		t.Fatal(err)
+	}
 	if err := server.store.SaveTurn(RunTurn{AttemptID: "attempt-done", ProjectID: "app", RecordID: "APP-T-0001", TurnID: "turn-1", TurnIndex: 0, Status: "completed", InputTokens: 120, OutputTokens: 34, TotalTokens: 154, StartedAt: started, CompletedAt: released, LastEventAt: released}); err != nil {
 		t.Fatal(err)
 	}
@@ -274,13 +423,19 @@ func TestServeRunDetailUsesCanonicalCompletedRunRow(t *testing.T) {
 	assertEqual(t, "unclaimed", detail.LeaseState, "completed detail lease")
 	assertEqual(t, 886, detail.ElapsedSec, "completed detail elapsed freezes at release")
 	assertEqual(t, 914, detail.SinceLastEventSec, "detail did not use newer child liveness")
-	assertEqual(t, 150, detail.Tokens.Input, "detail input tokens from recorded turns")
-	assertEqual(t, 40, detail.Tokens.Output, "detail output tokens from recorded turns")
 	assertEqual(t, 1, len(detail.Attempts), "detail attempts")
 	assertEqual(t, "succeeded", detail.Attempts[0].Outcome, "attempt outcome")
 	assertEqual(t, 886, detail.Attempts[0].DurationSec, "attempt elapsed freezes at finish")
-	assertEqual(t, 150, detail.Attempts[0].Tokens.Input, "attempt input tokens")
-	assertEqual(t, 40, detail.Attempts[0].Tokens.Output, "attempt output tokens")
+	assertEqual(t, "tusker_cli", detail.Authorization.Source, "authorization source")
+	assertEqual(t, "/repo/app", detail.Identity.RepoRoot, "registered repository")
+	assertEqual(t, true, detail.Resume.Supported, "codex resume supported")
+	assertEqual(t, "codex exec resume 'session-1'", detail.Resume.Command, "copyable resume command")
+	assertEqual(t, "pending", detail.Delivery.ProofStatus, "delivery proof status")
+	turns, err := server.store.ListTurnsForAttempt("attempt-done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 2, len(turns), "raw usage rows remain available for forensic use")
 }
 
 func TestServeReadParityEndpointsSerialize(t *testing.T) {
@@ -328,7 +483,6 @@ func TestServeReadParityEndpointsSerialize(t *testing.T) {
 	serveDecode(t, server, "/api/attempts?task=APP-T-0007", &attempts)
 	assertEqual(t, 1, len(attempts), "attempt count")
 	assertEqual(t, "attempt-1", attempts[0].ID, "attempt id")
-	assertEqual(t, 10, attempts[0].Tokens.Input, "attempt tokens")
 
 	var attempt serveAttemptDetail
 	serveDecode(t, server, "/api/attempts/attempt-1", &attempt)
@@ -582,6 +736,34 @@ func writeServeGate(t *testing.T, vault string) {
 	t.Helper()
 	body := "---\nschema: \"tusker.gate/v1\"\nkind: \"gate\"\nid: \"APP-G-0001\"\nproject: \"app\"\ntitle: \"Provision credentials\"\ngate_kind: \"provision\"\nstatus: \"open\"\nowner: \"human:sarav\"\nblocking: true\nblocks:\n  - \"APP-T-0003\"\naction: \"Provision test credentials.\"\n---\n\n# APP-G-0001 - Provision credentials\n\n## Action\n\nProvision test credentials.\n"
 	if err := writeText(filepath.Join(vault, "work", "gates", "APP-G-0001.md"), body); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeServeHumanVerificationGate(t *testing.T, vault, gateID, taskID, covers string) {
+	t.Helper()
+	coverLines := ""
+	for _, cover := range strings.Split(covers, ",") {
+		cover = strings.TrimSpace(cover)
+		if cover != "" {
+			coverLines += "  - \"" + cover + "\"\n"
+		}
+	}
+	body := "---\nschema: \"tusker.gate/v1\"\nkind: \"gate\"\nid: \"" + gateID + "\"\nproject: \"app\"\ntitle: \"Panel verification\"\ngate_kind: \"verification\"\nstatus: \"open\"\nowner: \"human:sarav\"\nblocking: true\nblocks:\n  - \"" + taskID + "\"\ncovers:\n" + coverLines + "why_agent_cannot: \"Requires visual macOS interaction.\"\naction: \"Exercise the panel.\"\nverification: \"The panel behavior is confirmed.\"\ncreated_at: \"2026-07-06T06:00:00Z\"\nupdated_at: \"2026-07-06T06:00:00Z\"\n---\n\n# " + gateID + " · Panel verification\n\n## Why agent cannot do this\n\nRequires visual macOS interaction.\n\n## Action\n\nExercise the panel.\n\n## Verification\n\nThe panel behavior is confirmed.\n"
+	if err := writeText(filepath.Join(vault, "work", "gates", gateID+".md"), body); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeServeAcceptanceRows(t *testing.T, vault, taskID string) {
+	t.Helper()
+	path := filepath.Join(vault, "work", "tasks", taskID+".md")
+	text, err := readText(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text = strings.Replace(text, "| A1 | Works. | Inline verification |", "| A1 | Panel opens. | Inline verification |\n| A2 | Panel fits. | Inline verification |\n| A3 | Panel closes. | Inline verification |", 1)
+	if err := writeText(path, text); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -8,16 +8,16 @@ status: "ready"
 owner: "human:sarav"
 priority: "p2"
 domains: []
-capsule:
-  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
-  use_when: "Use to triage work on packets, capsules, command budgets, and agent-facing task flow."
-  what: "AGX epic for reducing agent token burn and improving CLI ergonomics."
 next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:17:22Z"
-updated_at: "2026-07-08T05:45:10Z"
-state_rev: "sha256:3a4550ea116f97b704885289480f3b6e1583f157caab682999c95f2d4f5071ee"
+updated_at: "2026-07-14T04:53:18Z"
+state_rev: "sha256:8e23a710bb10e325f3cbc722e698ac84e4686968b1468a3ab6cedfdd4b63280a"
+capsule:
+  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
+  use_when: "Use to triage work on packets, capsules, command budgets, and agent-facing task flow."
+  what: "AGX epic for reducing agent token burn and improving CLI ergonomics."
 ---
 
 # AGX · Agent experience: token economy and CLI ergonomics
@@ -51,7 +51,9 @@ TBD.
 | [[AGX-T-0001]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[AGX-T-0002]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[AGX-T-0004]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[AGX-T-0005]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[AGX-T-0005]] | review | reviewer | Review evidence and close or return to rework. |
+| [[AGX-T-0006]] | review | human:sarav | Accept, waive, or return rework for AGX-G-0001. |
+| [[AGX-T-0007]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 
@@ -60,4 +62,3 @@ TBD.
 | Task | Accepted by | Closed at |
 |---|---|---|
 | [[AGX-T-0003]] | reviewer:agent | 2026-07-06T06:37:08Z |
-| [[AGX-T-0006]] | reviewer:agent | 2026-07-07T08:58:17Z |

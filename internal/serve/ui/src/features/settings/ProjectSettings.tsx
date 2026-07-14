@@ -1,20 +1,20 @@
 /*
   Project Settings / Details (route: /p/$projectId/settings).
 
-  Per-project configuration: repository facts, live worktrees, general config,
+  Per-project configuration: repository facts, live execution workspaces, general config,
   routing rules, workspace lifecycle, and landing / parallelism. Every editable
   row carries a provenance chip and — crucially — an edit writes a machine-local
   override rather than touching committed project config (see useConfigRows in
   ./project/parts). Derived facts render read-only, so a programmatic edit never
   *looks* like it rewrote a shared file.
 
-  Settings values are screen-local (./project/mock); live project + daemon status
-  come from the shared hooks.
+  Presentational fixture rows remain screen-local; execution policy and runtime
+  state come exclusively from shared API hooks.
 */
 
 import { useState } from "react";
 import { getRouteApi, Link } from "@tanstack/react-router";
-import { useDaemon, useProjectAutomation, useProjects } from "@/lib/queries";
+import { useDaemon, useProjectAutomation, useProjectSettings, useProjects, useRuns } from "@/lib/queries";
 import { PageScroll, SectionLabel } from "@/components/ui/page";
 import { EmptyState, QueryBoundary, Skeleton } from "@/components/ui/states";
 import type { ProjectSummary } from "@/types/domain";
@@ -28,7 +28,6 @@ import {
   routingRules,
   settingsTabs,
   workspaceScripts,
-  worktrees,
   type SettingsTab,
 } from "./project/mock";
 import {
@@ -85,6 +84,11 @@ function SettingsBody({ project, projectId }: { project: ProjectSummary; project
   const daemonQ = useDaemon();
   const daemon = daemonQ.data;
   const automation = useProjectAutomation(projectId);
+  const settings = useProjectSettings(projectId);
+  const runsQ = useRuns(projectId);
+  const workspaces = (runsQ.data ?? []).filter((r) => !r.terminal && ["claimed", "starting", "running"].includes(r.leaseStateRaw ?? "")).map((r) => ({
+    task: r.taskId, path: r.workspacePath || project.repoRoot, lease: r.liveness, mode: r.workspaceMode || "shared",
+  }));
 
   // Three independent override write-paths (edits → local, reset → inherited).
   const repo = useConfigRows(repositoryRows);
@@ -145,22 +149,35 @@ function SettingsBody({ project, projectId }: { project: ProjectSummary; project
               </button>
             </div>
 
+            <SectionLabel className="mb-2.5">Execution policy</SectionLabel>
+            <div className="mb-7 grid grid-cols-2 gap-3 rounded-lg border border-line bg-panel p-4">
+              <label className="text-[12px] text-muted">Workspace mode
+                <select aria-label="Workspace mode" value={project.workspaceMode ?? "shared"} onChange={(e) => settings.mutate({workspaceMode:e.target.value})} className="mt-1 block w-full rounded border border-line bg-canvas p-2 text-ink">
+                  <option value="shared">shared repository</option><option value="worktree">worktree</option><option value="clone">clone</option><option value="copy">copy</option>
+                </select><span className="font-mono text-[10px]">{project.workspaceSource}</span>
+              </label>
+              <label className="text-[12px] text-muted">Project concurrency
+                <input aria-label="Project concurrency" type="number" min={1} value={project.maxActiveRunsPerProject ?? 1} onChange={(e) => settings.mutate({maxActiveRunsPerProject:Number(e.target.value)})} className="mt-1 block w-full rounded border border-line bg-canvas p-2 text-ink" />
+                <span className="font-mono text-[10px]">{project.concurrencySource}</span>
+              </label>
+            </div>
+
             <SectionLabel className="mb-2.5">Repository</SectionLabel>
             <div className="mb-7">
               <SettingList rows={repo.rows} onChange={repo.setValue} onReset={repo.reset} />
             </div>
 
             <div className="mb-2.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-              <SectionLabel>Worktrees</SectionLabel>
+              <SectionLabel>Execution workspaces</SectionLabel>
               {daemon && (
                 <LiveMeta
                   connected={daemon.connected}
-                  label={daemon.connected ? `${worktrees.length} active · ${daemon.addr}` : "daemon offline"}
+                  label={daemon.connected ? `${workspaces.length} active · ${daemon.addr}` : "daemon offline"}
                 />
               )}
             </div>
             <div className="mb-7">
-              <WorktreeList worktrees={daemon && !daemon.connected ? [] : worktrees} />
+              <WorktreeList worktrees={daemon && !daemon.connected ? [] : workspaces} />
             </div>
 
             <SectionLabel className="mb-2.5">Configuration</SectionLabel>

@@ -8,6 +8,11 @@ tusker automation plan <TASK-ID> --json
 
 The plan is the stable control-plane answer for daemon pickup, manual dispatch, Obsidian views, and future UI. It should be trusted over ad hoc inspection.
 
+Planning is read-only. A human-opened Codex or Claude session executes direct
+work itself and never invokes dispatch or starts nested model processes. Only
+the independently running resident daemon may turn an eligible plan into a
+background worker, and only when project automation is enabled.
+
 ## Plan Shape
 
 ```json
@@ -15,7 +20,7 @@ The plan is the stable control-plane answer for daemon pickup, manual dispatch, 
   "decision": "dispatch",
   "task": "APP-T-0001",
   "lane": "execute",
-  "runner": "codex_app_server",
+  "runner": "codex_exec",
   "workspace": "...",
   "blockers": [],
   "required_reads": ["SKILL.md", "work/tasks/APP-T-0001.md", "knowledge/domains/project/INDEX.md", "knowledge/domains/project/CANON.md"]

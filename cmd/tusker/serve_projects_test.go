@@ -47,8 +47,8 @@ func TestServeProjectRegistrationDefaultsAutomationOffAndSettingsCanEnableIt(t *
 
 	var duplicate serveActionResult
 	servePost(t, server, "/api/projects", `{"repoRoot":"`+repo+`"}`, &duplicate)
-	if duplicate.OK || !duplicate.Refused {
-		t.Fatalf("expected duplicate registration refusal, got %#v", duplicate)
+	if !duplicate.OK || duplicate.Refused || duplicate.ProjectID != registered.ProjectID {
+		t.Fatalf("expected idempotent duplicate registration, got %#v", duplicate)
 	}
 
 	var enabled serveActionResult
@@ -86,4 +86,29 @@ func TestServeProjectRegistrationRejectsInvalidPathsWithoutPersisting(t *testing
 		t.Fatal(err)
 	}
 	assertEqual(t, len(before), len(after), "invalid registration leaves no phantom project")
+}
+
+func TestServeProjectSettingsPersistWorkspaceAndConcurrency(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	projects, err := server.store.ListProjects()
+	if err != nil || len(projects) == 0 {
+		t.Fatalf("fixture project: %v %#v", err, projects)
+	}
+	project := projects[0]
+	var workspace serveActionResult
+	servePost(t, server, "/api/projects/"+project.ProjectID+"/settings", `{"workspaceMode":"worktree"}`, &workspace)
+	if !workspace.OK {
+		t.Fatalf("workspace setting failed: %#v", workspace)
+	}
+	var concurrency serveActionResult
+	servePost(t, server, "/api/projects/"+project.ProjectID+"/settings", `{"maxActiveRunsPerProject":3}`, &concurrency)
+	if !concurrency.OK {
+		t.Fatalf("concurrency setting failed: %#v", concurrency)
+	}
+	wf, err := loadWorkflow(project.VaultRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, string(WorkspaceStrategyWorktree), wf.Data.Workspace.Strategy, "workspace setting readback")
+	assertEqual(t, 3, wf.Data.Runtime.MaxActiveRunsPerProject, "concurrency setting readback")
 }

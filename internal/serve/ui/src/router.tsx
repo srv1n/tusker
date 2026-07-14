@@ -117,9 +117,10 @@ const opsRoute = createRoute({
 const docsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "docs",
-  validateSearch: (search: Record<string, unknown>): { path?: string; view?: "source" } => ({
+  validateSearch: (search: Record<string, unknown>): { path?: string; view?: "source"; gate?: string } => ({
     path: typeof search.path === "string" ? search.path : undefined,
     view: search.view === "source" ? "source" : undefined,
+    gate: typeof search.gate === "string" ? search.gate : undefined,
   }),
   component: lazyRouteComponent(
     () => import("@/features/docs/DocumentView"),

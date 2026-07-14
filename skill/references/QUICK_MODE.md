@@ -80,6 +80,12 @@ tusker new gate --blocks <TASK-ID> --kind verification --owner human:<name> \
 
 Use the reviewer lane, not a human gate, for code review, diffs, test/log inspection, and implementation judgment. If a spec is contradictory or unusable, create a `decision` gate and include `--suggestion "<recommended resolution>"`.
 
+Treat choices stated by the approved task/spec as already decided. Do not ask a
+human to accept a removal, migration, mapping, naming, compatibility, or other
+implementation choice already required by the contract. Screenshot, recording,
+and artifact inspection is reviewer work unless the contract explicitly names
+subjective human acceptance of the final artifact.
+
 Do not hide blockers only in body text.
 
 ## Close a low-risk task

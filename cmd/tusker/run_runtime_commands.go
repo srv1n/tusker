@@ -42,6 +42,37 @@ type runInspection struct {
 	TokenTotals              runtimeTokenTotals          `json:"token_totals"`
 	FailureClass             string                      `json:"failure_class,omitempty"`
 	Paths                    runtimeArtifactPaths        `json:"paths"`
+	Authorization            *RunAuthorization           `json:"authorization,omitempty"`
+	Identity                 *RunIdentityMetadata        `json:"identity,omitempty"`
+	Resume                   runResumeCapability         `json:"resume"`
+}
+
+type runResumeCapability struct {
+	Supported bool   `json:"supported"`
+	Command   string `json:"command,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func resumeCapability(run *RunStatus, session *RunnerSession) runResumeCapability {
+	if run == nil || session == nil || strings.TrimSpace(session.SessionRef) == "" {
+		return runResumeCapability{Reason: "runner session id is unavailable"}
+	}
+	if !session.Resumable {
+		return runResumeCapability{Reason: firstNonEmpty(session.LastError, "runner session is not resumable")}
+	}
+	quoted := shellSingleQuote(session.SessionRef)
+	switch RunnerName(run.Runner) {
+	case RunnerCodex, RunnerCodexExec, RunnerCodexAppServer:
+		return runResumeCapability{Supported: true, Command: "codex exec resume " + quoted}
+	case RunnerClaude:
+		return runResumeCapability{Supported: true, Command: "claude --resume " + quoted}
+	default:
+		return runResumeCapability{Reason: "runner does not support native resume"}
+	}
 }
 
 func (s *RuntimeStore) FindRun(identity string) (*RunStatus, error) {
@@ -103,6 +134,14 @@ func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, err
 		return runInspection{}, err
 	}
 	latestSession := latestRunnerSession(sessions)
+	authorization, err := store.LatestRunAuthorization(run.ProjectID, run.RecordID)
+	if err != nil {
+		return runInspection{}, err
+	}
+	identity, err := store.RunIdentity(run.ProjectID, run.RecordID)
+	if err != nil {
+		return runInspection{}, err
+	}
 	eventPath := bestRunEventPath(*run, attempts)
 	return runInspection{
 		OK:                       true,
@@ -127,6 +166,9 @@ func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, err
 			RawLog:    bestRunLogPath(*run, attempts),
 			Status:    run.StatusPath,
 		},
+		Authorization: authorization,
+		Identity:      identity,
+		Resume:        resumeCapability(run, latestSession),
 	}, nil
 }
 

@@ -8,23 +8,19 @@
 import type { Lane, Liveness, RunSummary } from "@/types/domain";
 
 /**
- * The 6-column grid shared by the table header and every run row:
- * Task · Runner · Lane · Lease · Tokens · State. Lease_state is its own labeled
+ * The 5-column grid shared by the table header and every run row:
+ * Task · Runner · Lane · Lease · State. Lease_state is its own labeled
  * column; the State column carries liveness (active) or the outcome chip
  * (recent), so both lease_state and outcome are surfaced per row (SRV-T-0015 A2).
  *
- * Below `md` the four secondary cells (Runner/Lane/Lease/Tokens) hide themselves
+ * Below `md` the three secondary cells (Runner/Lane/Lease) hide themselves
  * (`hidden md:*` in rows.tsx), so the grid collapses to Task + State — task id,
  * title, and liveness/outcome stay visible on a phone without page scroll. At
- * `md`+ the full 6-column desktop layout is pixel-identical to before.
+ * `md`+ the full five-column desktop layout retains the liveness and outcome
+ * information without presenting diagnostic usage snapshots as totals.
  */
 export const RUNS_GRID =
-  "grid grid-cols-[minmax(0,1fr)_auto] gap-3 md:grid-cols-[1fr_104px_64px_88px_72px_128px]";
-
-/** Total tokens for a run — the board shows one compact figure per run. */
-export function tokenTotal(run: RunSummary): number {
-  return run.tokens.input + run.tokens.output;
-}
+  "grid grid-cols-[minmax(0,1fr)_auto] gap-3 md:grid-cols-[1fr_104px_64px_88px_128px]";
 
 /** A run is "active" while it is still running. */
 export function isActive(run: RunSummary): boolean {

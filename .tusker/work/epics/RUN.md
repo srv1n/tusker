@@ -8,16 +8,16 @@ status: "ready"
 owner: "human:sarav"
 priority: "p2"
 domains: []
-capsule:
-  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
-  use_when: "Use to triage Codex/Claude runner behavior, profile policy, leases, and runner integration."
-  what: "RUN epic for runner parity, model profiles, and future harness boundaries."
 next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:32:32Z"
-updated_at: "2026-07-10T04:47:13Z"
-state_rev: "sha256:d172d99ad9df5f19b1eb6f1375ea1c3666cff1ec856ede0a6f3106212ec46ab5"
+updated_at: "2026-07-12T17:56:10Z"
+state_rev: "sha256:0e3dd2ae98d9926dde12d30053ab9b2bf0988b0d46d5367f6a1ca486e37a9382"
+capsule:
+  skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
+  use_when: "Use to triage Codex/Claude runner behavior, profile policy, leases, and runner integration."
+  what: "RUN epic for runner parity, model profiles, and future harness boundaries."
 ---
 
 # RUN · Runner parity and model profiles
@@ -48,10 +48,10 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[RUN-T-0001]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[RUN-T-0002]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[RUN-T-0003]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach review with satisfied proof or done. |
-| [[RUN-T-0005]] | backlog | blocked_dependency | Wait for dependency RUN-T-0002 to reach review with satisfied proof or done. |
+| [[RUN-T-0001]] | backlog | human:sarav | Accept, waive, or return rework for RUN-G-0001. |
+| [[RUN-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
+| [[RUN-T-0003]] | backlog | agent | Wait for dependency RUN-T-0002 to reach review with satisfied proof or done. |
+| [[RUN-T-0005]] | backlog | agent | Wait for dependency RUN-T-0002 to reach review with satisfied proof or done. |
 | [[RUN-T-0006]] | backlog | agent | Wait for dependency RUN-T-0004 to reach done. |
 | [[RUN-T-0015]] | backlog | agent | Wait for dependency RUN-T-0011 to reach done. |
 | [[RUN-T-0045]] | review | reviewer | Review evidence and close or return to rework. |

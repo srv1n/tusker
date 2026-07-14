@@ -17,6 +17,26 @@ test("project overview starts project reads without a projects-first boundary", 
   expect(overview).toContain("const tasksQ = useTasks(projectId)");
 });
 
+test("overview task cards open task contracts while active runs open run detail", () => {
+  const overview = readSource("src/features/overview/ProjectOverview.tsx");
+  const taskCard = overview.slice(
+    overview.indexOf("function TaskMiniCard("),
+    overview.indexOf("function BlockerCard("),
+  );
+  const activeRun = overview.slice(
+    overview.indexOf("function ActiveRunRow("),
+    overview.indexOf("// ----------------------------------------------------------------------------\n// Loading skeletons"),
+  );
+
+  expect(taskCard).toContain('to="/p/$projectId/docs"');
+  expect(taskCard).toContain("params={{ projectId }}");
+  expect(taskCard).toContain("search={{ path: task.id }}");
+  expect(taskCard).not.toContain('to="/p/$projectId/runs/$taskId"');
+
+  expect(activeRun).toContain('to="/p/$projectId/runs/$taskId"');
+  expect(activeRun).toContain("taskId: run.taskId");
+});
+
 test("detail and mutation transports carry project identity", () => {
   const api = readSource("src/lib/api.ts");
   const queries = readSource("src/lib/queries.ts");

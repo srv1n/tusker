@@ -47,16 +47,16 @@ automation:
     - codex_exec
     - claude-code
   workspace:
-    strategy: worktree
-    root: workspaces
+    strategy: shared
+    root: .
   concurrency:
     max_active_runs: 2
-    max_active_runs_per_project: 2
+    max_active_runs_per_project: 1
     max_continuation_retries: 3
     max_concurrent_by_state:
       rework: 1
   budget:
-    enabled: true
+    enabled: false
     per_attempt_input_tokens: 2000000
     per_attempt_output_tokens: 100000
     per_task_input_tokens: 6000000

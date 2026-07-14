@@ -64,8 +64,14 @@ func TestDefaultWorkflowEnablesRiskAwareReviewer(t *testing.T) {
 	if wf.Reviewer.Actor != "agent:reviewer/codex" {
 		t.Fatalf("expected normalized reviewer actor, got %q", wf.Reviewer.Actor)
 	}
+	if wf.Reviewer.MaxCycles != 3 {
+		t.Fatalf("expected three bounded reviewer cycles, got %d", wf.Reviewer.MaxCycles)
+	}
 	if !strings.Contains(wf.Reviewer.Prompt, "independent Tusker reviewer") {
 		t.Fatalf("expected reviewer prompt to be substantive, got %q", wf.Reviewer.Prompt)
+	}
+	if !strings.Contains(wf.Reviewer.Prompt, "Risk alone does not justify a human gate") || !strings.Contains(wf.Reviewer.Prompt, "already settled by the task/spec") {
+		t.Fatalf("expected reviewer prompt to reserve human attention, got %q", wf.Reviewer.Prompt)
 	}
 }
 

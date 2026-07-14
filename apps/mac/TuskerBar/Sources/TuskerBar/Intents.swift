@@ -23,5 +23,6 @@ struct TuskerShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: TogglePanelIntent(), phrases: ["Toggle \(.applicationName) panel"], shortTitle: "Toggle panel", systemImageName: "menubar.rectangle")
         AppShortcut(intent: OpenReviewQueueIntent(), phrases: ["Open \(.applicationName) review queue"], shortTitle: "Review queue", systemImageName: "checklist")
+        AppShortcut(intent: OpenTaskIntent(), phrases: ["Open \(.applicationName) task \(\.$taskID)"], shortTitle: "Open task", systemImageName: "arrow.up.right.square")
     }
 }

@@ -60,7 +60,7 @@ func defaultConfig() Config {
 	cfg.Retry.MaxAttempts = 3
 	cfg.Retry.BackoffSeconds = []int{30, 120, 600}
 	cfg.Workspace.Root = "."
-	cfg.Workspace.Isolation = string(WorkspaceStrategyInPlace)
+	cfg.Workspace.Isolation = string(WorkspaceStrategyShared)
 	cfg.DefinitionOfDone.RequireCodeComplete = true
 	cfg.DefinitionOfDone.RequireUserVerifiedForUI = true
 	return cfg

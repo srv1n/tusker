@@ -1,4 +1,5 @@
 import AppKit
+import CoreSpotlight
 import KeyboardShortcuts
 import UserNotifications
 
@@ -10,6 +11,7 @@ final class ShellRouter {
     func show(path: String) { appDelegate?.showPanel(path: path) }
     func showTask(id: String) { appDelegate?.showTask(id: id) }
     func showMain(path: String) { appDelegate?.showMainWindow(path: path) }
+    func showSpotlight(identifier: String) { appDelegate?.showSpotlight(identifier: identifier) }
     func setBadge(_ count: Int) { appDelegate?.setBadge(count) }
 }
 
@@ -21,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: PanelController!
     private var mainWindow: MainWindowController!
     private var notifications: NotificationCoordinator!
+    private let spotlight = SpotlightIndexer()
     private var statusItem: NSStatusItem!
     private var connected = false { didSet { updateStatusAppearance() } }
 
@@ -37,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(configChanged), name: .tuskerConfigChanged, object: config)
         notifications.requestAuthorization()
         connectStream()
+        spotlight.refresh(baseURL: config.baseURL)
         mainWindow.show()
     }
 
@@ -46,13 +50,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch link {
             case let .open(path): showPanel(path: path)
             case let .task(id): showTask(id: id)
+            case let .spotlight(identifier): showSpotlight(identifier: identifier)
             }
         }
+    }
+
+    func application(_ application: NSApplication, continue userActivity: NSUserActivity,
+                     restorationHandler: @escaping ([any NSUserActivityRestoring]) -> Void) -> Bool {
+        guard userActivity.activityType == CSSearchableItemActionType,
+              let identifier = userActivity.userInfo?[CSSearchableItemActivityIdentifier] as? String else { return false }
+        showSpotlight(identifier: identifier)
+        return true
     }
 
     @objc private func configChanged() {
         NSApp.setActivationPolicy(config.showDockIcon ? .regular : .accessory)
         RuntimeSupervisor.shared.ensureRunning(force: true)
+        spotlight.refresh(baseURL: config.baseURL)
         connectStream()
     }
 
@@ -101,6 +115,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     func showMainWindow(path: String) { mainWindow.show(path: path) }
+    func showSpotlight(identifier: String) {
+        guard let route = SpotlightRoute.from(identifier: identifier) else { return }
+        mainWindow.show(path: route.path)
+    }
     @objc private func openMainWindow() { mainWindow.show() }
     @objc private func openFullScreen() { mainWindow.enterFullScreen() }
     @objc private func openTusker() { NSWorkspace.shared.open(config.baseURL) }
@@ -112,7 +130,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sse.connect(url: streamURL, onEvent: { [weak self] event in
             self?.notifications.handle(event)
             self?.refreshSummary()
-        }, onConnection: { [weak self] connected in self?.connected = connected })
+            if let baseURL = self?.config.baseURL { self?.spotlight.refresh(baseURL: baseURL) }
+        }, onConnection: { [weak self] connected in
+            self?.connected = connected
+            if connected, let baseURL = self?.config.baseURL { self?.spotlight.refresh(baseURL: baseURL) }
+        })
         refreshSummary()
     }
 

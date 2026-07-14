@@ -44,7 +44,8 @@ var FrontmatterOrder = map[string][]string{
 		"proof_mode", "proof_status", "proof_required", "proof_required_owner", "evidence_budget", "raw_artifacts_allowed", "raw_artifacts_reason",
 		"machine_status", "human_status", "closeout_status", "agent_action",
 		"next_owner", "next_source", "next_ref", "next_action", "domains", "spec_refs", "gates", "dependencies", "evidence_required",
-		"accepted_by", "accepted_at", "closed_at", "superseded_by", "created_at", "created_by", "updated_at", "updated_by", "state_rev",
+		"accepted_by", "accepted_at", "closed_at", "superseded_by", "discarded_by", "discarded_at", "discard_reason",
+		"created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
 	"closeout": {
 		"schema", "kind", "id", "project", "task", "state", "agent_action", "state_fingerprint",

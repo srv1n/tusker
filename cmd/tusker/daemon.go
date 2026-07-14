@@ -793,6 +793,17 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			if current.LeaseState == "" {
 				current.LeaseState = string(LeaseStateUnclaimed)
 			}
+			if LeaseState(current.LeaseState) == LeaseStateParkedBudget {
+				previous := current
+				current = releaseLegacyBudgetPark(current, now)
+				d.emitSupervisorDecision(SupervisorDecision{
+					ProjectID: project.ProjectID, RecordID: recordID, ItemID: current.ItemID,
+					Runner: current.Runner, WorkRevision: current.WorkRevision,
+					ParentAttemptID: previous.ActiveAttemptID, ParentSessionRef: previous.SessionRef,
+					Kind: string(SupervisorDecisionRedrive), Reason: current.LastError,
+					WorkspacePath: previous.WorkspacePath, LeaseState: current.LeaseState,
+				})
+			}
 
 			workRevision := intField(note.Data, "work_revision")
 			if current.WorkRevision != workRevision {
@@ -961,7 +972,25 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				continue
 			}
 			current := projectRuns[recordID]
-			if !reviewDispatchAllowed(project.VaultRoot, note, wfFile.Data, current) {
+			reviewAttempts, err := d.store.ListAttemptsForRun(project.ProjectID, recordID)
+			if err != nil {
+				return err
+			}
+			reviewCycles := reviewerAttemptCount(reviewAttempts)
+			if !reviewDispatchAllowed(project.VaultRoot, note, wfFile.Data, current, reviewCycles) {
+				if wfFile.Data.Reviewer.Enabled && reviewCycles >= wfFile.Data.Reviewer.MaxCycles && stringField(note.Data, "verified_at") == "" {
+					current.ProjectID = project.ProjectID
+					current.RecordID = recordID
+					current.ItemID = stringField(note.Data, "id")
+					current.Lane = runLaneReview
+					current.LeaseState = string(LeaseStateReleased)
+					current.LastError = fmt.Sprintf("review dispatch blocked: automated review cycle cap reached (%d/%d); operator intervention required", reviewCycles, wfFile.Data.Reviewer.MaxCycles)
+					current.UpdatedAt = now.Format(time.RFC3339)
+					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
+						return err
+					}
+					projectRuns[recordID] = current
+				}
 				continue
 			}
 			reviewerRunner := firstNonEmpty(wfFile.Data.Reviewer.Runner, wfFile.Data.Agents.Default)
@@ -1083,14 +1112,9 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 	if err != nil {
 		return err
 	}
-	tokenTotals, err := d.store.RunTokenTotalsByRun()
-	if err != nil {
-		return err
-	}
 	if _, err := d.refreshInvariantCircuitStatus(runtimeSentinelSnapshot{
 		Projects:       sentinelProjects,
 		Runs:           finalRuns,
-		TokenTotals:    tokenTotals,
 		PreviousPollAt: previousPollAt,
 		CurrentPollAt:  currentPollAt,
 		Now:            time.Now().UTC(),
@@ -1393,8 +1417,11 @@ func prepareRunForLaneDispatch(run RunStatus, lane, runner string) RunStatus {
 	return run
 }
 
-func reviewDispatchAllowed(vaultPath string, note Note, wf Workflow, run RunStatus) bool {
+func reviewDispatchAllowed(vaultPath string, note Note, wf Workflow, run RunStatus, reviewCycles int) bool {
 	if !wf.Reviewer.Enabled {
+		return false
+	}
+	if reviewCycles >= wf.Reviewer.MaxCycles {
 		return false
 	}
 	if stringField(note.Data, "status") != "review" {
@@ -1421,6 +1448,16 @@ func reviewDispatchAllowed(vaultPath string, note Note, wf Workflow, run RunStat
 		return false
 	}
 	return true
+}
+
+func reviewerAttemptCount(attempts []RunAttempt) int {
+	count := 0
+	for _, attempt := range attempts {
+		if strings.EqualFold(strings.TrimSpace(attempt.Lane), runLaneReview) {
+			count++
+		}
+	}
+	return count
 }
 
 func daemonNoteKind(note Note) string {
@@ -2759,6 +2796,13 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 		return run, false, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": lane}))
 	}
+	// Registry enablement is the compatibility boundary and the explicit daemon
+	// opt-in. The workflow bit is persisted alongside it by Settings, but older
+	// registered projects and fixtures predate that config key.
+	if !project.Enabled {
+		run.LastError = "daemon auto-spawn disabled for project"
+		return run, false, nil
+	}
 	if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached {
 		return capped, false, nil
 	}
@@ -2816,18 +2860,25 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	if d.beforeRunLeaseClaim != nil {
 		d.beforeRunLeaseClaim(run)
 	}
-	claimed, err := d.store.ClaimRunLease(project.ProjectID, run.RecordID, attemptID, leaseGeneration, defaultRunLeaseTTL, started, true, RuntimeLeaseClaimPrecondition{
-		ExpectedLeaseState:      LeaseState(run.LeaseState),
-		ExpectedOwner:           run.LeaseOwner,
-		ExpectedLeaseGeneration: run.LeaseGeneration,
-		ExpectedWorkRevision:    run.WorkRevision,
+	claimRun := run
+	claimRun.ProjectID = project.ProjectID
+	claimRun.Runner = string(runner.Name())
+	claimRun.WorkspacePath = selectedWorkspacePath
+	ownership := newRunOwnershipService(d.store)
+	ownership.projectConcurrencyLimit = wfFile.Data.Runtime.MaxActiveRunsPerProject
+	claimResult, err := ownership.claimExistingWithAuthorization(claimRun, attemptID, RunAuthorization{
+		Source: "daemon_auto", Actor: "daemon", Trigger: "poll", ProjectAutomationEnabled: project.Enabled,
 	})
 	if err != nil {
 		return run, false, err
 	}
-	if !claimed {
+	if !claimResult.Claimed {
 		latest, err := d.latestDispatchRun(run)
 		return latest, true, err
+	}
+	leaseGeneration = claimResult.Run.LeaseGeneration
+	if err := d.store.SaveRunIdentity(runIdentityForClaim(*claimResult.Run, project.RepoRoot, selectedWorkspacePath, string(workspaceStrategy), branchName)); err != nil {
+		return run, true, err
 	}
 	if reason := runnerCommandPreflightBlocker(runner.Name(), command); reason != "" {
 		run.LeaseGeneration = leaseGeneration
@@ -3022,6 +3073,10 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 			RawLogPath:      startReq.RawLogPath,
 			StatusPath:      startReq.StatusPath,
 			Command:         startReq.Command,
+			RunnerProfile:   startReq.RunnerProfile,
+			RunnerHarness:   startReq.RunnerHarness,
+			RunnerModel:     startReq.RunnerModel,
+			RunnerEffort:    startReq.RunnerEffort,
 			NotePath:        startReq.NotePath,
 			VaultPath:       startReq.VaultPath,
 			CodexPolicy:     startReq.CodexPolicy,
@@ -3153,15 +3208,7 @@ func (d *Daemon) persistClaimedDispatchFailure(project RegisteredProject, wf Wor
 }
 
 func (d *Daemon) workspaceStrategyForDispatch(project RegisteredProject, wf Workflow, run RunStatus) WorkspaceStrategy {
-	configured := workspaceStrategyFromWorkflow(wf.Workspace.Strategy)
-	if configured != WorkspaceStrategyInPlace || d == nil || d.store == nil {
-		return configured
-	}
-	runs, err := d.store.ListRuns()
-	if err != nil {
-		return configured
-	}
-	return workspaceStrategyForRun(wf, project, run, runs)
+	return workspaceStrategyFromWorkflow(wf.Workspace.Strategy)
 }
 
 type resolvedResumeSession struct {
@@ -3720,10 +3767,6 @@ type reviewPacketFacts struct {
 
 func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDecisions []RuntimeSupervisorDecision, facts reviewPacketFacts) string {
 	var out []string
-	tokenTotals := tokenTotalsForTurns(turns)
-	if tokenTotals.TotalTokens == 0 && facts.EventTokenTotals.TotalTokens > 0 {
-		tokenTotals = facts.EventTokenTotals
-	}
 	out = append(out, "# Review packet")
 	out = append(out, "")
 	out = append(out, fmt.Sprintf("- Item: %s - %s", stringField(note.Data, "id"), stringField(note.Data, "title")))
@@ -3737,7 +3780,7 @@ func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDec
 	out = append(out, fmt.Sprintf("- Lane: %s", firstNonEmpty(run.Lane, runLaneExecute)))
 	out = append(out, fmt.Sprintf("- Work revision: %d", run.WorkRevision))
 	out = append(out, fmt.Sprintf("- Turns: %d", len(turns)))
-	out = append(out, fmt.Sprintf("- Token totals: total=%d input=%d output=%d", tokenTotals.TotalTokens, tokenTotals.InputTokens, tokenTotals.OutputTokens))
+	out = append(out, "- Usage telemetry: raw diagnostic data only; it is neither billable nor an exact aggregate.")
 	out = append(out, fmt.Sprintf("- Workspace: %s", run.WorkspacePath))
 	out = append(out, fmt.Sprintf("- Session: %s", run.SessionRef))
 	out = append(out, fmt.Sprintf("- Started: %s", run.StartedAt))
@@ -3778,8 +3821,8 @@ func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDec
 		out = append(out, "- No normalized turns were recorded for this attempt.")
 	} else {
 		for _, turn := range turns {
-			out = append(out, fmt.Sprintf("- #%d `%s` session=%s status=%s tokens=%d input=%d output=%d last_event=%s error=%s",
-				turn.TurnIndex, turn.TurnID, firstNonEmpty(turn.SessionRef, "none"), turn.Status, turn.TotalTokens, turn.InputTokens, turn.OutputTokens, turn.LastEventAt, firstNonEmpty(turn.LastError, "none")))
+			out = append(out, fmt.Sprintf("- #%d `%s` session=%s status=%s last_event=%s error=%s",
+				turn.TurnIndex, turn.TurnID, firstNonEmpty(turn.SessionRef, "none"), turn.Status, turn.LastEventAt, firstNonEmpty(turn.LastError, "none")))
 		}
 	}
 	out = append(out, "", "## Sessions and turns", "")
@@ -4987,8 +5030,8 @@ func sessionStateForLeaseState(state LeaseState) string {
 
 func workspaceStrategyFromWorkflow(value string) WorkspaceStrategy {
 	switch strings.TrimSpace(value) {
-	case "", string(WorkspaceStrategyInPlace):
-		return WorkspaceStrategyInPlace
+	case "", string(WorkspaceStrategyInPlace), string(WorkspaceStrategyShared):
+		return WorkspaceStrategyShared
 	case string(WorkspaceStrategyWorktree):
 		return WorkspaceStrategyWorktree
 	case string(WorkspaceStrategyClone):
@@ -4996,27 +5039,12 @@ func workspaceStrategyFromWorkflow(value string) WorkspaceStrategy {
 	case string(WorkspaceStrategyCopy):
 		return WorkspaceStrategyCopy
 	default:
-		return WorkspaceStrategyInPlace
+		return WorkspaceStrategyShared
 	}
 }
 
 func workspaceStrategyForRun(wf Workflow, project RegisteredProject, run RunStatus, runs []RunStatus) WorkspaceStrategy {
-	configured := workspaceStrategyFromWorkflow(wf.Workspace.Strategy)
-	if configured != WorkspaceStrategyInPlace {
-		return configured
-	}
-	for _, other := range runs {
-		if project.ProjectID != "" && other.ProjectID != project.ProjectID {
-			continue
-		}
-		if other.RecordID == run.RecordID {
-			continue
-		}
-		if isDispatchingLeaseState(other.LeaseState) {
-			return WorkspaceStrategyWorktree
-		}
-	}
-	return configured
+	return workspaceStrategyFromWorkflow(wf.Workspace.Strategy)
 }
 
 var workflowTemplatePlaceholder = regexp.MustCompile(`{{\s*([A-Za-z0-9_.]+)\s*}}`)
@@ -5385,6 +5413,9 @@ func markNoteReadyForReview(vaultPath, notePath string) error {
 }
 
 func daemonRunCmd(args Args) error {
+	if err := rejectAgentSpawn("tusker daemon run"); err != nil {
+		return err
+	}
 	stateRoot := DefaultStateRoot()
 	once := args.Bool("once")
 	stalePIDFile := !once && daemonStalePIDFileExists(stateRoot)
@@ -5749,7 +5780,8 @@ func projectsAddCmd(args Args) error {
 	}
 	defer store.Close()
 	project := newRegisteredProject(repoRoot, vaultPath)
-	if err := store.UpsertProject(project); err != nil {
+	project, created, err := store.RegisterProject(project)
+	if err != nil {
 		return err
 	}
 	warnings := []string{}
@@ -5757,7 +5789,11 @@ func projectsAddCmd(args Args) error {
 		warnings = append(warnings, warning)
 	}
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "project": project, "warnings": warnings})
+		emitJSON(map[string]any{"ok": true, "project": project, "created": created, "warnings": warnings})
+		return nil
+	}
+	if !created {
+		fmt.Printf("Project already registered as %s (%s)\n", project.Name, project.ProjectID)
 		return nil
 	}
 	fmt.Printf("Registered project %s (%s)\n", project.Name, project.ProjectID)

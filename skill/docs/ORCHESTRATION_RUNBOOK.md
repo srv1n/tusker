@@ -11,6 +11,19 @@ generated dashboards   -> rebuildable projections
 
 Only markdown work records and accepted evidence/gates should drive lifecycle truth. Runtime state is operational bookkeeping.
 
+## Execution ownership
+
+| Role | Owns | Must never do |
+|---|---|---|
+| Interactive Codex/Claude | Current user's shell commands, edits, tests, and task updates | Start a foreground daemon, invoke dispatch, or launch another model runner |
+| Resident daemon | Poll enabled projects and launch eligible background implementation/review workers | Dispatch disabled projects or treat task creation alone as authorization |
+| Implementation worker | One injected task, attempt, and workspace | Work another task, launch a daemon/runner, or self-review |
+| Reviewer worker | Read-only verification of one implementation handoff | Edit implementation files or review forever |
+
+Interactive sessions do not enter the daemon claim/heartbeat lifecycle. Before
+taking over the same tracked task they inspect an existing live run and
+coordinate; disabled automation never blocks their direct work.
+
 ## Dispatch eligibility
 
 A daemon or agent runner may pick up a task only when:
@@ -75,6 +88,7 @@ Reviewer lanes are independent from implementation workers.
 - High/critical risk may get advisory reviewer output, but final close follows human/reviewer policy.
 - If review fails, move to `rework` with exact acceptance gaps.
 - If review leaves only human gates, set/recognize human-wait and stop.
+- Dispatch at most one reviewer per handoff and three automated review cycles per task. At the cap, leave the task in review for operator intervention.
 
 ## Continuation retry rule
 

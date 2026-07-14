@@ -60,8 +60,17 @@ runtime, so the bundle path is intentional from the first shell task.
 The bundle registers `tusker://`:
 
 - `tusker://task/MAC-T-0001` opens that task in the panel.
+- `tusker://spotlight/task%3Atusker%3AMAC-T-0001` opens the project-qualified
+  Spotlight task route in the main window.
 - `tusker://open?path=%2Fp%2Ftusker%2Fwork` opens an arbitrary same-origin
   Serve UI path.
+
+TuskerBar also indexes registered projects, tasks, and gates in macOS
+Spotlight. Search a project name, task title, or exact ID such as `MAC-T-0001`
+or `MAC-G-0007` and
+select the result to open the native Tusker window at that project or task.
+The index refreshes on launch and as the Serve event stream changes. Indexed
+items use a project-qualified identity so duplicate task IDs remain distinct.
 
 When the panel is on its configured base URL, it exposes a deliberately small
 `window.tuskerShell` API:

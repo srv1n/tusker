@@ -316,6 +316,7 @@ func TestLeaseClaimCASWorkRevisionFence(t *testing.T) {
 
 func TestDispatchLeaseClaimRejectsConcurrentInterruptState(t *testing.T) {
 	vault := automationTestVault(t)
+	installCodexSleepShimForTest(t)
 	disableReviewerForTest(t, vault)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Interrupt before claim", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
@@ -326,7 +327,7 @@ func TestDispatchLeaseClaimRejectsConcurrentInterruptState(t *testing.T) {
 	}
 	wfFile.Data.Agents.Default = "test-interrupt-fence"
 	wfFile.Data.Agents.Enabled = append(wfFile.Data.Agents.Enabled, "test-interrupt-fence")
-	wfFile.Data.Runners["test-interrupt-fence"] = RunnerDefinition{Kind: string(RunnerCodexExec), Command: "sleep 30"}
+	wfFile.Data.Runners["test-interrupt-fence"] = RunnerDefinition{Kind: string(RunnerCodexExec), Command: defaultCodexExecCommand()}
 	wfFile.Data.Workspace.Root = filepath.Join(DefaultStateRoot(), "workspaces", "interrupt-fence", newRecordID())
 	note, err := resolveNote(vault, "APP-T-0001")
 	if err != nil {
@@ -466,6 +467,7 @@ func TestDispatchLostCASAbortsBeforeWorkspacePrepAndPreservesControlMutation(t *
 
 func TestDispatchCASHappyPathStillDispatches(t *testing.T) {
 	vault := automationTestVault(t)
+	installCodexSleepShimForTest(t)
 	disableReviewerForTest(t, vault)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "CAS happy", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
@@ -476,7 +478,7 @@ func TestDispatchCASHappyPathStillDispatches(t *testing.T) {
 	}
 	wfFile.Data.Agents.Default = "test-dispatch"
 	wfFile.Data.Agents.Enabled = append(wfFile.Data.Agents.Enabled, "test-dispatch")
-	wfFile.Data.Runners["test-dispatch"] = RunnerDefinition{Kind: string(RunnerCodexExec), Command: "sleep 30"}
+	wfFile.Data.Runners["test-dispatch"] = RunnerDefinition{Kind: string(RunnerCodexExec), Command: defaultCodexExecCommand()}
 	note, err := resolveNote(vault, "APP-T-0001")
 	if err != nil {
 		t.Fatal(err)

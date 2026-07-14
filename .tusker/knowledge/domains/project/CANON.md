@@ -5,21 +5,21 @@ id: "project/canon"
 project: "tusker"
 domain: "project"
 title: "Project Canon"
+status: "current"
+summary: "Current durable rules for Tusker's own repository."
 capsule:
   skip_when:
     - "You only need a task contract or runtime log."
   use_when:
     - "Changing dispatch states, proof policy, automation, or project knowledge rules."
   what: "Current durable project rules for Tusker V7 lifecycle, routing, and validation."
-status: "current"
-summary: "Current durable rules for Tusker's own repository."
 source_of_truth:
   - ".tusker/SKILL.md"
   - ".tusker/WORKFLOW.md"
   - "tusker.yaml"
 created_at: "2026-06-04 00:00:00 +0000 UTC"
-updated_at: "2026-07-10T04:45:40Z"
-state_rev: "sha256:dc7c3334d4cc2ed5aab79acf0f3560b29f4223eecb52b3d94e26646f7ecb29ba"
+updated_at: "2026-07-14T07:23:51Z"
+state_rev: "sha256:d960174286d6367574b1092873fed0bbc8d575da1c9327f50878ee849fab360d"
 ---
 
 # Project Canon
@@ -30,12 +30,21 @@ state_rev: "sha256:dc7c3334d4cc2ed5aab79acf0f3560b29f4223eecb52b3d94e26646f7ecb2
 - Durable task status never uses `active`.
 - Dispatchable task states are `ready` and `rework`.
 - Runtime activity is represented by run leases, attempts, sessions, and workspaces.
+- Execution has four disjoint roles: a human-opened interactive session executes directly with its own tools; the independently running resident daemon is the only background dispatcher; an implementation worker handles exactly one injected task/attempt; and an independent read-only reviewer verifies one handoff. Interactive sessions and dispatched workers never launch nested model runners or foreground daemons.
+- Creating or grooming tasks is inert. Only a registered project with automation enabled, a resident daemon, and a ready/rework task with satisfied dependencies can produce a background implementation process.
+- Direct interactive work does not require daemon enablement or a daemon lifecycle claim. It inspects any live automated owner before taking over the same tracked task, but unrelated disabled-daemon state never blocks implementation.
 - Canonical task state owns runtime liveness: when a task is closed, cancelled, superseded, or moved back to backlog, every non-terminal runtime row for that task is retired with an actor/reason audit stamp.
+- Abandoned work uses the dedicated discard ceremony: `cancelled` is a durable tombstone, active views hide it by default, open gates become obsolete, and task/attempt/evidence/event history remains addressable. Physical task deletion is not a normal lifecycle operation.
+- Discard never weakens downstream contracts silently. Active dependents require an explicit choice to detach the discarded prerequisite or discard the complete downstream dependency closure.
 - Every attempt-creating path uses the shared attempt-cap guard before dispatch. Fresh dispatch, failure retry, continuation retry, reclaim replacement, and redriven retry-queued dispatch all count against the active redrive window; reclaim-caused replacements are not free attempts.
+- The resident daemon claims before spawning a worker. Dispatched workers verify injected ownership but never claim again; the runner harness owns session attachment, heartbeats, and normalized runtime outcomes, while the worker owns implementation, proof, review request, or a concrete blocker/gate.
 - Runner exit classification is tracker-aware on every outcome write path, including daemon status observation and wrapper direct-store recording: exit code 0 with tracker state still in `ready` or `rework` is attempt outcome `early_exit`, not clean completion, and counts against the no-progress continuation cap.
 - Codex exec owns the inner agent loop for the local Codex lane: Tusker launches one `codex exec --json` process per attempt, ingests `thread.started` and `turn.*` JSONL events, resumes later attempts with `codex exec resume <session-id>` when safe, and treats `max_turns` and budget as process governors.
+- Automated review is independent, read-only, one review per implementation handoff, and capped at three review cycles per task before operator intervention.
+- The resolved Codex runner policy is enforced with real `codex exec` CLI arguments. Full-access plus approval-free execution uses the CLI bypass flag; sandboxed profiles use the matching `--sandbox` mode. Tusker-specific environment variables are diagnostic metadata, not enforcement.
 - Codex exec event-stream silence is not evidence of runner death while raw JSONL shows a command execution started and not completed; the heartbeat watchdog uses `codex.turn_timeout_ms` as the in-flight command cap and reserves the shorter idle heartbeat reap for true silence.
 - Human-owned gates set `agent_action: stop_until_human_response` and `readiness: waiting_on_human`.
+- Human gates are reserved for human capability/authority, genuinely unresolved contract intent, or explicitly subjective final-artifact acceptance. Approved task/spec decisions are already accepted; agents must not turn their implementation into new human approval questions. Risk controls proof depth and configured close policy, not ad hoc gate creation.
 - Tags are projections; typed frontmatter is source of truth.
 - Obsidian Bases and dashboards are generated views, not canonical state.
 - Browser-backed ChatGPT work is a runner result source, not a direct state writer.
@@ -50,9 +59,11 @@ state_rev: "sha256:dc7c3334d4cc2ed5aab79acf0f3560b29f4223eecb52b3d94e26646f7ecb2
 - A ready/rework task must have concrete acceptance and verification proof.
 - Placeholder acceptance must block dispatch.
 - A task in canonical terminal/backlog state must not retain a non-terminal runtime row; the invariant circuit is last-resort containment for rows the close/status/reconcile retirement sweep failed to reach.
+- A discarded task must retain its ID and history, record actor/time/reason metadata, and have no open gates. Any removed dependency edge must be attributable to an explicit discard resolution.
 - A run at its attempt cap parks before any new attempt is created. `attempt_count_within_caps` is a corruption/operator-surgery sentinel, not a normal dispatch control path.
 - Raw CLI output belongs in runtime scratch/logs, not task markdown.
 - `tusker automation plan <task> --json` is the canonical pre-dispatch explanation.
+- `tusker daemon run` and `tusker automation dispatch` fail closed when invoked from a detected Codex/Claude or dispatched-worker environment; a model session may inspect plans/status and manage records, but cannot recursively create model workers.
 - `tusker xcode doctor` classifies generated Xcode build-state failures; when it reports `likely_infrastructure`, agents must record proof as blocked by infrastructure and do not claim code validation from the failed Xcode build.
 - High and critical risk closeout requires human acceptance.
 - Legacy V5/V6 docs, publication manifests, site export state, and checked-in event history are not default read paths.

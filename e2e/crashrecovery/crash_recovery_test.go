@@ -34,6 +34,17 @@ var builtE2EBinaries struct {
 	err        error
 }
 
+func TestHarnessEnvScrubsAgentSessionMarkers(t *testing.T) {
+	t.Setenv("CODEX_SHELL", "1")
+	t.Setenv("TUSKER_ATTEMPT_ID", "attempt-parent")
+	h := &harness{t: t, tempRoot: t.TempDir(), stateRoot: t.TempDir()}
+	for _, entry := range h.env() {
+		if strings.HasPrefix(entry, "CODEX_SHELL=") || strings.HasPrefix(entry, "TUSKER_ATTEMPT_ID=") {
+			t.Fatalf("child daemon inherited agent-session marker %q", entry)
+		}
+	}
+}
+
 func TestMain(m *testing.M) {
 	if stale := fixtureProcesses(""); len(stale) > 0 {
 		fmt.Fprintf(os.Stderr, "crashrecovery preflight reaping stale fixture processes:\n%s\n", summarizeFixtureProcesses(stale))
@@ -344,7 +355,7 @@ func TestCleanExitContinuationLoopParksAtCap(t *testing.T) {
 	h.createRunnableTask("clean exit loop parks")
 
 	daemon := h.startDaemon("daemon")
-	h.waitRun(crashTaskID, 8*time.Second, func(run map[string]any) bool {
+	h.waitRun(crashTaskID, 40*time.Second, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "parked_no_progress" &&
 			runInt(run, "attempt_count") == 3
 	})
@@ -534,6 +545,16 @@ func (h *harness) configureFakeRunner(cfg fakeRunnerConfig) {
 		parts = append(parts, "--hold-timeout", cfg.HoldTimeout.String())
 	}
 	command := strings.Join(parts, " ")
+	if cfg.RunnerKind == "codex_exec" {
+		binDir := filepath.Join(h.tempRoot, "bin")
+		h.mustMkdir(binDir)
+		codexShim := filepath.Join(binDir, "codex")
+		h.writeFile(codexShim, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo codex-crashrecovery-shim\n  exit 0\nfi\nexec "+command+"\n")
+		if err := os.Chmod(codexShim, 0o755); err != nil {
+			h.t.Fatal(err)
+		}
+		command = "codex exec --json --skip-git-repo-check -"
+	}
 	config := fmt.Sprintf(`schema: tusker.config/v1
 project_id: crash-recovery-e2e
 
@@ -750,11 +771,31 @@ func (h *harness) startDaemon(name string) *daemonProcess {
 }
 
 func (h *harness) env() []string {
-	return append(os.Environ(),
+	env := make([]string, 0, len(os.Environ())+5)
+	pathValue := filepath.Join(h.tempRoot, "bin") + string(os.PathListSeparator) + os.Getenv("PATH")
+	for _, entry := range os.Environ() {
+		key := entry
+		if index := strings.IndexByte(entry, '='); index >= 0 {
+			key = entry[:index]
+		}
+		switch key {
+		case "TUSKER_ATTEMPT_ID", "CODEX_SHELL", "CODEX_THREAD_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT":
+			continue
+		case "PATH":
+			env = append(env, "PATH="+pathValue)
+			continue
+		}
+		env = append(env, entry)
+	}
+	if os.Getenv("PATH") == "" {
+		env = append(env, "PATH="+pathValue)
+	}
+	return append(env,
 		"TUSKER_STATE_ROOT="+h.stateRoot,
 		"TUSKER_CONFIG="+filepath.Join(h.tempRoot, "config", "tusker", "config.yaml"),
 		"TUSKER_WRAPPER_HEARTBEAT_MS=100",
 		"TUSKER_WRAPPER_STOP_TIMEOUT_MS=1000",
+		"TUSKER_POLL_INTERVAL_MS=100",
 	)
 }
 

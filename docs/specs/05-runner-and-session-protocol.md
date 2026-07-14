@@ -21,7 +21,7 @@ The runner/session layer owns execution protocol, not tracker state.
 - raw runner artifacts live under the daemon state root, not in frontmatter
 - one attempt is one worker session
 - one attempt may contain many turns
-- Codex app-server is the first-class orchestration runner
+- `codex exec` is the first-class Codex runner
 - Claude Code is supported only to the level its adapter can honestly observe and resume
 
 ## Goals
@@ -171,7 +171,7 @@ type RunnerCapabilities struct {
 | heartbeats | yes | wrapper-generated if needed | daemon never trusts silence |
 | machine final status | yes | partial | adapter must classify exit honestly |
 
-Codex and Claude Code both need honest same-ticket resume semantics. Codex has the stronger app-server protocol today. Claude Code may need adapter-generated events and stricter proof before the daemon trusts a resume. Fake parity is not allowed.
+Codex and Claude Code both need honest same-ticket resume semantics. Their adapters may expose different event and resume guarantees; fake parity is not allowed.
 
 ## Adapter Responsibilities
 

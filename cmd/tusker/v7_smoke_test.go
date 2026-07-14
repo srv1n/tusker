@@ -117,6 +117,11 @@ func TestV7GateCreationRejectsVagueHumanGates(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "agent-capable") {
 		t.Fatalf("expected decision-gate code review loophole rejection, got %v", err)
 	}
+	err = newV7Gate(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "signoff", "owner": "human:sarav", "action": "Accept legacy mapping removal.", "verification": "Human confirms removal required by the approved task.", "why-agent-cannot": "This is high risk and the human should approve it.", "covers": "A1"})
+	if err == nil || !strings.Contains(err.Error(), "agent-capable") {
+		t.Fatalf("expected already-decided implementation signoff rejection, got %v", err)
+	}
+	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "signoff", "owner": "human:sarav", "action": "Review the final screen recording for subjective UX acceptance.", "verification": "Human records final artifact acceptance.", "why-agent-cannot": "The approved contract explicitly reserves subjective UX acceptance for the product owner.", "covers": "A1"}, newV7Gate)
 	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "decision", "owner": "human:sarav", "action": "Choose frontend/backend API contract.", "verification": "Decision is recorded on the task.", "why-agent-cannot": "The spec conflicts with the current backend API and the agent cannot choose product intent.", "suggestion": "Align the frontend to the backend response field names unless the API change is intentional.", "covers": "A1"}, newV7Gate)
 	if code, err := validateCmd(Args{"vault": vault, "json": "true"}); err != nil || code != 0 {
 		t.Fatalf("expected concrete decision gate to validate, code=%d err=%v", code, err)
@@ -1629,6 +1634,35 @@ func TestV7ValidationFlagsVagueAndMisroutedHumanGates(t *testing.T) {
 	errs, _ = validateV7Note(decisionReviewGate, validationContext{VaultPath: vault, RelativePath: decisionReviewGate.RelativePath}, decisionReviewGate.RelativePath)
 	if !issuesContainCode(errs, "GATE_HUMAN_OWNS_AGENT_CAPABLE_WORK") {
 		t.Fatalf("expected decision-gate code review loophole failure, got %#v", errs)
+	}
+
+	alreadyDecidedGate := reviewGate
+	alreadyDecidedGate.Data = cloneData(reviewGate.Data)
+	alreadyDecidedGate.Data["id"] = "APP-G-0005"
+	alreadyDecidedGate.Data["title"] = "Accept legacy mapping removal"
+	alreadyDecidedGate.Data["gate_kind"] = "signoff"
+	alreadyDecidedGate.Data["action"] = "Accept legacy mapping removal."
+	alreadyDecidedGate.Data["verification"] = "Human confirms removal required by the approved task."
+	alreadyDecidedGate.Data["why_agent_cannot"] = "This is high risk and the human should approve it."
+	alreadyDecidedGate.RelativePath = "work/gates/APP-G-0005.md"
+	errs, _ = validateV7Note(alreadyDecidedGate, validationContext{VaultPath: vault, RelativePath: alreadyDecidedGate.RelativePath}, alreadyDecidedGate.RelativePath)
+	if !issuesContainCode(errs, "GATE_HUMAN_OWNS_AGENT_CAPABLE_WORK") {
+		t.Fatalf("expected already-decided implementation signoff failure, got %#v", errs)
+	}
+
+	artifactGate := reviewGate
+	artifactGate.Data = cloneData(reviewGate.Data)
+	artifactGate.Data["id"] = "APP-G-0006"
+	artifactGate.Data["title"] = "Accept final interaction recording"
+	artifactGate.Data["gate_kind"] = "signoff"
+	artifactGate.Data["action"] = "Review the final screen recording for subjective UX acceptance."
+	artifactGate.Data["verification"] = "Human records final artifact acceptance."
+	artifactGate.Data["why_agent_cannot"] = "The approved contract explicitly reserves subjective UX acceptance for the product owner."
+	artifactGate.Data["covers"] = []string{"A2"}
+	artifactGate.RelativePath = "work/gates/APP-G-0006.md"
+	errs, _ = validateV7Note(artifactGate, validationContext{VaultPath: vault, RelativePath: artifactGate.RelativePath}, artifactGate.RelativePath)
+	if len(errs) != 0 {
+		t.Fatalf("expected subjective final-artifact signoff to validate, got %#v", errs)
 	}
 
 	decisionGate := reviewGate

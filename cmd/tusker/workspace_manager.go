@@ -12,11 +12,23 @@ import (
 type WorkspaceStrategy string
 
 const (
+	WorkspaceStrategyShared   WorkspaceStrategy = "shared"
+	// WorkspaceStrategyInPlace is accepted as a legacy configuration value.
+	// New configuration and persisted metadata use "shared".
 	WorkspaceStrategyInPlace  WorkspaceStrategy = "in_place"
 	WorkspaceStrategyWorktree WorkspaceStrategy = "worktree"
 	WorkspaceStrategyClone    WorkspaceStrategy = "clone"
 	WorkspaceStrategyCopy     WorkspaceStrategy = "copy"
 )
+
+func normalizeWorkspaceStrategy(strategy WorkspaceStrategy) WorkspaceStrategy {
+	switch strategy {
+	case "", WorkspaceStrategyInPlace, WorkspaceStrategyShared:
+		return WorkspaceStrategyShared
+	default:
+		return strategy
+	}
+}
 
 type WorkspacePrepareRequest struct {
 	ProjectID     string
@@ -63,14 +75,12 @@ func NewWorkspaceManager() WorkspaceManager {
 }
 
 func (m *FSWorkspaceManager) Prepare(req WorkspacePrepareRequest) (WorkspacePrepareResult, error) {
-	if req.Strategy == "" {
-		req.Strategy = WorkspaceStrategyInPlace
-	}
+	req.Strategy = normalizeWorkspaceStrategy(req.Strategy)
 	workspacePath, root, err := workspacePathForRequest(req)
 	if err != nil {
 		return WorkspacePrepareResult{}, err
 	}
-	if req.Strategy == WorkspaceStrategyInPlace {
+	if req.Strategy == WorkspaceStrategyShared {
 		if err := assertInPlaceWorkspaceReady(req.RepoRoot); err != nil {
 			return WorkspacePrepareResult{}, err
 		}
@@ -81,7 +91,7 @@ func (m *FSWorkspaceManager) Prepare(req WorkspacePrepareRequest) (WorkspacePrep
 }
 
 func workspacePathForRequest(req WorkspacePrepareRequest) (string, string, error) {
-	if req.Strategy == WorkspaceStrategyInPlace {
+	if req.Strategy == WorkspaceStrategyShared {
 		repoRoot := strings.TrimSpace(req.RepoRoot)
 		if repoRoot == "" {
 			return "", "", tuskerError(errorConfigInvalid, "in_place workspace requires repo_root")
@@ -143,7 +153,7 @@ func (m *FSWorkspaceManager) prepareAtPath(workspacePath string, req WorkspacePr
 	metadataPath := filepath.Join(workspacePath, ".tusker", "workspace.json")
 	created := false
 	if !fileExists(metadataPath) {
-		if req.Strategy != WorkspaceStrategyInPlace {
+		if req.Strategy != WorkspaceStrategyShared {
 			if err := m.materializeWorkspace(workspacePath, req); err != nil {
 				return WorkspacePrepareResult{}, err
 			}

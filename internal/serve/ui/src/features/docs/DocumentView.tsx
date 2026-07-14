@@ -16,10 +16,10 @@ const route = getRouteApi("/p/$projectId/docs");
  */
 export function DocumentView() {
   const { projectId } = route.useParams();
-  const { path, view } = route.useSearch();
+  const { path, view, gate } = route.useSearch();
 
   if (!path) return <LibraryList projectId={projectId} />;
-  if (isTaskId(path)) return <TaskContract projectId={projectId} taskId={path} />;
+  if (isTaskId(path)) return <TaskContract projectId={projectId} taskId={path} focusGateId={gate} />;
   if (view === "source") return <DocSourceView projectId={projectId} path={path} />;
   return <DocReader projectId={projectId} path={path} />;
 }
