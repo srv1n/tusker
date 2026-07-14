@@ -40,6 +40,9 @@ type setupDoctorInput struct {
 	ExecutablePath  string
 	InstalledPath   string
 	WorkflowInspect func(system, workflow string) ([]byte, error)
+	// SuppressHandoffRepair keeps cross-project rollout inside its preservation
+	// boundary. Standalone setup repair retains its existing handoff repair.
+	SuppressHandoffRepair bool
 }
 
 func setupDoctorCmd(args Args, apply bool) error {
@@ -203,7 +206,7 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 			}
 			zipFinding, nextConfig := diagnoseHandoffZip(repo, config, configPath)
 			if zipFinding != nil {
-				if apply && zipFinding.Repairable {
+				if apply && zipFinding.Repairable && !input.SuppressHandoffRepair {
 					if err := writeHandoffConfig(configPath, nextConfig); err != nil {
 						return report, err
 					}

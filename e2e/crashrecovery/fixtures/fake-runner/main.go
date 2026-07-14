@@ -19,6 +19,8 @@ func main() {
 	pidFile := flag.String("pid-file", "", "path receiving the fake runner pid")
 	releaseFile := flag.String("release-file", "", "path that releases hold-success mode")
 	completeStatus := flag.String("complete-status", "", "task status to set through tusker before a successful exit")
+	delivery := flag.Bool("delivery", false, "execute the lane-aware spec-to-wave delivery fixture")
+	deliveryControl := flag.String("delivery-control", "", "fixture-only delivery failure/hold control directory")
 	tuskerBin := flag.String("tusker-bin", "tusker", "tusker binary used for public-CLI task transitions")
 	exitCode := flag.Int("exit-code", 1, "exit code for fail mode")
 	heartbeatEvery := flag.Duration("heartbeat-every", 100*time.Millisecond, "heartbeat interval")
@@ -27,6 +29,24 @@ func main() {
 
 	mustWrite(*pidFile, fmt.Sprintf("%d\n", os.Getpid()))
 	touch(*readyFile)
+	if *delivery {
+		emitFirstEvent()
+		if os.Getenv("TUSKER_RUN_LANE") != "review" && *deliveryControl != "" {
+			task := os.Getenv("TUSKER_ITEM_ID")
+			if exists(filepath.Join(*deliveryControl, "fail-"+task)) {
+				os.Exit(19)
+			}
+			if exists(filepath.Join(*deliveryControl, "hold-"+task)) && !runHoldLoop(*heartbeatEvery, *holdTimeout, func() bool { return exists(filepath.Join(*deliveryControl, "release-"+task)) }) {
+				os.Exit(124)
+			}
+		}
+		if err := runDeliveryFixture(*tuskerBin); err != nil {
+			fmt.Fprintf(os.Stderr, "delivery fixture failed: %v\n", err)
+			os.Exit(18)
+		}
+		emitHeartbeat()
+		return
+	}
 
 	switch *mode {
 	case "success":
@@ -70,6 +90,108 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "unknown fake-runner mode %q\n", *mode)
 		os.Exit(64)
+	}
+}
+
+func runDeliveryFixture(tuskerBin string) error {
+	taskID := os.Getenv("TUSKER_ITEM_ID")
+	workspace := os.Getenv("TUSKER_WORKSPACE")
+	lane := os.Getenv("TUSKER_RUN_LANE")
+	if taskID == "" || workspace == "" {
+		return fmt.Errorf("missing task or workspace identity")
+	}
+	run := func(name string, args ...string) error {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = workspace
+		cmd.Env = os.Environ()
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, out)
+		}
+		return nil
+	}
+	if lane == "review" {
+		kind, relPath := deliveryEvidenceForTask(taskID)
+		evidenceArgs := []string{"evidence", "add", taskID, "--kind", kind, "--status", "accepted", "--accepted-by", "reviewer:e2e", "--covers", "A1", "--path", relPath, "--summary", "objective fixture artifact inspected", "--local", "--quiet"}
+		if kind == "screenshot" {
+			evidenceArgs = append(evidenceArgs, "--checked-by", "reviewer:e2e")
+		}
+		if err := run(tuskerBin, evidenceArgs...); err != nil {
+			return err
+		}
+		if err := run(tuskerBin, "verify", "add", taskID, "--by", "reviewer:e2e", "--covers", "A1", "--check", "review: acceptance, evidence, gates, and docs", "--result", "pass", "--note", "independent fixture review", "--local", "--quiet"); err != nil {
+			return err
+		}
+		if err := run("git", "add", ".tusker"); err != nil {
+			return err
+		}
+		if err := run("git", "commit", "-m", "review "+taskID); err != nil {
+			return err
+		}
+		if err := run(tuskerBin, "land", taskID, "--by", "reviewer:e2e", "--quiet"); err != nil {
+			return err
+		}
+		if err := run(tuskerBin, "close", taskID, "--by", "reviewer:e2e", "--reason", "fixture acceptance independently verified", "--quiet"); err != nil {
+			return err
+		}
+		if err := run("git", "add", ".tusker"); err != nil {
+			return err
+		}
+		if err := run("git", "commit", "-m", "close "+taskID); err != nil {
+			return err
+		}
+		return run(tuskerBin, "land", taskID, "--by", "reviewer:e2e", "--quiet")
+	}
+	artifactDir := filepath.Join(workspace, "artifacts", "delivery")
+	docDir := filepath.Join(workspace, "docs", "delivery")
+	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(docDir, 0o755); err != nil {
+		return err
+	}
+	_, artifactRel := deliveryEvidenceForTask(taskID)
+	artifact := filepath.Join(workspace, artifactRel)
+	doc := filepath.Join(docDir, strings.ToLower(taskID)+".md")
+	artifactBody := []byte(fmt.Sprintf("{\"task\":%q,\"acceptance\":[\"A1\"],\"result\":\"pass\"}\n", taskID))
+	if strings.HasSuffix(artifact, ".svg") {
+		artifactBody = []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" role="img" aria-label="Spec to wave delivery brief"><rect width="960" height="540" fill="#101827"/><text x="48" y="74" fill="#fff" font-size="34">Spec → Wave delivered</text><text x="48" y="130" fill="#7dd3fc" font-size="22">7 tasks · one arm · isolated review · landed</text><rect x="48" y="170" width="864" height="280" rx="18" fill="#1e293b"/><text x="78" y="225" fill="#86efac" font-size="24">Outcome: fully drained</text><text x="78" y="280" fill="#fff" font-size="20">See it: screenshot · benchmark · trace · matrix</text><text x="78" y="330" fill="#fff" font-size="20">Recovery: SIGKILL adoption and bounded reclaim</text><text x="78" y="380" fill="#fff" font-size="20">Human action: credential boundary only</text></svg>` + "\n")
+	}
+	if err := os.WriteFile(artifact, artifactBody, 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(doc, []byte("# "+taskID+" delivery\n\nAcceptance A1 delivered in an isolated workspace.\n"), 0o644); err != nil {
+		return err
+	}
+	if err := run(tuskerBin, "verify", "add", taskID, "--by", "agent:e2e", "--covers", "A1", "--check", "command: fixture delivery assertion", "--result", "pass", "--note", "isolated implementation and artifact committed", "--local", "--quiet"); err != nil {
+		return err
+	}
+	if err := run(tuskerBin, "finish", taskID, "--summary", "fixture implementation complete", "--request-review", "--local", "--quiet"); err != nil {
+		return err
+	}
+	if err := run("git", "add", "-A"); err != nil {
+		return err
+	}
+	return run("git", "commit", "-m", "deliver "+taskID)
+}
+
+func deliveryEvidenceForTask(taskID string) (string, string) {
+	base := "artifacts/delivery/" + strings.ToLower(taskID)
+	switch taskID {
+	case "APP-T-0001":
+		return "screenshot", base + ".svg"
+	case "APP-T-0002":
+		return "benchmark", base + ".json"
+	case "APP-T-0003":
+		return "trace", base + ".json"
+	case "APP-T-0004":
+		return "integration_test", base + ".json"
+	case "APP-T-0005":
+		return "release_smoke", base + ".json"
+	case "APP-T-0006":
+		return "security_review", base + ".json"
+	default:
+		return "manual_smoke", base + ".json"
 	}
 }
 

@@ -18,8 +18,8 @@ source_of_truth:
   - ".tusker/WORKFLOW.md"
   - "tusker.yaml"
 created_at: "2026-06-04 00:00:00 +0000 UTC"
-updated_at: "2026-07-14T15:17:50Z"
-state_rev: "sha256:2e2347e9d748f80db74ec07db4f40bffc725d54333ce659919e180a4afcda963"
+updated_at: "2026-07-14T15:45:24Z"
+state_rev: "sha256:7f205dbf3c917f14cf53b070a6338bea2529bdf579b76ad3dc38b8fe31097a10"
 ---
 
 # Project Canon
@@ -58,6 +58,7 @@ state_rev: "sha256:2e2347e9d748f80db74ec07db4f40bffc725d54333ce659919e180a4afcda
 - Terminal task state is monotone under merge and reconcile. A task in `done`, `cancelled`, or `superseded` may leave terminal state only through an explicit Tusker control operation that mints a fresh `state_rev`; stale branch content or stale object-rev repair must fail with a CAS conflict instead of certifying a non-terminal rewind.
 - Project registration quarantine is a loader property: entry points that scan registered projects use the shared loader, which records failed enabled registrations as `health: error` with `last_error` and continues loading unrelated healthy projects.
 - `tusker setup doctor` is the read-only onboarding diagnostic for registered vault/workflow drift, binary and generated-skill provenance, and offline ChatGPT handoff configuration. `setup repair` changes only deterministic local state, is idempotent, and never invents project routing, credentials, or browser workflow updates.
+- `tusker delivery rollout doctor|repair` aggregates that same setup doctor once across registered projects, diagnoses the managed daemon once globally, and quarantines incompatible registrations without stopping compatible siblings. Repair is idempotent and allowlisted to generated Tusker skills, supported workflow/runner policy, objective close defaults, registration metadata, and the managed service; it never rewrites project knowledge, task contracts, secrets, repo instructions, handoff routing, or unrelated configuration.
 - Repository validation is serialized across linked worktrees by one validation gate. Makefile Go build, vet, and test phases default to two Go scheduler threads and one package/test lane; the `cmd/tusker` TestMain also acquires the gate so raw focused tests cannot overlap a broad shared-state suite. Helper test re-execs inherit the held lease.
 
 ## Invariants
