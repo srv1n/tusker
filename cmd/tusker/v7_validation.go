@@ -661,22 +661,48 @@ func v7HumanGateOwnsAgentCapableWork(gateKind, owner, action, verification, whyA
 	if !v7GateOwnerNeedsAgentBoundary(owner) {
 		return false
 	}
-	text := strings.ToLower(strings.Join([]string{action, verification, whyAgentCannot, suggestion}, " "))
+	requested := strings.ToLower(strings.Join([]string{action, verification}, " "))
+	context := strings.ToLower(strings.Join([]string{action, verification, whyAgentCannot, suggestion}, " "))
 	agentCapable := []string{
-		"code review", "review code", "reviews code", "review code changes", "review diff", "diff review", "approve diff", "compare code",
+		"code review", "review code", "review the code", "reviews code", "review code changes", "review diff", "review the diff", "diff review", "approve diff", "compare code",
 		"code comparison", "review branch proof", "review proof", "review acceptance", "review changes",
-		"inspect logs", "log analysis", "test inspection", "test failure", "debug test",
+		"inspect logs", "inspect the logs", "review logs", "log analysis", "interpret logs", "test inspection", "inspect tests", "test failure", "debug test",
 		"documentation review", "implementation judgment", "audit implementation",
 		"approve implementation", "accept implementation", "confirm implementation",
 		"approve removal", "accept removal", "confirm removal", "legacy mapping",
 		"approve mapping", "accept mapping", "confirm mapping", "approve behavior", "accept behavior",
-		"screenshot", "screen recording", "video recording", "benchmark", "performance result",
+		"screenshot", "screen recording", "video recording", "recording", "benchmark", "performance result", "performance delta",
 		"choose implementation", "implementation choice", "select implementation", "basic test", "run tests",
 	}
 	subjective := []string{"subjective", "look and feel", "brand quality", "visual acceptance", "ux acceptance", "feels right", "on-brand", "required by this proof policy"}
+	requestedSubjective := false
 	for _, marker := range subjective {
-		if strings.Contains(text, marker) {
-			return false
+		if strings.Contains(requested, marker) {
+			requestedSubjective = true
+			break
+		}
+	}
+	requestedObjective := false
+	for _, marker := range agentCapable {
+		if strings.Contains(requested, marker) {
+			requestedObjective = true
+			break
+		}
+	}
+	// Subjective acceptance may inspect an artifact, but the requested judgment
+	// itself must say what is subjective. Authority vocabulary in the rationale
+	// cannot turn an objective action into human-only work.
+	if requestedObjective && !(requestedSubjective && (gateKind == "subjective_acceptance" || gateKind == "signoff")) {
+		return true
+	}
+	if requestedSubjective {
+		return gateKind != "subjective_acceptance" && gateKind != "signoff"
+	}
+	explicitSubjectiveContext := false
+	for _, marker := range subjective {
+		if strings.Contains(context, marker) {
+			explicitSubjectiveContext = true
+			break
 		}
 	}
 	authority := []string{
@@ -685,24 +711,21 @@ func v7HumanGateOwnsAgentCapableWork(gateKind, owner, action, verification, whyA
 		"privacy authority", "security authority", "security approval", "release approval", "production access", "inaccessible environment",
 		"physical device", "device unavailable", "device or ui access", "human device", "cannot access",
 	}
+	hasAuthorityBoundary := false
 	for _, marker := range authority {
-		if strings.Contains(text, marker) {
-			return false
-		}
-	}
-	for _, marker := range agentCapable {
-		if strings.Contains(text, marker) {
-			return true
+		if strings.Contains(context, marker) {
+			hasAuthorityBoundary = true
+			break
 		}
 	}
 	if gateKind == "decision" {
-		return strings.TrimSpace(suggestion) == "" || !v7GateHasDecisionConflictContext(text)
+		return strings.TrimSpace(suggestion) == "" || !v7GateHasDecisionConflictContext(context)
 	}
 	if gateKind == "signoff" {
-		return true
+		return !explicitSubjectiveContext
 	}
 	if gateKind == "security" || gateKind == "privacy" || gateKind == "legal" || gateKind == "billing" || gateKind == "release" || gateKind == "destructive_external_action" {
-		return true
+		return !hasAuthorityBoundary
 	}
 	return false
 }

@@ -8,7 +8,7 @@
 | `inline` | Default for normal code tasks. Verification rows live in the task. |
 | `card` | Medium/high tasks needing a concise evidence object. |
 | `artifact` | UI screenshots, traces, videos, benchmark files, or other durable artifacts. |
-| `audit` | Critical/security/release tasks. Requires stronger review and usually human acceptance. |
+| `audit` | Critical/security/release tasks. Requires stronger objective proof and independent review. |
 
 ## Evidence Discipline
 
@@ -18,5 +18,5 @@
 - Keep evidence, verification rows, and attempt summaries terse: command plus PASS/FAIL and the first actionable failure. Task contracts and specs stay in full prose.
 - Do not require changelog/docs/canon updates unless the task contract names `doc_nodes`; low/medium tasks with no `doc_nodes` should keep `Knowledge delta: None expected.`
 - Route repeated lessons through `tusker feedback promote` instead of appending long per-task knowledge deltas.
-- High and critical risks require stronger proof and follow configured close policy. Risk alone does not justify an ad hoc human gate or a request to re-approve implementation choices already settled by the contract.
+- High and critical risks require stronger proof, reviewer depth, and landing safeguards. Independent reviewers may close them after objective proof and explicit gates pass; risk alone never supplies human authority.
 - Explainer/understanding packets help humans build a mental model, but they do not satisfy proof by themselves.

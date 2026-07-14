@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -112,6 +113,33 @@ func TestHumanGateBoundary(t *testing.T) {
 	}
 }
 
+func TestHumanGateBoundaryAdversarialVocabulary(t *testing.T) {
+	invalid := []struct{ kind, action, verification, boundary string }{
+		{"release", "Review code changes and authorize the production release.", "Release authority records approval.", "Only the production release authority can deploy."},
+		{"security", "Inspect logs and grant security approval.", "Security authority records approval.", "Only the security authority can approve."},
+		{"privacy", "Interpret the benchmark and approve the privacy exception.", "Privacy authority records approval.", "Only the privacy authority can approve."},
+		{"billing", "Review the diff before approving the charge.", "Billing authority records approval.", "Only billing authority controls account spend."},
+		{"subjective_acceptance", "Inspect the objective screenshot.", "Human confirms the screenshot.", "The contract mentions subjective brand quality."},
+		{"env", "Capture an objective screen recording.", "The recording is attached.", "The physical device is unavailable to the agent."},
+	}
+	for _, tc := range invalid {
+		if err := validateV7GateCreationPolicy(tc.kind, "human:owner", true, tc.action, tc.verification, tc.boundary, ""); err == nil || !strings.Contains(err.Error(), "agent-capable") {
+			t.Errorf("authority vocabulary laundered %s action %q: %v", tc.kind, tc.action, err)
+		}
+	}
+	valid := []struct{ kind, action, verification, boundary string }{
+		{"release", "Authorize the production release.", "Release authority records approval.", "Only the release authority can deploy; an independent agent completed code review."},
+		{"security", "Grant security approval.", "Security authority records approval.", "Only the security authority can approve; an agent already inspected logs."},
+		{"subjective_acceptance", "Judge whether the screenshot feels on-brand.", "Subjective brand acceptance is recorded.", "The contract explicitly reserves this look and feel judgment."},
+		{"env", "Use the unavailable physical device to exercise the app.", "The device result is attached.", "The physical device is unavailable to the agent."},
+	}
+	for _, tc := range valid {
+		if err := validateV7GateCreationPolicy(tc.kind, "human:owner", true, tc.action, tc.verification, tc.boundary, ""); err != nil {
+			t.Errorf("genuine %s boundary rejected: %v", tc.kind, err)
+		}
+	}
+}
+
 func TestObjectiveClosePolicyContract(t *testing.T) {
 	wf := defaultWorkflowMarkdown()
 	for _, residue := range []string{"human_required_risks", "Human close required", "high/critical risks stay in `review`"} {
@@ -127,6 +155,54 @@ func TestObjectiveClosePolicyContract(t *testing.T) {
 		text := string(raw)
 		if strings.Contains(text, `risk == "high" || risk == "critical"`) && strings.Contains(text, "human") {
 			t.Fatalf("%s retains a high/critical human heuristic", path)
+		}
+	}
+	forbidden := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)high(?:\s+and|\s+or|/)?\s*critical[^\n]{0,100}(?:human verification and close|requires? (?:a )?human acceptor|stay[^\n]{0,30}review|route[^\n]{0,20}human)`),
+		regexp.MustCompile(`(?i)risk[^\n]{0,80}requires?[^\n]{0,20}human (?:acceptor|acceptance|close|verification|review)`),
+		regexp.MustCompile(`(?i)usually human acceptance`),
+		regexp.MustCompile(`(?i)human_required_risks\s*:`),
+	}
+	paths := []string{"../../skill", "../../docs", "../../internal/serve/ui", "../../.tusker/WORKFLOW.md", "../../.tusker/knowledge/domains/project/CANON.md", "../../HANDOFF-dispatch-land-hardening.md", "../../tusker.yaml"}
+	for _, root := range paths {
+		info, err := os.Stat(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		check := func(path string) error {
+			if strings.Contains(filepath.ToSlash(path), "/dist/") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			for _, pattern := range forbidden {
+				if match := pattern.Find(raw); match != nil {
+					t.Errorf("%s retains risk-based human authority: %q", path, match)
+				}
+			}
+			return nil
+		}
+		if !info.IsDir() {
+			if err := check(root); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() {
+				if info.Name() == "dist" || info.Name() == "artifacts" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			return check(path)
+		}); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

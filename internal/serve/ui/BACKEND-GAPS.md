@@ -62,13 +62,13 @@ don't expose the inputs. This whole derivation should move **server-side**
 
 | Signal | Rule | Implemented? | Missing input |
 |---|---|---|---|
-| 1 High/critical review | `status=review` ∧ `risk ∈ {high,critical}` | ✅ | none — `critical` confirmed real in the Go schema (`cmd/tusker/schema.go`), now in the `Risk` type + derivation; serve API must emit it |
+| 1 Explicit human gate | unsatisfied gate with a human capability, authority, unresolved-intent, or subjective-acceptance boundary | ✅ | serve API must emit the gate owner, action, verification, and boundary |
 | 2 Human-owned gate | unsatisfied gate, human owner | ⚠️ partial | gate needs a **`satisfied` flag** + a **payload** (clarify→`question`, provision→`ask`+`path`, approve-spec→`specTitle`+`specPath`); today only `{id,kind,owner}` |
 | 3 Rework ping-pong | bounced runner→reviewer→rework ≥ 2× | ❌ | a **rework/bounce counter** per task (or transition history) |
 | 4 Terminal run failure | exhausted retries, no lease to continue | ✅ | daemon should mark **terminal vs retry-queued** explicitly + surface the terminal error text + attempt count |
 | 5 Wave boundary | batch-review trigger, as ONE card | ❌ | a **cohort-drain signal** from the daemon (see §4) |
 
-**Explicit non-signals** (encoded, never enter the panel): low/medium review,
+**Explicit non-signals** (encoded, never enter the panel): review at any risk tier without an explicit human gate,
 dep-blocked tasks, capacity-blocked ready tasks, deliberately parked leases.
 
 ---
@@ -79,7 +79,7 @@ Concrete additions the backend must supply (types in `src/types/domain.ts`):
 
 - `Risk`: ✅ `"critical"` added — confirmed real in the Go schema
   (`cmd/tusker/schema.go`: `low\|medium\|high\|critical`); the serve API must
-  emit it and the reviewer must route high **and** critical to the human.
+  emit it. Risk controls proof and landing safeguards, not human routing.
 - Gate objects (`TaskDetail.gates[]`): add `satisfied: boolean` and a
   kind-specific payload (`question` / `ask` + `path` / `specTitle` + `specPath`).
 - Task: a **rework/bounce count** (signal 3) and per-**project ownership**
@@ -146,7 +146,7 @@ The UI must never invent a mutation path; every write goes through the
 
 | Situation | Action | Verb |
 |---|---|---|
-| High/critical review accepted | Close | `tusker close <id>` (close policy enforced) |
+| Objective review accepted | Close | `tusker close <id>` (proof and explicit gates enforced) |
 | Review rejected | Rework + reason | `tusker status <id> rework` with note |
 | Human gate | Satisfy + evidence | `tusker gate satisfy --evidence "<stmt>"` |
 | Rework ping-pong | Amend contract, requeue | edit task + `tusker reconcile` |

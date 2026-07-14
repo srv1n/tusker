@@ -350,7 +350,7 @@ func TestV7ArtifactFinishRequiresEvidenceOrGate(t *testing.T) {
 		t.Fatalf("expected finish proof error, got %v", err)
 	}
 
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "human:sarav", "action": "Capture manual artifact proof.", "verification": "Attach screenshot/video proof for A1.", "covers": "A1", "why-agent-cannot": "Manual artifact capture requires human device or UI access."}, newV7Gate)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "env", "owner": "human:sarav", "action": "Use the unavailable physical device to capture artifact proof.", "verification": "The device capture is attached for A1.", "covers": "A1", "why-agent-cannot": "The required physical device is unavailable to the agent."}, newV7Gate)
 	if err := finishV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "attempt": "APP-T-0001-A-0001", "summary": "Implementation complete; manual proof gated.", "local": "true"}); err != nil {
 		t.Fatal(err)
 	}
