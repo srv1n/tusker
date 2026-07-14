@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -26,6 +27,8 @@ type Daemon struct {
 	serve                  *serveServer
 	pollTaskStatuses       map[string]string
 	pollTaskMeta           map[string]serveStreamTaskMeta
+	reconcileMu            sync.Mutex
+	writeNotify            chan string
 	postSpawnBeforePersist func(RunStatus)
 	beforePollRunPersist   func(RunStatus, RunStatus)
 	beforeRunLeaseClaim    func(RunStatus)
@@ -67,7 +70,7 @@ func NewDaemon(stateRoot string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Daemon{stateRoot: stateRoot, store: store}, nil
+	return &Daemon{stateRoot: stateRoot, store: store, writeNotify: make(chan string, daemonWriteNotifyBuffer)}, nil
 }
 
 func (d *Daemon) Close() error {
@@ -83,22 +86,12 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	go d.runWriteNotifyLoop(runCtx)
 	var control *daemonControlServer
 	var err error
 	if !once {
 		control, err = startDaemonControlServer(d.stateRoot, func(reqCtx context.Context, req daemonControlRequest) daemonControlResponse {
-			switch req.Command {
-			case "interrupt":
-				if err := d.InterruptRun(reqCtx, req.Identity); err != nil {
-					return daemonControlResponse{OK: false, Message: err.Error()}
-				}
-				return daemonControlResponse{OK: true}
-			case "stop":
-				cancel()
-				return daemonControlResponse{OK: true, Message: "daemon stop requested"}
-			default:
-				return daemonControlResponse{OK: false, Message: "unknown control command"}
-			}
+			return d.handleControlRequest(reqCtx, req, cancel)
 		})
 		if err != nil {
 			return err
@@ -409,7 +402,18 @@ func finishRuntimeRun(store *RuntimeStore, run *RunStatus, state LeaseState, out
 }
 
 func (d *Daemon) PollOnce(ctx context.Context) error {
-	err := d.pollOnce(ctx)
+	d.reconcileMu.Lock()
+	defer d.reconcileMu.Unlock()
+	return ignoreDaemonPollSnapshotConflict(d.pollScope(ctx, ""))
+}
+
+func (d *Daemon) reconcileProjectOnce(ctx context.Context, projectID string) error {
+	d.reconcileMu.Lock()
+	defer d.reconcileMu.Unlock()
+	return ignoreDaemonPollSnapshotConflict(d.pollScope(ctx, strings.TrimSpace(projectID)))
+}
+
+func ignoreDaemonPollSnapshotConflict(err error) error {
 	var typed *TuskerError
 	if errors.As(err, &typed) && typed.Code == "CAS_CONFLICT" && strings.Contains(err.Error(), "run changed while daemon poll was applying its snapshot") {
 		return nil
@@ -417,7 +421,7 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 	return err
 }
 
-func (d *Daemon) pollOnce(ctx context.Context) error {
+func (d *Daemon) pollScope(ctx context.Context, projectID string) error {
 	previousPollAt, err := d.store.GetSetting("daemon_last_poll_at")
 	if err != nil {
 		return err
@@ -425,9 +429,20 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	if err := d.feedWatchdogBeat(time.Now().UTC()); err != nil {
 		return err
 	}
-	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{Notes: true, FrontmatterOnly: true})
+	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{Notes: true, FrontmatterOnly: true, ProjectID: projectID})
 	if err != nil {
 		return err
+	}
+	if projectID != "" {
+		if len(projects) == 0 {
+			return tuskerError(errorNotFound, "registered project not found: "+projectID)
+		}
+		if projects[0].LoadError != nil {
+			return projects[0].LoadError
+		}
+		if !projects[0].Project.Enabled {
+			return tuskerError(errorInvalidTransition, "registered project is disabled: "+projectID)
+		}
 	}
 	allRuns, err := d.store.ListRuns()
 	if err != nil {
@@ -938,6 +953,10 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 		if err := d.store.TouchProjectPoll(project.ProjectID); err != nil {
 			return err
 		}
+	}
+	if projectID != "" {
+		d.emitProjectReconciledStreamEvent(projects[0].Project)
+		return nil
 	}
 	currentPollAt := time.Now().UTC().Format(time.RFC3339Nano)
 	if err := d.store.SetSetting("daemon_last_poll_at", currentPollAt); err != nil {

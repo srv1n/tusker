@@ -14,8 +14,9 @@ import (
 )
 
 type daemonControlRequest struct {
-	Command  string `json:"command"`
-	Identity string `json:"identity"`
+	Command   string `json:"command"`
+	Identity  string `json:"identity"`
+	ProjectID string `json:"project_id,omitempty"`
 }
 
 type daemonControlResponse struct {
@@ -27,6 +28,28 @@ type daemonControlServer struct {
 	path string
 	ln   net.Listener
 	wg   sync.WaitGroup
+}
+
+func (d *Daemon) handleControlRequest(ctx context.Context, req daemonControlRequest, stop func()) daemonControlResponse {
+	switch req.Command {
+	case "notify":
+		if !d.queueWriteNotify(req.ProjectID) {
+			return daemonControlResponse{OK: false, Message: "project notification is missing a project id"}
+		}
+		return daemonControlResponse{OK: true}
+	case "interrupt":
+		if err := d.InterruptRun(ctx, req.Identity); err != nil {
+			return daemonControlResponse{OK: false, Message: err.Error()}
+		}
+		return daemonControlResponse{OK: true}
+	case "stop":
+		if stop != nil {
+			stop()
+		}
+		return daemonControlResponse{OK: true, Message: "daemon stop requested"}
+	default:
+		return daemonControlResponse{OK: false, Message: "unknown control command"}
+	}
 }
 
 func daemonSocketPath(stateRoot string) string {
@@ -112,4 +135,19 @@ func sendDaemonControl(stateRoot string, req daemonControlRequest) (daemonContro
 		return daemonControlResponse{}, err
 	}
 	return resp, nil
+}
+
+func sendDaemonControlOneWay(stateRoot string, req daemonControlRequest, timeout time.Duration) error {
+	conn, err := net.DialTimeout("unix", daemonSocketPath(stateRoot), timeout)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_ = conn.SetWriteDeadline(time.Now().Add(timeout))
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Write(append(raw, '\n'))
+	return err
 }

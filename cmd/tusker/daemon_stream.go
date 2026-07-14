@@ -8,6 +8,7 @@ const (
 	serveStreamKindLeaseTransition  = "lease_transition"
 	serveStreamKindTaskStatusChange = "task_status_change"
 	serveStreamKindReviewBatch      = "review_batch"
+	serveStreamKindProjectReconcile = "project_reconciled"
 )
 
 type serveStreamTaskMeta struct {
@@ -46,6 +47,20 @@ func (d *Daemon) emitStreamEvent(kind string, keys ...string) {
 
 func (d *Daemon) emitPollTickStreamEvent() {
 	d.emitStreamEvent(serveStreamKindPollTick, "daemon", "projects")
+}
+
+func (d *Daemon) emitProjectReconciledStreamEvent(project RegisteredProject) {
+	if d == nil || d.stream == nil {
+		return
+	}
+	if d.serve != nil {
+		d.serve.refreshProjectSnapshot(project.ProjectID)
+	}
+	d.stream.Broadcast(serveStreamEvent{
+		Kind:    serveStreamKindProjectReconcile,
+		Project: firstNonEmpty(project.ProjectKey, project.ProjectID),
+		Keys:    []string{"project", "tasks", "runs"},
+	})
 }
 
 func (d *Daemon) emitDispatchStreamEvent(run RunStatus) {

@@ -1640,6 +1640,11 @@ func reconcileV7Cmd(args Args) error {
 		openDoneGates := len(v7DoneTaskOpenGateViolations(idx))
 		fmt.Printf("Reconciled %d V7 task projection%s, %d wave projection%s, %d task wave pointer%s, repaired %d stale object rev%s, %d epic managed block%s, %d stale lease%s, and detected %d done/open-gate violation%s.\n", changed, plural(changed), waveChanges, plural(waveChanges), taskWavePointers, plural(taskWavePointers), revRepairs, plural(revRepairs), epicBlocks, plural(epicBlocks), staleLeases, plural(staleLeases), openDoneGates, plural(openDoneGates))
 	}
+	// Reconcile-generated events are suppressed by emitV7Event so a daemon
+	// reconcile cannot notify itself forever. A successful CLI reconcile still
+	// represents a completed write batch (including generated projections), so
+	// send exactly one notification after the batch finishes.
+	notifyDaemonAfterV7Write(v7ProjectID(vaultPath))
 	return nil
 }
 
@@ -2921,10 +2926,11 @@ func appendV7EvidenceLink(taskPath, evidenceID, kind, summary string) error {
 func emitV7Event(vaultPath, objectID, objectKind, eventKind, actor string, payload map[string]any) error {
 	now := time.Now().UTC()
 	eventID := newRecordID()
+	projectID := v7ProjectID(vaultPath)
 	event := map[string]any{
 		"schema":      "tusker.event/v1",
 		"id":          eventID,
-		"project":     v7ProjectID(vaultPath),
+		"project":     projectID,
 		"object":      objectID,
 		"object_kind": objectKind,
 		"event_kind":  eventKind,
@@ -2936,7 +2942,13 @@ func emitV7Event(vaultPath, objectID, objectKind, eventKind, actor string, paylo
 	}
 	name := fmt.Sprintf("%s--%s--%s.json", objectID, now.Format("20060102T150405Z"), eventID)
 	path := filepath.Join(vaultPath, "events", now.Format("2006"), now.Format("01"), name)
-	return writeJSON(path, event)
+	if err := writeJSON(path, event); err != nil {
+		return err
+	}
+	if strings.TrimSpace(actor) != "tusker:reconcile" {
+		notifyDaemonAfterV7Write(projectID)
+	}
+	return nil
 }
 
 func nextV7Sequence(vaultPath, epic, kind string) int {

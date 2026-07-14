@@ -909,6 +909,25 @@ func (s *RuntimeStore) ListProjects() ([]RegisteredProject, error) {
 	return out, rows.Err()
 }
 
+func (s *RuntimeStore) GetProject(projectID string) (*RegisteredProject, error) {
+	var project RegisteredProject
+	var enabled int
+	var health string
+	err := s.queryRowScan(`SELECT project_id, project_key, name, repo_root, vault_root, workflow_path, enabled, health, last_poll_at, last_error
+		FROM projects WHERE project_id = ?`, []any{strings.TrimSpace(projectID)},
+		&project.ProjectID, &project.ProjectKey, &project.Name, &project.RepoRoot, &project.VaultRoot, &project.WorkflowPath,
+		&enabled, &health, &project.LastPollAt, &project.LastError)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	project.Enabled = enabled != 0
+	project.Health = ProjectHealth(health)
+	return &project, nil
+}
+
 func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
 	rows, err := s.query(`SELECT project_id, record_id, item_id, runner, runner_profile, runner_harness, runner_model, runner_effort, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at FROM runs ORDER BY updated_at DESC, project_id, item_id`)
 	if err != nil {

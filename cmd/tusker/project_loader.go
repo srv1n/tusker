@@ -29,15 +29,24 @@ func loadRegisteredProjects(store *RuntimeStore, opts registeredProjectLoadOptio
 	if store == nil {
 		return nil, tuskerError(errorConfigInvalid, "runtime store is required")
 	}
-	projects, err := store.ListProjects()
-	if err != nil {
-		return nil, err
+	var projects []RegisteredProject
+	if strings.TrimSpace(opts.ProjectID) != "" {
+		project, err := store.GetProject(opts.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		if project != nil {
+			projects = append(projects, *project)
+		}
+	} else {
+		var err error
+		projects, err = store.ListProjects()
+		if err != nil {
+			return nil, err
+		}
 	}
 	out := make([]loadedRegisteredProject, 0, len(projects))
 	for _, project := range projects {
-		if opts.ProjectID != "" && project.ProjectID != opts.ProjectID {
-			continue
-		}
 		loaded := loadedRegisteredProject{Project: project}
 		if (!project.Enabled && !opts.LoadDisabled) || opts.MetadataOnly {
 			out = append(out, loaded)
