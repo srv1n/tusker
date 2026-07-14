@@ -276,20 +276,51 @@ func TestWavePause(t *testing.T) {
 }
 
 func TestWavePauseAndDisarmPreserveLiveDaemonRuns(t *testing.T) {
-	for _, authorization := range []string{"paused", "disarmed"} {
-		t.Run(authorization, func(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(t *testing.T, vault string)
+	}{
+		{name: "paused", mutate: func(t *testing.T, vault string) {
+			args := Args{"vault": vault, "_pos0": "W-0001", "by": "human:test", "reason": "lifecycle test", "quiet": "true"}
+			if err := mutateWaveAuthorization(args, "paused", nil); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "disarmed", mutate: func(t *testing.T, vault string) {
+			args := Args{"vault": vault, "_pos0": "W-0001", "by": "human:test", "reason": "lifecycle test", "quiet": "true"}
+			if err := mutateWaveAuthorization(args, "disarmed", nil); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "stale", mutate: func(t *testing.T, vault string) {
+			path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+			data, body, err := parseFrontmatterMustRead(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data["title"] = "Materially changed after authorization"
+			data["state_rev"] = v7StateRev(data, body)
+			content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writeText(path, content); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("TUSKER_STATE_ROOT", t.TempDir())
 			vault := authorizedWaveTestVault(t)
 			armWaveForTest(t, vault)
-			args := Args{"vault": vault, "_pos0": "W-0001", "by": "human:test", "reason": "lifecycle test", "quiet": "true"}
-			if err := mutateWaveAuthorization(args, authorization, nil); err != nil {
-				t.Fatal(err)
-			}
+			tc.mutate(t, vault)
 			wfFile := WorkflowFile{Path: workflowPath(vault), Data: defaultWorkflow()}
 			notes, err := listAllNotes(vault)
 			if err != nil {
 				t.Fatal(err)
 			}
+			lookup := buildNoteLookup(notes)
 			note, err := resolveNote(vault, "APP-T-0001")
 			if err != nil {
 				t.Fatal(err)
@@ -299,16 +330,21 @@ func TestWavePauseAndDisarmPreserveLiveDaemonRuns(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
+			daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store, processIdentityProbe: func(RunStatus) bool { return true }}
 			project := RegisteredProject{ProjectID: "app", ProjectKey: "app", Name: "app", RepoRoot: v7RepoRoot(vault), VaultRoot: vault, Enabled: true, Health: projectHealthHealthy}
 			for _, lease := range []LeaseState{LeaseStateClaimed, LeaseStateRunning} {
-				live := RunStatus{ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: wfFile.Data.Agents.Default, Lane: runLaneExecute, LeaseState: string(lease), LeaseOwner: "attempt-live", LeaseGeneration: 7, ActiveAttemptID: "attempt-live", ProcessPID: 1234, ProcessPGID: 1234}
+				now := time.Now().UTC().Format(time.RFC3339)
+				live := RunStatus{ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: wfFile.Data.Agents.Default, Lane: runLaneExecute, LeaseState: string(lease), LeaseOwner: "attempt-live", LeaseGeneration: 7, ActiveAttemptID: "attempt-live", AttemptCount: 3, ProcessPID: 1234, ProcessPGID: 1234, ProcessStartedAt: now, StartedAt: now, FirstEventAt: now, LastEventAt: now, LastHeartbeatAt: now}
 				updated, persisted, err := daemon.reconcileExecuteRunWithPlan(context.Background(), project, wfFile, notes, note, live)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if persisted || updated.LeaseState != string(lease) || updated.LeaseOwner != "attempt-live" || updated.LeaseGeneration != 7 || updated.ActiveAttemptID != "attempt-live" || updated.ProcessPID != 1234 {
-					t.Fatalf("%s forged a terminal/released live run: before=%#v after=%#v persisted=%t", authorization, live, updated, persisted)
+				updated, trackerPersisted, err := daemon.reconcileRunWithTracker(context.Background(), project, wfFile, updated, note, lookup.ByID, lookup.ByRecordID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if persisted || updated.LeaseState == string(LeaseStateReleased) || updated.LeaseState == string(LeaseStateInterrupted) || updated.LeaseOwner != live.LeaseOwner || updated.LeaseGeneration != live.LeaseGeneration || updated.ActiveAttemptID != live.ActiveAttemptID || updated.AttemptCount != live.AttemptCount || updated.ProcessPID != live.ProcessPID || updated.ProcessPGID != live.ProcessPGID || updated.ProcessStartedAt != live.ProcessStartedAt {
+					t.Fatalf("%s forged a terminal/released live run: before=%#v after=%#v plan_persisted=%t tracker_persisted=%t", tc.name, live, updated, persisted, trackerPersisted)
 				}
 			}
 			retry := RunStatus{ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: wfFile.Data.Agents.Default, Lane: runLaneExecute, LeaseState: string(LeaseStateRetryQueued), NextRetryAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)}
@@ -316,10 +352,47 @@ func TestWavePauseAndDisarmPreserveLiveDaemonRuns(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			updated, _, err = daemon.reconcileRunWithTracker(context.Background(), project, wfFile, updated, note, lookup.ByID, lookup.ByRecordID)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if !persisted || updated.LeaseState != string(LeaseStateUnclaimed) || !strings.Contains(updated.LastError, "wave W-0001 authorization") {
-				t.Fatalf("%s did not suppress the future retry: %#v persisted=%t", authorization, updated, persisted)
+				t.Fatalf("%s did not suppress the future retry: %#v persisted=%t", tc.name, updated, persisted)
 			}
 		})
+	}
+}
+
+func TestLiveExecuteTrackerStillReleasesTaskIneligibility(t *testing.T) {
+	t.Setenv("TUSKER_STATE_ROOT", t.TempDir())
+	vault := authorizedWaveTestVault(t)
+	armWaveForTest(t, vault)
+	wfFile := WorkflowFile{Path: workflowPath(vault), Data: defaultWorkflow()}
+	notes, err := listAllNotes(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := buildNoteLookup(notes)
+	note, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	note.Data = cloneMap(note.Data)
+	note.Data["status"] = "backlog"
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
+	project := RegisteredProject{ProjectID: "app", ProjectKey: "app", Name: "app", RepoRoot: v7RepoRoot(vault), VaultRoot: vault, Enabled: true, Health: projectHealthHealthy}
+	live := RunStatus{ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: wfFile.Data.Agents.Default, Lane: runLaneExecute, LeaseState: string(LeaseStateClaimed), LeaseOwner: "attempt-live", LeaseGeneration: 7, ActiveAttemptID: "attempt-live", AttemptCount: 1}
+	updated, changed, err := daemon.reconcileRunWithTracker(context.Background(), project, wfFile, live, note, lookup.ByID, lookup.ByRecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || updated.LeaseState != string(LeaseStateReleased) || !updated.Terminal || !strings.Contains(updated.LastError, "canonical status backlog") {
+		t.Fatalf("genuine task ineligibility did not release live run: %#v changed=%t", updated, changed)
 	}
 }
 

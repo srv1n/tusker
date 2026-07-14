@@ -3252,13 +3252,17 @@ func isV7DispatchableAgentTask(vaultPath string, task Note) bool {
 }
 
 func v7TaskDispatchBlockers(vaultPath string, task Note) []string {
+	return v7TaskDispatchBlockersWithAuthorization(vaultPath, task, true)
+}
+
+func v7TaskDispatchBlockersWithAuthorization(vaultPath string, task Note, includeAuthorizationState bool) []string {
 	reasons := append([]string{}, v7BasicRunnableBlockers(task)...)
 	if waveID := strings.TrimSpace(stringField(task.Data, "wave")); waveID != "" {
 		if idx, err := loadV7Index(vaultPath); err == nil {
 			if wave, ok := idx.Waves[waveID]; ok {
 				if !containsString(normalizeList(wave.Data["members"]), stringField(task.Data, "id")) {
 					reasons = append(reasons, stringField(task.Data, "id")+" is not an authorized member of wave "+waveID)
-				} else {
+				} else if includeAuthorizationState {
 					auth := waveAuthorizationProjection(vaultPath, idx, wave)
 					if state := stringField(auth, "state"); state != "armed" {
 						reasons = append(reasons, "wave "+waveID+" authorization is "+state+"; "+stringField(auth, "action"))

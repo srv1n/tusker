@@ -1313,6 +1313,29 @@ func daemonDispatchBlockedReason(vaultPath string, note Note, notesByID map[stri
 	return "dispatch blocked: " + strings.Join(blockers, "; ")
 }
 
+// daemonLiveExecuteBlockedReason deliberately excludes claim-time authorization
+// policy. Pausing, disarming, or staling a wave prevents future claims and
+// retries, but does not revoke work already claimed by an execute runner.
+func daemonLiveExecuteBlockedReason(vaultPath string, note Note, notesByID map[string]Note, notesByRecordID map[string]Note) string {
+	var blockers []string
+	if isV7TaskNote(note) {
+		blockers = append(blockers, v7TaskDispatchBlockersWithAuthorization(vaultPath, note, false)...)
+	} else {
+		status := stringField(note.Data, "status")
+		if status != "ready" && status != "rework" {
+			blockers = append(blockers, "status is "+fallback(status, "(missing)"))
+		}
+	}
+	if reason := unresolvedBlockerReason(note, notesByID, notesByRecordID); reason != "" {
+		blockers = append(blockers, reason)
+	}
+	blockers = uniqueStrings(blockers)
+	if len(blockers) == 0 {
+		return ""
+	}
+	return "dispatch blocked: " + strings.Join(blockers, "; ")
+}
+
 func trackerRecordID(note Note) string {
 	return firstNonEmpty(stringField(note.Data, "record_id"), stringField(note.Data, "id"))
 }
@@ -1663,8 +1686,12 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 		reason := fmt.Sprintf("tracker state %q is not dispatchable; daemon released run", firstNonEmpty(trackerState, "missing"))
 		return d.releaseIneligibleRun(ctx, project, run, reason)
 	}
-	if reason := daemonDispatchBlockedReason(project.VaultRoot, note, notesByID, notesByRecordID); reason != "" {
-		return d.releaseIneligibleRun(ctx, project, run, reason+"; daemon released run")
+	blockedReason := daemonDispatchBlockedReason(project.VaultRoot, note, notesByID, notesByRecordID)
+	if run.Lane == runLaneExecute && isDispatchingLeaseState(run.LeaseState) {
+		blockedReason = daemonLiveExecuteBlockedReason(project.VaultRoot, note, notesByID, notesByRecordID)
+	}
+	if blockedReason != "" {
+		return d.releaseIneligibleRun(ctx, project, run, blockedReason+"; daemon released run")
 	}
 	return d.reconcileRun(ctx, project, wfFile, run)
 }
