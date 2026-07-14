@@ -248,6 +248,7 @@ func v7KnowledgeDeltaEmpty(content string) bool {
 
 func validateV7TaskProofPolicy(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
 	data := note.Data
+	validateV7ArtifactContract(note, where, errors)
 	status := stringField(data, "status")
 	terminalWithoutProof := status == "cancelled" || status == "superseded"
 	mode := strings.ToLower(strings.TrimSpace(stringField(data, "proof_mode")))
@@ -315,6 +316,42 @@ func validateV7TaskProofPolicy(note Note, ctx validationContext, where string, e
 			return
 		}
 		*errors = append(*errors, issue("COMPLETED_ATTEMPT_WITHOUT_REVIEW_OR_GATE", "completed attempt has satisfied proof but task is not in review and has no blocking gate", where, "run `tusker finish <task-id> --request-review` or create a blocking gate", nil))
+	}
+}
+
+var v7OperatorArtifactKinds = makeSet(
+	"screenshot", "video", "benchmark_delta", "trace", "replay", "behavior_matrix",
+	"reliability_summary", "security_note", "diff_summary", "knowledge_link",
+	"screenshot_set", "recording", "benchmark", "request_response", "matrix",
+	"reliability_timeline", "security_summary", "documentation", "document",
+)
+
+// validateV7ArtifactContract validates the compact operator-facing promise. The
+// artifact itself belongs in durable evidence, never in task markdown.
+func validateV7ArtifactContract(note Note, where string, errors *[]Issue) {
+	value, exists := note.Data["artifact_contract"]
+	if !exists || value == nil {
+		return // Legacy/manual tasks remain valid; delivery import/preflight require it.
+	}
+	contract := mapField(note.Data, "artifact_contract")
+	kind := strings.ToLower(strings.TrimSpace(stringField(contract, "kind")))
+	if _, ok := v7OperatorArtifactKinds[kind]; !ok {
+		*errors = append(*errors, issue("TASK_ARTIFACT_KIND_INVALID", "operator artifact kind is invalid: "+fallback(kind, "(missing)"), where, "use a compact visual, performance, behavior, reliability, security, diff, or knowledge artifact kind", nil))
+	}
+	if strings.TrimSpace(stringField(contract, "summary")) == "" {
+		*errors = append(*errors, issue("TASK_ARTIFACT_SUMMARY_MISSING", "operator artifact contract requires a compact summary", where, "describe what the operator will learn from the artifact", nil))
+	}
+	path := strings.TrimSpace(stringField(contract, "path"))
+	if path == "" {
+		*errors = append(*errors, issue("TASK_ARTIFACT_PATH_MISSING", "operator artifact contract requires a production path", where, "name the repo-relative implementation or knowledge path; evidence files are recorded separately", nil))
+	} else if clean := filepath.Clean(path); filepath.IsAbs(path) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || strings.HasPrefix(filepath.ToSlash(clean), ".tusker/scratch/") {
+		*errors = append(*errors, issue("TASK_ARTIFACT_PATH_INVALID", "operator artifact production path must be durable and repo-relative: "+path, where, "use a production/documentation path, not scratch, raw logs, or a local absolute path", nil))
+	}
+	acceptance := v7AcceptanceIDs(note.Body)
+	for _, id := range normalizeList(firstPresent(contract, "acceptance_ids", "acceptance")) {
+		if !containsString(acceptance, id) {
+			*errors = append(*errors, issue("TASK_ARTIFACT_ACCEPTANCE_UNKNOWN", "operator artifact references unknown acceptance id: "+id, where, "tie the contract only to acceptance IDs declared by this task", nil))
+		}
 	}
 }
 

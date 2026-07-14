@@ -154,6 +154,7 @@ type serveWaveSummary struct {
 	Members       []serveWaveTaskSummary `json:"members"`
 	Counts        map[string]int         `json:"counts"`
 	Authorization map[string]any         `json:"authorization"`
+	Brief         waveBrief              `json:"brief"`
 }
 
 type serveWaveTaskSummary struct {

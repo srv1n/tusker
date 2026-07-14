@@ -265,6 +265,8 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]st
 		}
 		if deliveryPlaceholder(task.Artifact.Kind) || deliveryInvalidProductionPath(task.Artifact.Path) || deliveryPlaceholder(task.Artifact.Summary) {
 			issues = append(issues, key+": artifact requires kind, summary, and a repo-relative production path")
+		} else if _, ok := v7OperatorArtifactKinds[strings.ToLower(strings.TrimSpace(task.Artifact.Kind))]; !ok {
+			issues = append(issues, key+": artifact kind is not an operator-facing visual, performance, behavior, reliability, security, diff, or knowledge artifact")
 		}
 		if task.Risk != "" {
 			if _, ok := risks[strings.ToLower(task.Risk)]; !ok {

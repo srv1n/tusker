@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600" role="img" aria-label="Artifact-first wave brief fixture">
+  <rect width="960" height="600" fill="#111318"/>
+  <rect x="40" y="32" width="880" height="536" rx="16" fill="#191c22" stroke="#343945"/>
+  <text x="72" y="76" fill="#eef0f4" font-family="system-ui" font-size="25" font-weight="700">W-0042 · Checkout delivery</text>
+  <text x="72" y="118" fill="#aeb4c0" font-family="system-ui" font-size="15">Outcome</text>
+  <text x="72" y="146" fill="#eef0f4" font-family="system-ui" font-size="17">Delivered 1 of 2 tasks; 1 parked for machine rework.</text>
+  <text x="72" y="194" fill="#aeb4c0" font-family="system-ui" font-size="15">See it</text>
+  <rect x="72" y="214" width="390" height="118" rx="10" fill="#222630" stroke="#4b5262"/>
+  <text x="92" y="242" fill="#74c7ec" font-family="monospace" font-size="13">screenshot · A1</text>
+  <text x="92" y="276" fill="#eef0f4" font-family="system-ui" font-size="17">Checkout success state</text>
+  <text x="92" y="306" fill="#9299a7" font-family="monospace" font-size="12">APP-T-0001-E-0001</text>
+  <text x="72" y="382" fill="#aeb4c0" font-family="system-ui" font-size="15">Landed</text>
+  <text x="72" y="410" fill="#8bd49c" font-family="monospace" font-size="14">APP-T-0001 · abc123</text>
+  <text x="72" y="458" fill="#aeb4c0" font-family="system-ui" font-size="15">Rework/parked</text>
+  <text x="72" y="488" fill="#f2bd73" font-family="monospace" font-size="14">APP-T-0002 · Fix the failed response matrix assertion.</text>
+  <text x="72" y="536" fill="#aeb4c0" font-family="system-ui" font-size="15">Human action · None</text>
+</svg>

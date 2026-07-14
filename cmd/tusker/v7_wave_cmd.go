@@ -26,6 +26,8 @@ func waveV7Cmd(args Args) error {
 		return waveV7RemoveCmd(shiftV7WaveArgs(args, 1))
 	case "show":
 		return waveV7ShowCmd(shiftV7WaveArgs(args, 1))
+	case "brief":
+		return waveV7BriefCmd(shiftV7WaveArgs(args, 1))
 	case "preflight":
 		return waveV7PreflightCmd(shiftV7WaveArgs(args, 1))
 	case "arm":
@@ -37,7 +39,7 @@ func waveV7Cmd(args Args) error {
 	case "disarm":
 		return waveV7DisarmCmd(shiftV7WaveArgs(args, 1))
 	default:
-		return tuskerError(errorMissingArg, "Usage: tusker wave create|add|remove|show|preflight|arm|pause|resume|disarm ...")
+		return tuskerError(errorMissingArg, "Usage: tusker wave create|add|remove|show|brief|preflight|arm|pause|resume|disarm ...")
 	}
 }
 

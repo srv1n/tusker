@@ -1202,12 +1202,20 @@ func serveWaveSummaryFor(snap serveSnapshot, wave Note) serveWaveSummary {
 		})
 	}
 	sort.Slice(members, func(i, j int) bool { return members[i].ID < members[j].ID })
-	idx := v7Index{Tasks: map[string]Note{}, Gates: map[string]Note{}, Waves: map[string]Note{}}
+	idx := v7Index{Tasks: map[string]Note{}, Gates: map[string]Note{}, Waves: map[string]Note{}, Evidence: map[string][]Note{}, Attempts: map[string][]Note{}}
 	for _, task := range snap.tasks {
 		idx.Tasks[stringField(task.Data, "id")] = task
 	}
 	for _, gate := range snap.gates {
 		idx.Gates[stringField(gate.Data, "id")] = gate
+	}
+	for _, evidence := range snap.evidence {
+		taskID := stringField(evidence.Data, "task")
+		idx.Evidence[taskID] = append(idx.Evidence[taskID], evidence)
+	}
+	for _, attempt := range snap.attemptNotes {
+		taskID := stringField(attempt.Data, "task")
+		idx.Attempts[taskID] = append(idx.Attempts[taskID], attempt)
 	}
 	for _, item := range snap.waves {
 		idx.Waves[stringField(item.Data, "id")] = item
@@ -1221,6 +1229,7 @@ func serveWaveSummaryFor(snap serveSnapshot, wave Note) serveWaveSummary {
 		Members:       members,
 		Counts:        counts,
 		Authorization: waveAuthorizationProjection(snap.project.VaultRoot, idx, wave),
+		Brief:         buildWaveBrief(idx, wave),
 	}
 }
 

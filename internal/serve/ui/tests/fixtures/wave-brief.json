@@ -1,0 +1,22 @@
+{
+  "schema": "tusker.wave-brief/v1",
+  "waveId": "W-0042",
+  "title": "Checkout delivery",
+  "waveHref": "/waves/W-0042",
+  "sectionOrder": ["outcome", "seeIt", "landed", "reworkParked", "humanAction", "documentation"],
+  "outcome": {
+    "summary": "Delivered 1 of 2 tasks; 1 parked for machine rework and 0 require human action.",
+    "fullyDrained": false,
+    "counts": { "implemented": 2, "proven": 1, "reviewed": 1, "landed": 1, "documented": 0, "reworkParked": 1, "humanAction": 0 },
+    "tasks": [
+      { "taskId": "APP-T-0001", "title": "Checkout UI", "taskHref": "/tasks/APP-T-0001", "implementation": "present", "proof": "satisfied", "review": "accepted", "landing": "landed", "documentation": "not_required" }
+    ]
+  },
+  "seeIt": [
+    { "taskId": "APP-T-0001", "taskHref": "/tasks/APP-T-0001", "kind": "screenshot", "priority": 1, "summary": "Checkout success state", "acceptanceIds": ["A1"], "evidenceRef": "APP-T-0001-E-0001", "artifactRef": "evidence/APP-T-0001/artifacts/checkout.png", "evidenceHref": "/evidence/APP-T-0001-E-0001" }
+  ],
+  "landed": [{ "taskId": "APP-T-0001", "title": "Checkout UI", "taskHref": "/tasks/APP-T-0001", "commit": "abc123" }],
+  "reworkParked": [{ "taskId": "APP-T-0002", "title": "Checkout API", "taskHref": "/tasks/APP-T-0002", "state": "rework", "firstActionableFailure": "Fix the failed response matrix assertion.", "affectedTaskIds": ["APP-T-0002"] }],
+  "humanAction": [],
+  "documentation": []
+}

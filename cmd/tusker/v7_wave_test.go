@@ -159,6 +159,8 @@ func TestServeWaves(t *testing.T) {
 	var detail serveWaveSummary
 	serveDecode(t, server, "/api/waves/W-0001", &detail)
 	assertEqual(t, "Morning batch", detail.Title, "wave detail title")
+	assertEqual(t, waveBriefSchema, detail.Brief.Schema, "serve shared brief schema")
+	assertEqual(t, waveBriefSectionOrder, detail.Brief.SectionOrder, "serve brief section order")
 	if len(detail.Members) != 1 || detail.Members[0].ID != "APP-T-0001" {
 		t.Fatalf("expected wave detail member, got %#v", detail.Members)
 	}

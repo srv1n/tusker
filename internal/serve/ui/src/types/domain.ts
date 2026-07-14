@@ -304,6 +304,30 @@ export interface WaveSummary {
   members: WaveTaskSummary[];
   counts: Record<string, number>;
   authorization: { state: "disarmed" | "armed" | "paused" | "stale"; stale: boolean; action: string; actor?: string | null; at?: string | null };
+  brief: WaveBrief;
+}
+
+export interface WaveTaskDeliveryState {
+  taskId: string; title: string; taskHref: string;
+  implementation: "absent" | "present";
+  proof: string; review: string; landing: string; documentation: string;
+  firstActionableFailure?: string;
+}
+
+export interface WaveArtifactCard {
+  taskId: string; taskHref: string; kind: string; priority: number; summary: string;
+  acceptanceIds: string[]; evidenceRef: string; artifactRef?: string; evidenceHref: string;
+}
+
+export interface WaveBrief {
+  schema: "tusker.wave-brief/v1"; waveId: string; title: string; waveHref: string;
+  sectionOrder: ["outcome", "seeIt", "landed", "reworkParked", "humanAction", "documentation"];
+  outcome: { summary: string; fullyDrained: boolean; counts: Record<string, number>; tasks: WaveTaskDeliveryState[] };
+  seeIt: WaveArtifactCard[];
+  landed: Array<{ taskId: string; title: string; taskHref: string; commit?: string; target?: string }>;
+  reworkParked: Array<{ taskId: string; title: string; taskHref: string; state: string; firstActionableFailure: string; affectedTaskIds: string[] }>;
+  humanAction: Array<{ gateId: string; gateHref: string; action: string; resumeId: string; blockedTaskIds: string[] }>;
+  documentation: Array<{ taskId: string; taskHref: string; node: string; nodeHref: string; state: string }>;
 }
 
 export interface TaskCapsule {

@@ -22,7 +22,7 @@ import {
   useLandWave,
   useWaves,
 } from "@/lib/queries";
-import type { AttemptDetail, DaemonStatus, GateDetail, WaveSummary } from "@/types/domain";
+import type { AttemptDetail, DaemonStatus, GateDetail, WaveBrief as WaveBriefContract, WaveSummary } from "@/types/domain";
 
 const route = getRouteApi("/p/$projectId/ops");
 
@@ -133,6 +133,7 @@ function WavePanel({ waves, projectId }: { waves: WaveSummary[]; projectId: stri
                   ))}
                 </div>
                 {wave.authorization.action !== "none" ? <Mono className="mt-1 block text-[10px] text-warn">{wave.authorization.action}</Mono> : null}
+                <WaveBriefView brief={wave.brief} projectId={projectId} />
               </div>
               <Button
                 type="button"
@@ -150,6 +151,50 @@ function WavePanel({ waves, projectId }: { waves: WaveSummary[]; projectId: stri
       <ActionResultLine className="mt-2" pending={landWave.isPending} error={landWave.error} result={landWave.data} />
     </section>
   );
+}
+
+export function WaveBriefView({ brief, projectId }: { brief: WaveBriefContract; projectId: string }) {
+  const docLink = (path: string) => ({ to: "/p/$projectId/docs" as const, params: { projectId }, search: { path } });
+  return (
+    <div className="mt-3 space-y-3 border-t border-line pt-3" data-testid="wave-brief">
+      <section>
+        <div className="flex items-center justify-between gap-2">
+          <SectionLabel>Outcome</SectionLabel>
+          <Link {...docLink(brief.waveId)} className="font-mono text-[10px] text-faint hover:text-ink">{brief.waveId}</Link>
+        </div>
+        <p className="mt-1 text-[12px] text-ink-soft">{brief.outcome.summary}</p>
+        <div className="mt-1 flex flex-wrap gap-1">
+          {brief.outcome.tasks.map((task) => (
+            <Link key={task.taskId} {...docLink(task.taskId)} className="rounded border border-line px-1.5 py-0.5 font-mono text-[10px] text-faint hover:bg-hover">
+              {task.taskId} · impl:{task.implementation} proof:{task.proof} review:{task.review} land:{task.landing} docs:{task.documentation}
+            </Link>
+          ))}
+        </div>
+      </section>
+      <section>
+        <SectionLabel>See it</SectionLabel>
+        {brief.seeIt.length === 0 ? <EmptyLine text="None" /> : (
+          <div className="mt-1 grid gap-1.5 sm:grid-cols-2">
+            {brief.seeIt.map((artifact, index) => (
+              <Link key={`${artifact.evidenceRef}-${index}`} {...docLink(artifact.evidenceRef)} className="rounded-md border border-line bg-surface px-2.5 py-2 hover:bg-hover">
+                <div className="flex justify-between gap-2"><Mono className="text-[10px] text-accent">{artifact.kind}</Mono><Mono className="text-[9px] text-faint">{artifact.acceptanceIds.join(",")}</Mono></div>
+                <p className="mt-1 text-[11.5px] text-ink-soft">{artifact.summary}</p>
+                {artifact.artifactRef ? <Mono className="mt-1 block truncate text-[9.5px] text-faint">{artifact.artifactRef}</Mono> : null}
+              </Link>
+            ))}
+          </div>
+        )}
+      </section>
+      <BriefRows title="Landed" empty="None" rows={brief.landed.map((x) => ({ id: x.taskId, text: `${x.title}${x.commit ? ` · ${x.commit}` : ""}`, link: x.taskId }))} projectId={projectId} />
+      <BriefRows title="Rework/parked" empty="None" rows={brief.reworkParked.map((x) => ({ id: x.taskId, text: x.firstActionableFailure, link: x.taskId }))} projectId={projectId} />
+      <BriefRows title="Human action" empty="None" rows={brief.humanAction.map((x) => ({ id: x.gateId, text: `${x.action} · resume ${x.resumeId}`, link: x.gateId }))} projectId={projectId} />
+      <BriefRows title="Documentation" empty="None" rows={brief.documentation.map((x) => ({ id: x.taskId, text: `${x.node} · ${x.state}`, link: x.node }))} projectId={projectId} />
+    </div>
+  );
+}
+
+function BriefRows({ title, empty, rows, projectId }: { title: string; empty: string; rows: Array<{ id: string; text: string; link: string }>; projectId: string }) {
+  return <section><SectionLabel>{title}</SectionLabel>{rows.length === 0 ? <EmptyLine text={empty} /> : <div className="mt-1 space-y-1">{rows.map((row, index) => <Link key={`${row.id}-${index}`} to="/p/$projectId/docs" params={{ projectId }} search={{ path: row.link }} className="block text-[11px] text-ink-soft hover:text-ink"><Mono className="mr-1 text-[10px] text-faint">{row.id}</Mono>{row.text}</Link>)}</div>}</section>;
 }
 
 function GatePanel({ gates, projectId }: { gates: GateDetail[]; projectId: string }) {
