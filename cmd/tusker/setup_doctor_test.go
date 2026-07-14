@@ -288,12 +288,14 @@ func TestSetupDoctorAcceptsCanonicalReadAliasWithResolvedCapability(t *testing.T
 	}
 	assertNoHandoffWorkflowFinding(t, report)
 
-	contracts["read"] = workflowInspectFixture("chatgpt/read", "chatgpt/projects", "chatgpt.read", []string{"chat_id", "download_attachments", "attachments_scroll"})
-	report, err = runSetupDoctor(setupDoctorInput{RepoRoot: repo, WorkflowInspect: inspect}, false)
-	if err != nil {
-		t.Fatal(err)
+	for _, forgedID := range []string{"chatgpt/read_obsolete", "chatgpt/read_evil", "chatgpt/projects"} {
+		contracts["read"] = workflowInspectFixture("chatgpt/read", forgedID, "chatgpt.read", []string{"chat_id", "download_attachments", "attachments_scroll"})
+		report, err = runSetupDoctor(setupDoctorInput{RepoRoot: repo, WorkflowInspect: inspect}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertSetupFinding(t, report, "handoff_workflow_read_stale", false)
 	}
-	assertSetupFinding(t, report, "handoff_workflow_read_stale", false)
 }
 
 func TestLiveRZNWorkflowContractsOffline(t *testing.T) {

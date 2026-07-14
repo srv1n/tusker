@@ -567,7 +567,14 @@ func handoffWorkflowIdentityMatches(contract handoffWorkflowContract, expectedRe
 	if contract.Reference != expectedReference {
 		return false
 	}
-	return contract.ID == expectedReference || strings.HasPrefix(contract.ID, expectedReference+"_")
+	if contract.ID == expectedReference {
+		return true
+	}
+	return canonicalHandoffWorkflowAliases[expectedReference][contract.ID]
+}
+
+var canonicalHandoffWorkflowAliases = map[string]map[string]bool{
+	"chatgpt/read": {"chatgpt/read_current": true},
 }
 
 func boolWithDefault(values map[string]any, key string, fallback bool) bool {
