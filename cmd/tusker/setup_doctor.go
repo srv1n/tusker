@@ -151,7 +151,7 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 		resolved, resolveErr := filepath.EvalSymlinks(localVault)
 		if resolveErr != nil {
 			add(setupFinding{Code: "broken_vault_symlink", Status: "error", Path: localVault, Message: "repo-local .tusker symlink is broken", Action: "recreate the vault link with tusker vault mount", Repairable: false})
-		} else if sameCleanPath(resolved, filepath.Join(repo, "tusker")) {
+		} else if sameResolvedFile(resolved, filepath.Join(repo, "tusker")) {
 			add(setupFinding{Code: "stale_vault_symlink", Status: "warning", Path: localVault, Message: "repo-local .tusker symlink still targets the legacy repo/tusker vault", Action: "run tusker migrate vault-root --to .tusker and replace the legacy link after verification", Repairable: false})
 		}
 	}
@@ -477,16 +477,18 @@ func diagnoseHandoffWorkflows(config map[string]any, configPath string, inspect 
 			findings = append(findings, setupFinding{Code: "handoff_workflow_" + role.name + "_missing", Status: "error", Path: configPath, Message: fmt.Sprintf("cannot inspect configured %s workflow %s/%s: %v", role.name, system, role.workflow, err), Action: "refresh the installed rzn-browser workflow catalog", Repairable: false})
 			continue
 		}
-		id, inputs, err := parseHandoffWorkflowContract(raw)
+		contract, err := parseHandoffWorkflowContract(raw)
 		expectedID := system + "/" + role.workflow
+		expectedCapability := system + "." + role.name
 		missing := []string{}
 		for _, required := range role.required {
-			if !inputs[required] {
+			if !contract.Inputs[required] {
 				missing = append(missing, required)
 			}
 		}
-		if err != nil || id != expectedID || len(missing) > 0 {
-			detail := firstNonEmpty(errorString(err), fmt.Sprintf("id=%q missing_inputs=%s", id, strings.Join(missing, ",")))
+		identityOK := handoffWorkflowIdentityMatches(contract, expectedID, system, expectedCapability)
+		if err != nil || !identityOK || len(missing) > 0 {
+			detail := firstNonEmpty(errorString(err), fmt.Sprintf("reference=%q id=%q system=%q capability=%q missing_inputs=%s", contract.Reference, contract.ID, contract.System, contract.Capability, strings.Join(missing, ",")))
 			findings = append(findings, setupFinding{Code: "handoff_workflow_" + role.name + "_stale", Status: "error", Path: configPath, Message: fmt.Sprintf("configured %s workflow contract is stale: %s", role.name, detail), Action: "refresh the installed rzn-browser workflow catalog", Repairable: false})
 		}
 	}
@@ -515,31 +517,57 @@ func loadHandoffWorkflow(rzn map[string]any, configDir, system, workflow string,
 	return inspect(system, workflow)
 }
 
-func parseHandoffWorkflowContract(raw []byte) (string, map[string]bool, error) {
+type handoffWorkflowContract struct {
+	Reference  string
+	ID         string
+	System     string
+	Capability string
+	Inputs     map[string]bool
+}
+
+func parseHandoffWorkflowContract(raw []byte) (handoffWorkflowContract, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return "", nil, err
+		return handoffWorkflowContract{}, err
 	}
-	inputs := map[string]bool{}
+	contract := handoffWorkflowContract{
+		Reference:  mapString(payload, "reference"),
+		ID:         mapString(payload, "id"),
+		System:     mapString(payload, "system"),
+		Capability: mapString(payload, "capability"),
+		Inputs:     map[string]bool{},
+	}
 	if list, ok := payload["inputs"].([]any); ok {
 		for _, item := range list {
 			if value, ok := item.(map[string]any); ok {
-				inputs[mapString(value, "name")] = true
+				contract.Inputs[mapString(value, "name")] = true
 			}
 		}
 	}
 	if params, ok := payload["params"].(map[string]any); ok {
 		if properties, ok := params["properties"].(map[string]any); ok {
 			for name := range properties {
-				inputs[name] = true
+				contract.Inputs[name] = true
 			}
 		}
 	}
-	id := mapString(payload, "id")
-	if id == "" {
-		return "", inputs, fmt.Errorf("workflow contract has no id")
+	if contract.ID == "" {
+		return contract, fmt.Errorf("workflow contract has no id")
 	}
-	return id, inputs, nil
+	return contract, nil
+}
+
+func handoffWorkflowIdentityMatches(contract handoffWorkflowContract, expectedReference, expectedSystem, expectedCapability string) bool {
+	if contract.System != expectedSystem || contract.Capability != expectedCapability {
+		return false
+	}
+	if contract.Reference == "" {
+		return contract.ID == expectedReference
+	}
+	if contract.Reference != expectedReference {
+		return false
+	}
+	return contract.ID == expectedReference || strings.HasPrefix(contract.ID, expectedReference+"_")
 }
 
 func boolWithDefault(values map[string]any, key string, fallback bool) bool {

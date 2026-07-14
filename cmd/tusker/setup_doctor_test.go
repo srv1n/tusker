@@ -243,7 +243,7 @@ func TestSetupDoctorDiagnosesActualProviderContractDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	inspect := func(system, workflow string) ([]byte, error) {
-		return []byte(`{"id":"chatgpt/` + workflow + `","inputs":[{"name":"project_id"}]}`), nil
+		return []byte(`{"reference":"chatgpt/` + workflow + `","id":"chatgpt/` + workflow + `","system":"chatgpt","capability":"chatgpt.` + workflow + `","inputs":[{"name":"project_id"}]}`), nil
 	}
 	report, err := runSetupDoctor(setupDoctorInput{RepoRoot: repo, WorkflowInspect: inspect}, false)
 	if err != nil {
@@ -253,6 +253,62 @@ func TestSetupDoctorDiagnosesActualProviderContractDrift(t *testing.T) {
 	assertSetupFinding(t, report, "handoff_workflow_read_stale", false)
 	if finding := findingByCode(report, "handoff_workflow_projects_stale"); finding != nil {
 		t.Fatalf("projects contract only requires the correct installed identity: %#v", finding)
+	}
+}
+
+func TestSetupDoctorAcceptsCanonicalReadAliasWithResolvedCapability(t *testing.T) {
+	repo := t.TempDir()
+	if err := writeText(filepath.Join(repo, ".chatgpt-handoff", "profile.md"), "# profile\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(repo, "Makefile"), "codebasezip:\n\t@true\n"); err != nil {
+		t.Fatal(err)
+	}
+	config := map[string]any{
+		"schema":     "rzn.chatgpt_handoff.config/v1",
+		"project_id": "project-123",
+		"rzn": map[string]any{
+			"system": "chatgpt", "send_workflow": "send", "read_workflow": "read", "projects_workflow": "projects",
+			"include_model_version_param": true, "include_require_exact_model_param": true,
+		},
+		"zip": map[string]any{"make_target": "codebasezip", "artifacts_dir": "artifacts", "pattern": "-codebase-"},
+	}
+	if err := writeHandoffConfig(filepath.Join(repo, ".chatgpt-handoff.json"), config); err != nil {
+		t.Fatal(err)
+	}
+	contracts := map[string]map[string]any{
+		"send":     workflowInspectFixture("chatgpt/send", "chatgpt/send", "chatgpt.send", []string{"project_id", "message_text", "model_slug", "model_effort", "model_version", "require_exact_model"}),
+		"read":     workflowInspectFixture("chatgpt/read", "chatgpt/read_current", "chatgpt.read", []string{"chat_id", "download_attachments", "attachments_scroll", "mode"}),
+		"projects": workflowInspectFixture("chatgpt/projects", "chatgpt/projects", "chatgpt.projects", []string{"project_id", "mode"}),
+	}
+	inspect := func(_ string, workflow string) ([]byte, error) { return json.Marshal(contracts[workflow]) }
+	report, err := runSetupDoctor(setupDoctorInput{RepoRoot: repo, WorkflowInspect: inspect}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoHandoffWorkflowFinding(t, report)
+
+	contracts["read"] = workflowInspectFixture("chatgpt/read", "chatgpt/projects", "chatgpt.read", []string{"chat_id", "download_attachments", "attachments_scroll"})
+	report, err = runSetupDoctor(setupDoctorInput{RepoRoot: repo, WorkflowInspect: inspect}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSetupFinding(t, report, "handoff_workflow_read_stale", false)
+}
+
+func TestLiveRZNWorkflowContractsOffline(t *testing.T) {
+	if os.Getenv("TUSKER_LIVE_RZN_WORKFLOW_TEST") != "1" {
+		t.Skip("set TUSKER_LIVE_RZN_WORKFLOW_TEST=1 to inspect the installed local provider catalog")
+	}
+	config := map[string]any{
+		"rzn": map[string]any{
+			"system": "chatgpt", "send_workflow": "send", "read_workflow": "read", "projects_workflow": "projects",
+			"include_model_version_param": true, "include_require_exact_model_param": true,
+		},
+	}
+	findings := diagnoseHandoffWorkflows(config, filepath.Join(t.TempDir(), ".chatgpt-handoff.json"), inspectRZNWorkflow)
+	if len(findings) != 0 {
+		t.Fatalf("installed local rzn workflow contracts drifted: %#v", findings)
 	}
 }
 
@@ -488,13 +544,36 @@ func writeHandoffProviderFixtures(t *testing.T, repo string) {
 		for _, name := range names {
 			properties[name] = map[string]any{"type": "string"}
 		}
-		payload := map[string]any{"schema_version": "rzn.workflow_manifest", "id": "chatgpt/" + workflow, "version": "1.0.0", "params": map[string]any{"properties": properties}}
+		payload := map[string]any{"schema_version": "rzn.workflow_manifest", "id": "chatgpt/" + workflow, "version": "1.0.0", "system": "chatgpt", "capability": "chatgpt." + workflow, "params": map[string]any{"properties": properties}}
 		raw, err := json.Marshal(payload)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := writeText(filepath.Join(repo, "workflows", "chatgpt", "chatgpt_"+workflow+".json"), string(raw)); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+func workflowInspectFixture(reference, id, capability string, names []string) map[string]any {
+	inputs := make([]any, 0, len(names))
+	for _, name := range names {
+		inputs = append(inputs, map[string]any{"name": name, "kind": "string", "required": false})
+	}
+	return map[string]any{
+		"reference":  reference,
+		"id":         id,
+		"system":     "chatgpt",
+		"capability": capability,
+		"inputs":     inputs,
+	}
+}
+
+func assertNoHandoffWorkflowFinding(t *testing.T, report setupDoctorReport) {
+	t.Helper()
+	for _, finding := range report.Findings {
+		if strings.HasPrefix(finding.Code, "handoff_workflow_") {
+			t.Fatalf("unexpected handoff workflow finding: %#v", finding)
 		}
 	}
 }
