@@ -25,7 +25,6 @@ const completedRun = {
   elapsedSec: 886,
   sinceLastEventSec: 6,
   liveness: "fresh",
-  tokens: { input: 150, output: 40 },
   attemptCount: 1,
   terminal: true,
   workspacePath: "/tmp/TRC-T-0002",
@@ -34,7 +33,6 @@ const completedRun = {
       n: 1,
       outcome: "succeeded",
       durationSec: 886,
-      tokens: { input: 150, output: 40 },
       startedAt: "2026-07-08T03:00:00Z",
     },
   ],
@@ -50,12 +48,11 @@ test("runs-detail header derives live state from terminal lease/outcome", () => 
   expect(source.indexOf("<LivenessIndicator")).toBeGreaterThan(source.indexOf("{live && ("));
 });
 
-test("runs-detail stats freeze released elapsed and show recorded turn tokens", () => {
+test("runs-detail stats freeze released elapsed without presenting usage totals", () => {
   expect(runStats(completedRun)).toEqual([
     { label: "Elapsed", value: "14m 46s" },
-    { label: "Input", value: "150" },
-    { label: "Output", value: "40" },
     { label: "Attempts", value: "1" },
+    { label: "Liveness", value: "fresh" },
   ]);
 });
 

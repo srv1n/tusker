@@ -42,7 +42,6 @@ func (s *serveServer) runSummary(snap serveSnapshot, run RunStatus) serveRunSumm
 		ElapsedSec:        serveRunElapsedSec(run, s.now()),
 		SinceLastEventSec: serveSinceSec(firstNonEmpty(run.LastEventAt, run.UpdatedAt), s.now()),
 		Liveness:          serveRunLiveness(run, s.now()),
-		Tokens:            serveTokenTotalsForTurns(turns),
 		AttemptCount:      maxInt(run.AttemptCount, len(turnsByAttempt(turns))),
 		Terminal:          run.Terminal,
 		Error:             nullIfBlank(run.LastError),
@@ -278,15 +277,6 @@ func serveDurationSec(start, end string, now time.Time) int {
 		}
 	}
 	return maxInt(0, int(endAt.Sub(startAt).Seconds()))
-}
-
-func serveTokenTotalsForTurns(turns []RunTurn) serveTokenTotals {
-	var total serveTokenTotals
-	for _, turn := range turns {
-		total.Input += turn.InputTokens
-		total.Output += turn.OutputTokens
-	}
-	return total
 }
 
 func turnsByAttempt(turns []RunTurn) map[string]struct{} {

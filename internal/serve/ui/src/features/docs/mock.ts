@@ -407,7 +407,6 @@ const clnReviewRun: RunSummary = {
   elapsedSec: 143,
   sinceLastEventSec: 96,
   liveness: "stale",
-  tokens: { input: 96010, output: 8820 },
   attemptCount: 1,
 };
 

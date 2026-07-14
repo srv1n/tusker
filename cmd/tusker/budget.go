@@ -57,7 +57,10 @@ type budgetCircuitStatus struct {
 
 func defaultRuntimeBudgetConfig() RuntimeBudgetConfig {
 	return RuntimeBudgetConfig{
-		Enabled:                true,
+		// Token telemetry is diagnostic-only until runners can report
+		// non-cumulative, billable usage. Keep the historical shape so old
+		// workflow files still load, but never enable enforcement by default.
+		Enabled:                false,
 		PerAttemptInputTokens:  defaultBudgetPerAttemptInputTokens,
 		PerAttemptOutputTokens: defaultBudgetPerAttemptOutputTokens,
 		PerTaskInputTokens:     defaultBudgetPerAttemptInputTokens * defaultBudgetPerTaskMultiplier,
@@ -87,6 +90,10 @@ func withDefaultRuntimeBudgetConfig(budget RuntimeBudgetConfig) RuntimeBudgetCon
 	if budget.DailyOutputTokens <= 0 {
 		budget.DailyOutputTokens = defaults.DailyOutputTokens
 	}
+	// A legacy enabled value must migrate to the disabled behavior. Do not
+	// rewrite workflow/task data or delete turn history: callers may still use
+	// it for forensic inspection once accounting is redesigned.
+	budget.Enabled = false
 	return budget
 }
 
@@ -224,34 +231,9 @@ func (s *RuntimeStore) RecordBudgetRedrive(projectID, recordID, actor, reason st
 }
 
 func (s *RuntimeStore) BudgetCircuitStatus(wf Workflow, now time.Time) (budgetCircuitStatus, error) {
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	now = now.UTC()
-	budget := withDefaultRuntimeBudgetConfig(wf.Runtime.Budget)
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	status := budgetCircuitStatus{
-		ResetAt:           start.Add(24 * time.Hour).Format(time.RFC3339),
-		InputTokenLimit:   budget.DailyInputTokens,
-		OutputTokenLimit:  budget.DailyOutputTokens,
-		WindowStartedAt:   start.Format(time.RFC3339),
-		WindowElapsedSecs: maxInt(0, int(now.Sub(start).Seconds())),
-		Budget:            budget,
-	}
-	if !budget.Enabled {
-		return status, nil
-	}
-	totals, err := s.SumTokensSince(status.WindowStartedAt)
-	if err != nil {
-		return status, err
-	}
-	status.InputTokens = totals.InputTokens
-	status.OutputTokens = totals.OutputTokens
-	if breached, reason := budgetLimitBreached("daily", totals, budget.DailyInputTokens, budget.DailyOutputTokens); breached {
-		status.Open = true
-		status.Reason = reason
-	}
-	return status, nil
+	_ = s
+	_ = now
+	return budgetCircuitStatus{Budget: withDefaultRuntimeBudgetConfig(wf.Runtime.Budget)}, nil
 }
 
 func (s *RuntimeStore) SetBudgetCircuitStatus(status budgetCircuitStatus) error {
@@ -263,15 +245,11 @@ func (s *RuntimeStore) SetBudgetCircuitStatus(status budgetCircuitStatus) error 
 }
 
 func (s *RuntimeStore) ReadBudgetCircuitStatus() (budgetCircuitStatus, error) {
-	raw, err := s.GetSetting(budgetCircuitSettingKey)
-	if err != nil || strings.TrimSpace(raw) == "" {
-		return budgetCircuitStatus{}, err
-	}
-	var status budgetCircuitStatus
-	if err := json.Unmarshal([]byte(raw), &status); err != nil {
-		return budgetCircuitStatus{}, err
-	}
-	return status, nil
+	// Do not parse a legacy circuit record here. A malformed or stale record is
+	// telemetry, not control-plane state, and must never make status/dispatch
+	// fail or resurrect a circuit-open banner.
+	_ = s
+	return budgetCircuitStatus{Budget: defaultRuntimeBudgetConfig()}, nil
 }
 
 func budgetLimitBreached(scope string, totals runtimeBudgetTotals, inputLimit, outputLimit int) (bool, string) {
@@ -296,93 +274,32 @@ func (d *Daemon) refreshBudgetCircuitStatus(wf Workflow, now time.Time) (budgetC
 }
 
 func (d *Daemon) budgetDispatchBlocker(project RegisteredProject, wf Workflow, note Note, run RunStatus, now time.Time) (RunStatus, string, bool, error) {
-	if d == nil || d.store == nil {
-		return run, "", false, nil
-	}
-	budget := resolveRunBudget(wf, note)
-	if !budget.Enabled {
-		return run, "", false, nil
-	}
-	circuit, err := d.store.BudgetCircuitStatus(wf, now)
-	if err != nil {
-		return run, "", false, err
-	}
-	if circuit.Open {
-		return run, "budget circuit open until " + circuit.ResetAt + ": " + circuit.Reason, false, nil
-	}
-	reset, err := d.store.BudgetWindowStart(project.ProjectID, run.RecordID)
-	if err != nil {
-		return run, "", false, err
-	}
-	totals, err := d.store.SumRunTokens(project.ProjectID, run.RecordID, reset.ResetAt)
-	if err != nil {
-		return run, "", false, err
-	}
-	if breached, reason := budgetLimitBreached("task", totals, budget.PerTaskInputTokens, budget.PerTaskOutputTokens); breached {
-		run = parkBudgetRun(run, reason+"; redrive required")
-		recordDaemonEscalationForRun(project, run, "park", run.LastError)
-		return run, run.LastError, true, nil
-	}
+	_ = d
+	_ = project
+	_ = wf
+	_ = note
+	_ = now
 	return run, "", false, nil
 }
 
 func (d *Daemon) enforceBudgetForRun(ctx context.Context, project RegisteredProject, wf Workflow, note Note, run RunStatus) (RunStatus, bool, error) {
-	if d == nil || d.store == nil || !isDispatchCapacityLeaseState(run.LeaseState) {
-		return run, false, nil
-	}
-	budget := resolveRunBudget(wf, note)
-	if !budget.Enabled {
-		return run, false, nil
-	}
-	reset, err := d.store.BudgetWindowStart(project.ProjectID, run.RecordID)
-	if err != nil {
-		return run, false, err
-	}
-	taskTotals, err := d.store.SumRunTokens(project.ProjectID, run.RecordID, reset.ResetAt)
-	if err != nil {
-		return run, false, err
-	}
-	if breached, reason := budgetLimitBreached("task", taskTotals, budget.PerTaskInputTokens, budget.PerTaskOutputTokens); breached {
-		if isDispatchingLeaseState(run.LeaseState) {
-			if _, stopErr := d.stopRunExecution(ctx, run); stopErr != nil {
-				reason += ": " + stopErr.Error()
-			}
-		}
-		now := time.Now().UTC().Format(time.RFC3339)
-		updateRunAttemptFromRun(d.store, run, AttemptOutcomeBudgetExceeded, exitCodeForOutcome(AttemptOutcomeBudgetExceeded), reason, now)
-		run = parkBudgetRun(run, reason+"; redrive required")
-		recordDaemonEscalationForRun(project, run, "park", run.LastError)
-		if strings.TrimSpace(run.SessionRef) != "" {
-			_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateParkedBudget), "", run.LastError, false)
-		}
-		return run, true, nil
-	}
-	if !isDispatchingLeaseState(run.LeaseState) {
-		return run, false, nil
-	}
-	attemptTotals, err := d.store.SumAttemptTokens(run.ActiveAttemptID)
-	if err != nil {
-		return run, false, err
-	}
-	if breached, reason := budgetLimitBreached("attempt", attemptTotals, budget.PerAttemptInputTokens, budget.PerAttemptOutputTokens); breached {
-		if _, stopErr := d.stopRunExecution(ctx, run); stopErr != nil {
-			reason += ": " + stopErr.Error()
-		}
-		now := time.Now().UTC().Format(time.RFC3339)
-		updateRunAttemptFromRun(d.store, run, AttemptOutcomeBudgetExceeded, exitCodeForOutcome(AttemptOutcomeBudgetExceeded), reason, now)
-		run.LeaseState = string(LeaseStateReleased)
-		run.AttemptOutcome = string(AttemptOutcomeBudgetExceeded)
-		run.NextRetryAt = ""
-		run.LastError = reason
-		run.UpdatedAt = now
-		run.Terminal = true
-		if strings.TrimSpace(run.SessionRef) != "" {
-			_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForOutcome(AttemptOutcomeBudgetExceeded), "", reason, false)
-		}
-		clearActiveExecution(&run)
-		return run, true, nil
-	}
+	_ = d
+	_ = ctx
+	_ = project
+	_ = wf
+	_ = note
 	return run, false, nil
+}
+
+func releaseLegacyBudgetPark(run RunStatus, now time.Time) RunStatus {
+	run.LeaseState = string(LeaseStateUnclaimed)
+	run.AttemptOutcome = string(AttemptOutcomeNone)
+	run.NextRetryAt = ""
+	run.LastError = "legacy token budget park released: token telemetry is diagnostic-only"
+	run.UpdatedAt = now.UTC().Format(time.RFC3339)
+	run.Terminal = false
+	clearActiveExecution(&run)
+	return run
 }
 
 func (d *Daemon) enforceTurnCapForRun(ctx context.Context, project RegisteredProject, wf Workflow, run RunStatus) (RunStatus, bool, error) {

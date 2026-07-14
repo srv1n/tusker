@@ -14,7 +14,7 @@ import { Mono } from "@/components/ui/primitives";
 import { OutcomeChip, RunnerBadge } from "@/components/ui/chips";
 import { LivenessIndicator } from "@/components/ui/liveness";
 import { Skeleton } from "@/components/ui/states";
-import { compactNumber, duration } from "@/lib/time";
+import { duration } from "@/lib/time";
 import type { RunSummary } from "@/types/domain";
 import {
   RUNS_GRID,
@@ -22,7 +22,6 @@ import {
   leaseTextClass,
   livenessRowClass,
   livenessTextClass,
-  tokenTotal,
 } from "@/features/runs/board/helpers";
 
 const ROW_BORDER = "border-b border-line-soft last:border-b-0";
@@ -40,7 +39,6 @@ export function RunsTableHeader() {
       <span className="hidden md:block">Runner</span>
       <span className="hidden md:block">Lane</span>
       <span className="hidden md:block">Lease</span>
-      <span className="hidden md:block">Tokens</span>
       <span>State</span>
     </div>
   );
@@ -106,9 +104,6 @@ export function ActiveRunRow({ run }: { run: RunSummary }) {
       <Mono className={cn("hidden self-center text-[10px] md:block", leaseTextClass(run.leaseState))}>
         {run.leaseState}
       </Mono>
-      <Mono className="hidden self-center text-[11px] text-ink-soft md:block">
-        {compactNumber(tokenTotal(run))}
-      </Mono>
       <span className="flex flex-col items-start gap-1">
         <Mono
           className={cn(
@@ -145,9 +140,6 @@ export function RecentRunRow({ run }: { run: RunSummary }) {
       <Mono className={cn("hidden self-center text-[10px] md:block", leaseTextClass(run.leaseState))}>
         {run.leaseState}
       </Mono>
-      <Mono className="hidden self-center text-[11px] text-muted md:block">
-        {compactNumber(tokenTotal(run))}
-      </Mono>
       <span className="flex items-center gap-1.5 justify-self-start">
         <OutcomeChip outcome={run.outcome} />
         {run.terminal && (
@@ -171,7 +163,6 @@ export function RunsBoardSkeleton() {
           <Skeleton className="hidden h-4 w-16 md:block" />
           <Skeleton className="hidden h-3 w-10 md:block" />
           <Skeleton className="hidden h-3 w-10 md:block" />
-          <Skeleton className="hidden h-3 w-12 md:block" />
           <Skeleton className="h-4 w-20" />
         </div>
       ))}

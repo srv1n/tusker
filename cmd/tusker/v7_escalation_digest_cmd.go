@@ -51,16 +51,15 @@ type digestBuildOptions struct {
 }
 
 type tuskerDigest struct {
-	ProjectID                  string                    `json:"projectId"`
-	GeneratedAt                string                    `json:"generatedAt"`
-	Since                      string                    `json:"since"`
-	Watermark                  string                    `json:"watermark"`
-	PersistentEscalationBanner bool                      `json:"persistentEscalationBanner"`
-	OpenEscalations            []digestEscalation        `json:"openEscalations"`
-	Landed                     []digestLanded            `json:"landed"`
-	RedParked                  []digestRedParked         `json:"redParked"`
-	PendingHardGates           []digestPendingHardGate   `json:"pendingHardGates"`
-	BudgetCircuitStatus        digestBudgetCircuitStatus `json:"budgetCircuitStatus"`
+	ProjectID                  string                  `json:"projectId"`
+	GeneratedAt                string                  `json:"generatedAt"`
+	Since                      string                  `json:"since"`
+	Watermark                  string                  `json:"watermark"`
+	PersistentEscalationBanner bool                    `json:"persistentEscalationBanner"`
+	OpenEscalations            []digestEscalation      `json:"openEscalations"`
+	Landed                     []digestLanded          `json:"landed"`
+	RedParked                  []digestRedParked       `json:"redParked"`
+	PendingHardGates           []digestPendingHardGate `json:"pendingHardGates"`
 }
 
 type digestEscalation struct {
@@ -101,18 +100,6 @@ type digestPendingHardGate struct {
 	Status    string `json:"status"`
 	Proof     string `json:"proof"`
 	UpdatedAt string `json:"updatedAt"`
-}
-
-type digestBudgetCircuitStatus struct {
-	ActiveRuns             int    `json:"activeRuns"`
-	ParkedNoProgressRuns   int    `json:"parkedNoProgressRuns"`
-	ParkedBudgetRuns       int    `json:"parkedBudgetRuns"`
-	MaxActiveRuns          int    `json:"maxActiveRuns"`
-	BudgetCircuitOpen      bool   `json:"budgetCircuitOpen"`
-	BudgetCircuitReason    string `json:"budgetCircuitReason"`
-	BudgetCircuitResetAt   string `json:"budgetCircuitResetAt"`
-	InvariantCircuitOpen   bool   `json:"invariantCircuitOpen"`
-	InvariantCircuitReason string `json:"invariantCircuitReason"`
 }
 
 func escalationV7Cmd(args Args) error {
@@ -455,15 +442,14 @@ func buildTuskerDigest(vaultPath string, store *RuntimeStore, opts digestBuildOp
 	}
 	generatedAt := now.Format(time.RFC3339)
 	digest := tuskerDigest{
-		ProjectID:           projectID,
-		GeneratedAt:         generatedAt,
-		Since:               formatDigestSince(since),
-		Watermark:           watermark,
-		OpenEscalations:     []digestEscalation{},
-		Landed:              []digestLanded{},
-		RedParked:           []digestRedParked{},
-		PendingHardGates:    []digestPendingHardGate{},
-		BudgetCircuitStatus: digestBudgetCircuitStatus{},
+		ProjectID:        projectID,
+		GeneratedAt:      generatedAt,
+		Since:            formatDigestSince(since),
+		Watermark:        watermark,
+		OpenEscalations:  []digestEscalation{},
+		Landed:           []digestLanded{},
+		RedParked:        []digestRedParked{},
+		PendingHardGates: []digestPendingHardGate{},
 	}
 	digest.OpenEscalations = digestOpenEscalations(idx)
 	for _, escalation := range digest.OpenEscalations {
@@ -476,8 +462,6 @@ func buildTuskerDigest(vaultPath string, store *RuntimeStore, opts digestBuildOp
 	if store != nil {
 		runs, _ := store.ListRuns()
 		digest.RedParked = digestRedParkedItems(idx, runs, projectID)
-		status, _ := store.DaemonStatus()
-		digest.BudgetCircuitStatus = digestCircuitStatus(status)
 	}
 	digest.PendingHardGates = digestPendingHardGates(idx)
 	if opts.MarkWatermark && store != nil {
@@ -502,7 +486,6 @@ func renderTuskerDigestMarkdown(d tuskerDigest) string {
 	renderDigestLanded(&b, d.Landed)
 	renderDigestRedParked(&b, d.RedParked)
 	renderDigestHardGates(&b, d.PendingHardGates)
-	renderDigestCircuitStatus(&b, d.BudgetCircuitStatus)
 	return b.String()
 }
 
@@ -560,14 +543,6 @@ func renderDigestHardGates(b *strings.Builder, rows []digestPendingHardGate) {
 		b.WriteString(fmt.Sprintf("- %s [%s] — %s; proof: %s\n", row.TaskID, row.Risk, row.TaskTitle, row.Proof))
 	}
 	b.WriteString("\n")
-}
-
-func renderDigestCircuitStatus(b *strings.Builder, status digestBudgetCircuitStatus) {
-	b.WriteString("## Budget / Circuit Status\n\n")
-	b.WriteString(fmt.Sprintf("- Active runs: %d / %d\n", status.ActiveRuns, status.MaxActiveRuns))
-	b.WriteString(fmt.Sprintf("- Parked: %d no-progress, %d budget\n", status.ParkedNoProgressRuns, status.ParkedBudgetRuns))
-	b.WriteString(fmt.Sprintf("- Budget circuit: %s%s\n", openClosed(status.BudgetCircuitOpen), suffixReason(status.BudgetCircuitReason)))
-	b.WriteString(fmt.Sprintf("- Invariant circuit: %s%s\n", openClosed(status.InvariantCircuitOpen), suffixReason(status.InvariantCircuitReason)))
 }
 
 func digestOpenEscalations(idx v7Index) []digestEscalation {
@@ -696,21 +671,6 @@ func digestPendingHardGates(idx v7Index) []digestPendingHardGate {
 			Proof:     firstNonEmpty(stringField(task.Data, "proof_status"), "pending"),
 			UpdatedAt: stringField(task.Data, "updated_at"),
 		})
-	}
-	return out
-}
-
-func digestCircuitStatus(status map[string]any) digestBudgetCircuitStatus {
-	out := digestBudgetCircuitStatus{
-		ActiveRuns:             intFromAny(status["activeRuns"]),
-		ParkedNoProgressRuns:   intFromAny(status["parkedNoProgressRuns"]),
-		ParkedBudgetRuns:       intFromAny(status["parkedBudgetRuns"]),
-		MaxActiveRuns:          intFromAny(status["max_active_runs"]),
-		BudgetCircuitOpen:      boolFromAny(status["budget_circuit_open"]),
-		BudgetCircuitReason:    stringValue(status["budget_circuit_reason"]),
-		BudgetCircuitResetAt:   stringValue(status["budget_circuit_reset_at"]),
-		InvariantCircuitOpen:   boolFromAny(status["invariant_circuit_open"]),
-		InvariantCircuitReason: stringValue(status["invariant_circuit_reason"]),
 	}
 	return out
 }

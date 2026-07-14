@@ -870,7 +870,6 @@ func (s *serveServer) serveAttemptDetail(run RunStatus, attempt RunAttempt) serv
 		StartedAt:      attempt.StartedAt,
 		FinishedAt:     attempt.FinishedAt,
 		DurationSec:    serveDurationSec(attempt.StartedAt, firstNonEmpty(attempt.FinishedAt, run.UpdatedAt), s.now()),
-		Tokens:         serveTokenTotalsForTurns(turns),
 		WorkspacePath:  attempt.WorkspacePath,
 		BranchName:     attempt.BranchName,
 		PullRequestURL: attempt.PullRequestURL,

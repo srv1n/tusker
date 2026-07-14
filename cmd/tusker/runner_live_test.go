@@ -1097,8 +1097,8 @@ for line in sys.stdin:
 		RawLogPath:      rawLogPath,
 		StatusPath:      statusPath,
 	}, turns, nil, collectReviewPacketFacts(RunStatus{EventSinkPath: eventSinkPath, WorkspacePath: workspaceRoot, StatusPath: statusPath}))
-	if !strings.Contains(packet, "Token totals: total=26 input=17 output=9") {
-		t.Fatalf("expected review packet token totals, got:\n%s", packet)
+	if !strings.Contains(packet, "Usage telemetry: raw diagnostic data only; it is neither billable nor an exact aggregate.") {
+		t.Fatalf("expected review packet diagnostic usage disclaimer, got:\n%s", packet)
 	}
 }
 

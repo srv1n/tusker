@@ -77,7 +77,6 @@ func defaultRuntimeSentinelConfig() RuntimeSentinelConfig {
 			invariantCheckAttemptCountWithinCaps,
 			invariantCheckFreshHeartbeatPidLive,
 			invariantCheckUniqueActiveLeasePerTask,
-			invariantCheckActiveSpendMonotonic,
 			invariantCheckLastPollAdvanced,
 		},
 		FreshHeartbeatMS: defaultSentinelFreshHeartbeatMS,
@@ -227,13 +226,8 @@ func (d *Daemon) ResumeInvariantCircuit() (invariantCircuitStatus, error) {
 	if err != nil {
 		return invariantCircuitStatus{}, err
 	}
-	totals, err := d.store.RunTokenTotalsByRun()
-	if err != nil {
-		return invariantCircuitStatus{}, err
-	}
 	snapshot := runtimeSentinelSnapshot{
 		Runs:           runs,
-		TokenTotals:    totals,
 		PreviousPollAt: previousPollAt,
 		CurrentPollAt:  previousPollAt,
 		Now:            time.Now().UTC(),
@@ -336,10 +330,6 @@ func (d *Daemon) evaluateInvariantSentinel(snapshot runtimeSentinelSnapshot) (in
 	if snapshot.TokenTotals == nil {
 		snapshot.TokenTotals = map[string]runtimeBudgetTotals{}
 	}
-	previousSpend, err := d.store.ReadInvariantSpendSnapshot()
-	if err != nil {
-		return invariantCircuitStatus{}, err
-	}
 	status := invariantCircuitStatus{
 		Open:          true,
 		Reason:        invariantViolationReason,
@@ -349,8 +339,11 @@ func (d *Daemon) evaluateInvariantSentinel(snapshot runtimeSentinelSnapshot) (in
 	runsByProject := sentinelRunsByProject(snapshot.Runs)
 	for _, project := range snapshot.Projects {
 		config := withDefaultRuntimeSentinelConfig(project.Workflow.Runtime.Sentinel)
-		status.Checks = append(status.Checks, config.Checks...)
 		for _, check := range config.Checks {
+			if check == invariantCheckActiveSpendMonotonic {
+				continue
+			}
+			status.Checks = append(status.Checks, check)
 			if snapshot.Resume && check == invariantCheckLastPollAdvanced {
 				continue
 			}
@@ -364,8 +357,6 @@ func (d *Daemon) evaluateInvariantSentinel(snapshot runtimeSentinelSnapshot) (in
 				violations = sentinelFreshHeartbeatPidLive(project, runsByProject[project.Project.ProjectID], config, snapshot.Now, snapshot.Liveness)
 			case invariantCheckUniqueActiveLeasePerTask:
 				violations = sentinelUniqueActiveLeasePerTask(project, runsByProject[project.Project.ProjectID])
-			case invariantCheckActiveSpendMonotonic:
-				violations = sentinelActiveSpendMonotonic(project, runsByProject[project.Project.ProjectID], snapshot.TokenTotals, previousSpend)
 			case invariantCheckLastPollAdvanced:
 				violations = sentinelLastPollAdvanced(snapshot.PreviousPollAt, snapshot.CurrentPollAt)
 			default:
@@ -401,9 +392,6 @@ func (d *Daemon) evaluateInvariantSentinel(snapshot runtimeSentinelSnapshot) (in
 		status.Summary = "no invariant violations"
 	} else {
 		status.Summary = invariantViolationReason + ": " + status.Violations[0].Detail
-	}
-	if err := d.store.SetInvariantSpendSnapshot(currentActiveSpendSnapshot(snapshot.Runs, snapshot.TokenTotals)); err != nil {
-		return status, err
 	}
 	return status, nil
 }

@@ -196,11 +196,6 @@ export type NeedItem =
 // Runs
 // ----------------------------------------------------------------------------
 
-export interface TokenTotals {
-  input: number;
-  output: number;
-}
-
 export interface RunSummary {
   /** Runs are keyed by the task they execute. */
   taskId: string;
@@ -220,7 +215,6 @@ export interface RunSummary {
   /** Seconds since the last protocol event — feeds the liveness indicator. */
   sinceLastEventSec: number;
   liveness: Liveness;
-  tokens: TokenTotals;
   attemptCount: number;
   terminal?: boolean;
   error?: string | null;
@@ -232,7 +226,6 @@ export interface Attempt {
   n: number;
   outcome: RunOutcome;
   durationSec: number;
-  tokens: TokenTotals;
   startedAt: string;
 }
 
@@ -419,7 +412,6 @@ export interface AttemptDetail {
   startedAt: string;
   finishedAt?: string;
   durationSec: number;
-  tokens: TokenTotals;
   workspacePath?: string;
   branchName?: string;
   pullRequestUrl?: string;
@@ -522,17 +514,7 @@ export interface DaemonStatus {
   daemonStartedAt?: string | null;
   daemonLastPollAt?: string | null;
   diskPressure?: DiskPressureStatus;
-  parkedBudgetRuns?: number;
   persistentEscalationBanner?: boolean;
-  budgetCircuit?: {
-    open: boolean;
-    reason?: string;
-    reset_at?: string;
-    input_tokens?: number;
-    output_tokens?: number;
-    input_token_limit?: number;
-    output_token_limit?: number;
-  } | null;
   crashLoop?: {
     open: boolean;
     reason?: string;

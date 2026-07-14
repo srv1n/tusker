@@ -241,10 +241,13 @@ func TestDigestRender(t *testing.T) {
 		t.Fatal(cmdErr)
 	}
 	assertDigestSectionOrder(t, output)
-	for _, expected := range []string{"digest escalation", "W-0001", "Closed task", "APP-T-0003", "continuation retry cap reached", "APP-T-0002", "Budget / Circuit Status"} {
+	for _, expected := range []string{"digest escalation", "W-0001", "Closed task", "APP-T-0003", "continuation retry cap reached", "APP-T-0002"} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("digest missing %q:\n%s", expected, output)
 		}
+	}
+	if strings.Contains(output, "Budget / Circuit Status") {
+		t.Fatalf("digest must not render an authoritative budget/circuit section:\n%s", output)
 	}
 	watermark, err := store.GetSetting(digestWatermarkKey(projectID))
 	if err != nil {
@@ -405,7 +408,7 @@ func writeEscalationNotificationsConfig(t *testing.T, vault string, enabled bool
 
 func assertDigestSectionOrder(t *testing.T, output string) {
 	t.Helper()
-	sections := []string{"## Open Escalations", "## Landed", "## Red / Parked", "## Pending Hard Gates", "## Budget / Circuit Status"}
+	sections := []string{"## Open Escalations", "## Landed", "## Red / Parked", "## Pending Hard Gates"}
 	last := -1
 	for _, section := range sections {
 		idx := strings.Index(output, section)

@@ -48,7 +48,7 @@ import {
 } from "@/lib/queries";
 import { Button, Select, TextInput } from "@/components/ui/controls";
 import { ActionResultLine, useConfirm } from "@/components/ui/action-feedback";
-import { compactNumber, duration, relativeTime } from "@/lib/time";
+import { duration, relativeTime } from "@/lib/time";
 import type { EvidenceCard, RunSummary, TaskDetail } from "@/types/domain";
 import { DocEditor, type EditorRuntimeConfig } from "@/features/editor";
 import { DocShell } from "./DocShell";
@@ -729,7 +729,6 @@ function EditableFact({
 }
 
 function RunHistoryItem({ run, projectId }: { run: RunSummary; projectId: string }) {
-  const tokens = compactNumber(run.tokens.input + run.tokens.output);
   return (
     <Link
       to="/p/$projectId/runs/$taskId"
@@ -748,7 +747,6 @@ function RunHistoryItem({ run, projectId }: { run: RunSummary; projectId: string
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted">
         <span>{plural(run.attemptCount, "attempt")}</span>
         <span>{duration(run.elapsedSec)}</span>
-        <span>{tokens} tokens</span>
         <span>last event {duration(run.sinceLastEventSec)} ago</span>
       </div>
     </Link>

@@ -5,7 +5,7 @@
 */
 
 import type { Attempt, DaemonStatus, RunDetail, RunEvent, TaskStatus } from "@/types/domain";
-import { compactNumber, duration } from "@/lib/time";
+import { duration } from "@/lib/time";
 
 /** A derived stat cell for the run summary grid (design §07 — four headline numbers). */
 export interface RunStat {
@@ -13,13 +13,12 @@ export interface RunStat {
   value: string;
 }
 
-/** The four headline numbers shown above the run body. */
+/** The run headline numbers avoid usage totals because runner telemetry is diagnostic-only. */
 export function runStats(run: RunDetail, waitingForDaemon = false): RunStat[] {
   return [
     { label: "Elapsed", value: waitingForDaemon ? "Paused" : duration(run.elapsedSec) },
-    { label: "Input", value: compactNumber(run.tokens.input) },
-    { label: "Output", value: compactNumber(run.tokens.output) },
     { label: "Attempts", value: String(run.attemptCount) },
+    { label: "Liveness", value: run.liveness },
   ];
 }
 
@@ -52,11 +51,9 @@ export function waitingForDaemonReason(
   );
 }
 
-/** Compact "1m 04s · 21.1k→1.5k tok" attempt meta line. */
+/** Compact attempt metadata without treating usage snapshots as a total. */
 export function attemptMeta(a: Attempt): string {
-  return `${duration(a.durationSec)} · ${compactNumber(a.tokens.input)}→${compactNumber(
-    a.tokens.output,
-  )} tok`;
+  return duration(a.durationSec);
 }
 
 /**

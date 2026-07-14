@@ -750,8 +750,6 @@ func (s *serveServer) daemonStatusFromSnapshot(snap serveSnapshot) *serveDaemonS
 		StateRoot:                  DefaultStateRoot(),
 		ProjectCount:               intFromAny(daemonStatus["projects"]),
 		Projects:                   projects,
-		ParkedBudgetRuns:           intFromAny(daemonStatus["parkedBudgetRuns"]),
-		BudgetCircuit:              daemonStatus["budgetCircuit"],
 		CrashLoop:                  daemonStatus["crashLoop"],
 		InvariantCircuit:           daemonStatus["invariantCircuit"],
 		DiskPressure:               diskPressureStatusFromAny(daemonStatus["disk_pressure"]),
@@ -960,12 +958,10 @@ func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID s
 	sort.Slice(attempts, func(i, j int) bool { return attempts[i].StartedAt < attempts[j].StartedAt })
 	detail := serveRunDetail{serveRunSummary: summary, WorkspacePath: run.WorkspacePath, Attempts: []serveAttempt{}}
 	for i, attempt := range attempts {
-		turns, _ := s.store.ListTurnsForAttempt(attempt.AttemptID)
 		detail.Attempts = append(detail.Attempts, serveAttempt{
 			N:           i + 1,
 			Outcome:     serveRunOutcomeFromAttempt(attempt.Outcome, run.LeaseState),
 			DurationSec: serveDurationSec(attempt.StartedAt, firstNonEmpty(attempt.FinishedAt, run.UpdatedAt), s.now()),
-			Tokens:      serveTokenTotalsForTurns(turns),
 			StartedAt:   attempt.StartedAt,
 		})
 	}

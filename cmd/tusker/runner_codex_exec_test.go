@@ -189,14 +189,20 @@ func TestCodexExecBudgetAcrossJSONLTurnsAndTurnCap(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		assertEqual(t, true, changed, "budget changed")
-		assertEqual(t, string(AttemptOutcomeBudgetExceeded), updated.AttemptOutcome, "budget outcome")
+		assertEqual(t, false, changed, "usage telemetry does not stop the runner")
+		assertEqual(t, string(AttemptOutcomeNone), updated.AttemptOutcome, "usage does not set a budget outcome")
 		attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		assertEqual(t, string(AttemptOutcomeBudgetExceeded), attempts[0].Outcome, "budget attempt outcome")
-		assertEqual(t, 2, attempts[0].TurnsUsed, "budget turns used")
+		if attempts[0].Outcome == string(AttemptOutcomeBudgetExceeded) {
+			t.Fatalf("usage telemetry must not set a budget outcome: %#v", attempts[0])
+		}
+		turns, err := store.ListTurnsForAttempt(run.ActiveAttemptID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertEqual(t, 2, len(turns), "turns remain recorded diagnostically")
 	})
 
 	t.Run("turn cap", func(t *testing.T) {
@@ -224,6 +230,33 @@ func TestCodexExecBudgetAcrossJSONLTurnsAndTurnCap(t *testing.T) {
 			t.Fatalf("turn cap must not record early_exit: %#v", attempts[0])
 		}
 	})
+}
+
+func TestUsageTelemetryIsOptionalAndCannotPauseCodexExec(t *testing.T) {
+	store, daemon, run, project := codexExecGovernorFixture(t)
+	defer store.Close()
+	if err := writeText(run.RawLogPath, strings.Join([]string{
+		`not json`,
+		`{"type":"turn.completed","turn_id":"nested","token_usage":{"total":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}`,
+		`{"type":"turn.completed","turn_id":"oversized","token_usage":{"input_tokens":1e100,"output_tokens":1e100,"total_tokens":1e100}}`,
+		``,
+	}, "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := daemon.ingestCodexExecRawLog(run); err != nil {
+		t.Fatalf("usage telemetry must not fail a valid run: %v", err)
+	}
+	updated, changed, err := daemon.enforceBudgetForRun(context.Background(), project, defaultWorkflow(), Note{}, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, false, changed, "optional usage telemetry does not pause the run")
+	assertEqual(t, run.LeaseState, updated.LeaseState, "run remains live with malformed or oversized usage")
+	turns, err := store.ListTurnsForAttempt(run.ActiveAttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 2, len(turns), "nested and oversized usage remain diagnostic rows")
 }
 
 func TestCodexExecIngestReplayKeepsCompletedTurns(t *testing.T) {

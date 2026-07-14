@@ -33,7 +33,6 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
 
   const needsCount = globalNeeds.data?.length ?? 0;
   const daemonLive = !!daemon.data?.connected && stream.connected;
-  const budgetCircuitOpen = daemon.data?.budgetCircuit?.open === true;
   const invariantCircuitOpen = daemon.data?.invariantCircuit?.open === true;
 
   // Drawer keyboard/focus contract: Escape closes; opening moves focus into
@@ -171,14 +170,6 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
               title="Screens render mock fixtures, not live vault data. IDs and counts are illustrative until the serve API lands."
             >
               fixture data
-            </div>
-          )}
-          {budgetCircuitOpen && (
-            <div
-              className="mb-1 inline-flex items-center gap-1 rounded bg-fail-soft px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.12em] text-fail"
-              title={daemon.data?.budgetCircuit?.reason ?? "Budget circuit is open"}
-            >
-              budget circuit open
             </div>
           )}
           {invariantCircuitOpen && (

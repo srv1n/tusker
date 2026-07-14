@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowRight, Diamond, Flag, RefreshCw, Settings } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { compactNumber, sinceLabel } from "@/lib/time";
+import { sinceLabel } from "@/lib/time";
 import {
   useDaemon,
   useEpics,
@@ -145,7 +145,6 @@ function OverviewContent({ project, projectId }: { project: ProjectSummary; proj
 
   // Prefer the live queue length, falling back to the project summary count.
   const needsCount = needsQ.data ? needsQ.data.length : project.needsCount;
-  const totalTokens = runs.reduce((sum, r) => sum + r.tokens.input + r.tokens.output, 0);
   const inProgressCount = tasks.filter((t) => t.status === "in_progress").length;
 
   // A task whose latest run took more than one attempt reads as "rework".
@@ -221,10 +220,7 @@ function OverviewContent({ project, projectId }: { project: ProjectSummary; proj
           label="In progress"
           value={statsLoading ? <StatSkeleton /> : String(inProgressCount)}
         />
-        <StatCell
-          label="Tokens"
-          value={statsLoading ? <StatSkeleton /> : compactNumber(totalTokens)}
-        />
+        <StatCell label="Runs" value={statsLoading ? <StatSkeleton /> : String(runs.length)} />
       </div>
 
       {/* Epic rollups */}

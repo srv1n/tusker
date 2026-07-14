@@ -274,13 +274,14 @@ func TestServeRunDetailUsesCanonicalCompletedRunRow(t *testing.T) {
 	assertEqual(t, "unclaimed", detail.LeaseState, "completed detail lease")
 	assertEqual(t, 886, detail.ElapsedSec, "completed detail elapsed freezes at release")
 	assertEqual(t, 914, detail.SinceLastEventSec, "detail did not use newer child liveness")
-	assertEqual(t, 150, detail.Tokens.Input, "detail input tokens from recorded turns")
-	assertEqual(t, 40, detail.Tokens.Output, "detail output tokens from recorded turns")
 	assertEqual(t, 1, len(detail.Attempts), "detail attempts")
 	assertEqual(t, "succeeded", detail.Attempts[0].Outcome, "attempt outcome")
 	assertEqual(t, 886, detail.Attempts[0].DurationSec, "attempt elapsed freezes at finish")
-	assertEqual(t, 150, detail.Attempts[0].Tokens.Input, "attempt input tokens")
-	assertEqual(t, 40, detail.Attempts[0].Tokens.Output, "attempt output tokens")
+	turns, err := server.store.ListTurnsForAttempt("attempt-done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 2, len(turns), "raw usage rows remain available for forensic use")
 }
 
 func TestServeReadParityEndpointsSerialize(t *testing.T) {
@@ -328,7 +329,6 @@ func TestServeReadParityEndpointsSerialize(t *testing.T) {
 	serveDecode(t, server, "/api/attempts?task=APP-T-0007", &attempts)
 	assertEqual(t, 1, len(attempts), "attempt count")
 	assertEqual(t, "attempt-1", attempts[0].ID, "attempt id")
-	assertEqual(t, 10, attempts[0].Tokens.Input, "attempt tokens")
 
 	var attempt serveAttemptDetail
 	serveDecode(t, server, "/api/attempts/attempt-1", &attempt)

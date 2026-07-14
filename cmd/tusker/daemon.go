@@ -793,6 +793,17 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			if current.LeaseState == "" {
 				current.LeaseState = string(LeaseStateUnclaimed)
 			}
+			if LeaseState(current.LeaseState) == LeaseStateParkedBudget {
+				previous := current
+				current = releaseLegacyBudgetPark(current, now)
+				d.emitSupervisorDecision(SupervisorDecision{
+					ProjectID: project.ProjectID, RecordID: recordID, ItemID: current.ItemID,
+					Runner: current.Runner, WorkRevision: current.WorkRevision,
+					ParentAttemptID: previous.ActiveAttemptID, ParentSessionRef: previous.SessionRef,
+					Kind: string(SupervisorDecisionRedrive), Reason: current.LastError,
+					WorkspacePath: previous.WorkspacePath, LeaseState: current.LeaseState,
+				})
+			}
 
 			workRevision := intField(note.Data, "work_revision")
 			if current.WorkRevision != workRevision {
@@ -1083,14 +1094,9 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 	if err != nil {
 		return err
 	}
-	tokenTotals, err := d.store.RunTokenTotalsByRun()
-	if err != nil {
-		return err
-	}
 	if _, err := d.refreshInvariantCircuitStatus(runtimeSentinelSnapshot{
 		Projects:       sentinelProjects,
 		Runs:           finalRuns,
-		TokenTotals:    tokenTotals,
 		PreviousPollAt: previousPollAt,
 		CurrentPollAt:  currentPollAt,
 		Now:            time.Now().UTC(),
@@ -3720,10 +3726,6 @@ type reviewPacketFacts struct {
 
 func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDecisions []RuntimeSupervisorDecision, facts reviewPacketFacts) string {
 	var out []string
-	tokenTotals := tokenTotalsForTurns(turns)
-	if tokenTotals.TotalTokens == 0 && facts.EventTokenTotals.TotalTokens > 0 {
-		tokenTotals = facts.EventTokenTotals
-	}
 	out = append(out, "# Review packet")
 	out = append(out, "")
 	out = append(out, fmt.Sprintf("- Item: %s - %s", stringField(note.Data, "id"), stringField(note.Data, "title")))
@@ -3737,7 +3739,7 @@ func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDec
 	out = append(out, fmt.Sprintf("- Lane: %s", firstNonEmpty(run.Lane, runLaneExecute)))
 	out = append(out, fmt.Sprintf("- Work revision: %d", run.WorkRevision))
 	out = append(out, fmt.Sprintf("- Turns: %d", len(turns)))
-	out = append(out, fmt.Sprintf("- Token totals: total=%d input=%d output=%d", tokenTotals.TotalTokens, tokenTotals.InputTokens, tokenTotals.OutputTokens))
+	out = append(out, "- Usage telemetry: raw diagnostic data only; it is neither billable nor an exact aggregate.")
 	out = append(out, fmt.Sprintf("- Workspace: %s", run.WorkspacePath))
 	out = append(out, fmt.Sprintf("- Session: %s", run.SessionRef))
 	out = append(out, fmt.Sprintf("- Started: %s", run.StartedAt))
@@ -3778,8 +3780,8 @@ func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDec
 		out = append(out, "- No normalized turns were recorded for this attempt.")
 	} else {
 		for _, turn := range turns {
-			out = append(out, fmt.Sprintf("- #%d `%s` session=%s status=%s tokens=%d input=%d output=%d last_event=%s error=%s",
-				turn.TurnIndex, turn.TurnID, firstNonEmpty(turn.SessionRef, "none"), turn.Status, turn.TotalTokens, turn.InputTokens, turn.OutputTokens, turn.LastEventAt, firstNonEmpty(turn.LastError, "none")))
+			out = append(out, fmt.Sprintf("- #%d `%s` session=%s status=%s last_event=%s error=%s",
+				turn.TurnIndex, turn.TurnID, firstNonEmpty(turn.SessionRef, "none"), turn.Status, turn.LastEventAt, firstNonEmpty(turn.LastError, "none")))
 		}
 	}
 	out = append(out, "", "## Sessions and turns", "")
