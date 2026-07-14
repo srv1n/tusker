@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-14T11:20:08Z"
-updated_at: "2026-07-14T11:22:37Z"
-state_rev: "sha256:d7d88f6d0fff5eec1648647c05f1992b229ec416c6e3efdf65d172d6bbcfdca5"
+updated_at: "2026-07-14T14:05:45Z"
+state_rev: "sha256:6998c780bbf3fda0b179ae8260e59b9a2738459d4200b7615be63ca98735696d"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -58,11 +58,10 @@ external authority, unresolved intent, or explicitly subjective acceptance.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[DEL-T-0001]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[DEL-T-0002]] | backlog | blocked_dependency | Wait for dependency DEL-T-0001 to reach review with satisfied proof or done. |
-| [[DEL-T-0003]] | backlog | blocked_dependency | Wait for dependency DEL-T-0002 to reach review with satisfied proof or done. |
-| [[DEL-T-0004]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[DEL-T-0005]] | backlog | blocked_dependency | Wait for dependency DEL-T-0002 to reach review with satisfied proof or done. |
+| [[DEL-T-0001]] | review | reviewer | Review evidence and close or return to rework. |
+| [[DEL-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
+| [[DEL-T-0003]] | rework | agent | Review evidence and close or return to rework. |
+| [[DEL-T-0005]] | review | reviewer | Review evidence and close or return to rework. |
 | [[DEL-T-0006]] | backlog | blocked_dependency | Wait for dependency DEL-T-0003 to reach done. |
 
 ## Recently completed
@@ -71,4 +70,4 @@ external authority, unresolved intent, or explicitly subjective acceptance.
 
 | Task | Accepted by | Closed at |
 |---|---|---|
-| _None._ |  | |
+| [[DEL-T-0004]] | reviewer:codex-reviewer | 2026-07-14T13:05:05Z |

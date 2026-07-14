@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-12T11:03:42Z"
-updated_at: "2026-07-14T08:21:52Z"
-state_rev: "sha256:39761218388365a4ff40340c03f330458a5923e58f158c34dfb5f9c064140792"
+updated_at: "2026-07-14T13:55:42Z"
+state_rev: "sha256:93607a0c3990828aec52e1db05e65c563b297188f23da69d84d41557ad24f15f"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -56,17 +56,6 @@ Prioritize reliable delivery and operator visibility over token optimization. Us
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[LIF-T-0001]] | review | reviewer | Review evidence and close or return to rework. |
-| [[LIF-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
-| [[LIF-T-0003]] | review | reviewer | Review evidence and close or return to rework. |
-| [[LIF-T-0004]] | review | blocked_dependency | Wait for dependency LIF-T-0003 to reach done. |
-| [[LIF-T-0005]] | review | blocked_dependency | Wait for dependency LIF-T-0002 to reach done. |
-| [[LIF-T-0006]] | review | blocked_dependency | Wait for dependency LIF-T-0003 to reach done. |
-| [[LIF-T-0007]] | review | blocked_dependency | Wait for dependency LIF-T-0002 to reach done. |
-| [[LIF-T-0008]] | review | blocked_dependency | Wait for dependency LIF-T-0003 to reach done. |
-| [[LIF-T-0009]] | review | blocked_dependency | Wait for dependency LIF-T-0003 to reach done. |
-| [[LIF-T-0010]] | review | reviewer | Review evidence and close or return to rework. |
-| [[LIF-T-0011]] | review | blocked_dependency | Wait for dependency LIF-T-0002 to reach done. |
 | [[LIF-T-0012]] | review | reviewer | Review evidence and close or return to rework. |
 | [[LIF-T-0013]] | review | reviewer | Review evidence and close or return to rework. |
 
@@ -76,4 +65,14 @@ Prioritize reliable delivery and operator visibility over token optimization. Us
 
 | Task | Accepted by | Closed at |
 |---|---|---|
-| _None._ |  | |
+| [[LIF-T-0001]] | reviewer:codex-lifecycle | 2026-07-14T13:55:07Z |
+| [[LIF-T-0002]] | reviewer:codex-lifecycle | 2026-07-14T13:50:12Z |
+| [[LIF-T-0003]] | reviewer:codex-lifecycle | 2026-07-14T13:50:12Z |
+| [[LIF-T-0004]] | reviewer:codex-lifecycle | 2026-07-14T13:51:22Z |
+| [[LIF-T-0005]] | reviewer:codex-lifecycle | 2026-07-14T13:52:53Z |
+| [[LIF-T-0006]] | reviewer:codex-lifecycle | 2026-07-14T13:53:42Z |
+| [[LIF-T-0007]] | reviewer:codex-lifecycle | 2026-07-14T13:52:53Z |
+| [[LIF-T-0008]] | reviewer:codex-lifecycle | 2026-07-14T13:55:07Z |
+| [[LIF-T-0009]] | reviewer:codex-lifecycle | 2026-07-14T13:55:07Z |
+| [[LIF-T-0010]] | reviewer:codex-lifecycle | 2026-07-14T13:55:07Z |
+| [[LIF-T-0011]] | reviewer:codex-lifecycle | 2026-07-14T13:55:42Z |

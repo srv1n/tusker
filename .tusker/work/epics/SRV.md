@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:16:22Z"
-updated_at: "2026-07-14T07:00:05Z"
-state_rev: "sha256:a8c5c049c5cad673abdf2cab3560548f752fe42666c0f589fcf198ccb36467cd"
+updated_at: "2026-07-14T13:50:24Z"
+state_rev: "sha256:a0acf1738ba58bba6dd4c73d9e9a9ce3c5c55b98cd90e9f9fdf1bd41140c03f1"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
   use_when: "Use to triage needs-me queue, read/edit UI, runtime-store API, and embedded SPA work."
@@ -65,7 +65,6 @@ TBD.
 | [[SRV-T-0025]] | review | reviewer | Review evidence and close or return to rework. |
 | [[SRV-T-0026]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0027]] | backlog | blocked_dependency | Wait for dependency SRV-T-0026 to reach review with satisfied proof or done. |
-| [[SRV-T-0028]] | review | reviewer | Review evidence and close or return to rework. |
 | [[SRV-T-0029]] | review | reviewer | Review evidence and close or return to rework. |
 | [[SRV-T-0031]] | review | reviewer | Review evidence and close or return to rework. |
 | [[SRV-T-0032]] | review | reviewer | Review evidence and close or return to rework. |
@@ -87,4 +86,5 @@ TBD.
 | [[SRV-T-0015]] | human:sarav | 2026-07-08T06:14:48Z |
 | [[SRV-T-0016]] | human:sarav | 2026-07-08T06:14:48Z |
 | [[SRV-T-0017]] | human:sarav | 2026-07-08T07:12:47Z |
+| [[SRV-T-0028]] | reviewer:codex-lifecycle | 2026-07-14T13:50:12Z |
 | [[SRV-T-0030]] | reviewer:agent | 2026-07-14T04:59:28Z |

@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:13:34Z"
-updated_at: "2026-07-12T18:05:50Z"
-state_rev: "sha256:98e586d0e91fa0dba3b3fc0c0277fbcb7ce928db45a09b7df6612b7333a565ea"
+updated_at: "2026-07-14T14:16:50Z"
+state_rev: "sha256:fc87cdf076fef695867ea953c5a55661992e04dffb6c1f4c50f984d462104d2a"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
   use_when: "Use to triage feedback signals, review findings, promotion rules, and cross-vault health."
@@ -53,7 +53,7 @@ Start from the 2026-07-05 feedback intake: 4 explicit notes collapsed to 2 produ
 |---|---|---|---|
 | [[FBK-T-0001]] | ready | agent | Execute the task contract and satisfy proof mode. |
 | [[FBK-T-0002]] | backlog | human:sarav | Accept, waive, or return rework for FBK-G-0001. |
-| [[FBK-T-0004]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[FBK-T-0004]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 

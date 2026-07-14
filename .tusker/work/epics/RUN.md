@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:32:32Z"
-updated_at: "2026-07-12T17:56:10Z"
-state_rev: "sha256:0e3dd2ae98d9926dde12d30053ab9b2bf0988b0d46d5367f6a1ca486e37a9382"
+updated_at: "2026-07-14T14:05:06Z"
+state_rev: "sha256:750a79754fdeac9f8de3a440ebb532c5b38603393e6e667dd2d8862d3527c77e"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
   use_when: "Use to triage Codex/Claude runner behavior, profile policy, leases, and runner integration."
@@ -53,7 +53,7 @@ TBD.
 | [[RUN-T-0003]] | backlog | agent | Wait for dependency RUN-T-0002 to reach review with satisfied proof or done. |
 | [[RUN-T-0005]] | backlog | agent | Wait for dependency RUN-T-0002 to reach review with satisfied proof or done. |
 | [[RUN-T-0006]] | backlog | agent | Wait for dependency RUN-T-0004 to reach done. |
-| [[RUN-T-0015]] | backlog | agent | Wait for dependency RUN-T-0011 to reach done. |
+| [[RUN-T-0015]] | ready | agent | Wait for dependency RUN-T-0011 to reach done. |
 | [[RUN-T-0045]] | review | reviewer | Review evidence and close or return to rework. |
 | [[RUN-T-0046]] | review | reviewer | Review evidence and close or return to rework. |
 

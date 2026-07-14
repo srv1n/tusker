@@ -7,20 +7,12 @@
 | Task | Wave | Risk | Next action |
 |---|---|---|---|
 | [[AGX-T-0005]] | W-0001 | medium | Review evidence and close or return to rework. |
-| [[AGX-T-0007]] |  | medium | Review evidence and close or return to rework. |
 | [[CLN-T-0006]] |  | low | Review evidence and close or return to rework. |
 | [[CLN-T-0009]] |  | low | Review evidence and close or return to rework. |
-| [[LIF-T-0001]] |  | medium | Review evidence and close or return to rework. |
-| [[LIF-T-0002]] |  | high | Review evidence and close or return to rework. |
-| [[LIF-T-0003]] |  | high | Review evidence and close or return to rework. |
-| [[LIF-T-0004]] |  | high | Wait for dependency LIF-T-0003 to reach done. |
-| [[LIF-T-0005]] |  | high | Wait for dependency LIF-T-0002 to reach done. |
-| [[LIF-T-0006]] |  | medium | Wait for dependency LIF-T-0003 to reach done. |
-| [[LIF-T-0007]] |  | medium | Wait for dependency LIF-T-0002 to reach done. |
-| [[LIF-T-0008]] |  | medium | Wait for dependency LIF-T-0003 to reach done. |
-| [[LIF-T-0009]] |  | medium | Wait for dependency LIF-T-0003 to reach done. |
-| [[LIF-T-0010]] |  | medium | Review evidence and close or return to rework. |
-| [[LIF-T-0011]] |  | high | Wait for dependency LIF-T-0002 to reach done. |
+| [[DEL-T-0001]] |  | medium | Review evidence and close or return to rework. |
+| [[DEL-T-0002]] |  | high | Review evidence and close or return to rework. |
+| [[DEL-T-0005]] |  | medium | Review evidence and close or return to rework. |
+| [[FBK-T-0004]] |  | medium | Review evidence and close or return to rework. |
 | [[LIF-T-0012]] |  | medium | Review evidence and close or return to rework. |
 | [[LIF-T-0013]] |  | high | Review evidence and close or return to rework. |
 | [[MAC-T-0002]] |  | low | Wait for dependency MAC-T-0001 to reach review with satisfied proof or done. |
@@ -44,7 +36,6 @@
 | [[SRV-T-0023]] |  | low | Review evidence and close or return to rework. |
 | [[SRV-T-0024]] |  | medium | Review evidence and close or return to rework. |
 | [[SRV-T-0025]] |  | high | Review evidence and close or return to rework. |
-| [[SRV-T-0028]] |  | medium | Review evidence and close or return to rework. |
 | [[SRV-T-0029]] |  | low | Review evidence and close or return to rework. |
 | [[SRV-T-0031]] |  | medium | Review evidence and close or return to rework. |
 | [[SRV-T-0032]] |  | medium | Review evidence and close or return to rework. |

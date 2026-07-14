@@ -18,8 +18,8 @@ source_of_truth:
   - ".tusker/WORKFLOW.md"
   - "tusker.yaml"
 created_at: "2026-06-04 00:00:00 +0000 UTC"
-updated_at: "2026-07-14T07:23:51Z"
-state_rev: "sha256:a3bb462c52236673b2aa5ddceeb928a039d79177b6f8f99783f93b75e083856a"
+updated_at: "2026-07-14T13:50:24Z"
+state_rev: "sha256:f8d371a3485c947a0334fc4808b3a4c2201d1c39b676e3877de5d16e60128fcc"
 ---
 
 # Project Canon
