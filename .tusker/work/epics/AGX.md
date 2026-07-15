@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-05T11:17:22Z"
-updated_at: "2026-07-15T05:08:07Z"
-state_rev: "sha256:92e9ae56455ae447713a8d1029c1c65f8d0013775d76315052f9765859a96eda"
+updated_at: "2026-07-15T06:02:18Z"
+state_rev: "sha256:a70c5df71bb8b0eccb6556702a3bcda442e6c5354cccdc3f2b83ec7bb034a95f"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or runtime attempt."
   use_when: "Use to triage work on packets, capsules, command budgets, and agent-facing task flow."
@@ -53,7 +53,6 @@ TBD.
 | [[AGX-T-0004]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[AGX-T-0005]] | review | reviewer | Review evidence and close or return to rework. |
 | [[AGX-T-0008]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[AGX-T-0009]] | ready | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 
@@ -64,3 +63,4 @@ TBD.
 | [[AGX-T-0003]] | reviewer:agent | 2026-07-06T06:37:08Z |
 | [[AGX-T-0006]] | reviewer:codex-chain | 2026-07-14T15:22:54Z |
 | [[AGX-T-0007]] | reviewer:codex-reviewer | 2026-07-14T13:05:01Z |
+| [[AGX-T-0009]] | reviewer:independent | 2026-07-15T06:02:18Z |

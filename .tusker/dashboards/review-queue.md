@@ -16,13 +16,11 @@
 | [[MAC-T-0009]] |  | high | Review evidence and close or return to rework. |
 | [[OPS-T-0010]] |  | high | Review evidence and close or return to rework. |
 | [[OPS-T-0011]] |  | high | Review evidence and close or return to rework. |
-| [[PRF-T-0001]] |  | low | Review evidence and close or return to rework. |
 | [[PRF-T-0002]] |  | low | Review evidence and close or return to rework. |
 | [[PRF-T-0003]] |  | medium | Review evidence and close or return to rework. |
 | [[PRF-T-0004]] |  | medium | Review evidence and close or return to rework. |
 | [[PRF-T-0005]] |  | low | Review evidence and close or return to rework. |
-| [[PRF-T-0006]] |  | medium | Review evidence and close or return to rework. |
-| [[PRF-T-0007]] |  | low | Review evidence and close or return to rework. |
+| [[PRF-T-0008]] |  | high | Review evidence and close or return to rework. |
 | [[RUN-T-0002]] | W-0001 | medium | Review evidence and close or return to rework. |
 | [[RUN-T-0045]] |  | medium | Review evidence and close or return to rework. |
 | [[RUN-T-0046]] |  | medium | Review evidence and close or return to rework. |
