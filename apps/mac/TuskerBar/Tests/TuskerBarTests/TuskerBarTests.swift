@@ -64,12 +64,34 @@ final class TuskerBarTests: XCTestCase {
         let path = RuntimeLaunchPlan.path(home: "/Users/test", inherited: "/custom/bin:/usr/bin")
         XCTAssertTrue(path.hasPrefix("/Users/test/.local/bin:/opt/homebrew/bin"))
         XCTAssertEqual(path.components(separatedBy: ":").filter { $0 == "/usr/bin" }.count, 1)
-        XCTAssertEqual(RuntimeLaunchPlan.healthTimeout, 0.25)
-        XCTAssertEqual(RuntimeLaunchPlan.startupProbeCount, 20)
+        XCTAssertEqual(RuntimeLaunchPlan.healthTimeout, 1)
+        XCTAssertEqual(RuntimeLaunchPlan.monitorHealthTimeout, 3)
+        XCTAssertEqual(RuntimeLaunchPlan.startupWindow, .seconds(15))
         XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .starting), .finishStartup)
         XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .running), .restart)
         XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .checking), .ignore)
         XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .failed("boom")), .ignore)
+    }
+
+    func testRuntimeProbeSequenceRejectsLateHealthCallbacks() {
+        var sequence = RuntimeProbeSequence()
+        let stale = sequence.begin()
+        let current = sequence.begin()
+
+        XCTAssertFalse(sequence.accepts(stale))
+        XCTAssertTrue(sequence.accepts(current))
+    }
+
+    func testVisibleShellProbesEvenWhileRuntimeStateIsTransient() {
+        let transientStates: [ManagedRuntimeState] = [.idle, .checking, .starting, .failed("late startup")]
+
+        for state in transientStates {
+            let plan = RuntimeShellProbePlan.make(for: state)
+            XCTAssertEqual(plan.display, .runtimeState)
+            XCTAssertTrue(plan.shouldProbe)
+        }
+        XCTAssertEqual(RuntimeShellProbePlan.make(for: .running), RuntimeShellProbePlan(display: .connecting, shouldProbe: true))
+        XCTAssertEqual(RuntimeShellProbePlan.make(for: .external), RuntimeShellProbePlan(display: .connecting, shouldProbe: true))
     }
 
     @MainActor

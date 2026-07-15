@@ -16,9 +16,10 @@ enum RuntimeLaunchPlan {
         case restart
     }
 
-    static let healthTimeout: TimeInterval = 0.25
-    static let startupProbeDelay = Duration.milliseconds(100)
-    static let startupProbeCount = 20
+    static let healthTimeout: TimeInterval = 1
+    static let monitorHealthTimeout: TimeInterval = 3
+    static let startupProbeDelay = Duration.milliseconds(250)
+    static let startupWindow = Duration.seconds(15)
 
     static func terminationAction(for state: ManagedRuntimeState) -> TerminationAction {
         switch state {
@@ -55,6 +56,40 @@ enum RuntimeLaunchPlan {
     }
 }
 
+struct RuntimeProbeSequence {
+    private(set) var generation = 0
+
+    mutating func begin() -> Int {
+        generation &+= 1
+        return generation
+    }
+
+    func accepts(_ candidate: Int) -> Bool {
+        candidate == generation
+    }
+}
+
+enum RuntimeShellDisplay: Equatable {
+    case runtimeState
+    case connecting
+}
+
+struct RuntimeShellProbePlan: Equatable {
+    let display: RuntimeShellDisplay
+    let shouldProbe: Bool
+
+    static func make(for state: ManagedRuntimeState) -> RuntimeShellProbePlan {
+        switch state {
+        case .running, .external:
+            return RuntimeShellProbePlan(display: .connecting, shouldProbe: true)
+        case .idle, .checking, .starting, .failed:
+            // Runtime state controls the copy, never whether a visible shell
+            // probes health. Notifications are hints and may be missed.
+            return RuntimeShellProbePlan(display: .runtimeState, shouldProbe: true)
+        }
+    }
+}
+
 @MainActor
 final class RuntimeSupervisor {
     static let shared = RuntimeSupervisor(config: .shared)
@@ -67,8 +102,8 @@ final class RuntimeSupervisor {
     private var lastExitCode: Int32?
     private lazy var healthSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = RuntimeLaunchPlan.healthTimeout
-        configuration.timeoutIntervalForResource = RuntimeLaunchPlan.healthTimeout
+        configuration.timeoutIntervalForRequest = RuntimeLaunchPlan.monitorHealthTimeout
+        configuration.timeoutIntervalForResource = RuntimeLaunchPlan.monitorHealthTimeout
         configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         return URLSession(configuration: configuration)
     }()
@@ -134,7 +169,9 @@ final class RuntimeSupervisor {
                 self.startupTask = nil
                 return
             }
-            for _ in 0..<RuntimeLaunchPlan.startupProbeCount {
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: RuntimeLaunchPlan.startupWindow)
+            while clock.now < deadline {
                 guard !Task.isCancelled else { return }
                 if await self.isHealthy() {
                     self.state = .running
@@ -142,6 +179,7 @@ final class RuntimeSupervisor {
                     self.startMonitoring()
                     return
                 }
+                guard clock.now < deadline else { break }
                 try? await Task.sleep(for: RuntimeLaunchPlan.startupProbeDelay)
             }
             self.state = .failed(self.startupFailureMessage())
@@ -168,7 +206,7 @@ final class RuntimeSupervisor {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(5))
                 guard !Task.isCancelled, let self else { return }
-                if await self.isHealthy(timeout: 3) {
+                if await self.isHealthy(timeout: RuntimeLaunchPlan.monitorHealthTimeout) {
                     consecutiveFailures = 0
                 } else {
                     consecutiveFailures += 1

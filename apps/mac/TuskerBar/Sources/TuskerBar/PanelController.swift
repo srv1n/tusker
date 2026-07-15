@@ -12,6 +12,7 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
     private let stateHint = NSTextField(labelWithString: "Checking http://127.0.0.1:7420")
     private var retryWorkItem: DispatchWorkItem?
     private var retryDelay: TimeInterval = 1
+    private var probeSequence = RuntimeProbeSequence()
     private var loaded = false
     private var globalMonitor: Any?
     private var localMonitor: Any?
@@ -90,24 +91,28 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
 
     private func load(path: String) {
         guard let url = url(for: path) else { showUnavailable(); return }
+        retryWorkItem?.cancel()
         loaded = true
+        unavailableView.isHidden = true
         webView.load(URLRequest(url: url))
     }
 
     private func probeAndLoad(path: String) {
+        let probe = probeSequence.begin()
         let runtime = RuntimeSupervisor.shared
         if runtime.state == .idle { runtime.ensureRunning() }
-        switch runtime.state {
-        case .checking, .starting, .failed, .idle:
+        let plan = RuntimeShellProbePlan.make(for: runtime.state)
+        switch plan.display {
+        case .runtimeState:
             showRuntimeState()
-            return
-        case .running, .external:
+        case .connecting:
             showConnecting()
         }
+        guard plan.shouldProbe else { return }
         let healthURL = config.baseURL.appendingPathComponent("api/summary")
         URLSession.shared.dataTask(with: healthURL) { [weak self] _, response, error in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, self.probeSequence.accepts(probe) else { return }
                 if error == nil, (response as? HTTPURLResponse)?.statusCode == 200 {
                     self.load(path: path)
                 } else {
@@ -194,7 +199,7 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
     }
 
     private func showUnavailable() {
-        RuntimeSupervisor.shared.ensureRunning(force: true)
+        RuntimeSupervisor.shared.ensureRunning()
         showRuntimeState()
         scheduleRetry()
     }
