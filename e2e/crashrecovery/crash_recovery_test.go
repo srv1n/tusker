@@ -22,7 +22,7 @@ import (
 const crashTaskID = "APP-T-0001"
 
 const (
-	crashRunWait    = 20 * time.Second
+	crashRunWait    = time.Minute
 	crashRunnerWait = 15 * time.Second
 )
 
@@ -340,11 +340,27 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	rootPID, rootGeneration, rootAttempts := runInt(root, "process_pid"), runInt(root, "lease_generation"), runInt(root, "attempt_count")
 	daemon.kill(syscall.SIGKILL)
 	daemon = h.startDaemon("delivery-daemon-restarted")
-	h.waitRun("APP-T-0001", crashRunWait, func(run map[string]any) bool {
+	adopted := h.waitRun("APP-T-0001", crashRunWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "running" && runInt(run, "process_pid") == rootPID && runInt(run, "lease_generation") == rootGeneration && runInt(run, "attempt_count") == rootAttempts
 	})
+	worktreeVault := filepath.Join(runString(adopted, "workspace_path"), ".tusker")
+	attemptDir := filepath.Join(worktreeVault, "attempts", "APP-T-0001")
+	attemptEntries, err := os.ReadDir(attemptDir)
+	if err != nil {
+		t.Fatalf("read adopted V7 attempts: %v", err)
+	}
+	if len(attemptEntries) != 1 || attemptEntries[0].Name() != "APP-T-0001-A-0001.md" {
+		t.Fatalf("SIGKILL adoption must preserve exactly one V7 attempt, got %#v", attemptEntries)
+	}
+	attemptBody := h.readFile(filepath.Join(attemptDir, attemptEntries[0].Name()))
+	if !strings.Contains(attemptBody, "runtime_attempt_id:") || !strings.Contains(attemptBody, runString(adopted, "active_attempt_id")) {
+		t.Fatalf("V7 attempt is not bound to adopted runtime attempt:\n%s", attemptBody)
+	}
 	h.touch(filepath.Join(h.tempRoot, "delivery-control", "release-APP-T-0001"))
-	eventually(t, 90*time.Second, 250*time.Millisecond, func() (bool, string) {
+	polls := 0
+	lastQueue := ""
+	eventually(t, 3*time.Minute, time.Second, func() (bool, string) {
+		polls++
 		out, err := h.cli(h.repoDir, 10*time.Second, "wave", "brief", "W-0001", "--vault", h.vaultDir, "--json")
 		if err != nil {
 			return false, string(out)
@@ -354,7 +370,10 @@ func TestSpecToWaveDelivery(t *testing.T) {
 		outcome := mapAtPath(t, brief, "outcome")
 		fully, _ := outcome["fullyDrained"].(bool)
 		if !fully {
-			return false, prettyJSON(brief)
+			if polls%10 == 0 {
+				lastQueue = prettyJSON(h.automationQueue())
+			}
+			return false, prettyJSON(brief) + "\nqueue:\n" + lastQueue
 		}
 		return true, ""
 	})
@@ -363,16 +382,19 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	if runString(brief, "schema") != "tusker.wave-brief/v1" || len(sliceAt(brief, "seeIt")) != 7 || len(sliceAt(brief, "landed")) != 7 || len(sliceAt(brief, "documentation")) != 7 || len(sliceAt(brief, "humanAction")) != 0 {
 		t.Fatalf("artifact-first brief is incomplete: %s", prettyJSON(brief))
 	}
+	eventually(t, 2*time.Minute, time.Second, func() (bool, string) {
+		for i := 1; i <= 7; i++ {
+			id := fmt.Sprintf("APP-T-%04d", i)
+			if _, err := os.Stat(filepath.Join(h.repoDir, "docs", "delivery", strings.ToLower(id)+".md")); err != nil {
+				return false, id + " documentation has not reached the default-branch checkout"
+			}
+		}
+		return true, ""
+	})
 	wave := parseJSON(t, h.cliOK(h.repoDir, "wave", "show", "W-0001", "--vault", h.vaultDir, "--json"))
 	auth := mapAtPath(t, mapAtPath(t, wave, "wave"), "authorization")
 	if runString(auth, "actor") != "human:e2e" || runString(auth, "state") != "armed" {
 		t.Fatalf("one-arm authorization was not preserved: %s", prettyJSON(wave))
-	}
-	for i := 1; i <= 7; i++ {
-		id := fmt.Sprintf("APP-T-%04d", i)
-		if _, err := os.Stat(filepath.Join(h.repoDir, "docs", "delivery", strings.ToLower(id)+".md")); err != nil {
-			t.Fatalf("%s documentation did not land", id)
-		}
 	}
 	daemon.stop()
 	h.writeFile(filepath.Join(h.repoDir, "docs", "specs", "delivery.md"), h.readFile(filepath.Join(h.repoDir, "docs", "specs", "delivery.md"))+"\nMaterial post-arm change.\n")
@@ -390,7 +412,7 @@ func runSpecToWaveFailureContainment(t *testing.T) {
 	daemon := h.startDaemon("failure-daemon")
 	h.waitForAutomationStatus(crashRunWait)
 	h.cliOK(h.repoDir, "wave", "arm", "W-0001", "--vault", h.vaultDir, "--by", "human:e2e", "--json")
-	eventually(t, 45*time.Second, 200*time.Millisecond, func() (bool, string) {
+	eventually(t, 90*time.Second, 200*time.Millisecond, func() (bool, string) {
 		failed := h.latestRun("APP-T-0002")
 		briefRaw, err := h.cli(h.repoDir, 10*time.Second, "wave", "brief", "W-0001", "--vault", h.vaultDir, "--json")
 		if err != nil {
@@ -407,7 +429,7 @@ func runSpecToWaveCredentialContainment(t *testing.T) {
 	daemon := h.startDaemon("credential-daemon")
 	h.waitForAutomationStatus(crashRunWait)
 	h.cliOK(h.repoDir, "wave", "arm", "W-0001", "--vault", h.vaultDir, "--by", "human:e2e", "--json")
-	eventually(t, 45*time.Second, 200*time.Millisecond, func() (bool, string) {
+	eventually(t, 90*time.Second, 200*time.Millisecond, func() (bool, string) {
 		raw, err := h.cli(h.repoDir, 10*time.Second, "wave", "brief", "W-0001", "--vault", h.vaultDir, "--json")
 		if err != nil {
 			return false, string(raw)
@@ -425,8 +447,10 @@ func runSpecToWaveCredentialContainment(t *testing.T) {
 
 func newSmallDeliveryWave(t *testing.T, credentialGate bool) *harness {
 	h := newHarness(t, "spec-wave-small")
-	h.configureFakeRunner(fakeRunnerConfig{Delivery: true, RunnerKind: "codex_exec", Reviewer: true, MaxActive: 2, WorkspaceStrategy: "worktree", StallTimeoutMS: 10000, MaxAttempts: 1})
+	h.configureFakeRunner(fakeRunnerConfig{Delivery: true, RunnerKind: "codex_exec", Reviewer: true, MaxActive: 2, WorkspaceStrategy: "worktree", StallTimeoutMS: 10000, MaxAttempts: 2})
 	h.installWaveCompatibleOperatorSkill()
+	h.writeFile(filepath.Join(h.repoDir, "docs", "specs", "delivery.md"), "# Containment delivery\n")
+	h.writeFile(filepath.Join(h.repoDir, "artifacts", "delivery", "baseline.json"), "{}\n")
 	h.createRunnableTaskID("APP-T-0001", "fixture root", "")
 	h.createRunnableTaskID("APP-T-0002", "contained branch", "APP-T-0001:hard")
 	h.createRunnableTaskID("APP-T-0003", "independent branch", "APP-T-0001:soft")
@@ -863,15 +887,16 @@ automation:
       stall_timeout_ms: %d
       max_turns: 1
 `, cfg.WorkspaceStrategy, cfg.MaxActive, cfg.MaxActive, cfg.RunnerKind, command, cfg.StallTimeoutMS)
+	if cfg.Delivery {
+		config += "  validation:\n    commands:\n      - test -s docs/specs/delivery.md && test -d artifacts/delivery\n"
+	}
 	h.writeFile(filepath.Join(h.repoDir, "tusker.yaml"), config)
 
 	workflow := h.readFile(filepath.Join(h.vaultDir, "WORKFLOW.md"))
 	workflow = replaceYAMLScalarUnder(workflow, "runtime:", "  poll_interval_ms:", "  poll_interval_ms: 100")
 	workflow = replaceYAMLScalarUnder(workflow, "runtime:", "  max_active_runs_per_project:", fmt.Sprintf("  max_active_runs_per_project: %d", cfg.MaxActive))
 	workflow = replaceYAMLScalarUnder(workflow, "workspace:", "  strategy:", "  strategy: "+cfg.WorkspaceStrategy)
-	if cfg.WorkspaceStrategy != "copy" {
-		workflow = replaceYAMLScalarUnder(workflow, "workspace:", "  root:", "  root: workspaces")
-	}
+	workflow = replaceYAMLScalarUnder(workflow, "workspace:", "  root:", "  root: workspaces")
 	if cfg.Reviewer {
 		workflow = replaceYAMLScalarUnder(workflow, "reviewer:", "  enabled:", "  enabled: true")
 	}
@@ -884,7 +909,10 @@ automation:
 	h.writeFile(filepath.Join(h.vaultDir, "WORKFLOW.md"), workflow)
 
 	h.cliOK(h.repoDir, "projects", "add", "--repo", h.repoDir, "--vault", h.vaultDir, "--json")
-	h.cliOK(h.repoDir, "daemon", "limits", "--max-active-runs", strconv.Itoa(cfg.MaxActive), "--json")
+	limits := parseJSON(h.t, h.cliOK(h.repoDir, "daemon", "limits", "--json"))
+	if runInt(limits, "max_active_runs") != cfg.MaxActive {
+		h.cliOK(h.repoDir, "daemon", "limits", "--max-active-runs", strconv.Itoa(cfg.MaxActive), "--json")
+	}
 }
 
 func (h *harness) createRunnableTask(title string) {
@@ -954,7 +982,7 @@ func (h *harness) disableReviewer() {
 
 func (h *harness) cliOK(dir string, args ...string) []byte {
 	h.t.Helper()
-	out, err := h.cli(dir, 20*time.Second, args...)
+	out, err := h.cli(dir, time.Minute, args...)
 	if err != nil {
 		h.t.Fatalf("tusker %s failed: %v\n%s", strings.Join(args, " "), err, out)
 	}

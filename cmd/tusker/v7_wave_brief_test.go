@@ -105,6 +105,30 @@ func TestWaveBriefHonesty(t *testing.T) {
 	}
 }
 
+func TestWaveBriefDoesNotDrainBeforeContractedArtifactIsVisible(t *testing.T) {
+	idx, wave := briefFixture()
+	delete(idx.Evidence, "APP-T-0001")
+	brief := buildWaveBrief(idx, wave)
+	if brief.Outcome.FullyDrained {
+		t.Fatal("a wave with a missing contracted artifact must not report fully drained")
+	}
+	if len(brief.SeeIt) != 0 {
+		t.Fatalf("missing evidence unexpectedly produced artifacts: %#v", brief.SeeIt)
+	}
+}
+
+func TestWaveBriefSurfacesRuntimeParkedFailure(t *testing.T) {
+	idx, wave := briefFixture()
+	runs := map[string]RunStatus{"APP-T-0001": {RecordID: "APP-T-0001", LeaseState: string(LeaseStateParkedNoProgress), LastError: "runner exited with code 19"}}
+	brief := buildWaveBriefWithRuns(idx, wave, runs)
+	if len(brief.Rework) != 1 || brief.Rework[0].State != string(LeaseStateParkedNoProgress) || !strings.Contains(brief.Rework[0].Failure, "code 19") {
+		t.Fatalf("runtime parked failure missing from brief: %#v", brief.Rework)
+	}
+	if brief.Outcome.FullyDrained {
+		t.Fatal("runtime parked work must prevent a fully-drained outcome")
+	}
+}
+
 func TestWaveBriefHumanAction(t *testing.T) {
 	idx, wave := briefFixture()
 	valid := briefGate("APP-G-0001", "auth", "Provision the staging OAuth secret.", "A successful authenticated probe resumes the task.", "The credential belongs to the human account owner.")

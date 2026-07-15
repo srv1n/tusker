@@ -125,22 +125,13 @@ func runDeliveryFixture(tuskerBin string) error {
 		if err := run("git", "add", ".tusker"); err != nil {
 			return err
 		}
-		if err := run("git", "commit", "-m", "review "+taskID); err != nil {
-			return err
-		}
-		if err := run(tuskerBin, "land", taskID, "--by", "reviewer:e2e", "--quiet"); err != nil {
-			return err
-		}
 		if err := run(tuskerBin, "close", taskID, "--by", "reviewer:e2e", "--reason", "fixture acceptance independently verified", "--quiet"); err != nil {
 			return err
 		}
 		if err := run("git", "add", ".tusker"); err != nil {
 			return err
 		}
-		if err := run("git", "commit", "-m", "close "+taskID); err != nil {
-			return err
-		}
-		return run(tuskerBin, "land", taskID, "--by", "reviewer:e2e", "--quiet")
+		return run("git", "commit", "-m", "review and close "+taskID)
 	}
 	artifactDir := filepath.Join(workspace, "artifacts", "delivery")
 	docDir := filepath.Join(workspace, "docs", "delivery")
@@ -163,7 +154,14 @@ func runDeliveryFixture(tuskerBin string) error {
 	if err := os.WriteFile(doc, []byte("# "+taskID+" delivery\n\nAcceptance A1 delivered in an isolated workspace.\n"), 0o644); err != nil {
 		return err
 	}
-	if err := run(tuskerBin, "verify", "add", taskID, "--by", "agent:e2e", "--covers", "A1", "--check", "command: fixture delivery assertion", "--result", "pass", "--note", "isolated implementation and artifact committed", "--local", "--quiet"); err != nil {
+	focusedCheck := "test -s " + artifactRel
+	if err := run("test", "-s", artifactRel); err != nil {
+		return err
+	}
+	if err := run(tuskerBin, "verify", "add", taskID, "--by", "agent:e2e", "--covers", "A1", "--check", focusedCheck, "--result", "pass", "--note", "focused artifact test passed in the isolated workspace", "--local", "--quiet"); err != nil {
+		return err
+	}
+	if err := requireSatisfiedProof(tuskerBin, workspace, taskID); err != nil {
 		return err
 	}
 	if err := run(tuskerBin, "finish", taskID, "--summary", "fixture implementation complete", "--request-review", "--local", "--quiet"); err != nil {
@@ -173,6 +171,31 @@ func runDeliveryFixture(tuskerBin string) error {
 		return err
 	}
 	return run("git", "commit", "-m", "deliver "+taskID)
+}
+
+func requireSatisfiedProof(tuskerBin, workspace, taskID string) error {
+	type proofStatus struct {
+		TaskID         string   `json:"task_id"`
+		Status         string   `json:"status"`
+		Missing        []string `json:"missing"`
+		MachineMissing []string `json:"machine_missing"`
+	}
+
+	cmd := exec.Command(tuskerBin, "proof", "status", taskID, "--json", "--local")
+	cmd.Dir = workspace
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("read back focused proof for %s: %w: %s", taskID, err, out)
+	}
+	var status proofStatus
+	if err := json.Unmarshal(out, &status); err != nil {
+		return fmt.Errorf("decode focused proof status for %s: %w: %s", taskID, err, out)
+	}
+	if status.TaskID != taskID || status.Status != "satisfied" || len(status.Missing) != 0 || len(status.MachineMissing) != 0 {
+		return fmt.Errorf("focused proof for %s is not satisfied before finish: task_id=%q status=%q missing=%v machine_missing=%v", taskID, status.TaskID, status.Status, status.Missing, status.MachineMissing)
+	}
+	return nil
 }
 
 func deliveryEvidenceForTask(taskID string) (string, string) {

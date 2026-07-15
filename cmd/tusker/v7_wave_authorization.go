@@ -339,16 +339,22 @@ func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, 
 			issues = append(issues, "member task does not resolve: "+id)
 			continue
 		}
-		rows = append(rows, map[string]any{
+		row := map[string]any{
 			"id": id, "title": stringField(task.Data, "title"), "epic": stringField(task.Data, "epic"), "risk": stringField(task.Data, "risk"),
 			"dependencies": sortedStrings(normalizeList(task.Data["dependencies"])), "spec_refs": sortedStrings(normalizeList(task.Data["spec_refs"])),
 			"delivery_contract_fingerprint": stringField(task.Data, "delivery_contract_fingerprint"), "artifact_contract": task.Data["artifact_contract"],
 			"owned_paths": sortedStrings(normalizeList(task.Data["owned_paths"])), "runner_profile": stringField(task.Data, "runner_profile"),
 			"proof_contract": map[string]any{"mode": stringField(task.Data, "proof_mode"), "required": sortedStrings(normalizeList(task.Data["proof_required"])), "required_owner": task.Data["proof_required_owner"], "evidence_budget": intField(task.Data, "evidence_budget"), "evidence_required": sortedStrings(normalizeList(task.Data["evidence_required"]))},
-			"acceptance":     waveMaterialTable(sectionContent(task.Body, "## Acceptance"), []int{0, 1}),
-			"verification":   waveMaterialTable(sectionContent(task.Body, "## Verification"), []int{0, 1}),
 			"gates":          waveMaterialGates(idx, id),
-		})
+		}
+		// Imported delivery tasks already carry the immutable source-contract
+		// fingerprint. Their live Verification table is also the proof ledger, so
+		// reviewers may append rows without invalidating one-arm authorization.
+		if stringField(task.Data, "delivery_contract_fingerprint") == "" {
+			row["acceptance"] = waveMaterialTable(sectionContent(task.Body, "## Acceptance"), []int{0, 1})
+			row["verification"] = waveMaterialTable(sectionContent(task.Body, "## Verification"), []int{0, 1})
+		}
+		rows = append(rows, row)
 	}
 	material["members"] = rows
 	allSpecRefs := append([]string{}, normalizeList(wave.Data["spec_refs"])...)

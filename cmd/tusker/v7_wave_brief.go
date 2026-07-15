@@ -106,7 +106,11 @@ func waveV7BriefCmd(args Args) error {
 	if !ok {
 		return tuskerError(errorNotFound, "V7 wave not found: "+id)
 	}
-	brief := buildWaveBrief(idx, wave)
+	idx, err = armedWaveBriefProjectedIndex(vaultPath, idx, wave)
+	if err != nil {
+		return err
+	}
+	brief := buildWaveBriefWithRuns(idx, wave, v7WaveRuntimeRuns(vaultPath, stringField(wave.Data, "project")))
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "brief": brief})
 		return nil
@@ -115,7 +119,52 @@ func waveV7BriefCmd(args Args) error {
 	return nil
 }
 
+func armedWaveBriefProjectedIndex(vaultPath string, idx v7Index, wave Note) (v7Index, error) {
+	if armedWaveIntegrated(wave) {
+		return idx, nil
+	}
+	projected, projectionErrors := armedWaveProjectedIndex(vaultPath, idx, wave)
+	// Briefs are a recovery surface. Keep canonical task state for a projection
+	// that is temporarily unavailable and render the partial outcome instead of
+	// making the entire morning report unreadable.
+	_ = projectionErrors
+	repoRoot := v7RepoRoot(vaultPath)
+	branch := v7WaveIntegrationBranch(wave)
+	branchRev, err := gitOutputTrim(repoRoot, "rev-parse", "refs/heads/"+branch)
+	if err != nil {
+		// Promotion may have removed the integration ref after the canonical
+		// snapshot was loaded. The next read will observe the integrated audit.
+		return idx, nil
+	}
+	landed := armedWaveLandedMembers(wave)
+	output, err := gitCombined(repoRoot, "ls-tree", "-r", "--name-only", branchRev, "--", ".tusker/evidence")
+	if err != nil {
+		return idx, err
+	}
+	for taskID := range landed {
+		projected.Evidence[taskID] = nil
+	}
+	for _, rel := range strings.Fields(output) {
+		note, ok, err := v7GitNoteAtRef(repoRoot, branchRev, rel)
+		if err != nil {
+			return idx, err
+		}
+		if !ok || effectiveV7Kind(note.Data) != "evidence" {
+			continue
+		}
+		taskID := stringField(note.Data, "task")
+		if landed[taskID] {
+			projected.Evidence[taskID] = append(projected.Evidence[taskID], note)
+		}
+	}
+	return projected, nil
+}
+
 func buildWaveBrief(idx v7Index, wave Note) waveBrief {
+	return buildWaveBriefWithRuns(idx, wave, nil)
+}
+
+func buildWaveBriefWithRuns(idx v7Index, wave Note, runs map[string]RunStatus) waveBrief {
 	waveID := stringField(wave.Data, "id")
 	b := waveBrief{
 		Schema: waveBriefSchema, WaveID: waveID, Title: stringField(wave.Data, "title"),
@@ -125,6 +174,7 @@ func buildWaveBrief(idx v7Index, wave Note) waveBrief {
 	}
 	landing := successfulWaveLandings(wave)
 	members := normalizeList(wave.Data["members"])
+	artifactsComplete := true
 	for _, taskID := range members {
 		task, ok := idx.Tasks[taskID]
 		if !ok {
@@ -147,12 +197,22 @@ func buildWaveBrief(idx v7Index, wave Note) waveBrief {
 		if state.Documentation == "documented" {
 			b.Outcome.Counts["documented"]++
 		}
-		b.SeeIt = append(b.SeeIt, normalizeWaveArtifacts(idx, task)...)
+		artifacts := normalizeWaveArtifacts(idx, task)
+		b.SeeIt = append(b.SeeIt, artifacts...)
+		if mapField(task.Data, "artifact_contract") != nil && len(artifacts) == 0 {
+			artifactsComplete = false
+		}
 		if row := landing[taskID]; row != nil {
 			b.Landed = append(b.Landed, waveBriefTask{TaskID: taskID, Title: stringField(task.Data, "title"), TaskHref: taskDeepLink(stringField(task.Data, "project"), taskID), Commit: stringField(row, "commit"), Target: stringField(row, "target")})
 		}
 		if item, ok := waveReworkItem(idx, task, state); ok {
 			b.Rework = append(b.Rework, item)
+		} else if run := runs[taskID]; armedWaveRunMachineParked(run) {
+			b.Rework = append(b.Rework, waveBriefRework{
+				TaskID: taskID, Title: state.Title, TaskHref: state.TaskHref,
+				State: string(LeaseStateParkedNoProgress), Failure: firstNonEmpty(run.LastError, "attempt policy exhausted"),
+				AffectedTasks: waveDependentClosure(idx, taskID),
+			})
 		}
 		for _, node := range normalizeList(task.Data["knowledge_nodes"]) {
 			project := stringField(task.Data, "project")
@@ -163,7 +223,7 @@ func buildWaveBrief(idx v7Index, wave Note) waveBrief {
 	b.Outcome.Counts["reworkParked"] = len(b.Rework)
 	b.Outcome.Counts["humanAction"] = len(b.HumanAction)
 	sortWaveBrief(&b)
-	b.Outcome.FullyDrained = len(b.Outcome.Tasks) == len(members) && len(b.Rework) == 0 && len(b.HumanAction) == 0
+	b.Outcome.FullyDrained = len(b.Outcome.Tasks) == len(members) && artifactsComplete && len(b.Rework) == 0 && len(b.HumanAction) == 0
 	for _, state := range b.Outcome.Tasks {
 		if state.Proof != "satisfied" && state.Proof != "waived" || state.Review != "accepted" || state.Landing != "landed" || (state.Documentation == "pending") {
 			b.Outcome.FullyDrained = false

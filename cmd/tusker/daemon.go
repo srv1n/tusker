@@ -849,7 +849,34 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			projectRuns[recordID] = current
 
 			if shouldDispatchRun(current, now) {
-				if reason := armedWaveDispatchBlocker(project.VaultRoot, note, wfFile.Data, projectRuns); reason != "" {
+				dispatchNote := note
+				dispatchNotes := notes
+				dispatchNotesByID := notesByID
+				dispatchNotesByRecordID := notesByRecordID
+				if projected, projectedIdx, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note); err != nil {
+					return err
+				} else if ok {
+					dispatchNote = projected
+					dispatchNotes = append([]Note(nil), notes...)
+					dispatchNotesByID = make(map[string]Note, len(notesByID))
+					dispatchNotesByRecordID = make(map[string]Note, len(notesByRecordID))
+					for id, candidate := range notesByID {
+						dispatchNotesByID[id] = candidate
+					}
+					for id, candidate := range notesByRecordID {
+						dispatchNotesByRecordID[id] = candidate
+					}
+					for id, candidate := range projectedIdx.Tasks {
+						dispatchNotesByID[id] = candidate
+						dispatchNotesByRecordID[trackerRecordID(candidate)] = candidate
+					}
+					for i, candidate := range dispatchNotes {
+						if projectedTask, exists := projectedIdx.Tasks[trackerRecordID(candidate)]; exists {
+							dispatchNotes[i] = projectedTask
+						}
+					}
+				}
+				if reason := armedWaveDispatchBlocker(project.VaultRoot, dispatchNote, wfFile.Data, projectRuns); reason != "" {
 					current.LastError = "dispatch blocked: " + reason
 					current.UpdatedAt = now.Format(time.RFC3339)
 					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
@@ -858,7 +885,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					projectRuns[recordID] = current
 					continue
 				}
-				if reason := daemonDispatchBlockedReason(project.VaultRoot, note, notesByID, notesByRecordID); reason != "" {
+				if reason := daemonDispatchBlockedReason(project.VaultRoot, dispatchNote, dispatchNotesByID, dispatchNotesByRecordID); reason != "" {
 					current.LastError = reason
 					current.UpdatedAt = now.Format(time.RFC3339)
 					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
@@ -887,7 +914,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					continue
 				}
 				beforeBudget := current
-				budgeted, budgetReason, budgetChanged, err := d.budgetDispatchBlocker(project, wfFile.Data, note, current, now)
+				budgeted, budgetReason, budgetChanged, err := d.budgetDispatchBlocker(project, wfFile.Data, dispatchNote, current, now)
 				if err != nil {
 					return err
 				}
@@ -927,7 +954,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					projectRuns[recordID] = current
 					continue
 				}
-				if blocked, err := d.executePlanBlockedReason(project, wfFile, notes, note, current); err != nil {
+				if blocked, err := d.executePlanBlockedReason(project, wfFile, dispatchNotes, dispatchNote, current); err != nil {
 					return err
 				} else if blocked != "" {
 					current.LastError = "automation plan do_not_dispatch: " + blocked
@@ -947,7 +974,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 					return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneExecute}))
 				}
-				updated, persisted, err := d.dispatchRun(ctx, project, wfFile, note, current, runLaneExecute)
+				updated, persisted, err := d.dispatchRun(ctx, project, wfFile, dispatchNote, current, runLaneExecute)
 				if !persisted {
 					if err != nil {
 						updated = d.scheduleRetry(updated, wfFile.Data, err.Error())
@@ -974,7 +1001,15 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			}
 			status := stringField(note.Data, "status")
 			if !containsString(wfFile.Data.Tracker.ReviewStates, status) {
-				continue
+				projected, ok, err := armedWaveIntegrationTaskProjection(project.VaultRoot, note)
+				if err != nil {
+					return err
+				}
+				if !ok || !containsString(wfFile.Data.Tracker.ReviewStates, stringField(projected.Data, "status")) {
+					continue
+				}
+				note = projected
+				status = stringField(note.Data, "status")
 			}
 			recordID := trackerRecordID(note)
 			if recordID == "" {
@@ -1006,6 +1041,18 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					}
 					projectRuns[recordID] = current
 				}
+				continue
+			}
+			if reason := armedWaveReviewDependencyBlocker(project.VaultRoot, note); reason != "" {
+				current.ProjectID = project.ProjectID
+				current.RecordID = recordID
+				current.ItemID = stringField(note.Data, "id")
+				current.LastError = "review dispatch blocked: " + reason
+				current.UpdatedAt = now.Format(time.RFC3339)
+				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
+					return err
+				}
+				projectRuns[recordID] = current
 				continue
 			}
 			reviewerRunner := firstNonEmpty(wfFile.Data.Reviewer.Runner, wfFile.Data.Agents.Default)
@@ -1119,6 +1166,9 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			globalActiveRuns += dispatchCapacityRunDelta(current, updated)
 			projectActiveRuns += dispatchCapacityRunDelta(current, updated)
 			stateActiveRuns[status] += dispatchCapacityRunDelta(current, updated)
+		}
+		if err := drainArmedWavesToMain(project.VaultRoot); err != nil {
+			return err
 		}
 
 		if err := d.store.DeleteRunsNotIn(project.ProjectID, keep); err != nil {
@@ -1590,6 +1640,17 @@ func (d *Daemon) reconcileExecuteRunWithPlan(ctx context.Context, project Regist
 	if d == nil || d.store == nil || run.RecordID == "" || run.Lane == runLaneReview || !isDispatchCapacityLeaseState(run.LeaseState) {
 		return run, false, nil
 	}
+	if projected, projectedIdx, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note); err != nil {
+		return run, false, err
+	} else if ok {
+		note = projected
+		notes = append([]Note(nil), notes...)
+		for i, candidate := range notes {
+			if projectedTask, exists := projectedIdx.Tasks[trackerRecordID(candidate)]; exists {
+				notes[i] = projectedTask
+			}
+		}
+	}
 	closeNonDispatchable := daemonShouldCloseNonDispatchableRun(wfFile.Data, note)
 	if isDispatchingLeaseState(run.LeaseState) && !closeNonDispatchable {
 		return run, false, nil
@@ -1656,7 +1717,27 @@ func daemonShouldCloseNonDispatchableRun(wf Workflow, note Note) bool {
 }
 
 func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus, note Note, notesByID map[string]Note, notesByRecordID map[string]Note) (RunStatus, bool, error) {
+	if run.Lane == runLaneExecute && strings.TrimSpace(stringField(note.Data, "readiness")) == "blocked_by_dependency" {
+		projected, projectedIdx, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note)
+		if err != nil {
+			return run, false, err
+		}
+		if ok {
+			note = projected
+			notesByID = projectedNoteMap(notesByID, projectedIdx)
+			notesByRecordID = projectedNoteMap(notesByRecordID, projectedIdx)
+		}
+	}
 	trackerState := strings.TrimSpace(stringField(note.Data, "status"))
+	if run.Lane == runLaneReview {
+		projected, ok, err := armedWaveIntegrationTaskProjection(project.VaultRoot, note)
+		if err != nil {
+			return run, false, err
+		}
+		if ok {
+			trackerState = strings.TrimSpace(stringField(projected.Data, "status"))
+		}
+	}
 	if isDispatchCapacityLeaseState(run.LeaseState) {
 		if _, err := d.ingestCodexExecRawLog(run); err != nil {
 			return run, false, err
@@ -1700,6 +1781,39 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 		return d.releaseIneligibleRun(ctx, project, run, blockedReason+"; daemon released run")
 	}
 	return d.reconcileRun(ctx, project, wfFile, run)
+}
+
+func projectedNoteMap(notes map[string]Note, idx v7Index) map[string]Note {
+	projected := make(map[string]Note, len(notes))
+	for key, note := range notes {
+		if task, ok := idx.Tasks[trackerRecordID(note)]; ok {
+			projected[key] = task
+			continue
+		}
+		projected[key] = note
+	}
+	return projected
+}
+
+func drainArmedWavesToMain(vaultPath string) error {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return err
+	}
+	for _, wave := range sortedV7Waves(idx) {
+		if armedWaveIntegrated(wave) {
+			continue
+		}
+		authorization := waveAuthorizationProjection(vaultPath, idx, wave)
+		if stringField(authorization, "state") != "armed" || boolFromAny(authorization["stale"]) {
+			continue
+		}
+		summary := &v7LandSummary{}
+		if err := landV7WaveToMainIfReady(vaultPath, stringField(wave.Data, "id"), Args{"quiet": "true", "by": "daemon:wave-drain"}, summary); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func completedReviewHandoffCanReconcile(wf Workflow, run RunStatus, trackerState string) bool {
@@ -1811,6 +1925,9 @@ func (d *Daemon) runLeaseRenewalDispatchable(project RegisteredProject, wf Workf
 	}
 	status := strings.TrimSpace(stringField(note.Data, "status"))
 	if run.Lane == runLaneReview {
+		if projected, ok, projectionErr := armedWaveIntegrationTaskProjection(project.VaultRoot, note); projectionErr == nil && ok {
+			status = strings.TrimSpace(stringField(projected.Data, "status"))
+		}
 		return containsString(wf.Tracker.ReviewStates, status)
 	}
 	return containsString(wf.Tracker.ActiveStates, status)
@@ -1922,7 +2039,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			}
 			if run.Lane != runLaneReview {
 				if reason, ok := completedRunnerReviewRequest(run, project.VaultRoot, wfFile.Data); ok {
-					return d.finishReviewCompleteRun(project, run, reason, finished)
+					return d.finishReviewCompleteRun(project, note, run, reason, finished)
 				}
 			}
 			if classification.outcome == AttemptOutcomeWaitingForHuman {
@@ -2010,6 +2127,41 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 						ParentSessionRef: parentSessionRef,
 						WorkspacePath:    run.WorkspacePath,
 					})
+					clearActiveExecution(&run)
+					return run, true, nil
+				}
+				autoLanded, err := autoLandArmedWaveReviewComplete(project, note, run)
+				if err != nil {
+					landReason := "armed-wave reviewer auto-land failed: " + err.Error()
+					_ = kickV7LandingTaskToRework(project.VaultRoot, run.ItemID, landReason, "daemon:wave-drain")
+					updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, 1, landReason, finished)
+					run.LeaseState = string(LeaseStateParkedNoProgress)
+					run.AttemptOutcome = string(AttemptOutcomeBlocked)
+					run.LastError = landReason
+					run.UpdatedAt = finished
+					run.Terminal = false
+					clearActiveExecution(&run)
+					return run, true, nil
+				}
+				if autoLanded {
+					terminalStatus := ""
+					if projected, ok, projectionErr := armedWaveIntegrationTaskProjection(project.VaultRoot, note); projectionErr != nil {
+						return run, changed, projectionErr
+					} else if ok {
+						terminalStatus = stringField(projected.Data, "status")
+					} else if landedNote, resolveErr := resolveNote(project.VaultRoot, run.RecordID); resolveErr == nil {
+						terminalStatus = stringField(landedNote.Data, "status")
+					}
+					if !trackerStateTerminal(wfFile.Data, terminalStatus) {
+						return run, changed, tuskerError(errorInvalidTransition, "armed-wave reviewer landed without terminal task state for "+run.ItemID)
+					}
+					run.LeaseState = string(LeaseStateReleased)
+					run.AttemptOutcome = string(AttemptOutcomeSucceeded)
+					run.NextRetryAt = ""
+					run.LastError = ""
+					run.UpdatedAt = finished
+					run.Terminal = true
+					updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, "", finished)
 					clearActiveExecution(&run)
 					return run, true, nil
 				}
@@ -2572,11 +2724,26 @@ func (d *Daemon) finishDispatchDeclinedRun(project RegisteredProject, wf Workflo
 // without queuing a continuation. Re-dispatch is prevented because
 // shouldDispatchRun declines released runs, so the row waits for the landing
 // lane instead of churning to the park guard.
-func (d *Daemon) finishReviewCompleteRun(project RegisteredProject, run RunStatus, reason, finished string) (RunStatus, bool, error) {
+func (d *Daemon) finishReviewCompleteRun(project RegisteredProject, note Note, run RunStatus, reason, finished string) (RunStatus, bool, error) {
 	parentAttemptID := run.ActiveAttemptID
 	parentSessionRef := run.SessionRef
 	reason = firstNonEmpty(strings.TrimSpace(reason), runnerReviewCompleteAwaitingLandReason)
 	finished = firstNonEmpty(strings.TrimSpace(finished), time.Now().UTC().Format(time.RFC3339))
+	if autoLanded, err := autoLandArmedWaveReviewComplete(project, note, run); err != nil {
+		landReason := "armed-wave auto-land failed: " + err.Error()
+		_ = kickV7LandingTaskToRework(project.VaultRoot, run.ItemID, landReason, "daemon:wave-drain")
+		updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, 1, landReason, finished)
+		run.LeaseState = string(LeaseStateParkedNoProgress)
+		run.AttemptOutcome = string(AttemptOutcomeBlocked)
+		run.NextRetryAt = ""
+		run.LastError = landReason
+		run.UpdatedAt = finished
+		run.Terminal = false
+		clearActiveExecution(&run)
+		return run, true, nil
+	} else if autoLanded {
+		reason = "runner requested review; daemon landed clean worktree to armed-wave integration"
+	}
 	updateRunAttemptFromRun(d.store, run, AttemptOutcomeWaitingForReview, 0, reason, finished)
 	run.LeaseState = string(LeaseStateReleased)
 	run.AttemptOutcome = string(AttemptOutcomeWaitingForReview)
@@ -2601,6 +2768,33 @@ func (d *Daemon) finishReviewCompleteRun(project RegisteredProject, run RunStatu
 		LeaseState:       run.LeaseState,
 	})
 	return run, true, nil
+}
+
+func autoLandArmedWaveReviewComplete(project RegisteredProject, note Note, run RunStatus) (bool, error) {
+	wave, _, armed := armedWaveForTask(project.VaultRoot, note)
+	if !armed {
+		return false, nil
+	}
+	taskID := stringField(note.Data, "id")
+	repoRoot := project.RepoRoot
+	integrationBranch := v7WaveIntegrationBranch(wave)
+	taskBranch := v7TaskBranchName(taskID)
+	landed := armedWaveLandedMembers(wave)[taskID]
+	integrated := gitRefExists(repoRoot, "refs/heads/"+taskBranch) && gitRefExists(repoRoot, "refs/heads/"+integrationBranch) && gitMergeBaseAncestor(repoRoot, taskBranch, integrationBranch)
+	if landed && integrated {
+		return true, nil
+	}
+	err := landV7Cmd(Args{
+		"vault": project.VaultRoot,
+		"quiet": "true",
+		"_pos0": taskID,
+		"from":  run.WorkspacePath,
+		"by":    "daemon:wave-drain",
+	})
+	if err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 func trackerStateTerminal(wf Workflow, status string) bool {
@@ -3009,6 +3203,9 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		return updated, true, err
 	}
 	run = updated
+	if _, err := ensureDispatchedV7Attempt(project.VaultRoot, run.ItemID, attemptID, lane, run.Runner, workspace.Path, branchName); err != nil {
+		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
+	}
 
 	prompt, err := renderAttemptPrompt(project, wfFile, note, workspace.Path, ordinal, attemptID, lane, run, previousRun, d.store)
 	if err != nil {
@@ -3269,6 +3466,67 @@ func (d *Daemon) persistClaimedDispatchFailure(project RegisteredProject, wf Wor
 
 func (d *Daemon) workspaceStrategyForDispatch(project RegisteredProject, wf Workflow, run RunStatus) WorkspaceStrategy {
 	return workspaceStrategyFromWorkflow(wf.Workspace.Strategy)
+}
+
+func ensureDispatchedV7Attempt(canonicalVault, taskID, runtimeAttemptID, lane, runner, workspacePath, branch string) (string, error) {
+	runtimeAttemptID = strings.ToUpper(strings.TrimSpace(runtimeAttemptID))
+	if taskID == "" || runtimeAttemptID == "" || workspacePath == "" {
+		return "", tuskerError(errorInvalidField, "daemon dispatch requires task, attempt, and workspace identity before runner spawn")
+	}
+	if filepath.Base(runtimeAttemptID) != runtimeAttemptID {
+		return "", tuskerError(errorInvalidField, "invalid daemon runtime attempt id: "+runtimeAttemptID)
+	}
+	vaultPath := runnerWorktreeVaultPath(workspacePath, canonicalVault)
+	if vaultPath == "" {
+		return "", tuskerError(errorConfigInvalid, "cannot resolve worktree vault for daemon runtime attempt "+runtimeAttemptID)
+	}
+	// Legacy/external tracker roots are not materialized inside Git worktrees.
+	// Preserve their existing dispatch path; repo-local V7 vaults get the
+	// durable runtime-attempt binding below.
+	if !dirExists(vaultPath) {
+		return "", nil
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return "", err
+	}
+	if _, ok := idx.Tasks[taskID]; !ok {
+		return "", nil
+	}
+	var bound []Note
+	for _, attempt := range idx.Attempts[taskID] {
+		if strings.EqualFold(stringField(attempt.Data, "runtime_attempt_id"), runtimeAttemptID) {
+			bound = append(bound, attempt)
+		}
+	}
+	if len(bound) > 1 {
+		return "", tuskerError("CAS_CONFLICT", "multiple V7 attempts are bound to daemon runtime attempt "+runtimeAttemptID)
+	}
+	if len(bound) == 1 {
+		attempt := bound[0]
+		v7AttemptID := stringField(attempt.Data, "id")
+		if stringField(attempt.Data, "kind") != "attempt" || stringField(attempt.Data, "task") != taskID || !workspacePathsCompatible(stringField(attempt.Data, "workspace_path"), workspacePath) {
+			return "", tuskerError("CAS_CONFLICT", "daemon attempt record identity mismatch: "+attempt.AbsolutePath)
+		}
+		return v7AttemptID, nil
+	}
+	v7AttemptID := fmt.Sprintf("%s-A-%s", taskID, padNumber(nextV7AttemptSequence(vaultPath, taskID)))
+	err = attemptV7StartCmd(Args{
+		"vault":              vaultPath,
+		"quiet":              "true",
+		"id":                 taskID,
+		"attempt-id":         v7AttemptID,
+		"runtime-attempt-id": runtimeAttemptID,
+		"lane":               lane,
+		"runner":             runner,
+		"workspace-kind":     "git_worktree",
+		"workspace-path":     workspacePath,
+		"branch":             branch,
+	})
+	if err != nil {
+		return "", err
+	}
+	return v7AttemptID, nil
 }
 
 type resolvedResumeSession struct {

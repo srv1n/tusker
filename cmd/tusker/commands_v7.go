@@ -1219,20 +1219,22 @@ func attemptV7StartCmd(args Args) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	data := map[string]any{
-		"schema":         "tusker.attempt/v1",
-		"kind":           "attempt",
-		"id":             attemptID,
-		"project":        v7ProjectID(vaultPath),
-		"task":           taskID,
-		"runner":         fallback(args.String("runner"), "codex"),
-		"agent_model":    args.String("agent-model"),
-		"workspace_kind": fallback(args.String("workspace-kind"), "same_checkout"),
-		"workspace_path": args.String("workspace-path"),
-		"branch":         fallback(args.String("branch"), currentGitBranch()),
-		"status":         "started",
-		"started_at":     now,
-		"pr_url":         args.String("pr-url"),
-		"evidence":       splitCSV(args.String("evidence")),
+		"schema":             "tusker.attempt/v1",
+		"kind":               "attempt",
+		"id":                 attemptID,
+		"runtime_attempt_id": strings.TrimSpace(args.String("runtime-attempt-id")),
+		"lane":               strings.TrimSpace(args.String("lane")),
+		"project":            v7ProjectID(vaultPath),
+		"task":               taskID,
+		"runner":             fallback(args.String("runner"), "codex"),
+		"agent_model":        args.String("agent-model"),
+		"workspace_kind":     fallback(args.String("workspace-kind"), "same_checkout"),
+		"workspace_path":     args.String("workspace-path"),
+		"branch":             fallback(args.String("branch"), currentGitBranch()),
+		"status":             "started",
+		"started_at":         now,
+		"pr_url":             args.String("pr-url"),
+		"evidence":           splitCSV(args.String("evidence")),
 	}
 	body := fmt.Sprintf("# %s · Agent attempt summary\n\n## Outcome\n\nStarted.\n\n## Changed areas\n\nPending.\n\n## Verification\n\nPending.\n\n## Handoff\n\nPending.\n\n## Follow-ups proposed\n\nNone.\n", attemptID)
 	data["state_rev"] = v7StateRev(data, body)
@@ -3756,12 +3758,47 @@ func ensureV7ControlMutation(vaultPath string, args Args) error {
 	if isV7ControlBranch(vaultPath, branch) {
 		return nil
 	}
+	if v7ReviewerControlMutationAllowed(vaultPath, args, branch) {
+		return nil
+	}
 	return tuskerError(
 		errorInvalidTransition,
 		"protected Tusker state cannot be mutated from branch "+branch,
 		withHint(v7ProtectedImplementationFlowHint(args)),
 		withContext(map[string]any{"branch": branch}),
 	)
+}
+
+func v7ReviewerControlMutationAllowed(vaultPath string, args Args, branch string) bool {
+	taskID := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
+	actor := strings.ToLower(strings.TrimSpace(firstNonEmpty(args.String("by"), args.String("actor"))))
+	runtimeAttemptID := strings.ToUpper(strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID")))
+	workspace := strings.TrimSpace(os.Getenv("TUSKER_WORKSPACE"))
+	if taskID == "" || runtimeAttemptID == "" || workspace == "" || !strings.HasPrefix(actor, "reviewer:") || !strings.EqualFold(os.Getenv("TUSKER_RUN_LANE"), runLaneReview) {
+		return false
+	}
+	if !strings.EqualFold(branch, v7TaskBranchName(taskID)) || !workspacePathsCompatible(v7RepoRoot(vaultPath), workspace) {
+		return false
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return false
+	}
+	var bound []Note
+	for _, attempt := range idx.Attempts[taskID] {
+		if strings.EqualFold(stringField(attempt.Data, "runtime_attempt_id"), runtimeAttemptID) {
+			bound = append(bound, attempt)
+		}
+	}
+	if len(bound) != 1 {
+		return false
+	}
+	attempt := bound[0]
+	return stringField(attempt.Data, "status") == "started" &&
+		strings.EqualFold(stringField(attempt.Data, "lane"), runLaneReview) &&
+		strings.EqualFold(stringField(attempt.Data, "task"), taskID) &&
+		strings.EqualFold(stringField(attempt.Data, "branch"), branch) &&
+		workspacePathsCompatible(stringField(attempt.Data, "workspace_path"), workspace)
 }
 
 func v7ProtectedImplementationFlowHint(args Args) string {

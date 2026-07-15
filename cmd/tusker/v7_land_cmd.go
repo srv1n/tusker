@@ -522,11 +522,27 @@ func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandT
 	removeWorktree = true
 	for _, task := range tasks {
 		if output, err := gitCombined(tmp, "merge", "--no-ff", "--no-edit", task.Branch); err != nil {
-			return false, "", landingFailureSummary("merge "+task.Branch, output, err), nil
+			resolved, unresolved, resolveErr := resolveV7GeneratedProjectionMerge(tmp)
+			if resolveErr != nil {
+				return false, "", "", resolveErr
+			}
+			if !resolved {
+				summary := landingFailureSummary("merge "+task.Branch, output, err)
+				if unresolved != "" {
+					summary = limitLandingSummary(summary+"; all unmerged paths: "+unresolved, 500)
+				}
+				return false, "", summary, nil
+			}
 		}
 		if err := guardV7LandingTerminalTaskRewinds(tmp, baseBranch); err != nil {
 			return false, "", "", err
 		}
+	}
+	if err := removeV7WorkspaceMetadataFromLanding(tmp); err != nil {
+		return false, "", "", err
+	}
+	if err := commitV7LandingCleanup(tmp); err != nil {
+		return false, "", "", err
 	}
 	pass, summary := runV7LandingGate(vaultPath, tmp, v7LandingBatchIdentity(tasks))
 	if !pass {
@@ -537,6 +553,115 @@ func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandT
 		return false, "", "", err
 	}
 	return true, commit, summary, nil
+}
+
+// resolveV7GeneratedProjectionMerge prevents derived Tusker dashboards from
+// serializing otherwise-independent task landings. Only an all-generated
+// conflict is eligible; any source or task-contract conflict remains a hard
+// landing failure.
+func resolveV7GeneratedProjectionMerge(workDir string) (bool, string, error) {
+	output, err := gitCombined(workDir, "diff", "--name-only", "--diff-filter=U")
+	if err != nil {
+		return false, "", err
+	}
+	paths := strings.Fields(output)
+	if len(paths) == 0 {
+		return false, "", nil
+	}
+	for _, path := range paths {
+		generated := path == ".tusker/Dashboard.md" || path == ".tusker/workspace.json" || strings.HasPrefix(path, ".tusker/_generated/") || strings.HasPrefix(path, ".tusker/dashboards/")
+		if strings.HasPrefix(path, ".tusker/work/epics/") && strings.HasSuffix(path, ".md") {
+			generated = v7EpicConflictOnlyTouchesManagedState(workDir, path)
+		}
+		if !generated {
+			return false, strings.Join(paths, ", "), nil
+		}
+	}
+	for _, path := range paths {
+		if strings.HasPrefix(path, ".tusker/work/epics/") {
+			if output, err := gitCombined(workDir, "checkout", "--ours", "--", path); err != nil {
+				return false, "", tuskerError(errorInvalidTransition, "failed to retain epic source while regenerating managed blocks: "+firstActionableLine(output, err.Error()))
+			}
+		}
+	}
+	if err := removeV7WorkspaceMetadataFromLanding(workDir); err != nil {
+		return false, "", err
+	}
+	vaultPath := filepath.Join(workDir, ".tusker")
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return false, "", err
+	}
+	if err := buildV7Dashboards(vaultPath, idx); err != nil {
+		return false, "", err
+	}
+	if _, err := reconcileV7EpicManagedBlocks(vaultPath, idx); err != nil {
+		return false, "", err
+	}
+	if output, err := gitCombined(workDir, "add", ".tusker/Dashboard.md", ".tusker/_generated", ".tusker/dashboards", ".tusker/work/epics"); err != nil {
+		return false, "", tuskerError(errorInvalidTransition, "failed to stage regenerated Tusker projections: "+firstActionableLine(output, err.Error()))
+	}
+	if output, err := gitCombined(workDir, "commit", "--no-edit"); err != nil {
+		return false, "", tuskerError(errorInvalidTransition, "failed to complete generated-projection merge: "+firstActionableLine(output, err.Error()))
+	}
+	return true, "", nil
+}
+
+func v7EpicConflictOnlyTouchesManagedState(workDir, path string) bool {
+	var canonical string
+	for _, stage := range []string{"1", "2", "3"} {
+		output, err := gitCombined(workDir, "show", ":"+stage+":"+path)
+		if err != nil {
+			return false
+		}
+		candidate := stripV7EpicManagedState(output)
+		if canonical == "" {
+			canonical = candidate
+			continue
+		}
+		if candidate != canonical {
+			return false
+		}
+	}
+	return true
+}
+
+func stripV7EpicManagedState(content string) string {
+	for _, heading := range []string{"## Open gates", "## Active work", "## Recently completed"} {
+		content = replaceSection(content, heading, "<tusker-managed>")
+	}
+	lines := strings.Split(content, "\n")
+	out := lines[:0]
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "updated_at:") || strings.HasPrefix(trimmed, "state_rev:") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func removeV7WorkspaceMetadataFromLanding(workDir string) error {
+	output, err := gitCombined(workDir, "rm", "-f", "--ignore-unmatch", "--", ".tusker/workspace.json")
+	if err != nil {
+		return tuskerError(errorInvalidTransition, "failed to strip workspace-local metadata from landing: "+firstActionableLine(output, err.Error()))
+	}
+	return nil
+}
+
+func commitV7LandingCleanup(workDir string) error {
+	cmd := exec.Command("git", "-C", workDir, "diff", "--cached", "--quiet")
+	if err := cmd.Run(); err == nil {
+		return nil
+	} else if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		return err
+	}
+	output, err := gitCombined(workDir, "commit", "-m", "Strip workspace-local landing metadata")
+	if err != nil {
+		return tuskerError(errorInvalidTransition, "failed to commit landing metadata cleanup: "+firstActionableLine(output, err.Error()))
+	}
+	return nil
 }
 
 func guardV7LandingTerminalTaskRewinds(workDir, baseRef string) error {
@@ -862,8 +987,11 @@ func landV7WaveToMainIfReady(vaultPath, waveID string, args Args, summary *v7Lan
 	}
 	open := 0
 	for _, member := range normalizeList(wave.Data["members"]) {
-		task, ok := idx.Tasks[member]
-		if !ok || stringField(task.Data, "status") != "done" {
+		status, found, err := v7WaveIntegrationMemberStatus(vaultPath, wave, member)
+		if err != nil {
+			return err
+		}
+		if !found || status != "done" {
 			open++
 		}
 	}
@@ -884,8 +1012,11 @@ func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummar
 		return tuskerError(errorNotFound, "V7 wave not found: "+waveID)
 	}
 	for _, member := range normalizeList(wave.Data["members"]) {
-		task, ok := idx.Tasks[member]
-		if !ok || stringField(task.Data, "status") != "done" {
+		status, found, err := v7WaveIntegrationMemberStatus(vaultPath, wave, member)
+		if err != nil {
+			return err
+		}
+		if !found || status != "done" {
 			return tuskerError(errorInvalidTransition, waveID+" cannot land to main until every member task is done")
 		}
 	}
@@ -906,16 +1037,19 @@ func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummar
 	}
 	if gitMergeBaseAncestor(repoRoot, integrationBranch, defaultBranch) {
 		mainRev, _ := gitOutputTrim(repoRoot, "rev-parse", defaultBranch)
-		if err := deleteGitBranch(repoRoot, integrationBranch); err != nil {
-			return err
-		}
 		actor := landV7Actor(args)
-		summary.MainNotes = append(summary.MainNotes, "main: "+waveID+" already landed at "+shortCommit(mainRev)+"; cleaned up integration branch")
-		return appendV7WaveLandingAudit(vaultPath, waveID, []v7LandingAuditEntry{{
+		if err := appendV7WaveLandingAudit(vaultPath, waveID, []v7LandingAuditEntry{{
 			Task: "wave", Branch: integrationBranch, Target: defaultBranch,
 			GateResult: "pass", GateSummary: "already landed; cleaned up integration branch",
 			Commit: mainRev, Actor: actor, Timestamp: time.Now().UTC().Format(time.RFC3339),
-		}}, actor)
+		}}, actor); err != nil {
+			return err
+		}
+		if err := deleteGitBranch(repoRoot, integrationBranch); err != nil {
+			return err
+		}
+		summary.MainNotes = append(summary.MainNotes, "main: "+waveID+" already landed at "+shortCommit(mainRev)+"; cleaned up integration branch")
+		return nil
 	}
 	if !gitMergeBaseAncestor(repoRoot, defaultBranch, integrationBranch) {
 		return tuskerError(errorInvalidTransition, defaultBranch+" is not an ancestor of "+integrationBranch+"; rebase or merge main before wave landing")
@@ -923,6 +1057,13 @@ func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummar
 	pass, summaryText := runV7LandingGateOnRef(vaultPath, repoRoot, integrationBranch)
 	if !pass {
 		return tuskerError(errorInvalidTransition, waveID+" integration branch is red: "+summaryText)
+	}
+	if err := syncV7WaveControlStateToIntegration(vaultPath, wave, integrationBranch); err != nil {
+		return err
+	}
+	integrationRev, err = gitOutputTrim(repoRoot, "rev-parse", integrationBranch)
+	if err != nil {
+		return err
 	}
 	mainRev, err := gitOutputTrim(repoRoot, "rev-parse", defaultBranch)
 	if err != nil {
@@ -934,19 +1075,116 @@ func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummar
 	if err != nil {
 		return err
 	}
+	if err := prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch, wave); err != nil {
+		return err
+	}
 	if err := advanceV7DefaultBranch(repoRoot, defaultBranch, mergeCommit, mainRev); err != nil {
+		return err
+	}
+	actor := landV7Actor(args)
+	if err := appendV7WaveLandingAudit(vaultPath, waveID, []v7LandingAuditEntry{{
+		Task: "wave", Branch: integrationBranch, Target: defaultBranch,
+		GateResult: "pass", GateSummary: summaryText, Commit: mergeCommit,
+		Actor: actor, Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}}, actor); err != nil {
 		return err
 	}
 	if err := deleteGitBranch(repoRoot, integrationBranch); err != nil {
 		return err
 	}
-	actor := landV7Actor(args)
 	summary.MainNotes = append(summary.MainNotes, "main: moved to "+shortCommit(mergeCommit)+" ("+message+")")
-	return appendV7WaveLandingAudit(vaultPath, waveID, []v7LandingAuditEntry{{
-		Task: "wave", Branch: integrationBranch, Target: defaultBranch,
-		GateResult: "pass", GateSummary: summaryText, Commit: mergeCommit,
-		Actor: actor, Timestamp: time.Now().UTC().Format(time.RFC3339),
-	}}, actor)
+	return nil
+}
+
+func prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch string, wave Note) error {
+	relVault, err := filepath.Rel(repoRoot, vaultPath)
+	if err != nil || filepath.IsAbs(relVault) || strings.HasPrefix(filepath.Clean(relVault), "..") {
+		return tuskerError(errorInvalidTransition, "cannot prepare wave members for default-branch advance: invalid vault path "+vaultPath)
+	}
+	paths := make([]string, 0, len(normalizeList(wave.Data["members"])))
+	for _, member := range normalizeList(wave.Data["members"]) {
+		paths = append(paths, filepath.ToSlash(filepath.Join(relVault, "work", "tasks", member+".md")))
+	}
+	paths = append(paths, filepath.ToSlash(filepath.Join(relVault, "work", "waves", stringField(wave.Data, "id")+".md")))
+	for _, wt := range v7DefaultBranchCheckouts(repoRoot, defaultBranch) {
+		tracked := make([]string, 0, len(paths))
+		for _, path := range paths {
+			if exec.Command("git", "-C", wt.Path, "ls-files", "--error-unmatch", "--", path).Run() == nil {
+				tracked = append(tracked, path)
+			}
+		}
+		if len(tracked) == 0 {
+			continue
+		}
+		args := append([]string{"checkout", "--"}, tracked...)
+		if output, err := gitCombined(wt.Path, args...); err != nil {
+			return tuskerError(errorInvalidTransition, "failed to reset integrated wave task projections before default-branch advance: "+firstActionableLine(output, err.Error()), withPath(wt.Path))
+		}
+	}
+	return nil
+}
+
+func syncV7WaveControlStateToIntegration(vaultPath string, wave Note, integrationBranch string) error {
+	repoRoot := v7RepoRoot(vaultPath)
+	rel, err := filepath.Rel(repoRoot, wave.AbsolutePath)
+	if err != nil || filepath.IsAbs(rel) || strings.HasPrefix(filepath.Clean(rel), "..") {
+		return tuskerError(errorInvalidTransition, "cannot sync wave control state to integration: invalid wave path "+wave.AbsolutePath)
+	}
+	canonical, err := os.ReadFile(wave.AbsolutePath)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.MkdirTemp("", "tusker-wave-control-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = exec.Command("git", "-C", repoRoot, "worktree", "remove", "--force", tmp).Run() }()
+	if output, err := gitCombined(repoRoot, "worktree", "add", "--detach", tmp, integrationBranch); err != nil {
+		return tuskerError(errorInvalidTransition, "failed to stage wave control state: "+firstActionableLine(output, err.Error()))
+	}
+	target := filepath.Join(tmp, rel)
+	if err := writeText(target, string(canonical)); err != nil {
+		return err
+	}
+	if output, err := gitCombined(tmp, "add", "--", filepath.ToSlash(rel)); err != nil {
+		return tuskerError(errorInvalidTransition, "failed to stage wave control state: "+firstActionableLine(output, err.Error()))
+	}
+	if exec.Command("git", "-C", tmp, "diff", "--cached", "--quiet").Run() == nil {
+		return nil
+	}
+	if output, err := gitCombined(tmp, "commit", "-m", "Sync wave control state "+stringField(wave.Data, "id")); err != nil {
+		return tuskerError(errorInvalidTransition, "failed to commit wave control state: "+firstActionableLine(output, err.Error()))
+	}
+	commit, err := gitOutputTrim(tmp, "rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	old, err := gitOutputTrim(repoRoot, "rev-parse", integrationBranch)
+	if err != nil {
+		return err
+	}
+	return updateGitRef(repoRoot, "refs/heads/"+integrationBranch, commit, old)
+}
+
+func v7WaveIntegrationMemberStatus(vaultPath string, wave Note, member string) (string, bool, error) {
+	member = strings.ToUpper(strings.TrimSpace(member))
+	if !v7TaskIDPattern.MatchString(member) {
+		return "", false, tuskerError(errorInvalidField, "invalid wave member task id: "+member)
+	}
+	repoRoot := v7RepoRoot(vaultPath)
+	integrationBranch := v7WaveIntegrationBranch(wave)
+	rel := filepath.ToSlash(filepath.Join(relativeFromRepo(repoRoot, vaultPath), "work", "tasks", member+".md"))
+	data, ok, err := v7GitFrontmatterAtRef(repoRoot, integrationBranch, rel)
+	if err != nil {
+		return "", false, err
+	}
+	if !ok {
+		return "", false, nil
+	}
+	if effectiveV7Kind(data) != "task" || stringField(data, "id") != member {
+		return "", false, tuskerError(errorInvalidField, "wave integration member identity mismatch: "+integrationBranch+":"+rel)
+	}
+	return stringField(data, "status"), true, nil
 }
 
 func advanceV7DefaultBranch(repoRoot, defaultBranch, newRev, oldRev string) error {
@@ -955,6 +1193,9 @@ func advanceV7DefaultBranch(repoRoot, defaultBranch, newRev, oldRev string) erro
 		return updateGitRef(repoRoot, "refs/heads/"+defaultBranch, newRev, oldRev)
 	}
 	for _, wt := range checkouts {
+		if err := prepareV7GeneratedStateForDefaultAdvance(wt.Path); err != nil {
+			return err
+		}
 		dirty, err := inPlaceDirtyPaths(wt.Path)
 		if err != nil {
 			return err
@@ -977,7 +1218,9 @@ func advanceV7DefaultBranch(repoRoot, defaultBranch, newRev, oldRev string) erro
 		// which silently drops staged/modified tracked files (including
 		// tusker-owned .tusker/* files that the dirty-path guard skips).
 		if output, err := gitCombined(wt.Path, "merge", "--ff-only", newRev); err != nil {
-			return tuskerError(errorInvalidTransition, "failed to advance checked-out "+defaultBranch+" worktree at "+wt.Path+": "+firstActionableLine(output, err.Error()), withPath(wt.Path))
+			status, _ := gitCombined(wt.Path, "status", "--porcelain")
+			paths := strings.Join(limitStrings(strings.Fields(status), 12), " ")
+			return tuskerError(errorInvalidTransition, "failed to advance checked-out "+defaultBranch+" worktree at "+wt.Path+": "+firstActionableLine(output, err.Error())+"; local status: "+paths, withPath(wt.Path))
 		}
 		head, err := gitOutputTrim(wt.Path, "rev-parse", "HEAD")
 		if err != nil {
@@ -985,6 +1228,58 @@ func advanceV7DefaultBranch(repoRoot, defaultBranch, newRev, oldRev string) erro
 		}
 		if strings.TrimSpace(head) != strings.TrimSpace(newRev) {
 			return tuskerError(errorInvalidTransition, "checked-out "+defaultBranch+" worktree did not advance to "+shortCommit(newRev), withPath(wt.Path))
+		}
+		vaultPath := filepath.Join(wt.Path, ".tusker")
+		idx, err := loadV7Index(vaultPath)
+		if err != nil {
+			return err
+		}
+		if _, err := reconcileV7EpicManagedBlocks(vaultPath, idx); err != nil {
+			return err
+		}
+		if err := buildV7Dashboards(vaultPath, idx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func prepareV7GeneratedStateForDefaultAdvance(workDir string) error {
+	for _, path := range []string{".tusker/Dashboard.md", ".tusker/_generated", ".tusker/dashboards"} {
+		if output, err := gitCombined(workDir, "checkout", "--", path); err != nil && !strings.Contains(output, "did not match any file") {
+			return tuskerError(errorInvalidTransition, "failed to reset generated projection before default-branch advance: "+firstActionableLine(output, err.Error()), withPath(workDir))
+		}
+	}
+	output, err := gitCombined(workDir, "diff", "--name-only", "--", ".tusker/work/epics")
+	if err != nil {
+		return err
+	}
+	for _, path := range strings.Fields(output) {
+		head, ok, err := v7GitNoteAtRef(workDir, "HEAD", path)
+		if err != nil || !ok {
+			return err
+		}
+		raw, err := os.ReadFile(filepath.Join(workDir, filepath.FromSlash(path)))
+		if err != nil {
+			return err
+		}
+		workingData, workingBody, err := parseFrontmatter(string(raw))
+		if err != nil {
+			return err
+		}
+		headRaw, err := serializeDocument(head.Data, head.Body, v7FrontmatterOrder["epic"])
+		if err != nil {
+			return err
+		}
+		workingRaw, err := serializeDocument(workingData, workingBody, v7FrontmatterOrder["epic"])
+		if err != nil {
+			return err
+		}
+		if stripV7EpicManagedState(headRaw) != stripV7EpicManagedState(workingRaw) {
+			continue
+		}
+		if output, err := gitCombined(workDir, "checkout", "--", path); err != nil {
+			return tuskerError(errorInvalidTransition, "failed to reset epic managed projection before default-branch advance: "+firstActionableLine(output, err.Error()), withPath(path))
 		}
 	}
 	return nil
@@ -999,6 +1294,21 @@ func v7DefaultBranchCheckouts(repoRoot, defaultBranch string) []v7Worktree {
 	for _, wt := range v7ListWorktrees(repoRoot) {
 		if strings.TrimSpace(wt.Branch) == branchRef {
 			out = append(out, wt)
+		}
+	}
+	// A ref-only update leaves a checked-out branch's index and files stale.
+	// Keep a direct primary-worktree fallback in case platform path aliases or
+	// older Git porcelain omit/misreport that entry.
+	if branch, err := gitOutputTrim(repoRoot, "symbolic-ref", "--short", "HEAD"); err == nil && strings.TrimSpace(branch) == strings.TrimSpace(defaultBranch) {
+		found := false
+		for _, wt := range out {
+			if workspacePathsCompatible(wt.Path, repoRoot) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			out = append(out, v7Worktree{Path: repoRoot, Branch: branchRef})
 		}
 	}
 	return out

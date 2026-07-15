@@ -148,6 +148,7 @@ func TestWaveLandToMain(t *testing.T) {
 		t.Fatal(err)
 	}
 	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-07T02:00:00Z")
+	commitCanonicalTaskStateToIntegration(t, repo, vault, "APP-T-0001")
 
 	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"}); err != nil {
 		t.Fatal(err)
@@ -250,6 +251,7 @@ func newLandReadyForMainAdvanceTest(t *testing.T, fileName, content string) (str
 		t.Fatalf("task land setup failed: %v", err)
 	}
 	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-07T02:00:00Z")
+	commitCanonicalTaskStateToIntegration(t, repo, vault, "APP-T-0001")
 	return repo, vault
 }
 
@@ -264,6 +266,7 @@ func TestLandIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-07T02:00:00Z")
+	commitCanonicalTaskStateToIntegration(t, repo, vault, "APP-T-0001")
 
 	mainRev := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
 	integrationRev := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "integration/W-0001"))
@@ -336,6 +339,9 @@ func newLandTestRepo(t *testing.T, tasks int, gate string) (string, string) {
 		waveArgs[fmt.Sprintf("_pos%d", i)] = "APP-T-" + padNumber(i)
 	}
 	mustWave(t, waveArgs, waveV7CreateCmd)
+	runGitDir(t, repo, "add", "-A")
+	runGitDir(t, repo, "commit", "-m", "record landing wave")
+	runGitDir(t, repo, "branch", "-f", "integration/W-0001", "main")
 	return repo, vault
 }
 
@@ -361,6 +367,24 @@ func commitLandBranch(t *testing.T, repo, branch, base string, files map[string]
 	rev := strings.TrimSpace(gitDirOutput(t, worktree, "rev-parse", "HEAD"))
 	runGitDir(t, repo, "worktree", "remove", "--force", worktree)
 	return rev
+}
+
+func commitCanonicalTaskStateToIntegration(t *testing.T, repo, vault, taskID string) {
+	t.Helper()
+	branch := "integration/W-0001"
+	old := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", branch))
+	worktree := filepath.Join(t.TempDir(), "integration-state")
+	runGitDir(t, repo, "worktree", "add", "--detach", worktree, branch)
+	rel := filepath.ToSlash(filepath.Join(".tusker", "work", "tasks", taskID+".md"))
+	content := mustReadIndexTest(t, filepath.Join(vault, "work", "tasks", taskID+".md"))
+	if err := writeText(filepath.Join(worktree, rel), content); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, worktree, "add", "--", rel)
+	runGitDir(t, worktree, "commit", "-m", "integrate task state "+taskID)
+	next := strings.TrimSpace(gitDirOutput(t, worktree, "rev-parse", "HEAD"))
+	runGitDir(t, repo, "worktree", "remove", "--force", worktree)
+	runGitDir(t, repo, "update-ref", "refs/heads/"+branch, next, old)
 }
 
 func gitShowFile(t *testing.T, repo, ref, path string) string {

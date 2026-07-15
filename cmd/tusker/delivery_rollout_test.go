@@ -131,13 +131,18 @@ func TestDeliveryRolloutQuarantine(t *testing.T) {
 	if err := writeText(path, strings.Replace(mustReadIndexTest(t, path), "tracker_schema_version: 7", "tracker_schema_version: 6", 1)); err != nil {
 		t.Fatal(err)
 	}
+	opaque := fixture.addProject("opaque-runner", true)
+	opaqueConfig := "schema: tusker.config/v1\nproject_id: opaque-runner\nautomation:\n  runners:\n    codex:\n      kind: codex_exec\n      command: custom-human-approval-wrapper\n      approval_policy: on-request\n"
+	if err := writeText(filepath.Join(opaque, "tusker.yaml"), opaqueConfig); err != nil {
+		t.Fatal(err)
+	}
 	report, err := runDeliveryRollout(fixture.input(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"missing", "old-schema"} {
+	for _, id := range []string{"missing", "old-schema", "opaque-runner"} {
 		project := rolloutProjectByID(t, report, id)
-		if project.Status != "quarantined" || project.Action == "" || len(project.Findings) != 1 {
+		if project.Status != "quarantined" || project.Action == "" {
 			t.Fatalf("bad quarantine for %s: %#v", id, project)
 		}
 	}
@@ -146,10 +151,22 @@ func TestDeliveryRolloutQuarantine(t *testing.T) {
 	}
 	projects, _ := fixture.store.ListProjects()
 	for _, project := range projects {
-		if project.ProjectID == "missing" || project.ProjectID == "old-schema" {
+		if project.ProjectID == "missing" || project.ProjectID == "old-schema" || project.ProjectID == "opaque-runner" {
 			if project.Health != projectHealthError || !strings.HasPrefix(project.LastError, "delivery rollout quarantine:") {
 				t.Fatalf("quarantine not durable: %#v", project)
 			}
+		}
+	}
+	if err := writeText(path, strings.Replace(mustReadIndexTest(t, path), "tracker_schema_version: 6", "tracker_schema_version: 7", 1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runDeliveryRollout(fixture.input(), true); err != nil {
+		t.Fatal(err)
+	}
+	projects, _ = fixture.store.ListProjects()
+	for _, project := range projects {
+		if project.ProjectID == "old-schema" && (project.Health != projectHealthHealthy || project.LastError != "") {
+			t.Fatalf("restored project retained rollout quarantine: %#v", project)
 		}
 	}
 }

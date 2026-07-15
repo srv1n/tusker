@@ -11,7 +11,10 @@ import (
 )
 
 const (
-	runnerPreflightTimeout       = 5 * time.Second
+	// Cold executable launches can spend several seconds in platform security
+	// scanning (notably XProtect on macOS). Keep the probe bounded without
+	// mistaking that one-time startup cost for a missing runner.
+	runnerPreflightTimeout       = 30 * time.Second
 	runnerPathPrefixEnv          = "TUSKER_RUNNER_PATH_PREFIX"
 	runnerPreflightOutputMaxRune = 300
 )

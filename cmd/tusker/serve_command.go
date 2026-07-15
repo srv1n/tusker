@@ -1220,6 +1220,13 @@ func serveWaveSummaryFor(snap serveSnapshot, wave Note) serveWaveSummary {
 	for _, item := range snap.waves {
 		idx.Waves[stringField(item.Data, "id")] = item
 	}
+	if projected, err := armedWaveBriefProjectedIndex(snap.project.VaultRoot, idx, wave); err == nil {
+		idx = projected
+	}
+	runs := map[string]RunStatus{}
+	for _, run := range snap.runs {
+		runs[firstNonEmpty(run.ItemID, run.RecordID)] = run
+	}
 	return serveWaveSummary{
 		ID:            stringField(wave.Data, "id"),
 		Title:         stringField(wave.Data, "title"),
@@ -1229,7 +1236,7 @@ func serveWaveSummaryFor(snap serveSnapshot, wave Note) serveWaveSummary {
 		Members:       members,
 		Counts:        counts,
 		Authorization: waveAuthorizationProjection(snap.project.VaultRoot, idx, wave),
-		Brief:         buildWaveBrief(idx, wave),
+		Brief:         buildWaveBriefWithRuns(idx, wave, runs),
 	}
 }
 

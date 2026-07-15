@@ -512,6 +512,28 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 		run.Lane = firstNonEmpty(run.Lane, runLaneExecute)
 	}
 	lane := firstNonEmpty(run.Lane, runLaneExecute)
+	notesByID := ctx.NotesByID
+	notesByRecordID := ctx.NotesByRecordID
+	projectionBlocker := ""
+	if lane == runLaneExecute {
+		if projected, projectedIdx, ok, projectionErr := armedWaveDispatchTaskProjection(ctx.Project.VaultRoot, note); projectionErr != nil {
+			projectionBlocker = projectionErr.Error()
+		} else if ok {
+			note = projected
+			notesByID = make(map[string]Note, len(ctx.NotesByID))
+			notesByRecordID = make(map[string]Note, len(ctx.NotesByRecordID))
+			for id, candidate := range ctx.NotesByID {
+				notesByID[id] = candidate
+			}
+			for id, candidate := range ctx.NotesByRecordID {
+				notesByRecordID[id] = candidate
+			}
+			for id, candidate := range projectedIdx.Tasks {
+				notesByID[id] = candidate
+				notesByRecordID[trackerRecordID(candidate)] = candidate
+			}
+		}
+	}
 	selectedProfile, profileErr := resolveRunProfileForLane(note, ctx.Workflow.Data, lane, runner)
 	if profileErr == nil {
 		run = applyResolvedProfileToRun(run, selectedProfile)
@@ -520,6 +542,9 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 	command := ""
 	requiredApprovals := []string{}
 	var blockers []string
+	if projectionBlocker != "" {
+		blockers = append(blockers, projectionBlocker)
+	}
 	if profileErr != nil {
 		blockers = append(blockers, "runner profile: "+profileErr.Error())
 	}
@@ -533,7 +558,7 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 	} else {
 		blockers = append(blockers, automationLegacyTaskBlockers(note, ctx.Workflow.Data)...)
 	}
-	if reason := dispatchEligibilityReason(note, ctx.NotesByID, ctx.NotesByRecordID); reason != "" {
+	if reason := dispatchEligibilityReason(note, notesByID, notesByRecordID); reason != "" {
 		blockers = append(blockers, reason)
 	}
 	runnerObj, configuredCommand, err := runnerForName(runner, ctx.Workflow.Data)

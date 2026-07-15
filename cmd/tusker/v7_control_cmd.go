@@ -282,6 +282,7 @@ func closeV7Cmd(args Args) error {
 			return tuskerError(errorInvalidTransition, id+": close blocked by open gate "+stringField(gate.Data, "id"))
 		}
 	}
+	idx = v7ReviewerIntegratedDependencyIndex(vaultPath, args, note, idx)
 	if dep, blocked := v7UnclosedDependency(note, idx); blocked {
 		return tuskerError(errorInvalidTransition, id+": close blocked by unfinished dependency "+dep.ID)
 	}
@@ -344,6 +345,34 @@ func closeV7Cmd(args Args) error {
 	}
 	_, err = reconcileV7ControlProjections(vaultPath, affected, actor, "task:"+id)
 	return err
+}
+
+func v7ReviewerIntegratedDependencyIndex(vaultPath string, args Args, task Note, idx v7Index) v7Index {
+	branch, err := currentGitBranchIn(v7RepoRoot(vaultPath))
+	if err != nil || !v7ReviewerControlMutationAllowed(vaultPath, args, branch) {
+		return idx
+	}
+	wave, ok := idx.Waves[stringField(task.Data, "wave")]
+	if !ok {
+		return idx
+	}
+	repoRoot := v7RepoRoot(vaultPath)
+	for _, edge := range v7TaskDependencyEdges(task, idx) {
+		dependencyID := edge.ID
+		dependency, ok := idx.Tasks[dependencyID]
+		if !ok {
+			continue
+		}
+		rel, err := filepath.Rel(repoRoot, dependency.AbsolutePath)
+		if err != nil || filepath.IsAbs(rel) || strings.HasPrefix(filepath.Clean(rel), "..") {
+			continue
+		}
+		integrated, ok, err := v7GitNoteAtRef(repoRoot, v7WaveIntegrationBranch(wave), filepath.ToSlash(rel))
+		if err == nil && ok {
+			idx.Tasks[dependencyID] = integrated
+		}
+	}
+	return idx
 }
 
 func enforceV7ClosePolicy(vaultPath string, task Note, idx v7Index, actor string) error {

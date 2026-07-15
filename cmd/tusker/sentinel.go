@@ -416,6 +416,9 @@ func sentinelHeldLeaseDispatchEligible(project runtimeSentinelProjectSnapshot, r
 		status := strings.TrimSpace(stringField(note.Data, "status"))
 		allowed := containsString(project.Workflow.Tracker.ActiveStates, status)
 		if run.Lane == runLaneReview {
+			if projected, ok, projectionErr := armedWaveIntegrationTaskProjection(project.Project.VaultRoot, note); projectionErr == nil && ok {
+				status = strings.TrimSpace(stringField(projected.Data, "status"))
+			}
 			allowed = containsString(project.Workflow.Tracker.ReviewStates, status)
 		}
 		if !allowed {

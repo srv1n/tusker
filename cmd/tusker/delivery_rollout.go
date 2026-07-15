@@ -82,9 +82,13 @@ func runDeliveryRollout(input deliveryRolloutInput, apply bool) (deliveryRollout
 	if input.Store == nil {
 		return report, tuskerError(errorConfigInvalid, "delivery rollout requires a runtime project registry")
 	}
-	projects, err := input.Store.ListProjects()
+	loaded, err := loadRegisteredProjects(input.Store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
 	if err != nil {
 		return report, err
+	}
+	projects := make([]RegisteredProject, 0, len(loaded))
+	for _, item := range loaded {
+		projects = append(projects, item.Project)
 	}
 	sort.Slice(projects, func(i, j int) bool { return projects[i].ProjectID < projects[j].ProjectID })
 	for _, project := range projects {
@@ -95,7 +99,9 @@ func runDeliveryRollout(input deliveryRolloutInput, apply bool) (deliveryRollout
 			report.OK = false
 			if apply {
 				project.Health = projectHealthError
-				project.LastError = "delivery rollout quarantine: " + reason + "; action: " + action
+				if project.LastError == "" || strings.HasPrefix(project.LastError, "delivery rollout quarantine:") {
+					project.LastError = "delivery rollout quarantine: " + reason + "; action: " + action
+				}
 				if err := input.Store.UpsertProject(project); err != nil {
 					return report, err
 				}
@@ -133,6 +139,26 @@ func runDeliveryRollout(input deliveryRolloutInput, apply bool) (deliveryRollout
 		}
 		if item.Status == "quarantined" {
 			report.OK = false
+			if apply && project.LastError == "" {
+				project.Health = projectHealthError
+				project.LastError = "delivery rollout quarantine: " + firstNonEmpty(deliveryRolloutFirstError(item.Findings), "incompatible unattended delivery configuration") + "; action: " + item.Action
+				if err := input.Store.UpsertProject(project); err != nil {
+					return report, err
+				}
+			}
+		} else if item.Status == "needs_repair" {
+			report.OK = false
+		}
+		if apply && item.Status != "quarantined" && strings.HasPrefix(project.LastError, "delivery rollout quarantine:") {
+			project.LastError = ""
+			if project.Enabled {
+				project.Health = projectHealthHealthy
+			} else {
+				project.Health = projectHealthDisabled
+			}
+			if err := input.Store.UpsertProject(project); err != nil {
+				return report, err
+			}
 		}
 		report.Projects = append(report.Projects, item)
 	}
@@ -153,6 +179,15 @@ func runDeliveryRollout(input deliveryRolloutInput, apply bool) (deliveryRollout
 		}
 	}
 	return report, nil
+}
+
+func deliveryRolloutFirstError(findings []setupFinding) string {
+	for _, finding := range findings {
+		if finding.Status == "error" && !finding.Changed {
+			return finding.Message
+		}
+	}
+	return ""
 }
 
 func deliveryRolloutCompatibility(project RegisteredProject) (string, string) {
@@ -182,6 +217,9 @@ func deliveryRolloutCompatibility(project RegisteredProject) (string, string) {
 
 func deliveryRolloutWorkflowPolicy(project RegisteredProject, apply bool) ([]setupFinding, error) {
 	findings := []setupFinding{}
+	if opaque := deliveryOpaqueRunnerCommands(project.WorkflowPath); len(opaque) > 0 {
+		findings = append(findings, setupFinding{Code: "runner_harness_opaque", Status: "error", Path: project.WorkflowPath, Message: "unattended runner command is not a canonical enforceable harness: " + strings.Join(opaque, ", "), Action: "replace the opaque wrapper with canonical codex exec or Claude bypassPermissions command", Repairable: false})
+	}
 	workflowChanged, workflowText, err := migratedObjectiveWorkflow(project.WorkflowPath)
 	if err != nil {
 		return findings, err
@@ -202,6 +240,9 @@ func deliveryRolloutWorkflowPolicy(project RegisteredProject, apply bool) ([]set
 		findings = append(findings, finding)
 	}
 	configPath := filepath.Join(project.RepoRoot, "tusker.yaml")
+	if opaque := deliveryOpaqueRunnerCommands(configPath); len(opaque) > 0 {
+		findings = append(findings, setupFinding{Code: "runner_harness_opaque", Status: "error", Path: configPath, Message: "unattended runner command is not a canonical enforceable harness: " + strings.Join(opaque, ", "), Action: "replace the opaque wrapper with canonical codex exec or Claude bypassPermissions command", Repairable: false})
+	}
 	configChanged, configText, err := migratedObjectiveCloseConfig(configPath)
 	if err != nil {
 		return findings, err
@@ -222,6 +263,65 @@ func deliveryRolloutWorkflowPolicy(project RegisteredProject, apply bool) ([]set
 		findings = append(findings, finding)
 	}
 	return findings, nil
+}
+
+func deliveryOpaqueRunnerCommands(path string) []string {
+	if !fileExists(path) {
+		return nil
+	}
+	text, err := readText(path)
+	if err != nil {
+		return []string{"unreadable command configuration"}
+	}
+	var data map[string]any
+	if strings.HasSuffix(path, "WORKFLOW.md") {
+		data, _, err = parseFrontmatter(text)
+	} else {
+		err = yaml.Unmarshal([]byte(text), &data)
+	}
+	if err != nil {
+		return nil // syntax compatibility reports the actionable error elsewhere
+	}
+	var opaque []string
+	check := func(label string, entry map[string]any) {
+		kind := strings.ToLower(firstNonEmpty(stringField(entry, "kind"), stringField(entry, "harness")))
+		command := strings.TrimSpace(stringField(entry, "command"))
+		if command == "" {
+			return
+		}
+		valid := true
+		switch kind {
+		case "codex", "codex_exec", "codex_app_server":
+			valid = strings.HasPrefix(command, "codex exec ") || command == "codex exec"
+		case "claude", "claude-code":
+			valid = strings.HasPrefix(command, "claude -p ") && strings.Contains(command, "bypassPermissions")
+		}
+		if !valid {
+			opaque = append(opaque, label)
+		}
+	}
+	for _, root := range []string{"runners", "runner_profiles"} {
+		if entries, ok := data[root].(map[string]any); ok {
+			for name, raw := range entries {
+				if entry, ok := raw.(map[string]any); ok {
+					check(root+"."+name, entry)
+				}
+			}
+		}
+	}
+	if automation, ok := data["automation"].(map[string]any); ok {
+		for _, root := range []string{"runners", "profiles"} {
+			if entries, ok := automation[root].(map[string]any); ok {
+				for name, raw := range entries {
+					if entry, ok := raw.(map[string]any); ok {
+						check("automation."+root+"."+name, entry)
+					}
+				}
+			}
+		}
+	}
+	sort.Strings(opaque)
+	return opaque
 }
 
 func migratedUnattendedWorkflow(path, text string) (bool, string, error) {

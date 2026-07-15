@@ -79,6 +79,7 @@ func TestLandDetachedRecovery(t *testing.T) {
 	// Complete the task and land the wave; main must move with the recovered work.
 	runGitDir(t, repo, "worktree", "remove", "--force", worktree)
 	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-08T02:00:00Z")
+	commitCanonicalTaskStateToIntegration(t, repo, vault, "APP-T-0001")
 	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"}); err != nil {
 		t.Fatalf("wave land to main failed: %v", err)
 	}
@@ -407,5 +408,45 @@ func TestLandConflictSummary(t *testing.T) {
 	}
 	if strings.Contains(failSummary, "Auto-merging") {
 		t.Fatalf("audit gate_summary must not carry Auto-merging chatter, got %q", failSummary)
+	}
+}
+
+func TestLandRegeneratesParallelDashboardConflicts(t *testing.T) {
+	repo, vault := newLandTestRepo(t, 2, "true")
+	projection := ".tusker/dashboards/review-queue.md"
+	epicPath := ".tusker/work/epics/APP.md"
+	epic := gitShowFile(t, repo, "integration/W-0001", epicPath)
+	commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{
+		"one.txt":                "one\n",
+		projection:               "branch one derived projection\n",
+		epicPath:                 replaceSection(epic, "## Active work", "branch one managed projection"),
+		".tusker/workspace.json": "{\"record_id\":\"APP-T-0001\"}\n",
+	})
+	commitLandBranch(t, repo, "task/APP-T-0002", "integration/W-0001", map[string]string{
+		"two.txt":                "two\n",
+		projection:               "branch two derived projection\n",
+		epicPath:                 replaceSection(epic, "## Active work", "branch two managed projection"),
+		".tusker/workspace.json": "{\"record_id\":\"APP-T-0002\"}\n",
+	})
+
+	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "_pos1": "APP-T-0002"}); err != nil {
+		t.Fatalf("generated dashboard conflicts must not block independent task work: %v", err)
+	}
+	for _, path := range []string{"one.txt", "two.txt"} {
+		if !gitShowFileOK(repo, "integration/W-0001", path) {
+			data, _, _ := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0002.md"))
+			t.Fatalf("integration branch is missing %s: %s", path, stringField(data, "next_action"))
+		}
+	}
+	dashboard := gitShowFile(t, repo, "integration/W-0001", projection)
+	if !strings.Contains(dashboard, "tusker:generated:file") || strings.Contains(dashboard, "branch one") || strings.Contains(dashboard, "branch two") {
+		t.Fatalf("landing did not regenerate the derived dashboard:\n%s", dashboard)
+	}
+	landedEpic := gitShowFile(t, repo, "integration/W-0001", epicPath)
+	if strings.Contains(landedEpic, "branch one") || strings.Contains(landedEpic, "branch two") {
+		t.Fatalf("landing did not regenerate epic managed blocks:\n%s", landedEpic)
+	}
+	if gitShowFileOK(repo, "integration/W-0001", ".tusker/workspace.json") {
+		t.Fatal("workspace-local identity metadata leaked into integration")
 	}
 }

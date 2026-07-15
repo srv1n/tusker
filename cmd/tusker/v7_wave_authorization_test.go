@@ -249,6 +249,44 @@ func TestWaveArmAuthorizesCriticalMemberDispatch(t *testing.T) {
 	}
 }
 
+func TestImportedWaveAuthorizationIgnoresAppendedProofRows(t *testing.T) {
+	vault := deliveryTestVault(t)
+	planPath := writeDeliveryTestPlan(t, vault, validDeliveryPlan())
+	if err := deliveryImportCmd(Args{"vault": vault, "plan": planPath, "wave": "Proof ledger", "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	armWaveForTest(t, vault)
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, issues := waveMaterialFingerprint(vault, idx, idx.Waves["W-0001"])
+	if len(issues) != 0 {
+		t.Fatalf("unexpected fingerprint issues: %#v", issues)
+	}
+	path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = strings.TrimRight(body, "\n") + "\n| A1 | review: independent acceptance | pass | reviewer proof |\n"
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, content); err != nil {
+		t.Fatal(err)
+	}
+	idx, err = loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, issues := waveMaterialFingerprint(vault, idx, idx.Waves["W-0001"])
+	if len(issues) != 0 || after != before {
+		t.Fatalf("proof-only verification row invalidated imported authorization: before=%s after=%s issues=%#v", before, after, issues)
+	}
+}
+
 func TestWavePause(t *testing.T) {
 	vault := authorizedWaveTestVault(t)
 	armWaveForTest(t, vault)
