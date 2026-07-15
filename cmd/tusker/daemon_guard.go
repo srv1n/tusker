@@ -85,11 +85,13 @@ func acquireDaemonGuard(stateRoot string) (*daemonGuard, error) {
 
 func (g *daemonGuard) writePIDFile(startedAt time.Time) error {
 	pidFile := daemonPIDFile{
-		PID:              os.Getpid(),
-		StartedAt:        startedAt.Format(time.RFC3339Nano),
-		StateRoot:        g.stateRoot,
-		ServeEnabled:     true,
-		ServeAddr:        defaultServeAddr,
+		PID:       os.Getpid(),
+		StartedAt: startedAt.Format(time.RFC3339Nano),
+		StateRoot: g.stateRoot,
+		// The guard exists before the embedded HTTP listener does. Publish Serve
+		// readiness only after startServe has successfully bound its socket.
+		ServeEnabled:     false,
+		ServeAddr:        "",
 		ManagedByLaunchd: daemonRunningUnderLaunchd(),
 	}
 	return g.writePIDFileData(pidFile)

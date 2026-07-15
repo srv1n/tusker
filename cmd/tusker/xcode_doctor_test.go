@@ -154,7 +154,7 @@ func TestXcodeDoctorHelpDocumentsProofGuardrail(t *testing.T) {
 			t.Fatalf("xcode help missing %q:\n%s", expected, output)
 		}
 	}
-	guidance, err := readText(filepath.Join("..", "..", "skill", "references", "XCODE_BUILD_STATE.md"))
+	guidance, err := readText(filepath.Join("..", "..", "skills", "tusker", "references", "XCODE_BUILD_STATE.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

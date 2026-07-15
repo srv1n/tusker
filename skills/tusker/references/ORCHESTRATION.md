@@ -13,6 +13,21 @@ work itself and never invokes dispatch or starts nested model processes. Only
 the independently running resident daemon may turn an eligible plan into a
 background worker, and only when project automation is enabled.
 
+## Reconciliation and activity
+
+Canonical task, proof, gate, evidence, wave, and closeout mutations go through
+the Tusker CLI. After a successful write, the CLI sends a best-effort targeted
+notification for the affected project; bursts coalesce before one reconcile.
+The resident daemon keeps a separate bounded safety cadence for raw editor
+changes and crash recovery. That cadence backs off independently for idle
+projects and resets immediately when the CLI mutates a project or the Serve UI
+attends/refreshes it. A project with live or retry-sensitive runtime work stays
+hot enough for lease and recovery guarantees.
+
+Do not lower a global poll interval to make one project responsive. Use CLI
+mutations or targeted UI refresh. Timed polling is fallback correctness, not the
+normal control plane.
+
 ## Plan Shape
 
 ```json

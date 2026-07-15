@@ -227,7 +227,7 @@ func TestDeliveryDAGFrontiersAndMapping(t *testing.T) {
 		Acceptance:   []deliveryAcceptance{{ID: "A1", Outcome: "Canon names the delivery behavior."}},
 		Verification: []deliveryVerification{{Covers: "A1", Check: "command: go test ./cmd/tusker -run TestDeliverySkillContract -count=1"}},
 		Dependencies: []deliveryDependency{{Task: "schema", Kind: "soft"}},
-		Artifact:     deliveryArtifactContract{Kind: "document", Path: "skill/SKILL.md", Summary: "Rendered operator contract.", AcceptanceIDs: []string{"A1"}},
+		Artifact:     deliveryArtifactContract{Kind: "document", Path: "skills/tusker/SKILL.md", Summary: "Rendered operator contract.", AcceptanceIDs: []string{"A1"}},
 	})
 	frontiers, cycle := deliveryFrontiers(plan)
 	if cycle {
@@ -266,7 +266,7 @@ func TestDeliveryHelpSpecRefsAndSkillContract(t *testing.T) {
 	for _, want := range []string{"delivery plan", "delivery import", "inert", "Tusker", "final"} {
 		assertContainsIndexTest(t, help, want)
 	}
-	skill := mustReadIndexTest(t, filepath.Join("..", "..", "skill", "SKILL.md"))
+	skill := mustReadIndexTest(t, filepath.Join("..", "..", "skills", "tusker", "SKILL.md"))
 	for _, want := range []string{"explicit stable scope", "source-keyed tasks", "Tusker owns the final records", "never dispatch"} {
 		assertContainsIndexTest(t, skill, want)
 	}

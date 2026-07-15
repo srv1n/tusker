@@ -2752,7 +2752,7 @@ func TestV7ProtectedFieldDiffCoversAllStateObjects(t *testing.T) {
 
 func TestV7BundledSkillOmitsObsidianStatusHooks(t *testing.T) {
 	for _, path := range []string{
-		filepath.Join("..", "..", "skill", "assets", "snippets", "status-hooks.js"),
+		filepath.Join("..", "..", "skills", "tusker", "assets", "snippets", "status-hooks.js"),
 		filepath.Join("..", "..", ".agents", "skills", "tusker", "assets", "snippets", "status-hooks.js"),
 		filepath.Join("..", "..", ".claude", "skills", "tusker", "assets", "snippets", "status-hooks.js"),
 	} {

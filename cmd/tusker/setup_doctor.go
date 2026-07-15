@@ -254,8 +254,13 @@ func classifySkillSyncSource(sourceArg, repo string) skillSourceReport {
 		return skillSourceReport{Kind: "invalid"}
 	}
 	path := abs
-	if !fileExists(filepath.Join(path, "SKILL.md")) && fileExists(filepath.Join(path, "skill", "SKILL.md")) {
-		path = filepath.Join(path, "skill")
+	if !fileExists(filepath.Join(path, "SKILL.md")) {
+		for _, nested := range []string{filepath.Join(path, "skills", "tusker"), filepath.Join(path, "skill")} {
+			if fileExists(filepath.Join(nested, "SKILL.md")) {
+				path = nested
+				break
+			}
+		}
 	}
 	if !fileExists(filepath.Join(path, "SKILL.md")) {
 		return skillSourceReport{Kind: "invalid", Path: path}

@@ -3,7 +3,7 @@
 # Advisory code file-size check.
 #
 # Lists hand-written code files over the ~1,000-line guideline (see
-# skill/references/ENGINEERING_DISCIPLINE.md, Operating Posture, and
+# skills/tusker/references/ENGINEERING_DISCIPLINE.md, Operating Posture, and
 # docs/ai-contribution-policy.md, Code file size). This check is ADVISORY: it
 # reports offenders but never fails the build. Files already known to exceed the
 # limit live in scripts/file-size-allowlist.txt and are burned down by

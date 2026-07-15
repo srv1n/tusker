@@ -838,6 +838,12 @@ func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 			Health: string(project.Health), LastError: nullIfBlank(project.LastError),
 			NeedsCount: needsCount, ActiveRuns: active, WorstLiveness: worst,
 			DaemonConnected: true, LastPollAt: nullIfBlank(project.LastPollAt),
+			Reconciliation: func() adaptiveProjectReconcileStatus {
+				if s.reconcileStatus == nil {
+					return adaptiveProjectReconcileStatus{}
+				}
+				return s.reconcileStatus(project.ProjectID)
+			}(),
 		})
 	}
 	serveJSON(w, http.StatusOK, items)

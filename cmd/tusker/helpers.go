@@ -307,6 +307,7 @@ func writeText(filePath, content string) error {
 		return err
 	}
 	invalidateCachedNote(filePath)
+	recordCLIVaultMutation(filePath)
 	return nil
 }
 

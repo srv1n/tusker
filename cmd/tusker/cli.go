@@ -195,9 +195,19 @@ func (a Args) Bool(key string) bool {
 }
 
 func run(command string, args Args) (int, error) {
+	beginCLIVaultMutationTracking()
 	code, err := runInner(command, args)
-	if code == 0 && err == nil && cliCommandMutatesVault(command) {
-		notifyDaemonForVault(args)
+	vaults := finishCLIVaultMutationTracking()
+	if code == 0 && err == nil {
+		for _, vault := range vaults {
+			notifyDaemonForVaultPath(vault)
+		}
+		if len(vaults) == 0 && cliCommandMutatesVault(command) {
+			notifyDaemonForVault(args)
+		}
+		if cliCommandMutatesProjectRegistry(command) {
+			_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_registry"}, 250*time.Millisecond)
+		}
 	}
 	return code, err
 }
@@ -216,11 +226,7 @@ func notifyDaemonForVault(args Args) {
 	if err != nil {
 		return
 	}
-	projectID, err := resolveV7ProjectID(vaultPath)
-	if err != nil {
-		return
-	}
-	_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: projectID}, 250*time.Millisecond)
+	notifyDaemonForVaultPath(vaultPath)
 }
 
 func runInner(command string, args Args) (int, error) {

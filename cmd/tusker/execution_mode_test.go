@@ -39,7 +39,7 @@ func TestAgentSessionGuardLeavesHumanTerminalCommandsAvailable(t *testing.T) {
 }
 
 func TestExecutionModeInstructionsForbidNestedRunners(t *testing.T) {
-	for _, path := range []string{"../../AGENTS.md", "../../CLAUDE.md", "../../skill/SKILL.md", "../../docs/specs/reliable-execution-lifecycle.md"} {
+	for _, path := range []string{"../../AGENTS.md", "../../CLAUDE.md", "../../skills/tusker/SKILL.md", "../../docs/specs/reliable-execution-lifecycle.md"} {
 		body, err := readText(path)
 		if err != nil {
 			t.Fatal(err)
@@ -50,7 +50,7 @@ func TestExecutionModeInstructionsForbidNestedRunners(t *testing.T) {
 			}
 		}
 	}
-	skill, err := readText("../../skill/SKILL.md")
+	skill, err := readText("../../skills/tusker/SKILL.md")
 	if err != nil {
 		t.Fatal(err)
 	}

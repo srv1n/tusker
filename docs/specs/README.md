@@ -13,7 +13,7 @@ This directory is the implementation spec set for Tusker V5.
 
 Tusker has three concerns:
 
-1. the installable skill bundle in `skill/SKILL.md`
+1. the installable skill bundle in `skills/tusker/SKILL.md`
 2. the V5 markdown tracker stored in the vault
 3. internal runtime orchestration on top of V5 tasks
 

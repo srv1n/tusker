@@ -8,7 +8,7 @@ import (
 )
 
 func TestSkillExecutionOwnershipProtocol(t *testing.T) {
-	source := filepath.Join("..", "..", "skill", "SKILL.md")
+	source := filepath.Join("..", "..", "skills", "tusker", "SKILL.md")
 	raw, err := os.ReadFile(source)
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestSkillExecutionOwnershipProtocol(t *testing.T) {
 }
 
 func TestSkillReservesHumanApprovalForHumanOnlyBoundaries(t *testing.T) {
-	source := filepath.Join("..", "..", "skill", "SKILL.md")
+	source := filepath.Join("..", "..", "skills", "tusker", "SKILL.md")
 	raw, err := os.ReadFile(source)
 	if err != nil {
 		t.Fatal(err)

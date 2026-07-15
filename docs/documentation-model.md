@@ -103,7 +103,7 @@ A node looks like this:
   stale_when:
     paths:
       - cmd/tusker/docs_*.go
-      - skill/references/DOCS_PUBLICATION.md
+      - skills/tusker/references/DOCS_PUBLICATION.md
   publish_lane: internal
   publish_path: reference/docs-pipeline
   publish_description: Docs routing, impact hook, waiver flow, and publication rules.

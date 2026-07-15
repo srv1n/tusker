@@ -533,7 +533,7 @@ func TestSkillSyncSymlinkAcceptsExplicitSourceOutsideCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, filepath.Join(sourceRoot, "skill"), target, "skill symlink target")
+	assertEqual(t, filepath.Join(sourceRoot, "skills", "tusker"), target, "skill symlink target")
 }
 
 func TestSkillBundleMaterializesPortableCopies(t *testing.T) {

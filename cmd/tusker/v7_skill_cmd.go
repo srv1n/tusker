@@ -4,9 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
+
+var agentSkillNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+var agentSkillReferencePattern = regexp.MustCompile(`(?:\(|\x60)(references|scripts|assets)/([^\s\)\x60]+)`)
 
 func skillV7DoctorCmd(args Args) (int, error) {
 	root, packageMode, err := skillDoctorRoot(args)
@@ -56,6 +61,9 @@ func skillDoctorRoot(args Args) (string, bool, error) {
 		if err != nil {
 			return "", true, err
 		}
+		if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
+			abs = resolved
+		}
 		return abs, true, nil
 	}
 	vaultPath, err := resolveVaultPath(args, false)
@@ -66,6 +74,9 @@ func skillDoctorRoot(args Args) (string, bool, error) {
 }
 
 func skillDoctorIssues(root string, packageMode, strict bool) ([]Issue, []Issue) {
+	if packageMode && isAgentSkillPackage(root) {
+		return agentSkillPackageIssues(root, strict)
+	}
 	var errs, warns []Issue
 	if !fileExists(filepath.Join(root, "SKILL.md")) {
 		errs = append(errs, issue(errorMissingField, "V7 project skill package requires SKILL.md", "SKILL.md", "", nil))
@@ -86,7 +97,7 @@ func skillDoctorIssues(root string, packageMode, strict bool) ([]Issue, []Issue)
 	if !packageMode {
 		repoRoot := v7RepoRoot(root)
 		if fileExists(filepath.Join(repoRoot, "go.mod")) || fileExists(filepath.Join(repoRoot, "skill")) {
-			for _, rel := range []string{"skill/SKILL.md", "skill/README.md", "skill/references/COMMANDS.md", "skill/references/WORKFLOW.md"} {
+			for _, rel := range []string{"skills/tusker/SKILL.md", "skills/tusker/README.md", "skills/tusker/references/COMMANDS.md", "skills/tusker/references/WORKFLOW.md"} {
 				if !fileExists(filepath.Join(repoRoot, rel)) {
 					errs = append(errs, issue(errorMissingField, "repo skill source is missing: "+rel, rel, "", nil))
 				}
@@ -98,6 +109,72 @@ func skillDoctorIssues(root string, packageMode, strict bool) ([]Issue, []Issue)
 	} else {
 		warns = append(warns, skillDoctorRouteCollisions(root)...)
 	}
+	return errs, warns
+}
+
+func isAgentSkillPackage(root string) bool {
+	data, _, err := parseFrontmatterMustRead(filepath.Join(root, "SKILL.md"))
+	return err == nil && strings.TrimSpace(stringField(data, "schema")) == "" && strings.TrimSpace(stringField(data, "name")) != ""
+}
+
+func agentSkillPackageIssues(root string, strict bool) ([]Issue, []Issue) {
+	var errs, warns []Issue
+	skillPath := filepath.Join(root, "SKILL.md")
+	data, body, err := parseFrontmatterMustRead(skillPath)
+	if err != nil {
+		return []Issue{issue(errorInvalidField, "Agent Skills package requires a readable SKILL.md with YAML frontmatter: "+err.Error(), "SKILL.md", "add valid name and description frontmatter", nil)}, nil
+	}
+	name := strings.TrimSpace(stringField(data, "name"))
+	description := strings.TrimSpace(stringField(data, "description"))
+	if name == "" {
+		errs = append(errs, issue(errorMissingField, "Agent Skills package requires name", "SKILL.md", "set lowercase package name metadata", map[string]any{"field": "name"}))
+	} else {
+		if !agentSkillNamePattern.MatchString(name) || len(name) > 64 {
+			errs = append(errs, issue(errorInvalidField, "Agent Skills name must be 1-64 lowercase letters, numbers, or single hyphens", "SKILL.md", "rename the skill and package directory", map[string]any{"field": "name", "value": name}))
+		}
+		if filepath.Base(filepath.Clean(root)) != name {
+			errs = append(errs, issue("AGENT_SKILL_NAME_PATH_MISMATCH", "Agent Skills name must match its parent directory", "SKILL.md", "move the canonical package to a directory named "+name, map[string]any{"name": name, "directory": filepath.Base(filepath.Clean(root))}))
+		}
+	}
+	if description == "" || utf8.RuneCountInString(description) > 1024 {
+		errs = append(errs, issue(errorInvalidField, "Agent Skills description must be 1-1024 characters and state what the skill does and when to use it", "SKILL.md", "write focused discovery metadata with trigger conditions", map[string]any{"field": "description"}))
+	}
+	if compatibility := strings.TrimSpace(stringField(data, "compatibility")); utf8.RuneCountInString(compatibility) > 500 {
+		errs = append(errs, issue(errorInvalidField, "Agent Skills compatibility must be at most 500 characters", "SKILL.md", "shorten compatibility metadata", map[string]any{"field": "compatibility"}))
+	}
+	if metadata, ok := data["metadata"].(map[string]any); ok {
+		for key, value := range metadata {
+			if _, ok := value.(string); !ok {
+				errs = append(errs, issue("AGENT_SKILL_METADATA_VALUE", "Agent Skills metadata values must be strings", "SKILL.md", "quote metadata value "+key, map[string]any{"field": "metadata." + key}))
+			}
+		}
+	}
+	if license := strings.TrimSpace(stringField(data, "license")); license != "" && !strings.ContainsAny(license, " \t") && !fileExists(filepath.Join(root, filepath.Clean(license))) {
+		warns = append(warns, issue("AGENT_SKILL_LICENSE_REFERENCE", "Agent Skills license reference does not resolve inside the package", "SKILL.md", "bundle the referenced license file or use a license identifier", map[string]any{"license": license}))
+	}
+	lineCount := 1 + strings.Count(body, "\n")
+	if lineCount > 500 {
+		current := issue("AGENT_SKILL_BODY_BUDGET", "Agent Skills SKILL.md exceeds the 500-line progressive-disclosure budget", "SKILL.md", "move detailed material into focused references", map[string]any{"lines": lineCount, "limit": 500})
+		if strict {
+			errs = append(errs, current)
+		} else {
+			warns = append(warns, current)
+		}
+	}
+	for _, match := range agentSkillReferencePattern.FindAllStringSubmatch(body, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		rel := filepath.ToSlash(filepath.Join(match[1], strings.TrimRight(match[2], ".,;:")))
+		if strings.Count(rel, "/") > 2 {
+			warns = append(warns, issue("AGENT_SKILL_DEEP_REFERENCE", "Agent Skills references should stay one resource hop from SKILL.md", rel, "route directly to a focused resource", nil))
+		}
+		if !fileExists(filepath.Join(root, filepath.FromSlash(rel))) {
+			errs = append(errs, issue(errorNotFound, "Agent Skills referenced resource is missing: "+rel, rel, "add the resource or remove the stale reference", nil))
+		}
+	}
+	errs = append(errs, skillDoctorForbiddenPaths(root, true)...)
+	errs = append(errs, skillDoctorLocalAbsolutePaths(root, true)...)
 	return errs, warns
 }
 
@@ -187,9 +264,9 @@ func skillDoctorRouteCollisions(root string) []Issue {
 
 func v7SkillDoctorScope(packageMode bool) []string {
 	if packageMode {
-		return []string{"SKILL.md", "knowledge/domains/**"}
+		return []string{"SKILL.md", "references/**", "scripts/**", "assets/**"}
 	}
-	return []string{defaultRepoVaultDir + "/SKILL.md", defaultRepoVaultDir + "/knowledge/domains/**", "skill/**"}
+	return []string{defaultRepoVaultDir + "/SKILL.md", defaultRepoVaultDir + "/knowledge/domains/**", "skills/tusker/**"}
 }
 
 func skillV7RouteCmd(args Args) error {

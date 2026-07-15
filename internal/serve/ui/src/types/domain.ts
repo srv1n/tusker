@@ -158,6 +158,15 @@ export interface ProjectSummary {
   /** Highest-severity liveness across this project's active runs. */
   worstLiveness: Liveness | null;
   daemonConnected: boolean;
+  /** Adaptive safety reconciliation; CLI/UI activity resets a project to hot. */
+  reconciliation?: {
+    tier: "" | "live" | "hot" | "warm" | "cool" | "cold";
+    cadenceMs: number;
+    lastActivityAt?: string;
+    lastActivityReason?: string;
+    lastPollAt?: string;
+    nextDueAt?: string;
+  };
 }
 
 export interface ProjectRegistrationResult extends ActionResult {

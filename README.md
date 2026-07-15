@@ -16,7 +16,7 @@ Generated views   = disposable UI surfaces
 
 ## Current source of truth
 
-- Operator skill bundle: `skill/SKILL.md` and `skill/references/**`
+- Operator skill bundle: `skills/tusker/SKILL.md` and `skills/tusker/references/**`
 - Project knowledge skill: `.tusker/SKILL.md`
 - Project canon: `.tusker/knowledge/domains/**`
 - Work contracts: `.tusker/work/**`

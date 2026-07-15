@@ -13,11 +13,11 @@ func TestFreshCloneBaselineHasModuleAndEmbeddedSkillAssets(t *testing.T) {
 	for _, rel := range []string{
 		"go.mod",
 		"go.sum",
-		"skill/SKILL.md",
-		"skill/LICENSE",
-		"skill/references/COMMANDS.md",
-		"skill/references/WORKFLOW.md",
-		"skill/references/ORCHESTRATION.md",
+		"skills/tusker/SKILL.md",
+		"skills/tusker/LICENSE",
+		"skills/tusker/references/COMMANDS.md",
+		"skills/tusker/references/WORKFLOW.md",
+		"skills/tusker/references/ORCHESTRATION.md",
 		".tusker/SKILL.md",
 		".tusker/WORKFLOW.md",
 		".tusker/knowledge/domains/project/CANON.md",
@@ -83,6 +83,13 @@ func TestFreshCloneBaselineCLIRunsHelpAndV7Init(t *testing.T) {
 	if fileExists(filepath.Join(vault, "_config", "docs-map.yaml")) {
 		t.Fatal("V7 init must not create legacy docs-map")
 	}
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Data.AutomationEnabled {
+		t.Fatal("fresh V7 init must keep daemon automation opt-in")
+	}
 }
 
 func TestFreshCloneBaselineIgnoresTaskAttachmentGoSources(t *testing.T) {
@@ -128,7 +135,7 @@ func repoRootForFreshCloneTest(t *testing.T) string {
 		t.Fatal(err)
 	}
 	for {
-		if fileExists(filepath.Join(current, "go.mod")) && fileExists(filepath.Join(current, "skill", "bundle.go")) {
+		if fileExists(filepath.Join(current, "go.mod")) && fileExists(filepath.Join(current, "skills", "tusker", "bundle.go")) {
 			return current
 		}
 		parent := filepath.Dir(current)

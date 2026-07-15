@@ -226,5 +226,7 @@ func atomicReplaceV7DocumentWithOps(filePath, content string, ops v7AtomicWriteO
 	if err := ops.syncDirectory(filepath.Dir(filePath)); err != nil {
 		return fmt.Errorf("sync V7 document parent directory after rename: %w", err)
 	}
+	invalidateCachedNote(filePath)
+	recordCLIVaultMutation(filePath)
 	return nil
 }

@@ -58,12 +58,12 @@ func TestV7CapsuleValidateCommandWarnsAndFailsByBudget(t *testing.T) {
 
 func TestV7CapsuleTemplatesAndGeneratedRecords(t *testing.T) {
 	for _, rel := range []string{
-		"skill/assets/templates/project-skill.md",
-		"skill/assets/templates/domain-index.md",
-		"skill/assets/templates/domain-canon.md",
-		"skill/assets/templates/epic.md",
-		"skill/assets/templates/doc.md",
-		"skill/assets/templates/agent-doc.md",
+		"skills/tusker/assets/templates/project-skill.md",
+		"skills/tusker/assets/templates/domain-index.md",
+		"skills/tusker/assets/templates/domain-canon.md",
+		"skills/tusker/assets/templates/epic.md",
+		"skills/tusker/assets/templates/doc.md",
+		"skills/tusker/assets/templates/agent-doc.md",
 	} {
 		raw, err := readText(filepath.Join("..", "..", rel))
 		if err != nil {

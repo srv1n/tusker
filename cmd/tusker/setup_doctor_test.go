@@ -136,7 +136,7 @@ name: another-skill
 		t.Fatal(err)
 	}
 	assertEqual(t, "canonical", mapString(payload, "skill_source_kind"), "reported skill source kind")
-	assertEqual(t, filepath.Join(canonical, "skill"), mapString(payload, "skill_source"), "reported canonical source")
+	assertEqual(t, filepath.Join(canonical, "skills", "tusker"), mapString(payload, "skill_source"), "reported canonical source")
 }
 
 func TestSkillSyncCopyUsesEmbeddedCanonicalPayloadOutsideCheckout(t *testing.T) {
@@ -319,7 +319,7 @@ func TestSetupDoctorReadOnlyCommandDoesNotChangeRuntimeOrRepoBytes(t *testing.T)
 	repo := t.TempDir()
 	canonical := t.TempDir()
 	writeCanonicalTuskerSkillFixture(t, canonical)
-	installCanonicalSkillLinks(t, repo, filepath.Join(canonical, "skill"))
+	installCanonicalSkillLinks(t, repo, filepath.Join(canonical, "skills", "tusker"))
 	writeValidHandoffFixture(t, repo)
 	vault := filepath.Join(repo, ".tusker")
 	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
@@ -386,7 +386,7 @@ func TestSetupRepairConvergesForWrongRootValidStaleSymlinkAndZip(t *testing.T) {
 	repo := t.TempDir()
 	canonical := t.TempDir()
 	writeCanonicalTuskerSkillFixture(t, canonical)
-	installCanonicalSkillLinks(t, repo, filepath.Join(canonical, "skill"))
+	installCanonicalSkillLinks(t, repo, filepath.Join(canonical, "skills", "tusker"))
 	writeValidHandoffFixture(t, repo)
 	legacy := filepath.Join(repo, "tusker")
 	if err := writeText(workflowPath(legacy), defaultWorkflowMarkdown()); err != nil {
@@ -498,7 +498,7 @@ func findingByCode(report setupDoctorReport, code string) *setupFinding {
 
 func writeCanonicalTuskerSkillFixture(t *testing.T, root string) {
 	t.Helper()
-	writeCanonicalTuskerSkillPackage(t, filepath.Join(root, "skill"))
+	writeCanonicalTuskerSkillPackage(t, filepath.Join(root, "skills", "tusker"))
 }
 
 func writeCanonicalTuskerSkillPackage(t *testing.T, root string) {

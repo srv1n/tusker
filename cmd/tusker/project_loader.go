@@ -9,6 +9,7 @@ import (
 type registeredProjectLoadOptions struct {
 	Notes           bool
 	FrontmatterOnly bool
+	OperationalOnly bool
 	MetadataOnly    bool
 	LoadDisabled    bool
 	ProjectID       string
@@ -72,7 +73,11 @@ func loadRegisteredProjects(store *RuntimeStore, opts registeredProjectLoadOptio
 		loaded.Workflow = wfFile
 		if opts.Notes {
 			var notes []Note
-			if opts.FrontmatterOnly {
+			if opts.OperationalOnly && opts.FrontmatterOnly {
+				notes, err = listOperationalNotesFrontmatter(project.VaultRoot)
+			} else if opts.OperationalOnly {
+				notes, err = listOperationalNotes(project.VaultRoot)
+			} else if opts.FrontmatterOnly {
 				notes, err = listAllNotesFrontmatter(project.VaultRoot)
 			} else {
 				notes, err = listAllNotes(project.VaultRoot)

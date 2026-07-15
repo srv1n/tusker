@@ -99,6 +99,12 @@ Apply only deterministic local repairs, then rerun until the report is stable:
 tusker setup repair --repo . --source /path/to/tusker --json
 ```
 
+Fresh initialization defaults `automation.enabled` to `false`. For status-only
+daily use, keep that value false and register the project with `tusker projects
+add --repo . --vault ./.tusker`; registry enablement lets the daemon observe
+state while the repo automation setting prevents dispatch. Use the explicit
+Serve automation control when the project is ready for unattended work.
+
 The doctor recognizes the canonical Tusker package by its manifest contract,
 not merely by finding a `SKILL.md`. For ChatGPT handoff it validates the
 `rzn.chatgpt_handoff.config/v1` shape, nested `zip.artifacts_dir` and

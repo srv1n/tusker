@@ -1,10 +1,12 @@
 ---
 name: tusker
-description: "Operate Tusker repo-local task contracts, proof, review, human gates, and agent orchestration."
+description: "Operate Tusker repo-local task contracts, proof, review, human gates, waves, and agent orchestration. Use when a repository contains .tusker, the user names a Tusker task, or work must be planned, executed, reviewed, or closed through Tusker."
+license: "LICENSE"
+compatibility: "Requires the tusker CLI and a repository-local Tusker V7 vault."
 metadata:
   wave_authorization_schema: "tusker.wave-authorization/v1"
-  workflow_version: 1
-  tracker_schema_version: 7
+  workflow_version: "1"
+  tracker_schema_version: "7"
 ---
 
 # Tusker Operator Skill
@@ -139,6 +141,8 @@ subjective acceptance.
 ## Hard Rules
 
 - A task is a contract, not a chat log.
+- Use the Tusker CLI for canonical lifecycle, proof, gate, wave, and evidence mutations. Do not hand-edit control fields when a CLI command exists.
+- Successful CLI mutations notify the resident daemon for targeted project reconciliation. Timed reconciliation is an adaptive safety net for raw external edits and recovery, not the primary state-change channel.
 - `active` is never a durable V7 task status.
 - Runtime activity lives in runs, leases, sessions, attempts, and workspaces.
 - Human gates stop the agent. Do not keep validating around them.
@@ -184,6 +188,10 @@ When machine work is complete but a human gate remains, answer with exactly what
 | Proof modes and evidence | `references/RISK_AND_EVIDENCE.md` |
 | Xcode generated build-state failures | `references/XCODE_BUILD_STATE.md` |
 | Obsidian/Bases projections | `references/OBSIDIAN_BASES.md` |
+
+Read only the one row needed for the current request. References are terminal
+operator resources: do not recursively load sibling references unless the
+selected file explicitly identifies one as required for the current operation.
 
 ## Default Agent Loop
 

@@ -6,7 +6,9 @@
 
 | Task | Priority | Next action |
 |---|---|---|
+| [[AGX-T-0009]] | p0 | Execute the task contract and satisfy proof mode. |
 | [[FBK-T-0001]] | p1 | Execute the task contract and satisfy proof mode. |
+| [[PRF-T-0008]] | p0 | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0019]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0020]] | p1 | Execute the task contract and satisfy proof mode. |
 

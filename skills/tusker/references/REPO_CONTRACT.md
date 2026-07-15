@@ -112,7 +112,7 @@ Patch routing:
 
 | Patch target | Correct destination |
 | --- | --- |
-| Generic Tusker/skill behavior | canonical `skill/**` source |
+| Generic Tusker/skill behavior | canonical `skills/tusker/**` source |
 | Repo-specific workflow or domain knowledge | `.tusker/SKILL.md` or `.tusker/knowledge/domains/**` |
 | ChatGPT Project id, model lane, repo handoff quirks | `.chatgpt-handoff.json` or `.chatgpt-handoff/profile.md` |
 | Generated `.agents/skills/**` or `.claude/skills/**` copy | reject or rewrite to source |

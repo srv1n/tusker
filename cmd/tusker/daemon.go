@@ -35,6 +35,8 @@ type Daemon struct {
 	notifyTimers           map[string]*time.Timer
 	notifyWake             chan string
 	attentionLastPoll      map[string]time.Time
+	reconcileMu            sync.Mutex
+	reconcileSchedule      map[string]adaptiveProjectReconcileState
 	processIdentityProbe   func(RunStatus) bool
 	pollProcessIdentity    func(RunStatus) bool
 }
@@ -114,6 +116,9 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 				}
 				d.scheduleProjectReconcile(req.ProjectID)
 				return daemonControlResponse{OK: true}
+			case "reconcile_registry":
+				d.scheduleProjectReconcile("*")
+				return daemonControlResponse{OK: true}
 			default:
 				return daemonControlResponse{OK: false, Message: "unknown control command"}
 			}
@@ -142,7 +147,11 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 	if err := d.runPoll(runCtx, ""); err != nil {
 		return err
 	}
-	pollTimer := time.NewTimer(d.nextPollInterval())
+	_, initialWait, err := d.adaptiveProjectsDue(time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	pollTimer := time.NewTimer(initialWait)
 	defer pollTimer.Stop()
 	var attentionC <-chan time.Time
 	var attentionTicker *time.Ticker
@@ -156,21 +165,54 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 		case <-runCtx.Done():
 			return nil
 		case projectID := <-d.notifyWake:
+			if projectID == "*" {
+				if err := d.runPoll(runCtx, ""); err != nil {
+					return err
+				}
+				_, wait, err := d.adaptiveProjectsDue(time.Now().UTC())
+				if err != nil {
+					return err
+				}
+				resetTimer(pollTimer, wait)
+				continue
+			}
+			d.noteProjectActivity(projectID, "cli_mutation", time.Now().UTC())
 			if err := d.runPoll(runCtx, projectID); err != nil {
 				return err
 			}
-		case <-pollTimer.C:
-			if err := d.runPoll(runCtx, ""); err != nil {
+			_, wait, err := d.adaptiveProjectsDue(time.Now().UTC())
+			if err != nil {
 				return err
 			}
-			pollTimer.Reset(d.nextPollInterval())
+			resetTimer(pollTimer, wait)
+		case <-pollTimer.C:
+			due, _, err := d.adaptiveProjectsDue(time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			for _, projectID := range due {
+				if err := d.runPoll(runCtx, projectID); err != nil {
+					return err
+				}
+			}
+			_, wait, err := d.adaptiveProjectsDue(time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			resetTimer(pollTimer, wait)
 		case now := <-attentionC:
 			for _, attendedProjectID := range d.attentionProjectsDue(now) {
+				d.noteProjectActivity(attendedProjectID, "serve_attention", now)
 				if err := d.runPoll(runCtx, attendedProjectID); err != nil {
 					return err
 				}
 				d.attentionLastPoll[attendedProjectID] = now
 			}
+			_, wait, err := d.adaptiveProjectsDue(time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			resetTimer(pollTimer, wait)
 		}
 	}
 }
@@ -211,7 +253,13 @@ func (d *Daemon) runPoll(ctx context.Context, projectID string) error {
 	}
 	var typed *TuskerError
 	if errors.As(err, &typed) && typed.Code == "CAS_CONFLICT" {
+		_ = d.recordPollSchedule(projectID, time.Now().UTC())
 		return nil
+	}
+	if err == nil {
+		if scheduleErr := d.recordPollSchedule(projectID, time.Now().UTC()); scheduleErr != nil {
+			return scheduleErr
+		}
 	}
 	return err
 }
@@ -236,7 +284,7 @@ func (d *Daemon) startWatchdog(ctx context.Context) func() {
 			case <-watchdogCtx.Done():
 				return
 			case <-ticker.C:
-				d.checkWatchdogOrExit(time.Now().UTC(), d.nextPollInterval())
+				d.checkWatchdogOrExit(time.Now().UTC(), d.adaptiveWatchdogCadence())
 			}
 		}
 	}()
@@ -506,6 +554,9 @@ func (d *Daemon) scheduleProjectReconcile(projectID string) {
 	if projectID == "" {
 		return
 	}
+	if projectID != "*" {
+		d.noteProjectActivity(projectID, "control_notification", time.Now().UTC())
+	}
 	d.notifyMu.Lock()
 	defer d.notifyMu.Unlock()
 	if d.notifyTimers == nil {
@@ -554,7 +605,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 	if err := d.feedWatchdogBeat(time.Now().UTC()); err != nil {
 		return err
 	}
-	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{Notes: true, FrontmatterOnly: true, ProjectID: projectID})
+	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{Notes: true, FrontmatterOnly: true, OperationalOnly: true, ProjectID: projectID})
 	if err != nil {
 		return err
 	}
@@ -588,7 +639,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			if !requiresBodies {
 				continue
 			}
-			notes, err := listAllNotes(loaded.Project.VaultRoot)
+			notes, err := listOperationalNotes(loaded.Project.VaultRoot)
 			if err != nil {
 				return err
 			}
@@ -602,7 +653,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		// Dispatch proof, gates, and dependency checks read task contract bodies.
 		// Promote only projects with live task work to the shared full-body cache;
 		// subsequent ticks remain zero-read warm hits.
-		notes, err := listAllNotes(loaded.Project.VaultRoot)
+		notes, err := listOperationalNotes(loaded.Project.VaultRoot)
 		if err != nil {
 			return err
 		}

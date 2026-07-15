@@ -259,8 +259,8 @@ Do not create a separate global Tusker onboarding skill. Add a Tusker operator
 reference:
 
 ```text
-skill/references/REPO_ONBOARDING.md
-skill/assets/templates/onboard-prompt.md
+skills/tusker/references/REPO_ONBOARDING.md
+skills/tusker/assets/templates/onboard-prompt.md
 ```
 
 The installed operator skill is the source of truth. The external prompt is a

@@ -156,7 +156,7 @@ func waveSkillCompatible(vaultPath string) bool {
 		return false
 	}
 	repoRoot := v7RepoRoot(vaultPath)
-	for _, path := range []string{filepath.Join(repoRoot, ".agents", "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, ".claude", "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, "skill", "SKILL.md")} {
+	for _, path := range []string{filepath.Join(repoRoot, ".agents", "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, ".claude", "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, "skill", "SKILL.md")} {
 		data, _, readErr := parseFrontmatterMustRead(path)
 		metadata := mapField(data, "metadata")
 		if readErr == nil && stringField(metadata, "wave_authorization_schema") == waveAuthorizationSchema && intField(metadata, "workflow_version") == 1 && intField(metadata, "tracker_schema_version") == 7 {

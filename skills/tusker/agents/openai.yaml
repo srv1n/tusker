@@ -1,0 +1,3 @@
+name: tusker
+description: Use Tusker V7 task contracts, proof, objective review, human gates, waves, and CLI-first orchestration when a repository contains .tusker or the user names Tusker work.
+entrypoint: SKILL.md

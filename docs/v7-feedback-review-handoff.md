@@ -14,7 +14,7 @@ strategy problems raised in the previous static review.
 |---|---|---|
 | P0-1 build completeness | Added fresh-clone baseline tests for module files, embedded skill assets, CLI help, and V7 init | `cmd/tusker/fresh_clone_baseline_test.go` |
 | P0-2/P0-3 legacy docs leakage and mixed bootstrap | Default init/bootstrap is V7-only; legacy bootstrap is explicit; top-level docs help redirects to legacy; public/site publication narrowed to V7-safe docs | `cmd/tusker/commands_create.go`, `cmd/tusker/install.go`, `cmd/tusker/cli.go`, `docs/publication.yaml`, `README.md` |
-| P0-4 finish lifecycle | Added `tusker finish`; `attempt handoff` now requests review unless explicitly bypassed | `cmd/tusker/commands_v7.go`, `skill/SKILL.md`, `skill/references/WORKFLOW.md`, `tusker/docs/agents/use-tusker.md` |
+| P0-4 finish lifecycle | Added `tusker finish`; `attempt handoff` now requests review unless explicitly bypassed | `cmd/tusker/commands_v7.go`, `skills/tusker/SKILL.md`, `skills/tusker/references/WORKFLOW.md`, `tusker/docs/agents/use-tusker.md` |
 | P0-5 close bypass | `close` now requires task status `review` unless forced; smoke flow updated | `cmd/tusker/v7_control_cmd.go`, `cmd/tusker/v7_smoke_test.go` |
 | P0-6 guardrails | Broadened guardrails for finish contract, top-level help, bootstrap leakage, and active shipped surfaces | `cmd/tusker/v7_guardrail_test.go` |
 | P1-1 gate evidence | Blocking gate satisfaction requires durable evidence unless forced; gate records satisfaction evidence fields | `cmd/tusker/v7_control_cmd.go`, `internal/v7schema/schema.go` |
@@ -23,7 +23,7 @@ strategy problems raised in the previous static review.
 | P1-4 proposal apply consistency | Proposal apply now writes `applying_*` transaction metadata before target mutation and records applied metadata afterward | `cmd/tusker/v7_proposal_cmd.go`, `internal/v7schema/schema.go` |
 | P1-5 source-of-truth clarification | V7 spec now defines `source_of_truth` as repo-local canonical inputs, not old publication freshness | `tusker/docs/spec/tusker-v7-repo-local-work-tracker-spec.md` |
 | P1-6 evidence acceptance | Review-heavy evidence kinds default to pending review; accepted manual/video/security/release/human/perf evidence requires human/reviewer acceptance | `cmd/tusker/v7_evidence_attempt_cmd.go`, `cmd/tusker/v7_validation.go` |
-| P2 dashboards/tests | Dashboards get generated headers; skill now includes acceptance-linked proof, test class selection, and retry/output discipline | `cmd/tusker/v7_state_runtime.go`, `skill/references/RISK_AND_EVIDENCE.md` |
+| P2 dashboards/tests | Dashboards get generated headers; skill now includes acceptance-linked proof, test class selection, and retry/output discipline | `cmd/tusker/v7_state_runtime.go`, `skills/tusker/references/RISK_AND_EVIDENCE.md` |
 
 ## Legacy quarantine
 

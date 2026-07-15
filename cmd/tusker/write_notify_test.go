@@ -43,6 +43,44 @@ func TestWriteNotifyCLIUsesRepoIdentityAndCompletesSocketWrite(t *testing.T) {
 	}
 }
 
+func TestWriteNotifyUsesRegisteredRuntimeIdentityInsteadOfConfigIdentity(t *testing.T) {
+	stateRoot, err := os.MkdirTemp("/tmp", "tusker-notify-registered-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(stateRoot) })
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	vault := pickupV7TestVault(t)
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registeredID := "01REGISTEREDULID"
+	if err := store.UpsertProject(RegisteredProject{ProjectID: registeredID, ProjectKey: "app", Name: "app", RepoRoot: filepath.Dir(vault), VaultRoot: vault, WorkflowPath: workflowPath(vault), Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+	received := make(chan daemonControlRequest, 1)
+	server, err := startDaemonControlServer(stateRoot, func(_ context.Context, req daemonControlRequest) daemonControlResponse {
+		received <- req
+		return daemonControlResponse{OK: true}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	notifyDaemonForVaultPath(vault)
+	select {
+	case req := <-received:
+		if req.ProjectID != registeredID {
+			t.Fatalf("notification used %q, want registered identity %q", req.ProjectID, registeredID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("registered identity notification was not delivered")
+	}
+}
+
 func TestWriteNotifyDaemonDownIsBoundedAndIgnored(t *testing.T) {
 	stateRoot := t.TempDir()
 	started := time.Now()

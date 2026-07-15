@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	skillbundle "tusker/skill"
+	skillbundle "tusker/skills/tusker"
 )
 
 const (
@@ -368,13 +368,17 @@ func canonicalSkillSourceDir(sourceArg string) (string, error) {
 			return "", err
 		}
 		if fileExists(filepath.Join(source, "SKILL.md")) {
+			if resolved, resolveErr := filepath.EvalSymlinks(source); resolveErr == nil {
+				source = resolved
+			}
 			return source, nil
 		}
-		nested := filepath.Join(source, "skill")
-		if fileExists(filepath.Join(nested, "SKILL.md")) {
-			return nested, nil
+		for _, nested := range []string{filepath.Join(source, "skills", "tusker"), filepath.Join(source, "skill")} {
+			if fileExists(filepath.Join(nested, "SKILL.md")) {
+				return nested, nil
+			}
 		}
-		return "", tuskerError(errorNotFound, "canonical Tusker skill source is missing: "+source, withHint("pass --source <tusker-checkout> or --source <tusker-checkout>/skill"))
+		return "", tuskerError(errorNotFound, "canonical Tusker skill source is missing: "+source, withHint("pass --source <tusker-checkout> or --source <tusker-checkout>/skills/tusker"))
 	}
 	repoRoot, err := findRepoRoot(mustGetwd())
 	if err != nil {
@@ -383,7 +387,7 @@ func canonicalSkillSourceDir(sourceArg string) (string, error) {
 	if repoRoot == "" {
 		return "", tuskerError(errorNotFound, "cannot symlink Tusker skill without a source checkout", withHint("Use --source <tusker-checkout>, set TUSKER_SKILL_SOURCE, or use --skill-mode copy for portable installs from a release binary."))
 	}
-	source := filepath.Join(repoRoot, "skill")
+	source := filepath.Join(repoRoot, "skills", "tusker")
 	if !fileExists(filepath.Join(source, "SKILL.md")) {
 		return "", tuskerError(errorNotFound, "canonical Tusker skill source is missing: "+source)
 	}
@@ -448,7 +452,7 @@ func skillSyncCmd(args Args) error {
 		mode = skillInstallModeLink
 	}
 	sourceArg := firstNonEmpty(args.String("source"), os.Getenv("TUSKER_SKILL_SOURCE"))
-	source := skillSourceReport{Kind: "embedded", Path: "embedded://tusker/skill"}
+	source := skillSourceReport{Kind: "embedded", Path: "embedded://tusker/skills/tusker"}
 	if mode != skillInstallModeCopy || strings.TrimSpace(sourceArg) != "" {
 		source = classifySkillSyncSource(sourceArg, "")
 	}
@@ -729,7 +733,7 @@ func findRepoRoot(start string) (string, error) {
 		return "", err
 	}
 	for {
-		if fileExists(filepath.Join(dir, "go.mod")) && fileExists(filepath.Join(dir, "skill", "SKILL.md")) {
+		if fileExists(filepath.Join(dir, "go.mod")) && (fileExists(filepath.Join(dir, "skills", "tusker", "SKILL.md")) || fileExists(filepath.Join(dir, "skill", "SKILL.md"))) {
 			return dir, nil
 		}
 		parent := filepath.Dir(dir)

@@ -361,7 +361,7 @@ func improveSummaryEvidenceFromFile(sourceName, path string) []improveEvidence {
 
 func collectImproveInventory(repoRoot, vaultPath string) improveInventory {
 	inventory := improveInventory{}
-	for _, rel := range []string{".tusker/SKILL.md", "skill/SKILL.md"} {
+	for _, rel := range []string{".tusker/SKILL.md", "skills/tusker/SKILL.md"} {
 		if fileExists(filepath.Join(repoRoot, filepath.FromSlash(rel))) {
 			inventory.Skills = append(inventory.Skills, rel)
 		}

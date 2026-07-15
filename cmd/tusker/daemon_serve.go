@@ -50,6 +50,7 @@ func (d *Daemon) startServe(_ context.Context) (*daemonServeServer, error) {
 	d.stream = stream
 	server := newServeServer(target.project.VaultRoot, target.project.RepoRoot, actualAddr, d.store, dist)
 	server.stream = stream
+	server.reconcileStatus = d.adaptiveReconcileStatus
 	d.serve = server
 	go server.warmRegisteredProjectSnapshots()
 	httpServer := &http.Server{Addr: actualAddr, Handler: server, ReadHeaderTimeout: 5 * time.Second}

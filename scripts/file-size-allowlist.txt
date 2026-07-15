@@ -1,7 +1,7 @@
 # Code file size allowlist (advisory check: scripts/check-file-size.sh).
 #
 # Files listed here are known to exceed the ~1,000-line guideline
-# (skill/references/ENGINEERING_DISCIPLINE.md, Operating Posture;
+# (skills/tusker/references/ENGINEERING_DISCIPLINE.md, Operating Posture;
 # docs/ai-contribution-policy.md, Code file size). They are grandfathered so the
 # advisory check does not flag them on every run.
 #

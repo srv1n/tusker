@@ -28,3 +28,8 @@ tasks, `running` counts live dispatching leases, and `failed_recent` counts
 terminal failed runs within the configured retry policy. The endpoint keeps a
 one-second warm projection, so repeated badge refreshes do not perform a full
 vault scan for every request.
+
+`GET /api/projects` also includes a `reconciliation` object per project with
+the effective adaptive `tier`, `cadenceMs`, `lastActivityAt`,
+`lastActivityReason`, `lastPollAt`, and `nextDueAt`. CLI/UI activity resets only
+the affected project to `hot`; live runtime work uses the `live` safety tier.

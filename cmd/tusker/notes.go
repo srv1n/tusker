@@ -12,11 +12,12 @@ import (
 	"sync"
 	"time"
 
-	skillbundle "tusker/skill"
+	skillbundle "tusker/skills/tusker"
 )
 
 type noteLoadOptions struct {
 	FrontmatterOnly bool
+	OperationalOnly bool
 }
 
 type noteFileVersion struct {
@@ -55,6 +56,14 @@ func listAllNotes(vaultPath string) ([]Note, error) {
 
 func listAllNotesFrontmatter(vaultPath string) ([]Note, error) {
 	return listAllNotesWithOptions(vaultPath, noteLoadOptions{FrontmatterOnly: true})
+}
+
+func listOperationalNotes(vaultPath string) ([]Note, error) {
+	return listAllNotesWithOptions(vaultPath, noteLoadOptions{OperationalOnly: true})
+}
+
+func listOperationalNotesFrontmatter(vaultPath string) ([]Note, error) {
+	return listAllNotesWithOptions(vaultPath, noteLoadOptions{FrontmatterOnly: true, OperationalOnly: true})
 }
 
 func listAllNotesWithOptions(vaultPath string, opts noteLoadOptions) ([]Note, error) {
@@ -106,7 +115,7 @@ func invalidateCachedNote(filePath string) {
 }
 
 func (cache *vaultNoteCache) list(vaultPath string, opts noteLoadOptions) ([]Note, error) {
-	paths, err := walkNoteFiles(vaultPath)
+	paths, err := walkNoteFilesForOptions(vaultPath, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -209,11 +218,29 @@ func (cache *vaultNoteCache) list(vaultPath string, opts noteLoadOptions) ([]Not
 		notes[current.index] = cloneNoteForLoad(entry.note, opts.FrontmatterOnly)
 	}
 	for path := range cache.entries {
-		if _, ok := seen[path]; !ok {
+		if _, ok := seen[path]; !ok && notePathInLoadScope(vaultPath, path, opts) {
 			delete(cache.entries, path)
 		}
 	}
 	return notes, nil
+}
+
+func walkNoteFilesForOptions(vaultPath string, opts noteLoadOptions) ([]string, error) {
+	if !opts.OperationalOnly {
+		return walkNoteFiles(vaultPath)
+	}
+	workRoot := filepath.Join(vaultPath, "work")
+	if !dirExists(workRoot) {
+		return []string{}, nil
+	}
+	return walkNoteFilesFromRoot(vaultPath, workRoot)
+}
+
+func notePathInLoadScope(vaultPath, path string, opts noteLoadOptions) bool {
+	if !opts.OperationalOnly {
+		return true
+	}
+	return isWithinPath(path, filepath.Join(vaultPath, "work"))
 }
 
 func readNoteTextForCache(filePath string) (string, error) {
@@ -268,8 +295,12 @@ func cloneNoteValue(value any) any {
 }
 
 func walkNoteFiles(vaultPath string) ([]string, error) {
+	return walkNoteFilesFromRoot(vaultPath, vaultPath)
+}
+
+func walkNoteFilesFromRoot(vaultPath, scanRoot string) ([]string, error) {
 	var files []string
-	if err := walkDirUnsorted(vaultPath, func(current string, entry fs.DirEntry) error {
+	if err := walkDirUnsorted(scanRoot, func(current string, entry fs.DirEntry) error {
 		rel, err := filepath.Rel(vaultPath, current)
 		if err != nil {
 			return err

@@ -18,8 +18,8 @@ source_of_truth:
   - ".tusker/WORKFLOW.md"
   - "tusker.yaml"
 created_at: "2026-06-04 00:00:00 +0000 UTC"
-updated_at: "2026-07-14T15:45:24Z"
-state_rev: "sha256:7f205dbf3c917f14cf53b070a6338bea2529bdf579b76ad3dc38b8fe31097a10"
+updated_at: "2026-07-15T05:51:05Z"
+state_rev: "sha256:29bd955b68e1dfdb803af55b469b3486f9f7ce3cf0b70216db126168da722e86"
 ---
 
 # Project Canon
@@ -57,6 +57,11 @@ state_rev: "sha256:7f205dbf3c917f14cf53b070a6338bea2529bdf579b76ad3dc38b8fe31097
 - Merge landing is wave-scoped: `tusker wave create` cuts `integration/W-####`, wave task worktrees branch from that integration branch as `task/<TASK-ID>`, `tusker land` serializes batch merges through a gated staging worktree, and completed waves land to the configured default branch as one merge commit.
 - Terminal task state is monotone under merge and reconcile. A task in `done`, `cancelled`, or `superseded` may leave terminal state only through an explicit Tusker control operation that mints a fresh `state_rev`; stale branch content or stale object-rev repair must fail with a CAS conflict instead of certifying a non-terminal rewind.
 - Project registration quarantine is a loader property: entry points that scan registered projects use the shared loader, which records failed enabled registrations as `health: error` with `last_error` and continues loading unrelated healthy projects.
+- Canonical CLI writes are the primary state-change channel and notify the resident daemon through one common post-write boundary using the registered runtime project identity. Notifications debounce and reconcile one project; project-registry mutations trigger one explicit registry refresh. Timed reconciliation is only a bounded correctness/recovery fallback.
+- Reconciliation cadence is independent per enabled project and resets on CLI mutation, Serve attention, or manual refresh: live runtime work stays at the 5-second safety floor, actively viewed projects use 20-second attention, then idle projects back off through 60 seconds, 5 minutes, 10 minutes, and 30 minutes. Daemon restart begins hot. The scheduler wakes at the nearest due time instead of scanning every project on a global tick.
+- Daemon project polls load only operational records under `.tusker/work/**`. The shared mtime/size cache makes unchanged due polls stat-only with zero Markdown reads or YAML parses; full-vault knowledge/document loading remains exclusive to surfaces that require it.
+- Project registration and dispatch authorization are separate. A registered enabled project may be observed with `automation.enabled: false`; fresh V7 initialization defaults automation off.
+- The canonical reusable Agent Skills package lives at `skills/tusker/`, with `skill` retained only as a compatibility symlink for existing source-linked installs. Its `SKILL.md` obeys Agent Skills identity/metadata budgets and directly routes one-hop resources; `.tusker/SKILL.md` remains a separate project-knowledge router.
 - `tusker setup doctor` is the read-only onboarding diagnostic for registered vault/workflow drift, binary and generated-skill provenance, and offline ChatGPT handoff configuration. `setup repair` changes only deterministic local state, is idempotent, and never invents project routing, credentials, or browser workflow updates.
 - `tusker delivery rollout doctor|repair` aggregates that same setup doctor once across registered projects, diagnoses the managed daemon once globally, and quarantines incompatible registrations without stopping compatible siblings. Repair is idempotent and allowlisted to generated Tusker skills, supported workflow/runner policy, objective close defaults, registration metadata, and the managed service; it never rewrites project knowledge, task contracts, secrets, repo instructions, handoff routing, or unrelated configuration.
 - Repository validation is serialized across linked worktrees by one validation gate. Makefile Go build, vet, and test phases default to two Go scheduler threads and one package/test lane; the `cmd/tusker` TestMain also acquires the gate so raw focused tests cannot overlap a broad shared-state suite. Helper test re-execs inherit the held lease.

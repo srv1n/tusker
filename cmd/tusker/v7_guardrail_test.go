@@ -158,7 +158,7 @@ func TestV7GuardrailVerificationTablePassRowsAreStructuredProof(t *testing.T) {
 func TestV7GuardrailSkillPackageEnforcesHardStopCloseoutContract(t *testing.T) {
 	repo := repoRootForFreshCloneTest(t)
 	required := map[string][]string{
-		"skill/SKILL.md": {
+		"skills/tusker/SKILL.md": {
 			"Hard Stop Rule",
 			"tusker closeout status <TASK-ID> --json",
 			"tusker proof status <TASK-ID>",
@@ -170,7 +170,7 @@ func TestV7GuardrailSkillPackageEnforcesHardStopCloseoutContract(t *testing.T) {
 			"installed Tusker operator skill owns tracker mechanics",
 			"repo `.tusker/SKILL.md` owns project knowledge routing",
 		},
-		"skill/references/CLOSEOUT_PROTOCOL.md": {
+		"skills/tusker/references/CLOSEOUT_PROTOCOL.md": {
 			"Gap ownership",
 			"Validation cache rule",
 			"Loop guard",
@@ -178,12 +178,12 @@ func TestV7GuardrailSkillPackageEnforcesHardStopCloseoutContract(t *testing.T) {
 			"machine_complete_waiting_for_human",
 			"Final human-wait response",
 		},
-		"skill/references/WORKFLOW.md": {
+		"skills/tusker/references/WORKFLOW.md": {
 			"idea -> backlog -> ready -> review -> done",
 			"`claimed`, `running`, `leased`, and `interrupted` are runtime states",
 			"Human-only review becomes `readiness: waiting_on_human`",
 		},
-		"skill/references/SCHEMA.md": {
+		"skills/tusker/references/SCHEMA.md": {
 			"status: review",
 			"readiness: waiting_on_human",
 			"next_owner: human:sarav",

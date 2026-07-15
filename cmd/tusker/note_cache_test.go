@@ -219,3 +219,38 @@ func TestReconcileUsesOneIndexForCleanVault(t *testing.T) {
 		t.Fatalf("reconcile index loads=%d, want initial load plus at most one post-mutation reload", loads.Load())
 	}
 }
+
+func TestOperationalNoteLoadSkipsProjectKnowledgeAndStaysWarm(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "vault")
+	if err := bootstrapV7Profile(vault, "v7"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"), "---\nschema: tusker.task/v7\nkind: task\nid: APP-T-0001\n---\n"); err != nil {
+		t.Fatal(err)
+	}
+	knowledgePath := filepath.Join(vault, "knowledge", "domains", "project", "runbooks", "large.md")
+	if err := writeText(knowledgePath, "---\nschema: tusker.knowledge/v7\nkind: runbook\nid: project/runbooks/large\n---\nknowledge\n"); err != nil {
+		t.Fatal(err)
+	}
+	notes, err := listOperationalNotesFrontmatter(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 || stringField(notes[0].Data, "id") != "APP-T-0001" {
+		t.Fatalf("operational scope loaded %#v", notes)
+	}
+
+	var reads, parses atomic.Int64
+	noteCacheReadObserver = func() { reads.Add(1) }
+	noteCacheParseObserver = func() { parses.Add(1) }
+	t.Cleanup(func() {
+		noteCacheReadObserver = nil
+		noteCacheParseObserver = nil
+	})
+	if _, err := listOperationalNotesFrontmatter(vault); err != nil {
+		t.Fatal(err)
+	}
+	if reads.Load() != 0 || parses.Load() != 0 {
+		t.Fatalf("warm operational load reads=%d parses=%d", reads.Load(), parses.Load())
+	}
+}

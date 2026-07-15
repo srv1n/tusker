@@ -70,6 +70,9 @@ func TestDaemonStalePidGuardIsReclaimed(t *testing.T) {
 	if pidFile.PID != os.Getpid() {
 		t.Fatalf("expected pidfile to be reclaimed by current process, got %#v", pidFile)
 	}
+	if pidFile.ServeEnabled || pidFile.ServeAddr != "" {
+		t.Fatalf("guard must not advertise Serve before the listener binds: %#v", pidFile)
+	}
 }
 
 func TestRuntimeStoreSqliteBusyRetrySurvivesHeldWriteLock(t *testing.T) {
