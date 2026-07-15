@@ -1,7 +1,0 @@
-# Agent Feedback
-
-- context: Planner session authored 8 task contracts for the Mac shell epic; 6 were flagged VERIFICATION_PROOF_MISSING and SRV-T-0023 blocked at dispatch despite verification rows naming real commands.
-- friction: The verification 'exactness' rule is an undocumented heuristic (v7_validation.go v7VerificationCheckLooksExact): marker strings command:/proof:/manual proof OR a hardcoded tool-prefix allowlist. The allowlist is stale against the repo's own stack (no bun, no swift, and compound 'cd x && ...' commands never match). The rule is not stated in the operator skill, the create-time placeholder does not model a passing row, and the error message names the failure but not the accepted grammar.
-- product-idea: 1) Treat command:/manual proof: markers as the canonical documented grammar and ship them in the new-task placeholder row so fill-in preserves validity. 2) Drop or demote the tool-prefix heuristic (it rots; bun/swift already missing). 3) Error/hint text should include one passing example row (error message as agent prompt). 4) Document the grammar in the operator skill COMMANDS.md and in the validate hint. 5) Optional: tusker validate --task <ID> for author-time row-level linting.
-- impact: Every contract-authoring agent (frontier or junior) hits this blind: rule only discoverable by reading Go source or failing at dispatch. Costs a full author-fix-revalidate round trip per task batch and blocks downstream runners.
-- related: SRV-T-0023, MAC epic wave-1, cmd/tusker/v7_validation.go, cmd/tusker/commands_v7.go:3191

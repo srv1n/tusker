@@ -6,8 +6,6 @@
 
 | Task | Priority | Next action |
 |---|---|---|
-| [[FBK-T-0001]] | p1 | Execute the task contract and satisfy proof mode. |
-| [[SRV-T-0019]] | p1 | Execute the task contract and satisfy proof mode. |
-| [[SRV-T-0020]] | p1 | Execute the task contract and satisfy proof mode. |
+
 
 <!-- tusker:generated:end -->
