@@ -1,0 +1,13 @@
+{
+  "schema": "tusker.lease/v1",
+  "id": "SRV-T-0032",
+  "project": "tusker",
+  "task": "SRV-T-0032",
+  "owner": "codex-root",
+  "workspace": "",
+  "branch": "main",
+  "status": "released",
+  "claimed_at": "2026-07-14T05:11:10Z",
+  "expires_at": "2026-07-14T07:27:10Z",
+  "heartbeat_at": "2026-07-14T05:27:10Z"
+}

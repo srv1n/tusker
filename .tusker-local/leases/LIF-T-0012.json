@@ -1,0 +1,13 @@
+{
+  "schema": "tusker.lease/v1",
+  "id": "LIF-T-0012",
+  "project": "tusker",
+  "task": "LIF-T-0012",
+  "owner": "codex:sarav",
+  "workspace": "",
+  "branch": "main",
+  "status": "released",
+  "claimed_at": "2026-07-14T05:07:59Z",
+  "expires_at": "2026-07-14T07:23:51Z",
+  "heartbeat_at": "2026-07-14T05:23:51Z"
+}
