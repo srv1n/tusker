@@ -13,14 +13,11 @@
 | [[LIF-T-0013]] |  | high | Review evidence and close or return to rework. |
 | [[MAC-T-0002]] |  | low | Wait for dependency MAC-T-0001 to reach review with satisfied proof or done. |
 | [[MAC-T-0006]] |  | low | Review evidence and close or return to rework. |
-| [[MAC-T-0010]] |  | medium | Review evidence and close or return to rework. |
 | [[OPS-T-0010]] |  | high | Review evidence and close or return to rework. |
 | [[OPS-T-0011]] |  | high | Review evidence and close or return to rework. |
 | [[PRF-T-0002]] |  | low | Review evidence and close or return to rework. |
-| [[PRF-T-0003]] |  | medium | Review evidence and close or return to rework. |
 | [[PRF-T-0004]] |  | medium | Review evidence and close or return to rework. |
 | [[PRF-T-0005]] |  | low | Review evidence and close or return to rework. |
-| [[PRF-T-0008]] |  | high | Review evidence and close or return to rework. |
 | [[RUN-T-0002]] | W-0001 | medium | Review evidence and close or return to rework. |
 | [[RUN-T-0045]] |  | medium | Review evidence and close or return to rework. |
 | [[RUN-T-0046]] |  | medium | Review evidence and close or return to rework. |

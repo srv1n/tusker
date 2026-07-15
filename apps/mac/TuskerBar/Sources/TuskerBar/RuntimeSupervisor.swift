@@ -29,6 +29,16 @@ enum RuntimeLaunchPlan {
         }
     }
 
+    static func shouldStart(from state: ManagedRuntimeState, force: Bool) -> Bool {
+        if force { return true }
+        switch state {
+        case .running, .checking, .starting, .failed:
+            return false
+        case .idle, .external:
+            return true
+        }
+    }
+
     static func manages(_ baseURL: URL) -> Bool {
         guard baseURL.scheme?.lowercased() == "http" else { return false }
         let host = baseURL.host?.lowercased()
@@ -53,6 +63,18 @@ enum RuntimeLaunchPlan {
         return (preferred + inheritedParts).reduce(into: [String]()) { result, item in
             if !item.isEmpty && !result.contains(item) { result.append(item) }
         }.joined(separator: ":")
+    }
+
+    static func daemonEnvironment(inheriting environment: [String: String]) -> [String: String] {
+        var environment = environment
+        // TuskerBar is the independent resident-daemon supervisor. Developer
+        // launches via `open` can inherit the invoking Codex/Claude shell's
+        // identity, which would make the bundled runtime reject a legitimate
+        // app-owned launch as a nested agent launch.
+        for key in ["TUSKER_ATTEMPT_ID", "CODEX_SHELL", "CODEX_THREAD_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"] {
+            environment.removeValue(forKey: key)
+        }
+        return environment
     }
 }
 
@@ -146,7 +168,10 @@ final class RuntimeSupervisor {
             state = .external
             return
         }
-        if !force, state == .running || state == .checking || state == .starting { return }
+        // A failed launch is terminal until the user explicitly retries. Visible
+        // shells continue probing health, but must not turn their probe failures
+        // and runtime-state notifications into an unthrottled relaunch loop.
+        guard RuntimeLaunchPlan.shouldStart(from: state, force: force) else { return }
         startupTask?.cancel()
         if force {
             monitorTask?.cancel()
@@ -231,7 +256,7 @@ final class RuntimeSupervisor {
         let process = Process()
         process.executableURL = executable
         process.arguments = ["daemon", "run"]
-        var environment = ProcessInfo.processInfo.environment
+        var environment = RuntimeLaunchPlan.daemonEnvironment(inheriting: ProcessInfo.processInfo.environment)
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         environment["HOME"] = home
         environment["PATH"] = RuntimeLaunchPlan.path(home: home, inherited: environment["PATH"])

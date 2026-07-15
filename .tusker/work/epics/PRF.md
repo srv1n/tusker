@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-11T08:10:04Z"
-updated_at: "2026-07-15T06:03:19Z"
-state_rev: "sha256:6c8536e6ad39b104a84744275a7a9fad136e175111d64880bf49ed75276da837"
+updated_at: "2026-07-15T10:38:08Z"
+state_rev: "sha256:c03e88fdb43daff6ea294763bb270d71a99cf33d5376dc8a7687bec24d3d164c"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -49,10 +49,8 @@ TBD.
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
 | [[PRF-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
-| [[PRF-T-0003]] | review | reviewer | Review evidence and close or return to rework. |
 | [[PRF-T-0004]] | review | reviewer | Review evidence and close or return to rework. |
 | [[PRF-T-0005]] | review | reviewer | Review evidence and close or return to rework. |
-| [[PRF-T-0008]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 
@@ -61,5 +59,7 @@ TBD.
 | Task | Accepted by | Closed at |
 |---|---|---|
 | [[PRF-T-0001]] | reviewer:independent | 2026-07-15T06:03:19Z |
+| [[PRF-T-0003]] | reviewer:codex | 2026-07-15T10:38:07Z |
 | [[PRF-T-0006]] | reviewer:independent | 2026-07-15T06:03:19Z |
 | [[PRF-T-0007]] | reviewer:independent | 2026-07-15T06:03:19Z |
+| [[PRF-T-0008]] | reviewer:codex | 2026-07-15T10:38:08Z |

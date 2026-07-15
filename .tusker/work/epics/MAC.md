@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-10T13:18:03Z"
-updated_at: "2026-07-15T06:14:26Z"
-state_rev: "sha256:20f83b1c7629859924cc591f8585a3b1a8a348de5e85a8b326d5e805980acf02"
+updated_at: "2026-07-15T10:38:07Z"
+state_rev: "sha256:b41f54aa9ef9b7e85fbf1d3c4c9ed77622e7487fe166ae60623d7565b43bf626"
 ---
 
 # MAC · Tusker Mac menu bar shell
@@ -54,7 +54,6 @@ TBD.
 | [[MAC-T-0005]] | backlog | human:sarav | Accept, waive, or return rework for MAC-G-0006. |
 | [[MAC-T-0006]] | review | reviewer | Review evidence and close or return to rework. |
 | [[MAC-T-0008]] | ready | human:sarav | Accept, waive, or return rework for MAC-G-0007. |
-| [[MAC-T-0010]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 
@@ -64,3 +63,4 @@ TBD.
 |---|---|---|
 | [[MAC-T-0007]] | reviewer:codex | 2026-07-12T01:00:28Z |
 | [[MAC-T-0009]] | reviewer:codex | 2026-07-15T06:12:05Z |
+| [[MAC-T-0010]] | reviewer:codex | 2026-07-15T10:38:07Z |

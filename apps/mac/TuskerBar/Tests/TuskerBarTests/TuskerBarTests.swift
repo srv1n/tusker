@@ -73,6 +73,29 @@ final class TuskerBarTests: XCTestCase {
         XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .failed("boom")), .ignore)
     }
 
+    func testRuntimeLaunchPlanRequiresExplicitRetryAfterFailure() {
+        XCTAssertTrue(RuntimeLaunchPlan.shouldStart(from: .idle, force: false))
+        XCTAssertTrue(RuntimeLaunchPlan.shouldStart(from: .external, force: false))
+        XCTAssertFalse(RuntimeLaunchPlan.shouldStart(from: .checking, force: false))
+        XCTAssertFalse(RuntimeLaunchPlan.shouldStart(from: .starting, force: false))
+        XCTAssertFalse(RuntimeLaunchPlan.shouldStart(from: .running, force: false))
+        XCTAssertFalse(RuntimeLaunchPlan.shouldStart(from: .failed("exit 1"), force: false))
+        XCTAssertTrue(RuntimeLaunchPlan.shouldStart(from: .failed("exit 1"), force: true))
+    }
+
+    func testBundledDaemonDoesNotInheritAgentSessionIdentity() {
+        let environment = RuntimeLaunchPlan.daemonEnvironment(inheriting: [
+            "PATH": "/usr/bin",
+            "TUSKER_ATTEMPT_ID": "attempt-1",
+            "CODEX_SHELL": "1",
+            "CODEX_THREAD_ID": "thread-1",
+            "CLAUDECODE": "1",
+            "CLAUDE_CODE_ENTRYPOINT": "cli",
+        ])
+
+        XCTAssertEqual(environment, ["PATH": "/usr/bin"])
+    }
+
     func testRuntimeProbeSequenceRejectsLateHealthCallbacks() {
         var sequence = RuntimeProbeSequence()
         let stale = sequence.begin()
