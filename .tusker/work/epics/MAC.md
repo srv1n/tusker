@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-10T13:18:03Z"
-updated_at: "2026-07-14T05:38:48Z"
-state_rev: "sha256:30ab1b8e6dd9c82ad2093dc1282418fdf4d19eaf1b949ad90b8464e9ba2fee20"
+updated_at: "2026-07-15T06:12:05Z"
+state_rev: "sha256:281d0d4401730656c3fb40a153e655e1a9a27d893828591916e983ba6fb7ffd3"
 ---
 
 # MAC · Tusker Mac menu bar shell
@@ -62,3 +62,4 @@ TBD.
 | Task | Accepted by | Closed at |
 |---|---|---|
 | [[MAC-T-0007]] | reviewer:codex | 2026-07-12T01:00:28Z |
+| [[MAC-T-0009]] | reviewer:codex | 2026-07-15T06:12:05Z |

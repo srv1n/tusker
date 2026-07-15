@@ -334,11 +334,20 @@ func (m eventLogSequenceMetadata) matches(snapshot eventLogFileSnapshot) bool {
 }
 
 func (m eventLogSequenceMetadata) matchesIdentity(snapshot eventLogFileSnapshot) bool {
-	return m.Device == snapshot.Device && m.Inode == snapshot.Inode
+	return persistedEventLogIdentityMatches(m.Inode, snapshot)
 }
 
 func (m eventLogSequenceMetadata) matchesLockIdentity(snapshot eventLogFileSnapshot) bool {
-	return (m.LockDevice == 0 && m.LockInode == 0) || (m.LockDevice == snapshot.Device && m.LockInode == snapshot.Inode)
+	return (m.LockDevice == 0 && m.LockInode == 0) || persistedEventLogIdentityMatches(m.LockInode, snapshot)
+}
+
+// Device numbers are mount-session identifiers, not durable file identities.
+// In particular, macOS can renumber an APFS volume across reboot while keeping
+// every inode stable. Sequence metadata persists across those sessions, so its
+// identity check must use the durable inode. Same-process path verification
+// still compares both device and inode through eventLogFileSnapshot.matchesIdentity.
+func persistedEventLogIdentityMatches(inode uint64, snapshot eventLogFileSnapshot) bool {
+	return inode != 0 && inode == snapshot.Inode
 }
 
 func (m eventLogSequenceMetadata) hasValidChecksum() bool {

@@ -495,6 +495,49 @@ func TestEventLogAppendFailsClosedWhenEstablishedLockIsDeletedOrReplaced(t *test
 	}
 }
 
+func TestEventLogMetadataAcceptsDeviceRenumberingWithStableInodes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	log := NewEventLog(path)
+	if err := log.Append("one", "attempt-1", RunnerCodexExec, nil); err != nil {
+		t.Fatal(err)
+	}
+	metadata, established, err := readEventLogSequenceMetadata(path)
+	if err != nil || !established {
+		t.Fatalf("read established sequence metadata: established=%v err=%v", established, err)
+	}
+	metadata.Device++
+	metadata.LockDevice++
+	if err := writeEventLogSequenceMetadata(path, metadata, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := log.Append("two", "attempt-1", RunnerCodexExec, nil); err != nil {
+		t.Fatalf("append after filesystem device renumbering: %v", err)
+	}
+	refreshed, established, err := readEventLogSequenceMetadata(path)
+	if err != nil || !established {
+		t.Fatalf("read refreshed sequence metadata: established=%v err=%v", established, err)
+	}
+	eventSnapshot, err := snapshotEventLogPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockSnapshot, err := snapshotEventLogPath(path + ".lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.Device != eventSnapshot.Device || refreshed.LockDevice != lockSnapshot.Device {
+		t.Fatalf("append did not refresh mount-session device numbers: metadata=%#v event=%#v lock=%#v", refreshed, eventSnapshot, lockSnapshot)
+	}
+
+	if refreshed.matchesIdentity(eventLogFileSnapshot{Device: eventSnapshot.Device, Inode: eventSnapshot.Inode + 1}) {
+		t.Fatal("event-log replacement with a different inode was accepted")
+	}
+	if refreshed.matchesLockIdentity(eventLogFileSnapshot{Device: lockSnapshot.Device, Inode: lockSnapshot.Inode + 1}) {
+		t.Fatal("lock-file replacement with a different inode was accepted")
+	}
+}
+
 func TestEventLogAppendRefusesPathReplacementBeforeMetadataPublication(t *testing.T) {
 	tests := map[string]struct {
 		replacePath func(string) string
