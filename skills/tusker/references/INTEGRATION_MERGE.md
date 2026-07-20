@@ -107,6 +107,14 @@ run, verify in this order and refuse early with a named cause:
 4. Feature/scheme profile matches the canonical gate profile exactly.
 5. Working tree frozen (committed), so the result is attributable to one revision.
 
+`tusker gate-run` mechanizes this section: it evaluates those five in order,
+refuses with a named `cause` and `remedy` before spending a cycle, runs the
+project's configured harvest commands in one pass, and returns the complete
+defect list (command, target, first actionable diagnostic) for a single repair
+batch. Configure it under `orchestration.gate` in `.tusker/WORKFLOW.md`; see
+`references/COMMANDS.md`. Running gates by hand is still allowed, but then the
+five checks and the harvest flag are yours to remember.
+
 ### Cadence
 
 | Tier | Trigger | Scope | Mode |

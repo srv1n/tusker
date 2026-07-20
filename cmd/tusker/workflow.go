@@ -94,6 +94,33 @@ type OrchestrationPolicy struct {
 	SharedNamespaces      []string               `yaml:"shared_namespaces,omitempty" json:"shared_namespaces,omitempty"`
 	NamespaceLints        []NamespaceLintPattern `yaml:"namespace_lints,omitempty" json:"namespace_lints,omitempty"`
 	BatchGate             BatchGatePolicy        `yaml:"batch_gate,omitempty" json:"batch_gate"`
+	Gate                  GateTierPolicy         `yaml:"gate,omitempty" json:"gate"`
+}
+
+// GateTierPolicy is the project's declared gate contract. Tusker owns the proof
+// economics (harvest, preflight, defect harvesting); the project owns every
+// toolchain-specific detail here, so no per-language runner logic lives in the
+// binary.
+type GateTierPolicy struct {
+	// Profile is the canonical gate profile. A run requesting a different one
+	// is refused rather than silently discarding the warm build.
+	Profile string `yaml:"profile,omitempty" json:"profile,omitempty"`
+	// HarvestCommands must be the runner's no-fail-fast form, e.g.
+	// "cargo nextest run --no-fail-fast" or "go test ./...". Defaults to the
+	// batch gate's commands.
+	HarvestCommands []string `yaml:"harvest_commands,omitempty" json:"harvest_commands,omitempty"`
+	// MinFreeDiskGB is the project's measured peak build footprint.
+	MinFreeDiskGB float64 `yaml:"min_free_disk_gb,omitempty" json:"min_free_disk_gb,omitempty"`
+	// BuildSlotLocks are paths whose presence means another stream owns the
+	// host's build slot.
+	BuildSlotLocks []string `yaml:"build_slot_locks,omitempty" json:"build_slot_locks,omitempty"`
+	// AllowDirtyTree opts out of the frozen-tree precondition.
+	AllowDirtyTree bool `yaml:"allow_dirty_tree,omitempty" json:"allow_dirty_tree,omitempty"`
+	// DefectTargetRegex has one capture group naming the failing target, e.g.
+	// `^--- FAIL: (\S+)` for Go or `^test (\S+) \.\.\. FAILED` for Rust.
+	DefectTargetRegex string `yaml:"defect_target_regex,omitempty" json:"defect_target_regex,omitempty"`
+	// DefectLineLimit caps each defect excerpt. Defaults to 12 lines.
+	DefectLineLimit int `yaml:"defect_line_limit,omitempty" json:"defect_line_limit,omitempty"`
 }
 
 type NamespaceLintPattern struct {

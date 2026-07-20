@@ -1,12 +1,9 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -76,11 +73,7 @@ func (d *Daemon) executeBatchGate(project RegisteredProject, policy BatchGatePol
 	failures := 0
 	for _, command := range policy.Commands {
 		started := time.Now()
-		cmd := exec.CommandContext(context.Background(), "/bin/sh", "-lc", command)
-		cmd.Dir = project.RepoRoot
-		var output bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &output, &output
-		err := cmd.Run()
+		output, err := runGateCommand(project.RepoRoot, command)
 		if err == nil {
 			treeHash, hashErr := workspaceTreeStateHash(project.RepoRoot)
 			if hashErr == nil {
@@ -89,7 +82,7 @@ func (d *Daemon) executeBatchGate(project RegisteredProject, policy BatchGatePol
 			continue
 		}
 		failures++
-		excerpt := actionableGateFailure(output.String(), err)
+		excerpt := actionableGateFailure(output, err)
 		if run.FirstFailure == "" {
 			run.FirstFailure = excerpt
 		}

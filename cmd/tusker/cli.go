@@ -713,6 +713,10 @@ func runInner(command string, args Args) (int, error) {
 		return 0, runsInspectCmd(args)
 	case "streams":
 		return 0, streamsCmd(args)
+	// gate-run is deliberately not "gate run": "gate" is the human-gate
+	// namespace and must keep its own subcommand parsing.
+	case "gate-run":
+		return gateRunCmd(args)
 	case "gate-ledger check", "gate-ledger record":
 		return 0, gateLedgerCmd(args, strings.TrimPrefix(command, "gate-ledger "))
 	case "runs claim":
@@ -948,6 +952,7 @@ Commands:
   projects            register repositories for daemon pickup
   runs                inspect, tail, interrupt, release, and retire daemon runs
   streams             show the generated live/landed orchestration lane board
+  gate-run            run gate-tier proof in harvest mode behind preflight refusal
   gate-ledger         check or record tree-keyed gate results
   serve               serve the read-only localhost control room
   refresh             run one daemon poll tick

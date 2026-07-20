@@ -105,6 +105,7 @@ The marker must be in the **Check** column, not Notes. Freshly created tasks (`t
 
 ```bash
 tusker streams --json
+tusker gate-run --profile canonical
 tusker gate-ledger check --command "make test" --profile canonical
 tusker gate-ledger record --command "make test" --profile canonical --duration-ms 42000
 tusker runs submit <TASK-ID> --owner <lease-owner> --deliverable "<summary>" --verification "<summary>" --gate-verdicts 'A1=pass,A2=pass'
@@ -114,6 +115,17 @@ tusker packet <INTEGRATOR-TASK> --for integrator
 The runner harness captures branch, HEAD, worktree, and dirty state from the
 workspace; `--branch` and `--sha` are treated only as reported values and any
 contradiction is retained as a discrepancy.
+
+`tusker gate-run` executes the project's configured harvest commands in one
+pass — never fail-fast — behind the preflight order in
+`references/INTEGRATION_MERGE.md`: gate-ledger hit, disk headroom, build slot,
+profile parity, frozen tree. It emits `tusker.gate-tier/v1` JSON. A refusal
+carries `refusal.cause` and `refusal.remedy` and costs no compile cycle; a red
+gate carries `defects[]` with `command`, `target`, and the first actionable
+diagnostic excerpt, ready to repair as one batch. Every green command is
+recorded to the gate ledger so the next invocation on the same tree state
+short-circuits. Add `--command "<one command>"` to override the configured set,
+`--workspace <dir>` to gate a worktree other than the registered repo root.
 
 Repository policy lives in `.tusker/WORKFLOW.md` frontmatter. Every key is
 optional; absent namespace patterns preserve prior validation behavior:
@@ -134,7 +146,21 @@ orchestration:
     feature_profile: canonical
     commands: ["make test"]
     max_repairs: 3
+  gate:
+    profile: canonical
+    harvest_commands: ["cargo nextest run --no-fail-fast"]
+    min_free_disk_gb: 25
+    build_slot_locks: [".cargo-build.lock"]
+    defect_target_regex: "^--- FAIL: (\\S+)"
+    defect_line_limit: 12
 ```
+
+`orchestration.gate` is the whole gate contract. `harvest_commands` must be the
+runner's no-fail-fast form and defaults to `batch_gate.commands`;
+`defect_target_regex` needs exactly one capture group naming the failing target
+(omit it and the command is the target); `allow_dirty_tree: true` opts out of
+the frozen-tree precondition. Tusker carries no per-language runner knowledge —
+if a toolchain needs a different flag, it changes here, not in the binary.
 
 ## Human Stop
 
