@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-20T03:38:53Z"
-updated_at: "2026-07-20T07:05:22Z"
-state_rev: "sha256:e2aa695eb0842231f9f758c70aa874189ff8635d31013e45e41c59a6fbfad83a"
+updated_at: "2026-07-20T14:31:06Z"
+state_rev: "sha256:61e17e34836536e85bb7264fe567759a303e4f08f69afd2ceb1b0ad564155ed0"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -67,6 +67,9 @@ report-less overnight lane, eight redundant workspace gates).
 | [[ORC-T-0007]] | review | reviewer | Review evidence and close or return to rework. |
 | [[ORC-T-0008]] | review | reviewer | Review evidence and close or return to rework. |
 | [[ORC-T-0009]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[ORC-T-0010]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[ORC-T-0011]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[ORC-T-0012]] | ready | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 
