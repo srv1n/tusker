@@ -84,7 +84,31 @@ type Workflow struct {
 		AfterWorkspaceCreate  []string `yaml:"after_workspace_create"`
 		BeforeWorkspaceRemove []string `yaml:"before_workspace_remove"`
 	} `yaml:"hooks"`
-	Fanout FanoutPolicy `yaml:"fanout"`
+	Fanout        FanoutPolicy        `yaml:"fanout"`
+	Orchestration OrchestrationPolicy `yaml:"orchestration,omitempty"`
+}
+
+type OrchestrationPolicy struct {
+	DefaultBranch         string                 `yaml:"default_branch,omitempty" json:"default_branch,omitempty"`
+	BranchAgeWarningHours int                    `yaml:"branch_age_warning_hours,omitempty" json:"branch_age_warning_hours"`
+	SharedNamespaces      []string               `yaml:"shared_namespaces,omitempty" json:"shared_namespaces,omitempty"`
+	NamespaceLints        []NamespaceLintPattern `yaml:"namespace_lints,omitempty" json:"namespace_lints,omitempty"`
+	BatchGate             BatchGatePolicy        `yaml:"batch_gate,omitempty" json:"batch_gate"`
+}
+
+type NamespaceLintPattern struct {
+	Name                 string `yaml:"name" json:"name"`
+	Glob                 string `yaml:"glob" json:"glob"`
+	CaptureRegex         string `yaml:"capture_regex" json:"capture_regex"`
+	NamingRecommendation string `yaml:"naming_recommendation,omitempty" json:"naming_recommendation,omitempty"`
+}
+
+type BatchGatePolicy struct {
+	Enabled        bool     `yaml:"enabled" json:"enabled"`
+	PeriodHours    int      `yaml:"period_hours,omitempty" json:"period_hours"`
+	Commands       []string `yaml:"commands,omitempty" json:"commands,omitempty"`
+	FeatureProfile string   `yaml:"feature_profile,omitempty" json:"feature_profile,omitempty"`
+	MaxRepairs     int      `yaml:"max_repairs,omitempty" json:"max_repairs"`
 }
 
 type RunnerDefinition struct {
@@ -196,6 +220,9 @@ func defaultWorkflow() Workflow {
 	wf.Fanout.MaxChildren = 0
 	wf.Fanout.AllowedChildTypes = []string{}
 	wf.Fanout.MergeRule = "manual_review"
+	wf.Orchestration.BranchAgeWarningHours = 48
+	wf.Orchestration.BatchGate.PeriodHours = 24
+	wf.Orchestration.BatchGate.MaxRepairs = 3
 	normalizeWorkflowDispatchStates(&wf)
 	return wf
 }

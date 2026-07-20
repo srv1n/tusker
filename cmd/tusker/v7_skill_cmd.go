@@ -95,6 +95,7 @@ func skillDoctorIssues(root string, packageMode, strict bool) ([]Issue, []Issue)
 	errs = append(errs, skillDoctorForbiddenPaths(root, packageMode)...)
 	errs = append(errs, skillDoctorLocalAbsolutePaths(root, packageMode)...)
 	if !packageMode {
+		errs = append(errs, validateCollisionProneNamespaces(root)...)
 		repoRoot := v7RepoRoot(root)
 		if fileExists(filepath.Join(repoRoot, "go.mod")) || fileExists(filepath.Join(repoRoot, "skill")) {
 			for _, rel := range []string{"skills/tusker/SKILL.md", "skills/tusker/README.md", "skills/tusker/references/COMMANDS.md", "skills/tusker/references/WORKFLOW.md"} {

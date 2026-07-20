@@ -847,10 +847,14 @@ func TestClaudeLiveRunnerCompletesFixtureThroughReviewLane(t *testing.T) {
 	project := registerAutomationTestProject(t, vault)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Claude fixture", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	if _, err := upsertV7Verification(vault, "APP-T-0001", v7VerificationRow{CoverText: "A1", Check: "command: true", Result: "pass", Notes: "fixture proof"}, "agent:test"); err != nil {
+		t.Fatal(err)
+	}
+	initializeOrchestrationGitRepo(t, filepath.Dir(vault))
 
 	scriptPath := filepath.Join(filepath.Dir(vault), "fake-claude.py")
 	script := `#!/usr/bin/env python3
-import json, os, pathlib, sys
+import json, os, pathlib, subprocess, sys
 def promote_note_to_review():
     path = pathlib.Path(os.environ["TUSKER_NOTE_PATH"])
     text = path.read_text()
@@ -866,6 +870,14 @@ for line in sys.stdin:
         lane=os.environ["TUSKER_RUN_LANE"]
         assert os.path.isdir(os.environ["TUSKER_WORKSPACE"]), os.environ["TUSKER_WORKSPACE"]
         if lane=="execute":
+            workspace=os.environ["TUSKER_WORKSPACE"]
+            subprocess.run(["git","init","-b","main"],cwd=workspace,check=True,stdout=subprocess.DEVNULL)
+            subprocess.run(["git","config","user.email","test@example.com"],cwd=workspace,check=True)
+            subprocess.run(["git","config","user.name","Tusker Test"],cwd=workspace,check=True)
+            pathlib.Path(workspace,".gitignore").write_text(".tusker/workspace.json\n")
+            subprocess.run(["git","rm","--cached","--ignore-unmatch",".tusker/workspace.json"],cwd=workspace,check=True,stdout=subprocess.DEVNULL)
+            subprocess.run(["git","add","-A"],cwd=workspace,check=True)
+            subprocess.run(["git","commit","-m","fixture end state"],cwd=workspace,check=True,stdout=subprocess.DEVNULL)
             promote_note_to_review()
         elif lane=="review":
             assert 'status: "review"' in pathlib.Path(os.environ["TUSKER_NOTE_PATH"]).read_text()
@@ -918,6 +930,9 @@ for line in sys.stdin:
 		t.Fatal(err)
 	}
 	executeRun = finishDaemonRunForTest(t, daemon, project, wfFile, executeRun)
+	if executeRun.LeaseState != string(LeaseStateReleased) {
+		t.Fatalf("execute completion was not released: state=%s error=%s", executeRun.LeaseState, executeRun.LastError)
+	}
 	assertEqual(t, string(LeaseStateReleased), executeRun.LeaseState, "execute lease")
 	assertEqual(t, string(AttemptOutcomeSucceeded), executeRun.AttemptOutcome, "execute outcome")
 	updatedNote, err := resolveNote(vault, "APP-T-0001")
@@ -931,6 +946,9 @@ for line in sys.stdin:
 		t.Fatal(err)
 	}
 	reviewRun = finishDaemonRunForTest(t, daemon, project, wfFile, reviewRun)
+	if reviewRun.AttemptOutcome != string(AttemptOutcomeSucceeded) {
+		t.Fatalf("review completion failed: state=%s outcome=%s error=%s", reviewRun.LeaseState, reviewRun.AttemptOutcome, reviewRun.LastError)
+	}
 	assertEqual(t, runLaneReview, reviewRun.Lane, "review lane")
 	assertEqual(t, string(LeaseStateReleased), reviewRun.LeaseState, "review lease")
 	assertEqual(t, string(AttemptOutcomeSucceeded), reviewRun.AttemptOutcome, "review outcome")

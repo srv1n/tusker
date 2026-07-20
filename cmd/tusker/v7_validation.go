@@ -96,6 +96,9 @@ func validateV7FrontmatterSize(note Note, ctx validationContext, where string, w
 
 func validateV7Task(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
 	data := note.Data
+	if workKind := strings.TrimSpace(stringField(data, "work_kind")); workKind != "" && workKind != "implementation" && workKind != "integrator" {
+		*errors = append(*errors, issue(errorInvalidField, "task work_kind must be implementation or integrator", where, "use work_kind: integrator only for the typed merge lane", map[string]any{"work_kind": workKind}))
+	}
 	id := stringField(data, "id")
 	policy := v7ValidationPolicyFor(ctx.VaultPath)
 	for _, field := range []string{"schema", "kind", "id", "project", "title", "status", "risk", "priority"} {
@@ -806,11 +809,11 @@ func v7GateBodyHasExactVerificationProof(body string) bool {
 // v7VerificationGrammarHint states the accepted Verification "Check" grammar.
 // It is surfaced verbatim in validate warnings and the dispatch blocker so an
 // authoring agent can fix a row without reading this source.
-const v7VerificationGrammarHint = `each Verification "Check" cell must start with "command: <exact shell command>" or "manual proof: <exact steps a human runs>", e.g. command: go test ./cmd/tusker -run TestFoo -count=1`
+const v7VerificationGrammarHint = `each Verification "Check" cell must start with "command: <exact shell command>", "manual proof: <exact steps a human runs>", or "ledger: <gate-ledger-id>", e.g. command: go test ./cmd/tusker -run TestFoo -count=1`
 
 // v7VerificationMarkers are the canonical exactness markers, longest-first so
 // "manual proof:" is matched before the generic "proof:".
-var v7VerificationMarkers = []string{"command:", "manual proof:", "manual proof", "proof:"}
+var v7VerificationMarkers = []string{"command:", "manual proof:", "manual proof", "ledger:", "proof:"}
 
 // v7VerificationLegacyPrefixes keep pre-grammar bare-command rows valid. The
 // grammar markers above are canonical; prefer "command: <cmd>" for new rows and

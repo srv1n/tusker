@@ -152,6 +152,14 @@ subjective acceptance.
 - Explainer packets help humans understand and participate; they do not satisfy proof by themselves.
 - Raw logs do not belong in task markdown.
 - Tags are generated projections; typed frontmatter is source of truth.
+- Work spanning more than one lane, worktree, or branch follows
+  `references/INTEGRATION_MERGE.md`: lanes claim before work, shared scarce
+  resources (migration numbers, lockfiles, generated files) belong to a single
+  integrator, and full-suite gates run as unattended batch, never inside a lane.
+- Gate-tier proof runs in harvest mode (no fail-fast) behind cheap preflight
+  checks, and never repeats on an unchanged tree. Serial
+  fix-recompile-rediscover loops are a defect in slow-compile ecosystems, not
+  diligence.
 
 
 ## Hard Stop Rule
@@ -183,6 +191,7 @@ When machine work is complete but a human gate remains, answer with exactly what
 | Repo skill/source policy | `references/REPO_CONTRACT.md` |
 | Lifecycle and statuses | `references/WORKFLOW.md` |
 | Automation, runners, browser workers, fanout | `references/ORCHESTRATION.md` |
+| Multi-lane work, merges, integrator role, slow-compile proof tiers | `references/INTEGRATION_MERGE.md` |
 | Existing repo setup/onboarding | `references/REPO_ONBOARDING.md` |
 | Human gates and closeout | `references/CLOSEOUT_PROTOCOL.md` |
 | Proof modes and evidence | `references/RISK_AND_EVIDENCE.md` |

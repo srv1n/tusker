@@ -75,6 +75,10 @@ func main() {
 		}
 		if *completeStatus != "" {
 			if *completeStatus == "review" {
+				if err := ensureGitEndState(); err != nil {
+					fmt.Fprintf(os.Stderr, "fake-runner git end state failed: %v\n", err)
+					os.Exit(15)
+				}
 				if err := recordTaskProof(*tuskerBin); err != nil {
 					fmt.Fprintf(os.Stderr, "fake-runner proof transition failed: %v\n", err)
 					os.Exit(16)
@@ -91,6 +95,39 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown fake-runner mode %q\n", *mode)
 		os.Exit(64)
 	}
+}
+
+func ensureGitEndState() error {
+	workspace := os.Getenv("TUSKER_WORKSPACE")
+	if workspace == "" {
+		return fmt.Errorf("missing TUSKER_WORKSPACE")
+	}
+	run := func(args ...string) error {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = workspace
+		cmd.Env = os.Environ()
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, out)
+		}
+		return nil
+	}
+	if err := run("rev-parse", "--verify", "HEAD"); err == nil {
+		return nil
+	}
+	if err := run("init", "-b", "main"); err != nil {
+		return err
+	}
+	if err := run("config", "user.email", "crash@example.com"); err != nil {
+		return err
+	}
+	if err := run("config", "user.name", "Crash Recovery"); err != nil {
+		return err
+	}
+	if err := run("add", "-A"); err != nil {
+		return err
+	}
+	return run("commit", "--allow-empty", "-m", "fixture end state")
 }
 
 func runDeliveryFixture(tuskerBin string) error {

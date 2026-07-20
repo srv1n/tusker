@@ -29,6 +29,24 @@ func packetV7Cmd(args Args) error {
 		return tuskerError(errorNotFound, "V7 task not found: "+id)
 	}
 	audience := fallback(args.String("for"), "agent")
+	if audience == "integrator" {
+		if stringField(task.Data, "work_kind") != "integrator" {
+			return tuskerError(errorInvalidArg, id+": integrator packet requires work_kind: integrator")
+		}
+		content := integratorPacket(vaultPath, task, idx)
+		if args.Bool("write") {
+			path := filepath.Join(vaultPath, "_generated", "packets", id+".integrator.md")
+			if err := writeText(path, content); err != nil {
+				return err
+			}
+			if !args.Bool("quiet") {
+				fmt.Println(path)
+			}
+			return nil
+		}
+		fmt.Print(content)
+		return nil
+	}
 	if audience == "agent" && !args.Bool("force") {
 		if reasons := v7TaskDispatchBlockers(vaultPath, task); len(reasons) > 0 {
 			return tuskerError(

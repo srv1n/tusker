@@ -90,7 +90,7 @@ func (s *RuntimeStore) FindRun(identity string) (*RunStatus, error) {
 }
 
 func (s *RuntimeStore) ListAttemptsForRun(projectID, recordID string) ([]RunAttempt, error) {
-	rows, err := s.query(`SELECT attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, outcome, exit_code, turns_used, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
+	rows, err := s.query(`SELECT attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, end_state_json, process_pid, outcome, exit_code, turns_used, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
 		FROM attempts
 		WHERE project_id = ? AND record_id = ?
 		ORDER BY started_at DESC, attempt_id DESC`, projectID, recordID)
@@ -101,8 +101,11 @@ func (s *RuntimeStore) ListAttemptsForRun(projectID, recordID string) ([]RunAtte
 	var out []RunAttempt
 	for rows.Next() {
 		var attempt RunAttempt
-		if err := rows.Scan(&attempt.AttemptID, &attempt.ProjectID, &attempt.RecordID, &attempt.ItemID, &attempt.Runner, &attempt.Lane, &attempt.WorkRevision, &attempt.WorkspacePath, &attempt.SessionRef, &attempt.ParentAttemptID, &attempt.ChildType, &attempt.BranchName, &attempt.MergeRule, &attempt.FanoutGroup, &attempt.CloudTaskID, &attempt.CloudStatus, &attempt.CloudEnvironmentID, &attempt.CloudAttemptNumber, &attempt.PullRequestURL, &attempt.ApplyRef, &attempt.LogsSummary, &attempt.FinalSummary, &attempt.ProcessPID, &attempt.Outcome, &attempt.ExitCode, &attempt.TurnsUsed, &attempt.PromptPath, &attempt.EventSinkPath, &attempt.RawLogPath, &attempt.StatusPath, &attempt.LastError, &attempt.StartedAt, &attempt.FinishedAt); err != nil {
+		if err := rows.Scan(&attempt.AttemptID, &attempt.ProjectID, &attempt.RecordID, &attempt.ItemID, &attempt.Runner, &attempt.Lane, &attempt.WorkRevision, &attempt.WorkspacePath, &attempt.SessionRef, &attempt.ParentAttemptID, &attempt.ChildType, &attempt.BranchName, &attempt.MergeRule, &attempt.FanoutGroup, &attempt.CloudTaskID, &attempt.CloudStatus, &attempt.CloudEnvironmentID, &attempt.CloudAttemptNumber, &attempt.PullRequestURL, &attempt.ApplyRef, &attempt.LogsSummary, &attempt.FinalSummary, &attempt.EndStateJSON, &attempt.ProcessPID, &attempt.Outcome, &attempt.ExitCode, &attempt.TurnsUsed, &attempt.PromptPath, &attempt.EventSinkPath, &attempt.RawLogPath, &attempt.StatusPath, &attempt.LastError, &attempt.StartedAt, &attempt.FinishedAt); err != nil {
 			return nil, err
+		}
+		if attempt.EndStateJSON != "" {
+			_ = json.Unmarshal([]byte(attempt.EndStateJSON), &attempt.EndState)
 		}
 		out = append(out, attempt)
 	}

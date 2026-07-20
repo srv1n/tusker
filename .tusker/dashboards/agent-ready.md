@@ -6,6 +6,6 @@
 
 | Task | Priority | Next action |
 |---|---|---|
-
+| [[ORC-T-0009]] | p1 | Execute the task contract and satisfy proof mode. |
 
 <!-- tusker:generated:end -->

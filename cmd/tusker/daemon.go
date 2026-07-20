@@ -42,8 +42,9 @@ type Daemon struct {
 }
 
 const (
-	runLaneExecute = "execute"
-	runLaneReview  = "review"
+	runLaneExecute    = "execute"
+	runLaneReview     = "review"
+	runLaneIntegrator = "integrator"
 
 	daemonFirstEventDeadline     = 5 * time.Minute
 	daemonHeartbeatDeadThreshold = 120 * time.Second
@@ -714,6 +715,9 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		}
 		projectActiveRuns := countDispatchCapacityProjectRuns(projectRuns)
 		now := time.Now().UTC()
+		if err := d.scheduleBatchGateIfDue(project, wfFile.Data, now); err != nil {
+			return err
+		}
 		skipReviewDispatch := map[string]struct{}{}
 		for recordID, current := range projectRuns {
 			if note, ok := notesByRecordID[recordID]; ok {
@@ -1025,7 +1029,11 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 					return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneExecute}))
 				}
-				updated, persisted, err := d.dispatchRun(ctx, project, wfFile, dispatchNote, current, runLaneExecute)
+				dispatchLane := runLaneExecute
+				if stringField(dispatchNote.Data, "work_kind") == "integrator" {
+					dispatchLane = runLaneIntegrator
+				}
+				updated, persisted, err := d.dispatchRun(ctx, project, wfFile, dispatchNote, current, dispatchLane)
 				if !persisted {
 					if err != nil {
 						updated = d.scheduleRetry(updated, wfFile.Data, err.Error())
@@ -2050,9 +2058,20 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 
 	if statusPath := runnerStatusPathForRun(run); statusPath != "" && fileExists(statusPath) {
 		run.StatusPath = statusPath
-		status, err := readRunnerProcessStatus(statusPath)
-		if err != nil {
-			return run, changed, err
+		status, statusErr := readRunnerProcessStatus(statusPath)
+		statusFailureReason := ""
+		if statusErr != nil {
+			// A status file is the runner's terminal signal. Current writers publish
+			// it atomically, so a present but malformed file is a failed attempt,
+			// not a daemon-wide startup failure. Contain the bad artifact to this
+			// run and let the normal retry/cap policy decide what happens next.
+			statusFailureReason = fmt.Sprintf("runner status is malformed: %v", statusErr)
+			status = runnerProcessStatus{
+				ExitCode:    1,
+				CompletedAt: time.Now().UTC().Format(time.RFC3339),
+				Outcome:     string(AttemptOutcomeFailed),
+				Reason:      statusFailureReason,
+			}
 		}
 		finished := runnerProcessFinishedAt(status)
 		run.ProcessPID = 0
@@ -2062,6 +2081,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			return run, changed, err
 		}
 		classification := classifyRunnerProcessExit(run, status, note, project.VaultRoot, wfFile.Data.Tracker.ActiveStates)
+		if statusFailureReason != "" {
+			classification.reason = statusFailureReason
+		}
 		if canonicalStatusRetiresRuntimeRows(wfFile.Data, classification.trackerState) {
 			outcome := classification.outcome
 			if status.ExitCode != 0 {
@@ -2218,6 +2240,19 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				}
 			}
 			noteStatus := classification.trackerState
+			endState := RunEndState{}
+			if run.Lane != runLaneReview {
+				verdictJSON, _ := json.Marshal(gateVerdictsFromTask(note))
+				var endStateErr error
+				endState, endStateErr = captureRunEndState(run.WorkspacePath, string(verdictJSON), "", "", time.Now().UTC())
+				if endStateErr != nil {
+					reason := "normalized run submission refused: " + endStateErr.Error()
+					updateRunAttemptFromRun(d.store, run, AttemptOutcomeEarlyExit, 0, reason, finished)
+					run, _ = d.scheduleContinuationRetry(run, wfFile.Data, reason)
+					run.UpdatedAt = finished
+					return run, true, nil
+				}
+			}
 			if err := writeReviewPacketEvidence(project.VaultRoot, note, run, d.store); err != nil {
 				return run, changed, err
 			}
@@ -2232,6 +2267,11 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			run.LastError = ""
 			run.Terminal = false
 			updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, "", finished)
+			if endState.Schema != "" {
+				if err := saveAttemptEndStateForRun(d.store, run, endState); err != nil {
+					return run, changed, err
+				}
+			}
 			if strings.TrimSpace(run.SessionRef) != "" {
 				_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForOutcome(AttemptOutcomeSucceeded), "", "", sessionResumable)
 			}
@@ -3170,6 +3210,13 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	claimRun.Runner = string(runner.Name())
 	claimRun.WorkspacePath = selectedWorkspacePath
 	ownership := newRunOwnershipService(d.store)
+	claimNotes, claimNotesErr := listOperationalNotes(project.VaultRoot)
+	if claimNotesErr != nil {
+		return run, false, claimNotesErr
+	}
+	claimNotesByID, _ := daemonNoteMaps(claimNotes)
+	claimNotesByID = orchestrationOwnedPathNotes(claimNotesByID, wfFile.Data)
+	ownership.withOwnedPathContext(project.VaultRoot, claimNotesByID[stringField(note.Data, "id")], claimNotesByID)
 	ownership.projectConcurrencyLimit = wfFile.Data.Runtime.MaxActiveRunsPerProject
 	claimResult, err := ownership.claimExistingWithAuthorization(claimRun, attemptID, RunAuthorization{
 		Source: "daemon_auto", Actor: "daemon", Trigger: "poll", ProjectAutomationEnabled: project.Enabled,

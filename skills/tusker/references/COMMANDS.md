@@ -82,10 +82,11 @@ Use inline verification for normal code tasks. Use evidence cards/artifacts/audi
 
 ### Verification "Check" grammar
 
-A task cannot go `ready` (and will not dispatch) until every row in its `## Verification` table names an exact proof. A `Check` cell is exact when it starts with one of two markers:
+A task cannot go `ready` (and will not dispatch) until every row in its `## Verification` table names an exact proof. A `Check` cell is exact when it starts with one of three markers:
 
 - `command: <exact shell command>` — anything runnable, tool-agnostic. Compound commands are fine: `command: cd internal/serve/ui && bun test`, `command: swift build -c release`, `command: go test ./cmd/tusker -run TestFoo -count=1`.
 - `manual proof: <exact steps a human runs>` — for outcomes only a human can confirm: `manual proof: launch the bundle and confirm the menu item opens the browser`.
+- `ledger: <gate-ledger-id>` — reuse a passing gate on the exact same tracked tree, command, and feature profile.
 
 Passing vs failing:
 
@@ -93,11 +94,47 @@ Passing vs failing:
 |---|---|---|
 | `command: cd apps/mac && swift build -c release` | ✅ | starts with `command:`, real command |
 | `manual proof: open /panel at 420×640 and confirm no horizontal scroll` | ✅ | starts with `manual proof:`, real steps |
+| `ledger: gate-abc123` | ✅ | cites a tree-keyed passing gate |
 | `bun test` | ✅ | bare command still accepted (legacy), but prefer the `command:` marker |
 | `command: <exact command that proves A1>` | ❌ | unfilled `<...>` placeholder |
 | `TBD` / `Run the tests` | ❌ | no marker, no exact command |
 
 The marker must be in the **Check** column, not Notes. Freshly created tasks (`tusker new task`) ship a placeholder row in this grammar; replace the `<...>` before promoting to `ready`. Run `tusker validate` to lint rows before promotion — the warning and the dispatch blocker both restate this grammar with an example.
+
+## Agent-native orchestration
+
+```bash
+tusker streams --json
+tusker gate-ledger check --command "make test" --profile canonical
+tusker gate-ledger record --command "make test" --profile canonical --duration-ms 42000
+tusker runs submit <TASK-ID> --owner <lease-owner> --deliverable "<summary>" --verification "<summary>" --gate-verdicts 'A1=pass,A2=pass'
+tusker packet <INTEGRATOR-TASK> --for integrator
+```
+
+The runner harness captures branch, HEAD, worktree, and dirty state from the
+workspace; `--branch` and `--sha` are treated only as reported values and any
+contradiction is retained as a discrepancy.
+
+Repository policy lives in `.tusker/WORKFLOW.md` frontmatter. Every key is
+optional; absent namespace patterns preserve prior validation behavior:
+
+```yaml
+orchestration:
+  default_branch: main
+  branch_age_warning_hours: 48
+  shared_namespaces: [migrations, go.sum, generated]
+  namespace_lints:
+    - name: sequential-migrations
+      glob: "**/migrations/*_*.sql"
+      capture_regex: "(\\d{4})_"
+      naming_recommendation: "prefer timestamp-named migrations"
+  batch_gate:
+    enabled: true
+    period_hours: 24
+    feature_profile: canonical
+    commands: ["make test"]
+    max_repairs: 3
+```
 
 ## Human Stop
 

@@ -6,6 +6,20 @@ import (
 	"time"
 )
 
+func TestClaimOwnedPathConflict(t *testing.T) {
+	now := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	candidate := Note{Data: map[string]any{"id": "APP-T-0002", "owned_paths": []string{"migrations/0014_add.sql"}}}
+	notes := map[string]Note{"APP-T-0001": {Data: map[string]any{"id": "APP-T-0001", "owned_paths": []string{"migrations"}}}}
+	runs := []RunStatus{{ItemID: "APP-T-0001", LeaseOwner: "lane-a", LeaseState: string(LeaseStateRunning), LeaseExpiresAt: now.Add(time.Minute).Format(time.RFC3339), StartedAt: now.Add(-time.Minute).Format(time.RFC3339)}}
+	conflict, found := ownedPathConflict(candidate, notes, runs, now)
+	if !found || conflict["task_id"] != "APP-T-0001" || conflict["liveness"] != "fresh" {
+		t.Fatalf("unexpected conflict: %#v, %v", conflict, found)
+	}
+	if _, found := ownedPathConflict(candidate, notes, []RunStatus{{ItemID: "APP-T-0001", LeaseState: string(LeaseStateRunning), LeaseExpiresAt: now.Add(-time.Minute).Format(time.RFC3339)}}, now); found {
+		t.Fatal("expired holder must not block a claim")
+	}
+}
+
 func TestConcurrentRunClaimExactlyOneOwner(t *testing.T) {
 	store, run := ownershipStoreFixture(t, "APP-T-0001")
 	service := newRunOwnershipService(store)

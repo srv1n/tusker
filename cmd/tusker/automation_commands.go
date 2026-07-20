@@ -119,12 +119,21 @@ type automationDispatchPlan struct {
 	WorkspacePath     string                   `json:"workspace_path"`
 	WorkspaceStrategy string                   `json:"workspace_strategy"`
 	Branch            string                   `json:"branch"`
+	BranchAgeHours    *float64                 `json:"branch_age_hours,omitempty"`
+	Ahead             *int                     `json:"ahead,omitempty"`
+	Behind            *int                     `json:"behind,omitempty"`
+	Warnings          []automationPlanWarning  `json:"warnings,omitempty"`
 	Blockers          []string                 `json:"blockers"`
 	RequiredReads     []string                 `json:"required_reads"`
 	ProofRequired     []string                 `json:"proof_required"`
 	RequiredApprovals []string                 `json:"required_approvals"`
 	Fanout            automationFanoutSummary  `json:"fanout"`
 	Project           automationProjectSummary `json:"project"`
+}
+
+type automationPlanWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 type automationQueueReport struct {
@@ -512,6 +521,10 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 		run.Lane = firstNonEmpty(run.Lane, runLaneExecute)
 	}
 	lane := firstNonEmpty(run.Lane, runLaneExecute)
+	if stringField(note.Data, "work_kind") == "integrator" && lane != runLaneReview {
+		lane = runLaneIntegrator
+		run.Lane = lane
+	}
 	notesByID := ctx.NotesByID
 	notesByRecordID := ctx.NotesByRecordID
 	projectionBlocker := ""
@@ -711,7 +724,7 @@ func automationPlanFromExplanation(vaultPath string, note Note, explanation auto
 	if !explanation.Dispatchable {
 		decision = "do_not_dispatch"
 	}
-	return automationDispatchPlan{
+	plan := automationDispatchPlan{
 		Schema:            automationPlanSchema,
 		Task:              explanation.ID,
 		RecordID:          explanation.RecordID,
@@ -735,7 +748,25 @@ func automationPlanFromExplanation(vaultPath string, note Note, explanation auto
 		Fanout:            explanation.Fanout,
 		Project:           explanation.Project,
 	}
+	wf, _ := loadWorkflow(vaultPath)
+	if facts, err := captureGitBranchFacts(explanation.WorkspacePath, wf.Data.Orchestration.DefaultBranch, time.Now().UTC()); err == nil {
+		plan.Branch = facts.Branch
+		plan.BranchAgeHours = float64Pointer(facts.BranchAgeHours)
+		plan.Ahead = intPointer(facts.Ahead)
+		plan.Behind = intPointer(facts.Behind)
+		threshold := wf.Data.Orchestration.BranchAgeWarningHours
+		if threshold <= 0 {
+			threshold = 48
+		}
+		if facts.BranchAgeHours > float64(threshold) {
+			plan.Warnings = append(plan.Warnings, automationPlanWarning{Code: "BRANCH_AGE", Message: fmt.Sprintf("branch %s is %.1fh old (threshold %dh); integrate before adding feature work", facts.Branch, facts.BranchAgeHours, threshold)})
+		}
+	}
+	return plan
 }
+
+func float64Pointer(value float64) *float64 { return &value }
+func intPointer(value int) *int             { return &value }
 
 func automationPlanRequiredReads(vaultPath string, note Note) []string {
 	vaultRoot := filepath.ToSlash(firstNonEmpty(relativeFromRepo(v7RepoRoot(vaultPath), vaultPath), defaultRepoVaultDir))

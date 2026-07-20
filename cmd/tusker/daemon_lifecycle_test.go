@@ -1162,6 +1162,9 @@ func TestCleanFinishReleasesLeaseBothRunnerLanes(t *testing.T) {
 			disableReviewerForTest(t, vault)
 			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Clean finish", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 			makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+			if _, err := upsertV7Verification(vault, "APP-T-0001", v7VerificationRow{CoverText: "A1", Check: "command: true", Result: "pass", Notes: "fixture proof"}, "agent:test"); err != nil {
+				t.Fatal(err)
+			}
 			setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer"})
 			project := registerAutomationTestProject(t, vault)
 			store, err := OpenRuntimeStore(DefaultStateRoot())
@@ -1173,6 +1176,9 @@ func TestCleanFinishReleasesLeaseBothRunnerLanes(t *testing.T) {
 				t.Fatal(err)
 			}
 			workspacePath := t.TempDir()
+			if tc.lane != runLaneReview {
+				workspacePath = orchestrationGitRepo(t)
+			}
 			if err := store.UpsertRun(RunStatus{
 				ProjectID:       project.ProjectID,
 				RecordID:        "APP-T-0001",
@@ -1213,6 +1219,55 @@ func TestCleanFinishReleasesLeaseBothRunnerLanes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMalformedRunnerStatusFailsOnlyTheAttempt(t *testing.T) {
+	vault := automationTestVault(t)
+	disableReviewerForTest(t, vault)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Malformed runner status", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	project := registerAutomationTestProject(t, vault)
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusPath := filepath.Join(t.TempDir(), "runner.status.json")
+	if err := writeText(statusPath, "{\"exit_code\":1}\n}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(RunStatus{
+		ProjectID:       project.ProjectID,
+		RecordID:        "APP-T-0001",
+		ItemID:          "APP-T-0001",
+		Runner:          string(RunnerCodexAppServer),
+		Lane:            runLaneExecute,
+		LeaseState:      string(LeaseStateRunning),
+		AttemptOutcome:  string(AttemptOutcomeNone),
+		ActiveAttemptID: "attempt-malformed-status",
+		WorkspacePath:   t.TempDir(),
+		StatusPath:      statusPath,
+		AttemptCount:    1,
+		UpdatedAt:       "2026-07-17T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatalf("malformed runner status crashed daemon poll: %v", err)
+	}
+	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+	if run.LeaseState == string(LeaseStateRunning) || run.LeaseState == string(LeaseStateClaimed) {
+		t.Fatalf("malformed runner status left a live lease: %#v", run)
+	}
+	if !strings.Contains(run.LastError, "runner status is malformed") {
+		t.Fatalf("malformed status reason was not preserved: %#v", run)
 	}
 }
 

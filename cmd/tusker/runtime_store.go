@@ -22,6 +22,29 @@ type RuntimeStore struct {
 	stateRoot string
 }
 
+type GateLedgerEntry struct {
+	ID         string `json:"id"`
+	ProjectID  string `json:"project_id"`
+	TreeHash   string `json:"tree_hash"`
+	Command    string `json:"command"`
+	Profile    string `json:"profile"`
+	Host       string `json:"host"`
+	DurationMS int64  `json:"duration_ms"`
+	PassedAt   string `json:"passed_at"`
+}
+
+type BatchGateRun struct {
+	ID           string `json:"id"`
+	ProjectID    string `json:"project_id"`
+	TreeHash     string `json:"tree_hash"`
+	Profile      string `json:"profile"`
+	CommandsJSON string `json:"commands_json"`
+	Status       string `json:"status"`
+	StartedAt    string `json:"started_at"`
+	FinishedAt   string `json:"finished_at"`
+	FirstFailure string `json:"first_failure"`
+}
+
 type ProjectHealth string
 
 const (
@@ -136,6 +159,8 @@ type RunAttempt struct {
 	ApplyRef           string
 	LogsSummary        string
 	FinalSummary       string
+	EndStateJSON       string      `json:"-"`
+	EndState           RunEndState `json:"end_state,omitempty"`
 	Outcome            string
 	ExitCode           int
 	TurnsUsed          int
@@ -147,6 +172,19 @@ type RunAttempt struct {
 	LastError          string
 	StartedAt          string
 	FinishedAt         string
+}
+
+type RunEndState struct {
+	Schema          string            `json:"schema"`
+	Branch          string            `json:"branch"`
+	HeadSHA         string            `json:"head_sha"`
+	WorktreePath    string            `json:"worktree_path"`
+	Dirty           bool              `json:"dirty"`
+	GateVerdicts    map[string]string `json:"gate_verdicts"`
+	ReportedBranch  string            `json:"reported_branch,omitempty"`
+	ReportedHeadSHA string            `json:"reported_head_sha,omitempty"`
+	Discrepancies   []string          `json:"discrepancies,omitempty"`
+	CapturedAt      string            `json:"captured_at"`
 }
 
 type RuntimeApplyInput struct {
@@ -559,6 +597,7 @@ func (s *RuntimeStore) Migrate() error {
 			apply_ref TEXT NOT NULL DEFAULT '',
 			logs_summary TEXT NOT NULL DEFAULT '',
 			final_summary TEXT NOT NULL DEFAULT '',
+			end_state_json TEXT NOT NULL DEFAULT '',
 			process_pid INTEGER NOT NULL DEFAULT 0,
 			outcome TEXT NOT NULL DEFAULT 'none',
 			exit_code INTEGER NOT NULL DEFAULT 0,
@@ -650,6 +689,28 @@ func (s *RuntimeStore) Migrate() error {
 		`CREATE TABLE IF NOT EXISTS daemon_settings (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE TABLE IF NOT EXISTS gate_ledger (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			tree_hash TEXT NOT NULL,
+			command TEXT NOT NULL,
+			profile TEXT NOT NULL DEFAULT '',
+			host TEXT NOT NULL DEFAULT '',
+			duration_ms INTEGER NOT NULL DEFAULT 0,
+			passed_at TEXT NOT NULL,
+			UNIQUE(project_id, tree_hash, command, profile)
+		);`,
+		`CREATE TABLE IF NOT EXISTS batch_gate_runs (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			tree_hash TEXT NOT NULL DEFAULT '',
+			profile TEXT NOT NULL DEFAULT '',
+			commands_json TEXT NOT NULL DEFAULT '[]',
+			status TEXT NOT NULL,
+			started_at TEXT NOT NULL,
+			finished_at TEXT NOT NULL DEFAULT '',
+			first_failure TEXT NOT NULL DEFAULT ''
 		);`,
 		`CREATE TABLE IF NOT EXISTS external_loop_events (
 			event_id TEXT PRIMARY KEY,
@@ -806,6 +867,7 @@ func (s *RuntimeStore) Migrate() error {
 		{"apply_ref", `ALTER TABLE attempts ADD COLUMN apply_ref TEXT NOT NULL DEFAULT ''`},
 		{"logs_summary", `ALTER TABLE attempts ADD COLUMN logs_summary TEXT NOT NULL DEFAULT ''`},
 		{"final_summary", `ALTER TABLE attempts ADD COLUMN final_summary TEXT NOT NULL DEFAULT ''`},
+		{"end_state_json", `ALTER TABLE attempts ADD COLUMN end_state_json TEXT NOT NULL DEFAULT ''`},
 	} {
 		if err := s.ensureColumn("attempts", column.name, column.stmt); err != nil {
 			return err
@@ -1711,9 +1773,14 @@ func (s *RuntimeStore) CheckRunLeaseGeneration(projectID, recordID string, gener
 }
 
 func (s *RuntimeStore) SaveAttempt(attempt RunAttempt) error {
+	if attempt.EndStateJSON == "" && attempt.EndState.Schema != "" {
+		if encoded, err := json.Marshal(attempt.EndState); err == nil {
+			attempt.EndStateJSON = string(encoded)
+		}
+	}
 	_, err := s.exec(`INSERT INTO attempts (
-		attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, outcome, exit_code, turns_used, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, end_state_json, process_pid, outcome, exit_code, turns_used, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(attempt_id) DO UPDATE SET
 		project_id=excluded.project_id,
 		record_id=excluded.record_id,
@@ -1736,6 +1803,7 @@ func (s *RuntimeStore) SaveAttempt(attempt RunAttempt) error {
 		apply_ref=excluded.apply_ref,
 		logs_summary=excluded.logs_summary,
 		final_summary=excluded.final_summary,
+		end_state_json=excluded.end_state_json,
 		process_pid=excluded.process_pid,
 		outcome=excluded.outcome,
 		exit_code=excluded.exit_code,
@@ -1747,7 +1815,7 @@ func (s *RuntimeStore) SaveAttempt(attempt RunAttempt) error {
 		last_error=excluded.last_error,
 		started_at=excluded.started_at,
 		finished_at=excluded.finished_at`,
-		attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkRevision, attempt.WorkspacePath, attempt.SessionRef, attempt.ParentAttemptID, attempt.ChildType, attempt.BranchName, attempt.MergeRule, attempt.FanoutGroup, attempt.CloudTaskID, attempt.CloudStatus, attempt.CloudEnvironmentID, attempt.CloudAttemptNumber, attempt.PullRequestURL, attempt.ApplyRef, attempt.LogsSummary, attempt.FinalSummary, attempt.ProcessPID, attempt.Outcome, attempt.ExitCode, attempt.TurnsUsed, attempt.PromptPath, attempt.EventSinkPath, attempt.RawLogPath, attempt.StatusPath, attempt.LastError, attempt.StartedAt, attempt.FinishedAt)
+		attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkRevision, attempt.WorkspacePath, attempt.SessionRef, attempt.ParentAttemptID, attempt.ChildType, attempt.BranchName, attempt.MergeRule, attempt.FanoutGroup, attempt.CloudTaskID, attempt.CloudStatus, attempt.CloudEnvironmentID, attempt.CloudAttemptNumber, attempt.PullRequestURL, attempt.ApplyRef, attempt.LogsSummary, attempt.FinalSummary, attempt.EndStateJSON, attempt.ProcessPID, attempt.Outcome, attempt.ExitCode, attempt.TurnsUsed, attempt.PromptPath, attempt.EventSinkPath, attempt.RawLogPath, attempt.StatusPath, attempt.LastError, attempt.StartedAt, attempt.FinishedAt)
 	return err
 }
 

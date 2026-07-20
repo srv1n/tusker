@@ -513,6 +513,9 @@ func TestCodexExecCompletionRecordsSucceeded(t *testing.T) {
 	disableReviewerForTest(t, vault)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Codex exec completion", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	if _, err := upsertV7Verification(vault, "APP-T-0001", v7VerificationRow{CoverText: "A1", Check: "command: true", Result: "pass", Notes: "fixture proof"}, "agent:test"); err != nil {
+		t.Fatal(err)
+	}
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer"})
 	wfFile, err := loadWorkflow(vault)
 	if err != nil {
@@ -540,6 +543,7 @@ func TestCodexExecCompletionRecordsSucceeded(t *testing.T) {
 	if err := writeRunnerStatusFile(statusPath, 0); err != nil {
 		t.Fatal(err)
 	}
+	workspace := orchestrationGitRepo(t)
 	run := RunStatus{
 		ProjectID:       project.ProjectID,
 		RecordID:        "APP-T-0001",
@@ -553,7 +557,7 @@ func TestCodexExecCompletionRecordsSucceeded(t *testing.T) {
 		RawLogPath:      rawLogPath,
 		EventSinkPath:   eventSinkPath,
 		StatusPath:      statusPath,
-		WorkspacePath:   t.TempDir(),
+		WorkspacePath:   workspace,
 		AttemptCount:    1,
 		UpdatedAt:       "2026-07-06T00:00:00Z",
 	}

@@ -873,6 +873,7 @@ func validateCmd(args Args) (int, error) {
 	warns = append(warns, v7SkillWarns...)
 	warns = append(warns, validateV7FeedbackNotes(vaultPath)...)
 	warns = append(warns, validateV7FeedbackSignals(vaultPath)...)
+	errs = append(errs, validateCollisionProneNamespaces(vaultPath)...)
 	idToPaths := map[string][]string{}
 	idCollisionLabels := map[string]string{}
 	publishPathToPaths := map[string][]string{}

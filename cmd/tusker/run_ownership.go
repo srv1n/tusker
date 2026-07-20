@@ -1,9 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -24,6 +28,9 @@ type runOwnershipService struct {
 	store                   *RuntimeStore
 	now                     func() time.Time
 	projectConcurrencyLimit int
+	vaultPath               string
+	candidateNote           Note
+	notesByID               map[string]Note
 }
 
 type runClaimResult struct {
@@ -35,8 +42,152 @@ type runClaimResult struct {
 	Authorization *RunAuthorization `json:"authorization,omitempty"`
 }
 
+// ownedPathConflict is deliberately evaluated before the lease CAS.  A lease
+// protects a task row; it does not protect the files that two tasks intend to
+// edit.  Treating prefix paths as overlapping also catches a lane claiming a
+// directory while another claims a file beneath it.
+func ownedPathConflict(candidate Note, notes map[string]Note, runs []RunStatus, now time.Time) (map[string]any, bool) {
+	wanted := normalizeOwnedPaths(normalizeList(candidate.Data["owned_paths"]))
+	if len(wanted) == 0 {
+		return nil, false
+	}
+	for _, run := range runs {
+		if run.ItemID == stringField(candidate.Data, "id") || runFreshness(&run, now) != "fresh" {
+			continue
+		}
+		holder, ok := notes[run.ItemID]
+		if !ok {
+			continue
+		}
+		for _, mine := range wanted {
+			for _, theirs := range normalizeOwnedPaths(normalizeList(holder.Data["owned_paths"])) {
+				if ownedPathsOverlap(mine, theirs) {
+					age := "unknown"
+					if started, err := time.Parse(time.RFC3339, firstNonEmpty(run.StartedAt, run.UpdatedAt)); err == nil {
+						age = now.Sub(started).Round(time.Second).String()
+					}
+					return map[string]any{"code": "OWNED_PATH_CONFLICT", "holder": run.LeaseOwner, "task_id": run.ItemID, "lease_age": age, "liveness": "fresh", "candidate_path": mine, "holder_path": theirs}, true
+				}
+			}
+		}
+	}
+	return nil, false
+}
+
+func normalizeOwnedPaths(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.Trim(strings.TrimSpace(path), "/")
+		if path != "" {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+func orchestrationOwnedPathNotes(notes map[string]Note, wf Workflow) map[string]Note {
+	out := make(map[string]Note, len(notes))
+	for id, note := range notes {
+		copyNote := note
+		copyNote.Data = cloneMap(note.Data)
+		if stringField(copyNote.Data, "work_kind") == "integrator" {
+			copyNote.Data["owned_paths"] = uniqueStrings(append(normalizeList(copyNote.Data["owned_paths"]), wf.Orchestration.SharedNamespaces...))
+		}
+		out[id] = copyNote
+	}
+	return out
+}
+
+func ownedPathsOverlap(a, b string) bool {
+	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
+}
+
+func reclaimDeadOwnedPathHolders(store *RuntimeStore, vaultPath string, candidate Note, notes map[string]Note, runs []RunStatus, now time.Time) ([]string, error) {
+	wanted := normalizeOwnedPaths(normalizeList(candidate.Data["owned_paths"]))
+	if len(wanted) == 0 {
+		return nil, nil
+	}
+	taken := []string{}
+	for _, run := range runs {
+		if run.ItemID == stringField(candidate.Data, "id") || runFreshness(&run, now) != "stale" {
+			continue
+		}
+		if run.ProcessPID > 0 && processIdentityMatches(run) {
+			continue
+		}
+		holder, ok := notes[run.ItemID]
+		if !ok {
+			continue
+		}
+		for _, mine := range wanted {
+			for _, theirs := range normalizeOwnedPaths(normalizeList(holder.Data["owned_paths"])) {
+				if !ownedPathsOverlap(mine, theirs) {
+					continue
+				}
+				ok, err := store.ReclaimExpiredRunLease(run.ProjectID, run.RecordID, now.Add(2*defaultRunLeaseTTL), defaultRunLeaseTTL, "owned-path takeover after expired heartbeat")
+				if err != nil {
+					return nil, err
+				}
+				if ok {
+					taken = append(taken, run.ItemID)
+					if vaultPath != "" {
+						_ = emitV7Event(vaultPath, stringField(candidate.Data, "id"), "task", "claimed", "tusker:claim", map[string]any{"takeover_from": run.ItemID, "dead_holder": run.LeaseOwner, "reason": "expired heartbeat and failed liveness probe", "candidate_path": mine, "holder_path": theirs})
+					}
+				}
+			}
+		}
+	}
+	return uniqueStrings(taken), nil
+}
+
 func newRunOwnershipService(store *RuntimeStore) *runOwnershipService {
 	return &runOwnershipService{store: store, now: func() time.Time { return time.Now().UTC() }, projectConcurrencyLimit: 1}
+}
+
+func (s *runOwnershipService) withOwnedPathContext(vaultPath string, candidate Note, notes map[string]Note) *runOwnershipService {
+	s.vaultPath, s.candidateNote, s.notesByID = vaultPath, candidate, notes
+	return s
+}
+
+func (s *runOwnershipService) guardOwnedPathClaim() error {
+	if len(s.notesByID) == 0 || stringField(s.candidateNote.Data, "id") == "" {
+		return nil
+	}
+	runs, err := s.store.ListRuns()
+	if err != nil {
+		return err
+	}
+	now := s.now()
+	if _, err := reclaimDeadOwnedPathHolders(s.store, s.vaultPath, s.candidateNote, s.notesByID, runs, now); err != nil {
+		return err
+	}
+	runs, err = s.store.ListRuns()
+	if err != nil {
+		return err
+	}
+	if conflict, found := ownedPathConflict(s.candidateNote, s.notesByID, runs, now); found {
+		return tuskerError("OWNED_PATH_CONFLICT", fmt.Sprintf("claim refused: %s holds %s for %s (lease age %s; liveness %s)", conflict["holder"], conflict["holder_path"], conflict["task_id"], conflict["lease_age"], conflict["liveness"]), withContext(conflict))
+	}
+	return nil
+}
+
+func (s *runOwnershipService) lockOwnedPathClaims() (func(), error) {
+	if len(s.notesByID) == 0 {
+		return func() {}, nil
+	}
+	lockDir := filepath.Join(s.store.stateRoot, "locks")
+	if err := ensureDir(lockDir); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(filepath.Join(lockDir, "owned-path-claims.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return func() { _ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN); _ = file.Close() }, nil
 }
 
 func (s *runOwnershipService) claim(run RunStatus, owner string) (runClaimResult, error) {
@@ -53,6 +204,14 @@ func (s *runOwnershipService) claimWithAuthorization(run RunStatus, owner string
 	}
 	if run.ProjectID == "" || run.RecordID == "" || run.Runner == "" || run.WorkspacePath == "" {
 		return runClaimResult{}, tuskerError(errorInvalidArg, "claim requires project, task, runner, and workspace")
+	}
+	unlock, err := s.lockOwnedPathClaims()
+	if err != nil {
+		return runClaimResult{}, err
+	}
+	defer unlock()
+	if err := s.guardOwnedPathClaim(); err != nil {
+		return runClaimResult{}, err
 	}
 	if run.LeaseState == "" {
 		run.LeaseState = string(LeaseStateUnclaimed)
@@ -98,6 +257,14 @@ func (s *runOwnershipService) claimWithAuthorization(run RunStatus, owner string
 func (s *runOwnershipService) claimExistingWithAuthorization(run RunStatus, owner string, auth RunAuthorization) (runClaimResult, error) {
 	if s == nil || s.store == nil {
 		return runClaimResult{}, tuskerError(errorConfigInvalid, "run ownership store is unavailable")
+	}
+	unlock, err := s.lockOwnedPathClaims()
+	if err != nil {
+		return runClaimResult{}, err
+	}
+	defer unlock()
+	if err := s.guardOwnedPathClaim(); err != nil {
+		return runClaimResult{}, err
 	}
 	now := s.now()
 	generation := run.LeaseGeneration + 1
@@ -182,6 +349,10 @@ func (s *runOwnershipService) heartbeat(identity, owner string) (*RunStatus, err
 }
 
 func (s *runOwnershipService) finish(identity, owner string, outcome AttemptOutcome, summary, verification, reason string) (*RunStatus, error) {
+	return s.finishWithEndState(identity, owner, outcome, summary, verification, reason, nil)
+}
+
+func (s *runOwnershipService) finishWithEndState(identity, owner string, outcome AttemptOutcome, summary, verification, reason string, endState *RunEndState) (*RunStatus, error) {
 	run, err := s.ownedRun(identity, owner)
 	if err != nil {
 		return nil, err
@@ -189,9 +360,19 @@ func (s *runOwnershipService) finish(identity, owner string, outcome AttemptOutc
 	if outcome == AttemptOutcomeSucceeded && (strings.TrimSpace(summary) == "" || strings.TrimSpace(verification) == "") {
 		return nil, tuskerError(errorInvalidArg, "successful submission requires deliverable and acceptance-mapped verification summaries")
 	}
+	if outcome == AttemptOutcomeSucceeded && endState != nil {
+		missing := missingRunEndStateFields(*endState)
+		if len(missing) > 0 {
+			return nil, tuskerError("END_STATE_REQUIRED", "run submission is missing end-state fields: "+strings.Join(missing, ", "), withContext(map[string]any{"missing_fields": missing}))
+		}
+	}
 	now := s.now().Format(time.RFC3339)
 	attemptID := firstNonEmpty(run.ActiveAttemptID, owner)
 	attempt := RunAttempt{AttemptID: attemptID, ProjectID: run.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID, Runner: run.Runner, Lane: run.Lane, WorkRevision: run.WorkRevision, WorkspacePath: run.WorkspacePath, SessionRef: run.SessionRef, Outcome: string(outcome), FinalSummary: summary, LastError: reason, StartedAt: run.StartedAt, FinishedAt: now}
+	if endState != nil {
+		attempt.EndState = *endState
+		attempt.BranchName = endState.Branch
+	}
 	if ok, err := s.store.SaveAttemptIfRunLease(attempt, owner, run.LeaseGeneration); err != nil || !ok {
 		return nil, firstNonNil(err, tuskerError("CAS_CONFLICT", "run ownership changed before outcome write"))
 	}
@@ -210,6 +391,95 @@ func (s *runOwnershipService) finish(identity, owner string, outcome AttemptOutc
 		return nil, firstNonNil(err, tuskerError("CAS_CONFLICT", "run ownership changed before release"))
 	}
 	return s.store.FindRun(identity)
+}
+
+func captureRunEndState(workspace, gateVerdicts, reportedBranch, reportedSHA string, now time.Time) (RunEndState, error) {
+	verdicts, err := parseGateVerdicts(gateVerdicts)
+	if err != nil {
+		return RunEndState{}, err
+	}
+	if len(verdicts) == 0 {
+		return RunEndState{}, tuskerError("END_STATE_REQUIRED", "run submission is missing end-state fields: gate_verdicts", withContext(map[string]any{"missing_fields": []string{"gate_verdicts"}}))
+	}
+	facts, err := captureGitBranchFacts(workspace, "", now)
+	if err != nil {
+		return RunEndState{}, tuskerError("END_STATE_CAPTURE_FAILED", "cannot capture authoritative workspace end state: "+err.Error(), withContext(map[string]any{"worktree_path": workspace}))
+	}
+	state := RunEndState{Schema: "tusker.run-end-state/v1", Branch: facts.Branch, HeadSHA: facts.Head, WorktreePath: workspace, Dirty: facts.Dirty, GateVerdicts: verdicts, ReportedBranch: strings.TrimSpace(reportedBranch), ReportedHeadSHA: strings.TrimSpace(reportedSHA), CapturedAt: now.UTC().Format(time.RFC3339)}
+	if state.ReportedBranch != "" && state.ReportedBranch != state.Branch {
+		state.Discrepancies = append(state.Discrepancies, fmt.Sprintf("reported branch %s differs from harness branch %s", state.ReportedBranch, state.Branch))
+	}
+	if state.ReportedHeadSHA != "" && state.ReportedHeadSHA != state.HeadSHA {
+		state.Discrepancies = append(state.Discrepancies, fmt.Sprintf("reported HEAD %s differs from harness HEAD %s", state.ReportedHeadSHA, state.HeadSHA))
+	}
+	return state, nil
+}
+
+func parseGateVerdicts(raw string) (map[string]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	result := map[string]string{}
+	if strings.HasPrefix(raw, "{") {
+		if err := json.Unmarshal([]byte(raw), &result); err != nil {
+			return nil, tuskerError(errorInvalidArg, "--gate-verdicts must be JSON or comma-separated ID=verdict pairs")
+		}
+	} else {
+		for _, pair := range strings.Split(raw, ",") {
+			parts := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+			if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+				return nil, tuskerError(errorInvalidArg, "--gate-verdicts must be JSON or comma-separated ID=verdict pairs")
+			}
+			result[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
+	return result, nil
+}
+
+func gateVerdictsFromTask(note Note) map[string]string {
+	verdicts := map[string]string{}
+	for _, row := range parseV7VerificationRows(note.Body) {
+		if strings.TrimSpace(row.CoverText) == "" || strings.EqualFold(row.Result, "pending") {
+			continue
+		}
+		verdicts[row.CoverText] = row.Result
+	}
+	return verdicts
+}
+
+func saveAttemptEndStateForRun(store *RuntimeStore, run RunStatus, state RunEndState) error {
+	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil {
+		return err
+	}
+	for _, attempt := range attempts {
+		if attempt.AttemptID != run.ActiveAttemptID {
+			continue
+		}
+		attempt.EndState = state
+		attempt.EndStateJSON = ""
+		attempt.BranchName = state.Branch
+		return store.SaveAttempt(attempt)
+	}
+	return tuskerError(errorNotFound, "active attempt missing while recording end state: "+run.ActiveAttemptID)
+}
+
+func missingRunEndStateFields(state RunEndState) []string {
+	missing := []string{}
+	if strings.TrimSpace(state.Branch) == "" {
+		missing = append(missing, "branch")
+	}
+	if strings.TrimSpace(state.HeadSHA) == "" {
+		missing = append(missing, "head_sha")
+	}
+	if strings.TrimSpace(state.WorktreePath) == "" {
+		missing = append(missing, "worktree_path")
+	}
+	if len(state.GateVerdicts) == 0 {
+		missing = append(missing, "gate_verdicts")
+	}
+	return missing
 }
 
 func (s *runOwnershipService) ownedRun(identity, owner string) (*RunStatus, error) {
@@ -244,14 +514,27 @@ func runsClaimCmd(args Args) error {
 	if !explain.Dispatchable {
 		return tuskerError("CAS_CONFLICT", "claim blocked: "+strings.Join(explain.Blockers, "; "))
 	}
+	now := time.Now().UTC()
+	if _, err := reclaimDeadOwnedPathHolders(ctx.Store, ctx.Project.VaultRoot, note, ctx.NotesByID, ctx.Runs, now); err != nil {
+		return err
+	}
+	runs, err := ctx.Store.ListRuns()
+	if err != nil {
+		return err
+	}
+	if conflict, found := ownedPathConflict(note, ctx.NotesByID, runs, now); found {
+		return tuskerError("OWNED_PATH_CONFLICT", fmt.Sprintf("claim refused: %s holds %s for %s (lease age %s; liveness %s)", conflict["holder"], conflict["holder_path"], conflict["task_id"], conflict["lease_age"], conflict["liveness"]), withContext(conflict))
+	}
 	run := ctx.effectiveRunForTask(note, explain.Runner)
-	run.ProjectID, run.Runner, run.WorkspacePath = ctx.Project.ProjectID, explain.Runner, explain.WorkspacePath
+	run.ProjectID, run.Runner, run.WorkspacePath, run.Lane = ctx.Project.ProjectID, explain.Runner, explain.WorkspacePath, explain.Lane
 	owner := firstNonEmpty(args.String("owner"), args.String("actor"))
 	source := firstNonEmpty(args.String("source"), "tusker_cli")
 	if source != "tusker_cli" && source != "codex" && source != "claude" {
 		return tuskerError(errorInvalidArg, "manual claim source must be tusker_cli, codex, or claude")
 	}
 	service := newRunOwnershipService(ctx.Store)
+	claimNotes := orchestrationOwnedPathNotes(ctx.NotesByID, ctx.Workflow.Data)
+	service.withOwnedPathContext(ctx.Project.VaultRoot, claimNotes[stringField(note.Data, "id")], claimNotes)
 	service.projectConcurrencyLimit = ctx.Workflow.Data.Runtime.MaxActiveRunsPerProject
 	result, err := service.claimWithAuthorization(run, owner, RunAuthorization{Source: source, Actor: owner, Trigger: firstNonEmpty(args.String("trigger"), "manual_claim"), ProjectAutomationEnabled: ctx.Workflow.Data.AutomationEnabled})
 	if err != nil {
@@ -262,6 +545,7 @@ func runsClaimCmd(args Args) error {
 		if err := ctx.Store.SaveRunIdentity(identity); err != nil {
 			return err
 		}
+		_ = refreshStreamBoardForProject(ctx.Store, result.Run.ProjectID)
 	}
 	emitJSON(result)
 	if !result.Claimed {
@@ -292,7 +576,15 @@ func runsLifecycleCmd(args Args, action string) error {
 	case "heartbeat":
 		run, err = service.heartbeat(id, owner)
 	case "submit":
-		run, err = service.finish(id, owner, AttemptOutcomeSucceeded, args.String("deliverable"), args.String("verification"), "")
+		current, findErr := store.FindRun(id)
+		if findErr != nil || current == nil {
+			return firstNonNil(findErr, tuskerError(errorNotFound, "run not found: "+id))
+		}
+		endState, captureErr := captureRunEndState(current.WorkspacePath, firstNonEmpty(args.String("gate-verdicts"), args.String("gates")), args.String("branch"), firstNonEmpty(args.String("head-sha"), args.String("sha")), time.Now().UTC())
+		if captureErr != nil {
+			return captureErr
+		}
+		run, err = service.finishWithEndState(id, owner, AttemptOutcomeSucceeded, args.String("deliverable"), args.String("verification"), "", &endState)
 	case "fail":
 		run, err = service.finish(id, owner, AttemptOutcomeFailed, "", "", firstNonEmpty(args.String("reason"), "run failed"))
 	case "reclaim":
@@ -310,6 +602,7 @@ func runsLifecycleCmd(args Args, action string) error {
 	if err != nil {
 		return err
 	}
+	_ = refreshStreamBoardForProject(store, run.ProjectID)
 	if action == "submit" {
 		statusArgs := Args{"id": run.ItemID, "status": "review", "actor": firstNonEmpty(args.String("actor"), owner), "reason": "normalized run submission"}
 		if err := statusCmd(statusArgs); err != nil {

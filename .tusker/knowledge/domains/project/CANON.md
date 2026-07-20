@@ -18,8 +18,8 @@ source_of_truth:
   - ".tusker/WORKFLOW.md"
   - "tusker.yaml"
 created_at: "2026-06-04 00:00:00 +0000 UTC"
-updated_at: "2026-07-15T05:51:05Z"
-state_rev: "sha256:29bd955b68e1dfdb803af55b469b3486f9f7ce3cf0b70216db126168da722e86"
+updated_at: "2026-07-20T05:17:38Z"
+state_rev: "sha256:95adcf67044008ecb9ed7ee90621f8b83a34cc7265836e6cceebed833f8aca7e"
 ---
 
 # Project Canon
@@ -65,6 +65,11 @@ state_rev: "sha256:29bd955b68e1dfdb803af55b469b3486f9f7ce3cf0b70216db126168da722
 - `tusker setup doctor` is the read-only onboarding diagnostic for registered vault/workflow drift, binary and generated-skill provenance, and offline ChatGPT handoff configuration. `setup repair` changes only deterministic local state, is idempotent, and never invents project routing, credentials, or browser workflow updates.
 - `tusker delivery rollout doctor|repair` aggregates that same setup doctor once across registered projects, diagnoses the managed daemon once globally, and quarantines incompatible registrations without stopping compatible siblings. Repair is idempotent and allowlisted to generated Tusker skills, supported workflow/runner policy, objective close defaults, registration metadata, and the managed service; it never rewrites project knowledge, task contracts, secrets, repo instructions, handoff routing, or unrelated configuration.
 - Repository validation is serialized across linked worktrees by one validation gate. Makefile Go build, vet, and test phases default to two Go scheduler threads and one package/test lane; the `cmd/tusker` TestMain also acquires the gate so raw focused tests cannot overlap a broad shared-state suite. Helper test re-execs inherit the held lease.
+- Owned paths are enforced at claim time across CLI and daemon claims under a cross-process claim lock. Healthy intersecting leases are reason-fully refused; expired holders are taken over only after process liveness fails, with an audit event.
+- Successful run submission requires a structured end state. The harness, not model prose, owns branch, HEAD, worktree, and dirty facts; attempts and the generated stream board expose that record.
+- `.tusker/dashboards/streams.md` and `tusker streams --json` are projections of runtime leases and recent successful attempts. Stale heartbeats are never presented as live lanes.
+- Passing gates are reusable only by the exact tracked-tree hash, command, and feature profile. Scheduled batch gates run unattended, write that ledger on green, and create or update repair tasks on red without blocking a merge.
+- Collision-prone namespace linting is opt-in repository policy. Integrator tasks are a typed work kind and exclusively claim configured shared namespaces; their packet composes dependency end states and a file-overlap audit.
 
 ## Invariants
 

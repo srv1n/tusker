@@ -763,6 +763,12 @@ func newV7Task(args Args) error {
 		"updated_at":            now,
 		"updated_by":            fallback(args.String("by"), "agent:"+defaultActorName()),
 	}
+	if workKind := strings.ToLower(strings.TrimSpace(args.String("work-kind"))); workKind != "" {
+		if workKind != "implementation" && workKind != "integrator" {
+			return tuskerError(errorInvalidField, "work_kind must be implementation or integrator")
+		}
+		data["work_kind"] = workKind
+	}
 	if len(specRefs) > 0 {
 		data["spec_refs"] = specRefs
 	}
@@ -1643,6 +1649,9 @@ func reconcileV7Cmd(args Args) error {
 		return err
 	}
 	if err := buildV7Dashboards(vaultPath, idx); err != nil {
+		return err
+	}
+	if err := refreshStreamBoardForVault(vaultPath); err != nil {
 		return err
 	}
 	if !args.Bool("quiet") {

@@ -142,7 +142,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "trace", "escalate":
+	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "gate-ledger", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "trace", "escalate":
 		return true
 	default:
 		return false
@@ -711,6 +711,10 @@ func runInner(command string, args Args) (int, error) {
 	case "runs inspect":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, runsInspectCmd(args)
+	case "streams":
+		return 0, streamsCmd(args)
+	case "gate-ledger check", "gate-ledger record":
+		return 0, gateLedgerCmd(args, strings.TrimPrefix(command, "gate-ledger "))
 	case "runs claim":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, runsClaimCmd(args)
@@ -943,6 +947,8 @@ Commands:
   automation          plan, inspect, and manually dispatch daemon automation work
   projects            register repositories for daemon pickup
   runs                inspect, tail, interrupt, release, and retire daemon runs
+  streams             show the generated live/landed orchestration lane board
+  gate-ledger         check or record tree-keyed gate results
   serve               serve the read-only localhost control room
   refresh             run one daemon poll tick
   install             install binary and skill bundles
