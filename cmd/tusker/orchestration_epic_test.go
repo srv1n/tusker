@@ -427,6 +427,88 @@ func TestNamespaceLintDuplicate(t *testing.T) {
 	}
 }
 
+// namespaceLintFixture builds a repo whose migrations directory already has a
+// duplicate sequence number. patterns == nil leaves the repo unconfigured.
+func namespaceLintFixture(t *testing.T, patterns []any) string {
+	t.Helper()
+	repo := t.TempDir()
+	vault := filepath.Join(repo, ".tusker")
+	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeDefaultWorkflow(vault); err != nil {
+		t.Fatal(err)
+	}
+	if patterns != nil {
+		path := filepath.Join(vault, "WORKFLOW.md")
+		data, body, err := parseFrontmatterMustRead(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data["orchestration"] = map[string]any{"namespace_lints": patterns}
+		content, err := serializeDocument(data, body, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writeText(path, content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "migrations"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"0014_a.sql", "0014_b.sql"} {
+		if err := os.WriteFile(filepath.Join(repo, "migrations", name), []byte("-- migration\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return vault
+}
+
+func TestNamespaceLintNoConfiguredPatternsChangesNothing(t *testing.T) {
+	vault := namespaceLintFixture(t, nil)
+	if issues := validateCollisionProneNamespaces(vault); len(issues) != 0 {
+		t.Fatalf("unconfigured repo gained validation findings: %#v", issues)
+	}
+	if issues := validateCollisionProneNamespaces(t.TempDir()); len(issues) != 0 {
+		t.Fatalf("directory without a workflow produced findings: %#v", issues)
+	}
+}
+
+func TestNamespaceLintConfiguredPatternIgnoresDistinctKeys(t *testing.T) {
+	vault := namespaceLintFixture(t, []any{map[string]any{"name": "migrations", "glob": "migrations/*_*.sql", "capture_regex": `(\d{4})_`}})
+	repo := filepath.Dir(vault)
+	for _, name := range []string{"0014_a.sql", "0014_b.sql"} {
+		if err := os.Remove(filepath.Join(repo, "migrations", name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"0014_a.sql", "0015_b.sql"} {
+		if err := os.WriteFile(filepath.Join(repo, "migrations", name), []byte("-- migration\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if issues := validateCollisionProneNamespaces(vault); len(issues) != 0 {
+		t.Fatalf("distinct sequence numbers flagged as a collision: %#v", issues)
+	}
+}
+
+func TestNamespaceLintReportsBothClaimingPaths(t *testing.T) {
+	vault := namespaceLintFixture(t, []any{map[string]any{"name": "sequential-migrations", "glob": "migrations/*_*.sql", "capture_regex": `(\d{4})_`, "naming_recommendation": "prefer timestamp-named migrations"}})
+	issues := validateCollisionProneNamespaces(vault)
+	if len(issues) != 1 || issues[0].Code != "NAMESPACE_COLLISION" {
+		t.Fatalf("collision not diagnosed: %#v", issues)
+	}
+	for _, want := range []string{"sequential-migrations", "0014", "migrations/0014_a.sql", "migrations/0014_b.sql"} {
+		if !strings.Contains(issues[0].Message, want) {
+			t.Fatalf("finding does not name %s: %#v", want, issues[0])
+		}
+	}
+	if !strings.Contains(toString(issues[0].Context), "timestamp") && !strings.Contains(issues[0].Hint, "timestamp") {
+		t.Fatalf("finding carries no naming recommendation: %#v", issues[0])
+	}
+}
+
 func TestPlanBranchFacts(t *testing.T) {
 	repo := orchestrationGitRepo(t)
 	runGitDir(t, repo, "checkout", "-b", "task/a")
