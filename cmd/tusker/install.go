@@ -358,7 +358,29 @@ func installSkillPayloadSymlink(destination, sourceArg string) error {
 	if err := ensureDir(filepath.Dir(destination)); err != nil {
 		return err
 	}
-	return os.Symlink(source, destination)
+	return os.Symlink(skillSymlinkTarget(source, destination), destination)
+}
+
+// skillSymlinkTarget keeps repo-local skill installs portable. An absolute
+// target only resolves inside the checkout that wrote it, so the generated
+// install looks canonical in one working copy and points at a foreign tree in
+// every git worktree and fresh clone. A relative target travels with the tree.
+// Installs outside the source repo — user-home destinations — keep the absolute
+// target, because a relative path between two unrelated trees is meaningless.
+func skillSymlinkTarget(source, destination string) string {
+	absDestination, err := filepath.Abs(destination)
+	if err != nil {
+		return source
+	}
+	repoRoot, err := findRepoRoot(source)
+	if err != nil || repoRoot == "" || !isRepoLocalSkillDestination(absDestination, repoRoot) {
+		return source
+	}
+	relative, err := filepath.Rel(filepath.Dir(absDestination), source)
+	if err != nil || relative == "" {
+		return source
+	}
+	return relative
 }
 
 func canonicalSkillSourceDir(sourceArg string) (string, error) {

@@ -7,6 +7,56 @@ import (
 	"testing"
 )
 
+func TestSkillSymlinkTargetIsRelativeInsideTheRepo(t *testing.T) {
+	repo := t.TempDir()
+	source := filepath.Join(repo, "skills", "tusker")
+	if err := writeText(filepath.Join(source, "SKILL.md"), "# skill\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(repo, "go.mod"), "module sample\n"); err != nil {
+		t.Fatal(err)
+	}
+	for _, install := range []string{".agents", ".claude"} {
+		destination := filepath.Join(repo, install, "skills", "tusker")
+		target := skillSymlinkTarget(source, destination)
+		if filepath.IsAbs(target) {
+			t.Fatalf("%s install got an absolute target %q: it would dangle in every worktree and fresh clone", install, target)
+		}
+		if want := filepath.Join("..", "..", "skills", "tusker"); target != want {
+			t.Fatalf("%s install target %q, want %q", install, target, want)
+		}
+		if err := installSkillPayloadSymlink(destination, source); err != nil {
+			t.Fatal(err)
+		}
+		resolved, err := filepath.EvalSymlinks(filepath.Join(destination, "SKILL.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		canonical, err := filepath.EvalSymlinks(filepath.Join(source, "SKILL.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resolved != canonical {
+			t.Fatalf("%s install does not resolve to the canonical skill: %s != %s", install, resolved, canonical)
+		}
+	}
+}
+
+func TestSkillSymlinkTargetStaysAbsoluteOutsideTheRepo(t *testing.T) {
+	repo := t.TempDir()
+	source := filepath.Join(repo, "skills", "tusker")
+	if err := writeText(filepath.Join(source, "SKILL.md"), "# skill\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(repo, "go.mod"), "module sample\n"); err != nil {
+		t.Fatal(err)
+	}
+	target := skillSymlinkTarget(source, filepath.Join(t.TempDir(), ".claude", "skills", "tusker"))
+	if target != source {
+		t.Fatalf("user-home install lost its absolute target: %q", target)
+	}
+}
+
 func TestSkillExecutionOwnershipProtocol(t *testing.T) {
 	source := filepath.Join("..", "..", "skills", "tusker", "SKILL.md")
 	raw, err := os.ReadFile(source)
