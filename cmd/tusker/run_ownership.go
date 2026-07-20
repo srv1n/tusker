@@ -381,9 +381,15 @@ func (s *runOwnershipService) finishWithEndState(identity, owner string, outcome
 	if outcome == AttemptOutcomeSucceeded && (strings.TrimSpace(summary) == "" || strings.TrimSpace(verification) == "") {
 		return nil, tuskerError(errorInvalidArg, "successful submission requires deliverable and acceptance-mapped verification summaries")
 	}
-	if outcome == AttemptOutcomeSucceeded && endState != nil {
-		missing := missingRunEndStateFields(*endState)
-		if len(missing) > 0 {
+	// A missing end state is the same defect as an incomplete one: an absent
+	// record is exactly how a lane reports success with no branch, no SHA and
+	// no verdicts.  Refuse both, naming every field the submitter still owes.
+	if outcome == AttemptOutcomeSucceeded {
+		state := RunEndState{}
+		if endState != nil {
+			state = *endState
+		}
+		if missing := missingRunEndStateFields(state); len(missing) > 0 {
 			return nil, tuskerError("END_STATE_REQUIRED", "run submission is missing end-state fields: "+strings.Join(missing, ", "), withContext(map[string]any{"missing_fields": missing}))
 		}
 	}

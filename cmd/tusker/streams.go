@@ -103,9 +103,34 @@ func buildStreamRows(ctx *automationCommandContext, now time.Time) ([]streamRow,
 	return rows, nil
 }
 
+// formatStreamEndState answers "what did this lane leave behind" in one cell:
+// the harness-captured SHA, whether the workspace was clean, the gate verdicts,
+// and a marker when the lane's own claims contradicted the workspace.
+func formatStreamEndState(state *RunEndState) string {
+	if state == nil || strings.TrimSpace(state.HeadSHA) == "" {
+		return ""
+	}
+	sha := state.HeadSHA
+	if len(sha) > 12 {
+		sha = sha[:12]
+	}
+	cleanliness := "clean"
+	if state.Dirty {
+		cleanliness = "dirty"
+	}
+	parts := []string{sha, cleanliness}
+	if verdicts := formatGateVerdicts(state.GateVerdicts); verdicts != "" {
+		parts = append(parts, verdicts)
+	}
+	if count := len(state.Discrepancies); count > 0 {
+		parts = append(parts, fmt.Sprintf("%d reported-vs-harness discrepancy", count))
+	}
+	return strings.Join(parts, " · ")
+}
+
 func renderStreamBoard(rows []streamRow) string {
 	var b strings.Builder
-	b.WriteString("# Streams\n\nGenerated from runtime leases and attempts. Do not edit.\n\n| Lane | Task | Runner | Worktree | Branch | Owned paths | Heartbeat | Status |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	b.WriteString("# Streams\n\nGenerated from runtime leases and attempts. Do not edit.\n\n| Lane | Task | Runner | Worktree | Branch | Owned paths | Heartbeat | Status | End state |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, r := range rows {
 		branch := r.Branch
 		if r.Ahead != nil && r.Behind != nil {
@@ -115,7 +140,7 @@ func renderStreamBoard(rows []streamRow) string {
 		if heartbeat != "" {
 			heartbeat += " (" + r.HeartbeatAge + ")"
 		}
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s |\n", r.Lane, r.TaskID, r.Runner, r.WorktreePath, branch, strings.Join(r.OwnedPaths, ", "), heartbeat, r.Status)
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", r.Lane, r.TaskID, r.Runner, r.WorktreePath, branch, strings.Join(r.OwnedPaths, ", "), heartbeat, r.Status, formatStreamEndState(r.EndState))
 	}
 	return b.String()
 }

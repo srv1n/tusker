@@ -1336,7 +1336,7 @@ func printRunsHelp() {
 	  tusker runs claim <task-id> --owner <actor> [--project <id>] [--json]
 	  tusker runs start <task-id> --owner <actor> [--session <id>] [--pid <n>] [--pgid <n>] [--json]
 	  tusker runs heartbeat <task-id> --owner <actor> [--json]
-	  tusker runs submit <task-id> --owner <actor> --deliverable <summary> --verification <summary> [--json]
+	  tusker runs submit <task-id> --owner <actor> --deliverable <summary> --verification <summary> --gate-verdicts <A1=pass,A2=pass> [--branch <name>] [--head-sha <sha>] [--json]
 	  tusker runs fail <task-id> --owner <actor> --reason <text> [--json]
 	  tusker runs reclaim <task-id> --owner <actor> --reason <text> [--json]
   tusker runs inspect <task-id-or-record-id> [--json]

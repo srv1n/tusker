@@ -23,6 +23,20 @@ func TestClaimOwnedPathConflict(t *testing.T) {
 	}
 }
 
+// submittableEndState is the normalized record a lane owes at submit time.
+// Tests that are not about end-state validation still have to supply one,
+// because a successful submission without it is now refused.
+func submittableEndState() *RunEndState {
+	return &RunEndState{
+		Schema:       "tusker.run-end-state/v1",
+		Branch:       "task/fixture",
+		HeadSHA:      strings.Repeat("a", 40),
+		WorktreePath: "/tmp/repo with spaces",
+		GateVerdicts: map[string]string{"A1": "pass"},
+		CapturedAt:   time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
+	}
+}
+
 // ownedPathClaimFixture wires a live holder and a candidate through the real
 // claim entry point, because the incident this guards against was two lanes
 // claiming successfully — not a helper returning the wrong verdict.
@@ -140,7 +154,7 @@ func TestRunClaimStartHeartbeatSubmitFailInterruptReclaim(t *testing.T) {
 	if _, err := service.finish(run.RecordID, "actor-1", AttemptOutcomeSucceeded, "", "A1 pass", ""); err == nil {
 		t.Fatal("submission without deliverable must fail")
 	}
-	submitted, err := service.finish(run.RecordID, "actor-1", AttemptOutcomeSucceeded, "diff: cmd/tusker", "A1,A2: pass", "")
+	submitted, err := service.finishWithEndState(run.RecordID, "actor-1", AttemptOutcomeSucceeded, "diff: cmd/tusker", "A1,A2: pass", "", submittableEndState())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +249,7 @@ func TestHeartbeatCompletionRaceSingleTerminalOutcome(t *testing.T) {
 	go func() { defer wg.Done(); _, _ = service.heartbeat(run.RecordID, "owner") }()
 	go func() {
 		defer wg.Done()
-		_, _ = service.finish(run.RecordID, "owner", AttemptOutcomeSucceeded, "diff", "A1 pass", "")
+		_, _ = service.finishWithEndState(run.RecordID, "owner", AttemptOutcomeSucceeded, "diff", "A1 pass", "", submittableEndState())
 	}()
 	wg.Wait()
 	latest, err := store.FindRun(run.RecordID)
@@ -346,7 +360,7 @@ func TestReliableExecutionLifecycleE2E(t *testing.T) {
 	if _, err := service.finish(run.RecordID, winner, AttemptOutcomeSucceeded, "", "A1 pass", ""); err == nil {
 		t.Fatal("exit-zero without a deliverable must be rejected")
 	}
-	completed, err := service.finish(run.RecordID, winner, AttemptOutcomeSucceeded, "fixture.diff: one changed file", "A1-A6 pass", "")
+	completed, err := service.finishWithEndState(run.RecordID, winner, AttemptOutcomeSucceeded, "fixture.diff: one changed file", "A1-A6 pass", "", submittableEndState())
 	if err != nil {
 		t.Fatal(err)
 	}

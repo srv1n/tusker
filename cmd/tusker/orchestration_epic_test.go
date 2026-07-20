@@ -147,6 +147,30 @@ func TestRunSubmitEndStateRequired(t *testing.T) {
 	if _, err := captureRunEndState(t.TempDir(), "", "", "", time.Now()); err == nil || !strings.Contains(err.Error(), "gate_verdicts") {
 		t.Fatalf("missing end state was not actionable: %v", err)
 	}
+	store, run := ownershipStoreFixture(t, "APP-T-NO-END-STATE")
+	service := newRunOwnershipService(store)
+	if claimed, err := service.claim(run, "owner"); err != nil || !claimed.Claimed {
+		t.Fatal(err)
+	}
+	_, err := service.finishWithEndState(run.RecordID, "owner", AttemptOutcomeSucceeded, "diff: cmd/tusker", "A1 pass", "", nil)
+	var typed *TuskerError
+	if !errors.As(err, &typed) || typed.Code != "END_STATE_REQUIRED" {
+		t.Fatalf("submission without an end state was accepted: %v", err)
+	}
+	for _, field := range []string{"branch", "head_sha", "worktree_path", "gate_verdicts"} {
+		if !strings.Contains(typed.Message, field) {
+			t.Fatalf("refusal does not name missing field %s: %s", field, typed.Message)
+		}
+	}
+	partial := RunEndState{Schema: "tusker.run-end-state/v1", Branch: "task/a", WorktreePath: "/tmp/repo"}
+	_, err = service.finishWithEndState(run.RecordID, "owner", AttemptOutcomeSucceeded, "diff: cmd/tusker", "A1 pass", "", &partial)
+	if !errors.As(err, &typed) || !strings.Contains(typed.Message, "head_sha") || !strings.Contains(typed.Message, "gate_verdicts") || strings.Contains(typed.Message, "branch,") {
+		t.Fatalf("partial end state refusal was not actionable: %v", err)
+	}
+	latest, _ := store.FindRun(run.RecordID)
+	if latest.AttemptOutcome == string(AttemptOutcomeSucceeded) {
+		t.Fatalf("refused submission still released the run: %#v", latest)
+	}
 }
 
 func TestRunSubmitHarnessGitFactsAuthoritative(t *testing.T) {
@@ -157,6 +181,38 @@ func TestRunSubmitHarnessGitFactsAuthoritative(t *testing.T) {
 	}
 	if state.Branch != "main" || len(state.HeadSHA) != 40 || state.Dirty || len(state.Discrepancies) != 2 {
 		t.Fatalf("unexpected authoritative end state: %#v", state)
+	}
+	if state.ReportedBranch != "wrong" || state.ReportedHeadSHA != "deadbeef" {
+		t.Fatalf("model claim was not preserved as a claim: %#v", state)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dirty, err := captureRunEndState(repo, "A1=pass", "main", state.HeadSHA, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dirty.Dirty || len(dirty.Discrepancies) != 0 {
+		t.Fatalf("harness did not observe the workspace itself: %#v", dirty)
+	}
+	store, run := ownershipStoreFixture(t, "APP-T-AUTHORITATIVE")
+	service := newRunOwnershipService(store)
+	if claimed, err := service.claim(run, "owner"); err != nil || !claimed.Claimed {
+		t.Fatal(err)
+	}
+	if _, err := service.finishWithEndState(run.RecordID, "owner", AttemptOutcomeSucceeded, "diff: cmd/tusker", "A1 pass", "", &state); err != nil {
+		t.Fatal(err)
+	}
+	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil || len(attempts) != 1 {
+		t.Fatalf("submitted attempt missing: %#v %v", attempts, err)
+	}
+	stored := attempts[0].EndState
+	if stored.HeadSHA != state.HeadSHA || stored.ReportedHeadSHA != "deadbeef" || len(stored.Discrepancies) != 2 {
+		t.Fatalf("discrepancy record did not survive submit: %#v", stored)
+	}
+	if attempts[0].BranchName != "main" {
+		t.Fatalf("attempt branch is not the harness branch: %#v", attempts[0])
 	}
 }
 
@@ -174,6 +230,49 @@ func TestRunSubmitEndStateAttemptProjection(t *testing.T) {
 	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
 	if err != nil || len(attempts) != 1 || attempts[0].EndState.HeadSHA != state.HeadSHA {
 		t.Fatalf("end state not projected: %#v %v", attempts, err)
+	}
+}
+
+// A3: the board is the answer to "what did this lane leave behind", so the
+// submitted end state has to reach the rendered board, not just the store.
+func TestRunSubmitEndStateStreamBoardProjection(t *testing.T) {
+	store, run := ownershipStoreFixture(t, "APP-T-BOARD")
+	service := newRunOwnershipService(store)
+	if claimed, err := service.claim(run, "owner"); err != nil || !claimed.Claimed {
+		t.Fatal(err)
+	}
+	state := RunEndState{
+		Schema: "tusker.run-end-state/v1", Branch: "task/board", HeadSHA: strings.Repeat("b", 40),
+		WorktreePath: "/tmp/board", Dirty: true, GateVerdicts: map[string]string{"A1": "pass", "A2": "fail"},
+		ReportedHeadSHA: "deadbeef", Discrepancies: []string{"reported HEAD deadbeef differs from harness HEAD"},
+		CapturedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if _, err := service.finishWithEndState(run.RecordID, "owner", AttemptOutcomeSucceeded, "diff: cmd/tusker", "A1 pass", "", &state); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := store.ListRuns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &automationCommandContext{
+		Store:     store,
+		Project:   RegisteredProject{ProjectID: run.ProjectID},
+		Workflow:  WorkflowFile{Data: defaultWorkflow()},
+		NotesByID: map[string]Note{run.ItemID: {Data: map[string]any{"id": run.ItemID}}},
+		Runs:      runs,
+	}
+	rows, err := buildStreamRows(ctx, time.Now().UTC())
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("landed lane missing from the board: %#v %v", rows, err)
+	}
+	if rows[0].EndState == nil || rows[0].EndState.HeadSHA != state.HeadSHA {
+		t.Fatalf("row lost the end state: %#v", rows[0])
+	}
+	board := renderStreamBoard(rows)
+	for _, want := range []string{"APP-T-BOARD", "task/board", strings.Repeat("b", 12), "dirty", "A1=pass", "A2=fail", "discrepancy"} {
+		if !strings.Contains(board, want) {
+			t.Fatalf("board omits %q: %s", want, board)
+		}
 	}
 }
 
