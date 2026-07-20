@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -28,7 +29,39 @@ func initializeOrchestrationGitRepo(t *testing.T, repo string) {
 	runGitDir(t, repo, "commit", "-m", "base")
 }
 
+// recordedTakeoverEvents reads the vault's event log the way an operator would,
+// so a takeover is only "recorded" if it survived to durable state.
+func recordedTakeoverEvents(t *testing.T, vaultPath string) []map[string]any {
+	t.Helper()
+	events := []map[string]any{}
+	root := filepath.Join(vaultPath, "events")
+	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".json") {
+			return nil
+		}
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		event := map[string]any{}
+		if json.Unmarshal(raw, &event) != nil {
+			return nil
+		}
+		if payload, ok := event["payload"].(map[string]any); ok && payload["takeover_from"] != nil {
+			events = append(events, event)
+		}
+		return nil
+	}); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return events
+}
+
 func TestClaimDeadHolderTakeover(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), ".tusker")
+	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
 	store, candidateRun := ownershipStoreFixture(t, "APP-T-0002")
 	now := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	holder := candidateRun
@@ -41,7 +74,7 @@ func TestClaimDeadHolderTakeover(t *testing.T) {
 	}
 	candidate := Note{Data: map[string]any{"id": candidateRun.ItemID, "owned_paths": []string{"migrations/0014_new.sql"}}}
 	notes := map[string]Note{holder.ItemID: {Data: map[string]any{"id": holder.ItemID, "owned_paths": []string{"migrations"}}}, candidateRun.ItemID: candidate}
-	service := newRunOwnershipService(store).withOwnedPathContext("", candidate, notes)
+	service := newRunOwnershipService(store).withOwnedPathContext(vault, candidate, notes)
 	service.now = func() time.Time { return now }
 	service.projectConcurrencyLimit = 2
 	result, err := service.claim(candidateRun, "takeover-lane")
@@ -52,26 +85,61 @@ func TestClaimDeadHolderTakeover(t *testing.T) {
 	if former.LeaseState != string(LeaseStateInterrupted) {
 		t.Fatalf("dead holder not released: %#v", former)
 	}
+	events := recordedTakeoverEvents(t, vault)
+	if len(events) != 1 {
+		t.Fatalf("takeover was not recorded exactly once: %#v", events)
+	}
+	payload := events[0]["payload"].(map[string]any)
+	if events[0]["object"] != candidateRun.ItemID || payload["takeover_from"] != holder.ItemID || payload["dead_holder"] != "dead-lane" {
+		t.Fatalf("takeover event does not identify the parties: %#v", events[0])
+	}
 }
 
+// TestClaimRefusalShape drives the real claim entry point: the refusal has to
+// be produced by the claim itself, carry a stable code plus structured fields
+// for machines and a sentence for humans in one response, and leave the
+// refused run unclaimed.
 func TestClaimRefusalShape(t *testing.T) {
+	store, candidateRun := ownershipStoreFixture(t, "APP-T-0002")
 	now := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
-	candidate := Note{Data: map[string]any{"id": "APP-T-0002", "owned_paths": []string{"migrations/0014.sql"}}}
-	notes := map[string]Note{"APP-T-0001": {Data: map[string]any{"id": "APP-T-0001", "owned_paths": []string{"migrations"}}}}
-	runs := []RunStatus{{ItemID: "APP-T-0001", LeaseOwner: "lane-a", LeaseState: string(LeaseStateRunning), LeaseExpiresAt: now.Add(time.Hour).Format(time.RFC3339), StartedAt: now.Add(-time.Minute).Format(time.RFC3339)}}
-	conflict, found := ownedPathConflict(candidate, notes, runs, now)
-	if !found {
-		t.Fatal("expected conflict")
+	holder := candidateRun
+	holder.RecordID, holder.ItemID = "APP-T-0001", "APP-T-0001"
+	holder.LeaseState, holder.LeaseOwner = string(LeaseStateRunning), "lane-a"
+	holder.LeaseExpiresAt = now.Add(time.Hour).Format(time.RFC3339)
+	holder.StartedAt = now.Add(-90 * time.Second).Format(time.RFC3339)
+	if err := store.UpsertRun(holder); err != nil {
+		t.Fatal(err)
 	}
-	err := tuskerError("OWNED_PATH_CONFLICT", "claim refused", withContext(conflict))
+	candidate := Note{Data: map[string]any{"id": candidateRun.ItemID, "owned_paths": []string{"migrations/0014.sql"}}}
+	notes := map[string]Note{holder.ItemID: {Data: map[string]any{"id": holder.ItemID, "owned_paths": []string{"migrations"}}}, candidateRun.ItemID: candidate}
+	service := newRunOwnershipService(store).withOwnedPathContext("", candidate, notes)
+	service.now = func() time.Time { return now }
+	service.projectConcurrencyLimit = 2
+	result, err := service.claim(candidateRun, "lane-b")
+	if err == nil || result.Claimed {
+		t.Fatalf("intersecting claim was not refused: %#v %v", result, err)
+	}
 	var typed *TuskerError
 	if !errors.As(err, &typed) || typed.Code != "OWNED_PATH_CONFLICT" {
 		t.Fatalf("unstable error shape: %#v", err)
 	}
-	for _, field := range []string{"holder", "task_id", "lease_age", "liveness"} {
-		if !strings.Contains(toString(typed.Context), field) {
-			t.Fatalf("missing structured field %s: %#v", field, typed.Context)
+	for _, want := range []string{"lane-a", "APP-T-0001", "1m30s", "fresh", "migrations"} {
+		if !strings.Contains(typed.Message, want) {
+			t.Fatalf("human-readable refusal omits %q: %s", want, typed.Message)
 		}
+	}
+	encoded, marshalErr := json.Marshal(map[string]any{"ok": false, "error": errorToIssue(err)})
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	for _, want := range []string{`"code":"OWNED_PATH_CONFLICT"`, `"holder":"lane-a"`, `"task_id":"APP-T-0001"`, `"lease_age":"1m30s"`, `"liveness":"fresh"`, `"message":"claim refused`} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("machine-readable refusal omits %s: %s", want, encoded)
+		}
+	}
+	after, _ := store.FindRun(candidateRun.RecordID)
+	if after.LeaseState != string(LeaseStateUnclaimed) || after.LeaseOwner != "" {
+		t.Fatalf("refused claim still mutated the run: %#v", after)
 	}
 }
 

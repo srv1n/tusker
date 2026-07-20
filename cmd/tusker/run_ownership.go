@@ -42,6 +42,26 @@ type runClaimResult struct {
 	Authorization *RunAuthorization `json:"authorization,omitempty"`
 }
 
+// holderLiveness reports the liveness verdict named in a claim refusal and
+// whether that holder still blocks the claim.  Lease age alone is not the
+// verdict: an aged-out lease does not release the files its holder is still
+// editing, so a stale lease whose process is provably alive keeps blocking and
+// says so.  Only a holder that is both aged out and unprovable is treated as
+// dead, which is the sole case lease self-heal may take over.
+func holderLiveness(run RunStatus, now time.Time) (string, bool) {
+	switch runFreshness(&run, now) {
+	case "fresh":
+		return "fresh", true
+	case "stale":
+		if run.ProcessPID > 0 && processIdentityMatches(run) {
+			return "lease_expired_process_alive", true
+		}
+		return "dead", false
+	default:
+		return "released", false
+	}
+}
+
 // ownedPathConflict is deliberately evaluated before the lease CAS.  A lease
 // protects a task row; it does not protect the files that two tasks intend to
 // edit.  Treating prefix paths as overlapping also catches a lane claiming a
@@ -52,7 +72,8 @@ func ownedPathConflict(candidate Note, notes map[string]Note, runs []RunStatus, 
 		return nil, false
 	}
 	for _, run := range runs {
-		if run.ItemID == stringField(candidate.Data, "id") || runFreshness(&run, now) != "fresh" {
+		liveness, blocking := holderLiveness(run, now)
+		if run.ItemID == stringField(candidate.Data, "id") || !blocking {
 			continue
 		}
 		holder, ok := notes[run.ItemID]
@@ -66,7 +87,7 @@ func ownedPathConflict(candidate Note, notes map[string]Note, runs []RunStatus, 
 					if started, err := time.Parse(time.RFC3339, firstNonEmpty(run.StartedAt, run.UpdatedAt)); err == nil {
 						age = now.Sub(started).Round(time.Second).String()
 					}
-					return map[string]any{"code": "OWNED_PATH_CONFLICT", "holder": run.LeaseOwner, "task_id": run.ItemID, "lease_age": age, "liveness": "fresh", "candidate_path": mine, "holder_path": theirs}, true
+					return map[string]any{"code": "OWNED_PATH_CONFLICT", "holder": run.LeaseOwner, "task_id": run.ItemID, "lease_age": age, "liveness": liveness, "candidate_path": mine, "holder_path": theirs}, true
 				}
 			}
 		}

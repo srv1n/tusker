@@ -1,6 +1,9 @@
 package main
 
 import (
+	"errors"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +20,62 @@ func TestClaimOwnedPathConflict(t *testing.T) {
 	}
 	if _, found := ownedPathConflict(candidate, notes, []RunStatus{{ItemID: "APP-T-0001", LeaseState: string(LeaseStateRunning), LeaseExpiresAt: now.Add(-time.Minute).Format(time.RFC3339)}}, now); found {
 		t.Fatal("expired holder must not block a claim")
+	}
+}
+
+// ownedPathClaimFixture wires a live holder and a candidate through the real
+// claim entry point, because the incident this guards against was two lanes
+// claiming successfully — not a helper returning the wrong verdict.
+func ownedPathClaimFixture(t *testing.T, candidateID, holderID string, candidatePaths, holderPaths []string, mutate func(*RunStatus, time.Time)) (*RuntimeStore, RunStatus, *runOwnershipService) {
+	t.Helper()
+	store, candidateRun := ownershipStoreFixture(t, candidateID)
+	now := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	holder := candidateRun
+	holder.RecordID, holder.ItemID = holderID, holderID
+	holder.LeaseState, holder.LeaseOwner = string(LeaseStateRunning), "lane-a"
+	holder.LeaseExpiresAt = now.Add(time.Hour).Format(time.RFC3339)
+	holder.StartedAt = now.Add(-time.Minute).Format(time.RFC3339)
+	if mutate != nil {
+		mutate(&holder, now)
+	}
+	if err := store.UpsertRun(holder); err != nil {
+		t.Fatal(err)
+	}
+	candidate := Note{Data: map[string]any{"id": candidateID, "owned_paths": candidatePaths}}
+	notes := map[string]Note{holderID: {Data: map[string]any{"id": holderID, "owned_paths": holderPaths}}, candidateID: candidate}
+	service := newRunOwnershipService(store).withOwnedPathContext("", candidate, notes)
+	service.now = func() time.Time { return now }
+	service.projectConcurrencyLimit = 2
+	return store, candidateRun, service
+}
+
+func TestClaimDisjointOwnedPathsSucceeds(t *testing.T) {
+	_, candidateRun, service := ownedPathClaimFixture(t, "APP-T-DISJOINT-2", "APP-T-DISJOINT-1", []string{"cmd/tusker/run_ownership.go"}, []string{"internal/v7schema"}, nil)
+	result, err := service.claim(candidateRun, "lane-b")
+	if err != nil || !result.Claimed {
+		t.Fatalf("disjoint claim was refused: %#v %v", result, err)
+	}
+}
+
+// A lease that aged out does not release the files its holder is editing.  If
+// the holder's process is provably alive, the claim is still a collision and
+// must be refused with that liveness verdict instead of quietly proceeding.
+func TestClaimStaleLeaseWithLiveProcessRefused(t *testing.T) {
+	store, candidateRun, service := ownedPathClaimFixture(t, "APP-T-LIVE-2", "APP-T-LIVE-1", []string{"migrations/0014.sql"}, []string{"migrations"}, func(holder *RunStatus, now time.Time) {
+		holder.LeaseExpiresAt = now.Add(-time.Minute).Format(time.RFC3339)
+		holder.ProcessPID = os.Getpid()
+	})
+	result, err := service.claim(candidateRun, "lane-b")
+	if err == nil || result.Claimed {
+		t.Fatalf("live holder with an expired lease did not block the claim: %#v %v", result, err)
+	}
+	var typed *TuskerError
+	if !errors.As(err, &typed) || typed.Code != "OWNED_PATH_CONFLICT" || !strings.Contains(typed.Message, "lease_expired_process_alive") {
+		t.Fatalf("liveness verdict missing from refusal: %v", err)
+	}
+	holder, _ := store.FindRun("APP-T-LIVE-1")
+	if holder.LeaseState != string(LeaseStateRunning) {
+		t.Fatalf("live holder was taken over: %#v", holder)
 	}
 }
 
