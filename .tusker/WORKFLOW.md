@@ -143,6 +143,15 @@ fanout:
     max_children: 0
     allowed_child_types: []
     merge_rule: manual_review
+orchestration:
+    default_branch: main
+    gate:
+        profile: default
+        harvest_commands:
+            - make test
+        min_free_disk_gb: 5
+        defect_target_regex: '^--- FAIL: (\S+)'
+        defect_line_limit: 12
 # runner escalation reasons: system_error|security_concern|unresolvable_conflict|stuck_loop
 ---
 
