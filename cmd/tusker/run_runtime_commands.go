@@ -889,60 +889,40 @@ func redriveCmd(args Args) error {
 	now := time.Now().UTC()
 	actor := firstNonEmpty(strings.TrimSpace(args.String("by")), strings.TrimSpace(args.String("actor")), defaultActorName())
 	reason := firstNonEmpty(strings.TrimSpace(args.String("reason")), "operator redrive")
-	previousAttemptCount := run.AttemptCount
-	previousLeaseState := run.LeaseState
-	previousAttemptOutcome := run.AttemptOutcome
-	previousAttemptID := run.ActiveAttemptID
-	previousSessionRef := run.SessionRef
-	previousWorkspacePath := run.WorkspacePath
 	// Route through the idempotent retry primitive so a second redrive of a run
-	// whose attempt is already live or queued is a no-op that reports "already
-	// running" instead of double-dispatching a competing attempt.
+	// whose attempt is already live or queued is a no-op that reports honestly
+	// instead of double-dispatching a competing attempt. The retry primitive
+	// owns the supervisor-decision audit trail for every requeue/expedite it
+	// applies, so no audit is written here.
 	retry, err := retryFailedRun(store, identity, actor, reason, now)
 	if err != nil {
 		return err
 	}
 	*run = retry.Run
-	if retry.AlreadyLive {
+	switch {
+	case retry.AlreadyLive:
 		if args.Bool("json") {
 			emitJSON(map[string]any{"ok": true, "redriven": false, "already_running": true, "item_id": run.ItemID, "record_id": run.RecordID, "lease_state": run.LeaseState, "reason": retry.Reason})
 			return nil
 		}
 		fmt.Printf("Already running %s; %s\n", firstNonEmpty(run.ItemID, run.RecordID), retry.Reason)
 		return nil
+	case retry.AlreadyQueued:
+		if args.Bool("json") {
+			emitJSON(map[string]any{"ok": true, "redriven": false, "already_queued": true, "item_id": run.ItemID, "record_id": run.RecordID, "lease_state": run.LeaseState, "reason": retry.Reason})
+			return nil
+		}
+		fmt.Printf("Already queued %s; %s\n", firstNonEmpty(run.ItemID, run.RecordID), retry.Reason)
+		return nil
+	case retry.Expedited:
+		if args.Bool("json") {
+			emitJSON(map[string]any{"ok": true, "redriven": false, "expedited": true, "item_id": run.ItemID, "record_id": run.RecordID, "lease_state": run.LeaseState, "next_retry_at": run.NextRetryAt, "reason": retry.Reason})
+			return nil
+		}
+		fmt.Printf("Expedited %s; %s\n", firstNonEmpty(run.ItemID, run.RecordID), retry.Reason)
+		return nil
 	}
 	reset := retry.Reset
-	auditPayload, err := json.Marshal(map[string]any{
-		"actor":                    actor,
-		"reason":                   reason,
-		"reset_at":                 reset.ResetAt,
-		"previous_attempt_count":   previousAttemptCount,
-		"previous_lease_state":     previousLeaseState,
-		"previous_attempt_outcome": previousAttemptOutcome,
-	})
-	if err != nil {
-		return err
-	}
-	if _, err := store.SaveSupervisorDecision(SupervisorDecision{
-		ProjectID:        run.ProjectID,
-		RecordID:         run.RecordID,
-		ItemID:           run.ItemID,
-		Runner:           run.Runner,
-		WorkRevision:     run.WorkRevision,
-		AttemptID:        previousAttemptID,
-		ParentAttemptID:  previousAttemptID,
-		SessionRef:       previousSessionRef,
-		ParentSessionRef: previousSessionRef,
-		Kind:             string(SupervisorDecisionRedrive),
-		Reason:           reason,
-		WorkspacePath:    previousWorkspacePath,
-		ValidationDelta:  string(auditPayload),
-		LeaseState:       run.LeaseState,
-		ContextSignal:    "operator_redrive",
-		CreatedAt:        now.Format(time.RFC3339),
-	}); err != nil {
-		return err
-	}
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "redriven": true, "item_id": run.ItemID, "record_id": run.RecordID, "reset": reset, "lease_state": run.LeaseState})
 		return nil

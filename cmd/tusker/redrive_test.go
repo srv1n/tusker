@@ -178,12 +178,16 @@ func TestRedriveIdempotentOnLiveAttempt(t *testing.T) {
 		OK             bool `json:"ok"`
 		Redriven       bool `json:"redriven"`
 		AlreadyRunning bool `json:"already_running"`
+		AlreadyQueued  bool `json:"already_queued"`
 	}
 	if err := json.Unmarshal([]byte(output), &payload); err != nil {
 		t.Fatal(err)
 	}
 	assertEqual(t, false, payload.Redriven, "second redrive must not redrive")
-	assertEqual(t, true, payload.AlreadyRunning, "second redrive reports already running")
+	// A RetryQueued run has no live attempt behind it, so the honest no-op is
+	// "already queued", not "already running".
+	assertEqual(t, false, payload.AlreadyRunning, "queued run is not reported as running")
+	assertEqual(t, true, payload.AlreadyQueued, "second redrive reports already queued")
 
 	store, err = OpenRuntimeStore(stateRoot)
 	if err != nil {
