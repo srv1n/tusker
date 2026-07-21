@@ -9,10 +9,16 @@ import (
 
 // A hand-run marker records that a piece of work was picked up by hand in a
 // live, interactive session rather than handed out by the automation daemon.
-// The marker lives beside the lease so it survives later status changes (the
+// The marker lives beside the lease and survives later status changes (the
 // lease record is rewritten on every status change, but this marker file is
-// not) and stays put until the work closes. Daemon-dispatched work never writes
-// this marker, so hand-run and handed-out work stay distinguishable.
+// not), so hand-run and handed-out work stay distinguishable.
+//
+// The marker is restamped on EVERY claim: a hand-run claim writes it, and a
+// daemon-dispatched claim removes any stale marker left by an earlier hand-run
+// claim of the same task. This keeps the on-disk marker in agreement with the
+// hand_run flag on the claimed event, even when a task is hand-claimed,
+// released, and later re-claimed by the daemon. There is no separate cleanup at
+// close; restamp-on-claim is the sole authority.
 
 // handRunMarkerPath is the durable marker file for a task's claim.
 func handRunMarkerPath(vaultPath, taskID string) string {
@@ -37,6 +43,28 @@ func markHandRun(vaultPath, taskID, owner string) error {
 	stamp := "owner: " + fallback(owner, "agent:"+defaultActorName()) + "\n" +
 		"claimed_at: " + time.Now().UTC().Format(time.RFC3339) + "\n"
 	return writeText(handRunMarkerPath(vaultPath, taskID), stamp)
+}
+
+// clearHandRun removes any hand-run marker for a task. It is a no-op when no
+// marker exists, so daemon claims can call it unconditionally.
+func clearHandRun(vaultPath, taskID string) error {
+	if taskID == "" {
+		return nil
+	}
+	if err := os.Remove(handRunMarkerPath(vaultPath, taskID)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// restampHandRun brings the on-disk marker into agreement with the current
+// claim: a hand-run claim writes the marker, a daemon-dispatched claim removes
+// any stale marker from an earlier hand-run claim of the same task.
+func restampHandRun(vaultPath, taskID, owner string) error {
+	if claimIsHandRun() {
+		return markHandRun(vaultPath, taskID, owner)
+	}
+	return clearHandRun(vaultPath, taskID)
 }
 
 // hasHandRunMarker reports whether a task carries the hand-run marker.

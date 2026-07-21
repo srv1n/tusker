@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func handRunTestVault(t *testing.T) string {
@@ -73,4 +76,90 @@ func TestOutsideDaemonMarkerPersistsThroughStatus(t *testing.T) {
 	if !hasHandRunMarker(vault, "APP-T-0001") {
 		t.Fatal("hand-run marker must survive later status changes until the work closes")
 	}
+}
+
+// A4: a daemon re-claim after a hand-run claim of the same task must leave NO
+// marker and emit hand_run:false — the on-disk marker and the claimed event's
+// hand_run flag agree for the same claim.
+func TestDaemonReclaimAfterHandRunClearsMarker(t *testing.T) {
+	vault := handRunTestVault(t)
+
+	// First: an interactive hand-run claim stamps the durable marker.
+	t.Setenv("TUSKER_ATTEMPT_ID", "")
+	if err := claimCmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "owner": "agent:codex"}); err != nil {
+		t.Fatal(err)
+	}
+	if !hasHandRunMarker(vault, "APP-T-0001") {
+		t.Fatal("expected hand-run marker after interactive claim")
+	}
+
+	// Release the hand-run claim so the task is claimable again.
+	if _, err := writeV7Lease(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "owner": "agent:codex"}, "released"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: the daemon re-claims the same task under a dispatched attempt id.
+	t.Setenv("TUSKER_ATTEMPT_ID", "APP-T-0001-A-0001")
+	if err := claimCmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "owner": "agent:codex"}); err != nil {
+		t.Fatal(err)
+	}
+	if hasHandRunMarker(vault, "APP-T-0001") {
+		t.Fatal("daemon re-claim must clear the stale hand-run marker")
+	}
+	if v := latestClaimedHandRun(t, vault, "APP-T-0001"); v != false {
+		t.Fatalf("daemon re-claim must emit hand_run:false, got %v", v)
+	}
+}
+
+// latestClaimedHandRun returns the hand_run flag on the most recent "claimed"
+// event emitted for a task. Events are individual JSON files under
+// <vault>/events/YYYY/MM/; the newest by modtime wins.
+func latestClaimedHandRun(t *testing.T, vault, taskID string) bool {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(vault, "events", "*", "*", taskID+"--*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var newest string
+	var newestAt time.Time
+	for _, path := range matches {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var event map[string]any
+		if err := json.Unmarshal(raw, &event); err != nil {
+			t.Fatal(err)
+		}
+		if event["event_kind"] != "claimed" {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if newest == "" || info.ModTime().After(newestAt) {
+			newest, newestAt = path, info.ModTime()
+		}
+	}
+	if newest == "" {
+		t.Fatal("no claimed event found for task")
+	}
+	raw, err := os.ReadFile(newest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var event map[string]any
+	if err := json.Unmarshal(raw, &event); err != nil {
+		t.Fatal(err)
+	}
+	payload, ok := event["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("claimed event %s has no payload", newest)
+	}
+	handRun, ok := payload["hand_run"].(bool)
+	if !ok {
+		t.Fatalf("claimed event %s payload has no hand_run bool", newest)
+	}
+	return handRun
 }
