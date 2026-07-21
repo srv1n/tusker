@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-21T07:06:03Z"
-updated_at: "2026-07-21T08:03:38Z"
-state_rev: "sha256:a894e81e080650ff772e243c8f94bc5dcd490dbf028f38e5696bc5cb476796e7"
+updated_at: "2026-07-21T08:30:06Z"
+state_rev: "sha256:5db3c469ab6f49eea47edc86abbf34ca0d134922b54c2eb38eb10377776a5367"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -48,9 +48,7 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[FAC-T-0009]] | backlog | agent | Wait for dependency FAC-T-0007 to reach review with satisfied proof or done. |
-| [[FAC-T-0010]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[FAC-T-0011]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| _None._ |  |  |  |
 
 ## Recently completed
 
@@ -66,4 +64,7 @@ TBD.
 | [[FAC-T-0006]] | reviewer:fable | 2026-07-21T08:03:37Z |
 | [[FAC-T-0007]] | reviewer:fable | 2026-07-21T07:34:24Z |
 | [[FAC-T-0008]] | reviewer:fable | 2026-07-21T08:03:37Z |
+| [[FAC-T-0009]] | reviewer:fable | 2026-07-21T08:30:05Z |
+| [[FAC-T-0010]] | reviewer:fable | 2026-07-21T08:30:05Z |
+| [[FAC-T-0011]] | reviewer:fable | 2026-07-21T08:30:06Z |
 | [[FAC-T-0012]] | reviewer:fable | 2026-07-21T08:03:38Z |
