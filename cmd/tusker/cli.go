@@ -214,7 +214,7 @@ func run(command string, args Args) (int, error) {
 
 func cliCommandMutatesVault(command string) bool {
 	switch command {
-	case "status", "discard", "verify add", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "delivery import", "reconcile", "finish", "close", "handoff":
+	case "status", "discard", "verify add", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "delivery import", "reconcile", "finish", "close", "accept", "handoff":
 		return true
 	default:
 		return false
@@ -383,6 +383,9 @@ func runInner(command string, args Args) (int, error) {
 	case "close":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, closeV7Cmd(args)
+	case "accept":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, acceptV7Cmd(args)
 	case "redrive":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, redriveCmd(args)
@@ -962,6 +965,7 @@ Commands:
   install             install binary and skill bundles
   purge               dry-run or remove generated Tusker repo state
   close               close a V7 task after gates and evidence pass
+  accept              accept, confirm proof, and close a green task in one step
   validate            check vault invariants
   reindex             rebuild generated indexes
   update              refresh the installed binary link and skill bundle
