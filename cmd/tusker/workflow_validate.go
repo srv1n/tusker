@@ -99,6 +99,11 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	if err := validateFanoutPolicy(wf.Fanout, filePath); err != nil {
 		return err
 	}
+	if len(wf.Orchestration.BatchGate.Windows) > 0 {
+		if _, err := parseMergeWindows(wf.Orchestration.BatchGate.Windows); err != nil {
+			return tuskerError(errorConfigInvalid, err.Error(), withPath(filePath))
+		}
+	}
 	for _, section := range []string{"## Routing", "## Prompt", "## Retry policy", "## Human override policy"} {
 		if findHeading(body, section) == nil {
 			return tuskerError(errorConfigInvalid, fmt.Sprintf("WORKFLOW.md missing required section %q", section), withPath(filePath))

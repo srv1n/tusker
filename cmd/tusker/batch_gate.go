@@ -4,9 +4,98 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// mergeWindowRunningGrace bounds how long a still-running batch gate suppresses
+// a new clock-window spawn. It mirrors the period path's stuck-run guard: a run
+// in flight blocks a concurrent gate, but only up to this cap so a permanently
+// stuck run cannot wedge the window schedule forever.
+const mergeWindowRunningGrace = 24 * time.Hour
+
+// mergeWindow is a daily wall-clock departure time in the daemon host's local
+// time zone.
+type mergeWindow struct {
+	hour   int
+	minute int
+}
+
+// parseMergeWindows converts configured "HH:MM" entries into an ordered
+// (ascending, de-duplicated) set of daily local wall-clock times. Malformed
+// entries such as "25:00" or "1300" are rejected with a named config error
+// rather than silently dropped.
+func parseMergeWindows(raw []string) ([]mergeWindow, error) {
+	windows := make([]mergeWindow, 0, len(raw))
+	seen := map[int]struct{}{}
+	for _, entry := range raw {
+		trimmed := strings.TrimSpace(entry)
+		parts := strings.Split(trimmed, ":")
+		if len(parts) != 2 || len(parts[0]) != 2 || len(parts[1]) != 2 {
+			return nil, tuskerError(errorConfigInvalid, "orchestration.batch_gate.windows entry "+strconv.Quote(entry)+" must be a HH:MM local wall-clock time")
+		}
+		hour, hourErr := strconv.Atoi(parts[0])
+		minute, minErr := strconv.Atoi(parts[1])
+		if hourErr != nil || minErr != nil || hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+			return nil, tuskerError(errorConfigInvalid, "orchestration.batch_gate.windows entry "+strconv.Quote(entry)+" must be a HH:MM local wall-clock time")
+		}
+		key := hour*60 + minute
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		windows = append(windows, mergeWindow{hour: hour, minute: minute})
+	}
+	sort.Slice(windows, func(i, j int) bool {
+		return windows[i].hour*60+windows[i].minute < windows[j].hour*60+windows[j].minute
+	})
+	return windows, nil
+}
+
+// mergeWindowMostRecent returns the latest window occurrence at or before now
+// (in now's location). Windows must be non-empty, so a result always exists.
+func mergeWindowMostRecent(windows []mergeWindow, now time.Time) time.Time {
+	loc := now.Location()
+	y, m, d := now.Date()
+	var best time.Time
+	found := false
+	for _, off := range []int{0, -1} {
+		for _, w := range windows {
+			t := time.Date(y, m, d+off, w.hour, w.minute, 0, 0, loc)
+			if t.After(now) {
+				continue
+			}
+			if !found || t.After(best) {
+				best, found = t, true
+			}
+		}
+	}
+	return best
+}
+
+// mergeWindowNext returns the earliest window occurrence strictly after now (in
+// now's location). An exact boundary hit resolves to the following window, so
+// the result is deterministic.
+func mergeWindowNext(windows []mergeWindow, now time.Time) time.Time {
+	loc := now.Location()
+	y, m, d := now.Date()
+	var best time.Time
+	found := false
+	for _, off := range []int{0, 1} {
+		for _, w := range windows {
+			t := time.Date(y, m, d+off, w.hour, w.minute, 0, 0, loc)
+			if !t.After(now) {
+				continue
+			}
+			if !found || t.Before(best) {
+				best, found = t, true
+			}
+		}
+	}
+	return best
+}
 
 func (s *RuntimeStore) latestBatchGateRun(projectID string) (*BatchGateRun, error) {
 	var run BatchGateRun
@@ -35,21 +124,47 @@ func (d *Daemon) scheduleBatchGateIfDue(project RegisteredProject, wf Workflow, 
 	if !policy.Enabled || len(policy.Commands) == 0 {
 		return nil
 	}
-	period := time.Duration(policy.PeriodHours) * time.Hour
-	if period <= 0 {
-		period = 24 * time.Hour
-	}
 	latest, err := d.store.latestBatchGateRun(project.ProjectID)
 	if err != nil {
 		return err
 	}
-	if latest != nil {
-		started, parseErr := time.Parse(time.RFC3339, latest.StartedAt)
-		if parseErr == nil && now.Sub(started) < period {
-			return nil
+	if len(policy.Windows) > 0 {
+		windows, parseErr := parseMergeWindows(policy.Windows)
+		if parseErr != nil {
+			return parseErr
 		}
-		if latest.Status == "running" && parseErr == nil && now.Sub(started) < 2*period {
-			return nil
+		windowStart := mergeWindowMostRecent(windows, now)
+		if latest != nil {
+			if started, tErr := time.Parse(time.RFC3339, latest.StartedAt); tErr == nil {
+				// A run started at or after the current window already consumed
+				// it, so each window fires at most once per day and is a no-op
+				// between windows.
+				if !started.Before(windowStart) {
+					return nil
+				}
+				// A run still in flight from before this window must not be
+				// joined by a second concurrent gate. Mirror the period path's
+				// stuck-run guard: suppress a new spawn while a recent run is
+				// running, but bound it so a permanently stuck run cannot wedge
+				// the schedule forever.
+				if latest.Status == "running" && now.Sub(started) < mergeWindowRunningGrace {
+					return nil
+				}
+			}
+		}
+	} else {
+		period := time.Duration(policy.PeriodHours) * time.Hour
+		if period <= 0 {
+			period = 24 * time.Hour
+		}
+		if latest != nil {
+			started, parseErr := time.Parse(time.RFC3339, latest.StartedAt)
+			if parseErr == nil && now.Sub(started) < period {
+				return nil
+			}
+			if latest.Status == "running" && parseErr == nil && now.Sub(started) < 2*period {
+				return nil
+			}
 		}
 	}
 	treeHash, err := workspaceTreeStateHash(project.RepoRoot)

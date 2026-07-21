@@ -131,8 +131,13 @@ type NamespaceLintPattern struct {
 }
 
 type BatchGatePolicy struct {
-	Enabled        bool     `yaml:"enabled" json:"enabled"`
-	PeriodHours    int      `yaml:"period_hours,omitempty" json:"period_hours"`
+	Enabled     bool `yaml:"enabled" json:"enabled"`
+	PeriodHours int  `yaml:"period_hours,omitempty" json:"period_hours"`
+	// Windows are daily wall-clock departure times ("HH:MM") in the daemon
+	// host's LOCAL time. When set, the cycle fires AT these times each day
+	// rather than every period_hours; period_hours is the fallback when empty.
+	// No day-of-week/calendar scheduling and no timezone selector in v1.
+	Windows        []string `yaml:"windows,omitempty" json:"windows,omitempty"`
 	Commands       []string `yaml:"commands,omitempty" json:"commands,omitempty"`
 	FeatureProfile string   `yaml:"feature_profile,omitempty" json:"feature_profile,omitempty"`
 	MaxRepairs     int      `yaml:"max_repairs,omitempty" json:"max_repairs"`
