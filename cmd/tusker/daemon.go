@@ -2176,23 +2176,10 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				return run, true, nil
 			}
 			if run.Lane == runLaneReview {
-				if finding, ok := reviewerFindingFromTask(note); ok {
-					if err := returnReviewerFindingToImplementer(project.VaultRoot, run.RecordID, finding, "daemon:reviewer-finding"); err != nil {
-						return run, changed, err
-					}
-					run.LeaseState = string(LeaseStateReleased)
-					run.AttemptOutcome = string(AttemptOutcomeSucceeded)
-					run.NextRetryAt = ""
-					run.LastError = reviewerFindingReturnReason
-					run.UpdatedAt = finished
-					run.Terminal = true
-					updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, reviewerFindingReturnReason, finished)
-					if strings.TrimSpace(run.SessionRef) != "" {
-						_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForOutcome(AttemptOutcomeSucceeded), "", reviewerFindingReturnReason, false)
-					}
-					clearActiveExecution(&run)
-					return run, true, nil
-				}
+				// Dirty-workspace handling takes precedence over a findings
+				// bounce: if the reviewer left uncommitted changes, stop for
+				// audit so those changes are never silently abandoned, even
+				// when a finding row is also present.
 				if reason := reviewerWorkspaceDirtyReason(run.WorkspacePath); reason != "" {
 					parentAttemptID := run.ActiveAttemptID
 					parentSessionRef := run.SessionRef
@@ -2213,6 +2200,41 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 						SessionRef:       parentSessionRef,
 						Kind:             string(SupervisorDecisionStopForAudit),
 						Reason:           reason,
+						ParentAttemptID:  parentAttemptID,
+						ParentSessionRef: parentSessionRef,
+						WorkspacePath:    run.WorkspacePath,
+					})
+					clearActiveExecution(&run)
+					return run, true, nil
+				}
+				if finding, ok := reviewerFindingFromTask(note, run.ActiveAttemptID); ok {
+					if err := returnReviewerFindingToImplementer(project.VaultRoot, run.RecordID, finding, "daemon:reviewer-finding"); err != nil {
+						return run, changed, err
+					}
+					// A findings bounce is a "review did not pass" outcome, not
+					// a success: mirror the dirty sibling branch (Blocked +
+					// StopForAudit) so the run's end state is honest and the
+					// bounce shows in the decision log. No retry is scheduled,
+					// preserving the no-stacking semantics.
+					parentAttemptID := run.ActiveAttemptID
+					parentSessionRef := run.SessionRef
+					updateRunAttemptFromRun(d.store, run, AttemptOutcomeBlocked, 1, reviewerFindingReturnReason, finished)
+					run.LeaseState = string(LeaseStateReleased)
+					run.AttemptOutcome = string(AttemptOutcomeBlocked)
+					run.NextRetryAt = ""
+					run.LastError = reviewerFindingReturnReason
+					run.UpdatedAt = finished
+					run.Terminal = false
+					if strings.TrimSpace(run.SessionRef) != "" {
+						_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateReleased), "", reviewerFindingReturnReason, false)
+					}
+					d.emitSupervisorDecision(SupervisorDecision{
+						ProjectID:        project.ProjectID,
+						RecordID:         run.RecordID,
+						AttemptID:        parentAttemptID,
+						SessionRef:       parentSessionRef,
+						Kind:             string(SupervisorDecisionStopForAudit),
+						Reason:           reviewerFindingReturnReason,
 						ParentAttemptID:  parentAttemptID,
 						ParentSessionRef: parentSessionRef,
 						WorkspacePath:    run.WorkspacePath,
