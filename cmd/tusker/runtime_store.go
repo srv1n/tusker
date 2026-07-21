@@ -111,6 +111,16 @@ type RunStatus struct {
 	Terminal           bool   `json:"terminal"`
 	StartedAt          string `json:"started_at"`
 	UpdatedAt          string `json:"updated_at"`
+	// HandRun records, per RUN, whether this claim was made by hand in a live
+	// interactive session rather than handed out by the automation daemon. It is
+	// stamped once at claim time (ClaimRunLease) and preserved by later upserts,
+	// so a historical row keeps the origin of the claim that produced it even
+	// after the same task is later re-claimed by a different origin.
+	HandRun bool `json:"hand_run"`
+	// HandRunStamped is true when the hand_run column carried an explicit value
+	// (i.e. the run was claimed after the field existed). When false the origin is
+	// unknown and callers fall back to the legacy task-keyed marker file.
+	HandRunStamped bool `json:"-"`
 }
 
 type RunAuthorization struct {
@@ -829,6 +839,13 @@ func (s *RuntimeStore) Migrate() error {
 			return err
 		}
 	}
+	// hand_run is deliberately nullable with no default: rows claimed before this
+	// column existed scan back as NULL (origin unknown -> render falls back to the
+	// task-keyed marker), while every claim under ClaimRunLease stamps an explicit
+	// 0/1 that renders authoritatively without touching the filesystem.
+	if err := s.ensureColumn("runs", "hand_run", `ALTER TABLE runs ADD COLUMN hand_run INTEGER`); err != nil {
+		return err
+	}
 	if err := s.ensureColumn("attempts", "process_pid", `ALTER TABLE attempts ADD COLUMN process_pid INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return err
 	}
@@ -1164,7 +1181,7 @@ func (s *RuntimeStore) ListProjects() ([]RegisteredProject, error) {
 }
 
 func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
-	rows, err := s.query(`SELECT project_id, record_id, item_id, runner, runner_profile, runner_harness, runner_model, runner_effort, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at FROM runs ORDER BY updated_at DESC, project_id, item_id`)
+	rows, err := s.query(`SELECT project_id, record_id, item_id, runner, runner_profile, runner_harness, runner_model, runner_effort, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at, hand_run FROM runs ORDER BY updated_at DESC, project_id, item_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -1173,10 +1190,13 @@ func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
 	for rows.Next() {
 		var run RunStatus
 		var terminal int
-		if err := rows.Scan(&run.ProjectID, &run.RecordID, &run.ItemID, &run.Runner, &run.RunnerProfile, &run.RunnerHarness, &run.RunnerModel, &run.RunnerEffort, &run.Lane, &run.LeaseState, &run.LeaseOwner, &run.LeaseGeneration, &run.LeaseExpiresAt, &run.LeaseHost, &run.AttemptOutcome, &run.ActiveAttemptID, &run.WorkspacePath, &run.SessionRef, &run.CloudTaskID, &run.CloudStatus, &run.CloudEnvironmentID, &run.CloudAttemptNumber, &run.PullRequestURL, &run.ApplyRef, &run.LogsSummary, &run.FinalSummary, &run.ProcessPID, &run.ProcessPGID, &run.ProcessStartedAt, &run.PromptPath, &run.EventSinkPath, &run.RawLogPath, &run.StatusPath, &run.WorkRevision, &run.AttemptCount, &run.NextRetryAt, &run.LastError, &run.LastEventAt, &run.FirstEventAt, &run.LastHeartbeatAt, &terminal, &run.StartedAt, &run.UpdatedAt); err != nil {
+		var handRun sql.NullInt64
+		if err := rows.Scan(&run.ProjectID, &run.RecordID, &run.ItemID, &run.Runner, &run.RunnerProfile, &run.RunnerHarness, &run.RunnerModel, &run.RunnerEffort, &run.Lane, &run.LeaseState, &run.LeaseOwner, &run.LeaseGeneration, &run.LeaseExpiresAt, &run.LeaseHost, &run.AttemptOutcome, &run.ActiveAttemptID, &run.WorkspacePath, &run.SessionRef, &run.CloudTaskID, &run.CloudStatus, &run.CloudEnvironmentID, &run.CloudAttemptNumber, &run.PullRequestURL, &run.ApplyRef, &run.LogsSummary, &run.FinalSummary, &run.ProcessPID, &run.ProcessPGID, &run.ProcessStartedAt, &run.PromptPath, &run.EventSinkPath, &run.RawLogPath, &run.StatusPath, &run.WorkRevision, &run.AttemptCount, &run.NextRetryAt, &run.LastError, &run.LastEventAt, &run.FirstEventAt, &run.LastHeartbeatAt, &terminal, &run.StartedAt, &run.UpdatedAt, &handRun); err != nil {
 			return nil, err
 		}
 		run.Terminal = terminal != 0
+		run.HandRun = handRun.Valid && handRun.Int64 != 0
+		run.HandRunStamped = handRun.Valid
 		out = append(out, run)
 	}
 	return out, rows.Err()
@@ -1473,7 +1493,7 @@ type RuntimeLeaseClaimPrecondition struct {
 	ProjectConcurrencyLimit int
 }
 
-func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generation int, ttl time.Duration, now time.Time, dispatchable bool, precondition RuntimeLeaseClaimPrecondition) (bool, error) {
+func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generation int, ttl time.Duration, now time.Time, dispatchable bool, handRun bool, precondition RuntimeLeaseClaimPrecondition) (bool, error) {
 	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" {
 		return false, tuskerError(errorInvalidArg, "lease claim requires project_id and record_id")
 	}
@@ -1504,7 +1524,8 @@ func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generati
 			lease_expires_at = ?,
 			lease_host = ?,
 			last_heartbeat_at = ?,
-			updated_at = ?
+			updated_at = ?,
+			hand_run = ?
 		WHERE project_id = ? AND record_id = ?
 			AND lease_state NOT IN ('claimed', 'running')
 			AND lease_state = ?
@@ -1513,7 +1534,7 @@ func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generati
 			AND work_revision = ?
 			AND (? <= 0 OR (SELECT COUNT(1) FROM runs active WHERE active.project_id = ? AND active.lease_state IN ('claimed','running')) < ?)`
 	params := []any{
-		owner, generation, now.Add(ttl).Format(time.RFC3339), runtimeLeaseHost(), now.Format(time.RFC3339), now.Format(time.RFC3339),
+		owner, generation, now.Add(ttl).Format(time.RFC3339), runtimeLeaseHost(), now.Format(time.RFC3339), now.Format(time.RFC3339), boolToInt(handRun),
 		projectID, recordID, expectedLeaseState, precondition.ExpectedOwner,
 		precondition.ExpectedLeaseGeneration, precondition.ExpectedWorkRevision,
 		precondition.ProjectConcurrencyLimit, projectID, precondition.ProjectConcurrencyLimit,

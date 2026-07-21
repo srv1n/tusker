@@ -199,14 +199,14 @@ func TestLeaseClaimCASLeaseRenewReclaimLeaseGenerationFence(t *testing.T) {
 	if err := store.UpsertRun(run); err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := store.ClaimRunLease("project-1", "APP-T-0001", "owner-1", 1, defaultRunLeaseTTL, now, true, RuntimeLeaseClaimPrecondition{
+	claimed, err := store.ClaimRunLease("project-1", "APP-T-0001", "owner-1", 1, defaultRunLeaseTTL, now, true, false, RuntimeLeaseClaimPrecondition{
 		ExpectedLeaseState: LeaseStateUnclaimed,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertEqual(t, true, claimed, "first claim")
-	claimed, err = store.ClaimRunLease("project-1", "APP-T-0001", "owner-2", 2, defaultRunLeaseTTL, now, true, RuntimeLeaseClaimPrecondition{
+	claimed, err = store.ClaimRunLease("project-1", "APP-T-0001", "owner-2", 2, defaultRunLeaseTTL, now, true, false, RuntimeLeaseClaimPrecondition{
 		ExpectedLeaseState: LeaseStateUnclaimed,
 	})
 	if err != nil {
@@ -280,7 +280,7 @@ func TestLeaseClaimCASWorkRevisionFence(t *testing.T) {
 	if err := store.UpsertRun(run); err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := store.ClaimRunLease("project-1", "APP-T-0001", "owner-stale", 1, defaultRunLeaseTTL, now, true, RuntimeLeaseClaimPrecondition{
+	claimed, err := store.ClaimRunLease("project-1", "APP-T-0001", "owner-stale", 1, defaultRunLeaseTTL, now, true, false, RuntimeLeaseClaimPrecondition{
 		ExpectedLeaseState:      LeaseStateUnclaimed,
 		ExpectedOwner:           "",
 		ExpectedLeaseGeneration: 0,
@@ -297,7 +297,7 @@ func TestLeaseClaimCASWorkRevisionFence(t *testing.T) {
 	assertEqual(t, string(LeaseStateUnclaimed), current.LeaseState, "stale claim leaves row unclaimed")
 	assertEqual(t, "", current.LeaseOwner, "stale claim does not set owner")
 
-	claimed, err = store.ClaimRunLease("project-1", "APP-T-0001", "owner-current", 1, defaultRunLeaseTTL, now, true, RuntimeLeaseClaimPrecondition{
+	claimed, err = store.ClaimRunLease("project-1", "APP-T-0001", "owner-current", 1, defaultRunLeaseTTL, now, true, false, RuntimeLeaseClaimPrecondition{
 		ExpectedLeaseState:      LeaseStateUnclaimed,
 		ExpectedOwner:           "",
 		ExpectedLeaseGeneration: 0,
@@ -630,7 +630,7 @@ func TestHeartbeatStopSignal(t *testing.T) {
 	if err := store.UpsertRun(RunStatus{ProjectID: "project-1", RecordID: "APP-T-0001", ItemID: "APP-T-0001", LeaseState: string(LeaseStateUnclaimed)}); err != nil {
 		t.Fatal(err)
 	}
-	if claimed, err := store.ClaimRunLease("project-1", "APP-T-0001", "owner-1", 1, defaultRunLeaseTTL, now, true, RuntimeLeaseClaimPrecondition{ExpectedLeaseState: LeaseStateUnclaimed}); err != nil || !claimed {
+	if claimed, err := store.ClaimRunLease("project-1", "APP-T-0001", "owner-1", 1, defaultRunLeaseTTL, now, true, false, RuntimeLeaseClaimPrecondition{ExpectedLeaseState: LeaseStateUnclaimed}); err != nil || !claimed {
 		t.Fatalf("claim failed claimed=%v err=%v", claimed, err)
 	}
 	renewed, err := store.RenewRunLease(RuntimeLeaseRenewal{ProjectID: "project-1", RecordID: "APP-T-0001", Owner: "owner-1", Generation: 1, TTL: defaultRunLeaseTTL, Now: now.Add(defaultRunHeartbeatInterval), Dispatchable: false})

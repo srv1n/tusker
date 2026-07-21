@@ -294,7 +294,7 @@ func TestRunsInterruptRuntimeRunDoesNotOverwriteConcurrentLeaseClaim(t *testing.
 	var claimErr error
 	_, viaDaemon, err := interruptRuntimeRunWithHook(DefaultStateRoot(), server.store, original.RecordID, func() {
 		var claimed bool
-		claimed, claimErr = server.store.ClaimRunLease(original.ProjectID, original.RecordID, "new-attempt", 1, defaultRunLeaseTTL, time.Now().UTC(), true, RuntimeLeaseClaimPrecondition{
+		claimed, claimErr = server.store.ClaimRunLease(original.ProjectID, original.RecordID, "new-attempt", 1, defaultRunLeaseTTL, time.Now().UTC(), true, false, RuntimeLeaseClaimPrecondition{
 			ExpectedLeaseState: LeaseStateUnclaimed, ExpectedOwner: "", ExpectedLeaseGeneration: 0, ExpectedWorkRevision: original.WorkRevision,
 		})
 		if claimErr == nil && !claimed {

@@ -19,6 +19,15 @@ import (
 // hand_run flag on the claimed event, even when a task is hand-claimed,
 // released, and later re-claimed by the daemon. There is no separate cleanup at
 // close; restamp-on-claim is the sole authority.
+//
+// The marker is keyed by TASK, so it only ever reflects the LATEST claim of a
+// task. Board and web rows are keyed by RUN and can be historical (a daemon
+// row landed hours ago while the task was since hand-claimed, or vice versa),
+// so they must NOT render from this marker. The authoritative per-run origin is
+// the hand_run stamp persisted on the RunStatus at claim time
+// (ClaimRunLease). runHandRunOrigin reads that stamp and only falls back to
+// this marker for runs claimed before the stamp existed (RunStatus.HandRun
+// unstamped). The marker remains for lease-level introspection.
 
 // handRunMarkerPath is the durable marker file for a task's claim.
 func handRunMarkerPath(vaultPath, taskID string) string {
@@ -70,4 +79,15 @@ func restampHandRun(vaultPath, taskID, owner string) error {
 // hasHandRunMarker reports whether a task carries the hand-run marker.
 func hasHandRunMarker(vaultPath, taskID string) bool {
 	return fileExists(handRunMarkerPath(vaultPath, taskID))
+}
+
+// runHandRunOrigin reports whether a specific RUN was claimed by hand. It reads
+// the authoritative per-run stamp on the run record and only consults the
+// task-keyed marker for legacy runs that predate the stamp (HandRunStamped is
+// false), so a historical row no longer inherits a later claim's origin.
+func runHandRunOrigin(run RunStatus, vaultPath string) bool {
+	if run.HandRunStamped {
+		return run.HandRun
+	}
+	return hasHandRunMarker(vaultPath, run.ItemID)
 }

@@ -35,7 +35,7 @@ func TestRedriveCASDoesNotClearConcurrentClaimOrResetBudget(t *testing.T) {
 	var claimErr error
 	_, err = redriveRuntimeRunWithHook(store, &run, "human:new", "new window", now, func() {
 		var claimed bool
-		claimed, claimErr = store.ClaimRunLease(original.ProjectID, original.RecordID, "concurrent-attempt", 1, defaultRunLeaseTTL, now, true, RuntimeLeaseClaimPrecondition{
+		claimed, claimErr = store.ClaimRunLease(original.ProjectID, original.RecordID, "concurrent-attempt", 1, defaultRunLeaseTTL, now, true, false, RuntimeLeaseClaimPrecondition{
 			ExpectedLeaseState: LeaseStateReleased, ExpectedOwner: "", ExpectedLeaseGeneration: 0, ExpectedWorkRevision: original.WorkRevision,
 		})
 		if claimErr == nil && !claimed {

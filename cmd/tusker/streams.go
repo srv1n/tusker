@@ -57,7 +57,7 @@ func buildStreamRows(ctx *automationCommandContext, now time.Time) ([]streamRow,
 		freshness := runFreshness(&run, now)
 		note := ctx.NotesByID[run.ItemID]
 		row := streamRow{Lane: run.Lane, TaskID: run.ItemID, Runner: run.Runner, WorktreePath: run.WorkspacePath, OwnedPaths: normalizeOwnedPaths(normalizeList(note.Data["owned_paths"]))}
-		row.HandRun = hasHandRunMarker(ctx.Project.VaultRoot, run.ItemID)
+		row.HandRun = runHandRunOrigin(run, ctx.Project.VaultRoot)
 		if freshness == "released" {
 			if !strings.EqualFold(run.AttemptOutcome, "succeeded") {
 				continue

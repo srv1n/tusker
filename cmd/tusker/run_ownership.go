@@ -246,7 +246,7 @@ func (s *runOwnershipService) claimWithAuthorization(run RunStatus, owner string
 	}
 	now := s.now()
 	generation := current.LeaseGeneration + 1
-	claimed, err := s.store.ClaimRunLease(current.ProjectID, current.RecordID, owner, generation, defaultRunLeaseTTL, now, true, RuntimeLeaseClaimPrecondition{
+	claimed, err := s.store.ClaimRunLease(current.ProjectID, current.RecordID, owner, generation, defaultRunLeaseTTL, now, true, claimIsHandRun(), RuntimeLeaseClaimPrecondition{
 		ExpectedLeaseState: LeaseState(current.LeaseState), ExpectedOwner: current.LeaseOwner,
 		ExpectedLeaseGeneration: current.LeaseGeneration, ExpectedWorkRevision: current.WorkRevision,
 		ProjectConcurrencyLimit: s.projectConcurrencyLimit,
@@ -289,7 +289,10 @@ func (s *runOwnershipService) claimExistingWithAuthorization(run RunStatus, owne
 	}
 	now := s.now()
 	generation := run.LeaseGeneration + 1
-	claimed, err := s.store.ClaimRunLease(run.ProjectID, run.RecordID, owner, generation, defaultRunLeaseTTL, now, true, RuntimeLeaseClaimPrecondition{
+	// The daemon claim path is, by definition, machine-dispatched: this claim was
+	// not made by hand in a live session, so it stamps hand_run=false and clears
+	// any hand-run origin left by an earlier hand claim of the same task.
+	claimed, err := s.store.ClaimRunLease(run.ProjectID, run.RecordID, owner, generation, defaultRunLeaseTTL, now, true, false, RuntimeLeaseClaimPrecondition{
 		ExpectedLeaseState: LeaseState(run.LeaseState), ExpectedOwner: run.LeaseOwner,
 		ExpectedLeaseGeneration: run.LeaseGeneration, ExpectedWorkRevision: run.WorkRevision,
 		ProjectConcurrencyLimit: s.projectConcurrencyLimit,
