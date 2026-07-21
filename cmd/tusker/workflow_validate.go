@@ -104,6 +104,9 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 			return tuskerError(errorConfigInvalid, err.Error(), withPath(filePath))
 		}
 	}
+	if err := validateGateScopes(wf.Orchestration.Gate.Scopes, filePath); err != nil {
+		return err
+	}
 	for _, section := range []string{"## Routing", "## Prompt", "## Retry policy", "## Human override policy"} {
 		if findHeading(body, section) == nil {
 			return tuskerError(errorConfigInvalid, fmt.Sprintf("WORKFLOW.md missing required section %q", section), withPath(filePath))
@@ -162,6 +165,40 @@ func validateRunnerDefinitions(wf Workflow, filePath string) error {
 		}
 	}
 	return nil
+}
+
+// validateGateScopes enforces that each selective-gate scope is well formed: a
+// scope with no name, no paths, or no commands cannot be selected or run, so it
+// is a configuration error rather than a silently inert entry.
+func validateGateScopes(scopes []GateScope, filePath string) error {
+	seen := map[string]bool{}
+	for i, scope := range scopes {
+		name := strings.TrimSpace(scope.Name)
+		if name == "" {
+			return tuskerError(errorConfigInvalid, fmt.Sprintf("orchestration.gate.scopes[%d] is missing name", i), withPath(filePath))
+		}
+		if seen[name] {
+			return tuskerError(errorConfigInvalid, "orchestration.gate.scopes has duplicate scope name "+name, withPath(filePath))
+		}
+		seen[name] = true
+		if len(nonEmptyTrimmed(scope.Paths)) == 0 {
+			return tuskerError(errorConfigInvalid, "orchestration.gate.scope "+name+" requires at least one path", withPath(filePath))
+		}
+		if len(nonEmptyTrimmed(scope.Commands)) == 0 {
+			return tuskerError(errorConfigInvalid, "orchestration.gate.scope "+name+" requires at least one command", withPath(filePath))
+		}
+	}
+	return nil
+}
+
+func nonEmptyTrimmed(values []string) []string {
+	var out []string
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func validateFanoutPolicy(policy FanoutPolicy, filePath string) error {

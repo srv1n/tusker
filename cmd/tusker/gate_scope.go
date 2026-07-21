@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -86,39 +87,114 @@ func selectScopedCommands(scopes []GateScope, touched []string) (commands []stri
 	return commands, selected
 }
 
+// unscopedTouchedPaths returns the touched paths that no configured scope owns.
+// These are coverage gaps: at the per-change stage there is no scoped command
+// that would verify them, so the selective gate must not silently narrow them
+// away — it falls back to the full harvest set instead.
+func unscopedTouchedPaths(scopes []GateScope, touched []string) []string {
+	var unscoped []string
+	for _, path := range touched {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		owned := false
+		for _, scope := range scopes {
+			if scopeOwnsPath(scope, path) {
+				owned = true
+				break
+			}
+		}
+		if !owned {
+			unscoped = append(unscoped, path)
+		}
+	}
+	return unscoped
+}
+
 // runSelectiveGateTier is the Stage 1 per-change gate. It asks the runtime which
 // paths the change touched (diff against the base branch), selects the scopes
 // that own those paths, and harvests only their commands behind the same
 // preflight and one-pass defect harvest as the full gate. Areas the change did
-// not touch never run. When the change touched nothing a scope owns, the gate
-// passes without running any command — there is nothing in scope to check. The
-// wave-end collective gate stays whole: callers keep using runGateTier over the
-// project's full harvest set for that stage.
+// not touch never run. The gate fails closed: if the change set cannot be
+// computed it REFUSES rather than passes, and a touched path that no scope owns
+// falls back to the project's full harvest set rather than being skipped. Only a
+// truly empty diff (nothing touched at all) passes without running a command,
+// and even that pass runs preflight and stamps the tree hash. The wave-end
+// collective gate stays whole: callers keep using runGateTier over the project's
+// full harvest set for that stage.
 func runSelectiveGateTier(policy GateTierPolicy, scopes []GateScope, base, requestedProfile string, rt gateTierRuntime) (GateTierResult, error) {
 	started := rt.now()
+	profile := strings.TrimSpace(firstNonEmpty(requestedProfile, policy.Profile))
 	if rt.DiffPaths == nil {
-		return GateTierResult{Schema: gateTierSchema, Mode: gateTierModeSelective},
+		return GateTierResult{Schema: gateTierSchema, Mode: gateTierModeSelective, Profile: profile},
 			tuskerError(errorInvalidArg, "selective gate runtime is missing a diff-paths boundary")
 	}
 	touched, err := rt.DiffPaths(rt.Workspace, base)
 	if err != nil {
-		return GateTierResult{Schema: gateTierSchema, Mode: gateTierModeSelective},
-			tuskerError("DIFF_PATHS_FAILED", "cannot determine which paths the change touched: "+err.Error())
+		// Fail closed: an unavailable change set is a refusal, never a pass on a
+		// narrowed or empty diff.
+		return GateTierResult{
+			Schema:  gateTierSchema,
+			Mode:    gateTierModeSelective,
+			Profile: profile,
+			Outcome: gateOutcomeRefused,
+			Refusal: &GateRefusal{
+				Cause:  gateRefusalDiffUnavailable,
+				Detail: "cannot determine which paths the change touched: " + err.Error(),
+				Remedy: "make the base branch and merge-base resolvable (fetch the base branch or pass --base) so the change set is computable; the gate refuses rather than gating on a narrowed or empty diff",
+			},
+			DurationMS: rt.now().Sub(started).Milliseconds(),
+		}, nil
 	}
 
 	commands, selected := selectScopedCommands(scopes, touched)
+
+	// Fail closed on coverage gaps: any touched path that no scope owns is
+	// unaccounted for at the per-change stage. Fall back to the full harvest set
+	// rather than pass on an unverified area.
+	if unscoped := unscopedTouchedPaths(scopes, touched); len(unscoped) > 0 {
+		result, runErr := runGateTier(policy, requestedProfile, rt)
+		result.Mode = gateTierModeSelective
+		result.Touched = touched
+		result.Scopes = selected
+		result.Fallback = fmt.Sprintf(
+			"%d touched path(s) own no configured scope; ran the full harvest set instead of narrowing: %s",
+			len(unscoped), strings.Join(unscoped, ", "))
+		if result.DurationMS == 0 {
+			result.DurationMS = rt.now().Sub(started).Milliseconds()
+		}
+		return result, runErr
+	}
+
 	if len(commands) == 0 {
-		// The change touched no area any scope owns: nothing to build, style, or
-		// test at the per-change stage. That is a pass, not a refusal.
-		return GateTierResult{
-			Schema:     gateTierSchema,
-			Mode:       gateTierModeSelective,
-			Outcome:    gateOutcomePassed,
-			Profile:    strings.TrimSpace(firstNonEmpty(requestedProfile, policy.Profile)),
-			Touched:    touched,
-			Commands:   nil,
-			DurationMS: rt.now().Sub(started).Milliseconds(),
-		}, nil
+		// A truly empty diff: nothing was touched (or nothing maps to a command).
+		// Still stamp the tree and run preflight so even a pass is attributable to
+		// one revision and honors the gate's preconditions.
+		if rt.TreeHash == nil {
+			return GateTierResult{Schema: gateTierSchema, Mode: gateTierModeSelective, Profile: profile},
+				tuskerError(errorInvalidArg, "selective gate runtime is missing a tree hash boundary")
+		}
+		treeHash, hashErr := rt.TreeHash(rt.Workspace)
+		if hashErr != nil {
+			return GateTierResult{Schema: gateTierSchema, Mode: gateTierModeSelective, Profile: profile},
+				tuskerError("TREE_HASH_FAILED", "cannot hash the gate tree state: "+hashErr.Error())
+		}
+		result := GateTierResult{
+			Schema:   gateTierSchema,
+			Mode:     gateTierModeSelective,
+			Profile:  profile,
+			TreeHash: treeHash,
+			Touched:  touched,
+		}
+		if refusal := gateTierPreflight(policy, requestedProfile, rt); refusal != nil {
+			result.Outcome = gateOutcomeRefused
+			result.Refusal = refusal
+			result.DurationMS = rt.now().Sub(started).Milliseconds()
+			return result, nil
+		}
+		result.Outcome = gateOutcomePassed
+		result.DurationMS = rt.now().Sub(started).Milliseconds()
+		return result, nil
 	}
 
 	scoped := policy
@@ -153,14 +229,32 @@ func changedGatePaths(workspace, base string) ([]string, error) {
 			}
 		}
 	}
-	if base != "" {
-		if mergeBase, err := gitFactOutput(workspace, "merge-base", base, "HEAD"); err == nil && mergeBase != "" {
-			if out, err := gitFactOutput(workspace, "diff", "--name-only", mergeBase, "--"); err == nil {
-				collect(out)
-			}
-		}
+	// The committed delta since the merge-base is load-bearing: without it,
+	// committed changes vanish from the diff and the selective gate would pass on
+	// nothing. Its unavailability (no resolvable base, merge-base error, or diff
+	// error) is a hard refusal, never a silent narrowing.
+	if base == "" {
+		return nil, tuskerError("GATE_DIFF_UNAVAILABLE",
+			"cannot resolve a default branch to diff committed changes against; refusing rather than gating on a narrowed change set")
 	}
-	// Uncommitted work the change carries but has not committed yet.
+	mergeBase, err := gitFactOutput(workspace, "merge-base", base, "HEAD")
+	if err != nil || mergeBase == "" {
+		detail := "merge-base against " + base + " is empty"
+		if err != nil {
+			detail = err.Error()
+		}
+		return nil, tuskerError("GATE_DIFF_UNAVAILABLE",
+			"cannot resolve the committed-change base for the selective gate: "+detail)
+	}
+	if out, err := gitFactOutput(workspace, "diff", "--name-only", mergeBase, "--"); err == nil {
+		collect(out)
+	} else {
+		return nil, tuskerError("GATE_DIFF_UNAVAILABLE",
+			"committed-delta diff against the merge-base failed: "+err.Error())
+	}
+	// Uncommitted work the change carries but has not committed yet. These queries
+	// are additive; the committed delta above already guarantees at least one
+	// successful query, so a failure here does not blind the gate.
 	if out, err := gitFactOutput(workspace, "diff", "--name-only", "HEAD", "--"); err == nil {
 		collect(out)
 	}

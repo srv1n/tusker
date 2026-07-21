@@ -121,6 +121,12 @@ type GateTierPolicy struct {
 	DefectTargetRegex string `yaml:"defect_target_regex,omitempty" json:"defect_target_regex,omitempty"`
 	// DefectLineLimit caps each defect excerpt. Defaults to 12 lines.
 	DefectLineLimit int `yaml:"defect_line_limit,omitempty" json:"defect_line_limit,omitempty"`
+	// Scopes map areas of the project to the harvest commands that cover them,
+	// enabling the Stage 1 per-change (selective) gate: `tusker gate --changed`
+	// runs only the scopes a change touched. When empty, only the whole-harvest
+	// gate is available. A change touching a path no scope owns fails closed to
+	// the full harvest set rather than being skipped.
+	Scopes []GateScope `yaml:"scopes,omitempty" json:"scopes,omitempty"`
 }
 
 type NamespaceLintPattern struct {
@@ -399,6 +405,23 @@ orchestration:
     defect_target_regex: '^--- FAIL: (\S+)'
     # defect_line_limit caps each harvested defect excerpt.
     defect_line_limit: 12
+    # scopes enable the Stage 1 per-change gate ("tusker gate --changed"): map an
+    # area of the repo to the harvest commands that cover it, and a change is
+    # gated on only the scopes it touched. A touched path that no scope owns fails
+    # closed to the full harvest_commands set above rather than being skipped, so
+    # scopes narrow proof cost without ever narrowing coverage. Uncomment and set
+    # to this project's real areas; leave empty to only ever run the whole gate.
+    # scopes:
+    #   - name: api
+    #     paths:
+    #       - internal/api
+    #     commands:
+    #       - go test ./internal/api/...
+    #   - name: store
+    #     paths:
+    #       - internal/store
+    #     commands:
+    #       - go test ./internal/store/...
 `, orch.BranchAgeWarningHours, orch.BatchGate.Enabled, orch.BatchGate.PeriodHours, orch.BatchGate.MaxRepairs)
 }
 

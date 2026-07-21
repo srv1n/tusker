@@ -42,6 +42,11 @@ const (
 	gateRefusalBuildSlotHeld = "build_slot_held"
 	gateRefusalProfileParity = "profile_parity"
 	gateRefusalTreeNotFrozen = "tree_not_frozen"
+	// gateRefusalDiffUnavailable is the selective gate's fail-closed refusal when
+	// it cannot compute the set of paths a change touched. Passing on an
+	// unavailable (hence possibly empty) diff would run nothing and green-light an
+	// unverified change, so the gate refuses instead.
+	gateRefusalDiffUnavailable = "diff_unavailable"
 )
 
 // GateRefusal is the structured "why not" a preflight returns instead of
@@ -72,6 +77,7 @@ type GateTierResult struct {
 	Commands   []string     `json:"commands"`
 	Touched    []string     `json:"touched,omitempty"`
 	Scopes     []string     `json:"scopes,omitempty"`
+	Fallback   string       `json:"fallback,omitempty"`
 	Ran        []string     `json:"ran,omitempty"`
 	LedgerHits []string     `json:"ledger_hits,omitempty"`
 	Defects    []GateDefect `json:"defects,omitempty"`
@@ -327,7 +333,7 @@ func defaultGateTierRuntime(store *RuntimeStore, projectID, workspace string) ga
 		},
 		DiffPaths: changedGatePaths,
 		Exec:      runGateCommand,
-		Now:  time.Now,
+		Now:       time.Now,
 	}
 	if store != nil {
 		rt.Ledger = store
@@ -396,7 +402,29 @@ func gateRunCmd(args Args) (int, error) {
 	if command := strings.TrimSpace(args.String("command")); command != "" {
 		policy.HarvestCommands = []string{command}
 	}
-	result, err := runGateTier(policy, args.String("profile"), defaultGateTierRuntime(ctx.Store, projectID, workspace))
+	runtime := defaultGateTierRuntime(ctx.Store, projectID, workspace)
+
+	// --changed runs the Stage 1 per-change (selective) gate: only the scopes the
+	// change actually touched. It requires configured scopes; with none, refuse
+	// with a clear message rather than silently running the full harvest.
+	if args.Bool("changed") {
+		scopes := ctx.Workflow.Data.Orchestration.Gate.Scopes
+		if len(scopes) == 0 {
+			return 1, tuskerError(errorInvalidArg,
+				"--changed selective gate requires orchestration.gate.scopes; none are configured, so there is no per-change scoping to apply")
+		}
+		result, err := runSelectiveGateTier(policy, scopes, strings.TrimSpace(args.String("base")), args.String("profile"), runtime)
+		if err != nil {
+			return 1, err
+		}
+		emitJSON(result)
+		if result.Outcome == gateOutcomeRefused || result.Outcome == gateOutcomeFailed {
+			return 1, nil
+		}
+		return 0, nil
+	}
+
+	result, err := runGateTier(policy, args.String("profile"), runtime)
 	if err != nil {
 		return 1, err
 	}
