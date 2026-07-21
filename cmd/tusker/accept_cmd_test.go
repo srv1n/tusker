@@ -98,3 +98,92 @@ func TestAcceptRefusesUnprovenTask(t *testing.T) {
 		t.Fatalf("refused task recorded an acceptor")
 	}
 }
+
+// A4: accept on an already-done task is refused by name and does not downgrade
+// it back to review or wipe its acceptance metadata.
+func TestAcceptRefusesDoneTask(t *testing.T) {
+	vault, id := acceptTestVaultWithTask(t)
+	acceptTestGreenProof(t, vault, id)
+
+	if err := acceptV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": id, "by": "reviewer:independent"}); err != nil {
+		t.Fatalf("first accept: %v", err)
+	}
+	before := acceptTestTaskData(t, vault, id)
+	if got := stringField(before, "status"); got != "done" {
+		t.Fatalf("precondition: task not done: status=%q", got)
+	}
+
+	err := acceptV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": id, "by": "reviewer:second"})
+	if err == nil {
+		t.Fatalf("accept re-accepted a done task")
+	}
+	if !strings.Contains(err.Error(), "already done") {
+		t.Fatalf("refusal lacked a named reason: %v", err)
+	}
+	after := acceptTestTaskData(t, vault, id)
+	if got := stringField(after, "status"); got != "done" {
+		t.Fatalf("refused done task was downgraded: status=%q", got)
+	}
+	if got := stringField(after, "accepted_by"); got != "reviewer:independent" {
+		t.Fatalf("refused done task lost its acceptor: accepted_by=%q", got)
+	}
+}
+
+// A5: a close precondition that would refuse (an open blocking gate) is detected
+// before any status write, so the task is left exactly where it was.
+func TestAcceptPreflightLeavesStatusUntouched(t *testing.T) {
+	vault, id := acceptTestVaultWithTask(t)
+	acceptTestGreenProof(t, vault, id)
+
+	if err := newV7Gate(Args{"vault": vault, "quiet": "true", "blocks": id, "kind": "release", "owner": "human:release", "action": "Authorize the production release.", "verification": "Release authority records approval.", "why-agent-cannot": "Only the production release authority can deploy."}); err != nil {
+		t.Fatalf("create blocking gate: %v", err)
+	}
+	before := stringField(acceptTestTaskData(t, vault, id), "status")
+
+	err := acceptV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": id, "by": "reviewer:independent"})
+	if err == nil {
+		t.Fatalf("accept ignored an open blocking gate")
+	}
+	if !strings.Contains(err.Error(), "open gate") {
+		t.Fatalf("refusal lacked a named reason: %v", err)
+	}
+	after := stringField(acceptTestTaskData(t, vault, id), "status")
+	if after != before {
+		t.Fatalf("preflight refusal changed status: before=%q after=%q", before, after)
+	}
+	if after == "review" {
+		t.Fatalf("preflight refusal stranded task in review")
+	}
+}
+
+// A6: accept requires an explicit, namespaced reviewer identity; a missing or
+// bare --by is refused with a message naming the expected format.
+func TestAcceptRequiresExplicitReviewer(t *testing.T) {
+	vault, id := acceptTestVaultWithTask(t)
+	acceptTestGreenProof(t, vault, id)
+
+	missing := acceptV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": id})
+	if missing == nil {
+		t.Fatalf("accept ran without an explicit acceptor")
+	}
+	if !strings.Contains(missing.Error(), "reviewer:") || !strings.Contains(missing.Error(), "human:") {
+		t.Fatalf("missing --by refusal did not name the expected format: %v", missing)
+	}
+
+	bad := acceptV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": id, "by": "agent:worker"})
+	if bad == nil {
+		t.Fatalf("accept accepted a non-namespaced actor")
+	}
+	if !strings.Contains(bad.Error(), "reviewer:") || !strings.Contains(bad.Error(), "human:") {
+		t.Fatalf("invalid --by refusal did not name the expected format: %v", bad)
+	}
+
+	// The refused task must stay open with no recorded acceptor.
+	data := acceptTestTaskData(t, vault, id)
+	if got := stringField(data, "status"); got == "done" {
+		t.Fatalf("task closed despite refused identity: status=%q", got)
+	}
+	if stringField(data, "accepted_by") != "" {
+		t.Fatalf("refused task recorded an acceptor")
+	}
+}
