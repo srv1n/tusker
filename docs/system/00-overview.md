@@ -1,5 +1,7 @@
 ---
 title: "Tusker system overview"
+subject: overview
+keywords: [overview, architecture, system]
 status: canonical
 read_when: "You are new to Tusker (human PM or fresh agent session) and need the mental model, the moving parts, and where to look next."
 skip_when: "You already know the architecture and just need one command or one subsystem — jump straight to the sibling reference docs."

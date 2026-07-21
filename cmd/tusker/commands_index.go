@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"tusker/internal/docgraph"
 )
 
 func reindex(args Args) error {
@@ -798,6 +800,10 @@ func validateCmd(args Args) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	docGraphIssues, err := docgraph.ValidateRepository(v7RepoRoot(vaultPath))
+	if err != nil {
+		return 0, err
+	}
 	docsMap, err := loadDocsMap(vaultPath)
 	if err != nil {
 		return 0, err
@@ -862,6 +868,9 @@ func validateCmd(args Args) (int, error) {
 		}
 	}
 	var errs, warns []Issue
+	for _, current := range docGraphIssues {
+		errs = append(errs, issue(current.Code, current.Message, current.Path, "", nil))
+	}
 	errs = append(errs, validateDocsMapConfig(docsMap)...)
 	if hasV6Index {
 		v6Errs, v6Warns := validateV6Vault(vaultPath, v6Index)

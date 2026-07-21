@@ -6,6 +6,6 @@
 
 | Task | Priority | Next action |
 |---|---|---|
-| [[KNW-T-0007]] | p1 | Execute the task contract and satisfy proof mode. |
+
 
 <!-- tusker:generated:end -->

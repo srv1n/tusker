@@ -1,5 +1,8 @@
 ---
 title: "Gates (human gates, the gate tier, and batch merge windows)"
+subject: gates
+keywords: [gates, proof, human action]
+part_of: overview
 status: canonical
 read_when: "Understanding what blocks a task from closing, how automated build/test gates refuse or harvest failures, and how a red wave-end gate quarantines dependents."
 skip_when: "You only need the day-to-day gate command syntax — the tusker skill covers that; this is the model behind it."

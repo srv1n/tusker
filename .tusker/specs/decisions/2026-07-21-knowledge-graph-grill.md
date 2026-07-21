@@ -1,5 +1,8 @@
 ---
 title: "Decision log: the knowledge-graph discussion"
+subject: knowledge-graph-grill
+keywords: [knowledge graph, decisions, documentation]
+part_of: knowledge-graph
 status: canonical
 created: 2026-07-21
 decides_for: ".tusker/specs/knowledge-graph.md"

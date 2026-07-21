@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-21T11:43:47Z"
-updated_at: "2026-07-21T11:47:09Z"
-state_rev: "sha256:33a9a973e7d9e736790b1a8ea7ceaa3abd25e8cd2e8b980dd8100425bb2910bf"
+updated_at: "2026-07-21T12:32:21Z"
+state_rev: "sha256:03cec55be4bb40ba100ea03a3bafc69f4580f78f968e5c9e4b3bd3364834fb2e"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -50,13 +50,12 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[KNW-T-0001]] | backlog | blocked_dependency | Wait for dependency KNW-T-0007 to reach review with satisfied proof or done. |
-| [[KNW-T-0002]] | backlog | blocked_dependency | Wait for dependency KNW-T-0007 to reach review with satisfied proof or done. |
-| [[KNW-T-0003]] | backlog | blocked_dependency | Wait for dependency KNW-T-0007 to reach review with satisfied proof or done. |
-| [[KNW-T-0004]] | backlog | blocked_dependency | Wait for dependency KNW-T-0007 to reach review with satisfied proof or done. |
+| [[KNW-T-0001]] | backlog | agent | Wait for dependency KNW-T-0007 to reach review with satisfied proof or done. |
+| [[KNW-T-0002]] | backlog | agent | Wait for dependency KNW-T-0007 to reach review with satisfied proof or done. |
+| [[KNW-T-0003]] | backlog | agent | Wait for dependency KNW-T-0007 to reach review with satisfied proof or done. |
+| [[KNW-T-0004]] | backlog | blocked_dependency | Wait for dependency KNW-T-0002 to reach review with satisfied proof or done. |
 | [[KNW-T-0005]] | backlog | blocked_dependency | Wait for dependency KNW-T-0001 to reach review with satisfied proof or done. |
 | [[KNW-T-0006]] | backlog | blocked_dependency | Wait for dependency KNW-T-0001 to reach review with satisfied proof or done. |
-| [[KNW-T-0007]] | ready | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 
@@ -64,4 +63,4 @@ TBD.
 
 | Task | Accepted by | Closed at |
 |---|---|---|
-| _None._ |  | |
+| [[KNW-T-0007]] | reviewer:opus | 2026-07-21T12:32:21Z |

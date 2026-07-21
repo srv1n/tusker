@@ -1,5 +1,8 @@
 ---
 title: "Tusker CLI reference"
+subject: cli
+keywords: [cli, commands, reference]
+part_of: overview
 status: canonical
 read_when: "You need to know which `tusker` command does a thing, what it means in plain terms, and when to reach for it."
 skip_when: "You want the mental model or architecture — read the [overview](00-overview.md) first."

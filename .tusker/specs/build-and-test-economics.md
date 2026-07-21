@@ -1,5 +1,8 @@
 ---
 title: "Build and test economics: how often we build and test at each stage"
+subject: build-and-test-economics
+keywords: [build, test, validation]
+part_of: software-factory
 status: canonical
 created: 2026-07-21
 read_when: "Deciding what to build/lint/test for a change, a landing wave, or a nightly run; setting up parallel story work; tuning gate budgets, worktree caps, or disk floors; onboarding a worker or reviewer to the build rhythm."

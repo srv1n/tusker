@@ -1,5 +1,8 @@
 ---
 title: "Decision log: the factory grill session"
+subject: software-factory-grill
+keywords: [software factory, decisions, workflow]
+part_of: software-factory
 status: canonical
 created: 2026-07-21
 read_when: "You want to know WHY a locked decision in [[software-factory]] was made, what the operator actually said, or what alternatives were weighed and rejected."

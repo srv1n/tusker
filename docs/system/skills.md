@@ -1,5 +1,8 @@
 ---
 title: The Tusker skill system
+subject: skills
+keywords: [skills, agents, routing]
+part_of: overview
 status: canonical
 read_when:
   - You are a fresh agent session trying to find how Tusker teaches itself to agents.

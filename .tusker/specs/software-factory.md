@@ -1,5 +1,8 @@
 ---
 title: "Software Factory: Tusker as the production loop harness"
+subject: software-factory
+keywords: [software factory, workflow, agents]
+part_of: overview
 status: canonical
 created: 2026-07-21
 read_when: "Planning, contract-cutting, or implementing any FAC epic work; onboarding a new agent session to the factory direction."

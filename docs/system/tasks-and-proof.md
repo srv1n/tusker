@@ -1,5 +1,8 @@
 ---
 title: "Tasks and proof (v7 task model)"
+subject: tasks-and-proof
+keywords: [tasks, proof, contracts]
+part_of: overview
 status: canonical
 read_when: "Onboarding to how a Tusker task is written, moved through its lifecycle, and proven closed; cutting a contract; reviewing or accepting finished work."
 skip_when: "You only need to run one command — the tusker skill covers day-to-day mechanics; this is the model behind it."

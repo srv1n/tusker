@@ -1,5 +1,8 @@
 ---
 title: The observation surface — serve, dashboards, logbook, digest
+subject: serve-ui
+keywords: [serve, ui, dashboard]
+part_of: overview
 status: canonical
 read_when:
   - You want to watch what the machine is doing, or route "what needs me" attention.

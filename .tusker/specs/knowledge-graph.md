@@ -1,6 +1,8 @@
 ---
 title: "Knowledge graph: self-scaffolding, self-checking documentation"
 subject: knowledge-graph
+keywords: [knowledge graph, documentation, docs]
+part_of: overview
 status: canonical
 created: 2026-07-21
 read_when: "Implementing or reviewing Stream E (KNW epic) work; wiring docs behavior into init, validate, or the spec skill; asking how docs stay findable and true."
