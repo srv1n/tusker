@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1362,8 +1363,38 @@ func anyInt(value any) int {
 	}
 }
 
+// budgetScale returns the multiplier applied to every condition-wait ceiling in
+// this suite. It is 1.0 by default, so unset environments keep the historical
+// timing exactly. On an I/O-pressured host, exporting TUSKER_E2E_BUDGET_SCALE
+// (e.g. "2" or "2.5") widens the generous hard ceilings without touching the
+// poll cadence, so healthy-but-slow convergence is not flagged as a failure.
+// Values <= 0 or unparseable fall back to 1.0. This never accelerates genuine
+// non-convergence detection past the default and never shortens any budget.
+func budgetScale() float64 {
+	raw := strings.TrimSpace(os.Getenv("TUSKER_E2E_BUDGET_SCALE"))
+	if raw == "" {
+		return 1.0
+	}
+	scale, err := strconv.ParseFloat(raw, 64)
+	if err != nil || math.IsNaN(scale) || math.IsInf(scale, 0) || scale <= 0 {
+		return 1.0
+	}
+	return scale
+}
+
+// scaledBudget applies budgetScale to a ceiling, never returning less than the
+// unscaled duration so a misconfigured scale can only widen, never tighten.
+func scaledBudget(timeout time.Duration) time.Duration {
+	scale := budgetScale()
+	if scale <= 1.0 {
+		return timeout
+	}
+	return time.Duration(float64(timeout) * scale)
+}
+
 func eventually(t *testing.T, timeout, tick time.Duration, fn func() (bool, string)) {
 	t.Helper()
+	timeout = scaledBudget(timeout)
 	deadline := time.Now().Add(timeout)
 	last := ""
 	for time.Now().Before(deadline) {
