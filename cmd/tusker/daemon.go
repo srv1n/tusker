@@ -2176,6 +2176,23 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				return run, true, nil
 			}
 			if run.Lane == runLaneReview {
+				if finding, ok := reviewerFindingFromTask(note); ok {
+					if err := returnReviewerFindingToImplementer(project.VaultRoot, run.RecordID, finding, "daemon:reviewer-finding"); err != nil {
+						return run, changed, err
+					}
+					run.LeaseState = string(LeaseStateReleased)
+					run.AttemptOutcome = string(AttemptOutcomeSucceeded)
+					run.NextRetryAt = ""
+					run.LastError = reviewerFindingReturnReason
+					run.UpdatedAt = finished
+					run.Terminal = true
+					updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, reviewerFindingReturnReason, finished)
+					if strings.TrimSpace(run.SessionRef) != "" {
+						_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForOutcome(AttemptOutcomeSucceeded), "", reviewerFindingReturnReason, false)
+					}
+					clearActiveExecution(&run)
+					return run, true, nil
+				}
 				if reason := reviewerWorkspaceDirtyReason(run.WorkspacePath); reason != "" {
 					parentAttemptID := run.ActiveAttemptID
 					parentSessionRef := run.SessionRef
