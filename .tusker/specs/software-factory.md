@@ -104,6 +104,15 @@ fan-out cap on daemon dispatch; gate-failure quarantine that holds dependents
 instead of letting a red node's children start; boundary traces on worker runs
 so a failed attempt can be replayed for adjudication without new model calls.
 
+### Stream E — The knowledge graph
+The documentation system becomes part of Tusker itself instead of repo-local
+discipline: `tusker init` scaffolds the doc tree and spec skill in any repo;
+`docs find`/`docs new` give deterministic retrieval and write-time dedup; the
+map is generated (never hand-maintained) and validate diffs it fresh; the
+doc-touch rule catches drift at task close (warning first, blocker after
+probation); `docs adopt` triages legacy docs in brownfield repos. Full spec:
+[[knowledge-graph]].
+
 ## Deferred (explicitly not now)
 
 - Cloud sandboxes as the default execution substrate (napkin-math doc plus one
