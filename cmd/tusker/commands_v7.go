@@ -2251,6 +2251,14 @@ func v7ProjectedTaskState(vaultPath string, task Note, idx v7Index) map[string]a
 			return finalizeV7ProjectedTaskState(projected, task)
 		}
 	}
+	if upstreamID, held := v7HeldByFailedUpstream(task, idx); held {
+		projected["readiness"] = "held"
+		projected["next_owner"] = "blocked_dependency"
+		projected["next_source"] = "upstream_build"
+		projected["next_ref"] = upstreamID
+		projected["next_action"] = "Held: upstream " + upstreamID + " failed its build-and-test; wait for it to go green."
+		return finalizeV7ProjectedTaskState(projected, task)
+	}
 	if edge, blocked := v7BlockingDependencyForReadiness(task, idx); blocked {
 		projected["readiness"] = "blocked_by_dependency"
 		projected["next_owner"] = "blocked_dependency"
@@ -2269,7 +2277,7 @@ func v7ProjectedTaskState(vaultPath string, task Note, idx v7Index) map[string]a
 	}
 	projected["readiness"] = "ready"
 	nextSource := stringField(task.Data, "next_source")
-	if nextSource == "" || nextSource == "gate" || nextSource == "human_gate" || nextSource == "human_review" || strings.HasPrefix(nextSource, "closeout:") || nextSource == "dependency" || nextSource == "status" || nextSource == "review_policy" {
+	if nextSource == "" || nextSource == "gate" || nextSource == "human_gate" || nextSource == "human_review" || strings.HasPrefix(nextSource, "closeout:") || nextSource == "dependency" || nextSource == "upstream_build" || nextSource == "status" || nextSource == "review_policy" {
 		projected["next_owner"] = "agent"
 		projected["next_source"] = "task"
 		projected["next_ref"] = stringField(task.Data, "id")
@@ -3306,6 +3314,11 @@ func v7TaskDispatchBlockersWithAuthorization(vaultPath string, task Note, includ
 	}
 	for _, warning := range v7PacketDomainRouteWarnings(vaultPath, task) {
 		reasons = append(reasons, warning)
+	}
+	if idx, err := loadV7Index(vaultPath); err == nil {
+		if upstreamID, held := v7HeldByFailedUpstream(task, idx); held {
+			reasons = append(reasons, v7UpstreamFailureHoldReason(upstreamID))
+		}
 	}
 	return uniqueStrings(reasons)
 }

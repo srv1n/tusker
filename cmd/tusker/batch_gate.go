@@ -208,11 +208,46 @@ func (d *Daemon) executeBatchGate(project RegisteredProject, policy BatchGatePol
 	run.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 	if failures == 0 {
 		run.Status = "passed"
+		// A green shared build-and-test means the tree is healthy again:
+		// release the dependency-scoped holds so held dependents become
+		// pickable again.
+		_ = clearBuildFailedMarkers(project.VaultRoot)
 	} else {
 		run.Status = "failed"
 	}
 	_ = d.store.saveBatchGateRun(run)
 	_ = refreshStreamBoardForVault(project.VaultRoot)
+}
+
+// clearBuildFailedMarkers drops the red shared-build marker from every task
+// that still carries it. It is called when a shared build-and-test goes green,
+// releasing the dependents that were held for an upstream failure.
+func clearBuildFailedMarkers(vaultPath string) error {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return err
+	}
+	for _, task := range sortedV7Tasks(idx) {
+		if !v7BuildFailed(task) {
+			continue
+		}
+		if task.AbsolutePath == "" {
+			continue
+		}
+		_, _, mutErr := mutateV7DocumentLocked(task.AbsolutePath, v7FrontmatterOrder["task"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
+			if !boolField(data, buildFailedField) {
+				return data, body, false, nil
+			}
+			delete(data, buildFailedField)
+			data["updated_by"] = "tusker:batch-gate"
+			data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+			return data, body, true, nil
+		})
+		if mutErr != nil {
+			return mutErr
+		}
+	}
+	return nil
 }
 
 func actionableGateFailure(output string, runErr error) string {
@@ -246,6 +281,7 @@ func createBatchGateRepairTask(vaultPath, gateRunID, command, excerpt string) er
 			}
 			_, _, updateErr := mutateV7DocumentLocked(existing.AbsolutePath, v7FrontmatterOrder["task"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
 				data["batch_gate_run"] = gateRunID
+				data[buildFailedField] = true
 				data["updated_by"] = "tusker:batch-gate"
 				data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
 				intent := "Repair unattended batch gate `" + gateRunID + "`.\n\nFirst actionable failure:\n\n" + excerpt
@@ -276,6 +312,7 @@ func createBatchGateRepairTask(vaultPath, gateRunID, command, excerpt string) er
 		data["next_action"] = "Fix the first actionable batch failure and rerun the failed command."
 		data["batch_gate_command"] = command
 		data["batch_gate_run"] = gateRunID
+		data[buildFailedField] = true
 		data["updated_by"] = "tusker:batch-gate"
 		data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
 		return data, body, true, nil
