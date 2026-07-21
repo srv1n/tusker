@@ -88,7 +88,10 @@ compile+lint+workspace-test; the full suite runs nightly on the Hetzner box
 disjoint file ownership is the sanctioned pattern. Shared build caches across
 worktrees, a hard cap on live worktrees, and measured disk floors before any
 gate. Xcode/Mac work stays local. Escalation timer: if a local gate exceeds its
-budget or disk drops below the floor, route the run to a VM.
+budget or disk drops below the floor, route the run to a VM. The full policy —
+the three stages, the parallel-work pattern, the escalation rule, and the
+2026-07 disk-fill incident it answers — is written down in
+`.tusker/specs/build-and-test-economics.md`.
 
 ### Stream D — Graph hardening
 Idempotent re-dispatch of a failed task without re-running neighbors; a bounded
