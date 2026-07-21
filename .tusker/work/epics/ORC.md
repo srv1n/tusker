@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-20T03:38:53Z"
-updated_at: "2026-07-20T14:31:06Z"
-state_rev: "sha256:61e17e34836536e85bb7264fe567759a303e4f08f69afd2ceb1b0ad564155ed0"
+updated_at: "2026-07-21T06:09:14Z"
+state_rev: "sha256:dffa359a2d872b290e2daa385309dd04688c5886c7f7d494c2c752bdf0f476be"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -58,18 +58,7 @@ report-less overnight lane, eight redundant workspace gates).
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[ORC-T-0001]] | review | reviewer | Review evidence and close or return to rework. |
-| [[ORC-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
-| [[ORC-T-0003]] | review | reviewer | Review evidence and close or return to rework. |
-| [[ORC-T-0004]] | review | reviewer | Review evidence and close or return to rework. |
-| [[ORC-T-0005]] | review | reviewer | Review evidence and close or return to rework. |
-| [[ORC-T-0006]] | review | reviewer | Review evidence and close or return to rework. |
-| [[ORC-T-0007]] | review | reviewer | Review evidence and close or return to rework. |
-| [[ORC-T-0008]] | review | reviewer | Review evidence and close or return to rework. |
-| [[ORC-T-0009]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[ORC-T-0010]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[ORC-T-0011]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[ORC-T-0012]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| _None._ |  |  |  |
 
 ## Recently completed
 
@@ -77,4 +66,16 @@ report-less overnight lane, eight redundant workspace gates).
 
 | Task | Accepted by | Closed at |
 |---|---|---|
-| _None._ |  | |
+| [[ORC-T-0001]] | reviewer:fable | 2026-07-21T04:41:22Z |
+| [[ORC-T-0002]] | reviewer:fable | 2026-07-21T04:41:23Z |
+| [[ORC-T-0003]] | reviewer:fable | 2026-07-21T04:41:23Z |
+| [[ORC-T-0004]] | reviewer:fable | 2026-07-21T04:41:23Z |
+| [[ORC-T-0005]] | reviewer:fable | 2026-07-21T04:41:23Z |
+| [[ORC-T-0006]] | reviewer:fable | 2026-07-21T04:41:24Z |
+| [[ORC-T-0007]] | reviewer:fable | 2026-07-21T04:41:24Z |
+| [[ORC-T-0008]] | reviewer:fable | 2026-07-21T04:41:24Z |
+| [[ORC-T-0009]] | reviewer:fable | 2026-07-21T04:41:39Z |
+| [[ORC-T-0010]] | reviewer:fable | 2026-07-21T04:56:09Z |
+| [[ORC-T-0011]] | reviewer:fable | 2026-07-21T05:18:00Z |
+| [[ORC-T-0012]] | reviewer:fable | 2026-07-21T05:37:45Z |
+| [[ORC-T-0013]] | reviewer:fable | 2026-07-21T06:09:14Z |
