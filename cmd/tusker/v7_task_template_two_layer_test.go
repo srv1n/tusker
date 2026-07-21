@@ -63,3 +63,29 @@ func TestNewTaskAcceptanceReadsAsOutcomes(t *testing.T) {
 		t.Fatalf("acceptance scaffold must not fall back to a generic non-outcome, got:\n%s", acceptance)
 	}
 }
+
+// TestFreshTaskDefaultAcceptanceRegistersAsPlaceholder pins the link between the
+// new-task scaffold and the feedback signal: a freshly created, never-edited
+// task's default A1 outcome must be detected as an acceptance placeholder gap.
+// This guards against the template and detector drifting apart (as they did when
+// the default A1 outcome text changed but the detector's substring list did not).
+func TestFreshTaskDefaultAcceptanceRegistersAsPlaceholder(t *testing.T) {
+	body := v7TaskBody("APP-T-0001", "Fresh placeholder")
+
+	// The scaffold must actually use the shared constant.
+	if !strings.Contains(body, defaultScaffoldAcceptanceOutcome) {
+		t.Fatalf("scaffold must carry the shared default acceptance outcome constant, got:\n%s", body)
+	}
+
+	gaps := feedbackSignalAcceptanceGaps(body)
+	foundAcceptanceGap := false
+	for _, g := range gaps {
+		if g == "A1" || g == "acceptance-placeholder" {
+			foundAcceptanceGap = true
+			break
+		}
+	}
+	if !foundAcceptanceGap {
+		t.Fatalf("fresh task default acceptance must register as a placeholder gap, got gaps: %v", gaps)
+	}
+}

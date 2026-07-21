@@ -3395,6 +3395,13 @@ func v7NotesPayload(notes []Note) []map[string]any {
 	return out
 }
 
+// defaultScaffoldAcceptanceOutcome is the A1 outcome text a freshly created,
+// never-edited task carries. It is intentionally a placeholder: the feedback
+// signal (v7_feedback_signal.go) matches on it so an unedited default
+// acceptance registers as a gap. Keep the template and detector using this same
+// constant so the two cannot silently drift apart.
+const defaultScaffoldAcceptanceOutcome = "Someone can see the visible result this task delivers."
+
 func v7TaskBody(id, title string) string {
 	return fmt.Sprintf(`# %s · %s
 
@@ -3411,7 +3418,7 @@ names, symbols, or commands here; those live in the appendix below.
 
 | ID | Outcome | Proof |
 |---|---|---|
-| A1 | Someone can see the visible result this task delivers. | Inline verification, evidence, gate, or waiver |
+| A1 | %s | Inline verification, evidence, gate, or waiver |
 
 ## Non-goals
 
@@ -3445,7 +3452,7 @@ Pending:
 ## Knowledge delta
 
 None expected.
-`, id, title, "`command: <exact shell command>`", "`manual proof: <exact steps a human runs>`")
+`, id, title, defaultScaffoldAcceptanceOutcome, "`command: <exact shell command>`", "`manual proof: <exact steps a human runs>`")
 }
 
 func v7GateBody(id, title, action, verification string, blocks []string, gateKind, whyAgentCannot, suggestion string) string {

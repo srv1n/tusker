@@ -802,7 +802,8 @@ func feedbackSignalAcceptanceFacts(body string) feedbackSignalAcceptanceFactSet 
 		facts.AcceptanceGaps = []string{"acceptance-section"}
 		return facts
 	}
-	if strings.Contains(acceptance, "complete the task contract") ||
+	if strings.Contains(acceptance, strings.ToLower(defaultScaffoldAcceptanceOutcome)) ||
+		strings.Contains(acceptance, "complete the task contract") ||
 		strings.Contains(acceptance, "define the accepted outcome") ||
 		strings.Contains(acceptance, " tbd") ||
 		strings.Contains(acceptance, "| tbd |") {
