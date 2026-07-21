@@ -7,8 +7,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
+
+// staleWorkspaceThreshold is the generous idle window after which a live work
+// copy with no recorded owning PID (legacy copies) is treated as abandoned.
+const staleWorkspaceThreshold = 24 * time.Hour
 
 type WorkspaceStrategy string
 
@@ -66,6 +71,10 @@ type WorkspaceMetadata struct {
 	WorkRevision int    `json:"work_revision"`
 	CreatedAt    string `json:"created_at"`
 	PreparedAt   string `json:"prepared_at"`
+	// PID records the process that last prepared (owns) this live work copy. It
+	// is the liveness signal for orphan pruning: when this process is gone, no
+	// run is using the copy and it can be reclaimed. Zero for legacy copies.
+	PID int `json:"pid,omitempty"`
 }
 
 type WorkspaceManager interface {
@@ -93,7 +102,17 @@ func (m *FSWorkspaceManager) Prepare(req WorkspacePrepareRequest) (WorkspacePrep
 	} else if err := assertWorkspaceWithinRoot(workspacePath, root); err != nil {
 		return WorkspacePrepareResult{}, err
 	}
-	if req.Strategy != WorkspaceStrategyShared {
+	if req.Strategy != WorkspaceStrategyShared && req.MaxLiveWorktrees > 0 {
+		// Serialize the count-and-materialize critical section across processes:
+		// an in-process mutex is insufficient when several dispatchers Prepare
+		// concurrently, so an flock in the (per-project) workspace root closes
+		// the TOCTOU window where two callers both pass the count and exceed the
+		// cap. The lock is held through materialization below.
+		unlock, err := lockWorkspaceRoot(root)
+		if err != nil {
+			return WorkspacePrepareResult{}, err
+		}
+		defer unlock()
 		if refusal := liveWorktreeCapRefusal(root, workspacePath, req.MaxLiveWorktrees); refusal != nil {
 			return WorkspacePrepareResult{}, tuskerError(errorInvalidTransition,
 				refusal.Detail+"; "+refusal.Remedy,
@@ -122,15 +141,23 @@ func liveWorktreeCapRefusal(root, workspacePath string, max int) *GateRefusal {
 		return nil
 	}
 	return &GateRefusal{
-		Cause:  gateRefusalWorktreeCap,
-		Detail: fmt.Sprintf("cannot open another live work copy: %d already live under %s, at the configured cap of %d", live, root, max),
-		Remedy: "finish and clean up a running work copy (tusker will git worktree remove it) before opening a new one, or raise the measured cap in workspace.max_live_worktrees",
+		Cause: gateRefusalWorktreeCap,
+		Detail: fmt.Sprintf("cannot open another live work copy: %d already live under %s, at the configured per-project cap of %d", live, root, max),
+		// These %d copies are actively in use: stale/orphaned copies (their run
+		// crashed or exited) are pruned automatically on every prepare, so they
+		// are never part of this count. There is nothing to reclaim by hand.
+		Remedy: "these copies are actively in use (orphaned copies are pruned automatically, so none are counted here); wait for a running copy to finish and be cleaned up, or raise the per-project cap in workspace.max_live_worktrees",
 	}
 }
 
 // countLiveWorktrees counts the immediate child directories under root that hold
-// a materialized workspace (a .tusker/workspace.json), i.e. one live work copy
-// each. The shared/in_place repo is never under root, so it is not counted.
+// a materialized, still-live workspace (a .tusker/workspace.json). Each is one
+// live work copy. The shared/in_place repo is never under root, so it is not
+// counted. Orphaned copies — whose recording run has crashed or exited and left
+// the copy behind — are opportunistically pruned here (through the same removal
+// path Cleanup uses, so git worktree metadata stays consistent) rather than
+// counted, so accumulated orphans can never wedge dispatch by exhausting the cap
+// forever.
 func countLiveWorktrees(root string) int {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -141,11 +168,63 @@ func countLiveWorktrees(root string) int {
 		if !entry.IsDir() {
 			continue
 		}
-		if fileExists(filepath.Join(root, entry.Name(), ".tusker", "workspace.json")) {
-			count++
+		child := filepath.Join(root, entry.Name())
+		metadataPath := filepath.Join(child, ".tusker", "workspace.json")
+		if !fileExists(metadataPath) {
+			continue
 		}
+		if workspaceCopyStale(metadataPath) {
+			_ = cleanupWorkspacePath(child)
+			continue
+		}
+		count++
 	}
 	return count
+}
+
+// workspaceCopyStale reports whether the live copy described by metadataPath is
+// an orphan that nothing is using. The most reliable adjacent signal is the
+// owning PID recorded in workspace.json: if a PID was recorded and that process
+// is no longer alive, its run has gone and the copy is stale. For legacy copies
+// with no recorded PID, fall back to the workspace.json mtime — a copy untouched
+// for longer than the generous staleWorkspaceThreshold is treated as abandoned.
+func workspaceCopyStale(metadataPath string) bool {
+	text, err := readText(metadataPath)
+	if err != nil {
+		return false
+	}
+	var meta WorkspaceMetadata
+	if err := json.Unmarshal([]byte(text), &meta); err != nil {
+		return false
+	}
+	if meta.PID > 0 {
+		return !processAlive(meta.PID)
+	}
+	info, err := os.Stat(metadataPath)
+	if err != nil {
+		return false
+	}
+	return time.Since(info.ModTime()) > staleWorkspaceThreshold
+}
+
+// lockWorkspaceRoot takes an exclusive cross-process lock in the (per-project)
+// workspace root, mirroring the flock convention used elsewhere (see
+// runOwnershipService.lockOwnedPathClaims). It serializes the worktree-cap
+// count-and-materialize critical section so concurrent Prepare calls cannot both
+// pass the count and exceed the cap.
+func lockWorkspaceRoot(root string) (func(), error) {
+	if err := ensureDir(root); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(filepath.Join(root, ".worktree-cap.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return func() { _ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN); _ = file.Close() }, nil
 }
 
 func workspacePathForRequest(req WorkspacePrepareRequest) (string, string, error) {
@@ -225,6 +304,7 @@ func (m *FSWorkspaceManager) prepareAtPath(workspacePath string, req WorkspacePr
 	metadata := WorkspaceMetadata{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID,
 		BranchName: req.BranchName, BranchBase: req.BranchBase, RepoRoot: req.RepoRoot, Strategy: string(req.Strategy), WorkRevision: req.WorkRevision, CreatedAt: now, PreparedAt: now,
+		PID: os.Getpid(),
 	}
 	if !created && fileExists(metadataPath) {
 		text, err := readText(metadataPath)
@@ -376,6 +456,14 @@ func sanitizeWorkspaceKey(value string) string {
 }
 
 func (m *FSWorkspaceManager) Cleanup(path string) error {
+	return cleanupWorkspacePath(path)
+}
+
+// cleanupWorkspacePath removes a live work copy, first detaching any git worktree
+// so git's worktree metadata stays consistent, then deleting the directory. It is
+// the single removal path shared by Cleanup and the orphan pruning in
+// countLiveWorktrees.
+func cleanupWorkspacePath(path string) error {
 	metadataPath := filepath.Join(path, ".tusker", "workspace.json")
 	if fileExists(metadataPath) {
 		text, err := readText(metadataPath)

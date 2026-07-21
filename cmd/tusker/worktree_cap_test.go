@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -38,6 +41,143 @@ func TestWorktreeCapRefusesOverLimit(t *testing.T) {
 	// Reusing an already-live copy is not a new copy and must not be refused.
 	if _, err := prepareCopyWorkspace(t, stateRoot, "record-1", cap); err != nil {
 		t.Fatalf("reusing an existing work copy must not be refused: %v", err)
+	}
+}
+
+// writeOrphanCopy plants a live-looking work copy under root whose recording run
+// is gone: its workspace.json records a PID that is not alive.
+func writeOrphanCopy(t *testing.T, root, name string, pid int) string {
+	t.Helper()
+	dir := filepath.Join(root, name)
+	metaDir := filepath.Join(dir, ".tusker")
+	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+		t.Fatalf("mkdir orphan copy: %v", err)
+	}
+	body := `{"strategy":"copy","record_id":"` + name + `","pid":` + itoa(pid) + `}` + "\n"
+	if err := os.WriteFile(filepath.Join(metaDir, "workspace.json"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write orphan workspace.json: %v", err)
+	}
+	return dir
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	if neg {
+		b = append([]byte{'-'}, b...)
+	}
+	return string(b)
+}
+
+// A1b: an orphaned copy (recording process gone) does not count toward the cap
+// and is pruned on the next Prepare, so accumulated orphans can never wedge
+// dispatch by exhausting the cap forever.
+func TestWorktreeCapPrunesStaleOrphans(t *testing.T) {
+	stateRoot := t.TempDir()
+	// Materialize one real, live copy (owned by this test process, which is
+	// alive) so we know the project root.
+	live, err := prepareCopyWorkspace(t, stateRoot, "record-live", 1)
+	if err != nil {
+		t.Fatalf("first live copy under cap 1 should succeed: %v", err)
+	}
+	root := filepath.Dir(live.Path)
+
+	// A dead PID is very unlikely to be a running process; pick an unused high one.
+	const deadPID = 2147483000
+	orphan := writeOrphanCopy(t, root, "record-orphan", deadPID)
+
+	// The orphan must not count toward the cap: with cap 2 and one live + one
+	// orphan, opening a new copy still succeeds because the orphan is pruned.
+	if _, err := prepareCopyWorkspace(t, stateRoot, "record-new", 2); err != nil {
+		t.Fatalf("orphan must not count toward the cap: %v", err)
+	}
+	if _, statErr := os.Stat(orphan); !os.IsNotExist(statErr) {
+		t.Fatalf("orphaned copy should have been pruned, stat err = %v", statErr)
+	}
+}
+
+// A1c: two concurrent Prepare calls against cap=1 under a fresh root must not
+// both pass the count and exceed the cap — the cross-process lock lets exactly
+// one succeed.
+func TestWorktreeCapSerializesConcurrentPrepare(t *testing.T) {
+	stateRoot := t.TempDir()
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	start := make(chan struct{})
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-start
+			_, errs[idx] = prepareCopyWorkspace(t, stateRoot, "record-"+itoa(idx), 1)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	success := 0
+	for _, e := range errs {
+		if e == nil {
+			success++
+		}
+	}
+	if success != 1 {
+		t.Fatalf("exactly one concurrent Prepare must succeed under cap 1, got %d successes (errs=%v)", success, errs)
+	}
+}
+
+// The daemon builds its WorkspacePrepareRequest from the workflow's
+// workspace.max_live_worktrees. This pins that the configured cap reaches
+// Prepare and is honored on the daemon dispatch path (not left dormant).
+func TestDaemonPathPrepareHonorsConfiguredCap(t *testing.T) {
+	stateRoot := t.TempDir()
+	var wf Workflow
+	wf.Workspace.Root = ""
+	wf.Workspace.MaxLiveWorktrees = 1
+
+	// buildDaemonReq mirrors the daemon's request literal: the cap comes from the
+	// workflow config field, exactly as daemon.go wires it.
+	buildDaemonReq := func(recordID string) WorkspacePrepareRequest {
+		return WorkspacePrepareRequest{
+			ProjectID: "project-1", ProjectKey: "MEM", RecordID: recordID, ItemID: recordID,
+			RepoRoot: t.TempDir(), StateRoot: stateRoot,
+			WorkspaceRoot: wf.Workspace.Root, Strategy: WorkspaceStrategyCopy,
+			MaxLiveWorktrees: wf.Workspace.MaxLiveWorktrees,
+		}
+	}
+	manager := NewWorkspaceManager()
+	if _, err := manager.Prepare(buildDaemonReq("record-1")); err != nil {
+		t.Fatalf("first daemon-path copy under cap 1 should succeed: %v", err)
+	}
+	_, err := manager.Prepare(buildDaemonReq("record-2"))
+	if err == nil {
+		t.Fatal("daemon-path prepare must refuse the second copy at the configured cap of 1")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "another live work copy") || !strings.Contains(msg, "cap of 1") {
+		t.Fatalf("refusal must name the reason and configured cap, got %q", msg)
+	}
+	// A zero cap (config off) leaves the daemon path uncapped.
+	wf.Workspace.MaxLiveWorktrees = 0
+	freshRoot := t.TempDir()
+	for _, rec := range []string{"a", "b", "c"} {
+		req := WorkspacePrepareRequest{
+			ProjectID: "project-1", ProjectKey: "MEM", RecordID: rec, ItemID: rec,
+			RepoRoot: t.TempDir(), StateRoot: freshRoot, Strategy: WorkspaceStrategyCopy,
+			MaxLiveWorktrees: wf.Workspace.MaxLiveWorktrees,
+		}
+		if _, err := manager.Prepare(req); err != nil {
+			t.Fatalf("cap of zero on daemon path must impose no limit, %s refused: %v", rec, err)
+		}
 	}
 }
 

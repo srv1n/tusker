@@ -53,12 +53,15 @@ type Workflow struct {
 		Root     string `yaml:"root"`
 		Strategy string `yaml:"strategy"`
 		// MaxLiveWorktrees is the hard cap on how many live work copies may exist
-		// at once. It is a MEASURED number from the real machine (peak worktrees
-		// before the disk fills), never a guess — see
-		// .tusker/specs/build-and-test-economics.md, "Measured floors". Zero leaves
-		// the cap off. Opening a work copy past this limit is refused up front so we
-		// can never again spin up enough cold builds to wedge the disk (the
-		// 2026-07-20 incident).
+		// at once PER PROJECT (the cap is enforced against this project's own
+		// workspace root, not machine-wide). The machine-wide ceiling is therefore
+		// projects × max_live_worktrees, so set this with the number of active
+		// projects in mind rather than as a single machine disk budget. It is a
+		// MEASURED number from the real machine (peak worktrees before the disk
+		// fills), never a guess — see .tusker/specs/build-and-test-economics.md,
+		// "Measured floors". Zero leaves the cap off. Opening a work copy past this
+		// limit is refused up front so we can never again spin up enough cold
+		// builds to wedge the disk (the 2026-07-20 incident).
 		MaxLiveWorktrees int `yaml:"max_live_worktrees,omitempty"`
 	} `yaml:"workspace"`
 	Retry struct {
