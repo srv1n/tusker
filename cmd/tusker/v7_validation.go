@@ -171,6 +171,7 @@ func validateV7Task(note Note, ctx validationContext, where string, errors, warn
 		}
 	}
 	validateV7TaskBodyPolicy(note.Body, ctx.VaultPath, where, errors, warnings)
+	lintV7PlainTopLayer(note, where, errors, warnings)
 	if policy.RequireAcceptanceProof && !v7AcceptanceHasProof(note.Body) {
 		*warnings = append(*warnings, issue("ACCEPTANCE_PROOF_MISSING", "V7 task acceptance should include a proof column or proof text", where, "", nil))
 	}
