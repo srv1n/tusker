@@ -3400,17 +3400,31 @@ func v7TaskBody(id, title string) string {
 
 ## Intent
 
-TBD.
+Write a few plain sentences a former product manager can read cold — no file
+names, symbols, or commands here; those live in the appendix below.
+
+- What this is: TBD.
+- Why it matters: TBD.
+- What "done" looks like: TBD — describe things someone can actually see.
 
 ## Acceptance
 
 | ID | Outcome | Proof |
 |---|---|---|
-| A1 | Complete the task contract. | Inline verification, evidence, gate, or waiver |
+| A1 | Someone can see the visible result this task delivers. | Inline verification, evidence, gate, or waiver |
 
 ## Non-goals
 
 - TBD.
+
+## Implementation notes
+
+Builder appendix — only the person doing the hands-on work opens this. Keep the
+plain top section above free of jargon; put the technical detail here instead.
+
+- File map: TBD (verify the paths before editing).
+- Moving parts: TBD.
+- Exact commands: TBD.
 
 ## Verification
 
