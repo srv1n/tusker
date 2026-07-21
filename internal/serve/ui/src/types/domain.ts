@@ -245,6 +245,8 @@ export interface RunSummary {
   leaseStateRaw?: string;
   /** Verified OS process identity, not inferred from the lease row. */
   processRunning?: boolean;
+  /** True when the work was picked up by hand in a live session, not handed out by the daemon. */
+  handRun?: boolean;
   outcome: RunOutcome;
   /** Elapsed wall-clock seconds for the active/last attempt. */
   elapsedSec: number;

@@ -56,7 +56,17 @@ function TaskCell({
 }) {
   return (
     <span className="min-w-0">
-      <Mono className="block text-[10px] text-faint">{run.taskId}</Mono>
+      <span className="flex items-center gap-1.5">
+        <Mono className="block text-[10px] text-faint">{run.taskId}</Mono>
+        {run.handRun && (
+          <Mono
+            className="rounded-sm bg-panel px-1 py-px text-[8.5px] uppercase tracking-[0.06em] text-faint ring-1 ring-line-soft"
+            title="Picked up by hand in a live session, not handed out by the daemon"
+          >
+            hand-run
+          </Mono>
+        )}
+      </span>
       <span className={cn("block truncate text-[13px] font-medium", titleClass)}>
         {run.taskTitle}
       </span>

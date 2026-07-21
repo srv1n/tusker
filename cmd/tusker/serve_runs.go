@@ -43,6 +43,7 @@ func (s *serveServer) runSummary(snap serveSnapshot, run RunStatus) serveRunSumm
 		Lane:              serveLane(run.Lane),
 		LeaseState:        serveLeaseState(run.LeaseState),
 		LeaseStateRaw:     run.LeaseState,
+		HandRun:           hasHandRunMarker(snap.project.VaultRoot, taskID),
 		ProcessRunning:    runProcessGroupAlive(run),
 		Outcome:           serveRunOutcome(run, s.now()),
 		ElapsedSec:        serveRunElapsedSec(run, s.now()),

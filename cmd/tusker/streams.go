@@ -22,6 +22,7 @@ type streamRow struct {
 	LastHeartbeat  string       `json:"last_heartbeat"`
 	HeartbeatAge   string       `json:"heartbeat_age"`
 	Status         string       `json:"status"`
+	HandRun        bool         `json:"hand_run,omitempty"`
 	LandedAt       string       `json:"landed_at,omitempty"`
 	EndState       *RunEndState `json:"end_state,omitempty"`
 }
@@ -56,6 +57,7 @@ func buildStreamRows(ctx *automationCommandContext, now time.Time) ([]streamRow,
 		freshness := runFreshness(&run, now)
 		note := ctx.NotesByID[run.ItemID]
 		row := streamRow{Lane: run.Lane, TaskID: run.ItemID, Runner: run.Runner, WorktreePath: run.WorkspacePath, OwnedPaths: normalizeOwnedPaths(normalizeList(note.Data["owned_paths"]))}
+		row.HandRun = hasHandRunMarker(ctx.Project.VaultRoot, run.ItemID)
 		if freshness == "released" {
 			if !strings.EqualFold(run.AttemptOutcome, "succeeded") {
 				continue
@@ -140,7 +142,11 @@ func renderStreamBoard(rows []streamRow) string {
 		if heartbeat != "" {
 			heartbeat += " (" + r.HeartbeatAge + ")"
 		}
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", r.Lane, r.TaskID, r.Runner, r.WorktreePath, branch, strings.Join(r.OwnedPaths, ", "), heartbeat, r.Status, formatStreamEndState(r.EndState))
+		status := r.Status
+		if r.HandRun {
+			status = strings.TrimSpace(status + " · hand-run")
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", r.Lane, r.TaskID, r.Runner, r.WorktreePath, branch, strings.Join(r.OwnedPaths, ", "), heartbeat, status, formatStreamEndState(r.EndState))
 	}
 	return b.String()
 }

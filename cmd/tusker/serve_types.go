@@ -317,6 +317,7 @@ type serveRunSummary struct {
 	Lane              string `json:"lane"`
 	LeaseState        string `json:"leaseState"`
 	LeaseStateRaw     string `json:"leaseStateRaw"`
+	HandRun           bool   `json:"handRun"`
 	ProcessRunning    bool   `json:"processRunning"`
 	Outcome           string `json:"outcome"`
 	ElapsedSec        int    `json:"elapsedSec"`
