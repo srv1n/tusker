@@ -141,7 +141,7 @@ func liveWorktreeCapRefusal(root, workspacePath string, max int) *GateRefusal {
 		return nil
 	}
 	return &GateRefusal{
-		Cause: gateRefusalWorktreeCap,
+		Cause:  gateRefusalWorktreeCap,
 		Detail: fmt.Sprintf("cannot open another live work copy: %d already live under %s, at the configured per-project cap of %d", live, root, max),
 		// These %d copies are actively in use: stale/orphaned copies (their run
 		// crashed or exited) are pruned automatically on every prepare, so they
