@@ -52,7 +52,17 @@ Write `.tusker/specs/decisions/<date>-<subject>-grill.md`:
   who want the why here, and `skip_when` points decision-only readers back to
   the spec.
 
-## Artifact 3 — the emitted work
+## Artifact 3 — the canonical system docs stay true
+
+The living reference docs in `docs/system/` describe how the system works
+TODAY (features, diagrams, tables — the newcomer's map). If the decisions
+locked in this session change any documented behavior, updating the affected
+`docs/system/*.md` files is part of the session's emitted work — either edit
+them directly for small deltas or cut an explicit doc-update task into the
+epic. A spec that changes a design without truing up the canonical doc is
+incomplete.
+
+## Artifact 4 — the emitted work
 
 End the session by cutting Tusker tasks:
 

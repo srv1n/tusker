@@ -31,6 +31,9 @@ Use Tusker for tracked repo work.
 
 - Task mechanics live in the installed `tusker` skill.
 - Project knowledge starts at `.tusker/SKILL.md`.
+- The canonical system docs live at `docs/system/00-overview.md` (how each
+  subsystem works today); specs and decision logs live in `.tusker/specs/`
+  (what is changing and why). Keep `docs/system/` true when designs change.
 - Start runnable work with `tusker next`; inspect named work with `tusker show <TASK-ID> --capsule`.
 - Do not read `.tusker/events`, `_generated`, `attempts`, `evidence`, `Attachments`, raw logs, or full task files unless the task explicitly requires it.
 - Keep proof compact: use capsules, path-scoped status/search, and command + PASS/FAIL summaries; put noisy logs in `.tusker/scratch/<TASK-ID>/`.
