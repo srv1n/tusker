@@ -345,6 +345,93 @@ func TestTraceReplayStrippedEnv(t *testing.T) {
 	assertEqual(t, 0, report.NetworkCalls, "mock network calls")
 }
 
+func TestReplayForAdjudicationReproducesSteps(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), ".tusker")
+	writeReplayTraceFixture(t, vault, []TraceRecord{
+		replayTraceRecord("trace-adj-model", "turn-1", "model", "", `{
+			"expected_transitions":[{"type":"lease_change","subject":"APP-T-0001","from":"ready","to":"review"}],
+			"state_transitions":[{"type":"lease_change","subject":"APP-T-0001","from":"ready","to":"review"}]
+		}`),
+		replayTraceRecord("trace-adj-tool", "tool-1", "tool", `{"command":"printf should-not-run"}`, `{
+			"expected_transitions":[{"type":"file_touch_set","files":["cmd/tusker/trace.go"]}],
+			"state_transitions":[{"type":"file_touch_set","files":["cmd/tusker/trace.go"]}]
+		}`),
+	})
+
+	report, err := ReplayForAdjudication(context.Background(), TraceReplayOptions{
+		VaultPath: vault,
+		TraceID:   "trace-adj-model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Passed {
+		t.Fatalf("expected adjudication replay to pass, got %#v", report)
+	}
+	if !report.Adjudicated {
+		t.Fatalf("expected report to be flagged as adjudicated")
+	}
+	assertEqual(t, traceReplayModeAdjudicate, report.Mode, "adjudication mode")
+	// Both recorded boundaries are reproduced for the reviewer.
+	assertEqual(t, 2, len(report.Boundaries), "reproduced boundary count")
+	assertEqual(t, 2, len(report.ActualTransitions), "reproduced transition count")
+	// The recorded tool boundary was replayed from its recording, not executed.
+	assertEqual(t, 0, report.LiveToolCalls, "adjudication live tool calls")
+}
+
+func TestReplayReportsZeroModelCalls(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), ".tusker")
+	writeReplayTraceFixture(t, vault, []TraceRecord{
+		replayTraceRecord("trace-zero-model", "turn-1", "model", "", `{"state_transitions":[]}`),
+	})
+
+	report, err := ReplayForAdjudication(context.Background(), TraceReplayOptions{
+		VaultPath: vault,
+		TraceID:   "trace-zero-model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 0, report.ModelCalls, "adjudication model calls")
+	assertEqual(t, 0, report.NetworkCalls, "adjudication network calls")
+
+	output := captureStdout(t, func() {
+		if err := traceReplayCmd(Args{"vault": vault, "id": "trace-zero-model", "adjudicate": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(output, "adjudication: replayed from recording, 0 new model calls") {
+		t.Fatalf("adjudication replay did not plainly report zero model calls:\n%s", output)
+	}
+}
+
+func TestReplayFlagsIncompleteTrace(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), ".tusker")
+	// A model boundary with neither a recorded output nor a recorded error: the
+	// trail is missing this step, so an honest replay cannot reproduce it.
+	writeReplayTraceFixture(t, vault, []TraceRecord{
+		replayTraceRecord("trace-incomplete", "turn-1", "model", "", ""),
+	})
+
+	_, err := ReplayForAdjudication(context.Background(), TraceReplayOptions{
+		VaultPath: vault,
+		TraceID:   "trace-incomplete",
+	})
+	if err == nil {
+		t.Fatalf("expected incomplete recording to fail adjudication")
+	}
+	tuskerErr, ok := err.(*TuskerError)
+	if !ok {
+		t.Fatalf("expected a TuskerError, got %T: %v", err, err)
+	}
+	if tuskerErr.Code != errorTraceReplayIncomplete {
+		t.Fatalf("expected %s, got %s", errorTraceReplayIncomplete, tuskerErr.Code)
+	}
+	if !strings.Contains(tuskerErr.Message, "incomplete recording") {
+		t.Fatalf("expected a clear incomplete-recording message, got %q", tuskerErr.Message)
+	}
+}
+
 func replayTraceRecord(traceID, nodeID, nodeType, input, output string) TraceRecord {
 	record := TraceRecord{
 		SchemaVersion: traceRecordSchemaVersion,

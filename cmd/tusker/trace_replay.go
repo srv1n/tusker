@@ -14,9 +14,15 @@ import (
 )
 
 const (
-	traceReplayModeMock      = "mock"
-	traceReplayModeLiveTools = "live-tools"
+	traceReplayModeMock       = "mock"
+	traceReplayModeLiveTools  = "live-tools"
+	traceReplayModeAdjudicate = "adjudicate"
 )
+
+// errorTraceReplayIncomplete is returned when an adjudication replay finds the
+// recorded trail missing a boundary's step, so replaying it honestly cannot
+// reproduce the attempt without reaching back to the model.
+const errorTraceReplayIncomplete = "TRACE_REPLAY_INCOMPLETE"
 
 type TraceStateTransition struct {
 	Type    string   `json:"type"`
@@ -58,6 +64,7 @@ type TraceReplayReport struct {
 	ExpectedTransitions []TraceStateTransition      `json:"expected_transitions"`
 	ActualTransitions   []TraceStateTransition      `json:"actual_transitions"`
 	Boundaries          []TraceReplayBoundaryReport `json:"boundaries"`
+	Adjudicated         bool                        `json:"adjudicated,omitempty"`
 	ModelCalls          int                         `json:"model_calls"`
 	NetworkCalls        int                         `json:"network_calls"`
 	ToolCalls           int                         `json:"tool_calls"`
@@ -90,6 +97,9 @@ func traceReplayCmd(args Args) error {
 		return tuskerError(errorMissingArg, "trace replay requires <trace-id>")
 	}
 	mode := strings.ToLower(fallback(args.String("mode"), traceReplayModeMock))
+	if args.Bool("adjudicate") {
+		mode = traceReplayModeAdjudicate
+	}
 	report, err := ReplayTrace(context.Background(), TraceReplayOptions{
 		VaultPath: vaultPath,
 		TraceID:   traceID,
@@ -112,9 +122,10 @@ func traceReplayCmd(args Args) error {
 
 func ReplayTrace(ctx context.Context, opts TraceReplayOptions) (TraceReplayReport, error) {
 	mode := strings.ToLower(fallback(opts.Mode, traceReplayModeMock))
-	if mode != traceReplayModeMock && mode != traceReplayModeLiveTools {
-		return TraceReplayReport{}, tuskerError(errorInvalidArg, "invalid trace replay mode: "+mode, withHint("use --mode mock or --mode live-tools"))
+	if mode != traceReplayModeMock && mode != traceReplayModeLiveTools && mode != traceReplayModeAdjudicate {
+		return TraceReplayReport{}, tuskerError(errorInvalidArg, "invalid trace replay mode: "+mode, withHint("use --mode mock, --mode live-tools, or --mode adjudicate"))
 	}
+	adjudicate := mode == traceReplayModeAdjudicate
 	traceID := strings.TrimSpace(opts.TraceID)
 	if traceID == "" {
 		return TraceReplayReport{}, tuskerError(errorMissingArg, "trace replay requires trace_id")
@@ -126,6 +137,11 @@ func ReplayTrace(ctx context.Context, opts TraceReplayOptions) (TraceReplayRepor
 	records, err := readTraceRecords(tracePath)
 	if err != nil {
 		return TraceReplayReport{}, err
+	}
+	if adjudicate {
+		if err := checkTraceReplayComplete(traceID, tracePath, records); err != nil {
+			return TraceReplayReport{}, err
+		}
 	}
 	env, cleanup, err := prepareTraceReplayEnvironment(mode, opts)
 	if err != nil {
@@ -144,6 +160,7 @@ func ReplayTrace(ctx context.Context, opts TraceReplayOptions) (TraceReplayRepor
 		TracePath:   tracePath,
 		Mode:        mode,
 		Passed:      true,
+		Adjudicated: adjudicate,
 		Environment: env,
 	}
 	_ = record
@@ -217,6 +234,9 @@ func printTraceReplayReport(report TraceReplayReport) {
 	fmt.Printf("trace replay %s mode=%s %s\n", report.TraceID, report.Mode, result)
 	fmt.Printf("attempt=%s boundaries=%d transitions=%d\n", report.AttemptID, len(report.Boundaries), len(report.ActualTransitions))
 	fmt.Printf("calls model=%d live_tools=%d network=%d\n", report.ModelCalls, report.LiveToolCalls, report.NetworkCalls)
+	if report.Adjudicated {
+		fmt.Printf("adjudication: replayed from recording, %d new model calls\n", report.ModelCalls)
+	}
 	fmt.Printf("environment worktree=%s git_history=%t network=%s\n", report.Environment.WorktreePath, report.Environment.GitHistoryPresent, report.Environment.NetworkAccess)
 	if !report.Passed {
 		fmt.Printf("first divergence: %s\n", report.FirstDivergence)
@@ -238,7 +258,7 @@ func prepareTraceReplayEnvironment(mode string, opts TraceReplayOptions) (TraceR
 	}
 	networkAccess := "host"
 	networkEnabled := true
-	if mode == traceReplayModeMock {
+	if mode != traceReplayModeLiveTools {
 		networkAccess = "off"
 		networkEnabled = false
 	}
@@ -529,6 +549,58 @@ func evaluateV7ReplayVerificationRow(vaultPath string, row v7VerificationRow) v7
 		row.Notes = appendTraceReplayNote(row.Notes, "first divergent transition: "+report.FirstDivergence)
 	}
 	return row
+}
+
+// ReplayForAdjudication replays a recorded attempt strictly from its trail for a
+// reviewer. It never calls the model or runs live tools, and it reports how many
+// model calls it made (always zero). When the recorded trail is missing a
+// boundary's step it returns a clear TRACE_REPLAY_INCOMPLETE error rather than
+// quietly reaching back to the model.
+func ReplayForAdjudication(ctx context.Context, opts TraceReplayOptions) (TraceReplayReport, error) {
+	opts.Mode = traceReplayModeAdjudicate
+	opts.ToolExecutor = nil
+	return ReplayTrace(ctx, opts)
+}
+
+// checkTraceReplayComplete fails when the recorded trail cannot stand on its own
+// for review: an empty trail, or a boundary that recorded neither an output nor
+// an error, means replaying it honestly would have to ask the model again.
+func checkTraceReplayComplete(traceID, tracePath string, records []TraceRecord) error {
+	if len(records) == 0 {
+		return tuskerError(errorTraceReplayIncomplete,
+			"trace replay cannot adjudicate an empty recording: "+traceID,
+			withHint("the recorded trail has no boundaries to replay"))
+	}
+	for _, record := range records {
+		if !traceReplayBoundaryRecorded(record) {
+			boundary := firstNonEmpty(record.TraceID, record.NodeID, record.NodeType, "boundary")
+			return tuskerError(errorTraceReplayIncomplete,
+				"incomplete recording: boundary "+boundary+" has no recorded step to replay",
+				withHint("re-run the attempt with tracing so the boundary is recorded; adjudication will not call the model"),
+				withContext(map[string]any{
+					"trace_id":         traceID,
+					"trace_path":       tracePath,
+					"boundary":         boundary,
+					"node_type":        record.NodeType,
+					"missing":          "output",
+					"model_calls":      0,
+					"would_call_model": true,
+				}))
+		}
+	}
+	return nil
+}
+
+// traceReplayBoundaryRecorded reports whether a boundary carries a replayable
+// step: either a recorded output or a recorded error. A boundary with neither is
+// a hole in the trail.
+func traceReplayBoundaryRecorded(record TraceRecord) bool {
+	return traceReplayRawPresent(record.Output) || traceReplayRawPresent(record.Error)
+}
+
+func traceReplayRawPresent(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) != 0 && !bytes.Equal(trimmed, []byte("null"))
 }
 
 func appendTraceReplayNote(notes, addition string) string {
