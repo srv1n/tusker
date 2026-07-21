@@ -1,0 +1,165 @@
+{
+  "nodes": [
+    {
+      "subject": "build-and-test-economics",
+      "kind": "spec",
+      "path": ".tusker/specs/build-and-test-economics.md",
+      "title": "Build and test economics: how often we build and test at each stage",
+      "status": "canonical"
+    },
+    {
+      "subject": "cli",
+      "kind": "canonical",
+      "path": "docs/system/cli.md",
+      "title": "Tusker CLI reference",
+      "status": "canonical"
+    },
+    {
+      "subject": "gates",
+      "kind": "canonical",
+      "path": "docs/system/gates.md",
+      "title": "Gates (human gates, the gate tier, and batch merge windows)",
+      "status": "canonical"
+    },
+    {
+      "subject": "knowledge-graph",
+      "kind": "spec",
+      "path": ".tusker/specs/knowledge-graph.md",
+      "title": "Knowledge graph: self-scaffolding, self-checking documentation",
+      "status": "canonical"
+    },
+    {
+      "subject": "knowledge-graph-grill",
+      "kind": "decision",
+      "path": ".tusker/specs/decisions/2026-07-21-knowledge-graph-grill.md",
+      "title": "Decision log: the knowledge-graph discussion",
+      "status": "canonical"
+    },
+    {
+      "subject": "orchestration",
+      "kind": "canonical",
+      "path": "docs/system/orchestration.md",
+      "title": "Orchestration",
+      "status": "canonical"
+    },
+    {
+      "subject": "overview",
+      "kind": "canonical",
+      "path": "docs/system/00-overview.md",
+      "title": "Tusker system overview",
+      "status": "canonical"
+    },
+    {
+      "subject": "serve-ui",
+      "kind": "canonical",
+      "path": "docs/system/serve-ui.md",
+      "title": "The observation surface — serve, dashboards, logbook, digest",
+      "status": "canonical"
+    },
+    {
+      "subject": "skills",
+      "kind": "canonical",
+      "path": "docs/system/skills.md",
+      "title": "The Tusker skill system",
+      "status": "canonical"
+    },
+    {
+      "subject": "software-factory",
+      "kind": "spec",
+      "path": ".tusker/specs/software-factory.md",
+      "title": "Software Factory: Tusker as the production loop harness",
+      "status": "canonical"
+    },
+    {
+      "subject": "software-factory-grill",
+      "kind": "decision",
+      "path": ".tusker/specs/decisions/2026-07-21-factory-grill.md",
+      "title": "Decision log: the factory grill session",
+      "status": "canonical"
+    },
+    {
+      "subject": "tasks-and-proof",
+      "kind": "canonical",
+      "path": "docs/system/tasks-and-proof.md",
+      "title": "Tasks and proof (v7 task model)",
+      "status": "canonical"
+    }
+  ],
+  "edges": [
+    {
+      "from": "build-and-test-economics",
+      "to": "software-factory",
+      "kind": "part_of"
+    },
+    {
+      "from": "cli",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "gates",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "knowledge-graph",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "knowledge-graph",
+      "to": "docs/system/00-overview.md",
+      "kind": "updates"
+    },
+    {
+      "from": "knowledge-graph",
+      "to": "docs/system/cli.md",
+      "kind": "updates"
+    },
+    {
+      "from": "knowledge-graph-grill",
+      "to": ".tusker/specs/knowledge-graph.md",
+      "kind": "decides_for"
+    },
+    {
+      "from": "knowledge-graph-grill",
+      "to": "knowledge-graph",
+      "kind": "part_of"
+    },
+    {
+      "from": "orchestration",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "serve-ui",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "skills",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "software-factory",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "software-factory-grill",
+      "to": ".tusker/specs/software-factory.md",
+      "kind": "decides_for"
+    },
+    {
+      "from": "software-factory-grill",
+      "to": "software-factory",
+      "kind": "part_of"
+    },
+    {
+      "from": "tasks-and-proof",
+      "to": "overview",
+      "kind": "part_of"
+    }
+  ]
+}

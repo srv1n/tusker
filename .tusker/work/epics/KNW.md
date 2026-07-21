@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-21T11:43:47Z"
-updated_at: "2026-07-21T12:32:21Z"
-state_rev: "sha256:03cec55be4bb40ba100ea03a3bafc69f4580f78f968e5c9e4b3bd3364834fb2e"
+updated_at: "2026-07-21T14:54:18Z"
+state_rev: "sha256:043724868e05b9651a04e6904cb66bf376ff107121f298835170fc47d409a4cc"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -50,12 +50,10 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[KNW-T-0001]] | backlog | agent | Wait for dependency KNW-T-0007 to reach review with satisfied proof or done. |
-| [[KNW-T-0002]] | backlog | agent | Wait for dependency KNW-T-0007 to reach review with satisfied proof or done. |
 | [[KNW-T-0003]] | backlog | agent | Wait for dependency KNW-T-0007 to reach review with satisfied proof or done. |
-| [[KNW-T-0004]] | backlog | blocked_dependency | Wait for dependency KNW-T-0002 to reach review with satisfied proof or done. |
-| [[KNW-T-0005]] | backlog | blocked_dependency | Wait for dependency KNW-T-0001 to reach review with satisfied proof or done. |
-| [[KNW-T-0006]] | backlog | blocked_dependency | Wait for dependency KNW-T-0001 to reach review with satisfied proof or done. |
+| [[KNW-T-0004]] | backlog | agent | Wait for dependency KNW-T-0002 to reach review with satisfied proof or done. |
+| [[KNW-T-0005]] | backlog | agent | Wait for dependency KNW-T-0002 to reach review with satisfied proof or done. |
+| [[KNW-T-0006]] | backlog | agent | Wait for dependency KNW-T-0002 to reach review with satisfied proof or done. |
 
 ## Recently completed
 
@@ -63,4 +61,6 @@ TBD.
 
 | Task | Accepted by | Closed at |
 |---|---|---|
+| [[KNW-T-0001]] | reviewer:opus | 2026-07-21T14:54:18Z |
+| [[KNW-T-0002]] | reviewer:opus | 2026-07-21T14:54:18Z |
 | [[KNW-T-0007]] | reviewer:opus | 2026-07-21T12:32:21Z |

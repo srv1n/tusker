@@ -804,6 +804,11 @@ func validateCmd(args Args) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	docsMapIssues, err := docgraph.CheckDocsMapFresh(v7RepoRoot(vaultPath))
+	if err != nil {
+		return 0, err
+	}
+	docGraphIssues = append(docGraphIssues, docsMapIssues...)
 	docsMap, err := loadDocsMap(vaultPath)
 	if err != nil {
 		return 0, err

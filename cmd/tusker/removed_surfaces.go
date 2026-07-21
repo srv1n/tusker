@@ -23,7 +23,6 @@ func removedSurfaceError(name string) error {
 
 func docsInitCmd(args Args) error           { return removedSurfaceError("docs init") }
 func docsModelCmd(args Args) error          { return removedSurfaceError("docs model") }
-func docsMapCmd(args Args) error            { return removedSurfaceError("docs map") }
 func docsCatalogCmd(args Args) error        { return removedSurfaceError("docs catalog") }
 func docsFreshnessCmd(args Args) error      { return removedSurfaceError("docs freshness") }
 func docsImpactCheckCmd(args Args) error    { return removedSurfaceError("docs check") }

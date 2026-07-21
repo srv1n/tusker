@@ -459,12 +459,16 @@ func runInner(command string, args Args) (int, error) {
 		return 0, compactCmd(args)
 	case "context audit":
 		return 0, contextAuditCmd(args)
+	case "docs find":
+		return 0, docsCmd("find", args)
+	case "docs new":
+		return 0, docsCmd("new", args)
 	case "docs init":
 		return legacyOnlyCommand("docs init", "legacy docs init")
 	case "docs model":
 		return legacyOnlyCommand("docs model", "legacy docs model")
 	case "docs map":
-		return legacyOnlyCommand("docs map", "legacy docs map")
+		return 0, docsCmd("map", args)
 	case "docs catalog":
 		return legacyOnlyCommand("docs catalog", "legacy docs catalog")
 	case "docs freshness":

@@ -92,3 +92,32 @@ Three kinds of writing, three jobs — keep them separate:
   design changes**, in place, no versions.
 
 If code and these docs disagree, the code wins and the doc is the bug — fix it.
+
+<!-- tusker:docs-map:begin -->
+```mermaid
+graph TD
+  n_build_and_test_economics["Build and test economics: how often we build and test at each stage"]
+  n_cli["Tusker CLI reference"]
+  n_gates["Gates (human gates, the gate tier, and batch merge windows)"]
+  n_knowledge_graph["Knowledge graph: self-scaffolding, self-checking documentation"]
+  n_knowledge_graph_grill["Decision log: the knowledge-graph discussion"]
+  n_orchestration["Orchestration"]
+  n_overview["Tusker system overview"]
+  n_serve_ui["The observation surface — serve, dashboards, logbook, digest"]
+  n_skills["The Tusker skill system"]
+  n_software_factory["Software Factory: Tusker as the production loop harness"]
+  n_software_factory_grill["Decision log: the factory grill session"]
+  n_tasks_and_proof["Tasks and proof (v7 task model)"]
+  n_software_factory --> n_build_and_test_economics
+  n_overview --> n_cli
+  n_overview --> n_gates
+  n_overview --> n_knowledge_graph
+  n_knowledge_graph --> n_knowledge_graph_grill
+  n_overview --> n_orchestration
+  n_overview --> n_serve_ui
+  n_overview --> n_skills
+  n_overview --> n_software_factory
+  n_software_factory --> n_software_factory_grill
+  n_overview --> n_tasks_and_proof
+```
+<!-- tusker:docs-map:end -->

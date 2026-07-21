@@ -198,6 +198,9 @@ func scanRepository(repoRoot string) ([]Document, []Issue, error) {
 			if entry.IsDir() {
 				return nil
 			}
+			if entry.Name() == "INDEX.md" {
+				return nil
+			}
 			if strings.HasSuffix(strings.ToLower(entry.Name()), ".md") {
 				paths = append(paths, path)
 			}

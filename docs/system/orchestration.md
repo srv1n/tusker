@@ -1,7 +1,7 @@
 ---
 title: Orchestration
 subject: orchestration
-keywords: [orchestration, daemon, runners]
+keywords: [orchestration, daemon, runners, worktree, dispatch]
 part_of: overview
 status: canonical
 read_when:
