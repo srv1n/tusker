@@ -96,3 +96,69 @@ func TestGreenUpstreamReleasesDependent(t *testing.T) {
 		t.Fatalf("expected released dependent to be dispatchable, blockers: %#v", v7TaskDispatchBlockers(vault, note))
 	}
 }
+
+func holdTestTask(id, status string, extra map[string]any) Note {
+	data := map[string]any{"schema": "tusker.task/v7", "kind": "task", "id": id, "project": "app", "status": status}
+	for k, v := range extra {
+		data[k] = v
+	}
+	return Note{Data: data}
+}
+
+// Finding 3: a shared red gate holds a dependent through its own wave even when
+// the piece carrying the marker is a fresh repair task with zero dependents.
+func TestRedGateHoldsWaveMemberViaFreshRepairTask(t *testing.T) {
+	repair := holdTestTask("BGR-T-0001", "ready", map[string]any{
+		"build_failed":         true,
+		"build_failed_command": "go test ./...",
+	})
+	member := holdTestTask("APP-T-0002", "ready", map[string]any{"wave": "W-0001"})
+	unrelated := holdTestTask("APP-T-0003", "ready", nil)
+	wave := Note{Data: map[string]any{"schema": "tusker.wave/v7", "kind": "wave", "id": "W-0001",
+		"members": []string{"APP-T-0002"}, "build_failed_command": "go test ./..."}}
+	idx := v7Index{
+		Tasks: map[string]Note{"BGR-T-0001": repair, "APP-T-0002": member, "APP-T-0003": unrelated},
+		Waves: map[string]Note{"W-0001": wave},
+	}
+
+	if _, held := v7HeldByFailedUpstream(member, idx); !held {
+		t.Fatalf("expected wave member to be held by shared red gate even though the marker sits on a dependent-less repair task")
+	}
+	if _, held := v7HeldByFailedUpstream(unrelated, idx); held {
+		t.Fatalf("expected a task outside the red wave (and with no red dependency) to stay free")
+	}
+	if _, held := v7HeldByFailedUpstream(repair, idx); held {
+		t.Fatalf("the repair task itself carries no wave marker and depends on nothing, so it must not hold itself")
+	}
+}
+
+// Finding 6: a red marker on a dead (cancelled/superseded) dependency must be
+// ignored, since no green run will ever clear it; a done dependency still holds.
+func TestDeadUpstreamMarkerDoesNotHoldForever(t *testing.T) {
+	dependent := holdTestTask("APP-T-0002", "ready", map[string]any{"dependencies": []string{"APP-T-0001:hard"}})
+
+	for _, dead := range []string{"cancelled", "superseded"} {
+		dep := holdTestTask("APP-T-0001", dead, map[string]any{"build_failed": true})
+		idx := v7Index{Tasks: map[string]Note{"APP-T-0001": dep, "APP-T-0002": dependent}, Waves: map[string]Note{}}
+		if _, held := v7HeldByFailedUpstream(dependent, idx); held {
+			t.Fatalf("expected %s upstream's red marker to be ignored, got dependent held forever", dead)
+		}
+	}
+
+	live := holdTestTask("APP-T-0001", "done", map[string]any{"build_failed": true})
+	idx := v7Index{Tasks: map[string]Note{"APP-T-0001": live, "APP-T-0002": dependent}, Waves: map[string]Note{}}
+	if _, held := v7HeldByFailedUpstream(dependent, idx); !held {
+		t.Fatalf("a done-but-red-on-build dependency must still hold its dependent")
+	}
+}
+
+// Finding 5: a task already in review must stay in the review queue and not be
+// pulled out by an upstream build hold.
+func TestReviewPrecedesUpstreamHold(t *testing.T) {
+	vault := setupUpstreamHoldVault(t)
+	setAutomationV7TaskFields(t, vault, "APP-T-0002", map[string]any{"status": "review"})
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
+
+	dependent := mustTaskData(t, vault, "APP-T-0002")
+	assertEqual(t, "waiting_on_review", stringField(dependent, "readiness"), "task in review stays in review, not held")
+}

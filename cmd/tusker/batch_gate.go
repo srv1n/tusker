@@ -186,6 +186,7 @@ func (d *Daemon) executeBatchGate(project RegisteredProject, policy BatchGatePol
 		maxRepairs = 3
 	}
 	failures := 0
+	firstFailCommand := ""
 	for _, command := range policy.Commands {
 		started := time.Now()
 		output, err := runGateCommand(project.RepoRoot, command)
@@ -201,53 +202,157 @@ func (d *Daemon) executeBatchGate(project RegisteredProject, policy BatchGatePol
 		if run.FirstFailure == "" {
 			run.FirstFailure = excerpt
 		}
+		if firstFailCommand == "" {
+			firstFailCommand = command
+		}
 		if failures <= maxRepairs {
-			_ = createBatchGateRepairTask(project.VaultRoot, run.ID, command, excerpt)
+			_ = createBatchGateRepairTask(project.VaultRoot, run.ID, command, excerpt, policy.FeatureProfile)
 		}
 	}
 	run.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 	if failures == 0 {
 		run.Status = "passed"
-		// A green shared build-and-test means the tree is healthy again:
-		// release the dependency-scoped holds so held dependents become
-		// pickable again.
-		_ = clearBuildFailedMarkers(project.VaultRoot)
+		// A green shared build-and-test means the commands it re-ran are healthy
+		// again: release the dependency-scoped holds whose recorded command this
+		// run actually re-ran green, leaving unrelated red markers in place.
+		_ = clearBuildFailedMarkers(project.VaultRoot, policy.Commands, policy.FeatureProfile)
 	} else {
 		run.Status = "failed"
+		// The failing piece (repair task or command-tagged task) may have no
+		// dependents of its own, so stamp the red command onto every wave with
+		// in-flight members. Their not-yet-landed members then hold via
+		// v7HeldByFailedUpstream's own-wave reach, so a genuine shared failure
+		// actually quarantines the concurrent work it endangers.
+		_ = stampFailedCommandOnActiveWaves(project.VaultRoot, firstFailCommand, policy.FeatureProfile)
 	}
 	_ = d.store.saveBatchGateRun(run)
 	_ = refreshStreamBoardForVault(project.VaultRoot)
 }
 
-// clearBuildFailedMarkers drops the red shared-build marker from every task
-// that still carries it. It is called when a shared build-and-test goes green,
-// releasing the dependents that were held for an upstream failure.
-func clearBuildFailedMarkers(vaultPath string) error {
+// clearBuildFailedMarkers drops red shared-build markers whose recorded command
+// (and profile) the just-passed run actually re-ran green. It is called when a
+// shared build-and-test goes green, releasing only the dependents whose failing
+// command is now healthy again — an unrelated red marker (a different command or
+// feature profile) is left in place. A marker with no recorded command is a
+// legacy marker and is cleared unconditionally for backward compatibility.
+//
+// The clear loop continues through every task and wave even when an individual
+// mutate fails, collecting errors and returning them joined, so one bad
+// document cannot leave the release half-applied.
+func clearBuildFailedMarkers(vaultPath string, greenCommands []string, profile string) error {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return err
 	}
-	for _, task := range sortedV7Tasks(idx) {
-		if !v7BuildFailed(task) {
-			continue
+	green := make(map[string]struct{}, len(greenCommands))
+	for _, c := range greenCommands {
+		green[strings.TrimSpace(c)] = struct{}{}
+	}
+	reRanGreen := func(data map[string]any) bool {
+		cmd := strings.TrimSpace(stringField(data, buildFailedCommandField))
+		if cmd == "" {
+			return true // legacy marker: no command recorded, clear it
 		}
-		if task.AbsolutePath == "" {
+		if _, ok := green[cmd]; !ok {
+			return false
+		}
+		markerProfile := strings.TrimSpace(stringField(data, buildFailedProfileField))
+		if markerProfile != "" && profile != "" && markerProfile != profile {
+			return false
+		}
+		return true
+	}
+	clearFields := func(data map[string]any) {
+		delete(data, buildFailedField)
+		delete(data, buildFailedCommandField)
+		delete(data, buildFailedProfileField)
+		data["updated_by"] = "tusker:batch-gate"
+		data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+	}
+	var errs []error
+	for _, task := range sortedV7Tasks(idx) {
+		if !v7BuildFailed(task) || task.AbsolutePath == "" || !reRanGreen(task.Data) {
 			continue
 		}
 		_, _, mutErr := mutateV7DocumentLocked(task.AbsolutePath, v7FrontmatterOrder["task"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
-			if !boolField(data, buildFailedField) {
+			if !boolField(data, buildFailedField) || !reRanGreen(data) {
 				return data, body, false, nil
 			}
-			delete(data, buildFailedField)
+			clearFields(data)
+			return data, body, true, nil
+		})
+		if mutErr != nil {
+			errs = append(errs, mutErr)
+		}
+	}
+	for _, wave := range idx.Waves {
+		if wave.AbsolutePath == "" || strings.TrimSpace(stringField(wave.Data, buildFailedCommandField)) == "" || !reRanGreen(wave.Data) {
+			continue
+		}
+		_, _, mutErr := mutateV7DocumentLocked(wave.AbsolutePath, v7FrontmatterOrder["wave"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
+			if strings.TrimSpace(stringField(data, buildFailedCommandField)) == "" || !reRanGreen(data) {
+				return data, body, false, nil
+			}
+			clearFields(data)
+			return data, body, true, nil
+		})
+		if mutErr != nil {
+			errs = append(errs, mutErr)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// stampFailedCommandOnActiveWaves records a red gate command onto every wave
+// that still has an in-flight (non-terminal) member. Those members' not-yet-
+// landed dependents then hold through v7HeldByFailedUpstream's own-wave reach.
+// Waves whose members have all landed carry nothing new, so the hold stays
+// scoped to work that is actually still in flight rather than freezing the
+// whole project.
+func stampFailedCommandOnActiveWaves(vaultPath, command, profile string) error {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return nil
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, wave := range idx.Waves {
+		if wave.AbsolutePath == "" || !v7WaveHasInFlightMember(wave, idx) {
+			continue
+		}
+		_, _, mutErr := mutateV7DocumentLocked(wave.AbsolutePath, v7FrontmatterOrder["wave"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
+			data[buildFailedCommandField] = command
+			if profile != "" {
+				data[buildFailedProfileField] = profile
+			}
 			data["updated_by"] = "tusker:batch-gate"
 			data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
 			return data, body, true, nil
 		})
 		if mutErr != nil {
-			return mutErr
+			errs = append(errs, mutErr)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
+}
+
+// v7WaveHasInFlightMember reports whether a wave still has at least one member
+// that has not reached a terminal status, i.e. work the red command can still
+// endanger.
+func v7WaveHasInFlightMember(wave Note, idx v7Index) bool {
+	for _, id := range normalizeList(wave.Data["members"]) {
+		member, ok := idx.Tasks[id]
+		if !ok {
+			continue
+		}
+		if !v7TerminalTaskStatus(stringField(member.Data, "status")) {
+			return true
+		}
+	}
+	return false
 }
 
 func actionableGateFailure(output string, runErr error) string {
@@ -272,7 +377,7 @@ func actionableGateFailure(output string, runErr error) string {
 	return strings.Join(kept, "\n")
 }
 
-func createBatchGateRepairTask(vaultPath, gateRunID, command, excerpt string) error {
+func createBatchGateRepairTask(vaultPath, gateRunID, command, excerpt, profile string) error {
 	if idx, err := loadV7Index(vaultPath); err == nil {
 		for _, existing := range idx.Tasks {
 			status := stringField(existing.Data, "status")
@@ -282,6 +387,10 @@ func createBatchGateRepairTask(vaultPath, gateRunID, command, excerpt string) er
 			_, _, updateErr := mutateV7DocumentLocked(existing.AbsolutePath, v7FrontmatterOrder["task"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
 				data["batch_gate_run"] = gateRunID
 				data[buildFailedField] = true
+				data[buildFailedCommandField] = command
+				if profile != "" {
+					data[buildFailedProfileField] = profile
+				}
 				data["updated_by"] = "tusker:batch-gate"
 				data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
 				intent := "Repair unattended batch gate `" + gateRunID + "`.\n\nFirst actionable failure:\n\n" + excerpt
@@ -313,6 +422,10 @@ func createBatchGateRepairTask(vaultPath, gateRunID, command, excerpt string) er
 		data["batch_gate_command"] = command
 		data["batch_gate_run"] = gateRunID
 		data[buildFailedField] = true
+		data[buildFailedCommandField] = command
+		if profile != "" {
+			data[buildFailedProfileField] = profile
+		}
 		data["updated_by"] = "tusker:batch-gate"
 		data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
 		return data, body, true, nil

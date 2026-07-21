@@ -2251,6 +2251,17 @@ func v7ProjectedTaskState(vaultPath string, task Note, idx v7Index) map[string]a
 			return finalizeV7ProjectedTaskState(projected, task)
 		}
 	}
+	// Precedence: work already sitting in review must stay in the review queue.
+	// An upstream build failure holds not-yet-started work; it must not pull a
+	// task that has been done and is awaiting review back out of review.
+	if status == "review" {
+		projected["readiness"] = "waiting_on_review"
+		projected["next_owner"] = "reviewer"
+		projected["next_source"] = "review_policy"
+		projected["next_ref"] = ""
+		projected["next_action"] = "Review evidence and close or return to rework."
+		return finalizeV7ProjectedTaskState(projected, task)
+	}
 	if upstreamID, held := v7HeldByFailedUpstream(task, idx); held {
 		projected["readiness"] = "held"
 		projected["next_owner"] = "blocked_dependency"
@@ -2265,14 +2276,6 @@ func v7ProjectedTaskState(vaultPath string, task Note, idx v7Index) map[string]a
 		projected["next_source"] = "dependency"
 		projected["next_ref"] = edge.ID
 		projected["next_action"] = v7DependencyWaitAction(edge)
-		return finalizeV7ProjectedTaskState(projected, task)
-	}
-	if status == "review" {
-		projected["readiness"] = "waiting_on_review"
-		projected["next_owner"] = "reviewer"
-		projected["next_source"] = "review_policy"
-		projected["next_ref"] = ""
-		projected["next_action"] = "Review evidence and close or return to rework."
 		return finalizeV7ProjectedTaskState(projected, task)
 	}
 	projected["readiness"] = "ready"
@@ -3319,6 +3322,11 @@ func v7TaskDispatchBlockersWithAuthorization(vaultPath string, task Note, includ
 		if upstreamID, held := v7HeldByFailedUpstream(task, idx); held {
 			reasons = append(reasons, v7UpstreamFailureHoldReason(upstreamID))
 		}
+	} else {
+		// Fail closed: if we cannot load the index we cannot rule out an
+		// upstream build failure, so block dispatch rather than silently handing
+		// out work that may be quarantined.
+		reasons = append(reasons, "cannot verify upstream health: "+err.Error())
 	}
 	return uniqueStrings(reasons)
 }
