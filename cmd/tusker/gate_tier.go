@@ -24,6 +24,7 @@ import (
 const (
 	gateTierSchema             = "tusker.gate-tier/v1"
 	gateTierModeHarvest        = "harvest"
+	gateTierModeSelective      = "selective"
 	gateTierDefaultDefectLines = 12
 	gateTierDefaultExcerptLen  = 320
 )
@@ -69,6 +70,8 @@ type GateTierResult struct {
 	Profile    string       `json:"profile,omitempty"`
 	TreeHash   string       `json:"tree_hash,omitempty"`
 	Commands   []string     `json:"commands"`
+	Touched    []string     `json:"touched,omitempty"`
+	Scopes     []string     `json:"scopes,omitempty"`
 	Ran        []string     `json:"ran,omitempty"`
 	LedgerHits []string     `json:"ledger_hits,omitempty"`
 	Defects    []GateDefect `json:"defects,omitempty"`
@@ -94,6 +97,7 @@ type gateTierRuntime struct {
 	FreeDiskGB func(path string) (float64, error)
 	SlotHolder func(workspace string, locks []string) (string, bool)
 	TreeStatus func(workspace string) (string, error)
+	DiffPaths  func(workspace, base string) ([]string, error)
 	Exec       func(workspace, command string) (string, error)
 	RecordPass func(command, treeHash, profile string, elapsed time.Duration)
 	Now        func() time.Time
@@ -321,7 +325,8 @@ func defaultGateTierRuntime(store *RuntimeStore, projectID, workspace string) ga
 		TreeStatus: func(ws string) (string, error) {
 			return gitFactOutput(ws, "status", "--porcelain", "--untracked-files=normal")
 		},
-		Exec: runGateCommand,
+		DiffPaths: changedGatePaths,
+		Exec:      runGateCommand,
 		Now:  time.Now,
 	}
 	if store != nil {
