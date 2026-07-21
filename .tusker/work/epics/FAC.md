@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-21T07:06:03Z"
-updated_at: "2026-07-21T07:34:24Z"
-state_rev: "sha256:f36fb41e712deaf9f2836c0330736a0170a940e6db1457ab8e1ef3cff4da535f"
+updated_at: "2026-07-21T08:03:38Z"
+state_rev: "sha256:a894e81e080650ff772e243c8f94bc5dcd490dbf028f38e5696bc5cb476796e7"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -48,14 +48,9 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[FAC-T-0002]] | backlog | agent | Wait for dependency FAC-T-0001 to reach review with satisfied proof or done. |
-| [[FAC-T-0004]] | backlog | agent | Wait for dependency FAC-T-0003 to reach review with satisfied proof or done. |
-| [[FAC-T-0006]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[FAC-T-0008]] | backlog | agent | Wait for dependency FAC-T-0007 to reach review with satisfied proof or done. |
 | [[FAC-T-0009]] | backlog | agent | Wait for dependency FAC-T-0007 to reach review with satisfied proof or done. |
 | [[FAC-T-0010]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[FAC-T-0011]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[FAC-T-0012]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 
@@ -64,6 +59,11 @@ TBD.
 | Task | Accepted by | Closed at |
 |---|---|---|
 | [[FAC-T-0001]] | reviewer:fable | 2026-07-21T07:34:22Z |
+| [[FAC-T-0002]] | reviewer:fable | 2026-07-21T08:03:36Z |
 | [[FAC-T-0003]] | reviewer:fable | 2026-07-21T07:34:22Z |
+| [[FAC-T-0004]] | reviewer:fable | 2026-07-21T08:03:36Z |
 | [[FAC-T-0005]] | reviewer:fable | 2026-07-21T07:34:23Z |
+| [[FAC-T-0006]] | reviewer:fable | 2026-07-21T08:03:37Z |
 | [[FAC-T-0007]] | reviewer:fable | 2026-07-21T07:34:24Z |
+| [[FAC-T-0008]] | reviewer:fable | 2026-07-21T08:03:37Z |
+| [[FAC-T-0012]] | reviewer:fable | 2026-07-21T08:03:38Z |
