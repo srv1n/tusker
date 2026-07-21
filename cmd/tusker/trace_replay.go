@@ -32,6 +32,7 @@ type TraceStateTransition struct {
 	Covers  string   `json:"covers,omitempty"`
 	Check   string   `json:"check,omitempty"`
 	Result  string   `json:"result,omitempty"`
+	Error   string   `json:"error,omitempty"`
 	Files   []string `json:"files,omitempty"`
 }
 
@@ -49,6 +50,7 @@ type TraceReplayBoundaryReport struct {
 	Mode                string                 `json:"mode"`
 	ExpectedTransitions []TraceStateTransition `json:"expected_transitions"`
 	ActualTransitions   []TraceStateTransition `json:"actual_transitions"`
+	RecordedError       string                 `json:"recorded_error,omitempty"`
 	Diverged            bool                   `json:"diverged"`
 	Divergence          string                 `json:"divergence,omitempty"`
 }
@@ -150,8 +152,12 @@ func ReplayTrace(ctx context.Context, opts TraceReplayOptions) (TraceReplayRepor
 	if !opts.KeepEnvironment {
 		defer cleanup()
 	}
+	// Only the live-tools mode is allowed to reach a live execution path. In
+	// mock and adjudicate modes the executor stays nil so no live tool runs by
+	// default; if a regression injects one and the seam below invokes it, the
+	// call is measured (NetworkCalls) and adjudication fails on a nonzero count.
 	executor := opts.ToolExecutor
-	if executor == nil {
+	if executor == nil && mode == traceReplayModeLiveTools {
 		executor = shellTraceReplayToolExecutor{}
 	}
 	report := TraceReplayReport{
@@ -165,6 +171,11 @@ func ReplayTrace(ctx context.Context, opts TraceReplayOptions) (TraceReplayRepor
 	}
 	_ = record
 	for _, boundaryRecord := range records {
+		// The attempt-end sentinel closes the trail; it is a completeness marker,
+		// not a replayable boundary, so it never becomes a report step.
+		if traceRecordIsAttemptSentinel(boundaryRecord) {
+			continue
+		}
 		boundary := TraceReplayBoundaryReport{
 			TraceID:  boundaryRecord.TraceID,
 			NodeID:   boundaryRecord.NodeID,
@@ -177,8 +188,13 @@ func ReplayTrace(ctx context.Context, opts TraceReplayOptions) (TraceReplayRepor
 		expected := expectedTraceTransitions(boundaryRecord)
 		actualOutput := boundaryRecord.Output
 		outputDivergence := ""
-		if mode == traceReplayModeLiveTools && boundaryRecord.NodeType == "tool" {
+		// The live-tools gate is the one seam that reaches a live execution path.
+		// Count every attempted invocation here so a regression that lets a
+		// non-live mode reach this branch is measured rather than silently
+		// tolerated.
+		if boundaryRecord.NodeType == "tool" && executor != nil {
 			report.LiveToolCalls++
+			report.NetworkCalls++
 			liveOutput, err := executor.ExecuteTraceReplayTool(ctx, boundaryRecord, env)
 			if err != nil {
 				actualOutput = traceReplayErrorOutput(boundaryRecord, err)
@@ -192,6 +208,17 @@ func ReplayTrace(ctx context.Context, opts TraceReplayOptions) (TraceReplayRepor
 		actual := actualTraceTransitions(actualOutput)
 		if len(expected) == 0 {
 			expected = actualTraceTransitions(boundaryRecord.Output)
+		}
+		// A boundary that recorded an error contributes that error to the
+		// adjudicated trail: it must count toward the expected transitions
+		// whether it recorded an output or an error, so an error-only boundary
+		// can never yield a vacuous PASS.
+		if errTransition, ok := traceReplayRecordedErrorTransition(boundaryRecord); ok {
+			boundary.RecordedError = errTransition.Error
+			expected = normalizeTraceTransitions(append(expected, errTransition))
+			if mode != traceReplayModeLiveTools {
+				actual = normalizeTraceTransitions(append(actual, errTransition))
+			}
 		}
 		boundary.ExpectedTransitions = expected
 		boundary.ActualTransitions = actual
@@ -217,6 +244,16 @@ func ReplayTrace(ctx context.Context, opts TraceReplayOptions) (TraceReplayRepor
 		report.Passed = false
 		if report.FirstDivergence == "" {
 			report.FirstDivergence = divergence
+		}
+	}
+	// Adjudication guarantees no model/network reach. Measure rather than assert:
+	// if the run reached a live path, the counters above are nonzero and the
+	// adjudication fails instead of printing a hardcoded, unearned zero.
+	if adjudicate && (report.ModelCalls > 0 || report.NetworkCalls > 0) {
+		report.Passed = false
+		violation := fmt.Sprintf("adjudication reached a live path: model_calls=%d network_calls=%d", report.ModelCalls, report.NetworkCalls)
+		if report.FirstDivergence == "" {
+			report.FirstDivergence = violation
 		}
 	}
 	if report.FirstDivergence == "" {
@@ -439,6 +476,7 @@ func normalizeTraceTransitions(rows []TraceStateTransition) []TraceStateTransiti
 		row.Covers = strings.TrimSpace(row.Covers)
 		row.Check = strings.TrimSpace(row.Check)
 		row.Result = strings.ToLower(strings.TrimSpace(row.Result))
+		row.Error = strings.TrimSpace(row.Error)
 		row.Files = dedupeSortedStrings(row.Files)
 		if row.Type == "" {
 			continue
@@ -571,7 +609,14 @@ func checkTraceReplayComplete(traceID, tracePath string, records []TraceRecord) 
 			"trace replay cannot adjudicate an empty recording: "+traceID,
 			withHint("the recorded trail has no boundaries to replay"))
 	}
+	sawSentinel := false
+	sawBoundary := false
 	for _, record := range records {
+		if traceRecordIsAttemptSentinel(record) {
+			sawSentinel = true
+			continue
+		}
+		sawBoundary = true
 		if !traceReplayBoundaryRecorded(record) {
 			boundary := firstNonEmpty(record.TraceID, record.NodeID, record.NodeType, "boundary")
 			return tuskerError(errorTraceReplayIncomplete,
@@ -588,7 +633,56 @@ func checkTraceReplayComplete(traceID, tracePath string, records []TraceRecord) 
 				}))
 		}
 	}
+	// A crash-truncated trail has boundaries but never wrote the attempt-end
+	// marker. Refuse it: replaying a partial recording as PASS would report a
+	// vacuous guarantee. Older recordings predating the marker fail here too,
+	// which is the correct, clearly-explained behavior for adjudication.
+	if !sawSentinel {
+		return tuskerError(errorTraceReplayIncomplete,
+			"incomplete recording: "+traceID+" recording ends mid-attempt (no attempt-end marker)",
+			withHint("re-run the attempt to a terminal state so the trail records an attempt-end marker; adjudication requires a closed recording"),
+			withContext(map[string]any{
+				"trace_id":     traceID,
+				"trace_path":   tracePath,
+				"missing":      "attempt_end_marker",
+				"had_boundary": sawBoundary,
+			}))
+	}
 	return nil
+}
+
+// traceReplayRecordedErrorTransition turns a boundary's recorded error into a
+// transition so an error-only boundary is reproduced in the adjudicated trail
+// rather than silently dropped.
+func traceReplayRecordedErrorTransition(record TraceRecord) (TraceStateTransition, bool) {
+	if !traceReplayRawPresent(record.Error) {
+		return TraceStateTransition{}, false
+	}
+	subject := firstNonEmpty(record.NodeID, record.TraceID, record.NodeType, "boundary")
+	return TraceStateTransition{
+		Type:    "boundary_error",
+		Subject: subject,
+		Error:   traceReplayErrorMessage(record.Error),
+	}, true
+}
+
+func traceReplayErrorMessage(raw json.RawMessage) string {
+	if object := rawObject(raw); object != nil {
+		if msg := strings.TrimSpace(firstNonEmpty(
+			stringValue(object["message"]),
+			stringValue(object["error"]),
+			stringValue(object["reason"]),
+		)); msg != "" {
+			return msg
+		}
+		if status := strings.TrimSpace(stringValue(object["status"])); status != "" {
+			return "status " + status
+		}
+	}
+	if trimmed := strings.TrimSpace(string(raw)); trimmed != "" {
+		return trimmed
+	}
+	return "recorded error"
 }
 
 // traceReplayBoundaryRecorded reports whether a boundary carries a replayable

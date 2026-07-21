@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTraceSchemaRoundTripExplicitNulls(t *testing.T) {
@@ -356,6 +357,7 @@ func TestReplayForAdjudicationReproducesSteps(t *testing.T) {
 			"expected_transitions":[{"type":"file_touch_set","files":["cmd/tusker/trace.go"]}],
 			"state_transitions":[{"type":"file_touch_set","files":["cmd/tusker/trace.go"]}]
 		}`),
+		replayTraceSentinel(),
 	})
 
 	report, err := ReplayForAdjudication(context.Background(), TraceReplayOptions{
@@ -383,6 +385,7 @@ func TestReplayReportsZeroModelCalls(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), ".tusker")
 	writeReplayTraceFixture(t, vault, []TraceRecord{
 		replayTraceRecord("trace-zero-model", "turn-1", "model", "", `{"state_transitions":[]}`),
+		replayTraceSentinel(),
 	})
 
 	report, err := ReplayForAdjudication(context.Background(), TraceReplayOptions{
@@ -430,6 +433,140 @@ func TestReplayFlagsIncompleteTrace(t *testing.T) {
 	if !strings.Contains(tuskerErr.Message, "incomplete recording") {
 		t.Fatalf("expected a clear incomplete-recording message, got %q", tuskerErr.Message)
 	}
+}
+
+func TestReplayReproducesErrorOnlyBoundary(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), ".tusker")
+	// A tool boundary that recorded only an error (no output). It must still be
+	// reproduced in the adjudicated trail rather than dropped into a vacuous PASS.
+	errorRecord := replayTraceRecord("trace-err-tool", "tool-1", "tool", `{"command":"go build ./..."}`, "")
+	errorRecord.Error = json.RawMessage(`{"message":"exit status 2: build failed","status":"failed"}`)
+	writeReplayTraceFixture(t, vault, []TraceRecord{
+		replayTraceRecord("trace-err-model", "turn-1", "model", "", `{"state_transitions":[]}`),
+		errorRecord,
+		replayTraceSentinel(),
+	})
+
+	report, err := ReplayForAdjudication(context.Background(), TraceReplayOptions{
+		VaultPath: vault,
+		TraceID:   "trace-err-model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Passed {
+		t.Fatalf("expected error-only boundary to be reproduced and pass, got %#v", report)
+	}
+	var errorBoundary *TraceReplayBoundaryReport
+	for i := range report.Boundaries {
+		if report.Boundaries[i].TraceID == "trace-err-tool" {
+			errorBoundary = &report.Boundaries[i]
+		}
+	}
+	if errorBoundary == nil {
+		t.Fatalf("error-only boundary missing from report: %#v", report.Boundaries)
+	}
+	if !strings.Contains(errorBoundary.RecordedError, "build failed") {
+		t.Fatalf("expected recorded error surfaced in boundary, got %q", errorBoundary.RecordedError)
+	}
+	sawErrorTransition := false
+	for _, transition := range report.ExpectedTransitions {
+		if transition.Type == "boundary_error" && strings.Contains(transition.Error, "build failed") {
+			sawErrorTransition = true
+		}
+	}
+	if !sawErrorTransition {
+		t.Fatalf("error boundary must contribute an expected transition, got %#v", report.ExpectedTransitions)
+	}
+}
+
+func TestReplayRefusesTruncatedTraceWithoutSentinel(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), ".tusker")
+	// A fully-recorded boundary but no attempt-end sentinel: the recording ends
+	// mid-attempt (crash-truncated, or from an older recorder). Adjudication must
+	// refuse it rather than report a partial trail as PASS.
+	writeReplayTraceFixture(t, vault, []TraceRecord{
+		replayTraceRecord("trace-truncated", "turn-1", "model", "", `{"state_transitions":[{"type":"lease_change","subject":"APP-T-0001","from":"ready","to":"review"}]}`),
+	})
+
+	_, err := ReplayForAdjudication(context.Background(), TraceReplayOptions{
+		VaultPath: vault,
+		TraceID:   "trace-truncated",
+	})
+	if err == nil {
+		t.Fatalf("expected truncated recording to fail adjudication")
+	}
+	tuskerErr, ok := err.(*TuskerError)
+	if !ok {
+		t.Fatalf("expected a TuskerError, got %T: %v", err, err)
+	}
+	if tuskerErr.Code != errorTraceReplayIncomplete {
+		t.Fatalf("expected %s, got %s", errorTraceReplayIncomplete, tuskerErr.Code)
+	}
+	if !strings.Contains(tuskerErr.Message, "recording ends mid-attempt") {
+		t.Fatalf("expected a clear mid-attempt message, got %q", tuskerErr.Message)
+	}
+}
+
+// countingTraceReplayExecutor simulates a regression that reaches a live tool
+// path during adjudication.
+type countingTraceReplayExecutor struct{ calls int }
+
+func (e *countingTraceReplayExecutor) ExecuteTraceReplayTool(_ context.Context, record TraceRecord, _ TraceReplayEnvironment) (json.RawMessage, error) {
+	e.calls++
+	return record.Output, nil
+}
+
+func TestReplayFailsAdjudicationOnLivePathInvocation(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), ".tusker")
+	writeReplayTraceFixture(t, vault, []TraceRecord{
+		replayTraceRecord("trace-live-adj", "tool-1", "tool", `{"command":"printf recorded"}`, `{"command":"printf recorded","exit_code":0,"stdout":"recorded","status":"success"}`),
+		replayTraceSentinel(),
+	})
+
+	executor := &countingTraceReplayExecutor{}
+	// Adjudicate mode with an injected executor: the live seam is reached, so the
+	// network counter must move and adjudication must fail on the nonzero count.
+	report, err := ReplayTrace(context.Background(), TraceReplayOptions{
+		VaultPath:    vault,
+		TraceID:      "trace-live-adj",
+		Mode:         traceReplayModeAdjudicate,
+		ToolExecutor: executor,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executor.calls == 0 {
+		t.Fatalf("expected the injected live executor to be invoked")
+	}
+	if report.NetworkCalls == 0 {
+		t.Fatalf("expected the live path to be measured as a nonzero network call")
+	}
+	if report.Passed {
+		t.Fatalf("adjudication must fail when a live path is reached, got %#v", report)
+	}
+	if !strings.Contains(report.FirstDivergence, "reached a live path") {
+		t.Fatalf("expected first divergence to name the live-path violation, got %q", report.FirstDivergence)
+	}
+}
+
+func replayTraceSentinel() TraceRecord {
+	return attemptTraceSentinelRecord(TraceRecorderOptions{
+		WorkItemID:     "APP-T-0001",
+		AttemptID:      "attempt-replay",
+		CodeSHA:        "sha-fixture",
+		AttemptClosed:  true,
+		AttemptOutcome: "failed",
+		Now:            func() time.Time { return mustParseTraceTime("2026-07-07T00:00:09Z") },
+	})
+}
+
+func mustParseTraceTime(value string) time.Time {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		panic(err)
+	}
+	return parsed
 }
 
 func replayTraceRecord(traceID, nodeID, nodeType, input, output string) TraceRecord {

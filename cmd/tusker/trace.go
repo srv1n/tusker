@@ -34,6 +34,16 @@ type TraceRecord struct {
 	PermissionScope   *string         `json:"permission_scope"`
 	RetrievedChunkIDs []string        `json:"retrieved_chunk_ids"`
 	CreatedAt         string          `json:"created_at"`
+	// AttemptClosed marks the terminal sentinel record written when an attempt
+	// reaches any end state. Adjudication requires it so a crash-truncated trail
+	// cannot pass completeness; ordinary boundary records omit it.
+	AttemptClosed bool `json:"attempt_closed,omitempty"`
+}
+
+// traceRecordIsAttemptSentinel reports whether a record is the attempt-end
+// marker rather than a replayable boundary.
+func traceRecordIsAttemptSentinel(record TraceRecord) bool {
+	return record.AttemptClosed
 }
 
 func TraceRecordJSONSchema() map[string]any {
@@ -85,17 +95,20 @@ func TraceRecordJSONSchema() map[string]any {
 			"permission_scope":    map[string]any{"type": nullString},
 			"retrieved_chunk_ids": map[string]any{"type": nullArray, "items": map[string]any{"type": "string"}},
 			"created_at":          map[string]any{"type": "string", "format": "date-time"},
+			"attempt_closed":      map[string]any{"type": "boolean"},
 		},
 	}
 }
 
 type TraceRecorderOptions struct {
-	VaultPath     string
-	WorkItemID    string
-	AttemptID     string
-	EventSinkPath string
-	CodeSHA       string
-	Now           func() time.Time
+	VaultPath      string
+	WorkItemID     string
+	AttemptID      string
+	EventSinkPath  string
+	CodeSHA        string
+	AttemptClosed  bool
+	AttemptOutcome string
+	Now            func() time.Time
 }
 
 func RecordAttemptTraces(opts TraceRecorderOptions) (int, error) {
@@ -137,6 +150,16 @@ func RecordAttemptTraces(opts TraceRecorderOptions) (int, error) {
 		existing[record.TraceID] = true
 		records = append(records, record)
 	}
+	// When the attempt has reached any end state, close the trail with a terminal
+	// sentinel so an adjudicating replay can tell a complete recording from a
+	// crash-truncated one. It is written once and is idempotent.
+	if opts.AttemptClosed {
+		sentinel := attemptTraceSentinelRecord(opts)
+		if !existing[sentinel.TraceID] {
+			existing[sentinel.TraceID] = true
+			records = append(records, sentinel)
+		}
+	}
 	if len(records) == 0 {
 		return 0, nil
 	}
@@ -151,13 +174,41 @@ func recordRunBoundaryTraces(project RegisteredProject, run RunStatus) error {
 		return nil
 	}
 	_, err := RecordAttemptTraces(TraceRecorderOptions{
-		VaultPath:     project.VaultRoot,
-		WorkItemID:    firstNonEmpty(run.RecordID, run.ItemID),
-		AttemptID:     run.ActiveAttemptID,
-		EventSinkPath: run.EventSinkPath,
-		CodeSHA:       resolveTraceCodeSHA(project.RepoRoot),
+		VaultPath:      project.VaultRoot,
+		WorkItemID:     firstNonEmpty(run.RecordID, run.ItemID),
+		AttemptID:      run.ActiveAttemptID,
+		EventSinkPath:  run.EventSinkPath,
+		CodeSHA:        resolveTraceCodeSHA(project.RepoRoot),
+		AttemptClosed:  run.Terminal,
+		AttemptOutcome: run.AttemptOutcome,
 	})
 	return err
+}
+
+// attemptTraceSentinelRecord builds the terminal marker that closes an attempt's
+// trail. Its trace_id is derived from the work item and attempt so the marker is
+// stable and written at most once.
+func attemptTraceSentinelRecord(opts TraceRecorderOptions) TraceRecord {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		traceRecordSchemaVersion,
+		"attempt_end",
+		strings.TrimSpace(opts.WorkItemID),
+		strings.TrimSpace(opts.AttemptID),
+	}, "\x00")))
+	output := optionalJSON(map[string]any{
+		"attempt_end": true,
+		"outcome":     firstNonEmpty(strings.TrimSpace(opts.AttemptOutcome), "unknown"),
+	})
+	return TraceRecord{
+		SchemaVersion: traceRecordSchemaVersion,
+		TraceID:       "trc_end_" + hex.EncodeToString(sum[:12]),
+		WorkItemID:    strings.TrimSpace(opts.WorkItemID),
+		NodeID:        "attempt_end",
+		Output:        output,
+		CodeSHA:       opts.CodeSHA,
+		AttemptClosed: true,
+		CreatedAt:     opts.Now().UTC().Format(time.RFC3339),
+	}
 }
 
 func readTraceEvents(path string) ([]Event, error) {
