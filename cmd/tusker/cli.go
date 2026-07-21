@@ -313,6 +313,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, escalationV7AckCmd(args)
 	case "digest":
 		return 0, digestCmd(args)
+	case "logbook":
+		return 0, logbookCmd(args)
 	case "trace":
 		return 0, traceV7Cmd(args)
 	case "trace list":
@@ -934,6 +936,7 @@ Commands:
   wave                create, edit, and show named task batches
   land                run the serialized wave merge lane
   feedback            add agent feedback notes and generate digests
+  logbook             render a plain-language daily digest for a product reader
   improve             opt-in scans for repeated work worth packaging
   xcode               diagnose Xcode generated build-state failures
   attempt             start or hand off V7 attempts
@@ -1242,6 +1245,7 @@ func printV7Help() {
   tusker escalate -s P1 --task HSP-T-0001 --reason system_error "Runner is stuck in a no-progress loop."
   tusker escalate ack ESC-0001 --by human:sarav
   tusker digest [--since 2026-07-07T00:00:00Z] [--json]
+  tusker logbook [--date 2026-07-20] [--write] [--json]   # --date is host-local; default is today
 
   tusker brief HSP-T-0001
   tusker packet HSP-T-0001 --for agent [--write]
