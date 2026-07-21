@@ -162,6 +162,17 @@ runner's no-fail-fast form and defaults to `batch_gate.commands`;
 the frozen-tree precondition. Tusker carries no per-language runner knowledge —
 if a toolchain needs a different flag, it changes here, not in the binary.
 
+A fresh `tusker init` seeds this stanza with a placeholder `profile: default`
+and ships `min_free_disk_gb` COMMENTED OUT so nothing inherits an unmeasured
+floor. It also records the repo's default proof policy (`proof_mode: inline`,
+`proof_mode_critical: audit`, `evidence_budget: 0`, evidence files only for
+`card`/`artifact`/`audit`) — a human/agent-readable mirror of the defaults
+Tusker already applies at task-create time, not a runtime-consulted key.
+`min_free_disk_gb` MUST be measured against the project's real peak build
+footprint before you uncomment it, never guessed: on 2026-07-20 an unmeasured
+guess of 15 GB authorized a run that died on a full disk mid-gate, and its
+recovery deleted the build cache the next run needed.
+
 ## Human Stop
 
 ```bash

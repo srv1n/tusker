@@ -320,9 +320,86 @@ func stringListContainsFold(values []string, target string) bool {
 
 func defaultWorkflowMarkdown() string {
 	wf := defaultWorkflow()
+	// Orchestration is emitted as a hand-written, commented block below so that
+	// the seeded gate stanza and proof policy carry per-field explanations that
+	// yaml.Marshal cannot produce. Zero it here so the struct marshal omits the
+	// key (omitempty) and the raw block is the single source of `orchestration:`.
+	orch := wf.Orchestration
+	wf.Orchestration = OrchestrationPolicy{}
 	raw, _ := yaml.Marshal(wf)
+	raw = append(raw, []byte(defaultProofAndGateBlock(orch))...)
 	raw = append(raw, []byte("# runner escalation reasons: system_error|security_concern|unresolvable_conflict|stuck_loop\n")...)
 	return "---\n" + strings.TrimSpace(string(raw)) + "\n---\n\n## Routing\n\nYou are working on {{ note.id }} for {{ project.name }}. Dispatch only makes sense when this task is in a dispatch state (`ready` or `rework`) and the workspace is ready at {{ workspace.path }}.\n\n## Hard stop check\n\nBefore doing work, run `tusker closeout status {{ note.id }} --json` when the V7 closeout command is available. If it reports `agent_action=stop_until_human_response`, do not validate, inspect files, spawn subagents, or modify Tusker records. Reply with the pending human gates/proof and whether the closeout checkpoint or review packet is still needed.\n\nRevalidate only after you edited files, a task/gate/evidence state changed, the closeout fingerprint no longer matches, or the user explicitly asked for fresh validation.\n\n## Prompt\n\nUse the installed Tusker skill bundle for durable task semantics and proof discipline. Work inside {{ workspace.path }}. Treat {{ repo.root }} as the source repository root for context only unless the task explicitly requires comparing against it.\n\nItem: {{ note.title }}\nRecord: {{ note.record_id }}\nType: {{ note.type }}\nAttempt: {{ attempt.number }}\nWorkflow: {{ workflow.path }}\nVault: {{ vault.path }}\n\n## Command budget\n\nUse the smallest command that proves or locates the next fact. Prefer packets/capsules, path-scoped status/search, repo-configured wrappers and build-lock/status commands, and redirected validation logs with small tails. Report validation as command + PASS/FAIL plus the first actionable failure; do not paste raw transcripts or repeat unchanged-state updates.\n\n## Worker protocol\n\nEach dispatched attempt starts with fresh runner context. Use the injected task packet, `.tusker/scratch/<TASK-ID>/PLAN.md`, and previous structured outcome as the handoff; do not query or replay predecessor transcripts. Work one task only. Search before implementing, do not add placeholders or stubs, and run the configured backpressure commands serially.\n\n## Merge lane guard\n\nDo not push or merge directly to the default branch/main. Finish the task proof, then use `tusker land {{ note.id }}`; the serialized landing lane is the only authorized path from task branches into integration branches and main.\n\n## External Apply Inputs\n\nSome tasks may have external apply inputs collected by Tusker under `architect/{{ note.id }}/` or a workspace-local mirror of that directory.\n\nWhen that directory contains exactly one `*.patch` or `*.diff` file:\n\n1. inspect the task acceptance and verification contract first;\n2. run `git apply --check --3way <patch>`;\n3. apply with `git apply --3way <patch>` only after the check passes;\n4. resolve conflicts only when the resolution is mechanical and clearly within the task contract;\n5. run the task verification commands;\n6. record compact verification evidence;\n7. use `tusker finish {{ note.id }} --request-review` when machine proof is complete;\n8. create a concrete gate or move to rework/blocked when proof cannot be completed.\n\nIf there are zero patches, multiple patches, a patch outside scope, or an ambiguous conflict, stop and report the blocker through Tusker. Do not invent or silently repair patches.\n\n## Completion contract\n\nSatisfy the task proof mode. For proof_mode=inline, record concise verification rows with `tusker verify add`; do not create evidence files. For card/artifact/audit, create only the evidence the proof mode requires. When machine work is complete and only human-owned proof or gates remain, run `tusker closeout <task-id> --emit-packet --validate \"<command>\"`, then stop. When the work is demonstrably ready for verification, use `tusker finish <task-id> --request-review` so the task reaches `review` or a branch-safe `propose status ... --status review` proposal is created. Attempt handoff alone is not a review request. If proof is blocked, create/propose a gate with a concrete owner, action, and verification instead of appending negative evidence.\n\n## Reviewer contract\n\nIf `reviewer.enabled` is true, tasks in `review` may be dispatched to `reviewer.runner` for independent review. The reviewer must not edit implementation files. Independent reviewers may verify and close every risk tier after required objective proof and explicit gates pass. High and critical risk increase proof depth and landing safeguards; they do not imply human authority.\n\n## Retry policy\n\nRetry only transient infrastructure failures. Human-directed rework creates a new task revision; runtime activity remains in the run/lease store.\n\n## Human override policy\n\nHumans may edit tasks directly, but runtime state belongs to the daemon store.\n"
+}
+
+// defaultProofAndGateBlock renders the seeded proof policy and the
+// orchestration/gate stanza as commented YAML. yaml.Marshal cannot emit
+// comments, and the gate floors are project-specific placeholders that a fresh
+// init must land already explained, so this block is authored by hand. The
+// orchestration defaults (branch_age_warning_hours, batch_gate) are taken from
+// the workflow struct so the raw block stays in agreement with defaultWorkflow().
+func defaultProofAndGateBlock(orch OrchestrationPolicy) string {
+	return fmt.Sprintf(`# Declared proof policy for this repo. These are the defaults Tusker already
+# applies at task-create time (defaultV7ProofMode / defaultV7EvidenceBudget);
+# this stanza records the repo's policy for humans and agents to read and is not
+# itself consulted at runtime, so editing it does not change resolution.
+# Evidence-by-risk-class: inline is the floor; only evidence-bearing modes
+# attach files.
+proof:
+  # proof_mode is the default proof depth Tusker assigns a new task that does
+  # not declare its own: inline for every risk class EXCEPT critical, which
+  # defaults to audit. inline records verification rows (command + PASS/FAIL)
+  # directly on the task and writes no evidence files.
+  proof_mode: inline
+  # proof_mode for risk=critical tasks; audit adds independent_review and
+  # evidence files on top of the inline test proof.
+  proof_mode_critical: audit
+  # evidence_budget caps the evidence files a task may attach. 0 keeps inline
+  # tasks file-free; only the evidence-bearing modes below raise this.
+  evidence_budget: 0
+  # Evidence files are required ONLY for these evidence-bearing proof modes.
+  # Every other mode (inline, focused_test, broad_test, ...) proves inline with
+  # no files.
+  evidence_bearing_modes:
+    - card
+    - artifact
+    - audit
+orchestration:
+  # branch_age_warning_hours warns when a task branch outlives this many hours.
+  branch_age_warning_hours: %d
+  batch_gate:
+    # enabled turns on the periodic wave-boundary batch gate.
+    enabled: %t
+    # period_hours is the batch-gate cycle length when no windows are set.
+    period_hours: %d
+    # max_repairs caps repair continuations Tusker attempts per batch cycle.
+    max_repairs: %d
+  # orchestration.gate is this project's gate contract. The floor values below
+  # ship COMMENTED OUT as placeholders: uncomment and set them to the project's
+  # real, measured toolchain values before relying on the gate. Nothing here
+  # inherits an unmeasured floor.
+  gate:
+    # profile is the canonical gate profile name. Replace this placeholder; a
+    # run requesting a different profile is refused rather than discarding the
+    # warm build.
+    profile: default
+    # harvest_commands is the runner's no-fail-fast test/build form, e.g.
+    # "go test ./..." or "cargo nextest run --no-fail-fast". Defaults to the
+    # batch gate's commands when empty.
+    harvest_commands:
+      - make test
+    # min_free_disk_gb MUST be MEASURED against this project's real peak build
+    # footprint, never guessed, before you uncomment it. On 2026-07-20 an
+    # unmeasured guess of 15 GB authorized a doomed run: it died on a full disk
+    # mid-gate, and its recovery deleted the build cache the next run needed.
+    # Measure the peak footprint and set the floor above it.
+    # min_free_disk_gb: <measured-peak-build-gb>
+    # defect_target_regex has exactly one capture group naming the failing
+    # target, e.g. "^--- FAIL: (\S+)" for Go.
+    defect_target_regex: '^--- FAIL: (\S+)'
+    # defect_line_limit caps each harvested defect excerpt.
+    defect_line_limit: 12
+`, orch.BranchAgeWarningHours, orch.BatchGate.Enabled, orch.BatchGate.PeriodHours, orch.BatchGate.MaxRepairs)
 }
 
 func normalizeWorkflowDispatchStates(wf *Workflow) {
