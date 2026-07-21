@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,6 +43,11 @@ type WorkspacePrepareRequest struct {
 	WorkspaceRoot string
 	Strategy      WorkspaceStrategy
 	WorkRevision  int
+	// MaxLiveWorktrees caps how many live work copies may exist under the
+	// workspace root at once. Zero leaves the cap off. The number is measured,
+	// not guessed (see .tusker/specs/build-and-test-economics.md). Opening a new
+	// work copy past the cap is refused before any git worktree is created.
+	MaxLiveWorktrees int
 }
 
 type WorkspacePrepareResult struct {
@@ -87,7 +93,59 @@ func (m *FSWorkspaceManager) Prepare(req WorkspacePrepareRequest) (WorkspacePrep
 	} else if err := assertWorkspaceWithinRoot(workspacePath, root); err != nil {
 		return WorkspacePrepareResult{}, err
 	}
+	if req.Strategy != WorkspaceStrategyShared {
+		if refusal := liveWorktreeCapRefusal(root, workspacePath, req.MaxLiveWorktrees); refusal != nil {
+			return WorkspacePrepareResult{}, tuskerError(errorInvalidTransition,
+				refusal.Detail+"; "+refusal.Remedy,
+				withPath(workspacePath),
+				withContext(map[string]any{"cause": refusal.Cause}))
+		}
+	}
 	return m.prepareAtPath(workspacePath, req)
+}
+
+// liveWorktreeCapRefusal refuses opening a new live work copy once the count of
+// existing live copies under root has reached the configured (measured) cap. It
+// is a no-op when the cap is off (max <= 0) or when the target work copy already
+// exists (reusing a copy does not add to the live count). The cause is named so
+// the refusal is machine-routable, matching the gate preflight's GateRefusal.
+func liveWorktreeCapRefusal(root, workspacePath string, max int) *GateRefusal {
+	if max <= 0 {
+		return nil
+	}
+	// An existing target is a reuse, not a new copy — never refuse it.
+	if fileExists(filepath.Join(workspacePath, ".tusker", "workspace.json")) {
+		return nil
+	}
+	live := countLiveWorktrees(root)
+	if live < max {
+		return nil
+	}
+	return &GateRefusal{
+		Cause:  gateRefusalWorktreeCap,
+		Detail: fmt.Sprintf("cannot open another live work copy: %d already live under %s, at the configured cap of %d", live, root, max),
+		Remedy: "finish and clean up a running work copy (tusker will git worktree remove it) before opening a new one, or raise the measured cap in workspace.max_live_worktrees",
+	}
+}
+
+// countLiveWorktrees counts the immediate child directories under root that hold
+// a materialized workspace (a .tusker/workspace.json), i.e. one live work copy
+// each. The shared/in_place repo is never under root, so it is not counted.
+func countLiveWorktrees(root string) int {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if fileExists(filepath.Join(root, entry.Name(), ".tusker", "workspace.json")) {
+			count++
+		}
+	}
+	return count
 }
 
 func workspacePathForRequest(req WorkspacePrepareRequest) (string, string, error) {

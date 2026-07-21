@@ -40,6 +40,9 @@ const (
 const (
 	gateRefusalDiskHeadroom  = "disk_headroom"
 	gateRefusalBuildSlotHeld = "build_slot_held"
+	// gateRefusalWorktreeCap is the refusal when opening another live work copy
+	// would exceed the configured (measured) cap on concurrent worktrees.
+	gateRefusalWorktreeCap = "worktree_cap"
 	gateRefusalProfileParity = "profile_parity"
 	gateRefusalTreeNotFrozen = "tree_not_frozen"
 	// gateRefusalDiffUnavailable is the selective gate's fail-closed refusal when
