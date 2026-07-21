@@ -149,9 +149,39 @@ orchestration:
         profile: default
         harvest_commands:
             - make test
+        # min_free_disk_gb is MEASURED: peak build footprint observed ~3 GB
+        # (go build + test cache); floor set at 5 GB headroom. Re-measure if the
+        # build grows. An unmeasured guess of 15 GB authorized a doomed run on
+        # 2026-07-20.
         min_free_disk_gb: 5
         defect_target_regex: '^--- FAIL: (\S+)'
         defect_line_limit: 12
+        # scopes drive `tusker gate-run --changed`: per-change gates run only
+        # the areas a change touched; unscoped paths fall back to the FULL
+        # harvest set (fail closed). Wave-end and nightly always run everything.
+        scopes:
+            - name: cli
+              paths:
+                - cmd/tusker/
+              commands:
+                - go vet ./cmd/tusker
+                - go test ./cmd/tusker -count=1
+            - name: policy
+              paths:
+                - internal/v7policy/
+                - internal/v7schema/
+              commands:
+                - go test ./internal/v7policy ./internal/v7schema -count=1
+            - name: e2e
+              paths:
+                - e2e/
+              commands:
+                - go test ./e2e/... -count=1
+            - name: skills
+              paths:
+                - skills/
+              commands:
+                - make skill-doctor
 # runner escalation reasons: system_error|security_concern|unresolvable_conflict|stuck_loop
 ---
 

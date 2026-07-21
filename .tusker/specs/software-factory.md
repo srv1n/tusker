@@ -8,7 +8,7 @@ decisions_locked: true
 sources:
   - "AIE software-factories conference vault (mined 2026-07-21)"
   - "Loops-vs-graphs field research (2026-07-21)"
-  - "Operator grill session (2026-07-21)"
+  - "Operator grill session (2026-07-21) — full Q&A in [[2026-07-21-factory-grill]]"
 ---
 
 # Software Factory: Tusker as the production loop harness
@@ -22,6 +22,11 @@ contracts, and storage decisions — never to reading plumbing code. Tusker is t
 harness that makes that division of labor real for our own portfolio (this repo,
 the rzn backend, Rust and Xcode projects). It is a private harness: every design
 decision optimizes for our workflow, not a general audience.
+
+Every locked decision below traces to the operator grill session recorded in
+[[2026-07-21-factory-grill]] (`.tusker/specs/decisions/2026-07-21-factory-grill.md`)
+— read it for what was actually said, the alternatives weighed, and the
+incidents that motivated each call.
 
 ## Operating principles (locked)
 
