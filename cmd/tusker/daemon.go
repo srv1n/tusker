@@ -3208,17 +3208,18 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		return run, false, err
 	}
 	workspaceRequest := WorkspacePrepareRequest{
-		ProjectID:     project.ProjectID,
-		ProjectKey:    project.ProjectKey,
-		RecordID:      run.RecordID,
-		ItemID:        run.ItemID,
-		BranchName:    branchName,
-		BranchBase:    branchBase,
-		RepoRoot:      project.RepoRoot,
-		StateRoot:     d.stateRoot,
-		WorkspaceRoot: wfFile.Data.Workspace.Root,
-		Strategy:      workspaceStrategy,
-		WorkRevision:  run.WorkRevision,
+		ProjectID:        project.ProjectID,
+		ProjectKey:       project.ProjectKey,
+		RecordID:         run.RecordID,
+		ItemID:           run.ItemID,
+		BranchName:       branchName,
+		BranchBase:       branchBase,
+		RepoRoot:         project.RepoRoot,
+		StateRoot:        d.stateRoot,
+		WorkspaceRoot:    wfFile.Data.Workspace.Root,
+		Strategy:         workspaceStrategy,
+		WorkRevision:     run.WorkRevision,
+		MaxLiveWorktrees: wfFile.Data.Workspace.MaxLiveWorktrees,
 	}
 	selectedWorkspacePath, _, err := workspacePathForRequest(workspaceRequest)
 	if err != nil {

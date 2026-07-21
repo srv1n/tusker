@@ -140,6 +140,66 @@ func TestRedriveResetsAttemptWindow(t *testing.T) {
 	}
 }
 
+// A second redrive of a run whose attempt is already live/queued must be an
+// idempotent no-op that reports "already running" instead of resetting the
+// window and dispatching a competing attempt.
+func TestRedriveIdempotentOnLiveAttempt(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := RunStatus{
+		ProjectID:       "project-1",
+		RecordID:        "APP-T-0001",
+		ItemID:          "APP-T-0001",
+		Runner:          string(RunnerCodexExec),
+		Lane:            runLaneExecute,
+		LeaseState:      string(LeaseStateRetryQueued),
+		AttemptOutcome:  string(AttemptOutcomeNone),
+		ActiveAttemptID: "attempt-7",
+		AttemptCount:    2,
+		Terminal:        false,
+	}
+	if err := store.UpsertRun(live); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := redriveCmd(Args{"id": "APP-T-0001", "by": "human:sarav", "reason": "double click", "json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var payload struct {
+		OK             bool `json:"ok"`
+		Redriven       bool `json:"redriven"`
+		AlreadyRunning bool `json:"already_running"`
+	}
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, false, payload.Redriven, "second redrive must not redrive")
+	assertEqual(t, true, payload.AlreadyRunning, "second redrive reports already running")
+
+	store, err = OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	after, err := store.FindRun("APP-T-0001")
+	if err != nil || after == nil {
+		t.Fatalf("load run: %#v %v", after, err)
+	}
+	// The live attempt is untouched: no window reset, no attempt-count churn.
+	assertEqual(t, 2, after.AttemptCount, "attempt count unchanged by no-op redrive")
+	assertEqual(t, string(LeaseStateRetryQueued), after.LeaseState, "lease untouched")
+	assertEqual(t, "attempt-7", after.ActiveAttemptID, "active attempt untouched")
+}
+
 func TestRedrivePreservesHistory(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)

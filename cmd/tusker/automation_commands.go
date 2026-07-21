@@ -976,15 +976,16 @@ func (ctx *automationCommandContext) concurrencyBlockers(note Note, run RunStatu
 
 func automationWorkspacePath(stateRoot string, project RegisteredProject, wf Workflow, run RunStatus, strategy WorkspaceStrategy) string {
 	req := WorkspacePrepareRequest{
-		ProjectID:     project.ProjectID,
-		ProjectKey:    project.ProjectKey,
-		RecordID:      run.RecordID,
-		ItemID:        run.ItemID,
-		RepoRoot:      project.RepoRoot,
-		StateRoot:     stateRoot,
-		WorkspaceRoot: wf.Workspace.Root,
-		Strategy:      strategy,
-		WorkRevision:  run.WorkRevision,
+		ProjectID:        project.ProjectID,
+		ProjectKey:       project.ProjectKey,
+		RecordID:         run.RecordID,
+		ItemID:           run.ItemID,
+		RepoRoot:         project.RepoRoot,
+		StateRoot:        stateRoot,
+		WorkspaceRoot:    wf.Workspace.Root,
+		Strategy:         strategy,
+		WorkRevision:     run.WorkRevision,
+		MaxLiveWorktrees: wf.Workspace.MaxLiveWorktrees,
 	}
 	workspacePath, _, err := workspacePathForRequest(req)
 	if err != nil {

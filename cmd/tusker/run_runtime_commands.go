@@ -886,9 +886,6 @@ func redriveCmd(args Args) error {
 	if run == nil {
 		return tuskerError(errorNotFound, "run not found: "+identity)
 	}
-	if runProcessGroupAlive(*run) {
-		return tuskerError(errorInvalidTransition, "run process is still running; interrupt it before redrive", withContext(map[string]any{"pid": run.ProcessPID}))
-	}
 	now := time.Now().UTC()
 	actor := firstNonEmpty(strings.TrimSpace(args.String("by")), strings.TrimSpace(args.String("actor")), defaultActorName())
 	reason := firstNonEmpty(strings.TrimSpace(args.String("reason")), "operator redrive")
@@ -898,10 +895,23 @@ func redriveCmd(args Args) error {
 	previousAttemptID := run.ActiveAttemptID
 	previousSessionRef := run.SessionRef
 	previousWorkspacePath := run.WorkspacePath
-	reset, err := redriveRuntimeRun(store, run, actor, reason, now)
+	// Route through the idempotent retry primitive so a second redrive of a run
+	// whose attempt is already live or queued is a no-op that reports "already
+	// running" instead of double-dispatching a competing attempt.
+	retry, err := retryFailedRun(store, identity, actor, reason, now)
 	if err != nil {
 		return err
 	}
+	*run = retry.Run
+	if retry.AlreadyLive {
+		if args.Bool("json") {
+			emitJSON(map[string]any{"ok": true, "redriven": false, "already_running": true, "item_id": run.ItemID, "record_id": run.RecordID, "lease_state": run.LeaseState, "reason": retry.Reason})
+			return nil
+		}
+		fmt.Printf("Already running %s; %s\n", firstNonEmpty(run.ItemID, run.RecordID), retry.Reason)
+		return nil
+	}
+	reset := retry.Reset
 	auditPayload, err := json.Marshal(map[string]any{
 		"actor":                    actor,
 		"reason":                   reason,
