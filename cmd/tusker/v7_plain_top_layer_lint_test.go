@@ -109,3 +109,103 @@ func TestTopLayerLintCleanPasses(t *testing.T) {
 		t.Fatalf("expected a warning for dirty top layer")
 	}
 }
+
+// Prose times like "5 p.m." must not be mistaken for single-letter-extension
+// filenames, while a real single-letter-extension file is still caught.
+func TestTopLayerLintFilenameSingleLetterExt(t *testing.T) {
+	clean := v7TopLayerCodeWords(twoLayerBody(
+		"Ship the update by 5 p.m. tomorrow, and no earlier than 9 a.m. today.",
+		"Nothing here.",
+	))
+	if len(clean) != 0 {
+		t.Fatalf("prose times must not be flagged as filenames: %#v", clean)
+	}
+	// A genuine two-letter-stem single-letter-extension file is still a code word.
+	real := v7TopLayerCodeWords(twoLayerBody(
+		"The build compiles from main.c into the binary.",
+		"Nothing here.",
+	))
+	if !containsString(real, "main.c") {
+		t.Fatalf("real single-letter-extension file should be flagged: %#v", real)
+	}
+}
+
+// Mixed-case words are only code words when corroborating evidence backs them.
+// Marketing-style product names stay clean; genuine identifiers are flagged.
+func TestTopLayerLintMixedCaseEvidence(t *testing.T) {
+	cases := []struct {
+		name   string
+		intent string
+		token  string
+		flag   bool
+	}{
+		{"testflight", "Testers install the build through TestFlight before launch.", "TestFlight", false},
+		{"paypal", "Customers can pay with PayPal or a card at checkout.", "PayPal", false},
+		{"doordash", "The order is delivered through DoorDash within the hour.", "DoorDash", false},
+		{"icloud", "Photos sync to iCloud automatically overnight.", "iCloud", false},
+		{"linkedin", "Recruiters find the profile on LinkedIn easily.", "LinkedIn", false},
+		{"lowercamel", "The loop runs scheduleBatchGateIfDue on each tick.", "scheduleBatchGateIfDue", true},
+		{"digitcamel", "The helper reads v7TaskBody before rendering.", "v7TaskBody", true},
+		{"callparen", "It then calls defaultWorkflow() to build the plan.", "defaultWorkflow", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			offenders := v7TopLayerCodeWords(twoLayerBody(tc.intent, "Nothing here."))
+			got := containsString(offenders, tc.token)
+			if got != tc.flag {
+				t.Fatalf("token %q: flagged=%v want=%v (offenders=%#v)", tc.token, got, tc.flag, offenders)
+			}
+		})
+	}
+}
+
+// A PascalCase word that carries no local evidence is clean, but the same word
+// becomes a code word once it appears verbatim in the builder appendix.
+func TestTopLayerLintAppendixEvidence(t *testing.T) {
+	intent := "The DefaultWorkflow decides what runs first."
+	clean := v7TopLayerCodeWords(twoLayerBody(intent, "Nothing here."))
+	if containsString(clean, "DefaultWorkflow") {
+		t.Fatalf("PascalCase word with no evidence must stay clean: %#v", clean)
+	}
+	flagged := v7TopLayerCodeWords(twoLayerBody(intent, "Call DefaultWorkflow in the dispatch loop."))
+	if !containsString(flagged, "DefaultWorkflow") {
+		t.Fatalf("word appearing in appendix should be flagged: %#v", flagged)
+	}
+}
+
+// The appendix boundary is recognized case-insensitively and tolerates the
+// heading level and trailing-word variations.
+func TestTopLayerLintAppendixHeadingVariations(t *testing.T) {
+	for _, heading := range []string{
+		"## Implementation notes",
+		"### Implementation Notes",
+		"## implementation notes for the builder",
+	} {
+		body := strings.Join([]string{
+			"## Intent",
+			"",
+			"A plain reader can follow this without any jargon at all.",
+			"",
+			heading,
+			"",
+			"The builder edits cmd/tusker/foo.go and calls v7TaskBody here.",
+		}, "\n")
+		if offenders := v7TopLayerCodeWords(body); len(offenders) != 0 {
+			t.Fatalf("heading %q: appendix code words leaked: %#v", heading, offenders)
+		}
+	}
+}
+
+// A path and the bare filename it ends with occupy a single display slot.
+func TestTopLayerLintDedupsByBaseName(t *testing.T) {
+	offenders := v7TopLayerCodeWords(twoLayerBody(
+		"The runner reads cmd/tusker/foo.go during startup.",
+		"Nothing here.",
+	))
+	if !containsString(offenders, "cmd/tusker/foo.go") {
+		t.Fatalf("expected the full path to be reported: %#v", offenders)
+	}
+	if containsString(offenders, "foo.go") {
+		t.Fatalf("bare filename should be deduped against the path: %#v", offenders)
+	}
+}

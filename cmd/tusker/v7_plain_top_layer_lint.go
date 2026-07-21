@@ -14,28 +14,21 @@ import (
 // It looks only at the text above the appendix heading; the appendix, the
 // acceptance/verification table rows, and fenced code blocks are exempt.
 
-const v7TopLayerAppendixHeading = "## Implementation notes"
-
 var (
-	// A dotted filename like foo.go or app.tsx.
-	v7CodeFilePattern = regexp.MustCompile(`(?i)\b[\w-]+\.(?:go|ts|tsx|js|jsx|mjs|cjs|py|rs|rb|md|ya?ml|json|toml|swift|java|kt|kts|c|h|cc|cpp|hpp|m|mm|sh|sql|proto|css|scss|html|tf)\b`)
+	// A dotted filename like foo.go or app.tsx. Single-letter extensions
+	// (.c/.h/.m) require a stem of two or more characters so ordinary prose
+	// abbreviations like "p.m." or "a.m." are not mistaken for filenames.
+	v7CodeFilePattern = regexp.MustCompile(`(?i)\b(?:[\w-]+\.(?:go|ts|tsx|js|jsx|mjs|cjs|py|rs|rb|md|ya?ml|json|toml|swift|java|kt|kts|cc|cpp|hpp|mm|sh|sql|proto|css|scss|html|tf)|[\w-]{2,}\.[chm])\b`)
 	// A slash path token like cmd/tusker/foo or internal/serve/ui.
 	v7CodePathPattern = regexp.MustCompile(`[\w.-]+(?:/[\w.-]+)+`)
 	// A backticked span; whatever is inside is code, by convention.
 	v7CodeBacktickPattern = regexp.MustCompile("`[^`]+`")
+	// The builder appendix heading. Case-insensitive, tolerant of heading
+	// level (## or ###) and trailing variations ("Implementation Notes").
+	v7AppendixHeadingPattern = regexp.MustCompile(`(?i)^#{2,3}\s+implementation notes\b`)
+	// An identifier-shaped token.
+	v7IdentTokenPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9_]*`)
 )
-
-// v7CamelCaseAllowlist holds common product and proper nouns that read as plain
-// words to a non-engineer even though they carry an internal capital. Keeping
-// them off the flagged list avoids noisy warnings on ordinary prose.
-var v7CamelCaseAllowlist = map[string]bool{
-	"github": true, "gitlab": true, "javascript": true, "typescript": true,
-	"postgresql": true, "mysql": true, "graphql": true, "nosql": true,
-	"ios": true, "macos": true, "iphone": true, "ipad": true, "ipados": true,
-	"oauth": true, "openai": true, "chatgpt": true, "youtube": true,
-	"websocket": true, "webrtc": true, "webhook": true, "webhooks": true,
-	"dynamodb": true, "mongodb": true, "sqlite": true,
-}
 
 // lintV7PlainTopLayer warns when a task's plain top layer slips into code words,
 // and blocks a demanding task (p0/p1 or medium+ risk) from going ready while it
@@ -77,20 +70,35 @@ func v7TaskIsDemanding(data map[string]any) bool {
 
 // v7TopLayerCodeWords returns the code-shaped tokens found in the plain top
 // layer, deduped in first-seen order. The appendix, table rows, and fenced code
-// blocks are skipped.
+// blocks are skipped. A mixed-case word (product names read as plain prose) is
+// only flagged when corroborating code evidence backs it: see v7MixedCaseIsCode.
 func v7TopLayerCodeWords(body string) []string {
-	top := v7TaskTopLayer(body)
+	top, appendix := v7TaskLayers(body)
 	if strings.TrimSpace(top) == "" {
 		return nil
 	}
+	appendixSymbols := v7IdentifierSet(appendix)
+
 	seen := map[string]bool{}
+	seenBase := map[string]bool{}
 	var offenders []string
+	// add dedups by exact token and by base name, so a slash path and the
+	// bare filename it ends with ("cmd/tusker/foo.go" and "foo.go") together
+	// occupy a single display slot rather than double-reporting.
 	add := func(word string) {
 		word = strings.TrimSpace(word)
 		if word == "" || seen[word] {
 			return
 		}
+		base := word
+		if idx := strings.LastIndex(word, "/"); idx >= 0 {
+			base = word[idx+1:]
+		}
+		if seenBase[base] {
+			return
+		}
 		seen[word] = true
+		seenBase[base] = true
 		offenders = append(offenders, word)
 	}
 
@@ -112,14 +120,15 @@ func v7TopLayerCodeWords(body string) []string {
 		if strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		v7CollectLineCodeWords(line, add)
+		v7CollectLineCodeWords(line, appendixSymbols, add)
 	}
 	return offenders
 }
 
 // v7CollectLineCodeWords finds the code-shaped tokens in one prose line:
-// backticked spans, dotted filenames, slash paths, and camel-case symbols.
-func v7CollectLineCodeWords(line string, add func(string)) {
+// backticked spans, dotted filenames, slash paths, and mixed-case symbols that
+// carry corroborating code evidence.
+func v7CollectLineCodeWords(line string, appendixSymbols map[string]bool, add func(string)) {
 	// Backticked spans first; their inner text is code by convention.
 	remaining := v7CodeBacktickPattern.ReplaceAllStringFunc(line, func(span string) string {
 		inner := strings.TrimSpace(strings.Trim(span, "`"))
@@ -137,8 +146,12 @@ func v7CollectLineCodeWords(line string, add func(string)) {
 	for _, file := range v7CodeFilePattern.FindAllString(remaining, -1) {
 		add(file)
 	}
-	for _, token := range regexp.MustCompile(`[A-Za-z][A-Za-z0-9_]*`).FindAllString(remaining, -1) {
-		if v7TokenIsCamelCase(token) {
+	for _, loc := range v7IdentTokenPattern.FindAllStringIndex(remaining, -1) {
+		token := remaining[loc[0]:loc[1]]
+		if !v7TokenIsMixedCase(token) {
+			continue
+		}
+		if v7MixedCaseIsCode(token, remaining, loc[0], loc[1], appendixSymbols) {
 			add(token)
 		}
 	}
@@ -154,33 +167,144 @@ func v7PathLooksLikeCode(path string) bool {
 	return strings.Count(path, "/") >= 2
 }
 
-// v7TokenIsCamelCase reports whether a token is a camel-case or Pascal-case
-// symbol (an internal lowercase-to-uppercase transition), excluding all-caps
-// acronyms and known plain-word product names.
-func v7TokenIsCamelCase(token string) bool {
-	if v7CamelCaseAllowlist[strings.ToLower(token)] {
-		return false
-	}
-	hasTransition := false
+// v7TokenIsMixedCase reports whether a token has an internal lowercase-to-
+// uppercase transition (camelCase or PascalCase), excluding all-caps acronyms
+// and plain capitalized words.
+func v7TokenIsMixedCase(token string) bool {
 	for i := 0; i+1 < len(token); i++ {
 		if token[i] >= 'a' && token[i] <= 'z' && token[i+1] >= 'A' && token[i+1] <= 'Z' {
-			hasTransition = true
-			break
+			return true
 		}
 	}
-	return hasTransition
+	return false
 }
 
-// v7TaskTopLayer returns the plain top layer: everything above the appendix
-// heading. When a task predates the two-layer template and has no appendix, the
-// Intent section alone is treated as the top layer so legacy single-layer tasks
-// are not flooded with warnings.
-func v7TaskTopLayer(body string) string {
-	lines := strings.Split(body, "\n")
-	for i, line := range lines {
-		if strings.TrimSpace(line) == v7TopLayerAppendixHeading {
-			return strings.Join(lines[:i], "\n")
+// v7MixedCaseIsCode decides whether a mixed-case token is a real code symbol
+// rather than a marketing-style product name (TestFlight, PayPal, iCloud). A
+// bare product name with no corroborating evidence is left alone; a token is
+// flagged only when it looks like a genuine identifier or the surrounding text
+// treats it as code:
+//
+//   - it is lowerCamelCase in the identifier sense (v7MixedCaseIsCode's helper),
+//   - it sits next to code punctuation ((), ., ::, ->, =, or path separators),
+//   - it ends in a code-ish suffix (Cmd, Fn, Func, Impl, Ctx, Cfg, Err, Ptr, or
+//     a compound Id/ID/IDs like taskID), or
+//   - it appears verbatim among the symbols named in the builder appendix.
+func v7MixedCaseIsCode(token, line string, start, end int, appendixSymbols map[string]bool) bool {
+	if v7IsLowerCamelSymbol(token) {
+		return true
+	}
+	if v7HasCodeAdjacency(line, start, end) {
+		return true
+	}
+	if v7HasCodeSuffix(token) {
+		return true
+	}
+	if appendixSymbols[token] {
+		return true
+	}
+	return false
+}
+
+// v7IsLowerCamelSymbol reports whether a mixed-case token reads as a genuine
+// lowerCamelCase identifier. A leading lowercase word (two or more letters, like
+// "schedule" in scheduleBatchGateIfDue) or an embedded digit (v7TaskBody) marks
+// a real symbol, while a single leading lowercase letter ("iCloud") does not.
+func v7IsLowerCamelSymbol(token string) bool {
+	if token == "" || token[0] < 'a' || token[0] > 'z' {
+		return false
+	}
+	runLen := 0
+	for runLen < len(token) && token[runLen] >= 'a' && token[runLen] <= 'z' {
+		runLen++
+	}
+	if runLen >= 2 {
+		return true
+	}
+	return strings.ContainsAny(token, "0123456789")
+}
+
+// v7HasCodeAdjacency reports whether the token at [start,end) in line abuts a
+// character that only appears when the surrounding text is treating it as code:
+// a call paren, an assignment, an arrow or scope operator, a path separator, or
+// an attached dot (method or field access, distinct from a sentence period).
+func v7HasCodeAdjacency(line string, start, end int) bool {
+	var before, after byte
+	hasBefore := start > 0
+	if hasBefore {
+		before = line[start-1]
+	}
+	hasAfter := end < len(line)
+	if hasAfter {
+		after = line[end]
+	}
+	if hasAfter {
+		switch after {
+		case '(', '=', '/', ':':
+			return true
+		case '.':
+			// Attached dot only counts as method access when an identifier
+			// follows it (Bar.foo), not a sentence period ("Bar. ").
+			if end+1 < len(line) && v7IsIdentByte(line[end+1]) {
+				return true
+			}
 		}
 	}
-	return sectionContent(body, "## Intent")
+	if hasBefore {
+		switch before {
+		case '=', '/', ':', '>', '.':
+			return true
+		}
+	}
+	return false
+}
+
+// v7HasCodeSuffix reports whether a token ends in a suffix that marks it as a
+// code symbol: Cmd/Fn/Func/Impl/Ctx/Cfg/Err/Ptr, or a compound identifier
+// suffix Id/ID/IDs (taskID), but not the bare word "ID" on its own.
+func v7HasCodeSuffix(token string) bool {
+	for _, suf := range []string{"Cmd", "Fn", "Func", "Impl", "Ctx", "Cfg", "Err", "Ptr"} {
+		if strings.HasSuffix(token, suf) {
+			return true
+		}
+	}
+	for _, suf := range []string{"IDs", "ID", "Ids", "Id"} {
+		if strings.HasSuffix(token, suf) && len(token) > len(suf) {
+			return true
+		}
+	}
+	return false
+}
+
+func v7IsIdentByte(b byte) bool {
+	return b == '_' ||
+		(b >= 'a' && b <= 'z') ||
+		(b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9')
+}
+
+// v7IdentifierSet returns the set of identifier-shaped tokens in text, used to
+// recognize a top-layer word that also appears verbatim in the builder
+// appendix (a strong signal it names a real symbol).
+func v7IdentifierSet(text string) map[string]bool {
+	set := map[string]bool{}
+	for _, token := range v7IdentTokenPattern.FindAllString(text, -1) {
+		set[token] = true
+	}
+	return set
+}
+
+// v7TaskLayers splits a task body into its plain top layer (everything above the
+// appendix heading) and the builder appendix (everything from the heading on).
+// When a task predates the two-layer template and has no appendix, the Intent
+// section alone is treated as the top layer so legacy single-layer tasks are not
+// flooded with warnings, and the appendix is empty.
+func v7TaskLayers(body string) (top, appendix string) {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		if v7AppendixHeadingPattern.MatchString(strings.TrimSpace(line)) {
+			return strings.Join(lines[:i], "\n"), strings.Join(lines[i:], "\n")
+		}
+	}
+	return sectionContent(body, "## Intent"), ""
 }
