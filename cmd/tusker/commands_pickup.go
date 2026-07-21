@@ -52,7 +52,12 @@ func claimCmd(args Args) error {
 		if _, err := writeV7Lease(args, "active"); err != nil {
 			return err
 		}
-		_ = emitV7Event(vaultPath, id, "task", "claimed", fallback(args.String("owner"), "agent:"+defaultActorName()), map[string]any{"branch": currentGitBranch()})
+		if claimIsHandRun() {
+			if err := markHandRun(vaultPath, id, args.String("owner")); err != nil {
+				return err
+			}
+		}
+		_ = emitV7Event(vaultPath, id, "task", "claimed", fallback(args.String("owner"), "agent:"+defaultActorName()), map[string]any{"branch": currentGitBranch(), "hand_run": claimIsHandRun()})
 		return nil
 	}
 	return removedSurfaceError("legacy claim")
@@ -98,6 +103,11 @@ func emitNextSelection(args Args, vaultPath string, selected Note, skipped []nex
 		args["id"] = stringField(selected.Data, "id")
 		if _, err := writeV7Lease(args, "active"); err != nil {
 			return err
+		}
+		if claimIsHandRun() {
+			if err := markHandRun(vaultPath, args.String("id"), args.String("owner")); err != nil {
+				return err
+			}
 		}
 	}
 	if args.Bool("json") {
