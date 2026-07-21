@@ -12,12 +12,12 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-21T07:06:03Z"
-updated_at: "2026-07-21T07:06:03Z"
-state_rev: "sha256:56b2bfd8a75a6f86c86c3dede9b83d8a1b7c8f6cce996a882e5590f74abf59a1"
+updated_at: "2026-07-21T07:34:24Z"
+state_rev: "sha256:f36fb41e712deaf9f2836c0330736a0170a940e6db1457ab8e1ef3cff4da535f"
 capsule:
-  what: "FAC epic: Software factory production hardening."
-  use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
+  use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
+  what: "FAC epic: Software factory production hardening."
 ---
 
 # FAC · Software factory production hardening
@@ -38,10 +38,32 @@ TBD.
 
 <!-- tusker:generated open-gates -->
 
+| Gate | Owner | Blocks | Action |
+|---|---|---|---|
+| _None._ |  |  |  |
+
 ## Active work
 
 <!-- tusker:generated active-work -->
 
+| Task | Status | Next owner | Next action |
+|---|---|---|---|
+| [[FAC-T-0002]] | backlog | agent | Wait for dependency FAC-T-0001 to reach review with satisfied proof or done. |
+| [[FAC-T-0004]] | backlog | agent | Wait for dependency FAC-T-0003 to reach review with satisfied proof or done. |
+| [[FAC-T-0006]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[FAC-T-0008]] | backlog | agent | Wait for dependency FAC-T-0007 to reach review with satisfied proof or done. |
+| [[FAC-T-0009]] | backlog | agent | Wait for dependency FAC-T-0007 to reach review with satisfied proof or done. |
+| [[FAC-T-0010]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[FAC-T-0011]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[FAC-T-0012]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+
 ## Recently completed
 
 <!-- tusker:generated recently-completed -->
+
+| Task | Accepted by | Closed at |
+|---|---|---|
+| [[FAC-T-0001]] | reviewer:fable | 2026-07-21T07:34:22Z |
+| [[FAC-T-0003]] | reviewer:fable | 2026-07-21T07:34:22Z |
+| [[FAC-T-0005]] | reviewer:fable | 2026-07-21T07:34:23Z |
+| [[FAC-T-0007]] | reviewer:fable | 2026-07-21T07:34:24Z |
