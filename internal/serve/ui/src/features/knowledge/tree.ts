@@ -112,15 +112,19 @@ function assignDepth(node: MutableNode, depth: number): void {
   if (node.type === "folder") for (const child of node.children) assignDepth(child, depth + 1);
 }
 
-/** Folders before files; folders dot-dirs last then A→Z; files by title. */
+/**
+ * Folders before files; folders dot-dirs last then A→Z; files by filename —
+ * the rows display filenames, so they must sort by filename (00-overview.md
+ * leads its folder, decision logs read chronologically).
+ */
 function compareNodes(a: MutableNode, b: MutableNode): number {
   if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
   if (a.type === "folder" && b.type === "folder") {
     return dirRank(a.name) - dirRank(b.name) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
   }
-  const at = (a as TreeLeaf).title;
-  const bt = (b as TreeLeaf).title;
-  return at.localeCompare(bt, undefined, { sensitivity: "base" });
+  const af = (a as TreeLeaf).path.split("/").pop() ?? "";
+  const bf = (b as TreeLeaf).path.split("/").pop() ?? "";
+  return af.localeCompare(bf, undefined, { sensitivity: "base", numeric: true });
 }
 
 // Visible directories sort before dot-directories, so docs/system leads

@@ -155,14 +155,20 @@ function TreeNodeRow({
       >
         <Guides depth={node.depth} />
         <span className="flex-none" style={{ width: CHEVRON_SLOT }} />
-        <FileText size={14} strokeWidth={1.75} className="flex-none text-faint" />
-        <span className={cn("ml-1 min-w-0 flex-1 truncate text-[12.5px]", active && "font-medium")}>
+        <FileText
+          size={14}
+          strokeWidth={1.75}
+          className="flex-none opacity-80"
+          style={{ color: `var(${kindMeta[node.kind].cssVar})` }}
+        />
+        <span
+          className={cn(
+            "ml-1 min-w-0 flex-1 truncate text-left text-[12.5px]",
+            active && "font-medium",
+          )}
+        >
           {filename}
         </span>
-        <span
-          className="ml-1.5 h-1.5 w-1.5 flex-none rounded-full"
-          style={{ background: `var(${kindMeta[node.kind].cssVar})` }}
-        />
       </Link>
     );
   }
@@ -202,7 +208,9 @@ function FolderRow({
       ) : (
         <Folder size={14} strokeWidth={1.75} className="flex-none text-faint" />
       )}
-      <span className="ml-1 min-w-0 flex-1 truncate text-[12.5px] text-ink-soft">{node.name}</span>
+      <span className="ml-1 min-w-0 flex-1 truncate text-left text-[12.5px] text-ink-soft">
+        {node.name}
+      </span>
     </>
   );
   return (

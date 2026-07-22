@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Check } from "lucide-react";
 import { Mono } from "@/components/ui/primitives";
 import { SectionLabel } from "@/components/ui/page";
 import { ErrorState, Skeleton } from "@/components/ui/states";
@@ -114,6 +114,7 @@ function DocBody({
         left={<ContextLabel kind={doc.kind} subject={doc.subject} />}
         right={
           <>
+            <AutoSaveTick state={ed.saveState} />
             <SaveButton dirty={ed.dirty} saving={ed.saving} onSave={ed.save} />
             <ViewSwitch projectId={projectId} active="files" />
           </>
@@ -153,9 +154,10 @@ function DocBody({
           />
 
           {/* The rendered document is the editor — always editable, styled to
-              match the reader. Re-key per subject/rev so a reload loads fresh. */}
+              match the reader. Keyed on the reload generation, NOT the rev: our
+              own autosaves bump the rev and must never remount it mid-typing. */}
           <DocBodyEditor
-            key={`${doc.subject}:${doc.rev}`}
+            key={`${doc.subject}:${ed.reloadGen}`}
             initialMarkdown={doc.body}
             resolve={resolve}
             onReady={ed.onBodyReady}
@@ -218,6 +220,17 @@ function Backlinks({ projectId, backlinks }: { projectId: string; backlinks: Doc
         ))}
       </div>
     </section>
+  );
+}
+
+/** Quiet autosave status beside the Save button — subtle "Saved" tick, no banner. */
+function AutoSaveTick({ state }: { state: KnowledgeDocEditor["saveState"] }) {
+  if (state === "idle") return null;
+  return (
+    <span className="hidden items-center gap-1 text-[10.5px] text-faint sm:inline-flex">
+      {state === "saved" && <Check size={11} strokeWidth={2.5} className="text-pass" />}
+      {state === "saved" ? "Saved" : "Saving…"}
+    </span>
   );
 }
 

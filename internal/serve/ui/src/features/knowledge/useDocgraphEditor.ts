@@ -56,11 +56,21 @@ export interface KnowledgeDocEditor {
   headerDirty: boolean;
   dirty: boolean;
   saving: boolean;
+  // Quiet autosave indicator for the toolbar; autosaves never raise `banner`.
+  saveState: "idle" | "saving" | "saved";
+  // Bumped when the editor must remount with fresh content (explicit reload, or
+  // an external change arriving while clean). The body editor keys on this —
+  // never on the doc rev, or our own autosaves would remount it mid-typing.
+  reloadGen: number;
   banner: SaveBanner;
   save: () => void;
   reload: () => void;
   dismissBanner: () => void;
 }
+
+// Idle window before an autosave fires. Long enough not to interrupt typing,
+// short enough to feel automatic; re-armed on every edit.
+const AUTOSAVE_IDLE_MS = 1500;
 
 export function useDocgraphEditor(
   doc: DocgraphDocDetail,
@@ -76,13 +86,30 @@ export function useDocgraphEditor(
   const [partOf, setPartOf] = useState(initPartOf);
   const [banner, setBanner] = useState<SaveBanner>({ type: "none" });
 
+  // Autosave surfaces only a quiet tick, never the full "saved" banner.
+  // `autoSaving` is an in-flight auto save; `autoSavedAt` marks the last clean
+  // autosave so the tick reads "Saved" until the next edit dirties the doc.
+  const [autoSaving, setAutoSaving] = useState(false);
+  const [autoSavedAt, setAutoSavedAt] = useState<number | null>(null);
+  const [reloadGen, setReloadGen] = useState(0);
+
+  // The revision the editor's CONTENT derives from — advanced only by our own
+  // successful saves and by editor remounts, never by background refetches. The
+  // doc query polls, so `doc.rev` can absorb an external edit's rev while the
+  // editor still holds content based on the old file; saving with that live rev
+  // would silently overwrite the external change. Pinning base_rev here turns
+  // that save into an honest 409 instead.
+  const baseRev = useRef(doc.rev);
+  const liveRev = useRef(doc.rev);
+  liveRev.current = doc.rev;
+
   // Baseline is the editor's serialization of the loaded body; body dirtiness is
   // measured against it (not the raw file), so tiptap-markdown's list-marker
   // normalization never counts as an edit. `null` until the editor has emitted
   // its first serialization, so an unopened doc is never dirty. This is written
-  // ONLY by onBodyReady — the body editor is re-keyed per subject/rev, so a fresh
-  // baseline is captured on every reload without a parent effect that could race
-  // (and clobber) the child's onReady.
+  // ONLY by onBodyReady — the body editor is re-keyed per subject/reloadGen, so
+  // a fresh baseline is captured on every reload without a parent effect that
+  // could race (and clobber) the child's onReady.
   const baseline = useRef<string | null>(null);
   const [body, setBody] = useState<string>("");
 
@@ -94,12 +121,15 @@ export function useDocgraphEditor(
     setKeywords(initKeywords);
     setPartOf(initPartOf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc.subject, doc.rev]);
+  }, [doc.subject, reloadGen]);
 
   const save = useSaveDocgraphDoc(projectId, doc.subject);
 
   const onBodyReady = useCallback((markdown: string) => {
     baseline.current = markdown;
+    // A (re)mounted editor rendered whatever the cache held at that moment, so
+    // its content now derives from the live rev.
+    baseRev.current = liveRev.current;
     setBody(markdown);
   }, []);
 
@@ -123,36 +153,87 @@ export function useDocgraphEditor(
     return next;
   }, [doc.header, status, keywords, partOf]);
 
-  const doSave = useCallback(() => {
-    if (!dirty || save.isPending) return;
-    const payload: DocgraphSavePayload = { base_rev: doc.rev };
-    if (bodyDirty) payload.body = body;
-    if (headerDirty) payload.header = mergedHeader;
-    save.mutate(payload, {
-      onSuccess: (data) => {
-        // The saved body is now the on-disk truth; advance the baseline so the
-        // control reads clean immediately, before the re-keyed editor remounts.
-        baseline.current = body;
-        setBanner({ type: "saved", warnings: data.warnings ?? [] });
-      },
-      onError: (err) => {
-        if (err instanceof DocSaveError && err.conflict) {
-          setBanner({ type: "conflict", currentRev: err.conflict.current_rev });
-        } else if (err instanceof DocSaveError && err.defects) {
-          setBanner({ type: "defects", defects: err.defects });
-        } else {
-          setBanner({ type: "error", message: err instanceof Error ? err.message : String(err) });
-        }
-      },
-    });
-  }, [dirty, save, doc.rev, bodyDirty, headerDirty, body, mergedHeader]);
+  const doSave = useCallback(
+    (source: "auto" | "manual") => {
+      if (!dirty || save.isPending) return;
+      if (source === "auto") setAutoSaving(true);
+      const payload: DocgraphSavePayload = { base_rev: baseRev.current };
+      if (bodyDirty) payload.body = body;
+      if (headerDirty) payload.header = mergedHeader;
+      save.mutate(payload, {
+        onSuccess: (data) => {
+          // The saved body is now the on-disk truth: advance the baseline so the
+          // control reads clean, and pin base_rev to the rev we just produced.
+          baseline.current = body;
+          baseRev.current = data.rev;
+          if (source === "auto") {
+            setAutoSaving(false);
+            setAutoSavedAt(Date.now());
+          } else {
+            // Manual save keeps the full banner as the sole signal.
+            setAutoSavedAt(null);
+            setBanner({ type: "saved", warnings: data.warnings ?? [] });
+          }
+        },
+        onError: (err) => {
+          if (source === "auto") setAutoSaving(false);
+          // A conflict/defects/error banner suspends autosave (see effect below)
+          // so a refused save never loops; only a manual save or reload resumes.
+          if (err instanceof DocSaveError && err.conflict) {
+            setBanner({ type: "conflict", currentRev: err.conflict.current_rev });
+          } else if (err instanceof DocSaveError && err.defects) {
+            setBanner({ type: "defects", defects: err.defects });
+          } else {
+            setBanner({ type: "error", message: err instanceof Error ? err.message : String(err) });
+          }
+        },
+      });
+    },
+    [dirty, save, bodyDirty, headerDirty, body, mergedHeader],
+  );
+
+  // Autosave: once the editor has been idle ~1.5s while dirty, run the save path
+  // unprompted. `doSave` changes identity on every edit, so this effect re-arms
+  // (debounces) per keystroke. Suspended whenever a conflict/defects/error
+  // banner is up so a refused save never loops. Never fires mid-save; a keystroke
+  // during an in-flight save keeps the doc dirty (baseline logic) and this
+  // re-arms for the next cycle once `save.isPending` clears.
+  const autosaveSuspended =
+    banner.type === "conflict" || banner.type === "defects" || banner.type === "error";
+  useEffect(() => {
+    if (!dirty || save.isPending || autosaveSuspended) return;
+    const t = setTimeout(() => doSave("auto"), AUTOSAVE_IDLE_MS);
+    return () => clearTimeout(t);
+  }, [dirty, save.isPending, autosaveSuspended, doSave]);
+
+  // Toolbar tick: the in-flight auto save, then a quiet "Saved" while the doc
+  // stays clean. Editing dirties the doc and drops it back to idle.
+  const saveState: "idle" | "saving" | "saved" = autoSaving
+    ? "saving"
+    : autoSavedAt !== null && !dirty
+      ? "saved"
+      : "idle";
+
+  // A clean editor follows external changes: when the polled query brings a rev
+  // we did not produce and nothing is unsaved, remount to show it. A dirty
+  // editor never remounts — its pinned base_rev turns the next save into a 409
+  // (conflict banner) instead of losing either side's words. Our own saves are
+  // never "external": baseRev advances synchronously in onSuccess, before the
+  // seeded cache re-renders.
+  useEffect(() => {
+    if (!dirty && !save.isPending && doc.rev !== baseRev.current) {
+      setReloadGen((g) => g + 1);
+    }
+  }, [dirty, save.isPending, doc.rev]);
 
   const reload = useCallback(() => {
     if (dirty && !window.confirm("Discard your unsaved changes and reload the latest version?")) {
       return;
     }
     setBanner({ type: "none" });
-    refetch();
+    // Remount only after the refetch lands — the remounting editor reads the
+    // cache, which must already hold the fresh body.
+    void Promise.resolve(refetch()).then(() => setReloadGen((g) => g + 1));
   }, [dirty, refetch]);
 
   return {
@@ -171,9 +252,11 @@ export function useDocgraphEditor(
     bodyDirty,
     headerDirty,
     dirty,
+    reloadGen,
     saving: save.isPending,
+    saveState,
     banner,
-    save: doSave,
+    save: () => doSave("manual"),
     reload,
     dismissBanner: () => setBanner({ type: "none" }),
   };
