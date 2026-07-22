@@ -18,13 +18,40 @@
 
 import { CodeBlockLowlight } from "@tiptap/extension-code-block-lowlight";
 import { ReactNodeViewRenderer } from "@tiptap/react";
-import { createLowlight, common } from "lowlight";
+import { createLowlight } from "lowlight";
 import type { NodeViewRenderer } from "@tiptap/core";
 import { MermaidView } from "./nodeviews/MermaidView";
 
-/** A sensible common language set (js/ts/py/bash/json/css/html/… ~35 grammars),
- *  lazy-registered by lowlight itself. Unknown languages fall back to auto. */
-const lowlight = createLowlight(common);
+import bash from "highlight.js/lib/languages/bash";
+import diff from "highlight.js/lib/languages/diff";
+import go from "highlight.js/lib/languages/go";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import markdown from "highlight.js/lib/languages/markdown";
+import python from "highlight.js/lib/languages/python";
+import rust from "highlight.js/lib/languages/rust";
+import sql from "highlight.js/lib/languages/sql";
+import swift from "highlight.js/lib/languages/swift";
+import typescript from "highlight.js/lib/languages/typescript";
+import yaml from "highlight.js/lib/languages/yaml";
+
+/** Only the grammars this app's docs actually use. `common` pulls ~35 grammars
+ *  into the editor chunk; registering an explicit set keeps that chunk lean.
+ *  Unknown languages still render as plain (unhighlighted) code. */
+const lowlight = createLowlight({
+  bash,
+  diff,
+  go,
+  javascript,
+  json,
+  markdown,
+  python,
+  rust,
+  sql,
+  swift,
+  typescript,
+  yaml,
+});
 
 export const CodeBlockWithMermaid = CodeBlockLowlight.extend({
   addNodeView() {

@@ -20,7 +20,10 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    sourcemap: true,
+    // No sourcemaps in the shipped build: `dist/` is compiled into the Go
+    // binary via go:embed, and the maps were ~14MB of the 22MB total while
+    // being useful only when debugging minified prod JS by hand.
+    sourcemap: false,
     rollupOptions: {
       output: {
         // Split large vendors into a handful of stable, logical chunks so the
