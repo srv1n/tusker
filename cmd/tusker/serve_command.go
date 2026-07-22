@@ -298,6 +298,10 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleDocs(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/docs/"):
 		s.handleDoc(w, r, strings.TrimPrefix(r.URL.Path, "/api/docs/"))
+	case path == "/api/docgraph":
+		s.handleDocgraph(w, r)
+	case path == "/api/docgraph/doc":
+		s.handleDocgraphDoc(w, r)
 	case path == "/api/roster":
 		s.handleRoster(w, r)
 	case path == "/api/review/batch":

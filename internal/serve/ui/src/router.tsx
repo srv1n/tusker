@@ -25,6 +25,9 @@ import { RouteFallback } from "@/components/RouteFallback";
     '/p/$projectId/work'         Project work
     '/p/$projectId/ops'          Operator controls
     '/p/$projectId/docs'         Library / document  (search: { path?: string })
+    '/p/$projectId/knowledge'            Docs corpus list
+    '/p/$projectId/knowledge/graph'      Doc-graph view
+    '/p/$projectId/knowledge/$subject'   Doc reader        (params: projectId, subject)
     '/p/$projectId/settings'     Project settings
 */
 
@@ -128,6 +131,33 @@ const docsRoute = createRoute({
   ),
 });
 
+const knowledgeRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "knowledge",
+  component: lazyRouteComponent(
+    () => import("@/features/knowledge/KnowledgeList"),
+    "KnowledgeList",
+  ),
+});
+
+const knowledgeGraphRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "knowledge/graph",
+  component: lazyRouteComponent(
+    () => import("@/features/knowledge/KnowledgeGraph"),
+    "KnowledgeGraph",
+  ),
+});
+
+const knowledgeReaderRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "knowledge/$subject",
+  component: lazyRouteComponent(
+    () => import("@/features/knowledge/KnowledgeReader"),
+    "KnowledgeReader",
+  ),
+});
+
 const projectSettingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "settings",
@@ -149,6 +179,9 @@ const routeTree = rootRoute.addChildren([
     workRoute,
     opsRoute,
     docsRoute,
+    knowledgeRoute,
+    knowledgeGraphRoute,
+    knowledgeReaderRoute,
     projectSettingsRoute,
   ]),
 ]);

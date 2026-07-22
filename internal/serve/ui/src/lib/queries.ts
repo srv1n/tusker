@@ -36,6 +36,8 @@ export const qk = {
   task: (id: string, projectId?: string) => ["task", projectId ?? "all", id] as const,
   docs: (projectId?: string) => ["docs", projectId ?? "all"] as const,
   doc: (path: string, projectId?: string) => ["doc", projectId ?? "all", path] as const,
+  docgraph: (projectId?: string) => ["docgraph", projectId ?? "all"] as const,
+  docgraphDoc: (projectId: string, subject: string) => ["docgraph", "doc", projectId, subject] as const,
 };
 
 export const useDaemon = () =>
@@ -158,6 +160,12 @@ export const useDocList = (projectId?: string) =>
 
 export const useDoc = (path: string, projectId?: string) =>
   useQuery({ queryKey: qk.doc(path, projectId), queryFn: () => api.doc(path, projectId), enabled: path.length > 0, refetchInterval: liveRefetchInterval });
+
+export const useDocgraph = (projectId?: string) =>
+  useQuery({ queryKey: qk.docgraph(projectId), queryFn: () => api.docgraph(projectId), refetchInterval: liveRefetchInterval });
+
+export const useDocgraphDoc = (projectId: string, subject: string) =>
+  useQuery({ queryKey: qk.docgraphDoc(projectId, subject), queryFn: () => api.docgraphDoc(projectId, subject), enabled: subject.length > 0, refetchInterval: liveRefetchInterval });
 
 /**
  * Redrive (Retry) a run. The mutation resolves with the API's result — a

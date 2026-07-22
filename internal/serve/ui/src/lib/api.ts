@@ -11,6 +11,7 @@
 import * as fx from "@/mock/fixtures";
 import { deriveNeeds } from "@/features/inbox/deriveNeeds";
 import type { FrontmatterUpdateInput } from "@/lib/frontmatter";
+import type { DocgraphDocDetail, DocgraphResponse } from "@/features/knowledge/types";
 import type {
   DaemonStatus,
   ActionResult,
@@ -282,4 +283,17 @@ export const api = {
     if (!content) return Promise.reject(new ApiError(404, `no doc at ${path}`));
     return delay(content);
   },
+
+  // GET /api/docgraph?project= — the documentation corpus + its relation graph.
+  // No fixture backs this; UI-only mock work surfaces the daemon/error state.
+  docgraph: (projectId?: string): Promise<DocgraphResponse> =>
+    USE_MOCK
+      ? Promise.reject(new ApiError(404, "docgraph has no fixture"))
+      : real(withProject("/docgraph", projectId)),
+
+  // GET /api/docgraph/doc?project=&subject= — one rendered corpus document.
+  docgraphDoc: (projectId: string, subject: string): Promise<DocgraphDocDetail> =>
+    USE_MOCK
+      ? Promise.reject(new ApiError(404, "docgraph has no fixture"))
+      : real(withProject(`/docgraph/doc?subject=${encodeURIComponent(subject)}`, projectId)),
 };

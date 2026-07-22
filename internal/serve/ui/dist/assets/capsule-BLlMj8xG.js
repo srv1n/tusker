@@ -1,2 +1,0 @@
-import{E as e}from"./editor-2CgVOQBD.js";import"./queries-Dv0q2GVI.js";import{a as t,c as n,o as r,r as i}from"./chips-UJxtl1j3.js";var a=e();function o({capsule:e,show:o=[`status`,`priority`,`risk`]}){return(0,a.jsxs)(`div`,{className:`flex flex-wrap items-center gap-1.5`,children:[o.includes(`status`)&&(0,a.jsx)(n,{status:e.status}),o.includes(`readiness`)&&(0,a.jsx)(t,{readiness:e.readiness}),o.includes(`priority`)&&(0,a.jsx)(i,{priority:e.priority}),o.includes(`risk`)&&(0,a.jsx)(r,{risk:e.risk})]})}export{o as t};
-//# sourceMappingURL=capsule-BLlMj8xG.js.map

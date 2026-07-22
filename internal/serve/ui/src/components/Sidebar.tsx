@@ -20,6 +20,7 @@ const SUBSECTIONS = [
   { key: "work", label: "Work", to: "/p/$projectId/work" as const },
   { key: "ops", label: "Ops", to: "/p/$projectId/ops" as const },
   { key: "docs", label: "Library", to: "/p/$projectId/docs" as const },
+  { key: "knowledge", label: "Docs", to: "/p/$projectId/knowledge" as const },
 ];
 
 export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
