@@ -71,6 +71,7 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	if command == "" {
 		command = "codex app-server"
 	}
+	command = runnerCommandWithPathPrefix(command, req.RunnerPathPrefix)
 	if err := ensureDir(filepath.Dir(req.RawLogPath)); err != nil {
 		return nil, err
 	}
@@ -92,7 +93,8 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-		NotePath: req.NotePath, VaultPath: req.VaultPath,
+		RunnerPathPrefix: req.RunnerPathPrefix,
+		NotePath:         req.NotePath, VaultPath: req.VaultPath,
 		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		CodexPolicy: policy,
 	})

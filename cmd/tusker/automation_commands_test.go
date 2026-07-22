@@ -277,6 +277,9 @@ func automationTestVault(t *testing.T) string {
 
 func registerAutomationTestProject(t *testing.T, vault string) RegisteredProject {
 	t.Helper()
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.enabled", true); err != nil {
+		t.Fatal(err)
+	}
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		t.Fatal(err)

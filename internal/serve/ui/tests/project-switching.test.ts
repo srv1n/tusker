@@ -23,10 +23,7 @@ test("overview task cards open task contracts while active runs open run detail"
     overview.indexOf("function TaskMiniCard("),
     overview.indexOf("function BlockerCard("),
   );
-  const activeRun = overview.slice(
-    overview.indexOf("function ActiveRunRow("),
-    overview.indexOf("// ----------------------------------------------------------------------------\n// Loading skeletons"),
-  );
+  const activeRun = readSource("src/features/runs/board/rows.tsx");
 
   expect(taskCard).toContain('to="/p/$projectId/docs"');
   expect(taskCard).toContain("params={{ projectId }}");

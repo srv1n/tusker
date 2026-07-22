@@ -20,6 +20,7 @@ import { EventTail } from "@/features/runs/detail/EventTail";
 import { waitingForDaemonReason } from "@/features/runs/detail/helpers";
 import { createRunActionLock } from "@/features/runs/detail/actionLock";
 import { useConfirm } from "@/components/ui/action-feedback";
+import { relativeTime } from "@/lib/time";
 
 const route = getRouteApi("/p/$projectId/runs/$taskId");
 
@@ -152,7 +153,7 @@ function OperatorFacts({ run }: { run: RunDetailData }) {
     <section className="mb-6 rounded-[10px] border border-line bg-raised p-4" data-run-operator-facts>
       <SectionLabel className="mb-3">Ownership &amp; resume</SectionLabel>
       <dl className="grid gap-3 text-[11px] sm:grid-cols-2 lg:grid-cols-4">
-        <div><dt className="text-faint">authorized by</dt><dd className="font-mono text-ink">{run.authorization ? `${run.authorization.source} · ${run.authorization.actor}` : "authorization unavailable"}</dd></div>
+        <div><dt className="text-faint">authorized by</dt><dd className="font-mono text-ink">{run.authorization ? `${run.authorization.source} · ${run.authorization.actor} · ${relativeTime(run.authorization.created_at)}` : "authorization unavailable"}</dd></div>
         <div><dt className="text-faint">repository</dt><dd className="break-all font-mono text-ink">{run.identity?.repo_root ?? "registered repository unavailable"}</dd></div>
         <div><dt className="text-faint">workspace mode</dt><dd className="font-mono text-ink">{run.identity?.workspace_mode ?? run.workspaceMode ?? "unknown"}</dd></div>
         <div><dt className="text-faint">session</dt><dd className="break-all font-mono text-ink">{run.session?.session_ref ?? "session unavailable"}</dd></div>

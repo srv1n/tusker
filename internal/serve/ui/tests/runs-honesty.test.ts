@@ -45,7 +45,7 @@ test("recent rows are visually distinct from live runs (terminal tag + attempt c
 });
 
 test("both the active and recent boards render the labeled header", () => {
-  const src = readFileSync("src/features/runs/ProjectRuns.tsx", "utf8");
+  const src = readFileSync("src/features/runs/RunsBoard.tsx", "utf8");
   const headerCount = src.split("<RunsTableHeader />").length - 1;
   expect(headerCount).toBe(2);
 });

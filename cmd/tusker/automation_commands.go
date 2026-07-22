@@ -426,7 +426,10 @@ func resolveAutomationRegisteredProject(store *RuntimeStore, args Args) (*loaded
 	if vault := strings.TrimSpace(args.String("vault")); vault != "" {
 		projectArgs["vault"] = vault
 	}
-	project, err := resolveLoadedRegisteredProject(store, projectArgs, registeredProjectLoadOptions{Notes: true})
+	// Interactive commands must load a registered project even when the daemon
+	// registry has it disabled. Registry state is a polling-cost control, not a
+	// visibility or manual-ownership gate.
+	project, err := resolveLoadedRegisteredProject(store, projectArgs, registeredProjectLoadOptions{Notes: true, LoadDisabled: true})
 	if err != nil {
 		return nil, false, err
 	}
@@ -509,6 +512,18 @@ func (ctx *automationCommandContext) explainTask(note Note) automationTaskExplan
 }
 
 func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner string, runOverride *RunStatus) automationTaskExplanation {
+	return ctx.explainTaskForRunnerMode(note, runner, runOverride, true)
+}
+
+// explainTaskForInteractiveRun deliberately excludes daemon-only opt-ins. A
+// disabled registry entry reduces daemon polling, and automation.enabled stops
+// daemon spawning; neither revokes an interactive session's ability to own a
+// task and report its run through the normal runtime store.
+func (ctx *automationCommandContext) explainTaskForInteractiveRun(note Note) automationTaskExplanation {
+	return ctx.explainTaskForRunnerMode(note, automationResolveRunner(note, ctx.Workflow.Data), nil, false)
+}
+
+func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner string, runOverride *RunStatus, daemonDispatch bool) automationTaskExplanation {
 	recordID := trackerRecordID(note)
 	runner = firstNonEmpty(strings.TrimSpace(runner), automationResolveRunner(note, ctx.Workflow.Data))
 	run := ctx.effectiveRunForTask(note, runner)
@@ -561,10 +576,15 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 	if profileErr != nil {
 		blockers = append(blockers, "runner profile: "+profileErr.Error())
 	}
-	if !ctx.ProjectRegistered {
-		blockers = append(blockers, "project is not registered for automation")
-	} else if !ctx.Project.Enabled {
-		blockers = append(blockers, "project is disabled")
+	if daemonDispatch {
+		if !ctx.ProjectRegistered {
+			blockers = append(blockers, "project is not registered for automation")
+		} else if !ctx.Project.Enabled {
+			blockers = append(blockers, "project is disabled")
+		}
+		if !ctx.Workflow.Data.AutomationEnabled {
+			blockers = append(blockers, "project automation is disabled in its configuration")
+		}
 	}
 	if isV7TaskNote(note) {
 		blockers = append(blockers, v7TaskDispatchBlockers(ctx.Project.VaultRoot, note)...)

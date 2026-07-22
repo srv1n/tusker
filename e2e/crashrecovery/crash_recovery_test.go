@@ -894,6 +894,12 @@ automation:
 	h.writeFile(filepath.Join(h.repoDir, "tusker.yaml"), config)
 
 	workflow := h.readFile(filepath.Join(h.vaultDir, "WORKFLOW.md"))
+	// The harness deliberately exercises daemon crash recovery. Keep the local
+	// daemon opt-in explicit; a fresh workflow correctly defaults it off.
+	if !strings.Contains(workflow, "automation_enabled: false") {
+		h.t.Fatalf("crash-recovery fixture expected fresh workflow automation opt-in to be off")
+	}
+	workflow = strings.Replace(workflow, "automation_enabled: false", "automation_enabled: true", 1)
 	workflow = replaceYAMLScalarUnder(workflow, "runtime:", "  poll_interval_ms:", "  poll_interval_ms: 100")
 	workflow = replaceYAMLScalarUnder(workflow, "runtime:", "  max_active_runs_per_project:", fmt.Sprintf("  max_active_runs_per_project: %d", cfg.MaxActive))
 	workflow = replaceYAMLScalarUnder(workflow, "workspace:", "  strategy:", "  strategy: "+cfg.WorkspaceStrategy)

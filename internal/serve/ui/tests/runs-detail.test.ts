@@ -167,6 +167,7 @@ test("run inspector separates ownership, resume, delivery, and bounded failure",
   const detail = readFileSync("src/features/runs/RunDetail.tsx", "utf8");
   expect(detail).toContain("data-run-operator-facts");
   expect(detail).toContain("run.authorization.source");
+  expect(detail).toContain("relativeTime(run.authorization.created_at)");
   expect(detail).toContain("run.identity?.repo_root");
   expect(detail).toContain("run.session?.session_ref");
   expect(detail).toContain("Copy resume command");

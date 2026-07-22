@@ -315,6 +315,40 @@ func (s *runOwnershipService) claimExistingWithAuthorization(run RunStatus, owne
 	return runClaimResult{OK: true, Claimed: true, Run: latest, Freshness: "fresh", Authorization: &auth}, nil
 }
 
+func (s *runOwnershipService) claimExistingWithDirective(run RunStatus, owner string, auth RunAuthorization, attempt RunAttempt) (runClaimResult, error) {
+	if s == nil || s.store == nil {
+		return runClaimResult{}, tuskerError(errorConfigInvalid, "run ownership store is unavailable")
+	}
+	unlock, err := s.lockOwnedPathClaims()
+	if err != nil {
+		return runClaimResult{}, err
+	}
+	defer unlock()
+	if err := s.guardOwnedPathClaim(); err != nil {
+		return runClaimResult{}, err
+	}
+	now := s.now()
+	generation := run.LeaseGeneration + 1
+	claimed, err := s.store.claimRunLeaseWithDirectiveAttempt(run, owner, generation, defaultRunLeaseTTL, now, RuntimeLeaseClaimPrecondition{
+		ExpectedLeaseState: LeaseState(run.LeaseState), ExpectedOwner: run.LeaseOwner,
+		ExpectedLeaseGeneration: run.LeaseGeneration, ExpectedWorkRevision: run.WorkRevision,
+		ProjectConcurrencyLimit: s.projectConcurrencyLimit,
+	}, auth, attempt)
+	if err != nil {
+		return runClaimResult{}, err
+	}
+	latest, err := s.store.FindRun(run.RecordID)
+	if err != nil {
+		return runClaimResult{}, err
+	}
+	if !claimed {
+		return runClaimResult{OwnerRun: latest, Freshness: runFreshness(latest, now)}, nil
+	}
+	auth.ProjectID, auth.RecordID, auth.LeaseGeneration = run.ProjectID, run.RecordID, generation
+	auth.Actor, auth.Source, auth.CreatedAt = firstNonEmpty(auth.Actor, owner), firstNonEmpty(auth.Source, "human_run_directive"), now.Format(time.RFC3339Nano)
+	return runClaimResult{OK: true, Claimed: true, Run: latest, Freshness: "fresh", Authorization: &auth}, nil
+}
+
 func firstNonNil(errs ...error) error {
 	for _, err := range errs {
 		if err != nil {
@@ -540,7 +574,7 @@ func runsClaimCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	explain := ctx.explainTask(note)
+	explain := ctx.explainTaskForInteractiveRun(note)
 	if !explain.Dispatchable {
 		return tuskerError("CAS_CONFLICT", "claim blocked: "+strings.Join(explain.Blockers, "; "))
 	}
@@ -556,7 +590,27 @@ func runsClaimCmd(args Args) error {
 		return tuskerError("OWNED_PATH_CONFLICT", fmt.Sprintf("claim refused: %s holds %s for %s (lease age %s; liveness %s)", conflict["holder"], conflict["holder_path"], conflict["task_id"], conflict["lease_age"], conflict["liveness"]), withContext(conflict))
 	}
 	run := ctx.effectiveRunForTask(note, explain.Runner)
-	run.ProjectID, run.Runner, run.WorkspacePath, run.Lane = ctx.Project.ProjectID, explain.Runner, explain.WorkspacePath, explain.Lane
+	run.ProjectID, run.Runner, run.Lane = ctx.Project.ProjectID, explain.Runner, explain.Lane
+	workspaceStrategy := workspaceStrategyForRun(ctx.Workflow.Data, ctx.Project, run, ctx.projectRunsSlice())
+	branchName, branchBase, err := v7WorkspaceBranchForTask(ctx.Project.VaultRoot, note)
+	if err != nil {
+		return err
+	}
+	if branchName == "" && v7GitRepo(ctx.Project.RepoRoot) {
+		branchName = v7TaskBranchName(trackerRecordID(note))
+	}
+	workspace, err := NewWorkspaceManager().Prepare(WorkspacePrepareRequest{
+		ProjectID: ctx.Project.ProjectID, ProjectKey: ctx.Project.ProjectKey,
+		RecordID: run.RecordID, ItemID: run.ItemID,
+		BranchName: branchName, BranchBase: branchBase,
+		RepoRoot: ctx.Project.RepoRoot, StateRoot: ctx.StateRoot,
+		WorkspaceRoot: ctx.Workflow.Data.Workspace.Root, Strategy: workspaceStrategy,
+		WorkRevision: run.WorkRevision, MaxLiveWorktrees: ctx.Workflow.Data.Workspace.MaxLiveWorktrees,
+	})
+	if err != nil {
+		return err
+	}
+	run.WorkspacePath = workspace.Path
 	owner := firstNonEmpty(args.String("owner"), args.String("actor"))
 	source := firstNonEmpty(args.String("source"), "tusker_cli")
 	if source != "tusker_cli" && source != "codex" && source != "claude" {
@@ -571,7 +625,7 @@ func runsClaimCmd(args Args) error {
 		return err
 	}
 	if result.Claimed {
-		identity := runIdentityForClaim(*result.Run, ctx.Project.RepoRoot, result.Run.WorkspacePath, string(workspaceStrategyFromWorkflow(ctx.Workflow.Data.Workspace.Strategy)), "")
+		identity := runIdentityForClaim(*result.Run, ctx.Project.RepoRoot, result.Run.WorkspacePath, string(workspaceStrategy), branchName)
 		if err := ctx.Store.SaveRunIdentity(identity); err != nil {
 			return err
 		}
@@ -635,6 +689,14 @@ func runsLifecycleCmd(args Args, action string) error {
 	_ = refreshStreamBoardForProject(store, run.ProjectID)
 	if action == "submit" {
 		statusArgs := Args{"id": run.ItemID, "status": "review", "actor": firstNonEmpty(args.String("actor"), owner), "reason": "normalized run submission"}
+		loaded, projectErr := loadRegisteredProjects(store, registeredProjectLoadOptions{LoadDisabled: true, ProjectID: run.ProjectID})
+		if projectErr != nil {
+			return projectErr
+		}
+		if len(loaded) != 1 || loaded[0].LoadError != nil {
+			return tuskerError(errorNotFound, "registered project for submitted run was not found: "+run.ProjectID)
+		}
+		statusArgs["vault"] = loaded[0].Project.VaultRoot
 		if err := statusCmd(statusArgs); err != nil {
 			return err
 		}

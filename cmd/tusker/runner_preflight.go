@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -19,6 +20,8 @@ const (
 	runnerPreflightOutputMaxRune = 300
 )
 
+var runnerLoginShellPath = readRunnerLoginShellPath
+
 func runnerBaseEnv() []string {
 	return setEnvValue(os.Environ(), "PATH", runnerCommandSearchPath())
 }
@@ -27,6 +30,7 @@ func runnerCommandSearchPath() string {
 	parts := []string{}
 	parts = appendPathList(parts, os.Getenv(runnerPathPrefixEnv))
 	parts = appendPathList(parts, os.Getenv("PATH"))
+	parts = appendPathList(parts, runnerLoginShellPath())
 	parts = append(parts, runnerPreferredPathDirs()...)
 	parts = append(parts,
 		"/opt/homebrew/bin",
@@ -37,6 +41,53 @@ func runnerCommandSearchPath() string {
 		"/sbin",
 	)
 	return strings.Join(uniquePathStrings(parts), string(os.PathListSeparator))
+}
+
+// readRunnerLoginShellPath mirrors the operator's login shell rather than
+// assuming the daemon inherited an interactive terminal PATH. It is best-effort:
+// a broken shell profile must never prevent normal PATH resolution.
+func readRunnerLoginShellPath() string {
+	shell := runnerLoginShell()
+	if shell == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, shell, "-lc", `printf %s "$PATH"`).Output()
+	if err != nil || ctx.Err() != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+func runnerLoginShell() string {
+	if shell := strings.TrimSpace(os.Getenv("SHELL")); isExecutableFile(shell) {
+		return shell
+	}
+	// launchd does not promise SHELL. On macOS, ask Directory Services for the
+	// account's actual login shell before falling back to common local shells.
+	if current, err := user.Current(); err == nil && strings.TrimSpace(current.Username) != "" {
+		if dscl, lookErr := exec.LookPath("dscl"); lookErr == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			output, commandErr := exec.CommandContext(ctx, dscl, ".", "-read", "/Users/"+current.Username, "UserShell").Output()
+			timedOut := ctx.Err() != nil
+			cancel()
+			if commandErr == nil && !timedOut {
+				fields := strings.Fields(string(output))
+				if len(fields) >= 2 {
+					if candidate := fields[len(fields)-1]; isExecutableFile(candidate) {
+						return candidate
+					}
+				}
+			}
+		}
+	}
+	for _, candidate := range []string{"/bin/zsh", "/bin/bash", "/bin/sh"} {
+		if isExecutableFile(candidate) {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func runnerPreferredPathDirs() []string {
@@ -108,23 +159,64 @@ func setEnvValue(env []string, key, value string) []string {
 }
 
 func runnerCommandPreflightBlocker(runner RunnerName, command string) string {
+	_, blocker := runnerCommandPreflight(runner, command)
+	return blocker
+}
+
+type runnerCommandPreflightResult struct {
+	ResolvedExecutable string
+	RunnerPathPrefix   string
+}
+
+// runnerCommandPreflight validates every candidate for a bare runner command.
+// The first healthy candidate is also returned as a PATH prefix, ensuring the
+// later shell launch executes the same binary that passed preflight.
+func runnerCommandPreflight(runner RunnerName, command string) (runnerCommandPreflightResult, string) {
 	probe, err := runnerCommandPreflightProbe(command, runnerCommandSearchPath())
 	if err != nil {
-		return "runner preflight blocked: " + err.Error()
+		return runnerCommandPreflightResult{}, "runner preflight blocked: " + err.Error()
 	}
 	if strings.TrimSpace(probe.Executable) == "" {
-		return "runner preflight blocked: runner command is empty"
+		return runnerCommandPreflightResult{}, "runner preflight blocked: runner command is empty"
 	}
-	resolved, err := lookPathInSearchPath(probe.Executable, probe.SearchPath)
+	candidates, err := executableCandidatesInSearchPath(probe.Executable, probe.SearchPath)
 	if err != nil {
-		return fmt.Sprintf("runner preflight blocked: executable %q not found: %s", probe.Executable, err.Error())
+		return runnerCommandPreflightResult{}, fmt.Sprintf("runner preflight blocked: executable %q not found: %s", probe.Executable, err.Error())
 	}
-	if runnerExecutableNeedsHealthCheck(runner, probe.Executable) {
-		if err := runnerExecutableHealthCheck(resolved, probe.SearchPath); err != nil {
-			return fmt.Sprintf("runner preflight blocked: executable %q resolved to %s but failed health check: %s", probe.Executable, resolved, err.Error())
+	var firstHealthErr error
+	for _, resolved := range candidates {
+		if runnerExecutableNeedsHealthCheck(runner, probe.Executable) {
+			if err := runnerExecutableHealthCheck(resolved, probe.SearchPath); err != nil {
+				if firstHealthErr == nil {
+					firstHealthErr = err
+				}
+				continue
+			}
 		}
+		result := runnerCommandPreflightResult{ResolvedExecutable: resolved}
+		if !strings.ContainsRune(probe.Executable, os.PathSeparator) {
+			result.RunnerPathPrefix = filepath.Dir(resolved)
+		}
+		return result, ""
 	}
-	return ""
+	first := candidates[0]
+	if !runnerExecutableNeedsHealthCheck(runner, probe.Executable) {
+		return runnerCommandPreflightResult{ResolvedExecutable: first}, ""
+	}
+	// Report the first candidate's diagnostic: it is normally the stale binary
+	// the operator needs to repair, while still proving no later candidate works.
+	return runnerCommandPreflightResult{}, fmt.Sprintf("runner preflight blocked: executable %q resolved to %s but failed health check (and no later PATH candidate worked): %s", probe.Executable, first, firstHealthErr)
+}
+
+// runnerCommandWithPathPrefix reapplies the healthy directory *inside* the
+// shell command. A login shell may replace inherited PATH while sourcing its
+// profile, so environment-only prefixing can resurrect the broken candidate.
+func runnerCommandWithPathPrefix(command, prefix string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return command
+	}
+	return "PATH=" + shellSingleQuote(prefix) + ":\"$PATH\"; export PATH; " + command
 }
 
 type runnerCommandProbe struct {
@@ -267,26 +359,48 @@ func expandPathAssignment(value, baseSearchPath string) string {
 }
 
 func lookPathInSearchPath(executable, searchPath string) (string, error) {
+	candidates, err := executableCandidatesInSearchPath(executable, searchPath)
+	if err != nil {
+		return "", err
+	}
+	return candidates[0], nil
+}
+
+func executableCandidatesInSearchPath(executable, searchPath string) ([]string, error) {
 	executable = strings.TrimSpace(executable)
 	if executable == "" {
-		return "", exec.ErrNotFound
+		return nil, exec.ErrNotFound
 	}
 	if strings.ContainsRune(executable, os.PathSeparator) {
 		if isExecutableFile(executable) {
-			return executable, nil
+			return []string{executable}, nil
 		}
-		return "", fmt.Errorf("%s is not executable or does not exist", executable)
+		return nil, fmt.Errorf("%s is not executable or does not exist", executable)
 	}
+	candidates := []string{}
+	seen := map[string]struct{}{}
 	for _, dir := range filepath.SplitList(searchPath) {
 		if dir == "" {
 			dir = "."
 		}
 		candidate := filepath.Join(dir, executable)
-		if isExecutableFile(candidate) {
-			return candidate, nil
+		if !isExecutableFile(candidate) {
+			continue
 		}
+		key, err := filepath.Abs(candidate)
+		if err != nil {
+			key = candidate
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		candidates = append(candidates, candidate)
 	}
-	return "", fmt.Errorf("%s was not found in PATH", executable)
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("%s was not found in PATH", executable)
+	}
+	return candidates, nil
 }
 
 func isExecutableFile(path string) bool {

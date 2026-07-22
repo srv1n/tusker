@@ -538,6 +538,9 @@ func finishRuntimeRun(store *RuntimeStore, run *RunStatus, state LeaseState, out
 }
 
 func (d *Daemon) PollOnce(ctx context.Context) error {
+	if err := d.store.ExpireRunDirectives(time.Now().UTC()); err != nil {
+		return err
+	}
 	err := d.pollOnce(ctx, "")
 	var typed *TuskerError
 	if errors.As(err, &typed) && typed.Code == "CAS_CONFLICT" && strings.Contains(err.Error(), "run changed while daemon poll was applying its snapshot") {
@@ -1760,7 +1763,21 @@ func (d *Daemon) executePlanBlockedReason(project RegisteredProject, wfFile Work
 	if explanation.Dispatchable {
 		return "", nil
 	}
-	return strings.Join(explanation.Blockers, "; "), nil
+	directive, directiveErr := d.store.RunDirective(project.ProjectID, run.RecordID)
+	if directiveErr != nil {
+		return "", directiveErr
+	}
+	blockers := append([]string(nil), explanation.Blockers...)
+	if runDirectiveActive(directive, time.Now().UTC()) {
+		filtered := blockers[:0]
+		for _, blocker := range blockers {
+			if blocker != "project automation is disabled in its configuration" {
+				filtered = append(filtered, blocker)
+			}
+		}
+		blockers = filtered
+	}
+	return strings.Join(blockers, "; "), nil
 }
 
 func daemonShouldCloseNonDispatchableRun(wf Workflow, note Note) bool {
@@ -2332,6 +2349,11 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		run = recovered
 		changed = true
 	}
+	if run.ProcessPID == 0 {
+		if recovered, recoveredChanged, err := d.recoverUnstartedDirectedClaim(run, nowTime); err != nil || recoveredChanged {
+			return recovered, changed || recoveredChanged, err
+		}
+	}
 
 	if run.ProcessPID > 0 && d.processIdentityMatchesForPoll(run) {
 		if run.LeaseGeneration > 0 && strings.TrimSpace(firstNonEmpty(run.LeaseOwner, run.ActiveAttemptID)) != "" {
@@ -2488,6 +2510,24 @@ func (d *Daemon) recoverWrapperLeaseIdentity(run RunStatus) (RunStatus, bool) {
 	run.ProcessPGID = wrapper.ProcessPGID
 	run.ProcessStartedAt = wrapper.ProcessStartedAt
 	return run, true
+}
+
+func (d *Daemon) recoverUnstartedDirectedClaim(run RunStatus, now time.Time) (RunStatus, bool, error) {
+	if LeaseState(run.LeaseState) != LeaseStateClaimed || run.ProcessPID != 0 || strings.TrimSpace(run.ActiveAttemptID) == "" {
+		return run, false, nil
+	}
+	if statusPath := runnerStatusPathForRun(run); statusPath != "" && fileExists(statusPath) {
+		return run, false, nil
+	}
+	requeued, err := d.store.requeueUnstartedDirectedClaim(run, now)
+	if err != nil || !requeued {
+		return run, false, err
+	}
+	latest, err := d.latestDispatchRun(run)
+	if err != nil {
+		return run, false, err
+	}
+	return latest, true, nil
 }
 
 func (d *Daemon) wrapperLeaseIdentityFromEvents(run RunStatus) (RunStatus, bool) {
@@ -3180,11 +3220,19 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 		return run, false, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": lane}))
 	}
-	// Registry enablement is the compatibility boundary and the explicit daemon
-	// opt-in. The workflow bit is persisted alongside it by Settings, but older
-	// registered projects and fixtures predate that config key.
+	// Registry enablement controls whether this project is polled. The project
+	// configuration is the separate, authoritative opt-in for daemon spawning.
 	if !project.Enabled {
 		run.LastError = "daemon auto-spawn disabled for project"
+		return run, false, nil
+	}
+	directive, err := d.store.RunDirective(project.ProjectID, run.RecordID)
+	if err != nil {
+		return run, false, err
+	}
+	directiveActive := runDirectiveActive(directive, time.Now().UTC())
+	if !wfFile.Data.AutomationEnabled && !directiveActive {
+		run.LastError = "daemon auto-spawn disabled: project automation is disabled in its configuration"
 		return run, false, nil
 	}
 	if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached {
@@ -3258,9 +3306,21 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	claimNotesByID = orchestrationOwnedPathNotes(claimNotesByID, wfFile.Data)
 	ownership.withOwnedPathContext(project.VaultRoot, claimNotesByID[stringField(note.Data, "id")], claimNotesByID)
 	ownership.projectConcurrencyLimit = wfFile.Data.Runtime.MaxActiveRunsPerProject
-	claimResult, err := ownership.claimExistingWithAuthorization(claimRun, attemptID, RunAuthorization{
-		Source: "daemon_auto", Actor: "daemon", Trigger: "poll", ProjectAutomationEnabled: project.Enabled,
-	})
+	authorization := RunAuthorization{Source: "daemon_auto", Actor: "daemon", Trigger: "poll", ProjectAutomationEnabled: project.Enabled}
+	if directiveActive {
+		authorization = RunAuthorization{Source: "human_run_directive", Actor: directive.Actor, Trigger: "serve_run", ProjectAutomationEnabled: false}
+	}
+	attemptIntent := RunAttempt{
+		AttemptID: attemptID, ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
+		Runner: run.Runner, Lane: lane, WorkRevision: run.WorkRevision, WorkspacePath: selectedWorkspacePath,
+		BranchName: branchName, ParentAttemptID: previousRun.ActiveAttemptID, StartedAt: startedAt,
+	}
+	var claimResult runClaimResult
+	if directiveActive {
+		claimResult, err = ownership.claimExistingWithDirective(claimRun, attemptID, authorization, attemptIntent)
+	} else {
+		claimResult, err = ownership.claimExistingWithAuthorization(claimRun, attemptID, authorization)
+	}
 	if err != nil {
 		return run, false, err
 	}
@@ -3272,7 +3332,8 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	if err := d.store.SaveRunIdentity(runIdentityForClaim(*claimResult.Run, project.RepoRoot, selectedWorkspacePath, string(workspaceStrategy), branchName)); err != nil {
 		return run, true, err
 	}
-	if reason := runnerCommandPreflightBlocker(runner.Name(), command); reason != "" {
+	preflight, reason := runnerCommandPreflight(runner.Name(), command)
+	if reason != "" {
 		run.LeaseGeneration = leaseGeneration
 		run.LeaseHost = runtimeLeaseHost()
 		parked := d.parkRunnerPreflightFailure(project, run, reason)
@@ -3323,14 +3384,12 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 	eventSinkPath := filepath.Join(runDir, attemptStem+".events.jsonl")
 	rawLogPath := filepath.Join(runDir, attemptStem+".raw.log")
 	statusPath := filepath.Join(runDir, attemptStem+".status.json")
-	attempt := RunAttempt{
-		AttemptID: attemptID, ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
-		Runner: run.Runner, Lane: lane, WorkRevision: run.WorkRevision, WorkspacePath: workspace.Path,
-		BranchName: branchName,
-		PromptPath: promptPath, EventSinkPath: eventSinkPath, RawLogPath: rawLogPath, StatusPath: statusPath,
-		ParentAttemptID: previousRun.ActiveAttemptID,
-		StartedAt:       startedAt,
-	}
+	attempt := attemptIntent
+	attempt.WorkspacePath = workspace.Path
+	attempt.PromptPath = promptPath
+	attempt.EventSinkPath = eventSinkPath
+	attempt.RawLogPath = rawLogPath
+	attempt.StatusPath = statusPath
 	run.WorkspacePath = workspace.Path
 	run.PromptPath = promptPath
 	run.EventSinkPath = eventSinkPath
@@ -3393,30 +3452,31 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		})
 	}
 	startReq := StartRequest{
-		ProjectID:       project.ProjectID,
-		RecordID:        run.RecordID,
-		ItemID:          run.ItemID,
-		AttemptID:       attemptID,
-		Lane:            lane,
-		WorkRevision:    run.WorkRevision,
-		LeaseGeneration: run.LeaseGeneration,
-		ActiveStates:    wfFile.Data.Tracker.ActiveStates,
-		WorkingDir:      workspace.Path,
-		WorkspacePath:   workspace.Path,
-		RepoRoot:        project.RepoRoot,
-		PromptPath:      promptPath,
-		EventSinkPath:   eventSinkPath,
-		RawLogPath:      rawLogPath,
-		StatusPath:      statusPath,
-		Command:         command,
-		RunnerProfile:   run.RunnerProfile,
-		RunnerHarness:   run.RunnerHarness,
-		RunnerModel:     run.RunnerModel,
-		RunnerEffort:    run.RunnerEffort,
-		NotePath:        note.AbsolutePath,
-		VaultPath:       project.VaultRoot,
-		CodexPolicy:     codexPolicy,
-		ExternalLoop:    externalLaunch,
+		ProjectID:        project.ProjectID,
+		RecordID:         run.RecordID,
+		ItemID:           run.ItemID,
+		AttemptID:        attemptID,
+		Lane:             lane,
+		WorkRevision:     run.WorkRevision,
+		LeaseGeneration:  run.LeaseGeneration,
+		ActiveStates:     wfFile.Data.Tracker.ActiveStates,
+		WorkingDir:       workspace.Path,
+		WorkspacePath:    workspace.Path,
+		RepoRoot:         project.RepoRoot,
+		PromptPath:       promptPath,
+		EventSinkPath:    eventSinkPath,
+		RawLogPath:       rawLogPath,
+		StatusPath:       statusPath,
+		Command:          command,
+		RunnerPathPrefix: preflight.RunnerPathPrefix,
+		RunnerProfile:    run.RunnerProfile,
+		RunnerHarness:    run.RunnerHarness,
+		RunnerModel:      run.RunnerModel,
+		RunnerEffort:     run.RunnerEffort,
+		NotePath:         note.AbsolutePath,
+		VaultPath:        project.VaultRoot,
+		CodexPolicy:      codexPolicy,
+		ExternalLoop:     externalLaunch,
 	}
 	resumeSession := resolvedResumeSession{}
 	if runner.Capabilities().ResumeSession {
@@ -3450,32 +3510,33 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 			WorkspacePath:    workspace.Path,
 		})
 		start, err = runner.Resume(ctx, ResumeRequest{
-			ProjectID:       startReq.ProjectID,
-			RecordID:        startReq.RecordID,
-			ItemID:          startReq.ItemID,
-			AttemptID:       startReq.AttemptID,
-			Lane:            startReq.Lane,
-			WorkRevision:    startReq.WorkRevision,
-			LeaseGeneration: startReq.LeaseGeneration,
-			ActiveStates:    startReq.ActiveStates,
-			SessionRef:      resumeSession.SessionRef,
-			MessageRef:      resumeSession.MessageRef,
-			WorkingDir:      startReq.WorkingDir,
-			WorkspacePath:   startReq.WorkspacePath,
-			RepoRoot:        startReq.RepoRoot,
-			PromptPath:      startReq.PromptPath,
-			EventSinkPath:   startReq.EventSinkPath,
-			RawLogPath:      startReq.RawLogPath,
-			StatusPath:      startReq.StatusPath,
-			Command:         startReq.Command,
-			RunnerProfile:   startReq.RunnerProfile,
-			RunnerHarness:   startReq.RunnerHarness,
-			RunnerModel:     startReq.RunnerModel,
-			RunnerEffort:    startReq.RunnerEffort,
-			NotePath:        startReq.NotePath,
-			VaultPath:       startReq.VaultPath,
-			CodexPolicy:     startReq.CodexPolicy,
-			ExternalLoop:    startReq.ExternalLoop,
+			ProjectID:        startReq.ProjectID,
+			RecordID:         startReq.RecordID,
+			ItemID:           startReq.ItemID,
+			AttemptID:        startReq.AttemptID,
+			Lane:             startReq.Lane,
+			WorkRevision:     startReq.WorkRevision,
+			LeaseGeneration:  startReq.LeaseGeneration,
+			ActiveStates:     startReq.ActiveStates,
+			SessionRef:       resumeSession.SessionRef,
+			MessageRef:       resumeSession.MessageRef,
+			WorkingDir:       startReq.WorkingDir,
+			WorkspacePath:    startReq.WorkspacePath,
+			RepoRoot:         startReq.RepoRoot,
+			PromptPath:       startReq.PromptPath,
+			EventSinkPath:    startReq.EventSinkPath,
+			RawLogPath:       startReq.RawLogPath,
+			StatusPath:       startReq.StatusPath,
+			Command:          startReq.Command,
+			RunnerPathPrefix: startReq.RunnerPathPrefix,
+			RunnerProfile:    startReq.RunnerProfile,
+			RunnerHarness:    startReq.RunnerHarness,
+			RunnerModel:      startReq.RunnerModel,
+			RunnerEffort:     startReq.RunnerEffort,
+			NotePath:         startReq.NotePath,
+			VaultPath:        startReq.VaultPath,
+			CodexPolicy:      startReq.CodexPolicy,
+			ExternalLoop:     startReq.ExternalLoop,
 		})
 	} else {
 		start, err = runner.Start(ctx, startReq)

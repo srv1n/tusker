@@ -360,6 +360,43 @@ func TestCodexCloudRunnerSurfacesExecutorErrors(t *testing.T) {
 	}
 }
 
+func TestCodexCloudRunnerReconcileFallsBackPastBrokenCodexOnPATH(t *testing.T) {
+	badDir := t.TempDir()
+	goodDir := t.TempDir()
+	writeRunnerPreflightScript(t, badDir, "codex", "#!/bin/sh\necho stale cloud wrapper >&2\nexit 127\n")
+	writeRunnerPreflightScript(t, goodDir, "codex", "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo codex-good; exit 0; fi\nprintf '{\"task_id\":\"cloud-task-123\",\"status\":\"running\"}\\n'\n")
+	t.Setenv("PATH", badDir+string(os.PathListSeparator)+goodDir+string(os.PathListSeparator)+"/bin")
+	previousLoginPath := runnerLoginShellPath
+	runnerLoginShellPath = func() string { return "" }
+	t.Cleanup(func() { runnerLoginShellPath = previousLoginPath })
+
+	runner := &CodexCloudRunner{Config: codexCloudTestConfig("manual", "none")}
+	result, err := runner.Reconcile(context.Background(), ReconcileRequest{CloudTaskID: "cloud-task-123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "running", result.CloudStatus, "cloud status from healthy fallback")
+}
+
+func TestCodexCloudRunnerStartPrefixesDispatchResolvedPath(t *testing.T) {
+	exec := &fakeCodexCloudExecutor{outputs: [][]byte{[]byte(`{"task_id":"cloud-task-123","status":"queued"}`)}}
+	runner := &CodexCloudRunner{Config: codexCloudTestConfig("manual", "none"), Executor: exec}
+	root := t.TempDir()
+	prompt := filepath.Join(root, "prompt.md")
+	eventPath := filepath.Join(root, "events.jsonl")
+	rawLog := filepath.Join(root, "runner.log")
+	if err := writeText(prompt, "cloud task\n"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := runner.Start(context.Background(), StartRequest{PromptPath: prompt, WorkspacePath: root, EventSinkPath: eventPath, RawLogPath: rawLog, StatusPath: filepath.Join(root, "status.json"), RunnerPathPrefix: "/tmp/healthy-codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exec.requests) != 1 || !strings.HasPrefix(exec.requests[0].Command, `PATH='/tmp/healthy-codex':"$PATH"; export PATH; codex cloud start`) {
+		t.Fatalf("expected dispatch command to preserve its resolved runner path, got %#v", exec.requests)
+	}
+}
+
 type fakeCodexCloudExecutor struct {
 	outputs  [][]byte
 	err      error

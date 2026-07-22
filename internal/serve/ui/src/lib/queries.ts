@@ -282,6 +282,14 @@ export const useTaskStatusAction = (taskId: string, projectId?: string) => {
   });
 };
 
+export const useRunTask = (taskId: string, projectId?: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.runTask(taskId, projectId),
+    onSettled: () => invalidateOperatorState(qc, taskId, projectId),
+  });
+};
+
 export const useDiscardTask = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({

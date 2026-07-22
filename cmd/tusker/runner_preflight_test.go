@@ -50,6 +50,27 @@ exit 0
 	}
 }
 
+func TestRunnerResolutionFallsBackPastBrokenBinary(t *testing.T) {
+	badDir := t.TempDir()
+	goodDir := t.TempDir()
+	writeRunnerPreflightScript(t, badDir, "codex", "#!/bin/sh\necho stale wrapper >&2\nexit 127\n")
+	writeRunnerPreflightScript(t, goodDir, "codex", "#!/bin/sh\necho codex-test 1.0\n")
+	t.Setenv("PATH", badDir+string(os.PathListSeparator)+goodDir)
+	t.Setenv(runnerPathPrefixEnv, "")
+	previousLoginPath := runnerLoginShellPath
+	runnerLoginShellPath = func() string { return "" }
+	t.Cleanup(func() { runnerLoginShellPath = previousLoginPath })
+
+	result, blocker := runnerCommandPreflight(RunnerCodexExec, "codex exec --json --skip-git-repo-check -")
+	if blocker != "" {
+		t.Fatalf("expected healthy PATH fallback, got %q", blocker)
+	}
+	assertEqual(t, filepath.Join(goodDir, "codex"), result.ResolvedExecutable, "resolved executable")
+	assertEqual(t, goodDir, result.RunnerPathPrefix, "launch PATH prefix")
+	launchPath := envValueForPreflightTest(runnerEnv(runnerLaunchEnv{RunnerPathPrefix: result.RunnerPathPrefix}), "PATH")
+	assertEqual(t, goodDir, filepath.SplitList(launchPath)[0], "healthy executable wins at launch")
+}
+
 func TestRunnerPreferredPathDirsFindsEachSupportedAppBundle(t *testing.T) {
 	standalone := t.TempDir()
 	chatGPT := t.TempDir()
@@ -115,6 +136,100 @@ exit 127
 	if blocker := automationRunBlocker(run, time.Now().UTC()); !strings.Contains(blocker, "runner preflight") || !strings.Contains(blocker, "redrive") {
 		t.Fatalf("expected queue blocker to explain runner preflight/redrive, got %q", blocker)
 	}
+}
+
+func TestDaemonSkipsAutomationDisabledProject(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Automation off", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	project := registerAutomationTestProject(t, vault)
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.enabled", false); err != nil {
+		t.Fatal(err)
+	}
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+	assertEqual(t, string(LeaseStateUnclaimed), run.LeaseState, "automation-disabled lease state")
+	if !strings.Contains(run.LastError, "automation is disabled in its configuration") {
+		t.Fatalf("expected explicit automation-disabled reason, got %#v", run)
+	}
+	attempts, err := daemon.store.ListAttemptsForRun(project.ProjectID, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 0, len(attempts), "automation-disabled attempt count")
+}
+
+func TestInteractiveClaimRegistersRunWithAutomationOff(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual automation off", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	initializeOrchestrationGitRepo(t, filepath.Dir(vault))
+	project := registerAutomationTestProject(t, vault)
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.enabled", false); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.Enabled = false
+	project.Health = projectHealthDisabled
+	if err := store.UpsertProject(project); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	captureStdout(t, func() {
+		if err := runsClaimCmd(Args{"vault": vault, "id": "APP-T-0001", "owner": "agent:codex", "source": "codex"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	captureStdout(t, func() {
+		if err := runsLifecycleCmd(Args{"id": "APP-T-0001", "owner": "agent:codex"}, "start"); err != nil {
+			t.Fatal(err)
+		}
+		if err := runsLifecycleCmd(Args{"id": "APP-T-0001", "owner": "agent:codex"}, "heartbeat"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	store, err = OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run, err := store.FindRun("APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run == nil {
+		t.Fatal("interactive claim did not register a run")
+	}
+	assertEqual(t, string(LeaseStateRunning), run.LeaseState, "interactive automation-off run state")
+	assertEqual(t, true, run.HandRun, "interactive automation-off origin")
+	if strings.TrimSpace(run.LastHeartbeatAt) == "" {
+		t.Fatalf("interactive automation-off run did not record a heartbeat: %#v", run)
+	}
+	captureStdout(t, func() {
+		if err := runsLifecycleCmd(Args{"id": "APP-T-0001", "owner": "agent:codex", "gate-verdicts": "A1=pass", "deliverable": "manual run submitted", "verification": "A1=pass"}, "submit"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	noteData, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "review", stringField(noteData, "status"), "interactive automation-off submit status")
 }
 
 func writeRunnerPreflightScript(t *testing.T, dir, name, body string) string {

@@ -163,6 +163,8 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleRunAcknowledge(w, r, parts[2])
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "status":
 		s.handleTaskStatusAction(w, parts[2], body)
+	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "run":
+		s.handleTaskRunDirective(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "discard":
 		s.handleTaskDiscardAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "close":
@@ -183,6 +185,85 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		return false
 	}
 	return true
+}
+
+// handleTaskRunDirective records an operator's one-shot request. It never
+// launches a runner: only the resident daemon can consume the directive.
+func (s *serveServer) handleTaskRunDirective(w http.ResponseWriter, taskID string, body serveActionBody) {
+	_, project, err := serveBaseArgsForBody(s, body)
+	if err != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker task run", "", err))
+		return
+	}
+	snap, err := s.loadSnapshotForProject(project.ProjectID)
+	if err != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker task run", "", err))
+		return
+	}
+	note, ok := snap.notesByID[strings.TrimSpace(taskID)]
+	if !ok || serveNoteKind(note) != "task" {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "task not found"})
+		return
+	}
+	status := stringField(note.Data, "status")
+	if !containsString(snap.workflow.Tracker.ActiveStates, status) {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "task is not runnable; it must be ready or rework"})
+		return
+	}
+	if run, ok := serveFindRun(snap.runs, trackerRecordID(note)); ok && isDispatchingLeaseState(run.LeaseState) {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "task already has a live run"})
+		return
+	}
+	if explanation, ok := snap.queue[stringField(note.Data, "id")]; ok {
+		blockers := make([]string, 0, len(explanation.Blockers))
+		for _, blocker := range explanation.Blockers {
+			if blocker != "project automation is disabled in its configuration" {
+				blockers = append(blockers, blocker)
+			}
+		}
+		if len(blockers) > 0 {
+			serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "task cannot be dispatched: " + strings.Join(blockers, "; ")})
+			return
+		}
+	} else {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "task dispatchability could not be verified; refresh the project and try again"})
+		return
+	}
+	daemon, _ := s.store.DaemonStatus()
+	if !boolFromAny(daemon["daemon_alive"]) {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "daemon is not running; start it before queuing a one-shot run"})
+		return
+	}
+	now := time.Now().UTC()
+	directive := RunDirective{ProjectID: project.ProjectID, RecordID: trackerRecordID(note), Actor: serveOperatorActor(), CreatedAt: now.Format(time.RFC3339), ExpiresAt: now.Add(10 * time.Minute).Format(time.RFC3339), State: "queued"}
+	queued, err := s.store.QueueRunDirective(directive)
+	if err != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker task run", "", err))
+		return
+	}
+	if !queued {
+		reason := "task is already queued for dispatch"
+		if runs, listErr := s.store.ListRuns(); listErr == nil {
+			for _, run := range runs {
+				if run.ProjectID == project.ProjectID && run.RecordID == directive.RecordID && isDispatchingLeaseState(run.LeaseState) {
+					reason = "task already has a live run"
+					break
+				}
+			}
+		}
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: reason})
+		return
+	}
+	s.refreshProjectSnapshot(project.ProjectID)
+	serveJSON(w, http.StatusOK, serveActionResult{OK: true, Reason: "queued for daemon dispatch", Command: "tusker task run"})
+}
+
+func serveOperatorActor() string {
+	name := strings.TrimSpace(firstNonEmpty(os.Getenv("USER"), os.Getenv("LOGNAME"), defaultActorName()))
+	if strings.HasPrefix(name, "human:") {
+		return name
+	}
+	return "human:" + name
 }
 
 func (s *serveServer) handleProjectRegisterAction(w http.ResponseWriter, body serveActionBody) {

@@ -21,3 +21,14 @@ test("secondary task workflows are progressively disclosed one at a time", () =>
 
   expect(task).toContain('setActiveAction("")');
 });
+
+test("ready and rework tasks expose one-shot daemon dispatch with visible lifecycle state", () => {
+  expect(task).toContain("const runnable = currentStatus === \"ready\" || currentStatus === \"rework\"");
+  expect(task).toContain("runTask.mutate()");
+  expect(task).not.toContain("human:serve");
+  expect(task).toContain('directiveQueued ? "Queued for dispatch" : "Run once"');
+  for (const state of ["queued", "lapsed", "consumed"]) {
+    expect(task).toContain(`task.runDirective.state === "${state}"`);
+  }
+  expect(task).toContain("<ActionResultLine pending={runTask.isPending} error={runTask.error} result={runTask.data} />");
+});

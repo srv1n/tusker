@@ -281,7 +281,7 @@ export interface RunDetail extends RunSummary {
   workspacePath: string;
   attempts: Attempt[];
   events: RunEvent[];
-  authorization?: { source: string; actor: string; trigger: string; project_automation_enabled: boolean };
+  authorization?: { source: string; actor: string; trigger: string; project_automation_enabled: boolean; created_at: string };
   identity?: { repo_root: string; workspace_path: string; workspace_mode: string; runner: string; branch?: string; head?: string };
   session?: { session_ref: string; state: string; resumable: boolean; last_seen_at: string; last_error?: string };
   resume?: { supported: boolean; command?: string; reason?: string };
@@ -410,6 +410,13 @@ export interface TaskDetail extends TaskCapsule {
   humanAction?: HumanAction;
   humanActions?: HumanAction[];
   runHistory: RunSummary[];
+  runDirective?: {
+    state: "queued" | "consumed" | "lapsed";
+    actor: string;
+    createdAt: string;
+    expiresAt: string;
+    reason?: string;
+  };
 }
 
 export interface GateDetail {

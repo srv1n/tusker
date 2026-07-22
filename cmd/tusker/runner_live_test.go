@@ -895,6 +895,9 @@ for line in sys.stdin:
 	}
 
 	wf := defaultWorkflow()
+	// This fixture dispatches through the daemon. Fresh workflows default the
+	// daemon opt-in off, so the test must make that authorization explicit.
+	wf.AutomationEnabled = true
 	wf.Agents.Default = string(RunnerClaude)
 	wf.Agents.Enabled = []string{string(RunnerClaude), string(RunnerCodexAppServer)}
 	wf.Workspace.Strategy = string(WorkspaceStrategyCopy)

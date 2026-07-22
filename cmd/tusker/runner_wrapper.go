@@ -107,6 +107,35 @@ func runnerWrapperCmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	pid := os.Getpid()
+	pgid := processGroupID(pid)
+	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		_ = writeRunnerStatusFile(req.Start.StatusPath, 1)
+		return fmt.Errorf("open runtime store for wrapper registration: %w", err)
+	}
+	registered, registerErr := store.registerRunnerWrapperSpawn(req.Start, pid, pgid, processStartedAt)
+	closeErr := store.Close()
+	if registerErr != nil {
+		_ = writeRunnerStatusFile(req.Start.StatusPath, 1)
+		return fmt.Errorf("register runner wrapper spawn: %w", registerErr)
+	}
+	if closeErr != nil {
+		_ = writeRunnerStatusFile(req.Start.StatusPath, 1)
+		return fmt.Errorf("close wrapper runtime store: %w", closeErr)
+	}
+	if !registered {
+		_ = writeRunnerStatusFile(req.Start.StatusPath, 130)
+		return tuskerError(errorInvalidTransition, "wrapper lease was recovered or revoked before spawn")
+	}
+	if err := NewEventLog(req.Start.EventSinkPath).Append("attempt_wrapper_spawned", req.Start.AttemptID, RunnerName(req.Runner), map[string]any{
+		"pid": pid, "pgid": pgid, "process_start": processStartedAt, "request_path": requestPath,
+		"log_path": runnerWrapperLogPath(req.Start), "status_path": req.Start.StatusPath,
+	}); err != nil {
+		_ = writeRunnerStatusFile(req.Start.StatusPath, 1)
+		return fmt.Errorf("register runner wrapper identity: %w", err)
+	}
 	return runRunnerWrapper(context.Background(), req)
 }
 
@@ -151,7 +180,8 @@ func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*St
 			ProjectID: req.Start.ProjectID, RecordID: req.Start.RecordID, ItemID: req.Start.ItemID, AttemptID: req.Start.AttemptID,
 			Lane: req.Start.Lane, WorkRevision: req.Start.WorkRevision, LeaseGeneration: req.Start.LeaseGeneration, WorkingDir: req.Start.WorkingDir, WorkspacePath: req.Start.WorkspacePath,
 			RepoRoot: req.Start.RepoRoot, PromptPath: req.Start.PromptPath, EventSinkPath: req.Start.EventSinkPath, RawLogPath: req.Start.RawLogPath, StatusPath: req.Start.StatusPath,
-			Command: req.Start.Command, NotePath: req.Start.NotePath, VaultPath: req.Start.VaultPath, CodexPolicy: req.Start.CodexPolicy, ExternalLoop: req.Start.ExternalLoop,
+			RunnerPathPrefix: req.Start.RunnerPathPrefix,
+			Command:          req.Start.Command, NotePath: req.Start.NotePath, VaultPath: req.Start.VaultPath, CodexPolicy: req.Start.CodexPolicy, ExternalLoop: req.Start.ExternalLoop,
 		}
 		if req.Resume != nil {
 			execReq.SessionRef = req.Resume.SessionRef

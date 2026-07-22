@@ -304,6 +304,15 @@ type serveTaskDetail struct {
 	HumanAction    *serveHumanAction      `json:"humanAction,omitempty"`
 	HumanActions   []serveHumanAction     `json:"humanActions"`
 	RunHistory     []serveRunSummary      `json:"runHistory"`
+	RunDirective   *serveRunDirective     `json:"runDirective,omitempty"`
+}
+
+type serveRunDirective struct {
+	State     string `json:"state"`
+	Actor     string `json:"actor"`
+	CreatedAt string `json:"createdAt"`
+	ExpiresAt string `json:"expiresAt"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 type serveRunSummary struct {

@@ -13,32 +13,33 @@ import (
 )
 
 type runnerExecRequest struct {
-	ProjectID       string
-	RecordID        string
-	ItemID          string
-	AttemptID       string
-	Lane            string
-	WorkRevision    int
-	LeaseGeneration int
-	SessionRef      string
-	MessageRef      string
-	WorkingDir      string
-	WorkspacePath   string
-	RepoRoot        string
-	PromptPath      string
-	EventSinkPath   string
-	RawLogPath      string
-	StatusPath      string
-	Command         string
-	RunnerProfile   string
-	RunnerHarness   string
-	RunnerModel     string
-	RunnerEffort    string
-	NotePath        string
-	VaultPath       string
-	ResumeMode      bool
-	CodexPolicy     CodexPolicy
-	ExternalLoop    ExternalLoopLaunchContext
+	ProjectID        string
+	RecordID         string
+	ItemID           string
+	AttemptID        string
+	Lane             string
+	WorkRevision     int
+	LeaseGeneration  int
+	SessionRef       string
+	MessageRef       string
+	WorkingDir       string
+	WorkspacePath    string
+	RepoRoot         string
+	PromptPath       string
+	EventSinkPath    string
+	RawLogPath       string
+	StatusPath       string
+	RunnerPathPrefix string
+	Command          string
+	RunnerProfile    string
+	RunnerHarness    string
+	RunnerModel      string
+	RunnerEffort     string
+	NotePath         string
+	VaultPath        string
+	ResumeMode       bool
+	CodexPolicy      CodexPolicy
+	ExternalLoop     ExternalLoopLaunchContext
 }
 
 type runnerProcessStatus struct {
@@ -100,6 +101,7 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 		"{{session_ref}}":     req.SessionRef,
 		"{{message_ref}}":     req.MessageRef,
 	})
+	expanded = runnerCommandWithPathPrefix(expanded, req.RunnerPathPrefix)
 	script := fmt.Sprintf(`rm -f "$TUSKER_STATUS_PATH"
 ( %s ) < "$TUSKER_PROMPT_PATH" >> "$TUSKER_RAW_LOG" 2>&1
 code=$?
@@ -130,7 +132,8 @@ PY
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-		NotePath: req.NotePath, VaultPath: req.VaultPath, SessionRef: req.SessionRef, MessageRef: req.MessageRef,
+		RunnerPathPrefix: req.RunnerPathPrefix,
+		NotePath:         req.NotePath, VaultPath: req.VaultPath, SessionRef: req.SessionRef, MessageRef: req.MessageRef,
 		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		CodexPolicy:  withDefaultCodexPolicy(req.CodexPolicy),
 		ExternalLoop: req.ExternalLoop,

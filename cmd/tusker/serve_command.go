@@ -1130,6 +1130,9 @@ func (s *serveServer) handleTask(w http.ResponseWriter, r *http.Request, id stri
 		HumanActions:     serveHumanActionsForTask(snap, task),
 		RunHistory:       serveRunHistory(s, snap, stringField(task.Data, "id")),
 	}
+	if directive, directiveErr := s.store.RunDirective(snap.projectID, trackerRecordID(task)); directiveErr == nil && directive != nil {
+		detail.RunDirective = &serveRunDirective{State: directive.State, Actor: directive.Actor, CreatedAt: directive.CreatedAt, ExpiresAt: directive.ExpiresAt, Reason: directive.Reason}
+	}
 	serveJSON(w, http.StatusOK, detail)
 }
 

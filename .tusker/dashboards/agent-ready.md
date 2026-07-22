@@ -6,6 +6,6 @@
 
 | Task | Priority | Next action |
 |---|---|---|
-| [[FAC-T-0013]] | p2 | Execute the task contract and satisfy proof mode. |
+
 
 <!-- tusker:generated:end -->

@@ -134,6 +134,19 @@ type RunAuthorization struct {
 	CreatedAt                string `json:"created_at"`
 }
 
+// RunDirective is a durable, human-authorized request for the resident daemon
+// to execute one named task once. It is deliberately separate from a lease:
+// only the daemon may consume it into a normal claim/attempt.
+type RunDirective struct {
+	ProjectID string `json:"project_id"`
+	RecordID  string `json:"record_id"`
+	Actor     string `json:"actor"`
+	CreatedAt string `json:"created_at"`
+	ExpiresAt string `json:"expires_at"`
+	State     string `json:"state"`
+	Reason    string `json:"reason"`
+}
+
 type RunIdentityMetadata struct {
 	ProjectID     string `json:"project_id"`
 	RecordID      string `json:"record_id"`
@@ -576,6 +589,16 @@ func (s *RuntimeStore) Migrate() error {
 			project_automation_enabled INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL,
 			PRIMARY KEY(project_id, record_id, lease_generation)
+		);`,
+		`CREATE TABLE IF NOT EXISTS run_directives (
+			project_id TEXT NOT NULL,
+			record_id TEXT NOT NULL,
+			actor TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			expires_at TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'queued',
+			reason TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY(project_id, record_id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS run_identity_metadata (
 			project_id TEXT NOT NULL,
@@ -1202,6 +1225,219 @@ func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
 	return out, rows.Err()
 }
 
+func (s *RuntimeStore) QueueRunDirective(directive RunDirective) (bool, error) {
+	if strings.TrimSpace(directive.ProjectID) == "" || strings.TrimSpace(directive.RecordID) == "" || strings.TrimSpace(directive.Actor) == "" {
+		return false, tuskerError(errorInvalidArg, "run directive requires project_id, record_id, and actor")
+	}
+	if strings.TrimSpace(directive.CreatedAt) == "" {
+		directive.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	if strings.TrimSpace(directive.ExpiresAt) == "" {
+		return false, tuskerError(errorInvalidArg, "run directive requires an expiry")
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, directive.CreatedAt)
+	if err != nil {
+		return false, tuskerError(errorInvalidArg, "run directive has an invalid created_at")
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, directive.ExpiresAt)
+	if err != nil {
+		return false, tuskerError(errorInvalidArg, "run directive has an invalid expires_at")
+	}
+	if !expiresAt.After(createdAt) {
+		return false, tuskerError(errorInvalidArg, "run directive expiry must be after creation")
+	}
+	directive.CreatedAt = createdAt.UTC().Format(time.RFC3339Nano)
+	directive.ExpiresAt = expiresAt.UTC().Format(time.RFC3339Nano)
+	directive.State = "queued"
+	directive.Reason = ""
+	result, err := s.exec(`INSERT INTO run_directives (project_id, record_id, actor, created_at, expires_at, state, reason)
+		SELECT ?, ?, ?, ?, ?, ?, ?
+		WHERE NOT EXISTS (
+			SELECT 1 FROM runs WHERE project_id = ? AND record_id = ? AND lease_state IN ('claimed', 'running')
+		)
+		ON CONFLICT(project_id, record_id) DO UPDATE SET actor=excluded.actor, created_at=excluded.created_at, expires_at=excluded.expires_at, state=excluded.state, reason=excluded.reason
+		WHERE run_directives.state != 'queued'`,
+		directive.ProjectID, directive.RecordID, directive.Actor, directive.CreatedAt, directive.ExpiresAt, directive.State, directive.Reason,
+		directive.ProjectID, directive.RecordID)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed > 0, err
+}
+
+func (s *RuntimeStore) RunDirective(projectID, recordID string) (*RunDirective, error) {
+	row := s.db.QueryRow(`SELECT project_id, record_id, actor, created_at, expires_at, state, reason FROM run_directives WHERE project_id = ? AND record_id = ?`, projectID, recordID)
+	var directive RunDirective
+	if err := row.Scan(&directive.ProjectID, &directive.RecordID, &directive.Actor, &directive.CreatedAt, &directive.ExpiresAt, &directive.State, &directive.Reason); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if directive.State == "queued" && !runDirectiveActive(&directive, time.Now().UTC()) {
+		if err := s.ExpireRunDirectives(time.Now().UTC()); err != nil {
+			return nil, err
+		}
+		directive.State = "lapsed"
+		directive.Reason = "daemon did not claim this one-shot run before it expired"
+	}
+	return &directive, nil
+}
+
+func (s *RuntimeStore) ExpireRunDirectives(now time.Time) error {
+	_, err := s.exec(`UPDATE run_directives SET state = 'lapsed', reason = 'daemon did not claim this one-shot run before it expired' WHERE state = 'queued' AND julianday(expires_at) <= julianday(?)`, now.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func runDirectiveActive(directive *RunDirective, now time.Time) bool {
+	if directive == nil || directive.State != "queued" {
+		return false
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, directive.ExpiresAt)
+	return err == nil && expiresAt.After(now)
+}
+
+// requeueUnstartedDirectedClaim recovers the narrow post-commit/pre-spawn
+// window. The caller must first prove that no wrapper spawn event or terminal
+// status exists. This transaction removes only the placeholder attempt intent
+// and restores the consumed authorization for another daemon poll.
+func (s *RuntimeStore) requeueUnstartedDirectedClaim(run RunStatus, now time.Time) (bool, error) {
+	if run.ProjectID == "" || run.RecordID == "" || run.ActiveAttemptID == "" || run.LeaseGeneration <= 0 || run.ProcessPID != 0 {
+		return false, nil
+	}
+	now = now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	recovered := false
+	err := s.withBusyRetry(func() error {
+		recovered = false
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		var source, actor string
+		if err := tx.QueryRow(`SELECT source, actor FROM run_authorizations WHERE project_id = ? AND record_id = ? AND lease_generation = ?`, run.ProjectID, run.RecordID, run.LeaseGeneration).Scan(&source, &actor); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+		if source != "human_run_directive" {
+			return nil
+		}
+		var attemptPID int
+		if err := tx.QueryRow(`SELECT process_pid FROM attempts WHERE attempt_id = ? AND project_id = ? AND record_id = ?`, run.ActiveAttemptID, run.ProjectID, run.RecordID).Scan(&attemptPID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+		if attemptPID != 0 {
+			return nil
+		}
+		result, err := tx.Exec(`UPDATE runs SET lease_state = 'unclaimed', lease_owner = '', lease_expires_at = '', lease_host = '',
+			active_attempt_id = '', workspace_path = '', session_ref = '', process_pid = 0, process_pgid = 0,
+			process_started_at = '', prompt_path = '', event_sink_path = '', raw_log_path = '', status_path = '',
+			first_event_at = '', last_heartbeat_at = '', next_retry_at = '', terminal = 0,
+			attempt_count = CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
+			last_error = 'recovered unstarted one-shot run; queued for daemon dispatch', updated_at = ?
+			WHERE project_id = ? AND record_id = ? AND lease_state = 'claimed' AND lease_owner = ?
+				AND lease_generation = ? AND process_pid = 0 AND active_attempt_id = ?`,
+			now.Format(time.RFC3339Nano), run.ProjectID, run.RecordID, run.ActiveAttemptID, run.LeaseGeneration, run.ActiveAttemptID)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return nil
+		}
+		if _, err := tx.Exec(`DELETE FROM attempts WHERE attempt_id = ? AND project_id = ? AND record_id = ? AND process_pid = 0`, run.ActiveAttemptID, run.ProjectID, run.RecordID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM run_authorizations WHERE project_id = ? AND record_id = ? AND lease_generation = ?`, run.ProjectID, run.RecordID, run.LeaseGeneration); err != nil {
+			return err
+		}
+		if directiveResult, err := tx.Exec(`UPDATE run_directives SET state = 'queued', actor = ?, created_at = ?, expires_at = ?, reason = 'recovered before runner spawn'
+			WHERE project_id = ? AND record_id = ? AND state = 'consumed'`, actor, now.Format(time.RFC3339Nano), now.Add(10*time.Minute).Format(time.RFC3339Nano), run.ProjectID, run.RecordID); err != nil {
+			return err
+		} else if directiveRows, err := directiveResult.RowsAffected(); err != nil {
+			return err
+		} else if directiveRows == 0 {
+			return nil
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		recovered = true
+		return nil
+	})
+	return recovered, err
+}
+
+// registerRunnerWrapperSpawn is the durable handoff from a committed attempt
+// intent to a real wrapper process. It races recovery inside SQLite: if
+// recovery removed the placeholder first, registration returns false and the
+// wrapper must exit before launching its child; if registration wins, the
+// non-zero attempt PID makes recovery ineligible.
+func (s *RuntimeStore) registerRunnerWrapperSpawn(req StartRequest, pid, pgid int, processStartedAt string) (bool, error) {
+	if req.ProjectID == "" || req.RecordID == "" || req.AttemptID == "" || req.LeaseGeneration <= 0 || pid <= 0 {
+		return false, tuskerError(errorInvalidArg, "wrapper spawn registration requires project, task, attempt, lease generation, and pid")
+	}
+	registered := false
+	err := s.withBusyRetry(func() error {
+		registered = false
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		attemptResult, err := tx.Exec(`UPDATE attempts SET process_pid = ?
+			WHERE attempt_id = ? AND project_id = ? AND record_id = ? AND process_pid = 0
+				AND EXISTS (SELECT 1 FROM runs WHERE project_id = ? AND record_id = ?
+					AND active_attempt_id = ? AND lease_owner = ? AND lease_generation = ?
+					AND lease_state IN ('claimed','running') AND process_pid = 0)`,
+			pid, req.AttemptID, req.ProjectID, req.RecordID,
+			req.ProjectID, req.RecordID, req.AttemptID, req.AttemptID, req.LeaseGeneration)
+		if err != nil {
+			return err
+		}
+		attemptRows, err := attemptResult.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if attemptRows == 0 {
+			return nil
+		}
+		runResult, err := tx.Exec(`UPDATE runs SET process_pid = ?, process_pgid = ?, process_started_at = ?, updated_at = ?
+			WHERE project_id = ? AND record_id = ? AND active_attempt_id = ? AND lease_owner = ?
+				AND lease_generation = ? AND lease_state IN ('claimed','running') AND process_pid = 0`,
+			pid, pgid, processStartedAt, time.Now().UTC().Format(time.RFC3339Nano),
+			req.ProjectID, req.RecordID, req.AttemptID, req.AttemptID, req.LeaseGeneration)
+		if err != nil {
+			return err
+		}
+		runRows, err := runResult.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if runRows == 0 {
+			return nil
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		registered = true
+		return nil
+	})
+	return registered, err
+}
+
 func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 	if run.LeaseState == "" {
 		run.LeaseState = string(LeaseStateUnclaimed)
@@ -1548,6 +1784,105 @@ func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generati
 		return false, err
 	}
 	return affected > 0, nil
+}
+
+// claimRunLeaseWithDirectiveAttempt is the directed-dispatch commit boundary.
+// A one-shot authorization must never be consumed unless the matching lease,
+// authorization trail, and durable attempt intent all exist. Keeping those
+// writes in one SQLite transaction lets normal stale-lease recovery handle a
+// crash after the claim without losing the operator's exactly-once request.
+func (s *RuntimeStore) claimRunLeaseWithDirectiveAttempt(run RunStatus, owner string, generation int, ttl time.Duration, now time.Time, precondition RuntimeLeaseClaimPrecondition, auth RunAuthorization, attempt RunAttempt) (bool, error) {
+	if strings.TrimSpace(run.ProjectID) == "" || strings.TrimSpace(run.RecordID) == "" || strings.TrimSpace(owner) == "" || generation <= 0 {
+		return false, tuskerError(errorInvalidArg, "directed lease claim requires project, task, owner, and generation")
+	}
+	if strings.TrimSpace(attempt.AttemptID) == "" || attempt.AttemptID != owner {
+		return false, tuskerError(errorInvalidArg, "directed lease claim requires an attempt matching the lease owner")
+	}
+	expectedLeaseState := strings.TrimSpace(string(precondition.ExpectedLeaseState))
+	if expectedLeaseState == "" {
+		return false, tuskerError(errorInvalidArg, "directed lease claim requires expected lease state")
+	}
+	if ttl <= 0 {
+		ttl = defaultRunLeaseTTL
+	}
+	now = now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	createdAt := now.Format(time.RFC3339Nano)
+	auth.ProjectID, auth.RecordID, auth.LeaseGeneration = run.ProjectID, run.RecordID, generation
+	auth.Actor = firstNonEmpty(strings.TrimSpace(auth.Actor), owner)
+	auth.Source = firstNonEmpty(strings.TrimSpace(auth.Source), "human_run_directive")
+	auth.CreatedAt = createdAt
+	attempt.ProjectID, attempt.RecordID = run.ProjectID, run.RecordID
+	attempt.AttemptID = owner
+	attempt.ItemID = firstNonEmpty(attempt.ItemID, run.ItemID)
+	attempt.Runner = firstNonEmpty(attempt.Runner, run.Runner)
+	attempt.Lane = firstNonEmpty(attempt.Lane, run.Lane, runLaneExecute)
+	attempt.WorkRevision = run.WorkRevision
+	attempt.Outcome = firstNonEmpty(attempt.Outcome, string(AttemptOutcomeNone))
+	attempt.StartedAt = firstNonEmpty(attempt.StartedAt, createdAt)
+
+	claimed := false
+	err := s.withBusyRetry(func() error {
+		claimed = false
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		directiveResult, err := tx.Exec(`UPDATE run_directives SET state = 'consumed', reason = ''
+			WHERE project_id = ? AND record_id = ? AND state = 'queued' AND julianday(expires_at) > julianday(?)`,
+			run.ProjectID, run.RecordID, createdAt)
+		if err != nil {
+			return err
+		}
+		directiveRows, err := directiveResult.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if directiveRows == 0 {
+			return nil
+		}
+
+		claimResult, err := tx.Exec(`UPDATE runs
+			SET lease_state = 'claimed', lease_owner = ?, lease_generation = ?, lease_expires_at = ?, lease_host = ?,
+				last_heartbeat_at = ?, updated_at = ?, hand_run = 0, attempt_count = ?, active_attempt_id = ?,
+				runner = ?, lane = ?, started_at = CASE WHEN started_at = '' THEN ? ELSE started_at END, last_event_at = ?
+			WHERE project_id = ? AND record_id = ?
+				AND lease_state NOT IN ('claimed', 'running') AND lease_state = ? AND lease_owner = ?
+				AND lease_generation = ? AND work_revision = ?
+				AND (? <= 0 OR (SELECT COUNT(1) FROM runs active WHERE active.project_id = ? AND active.lease_state IN ('claimed','running')) < ?)`,
+			owner, generation, now.Add(ttl).Format(time.RFC3339Nano), runtimeLeaseHost(), createdAt, createdAt,
+			run.AttemptCount+1, owner, attempt.Runner, attempt.Lane, attempt.StartedAt, createdAt,
+			run.ProjectID, run.RecordID, expectedLeaseState, precondition.ExpectedOwner,
+			precondition.ExpectedLeaseGeneration, precondition.ExpectedWorkRevision,
+			precondition.ProjectConcurrencyLimit, run.ProjectID, precondition.ProjectConcurrencyLimit)
+		if err != nil {
+			return err
+		}
+		claimRows, err := claimResult.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if claimRows == 0 {
+			return nil
+		}
+		if _, err := tx.Exec(`INSERT INTO run_authorizations(project_id, record_id, lease_generation, source, actor, trigger, project_automation_enabled, created_at)
+			VALUES(?,?,?,?,?,?,?,?)`, auth.ProjectID, auth.RecordID, auth.LeaseGeneration, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, branch_name, outcome, started_at)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkRevision, attempt.WorkspacePath, attempt.BranchName, attempt.Outcome, attempt.StartedAt); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		claimed = true
+		return nil
+	})
+	return claimed, err
 }
 
 func (s *RuntimeStore) RunLeaseMatches(projectID, recordID, owner string, generation int) (bool, error) {

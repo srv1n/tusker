@@ -18,6 +18,7 @@ import {
   Lock,
   ScrollText,
   GitMerge,
+  Play,
   X,
 } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -45,6 +46,7 @@ import {
   useFrontmatterUpdate,
   useGateAction,
   useLandTask,
+  useRunTask,
   useTask,
   useTaskStatusAction,
 } from "@/lib/queries";
@@ -547,6 +549,7 @@ function TaskProseBlock({
 }
 
 function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: string }) {
+  const runTask = useRunTask(task.id, projectId);
   const statusAction = useTaskStatusAction(task.id, projectId);
   const closeTask = useCloseTask(task.id, projectId);
   const discardTask = useDiscardTask(task.id, projectId);
@@ -575,6 +578,7 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
   // Shared busy flag: the whole panel disables while any one action is in
   // flight, so a slow POST can't be double-fired from another button.
   const busy =
+    runTask.isPending ||
     statusAction.isPending ||
     closeTask.isPending ||
     discardTask.isPending ||
@@ -586,6 +590,8 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
   const currentStatus =
     task.rawStatus ??
     (task.status === "in_progress" || task.status === "blocked" ? "ready" : task.status);
+  const runnable = currentStatus === "ready" || currentStatus === "rework";
+  const directiveQueued = task.runDirective?.state === "queued";
   const statusOptions = [
     ["ready", "Ready"],
     ["review", "Review"],
@@ -665,6 +671,22 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
   return (
     <div className="overflow-hidden rounded-xl border border-line bg-raised">
       <div className="space-y-2.5 p-3">
+        {runnable && (
+          <div className="space-y-2 border-b border-line-soft pb-2.5">
+            <Button type="button" size="sm" variant="primary" className="w-full" disabled={busy || directiveQueued} onClick={() => runTask.mutate()}>
+              <Play size={12} />
+              {directiveQueued ? "Queued for dispatch" : "Run once"}
+            </Button>
+            {task.runDirective && (
+              <div className="text-[11px] leading-relaxed text-muted" role="status">
+                {task.runDirective.state === "queued" && `Queued by ${task.runDirective.actor} · expires ${relativeTime(task.runDirective.expiresAt)}`}
+                {task.runDirective.state === "lapsed" && (task.runDirective.reason ?? "The queued run lapsed before the daemon claimed it.")}
+                {task.runDirective.state === "consumed" && `Claimed from the one-shot request by ${task.runDirective.actor}.`}
+              </div>
+            )}
+            <ActionResultLine pending={runTask.isPending} error={runTask.error} result={runTask.data} />
+          </div>
+        )}
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em] text-fainter">

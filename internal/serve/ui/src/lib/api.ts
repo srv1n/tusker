@@ -229,6 +229,9 @@ export const api = {
   taskStatus: (taskId: string, body: { status: string; reason?: string; actor?: string; force?: boolean }, projectId?: string): Promise<ActionResult> =>
     USE_MOCK ? delay({ ok: true, reason: `status -> ${body.status}`, taskId }) : post(withProject(`/tasks/${taskId}/status`, projectId), body),
 
+  runTask: (taskId: string, projectId?: string): Promise<ActionResult> =>
+    USE_MOCK ? delay({ ok: true, reason: "queued for daemon dispatch", taskId }) : post(withProject(`/tasks/${taskId}/run`, projectId), {}),
+
   discardTask: (
     taskId: string,
     body: { dryRun?: boolean; reason?: string; actor?: string; dependents?: "detach" | "discard" },

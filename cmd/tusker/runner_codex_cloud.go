@@ -92,7 +92,10 @@ func (r *CodexCloudRunner) Start(ctx context.Context, req StartRequest) (*StartR
 	if err := preflightCodexCloudRawLog(req.RawLogPath); err != nil {
 		return nil, fmt.Errorf("preflight codex cloud raw log: %w", err)
 	}
-	command := codexCloudCommand(config.Command, config, req, "")
+	command, err := r.commandForExecution(codexCloudCommand(config.Command, config, req, ""), req.RunnerPathPrefix)
+	if err != nil {
+		return nil, err
+	}
 	output, launchErr := r.executor().RunCodexCloud(ctx, codexCloudExecRequest{
 		Command: command,
 		Stdin:   prompt,
@@ -160,7 +163,10 @@ func (r *CodexCloudRunner) Reconcile(ctx context.Context, req ReconcileRequest) 
 	if taskID == "" {
 		return &ReconcileResult{LeaseState: LeaseStateReleased, Outcome: AttemptOutcomeAbandoned, Reason: "missing codex cloud task id"}, nil
 	}
-	command := codexCloudCommand(config.StatusCommand, config, StartRequest{}, taskID)
+	command, err := r.commandForExecution(codexCloudCommand(config.StatusCommand, config, StartRequest{}, taskID), "")
+	if err != nil {
+		return nil, err
+	}
 	output, err := r.executor().RunCodexCloud(ctx, codexCloudExecRequest{
 		Command:     command,
 		Env:         codexCloudEnv(StartRequest{}, config, taskID),
@@ -190,7 +196,10 @@ func (r *CodexCloudRunner) Collect(ctx context.Context, req CollectRequest) (*Co
 	if taskID == "" {
 		return &CollectResult{Artifacts: map[string]string{}}, nil
 	}
-	command := codexCloudCommand(config.CollectCommand, config, StartRequest{}, taskID)
+	command, err := r.commandForExecution(codexCloudCommand(config.CollectCommand, config, StartRequest{}, taskID), "")
+	if err != nil {
+		return nil, err
+	}
 	output, err := r.executor().RunCodexCloud(ctx, codexCloudExecRequest{
 		Command:     command,
 		Env:         codexCloudEnv(StartRequest{}, config, taskID),
@@ -213,6 +222,22 @@ func (r *CodexCloudRunner) executor() codexCloudExecutor {
 		return r.Executor
 	}
 	return shellCodexCloudExecutor{}
+}
+
+// commandForExecution makes the shell execute the same runner binary that
+// passed preflight. Status and collect are separate shell launches, so they
+// re-resolve the command when no dispatch-time prefix is available.
+func (r *CodexCloudRunner) commandForExecution(command, pathPrefix string) (string, error) {
+	if strings.TrimSpace(pathPrefix) == "" {
+		if _, isShellExecutor := r.executor().(shellCodexCloudExecutor); isShellExecutor {
+			preflight, blocker := runnerCommandPreflight(RunnerCodexCloud, command)
+			if blocker != "" {
+				return "", errors.New(blocker)
+			}
+			pathPrefix = preflight.RunnerPathPrefix
+		}
+	}
+	return runnerCommandWithPathPrefix(command, pathPrefix), nil
 }
 
 func withDefaultCodexCloudConfig(config CodexCloudConfig) CodexCloudConfig {
@@ -266,7 +291,8 @@ func codexCloudEnv(req StartRequest, config CodexCloudConfig, taskID string) []s
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: req.WorkspacePath, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-		NotePath: req.NotePath, VaultPath: req.VaultPath,
+		RunnerPathPrefix: req.RunnerPathPrefix,
+		NotePath:         req.NotePath, VaultPath: req.VaultPath,
 		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		CodexPolicy: withDefaultCodexPolicy(req.CodexPolicy),
 	})

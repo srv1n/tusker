@@ -61,60 +61,62 @@ type RunnerCapabilities struct {
 }
 
 type StartRequest struct {
-	ProjectID       string
-	RecordID        string
-	ItemID          string
-	AttemptID       string
-	Lane            string
-	WorkRevision    int
-	LeaseGeneration int
-	ActiveStates    []string
-	WorkingDir      string
-	WorkspacePath   string
-	RepoRoot        string
-	PromptPath      string
-	EventSinkPath   string
-	RawLogPath      string
-	StatusPath      string
-	Command         string
-	RunnerProfile   string
-	RunnerHarness   string
-	RunnerModel     string
-	RunnerEffort    string
-	NotePath        string
-	VaultPath       string
-	Budget          map[string]any
-	CodexPolicy     CodexPolicy
-	ExternalLoop    ExternalLoopLaunchContext
+	ProjectID        string
+	RecordID         string
+	ItemID           string
+	AttemptID        string
+	Lane             string
+	WorkRevision     int
+	LeaseGeneration  int
+	ActiveStates     []string
+	WorkingDir       string
+	WorkspacePath    string
+	RepoRoot         string
+	PromptPath       string
+	EventSinkPath    string
+	RawLogPath       string
+	StatusPath       string
+	Command          string
+	RunnerPathPrefix string
+	RunnerProfile    string
+	RunnerHarness    string
+	RunnerModel      string
+	RunnerEffort     string
+	NotePath         string
+	VaultPath        string
+	Budget           map[string]any
+	CodexPolicy      CodexPolicy
+	ExternalLoop     ExternalLoopLaunchContext
 }
 
 type ResumeRequest struct {
-	ProjectID       string
-	RecordID        string
-	ItemID          string
-	AttemptID       string
-	Lane            string
-	WorkRevision    int
-	LeaseGeneration int
-	ActiveStates    []string
-	SessionRef      string
-	MessageRef      string
-	WorkingDir      string
-	WorkspacePath   string
-	RepoRoot        string
-	PromptPath      string
-	EventSinkPath   string
-	RawLogPath      string
-	StatusPath      string
-	Command         string
-	RunnerProfile   string
-	RunnerHarness   string
-	RunnerModel     string
-	RunnerEffort    string
-	NotePath        string
-	VaultPath       string
-	CodexPolicy     CodexPolicy
-	ExternalLoop    ExternalLoopLaunchContext
+	ProjectID        string
+	RecordID         string
+	ItemID           string
+	AttemptID        string
+	Lane             string
+	WorkRevision     int
+	LeaseGeneration  int
+	ActiveStates     []string
+	SessionRef       string
+	MessageRef       string
+	WorkingDir       string
+	WorkspacePath    string
+	RepoRoot         string
+	PromptPath       string
+	EventSinkPath    string
+	RawLogPath       string
+	StatusPath       string
+	Command          string
+	RunnerPathPrefix string
+	RunnerProfile    string
+	RunnerHarness    string
+	RunnerModel      string
+	RunnerEffort     string
+	NotePath         string
+	VaultPath        string
+	CodexPolicy      CodexPolicy
+	ExternalLoop     ExternalLoopLaunchContext
 }
 
 type ExternalLoopLaunchContext struct {
@@ -321,7 +323,12 @@ func assertRunnerCommandDir(runner RunnerName, cmdDir, workspacePath string) err
 func runnerEnv(req runnerLaunchEnv) []string {
 	extensionPolicy := withDefaultExtensionPolicy(req.CodexPolicy.Extensions)
 	extensionPolicyJSON, _ := json.Marshal(extensionPolicy)
-	return append(runnerBaseEnv(),
+	baseEnv := runnerBaseEnv()
+	if prefix := strings.TrimSpace(req.RunnerPathPrefix); prefix != "" {
+		path := runnerEnvValue(baseEnv, "PATH")
+		baseEnv = setEnvValue(baseEnv, "PATH", strings.Join(uniquePathStrings([]string{prefix, path}), string(os.PathListSeparator)))
+	}
+	return append(baseEnv,
 		"TUSKER_PROJECT_ID="+req.ProjectID,
 		"TUSKER_RECORD_ID="+req.RecordID,
 		"TUSKER_ITEM_ID="+req.ItemID,
@@ -365,6 +372,16 @@ func runnerEnv(req runnerLaunchEnv) []string {
 	)
 }
 
+func runnerEnvValue(env []string, key string) string {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return ""
+}
+
 func withDefaultExtensionPolicy(policy ExtensionPolicy) ExtensionPolicy {
 	out := policy
 	out.AllowedTools = append([]string{}, policy.AllowedTools...)
@@ -373,29 +390,30 @@ func withDefaultExtensionPolicy(policy ExtensionPolicy) ExtensionPolicy {
 }
 
 type runnerLaunchEnv struct {
-	ProjectID       string
-	RecordID        string
-	ItemID          string
-	AttemptID       string
-	Lane            string
-	WorkRevision    int
-	LeaseGeneration int
-	WorkspacePath   string
-	RepoRoot        string
-	PromptPath      string
-	EventSinkPath   string
-	RawLogPath      string
-	StatusPath      string
-	NotePath        string
-	VaultPath       string
-	SessionRef      string
-	MessageRef      string
-	RunnerProfile   string
-	RunnerHarness   string
-	RunnerModel     string
-	RunnerEffort    string
-	CodexPolicy     CodexPolicy
-	ExternalLoop    ExternalLoopLaunchContext
+	ProjectID        string
+	RecordID         string
+	ItemID           string
+	AttemptID        string
+	Lane             string
+	WorkRevision     int
+	LeaseGeneration  int
+	WorkspacePath    string
+	RepoRoot         string
+	PromptPath       string
+	EventSinkPath    string
+	RawLogPath       string
+	StatusPath       string
+	RunnerPathPrefix string
+	NotePath         string
+	VaultPath        string
+	SessionRef       string
+	MessageRef       string
+	RunnerProfile    string
+	RunnerHarness    string
+	RunnerModel      string
+	RunnerEffort     string
+	CodexPolicy      CodexPolicy
+	ExternalLoop     ExternalLoopLaunchContext
 }
 
 func networkAccessEnvValue(value *bool) string {

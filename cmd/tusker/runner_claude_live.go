@@ -97,6 +97,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		"{{session_ref}}":    resumeSessionRef(resume),
 		"{{message_ref}}":    resumeMessageRef(resume),
 	})
+	command = runnerCommandWithPathPrefix(command, req.RunnerPathPrefix)
 	policy := codexPolicyForLane(req.CodexPolicy, req.Lane)
 	cmd := exec.CommandContext(ctx, "sh", "-lc", command)
 	cmd.Dir = workspaceCWD
@@ -107,7 +108,8 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-		NotePath: req.NotePath, VaultPath: req.VaultPath, SessionRef: resumeSessionRef(resume), MessageRef: resumeMessageRef(resume),
+		RunnerPathPrefix: req.RunnerPathPrefix,
+		NotePath:         req.NotePath, VaultPath: req.VaultPath, SessionRef: resumeSessionRef(resume), MessageRef: resumeMessageRef(resume),
 		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		CodexPolicy: policy,
 	})
