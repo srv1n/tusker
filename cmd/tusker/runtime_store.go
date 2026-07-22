@@ -1397,13 +1397,18 @@ func (s *RuntimeStore) registerRunnerWrapperSpawn(req StartRequest, pid, pgid in
 			return err
 		}
 		defer tx.Rollback()
+		// process_pid = pid (not just 0) accepts the benign write race where the
+		// daemon persisted the wrapper's own PID before the wrapper registered it:
+		// re-registering the identical PID is idempotent. A different PID or a
+		// recovered/replaced claim (stale lease generation, mismatched attempt
+		// identity) still fails these predicates and returns unregistered.
 		attemptResult, err := tx.Exec(`UPDATE attempts SET process_pid = ?
-			WHERE attempt_id = ? AND project_id = ? AND record_id = ? AND process_pid = 0
+			WHERE attempt_id = ? AND project_id = ? AND record_id = ? AND (process_pid = 0 OR process_pid = ?)
 				AND EXISTS (SELECT 1 FROM runs WHERE project_id = ? AND record_id = ?
 					AND active_attempt_id = ? AND lease_owner = ? AND lease_generation = ?
-					AND lease_state IN ('claimed','running') AND process_pid = 0)`,
-			pid, req.AttemptID, req.ProjectID, req.RecordID,
-			req.ProjectID, req.RecordID, req.AttemptID, req.AttemptID, req.LeaseGeneration)
+					AND lease_state IN ('claimed','running') AND (process_pid = 0 OR process_pid = ?))`,
+			pid, req.AttemptID, req.ProjectID, req.RecordID, pid,
+			req.ProjectID, req.RecordID, req.AttemptID, req.AttemptID, req.LeaseGeneration, pid)
 		if err != nil {
 			return err
 		}
@@ -1416,9 +1421,9 @@ func (s *RuntimeStore) registerRunnerWrapperSpawn(req StartRequest, pid, pgid in
 		}
 		runResult, err := tx.Exec(`UPDATE runs SET process_pid = ?, process_pgid = ?, process_started_at = ?, updated_at = ?
 			WHERE project_id = ? AND record_id = ? AND active_attempt_id = ? AND lease_owner = ?
-				AND lease_generation = ? AND lease_state IN ('claimed','running') AND process_pid = 0`,
+				AND lease_generation = ? AND lease_state IN ('claimed','running') AND (process_pid = 0 OR process_pid = ?)`,
 			pid, pgid, processStartedAt, time.Now().UTC().Format(time.RFC3339Nano),
-			req.ProjectID, req.RecordID, req.AttemptID, req.AttemptID, req.LeaseGeneration)
+			req.ProjectID, req.RecordID, req.AttemptID, req.AttemptID, req.LeaseGeneration, pid)
 		if err != nil {
 			return err
 		}

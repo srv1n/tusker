@@ -470,6 +470,81 @@ func TestDirectedClaimSpawnRegistrationRacesRecovery(t *testing.T) {
 	}
 }
 
+func TestDirectedClaimWrapperRegistersDaemonStampedPID(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	projects, err := server.store.ListProjects()
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("registered project: projects=%#v err=%v", projects, err)
+	}
+	project := projects[0]
+	run := RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: string(RunnerCodexExec), Lane: runLaneExecute, LeaseState: string(LeaseStateUnclaimed)}
+	if err := server.store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if queued, err := server.store.QueueRunDirective(RunDirective{ProjectID: project.ProjectID, RecordID: run.RecordID, Actor: "human:test", CreatedAt: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Minute).Format(time.RFC3339Nano)}); err != nil || !queued {
+		t.Fatalf("queue directive: queued=%t err=%v", queued, err)
+	}
+	if claimed, err := server.store.claimRunLeaseWithDirectiveAttempt(run, "attempt-stamped", 1, time.Minute, now, RuntimeLeaseClaimPrecondition{ExpectedLeaseState: LeaseStateUnclaimed}, RunAuthorization{Source: "human_run_directive", Actor: "human:test"}, RunAttempt{AttemptID: "attempt-stamped", Runner: string(RunnerCodexExec), Lane: runLaneExecute}); err != nil || !claimed {
+		t.Fatalf("commit intent: claimed=%t err=%v", claimed, err)
+	}
+	claimedRun, err := server.store.FindRun(run.RecordID)
+	if err != nil || claimedRun == nil {
+		t.Fatalf("load claimed run: run=%#v err=%v", claimedRun, err)
+	}
+
+	// The daemon wins the write race and persists the wrapper's own PID before
+	// the cold wrapper executable calls registerRunnerWrapperSpawn (daemon.go
+	// stamps the attempt then flips the run to running). Reproduce both stamps.
+	const daemonStampedPID = 424242
+	placeholders, err := server.store.ListAttemptsForRun(project.ProjectID, run.RecordID)
+	if err != nil || len(placeholders) != 1 {
+		t.Fatalf("expected one placeholder attempt: attempts=%#v err=%v", placeholders, err)
+	}
+	stampedAttempt := placeholders[0]
+	stampedAttempt.ProcessPID = daemonStampedPID
+	if ok, err := server.store.SaveAttemptIfRunLease(stampedAttempt, claimedRun.ActiveAttemptID, claimedRun.LeaseGeneration); err != nil || !ok {
+		t.Fatalf("daemon stamp attempt pid: ok=%t err=%v", ok, err)
+	}
+	stampedRun := *claimedRun
+	stampedRun.ProcessPID = daemonStampedPID
+	stampedRun.ProcessPGID = daemonStampedPID
+	stampedRun.ProcessStartedAt = "daemon-stamped-process"
+	stampedRun.LeaseState = string(LeaseStateRunning)
+	if ok, err := server.store.UpdateRunIfLease(stampedRun, claimedRun.ActiveAttemptID, claimedRun.LeaseGeneration); err != nil || !ok {
+		t.Fatalf("daemon stamp run pid: ok=%t err=%v", ok, err)
+	}
+
+	spawn := StartRequest{ProjectID: project.ProjectID, RecordID: run.RecordID, AttemptID: claimedRun.ActiveAttemptID, LeaseGeneration: claimedRun.LeaseGeneration}
+
+	// A different PID reaching this stamped attempt is a genuine conflict and
+	// must still be refused without clobbering the stored PID.
+	if registered, err := server.store.registerRunnerWrapperSpawn(spawn, daemonStampedPID+1, daemonStampedPID+1, "wrapper-process"); err != nil || registered {
+		t.Fatalf("different PID must be refused after daemon stamp: registered=%t err=%v", registered, err)
+	}
+	if guarded, err := server.store.ListAttemptsForRun(project.ProjectID, run.RecordID); err != nil || len(guarded) != 1 || guarded[0].ProcessPID != daemonStampedPID {
+		t.Fatalf("refused registration must not clobber stored PID: attempts=%#v err=%v", guarded, err)
+	}
+
+	// The wrapper registering the identical PID the daemon already stored is the
+	// benign race and must succeed idempotently.
+	if registered, err := server.store.registerRunnerWrapperSpawn(spawn, daemonStampedPID, daemonStampedPID, "wrapper-process"); err != nil || !registered {
+		t.Fatalf("wrapper registering the daemon-stamped PID must succeed: registered=%t err=%v", registered, err)
+	}
+	attempts, err := server.store.ListAttemptsForRun(project.ProjectID, run.RecordID)
+	if err != nil || len(attempts) != 1 || attempts[0].ProcessPID != daemonStampedPID {
+		t.Fatalf("registered attempt must retain daemon-stamped PID: attempts=%#v err=%v", attempts, err)
+	}
+	directive, err := server.store.RunDirective(project.ProjectID, run.RecordID)
+	if err != nil || directive == nil || directive.State != "consumed" {
+		t.Fatalf("registered directive must remain consumed: directive=%#v err=%v", directive, err)
+	}
+	final, err := server.store.FindRun(run.RecordID)
+	if err != nil || final == nil || final.ProcessPID != daemonStampedPID {
+		t.Fatalf("registered run must retain daemon-stamped PID: run=%#v err=%v", final, err)
+	}
+}
+
 func TestInteractiveCannotDispatchDirective(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Interactive refusal", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
