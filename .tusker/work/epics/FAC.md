@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-21T07:06:03Z"
-updated_at: "2026-07-22T04:54:11Z"
-state_rev: "sha256:c8cb1dabd5e8ef4e90cc6606938cf12a52be749f4992d88112144fd4c0a09b7f"
+updated_at: "2026-07-22T05:16:52Z"
+state_rev: "sha256:a81fae5e4d6f21f1b138389a0f8f0c1236b6ebd5800cea56d4f992782d66e3d4"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -51,6 +51,7 @@ TBD.
 | [[FAC-T-0013]] | ready | agent | Execute the task contract and satisfy proof mode. |
 | [[FAC-T-0014]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[FAC-T-0015]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[FAC-T-0016]] | backlog | blocked_dependency | Wait for dependency FAC-T-0013 to reach review with satisfied proof or done. |
 
 ## Recently completed
 
