@@ -16,6 +16,7 @@ import { gateKindLabel, gateKindTone } from "@/components/ui/tone";
 import { useConfirm, ActionResultLine } from "@/components/ui/action-feedback";
 import { HumanActionCard } from "@/features/human-action/HumanActionCard";
 import {
+  useAcknowledgeRun,
   useCloseTask,
   useGateAction,
   useRedrive,
@@ -134,6 +135,7 @@ export function NeedCard({ need, showProject = false }: { need: NeedItem; showPr
   const closeTask = useCloseTask(need.taskId, need.projectId);
   const statusAction = useTaskStatusAction(need.taskId, need.projectId);
   const redrive = useRedrive(need.taskId, need.projectId);
+  const acknowledge = useAcknowledgeRun(need.taskId, need.projectId);
   const gateAction = useGateAction();
 
   if (gone) return null;
@@ -236,6 +238,24 @@ export function NeedCard({ need, showProject = false }: { need: NeedItem; showPr
   function onSecondary() {
     if (pending) return;
     setComposeOpen((v) => !v);
+  }
+
+  /**
+   * Acknowledge a settled failed run: retire the record so it clears from
+   * attention everywhere. A confirm guards the terminal action; the shared run()
+   * helper slides the card away on success and restores it (with the refusal
+   * reason) if the run is still active.
+   */
+  async function onAcknowledge() {
+    if (pending) return;
+    const ok = await askConfirm({
+      title: "Acknowledge this failed run?",
+      body: `${need.taskId} — ${need.taskTitle}. This retires the run and clears it from attention.`,
+      confirmLabel: "Acknowledge",
+      cancelLabel: "Keep it",
+    });
+    if (!ok) return;
+    await run(() => acknowledge.mutateAsync());
   }
 
   /** The compose box send button — clarify answer, or a review/spec send-back. */
@@ -379,6 +399,15 @@ export function NeedCard({ need, showProject = false }: { need: NeedItem; showPr
             onClick={onPrimary}
           />
           <SecondaryAction need={need} disabled={pending} onClick={onSecondary} />
+          {need.kind === "failed" && (
+            <button
+              onClick={() => void onAcknowledge()}
+              disabled={pending}
+              className="rounded-lg border border-line px-3.5 py-2 text-[13px] font-medium text-muted transition-colors hover:border-fainter hover:text-ink-soft disabled:opacity-40"
+            >
+              Acknowledge
+            </button>
+          )}
         </div>
 
         {composeOpen && (

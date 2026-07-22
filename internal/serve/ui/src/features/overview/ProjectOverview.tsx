@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowRight, Diamond, Flag, RefreshCw, Search, Settings } from "lucide-react";
+import { Diamond, Flag, RefreshCw, Search, Settings } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { sinceLabel } from "@/lib/time";
 import {
   useDaemon,
   useEpics,
@@ -12,22 +11,11 @@ import {
   useRuns,
   useTasks,
 } from "@/lib/queries";
-import {
-  EmptyState,
-  ErrorState,
-  QueryBoundary,
-  Skeleton,
-  SkeletonRows,
-} from "@/components/ui/states";
+import { EmptyState, ErrorState, QueryBoundary, Skeleton } from "@/components/ui/states";
 import { PageScroll } from "@/components/ui/page";
 import { Dot, Mono } from "@/components/ui/primitives";
-import { RunnerBadge } from "@/components/ui/chips";
-import { LivenessDot } from "@/components/ui/liveness";
 import { Button } from "@/components/ui/controls";
 import {
-  gateKindLabel,
-  gateKindTone,
-  livenessTone,
   priorityTone,
   riskTone,
   statusLabel,
@@ -37,13 +25,14 @@ import {
 } from "@/components/ui/tone";
 import type {
   EpicSummary,
-  NeedItem,
   ProjectSummary,
   RunSummary,
   TaskCapsule,
   TaskStatus,
 } from "@/types/domain";
 import { openTaskSearch } from "@/features/search/TaskSearch";
+import { NeedsList } from "@/features/needs/ProjectNeeds";
+import { LivenessLegend, RunsBoard } from "@/features/runs/RunsBoard";
 
 const route = getRouteApi("/p/$projectId/");
 
@@ -52,17 +41,6 @@ const BOARD_COLUMNS: TaskStatus[] = ["in_progress", "review", "blocked", "ready"
 
 /** Order active runs worst-first so a dead process rises to the top. */
 const livenessRank: Record<RunSummary["liveness"], number> = { dead: 0, stale: 1, fresh: 2 };
-
-/** tone → left-accent CSS var (tokens, never a raw hex). */
-const toneVar: Record<Tone, string> = {
-  fail: "--k-fail",
-  pass: "--k-pass",
-  warn: "--k-warn",
-  info: "--k-info",
-  accent: "--k-accent",
-  muted: "--k-faint",
-  neutral: "--k-fainter",
-};
 
 /** tone → subtle outline for the tiny priority pill (full literals for the JIT). */
 const toneBorder: Record<Tone, string> = {
@@ -202,7 +180,11 @@ function OverviewContent({ project, projectId }: { project: ProjectSummary; proj
           </Button>
           <Button
             variant={needsCount > 0 ? "danger" : "default"}
-            onClick={() => navigate({ to: "/p/$projectId/needs", params: { projectId } })}
+            onClick={() =>
+              document
+                .getElementById("overview-attention")
+                ?.scrollIntoView({ behavior: "smooth", block: "start" })
+            }
           >
             {needsCount > 0 ? `${needsCount} ${needsCount === 1 ? "need" : "needs"} you` : "Needs"}
           </Button>
@@ -228,6 +210,17 @@ function OverviewContent({ project, projectId }: { project: ProjectSummary; proj
         <StatCell label="Runs" value={statsLoading ? <StatSkeleton /> : String(runs.length)} />
       </div>
 
+      {/* Attention — absorbs the Needs-me page (attention first). */}
+      <section id="overview-attention" className="mb-8 scroll-mt-6">
+        <div className="mb-2.5 flex items-center justify-between">
+          <SectionCaps>Needs you</SectionCaps>
+          {needsCount > 0 && (
+            <Mono className="text-[11px] font-semibold text-fail">{needsCount}</Mono>
+          )}
+        </div>
+        <NeedsList projectId={projectId} />
+      </section>
+
       {/* Epic rollups */}
       <div className="mb-5 flex flex-wrap items-center gap-2">
         <span className="mr-1 font-mono text-[9.5px] font-medium uppercase tracking-[0.12em] text-fainter">
@@ -238,76 +231,19 @@ function OverviewContent({ project, projectId }: { project: ProjectSummary; proj
         </QueryBoundary>
       </div>
 
-      {/* Board + right rail */}
-      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(272px,316px)]">
-        <QueryBoundary q={tasksQ} loading={<BoardSkeleton />}>
-          {(allTasks) => <Board tasks={allTasks} reworkIds={reworkIds} projectId={projectId} />}
-        </QueryBoundary>
+      {/* Work board */}
+      <QueryBoundary q={tasksQ} loading={<BoardSkeleton />}>
+        {(allTasks) => <Board tasks={allTasks} reworkIds={reworkIds} projectId={projectId} />}
+      </QueryBoundary>
 
-        <aside className="flex flex-col gap-6">
-          <section>
-            <div className="mb-2.5 flex items-center justify-between">
-              <SectionCaps>Blockers · needs you</SectionCaps>
-              {needsQ.data && needsQ.data.length > 0 && (
-                <Mono className="text-[11px] font-semibold text-fail">{needsQ.data.length}</Mono>
-              )}
-            </div>
-            <QueryBoundary q={needsQ} loading={<SkeletonRows rows={3} />}>
-              {(items) =>
-                items.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-line px-4 py-5 text-center text-[12.5px] text-faint">
-                    No human gates. Nothing blocked.
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    {[...items]
-                      .sort((a, b) => b.blocking - a.blocking)
-                      .map((need) => (
-                        <BlockerCard key={need.id} need={need} projectId={projectId} />
-                      ))}
-                  </div>
-                )
-              }
-            </QueryBoundary>
-          </section>
-
-          <section>
-            <div className="mb-2.5 flex items-center justify-between">
-              <SectionCaps>Active runs</SectionCaps>
-              <Link
-                to="/p/$projectId/runs"
-                params={{ projectId }}
-                className="inline-flex items-center gap-1 font-mono text-[10.5px] text-faint transition-colors hover:text-ink"
-              >
-                all
-                <ArrowRight size={11} />
-              </Link>
-            </div>
-            <QueryBoundary
-              q={runsQ}
-              loading={
-                <div className="rounded-lg border border-line p-3">
-                  <SkeletonRows rows={2} />
-                </div>
-              }
-            >
-              {() =>
-                activeRuns.length === 0 ? (
-                  <div className="rounded-lg border border-line px-4 py-4 text-center text-[12.5px] text-faint">
-                    No active runs.
-                  </div>
-                ) : (
-                  <div className="overflow-hidden rounded-lg border border-line">
-                    {activeRuns.map((run) => (
-                      <ActiveRunRow key={run.taskId} run={run} projectId={projectId} />
-                    ))}
-                  </div>
-                )
-              }
-            </QueryBoundary>
-          </section>
-        </aside>
-      </div>
+      {/* Runs — absorbs the Runs page (runs below). */}
+      <section className="mt-8">
+        <div className="mb-2.5 flex items-center justify-between gap-4">
+          <SectionCaps>Runs</SectionCaps>
+          <LivenessLegend />
+        </div>
+        <RunsBoard projectId={projectId} />
+      </section>
     </div>
   );
 }
@@ -494,55 +430,6 @@ function TaskMiniCard({
           {task.risk}
         </span>
       </div>
-    </Link>
-  );
-}
-
-function BlockerCard({ need, projectId }: { need: NeedItem; projectId: string }) {
-  const t = gateKindTone[need.kind];
-  return (
-    <Link
-      to="/p/$projectId/needs"
-      params={{ projectId }}
-      className="block rounded-lg border border-line bg-raised px-3 py-2.5 transition-colors hover:bg-panel"
-      style={{ borderLeftColor: `var(${toneVar[t]})`, borderLeftWidth: 3 }}
-    >
-      <div className="mb-1 flex items-center gap-2">
-        <span className={cn("font-mono text-[9px] font-semibold uppercase tracking-wide", tone[t].text)}>
-          {gateKindLabel[need.kind]}
-        </span>
-        <Mono className="text-[10px] text-faint">{need.taskId}</Mono>
-        {need.blocking > 0 && (
-          <span className={cn("ml-auto font-mono text-[10px] font-semibold", tone[t].text)}>
-            blocks {need.blocking}
-          </span>
-        )}
-      </div>
-      <div className="text-[13px] font-medium leading-snug text-ink-soft">{need.taskTitle}</div>
-    </Link>
-  );
-}
-
-function ActiveRunRow({ run, projectId }: { run: RunSummary; projectId: string }) {
-  const rowTint =
-    run.liveness === "dead" ? "bg-fail-soft/50" : run.liveness === "stale" ? "bg-warn-soft/40" : "";
-  return (
-    <Link
-      to="/p/$projectId/runs/$taskId"
-      params={{ projectId, taskId: run.taskId }}
-      className={cn(
-        "flex items-center gap-2.5 border-b border-line-soft px-3 py-2.5 transition-colors last:border-b-0 hover:bg-hover",
-        rowTint,
-      )}
-    >
-      <LivenessDot liveness={run.liveness} />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[12.5px] font-medium text-ink-soft">{run.taskTitle}</span>
-        <span className={cn("block font-mono text-[9.5px]", tone[livenessTone[run.liveness]].text)}>
-          {sinceLabel(run.sinceLastEventSec)} · {run.liveness}
-        </span>
-      </span>
-      <RunnerBadge runner={run.runner} />
     </Link>
   );
 }

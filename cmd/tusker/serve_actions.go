@@ -159,6 +159,8 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleProjectSettingsAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "redrive":
 		s.handleRunRedrive(w, r, parts[2])
+	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "acknowledge":
+		s.handleRunAcknowledge(w, r, parts[2])
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "status":
 		s.handleTaskStatusAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "discard":
@@ -1052,4 +1054,80 @@ func serveFeedbackDocFromRecord(record feedbackRecord) serveFeedbackDoc {
 		Fields:          record.Fields,
 		Issues:          record.Issues,
 	}
+}
+
+// serveAcknowledgeReason is the retirement reason recorded when an operator
+// clears a settled failed run from the serve attention surface. It mirrors
+// `tusker runs retire --reason <text>` so the CLI and UI leave the same trail.
+const serveAcknowledgeReason = "acknowledged from serve UI"
+
+// handleRunAcknowledge clears a settled failed run from the attention surface by
+// retiring the runtime row through retireRuntimeRun — the same transition as
+// `tusker runs retire`. It refuses (409) while the run is still executing or
+// holding a live lease, so an operator can never acknowledge away a run that is
+// still doing work; the caller must interrupt it first.
+func (s *serveServer) handleRunAcknowledge(w http.ResponseWriter, r *http.Request, taskID string) {
+	snap, err := s.loadSnapshotForRequest(r)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	taskID = strings.TrimSpace(taskID)
+	run, ok := serveFindRun(snap.runs, taskID)
+	if !ok {
+		serveJSON(w, http.StatusNotFound, serveActionResult{Refused: true, TaskID: taskID, Reason: "no run found for this task"})
+		return
+	}
+	if refused, reason := serveAcknowledgeRefusal(run, s.now()); refused {
+		serveJSON(w, http.StatusConflict, serveActionResult{Refused: true, TaskID: firstNonEmpty(run.ItemID, taskID), ProjectID: snap.projectID, Reason: reason})
+		return
+	}
+	actor := defaultActorName()
+	if _, err := retireRuntimeRun(s.store, DefaultStateRoot(), run, actor, serveAcknowledgeReason, s.now(), false); err != nil {
+		// retireRuntimeRun re-checks the live-heartbeat guard; surface a late
+		// refusal as a conflict rather than a 500 so the card can be restored.
+		issue := errorToIssue(err)
+		reason := issue.Message
+		if issue.Hint != "" {
+			reason += " Hint: " + issue.Hint
+		}
+		serveJSON(w, http.StatusConflict, serveActionResult{Refused: true, TaskID: firstNonEmpty(run.ItemID, taskID), ProjectID: snap.projectID, Reason: reason})
+		return
+	}
+	s.refreshProjectSnapshot(snap.projectID)
+	serveJSON(w, http.StatusOK, serveActionResult{
+		OK:        true,
+		TaskID:    firstNonEmpty(run.ItemID, taskID),
+		ProjectID: snap.projectID,
+		Reason:    "run acknowledged and retired",
+	})
+}
+
+// serveAcknowledgeRefusal reports whether a run is too live to acknowledge. A
+// running/claimed lease or a verified-live process must be interrupted first;
+// only a settled row can be retired from under the operator.
+func serveAcknowledgeRefusal(run RunStatus, now time.Time) (bool, string) {
+	if runProcessGroupAlive(run) {
+		return true, "run is still executing; interrupt it before acknowledging"
+	}
+	if !run.Terminal {
+		switch LeaseState(strings.TrimSpace(run.LeaseState)) {
+		case LeaseStateClaimed, LeaseStateRunning:
+			return true, "run is still leased and active; interrupt it before acknowledging"
+		}
+	}
+	if runHasFreshLiveHeartbeat(run, now) {
+		return true, "run has a fresh heartbeat and a verified-live process; interrupt it before acknowledging"
+	}
+	return false, ""
+}
+
+// serveRunRetired reports whether a run has already been retired — via the CLI
+// `tusker runs retire`, the serve acknowledge action, or the daemon's canonical
+// terminal retirement, all of which route through retireRuntimeRun. That
+// function is the single writer of the "retired by <actor>: <reason>" LastError
+// on a terminal row, so the prefix is the reliable retirement marker. A retired
+// run is cleared from the attention (needs) surface and the runs list.
+func serveRunRetired(run RunStatus) bool {
+	return run.Terminal && strings.HasPrefix(strings.TrimSpace(run.LastError), "retired by ")
 }

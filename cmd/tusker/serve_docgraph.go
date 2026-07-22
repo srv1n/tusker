@@ -1,10 +1,19 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"tusker/internal/docgraph"
 )
@@ -80,11 +89,28 @@ type serveDocgraphDetail struct {
 	Path      string                  `json:"path"`
 	Kind      string                  `json:"kind"`
 	Status    string                  `json:"status"`
+	Rev       string                  `json:"rev"`
 	Header    map[string]any          `json:"header"`
 	Body      string                  `json:"body"`
 	Links     []serveDocgraphLink     `json:"links"`
 	Backlinks []serveDocgraphBacklink `json:"backlinks"`
 	Successor *serveDocgraphSuccessor `json:"successor"`
+}
+
+// serveDocgraphSaveRequest is the PUT /api/docgraph/doc body. Body and Header
+// are optional; a nil pointer / absent raw message means "leave this region as
+// it is on disk". base_rev is the sha256 the client loaded, for optimistic
+// concurrency.
+type serveDocgraphSaveRequest struct {
+	BaseRev string          `json:"base_rev"`
+	Body    *string         `json:"body"`
+	Header  json.RawMessage `json:"header"`
+}
+
+// serveDocgraphSaveResponse is the GET detail shape plus warnings (never null).
+type serveDocgraphSaveResponse struct {
+	serveDocgraphDetail
+	Warnings []string `json:"warnings"`
 }
 
 // Ref is everything before an optional |label, mirroring the UI's wiki-link
@@ -237,6 +263,18 @@ func (s *serveServer) handleDocgraphDoc(w http.ResponseWriter, r *http.Request) 
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	detail, ok := serveDocgraphBuildDetail(project.RepoRoot, corpus, subject)
+	if !ok {
+		serveJSON(w, http.StatusNotFound, map[string]any{"error": "doc not found"})
+		return
+	}
+	serveJSON(w, http.StatusOK, detail)
+}
+
+// serveDocgraphBuildDetail assembles the read-detail shape (links, backlinks,
+// successor, and the on-disk rev) for one subject in an already-loaded corpus.
+// Shared by GET and the PUT save response so both stay identical.
+func serveDocgraphBuildDetail(repoRoot string, corpus docgraph.Corpus, subject string) (serveDocgraphDetail, bool) {
 	subjectPath := map[string]string{}
 	var target *docgraph.Document
 	for i := range corpus.Documents {
@@ -249,16 +287,15 @@ func (s *serveServer) handleDocgraphDoc(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if target == nil {
-		serveJSON(w, http.StatusNotFound, map[string]any{"error": "doc not found"})
-		return
+		return serveDocgraphDetail{}, false
 	}
-
 	detail := serveDocgraphDetail{
 		Subject:   target.Subject,
 		Title:     serveDocgraphTitle(*target),
 		Path:      target.Path,
 		Kind:      string(target.Kind),
 		Status:    target.Status,
+		Rev:       serveDocgraphFileRev(repoRoot, target.Path),
 		Header:    target.Raw,
 		Body:      target.Body,
 		Links:     serveDocgraphLinks(target.Body, subjectPath),
@@ -269,7 +306,279 @@ func (s *serveServer) handleDocgraphDoc(w http.ResponseWriter, r *http.Request) 
 			detail.Successor = &serveDocgraphSuccessor{Subject: successor, Path: path}
 		}
 	}
-	serveJSON(w, http.StatusOK, detail)
+	return detail, true
+}
+
+// handleDocgraphDocSave splices a body and/or header edit into the on-disk
+// document addressed by subject (never a client path), refuses on a stale
+// base_rev (409) or any newly-introduced defect (422), and writes atomically.
+func (s *serveServer) handleDocgraphDocSave(w http.ResponseWriter, r *http.Request) {
+	project, err := s.projectForSnapshot(strings.TrimSpace(r.URL.Query().Get("project")))
+	if err != nil {
+		serveJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	subject := strings.TrimSpace(r.URL.Query().Get("subject"))
+	if subject == "" {
+		serveJSON(w, http.StatusBadRequest, map[string]any{"error": "subject is required"})
+		return
+	}
+
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
+	if err != nil {
+		serveJSON(w, http.StatusBadRequest, map[string]any{"error": "could not read request body"})
+		return
+	}
+	var req serveDocgraphSaveRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		serveJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body: " + err.Error()})
+		return
+	}
+	baseRev := strings.TrimSpace(req.BaseRev)
+	if baseRev == "" {
+		serveJSON(w, http.StatusBadRequest, map[string]any{"error": "base_rev is required"})
+		return
+	}
+	headerPresent := len(req.Header) > 0 && !bytes.Equal(bytes.TrimSpace(req.Header), []byte("null"))
+	bodyPresent := req.Body != nil
+	if !headerPresent && !bodyPresent {
+		serveJSON(w, http.StatusBadRequest, map[string]any{"error": "body or header is required"})
+		return
+	}
+
+	corpus, _, err := docgraph.LoadRepository(project.RepoRoot)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	targetIndex := -1
+	for i := range corpus.Documents {
+		if corpus.Documents[i].Subject == subject {
+			targetIndex = i
+			break
+		}
+	}
+	if targetIndex < 0 {
+		serveJSON(w, http.StatusNotFound, map[string]any{"error": "doc not found"})
+		return
+	}
+	relPath := corpus.Documents[targetIndex].Path
+	fullPath := filepath.Join(project.RepoRoot, filepath.FromSlash(relPath))
+
+	original, err := os.ReadFile(fullPath)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	currentRev := serveDocgraphRev(original)
+	if currentRev != baseRev {
+		serveJSON(w, http.StatusConflict, map[string]any{
+			"error":       "document changed on disk since it was loaded; reload before saving",
+			"code":        "DOC_SAVE_CONFLICT",
+			"current_rev": currentRev,
+		})
+		return
+	}
+
+	_, bodyStart, ok := serveDocgraphSplitFile(string(original))
+	if !ok {
+		serveJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"error": "document is missing valid front matter",
+			"defects": []serveDocgraphIssue{{
+				Code:    "DOC_HEADER_MISSING",
+				Path:    relPath,
+				Message: "missing YAML front matter (expected an opening --- line)",
+			}},
+		})
+		return
+	}
+
+	var headerRegion string
+	if headerPresent {
+		var headerMap map[string]any
+		if err := json.Unmarshal(req.Header, &headerMap); err != nil {
+			serveJSON(w, http.StatusBadRequest, map[string]any{"error": "header must be a JSON object"})
+			return
+		}
+		yamlBytes, err := serveDocgraphMarshalHeader(headerMap)
+		if err != nil {
+			serveJSON(w, http.StatusBadRequest, map[string]any{"error": "could not encode header: " + err.Error()})
+			return
+		}
+		headerRegion = "---\n" + yamlBytes + "---\n"
+	} else {
+		// Header untouched: preserve the exact opening delimiter, YAML, and
+		// closing delimiter bytes (acceptance A5).
+		headerRegion = string(original[:bodyStart])
+	}
+
+	var bodyRegion string
+	if bodyPresent {
+		bodyRegion = serveDocgraphComposeBody(*req.Body)
+	} else {
+		// Body untouched: preserve exact bytes after the closing delimiter.
+		bodyRegion = string(original[bodyStart:])
+	}
+	newContent := headerRegion + bodyRegion
+
+	newDoc, parseErr := docgraph.ParseDocHeaders(relPath, []byte(newContent))
+	if parseErr != nil {
+		code := "DOC_HEADER_PARSE_ERROR"
+		msg := parseErr.Error()
+		if pe, ok := parseErr.(*docgraph.ParseError); ok {
+			code = pe.Code
+			msg = pe.Message
+		}
+		serveJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"error":   "edit would produce an invalid document",
+			"defects": []serveDocgraphIssue{{Code: code, Path: relPath, Message: msg}},
+		})
+		return
+	}
+
+	baseIssues := docgraph.ValidateCorpus(corpus)
+	editedDocs := make([]docgraph.Document, len(corpus.Documents))
+	copy(editedDocs, corpus.Documents)
+	editedDocs[targetIndex] = newDoc
+	editedIssues := docgraph.ValidateCorpus(docgraph.Corpus{Documents: editedDocs})
+	if defects := serveDocgraphNewDefects(baseIssues, editedIssues); len(defects) > 0 {
+		serveJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"error":   "edit would break the document's rules",
+			"defects": defects,
+		})
+		return
+	}
+
+	if err := serveDocgraphAtomicWrite(fullPath, []byte(newContent)); err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	reloaded, _, err := docgraph.LoadRepository(project.RepoRoot)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	detail, ok := serveDocgraphBuildDetail(project.RepoRoot, reloaded, newDoc.Subject)
+	if !ok {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": "saved document could not be reloaded"})
+		return
+	}
+	warnings := []string{}
+	if stale, err := docgraph.CheckDocsMapFresh(project.RepoRoot); err == nil && len(stale) > 0 {
+		warnings = append(warnings, "docs map is stale; run tusker docs map")
+	}
+	serveJSON(w, http.StatusOK, serveDocgraphSaveResponse{serveDocgraphDetail: detail, Warnings: warnings})
+}
+
+// serveDocgraphSplitFile locates the front-matter boundary in a document's raw
+// bytes without normalizing, so a body-only save preserves the header bytes
+// exactly. bodyStart is the offset of the body, just past the closing "---\n".
+func serveDocgraphSplitFile(raw string) (headerYAML string, bodyStart int, ok bool) {
+	// CRLF files parse fine on the read path (parseFrontmatter normalizes), so
+	// the save path must accept them too; the closing-delimiter scan already
+	// tolerates \r via TrimSpace.
+	if !strings.HasPrefix(raw, "---\n") && !strings.HasPrefix(raw, "---\r\n") {
+		return "", 0, false
+	}
+	lines := strings.SplitAfter(raw, "\n")
+	openingLength := len(lines[0])
+	lineStart := openingLength
+	for i := 1; i < len(lines); i++ {
+		line := strings.TrimSuffix(lines[i], "\n")
+		if strings.TrimSpace(line) == "---" {
+			return raw[openingLength:lineStart], lineStart + len(lines[i]), true
+		}
+		lineStart += len(lines[i])
+	}
+	return "", 0, false
+}
+
+// serveDocgraphComposeBody normalizes an edited body into the tail that follows
+// the closing delimiter: exactly one blank line, then the body with a single
+// trailing newline.
+func serveDocgraphComposeBody(body string) string {
+	b := strings.TrimLeft(body, "\n")
+	if !strings.HasSuffix(b, "\n") {
+		b += "\n"
+	}
+	return "\n" + b
+}
+
+// serveDocgraphMarshalHeader re-marshals an edited header as YAML with 2-space
+// indentation, matching the corpus's on-disk convention.
+func serveDocgraphMarshalHeader(header map[string]any) (string, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(header); err != nil {
+		_ = enc.Close()
+		return "", err
+	}
+	if err := enc.Close(); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+// serveDocgraphNewDefects returns edited-corpus issues that were not already
+// present before the edit, so a save is only refused for defects it introduces.
+func serveDocgraphNewDefects(base, edited []docgraph.Issue) []serveDocgraphIssue {
+	seen := map[string]struct{}{}
+	for _, issue := range base {
+		seen[issue.Code+"\x00"+issue.Path+"\x00"+issue.Message] = struct{}{}
+	}
+	defects := []serveDocgraphIssue{}
+	for _, issue := range edited {
+		if _, ok := seen[issue.Code+"\x00"+issue.Path+"\x00"+issue.Message]; ok {
+			continue
+		}
+		defects = append(defects, serveDocgraphIssue{Code: issue.Code, Path: issue.Path, Message: issue.Message})
+	}
+	return defects
+}
+
+// serveDocgraphAtomicWrite writes content to a temp file in the same directory
+// and renames it into place, so a failed or partial write never corrupts the
+// document.
+func serveDocgraphAtomicWrite(fullPath string, content []byte) error {
+	dir := filepath.Dir(fullPath)
+	tmp, err := os.CreateTemp(dir, ".docsave-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, fullPath); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
+}
+
+func serveDocgraphFileRev(repoRoot, relPath string) string {
+	raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(relPath)))
+	if err != nil {
+		return ""
+	}
+	return serveDocgraphRev(raw)
+}
+
+func serveDocgraphRev(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
 }
 
 func serveDocgraphLinks(body string, subjectPath map[string]string) []serveDocgraphLink {

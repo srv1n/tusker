@@ -11,7 +11,14 @@
 import * as fx from "@/mock/fixtures";
 import { deriveNeeds } from "@/features/inbox/deriveNeeds";
 import type { FrontmatterUpdateInput } from "@/lib/frontmatter";
-import type { DocgraphDocDetail, DocgraphResponse } from "@/features/knowledge/types";
+import type {
+  DocgraphDocDetail,
+  DocgraphResponse,
+  DocgraphSavePayload,
+  DocgraphSaveResponse,
+  DocSaveConflict,
+  DocSaveDefect,
+} from "@/features/knowledge/types";
 import type {
   DaemonStatus,
   ActionResult,
@@ -78,6 +85,24 @@ export class ApiError extends Error {
   ) {
     super(message);
     this.name = "ApiError";
+  }
+}
+
+/**
+ * A refused document save. Unlike the read/action endpoints, the doc-save PUT
+ * uses HTTP status to distinguish an on-disk conflict (409) from header-rule
+ * defects (422); both carry a structured body the UI surfaces inline, so this
+ * error preserves that body rather than collapsing it to a message string.
+ */
+export class DocSaveError extends ApiError {
+  constructor(
+    status: number,
+    message: string,
+    public conflict?: DocSaveConflict,
+    public defects?: DocSaveDefect[],
+  ) {
+    super(status, message);
+    this.name = "DocSaveError";
   }
 }
 
@@ -167,6 +192,24 @@ export const api = {
     USE_MOCK
       ? delay({ ok: true, requeued: true, reason: "redrive requested (mock)", taskId })
       : post(withProject(`/runs/${taskId}/redrive`, projectId)),
+
+  // POST /api/runs/:taskId/acknowledge — retires a settled failed run via the
+  // same path as `tusker runs retire`, clearing it from attention. Success
+  // returns an ActionResult; a still-active run is refused with 409/400 whose
+  // body carries the reason, surfaced here as an ApiError the card restores on.
+  acknowledgeRun: async (taskId: string, projectId?: string): Promise<ActionResult> => {
+    if (USE_MOCK) return delay({ ok: true, reason: "run acknowledged (mock)", taskId });
+    const path = withProject(`/runs/${taskId}/acknowledge`, projectId);
+    const res = await fetch(`/api${path}`, {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+    });
+    const body = (await res.json().catch(() => null)) as (ActionResult & { error?: string }) | null;
+    if (!res.ok) {
+      throw new ApiError(res.status, body?.reason ?? body?.error ?? `POST /api${path} → ${res.status}`);
+    }
+    return (body ?? { ok: true, reason: "run acknowledged", taskId }) as ActionResult;
+  },
 
   // POST /api/runs/:taskId/interrupt — shares `tusker runs interrupt` and
   // returns canonical lease/process readback rather than optimistic UI state.
@@ -296,4 +339,35 @@ export const api = {
     USE_MOCK
       ? Promise.reject(new ApiError(404, "docgraph has no fixture"))
       : real(withProject(`/docgraph/doc?subject=${encodeURIComponent(subject)}`, projectId)),
+
+  // PUT /api/docgraph/doc?project=&subject= — write an edited corpus document.
+  // 200 → fresh detail + warnings; 409 → on-disk conflict; 422 → header defects.
+  // A refusal is a typed DocSaveError so the reader can surface it inline.
+  saveDocgraphDoc: async (
+    projectId: string,
+    subject: string,
+    payload: DocgraphSavePayload,
+  ): Promise<DocgraphSaveResponse> => {
+    const path = withProject(`/docgraph/doc?subject=${encodeURIComponent(subject)}`, projectId);
+    const res = await fetch(`/api${path}`, {
+      method: "PUT",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) return (await res.json()) as DocgraphSaveResponse;
+    const body = (await res.json().catch(() => null)) as
+      | (Partial<DocSaveConflict> & { defects?: DocSaveDefect[] })
+      | null;
+    if (res.status === 409) {
+      throw new DocSaveError(res.status, body?.error ?? "The document changed on disk.", {
+        error: body?.error ?? "The document changed on disk.",
+        code: "DOC_SAVE_CONFLICT",
+        current_rev: body?.current_rev ?? "",
+      });
+    }
+    if (res.status === 422) {
+      throw new DocSaveError(res.status, body?.error ?? "Save refused.", undefined, body?.defects ?? []);
+    }
+    throw new ApiError(res.status, body?.error ?? `PUT /api${path} → ${res.status}`);
+  },
 };

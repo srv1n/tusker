@@ -178,6 +178,69 @@ func ValidateRepository(repoRoot string) ([]Issue, error) {
 	return issues, nil
 }
 
+// ValidateCorpus runs the header-field and cross-document checks over an
+// already-parsed corpus without touching disk. It exists so an editor save
+// path can validate a speculative edit — a document substituted in memory —
+// before writing anything. It does not cover parse errors or versioned
+// filenames, which are disk-scan concerns handled by LoadRepository.
+func ValidateCorpus(corpus Corpus) []Issue {
+	var issues []Issue
+	for _, doc := range corpus.Documents {
+		issues = append(issues, validateHeader(doc)...)
+	}
+
+	bySubject := make(map[string][]Document)
+	for _, doc := range corpus.Documents {
+		if strings.TrimSpace(doc.Subject) != "" {
+			bySubject[doc.Subject] = append(bySubject[doc.Subject], doc)
+		}
+	}
+	for subject, matches := range bySubject {
+		if len(matches) < 2 {
+			continue
+		}
+		paths := make([]string, 0, len(matches))
+		for _, doc := range matches {
+			paths = append(paths, doc.Path)
+		}
+		sort.Strings(paths)
+		for _, doc := range matches {
+			issues = append(issues, Issue{
+				Code:    "DOC_DUPLICATE_SUBJECT",
+				Path:    doc.Path,
+				Message: fmt.Sprintf("duplicate subject %q; also declared in %s", subject, strings.Join(pathsWithout(paths, doc.Path), ", ")),
+			})
+		}
+	}
+
+	knownSubjects := make(map[string]struct{}, len(bySubject))
+	for subject := range bySubject {
+		knownSubjects[subject] = struct{}{}
+	}
+	for _, doc := range corpus.Documents {
+		if strings.EqualFold(strings.TrimSpace(doc.Status), "superseded") {
+			if strings.TrimSpace(doc.SupersededBy) == "" {
+				issues = append(issues, Issue{
+					Code:    "DOC_TOMBSTONE_SUCCESSOR_MISSING",
+					Path:    doc.Path,
+					Message: "superseded document must name its successor with superseded_by",
+				})
+				continue
+			}
+			if _, ok := knownSubjects[doc.SupersededBy]; !ok {
+				issues = append(issues, Issue{
+					Code:    "DOC_TOMBSTONE_SUCCESSOR_NOT_FOUND",
+					Path:    doc.Path,
+					Message: fmt.Sprintf("superseded document names successor %q, but that subject does not exist", doc.SupersededBy),
+				})
+			}
+		}
+	}
+
+	sortIssues(issues)
+	return issues
+}
+
 func scanRepository(repoRoot string) ([]Document, []Issue, error) {
 	root, err := filepath.Abs(repoRoot)
 	if err != nil {

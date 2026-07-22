@@ -81,4 +81,36 @@ export interface DocgraphDocDetail {
   links: DocLinkRef[];
   backlinks: DocBacklink[];
   successor: { subject: string; path: string } | null;
+  /** sha256 hex of the on-disk file bytes — the optimistic-concurrency token. */
+  rev: string;
+}
+
+/*
+  Save contract (SRV-T-0002). PUT /api/docgraph/doc?project=&subject=.
+  Send `body` only when the body is dirty and `header` only when the header is
+  dirty (at least one); a body-only save leaves the on-disk YAML bytes untouched.
+*/
+export interface DocgraphSavePayload {
+  base_rev: string;
+  body?: string;
+  header?: Record<string, unknown>;
+}
+
+/** 200 response — a fresh {@link DocgraphDocDetail} plus any advisory warnings. */
+export interface DocgraphSaveResponse extends DocgraphDocDetail {
+  warnings: string[];
+}
+
+/** 409 body — the file changed on disk since it was loaded. */
+export interface DocSaveConflict {
+  error: string;
+  code: "DOC_SAVE_CONFLICT";
+  current_rev: string;
+}
+
+/** One named header-rule defect from a refused save (422). */
+export interface DocSaveDefect {
+  code: string;
+  path: string;
+  message: string;
 }

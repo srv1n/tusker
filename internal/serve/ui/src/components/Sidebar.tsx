@@ -11,16 +11,14 @@ import { USE_MOCK } from "@/lib/api";
 import type { ProjectSummary } from "@/types/domain";
 import { openTaskSearch } from "@/features/search/TaskSearch";
 
-// Project settings live behind the "Details" button on the Overview, not as a
-// separate rail item — keeps the sidebar minimal.
+// Four items only (SRV-T-0003): Needs-me and Runs folded into Overview; the
+// Library file browser moved under Docs as a Files tab. Project settings live
+// behind the "Details" button on the Overview, not as a separate rail item.
 const SUBSECTIONS = [
   { key: "overview", label: "Overview", to: "/p/$projectId" as const },
-  { key: "needs", label: "Needs me", to: "/p/$projectId/needs" as const },
-  { key: "runs", label: "Runs", to: "/p/$projectId/runs" as const },
   { key: "work", label: "Work", to: "/p/$projectId/work" as const },
-  { key: "ops", label: "Ops", to: "/p/$projectId/ops" as const },
-  { key: "docs", label: "Library", to: "/p/$projectId/docs" as const },
   { key: "knowledge", label: "Docs", to: "/p/$projectId/knowledge" as const },
+  { key: "ops", label: "Ops", to: "/p/$projectId/ops" as const },
 ];
 
 export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
@@ -347,8 +345,9 @@ function ProjectRailItem({
             const to = s.to.replace("$projectId", p.id);
             const isActive =
               s.key === "overview" ? pathname === to : pathname.startsWith(to);
+            // Needs now live on the Overview, so its badge rides that item.
             const badge =
-              s.key === "needs" && p.needsCount > 0 ? p.needsCount : undefined;
+              s.key === "overview" && p.needsCount > 0 ? p.needsCount : undefined;
             return (
               <Link
                 key={s.key}

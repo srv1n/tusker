@@ -3,6 +3,7 @@ import {
   createRoute,
   createRouter,
   lazyRouteComponent,
+  redirect,
 } from "@tanstack/react-router";
 import { ProjectLayout, RootLayout } from "@/routes/__root";
 import { RouteFallback } from "@/components/RouteFallback";
@@ -18,9 +19,9 @@ import { RouteFallback } from "@/components/RouteFallback";
   Code-based route tree. Route ids screens use with getRouteApi(...):
     '/'                          Global inbox
     '/settings'                  App settings
-    '/p/$projectId/'             Project overview   (params: projectId)
-    '/p/$projectId/needs'        Project needs
-    '/p/$projectId/runs'         Project runs
+    '/p/$projectId/'             Project overview   (params: projectId) — hosts attention + runs
+    '/p/$projectId/needs'        → redirects to overview (absorbed)
+    '/p/$projectId/runs'         → redirects to overview (absorbed)
     '/p/$projectId/runs/$taskId' Run detail          (params: projectId, taskId)
     '/p/$projectId/work'         Project work
     '/p/$projectId/ops'          Operator controls
@@ -72,22 +73,23 @@ const overviewRoute = createRoute({
   ),
 });
 
+// Needs-me and Runs are absorbed into the Overview (SRV-T-0003). Their old
+// URLs redirect to the Overview so bookmarks and in-app links never break; the
+// run-detail route below is kept (it is just no longer a sidebar item).
 const needsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "needs",
-  component: lazyRouteComponent(
-    () => import("@/features/needs/ProjectNeeds"),
-    "ProjectNeeds",
-  ),
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: "/p/$projectId", params: { projectId: params.projectId } });
+  },
 });
 
 const runsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "runs",
-  component: lazyRouteComponent(
-    () => import("@/features/runs/ProjectRuns"),
-    "ProjectRuns",
-  ),
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: "/p/$projectId", params: { projectId: params.projectId } });
+  },
 });
 
 const runDetailRoute = createRoute({

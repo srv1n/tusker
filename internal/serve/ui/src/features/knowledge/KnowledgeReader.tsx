@@ -1,55 +1,124 @@
-import { getRouteApi, Link } from "@tanstack/react-router";
-import { ArrowLeft, ArrowUpRight, CornerDownRight, Network } from "lucide-react";
-import { Card, Mono } from "@/components/ui/primitives";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
+import { ArrowUpRight } from "lucide-react";
+import { Mono } from "@/components/ui/primitives";
 import { SectionLabel } from "@/components/ui/page";
 import { ErrorState, Skeleton } from "@/components/ui/states";
-import { useDocgraphDoc, useProjects } from "@/lib/queries";
-import type { BacklinkVia, DocBacklink, DocgraphDocDetail } from "./types";
-import { DocStatusChip, KindBadge, KindGlyph, ViaChip } from "./bits";
-import { KnowledgeMarkdown } from "./Markdown";
+import { cn } from "@/lib/cn";
+import { useDocgraph, useDocgraphDoc } from "@/lib/queries";
+import type {
+  BacklinkVia,
+  DocBacklink,
+  DocgraphDocDetail,
+  DocgraphKind,
+  DocLinkRef,
+} from "./types";
+import { KindGlyph, ViaChip } from "./bits";
+import { KnowledgeShell, SectionToolbar, ViewSwitch } from "./KnowledgeShell";
+import { HeaderCard } from "./HeaderCard";
+import { DocBodyEditor } from "./DocBodyEditor";
+import { useDocgraphEditor, type KnowledgeDocEditor } from "./useDocgraphEditor";
+import { ConflictNotice, DefectsNotice, ErrorNotice, SavedNotice } from "./banners";
 
 const route = getRouteApi("/p/$projectId/knowledge/$subject");
 
 export function KnowledgeReader() {
   const { projectId, subject } = route.useParams();
-  return <Reader key={subject} projectId={projectId} subject={subject} />;
+  return <DocSection projectId={projectId} subject={subject} />;
 }
 
-function stringField(header: Record<string, unknown>, key: string): string | undefined {
-  const v = header[key];
-  return typeof v === "string" && v.trim() !== "" ? v : undefined;
+/**
+ * The two-pane doc section for one subject: the explorer rail + the document.
+ * Exported so the Docs index route can open it on the resolved root doc without
+ * a router change.
+ */
+export function DocSection({ projectId, subject }: { projectId: string; subject: string }) {
+  return (
+    <KnowledgeShell projectId={projectId} currentSubject={subject}>
+      <DocPane key={subject} projectId={projectId} subject={subject} />
+    </KnowledgeShell>
+  );
 }
 
-function stringArray(header: Record<string, unknown>, key: string): string[] {
-  const v = header[key];
-  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-}
-
-function Reader({ projectId, subject }: { projectId: string; subject: string }) {
+function DocPane({ projectId, subject }: { projectId: string; subject: string }) {
   const q = useDocgraphDoc(projectId, subject);
   const doc = q.data;
-
   if (!doc) {
-    if (q.isLoading) return <ReaderSkeleton projectId={projectId} />;
     return (
       <div className="flex h-full flex-col">
-        <TopBar projectId={projectId} path={subject} />
-        <div className="p-8">
-          <ErrorState error={q.error} onRetry={() => q.refetch()} />
-        </div>
+        <SectionToolbar
+          left={<ContextLabel subject={subject} />}
+          right={<ViewSwitch projectId={projectId} active="files" />}
+        />
+        {q.isLoading ? (
+          <BodySkeleton />
+        ) : (
+          <div className="p-8">
+            <ErrorState error={q.error} onRetry={() => q.refetch()} />
+          </div>
+        )}
       </div>
     );
   }
-  return <ReaderBody projectId={projectId} doc={doc} />;
+  return <DocBody projectId={projectId} doc={doc} refetch={() => q.refetch()} />;
 }
 
-function ReaderBody({ projectId, doc }: { projectId: string; doc: DocgraphDocDetail }) {
-  const partOf = stringField(doc.header, "part_of");
-  const keywords = stringArray(doc.header, "keywords");
+/** Slim toolbar context: the doc's kind glyph + subject. */
+function ContextLabel({ kind, subject }: { kind?: DocgraphKind; subject: string }) {
+  return (
+    <div className="flex min-w-0 items-center gap-1.5">
+      {kind && <KindGlyph kind={kind} size={14} />}
+      <Mono className="min-w-0 truncate text-[12px] text-muted">{subject}</Mono>
+    </div>
+  );
+}
+
+function DocBody({
+  projectId,
+  doc,
+  refetch,
+}: {
+  projectId: string;
+  doc: DocgraphDocDetail;
+  refetch: () => void;
+}) {
+  const ed = useDocgraphEditor(doc, projectId, refetch);
+  const navigate = useNavigate();
+  const graph = useDocgraph(projectId);
+  const subjects = useMemo(() => (graph.data?.docs ?? []).map((d) => d.subject), [graph.data]);
+
+  const linkMap = useMemo(() => new Map(doc.links.map((l) => [l.ref, l])), [doc.links]);
+  const resolve = useCallback(
+    (ref: string): DocLinkRef | undefined => linkMap.get(ref.trim()),
+    [linkMap],
+  );
+
+  // Cmd/Ctrl+S saves. Route through a ref so the listener binds once but always
+  // calls the latest save (which no-ops unless dirty).
+  const saveRef = useRef(ed.save);
+  saveRef.current = ed.save;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        saveRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar projectId={projectId} path={doc.path} />
+      <SectionToolbar
+        left={<ContextLabel kind={doc.kind} subject={doc.subject} />}
+        right={
+          <>
+            <SaveButton dirty={ed.dirty} saving={ed.saving} onSave={ed.save} />
+            <ViewSwitch projectId={projectId} active="files" />
+          </>
+        }
+      />
       <div className="tk-scroll flex-1 overflow-y-auto">
         <article className="mx-auto w-full max-w-[46rem] px-4 pb-24 pt-7 sm:px-6">
           {doc.successor && (
@@ -67,45 +136,34 @@ function ReaderBody({ projectId, doc }: { projectId: string; doc: DocgraphDocDet
             </Link>
           )}
 
-          {/* Header card — front-matter as typed facts, never raw YAML. */}
-          <Card className="mb-8 p-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <KindBadge kind={doc.kind} />
-              <DocStatusChip status={doc.status} />
-            </div>
-            <Mono className="mt-3 block text-[11.5px] text-faint">{doc.subject}</Mono>
-            <h1
-              className={
-                doc.status === "superseded"
-                  ? "mt-1 font-serif text-[30px] font-semibold leading-[1.1] tracking-[-0.02em] text-muted line-through"
-                  : "mt-1 font-serif text-[30px] font-semibold leading-[1.1] tracking-[-0.02em] text-ink"
-              }
-            >
-              {doc.title}
-            </h1>
-            {(partOf || keywords.length > 0) && (
-              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-                {partOf && (
-                  <Link
-                    to="/p/$projectId/knowledge/$subject"
-                    params={{ projectId, subject: partOf }}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-0.5 text-[11.5px] text-muted transition-colors hover:bg-hover hover:text-ink"
-                  >
-                    <CornerDownRight size={12} className="text-faint" />
-                    Part of <Mono className="text-[10.5px] text-ink-soft">{partOf}</Mono>
-                  </Link>
-                )}
-                {keywords.map((k) => (
-                  <span key={k} className="rounded bg-hover px-1.5 py-0.5 font-mono text-[10.5px] text-muted">
-                    {k}
-                  </span>
-                ))}
-              </div>
-            )}
-            <Mono className="mt-3 block truncate text-[10.5px] text-fainter">{doc.path}</Mono>
-          </Card>
+          <SaveBanners ed={ed} />
 
-          <KnowledgeMarkdown body={doc.body} projectId={projectId} links={doc.links} />
+          <HeaderCard
+            kind={doc.kind}
+            subject={doc.subject}
+            path={doc.path}
+            status={ed.status}
+            onStatusChange={ed.setStatus}
+            keywords={ed.keywords}
+            onAddKeyword={ed.addKeyword}
+            onRemoveKeyword={ed.removeKeyword}
+            partOf={ed.partOf}
+            onPartOfChange={ed.setPartOf}
+            subjects={subjects}
+          />
+
+          {/* The rendered document is the editor — always editable, styled to
+              match the reader. Re-key per subject/rev so a reload loads fresh. */}
+          <DocBodyEditor
+            key={`${doc.subject}:${doc.rev}`}
+            initialMarkdown={doc.body}
+            resolve={resolve}
+            onReady={ed.onBodyReady}
+            onChange={ed.onBodyChange}
+            onOpenWikilink={(subject) =>
+              navigate({ to: "/p/$projectId/knowledge/$subject", params: { projectId, subject } })
+            }
+          />
 
           <Backlinks projectId={projectId} backlinks={doc.backlinks} />
         </article>
@@ -114,15 +172,24 @@ function ReaderBody({ projectId, doc }: { projectId: string; doc: DocgraphDocDet
   );
 }
 
+function SaveBanners({ ed }: { ed: KnowledgeDocEditor }) {
+  switch (ed.banner.type) {
+    case "saved":
+      return <SavedNotice warnings={ed.banner.warnings} onDismiss={ed.dismissBanner} />;
+    case "conflict":
+      return <ConflictNotice currentRev={ed.banner.currentRev} onReload={ed.reload} />;
+    case "defects":
+      return <DefectsNotice defects={ed.banner.defects} onDismiss={ed.dismissBanner} />;
+    case "error":
+      return <ErrorNotice message={ed.banner.message} onDismiss={ed.dismissBanner} />;
+    default:
+      return null;
+  }
+}
+
 const VIA_ORDER: BacklinkVia[] = ["part_of", "updates", "decides_for", "superseded_by", "wiki"];
 
-function Backlinks({
-  projectId,
-  backlinks,
-}: {
-  projectId: string;
-  backlinks: DocBacklink[];
-}) {
+function Backlinks({ projectId, backlinks }: { projectId: string; backlinks: DocBacklink[] }) {
   if (backlinks.length === 0) return null;
   const ordered = [...backlinks].sort(
     (a, b) => VIA_ORDER.indexOf(a.via) - VIA_ORDER.indexOf(b.via) || a.title.localeCompare(b.title),
@@ -154,43 +221,36 @@ function Backlinks({
   );
 }
 
-/** Sticky context bar: back to the corpus list + the vault path + a graph jump. */
-function TopBar({ projectId, path }: { projectId: string; path: string }) {
-  const projects = useProjects();
-  const projectName = projects.data?.find((p) => p.id === projectId)?.name ?? projectId;
+function SaveButton({ dirty, saving, onSave }: { dirty: boolean; saving: boolean; onSave: () => void }) {
+  const enabled = dirty && !saving;
   return (
-    <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-line bg-surface/85 px-4 py-3 backdrop-blur-md sm:px-6">
-      <Link
-        to="/p/$projectId/knowledge"
-        params={{ projectId }}
-        className="flex flex-none items-center gap-1.5 font-mono text-[11.5px] text-faint transition-colors hover:text-ink"
+    <div className="flex flex-none items-center gap-2">
+      {dirty && !saving && <Mono className="hidden text-[10.5px] text-warn sm:inline">unsaved</Mono>}
+      <button
+        type="button"
+        onClick={onSave}
+        disabled={!enabled}
+        title="Save (⌘S)"
+        className={cn(
+          "flex h-7 items-center rounded-lg px-3 text-[12px] font-semibold leading-none transition-colors",
+          enabled
+            ? "bg-pass text-surface hover:opacity-90"
+            : "cursor-not-allowed border border-line text-faint opacity-70",
+        )}
       >
-        <ArrowLeft size={13} strokeWidth={2} />
-        {projectName} · Docs
-      </Link>
-      <Mono className="min-w-0 flex-1 truncate text-[11px] text-fainter">/ {path}</Mono>
-      <Link
-        to="/p/$projectId/knowledge/graph"
-        params={{ projectId }}
-        className="flex flex-none items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-[11.5px] font-medium text-muted transition-colors hover:bg-hover hover:text-ink"
-      >
-        <Network size={13} strokeWidth={2} />
-        Graph
-      </Link>
-    </header>
+        {saving ? "Saving…" : "Save"}
+      </button>
+    </div>
   );
 }
 
-function ReaderSkeleton({ projectId }: { projectId: string }) {
+function BodySkeleton() {
   return (
-    <div className="flex h-full flex-col">
-      <TopBar projectId={projectId} path="…" />
-      <div className="mx-auto w-full max-w-[46rem] px-4 pt-7 sm:px-6">
-        <Skeleton className="mb-8 h-28 w-full" />
-        <Skeleton className="mb-3 h-4 w-full" />
-        <Skeleton className="mb-3 h-4 w-full" />
-        <Skeleton className="mb-3 h-4 w-2/3" />
-      </div>
+    <div className="mx-auto w-full max-w-[46rem] px-4 pt-7 sm:px-6">
+      <Skeleton className="mb-8 h-28 w-full" />
+      <Skeleton className="mb-3 h-4 w-full" />
+      <Skeleton className="mb-3 h-4 w-full" />
+      <Skeleton className="mb-3 h-4 w-2/3" />
     </div>
   );
 }

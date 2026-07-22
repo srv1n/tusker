@@ -6,13 +6,14 @@ import {
   useRef,
   useState,
 } from "react";
-import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, List, Minus, Network, Plus } from "lucide-react";
+import { getRouteApi, useNavigate } from "@tanstack/react-router";
+import { Minus, Network, Plus } from "lucide-react";
 import { Mono } from "@/components/ui/primitives";
 import { EmptyState, QueryBoundary } from "@/components/ui/states";
-import { useDocgraph, useProjects } from "@/lib/queries";
+import { useDocgraph } from "@/lib/queries";
 import { layoutDocGraph, type PositionedEdge } from "./layout";
 import { kindMeta, KIND_ORDER } from "./bits";
+import { KnowledgeShell, SectionToolbar, ViewSwitch } from "./KnowledgeShell";
 import type { DocgraphResponse, EdgeKind } from "./types";
 
 const route = getRouteApi("/p/$projectId/knowledge/graph");
@@ -47,49 +48,33 @@ const EDGE_ORDER: EdgeKind[] = ["part_of", "updates", "decides_for", "superseded
 export function KnowledgeGraph() {
   const { projectId } = route.useParams();
   const q = useDocgraph(projectId);
+  const counts = q.data;
   return (
-    <div className="flex h-full flex-col">
-      <GraphHeader projectId={projectId} counts={q.data} />
-      <div className="relative min-h-0 flex-1 overflow-hidden">
-        <QueryBoundary q={q}>
-          {(data) => <GraphCanvas projectId={projectId} data={data} />}
-        </QueryBoundary>
+    <KnowledgeShell projectId={projectId}>
+      <div className="flex h-full flex-col">
+        <SectionToolbar
+          left={
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="font-serif text-[14px] font-semibold text-ink">Document graph</span>
+              {counts && (
+                <Mono className="text-[11px] text-fainter">
+                  {counts.graph.nodes.length} docs · {counts.graph.edges.length} links
+                </Mono>
+              )}
+              <span className="hidden font-mono text-[10.5px] text-fainter lg:inline">
+                · drag to pan · scroll to zoom
+              </span>
+            </div>
+          }
+          right={<ViewSwitch projectId={projectId} active="graph" />}
+        />
+        <div className="relative min-h-0 flex-1 overflow-hidden">
+          <QueryBoundary q={q}>
+            {(data) => <GraphCanvas projectId={projectId} data={data} />}
+          </QueryBoundary>
+        </div>
       </div>
-    </div>
-  );
-}
-
-function GraphHeader({ projectId, counts }: { projectId: string; counts?: DocgraphResponse }) {
-  const projects = useProjects();
-  const projectName = projects.data?.find((p) => p.id === projectId)?.name ?? projectId;
-  return (
-    <header className="flex flex-none items-center gap-3 border-b border-line bg-surface/85 px-4 py-3 backdrop-blur-md sm:px-6">
-      <Link
-        to="/p/$projectId/knowledge"
-        params={{ projectId }}
-        className="flex flex-none items-center gap-1.5 font-mono text-[11.5px] text-faint transition-colors hover:text-ink"
-      >
-        <ArrowLeft size={13} strokeWidth={2} />
-        {projectName} · Docs
-      </Link>
-      <div className="min-w-0 flex-1">
-        <span className="font-serif text-[15px] font-semibold text-ink">Document graph</span>
-        {counts && (
-          <Mono className="ml-2.5 text-[11px] text-fainter">
-            {counts.graph.nodes.length} docs · {counts.graph.edges.length} links
-          </Mono>
-        )}
-      </div>
-      <span className="hidden font-mono text-[10.5px] text-fainter sm:inline">drag to pan · scroll to zoom</span>
-      <Link
-        to="/p/$projectId/knowledge"
-        params={{ projectId }}
-        className="flex flex-none items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-[11.5px] font-medium text-muted transition-colors hover:bg-hover hover:text-ink"
-      >
-        <List size={13} strokeWidth={2} />
-        List
-      </Link>
-    </header>
+    </KnowledgeShell>
   );
 }
 

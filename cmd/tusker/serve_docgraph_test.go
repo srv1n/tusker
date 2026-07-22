@@ -1,8 +1,12 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -213,5 +217,289 @@ func TestDocgraphEmptyCorpus(t *testing.T) {
 	}
 	if !out.Graph.GraphGenerated {
 		t.Fatalf("graph_generated should be true even when empty")
+	}
+}
+
+func servePut(t *testing.T, server *serveServer, path, body string) (int, []byte) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut, "http://127.0.0.1:7420"+path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	return rec.Code, rec.Body.Bytes()
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func docRev(t *testing.T, server *serveServer, subject string) string {
+	t.Helper()
+	var out serveDocgraphDetail
+	serveDecode(t, server, "/api/docgraph/doc?project=app&subject="+subject, &out)
+	if out.Rev == "" {
+		t.Fatalf("GET %s returned empty rev", subject)
+	}
+	return out.Rev
+}
+
+func docFileRev(t *testing.T, repoRoot, rel string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func hasDefect(defects []serveDocgraphIssue, code string) bool {
+	for _, d := range defects {
+		if d.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+// headerRegion returns the bytes up to and including the closing --- delimiter.
+func headerRegion(raw string) string {
+	for _, marker := range []string{"\n---\n", "\r\n---\r\n"} {
+		if idx := strings.Index(raw, marker); idx >= 0 {
+			return raw[:idx+len(marker)]
+		}
+	}
+	return raw
+}
+
+func TestDocSaveWritesFile(t *testing.T) {
+	server := newServeFixture(t)
+	seedDocgraphCorpus(t, server.repoRoot)
+
+	rev := docRev(t, server, "alpha")
+	newBody := "# Alpha Spec\n\nRewritten body with [[beta]].\n"
+	payload := mustJSON(t, map[string]any{"base_rev": rev, "body": newBody})
+	code, raw := servePut(t, server, "/api/docgraph/doc?project=app&subject=alpha", payload)
+	if code != http.StatusOK {
+		t.Fatalf("save status = %d: %s", code, raw)
+	}
+
+	var resp serveDocgraphSaveResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("decode: %v\n%s", err, raw)
+	}
+	if !strings.Contains(resp.Body, "Rewritten body with") {
+		t.Fatalf("response body did not reflect edit: %q", resp.Body)
+	}
+	if resp.Warnings == nil {
+		t.Fatalf("warnings must never be null: %s", raw)
+	}
+	if resp.Rev == rev {
+		t.Fatalf("rev should change after an edit")
+	}
+	if want := docFileRev(t, server.repoRoot, ".tusker/specs/alpha.md"); resp.Rev != want {
+		t.Fatalf("response rev %q != sha256 of new file bytes %q", resp.Rev, want)
+	}
+	content, err := os.ReadFile(filepath.Join(server.repoRoot, ".tusker/specs/alpha.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "Rewritten body with [[beta]].") {
+		t.Fatalf("edit not persisted to disk: %q", content)
+	}
+}
+
+func TestDocSaveRefusesHeaderDefects(t *testing.T) {
+	server := newServeFixture(t)
+	seedDocgraphCorpus(t, server.repoRoot)
+
+	path := filepath.Join(server.repoRoot, ".tusker/specs/alpha.md")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev := docRev(t, server, "alpha")
+
+	// Rename alpha's subject onto beta's -> duplicate subject.
+	header := map[string]any{
+		"title":    "Alpha Spec",
+		"subject":  "beta",
+		"part_of":  "overview",
+		"keywords": []string{"alpha"},
+		"status":   "active",
+	}
+	payload := mustJSON(t, map[string]any{"base_rev": rev, "header": header})
+	code, raw := servePut(t, server, "/api/docgraph/doc?project=app&subject=alpha", payload)
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422: %s", code, raw)
+	}
+	var resp struct {
+		Defects []serveDocgraphIssue `json:"defects"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("decode: %v\n%s", err, raw)
+	}
+	if !hasDefect(resp.Defects, "DOC_DUPLICATE_SUBJECT") {
+		t.Fatalf("expected DOC_DUPLICATE_SUBJECT defect: %#v", resp.Defects)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("file must be byte-unchanged on refusal")
+	}
+}
+
+func TestDocSaveRefreshesCorpus(t *testing.T) {
+	server := newServeFixture(t)
+	seedDocgraphCorpus(t, server.repoRoot)
+
+	rev := docRev(t, server, "beta")
+	newBody := "# Beta Renamed\n\nRefers to [[alpha]] and now [[overview]].\n"
+	payload := mustJSON(t, map[string]any{"base_rev": rev, "body": newBody})
+	code, raw := servePut(t, server, "/api/docgraph/doc?project=app&subject=beta", payload)
+	if code != http.StatusOK {
+		t.Fatalf("save status = %d: %s", code, raw)
+	}
+
+	// Backlinks refresh without a restart: overview now backlinked from beta.
+	var overview serveDocgraphDetail
+	serveDecode(t, server, "/api/docgraph/doc?project=app&subject=overview", &overview)
+	if !hasBacklink(overview.Backlinks, "beta", "wiki") {
+		t.Fatalf("overview backlinks missing edited beta via wiki: %#v", overview.Backlinks)
+	}
+
+	// The list reflects the H1 title change.
+	var list serveDocgraphList
+	serveDecode(t, server, "/api/docgraph?project=app", &list)
+	found := false
+	for _, d := range list.Docs {
+		if d.Subject == "beta" {
+			found = true
+			if d.Title != "Beta Renamed" {
+				t.Fatalf("beta title = %q, want %q", d.Title, "Beta Renamed")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("beta missing from refreshed list")
+	}
+}
+
+func TestDocSaveConflictRefused(t *testing.T) {
+	server := newServeFixture(t)
+	seedDocgraphCorpus(t, server.repoRoot)
+
+	path := filepath.Join(server.repoRoot, ".tusker/specs/alpha.md")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := mustJSON(t, map[string]any{"base_rev": "deadbeef", "body": "# Alpha Spec\n\nStale write.\n"})
+	code, raw := servePut(t, server, "/api/docgraph/doc?project=app&subject=alpha", payload)
+	if code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", code, raw)
+	}
+	var resp struct {
+		Code       string `json:"code"`
+		CurrentRev string `json:"current_rev"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("decode: %v\n%s", err, raw)
+	}
+	if resp.Code != "DOC_SAVE_CONFLICT" {
+		t.Fatalf("code = %q, want DOC_SAVE_CONFLICT", resp.Code)
+	}
+	if want := docFileRev(t, server.repoRoot, ".tusker/specs/alpha.md"); resp.CurrentRev != want {
+		t.Fatalf("current_rev = %q, want %q", resp.CurrentRev, want)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("file must be unchanged on conflict")
+	}
+}
+
+func TestDocSaveBodyOnlyPreservesHeaderBytes(t *testing.T) {
+	server := newServeFixture(t)
+	seedDocgraphCorpus(t, server.repoRoot)
+
+	path := filepath.Join(server.repoRoot, ".tusker/specs/alpha.md")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headerBefore := headerRegion(string(before))
+
+	rev := docRev(t, server, "alpha")
+	payload := mustJSON(t, map[string]any{"base_rev": rev, "body": "# Alpha Spec\n\nBrand new body only.\n"})
+	code, raw := servePut(t, server, "/api/docgraph/doc?project=app&subject=alpha", payload)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d: %s", code, raw)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if headerBefore != headerRegion(string(after)) {
+		t.Fatalf("header region changed on body-only save:\nbefore=%q\nafter=%q", headerBefore, headerRegion(string(after)))
+	}
+	if !strings.Contains(string(after), "Brand new body only.") {
+		t.Fatalf("body edit not persisted: %q", after)
+	}
+}
+
+func TestDocSaveHandlesCRLFDocuments(t *testing.T) {
+	server := newServeFixture(t)
+	seedDocgraphCorpus(t, server.repoRoot)
+	path := filepath.Join(server.repoRoot, ".tusker/specs/crlf.md")
+	content := "---\r\ntitle: \"CRLF Spec\"\r\nsubject: crlf\r\npart_of: overview\r\nkeywords: [crlf]\r\nstatus: active\r\n---\r\n\r\n# CRLF Spec\r\n\r\nWindows line endings.\r\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	headerBefore := headerRegion(content)
+
+	rev := docRev(t, server, "crlf")
+	payload := mustJSON(t, map[string]any{"base_rev": rev, "body": "# CRLF Spec\n\nEdited body.\n"})
+	code, raw := servePut(t, server, "/api/docgraph/doc?project=app&subject=crlf", payload)
+	if code != http.StatusOK {
+		t.Fatalf("CRLF doc save status = %d, want 200: %s", code, raw)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if headerBefore != headerRegion(string(after)) {
+		t.Fatalf("CRLF header region changed on body-only save:\nbefore=%q\nafter=%q", headerBefore, headerRegion(string(after)))
+	}
+	if !strings.Contains(string(after), "Edited body.") {
+		t.Fatalf("body edit not persisted: %q", after)
+	}
+}
+
+func TestDocSaveRejectsBadRequests(t *testing.T) {
+	server := newServeFixture(t)
+	seedDocgraphCorpus(t, server.repoRoot)
+	rev := docRev(t, server, "alpha")
+
+	if code, raw := servePut(t, server, "/api/docgraph/doc?project=app&subject=alpha",
+		mustJSON(t, map[string]any{"body": "# X\n\nx\n"})); code != http.StatusBadRequest {
+		t.Fatalf("missing base_rev status = %d, want 400: %s", code, raw)
+	}
+	if code, raw := servePut(t, server, "/api/docgraph/doc?project=app&subject=alpha",
+		mustJSON(t, map[string]any{"base_rev": rev})); code != http.StatusBadRequest {
+		t.Fatalf("no body/header status = %d, want 400: %s", code, raw)
+	}
+	if code, raw := servePut(t, server, "/api/docgraph/doc?project=app&subject=does-not-exist",
+		mustJSON(t, map[string]any{"base_rev": rev, "body": "# X\n\nx\n"})); code != http.StatusNotFound {
+		t.Fatalf("unknown subject status = %d, want 404: %s", code, raw)
 	}
 }

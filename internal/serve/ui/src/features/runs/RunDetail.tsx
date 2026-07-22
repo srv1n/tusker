@@ -88,12 +88,13 @@ function TaskRunDetail({ projectId, taskId }: { projectId: string; taskId: strin
   return (
     <div className="tk-scroll h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-[1040px] px-6 pb-20 pt-6 sm:px-11">
+        {/* Runs now live on the Overview (SRV-T-0003); back-link goes there. */}
         <Link
-          to="/p/$projectId/runs"
+          to="/p/$projectId"
           params={{ projectId }}
           className="mb-4 inline-flex items-center gap-1.5 font-mono text-[11.5px] text-faint transition-colors hover:text-ink"
         >
-          <ArrowLeft size={13} strokeWidth={2} /> Runs
+          <ArrowLeft size={13} strokeWidth={2} /> Overview
         </Link>
 
         <QueryBoundary q={run} loading={<RunDetailSkeleton />}>

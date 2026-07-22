@@ -158,6 +158,11 @@ func serveHumanOwner(owner string) bool {
 }
 
 func serveTerminalFailure(run RunStatus, maxAttempts int) bool {
+	// A retired run has been acknowledged (or otherwise cleared); it never
+	// re-enters the attention surface even though its outcome stays "failed".
+	if serveRunRetired(run) {
+		return false
+	}
 	if LeaseState(run.LeaseState) == LeaseStateParkedNoProgress {
 		return true
 	}

@@ -6,6 +6,8 @@
 
 | Task | Wave | Risk | Next action |
 |---|---|---|---|
-| [[SRV-T-0001]] |  | low | Review evidence and close or return to rework. |
+| [[SRV-T-0002]] |  | medium | Review evidence and close or return to rework. |
+| [[SRV-T-0003]] |  | low | Review evidence and close or return to rework. |
+| [[SRV-T-0004]] |  | low | Review evidence and close or return to rework. |
 
 <!-- tusker:generated:end -->

@@ -239,6 +239,14 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if r.Method == http.MethodPut && path == "/api/docgraph/doc" {
+		if reason := serveMutationOriginRefusal(r); reason != "" {
+			serveJSON(w, http.StatusForbidden, serveActionResult{OK: false, Refused: true, Reason: reason})
+			return
+		}
+		s.handleDocgraphDocSave(w, r)
+		return
+	}
 	if s.handleAPIMutation(w, r, path) {
 		return
 	}
@@ -954,6 +962,12 @@ func (s *serveServer) handleRuns(w http.ResponseWriter, r *http.Request) {
 	out := []serveRunSummary{}
 	includeAll := parseTruthyQuery(r.URL.Query().Get("all"))
 	for _, run := range snap.runs {
+		// A retired run is a cleared record: it leaves the board so an
+		// acknowledged failure stays gone. Its history is still reachable via
+		// GET /api/runs/<task-id> for anyone who wants the trail.
+		if serveRunRetired(run) {
+			continue
+		}
 		if !includeAll && serveRunHiddenByDefault(run) {
 			continue
 		}

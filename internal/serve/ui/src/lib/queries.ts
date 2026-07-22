@@ -16,6 +16,11 @@ import {
 import { liveRefetchInterval } from "@/lib/stream";
 import { projectQueryScope } from "@/lib/queryScope";
 import type { DocContent, DocListEntry, RunDetail, TaskCapsule, TaskDetail } from "@/types/domain";
+import type {
+  DocgraphDocDetail,
+  DocgraphSavePayload,
+  DocgraphSaveResponse,
+} from "@/features/knowledge/types";
 
 /** Query-key factory. */
 export const qk = {
@@ -168,6 +173,28 @@ export const useDocgraphDoc = (projectId: string, subject: string) =>
   useQuery({ queryKey: qk.docgraphDoc(projectId, subject), queryFn: () => api.docgraphDoc(projectId, subject), enabled: subject.length > 0, refetchInterval: liveRefetchInterval });
 
 /**
+ * Save an edited corpus document. On success the fresh detail (new rev, links,
+ * backlinks, successor) is written straight into the doc cache, and the corpus
+ * list + graph query is invalidated so a title/status change is reflected there
+ * without a reload. A refused save (conflict/defects) rejects with a typed
+ * DocSaveError the reader surfaces inline; nothing is written to the cache.
+ */
+export const useSaveDocgraphDoc = (projectId: string, subject: string) => {
+  const qc = useQueryClient();
+  return useMutation<DocgraphSaveResponse, unknown, DocgraphSavePayload>({
+    mutationKey: ["docgraph", "save", projectId, subject],
+    mutationFn: (payload) => api.saveDocgraphDoc(projectId, subject, payload),
+    onSuccess: (data) => {
+      // Strip the transient warnings before seeding the read cache — they belong
+      // to this save response, not to the persisted document.
+      const { warnings: _warnings, ...detail } = data;
+      qc.setQueryData<DocgraphDocDetail>(qk.docgraphDoc(projectId, subject), detail);
+      void qc.invalidateQueries({ queryKey: qk.docgraph(projectId) });
+    },
+  });
+};
+
+/**
  * Redrive (Retry) a run. The mutation resolves with the API's result — a
  * requeue or a refusal reason — which the caller surfaces; on any resolution we
  * refresh the run, the runs list, and the tasks (canonical status may change),
@@ -179,6 +206,27 @@ export const useRedrive = (taskId: string, projectId?: string) => {
     mutationKey: ["redrive", taskId],
     mutationFn: () => api.redrive(taskId, projectId),
     onSettled: () => invalidateRunActionQueries(qc, taskId, projectId),
+  });
+};
+
+/**
+ * Acknowledge (retire) a settled failed run. Resolves with the API's
+ * ActionResult on success; a still-active run is refused as a rejected ApiError
+ * the caller surfaces inline. On any resolution the needs, runs, project (sidebar
+ * badge), and run-detail queries are invalidated so the acknowledged card stays
+ * gone everywhere — including the global "Needs me · all" inbox.
+ */
+export const useAcknowledgeRun = (taskId: string, projectId?: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationKey: ["acknowledge", taskId],
+    mutationFn: () => api.acknowledgeRun(taskId, projectId),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ["needs"] });
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+      void qc.invalidateQueries({ queryKey: ["projects"] });
+      void qc.invalidateQueries({ queryKey: qk.run(taskId, projectId) });
+    },
   });
 };
 
