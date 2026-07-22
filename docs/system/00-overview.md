@@ -99,6 +99,7 @@ graph TD
   n_build_and_test_economics["Build and test economics: how often we build and test at each stage"]
   n_cli["Tusker CLI reference"]
   n_gates["Gates (human gates, the gate tier, and batch merge windows)"]
+  n_gates_over_records["Decision log: gates over records"]
   n_knowledge_graph["Knowledge graph: self-scaffolding, self-checking documentation"]
   n_knowledge_graph_grill["Decision log: the knowledge-graph discussion"]
   n_orchestration["Orchestration"]
@@ -111,6 +112,7 @@ graph TD
   n_software_factory --> n_build_and_test_economics
   n_overview --> n_cli
   n_overview --> n_gates
+  n_software_factory --> n_gates_over_records
   n_overview --> n_knowledge_graph
   n_knowledge_graph --> n_knowledge_graph_grill
   n_overview --> n_orchestration

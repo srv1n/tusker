@@ -21,6 +21,12 @@ The task model exists to serve the factory principles in
 [software-factory.md](../../.tusker/specs/software-factory.md): humans own
 intent, agents own execution, and the validator is never the author.
 
+The economics of the model are governed by [[gates-over-records]]: every
+artifact here must either gate a decision (accept, land, review) or preserve a
+human decision. Proof is the smallest row set covering acceptance — one command
+row is a complete proof for a small task — and regenerable history (progress
+logs, transcripts, narrative evidence) is deliberately not recorded.
+
 ## The two-layer body
 
 Every task body leads with a **plain top layer** a former PM can read cold, then

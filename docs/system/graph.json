@@ -22,6 +22,13 @@
       "status": "canonical"
     },
     {
+      "subject": "gates-over-records",
+      "kind": "decision",
+      "path": ".tusker/specs/decisions/2026-07-22-gates-over-records.md",
+      "title": "Decision log: gates over records",
+      "status": "canonical"
+    },
+    {
       "subject": "knowledge-graph",
       "kind": "spec",
       "path": ".tusker/specs/knowledge-graph.md",
@@ -99,6 +106,16 @@
     {
       "from": "gates",
       "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "gates-over-records",
+      "to": ".tusker/specs/software-factory.md",
+      "kind": "decides_for"
+    },
+    {
+      "from": "gates-over-records",
+      "to": "software-factory",
       "kind": "part_of"
     },
     {

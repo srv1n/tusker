@@ -3201,7 +3201,7 @@ func latestV7AttemptID(vaultPath, taskID string) (string, error) {
 	}
 	attempts := idx.Attempts[taskID]
 	if len(attempts) == 0 {
-		return "", tuskerError(errorNotFound, "No attempt exists for "+taskID, withHint("attempts are runtime/session state, not durable task status; run `tusker attempt start "+taskID+"` then retry `tusker finish "+taskID+" --request-review`"))
+		return "", tuskerError(errorNotFound, "No attempt exists for "+taskID, withHint("attempts are runtime/session state; run `tusker attempt start "+taskID+"`, then retry `tusker finish "+taskID+" --request-review`"))
 	}
 	sort.Slice(attempts, func(i, j int) bool { return stringField(attempts[i].Data, "id") < stringField(attempts[j].Data, "id") })
 	return stringField(attempts[len(attempts)-1].Data, "id"), nil
@@ -3855,9 +3855,9 @@ func v7ReviewerControlMutationAllowed(vaultPath string, args Args, branch string
 func v7ProtectedImplementationFlowHint(args Args) string {
 	taskID := firstNonEmpty(args.String("id"), args.String("_pos0"), "<TASK-ID>")
 	if strings.EqualFold(args.String("status"), "active") || strings.EqualFold(args.String("_pos1"), "active") {
-		return "V7 does not use durable `active` task status for implementation. Use `tusker attempt start " + taskID + "`, implement, `tusker verify add " + taskID + " --covers A1 --check \"<check>\" --result pass`, then `tusker attempt handoff " + taskID + "` and `tusker finish " + taskID + " --request-review`; on protected branches finish will create or reuse a review proposal."
+		return "no durable `active` status; use `tusker attempt start " + taskID + "` → `tusker verify add " + taskID + " …` → `tusker attempt handoff " + taskID + "` → `tusker finish " + taskID + " --request-review` (auto-proposes on protected branches)."
 	}
-	return "protected V7 state changes belong on a control branch. Implementation branches should use `tusker attempt start " + taskID + "`, write proof with `tusker verify add`, hand off with `tusker attempt handoff " + taskID + "`, then `tusker finish " + taskID + " --request-review` or the proposal flow."
+	return "durable state changes on this branch go through `tusker finish " + taskID + " --request-review` (auto-proposes on implementation branches)."
 }
 
 func v7SingleUserLocalMutationMode(vaultPath string) bool {

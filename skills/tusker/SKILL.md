@@ -138,6 +138,24 @@ close objectively proven work at every tier. Explicit human gates remain binding
 for capability, external authority, unresolved intent, and contractually
 subjective acceptance.
 
+## Proof Economics (Gates Over Records)
+
+Building and re-verifying are cheap; context and human attention are not. Every
+process artifact must either gate a decision (accept, land, review, dispatch)
+or preserve a human decision and its why. Regenerable history passes neither
+test — do not write it.
+
+- Proof is the smallest set of verification rows that covers the acceptance
+  contract. For a small task, one command row is a complete proof. Never pad
+  proof to look thorough.
+- Do not write progress logs, unchanged-state updates, narrative evidence, or
+  transcripts. No gate reads them; every future context pays to skip them.
+- When a guard refuses with a remedy that involves no decision (open an
+  attempt, use a proposal), apply the remedy and continue; report it in one
+  line. Do not re-litigate the guard.
+- If a status is stale, suspect the mechanism before the operator: fix or flag
+  the transition that should have set it, do not add reminder ceremony.
+
 ## Hard Rules
 
 - A task is a contract, not a chat log.
