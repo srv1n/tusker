@@ -28,6 +28,7 @@ type Workflow struct {
 	TrackerSchemaVersion int                               `yaml:"tracker_schema_version"`
 	AutomationEnabled    bool                              `yaml:"automation_enabled"`
 	DispatchScope        automationDispatchScopeProjection `yaml:"-" json:"dispatch_scope"`
+	CompletionReactor    completionReactorModeProjection   `yaml:"-" json:"completion_reactor"`
 	// ScheduledPromotion is intentionally a workflow contract, rather than a
 	// daemon switch.  Resolving it is side-effect free; the departure runner is
 	// responsible for acting only on the permissions projected here.
@@ -292,6 +293,7 @@ func defaultWorkflow() Workflow {
 	wf.TrackerSchemaVersion = 7
 	wf.AutomationEnabled = false
 	wf.DispatchScope = defaultAutomationDispatchScope()
+	wf.CompletionReactor = defaultCompletionReactorMode()
 	wf.ScheduledPromotion = defaultScheduledPromotionPolicy()
 	wf.Tracker.Kind = "tusker_vault"
 	wf.Tracker.ActiveStates = []string{"ready", "rework"}
@@ -573,6 +575,11 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 			return wfFile, err
 		}
 		wfFile.Data.DispatchScope = scope
+		mode, err := resolveCompletionReactorMode(resolved, wfFile.Data.AutomationEnabled)
+		if err != nil {
+			return wfFile, err
+		}
+		wfFile.Data.CompletionReactor = mode
 		return wfFile, nil
 	}
 	wf := wfFile.Data
@@ -584,6 +591,11 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 		return wfFile, err
 	}
 	wf.DispatchScope = scope
+	mode, err := resolveCompletionReactorMode(resolved, wf.AutomationEnabled)
+	if err != nil {
+		return wfFile, err
+	}
+	wf.CompletionReactor = mode
 	triggerStates := normalizeList(cfg.Automation.TriggerStates)
 	if len(triggerStates) == 0 {
 		triggerStates = []string{"ready", "rework"}
@@ -712,6 +724,7 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 
 func v7AutomationConfigPresent(cfg v7TuskerConfigFile) bool {
 	return cfg.Automation.Enabled != nil ||
+		strings.TrimSpace(cfg.Automation.CompletionReactor.Mode) != "" ||
 		len(cfg.Automation.TriggerStates) > 0 ||
 		strings.TrimSpace(cfg.Automation.DefaultRunner) != "" ||
 		len(cfg.Automation.EnabledRunners) > 0 ||

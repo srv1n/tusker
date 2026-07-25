@@ -185,19 +185,27 @@ type TuskerAutomationValidationConfig struct {
 	Commands []string `yaml:"commands"`
 }
 
+// TuskerCompletionReactorConfig deliberately carries only authority mode. The
+// reactor itself is a later consumer; accepting this configuration must not
+// create an execution path by itself.
+type TuskerCompletionReactorConfig struct {
+	Mode string `yaml:"mode,omitempty"`
+}
+
 type TuskerAutomationConfig struct {
-	Enabled        *bool                                `yaml:"enabled"`
-	DispatchScope  string                               `yaml:"dispatch_scope,omitempty"`
-	TriggerStates  []string                             `yaml:"trigger_states"`
-	LegacyProfile  string                               `yaml:"legacy_profile"`
-	DefaultRunner  string                               `yaml:"default_runner"`
-	EnabledRunners []string                             `yaml:"enabled_runners"`
-	DefaultProfile string                               `yaml:"default_profile"`
-	LaneProfiles   map[string]string                    `yaml:"lane_profiles"`
-	Profiles       map[string]TuskerRunnerProfileConfig `yaml:"profiles"`
-	Routing        []TuskerAutomationRoutingRuleConfig  `yaml:"routing"`
-	Denylist       []TuskerAutomationDenyRuleConfig     `yaml:"denylist"`
-	Workspace      struct {
+	Enabled           *bool                                `yaml:"enabled"`
+	DispatchScope     string                               `yaml:"dispatch_scope,omitempty"`
+	CompletionReactor TuskerCompletionReactorConfig        `yaml:"completion_reactor,omitempty"`
+	TriggerStates     []string                             `yaml:"trigger_states"`
+	LegacyProfile     string                               `yaml:"legacy_profile"`
+	DefaultRunner     string                               `yaml:"default_runner"`
+	EnabledRunners    []string                             `yaml:"enabled_runners"`
+	DefaultProfile    string                               `yaml:"default_profile"`
+	LaneProfiles      map[string]string                    `yaml:"lane_profiles"`
+	Profiles          map[string]TuskerRunnerProfileConfig `yaml:"profiles"`
+	Routing           []TuskerAutomationRoutingRuleConfig  `yaml:"routing"`
+	Denylist          []TuskerAutomationDenyRuleConfig     `yaml:"denylist"`
+	Workspace         struct {
 		Root     string `yaml:"root"`
 		Strategy string `yaml:"strategy"`
 	} `yaml:"workspace"`
