@@ -234,6 +234,73 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		}
 	})
 
+	t.Run("standalone review binds singleton before immutable result", func(t *testing.T) {
+		repo, vault := newLandTestRepo(t, 1, "true")
+		clearWaveBackpointer(t, vault, "APP-T-0001")
+		setSingletonPromotionMode(t, vault, scheduledPromotionStage)
+		source := commitLandBranch(t, repo, "source/APP-T-0001", "integration/W-0001", map[string]string{"standalone.txt": "reviewed\n"})
+		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+			"status": "review", "readiness": "waiting_on_review", "proof_status": "satisfied",
+			"source_sha": source, "work_revision": 1,
+		})
+		before, err := resolveV7Note(vault, "APP-T-0001", "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stringField(before.Data, "wave") != "" {
+			t.Fatal("fixture is not standalone before review handoff")
+		}
+		if err := requestV7ReviewAfterHandoff(vault, "APP-T-0001", Args{"vault": vault, "quiet": "true", "by": "agent:test"}); err != nil {
+			t.Fatal(err)
+		}
+		reviewed, err := resolveV7Note(vault, "APP-T-0001", "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stringField(reviewed.Data, "wave") == "" || stringField(reviewed.Data, "state_rev") == stringField(before.Data, "state_rev") {
+			t.Fatal("review handoff did not freeze singleton binding before reviewer snapshot")
+		}
+		wave, ok := completionWaveForReviewedTask(vault, reviewed)
+		if !ok || !v7ImplicitDeliveryUnit(wave) {
+			t.Fatal("bound standalone task is not an authorized implicit completion unit")
+		}
+		proof, gates, err := reviewObjectiveSnapshots(vault, reviewed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		project := newRegisteredProject(repo, vault)
+		stateRoot := filepath.Join(t.TempDir(), "state")
+		t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+		daemon, err := NewDaemon(stateRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer daemon.Close()
+		result := ReviewResult{
+			Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: "APP-T-0001",
+			TaskStateRev: stringField(reviewed.Data, "state_rev"), WorkRevision: 1,
+			ImplementationSHA: source, AttemptID: "review-standalone", Actor: "reviewer:agent",
+			Runner: "codex", RunnerProfile: "review", Covers: []string{"A1"},
+			ProofFingerprint: proof, GateFingerprint: gates, Verdict: "pass", Summary: "standalone objective pass",
+		}
+		result.ResultRevision = reviewResultFingerprint(result)
+		if _, err := daemon.store.SaveReviewResult(result); err != nil {
+			t.Fatal(err)
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatal(err)
+		}
+		integration := "refs/heads/" + v7WaveIntegrationBranch(wave)
+		got, err := gitOutputTrim(repo, "rev-parse", integration)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !gitMergeBaseAncestor(repo, source, got) {
+			t.Fatal("standalone pass did not merge exact reviewed SHA")
+		}
+	})
+
 	t.Run("first completion creates a ref-less integration lane by CAS", func(t *testing.T) {
 		vault, project, daemon, result := completionReactorFixture(t, true)
 		defer daemon.Close()

@@ -177,20 +177,12 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 			return d.completePassingReview(project, result, prior)
 		}
 	}
-	wave, _, hasWave := armedWaveForTask(project.VaultRoot, note)
-	if !hasWave && mode == completionReactorModeAuthoritative {
-		if _, _, err := ensureV7ImplicitSingletonDeliveryUnit(project.VaultRoot, result.TaskID, Args{"quiet": "true", "by": "daemon:completion-reactor"}); err != nil {
-			return err
-		}
-		note, err = resolveV7Note(project.VaultRoot, result.TaskID, "task")
-		if err != nil {
-			return err
-		}
-		wave, _, hasWave = armedWaveForTask(project.VaultRoot, note)
-	}
+	wave, hasWave := completionWaveForReviewedTask(project.VaultRoot, note)
 	if !hasWave {
-		// Shadow is deliberately observational: an unbound task is a useful
-		// comparison result, not permission to manufacture a delivery unit.
+		// Binding after the reviewer froze TaskStateRev would invalidate the
+		// result. requestV7ReviewAfterHandoff owns singleton creation before
+		// reviewer dispatch; a result that somehow lacks that binding remains
+		// awaiting manual repair without lifecycle or Git mutation.
 		return nil
 	}
 	integrationRef := "refs/heads/" + v7WaveIntegrationBranch(wave)
@@ -234,6 +226,31 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 	default:
 		return tuskerError(errorInvalidArg, "stored review result has unknown verdict")
 	}
+}
+
+func completionWaveForReviewedTask(vaultPath string, task Note) (Note, bool) {
+	waveID := stringField(task.Data, "wave")
+	if waveID == "" {
+		return Note{}, false
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return Note{}, false
+	}
+	wave, ok := idx.Waves[waveID]
+	if !ok {
+		return Note{}, false
+	}
+	if v7ImplicitDeliveryUnit(wave) {
+		members := normalizeList(wave.Data["members"])
+		return wave, len(members) == 1 && members[0] == resultTaskID(task) && stringField(wave.Data, "delivery_task") == resultTaskID(task)
+	}
+	auth := waveAuthorizationProjection(vaultPath, idx, wave)
+	return wave, stringField(auth, "state") == "armed" && !boolFromAny(auth["stale"])
+}
+
+func resultTaskID(task Note) string {
+	return strings.ToUpper(strings.TrimSpace(stringField(task.Data, "id")))
 }
 
 func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewResult, transaction *completionTransaction) error {
@@ -559,6 +576,23 @@ func materializeReviewedDone(stageRoot, vaultPath string, result ReviewResult) e
 		return tuskerError(errorInvalidTransition, "cannot locate staged tracker")
 	}
 	path := filepath.Join(stageRoot, relVault, "work", "tasks", result.TaskID+".md")
+	canonicalPath := filepath.Join(vaultPath, "work", "tasks", result.TaskID+".md")
+	canonicalData, canonicalBody, err := parseFrontmatterMustRead(canonicalPath)
+	if err != nil {
+		return err
+	}
+	if stringField(canonicalData, "state_rev") != result.TaskStateRev ||
+		intField(canonicalData, "work_revision") != result.WorkRevision ||
+		firstNonEmpty(stringField(canonicalData, "source_sha"), stringField(canonicalData, "source_commit")) != result.ImplementationSHA {
+		return tuskerError(errorInvalidTransition, "canonical task drifted from exact reviewed revision before staging")
+	}
+	canonical, err := serializeDocument(canonicalData, canonicalBody, v7FrontmatterOrder["task"])
+	if err != nil {
+		return err
+	}
+	if err := writeText(path, canonical); err != nil {
+		return err
+	}
 	data, body, err := parseFrontmatterMustRead(path)
 	if err != nil {
 		return err
