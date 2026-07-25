@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 )
@@ -40,6 +41,22 @@ func cloneReviewArgs(base Args) Args {
 		clone[key] = value
 	}
 	return clone
+}
+
+func refreshReviewArgs(t *testing.T, vault string, args Args) Args {
+	t.Helper()
+	note, err := resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, gates, err := reviewObjectiveSnapshots(vault, note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args["task-rev"] = stringField(note.Data, "state_rev")
+	args["proof-fingerprint"] = proof
+	args["gate-fingerprint"] = gates
+	return args
 }
 
 func validStoredReviewResult() ReviewResult {
@@ -142,6 +159,117 @@ func TestReviewResultProtocolRejectsVerdictPayloadMixing(t *testing.T) {
 				t.Fatal("accepted verdict payload mixing")
 			}
 		})
+	}
+}
+
+func TestReviewResultProtocolRequiresGenuineHumanBlocker(t *testing.T) {
+	vault, base := reviewResultCommandFixture(t)
+	blocked := cloneReviewArgs(base)
+	blocked["verdict"] = "blocked"
+	blocked["finding"] = ""
+	blocked["blocker"] = "human"
+	if err := reviewSubmitCmd(blocked); err == nil {
+		t.Fatal("human block without an open human gate was accepted")
+	}
+	if err := newV7Gate(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "signoff", "owner": "human:product", "action": "Review the subjective artifact.", "verification": "Product owner records acceptance.", "why-agent-cannot": "The approved contract reserves subjective acceptance for the product owner.", "covers": "A1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reviewSubmitCmd(refreshReviewArgs(t, vault, blocked)); err != nil {
+		t.Fatalf("genuine human block rejected: %v", err)
+	}
+}
+
+func TestReviewResultProtocolRejectsInactiveReviewAuthority(t *testing.T) {
+	vault, base := reviewResultCommandFixture(t)
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.UpsertRun(RunStatus{ProjectID: v7ProjectID(vault), RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: "codex", RunnerProfile: "review-fixture", Lane: runLaneReview, LeaseState: string(LeaseStateRunning), ActiveAttemptID: "review-other", WorkRevision: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reviewSubmitCmd(base); err == nil {
+		t.Fatal("inactive reviewer attempt was accepted")
+	}
+}
+
+func TestReviewResultProtocolReviewerExitRetriesThenCaps(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Typed review exit", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer", "source_sha": "abc123", "work_revision": 2})
+	project := registerAutomationTestProject(t, vault)
+	statusPath := filepath.Join(t.TempDir(), "reviewer.status.json")
+	if err := writeRunnerStatusFile(statusPath, 0); err != nil {
+		t.Fatal(err)
+	}
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	wfFile, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: "codex", RunnerProfile: "review-fixture", Lane: runLaneReview, LeaseState: string(LeaseStateRunning), ActiveAttemptID: "review-1", WorkRevision: 2, StatusPath: statusPath, WorkspacePath: t.TempDir(), AttemptCount: 1}
+	updated, changed, err := daemon.reconcileRun(context.Background(), project, wfFile, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || updated.LeaseState != string(LeaseStateReleased) || updated.AttemptOutcome != string(AttemptOutcomeFailed) {
+		t.Fatalf("reviewer exit did not release a retryable failed run: %#v", updated)
+	}
+	attempts, err := daemon.store.ListAttemptsForRun(project.ProjectID, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, err := resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reviewDispatchAllowed(vault, note, wfFile.Data, updated, reviewerAttemptCount(attempts)) {
+		t.Fatal("reviewer exit without a result must be retryable before the configured cap")
+	}
+	wfFile.Data.Reviewer.MaxCycles = 1
+	if reviewDispatchAllowed(vault, note, wfFile.Data, updated, reviewerAttemptCount(attempts)) {
+		t.Fatal("reviewer exit must park at the configured review cycle cap")
+	}
+}
+
+func TestReviewResultProtocolSavedResultSuppressesDuplicateReviewDispatch(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Typed review duplicate", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer", "source_sha": "abc123", "work_revision": 2})
+	project := registerAutomationTestProject(t, vault)
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	result := validStoredReviewResult()
+	result.ProjectID = project.ProjectID
+	result.WorkRevision = 2
+	result.AttemptID = "review-1"
+	if _, err := daemon.store.SaveReviewResult(result); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+	if run.Lane != runLaneReview || run.AttemptOutcome != string(AttemptOutcomeSucceeded) || run.LeaseState != string(LeaseStateReleased) || run.ActiveAttemptID != "" {
+		t.Fatalf("saved typed result did not suppress review redispatch: %#v", run)
+	}
+	if run.LastError != "typed review result recorded; awaiting review reactor" {
+		t.Fatalf("unexpected result hold reason: %q", run.LastError)
+	}
+	attempts, err := daemon.store.ListAttemptsForRun(project.ProjectID, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 0 {
+		t.Fatalf("saved typed result dispatched an unnecessary reviewer: %#v", attempts)
 	}
 }
 

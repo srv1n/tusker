@@ -1235,14 +1235,38 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				return err
 			}
 			reviewCycles := reviewerAttemptCount(reviewAttempts)
+			hasResult, err := d.store.HasReviewResultForWork(project.ProjectID, recordID, intField(note.Data, "work_revision"))
+			if err != nil {
+				return err
+			}
+			if hasResult {
+				current.ProjectID = project.ProjectID
+				current.RecordID = recordID
+				current.ItemID = stringField(note.Data, "id")
+				current.Lane = runLaneReview
+				current.WorkRevision = intField(note.Data, "work_revision")
+				current.LeaseState = string(LeaseStateReleased)
+				current.AttemptOutcome = string(AttemptOutcomeSucceeded)
+				current.NextRetryAt = ""
+				current.LastError = "typed review result recorded; awaiting review reactor"
+				current.UpdatedAt = now.Format(time.RFC3339)
+				current.Terminal = false
+				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
+					return err
+				}
+				projectRuns[recordID] = current
+				continue
+			}
 			if !reviewDispatchAllowed(project.VaultRoot, note, wfFile.Data, current, reviewCycles) {
 				if wfFile.Data.Reviewer.Enabled && reviewCycles >= wfFile.Data.Reviewer.MaxCycles && stringField(note.Data, "verified_at") == "" {
 					current.ProjectID = project.ProjectID
 					current.RecordID = recordID
 					current.ItemID = stringField(note.Data, "id")
 					current.Lane = runLaneReview
-					current.LeaseState = string(LeaseStateReleased)
-					current.LastError = fmt.Sprintf("review dispatch blocked: automated review cycle cap reached (%d/%d); operator intervention required", reviewCycles, wfFile.Data.Reviewer.MaxCycles)
+					current.LeaseState = string(LeaseStateParkedNoProgress)
+					current.AttemptOutcome = string(AttemptOutcomeBlocked)
+					current.NextRetryAt = ""
+					current.LastError = fmt.Sprintf("review parked: automated review cycle cap reached (%d/%d); operator intervention required", reviewCycles, wfFile.Data.Reviewer.MaxCycles)
 					current.UpdatedAt = now.Format(time.RFC3339)
 					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 						return err
@@ -1750,9 +1774,7 @@ func reviewDispatchAllowed(vaultPath string, note Note, wf Workflow, run RunStat
 		return false
 	}
 	workRevision := intField(note.Data, "work_revision")
-	if run.Lane == runLaneReview && run.WorkRevision == workRevision && run.AttemptCount > 0 {
-		return false
-	}
+	_ = workRevision
 	return true
 }
 
@@ -2420,41 +2442,6 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				run.LastError, run.UpdatedAt, run.Terminal = reason, finished, false
 				clearActiveExecution(&run)
 				return run, true, nil
-				autoLanded, err := autoLandArmedWaveReviewComplete(project, note, run)
-				if err != nil {
-					landReason := "armed-wave reviewer auto-land failed: " + err.Error()
-					_ = kickV7LandingTaskToRework(project.VaultRoot, run.ItemID, landReason, "daemon:wave-drain")
-					updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, 1, landReason, finished)
-					run.LeaseState = string(LeaseStateParkedNoProgress)
-					run.AttemptOutcome = string(AttemptOutcomeBlocked)
-					run.LastError = landReason
-					run.UpdatedAt = finished
-					run.Terminal = false
-					clearActiveExecution(&run)
-					return run, true, nil
-				}
-				if autoLanded {
-					terminalStatus := ""
-					if projected, ok, projectionErr := armedWaveIntegrationTaskProjection(project.VaultRoot, note); projectionErr != nil {
-						return run, changed, projectionErr
-					} else if ok {
-						terminalStatus = stringField(projected.Data, "status")
-					} else if landedNote, resolveErr := resolveNote(project.VaultRoot, run.RecordID); resolveErr == nil {
-						terminalStatus = stringField(landedNote.Data, "status")
-					}
-					if !trackerStateTerminal(wfFile.Data, terminalStatus) {
-						return run, changed, tuskerError(errorInvalidTransition, "armed-wave reviewer landed without terminal task state for "+run.ItemID)
-					}
-					run.LeaseState = string(LeaseStateReleased)
-					run.AttemptOutcome = string(AttemptOutcomeSucceeded)
-					run.NextRetryAt = ""
-					run.LastError = ""
-					run.UpdatedAt = finished
-					run.Terminal = true
-					updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, "", finished)
-					clearActiveExecution(&run)
-					return run, true, nil
-				}
 			}
 			noteStatus := classification.trackerState
 			endState := RunEndState{}

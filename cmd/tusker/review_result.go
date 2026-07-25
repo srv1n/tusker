@@ -61,6 +61,16 @@ func (s *RuntimeStore) HasReviewResult(projectID, taskID string, workRevision in
 	return true, nil
 }
 
+// HasReviewResultForWork is deliberately work-revision scoped. A valid result
+// is a terminal reviewer output for this handoff; until the later deterministic
+// reactor consumes it, dispatching a fresh reviewer would create duplicate and
+// potentially conflicting judgments.
+func (s *RuntimeStore) HasReviewResultForWork(projectID, taskID string, workRevision int) (bool, error) {
+	var count int
+	err := s.queryRowScan(`SELECT COUNT(*) FROM review_results WHERE project_id=? AND task_id=? AND work_revision=?`, []any{projectID, taskID, workRevision}, &count)
+	return count > 0, err
+}
+
 func reviewSubmitCmd(args Args) error {
 	vault, err := resolveVaultPath(args, false)
 	if err != nil {
@@ -106,6 +116,15 @@ func reviewSubmitCmd(args Args) error {
 	case "blocked":
 		if blocker != "machine" && blocker != "infrastructure" && blocker != "human" {
 			return tuskerError(errorInvalidArg, "blocked requires --blocker machine|infrastructure|human")
+		}
+		if blocker == "human" {
+			humanBlocked, humanErr := reviewHasOpenHumanBlocker(vault, id)
+			if humanErr != nil {
+				return humanErr
+			}
+			if !humanBlocked {
+				return tuskerError(errorInvalidTransition, "blocked human result requires an open human-owned gate")
+			}
 		}
 	default:
 		return tuskerError(errorInvalidArg, "verdict must be pass, changes_requested, or blocked")
@@ -302,6 +321,22 @@ func reviewObjectiveSnapshots(vault string, note Note) (string, string, error) {
 	gateRaw, _ := json.Marshal(gates)
 	gateSum := sha256.Sum256(gateRaw)
 	return "sha256:" + hex.EncodeToString(proofSum[:]), "sha256:" + hex.EncodeToString(gateSum[:]), nil
+}
+
+func reviewHasOpenHumanBlocker(vaultPath, taskID string) (bool, error) {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return false, err
+	}
+	for _, gate := range idx.Gates {
+		if !v7GateTouchesTask(gate, taskID) || stringField(gate.Data, "status") != "open" || !boolField(gate.Data, "blocking") {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(stringField(gate.Data, "owner"))), "human:") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 func reviewResultFingerprint(r ReviewResult) string {
 	r.ResultRevision = ""
