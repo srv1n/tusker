@@ -459,12 +459,9 @@ func OpenRuntimeStore(stateRoot string) (*RuntimeStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	// Departures can have irreversible external effects (a ref move or release).
-	// Classify any interrupted row before a caller can schedule another window.
-	if _, err := store.ReconcileDepartureRuns(""); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
+	// Interrupted departure ref intents are reconciled only after the caller
+	// supplies the matching registered project. Ref names are project-local;
+	// store-only startup must not classify one against an unrelated repository.
 	return store, nil
 }
 

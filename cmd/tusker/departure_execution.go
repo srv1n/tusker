@@ -19,7 +19,7 @@ func (d *Daemon) startPendingDepartureExecutions(ctx context.Context, project Re
 	if d == nil || d.store == nil || d.departureExecutionDisabled || !wf.ScheduledPromotion.Effective.Observe {
 		return nil
 	}
-	recoveries, err := d.store.ReconcileDepartureRuns(project.ProjectID, d.activeDepartureExecutionIDs()...)
+	recoveries, err := d.store.ReconcileDepartureRunsForProject(project, d.activeDepartureExecutionIDs()...)
 	if err != nil {
 		return err
 	}

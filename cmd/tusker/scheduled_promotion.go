@@ -12,10 +12,17 @@ import (
 
 var (
 	scheduledPromotionResourceLeaseTTL        = defaultResourceLeaseTTL
+	scheduledPromotionAfterRefIntent          = func() error { return nil }
 	scheduledPromotionAfterRefUpdate          = func() error { return nil }
 	scheduledPromotionAfterDefaultPrepare     = func() error { return nil }
 	scheduledPromotionAfterFailureIntent      = func() error { return nil }
 	scheduledPromotionBeforeFailureCompletion = func() error { return nil }
+)
+
+const (
+	scheduledPromotionIntentPreRef    = "pre_ref"
+	scheduledPromotionIntentCommitted = "committed"
+	scheduledPromotionIntentDrifted   = "drifted"
 )
 
 // scheduledPromotionCandidateSnapshot is the immutable input contract for a
@@ -426,6 +433,193 @@ func appendScheduledPromotionAudit(vaultPath, waveID, defaultBranch, commit, gat
 	}}, actor)
 }
 
+func inspectScheduledPromotionIntent(repoRoot string, promotion DeparturePromotion) (string, string, error) {
+	if strings.TrimSpace(promotion.IntendedSHA) == "" {
+		return "", "", fmt.Errorf("legacy promotion intent lacks intended_sha")
+	}
+	if strings.TrimSpace(promotion.ExpectedRef) == "" || strings.TrimSpace(promotion.ExpectedSHA) == "" {
+		return "", "", fmt.Errorf("promotion intent lacks expected ref identity")
+	}
+	for _, frozen := range []struct {
+		label string
+		sha   string
+	}{
+		{label: "expected_sha", sha: promotion.ExpectedSHA},
+		{label: "intended_sha", sha: promotion.IntendedSHA},
+	} {
+		resolved, err := gitOutputTrim(repoRoot, "rev-parse", frozen.sha+"^{commit}")
+		if err != nil {
+			return "", "", fmt.Errorf("%s is unavailable", frozen.label)
+		}
+		if !strings.EqualFold(strings.TrimSpace(frozen.sha), resolved) {
+			return "", "", fmt.Errorf("%s must be a full immutable commit SHA", frozen.label)
+		}
+	}
+	current, err := gitOutputTrim(repoRoot, "rev-parse", promotion.ExpectedRef+"^{commit}")
+	if err != nil {
+		return "", "", fmt.Errorf("expected ref %s is unavailable", promotion.ExpectedRef)
+	}
+	switch {
+	case strings.EqualFold(current, promotion.ExpectedSHA):
+		return scheduledPromotionIntentPreRef, current, nil
+	case strings.EqualFold(current, promotion.IntendedSHA):
+		return scheduledPromotionIntentCommitted, current, nil
+	default:
+		return scheduledPromotionIntentDrifted, current, nil
+	}
+}
+
+func validateScheduledPromotionIntendedCommit(repoRoot string, run DepartureRun) error {
+	promotion := run.Promotion
+	candidateSHA := strings.TrimSpace(run.Candidate.CandidateSHA)
+	expectedSHA := strings.TrimSpace(run.Candidate.ExpectedDefaultBranchSHA)
+	if candidateSHA == "" || expectedSHA == "" || !strings.EqualFold(expectedSHA, promotion.ExpectedSHA) {
+		return fmt.Errorf("intended_sha provenance does not match the durable candidate")
+	}
+	resolvedCandidate, err := gitOutputTrim(repoRoot, "rev-parse", candidateSHA+"^{commit}")
+	if err != nil || !strings.EqualFold(candidateSHA, resolvedCandidate) {
+		return fmt.Errorf("durable candidate SHA is unavailable or mutable")
+	}
+	intendedTree, err := gitOutputTrim(repoRoot, "rev-parse", promotion.IntendedSHA+"^{tree}")
+	if err != nil {
+		return fmt.Errorf("intended_sha tree is unavailable")
+	}
+	candidateTree, err := gitOutputTrim(repoRoot, "rev-parse", candidateSHA+"^{tree}")
+	if err != nil || intendedTree != candidateTree {
+		return fmt.Errorf("intended_sha tree does not match the durable candidate")
+	}
+	parents, err := gitOutputTrim(repoRoot, "show", "-s", "--format=%P", promotion.IntendedSHA)
+	if err != nil {
+		return fmt.Errorf("intended_sha parents are unavailable")
+	}
+	actualParents := strings.Fields(parents)
+	if len(actualParents) != 2 ||
+		!strings.EqualFold(actualParents[0], promotion.ExpectedSHA) ||
+		!strings.EqualFold(actualParents[1], candidateSHA) {
+		return fmt.Errorf("intended_sha parents do not match the durable promotion")
+	}
+	return nil
+}
+
+func persistScheduledPromotionCommit(store *RuntimeStore, run *DepartureRun, ref, sha string) error {
+	if store == nil || run == nil {
+		return fmt.Errorf("persist promotion commit requires a durable departure")
+	}
+	if intended := strings.TrimSpace(run.Promotion.IntendedSHA); intended != "" && !strings.EqualFold(intended, sha) {
+		return tuskerError(errorInvalidTransition, "promotion recovery blocked: committed SHA differs from intended_sha")
+	}
+	next := *run
+	next.Promotion.CommittedRef = ref
+	next.Promotion.CommittedSHA = sha
+	next.Promotion.CommittedAt = departureNow()
+	next.State = DepartureStatePromoted
+	next.BlockReason = ""
+	changed, err := store.TransitionDepartureRun(next, run.StateRevision)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return tuskerError(errorInvalidTransition, "promotion committed but departure row changed concurrently; recover from committed ref "+sha)
+	}
+	*run = next
+	run.StateRevision++
+	return nil
+}
+
+func resumeScheduledPromotionIntent(vaultPath, projectID, waveID string, store *RuntimeStore, run *DepartureRun, actor string) (string, error) {
+	if run.ProjectID != projectID {
+		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: departure belongs to another project")
+	}
+	repoRoot := v7RepoRoot(vaultPath)
+	state, current, err := inspectScheduledPromotionIntent(repoRoot, run.Promotion)
+	if err == nil {
+		err = validateScheduledPromotionIntendedCommit(repoRoot, *run)
+	}
+	if err != nil {
+		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: "+err.Error())
+	}
+	if state == scheduledPromotionIntentDrifted {
+		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: default_ref_drift current="+current+" expected="+run.Promotion.ExpectedSHA+" intended="+run.Promotion.IntendedSHA)
+	}
+	complete := func() (string, error) {
+		if err := persistScheduledPromotionCommit(store, run, run.Promotion.ExpectedRef, run.Promotion.IntendedSHA); err != nil {
+			return "", err
+		}
+		if err := appendScheduledPromotionAudit(vaultPath, waveID, run.Promotion.CommittedRef, run.Promotion.CommittedSHA, "durable promotion intent replay: "+run.Gate.Command, actor); err != nil {
+			return "", err
+		}
+		return run.Promotion.CommittedSHA, nil
+	}
+	if state == scheduledPromotionIntentCommitted {
+		return complete()
+	}
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
+	}
+	releaseLanding, err := acquireV7LandingLock(vaultPath)
+	if err != nil {
+		return "", err
+	}
+	defer releaseLanding()
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return "", err
+	}
+	if _, ok := idx.Waves[waveID]; !ok {
+		return "", tuskerError(errorNotFound, "V7 wave not found: "+waveID)
+	}
+	state, current, err = inspectScheduledPromotionIntent(repoRoot, run.Promotion)
+	if err != nil {
+		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: "+err.Error())
+	}
+	if state == scheduledPromotionIntentCommitted {
+		return complete()
+	}
+	if state != scheduledPromotionIntentPreRef {
+		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: default_ref_drift current="+current+" expected="+run.Promotion.ExpectedSHA+" intended="+run.Promotion.IntendedSHA)
+	}
+	lease, acquired, err := store.AcquireResourceLease(ResourceLeaseAcquireInput{
+		Name: "gate:full", Owner: "departure:" + run.ID, Purpose: scheduledPromotionResourcePurpose,
+		ProjectID: projectID, DepartureID: run.ID, TTL: scheduledPromotionResourceLeaseTTL,
+	})
+	if err != nil {
+		return "", err
+	}
+	if !acquired {
+		return "", tuskerError(errorInvalidTransition, "promotion refusal: full_gate_lease_unavailable")
+	}
+	leaseOutcome := "promotion intent replay aborted before ref update"
+	defer func() {
+		_, _ = store.ReleaseResourceLease(lease.Name, lease.Owner, lease.Generation, leaseOutcome, time.Now().UTC())
+	}()
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
+	}
+	if matched, err := store.ResourceLeaseMatches(lease.Name, lease.Owner, lease.Generation); err != nil || !matched {
+		return "", tuskerError(errorInvalidTransition, "promotion refusal: full_gate_lease_fenced_at_ref_update")
+	}
+	if err := advanceV7DefaultBranch(repoRoot, run.Promotion.ExpectedRef, run.Promotion.IntendedSHA, run.Promotion.ExpectedSHA); err != nil {
+		if state, _, inspectErr := inspectScheduledPromotionIntent(repoRoot, run.Promotion); inspectErr == nil && state == scheduledPromotionIntentCommitted {
+			leaseOutcome = "promotion intent replay observed committed ref"
+			return complete()
+		}
+		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: default_ref_drift: "+err.Error())
+	}
+	if err := scheduledPromotionAfterRefUpdate(); err != nil {
+		return "", err
+	}
+	commit, err := complete()
+	if err != nil {
+		return "", err
+	}
+	leaseOutcome = "promotion passed"
+	return commit, nil
+}
+
 // promoteScheduledWave performs the irreversible half of a departure.  It
 // uses the normal staging worktree/gate implementation; this wrapper adds the
 // immutable candidate contract and the ref CAS that scheduled promotion needs.
@@ -444,15 +638,16 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	}
 	if run.Promotion.CommittedRef != "" && run.Promotion.CommittedSHA != "" {
 		repoRoot := v7RepoRoot(vaultPath)
-		if current, err := gitOutputTrim(repoRoot, "rev-parse", run.Promotion.CommittedRef); err == nil && current == run.Promotion.CommittedSHA {
+		if current, err := gitOutputTrim(repoRoot, "rev-parse", run.Promotion.CommittedRef+"^{commit}"); err == nil && current == run.Promotion.CommittedSHA {
 			if err := appendScheduledPromotionAudit(vaultPath, waveID, run.Promotion.CommittedRef, current, "durable promotion replay: "+run.Gate.Command, actor); err != nil {
 				return "", err
 			}
 			return current, nil
 		}
+		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: committed ref no longer matches its durable SHA")
 	}
 	if run.Promotion.AttemptedAt != "" {
-		return "", tuskerError(errorInvalidTransition, "promotion refusal: prior ref update outcome is ambiguous; reconcile the departure before retrying")
+		return resumeScheduledPromotionIntent(vaultPath, projectID, waveID, store, run, actor)
 	}
 	if hold, err := store.departureHold(projectID, false); err != nil {
 		return "", err
@@ -653,6 +848,7 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	intent.Gate.FinishedAt = gateFinished.Format(time.RFC3339Nano)
 	intent.Promotion = DeparturePromotion{
 		ExpectedRef: before.DefaultBranch, ExpectedSHA: before.Candidate.ExpectedDefaultBranchSHA,
+		IntendedSHA: mergeCommit,
 		AttemptedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	intent.State = DepartureStateGating
@@ -670,6 +866,9 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	}
 	*run = intent
 	run.StateRevision++
+	if err := scheduledPromotionAfterRefIntent(); err != nil {
+		return "", err
+	}
 	if matched, err := store.ResourceLeaseMatches(lease.Name, lease.Owner, lease.Generation); err != nil || !matched {
 		return "", tuskerError(errorInvalidTransition, "promotion refusal: full_gate_lease_fenced_at_ref_update")
 	}
@@ -683,20 +882,9 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		return "", err
 	}
 	// Only durable success after the ref update counts as a promoted revision.
-	next := *run
-	next.Promotion.CommittedRef = before.DefaultBranch
-	next.Promotion.CommittedSHA = mergeCommit
-	next.Promotion.CommittedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	next.State = DepartureStatePromoted
-	changed, err = store.TransitionDepartureRun(next, run.StateRevision)
-	if err != nil {
+	if err := persistScheduledPromotionCommit(store, run, before.DefaultBranch, mergeCommit); err != nil {
 		return "", err
 	}
-	if !changed {
-		return "", tuskerError(errorInvalidTransition, "promotion committed but departure row changed concurrently; recover from committed ref "+mergeCommit)
-	}
-	*run = next
-	run.StateRevision++
 	leaseOutcome = "promotion passed"
 	if err := appendScheduledPromotionAudit(vaultPath, waveID, before.DefaultBranch, mergeCommit, gateSummary, actor); err != nil {
 		return "", err

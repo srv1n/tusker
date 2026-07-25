@@ -70,12 +70,13 @@ type DepartureFailure struct {
 	AffectedTaskIDs []string               `json:"affected_task_ids,omitempty"`
 }
 
-// DeparturePromotion distinguishes an intent from an observed committed ref.
-// Recovery treats an intent with no committed ref as ambiguous: retrying a ref
-// move would be unsafe because the process may have died after the remote move.
+// DeparturePromotion distinguishes an exact ref-update intent from an observed
+// committed ref. ExpectedSHA and IntendedSHA make the crash window decidable:
+// project-aware recovery can compare the current ref with both immutable ends.
 type DeparturePromotion struct {
 	ExpectedRef  string `json:"expected_ref,omitempty"`
 	ExpectedSHA  string `json:"expected_sha,omitempty"`
+	IntendedSHA  string `json:"intended_sha,omitempty"`
 	CommittedRef string `json:"committed_ref,omitempty"`
 	CommittedSHA string `json:"committed_sha,omitempty"`
 	AttemptedAt  string `json:"attempted_at,omitempty"`
@@ -284,6 +285,21 @@ func (s *RuntimeStore) UpdateDepartureRunIfRevision(next DepartureRun, expectedR
 // blocked where an irreversible external action may have happened but was not
 // durably committed. All other nonterminal rows are returned as resumable.
 func (s *RuntimeStore) ReconcileDepartureRuns(projectID string, activeRunIDs ...string) ([]DepartureRecovery, error) {
+	return s.reconcileDepartureRuns(projectID, func(run DepartureRun) (DepartureRecovery, bool) {
+		return classifyDepartureRecovery(run), false
+	}, activeRunIDs...)
+}
+
+// ReconcileDepartureRunsForProject resolves an interrupted ref intent against
+// the registered project's repository. A store-only startup cannot safely do
+// this: identical ref names in different projects are unrelated truths.
+func (s *RuntimeStore) ReconcileDepartureRunsForProject(project RegisteredProject, activeRunIDs ...string) ([]DepartureRecovery, error) {
+	return s.reconcileDepartureRuns(project.ProjectID, func(run DepartureRun) (DepartureRecovery, bool) {
+		return classifyDepartureRecoveryForProject(project, run)
+	}, activeRunIDs...)
+}
+
+func (s *RuntimeStore) reconcileDepartureRuns(projectID string, classify func(DepartureRun) (DepartureRecovery, bool), activeRunIDs ...string) ([]DepartureRecovery, error) {
 	runs, err := s.ListDepartureRuns(projectID)
 	if err != nil {
 		return nil, err
@@ -291,12 +307,23 @@ func (s *RuntimeStore) ReconcileDepartureRuns(projectID string, activeRunIDs ...
 	active := makeSet(activeRunIDs...)
 	result := make([]DepartureRecovery, 0, len(runs))
 	for _, run := range runs {
-		recovery := classifyDepartureRecovery(run)
+		recovery, persistRecovery := classify(run)
 		_, isActive := active[run.ID]
-		if recovery.Disposition == DepartureRecoveryBlocked && run.State != DepartureStateBlocked && !isActive {
-			next := run
-			next.State = DepartureStateBlocked
-			next.BlockReason = recovery.Reason
+		if isActive && persistRecovery {
+			// The in-process owner may be between the ref CAS and its durable
+			// completion write. Do not publish a synthetic recovered state or
+			// race that owner's exact state revision.
+			recovery.Run = run
+			recovery.ResumeState = run.State
+			persistRecovery = false
+		}
+		if !isActive && (persistRecovery || (recovery.Disposition == DepartureRecoveryBlocked && run.State != DepartureStateBlocked)) {
+			next := recovery.Run
+			if !persistRecovery {
+				next = run
+				next.State = DepartureStateBlocked
+				next.BlockReason = recovery.Reason
+			}
 			updated, updateErr := s.TransitionDepartureRun(next, run.StateRevision)
 			if updateErr != nil {
 				return nil, updateErr
@@ -309,7 +336,7 @@ func (s *RuntimeStore) ReconcileDepartureRuns(projectID string, activeRunIDs ...
 					return nil, readErr
 				}
 				if latest != nil {
-					recovery = classifyDepartureRecovery(*latest)
+					recovery, _ = classify(*latest)
 					recovery.Run = *latest
 				}
 			} else {
@@ -321,6 +348,50 @@ func (s *RuntimeStore) ReconcileDepartureRuns(projectID string, activeRunIDs ...
 		result = append(result, recovery)
 	}
 	return result, nil
+}
+
+func classifyDepartureRecoveryForProject(project RegisteredProject, run DepartureRun) (DepartureRecovery, bool) {
+	if departureTerminal(run.State) ||
+		run.Promotion.AttemptedAt == "" ||
+		(run.Promotion.CommittedRef != "" && run.Promotion.CommittedSHA != "") {
+		return classifyDepartureRecovery(run), false
+	}
+	recovery := DepartureRecovery{Run: run}
+	if run.ProjectID != project.ProjectID || strings.TrimSpace(project.RepoRoot) == "" {
+		recovery.Disposition = DepartureRecoveryBlocked
+		recovery.Reason = "promotion recovery blocked: registered project repository is unavailable"
+		return recovery, false
+	}
+	state, _, err := inspectScheduledPromotionIntent(project.RepoRoot, run.Promotion)
+	if err == nil {
+		err = validateScheduledPromotionIntendedCommit(project.RepoRoot, run)
+	}
+	if err != nil {
+		recovery.Disposition = DepartureRecoveryBlocked
+		recovery.Reason = "promotion recovery blocked: " + err.Error()
+		return recovery, false
+	}
+	switch state {
+	case scheduledPromotionIntentPreRef:
+		recovery.Disposition = DepartureRecoveryResumable
+		recovery.ResumeState = DepartureStateGating
+		return recovery, false
+	case scheduledPromotionIntentCommitted:
+		next := run
+		next.Promotion.CommittedRef = run.Promotion.ExpectedRef
+		next.Promotion.CommittedSHA = run.Promotion.IntendedSHA
+		next.Promotion.CommittedAt = departureNow()
+		next.State = DepartureStatePromoted
+		next.BlockReason = ""
+		recovery.Run = next
+		recovery.Disposition = DepartureRecoveryResumable
+		recovery.ResumeState = DepartureStatePromoted
+		return recovery, true
+	default:
+		recovery.Disposition = DepartureRecoveryBlocked
+		recovery.Reason = "promotion recovery blocked: default ref matches neither expected nor intended SHA"
+		return recovery, false
+	}
 }
 
 func classifyDepartureRecovery(run DepartureRun) DepartureRecovery {

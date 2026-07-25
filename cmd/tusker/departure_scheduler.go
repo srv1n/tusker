@@ -219,6 +219,9 @@ func (d *Daemon) planScheduledDeparture(project RegisteredProject, wf Workflow) 
 
 func (d *Daemon) scheduleDepartureIfDue(project RegisteredProject, wf Workflow, now time.Time) error {
 	policy := wf.ScheduledPromotion.Effective
+	if _, err := d.store.ReconcileDepartureRunsForProject(project, d.activeDepartureExecutionIDs()...); err != nil {
+		return err
+	}
 	if err := d.refreshDepartureSchedule(project.ProjectID, wf, now); err != nil {
 		return err
 	}

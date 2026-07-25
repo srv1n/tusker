@@ -442,7 +442,57 @@ func TestScheduledPromotionLandingHeartbeatsLongFullGateLease(t *testing.T) {
 	}
 }
 
-func TestScheduledPromotionLandingCrashAfterRefUpdateBlocksReplay(t *testing.T) {
+func TestScheduledPromotionLandingCrashBeforeRefUpdateResumesExactIntent(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "pre-ref-crash.txt", "candidate\n")
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
+	wf := setScheduledPromotionGateForTest(t, vault, []string{"test -f pre-ref-crash.txt"}, "")
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	commitScheduledPromotionWorkflowForTest(t, repo, vault)
+	beforeMain := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
+
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run := newScheduledPromotionRunForTest(t, store, "2026-07-25T20:39:00Z")
+	injected := errors.New("injected crash after durable ref intent")
+	oldHook := scheduledPromotionAfterRefIntent
+	scheduledPromotionAfterRefIntent = func() error { return injected }
+	_, promoteErr := promoteScheduledWave(vault, "app", "W-0001", wf, store, &run, "daemon:test")
+	scheduledPromotionAfterRefIntent = oldHook
+	if !errors.Is(promoteErr, injected) {
+		t.Fatalf("missing injected pre-ref failure: %v", promoteErr)
+	}
+	if got := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")); got != beforeMain {
+		t.Fatalf("pre-ref failure moved main: before=%s after=%s", beforeMain, got)
+	}
+	durable, err := store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil ||
+		durable.Promotion.ExpectedSHA != beforeMain ||
+		durable.Promotion.IntendedSHA == "" ||
+		durable.Promotion.CommittedSHA != "" {
+		t.Fatalf("exact pre-ref intent was not durable: %#v err=%v", durable, err)
+	}
+	project := RegisteredProject{ProjectID: "app", RepoRoot: repo, VaultRoot: vault}
+	recoveries, err := store.ReconcileDepartureRunsForProject(project)
+	if err != nil || len(recoveries) != 1 ||
+		recoveries[0].Disposition != DepartureRecoveryResumable ||
+		recoveries[0].ResumeState != DepartureStateGating ||
+		recoveries[0].Run.State != DepartureStateGating {
+		t.Fatalf("expected-old ref was not classified as a safe pre-ref resume: %#v err=%v", recoveries, err)
+	}
+	resumed := recoveries[0].Run
+	commit, err := promoteScheduledWave(vault, "app", "W-0001", wf, store, &resumed, "daemon:test")
+	if err != nil {
+		t.Fatalf("resume exact ref intent: %v", err)
+	}
+	if commit != durable.Promotion.IntendedSHA || strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")) != durable.Promotion.IntendedSHA {
+		t.Fatalf("pre-ref resume did not commit the exact intended SHA: commit=%s intent=%s", commit, durable.Promotion.IntendedSHA)
+	}
+}
+
+func TestScheduledPromotionLandingCrashAfterRefUpdateRecoversCommittedIntent(t *testing.T) {
 	repo, vault := newLandReadyForMainAdvanceTest(t, "crash-window.txt", "candidate\n")
 	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
 	wf := setScheduledPromotionGateForTest(t, vault, []string{"test -f crash-window.txt"}, "")
@@ -469,17 +519,90 @@ func TestScheduledPromotionLandingCrashAfterRefUpdateBlocksReplay(t *testing.T) 
 		t.Fatal("failure seam did not occur after the ref update")
 	}
 	durable, err := store.FindDepartureRun(run.ID)
-	if err != nil || durable == nil || durable.Promotion.AttemptedAt == "" || durable.Promotion.CommittedSHA != "" {
+	if err != nil || durable == nil ||
+		durable.Promotion.AttemptedAt == "" ||
+		durable.Promotion.IntendedSHA != afterMain ||
+		durable.Promotion.CommittedSHA != "" {
 		t.Fatalf("pre-ref intent was not durable across the crash window: %#v err=%v", durable, err)
 	}
-	recoveries, err := store.ReconcileDepartureRuns("app")
-	if err != nil || len(recoveries) != 1 || recoveries[0].Disposition != DepartureRecoveryBlocked {
-		t.Fatalf("ambiguous ref outcome must block automatic replay: %#v err=%v", recoveries, err)
+	project := RegisteredProject{ProjectID: "app", RepoRoot: repo, VaultRoot: vault}
+	recoveries, err := store.ReconcileDepartureRunsForProject(project)
+	if err != nil || len(recoveries) != 1 ||
+		recoveries[0].Disposition != DepartureRecoveryResumable ||
+		recoveries[0].ResumeState != DepartureStatePromoted ||
+		recoveries[0].Run.State != DepartureStatePromoted ||
+		recoveries[0].Run.Promotion.CommittedSHA != afterMain {
+		t.Fatalf("intended ref outcome was not recovered as committed: %#v err=%v", recoveries, err)
 	}
-	_, replayErr := promoteScheduledWave(vault, "app", "W-0001", wf, store, durable, "daemon:test")
-	if replayErr == nil || !strings.Contains(replayErr.Error(), "ambiguous") {
-		t.Fatalf("ambiguous promotion replay was not refused: %v", replayErr)
+	recovered := recoveries[0].Run
+	if replayed, replayErr := promoteScheduledWave(vault, "app", "W-0001", wf, store, &recovered, "daemon:test"); replayErr != nil || replayed != afterMain {
+		t.Fatalf("committed intent replay failed: replay=%s err=%v", replayed, replayErr)
 	}
+}
+
+func TestScheduledPromotionLandingIntentRecoveryBlocksDriftAndLegacyRows(t *testing.T) {
+	t.Run("third ref value blocks", func(t *testing.T) {
+		repo, vault := newLandReadyForMainAdvanceTest(t, "intent-drift.txt", "candidate\n")
+		setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
+		wf := setScheduledPromotionGateForTest(t, vault, []string{"test -f intent-drift.txt"}, "")
+		armScheduledPromotionWaveForTest(t, vault, "W-0001")
+		commitScheduledPromotionWorkflowForTest(t, repo, vault)
+		store, err := OpenRuntimeStore(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		run := newScheduledPromotionRunForTest(t, store, "2026-07-25T20:41:00Z")
+		injected := errors.New("injected pre-ref crash")
+		oldHook := scheduledPromotionAfterRefIntent
+		scheduledPromotionAfterRefIntent = func() error { return injected }
+		_, promoteErr := promoteScheduledWave(vault, "app", "W-0001", wf, store, &run, "daemon:test")
+		scheduledPromotionAfterRefIntent = oldHook
+		if !errors.Is(promoteErr, injected) {
+			t.Fatalf("missing injected pre-ref failure: %v", promoteErr)
+		}
+		durable, err := store.FindDepartureRun(run.ID)
+		if err != nil || durable == nil {
+			t.Fatalf("load durable intent: %#v err=%v", durable, err)
+		}
+		external := commitLandBranch(t, repo, "external-main", "main", map[string]string{"external-main.txt": "external\n"})
+		runGitDir(t, repo, "update-ref", "refs/heads/main", external, durable.Promotion.ExpectedSHA)
+		recoveries, err := store.ReconcileDepartureRunsForProject(RegisteredProject{ProjectID: "app", RepoRoot: repo, VaultRoot: vault})
+		if err != nil || len(recoveries) != 1 ||
+			recoveries[0].Disposition != DepartureRecoveryBlocked ||
+			recoveries[0].Run.State != DepartureStateBlocked ||
+			!strings.Contains(recoveries[0].Reason, "matches neither") {
+			t.Fatalf("third ref value did not fail closed: %#v err=%v", recoveries, err)
+		}
+	})
+
+	t.Run("legacy intent without intended sha blocks", func(t *testing.T) {
+		repo, vault := newLandReadyForMainAdvanceTest(t, "legacy-intent.txt", "candidate\n")
+		store, err := OpenRuntimeStore(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		mainSHA := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
+		run, _, err := store.GetOrCreateDepartureRun(DepartureRun{
+			ProjectID: "app", PolicyID: "scheduled-promotion/v1/promote", ScheduledWindow: "2026-07-25T20:42:00Z",
+			State: DepartureStateGating,
+			Promotion: DeparturePromotion{
+				ExpectedRef: "main", ExpectedSHA: mainSHA,
+				AttemptedAt: time.Now().UTC().Format(time.RFC3339Nano),
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		recoveries, err := store.ReconcileDepartureRunsForProject(RegisteredProject{ProjectID: "app", RepoRoot: repo, VaultRoot: vault})
+		if err != nil || len(recoveries) != 1 ||
+			recoveries[0].Run.ID != run.ID ||
+			recoveries[0].Disposition != DepartureRecoveryBlocked ||
+			!strings.Contains(recoveries[0].Reason, "legacy promotion intent lacks intended_sha") {
+			t.Fatalf("legacy promotion intent did not fail closed: %#v err=%v", recoveries, err)
+		}
+	})
 }
 
 func TestScheduledPromotionLandingRefusesCandidateDrift(t *testing.T) {
