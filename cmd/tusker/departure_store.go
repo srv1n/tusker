@@ -109,6 +109,9 @@ type DepartureRun struct {
 	Release              DepartureRelease   `json:"release"`
 	SkipReason           string             `json:"skip_reason"`
 	BlockReason          string             `json:"block_reason"`
+	ExecutionLastError   string             `json:"execution_last_error,omitempty"`
+	ExecutionLastErrorAt string             `json:"execution_last_error_at,omitempty"`
+	ExecutionErrorCount  int                `json:"execution_error_count,omitempty"`
 	ModelInvocationCount int                `json:"model_invocation_count"`
 	CreatedAt            string             `json:"created_at"`
 	UpdatedAt            string             `json:"updated_at"`
@@ -170,12 +173,14 @@ func (s *RuntimeStore) GetOrCreateDepartureRun(input DepartureRun) (DepartureRun
 	result, err := s.exec(`INSERT INTO departure_runs (
 		id, project_id, policy_id, scheduled_window, state, state_revision,
 		candidate_json, gate_json, promotion_json, release_json, skip_reason,
-		block_reason, model_invocation_count, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		block_reason, execution_last_error, execution_last_error_at,
+		execution_error_count, model_invocation_count, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id, policy_id, scheduled_window) DO NOTHING`,
 		input.ID, input.ProjectID, input.PolicyID, input.ScheduledWindow, input.State, input.StateRevision,
 		values.candidate, values.gate, values.promotion, values.release, input.SkipReason,
-		input.BlockReason, input.ModelInvocationCount, input.CreatedAt, input.UpdatedAt)
+		input.BlockReason, input.ExecutionLastError, input.ExecutionLastErrorAt,
+		input.ExecutionErrorCount, input.ModelInvocationCount, input.CreatedAt, input.UpdatedAt)
 	if err != nil {
 		return DepartureRun{}, false, err
 	}
@@ -211,9 +216,12 @@ func (s *RuntimeStore) findDepartureRun(where string, args ...any) (*DepartureRu
 	var candidate, gate, promotion, release string
 	err := s.queryRowScan(`SELECT id, project_id, policy_id, scheduled_window, state, state_revision,
 		candidate_json, gate_json, promotion_json, release_json, skip_reason, block_reason,
+		execution_last_error, execution_last_error_at, execution_error_count,
 		model_invocation_count, created_at, updated_at FROM departure_runs `+where, args,
 		&row.ID, &row.ProjectID, &row.PolicyID, &row.ScheduledWindow, &row.State, &row.StateRevision,
-		&candidate, &gate, &promotion, &release, &row.SkipReason, &row.BlockReason, &row.ModelInvocationCount, &row.CreatedAt, &row.UpdatedAt)
+		&candidate, &gate, &promotion, &release, &row.SkipReason, &row.BlockReason,
+		&row.ExecutionLastError, &row.ExecutionLastErrorAt, &row.ExecutionErrorCount,
+		&row.ModelInvocationCount, &row.CreatedAt, &row.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -227,7 +235,7 @@ func (s *RuntimeStore) findDepartureRun(where string, args ...any) (*DepartureRu
 }
 
 func (s *RuntimeStore) ListDepartureRuns(projectID string) ([]DepartureRun, error) {
-	query := `SELECT id, project_id, policy_id, scheduled_window, state, state_revision, candidate_json, gate_json, promotion_json, release_json, skip_reason, block_reason, model_invocation_count, created_at, updated_at FROM departure_runs`
+	query := `SELECT id, project_id, policy_id, scheduled_window, state, state_revision, candidate_json, gate_json, promotion_json, release_json, skip_reason, block_reason, execution_last_error, execution_last_error_at, execution_error_count, model_invocation_count, created_at, updated_at FROM departure_runs`
 	args := []any{}
 	if projectID != "" {
 		query += ` WHERE project_id = ?`
@@ -262,9 +270,10 @@ func (s *RuntimeStore) TransitionDepartureRun(next DepartureRun, expectedRevisio
 	}
 	nextRevision := expectedRevision + 1
 	now := departureNow()
-	result, err := s.exec(`UPDATE departure_runs SET state = ?, state_revision = ?, candidate_json = ?, gate_json = ?, promotion_json = ?, release_json = ?, skip_reason = ?, block_reason = ?, model_invocation_count = ?, updated_at = ?
+	result, err := s.exec(`UPDATE departure_runs SET state = ?, state_revision = ?, candidate_json = ?, gate_json = ?, promotion_json = ?, release_json = ?, skip_reason = ?, block_reason = ?, execution_last_error = ?, execution_last_error_at = ?, execution_error_count = ?, model_invocation_count = ?, updated_at = ?
 		WHERE id = ? AND state_revision = ?`, next.State, nextRevision, values.candidate, values.gate, values.promotion, values.release,
-		next.SkipReason, next.BlockReason, next.ModelInvocationCount, now, next.ID, expectedRevision)
+		next.SkipReason, next.BlockReason, next.ExecutionLastError, next.ExecutionLastErrorAt,
+		next.ExecutionErrorCount, next.ModelInvocationCount, now, next.ID, expectedRevision)
 	if err != nil {
 		return false, err
 	}
@@ -465,7 +474,9 @@ func scanDepartureRun(scanner departureScanner) (DepartureRun, error) {
 	var run DepartureRun
 	var candidate, gate, promotion, release string
 	err := scanner.Scan(&run.ID, &run.ProjectID, &run.PolicyID, &run.ScheduledWindow, &run.State, &run.StateRevision,
-		&candidate, &gate, &promotion, &release, &run.SkipReason, &run.BlockReason, &run.ModelInvocationCount, &run.CreatedAt, &run.UpdatedAt)
+		&candidate, &gate, &promotion, &release, &run.SkipReason, &run.BlockReason,
+		&run.ExecutionLastError, &run.ExecutionLastErrorAt, &run.ExecutionErrorCount,
+		&run.ModelInvocationCount, &run.CreatedAt, &run.UpdatedAt)
 	if err != nil {
 		return DepartureRun{}, err
 	}

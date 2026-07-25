@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1366,12 +1367,14 @@ func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummar
 	if err != nil {
 		return err
 	}
-	if err := prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch, wave); err != nil {
+	preparation, err := prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch, wave)
+	if err != nil {
 		return err
 	}
 	if err := advanceV7DefaultBranch(repoRoot, defaultBranch, mergeCommit, mainRev); err != nil {
-		return err
+		return errors.Join(err, preparation.finishAfterRefAttempt(repoRoot, defaultBranch, mainRev, mergeCommit))
 	}
+	preparation.commit()
 	actor := landV7Actor(args)
 	if err := appendV7WaveLandingAudit(vaultPath, waveID, []v7LandingAuditEntry{{
 		Task: "wave", Branch: integrationBranch, Target: defaultBranch,
@@ -1387,32 +1390,209 @@ func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummar
 	return nil
 }
 
-func prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch string, wave Note) error {
+type v7PreparedWaveMemberState struct {
+	Exists bool
+	Mode   os.FileMode
+	Bytes  []byte
+}
+
+type v7PreparedWaveMemberPath struct {
+	Absolute string
+	WorkDir  string
+	Relative string
+	Before   v7PreparedWaveMemberState
+	Prepared v7PreparedWaveMemberState
+}
+
+type v7WaveMemberPreparation struct {
+	paths    []v7PreparedWaveMemberPath
+	finished bool
+}
+
+// prepareV7WaveMembersForDefaultAdvance temporarily restores the checked-out
+// index versions of wave control documents so Git can fast-forward the default
+// branch. The returned transaction must either be committed after the ref
+// moves or restored on a pre-ref refusal. Restoration is compare-and-swap:
+// operator edits made after preparation are never overwritten.
+func prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch string, wave Note) (*v7WaveMemberPreparation, error) {
 	relVault, err := filepath.Rel(repoRoot, vaultPath)
 	if err != nil || filepath.IsAbs(relVault) || strings.HasPrefix(filepath.Clean(relVault), "..") {
-		return tuskerError(errorInvalidTransition, "cannot prepare wave members for default-branch advance: invalid vault path "+vaultPath)
+		return nil, tuskerError(errorInvalidTransition, "cannot prepare wave members for default-branch advance: invalid vault path "+vaultPath)
 	}
 	paths := make([]string, 0, len(normalizeList(wave.Data["members"])))
 	for _, member := range normalizeList(wave.Data["members"]) {
 		paths = append(paths, filepath.ToSlash(filepath.Join(relVault, "work", "tasks", member+".md")))
 	}
 	paths = append(paths, filepath.ToSlash(filepath.Join(relVault, "work", "waves", stringField(wave.Data, "id")+".md")))
+	preparation := &v7WaveMemberPreparation{}
 	for _, wt := range v7DefaultBranchCheckouts(repoRoot, defaultBranch) {
 		tracked := make([]string, 0, len(paths))
 		for _, path := range paths {
-			if exec.Command("git", "-C", wt.Path, "ls-files", "--error-unmatch", "--", path).Run() == nil {
-				tracked = append(tracked, path)
+			prepared, ok, stateErr := v7PreparedIndexState(wt.Path, path)
+			if stateErr != nil {
+				return nil, errors.Join(stateErr, preparation.restore())
 			}
+			if !ok {
+				continue
+			}
+			before, stateErr := v7PreparedWorktreeState(filepath.Join(wt.Path, filepath.FromSlash(path)))
+			if stateErr != nil {
+				return nil, errors.Join(stateErr, preparation.restore())
+			}
+			preparation.paths = append(preparation.paths, v7PreparedWaveMemberPath{
+				Absolute: filepath.Join(wt.Path, filepath.FromSlash(path)),
+				WorkDir:  wt.Path,
+				Relative: path,
+				Before:   before,
+				Prepared: prepared,
+			})
+			tracked = append(tracked, path)
 		}
 		if len(tracked) == 0 {
 			continue
 		}
 		args := append([]string{"checkout", "--"}, tracked...)
 		if output, err := gitCombined(wt.Path, args...); err != nil {
-			return tuskerError(errorInvalidTransition, "failed to reset integrated wave task projections before default-branch advance: "+firstActionableLine(output, err.Error()), withPath(wt.Path))
+			prepareErr := tuskerError(errorInvalidTransition, "failed to reset integrated wave task projections before default-branch advance: "+firstActionableLine(output, err.Error()), withPath(wt.Path))
+			return nil, errors.Join(prepareErr, preparation.restore())
 		}
 	}
-	return nil
+	return preparation, nil
+}
+
+func v7PreparedIndexState(workDir, relativePath string) (v7PreparedWaveMemberState, bool, error) {
+	raw, err := exec.Command("git", "-C", workDir, "ls-files", "--stage", "-z", "--", relativePath).Output()
+	if err != nil {
+		return v7PreparedWaveMemberState{}, false, err
+	}
+	if len(raw) == 0 {
+		return v7PreparedWaveMemberState{}, false, nil
+	}
+	entry := strings.SplitN(strings.TrimSuffix(string(raw), "\x00"), "\t", 2)
+	fields := strings.Fields(entry[0])
+	if len(entry) != 2 || len(fields) != 3 || fields[2] != "0" {
+		return v7PreparedWaveMemberState{}, false, tuskerError(errorInvalidTransition, "cannot prepare unmerged wave control document: "+relativePath, withPath(workDir))
+	}
+	mode := os.FileMode(0o644)
+	switch fields[0] {
+	case "100644":
+	case "100755":
+		mode = 0o755
+	default:
+		return v7PreparedWaveMemberState{}, false, tuskerError(errorInvalidTransition, "cannot prepare non-regular wave control document: "+relativePath, withPath(workDir))
+	}
+	content, err := exec.Command("git", "-C", workDir, "cat-file", "blob", fields[1]).Output()
+	if err != nil {
+		return v7PreparedWaveMemberState{}, false, err
+	}
+	return v7PreparedWaveMemberState{Exists: true, Mode: mode, Bytes: content}, true, nil
+}
+
+func v7PreparedWorktreeState(absolutePath string) (v7PreparedWaveMemberState, error) {
+	info, err := os.Lstat(absolutePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return v7PreparedWaveMemberState{}, nil
+	}
+	if err != nil {
+		return v7PreparedWaveMemberState{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return v7PreparedWaveMemberState{}, tuskerError(errorInvalidTransition, "cannot prepare non-regular wave control document", withPath(absolutePath))
+	}
+	content, err := os.ReadFile(absolutePath)
+	if err != nil {
+		return v7PreparedWaveMemberState{}, err
+	}
+	return v7PreparedWaveMemberState{Exists: true, Mode: info.Mode().Perm(), Bytes: content}, nil
+}
+
+func sameV7PreparedWaveMemberBytes(left, right v7PreparedWaveMemberState) bool {
+	return left.Exists == right.Exists && (!left.Exists || bytes.Equal(left.Bytes, right.Bytes))
+}
+
+func sameV7PreparedWaveMemberIndexState(left, right v7PreparedWaveMemberState) bool {
+	return sameV7PreparedWaveMemberBytes(left, right) &&
+		(!left.Exists || left.Mode.Perm() == right.Mode.Perm())
+}
+
+func (preparation *v7WaveMemberPreparation) restore() error {
+	if preparation == nil || preparation.finished {
+		return nil
+	}
+	preparation.finished = true
+	var restoreErrors []error
+	for _, path := range preparation.paths {
+		indexState, tracked, err := v7PreparedIndexState(path.WorkDir, path.Relative)
+		if err != nil {
+			restoreErrors = append(restoreErrors, err)
+			continue
+		}
+		if !tracked {
+			indexState = v7PreparedWaveMemberState{}
+		}
+		if !sameV7PreparedWaveMemberIndexState(indexState, path.Prepared) {
+			// A checkout or index update owns the path now. Its bytes must win
+			// even if the branch ref moved to an unexpected third value.
+			continue
+		}
+		current, err := v7PreparedWorktreeState(path.Absolute)
+		if err != nil {
+			restoreErrors = append(restoreErrors, err)
+			continue
+		}
+		if !sameV7PreparedWaveMemberBytes(current, path.Prepared) {
+			// A concurrent operator edit owns the path now. It is safer to leave
+			// that edit intact than to force our preimage over it.
+			continue
+		}
+		if !path.Before.Exists {
+			if err := os.Remove(path.Absolute); err != nil && !errors.Is(err, os.ErrNotExist) {
+				restoreErrors = append(restoreErrors, err)
+				continue
+			}
+			invalidateCachedNote(path.Absolute)
+			continue
+		}
+		if err := atomicReplaceV7Document(path.Absolute, string(path.Before.Bytes)); err != nil {
+			restoreErrors = append(restoreErrors, err)
+			continue
+		}
+		if err := os.Chmod(path.Absolute, path.Before.Mode.Perm()); err != nil {
+			restoreErrors = append(restoreErrors, err)
+		}
+	}
+	return errors.Join(restoreErrors...)
+}
+
+func (preparation *v7WaveMemberPreparation) finishAfterRefAttempt(repoRoot, defaultBranch, expectedRev, intendedRev string) error {
+	if preparation == nil || preparation.finished {
+		return nil
+	}
+	current, err := gitOutputTrim(repoRoot, "rev-parse", "refs/heads/"+defaultBranch+"^{commit}")
+	if err != nil {
+		restoreErr := preparation.restore()
+		return errors.Join(fmt.Errorf("cannot inspect default ref while restoring wave control documents: %w", err), restoreErr)
+	}
+	switch {
+	case strings.EqualFold(strings.TrimSpace(current), strings.TrimSpace(intendedRev)):
+		preparation.commit()
+		return nil
+	case strings.EqualFold(strings.TrimSpace(current), strings.TrimSpace(expectedRev)):
+		return preparation.restore()
+	default:
+		// An external third-value ref race is still an aborted attempt. The
+		// index/worktree CAS in restore decides whether our preimage still owns
+		// each path or a concurrent checkout/edit must be preserved.
+		return preparation.restore()
+	}
+}
+
+func (preparation *v7WaveMemberPreparation) commit() {
+	if preparation == nil {
+		return
+	}
+	preparation.finished = true
+	preparation.paths = nil
 }
 
 func syncV7WaveControlStateToIntegration(vaultPath string, wave Note, integrationBranch string) error {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,8 +16,10 @@ var (
 	scheduledPromotionResourceLeaseTTL        = defaultResourceLeaseTTL
 	scheduledPromotionAfterRefIntent          = func() error { return nil }
 	scheduledPromotionAfterRefUpdate          = func() error { return nil }
+	scheduledPromotionBeforeDefaultPrepare    = func() error { return nil }
 	scheduledPromotionAfterDefaultPrepare     = func() error { return nil }
 	scheduledPromotionAfterFailureIntent      = func() error { return nil }
+	scheduledPromotionBeforeCommittedReplay   = func(context.Context) error { return nil }
 	scheduledPromotionBeforeFailureCompletion = func() error { return nil }
 )
 
@@ -574,7 +577,8 @@ func resumeScheduledPromotionIntent(ctx context.Context, vaultPath, projectID, w
 	if err != nil {
 		return "", err
 	}
-	if _, ok := idx.Waves[waveID]; !ok {
+	wave, ok := idx.Waves[waveID]
+	if !ok {
 		return "", tuskerError(errorNotFound, "V7 wave not found: "+waveID)
 	}
 	state, current, err = inspectScheduledPromotionIntent(repoRoot, run.Promotion)
@@ -615,13 +619,35 @@ func resumeScheduledPromotionIntent(ctx context.Context, vaultPath, projectID, w
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	preparation, err := prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, run.Promotion.ExpectedRef, wave)
+	if err != nil {
+		return "", err
+	}
+	if err := scheduledPromotionAfterDefaultPrepare(); err != nil {
+		return "", errors.Join(err, preparation.finishAfterRefAttempt(repoRoot, run.Promotion.ExpectedRef, run.Promotion.ExpectedSHA, run.Promotion.IntendedSHA))
+	}
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", errors.Join(err, preparation.finishAfterRefAttempt(repoRoot, run.Promotion.ExpectedRef, run.Promotion.ExpectedSHA, run.Promotion.IntendedSHA))
+	} else if hold != nil {
+		return "", errors.Join(departureHoldError(hold), preparation.finishAfterRefAttempt(repoRoot, run.Promotion.ExpectedRef, run.Promotion.ExpectedSHA, run.Promotion.IntendedSHA))
+	}
+	if matched, err := store.ResourceLeaseMatches(lease.Name, lease.Owner, lease.Generation); err != nil || !matched {
+		refusal := tuskerError(errorInvalidTransition, "promotion refusal: full_gate_lease_fenced_at_ref_update")
+		return "", errors.Join(refusal, preparation.finishAfterRefAttempt(repoRoot, run.Promotion.ExpectedRef, run.Promotion.ExpectedSHA, run.Promotion.IntendedSHA))
+	}
+	if err := ctx.Err(); err != nil {
+		return "", errors.Join(err, preparation.finishAfterRefAttempt(repoRoot, run.Promotion.ExpectedRef, run.Promotion.ExpectedSHA, run.Promotion.IntendedSHA))
+	}
 	if err := advanceV7DefaultBranch(repoRoot, run.Promotion.ExpectedRef, run.Promotion.IntendedSHA, run.Promotion.ExpectedSHA); err != nil {
 		if state, _, inspectErr := inspectScheduledPromotionIntent(repoRoot, run.Promotion); inspectErr == nil && state == scheduledPromotionIntentCommitted {
+			preparation.commit()
 			leaseOutcome = "promotion intent replay observed committed ref"
 			return complete()
 		}
-		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: default_ref_drift: "+err.Error())
+		refusal := tuskerError(errorInvalidTransition, "promotion recovery blocked: default_ref_drift: "+err.Error())
+		return "", errors.Join(refusal, preparation.finishAfterRefAttempt(repoRoot, run.Promotion.ExpectedRef, run.Promotion.ExpectedSHA, run.Promotion.IntendedSHA))
 	}
+	preparation.commit()
 	if err := scheduledPromotionAfterRefUpdate(); err != nil {
 		return "", err
 	}
@@ -660,6 +686,9 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 		return "", tuskerError(errorInvalidTransition, "promotion gate red: "+run.Gate.Failure.Identity)
 	}
 	if run.Promotion.CommittedRef != "" && run.Promotion.CommittedSHA != "" {
+		if err := scheduledPromotionBeforeCommittedReplay(ctx); err != nil {
+			return "", err
+		}
 		repoRoot := v7RepoRoot(vaultPath)
 		if current, err := gitOutputTrim(repoRoot, "rev-parse", run.Promotion.CommittedRef+"^{commit}"); err == nil && current == run.Promotion.CommittedSHA {
 			if err := appendScheduledPromotionAudit(vaultPath, waveID, run.Promotion.CommittedRef, current, "durable promotion replay: "+run.Gate.Command, actor); err != nil {
@@ -859,11 +888,15 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	} else if hold != nil {
 		return "", departureHoldError(hold)
 	}
-	if err := prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, before.DefaultBranch, wave); err != nil {
+	if err := scheduledPromotionBeforeDefaultPrepare(); err != nil {
 		return "", err
 	}
-	if err := scheduledPromotionAfterDefaultPrepare(); err != nil {
+	late, err := scheduledPromotionSnapshot(vaultPath, projectID, waveID, wf)
+	if err != nil {
 		return "", err
+	}
+	if drift := scheduledPromotionSnapshotDrift(before, late); drift != "" {
+		return "", tuskerError(errorInvalidTransition, "promotion recompute required: "+drift+"_drift")
 	}
 	if hold, err := store.departureHold(projectID, false); err != nil {
 		return "", err
@@ -904,12 +937,41 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	if err := scheduledPromotionAfterRefIntent(); err != nil {
 		return "", err
 	}
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
+	}
 	if matched, err := store.ResourceLeaseMatches(lease.Name, lease.Owner, lease.Generation); err != nil || !matched {
 		return "", tuskerError(errorInvalidTransition, "promotion refusal: full_gate_lease_fenced_at_ref_update")
 	}
-	if err := advanceV7DefaultBranch(repoRoot, before.DefaultBranch, mergeCommit, before.Candidate.ExpectedDefaultBranchSHA); err != nil {
-		return "", tuskerError(errorInvalidTransition, "promotion refusal: default_ref_drift: "+err.Error())
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
+	preparation, err := prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, before.DefaultBranch, wave)
+	if err != nil {
+		return "", err
+	}
+	if err := scheduledPromotionAfterDefaultPrepare(); err != nil {
+		return "", errors.Join(err, preparation.finishAfterRefAttempt(repoRoot, before.DefaultBranch, before.Candidate.ExpectedDefaultBranchSHA, mergeCommit))
+	}
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", errors.Join(err, preparation.finishAfterRefAttempt(repoRoot, before.DefaultBranch, before.Candidate.ExpectedDefaultBranchSHA, mergeCommit))
+	} else if hold != nil {
+		return "", errors.Join(departureHoldError(hold), preparation.finishAfterRefAttempt(repoRoot, before.DefaultBranch, before.Candidate.ExpectedDefaultBranchSHA, mergeCommit))
+	}
+	if matched, err := store.ResourceLeaseMatches(lease.Name, lease.Owner, lease.Generation); err != nil || !matched {
+		refusal := tuskerError(errorInvalidTransition, "promotion refusal: full_gate_lease_fenced_at_ref_update")
+		return "", errors.Join(refusal, preparation.finishAfterRefAttempt(repoRoot, before.DefaultBranch, before.Candidate.ExpectedDefaultBranchSHA, mergeCommit))
+	}
+	if err := ctx.Err(); err != nil {
+		return "", errors.Join(err, preparation.finishAfterRefAttempt(repoRoot, before.DefaultBranch, before.Candidate.ExpectedDefaultBranchSHA, mergeCommit))
+	}
+	if err := advanceV7DefaultBranch(repoRoot, before.DefaultBranch, mergeCommit, before.Candidate.ExpectedDefaultBranchSHA); err != nil {
+		refusal := tuskerError(errorInvalidTransition, "promotion refusal: default_ref_drift: "+err.Error())
+		return "", errors.Join(refusal, preparation.finishAfterRefAttempt(repoRoot, before.DefaultBranch, before.Candidate.ExpectedDefaultBranchSHA, mergeCommit))
+	}
+	preparation.commit()
 	if heartbeatErr := stopHeartbeat(); heartbeatErr != nil {
 		return "", heartbeatErr
 	}

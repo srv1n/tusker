@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -11,6 +12,15 @@ import (
 const departureHeldError = "DEPARTURE_HELD"
 
 var errDepartureExecutionDeferred = errors.New("departure execution deferred")
+
+const (
+	departureExecutionErrorLimit = 480
+	departureExecutionErrorCap   = 1_000_000
+)
+
+var departureExecutionLog = func(projectID, runID, state, message string) {
+	fmt.Fprintf(os.Stderr, "departure executor project=%s run=%s state=%s error=%s\n", projectID, runID, state, message)
+}
 
 // startPendingDepartureExecutions is the resident-daemon handoff from durable
 // scheduling to execution. Long landing and gate work runs outside the poll so
@@ -38,7 +48,20 @@ func (d *Daemon) startPendingDepartureExecutions(ctx context.Context, project Re
 		}
 		go func(runID string, workerCtx context.Context) {
 			defer d.releaseDepartureExecution(runID)
-			_ = d.executeDeparture(workerCtx, project, wf, runID)
+			executeErr := d.executeDeparture(workerCtx, project, wf, runID)
+			if departureExecutionContextCanceled(executeErr) {
+				return
+			}
+			if executeErr != nil {
+				persisted, persistErr := d.recordDepartureExecutionError(runID, executeErr)
+				message := safePacketText(executeErr.Error(), departureExecutionErrorLimit)
+				if persistErr != nil {
+					message += "; persistence failed: " + safePacketText(persistErr.Error(), 180)
+				}
+				departureExecutionLog(project.ProjectID, runID, firstNonEmpty(string(persisted.State), "unknown"), safePacketText(message, departureExecutionErrorLimit+200))
+				return
+			}
+			_ = d.clearDepartureExecutionError(runID)
 		}(run.ID, workerCtx)
 	}
 	return nil
@@ -103,6 +126,67 @@ func (d *Daemon) activeDepartureExecutionIDs() []string {
 		active = append(active, runID)
 	}
 	return active
+}
+
+func (d *Daemon) recordDepartureExecutionError(runID string, cause error) (DepartureRun, error) {
+	if d == nil || d.store == nil || cause == nil {
+		return DepartureRun{}, fmt.Errorf("record departure execution error requires a store, run, and cause")
+	}
+	message := safePacketText(cause.Error(), departureExecutionErrorLimit)
+	if message == "" {
+		message = "departure execution failed"
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		run, err := d.store.FindDepartureRun(runID)
+		if err != nil {
+			return DepartureRun{}, err
+		}
+		if run == nil {
+			return DepartureRun{}, tuskerError(errorNotFound, "departure run not found: "+runID)
+		}
+		next := *run
+		next.ExecutionLastError = message
+		next.ExecutionLastErrorAt = departureNow()
+		if next.ExecutionErrorCount < departureExecutionErrorCap {
+			next.ExecutionErrorCount++
+		}
+		changed, err := d.store.TransitionDepartureRun(next, run.StateRevision)
+		if err != nil {
+			return DepartureRun{}, err
+		}
+		if changed {
+			next.StateRevision++
+			next.UpdatedAt = departureNow()
+			return next, nil
+		}
+	}
+	return DepartureRun{}, fmt.Errorf("departure execution error CAS did not converge for %s", runID)
+}
+
+func (d *Daemon) clearDepartureExecutionError(runID string) error {
+	if d == nil || d.store == nil {
+		return nil
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		run, err := d.store.FindDepartureRun(runID)
+		if err != nil || run == nil {
+			return err
+		}
+		if run.ExecutionLastError == "" && run.ExecutionLastErrorAt == "" {
+			return nil
+		}
+		next := *run
+		next.ExecutionLastError = ""
+		next.ExecutionLastErrorAt = ""
+		changed, err := d.store.TransitionDepartureRun(next, run.StateRevision)
+		if err != nil {
+			return err
+		}
+		if changed {
+			return nil
+		}
+	}
+	return fmt.Errorf("departure execution error clear CAS did not converge for %s", runID)
 }
 
 // executeDeparture is the deterministic synchronous phase runner used by the
@@ -491,6 +575,9 @@ func (d *Daemon) executeDeparturePromoted(ctx context.Context, project Registere
 	}
 	durable := run
 	if _, err := promoteScheduledWaveContext(ctx, project.VaultRoot, project.ProjectID, run.Candidate.WaveIDs[0], wf, d.store, &durable, "daemon:departure:"+run.ID); err != nil {
+		if departureExecutionContextCanceled(err) {
+			return err
+		}
 		if departureExecutionTransient(err) {
 			return err
 		}
@@ -519,6 +606,10 @@ func (d *Daemon) blockDepartureRun(run DepartureRun, reason string) error {
 
 func departureExecutionTransient(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "landing lane is already running")
+}
+
+func departureExecutionContextCanceled(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func sameDepartureStrings(left, right []string) bool {

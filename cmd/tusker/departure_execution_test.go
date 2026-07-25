@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -371,7 +372,7 @@ func TestDepartureExecution(t *testing.T) {
 		}
 	})
 
-	t.Run("hold after default preparation blocks promotion intent", func(t *testing.T) {
+	t.Run("hold after default preparation restores canonical bytes", func(t *testing.T) {
 		fixture := newDepartureExecutionFixture(t, scheduledPromotionPromote, "final-hold-executor.txt")
 		store, err := OpenRuntimeStore(t.TempDir())
 		if err != nil {
@@ -380,6 +381,7 @@ func TestDepartureExecution(t *testing.T) {
 		defer store.Close()
 		run := createDepartureExecutionRun(t, store, fixture)
 		mainBefore := gitRevisionForTest(t, fixture.repo, "main")
+		canonicalBefore := departureWaveMemberBytes(t, fixture.vault, "W-0001", "APP-T-0001")
 		originalHook := scheduledPromotionAfterDefaultPrepare
 		hookCalled := false
 		scheduledPromotionAfterDefaultPrepare = func() error {
@@ -394,13 +396,54 @@ func TestDepartureExecution(t *testing.T) {
 		}
 		blocked := mustDepartureRun(t, store, run.ID)
 		if !hookCalled || blocked.State != DepartureStateBlocked ||
-			blocked.Promotion.AttemptedAt != "" ||
+			blocked.Promotion.AttemptedAt == "" ||
 			!strings.Contains(blocked.BlockReason, "last-second operator hold") {
-			t.Fatalf("final hold fence did not block before promotion intent: hook=%v run=%#v", hookCalled, blocked)
+			t.Fatalf("post-intent hold fence was not durable: hook=%v run=%#v", hookCalled, blocked)
 		}
 		if after := gitRevisionForTest(t, fixture.repo, "main"); after != mainBefore {
 			t.Fatalf("final hold fence moved main: before=%s after=%s", mainBefore, after)
 		}
+		assertDepartureWaveMemberBytes(t, fixture.vault, canonicalBefore)
+	})
+
+	t.Run("late disarm is revalidated before preparation", func(t *testing.T) {
+		fixture := newDepartureExecutionFixture(t, scheduledPromotionPromote, "final-disarm-executor.txt")
+		store, err := OpenRuntimeStore(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		run := createDepartureExecutionRun(t, store, fixture)
+		mainBefore := gitRevisionForTest(t, fixture.repo, "main")
+		originalHook := scheduledPromotionBeforeDefaultPrepare
+		hookCalled := false
+		var disarmedBytes map[string]string
+		scheduledPromotionBeforeDefaultPrepare = func() error {
+			hookCalled = true
+			if err := mutateWaveAuthorization(Args{
+				"vault": fixture.vault, "_pos0": "W-0001",
+				"by": "human:sara", "quiet": "true",
+			}, "disarmed", nil); err != nil {
+				return err
+			}
+			disarmedBytes = departureWaveMemberBytes(t, fixture.vault, "W-0001", "APP-T-0001")
+			return nil
+		}
+		defer func() { scheduledPromotionBeforeDefaultPrepare = originalHook }()
+		d := &Daemon{store: store, departurePlan: fixture.plan}
+		if err := d.executeDeparture(context.Background(), fixture.project, fixture.wf, run.ID); err != nil {
+			t.Fatal(err)
+		}
+		blocked := mustDepartureRun(t, store, run.ID)
+		if !hookCalled || blocked.State != DepartureStateBlocked ||
+			blocked.Promotion.AttemptedAt != "" ||
+			!strings.Contains(strings.ToLower(blocked.BlockReason), "authorization") {
+			t.Fatalf("late disarm was not fenced before promotion intent: hook=%v run=%#v", hookCalled, blocked)
+		}
+		if after := gitRevisionForTest(t, fixture.repo, "main"); after != mainBefore {
+			t.Fatalf("late disarm moved main: before=%s after=%s", mainBefore, after)
+		}
+		assertDepartureWaveMemberBytes(t, fixture.vault, disarmedBytes)
 	})
 
 	t.Run("resource contention waits wakes and retries", func(t *testing.T) {
@@ -599,6 +642,152 @@ func TestDepartureExecution(t *testing.T) {
 			durable.Promotion.AttemptedAt != "" ||
 			durable.Gate.Failure.Identity != "" {
 			t.Fatalf("cancelled full gate was misclassified as a product failure: %#v", durable)
+		}
+	})
+
+	t.Run("daemon close preserves a promoted row cancelled during replay", func(t *testing.T) {
+		fixture := newDepartureExecutionFixture(t, scheduledPromotionPromote, "cancel-promoted-replay.txt")
+		stateRoot := t.TempDir()
+		d, err := NewDaemon(stateRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run := createDepartureExecutionRun(t, d.store, fixture)
+		promoted := run
+		promoted.State = DepartureStatePromoted
+		promoted.Promotion = DeparturePromotion{
+			CommittedRef: "main",
+			CommittedSHA: gitRevisionForTest(t, fixture.repo, "main"),
+			CommittedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+		}
+		if changed, err := d.store.TransitionDepartureRun(promoted, run.StateRevision); err != nil || !changed {
+			t.Fatalf("prepare promoted replay: changed=%v err=%v", changed, err)
+		}
+		replayStarted := make(chan struct{})
+		oldHook := scheduledPromotionBeforeCommittedReplay
+		scheduledPromotionBeforeCommittedReplay = func(ctx context.Context) error {
+			close(replayStarted)
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		if err := d.startPendingDepartureExecutions(context.Background(), fixture.project, fixture.wf); err != nil {
+			scheduledPromotionBeforeCommittedReplay = oldHook
+			t.Fatal(err)
+		}
+		select {
+		case <-replayStarted:
+		case <-time.After(10 * time.Second):
+			scheduledPromotionBeforeCommittedReplay = oldHook
+			_ = d.Close()
+			t.Fatal("promoted replay did not enter its cancellable boundary")
+		}
+		closeResult := make(chan error, 1)
+		go func() { closeResult <- d.Close() }()
+		select {
+		case err := <-closeResult:
+			if err != nil {
+				scheduledPromotionBeforeCommittedReplay = oldHook
+				t.Fatal(err)
+			}
+		case <-time.After(5 * time.Second):
+			scheduledPromotionBeforeCommittedReplay = oldHook
+			t.Fatal("Close did not cancel the promoted replay")
+		}
+		scheduledPromotionBeforeCommittedReplay = oldHook
+
+		reopened, err := OpenRuntimeStore(stateRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cancelled := mustDepartureRun(t, reopened, run.ID)
+		if cancelled.State != DepartureStatePromoted ||
+			cancelled.BlockReason != "" ||
+			cancelled.Gate.Failure.Identity != "" {
+			_ = reopened.Close()
+			t.Fatalf("cancelled promoted replay was terminalized: %#v", cancelled)
+		}
+		replayDaemon := &Daemon{store: reopened}
+		if err := replayDaemon.executeDeparture(context.Background(), fixture.project, fixture.wf, run.ID); err != nil {
+			_ = reopened.Close()
+			t.Fatalf("promoted row was not replayable after cancellation: %v", err)
+		}
+		replayed := mustDepartureRun(t, reopened, run.ID)
+		if replayed.State != DepartureStatePassed {
+			_ = reopened.Close()
+			t.Fatalf("promoted cancellation did not remain pass-replayable: %#v", replayed)
+		}
+		if err := reopened.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("async executor errors are bounded durable and resumable", func(t *testing.T) {
+		fixture := newDepartureExecutionFixture(t, scheduledPromotionShadow, "async-error.txt")
+		d, err := NewDaemon(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer d.Close()
+		run := createDepartureExecutionRun(t, d.store, fixture)
+		rawFailure := "secret=supersecret " + strings.Repeat("x", departureExecutionErrorLimit*3)
+		d.departurePlan = func(RegisteredProject, Workflow) (DepartureDecision, error) {
+			return DepartureDecision{}, errors.New(rawFailure)
+		}
+		logged := make(chan string, 1)
+		oldLogger := departureExecutionLog
+		departureExecutionLog = func(projectID, runID, state, message string) {
+			logged <- strings.Join([]string{projectID, runID, state, message}, "|")
+		}
+		defer func() { departureExecutionLog = oldLogger }()
+		if err := d.startPendingDepartureExecutions(context.Background(), fixture.project, fixture.wf); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case line := <-logged:
+			if !strings.Contains(line, fixture.project.ProjectID+"|"+run.ID+"|evaluating|") ||
+				strings.Contains(line, "supersecret") {
+				t.Fatalf("async executor log was missing identity or leaked a secret: %q", line)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("async executor error was not logged")
+		}
+		failed := mustDepartureRun(t, d.store, run.ID)
+		if failed.State != DepartureStateEvaluating ||
+			failed.ExecutionLastError == "" ||
+			len(failed.ExecutionLastError) > departureExecutionErrorLimit+3 ||
+			strings.Contains(failed.ExecutionLastError, "supersecret") ||
+			failed.ExecutionLastErrorAt == "" ||
+			failed.ExecutionErrorCount != 1 {
+			t.Fatalf("async executor error was not bounded and durable: %#v", failed)
+		}
+		recovery, _ := classifyDepartureRecoveryForProject(fixture.project, failed)
+		if recovery.Disposition != DepartureRecoveryResumable || recovery.ResumeState != DepartureStateEvaluating {
+			t.Fatalf("safe async failure was not resumable: %#v", recovery)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for len(d.activeDepartureExecutionIDs()) != 0 {
+			if time.Now().After(deadline) {
+				t.Fatal("failed departure worker did not release its active claim")
+			}
+			time.Sleep(time.Millisecond)
+		}
+		d.departurePlan = fixture.plan
+		if err := d.startPendingDepartureExecutions(context.Background(), fixture.project, fixture.wf); err != nil {
+			t.Fatal(err)
+		}
+		deadline = time.Now().Add(10 * time.Second)
+		for {
+			replayed := mustDepartureRun(t, d.store, run.ID)
+			if replayed.State == DepartureStatePassed && replayed.ExecutionLastError == "" && replayed.ExecutionLastErrorAt == "" {
+				if replayed.ExecutionErrorCount != 1 {
+					t.Fatalf("successful retry lost bounded error count: %#v", replayed)
+				}
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("safe async failure did not resume and clear: %#v", replayed)
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 	})
 
@@ -819,6 +1008,34 @@ func mustDepartureRun(t *testing.T, store *RuntimeStore, runID string) Departure
 		t.Fatalf("find departure %s: %#v err=%v", runID, run, err)
 	}
 	return *run
+}
+
+func departureWaveMemberBytes(t *testing.T, vault, waveID string, taskIDs ...string) map[string]string {
+	t.Helper()
+	snapshot := make(map[string]string, len(taskIDs)+1)
+	for _, taskID := range taskIDs {
+		path := filepath.Join(vault, "work", "tasks", taskID+".md")
+		snapshot[path] = mustReadIndexTest(t, path)
+	}
+	wavePath := filepath.Join(vault, "work", "waves", waveID+".md")
+	snapshot[wavePath] = mustReadIndexTest(t, wavePath)
+	return snapshot
+}
+
+func assertDepartureWaveMemberBytes(t *testing.T, vault string, expected map[string]string) {
+	t.Helper()
+	if len(expected) == 0 {
+		t.Fatal("canonical wave-member snapshot is empty")
+	}
+	for path, want := range expected {
+		if got := mustReadIndexTest(t, path); got != want {
+			rel, err := filepath.Rel(vault, path)
+			if err != nil {
+				rel = path
+			}
+			t.Fatalf("canonical bytes changed for %s", rel)
+		}
+	}
 }
 
 func waitDepartureState(t *testing.T, store *RuntimeStore, runID string, state DepartureState) DepartureRun {

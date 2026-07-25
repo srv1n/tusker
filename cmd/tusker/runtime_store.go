@@ -887,6 +887,9 @@ func (s *RuntimeStore) Migrate() error {
 			release_json TEXT NOT NULL DEFAULT '{}',
 			skip_reason TEXT NOT NULL DEFAULT '',
 			block_reason TEXT NOT NULL DEFAULT '',
+			execution_last_error TEXT NOT NULL DEFAULT '',
+			execution_last_error_at TEXT NOT NULL DEFAULT '',
+			execution_error_count INTEGER NOT NULL DEFAULT 0,
 			model_invocation_count INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
@@ -913,6 +916,18 @@ func (s *RuntimeStore) Migrate() error {
 	}
 	for _, stmt := range statements {
 		if _, err := s.exec(stmt); err != nil {
+			return err
+		}
+	}
+	for _, column := range []struct {
+		name string
+		stmt string
+	}{
+		{"execution_last_error", `ALTER TABLE departure_runs ADD COLUMN execution_last_error TEXT NOT NULL DEFAULT ''`},
+		{"execution_last_error_at", `ALTER TABLE departure_runs ADD COLUMN execution_last_error_at TEXT NOT NULL DEFAULT ''`},
+		{"execution_error_count", `ALTER TABLE departure_runs ADD COLUMN execution_error_count INTEGER NOT NULL DEFAULT 0`},
+	} {
+		if err := s.ensureColumn("departure_runs", column.name, column.stmt); err != nil {
 			return err
 		}
 	}

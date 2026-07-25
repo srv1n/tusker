@@ -473,6 +473,68 @@ func TestAdvanceDefaultBranchFfOnlyPreservesStagedTuskerWork(t *testing.T) {
 	}
 }
 
+func TestWaveMemberPreparationFinishesByExactRefOutcome(t *testing.T) {
+	t.Run("third ref race restores original canonical bytes", func(t *testing.T) {
+		repo, vault := newLandReadyForMainAdvanceTest(t, "third-ref-preparation.txt", "candidate\n")
+		idx, err := loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wave := idx.Waves["W-0001"]
+		expected := gitRevisionForTest(t, repo, "main")
+		candidate := gitRevisionForTest(t, repo, "integration/W-0001")
+		intended := strings.TrimSpace(gitDirOutput(t, repo, "commit-tree", candidate+"^{tree}", "-p", expected, "-p", candidate, "-m", "intended promotion"))
+		original := departureWaveMemberBytes(t, vault, "W-0001", "APP-T-0001")
+
+		preparation, err := prepareV7WaveMembersForDefaultAdvance(repo, vault, "main", wave)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prepared := departureWaveMemberBytes(t, vault, "W-0001", "APP-T-0001")
+		if sameStringMap(original, prepared) {
+			t.Fatal("fixture did not produce live canonical bytes for preparation to protect")
+		}
+		third := strings.TrimSpace(gitDirOutput(t, repo, "commit-tree", expected+"^{tree}", "-p", expected, "-m", "external third ref"))
+		runGitDir(t, repo, "update-ref", "refs/heads/main", third, expected)
+
+		if err := preparation.finishAfterRefAttempt(repo, "main", expected, intended); err != nil {
+			t.Fatal(err)
+		}
+		assertDepartureWaveMemberBytes(t, vault, original)
+	})
+
+	t.Run("intended ref ownership does not restore the preimage", func(t *testing.T) {
+		repo, vault := newLandReadyForMainAdvanceTest(t, "intended-ref-preparation.txt", "candidate\n")
+		idx, err := loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wave := idx.Waves["W-0001"]
+		expected := gitRevisionForTest(t, repo, "main")
+		candidate := gitRevisionForTest(t, repo, "integration/W-0001")
+		intended := strings.TrimSpace(gitDirOutput(t, repo, "commit-tree", candidate+"^{tree}", "-p", expected, "-p", candidate, "-m", "intended promotion"))
+		original := departureWaveMemberBytes(t, vault, "W-0001", "APP-T-0001")
+
+		preparation, err := prepareV7WaveMembersForDefaultAdvance(repo, vault, "main", wave)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prepared := departureWaveMemberBytes(t, vault, "W-0001", "APP-T-0001")
+		if sameStringMap(original, prepared) {
+			t.Fatal("fixture did not produce live canonical bytes for preparation to protect")
+		}
+		runGitDir(t, repo, "update-ref", "refs/heads/main", intended, expected)
+
+		if err := preparation.finishAfterRefAttempt(repo, "main", expected, intended); err != nil {
+			t.Fatal(err)
+		}
+		assertDepartureWaveMemberBytes(t, vault, prepared)
+		if sameStringMap(original, departureWaveMemberBytes(t, vault, "W-0001", "APP-T-0001")) {
+			t.Fatal("intended ref observation incorrectly restored the preimage")
+		}
+	})
+}
+
 func writeWorkspaceRecordForLandTest(t *testing.T, worktree, recordID string) {
 	t.Helper()
 	metaDir := filepath.Join(worktree, ".tusker")
