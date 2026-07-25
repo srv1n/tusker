@@ -279,16 +279,44 @@ func TestArmedWaveDelivery(t *testing.T) {
 	if err == nil {
 		t.Fatal("another task was allowed to absorb an attributable workspace")
 	}
-	wf := defaultWorkflow()
-	wf.Reviewer.Prompt = "Legacy reviewer closes with {{ reviewer.close_command }}"
-	prompt, err := renderAttemptPrompt(RegisteredProject{ProjectID: "app"}, WorkflowFile{Path: "/tmp/WORKFLOW.md", Data: wf}, Note{Data: map[string]any{
-		"id": "APP-T-0001", "type": "task", "kind": "task", "status": "review", "wave": "W-0001", "risk": "medium",
-	}}, "/tmp/workspace", 1, "attempt-review", runLaneReview, RunStatus{}, RunStatus{}, nil)
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{
+		"vault": vault, "quiet": "true", "epic": "APP", "title": "Typed armed-wave review",
+		"risk": "medium", "priority": "p0", "v7": "true",
+	}, newV7Task)
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+		"status":        "review",
+		"wave":          "W-0001",
+		"source_sha":    "abc123",
+		"work_revision": 2,
+	})
+	note, err := resolveV7Note(vault, "APP-T-0001", "task")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(prompt, "tusker land APP-T-0001") || !strings.Contains(prompt, "After close") {
-		t.Fatalf("legacy reviewer prompt did not receive landing/finalization contract: %q", prompt)
+	wfFile, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Custom legacy reviewer choreography must be ignored even when it asks
+	// the reviewer to close. The fixed typed-result contract is authoritative.
+	wfFile.Data.Reviewer.Prompt = "Legacy reviewer closes with {{ reviewer.close_command }}"
+	prompt, err := renderAttemptPrompt(newRegisteredProject(filepath.Dir(vault), vault), wfFile, note, t.TempDir(), 1, "attempt-review", runLaneReview, RunStatus{}, RunStatus{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"tusker land", "tusker close", "tusker status", "rework"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("reviewer prompt retained authority %q: %q", forbidden, prompt)
+		}
+	}
+	if !strings.Contains(prompt, "tusker review submit") {
+		t.Fatalf("reviewer prompt lacks typed submit contract: %q", prompt)
+	}
+	for _, flag := range []string{"--task-rev", "--source-sha", "--work-rev", "--proof-fingerprint", "--gate-fingerprint"} {
+		if !strings.Contains(prompt, flag) {
+			t.Fatalf("reviewer prompt lacks %s: %q", flag, prompt)
+		}
 	}
 }
 

@@ -45,6 +45,32 @@ open gates, and refuses unresolved downstream dependencies until the operator
 explicitly detaches them or discards the downstream closure. Run `--dry-run`
 before committing when a task may have dependents.
 
+## Typed Review
+
+```bash
+tusker review submit <TASK-ID> \
+  --attempt <ATTEMPT-ID> \
+  --task-rev <TASK-REV> \
+  --source-sha <SOURCE-SHA> \
+  --work-rev <WORK-REV> \
+  --proof-fingerprint <PROOF-FINGERPRINT> \
+  --gate-fingerprint <GATE-FINGERPRINT> \
+  --verdict pass|changes_requested|blocked \
+  --covers A1,A2 \
+  --summary "<bounded summary>" \
+  [--finding "<actionable finding>"] \
+  [--evidence-ref "<reference>"] \
+  [--blocker machine|infrastructure|human]
+```
+
+This is the only lifecycle mutation available to a dispatched reviewer. The
+injected packet supplies the exact immutable bindings and reviewer actor. A
+reviewer never merges, lands, closes, moves refs, changes task status, or
+satisfies a gate; the deterministic control plane validates and consumes the
+result. Process exit and prose are not acceptance. If the installed CLI lacks
+`review submit`, stop and report a stale Tusker contract instead of using the
+legacy reviewer commands.
+
 ## Skill Installs
 
 ```bash

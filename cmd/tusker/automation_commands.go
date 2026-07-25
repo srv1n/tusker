@@ -37,20 +37,21 @@ type automationCommandContext struct {
 }
 
 type automationProjectSummary struct {
-	ProjectID     string                            `json:"project_id"`
-	ProjectKey    string                            `json:"project_key"`
-	Name          string                            `json:"name"`
-	RepoRoot      string                            `json:"repo_root"`
-	VaultRoot     string                            `json:"vault_root"`
-	WorkflowPath  string                            `json:"workflow_path"`
-	Registered    bool                              `json:"registered"`
-	Enabled       bool                              `json:"enabled"`
-	Health        ProjectHealth                     `json:"health"`
-	LastPollAt    string                            `json:"last_poll_at"`
-	LastError     string                            `json:"last_error"`
-	ActiveRuns    int                               `json:"active_runs"`
-	QueuedRuns    int                               `json:"queued_runs"`
-	DispatchScope automationDispatchScopeProjection `json:"dispatch_scope"`
+	ProjectID         string                            `json:"project_id"`
+	ProjectKey        string                            `json:"project_key"`
+	Name              string                            `json:"name"`
+	RepoRoot          string                            `json:"repo_root"`
+	VaultRoot         string                            `json:"vault_root"`
+	WorkflowPath      string                            `json:"workflow_path"`
+	Registered        bool                              `json:"registered"`
+	Enabled           bool                              `json:"enabled"`
+	Health            ProjectHealth                     `json:"health"`
+	LastPollAt        string                            `json:"last_poll_at"`
+	LastError         string                            `json:"last_error"`
+	ActiveRuns        int                               `json:"active_runs"`
+	QueuedRuns        int                               `json:"queued_runs"`
+	DispatchScope     automationDispatchScopeProjection `json:"dispatch_scope"`
+	CompletionReactor completionReactorModeProjection   `json:"completion_reactor"`
 }
 
 type automationTaskExplanation struct {
@@ -1055,19 +1056,24 @@ func automationSummarizeProject(project RegisteredProject, workflow WorkflowFile
 	if workflow.Data.DispatchScope.Effective != "" {
 		scope = workflow.Data.DispatchScope
 	}
+	completionReactor := defaultCompletionReactorMode()
+	if workflow.Data.CompletionReactor.Effective != "" {
+		completionReactor = workflow.Data.CompletionReactor
+	}
 	summary := automationProjectSummary{
-		ProjectID:     project.ProjectID,
-		ProjectKey:    project.ProjectKey,
-		Name:          project.Name,
-		RepoRoot:      project.RepoRoot,
-		VaultRoot:     project.VaultRoot,
-		WorkflowPath:  project.WorkflowPath,
-		Registered:    registered,
-		Enabled:       project.Enabled,
-		Health:        project.Health,
-		LastPollAt:    project.LastPollAt,
-		LastError:     project.LastError,
-		DispatchScope: scope,
+		ProjectID:         project.ProjectID,
+		ProjectKey:        project.ProjectKey,
+		Name:              project.Name,
+		RepoRoot:          project.RepoRoot,
+		VaultRoot:         project.VaultRoot,
+		WorkflowPath:      project.WorkflowPath,
+		Registered:        registered,
+		Enabled:           project.Enabled,
+		Health:            project.Health,
+		LastPollAt:        project.LastPollAt,
+		LastError:         project.LastError,
+		DispatchScope:     scope,
+		CompletionReactor: completionReactor,
 	}
 	for _, run := range runs {
 		if run.Terminal {
@@ -1114,9 +1120,13 @@ func printAutomationStatus(report automationStatusReport) {
 		if project.Enabled {
 			state = "enabled"
 		}
-		fmt.Printf("  %-12s %-8s %-8s active=%d queued=%d scope=%s provenance=%s %s\n", project.ProjectKey, state, project.Health, project.ActiveRuns, project.QueuedRuns, project.DispatchScope.Effective, project.DispatchScope.Provenance, project.RepoRoot)
+		fmt.Printf("  %-12s %-8s %-8s active=%d queued=%d scope=%s reactor=%s %s\n", project.ProjectKey, state, project.Health, project.ActiveRuns, project.QueuedRuns, project.DispatchScope.Effective, project.CompletionReactor.Effective, project.RepoRoot)
+		fmt.Printf("    scope provenance=%s; reactor provenance=%s\n", project.DispatchScope.Provenance, project.CompletionReactor.Provenance)
 		if project.DispatchScope.Warning != "" {
 			fmt.Printf("    warning: %s; repair: %s\n", project.DispatchScope.Warning, project.DispatchScope.Repair)
+		}
+		if project.CompletionReactor.Warning != "" {
+			fmt.Printf("    reactor warning: %s; repair: %s\n", project.CompletionReactor.Warning, project.CompletionReactor.Repair)
 		}
 	}
 	if len(report.ArmedWaves) > 0 {

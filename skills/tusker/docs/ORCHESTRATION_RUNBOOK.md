@@ -15,14 +15,15 @@ Only markdown work records and accepted evidence/gates should drive lifecycle tr
 
 | Role | Owns | Must never do |
 |---|---|---|
-| Interactive Codex/Claude | Current user's shell commands, edits, tests, and task updates | Start a foreground daemon, invoke dispatch, or launch another model runner |
+| Interactive Codex/Claude | One `tusker work start` session, current user's edits, tests, proof, and handoff | Start a foreground daemon, invoke dispatch, bypass ownership, or launch another model runner |
 | Resident daemon | Poll enabled projects and launch eligible background implementation/review workers | Dispatch disabled projects or treat task creation alone as authorization |
-| Implementation worker | One injected task, attempt, and workspace | Work another task, launch a daemon/runner, or self-review |
-| Reviewer worker | Read-only verification of one implementation handoff | Edit implementation files or review forever |
+| Implementation worker | One injected task, attempt, workspace, and objective proof handoff | Work another task, launch a daemon/runner, self-review, merge, land, or close |
+| Reviewer worker | Read-only verification and one attempt-bound typed verdict | Edit implementation, change lifecycle state, merge, land, close, move refs, or review forever |
 
-Interactive sessions do not enter the daemon claim/heartbeat lifecycle. Before
-taking over the same tracked task they inspect an existing live run and
-coordinate; disabled automation never blocks their direct work.
+Interactive sessions use the universal work-session ownership service without
+entering the daemon dispatch lifecycle. `tusker work start` refuses a healthy
+existing owner and works while automation is disabled; it never enables
+automation or launches a worker.
 
 ## Dispatch eligibility
 
@@ -51,7 +52,7 @@ poll:
   run configured runner
   collect attempt summary and proof artifacts
   if machine work complete:
-    request review or emit closeout
+    request independent typed review
   if task still agent-owned and machine gaps remain:
     allow one continuation within budget
   if only human/external gaps remain:
@@ -73,7 +74,7 @@ classify proof/gates by owner
       +-- human/external gaps only
               |
               v
-       emit review packet/checkpoint
+       emit human-wait packet/checkpoint
        set/recognize held plus a human/external next_owner
        release lease
        supervisor decision: stop_for_human / stop_for_external
@@ -84,10 +85,15 @@ classify proof/gates by owner
 
 Reviewer lanes are independent from implementation workers.
 
-- Every risk tier may be closed by an allowed independent reviewer when proof, gates, docs impact, and policy pass.
+- Every risk tier may be objectively accepted by an independent reviewer through one immutable `tusker review submit` result when proof, gates, docs impact, and policy pass.
 - High/critical risk strengthens proof, reviewer, and landing safeguards; it does not synthesize human acceptance.
-- If review fails, move to `rework` with exact acceptance gaps.
-- If review leaves only human gates, set/recognize human-wait and stop.
+- The reviewer never edits implementation, changes task/gate state, merges,
+  lands, closes, or moves refs. The deterministic completion reactor consumes
+  the typed result.
+- `changes_requested` deterministically returns the exact acceptance gaps to
+  `rework`; `blocked` parks the truthful machine/infrastructure/human blocker.
+- A human blocker is valid only when an open human-owned gate supplies the
+  missing authority or subjective decision.
 - Dispatch at most one reviewer per handoff and three automated review cycles per task. At the cap, leave the task in review for operator intervention.
 
 ## Continuation retry rule

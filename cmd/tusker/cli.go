@@ -142,7 +142,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "gate-ledger", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "trace", "escalate", "departure":
+	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "gate-ledger", "context", "config", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure":
 		return true
 	default:
 		return false
@@ -214,7 +214,7 @@ func run(command string, args Args) (int, error) {
 
 func cliCommandMutatesVault(command string) bool {
 	switch command {
-	case "status", "discard", "verify add", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "delivery import", "reconcile", "finish", "close", "accept", "handoff":
+	case "status", "discard", "verify add", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "delivery import", "delivery start", "reconcile", "finish", "close", "accept", "handoff":
 		return true
 	default:
 		return false
@@ -244,6 +244,8 @@ func runInner(command string, args Args) (int, error) {
 		return 1, nil
 	}
 	switch command {
+	case "version", "--version":
+		return 0, versionCmd(args)
 	case "runner-wrapper":
 		return 0, runnerWrapperCmd(args)
 	case "new epic":
@@ -309,6 +311,12 @@ func runInner(command string, args Args) (int, error) {
 		return 0, deliveryPlanningContextCmd(args)
 	case "delivery import":
 		return 0, deliveryImportCmd(args)
+	case "delivery review":
+		return 0, deliveryReviewCmd(args)
+	case "delivery start":
+		return 0, deliveryStartCmd(args)
+	case "review submit":
+		return 0, reviewSubmitCmd(args)
 	case "delivery doctor":
 		return 0, deliveryDoctorCmd(args)
 	case "delivery rollout":
@@ -1046,7 +1054,7 @@ func printCommandHelp(command string) bool {
 		printEvidenceHelp()
 	case "migrate vault-root":
 		printMigrateVaultRootHelp()
-	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "wave brief", "wave preflight", "wave arm", "wave pause", "wave resume", "wave disarm", "delivery", "delivery plan", "delivery context", "delivery import", "delivery rollout", "trace", "trace list", "trace show", "trace replay", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy", "migrate close-policy":
+	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "wave brief", "wave preflight", "wave arm", "wave pause", "wave resume", "wave disarm", "delivery", "delivery plan", "delivery context", "delivery import", "delivery review", "delivery start", "delivery doctor", "delivery rollout", "trace", "trace list", "trace show", "trace replay", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy", "migrate close-policy":
 		printV7Help()
 	case "feedback", "feedback add", "feedback digest", "feedback ingest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()
@@ -1233,9 +1241,12 @@ func printV7Help() {
   tusker new decision --epic HSP --title "Use repo-local branch-safe tracker"
 
   tusker delivery plan --spec docs/specs/example.md --out .tusker/scratch/delivery-plan.yaml
-  tusker delivery context --spec docs/specs/example.md --json
+  tusker delivery context --spec docs/specs/example.md --scope example/v1 --json
   tusker delivery import --plan .tusker/scratch/delivery-plan.yaml --wave "Example delivery" --dry-run
   tusker delivery import --plan .tusker/scratch/delivery-plan.yaml --wave "Example delivery"
+  tusker delivery review --plan .tusker/scratch/delivery-plan.yaml --json
+  tusker delivery start --plan .tusker/scratch/delivery-plan.yaml --confirm sha256:<reviewed-plan-fingerprint> --by human:<name>
+  tusker delivery doctor --plan .tusker/scratch/delivery-plan.yaml --json
   tusker delivery rollout doctor --json
   tusker delivery rollout repair --dry-run --json
 

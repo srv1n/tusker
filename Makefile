@@ -33,7 +33,7 @@ build-go: ## Build the Go binary from the prepared embedded assets
 
 build-go-unlocked:
 	@mkdir -p "$(DIST_DIR)"
-	GOMAXPROCS=$(GO_MAX_PROCS) go build -p=$(GO_PACKAGE_PARALLELISM) -o "$(DIST_BIN)" "$(CMD_DIR)"
+	GOMAXPROCS=$(GO_MAX_PROCS) go build -p=$(GO_PACKAGE_PARALLELISM) -ldflags "-X main.buildVersion=$(VERSION)" -o "$(DIST_BIN)" "$(CMD_DIR)"
 
 mac-app: build ## Build and sign TuskerBar with the current embedded CLI/Serve runtime
 	apps/mac/TuskerBar/scripts/build-app.sh
@@ -139,7 +139,7 @@ release-artifacts: build ## Build tar.gz release artifacts under dist/releases/$
 		EXT=""; \
 		if [ "$$GOOS" = "windows" ]; then EXT=".exe"; fi; \
 		mkdir -p "$$STAGE"; \
-		CGO_ENABLED=0 GOOS=$$GOOS GOARCH=$$GOARCH go build -o "$$STAGE/$(BIN_NAME)$$EXT" "$(CMD_DIR)"; \
+		CGO_ENABLED=0 GOOS=$$GOOS GOARCH=$$GOARCH go build -ldflags "-X main.buildVersion=$(RELEASE_VERSION)" -o "$$STAGE/$(BIN_NAME)$$EXT" "$(CMD_DIR)"; \
 		cp README.md LICENSE "$$STAGE"/; \
 		tar -C "$(RELEASES_DIR)" -czf "$(RELEASES_DIR)/$$STEM.tar.gz" "$$STEM"; \
 		rm -rf "$$STAGE"; \

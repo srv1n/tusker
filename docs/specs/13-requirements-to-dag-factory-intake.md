@@ -165,7 +165,7 @@ packet for a governing spec.
 Target surface:
 
 ```text
-tusker delivery context --spec docs/specs/example.md --json
+tusker delivery context --spec docs/specs/example.md --scope settings-redesign/v1 --json
 ```
 
 The bounded packet contains:
@@ -203,12 +203,14 @@ contract.
 
 V2 adds:
 
+- a planner-authored `context_fingerprint` from the bounded planning-context packet;
 - stable requirement IDs and observable requirement outcomes;
 - task-to-requirement traceability;
 - an optional source-keyed epic contract when no suitable epic exists;
 - source-keyed human gates tied to tasks and acceptance IDs;
 - declared shared resources and intentional owned-path overlap;
 - plan assumptions and explicitly unresolved decisions;
+- explicit non-goals that remain visible in product review;
 - an operator-facing plan summary.
 
 Conceptual shape:
@@ -219,6 +221,12 @@ scope: settings-redesign/v1
 title: Settings redesign
 spec_refs:
   - docs/specs/settings-redesign.md
+context_fingerprint: sha256:<planning-context-fingerprint>
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+non_goals:
+  - The redesign does not add new notification channels.
 epic_contract:
   source_key: settings-redesign
   acronym_hint: SET
@@ -282,7 +290,7 @@ as one concise surface:
    integration/rollout phases.
 4. **What needs your decision** — only genuine human gates or unresolved
    product choices.
-5. **Start boundary** — exact plan fingerprint, project readiness, estimated
+5. **Start boundary** — exact plan and planning-context fingerprints, project readiness, estimated
    execution class, and the single Start delivery action.
 
 Target CLI/API shapes:

@@ -15,6 +15,54 @@ import (
 )
 
 func TestDeliveryPlanningContext(t *testing.T) {
+	t.Run("plan scope ignores its own imported records but not other work", func(t *testing.T) {
+		vault := deliveryContextTestVault(t)
+		plan := validDeliveryPlanV2()
+		plan.HumanGates = nil
+
+		// This is genuinely related work, but it belongs to no delivery scope.
+		// The scope filter must not hide it merely because it cites the same spec.
+		if err := newV7Task(Args{
+			"vault": vault, "quiet": "true", "epic": "APP", "id": "APP-T-0001", "title": "Pre-existing related work",
+			"risk": "medium", "priority": "p1", "domains": "project", "spec-refs": plan.SpecRefs[0], "v7": "true",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		before, err := buildDeliveryPlanningContextForScope(vault, strings.Join(plan.SpecRefs, ","), plan.Scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertDeliveryContextIDs(t, before.DuplicateTaskClues, []string{"APP-T-0001"})
+		plan.ContextFingerprint = before.ContextFingerprint
+		path := writeDeliveryV2TestPlan(t, vault, plan)
+		if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "quiet": "true"}); err != nil {
+			t.Fatal(err)
+		}
+		after, err := buildDeliveryPlanningContextForScope(vault, strings.Join(plan.SpecRefs, ","), plan.Scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after.ContextFingerprint != before.ContextFingerprint {
+			t.Fatalf("own held import changed scoped planning context: before=%s after=%s", before.ContextFingerprint, after.ContextFingerprint)
+		}
+		assertDeliveryContextIDs(t, after.DuplicateTaskClues, []string{"APP-T-0001"})
+
+		if err := newV7Task(Args{
+			"vault": vault, "quiet": "true", "epic": "APP", "id": "APP-T-0002", "title": "Later related work",
+			"risk": "medium", "priority": "p1", "domains": "project", "spec-refs": plan.SpecRefs[0], "v7": "true",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		drifted, err := buildDeliveryPlanningContextForScope(vault, strings.Join(plan.SpecRefs, ","), plan.Scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if drifted.ContextFingerprint == before.ContextFingerprint {
+			t.Fatal("unscoped related work did not invalidate scoped planning context")
+		}
+	})
+
 	t.Run("bounded deterministic and read only", func(t *testing.T) {
 		vault := deliveryContextTestVault(t)
 		repo := v7RepoRoot(vault)
@@ -167,6 +215,13 @@ Deliver a bounded repository-fact packet. [[APP-D-0001]]
 		}
 		if report.Schema != deliveryPlanningContextSchema || report.ContextFingerprint == "" || !report.ReadOnly {
 			t.Fatalf("planning context identity missing: %#v", report)
+		}
+		factory, err := embeddedFactoryIntakeContractProvenance()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.PlanContract.FactoryIntakeContract != factory {
+			t.Fatalf("planning context omitted current factory contract provenance: %#v", report.PlanContract)
 		}
 		if !report.Readiness.NoWorkDispatched || report.Readiness.DispatchAuthorized || !report.Readiness.AutomationEnabled {
 			t.Fatalf("read-only automation projection is unsafe: %#v", report.Readiness)

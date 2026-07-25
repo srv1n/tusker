@@ -68,6 +68,9 @@ type tuskerLogbook struct {
 }
 
 func logbookCmd(args Args) error {
+	if args.Bool("scheduled-promotion") || args.Bool("morning-brief") {
+		return scheduledPromotionMorningBriefCmd(args)
+	}
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err

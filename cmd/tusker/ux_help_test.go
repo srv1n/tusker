@@ -94,7 +94,9 @@ func TestRuntimeCommandParsingIncludesOperatorGroups(t *testing.T) {
 		{[]string{"tusker", "daemon", "resume"}, "daemon resume", ""},
 		{[]string{"tusker", "projects", "add", "--repo", "."}, "projects add", ""},
 		{[]string{"tusker", "runs", "inspect", "ORC-T-0018"}, "runs inspect", "ORC-T-0018"},
+		{[]string{"tusker", "config", "resolve", "automation.profiles", "--json"}, "config resolve", "automation.profiles"},
 		{[]string{"tusker", "help", "runs", "events"}, "help runs events", ""},
+		{[]string{"tusker", "help", "config", "resolve"}, "help config resolve", ""},
 	}
 	for _, tc := range cases {
 		command, args := parseCLI(tc.argv)

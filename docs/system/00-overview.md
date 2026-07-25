@@ -30,7 +30,7 @@ Tusker is the harness that supplies all three. See the driving spec:
   gate-fenced) with **loop-ish workers on the inside** (one agent free to
   traverse its own path within one task).
 - **Proof, not vibes.** A task closes only when its proof rows are green and, for
-  risky work, an independent reviewer has signed off.
+  risky work, an independent reviewer has submitted a typed verdict.
 - **Whoever drives, it registers.** A background daemon worker and a hands-on
   interactive session both claim, update, and close through the same CLI, so the
   logbook, stream board, and serve UI always reflect reality.
@@ -47,7 +47,7 @@ flowchart TD
     worker2 --> proof
     proof --> gates["Gates\nper-change / wave / nightly"]
     gates --> review["Reviewer lane\n(independent model, review→rework loop)"]
-    review --> land["Merge window / batch gate\n(tusker land, gate-ledger)"]
+    review --> land["Deterministic integration / batch gate\n(exact reviewed SHA, gate-ledger)"]
     land --> views["Logbook • stream board • serve UI"]
     views -.reflects.-> vault
 ```

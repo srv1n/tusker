@@ -3,7 +3,7 @@ title: Factory intake contract
 subject: factory-intake
 part_of: overview
 contract: tusker.factory-intake-contract/v1
-contract_version: 1.0.0
+contract_version: 1.1.0
 source: skills/tusker/assets/factory-intake-contract.yaml
 ---
 
@@ -32,6 +32,13 @@ install or start a daemon, dispatch workers, release software, spend money, or
 satisfy human gates. A Start delivery action must revalidate the exact plan
 fingerprint (a stale plan fails) and pass preflight; setup, daemon availability, runner policy, and
 external authority remain separate prerequisites.
+
+Tracked modifying work begins with `tusker work start`; a dispatched worker
+verifies its already-injected claim instead of claiming again. Implementation
+produces objective proof, review produces one typed verdict, and deterministic
+Tusker handlers own merge, close, integration, and successor wake. Fresh
+automation remains separately opt-in and defaults to
+`automation.dispatch_scope: armed_waves`.
 
 Ask users about product outcomes, acceptance, constraints, priorities, and
 genuine authority or subjective decisions. The factory resolves task IDs,

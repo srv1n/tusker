@@ -74,8 +74,9 @@ func acquireV7DocumentLock(filePath string, timeout time.Duration) (*v7DocumentL
 }
 
 // acquireV7MaterialEpochLock serializes transactions whose authorization
-// spans multiple canonical V7 documents. SKILL.md is immutable and always
-// present, so it provides one stable filesystem identity for the vault.
+// fingerprint spans multiple canonical V7 documents. SKILL.md is immutable
+// and always present, so it provides one stable filesystem identity for the
+// vault. The observer is test-only instrumentation for lock-order assertions.
 func acquireV7MaterialEpochLock(vaultPath string) (*v7DocumentLock, error) {
 	if v7MaterialEpochLockObserver != nil {
 		v7MaterialEpochLockObserver()
@@ -95,7 +96,8 @@ func acquireV7MaterialEpochLockForDocument(filePath string) (*v7DocumentLock, er
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
-			// Low-level CAS helpers may intentionally operate outside a vault.
+			// Standalone CAS helpers and low-level tests may intentionally operate
+			// outside a V7 vault; only canonical project documents have an epoch.
 			return nil, nil
 		}
 		current = parent

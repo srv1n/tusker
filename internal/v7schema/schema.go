@@ -62,7 +62,8 @@ var FrontmatterOrder = map[string][]string{
 		"schema", "kind", "id", "project", "title", "status", "owner", "priority", "domains", "spec_refs", "delivery_source_key", "delivery_plan_scope", "next_task_number", "next_gate_number", "next_decision_number", "created_at", "updated_at", "state_rev",
 	},
 	"wave": {
-		"schema", "kind", "id", "project", "title", "summary", "status", "members", "integration_branch", "spec_refs", "requirements", "shared_resources", "owned_path_overlaps", "assumptions", "unresolved_decisions", "delivery_plan_scope", "delivery_plan_fingerprint", "concurrency", "runner_profile", "landings", "landed_at",
+		"schema", "kind", "id", "project", "title", "summary", "status", "members", "integration_branch", "integration_base_sha", "spec_refs", "requirements", "shared_resources", "owned_path_overlaps", "assumptions", "unresolved_decisions",
+		"delivery_plan_schema", "context_fingerprint", "factory_intake_contract_schema", "factory_intake_contract_version", "factory_intake_contract_fingerprint", "delivery_plan_scope", "delivery_plan_fingerprint", "concurrency", "runner_profile", "landings", "landed_at",
 		"authorization", "authorization_fingerprint", "authorized_by", "authorized_at", "authorization_reason", "authorization_updated_by", "authorization_updated_at",
 		"created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
@@ -185,19 +186,27 @@ type TuskerAutomationValidationConfig struct {
 	Commands []string `yaml:"commands"`
 }
 
+// TuskerCompletionReactorConfig deliberately carries only authority mode. The
+// reactor itself is a later consumer; accepting this configuration must not
+// create an execution path by itself.
+type TuskerCompletionReactorConfig struct {
+	Mode string `yaml:"mode,omitempty"`
+}
+
 type TuskerAutomationConfig struct {
-	Enabled        *bool                                `yaml:"enabled"`
-	DispatchScope  string                               `yaml:"dispatch_scope,omitempty"`
-	TriggerStates  []string                             `yaml:"trigger_states"`
-	LegacyProfile  string                               `yaml:"legacy_profile"`
-	DefaultRunner  string                               `yaml:"default_runner"`
-	EnabledRunners []string                             `yaml:"enabled_runners"`
-	DefaultProfile string                               `yaml:"default_profile"`
-	LaneProfiles   map[string]string                    `yaml:"lane_profiles"`
-	Profiles       map[string]TuskerRunnerProfileConfig `yaml:"profiles"`
-	Routing        []TuskerAutomationRoutingRuleConfig  `yaml:"routing"`
-	Denylist       []TuskerAutomationDenyRuleConfig     `yaml:"denylist"`
-	Workspace      struct {
+	Enabled           *bool                                `yaml:"enabled"`
+	DispatchScope     string                               `yaml:"dispatch_scope,omitempty"`
+	CompletionReactor TuskerCompletionReactorConfig        `yaml:"completion_reactor,omitempty"`
+	TriggerStates     []string                             `yaml:"trigger_states"`
+	LegacyProfile     string                               `yaml:"legacy_profile"`
+	DefaultRunner     string                               `yaml:"default_runner"`
+	EnabledRunners    []string                             `yaml:"enabled_runners"`
+	DefaultProfile    string                               `yaml:"default_profile"`
+	LaneProfiles      map[string]string                    `yaml:"lane_profiles"`
+	Profiles          map[string]TuskerRunnerProfileConfig `yaml:"profiles"`
+	Routing           []TuskerAutomationRoutingRuleConfig  `yaml:"routing"`
+	Denylist          []TuskerAutomationDenyRuleConfig     `yaml:"denylist"`
+	Workspace         struct {
 		Root     string `yaml:"root"`
 		Strategy string `yaml:"strategy"`
 	} `yaml:"workspace"`

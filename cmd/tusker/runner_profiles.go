@@ -251,6 +251,9 @@ func mergeTuskerAutomationConfig(dst *v7TuskerConfigFile, src v7TuskerConfigFile
 	if strings.TrimSpace(src.Automation.DispatchScope) != "" {
 		dst.Automation.DispatchScope = strings.TrimSpace(src.Automation.DispatchScope)
 	}
+	if strings.TrimSpace(src.Automation.CompletionReactor.Mode) != "" {
+		dst.Automation.CompletionReactor.Mode = strings.TrimSpace(src.Automation.CompletionReactor.Mode)
+	}
 	if len(src.Automation.TriggerStates) > 0 {
 		dst.Automation.TriggerStates = append([]string{}, src.Automation.TriggerStates...)
 	}
@@ -358,6 +361,9 @@ func mergeTuskerAutomationConfig(dst *v7TuskerConfigFile, src v7TuskerConfigFile
 func validateTuskerConfigLayer(layer tuskerConfigLayer) error {
 	if !layer.Present {
 		return nil
+	}
+	if err := validateCompletionReactorModeLayer(layer); err != nil {
+		return err
 	}
 	for name, profile := range layer.Config.Automation.Profiles {
 		if err := validateRunnerProfileDefinition(strings.TrimSpace(name), runnerProfileFromSchema(profile), layer.Path); err != nil {

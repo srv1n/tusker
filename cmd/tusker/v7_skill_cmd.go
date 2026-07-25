@@ -19,6 +19,13 @@ func skillV7DoctorCmd(args Args) (int, error) {
 		return 0, err
 	}
 	errs, warns := skillDoctorIssues(root, packageMode, args.Bool("strict"))
+	provenance := skillProvenanceReport{Status: "not_applicable"}
+	if packageMode {
+		provenance = inspectTuskerSkillPackage(root)
+		if provenance.Status != "not_tusker" && provenance.Status != "not_applicable" && provenance.Status != "current" {
+			errs = append(errs, issue("SKILL_PROVENANCE_"+strings.ToUpper(provenance.Status), provenance.Message, skillProvenanceFilename, skillSyncRepairAction(), map[string]any{"status": provenance.Status, "provenance": provenance}))
+		}
+	}
 	if args.Bool("json") {
 		emitJSON(map[string]any{
 			"ok":           len(errs) == 0,
@@ -30,6 +37,7 @@ func skillV7DoctorCmd(args Args) (int, error) {
 			"warnings":     warns,
 			"do_not_read":  v7SkillForbiddenReadGlobs(),
 			"doctor_scope": v7SkillDoctorScope(packageMode),
+			"provenance":   provenance,
 		})
 		if len(errs) > 0 {
 			return 1, nil
@@ -61,9 +69,8 @@ func skillDoctorRoot(args Args) (string, bool, error) {
 		if err != nil {
 			return "", true, err
 		}
-		if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
-			abs = resolved
-		}
+		// Preserve a package symlink here. The provenance doctor must inspect its
+		// live target rather than losing the materialization mode during routing.
 		return abs, true, nil
 	}
 	vaultPath, err := resolveVaultPath(args, false)

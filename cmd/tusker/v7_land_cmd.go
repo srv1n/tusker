@@ -670,7 +670,7 @@ func stageV7WaveBatch(vaultPath, repoRoot, waveID string, tasks []v7LandTask, ac
 		return tuskerError(errorInvalidTransition, "tusker land requires a Git repository", withPath(repoRoot))
 	}
 	integrationBranch := v7WaveIntegrationBranch(wave)
-	if err := ensureV7IntegrationBranch(vaultPath, integrationBranch); err != nil {
+	if err := ensureV7WaveIntegrationBranch(vaultPath, wave); err != nil {
 		return err
 	}
 	return landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks, acc)
@@ -2135,6 +2135,19 @@ func v7IntegrationBranchName(waveID string) string {
 	return "integration/" + strings.ToUpper(strings.TrimSpace(waveID))
 }
 
+func v7GitObjectID(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 func v7WaveIntegrationBranch(wave Note) string {
 	return firstNonEmpty(stringField(wave.Data, "integration_branch"), v7IntegrationBranchName(stringField(wave.Data, "id")))
 }
@@ -2153,7 +2166,39 @@ func v7WorkspaceBranchForTask(vaultPath string, note Note) (string, string, erro
 	if !ok {
 		return "", "", tuskerError(errorNotFound, "V7 wave not found: "+waveID)
 	}
-	return v7TaskBranchName(taskID), v7WaveIntegrationBranch(wave), nil
+	base := v7WaveIntegrationBranch(wave)
+	if v7GitRepo(v7RepoRoot(vaultPath)) && !gitRefExists(v7RepoRoot(vaultPath), "refs/heads/"+base) {
+		if frozen := strings.TrimSpace(stringField(wave.Data, "integration_base_sha")); frozen != "" {
+			// Fresh Start waves intentionally defer integration-ref creation until
+			// the serialized landing path. Task worktrees still branch from the
+			// exact frozen commit, not whatever default happens to be later.
+			base = frozen
+		}
+	}
+	return v7TaskBranchName(taskID), base, nil
+}
+
+func ensureV7WaveIntegrationBranch(vaultPath string, wave Note) error {
+	branch := v7WaveIntegrationBranch(wave)
+	repoRoot := v7RepoRoot(vaultPath)
+	if !v7GitRepo(repoRoot) || gitRefExists(repoRoot, "refs/heads/"+branch) {
+		return nil
+	}
+	frozen := strings.TrimSpace(stringField(wave.Data, "integration_base_sha"))
+	if frozen == "" {
+		return ensureV7IntegrationBranch(vaultPath, branch)
+	}
+	current, err := gitOutputTrim(repoRoot, "rev-parse", "refs/heads/"+v7DefaultBranch(vaultPath))
+	if err != nil || current != frozen {
+		return tuskerError(errorInvalidTransition, "integration base drifted before first completion; regenerate delivery review and Start")
+	}
+	// Supplying the all-zero old value makes this a create-only CAS. A racing
+	// completion cannot silently overwrite another integration lane.
+	zero := strings.Repeat("0", len(frozen))
+	if _, err := gitCombined(repoRoot, "update-ref", "refs/heads/"+branch, frozen, zero); err != nil {
+		return tuskerError(errorInvalidTransition, "failed to create integration branch from frozen base; retry the serialized landing lane: "+err.Error())
+	}
+	return nil
 }
 
 func ensureV7IntegrationBranch(vaultPath, branch string) error {

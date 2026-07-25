@@ -85,9 +85,12 @@ Durable statuses: `idea, backlog, ready, review, rework, superseded`
 ## Notes on the biggest workflows
 
 - **Reviewer lane.** After a worker submits, an independent reviewer (a different
-  model where configured) checks the diff; a finding returns the task to
-  `rework` with the reason attached, and only a `reviewer:`/`human:` actor can
-  `accept`/`close`. See [gates.md](gates.md) and [orchestration.md](orchestration.md).
+  model where configured) checks the exact diff and submits one attempt-bound
+  typed `pass`, `changes_requested`, or `blocked` result. The reviewer never
+  edits implementation, changes lifecycle state, merges, lands, closes, or
+  moves refs. Deterministic Tusker handlers apply rework or integrate/close the
+  exact reviewed SHA. See [gates.md](gates.md) and
+  [orchestration.md](orchestration.md).
 - **Gate tiers.** Per-change gates run on touched scopes only; a wave-end gate
   runs a collective compile+lint+test; the full suite runs nightly. See
   [gates.md](gates.md).

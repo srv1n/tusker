@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,6 +29,8 @@ type wavePreflightEnvironment struct {
 	IsolatedWorkspace  bool
 	IntegrationClean   bool
 }
+
+type wavePreflightEnvironmentInspector func(vaultPath string, wave Note) wavePreflightEnvironment
 
 type wavePreflightReport struct {
 	Schema               string                            `json:"schema"`
@@ -143,7 +146,18 @@ func applyWaveWorkflowEnvironment(env *wavePreflightEnvironment, wave Note, wf W
 	if profileName != "" {
 		profile, ok := wf.RunnerProfiles[profileName]
 		env.RunnerCompatible = ok && profile.Harness != ""
-		env.ApprovalFree = ok && profile.PermissionPreset == "danger-full-access"
+		if ok {
+			selected := ResolvedRunnerProfile{Name: profileName, Definition: profile}
+			policy := codexPolicyForResolvedProfile(codexPolicyFromWorkflow(wf), runLaneExecute, selected)
+			switch RunnerName(strings.TrimSpace(profile.Harness)) {
+			case RunnerCodex, RunnerCodexAppServer, RunnerCodexExec:
+				env.ApprovalFree = strings.EqualFold(policy.ApprovalPolicy, "never") || strings.EqualFold(policy.ApprovalPolicy, "bypass")
+			default:
+				// Preserve the legacy non-Codex signal until those harnesses
+				// expose a normalized effective approval policy.
+				env.ApprovalFree = profile.PermissionPreset == "danger-full-access"
+			}
+		}
 	} else {
 		env.RunnerCompatible = wf.Agents.Default != "" && containsString(wf.Agents.Enabled, wf.Agents.Default)
 		env.ApprovalFree = strings.EqualFold(wf.Codex.ApprovalPolicy, "never") || strings.EqualFold(wf.Codex.ApprovalPolicy, "bypass")
@@ -160,7 +174,8 @@ func waveSkillCompatible(vaultPath string) bool {
 	for _, path := range []string{filepath.Join(repoRoot, ".agents", "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, ".claude", "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, "skill", "SKILL.md")} {
 		data, _, readErr := parseFrontmatterMustRead(path)
 		metadata := mapField(data, "metadata")
-		if readErr == nil && stringField(metadata, "wave_authorization_schema") == waveAuthorizationSchema && intField(metadata, "workflow_version") == 1 && intField(metadata, "tracker_schema_version") == 7 {
+		want, provenanceErr := embeddedFactoryIntakeContractProvenance()
+		if readErr == nil && provenanceErr == nil && stringField(metadata, "wave_authorization_schema") == waveAuthorizationSchema && intField(metadata, "workflow_version") == 1 && intField(metadata, "tracker_schema_version") == 7 && stringField(metadata, "factory_intake_contract_schema") == want.Schema && stringField(metadata, "factory_intake_contract_version") == want.Version && stringField(metadata, "factory_intake_contract_fingerprint") == want.Fingerprint {
 			return true
 		}
 	}
@@ -170,23 +185,41 @@ func waveSkillCompatible(vaultPath string) bool {
 func waveIntegrationBaseClean(vaultPath string, wave Note) bool {
 	repoRoot := v7RepoRoot(vaultPath)
 	branch := firstNonEmpty(stringField(wave.Data, "integration_branch"), v7IntegrationBranchName(stringField(wave.Data, "id")))
-	if !v7GitRepo(repoRoot) || !gitRefExists(repoRoot, "refs/heads/"+branch) {
+	if !v7GitRepo(repoRoot) {
 		return false
 	}
 	defaultBranch := v7DefaultBranch(vaultPath)
-	integrationRev, integrationErr := gitCombined(repoRoot, "rev-parse", "refs/heads/"+branch)
 	baseRev, baseErr := gitCombined(repoRoot, "rev-parse", "refs/heads/"+defaultBranch)
-	if integrationErr != nil || baseErr != nil {
+	if baseErr != nil {
 		return false
 	}
-	if stringField(wave.Data, "authorized_at") == "" {
-		if strings.TrimSpace(integrationRev) != strings.TrimSpace(baseRev) {
+	baseRev = strings.TrimSpace(baseRev)
+	frozenBase := strings.TrimSpace(stringField(wave.Data, "integration_base_sha"))
+	branchRef := "refs/heads/" + branch
+	if !gitRefExists(repoRoot, branchRef) {
+		// A freshly imported delivery wave intentionally has no integration ref.
+		// It is clean only while its frozen base still is the configured default.
+		if frozenBase == "" || frozenBase != baseRev {
 			return false
 		}
-	} else if _, err := gitCombined(repoRoot, "merge-base", "--is-ancestor", strings.TrimSpace(baseRev), strings.TrimSpace(integrationRev)); err != nil {
-		return false
+	} else {
+		integrationRev, integrationErr := gitCombined(repoRoot, "rev-parse", branchRef)
+		if integrationErr != nil {
+			return false
+		}
+		integrationRev = strings.TrimSpace(integrationRev)
+		if stringField(wave.Data, "authorized_at") == "" {
+			expected := firstNonEmpty(frozenBase, baseRev)
+			if integrationRev != expected {
+				return false
+			}
+		} else {
+			expected := firstNonEmpty(frozenBase, baseRev)
+			if _, err := gitCombined(repoRoot, "merge-base", "--is-ancestor", expected, integrationRev); err != nil {
+				return false
+			}
+		}
 	}
-	branchRef := "refs/heads/" + branch
 	for _, worktree := range v7ListWorktrees(repoRoot) {
 		if worktree.Branch != branchRef {
 			continue
@@ -218,6 +251,7 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 		Checks:        map[string]bool{"specDag": true, "taskContracts": true, "artifacts": true, "project": env.ProjectRegistered && env.ProjectEnabled && env.ProjectHealthy, "daemon": env.DaemonAlive && env.DaemonReconciling, "runner": env.RunnerCompatible, "skill": env.SkillCompatible, "workflow": env.WorkflowCompatible, "approvalPolicy": env.ApprovalFree, "workspaceIsolation": env.IsolatedWorkspace && env.IntegrationClean},
 	}
 	report.Blockers = append(report.Blockers, fpIssues...)
+	report.Blockers = append(report.Blockers, waveFactoryIntakeContractBlockers(vaultPath, wave)...)
 	graph := map[string][]string{}
 	memberSet := makeSet(members...)
 	for _, id := range members {
@@ -334,7 +368,7 @@ func waveTaskContractBlockers(vaultPath string, task Note) []string {
 }
 
 func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, []string) {
-	material := map[string]any{"schema": waveAuthorizationSchema, "wave": stringField(wave.Data, "id"), "members": []any{}, "specs": map[string]any{}}
+	material := map[string]any{"schema": waveAuthorizationSchema, "wave": stringField(wave.Data, "id"), "delivery_plan_schema": stringField(wave.Data, "delivery_plan_schema"), "integration_base_sha": stringField(wave.Data, "integration_base_sha"), "factory_intake_contract": map[string]string{"schema": stringField(wave.Data, "factory_intake_contract_schema"), "version": stringField(wave.Data, "factory_intake_contract_version"), "fingerprint": stringField(wave.Data, "factory_intake_contract_fingerprint")}, "members": []any{}, "specs": map[string]any{}}
 	var issues []string
 	members := uniqueStrings(normalizeList(wave.Data["members"]))
 	sort.Strings(members)
@@ -388,6 +422,52 @@ func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, 
 	return "sha256:" + hex.EncodeToString(sum[:]), uniqueStrings(issues)
 }
 
+func waveFactoryIntakeContractBlockers(vaultPath string, wave Note) []string {
+	planned := factoryIntakeContractProvenance{Schema: stringField(wave.Data, "factory_intake_contract_schema"), Version: stringField(wave.Data, "factory_intake_contract_version"), Fingerprint: stringField(wave.Data, "factory_intake_contract_fingerprint")}
+	if planned.Schema == "" && planned.Version == "" && planned.Fingerprint == "" {
+		if stringField(wave.Data, "delivery_plan_schema") == deliveryPlanV2Schema || stringField(wave.Data, "context_fingerprint") != "" {
+			return []string{"factory-intake contract provenance is missing from a V2-derived wave; remedy: regenerate and re-import the V2 plan from tusker delivery context"}
+		}
+		// Manual and V1 waves retain compatibility because neither carries the
+		// V2 schema nor its authored planning-context fingerprint.
+		return nil
+	}
+	if planned.Schema == "" || planned.Version == "" || planned.Fingerprint == "" {
+		return []string{"factory-intake contract provenance is incomplete on this wave; remedy: re-import the V2 plan with schema, version, and fingerprint"}
+	}
+	want, err := embeddedFactoryIntakeContractProvenance()
+	if err != nil {
+		return []string{"factory-intake contract cannot be read from this Tusker build; remedy: " + skillSyncRepairAction()}
+	}
+	if status, _ := factoryContractStatus(planned, want); status != "current" {
+		return []string{"factory-intake plan contract is stale or contradictory; remedy: regenerate the V2 plan under the current factory contract"}
+	}
+	repoRoot := v7RepoRoot(vaultPath)
+	// A claimed factory wave is intentionally stricter than generic skill
+	// discovery: sync owns both managed agent surfaces, so a healthy sibling or
+	// source checkout must not mask a stale/missing Claude or Codex package.
+	var blockers []string
+	for _, managed := range []struct{ name, path string }{
+		{".agents", filepath.Join(repoRoot, ".agents", "skills", "tusker")},
+		{".claude", filepath.Join(repoRoot, ".claude", "skills", "tusker")},
+	} {
+		state := inspectSkillMaterialization(managed.path)
+		if state.Status != "current" {
+			blockers = append(blockers, "factory-intake managed "+managed.name+" skill is "+state.Status+"; remedy: "+skillSyncRepairAction())
+			continue
+		}
+		resolved := managed.path
+		if target, resolveErr := filepath.EvalSymlinks(managed.path); resolveErr == nil {
+			resolved = target
+		}
+		have, metadataErr := readSkillMetadata(resolved)
+		if metadataErr != nil || have != planned {
+			blockers = append(blockers, "factory-intake managed "+managed.name+" skill contradicts the planned contract; remedy: "+skillSyncRepairAction())
+		}
+	}
+	return blockers
+}
+
 func waveMaterialGates(idx v7Index, taskID string) []any {
 	var out []any
 	for _, gate := range sortedV7Gates(idx) {
@@ -422,12 +502,30 @@ func waveMaterialTable(section string, columns []int) []string {
 }
 
 func mutateWaveAuthorization(args Args, target string, environment *wavePreflightEnvironment) error {
+	var inspector wavePreflightEnvironmentInspector
+	if environment != nil {
+		fixed := *environment
+		inspector = func(string, Note) wavePreflightEnvironment { return fixed }
+	}
+	_, err := mutateWaveAuthorizationWithInspector(args, target, inspector, nil)
+	return err
+}
+
+func mutateWaveAuthorizationWithInspector(args Args, target string, inspector wavePreflightEnvironmentInspector, authority *deliveryStartAuthority) (wavePreflightReport, error) {
 	vaultPath, wave, _, err := loadWaveAuthorizationTarget(args)
 	if err != nil {
-		return err
+		return wavePreflightReport{}, err
 	}
 	if err := ensureV7ControlMutation(vaultPath, args); err != nil {
-		return err
+		return wavePreflightReport{}, err
+	}
+	var materialLock *v7DocumentLock
+	if target == "armed" {
+		materialLock, err = acquireV7MaterialEpochLock(vaultPath)
+		if err != nil {
+			return wavePreflightReport{}, err
+		}
+		defer materialLock.Close()
 	}
 	materialLock, err := acquireV7MaterialEpochLock(vaultPath)
 	if err != nil {
@@ -436,51 +534,85 @@ func mutateWaveAuthorization(args Args, target string, environment *wavePrefligh
 	defer func() { _ = materialLock.Close() }()
 	lock, err := acquireV7DocumentLock(wave.AbsolutePath, v7DocumentLockTimeout)
 	if err != nil {
-		return err
+		return wavePreflightReport{}, err
 	}
 	defer lock.Close()
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
-		return err
+		return wavePreflightReport{}, err
 	}
 	wave = idx.Waves[stringField(wave.Data, "id")]
 	current := fallback(stringField(wave.Data, "authorization"), "disarmed")
 	if target == "paused" && current == "disarmed" {
-		return tuskerError(errorInvalidTransition, stringField(wave.Data, "id")+": cannot pause a disarmed wave")
+		return wavePreflightReport{}, tuskerError(errorInvalidTransition, stringField(wave.Data, "id")+": cannot pause a disarmed wave")
 	}
 	if target == "armed" {
-		taskLocks, lockErr := lockWaveMemberTasks(idx, wave)
+		taskLocks, lockErr := lockWaveMemberTasks(idx, wave, authority)
 		if lockErr != nil {
-			return lockErr
+			return wavePreflightReport{}, lockErr
 		}
 		defer closeV7DocumentLocks(taskLocks)
 		idx, err = loadV7Index(vaultPath)
 		if err != nil {
-			return err
+			return wavePreflightReport{}, err
 		}
 		wave = idx.Waves[stringField(wave.Data, "id")]
-		env := inspectWavePreflightEnvironment(vaultPath, wave)
-		if environment != nil {
-			env = *environment
+		current = fallback(stringField(wave.Data, "authorization"), "disarmed")
+		var env wavePreflightEnvironment
+		if inspector == nil {
+			env = inspectWavePreflightEnvironment(vaultPath, wave)
+		} else {
+			env = inspector(vaultPath, wave)
 		}
 		report := buildWavePreflight(vaultPath, idx, wave, env)
+		if authority != nil && authority.WaveID != report.WaveID {
+			cause := tuskerError(errorInvalidTransition, report.WaveID+": reviewed import wave identity changed before authorization; rerun delivery review and Start", withContext(report))
+			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause)
+		}
+		if authority != nil && authority.AuthorizationFingerprint != report.Fingerprint {
+			cause := tuskerError(errorInvalidTransition, report.WaveID+": wave material changed after delivery preflight; rerun delivery review and Start", withContext(report))
+			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause)
+		}
+		if authority != nil && strings.Join(authority.Members, "\x00") != strings.Join(sortedStrings(normalizeList(wave.Data["members"])), "\x00") {
+			cause := tuskerError(errorInvalidTransition, report.WaveID+": wave membership changed after reviewed import; rerun delivery review and Start", withContext(report))
+			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause)
+		}
+		if err := validateDeliveryStartLiveAuthority(idx, wave, authority); err != nil {
+			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, err)
+		}
+		if err := validateDeliveryStartAuthorityUnderLock(vaultPath, wave, authority); err != nil {
+			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, err)
+		}
 		if !report.OK {
-			return tuskerError(errorInvalidTransition, report.WaveID+": wave arm blocked: "+strings.Join(report.Blockers, "; "), withContext(report))
+			cause := tuskerError(errorInvalidTransition, report.WaveID+": wave arm blocked: "+strings.Join(report.Blockers, "; "), withContext(report))
+			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause)
 		}
 		if current == "armed" && report.StoredFingerprint == report.Fingerprint {
-			return emitWaveAuthorizationResult(args, report.WaveID, current, report)
+			return report, emitWaveAuthorizationResult(args, report.WaveID, current, report)
 		}
-		return armWaveAtomically(vaultPath, idx, wave, report, args)
+		if err := armWaveAtomically(vaultPath, idx, wave, report, args); err != nil {
+			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, err)
+		}
+		final := report
+		final.Authorization = "armed"
+		final.StoredFingerprint = report.Fingerprint
+		final.AuthorizationStale = false
+		final.Action = waveAuthorizationAction(final)
+		return final, nil
 	}
 	if current == target {
 		report := buildWavePreflight(vaultPath, idx, wave, wavePreflightEnvironment{})
-		return emitWaveAuthorizationResult(args, report.WaveID, current, report)
+		return report, emitWaveAuthorizationResult(args, report.WaveID, current, report)
 	}
-	return updateWaveAuthorization(vaultPath, wave, target, "", args)
+	return wavePreflightReport{}, updateWaveAuthorization(vaultPath, wave, target, "", args)
 }
 
-func lockWaveMemberTasks(idx v7Index, wave Note) ([]*v7DocumentLock, error) {
-	memberIDs := sortedStrings(normalizeList(wave.Data["members"]))
+func lockWaveMemberTasks(idx v7Index, wave Note, authority *deliveryStartAuthority) ([]*v7DocumentLock, error) {
+	memberIDs := append([]string{}, normalizeList(wave.Data["members"])...)
+	if authority != nil {
+		memberIDs = append(memberIDs, authority.Members...)
+	}
+	memberIDs = sortedStrings(memberIDs)
 	locks := make([]*v7DocumentLock, 0, len(memberIDs))
 	for _, memberID := range memberIDs {
 		task, ok := idx.Tasks[memberID]
@@ -495,6 +627,160 @@ func lockWaveMemberTasks(idx v7Index, wave Note) ([]*v7DocumentLock, error) {
 		locks = append(locks, lock)
 	}
 	return locks, nil
+}
+
+func validateDeliveryStartLiveAuthority(idx v7Index, wave Note, authority *deliveryStartAuthority) error {
+	if authority == nil {
+		return nil
+	}
+	if fallback(stringField(wave.Data, "authorization"), "disarmed") != authority.WaveAuthorization ||
+		stringField(wave.Data, "authorization_fingerprint") != authority.WaveAuthorizedFingerprint ||
+		stringField(wave.Data, "authorized_by") != authority.WaveAuthorizedBy ||
+		stringField(wave.Data, "authorized_at") != authority.WaveAuthorizedAt {
+		return tuskerError(
+			errorInvalidTransition,
+			authority.WaveID+": authorization changed after reviewed import; preserve the current owner and explicitly review or repair it before retrying Start",
+		)
+	}
+	for _, memberID := range authority.Members {
+		task, ok := idx.Tasks[memberID]
+		if !ok || deliveryStartMemberBaseline(task) != authority.MemberBaselines[memberID] {
+			return tuskerError(
+				errorInvalidTransition,
+				memberID+": task state/work/source/owner changed after reviewed import; preserve the progressed task and explicitly review or repair it before retrying Start",
+			)
+		}
+		if stringField(task.Data, "readiness") != authority.MemberReadiness[memberID] {
+			return tuskerError(
+				errorInvalidTransition,
+				memberID+": readiness projection changed after reviewed import; restore the exact held baseline before retrying Start",
+			)
+		}
+	}
+	return nil
+}
+
+type deliveryStartRefusalHandledError struct {
+	cause error
+}
+
+func (err *deliveryStartRefusalHandledError) Error() string {
+	return err.cause.Error()
+}
+
+func (err *deliveryStartRefusalHandledError) Unwrap() error {
+	return err.cause
+}
+
+func deliveryStartRefusalAlreadyHandled(err error) bool {
+	var handled *deliveryStartRefusalHandledError
+	return errors.As(err, &handled)
+}
+
+func handledDeliveryStartRefusal(err error) error {
+	if err == nil || deliveryStartRefusalAlreadyHandled(err) {
+		return err
+	}
+	return &deliveryStartRefusalHandledError{cause: err}
+}
+
+// rollbackDeliveryStartRefusalUnderLock merges a refusal into freshly loaded
+// documents while the material epoch, wave, and union-member locks are held.
+// It never restores captured document bytes, so a competing membership/task
+// mutation survives. Only a readiness-only projection of the exact imported
+// backlog baseline is returned to held.
+func rollbackDeliveryStartRefusalUnderLock(vaultPath string, idx v7Index, authority *deliveryStartAuthority, cause error) error {
+	if authority == nil {
+		return cause
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	const actor = "tusker:delivery-start-rollback"
+	writes := map[string]string{}
+	var preserved []string
+	for _, memberID := range authority.Members {
+		task, ok := idx.Tasks[memberID]
+		if !ok {
+			preserved = append(preserved, memberID+" (missing)")
+			continue
+		}
+		baseline, exists := authority.MemberBaselines[memberID]
+		if !exists ||
+			authority.MemberReadiness[memberID] != "held" ||
+			stringField(task.Data, "status") != "backlog" ||
+			deliveryStartMemberBaseline(task) != baseline {
+			preserved = append(preserved, memberID)
+			continue
+		}
+		if stringField(task.Data, "readiness") == "held" {
+			continue
+		}
+		data := cloneMap(task.Data)
+		data["readiness"] = "held"
+		data["updated_at"], data["updated_by"] = now, actor
+		data["state_rev"] = v7StateRev(data, task.Body)
+		content, err := serializeDocument(data, task.Body, v7FrontmatterOrder["task"])
+		if err != nil {
+			return handledDeliveryStartRefusal(fmt.Errorf("%w; delivery Start rollback could not serialize %s: %v", cause, memberID, err))
+		}
+		writes[task.AbsolutePath] = content
+	}
+	if len(writes) > 0 {
+		if err := commitDeliveryWrites(writes, 0); err != nil {
+			return handledDeliveryStartRefusal(fmt.Errorf("%w; delivery Start readiness rollback failed: %v", cause, err))
+		}
+		_ = emitV7Event(vaultPath, authority.WaveID, "wave", "updated", actor, map[string]any{
+			"reason": "delivery Start authority changed before commit", "members_held": authority.Members,
+		})
+	}
+	if len(preserved) > 0 {
+		sort.Strings(preserved)
+		return handledDeliveryStartRefusal(fmt.Errorf("%w; refusal preserved progressed imported member(s) %s; explicit review or repair is required", cause, strings.Join(preserved, ", ")))
+	}
+	return handledDeliveryStartRefusal(cause)
+}
+
+// refuseDeliveryStartBeforeArm is only used before this Start has written
+// authorization. It reacquires the epoch and locks every surviving member from
+// both the reviewed import and current wave, then performs the narrow
+// readiness-only rollback. Missing members are reported after the remaining
+// safe cleanup instead of bypassing it.
+func refuseDeliveryStartBeforeArm(vaultPath string, authority *deliveryStartAuthority, cause error) error {
+	if authority == nil {
+		return cause
+	}
+	materialLock, err := acquireV7MaterialEpochLock(vaultPath)
+	if err != nil {
+		return fmt.Errorf("%w; refusal could not lock the material epoch for safe readiness cleanup: %v", cause, err)
+	}
+	defer materialLock.Close()
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return fmt.Errorf("%w; refusal could not load current state for safe readiness cleanup: %v", cause, err)
+	}
+	wave := idx.Waves[authority.WaveID]
+	var waveLock *v7DocumentLock
+	if wave.AbsolutePath != "" {
+		waveLock, err = acquireV7DocumentLock(wave.AbsolutePath, v7DocumentLockTimeout)
+		if err != nil {
+			return fmt.Errorf("%w; refusal could not lock current wave for safe readiness cleanup: %v", cause, err)
+		}
+		defer waveLock.Close()
+		idx, err = loadV7Index(vaultPath)
+		if err != nil {
+			return fmt.Errorf("%w; refusal could not reload current wave for safe readiness cleanup: %v", cause, err)
+		}
+		wave = idx.Waves[authority.WaveID]
+	}
+	taskLocks, err := lockWaveMemberTasks(idx, wave, authority)
+	if err != nil {
+		return fmt.Errorf("%w; refusal could not lock imported members for safe readiness cleanup: %v", cause, err)
+	}
+	defer closeV7DocumentLocks(taskLocks)
+	idx, err = loadV7Index(vaultPath)
+	if err != nil {
+		return fmt.Errorf("%w; refusal could not reload locked members for safe readiness cleanup: %v", cause, err)
+	}
+	return rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause)
 }
 
 func closeV7DocumentLocks(locks []*v7DocumentLock) {

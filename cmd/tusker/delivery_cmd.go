@@ -94,6 +94,8 @@ type deliveryPlanValidationRule struct {
 func deliveryPlanValidationRules() []deliveryPlanValidationRule {
 	return []deliveryPlanValidationRule{
 		{ID: "bounded_scope", Fields: []string{"scope", "spec_refs", "tasks"}, Requirement: "scope is stable, governing spec_refs resolve inside the repository, and tasks cover only cited requirements", FailureCode: "PLAN_CONTRACT_INVALID", Remedy: "remove unrelated runnable work and bind every task to the governing scope"},
+		{ID: "planning_context", Fields: []string{"context_fingerprint"}, Requirement: "a V2 proposal records the exact bounded planning-context fingerprint used to author it", FailureCode: "PLAN_CONTRACT_INVALID", Remedy: "regenerate the delivery context for the plan scope and author its fingerprint into the plan"},
+		{ID: "factory_intake_provenance", Fields: []string{"factory_intake_contract_schema", "factory_intake_contract_version", "factory_intake_contract_fingerprint"}, Requirement: "every newly imported V2 proposal records the canonical factory-intake contract schema, version, and exact content fingerprint", FailureCode: "PLAN_CONTRACT_INVALID", Remedy: "copy the factory-intake provenance emitted by the planning context; historical unclaimed waves remain readable but are not executable"},
 		{ID: "source_keys", Fields: []string{"requirements[].id", "tasks[].source_key"}, Requirement: "every requirement and task has a unique stable source key", FailureCode: "PLAN_CONTRACT_INVALID", Remedy: "replace missing, duplicate, or placeholder keys with stable identifiers"},
 		{ID: "requirement_coverage", Fields: []string{"requirements", "tasks[].requirement_refs"}, Requirement: "every requirement is covered by at least one task", FailureCode: "REQUIREMENT_UNCOVERED", Remedy: "map each requirement to a task with observable acceptance"},
 		{ID: "acceptance_proof", Fields: []string{"tasks[].acceptance", "tasks[].verification"}, Requirement: "acceptance is observable and every acceptance ID has an exact command or manual-proof mapping", FailureCode: "ACCEPTANCE_UNMAPPED", Remedy: "add exact verification covering every acceptance ID"},
@@ -104,7 +106,7 @@ func deliveryPlanValidationRules() []deliveryPlanValidationRule {
 		{ID: "overlap_strategy", Fields: []string{"tasks[].owned_paths", "tasks[].generated_outputs", "tasks[].migration_keys", "owned_path_overlaps"}, Requirement: "simultaneously runnable ownership collisions have an explicit serialization or downstream-integrator strategy", FailureCode: "OWNED_PATH_FRONTIER_CONFLICT", Remedy: "serialize colliding tasks or add an integrator that owns the complete collision surface"},
 		{ID: "capacity", Fields: []string{"concurrency", "runner_profile"}, Requirement: "requested frontier concurrency fits configured runner, workspace, and project capacity", FailureCode: "CONCURRENCY_CAP_EXCEEDED", Remedy: "lower concurrency or configure measured capacity before import"},
 		{ID: "runner_profile", Fields: []string{"runner_profile", "tasks[].runner_profile"}, Requirement: "every selected runner profile exists in the resolved project configuration", FailureCode: "UNSUPPORTED_RUNNER", Remedy: "choose a configured profile; never silently substitute an unsupported runner"},
-		{ID: "assumptions", Fields: []string{"assumptions", "unresolved_decisions"}, Requirement: "assumptions and unresolved decisions remain explicitly labeled and are not presented as accepted facts", FailureCode: "ASSUMPTION_PRESENTED_AS_FACT", Remedy: "resolve the fact through a decision or keep it only in the labeled assumption set"},
+		{ID: "assumptions", Fields: []string{"assumptions", "unresolved_decisions", "non_goals"}, Requirement: "assumptions, unresolved decisions, and non-goals remain explicitly labeled and are not presented as accepted facts", FailureCode: "ASSUMPTION_PRESENTED_AS_FACT", Remedy: "resolve the fact through a decision or keep it only in the labeled assumption/non-goal set"},
 	}
 }
 
@@ -243,8 +245,12 @@ func readDeliveryPlan(path string) (deliveryPlan, []byte, error) {
 
 func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]string) {
 	var issues []string
-	if plan.Schema != deliveryPlanSchema {
-		issues = append(issues, "schema must be "+deliveryPlanSchema)
+	expectedSchema := deliveryPlanSchema
+	if plan.v2 != nil {
+		expectedSchema = deliveryPlanV2Schema
+	}
+	if plan.Schema != expectedSchema {
+		issues = append(issues, "schema must be "+expectedSchema)
 	}
 	if deliveryPlaceholder(plan.Scope) || !deliveryScopeValid(plan.Scope) {
 		issues = append(issues, "scope must be an explicit stable identifier using letters, numbers, dot, underscore, slash, colon, or hyphen")
@@ -474,8 +480,37 @@ func deliveryFrontiers(plan deliveryPlan) ([][]string, bool) {
 }
 
 func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImportReport, args Args) error {
+	var materialLock *v7DocumentLock
+	var err error
+	if !args.Bool("material-lock-held") {
+		materialLock, err = acquireV7MaterialEpochLock(vaultPath)
+		if err != nil {
+			return err
+		}
+		defer materialLock.Close()
+	}
 	now := deliveryImportNow().UTC().Format(time.RFC3339)
 	actor := fallback(firstNonEmpty(args.String("by"), args.String("actor")), "agent:"+defaultActorName())
+	integrationBase, err := deliveryIntegrationBaseSHA(vaultPath)
+	if err != nil {
+		return err
+	}
+	if expected := strings.TrimSpace(args.String("expected-integration-base-sha")); expected != "" && integrationBase != expected {
+		return tuskerError(errorInvalidTransition, "configured default branch changed after review; regenerate delivery context and review before Start")
+	}
+	wavePath := filepath.Join(vaultPath, "work", "waves", report.WaveID+".md")
+	if fileExists(wavePath) {
+		existingWave, _, readErr := parseFrontmatterMustRead(wavePath)
+		if readErr != nil {
+			return readErr
+		}
+		if frozen := stringField(existingWave, "integration_base_sha"); frozen != "" {
+			if stringField(existingWave, "delivery_plan_fingerprint") != report.PlanFingerprint {
+				return tuskerError(errorInvalidTransition, "existing delivery scope is frozen to a different reviewed plan; use a new plan scope/wave or perform an explicit controlled rebase")
+			}
+			integrationBase = frozen
+		}
+	}
 	writes := map[string]string{}
 	for _, task := range plan.Tasks {
 		id := report.TaskMapping[task.SourceKey]
@@ -551,7 +586,6 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 		}
 		writes[path] = content
 	}
-	wavePath := filepath.Join(vaultPath, "work", "waves", report.WaveID+".md")
 	waveCreatedAt := now
 	waveCreatedBy := actor
 	var previousMembers []string
@@ -596,8 +630,13 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 	waveData := map[string]any{
 		"schema": "tusker.wave/v7", "kind": "wave", "id": report.WaveID, "project": v7ProjectID(vaultPath),
 		"title": report.WaveTitle, "status": "open", "authorization": "disarmed", "members": members, "integration_branch": v7IntegrationBranchName(report.WaveID),
-		"spec_refs": plan.SpecRefs, "delivery_plan_scope": report.PlanScope, "delivery_plan_fingerprint": report.PlanFingerprint, "concurrency": report.ExpectedConcurrency,
+		"spec_refs": plan.SpecRefs, "delivery_plan_schema": plan.Schema, "delivery_plan_scope": report.PlanScope, "delivery_plan_fingerprint": report.PlanFingerprint, "concurrency": report.ExpectedConcurrency,
 		"runner_profile": plan.RunnerProfile, "created_at": waveCreatedAt, "created_by": waveCreatedBy, "updated_at": now, "updated_by": actor,
+	}
+	if integrationBase != "" {
+		// This is a frozen, read-only snapshot of the configured default ref.
+		// Start may authorize against it, but never creates the integration ref.
+		waveData["integration_base_sha"] = integrationBase
 	}
 	if plan.v2 != nil {
 		contractData, err := deliveryV2WaveContractData(plan.v2)
@@ -666,20 +705,37 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 	branch := v7IntegrationBranchName(report.WaveID)
 	repoRoot := v7RepoRoot(vaultPath)
 	branchExisted := !v7GitRepo(repoRoot) || gitRefExists(repoRoot, "refs/heads/"+branch)
-	if err := ensureV7IntegrationBranch(vaultPath, branch); err != nil {
-		return err
+	// Start delivery is an authority transaction, not an integration operation.
+	// It may reconcile held records, but it must not create or move any Git ref.
+	if !args.Bool("skip-integration-branch") {
+		if err := ensureV7IntegrationBranch(vaultPath, branch); err != nil {
+			return err
+		}
 	}
 	failAfter := 0
 	if args.Bool("fail-after-first-write") {
 		failAfter = 1
 	}
 	if err := commitDeliveryWrites(writes, failAfter); err != nil {
-		if !branchExisted {
+		if !branchExisted && !args.Bool("skip-integration-branch") {
 			_, _ = gitCombined(repoRoot, "update-ref", "-d", "refs/heads/"+branch)
 		}
 		return err
 	}
 	return nil
+}
+
+func deliveryIntegrationBaseSHA(vaultPath string) (string, error) {
+	repoRoot := v7RepoRoot(vaultPath)
+	if !v7GitRepo(repoRoot) {
+		return "", nil
+	}
+	base := v7DefaultBranch(vaultPath)
+	sha, err := gitOutputTrim(repoRoot, "rev-parse", "refs/heads/"+base)
+	if err != nil {
+		return "", tuskerError(errorInvalidTransition, "delivery import could not read configured default integration base "+base+"; repair the default branch before Start")
+	}
+	return sha, nil
 }
 
 func convergeUnchangedDeliveryWrites(writes map[string]string) error {
@@ -928,6 +984,9 @@ func deliveryFingerprint(raw []byte) string {
 func emitDeliveryImportReport(report deliveryImportReport, args Args) {
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "delivery": report, "inert": true})
+		return
+	}
+	if args.Bool("quiet") {
 		return
 	}
 	mode := "Imported"

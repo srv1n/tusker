@@ -971,7 +971,21 @@ func newV7Gate(args Args) error {
 	if err != nil {
 		return err
 	}
+	materialLock, err := acquireV7MaterialEpochLock(vaultPath)
+	if err != nil {
+		return err
+	}
+	// Publishing the gate record is the material epoch change. Once visible,
+	// arm fingerprints it even if the derived task projection follows later.
+	if fileExists(path) {
+		_ = materialLock.Close()
+		return tuskerError(errorAlreadyExists, "Gate already exists: "+id, withPath(path))
+	}
 	if err := writeText(path, content); err != nil {
+		_ = materialLock.Close()
+		return err
+	}
+	if err := materialLock.Close(); err != nil {
 		return err
 	}
 	if !args.Bool("quiet") {

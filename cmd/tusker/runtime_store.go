@@ -280,6 +280,38 @@ type RunAttempt struct {
 	FinishedAt         string
 }
 
+// ReviewResult is the sole durable reviewer lifecycle output. It is keyed by
+// the reviewed task revision and reviewer attempt, so prose and process exit
+// cannot be mistaken for acceptance.
+type ReviewResult struct {
+	Schema            string   `json:"schema"`
+	ProjectID         string   `json:"project_id"`
+	TaskID            string   `json:"task_id"`
+	TaskStateRev      string   `json:"task_state_rev"`
+	WorkRevision      int      `json:"work_revision"`
+	ImplementationSHA string   `json:"implementation_sha"`
+	AttemptID         string   `json:"attempt_id"`
+	Actor             string   `json:"actor"`
+	Runner            string   `json:"runner"`
+	RunnerProfile     string   `json:"runner_profile"`
+	Covers            []string `json:"covers"`
+	ProofFingerprint  string   `json:"proof_fingerprint"`
+	GateFingerprint   string   `json:"gate_fingerprint"`
+	Verdict           string   `json:"verdict"`
+	Blocker           string   `json:"blocker,omitempty"`
+	Summary           string   `json:"summary"`
+	Findings          []string `json:"findings,omitempty"`
+	EvidenceRefs      []string `json:"evidence_refs,omitempty"`
+	ResultRevision    string   `json:"result_revision"`
+	CreatedAt         string   `json:"created_at"`
+}
+
+func (s *RuntimeStore) ReviewAttempt(attemptID string) (RunAttempt, error) {
+	var attempt RunAttempt
+	err := s.queryRowScan(`SELECT attempt_id, project_id, record_id, runner, lane, work_revision FROM attempts WHERE attempt_id = ?`, []any{attemptID}, &attempt.AttemptID, &attempt.ProjectID, &attempt.RecordID, &attempt.Runner, &attempt.Lane, &attempt.WorkRevision)
+	return attempt, err
+}
+
 type RunEndState struct {
 	Schema          string            `json:"schema"`
 	Branch          string            `json:"branch"`
@@ -736,6 +768,7 @@ func (s *RuntimeStore) Migrate() error {
 			started_at TEXT NOT NULL DEFAULT '',
 			finished_at TEXT NOT NULL DEFAULT ''
 		);`,
+		`CREATE TABLE IF NOT EXISTS review_results (project_id TEXT NOT NULL, task_id TEXT NOT NULL, work_revision INTEGER NOT NULL, attempt_id TEXT NOT NULL, result_json TEXT NOT NULL, PRIMARY KEY(project_id, task_id, work_revision, attempt_id));`,
 		`CREATE TABLE IF NOT EXISTS turns (
 			attempt_id TEXT NOT NULL,
 			project_id TEXT NOT NULL,

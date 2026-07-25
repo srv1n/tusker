@@ -44,7 +44,13 @@ normal control plane.
 
 ## Runner Rule
 
-Runners return normalized results: summary, patch/diff/artifacts, verification rows, questions, usage, and outcome. Independent reviewer runners may close every risk tier after objective proof and explicit gates pass.
+Implementation runners return normalized results: summary,
+patch/diff/artifacts, verification rows, questions, usage, and outcome.
+Independent reviewer runners are read-only and return exactly one immutable
+`pass`, `changes_requested`, or `blocked` result with acceptance coverage and
+proof/gate fingerprints. Reviewers never edit implementation, change task or
+gate state, merge, land, close, or move refs; deterministic Tusker handlers
+consume the result.
 
 ## Browser-backed ChatGPT Rule
 

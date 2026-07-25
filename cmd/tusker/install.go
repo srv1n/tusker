@@ -322,7 +322,7 @@ func installSkillPayloadWithMode(destination, mode string) error {
 func installSkillPayloadWithModeFrom(destination, mode, sourceArg string) error {
 	switch mode {
 	case skillInstallModeCopy:
-		return installSkillPayloadCopy(destination)
+		return installSkillPayloadCopyFrom(destination, sourceArg)
 	case skillInstallModeLink:
 		return installSkillPayloadSymlink(destination, sourceArg)
 	default:
@@ -331,20 +331,84 @@ func installSkillPayloadWithModeFrom(destination, mode, sourceArg string) error 
 }
 
 func installSkillPayloadCopy(destination string) error {
-	entries, err := skillbundle.PayloadEntries()
+	return installSkillPayloadCopyFrom(destination, "")
+}
+
+func installSkillPayloadCopyFrom(destination, sourceArg string) error {
+	entries, contract, sourceKind, sourceIdentity, err := skillCopySource(sourceArg)
 	if err != nil {
 		return err
 	}
-	if err := os.RemoveAll(destination); err != nil {
-		return err
+	return replaceSkillInstallDestination(destination, func(stage string) error {
+		for _, entry := range entries {
+			target := filepath.Join(stage, filepath.FromSlash(entry.Relative))
+			if err := writeText(target, entry.Content); err != nil {
+				return err
+			}
+		}
+		return writeSkillMaterializationProvenanceWithContract(stage, sourceKind, sourceIdentity, contract)
+	})
+}
+
+func skillCopySource(sourceArg string) ([]skillbundle.PayloadEntry, factoryIntakeContractProvenance, string, string, error) {
+	if strings.TrimSpace(sourceArg) == "" {
+		entries, err := skillbundle.PayloadEntries()
+		if err != nil {
+			return nil, factoryIntakeContractProvenance{}, "", "", err
+		}
+		contract, err := embeddedFactoryIntakeContractProvenance()
+		return entries, contract, "embedded", portableSkillSourceIdentity("embedded"), err
 	}
-	for _, entry := range entries {
-		target := filepath.Join(destination, filepath.FromSlash(entry.Relative))
-		if err := writeText(target, entry.Content); err != nil {
+	source, err := canonicalSkillSourceDir(sourceArg)
+	if err != nil {
+		return nil, factoryIntakeContractProvenance{}, "", "", err
+	}
+	if err := validateCurrentCanonicalTuskerSkillPackage(source); err != nil {
+		return nil, factoryIntakeContractProvenance{}, "", "", err
+	}
+	contract, err := factoryIntakeContractProvenanceFromPackage(source)
+	if err != nil {
+		return nil, factoryIntakeContractProvenance{}, "", "", err
+	}
+	entries := []skillbundle.PayloadEntry{}
+	err = filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("canonical skill source contains symlinked file: %s", path)
+		}
+		info, err := entry.Info()
+		if err != nil {
 			return err
 		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("canonical skill source contains special file: %s", path)
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.Base(rel) == skillProvenanceFilename {
+			return fmt.Errorf("canonical skill source contains invalid package path: %s", path)
+		}
+		for _, forbidden := range []string{"work", "epics", "evidence", "attempts", "events", "_generated", "_system", "dashboards", "Attachments"} {
+			if strings.HasPrefix(filepath.ToSlash(rel), forbidden+"/") {
+				return fmt.Errorf("canonical skill source contains forbidden package path: %s", rel)
+			}
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		entries = append(entries, skillbundle.PayloadEntry{Relative: filepath.ToSlash(rel), Content: string(raw)})
+		return nil
+	})
+	if err != nil {
+		return nil, factoryIntakeContractProvenance{}, "", "", err
 	}
-	return nil
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Relative < entries[j].Relative })
+	return entries, contract, "canonical", portableSkillSourceIdentity("canonical"), nil
 }
 
 func installSkillPayloadSymlink(destination, sourceArg string) error {
@@ -352,13 +416,12 @@ func installSkillPayloadSymlink(destination, sourceArg string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.RemoveAll(destination); err != nil {
+	if err := validateCurrentCanonicalTuskerSkillPackage(source); err != nil {
 		return err
 	}
-	if err := ensureDir(filepath.Dir(destination)); err != nil {
-		return err
-	}
-	return os.Symlink(skillSymlinkTarget(source, destination), destination)
+	return replaceSkillInstallDestination(destination, func(stage string) error {
+		return os.Symlink(skillSymlinkTarget(source, destination), stage)
+	})
 }
 
 // skillSymlinkTarget keeps repo-local skill installs portable. An absolute
@@ -483,23 +546,40 @@ func skillSyncCmd(args Args) error {
 			withHint("Pass --source <canonical-tusker-checkout>; generated installs are outputs, not editable source."),
 			withContext(map[string]any{"source_kind": source.Kind, "source": source.Path}))
 	}
-	next := Args{
-		"repo":              repo,
-		"no-bin":            "true",
-		"skill-mode":        mode,
-		"skill-source":      source.Path,
-		"skill-source-kind": source.Kind,
+	mode, err := normalizeSkillInstallMode(mode)
+	if err != nil {
+		return err
 	}
-	if source.Kind == "canonical" {
-		next["source"] = source.Path
+	repoRoot, err := filepath.Abs(repo)
+	if err != nil {
+		return err
+	}
+	// Sync is deliberately narrower than install/update. In particular it must
+	// not upsert AGENTS/CLAUDE pointers or create repo feedback files: callers
+	// use it as the safe repair for exactly these generated package paths.
+	destinations := []string{
+		filepath.Join(repoRoot, ".agents", "skills", currentSkillInstallDir),
+		filepath.Join(repoRoot, ".claude", "skills", currentSkillInstallDir),
+	}
+	for _, destination := range destinations {
+		copySource := ""
+		if source.Kind == "canonical" {
+			copySource = source.Path
+		}
+		if err := installSkillPayloadWithModeFrom(destination, mode, copySource); err != nil {
+			return err
+		}
 	}
 	if args.Bool("json") {
-		next["json"] = "true"
+		emitJSON(map[string]any{"ok": true, "repo": repoRoot, "mode": mode, "source_kind": source.Kind, "source": source.Path, "skill_source_kind": source.Kind, "skill_source": source.Path, "installed": destinations, "scope": "managed Tusker skill packages only"})
+		return nil
 	}
-	if args.Bool("quiet") {
-		next["quiet"] = "true"
+	if !args.Bool("quiet") {
+		for _, destination := range destinations {
+			fmt.Printf("Synced Tusker skill at %s (%s)\n", destination, mode)
+		}
 	}
-	return installCmd(next)
+	return nil
 }
 
 func skillBundleCmd(args Args) error {
@@ -516,22 +596,50 @@ func skillBundleCmd(args Args) error {
 		return err
 	}
 	out := strings.TrimSpace(args.String("out"))
+	explicitOut := out != ""
 	if out == "" {
 		out = filepath.Join(repoRoot, ".tusker", "_generated", "skill-bundle")
 	} else if !filepath.IsAbs(out) {
 		out = filepath.Join(repoRoot, out)
 	}
+	out, err = filepath.Abs(out)
+	if err != nil {
+		return err
+	}
+	boundary, err := bundleOutputBoundary(repoRoot, out)
+	if err != nil {
+		return err
+	}
+	if info, statErr := os.Lstat(out); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return tuskerError(errorInvalidArg, "bundle output must be a managed directory, not a symlink or file: "+out)
+		}
+		defaultOut := filepath.Join(repoRoot, ".tusker", "_generated", "skill-bundle")
+		if explicitOut && !sameCleanPath(out, defaultOut) && !fileExists(filepath.Join(out, skillBundleMarker)) {
+			return tuskerError(errorInvalidArg, "refusing to replace an arbitrary existing bundle output directory: "+out, withHint("choose a new --out path or an existing Tusker bundle containing "+skillBundleMarker))
+		}
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
 	destinations := []string{
 		filepath.Join(out, ".agents", "skills", currentSkillInstallDir),
 		filepath.Join(out, ".claude", "skills", currentSkillInstallDir),
 	}
-	if err := os.RemoveAll(out); err != nil {
-		return err
-	}
-	for _, destination := range destinations {
-		if err := installSkillPayloadWithMode(destination, skillInstallModeCopy); err != nil {
+	if err := replaceOwnedFilesystemEntry(out, boundary, false, func(stage string) error {
+		if err := os.Mkdir(stage, 0o755); err != nil {
 			return err
 		}
+		for _, rel := range []string{
+			filepath.Join(".agents", "skills", currentSkillInstallDir),
+			filepath.Join(".claude", "skills", currentSkillInstallDir),
+		} {
+			if err := installSkillPayloadWithMode(filepath.Join(stage, rel), skillInstallModeCopy); err != nil {
+				return err
+			}
+		}
+		return writeText(filepath.Join(stage, skillBundleMarker), "schema: tusker.skill-bundle/v1\n")
+	}); err != nil {
+		return err
 	}
 	if args.Bool("json") {
 		emitJSON(map[string]any{
@@ -835,7 +943,9 @@ Purpose:
   truth. The command reports canonical source provenance and rejects generated
   install output or invalid paths as source. Use --source when running from
   outside the Tusker checkout. Use --mode copy only when the repo must be
-  self-contained.
+  self-contained. Sync overwrites only the exact managed
+  .agents/.claude skills/tusker package targets; it never rewrites project
+  knowledge, repo instructions, secrets, unrelated skills, or plugins.
 
 Examples:
   tusker skill sync --repo .
