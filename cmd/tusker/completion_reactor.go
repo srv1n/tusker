@@ -913,6 +913,10 @@ func buildExactReviewCompletionCandidate(vaultPath, repoRoot, integrationBase st
 	if transaction == nil {
 		return "", tuskerError(errorInvalidArg, "completion staging requires a persisted transaction")
 	}
+	taskRel, err := completionTaskRepoRelativePath(repoRoot, vaultPath, result.TaskID)
+	if err != nil {
+		return "", err
+	}
 	tmp, err := os.MkdirTemp("", "tusker-completion-stage-*")
 	if err != nil {
 		return "", err
@@ -930,10 +934,10 @@ func buildExactReviewCompletionCandidate(vaultPath, repoRoot, integrationBase st
 	if err := removeV7WorkspaceMetadataFromLanding(tmp); err != nil {
 		return "", err
 	}
-	if err := materializeReviewedDone(tmp, vaultPath, result); err != nil {
+	if err := materializeReviewedDone(tmp, vaultPath, taskRel, result); err != nil {
 		return "", err
 	}
-	if output, err := gitCombined(tmp, "add", "--", filepath.ToSlash(filepath.Join(relativeFromRepo(repoRoot, vaultPath), "work", "tasks", result.TaskID+".md"))); err != nil {
+	if output, err := gitCombined(tmp, "add", "--", taskRel); err != nil {
 		return "", tuskerError(errorInvalidTransition, "failed to stage reviewed task closure: "+firstActionableLine(output, err.Error()))
 	}
 	message := "Complete reviewed task " + result.TaskID + "\n\nTusker-Completion: " + transaction.ID
@@ -969,7 +973,10 @@ func validateCompletionStagingCandidate(vaultPath, repoRoot, candidate, integrat
 	if err != nil || len(fields) != 3 || fields[0] != candidate || fields[1] != integrationBase || fields[2] != result.ImplementationSHA {
 		return tuskerError(errorInvalidTransition, "completion staging ref must have the frozen integration base and exact reviewed SHA as its only parents")
 	}
-	rel := filepath.ToSlash(filepath.Join(relativeFromRepo(repoRoot, vaultPath), "work", "tasks", result.TaskID+".md"))
+	rel, err := completionTaskRepoRelativePath(repoRoot, vaultPath, result.TaskID)
+	if err != nil {
+		return err
+	}
 	raw, err := gitOutputTrim(repoRoot, "show", candidate+":"+rel)
 	if err != nil {
 		return err
@@ -1004,14 +1011,23 @@ func gateExactReviewCompletion(vaultPath, repoRoot, stagedSHA string, result Rev
 	return pass, summary, nil
 }
 
-func materializeReviewedDone(stageRoot, vaultPath string, result ReviewResult) error {
-	repoRoot := v7RepoRoot(vaultPath)
+func completionTaskRepoRelativePath(repoRoot, vaultPath, taskID string) (string, error) {
+	repoRoot = canonicalProjectPath(repoRoot)
+	vaultPath = canonicalProjectPath(vaultPath)
 	relVault, err := filepath.Rel(repoRoot, vaultPath)
-	if err != nil || filepath.IsAbs(relVault) || strings.HasPrefix(filepath.Clean(relVault), "..") {
-		return tuskerError(errorInvalidTransition, "cannot locate staged tracker")
+	if err != nil || filepath.IsAbs(relVault) || relVault == ".." || strings.HasPrefix(filepath.Clean(relVault), ".."+string(filepath.Separator)) {
+		return "", tuskerError(errorInvalidTransition, "cannot locate completion task inside the repository")
 	}
-	path := filepath.Join(stageRoot, relVault, "work", "tasks", result.TaskID+".md")
-	canonicalPath := filepath.Join(vaultPath, "work", "tasks", result.TaskID+".md")
+	rel := filepath.Clean(filepath.Join(relVault, "work", "tasks", strings.ToUpper(strings.TrimSpace(taskID))+".md"))
+	if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", tuskerError(errorInvalidTransition, "completion task path escapes the repository")
+	}
+	return filepath.ToSlash(rel), nil
+}
+
+func materializeReviewedDone(stageRoot, vaultPath, taskRel string, result ReviewResult) error {
+	path := filepath.Join(stageRoot, filepath.FromSlash(taskRel))
+	canonicalPath := filepath.Join(canonicalProjectPath(vaultPath), "work", "tasks", result.TaskID+".md")
 	canonicalData, canonicalBody, err := parseFrontmatterMustRead(canonicalPath)
 	if err != nil {
 		return err
@@ -1053,7 +1069,10 @@ func projectCompletionTaskToCanonical(vaultPath, repoRoot string, result ReviewR
 	if transaction == nil || transaction.StagedSHA == "" {
 		return tuskerError(errorInvalidTransition, "canonical completion projection requires a staged commit")
 	}
-	rel := filepath.ToSlash(filepath.Join(relativeFromRepo(repoRoot, vaultPath), "work", "tasks", result.TaskID+".md"))
+	rel, err := completionTaskRepoRelativePath(repoRoot, vaultPath, result.TaskID)
+	if err != nil {
+		return err
+	}
 	stagedRaw, err := gitCombined(repoRoot, "show", transaction.StagedSHA+":"+rel)
 	if err != nil {
 		return err

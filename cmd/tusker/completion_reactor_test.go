@@ -914,8 +914,21 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			t.Fatal(err)
 		}
 		parents, err := gitOutputTrim(project.RepoRoot, "rev-list", "--parents", "-n", "1", forged)
-		if err != nil || len(strings.Fields(parents)) != 3 {
+		parentFields := strings.Fields(parents)
+		if err != nil || len(parentFields) != 3 ||
+			parentFields[1] != transaction.IntegrationBase || parentFields[2] != result.ImplementationSHA {
 			t.Fatalf("forged test commit lost exact parent shape: %q err=%v", parents, err)
+		}
+		taskRel, err := completionTaskRepoRelativePath(project.RepoRoot, vault, result.TaskID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		forgedTask, err := gitOutputTrim(project.RepoRoot, "show", forged+":"+taskRel)
+		if err != nil || !strings.Contains(forgedTask, "[tusker-review-result:"+result.ResultRevision+"]") {
+			t.Fatalf("forged test commit lost reviewed task projection: err=%v", err)
+		}
+		if smuggled, err := gitOutputTrim(project.RepoRoot, "show", forged+":smuggled.txt"); err != nil || smuggled != "not reviewed" {
+			t.Fatalf("forged test commit does not contain extra tree content: content=%q err=%v", smuggled, err)
 		}
 		if err := updateGitRef(project.RepoRoot, transaction.StagingRef, forged, strings.Repeat("0", 40)); err != nil {
 			t.Fatal(err)
