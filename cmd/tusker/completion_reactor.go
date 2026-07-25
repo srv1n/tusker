@@ -19,15 +19,19 @@ import (
 )
 
 const (
-	completionPhasePlanned      = "planned"
-	completionPhaseStaging      = "staging"
-	completionPhaseStaged       = "staged"
-	completionPhaseGated        = "gated"
-	completionPhaseRefIntent    = "ref_intent"
-	completionPhaseRefCommitted = "ref_committed"
-	completionPhaseAudited      = "audited"
-	completionPhaseWoken        = "woken"
-	completionPhaseTerminal     = "terminal"
+	completionPhasePlanned         = "planned"
+	completionPhaseStaging         = "staging"
+	completionPhaseStaged          = "staged"
+	completionPhaseGated           = "gated"
+	completionPhaseRefIntent       = "ref_intent"
+	completionPhaseRefCommitted    = "ref_committed"
+	completionPhaseAudited         = "audited"
+	completionPhaseWoken           = "woken"
+	completionPhaseFailureIntent   = "failure_intent"
+	completionPhaseFailureHandback = "failure_handback"
+	completionPhaseFailureReleased = "failure_released"
+	completionPhaseFailureAudited  = "failure_audited"
+	completionPhaseTerminal        = "terminal"
 )
 
 type completionTransaction struct {
@@ -44,8 +48,21 @@ type completionTransaction struct {
 	Phase             string `json:"phase"`
 	StagedSHA         string `json:"staged_sha,omitempty"`
 	Failure           string `json:"failure,omitempty"`
+	Disposition       string `json:"disposition,omitempty"`
 	CreatedAt         string `json:"created_at"`
 	UpdatedAt         string `json:"updated_at"`
+}
+
+// completionReactorCrashHook is test-only fault injection. Production leaves
+// it nil. Hooks run after an idempotent side effect and before its phase is
+// persisted, which is the only crash window worth proving.
+var completionReactorCrashHook func(string, *completionTransaction) error
+
+func injectCompletionReactorCrash(point string, transaction *completionTransaction) error {
+	if completionReactorCrashHook == nil {
+		return nil
+	}
+	return completionReactorCrashHook(point, transaction)
 }
 
 func completionTransactionID(projectID string, result ReviewResult, integrationBase string) string {
@@ -57,6 +74,22 @@ func completionTransactionID(projectID string, result ReviewResult, integrationB
 func (s *RuntimeStore) CompletionTransaction(id string) (*completionTransaction, error) {
 	var raw string
 	err := s.queryRowScan(`SELECT transaction_json FROM completion_transactions WHERE transaction_id=?`, []any{id}, &raw)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var transaction completionTransaction
+	if err := json.Unmarshal([]byte(raw), &transaction); err != nil {
+		return nil, err
+	}
+	return &transaction, nil
+}
+
+func (s *RuntimeStore) CompletionTransactionForResult(projectID, taskID, resultRevision string) (*completionTransaction, error) {
+	var raw string
+	err := s.queryRowScan(`SELECT transaction_json FROM completion_transactions WHERE project_id=? AND task_id=? AND result_revision=? ORDER BY updated_at DESC LIMIT 1`, []any{projectID, taskID, resultRevision}, &raw)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
 			return nil, nil
@@ -132,6 +165,18 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 	if err != nil {
 		return err
 	}
+	if prior, err := d.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision); err != nil {
+		return err
+	} else if prior != nil && mode == completionReactorModeAuthoritative {
+		switch result.Verdict {
+		case "changes_requested":
+			return d.beginCompletionDisposition(project, result, prior, "rework", strings.Join(result.Findings, "\n"))
+		case "blocked":
+			return d.beginCompletionDisposition(project, result, prior, "park", "Review blocked ("+result.Blocker+"): "+result.Summary)
+		case "pass":
+			return d.completePassingReview(project, result, prior)
+		}
+	}
 	wave, _, hasWave := armedWaveForTask(project.VaultRoot, note)
 	if !hasWave && mode == completionReactorModeAuthoritative {
 		if _, _, err := ensureV7ImplicitSingletonDeliveryUnit(project.VaultRoot, result.TaskID, Args{"quiet": "true", "by": "daemon:completion-reactor"}); err != nil {
@@ -179,30 +224,11 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 
 	switch result.Verdict {
 	case "changes_requested":
-		if transaction.Phase == completionPhaseTerminal {
-			return nil
-		}
-		finding := strings.Join(result.Findings, "\n")
-		if err := returnReviewerFindingToImplementer(project.VaultRoot, result.TaskID, finding, "daemon:completion-reactor"); err != nil {
-			return err
-		}
-		transaction.Phase = completionPhaseTerminal
-		return d.store.SaveCompletionTransaction(&transaction)
+		return d.beginCompletionDisposition(project, result, &transaction, "rework", strings.Join(result.Findings, "\n"))
 	case "blocked":
-		if result.Blocker == "human" {
-			// The submit command proved a genuine human gate.  Preserve review
-			// state and park the reactor; inventing done/rework would lie.
-			transaction.Phase = completionPhaseTerminal
-			return d.store.SaveCompletionTransaction(&transaction)
-		}
-		if transaction.Phase == completionPhaseTerminal {
-			return nil
-		}
-		if err := returnReviewerFindingToImplementer(project.VaultRoot, result.TaskID, "Review blocked ("+result.Blocker+"): "+result.Summary, "daemon:completion-reactor"); err != nil {
-			return err
-		}
-		transaction.Phase = completionPhaseTerminal
-		return d.store.SaveCompletionTransaction(&transaction)
+		// A typed blocker is a park, not a disguised completion or automatic
+		// rework. review submit already proved a genuine gate for human.
+		return d.beginCompletionDisposition(project, result, &transaction, "park", "Review blocked ("+result.Blocker+"): "+result.Summary)
 	case "pass":
 		return d.completePassingReview(project, result, &transaction)
 	default:
@@ -214,18 +240,21 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 	if transaction.Phase == completionPhaseTerminal {
 		return nil
 	}
+	if completionFailurePhase(transaction.Phase) {
+		return d.resumeCompletionDisposition(project, result, transaction)
+	}
 	note, err := resolveV7Note(project.VaultRoot, result.TaskID, "task")
 	if err != nil {
 		return err
 	}
 	if reason := completionReviewDrift(project.VaultRoot, note, result); reason != "" {
-		return d.failCompletion(project, transaction, reason)
+		return d.failCompletion(project, result, transaction, reason)
 	}
 	if !v7GitRepo(project.RepoRoot) {
-		return d.failCompletion(project, transaction, "completion reactor requires a Git repository")
+		return d.failCompletion(project, result, transaction, "completion reactor requires a Git repository")
 	}
 	if transaction.IntegrationBase == "" || transaction.IntegrationBase == "unresolved" {
-		return d.failCompletion(project, transaction, "integration base is not frozen")
+		return d.failCompletion(project, result, transaction, "integration base is not frozen")
 	}
 	refExists := gitRefExists(project.RepoRoot, transaction.IntegrationRef)
 	currentBase := ""
@@ -236,7 +265,7 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 		}
 	}
 	if refExists && currentBase != transaction.IntegrationBase && transaction.Phase != completionPhaseRefIntent && transaction.Phase != completionPhaseRefCommitted && transaction.Phase != completionPhaseAudited && transaction.Phase != completionPhaseWoken {
-		return d.failCompletion(project, transaction, "integration base drift: expected "+transaction.IntegrationBase+", got "+currentBase)
+		return d.failCompletion(project, result, transaction, "integration base drift: expected "+transaction.IntegrationBase+", got "+currentBase)
 	}
 
 	if transaction.Phase == completionPhasePlanned {
@@ -248,7 +277,7 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 	if transaction.Phase == completionPhaseStaging {
 		staged, stageErr := stageExactReviewCompletion(project.VaultRoot, project.RepoRoot, transaction.IntegrationBase, result)
 		if stageErr != nil {
-			return d.failCompletion(project, transaction, stageErr.Error())
+			return d.failCompletion(project, result, transaction, stageErr.Error())
 		}
 		transaction.StagedSHA, transaction.Phase = staged, completionPhaseStaged
 		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
@@ -258,10 +287,10 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 	if transaction.Phase == completionPhaseStaged {
 		pass, summary, gateErr := gateExactReviewCompletion(project.VaultRoot, project.RepoRoot, transaction.StagedSHA, result)
 		if gateErr != nil {
-			return d.failCompletion(project, transaction, gateErr.Error())
+			return d.failCompletion(project, result, transaction, gateErr.Error())
 		}
 		if !pass {
-			return d.failCompletion(project, transaction, summary)
+			return d.failCompletion(project, result, transaction, summary)
 		}
 		transaction.Phase = completionPhaseGated
 		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
@@ -277,14 +306,14 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 	if transaction.Phase == completionPhaseRefIntent {
 		if !refExists {
 			if err := updateGitRef(project.RepoRoot, transaction.IntegrationRef, transaction.StagedSHA, strings.Repeat("0", 40)); err != nil {
-				return d.failCompletion(project, transaction, "integration ref create compare-and-swap failed: "+firstActionableLine("", err.Error()))
+				return d.failCompletion(project, result, transaction, "integration ref create compare-and-swap failed: "+firstActionableLine("", err.Error()))
 			}
 		} else if currentBase == transaction.IntegrationBase {
 			if err := updateGitRef(project.RepoRoot, transaction.IntegrationRef, transaction.StagedSHA, transaction.IntegrationBase); err != nil {
-				return d.failCompletion(project, transaction, "integration ref compare-and-swap failed: "+firstActionableLine("", err.Error()))
+				return d.failCompletion(project, result, transaction, "integration ref compare-and-swap failed: "+firstActionableLine("", err.Error()))
 			}
 		} else if currentBase != transaction.StagedSHA {
-			return d.failCompletion(project, transaction, "integration ref diverged: expected base "+transaction.IntegrationBase+" or staged "+transaction.StagedSHA+", got "+currentBase)
+			return d.failCompletion(project, result, transaction, "integration ref diverged: expected base "+transaction.IntegrationBase+" or staged "+transaction.StagedSHA+", got "+currentBase)
 		}
 		transaction.Phase = completionPhaseRefCommitted
 		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
@@ -294,7 +323,7 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 	if transaction.Phase == completionPhaseRefCommitted {
 		wave, _, ok := armedWaveForTask(project.VaultRoot, note)
 		if !ok {
-			return d.failCompletion(project, transaction, "task lost wave binding after staging")
+			return d.failCompletion(project, result, transaction, "task lost wave binding after staging")
 		}
 		entry := v7LandingAuditEntry{Task: result.TaskID, Branch: result.ImplementationSHA, Target: strings.TrimPrefix(transaction.IntegrationRef, "refs/heads/"), GateResult: "pass", GateSummary: "typed review completion reactor", Commit: transaction.StagedSHA, Actor: "daemon:completion-reactor", Timestamp: time.Now().UTC().Format(time.RFC3339)}
 		if err := appendV7WaveLandingAudit(project.VaultRoot, stringField(wave.Data, "id"), []v7LandingAuditEntry{entry}, "daemon:completion-reactor"); err != nil {
@@ -343,15 +372,136 @@ func completionReviewDrift(vaultPath string, note Note, result ReviewResult) str
 	return ""
 }
 
-func (d *Daemon) failCompletion(project RegisteredProject, transaction *completionTransaction, reason string) error {
+func completionFailurePhase(phase string) bool {
+	switch phase {
+	case completionPhaseFailureIntent, completionPhaseFailureHandback, completionPhaseFailureReleased, completionPhaseFailureAudited:
+		return true
+	default:
+		return false
+	}
+}
+
+func (d *Daemon) failCompletion(project RegisteredProject, result ReviewResult, transaction *completionTransaction, reason string) error {
+	if completionFailurePhase(transaction.Phase) {
+		return d.resumeCompletionDisposition(project, result, transaction)
+	}
 	reason = "completion reactor " + transaction.ID + ": " + limitLandingSummary(reason, 500)
-	transaction.Failure, transaction.Phase = reason, completionPhaseTerminal
-	if err := d.store.SaveCompletionTransaction(transaction); err != nil {
+	return d.beginCompletionDisposition(project, result, transaction, "rework", reason)
+}
+
+func (d *Daemon) beginCompletionDisposition(project RegisteredProject, result ReviewResult, transaction *completionTransaction, disposition, reason string) error {
+	if transaction.Phase == completionPhaseTerminal {
+		return nil
+	}
+	if !completionFailurePhase(transaction.Phase) {
+		transaction.Disposition = disposition
+		transaction.Failure = strings.TrimSpace(reason)
+		transaction.Phase = completionPhaseFailureIntent
+		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
+			return err
+		}
+	}
+	return d.resumeCompletionDisposition(project, result, transaction)
+}
+
+// resumeCompletionDisposition is an intent-first transaction. Every side
+// effect is idempotent and its phase is saved only after it succeeds. A crash
+// can therefore repeat handback/release/audit, but can never strand a terminal
+// row in review or erase a newer owner.
+func (d *Daemon) resumeCompletionDisposition(project RegisteredProject, result ReviewResult, transaction *completionTransaction) error {
+	if transaction.Phase == completionPhaseFailureIntent {
+		if transaction.Disposition == "rework" {
+			if err := returnReviewerFindingToImplementer(project.VaultRoot, transaction.TaskID, transaction.Failure, "daemon:completion-reactor"); err != nil {
+				return err
+			}
+		}
+		if err := injectCompletionReactorCrash("failure_handback", transaction); err != nil {
+			return err
+		}
+		transaction.Phase = completionPhaseFailureHandback
+		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
+			return err
+		}
+	}
+	if transaction.Phase == completionPhaseFailureHandback {
+		if err := d.releaseCompletionReviewOwnership(project, result, transaction); err != nil {
+			return err
+		}
+		if err := injectCompletionReactorCrash("failure_release", transaction); err != nil {
+			return err
+		}
+		transaction.Phase = completionPhaseFailureReleased
+		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
+			return err
+		}
+	}
+	if transaction.Phase == completionPhaseFailureReleased {
+		if err := auditCompletionFailure(project, result, transaction); err != nil {
+			return err
+		}
+		if err := injectCompletionReactorCrash("failure_audit", transaction); err != nil {
+			return err
+		}
+		transaction.Phase = completionPhaseFailureAudited
+		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
+			return err
+		}
+	}
+	if transaction.Phase == completionPhaseFailureAudited {
+		transaction.Phase = completionPhaseTerminal
+		return d.store.SaveCompletionTransaction(transaction)
+	}
+	return nil
+}
+
+func (d *Daemon) releaseCompletionReviewOwnership(project RegisteredProject, result ReviewResult, transaction *completionTransaction) error {
+	runs, err := d.store.ListRuns()
+	if err != nil {
 		return err
 	}
-	// A CAS/ref divergence is deliberately not retried against a new base.  It
-	// becomes one attributable rework result with a stable transaction identity.
-	return kickV7LandingTaskToRework(project.VaultRoot, transaction.TaskID, reason, "daemon:completion-reactor")
+	for _, run := range runs {
+		if run.ProjectID != project.ProjectID || run.RecordID != result.TaskID || run.Lane != runLaneReview || run.WorkRevision != result.WorkRevision {
+			continue
+		}
+		if run.ActiveAttemptID != "" && run.ActiveAttemptID != result.AttemptID {
+			// Never release a newer review owner while replaying an old result.
+			return nil
+		}
+		if transaction.Disposition == "park" {
+			run.LeaseState = string(LeaseStateParkedNoProgress)
+		} else {
+			run.LeaseState = string(LeaseStateReleased)
+		}
+		run.AttemptOutcome = string(AttemptOutcomeBlocked)
+		run.NextRetryAt = ""
+		run.LastError = transaction.Failure
+		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		run.Terminal = false
+		clearActiveExecution(&run)
+		return d.store.UpsertRun(run)
+	}
+	return nil
+}
+
+func auditCompletionFailure(project RegisteredProject, result ReviewResult, transaction *completionTransaction) error {
+	task, err := resolveV7Note(project.VaultRoot, result.TaskID, "task")
+	if err != nil {
+		return err
+	}
+	waveID := stringField(task.Data, "wave")
+	if waveID == "" {
+		return nil
+	}
+	wave, err := resolveV7Note(project.VaultRoot, waveID, "wave")
+	if err != nil {
+		return err
+	}
+	entry := v7LandingAuditEntry{
+		Task: result.TaskID, Branch: result.ImplementationSHA, Target: v7WaveIntegrationBranch(wave),
+		DefectID: transaction.ID, GateResult: "fail", GateSummary: transaction.Failure,
+		Actor: "daemon:completion-reactor", Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+	return appendV7WaveLandingAudit(project.VaultRoot, waveID, []v7LandingAuditEntry{entry}, "daemon:completion-reactor")
 }
 
 // stageExactReviewCompletion stages from the frozen commit, merges the exact

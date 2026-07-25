@@ -25,6 +25,7 @@ type v7LandingAuditEntry struct {
 	Task        string
 	Branch      string
 	Target      string
+	DefectID    string
 	GateResult  string
 	GateSummary string
 	Commit      string
@@ -1612,11 +1613,11 @@ func appendV7WaveLandingAudit(vaultPath, waveID string, entries []v7LandingAudit
 	landings := normalizeLandingAudit(data["landings"])
 	seen := map[string]bool{}
 	for _, row := range landings {
-		key := fmt.Sprintf("%s|%s|%s|%s", stringField(row, "task"), stringField(row, "branch"), stringField(row, "target"), stringField(row, "commit"))
+		key := fmt.Sprintf("%s|%s|%s|%s|%s", stringField(row, "task"), stringField(row, "branch"), stringField(row, "target"), stringField(row, "commit"), stringField(row, "defect_id"))
 		seen[key] = true
 	}
 	for _, entry := range entries {
-		key := fmt.Sprintf("%s|%s|%s|%s", entry.Task, entry.Branch, entry.Target, entry.Commit)
+		key := fmt.Sprintf("%s|%s|%s|%s|%s", entry.Task, entry.Branch, entry.Target, entry.Commit, entry.DefectID)
 		if seen[key] {
 			continue
 		}
@@ -1633,6 +1634,9 @@ func appendV7WaveLandingAudit(vaultPath, waveID string, entries []v7LandingAudit
 		}
 		if entry.Commit != "" {
 			row["commit"] = entry.Commit
+		}
+		if entry.DefectID != "" {
+			row["defect_id"] = entry.DefectID
 		}
 		landings = append(landings, row)
 		seen[key] = true
