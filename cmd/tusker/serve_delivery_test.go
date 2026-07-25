@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -81,6 +82,282 @@ func TestServeDeliveryReviewUsesCanonicalProjectionWithoutMutation(t *testing.T)
 	assertEqual(t, beforeRuns, afterRuns, "delivery review runtime rows and revisions")
 	if filepath.Dir(path) != filepath.Join(repo, ".tusker", "scratch") {
 		t.Fatal("fixture plan unexpectedly escaped repository")
+	}
+}
+
+func TestDeliveryReviewFreshPlanProjectsProspectiveEnvironmentWithoutMutation(t *testing.T) {
+	server, repo := newServeDeliveryFixture(t)
+	vault := server.vaultPath
+	runGitDir(t, repo, "init", "-b", "main")
+	runGitDir(t, repo, "config", "user.email", "test@example.com")
+	runGitDir(t, repo, "config", "user.name", "Test User")
+	runGitDir(t, repo, "add", ".")
+	runGitDir(t, repo, "commit", "-m", "seed prospective delivery review")
+	plan := validDeliveryPlanV2()
+	plan.HumanGates = nil
+	path := writeDeliveryV2TestPlan(t, vault, plan)
+	stateRoot := DefaultStateRoot()
+	beforeRecords := snapshotDeliveryRecords(t, vault)
+	beforeState := snapshotTree(t, stateRoot)
+	beforeDB, err := os.ReadFile(runtimeStoreDBPath(stateRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeProjects, err := server.store.ListProjects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRuns, err := server.store.ListRuns()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*wavePreflightEnvironment)
+		state  string
+		label  string
+		action string
+		ready  bool
+	}{
+		{
+			name: "unregistered",
+			mutate: func(env *wavePreflightEnvironment) {
+				env.ProjectRegistered = false
+			},
+			state: "disabled", label: "Project is not registered",
+			action: "Register this project in Project Settings, then review the delivery again.",
+		},
+		{
+			name: "automation off",
+			mutate: func(env *wavePreflightEnvironment) {
+				env.ProjectEnabled = false
+			},
+			state: "disabled", label: "Project automation is off",
+			action: "Enable this project's automation in Project Settings, then review the delivery again.",
+		},
+		{
+			name: "daemon off",
+			mutate: func(env *wavePreflightEnvironment) {
+				env.DaemonAlive = false
+			},
+			state: "daemon-off", label: "Resident daemon is off",
+			action: "Start the resident daemon, then review the delivery again.",
+		},
+		{
+			name: "runner block",
+			mutate: func(env *wavePreflightEnvironment) {
+				env.RunnerCompatible = false
+			},
+			state: "runner-blocked", label: "Runner is incompatible",
+			action: "Configure a supported unattended runner for this wave, then review again.",
+		},
+		{
+			name: "shared workspace",
+			mutate: func(env *wavePreflightEnvironment) {
+				env.IsolatedWorkspace = false
+			},
+			state: "shared-workspace", label: "Workspace is shared",
+			action: "Select an isolated workspace strategy in Project Settings, then review again.",
+		},
+		{name: "healthy", mutate: func(*wavePreflightEnvironment) {}, state: "held", label: "Ready to start", ready: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			env := greenWaveEnvironment()
+			test.mutate(&env)
+			var prospective Note
+			review, reviewErr := buildDeliveryReviewWithInspector(vault, path, func(_ string, wave Note) wavePreflightEnvironment {
+				prospective = wave
+				return env
+			})
+			if reviewErr != nil {
+				t.Fatal(reviewErr)
+			}
+			action := test.action
+			if test.ready {
+				action = deliveryReviewStartCommand(vault, path, review.Start.PlanFingerprint)
+			}
+			if review.Ready != test.ready || review.Start.State != test.state || review.Start.StateLabel != test.label || review.Start.NextAction != action {
+				t.Fatalf("fresh state=%#v ready=%t; want state=%q label=%q action=%q ready=%t", review.Start, review.Ready, test.state, test.label, action, test.ready)
+			}
+			wantBlockers := 1
+			if test.ready {
+				wantBlockers = 0
+			}
+			if len(review.Start.Blockers) != wantBlockers {
+				t.Fatalf("fresh blockers=%#v; want exactly %d", review.Start.Blockers, wantBlockers)
+			}
+			if review.Start.Authorization != "not imported" || review.Flow.WaveID != "" || review.Flow.WaveHref != "" {
+				t.Fatalf("prospective review invented canonical identity or authorization: start=%#v flow=%#v", review.Start, review.Flow)
+			}
+			if _, claimed := prospective.Data["authorization"]; claimed {
+				t.Fatalf("prospective wave invented authorization: %#v", prospective.Data)
+			}
+			if !strings.HasPrefix(stringField(prospective.Data, "id"), "PROSPECTIVE-") ||
+				stringField(prospective.Data, "project") != v7ProjectID(vault) ||
+				stringField(prospective.Data, "delivery_plan_scope") != plan.Scope ||
+				stringField(prospective.Data, "delivery_plan_fingerprint") != review.Start.PlanFingerprint ||
+				stringField(prospective.Data, "runner_profile") != plan.RunnerProfile ||
+				stringField(prospective.Data, "integration_base_sha") == "" ||
+				!strings.HasPrefix(stringField(prospective.Data, "integration_branch"), "integration/PROSPECTIVE-") {
+				t.Fatalf("prospective wave omitted required read-only environment material: %#v", prospective.Data)
+			}
+		})
+	}
+
+	assertEqual(t, beforeRecords, snapshotDeliveryRecords(t, vault), "fresh review must not import delivery")
+	assertSnapshotEqual(t, beforeState, snapshotTree(t, stateRoot), "fresh review runtime state")
+	afterDB, err := os.ReadFile(runtimeStoreDBPath(stateRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, beforeDB, afterDB, "fresh review runtime database bytes")
+	afterProjects, err := server.store.ListProjects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterRuns, err := server.store.ListRuns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, beforeProjects, afterProjects, "fresh review registration rows and revisions")
+	assertEqual(t, beforeRuns, afterRuns, "fresh review runtime rows and revisions")
+}
+
+func TestDeliveryReviewCompletedOutranksDisabledEnvironmentButNotStaleIdentity(t *testing.T) {
+	server, _ := newServeDeliveryFixture(t)
+	vault := server.vaultPath
+	plan := validDeliveryPlanV2()
+	plan.HumanGates = nil
+	path := writeDeliveryV2TestPlan(t, vault, plan)
+	if err := deliveryV2ImportCmd(vault, path, Args{"quiet": "true", "skip-integration-branch": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	writeArmedWaveTestFields(t, vault, map[string]any{
+		"landings": []map[string]any{{"task": "wave", "gate_result": "pass"}},
+	})
+
+	var completed deliveryReview
+	serveDecode(t, server, "/api/delivery/review?project=delivery&plan=.tusker/scratch/delivery-plan-v2.yaml", &completed)
+	if !completed.Ready || completed.Start.State != "completed" || completed.Start.StateLabel != "Delivery completed" ||
+		completed.Start.NextAction != "Review the delivered artifacts and integration outcome." || len(completed.Start.Blockers) != 0 ||
+		completed.Start.ActionHref == "" {
+		t.Fatalf("disabled infrastructure rewrote completed delivery truth: %#v", completed.Start)
+	}
+
+	writeArmedWaveTestFields(t, vault, map[string]any{
+		"authorization":             "armed",
+		"authorization_fingerprint": "sha256:stale",
+	})
+	var stale deliveryReview
+	serveDecode(t, server, "/api/delivery/review?project=delivery&plan=.tusker/scratch/delivery-plan-v2.yaml", &stale)
+	if stale.Ready || stale.Start.State != "changed" || stale.Start.StateLabel != "Delivery changed" ||
+		!strings.Contains(stale.Start.NextAction, "Regenerate delivery review") ||
+		!strings.Contains(strings.Join(stale.Start.Blockers, "\n"), "authorization fingerprint is stale") {
+		t.Fatalf("stale delivery identity did not outrank terminal completion: %#v", stale.Start)
+	}
+}
+
+func TestDeliveryReviewProjectsBudgetParkButNotRetryOrHold(t *testing.T) {
+	server, _ := newServeDeliveryFixture(t)
+	vault := server.vaultPath
+	plan := validDeliveryPlanV2()
+	plan.HumanGates = nil
+	path := writeDeliveryV2TestPlan(t, vault, plan)
+	if err := deliveryV2ImportCmd(vault, path, Args{"quiet": "true", "skip-integration-branch": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wave := idx.Waves["W-0001"]
+	members := normalizeList(wave.Data["members"])
+	if len(members) != 1 {
+		t.Fatalf("budget fixture members=%#v", members)
+	}
+	taskID := members[0]
+	setAutomationV7TaskFields(t, vault, taskID, map[string]any{"status": "ready", "readiness": "ready", "next_owner": "agent"})
+	idx, err = loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wave = idx.Waves["W-0001"]
+	fingerprint, issues := waveMaterialFingerprint(vault, idx, wave)
+	if len(issues) > 0 {
+		t.Fatal(issues)
+	}
+	writeArmedWaveTestFields(t, vault, map[string]any{
+		"authorization":             "armed",
+		"authorization_fingerprint": fingerprint,
+	})
+	run := RunStatus{
+		ProjectID: "delivery", RecordID: taskID, ItemID: taskID,
+		LeaseState: string(LeaseStateParkedBudget), LastError: "project budget is exhausted", Terminal: true,
+	}
+	if err := server.store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+
+	review, err := buildDeliveryReviewWithInspector(vault, path, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if review.Start.State != "parked" || !strings.Contains(review.Start.NextAction, "project budget is exhausted") {
+		t.Fatalf("budget park was not projected as parked: %#v", review.Start)
+	}
+
+	run.LeaseState = string(LeaseStateRetryQueued)
+	run.LastError = "retry is queued"
+	run.Terminal = false
+	if err := server.store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	retrying, err := buildDeliveryReviewWithInspector(vault, path, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retrying.Start.State != "armed" {
+		t.Fatalf("retry queue was conflated with a parked delivery: %#v", retrying.Start)
+	}
+
+	writeArmedWaveTestFields(t, vault, map[string]any{
+		"authorization":             "disarmed",
+		"authorization_fingerprint": "",
+	})
+	held, err := buildDeliveryReviewWithInspector(vault, path, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held.Start.State != "held" {
+		t.Fatalf("held review was conflated with a parked delivery: %#v", held.Start)
+	}
+}
+
+func TestDeliveryReviewPageUsesStandardScrollableLayout(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate delivery review test source")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+	pageSource, err := os.ReadFile(filepath.Join(repoRoot, "internal", "serve", "ui", "src", "features", "delivery", "DeliveryReview.tsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scrollSource, err := os.ReadFile(filepath.Join(repoRoot, "internal", "serve", "ui", "src", "components", "ui", "page.tsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(pageSource)
+	if !strings.Contains(page, `import { PageScroll } from "@/components/ui/page";`) ||
+		!strings.Contains(page, "<PageScroll>") ||
+		!strings.Contains(page, "</PageScroll>") ||
+		!strings.Contains(page, "data-delivery-review-page") {
+		t.Fatalf("delivery review page is not wrapped in PageScroll")
+	}
+	if !strings.Contains(string(scrollSource), `"tk-scroll h-full overflow-y-auto"`) {
+		t.Fatalf("PageScroll lost its full-height vertical overflow contract")
 	}
 }
 

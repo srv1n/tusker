@@ -133,6 +133,10 @@ func deliveryReviewCmd(args Args) error {
 }
 
 func buildDeliveryReview(vault, path string) (deliveryReview, error) {
+	return buildDeliveryReviewWithInspector(vault, path, inspectWavePreflightEnvironmentReadOnly)
+}
+
+func buildDeliveryReviewWithInspector(vault, path string, inspector wavePreflightEnvironmentInspector) (deliveryReview, error) {
 	plan, raw, preparationIssues, err := readDeliveryReviewPlan(vault, path)
 	if err != nil {
 		return deliveryReview{}, err
@@ -141,6 +145,7 @@ func buildDeliveryReview(vault, path string) (deliveryReview, error) {
 	issues = uniqueStrings(append(preparationIssues, issues...))
 	sort.Strings(issues)
 	r := deliveryReview{Schema: deliveryReviewSchema, ReadOnly: true, What: []deliveryReviewOutcome{}, Proof: []deliveryReviewProof{}, Decisions: []deliveryReviewDecision{}, NonGoals: []string{}, Flow: deliveryReviewFlow{Frontiers: deliveryReviewFrontiers(plan, frontiers), ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Integration: "Reviewed work joins one serialized integration phase before landing.", SharedResources: []deliveryReviewResource{}, Warnings: []string{}}, Start: deliveryReviewStart{PlanFingerprint: deliveryFingerprint(raw), Authorization: "not imported", Readiness: "review only", Blockers: []string{}, State: "held", StateLabel: "Held for review"}}
+	integrationBaseSHA := ""
 	for _, issue := range issues {
 		r.Start.Blockers = append(r.Start.Blockers, issue)
 	}
@@ -157,6 +162,7 @@ func buildDeliveryReview(vault, path string) (deliveryReview, error) {
 		if contextErr != nil {
 			r.Start.Blockers = append(r.Start.Blockers, "planning context could not be recomputed: "+contextErr.Error())
 		} else {
+			integrationBaseSHA = context.IntegrationBase.SHA
 			r.Start.ContextFingerprint = plan.v2.ContextFingerprint
 			if context.ContextFingerprint != plan.v2.ContextFingerprint {
 				r.Start.Blockers = append(r.Start.Blockers, "planning context fingerprint differs; regenerate the plan from current delivery context")
@@ -164,6 +170,13 @@ func buildDeliveryReview(vault, path string) (deliveryReview, error) {
 				r.Start.StateLabel = "Delivery changed"
 				r.Start.NextAction = "Regenerate the plan from current delivery context, then review its new exact fingerprint."
 			}
+		}
+	}
+	if integrationBaseSHA == "" {
+		var integrationBaseErr error
+		integrationBaseSHA, integrationBaseErr = deliveryIntegrationBaseSHA(vault)
+		if integrationBaseErr != nil {
+			r.Start.Blockers = append(r.Start.Blockers, "configured integration base could not be inspected: "+integrationBaseErr.Error())
 		}
 	}
 	projectID := v7ProjectID(vault)
@@ -227,7 +240,7 @@ func buildDeliveryReview(vault, path string) (deliveryReview, error) {
 		r.Start.StateLabel = "Delivery plan is invalid"
 		r.Start.NextAction = "Resolve the first blocker: " + r.Start.Blockers[0]
 	}
-	deliveryReviewCanonical(vault, path, plan, &r)
+	deliveryReviewCanonical(vault, plan, integrationBaseSHA, inspector, &r)
 	r.Start.Blockers = uniqueStrings(r.Start.Blockers)
 	sort.Strings(r.Start.Blockers)
 	r.Flow.Warnings = uniqueStrings(r.Flow.Warnings)
@@ -352,7 +365,7 @@ func deliveryReviewDoctorFindings(vault, path string) []deliveryDoctorFinding {
 	return report.Findings
 }
 
-func deliveryReviewCanonical(vault, path string, plan deliveryPlan, r *deliveryReview) {
+func deliveryReviewCanonical(vault string, plan deliveryPlan, integrationBaseSHA string, inspector wavePreflightEnvironmentInspector, r *deliveryReview) {
 	idx, err := loadV7Index(vault)
 	if err != nil {
 		r.Start.Blockers = append(r.Start.Blockers, err.Error())
@@ -365,6 +378,15 @@ func deliveryReviewCanonical(vault, path string, plan deliveryPlan, r *deliveryR
 		}
 	}
 	if len(waves) == 0 {
+		if r.Start.State == "invalid" || r.Start.State == "changed" {
+			return
+		}
+		prospective := deliveryReviewProspectiveWave(vault, plan, r.Start.PlanFingerprint, integrationBaseSHA, r.Flow.ExpectedConcurrency)
+		env := deliveryReviewInspectEnvironment(vault, prospective, inspector)
+		if state, blocked := deliveryReviewEnvironmentState(env, ""); blocked {
+			deliveryReviewApplyState(r, state)
+			r.Start.Blockers = append(r.Start.Blockers, "operational preflight: "+state.Label)
+		}
 		return
 	}
 	if len(waves) != 1 {
@@ -449,14 +471,104 @@ func deliveryReviewCanonical(vault, path string, plan deliveryPlan, r *deliveryR
 			}
 		}
 	}
-	env := inspectWavePreflightEnvironmentReadOnly(vault, wave)
+	env := deliveryReviewInspectEnvironment(vault, wave, inspector)
 	preflight := buildWavePreflight(vault, idx, wave, env)
-	for _, blocker := range preflight.Blockers {
-		r.Start.Blockers = append(r.Start.Blockers, "operational preflight: "+blocker)
-	}
 	if r.Start.State != "invalid" && r.Start.State != "changed" {
 		deliveryReviewProjectState(vault, idx, wave, env, preflight, r)
 	}
+	if preflight.AuthorizationStale {
+		r.Start.Blockers = append(r.Start.Blockers, "operational preflight: wave authorization fingerprint is stale")
+	}
+	for _, blocker := range preflight.Blockers {
+		if r.Start.State == "completed" && deliveryReviewEnvironmentPreflightBlocker(blocker) {
+			continue
+		}
+		r.Start.Blockers = append(r.Start.Blockers, "operational preflight: "+blocker)
+	}
+}
+
+type deliveryReviewState struct {
+	State  string
+	Label  string
+	Action string
+	Href   string
+}
+
+func deliveryReviewProspectiveWave(vault string, plan deliveryPlan, planFingerprint, integrationBaseSHA string, concurrency int) Note {
+	materialID := strings.TrimPrefix(strings.TrimSpace(planFingerprint), "sha256:")
+	if len(materialID) > 12 {
+		materialID = materialID[:12]
+	}
+	prospectiveID := "PROSPECTIVE-" + strings.ToUpper(materialID)
+	data := map[string]any{
+		"schema":                    "tusker.wave/v7",
+		"kind":                      "wave",
+		"id":                        prospectiveID,
+		"project":                   v7ProjectID(vault),
+		"delivery_plan_schema":      plan.Schema,
+		"delivery_plan_scope":       deliveryPlanScope(plan),
+		"delivery_plan_fingerprint": planFingerprint,
+		"runner_profile":            plan.RunnerProfile,
+		"concurrency":               maxInt(1, concurrency),
+		"integration_branch":        v7IntegrationBranchName(prospectiveID),
+	}
+	if integrationBaseSHA != "" {
+		data["integration_base_sha"] = integrationBaseSHA
+	}
+	// This record is inspection material only. In particular, it deliberately
+	// carries no authorization claim and is never persisted or linked.
+	return Note{Data: data}
+}
+
+func deliveryReviewInspectEnvironment(vault string, wave Note, inspector wavePreflightEnvironmentInspector) wavePreflightEnvironment {
+	if inspector != nil {
+		return inspector(vault, wave)
+	}
+	return inspectWavePreflightEnvironmentReadOnly(vault, wave)
+}
+
+func deliveryReviewEnvironmentState(env wavePreflightEnvironment, statusHref string) (deliveryReviewState, bool) {
+	switch {
+	case !env.ProjectRegistered:
+		return deliveryReviewState{"disabled", "Project is not registered", "Register this project in Project Settings, then review the delivery again.", ""}, true
+	case !env.ProjectEnabled:
+		return deliveryReviewState{"disabled", "Project automation is off", "Enable this project's automation in Project Settings, then review the delivery again.", ""}, true
+	case !env.ProjectHealthy:
+		return deliveryReviewState{"disabled", "Project health is blocked", "Repair the project's reported health issue, then review the delivery again.", ""}, true
+	case !env.WorkflowCompatible:
+		return deliveryReviewState{"invalid", "Workflow is incompatible", "Repair the project workflow version and tracker schema, then review the delivery again.", ""}, true
+	case !env.SkillCompatible:
+		return deliveryReviewState{"invalid", "Project skill is incompatible", "Install or repair the compatible Tusker project skill, then review the delivery again.", ""}, true
+	case !env.DaemonAlive:
+		return deliveryReviewState{"daemon-off", "Resident daemon is off", "Start the resident daemon, then review the delivery again.", ""}, true
+	case !env.DaemonReconciling:
+		return deliveryReviewState{"daemon-off", "Resident daemon is not reconciling", "Repair the resident daemon's project polling, then review the delivery again.", ""}, true
+	case !env.RunnerCompatible:
+		return deliveryReviewState{"runner-blocked", "Runner is incompatible", "Configure a supported unattended runner for this wave, then review again.", ""}, true
+	case !env.ApprovalFree:
+		return deliveryReviewState{"runner-blocked", "Runner requires approval", "Configure this runner for approval-free unattended execution, then review again.", ""}, true
+	case !env.IsolatedWorkspace:
+		return deliveryReviewState{"shared-workspace", "Workspace is shared", "Select an isolated workspace strategy in Project Settings, then review again.", ""}, true
+	case !env.IntegrationClean:
+		return deliveryReviewState{"shared-workspace", "Integration lane is not clean", "Repair the wave integration lane, then review again.", statusHref}, true
+	}
+	return deliveryReviewState{}, false
+}
+
+func deliveryReviewApplyState(r *deliveryReview, state deliveryReviewState) {
+	r.Start.State = state.State
+	r.Start.StateLabel = state.Label
+	r.Start.NextAction = state.Action
+	r.Start.ActionHref = state.Href
+}
+
+func deliveryReviewEnvironmentPreflightBlocker(blocker string) bool {
+	for _, key := range []string{"project", "daemon", "runner", "skill", "workflow", "approvalPolicy", "workspaceIsolation"} {
+		if blocker == waveEnvironmentBlocker(key) {
+			return true
+		}
+	}
+	return false
 }
 
 func deliveryReviewProjectState(vault string, idx v7Index, wave Note, env wavePreflightEnvironment, preflight wavePreflightReport, r *deliveryReview) {
@@ -467,53 +579,29 @@ func deliveryReviewProjectState(vault string, idx v7Index, wave Note, env wavePr
 		statusHref = waveDeepLink(projectID, waveID)
 	}
 	set := func(state, label, action, href string) {
-		r.Start.State = state
-		r.Start.StateLabel = label
-		r.Start.NextAction = action
-		r.Start.ActionHref = href
+		deliveryReviewApplyState(r, deliveryReviewState{State: state, Label: label, Action: action, Href: href})
 	}
-	switch {
-	case preflight.AuthorizationStale:
+	if preflight.AuthorizationStale {
 		set("changed", "Delivery changed", "Regenerate delivery review, then confirm and Start the new exact fingerprint.", "")
 		return
-	case !env.ProjectRegistered:
-		set("disabled", "Project is not registered", "Register this project in Project Settings, then review the delivery again.", "")
+	}
+	members := normalizeList(wave.Data["members"])
+	allDone := len(members) > 0
+	for _, memberID := range members {
+		task, ok := idx.Tasks[memberID]
+		allDone = allDone && ok && stringField(task.Data, "status") == "done"
+	}
+	if armedWaveIntegrated(wave) || allDone {
+		set("completed", "Delivery completed", "Review the delivered artifacts and integration outcome.", statusHref)
 		return
-	case !env.ProjectEnabled:
-		set("disabled", "Project automation is off", "Enable this project's automation in Project Settings, then review the delivery again.", "")
-		return
-	case !env.ProjectHealthy:
-		set("disabled", "Project health is blocked", "Repair the project's reported health issue, then review the delivery again.", "")
-		return
-	case !env.WorkflowCompatible:
-		set("invalid", "Workflow is incompatible", "Repair the project workflow version and tracker schema, then review the delivery again.", "")
-		return
-	case !env.SkillCompatible:
-		set("invalid", "Project skill is incompatible", "Install or repair the compatible Tusker project skill, then review the delivery again.", "")
-		return
-	case !env.DaemonAlive:
-		set("daemon-off", "Resident daemon is off", "Start the resident daemon, then review the delivery again.", "")
-		return
-	case !env.DaemonReconciling:
-		set("daemon-off", "Resident daemon is not reconciling", "Repair the resident daemon's project polling, then review the delivery again.", "")
-		return
-	case !env.RunnerCompatible:
-		set("runner-blocked", "Runner is incompatible", "Configure a supported unattended runner for this wave, then review again.", "")
-		return
-	case !env.ApprovalFree:
-		set("runner-blocked", "Runner requires approval", "Configure this runner for approval-free unattended execution, then review again.", "")
-		return
-	case !env.IsolatedWorkspace:
-		set("shared-workspace", "Workspace is shared", "Select an isolated workspace strategy in Project Settings, then review again.", "")
-		return
-	case !env.IntegrationClean:
-		set("shared-workspace", "Integration lane is not clean", "Repair the wave integration lane, then review again.", statusHref)
+	}
+	if state, blocked := deliveryReviewEnvironmentState(env, statusHref); blocked {
+		deliveryReviewApplyState(r, state)
 		return
 	}
 
 	runs := deliveryReviewRuntimeRuns(vault, projectID)
 	snapshot := buildArmedWaveSnapshot(vault, idx, wave, runs, time.Now())
-	allDone := len(snapshot.Members) > 0
 	hasRunning, hasParked := false, false
 	hasGate := preflight.Authorization == "armed" && len(preflight.HumanGates) > 0
 	firstGateID := ""
@@ -522,8 +610,6 @@ func deliveryReviewProjectState(vault string, idx v7Index, wave Note, env wavePr
 	}
 	firstParked := ""
 	for _, member := range snapshot.Members {
-		task := idx.Tasks[member.ID]
-		allDone = allDone && stringField(task.Data, "status") == "done"
 		switch member.State {
 		case armedWaveRunning:
 			hasRunning = true
@@ -537,8 +623,6 @@ func deliveryReviewProjectState(vault string, idx v7Index, wave Note, env wavePr
 		}
 	}
 	switch {
-	case armedWaveIntegrated(wave) || allDone:
-		set("completed", "Delivery completed", "Review the delivered artifacts and integration outcome.", statusHref)
 	case hasParked:
 		set("parked", "Delivery parked", "Resolve the first parked outcome: "+fallback(firstParked, "inspect the wave status for its recovery action"), statusHref)
 	case hasGate:

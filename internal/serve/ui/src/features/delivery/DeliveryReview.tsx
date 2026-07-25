@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useParams } from "@tanstack/react-router";
 import { CheckCircle2, CircleAlert, Play, RefreshCw, ShieldCheck } from "lucide-react";
+import { PageScroll } from "@/components/ui/page";
 import { DeliveryError } from "@/lib/api";
 import { useDeliveryReview, useDeliveryStart } from "@/lib/queries";
 import { cn } from "@/lib/cn";
@@ -34,23 +35,25 @@ export function DeliveryReviewPage() {
   };
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-6 lg:px-8" data-delivery-review-page>
-      <header className="mb-6 flex flex-col gap-4 border-b border-line pb-5 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-accent">Delivery review</p>
-          <h1 className="mt-1 font-serif text-3xl font-semibold tracking-tight text-ink">Review the exact delivery</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">This review is read-only. Starting delivery only imports and arms the reviewed wave—it does not enable automation or change your daemon, permissions, gates, release, or spending.</p>
-        </div>
-        <form onSubmit={(event) => { event.preventDefault(); refresh(); }} className="flex w-full gap-2 sm:w-auto" aria-label="Delivery plan">
-          <input aria-label="Repo-relative plan path" value={plan} onChange={(event) => setPlan(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-line bg-panel px-3 py-2 font-mono text-xs text-ink outline-none focus:border-accent sm:w-80" />
-          <button type="submit" className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink hover:bg-hover"><RefreshCw size={14} />Review</button>
-        </form>
-      </header>
+    <PageScroll>
+      <main className="mx-auto w-full max-w-6xl" data-delivery-review-page>
+        <header className="mb-6 flex flex-col gap-4 border-b border-line pb-5 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-accent">Delivery review</p>
+            <h1 className="mt-1 font-serif text-3xl font-semibold tracking-tight text-ink">Review the exact delivery</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">This review is read-only. Starting delivery only imports and arms the reviewed wave—it does not enable automation or change your daemon, permissions, gates, release, or spending.</p>
+          </div>
+          <form onSubmit={(event) => { event.preventDefault(); refresh(); }} className="flex w-full gap-2 sm:w-auto" aria-label="Delivery plan">
+            <input aria-label="Repo-relative plan path" value={plan} onChange={(event) => setPlan(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-line bg-panel px-3 py-2 font-mono text-xs text-ink outline-none focus:border-accent sm:w-80" />
+            <button type="submit" className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink hover:bg-hover"><RefreshCw size={14} />Review</button>
+          </form>
+        </header>
 
-      {review.isLoading && <StateCard tone="info" title="Loading delivery review" detail="Reading the canonical product projection." />}
-      {review.error && <DeliveryFailure error={review.error} phase="review" />}
-      {data && <ReviewBody review={data} confirmation={confirmation} setConfirmation={setConfirmation} exactConfirmation={exactConfirmation} startResult={mutationMatchesReview ? start.data : undefined} startError={mutationMatchesReview ? start.error : null} starting={mutationMatchesReview && start.isPending} onStart={() => start.mutate({ plan: submittedPlan, confirm: confirmation.trim() })} />}
-    </main>
+        {review.isLoading && <StateCard tone="info" title="Loading delivery review" detail="Reading the canonical product projection." />}
+        {review.error && <DeliveryFailure error={review.error} phase="review" />}
+        {data && <ReviewBody review={data} confirmation={confirmation} setConfirmation={setConfirmation} exactConfirmation={exactConfirmation} startResult={mutationMatchesReview ? start.data : undefined} startError={mutationMatchesReview ? start.error : null} starting={mutationMatchesReview && start.isPending} onStart={() => start.mutate({ plan: submittedPlan, confirm: confirmation.trim() })} />}
+      </main>
+    </PageScroll>
   );
 }
 
