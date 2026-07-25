@@ -27,6 +27,8 @@ const (
 	completionPhaseGated           = "gated"
 	completionPhaseRefIntent       = "ref_intent"
 	completionPhaseRefCommitted    = "ref_committed"
+	completionPhaseCanonicalIntent = "canonical_intent"
+	completionPhaseCanonicalDone   = "canonical_done"
 	completionPhaseAudited         = "audited"
 	completionPhaseWoken           = "woken"
 	completionPhaseFailureIntent   = "failure_intent"
@@ -46,6 +48,7 @@ type completionTransaction struct {
 	ReviewAttempt        string `json:"review_attempt"`
 	ResultRevision       string `json:"result_revision"`
 	ReviewedTaskStateRev string `json:"reviewed_task_state_rev"`
+	WaveID               string `json:"wave_id"`
 	IntegrationBase      string `json:"integration_base"`
 	IntegrationRef       string `json:"integration_ref"`
 	StagingRef           string `json:"staging_ref"`
@@ -222,7 +225,7 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 		Schema: "tusker.completion-transaction/v1", ProjectID: project.ProjectID, TaskID: result.TaskID,
 		WorkRevision: result.WorkRevision, ImplementationSHA: result.ImplementationSHA, ReviewAttempt: result.AttemptID,
 		ResultRevision: result.ResultRevision, ReviewedTaskStateRev: result.TaskStateRev,
-		IntegrationBase: base, IntegrationRef: integrationRef, Phase: completionPhasePlanned,
+		WaveID: stringField(wave.Data, "id"), IntegrationBase: base, IntegrationRef: integrationRef, Phase: completionPhasePlanned,
 	}
 	transaction.ID = completionTransactionID(project.ProjectID, result, base)
 	transaction.StagingRef = completionStagingRef(transaction.ID)
@@ -236,6 +239,9 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 	}
 	if transaction.ReviewedTaskStateRev == "" {
 		transaction.ReviewedTaskStateRev = result.TaskStateRev
+	}
+	if transaction.WaveID == "" {
+		transaction.WaveID = stringField(wave.Data, "id")
 	}
 	if err := d.store.SaveCompletionTransaction(&transaction); err != nil {
 		return err
@@ -283,6 +289,54 @@ func resultTaskID(task Note) string {
 	return strings.ToUpper(strings.TrimSpace(stringField(task.Data, "id")))
 }
 
+// completionAuthorizedWave resolves only the wave frozen when the immutable
+// result was first planned. Dynamic armed state is intentionally not consulted
+// after planning: projecting the reviewed task to done changes the wave
+// material fingerprint, and an implicit singleton is deliberately disarmed.
+func completionAuthorizedWave(vaultPath string, transaction *completionTransaction) (Note, error) {
+	if transaction == nil || strings.TrimSpace(transaction.WaveID) == "" {
+		return Note{}, tuskerError(errorInvalidTransition, "completion transaction has no frozen wave binding")
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return Note{}, err
+	}
+	wave, ok := idx.Waves[transaction.WaveID]
+	if !ok {
+		return Note{}, tuskerError(errorInvalidTransition, "completion wave binding is missing: "+transaction.WaveID)
+	}
+	task, ok := idx.Tasks[transaction.TaskID]
+	if !ok || stringField(task.Data, "wave") != transaction.WaveID || !containsString(normalizeList(wave.Data["members"]), transaction.TaskID) {
+		return Note{}, tuskerError(errorInvalidTransition, "completion task lost its frozen wave membership")
+	}
+	if v7ImplicitDeliveryUnit(wave) {
+		members := normalizeList(wave.Data["members"])
+		if len(members) != 1 || members[0] != transaction.TaskID || stringField(wave.Data, "delivery_task") != transaction.TaskID {
+			return Note{}, tuskerError(errorInvalidTransition, "implicit completion wave no longer binds exactly one reviewed task")
+		}
+	}
+	expectedRef := "refs/heads/" + v7WaveIntegrationBranch(wave)
+	if transaction.IntegrationRef != expectedRef {
+		return Note{}, tuskerError(errorInvalidTransition, "completion wave integration ref drifted from its frozen transaction")
+	}
+	return wave, nil
+}
+
+func ensureCompletionWaveBinding(vaultPath string, transaction *completionTransaction) error {
+	if transaction == nil {
+		return tuskerError(errorInvalidArg, "completion transaction is required")
+	}
+	if transaction.WaveID == "" {
+		task, err := resolveV7Note(vaultPath, transaction.TaskID, "task")
+		if err != nil {
+			return err
+		}
+		transaction.WaveID = stringField(task.Data, "wave")
+	}
+	_, err := completionAuthorizedWave(vaultPath, transaction)
+	return err
+}
+
 func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewResult, transaction *completionTransaction) error {
 	if transaction.Phase == completionPhaseTerminal {
 		return nil
@@ -300,7 +354,26 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 	if err != nil {
 		return err
 	}
-	if reason := completionReviewDrift(project.VaultRoot, note, result); reason != "" {
+	if transaction.WaveID == "" {
+		if err := ensureCompletionWaveBinding(project.VaultRoot, transaction); err != nil {
+			if completionPhaseHasCommittedRef(transaction.Phase) {
+				return err
+			}
+			return d.failCompletion(project, result, transaction, err.Error())
+		}
+		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
+			return err
+		}
+	} else if err := ensureCompletionWaveBinding(project.VaultRoot, transaction); err != nil {
+		if completionPhaseHasCommittedRef(transaction.Phase) {
+			return err
+		}
+		return d.failCompletion(project, result, transaction, err.Error())
+	}
+	if reason := completionPassTaskDrift(project.VaultRoot, note, result, transaction); reason != "" {
+		if completionPhaseHasCommittedRef(transaction.Phase) {
+			return tuskerError("CAS_CONFLICT", "canonical completion state drifted after integration CAS: "+reason)
+		}
 		return d.failCompletion(project, result, transaction, reason)
 	}
 	if !v7GitRepo(project.RepoRoot) {
@@ -317,8 +390,20 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 			return err
 		}
 	}
-	if refExists && currentBase != transaction.IntegrationBase && transaction.Phase != completionPhaseRefIntent && transaction.Phase != completionPhaseRefCommitted && transaction.Phase != completionPhaseAudited && transaction.Phase != completionPhaseWoken {
+	if refExists && currentBase != transaction.IntegrationBase && !completionPhaseAcceptsCommittedRef(transaction.Phase) {
 		return d.failCompletion(project, result, transaction, "integration base drift: expected "+transaction.IntegrationBase+", got "+currentBase)
+	}
+	if completionPhaseHasCommittedRef(transaction.Phase) && (!refExists || currentBase != transaction.StagedSHA) {
+		return tuskerError("CAS_CONFLICT", "completion integration ref drifted after its committed CAS",
+			withContext(map[string]any{
+				"ref": transaction.IntegrationRef, "expected": transaction.StagedSHA, "current": currentBase,
+			}))
+	}
+	switch transaction.Phase {
+	case completionPhaseCanonicalDone, completionPhaseAudited, completionPhaseWoken:
+		if err := projectCompletionTaskToCanonical(project.VaultRoot, project.RepoRoot, result, transaction); err != nil {
+			return err
+		}
 	}
 
 	if transaction.Phase == completionPhasePlanned {
@@ -386,9 +471,27 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 		}
 	}
 	if transaction.Phase == completionPhaseRefCommitted {
-		wave, _, ok := armedWaveForTask(project.VaultRoot, note)
-		if !ok {
-			return d.failCompletion(project, result, transaction, "task lost wave binding after staging")
+		transaction.Phase = completionPhaseCanonicalIntent
+		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
+			return err
+		}
+	}
+	if transaction.Phase == completionPhaseCanonicalIntent {
+		if err := projectCompletionTaskToCanonical(project.VaultRoot, project.RepoRoot, result, transaction); err != nil {
+			return err
+		}
+		if err := injectCompletionReactorCrash("canonical_projection", transaction); err != nil {
+			return err
+		}
+		transaction.Phase = completionPhaseCanonicalDone
+		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
+			return err
+		}
+	}
+	if transaction.Phase == completionPhaseCanonicalDone {
+		wave, err := completionAuthorizedWave(project.VaultRoot, transaction)
+		if err != nil {
+			return err
 		}
 		entry := v7LandingAuditEntry{Task: result.TaskID, Branch: result.ImplementationSHA, Target: strings.TrimPrefix(transaction.IntegrationRef, "refs/heads/"), GateResult: "pass", GateSummary: "typed review completion reactor", Commit: transaction.StagedSHA, Actor: "daemon:completion-reactor", Timestamp: time.Now().UTC().Format(time.RFC3339)}
 		if err := appendV7WaveLandingAudit(project.VaultRoot, stringField(wave.Data, "id"), []v7LandingAuditEntry{entry}, "daemon:completion-reactor"); err != nil {
@@ -416,6 +519,40 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 	}
 	transaction.Phase = completionPhaseTerminal
 	return d.store.SaveCompletionTransaction(transaction)
+}
+
+func completionPhaseAcceptsCommittedRef(phase string) bool {
+	switch phase {
+	case completionPhaseRefIntent, completionPhaseRefCommitted, completionPhaseCanonicalIntent, completionPhaseCanonicalDone, completionPhaseAudited, completionPhaseWoken, completionPhaseTerminal:
+		return true
+	default:
+		return false
+	}
+}
+
+func completionPhaseHasCommittedRef(phase string) bool {
+	switch phase {
+	case completionPhaseRefCommitted, completionPhaseCanonicalIntent, completionPhaseCanonicalDone, completionPhaseAudited, completionPhaseWoken, completionPhaseTerminal:
+		return true
+	default:
+		return false
+	}
+}
+
+func completionPassTaskDrift(vaultPath string, note Note, result ReviewResult, transaction *completionTransaction) string {
+	if completionCanonicalTaskMatches(note, result, transaction) {
+		return ""
+	}
+	return completionReviewDrift(vaultPath, note, result)
+}
+
+func completionCanonicalTaskMatches(task Note, result ReviewResult, transaction *completionTransaction) bool {
+	return transaction != nil &&
+		stringField(task.Data, "status") == "done" &&
+		intField(task.Data, "work_revision") == result.WorkRevision &&
+		firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit")) == result.ImplementationSHA &&
+		stringField(task.Data, "next_ref") == result.ResultRevision &&
+		strings.Contains(task.Body, "[tusker-review-result:"+result.ResultRevision+"]")
 }
 
 func completionReviewDrift(vaultPath string, note Note, result ReviewResult) string {
@@ -464,6 +601,9 @@ func (d *Daemon) failCompletion(project RegisteredProject, result ReviewResult, 
 func (d *Daemon) beginCompletionDisposition(project RegisteredProject, result ReviewResult, transaction *completionTransaction, disposition, reason string) error {
 	if transaction.Phase == completionPhaseTerminal {
 		return nil
+	}
+	if err := ensureCompletionWaveBinding(project.VaultRoot, transaction); err != nil {
+		return err
 	}
 	if transaction.ReviewedTaskStateRev == "" {
 		transaction.ReviewedTaskStateRev = result.TaskStateRev
@@ -559,6 +699,13 @@ func (d *Daemon) returnCompletionFindingToImplementer(project RegisteredProject,
 	if currentWork < result.WorkRevision {
 		return tuskerError("CAS_CONFLICT", "completion handback found an older work revision", withContext(map[string]any{"task": result.TaskID, "expected_work_revision": result.WorkRevision, "current_work_revision": currentWork}))
 	}
+	switch status {
+	case "done", "cancelled", "superseded":
+		// Terminal monotonicity also applies before our marker is written. A
+		// crash after failure_intent must finish bookkeeping, not rewind a
+		// concurrent terminal decision or poison every future poll.
+		return nil
+	}
 	if strings.Contains(task.Body, marker) {
 		switch status {
 		case "rework":
@@ -599,9 +746,22 @@ func (d *Daemon) newerReviewOwnsCompletionTask(projectID string, result ReviewRe
 		return false, err
 	}
 	for _, run := range runs {
-		if run.ProjectID == projectID && run.RecordID == result.TaskID && run.Lane == runLaneReview &&
-			run.ActiveAttemptID != "" && run.ActiveAttemptID != result.AttemptID &&
-			(run.WorkRevision >= result.WorkRevision || isDispatchingLeaseState(run.LeaseState)) {
+		if run.ProjectID != projectID || run.RecordID != result.TaskID || run.Lane != runLaneReview ||
+			run.ActiveAttemptID == "" || run.ActiveAttemptID == result.AttemptID ||
+			!isDispatchingLeaseState(run.LeaseState) {
+			continue
+		}
+		if run.WorkRevision > result.WorkRevision {
+			return true, nil
+		}
+		if run.WorkRevision != result.WorkRevision {
+			continue
+		}
+		attempts, attemptErr := d.store.ListAttemptsForRun(projectID, result.TaskID)
+		if attemptErr != nil {
+			return false, attemptErr
+		}
+		if completionAttemptFollowsResult(attempts, run.ActiveAttemptID, result) {
 			return true, nil
 		}
 	}
@@ -612,11 +772,47 @@ func (d *Daemon) newerReviewOwnsCompletionTask(projectID string, result ReviewRe
 	for _, candidate := range results {
 		if candidate.TaskID == result.TaskID && candidate.ResultRevision != result.ResultRevision &&
 			(candidate.WorkRevision > result.WorkRevision ||
-				(candidate.WorkRevision == result.WorkRevision && candidate.AttemptID != result.AttemptID)) {
+				(candidate.WorkRevision == result.WorkRevision && candidate.AttemptID != result.AttemptID &&
+					completionTimestampAfter(candidate.CreatedAt, result.CreatedAt))) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+func completionAttemptFollowsResult(attempts []RunAttempt, candidateID string, result ReviewResult) bool {
+	candidateAt, reviewedAt := "", ""
+	for _, attempt := range attempts {
+		switch attempt.AttemptID {
+		case candidateID:
+			candidateAt = attempt.StartedAt
+		case result.AttemptID:
+			reviewedAt = attempt.StartedAt
+		}
+	}
+	if completionTimestampAfter(candidateAt, result.CreatedAt) {
+		return true
+	}
+	return strings.TrimSpace(result.CreatedAt) == "" && completionTimestampAfter(candidateAt, reviewedAt)
+}
+
+func completionTimestampAfter(candidate, prior string) bool {
+	candidateAt, candidateOK := completionTimestamp(candidate)
+	priorAt, priorOK := completionTimestamp(prior)
+	return candidateOK && priorOK && candidateAt.After(priorAt)
+}
+
+func completionTimestamp(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func (d *Daemon) releaseCompletionReviewOwnership(project RegisteredProject, result ReviewResult, transaction *completionTransaction) error {
@@ -649,18 +845,11 @@ func (d *Daemon) releaseCompletionReviewOwnership(project RegisteredProject, res
 }
 
 func auditCompletionFailure(project RegisteredProject, result ReviewResult, transaction *completionTransaction) error {
-	task, err := resolveV7Note(project.VaultRoot, result.TaskID, "task")
+	wave, err := completionAuthorizedWave(project.VaultRoot, transaction)
 	if err != nil {
 		return err
 	}
-	waveID := stringField(task.Data, "wave")
-	if waveID == "" {
-		return nil
-	}
-	wave, err := resolveV7Note(project.VaultRoot, waveID, "wave")
-	if err != nil {
-		return err
-	}
+	waveID := stringField(wave.Data, "id")
 	entry := v7LandingAuditEntry{
 		Task: result.TaskID, Branch: result.ImplementationSHA, Target: v7WaveIntegrationBranch(wave),
 		DefectID: transaction.ID, GateResult: "fail", GateSummary: transaction.Failure,
@@ -689,7 +878,40 @@ func stageExactReviewCompletion(vaultPath, repoRoot, integrationBase string, res
 		if err := validateCompletionStagingCandidate(vaultPath, repoRoot, candidate, integrationBase, result, transaction); err != nil {
 			return "", err
 		}
-		return candidate, nil
+		expected, err := buildExactReviewCompletionCandidate(vaultPath, repoRoot, integrationBase, result, transaction)
+		if err != nil {
+			return "", err
+		}
+		if candidate != expected {
+			return "", tuskerError(errorInvalidTransition, "completion staging ref does not match the deterministic reviewed completion object")
+		}
+		return expected, nil
+	}
+	sha, err := buildExactReviewCompletionCandidate(vaultPath, repoRoot, integrationBase, result, transaction)
+	if err != nil {
+		return "", err
+	}
+	if err := validateCompletionStagingCandidate(vaultPath, repoRoot, sha, integrationBase, result, transaction); err != nil {
+		return "", err
+	}
+	transaction.StagedSHA = sha
+	if err := injectCompletionReactorCrash("staging_commit", transaction); err != nil {
+		return "", err
+	}
+	if err := updateGitRef(repoRoot, transaction.StagingRef, sha, strings.Repeat("0", 40)); err != nil {
+		if existing, readErr := gitOutputTrim(repoRoot, "rev-parse", transaction.StagingRef); readErr != nil || existing != sha {
+			return "", tuskerError(errorInvalidTransition, "completion staging ref compare-and-swap failed: "+firstActionableLine("", err.Error()))
+		}
+	}
+	if err := injectCompletionReactorCrash("staging_ref", transaction); err != nil {
+		return "", err
+	}
+	return sha, nil
+}
+
+func buildExactReviewCompletionCandidate(vaultPath, repoRoot, integrationBase string, result ReviewResult, transaction *completionTransaction) (string, error) {
+	if transaction == nil {
+		return "", tuskerError(errorInvalidArg, "completion staging requires a persisted transaction")
 	}
 	tmp, err := os.MkdirTemp("", "tusker-completion-stage-*")
 	if err != nil {
@@ -727,18 +949,6 @@ func stageExactReviewCompletion(vaultPath, repoRoot, integrationBase string, res
 	}
 	sha, err := gitOutputTrim(tmp, "rev-parse", "HEAD")
 	if err != nil {
-		return "", err
-	}
-	transaction.StagedSHA = sha
-	if err := injectCompletionReactorCrash("staging_commit", transaction); err != nil {
-		return "", err
-	}
-	if err := updateGitRef(repoRoot, transaction.StagingRef, sha, strings.Repeat("0", 40)); err != nil {
-		if existing, readErr := gitOutputTrim(repoRoot, "rev-parse", transaction.StagingRef); readErr != nil || existing != sha {
-			return "", tuskerError(errorInvalidTransition, "completion staging ref compare-and-swap failed: "+firstActionableLine("", err.Error()))
-		}
-	}
-	if err := injectCompletionReactorCrash("staging_ref", transaction); err != nil {
 		return "", err
 	}
 	return sha, nil
@@ -833,6 +1043,76 @@ func materializeReviewedDone(stageRoot, vaultPath string, result ReviewResult) e
 	body = appendCompletionVerification(body, row)
 	_, err = saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["task"], stringField(data, "state_rev"))
 	return err
+}
+
+// projectCompletionTaskToCanonical copies the authenticated staged task blob
+// byte-for-byte under the normal document lock. The original reviewed
+// state_rev is the CAS base; the immutable result marker makes a replay
+// distinguish our completed write from unrelated terminal state.
+func projectCompletionTaskToCanonical(vaultPath, repoRoot string, result ReviewResult, transaction *completionTransaction) error {
+	if transaction == nil || transaction.StagedSHA == "" {
+		return tuskerError(errorInvalidTransition, "canonical completion projection requires a staged commit")
+	}
+	rel := filepath.ToSlash(filepath.Join(relativeFromRepo(repoRoot, vaultPath), "work", "tasks", result.TaskID+".md"))
+	stagedRaw, err := gitCombined(repoRoot, "show", transaction.StagedSHA+":"+rel)
+	if err != nil {
+		return err
+	}
+	stagedData, stagedBody, err := parseFrontmatter(stagedRaw)
+	if err != nil {
+		return err
+	}
+	staged := Note{Data: stagedData, Body: stagedBody}
+	if effectiveV7Kind(stagedData) != "task" || stringField(stagedData, "id") != result.TaskID ||
+		!v7StateRevMatches(stagedData, stagedBody, stringField(stagedData, "state_rev")) ||
+		!completionCanonicalTaskMatches(staged, result, transaction) {
+		return tuskerError(errorInvalidTransition, "staged completion task is not the exact reviewed done projection")
+	}
+
+	taskPath := filepath.Join(vaultPath, "work", "tasks", result.TaskID+".md")
+	lock, err := acquireV7DocumentLock(taskPath, v7DocumentLockTimeout)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+
+	currentRaw, err := os.ReadFile(taskPath)
+	if err != nil {
+		return err
+	}
+	if string(currentRaw) == stagedRaw {
+		return nil
+	}
+	currentData, currentBody, err := parseFrontmatter(string(currentRaw))
+	if err != nil {
+		return err
+	}
+	currentState := stringField(currentData, "state_rev")
+	if currentState != "" && !v7StateRevMatches(currentData, currentBody, currentState) {
+		return tuskerError("CAS_CONFLICT", "canonical completion task content changed without a refreshed state_rev",
+			withPath(taskPath), withContext(map[string]any{"current_rev": currentState, "actual_rev": v7StateRev(currentData, currentBody)}))
+	}
+	current := Note{Data: currentData, Body: currentBody}
+	if completionCanonicalTaskMatches(current, result, transaction) {
+		return tuskerError("CAS_CONFLICT", "canonical completion marker exists with bytes that differ from the authenticated staged task",
+			withPath(taskPath), withContext(map[string]any{"task": result.TaskID, "result_revision": result.ResultRevision}))
+	}
+	currentSource := firstNonEmpty(stringField(currentData, "source_sha"), stringField(currentData, "source_commit"))
+	if currentState != transaction.ReviewedTaskStateRev ||
+		stringField(currentData, "status") != "review" ||
+		intField(currentData, "work_revision") != result.WorkRevision ||
+		currentSource != result.ImplementationSHA {
+		return tuskerError("CAS_CONFLICT", "canonical completion projection refused task drift after integration CAS",
+			withPath(taskPath), withContext(map[string]any{
+				"task": result.TaskID, "expected_state_rev": transaction.ReviewedTaskStateRev, "current_state_rev": currentState,
+				"expected_source": result.ImplementationSHA, "current_source": currentSource, "status": stringField(currentData, "status"),
+			}))
+	}
+	if err := atomicReplaceV7Document(taskPath, stagedRaw); err != nil {
+		return err
+	}
+	invalidateCachedNote(taskPath)
+	return nil
 }
 
 func appendCompletionVerification(body, row string) string {

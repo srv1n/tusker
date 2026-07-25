@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // This matrix stays intentionally small but exercises the authority boundary:
@@ -262,6 +263,101 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		}
 	})
 
+	t.Run("older same-work result cannot suppress later active handback", func(t *testing.T) {
+		vault, project, daemon, older := completionReactorFixture(t, false)
+		defer daemon.Close()
+		older.Verdict, older.Findings, older.CreatedAt = "changes_requested", []string{"obsolete finding"}, "2026-07-25T10:00:00Z"
+		older.ResultRevision = reviewResultFingerprint(older)
+		later := older
+		later.AttemptID = "review-2"
+		later.Findings = []string{"current finding"}
+		later.CreatedAt = "2026-07-25T11:00:00Z"
+		later.ResultRevision = reviewResultFingerprint(later)
+		if _, err := daemon.store.SaveReviewResult(older); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := daemon.store.SaveReviewResult(later); err != nil {
+			t.Fatal(err)
+		}
+		for _, attempt := range []RunAttempt{
+			{AttemptID: older.AttemptID, ProjectID: project.ProjectID, RecordID: older.TaskID, ItemID: older.TaskID, Runner: "codex", Lane: runLaneReview, WorkRevision: older.WorkRevision, StartedAt: "2026-07-25T09:55:00Z"},
+			{AttemptID: later.AttemptID, ProjectID: project.ProjectID, RecordID: later.TaskID, ItemID: later.TaskID, Runner: "codex", Lane: runLaneReview, WorkRevision: later.WorkRevision, StartedAt: "2026-07-25T10:55:00Z"},
+		} {
+			if err := daemon.store.SaveAttempt(attempt); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := daemon.store.UpsertRun(RunStatus{
+			ProjectID: project.ProjectID, RecordID: later.TaskID, ItemID: later.TaskID,
+			Runner: "codex", RunnerProfile: "review", Lane: runLaneReview,
+			LeaseState: string(LeaseStateRunning), ActiveAttemptID: later.AttemptID,
+			AttemptOutcome: string(AttemptOutcomeNone), WorkRevision: later.WorkRevision,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatal(err)
+		}
+		task, err := resolveV7Note(vault, later.TaskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		finding := generatedReviewerFindingContent(task.Body)
+		if stringField(task.Data, "status") != "rework" || !strings.Contains(finding, "current finding") || strings.Contains(finding, "obsolete finding") {
+			t.Fatalf("later handback lost same-work ordering: status=%s finding=%q", stringField(task.Data, "status"), finding)
+		}
+		laterTransaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, later.TaskID, later.ResultRevision)
+		if err != nil || laterTransaction == nil || laterTransaction.Phase != completionPhaseTerminal {
+			t.Fatalf("later handback did not terminalize: transaction=%#v err=%v", laterTransaction, err)
+		}
+	})
+
+	t.Run("pre-marker terminal state finishes failure bookkeeping monotonically", func(t *testing.T) {
+		for _, terminalStatus := range []string{"done", "cancelled"} {
+			t.Run(terminalStatus, func(t *testing.T) {
+				vault, project, daemon, result := completionReactorFixture(t, false)
+				defer daemon.Close()
+				result.Verdict, result.Findings = "changes_requested", []string{"superseded finding"}
+				result.ResultRevision = reviewResultFingerprint(result)
+				if _, err := daemon.store.SaveReviewResult(result); err != nil {
+					t.Fatal(err)
+				}
+				oldHook := completionReactorCrashHook
+				t.Cleanup(func() { completionReactorCrashHook = oldHook })
+				completionReactorCrashHook = func(point string, _ *completionTransaction) error {
+					if point == "failure_intent" {
+						return errors.New("injected pre-marker crash")
+					}
+					return nil
+				}
+				wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+				if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
+					t.Fatal("expected failure-intent crash")
+				}
+				setAutomationV7TaskFields(t, vault, result.TaskID, map[string]any{"status": terminalStatus, "readiness": terminalStatus})
+				completionReactorCrashHook = nil
+				if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+					t.Fatalf("terminal replay poisoned reconciliation: %v", err)
+				}
+				task, err := resolveV7Note(vault, result.TaskID, "task")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if stringField(task.Data, "status") != terminalStatus {
+					t.Fatalf("old handback rewound pre-marker terminal state: %#v", task.Data)
+				}
+				transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+				if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal {
+					t.Fatalf("terminal bookkeeping did not converge: transaction=%#v err=%v", transaction, err)
+				}
+				if strings.Contains(task.Body, completionHandbackMarker(transaction.ID)) {
+					t.Fatal("terminal replay wrote a stale handback marker")
+				}
+			})
+		}
+	})
+
 	t.Run("partial same revision handback finishes its own status flip", func(t *testing.T) {
 		vault, project, daemon, result := completionReactorFixture(t, false)
 		defer daemon.Close()
@@ -361,7 +457,17 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		wave, _, _ := armedWaveForTask(vault, note)
+		if stringField(note.Data, "status") != "done" || !strings.Contains(note.Body, "[tusker-review-result:"+result.ResultRevision+"]") {
+			t.Fatalf("canonical task was not projected from staged completion: %#v", note.Data)
+		}
+		transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil {
+			t.Fatalf("missing completion transaction: transaction=%#v err=%v", transaction, err)
+		}
+		wave, err := resolveV7Note(vault, transaction.WaveID, "wave")
+		if err != nil {
+			t.Fatal(err)
+		}
 		integration := "refs/heads/" + v7WaveIntegrationBranch(wave)
 		got, err := gitOutputTrim(project.RepoRoot, "rev-parse", integration)
 		if err != nil {
@@ -379,6 +485,98 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		}
 		if replay, _ := gitOutputTrim(project.RepoRoot, "rev-parse", integration); replay != got {
 			t.Fatalf("replay moved integration %s -> %s", got, replay)
+		}
+	})
+
+	t.Run("canonical pass unlocks hard successor in another armed wave", func(t *testing.T) {
+		repo, vault := newLandTestRepo(t, 2, "true")
+		waveOne, err := resolveV7Note(vault, "W-0001", "wave")
+		if err != nil {
+			t.Fatal(err)
+		}
+		waveData, waveBody, err := parseFrontmatterMustRead(waveOne.AbsolutePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waveData["members"] = []string{"APP-T-0001"}
+		if _, err := saveV7DocumentCAS(waveOne.AbsolutePath, waveData, waveBody, v7FrontmatterOrder["wave"], stringField(waveData, "state_rev")); err != nil {
+			t.Fatal(err)
+		}
+		setAutomationV7TaskFields(t, vault, "APP-T-0002", map[string]any{
+			"wave": "", "status": "ready", "readiness": "blocked_by_dependency",
+			"dependencies": []string{"APP-T-0001:hard"}, "next_owner": "blocked_dependency",
+			"next_source": "dependency", "next_ref": "APP-T-0001",
+		})
+		if err := waveV7CreateCmd(Args{"vault": vault, "quiet": "true", "_pos0": "Dependent batch", "_pos1": "APP-T-0002"}); err != nil {
+			t.Fatal(err)
+		}
+		dependent, err := resolveV7Note(vault, "APP-T-0002", "task")
+		if err != nil || stringField(dependent.Data, "wave") != "W-0002" {
+			t.Fatalf("dependent was not isolated in wave B: task=%#v err=%v", dependent.Data, err)
+		}
+		source := commitLandBranch(t, repo, "source/APP-T-0001", "integration/W-0001", map[string]string{"predecessor.txt": "reviewed\n"})
+		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+			"status": "review", "readiness": "waiting_on_review", "proof_status": "satisfied",
+			"source_sha": source, "work_revision": 1,
+		})
+		armScheduledPromotionWaveForTest(t, vault, "W-0001")
+		armScheduledPromotionWaveForTest(t, vault, "W-0002")
+
+		project := newRegisteredProject(repo, vault)
+		stateRoot := filepath.Join(t.TempDir(), "state")
+		t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+		daemon, err := NewDaemon(stateRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer daemon.Close()
+		reviewed, err := resolveV7Note(vault, "APP-T-0001", "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		proof, gates, err := reviewObjectiveSnapshots(vault, reviewed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := ReviewResult{
+			Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: "APP-T-0001",
+			TaskStateRev: stringField(reviewed.Data, "state_rev"), WorkRevision: 1,
+			ImplementationSHA: source, AttemptID: "review-predecessor", Actor: "reviewer:agent",
+			Runner: "codex", RunnerProfile: "review", Covers: []string{"A1"},
+			ProofFingerprint: proof, GateFingerprint: gates, Verdict: "pass", Summary: "predecessor objective pass",
+		}
+		result.ResultRevision = reviewResultFingerprint(result)
+		if _, err := daemon.store.SaveReviewResult(result); err != nil {
+			t.Fatal(err)
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatal(err)
+		}
+		canonical, err := resolveV7Note(vault, result.TaskID, "task")
+		if err != nil || stringField(canonical.Data, "status") != "done" {
+			t.Fatalf("predecessor canonical state did not close: task=%#v err=%v", canonical.Data, err)
+		}
+		idx, err := loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waveTwo := idx.Waves["W-0002"]
+		snapshot := buildArmedWaveSnapshot(vault, idx, waveTwo, nil, time.Unix(0, 0).UTC())
+		frontierCount := 0
+		for _, id := range snapshot.Frontier {
+			if id == "APP-T-0002" {
+				frontierCount++
+			}
+		}
+		if frontierCount != 1 {
+			t.Fatalf("hard successor frontier count=%d, want exactly one: %#v", frontierCount, snapshot)
+		}
+		claimed := buildArmedWaveSnapshot(vault, idx, waveTwo, map[string]RunStatus{
+			"APP-T-0002": {ProjectID: project.ProjectID, RecordID: "APP-T-0002", ItemID: "APP-T-0002", LeaseState: string(LeaseStateRunning)},
+		}, time.Unix(0, 0).UTC())
+		if containsString(claimed.Frontier, "APP-T-0002") {
+			t.Fatalf("claimed cross-wave successor remained dispatchable: %#v", claimed)
 		}
 	})
 
@@ -447,6 +645,46 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if !gitMergeBaseAncestor(repo, source, got) {
 			t.Fatal("standalone pass did not merge exact reviewed SHA")
 		}
+		transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal || transaction.WaveID != stringField(wave.Data, "id") {
+			t.Fatalf("standalone completion did not terminalize on its frozen singleton: transaction=%#v err=%v", transaction, err)
+		}
+		canonical, err := resolveV7Note(vault, result.TaskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stringField(canonical.Data, "status") != "done" ||
+			strings.Count(canonical.Body, "[tusker-review-result:"+result.ResultRevision+"]") != 1 ||
+			strings.Contains(canonical.Body, completionHandbackMarker(transaction.ID)) {
+			t.Fatalf("standalone canonical projection is not exactly one pass: %#v", canonical.Data)
+		}
+		idx, err := loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		projected := v7ProjectedTaskState(vault, canonical, idx)
+		if stringField(projected, "readiness") != "done" {
+			t.Fatalf("standalone effective state is not done: %#v", projected)
+		}
+		auditedWave, err := resolveV7Note(vault, transaction.WaveID, "wave")
+		if err != nil {
+			t.Fatal(err)
+		}
+		passes, failures := 0, 0
+		for _, row := range normalizeLandingAudit(auditedWave.Data["landings"]) {
+			if stringField(row, "task") != result.TaskID {
+				continue
+			}
+			switch stringField(row, "gate_result") {
+			case "pass":
+				passes++
+			case "fail":
+				failures++
+			}
+		}
+		if passes != 1 || failures != 0 {
+			t.Fatalf("standalone landing audit passes=%d failures=%d, want 1/0", passes, failures)
+		}
 	})
 
 	t.Run("first completion creates a ref-less integration lane by CAS", func(t *testing.T) {
@@ -496,7 +734,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 	})
 
 	t.Run("phase crash matrix converges on one staged commit", func(t *testing.T) {
-		for _, point := range []string{"staging_commit", "staging_ref", "gate", "ref_commit", "audit", "wake"} {
+		for _, point := range []string{"staging_commit", "staging_ref", "gate", "ref_commit", "canonical_projection", "audit", "wake"} {
 			t.Run(point, func(t *testing.T) {
 				vault, project, daemon, result := completionReactorFixture(t, true)
 				if _, err := daemon.store.SaveReviewResult(result); err != nil {
@@ -557,13 +795,9 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 				if err != nil || stagingSHA != capturedSHA {
 					t.Fatalf("%s staging ref lost candidate: got=%s err=%v", point, stagingSHA, err)
 				}
-				task, err := resolveV7Note(vault, result.TaskID, "task")
+				wave, err := resolveV7Note(vault, transaction.WaveID, "wave")
 				if err != nil {
 					t.Fatal(err)
-				}
-				wave, ok := completionWaveForReviewedTask(vault, task)
-				if !ok {
-					t.Fatal("fixture wave disappeared")
 				}
 				integrated, err := gitOutputTrim(project.RepoRoot, "rev-parse", "refs/heads/"+v7WaveIntegrationBranch(wave))
 				if err != nil || integrated != capturedSHA {
@@ -632,6 +866,72 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		after, err := gitOutputTrim(project.RepoRoot, "rev-parse", integrationRef)
 		if err != nil || after != before {
 			t.Fatalf("tampered ref moved integration: before=%s after=%s err=%v", before, after, err)
+		}
+	})
+
+	t.Run("exact-parent staging ref with extra tree content is refused", func(t *testing.T) {
+		vault, project, daemon, result := completionReactorFixture(t, true)
+		defer daemon.Close()
+		if _, err := daemon.store.SaveReviewResult(result); err != nil {
+			t.Fatal(err)
+		}
+		oldHook := completionReactorCrashHook
+		t.Cleanup(func() { completionReactorCrashHook = oldHook })
+		completionReactorCrashHook = func(point string, _ *completionTransaction) error {
+			if point == "staging_intent" {
+				return errors.New("injected crash before deterministic staging")
+			}
+			return nil
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
+			t.Fatal("expected staging-intent crash")
+		}
+		transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil || transaction.Phase != completionPhaseStaging {
+			t.Fatalf("missing staging intent: transaction=%#v err=%v", transaction, err)
+		}
+		integrationBefore, err := gitOutputTrim(project.RepoRoot, "rev-parse", transaction.IntegrationRef)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected, err := buildExactReviewCompletionCandidate(vault, project.RepoRoot, transaction.IntegrationBase, result, transaction)
+		if err != nil {
+			t.Fatal(err)
+		}
+		worktree := filepath.Join(t.TempDir(), "forged-staging")
+		runGitDir(t, project.RepoRoot, "worktree", "add", "--detach", worktree, expected)
+		if err := writeText(filepath.Join(worktree, "smuggled.txt"), "not reviewed\n"); err != nil {
+			t.Fatal(err)
+		}
+		runGitDir(t, worktree, "add", "--", "smuggled.txt")
+		tree := strings.TrimSpace(gitDirOutput(t, worktree, "write-tree"))
+		runGitDir(t, project.RepoRoot, "worktree", "remove", "--force", worktree)
+		message := "Complete reviewed task " + result.TaskID + "\n\nTusker-Completion: " + transaction.ID
+		forged, err := gitOutputTrim(project.RepoRoot, "commit-tree", tree,
+			"-p", transaction.IntegrationBase, "-p", result.ImplementationSHA, "-m", message)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parents, err := gitOutputTrim(project.RepoRoot, "rev-list", "--parents", "-n", "1", forged)
+		if err != nil || len(strings.Fields(parents)) != 3 {
+			t.Fatalf("forged test commit lost exact parent shape: %q err=%v", parents, err)
+		}
+		if err := updateGitRef(project.RepoRoot, transaction.StagingRef, forged, strings.Repeat("0", 40)); err != nil {
+			t.Fatal(err)
+		}
+		completionReactorCrashHook = nil
+		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatal(err)
+		}
+		transaction, err = daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal ||
+			!strings.Contains(transaction.Failure, "deterministic reviewed completion object") {
+			t.Fatalf("forged exact-parent tree was not classified: transaction=%#v err=%v", transaction, err)
+		}
+		integrationAfter, err := gitOutputTrim(project.RepoRoot, "rev-parse", transaction.IntegrationRef)
+		if err != nil || integrationAfter != integrationBefore {
+			t.Fatalf("forged exact-parent tree moved integration: before=%s after=%s err=%v", integrationBefore, integrationAfter, err)
 		}
 	})
 }
