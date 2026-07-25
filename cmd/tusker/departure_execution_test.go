@@ -83,7 +83,7 @@ func TestDepartureExecution(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		recovered, err := scheduledPromotionTaskSourceSHA(fixture.repo, integrationAfter, "integration/W-0001", idx.Waves["W-0001"], idx.Tasks["APP-T-0001"])
+		recovered, err := scheduledPromotionTaskSourceSHAWithStore(fixture.repo, integrationAfter, "integration/W-0001", idx.Waves["W-0001"], idx.Tasks["APP-T-0001"], store)
 		if err != nil || recovered != sourceSHA {
 			t.Fatalf("exact audit did not fence mutable branch fallback: recovered=%s want=%s err=%v", recovered, sourceSHA, err)
 		}
@@ -1392,16 +1392,26 @@ func assertDepartureLandingSource(t *testing.T, vault, waveID, taskID, sourceSHA
 			if branch := stringField(row, "branch"); branch != "task/"+taskID {
 				t.Fatalf("%s exact landing audit branch = %q", taskID, branch)
 			}
+			actor := stringField(row, "actor")
+			fingerprint := stringField(row, "receipt_fingerprint")
 			if stringField(row, "commit") == "" ||
 				stringField(row, "tree") == "" ||
 				stringField(row, "base_sha") == "" ||
 				stringField(row, "merge_commit") == "" ||
 				stringField(row, "source_provenance") == "" ||
 				stringField(row, "gate_fingerprint") == "" ||
-				stringField(row, "receipt_fingerprint") == "" ||
+				fingerprint == "" ||
 				stringField(row, "control_authority") == "" ||
+				!trustedV7LandingControlAuthority(stringField(row, "control_authority"), actor) ||
 				stringField(row, "provenance") != v7LandingAuditProvenance {
 				t.Fatalf("%s exact landing audit is not authenticated: %#v", taskID, row)
+			}
+			receipt, ok := loadV7LandingReceipt(vault, fingerprint)
+			if !ok ||
+				receipt.Actor != actor ||
+				receipt.ControlAuthority != stringField(row, "control_authority") ||
+				receipt.Fingerprint != fingerprint {
+				t.Fatalf("%s exact landing audit lost its signed receipt identity: row=%#v receipt=%#v loaded=%v", taskID, row, receipt, ok)
 			}
 			return
 		}

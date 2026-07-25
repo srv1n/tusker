@@ -76,8 +76,10 @@ func v7LandingRepoIdentity(repoRoot string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	remote, _ := gitOutputTrim(root, "config", "--get", "remote.origin.url")
-	sum := sha256.Sum256([]byte(strings.Join([]string{root, gitDir, remote}, "\x00")))
+	// Remote configuration is mutable transport metadata, not repository
+	// identity. A receipt issued before `remote add`, a URL migration, or a
+	// mirror cutover must remain bound to the same physical Git repository.
+	sum := sha256.Sum256([]byte(strings.Join([]string{"tusker.repo-identity/v2", root, gitDir}, "\x00")))
 	return fmt.Sprintf("sha256:%x", sum), nil
 }
 

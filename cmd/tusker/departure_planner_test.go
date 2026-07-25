@@ -233,6 +233,7 @@ func TestDeparturePlannerDiscoversCompletedWaveFromExactLandingAudits(t *testing
 	); err != nil {
 		t.Fatal(err)
 	}
+	assertDepartureLandingSource(t, fixture.vault, "W-0001", "APP-T-0002", sourceTwo)
 	clearDepartureTaskSourceForTest(t, fixture.vault, "APP-T-0002")
 	armScheduledPromotionWaveForTest(t, fixture.vault, "W-0001")
 

@@ -175,6 +175,27 @@ func TestV7LandingAuthorityVerificationUsesIssuingDaemonStore(t *testing.T) {
 	}
 }
 
+func TestV7LandingRepoIdentitySurvivesRemoteConfiguration(t *testing.T) {
+	repo, _ := newLandTestRepo(t, 1, "true")
+	before, err := v7LandingRepoIdentity(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "remote", "add", "origin", filepath.Join(t.TempDir(), "first.git"))
+	afterAdd, err := v7LandingRepoIdentity(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "second.git"))
+	afterMigration, err := v7LandingRepoIdentity(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != afterAdd || before != afterMigration {
+		t.Fatalf("mutable remote configuration changed landing receipt repository identity: before=%s after_add=%s after_migration=%s", before, afterAdd, afterMigration)
+	}
+}
+
 func TestV7LandingAuthorityRejectsForgedWaveDrainReceiptIndex(t *testing.T) {
 	repo, vault := newLandTestRepo(t, 1, "true")
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))

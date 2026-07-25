@@ -909,7 +909,8 @@ func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string,
 				GateResult: "pass", GateSummary: result.Receipt.GateSummary,
 				GateFingerprint: result.Receipt.GateFingerprint, ReceiptFingerprint: result.Receipt.Fingerprint,
 				ControlAuthority: result.Receipt.ControlAuthority,
-				Commit:           result.Receipt.BatchHeadSHA, Tree: result.Receipt.BatchTreeSHA, Timestamp: now,
+				Commit:           result.Receipt.BatchHeadSHA, Tree: result.Receipt.BatchTreeSHA,
+				Actor: result.Receipt.Actor, Timestamp: now,
 			}})
 		}
 		return nil
