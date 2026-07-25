@@ -431,7 +431,7 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		gateOutput, _ := os.ReadFile(artifactRefs[len(artifactRefs)-1])
 		owner := promotionFailureOwner(before.Candidate)
 		touched, touchStatus := []string(nil), "unavailable"
-		if paths, pathErr := gitOutputTrim(v7RepoRoot(vaultPath), "diff", "--name-only", "-z", before.Candidate.ExpectedDefaultBranchSHA+".."+before.Candidate.CandidateSHA); pathErr == nil {
+		if paths, pathErr := gitCombined(v7RepoRoot(vaultPath), "diff", "--name-only", "-z", before.Candidate.ExpectedDefaultBranchSHA+".."+before.Candidate.CandidateSHA); pathErr == nil {
 			touched = promotionTouchedPathsFromNUL(paths)
 			touchStatus = "proven"
 		}

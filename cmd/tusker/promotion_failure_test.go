@@ -63,8 +63,8 @@ func TestPromotionFailureHardAndSoftSuccessorSemantics(t *testing.T) {
 }
 
 func TestPromotionTouchedPathsPreservesLegalNewlineFilename(t *testing.T) {
-	paths := promotionTouchedPathsFromNUL("zeta\x00dir/line\nbreak.go\x00alpha\x00")
-	if len(paths) != 3 || paths[1] != "dir/line\nbreak.go" {
+	paths := promotionTouchedPathsFromNUL("zeta \x00dir/line\nbreak.go\x00 alpha\x00")
+	if len(paths) != 3 || paths[0] != " alpha" || paths[1] != "dir/line\nbreak.go" || paths[2] != "zeta " {
 		t.Fatalf("NUL path parsing split a legal filename: %#v", paths)
 	}
 }
