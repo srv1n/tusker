@@ -1265,10 +1265,14 @@ func runV7LandingGateCommand(workDir, command string, isolated bool) ([]byte, er
 	}
 	gitDir := sandboxGitMetadataPath(workDir)
 	runtimePaths := sandboxToolchainReadPaths()
-	profile := `(version 1) (deny default) (deny network*) (allow process*) ` +
+	// Darwin's shell/toolchain startup probes a small read-only sysctl set and
+	// opens these two kernel devices even for a no-op command. They are not
+	// filesystem authority over user state, but withholding them causes
+	// sandbox-exec to abort before the gate command begins.
+	profile := `(version 1) (deny default) (deny network*) (allow process*) (allow sysctl-read) ` +
 		`(allow file-read* (subpath "` + sandboxProfilePath(worktreePath) + `") (subpath "` + sandboxProfilePath(scratchPath) + `") ` + sandboxProfileSubpath(moduleCachePath) + sandboxProfileSubpath(gitDir) +
 		runtimePaths + `(subpath "/usr") (subpath "/bin") (subpath "/private/etc") (subpath "/dev") (subpath "/System") (subpath "/Library/Developer") (subpath "/Applications/Xcode.app")) ` +
-		`(allow file-write* (subpath "` + sandboxProfilePath(worktreePath) + `") (subpath "` + sandboxProfilePath(scratchPath) + `") (literal "/dev/null"))`
+		`(allow file-write* (subpath "` + sandboxProfilePath(worktreePath) + `") (subpath "` + sandboxProfilePath(scratchPath) + `") (literal "/dev/null") (literal "/dev/dtracehelper") (literal "/dev/tty"))`
 	cmd := exec.Command(sandboxExec, "-p", profile, "sh", "-c", command)
 	cmd.Dir = workDir
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + scratchPath, "TMPDIR=" + scratchPath, "GOCACHE=" + goCache, "GOMODCACHE=" + moduleCache, "LANG=C", "LC_ALL=C"}
