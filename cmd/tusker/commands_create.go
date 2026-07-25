@@ -90,6 +90,10 @@ automation:
   # an explicit operator change may authorize daemon dispatch.
   enabled: false
   dispatch_scope: armed_waves
+  # The deterministic review-completion reactor is separately opt-in. Its
+  # modes are disabled, shadow (read-only comparison), and authoritative.
+  completion_reactor:
+    mode: disabled
   trigger_states: [ready, rework]
   default_runner: codex_exec
   enabled_runners: [codex_exec, claude-code]
