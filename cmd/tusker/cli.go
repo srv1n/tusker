@@ -142,7 +142,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "gate-ledger", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "trace", "escalate", "departure":
+	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "gate-ledger", "context", "config", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "trace", "escalate", "departure":
 		return true
 	default:
 		return false
