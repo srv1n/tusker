@@ -376,7 +376,7 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	}
 	leaseOwner := "departure:" + run.ID
 	lease, acquired, err := store.AcquireResourceLease(ResourceLeaseAcquireInput{
-		Name: "gate:full", Owner: leaseOwner, Purpose: "scheduled full promotion gate",
+		Name: "gate:full", Owner: leaseOwner, Purpose: scheduledPromotionResourcePurpose,
 		ProjectID: projectID, DepartureID: run.ID, TTL: scheduledPromotionResourceLeaseTTL,
 	})
 	if err != nil {

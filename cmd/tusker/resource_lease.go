@@ -2,9 +2,11 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -67,11 +69,117 @@ type ResourceLeaseRecovery struct {
 }
 
 const (
-	resourceLeaseHeld       = "held"
-	resourceLeaseReleased   = "released"
-	resourceLeaseRefusal    = "RESOURCE_LEASE_HELD"
-	defaultResourceLeaseTTL = 2 * time.Minute
+	resourceLeaseHeld                  = "held"
+	resourceLeaseReleased              = "released"
+	resourceLeaseRefusal               = "RESOURCE_LEASE_HELD"
+	defaultResourceLeaseTTL            = 2 * time.Minute
+	scheduledPromotionResourcePurpose  = "scheduled full promotion gate"
+	resourceLeaseDurableHolderUnknown  = 0
+	resourceLeaseDurableHolderAlive    = 1
+	resourceLeaseDurableHolderNotAlive = 2
 )
+
+var resourceLeaseWaiterState = struct {
+	sync.Mutex
+	notify func(stateRoot, resourceName, projectID string)
+}{
+	notify: func(stateRoot, resourceName, projectID string) {
+		_ = sendDaemonControlOneWay(stateRoot, daemonControlRequest{
+			Command: "reconcile_project", ProjectID: projectID, Cause: "resource_release:" + resourceName,
+		}, 250*time.Millisecond)
+	},
+}
+
+func resourceLeaseWaiterSetting(name string) string {
+	return "resource_lease_waiters_v1:" + strings.TrimSpace(name)
+}
+
+// RegisterResourceLeaseWaiter records only the project identity. Task-level
+// eligibility remains rebuildable from canonical notes; the durable waiter set
+// exists solely so a global resource release can target the affected projects.
+func (s *RuntimeStore) RegisterResourceLeaseWaiter(name, projectID string) error {
+	name, projectID = strings.TrimSpace(name), strings.TrimSpace(projectID)
+	if name == "" || projectID == "" {
+		return tuskerError(errorInvalidArg, "resource waiter requires resource name and project_id")
+	}
+	resourceLeaseWaiterState.Lock()
+	defer resourceLeaseWaiterState.Unlock()
+	waiters, err := s.resourceLeaseWaitersLocked(name)
+	if err != nil {
+		return err
+	}
+	if containsString(waiters, projectID) {
+		return nil
+	}
+	waiters = sortedStrings(append(waiters, projectID))
+	raw, err := json.Marshal(waiters)
+	if err != nil {
+		return err
+	}
+	return s.SetSetting(resourceLeaseWaiterSetting(name), string(raw))
+}
+
+func (s *RuntimeStore) ClearResourceLeaseWaiter(name, projectID string) error {
+	name, projectID = strings.TrimSpace(name), strings.TrimSpace(projectID)
+	if name == "" || projectID == "" {
+		return nil
+	}
+	resourceLeaseWaiterState.Lock()
+	defer resourceLeaseWaiterState.Unlock()
+	waiters, err := s.resourceLeaseWaitersLocked(name)
+	if err != nil || !containsString(waiters, projectID) {
+		return err
+	}
+	filtered := make([]string, 0, len(waiters)-1)
+	for _, waiter := range waiters {
+		if waiter != projectID {
+			filtered = append(filtered, waiter)
+		}
+	}
+	raw, err := json.Marshal(filtered)
+	if err != nil {
+		return err
+	}
+	return s.SetSetting(resourceLeaseWaiterSetting(name), string(raw))
+}
+
+func (s *RuntimeStore) resourceLeaseWaitersLocked(name string) ([]string, error) {
+	raw, err := s.GetSetting(resourceLeaseWaiterSetting(name))
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil, err
+	}
+	var waiters []string
+	if err := json.Unmarshal([]byte(raw), &waiters); err != nil {
+		return nil, nil
+	}
+	return sortedStrings(uniqueStrings(waiters)), nil
+}
+
+func (s *RuntimeStore) takeResourceLeaseWaiters(name string) ([]string, error) {
+	resourceLeaseWaiterState.Lock()
+	defer resourceLeaseWaiterState.Unlock()
+	waiters, err := s.resourceLeaseWaitersLocked(name)
+	if err != nil || len(waiters) == 0 {
+		return waiters, err
+	}
+	if err := s.SetSetting(resourceLeaseWaiterSetting(name), "[]"); err != nil {
+		return nil, err
+	}
+	return waiters, nil
+}
+
+func (s *RuntimeStore) notifyResourceLeaseWaiters(name string) {
+	waiters, err := s.takeResourceLeaseWaiters(name)
+	if err != nil {
+		return
+	}
+	resourceLeaseWaiterState.Lock()
+	notify := resourceLeaseWaiterState.notify
+	resourceLeaseWaiterState.Unlock()
+	for _, projectID := range waiters {
+		notify(s.stateRoot, strings.TrimSpace(name), projectID)
+	}
+}
 
 func normalizeResourceLeaseNow(now time.Time) time.Time {
 	if now.IsZero() {
@@ -96,6 +204,58 @@ func resourceLeaseContention(lease ResourceLease, liveness string) error {
 			"departure_id": lease.DepartureID, "generation": lease.Generation,
 			"expires_at": lease.ExpiresAt, "liveness": liveness,
 		}))
+}
+
+type resourceLeaseRowQuerier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+func scheduledPromotionResourceDepartureID(lease ResourceLease) (string, bool) {
+	departureID := strings.TrimSpace(lease.DepartureID)
+	if strings.TrimSpace(lease.Purpose) != scheduledPromotionResourcePurpose ||
+		departureID == "" || strings.TrimSpace(lease.Owner) != "departure:"+departureID {
+		return "", false
+	}
+	return departureID, true
+}
+
+func resourceLeaseDurableHolderState(query resourceLeaseRowQuerier, lease ResourceLease) (int, string, error) {
+	recordID, taskDispatch := fairDispatchResourceRecordID(lease)
+	if taskDispatch {
+		var count int
+		err := query.QueryRow(`
+			SELECT COUNT(1)
+			FROM runs
+			WHERE project_id=? AND record_id=? AND lease_owner=?
+				AND terminal=0 AND lease_state IN ('claimed', 'running')`,
+			lease.ProjectID, recordID, lease.Owner,
+		).Scan(&count)
+		if err != nil {
+			return resourceLeaseDurableHolderUnknown, "", err
+		}
+		if count > 0 {
+			return resourceLeaseDurableHolderAlive, "run", nil
+		}
+		return resourceLeaseDurableHolderNotAlive, "run", nil
+	}
+	departureID, scheduledPromotion := scheduledPromotionResourceDepartureID(lease)
+	if !scheduledPromotion {
+		return resourceLeaseDurableHolderUnknown, "", nil
+	}
+	var state string
+	err := query.QueryRow(`SELECT state FROM departure_runs WHERE id=? AND project_id=?`, departureID, lease.ProjectID).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return resourceLeaseDurableHolderNotAlive, "scheduled promotion", nil
+	}
+	if err != nil {
+		return resourceLeaseDurableHolderUnknown, "", err
+	}
+	// Only the gating state owns gate:full. Once the departure advances,
+	// terminates, or disappears, its old gate reservation is stale.
+	if DepartureState(strings.TrimSpace(state)) == DepartureStateGating {
+		return resourceLeaseDurableHolderAlive, "scheduled promotion", nil
+	}
+	return resourceLeaseDurableHolderNotAlive, "scheduled promotion", nil
 }
 
 // AcquireResourceLease atomically acquires one globally named resource. It is
@@ -141,8 +301,23 @@ func (s *RuntimeStore) AcquireResourceLease(input ResourceLeaseAcquireInput) (Re
 					return resourceLeaseContention(current, "fresh")
 				}
 			}
-			if !freshHolder && input.HolderAlive != nil && input.HolderAlive(current) {
-				return resourceLeaseContention(current, "lease_expired_holder_alive")
+			if !freshHolder {
+				durableState, _, err := resourceLeaseDurableHolderState(tx, current)
+				if err != nil {
+					return err
+				}
+				holderAlive := durableState == resourceLeaseDurableHolderAlive
+				if durableState == resourceLeaseDurableHolderUnknown && input.HolderAlive != nil {
+					holderAlive = input.HolderAlive(current)
+				}
+				if holderAlive {
+					if !sameHolder {
+						return resourceLeaseContention(current, "lease_expired_holder_alive")
+					}
+					// The exact task-run owner is still authoritative. Treat its
+					// expired row as an idempotent heartbeat; no fence changed.
+					freshHolder = true
+				}
 			}
 		}
 		generation := 1
@@ -255,7 +430,44 @@ func (s *RuntimeStore) ReleaseResourceLease(name, owner string, generation int, 
 		return false, err
 	}
 	changed, err := result.RowsAffected()
-	return changed == 1, err
+	if err != nil {
+		return false, err
+	}
+	if changed == 1 {
+		s.notifyResourceLeaseWaiters(name)
+	}
+	return changed == 1, nil
+}
+
+func (s *RuntimeStore) releaseInactiveTaskResourceLeases(projectID, recordID, reason string, now time.Time) error {
+	projectID, recordID = strings.TrimSpace(projectID), strings.TrimSpace(recordID)
+	if projectID == "" || recordID == "" {
+		return nil
+	}
+	leases, err := s.ListResourceLeases()
+	if err != nil {
+		return err
+	}
+	var releaseErr error
+	for _, lease := range leases {
+		leaseRecordID, taskDispatch := fairDispatchResourceRecordID(lease)
+		if !taskDispatch || lease.State != resourceLeaseHeld ||
+			lease.ProjectID != projectID || leaseRecordID != recordID {
+			continue
+		}
+		durableState, _, err := resourceLeaseDurableHolderState(s.db, lease)
+		if err != nil {
+			releaseErr = errors.Join(releaseErr, err)
+			continue
+		}
+		if durableState == resourceLeaseDurableHolderAlive {
+			continue
+		}
+		if _, err := s.ReleaseResourceLease(lease.Name, lease.Owner, lease.Generation, reason, now); err != nil {
+			releaseErr = errors.Join(releaseErr, err)
+		}
+	}
+	return releaseErr
 }
 
 // ReconcileExpiredResourceLeases is startup-safe. A verified-live holder is
@@ -279,8 +491,27 @@ func (s *RuntimeStore) ReconcileExpiredResourceLeases(now time.Time, holderAlive
 		if err != nil || expires.After(now) {
 			continue
 		}
-		if holderAlive != nil && holderAlive(lease) {
+		durableState, durableKind, durableErr := resourceLeaseDurableHolderState(s.db, lease)
+		if durableErr != nil {
+			return nil, durableErr
+		}
+		if durableState == resourceLeaseDurableHolderUnknown && holderAlive != nil && holderAlive(lease) {
 			result = append(result, ResourceLeaseRecovery{Lease: lease, Reason: "lease expired but holder is verified alive"})
+			continue
+		}
+		if durableState == resourceLeaseDurableHolderAlive {
+			reacquired, acquired, acquireErr := s.AcquireResourceLease(ResourceLeaseAcquireInput{
+				Name: lease.Name, Owner: lease.Owner, Purpose: lease.Purpose,
+				ProjectID: lease.ProjectID, DepartureID: lease.DepartureID,
+				TTL: defaultResourceLeaseTTL, Now: now,
+			})
+			if acquireErr != nil {
+				return nil, acquireErr
+			}
+			result = append(result, ResourceLeaseRecovery{
+				Lease: reacquired, Recovered: acquired,
+				Reason: "expired resource reacquired for its live " + durableKind + " owner",
+			})
 			continue
 		}
 		changed, releaseErr := s.ReleaseResourceLease(lease.Name, lease.Owner, lease.Generation, "daemon restart reconciliation: lease expired", now)

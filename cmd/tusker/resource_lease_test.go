@@ -156,3 +156,104 @@ func TestResourceLeaseTerminalReleaseAndRestartRecovery(t *testing.T) {
 		t.Fatalf("recovered lease not released: %#v %v", stored, err)
 	}
 }
+
+func TestResourceLeaseScheduledPromotionLivenessFencesTaskAndRestartRecovery(t *testing.T) {
+	stateRoot := t.TempDir()
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	departure, _, err := store.GetOrCreateDepartureRun(DepartureRun{
+		ProjectID: "promotion-project", PolicyID: "scheduled-promotion/v1/promote",
+		ScheduledWindow: "2026-07-25T10:00:00Z", State: DepartureStateGating,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredAt := time.Now().UTC().Add(-5 * time.Minute)
+	lease, acquired, err := store.AcquireResourceLease(ResourceLeaseAcquireInput{
+		Name: "gate:full", Owner: "departure:" + departure.ID,
+		Purpose: scheduledPromotionResourcePurpose, ProjectID: departure.ProjectID,
+		DepartureID: departure.ID, TTL: time.Minute, Now: expiredAt,
+	})
+	if err != nil || !acquired {
+		t.Fatalf("scheduled promotion acquire: %#v acquired=%t err=%v", lease, acquired, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Opening the runtime store performs restart reconciliation. The durable
+	// gating departure must refresh its exact fence before a task can contend.
+	store, err = OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	restarted, err := store.FindResourceLease(lease.Name)
+	if err != nil || restarted == nil || restarted.State != resourceLeaseHeld ||
+		restarted.Generation != lease.Generation {
+		t.Fatalf("restart lost live scheduled promotion fence: %#v err=%v", restarted, err)
+	}
+	contendAt := time.Now().UTC().Add(3 * time.Minute)
+	_, acquired, err = store.AcquireResourceLease(ResourceLeaseAcquireInput{
+		Name: lease.Name, Owner: "task-attempt", Purpose: fairDispatchResourcePurpose("APP-T-0001"),
+		ProjectID: "task-project", DepartureID: "APP-T-0001", TTL: time.Minute, Now: contendAt,
+	})
+	var refusal *TuskerError
+	if acquired || !errors.As(err, &refusal) || refusal.Code != resourceLeaseRefusal {
+		t.Fatalf("task stole expired live promotion lease: acquired=%t err=%v", acquired, err)
+	}
+	recoveries, err := store.ReconcileExpiredResourceLeases(contendAt, nil)
+	if err != nil || len(recoveries) != 1 ||
+		!strings.Contains(recoveries[0].Reason, "live scheduled promotion owner") ||
+		recoveries[0].Lease.Generation != lease.Generation {
+		t.Fatalf("restart reconciliation did not preserve promotion fence: %#v err=%v", recoveries, err)
+	}
+
+	// Promoted is no longer the gating owner even though it is not a terminal
+	// departure state. Its stale gate lease must eventually be released.
+	next := departure
+	next.State = DepartureStatePromoted
+	changed, err := store.TransitionDepartureRun(next, departure.StateRevision)
+	if err != nil || !changed {
+		t.Fatalf("advance departure: changed=%t err=%v", changed, err)
+	}
+	recoveries, err = store.ReconcileExpiredResourceLeases(contendAt.Add(3*time.Minute), nil)
+	if err != nil || len(recoveries) != 1 || !recoveries[0].Recovered {
+		t.Fatalf("stale promoted departure lease was not released: %#v err=%v", recoveries, err)
+	}
+	stale, err := store.FindResourceLease(lease.Name)
+	if err != nil || stale == nil || stale.State != resourceLeaseReleased {
+		t.Fatalf("stale promotion lease remains held: %#v err=%v", stale, err)
+	}
+
+	terminalDeparture, _, err := store.GetOrCreateDepartureRun(DepartureRun{
+		ProjectID: "promotion-project", PolicyID: "scheduled-promotion/v1/promote",
+		ScheduledWindow: "2026-07-25T11:00:00Z", State: DepartureStateGating,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminalLease, acquired, err := store.AcquireResourceLease(ResourceLeaseAcquireInput{
+		Name: "gate:full-terminal", Owner: "departure:" + terminalDeparture.ID,
+		Purpose: scheduledPromotionResourcePurpose, ProjectID: terminalDeparture.ProjectID,
+		DepartureID: terminalDeparture.ID, TTL: time.Minute, Now: contendAt,
+	})
+	if err != nil || !acquired {
+		t.Fatalf("terminal fixture acquire: %#v acquired=%t err=%v", terminalLease, acquired, err)
+	}
+	terminal := terminalDeparture
+	terminal.State = DepartureStatePassed
+	changed, err = store.TransitionDepartureRun(terminal, terminalDeparture.StateRevision)
+	if err != nil || !changed {
+		t.Fatalf("terminal departure transition: changed=%t err=%v", changed, err)
+	}
+	if _, err := store.ReconcileExpiredResourceLeases(contendAt.Add(2*time.Minute), nil); err != nil {
+		t.Fatal(err)
+	}
+	terminalStored, err := store.FindResourceLease(terminalLease.Name)
+	if err != nil || terminalStored == nil || terminalStored.State != resourceLeaseReleased {
+		t.Fatalf("terminal departure lease remains held: %#v err=%v", terminalStored, err)
+	}
+}
