@@ -327,8 +327,8 @@ func completionWaveForReviewedTask(vaultPath string, task Note) (Note, bool) {
 		members := normalizeList(wave.Data["members"])
 		return wave, len(members) == 1 && members[0] == resultTaskID(task) && stringField(wave.Data, "delivery_task") == resultTaskID(task)
 	}
-	auth := waveAuthorizationProjection(vaultPath, idx, wave)
-	return wave, stringField(auth, "state") == "armed" && !boolFromAny(auth["stale"])
+	_, _, compatible := completionWaveAuthorizationCompatibility(vaultPath, idx, wave)
+	return wave, compatible
 }
 
 func resultTaskID(task Note) string {
@@ -554,16 +554,43 @@ func completionWaveAuthoritySnapshot(vaultPath string, wave Note) (string, strin
 	if !ok {
 		return "", "", "", tuskerError(errorInvalidTransition, "completion wave binding is missing: "+waveID)
 	}
-	material, _ := waveMaterialFingerprint(vaultPath, idx, current)
+	material, stored, compatible := completionWaveAuthorizationCompatibility(vaultPath, idx, current)
 	if v7ImplicitDeliveryUnit(current) {
 		return "implicit", "", material, nil
 	}
-	auth := waveAuthorizationProjection(vaultPath, idx, current)
-	stored := stringField(current.Data, "authorization_fingerprint")
-	if stringField(auth, "state") != "armed" || boolFromAny(auth["stale"]) || stored == "" || stored != material {
+	if !compatible || stored == "" {
 		return "", "", "", tuskerError(errorInvalidTransition, "completion wave authorization is not an exact armed material snapshot")
 	}
 	return "armed", stored, material, nil
+}
+
+// completionWaveAuthorizationCompatibility admits one narrow migration shape:
+// older scheduled waves were armed before integration_base_sha was persisted.
+// If their integration ref is still absent, the newly frozen base is the
+// current clean default tip, and the stored fingerprint exactly matches the
+// otherwise identical pre-base material, completion may perform the intended
+// zero-old CAS. New Delivery Start waves include the base in material and do
+// not enter this compatibility path.
+func completionWaveAuthorizationCompatibility(vaultPath string, idx v7Index, wave Note) (material, stored string, compatible bool) {
+	material, _ = waveMaterialFingerprint(vaultPath, idx, wave)
+	stored = stringField(wave.Data, "authorization_fingerprint")
+	if stringField(wave.Data, "authorization") != "armed" || stored == "" {
+		return material, stored, false
+	}
+	if stored == material {
+		return material, stored, true
+	}
+	base := strings.TrimSpace(stringField(wave.Data, "integration_base_sha"))
+	ref := "refs/heads/" + v7WaveIntegrationBranch(wave)
+	repoRoot := v7RepoRoot(vaultPath)
+	if base == "" || !v7GitRepo(repoRoot) || gitRefExists(repoRoot, ref) || !waveIntegrationBaseClean(vaultPath, wave) {
+		return material, stored, false
+	}
+	legacy := wave
+	legacy.Data = cloneMap(wave.Data)
+	delete(legacy.Data, "integration_base_sha")
+	legacyMaterial, issues := waveMaterialFingerprint(vaultPath, idx, legacy)
+	return material, stored, len(issues) == 0 && stored == legacyMaterial
 }
 
 // completionAuthorizedWave verifies the current tracker binding. Failure
@@ -614,8 +641,8 @@ func completionPreCASAuthorizedWave(vaultPath string, transaction *completionTra
 	if !ok {
 		return Note{}, tuskerError(errorInvalidTransition, "completion wave binding is missing: "+transaction.WaveID)
 	}
-	material, _ := waveMaterialFingerprint(vaultPath, idx, current)
-	if material != transaction.WaveMaterialFP {
+	material, stored, compatible := completionWaveAuthorizationCompatibility(vaultPath, idx, current)
+	if !compatible || material != transaction.WaveMaterialFP {
 		return Note{}, tuskerError(errorInvalidTransition, "completion wave material drifted from its frozen authorization")
 	}
 	switch transaction.WaveAuthorityKind {
@@ -624,10 +651,7 @@ func completionPreCASAuthorizedWave(vaultPath string, transaction *completionTra
 			return Note{}, tuskerError(errorInvalidTransition, "implicit completion wave drifted from its frozen authority")
 		}
 	case "armed":
-		auth := waveAuthorizationProjection(vaultPath, idx, current)
-		stored := stringField(current.Data, "authorization_fingerprint")
-		if stringField(auth, "state") != "armed" || boolFromAny(auth["stale"]) ||
-			stored == "" || stored != transaction.WaveAuthorizationFP || stored != transaction.WaveMaterialFP {
+		if stored == "" || stored != transaction.WaveAuthorizationFP {
 			return Note{}, tuskerError(errorInvalidTransition, "completion wave authorization drifted from its frozen material authority")
 		}
 	default:
