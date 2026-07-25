@@ -971,7 +971,21 @@ func newV7Gate(args Args) error {
 	if err != nil {
 		return err
 	}
+	materialLock, err := acquireV7MaterialEpochLock(vaultPath)
+	if err != nil {
+		return err
+	}
+	// Publishing the gate record is the material epoch change. Once visible,
+	// arm fingerprints it even if the derived task projection follows later.
+	if fileExists(path) {
+		_ = materialLock.Close()
+		return tuskerError(errorAlreadyExists, "Gate already exists: "+id, withPath(path))
+	}
 	if err := writeText(path, content); err != nil {
+		_ = materialLock.Close()
+		return err
+	}
+	if err := materialLock.Close(); err != nil {
 		return err
 	}
 	if !args.Bool("quiet") {
@@ -3778,6 +3792,17 @@ type v7LockedDocumentMutation func(data map[string]any, body string) (map[string
 // lock, then computes the reconciliation change from that current content.
 // Cached Note values are discovery hints and never become write authority.
 func mutateV7DocumentLocked(filePath string, order []string, mutate v7LockedDocumentMutation) (string, bool, error) {
+	materialLock, err := acquireV7MaterialEpochLockForDocument(filePath)
+	if err != nil {
+		return "", false, err
+	}
+	if materialLock != nil {
+		defer func() { _ = materialLock.Close() }()
+	}
+	return mutateV7DocumentUnderMaterialLock(filePath, order, mutate)
+}
+
+func mutateV7DocumentUnderMaterialLock(filePath string, order []string, mutate v7LockedDocumentMutation) (string, bool, error) {
 	lock, err := acquireV7DocumentLock(filePath, v7DocumentLockTimeout)
 	if err != nil {
 		return "", false, err
@@ -3806,6 +3831,17 @@ func mutateV7DocumentLocked(filePath string, order []string, mutate v7LockedDocu
 }
 
 func saveV7DocumentCAS(filePath string, data map[string]any, body string, order []string, baseRev string) (string, error) {
+	materialLock, err := acquireV7MaterialEpochLockForDocument(filePath)
+	if err != nil {
+		return "", err
+	}
+	if materialLock != nil {
+		defer func() { _ = materialLock.Close() }()
+	}
+	return saveV7DocumentCASUnderMaterialLock(filePath, data, body, order, baseRev)
+}
+
+func saveV7DocumentCASUnderMaterialLock(filePath string, data map[string]any, body string, order []string, baseRev string) (string, error) {
 	lock, err := acquireV7DocumentLock(filePath, v7DocumentLockTimeout)
 	if err != nil {
 		return "", err

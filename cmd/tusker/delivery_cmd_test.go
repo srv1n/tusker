@@ -263,7 +263,7 @@ func TestDeliveryImportJSONReportsAllPreflightIssues(t *testing.T) {
 
 func TestDeliveryHelpSpecRefsAndSkillContract(t *testing.T) {
 	help := captureStdout(t, printV7Help)
-	for _, want := range []string{"delivery plan", "delivery import", "inert", "Tusker", "final"} {
+	for _, want := range []string{"delivery plan", "delivery import", "delivery review", "delivery start", "delivery doctor", "inert", "Tusker", "final"} {
 		assertContainsIndexTest(t, help, want)
 	}
 	skill := mustReadIndexTest(t, filepath.Join("..", "..", "skills", "tusker", "SKILL.md"))
