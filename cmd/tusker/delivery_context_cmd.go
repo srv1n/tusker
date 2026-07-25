@@ -1053,7 +1053,10 @@ func deliveryContextReadiness(vault string, workflowKnown bool, wf Workflow, unk
 	}
 	defer store.Close()
 	readiness.RuntimeStorePresent = true
-	projects, err := store.ListProjects()
+	loadedProjects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{
+		MetadataOnly: true,
+		LoadDisabled: true,
+	})
 	if err != nil {
 		unknowns = append(unknowns, deliveryContextUnknownFact(
 			"project_registration", "readiness.registration_state", "registered projects could not be read", "repair or inspect the runtime store",
@@ -1067,7 +1070,8 @@ func deliveryContextReadiness(vault string, workflowKnown bool, wf Workflow, unk
 	}
 	repo, vaultRoot := canonicalProjectPath(v7RepoRoot(vault)), canonicalProjectPath(vault)
 	projectID, _ := resolveV7ProjectID(vault)
-	for _, project := range projects {
+	for _, loaded := range loadedProjects {
+		project := loaded.Project
 		if canonicalProjectPath(project.RepoRoot) != repo && canonicalProjectPath(project.VaultRoot) != vaultRoot {
 			continue
 		}
