@@ -177,11 +177,7 @@ func landV7Cmd(args Args) error {
 }
 
 func landV7CmdWithFrozenSources(args Args, frozenSources map[string]string) error {
-	authority := ""
-	if frozenSources != nil && strings.HasPrefix(landV7Actor(args), "daemon:departure:") {
-		authority = v7LandingAuthorityDeparture
-	}
-	return landV7CmdWithAuthority(args, frozenSources, authority, nil)
+	return tuskerError(errorInvalidTransition, "scheduled landing refusal: frozen sources require an internal daemon authority capability")
 }
 
 func landV7CmdWithDepartureAuthority(args Args, frozenSources map[string]string, authority *v7LandingAuthority) error {
@@ -1243,16 +1239,17 @@ func runV7LandingGateCommand(workDir, command string, isolated bool) ([]byte, er
 		return nil, err
 	}
 	defer os.RemoveAll(scratch)
-	// Do not inherit the daemon control/state environment.  The profile admits
-	// only the disposable worktree, a private scratch directory, and immutable
-	// platform toolchain roots.  Project-specific caches must be declared by a
-	// hardened runner; otherwise the gate safely fails.
+	// Do not inherit the daemon control/state environment. The profile admits
+	// only the disposable worktree, a private scratch directory, immutable
+	// platform toolchain roots, and read-only module caches. In particular it
+	// never grants the user's Library/Application Support runtime state.
+	moduleCache := filepath.Join(userHomeDir(), "go", "pkg", "mod")
 	profile := `(version 1) (deny default) (deny network*) (allow process*) ` +
-		`(allow file-read* (subpath "` + sandboxProfilePath(workDir) + `") (subpath "/usr") (subpath "/bin") (subpath "/System") (subpath "/Library/Developer") (subpath "/Applications/Xcode.app")) ` +
+		`(allow file-read* (subpath "` + sandboxProfilePath(workDir) + `") (subpath "` + sandboxProfilePath(moduleCache) + `") (subpath "/usr") (subpath "/bin") (subpath "/etc") (subpath "/dev") (subpath "/System") (subpath "/Library/Developer") (subpath "/Applications/Xcode.app")) ` +
 		`(allow file-write* (subpath "` + sandboxProfilePath(workDir) + `") (subpath "` + sandboxProfilePath(scratch) + `"))`
 	cmd := exec.Command("sandbox-exec", "-p", profile, "sh", "-c", command)
 	cmd.Dir = workDir
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + scratch, "TMPDIR=" + scratch, "LANG=C", "LC_ALL=C"}
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + scratch, "TMPDIR=" + scratch, "GOCACHE=" + filepath.Join(scratch, "go-build"), "GOMODCACHE=" + moduleCache, "LANG=C", "LC_ALL=C"}
 	return cmd.CombinedOutput()
 }
 

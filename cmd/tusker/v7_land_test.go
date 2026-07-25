@@ -248,7 +248,7 @@ func newLandReadyForMainAdvanceTest(t *testing.T, fileName, content string) (str
 	repo, vault := newLandTestRepo(t, 1, "test -f "+yamlQuoteForShellTest(fileName))
 	sourceSHA := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{fileName: content})
 	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)
-	if err := landV7CmdWithFrozenSources(
+	if err := landFrozenSourcesAsIssuedDeparture(t, repo, vault,
 		Args{"vault": vault, "quiet": "true", "actor": "daemon:departure:land-ready-fixture", "_pos0": "APP-T-0001"},
 		map[string]string{"APP-T-0001": sourceSHA},
 	); err != nil {

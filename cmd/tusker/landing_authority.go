@@ -84,6 +84,10 @@ func (d *Daemon) issueV7LandingAuthority(project RegisteredProject, wf Workflow,
 	if d == nil || d.store == nil || strings.TrimSpace(run.ID) == "" {
 		return nil, fmt.Errorf("landing authority requires a resident daemon departure")
 	}
+	durable, err := d.store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil || durable.ProjectID != run.ProjectID || durable.PolicyID != run.PolicyID || durable.ScheduledWindow != run.ScheduledWindow {
+		return nil, tuskerError(errorInvalidTransition, "landing authority refusal: durable departure run is missing or mismatched")
+	}
 	repoIdentity, err := v7LandingRepoIdentity(project.RepoRoot)
 	if err != nil {
 		return nil, err

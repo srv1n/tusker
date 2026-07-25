@@ -225,7 +225,7 @@ func TestScheduledPromotionLandingImplicitSingletonNeedsNoWaveArm(t *testing.T) 
 	setWaveTaskState(t, vault, "APP-T-0001", "review", "review", "")
 	sourceSHA := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"singleton-promoted.txt": "yes\n"})
 	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)
-	if err := landV7CmdWithFrozenSources(
+	if err := landFrozenSourcesAsIssuedDeparture(t, repo, vault,
 		Args{"vault": vault, "quiet": "true", "actor": "daemon:departure:singleton-fixture", "_pos0": "APP-T-0001"},
 		map[string]string{"APP-T-0001": sourceSHA},
 	); err != nil {
@@ -662,7 +662,7 @@ func TestScheduledPromotionFinalAuthorityEpochLinearizesDeliveryReimport(t *test
 
 	sourceSHA := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"epoch-reimport.txt": "candidate\n"})
 	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)
-	if err := landV7CmdWithFrozenSources(
+	if err := landFrozenSourcesAsIssuedDeparture(t, repo, vault,
 		Args{"vault": vault, "quiet": "true", "actor": "daemon:departure:reimport-fixture", "_pos0": "APP-T-0001"},
 		map[string]string{"APP-T-0001": sourceSHA},
 	); err != nil {

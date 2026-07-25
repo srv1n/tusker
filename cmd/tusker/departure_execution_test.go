@@ -1067,7 +1067,7 @@ func newMultiMemberDepartureExecutionFixture(t *testing.T) departureExecutionFix
 	repo, vault := newLandTestRepo(t, 2, "test -f member-one.txt")
 	sourceOne := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"member-one.txt": "one\n"})
 	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceOne)
-	if err := landV7CmdWithFrozenSources(
+	if err := landFrozenSourcesAsIssuedDeparture(t, repo, vault,
 		Args{"vault": vault, "quiet": "true", "actor": "daemon:departure:fixture-one", "_pos0": "APP-T-0001"},
 		map[string]string{"APP-T-0001": sourceOne},
 	); err != nil {
