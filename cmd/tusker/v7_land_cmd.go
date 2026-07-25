@@ -1397,11 +1397,12 @@ type v7PreparedWaveMemberState struct {
 }
 
 type v7PreparedWaveMemberPath struct {
-	Absolute string
-	WorkDir  string
-	Relative string
-	Before   v7PreparedWaveMemberState
-	Prepared v7PreparedWaveMemberState
+	Absolute         string
+	WorkDir          string
+	Relative         string
+	Before           v7PreparedWaveMemberState
+	PreparedIndex    v7PreparedWaveMemberState
+	PreparedWorktree v7PreparedWaveMemberState
 }
 
 type v7WaveMemberPreparation struct {
@@ -1426,9 +1427,10 @@ func prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch st
 	paths = append(paths, filepath.ToSlash(filepath.Join(relVault, "work", "waves", stringField(wave.Data, "id")+".md")))
 	preparation := &v7WaveMemberPreparation{}
 	for _, wt := range v7DefaultBranchCheckouts(repoRoot, defaultBranch) {
+		firstPreparedPath := len(preparation.paths)
 		tracked := make([]string, 0, len(paths))
 		for _, path := range paths {
-			prepared, ok, stateErr := v7PreparedIndexState(wt.Path, path)
+			preparedIndex, ok, stateErr := v7PreparedIndexState(wt.Path, path)
 			if stateErr != nil {
 				return nil, errors.Join(stateErr, preparation.restore())
 			}
@@ -1444,7 +1446,11 @@ func prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch st
 				WorkDir:  wt.Path,
 				Relative: path,
 				Before:   before,
-				Prepared: prepared,
+				// Until checkout succeeds, the worktree still contains Before.
+				// Capturing this separately from the raw index blob matters for
+				// checkout filters and platform-specific working-tree modes.
+				PreparedIndex:    preparedIndex,
+				PreparedWorktree: before,
 			})
 			tracked = append(tracked, path)
 		}
@@ -1454,10 +1460,30 @@ func prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch st
 		args := append([]string{"checkout", "--"}, tracked...)
 		if output, err := gitCombined(wt.Path, args...); err != nil {
 			prepareErr := tuskerError(errorInvalidTransition, "failed to reset integrated wave task projections before default-branch advance: "+firstActionableLine(output, err.Error()), withPath(wt.Path))
-			return nil, errors.Join(prepareErr, preparation.restore())
+			captureErr := preparation.capturePreparedWorktree(firstPreparedPath)
+			return nil, errors.Join(prepareErr, captureErr, preparation.restore())
+		}
+		if err := preparation.capturePreparedWorktree(firstPreparedPath); err != nil {
+			return nil, errors.Join(err, preparation.restore())
 		}
 	}
 	return preparation, nil
+}
+
+func (preparation *v7WaveMemberPreparation) capturePreparedWorktree(first int) error {
+	if preparation == nil {
+		return nil
+	}
+	var captureErrors []error
+	for index := first; index < len(preparation.paths); index++ {
+		state, err := v7PreparedWorktreeState(preparation.paths[index].Absolute)
+		if err != nil {
+			captureErrors = append(captureErrors, err)
+			continue
+		}
+		preparation.paths[index].PreparedWorktree = state
+	}
+	return errors.Join(captureErrors...)
 }
 
 func v7PreparedIndexState(workDir, relativePath string) (v7PreparedWaveMemberState, bool, error) {
@@ -1515,6 +1541,10 @@ func sameV7PreparedWaveMemberIndexState(left, right v7PreparedWaveMemberState) b
 		(!left.Exists || left.Mode.Perm() == right.Mode.Perm())
 }
 
+func sameV7PreparedWaveMemberExactState(left, right v7PreparedWaveMemberState) bool {
+	return sameV7PreparedWaveMemberIndexState(left, right)
+}
+
 func (preparation *v7WaveMemberPreparation) restore() error {
 	if preparation == nil || preparation.finished {
 		return nil
@@ -1530,9 +1560,10 @@ func (preparation *v7WaveMemberPreparation) restore() error {
 		if !tracked {
 			indexState = v7PreparedWaveMemberState{}
 		}
-		if !sameV7PreparedWaveMemberIndexState(indexState, path.Prepared) {
+		if !sameV7PreparedWaveMemberIndexState(indexState, path.PreparedIndex) {
 			// A checkout or index update owns the path now. Its bytes must win
 			// even if the branch ref moved to an unexpected third value.
+			restoreErrors = append(restoreErrors, fmt.Errorf("refused to restore %s: index changed after default-advance preparation", path.Relative))
 			continue
 		}
 		current, err := v7PreparedWorktreeState(path.Absolute)
@@ -1540,9 +1571,10 @@ func (preparation *v7WaveMemberPreparation) restore() error {
 			restoreErrors = append(restoreErrors, err)
 			continue
 		}
-		if !sameV7PreparedWaveMemberBytes(current, path.Prepared) {
+		if !sameV7PreparedWaveMemberExactState(current, path.PreparedWorktree) {
 			// A concurrent operator edit owns the path now. It is safer to leave
 			// that edit intact than to force our preimage over it.
+			restoreErrors = append(restoreErrors, fmt.Errorf("refused to restore %s: worktree changed after default-advance preparation", path.Relative))
 			continue
 		}
 		if !path.Before.Exists {
@@ -1551,6 +1583,14 @@ func (preparation *v7WaveMemberPreparation) restore() error {
 				continue
 			}
 			invalidateCachedNote(path.Absolute)
+			restored, err := v7PreparedWorktreeState(path.Absolute)
+			if err != nil {
+				restoreErrors = append(restoreErrors, err)
+				continue
+			}
+			if !sameV7PreparedWaveMemberExactState(restored, path.Before) {
+				restoreErrors = append(restoreErrors, fmt.Errorf("restored wave control document does not match its absent preimage: %s", path.Relative))
+			}
 			continue
 		}
 		if err := atomicReplaceV7Document(path.Absolute, string(path.Before.Bytes)); err != nil {
@@ -1559,6 +1599,15 @@ func (preparation *v7WaveMemberPreparation) restore() error {
 		}
 		if err := os.Chmod(path.Absolute, path.Before.Mode.Perm()); err != nil {
 			restoreErrors = append(restoreErrors, err)
+			continue
+		}
+		restored, err := v7PreparedWorktreeState(path.Absolute)
+		if err != nil {
+			restoreErrors = append(restoreErrors, err)
+			continue
+		}
+		if !sameV7PreparedWaveMemberExactState(restored, path.Before) {
+			restoreErrors = append(restoreErrors, fmt.Errorf("restored wave control document does not match its byte-and-mode preimage: %s", path.Relative))
 		}
 	}
 	return errors.Join(restoreErrors...)

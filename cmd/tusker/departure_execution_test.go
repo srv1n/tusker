@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -381,15 +382,25 @@ func TestDepartureExecution(t *testing.T) {
 		defer store.Close()
 		run := createDepartureExecutionRun(t, store, fixture)
 		mainBefore := gitRevisionForTest(t, fixture.repo, "main")
-		canonicalBefore := departureWaveMemberBytes(t, fixture.vault, "W-0001", "APP-T-0001")
-		originalHook := scheduledPromotionAfterDefaultPrepare
+		var canonicalBefore map[string]string
+		var canonicalModesBefore map[string]os.FileMode
+		originalBeforeHook := scheduledPromotionBeforeDefaultPrepare
+		scheduledPromotionBeforeDefaultPrepare = func() error {
+			canonicalBefore = departureWaveMemberBytes(t, fixture.vault, "W-0001", "APP-T-0001")
+			canonicalModesBefore = departureWaveMemberModes(t, canonicalBefore)
+			return nil
+		}
+		originalAfterHook := scheduledPromotionAfterDefaultPrepare
 		hookCalled := false
 		scheduledPromotionAfterDefaultPrepare = func() error {
 			hookCalled = true
 			_, err := store.SetDepartureHold("app", false, "last-second operator hold", "human:sara", time.Now().UTC())
 			return err
 		}
-		defer func() { scheduledPromotionAfterDefaultPrepare = originalHook }()
+		defer func() {
+			scheduledPromotionBeforeDefaultPrepare = originalBeforeHook
+			scheduledPromotionAfterDefaultPrepare = originalAfterHook
+		}()
 		d := &Daemon{store: store, departurePlan: fixture.plan}
 		if err := d.executeDeparture(context.Background(), fixture.project, fixture.wf, run.ID); err != nil {
 			t.Fatal(err)
@@ -403,7 +414,7 @@ func TestDepartureExecution(t *testing.T) {
 		if after := gitRevisionForTest(t, fixture.repo, "main"); after != mainBefore {
 			t.Fatalf("final hold fence moved main: before=%s after=%s", mainBefore, after)
 		}
-		assertDepartureWaveMemberBytes(t, fixture.vault, canonicalBefore)
+		assertDepartureWaveMemberBytes(t, fixture.vault, canonicalBefore, canonicalModesBefore)
 	})
 
 	t.Run("late disarm is revalidated before preparation", func(t *testing.T) {
@@ -1022,20 +1033,73 @@ func departureWaveMemberBytes(t *testing.T, vault, waveID string, taskIDs ...str
 	return snapshot
 }
 
-func assertDepartureWaveMemberBytes(t *testing.T, vault string, expected map[string]string) {
+func departureWaveMemberModes(t *testing.T, files map[string]string) map[string]os.FileMode {
+	t.Helper()
+	modes := make(map[string]os.FileMode, len(files))
+	for path := range files {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		modes[path] = info.Mode()
+	}
+	return modes
+}
+
+func assertDepartureWaveMemberBytes(t *testing.T, vault string, expected map[string]string, expectedModes ...map[string]os.FileMode) {
 	t.Helper()
 	if len(expected) == 0 {
 		t.Fatal("canonical wave-member snapshot is empty")
 	}
 	for path, want := range expected {
-		if got := mustReadIndexTest(t, path); got != want {
+		got := mustReadIndexTest(t, path)
+		wantMode, gotMode := os.FileMode(0), os.FileMode(0)
+		if len(expectedModes) > 0 {
+			wantMode = expectedModes[0][path]
+		}
+		if info, statErr := os.Lstat(path); statErr == nil {
+			gotMode = info.Mode()
+		}
+		modeChanged := len(expectedModes) > 0 && gotMode != wantMode
+		if got != want || modeChanged {
 			rel, err := filepath.Rel(vault, path)
 			if err != nil {
 				rel = path
 			}
-			t.Fatalf("canonical bytes changed for %s", rel)
+			offset, line, wantByte, gotByte, wantLine, gotLine := departureFirstDifference(want, got)
+			t.Fatalf("canonical preimage changed for %s: first difference byte=%d line=%d want_byte=%#x got_byte=%#x want_len=%d got_len=%d want_mode=%s got_mode=%s want_line=%q got_line=%q",
+				rel, offset, line, wantByte, gotByte, len(want), len(got), wantMode, gotMode, wantLine, gotLine)
 		}
 	}
+}
+
+func departureFirstDifference(want, got string) (offset, line, wantByte, gotByte int, wantLine, gotLine string) {
+	limit := len(want)
+	if len(got) < limit {
+		limit = len(got)
+	}
+	for offset < limit && want[offset] == got[offset] {
+		offset++
+	}
+	line = strings.Count(want[:offset], "\n") + 1
+	wantByte, gotByte = -1, -1
+	if offset < len(want) {
+		wantByte = int(want[offset])
+	}
+	if offset < len(got) {
+		gotByte = int(got[offset])
+	}
+	lineAt := func(value string, at int) string {
+		start := strings.LastIndex(value[:at], "\n") + 1
+		end := strings.Index(value[at:], "\n")
+		if end < 0 {
+			end = len(value)
+		} else {
+			end += at
+		}
+		return value[start:end]
+	}
+	return offset, line, wantByte, gotByte, lineAt(want, min(offset, len(want))), lineAt(got, min(offset, len(got)))
 }
 
 func waitDepartureState(t *testing.T, store *RuntimeStore, runID string, state DepartureState) DepartureRun {

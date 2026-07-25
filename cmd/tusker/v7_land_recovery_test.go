@@ -535,6 +535,116 @@ func TestWaveMemberPreparationFinishesByExactRefOutcome(t *testing.T) {
 	})
 }
 
+func TestWaveMemberPreparationRestoreCAS(t *testing.T) {
+	t.Run("restores exact preimage when checkout bytes differ from index blob", func(t *testing.T) {
+		_, _, path, preparation, before, _ := newWaveMemberPreparationCASFixture(t)
+		if err := preparation.restore(); err != nil {
+			t.Fatal(err)
+		}
+		restored, err := v7PreparedWorktreeState(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !sameV7PreparedWaveMemberExactState(restored, before) {
+			t.Fatalf("restored state = bytes %q mode %s, want bytes %q mode %s",
+				string(restored.Bytes), restored.Mode, string(before.Bytes), before.Mode)
+		}
+	})
+
+	t.Run("preserves a concurrent operator worktree edit", func(t *testing.T) {
+		_, _, path, preparation, _, _ := newWaveMemberPreparationCASFixture(t)
+		if err := writeText(path, "operator worktree edit\n"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, 0o604); err != nil {
+			t.Fatal(err)
+		}
+		err := preparation.restore()
+		if err == nil || !strings.Contains(err.Error(), "worktree changed after default-advance preparation") {
+			t.Fatalf("concurrent worktree edit was not fenced: %v", err)
+		}
+		current, stateErr := v7PreparedWorktreeState(path)
+		if stateErr != nil {
+			t.Fatal(stateErr)
+		}
+		if string(current.Bytes) != "operator worktree edit\n" || current.Mode.Perm() != 0o604 {
+			t.Fatalf("operator edit was overwritten: bytes=%q mode=%s", string(current.Bytes), current.Mode)
+		}
+	})
+
+	t.Run("preserves a concurrent index owner", func(t *testing.T) {
+		repo, relative, path, preparation, _, preparedWorktree := newWaveMemberPreparationCASFixture(t)
+		if err := writeText(path, "concurrent index owner\n"); err != nil {
+			t.Fatal(err)
+		}
+		runGitDir(t, repo, "add", "--", relative)
+		if err := os.WriteFile(path, preparedWorktree.Bytes, preparedWorktree.Mode.Perm()); err != nil {
+			t.Fatal(err)
+		}
+		err := preparation.restore()
+		if err == nil || !strings.Contains(err.Error(), "index changed after default-advance preparation") {
+			t.Fatalf("concurrent index owner was not fenced: %v", err)
+		}
+		current, stateErr := v7PreparedWorktreeState(path)
+		if stateErr != nil {
+			t.Fatal(stateErr)
+		}
+		if !sameV7PreparedWaveMemberExactState(current, preparedWorktree) {
+			t.Fatalf("worktree owned by changed index was overwritten: bytes=%q mode=%s", string(current.Bytes), current.Mode)
+		}
+		indexBytes := gitDirOutput(t, repo, "show", ":"+relative)
+		if indexBytes != "concurrent index owner\n" {
+			t.Fatalf("concurrent index blob was overwritten: %q", indexBytes)
+		}
+	})
+}
+
+func newWaveMemberPreparationCASFixture(t *testing.T) (repo, relative, path string, preparation *v7WaveMemberPreparation, before, preparedWorktree v7PreparedWaveMemberState) {
+	t.Helper()
+	repo = t.TempDir()
+	runGitDir(t, repo, "init", "-b", "main")
+	runGitDir(t, repo, "config", "user.email", "test@example.com")
+	runGitDir(t, repo, "config", "user.name", "Test User")
+	relative = ".tusker/work/waves/W-0001.md"
+	path = filepath.Join(repo, filepath.FromSlash(relative))
+	if err := writeText(path, "raw index representation\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "add", "--", relative)
+	runGitDir(t, repo, "commit", "-m", "seed index representation")
+	preparedIndex, tracked, err := v7PreparedIndexState(repo, relative)
+	if err != nil || !tracked {
+		t.Fatalf("capture prepared index: tracked=%v err=%v", tracked, err)
+	}
+	before = v7PreparedWaveMemberState{
+		Exists: true,
+		Mode:   0o600,
+		Bytes:  []byte("exact live preimage\n"),
+	}
+	if err := os.WriteFile(path, []byte("checkout-filtered worktree representation\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	preparedWorktree, err = v7PreparedWorktreeState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sameV7PreparedWaveMemberBytes(preparedIndex, preparedWorktree) {
+		t.Fatal("fixture requires distinct index and post-checkout worktree representations")
+	}
+	preparation = &v7WaveMemberPreparation{paths: []v7PreparedWaveMemberPath{{
+		Absolute:         path,
+		WorkDir:          repo,
+		Relative:         relative,
+		Before:           before,
+		PreparedIndex:    preparedIndex,
+		PreparedWorktree: preparedWorktree,
+	}}}
+	return repo, relative, path, preparation, before, preparedWorktree
+}
+
 func writeWorkspaceRecordForLandTest(t *testing.T, worktree, recordID string) {
 	t.Helper()
 	metaDir := filepath.Join(worktree, ".tusker")
