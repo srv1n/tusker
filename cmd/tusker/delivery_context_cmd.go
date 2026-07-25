@@ -250,7 +250,11 @@ func deliveryPlanningContextCmd(args Args) error {
 	if spec == "" {
 		return tuskerError(errorMissingArg, "Usage: tusker delivery context --spec <repo-relative-spec> [--json]")
 	}
-	report, err := buildDeliveryPlanningContext(vault, spec)
+	scope := strings.TrimSpace(args.String("scope"))
+	if scope != "" && !deliveryScopeValid(scope) {
+		return tuskerError(errorInvalidArg, "--scope must be a valid delivery plan scope")
+	}
+	report, err := buildDeliveryPlanningContextForScope(vault, spec, scope)
 	if err != nil {
 		return err
 	}
@@ -263,6 +267,14 @@ func deliveryPlanningContextCmd(args Args) error {
 }
 
 func buildDeliveryPlanningContext(vault, specArg string) (deliveryPlanningContext, error) {
+	return buildDeliveryPlanningContextForScope(vault, specArg, "")
+}
+
+// buildDeliveryPlanningContextForScope excludes the records and generated
+// work-stream projection owned by one delivery scope. This is the context a V2
+// plan binds: importing that exact plan must not invalidate its own context.
+// Work from every other scope remains material duplicate/conflict evidence.
+func buildDeliveryPlanningContextForScope(vault, specArg, excludedPlanScope string) (deliveryPlanningContext, error) {
 	report := deliveryPlanningContext{
 		Schema:             deliveryPlanningContextSchema,
 		ReadOnly:           true,
@@ -288,7 +300,7 @@ func buildDeliveryPlanningContext(vault, specArg string) (deliveryPlanningContex
 	}
 	report.Project = deliveryContextProject{ID: projectID, RepoRef: ".", VaultRef: ".tusker", Provenance: configProvenance}
 
-	specs, decisions, documentDomains, governingRefs, documentUnknowns, err := deliveryContextDocuments(vault, specArg)
+	specs, decisions, documentDomains, governingRefs, documentUnknowns, err := deliveryContextDocuments(vault, specArg, excludedPlanScope)
 	if err != nil {
 		return report, err
 	}
@@ -310,6 +322,7 @@ func buildDeliveryPlanningContext(vault, specArg string) (deliveryPlanningContex
 		))
 		notes = nil
 	}
+	notes = deliveryContextExcludePlanScope(notes, excludedPlanScope)
 	relevantTasks := deliveryContextRelevantTasks(notes, governingRefs)
 	taskDomains := deliveryContextDomainsFromNotes(relevantTasks)
 	domains := uniqueStrings(append(documentDomains, taskDomains...))
@@ -351,7 +364,7 @@ type deliveryContextDocumentRequest struct {
 	Required bool
 }
 
-func deliveryContextDocuments(vault, specArg string) ([]deliveryContextDocument, []deliveryContextDocument, []string, []string, []deliveryContextUnknown, error) {
+func deliveryContextDocuments(vault, specArg, excludedPlanScope string) ([]deliveryContextDocument, []deliveryContextDocument, []string, []string, []deliveryContextUnknown, error) {
 	refs := splitCSV(specArg)
 	if len(refs) == 0 {
 		return nil, nil, nil, nil, nil, tuskerError(errorMissingArg, "--spec must name at least one governing specification")
@@ -397,7 +410,8 @@ func deliveryContextDocuments(vault, specArg string) ([]deliveryContextDocument,
 			))
 			continue
 		}
-		data, body, parseErr := parseFrontmatter(string(raw))
+		materialRaw := deliveryContextStripScopeWorkStream(raw, excludedPlanScope)
+		data, body, parseErr := parseFrontmatter(string(materialRaw))
 		if parseErr != nil {
 			if request.Required {
 				return nil, nil, nil, nil, nil, tuskerError(errorInvalidArg, "delivery context spec has invalid frontmatter: "+ref)
@@ -407,10 +421,18 @@ func deliveryContextDocuments(vault, specArg string) ([]deliveryContextDocument,
 			))
 			continue
 		}
-		provenance := []deliveryContextProvenance{{Kind: "repo_file", Ref: displayRef, Fingerprint: deliveryFingerprint(raw)}}
+		fingerprintMaterial := materialRaw
+		// Importing a scoped work-stream into a decision refreshes only decision
+		// bookkeeping (`updated_*` and state revision) in addition to the marker
+		// removed above. Those facts are not planning input, so exclude them from
+		// a scope-bound context while preserving all authored decision content.
+		if isDecision && excludedPlanScope != "" {
+			fingerprintMaterial = deliveryContextDecisionMaterial(data, body)
+		}
+		provenance := []deliveryContextProvenance{{Kind: "repo_file", Ref: displayRef, Fingerprint: deliveryFingerprint(fingerprintMaterial)}}
 		doc := deliveryContextDocument{
 			Kind: "spec", Ref: ref, Title: deliveryContextDocumentTitle(data, body, ref),
-			Fingerprint: deliveryFingerprint(raw), Provenance: provenance,
+			Fingerprint: deliveryFingerprint(fingerprintMaterial), Provenance: provenance,
 		}
 		if isDecision {
 			doc.Kind = "decision"
@@ -452,6 +474,21 @@ func deliveryContextDocuments(vault, specArg string) ([]deliveryContextDocument,
 	sort.Strings(domains)
 	sort.Strings(governingRefs)
 	return specs, decisions, domains, governingRefs, unknowns, nil
+}
+
+func deliveryContextDecisionMaterial(data map[string]any, body string) []byte {
+	material := make(map[string]any, len(data))
+	for key, value := range data {
+		material[key] = value
+	}
+	for _, field := range []string{"updated_at", "updated_by", "state_rev"} {
+		delete(material, field)
+	}
+	raw, _ := json.Marshal(struct {
+		Frontmatter map[string]any `json:"frontmatter"`
+		Body        string         `json:"body"`
+	}{Frontmatter: material, Body: body})
+	return raw
 }
 
 func deliveryContextReadDocument(vault, ref string) ([]byte, string, error) {
@@ -550,6 +587,48 @@ func deliveryContextRelevantTasks(notes []Note, governingRefs []string) []Note {
 	}
 	sort.Slice(tasks, func(i, j int) bool { return stringField(tasks[i].Data, "id") < stringField(tasks[j].Data, "id") })
 	return tasks
+}
+
+// deliveryContextExcludePlanScope removes only the canonical records created
+// by the plan whose context is being recomputed. Leaving a plan's own epic,
+// tasks, and human gates in the bounded packet makes a successful import alter
+// its own fingerprint, which turns a valid Start boundary into a paradox.
+func deliveryContextExcludePlanScope(notes []Note, scope string) []Note {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		return notes
+	}
+	out := make([]Note, 0, len(notes))
+	for _, note := range notes {
+		kind := effectiveV7Kind(note.Data)
+		if (kind == "epic" || kind == "task" || kind == "gate") && stringField(note.Data, "delivery_plan_scope") == scope {
+			continue
+		}
+		out = append(out, note)
+	}
+	return out
+}
+
+// deliveryContextStripScopeWorkStream removes only Tusker's generated marker
+// for the scoped import before a governing document is fingerprinted. The
+// author-controlled document remains material; other delivery scopes remain
+// material too. A malformed marker is preserved and therefore fails closed as
+// ordinary document drift rather than silently hiding content.
+func deliveryContextStripScopeWorkStream(raw []byte, scope string) []byte {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		return raw
+	}
+	begin, end := deliveryScopeMarkers(scope)
+	text := string(raw)
+	start := strings.Index(text, begin)
+	if start < 0 {
+		return raw
+	}
+	if strings.Index(text[start+len(begin):], end) < 0 {
+		return raw
+	}
+	return []byte(removeDeliveryWorkStreams(text, scope))
 }
 
 func deliveryContextDomainsFromNotes(notes []Note) []string {

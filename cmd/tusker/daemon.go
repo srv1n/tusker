@@ -1235,14 +1235,38 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				return err
 			}
 			reviewCycles := reviewerAttemptCount(reviewAttempts)
+			hasResult, err := d.store.HasReviewResultForWork(project.ProjectID, recordID, intField(note.Data, "work_revision"))
+			if err != nil {
+				return err
+			}
+			if hasResult {
+				current.ProjectID = project.ProjectID
+				current.RecordID = recordID
+				current.ItemID = stringField(note.Data, "id")
+				current.Lane = runLaneReview
+				current.WorkRevision = intField(note.Data, "work_revision")
+				current.LeaseState = string(LeaseStateReleased)
+				current.AttemptOutcome = string(AttemptOutcomeSucceeded)
+				current.NextRetryAt = ""
+				current.LastError = "typed review result recorded; awaiting review reactor"
+				current.UpdatedAt = now.Format(time.RFC3339)
+				current.Terminal = false
+				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
+					return err
+				}
+				projectRuns[recordID] = current
+				continue
+			}
 			if !reviewDispatchAllowed(project.VaultRoot, note, wfFile.Data, current, reviewCycles) {
 				if wfFile.Data.Reviewer.Enabled && reviewCycles >= wfFile.Data.Reviewer.MaxCycles && stringField(note.Data, "verified_at") == "" {
 					current.ProjectID = project.ProjectID
 					current.RecordID = recordID
 					current.ItemID = stringField(note.Data, "id")
 					current.Lane = runLaneReview
-					current.LeaseState = string(LeaseStateReleased)
-					current.LastError = fmt.Sprintf("review dispatch blocked: automated review cycle cap reached (%d/%d); operator intervention required", reviewCycles, wfFile.Data.Reviewer.MaxCycles)
+					current.LeaseState = string(LeaseStateParkedNoProgress)
+					current.AttemptOutcome = string(AttemptOutcomeBlocked)
+					current.NextRetryAt = ""
+					current.LastError = fmt.Sprintf("review parked: automated review cycle cap reached (%d/%d); operator intervention required", reviewCycles, wfFile.Data.Reviewer.MaxCycles)
 					current.UpdatedAt = now.Format(time.RFC3339)
 					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 						return err
@@ -1750,9 +1774,7 @@ func reviewDispatchAllowed(vaultPath string, note Note, wf Workflow, run RunStat
 		return false
 	}
 	workRevision := intField(note.Data, "work_revision")
-	if run.Lane == runLaneReview && run.WorkRevision == workRevision && run.AttemptCount > 0 {
-		return false
-	}
+	_ = workRevision
 	return true
 }
 
@@ -2397,41 +2419,29 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 					clearActiveExecution(&run)
 					return run, true, nil
 				}
-				autoLanded, err := autoLandArmedWaveReviewComplete(project, note, run)
-				if err != nil {
-					landReason := "armed-wave reviewer auto-land failed: " + err.Error()
-					_ = kickV7LandingTaskToRework(project.VaultRoot, run.ItemID, landReason, "daemon:wave-drain")
-					updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, 1, landReason, finished)
-					run.LeaseState = string(LeaseStateParkedNoProgress)
-					run.AttemptOutcome = string(AttemptOutcomeBlocked)
-					run.LastError = landReason
-					run.UpdatedAt = finished
-					run.Terminal = false
+				// Exit is transport, not acceptance. Only an attempt-bound typed
+				// result may reach the later review reactor; retry/park remains
+				// governed by the existing review-cycle cap.
+				hasResult, resultErr := d.store.HasReviewResult(project.ProjectID, run.RecordID, run.WorkRevision, run.ActiveAttemptID)
+				if resultErr != nil {
+					return run, changed, resultErr
+				}
+				if !hasResult {
+					reason := "reviewer exited without a valid typed review result"
+					updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, 1, reason, finished)
+					run.LeaseState, run.AttemptOutcome = string(LeaseStateReleased), string(AttemptOutcomeFailed)
+					run.LastError, run.UpdatedAt, run.Terminal = reason, finished, false
 					clearActiveExecution(&run)
 					return run, true, nil
 				}
-				if autoLanded {
-					terminalStatus := ""
-					if projected, ok, projectionErr := armedWaveIntegrationTaskProjection(project.VaultRoot, note); projectionErr != nil {
-						return run, changed, projectionErr
-					} else if ok {
-						terminalStatus = stringField(projected.Data, "status")
-					} else if landedNote, resolveErr := resolveNote(project.VaultRoot, run.RecordID); resolveErr == nil {
-						terminalStatus = stringField(landedNote.Data, "status")
-					}
-					if !trackerStateTerminal(wfFile.Data, terminalStatus) {
-						return run, changed, tuskerError(errorInvalidTransition, "armed-wave reviewer landed without terminal task state for "+run.ItemID)
-					}
-					run.LeaseState = string(LeaseStateReleased)
-					run.AttemptOutcome = string(AttemptOutcomeSucceeded)
-					run.NextRetryAt = ""
-					run.LastError = ""
-					run.UpdatedAt = finished
-					run.Terminal = true
-					updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, "", finished)
-					clearActiveExecution(&run)
-					return run, true, nil
-				}
+				// Completion/landing consumes typed results in the dedicated reactor.
+				// This exit path must never merge, land, close, or move refs.
+				reason := "typed review result recorded; awaiting review reactor"
+				updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, reason, finished)
+				run.LeaseState, run.AttemptOutcome = string(LeaseStateReleased), string(AttemptOutcomeSucceeded)
+				run.LastError, run.UpdatedAt, run.Terminal = reason, finished, false
+				clearActiveExecution(&run)
+				return run, true, nil
 			}
 			noteStatus := classification.trackerState
 			endState := RunEndState{}
@@ -5731,34 +5741,39 @@ var workflowTemplatePlaceholder = regexp.MustCompile(`{{\s*([A-Za-z0-9_.]+)\s*}}
 
 func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath string, attemptNumber int, attemptID, lane string, run RunStatus, previousRun RunStatus, store *RuntimeStore) (string, error) {
 	values := map[string]string{
-		"project.name":                project.Name,
-		"project.id":                  project.ProjectID,
-		"project.key":                 project.ProjectKey,
-		"vault.path":                  project.VaultRoot,
-		"repo.root":                   project.RepoRoot,
-		"workspace.path":              workspacePath,
-		"workflow.path":               wfFile.Path,
-		"note.id":                     stringField(note.Data, "id"),
-		"note.record_id":              trackerRecordID(note),
-		"note.title":                  stringField(note.Data, "title"),
-		"note.status":                 stringField(note.Data, "status"),
-		"note.type":                   stringField(note.Data, "type"),
-		"note.risk":                   stringField(note.Data, "risk"),
-		"attempt.number":              strconv.Itoa(attemptNumber),
-		"attempt.id":                  attemptID,
-		"reviewer.actor":              reviewerActorForNote(wfFile.Data.Reviewer.Actor, note),
-		"reviewer.auto_close_allowed": yesNo(reviewerMayAutoCloseRisk(wfFile.Data.Reviewer, stringField(note.Data, "risk"))),
+		"project.name":      project.Name,
+		"project.id":        project.ProjectID,
+		"project.key":       project.ProjectKey,
+		"vault.path":        project.VaultRoot,
+		"repo.root":         project.RepoRoot,
+		"workspace.path":    workspacePath,
+		"workflow.path":     wfFile.Path,
+		"note.id":           stringField(note.Data, "id"),
+		"note.record_id":    trackerRecordID(note),
+		"note.title":        stringField(note.Data, "title"),
+		"note.status":       stringField(note.Data, "status"),
+		"note.type":         stringField(note.Data, "type"),
+		"note.risk":         stringField(note.Data, "risk"),
+		"attempt.number":    strconv.Itoa(attemptNumber),
+		"attempt.id":        attemptID,
+		"review.task_rev":   stringField(note.Data, "state_rev"),
+		"review.source_sha": firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit")),
+		"review.work_rev":   strconv.Itoa(intField(note.Data, "work_revision")),
+		"reviewer.actor":    reviewerActorForNote(wfFile.Data.Reviewer.Actor, note),
 	}
-	values["reviewer.verify_command"] = reviewerVerifyCommandForNote(note, values["reviewer.actor"])
-	values["reviewer.land_command"] = fmt.Sprintf("tusker land %s --by %s", stringField(note.Data, "id"), values["reviewer.actor"])
-	values["reviewer.finalize_command"] = values["reviewer.land_command"]
-	values["reviewer.close_command"] = fmt.Sprintf("tusker close %s --by %s --reason \"agent review accepted\"", stringField(note.Data, "id"), values["reviewer.actor"])
+	if lane == runLaneReview {
+		proof, gates, snapshotErr := reviewObjectiveSnapshots(project.VaultRoot, note)
+		if snapshotErr != nil {
+			return "", snapshotErr
+		}
+		values["review.proof_fingerprint"], values["review.gate_fingerprint"] = proof, gates
+	}
 	template := wfFile.Body
 	if lane == runLaneReview {
-		template = firstNonEmpty(wfFile.Data.Reviewer.Prompt, defaultReviewerPrompt())
-		if stringField(note.Data, "wave") != "" && !strings.Contains(template, "reviewer.land_command") {
-			template = strings.TrimSpace(template) + "\n\nArmed-wave landing contract: after objective verification passes, run {{ reviewer.land_command }} before {{ reviewer.close_command }}. A landing gate failure returns the isolated task to rework; do not close it. After close, run {{ reviewer.finalize_command }} so the final member advances the integrated wave to the default branch.\n"
-		}
+		// Custom legacy reviewer templates may contain authority-bearing
+		// choreography. Do not interpolate or execute them: reviewers get the
+		// fixed read-only, result-submit-only contract until explicitly migrated.
+		template = defaultReviewerPrompt()
 	}
 	rendered, err := renderStrictWorkflowTemplate(template, values)
 	if err != nil {
@@ -6006,13 +6021,6 @@ func renderExternalLoopRuntimePromptContext(store *RuntimeStore, projectID, reco
 		}
 	}
 	return strings.Join(lines, "\n")
-}
-
-func yesNo(value bool) string {
-	if value {
-		return "yes"
-	}
-	return "no"
 }
 
 func reviewerActorForNote(configured string, note Note) string {

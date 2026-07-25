@@ -142,7 +142,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "gate-ledger", "context", "config", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "trace", "escalate", "departure":
+	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "gate-ledger", "context", "config", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure":
 		return true
 	default:
 		return false
@@ -311,6 +311,10 @@ func runInner(command string, args Args) (int, error) {
 		return 0, deliveryPlanningContextCmd(args)
 	case "delivery import":
 		return 0, deliveryImportCmd(args)
+	case "delivery review":
+		return 0, deliveryReviewCmd(args)
+	case "review submit":
+		return 0, reviewSubmitCmd(args)
 	case "delivery doctor":
 		return 0, deliveryDoctorCmd(args)
 	case "delivery rollout":
@@ -1235,7 +1239,7 @@ func printV7Help() {
   tusker new decision --epic HSP --title "Use repo-local branch-safe tracker"
 
   tusker delivery plan --spec docs/specs/example.md --out .tusker/scratch/delivery-plan.yaml
-  tusker delivery context --spec docs/specs/example.md --json
+  tusker delivery context --spec docs/specs/example.md --scope example/v1 --json
   tusker delivery import --plan .tusker/scratch/delivery-plan.yaml --wave "Example delivery" --dry-run
   tusker delivery import --plan .tusker/scratch/delivery-plan.yaml --wave "Example delivery"
   tusker delivery rollout doctor --json

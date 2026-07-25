@@ -287,8 +287,18 @@ func TestArmedWaveDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(prompt, "tusker land APP-T-0001") || !strings.Contains(prompt, "After close") {
-		t.Fatalf("legacy reviewer prompt did not receive landing/finalization contract: %q", prompt)
+	for _, forbidden := range []string{"tusker land", "tusker close", "tusker status", "rework"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("reviewer prompt retained authority %q: %q", forbidden, prompt)
+		}
+	}
+	if !strings.Contains(prompt, "tusker review submit") {
+		t.Fatalf("reviewer prompt lacks typed submit contract: %q", prompt)
+	}
+	for _, flag := range []string{"--task-rev", "--source-sha", "--work-rev", "--proof-fingerprint", "--gate-fingerprint"} {
+		if !strings.Contains(prompt, flag) {
+			t.Fatalf("reviewer prompt lacks %s: %q", flag, prompt)
+		}
 	}
 }
 

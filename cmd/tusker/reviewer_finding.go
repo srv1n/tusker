@@ -88,6 +88,20 @@ func reviewerFindingFromTask(note Note, attemptID string) (string, bool) {
 	return strings.Join(findings, "\n"), true
 }
 
+// legacyReviewerFindingResult makes pre-result marker rows readable through
+// the typed review surface. It intentionally does not infer a pass from old
+// prose: only a marked failing row becomes changes_requested, preserving the
+// original task and review-attempt attribution for migration/replay.
+func legacyReviewerFindingResult(note Note, attemptID string) (ReviewResult, bool) {
+	finding, ok := reviewerFindingFromTask(note, attemptID)
+	if !ok {
+		return ReviewResult{}, false
+	}
+	result := ReviewResult{Schema: reviewResultSchema, TaskID: stringField(note.Data, "id"), TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: intField(note.Data, "work_revision"), AttemptID: strings.TrimSpace(attemptID), Verdict: "changes_requested", Summary: "Migrated legacy reviewer finding.", Findings: []string{finding}}
+	result.ResultRevision = reviewResultFingerprint(result)
+	return result, true
+}
+
 // stripReviewerFindingMarker removes the attempt marker token from a Notes cell
 // so the pasted finding reads cleanly without the machine tag.
 func stripReviewerFindingMarker(noteText, marker string) string {

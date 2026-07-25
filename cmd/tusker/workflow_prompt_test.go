@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -63,26 +64,7 @@ func TestRenderAttemptPromptRejectsUnknownPlaceholder(t *testing.T) {
 }
 
 func TestRenderAttemptPromptUsesReviewerTemplateForReviewLane(t *testing.T) {
-	project := RegisteredProject{
-		ProjectID:  "project-123",
-		ProjectKey: "MEM",
-		Name:       "Memory",
-		RepoRoot:   "/repo/root",
-		VaultRoot:  "/vault/root",
-	}
-	wf := defaultWorkflow()
-	wfFile := WorkflowFile{
-		Path: "/vault/root/WORKFLOW.md",
-		Body: "worker prompt {{ note.id }}",
-		Data: wf,
-	}
-	note := Note{Data: map[string]any{
-		"id":     "MEM-T-0001",
-		"title":  "Add memory backend",
-		"risk":   "medium",
-		"status": "review",
-		"type":   "task",
-	}}
+	project, wfFile, note := reviewerPromptFixture(t)
 
 	prompt, err := renderAttemptPrompt(project, wfFile, note, "/workspace/path", 4, "attempt-review", runLaneReview, RunStatus{}, RunStatus{}, nil)
 	if err != nil {
@@ -90,51 +72,66 @@ func TestRenderAttemptPromptUsesReviewerTemplateForReviewLane(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"independent Tusker reviewer",
-		"ID: MEM-T-0001",
-		"Auto-close allowed: yes",
+		"ID: APP-T-0001",
 		"Risk alone does not justify a human gate",
-		"tusker close MEM-T-0001 --by agent-reviewer",
+		"tusker review submit APP-T-0001 --attempt attempt-review --task-rev",
+		"--source-sha",
+		"--work-rev",
+		"--proof-fingerprint",
+		"--gate-fingerprint",
+		"--verdict pass|changes_requested|blocked",
 	} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("expected reviewer prompt to contain %q, got:\n%s", expected, prompt)
 		}
 	}
+	for _, forbidden := range []string{"auto-close", "tusker status", "tusker merge", "tusker land", "tusker close", "tusker rework", "git update-ref", "git checkout"} {
+		if strings.Contains(strings.ToLower(prompt), forbidden) {
+			t.Fatalf("reviewer prompt retained forbidden authority %q:\n%s", forbidden, prompt)
+		}
+	}
 }
 
 func TestRenderAttemptPromptUsesV7ReviewerActorShape(t *testing.T) {
-	project := RegisteredProject{
-		ProjectID:  "project-123",
-		ProjectKey: "APP",
-		Name:       "App",
-		RepoRoot:   "/repo/root",
-		VaultRoot:  "/vault/root",
-	}
-	wf := defaultWorkflow()
-	wfFile := WorkflowFile{
-		Path: "/vault/root/WORKFLOW.md",
-		Body: "worker prompt {{ note.id }}",
-		Data: wf,
-	}
-	note := Note{
-		Data: map[string]any{
-			"schema": "tusker.task/v7",
-			"kind":   "task",
-			"id":     "APP-T-0001",
-			"title":  "Add provider harness",
-			"risk":   "medium",
-			"status": "review",
-		},
-		Body: "## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | First. | Review |\n| A2 | Second. | Review |\n",
-	}
+	project, wfFile, note := reviewerPromptFixture(t)
 
 	prompt, err := renderAttemptPrompt(project, wfFile, note, "/workspace/path", 4, "attempt-review", runLaneReview, RunStatus{}, RunStatus{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(prompt, "tusker close APP-T-0001 --by reviewer:agent") {
-		t.Fatalf("expected V7 reviewer prompt to use reviewer:agent, got:\n%s", prompt)
+	if !strings.Contains(prompt, "Reviewer actor: reviewer:agent") {
+		t.Fatalf("expected V7 reviewer actor, got:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "tusker verify add APP-T-0001 --by reviewer:agent --covers A1,A2") || strings.Contains(prompt, "tusker verify APP-T-0001") {
-		t.Fatalf("expected V7 reviewer prompt to use verify add, got:\n%s", prompt)
+	if !strings.Contains(prompt, "tusker review submit APP-T-0001 --attempt attempt-review") {
+		t.Fatalf("expected V7 reviewer prompt to use typed result submission, got:\n%s", prompt)
 	}
+	for _, forbidden := range []string{"tusker status", "tusker merge", "tusker land", "tusker close", "tusker rework", "git update-ref", "git checkout"} {
+		if strings.Contains(strings.ToLower(prompt), forbidden) {
+			t.Fatalf("V7 reviewer prompt retained forbidden authority %q:\n%s", forbidden, prompt)
+		}
+	}
+}
+
+func reviewerPromptFixture(t *testing.T) (RegisteredProject, WorkflowFile, Note) {
+	t.Helper()
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{
+		"vault": vault, "quiet": "true", "epic": "APP", "title": "Add provider harness",
+		"risk": "medium", "priority": "p0", "v7": "true",
+	}, newV7Task)
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+		"status":        "review",
+		"source_sha":    "abc123",
+		"work_revision": 2,
+	})
+	note, err := resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := newRegisteredProject(filepath.Dir(vault), vault)
+	return project, workflow, note
 }
