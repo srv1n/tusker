@@ -806,7 +806,80 @@ func v7LandingToolchainFingerprints(workDir string, commands []string) map[strin
 		}
 		out[key] = binary + "|" + version
 	}
+	// Every other executable still matters: a Python, JVM, .NET, C, or repo-local
+	// script gate must never collapse to one reusable empty identity. Resolve
+	// command heads without executing them. If shell syntax makes that impossible,
+	// return no identity and make the proof non-reusable rather than guessing.
+	for i, command := range commands {
+		for j, executable := range gateCommandExecutables(workDir, command) {
+			if executable == "" {
+				return map[string]string{}
+			}
+			out[fmt.Sprintf("exec:%d:%d", i, j)] = executable
+		}
+	}
 	return out
+}
+
+var gateShellBuiltins = map[string]bool{
+	".": true, ":": true, "alias": true, "break": true, "cd": true, "command": true,
+	"continue": true, "echo": true, "eval": true, "exec": true, "exit": true, "export": true,
+	"false": true, "printf": true, "pwd": true, "read": true, "return": true, "set": true,
+	"shift": true, "test": true, "times": true, "true": true, "type": true, "ulimit": true,
+	"umask": true, "unalias": true, "unset": true, "wait": true, "[": true,
+}
+
+func gateCommandExecutables(workDir, command string) []string {
+	if strings.ContainsAny(command, "`$|()") {
+		return []string{""}
+	}
+	command = strings.ReplaceAll(strings.ReplaceAll(command, "&&", ";"), "||", ";")
+	segments := strings.FieldsFunc(command, func(r rune) bool { return r == ';' })
+	if len(segments) == 0 {
+		return []string{""}
+	}
+	var resolved []string
+	for _, segment := range segments {
+		fields := strings.Fields(segment)
+		for len(fields) > 0 && strings.Contains(fields[0], "=") && !strings.HasPrefix(fields[0], "=") {
+			fields = fields[1:]
+		}
+		if len(fields) == 0 {
+			return []string{""}
+		}
+		if fields[0] == "env" {
+			fields = fields[1:]
+			for len(fields) > 0 && (strings.HasPrefix(fields[0], "-") || strings.Contains(fields[0], "=")) {
+				fields = fields[1:]
+			}
+			if len(fields) == 0 {
+				return []string{""}
+			}
+		}
+		name := fields[0]
+		if gateShellBuiltins[name] {
+			name = "/bin/sh"
+		}
+		path := name
+		if !filepath.IsAbs(path) && !strings.ContainsRune(path, filepath.Separator) {
+			var err error
+			path, err = exec.LookPath(path)
+			if err != nil {
+				return []string{""}
+			}
+		} else if !filepath.IsAbs(path) {
+			path = filepath.Join(workDir, path)
+		}
+		if resolvedPath, err := filepath.EvalSymlinks(path); err == nil && resolvedPath != "" {
+			path = resolvedPath
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			return []string{""}
+		}
+		resolved = append(resolved, fmt.Sprintf("%s|%d|%d", path, info.Size(), info.ModTime().UnixNano()))
+	}
+	return resolved
 }
 
 func v7LandingToolchainCorpus(workDir string, commands []string) string {

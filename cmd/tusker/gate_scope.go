@@ -186,6 +186,10 @@ func runSelectiveGateTier(policy GateTierPolicy, scopes []GateScope, base, reque
 			TreeHash: treeHash,
 			Touched:  touched,
 		}
+		if rt.Toolchain == nil {
+			return result, tuskerError(errorInvalidArg, "selective gate runtime is missing a toolchain fingerprint boundary")
+		}
+		result.Toolchain = strings.TrimSpace(rt.Toolchain(rt.Workspace, policy.HarvestCommands))
 		if refusal := gateTierPreflight(policy, requestedProfile, rt); refusal != nil {
 			result.Outcome = gateOutcomeRefused
 			result.Refusal = refusal

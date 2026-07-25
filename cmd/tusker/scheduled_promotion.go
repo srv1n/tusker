@@ -224,6 +224,9 @@ func scheduledPromotionTaskSourceSHA(repoRoot, candidateSHA, integrationBranch s
 
 func scheduledPromotionToolchainFingerprint(repoRoot string, commands []string) string {
 	toolchains := v7LandingToolchainFingerprints(repoRoot, commands)
+	if len(toolchains) == 0 {
+		return ""
+	}
 	parts := make([]string, 0, len(toolchains))
 	for name, value := range toolchains {
 		parts = append(parts, name+"="+value)
@@ -437,7 +440,7 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		}
 		lastGreen := ""
 		lastStatus := "unavailable:no_matching_entry"
-		if entry, ledgerErr := store.LatestCompleteGateLedgerBefore(projectID, gatePolicy.HarvestCommands, before.Gate.Profile, gateStarted.Format(time.RFC3339Nano)); ledgerErr == nil && entry != nil {
+		if entry, ledgerErr := store.LatestCompleteGateLedgerBefore(projectID, gatePolicy.HarvestCommands, before.Gate.Profile, before.Gate.Toolchain, gateStarted.Format(time.RFC3339Nano)); ledgerErr == nil && entry != nil {
 			lastGreen, lastStatus = entry.ID+"@"+entry.TreeHash+"@"+entry.PassedAt, "proven"
 		}
 		packet := promotionFailurePacket(before.Candidate, before.Gate, actor, string(gateOutput), execution.Err, gatePolicy, lastGreen, "", owner, touched, artifactRefs)

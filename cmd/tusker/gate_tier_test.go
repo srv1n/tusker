@@ -14,9 +14,9 @@ type fakeGateLedger struct {
 	calls int
 }
 
-func (f *fakeGateLedger) FindGateLedger(projectID, treeHash, command, profile string) (*GateLedgerEntry, error) {
+func (f *fakeGateLedger) FindGateLedger(projectID, treeHash, command, profile, toolchain string) (*GateLedgerEntry, error) {
 	f.calls++
-	return f.hits[projectID+"|"+treeHash+"|"+command+"|"+profile], nil
+	return f.hits[projectID+"|"+treeHash+"|"+command+"|"+profile+"|"+toolchain], nil
 }
 
 type recordingGateExec struct {
@@ -38,6 +38,7 @@ func gateTestRuntime(exec *recordingGateExec) gateTierRuntime {
 		ProjectID:  "app",
 		Workspace:  "/repo",
 		TreeHash:   func(string) (string, error) { return "tree-1", nil },
+		Toolchain:  func(string, []string) string { return "toolchain-1" },
 		FreeDiskGB: func(string) (float64, error) { return 500, nil },
 		SlotHolder: func(string, []string) (string, bool) { return "", false },
 		TreeStatus: func(string) (string, error) { return "", nil },
@@ -78,15 +79,15 @@ func TestGateHarvestModePassRecordsLedger(t *testing.T) {
 	exec := &recordingGateExec{outputs: map[string]string{"all-green": "ok"}}
 	rt := gateTestRuntime(exec)
 	var recorded []string
-	rt.RecordPass = func(command, treeHash, profile string, _ time.Duration) {
-		recorded = append(recorded, command+"@"+treeHash+"#"+profile)
+	rt.RecordPass = func(command, treeHash, profile, toolchain string, _ time.Duration) {
+		recorded = append(recorded, command+"@"+treeHash+"#"+profile+"$"+toolchain)
 	}
 	policy := GateTierPolicy{HarvestCommands: []string{"all-green"}, Profile: "canonical", AllowDirtyTree: true}
 	result, err := runGateTier(policy, "", rt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Outcome != gateOutcomePassed || len(recorded) != 1 || recorded[0] != "all-green@tree-1#canonical" {
+	if result.Outcome != gateOutcomePassed || len(recorded) != 1 || recorded[0] != "all-green@tree-1#canonical$toolchain-1" {
 		t.Fatalf("green gate was not ledgered for the next run: %#v %#v", result, recorded)
 	}
 }
@@ -267,7 +268,7 @@ func TestGateLedgerShortCircuitOnMatchingTreeState(t *testing.T) {
 	exec := &recordingGateExec{outputs: map[string]string{}}
 	rt := gateTestRuntime(exec)
 	ledger := &fakeGateLedger{hits: map[string]*GateLedgerEntry{
-		"app|tree-1|make test|canonical": {ID: "gate-abc", Command: "make test", Profile: "canonical", TreeHash: "tree-1"},
+		"app|tree-1|make test|canonical|toolchain-1": {ID: "gate-abc", Command: "make test", Profile: "canonical", Toolchain: "toolchain-1", TreeHash: "tree-1"},
 	}}
 	rt.Ledger = ledger
 	policy := GateTierPolicy{HarvestCommands: []string{"make test"}, Profile: "canonical"}
@@ -290,7 +291,7 @@ func TestGateLedgerShortCircuitSkipsOnlyHitCommands(t *testing.T) {
 	exec := &recordingGateExec{outputs: map[string]string{"make vet": "ok"}}
 	rt := gateTestRuntime(exec)
 	rt.Ledger = &fakeGateLedger{hits: map[string]*GateLedgerEntry{
-		"app|tree-1|make test|": {ID: "gate-abc", Command: "make test", TreeHash: "tree-1"},
+		"app|tree-1|make test||toolchain-1": {ID: "gate-abc", Command: "make test", Toolchain: "toolchain-1", TreeHash: "tree-1"},
 	}}
 	policy := GateTierPolicy{HarvestCommands: []string{"make test", "make vet"}, AllowDirtyTree: true}
 	result, err := runGateTier(policy, "", rt)
@@ -313,7 +314,7 @@ func TestGateLedgerShortCircuitUsesRuntimeStore(t *testing.T) {
 	defer store.Close()
 	// The seam is satisfied by the real ORC-T-0005 ledger, not only by fakes.
 	var reader gateLedgerReader = store
-	if err := store.RecordGateLedger(GateLedgerEntry{ID: "gate-real", ProjectID: "app", TreeHash: "tree-1", Command: "make test", Profile: "canonical"}); err != nil {
+	if err := store.RecordGateLedger(GateLedgerEntry{ID: "gate-real", ProjectID: "app", TreeHash: "tree-1", Command: "make test", Profile: "canonical", Toolchain: "toolchain-1"}); err != nil {
 		t.Fatal(err)
 	}
 	exec := &recordingGateExec{outputs: map[string]string{}}
@@ -325,6 +326,28 @@ func TestGateLedgerShortCircuitUsesRuntimeStore(t *testing.T) {
 	}
 	if result.Outcome != gateOutcomeLedgerHit || len(exec.ran) != 0 {
 		t.Fatalf("real ledger did not short-circuit: %#v", result)
+	}
+}
+
+func TestGateTierToolchainChangeMissesSameTreeLedger(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.RecordGateLedger(GateLedgerEntry{ID: "old", ProjectID: "app", TreeHash: "tree-1", Command: "make test", Profile: "canonical", Toolchain: "go1"}); err != nil {
+		t.Fatal(err)
+	}
+	exec := &recordingGateExec{outputs: map[string]string{"make test": "ok"}}
+	rt := gateTestRuntime(exec)
+	rt.Ledger = store
+	rt.Toolchain = func(string, []string) string { return "go2" }
+	result, err := runGateTier(GateTierPolicy{HarvestCommands: []string{"make test"}, Profile: "canonical", AllowDirtyTree: true}, "", rt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != gateOutcomePassed || result.Toolchain != "go2" || len(exec.ran) != 1 {
+		t.Fatalf("changed toolchain reused stale proof: result=%#v ran=%#v", result, exec.ran)
 	}
 }
 

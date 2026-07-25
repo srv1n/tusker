@@ -79,19 +79,25 @@ func (s *RuntimeStore) RecordGateLedger(entry GateLedgerEntry) error {
 	if entry.PassedAt == "" {
 		entry.PassedAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	_, err := s.exec(`INSERT INTO gate_ledger (id, project_id, tree_hash, command, profile, host, duration_ms, passed_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(project_id, tree_hash, command, profile) DO UPDATE SET
+	if strings.TrimSpace(entry.Toolchain) == "" {
+		return tuskerError(errorInvalidArg, "gate ledger requires a non-empty toolchain fingerprint")
+	}
+	_, err := s.exec(`INSERT INTO gate_ledger (id, project_id, tree_hash, command, profile, toolchain, host, duration_ms, passed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(project_id, tree_hash, command, profile, toolchain) DO UPDATE SET
 			host=excluded.host, duration_ms=excluded.duration_ms, passed_at=excluded.passed_at`,
-		entry.ID, entry.ProjectID, entry.TreeHash, entry.Command, entry.Profile, entry.Host, entry.DurationMS, entry.PassedAt)
+		entry.ID, entry.ProjectID, entry.TreeHash, entry.Command, entry.Profile, entry.Toolchain, entry.Host, entry.DurationMS, entry.PassedAt)
 	return err
 }
 
-func (s *RuntimeStore) FindGateLedger(projectID, treeHash, command, profile string) (*GateLedgerEntry, error) {
+func (s *RuntimeStore) FindGateLedger(projectID, treeHash, command, profile, toolchain string) (*GateLedgerEntry, error) {
+	if strings.TrimSpace(toolchain) == "" {
+		return nil, nil
+	}
 	var entry GateLedgerEntry
-	err := s.queryRowScan(`SELECT id, project_id, tree_hash, command, profile, host, duration_ms, passed_at
-		FROM gate_ledger WHERE project_id = ? AND tree_hash = ? AND command = ? AND profile = ?`,
-		[]any{projectID, treeHash, command, profile}, &entry.ID, &entry.ProjectID, &entry.TreeHash, &entry.Command, &entry.Profile, &entry.Host, &entry.DurationMS, &entry.PassedAt)
+	err := s.queryRowScan(`SELECT id, project_id, tree_hash, command, profile, toolchain, host, duration_ms, passed_at
+		FROM gate_ledger WHERE project_id = ? AND tree_hash = ? AND command = ? AND profile = ? AND toolchain = ?`,
+		[]any{projectID, treeHash, command, profile, toolchain}, &entry.ID, &entry.ProjectID, &entry.TreeHash, &entry.Command, &entry.Profile, &entry.Toolchain, &entry.Host, &entry.DurationMS, &entry.PassedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -121,24 +127,32 @@ func gateLedgerCmd(args Args, action string) error {
 		projectID, _ = resolveV7ProjectID(ctx.Project.VaultRoot)
 	}
 	profile := strings.TrimSpace(args.String("profile"))
+	toolchain := scheduledPromotionToolchainFingerprint(workspace, []string{command})
 	switch action {
 	case "check":
-		entry, err := ctx.Store.FindGateLedger(projectID, treeHash, command, profile)
+		entry, err := ctx.Store.FindGateLedger(projectID, treeHash, command, profile, toolchain)
 		if err != nil {
 			return err
 		}
-		emitJSON(map[string]any{"ok": true, "hit": entry != nil, "tree_hash": treeHash, "command": command, "profile": profile, "entry": entry})
+		emitJSON(map[string]any{"ok": true, "hit": entry != nil, "tree_hash": treeHash, "command": command, "profile": profile, "toolchain": toolchain, "entry": entry})
 		return nil
 	case "record":
 		if result := strings.ToLower(firstNonEmpty(args.String("result"), "pass")); result != "pass" && result != "passed" {
 			return tuskerError(errorInvalidArg, "gate-ledger records passing gates only")
 		}
+		// Keep the established CLI invocation valid for arbitrary project gate
+		// commands, but do not mint a reusable proof when their executable
+		// identity cannot be resolved safely.
+		if toolchain == "" {
+			emitJSON(map[string]any{"ok": true, "recorded": false, "reusable": false, "tree_hash": treeHash, "command": command, "profile": profile, "toolchain": ""})
+			return nil
+		}
 		duration, _ := strconv.ParseInt(firstNonEmpty(args.String("duration-ms"), "0"), 10, 64)
-		entry := GateLedgerEntry{ID: "gate-" + strings.ToLower(newRecordID()), ProjectID: projectID, TreeHash: treeHash, Command: command, Profile: profile, Host: runtimeLeaseHost(), DurationMS: duration, PassedAt: time.Now().UTC().Format(time.RFC3339)}
+		entry := GateLedgerEntry{ID: "gate-" + strings.ToLower(newRecordID()), ProjectID: projectID, TreeHash: treeHash, Command: command, Profile: profile, Toolchain: toolchain, Host: runtimeLeaseHost(), DurationMS: duration, PassedAt: time.Now().UTC().Format(time.RFC3339)}
 		if err := ctx.Store.RecordGateLedger(entry); err != nil {
 			return err
 		}
-		emitJSON(map[string]any{"ok": true, "recorded": entry})
+		emitJSON(map[string]any{"ok": true, "recorded": entry, "reusable": true})
 		return nil
 	default:
 		return fmt.Errorf("unknown gate-ledger action %s", action)

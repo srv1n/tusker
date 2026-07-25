@@ -28,23 +28,29 @@ func TestPromotionFailureLatestCompleteGateLedgerMatrix(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	put := func(id, tree, command, at string) {
-		if err := store.RecordGateLedger(GateLedgerEntry{ID: id, ProjectID: "app", TreeHash: tree, Command: command, Profile: "full", PassedAt: at}); err != nil {
+	put := func(id, tree, command, toolchain, at string) {
+		if err := store.RecordGateLedger(GateLedgerEntry{ID: id, ProjectID: "app", TreeHash: tree, Command: command, Profile: "full", Toolchain: toolchain, PassedAt: at}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	put("a1", "tree-a", "one", "2026-07-25T00:00:00.1Z")
-	put("a2", "tree-a", "two", "2026-07-25T00:00:00.2Z")
-	put("split", "tree-b", "one", "2026-07-25T00:00:00.9Z")
-	put("other", "tree-c", "two", "2026-07-25T00:00:00.9Z")
-	put("current", "tree-d", "one", "2026-07-25T00:00:02Z")
-	entry, err := store.LatestCompleteGateLedgerBefore("app", []string{"one", "two"}, "full", "2026-07-25T00:00:01Z")
+	put("a1", "tree-a", "one", "go1", "2026-07-25T00:00:00.1Z")
+	put("a2", "tree-a", "two", "go1", "2026-07-25T00:00:00.2Z")
+	put("split", "tree-b", "one", "go1", "2026-07-25T00:00:00.9Z")
+	put("other", "tree-c", "two", "go1", "2026-07-25T00:00:00.9Z")
+	put("mixed", "tree-e", "one", "go1", "2026-07-25T00:00:00.8Z")
+	put("mixed-two", "tree-e", "two", "go2", "2026-07-25T00:00:00.85Z")
+	put("current", "tree-d", "one", "go1", "2026-07-25T00:00:02Z")
+	entry, err := store.LatestCompleteGateLedgerBefore("app", []string{"one", "two"}, "full", "go1", "2026-07-25T00:00:01Z")
 	if err != nil || entry == nil || entry.TreeHash != "tree-a" {
 		t.Fatalf("same-tree complete proof=%#v err=%v", entry, err)
 	}
-	entry, err = store.LatestCompleteGateLedgerBefore("app", []string{"one", "two"}, "full", "2026-07-25T00:00:00.15Z")
+	entry, err = store.LatestCompleteGateLedgerBefore("app", []string{"one", "two"}, "full", "go1", "2026-07-25T00:00:00.15Z")
 	if err != nil || entry != nil {
 		t.Fatalf("partial/fractional prior pass incorrectly accepted: %#v %v", entry, err)
+	}
+	entry, err = store.LatestCompleteGateLedgerBefore("app", []string{"one", "two"}, "full", "go2", "2026-07-25T00:00:01Z")
+	if err != nil || entry != nil {
+		t.Fatalf("mixed-toolchain proof incorrectly accepted: %#v %v", entry, err)
 	}
 }
 

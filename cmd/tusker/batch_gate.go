@@ -187,13 +187,14 @@ func (d *Daemon) executeBatchGate(project RegisteredProject, policy BatchGatePol
 	}
 	failures := 0
 	firstFailCommand := ""
+	toolchain := scheduledPromotionToolchainFingerprint(project.RepoRoot, policy.Commands)
 	for _, command := range policy.Commands {
 		started := time.Now()
 		output, err := runGateCommand(project.RepoRoot, command)
 		if err == nil {
 			treeHash, hashErr := workspaceTreeStateHash(project.RepoRoot)
 			if hashErr == nil {
-				_ = d.store.RecordGateLedger(GateLedgerEntry{ID: "gate-" + strings.ToLower(newRecordID()), ProjectID: project.ProjectID, TreeHash: treeHash, Command: command, Profile: policy.FeatureProfile, Host: runtimeLeaseHost(), DurationMS: time.Since(started).Milliseconds(), PassedAt: time.Now().UTC().Format(time.RFC3339)})
+				_ = d.store.RecordGateLedger(GateLedgerEntry{ID: "gate-" + strings.ToLower(newRecordID()), ProjectID: project.ProjectID, TreeHash: treeHash, Command: command, Profile: policy.FeatureProfile, Toolchain: toolchain, Host: runtimeLeaseHost(), DurationMS: time.Since(started).Milliseconds(), PassedAt: time.Now().UTC().Format(time.RFC3339)})
 			}
 			continue
 		}
