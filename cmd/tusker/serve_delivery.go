@@ -1,17 +1,10 @@
 package main
 
 import (
-	"crypto/sha256"
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
-	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 const serveDeliveryErrorSchema = "tusker.serve-delivery-error/v1"
@@ -50,173 +43,31 @@ func serveDeliveryFailure(w http.ResponseWriter, err error) {
 	serveJSON(w, status, serveDeliveryError{Schema: serveDeliveryErrorSchema, Error: issue})
 }
 
-type serveDeliveryPlanComponent struct {
-	Name string
-	Dev  uint64
-	Ino  uint64
-	Mode uint32
+type serveDeliveryPlanHandle interface {
+	Close()
+	Verify() error
 }
 
 type serveDeliveryPlanSnapshot struct {
-	Path        string
-	Relative    string
-	Raw         []byte
-	Identity    string
-	directories []int
-	components  []serveDeliveryPlanComponent
-	file        *os.File
-	size        int64
-	modTime     time.Time
+	Path     string
+	Relative string
+	Raw      []byte
+	Identity string
+	handle   serveDeliveryPlanHandle
 }
 
 func (snapshot *serveDeliveryPlanSnapshot) Close() {
-	if snapshot == nil {
-		return
+	if snapshot != nil && snapshot.handle != nil {
+		snapshot.handle.Close()
+		snapshot.handle = nil
 	}
-	if snapshot.file != nil {
-		_ = snapshot.file.Close()
-		snapshot.file = nil
-	}
-	for index := len(snapshot.directories) - 1; index >= 0; index-- {
-		_ = unix.Close(snapshot.directories[index])
-	}
-	snapshot.directories = nil
 }
 
 func (snapshot *serveDeliveryPlanSnapshot) Verify() error {
-	if snapshot == nil || len(snapshot.components) == 0 || len(snapshot.directories) != len(snapshot.components) {
+	if snapshot == nil || snapshot.handle == nil {
 		return tuskerError(errorInvalidTransition, "delivery plan snapshot is no longer available")
 	}
-	for index, expected := range snapshot.components {
-		var current unix.Stat_t
-		if err := unix.Fstatat(snapshot.directories[index], expected.Name, &current, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-			return tuskerError(errorInvalidTransition, "delivery plan path identity changed after review")
-		}
-		if uint64(current.Dev) != expected.Dev || uint64(current.Ino) != expected.Ino ||
-			uint32(current.Mode)&unix.S_IFMT != expected.Mode&unix.S_IFMT {
-			return tuskerError(errorInvalidTransition, "delivery plan path identity changed after review")
-		}
-	}
-	current, err := snapshot.file.Stat()
-	if err != nil || current.Size() != snapshot.size || !current.ModTime().Equal(snapshot.modTime) {
-		return tuskerError(errorInvalidTransition, "delivery plan contents changed after its snapshot was read")
-	}
-	return nil
-}
-
-// serveDeliveryPlanSnapshotAt accepts only an existing repo-relative regular
-// file. Every caller-controlled component is opened relative to the already
-// opened repository descriptor with O_NOFOLLOW; no pathname is reopened to
-// obtain plan bytes.
-func serveDeliveryPlanSnapshotAt(project RegisteredProject, raw string, nestedRoots []string) (*serveDeliveryPlanSnapshot, error) {
-	path := strings.TrimSpace(raw)
-	if path == "" {
-		return nil, tuskerError(errorMissingArg, "delivery review requires a repo-relative plan path")
-	}
-	if filepath.IsAbs(path) {
-		return nil, tuskerError(errorInvalidArg, "delivery plan path must be relative to the repository", withPath(path))
-	}
-	clean := filepath.Clean(path)
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return nil, tuskerError(errorInvalidArg, "delivery plan path must stay inside the repository", withPath(path))
-	}
-	for _, nested := range nestedRoots {
-		nested = filepath.Clean(nested)
-		if clean == nested || strings.HasPrefix(clean, nested+string(filepath.Separator)) {
-			return nil, tuskerError(errorInvalidArg, "delivery plan belongs to a different registered nested project", withPath(path))
-		}
-	}
-	repoRoot, err := filepath.EvalSymlinks(project.RepoRoot)
-	if err != nil {
-		return nil, tuskerError(errorInvalidArg, "cannot resolve repository root for delivery plan", withPath(project.RepoRoot))
-	}
-	rootFD, err := unix.Open(repoRoot, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, tuskerError(errorInvalidArg, "cannot open authorized repository root for delivery plan", withPath(project.RepoRoot))
-	}
-	snapshot := &serveDeliveryPlanSnapshot{
-		Path:        filepath.Join(repoRoot, clean),
-		Relative:    clean,
-		directories: []int{rootFD},
-		components:  []serveDeliveryPlanComponent{},
-	}
-	fail := func(openErr error) (*serveDeliveryPlanSnapshot, error) {
-		snapshot.Close()
-		if errors.Is(openErr, unix.ENOENT) {
-			return nil, tuskerError(errorNotFound, "delivery plan does not exist", withPath(clean))
-		}
-		return nil, tuskerError(errorInvalidArg, "delivery plan path must contain only real directories and a non-symlink regular file", withPath(clean))
-	}
-	var rootStat unix.Stat_t
-	if err := unix.Fstat(rootFD, &rootStat); err != nil {
-		return fail(err)
-	}
-	parts := strings.Split(clean, string(filepath.Separator))
-	for index, part := range parts {
-		if serveDeliveryPlanOpenComponentHook != nil {
-			serveDeliveryPlanOpenComponentHook(clean, index)
-		}
-		final := index == len(parts)-1
-		flags := unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW
-		if final {
-			flags |= unix.O_NONBLOCK
-		} else {
-			flags |= unix.O_DIRECTORY
-		}
-		fd, openErr := unix.Openat(snapshot.directories[index], part, flags, 0)
-		if openErr != nil {
-			return fail(openErr)
-		}
-		var stat unix.Stat_t
-		if statErr := unix.Fstat(fd, &stat); statErr != nil {
-			_ = unix.Close(fd)
-			return fail(statErr)
-		}
-		mode := uint32(stat.Mode)
-		wantMode := uint32(unix.S_IFDIR)
-		if final {
-			wantMode = unix.S_IFREG
-		}
-		if mode&unix.S_IFMT != wantMode {
-			_ = unix.Close(fd)
-			return fail(unix.EINVAL)
-		}
-		snapshot.components = append(snapshot.components, serveDeliveryPlanComponent{Name: part, Dev: uint64(stat.Dev), Ino: uint64(stat.Ino), Mode: mode})
-		if final {
-			snapshot.file = os.NewFile(uintptr(fd), snapshot.Path)
-		} else {
-			snapshot.directories = append(snapshot.directories, fd)
-		}
-	}
-	before, err := snapshot.file.Stat()
-	if err != nil {
-		return fail(err)
-	}
-	snapshot.Raw, err = io.ReadAll(snapshot.file)
-	if err != nil {
-		return fail(err)
-	}
-	after, err := snapshot.file.Stat()
-	if err != nil {
-		return fail(err)
-	}
-	if !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
-		snapshot.Close()
-		return nil, tuskerError(errorInvalidTransition, "delivery plan changed while its snapshot was being read; review it again", withPath(clean))
-	}
-	snapshot.size = after.Size()
-	snapshot.modTime = after.ModTime()
-	identity := sha256.New()
-	_, _ = fmt.Fprintf(identity, "root:%d:%d\npath:%x\n", uint64(rootStat.Dev), uint64(rootStat.Ino), []byte(filepath.ToSlash(clean)))
-	for _, component := range snapshot.components {
-		_, _ = fmt.Fprintf(identity, "component:%x:%d:%d:%d\n", []byte(component.Name), component.Dev, component.Ino, component.Mode&unix.S_IFMT)
-	}
-	snapshot.Identity = fmt.Sprintf("sha256:%x", identity.Sum(nil))
-	if err := snapshot.Verify(); err != nil {
-		snapshot.Close()
-		return nil, tuskerError(errorInvalidTransition, "delivery plan path changed while its snapshot was being opened; review it again", withPath(clean), withContext(map[string]any{"cause": err.Error()}))
-	}
-	return snapshot, nil
+	return snapshot.handle.Verify()
 }
 
 func serveDeliveryPlanPath(project RegisteredProject, raw string) (string, error) {
@@ -366,6 +217,11 @@ func (s *serveServer) handleDeliveryStart(w http.ResponseWriter, body serveActio
 		BeforeMutation: func() {
 			if serveDeliveryPlanPhaseHook != nil {
 				serveDeliveryPlanPhaseHook("import")
+			}
+		},
+		BeforeImportCommit: func() {
+			if serveDeliveryPlanPhaseHook != nil {
+				serveDeliveryPlanPhaseHook("commit")
 			}
 		},
 		Verify: snapshot.Verify,

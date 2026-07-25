@@ -134,6 +134,10 @@ func deliveryV2ImportCmd(vaultPath, path string, args Args) error {
 }
 
 func deliveryV2ImportBytes(vaultPath, path string, raw []byte, args Args) error {
+	return deliveryV2ImportBytesGuarded(vaultPath, path, raw, args, nil)
+}
+
+func deliveryV2ImportBytesGuarded(vaultPath, path string, raw []byte, args Args, guard *deliveryImportWriteGuard) error {
 	if expected := strings.TrimSpace(args.String("expected-plan-fingerprint")); expected != "" && deliveryFingerprint(raw) != expected {
 		return tuskerError(errorInvalidTransition, "delivery plan changed after confirmation; regenerate delivery review and confirm its exact plan fingerprint")
 	}
@@ -178,7 +182,7 @@ func deliveryV2ImportBytes(vaultPath, path string, raw []byte, args Args) error 
 		emitDeliveryImportReport(report, args)
 		return nil
 	}
-	if err := applyDeliveryImport(vaultPath, plan, report, args); err != nil {
+	if err := applyDeliveryImportGuarded(vaultPath, plan, report, args, guard); err != nil {
 		return err
 	}
 	emitDeliveryImportReport(report, args)

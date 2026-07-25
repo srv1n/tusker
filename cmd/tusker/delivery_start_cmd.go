@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,15 +49,41 @@ type deliveryStartAuthority struct {
 	PlanBytes                 []byte
 	PlanBound                 bool
 	PlanVerify                func() error
+	ImportCommit              *deliveryImportCommit
 	ContextFingerprint        string
 	IntegrationBaseSHA        string
 }
 
 type deliveryPlanSource struct {
-	Path           string
-	Raw            []byte
-	BeforeMutation func()
-	Verify         func() error
+	Path               string
+	Raw                []byte
+	BeforeMutation     func()
+	BeforeImportCommit func()
+	Verify             func() error
+}
+
+type deliveryStartPlanAuthorityChangedError struct {
+	cause error
+}
+
+func (err *deliveryStartPlanAuthorityChangedError) Error() string {
+	return err.cause.Error()
+}
+
+func (err *deliveryStartPlanAuthorityChangedError) Unwrap() error {
+	return err.cause
+}
+
+func deliveryStartPlanAuthorityChanged(cause error) error {
+	if cause == nil {
+		return nil
+	}
+	return &deliveryStartPlanAuthorityChangedError{cause: cause}
+}
+
+func isDeliveryStartPlanAuthorityChanged(err error) bool {
+	var changed *deliveryStartPlanAuthorityChangedError
+	return errors.As(err, &changed)
 }
 
 func deliveryStartCmd(args Args) error {
@@ -156,9 +183,24 @@ func deliveryStartWithPlanSource(args Args, inspector wavePreflightEnvironmentIn
 	importArgs["expected-plan-fingerprint"] = authority.PlanFingerprint
 	importArgs["expected-integration-base-sha"] = authority.IntegrationBaseSHA
 	importArgs["material-lock-held"] = "true"
-	if err := deliveryV2ImportBytes(vault, authority.PlanPath, authority.PlanBytes, importArgs); err != nil {
+	var importGuard *deliveryImportWriteGuard
+	if source != nil {
+		importGuard = &deliveryImportWriteGuard{Verify: source.Verify, AfterPrecheck: source.BeforeImportCommit}
+	}
+	if err := deliveryV2ImportBytesGuarded(vault, authority.PlanPath, authority.PlanBytes, importArgs, importGuard); err != nil {
 		_ = materialLock.Close()
 		return deliveryStartResult{}, err
+	}
+	if importGuard != nil {
+		authority.ImportCommit = importGuard.Commit
+	}
+	if source != nil {
+		if verifyErr := source.Verify(); verifyErr != nil {
+			cause := deliveryStartPlanAuthorityChanged(tuskerError(errorInvalidTransition, "delivery plan identity changed after import; review and confirm the current plan again", withContext(map[string]any{"cause": verifyErr.Error()})))
+			cause = rollbackDeliveryStartImport(authority, cause)
+			_ = materialLock.Close()
+			return deliveryStartResult{}, cause
+		}
 	}
 	importedIdx, err := loadV7Index(vault)
 	if err != nil {
@@ -203,6 +245,12 @@ func deliveryStartWithPlanSource(args Args, inspector wavePreflightEnvironmentIn
 	// The plan and bounded context are sampled again after the write for an
 	// early refusal. Serve keeps parsing the bound bytes; CLI callers re-read
 	// their path. The final material lock repeats this authority check.
+	if source != nil {
+		if verifyErr := source.Verify(); verifyErr != nil {
+			cause := deliveryStartPlanAuthorityChanged(tuskerError(errorInvalidTransition, "delivery plan identity changed after import; review and confirm the current plan again", withContext(map[string]any{"cause": verifyErr.Error()})))
+			return deliveryStartResult{}, refuseDeliveryStartBeforeArm(vault, authority, cause)
+		}
+	}
 	_, confirmedAfter, planAfter, rawAfter, err := deliveryStartPlanInput(vault, Args{"plan": authority.PlanPath, "confirm": authority.PlanFingerprint}, source)
 	if err != nil {
 		return deliveryStartResult{}, refuseDeliveryStartBeforeArm(vault, authority, err)
@@ -281,7 +329,7 @@ func validateDeliveryStartAuthorityUnderLock(vault string, wave Note, authority 
 	}
 	if authority.PlanBound && authority.PlanVerify != nil {
 		if err := authority.PlanVerify(); err != nil {
-			return tuskerError(errorInvalidTransition, "reviewed delivery plan identity changed before authorization; regenerate delivery review and Start")
+			return deliveryStartPlanAuthorityChanged(tuskerError(errorInvalidTransition, "reviewed delivery plan identity changed before authorization; regenerate delivery review and Start"))
 		}
 	}
 	var (
@@ -312,6 +360,26 @@ func validateDeliveryStartAuthorityUnderLock(vault string, wave Note, authority 
 		return tuskerError(errorInvalidTransition, "configured default branch changed before authorization; regenerate delivery context and review")
 	}
 	return nil
+}
+
+func rollbackDeliveryStartImport(authority *deliveryStartAuthority, cause error) error {
+	if authority == nil || authority.ImportCommit == nil {
+		return cause
+	}
+	if err := authority.ImportCommit.Restore(); err != nil {
+		return tuskerError(
+			errorInvalidTransition,
+			"delivery plan identity changed and exact import rollback could not be proven; delivery is fail-closed pending repair",
+			withHint("stop delivery, restore every reported path from version control or a verified backup, then regenerate delivery review"),
+			withContext(map[string]any{"cause": cause.Error(), "rollback": err.Error(), "paths": authority.ImportCommit.Paths}),
+		)
+	}
+	return deliveryStartPlanAuthorityChanged(tuskerError(
+		errorInvalidTransition,
+		"delivery plan identity changed after import; exact import preimages were restored",
+		withHint("restore the reviewed plan path, regenerate delivery review, and confirm its current identity"),
+		withContext(map[string]any{"cause": cause.Error()}),
+	))
 }
 
 func deliveryStartActor(args Args) (string, error) {

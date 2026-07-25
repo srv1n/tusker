@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -667,6 +668,182 @@ func TestServeDeliveryBoundSnapshotSurvivesFormerReopenSwaps(t *testing.T) {
 			assertEqual(t, beforeRecords, snapshotDeliveryRecords(t, vault), phase+" path swap must refuse before import")
 			assertSnapshotEqual(t, beforeState, snapshotTree(t, DefaultStateRoot()), phase+" path swap runtime state")
 		})
+	}
+}
+
+func TestServeDeliveryImportCommitSwapRestoresEveryPreimage(t *testing.T) {
+	server, repo := newServeDeliveryFixture(t)
+	vault := server.vaultPath
+	plan := validDeliveryPlanV2()
+	path := writeDeliveryV2TestPlan(t, vault, plan)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(t.TempDir(), "external.yaml")
+	if err := writeText(external, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	var review deliveryReview
+	serveDecode(t, server, "/api/delivery/review?project=delivery&plan=.tusker/scratch/delivery-plan-v2.yaml", &review)
+	beforeRepo := snapshotTree(t, repo)
+	beforeState := snapshotTree(t, DefaultStateRoot())
+	originalHook := serveDeliveryPlanPhaseHook
+	var restore func()
+	swapped := false
+	serveDeliveryPlanPhaseHook = func(phase string) {
+		if !swapped && phase == "commit" {
+			swapped = true
+			restore = swapServeDeliveryPlanWithSymlink(t, path, external)
+		}
+	}
+	defer func() {
+		serveDeliveryPlanPhaseHook = originalHook
+		if restore != nil {
+			restore()
+		}
+	}()
+
+	body := `{"plan":".tusker/scratch/delivery-plan-v2.yaml","confirm":"` + review.Start.PlanFingerprint + `","planIdentity":"` + review.Start.PlanIdentity + `"}`
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if restore != nil {
+		restore()
+	}
+	if !swapped || recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "exact import preimages were restored") {
+		t.Fatalf("commit-boundary swap was not fully rolled back: swapped=%t status=%d body=%s", swapped, recorder.Code, recorder.Body.String())
+	}
+	assertSnapshotEqual(t, beforeRepo, snapshotTree(t, repo), "commit-boundary repository preimages")
+	assertSnapshotEqual(t, beforeState, snapshotTree(t, DefaultStateRoot()), "commit-boundary runtime state")
+}
+
+func TestServeDeliveryPostCommitSwapRestoresEveryPreimage(t *testing.T) {
+	server, repo := newServeDeliveryFixture(t)
+	vault := server.vaultPath
+	plan := validDeliveryPlanV2()
+	path := writeDeliveryV2TestPlan(t, vault, plan)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(t.TempDir(), "external.yaml")
+	if err := writeText(external, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	var review deliveryReview
+	serveDecode(t, server, "/api/delivery/review?project=delivery&plan=.tusker/scratch/delivery-plan-v2.yaml", &review)
+	beforeRepo := snapshotTree(t, repo)
+	beforeState := snapshotTree(t, DefaultStateRoot())
+	originalHook := deliveryStartAfterImportUnlock
+	var restore func()
+	swapped := false
+	deliveryStartAfterImportUnlock = func() {
+		if !swapped {
+			swapped = true
+			restore = swapServeDeliveryPlanWithSymlink(t, path, external)
+		}
+	}
+	defer func() {
+		deliveryStartAfterImportUnlock = originalHook
+		if restore != nil {
+			restore()
+		}
+	}()
+
+	body := `{"plan":".tusker/scratch/delivery-plan-v2.yaml","confirm":"` + review.Start.PlanFingerprint + `","planIdentity":"` + review.Start.PlanIdentity + `"}`
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if restore != nil {
+		restore()
+	}
+	if !swapped || recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "exact import preimages were restored") {
+		t.Fatalf("post-commit swap was not fully rolled back: swapped=%t status=%d body=%s", swapped, recorder.Code, recorder.Body.String())
+	}
+	assertSnapshotEqual(t, beforeRepo, snapshotTree(t, repo), "post-commit repository preimages")
+	assertSnapshotEqual(t, beforeState, snapshotTree(t, DefaultStateRoot()), "post-commit runtime state")
+}
+
+func TestServeDeliveryImportRollbackFailureIsActionableAndLeavesNoPartialDocument(t *testing.T) {
+	server, repo := newServeDeliveryFixture(t)
+	vault := server.vaultPath
+	plan := validDeliveryPlanV2()
+	path := writeDeliveryV2TestPlan(t, vault, plan)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(t.TempDir(), "external.yaml")
+	if err := writeText(external, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	var review deliveryReview
+	serveDecode(t, server, "/api/delivery/review?project=delivery&plan=.tusker/scratch/delivery-plan-v2.yaml", &review)
+	beforeState := snapshotTree(t, DefaultStateRoot())
+	originalPhaseHook := serveDeliveryPlanPhaseHook
+	originalRollbackHook := deliveryImportRollbackWriteHook
+	var restore func()
+	swapped := false
+	rollbackFailed := false
+	serveDeliveryPlanPhaseHook = func(phase string) {
+		if !swapped && phase == "commit" {
+			swapped = true
+			restore = swapServeDeliveryPlanWithSymlink(t, path, external)
+		}
+	}
+	deliveryImportRollbackWriteHook = func(path string) error {
+		if !rollbackFailed && strings.Contains(path, filepath.Join("work", "epics")) {
+			rollbackFailed = true
+			return errors.New("forced exact restoration failure")
+		}
+		return nil
+	}
+	defer func() {
+		serveDeliveryPlanPhaseHook = originalPhaseHook
+		deliveryImportRollbackWriteHook = originalRollbackHook
+		if restore != nil {
+			restore()
+		}
+	}()
+
+	body := `{"plan":".tusker/scratch/delivery-plan-v2.yaml","confirm":"` + review.Start.PlanFingerprint + `","planIdentity":"` + review.Start.PlanIdentity + `"}`
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if restore != nil {
+		restore()
+	}
+	if !swapped || !rollbackFailed || recorder.Code != http.StatusConflict ||
+		!strings.Contains(recorder.Body.String(), "exact rollback could not be proven") ||
+		!strings.Contains(recorder.Body.String(), "restore every reported path") {
+		t.Fatalf("rollback failure lost its fail-closed repair contract: swapped=%t rollbackFailed=%t status=%d body=%s", swapped, rollbackFailed, recorder.Code, recorder.Body.String())
+	}
+	epicPath := filepath.Join(vault, "work", "epics", "VTP.md")
+	epicRaw, err := os.ReadFile(epicPath)
+	if err != nil {
+		t.Fatalf("irrecoverable document was not retained as one complete file: %v", err)
+	}
+	if _, _, err := parseFrontmatter(string(epicRaw)); err != nil {
+		t.Fatalf("irrecoverable document is partial or malformed: %v\n%s", err, epicRaw)
+	}
+	for _, path := range []string{
+		filepath.Join(vault, "work", "tasks", "VTP-T-0001.md"),
+		filepath.Join(vault, "work", "gates", "VTP-G-0001.md"),
+		filepath.Join(vault, "work", "waves", "W-0001.md"),
+	} {
+		if fileExists(path) {
+			t.Fatalf("rollback failure retained unrelated partial import document %s", path)
+		}
+	}
+	assertSnapshotEqual(t, beforeState, snapshotTree(t, DefaultStateRoot()), "failed rollback runtime state")
+	for rel := range snapshotTree(t, repo) {
+		if strings.Contains(rel, ".delivery-") {
+			t.Fatalf("failed rollback retained transaction temporary file %s", rel)
+		}
 	}
 }
 

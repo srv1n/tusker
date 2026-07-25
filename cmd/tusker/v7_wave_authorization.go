@@ -622,6 +622,9 @@ func mutateWaveAuthorizationWithInspector(args Args, target string, inspector wa
 			env = inspector(vaultPath, wave)
 		}
 		report := buildWavePreflight(vaultPath, idx, wave, env)
+		if err := validateDeliveryStartAuthorityUnderLock(vaultPath, wave, authority); err != nil {
+			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, err)
+		}
 		if authority != nil && authority.WaveID != report.WaveID {
 			cause := tuskerError(errorInvalidTransition, report.WaveID+": reviewed import wave identity changed before authorization; rerun delivery review and Start", withContext(report))
 			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause)
@@ -637,9 +640,6 @@ func mutateWaveAuthorizationWithInspector(args Args, target string, inspector wa
 		if err := validateDeliveryStartLiveAuthority(idx, wave, authority); err != nil {
 			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, err)
 		}
-		if err := validateDeliveryStartAuthorityUnderLock(vaultPath, wave, authority); err != nil {
-			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, err)
-		}
 		if !report.OK {
 			cause := tuskerError(errorInvalidTransition, report.WaveID+": wave arm blocked: "+strings.Join(report.Blockers, "; "), withContext(report))
 			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause)
@@ -647,7 +647,7 @@ func mutateWaveAuthorizationWithInspector(args Args, target string, inspector wa
 		if current == "armed" && report.StoredFingerprint == report.Fingerprint {
 			return report, emitWaveAuthorizationResult(args, report.WaveID, current, report)
 		}
-		if err := armWaveAtomically(vaultPath, idx, wave, report, args); err != nil {
+		if err := armWaveAtomicallyGuarded(vaultPath, idx, wave, report, args, authority); err != nil {
 			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, err)
 		}
 		final := report
@@ -750,6 +750,9 @@ func rollbackDeliveryStartRefusalUnderLock(vaultPath string, idx v7Index, author
 	if authority == nil {
 		return cause
 	}
+	if isDeliveryStartPlanAuthorityChanged(cause) {
+		return handledDeliveryStartRefusal(rollbackDeliveryStartImport(authority, cause))
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	const actor = "tusker:delivery-start-rollback"
 	writes := map[string]string{}
@@ -847,6 +850,10 @@ func closeV7DocumentLocks(locks []*v7DocumentLock) {
 }
 
 func armWaveAtomically(vaultPath string, idx v7Index, wave Note, report wavePreflightReport, args Args) error {
+	return armWaveAtomicallyGuarded(vaultPath, idx, wave, report, args, nil)
+}
+
+func armWaveAtomicallyGuarded(vaultPath string, idx v7Index, wave Note, report wavePreflightReport, args Args, authority *deliveryStartAuthority) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	actor := fallback(firstNonEmpty(args.String("by"), args.String("actor")), "human:"+defaultActorName())
 	writes := map[string]string{}
@@ -894,7 +901,14 @@ func armWaveAtomically(vaultPath string, idx v7Index, wave Note, report wavePref
 	if args.Bool("fail-after-first-write") {
 		failAfter = 1
 	}
-	if err := commitDeliveryWrites(writes, failAfter); err != nil {
+	var guard *deliveryImportWriteGuard
+	if authority != nil && authority.PlanBound {
+		guard = &deliveryImportWriteGuard{Verify: authority.PlanVerify}
+	}
+	if err := commitDeliveryWritesGuarded(writes, failAfter, guard); err != nil {
+		if isDeliveryImportIdentityChanged(err) {
+			return deliveryStartPlanAuthorityChanged(err)
+		}
 		return err
 	}
 	_ = emitV7Event(vaultPath, report.WaveID, "wave", "updated", actor, map[string]any{"authorization": "armed", "fingerprint": report.Fingerprint, "members": report.Members})

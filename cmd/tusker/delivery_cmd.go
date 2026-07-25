@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,50 @@ import (
 const deliveryPlanSchema = "tusker.delivery-plan/v1"
 
 var deliveryImportNow = time.Now
+var deliveryImportRollbackWriteHook func(path string) error
+
+type deliveryImportWriteGuard struct {
+	Verify        func() error
+	AfterPrecheck func()
+	Commit        *deliveryImportCommit
+}
+
+type deliveryWritePreimage struct {
+	Content []byte
+	Mode    os.FileMode
+	Existed bool
+}
+
+type deliveryImportCommit struct {
+	Paths     []string
+	Preimages map[string]deliveryWritePreimage
+	Written   map[string][]byte
+	restored  bool
+}
+
+type deliveryImportIdentityChangedError struct {
+	cause error
+}
+
+func (err *deliveryImportIdentityChangedError) Error() string {
+	return err.cause.Error()
+}
+
+func (err *deliveryImportIdentityChangedError) Unwrap() error {
+	return err.cause
+}
+
+func markDeliveryImportIdentityChanged(cause error) error {
+	if cause == nil {
+		return nil
+	}
+	return &deliveryImportIdentityChangedError{cause: cause}
+}
+
+func isDeliveryImportIdentityChanged(err error) bool {
+	var changed *deliveryImportIdentityChangedError
+	return errors.As(err, &changed)
+}
 
 type deliveryPlan struct {
 	Schema        string             `yaml:"schema" json:"schema"`
@@ -485,6 +530,10 @@ func deliveryFrontiers(plan deliveryPlan) ([][]string, bool) {
 }
 
 func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImportReport, args Args) error {
+	return applyDeliveryImportGuarded(vaultPath, plan, report, args, nil)
+}
+
+func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deliveryImportReport, args Args, guard *deliveryImportWriteGuard) error {
 	var materialLock *v7DocumentLock
 	var err error
 	if !args.Bool("material-lock-held") {
@@ -721,7 +770,7 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 	if args.Bool("fail-after-first-write") {
 		failAfter = 1
 	}
-	if err := commitDeliveryWrites(writes, failAfter); err != nil {
+	if err := commitDeliveryWritesGuarded(writes, failAfter, guard); err != nil {
 		if !branchExisted && !args.Bool("skip-integration-branch") {
 			_, _ = gitCombined(repoRoot, "update-ref", "-d", "refs/heads/"+branch)
 		}
@@ -781,45 +830,269 @@ func convergeUnchangedDeliveryWrites(writes map[string]string) error {
 }
 
 func commitDeliveryWrites(writes map[string]string, failAfter int) error {
+	return commitDeliveryWritesGuarded(writes, failAfter, nil)
+}
+
+// commitDeliveryWritesGuarded is the document transaction boundary. Guarded
+// import callers hold the material lock; this function captures every actual
+// write preimage, atomically replaces one complete document at a time, and
+// verifies a bound plan after every replacement. A failed guard restores and
+// byte-verifies the whole set before any cache invalidation or mutation
+// notification escapes.
+func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard *deliveryImportWriteGuard) error {
 	paths := make([]string, 0, len(writes))
 	for path := range writes {
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
-	type backup struct {
-		content []byte
-		existed bool
-	}
-	backups := map[string]backup{}
+	backups := map[string]deliveryWritePreimage{}
 	for _, path := range paths {
-		raw, err := os.ReadFile(path)
-		if err == nil {
-			backups[path] = backup{content: raw, existed: true}
-		} else if !os.IsNotExist(err) {
+		parentInfo, err := os.Lstat(filepath.Dir(path))
+		if err != nil {
+			return tuskerError(errorInvalidTransition, "delivery import write directory is unavailable", withPath(filepath.Dir(path)), withContext(map[string]any{"cause": err.Error()}))
+		}
+		if parentInfo.Mode()&os.ModeSymlink != 0 || !parentInfo.IsDir() {
+			return tuskerError(errorInvalidTransition, "delivery import write directory is not a real directory", withPath(filepath.Dir(path)))
+		}
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			backups[path] = deliveryWritePreimage{Mode: 0o644}
+			continue
+		}
+		if err != nil {
 			return err
 		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return tuskerError(errorInvalidTransition, "delivery import write target is not a regular file", withPath(path))
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		backups[path] = deliveryWritePreimage{Content: raw, Mode: info.Mode().Perm(), Existed: true}
 	}
-	rollback := func() {
-		for _, path := range paths {
-			b := backups[path]
-			if b.existed {
-				_ = writeText(path, string(b.content))
-			} else {
-				_ = os.Remove(path)
+	if guard != nil {
+		if guard.Verify == nil {
+			return tuskerError(errorInvalidTransition, "delivery import write guard has no identity verifier")
+		}
+		if err := guard.Verify(); err != nil {
+			return markDeliveryImportIdentityChanged(tuskerError(
+				errorInvalidTransition,
+				"delivery plan identity changed before import commit; no documents were written",
+				withHint("restore the reviewed plan path, regenerate delivery review, and confirm its current identity"),
+				withContext(map[string]any{"cause": err.Error()}),
+			))
+		}
+		if guard.AfterPrecheck != nil {
+			guard.AfterPrecheck()
+		}
+	}
+
+	rollback := func(cause error, identityChanged bool) error {
+		rollbackErr := restoreDeliveryWritePreimages(paths, backups)
+		if rollbackErr != nil {
+			for _, path := range paths {
+				invalidateCachedNote(path)
+			}
+		}
+		if identityChanged {
+			return deliveryImportIdentityError(cause, rollbackErr, paths)
+		}
+		if rollbackErr != nil {
+			return tuskerError(
+				errorInvalidTransition,
+				"delivery import failed and exact rollback could not be proven; stop and repair the reported paths before retrying",
+				withHint("restore every reported path from version control or a verified backup, then rerun delivery review"),
+				withContext(map[string]any{"cause": cause.Error(), "rollback": rollbackErr.Error(), "paths": paths}),
+			)
+		}
+		return cause
+	}
+	for i, path := range paths {
+		if err := writeDeliveryTransactionFile(path, []byte(writes[path]), backups[path].Mode); err != nil {
+			return rollback(err, false)
+		}
+		if failAfter > 0 && i+1 >= failAfter {
+			return rollback(tuskerError(errorInvalidArg, "forced delivery import write failure"), false)
+		}
+		if guard != nil {
+			if err := guard.Verify(); err != nil {
+				return rollback(err, true)
 			}
 		}
 	}
-	for i, path := range paths {
-		if err := writeText(path, writes[path]); err != nil {
-			rollback()
-			return err
-		}
-		if failAfter > 0 && i+1 >= failAfter {
-			rollback()
-			return tuskerError(errorInvalidArg, "forced delivery import write failure")
+	if guard != nil {
+		if err := guard.Verify(); err != nil {
+			return rollback(err, true)
 		}
 	}
+	if guard != nil {
+		guard.Commit = captureDeliveryImportCommit(paths, backups, writes)
+	}
+	for _, path := range paths {
+		invalidateCachedNote(path)
+		recordCLIVaultMutation(path)
+	}
 	return nil
+}
+
+func writeDeliveryTransactionFile(path string, content []byte, mode os.FileMode) error {
+	if mode.Perm() == 0 {
+		mode = 0o644
+	}
+	temp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".delivery-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	renamed := false
+	defer func() {
+		_ = temp.Close()
+		if !renamed {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if err := temp.Chmod(mode.Perm()); err != nil {
+		return err
+	}
+	if written, err := temp.Write(content); err != nil {
+		return err
+	} else if written != len(content) {
+		return fmt.Errorf("write delivery transaction temporary file: wrote %d of %d bytes", written, len(content))
+	}
+	if err := temp.Sync(); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	renamed = true
+	if err := syncV7DocumentDirectory(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("sync delivery transaction parent directory after rename: %w", err)
+	}
+	return nil
+}
+
+func restoreDeliveryWritePreimages(paths []string, backups map[string]deliveryWritePreimage) error {
+	var failures []string
+	for index := len(paths) - 1; index >= 0; index-- {
+		path := paths[index]
+		if deliveryImportRollbackWriteHook != nil {
+			if err := deliveryImportRollbackWriteHook(path); err != nil {
+				failures = append(failures, path+": "+err.Error())
+				continue
+			}
+		}
+		backup := backups[path]
+		if backup.Existed {
+			if err := writeDeliveryTransactionFile(path, backup.Content, backup.Mode); err != nil {
+				failures = append(failures, path+": "+err.Error())
+			}
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			failures = append(failures, path+": "+err.Error())
+			continue
+		}
+		if err := syncV7DocumentDirectory(filepath.Dir(path)); err != nil {
+			failures = append(failures, path+": "+err.Error())
+		}
+	}
+	for _, path := range paths {
+		backup := backups[path]
+		info, err := os.Lstat(path)
+		if !backup.Existed {
+			if err == nil || !os.IsNotExist(err) {
+				failures = append(failures, path+": created file remains after rollback")
+			}
+			continue
+		}
+		if err != nil {
+			failures = append(failures, path+": restored file is unavailable: "+err.Error())
+			continue
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm() != backup.Mode.Perm() {
+			failures = append(failures, path+": restored file identity or mode differs")
+			continue
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			failures = append(failures, path+": restored file cannot be read: "+err.Error())
+		} else if !bytes.Equal(raw, backup.Content) {
+			failures = append(failures, path+": restored bytes differ")
+		}
+	}
+	if len(failures) > 0 {
+		sort.Strings(failures)
+		return fmt.Errorf("%s", strings.Join(uniqueStrings(failures), "; "))
+	}
+	return nil
+}
+
+func captureDeliveryImportCommit(paths []string, backups map[string]deliveryWritePreimage, writes map[string]string) *deliveryImportCommit {
+	commit := &deliveryImportCommit{
+		Paths:     append([]string(nil), paths...),
+		Preimages: make(map[string]deliveryWritePreimage, len(paths)),
+		Written:   make(map[string][]byte, len(paths)),
+	}
+	for _, path := range paths {
+		preimage := backups[path]
+		preimage.Content = append([]byte(nil), preimage.Content...)
+		commit.Preimages[path] = preimage
+		commit.Written[path] = []byte(writes[path])
+	}
+	return commit
+}
+
+func (commit *deliveryImportCommit) Restore() error {
+	if commit == nil || commit.restored {
+		return nil
+	}
+	for _, path := range commit.Paths {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return fmt.Errorf("%s: committed import document is unavailable: %w", path, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm() != commit.Preimages[path].Mode.Perm() {
+			return fmt.Errorf("%s: committed import document identity or mode changed before restoration", path)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("%s: committed import document cannot be read: %w", path, err)
+		}
+		if !bytes.Equal(raw, commit.Written[path]) {
+			return fmt.Errorf("%s: committed import bytes changed before restoration", path)
+		}
+	}
+	restoreErr := restoreDeliveryWritePreimages(commit.Paths, commit.Preimages)
+	for _, path := range commit.Paths {
+		invalidateCachedNote(path)
+	}
+	if restoreErr != nil {
+		return restoreErr
+	}
+	commit.restored = true
+	return nil
+}
+
+func deliveryImportIdentityError(cause, rollbackErr error, paths []string) error {
+	if rollbackErr == nil {
+		return markDeliveryImportIdentityChanged(tuskerError(
+			errorInvalidTransition,
+			"delivery plan identity changed during import; exact import preimages were restored",
+			withHint("restore the reviewed plan path, regenerate delivery review, and confirm its current identity"),
+			withContext(map[string]any{"cause": cause.Error()}),
+		))
+	}
+	return markDeliveryImportIdentityChanged(tuskerError(
+		errorInvalidTransition,
+		"delivery plan identity changed during import and exact rollback could not be proven; delivery is fail-closed pending repair",
+		withHint("stop delivery, restore every reported path from version control or a verified backup, then regenerate delivery review"),
+		withContext(map[string]any{"cause": cause.Error(), "rollback": rollbackErr.Error(), "paths": paths}),
+	))
 }
 
 func renderDeliveryTaskBody(id string, task deliveryPlanTask) string {
