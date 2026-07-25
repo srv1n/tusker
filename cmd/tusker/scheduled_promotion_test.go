@@ -219,15 +219,17 @@ func TestScheduledPromotionLandingFrozenCandidateCASAndReplay(t *testing.T) {
 }
 
 func TestScheduledPromotionLandingImplicitSingletonNeedsNoWaveArm(t *testing.T) {
+	stateRoot := t.TempDir()
 	repo, vault := newLandTestRepo(t, 1, "test -f singleton-promoted.txt")
 	clearWaveBackpointer(t, vault, "APP-T-0001")
 	setSingletonPromotionMode(t, vault, scheduledPromotionStage)
 	setWaveTaskState(t, vault, "APP-T-0001", "review", "review", "")
 	sourceSHA := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"singleton-promoted.txt": "yes\n"})
 	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)
-	if err := landFrozenSourcesAsIssuedDeparture(t, repo, vault,
+	if err := landFrozenSourcesAsIssuedDepartureInStateRoot(t, repo, vault,
 		Args{"vault": vault, "quiet": "true", "actor": "daemon:departure:singleton-fixture", "_pos0": "APP-T-0001"},
 		map[string]string{"APP-T-0001": sourceSHA},
+		stateRoot,
 	); err != nil {
 		t.Fatalf("singleton staging failed: %v", err)
 	}
@@ -258,7 +260,7 @@ func TestScheduledPromotionLandingImplicitSingletonNeedsNoWaveArm(t *testing.T) 
 		t.Fatalf("singleton promotion fixture retained an ordinary wave backpointer: %#v err=%v", task, err)
 	}
 
-	store, err := OpenRuntimeStore(t.TempDir())
+	store, err := OpenRuntimeStore(stateRoot)
 	if err != nil {
 		t.Fatal(err)
 	}

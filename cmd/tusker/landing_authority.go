@@ -68,19 +68,49 @@ func v7LandingAuthorityCandidate(candidate DepartureCandidate, taskIDs []string)
 }
 
 func v7LandingRepoIdentity(repoRoot string) (string, error) {
-	root, err := filepath.EvalSymlinks(repoRoot)
+	root, err := v7CanonicalPhysicalDirectory(repoRoot)
 	if err != nil {
 		return "", err
 	}
-	gitDir, err := gitOutputTrim(root, "rev-parse", "--git-dir")
+	gitDir, err := gitOutputTrim(root, "rev-parse", "--git-common-dir")
 	if err != nil {
 		return "", err
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(root, gitDir)
+	}
+	gitDir, err = v7CanonicalPhysicalDirectory(gitDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve Git common directory: %w", err)
 	}
 	// Remote configuration is mutable transport metadata, not repository
 	// identity. A receipt issued before `remote add`, a URL migration, or a
 	// mirror cutover must remain bound to the same physical Git repository.
 	sum := sha256.Sum256([]byte(strings.Join([]string{"tusker.repo-identity/v2", root, gitDir}, "\x00")))
 	return fmt.Sprintf("sha256:%x", sum), nil
+}
+
+func v7CanonicalPhysicalDirectory(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("directory path is empty")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	physical, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(physical)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", physical)
+	}
+	return filepath.Clean(physical), nil
 }
 
 func (d *Daemon) issueV7LandingAuthority(project RegisteredProject, wf Workflow, run DepartureRun, candidate DepartureCandidate, target string) (*v7LandingAuthority, error) {
@@ -182,10 +212,10 @@ func verifyV7LandingReceiptAuthority(repoRoot string, receipt v7LandingReceipt) 
 }
 
 // verifyV7LandingReceiptAuthorityWithStore deliberately treats
-// receipt/cache/index data as hostile discovery material. Only an issuance in
-// the caller's daemon-held store (or the configured canonical store for a
-// historical daemon), created before the isolated gate, plus its
-// daemon-private signature confers authority.
+// receipt/cache/index data as hostile discovery material. A non-nil caller
+// store is an exclusive trust domain; nil deliberately selects the configured
+// canonical store for historical command-path recovery. An issuance created
+// before the isolated gate plus its daemon-private signature confers authority.
 func verifyV7LandingReceiptAuthorityWithStore(repoRoot string, receipt v7LandingReceipt, trustedStore *RuntimeStore) bool {
 	if receipt.Schema != v7LandingReceiptSchema ||
 		receipt.Fingerprint != v7LandingReceiptFingerprint(receipt) ||
@@ -200,14 +230,10 @@ func verifyV7LandingReceiptAuthorityWithStore(repoRoot string, receipt v7Landing
 	if err != nil || repoIdentity != receipt.RepoIdentity {
 		return false
 	}
-	if trustedStore != nil && verifyV7LandingReceiptAuthorityInStore(receipt, trustedStore) {
-		return true
+	if trustedStore != nil {
+		return verifyV7LandingReceiptAuthorityInStore(receipt, trustedStore)
 	}
-	defaultRoot := DefaultStateRoot()
-	if trustedStore != nil && filepath.Clean(trustedStore.stateRoot) == filepath.Clean(defaultRoot) {
-		return false
-	}
-	store, err := OpenRuntimeStoreReadOnly(defaultRoot)
+	store, err := OpenRuntimeStoreReadOnly(DefaultStateRoot())
 	if err != nil {
 		return false
 	}

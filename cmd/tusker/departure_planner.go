@@ -325,7 +325,7 @@ func departureWaveFact(vaultPath string, idx v7Index, wave Note) DepartureWaveFa
 func departureGateIntent(wf Workflow, repoRoot, treeHash string) DepartureGate {
 	commands := departureGateCommands(wf)
 	command := strings.Join(commands, " && ")
-	return DepartureGate{Command: command, Profile: firstNonEmpty(wf.Orchestration.Gate.Profile, wf.Orchestration.BatchGate.FeatureProfile), Toolchain: scheduledPromotionToolchainFingerprint(repoRoot, commands), TreeHash: treeHash, Status: "required"}
+	return DepartureGate{Command: command, Profile: firstNonEmpty(wf.Orchestration.Gate.Profile, wf.Orchestration.BatchGate.FeatureProfile), Toolchain: scheduledPromotionFullGateToolchainFingerprint(repoRoot, commands), TreeHash: treeHash, Status: "required"}
 }
 
 func departureGateCommands(wf Workflow) []string {

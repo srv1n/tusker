@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -1239,6 +1240,24 @@ func runV7LandingGateCommand(workDir, command string, isolated bool) ([]byte, er
 		cmd.Dir = workDir
 		return cmd.CombinedOutput()
 	}
+	sandbox, err := newV7GateSandbox(workDir, true)
+	if err != nil {
+		return nil, err
+	}
+	defer sandbox.Close()
+	return sandbox.Run(context.Background(), command)
+}
+
+type v7GateSandbox struct {
+	executable   string
+	profile      string
+	worktreePath string
+	scratchPath  string
+	goCachePath  string
+	moduleCache  string
+}
+
+func newV7GateSandbox(workDir string, writableWorktree bool) (*v7GateSandbox, error) {
 	sandboxExec, err := landingGateSandboxPath()
 	if err != nil {
 		return nil, tuskerError(errorInvalidTransition, "scheduled landing refusal: host cannot isolate gate execution")
@@ -1247,7 +1266,12 @@ func runV7LandingGateCommand(workDir, command string, isolated bool) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(scratch)
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.RemoveAll(scratch)
+		}
+	}()
 	goCache := filepath.Join(scratch, "go-build")
 	if err := os.MkdirAll(goCache, 0o700); err != nil {
 		return nil, err
@@ -1281,16 +1305,72 @@ func runV7LandingGateCommand(workDir, command string, isolated bool) ([]byte, er
 	// opens these two kernel devices even for a no-op command. They are not
 	// filesystem authority over user state, but withholding them causes
 	// sandbox-exec to abort before the gate command begins.
+	writePaths := `(subpath "` + sandboxProfilePath(scratchPath) + `") `
+	if writableWorktree {
+		writePaths += `(subpath "` + sandboxProfilePath(worktreePath) + `") `
+	}
 	profile := `(version 1) (deny default) (deny network*) (allow process*) (allow sysctl-read) (allow file-read-data (literal "/")) ` +
 		`(allow file-read* (subpath "` + sandboxProfilePath(worktreePath) + `") (subpath "` + sandboxProfilePath(scratchPath) + `") ` + sandboxProfileSubpath(moduleCachePath) + sandboxProfileSubpath(gitDir) +
 		runtimePaths + `(literal "/private/var/select/sh") (subpath "/usr") (subpath "/bin") (subpath "/private/etc") (subpath "/dev") (subpath "/System") (subpath "/Library/Developer") (subpath "/Applications/Xcode.app")) ` +
-		`(allow file-write* (subpath "` + sandboxProfilePath(worktreePath) + `") (subpath "` + sandboxProfilePath(scratchPath) + `") (literal "/dev/null") (literal "/dev/dtracehelper") (literal "/dev/tty"))`
-	cmd := exec.Command(sandboxExec, "-p", profile, "sh", "-c", command)
-	cmd.Dir = workDir
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + scratchPath, "TMPDIR=" + scratchPath, "GOCACHE=" + goCachePath, "GOMODCACHE=" + moduleCachePath, "LANG=C", "LC_ALL=C"}
+		`(allow file-write* ` + writePaths + `(literal "/dev/null") (literal "/dev/dtracehelper") (literal "/dev/tty"))`
+	cleanup = false
+	return &v7GateSandbox{
+		executable: sandboxExec, profile: profile, worktreePath: worktreePath,
+		scratchPath: scratchPath, goCachePath: goCachePath, moduleCache: moduleCachePath,
+	}, nil
+}
+
+func (s *v7GateSandbox) Close() {
+	if s != nil && s.scratchPath != "" {
+		_ = os.RemoveAll(s.scratchPath)
+	}
+}
+
+func (s *v7GateSandbox) Run(ctx context.Context, command string) ([]byte, error) {
+	if s == nil || s.executable == "" {
+		return nil, tuskerError(errorInvalidTransition, "scheduled landing refusal: gate sandbox is unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, s.executable, "-p", s.profile, "/bin/sh", "-c", command)
+	cmd.Dir = s.worktreePath
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + s.scratchPath,
+		"TMPDIR=" + s.scratchPath,
+		"GOCACHE=" + s.goCachePath,
+		"GOMODCACHE=" + s.moduleCache,
+		"GOTMPDIR=" + s.scratchPath,
+		"CARGO_TARGET_DIR=" + filepath.Join(s.scratchPath, "cargo-target"),
+		"npm_config_cache=" + filepath.Join(s.scratchPath, "npm-cache"),
+		"YARN_CACHE_FOLDER=" + filepath.Join(s.scratchPath, "yarn-cache"),
+		"BUN_INSTALL_CACHE_DIR=" + filepath.Join(s.scratchPath, "bun-cache"),
+		"XDG_CACHE_HOME=" + filepath.Join(s.scratchPath, "xdg-cache"),
+		"CLANG_MODULE_CACHE_PATH=" + filepath.Join(s.scratchPath, "clang-module-cache"),
+		"SWIFTPM_MODULECACHE_OVERRIDE=" + filepath.Join(s.scratchPath, "swift-module-cache"),
+		"LANG=C",
+		"LC_ALL=C",
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err == nil {
+			return nil
+		} else if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return cmd.Process.Kill()
+	}
+	cmd.WaitDelay = 2 * time.Second
 	output, err := cmd.CombinedOutput()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return output, ctxErr
+	}
 	if err != nil && len(strings.TrimSpace(string(output))) == 0 {
-		return []byte("sandbox gate aborted or denied (worktree=" + worktreePath + "; scratch=" + scratchPath + ")"), err
+		return []byte("sandbox gate aborted or denied (worktree=" + s.worktreePath + "; scratch=" + s.scratchPath + ")"), err
 	}
 	return output, err
 }
@@ -1372,7 +1452,12 @@ type v7LandingReceiptIndexRecord struct {
 }
 
 var landingToolchainProbe = v7LandingToolchainFingerprints
-var landingGateSandboxPath = func() (string, error) { return exec.LookPath("sandbox-exec") }
+var landingGateSandboxPath = func() (string, error) {
+	if runtime.GOOS != "darwin" {
+		return "", fmt.Errorf("no proven scheduled-gate sandbox for %s", runtime.GOOS)
+	}
+	return exec.LookPath("sandbox-exec")
+}
 
 func v7LandingGateFingerprint(workDir, laneIdentity string, commands []string) string {
 	head, err := gitOutputTrim(workDir, "rev-parse", "HEAD")
@@ -2801,6 +2886,9 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return promotionGateExecution{Err: err}
+	}
 	writeFailure := func(detail string) promotionGateExecution {
 		root := DefaultStateRoot()
 		if store != nil && store.stateRoot != "" {
@@ -2810,6 +2898,9 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 		_ = os.MkdirAll(filepath.Dir(path), 0o755)
 		_ = os.WriteFile(path, []byte(safePacketText(detail, 4096)+"\n"), 0o600)
 		return promotionGateExecution{ArtifactRef: path, ArtifactRefs: []string{path}, Err: fmt.Errorf("%s", detail)}
+	}
+	if _, err := landingGateSandboxPath(); err != nil {
+		return writeFailure("promotion full-gate refusal: host cannot isolate configured gate execution")
 	}
 	tmp, err := os.MkdirTemp("", "tusker-promotion-gate-*")
 	if err != nil {
@@ -2827,11 +2918,55 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 		return writeFailure("failed to create full-gate worktree: " + firstActionableLine(output, err.Error()))
 	}
 	removeWorktree = true
+	if err := ctx.Err(); err != nil {
+		return promotionGateExecution{Err: err}
+	}
 	runtime := defaultGateTierRuntimeWithContext(ctx, store, projectID, tmp)
+	frozenTreeHash, err := runtime.TreeHash(tmp)
+	if err != nil {
+		return writeFailure("promotion full-gate refusal: cannot freeze candidate tree identity: " + err.Error())
+	}
+	frozenTreeStatus, err := runtime.TreeStatus(tmp)
+	if err != nil {
+		return writeFailure("promotion full-gate refusal: cannot freeze candidate worktree status: " + err.Error())
+	}
+	// Git facts are computed by the trusted daemon before command execution.
+	// Removing only this disposable linked-worktree pointer prevents a
+	// repository-controlled gate from reaching the shared common directory,
+	// refs, hooks, config, or signing material. It also keeps Go/Rust VCS
+	// stamping from turning read access to the control repository into an
+	// accidental prerequisite for a full gate.
+	gitPointer := filepath.Join(tmp, ".git")
+	info, statErr := os.Lstat(gitPointer)
+	if statErr != nil || !info.Mode().IsRegular() {
+		return writeFailure("promotion full-gate refusal: detached candidate Git pointer is missing or invalid")
+	}
+	gitPointerRaw, err := os.ReadFile(gitPointer)
+	if err != nil {
+		return writeFailure("promotion full-gate refusal: cannot read detached candidate Git pointer: " + err.Error())
+	}
+	if err := os.Remove(gitPointer); err != nil {
+		return writeFailure("promotion full-gate refusal: cannot detach candidate from shared Git metadata: " + err.Error())
+	}
+	defer func() {
+		if fileExists(tmp) {
+			_ = os.WriteFile(gitPointer, gitPointerRaw, info.Mode().Perm())
+		}
+	}()
+	runtime.TreeHash = func(string) (string, error) { return frozenTreeHash, nil }
+	runtime.TreeStatus = func(string) (string, error) { return frozenTreeStatus, nil }
+	runtime.Toolchain = scheduledPromotionFullGateToolchainFingerprint
+	runtime.DiffPaths = nil
+	sandbox, err := newV7GateSandbox(tmp, false)
+	if err != nil {
+		return writeFailure("promotion full-gate refusal: " + err.Error())
+	}
+	defer sandbox.Close()
 	var raw bytes.Buffer
-	execGate := runtime.Exec
 	runtime.Exec = func(workspace, command string) (string, error) {
-		output, runErr := execGate(workspace, command)
+		scheduledPromotionBeforeFullGateCommand(command)
+		outputBytes, runErr := sandbox.Run(ctx, command)
+		output := string(outputBytes)
 		fmt.Fprintf(&raw, "$ %s\n%s\n", command, output)
 		return output, runErr
 	}

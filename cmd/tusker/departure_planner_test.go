@@ -227,9 +227,10 @@ func TestDeparturePlannerDiscoversCompletedWaveFromExactLandingAudits(t *testing
 	if sourceTwo == "" {
 		t.Fatal("fixture is missing APP-T-0002 exact source")
 	}
-	if err := landFrozenSourcesAsIssuedDeparture(t, fixture.repo, fixture.vault,
+	if err := landFrozenSourcesAsIssuedDepartureInStateRoot(t, fixture.repo, fixture.vault,
 		Args{"vault": fixture.vault, "quiet": "true", "actor": "daemon:departure:fixture-two", "_pos0": "APP-T-0002"},
 		map[string]string{"APP-T-0002": sourceTwo},
+		fixture.stateRoot,
 	); err != nil {
 		t.Fatal(err)
 	}

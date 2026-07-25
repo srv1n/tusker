@@ -22,6 +22,7 @@ var (
 	scheduledPromotionAfterFailureIntent      = func() error { return nil }
 	scheduledPromotionBeforeCommittedReplay   = func(context.Context) error { return nil }
 	scheduledPromotionBeforeFailureCompletion = func() error { return nil }
+	scheduledPromotionBeforeFullGateCommand   = func(string) {}
 )
 
 const (
@@ -228,7 +229,7 @@ func scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID string, wf
 	if gate.Command == "" {
 		return scheduledPromotionCandidateSnapshot{}, tuskerError(errorInvalidTransition, "promotion candidate refusal: full_gate_missing")
 	}
-	gate.Toolchain = scheduledPromotionToolchainFingerprint(repoRoot, gatePolicy.HarvestCommands)
+	gate.Toolchain = scheduledPromotionFullGateToolchainFingerprint(repoRoot, gatePolicy.HarvestCommands)
 	return scheduledPromotionCandidateSnapshot{WaveID: waveID, Candidate: candidate, Gate: gate, DefaultBranch: defaultBranch}, nil
 }
 
@@ -763,6 +764,19 @@ func scheduledPromotionToolchainFingerprint(repoRoot string, commands []string) 
 	}
 	sort.Strings(parts)
 	return departureFingerprint(parts...)
+}
+
+const v7FullGateSandboxContract = "tusker.full-gate-isolation/darwin-sandbox-exec/v1"
+
+// Full-gate ledger proof is valid only under the isolation contract that
+// produced it. Keeping that contract in the toolchain identity prevents a
+// legacy unrestricted pass from bypassing Exec before the sandbox is entered.
+func scheduledPromotionFullGateToolchainFingerprint(repoRoot string, commands []string) string {
+	base := scheduledPromotionToolchainFingerprint(repoRoot, commands)
+	if base == "" {
+		return ""
+	}
+	return departureFingerprint(v7FullGateSandboxContract, base)
 }
 
 func scheduledPromotionSnapshotDrift(before, after scheduledPromotionCandidateSnapshot) string {

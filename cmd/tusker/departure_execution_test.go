@@ -11,17 +11,18 @@ import (
 )
 
 type departureExecutionFixture struct {
-	repo    string
-	vault   string
-	project RegisteredProject
-	wf      Workflow
-	plan    func(RegisteredProject, Workflow) (DepartureDecision, error)
+	repo      string
+	vault     string
+	stateRoot string
+	project   RegisteredProject
+	wf        Workflow
+	plan      func(RegisteredProject, Workflow) (DepartureDecision, error)
 }
 
 func TestDepartureExecution(t *testing.T) {
 	t.Run("stage keeps main fixed and replay does not duplicate audit", func(t *testing.T) {
 		fixture := newUnstagedDepartureExecutionFixture(t, scheduledPromotionStage, "stage-executor.txt")
-		store, err := OpenRuntimeStore(t.TempDir())
+		store, err := OpenRuntimeStore(fixture.stateRoot)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -91,7 +92,7 @@ func TestDepartureExecution(t *testing.T) {
 
 	t.Run("stage batches frozen sources across multiple waves", func(t *testing.T) {
 		fixture := newMultiWaveDepartureExecutionFixture(t)
-		store, err := OpenRuntimeStore(t.TempDir())
+		store, err := OpenRuntimeStore(fixture.stateRoot)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -172,7 +173,7 @@ func TestDepartureExecution(t *testing.T) {
 
 	t.Run("stage refuses a mutable source ref with named drift", func(t *testing.T) {
 		fixture := newUnstagedDepartureExecutionFixture(t, scheduledPromotionStage, "mutable-source-ref.txt")
-		store, err := OpenRuntimeStore(t.TempDir())
+		store, err := OpenRuntimeStore(fixture.stateRoot)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -206,7 +207,7 @@ func TestDepartureExecution(t *testing.T) {
 
 	t.Run("promote resumes in a fresh daemon and replays promoted audit", func(t *testing.T) {
 		fixture := newDepartureExecutionFixture(t, scheduledPromotionPromote, "promote-executor.txt")
-		stateRoot := t.TempDir()
+		stateRoot := fixture.stateRoot
 		store, err := OpenRuntimeStore(stateRoot)
 		if err != nil {
 			t.Fatal(err)
@@ -299,7 +300,7 @@ func TestDepartureExecution(t *testing.T) {
 
 	t.Run("promote freezes the full wave and stages only its missing member", func(t *testing.T) {
 		fixture := newMultiMemberDepartureExecutionFixture(t)
-		store, err := OpenRuntimeStore(t.TempDir())
+		store, err := OpenRuntimeStore(fixture.stateRoot)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -352,7 +353,7 @@ func TestDepartureExecution(t *testing.T) {
 			// after APP-T-0002 regresses while retaining its own source_sha.
 			setDepartureTaskSourceForTest(t, fixture.vault, "APP-T-0001", gitRevisionForTest(t, fixture.repo, "task/APP-T-0001"))
 			armScheduledPromotionWaveForTest(t, fixture.vault, "W-0001")
-			store, err := OpenRuntimeStore(t.TempDir())
+			store, err := OpenRuntimeStore(fixture.stateRoot)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -410,7 +411,7 @@ func TestDepartureExecution(t *testing.T) {
 		fixture := newMultiMemberDepartureExecutionFixture(t)
 		setDepartureTaskSourceForTest(t, fixture.vault, "APP-T-0001", gitRevisionForTest(t, fixture.repo, "task/APP-T-0001"))
 		armScheduledPromotionWaveForTest(t, fixture.vault, "W-0001")
-		store, err := OpenRuntimeStore(t.TempDir())
+		store, err := OpenRuntimeStore(fixture.stateRoot)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -453,7 +454,7 @@ func TestDepartureExecution(t *testing.T) {
 
 	t.Run("hold after evaluation blocks before side effects", func(t *testing.T) {
 		fixture := newDepartureExecutionFixture(t, scheduledPromotionPromote, "held-executor.txt")
-		store, err := OpenRuntimeStore(t.TempDir())
+		store, err := OpenRuntimeStore(fixture.stateRoot)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -485,7 +486,7 @@ func TestDepartureExecution(t *testing.T) {
 
 	t.Run("hold after default preparation restores canonical bytes", func(t *testing.T) {
 		fixture := newDepartureExecutionFixture(t, scheduledPromotionPromote, "final-hold-executor.txt")
-		store, err := OpenRuntimeStore(t.TempDir())
+		store, err := OpenRuntimeStore(fixture.stateRoot)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -529,7 +530,7 @@ func TestDepartureExecution(t *testing.T) {
 
 	t.Run("late disarm is revalidated before preparation", func(t *testing.T) {
 		fixture := newDepartureExecutionFixture(t, scheduledPromotionPromote, "final-disarm-executor.txt")
-		store, err := OpenRuntimeStore(t.TempDir())
+		store, err := OpenRuntimeStore(fixture.stateRoot)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -569,7 +570,7 @@ func TestDepartureExecution(t *testing.T) {
 
 	t.Run("resource contention waits wakes and retries", func(t *testing.T) {
 		fixture := newDepartureExecutionFixture(t, scheduledPromotionPromote, "contended-executor.txt")
-		store, err := OpenRuntimeStore(t.TempDir())
+		store, err := OpenRuntimeStore(fixture.stateRoot)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -702,14 +703,20 @@ func TestDepartureExecution(t *testing.T) {
 	})
 
 	t.Run("daemon close cancels a blocking full gate before waiting", func(t *testing.T) {
-		repo, vault := newLandReadyForMainAdvanceTest(t, "cancel-gate.txt", "departure\n")
+		if _, err := landingGateSandboxPath(); err != nil {
+			t.Skip("isolated full gate unavailable: " + err.Error())
+		}
+		stateRoot := t.TempDir()
+		repo, vault := newLandReadyForMainAdvanceTestInStateRoot(t, "cancel-gate.txt", "departure\n", stateRoot)
 		sourceSHA := gitRevisionForTest(t, repo, "task/APP-T-0001")
 		setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)
-		gateStarted := filepath.Join(t.TempDir(), "gate-started")
-		fixture := configureDepartureExecutionFixture(t, repo, vault, scheduledPromotionPromote, []string{
-			"touch " + yamlQuoteForShellTest(gateStarted) + " && sleep 300",
+		fixture := configureDepartureExecutionFixture(t, repo, vault, stateRoot, scheduledPromotionPromote, []string{
+			"sleep 300",
 		})
-		stateRoot := t.TempDir()
+		gateStarted := make(chan struct{})
+		oldGateHook := scheduledPromotionBeforeFullGateCommand
+		scheduledPromotionBeforeFullGateCommand = func(string) { close(gateStarted) }
+		defer func() { scheduledPromotionBeforeFullGateCommand = oldGateHook }()
 		d, err := NewDaemon(stateRoot)
 		if err != nil {
 			t.Fatal(err)
@@ -725,12 +732,10 @@ func TestDepartureExecution(t *testing.T) {
 		if err := d.startPendingDepartureExecutions(context.Background(), fixture.project, fixture.wf); err != nil {
 			t.Fatal(err)
 		}
-		deadline := time.Now().Add(15 * time.Second)
-		for !fileExists(gateStarted) {
-			if time.Now().After(deadline) {
-				t.Fatal("blocking full gate did not start")
-			}
-			time.Sleep(10 * time.Millisecond)
+		select {
+		case <-gateStarted:
+		case <-time.After(15 * time.Second):
+			t.Fatal("blocking full gate did not start")
 		}
 		startedClose := time.Now()
 		closeResult := make(chan error, 1)
@@ -768,7 +773,7 @@ func TestDepartureExecution(t *testing.T) {
 
 	t.Run("daemon close preserves a promoted row cancelled during replay", func(t *testing.T) {
 		fixture := newDepartureExecutionFixture(t, scheduledPromotionPromote, "cancel-promoted-replay.txt")
-		stateRoot := t.TempDir()
+		stateRoot := fixture.stateRoot
 		d, err := NewDaemon(stateRoot)
 		if err != nil {
 			t.Fatal(err)
@@ -844,7 +849,7 @@ func TestDepartureExecution(t *testing.T) {
 
 	t.Run("async executor errors are bounded durable and resumable", func(t *testing.T) {
 		fixture := newDepartureExecutionFixture(t, scheduledPromotionShadow, "async-error.txt")
-		d, err := NewDaemon(t.TempDir())
+		d, err := NewDaemon(fixture.stateRoot)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -963,7 +968,7 @@ func TestDepartureExecutionFinalAuthorityAfterPreparation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newDepartureExecutionFixture(t, scheduledPromotionPromote, "final-authority-"+strings.ReplaceAll(tc.name, " ", "-")+".txt")
-			store, err := OpenRuntimeStore(t.TempDir())
+			store, err := OpenRuntimeStore(fixture.stateRoot)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1047,29 +1052,33 @@ func TestDepartureExecutionFinalAuthorityAfterPreparation(t *testing.T) {
 
 func newDepartureExecutionFixture(t *testing.T, mode, fileName string) departureExecutionFixture {
 	t.Helper()
-	repo, vault := newLandReadyForMainAdvanceTest(t, fileName, "departure\n")
+	stateRoot := t.TempDir()
+	repo, vault := newLandReadyForMainAdvanceTestInStateRoot(t, fileName, "departure\n", stateRoot)
 	sourceSHA := gitRevisionForTest(t, repo, "task/APP-T-0001")
 	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)
-	return configureDepartureExecutionFixture(t, repo, vault, mode, []string{"go version >/dev/null && test -f " + yamlQuoteForShellTest(fileName)})
+	return configureDepartureExecutionFixture(t, repo, vault, stateRoot, mode, []string{"go version >/dev/null && test -f " + yamlQuoteForShellTest(fileName)})
 }
 
 func newUnstagedDepartureExecutionFixture(t *testing.T, mode, fileName string) departureExecutionFixture {
 	t.Helper()
+	stateRoot := t.TempDir()
 	repo, vault := newLandTestRepo(t, 1, "test -f "+yamlQuoteForShellTest(fileName))
 	sourceSHA := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{fileName: "departure\n"})
 	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-25T00:00:00Z")
 	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)
-	return configureDepartureExecutionFixture(t, repo, vault, mode, []string{"go version >/dev/null && test -f " + yamlQuoteForShellTest(fileName)})
+	return configureDepartureExecutionFixture(t, repo, vault, stateRoot, mode, []string{"go version >/dev/null && test -f " + yamlQuoteForShellTest(fileName)})
 }
 
 func newMultiMemberDepartureExecutionFixture(t *testing.T) departureExecutionFixture {
 	t.Helper()
+	stateRoot := t.TempDir()
 	repo, vault := newLandTestRepo(t, 2, "test -f member-one.txt")
 	sourceOne := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"member-one.txt": "one\n"})
 	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceOne)
-	if err := landFrozenSourcesAsIssuedDeparture(t, repo, vault,
+	if err := landFrozenSourcesAsIssuedDepartureInStateRoot(t, repo, vault,
 		Args{"vault": vault, "quiet": "true", "actor": "daemon:departure:fixture-one", "_pos0": "APP-T-0001"},
 		map[string]string{"APP-T-0001": sourceOne},
+		stateRoot,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -1086,13 +1095,14 @@ func newMultiMemberDepartureExecutionFixture(t *testing.T) departureExecutionFix
 		taskTwoRel:       mustReadIndexTest(t, filepath.Join(vault, "work", "tasks", "APP-T-0002.md")),
 	})
 	setDepartureTaskSourceForTest(t, vault, "APP-T-0002", sourceTwo)
-	return configureDepartureExecutionFixture(t, repo, vault, scheduledPromotionPromote, []string{
+	return configureDepartureExecutionFixture(t, repo, vault, stateRoot, scheduledPromotionPromote, []string{
 		"go version >/dev/null && test -f member-one.txt && test -f member-two.txt",
 	})
 }
 
 func newMultiWaveDepartureExecutionFixture(t *testing.T) departureExecutionFixture {
 	t.Helper()
+	stateRoot := t.TempDir()
 	repo := t.TempDir()
 	runGitDir(t, repo, "init", "-b", "main")
 	runGitDir(t, repo, "config", "user.email", "test@example.com")
@@ -1138,19 +1148,19 @@ func newMultiWaveDepartureExecutionFixture(t *testing.T) departureExecutionFixtu
 	armScheduledPromotionWaveForTest(t, vault, "W-0001")
 	armScheduledPromotionWaveForTest(t, vault, "W-0002")
 	commitScheduledPromotionWorkflowForWavesTest(t, repo, vault, []string{"W-0001", "W-0002"})
-	return departureExecutionFixtureForRepo(t, repo, vault, wf)
+	return departureExecutionFixtureForRepo(t, repo, vault, stateRoot, wf)
 }
 
-func configureDepartureExecutionFixture(t *testing.T, repo, vault, mode string, gateCommands []string) departureExecutionFixture {
+func configureDepartureExecutionFixture(t *testing.T, repo, vault, stateRoot, mode string, gateCommands []string) departureExecutionFixture {
 	t.Helper()
 	setScheduledPromotionPolicyForTest(t, vault, mode)
 	wf := setScheduledPromotionGateForTest(t, vault, gateCommands, "full")
 	armScheduledPromotionWaveForTest(t, vault, "W-0001")
 	commitScheduledPromotionWorkflowForTest(t, repo, vault)
-	return departureExecutionFixtureForRepo(t, repo, vault, wf)
+	return departureExecutionFixtureForRepo(t, repo, vault, stateRoot, wf)
 }
 
-func departureExecutionFixtureForRepo(t *testing.T, repo, vault string, wf Workflow) departureExecutionFixture {
+func departureExecutionFixtureForRepo(t *testing.T, repo, vault, stateRoot string, wf Workflow) departureExecutionFixture {
 	t.Helper()
 	remote := filepath.Join(t.TempDir(), "origin.git")
 	runGitDir(t, filepath.Dir(remote), "init", "--bare", remote)
@@ -1158,9 +1168,15 @@ func departureExecutionFixtureForRepo(t *testing.T, repo, vault string, wf Workf
 	runGitDir(t, repo, "push", "-u", "origin", "main")
 	project := RegisteredProject{ProjectID: "app", RepoRoot: repo, VaultRoot: vault}
 	planner := defaultDeparturePlanner()
+	receiptStore, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = receiptStore.Close() })
+	planner.receiptStore = receiptStore
 	planner.gateLookup = func(string, string, []string, string, string) bool { return false }
 	return departureExecutionFixture{
-		repo: repo, vault: vault, project: project, wf: wf,
+		repo: repo, vault: vault, stateRoot: stateRoot, project: project, wf: wf,
 		plan: func(project RegisteredProject, wf Workflow) (DepartureDecision, error) {
 			return planner.PlanDeparture(project.VaultRoot, project.ProjectID, WorkflowFile{Data: wf})
 		},

@@ -244,13 +244,18 @@ func TestWaveLandSummaryStillReportsMainMove(t *testing.T) {
 }
 
 func newLandReadyForMainAdvanceTest(t *testing.T, fileName, content string) (string, string) {
+	return newLandReadyForMainAdvanceTestInStateRoot(t, fileName, content, DefaultStateRoot())
+}
+
+func newLandReadyForMainAdvanceTestInStateRoot(t *testing.T, fileName, content, stateRoot string) (string, string) {
 	t.Helper()
 	repo, vault := newLandTestRepo(t, 1, "test -f "+yamlQuoteForShellTest(fileName))
 	sourceSHA := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{fileName: content})
 	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)
-	if err := landFrozenSourcesAsIssuedDeparture(t, repo, vault,
+	if err := landFrozenSourcesAsIssuedDepartureInStateRoot(t, repo, vault,
 		Args{"vault": vault, "quiet": "true", "actor": "daemon:departure:land-ready-fixture", "_pos0": "APP-T-0001"},
 		map[string]string{"APP-T-0001": sourceSHA},
+		stateRoot,
 	); err != nil {
 		t.Fatalf("task land setup failed: %v", err)
 	}
