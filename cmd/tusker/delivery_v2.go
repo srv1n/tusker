@@ -120,6 +120,9 @@ func deliveryV2ImportCmd(vaultPath, path string, args Args) error {
 	if err != nil {
 		return err
 	}
+	if expected := strings.TrimSpace(args.String("expected-plan-fingerprint")); expected != "" && deliveryFingerprint(raw) != expected {
+		return tuskerError(errorInvalidTransition, "delivery plan changed after confirmation; regenerate delivery review and confirm its exact plan fingerprint")
+	}
 	var v2 deliveryPlanV2
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(true)

@@ -21,6 +21,9 @@ func TestDeliveryPlanReview(t *testing.T) {
 	if !review.Ready || review.Start.Authorization != "not imported" || len(review.What) != 1 || len(review.Proof) != 1 {
 		t.Fatalf("clean review=%#v", review)
 	}
+	if want := "tusker delivery start --plan .tusker/scratch/delivery-plan-v2.yaml --confirm " + review.Start.PlanFingerprint + " --by human:<name>"; review.Start.NextAction != want {
+		t.Fatalf("review must expose one copyable Start action: want=%q got=%q", want, review.Start.NextAction)
+	}
 	if review.Start.ContextFingerprint == "" || len(review.NonGoals) != 1 || review.NonGoals[0] != plan.NonGoals[0] {
 		t.Fatalf("review did not bind authored planning context/non-goals: %#v", review)
 	}
@@ -92,7 +95,7 @@ func TestDeliveryPlanReviewFailsClosedOnPlanDriftAndCoverageGap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if review.Ready || !strings.Contains(strings.Join(review.Start.Blockers, "\n"), "plan fingerprint differs") || !strings.Contains(review.Start.NextAction, "tusker delivery import") {
+	if review.Ready || !strings.Contains(strings.Join(review.Start.Blockers, "\n"), "plan fingerprint differs") || !strings.Contains(review.Start.NextAction, "Regenerate delivery review") {
 		t.Fatalf("drift must fail closed: %#v", review.Start)
 	}
 

@@ -55,6 +55,12 @@ type deliveryContextProject struct {
 	Provenance []deliveryContextProvenance `json:"provenance"`
 }
 
+type deliveryContextIntegrationBase struct {
+	Ref        string                      `json:"ref"`
+	SHA        string                      `json:"sha,omitempty"`
+	Provenance []deliveryContextProvenance `json:"provenance"`
+}
+
 type deliveryContextDocument struct {
 	Kind        string                      `json:"kind"`
 	Ref         string                      `json:"ref"`
@@ -142,6 +148,7 @@ type deliveryContextWorkspacePolicy struct {
 
 type deliveryContextBranchPolicy struct {
 	DefaultBranch       string   `json:"default_branch"`
+	DefaultSHA          string   `json:"default_sha,omitempty"`
 	ProtectedRefs       []string `json:"protected_refs"`
 	TaskBranchTemplate  string   `json:"task_branch_template"`
 	WaveBranchTemplate  string   `json:"wave_branch_template"`
@@ -225,6 +232,7 @@ type deliveryPlanningContext struct {
 	ContextFingerprint string                           `json:"context_fingerprint"`
 	ReadOnly           bool                             `json:"read_only"`
 	Project            deliveryContextProject           `json:"project"`
+	IntegrationBase    deliveryContextIntegrationBase   `json:"integration_base"`
 	Specs              []deliveryContextDocument        `json:"specs"`
 	Decisions          []deliveryContextDocument        `json:"decisions"`
 	EpicCandidates     []deliveryContextEpicClue        `json:"epic_candidates"`
@@ -299,6 +307,7 @@ func buildDeliveryPlanningContextForScope(vault, specArg, excludedPlanScope stri
 		))
 	}
 	report.Project = deliveryContextProject{ID: projectID, RepoRef: ".", VaultRef: ".tusker", Provenance: configProvenance}
+	report.IntegrationBase, report.Unknowns = deliveryContextResolveIntegrationBase(vault, configProvenance, report.Unknowns)
 
 	specs, decisions, documentDomains, governingRefs, documentUnknowns, err := deliveryContextDocuments(vault, specArg, excludedPlanScope)
 	if err != nil {
@@ -357,6 +366,23 @@ func buildDeliveryPlanningContextForScope(vault, specArg, excludedPlanScope stri
 	deliveryContextSort(&report)
 	report.ContextFingerprint = deliveryContextMaterialFingerprint(report)
 	return report, nil
+}
+
+func deliveryContextResolveIntegrationBase(vault string, provenance []deliveryContextProvenance, unknowns []deliveryContextUnknown) (deliveryContextIntegrationBase, []deliveryContextUnknown) {
+	branch := v7DefaultBranch(vault)
+	base := deliveryContextIntegrationBase{Ref: "refs/heads/" + branch, Provenance: provenance}
+	if !v7GitRepo(v7RepoRoot(vault)) {
+		return base, unknowns
+	}
+	sha, err := gitOutputTrim(v7RepoRoot(vault), "rev-parse", base.Ref)
+	if err != nil {
+		unknowns = append(unknowns, deliveryContextUnknownFact(
+			"project", "integration_base.sha", "configured default integration base could not be resolved", "repair the configured default branch before review", provenance,
+		))
+		return base, unknowns
+	}
+	base.SHA = sha
+	return base, unknowns
 }
 
 type deliveryContextDocumentRequest struct {
@@ -920,6 +946,16 @@ func deliveryContextWorkflowPolicy(vault string, wf Workflow, provenance []deliv
 	if defaultBranch == "" {
 		defaultBranch = v7DefaultBranch(vault)
 	}
+	defaultSHA := ""
+	if v7GitRepo(v7RepoRoot(vault)) {
+		if resolved, err := gitOutputTrim(v7RepoRoot(vault), "rev-parse", "refs/heads/"+defaultBranch); err == nil {
+			defaultSHA = resolved
+		} else {
+			unknowns = append(unknowns, deliveryContextUnknownFact(
+				"project", "policy.branches.default_sha", "configured default branch commit could not be resolved", "repair the configured default branch before review", provenance,
+			))
+		}
+	}
 	gate := resolveGateTierPolicy(wf)
 	locks := []string{}
 	for _, lock := range deliveryContextCleanStrings(gate.BuildSlotLocks) {
@@ -948,7 +984,7 @@ func deliveryContextWorkflowPolicy(vault string, wf Workflow, provenance []deliv
 			MaxActiveRuns: wf.Agents.MaxConcurrentAgents, MaxActiveRunsPerProject: wf.Runtime.MaxActiveRunsPerProject,
 		},
 		Branches: deliveryContextBranchPolicy{
-			DefaultBranch: defaultBranch, ProtectedRefs: []string{"refs/heads/" + defaultBranch},
+			DefaultBranch: defaultBranch, DefaultSHA: defaultSHA, ProtectedRefs: []string{"refs/heads/" + defaultBranch},
 			TaskBranchTemplate: "task/<TASK-ID>", WaveBranchTemplate: "integration/<WAVE-ID>",
 			LandingCommand: "tusker land <TASK-ID>", LandingMode: "serialized integration lane", ControlBranchWrites: true,
 		},
@@ -1385,8 +1421,8 @@ func emitDeliveryPlanningContext(report deliveryPlanningContext) {
 		len(report.EpicCandidates), len(report.DuplicateTaskClues), len(report.HumanGates))
 	fmt.Printf("Planning inputs: %d knowledge domain(s), %d runner profile(s), %d owned-path clue(s), %d shared-resource clue(s)\n",
 		len(report.KnowledgeDomains), len(report.RunnerProfiles), len(report.LikelyOwnedPaths), len(report.SharedResources))
-	fmt.Printf("Policy: default=%s workspace=%s/%s automation=%v daemon_alive=%v registration=%s\n",
-		report.Policy.Branches.DefaultBranch, report.Policy.Workspace.Strategy, report.Policy.Workspace.Root,
+	fmt.Printf("Policy: default=%s@%s workspace=%s/%s automation=%v daemon_alive=%v registration=%s\n",
+		report.IntegrationBase.Ref, shortCommit(report.IntegrationBase.SHA), report.Policy.Workspace.Strategy, report.Policy.Workspace.Root,
 		report.Readiness.AutomationEnabled, report.Readiness.DaemonAlive, report.Readiness.RegistrationState)
 	if len(report.Unknowns) > 0 {
 		fmt.Println("Unknowns:")

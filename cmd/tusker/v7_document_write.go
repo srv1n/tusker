@@ -71,6 +71,33 @@ func acquireV7DocumentLock(filePath string, timeout time.Duration) (*v7DocumentL
 	}
 }
 
+// acquireV7MaterialEpochLock serializes transactions whose authorization
+// fingerprint spans more than one Markdown document. The project skill is an
+// immutable, always-present lock identity; its contents are never changed.
+func acquireV7MaterialEpochLock(vaultPath string) (*v7DocumentLock, error) {
+	return acquireV7DocumentLock(filepath.Join(vaultPath, "SKILL.md"), v7DocumentLockTimeout)
+}
+
+func acquireV7MaterialEpochLockForDocument(filePath string) (*v7DocumentLock, error) {
+	abs, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, err
+	}
+	current := filepath.Dir(abs)
+	for {
+		if fileExists(filepath.Join(current, "SKILL.md")) && fileExists(filepath.Join(current, "work")) {
+			return acquireV7MaterialEpochLock(current)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			// Standalone CAS helpers and low-level tests may intentionally operate
+			// outside a V7 vault; only canonical project documents have an epoch.
+			return nil, nil
+		}
+		current = parent
+	}
+}
+
 func v7DocumentLockDirectory() string {
 	return filepath.Join(string(os.PathSeparator), "tmp", fmt.Sprintf("tusker-v7-document-locks-%d", os.Getuid()))
 }
