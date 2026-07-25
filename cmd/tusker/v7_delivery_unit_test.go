@@ -50,6 +50,10 @@ func TestImplicitSingletonPolicyMatrixAndReplay(t *testing.T) {
 			if err != nil || recreated || again != unit {
 				t.Fatalf("replay must adopt exact unit: unit=%q created=%v err=%v", again, recreated, err)
 			}
+			eventIssues, _, _ := validateV7Events(vault)
+			if len(eventIssues) != 0 {
+				t.Fatalf("implicit delivery-unit creation event must validate: %#v", eventIssues)
+			}
 		})
 	}
 }

@@ -683,7 +683,14 @@ func commitV7LandingCleanup(workDir string) error {
 }
 
 func guardV7LandingTerminalTaskRewinds(workDir, baseRef string) error {
-	output, err := gitCombined(workDir, "diff", "--name-only", baseRef+"..HEAD", "--", ".tusker/work/tasks")
+	return guardV7LandingTerminalTaskRewindsAt(workDir, baseRef, "HEAD")
+}
+
+// guardV7LandingTerminalTaskRewindsAt applies the landing monotonicity guard
+// to an arbitrary frozen tree-ish. The completion reactor builds with
+// write-tree/commit-tree, so HEAD is intentionally not its candidate.
+func guardV7LandingTerminalTaskRewindsAt(workDir, baseRef, candidateRef string) error {
+	output, err := gitCombined(workDir, "diff", "--name-only", baseRef+".."+candidateRef, "--", ".tusker/work/tasks")
 	if err != nil {
 		return err
 	}
@@ -695,7 +702,7 @@ func guardV7LandingTerminalTaskRewinds(workDir, baseRef string) error {
 		if err != nil || !ok {
 			return err
 		}
-		headData, ok, err := v7GitFrontmatterAtRef(workDir, "HEAD", rel)
+		headData, ok, err := v7GitFrontmatterAtRef(workDir, candidateRef, rel)
 		if err != nil || !ok {
 			return err
 		}
