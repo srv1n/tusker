@@ -110,6 +110,52 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			t.Fatalf("replay moved integration %s -> %s", got, replay)
 		}
 	})
+
+	t.Run("first completion creates a ref-less integration lane by CAS", func(t *testing.T) {
+		vault, project, daemon, result := completionReactorFixture(t, true)
+		defer daemon.Close()
+		task, err := resolveV7Note(vault, result.TaskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		wave, _, ok := armedWaveForTask(vault, task)
+		if !ok {
+			t.Fatal("missing fixture wave")
+		}
+		base, err := gitOutputTrim(project.RepoRoot, "rev-parse", v7WaveIntegrationBranch(wave))
+		if err != nil {
+			t.Fatal(err)
+		}
+		waveData, waveBody, err := parseFrontmatterMustRead(wave.AbsolutePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waveData["integration_base_sha"] = base
+		if _, err := saveV7DocumentCAS(wave.AbsolutePath, waveData, waveBody, v7FrontmatterOrder["wave"], stringField(waveData, "state_rev")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := gitCombined(project.RepoRoot, "update-ref", "-d", "refs/heads/"+v7WaveIntegrationBranch(wave)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := daemon.store.SaveReviewResult(result); err != nil {
+			t.Fatal(err)
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatal(err)
+		}
+		ref := "refs/heads/" + v7WaveIntegrationBranch(wave)
+		if !gitRefExists(project.RepoRoot, ref) {
+			t.Fatal("reactor did not CAS-create integration ref")
+		}
+		got, err := gitOutputTrim(project.RepoRoot, "rev-parse", ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !gitMergeBaseAncestor(project.RepoRoot, result.ImplementationSHA, got) {
+			t.Fatal("ref-less integration omitted reviewed source")
+		}
+	})
 }
 
 func completionReactorFixture(t *testing.T, exactSource bool) (string, RegisteredProject, *Daemon, ReviewResult) {
