@@ -42,6 +42,7 @@ type Daemon struct {
 	departureMu                sync.Mutex
 	departureSchedules         map[string]departureSchedule
 	departureActive            map[string]struct{}
+	departureCancels           map[string]context.CancelFunc
 	departureWorkers           sync.WaitGroup
 	departureClosing           bool
 	departurePlan              func(RegisteredProject, Workflow) (DepartureDecision, error)
@@ -92,17 +93,24 @@ func NewDaemon(stateRoot string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Daemon{stateRoot: stateRoot, store: store, notifyWake: make(chan string, 256), frontiers: map[string]*projectFrontierIndex{}, frontierHints: map[string][]daemonControlChange{}, departureSchedules: map[string]departureSchedule{}, departureActive: map[string]struct{}{}}, nil
+	return &Daemon{stateRoot: stateRoot, store: store, notifyWake: make(chan string, 256), frontiers: map[string]*projectFrontierIndex{}, frontierHints: map[string][]daemonControlChange{}, departureSchedules: map[string]departureSchedule{}, departureActive: map[string]struct{}{}, departureCancels: map[string]context.CancelFunc{}}, nil
 }
 
 func (d *Daemon) Close() error {
-	d.stopNotifyTimers()
 	if d == nil || d.store == nil {
 		return nil
 	}
+	d.stopNotifyTimers()
 	d.departureMu.Lock()
 	d.departureClosing = true
+	cancels := make([]context.CancelFunc, 0, len(d.departureCancels))
+	for _, cancel := range d.departureCancels {
+		cancels = append(cancels, cancel)
+	}
 	d.departureMu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
 	d.departureWorkers.Wait()
 	return d.store.Close()
 }

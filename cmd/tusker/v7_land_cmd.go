@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -1731,6 +1732,13 @@ type promotionGateExecution struct {
 }
 
 func runV7GateTierOnRef(vaultPath, repoRoot, ref, projectID string, policy GateTierPolicy, store *RuntimeStore) promotionGateExecution {
+	return runV7GateTierOnRefContext(context.Background(), vaultPath, repoRoot, ref, projectID, policy, store)
+}
+
+func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, projectID string, policy GateTierPolicy, store *RuntimeStore) promotionGateExecution {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	writeFailure := func(detail string) promotionGateExecution {
 		root := DefaultStateRoot()
 		if store != nil && store.stateRoot != "" {
@@ -1757,7 +1765,7 @@ func runV7GateTierOnRef(vaultPath, repoRoot, ref, projectID string, policy GateT
 		return writeFailure("failed to create full-gate worktree: " + firstActionableLine(output, err.Error()))
 	}
 	removeWorktree = true
-	runtime := defaultGateTierRuntime(store, projectID, tmp)
+	runtime := defaultGateTierRuntimeWithContext(ctx, store, projectID, tmp)
 	var raw bytes.Buffer
 	execGate := runtime.Exec
 	runtime.Exec = func(workspace, command string) (string, error) {

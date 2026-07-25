@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -526,7 +527,13 @@ func persistScheduledPromotionCommit(store *RuntimeStore, run *DepartureRun, ref
 	return nil
 }
 
-func resumeScheduledPromotionIntent(vaultPath, projectID, waveID string, store *RuntimeStore, run *DepartureRun, actor string) (string, error) {
+func resumeScheduledPromotionIntent(ctx context.Context, vaultPath, projectID, waveID string, store *RuntimeStore, run *DepartureRun, actor string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if run.ProjectID != projectID {
 		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: departure belongs to another project")
 	}
@@ -580,6 +587,9 @@ func resumeScheduledPromotionIntent(vaultPath, projectID, waveID string, store *
 	if state != scheduledPromotionIntentPreRef {
 		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: default_ref_drift current="+current+" expected="+run.Promotion.ExpectedSHA+" intended="+run.Promotion.IntendedSHA)
 	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	lease, acquired, err := store.AcquireResourceLease(ResourceLeaseAcquireInput{
 		Name: "gate:full", Owner: "departure:" + run.ID, Purpose: scheduledPromotionResourcePurpose,
 		ProjectID: projectID, DepartureID: run.ID, TTL: scheduledPromotionResourceLeaseTTL,
@@ -601,6 +611,9 @@ func resumeScheduledPromotionIntent(vaultPath, projectID, waveID string, store *
 	}
 	if matched, err := store.ResourceLeaseMatches(lease.Name, lease.Owner, lease.Generation); err != nil || !matched {
 		return "", tuskerError(errorInvalidTransition, "promotion refusal: full_gate_lease_fenced_at_ref_update")
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	if err := advanceV7DefaultBranch(repoRoot, run.Promotion.ExpectedRef, run.Promotion.IntendedSHA, run.Promotion.ExpectedSHA); err != nil {
 		if state, _, inspectErr := inspectScheduledPromotionIntent(repoRoot, run.Promotion); inspectErr == nil && state == scheduledPromotionIntentCommitted {
@@ -624,6 +637,16 @@ func resumeScheduledPromotionIntent(vaultPath, projectID, waveID string, store *
 // uses the normal staging worktree/gate implementation; this wrapper adds the
 // immutable candidate contract and the ref CAS that scheduled promotion needs.
 func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, store *RuntimeStore, run *DepartureRun, actor string) (string, error) {
+	return promoteScheduledWaveContext(context.Background(), vaultPath, projectID, waveID, wf, store, run, actor)
+}
+
+func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, waveID string, wf Workflow, store *RuntimeStore, run *DepartureRun, actor string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if !wf.ScheduledPromotion.Effective.Promote {
 		return "", tuskerError(errorInvalidTransition, "scheduled promotion refusal: mode "+wf.ScheduledPromotion.Effective.Mode+" cannot move the default branch")
 	}
@@ -647,7 +670,7 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: committed ref no longer matches its durable SHA")
 	}
 	if run.Promotion.AttemptedAt != "" {
-		return resumeScheduledPromotionIntent(vaultPath, projectID, waveID, store, run, actor)
+		return resumeScheduledPromotionIntent(ctx, vaultPath, projectID, waveID, store, run, actor)
 	}
 	if hold, err := store.departureHold(projectID, false); err != nil {
 		return "", err
@@ -712,7 +735,13 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	gateStarted := time.Now().UTC()
 	stopHeartbeat := startScheduledPromotionLeaseHeartbeat(store, lease, scheduledPromotionResourceLeaseTTL)
 	defer func() { _ = stopHeartbeat() }()
-	execution := runV7GateTierOnRef(vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+	execution := runV7GateTierOnRefContext(ctx, vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+	if err := ctx.Err(); err != nil {
+		for _, ref := range execution.ArtifactRefs {
+			_ = os.Remove(ref)
+		}
+		return "", err
+	}
 	// A configured flake rerun is deliberately one-shot. Its second result
 	// replaces the gate attempt; a second red falls through to quarantine.
 	if execution.Err == nil && execution.Result.Outcome == gateOutcomeFailed && strings.TrimSpace(gatePolicy.FlakeFailureAction) == "rerun" {
@@ -720,9 +749,15 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		probe := promotionFailurePacket(before.Candidate, before.Gate, actor, string(raw), nil, gatePolicy, "unknown", "not_run", promotionFailureOwner(before.Candidate), nil, []string{execution.ArtifactRef})
 		if classifyPromotionFailure(probe, gatePolicy).Class == promotionFailureFlake {
 			firstRefs := append([]string(nil), execution.ArtifactRefs...)
-			execution = runV7GateTierOnRef(vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+			execution = runV7GateTierOnRefContext(ctx, vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
 			execution.ArtifactRefs = append(firstRefs, execution.ArtifactRefs...)
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		for _, ref := range execution.ArtifactRefs {
+			_ = os.Remove(ref)
+		}
+		return "", err
 	}
 	gateSummary := string(execution.Result.Outcome)
 	gateFinished := time.Now().UTC()

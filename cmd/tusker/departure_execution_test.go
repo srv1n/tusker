@@ -537,6 +537,71 @@ func TestDepartureExecution(t *testing.T) {
 		}
 	})
 
+	t.Run("daemon close cancels a blocking full gate before waiting", func(t *testing.T) {
+		repo, vault := newLandReadyForMainAdvanceTest(t, "cancel-gate.txt", "departure\n")
+		sourceSHA := gitRevisionForTest(t, repo, "task/APP-T-0001")
+		setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)
+		gateStarted := filepath.Join(t.TempDir(), "gate-started")
+		fixture := configureDepartureExecutionFixture(t, repo, vault, scheduledPromotionPromote, []string{
+			"touch " + yamlQuoteForShellTest(gateStarted) + " && sleep 300",
+		})
+		stateRoot := t.TempDir()
+		d, err := NewDaemon(stateRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		closed := false
+		defer func() {
+			if !closed {
+				_ = d.Close()
+			}
+		}()
+		d.departurePlan = fixture.plan
+		run := createDepartureExecutionRun(t, d.store, fixture)
+		if err := d.startPendingDepartureExecutions(context.Background(), fixture.project, fixture.wf); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(15 * time.Second)
+		for !fileExists(gateStarted) {
+			if time.Now().After(deadline) {
+				t.Fatal("blocking full gate did not start")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		startedClose := time.Now()
+		closeResult := make(chan error, 1)
+		go func() { closeResult <- d.Close() }()
+		select {
+		case err := <-closeResult:
+			if err != nil {
+				t.Fatal(err)
+			}
+			closed = true
+		case <-time.After(5 * time.Second):
+			t.Fatal("daemon Close waited on a full-gate process without cancelling it")
+		}
+		if elapsed := time.Since(startedClose); elapsed >= 5*time.Second {
+			t.Fatalf("daemon Close cancellation took %s", elapsed)
+		}
+		d.departureMu.Lock()
+		active := len(d.departureActive)
+		d.departureMu.Unlock()
+		if active != 0 {
+			t.Fatalf("departure worker remained active after Close: %d", active)
+		}
+		reopened, err := OpenRuntimeStore(stateRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer reopened.Close()
+		durable := mustDepartureRun(t, reopened, run.ID)
+		if durable.State != DepartureStateGating ||
+			durable.Promotion.AttemptedAt != "" ||
+			durable.Gate.Failure.Identity != "" {
+			t.Fatalf("cancelled full gate was misclassified as a product failure: %#v", durable)
+		}
+	})
+
 	t.Run("configured promotion fences legacy and absent policy stays compatible", func(t *testing.T) {
 		configuredRepo, configuredVault := newLandReadyForMainAdvanceTest(t, "configured-fence.txt", "configured\n")
 		setScheduledPromotionPolicyForTest(t, configuredVault, scheduledPromotionPromote)

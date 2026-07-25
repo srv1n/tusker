@@ -32,13 +32,14 @@ func (d *Daemon) startPendingDepartureExecutions(ctx context.Context, project Re
 			(run.State == DepartureStatePromoted && wf.ScheduledPromotion.Effective.Release) {
 			continue
 		}
-		if !d.claimDepartureExecution(run.ID) {
+		workerCtx, claimed := d.claimDepartureExecutionContext(ctx, run.ID)
+		if !claimed {
 			continue
 		}
-		go func(runID string) {
+		go func(runID string, workerCtx context.Context) {
 			defer d.releaseDepartureExecution(runID)
-			_ = d.executeDeparture(ctx, project, wf, runID)
-		}(run.ID)
+			_ = d.executeDeparture(workerCtx, project, wf, runID)
+		}(run.ID, workerCtx)
 	}
 	return nil
 }
@@ -53,26 +54,44 @@ func departureExecutionState(state DepartureState) bool {
 }
 
 func (d *Daemon) claimDepartureExecution(runID string) bool {
+	_, claimed := d.claimDepartureExecutionContext(context.Background(), runID)
+	return claimed
+}
+
+func (d *Daemon) claimDepartureExecutionContext(parent context.Context, runID string) (context.Context, bool) {
+	if parent == nil {
+		parent = context.Background()
+	}
 	d.departureMu.Lock()
 	defer d.departureMu.Unlock()
 	if d.departureActive == nil {
 		d.departureActive = map[string]struct{}{}
 	}
+	if d.departureCancels == nil {
+		d.departureCancels = map[string]context.CancelFunc{}
+	}
 	if d.departureClosing {
-		return false
+		return nil, false
 	}
 	if _, exists := d.departureActive[runID]; exists {
-		return false
+		return nil, false
 	}
+	workerCtx, cancel := context.WithCancel(parent)
 	d.departureActive[runID] = struct{}{}
+	d.departureCancels[runID] = cancel
 	d.departureWorkers.Add(1)
-	return true
+	return workerCtx, true
 }
 
 func (d *Daemon) releaseDepartureExecution(runID string) {
 	d.departureMu.Lock()
+	cancel := d.departureCancels[runID]
 	delete(d.departureActive, runID)
+	delete(d.departureCancels, runID)
 	d.departureMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	d.departureWorkers.Done()
 }
 
@@ -126,9 +145,9 @@ func (d *Daemon) executeDeparture(ctx context.Context, project RegisteredProject
 		case DepartureStateStaging:
 			err = d.executeDepartureStaging(project, wf, *run)
 		case DepartureStateGating:
-			err = d.executeDepartureGating(project, wf, *run)
+			err = d.executeDepartureGating(ctx, project, wf, *run)
 		case DepartureStatePromoted:
-			err = d.executeDeparturePromoted(project, wf, *run)
+			err = d.executeDeparturePromoted(ctx, project, wf, *run)
 		case DepartureStateRepairing, DepartureStateReleasing:
 			// Durable red routing and release have separate owners.
 			return nil
@@ -406,7 +425,7 @@ func departurePostStagingDrift(run DepartureRun, snapshot scheduledPromotionCand
 	return ""
 }
 
-func (d *Daemon) executeDepartureGating(project RegisteredProject, wf Workflow, run DepartureRun) error {
+func (d *Daemon) executeDepartureGating(ctx context.Context, project RegisteredProject, wf Workflow, run DepartureRun) error {
 	if hold, err := d.store.departureHold(project.ProjectID, false); err != nil {
 		return err
 	} else if hold != nil {
@@ -419,7 +438,7 @@ func (d *Daemon) executeDepartureGating(project RegisteredProject, wf Workflow, 
 		return err
 	}
 	durable := run
-	_, err := promoteScheduledWave(project.VaultRoot, project.ProjectID, run.Candidate.WaveIDs[0], wf, d.store, &durable, "daemon:departure:"+run.ID)
+	_, err := promoteScheduledWaveContext(ctx, project.VaultRoot, project.ProjectID, run.Candidate.WaveIDs[0], wf, d.store, &durable, "daemon:departure:"+run.ID)
 	if err == nil {
 		if run.Promotion.CommittedRef != "" && run.Promotion.CommittedSHA != "" {
 			_, err = d.transitionDepartureRun(run, func(next *DepartureRun) {
@@ -463,7 +482,7 @@ func (d *Daemon) executeDepartureGating(project RegisteredProject, wf Workflow, 
 	return err
 }
 
-func (d *Daemon) executeDeparturePromoted(project RegisteredProject, wf Workflow, run DepartureRun) error {
+func (d *Daemon) executeDeparturePromoted(ctx context.Context, project RegisteredProject, wf Workflow, run DepartureRun) error {
 	if wf.ScheduledPromotion.Effective.Release {
 		return errDepartureExecutionDeferred
 	}
@@ -471,7 +490,7 @@ func (d *Daemon) executeDeparturePromoted(project RegisteredProject, wf Workflow
 		return d.blockDepartureRun(run, "departure refusal: promoted row is missing its durable cargo wave")
 	}
 	durable := run
-	if _, err := promoteScheduledWave(project.VaultRoot, project.ProjectID, run.Candidate.WaveIDs[0], wf, d.store, &durable, "daemon:departure:"+run.ID); err != nil {
+	if _, err := promoteScheduledWaveContext(ctx, project.VaultRoot, project.ProjectID, run.Candidate.WaveIDs[0], wf, d.store, &durable, "daemon:departure:"+run.ID); err != nil {
 		if departureExecutionTransient(err) {
 			return err
 		}
