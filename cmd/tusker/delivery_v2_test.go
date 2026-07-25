@@ -34,6 +34,168 @@ func writeDeliveryV2TestPlan(t *testing.T, vault string, plan deliveryPlanV2) st
 	return path
 }
 
+func operationalDeliveryPlanV2() deliveryPlanV2 {
+	plan := validDeliveryPlanV2()
+	plan.Summary = "Persist the exact operational contract on held tasks and their wave."
+	plan.Concurrency = 1
+	plan.SharedResources = []deliverySharedResource{{SourceKey: "schema-slot", Kind: "migration", Capacity: 1}}
+	plan.Assumptions = []deliveryPlanAssumption{{SourceKey: "toolchain-ready", Statement: "The configured Go toolchain is available."}}
+	plan.UnresolvedDecisions = []deliveryUnresolvedDecision{{SourceKey: "rollout-owner", Question: "Who owns the downstream rollout?"}}
+
+	first := plan.Tasks[0]
+	first.OwnedPaths = []string{"cmd/tusker/shared_import.go"}
+	first.GeneratedOutputs = []string{"generated/import_api.go"}
+	first.MigrationKeys = []string{"schema-0042"}
+	first.ResourceRefs = []string{"schema-slot"}
+
+	second := first
+	second.SourceKey = "integrate"
+	second.Title = "Integrate V2"
+	second.Outcome = "The imported operational contract is integrated."
+	second.Acceptance = []deliveryAcceptance{{ID: "A1", Outcome: "The integrated records retain every operational claim."}}
+	second.Dependencies = []deliveryDependency{{Task: "import", Kind: "hard"}}
+	second.Artifact = deliveryArtifactContract{Kind: "diff_summary", Path: "cmd/tusker/delivery_v2_test.go", Summary: "Operational persistence regression.", AcceptanceIDs: []string{"A1"}}
+	plan.Tasks = []deliveryPlanTask{first, second}
+	plan.OwnedPathOverlaps = []deliveryOverlapStrategy{{
+		SourceKey: "integrated-import", Tasks: []string{"import", "integrate"},
+		Paths: []string{"cmd/tusker/shared_import.go"}, GeneratedOutputs: []string{"generated/import_api.go"},
+		MigrationKeys: []string{"schema-0042"}, Resources: []string{"schema-slot"}, Strategy: "integrator", Integrator: "integrate",
+	}}
+	plan.HumanGates[0].DependencyClosure = []string{"integrate"}
+	return plan
+}
+
+func TestDeliveryPlanV2OperationalPersistence(t *testing.T) {
+	originalNow := deliveryImportNow
+	currentNow := time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC)
+	deliveryImportNow = func() time.Time { return currentNow }
+	t.Cleanup(func() { deliveryImportNow = originalNow })
+
+	vault := deliveryTestVault(t)
+	plan := operationalDeliveryPlanV2()
+	path := writeDeliveryV2TestPlan(t, vault, plan)
+	beforeDryRun := snapshotDeliveryV2Records(t, vault)
+	if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "dry-run": "true", "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, beforeDryRun, snapshotDeliveryV2Records(t, vault), "V2 dry-run remains read only")
+
+	if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	assertDeliveryV2OperationalProjection(t, vault, plan)
+
+	firstImport := snapshotDeliveryV2Records(t, vault)
+	currentNow = currentNow.Add(time.Hour)
+	if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, firstImport, snapshotDeliveryV2Records(t, vault), "unchanged held operational import converges")
+
+	changed := plan
+	changed.Summary = "Persist the revised operational contract without stale claims."
+	changed.SharedResources = []deliverySharedResource{{SourceKey: "schema-slot-v2", Kind: "migration", Capacity: 2}}
+	changed.Assumptions = []deliveryPlanAssumption{{SourceKey: "toolchain-ready-v2", Statement: "The configured Go toolchain and generator are available."}}
+	changed.UnresolvedDecisions = []deliveryUnresolvedDecision{{SourceKey: "rollout-owner-v2", Question: "Who owns the staged downstream rollout?"}}
+	for i := range changed.Tasks {
+		changed.Tasks[i].GeneratedOutputs = []string{"generated/import_api_v2.go"}
+		changed.Tasks[i].MigrationKeys = []string{"schema-0043"}
+		changed.Tasks[i].ResourceRefs = []string{"schema-slot-v2"}
+	}
+	changed.OwnedPathOverlaps = []deliveryOverlapStrategy{{
+		SourceKey: "integrated-import-v2", Tasks: []string{"import", "integrate"},
+		Paths: []string{"cmd/tusker/shared_import.go"}, GeneratedOutputs: []string{"generated/import_api_v2.go"},
+		MigrationKeys: []string{"schema-0043"}, Resources: []string{"schema-slot-v2"}, Strategy: "integrator", Integrator: "integrate",
+	}}
+	path = writeDeliveryV2TestPlan(t, vault, changed)
+	currentNow = currentNow.Add(time.Hour)
+	if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	assertDeliveryV2OperationalProjection(t, vault, changed)
+	for record, content := range snapshotDeliveryV2Records(t, vault) {
+		for _, stale := range []string{"generated/import_api.go", "schema-0042", "schema-slot\"", "integrated-import\"", "toolchain-ready\"", "rollout-owner\""} {
+			if strings.Contains(content, stale) {
+				t.Fatalf("changed held import retained stale operational value %q in %s:\n%s", stale, record, content)
+			}
+		}
+	}
+
+	changedImport := snapshotDeliveryV2Records(t, vault)
+	currentNow = currentNow.Add(time.Hour)
+	if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, changedImport, snapshotDeliveryV2Records(t, vault), "revised held operational import converges")
+}
+
+func assertDeliveryV2OperationalProjection(t *testing.T, vault string, plan deliveryPlanV2) {
+	t.Helper()
+	for i, planned := range plan.Tasks {
+		taskID := "VTP-T-" + padNumber(i+1)
+		task, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", taskID+".md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertEqual(t, planned.GeneratedOutputs, normalizeList(task["generated_outputs"]), taskID+" generated outputs")
+		assertEqual(t, planned.MigrationKeys, normalizeList(task["migration_keys"]), taskID+" migration keys")
+		assertEqual(t, planned.ResourceRefs, normalizeList(task["resource_refs"]), taskID+" resource refs")
+	}
+
+	wave, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "waves", "W-0001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, plan.Summary, stringField(wave, "summary"), "wave delivery summary")
+	rawPlan, err := yaml.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, plan.Scope, stringField(wave, "delivery_plan_scope"), "wave delivery plan scope provenance")
+	assertEqual(t, deliveryFingerprint(rawPlan), stringField(wave, "delivery_plan_fingerprint"), "wave delivery plan fingerprint provenance")
+	requirement := deliveryV2TestRow(t, wave, "requirements", 0)
+	assertEqual(t, plan.Requirements[0].ID, stringField(requirement, "id"), "structured requirement id")
+	assertEqual(t, plan.Requirements[0].Outcome, stringField(requirement, "outcome"), "structured requirement outcome")
+	resource := deliveryV2TestRow(t, wave, "shared_resources", 0)
+	assertEqual(t, plan.SharedResources[0].SourceKey, stringField(resource, "source_key"), "shared resource source key")
+	assertEqual(t, plan.SharedResources[0].Kind, stringField(resource, "kind"), "shared resource kind")
+	assertEqual(t, plan.SharedResources[0].Capacity, intField(resource, "capacity"), "shared resource capacity")
+	overlap := deliveryV2TestRow(t, wave, "owned_path_overlaps", 0)
+	assertEqual(t, plan.OwnedPathOverlaps[0].SourceKey, stringField(overlap, "source_key"), "overlap source key")
+	assertEqual(t, plan.OwnedPathOverlaps[0].Tasks, normalizeList(overlap["tasks"]), "overlap tasks")
+	assertEqual(t, plan.OwnedPathOverlaps[0].Paths, normalizeList(overlap["paths"]), "overlap paths")
+	assertEqual(t, plan.OwnedPathOverlaps[0].GeneratedOutputs, normalizeList(overlap["generated_outputs"]), "overlap generated outputs")
+	assertEqual(t, plan.OwnedPathOverlaps[0].MigrationKeys, normalizeList(overlap["migration_keys"]), "overlap migration keys")
+	assertEqual(t, plan.OwnedPathOverlaps[0].Resources, normalizeList(overlap["resources"]), "overlap resources")
+	assertEqual(t, plan.OwnedPathOverlaps[0].Strategy, stringField(overlap, "strategy"), "overlap strategy")
+	assertEqual(t, plan.OwnedPathOverlaps[0].Integrator, stringField(overlap, "integrator"), "overlap integrator")
+	assumption := deliveryV2TestRow(t, wave, "assumptions", 0)
+	assertEqual(t, plan.Assumptions[0].SourceKey, stringField(assumption, "source_key"), "assumption source key")
+	assertEqual(t, plan.Assumptions[0].Statement, stringField(assumption, "statement"), "assumption statement")
+	decision := deliveryV2TestRow(t, wave, "unresolved_decisions", 0)
+	assertEqual(t, plan.UnresolvedDecisions[0].SourceKey, stringField(decision, "source_key"), "unresolved decision source key")
+	assertEqual(t, plan.UnresolvedDecisions[0].Question, stringField(decision, "question"), "unresolved decision question")
+
+	gate, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "gates", "VTP-G-0001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, plan.HumanGates[0].DependencyClosure, normalizeList(gate["dependency_closure"]), "human gate dependency closure")
+}
+
+func deliveryV2TestRow(t *testing.T, data map[string]any, field string, index int) map[string]any {
+	t.Helper()
+	rows, ok := data[field].([]any)
+	if !ok || index < 0 || index >= len(rows) {
+		t.Fatalf("%s is not a structured row list: %#v", field, data[field])
+	}
+	row, ok := rows[index].(map[string]any)
+	if !ok {
+		t.Fatalf("%s[%d] is not a structured row: %#v", field, index, rows[index])
+	}
+	return row
+}
+
 func TestDeliveryPlanV2RequirementsEpicGatesAndConvergence(t *testing.T) {
 	originalNow := deliveryImportNow
 	currentNow := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
