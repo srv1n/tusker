@@ -88,6 +88,15 @@ func TestServeDeliveryReviewPreservesRelationshipsAndResolvableDeepLinks(t *test
 	server, _ := newServeDeliveryFixture(t)
 	vault := server.vaultPath
 	plan := operationalDeliveryPlanV2()
+	for _, task := range plan.Tasks {
+		artifactPath, ok := safeRepoPath(v7RepoRoot(vault), filepath.ToSlash(task.Artifact.Path))
+		if !ok {
+			t.Fatalf("fixture artifact path escapes repository: %q", task.Artifact.Path)
+		}
+		if err := writeText(artifactPath, "fixture artifact for "+task.SourceKey+"\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	path := writeDeliveryV2TestPlan(t, vault, plan)
 	if err := deliveryV2ImportCmd(vault, path, Args{"quiet": "true", "skip-integration-branch": "true"}); err != nil {
 		t.Fatal(err)
