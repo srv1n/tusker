@@ -83,7 +83,7 @@ stateDiagram-v2
     ready --> review
     review --> rework : reviewer finding
     rework --> review : re-request review
-    review --> done : tusker close / accept
+    review --> done : typed pass + deterministic completion
     ready --> cancelled : tusker discard
     backlog --> cancelled : tusker discard
     idea --> superseded : replaced
@@ -97,9 +97,9 @@ stateDiagram-v2
 | `idea` | Raw, unrefined; not yet committed backlog |
 | `backlog` | Accepted work, not yet promoted for execution |
 | `ready` | Promoted and pickable; contract must be clean (spec link, plain top layer) |
-| `review` | Work submitted; awaiting adjudication. `close` requires this status |
+| `review` | Work submitted; awaiting a typed verdict and deterministic completion |
 | `rework` | Bounced back to the implementer after a reviewer finding |
-| `done` | Closed through the close ceremony; terminal |
+| `done` | Materialized by deterministic completion, or explicit human recovery close; terminal |
 | `cancelled` | Discarded via `tusker discard`; terminal |
 | `superseded` | Replaced by another task; terminal |
 

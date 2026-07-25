@@ -31,7 +31,8 @@ two implementation lanes plus one integrator is the proven default.
 - Every lane: own worktree, own branch, claimed Tusker task, disjoint owned
   paths from the plan packet. The primary checkout belongs to the human and the
   integrator; other lanes never edit, build, or gate in it.
-- Claim before work. Read the project's stream board (`.tusker/dashboards/`)
+- Open the task with `tusker work start` before work. Read the project's stream
+  board (`.tusker/dashboards/`)
   before claiming; on overlap, stop and report the conflict — do not negotiate
   ownership mid-flight.
 - A lane delivers the smallest mergeable slice and targets merge within one
@@ -61,11 +62,12 @@ generated files, and contract/schema regeneration.
 
 ## Moving Main With Near-Zero Human Review
 
-Default agent-native mode: the integrator merges to main when objective gates
-pass. Independent reviewer agents may close every risk tier (see the Human
-Approval Boundary in SKILL.md); a human gate on a merge exists only for
-authority, credentials, unresolved product intent, or contractually subjective
-acceptance — never as a substitute for agent verification.
+Default agent-native mode: independent reviewers submit typed acceptance, then
+the deterministic integration/completion handler merges the exact reviewed
+revision only when objective gates pass. The reviewer never merges or closes.
+A human gate on integration exists only for authority, credentials, unresolved
+product intent, or contractually subjective acceptance — never as a substitute
+for agent verification.
 
 A project may pin "only the human moves main" in its repo canon. Respect the
 pin; it is a project fact, not a doctrine default.
