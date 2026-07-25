@@ -295,6 +295,11 @@ func TestArmedWaveDelivery(t *testing.T) {
 	if !strings.Contains(prompt, "tusker review submit") {
 		t.Fatalf("reviewer prompt lacks typed submit contract: %q", prompt)
 	}
+	for _, flag := range []string{"--task-rev", "--source-sha", "--work-rev", "--proof-fingerprint", "--gate-fingerprint"} {
+		if !strings.Contains(prompt, flag) {
+			t.Fatalf("reviewer prompt lacks %s: %q", flag, prompt)
+		}
+	}
 }
 
 func TestArmedWaveLandingCache(t *testing.T) {

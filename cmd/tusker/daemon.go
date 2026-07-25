@@ -5769,6 +5769,11 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 		"note.risk":                   stringField(note.Data, "risk"),
 		"attempt.number":              strconv.Itoa(attemptNumber),
 		"attempt.id":                  attemptID,
+		"review.task_rev":             stringField(note.Data, "state_rev"),
+		"review.source_sha":           firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit")),
+		"review.work_rev":             strconv.Itoa(intField(note.Data, "work_revision")),
+		"review.proof_fingerprint":    reviewFingerprint(note, "proof"),
+		"review.gate_fingerprint":     reviewFingerprint(note, "gates"),
 		"reviewer.actor":              reviewerActorForNote(wfFile.Data.Reviewer.Actor, note),
 		"reviewer.auto_close_allowed": yesNo(reviewerMayAutoCloseRisk(wfFile.Data.Reviewer, stringField(note.Data, "risk"))),
 	}
