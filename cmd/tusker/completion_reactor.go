@@ -223,9 +223,6 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 		return err
 	} else if prior != nil {
 		if err := authenticateCompletionFrozenAuthority(project.ProjectID, result, prior); err != nil {
-			if errorToIssue(err).Code == completionRepairRequiredError {
-				return d.parkCompletionRepair(project, result, prior, err.Error())
-			}
 			return err
 		}
 		if mode == completionReactorModeShadow {
@@ -786,7 +783,7 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 				return stageErr
 			}
 			if errorToIssue(stageErr).Code == completionRepairRequiredError || gitRefExists(project.RepoRoot, transaction.StagingRef) {
-				return d.parkCompletionRepair(project, result, transaction, stageErr.Error())
+				return d.classifyCompletionStagingFailure(project, result, transaction, stageErr.Error())
 			}
 			return d.failCompletion(project, result, transaction, stageErr.Error())
 		}
@@ -1108,16 +1105,16 @@ func (d *Daemon) failCompletion(project RegisteredProject, result ReviewResult, 
 	return d.beginCompletionDisposition(project, result, transaction, "rework", reason)
 }
 
-// parkCompletionRepair records a durable, non-handback repair outcome for
-// corrupt or incomplete authority evidence. In particular, post-CAS evidence
-// loss must never be translated into a task rework: the integrated work stays
-// put while the runtime lease is parked and the audit records the repair.
-func (d *Daemon) parkCompletionRepair(project RegisteredProject, result ReviewResult, transaction *completionTransaction, reason string) error {
+// classifyCompletionStagingFailure records an authenticated external staging
+// failure as a durable, non-handback parked disposition. This is deliberately
+// distinct from a corrupt transaction row: we never write new facts into a row
+// whose own authority cannot be authenticated.
+func (d *Daemon) classifyCompletionStagingFailure(project RegisteredProject, result ReviewResult, transaction *completionTransaction, reason string) error {
 	if transaction == nil {
-		return completionFrozenAuthorityRepairError(nil, "cannot park missing completion transaction")
+		return completionFrozenAuthorityRepairError(nil, "cannot classify missing completion transaction")
 	}
 	if transaction.Phase == completionPhaseTerminal {
-		return completionFrozenAuthorityRepairError(transaction, reason)
+		return nil
 	}
 	if !completionFailurePhase(transaction.Phase) {
 		transaction.Disposition = "park"
@@ -1130,7 +1127,7 @@ func (d *Daemon) parkCompletionRepair(project RegisteredProject, result ReviewRe
 	if err := d.resumeCompletionDisposition(project, result, transaction); err != nil {
 		return err
 	}
-	return completionFrozenAuthorityRepairError(transaction, reason)
+	return nil
 }
 
 func (d *Daemon) beginCompletionDisposition(project RegisteredProject, result ReviewResult, transaction *completionTransaction, disposition, reason string) error {
