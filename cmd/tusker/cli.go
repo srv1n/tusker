@@ -244,6 +244,8 @@ func runInner(command string, args Args) (int, error) {
 		return 1, nil
 	}
 	switch command {
+	case "version", "--version":
+		return 0, versionCmd(args)
 	case "runner-wrapper":
 		return 0, runnerWrapperCmd(args)
 	case "new epic":
