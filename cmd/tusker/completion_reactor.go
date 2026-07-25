@@ -192,12 +192,21 @@ func (d *Daemon) reconcileReviewCompletion(project RegisteredProject, wf Workflo
 	if err != nil {
 		return err
 	}
+	var parkedRepair error
 	for _, result := range results {
 		if err := d.reactToReviewResult(project, wf, result, mode); err != nil {
+			if errorToIssue(err).Code == completionRepairRequiredError {
+				// A repair is an operator-visible outcome for this transaction, not
+				// a reason to starve independent reviewed work in the same project.
+				if parkedRepair == nil {
+					parkedRepair = err
+				}
+				continue
+			}
 			return err
 		}
 	}
-	return nil
+	return parkedRepair
 }
 
 func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, result ReviewResult, mode completionReactorMode) error {
@@ -1108,7 +1117,7 @@ func (d *Daemon) parkCompletionRepair(project RegisteredProject, result ReviewRe
 		return completionFrozenAuthorityRepairError(nil, "cannot park missing completion transaction")
 	}
 	if transaction.Phase == completionPhaseTerminal {
-		return nil
+		return completionFrozenAuthorityRepairError(transaction, reason)
 	}
 	if !completionFailurePhase(transaction.Phase) {
 		transaction.Disposition = "park"
@@ -1118,7 +1127,10 @@ func (d *Daemon) parkCompletionRepair(project RegisteredProject, result ReviewRe
 			return err
 		}
 	}
-	return d.resumeCompletionDisposition(project, result, transaction)
+	if err := d.resumeCompletionDisposition(project, result, transaction); err != nil {
+		return err
+	}
+	return completionFrozenAuthorityRepairError(transaction, reason)
 }
 
 func (d *Daemon) beginCompletionDisposition(project RegisteredProject, result ReviewResult, transaction *completionTransaction, disposition, reason string) error {

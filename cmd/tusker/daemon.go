@@ -1392,7 +1392,9 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		// authoritative project has exactly one completion authority.  Legacy,
 		// disabled, and shadow modes are no-ops inside the reactor.
 		if err := d.reconcileReviewCompletion(project, wfFile.Data); err != nil {
-			return err
+			if errorToIssue(err).Code != completionRepairRequiredError {
+				return err
+			}
 		}
 		if err := drainArmedWavesToMain(project.VaultRoot); err != nil {
 			return err
