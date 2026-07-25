@@ -101,6 +101,19 @@ func reviewSubmitCmd(args Args) error {
 	if impl == "" {
 		return tuskerError(errorInvalidTransition, "review result requires implementation source SHA")
 	}
+	if expected := strings.TrimSpace(args.String("task-rev")); expected != "" && expected != state {
+		return tuskerError(errorInvalidTransition, "stale task revision")
+	}
+	if expected := strings.TrimSpace(args.String("source-sha")); expected != "" && expected != impl {
+		return tuskerError(errorInvalidTransition, "stale implementation source SHA")
+	}
+	proofFingerprint, gateFingerprint := reviewFingerprint(note, "proof"), reviewFingerprint(note, "gates")
+	if expected := strings.TrimSpace(args.String("proof-fingerprint")); expected != "" && expected != proofFingerprint {
+		return tuskerError(errorInvalidTransition, "stale proof fingerprint")
+	}
+	if expected := strings.TrimSpace(args.String("gate-fingerprint")); expected != "" && expected != gateFingerprint {
+		return tuskerError(errorInvalidTransition, "stale gate fingerprint")
+	}
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return err
@@ -121,7 +134,7 @@ func reviewSubmitCmd(args Args) error {
 	if actor != reviewerActorForNote(wf.Data.Reviewer.Actor, note) {
 		return tuskerError(errorInvalidTransition, "reviewer actor is not authorized for this task")
 	}
-	result := ReviewResult{Schema: reviewResultSchema, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: attempt.Runner, RunnerProfile: attempt.Runner, Covers: covers, ProofFingerprint: reviewFingerprint(note, "proof"), GateFingerprint: reviewFingerprint(note, "gates"), Verdict: verdict, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+	result := ReviewResult{Schema: reviewResultSchema, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: attempt.Runner, RunnerProfile: attempt.Runner, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	result.ResultRevision = reviewResultFingerprint(result)
 	replay, err := store.SaveReviewResult(result)
 	if err != nil {
