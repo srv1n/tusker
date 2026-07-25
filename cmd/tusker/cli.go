@@ -70,6 +70,17 @@ definition_of_done:
 
 type Args map[string]string
 
+// copyArgsForInternalMutation keeps composite CLI operations from modifying
+// their caller's parsed argument map while they add private implementation
+// flags for a downstream command.
+func copyArgsForInternalMutation(in Args) Args {
+	out := make(Args, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
 type Config struct {
 	Version int `yaml:"version" json:"version"`
 	Agents  struct {

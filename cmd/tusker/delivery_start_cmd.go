@@ -147,7 +147,7 @@ func deliveryStartWithPlanSource(args Args, inspector wavePreflightEnvironmentIn
 
 	// Reuse the V2 importer, but suppress its integration-branch bootstrap: a
 	// Start request must not move refs as a side effect of authorization.
-	importArgs := cloneArgs(args)
+	importArgs := copyArgsForInternalMutation(args)
 	importArgs["plan"] = authority.PlanPath
 	importArgs["by"] = actor
 	importArgs["quiet"] = "true"
@@ -245,7 +245,7 @@ func deliveryStartWithPlanSource(args Args, inspector wavePreflightEnvironmentIn
 	}
 
 	wasArmed := preflight.Authorization == "armed" && preflight.StoredFingerprint == preflight.Fingerprint
-	armArgs := cloneArgs(args)
+	armArgs := copyArgsForInternalMutation(args)
 	armArgs["id"] = preflight.WaveID
 	armArgs["by"] = actor
 	armArgs["quiet"] = "true"
