@@ -1565,7 +1565,10 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 		started_at=excluded.started_at,
 		updated_at=excluded.updated_at`,
 		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.RunnerProfile, run.RunnerHarness, run.RunnerModel, run.RunnerEffort, run.Lane, run.LeaseState, run.LeaseOwner, run.LeaseGeneration, run.LeaseExpiresAt, run.LeaseHost, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, run.LastEventAt, run.FirstEventAt, run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt)
-	return err
+	if err != nil || runConsumesDispatchCapacity(run) {
+		return err
+	}
+	return s.releaseInactiveTaskResourceLeases(run.ProjectID, run.RecordID, "run no longer owns dispatch capacity", time.Now().UTC())
 }
 
 var runtimeRunMutableColumns = []string{
@@ -1684,6 +1687,11 @@ func (s *RuntimeStore) UpsertRunIfSnapshot(expected, updated RunStatus) (bool, e
 	affected, err := result.RowsAffected()
 	if err != nil {
 		return false, err
+	}
+	if affected > 0 && !runConsumesDispatchCapacity(updated) {
+		if err := s.releaseInactiveTaskResourceLeases(updated.ProjectID, updated.RecordID, "run reconciliation released dispatch capacity", time.Now().UTC()); err != nil {
+			return false, err
+		}
 	}
 	return affected > 0, nil
 }
@@ -2122,6 +2130,11 @@ func (s *RuntimeStore) UpdateRunIfLease(run RunStatus, owner string, generation 
 	if err != nil {
 		return false, err
 	}
+	if affected > 0 && !runConsumesDispatchCapacity(run) {
+		if err := s.releaseInactiveTaskResourceLeases(run.ProjectID, run.RecordID, "run completion released dispatch capacity", time.Now().UTC()); err != nil {
+			return false, err
+		}
+	}
 	return affected > 0, nil
 }
 
@@ -2170,6 +2183,11 @@ func (s *RuntimeStore) InterruptRunIfSnapshot(expected, interrupted RunStatus) (
 	affected, err := result.RowsAffected()
 	if err != nil {
 		return false, err
+	}
+	if affected > 0 && !runConsumesDispatchCapacity(interrupted) {
+		if err := s.releaseInactiveTaskResourceLeases(interrupted.ProjectID, interrupted.RecordID, "run interruption released dispatch capacity", time.Now().UTC()); err != nil {
+			return false, err
+		}
 	}
 	return affected > 0, nil
 }
@@ -2258,6 +2276,11 @@ func (s *RuntimeStore) ReclaimExpiredRunLease(projectID, recordID string, now ti
 	affected, err := result.RowsAffected()
 	if err != nil {
 		return false, err
+	}
+	if affected > 0 {
+		if err := s.releaseInactiveTaskResourceLeases(projectID, recordID, "expired run reclaim released dispatch capacity", now); err != nil {
+			return false, err
+		}
 	}
 	return affected > 0, nil
 }

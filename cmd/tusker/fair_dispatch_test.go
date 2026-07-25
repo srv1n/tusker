@@ -320,15 +320,18 @@ func TestFairMultiProjectDispatch(t *testing.T) {
 			t.Fatalf("live task resource was not fenced across restart: %#v %v", lease, err)
 		}
 
-		released := fairDispatchFindRun(t, store, "project-a", "A-T-0001")
-		released.LeaseState = string(LeaseStateReleased)
-		if err := store.UpsertRun(released); err != nil {
-			t.Fatal(err)
-		}
-		if err := daemon.dispatchFairCandidates(context.Background(), nil, 2); err != nil {
-			t.Fatal(err)
+		completed, err := newRunOwnershipService(store).finish(
+			"A-T-0001", lease.Owner, AttemptOutcomeFailed, "", "", "test completion",
+		)
+		if err != nil || completed.LeaseState != string(LeaseStateReleased) {
+			t.Fatalf("real run completion failed: %#v err=%v", completed, err)
 		}
 		assertFairDispatchOrder(t, []string{"build-host/project-b"}, wakes)
+		lease, err = store.FindResourceLease("build-host")
+		if err != nil || lease == nil || lease.State != resourceLeaseReleased ||
+			lease.ReleaseReason != "run completion released dispatch capacity" {
+			t.Fatalf("completion did not immediately release its fenced resource: %#v err=%v", lease, err)
+		}
 		if err := daemon.dispatchFairCandidates(context.Background(), []daemonDispatchCandidate{second}, 2); err != nil {
 			t.Fatal(err)
 		}
@@ -380,6 +383,60 @@ func TestFairMultiProjectDispatch(t *testing.T) {
 		}
 		sort.Strings(wakes)
 		assertFairDispatchOrder(t, []string{"build-host/project-a", "build-host/project-c"}, wakes)
+	})
+
+	t.Run("daemon_reconciliation_releases_fenced_resource_immediately", func(t *testing.T) {
+		store := fairDispatchTestStore(t)
+		now := time.Now().UTC()
+		live := RunStatus{
+			ProjectID: "project-a", RecordID: "A-T-0001", ItemID: "A-T-0001",
+			LeaseState: string(LeaseStateRunning), LeaseOwner: "attempt-a", LeaseGeneration: 1,
+			LeaseExpiresAt: now.Add(defaultRunLeaseTTL).Format(time.RFC3339),
+			AttemptOutcome: string(AttemptOutcomeNone), UpdatedAt: now.Format(time.RFC3339),
+		}
+		if err := store.UpsertRun(live); err != nil {
+			t.Fatal(err)
+		}
+		lease, acquired, err := store.AcquireResourceLease(ResourceLeaseAcquireInput{
+			Name: "reconcile-host", Owner: live.LeaseOwner,
+			Purpose: fairDispatchResourcePurpose(live.RecordID), ProjectID: live.ProjectID,
+			DepartureID: live.RecordID, TTL: defaultResourceLeaseTTL, Now: now,
+		})
+		if err != nil || !acquired {
+			t.Fatalf("resource acquire: %#v acquired=%t err=%v", lease, acquired, err)
+		}
+		if err := store.RegisterResourceLeaseWaiter(lease.Name, "project-b"); err != nil {
+			t.Fatal(err)
+		}
+		var wakes []string
+		resourceLeaseWaiterState.Lock()
+		previousNotify := resourceLeaseWaiterState.notify
+		resourceLeaseWaiterState.notify = func(_ string, resource, project string) {
+			wakes = append(wakes, resource+"/"+project)
+		}
+		resourceLeaseWaiterState.Unlock()
+		t.Cleanup(func() {
+			resourceLeaseWaiterState.Lock()
+			resourceLeaseWaiterState.notify = previousNotify
+			resourceLeaseWaiterState.Unlock()
+		})
+
+		released := live
+		released.LeaseState, released.LeaseOwner, released.LeaseExpiresAt = string(LeaseStateReleased), "", ""
+		released.AttemptOutcome = string(AttemptOutcomeSucceeded)
+		released.UpdatedAt = now.Add(time.Second).Format(time.RFC3339)
+		broker := newServeStreamBroker()
+		t.Cleanup(broker.Close)
+		daemon := &Daemon{store: store, stream: broker}
+		if err := daemon.upsertRunWithStream(live, released); err != nil {
+			t.Fatal(err)
+		}
+		assertFairDispatchOrder(t, []string{"reconcile-host/project-b"}, wakes)
+		stored, err := store.FindResourceLease(lease.Name)
+		if err != nil || stored == nil || stored.State != resourceLeaseReleased ||
+			stored.ReleaseReason != "run reconciliation released dispatch capacity" {
+			t.Fatalf("daemon reconciliation did not release resource: %#v err=%v", stored, err)
+		}
 	})
 
 	t.Run("armed_wave_concurrency_guard_is_stable_before_shared_selection", func(t *testing.T) {
