@@ -525,8 +525,7 @@ func scheduledPromotionDepartureAutomaticAction(run DepartureRun, kind string) s
 func scheduledPromotionReleaseSucceeded(release DepartureRelease) bool {
 	return strings.TrimSpace(release.Revision) != "" &&
 		strings.TrimSpace(release.CompletedAt) != "" &&
-		strings.TrimSpace(release.Status) != "" &&
-		!strings.EqualFold(strings.TrimSpace(release.Status), "failed")
+		strings.EqualFold(strings.TrimSpace(release.Status), "released")
 }
 
 func scheduledPromotionDepartureTaskIDs(run DepartureRun) []string {

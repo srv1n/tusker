@@ -237,6 +237,36 @@ func TestScheduledPromotionMorningBriefMixedPromotionAndReleaseFixture(t *testin
 	}
 }
 
+func TestScheduledPromotionMorningBriefRejectsNonSuccessReleaseStatuses(t *testing.T) {
+	night, now := scheduledPromotionTestTimes()
+	for _, status := range []string{"blocked", "pending", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			run := scheduledPromotionTestDeparture("departure-"+status, "2026-07-24T23:00:00Z")
+			run.State = DepartureStateBlocked
+			run.Promotion = DeparturePromotion{
+				CommittedRef: "refs/heads/main", CommittedSHA: "promoted-" + status, CommittedAt: "2026-07-24T23:00:00Z",
+			}
+			// Even malformed/noncanonical rows with apparently complete release
+			// fields must not be upgraded to a successful release.
+			run.Release = DepartureRelease{
+				Profile: "production", Revision: "not-a-release", Status: status, CompletedAt: "2026-07-24T23:05:00Z",
+			}
+			brief := composeScheduledPromotionMorningBrief(
+				newScheduledPromotionMorningBrief("app", scheduledPromotionTestProjection(scheduledPromotionPromote, true), night, now),
+				scheduledPromotionMorningBriefFacts{Index: scheduledPromotionEmptyIndex(), Departures: []DepartureRun{run}},
+				night,
+			)
+			if len(brief.LandedLastNight) != 1 || brief.LandedLastNight[0].ReleasedRevision != "" {
+				t.Fatalf("%q release status was presented as released: %#v", status, brief.LandedLastNight)
+			}
+			if !strings.Contains(renderScheduledPromotionMorningBrief(brief), "Promoted") ||
+				strings.Contains(renderScheduledPromotionMorningBrief(brief), "released revision") {
+				t.Fatalf("%q status collapsed promotion into release:\n%s", status, renderScheduledPromotionMorningBrief(brief))
+			}
+		})
+	}
+}
+
 func TestScheduledPromotionMorningBriefStableOrdering(t *testing.T) {
 	night, now := scheduledPromotionTestTimes()
 	earlier := scheduledPromotionTestDeparture("departure-z", "2026-07-24T21:00:00Z")
@@ -249,13 +279,21 @@ func TestScheduledPromotionMorningBriefStableOrdering(t *testing.T) {
 	blockedZ.State, blockedZ.BlockReason = DepartureStateBlocked, "Z failure"
 	blockedA := scheduledPromotionTestDeparture("blocked-a", "2026-07-24T20:00:00Z")
 	blockedA.State, blockedA.BlockReason = DepartureStateBlocked, "A failure"
+	idx := scheduledPromotionEmptyIndex()
+	idx.Tasks["APP-T-0001"] = briefTask("APP-T-0001", "ready", "pending")
+	for _, gateID := range []string{"APP-G-0002", "APP-G-0001"} {
+		idx.Gates[gateID] = briefGate(
+			gateID, "release", "Approve the production release in the account-owner console.",
+			"The account owner records the release approval.", "Only the account owner has production release authority.",
+		)
+	}
 
 	base := newScheduledPromotionMorningBrief("app", scheduledPromotionTestProjection(scheduledPromotionPromote, false), night, now)
 	left := composeScheduledPromotionMorningBrief(base, scheduledPromotionMorningBriefFacts{
-		Index: scheduledPromotionEmptyIndex(), Departures: []DepartureRun{earlier, blockedZ, later, blockedA},
+		Index: idx, Departures: []DepartureRun{earlier, blockedZ, later, blockedA},
 	}, night)
 	right := composeScheduledPromotionMorningBrief(base, scheduledPromotionMorningBriefFacts{
-		Index: scheduledPromotionEmptyIndex(), Departures: []DepartureRun{blockedA, later, blockedZ, earlier},
+		Index: idx, Departures: []DepartureRun{blockedA, later, blockedZ, earlier},
 	}, night)
 	leftJSON, _ := json.Marshal(left)
 	rightJSON, _ := json.Marshal(right)
@@ -267,6 +305,9 @@ func TestScheduledPromotionMorningBriefStableOrdering(t *testing.T) {
 	}
 	if got := []string{left.BlockedOrRepairing[0].ID, left.BlockedOrRepairing[1].ID}; !reflect.DeepEqual(got, []string{"blocked-a", "blocked-z"}) {
 		t.Fatalf("blocked ordering = %#v", got)
+	}
+	if got := []string{left.NeedsYourDecision[0].GateID, left.NeedsYourDecision[1].GateID}; !reflect.DeepEqual(got, []string{"APP-G-0001", "APP-G-0002"}) {
+		t.Fatalf("decision ordering = %#v", got)
 	}
 }
 
