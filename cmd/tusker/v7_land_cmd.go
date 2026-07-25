@@ -1231,7 +1231,8 @@ func runV7LandingGateCommand(workDir, command string, isolated bool) ([]byte, er
 		cmd.Dir = workDir
 		return cmd.CombinedOutput()
 	}
-	if _, err := exec.LookPath("sandbox-exec"); err != nil {
+	sandboxExec, err := landingGateSandboxPath()
+	if err != nil {
 		return nil, tuskerError(errorInvalidTransition, "scheduled landing refusal: host cannot isolate gate execution")
 	}
 	scratch, err := os.MkdirTemp("", "tusker-scheduled-gate-*")
@@ -1239,22 +1240,106 @@ func runV7LandingGateCommand(workDir, command string, isolated bool) ([]byte, er
 		return nil, err
 	}
 	defer os.RemoveAll(scratch)
+	goCache := filepath.Join(scratch, "go-build")
+	if err := os.MkdirAll(goCache, 0o700); err != nil {
+		return nil, err
+	}
+	worktreePath, err := sandboxCanonicalPath(workDir)
+	if err != nil {
+		return nil, fmt.Errorf("scheduled landing sandbox worktree: %w", err)
+	}
+	scratchPath, err := sandboxCanonicalPath(scratch)
+	if err != nil {
+		return nil, fmt.Errorf("scheduled landing sandbox scratch: %w", err)
+	}
 	// Do not inherit the daemon control/state environment. The profile admits
 	// only the disposable worktree, a private scratch directory, immutable
 	// platform toolchain roots, and read-only module caches. In particular it
 	// never grants the user's Library/Application Support runtime state.
 	moduleCache := filepath.Join(userHomeDir(), "go", "pkg", "mod")
+	moduleCachePath, moduleCacheErr := sandboxCanonicalPath(moduleCache)
+	if moduleCacheErr != nil {
+		// A missing module cache is not authority to read all of $HOME. Go will
+		// fail its command normally if the configured cache is genuinely needed.
+		moduleCachePath = ""
+	}
+	gitDir := sandboxGitMetadataPath(workDir)
+	runtimePaths := sandboxToolchainReadPaths()
 	profile := `(version 1) (deny default) (deny network*) (allow process*) ` +
-		`(allow file-read* (subpath "` + sandboxProfilePath(workDir) + `") (subpath "` + sandboxProfilePath(moduleCache) + `") (subpath "/usr") (subpath "/bin") (subpath "/etc") (subpath "/dev") (subpath "/System") (subpath "/Library/Developer") (subpath "/Applications/Xcode.app")) ` +
-		`(allow file-write* (subpath "` + sandboxProfilePath(workDir) + `") (subpath "` + sandboxProfilePath(scratch) + `"))`
-	cmd := exec.Command("sandbox-exec", "-p", profile, "sh", "-c", command)
+		`(allow file-read* (subpath "` + sandboxProfilePath(worktreePath) + `") (subpath "` + sandboxProfilePath(scratchPath) + `") ` + sandboxProfileSubpath(moduleCachePath) + sandboxProfileSubpath(gitDir) +
+		runtimePaths + `(subpath "/usr") (subpath "/bin") (subpath "/private/etc") (subpath "/dev") (subpath "/System") (subpath "/Library/Developer") (subpath "/Applications/Xcode.app")) ` +
+		`(allow file-write* (subpath "` + sandboxProfilePath(worktreePath) + `") (subpath "` + sandboxProfilePath(scratchPath) + `") (literal "/dev/null"))`
+	cmd := exec.Command(sandboxExec, "-p", profile, "sh", "-c", command)
 	cmd.Dir = workDir
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + scratch, "TMPDIR=" + scratch, "GOCACHE=" + filepath.Join(scratch, "go-build"), "GOMODCACHE=" + moduleCache, "LANG=C", "LC_ALL=C"}
-	return cmd.CombinedOutput()
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + scratchPath, "TMPDIR=" + scratchPath, "GOCACHE=" + goCache, "GOMODCACHE=" + moduleCache, "LANG=C", "LC_ALL=C"}
+	output, err := cmd.CombinedOutput()
+	if err != nil && len(strings.TrimSpace(string(output))) == 0 {
+		return []byte("sandbox gate aborted or denied (worktree=" + worktreePath + "; scratch=" + scratchPath + ")"), err
+	}
+	return output, err
+}
+
+func sandboxCanonicalPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
+}
+
+func sandboxGitMetadataPath(workDir string) string {
+	dir, err := gitOutputTrim(workDir, "rev-parse", "--git-common-dir")
+	if err != nil || strings.TrimSpace(dir) == "" {
+		return ""
+	}
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(workDir, dir)
+	}
+	canonical, err := sandboxCanonicalPath(dir)
+	if err != nil {
+		return ""
+	}
+	return canonical
+}
+
+func sandboxToolchainReadPaths() string {
+	paths := []string{}
+	for _, name := range []string{"go", "git", "sh"} {
+		binary, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		canonical, err := sandboxCanonicalPath(binary)
+		if err == nil {
+			paths = append(paths, filepath.Dir(canonical))
+		}
+		if name == "go" {
+			if root, rootErr := exec.Command(binary, "env", "GOROOT").Output(); rootErr == nil {
+				if canonicalRoot, canonicalErr := sandboxCanonicalPath(strings.TrimSpace(string(root))); canonicalErr == nil {
+					paths = append(paths, canonicalRoot)
+				}
+			}
+		}
+	}
+	paths = uniqueStrings(paths)
+	sort.Strings(paths)
+	var out strings.Builder
+	for _, path := range paths {
+		out.WriteString(sandboxProfileSubpath(path))
+	}
+	return out.String()
+}
+
+func sandboxProfileSubpath(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	return `(subpath "` + sandboxProfilePath(path) + `") `
 }
 
 func sandboxProfilePath(path string) string {
-	return strings.ReplaceAll(filepath.Clean(path), `"`, `\\"`)
+	escaped := strings.ReplaceAll(path, `\`, `\\`)
+	return strings.ReplaceAll(escaped, `"`, `\"`)
 }
 
 type v7LandingGateCacheRecord struct {
@@ -1271,6 +1356,7 @@ type v7LandingReceiptIndexRecord struct {
 }
 
 var landingToolchainProbe = v7LandingToolchainFingerprints
+var landingGateSandboxPath = func() (string, error) { return exec.LookPath("sandbox-exec") }
 
 func v7LandingGateFingerprint(workDir, laneIdentity string, commands []string) string {
 	head, err := gitOutputTrim(workDir, "rev-parse", "HEAD")

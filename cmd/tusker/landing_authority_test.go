@@ -4,8 +4,9 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"fmt"
-	"os/exec"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -122,10 +123,59 @@ func TestV7LandingAuthorityRejectsActorLabelAndFrozenSources(t *testing.T) {
 }
 
 func TestV7LandingAuthorityRequiresSandboxForScheduledGate(t *testing.T) {
-	if _, err := exec.LookPath("sandbox-exec"); err == nil {
-		t.Skip("host has the required isolation primitive")
-	}
+	original := landingGateSandboxPath
+	defer func() { landingGateSandboxPath = original }()
+	landingGateSandboxPath = func() (string, error) { return "", os.ErrNotExist }
 	if _, err := runV7LandingGateCommand(t.TempDir(), "true", true); err == nil {
 		t.Fatal("unsupported host ran a scheduled gate without isolation")
 	}
+}
+
+func TestV7LandingGateSandboxContract(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Darwin sandbox-exec contract")
+	}
+	if _, err := landingGateSandboxPath(); err != nil {
+		t.Skip("sandbox-exec unavailable: " + err.Error())
+	}
+	worktree := t.TempDir()
+	if err := os.WriteFile(filepath.Join(worktree, "allowed.txt"), []byte("ok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, "go.mod"), []byte("module sandboxfixture\n\ngo 1.22\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, "main.go"), []byte("package main\nimport \"fmt\"\nfunc main(){fmt.Println(\"ok\")}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stateRoot := filepath.Join(t.TempDir(), "runtime-state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(stateRoot, "authority-secret")
+	if err := os.WriteFile(sentinel, []byte("must-not-read"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	for _, command := range []string{"test -f allowed.txt", "go version >/dev/null", "go run . >/dev/null", "echo gate-write > gate-output.txt"} {
+		if output, err := runV7LandingGateCommand(worktree, command, true); err != nil {
+			t.Fatalf("sandbox rejected required gate command %q: %v: %s", command, err, output)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(worktree, "gate-output.txt")); err != nil {
+		t.Fatalf("sandbox did not permit worktree write: %v", err)
+	}
+	if output, err := runV7LandingGateCommand(worktree, "cat "+shellQuoteForSandboxTest(sentinel), true); err == nil {
+		t.Fatalf("sandbox read runtime sentinel: %s", output)
+	}
+	if output, err := runV7LandingGateCommand(worktree, "echo overwrite > "+shellQuoteForSandboxTest(sentinel), true); err == nil {
+		t.Fatalf("sandbox wrote runtime sentinel: %s", output)
+	}
+	if output, err := runV7LandingGateCommand(worktree, "curl --max-time 1 --silent http://127.0.0.1:9 >/dev/null", true); err == nil {
+		t.Fatalf("sandbox allowed network: %s", output)
+	}
+}
+
+func shellQuoteForSandboxTest(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
