@@ -1252,6 +1252,7 @@ func runV7LandingGateCommand(workDir, command string, isolated bool) ([]byte, er
 	if err != nil {
 		return nil, fmt.Errorf("scheduled landing sandbox scratch: %w", err)
 	}
+	goCachePath := filepath.Join(scratchPath, "go-build")
 	// Do not inherit the daemon control/state environment. The profile admits
 	// only the disposable worktree, a private scratch directory, immutable
 	// platform toolchain roots, and read-only module caches. In particular it
@@ -1261,7 +1262,10 @@ func runV7LandingGateCommand(workDir, command string, isolated bool) ([]byte, er
 	if moduleCacheErr != nil {
 		// A missing module cache is not authority to read all of $HOME. Go will
 		// fail its command normally if the configured cache is genuinely needed.
-		moduleCachePath = ""
+		moduleCachePath = filepath.Join(scratchPath, "empty-module-cache")
+		if err := os.MkdirAll(moduleCachePath, 0o700); err != nil {
+			return nil, err
+		}
 	}
 	gitDir := sandboxGitMetadataPath(workDir)
 	runtimePaths := sandboxToolchainReadPaths()
@@ -1271,11 +1275,11 @@ func runV7LandingGateCommand(workDir, command string, isolated bool) ([]byte, er
 	// sandbox-exec to abort before the gate command begins.
 	profile := `(version 1) (deny default) (deny network*) (allow process*) (allow sysctl-read) (allow file-read-data (literal "/")) ` +
 		`(allow file-read* (subpath "` + sandboxProfilePath(worktreePath) + `") (subpath "` + sandboxProfilePath(scratchPath) + `") ` + sandboxProfileSubpath(moduleCachePath) + sandboxProfileSubpath(gitDir) +
-		runtimePaths + `(subpath "/usr") (subpath "/bin") (subpath "/private/etc") (subpath "/dev") (subpath "/System") (subpath "/Library/Developer") (subpath "/Applications/Xcode.app")) ` +
+		runtimePaths + `(literal "/private/var/select/sh") (subpath "/usr") (subpath "/bin") (subpath "/private/etc") (subpath "/dev") (subpath "/System") (subpath "/Library/Developer") (subpath "/Applications/Xcode.app")) ` +
 		`(allow file-write* (subpath "` + sandboxProfilePath(worktreePath) + `") (subpath "` + sandboxProfilePath(scratchPath) + `") (literal "/dev/null") (literal "/dev/dtracehelper") (literal "/dev/tty"))`
 	cmd := exec.Command(sandboxExec, "-p", profile, "sh", "-c", command)
 	cmd.Dir = workDir
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + scratchPath, "TMPDIR=" + scratchPath, "GOCACHE=" + goCache, "GOMODCACHE=" + moduleCache, "LANG=C", "LC_ALL=C"}
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + scratchPath, "TMPDIR=" + scratchPath, "GOCACHE=" + goCachePath, "GOMODCACHE=" + moduleCachePath, "LANG=C", "LC_ALL=C"}
 	output, err := cmd.CombinedOutput()
 	if err != nil && len(strings.TrimSpace(string(output))) == 0 {
 		return []byte("sandbox gate aborted or denied (worktree=" + worktreePath + "; scratch=" + scratchPath + ")"), err
