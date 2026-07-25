@@ -414,12 +414,24 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		// triage has the frozen candidate and a durable raw-log reference rather
 		// than rediscovering the failure from mutable branches.
 		gateOutput, _ := os.ReadFile(execution.ArtifactRef)
-		packet := promotionFailurePacket(before.Candidate, before.Gate, actor, string(gateOutput), execution.Err, gatePolicy, "", "", "", nil, []string{execution.ArtifactRef})
+		owner := promotionFailureOwner(before.Candidate)
+		packet := promotionFailurePacket(before.Candidate, before.Gate, actor, string(gateOutput), execution.Err, gatePolicy, "unknown", "not_run", owner, nil, []string{execution.ArtifactRef})
 		packet.GateResult = execution.Result
 		route := classifyPromotionFailure(packet, gatePolicy)
-		repairTaskID := ""
-		if route.Repair {
-			if repairErr := createPromotionFailureRepairTask(vaultPath, run.ID, packet.GateCommand, actionableGateFailure(string(gateOutput), execution.Err), packet.GateProfile, route.StableIdentity, packet.OwningTaskID, execution.ArtifactRef); repairErr != nil {
+		repairTaskID, action := "", "ambiguous_repair"
+		if route.Class == promotionFailureIsolated && owner != "" {
+			action = "owner_rework"
+			if err := statusV7Cmd(Args{"vault": vaultPath, "quiet": "true", "local": "true", "id": owner, "status": "rework", "by": "tusker:scheduled-promotion", "reason": "promotion gate red: " + route.StableIdentity}); err != nil {
+				return "", err
+			}
+		} else {
+			if route.Class == promotionFailureInfrastructure {
+				action = "infrastructure_repair"
+			}
+			if route.Class == promotionFailureFlake {
+				action = "flake_quarantine"
+			}
+			if repairErr := createPromotionFailureRepairTask(vaultPath, run.ID, packet.GateCommand, actionableGateFailure(string(gateOutput), execution.Err), packet.GateProfile, route.StableIdentity, packet.OwningTaskID, execution.ArtifactRef, true); repairErr != nil {
 				return "", repairErr
 			}
 			repairTaskID = promotionFailureRepairTaskID(vaultPath, route.StableIdentity)
@@ -428,7 +440,11 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		failed.Candidate, failed.Gate = before.Candidate, before.Gate
 		failed.Gate.Status = "failed"
 		failed.Gate.StartedAt, failed.Gate.FinishedAt, failed.Gate.ArtifactRef = gateStarted.Format(time.RFC3339Nano), gateFinished.Format(time.RFC3339Nano), execution.ArtifactRef
-		failed.Gate.Failure = DepartureFailure{Class: string(route.Class), Identity: route.StableIdentity, OwningTaskID: packet.OwningTaskID, BisectionRef: packet.BisectionRef, ArtifactRefs: packet.ArtifactRefs, RepairTaskID: repairTaskID, ModelTriage: route.ModelTriage, Packet: packet}
+		affected := []string{}
+		if owner != "" {
+			affected = append(affected, owner)
+		}
+		failed.Gate.Failure = DepartureFailure{Class: string(route.Class), Identity: route.StableIdentity, OwningTaskID: packet.OwningTaskID, BisectionRef: packet.BisectionRef, ArtifactRefs: packet.ArtifactRefs, RepairTaskID: repairTaskID, ModelTriage: route.ModelTriage, Packet: packet, Action: action, AffectedTaskIDs: affected}
 		failed.State = DepartureStateFailed
 		failed.BlockReason = "promotion gate red: " + route.StableIdentity
 		if changed, persistErr := store.TransitionDepartureRun(failed, run.StateRevision); persistErr != nil {

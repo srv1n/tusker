@@ -302,7 +302,7 @@ func TestScheduledPromotionLandingRunsFrozenFullGateContract(t *testing.T) {
 		t.Fatalf("red full gate moved main: before=%s after=%s", beforeMain, got)
 	}
 	durable, err := store.FindDepartureRun(run.ID)
-	if err != nil || durable == nil || durable.State != DepartureStateFailed || durable.Gate.Status != "failed" || durable.Gate.Failure.Identity == "" || durable.Gate.Failure.RepairTaskID == "" || len(durable.Gate.Failure.ArtifactRefs) != 1 {
+	if err != nil || durable == nil || durable.State != DepartureStateFailed || durable.Gate.Status != "failed" || durable.Gate.Failure.Identity == "" || durable.Gate.Failure.Action != "owner_rework" || durable.Gate.Failure.OwningTaskID != "APP-T-0001" || len(durable.Gate.Failure.ArtifactRefs) != 1 {
 		t.Fatalf("red gate facts were not persisted: run=%#v err=%v", durable, err)
 	}
 	if strings.Contains(durable.Gate.Failure.ArtifactRefs[0], "FULL_GATE_EXECUTED") {
@@ -315,6 +315,10 @@ func TestScheduledPromotionLandingRunsFrozenFullGateContract(t *testing.T) {
 	durableJSON, marshalErr := json.Marshal(durable)
 	if marshalErr != nil || strings.Contains(string(durableJSON), "$ echo FULL_GATE_EXECUTED") {
 		t.Fatalf("raw gate output leaked into departure JSON: %s err=%v", durableJSON, marshalErr)
+	}
+	owner, _, ownerErr := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
+	if ownerErr != nil || stringField(owner, "status") != "rework" {
+		t.Fatalf("singleton owner was not canonically returned to rework: %#v err=%v", owner, ownerErr)
 	}
 	snapshot, err := scheduledPromotionSnapshot(vault, "app", "W-0001", wf)
 	if err != nil {

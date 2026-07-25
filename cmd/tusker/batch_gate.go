@@ -379,13 +379,13 @@ func actionableGateFailure(output string, runErr error) string {
 
 func createBatchGateRepairTask(vaultPath, gateRunID, command, excerpt, profile string) error {
 	identity := promotionFailureIdentity(PromotionFailurePacket{GateCommand: command, GateProfile: profile, Defects: []GateDefect{{Command: command, Target: command}}})
-	return createPromotionFailureRepairTask(vaultPath, gateRunID, command, excerpt, profile, identity, "", "")
+	return createPromotionFailureRepairTask(vaultPath, gateRunID, command, excerpt, profile, identity, "", "", false)
 }
 
 // createPromotionFailureRepairTask coalesces repeated red gates by the stable
 // defect identity rather than command alone. A command can contain several
 // unrelated tests; merging their repairs would erase ownership and evidence.
-func createPromotionFailureRepairTask(vaultPath, gateRunID, command, excerpt, profile, identity, owningTask, artifactRef string) error {
+func createPromotionFailureRepairTask(vaultPath, gateRunID, command, excerpt, profile, identity, owningTask, artifactRef string, held bool) error {
 	if idx, err := loadV7Index(vaultPath); err == nil {
 		for _, existing := range idx.Tasks {
 			status := stringField(existing.Data, "status")
@@ -454,6 +454,9 @@ func createPromotionFailureRepairTask(vaultPath, gateRunID, command, excerpt, pr
 	})
 	if err != nil {
 		return err
+	}
+	if held {
+		return nil
 	}
 	return statusCmd(Args{"vault": vaultPath, "id": id, "status": "ready", "actor": "tusker:batch-gate", "reason": "unattended batch gate red"})
 }

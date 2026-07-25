@@ -46,6 +46,18 @@ type promotionFailureRoute struct {
 	StableIdentity string
 }
 
+func promotionFailureOwner(candidate DepartureCandidate) string {
+	if len(candidate.TaskSourceSHAs) != 1 || len(candidate.TaskStateRevisions) != 1 {
+		return ""
+	}
+	for id := range candidate.TaskSourceSHAs {
+		if _, ok := candidate.TaskStateRevisions[id]; ok {
+			return id
+		}
+	}
+	return ""
+}
+
 // classifyPromotionFailure is intentionally deterministic. The caller only
 // spends a model when the bounded evidence is genuinely ambiguous.
 func classifyPromotionFailure(packet PromotionFailurePacket, policy GateTierPolicy) promotionFailureRoute {

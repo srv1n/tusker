@@ -56,14 +56,16 @@ type DepartureGate struct {
 // raw command log stays in the runtime artifact named here, never in SQLite or
 // a generated repair task.
 type DepartureFailure struct {
-	Class        string                 `json:"class,omitempty"`
-	Identity     string                 `json:"identity,omitempty"`
-	OwningTaskID string                 `json:"owning_task_id,omitempty"`
-	BisectionRef string                 `json:"bisection_ref,omitempty"`
-	ArtifactRefs []string               `json:"artifact_refs,omitempty"`
-	RepairTaskID string                 `json:"repair_task_id,omitempty"`
-	ModelTriage  bool                   `json:"model_triage,omitempty"`
-	Packet       PromotionFailurePacket `json:"packet,omitempty"`
+	Class           string                 `json:"class,omitempty"`
+	Identity        string                 `json:"identity,omitempty"`
+	OwningTaskID    string                 `json:"owning_task_id,omitempty"`
+	BisectionRef    string                 `json:"bisection_ref,omitempty"`
+	ArtifactRefs    []string               `json:"artifact_refs,omitempty"`
+	RepairTaskID    string                 `json:"repair_task_id,omitempty"`
+	ModelTriage     bool                   `json:"model_triage,omitempty"`
+	Packet          PromotionFailurePacket `json:"packet,omitempty"`
+	Action          string                 `json:"action,omitempty"`
+	AffectedTaskIDs []string               `json:"affected_task_ids,omitempty"`
 }
 
 // DeparturePromotion distinguishes an intent from an observed committed ref.
