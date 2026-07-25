@@ -121,13 +121,34 @@ export interface DeliveryReview {
   schema: "tusker.delivery-review/v1";
   readOnly: true;
   ready: boolean;
-  whatWillBeDelivered: Array<{ requirement: string; outcome: string; nonGoals: string[] }>;
-  howItWillBeProven: Array<{ requirements: string[]; outcome: string; acceptance: string[]; tests: string[]; artifacts: string[] }>;
-  howWorkFlows: { frontiers: string[][]; expectedConcurrency: number; integration: string; sharedResources: Array<{ sourceKey: string; kind: string; capacity?: number; capacityStatus: string; constraints: string[] }>; warnings: string[] };
-  whatNeedsYourDecision: Array<{ title: string; action: string; why: string }>;
-  startBoundary: { planFingerprint: string; contextFingerprint?: string; authorization: string; readiness: string; blockers: string[]; nextAction: string };
+  whatWillBeDelivered: Array<{ requirement: string; outcome: string; nonGoals: string[]; links: DeliveryReviewLink[] }>;
+  howItWillBeProven: Array<{
+    requirements: string[]; outcome: string; acceptance: string[]; tests: string[]; artifacts: string[];
+    sourceKey: string; taskId?: string; taskHref?: string;
+    checks: Array<{ covers: string; check: string; notes?: string; href?: string }>;
+    artifactRefs: Array<{ kind: string; path: string; summary: string; acceptanceIds: string[]; href?: string }>;
+    resourceRefs: string[];
+  }>;
+  howWorkFlows: {
+    frontiers: string[][]; expectedConcurrency: number; integration: string;
+    sharedResources: Array<{ sourceKey: string; kind: string; capacity?: number; capacityStatus: string; constraints: string[]; referencedBy: string[]; taskLinks: DeliveryReviewLink[] }>;
+    warnings: string[]; waveId?: string; waveHref?: string;
+  };
+  whatNeedsYourDecision: Array<{
+    title: string; action: string; why: string; sourceKey?: string; gateId?: string; gateHref?: string;
+    taskSourceKey?: string; taskId?: string; acceptanceIds: string[]; verification?: string;
+  }>;
+  startBoundary: {
+    planFingerprint: string; contextFingerprint?: string; authorization: string; readiness: string;
+    blockers: string[]; nextAction: string; state: DeliveryReviewState; stateLabel: string; actionHref?: string;
+  };
   nonGoals: string[];
 }
+
+export interface DeliveryReviewLink { label: string; href: string }
+export type DeliveryReviewState =
+  | "held" | "invalid" | "changed" | "disabled" | "daemon-off" | "runner-blocked"
+  | "shared-workspace" | "gated" | "armed" | "running" | "parked" | "completed";
 
 export interface DeliveryStartResult {
   schema: "tusker.delivery-start/v1";

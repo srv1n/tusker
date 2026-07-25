@@ -140,6 +140,68 @@ func inspectWavePreflightEnvironment(vaultPath string, wave Note) wavePreflightE
 	return env
 }
 
+// inspectWavePreflightEnvironmentReadOnly projects the same environment facts
+// without opening the runtime store through its migration/reconciliation path.
+// Delivery review and other diagnostic surfaces must use this observer.
+func inspectWavePreflightEnvironmentReadOnly(vaultPath string, wave Note) wavePreflightEnvironment {
+	env := wavePreflightEnvironment{}
+	stateRoot := DefaultStateRoot()
+	store, storeErr := OpenRuntimeStoreReadOnly(stateRoot)
+	if storeErr == nil {
+		defer store.Close()
+		projects, projectsErr := store.ListProjects()
+		if projectsErr == nil {
+			repoRoot := v7RepoRoot(vaultPath)
+			wantedProjectID := stringField(wave.Data, "project")
+			selected := -1
+			for i, project := range projects {
+				vaultMatch := sameCanonicalProjectPath(project.VaultRoot, vaultPath)
+				repoMatch := sameCanonicalProjectPath(project.RepoRoot, repoRoot)
+				if !vaultMatch && !repoMatch {
+					continue
+				}
+				switch {
+				case wantedProjectID != "" && project.ProjectID == wantedProjectID:
+					selected = i
+				case selected < 0 && vaultMatch:
+					selected = i
+				case selected < 0 && repoMatch:
+					selected = i
+				}
+			}
+			if selected >= 0 {
+				project := projects[selected]
+				env.ProjectRegistered = true
+				env.ProjectEnabled = project.Enabled
+				env.ProjectHealthy = project.Health == projectHealthHealthy
+				if wf, workflowErr := loadWorkflow(project.VaultRoot); workflowErr == nil {
+					env.ProjectEnabled = env.ProjectEnabled && wf.Data.AutomationEnabled
+					applyWaveWorkflowEnvironment(&env, wave, wf.Data)
+				}
+				if lastPoll, parseErr := time.Parse(time.RFC3339, project.LastPollAt); parseErr == nil {
+					env.DaemonReconciling = time.Since(lastPoll) <= daemonHeartbeatDeadThreshold
+				}
+			}
+		}
+		if status, statusErr := store.DaemonStatus(); statusErr == nil {
+			env.DaemonAlive = boolFromAny(status["daemon_alive"])
+		}
+		env.DaemonReconciling = env.DaemonAlive && env.DaemonReconciling
+		if !env.ProjectRegistered {
+			if wf, workflowErr := loadWorkflow(vaultPath); workflowErr == nil {
+				applyWaveWorkflowEnvironment(&env, wave, wf.Data)
+			}
+		}
+	} else if errors.Is(storeErr, os.ErrNotExist) {
+		if wf, workflowErr := loadWorkflow(vaultPath); workflowErr == nil {
+			applyWaveWorkflowEnvironment(&env, wave, wf.Data)
+		}
+	}
+	env.SkillCompatible = waveSkillCompatible(vaultPath)
+	env.IntegrationClean = waveIntegrationBaseClean(vaultPath, wave)
+	return env
+}
+
 func applyWaveWorkflowEnvironment(env *wavePreflightEnvironment, wave Note, wf Workflow) {
 	env.WorkflowCompatible = wf.WorkflowVersion == 1 && wf.TrackerSchemaVersion == 7
 	profileName := stringField(wave.Data, "runner_profile")

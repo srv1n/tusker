@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,6 +24,10 @@ type serveDeliveryError struct {
 
 func serveDeliveryFailure(w http.ResponseWriter, err error) {
 	issue := errorToIssue(err)
+	var typed *TuskerError
+	if errors.As(err, &typed) {
+		issue = errorToIssue(typed)
+	}
 	status := http.StatusUnprocessableEntity
 	if issue.Code == errorNotFound {
 		status = http.StatusNotFound
@@ -72,13 +77,54 @@ func serveDeliveryPlanPath(project RegisteredProject, raw string) (string, error
 	return resolved, nil
 }
 
+func (s *serveServer) serveDeliveryPlanPath(project RegisteredProject, raw string) (string, error) {
+	resolved, err := serveDeliveryPlanPath(project, raw)
+	if err != nil {
+		return "", err
+	}
+	projects, err := s.store.ListProjects()
+	if err != nil {
+		return "", err
+	}
+	selectedRepo := canonicalProjectPath(project.RepoRoot)
+	for _, other := range projects {
+		if serveSameRegisteredProject(project, other) {
+			continue
+		}
+		for _, root := range []string{other.RepoRoot, other.VaultRoot} {
+			otherRoot := canonicalProjectPath(root)
+			if otherRoot == "" || !pathWithin(selectedRepo, otherRoot) || sameCanonicalProjectPath(selectedRepo, otherRoot) {
+				continue
+			}
+			if pathWithin(otherRoot, resolved) {
+				return "", tuskerError(
+					errorInvalidArg,
+					"delivery plan belongs to a different registered nested project",
+					withPath(raw),
+					withHint("select project "+other.ProjectID+" before reviewing or starting this plan"),
+					withContext(map[string]any{"selectedProject": project.ProjectID, "nestedProject": other.ProjectID}),
+				)
+			}
+		}
+	}
+	return resolved, nil
+}
+
+func serveSameRegisteredProject(left, right RegisteredProject) bool {
+	if strings.TrimSpace(left.ProjectID) != "" && left.ProjectID == right.ProjectID {
+		return true
+	}
+	return sameCanonicalProjectPath(left.RepoRoot, right.RepoRoot) ||
+		sameCanonicalProjectPath(left.VaultRoot, right.VaultRoot)
+}
+
 func (s *serveServer) handleDeliveryReview(w http.ResponseWriter, r *http.Request) {
 	project, err := s.projectForSnapshot(strings.TrimSpace(r.URL.Query().Get("project")))
 	if err != nil {
 		serveDeliveryFailure(w, err)
 		return
 	}
-	planPath, err := serveDeliveryPlanPath(project, r.URL.Query().Get("plan"))
+	planPath, err := s.serveDeliveryPlanPath(project, r.URL.Query().Get("plan"))
 	if err != nil {
 		serveDeliveryFailure(w, err)
 		return
@@ -106,7 +152,7 @@ func (s *serveServer) handleDeliveryStart(w http.ResponseWriter, body serveActio
 		serveDeliveryFailure(w, err)
 		return
 	}
-	planPath, err := serveDeliveryPlanPath(project, body.string("plan"))
+	planPath, err := s.serveDeliveryPlanPath(project, body.string("plan"))
 	if err != nil {
 		serveDeliveryFailure(w, err)
 		return

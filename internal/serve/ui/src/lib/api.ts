@@ -98,6 +98,17 @@ export class DeliveryError extends ApiError {
   }
 }
 
+async function deliveryRequest<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    method,
+    headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const payload = await res.json() as T | DeliveryErrorPayload;
+  if (!res.ok) throw new DeliveryError(res.status, payload as DeliveryErrorPayload);
+  return payload as T;
+}
+
 /**
  * A refused document save. Unlike the read/action endpoints, the doc-save PUT
  * uses HTTP status to distinguish an on-disk conflict (409) from header-rule
@@ -122,15 +133,10 @@ export class DocSaveError extends ApiError {
 
 export const api = {
   deliveryReview: (plan: string, projectId?: string): Promise<DeliveryReview> =>
-    real(withProject(`/delivery/review?plan=${encodeURIComponent(plan)}`, projectId)),
+    deliveryRequest("GET", withProject(`/delivery/review?plan=${encodeURIComponent(plan)}`, projectId)),
 
-  deliveryStart: async (body: { plan: string; confirm: string }, projectId?: string): Promise<DeliveryStartResult> => {
-    const path = withProject("/delivery/start", projectId);
-    const res = await fetch(`/api${path}`, { method: "POST", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body) });
-    const payload = await res.json() as DeliveryStartResult | DeliveryErrorPayload;
-    if (!res.ok) throw new DeliveryError(res.status, payload as DeliveryErrorPayload);
-    return payload as DeliveryStartResult;
-  },
+  deliveryStart: (body: { plan: string; confirm: string }, projectId?: string): Promise<DeliveryStartResult> =>
+    deliveryRequest("POST", withProject("/delivery/start", projectId), body),
 
   // GET /api/daemon
   daemon: (): Promise<DaemonStatus> =>
