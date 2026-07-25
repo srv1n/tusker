@@ -2397,6 +2397,29 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 					clearActiveExecution(&run)
 					return run, true, nil
 				}
+				// Exit is transport, not acceptance. Only an attempt-bound typed
+				// result may reach the later review reactor; retry/park remains
+				// governed by the existing review-cycle cap.
+				hasResult, resultErr := d.store.HasReviewResult(project.ProjectID, run.RecordID, run.WorkRevision, run.ActiveAttemptID)
+				if resultErr != nil {
+					return run, changed, resultErr
+				}
+				if !hasResult {
+					reason := "reviewer exited without a valid typed review result"
+					updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, 1, reason, finished)
+					run.LeaseState, run.AttemptOutcome = string(LeaseStateReleased), string(AttemptOutcomeFailed)
+					run.LastError, run.UpdatedAt, run.Terminal = reason, finished, false
+					clearActiveExecution(&run)
+					return run, true, nil
+				}
+				// Completion/landing consumes typed results in the dedicated reactor.
+				// This exit path must never merge, land, close, or move refs.
+				reason := "typed review result recorded; awaiting review reactor"
+				updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, reason, finished)
+				run.LeaseState, run.AttemptOutcome = string(LeaseStateReleased), string(AttemptOutcomeSucceeded)
+				run.LastError, run.UpdatedAt, run.Terminal = reason, finished, false
+				clearActiveExecution(&run)
+				return run, true, nil
 				autoLanded, err := autoLandArmedWaveReviewComplete(project, note, run)
 				if err != nil {
 					landReason := "armed-wave reviewer auto-land failed: " + err.Error()

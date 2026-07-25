@@ -32,6 +32,18 @@ func (s *RuntimeStore) SaveReviewResult(result ReviewResult) (bool, error) {
 	return false, err
 }
 
+func (s *RuntimeStore) HasReviewResult(projectID, taskID string, workRevision int, attemptID string) (bool, error) {
+	var value string
+	err := s.queryRowScan(`SELECT result_json FROM review_results WHERE project_id=? AND task_id=? AND work_revision=? AND attempt_id=?`, []any{projectID, taskID, workRevision, attemptID}, &value)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func reviewSubmitCmd(args Args) error {
 	vault, err := resolveVaultPath(args, false)
 	if err != nil {
