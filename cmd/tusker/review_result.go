@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -58,8 +59,19 @@ func reviewSubmitCmd(args Args) error {
 	}
 	switch verdict {
 	case "pass":
-		if len(covers) == 0 {
-			return tuskerError(errorInvalidArg, "pass requires complete acceptance coverage")
+		accepted := uniqueStrings(v7AcceptanceIDs(note.Body))
+		sort.Strings(accepted)
+		got := append([]string(nil), covers...)
+		sort.Strings(got)
+		if strings.Join(accepted, ",") != strings.Join(got, ",") {
+			return tuskerError(errorInvalidArg, "pass requires exact complete acceptance coverage")
+		}
+		proof, proofErr := loadV7ProofReport(vault, id)
+		if proofErr != nil {
+			return proofErr
+		}
+		if proof.Status != "satisfied" || len(proof.OpenGates) != 0 {
+			return tuskerError(errorInvalidTransition, "pass requires currently satisfied objective proof and gates")
 		}
 	case "changes_requested":
 		if len(findings) == 0 {
@@ -90,6 +102,13 @@ func reviewSubmitCmd(args Args) error {
 		return tuskerError(errorInvalidTransition, "stale or unauthorized reviewer attempt")
 	}
 	actor := firstNonEmpty(args.String("by"), "reviewer:agent")
+	wf, wfErr := loadWorkflow(vault)
+	if wfErr != nil {
+		return wfErr
+	}
+	if actor != reviewerActorForNote(wf.Data.Reviewer.Actor, note) {
+		return tuskerError(errorInvalidTransition, "reviewer actor is not authorized for this task")
+	}
 	result := ReviewResult{Schema: reviewResultSchema, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: attempt.Runner, RunnerProfile: attempt.Runner, Covers: covers, ProofFingerprint: reviewFingerprint(note, "proof"), GateFingerprint: reviewFingerprint(note, "gates"), Verdict: verdict, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	result.ResultRevision = reviewResultFingerprint(result)
 	replay, err := store.SaveReviewResult(result)
