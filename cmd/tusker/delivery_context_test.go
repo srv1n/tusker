@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -85,10 +86,16 @@ Deliver a bounded repository-fact packet. [[APP-D-0001]]
 		wf.Workspace.MaxLiveWorktrees = 4
 		wf.Orchestration.SharedNamespaces = []string{"go.sum"}
 		wf.Orchestration.Gate = GateTierPolicy{
-			Profile: "default", HarvestCommands: []string{"TOKEN=$TOKEN PASSWORD=VERY-SENSITIVE-PASSWORD-VALUE go test ./...", "go test ./..."}, BuildSlotLocks: []string{".tusker/scratch/go-build.lock"},
+			Profile: "default", HarvestCommands: []string{
+				"TOKEN=$TOKEN PASSWORD=VERY-SENSITIVE-PASSWORD-VALUE go test ./...",
+				"curl -H 'Authorization: Bearer VERY-SENSITIVE-HEADER-VALUE' https://example.invalid",
+				"curl https://user:VERY-SENSITIVE-URL-VALUE@example.invalid/health",
+				"go test ./...",
+			}, BuildSlotLocks: []string{".tusker/scratch/go-build.lock"},
 			MinFreeDiskGB: 2, Scopes: []GateScope{{
 				Name: "cli", Paths: []string{"cmd/tusker/"}, Commands: []string{
 					"TOKEN=VERY-SENSITIVE-TOKEN-VALUE go test ./cmd/tusker",
+					"curl --token VERY-SENSITIVE-FLAG-VALUE https://example.invalid",
 					"CGO_ENABLED=0 go test ./cmd/tusker -run '^TestDeliveryPlanningContext' -count=1",
 				},
 			}},
@@ -184,7 +191,8 @@ Deliver a bounded repository-fact packet. [[APP-D-0001]]
 		}
 		for _, marker := range append([]string{
 			repo, vault, stateRoot, "PLANNING_SECRET_VALUE", "RAW-LOG-SECRET-MARKER", "UNRELATED-TITLE-MARKER", "UNRELATED-BODY-SECRET-MARKER",
-			"VERY-SENSITIVE-TOKEN-VALUE", "VERY-SENSITIVE-PASSWORD-VALUE",
+			"VERY-SENSITIVE-TOKEN-VALUE", "VERY-SENSITIVE-PASSWORD-VALUE", "VERY-SENSITIVE-FLAG-VALUE",
+			"VERY-SENSITIVE-HEADER-VALUE", "VERY-SENSITIVE-URL-VALUE",
 		}, forbiddenConfigFingerprints...) {
 			if strings.Contains(first, marker) {
 				t.Fatalf("bounded packet leaked %q:\n%s", marker, first)
@@ -241,6 +249,7 @@ Deliver a bounded repository-fact packet. [[APP-D-0001]]
 		volatile.Readiness.DaemonAlive = !volatile.Readiness.DaemonAlive
 		volatile.Readiness.RegistrationState = "not_registered"
 		volatile.Readiness.RuntimeStorePresent = !volatile.Readiness.RuntimeStorePresent
+		volatile.Readiness.NoWorkDispatched = !volatile.Readiness.NoWorkDispatched
 		if got := deliveryContextMaterialFingerprint(volatile); got != report.ContextFingerprint {
 			t.Fatalf("runtime liveness changed material fingerprint: want=%s got=%s", report.ContextFingerprint, got)
 		}
@@ -308,7 +317,7 @@ domains:
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, wanted := range []string{"knowledge_domain", "project_registration", "test_command"} {
+		for _, wanted := range []string{"knowledge_domain", "project_registration", "runtime_readiness", "test_command"} {
 			found := false
 			for _, unknown := range report.Unknowns {
 				if unknown.Kind == wanted && unknown.Reason != "" && unknown.Remedy != "" && unknown.Provenance != nil {
@@ -336,7 +345,98 @@ domains:
 				t.Fatalf("unsafe spec ref was accepted: %s", escaped)
 			}
 		}
+
+		outsideKnowledge := filepath.Join(filepath.Dir(repo), "outside-knowledge.md")
+		if err := writeText(outsideKnowledge, "# Outside knowledge\n\nOUTSIDE-KNOWLEDGE-SECRET-MARKER\n"); err != nil {
+			t.Fatal(err)
+		}
+		canonPath := filepath.Join(vault, "knowledge", "domains", "project", "CANON.md")
+		if err := os.Remove(canonPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outsideKnowledge, canonPath); err != nil {
+			t.Fatal(err)
+		}
+		domains, unknowns := deliveryContextKnowledge(vault, []string{"project"}, nil)
+		if len(domains) != 1 || domains[0].Complete || domains[0].CanonFingerprint != "" {
+			t.Fatalf("escaped knowledge symlink was projected as complete: %#v", domains)
+		}
+		if !deliveryContextHasUnknown(unknowns, "knowledge_domain") {
+			t.Fatalf("escaped knowledge symlink did not produce a typed unknown: %#v", unknowns)
+		}
+		projected, err := json.Marshal(struct {
+			Domains  []deliveryContextKnowledgeDomain `json:"domains"`
+			Unknowns []deliveryContextUnknown         `json:"unknowns"`
+		}{Domains: domains, Unknowns: unknowns})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, marker := range []string{outsideKnowledge, "OUTSIDE-KNOWLEDGE-SECRET-MARKER"} {
+			if strings.Contains(string(projected), marker) {
+				t.Fatalf("escaped knowledge symlink leaked %q: %s", marker, projected)
+			}
+		}
 	})
+
+	for _, tc := range []struct {
+		name             string
+		run              *RunStatus
+		wantNoDispatched bool
+	}{
+		{name: "no project runtime rows", wantNoDispatched: true},
+		{name: "unrelated active claim", run: &RunStatus{
+			ProjectID: "unrelated-project", RecordID: "OTHER-T-0001", ItemID: "OTHER-T-0001",
+			LeaseState: string(LeaseStateClaimed), LeaseExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		}, wantNoDispatched: true},
+		{name: "active project claim", run: &RunStatus{
+			RecordID: "APP-T-ACTIVE", ItemID: "APP-T-ACTIVE", LeaseState: string(LeaseStateClaimed),
+			LeaseExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		}},
+		{name: "stale project claim", run: &RunStatus{
+			RecordID: "APP-T-STALE", ItemID: "APP-T-STALE", LeaseState: string(LeaseStateClaimed),
+			LeaseExpiresAt: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+		}},
+	} {
+		tc := tc
+		t.Run("runtime readiness "+tc.name, func(t *testing.T) {
+			vault := deliveryContextTestVault(t)
+			repo := v7RepoRoot(vault)
+			stateRoot := filepath.Join(t.TempDir(), "state")
+			store, err := OpenRuntimeStore(stateRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			project := newRegisteredProject(repo, vault)
+			if err := store.UpsertProject(project); err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if tc.run != nil {
+				run := *tc.run
+				if run.ProjectID == "" {
+					run.ProjectID = project.ProjectID
+				}
+				if err := store.UpsertRun(run); err != nil {
+					_ = store.Close()
+					t.Fatal(err)
+				}
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			restoreStateRoot := deliveryContextStateRoot
+			deliveryContextStateRoot = func() string { return stateRoot }
+			t.Cleanup(func() { deliveryContextStateRoot = restoreStateRoot })
+
+			readiness, unknowns := deliveryContextReadiness(vault, true, Workflow{}, nil)
+			if readiness.NoWorkDispatched != tc.wantNoDispatched {
+				t.Fatalf("project-scoped dispatch projection mismatch: want=%t got=%#v", tc.wantNoDispatched, readiness)
+			}
+			if deliveryContextHasUnknown(unknowns, "runtime_readiness") {
+				t.Fatalf("readable project-scoped runtime rows were projected as unknown: %#v", unknowns)
+			}
+		})
+	}
 }
 
 func deliveryContextTestVault(t *testing.T) string {

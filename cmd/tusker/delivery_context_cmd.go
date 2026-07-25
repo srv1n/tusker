@@ -28,6 +28,10 @@ var (
 	deliveryContextStateRoot         = DefaultStateRoot
 	deliveryDecisionLinkRegex        = regexp.MustCompile(`\[\[([A-Z]{3}-D-[0-9]{4})(?:[|#][^\]]*)?\]\]`)
 	deliverySensitiveAssignmentRegex = regexp.MustCompile(`(?i)(?:^|[\s;])(?:export\s+)?(?:--?)?[a-z0-9_-]*(?:token|password|secret|api[_-]?key|access[_-]?key|private[_-]?key|credential)[a-z0-9_-]*\s*=\s*("[^"]*"|'[^']*'|[^\s;]+)`)
+	deliverySensitiveFlagRegex       = regexp.MustCompile(`(?i)(?:^|[\s;])--?[a-z0-9_-]*(?:token|password|secret|api[_-]?key|access[_-]?key|private[_-]?key|credential)[a-z0-9_-]*(?:\s*=|\s+|$)`)
+	deliverySensitiveHeaderRegex     = regexp.MustCompile(`(?i)(?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token)\s*:`)
+	deliveryURLUserinfoRegex         = regexp.MustCompile(`(?i)[a-z][a-z0-9+.-]*://[^\s/?#@]+@`)
+	deliveryUserCredentialFlagRegex  = regexp.MustCompile(`(?i)(?:^|[\s;])(?:-u|--user)(?:\s*=|\s+|$)`)
 )
 
 type deliveryContextProvenance struct {
@@ -490,6 +494,26 @@ func deliveryContextReadDocument(vault, ref string) ([]byte, string, error) {
 	return raw, displayRef, nil
 }
 
+func deliveryContextReadContainedRegularFile(repoRoot, path string) ([]byte, error) {
+	root, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, errors.New("file symlink escapes repository")
+	}
+	info, err := os.Stat(resolved)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, errors.New("file is not a regular file")
+	}
+	return os.ReadFile(resolved)
+}
+
 func deliveryContextDocumentTitle(data map[string]any, body, ref string) string {
 	if title := stringField(data, "title"); title != "" {
 		return title
@@ -676,8 +700,8 @@ func deliveryContextKnowledge(vault string, domains []string, unknowns []deliver
 		}
 		indexRef := filepath.ToSlash(filepath.Join(".tusker", "knowledge", "domains", domain, "INDEX.md"))
 		canonRef := filepath.ToSlash(filepath.Join(".tusker", "knowledge", "domains", domain, "CANON.md"))
-		indexRaw, indexErr := os.ReadFile(filepath.Join(vault, "knowledge", "domains", domain, "INDEX.md"))
-		canonRaw, canonErr := os.ReadFile(filepath.Join(vault, "knowledge", "domains", domain, "CANON.md"))
+		indexRaw, indexErr := deliveryContextReadContainedRegularFile(v7RepoRoot(vault), filepath.Join(vault, "knowledge", "domains", domain, "INDEX.md"))
+		canonRaw, canonErr := deliveryContextReadContainedRegularFile(v7RepoRoot(vault), filepath.Join(vault, "knowledge", "domains", domain, "CANON.md"))
 		item := deliveryContextKnowledgeDomain{
 			ID: domain, RouteReason: "declared by the governing documents or matching task metadata",
 			IndexRef: indexRef, CanonRef: canonRef, Complete: indexErr == nil && canonErr == nil,
@@ -709,7 +733,8 @@ func deliveryContextKnowledge(vault string, domains []string, unknowns []deliver
 		}
 		if !item.Complete {
 			unknowns = append(unknowns, deliveryContextUnknownFact(
-				"knowledge_domain", domain, "routed domain is missing INDEX.md or CANON.md", "create or repair both canonical domain files",
+				"knowledge_domain", domain, "routed INDEX.md or CANON.md is missing, unreadable, non-regular, or outside repository containment",
+				"repair both canonical domain files as regular files contained within the repository",
 				[]deliveryContextProvenance{{Kind: "knowledge_route", Ref: filepath.ToSlash(filepath.Join(".tusker", "knowledge", "domains", domain))}},
 			))
 		}
@@ -994,7 +1019,7 @@ func deliveryContextPlanSchemaContract() deliveryContextPlanContract {
 
 func deliveryContextReadiness(vault string, workflowKnown bool, wf Workflow, unknowns []deliveryContextUnknown) (deliveryContextRuntimeReadiness, []deliveryContextUnknown) {
 	readiness := deliveryContextRuntimeReadiness{
-		RegistrationState: "unknown", DispatchAuthorized: false, NoWorkDispatched: true,
+		RegistrationState: "unknown", DispatchAuthorized: false, NoWorkDispatched: false,
 		Provenance: []deliveryContextProvenance{{Kind: "runtime_probe", Ref: "daemon.db"}},
 	}
 	if workflowKnown {
@@ -1009,12 +1034,20 @@ func deliveryContextReadiness(vault string, workflowKnown bool, wf Workflow, unk
 			"project_registration", "readiness.registration_state", "runtime registry does not exist", "register the project before expecting resident-daemon observation",
 			readiness.Provenance,
 		))
+		unknowns = append(unknowns, deliveryContextUnknownFact(
+			"runtime_readiness", "readiness.no_work_dispatched", "project-scoped runtime rows cannot be inspected because the runtime registry does not exist",
+			"initialize or inspect the runtime registry before asserting that no work was dispatched", readiness.Provenance,
+		))
 		return readiness, unknowns
 	}
 	if err != nil {
 		unknowns = append(unknowns, deliveryContextUnknownFact(
 			"project_registration", "readiness.registration_state", "runtime registry could not be read without mutation", "repair or inspect the runtime store",
 			readiness.Provenance,
+		))
+		unknowns = append(unknowns, deliveryContextUnknownFact(
+			"runtime_readiness", "readiness.no_work_dispatched", "project-scoped runtime rows could not be inspected",
+			"repair or inspect the runtime store before asserting that no work was dispatched", readiness.Provenance,
 		))
 		return readiness, unknowns
 	}
@@ -1026,9 +1059,14 @@ func deliveryContextReadiness(vault string, workflowKnown bool, wf Workflow, unk
 			"project_registration", "readiness.registration_state", "registered projects could not be read", "repair or inspect the runtime store",
 			readiness.Provenance,
 		))
+		unknowns = append(unknowns, deliveryContextUnknownFact(
+			"runtime_readiness", "readiness.no_work_dispatched", "project identity could not be matched to project-scoped runtime rows",
+			"repair or inspect the runtime store before asserting that no work was dispatched", readiness.Provenance,
+		))
 		return readiness, unknowns
 	}
 	repo, vaultRoot := canonicalProjectPath(v7RepoRoot(vault)), canonicalProjectPath(vault)
+	projectID, _ := resolveV7ProjectID(vault)
 	for _, project := range projects {
 		if canonicalProjectPath(project.RepoRoot) != repo && canonicalProjectPath(project.VaultRoot) != vaultRoot {
 			continue
@@ -1037,13 +1075,38 @@ func deliveryContextReadiness(vault string, workflowKnown bool, wf Workflow, unk
 		enabled := project.Enabled
 		readiness.ProjectEnabled = &enabled
 		readiness.ProjectHealth = string(project.Health)
+		projectID = project.ProjectID
+		break
+	}
+	if readiness.RegistrationState != "registered" {
+		readiness.RegistrationState = "not_registered"
+		unknowns = append(unknowns, deliveryContextUnknownFact(
+			"project_registration", "readiness.registration_state", "project is absent from the runtime registry", "register the project before expecting resident-daemon observation",
+			readiness.Provenance,
+		))
+	}
+	if strings.TrimSpace(projectID) == "" {
+		unknowns = append(unknowns, deliveryContextUnknownFact(
+			"runtime_readiness", "readiness.no_work_dispatched", "project identity could not be resolved for project-scoped runtime inspection",
+			"configure project identity before asserting that no work was dispatched", readiness.Provenance,
+		))
 		return readiness, unknowns
 	}
-	readiness.RegistrationState = "not_registered"
-	unknowns = append(unknowns, deliveryContextUnknownFact(
-		"project_registration", "readiness.registration_state", "project is absent from the runtime registry", "register the project before expecting resident-daemon observation",
-		readiness.Provenance,
-	))
+	runs, err := store.ListRuns()
+	if err != nil {
+		unknowns = append(unknowns, deliveryContextUnknownFact(
+			"runtime_readiness", "readiness.no_work_dispatched", "project-scoped runtime rows could not be read",
+			"repair or inspect the runtime store before asserting that no work was dispatched", readiness.Provenance,
+		))
+		return readiness, unknowns
+	}
+	readiness.NoWorkDispatched = true
+	for _, run := range runs {
+		if strings.TrimSpace(run.ProjectID) == strings.TrimSpace(projectID) {
+			readiness.NoWorkDispatched = false
+			break
+		}
+	}
 	return readiness, unknowns
 }
 
@@ -1055,10 +1118,11 @@ func deliveryContextMaterialFingerprint(report deliveryPlanningContext) string {
 	material.Readiness.RegistrationState = ""
 	material.Readiness.ProjectEnabled = nil
 	material.Readiness.ProjectHealth = ""
+	material.Readiness.NoWorkDispatched = false
 	material.Readiness.Provenance = nil
 	filteredUnknowns := make([]deliveryContextUnknown, 0, len(material.Unknowns))
 	for _, unknown := range material.Unknowns {
-		if unknown.Kind == "project_registration" {
+		if unknown.Kind == "project_registration" || unknown.Kind == "runtime_readiness" {
 			continue
 		}
 		filteredUnknowns = append(filteredUnknowns, unknown)
@@ -1144,23 +1208,28 @@ func deliveryContextCleanStrings(values []string) []string {
 func deliveryContextSanitizedCommands(values []string, field string, provenance []deliveryContextProvenance, unknowns []deliveryContextUnknown) ([]string, []deliveryContextUnknown) {
 	out := make([]string, 0, len(values))
 	for _, command := range deliveryContextCleanStrings(values) {
-		containsSensitiveLiteral := false
-		for _, match := range deliverySensitiveAssignmentRegex.FindAllStringSubmatch(command, -1) {
-			if len(match) > 1 && deliveryContextLiteralAssignment(match[1]) {
-				containsSensitiveLiteral = true
-				break
-			}
-		}
-		if containsSensitiveLiteral {
+		if deliveryContextCommandContainsSensitiveCredential(command) {
 			unknowns = append(unknowns, deliveryContextUnknownFact(
-				"test_command", field, "a configured command contains a sensitive-key literal and was omitted",
-				"replace the literal with an environment reference or inspect the command locally", provenance,
+				"test_command", field, "a configured command may contain a credential-bearing assignment, flag, header, or URL and was omitted",
+				"replace credentials with a non-command secret injection mechanism or inspect the command locally", provenance,
 			))
 			continue
 		}
 		out = append(out, command)
 	}
 	return out, unknowns
+}
+
+func deliveryContextCommandContainsSensitiveCredential(command string) bool {
+	for _, match := range deliverySensitiveAssignmentRegex.FindAllStringSubmatch(command, -1) {
+		if len(match) > 1 && deliveryContextLiteralAssignment(match[1]) {
+			return true
+		}
+	}
+	return deliverySensitiveFlagRegex.MatchString(command) ||
+		deliverySensitiveHeaderRegex.MatchString(command) ||
+		deliveryURLUserinfoRegex.MatchString(command) ||
+		deliveryUserCredentialFlagRegex.MatchString(command)
 }
 
 func deliveryContextLiteralAssignment(value string) bool {
