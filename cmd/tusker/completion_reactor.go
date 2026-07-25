@@ -204,6 +204,12 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 	if err := validatePersistedReviewResult(result); err != nil {
 		return tuskerError(errorInvalidTransition, "stored review result failed immutable validation: "+err.Error())
 	}
+	if result.Schema != reviewResultSchema {
+		// v1 rows remain visible/auditable but their timestamp was outside the
+		// signed payload. Do not turn an upgrade into a lifecycle outage or a
+		// silent authority grant; a fresh v2 reviewer result is required.
+		return nil
+	}
 	if prior, err := d.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision); err != nil {
 		return err
 	} else if prior != nil {

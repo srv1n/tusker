@@ -5,13 +5,19 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 	"time"
 )
 
-const reviewResultSchema = "tusker.review-result/v1"
+const (
+	// v2 is the only result schema that can drive the completion reactor. Its
+	// revision binds the normalized payload *and* the reviewer timestamp.
+	reviewResultSchema = "tusker.review-result/v2"
+	// v1 remains readable so a pre-upgrade row cannot poison reconciliation,
+	// but it is deliberately re-review-only: its revision did not bind time.
+	reviewResultSchemaV1 = "tusker.review-result/v1"
+)
 
 const (
 	reviewResultMaxSummary       = 800
@@ -30,6 +36,9 @@ func (s *RuntimeStore) SaveReviewResult(result ReviewResult) (bool, error) {
 		return false, tuskerError(errorInvalidArg, "review result revision does not match its immutable payload")
 	}
 	result.ResultRevision = expectedRevision
+	if err := validatePersistedReviewResult(result); err != nil {
+		return false, tuskerError(errorInvalidArg, "review result is not a valid persisted authority: "+err.Error())
+	}
 	raw, err := json.Marshal(result)
 	if err != nil {
 		return false, err
@@ -230,7 +239,7 @@ func normalizeReviewResult(result *ReviewResult) error {
 	result.Covers = sortedUniqueStrings(result.Covers)
 	result.Findings = sortedUniqueStrings(result.Findings)
 	result.EvidenceRefs = sortedUniqueStrings(result.EvidenceRefs)
-	if result.Schema != reviewResultSchema || result.ProjectID == "" || result.TaskID == "" || result.TaskStateRev == "" || result.WorkRevision <= 0 || result.ImplementationSHA == "" || result.AttemptID == "" || result.Actor == "" || result.Runner == "" || result.RunnerProfile == "" || result.ProofFingerprint == "" || result.GateFingerprint == "" {
+	if (result.Schema != reviewResultSchema && result.Schema != reviewResultSchemaV1) || result.ProjectID == "" || result.TaskID == "" || result.TaskStateRev == "" || result.WorkRevision <= 0 || result.ImplementationSHA == "" || result.AttemptID == "" || result.Actor == "" || result.Runner == "" || result.RunnerProfile == "" || result.ProofFingerprint == "" || result.GateFingerprint == "" {
 		return tuskerError(errorInvalidArg, "review result is missing immutable authority fields")
 	}
 	if result.Summary == "" || len(result.Summary) > reviewResultMaxSummary {
@@ -341,6 +350,9 @@ func reviewHasOpenHumanBlocker(vaultPath, taskID string) (bool, error) {
 }
 func reviewResultFingerprint(r ReviewResult) string {
 	r.ResultRevision = ""
+	if r.Schema == reviewResultSchemaV1 {
+		r.CreatedAt = ""
+	}
 	raw, _ := json.Marshal(r)
 	sum := sha256.Sum256(raw)
 	return "sha256:" + hex.EncodeToString(sum[:])
@@ -350,18 +362,20 @@ func reviewResultFingerprint(r ReviewResult) string {
 // transport. A stored ResultRevision is not authority on its own: consumers
 // must prove the payload remains normalized and hashes to that revision.
 func validatePersistedReviewResult(result ReviewResult) error {
-	original := result
 	if err := normalizeReviewResult(&result); err != nil {
 		return err
-	}
-	if !reflect.DeepEqual(original, result) {
-		return fmt.Errorf("review result is not in canonical normalized form")
 	}
 	if result.ResultRevision == "" || result.ResultRevision != reviewResultFingerprint(result) {
 		return fmt.Errorf("review result fingerprint does not match immutable payload")
 	}
+	if result.Schema == reviewResultSchemaV1 {
+		// v1's fingerprint intentionally excluded CreatedAt. A syntactically
+		// sound v1 record is retained for audit/re-review but cannot authorise a
+		// timestamped completion.
+		return nil
+	}
 	if result.CreatedAt == "" {
-		return nil // legacy rows bind to the explicit deterministic epoch.
+		return fmt.Errorf("v2 review result created_at is required")
 	}
 	if _, err := time.Parse(time.RFC3339Nano, result.CreatedAt); err != nil {
 		if _, legacyErr := time.Parse(time.RFC3339, result.CreatedAt); legacyErr != nil {

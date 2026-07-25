@@ -77,6 +77,7 @@ func validStoredReviewResult() ReviewResult {
 		Verdict:           "blocked",
 		Blocker:           "infrastructure",
 		Summary:           "runner unavailable",
+		CreatedAt:         "2026-07-25T10:00:00Z",
 	}
 }
 
@@ -130,6 +131,20 @@ func TestPersistedReviewResultRejectsTamperedVerdictAndTimestamp(t *testing.T) {
 		if err := validatePersistedReviewResult(tampered); err == nil {
 			t.Fatal("tampered persisted result retained authority")
 		}
+	}
+}
+
+func TestPersistedReviewResultV1RemainsAuditOnly(t *testing.T) {
+	legacy := validStoredReviewResult()
+	legacy.Schema = reviewResultSchemaV1
+	legacy.CreatedAt = "" // v1 did not sign a timestamp.
+	legacy.ResultRevision = reviewResultFingerprint(legacy)
+	if err := validatePersistedReviewResult(legacy); err != nil {
+		t.Fatalf("valid legacy result became unreadable: %v", err)
+	}
+	legacy.CreatedAt = "2026-07-25T11:00:00Z"
+	if err := validatePersistedReviewResult(legacy); err != nil {
+		t.Fatalf("v1 timestamp should remain non-authoritative audit metadata: %v", err)
 	}
 }
 

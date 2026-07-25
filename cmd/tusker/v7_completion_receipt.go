@@ -81,6 +81,9 @@ func validateCompletionReceipt(raw []byte, taskPath string, task completionGitTr
 	if err := validatePersistedReviewResult(receipt.Review); err != nil {
 		return fmt.Errorf("completion receipt review invalid: %w", err)
 	}
+	if receipt.Review.Schema != reviewResultSchema {
+		return fmt.Errorf("completion receipt cannot use legacy review-result authority")
+	}
 	if receipt.Review.ResultRevision != result.ResultRevision || !reflect.DeepEqual(receipt.Review, result) {
 		return fmt.Errorf("completion receipt review does not match consumed review result")
 	}

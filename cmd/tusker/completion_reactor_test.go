@@ -766,6 +766,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			ImplementationSHA: source, AttemptID: "review-predecessor", Actor: "reviewer:agent",
 			Runner: "codex", RunnerProfile: "review", Covers: []string{"A1"},
 			ProofFingerprint: proof, GateFingerprint: gates, Verdict: "pass", Summary: "predecessor objective pass",
+			CreatedAt: "2026-07-25T10:00:00Z",
 		}
 		result.ResultRevision = reviewResultFingerprint(result)
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
@@ -851,6 +852,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			ImplementationSHA: source, AttemptID: "review-standalone", Actor: "reviewer:agent",
 			Runner: "codex", RunnerProfile: "review", Covers: []string{"A1"},
 			ProofFingerprint: proof, GateFingerprint: gates, Verdict: "pass", Summary: "standalone objective pass",
+			CreatedAt: "2026-07-25T10:00:00Z",
 		}
 		result.ResultRevision = reviewResultFingerprint(result)
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
@@ -2142,7 +2144,7 @@ func completionReactorFixture(t *testing.T, exactSource bool) (string, Registere
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := ReviewResult{Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: "APP-T-0001", TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: 1, ImplementationSHA: stringField(note.Data, "source_sha"), AttemptID: "review-1", Actor: "reviewer:agent", Runner: "codex", RunnerProfile: "review", Covers: []string{"A1"}, ProofFingerprint: proof, GateFingerprint: gates, Verdict: "pass", Summary: "objective pass"}
+	result := ReviewResult{Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: "APP-T-0001", TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: 1, ImplementationSHA: stringField(note.Data, "source_sha"), AttemptID: "review-1", Actor: "reviewer:agent", Runner: "codex", RunnerProfile: "review", Covers: []string{"A1"}, ProofFingerprint: proof, GateFingerprint: gates, Verdict: "pass", Summary: "objective pass", CreatedAt: "2026-07-25T10:00:00Z"}
 	result.ResultRevision = reviewResultFingerprint(result)
 	return vault, project, daemon, result
 }
@@ -2164,6 +2166,7 @@ func completionResultForReviewedTask(t *testing.T, vault string, project Registe
 		AttemptID:         attemptID, Actor: "reviewer:agent", Runner: "codex", RunnerProfile: "review",
 		Covers: []string{"A1"}, ProofFingerprint: proof, GateFingerprint: gates,
 		Verdict: "pass", Summary: summary,
+		CreatedAt: "2026-07-25T10:00:00Z",
 	}
 	result.ResultRevision = reviewResultFingerprint(result)
 	return result
