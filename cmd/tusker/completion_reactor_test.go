@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,12 +42,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 					}
 					return
 				}
-				wave, _, ok := armedWaveForTask(vault, note)
-				if !ok {
-					t.Fatal("fixture lost wave")
-				}
-				base, _ := gitOutputTrim(project.RepoRoot, "rev-parse", "refs/heads/"+v7WaveIntegrationBranch(wave))
-				transaction, err := daemon.store.CompletionTransaction(completionTransactionID(project.ProjectID, result, base))
+				transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
 				if err != nil || transaction == nil || transaction.Phase != tc.wantPhase {
 					t.Fatalf("transaction=%#v err=%v", transaction, err)
 				}
@@ -453,10 +449,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 			t.Fatal(err)
 		}
-		note, err := resolveV7Note(vault, result.TaskID, "task")
-		if err != nil {
-			t.Fatal(err)
-		}
+		note := assertCompletionTerminalProjection(t, vault, result)
 		if stringField(note.Data, "status") != "done" || !strings.Contains(note.Body, "[tusker-review-result:"+result.ResultRevision+"]") {
 			t.Fatalf("canonical task was not projected from staged completion: %#v", note.Data)
 		}
@@ -488,6 +481,120 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		}
 	})
 
+	t.Run("ref intent replay accepts authenticated same-wave descendant", func(t *testing.T) {
+		repo, vault := newLandTestRepo(t, 2, "true")
+		sourceZ := commitLandBranch(t, repo, "source/APP-T-0002-z", "integration/W-0001", map[string]string{"z-reviewed.txt": "z\n"})
+		sourceA := commitLandBranch(t, repo, "source/APP-T-0001-a", "integration/W-0001", map[string]string{"a-reviewed.txt": "a\n"})
+		for id, source := range map[string]string{"APP-T-0001": sourceA, "APP-T-0002": sourceZ} {
+			recordCompletionTestProof(t, vault, id)
+			setAutomationV7TaskFields(t, vault, id, map[string]any{
+				"status": "review", "readiness": "waiting_on_review",
+				"source_sha": source, "work_revision": 1,
+			})
+		}
+		armScheduledPromotionWaveForTest(t, vault, "W-0001")
+		project := newRegisteredProject(repo, vault)
+		stateRoot := filepath.Join(t.TempDir(), "state")
+		t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+		daemon, err := NewDaemon(stateRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		zResult := completionResultForReviewedTask(t, vault, project, "APP-T-0002", "review-z", "Z passed")
+		aResult := completionResultForReviewedTask(t, vault, project, "APP-T-0001", "review-a", "A passed")
+		for _, result := range []ReviewResult{zResult, aResult} {
+			if _, err := daemon.store.SaveReviewResult(result); err != nil {
+				t.Fatal(err)
+			}
+		}
+		oldHook := completionReactorCrashHook
+		t.Cleanup(func() { completionReactorCrashHook = oldHook })
+		crashed := false
+		completionReactorCrashHook = func(point string, transaction *completionTransaction) error {
+			if point == "ref_commit" && transaction.TaskID == zResult.TaskID && !crashed {
+				crashed = true
+				return errors.New("injected Z crash after integration CAS")
+			}
+			return nil
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reactToReviewResult(project, wf, zResult, completionReactorModeAuthoritative); err == nil {
+			t.Fatal("expected Z ref-commit crash")
+		}
+		zTransaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, zResult.TaskID, zResult.ResultRevision)
+		if err != nil || zTransaction == nil || zTransaction.Phase != completionPhaseRefIntent {
+			t.Fatalf("Z did not retain ref intent after CAS crash: transaction=%#v err=%v", zTransaction, err)
+		}
+		crashedTip, err := gitOutputTrim(repo, "rev-parse", zTransaction.IntegrationRef)
+		if err != nil || crashedTip != zTransaction.StagedSHA {
+			t.Fatalf("Z CAS was not observable before restart: tip=%s transaction=%#v err=%v", crashedTip, zTransaction, err)
+		}
+		if err := daemon.Close(); err != nil {
+			t.Fatal(err)
+		}
+		completionReactorCrashHook = nil
+		restarted, err := NewDaemon(stateRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer restarted.Close()
+		if err := restarted.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatal(err)
+		}
+		aTransaction, err := restarted.store.CompletionTransactionForResult(project.ProjectID, aResult.TaskID, aResult.ResultRevision)
+		if err != nil || aTransaction == nil || aTransaction.Phase != completionPhaseTerminal {
+			t.Fatalf("lexically earlier A did not terminalize: transaction=%#v err=%v", aTransaction, err)
+		}
+		zTransaction, err = restarted.store.CompletionTransactionForResult(project.ProjectID, zResult.TaskID, zResult.ResultRevision)
+		if err != nil || zTransaction == nil || zTransaction.Phase != completionPhaseTerminal {
+			t.Fatalf("descended Z replay did not terminalize: transaction=%#v err=%v", zTransaction, err)
+		}
+		if aTransaction.IntegrationBase != zTransaction.StagedSHA {
+			t.Fatalf("A did not stage from Z's committed tip: A base=%s Z staged=%s", aTransaction.IntegrationBase, zTransaction.StagedSHA)
+		}
+		integrated, err := gitOutputTrim(repo, "rev-parse", aTransaction.IntegrationRef)
+		if err != nil || integrated != aTransaction.StagedSHA ||
+			!gitMergeBaseAncestor(repo, zTransaction.StagedSHA, integrated) {
+			t.Fatalf("A did not advance integration as an authenticated Z descendant: tip=%s err=%v", integrated, err)
+		}
+		for _, result := range []ReviewResult{aResult, zResult} {
+			task, err := resolveV7Note(vault, result.TaskID, "task")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stringField(task.Data, "status") != "done" ||
+				strings.Count(task.Body, "[tusker-review-result:"+result.ResultRevision+"]") != 1 ||
+				generatedReviewerFindingContent(task.Body) != "" {
+				t.Fatalf("%s did not project exactly one canonical pass: %#v", result.TaskID, task.Data)
+			}
+		}
+		wave, err := resolveV7Note(vault, "W-0001", "wave")
+		if err != nil {
+			t.Fatal(err)
+		}
+		passCounts, failureCounts := map[string]int{}, map[string]int{}
+		for _, row := range normalizeLandingAudit(wave.Data["landings"]) {
+			switch stringField(row, "gate_result") {
+			case "pass":
+				passCounts[stringField(row, "task")]++
+			case "fail":
+				failureCounts[stringField(row, "task")]++
+			}
+		}
+		for _, result := range []ReviewResult{aResult, zResult} {
+			if passCounts[result.TaskID] != 1 || failureCounts[result.TaskID] != 0 {
+				t.Fatalf("%s audit pass/fail=%d/%d, want 1/0", result.TaskID, passCounts[result.TaskID], failureCounts[result.TaskID])
+			}
+		}
+		beforeReplay := integrated
+		if err := restarted.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatal(err)
+		}
+		if afterReplay, _ := gitOutputTrim(repo, "rev-parse", aTransaction.IntegrationRef); afterReplay != beforeReplay {
+			t.Fatalf("terminal replay moved descendant integration: before=%s after=%s", beforeReplay, afterReplay)
+		}
+	})
+
 	t.Run("canonical pass unlocks hard successor in another armed wave", func(t *testing.T) {
 		repo, vault := newLandTestRepo(t, 2, "true")
 		waveOne, err := resolveV7Note(vault, "W-0001", "wave")
@@ -515,8 +622,9 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			t.Fatalf("dependent was not isolated in wave B: task=%#v err=%v", dependent.Data, err)
 		}
 		source := commitLandBranch(t, repo, "source/APP-T-0001", "integration/W-0001", map[string]string{"predecessor.txt": "reviewed\n"})
+		recordCompletionTestProof(t, vault, "APP-T-0001")
 		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
-			"status": "review", "readiness": "waiting_on_review", "proof_status": "satisfied",
+			"status": "review", "readiness": "waiting_on_review",
 			"source_sha": source, "work_revision": 1,
 		})
 		armScheduledPromotionWaveForTest(t, vault, "W-0001")
@@ -585,8 +693,9 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		clearWaveBackpointer(t, vault, "APP-T-0001")
 		setSingletonPromotionMode(t, vault, scheduledPromotionStage)
 		source := commitLandBranch(t, repo, "source/APP-T-0001", "integration/W-0001", map[string]string{"standalone.txt": "reviewed\n"})
+		recordCompletionTestProof(t, vault, "APP-T-0001")
 		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
-			"status": "review", "readiness": "waiting_on_review", "proof_status": "satisfied",
+			"status": "review", "readiness": "waiting_on_review",
 			"source_sha": source, "work_revision": 1,
 		})
 		before, err := resolveV7Note(vault, "APP-T-0001", "task")
@@ -649,10 +758,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal || transaction.WaveID != stringField(wave.Data, "id") {
 			t.Fatalf("standalone completion did not terminalize on its frozen singleton: transaction=%#v err=%v", transaction, err)
 		}
-		canonical, err := resolveV7Note(vault, result.TaskID, "task")
-		if err != nil {
-			t.Fatal(err)
-		}
+		canonical := assertCompletionTerminalProjection(t, vault, result)
 		if stringField(canonical.Data, "status") != "done" ||
 			strings.Count(canonical.Body, "[tusker-review-result:"+result.ResultRevision+"]") != 1 ||
 			strings.Contains(canonical.Body, completionHandbackMarker(transaction.ID)) {
@@ -816,6 +922,206 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		}
 	})
 
+	t.Run("ref commit crash ignores post-CAS disarm material and gate drift", func(t *testing.T) {
+		vault, project, daemon, result := completionReactorFixture(t, true)
+		if _, err := daemon.store.SaveReviewResult(result); err != nil {
+			t.Fatal(err)
+		}
+		oldHook := completionReactorCrashHook
+		t.Cleanup(func() { completionReactorCrashHook = oldHook })
+		crashed := false
+		completionReactorCrashHook = func(point string, _ *completionTransaction) error {
+			if point == "ref_commit" && !crashed {
+				crashed = true
+				return errors.New("injected ref-commit crash before phase persistence")
+			}
+			return nil
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
+			t.Fatal("expected ref-commit crash")
+		}
+		transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil || transaction.Phase != completionPhaseRefIntent {
+			t.Fatalf("ref-commit crash did not retain intent: transaction=%#v err=%v", transaction, err)
+		}
+		if transaction.WaveAuthorityKind != "armed" || transaction.WaveAuthorizationFP == "" ||
+			transaction.WaveAuthorizationFP != transaction.WaveMaterialFP {
+			t.Fatalf("ref-commit transaction did not freeze exact wave authority: %#v", transaction)
+		}
+		integrated, err := gitOutputTrim(project.RepoRoot, "rev-parse", transaction.IntegrationRef)
+		if err != nil || integrated != transaction.StagedSHA {
+			t.Fatalf("ref-commit crash did not leave staged integration observable: tip=%s err=%v", integrated, err)
+		}
+
+		waveBeforeDrift, err := resolveV7Note(vault, transaction.WaveID, "wave")
+		if err != nil {
+			t.Fatal(err)
+		}
+		waveData, waveBody, err := parseFrontmatterMustRead(waveBeforeDrift.AbsolutePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waveData["authorization"] = "disarmed"
+		delete(waveData, "authorization_fingerprint")
+		waveData["members"] = []string{}
+		if _, err := saveV7DocumentCAS(waveBeforeDrift.AbsolutePath, waveData, waveBody, v7FrontmatterOrder["wave"], stringField(waveData, "state_rev")); err != nil {
+			t.Fatal(err)
+		}
+
+		gateID := "APP-G-9999"
+		gateBody := "# " + gateID + " · post-CAS drift\n"
+		gateData := map[string]any{
+			"schema": "tusker.gate/v1", "kind": "gate", "id": gateID, "project": "app",
+			"title": "Post-CAS drift", "gate_kind": "verification", "status": "open",
+			"owner": "reviewer", "priority": "p2", "blocking": false,
+			"blocks": []string{result.TaskID}, "covers": []string{"A1"},
+			"action": "Recheck after the immutable result.", "verification": "Post-CAS gate exists.",
+			"created_at": "2026-07-25T12:00:00Z", "created_by": "agent:test",
+			"updated_at": "2026-07-25T12:00:00Z", "updated_by": "agent:test",
+		}
+		gateData["state_rev"] = v7StateRev(gateData, gateBody)
+		gateRaw, err := serializeDocument(gateData, gateBody, v7FrontmatterOrder["gate"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writeText(filepath.Join(vault, "work", "gates", gateID+".md"), gateRaw); err != nil {
+			t.Fatal(err)
+		}
+		reviewed, err := resolveV7Note(vault, result.TaskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stringField(reviewed.Data, "state_rev") != result.TaskStateRev {
+			t.Fatal("gate drift fixture unexpectedly mutated the canonical reviewed task")
+		}
+		_, driftedGates, err := reviewObjectiveSnapshots(vault, reviewed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if driftedGates == result.GateFingerprint {
+			t.Fatal("gate drift fixture did not invalidate the frozen fingerprint")
+		}
+
+		stateRoot := daemon.stateRoot
+		if err := daemon.Close(); err != nil {
+			t.Fatal(err)
+		}
+		completionReactorCrashHook = nil
+		restarted, err := NewDaemon(stateRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer restarted.Close()
+		if err := restarted.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatalf("post-CAS gate drift replay failed: %v", err)
+		}
+		if err := restarted.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatalf("post-CAS terminal replay failed: %v", err)
+		}
+		transaction, err = restarted.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal || transaction.Failure != "" {
+			t.Fatalf("post-CAS gate drift did not terminalize as pass: transaction=%#v err=%v", transaction, err)
+		}
+		canonical := assertCompletionTerminalProjection(t, vault, result)
+		if stringField(canonical.Data, "status") != "done" ||
+			!strings.Contains(canonical.Body, "[tusker-review-result:"+result.ResultRevision+"]") ||
+			generatedReviewerFindingContent(canonical.Body) != "" {
+			t.Fatalf("post-CAS drift created integration/canonical split brain: %#v", canonical.Data)
+		}
+		wave, err := resolveV7Note(vault, transaction.WaveID, "wave")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stringField(wave.Data, "authorization") != "disarmed" ||
+			containsString(normalizeList(wave.Data["members"]), result.TaskID) {
+			t.Fatalf("post-CAS replay rewrote human wave drift instead of using frozen authority: %#v", wave.Data)
+		}
+		passes, failures := 0, 0
+		for _, row := range normalizeLandingAudit(wave.Data["landings"]) {
+			if stringField(row, "task") != result.TaskID {
+				continue
+			}
+			if stringField(row, "gate_result") == "pass" {
+				passes++
+			}
+			if stringField(row, "gate_result") == "fail" {
+				failures++
+			}
+		}
+		if passes != 1 || failures != 0 {
+			t.Fatalf("post-CAS drift audit pass/fail=%d/%d, want 1/0", passes, failures)
+		}
+	})
+
+	t.Run("missing post-CAS wave is a repair conflict without handback", func(t *testing.T) {
+		vault, project, daemon, result := completionReactorFixture(t, true)
+		defer daemon.Close()
+		if _, err := daemon.store.SaveReviewResult(result); err != nil {
+			t.Fatal(err)
+		}
+		oldHook := completionReactorCrashHook
+		t.Cleanup(func() { completionReactorCrashHook = oldHook })
+		completionReactorCrashHook = func(point string, _ *completionTransaction) error {
+			if point == "ref_commit" {
+				return errors.New("injected ref-commit crash")
+			}
+			return nil
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
+			t.Fatal("expected ref-commit crash")
+		}
+		transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil || transaction.Phase != completionPhaseRefIntent {
+			t.Fatalf("ref-commit crash did not retain intent: transaction=%#v err=%v", transaction, err)
+		}
+		wave, err := resolveV7Note(vault, transaction.WaveID, "wave")
+		if err != nil {
+			t.Fatal(err)
+		}
+		missingPath := wave.AbsolutePath + ".missing"
+		if err := os.Rename(wave.AbsolutePath, missingPath); err != nil {
+			t.Fatal(err)
+		}
+		invalidateCachedNote(wave.AbsolutePath)
+		t.Cleanup(func() {
+			if fileExists(missingPath) {
+				_ = os.Rename(missingPath, wave.AbsolutePath)
+				invalidateCachedNote(wave.AbsolutePath)
+			}
+		})
+		completionReactorCrashHook = nil
+		replayErr := daemon.reconcileReviewCompletion(project, wf)
+		var typed *TuskerError
+		if !errors.As(replayErr, &typed) || typed.Code != completionRepairRequiredError {
+			t.Fatalf("missing committed wave error=%v, want %s", replayErr, completionRepairRequiredError)
+		}
+		transaction, err = daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil || transaction.Phase != completionPhaseCanonicalDone || transaction.Failure != "" {
+			t.Fatalf("repair conflict rewrote committed pass as failure: transaction=%#v err=%v", transaction, err)
+		}
+		task, err := resolveV7Note(vault, result.TaskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stringField(task.Data, "status") != "done" || generatedReviewerFindingContent(task.Body) != "" {
+			t.Fatalf("repair conflict handed integrated work back: %#v", task.Data)
+		}
+
+		if err := os.Rename(missingPath, wave.AbsolutePath); err != nil {
+			t.Fatal(err)
+		}
+		invalidateCachedNote(wave.AbsolutePath)
+		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatalf("restored frozen wave did not repair completion: %v", err)
+		}
+		transaction, err = daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal {
+			t.Fatalf("restored frozen wave did not terminalize: transaction=%#v err=%v", transaction, err)
+		}
+	})
+
 	t.Run("tampered staging ref is classified without integration movement", func(t *testing.T) {
 		vault, project, daemon, result := completionReactorFixture(t, true)
 		defer daemon.Close()
@@ -900,7 +1206,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			t.Fatal(err)
 		}
 		worktree := filepath.Join(t.TempDir(), "forged-staging")
-		runGitDir(t, project.RepoRoot, "worktree", "add", "--detach", worktree, expected)
+		runGitDir(t, project.RepoRoot, "worktree", "add", "--detach", worktree, expected.SHA)
 		if err := writeText(filepath.Join(worktree, "smuggled.txt"), "not reviewed\n"); err != nil {
 			t.Fatal(err)
 		}
@@ -947,6 +1253,432 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			t.Fatalf("forged exact-parent tree moved integration: before=%s after=%s err=%v", integrationBefore, integrationAfter, err)
 		}
 	})
+
+	t.Run("staging commit plumbing bypasses mutating pre-commit hook", func(t *testing.T) {
+		vault, project, daemon, result := completionReactorFixture(t, true)
+		defer daemon.Close()
+		hooksDir := filepath.Join(t.TempDir(), "hooks")
+		if err := ensureDir(hooksDir); err != nil {
+			t.Fatal(err)
+		}
+		hookMarker := filepath.Join(t.TempDir(), "pre-commit-invoked")
+		hook := "#!/bin/sh\n" +
+			"printf invoked > " + shellSingleQuote(hookMarker) + "\n" +
+			"printf smuggled > smuggled.txt\n" +
+			"git add -- smuggled.txt\n"
+		hookPath := filepath.Join(hooksDir, "pre-commit")
+		if err := writeText(hookPath, hook); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(hookPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := gitCombined(project.RepoRoot, "config", "core.hooksPath", hooksDir); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := daemon.store.SaveReviewResult(result); err != nil {
+			t.Fatal(err)
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatal(err)
+		}
+		transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal {
+			t.Fatalf("hook-free completion did not terminalize: transaction=%#v err=%v", transaction, err)
+		}
+		if fileExists(hookMarker) {
+			t.Fatal("completion staging invoked the repository pre-commit hook")
+		}
+		integrated, err := gitOutputTrim(project.RepoRoot, "rev-parse", transaction.IntegrationRef)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for label, commit := range map[string]string{"staging": transaction.StagedSHA, "integration": integrated} {
+			if _, err := gitCombined(project.RepoRoot, "cat-file", "-e", commit+":smuggled.txt"); err == nil {
+				t.Fatalf("%s tree contains pre-commit hook smuggled content", label)
+			}
+		}
+		canonical, err := resolveV7Note(vault, result.TaskID, "task")
+		if err != nil || stringField(canonical.Data, "status") != "done" {
+			t.Fatalf("hook-free completion lost canonical done projection: task=%#v err=%v", canonical.Data, err)
+		}
+		assertCompletionTerminalProjection(t, vault, result)
+	})
+
+	t.Run("staging task blob bypasses mutating clean filter", func(t *testing.T) {
+		vault, project, daemon, result := completionReactorFixture(t, true)
+		defer daemon.Close()
+		filterDir := t.TempDir()
+		filterMarker := filepath.Join(filterDir, "clean-filter-invoked")
+		filterPath := filepath.Join(filterDir, "mutating-clean-filter")
+		filter := "#!/bin/sh\n" +
+			"printf invoked > " + shellSingleQuote(filterMarker) + "\n" +
+			"cat\n" +
+			"printf '\\nclean-filter-smuggled\\n'\n"
+		if err := writeText(filterPath, filter); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(filterPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		attributesPath := filepath.Join(filterDir, "attributes")
+		if err := writeText(attributesPath, "*.md filter=completion-mutator\n"); err != nil {
+			t.Fatal(err)
+		}
+		for key, value := range map[string]string{
+			"core.attributesFile":                attributesPath,
+			"filter.completion-mutator.clean":    shellSingleQuote(filterPath),
+			"filter.completion-mutator.required": "true",
+		} {
+			if _, err := gitCombined(project.RepoRoot, "config", key, value); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := daemon.store.SaveReviewResult(result); err != nil {
+			t.Fatal(err)
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatal(err)
+		}
+		transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal || transaction.StagedTaskBlob == "" {
+			t.Fatalf("filter-free completion did not terminalize: transaction=%#v err=%v", transaction, err)
+		}
+		if fileExists(filterMarker) {
+			t.Fatal("completion staging invoked the task clean filter")
+		}
+		taskRel, err := completionTaskRepoRelativePath(project.RepoRoot, vault, result.TaskID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		integrated, err := gitOutputTrim(project.RepoRoot, "rev-parse", transaction.IntegrationRef)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var generatedRaw string
+		for _, committed := range []struct {
+			label    string
+			revision string
+		}{
+			{label: "staging", revision: transaction.StagedSHA},
+			{label: "integration", revision: integrated},
+		} {
+			blob, err := gitOutputTrim(project.RepoRoot, "rev-parse", committed.revision+":"+taskRel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := gitCombined(project.RepoRoot, "cat-file", "blob", blob)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if generatedRaw == "" {
+				generatedRaw = raw
+			}
+			if blob != transaction.StagedTaskBlob || raw != generatedRaw || strings.Contains(raw, "clean-filter-smuggled") {
+				t.Fatalf("%s commit tree does not retain the transaction's exact generated task blob: blob=%s want=%s", committed.label, blob, transaction.StagedTaskBlob)
+			}
+		}
+		rawBlob, err := gitCommandInput(project.RepoRoot, generatedRaw, "hash-object", "--stdin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.TrimSpace(rawBlob) != transaction.StagedTaskBlob {
+			t.Fatalf("committed task bytes hash to %s, want generated blob %s", strings.TrimSpace(rawBlob), transaction.StagedTaskBlob)
+		}
+		filteredBlob, err := gitCommandInput(project.RepoRoot, generatedRaw,
+			"hash-object", "--filters", "--path="+taskRel, "--stdin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.TrimSpace(filteredBlob) == transaction.StagedTaskBlob || !fileExists(filterMarker) {
+			t.Fatal("clean-filter control did not mutate the generated task blob")
+		}
+		assertCompletionTerminalProjection(t, vault, result)
+	})
+
+	t.Run("legacy transaction missing frozen authority requires repair on both sides of CAS", func(t *testing.T) {
+		for _, tc := range []struct {
+			name      string
+			crash     string
+			wantPhase string
+			committed bool
+		}{
+			{name: "pre-CAS", crash: "gate", wantPhase: completionPhaseStaged},
+			{name: "post-CAS", crash: "ref_commit", wantPhase: completionPhaseRefIntent, committed: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				vault, project, daemon, result := completionReactorFixture(t, true)
+				defer daemon.Close()
+				if _, err := daemon.store.SaveReviewResult(result); err != nil {
+					t.Fatal(err)
+				}
+				oldHook := completionReactorCrashHook
+				t.Cleanup(func() { completionReactorCrashHook = oldHook })
+				crashed := false
+				completionReactorCrashHook = func(point string, _ *completionTransaction) error {
+					if point == tc.crash && !crashed {
+						crashed = true
+						return errors.New("injected legacy transaction crash")
+					}
+					return nil
+				}
+				wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+				if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
+					t.Fatal("expected injected crash")
+				}
+				transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+				if err != nil || transaction == nil || transaction.Phase != tc.wantPhase {
+					t.Fatalf("crash fixture phase=%#v err=%v, want %s", transaction, err, tc.wantPhase)
+				}
+				transaction.WaveAuthorityKind = ""
+				transaction.WaveAuthorizationFP = ""
+				transaction.WaveMaterialFP = ""
+				if err := daemon.store.SaveCompletionTransaction(transaction); err != nil {
+					t.Fatal(err)
+				}
+				completionReactorCrashHook = nil
+				replayErr := daemon.reconcileReviewCompletion(project, wf)
+				var typed *TuskerError
+				if !errors.As(replayErr, &typed) || typed.Code != completionRepairRequiredError {
+					t.Fatalf("legacy replay error=%v, want %s", replayErr, completionRepairRequiredError)
+				}
+				replayed, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+				if err != nil || replayed == nil || replayed.Phase != tc.wantPhase || replayed.Failure != "" {
+					t.Fatalf("legacy replay mutated transaction: transaction=%#v err=%v", replayed, err)
+				}
+				task, err := resolveV7Note(vault, result.TaskID, "task")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if stringField(task.Data, "status") != "review" ||
+					strings.Contains(task.Body, "[tusker-review-result:"+result.ResultRevision+"]") ||
+					generatedReviewerFindingContent(task.Body) != "" {
+					t.Fatalf("legacy replay handed back or closed task: %#v", task.Data)
+				}
+				tip, err := gitOutputTrim(project.RepoRoot, "rev-parse", transaction.IntegrationRef)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tc.committed && tip != transaction.StagedSHA {
+					t.Fatalf("post-CAS legacy fixture lost integrated SHA: tip=%s staged=%s", tip, transaction.StagedSHA)
+				}
+				if !tc.committed && tip != transaction.IntegrationBase {
+					t.Fatalf("pre-CAS legacy replay moved integration: tip=%s base=%s", tip, transaction.IntegrationBase)
+				}
+			})
+		}
+	})
+
+	t.Run("close policy eligibility is enforced before integration CAS", func(t *testing.T) {
+		t.Run("legacy human acceptor policy cannot authorize reviewer closure", func(t *testing.T) {
+			vault, project, daemon, result := completionReactorFixture(t, true)
+			defer daemon.Close()
+			appendCompletionTestClosePolicy(t, project.RepoRoot, "  low:\n    required_acceptor: human\n")
+			if _, err := daemon.store.SaveReviewResult(result); err != nil {
+				t.Fatal(err)
+			}
+			before, err := gitOutputTrim(project.RepoRoot, "rev-parse", "refs/heads/integration/W-0001")
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = daemon.reconcileReviewCompletion(project, Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}})
+			if err == nil || errorToIssue(err).Code != errorConfigInvalid || !strings.Contains(err.Error(), "required_acceptor: human") {
+				t.Fatalf("custom human acceptor policy was not enforced: %v", err)
+			}
+			assertCompletionPolicyRefusedWithoutCAS(t, vault, project, daemon, result, before)
+		})
+
+		t.Run("required evidence blocks absent accepted evidence", func(t *testing.T) {
+			vault, project, daemon, result := completionReactorFixture(t, true)
+			defer daemon.Close()
+			appendCompletionTestClosePolicy(t, project.RepoRoot, "  low:\n    required_acceptor: reviewer_agent\n    required_evidence: [automated_test]\n")
+			if _, err := daemon.store.SaveReviewResult(result); err != nil {
+				t.Fatal(err)
+			}
+			before, err := gitOutputTrim(project.RepoRoot, "rev-parse", "refs/heads/integration/W-0001")
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = daemon.reconcileReviewCompletion(project, Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}})
+			if err == nil || errorToIssue(err).Code != errorEvidenceGate || !strings.Contains(err.Error(), "automated_test") {
+				t.Fatalf("required evidence policy was not enforced: %v", err)
+			}
+			assertCompletionPolicyRefusedWithoutCAS(t, vault, project, daemon, result, before)
+		})
+
+		t.Run("required gate blocks absent gate kind", func(t *testing.T) {
+			vault, project, daemon, _ := completionReactorFixture(t, true)
+			defer daemon.Close()
+			addCompletionTestEvidence(t, vault, "APP-T-0001")
+			armScheduledPromotionWaveForTest(t, vault, "W-0001")
+			result := completionResultForReviewedTask(t, vault, project, "APP-T-0001", "review-policy-gate-missing", "policy gate check")
+			appendCompletionTestClosePolicy(t, project.RepoRoot, "  low:\n    required_acceptor: reviewer_agent\n    required_evidence: [automated_test]\n    required_gates: [security]\n")
+			if _, err := daemon.store.SaveReviewResult(result); err != nil {
+				t.Fatal(err)
+			}
+			before, err := gitOutputTrim(project.RepoRoot, "rev-parse", "refs/heads/integration/W-0001")
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = daemon.reconcileReviewCompletion(project, Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}})
+			if err == nil || errorToIssue(err).Code != errorInvalidTransition || !strings.Contains(err.Error(), "security gate") {
+				t.Fatalf("required gate-kind policy was not enforced: %v", err)
+			}
+			assertCompletionPolicyRefusedWithoutCAS(t, vault, project, daemon, result, before)
+		})
+
+		t.Run("accepted evidence and satisfied gate authorize closure", func(t *testing.T) {
+			vault, project, daemon, _ := completionReactorFixture(t, true)
+			defer daemon.Close()
+			addCompletionTestEvidence(t, vault, "APP-T-0001")
+			addCompletionTestSecurityGate(t, vault, "APP-T-0001")
+			armScheduledPromotionWaveForTest(t, vault, "W-0001")
+			result := completionResultForReviewedTask(t, vault, project, "APP-T-0001", "review-policy-satisfied", "policy evidence and gate satisfied")
+			appendCompletionTestClosePolicy(t, project.RepoRoot, "  low:\n    required_acceptor: reviewer_agent\n    required_evidence: [automated_test]\n    required_gates: [security]\n")
+			if _, err := daemon.store.SaveReviewResult(result); err != nil {
+				t.Fatal(err)
+			}
+			wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+			if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+				t.Fatal(err)
+			}
+			transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+			if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal || transaction.CloseAuthorityFP == "" {
+				t.Fatalf("eligible close policy did not freeze and terminalize: transaction=%#v err=%v", transaction, err)
+			}
+			assertCompletionTerminalProjection(t, vault, result)
+		})
+
+		t.Run("policy drift after freeze but before CAS requires repair", func(t *testing.T) {
+			vault, project, daemon, result := completionReactorFixture(t, true)
+			defer daemon.Close()
+			if _, err := daemon.store.SaveReviewResult(result); err != nil {
+				t.Fatal(err)
+			}
+			oldHook := completionReactorCrashHook
+			t.Cleanup(func() { completionReactorCrashHook = oldHook })
+			crashed := false
+			completionReactorCrashHook = func(point string, _ *completionTransaction) error {
+				if point == "gate" && !crashed {
+					crashed = true
+					return errors.New("injected pre-CAS policy crash")
+				}
+				return nil
+			}
+			wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+			if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
+				t.Fatal("expected gate crash")
+			}
+			transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+			if err != nil || transaction == nil || transaction.Phase != completionPhaseStaged {
+				t.Fatalf("pre-CAS policy fixture did not retain staged phase: transaction=%#v err=%v", transaction, err)
+			}
+			appendCompletionTestClosePolicy(t, project.RepoRoot, "  low:\n    required_acceptor: reviewer_agent\n    required_evidence: [automated_test]\n")
+			completionReactorCrashHook = nil
+			replayErr := daemon.reconcileReviewCompletion(project, wf)
+			var typed *TuskerError
+			if !errors.As(replayErr, &typed) || typed.Code != completionRepairRequiredError {
+				t.Fatalf("pre-CAS policy drift error=%v, want %s", replayErr, completionRepairRequiredError)
+			}
+			replayed, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+			if err != nil || replayed == nil || replayed.Phase != completionPhaseStaged || replayed.Failure != "" {
+				t.Fatalf("pre-CAS policy drift mutated transaction: transaction=%#v err=%v", replayed, err)
+			}
+			task, err := resolveV7Note(vault, result.TaskID, "task")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stringField(task.Data, "status") != "review" || generatedReviewerFindingContent(task.Body) != "" {
+				t.Fatalf("pre-CAS policy drift handed task back: %#v", task.Data)
+			}
+			tip, err := gitOutputTrim(project.RepoRoot, "rev-parse", transaction.IntegrationRef)
+			if err != nil || tip != transaction.IntegrationBase {
+				t.Fatalf("pre-CAS policy drift moved integration: tip=%s base=%s err=%v", tip, transaction.IntegrationBase, err)
+			}
+		})
+	})
+
+	t.Run("post-CAS replay uses frozen close authority across policy changes", func(t *testing.T) {
+		for _, tc := range []struct {
+			name            string
+			strongBeforeCAS bool
+		}{
+			{name: "policy strengthens after CAS"},
+			{name: "policy weakens after CAS", strongBeforeCAS: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				vault, project, daemon, result := completionReactorFixture(t, true)
+				originalConfig, err := os.ReadFile(filepath.Join(project.RepoRoot, "tusker.yaml"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tc.strongBeforeCAS {
+					addCompletionTestEvidence(t, vault, result.TaskID)
+					addCompletionTestSecurityGate(t, vault, result.TaskID)
+					armScheduledPromotionWaveForTest(t, vault, "W-0001")
+					result = completionResultForReviewedTask(t, vault, project, result.TaskID, "review-policy-strong", "strong policy satisfied")
+					appendCompletionTestClosePolicy(t, project.RepoRoot, "  low:\n    required_acceptor: reviewer_agent\n    required_evidence: [automated_test]\n    required_gates: [security]\n")
+				}
+				if _, err := daemon.store.SaveReviewResult(result); err != nil {
+					t.Fatal(err)
+				}
+				oldHook := completionReactorCrashHook
+				t.Cleanup(func() { completionReactorCrashHook = oldHook })
+				crashed := false
+				completionReactorCrashHook = func(point string, _ *completionTransaction) error {
+					if point == "ref_commit" && !crashed {
+						crashed = true
+						return errors.New("injected policy crash after CAS")
+					}
+					return nil
+				}
+				wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+				if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
+					t.Fatal("expected ref-commit crash")
+				}
+				transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+				if err != nil || transaction == nil || transaction.Phase != completionPhaseRefIntent || transaction.CloseAuthorityFP == "" {
+					t.Fatalf("policy crash did not retain frozen ref intent: transaction=%#v err=%v", transaction, err)
+				}
+				if tc.strongBeforeCAS {
+					if err := writeText(filepath.Join(project.RepoRoot, "tusker.yaml"), string(originalConfig)); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					appendCompletionTestClosePolicy(t, project.RepoRoot, "  low:\n    required_acceptor: reviewer_agent\n    required_evidence: [automated_test]\n    required_gates: [security]\n")
+				}
+				stateRoot := daemon.stateRoot
+				if err := daemon.Close(); err != nil {
+					t.Fatal(err)
+				}
+				completionReactorCrashHook = nil
+				restarted, err := NewDaemon(stateRoot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer restarted.Close()
+				if err := restarted.reconcileReviewCompletion(project, wf); err != nil {
+					t.Fatalf("post-CAS policy replay consulted mutable policy: %v", err)
+				}
+				transaction, err = restarted.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+				if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal || transaction.Failure != "" {
+					t.Fatalf("post-CAS policy replay did not terminalize frozen authority: transaction=%#v err=%v", transaction, err)
+				}
+				task, err := resolveV7Note(vault, result.TaskID, "task")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if stringField(task.Data, "status") != "done" ||
+					stringField(task.Data, "accepted_by") != result.Actor ||
+					stringField(task.Data, "accepted_at") != completionResultTimestamp(result) ||
+					generatedReviewerFindingContent(task.Body) != "" {
+					t.Fatalf("post-CAS policy replay lost authoritative closure: %#v", task.Data)
+				}
+			})
+		}
+	})
 }
 
 func completionReactorFixture(t *testing.T, exactSource bool) (string, RegisteredProject, *Daemon, ReviewResult) {
@@ -959,11 +1691,12 @@ func completionReactorFixture(t *testing.T, exactSource bool) (string, Registere
 	if err != nil {
 		t.Fatal(err)
 	}
+	recordCompletionTestProof(t, vault, "APP-T-0001")
 	if exactSource {
 		sha := commitLandBranch(t, repo, "source/APP-T-0001", "integration/W-0001", map[string]string{"reviewed.txt": "exact\n"})
-		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "proof_status": "satisfied", "source_sha": sha, "work_revision": 1})
+		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "source_sha": sha, "work_revision": 1})
 	} else {
-		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "proof_status": "satisfied", "source_sha": "deadbeef", "work_revision": 1})
+		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "source_sha": "deadbeef", "work_revision": 1})
 	}
 	armScheduledPromotionWaveForTest(t, vault, "W-0001")
 	note, err := resolveV7Note(vault, "APP-T-0001", "task")
@@ -977,4 +1710,158 @@ func completionReactorFixture(t *testing.T, exactSource bool) (string, Registere
 	result := ReviewResult{Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: "APP-T-0001", TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: 1, ImplementationSHA: stringField(note.Data, "source_sha"), AttemptID: "review-1", Actor: "reviewer:agent", Runner: "codex", RunnerProfile: "review", Covers: []string{"A1"}, ProofFingerprint: proof, GateFingerprint: gates, Verdict: "pass", Summary: "objective pass"}
 	result.ResultRevision = reviewResultFingerprint(result)
 	return vault, project, daemon, result
+}
+
+func completionResultForReviewedTask(t *testing.T, vault string, project RegisteredProject, taskID, attemptID, summary string) ReviewResult {
+	t.Helper()
+	task, err := resolveV7Note(vault, taskID, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, gates, err := reviewObjectiveSnapshots(vault, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := ReviewResult{
+		Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: taskID,
+		TaskStateRev: stringField(task.Data, "state_rev"), WorkRevision: intField(task.Data, "work_revision"),
+		ImplementationSHA: firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit")),
+		AttemptID:         attemptID, Actor: "reviewer:agent", Runner: "codex", RunnerProfile: "review",
+		Covers: []string{"A1"}, ProofFingerprint: proof, GateFingerprint: gates,
+		Verdict: "pass", Summary: summary,
+	}
+	result.ResultRevision = reviewResultFingerprint(result)
+	return result
+}
+
+func recordCompletionTestProof(t *testing.T, vault, taskID string) {
+	t.Helper()
+	rows := strings.Join([]string{
+		"A1|go test ./cmd/tusker -run '^TestDeterministicReviewCompletion$' -count=1|pass|Focused completion proof passed.",
+		"A1|go test ./cmd/tusker -count=1|pass|Broad command proof passed.",
+	}, "\n")
+	if err := verifyV7AddCmd(Args{
+		"vault": vault, "quiet": "true", "id": taskID, "rows": rows, "by": "agent:test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	report, err := loadV7ProofReport(vault, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "satisfied" || len(report.Missing) != 0 || len(report.ModeMissing) != 0 {
+		t.Fatalf("completion fixture proof is not objectively satisfied: %#v", report)
+	}
+}
+
+func appendCompletionTestClosePolicy(t *testing.T, repoRoot, policy string) {
+	t.Helper()
+	path := filepath.Join(repoRoot, "tusker.yaml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "\nclose_policy:") {
+		t.Fatal("completion test config already has close_policy")
+	}
+	next := strings.TrimRight(string(raw), "\n") + "\nclose_policy:\n" + policy
+	if err := writeText(path, next); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func addCompletionTestEvidence(t *testing.T, vault, taskID string) {
+	t.Helper()
+	if err := evidenceV7AddCmd(Args{
+		"vault": vault, "quiet": "true", "id": taskID,
+		"kind": "automated_test", "status": "accepted", "accepted-by": "reviewer:independent",
+		"covers": "A1", "external-url": "https://example.test/completion-proof",
+		"summary": "Accepted automated completion proof.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func addCompletionTestSecurityGate(t *testing.T, vault, taskID string) {
+	t.Helper()
+	if err := newV7Gate(Args{
+		"vault": vault, "quiet": "true", "blocks": taskID, "kind": "security",
+		"owner": "reviewer:security", "covers": "A1",
+		"action":       "Perform the objective security verification.",
+		"verification": "The independent security check passes.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateV7Transition(Args{
+		"vault": vault, "quiet": "true", "id": "APP-G-0001", "by": "reviewer:security",
+		"evidence": "Independent security verification passed.",
+	}, "satisfied"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertCompletionPolicyRefusedWithoutCAS(t *testing.T, vault string, project RegisteredProject, daemon *Daemon, result ReviewResult, before string) {
+	t.Helper()
+	after, err := gitOutputTrim(project.RepoRoot, "rev-parse", "refs/heads/integration/W-0001")
+	if err != nil || after != before {
+		t.Fatalf("close-policy refusal moved integration: before=%s after=%s err=%v", before, after, err)
+	}
+	transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+	if err != nil || transaction != nil {
+		t.Fatalf("close-policy refusal persisted executable authority: transaction=%#v err=%v", transaction, err)
+	}
+	task, err := resolveV7Note(vault, result.TaskID, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stringField(task.Data, "status") != "review" ||
+		strings.Contains(task.Body, "[tusker-review-result:"+result.ResultRevision+"]") ||
+		generatedReviewerFindingContent(task.Body) != "" {
+		t.Fatalf("close-policy refusal handed back or closed task: %#v", task.Data)
+	}
+}
+
+func assertCompletionTerminalProjection(t *testing.T, vault string, result ReviewResult) Note {
+	t.Helper()
+	task, err := resolveV7Note(vault, result.TaskID, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := completionResultTimestamp(result)
+	proofStatus := stringField(task.Data, "proof_status")
+	if stringField(task.Data, "status") != "done" ||
+		stringField(task.Data, "readiness") != "done" ||
+		(proofStatus != "satisfied" && proofStatus != "waived") ||
+		stringField(task.Data, "source_sha") != result.ImplementationSHA ||
+		stringField(task.Data, "accepted_by") != result.Actor ||
+		stringField(task.Data, "accepted_at") != stamp ||
+		stringField(task.Data, "closed_at") != stamp ||
+		stringField(task.Data, "updated_by") != result.Actor {
+		t.Fatalf("completion terminal provenance is incomplete or synthetic: %#v", task.Data)
+	}
+	if stringField(task.Data, "next_owner") != "none" ||
+		stringField(task.Data, "next_source") != "status" ||
+		stringField(task.Data, "next_ref") != "" ||
+		stringField(task.Data, "next_action") != "" {
+		t.Fatalf("completion terminal routing was not cleared: %#v", task.Data)
+	}
+	report, err := loadV7ProofReport(vault, result.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "satisfied" || len(report.Missing) != 0 || len(report.ModeMissing) != 0 {
+		t.Fatalf("completion projection did not preserve accepted proof: %#v", report)
+	}
+	policy, err := v7ClosePolicyFor(vault, stringField(task.Data, "risk"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v7CloseAcceptorAllowed(result.Actor, policy.RequiredAcceptor) {
+		t.Fatalf("completion result actor %q does not satisfy %q close policy", result.Actor, policy.RequiredAcceptor)
+	}
+	issues, _ := validateV7Note(task, validationContext{VaultPath: vault, RelativePath: task.RelativePath}, task.RelativePath)
+	if len(issues) != 0 {
+		t.Fatalf("completion projection is not schema-valid: %#v", issues)
+	}
+	return task
 }
