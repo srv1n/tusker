@@ -1,18 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"time"
 )
 
-const v7TaskCloseAuthoritySchema = "tusker.task-close-authority/v1"
+const v7TaskCloseAuthoritySchema = "tusker.task-close-authority/v2"
 
 // v7TaskCloseAuthority is the canonical, protected audit fact for a close
 // whose policy authority was frozen before an external commit boundary. It is
@@ -24,6 +24,7 @@ type v7TaskCloseAuthority struct {
 	Schema                    string `json:"schema"`
 	Project                   string `json:"project"`
 	TransactionID             string `json:"transaction_id"`
+	ReceiptID                 string `json:"receipt_id"`
 	TaskID                    string `json:"task_id"`
 	ReviewResultRevision      string `json:"review_result_revision"`
 	ReviewedTaskStateRev      string `json:"reviewed_task_state_rev"`
@@ -37,6 +38,7 @@ type v7TaskCloseAuthorityBinding struct {
 	Schema                    string `json:"schema"`
 	Project                   string `json:"project"`
 	TransactionID             string `json:"transaction_id"`
+	ReceiptID                 string `json:"receipt_id"`
 	TaskID                    string `json:"task_id"`
 	ReviewResultRevision      string `json:"review_result_revision"`
 	ReviewedTaskStateRev      string `json:"reviewed_task_state_rev"`
@@ -51,7 +53,7 @@ func newCompletionTaskCloseAuthority(vaultPath string, result ReviewResult, tran
 	}
 	fact := v7TaskCloseAuthority{
 		Schema: v7TaskCloseAuthoritySchema, Project: v7ProjectID(vaultPath),
-		TransactionID: transaction.ID, TaskID: result.TaskID,
+		TransactionID: transaction.ID, ReceiptID: completionReceiptID(transaction.ID), TaskID: result.TaskID,
 		ReviewResultRevision: result.ResultRevision, ReviewedTaskStateRev: transaction.ReviewedTaskStateRev,
 		CloseAuthorityFingerprint: transaction.CloseAuthorityFP, Actor: result.Actor,
 		ClosedAt: completionResultTimestamp(result),
@@ -69,7 +71,7 @@ func newCompletionTaskCloseAuthority(vaultPath string, result ReviewResult, tran
 
 func v7TaskCloseAuthorityBindingFingerprint(fact v7TaskCloseAuthority) (string, error) {
 	raw, err := json.Marshal(v7TaskCloseAuthorityBinding{
-		Schema: fact.Schema, Project: fact.Project, TransactionID: fact.TransactionID,
+		Schema: fact.Schema, Project: fact.Project, TransactionID: fact.TransactionID, ReceiptID: fact.ReceiptID,
 		TaskID: fact.TaskID, ReviewResultRevision: fact.ReviewResultRevision,
 		ReviewedTaskStateRev:      fact.ReviewedTaskStateRev,
 		CloseAuthorityFingerprint: fact.CloseAuthorityFingerprint,
@@ -85,7 +87,7 @@ func v7TaskCloseAuthorityBindingFingerprint(fact v7TaskCloseAuthority) (string, 
 func (fact v7TaskCloseAuthority) mapValue() map[string]any {
 	return map[string]any{
 		"schema": fact.Schema, "project": fact.Project,
-		"transaction_id": fact.TransactionID, "task_id": fact.TaskID,
+		"transaction_id": fact.TransactionID, "receipt_id": fact.ReceiptID, "task_id": fact.TaskID,
 		"review_result_revision":      fact.ReviewResultRevision,
 		"reviewed_task_state_rev":     fact.ReviewedTaskStateRev,
 		"close_authority_fingerprint": fact.CloseAuthorityFingerprint,
@@ -108,7 +110,7 @@ func v7TaskCloseAuthorityFromAny(value any) (v7TaskCloseAuthority, bool) {
 	}
 	return v7TaskCloseAuthority{
 		Schema: stringField(data, "schema"), Project: stringField(data, "project"),
-		TransactionID: stringField(data, "transaction_id"), TaskID: stringField(data, "task_id"),
+		TransactionID: stringField(data, "transaction_id"), ReceiptID: stringField(data, "receipt_id"), TaskID: stringField(data, "task_id"),
 		ReviewResultRevision:      stringField(data, "review_result_revision"),
 		ReviewedTaskStateRev:      stringField(data, "reviewed_task_state_rev"),
 		CloseAuthorityFingerprint: stringField(data, "close_authority_fingerprint"),
@@ -122,7 +124,7 @@ func validateV7TaskCloseAuthorityFact(fact v7TaskCloseAuthority, project, taskID
 		return fmt.Errorf("close authority schema must be %s", v7TaskCloseAuthoritySchema)
 	}
 	for field, value := range map[string]string{
-		"project": fact.Project, "transaction_id": fact.TransactionID, "task_id": fact.TaskID,
+		"project": fact.Project, "transaction_id": fact.TransactionID, "receipt_id": fact.ReceiptID, "task_id": fact.TaskID,
 		"review_result_revision":      fact.ReviewResultRevision,
 		"reviewed_task_state_rev":     fact.ReviewedTaskStateRev,
 		"close_authority_fingerprint": fact.CloseAuthorityFingerprint,
@@ -134,6 +136,9 @@ func validateV7TaskCloseAuthorityFact(fact v7TaskCloseAuthority, project, taskID
 	}
 	if !v7CloseAuthorityDigest(fact.TransactionID, "completion:") {
 		return fmt.Errorf("close authority transaction_id is not a completion transaction")
+	}
+	if !v7CloseAuthorityDigest(fact.ReceiptID, "receipt:") {
+		return fmt.Errorf("close authority receipt_id is invalid")
 	}
 	for field, value := range map[string]string{
 		"review_result_revision":      fact.ReviewResultRevision,
@@ -226,14 +231,71 @@ func emitV7TaskClosedEvent(vaultPath, taskID, actor, at, from, reason string, au
 	}
 	name := fmt.Sprintf("%s--%s--%s.json", taskID, parsedAt.UTC().Format("20060102T150405Z"), eventID)
 	path := filepath.Join(vaultPath, "events", parsedAt.UTC().Format("2006"), parsedAt.UTC().Format("01"), name)
-	if raw, readErr := os.ReadFile(path); readErr == nil {
-		var existing map[string]any
-		if json.Unmarshal(raw, &existing) == nil && reflect.DeepEqual(existing, event) {
+	return writeDeterministicV7CloseEvent(path, event)
+}
+
+// writeDeterministicV7CloseEvent is intentionally not writeJSON.  Close-event
+// identity is part of replay safety: a partially written final name must never
+// become an immutable false conflict. We fsync a private file then link it into
+// place (the link is no-clobber); an existing final path is accepted only when
+// its canonical bytes are exactly ours.  A malformed short legacy/crash file is
+// replaced atomically, which is safe because it was never a valid event.
+func writeDeterministicV7CloseEvent(path string, event map[string]any) error {
+	raw, err := json.MarshalIndent(event, "", "  ")
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	if existing, readErr := os.ReadFile(path); readErr == nil {
+		if bytes.Equal(existing, raw) {
 			return nil
 		}
-		return tuskerError("CAS_CONFLICT", "closed-event audit identity already exists with different content", withPath(path))
+		var parsed map[string]any
+		if json.Unmarshal(existing, &parsed) == nil {
+			return tuskerError("CAS_CONFLICT", "closed-event audit identity already exists with different content", withPath(path))
+		}
+		// A short/corrupt final name can only be recovered to canonical bytes;
+		// atomic replacement prevents readers from observing another short file.
+		if err := atomicReplaceV7Document(path, string(raw)); err != nil {
+			return err
+		}
+		return nil
 	} else if !os.IsNotExist(readErr) {
 		return readErr
 	}
-	return writeJSON(path, event)
+	if err := ensureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer func() { _ = temp.Close(); _ = os.Remove(tempPath) }()
+	if err := temp.Chmod(0o644); err != nil {
+		return err
+	}
+	if n, err := temp.Write(raw); err != nil || n != len(raw) {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("write deterministic close event: short write %d of %d", n, len(raw))
+	}
+	if err := temp.Sync(); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Link(tempPath, path); err != nil {
+		if os.IsExist(err) {
+			existing, readErr := os.ReadFile(path)
+			if readErr == nil && bytes.Equal(existing, raw) {
+				return nil
+			}
+			return tuskerError("CAS_CONFLICT", "closed-event audit identity already exists with different content", withPath(path))
+		}
+		return err
+	}
+	return syncV7DocumentDirectory(filepath.Dir(path))
 }

@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	completionTransactionSchema   = "tusker.completion-transaction/v3"
+	completionTransactionSchema    = "tusker.completion-transaction/v3"
 	completionPhasePlanned         = "planned"
 	completionPhaseStaging         = "staging"
 	completionPhaseStaged          = "staged"
@@ -63,6 +63,8 @@ type completionTransaction struct {
 	StagedSHA            string `json:"staged_sha,omitempty"`
 	StagedTaskBlob       string `json:"staged_task_blob,omitempty"`
 	StagedTaskMode       string `json:"staged_task_mode,omitempty"`
+	StagedReceiptBlob    string `json:"staged_receipt_blob,omitempty"`
+	StagedReceiptMode    string `json:"staged_receipt_mode,omitempty"`
 	Failure              string `json:"failure,omitempty"`
 	Disposition          string `json:"disposition,omitempty"`
 	CreatedAt            string `json:"created_at"`
@@ -170,6 +172,9 @@ func (s *RuntimeStore) ListReviewResults(projectID string) ([]ReviewResult, erro
 		if err := json.Unmarshal([]byte(raw), &result); err != nil {
 			return nil, err
 		}
+		if err := validatePersistedReviewResult(result); err != nil {
+			return nil, tuskerError(errorInvalidTransition, "stored review result failed immutable validation: "+err.Error())
+		}
 		out = append(out, result)
 	}
 	return out, rows.Err()
@@ -196,6 +201,9 @@ func (d *Daemon) reconcileReviewCompletion(project RegisteredProject, wf Workflo
 }
 
 func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, result ReviewResult, mode completionReactorMode) error {
+	if err := validatePersistedReviewResult(result); err != nil {
+		return tuskerError(errorInvalidTransition, "stored review result failed immutable validation: "+err.Error())
+	}
 	if prior, err := d.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision); err != nil {
 		return err
 	} else if prior != nil {
@@ -330,13 +338,26 @@ type completionCloseAuthorityProjection struct {
 // guards as the canonical close ceremony, then fingerprints only the
 // eligibility inputs that made this exact typed result closeable.
 func completionCloseAuthoritySnapshot(vaultPath, integrationView string, result ReviewResult) (string, error) {
-	idx, err := loadV7Index(vaultPath)
+	projection, err := completionCloseAuthorityProjectionSnapshot(vaultPath, integrationView, result)
 	if err != nil {
 		return "", err
 	}
+	raw, err := json.Marshal(projection)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func completionCloseAuthorityProjectionSnapshot(vaultPath, integrationView string, result ReviewResult) (completionCloseAuthorityProjection, error) {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return completionCloseAuthorityProjection{}, err
+	}
 	task, ok := idx.Tasks[result.TaskID]
 	if !ok {
-		return "", tuskerError(errorNotFound, "V7 task not found: "+result.TaskID)
+		return completionCloseAuthorityProjection{}, tuskerError(errorNotFound, "V7 task not found: "+result.TaskID)
 	}
 	preflight, err := v7ClosePreflight(vaultPath, task, idx, v7ClosePreflightRequest{
 		Actor: result.Actor, Action: "close", RequireReview: true,
@@ -344,14 +365,14 @@ func completionCloseAuthoritySnapshot(vaultPath, integrationView string, result 
 		ExpectedStateRev: result.TaskStateRev, ExpectedTaskState: "review",
 	})
 	if err != nil {
-		return "", err
+		return completionCloseAuthorityProjection{}, err
 	}
 	proof, gates, err := reviewObjectiveSnapshots(vaultPath, preflight.Task)
 	if err != nil {
-		return "", err
+		return completionCloseAuthorityProjection{}, err
 	}
 	if proof != result.ProofFingerprint || gates != result.GateFingerprint {
-		return "", tuskerError(errorInvalidTransition, result.TaskID+": completion close authority drifted from the typed review snapshots")
+		return completionCloseAuthorityProjection{}, tuskerError(errorInvalidTransition, result.TaskID+": completion close authority drifted from the typed review snapshots")
 	}
 	projection := completionCloseAuthorityProjection{
 		Schema: "tusker.completion-close-authority/v2", TaskID: result.TaskID,
@@ -360,12 +381,7 @@ func completionCloseAuthoritySnapshot(vaultPath, integrationView string, result 
 		RequiredGateKinds: preflight.RequiredGateKinds, ProofFingerprint: proof, GateFingerprint: gates,
 		Dependencies: preflight.DependencyAuthority,
 	}
-	raw, err := json.Marshal(projection)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(raw)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return projection, nil
 }
 
 func completionFrozenAuthorityParts(transaction *completionTransaction) []string {
@@ -438,8 +454,41 @@ func authenticateCompletionFrozenAuthority(projectID string, result ReviewResult
 		return completionFrozenAuthorityRepairError(transaction, "durable staging ref is missing or does not match the transaction")
 	}
 	if completionPhaseRequiresStagedTaskAttestation(transaction) &&
-		(transaction.StagedSHA == "" || transaction.StagedTaskBlob == "" || transaction.StagedTaskMode != "100644") {
-		return completionFrozenAuthorityRepairError(transaction, "staged task blob and regular-file mode attestation is missing or invalid")
+		(transaction.StagedSHA == "" || transaction.StagedTaskBlob == "" || transaction.StagedTaskMode != "100644" || transaction.StagedReceiptBlob == "" || transaction.StagedReceiptMode != "100644") {
+		return completionFrozenAuthorityRepairError(transaction, "staged task/receipt blob and regular-file mode attestation is missing or invalid")
+	}
+	if err := validateCompletionTransactionPhase(transaction, result); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateCompletionTransactionPhase(transaction *completionTransaction, result ReviewResult) error {
+	if transaction == nil {
+		return completionFrozenAuthorityRepairError(nil, "transaction is missing")
+	}
+	switch transaction.Phase {
+	case completionPhasePlanned, completionPhaseStaging, completionPhaseStaged, completionPhaseGated,
+		completionPhaseRefIntent, completionPhaseRefCommitted, completionPhaseCanonicalIntent,
+		completionPhaseCanonicalDone, completionPhaseAudited, completionPhaseWoken,
+		completionPhaseFailureIntent, completionPhaseFailureHandback, completionPhaseFailureReleased,
+		completionPhaseFailureAudited, completionPhaseTerminal:
+	default:
+		return completionFrozenAuthorityRepairError(transaction, "unknown completion phase")
+	}
+	if transaction.Disposition != "" && transaction.Disposition != "rework" && transaction.Disposition != "park" {
+		return completionFrozenAuthorityRepairError(transaction, "unknown completion disposition")
+	}
+	if transaction.Disposition != "" && !completionFailurePhase(transaction.Phase) && transaction.Phase != completionPhaseTerminal {
+		return completionFrozenAuthorityRepairError(transaction, "failure disposition appears in a successful completion phase")
+	}
+	if transaction.Disposition == "" && completionFailurePhase(transaction.Phase) {
+		return completionFrozenAuthorityRepairError(transaction, "failure phase is missing a disposition")
+	}
+	// A freshly persisted non-pass result starts planned; beginCompletionDisposition
+	// is the next intent-first write that supplies its typed disposition.
+	if transaction.Disposition == "" && result.Verdict != "pass" && transaction.Phase != completionPhasePlanned {
+		return completionFrozenAuthorityRepairError(transaction, "non-pass review cannot use successful completion phases")
 	}
 	return nil
 }
@@ -448,7 +497,7 @@ func completionPhaseRequiresStagedTaskAttestation(transaction *completionTransac
 	if transaction == nil {
 		return false
 	}
-	if transaction.StagedSHA != "" || transaction.StagedTaskBlob != "" || transaction.StagedTaskMode != "" {
+	if transaction.StagedSHA != "" || transaction.StagedTaskBlob != "" || transaction.StagedTaskMode != "" || transaction.StagedReceiptBlob != "" || transaction.StagedReceiptMode != "" {
 		return true
 	}
 	switch transaction.Phase {
@@ -600,7 +649,7 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 		return err
 	}
 	if transaction.Phase == completionPhaseTerminal && transaction.Disposition != "" {
-		return nil
+		return d.validateTerminalCompletionDisposition(project, result, transaction)
 	}
 	if completionFailurePhase(transaction.Phase) {
 		return d.resumeCompletionDisposition(project, result, transaction)
@@ -710,8 +759,8 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 			}
 			return d.failCompletion(project, result, transaction, stageErr.Error())
 		}
-		transaction.StagedSHA, transaction.StagedTaskBlob, transaction.StagedTaskMode, transaction.Phase =
-			staged.SHA, staged.TaskBlob, staged.TaskMode, completionPhaseStaged
+		transaction.StagedSHA, transaction.StagedTaskBlob, transaction.StagedTaskMode = staged.SHA, staged.TaskBlob, staged.TaskMode
+		transaction.StagedReceiptBlob, transaction.StagedReceiptMode, transaction.Phase = staged.ReceiptBlob, staged.ReceiptMode, completionPhaseStaged
 		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
 			return err
 		}
@@ -843,6 +892,9 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 			return err
 		}
 	}
+	if transaction.Phase != completionPhaseWoken {
+		return completionFrozenAuthorityRepairError(transaction, "cannot terminalize incomplete successful completion phase")
+	}
 	transaction.Phase = completionPhaseTerminal
 	return d.store.SaveCompletionTransaction(transaction)
 }
@@ -895,7 +947,10 @@ func authenticateCommittedCompletionRef(vaultPath, repoRoot, current string, res
 		!gitMergeBaseAncestor(repoRoot, transaction.StagedSHA, current) {
 		return completionRefDivergenceError(transaction, current)
 	}
-	if err := authenticateCompletionStagedObject(vaultPath, repoRoot, result, transaction); err != nil {
+	// The integration ancestry is the trust root after CAS. A staging ref may
+	// corroborate recovery but is never required to authenticate a receipt that
+	// is already reachable from the trusted integration history.
+	if err := validateCompletionStagingCandidate(vaultPath, repoRoot, transaction.StagedSHA, transaction.IntegrationBase, result, transaction); err != nil {
 		return tuskerError("CAS_CONFLICT", "committed completion staged object failed authentication: "+err.Error())
 	}
 	taskRel, err := completionTaskRepoRelativePath(repoRoot, vaultPath, result.TaskID)
@@ -1054,6 +1109,9 @@ func (d *Daemon) beginCompletionDisposition(project RegisteredProject, result Re
 // can therefore repeat handback/release/audit, but can never strand a terminal
 // row in review or erase a newer owner.
 func (d *Daemon) resumeCompletionDisposition(project RegisteredProject, result ReviewResult, transaction *completionTransaction) error {
+	if err := validateCompletionTransactionPhase(transaction, result); err != nil {
+		return err
+	}
 	if transaction.Phase == completionPhaseFailureIntent {
 		if transaction.Disposition == "rework" {
 			if err := d.returnCompletionFindingToImplementer(project, result, transaction); err != nil {
@@ -1095,6 +1153,36 @@ func (d *Daemon) resumeCompletionDisposition(project RegisteredProject, result R
 	if transaction.Phase == completionPhaseFailureAudited {
 		transaction.Phase = completionPhaseTerminal
 		return d.store.SaveCompletionTransaction(transaction)
+	}
+	return nil
+}
+
+// Terminal failure rows are not permissions to skip their observable effects.
+// Rework needs the persistent handback marker (unless a newer owner won), and
+// both dispositions must have released the old review lease before becoming a
+// terminal no-op.
+func (d *Daemon) validateTerminalCompletionDisposition(project RegisteredProject, result ReviewResult, transaction *completionTransaction) error {
+	if transaction.Phase != completionPhaseTerminal || transaction.Disposition == "" {
+		return completionFrozenAuthorityRepairError(transaction, "terminal failure disposition is malformed")
+	}
+	task, err := resolveV7Note(project.VaultRoot, result.TaskID, "task")
+	if err != nil {
+		return err
+	}
+	if transaction.Disposition == "rework" && !strings.Contains(task.Body, completionHandbackMarker(transaction.ID)) {
+		newer, newerErr := d.newerReviewOwnsCompletionTask(project.ProjectID, result)
+		if newerErr != nil || !newer {
+			return completionFrozenAuthorityRepairError(transaction, "terminal rework lacks durable handback effect")
+		}
+	}
+	runs, err := d.store.ListRuns()
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		if run.ProjectID == project.ProjectID && run.RecordID == result.TaskID && run.Lane == runLaneReview && run.WorkRevision == result.WorkRevision && run.ActiveAttemptID == result.AttemptID && isDispatchingLeaseState(run.LeaseState) {
+			return completionFrozenAuthorityRepairError(transaction, "terminal failure still owns active review lease")
+		}
 	}
 	return nil
 }
@@ -1301,7 +1389,9 @@ type completionStagingCandidate struct {
 	TaskBlob string
 	// TaskMode binds the complete tree entry, not just its content object.
 	// Task contracts are always regular, non-executable files.
-	TaskMode string
+	TaskMode    string
+	ReceiptBlob string
+	ReceiptMode string
 }
 
 func stageExactReviewCompletion(
@@ -1337,6 +1427,8 @@ func stageExactReviewCompletion(
 	transaction.StagedSHA = candidate.SHA
 	transaction.StagedTaskBlob = candidate.TaskBlob
 	transaction.StagedTaskMode = candidate.TaskMode
+	transaction.StagedReceiptBlob = candidate.ReceiptBlob
+	transaction.StagedReceiptMode = candidate.ReceiptMode
 	if err := validateCompletionStagingCandidate(vaultPath, repoRoot, candidate.SHA, integrationBase, result, transaction); err != nil {
 		return completionStagingCandidate{}, err
 	}
@@ -1396,6 +1488,15 @@ func buildExactReviewCompletionCandidate(vaultPath, repoRoot, integrationBase st
 	if err != nil {
 		return completionStagingCandidate{}, err
 	}
+	receipt, receiptRaw, err := newCompletionReceipt(vaultPath, taskRel, taskEntry, result, transaction)
+	if err != nil {
+		return completionStagingCandidate{}, err
+	}
+	receiptRel := completionReceiptRepoPath(receipt.ReceiptID)
+	receiptEntry, err := stageExactCompletionBlob(tmp, receiptRel, receiptRaw)
+	if err != nil {
+		return completionStagingCandidate{}, err
+	}
 	tree, err := gitOutputTrim(tmp, "write-tree")
 	if err != nil {
 		return completionStagingCandidate{}, tuskerError(errorInvalidTransition, "failed to freeze reviewed task closure tree: "+firstActionableLine("", err.Error()))
@@ -1403,6 +1504,10 @@ func buildExactReviewCompletionCandidate(vaultPath, repoRoot, integrationBase st
 	treeTaskEntry, err := completionGitTreeEntryAt(tmp, tree, taskRel)
 	if err != nil || treeTaskEntry != taskEntry {
 		return completionStagingCandidate{}, tuskerError(errorInvalidTransition, "reviewed task tree does not retain the exact generated regular-file entry")
+	}
+	treeReceiptEntry, err := completionGitTreeEntryAt(tmp, tree, receiptRel)
+	if err != nil || treeReceiptEntry != receiptEntry {
+		return completionStagingCandidate{}, tuskerError(errorInvalidTransition, "completion receipt tree does not retain the exact generated regular-file entry")
 	}
 	if err := guardV7LandingTerminalTaskRewindsAt(tmp, integrationBase, tree); err != nil {
 		return completionStagingCandidate{}, err
@@ -1429,7 +1534,11 @@ func buildExactReviewCompletionCandidate(vaultPath, repoRoot, integrationBase st
 	if err != nil || commitTaskEntry != taskEntry {
 		return completionStagingCandidate{}, tuskerError(errorInvalidTransition, "reviewed completion commit does not retain the exact generated regular-file entry")
 	}
-	return completionStagingCandidate{SHA: sha, TaskBlob: taskEntry.OID, TaskMode: taskEntry.Mode}, nil
+	commitReceiptEntry, err := completionGitTreeEntryAt(repoRoot, sha, receiptRel)
+	if err != nil || commitReceiptEntry != receiptEntry {
+		return completionStagingCandidate{}, tuskerError(errorInvalidTransition, "completion commit does not retain the exact generated receipt entry")
+	}
+	return completionStagingCandidate{SHA: sha, TaskBlob: taskEntry.OID, TaskMode: taskEntry.Mode, ReceiptBlob: receiptEntry.OID, ReceiptMode: receiptEntry.Mode}, nil
 }
 
 // stageExactCompletionTaskBlob bypasses attributes and clean filters entirely.
@@ -1478,6 +1587,30 @@ func stageExactCompletionTaskBlob(worktree, taskRel string, generated []byte) (c
 	return completionGitTreeEntry{Mode: mode, Type: "blob", OID: blob}, nil
 }
 
+// stageExactCompletionBlob uses raw hash-object/update-index like the task
+// path, but can introduce a sibling receipt that did not exist at the base.
+func stageExactCompletionBlob(worktree, rel string, raw []byte) (completionGitTreeEntry, error) {
+	hash := exec.Command("git", "-C", worktree, "hash-object", "-w", "--stdin")
+	hash.Stdin = bytes.NewReader(raw)
+	output, err := hash.CombinedOutput()
+	if err != nil {
+		return completionGitTreeEntry{}, tuskerError(errorInvalidTransition, "failed to write exact completion receipt blob: "+firstActionableLine(string(output), err.Error()))
+	}
+	blob := strings.TrimSpace(string(output))
+	if blob == "" {
+		return completionGitTreeEntry{}, tuskerError(errorInvalidTransition, "completion receipt hash-object returned no object")
+	}
+	if output, err := gitCombined(worktree, "update-index", "--add", "--cacheinfo", "100644,"+blob+","+rel); err != nil {
+		return completionGitTreeEntry{}, tuskerError(errorInvalidTransition, "failed to stage exact completion receipt blob: "+firstActionableLine(output, err.Error()))
+	}
+	index, indexErr := gitOutputTrim(worktree, "ls-files", "--stage", "--", rel)
+	fields := strings.Fields(index)
+	if indexErr != nil || len(fields) < 3 || fields[0] != "100644" || fields[1] != blob || fields[2] != "0" {
+		return completionGitTreeEntry{}, tuskerError(errorInvalidTransition, "completion receipt index entry does not authenticate exact blob")
+	}
+	return completionGitTreeEntry{Mode: "100644", Type: "blob", OID: blob}, nil
+}
+
 func completionGitTreeEntryAt(repoRoot, ref, taskRel string) (completionGitTreeEntry, error) {
 	raw, err := gitOutputTrim(repoRoot, "ls-tree", ref, "--", taskRel)
 	if err != nil {
@@ -1495,7 +1628,7 @@ func completionGitTreeEntryAt(repoRoot, ref, taskRel string) (completionGitTreeE
 }
 
 func completionResultTimestamp(result ReviewResult) string {
-	if parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(result.CreatedAt)); err == nil {
+	if parsed, ok := completionTimestamp(result.CreatedAt); ok {
 		return parsed.UTC().Format(time.RFC3339)
 	}
 	// Legacy typed-result fixtures omitted CreatedAt. A fixed epoch keeps their
@@ -1504,8 +1637,8 @@ func completionResultTimestamp(result ReviewResult) string {
 }
 
 func validateCompletionStagingCandidate(vaultPath, repoRoot, candidate, integrationBase string, result ReviewResult, transaction *completionTransaction) error {
-	if transaction == nil || transaction.StagedTaskBlob == "" || transaction.StagedTaskMode != "100644" {
-		return completionFrozenAuthorityRepairError(transaction, "staged task tree entry attestation is missing or invalid")
+	if transaction == nil || transaction.StagedTaskBlob == "" || transaction.StagedTaskMode != "100644" || transaction.StagedReceiptBlob == "" || transaction.StagedReceiptMode != "100644" {
+		return completionFrozenAuthorityRepairError(transaction, "staged task/receipt tree entry attestation is missing or invalid")
 	}
 	parents, err := gitOutputTrim(repoRoot, "rev-list", "--parents", "-n", "1", candidate)
 	fields := strings.Fields(parents)
@@ -1523,6 +1656,11 @@ func validateCompletionStagingCandidate(vaultPath, repoRoot, candidate, integrat
 	if taskEntry.OID != transaction.StagedTaskBlob || taskEntry.Mode != transaction.StagedTaskMode {
 		return tuskerError(errorInvalidTransition, "completion staging ref does not retain its generated task tree entry")
 	}
+	receiptRel := completionReceiptRepoPath(completionReceiptID(transaction.ID))
+	receiptEntry, err := completionGitTreeEntryAt(repoRoot, candidate, receiptRel)
+	if err != nil || receiptEntry.OID != transaction.StagedReceiptBlob || receiptEntry.Mode != transaction.StagedReceiptMode {
+		return tuskerError(errorInvalidTransition, "completion staging ref does not retain its generated receipt tree entry")
+	}
 	raw, err := gitOutputTrim(repoRoot, "show", candidate+":"+rel)
 	if err != nil {
 		return err
@@ -1533,6 +1671,13 @@ func validateCompletionStagingCandidate(vaultPath, repoRoot, candidate, integrat
 	}
 	if stringField(data, "status") != "done" || !strings.Contains(body, "[tusker-review-result:"+result.ResultRevision+"]") {
 		return tuskerError(errorInvalidTransition, "completion staging ref lacks the reviewed done projection")
+	}
+	receiptRaw, err := gitCombined(repoRoot, "show", candidate+":"+receiptRel)
+	if err != nil {
+		return err
+	}
+	if err := validateCompletionReceipt([]byte(receiptRaw), rel, taskEntry, result, transaction, data, body); err != nil {
+		return tuskerError(errorInvalidTransition, "completion staging receipt is invalid: "+err.Error())
 	}
 	message, err := gitOutputTrim(repoRoot, "show", "-s", "--format=%B", candidate)
 	if err != nil || !strings.Contains(message, "Tusker-Completion: "+transaction.ID) {
@@ -1583,7 +1728,11 @@ func materializeReviewedDone(stageRoot, vaultPath, taskRel string, result Review
 	if err != nil {
 		return err
 	}
-	if stringField(canonicalData, "state_rev") != result.TaskStateRev ||
+	if canonicalRev := stringField(canonicalData, "state_rev"); canonicalRev == "" || !v7StateRevMatches(canonicalData, canonicalBody, canonicalRev) {
+		return tuskerError("CAS_CONFLICT", "canonical task bytes changed without a refreshed state_rev before staging")
+	}
+	if stringField(canonicalData, "id") != result.TaskID ||
+		stringField(canonicalData, "state_rev") != result.TaskStateRev ||
 		intField(canonicalData, "work_revision") != result.WorkRevision ||
 		firstNonEmpty(stringField(canonicalData, "source_sha"), stringField(canonicalData, "source_commit")) != result.ImplementationSHA {
 		return tuskerError(errorInvalidTransition, "canonical task drifted from exact reviewed revision before staging")
@@ -1669,6 +1818,9 @@ func projectCompletionTaskToCanonical(vaultPath, repoRoot string, result ReviewR
 	if currentState != "" && !v7StateRevMatches(currentData, currentBody, currentState) {
 		return tuskerError("CAS_CONFLICT", "canonical completion task content changed without a refreshed state_rev",
 			withPath(taskPath), withContext(map[string]any{"current_rev": currentState, "actual_rev": v7StateRev(currentData, currentBody)}))
+	}
+	if stringField(currentData, "id") != result.TaskID {
+		return tuskerError("CAS_CONFLICT", "canonical completion task identity drifted under task lock", withPath(taskPath))
 	}
 	current := Note{Data: currentData, Body: currentBody}
 	if completionCanonicalTaskMatches(current, result, transaction) {

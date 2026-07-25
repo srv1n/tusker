@@ -114,6 +114,25 @@ func TestReviewResultProtocolStoreReplayAndConflict(t *testing.T) {
 	}
 }
 
+func TestPersistedReviewResultRejectsTamperedVerdictAndTimestamp(t *testing.T) {
+	result := validStoredReviewResult()
+	result.CreatedAt = "2026-07-25T10:00:00Z"
+	result.ResultRevision = reviewResultFingerprint(result)
+	if err := validatePersistedReviewResult(result); err != nil {
+		t.Fatalf("valid stored result rejected: %v", err)
+	}
+	for _, mutate := range []func(*ReviewResult){
+		func(r *ReviewResult) { r.Summary = "forged verdict payload" },
+		func(r *ReviewResult) { r.CreatedAt = "2026-07-25T11:00:00Z" },
+	} {
+		tampered := result
+		mutate(&tampered)
+		if err := validatePersistedReviewResult(tampered); err == nil {
+			t.Fatal("tampered persisted result retained authority")
+		}
+	}
+}
+
 func TestReviewResultProtocolCommandValidation(t *testing.T) {
 	for name, mutate := range map[string]func(Args){
 		"invalid changes": func(a Args) { a["finding"] = "" },

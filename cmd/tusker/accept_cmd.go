@@ -144,7 +144,7 @@ func v7AcceptPreflight(vaultPath string, args Args, task Note, idx v7Index, acto
 	}
 
 	_, err := v7ClosePreflight(vaultPath, task, idx, v7ClosePreflightRequest{
-		Args: args, Actor: actor, Action: "accept",
+		Args: args, Actor: actor, Action: "accept", ExpectedTaskID: id,
 	})
 	return err
 }

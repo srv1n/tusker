@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // v7ClosePreflightRequest identifies the small amount of caller-specific
@@ -21,6 +23,46 @@ type v7ClosePreflightRequest struct {
 	ExpectedStateRev  string
 	ExpectedTaskID    string
 	ExpectedTaskState string
+}
+
+// saveV7CloseProjectionCAS repeats the task identity/revision integrity check
+// while holding the same lock that spans the replacement. Preflight's initial
+// read is only a hint; without this check a raw edit that retained state_rev
+// could move the integration ref and then wedge canonical projection.
+func saveV7CloseProjectionCAS(path string, data map[string]any, body string, baseRev, expectedID string) (string, error) {
+	lock, err := acquireV7DocumentLock(path, v7DocumentLockTimeout)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = lock.Close() }()
+	current, currentBody, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		return "", err
+	}
+	if stringField(current, "id") != expectedID {
+		return "", tuskerError(errorInvalidTransition, "close task identity drifted under lock")
+	}
+	currentRev := stringField(current, "state_rev")
+	if currentRev == "" || !v7StateRevMatches(current, currentBody, currentRev) {
+		return "", tuskerError("CAS_CONFLICT", "close task content changed without a refreshed state_rev", withPath(path))
+	}
+	if currentRev != baseRev {
+		return "", tuskerError("CAS_CONFLICT", "close task revision drifted under lock", withPath(path))
+	}
+	next := cloneMap(data)
+	next["updated_at"] = firstNonEmpty(stringField(next, "updated_at"), time.Now().UTC().Format(time.RFC3339))
+	nextRev := v7StateRev(next, body)
+	next["state_rev"] = nextRev
+	content, err := serializeDocument(next, body, v7FrontmatterOrder["task"])
+	if err != nil {
+		return "", err
+	}
+	if err := atomicReplaceV7Document(path, content); err != nil {
+		return "", err
+	}
+	data["state_rev"] = nextRev
+	invalidateCachedNote(path)
+	return nextRev, nil
 }
 
 type v7CloseDependencyAuthority struct {
@@ -59,6 +101,9 @@ func v7ClosePreflight(vaultPath string, task Note, idx v7Index, request v7CloseP
 	if request.ExpectedTaskID != "" && id != request.ExpectedTaskID {
 		return v7ClosePreflightResult{}, tuskerError(errorInvalidTransition, "close preflight task identity drifted")
 	}
+	if rev := stringField(data, "state_rev"); rev == "" || !v7StateRevMatches(data, body, rev) {
+		return v7ClosePreflightResult{}, tuskerError("CAS_CONFLICT", id+": close preflight task bytes do not match state_rev")
+	}
 	if request.ExpectedStateRev != "" && stringField(data, "state_rev") != request.ExpectedStateRev {
 		return v7ClosePreflightResult{}, tuskerError(errorInvalidTransition, id+": close preflight task revision drifted")
 	}
@@ -79,7 +124,10 @@ func v7ClosePreflight(vaultPath string, task Note, idx v7Index, request v7CloseP
 	idx.Tasks = cloneNoteMap(idx.Tasks)
 	idx.Tasks[id] = task
 	if request.DependencyRef != "" {
-		idx = v7CloseDependencyIndexAtRef(vaultPath, request.DependencyRef, task, idx)
+		idx, err = v7CloseDependencyIndexAtRef(vaultPath, request.DependencyRef, task, idx)
+		if err != nil {
+			return v7ClosePreflightResult{}, err
+		}
 	} else {
 		idx = v7ReviewerIntegratedDependencyIndex(vaultPath, request.Args, task, idx)
 	}
@@ -139,28 +187,49 @@ func v7ClosePreflightMessage(action, id, detail string) string {
 	return id + ": close " + detail
 }
 
-func v7CloseDependencyIndexAtRef(vaultPath, ref string, task Note, idx v7Index) v7Index {
+func v7CloseDependencyIndexAtRef(vaultPath, ref string, task Note, idx v7Index) (v7Index, error) {
 	repoRoot := v7RepoRoot(vaultPath)
-	if !v7GitRepo(repoRoot) || !gitRefExists(repoRoot, ref) {
-		return idx
+	if !v7GitRepo(repoRoot) {
+		return idx, tuskerError(errorInvalidTransition, "frozen close dependency ref is unavailable: "+ref)
+	}
+	if _, err := gitOutputTrim(repoRoot, "rev-parse", "--verify", ref+"^{commit}"); err != nil {
+		return idx, tuskerError(errorInvalidTransition, "frozen close dependency ref is unavailable: "+ref)
 	}
 	idx.Tasks = cloneNoteMap(idx.Tasks)
-	for _, edge := range v7TaskDependencyEdges(task, idx) {
+	for _, raw := range normalizeList(task.Data["dependencies"]) {
+		edge := parseV7DependencyEdge(raw)
+		if edge.ID == "" || (edge.ExplicitHardness && edge.Hardness != v7DependencyHardnessHard && edge.Hardness != v7DependencyHardnessSoft) {
+			return idx, tuskerError(errorInvalidField, "frozen close dependency is malformed: "+raw)
+		}
 		dependency, ok := idx.Tasks[edge.ID]
 		if !ok {
-			continue
+			return idx, tuskerError(errorNotFound, "frozen close dependency is missing from canonical index: "+edge.ID)
 		}
 		rel, err := filepath.Rel(repoRoot, dependency.AbsolutePath)
 		if err != nil || filepath.IsAbs(rel) || strings.HasPrefix(filepath.Clean(rel), "..") {
-			continue
+			return idx, fmt.Errorf("frozen close dependency path escapes repository: %s", edge.ID)
 		}
 		integrated, ok, err := v7GitNoteAtRef(repoRoot, ref, filepath.ToSlash(rel))
-		if err == nil && ok {
-			integrated.AbsolutePath = dependency.AbsolutePath
-			idx.Tasks[edge.ID] = integrated
+		if err != nil || !ok {
+			if err != nil {
+				return idx, err
+			}
+			return idx, tuskerError(errorNotFound, "frozen close dependency is missing from integration ref: "+edge.ID)
 		}
+		if effectiveV7Kind(integrated.Data) != "task" || stringField(integrated.Data, "id") != edge.ID {
+			return idx, tuskerError(errorInvalidField, "frozen close dependency identity mismatch: "+edge.ID)
+		}
+		state := stringField(integrated.Data, "state_rev")
+		if state == "" || !v7StateRevMatches(integrated.Data, integrated.Body, state) {
+			return idx, tuskerError(errorInvalidTransition, "frozen close dependency state revision is missing or invalid: "+edge.ID)
+		}
+		if strings.ToLower(strings.TrimSpace(stringField(integrated.Data, "status"))) != "done" {
+			return idx, tuskerError(errorInvalidTransition, "frozen close dependency is not done: "+edge.ID)
+		}
+		integrated.AbsolutePath = dependency.AbsolutePath
+		idx.Tasks[edge.ID] = integrated
 	}
-	return idx
+	return idx, nil
 }
 
 func applyV7TaskCloseProjection(data map[string]any, actor, now string, authority map[string]any) {

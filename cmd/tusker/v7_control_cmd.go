@@ -277,7 +277,7 @@ func closeV7Cmd(args Args) error {
 	}
 	actor := fallback(fallback(args.String("actor"), args.String("by")), "reviewer:agent")
 	preflight, err := v7ClosePreflight(vaultPath, note, idx, v7ClosePreflightRequest{
-		Args: args, Actor: actor, Action: "close", RequireReview: true, Force: args.Bool("force"),
+		Args: args, Actor: actor, Action: "close", RequireReview: true, Force: args.Bool("force"), ExpectedTaskID: id,
 	})
 	if err != nil {
 		return err
@@ -287,7 +287,7 @@ func closeV7Cmd(args Args) error {
 	prev := stringField(data, "status")
 	now := time.Now().UTC().Format(time.RFC3339)
 	applyV7TaskCloseProjection(data, actor, now, nil)
-	if _, err := saveV7DocumentCAS(note.AbsolutePath, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
+	if _, err := saveV7CloseProjectionCAS(note.AbsolutePath, data, body, baseRev, id); err != nil {
 		return err
 	}
 	if !args.Bool("quiet") {
@@ -319,7 +319,14 @@ func v7ReviewerIntegratedDependencyIndex(vaultPath string, args Args, task Note,
 	if !ok {
 		return idx
 	}
-	return v7CloseDependencyIndexAtRef(vaultPath, v7WaveIntegrationBranch(wave), task, idx)
+	projected, err := v7CloseDependencyIndexAtRef(vaultPath, v7WaveIntegrationBranch(wave), task, idx)
+	// This legacy helper cannot return an error. Callers which select a frozen
+	// ref (the close ceremony/reactor) use the error-returning function above;
+	// keep the live view here rather than silently manufacturing a projection.
+	if err != nil {
+		return idx
+	}
+	return projected
 }
 
 func enforceV7ClosePolicy(vaultPath string, task Note, idx v7Index, actor string) error {

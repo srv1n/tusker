@@ -690,24 +690,63 @@ func guardV7LandingTerminalTaskRewinds(workDir, baseRef string) error {
 // to an arbitrary frozen tree-ish. The completion reactor builds with
 // write-tree/commit-tree, so HEAD is intentionally not its candidate.
 func guardV7LandingTerminalTaskRewindsAt(workDir, baseRef, candidateRef string) error {
-	output, err := gitCombined(workDir, "diff", "--name-only", baseRef+".."+candidateRef, "--", ".tusker/work/tasks")
+	// --name-status is intentional. A deleted terminal task is just as much a
+	// rewind as changing it back to review, and --name-only used to erase that
+	// distinction.  Do not return early for a new task: another changed path may
+	// still be an attempted terminal rewind.
+	output, err := gitCombined(workDir, "diff", "--name-status", baseRef+".."+candidateRef, "--", ".tusker/work/tasks")
 	if err != nil {
 		return err
 	}
-	for _, rel := range strings.Fields(output) {
-		if !strings.HasSuffix(rel, ".md") {
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			if strings.TrimSpace(line) != "" {
+				return tuskerError(errorInvalidTransition, "landing terminal-task guard encountered malformed Git diff entry")
+			}
 			continue
 		}
-		baseData, ok, err := v7GitFrontmatterAtRef(workDir, baseRef, rel)
-		if err != nil || !ok {
-			return err
+		status, rel := fields[0], fields[len(fields)-1]
+		paths := []string{rel}
+		if strings.HasPrefix(status, "R") || strings.HasPrefix(status, "C") {
+			if len(fields) != 3 {
+				return tuskerError(errorInvalidTransition, "landing terminal-task guard encountered malformed rename diff entry")
+			}
+			rel = fields[2]
+			// A rename is a delete plus an add for monotonicity purposes. In
+			// particular, renaming a terminal task must not smuggle its deletion
+			// past a target-only diff walk.
+			paths = []string{fields[1], fields[2]}
 		}
-		headData, ok, err := v7GitFrontmatterAtRef(workDir, candidateRef, rel)
-		if err != nil || !ok {
-			return err
-		}
-		if err := guardV7TerminalTaskRewind(filepath.Join(workDir, filepath.FromSlash(rel)), "land:"+baseRef, baseData, headData); err != nil {
-			return err
+		for _, rel := range paths {
+			if !strings.HasSuffix(rel, ".md") {
+				continue
+			}
+			baseData, baseOK, err := v7GitFrontmatterAtRef(workDir, baseRef, rel)
+			if err != nil {
+				return err
+			}
+			headData, headOK, err := v7GitFrontmatterAtRef(workDir, candidateRef, rel)
+			if err != nil {
+				return err
+			}
+			if !baseOK {
+				// A genuinely new candidate task is harmless, but malformed/missing
+				// paired entries are never treated as a reason to skip later paths.
+				if headOK {
+					continue
+				}
+				return tuskerError(errorInvalidTransition, "landing terminal-task guard cannot read changed task in either tree: "+rel)
+			}
+			if !headOK {
+				if v7TerminalTaskStatus(stringField(baseData, "status")) {
+					return tuskerError(errorInvalidTransition, "landing cannot delete terminal task: "+rel)
+				}
+				return tuskerError(errorInvalidTransition, "landing terminal-task guard cannot read candidate task: "+rel)
+			}
+			if err := guardV7TerminalTaskRewind(filepath.Join(workDir, filepath.FromSlash(rel)), "land:"+baseRef, baseData, headData); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
