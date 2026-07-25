@@ -50,6 +50,7 @@ type deliveryStartAuthority struct {
 	PlanBound                 bool
 	PlanVerify                func() error
 	ImportCommit              *deliveryImportCommit
+	ArmCommit                 *deliveryImportCommit
 	ContextFingerprint        string
 	IntegrationBaseSHA        string
 }
@@ -100,10 +101,10 @@ func deliveryStartCmd(args Args) error {
 }
 
 // deliveryStart performs the two safe mutations in order: held import, then
-// exact-wave arm. The importer and armer each use their existing rollback/CAS
-// machinery; a preflight refusal intentionally leaves the imported records
-// held and disarmed. Tests can inject a repeatable environment inspector
-// without creating a daemon while production always inspects live state.
+// exact-wave arm. Standalone CLI Start retains its historical held-import
+// refusal semantics. A descriptor-bound Serve Start keeps both write commits
+// private until authorization succeeds and restores their exact preimages on
+// every refusal.
 func deliveryStart(args Args, inspector wavePreflightEnvironmentInspector) (deliveryStartResult, error) {
 	return deliveryStartWithPlanSource(args, inspector, nil)
 }
@@ -185,7 +186,11 @@ func deliveryStartWithPlanSource(args Args, inspector wavePreflightEnvironmentIn
 	importArgs["material-lock-held"] = "true"
 	var importGuard *deliveryImportWriteGuard
 	if source != nil {
-		importGuard = &deliveryImportWriteGuard{Verify: source.Verify, AfterPrecheck: source.BeforeImportCommit}
+		importGuard = &deliveryImportWriteGuard{
+			Verify:                  source.Verify,
+			AfterPrecheck:           source.BeforeImportCommit,
+			DelayMutationVisibility: true,
+		}
 	}
 	if err := deliveryV2ImportBytesGuarded(vault, authority.PlanPath, authority.PlanBytes, importArgs, importGuard); err != nil {
 		_ = materialLock.Close()
@@ -197,26 +202,22 @@ func deliveryStartWithPlanSource(args Args, inspector wavePreflightEnvironmentIn
 	if source != nil {
 		if verifyErr := source.Verify(); verifyErr != nil {
 			cause := deliveryStartPlanAuthorityChanged(tuskerError(errorInvalidTransition, "delivery plan identity changed after import; review and confirm the current plan again", withContext(map[string]any{"cause": verifyErr.Error()})))
-			cause = rollbackDeliveryStartImport(authority, cause)
-			_ = materialLock.Close()
-			return deliveryStartResult{}, cause
+			return deliveryStartResult{}, refuseDeliveryStartUnderMaterialLock(materialLock, authority, cause)
 		}
 	}
 	importedIdx, err := loadV7Index(vault)
 	if err != nil {
-		_ = materialLock.Close()
-		return deliveryStartResult{}, err
+		return deliveryStartResult{}, refuseDeliveryStartUnderMaterialLock(materialLock, authority, err)
 	}
 	importedWave, err := deliveryStartWave(importedIdx, planLocked, authority.PlanFingerprint)
 	if err != nil {
-		_ = materialLock.Close()
-		return deliveryStartResult{}, err
+		return deliveryStartResult{}, refuseDeliveryStartUnderMaterialLock(materialLock, authority, err)
 	}
 	authorizationFingerprint, fingerprintIssues := waveMaterialFingerprint(vault, importedIdx, importedWave)
 	authority.AuthorizationFingerprint = authorizationFingerprint
 	if len(fingerprintIssues) > 0 {
-		_ = materialLock.Close()
-		return deliveryStartResult{}, tuskerError(errorInvalidTransition, "reviewed import has invalid authorization material: "+fingerprintIssues[0])
+		cause := tuskerError(errorInvalidTransition, "reviewed import has invalid authorization material: "+fingerprintIssues[0])
+		return deliveryStartResult{}, refuseDeliveryStartUnderMaterialLock(materialLock, authority, cause)
 	}
 	authority.WaveID = stringField(importedWave.Data, "id")
 	authority.Members = sortedStrings(normalizeList(importedWave.Data["members"]))
@@ -225,8 +226,8 @@ func deliveryStartWithPlanSource(args Args, inspector wavePreflightEnvironmentIn
 	for _, memberID := range authority.Members {
 		member, ok := importedIdx.Tasks[memberID]
 		if !ok {
-			_ = materialLock.Close()
-			return deliveryStartResult{}, tuskerError(errorInvalidTransition, "reviewed import lost member "+memberID+" before authority capture")
+			cause := tuskerError(errorInvalidTransition, "reviewed import lost member "+memberID+" before authority capture")
+			return deliveryStartResult{}, refuseDeliveryStartUnderMaterialLock(materialLock, authority, cause)
 		}
 		authority.MemberBaselines[memberID] = deliveryStartMemberBaseline(member)
 		authority.MemberReadiness[memberID] = stringField(member.Data, "readiness")
@@ -236,6 +237,14 @@ func deliveryStartWithPlanSource(args Args, inspector wavePreflightEnvironmentIn
 	authority.WaveAuthorizedBy = stringField(importedWave.Data, "authorized_by")
 	authority.WaveAuthorizedAt = stringField(importedWave.Data, "authorized_at")
 	if err := materialLock.Close(); err != nil {
+		if authority.ImportCommit != nil {
+			cause := tuskerError(
+				errorInvalidTransition,
+				"delivery Start could not release the import material lock before authorization",
+				withContext(map[string]any{"cause": err.Error()}),
+			)
+			return deliveryStartResult{}, refuseDeliveryStartBeforeArm(vault, authority, cause)
+		}
 		return deliveryStartResult{}, err
 	}
 	if deliveryStartAfterImportUnlock != nil {
@@ -305,7 +314,9 @@ func deliveryStartWithPlanSource(args Args, inspector wavePreflightEnvironmentIn
 		}
 		return deliveryStartResult{}, err
 	}
-	return deliveryStartProjection(wave, authority.PlanFingerprint, authority.ContextFingerprint, final, wasArmed), nil
+	result = deliveryStartProjection(wave, authority.PlanFingerprint, authority.ContextFingerprint, final, wasArmed)
+	publishDeliveryStartMutation(vault, authority, actor, final)
+	return result, nil
 }
 
 func deliveryStartInspectEnvironment(vault string, wave Note, inspector wavePreflightEnvironmentInspector) wavePreflightEnvironment {
@@ -362,24 +373,102 @@ func validateDeliveryStartAuthorityUnderLock(vault string, wave Note, authority 
 	return nil
 }
 
-func rollbackDeliveryStartImport(authority *deliveryStartAuthority, cause error) error {
-	if authority == nil || authority.ImportCommit == nil {
+func rollbackDeliveryStartTransaction(authority *deliveryStartAuthority, cause error) error {
+	if authority == nil || (authority.ImportCommit == nil && authority.ArmCommit == nil) {
 		return cause
 	}
-	if err := authority.ImportCommit.Restore(); err != nil {
+	type rollbackStep struct {
+		name   string
+		commit *deliveryImportCommit
+	}
+	steps := []rollbackStep{
+		{name: "authorization", commit: authority.ArmCommit},
+		{name: "import", commit: authority.ImportCommit},
+	}
+	var failures []string
+	for _, step := range steps {
+		if step.commit == nil {
+			continue
+		}
+		if err := step.commit.Restore(); err != nil {
+			failures = append(failures, step.name+": "+err.Error())
+		}
+	}
+	paths := deliveryStartTransactionPaths(authority)
+	if len(failures) > 0 {
 		return tuskerError(
 			errorInvalidTransition,
-			"delivery plan identity changed and exact import rollback could not be proven; delivery is fail-closed pending repair",
+			"delivery Start was rejected and exact transaction rollback could not be proven; delivery is fail-closed pending repair",
 			withHint("stop delivery, restore every reported path from version control or a verified backup, then regenerate delivery review"),
-			withContext(map[string]any{"cause": cause.Error(), "rollback": err.Error(), "paths": authority.ImportCommit.Paths}),
+			withContext(map[string]any{"cause": cause.Error(), "rollback": failures, "paths": paths}),
 		)
 	}
-	return deliveryStartPlanAuthorityChanged(tuskerError(
-		errorInvalidTransition,
-		"delivery plan identity changed after import; exact import preimages were restored",
-		withHint("restore the reviewed plan path, regenerate delivery review, and confirm its current identity"),
-		withContext(map[string]any{"cause": cause.Error()}),
-	))
+	restored := "exact import preimages were restored"
+	if authority.ArmCommit != nil {
+		restored = "exact authorization and import preimages were restored"
+	}
+	var typed *TuskerError
+	var result error
+	if errors.As(cause, &typed) {
+		cloned := *typed
+		cloned.Message = strings.TrimSuffix(cloned.Message, ".") + "; " + restored
+		result = &cloned
+	} else {
+		result = fmt.Errorf("%w; %s", cause, restored)
+	}
+	if isDeliveryStartPlanAuthorityChanged(cause) {
+		return deliveryStartPlanAuthorityChanged(result)
+	}
+	return result
+}
+
+func deliveryStartTransactionPaths(authority *deliveryStartAuthority) []string {
+	if authority == nil {
+		return nil
+	}
+	var paths []string
+	if authority.ArmCommit != nil {
+		paths = append(paths, authority.ArmCommit.Paths...)
+	}
+	if authority.ImportCommit != nil {
+		paths = append(paths, authority.ImportCommit.Paths...)
+	}
+	return sortedStrings(uniqueStrings(paths))
+}
+
+func refuseDeliveryStartUnderMaterialLock(lock *v7DocumentLock, authority *deliveryStartAuthority, cause error) error {
+	if authority != nil && authority.ImportCommit != nil {
+		cause = rollbackDeliveryStartTransaction(authority, cause)
+	}
+	if err := lock.Close(); err != nil {
+		return tuskerError(
+			errorInvalidTransition,
+			"delivery Start refusal could not release the material lock cleanly; delivery is fail-closed pending repair",
+			withHint("stop delivery, inspect the reported lock and transaction paths, then regenerate delivery review"),
+			withContext(map[string]any{"cause": cause.Error(), "lock": err.Error(), "paths": deliveryStartTransactionPaths(authority)}),
+		)
+	}
+	return cause
+}
+
+func publishDeliveryStartMutation(vault string, authority *deliveryStartAuthority, actor string, report wavePreflightReport) {
+	if authority == nil || authority.ImportCommit == nil {
+		return
+	}
+	if authority.ArmCommit != nil {
+		_ = emitV7Event(vault, report.WaveID, "wave", "updated", actor, map[string]any{
+			"authorization": "armed",
+			"fingerprint":   report.Fingerprint,
+			"members":       report.Members,
+		})
+	}
+	paths := append([]string{}, authority.ImportCommit.Paths...)
+	if authority.ArmCommit != nil {
+		paths = append(paths, authority.ArmCommit.Paths...)
+	}
+	for _, path := range sortedStrings(uniqueStrings(paths)) {
+		recordCLIVaultMutation(path)
+	}
 }
 
 func deliveryStartActor(args Args) (string, error) {

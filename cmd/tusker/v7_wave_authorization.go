@@ -16,6 +16,8 @@ import (
 
 const waveAuthorizationSchema = "tusker.wave-authorization/v1"
 
+var deliveryStartAfterArmCommit func() error
+
 type wavePreflightEnvironment struct {
 	ProjectRegistered  bool
 	ProjectEnabled     bool
@@ -741,17 +743,16 @@ func handledDeliveryStartRefusal(err error) error {
 	return &deliveryStartRefusalHandledError{cause: err}
 }
 
-// rollbackDeliveryStartRefusalUnderLock merges a refusal into freshly loaded
-// documents while the material epoch, wave, and union-member locks are held.
-// It never restores captured document bytes, so a competing membership/task
-// mutation survives. Only a readiness-only projection of the exact imported
-// backlog baseline is returned to held.
+// rollbackDeliveryStartRefusalUnderLock restores a descriptor-bound Serve
+// transaction exactly while the material epoch, wave, and union-member locks
+// are held. Standalone CLI Start has no captured import commit, so it retains
+// the historical readiness-only merge that preserves concurrent progress.
 func rollbackDeliveryStartRefusalUnderLock(vaultPath string, idx v7Index, authority *deliveryStartAuthority, cause error) error {
 	if authority == nil {
 		return cause
 	}
-	if isDeliveryStartPlanAuthorityChanged(cause) {
-		return handledDeliveryStartRefusal(rollbackDeliveryStartImport(authority, cause))
+	if authority.ImportCommit != nil {
+		return handledDeliveryStartRefusal(rollbackDeliveryStartTransaction(authority, cause))
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	const actor = "tusker:delivery-start-rollback"
@@ -799,18 +800,36 @@ func rollbackDeliveryStartRefusalUnderLock(vaultPath string, idx v7Index, author
 	return handledDeliveryStartRefusal(cause)
 }
 
-// refuseDeliveryStartBeforeArm is only used before this Start has written
-// authorization. It reacquires the epoch and locks every surviving member from
-// both the reviewed import and current wave, then performs the narrow
-// readiness-only rollback. Missing members are reported after the remaining
-// safe cleanup instead of bypassing it.
+// refuseDeliveryStartBeforeArm reacquires the material epoch before cleanup.
+// Serve can then restore its complete transaction preimages directly. CLI
+// callers lock every surviving member and perform the narrower readiness merge.
 func refuseDeliveryStartBeforeArm(vaultPath string, authority *deliveryStartAuthority, cause error) error {
 	if authority == nil {
 		return cause
 	}
 	materialLock, err := acquireV7MaterialEpochLock(vaultPath)
 	if err != nil {
+		if authority.ImportCommit != nil {
+			return tuskerError(
+				errorInvalidTransition,
+				"delivery Start was rejected but its transaction could not be locked for exact rollback; delivery is fail-closed pending repair",
+				withHint("stop delivery, restore every reported path from version control or a verified backup, then regenerate delivery review"),
+				withContext(map[string]any{"cause": cause.Error(), "rollback": err.Error(), "paths": deliveryStartTransactionPaths(authority)}),
+			)
+		}
 		return fmt.Errorf("%w; refusal could not lock the material epoch for safe readiness cleanup: %v", cause, err)
+	}
+	if authority.ImportCommit != nil {
+		rolledBack := rollbackDeliveryStartTransaction(authority, cause)
+		if closeErr := materialLock.Close(); closeErr != nil {
+			return tuskerError(
+				errorInvalidTransition,
+				"delivery Start rollback completed but its material lock did not close cleanly; delivery is fail-closed pending repair",
+				withHint("stop delivery, inspect the material lock and reported transaction paths, then regenerate delivery review"),
+				withContext(map[string]any{"cause": rolledBack.Error(), "lock": closeErr.Error(), "paths": deliveryStartTransactionPaths(authority)}),
+			)
+		}
+		return handledDeliveryStartRefusal(rolledBack)
 	}
 	defer materialLock.Close()
 	idx, err := loadV7Index(vaultPath)
@@ -903,7 +922,10 @@ func armWaveAtomicallyGuarded(vaultPath string, idx v7Index, wave Note, report w
 	}
 	var guard *deliveryImportWriteGuard
 	if authority != nil && authority.PlanBound {
-		guard = &deliveryImportWriteGuard{Verify: authority.PlanVerify}
+		guard = &deliveryImportWriteGuard{
+			Verify:                  authority.PlanVerify,
+			DelayMutationVisibility: true,
+		}
 	}
 	if err := commitDeliveryWritesGuarded(writes, failAfter, guard); err != nil {
 		if isDeliveryImportIdentityChanged(err) {
@@ -911,7 +933,16 @@ func armWaveAtomicallyGuarded(vaultPath string, idx v7Index, wave Note, report w
 		}
 		return err
 	}
-	_ = emitV7Event(vaultPath, report.WaveID, "wave", "updated", actor, map[string]any{"authorization": "armed", "fingerprint": report.Fingerprint, "members": report.Members})
+	if guard != nil {
+		authority.ArmCommit = guard.Commit
+		if deliveryStartAfterArmCommit != nil {
+			if err := deliveryStartAfterArmCommit(); err != nil {
+				return err
+			}
+		}
+	} else {
+		_ = emitV7Event(vaultPath, report.WaveID, "wave", "updated", actor, map[string]any{"authorization": "armed", "fingerprint": report.Fingerprint, "members": report.Members})
+	}
 	return emitWaveAuthorizationResult(args, report.WaveID, "armed", report)
 }
 

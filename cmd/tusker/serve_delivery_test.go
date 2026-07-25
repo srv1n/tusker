@@ -31,6 +31,25 @@ func newServeDeliveryFixture(t *testing.T) (*serveServer, string) {
 	return newServeServer(vault, repo, defaultServeAddr, store, nil), repo
 }
 
+func beginServeDeliveryMutationTracking(t *testing.T) func() []string {
+	t.Helper()
+	finished := false
+	beginCLIVaultMutationTracking()
+	t.Cleanup(func() {
+		if !finished {
+			_ = finishCLIVaultMutationTracking()
+		}
+	})
+	return func() []string {
+		t.Helper()
+		if finished {
+			t.Fatal("Serve delivery mutation tracking finished twice")
+		}
+		finished = true
+		return finishCLIVaultMutationTracking()
+	}
+}
+
 func TestServeDeliveryReviewUsesCanonicalProjectionWithoutMutation(t *testing.T) {
 	server, repo := newServeDeliveryFixture(t)
 	vault := server.vaultPath
@@ -674,6 +693,10 @@ func TestServeDeliveryBoundSnapshotSurvivesFormerReopenSwaps(t *testing.T) {
 func TestServeDeliveryImportCommitSwapRestoresEveryPreimage(t *testing.T) {
 	server, repo := newServeDeliveryFixture(t)
 	vault := server.vaultPath
+	specPath := filepath.Join(repo, "docs", "specs", "delivery.md")
+	if err := os.Chmod(specPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	plan := validDeliveryPlanV2()
 	path := writeDeliveryV2TestPlan(t, vault, plan)
 	raw, err := os.ReadFile(path)
@@ -704,6 +727,7 @@ func TestServeDeliveryImportCommitSwapRestoresEveryPreimage(t *testing.T) {
 		}
 	}()
 
+	finishMutations := beginServeDeliveryMutationTracking(t)
 	body := `{"plan":".tusker/scratch/delivery-plan-v2.yaml","confirm":"` + review.Start.PlanFingerprint + `","planIdentity":"` + review.Start.PlanIdentity + `"}`
 	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -712,11 +736,20 @@ func TestServeDeliveryImportCommitSwapRestoresEveryPreimage(t *testing.T) {
 	if restore != nil {
 		restore()
 	}
+	mutatedVaults := finishMutations()
 	if !swapped || recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "exact import preimages were restored") {
 		t.Fatalf("commit-boundary swap was not fully rolled back: swapped=%t status=%d body=%s", swapped, recorder.Code, recorder.Body.String())
 	}
+	if len(mutatedVaults) != 0 {
+		t.Fatalf("rejected commit-boundary Start published mutation callbacks: %v", mutatedVaults)
+	}
 	assertSnapshotEqual(t, beforeRepo, snapshotTree(t, repo), "commit-boundary repository preimages")
 	assertSnapshotEqual(t, beforeState, snapshotTree(t, DefaultStateRoot()), "commit-boundary runtime state")
+	if info, err := os.Stat(specPath); err != nil {
+		t.Fatal(err)
+	} else if info.Mode().Perm() != 0o600 {
+		t.Fatalf("commit-boundary rollback changed spec mode: got %o want 600", info.Mode().Perm())
+	}
 }
 
 func TestServeDeliveryPostCommitSwapRestoresEveryPreimage(t *testing.T) {
@@ -752,6 +785,7 @@ func TestServeDeliveryPostCommitSwapRestoresEveryPreimage(t *testing.T) {
 		}
 	}()
 
+	finishMutations := beginServeDeliveryMutationTracking(t)
 	body := `{"plan":".tusker/scratch/delivery-plan-v2.yaml","confirm":"` + review.Start.PlanFingerprint + `","planIdentity":"` + review.Start.PlanIdentity + `"}`
 	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -760,8 +794,12 @@ func TestServeDeliveryPostCommitSwapRestoresEveryPreimage(t *testing.T) {
 	if restore != nil {
 		restore()
 	}
+	mutatedVaults := finishMutations()
 	if !swapped || recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "exact import preimages were restored") {
 		t.Fatalf("post-commit swap was not fully rolled back: swapped=%t status=%d body=%s", swapped, recorder.Code, recorder.Body.String())
+	}
+	if len(mutatedVaults) != 0 {
+		t.Fatalf("rejected post-commit Start published mutation callbacks: %v", mutatedVaults)
 	}
 	assertSnapshotEqual(t, beforeRepo, snapshotTree(t, repo), "post-commit repository preimages")
 	assertSnapshotEqual(t, beforeState, snapshotTree(t, DefaultStateRoot()), "post-commit runtime state")
@@ -809,6 +847,7 @@ func TestServeDeliveryImportRollbackFailureIsActionableAndLeavesNoPartialDocumen
 		}
 	}()
 
+	finishMutations := beginServeDeliveryMutationTracking(t)
 	body := `{"plan":".tusker/scratch/delivery-plan-v2.yaml","confirm":"` + review.Start.PlanFingerprint + `","planIdentity":"` + review.Start.PlanIdentity + `"}`
 	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -817,10 +856,14 @@ func TestServeDeliveryImportRollbackFailureIsActionableAndLeavesNoPartialDocumen
 	if restore != nil {
 		restore()
 	}
+	mutatedVaults := finishMutations()
 	if !swapped || !rollbackFailed || recorder.Code != http.StatusConflict ||
 		!strings.Contains(recorder.Body.String(), "exact rollback could not be proven") ||
 		!strings.Contains(recorder.Body.String(), "restore every reported path") {
 		t.Fatalf("rollback failure lost its fail-closed repair contract: swapped=%t rollbackFailed=%t status=%d body=%s", swapped, rollbackFailed, recorder.Code, recorder.Body.String())
+	}
+	if len(mutatedVaults) != 0 {
+		t.Fatalf("unproven rollback published mutation callbacks: %v", mutatedVaults)
 	}
 	epicPath := filepath.Join(vault, "work", "epics", "VTP.md")
 	epicRaw, err := os.ReadFile(epicPath)
@@ -949,7 +992,11 @@ func TestServeDeliveryStartReplaysCanonicalAuthorization(t *testing.T) {
 		}
 		return result
 	}
+	finishMutations := beginServeDeliveryMutationTracking(t)
 	first := post()
+	if mutatedVaults := finishMutations(); len(mutatedVaults) != 1 || mutatedVaults[0] != vault {
+		t.Fatalf("successful Serve Start did not publish one delayed vault mutation: %v", mutatedVaults)
+	}
 	beforeReplay := snapshotDeliveryRecords(t, vault)
 	second := post()
 	if !second.Replayed || second.WaveID != first.WaveID || second.AuthorizationFingerprint != first.AuthorizationFingerprint {
@@ -959,7 +1006,7 @@ func TestServeDeliveryStartReplaysCanonicalAuthorization(t *testing.T) {
 }
 
 func TestServeDeliveryStartPreservesTypedPreflightRefusal(t *testing.T) {
-	server, _ := newServeDeliveryFixture(t)
+	server, repo := newServeDeliveryFixture(t)
 	vault := server.vaultPath
 	plan := validDeliveryPlanV2()
 	plan.HumanGates = nil
@@ -979,13 +1026,22 @@ func TestServeDeliveryStartPreservesTypedPreflightRefusal(t *testing.T) {
 	}
 	t.Cleanup(func() { serveDeliveryStartFn = original })
 
+	beforeRepo := snapshotTree(t, repo)
+	beforeState := snapshotTree(t, DefaultStateRoot())
+	finishMutations := beginServeDeliveryMutationTracking(t)
 	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(`{"plan":"`+rel+`","confirm":"`+deliveryFingerprint(raw)+`","planIdentity":"`+reviewed.Start.PlanIdentity+`"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
+	mutatedVaults := finishMutations()
 	if recorder.Code != http.StatusConflict {
 		t.Fatalf("blocked Start status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
+	if len(mutatedVaults) != 0 {
+		t.Fatalf("preflight-refused Start published mutation callbacks: %v", mutatedVaults)
+	}
+	assertSnapshotEqual(t, beforeRepo, snapshotTree(t, repo), "preflight-refused repository preimages")
+	assertSnapshotEqual(t, beforeState, snapshotTree(t, DefaultStateRoot()), "preflight-refused runtime state")
 	var problem serveDeliveryError
 	if err := json.Unmarshal(recorder.Body.Bytes(), &problem); err != nil {
 		t.Fatal(err)
@@ -999,6 +1055,60 @@ func TestServeDeliveryStartPreservesTypedPreflightRefusal(t *testing.T) {
 	serveDecode(t, server, "/api/delivery/review?project=delivery&plan="+rel, &review)
 	if review.Start.State != "disabled" || review.Start.NextAction == "" {
 		t.Fatalf("blocked Start did not project one canonical disabled remedy: %#v", review.Start)
+	}
+}
+
+func TestServeDeliveryPostArmFailureRestoresFullTransaction(t *testing.T) {
+	server, repo := newServeDeliveryFixture(t)
+	vault := server.vaultPath
+	specPath := filepath.Join(repo, "docs", "specs", "delivery.md")
+	if err := os.Chmod(specPath, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	plan := validDeliveryPlanV2()
+	plan.HumanGates = nil
+	path := writeDeliveryV2TestPlan(t, vault, plan)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel := filepath.ToSlash(filepath.Join(".tusker", "scratch", filepath.Base(path)))
+	var reviewed deliveryReview
+	serveDecode(t, server, "/api/delivery/review?project=delivery&plan="+rel, &reviewed)
+	originalStart := serveDeliveryStartFn
+	serveDeliveryStartFn = func(args Args, source *deliveryPlanSource) (deliveryStartResult, error) {
+		return deliveryStartWithPlanSource(args, fixedWaveEnvironmentInspector(greenWaveEnvironment()), source)
+	}
+	t.Cleanup(func() { serveDeliveryStartFn = originalStart })
+	originalAfterArm := deliveryStartAfterArmCommit
+	deliveryStartAfterArmCommit = func() error {
+		return tuskerError(errorInvalidTransition, "forced post-arm delivery failure")
+	}
+	t.Cleanup(func() { deliveryStartAfterArmCommit = originalAfterArm })
+
+	beforeRepo := snapshotTree(t, repo)
+	beforeState := snapshotTree(t, DefaultStateRoot())
+	finishMutations := beginServeDeliveryMutationTracking(t)
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(`{"plan":"`+rel+`","confirm":"`+deliveryFingerprint(raw)+`","planIdentity":"`+reviewed.Start.PlanIdentity+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	mutatedVaults := finishMutations()
+
+	if recorder.Code != http.StatusConflict ||
+		!strings.Contains(recorder.Body.String(), "forced post-arm delivery failure") ||
+		!strings.Contains(recorder.Body.String(), "exact authorization and import preimages were restored") {
+		t.Fatalf("post-arm failure lost its full rollback contract: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(mutatedVaults) != 0 {
+		t.Fatalf("failed arm published mutation callbacks: %v", mutatedVaults)
+	}
+	assertSnapshotEqual(t, beforeRepo, snapshotTree(t, repo), "failed-arm repository preimages")
+	assertSnapshotEqual(t, beforeState, snapshotTree(t, DefaultStateRoot()), "failed-arm runtime state")
+	if info, err := os.Stat(specPath); err != nil {
+		t.Fatal(err)
+	} else if info.Mode().Perm() != 0o640 {
+		t.Fatalf("failed-arm rollback changed spec mode: got %o want 640", info.Mode().Perm())
 	}
 }
 

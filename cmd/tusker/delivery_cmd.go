@@ -21,9 +21,10 @@ var deliveryImportNow = time.Now
 var deliveryImportRollbackWriteHook func(path string) error
 
 type deliveryImportWriteGuard struct {
-	Verify        func() error
-	AfterPrecheck func()
-	Commit        *deliveryImportCommit
+	Verify                  func() error
+	AfterPrecheck           func()
+	DelayMutationVisibility bool
+	Commit                  *deliveryImportCommit
 }
 
 type deliveryWritePreimage struct {
@@ -890,10 +891,8 @@ func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard 
 
 	rollback := func(cause error, identityChanged bool) error {
 		rollbackErr := restoreDeliveryWritePreimages(paths, backups)
-		if rollbackErr != nil {
-			for _, path := range paths {
-				invalidateCachedNote(path)
-			}
+		for _, path := range paths {
+			invalidateCachedNote(path)
 		}
 		if identityChanged {
 			return deliveryImportIdentityError(cause, rollbackErr, paths)
@@ -931,7 +930,9 @@ func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard 
 	}
 	for _, path := range paths {
 		invalidateCachedNote(path)
-		recordCLIVaultMutation(path)
+		if guard == nil || !guard.DelayMutationVisibility {
+			recordCLIVaultMutation(path)
+		}
 	}
 	return nil
 }
@@ -1051,6 +1052,11 @@ func (commit *deliveryImportCommit) Restore() error {
 	if commit == nil || commit.restored {
 		return nil
 	}
+	defer func() {
+		for _, path := range commit.Paths {
+			invalidateCachedNote(path)
+		}
+	}()
 	for _, path := range commit.Paths {
 		info, err := os.Lstat(path)
 		if err != nil {
@@ -1068,9 +1074,6 @@ func (commit *deliveryImportCommit) Restore() error {
 		}
 	}
 	restoreErr := restoreDeliveryWritePreimages(commit.Paths, commit.Preimages)
-	for _, path := range commit.Paths {
-		invalidateCachedNote(path)
-	}
 	if restoreErr != nil {
 		return restoreErr
 	}
