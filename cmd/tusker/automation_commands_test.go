@@ -30,6 +30,9 @@ func TestAutomationExplainJSONReportsBlockers(t *testing.T) {
 		"next_owner": "human:pm",
 	})
 	registerAutomationTestProject(t, vault)
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.dispatch_scope", "all_eligible"); err != nil {
+		t.Fatal(err)
+	}
 
 	output := captureStdout(t, func() {
 		if err := automationExplainCmd(Args{"vault": vault, "id": "APP-T-0001", "json": "true"}); err != nil {
@@ -67,6 +70,9 @@ func TestAutomationQueueJSONSplitsEligibleAndBlockedWithoutMutatingLifecycle(t *
 		"next_owner": "human:pm",
 	})
 	registerAutomationTestProject(t, vault)
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.dispatch_scope", "all_eligible"); err != nil {
+		t.Fatal(err)
+	}
 
 	output := captureStdout(t, func() {
 		if err := automationQueueCmd(Args{"vault": vault, "json": "true"}); err != nil {
@@ -293,6 +299,16 @@ func registerAutomationTestProject(t *testing.T, vault string) RegisteredProject
 		t.Fatal(err)
 	}
 	return project
+}
+
+// Legacy automation fixtures exercise behavior other than admission policy.
+// Make their broad authority explicit instead of relying on the old implicit
+// all-eligible default; production's generated configuration stays armed_waves.
+func setAllEligibleDispatchScopeForAutomationTest(t *testing.T, vault string) {
+	t.Helper()
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.dispatch_scope", "all_eligible"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func setAutomationV7TaskFields(t *testing.T, vault, id string, fields map[string]any) {

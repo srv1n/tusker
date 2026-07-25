@@ -22,6 +22,7 @@ type externalLoopStatusPayload struct {
 
 func TestAutomationAdvanceExternalCollectsRecordsPolicyAndIsIdempotent(t *testing.T) {
 	vault := automationTestVault(t)
+	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 	repoRoot := filepath.Dir(vault)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Advance external", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")

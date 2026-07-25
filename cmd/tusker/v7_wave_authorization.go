@@ -30,27 +30,28 @@ type wavePreflightEnvironment struct {
 }
 
 type wavePreflightReport struct {
-	Schema               string           `json:"schema"`
-	WaveID               string           `json:"waveId"`
-	OK                   bool             `json:"ok"`
-	ReadOnly             bool             `json:"readOnly"`
-	Fingerprint          string           `json:"fingerprint"`
-	StoredFingerprint    string           `json:"storedFingerprint,omitempty"`
-	Authorization        string           `json:"authorization"`
-	AuthorizationStale   bool             `json:"authorizationStale"`
-	Action               string           `json:"action"`
-	Members              []string         `json:"members"`
-	Frontiers            [][]string       `json:"frontiers"`
-	TaskProof            map[string]any   `json:"taskProof"`
-	Artifacts            map[string]any   `json:"artifacts"`
-	ExternalDependencies map[string]any   `json:"externalDependencies"`
-	HumanGates           []map[string]any `json:"humanGates"`
-	ExpectedConcurrency  int              `json:"expectedConcurrency"`
-	ValidationLane       string           `json:"validationLane"`
-	IntegrationBranch    string           `json:"integrationBranch"`
-	LandingPolicy        string           `json:"landingPolicy"`
-	Checks               map[string]bool  `json:"checks"`
-	Blockers             []string         `json:"blockers"`
+	Schema               string                            `json:"schema"`
+	WaveID               string                            `json:"waveId"`
+	OK                   bool                              `json:"ok"`
+	ReadOnly             bool                              `json:"readOnly"`
+	Fingerprint          string                            `json:"fingerprint"`
+	StoredFingerprint    string                            `json:"storedFingerprint,omitempty"`
+	Authorization        string                            `json:"authorization"`
+	AuthorizationStale   bool                              `json:"authorizationStale"`
+	Action               string                            `json:"action"`
+	Members              []string                          `json:"members"`
+	Frontiers            [][]string                        `json:"frontiers"`
+	TaskProof            map[string]any                    `json:"taskProof"`
+	Artifacts            map[string]any                    `json:"artifacts"`
+	ExternalDependencies map[string]any                    `json:"externalDependencies"`
+	HumanGates           []map[string]any                  `json:"humanGates"`
+	ExpectedConcurrency  int                               `json:"expectedConcurrency"`
+	ValidationLane       string                            `json:"validationLane"`
+	IntegrationBranch    string                            `json:"integrationBranch"`
+	LandingPolicy        string                            `json:"landingPolicy"`
+	DispatchScope        automationDispatchScopeProjection `json:"dispatchScope"`
+	Checks               map[string]bool                   `json:"checks"`
+	Blockers             []string                          `json:"blockers"`
 }
 
 func waveV7PreflightCmd(args Args) error {
@@ -202,6 +203,10 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 	members := uniqueStrings(normalizeList(wave.Data["members"]))
 	sort.Strings(members)
 	fingerprint, fpIssues := waveMaterialFingerprint(vaultPath, idx, wave)
+	dispatchScope := defaultAutomationDispatchScope()
+	if wf, err := loadWorkflow(vaultPath); err == nil {
+		dispatchScope = wf.Data.DispatchScope
+	}
 	report := wavePreflightReport{
 		Schema: waveAuthorizationSchema, WaveID: stringField(wave.Data, "id"), ReadOnly: true,
 		Fingerprint: fingerprint, StoredFingerprint: stringField(wave.Data, "authorization_fingerprint"),
@@ -209,6 +214,7 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 		TaskProof: map[string]any{}, Artifacts: map[string]any{}, ExternalDependencies: map[string]any{}, ExpectedConcurrency: maxInt(1, intField(wave.Data, "concurrency")),
 		ValidationLane: "serialized integration validation", IntegrationBranch: stringField(wave.Data, "integration_branch"),
 		LandingPolicy: "task branches -> wave integration branch -> configured default branch",
+		DispatchScope: dispatchScope,
 		Checks:        map[string]bool{"specDag": true, "taskContracts": true, "artifacts": true, "project": env.ProjectRegistered && env.ProjectEnabled && env.ProjectHealthy, "daemon": env.DaemonAlive && env.DaemonReconciling, "runner": env.RunnerCompatible, "skill": env.SkillCompatible, "workflow": env.WorkflowCompatible, "approvalPolicy": env.ApprovalFree, "workspaceIsolation": env.IsolatedWorkspace && env.IntegrationClean},
 	}
 	report.Blockers = append(report.Blockers, fpIssues...)
@@ -730,6 +736,10 @@ func renderWavePreflight(report wavePreflightReport) string {
 	fmt.Fprintf(&b, "  authorization=%s stale=%t action=%s\n", report.Authorization, report.AuthorizationStale, report.Action)
 	fmt.Fprintf(&b, "  fingerprint=%s members=%s concurrency=%d\n", report.Fingerprint, strings.Join(report.Members, ","), report.ExpectedConcurrency)
 	fmt.Fprintf(&b, "  integration=%s validation=%s landing=%s\n", report.IntegrationBranch, report.ValidationLane, report.LandingPolicy)
+	fmt.Fprintf(&b, "  dispatch_scope configured=%s effective=%s provenance=%s\n", fallback(report.DispatchScope.Configured, "-"), report.DispatchScope.Effective, report.DispatchScope.Provenance)
+	if report.DispatchScope.Warning != "" {
+		fmt.Fprintf(&b, "  scope_warning=%s; repair=%s\n", report.DispatchScope.Warning, report.DispatchScope.Repair)
+	}
 	for i, frontier := range report.Frontiers {
 		fmt.Fprintf(&b, "  frontier %d: %s\n", i+1, strings.Join(frontier, ","))
 	}

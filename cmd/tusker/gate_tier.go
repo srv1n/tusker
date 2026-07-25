@@ -225,8 +225,8 @@ func gateTierPreflight(policy GateTierPolicy, requestedProfile string, rt gateTi
 		if lock, held := rt.SlotHolder(rt.Workspace, policy.BuildSlotLocks); held {
 			return &GateRefusal{
 				Cause:  gateRefusalBuildSlotHeld,
-				Detail: fmt.Sprintf("build slot lock %s is held, so another stream owns this host's build", lock),
-				Remedy: "wait for the running build stream to finish, or clear the lock if its owner is gone",
+				Detail: fmt.Sprintf("project-local build slot lock %s is held, so another stream owns this host's build", lock),
+				Remedy: "wait for the running build stream to finish, or clear this project-local lock if its owner is gone; it is not daemon-wide resource arbitration",
 			}
 		}
 	}

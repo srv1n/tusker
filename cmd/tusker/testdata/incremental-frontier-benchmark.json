@@ -1,0 +1,12 @@
+{
+  "fixture": "10000 operational task records",
+  "scenario": "warm one-task mutation with one reverse dependent",
+  "expected": {
+    "recordsStated": 0,
+    "recordsReadMax": 2,
+    "recordsParsedMax": 2,
+    "graphNodesRecomputedMax": 2,
+    "unrelatedProjectReads": 0,
+    "unrelatedProjectParses": 0
+  }
+}

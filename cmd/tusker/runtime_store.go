@@ -369,6 +369,19 @@ func OpenRuntimeStore(stateRoot string) (*RuntimeStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// Resource leases are daemon-wide rather than project-local lock files.
+	// Reclaim only leases whose own expiry policy has elapsed; a caller with a
+	// stronger liveness probe may keep an expired-but-live holder fenced.
+	if _, err := store.ReconcileExpiredResourceLeases(time.Now().UTC(), nil); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	// Departures can have irreversible external effects (a ref move or release).
+	// Classify any interrupted row before a caller can schedule another window.
+	if _, err := store.ReconcileDepartureRuns(""); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return store, nil
 }
 
@@ -744,6 +757,59 @@ func (s *RuntimeStore) Migrate() error {
 			started_at TEXT NOT NULL,
 			finished_at TEXT NOT NULL DEFAULT '',
 			first_failure TEXT NOT NULL DEFAULT ''
+		);`,
+		// resource_leases is intentionally global: resource_name is the primary
+		// key, so two registered projects contend through this one daemon DB.
+		// Rows are retained after release for generation fencing and recovery
+		// audit; resource_lease_events records every attributable takeover.
+		`CREATE TABLE IF NOT EXISTS resource_leases (
+			resource_name TEXT PRIMARY KEY,
+			owner TEXT NOT NULL DEFAULT '',
+			purpose TEXT NOT NULL DEFAULT '',
+			project_id TEXT NOT NULL DEFAULT '',
+			departure_id TEXT NOT NULL DEFAULT '',
+			heartbeat_at TEXT NOT NULL DEFAULT '',
+			expires_at TEXT NOT NULL DEFAULT '',
+			generation INTEGER NOT NULL DEFAULT 0,
+			state TEXT NOT NULL DEFAULT 'released',
+			released_at TEXT NOT NULL DEFAULT '',
+			release_reason TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE TABLE IF NOT EXISTS resource_lease_events (
+			event_id TEXT PRIMARY KEY,
+			resource_name TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			owner TEXT NOT NULL DEFAULT '',
+			generation INTEGER NOT NULL DEFAULT 0,
+			previous_owner TEXT NOT NULL DEFAULT '',
+			previous_generation INTEGER NOT NULL DEFAULT 0,
+			reason TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS resource_lease_events_resource
+			ON resource_lease_events(resource_name, created_at);`,
+		// departure_runs deliberately keeps structured operational facts in JSON
+		// columns rather than copying raw command output into the runtime DB. A
+		// departure is system work, not a task attempt: its natural idempotency key
+		// is the policy window, not a task record id.
+		`CREATE TABLE IF NOT EXISTS departure_runs (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			policy_id TEXT NOT NULL,
+			scheduled_window TEXT NOT NULL,
+			state TEXT NOT NULL,
+			state_revision INTEGER NOT NULL DEFAULT 1,
+			candidate_json TEXT NOT NULL DEFAULT '{}',
+			gate_json TEXT NOT NULL DEFAULT '{}',
+			promotion_json TEXT NOT NULL DEFAULT '{}',
+			release_json TEXT NOT NULL DEFAULT '{}',
+			skip_reason TEXT NOT NULL DEFAULT '',
+			block_reason TEXT NOT NULL DEFAULT '',
+			model_invocation_count INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(project_id, policy_id, scheduled_window)
 		);`,
 		`CREATE TABLE IF NOT EXISTS external_loop_events (
 			event_id TEXT PRIMARY KEY,
@@ -1879,6 +1945,87 @@ func (s *RuntimeStore) claimRunLeaseWithDirectiveAttempt(run RunStatus, owner st
 		}
 		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, branch_name, outcome, started_at)
 			VALUES(?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkRevision, attempt.WorkspacePath, attempt.BranchName, attempt.Outcome, attempt.StartedAt); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		claimed = true
+		return nil
+	})
+	return claimed, err
+}
+
+// claimRunLeaseWithWorkSessionAttempt is the interactive counterpart to the
+// directive claim transaction.  It intentionally does not read or consume a
+// directive: a user-directed session authorizes exactly this lease and no
+// daemon work.  Lease, authorization, and attempt intent either commit
+// together or do not exist at all.
+func (s *RuntimeStore) claimRunLeaseWithWorkSessionAttempt(run RunStatus, owner string, generation int, ttl time.Duration, now time.Time, precondition RuntimeLeaseClaimPrecondition, auth RunAuthorization, attempt RunAttempt, identity RunIdentityMetadata) (bool, error) {
+	if strings.TrimSpace(run.ProjectID) == "" || strings.TrimSpace(run.RecordID) == "" || strings.TrimSpace(owner) == "" || generation <= 0 || strings.TrimSpace(attempt.AttemptID) == "" {
+		return false, tuskerError(errorInvalidArg, "work-session claim requires project, task, owner, generation, and attempt")
+	}
+	if identity.ProjectID != run.ProjectID || identity.RecordID != run.RecordID || identity.RepoRoot == "" || identity.WorkspacePath == "" || identity.WorkspaceMode == "" || identity.Runner == "" {
+		return false, tuskerError(errorInvalidArg, "work-session claim requires an exact repository, workspace, branch, and source identity")
+	}
+	expectedLeaseState := strings.TrimSpace(string(precondition.ExpectedLeaseState))
+	if expectedLeaseState == "" {
+		return false, tuskerError(errorInvalidArg, "work-session claim requires expected lease state")
+	}
+	if ttl <= 0 {
+		ttl = defaultRunLeaseTTL
+	}
+	now = now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	createdAt := now.Format(time.RFC3339Nano)
+	auth.ProjectID, auth.RecordID, auth.LeaseGeneration = run.ProjectID, run.RecordID, generation
+	auth.Actor, auth.Source, auth.CreatedAt = firstNonEmpty(strings.TrimSpace(auth.Actor), owner), firstNonEmpty(strings.TrimSpace(auth.Source), "tusker_cli"), createdAt
+	attempt.ProjectID, attempt.RecordID = run.ProjectID, run.RecordID
+	attempt.ItemID = firstNonEmpty(attempt.ItemID, run.ItemID)
+	attempt.Runner, attempt.Lane = firstNonEmpty(attempt.Runner, run.Runner), firstNonEmpty(attempt.Lane, run.Lane, runLaneExecute)
+	attempt.WorkRevision, attempt.Outcome, attempt.StartedAt = run.WorkRevision, firstNonEmpty(attempt.Outcome, string(AttemptOutcomeNone)), firstNonEmpty(attempt.StartedAt, createdAt)
+	identity.CreatedAt = firstNonEmpty(identity.CreatedAt, createdAt)
+	claimed := false
+	err := s.withBusyRetry(func() error {
+		claimed = false
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		claimResult, err := tx.Exec(`UPDATE runs
+			SET lease_state = 'claimed', lease_owner = ?, lease_generation = ?, lease_expires_at = ?, lease_host = ?,
+				last_heartbeat_at = ?, updated_at = ?, hand_run = 1, attempt_count = ?, active_attempt_id = ?,
+				runner = ?, lane = ?, started_at = CASE WHEN started_at = '' THEN ? ELSE started_at END, last_event_at = ?
+			WHERE project_id = ? AND record_id = ?
+				AND lease_state NOT IN ('claimed', 'running') AND lease_state = ? AND lease_owner = ?
+				AND lease_generation = ? AND work_revision = ?
+				AND (? <= 0 OR (SELECT COUNT(1) FROM runs active WHERE active.project_id = ? AND active.lease_state IN ('claimed','running')) < ?)`,
+			owner, generation, now.Add(ttl).Format(time.RFC3339Nano), runtimeLeaseHost(), createdAt, createdAt,
+			run.AttemptCount+1, attempt.AttemptID, attempt.Runner, attempt.Lane, attempt.StartedAt, createdAt,
+			run.ProjectID, run.RecordID, expectedLeaseState, precondition.ExpectedOwner, precondition.ExpectedLeaseGeneration, precondition.ExpectedWorkRevision,
+			precondition.ProjectConcurrencyLimit, run.ProjectID, precondition.ProjectConcurrencyLimit)
+		if err != nil {
+			return err
+		}
+		rows, err := claimResult.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return nil
+		}
+		if _, err := tx.Exec(`INSERT INTO run_authorizations(project_id, record_id, lease_generation, source, actor, trigger, project_automation_enabled, created_at) VALUES(?,?,?,?,?,?,?,?)`, auth.ProjectID, auth.RecordID, auth.LeaseGeneration, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, work_revision, workspace_path, branch_name, outcome, started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkRevision, attempt.WorkspacePath, attempt.BranchName, attempt.Outcome, attempt.StartedAt); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO run_identity_metadata(project_id,record_id,repo_root,workspace_path,workspace_mode,runner,branch,head,created_at)
+			VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(project_id,record_id) DO UPDATE SET repo_root=excluded.repo_root, workspace_path=excluded.workspace_path, workspace_mode=excluded.workspace_mode, runner=excluded.runner, branch=excluded.branch, head=excluded.head`,
+			identity.ProjectID, identity.RecordID, identity.RepoRoot, identity.WorkspacePath, identity.WorkspaceMode, identity.Runner, identity.Branch, identity.Head, identity.CreatedAt); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {

@@ -20,6 +20,9 @@ func TestServeProjectsExposeAdaptiveReconciliationStatus(t *testing.T) {
 	if summaries[0].Reconciliation.Tier != "warm" || summaries[0].Reconciliation.CadenceMS != reconcileWarmCadence.Milliseconds() {
 		t.Fatalf("adaptive reconciliation status missing: %#v", summaries[0].Reconciliation)
 	}
+	if summaries[0].DispatchScope.Effective != string(automationDispatchScopeArmedWaves) || summaries[0].DispatchScope.Provenance == "" {
+		t.Fatalf("dispatch scope projection missing from Serve: %#v", summaries[0].DispatchScope)
+	}
 }
 
 func TestServeProjectRegistrationDefaultsAutomationOffAndSettingsCanEnableIt(t *testing.T) {

@@ -102,6 +102,7 @@ exit 127
 	writeTuskerYamlRunnerCommandForPreflightTest(t, vault, command)
 
 	project := registerAutomationTestProject(t, vault)
+	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 	daemon, err := NewDaemon(DefaultStateRoot())
 	if err != nil {
 		t.Fatal(err)
@@ -143,6 +144,7 @@ func TestDaemonSkipsAutomationDisabledProject(t *testing.T) {
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Automation off", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
+	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.enabled", false); err != nil {
 		t.Fatal(err)
 	}

@@ -89,6 +89,7 @@ automation:
   # Automation is opt-in. Registration keeps status projections fresh; only
   # an explicit operator change may authorize daemon dispatch.
   enabled: false
+  dispatch_scope: armed_waves
   trigger_states: [ready, rework]
   default_runner: codex_exec
   enabled_runners: [codex_exec, claude-code]

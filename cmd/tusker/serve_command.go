@@ -845,6 +845,7 @@ func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 			RepoRoot: project.RepoRoot, VaultRoot: project.VaultRoot,
 			AutomationEnabled: wf.Data.AutomationEnabled,
 			AutomationSource:  autoReport.Source,
+			DispatchScope:     wf.Data.DispatchScope,
 			WorkspaceMode:     string(workspaceStrategyFromWorkflow(wf.Data.Workspace.Strategy)), WorkspaceSource: workspaceReport.Source,
 			MaxActiveRunsPerProject: wf.Data.Runtime.MaxActiveRunsPerProject, ConcurrencySource: concurrencyReport.Source,
 			Health: string(project.Health), LastError: nullIfBlank(project.LastError),

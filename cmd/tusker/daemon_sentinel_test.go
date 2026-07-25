@@ -98,6 +98,7 @@ func TestSentinelCircuitOpenBlocksDispatchButServeReadsStatus(t *testing.T) {
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Circuit blocked", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
+	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		t.Fatal(err)

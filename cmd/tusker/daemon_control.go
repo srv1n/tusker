@@ -17,11 +17,25 @@ type daemonControlRequest struct {
 	Command   string `json:"command"`
 	Identity  string `json:"identity"`
 	ProjectID string `json:"project_id,omitempty"`
+	// Optional rich hints preserve compatibility with existing project-only
+	// reconciliation notifications.
+	Cause   string                `json:"cause,omitempty"`
+	Changes []daemonControlChange `json:"changes,omitempty"`
 }
 
 type daemonControlResponse struct {
 	OK      bool   `json:"ok"`
 	Message string `json:"message,omitempty"`
+}
+
+func runDirectiveBypassableBlocker(blocker string) bool {
+	switch strings.TrimSpace(blocker) {
+	case "project automation is disabled in its configuration",
+		"dispatch scope armed_waves requires task membership in a currently armed wave":
+		return true
+	default:
+		return false
+	}
 }
 
 type daemonControlServer struct {

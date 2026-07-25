@@ -10,6 +10,7 @@ import (
 
 func TestV7SoftDependencyUnblocks(t *testing.T) {
 	vault := automationTestVault(t)
+	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Soft dependency", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent", "risk": "low", "priority": "p0", "dependencies": "APP-T-0001", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0002")

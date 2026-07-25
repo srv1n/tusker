@@ -272,6 +272,55 @@ func (s *runOwnershipService) claimWithAuthorization(run RunStatus, owner string
 	return runClaimResult{OK: true, Claimed: true, Run: latest, Freshness: "fresh", Authorization: &auth}, nil
 }
 
+// claimWorkSessionWithAuthorization is the only interactive claim entry.  In
+// contrast with the older claim API, it atomically creates the lease, its
+// authorization evidence, and a unique runtime attempt intent.
+func (s *runOwnershipService) claimWorkSessionWithAuthorization(run RunStatus, owner string, auth RunAuthorization, identity RunIdentityMetadata) (runClaimResult, error) {
+	if s == nil || s.store == nil {
+		return runClaimResult{}, tuskerError(errorConfigInvalid, "run ownership store is unavailable")
+	}
+	if strings.TrimSpace(owner) == "" || run.ProjectID == "" || run.RecordID == "" || run.Runner == "" || run.WorkspacePath == "" {
+		return runClaimResult{}, tuskerError(errorInvalidArg, "work start requires project, task, runner, workspace, and owner")
+	}
+	unlock, err := s.lockOwnedPathClaims()
+	if err != nil {
+		return runClaimResult{}, err
+	}
+	defer unlock()
+	if err := s.guardOwnedPathClaim(); err != nil {
+		return runClaimResult{}, err
+	}
+	if run.LeaseState == "" {
+		run.LeaseState = string(LeaseStateUnclaimed)
+	}
+	if err := s.store.UpsertRunPreservingLease(run); err != nil {
+		return runClaimResult{}, err
+	}
+	current, err := s.store.FindRun(run.RecordID)
+	if err != nil || current == nil {
+		return runClaimResult{}, firstNonNil(err, tuskerError(errorNotFound, "run not found after work-session preparation"))
+	}
+	now, generation := s.now(), current.LeaseGeneration+1
+	identity.ProjectID, identity.RecordID = current.ProjectID, current.RecordID
+	identity.WorkspacePath, identity.Runner = current.WorkspacePath, current.Runner
+	attempt := RunAttempt{AttemptID: "work-" + newRecordID(), ProjectID: current.ProjectID, RecordID: current.RecordID, ItemID: current.ItemID, Runner: current.Runner, Lane: current.Lane, WorkRevision: current.WorkRevision, WorkspacePath: current.WorkspacePath, BranchName: identity.Branch, Outcome: string(AttemptOutcomeNone), StartedAt: now.Format(time.RFC3339Nano)}
+	claimed, err := s.store.claimRunLeaseWithWorkSessionAttempt(*current, owner, generation, defaultRunLeaseTTL, now, RuntimeLeaseClaimPrecondition{ExpectedLeaseState: LeaseState(current.LeaseState), ExpectedOwner: current.LeaseOwner, ExpectedLeaseGeneration: current.LeaseGeneration, ExpectedWorkRevision: current.WorkRevision, ProjectConcurrencyLimit: s.projectConcurrencyLimit}, auth, attempt, identity)
+	if err != nil {
+		return runClaimResult{}, err
+	}
+	latest, err := s.store.FindRun(current.RecordID)
+	if err != nil {
+		return runClaimResult{}, err
+	}
+	if !claimed {
+		existingAuth, _ := s.store.LatestRunAuthorization(current.ProjectID, current.RecordID)
+		return runClaimResult{OK: false, OwnerRun: latest, Freshness: runFreshness(latest, now), Authorization: existingAuth}, nil
+	}
+	auth.ProjectID, auth.RecordID, auth.LeaseGeneration = current.ProjectID, current.RecordID, generation
+	auth.Actor, auth.Source, auth.CreatedAt = firstNonEmpty(strings.TrimSpace(auth.Actor), owner), firstNonEmpty(strings.TrimSpace(auth.Source), "tusker_cli"), now.Format(time.RFC3339Nano)
+	return runClaimResult{OK: true, Claimed: true, Run: latest, Freshness: "fresh", Authorization: &auth}, nil
+}
+
 // claimExistingWithAuthorization is the daemon path: the supplied row is the
 // planning snapshot, so its CAS preconditions must not be refreshed after a
 // concurrent operator mutation.
@@ -561,81 +610,8 @@ func (s *runOwnershipService) ownedRun(identity, owner string) (*RunStatus, erro
 }
 
 func runsClaimCmd(args Args) error {
-	id, err := requireArg(args, "id")
-	if err != nil {
-		return err
-	}
-	ctx, err := loadAutomationCommandContext(args)
-	if err != nil {
-		return err
-	}
-	defer ctx.Close()
-	note, err := ctx.findTask(id)
-	if err != nil {
-		return err
-	}
-	explain := ctx.explainTaskForInteractiveRun(note)
-	if !explain.Dispatchable {
-		return tuskerError("CAS_CONFLICT", "claim blocked: "+strings.Join(explain.Blockers, "; "))
-	}
-	now := time.Now().UTC()
-	if _, err := reclaimDeadOwnedPathHolders(ctx.Store, ctx.Project.VaultRoot, note, ctx.NotesByID, ctx.Runs, now); err != nil {
-		return err
-	}
-	runs, err := ctx.Store.ListRuns()
-	if err != nil {
-		return err
-	}
-	if conflict, found := ownedPathConflict(note, ctx.NotesByID, runs, now); found {
-		return tuskerError("OWNED_PATH_CONFLICT", fmt.Sprintf("claim refused: %s holds %s for %s (lease age %s; liveness %s)", conflict["holder"], conflict["holder_path"], conflict["task_id"], conflict["lease_age"], conflict["liveness"]), withContext(conflict))
-	}
-	run := ctx.effectiveRunForTask(note, explain.Runner)
-	run.ProjectID, run.Runner, run.Lane = ctx.Project.ProjectID, explain.Runner, explain.Lane
-	workspaceStrategy := workspaceStrategyForRun(ctx.Workflow.Data, ctx.Project, run, ctx.projectRunsSlice())
-	branchName, branchBase, err := v7WorkspaceBranchForTask(ctx.Project.VaultRoot, note)
-	if err != nil {
-		return err
-	}
-	if branchName == "" && v7GitRepo(ctx.Project.RepoRoot) {
-		branchName = v7TaskBranchName(trackerRecordID(note))
-	}
-	workspace, err := NewWorkspaceManager().Prepare(WorkspacePrepareRequest{
-		ProjectID: ctx.Project.ProjectID, ProjectKey: ctx.Project.ProjectKey,
-		RecordID: run.RecordID, ItemID: run.ItemID,
-		BranchName: branchName, BranchBase: branchBase,
-		RepoRoot: ctx.Project.RepoRoot, StateRoot: ctx.StateRoot,
-		WorkspaceRoot: ctx.Workflow.Data.Workspace.Root, Strategy: workspaceStrategy,
-		WorkRevision: run.WorkRevision, MaxLiveWorktrees: ctx.Workflow.Data.Workspace.MaxLiveWorktrees,
-	})
-	if err != nil {
-		return err
-	}
-	run.WorkspacePath = workspace.Path
-	owner := firstNonEmpty(args.String("owner"), args.String("actor"))
-	source := firstNonEmpty(args.String("source"), "tusker_cli")
-	if source != "tusker_cli" && source != "codex" && source != "claude" {
-		return tuskerError(errorInvalidArg, "manual claim source must be tusker_cli, codex, or claude")
-	}
-	service := newRunOwnershipService(ctx.Store)
-	claimNotes := orchestrationOwnedPathNotes(ctx.NotesByID, ctx.Workflow.Data)
-	service.withOwnedPathContext(ctx.Project.VaultRoot, claimNotes[stringField(note.Data, "id")], claimNotes)
-	service.projectConcurrencyLimit = ctx.Workflow.Data.Runtime.MaxActiveRunsPerProject
-	result, err := service.claimWithAuthorization(run, owner, RunAuthorization{Source: source, Actor: owner, Trigger: firstNonEmpty(args.String("trigger"), "manual_claim"), ProjectAutomationEnabled: ctx.Workflow.Data.AutomationEnabled})
-	if err != nil {
-		return err
-	}
-	if result.Claimed {
-		identity := runIdentityForClaim(*result.Run, ctx.Project.RepoRoot, result.Run.WorkspacePath, string(workspaceStrategy), branchName)
-		if err := ctx.Store.SaveRunIdentity(identity); err != nil {
-			return err
-		}
-		_ = refreshStreamBoardForProject(ctx.Store, result.Run.ProjectID)
-	}
-	emitJSON(result)
-	if !result.Claimed {
-		return tuskerError("CAS_CONFLICT", "task already has a live owner")
-	}
-	return nil
+	// Compatibility surface: do not create a second notion of an active run.
+	return workSessionStartCmd(args)
 }
 
 func runsLifecycleCmd(args Args, action string) error {
@@ -671,6 +647,8 @@ func runsLifecycleCmd(args Args, action string) error {
 		run, err = service.finishWithEndState(id, owner, AttemptOutcomeSucceeded, args.String("deliverable"), args.String("verification"), "", &endState)
 	case "fail":
 		run, err = service.finish(id, owner, AttemptOutcomeFailed, "", "", firstNonEmpty(args.String("reason"), "run failed"))
+	case "release":
+		run, err = service.finish(id, owner, AttemptOutcomeInterrupted, "", "", firstNonEmpty(args.String("reason"), "work session released"))
 	case "reclaim":
 		current, findErr := store.FindRun(id)
 		if findErr != nil || current == nil {
@@ -688,7 +666,7 @@ func runsLifecycleCmd(args Args, action string) error {
 	}
 	_ = refreshStreamBoardForProject(store, run.ProjectID)
 	if action == "submit" {
-		statusArgs := Args{"id": run.ItemID, "status": "review", "actor": firstNonEmpty(args.String("actor"), owner), "reason": "normalized run submission"}
+		statusArgs := Args{"id": run.ItemID, "status": "review", "actor": firstNonEmpty(args.String("actor"), owner), "reason": "normalized run submission", "normalized-work-submit": "true", "lease-generation": fmt.Sprintf("%d", run.LeaseGeneration)}
 		loaded, projectErr := loadRegisteredProjects(store, registeredProjectLoadOptions{LoadDisabled: true, ProjectID: run.ProjectID})
 		if projectErr != nil {
 			return projectErr

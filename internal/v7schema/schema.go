@@ -44,7 +44,7 @@ var FrontmatterOrder = map[string][]string{
 		"proof_mode", "proof_status", "proof_required", "proof_required_owner", "evidence_budget", "raw_artifacts_allowed", "raw_artifacts_reason",
 		"machine_status", "human_status", "closeout_status", "agent_action",
 		"next_owner", "next_source", "next_ref", "next_action", "domains", "spec_refs", "gates", "dependencies", "evidence_required",
-		"delivery_source_key", "delivery_plan_scope", "delivery_contract_fingerprint", "artifact_contract", "work_kind", "owned_paths", "runner_profile", "concurrency_group", "knowledge_nodes", "batch_gate_command", "batch_gate_run",
+		"delivery_source_key", "delivery_plan_scope", "delivery_contract_fingerprint", "requirement_refs", "artifact_contract", "work_kind", "owned_paths", "runner_profile", "concurrency_group", "knowledge_nodes", "batch_gate_command", "batch_gate_run",
 		"accepted_by", "accepted_at", "closed_at", "superseded_by", "discarded_by", "discarded_at", "discard_reason",
 		"created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
@@ -55,14 +55,14 @@ var FrontmatterOrder = map[string][]string{
 	},
 	"gate": {
 		"schema", "kind", "id", "project", "title", "gate_kind", "status", "owner", "priority", "blocking", "blocks",
-		"covers", "why_agent_cannot", "action", "suggestion", "verification", "satisfaction_evidence", "satisfaction_evidence_refs", "satisfied_by", "satisfied_at", "waived_by", "waived_at", "waive_reason", "obsolete_reason",
+		"covers", "delivery_source_key", "delivery_plan_scope", "delivery_contract_fingerprint", "why_agent_cannot", "action", "suggestion", "verification", "satisfaction_evidence", "satisfaction_evidence_refs", "satisfied_by", "satisfied_at", "waived_by", "waived_at", "waive_reason", "obsolete_reason",
 		"created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
 	"epic": {
-		"schema", "kind", "id", "project", "title", "status", "owner", "priority", "domains", "spec_refs", "next_task_number", "next_gate_number", "next_decision_number", "created_at", "updated_at", "state_rev",
+		"schema", "kind", "id", "project", "title", "status", "owner", "priority", "domains", "spec_refs", "delivery_source_key", "delivery_plan_scope", "next_task_number", "next_gate_number", "next_decision_number", "created_at", "updated_at", "state_rev",
 	},
 	"wave": {
-		"schema", "kind", "id", "project", "title", "status", "members", "integration_branch", "spec_refs", "delivery_plan_scope", "delivery_plan_fingerprint", "concurrency", "runner_profile", "landings", "landed_at",
+		"schema", "kind", "id", "project", "title", "status", "members", "integration_branch", "spec_refs", "requirements", "delivery_plan_scope", "delivery_plan_fingerprint", "concurrency", "runner_profile", "landings", "landed_at",
 		"authorization", "authorization_fingerprint", "authorized_by", "authorized_at", "authorization_reason", "authorization_updated_by", "authorization_updated_at",
 		"created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
@@ -187,6 +187,7 @@ type TuskerAutomationValidationConfig struct {
 
 type TuskerAutomationConfig struct {
 	Enabled        *bool                                `yaml:"enabled"`
+	DispatchScope  string                               `yaml:"dispatch_scope,omitempty"`
 	TriggerStates  []string                             `yaml:"trigger_states"`
 	LegacyProfile  string                               `yaml:"legacy_profile"`
 	DefaultRunner  string                               `yaml:"default_runner"`

@@ -66,6 +66,57 @@ func listOperationalNotesFrontmatter(vaultPath string) ([]Note, error) {
 	return listAllNotesWithOptions(vaultPath, noteLoadOptions{FrontmatterOnly: true, OperationalOnly: true})
 }
 
+// loadOperationalNotesByPath reloads only records named by an event. It shares
+// the cache used by fallback scans, so a stale or missing path is harmless: the
+// caller can fall back to a stat-only full operational scan.
+func loadOperationalNotesByPath(vaultPath string, paths []string) ([]Note, error) {
+	cache, err := noteCacheForVault(vaultPath)
+	if err != nil {
+		return nil, err
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	result := make([]Note, 0, len(paths))
+	for _, path := range paths {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(vaultPath, path)
+		}
+		path = filepath.Clean(path)
+		info, err := os.Stat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			delete(cache.entries, path)
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		version := noteFileVersion{modTime: info.ModTime().UnixNano(), size: info.Size()}
+		if entry, ok := cache.entries[path]; ok && entry.version == version {
+			result = append(result, cloneNoteForLoad(entry.note, true))
+			continue
+		}
+		text, err := readNoteTextForCache(path)
+		if err != nil {
+			return nil, err
+		}
+		if noteCacheParseObserver != nil {
+			noteCacheParseObserver()
+		}
+		data, body, err := parseFrontmatter(text)
+		if err != nil {
+			return nil, err
+		}
+		rel, err := filepath.Rel(vaultPath, path)
+		if err != nil {
+			return nil, err
+		}
+		note := Note{AbsolutePath: path, RelativePath: filepath.ToSlash(rel), Data: data, Body: body}
+		cache.entries[path] = cachedNote{version: version, contentHash: sha256.Sum256([]byte(text)), note: note, hasBody: true}
+		result = append(result, cloneNoteForLoad(note, false))
+	}
+	return result, nil
+}
+
 func listAllNotesWithOptions(vaultPath string, opts noteLoadOptions) ([]Note, error) {
 	absVaultPath, err := filepath.Abs(vaultPath)
 	if err != nil {

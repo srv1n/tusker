@@ -16,6 +16,8 @@ import (
 
 const deliveryPlanSchema = "tusker.delivery-plan/v1"
 
+var deliveryImportNow = time.Now
+
 type deliveryPlan struct {
 	Schema        string             `yaml:"schema" json:"schema"`
 	Scope         string             `yaml:"scope,omitempty" json:"scope,omitempty"`
@@ -25,6 +27,7 @@ type deliveryPlan struct {
 	Concurrency   int                `yaml:"concurrency,omitempty" json:"concurrency,omitempty"`
 	RunnerProfile string             `yaml:"runner_profile,omitempty" json:"runner_profile,omitempty"`
 	Tasks         []deliveryPlanTask `yaml:"tasks" json:"tasks"`
+	v2            *deliveryPlanV2
 }
 
 type deliveryPlanTask struct {
@@ -36,6 +39,9 @@ type deliveryPlanTask struct {
 	Dependencies     []deliveryDependency     `yaml:"dependencies,omitempty" json:"dependencies,omitempty"`
 	Artifact         deliveryArtifactContract `yaml:"artifact" json:"artifact"`
 	OwnedPaths       []string                 `yaml:"owned_paths,omitempty" json:"owned_paths,omitempty"`
+	GeneratedOutputs []string                 `yaml:"generated_outputs,omitempty" json:"generated_outputs,omitempty"`
+	MigrationKeys    []string                 `yaml:"migration_keys,omitempty" json:"migration_keys,omitempty"`
+	ResourceRefs     []string                 `yaml:"resource_refs,omitempty" json:"resource_refs,omitempty"`
 	RunnerProfile    string                   `yaml:"runner_profile,omitempty" json:"runner_profile,omitempty"`
 	ConcurrencyGroup string                   `yaml:"concurrency_group,omitempty" json:"concurrency_group,omitempty"`
 	KnowledgeNodes   []string                 `yaml:"knowledge_nodes,omitempty" json:"knowledge_nodes,omitempty"`
@@ -43,11 +49,16 @@ type deliveryPlanTask struct {
 	Priority         string                   `yaml:"priority,omitempty" json:"priority,omitempty"`
 	Size             string                   `yaml:"size,omitempty" json:"size,omitempty"`
 	Domains          []string                 `yaml:"domains,omitempty" json:"domains,omitempty"`
+	RequirementRefs  []string                 `yaml:"requirement_refs,omitempty" json:"requirement_refs,omitempty"`
 }
 
 type deliveryAcceptance struct {
 	ID      string `yaml:"id" json:"id"`
 	Outcome string `yaml:"outcome" json:"outcome"`
+}
+
+func deliveryAcceptanceID(id string) string {
+	return strings.ToUpper(strings.TrimSpace(id))
 }
 
 type deliveryVerification struct {
@@ -143,6 +154,13 @@ func deliveryImportCmd(args Args) error {
 	if !filepath.IsAbs(planPath) {
 		planPath = filepath.Join(v7RepoRoot(vaultPath), planPath)
 	}
+	// Decode V2 in its own strict contract. Keeping this branch before the V1
+	// decoder is intentional: V1 remains exactly the old data model.
+	if schema, err := deliveryPlanSchemaAt(planPath); err != nil {
+		return err
+	} else if schema == deliveryPlanV2Schema {
+		return deliveryV2ImportCmd(vaultPath, planPath, args)
+	}
 	plan, raw, err := readDeliveryPlan(planPath)
 	if err != nil {
 		return err
@@ -204,7 +222,7 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]st
 	}
 	if !epicAcronymPattern.MatchString(strings.ToUpper(plan.Epic)) {
 		issues = append(issues, "epic must name an existing three-letter V7 epic")
-	} else if !fileExists(filepath.Join(vaultPath, "work", "epics", strings.ToUpper(plan.Epic)+".md")) {
+	} else if (plan.v2 == nil || plan.v2.EpicContract == nil) && !fileExists(filepath.Join(vaultPath, "work", "epics", strings.ToUpper(plan.Epic)+".md")) {
 		issues = append(issues, "epic does not exist: "+strings.ToUpper(plan.Epic))
 	}
 	if len(plan.SpecRefs) == 0 {
@@ -236,10 +254,11 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]st
 			if strings.TrimSpace(row.ID) == "" || deliveryPlaceholder(row.Outcome) {
 				issues = append(issues, key+": acceptance rows require an id and concrete outcome")
 			}
-			if acceptance[row.ID] {
+			id := deliveryAcceptanceID(row.ID)
+			if acceptance[id] {
 				issues = append(issues, key+": duplicate acceptance id "+row.ID)
 			}
-			acceptance[row.ID] = true
+			acceptance[id] = true
 		}
 		if len(task.Acceptance) == 0 {
 			issues = append(issues, key+": acceptance is required")
@@ -250,6 +269,7 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]st
 				issues = append(issues, key+": verification must use an exact command: or manual proof: check")
 			}
 			for _, cover := range splitCSV(row.Covers) {
+				cover = deliveryAcceptanceID(cover)
 				if !acceptance[cover] {
 					issues = append(issues, key+": verification references unknown acceptance "+cover)
 				}
@@ -273,7 +293,7 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]st
 			issues = append(issues, key+": artifact acceptance_ids must name at least one task acceptance outcome")
 		} else {
 			for _, id := range task.Artifact.AcceptanceIDs {
-				if !acceptance[strings.ToUpper(strings.TrimSpace(id))] {
+				if !acceptance[deliveryAcceptanceID(id)] {
 					issues = append(issues, key+": artifact acceptance_ids references unknown acceptance "+id)
 				}
 			}
@@ -347,6 +367,9 @@ func deliveryTaskMapping(vaultPath string, plan deliveryPlan) (map[string]string
 		}
 		key := stringField(task.Data, "delivery_source_key")
 		taskScope := stringField(task.Data, "delivery_plan_scope")
+		if wanted[key] && taskScope == scope && stringField(task.Data, "epic") != strings.ToUpper(plan.Epic) {
+			return nil, "", tuskerError(errorInvalidArg, "delivery source_key collision "+key+" belongs to epic "+stringField(task.Data, "epic")+" in plan scope "+scope)
+		}
 		sameScope := taskScope == scope || (taskScope == "" && deliveryRefsOverlap(normalizeList(task.Data["spec_refs"]), plan.SpecRefs))
 		if wanted[key] && stringField(task.Data, "epic") == strings.ToUpper(plan.Epic) && sameScope {
 			if previous := mapping[key]; previous != "" && previous != id {
@@ -422,7 +445,7 @@ func deliveryFrontiers(plan deliveryPlan) ([][]string, bool) {
 }
 
 func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImportReport, args Args) error {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := deliveryImportNow().UTC().Format(time.RFC3339)
 	actor := fallback(firstNonEmpty(args.String("by"), args.String("actor")), "agent:"+defaultActorName())
 	writes := map[string]string{}
 	for _, task := range plan.Tasks {
@@ -450,6 +473,9 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 			deps = append(deps, report.TaskMapping[dep.Task]+":"+fallback(strings.ToLower(dep.Kind), "hard"))
 		}
 		contractFingerprint := deliveryTaskFingerprint(task)
+		if plan.v2 != nil {
+			contractFingerprint = deliveryV2TaskFingerprint(task, plan.v2.HumanGates)
+		}
 		if existing != nil && (status != "backlog" || readiness != "held") && stringField(existing, "delivery_contract_fingerprint") != contractFingerprint {
 			return tuskerError(errorInvalidTransition, id+" has progressed beyond held state; changed delivery contract requires an explicit rework/control transition")
 		}
@@ -465,6 +491,12 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 			"owned_paths":       task.OwnedPaths, "runner_profile": firstNonEmpty(task.RunnerProfile, plan.RunnerProfile),
 			"concurrency_group": task.ConcurrencyGroup, "knowledge_nodes": task.KnowledgeNodes, "wave": report.WaveID,
 			"created_at": createdAt, "created_by": createdBy, "updated_at": now, "updated_by": actor,
+		}
+		if len(task.RequirementRefs) > 0 {
+			data["requirement_refs"] = task.RequirementRefs
+		}
+		if plan.v2 != nil {
+			data["gates"] = deliveryV2TaskGateIDs(plan.v2, task.SourceKey)
 		}
 		if existing != nil && (status != "backlog" || readiness != "held") {
 			for _, field := range []string{"proof_status", "proof_required", "proof_required_owner", "evidence_budget", "gates", "evidence_required", "machine_status", "human_status", "closeout_status", "agent_action", "next_owner", "next_source", "next_ref", "next_action", "accepted_by", "accepted_at", "closed_at"} {
@@ -529,6 +561,9 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 		"spec_refs": plan.SpecRefs, "delivery_plan_scope": report.PlanScope, "delivery_plan_fingerprint": report.PlanFingerprint, "concurrency": report.ExpectedConcurrency,
 		"runner_profile": plan.RunnerProfile, "created_at": waveCreatedAt, "created_by": waveCreatedBy, "updated_at": now, "updated_by": actor,
 	}
+	if plan.v2 != nil {
+		waveData["requirements"] = plan.v2.Requirements
+	}
 	if fileExists(wavePath) {
 		previous, _, _ := parseFrontmatterMustRead(wavePath)
 		for _, field := range []string{"authorization", "authorization_fingerprint", "authorized_by", "authorized_at", "authorization_reason", "authorization_updated_by", "authorization_updated_at"} {
@@ -544,6 +579,11 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 		return err
 	}
 	writes[wavePath] = waveContent
+	if plan.v2 != nil {
+		if err := deliveryV2WriteExtras(vaultPath, plan, report, writes, now, actor); err != nil {
+			return err
+		}
+	}
 	currentRefs := makeSet(plan.SpecRefs...)
 	allRefs := uniqueStrings(append(append([]string{}, previousSpecRefs...), plan.SpecRefs...))
 	for _, ref := range allRefs {
@@ -576,6 +616,9 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 		}
 		writes[specPath] = content
 	}
+	if err := convergeUnchangedDeliveryWrites(writes); err != nil {
+		return err
+	}
 	branch := v7IntegrationBranchName(report.WaveID)
 	repoRoot := v7RepoRoot(vaultPath)
 	branchExisted := !v7GitRepo(repoRoot) || gitRefExists(repoRoot, "refs/heads/"+branch)
@@ -591,6 +634,43 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 			_, _ = gitCombined(repoRoot, "update-ref", "-d", "refs/heads/"+branch)
 		}
 		return err
+	}
+	return nil
+}
+
+func convergeUnchangedDeliveryWrites(writes map[string]string) error {
+	for path, next := range writes {
+		current, err := readText(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if current == next {
+			delete(writes, path)
+			continue
+		}
+		currentData, currentBody, currentErr := parseFrontmatter(current)
+		nextData, nextBody, nextErr := parseFrontmatter(next)
+		if currentErr != nil || nextErr != nil {
+			continue
+		}
+		for _, field := range []string{"updated_at", "updated_by", "state_rev"} {
+			delete(currentData, field)
+			delete(nextData, field)
+		}
+		currentCanonical, err := yaml.Marshal(currentData)
+		if err != nil {
+			return err
+		}
+		nextCanonical, err := yaml.Marshal(nextData)
+		if err != nil {
+			return err
+		}
+		if bytes.Equal(currentCanonical, nextCanonical) && strings.TrimSpace(currentBody) == strings.TrimSpace(nextBody) {
+			delete(writes, path)
+		}
 	}
 	return nil
 }

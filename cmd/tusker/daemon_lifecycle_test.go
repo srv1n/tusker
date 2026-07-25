@@ -142,6 +142,7 @@ func TestDispatchConsultsPlanBeforeExecute(t *testing.T) {
 		"next_owner": "blocked_dependency",
 	})
 	project := registerAutomationTestProject(t, vault)
+	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 
 	daemon, err := NewDaemon(DefaultStateRoot())
 	if err != nil {
@@ -404,6 +405,7 @@ func TestStaleLeaseReleaseForReviewState(t *testing.T) {
 		"next_owner": "reviewer",
 	})
 	project := registerAutomationTestProject(t, vault)
+	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		t.Fatal(err)
@@ -887,6 +889,7 @@ func TestDispatchRecordsProcessIdentity(t *testing.T) {
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Identity", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
+	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 
 	daemon, err := NewDaemon(DefaultStateRoot())
 	if err != nil {

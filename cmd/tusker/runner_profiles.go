@@ -248,6 +248,9 @@ func mergeTuskerAutomationConfig(dst *v7TuskerConfigFile, src v7TuskerConfigFile
 	if src.Automation.Enabled != nil {
 		dst.Automation.Enabled = src.Automation.Enabled
 	}
+	if strings.TrimSpace(src.Automation.DispatchScope) != "" {
+		dst.Automation.DispatchScope = strings.TrimSpace(src.Automation.DispatchScope)
+	}
 	if len(src.Automation.TriggerStates) > 0 {
 		dst.Automation.TriggerStates = append([]string{}, src.Automation.TriggerStates...)
 	}

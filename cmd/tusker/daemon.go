@@ -34,7 +34,13 @@ type Daemon struct {
 	notifyMu               sync.Mutex
 	notifyTimers           map[string]*time.Timer
 	notifyWake             chan string
+	frontierMu             sync.Mutex
+	frontiers              map[string]*projectFrontierIndex
+	frontierHints          map[string][]daemonControlChange
 	attentionLastPoll      map[string]time.Time
+	departureMu            sync.Mutex
+	departureSchedules     map[string]departureSchedule
+	departurePlan          func(RegisteredProject, Workflow) (DepartureDecision, error)
 	reconcileMu            sync.Mutex
 	reconcileSchedule      map[string]adaptiveProjectReconcileState
 	processIdentityProbe   func(RunStatus) bool
@@ -81,7 +87,7 @@ func NewDaemon(stateRoot string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Daemon{stateRoot: stateRoot, store: store, notifyWake: make(chan string, 256)}, nil
+	return &Daemon{stateRoot: stateRoot, store: store, notifyWake: make(chan string, 256), frontiers: map[string]*projectFrontierIndex{}, frontierHints: map[string][]daemonControlChange{}, departureSchedules: map[string]departureSchedule{}}, nil
 }
 
 func (d *Daemon) Close() error {
@@ -115,9 +121,11 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 				if strings.TrimSpace(req.ProjectID) == "" {
 					return daemonControlResponse{OK: false, Message: "project_id is required"}
 				}
+				d.recordFrontierHint(req.ProjectID, req.Changes)
 				d.scheduleProjectReconcile(req.ProjectID)
 				return daemonControlResponse{OK: true}
 			case "reconcile_registry":
+				d.clearFrontiers()
 				d.scheduleProjectReconcile("*")
 				return daemonControlResponse{OK: true}
 			default:
@@ -152,6 +160,7 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 	if err != nil {
 		return err
 	}
+	initialWait = d.nextDepartureWait(time.Now().UTC(), initialWait)
 	pollTimer := time.NewTimer(initialWait)
 	defer pollTimer.Stop()
 	var attentionC <-chan time.Time
@@ -174,7 +183,7 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 				if err != nil {
 					return err
 				}
-				resetTimer(pollTimer, wait)
+				resetTimer(pollTimer, d.nextDepartureWait(time.Now().UTC(), wait))
 				continue
 			}
 			d.noteProjectActivity(projectID, "cli_mutation", time.Now().UTC())
@@ -185,7 +194,7 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 			if err != nil {
 				return err
 			}
-			resetTimer(pollTimer, wait)
+			resetTimer(pollTimer, d.nextDepartureWait(time.Now().UTC(), wait))
 		case <-pollTimer.C:
 			due, _, err := d.adaptiveProjectsDue(time.Now().UTC())
 			if err != nil {
@@ -196,11 +205,19 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 					return err
 				}
 			}
+			for _, projectID := range d.departureProjectsDue(time.Now().UTC()) {
+				if containsString(due, projectID) {
+					continue
+				}
+				if err := d.runPoll(runCtx, projectID); err != nil {
+					return err
+				}
+			}
 			_, wait, err := d.adaptiveProjectsDue(time.Now().UTC())
 			if err != nil {
 				return err
 			}
-			resetTimer(pollTimer, wait)
+			resetTimer(pollTimer, d.nextDepartureWait(time.Now().UTC(), wait))
 		case now := <-attentionC:
 			for _, attendedProjectID := range d.attentionProjectsDue(now) {
 				d.noteProjectActivity(attendedProjectID, "serve_attention", now)
@@ -213,7 +230,7 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 			if err != nil {
 				return err
 			}
-			resetTimer(pollTimer, wait)
+			resetTimer(pollTimer, d.nextDepartureWait(time.Now().UTC(), wait))
 		}
 	}
 }
@@ -587,6 +604,114 @@ func (d *Daemon) scheduleProjectReconcile(projectID string) {
 	d.notifyTimers[projectID] = timer
 }
 
+func (d *Daemon) recordFrontierHint(projectID string, changes []daemonControlChange) {
+	if d == nil || strings.TrimSpace(projectID) == "" || len(changes) == 0 {
+		return
+	}
+	d.frontierMu.Lock()
+	defer d.frontierMu.Unlock()
+	if d.frontierHints == nil {
+		d.frontierHints = map[string][]daemonControlChange{}
+	}
+	d.frontierHints[projectID] = append(d.frontierHints[projectID], changes...)
+}
+
+func (d *Daemon) takeFrontierHint(projectID string) []daemonControlChange {
+	if d == nil {
+		return nil
+	}
+	d.frontierMu.Lock()
+	defer d.frontierMu.Unlock()
+	changes := append([]daemonControlChange(nil), d.frontierHints[projectID]...)
+	delete(d.frontierHints, projectID)
+	return changes
+}
+
+func (d *Daemon) clearFrontiers() {
+	if d == nil {
+		return
+	}
+	d.frontierMu.Lock()
+	defer d.frontierMu.Unlock()
+	d.frontiers = map[string]*projectFrontierIndex{}
+	d.frontierHints = map[string][]daemonControlChange{}
+}
+
+func (d *Daemon) rebuildFrontier(projectID string, notes []Note) {
+	if d == nil || strings.TrimSpace(projectID) == "" {
+		return
+	}
+	d.frontierMu.Lock()
+	defer d.frontierMu.Unlock()
+	if d.frontiers == nil {
+		d.frontiers = map[string]*projectFrontierIndex{}
+	}
+	index := newProjectFrontierIndex(projectID)
+	index.rebuild(notes)
+	d.frontiers[projectID] = index
+}
+
+// applyFrontierHint is deliberately all-or-nothing: any unknown path, deleted
+// record, or revision discrepancy falls back to the canonical adaptive scan.
+func (d *Daemon) applyFrontierHint(project RegisteredProject, changes []daemonControlChange) ([]Note, bool) {
+	if d == nil || len(changes) == 0 {
+		return nil, false
+	}
+	d.frontierMu.Lock()
+	defer d.frontierMu.Unlock()
+	index := d.frontiers[project.ProjectID]
+	if index == nil {
+		return nil, false
+	} // daemon restart: cold reconstruction
+	recordChanges := make([]daemonControlChange, 0, len(changes))
+	runtimeTaskIDs := make([]string, 0, len(changes))
+	for _, change := range changes {
+		if frontierRuntimeOnlyChange(change) {
+			runtimeTaskIDs = append(runtimeTaskIDs, change.ID)
+		} else {
+			recordChanges = append(recordChanges, change)
+		}
+	}
+	if len(recordChanges) > 0 {
+		paths, ok := index.pathsForChanges(recordChanges)
+		if !ok {
+			return nil, false
+		}
+		notes, err := loadOperationalNotesByPath(project.VaultRoot, paths)
+		if err != nil || len(notes) != len(recordChanges) {
+			return nil, false
+		}
+		byID := map[string]Note{}
+		for _, note := range notes {
+			byID[stringField(note.Data, "id")] = note
+		}
+		for _, change := range recordChanges {
+			note, ok := byID[change.ID]
+			if !ok {
+				return nil, false
+			}
+			if revision := strings.TrimSpace(change.Revision); revision != "" && revision != firstNonEmpty(stringField(note.Data, "state_rev"), stringField(note.Data, "work_revision")) {
+				return nil, false
+			}
+		}
+		index.apply(notes)
+	}
+	if len(runtimeTaskIDs) > 0 {
+		if _, ok := index.touch(runtimeTaskIDs); !ok {
+			return nil, false
+		}
+	}
+	return index.notes(), true
+}
+
+func frontierRuntimeOnlyChange(change daemonControlChange) bool {
+	if strings.EqualFold(strings.TrimSpace(change.Kind), "run") {
+		return true
+	}
+	// Compatibility for work-session clients released before `kind: run`.
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(change.Revision)), "lease:")
+}
+
 func (d *Daemon) stopNotifyTimers() {
 	if d == nil {
 		return
@@ -609,7 +734,25 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 	if err := d.feedWatchdogBeat(time.Now().UTC()); err != nil {
 		return err
 	}
-	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{Notes: true, FrontmatterOnly: true, OperationalOnly: true, ProjectID: projectID})
+	var projects []loadedRegisteredProject
+	warmProjectID := ""
+	if projectID != "" {
+		if changes := d.takeFrontierHint(projectID); len(changes) > 0 {
+			projects, err = loadRegisteredProjects(d.store, registeredProjectLoadOptions{ProjectID: projectID})
+			if err != nil {
+				return err
+			}
+			if len(projects) == 1 && projects[0].Loadable() {
+				if notes, ok := d.applyFrontierHint(projects[0].Project, changes); ok {
+					projects[0].Notes = notes
+					warmProjectID = projectID
+				}
+			}
+		}
+	}
+	if warmProjectID == "" {
+		projects, err = loadRegisteredProjects(d.store, registeredProjectLoadOptions{Notes: true, FrontmatterOnly: true, OperationalOnly: true, ProjectID: projectID})
+	}
 	if err != nil {
 		return err
 	}
@@ -662,6 +805,11 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			return err
 		}
 		loaded.Notes = notes
+	}
+	for i := range projects {
+		if projects[i].Loadable() && projects[i].Project.ProjectID != warmProjectID {
+			d.rebuildFrontier(projects[i].Project.ProjectID, projects[i].Notes)
+		}
 	}
 	globalActiveRuns := countDispatchCapacityRuns(allRuns)
 	globalLimit, err := d.globalActiveRunLimit()
@@ -719,6 +867,9 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		projectActiveRuns := countDispatchCapacityProjectRuns(projectRuns)
 		now := time.Now().UTC()
 		if err := d.scheduleBatchGateIfDue(project, wfFile.Data, now); err != nil {
+			return err
+		}
+		if err := d.scheduleDepartureIfDue(project, wfFile.Data, now); err != nil {
 			return err
 		}
 		skipReviewDispatch := map[string]struct{}{}
@@ -934,7 +1085,16 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 						}
 					}
 				}
-				if reason := armedWaveDispatchBlocker(project.VaultRoot, dispatchNote, wfFile.Data, projectRuns); reason != "" {
+				// Process-level dispatch refusal (one-shot interactive commands and
+				// circuit containment) is the outer authority boundary.  Evaluate it
+				// before task-local scope/readiness projections so callers receive the
+				// actual refusal instead of a misleading per-task blocker.
+				if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
+					return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneExecute}))
+				}
+				if reason, err := d.scopeDispatchBlocker(project, dispatchNote, wfFile.Data, projectRuns); err != nil {
+					return err
+				} else if reason != "" {
 					current.LastError = "dispatch blocked: " + reason
 					current.UpdatedAt = now.Format(time.RFC3339)
 					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
@@ -1143,7 +1303,12 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			if !shouldDispatchRun(current, now) {
 				continue
 			}
-			if reason := armedWaveDispatchBlocker(project.VaultRoot, note, wfFile.Data, projectRuns); reason != "" {
+			if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
+				return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneReview}))
+			}
+			if reason, err := d.scopeDispatchBlocker(project, note, wfFile.Data, projectRuns); err != nil {
+				return err
+			} else if reason != "" {
 				current.LastError = "review dispatch blocked: " + reason
 				current.UpdatedAt = now.Format(time.RFC3339)
 				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
@@ -1771,7 +1936,7 @@ func (d *Daemon) executePlanBlockedReason(project RegisteredProject, wfFile Work
 	if runDirectiveActive(directive, time.Now().UTC()) {
 		filtered := blockers[:0]
 		for _, blocker := range blockers {
-			if blocker != "project automation is disabled in its configuration" {
+			if !runDirectiveBypassableBlocker(blocker) {
 				filtered = append(filtered, blocker)
 			}
 		}
@@ -3213,6 +3378,24 @@ func resolveRunnerForNote(note Note, wf Workflow) string {
 		}
 	}
 	return wf.Agents.Default
+}
+
+// scopeDispatchBlocker preserves the narrow human-directive exception: a
+// directive may bypass only automation-off and fresh no-wave scope admission.
+// It never weakens dependency, readiness, runner, budget, or circuit checks.
+func (d *Daemon) scopeDispatchBlocker(project RegisteredProject, note Note, wf Workflow, runs map[string]RunStatus) (string, error) {
+	reason := armedWaveDispatchBlocker(project.VaultRoot, note, wf, runs)
+	if reason == "" || !runDirectiveBypassableBlocker(reason) {
+		return reason, nil
+	}
+	directive, err := d.store.RunDirective(project.ProjectID, stringField(note.Data, "id"))
+	if err != nil {
+		return "", err
+	}
+	if runDirectiveActive(directive, time.Now().UTC()) {
+		return "", nil
+	}
+	return reason, nil
 }
 
 func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane string) (RunStatus, bool, error) {

@@ -54,6 +54,27 @@ func TestRunDirectiveRecorded(t *testing.T) {
 	assertEqual(t, "human:test-operator", directive.Actor, "duplicate must not overwrite actor")
 }
 
+func TestRunDirectiveBypassableBlocker(t *testing.T) {
+	tests := []struct {
+		name    string
+		blocker string
+		want    bool
+	}{
+		{name: "automation disabled", blocker: "project automation is disabled in its configuration", want: true},
+		{name: "default armed wave membership", blocker: "dispatch scope armed_waves requires task membership in a currently armed wave", want: true},
+		{name: "explicit wave is not armed", blocker: "wave is not durably armed", want: false},
+		{name: "dependency", blocker: "dependency APP-T-0002 is not done", want: false},
+		{name: "empty", blocker: "", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := runDirectiveBypassableBlocker(tt.blocker); got != tt.want {
+				t.Fatalf("runDirectiveBypassableBlocker(%q) = %v, want %v", tt.blocker, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDaemonHonorsDirectiveWithAutomationOff(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Directed", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)

@@ -220,6 +220,7 @@ func TestCrashLoopPreRunFailuresLeaveSixthReplacementServingReads(t *testing.T) 
 		t.Fatal(err)
 	}
 	project := newRegisteredProject(filepath.Dir(vault), vault)
+	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 	if err := store.UpsertProject(project); err != nil {
 		t.Fatal(err)
 	}
@@ -376,6 +377,7 @@ func TestCrashLoopBreakerBlocksDispatchUntilResume(t *testing.T) {
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Crash loop blocked", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
+	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		t.Fatal(err)

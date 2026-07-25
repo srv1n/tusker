@@ -1,0 +1,620 @@
+schema: tusker.delivery-plan/v1
+scope: scheduled-promotion/v1
+title: Opt-in scheduled promotion
+epic: ORC
+spec_refs:
+  - docs/specs/12-opt-in-scheduled-promotion.md
+concurrency: 3
+tasks:
+  - source_key: opt-in-policy
+    title: Define the default-off scheduled-promotion policy
+    outcome: A versioned workflow contract exposes monotone disabled, shadow, stage, and promote modes while release and paid triage remain separately authorized.
+    acceptance:
+      - id: A1
+        outcome: Absent scheduled-promotion configuration preserves current behavior and causes no scheduling, Git access, model launch, ref mutation, release, or feature-generated runtime record.
+      - id: A2
+        outcome: The configured mode grants only its documented monotone permissions, and enabling promotion cannot enable release or paid model triage.
+      - id: A3
+        outcome: Invalid or contradictory combinations fail validation with a stable cause and actionable remedy.
+      - id: A4
+        outcome: Fresh initialization and migration preserve a disabled default and expose effective mode provenance through configuration inspection.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestScheduledPromotionPolicy' -count=1"
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/workflow_validate_test.go
+      summary: Default-off and permission-mode behavior matrix covering absent, disabled, shadow, stage, promote, release, and triage combinations.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/workflow.go
+      - cmd/tusker/workflow_validate.go
+      - cmd/tusker/workflow_validate_test.go
+      - cmd/tusker/config.go
+      - cmd/tusker/config_test.go
+    concurrency_group: foundation
+    risk: high
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: departure-runtime-store
+    title: Persist restart-safe departure runs
+    outcome: The runtime store owns first-class idempotent departure records instead of representing scheduled system work as fake task attempts.
+    acceptance:
+      - id: A1
+        outcome: A departure record captures project, policy, scheduled window, state, candidate fingerprints, gate, promotion, release, skip or block reason, and model invocation count.
+      - id: A2
+        outcome: A uniqueness constraint prevents duplicate departure creation for the same project, policy, and scheduled window across concurrent triggers and daemon restarts.
+      - id: A3
+        outcome: State transitions use compare-and-swap semantics and reject stale writers without losing the winning terminal result.
+      - id: A4
+        outcome: Startup reconciliation classifies incomplete states as safely resumable or explicitly blocked and never repeats an already committed ref or release action.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestDepartureRunStore' -count=1"
+    artifact:
+      kind: reliability_summary
+      path: cmd/tusker/departure_store_test.go
+      summary: Persistence, duplicate-trigger, stale-writer, and restart-recovery reliability proof for departure runs.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/runtime_store.go
+      - cmd/tusker/departure_store.go
+      - cmd/tusker/departure_store_test.go
+    concurrency_group: foundation
+    risk: high
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: shadow-planner-cli
+    title: Build the deterministic shadow planner and CLI
+    outcome: Operators can inspect an immutable, model-free departure decision with typed reasons before authorizing staging or promotion.
+    acceptance:
+      - id: A1
+        outcome: The planner snapshots task state revisions, source SHAs, wave authorization, integration and default refs, proof fingerprints, gate intent, resource needs, and release eligibility.
+      - id: A2
+        outcome: Disabled mode returns a clear disabled decision without Git fetch, mutation, model invocation, or a durable departure run.
+      - id: A3
+        outcome: Shadow mode may refresh configured remote refs under a bounded timeout but cannot mutate Git refs, task or wave records, gates, external systems, or launch paid work.
+      - id: A4
+        outcome: Offline or failed fetch is indeterminate or blocked, never reported as empty cargo.
+      - id: A5
+        outcome: Check, status, and bounded history commands emit stable JSON and concise product-language terminal output.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestDeparturePlanner' -count=1"
+      - covers: A5
+        check: "command: go test ./cmd/tusker -run '^TestDepartureCLI' -count=1"
+    dependencies:
+      - task: opt-in-policy
+        kind: hard
+      - task: departure-runtime-store
+        kind: hard
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/departure_planner_test.go
+      summary: Planner decision matrix for disabled, empty, cargo, held, offline, stale authorization, already gated, and release-ineligible states.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - cmd/tusker/cli.go
+      - cmd/tusker/departure_commands.go
+      - cmd/tusker/departure_planner.go
+      - cmd/tusker/departure_planner_test.go
+    concurrency_group: planner
+    risk: high
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: implicit-singleton
+    title: Make standalone tasks invisible singleton delivery units
+    outcome: A lone finished task follows the same staging and promotion path as a wave without requiring the operator to understand or manipulate wave mechanics.
+    acceptance:
+      - id: A1
+        outcome: In stage or promote mode, a standalone task receives an implicit one-member delivery unit before landing while disabled and shadow modes create none and explicit multi-task wave behavior remains unchanged.
+      - id: A2
+        outcome: Finish, review, staging, and scheduled promotion require no explicit wave create, add, or arm command for the singleton path.
+      - id: A3
+        outcome: Automatic wrapping inherits existing task execution provenance and repository landing policy but cannot authorize new implementation work or release.
+      - id: A4
+        outcome: Existing task branches and detached completed worktrees can be adopted safely with exact source binding and idempotent repeated reconciliation.
+      - id: A5
+        outcome: Basic human surfaces describe staging and scheduled landing without exposing the synthetic wave ID unless the operator drills into diagnostics.
+    verification:
+      - covers: A1,A2,A3,A4,A5
+        check: "command: go test ./cmd/tusker -run '^TestImplicitSingleton' -count=1"
+    dependencies:
+      - task: opt-in-policy
+        kind: hard
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/v7_delivery_unit_test.go
+      summary: Standalone and explicit-wave lifecycle comparison proving zero-ceremony delivery without authorization widening.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - cmd/tusker/v7_delivery_unit.go
+      - cmd/tusker/v7_delivery_unit_test.go
+      - cmd/tusker/v7_wave_cmd.go
+      - cmd/tusker/v7_finish_cmd.go
+      - cmd/tusker/v7_land_cmd.go
+      - cmd/tusker/v7_land_recovery_test.go
+      - cmd/tusker/workspace_manager.go
+    concurrency_group: task-lifecycle
+    risk: high
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: daemon-timetable
+    title: Run opt-in timetables, holds, and misfire policy in the daemon
+    outcome: The resident daemon evaluates only opted-in projects at the nearest due window and produces one idempotent departure decision.
+    acceptance:
+      - id: A1
+        outcome: Opted-out projects add no departure wakeups, polling work, Git access, records, or dispatch capacity consumption.
+      - id: A2
+        outcome: Daily windows and timezone behavior share one scheduling primitive with existing batch gates rather than creating a second clock implementation.
+      - id: A3
+        outcome: Global, project, and release-only holds are durable, attributable, instantly effective for future actions, and expose the exact resume action.
+      - id: A4
+        outcome: Staging windows default to skip-on-misfire and full promotion coalesces at most one ungated missed window; no policy replays every missed departure.
+      - id: A5
+        outcome: Concurrent triggers and restarts converge on the unique departure record without launching duplicate work.
+    verification:
+      - covers: A1,A2,A3,A4,A5
+        check: "command: go test ./cmd/tusker -run '^TestDepartureScheduler' -count=1"
+    dependencies:
+      - task: shadow-planner-cli
+        kind: hard
+    artifact:
+      kind: reliability_timeline
+      path: cmd/tusker/departure_scheduler_test.go
+      summary: Clock, hold, sleep/wake, duplicate-trigger, and restart event timelines with one durable outcome per window.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - cmd/tusker/cli.go
+      - cmd/tusker/departure_commands.go
+      - cmd/tusker/daemon.go
+      - cmd/tusker/batch_gate.go
+      - cmd/tusker/departure_scheduler.go
+      - cmd/tusker/departure_scheduler_test.go
+      - cmd/tusker/daemon_control.go
+    concurrency_group: daemon
+    risk: high
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: global-resource-leases
+    title: Arbitrate scarce build and release resources across projects
+    outcome: Heavy gates and releases acquire atomic daemon-wide resource leases with bounded recovery instead of relying on unrelated repository lock files.
+    acceptance:
+      - id: A1
+        outcome: Resource leases carry name, owner, purpose, project, departure, heartbeat, expiry, and generation and are acquired atomically across processes.
+      - id: A2
+        outcome: A healthy holder blocks a competing project with a stable cause and remedy while unrelated resources and light work remain concurrent.
+      - id: A3
+        outcome: Expired holders are reclaimed only after liveness or expiry policy proves recovery is safe, with an attributable takeover record.
+      - id: A4
+        outcome: Gate and release runners release leases on terminal outcomes and restart reconciliation recovers abandoned leases without overlapping work.
+      - id: A5
+        outcome: Existing project-local build-slot checks remain compatible but are not presented as daemon-wide arbitration.
+    verification:
+      - covers: A1,A2,A3,A4,A5
+        check: "command: go test ./cmd/tusker -run '^TestResourceLease' -count=1"
+    dependencies:
+      - task: departure-runtime-store
+        kind: hard
+    artifact:
+      kind: reliability_timeline
+      path: cmd/tusker/resource_lease_test.go
+      summary: Two-project contention, crash, expiry, takeover, and release timeline proving that heavy work never overlaps.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - cmd/tusker/runtime_store.go
+      - cmd/tusker/resource_lease.go
+      - cmd/tusker/resource_lease_test.go
+      - cmd/tusker/gate_tier.go
+    concurrency_group: foundation
+    risk: high
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: gated-staging-promotion
+    title: Stage continuously and promote only an exact full-green candidate
+    outcome: Reviewed work integrates into delivery branches while the default branch moves only through a deterministic, full-gated, compare-and-swap promotion.
+    acceptance:
+      - id: A1
+        outcome: Stage mode may land eligible reviewed tasks into their delivery branch but cannot move the configured default branch.
+      - id: A2
+        outcome: Promote mode reuses the serialized landing engine, staging worktree, batch bisection, gate ledger, and landing audit instead of implementing parallel merge machinery.
+      - id: A3
+        outcome: The full promotion gate binds the exact frozen candidate, command, profile, and toolchain, and focused staging proof cannot satisfy it.
+      - id: A4
+        outcome: Candidate, task, authorization, integration, gate, or default-ref drift before update produces a named recompute or refusal and never an optimistic push.
+      - id: A5
+        outcome: Successful promotion records the exact last successfully gated and promoted SHA only after the ref update and remains idempotent on replay.
+      - id: A6
+        outcome: Existing repositories without the opt-in policy retain the current reviewer and wave landing behavior.
+    verification:
+      - covers: A1,A2,A3,A4,A5,A6
+        check: "command: go test ./cmd/tusker -run '^TestScheduledPromotionLanding' -count=1"
+    dependencies:
+      - task: implicit-singleton
+        kind: hard
+      - task: daemon-timetable
+        kind: hard
+      - task: global-resource-leases
+        kind: hard
+    artifact:
+      kind: reliability_timeline
+      path: cmd/tusker/scheduled_promotion_test.go
+      summary: Reviewed task through staging, full gate, CAS main promotion, replay, drift refusal, and default-off compatibility timeline.
+      acceptance_ids: [A1, A2, A3, A4, A5, A6]
+    owned_paths:
+      - cmd/tusker/v7_land_cmd.go
+      - cmd/tusker/v7_land_recovery_test.go
+      - cmd/tusker/scheduled_promotion.go
+      - cmd/tusker/scheduled_promotion_test.go
+      - cmd/tusker/armed_wave.go
+    concurrency_group: landing
+    risk: high
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: red-failure-packet
+    title: Capture and deterministically classify red promotion evidence
+    outcome: One structured failure packet lets Tusker distinguish infrastructure, known flakes, isolated task failures, and ambiguous integration failures without rediscovery.
+    acceptance:
+      - id: A1
+        outcome: A red promotion stores exact candidate, gate, toolchain, runner, defect, last-green, bisection, task, touched-path, reproduction, and runtime artifact facts.
+      - id: A2
+        outcome: Raw logs remain runtime artifacts while tasks and briefs receive bounded actionable diagnostics and durable references.
+      - id: A3
+        outcome: Deterministic rules classify known infrastructure, configured flakes, and isolated task failures before any model launch.
+      - id: A4
+        outcome: Infrastructure routes to bounded retry or infrastructure repair, a flake follows configured quarantine or rerun policy, and an isolated defect returns only the owning task and hard downstream closure to rework.
+      - id: A5
+        outcome: Repeated instances update one open repair contract per stable defect identity rather than creating unbounded duplicate tasks.
+    verification:
+      - covers: A1,A2,A3,A4,A5
+        check: "command: go test ./cmd/tusker -run '^TestPromotionFailure' -count=1"
+    dependencies:
+      - task: gated-staging-promotion
+        kind: hard
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/promotion_failure_test.go
+      summary: Red-gate classification and routing matrix with complete structured packet examples and bounded task projections.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - cmd/tusker/batch_gate.go
+      - cmd/tusker/gate_tier.go
+      - cmd/tusker/promotion_failure.go
+      - cmd/tusker/promotion_failure_test.go
+      - cmd/tusker/upstream_hold.go
+    concurrency_group: landing
+    risk: high
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: optional-model-triage
+    title: Dispatch paid triage only for ambiguous red promotions
+    outcome: An explicitly enabled project may spend one bounded model attempt to turn an ambiguous failure packet into a scoped repair contract.
+    acceptance:
+      - id: A1
+        outcome: Model triage defaults off and cannot launch for disabled, shadow-only, known infrastructure, known flake, or isolated task failures.
+      - id: A2
+        outcome: An ambiguous failure creates or updates a real integrator or repair task and dispatches through the normal claimed-run protocol rather than inventing a departure attempt.
+      - id: A3
+        outcome: The prompt contains the structured failure packet and governing policy but no secrets, arbitrary release command, raw transcript, or authority to move the default branch.
+      - id: A4
+        outcome: The result schema requires classification, confidence, affected tasks, likely root cause, reproduction, and repair acceptance; malformed or early exits park without fabricating a repair.
+      - id: A5
+        outcome: Per-departure and daily launch quotas fail closed with a spending hold and never rely on unauditable exact USD estimates.
+    verification:
+      - covers: A1,A2,A3,A4,A5
+        check: "command: go test ./cmd/tusker -run '^TestPromotionTriage' -count=1"
+    dependencies:
+      - task: opt-in-policy
+        kind: hard
+      - task: red-failure-packet
+        kind: hard
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/promotion_triage_test.go
+      summary: Spend/no-spend routing matrix and structured model-triage result contract for ambiguous red promotions.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - cmd/tusker/daemon.go
+      - cmd/tusker/promotion_triage.go
+      - cmd/tusker/promotion_triage_test.go
+      - cmd/tusker/runner.go
+    concurrency_group: daemon
+    risk: high
+    priority: p1
+    size: l
+    domains: [project]
+
+  - source_key: release-profiles
+    title: Bind optional releases to named authorized profiles
+    outcome: A separately opted-in release runner deploys only the exact green promoted revision without exposing credentials or arbitrary shell authority to models.
+    acceptance:
+      - id: A1
+        outcome: Promotion never implies release; absent, disabled, held, or unauthorized release configuration produces no external action.
+      - id: A2
+        outcome: Release configuration names a validated profile rather than embedding an arbitrary deploy shell command in the departure policy.
+      - id: A3
+        outcome: The release binds the promoted SHA, environment, credential provider, deterministic runner, idempotency key, rollback reference, and authorization provenance.
+      - id: A4
+        outcome: Secrets resolve only inside the release runner and are absent from prompts, records, task Markdown, logs, notifications, JSON APIs, and command previews.
+      - id: A5
+        outcome: Release hold, retry, duplicate trigger, partial failure, and rollback record one truthful durable outcome without repeating a successful release.
+    verification:
+      - covers: A1,A2,A3,A4,A5
+        check: "command: go test ./cmd/tusker -run '^TestReleaseProfile' -count=1"
+    dependencies:
+      - task: opt-in-policy
+        kind: hard
+      - task: global-resource-leases
+        kind: hard
+      - task: gated-staging-promotion
+        kind: hard
+    artifact:
+      kind: security_summary
+      path: cmd/tusker/release_profile_test.go
+      summary: Release authority, revision binding, secret-flow, idempotency, failure, and rollback security matrix.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - cmd/tusker/workflow.go
+      - cmd/tusker/runner_profiles.go
+      - cmd/tusker/release_profile.go
+      - cmd/tusker/release_profile_test.go
+      - cmd/tusker/daemon.go
+    concurrency_group: daemon
+    risk: high
+    priority: p1
+    size: xl
+    domains: [project]
+
+  - source_key: morning-brief-api
+    title: Project the scheduled-promotion morning brief
+    outcome: CLI and Serve expose one product-language brief showing what landed, what is blocked or repairing, and what requires a human decision.
+    acceptance:
+      - id: A1
+        outcome: The brief has exactly three primary lists—Landed last night, Blocked or repairing, and Needs your decision—with stable ordering and empty states.
+      - id: A2
+        outcome: The projection composes wave brief, logbook, departure, gate, repair, release, and human-gate facts without recomputing proof or storing a duplicate narrative source of truth.
+      - id: A3
+        outcome: Every blocked item shows the first actionable cause, affected scope, current automatic action, and deep link; machine work never appears under human decisions.
+      - id: A4
+        outcome: Landed items bind exact promoted and optional released revisions and link accepted artifacts without claiming release when only promotion succeeded.
+      - id: A5
+        outcome: Disabled projects return a clear feature-off projection and no alarming pending state.
+    verification:
+      - covers: A1,A2,A3,A4,A5
+        check: "command: go test ./cmd/tusker -run '^TestScheduledPromotionMorningBrief' -count=1"
+    dependencies:
+      - task: departure-runtime-store
+        kind: hard
+      - task: red-failure-packet
+        kind: hard
+      - task: release-profiles
+        kind: soft
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/morning_brief_test.go
+      summary: Product-language morning brief fixtures covering landed, repairing, human decision, release, mixed, empty, and disabled days.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - cmd/tusker/v7_wave_brief.go
+      - cmd/tusker/v7_logbook_cmd.go
+      - cmd/tusker/morning_brief.go
+      - cmd/tusker/morning_brief_test.go
+      - cmd/tusker/serve_command.go
+      - cmd/tusker/serve_types.go
+    concurrency_group: surface
+    risk: medium
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: serve-ui
+    title: Ship the morning screen and explicit opt-in controls in Serve
+    outcome: The operator can understand last night's delivery and deliberately change scheduled-promotion mode without reading logs or accidentally enabling release.
+    acceptance:
+      - id: A1
+        outcome: The project operations screen leads with the three morning lists and provides drill-down links for revisions, artifacts, repairs, gates, and release outcomes.
+      - id: A2
+        outcome: The current mode, next departure, active holds, last green promoted revision, and exact resume action are visible without opening configuration files.
+      - id: A3
+        outcome: Mode changes are explicit, explain their permitted effects, and never enable release or model triage as a side effect.
+      - id: A4
+        outcome: Disabled, shadow, held, red, green, repair, and human-decision states remain distinguishable at desktop and narrow widths with accessible labels and keyboard operation.
+      - id: A5
+        outcome: UI tests consume the versioned API contract and an objective screenshot fixture demonstrates the final information hierarchy.
+    verification:
+      - covers: A1,A2,A3,A4,A5
+        check: "command: cd internal/serve/ui && bun test tests/scheduled-promotion-brief.test.ts"
+    dependencies:
+      - task: opt-in-policy
+        kind: hard
+      - task: morning-brief-api
+        kind: hard
+    artifact:
+      kind: screenshot
+      path: internal/serve/ui/tests/fixtures/scheduled-promotion-brief.svg
+      summary: Objective wide and narrow Serve fixture showing the three-list morning brief, opt-in mode, holds, next departure, and deep links.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - internal/serve/ui/src/features/ops/ProjectOps.tsx
+      - internal/serve/ui/src/features/settings/AppSettings.tsx
+      - internal/serve/ui/src/features/settings/app/NotificationsSection.tsx
+      - internal/serve/ui/src/types/domain.ts
+      - internal/serve/ui/tests/scheduled-promotion-brief.test.ts
+      - internal/serve/ui/tests/fixtures/scheduled-promotion-brief.svg
+    concurrency_group: surface
+    risk: medium
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: actionable-notifications
+    title: Notify only on red promotion, failed release, or spending hold
+    outcome: Operators receive one actionable deep-linked notification for the three exceptional outcomes and silence for routine departures.
+    acceptance:
+      - id: A1
+        outcome: Only promotion red, release failed, and spending or paid-launch hold events are eligible for scheduled-promotion push delivery.
+      - id: A2
+        outcome: Notifications are deduplicated by durable outcome, identify project and revision, state one bounded cause, and deep-link to the morning brief.
+      - id: A3
+        outcome: Green, empty, shadow, ordinary staging, operator-held, retrying, and repeated unchanged outcomes remain silent.
+      - id: A4
+        outcome: Notification preferences persist through the settings API, default to the documented safe values, and cannot enable scheduled promotion, model triage, or release.
+      - id: A5
+        outcome: Delivery failure is recorded for retry or inspection without changing the underlying promotion, release, or hold truth.
+    verification:
+      - covers: A1,A2,A3,A5
+        check: "command: go test ./cmd/tusker -run '^TestPromotionNotification' -count=1"
+      - covers: A4
+        check: "command: cd internal/serve/ui && bun test tests/scheduled-promotion-notifications.test.ts"
+    dependencies:
+      - task: morning-brief-api
+        kind: hard
+      - task: serve-ui
+        kind: hard
+      - task: red-failure-packet
+        kind: hard
+      - task: release-profiles
+        kind: soft
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/promotion_notifications_test.go
+      summary: Exact notification allowlist, silence matrix, deduplication, deep-link, preference, and delivery-failure proof.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - cmd/tusker/promotion_notifications.go
+      - cmd/tusker/promotion_notifications_test.go
+      - cmd/tusker/v7_escalation_digest_cmd.go
+      - cmd/tusker/serve_actions.go
+      - internal/serve/ui/src/features/settings/app/NotificationsSection.tsx
+      - internal/serve/ui/tests/scheduled-promotion-notifications.test.ts
+    concurrency_group: surface
+    risk: medium
+    priority: p1
+    size: l
+    domains: [project]
+
+  - source_key: skill-agent-guidance
+    title: Teach agents the opt-in scheduled-promotion contract
+    outcome: Canonical skills, commands, and project knowledge route every agent through the same default-off staging, promotion, red-triage, and release boundaries.
+    acceptance:
+      - id: A1
+        outcome: The operator skill states that scheduled promotion is daemon-owned and opt-in and that interactive or dispatched agents never start departures or push the default branch.
+      - id: A2
+        outcome: Integration guidance distinguishes staging proof from full promotion proof, documents implicit singleton delivery, and routes normal landings through the deterministic engine.
+      - id: A3
+        outcome: Red-gate guidance requires deterministic classification before optional paid triage and forbids model-held secrets, release authority, or fake departure attempts.
+      - id: A4
+        outcome: Command guidance documents check, status, history, holds, resume, configuration modes, release separation, and the human-facing morning surface.
+      - id: A5
+        outcome: Project canon records the durable implementation truth while generated skill installs remain outputs rather than edited sources.
+    verification:
+      - covers: A1,A2,A3,A4,A5
+        check: "command: make skill-doctor && tusker validate --json"
+    dependencies:
+      - task: gated-staging-promotion
+        kind: hard
+      - task: red-failure-packet
+        kind: hard
+      - task: morning-brief-api
+        kind: hard
+      - task: release-profiles
+        kind: soft
+      - task: actionable-notifications
+        kind: soft
+    artifact:
+      kind: knowledge_link
+      path: .tusker/knowledge/domains/project/CANON.md
+      summary: Canon and one-hop skill routing for scheduled promotion, default-off policy, operator controls, repair triage, and release authority.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - skills/tusker/SKILL.md
+      - skills/tusker/references/INTEGRATION_MERGE.md
+      - skills/tusker/references/COMMANDS.md
+      - .tusker/knowledge/domains/project/CANON.md
+      - .tusker/knowledge/domains/project/INDEX.md
+      - docs/specs/12-opt-in-scheduled-promotion.md
+    concurrency_group: guidance
+    risk: medium
+    priority: p1
+    size: l
+    domains: [project]
+    knowledge_nodes:
+      - project/CANON.md
+
+  - source_key: shadow-cutover-e2e
+    title: Prove default-off safety, shadow parity, recovery, and cutover
+    outcome: Failure-injection and migration proof demonstrate that Tusker can replace an existing conductor without a cadence gap or unauthorized side effect.
+    acceptance:
+      - id: A1
+        outcome: A repository with absent or disabled configuration experiences zero departure wakeups, Git fetches, records, branch movement, model launches, release attempts, notifications, or misleading UI pending state.
+      - id: A2
+        outcome: Shadow comparison covers empty cargo, eligible cargo, holds, offline fetch, ungated main, restart, duplicate trigger, red gate, and green promotion with exact decision diffs.
+      - id: A3
+        outcome: Crash injection at evaluating, staging, gating, promoting, releasing, and terminal persistence converges without duplicate main movement, release, notification, or repair task.
+      - id: A4
+        outcome: A standalone task completes the zero-ceremony path from finish through review, staging, scheduled full gate, main promotion, and morning brief.
+      - id: A5
+        outcome: Two projects contending for one heavy resource serialize correctly while independent light work continues.
+      - id: A6
+        outcome: The cutover runbook keeps the legacy conductor authoritative until representative parity passes, disables it only after Tusker becomes authoritative, and preserves one rollback window.
+    verification:
+      - covers: A1,A2,A3,A4,A5
+        check: "command: go test ./e2e/... -run '^TestScheduledPromotion' -count=1"
+      - covers: A6
+        check: "command: go test ./cmd/tusker -run 'TestScheduledPromotionCutoverDoctor' -count=1"
+    dependencies:
+      - task: shadow-planner-cli
+        kind: hard
+      - task: implicit-singleton
+        kind: hard
+      - task: daemon-timetable
+        kind: hard
+      - task: global-resource-leases
+        kind: hard
+      - task: gated-staging-promotion
+        kind: hard
+      - task: red-failure-packet
+        kind: hard
+      - task: optional-model-triage
+        kind: soft
+      - task: release-profiles
+        kind: soft
+      - task: morning-brief-api
+        kind: hard
+      - task: serve-ui
+        kind: hard
+      - task: actionable-notifications
+        kind: hard
+      - task: skill-agent-guidance
+        kind: hard
+    artifact:
+      kind: reliability_timeline
+      path: e2e/scheduled_promotion_test.go
+      summary: End-to-end default-off, parity, failure-injection, singleton, cross-project, and conductor-cutover reliability evidence.
+      acceptance_ids: [A1, A2, A3, A4, A5, A6]
+    owned_paths:
+      - e2e/scheduled_promotion_test.go
+      - cmd/tusker/delivery_rollout.go
+      - cmd/tusker/delivery_rollout_test.go
+      - docs/runbooks/scheduled-promotion-cutover.md
+    concurrency_group: integration
+    risk: high
+    priority: p0
+    size: xl
+    domains: [project]

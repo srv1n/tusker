@@ -213,6 +213,11 @@ func statusV7Cmd(args Args) error {
 	baseRev := stringField(data, "state_rev")
 	prev := stringField(data, "status")
 	actor := fallback(fallback(args.String("actor"), args.String("by")), "agent:"+defaultActorName())
+	if nextStatus == "review" {
+		if err := requireAgentWorkSession(vaultPath, id, actor, args); err != nil {
+			return err
+		}
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	data["status"] = nextStatus
 	data["updated_at"] = now

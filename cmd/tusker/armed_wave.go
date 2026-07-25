@@ -325,6 +325,10 @@ func armedWaveReviewDependencyBlocker(vaultPath string, task Note) string {
 }
 
 func armedWaveDispatchBlocker(vaultPath string, task Note, wf Workflow, runs map[string]RunStatus) string {
+	return automationDispatchScopeBlocker(vaultPath, task, wf, runs)
+}
+
+func armedWaveDispatchBlockerForArmedScope(vaultPath string, task Note, wf Workflow, runs map[string]RunStatus) string {
 	wave, idx, armed := armedWaveForTask(vaultPath, task)
 	if stringField(task.Data, "wave") == "" {
 		return ""

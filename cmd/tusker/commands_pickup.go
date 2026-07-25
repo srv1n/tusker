@@ -35,19 +35,13 @@ func claimCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	id, err := requireArg(args, "id")
-	if err != nil {
-		return err
-	}
-	if note, err := resolveV7Note(vaultPath, id, "task"); err == nil && strings.HasSuffix(stringField(note.Data, "schema"), "/v7") {
-		if args.String("owner") == "" && args.String("as") != "" {
-			args["owner"] = args.String("as")
-		}
-		if args.String("owner") == "" && args.String("actor") != "" {
-			args["owner"] = args.String("actor")
+	if !fileExists(workflowPath(vaultPath)) {
+		id, err := requireArg(args, "id")
+		if err != nil {
+			return err
 		}
 		if args.String("owner") == "" {
-			args["owner"] = "agent:" + defaultActorName()
+			args["owner"] = firstNonEmpty(args.String("as"), args.String("actor"), "agent:"+defaultActorName())
 		}
 		if _, err := writeV7Lease(args, "active"); err != nil {
 			return err
@@ -55,10 +49,13 @@ func claimCmd(args Args) error {
 		if err := restampHandRun(vaultPath, id, args.String("owner")); err != nil {
 			return err
 		}
-		_ = emitV7Event(vaultPath, id, "task", "claimed", fallback(args.String("owner"), "agent:"+defaultActorName()), map[string]any{"branch": currentGitBranch(), "hand_run": claimIsHandRun()})
-		return nil
+		return emitV7Event(vaultPath, id, "task", "claimed", args.String("owner"), map[string]any{"branch": currentGitBranch(), "hand_run": claimIsHandRun(), "compatibility": "single_user_local"})
 	}
-	return removedSurfaceError("legacy claim")
+	if args.String("owner") == "" {
+		args["owner"] = firstNonEmpty(args.String("as"), args.String("actor"), "agent:"+defaultActorName())
+	}
+	args["source"] = firstNonEmpty(args.String("source"), "tusker_cli")
+	return workSessionStartCmd(args)
 }
 
 func nextCmd(args Args) error {
@@ -99,10 +96,9 @@ func emitNextSelection(args Args, vaultPath string, selected Note, skipped []nex
 			args["owner"] = firstNonEmpty(args.String("assignee"), args.String("owner"), args.String("as"), args.String("actor"), "agent:"+defaultActorName())
 		}
 		args["id"] = stringField(selected.Data, "id")
-		if _, err := writeV7Lease(args, "active"); err != nil {
-			return err
-		}
-		if err := restampHandRun(vaultPath, args.String("id"), args.String("owner")); err != nil {
+		args["source"] = firstNonEmpty(args.String("source"), "tusker_cli")
+		args["embedded"] = "true"
+		if err := claimCmd(args); err != nil {
 			return err
 		}
 	}

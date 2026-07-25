@@ -29,7 +29,7 @@ func TestServeRefreshTargetsProjectAndCollapsesRapidRequests(t *testing.T) {
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
 	daemon := &Daemon{
 		stateRoot: stateRoot, store: server.store, serve: server, stream: server.stream,
-		notifyWake: make(chan string, 8), dispatchRefusalReason: "test refresh must not dispatch",
+		notifyWake: make(chan string, 8),
 	}
 	defer daemon.stopNotifyTimers()
 	received := make(chan daemonControlRequest, 4)
@@ -86,6 +86,13 @@ func TestServeRefreshTargetsProjectAndCollapsesRapidRequests(t *testing.T) {
 		}
 		if err := daemon.PollProjectOnce(context.Background(), projectID); err != nil {
 			t.Fatal(err)
+		}
+		attempts, err := daemon.store.ListAttemptsForRun("app", "APP-T-0001")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(attempts) != 0 {
+			t.Fatalf("manual refresh dispatched default-off project work: %#v", attempts)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("manual refresh did not enter daemon reconcile loop")

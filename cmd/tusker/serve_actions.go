@@ -214,10 +214,15 @@ func (s *serveServer) handleTaskRunDirective(w http.ResponseWriter, taskID strin
 		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "task already has a live run"})
 		return
 	}
+	daemon, _ := s.store.DaemonStatus()
+	if !boolFromAny(daemon["daemon_alive"]) {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "daemon is not running; start it before queuing a one-shot run"})
+		return
+	}
 	if explanation, ok := snap.queue[stringField(note.Data, "id")]; ok {
 		blockers := make([]string, 0, len(explanation.Blockers))
 		for _, blocker := range explanation.Blockers {
-			if blocker != "project automation is disabled in its configuration" {
+			if !runDirectiveBypassableBlocker(blocker) {
 				blockers = append(blockers, blocker)
 			}
 		}
@@ -227,11 +232,6 @@ func (s *serveServer) handleTaskRunDirective(w http.ResponseWriter, taskID strin
 		}
 	} else {
 		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "task dispatchability could not be verified; refresh the project and try again"})
-		return
-	}
-	daemon, _ := s.store.DaemonStatus()
-	if !boolFromAny(daemon["daemon_alive"]) {
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "daemon is not running; start it before queuing a one-shot run"})
 		return
 	}
 	now := time.Now().UTC()

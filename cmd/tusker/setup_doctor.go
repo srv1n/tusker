@@ -150,6 +150,16 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 	}
 
 	localVault := filepath.Join(repo, ".tusker")
+	if workflow, err := loadWorkflow(localVault); err == nil && workflow.Data.DispatchScope.Warning != "" {
+		add(setupFinding{
+			Code:       "legacy_dispatch_scope",
+			Status:     "warning",
+			Path:       filepath.Join(repo, "tusker.yaml"),
+			Message:    workflow.Data.DispatchScope.Warning,
+			Action:     workflow.Data.DispatchScope.Repair,
+			Repairable: false,
+		})
+	}
 	if info, err := os.Lstat(localVault); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		resolved, resolveErr := filepath.EvalSymlinks(localVault)
 		if resolveErr != nil {

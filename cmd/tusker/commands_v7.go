@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1198,7 +1199,12 @@ func attemptV7Cmd(args Args) error {
 	switch strings.ToLower(args.String("_pos0")) {
 	case "start":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos1"))
-		return attemptV7StartCmd(args)
+		if vaultPath, err := resolveVaultPath(args, false); err == nil && !fileExists(workflowPath(vaultPath)) {
+			return attemptV7StartCmd(args)
+		}
+		args["owner"] = firstNonEmpty(args.String("owner"), args.String("by"), "agent:"+defaultActorName())
+		args["source"] = firstNonEmpty(args.String("source"), "tusker_cli")
+		return workSessionStartCmd(args)
 	case "handoff":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos1"))
 		return attemptV7HandoffCmd(args)
@@ -1267,6 +1273,9 @@ func attemptV7HandoffCmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	if err := requireAgentWorkSession(vaultPath, taskID, fallback(args.String("by"), "agent:"+defaultActorName()), args); err != nil {
+		return err
+	}
 	attemptID := args.String("attempt-id")
 	if attemptID == "" {
 		attemptID, err = latestV7AttemptID(vaultPath, taskID)
@@ -1331,6 +1340,9 @@ func finishV7Cmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	if err := requireAgentWorkSession(vaultPath, taskID, fallback(args.String("by"), "agent:"+defaultActorName()), args); err != nil {
+		return err
+	}
 	if verify := strings.TrimSpace(args.String("verify")); verify != "" {
 		rows, err := parseV7FinishVerificationRows(verify)
 		if err != nil {
@@ -1350,6 +1362,110 @@ func finishV7Cmd(args Args) error {
 		return err
 	}
 	return attemptV7HandoffCmd(args)
+}
+
+// requireAgentWorkSession prevents model-facing finish/review mutations from
+// becoming a second active-work protocol. Humans retain their existing local
+// control path; a human may also state --break-glass explicitly for an
+// attributable emergency override.
+func requireAgentWorkSession(vaultPath, taskID, actor string, args Args) error {
+	actor = strings.TrimSpace(actor)
+	if args.Bool("break-glass") {
+		if !strings.HasPrefix(actor, "human:") || strings.TrimSpace(args.String("reason")) == "" {
+			return tuskerError(errorInvalidArg, "break-glass requires --by human:<name> and --reason")
+		}
+		return nil
+	}
+	if !strings.HasPrefix(actor, "agent:") {
+		return nil
+	}
+	// V7 predates the automation workflow/runtime store. A vault with no
+	// WORKFLOW.md, or a project configured for local-only mutation, has no daemon
+	// ownership surface to compare against. Keep that attributable compatibility
+	// path without letting an agent self-authorize through a command-line flag.
+	if !fileExists(workflowPath(vaultPath)) || v7SingleUserLocalMutationMode(vaultPath) {
+		return nil
+	}
+	note, err := resolveV7Note(vaultPath, taskID, "task")
+	if err != nil {
+		return err
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	run, err := store.FindRun(trackerRecordID(note))
+	if err != nil {
+		return err
+	}
+	if args.Bool("normalized-work-submit") && run != nil && LeaseState(run.LeaseState) == LeaseStateReleased && run.AttemptOutcome == string(AttemptOutcomeSucceeded) && run.LeaseGeneration == intArg(args, "lease-generation") {
+		auth, authErr := store.LatestRunAuthorization(run.ProjectID, run.RecordID)
+		if authErr == nil && auth != nil && auth.Actor == actor && auth.LeaseGeneration == run.LeaseGeneration {
+			return nil
+		}
+	}
+	if dispatchedWorkerWorkSessionMatches(vaultPath, taskID, note, run, store) {
+		return nil
+	}
+	if run == nil || run.LeaseOwner != actor ||
+		(LeaseState(run.LeaseState) != LeaseStateClaimed && LeaseState(run.LeaseState) != LeaseStateRunning) ||
+		runFreshness(run, time.Now().UTC()) != "fresh" {
+		return tuskerError("WORK_SESSION_REQUIRED", "agent mutation requires a live work session owned by "+actor, withHint("run `tusker work start "+taskID+" --by "+actor+"` or use explicit human --break-glass"))
+	}
+	if data, _, readErr := parseFrontmatterMustRead(note.AbsolutePath); readErr != nil {
+		return readErr
+	} else if run.WorkRevision != intField(data, "work_revision") {
+		return tuskerError("WORK_SESSION_STALE", "agent mutation refused: work session revision is stale")
+	}
+	return nil
+}
+
+func dispatchedWorkerWorkSessionMatches(vaultPath, taskID string, task Note, run *RunStatus, store *RuntimeStore) bool {
+	attemptID := strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID"))
+	projectID := strings.TrimSpace(os.Getenv("TUSKER_PROJECT_ID"))
+	recordID := strings.TrimSpace(os.Getenv("TUSKER_RECORD_ID"))
+	workspace := strings.TrimSpace(os.Getenv("TUSKER_WORKSPACE"))
+	generation, generationErr := strconv.Atoi(strings.TrimSpace(os.Getenv("TUSKER_LEASE_GENERATION")))
+	workRevision, revisionErr := strconv.Atoi(strings.TrimSpace(os.Getenv("TUSKER_WORK_REVISION")))
+	if run == nil || store == nil || attemptID == "" || projectID == "" || recordID == "" || workspace == "" ||
+		generationErr != nil || revisionErr != nil || generation <= 0 ||
+		!strings.EqualFold(recordID, trackerRecordID(task)) ||
+		projectID != run.ProjectID ||
+		!strings.EqualFold(run.LeaseOwner, attemptID) ||
+		!strings.EqualFold(run.ActiveAttemptID, attemptID) ||
+		run.LeaseGeneration != generation ||
+		run.WorkRevision != workRevision ||
+		intField(task.Data, "work_revision") != workRevision ||
+		(LeaseState(run.LeaseState) != LeaseStateClaimed && LeaseState(run.LeaseState) != LeaseStateRunning) ||
+		runFreshness(run, time.Now().UTC()) != "fresh" ||
+		!workspacePathsCompatible(run.WorkspacePath, workspace) ||
+		!workspacePathsCompatible(v7RepoRoot(vaultPath), workspace) {
+		return false
+	}
+	auth, err := store.LatestRunAuthorization(run.ProjectID, run.RecordID)
+	if err != nil || auth == nil || auth.LeaseGeneration != generation ||
+		(auth.Source != "daemon_auto" && auth.Source != "human_run_directive") {
+		return false
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return false
+	}
+	var bound []Note
+	for _, attempt := range idx.Attempts[taskID] {
+		if strings.EqualFold(stringField(attempt.Data, "runtime_attempt_id"), attemptID) {
+			bound = append(bound, attempt)
+		}
+	}
+	if len(bound) != 1 {
+		return false
+	}
+	attempt := bound[0]
+	return stringField(attempt.Data, "status") == "started" &&
+		strings.EqualFold(stringField(attempt.Data, "task"), taskID) &&
+		workspacePathsCompatible(stringField(attempt.Data, "workspace_path"), workspace) &&
+		strings.EqualFold(stringField(attempt.Data, "lane"), os.Getenv("TUSKER_RUN_LANE"))
 }
 
 func ensureV7FinishProofReady(vaultPath, taskID string) error {
@@ -1396,6 +1512,10 @@ func requestV7ReviewAfterHandoff(vaultPath, taskID string, args Args) error {
 	}
 	status := stringField(task.Data, "status")
 	if status == "review" || status == "done" || status == "cancelled" || status == "superseded" {
+		if status == "review" || status == "done" {
+			_, _, err := ensureV7ImplicitSingletonDeliveryUnit(vaultPath, taskID, args)
+			return err
+		}
 		return nil
 	}
 	projected := v7ProjectedTaskState(vaultPath, task, idx)
@@ -1442,6 +1562,12 @@ func requestV7ReviewAfterHandoff(vaultPath, taskID string, args Args) error {
 	}
 	if !args.Bool("quiet") {
 		fmt.Printf("%s moved to review\n", taskID)
+	}
+	// This is intentionally after review has been requested. The synthetic
+	// delivery unit inherits completed execution provenance; it cannot make a
+	// ready task dispatchable, arm a wave, or authorize a release.
+	if _, _, err := ensureV7ImplicitSingletonDeliveryUnit(vaultPath, taskID, args); err != nil {
+		return err
 	}
 	return emitV7Event(vaultPath, taskID, "task", "review_requested", actor, map[string]any{"reason": reason})
 }

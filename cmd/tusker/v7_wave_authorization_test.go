@@ -23,6 +23,9 @@ func TestWavePreflight(t *testing.T) {
 	if !report.OK || !report.ReadOnly || len(report.Frontiers) != 2 || len(report.Artifacts) != 2 {
 		t.Fatalf("unexpected green preflight: %#v", report)
 	}
+	if report.DispatchScope.Effective != string(automationDispatchScopeArmedWaves) || report.DispatchScope.Provenance == "" {
+		t.Fatalf("preflight omitted dispatch scope projection: %#v", report.DispatchScope)
+	}
 	if after := snapshotDeliveryRecords(t, vault); !mapsEqualString(before, after) {
 		t.Fatal("preflight mutated records")
 	}

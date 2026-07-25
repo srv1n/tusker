@@ -37,60 +37,62 @@ type automationCommandContext struct {
 }
 
 type automationProjectSummary struct {
-	ProjectID    string        `json:"project_id"`
-	ProjectKey   string        `json:"project_key"`
-	Name         string        `json:"name"`
-	RepoRoot     string        `json:"repo_root"`
-	VaultRoot    string        `json:"vault_root"`
-	WorkflowPath string        `json:"workflow_path"`
-	Registered   bool          `json:"registered"`
-	Enabled      bool          `json:"enabled"`
-	Health       ProjectHealth `json:"health"`
-	LastPollAt   string        `json:"last_poll_at"`
-	LastError    string        `json:"last_error"`
-	ActiveRuns   int           `json:"active_runs"`
-	QueuedRuns   int           `json:"queued_runs"`
+	ProjectID     string                            `json:"project_id"`
+	ProjectKey    string                            `json:"project_key"`
+	Name          string                            `json:"name"`
+	RepoRoot      string                            `json:"repo_root"`
+	VaultRoot     string                            `json:"vault_root"`
+	WorkflowPath  string                            `json:"workflow_path"`
+	Registered    bool                              `json:"registered"`
+	Enabled       bool                              `json:"enabled"`
+	Health        ProjectHealth                     `json:"health"`
+	LastPollAt    string                            `json:"last_poll_at"`
+	LastError     string                            `json:"last_error"`
+	ActiveRuns    int                               `json:"active_runs"`
+	QueuedRuns    int                               `json:"queued_runs"`
+	DispatchScope automationDispatchScopeProjection `json:"dispatch_scope"`
 }
 
 type automationTaskExplanation struct {
-	Schema            string                   `json:"schema"`
-	ID                string                   `json:"id"`
-	RecordID          string                   `json:"record_id"`
-	Title             string                   `json:"title"`
-	Path              string                   `json:"path"`
-	Status            string                   `json:"status"`
-	Readiness         string                   `json:"readiness"`
-	NextOwner         string                   `json:"next_owner"`
-	ProofMode         string                   `json:"proof_mode"`
-	ProofStatus       string                   `json:"proof_status"`
-	Risk              string                   `json:"risk"`
-	Priority          string                   `json:"priority"`
-	Dispatchable      bool                     `json:"dispatchable"`
-	Blockers          []string                 `json:"blockers"`
-	Project           automationProjectSummary `json:"project"`
-	Runner            string                   `json:"runner"`
-	RunnerProfile     string                   `json:"runner_profile"`
-	RunnerHarness     string                   `json:"runner_harness"`
-	RunnerModel       string                   `json:"runner_model"`
-	RunnerEffort      string                   `json:"runner_effort"`
-	ProfileSource     string                   `json:"profile_source"`
-	ProfileRule       string                   `json:"profile_rule,omitempty"`
-	Lane              string                   `json:"lane"`
-	Command           string                   `json:"command"`
-	WorkflowPath      string                   `json:"workflow_path"`
-	WorkspacePath     string                   `json:"workspace_path"`
-	WorkspaceStrategy string                   `json:"workspace_strategy"`
-	Branch            string                   `json:"branch"`
-	ApprovalPolicy    string                   `json:"approval_policy"`
-	ThreadSandbox     string                   `json:"thread_sandbox"`
-	TurnSandboxPolicy string                   `json:"turn_sandbox_policy"`
-	RequiredApprovals []string                 `json:"required_approvals"`
-	ApplyInputs       []RuntimeApplyInput      `json:"apply_inputs,omitempty"`
-	Fanout            automationFanoutSummary  `json:"fanout"`
-	ExistingRun       *RunStatus               `json:"existing_run,omitempty"`
-	WaveID            string                   `json:"wave_id,omitempty"`
-	ArmedWaveState    string                   `json:"armed_wave_state,omitempty"`
-	ArmedWaveReason   string                   `json:"armed_wave_reason,omitempty"`
+	Schema            string                            `json:"schema"`
+	ID                string                            `json:"id"`
+	RecordID          string                            `json:"record_id"`
+	Title             string                            `json:"title"`
+	Path              string                            `json:"path"`
+	Status            string                            `json:"status"`
+	Readiness         string                            `json:"readiness"`
+	NextOwner         string                            `json:"next_owner"`
+	ProofMode         string                            `json:"proof_mode"`
+	ProofStatus       string                            `json:"proof_status"`
+	Risk              string                            `json:"risk"`
+	Priority          string                            `json:"priority"`
+	Dispatchable      bool                              `json:"dispatchable"`
+	Blockers          []string                          `json:"blockers"`
+	Project           automationProjectSummary          `json:"project"`
+	Runner            string                            `json:"runner"`
+	RunnerProfile     string                            `json:"runner_profile"`
+	RunnerHarness     string                            `json:"runner_harness"`
+	RunnerModel       string                            `json:"runner_model"`
+	RunnerEffort      string                            `json:"runner_effort"`
+	ProfileSource     string                            `json:"profile_source"`
+	ProfileRule       string                            `json:"profile_rule,omitempty"`
+	Lane              string                            `json:"lane"`
+	Command           string                            `json:"command"`
+	WorkflowPath      string                            `json:"workflow_path"`
+	WorkspacePath     string                            `json:"workspace_path"`
+	WorkspaceStrategy string                            `json:"workspace_strategy"`
+	Branch            string                            `json:"branch"`
+	ApprovalPolicy    string                            `json:"approval_policy"`
+	ThreadSandbox     string                            `json:"thread_sandbox"`
+	TurnSandboxPolicy string                            `json:"turn_sandbox_policy"`
+	RequiredApprovals []string                          `json:"required_approvals"`
+	ApplyInputs       []RuntimeApplyInput               `json:"apply_inputs,omitempty"`
+	Fanout            automationFanoutSummary           `json:"fanout"`
+	ExistingRun       *RunStatus                        `json:"existing_run,omitempty"`
+	WaveID            string                            `json:"wave_id,omitempty"`
+	ArmedWaveState    string                            `json:"armed_wave_state,omitempty"`
+	ArmedWaveReason   string                            `json:"armed_wave_reason,omitempty"`
+	DispatchScope     automationDispatchScopeProjection `json:"dispatch_scope"`
 }
 
 type automationFanoutSummary struct {
@@ -103,32 +105,33 @@ type automationFanoutSummary struct {
 }
 
 type automationDispatchPlan struct {
-	Schema            string                   `json:"schema"`
-	Task              string                   `json:"task"`
-	RecordID          string                   `json:"record_id"`
-	Decision          string                   `json:"decision"`
-	Lane              string                   `json:"lane"`
-	Runner            string                   `json:"runner"`
-	RunnerProfile     string                   `json:"runner_profile"`
-	RunnerHarness     string                   `json:"runner_harness"`
-	RunnerModel       string                   `json:"runner_model"`
-	RunnerEffort      string                   `json:"runner_effort"`
-	ProfileSource     string                   `json:"profile_source"`
-	ProfileRule       string                   `json:"profile_rule,omitempty"`
-	Command           string                   `json:"command"`
-	WorkspacePath     string                   `json:"workspace_path"`
-	WorkspaceStrategy string                   `json:"workspace_strategy"`
-	Branch            string                   `json:"branch"`
-	BranchAgeHours    *float64                 `json:"branch_age_hours,omitempty"`
-	Ahead             *int                     `json:"ahead,omitempty"`
-	Behind            *int                     `json:"behind,omitempty"`
-	Warnings          []automationPlanWarning  `json:"warnings,omitempty"`
-	Blockers          []string                 `json:"blockers"`
-	RequiredReads     []string                 `json:"required_reads"`
-	ProofRequired     []string                 `json:"proof_required"`
-	RequiredApprovals []string                 `json:"required_approvals"`
-	Fanout            automationFanoutSummary  `json:"fanout"`
-	Project           automationProjectSummary `json:"project"`
+	Schema            string                            `json:"schema"`
+	Task              string                            `json:"task"`
+	RecordID          string                            `json:"record_id"`
+	Decision          string                            `json:"decision"`
+	Lane              string                            `json:"lane"`
+	Runner            string                            `json:"runner"`
+	RunnerProfile     string                            `json:"runner_profile"`
+	RunnerHarness     string                            `json:"runner_harness"`
+	RunnerModel       string                            `json:"runner_model"`
+	RunnerEffort      string                            `json:"runner_effort"`
+	ProfileSource     string                            `json:"profile_source"`
+	ProfileRule       string                            `json:"profile_rule,omitempty"`
+	Command           string                            `json:"command"`
+	WorkspacePath     string                            `json:"workspace_path"`
+	WorkspaceStrategy string                            `json:"workspace_strategy"`
+	Branch            string                            `json:"branch"`
+	BranchAgeHours    *float64                          `json:"branch_age_hours,omitempty"`
+	Ahead             *int                              `json:"ahead,omitempty"`
+	Behind            *int                              `json:"behind,omitempty"`
+	Warnings          []automationPlanWarning           `json:"warnings,omitempty"`
+	Blockers          []string                          `json:"blockers"`
+	RequiredReads     []string                          `json:"required_reads"`
+	ProofRequired     []string                          `json:"proof_required"`
+	RequiredApprovals []string                          `json:"required_approvals"`
+	Fanout            automationFanoutSummary           `json:"fanout"`
+	Project           automationProjectSummary          `json:"project"`
+	DispatchScope     automationDispatchScopeProjection `json:"dispatch_scope"`
 }
 
 type automationPlanWarning struct {
@@ -178,7 +181,7 @@ func automationStatusCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{})
+	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{LoadDisabled: true})
 	if err != nil {
 		return err
 	}
@@ -207,7 +210,7 @@ func automationStatusCmd(args Args) error {
 		CrashLoop:           status["crashLoop"],
 		InvariantCircuit:    status["invariantCircuit"],
 		DiskPressure:        diskPressureStatusFromAny(status["disk_pressure"]),
-		Projects:            automationProjectSummaries(projects, runs),
+		Projects:            automationProjectSummaries(loaded, runs),
 		ArmedWaves:          automationStatusArmedWaves(projects, runs),
 	}
 	if args.Bool("json") {
@@ -293,24 +296,14 @@ func automationDispatchCmd(args Args) error {
 		return err
 	}
 	defer ctx.Close()
-	note, err := ctx.findTask(taskID)
+	_, err = ctx.findTask(taskID)
 	if err != nil {
 		return err
 	}
-	explanation := ctx.explainTask(note)
-	if !explanation.Dispatchable {
-		if args.Bool("json") {
-			emitJSON(map[string]any{"ok": false, "explanation": explanation})
-			return nil
-		}
-		printAutomationExplanation(explanation)
-		return tuskerError(errorInvalidTransition, taskID+": automation dispatch blocked: "+strings.Join(explanation.Blockers, "; "), withContext(explanation))
-	}
-	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": false, "explanation": explanation, "error": oneShotDispatchRefusal("tusker automation dispatch")})
-		return nil
-	}
-	return tuskerError(errorInvalidTransition, oneShotDispatchRefusal("tusker automation dispatch"), withContext(explanation))
+	// Foreground dispatch is never a substitute for the resident daemon. The
+	// refusal is process-level, so it takes precedence over task-local scope or
+	// readiness explanations.
+	return tuskerError(errorInvalidTransition, oneShotDispatchRefusal("tusker automation dispatch"), withContext(map[string]any{"task": taskID}))
 }
 
 func loadAutomationCommandContext(args Args) (*automationCommandContext, error) {
@@ -452,7 +445,7 @@ func (ctx *automationCommandContext) automationQueueReport() automationQueueRepo
 	sortDispatchCandidates(notes)
 	report := automationQueueReport{
 		Schema:  automationQueueSchema,
-		Project: automationSummarizeProject(ctx.Project, ctx.projectRunsSlice(), ctx.ProjectRegistered),
+		Project: automationSummarizeProject(ctx.Project, ctx.Workflow, ctx.projectRunsSlice(), ctx.ProjectRegistered),
 	}
 	for _, note := range notes {
 		if !ctx.automationQueueIncludes(note) {
@@ -594,6 +587,11 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 	if reason := dispatchEligibilityReason(note, notesByID, notesByRecordID); reason != "" {
 		blockers = append(blockers, reason)
 	}
+	if daemonDispatch {
+		if reason := armedWaveDispatchBlocker(ctx.Project.VaultRoot, note, ctx.Workflow.Data, ctx.ProjectRuns); reason != "" {
+			blockers = append(blockers, reason)
+		}
+	}
 	runnerObj, configuredCommand, err := runnerForName(runner, ctx.Workflow.Data)
 	if err != nil {
 		blockers = append(blockers, "runner config: "+err.Error())
@@ -666,7 +664,7 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 		Priority:          stringField(note.Data, "priority"),
 		Dispatchable:      len(blockers) == 0,
 		Blockers:          blockers,
-		Project:           automationSummarizeProject(ctx.Project, ctx.projectRunsSlice(), ctx.ProjectRegistered),
+		Project:           automationSummarizeProject(ctx.Project, ctx.Workflow, ctx.projectRunsSlice(), ctx.ProjectRegistered),
 		Runner:            runner,
 		RunnerProfile:     run.RunnerProfile,
 		RunnerHarness:     firstNonEmpty(run.RunnerHarness, runner),
@@ -690,6 +688,7 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 		WaveID:            waveID,
 		ArmedWaveState:    waveState,
 		ArmedWaveReason:   waveReason,
+		DispatchScope:     ctx.Workflow.Data.DispatchScope,
 	}
 }
 
@@ -767,6 +766,7 @@ func automationPlanFromExplanation(vaultPath string, note Note, explanation auto
 		RequiredApprovals: append([]string{}, explanation.RequiredApprovals...),
 		Fanout:            explanation.Fanout,
 		Project:           explanation.Project,
+		DispatchScope:     explanation.DispatchScope,
 	}
 	wf, _ := loadWorkflow(vaultPath)
 	if facts, err := captureGitBranchFacts(explanation.WorkspacePath, wf.Data.Orchestration.DefaultBranch, time.Now().UTC()); err == nil {
@@ -1031,14 +1031,15 @@ func (ctx *automationCommandContext) projectRunsSlice() []RunStatus {
 	return runs
 }
 
-func automationProjectSummaries(projects []RegisteredProject, runs []RunStatus) []automationProjectSummary {
+func automationProjectSummaries(projects []loadedRegisteredProject, runs []RunStatus) []automationProjectSummary {
 	runsByProject := map[string][]RunStatus{}
 	for _, run := range runs {
 		runsByProject[run.ProjectID] = append(runsByProject[run.ProjectID], run)
 	}
 	out := make([]automationProjectSummary, 0, len(projects))
-	for _, project := range projects {
-		out = append(out, automationSummarizeProject(project, runsByProject[project.ProjectID], true))
+	for _, loaded := range projects {
+		project := loaded.Project
+		out = append(out, automationSummarizeProject(project, loaded.Workflow, runsByProject[project.ProjectID], true))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Name == out[j].Name {
@@ -1049,19 +1050,24 @@ func automationProjectSummaries(projects []RegisteredProject, runs []RunStatus) 
 	return out
 }
 
-func automationSummarizeProject(project RegisteredProject, runs []RunStatus, registered bool) automationProjectSummary {
+func automationSummarizeProject(project RegisteredProject, workflow WorkflowFile, runs []RunStatus, registered bool) automationProjectSummary {
+	scope := defaultAutomationDispatchScope()
+	if workflow.Data.DispatchScope.Effective != "" {
+		scope = workflow.Data.DispatchScope
+	}
 	summary := automationProjectSummary{
-		ProjectID:    project.ProjectID,
-		ProjectKey:   project.ProjectKey,
-		Name:         project.Name,
-		RepoRoot:     project.RepoRoot,
-		VaultRoot:    project.VaultRoot,
-		WorkflowPath: project.WorkflowPath,
-		Registered:   registered,
-		Enabled:      project.Enabled,
-		Health:       project.Health,
-		LastPollAt:   project.LastPollAt,
-		LastError:    project.LastError,
+		ProjectID:     project.ProjectID,
+		ProjectKey:    project.ProjectKey,
+		Name:          project.Name,
+		RepoRoot:      project.RepoRoot,
+		VaultRoot:     project.VaultRoot,
+		WorkflowPath:  project.WorkflowPath,
+		Registered:    registered,
+		Enabled:       project.Enabled,
+		Health:        project.Health,
+		LastPollAt:    project.LastPollAt,
+		LastError:     project.LastError,
+		DispatchScope: scope,
 	}
 	for _, run := range runs {
 		if run.Terminal {
@@ -1108,7 +1114,10 @@ func printAutomationStatus(report automationStatusReport) {
 		if project.Enabled {
 			state = "enabled"
 		}
-		fmt.Printf("  %-12s %-8s %-8s active=%d queued=%d %s\n", project.ProjectKey, state, project.Health, project.ActiveRuns, project.QueuedRuns, project.RepoRoot)
+		fmt.Printf("  %-12s %-8s %-8s active=%d queued=%d scope=%s provenance=%s %s\n", project.ProjectKey, state, project.Health, project.ActiveRuns, project.QueuedRuns, project.DispatchScope.Effective, project.DispatchScope.Provenance, project.RepoRoot)
+		if project.DispatchScope.Warning != "" {
+			fmt.Printf("    warning: %s; repair: %s\n", project.DispatchScope.Warning, project.DispatchScope.Repair)
+		}
 	}
 	if len(report.ArmedWaves) > 0 {
 		fmt.Println("Armed waves:")
@@ -1144,6 +1153,10 @@ func printAutomationQueue(report automationQueueReport) {
 
 func printAutomationPlan(plan automationDispatchPlan) {
 	fmt.Printf("%s automation plan: %s\n", plan.Task, plan.Decision)
+	fmt.Printf("  dispatch_scope configured=%s effective=%s provenance=%s\n", fallback(plan.DispatchScope.Configured, "-"), plan.DispatchScope.Effective, plan.DispatchScope.Provenance)
+	if plan.DispatchScope.Warning != "" {
+		fmt.Printf("  scope_warning=%s; repair=%s\n", plan.DispatchScope.Warning, plan.DispatchScope.Repair)
+	}
 	fmt.Printf("  runner=%s lane=%s workspace=%s\n", fallback(plan.Runner, "-"), fallback(plan.Lane, "-"), fallback(plan.WorkspacePath, "-"))
 	fmt.Printf("  profile=%s harness=%s model=%s effort=%s source=%s\n", fallback(plan.RunnerProfile, "-"), fallback(plan.RunnerHarness, plan.Runner), fallback(plan.RunnerModel, "-"), fallback(plan.RunnerEffort, "-"), fallback(plan.ProfileSource, "-"))
 	if len(plan.RequiredReads) > 0 {
@@ -1171,6 +1184,10 @@ func printAutomationExplanation(explanation automationTaskExplanation) {
 		state = "dispatchable"
 	}
 	fmt.Printf("%s automation: %s\n", explanation.ID, state)
+	fmt.Printf("  dispatch_scope configured=%s effective=%s provenance=%s\n", fallback(explanation.DispatchScope.Configured, "-"), explanation.DispatchScope.Effective, explanation.DispatchScope.Provenance)
+	if explanation.DispatchScope.Warning != "" {
+		fmt.Printf("  scope_warning=%s; repair=%s\n", explanation.DispatchScope.Warning, explanation.DispatchScope.Repair)
+	}
 	fmt.Printf("  status=%s readiness=%s next_owner=%s risk=%s proof=%s/%s\n",
 		fallback(explanation.Status, "-"),
 		fallback(explanation.Readiness, "-"),

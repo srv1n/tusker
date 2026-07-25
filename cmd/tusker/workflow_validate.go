@@ -22,6 +22,9 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	if wf.TrackerSchemaVersion != 7 {
 		return tuskerError(errorConfigInvalid, "tracker_schema_version must be 7", withPath(filePath))
 	}
+	if err := validateScheduledPromotionPolicy(wf.ScheduledPromotion, filePath); err != nil {
+		return err
+	}
 	if len(wf.Tracker.ActiveStates) == 0 {
 		return tuskerError(errorConfigInvalid, "tracker.dispatch_states must not be empty; usually ready,rework", withPath(filePath))
 	}
@@ -114,6 +117,25 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	}
 	if strings.TrimSpace(wf.Agents.Default) == "" {
 		return tuskerError(errorConfigInvalid, "agents.default is required", withPath(filePath))
+	}
+	return nil
+}
+
+func validateScheduledPromotionPolicy(policy ScheduledPromotionPolicy, filePath string) error {
+	if policy.Version != scheduledPromotionPolicyVersion {
+		return tuskerError(errorConfigInvalid, "scheduled_promotion.version must be 1", withPath(filePath), withHint("set scheduled_promotion.version: 1 and mode: disabled, shadow, stage, or promote"))
+	}
+	switch policy.Mode {
+	case scheduledPromotionDisabled, scheduledPromotionShadow, scheduledPromotionStage, scheduledPromotionPromote:
+	default:
+		return tuskerError(errorConfigInvalid, "scheduled_promotion.mode must be disabled, shadow, stage, or promote", withPath(filePath), withHint("set scheduled_promotion.mode: disabled to preserve existing behavior"))
+	}
+	profile := strings.TrimSpace(policy.Release.Profile)
+	if (profile == "") != !policy.Release.Authorized {
+		return tuskerError(errorConfigInvalid, "scheduled_promotion.release.profile and scheduled_promotion.release.authorized must be set together", withPath(filePath), withHint("set a named release profile with authorized: true, or remove both release fields"))
+	}
+	if policy.Mode != scheduledPromotionPromote && (profile != "" || policy.ModelTriage.Authorized) {
+		return tuskerError(errorConfigInvalid, "scheduled_promotion release and paid model triage require mode promote", withPath(filePath), withHint("use mode: promote for separately authorized release/model triage, or remove those authorities"))
 	}
 	return nil
 }

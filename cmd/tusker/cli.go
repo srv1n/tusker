@@ -142,7 +142,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "gate-ledger", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "trace", "escalate":
+	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "gate-ledger", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "trace", "escalate", "departure":
 		return true
 	default:
 		return false
@@ -265,6 +265,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, discardV7Cmd(args)
 	case "next":
 		return 0, nextCmd(args)
+	case "work start", "work status", "work heartbeat", "work submit", "work fail", "work release":
+		return 0, workSessionCmd(args, strings.TrimPrefix(command, "work "))
 	case "claim":
 		return 0, claimCmd(args)
 	case "heartbeat":
@@ -305,6 +307,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, deliveryPlanCmd(args)
 	case "delivery import":
 		return 0, deliveryImportCmd(args)
+	case "delivery doctor":
+		return 0, deliveryDoctorCmd(args)
 	case "delivery rollout":
 		return 0, deliveryRolloutCmd(args)
 	case "escalate":
@@ -325,6 +329,19 @@ func runInner(command string, args Args) (int, error) {
 		return 0, traceReplayCmd(args)
 	case "land":
 		return 0, landV7Cmd(args)
+	case "departure":
+		printDepartureHelp()
+		return 0, nil
+	case "departure check":
+		return 0, departureCheckCmd(args)
+	case "departure status":
+		return 0, departureStatusCmd(args)
+	case "departure history":
+		return 0, departureHistoryCmd(args)
+	case "departure hold":
+		return 0, departureHoldCmd(args)
+	case "departure resume":
+		return 0, departureResumeCmd(args)
 	case "proof":
 		return 0, proofV7Cmd(args)
 	case "feedback":
@@ -937,7 +954,8 @@ Commands:
   status              move a V7 task through its workflow
   discard             abandon work safely while preserving its history
   next                show the next pickable V7 task
-  claim               create a V7 local lease
+  work                atomically own and retire one interactive work session
+  claim               compatibility alias for work start
   evidence            add V7 evidence records
   gate                list/satisfy/waive/obsolete V7 gates
   wave                create, edit, and show named task batches
@@ -1018,6 +1036,8 @@ func printCommandHelp(command string) bool {
 		printDiscardHelp()
 	case "next":
 		printNextHelp()
+	case "work", "work start", "work status", "work heartbeat", "work submit", "work fail", "work release":
+		printWorkSessionHelp()
 	case "claim":
 		printClaimHelp()
 	case "evidence":
@@ -1379,6 +1399,21 @@ Examples:
   tusker runs release ORC-T-0018 --json
   tusker runs retire ORC-T-0018 --reason "legacy over retry cap" --json
   tusker redrive ORC-T-0018 --reason "operator reviewed spend" --json`)
+}
+
+func printWorkSessionHelp() {
+	fmt.Println(`Usage:
+  tusker work start <task-id> --by <agent> [--source codex|claude|tusker_cli] [--json]
+  tusker work status <task-id> [--json]
+  tusker work heartbeat <task-id> --by <agent> [--json]
+  tusker work submit <task-id> --by <agent> --deliverable <summary> --verification <summary> --gate-verdicts <A1=pass> [--json]
+  tusker work fail <task-id> --by <agent> --reason <text> [--json]
+  tusker work release <task-id> --by <agent> --reason <text> [--json]
+
+Purpose:
+  The canonical runtime ownership protocol for interactive tracked work.
+  It never enables automation, arms a wave, starts a daemon, or launches a
+  worker. Legacy claim remains a compatibility alias for work start.`)
 }
 
 func printRefreshHelp() {

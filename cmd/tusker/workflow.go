@@ -24,10 +24,15 @@ type RuntimeServeConfig struct {
 }
 
 type Workflow struct {
-	WorkflowVersion      int  `yaml:"workflow_version"`
-	TrackerSchemaVersion int  `yaml:"tracker_schema_version"`
-	AutomationEnabled    bool `yaml:"automation_enabled"`
-	Tracker              struct {
+	WorkflowVersion      int                               `yaml:"workflow_version"`
+	TrackerSchemaVersion int                               `yaml:"tracker_schema_version"`
+	AutomationEnabled    bool                              `yaml:"automation_enabled"`
+	DispatchScope        automationDispatchScopeProjection `yaml:"-" json:"dispatch_scope"`
+	// ScheduledPromotion is intentionally a workflow contract, rather than a
+	// daemon switch.  Resolving it is side-effect free; the departure runner is
+	// responsible for acting only on the permissions projected here.
+	ScheduledPromotion ScheduledPromotionPolicy `yaml:"scheduled_promotion,omitempty" json:"scheduled_promotion"`
+	Tracker            struct {
 		Kind               string   `yaml:"kind"`
 		ActiveStates       []string `yaml:"dispatch_states"`
 		LegacyActiveStates []string `yaml:"active_states,omitempty"`
@@ -97,6 +102,72 @@ type Workflow struct {
 	} `yaml:"hooks"`
 	Fanout        FanoutPolicy        `yaml:"fanout"`
 	Orchestration OrchestrationPolicy `yaml:"orchestration,omitempty"`
+}
+
+// ScheduledPromotionPolicy is versioned so a future expansion cannot turn an
+// old configuration into new authority. Release and paid triage are separate
+// authorities; neither is implied by promote mode.
+type ScheduledPromotionPolicy struct {
+	Version     int                           `yaml:"version" json:"version"`
+	Mode        string                        `yaml:"mode" json:"mode"`
+	Release     ScheduledPromotionRelease     `yaml:"release,omitempty" json:"release"`
+	ModelTriage ScheduledPromotionModelTriage `yaml:"model_triage,omitempty" json:"model_triage"`
+	Effective   ScheduledPromotionProjection  `yaml:"-" json:"effective"`
+}
+
+type ScheduledPromotionRelease struct {
+	Profile    string `yaml:"profile,omitempty" json:"profile,omitempty"`
+	Authorized bool   `yaml:"authorized,omitempty" json:"authorized"`
+}
+
+type ScheduledPromotionModelTriage struct {
+	Authorized bool `yaml:"authorized,omitempty" json:"authorized"`
+}
+
+// ScheduledPromotionProjection is the configuration-inspection surface. It
+// makes the effective capabilities and the origin of the disabled default
+// observable without making configuration inspection perform any work.
+type ScheduledPromotionProjection struct {
+	Configured  bool   `json:"configured"`
+	Mode        string `json:"mode"`
+	Provenance  string `json:"provenance"`
+	Observe     bool   `json:"observe"`
+	Stage       bool   `json:"stage"`
+	Promote     bool   `json:"promote"`
+	Release     bool   `json:"release"`
+	ModelTriage bool   `json:"model_triage"`
+}
+
+const (
+	scheduledPromotionPolicyVersion = 1
+	scheduledPromotionDisabled      = "disabled"
+	scheduledPromotionShadow        = "shadow"
+	scheduledPromotionStage         = "stage"
+	scheduledPromotionPromote       = "promote"
+)
+
+func defaultScheduledPromotionPolicy() ScheduledPromotionPolicy {
+	policy := ScheduledPromotionPolicy{Version: scheduledPromotionPolicyVersion, Mode: scheduledPromotionDisabled}
+	policy.Effective = scheduledPromotionProjection(policy, true, "fresh default")
+	return policy
+}
+
+func scheduledPromotionProjection(policy ScheduledPromotionPolicy, configured bool, provenance string) ScheduledPromotionProjection {
+	projection := ScheduledPromotionProjection{Configured: configured, Mode: policy.Mode, Provenance: provenance}
+	switch policy.Mode {
+	case scheduledPromotionShadow:
+		projection.Observe = true
+	case scheduledPromotionStage:
+		projection.Observe = true
+		projection.Stage = true
+	case scheduledPromotionPromote:
+		projection.Observe = true
+		projection.Stage = true
+		projection.Promote = true
+		projection.Release = policy.Release.Authorized && strings.TrimSpace(policy.Release.Profile) != ""
+		projection.ModelTriage = policy.ModelTriage.Authorized
+	}
+	return projection
 }
 
 type OrchestrationPolicy struct {
@@ -215,6 +286,8 @@ func defaultWorkflow() Workflow {
 	wf.WorkflowVersion = 1
 	wf.TrackerSchemaVersion = 7
 	wf.AutomationEnabled = false
+	wf.DispatchScope = defaultAutomationDispatchScope()
+	wf.ScheduledPromotion = defaultScheduledPromotionPolicy()
 	wf.Tracker.Kind = "tusker_vault"
 	wf.Tracker.ActiveStates = []string{"ready", "rework"}
 	wf.Tracker.ReviewStates = []string{"review"}
@@ -464,6 +537,12 @@ func loadWorkflow(vaultPath string) (WorkflowFile, error) {
 	if err := yaml.Unmarshal(raw, &wf); err != nil {
 		return WorkflowFile{}, tuskerError(errorConfigInvalid, fmt.Sprintf("failed to decode WORKFLOW.md: %s", err.Error()), withPath(filePath))
 	}
+	_, configured := data["scheduled_promotion"]
+	provenance := "workflow"
+	if !configured {
+		provenance = "migration default (scheduled_promotion absent)"
+	}
+	wf.ScheduledPromotion.Effective = scheduledPromotionProjection(wf.ScheduledPromotion, configured, provenance)
 	normalizeWorkflowDispatchStates(&wf)
 	wfFile := WorkflowFile{Path: filePath, Body: body, Data: wf}
 	if err := validateWorkflowFile(wfFile); err != nil {
@@ -484,12 +563,22 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 	}
 	cfg := resolved.Config
 	if !v7AutomationConfigPresent(cfg) {
+		scope, err := resolveAutomationDispatchScope(resolved, wfFile.Data.AutomationEnabled)
+		if err != nil {
+			return wfFile, err
+		}
+		wfFile.Data.DispatchScope = scope
 		return wfFile, nil
 	}
 	wf := wfFile.Data
 	if cfg.Automation.Enabled != nil {
 		wf.AutomationEnabled = *cfg.Automation.Enabled
 	}
+	scope, err := resolveAutomationDispatchScope(resolved, wf.AutomationEnabled)
+	if err != nil {
+		return wfFile, err
+	}
+	wf.DispatchScope = scope
 	triggerStates := normalizeList(cfg.Automation.TriggerStates)
 	if len(triggerStates) == 0 {
 		triggerStates = []string{"ready", "rework"}

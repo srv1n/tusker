@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -143,7 +144,23 @@ func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v
 		}
 		waveID := stringField(task.Data, "wave")
 		if waveID == "" {
-			return tuskerError(errorInvalidTransition, v7NoWaveRefusal(taskID))
+			if unitID, created, unitErr := ensureV7ImplicitSingletonDeliveryUnit(vaultPath, taskID, args); unitErr != nil {
+				return unitErr
+			} else if created {
+				// The unit and task back-pointer were written atomically enough for
+				// replay: reload so this invocation uses the canonical binding.
+				idx, err = loadV7Index(vaultPath)
+				if err != nil {
+					return err
+				}
+				task = idx.Tasks[taskID]
+				waveID = stringField(task.Data, "wave")
+			} else {
+				waveID = unitID
+			}
+			if waveID == "" {
+				return tuskerError(errorInvalidTransition, v7NoWaveRefusal(taskID))
+			}
 		}
 		if _, ok := idx.Waves[waveID]; !ok {
 			return tuskerError(errorNotFound, "V7 wave not found: "+waveID)
@@ -985,6 +1002,14 @@ func landV7WaveToMainIfReady(vaultPath, waveID string, args Args, summary *v7Lan
 	if !ok {
 		return tuskerError(errorNotFound, "V7 wave not found: "+waveID)
 	}
+	allowed, err := scheduledPromotionAllowsDefaultAdvance(vaultPath)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		summary.MainNotes = append(summary.MainNotes, "main: scheduled promotion policy keeps "+waveID+" staged")
+		return nil
+	}
 	open := 0
 	for _, member := range normalizeList(wave.Data["members"]) {
 		status, found, err := v7WaveIntegrationMemberStatus(vaultPath, wave, member)
@@ -1010,6 +1035,13 @@ func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummar
 	wave, ok := idx.Waves[waveID]
 	if !ok {
 		return tuskerError(errorNotFound, "V7 wave not found: "+waveID)
+	}
+	allowed, err := scheduledPromotionAllowsDefaultAdvance(vaultPath)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return tuskerError(errorInvalidTransition, "scheduled promotion policy refuses default-branch advance; mode must be promote")
 	}
 	for _, member := range normalizeList(wave.Data["members"]) {
 		status, found, err := v7WaveIntegrationMemberStatus(vaultPath, wave, member)
@@ -1196,6 +1228,9 @@ func advanceV7DefaultBranch(repoRoot, defaultBranch, newRev, oldRev string) erro
 		if err := prepareV7GeneratedStateForDefaultAdvance(wt.Path); err != nil {
 			return err
 		}
+		if err := prepareV7IdenticalUntrackedStateForDefaultAdvance(wt.Path, newRev); err != nil {
+			return err
+		}
 		dirty, err := inPlaceDirtyPaths(wt.Path)
 		if err != nil {
 			return err
@@ -1238,6 +1273,43 @@ func advanceV7DefaultBranch(repoRoot, defaultBranch, newRev, oldRev string) erro
 			return err
 		}
 		if err := buildV7Dashboards(vaultPath, idx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// prepareV7IdenticalUntrackedStateForDefaultAdvance resolves the benign case
+// where Tusker created a local control-plane file before the candidate began
+// tracking that exact file. Git refuses to overwrite any untracked path, even
+// byte-identical content. We remove only .tusker files whose complete bytes
+// are already recoverable from newRev; divergent or user-owned files remain
+// untouched and continue to block the fast-forward.
+func prepareV7IdenticalUntrackedStateForDefaultAdvance(workDir, newRev string) error {
+	output, err := gitCombined(workDir, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		return err
+	}
+	for _, entry := range strings.Split(output, "\x00") {
+		if !strings.HasPrefix(entry, "?? ") {
+			continue
+		}
+		rel := filepath.ToSlash(strings.TrimSpace(strings.TrimPrefix(entry, "?? ")))
+		if !strings.HasPrefix(rel, ".tusker/") {
+			continue
+		}
+		local, readErr := os.ReadFile(filepath.Join(workDir, filepath.FromSlash(rel)))
+		if readErr != nil {
+			return readErr
+		}
+		candidate, showErr := exec.Command("git", "-C", workDir, "show", newRev+":"+rel).Output()
+		if showErr != nil {
+			continue
+		}
+		if !bytes.Equal(local, candidate) {
+			return tuskerError(errorInvalidTransition, "cannot advance default branch over divergent untracked Tusker state: "+rel, withPath(filepath.Join(workDir, filepath.FromSlash(rel))))
+		}
+		if err := os.Remove(filepath.Join(workDir, filepath.FromSlash(rel))); err != nil {
 			return err
 		}
 	}
@@ -1325,22 +1397,41 @@ func printV7LandingSummary(summary *v7LandSummary, args Args) {
 		return
 	}
 	var b strings.Builder
+	vaultPath, _ := resolveVaultPath(args, false)
 	if len(summary.Landed) > 0 {
 		b.WriteString(fmt.Sprintf("Landed %d task%s:\n", len(summary.Landed), plural(len(summary.Landed))))
 		for _, row := range summary.Landed {
-			b.WriteString(fmt.Sprintf("  %s  %s -> %s  gate:%s  %s\n", row.Task, row.Branch, row.Target, row.GateResult, shortCommit(row.Commit)))
+			b.WriteString(fmt.Sprintf("  %s  %s -> %s  gate:%s  %s\n", row.Task, row.Branch, v7LandingTargetLabel(vaultPath, row.Target), row.GateResult, shortCommit(row.Commit)))
 		}
 	}
 	if len(summary.Reworked) > 0 {
 		b.WriteString(fmt.Sprintf("Returned %d task%s to rework:\n", len(summary.Reworked), plural(len(summary.Reworked))))
 		for _, row := range summary.Reworked {
-			b.WriteString(fmt.Sprintf("  %s  %s -> %s  gate:%s\n", row.Task, row.Branch, row.Target, row.GateResult))
+			b.WriteString(fmt.Sprintf("  %s  %s -> %s  gate:%s\n", row.Task, row.Branch, v7LandingTargetLabel(vaultPath, row.Target), row.GateResult))
 		}
 	}
 	for _, note := range summary.MainNotes {
 		b.WriteString(note + "\n")
 	}
 	fmt.Print(b.String())
+}
+
+// Basic operator output is product language. The internal wave remains
+// available through diagnostic wave commands and audit payloads.
+func v7LandingTargetLabel(vaultPath, target string) string {
+	if strings.TrimSpace(vaultPath) == "" {
+		return target
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return target
+	}
+	for _, wave := range idx.Waves {
+		if v7ImplicitDeliveryUnit(wave) && v7WaveIntegrationBranch(wave) == target {
+			return "scheduled staging"
+		}
+	}
+	return target
 }
 
 func shortCommit(commit string) string {
@@ -1369,6 +1460,39 @@ func runV7LandingGateOnRef(vaultPath, repoRoot, ref string) (bool, string) {
 	}
 	removeWorktree = true
 	return runV7LandingGate(vaultPath, tmp, "wave-ref:"+ref)
+}
+
+// runV7GateTierOnRef executes the canonical full gate on a detached frozen
+// candidate. Unlike the focused landing gate, this path uses the shared gate
+// ledger and harvest semantics and is therefore valid promotion proof.
+func runV7GateTierOnRef(vaultPath, repoRoot, ref, projectID string, policy GateTierPolicy, store *RuntimeStore) (bool, string) {
+	tmp, err := os.MkdirTemp("", "tusker-promotion-gate-*")
+	if err != nil {
+		return false, err.Error()
+	}
+	removeWorktree := false
+	defer func() {
+		if removeWorktree {
+			_ = exec.Command("git", "-C", repoRoot, "worktree", "remove", "--force", tmp).Run()
+		} else {
+			_ = os.RemoveAll(tmp)
+		}
+	}()
+	if output, err := gitCombined(repoRoot, "worktree", "add", "--detach", tmp, ref); err != nil {
+		return false, "failed to create full-gate worktree: " + firstActionableLine(output, err.Error())
+	}
+	removeWorktree = true
+	runtime := defaultGateTierRuntime(store, projectID, tmp)
+	result, err := runGateTier(policy, policy.Profile, runtime)
+	if err != nil {
+		return false, err.Error()
+	}
+	summary, marshalErr := json.Marshal(result)
+	if marshalErr != nil {
+		return false, marshalErr.Error()
+	}
+	passed := result.Outcome == gateOutcomePassed || result.Outcome == gateOutcomeLedgerHit
+	return passed, string(summary)
 }
 
 func appendV7WaveLandingAudit(vaultPath, waveID string, entries []v7LandingAuditEntry, actor string) error {

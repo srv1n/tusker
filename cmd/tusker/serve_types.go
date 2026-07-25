@@ -59,24 +59,25 @@ type serveSnapshot struct {
 }
 
 type serveProjectSummary struct {
-	ID                      string                         `json:"id"`
-	Name                    string                         `json:"name"`
-	RepoRoot                string                         `json:"repoRoot"`
-	VaultRoot               string                         `json:"vaultRoot"`
-	AutomationEnabled       bool                           `json:"automationEnabled"`
-	AutomationSource        string                         `json:"automationSource"`
-	WorkspaceMode           string                         `json:"workspaceMode"`
-	WorkspaceSource         string                         `json:"workspaceSource"`
-	MaxActiveRunsPerProject int                            `json:"maxActiveRunsPerProject"`
-	ConcurrencySource       string                         `json:"concurrencySource"`
-	Health                  string                         `json:"health"`
-	LastError               any                            `json:"lastError"`
-	NeedsCount              int                            `json:"needsCount"`
-	ActiveRuns              int                            `json:"activeRuns"`
-	WorstLiveness           any                            `json:"worstLiveness"`
-	DaemonConnected         bool                           `json:"daemonConnected"`
-	LastPollAt              any                            `json:"lastPollAt"`
-	Reconciliation          adaptiveProjectReconcileStatus `json:"reconciliation"`
+	ID                      string                            `json:"id"`
+	Name                    string                            `json:"name"`
+	RepoRoot                string                            `json:"repoRoot"`
+	VaultRoot               string                            `json:"vaultRoot"`
+	AutomationEnabled       bool                              `json:"automationEnabled"`
+	AutomationSource        string                            `json:"automationSource"`
+	DispatchScope           automationDispatchScopeProjection `json:"dispatchScope"`
+	WorkspaceMode           string                            `json:"workspaceMode"`
+	WorkspaceSource         string                            `json:"workspaceSource"`
+	MaxActiveRunsPerProject int                               `json:"maxActiveRunsPerProject"`
+	ConcurrencySource       string                            `json:"concurrencySource"`
+	Health                  string                            `json:"health"`
+	LastError               any                               `json:"lastError"`
+	NeedsCount              int                               `json:"needsCount"`
+	ActiveRuns              int                               `json:"activeRuns"`
+	WorstLiveness           any                               `json:"worstLiveness"`
+	DaemonConnected         bool                              `json:"daemonConnected"`
+	LastPollAt              any                               `json:"lastPollAt"`
+	Reconciliation          adaptiveProjectReconcileStatus    `json:"reconciliation"`
 }
 
 type serveDaemonStatus struct {
