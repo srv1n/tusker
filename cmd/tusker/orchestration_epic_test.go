@@ -317,11 +317,11 @@ func TestGateLedgerCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	entry := GateLedgerEntry{ID: "gate-1", ProjectID: "app", TreeHash: "tree", Command: "go test ./...", Profile: "default", PassedAt: time.Now().UTC().Format(time.RFC3339)}
+	entry := GateLedgerEntry{ID: "gate-1", ProjectID: "app", TreeHash: "tree", Command: "go test ./...", Profile: "default", Toolchain: "go-test", PassedAt: time.Now().UTC().Format(time.RFC3339)}
 	if err := store.RecordGateLedger(entry); err != nil {
 		t.Fatal(err)
 	}
-	hit, err := store.FindGateLedger("app", "tree", entry.Command, entry.Profile)
+	hit, err := store.FindGateLedger("app", "tree", entry.Command, entry.Profile, entry.Toolchain)
 	if err != nil || hit == nil || hit.ID != entry.ID {
 		t.Fatalf("ledger miss: %#v %v", hit, err)
 	}
@@ -614,7 +614,7 @@ func TestBatchGateGreenRecorded(t *testing.T) {
 	policy := BatchGatePolicy{Enabled: true, Commands: []string{"true"}, FeatureProfile: "canonical"}
 	daemon.executeBatchGate(project, policy, BatchGateRun{ID: "batch-green", ProjectID: "app", StartedAt: time.Now().UTC().Format(time.RFC3339)})
 	tree, _ := workspaceTreeStateHash(repo)
-	hit, err := store.FindGateLedger("app", tree, "true", "canonical")
+	hit, err := store.FindGateLedger("app", tree, "true", "canonical", scheduledPromotionToolchainFingerprint(repo, []string{"true"}))
 	if err != nil || hit == nil {
 		t.Fatalf("green gate was not ledgered: %#v %v", hit, err)
 	}

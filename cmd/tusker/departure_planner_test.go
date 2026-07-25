@@ -187,7 +187,7 @@ func departurePlannerTestPlanner(noRemote, gateHit bool) departurePlanner {
 		}
 		return "", false
 	}
-	planner.gateLookup = func(string, string, string, string) bool { return gateHit }
+	planner.gateLookup = func(string, string, []string, string, string) bool { return gateHit }
 	return planner
 }
 

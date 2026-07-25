@@ -23,14 +23,97 @@ type RuntimeStore struct {
 }
 
 type GateLedgerEntry struct {
-	ID         string `json:"id"`
-	ProjectID  string `json:"project_id"`
-	TreeHash   string `json:"tree_hash"`
-	Command    string `json:"command"`
-	Profile    string `json:"profile"`
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	TreeHash  string `json:"tree_hash"`
+	Command   string `json:"command"`
+	Profile   string `json:"profile"`
+	// Toolchain is the deterministic fingerprint of the executables and
+	// versions that produced this proof. An empty value is legacy evidence and
+	// intentionally never satisfies a toolchain-bound lookup.
+	Toolchain  string `json:"toolchain"`
 	Host       string `json:"host"`
 	DurationMS int64  `json:"duration_ms"`
 	PassedAt   string `json:"passed_at"`
+}
+
+func (s *RuntimeStore) LatestGateLedgerBefore(projectID, command, profile, toolchain, before string) (*GateLedgerEntry, error) {
+	var entry GateLedgerEntry
+	if strings.TrimSpace(toolchain) == "" {
+		return nil, nil
+	}
+	err := s.queryRowScan(`SELECT id, project_id, tree_hash, command, profile, toolchain, host, duration_ms, passed_at FROM gate_ledger WHERE project_id = ? AND command = ? AND profile = ? AND toolchain = ? AND passed_at < ? ORDER BY passed_at DESC LIMIT 1`, []any{projectID, command, profile, toolchain, before}, &entry.ID, &entry.ProjectID, &entry.TreeHash, &entry.Command, &entry.Profile, &entry.Toolchain, &entry.Host, &entry.DurationMS, &entry.PassedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &entry, nil
+}
+
+// LatestCompleteGateLedgerBefore returns the newest tree for which every
+// command in the declared full gate has a green ledger entry before `before`.
+func (s *RuntimeStore) LatestCompleteGateLedgerBefore(projectID string, commands []string, profile, toolchain, before string) (*GateLedgerEntry, error) {
+	cutoff, err := time.Parse(time.RFC3339Nano, before)
+	if err != nil {
+		return nil, err
+	}
+	need := map[string]bool{}
+	for _, command := range commands {
+		if command = strings.TrimSpace(command); command != "" {
+			need[command] = true
+		}
+	}
+	if len(need) == 0 {
+		return nil, nil
+	}
+	if strings.TrimSpace(toolchain) == "" {
+		return nil, nil
+	}
+	rows, err := s.query(`SELECT id, project_id, tree_hash, command, profile, toolchain, host, duration_ms, passed_at FROM gate_ledger WHERE project_id = ? AND profile = ? AND toolchain = ?`, projectID, profile, toolchain)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type bucket struct {
+		seen   map[string]bool
+		latest GateLedgerEntry
+		at     time.Time
+	}
+	buckets := map[string]*bucket{}
+	for rows.Next() {
+		var entry GateLedgerEntry
+		if err := rows.Scan(&entry.ID, &entry.ProjectID, &entry.TreeHash, &entry.Command, &entry.Profile, &entry.Toolchain, &entry.Host, &entry.DurationMS, &entry.PassedAt); err != nil {
+			return nil, err
+		}
+		at, parseErr := time.Parse(time.RFC3339Nano, entry.PassedAt)
+		if parseErr != nil || !at.Before(cutoff) || !need[entry.Command] {
+			continue
+		}
+		b := buckets[entry.TreeHash]
+		if b == nil {
+			b = &bucket{seen: map[string]bool{}}
+			buckets[entry.TreeHash] = b
+		}
+		b.seen[entry.Command] = true
+		if at.After(b.at) {
+			b.latest, b.at = entry, at
+		}
+	}
+	var best *bucket
+	for _, b := range buckets {
+		if len(b.seen) != len(need) {
+			continue
+		}
+		if best == nil || b.at.After(best.at) {
+			best = b
+		}
+	}
+	if best == nil {
+		return nil, nil
+	}
+	return &best.latest, nil
 }
 
 type BatchGateRun struct {
@@ -742,10 +825,11 @@ func (s *RuntimeStore) Migrate() error {
 			tree_hash TEXT NOT NULL,
 			command TEXT NOT NULL,
 			profile TEXT NOT NULL DEFAULT '',
+			toolchain TEXT NOT NULL DEFAULT '',
 			host TEXT NOT NULL DEFAULT '',
 			duration_ms INTEGER NOT NULL DEFAULT 0,
 			passed_at TEXT NOT NULL,
-			UNIQUE(project_id, tree_hash, command, profile)
+			UNIQUE(project_id, tree_hash, command, profile, toolchain)
 		);`,
 		`CREATE TABLE IF NOT EXISTS batch_gate_runs (
 			id TEXT PRIMARY KEY,
@@ -834,6 +918,9 @@ func (s *RuntimeStore) Migrate() error {
 		if _, err := s.exec(stmt); err != nil {
 			return err
 		}
+	}
+	if err := s.migrateGateLedgerToolchain(); err != nil {
+		return err
 	}
 	if err := s.ensureColumn("runs", "work_revision", `ALTER TABLE runs ADD COLUMN work_revision INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return err
@@ -1033,6 +1120,62 @@ func (s *RuntimeStore) Migrate() error {
 		}
 	}
 	return nil
+}
+
+// migrateGateLedgerToolchain rebuilds the one early ledger table whose old
+// inline UNIQUE constraint omitted toolchain. ALTER TABLE can add the column,
+// but cannot replace that autoindex; leaving it would silently overwrite a
+// green proof from another compiler/runtime. Legacy rows are retained with an
+// empty toolchain and are intentionally not reusable by the new lookup API.
+func (s *RuntimeStore) migrateGateLedgerToolchain() error {
+	rows, err := s.query(`PRAGMA table_info(gate_ledger)`)
+	if err != nil {
+		return err
+	}
+	hasToolchain := false
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, kind string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &pk); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		hasToolchain = hasToolchain || name == "toolchain"
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if hasToolchain {
+		return nil
+	}
+	return s.withBusyRetry(func() error {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, err := tx.Exec(`ALTER TABLE gate_ledger RENAME TO gate_ledger_legacy_toolchain`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`CREATE TABLE gate_ledger (
+			id TEXT PRIMARY KEY, project_id TEXT NOT NULL, tree_hash TEXT NOT NULL,
+			command TEXT NOT NULL, profile TEXT NOT NULL DEFAULT '',
+			toolchain TEXT NOT NULL DEFAULT '', host TEXT NOT NULL DEFAULT '',
+			duration_ms INTEGER NOT NULL DEFAULT 0, passed_at TEXT NOT NULL,
+			UNIQUE(project_id, tree_hash, command, profile, toolchain)
+		)`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO gate_ledger (id, project_id, tree_hash, command, profile, toolchain, host, duration_ms, passed_at)
+			SELECT id, project_id, tree_hash, command, profile, '', host, duration_ms, passed_at FROM gate_ledger_legacy_toolchain`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DROP TABLE gate_ledger_legacy_toolchain`); err != nil {
+			return err
+		}
+		return tx.Commit()
+	})
 }
 
 func (s *RuntimeStore) ensureColumn(tableName, columnName, stmt string) error {

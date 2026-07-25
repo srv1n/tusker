@@ -1,0 +1,201 @@
+package main
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+// PromotionFailurePacket is the durable, bounded explanation of a red full
+// promotion gate. Raw command output belongs in ArtifactRefs, never here: a
+// packet is deliberately safe to put in a repair task, brief, or model prompt.
+type PromotionFailurePacket struct {
+	CandidateSHA       string         `json:"candidate_sha"`
+	CandidateTreeHash  string         `json:"candidate_tree_hash"`
+	ExpectedMainSHA    string         `json:"expected_main_sha"`
+	GateCommand        string         `json:"gate_command"`
+	GateProfile        string         `json:"gate_profile"`
+	Toolchain          string         `json:"toolchain"`
+	Runner             string         `json:"runner"`
+	Defects            []GateDefect   `json:"defects"`
+	LastGreenRef       string         `json:"last_green_ref,omitempty"`
+	LastGreenStatus    string         `json:"last_green_status"`
+	BisectionRef       string         `json:"bisection_ref,omitempty"`
+	BisectionStatus    string         `json:"bisection_status"`
+	OwningTaskID       string         `json:"owning_task_id,omitempty"`
+	TouchedPaths       []string       `json:"touched_paths,omitempty"`
+	TouchedPathsStatus string         `json:"touched_paths_status"`
+	CandidateTaskIDs   []string       `json:"candidate_task_ids"`
+	Reproduction       string         `json:"reproduction"`
+	ArtifactRefs       []string       `json:"artifact_refs,omitempty"`
+	GateResult         GateTierResult `json:"gate_result"`
+	ClassificationText string         `json:"-"`
+}
+
+type promotionFailureClass string
+
+const (
+	promotionFailureInfrastructure promotionFailureClass = "infrastructure"
+	promotionFailureFlake          promotionFailureClass = "flake"
+	promotionFailureIsolated       promotionFailureClass = "isolated_defect"
+	promotionFailureAmbiguous      promotionFailureClass = "ambiguous"
+)
+
+type promotionFailureRoute struct {
+	Class          promotionFailureClass
+	Retry          bool
+	Quarantine     bool
+	Repair         bool
+	ModelTriage    bool
+	StableIdentity string
+}
+
+func promotionFailureOwner(candidate DepartureCandidate) string {
+	if len(candidate.TaskSourceSHAs) != 1 || len(candidate.TaskStateRevisions) != 1 {
+		return ""
+	}
+	for id := range candidate.TaskSourceSHAs {
+		if _, ok := candidate.TaskStateRevisions[id]; ok {
+			return id
+		}
+	}
+	return ""
+}
+
+func promotionFailureTouchedPaths(candidate DepartureCandidate, owner string) ([]string, string) {
+	if owner == "" || len(candidate.TaskSourceSHAs) != 1 {
+		return nil, "unknown"
+	}
+	return []string{}, "none_proven"
+}
+
+func promotionFailureHardClosure(vaultPath, owner string) []string {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil || owner == "" {
+		return nil
+	}
+	seen := map[string]bool{owner: true}
+	changed := true
+	for changed {
+		changed = false
+		for id, task := range idx.Tasks {
+			if seen[id] {
+				continue
+			}
+			for _, edge := range v7TaskDependencyEdges(task, idx) {
+				if edge.Hardness == v7DependencyHardnessHard && seen[edge.ID] {
+					seen[id] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func promotionTouchedPathsFromNUL(raw string) []string {
+	paths := []string{}
+	for _, path := range strings.Split(raw, "\x00") {
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// classifyPromotionFailure is intentionally deterministic. The caller only
+// spends a model when the bounded evidence is genuinely ambiguous.
+func classifyPromotionFailure(packet PromotionFailurePacket, policy GateTierPolicy) promotionFailureRoute {
+	text := packet.ClassificationText
+	identity := promotionFailureIdentity(packet)
+	if matchesConfiguredFailurePattern(text, policy.InfrastructureFailurePatterns) {
+		return promotionFailureRoute{Class: promotionFailureInfrastructure, Retry: true, Repair: true, StableIdentity: identity}
+	}
+	if matchesConfiguredFailurePattern(text, policy.FlakeFailurePatterns) {
+		return promotionFailureRoute{Class: promotionFailureFlake, Quarantine: true, Retry: true, StableIdentity: identity}
+	}
+	if strings.TrimSpace(packet.OwningTaskID) != "" || (strings.TrimSpace(packet.BisectionStatus) == "proven" && strings.TrimSpace(packet.BisectionRef) != "") {
+		return promotionFailureRoute{Class: promotionFailureIsolated, Repair: true, StableIdentity: identity}
+	}
+	return promotionFailureRoute{Class: promotionFailureAmbiguous, Repair: true, ModelTriage: true, StableIdentity: identity}
+}
+
+func matchesConfiguredFailurePattern(text string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if pattern != "" && strings.Contains(text, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func promotionFailureIdentity(packet PromotionFailurePacket) string {
+	parts := []string{strings.TrimSpace(packet.GateCommand), strings.TrimSpace(packet.GateProfile), strings.TrimSpace(packet.Toolchain), strings.TrimSpace(packet.OwningTaskID)}
+	for _, defect := range packet.Defects {
+		parts = append(parts, strings.TrimSpace(defect.Target))
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return "promotion/" + hex.EncodeToString(sum[:8])
+}
+
+func promotionFailurePacket(candidate DepartureCandidate, gate DepartureGate, runner, output string, runErr error, policy GateTierPolicy, lastGreenRef, bisectionRef, owningTask string, touched, artifacts []string) PromotionFailurePacket {
+	defects := harvestGateDefects(gate.Command, output, runErr, policy)
+	return PromotionFailurePacket{
+		CandidateSHA: candidate.CandidateSHA, CandidateTreeHash: candidate.CandidateTreeHash, ExpectedMainSHA: candidate.ExpectedDefaultBranchSHA,
+		GateCommand: gate.Command, GateProfile: gate.Profile, Toolchain: gate.Toolchain, Runner: runner, Defects: defects,
+		LastGreenRef: lastGreenRef, BisectionRef: bisectionRef, OwningTaskID: owningTask,
+		LastGreenStatus: "unknown", BisectionStatus: "not_run",
+		TouchedPaths: uniqueStrings(touched), TouchedPathsStatus: "unavailable", CandidateTaskIDs: sortedPromotionTaskIDs(candidate), Reproduction: strings.TrimSpace(gate.Command), ArtifactRefs: uniqueStrings(artifacts),
+		ClassificationText: output,
+	}
+}
+
+// Promotion artifacts live in runtime state, not in task contracts or briefs.
+// Keep a portable opaque locator there so a state-root path (and its user name)
+// cannot leak into a repair prompt. The runtime owns resolving this locator.
+func promotionFailureArtifactRefs(refs []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		if !strings.HasPrefix(ref, "runtime://") {
+			ref = "runtime://promotion-gates/" + filepath.Base(ref)
+		}
+		if !seen[ref] {
+			seen[ref] = true
+			out = append(out, ref)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedPromotionTaskIDs(candidate DepartureCandidate) []string {
+	ids := make([]string, 0, len(candidate.TaskStateRevisions))
+	for id := range candidate.TaskStateRevisions {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func containsAny(text string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
+}

@@ -76,6 +76,7 @@ type GateTierResult struct {
 	Outcome    string       `json:"outcome"`
 	Mode       string       `json:"mode"`
 	Profile    string       `json:"profile,omitempty"`
+	Toolchain  string       `json:"toolchain,omitempty"`
 	TreeHash   string       `json:"tree_hash,omitempty"`
 	Commands   []string     `json:"commands"`
 	Touched    []string     `json:"touched,omitempty"`
@@ -92,7 +93,7 @@ type GateTierResult struct {
 // *RuntimeStore satisfies it; a nil reader simply disables the short-circuit,
 // which keeps the gate usable in projects that have no ledger yet.
 type gateLedgerReader interface {
-	FindGateLedger(projectID, treeHash, command, profile string) (*GateLedgerEntry, error)
+	FindGateLedger(projectID, treeHash, command, profile, toolchain string) (*GateLedgerEntry, error)
 }
 
 // gateTierRuntime isolates the four real boundaries a gate touches: the ledger,
@@ -103,12 +104,13 @@ type gateTierRuntime struct {
 	Workspace  string
 	Ledger     gateLedgerReader
 	TreeHash   func(workspace string) (string, error)
+	Toolchain  func(workspace string, commands []string) string
 	FreeDiskGB func(path string) (float64, error)
 	SlotHolder func(workspace string, locks []string) (string, bool)
 	TreeStatus func(workspace string) (string, error)
 	DiffPaths  func(workspace, base string) ([]string, error)
 	Exec       func(workspace, command string) (string, error)
-	RecordPass func(command, treeHash, profile string, elapsed time.Duration)
+	RecordPass func(command, treeHash, profile, toolchain string, elapsed time.Duration)
 	Now        func() time.Time
 }
 
@@ -155,12 +157,16 @@ func runGateTier(policy GateTierPolicy, requestedProfile string, rt gateTierRunt
 		return result, tuskerError("TREE_HASH_FAILED", "cannot hash the gate tree state: "+err.Error())
 	}
 	result.TreeHash = treeHash
+	if rt.Toolchain == nil {
+		return result, tuskerError(errorInvalidArg, "gate tier runtime is missing a toolchain fingerprint boundary")
+	}
+	result.Toolchain = strings.TrimSpace(rt.Toolchain(rt.Workspace, policy.HarvestCommands))
 
 	// Preflight 1: has this exact gate already passed on this exact tree?
 	pending := make([]string, 0, len(policy.HarvestCommands))
 	for _, command := range policy.HarvestCommands {
-		if rt.Ledger != nil {
-			entry, lookupErr := rt.Ledger.FindGateLedger(rt.ProjectID, treeHash, command, profile)
+		if rt.Ledger != nil && result.Toolchain != "" {
+			entry, lookupErr := rt.Ledger.FindGateLedger(rt.ProjectID, treeHash, command, profile, result.Toolchain)
 			if lookupErr == nil && entry != nil {
 				result.LedgerHits = append(result.LedgerHits, command)
 				continue
@@ -187,8 +193,8 @@ func runGateTier(policy GateTierPolicy, requestedProfile string, rt gateTierRunt
 		output, runErr := rt.Exec(rt.Workspace, command)
 		result.Ran = append(result.Ran, command)
 		if runErr == nil {
-			if rt.RecordPass != nil {
-				rt.RecordPass(command, treeHash, profile, rt.now().Sub(commandStart))
+			if rt.RecordPass != nil && result.Toolchain != "" {
+				rt.RecordPass(command, treeHash, profile, result.Toolchain, rt.now().Sub(commandStart))
 			}
 			continue
 		}
@@ -329,6 +335,7 @@ func defaultGateTierRuntime(store *RuntimeStore, projectID, workspace string) ga
 		ProjectID:  projectID,
 		Workspace:  workspace,
 		TreeHash:   workspaceTreeStateHash,
+		Toolchain:  scheduledPromotionToolchainFingerprint,
 		FreeDiskGB: freeDiskGB,
 		SlotHolder: heldBuildSlot,
 		TreeStatus: func(ws string) (string, error) {
@@ -340,12 +347,13 @@ func defaultGateTierRuntime(store *RuntimeStore, projectID, workspace string) ga
 	}
 	if store != nil {
 		rt.Ledger = store
-		rt.RecordPass = func(command, treeHash, profile string, elapsed time.Duration) {
+		rt.RecordPass = func(command, treeHash, profile, toolchain string, elapsed time.Duration) {
 			_ = store.RecordGateLedger(GateLedgerEntry{
 				ProjectID:  projectID,
 				TreeHash:   treeHash,
 				Command:    command,
 				Profile:    profile,
+				Toolchain:  toolchain,
 				Host:       runtimeLeaseHost(),
 				DurationMS: elapsed.Milliseconds(),
 			})

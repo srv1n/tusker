@@ -41,14 +41,31 @@ type DepartureCandidate struct {
 }
 
 type DepartureGate struct {
-	Command     string `json:"command,omitempty"`
-	Profile     string `json:"profile,omitempty"`
-	Toolchain   string `json:"toolchain,omitempty"`
-	TreeHash    string `json:"tree_hash,omitempty"`
-	Status      string `json:"status,omitempty"`
-	StartedAt   string `json:"started_at,omitempty"`
-	FinishedAt  string `json:"finished_at,omitempty"`
-	ArtifactRef string `json:"artifact_ref,omitempty"`
+	Command     string           `json:"command,omitempty"`
+	Profile     string           `json:"profile,omitempty"`
+	Toolchain   string           `json:"toolchain,omitempty"`
+	TreeHash    string           `json:"tree_hash,omitempty"`
+	Status      string           `json:"status,omitempty"`
+	StartedAt   string           `json:"started_at,omitempty"`
+	FinishedAt  string           `json:"finished_at,omitempty"`
+	ArtifactRef string           `json:"artifact_ref,omitempty"`
+	Failure     DepartureFailure `json:"failure,omitempty"`
+}
+
+// DepartureFailure keeps promotion-red evidence referential and bounded. The
+// raw command log stays in the runtime artifact named here, never in SQLite or
+// a generated repair task.
+type DepartureFailure struct {
+	Class           string                 `json:"class,omitempty"`
+	Identity        string                 `json:"identity,omitempty"`
+	OwningTaskID    string                 `json:"owning_task_id,omitempty"`
+	BisectionRef    string                 `json:"bisection_ref,omitempty"`
+	ArtifactRefs    []string               `json:"artifact_refs,omitempty"`
+	RepairTaskID    string                 `json:"repair_task_id,omitempty"`
+	ModelTriage     bool                   `json:"model_triage,omitempty"`
+	Packet          PromotionFailurePacket `json:"packet,omitempty"`
+	Action          string                 `json:"action,omitempty"`
+	AffectedTaskIDs []string               `json:"affected_task_ids,omitempty"`
 }
 
 // DeparturePromotion distinguishes an intent from an observed committed ref.
@@ -113,7 +130,7 @@ func departureNow() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
 func departureTerminal(state DepartureState) bool {
 	switch state {
-	case DepartureStateSkipped, DepartureStateBlocked, DepartureStatePassed, DepartureStateFailed, DepartureStateRepairing:
+	case DepartureStateSkipped, DepartureStateBlocked, DepartureStatePassed, DepartureStateFailed:
 		return true
 	default:
 		return false

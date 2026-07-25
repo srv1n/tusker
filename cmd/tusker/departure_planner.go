@@ -73,7 +73,7 @@ type departurePlanner struct {
 	rev        func(string, string) (string, bool)
 	remote     func(string) (string, bool)
 	now        func() time.Time
-	gateLookup func(projectID, treeHash, command, profile string) bool
+	gateLookup func(projectID, treeHash string, commands []string, profile, toolchain string) bool
 }
 
 func defaultDeparturePlanner() departurePlanner {
@@ -153,7 +153,7 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 		}
 	}
 	decision.ResourceNeeds = uniqueDepartureStrings(decision.ResourceNeeds)
-	decision.GateIntent = departureGateIntent(wf.Data, firstNonEmpty(decision.Candidate.IntegrationBaseSHA, decision.Candidate.ExpectedDefaultBranchSHA))
+	decision.GateIntent = departureGateIntent(wf.Data, repoRoot, firstNonEmpty(decision.Candidate.IntegrationBaseSHA, decision.Candidate.ExpectedDefaultBranchSHA))
 	decision.ReleaseEligible = policy.Release && len(decision.ResourceNeeds) > 0 && decision.Candidate.ExpectedDefaultBranchSHA != ""
 
 	if !hasRemote {
@@ -176,7 +176,7 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 		decision.Reasons = append(decision.Reasons, DepartureReason{Code: "wave_authorization_held", Message: "Cargo is held because wave " + held + " is not authorized for departure."})
 		return decision, nil
 	}
-	if p.gateLookup != nil && decision.GateIntent.Command != "" && decision.GateIntent.TreeHash != "" && p.gateLookup(projectID, decision.GateIntent.TreeHash, decision.GateIntent.Command, decision.GateIntent.Profile) {
+	if commands := departureGateCommands(wf.Data); p.gateLookup != nil && len(commands) > 0 && decision.GateIntent.TreeHash != "" && p.gateLookup(projectID, decision.GateIntent.TreeHash, commands, decision.GateIntent.Profile, decision.GateIntent.Toolchain) {
 		decision.GateIntent.Status = "already_passed"
 	}
 	if decision.GateIntent.Status == "already_passed" {
@@ -203,12 +203,26 @@ func departureWaveFact(vaultPath string, idx v7Index, wave Note) DepartureWaveFa
 	return DepartureWaveFact{ID: stringField(wave.Data, "id"), Authorization: auth, AuthorizationFingerprint: stringField(projection, "fingerprint"), AuthorizationStale: boolField(projection, "stale") || auth == "stale", IntegrationRef: firstNonEmpty(stringField(wave.Data, "integration_branch"), "integration/"+stringField(wave.Data, "id")), ImplicitSingleton: v7ImplicitDeliveryUnit(wave)}
 }
 
-func departureGateIntent(wf Workflow, treeHash string) DepartureGate {
-	command := strings.Join(wf.Orchestration.Gate.HarvestCommands, " && ")
-	if command == "" {
-		command = strings.Join(wf.Orchestration.BatchGate.Commands, " && ")
+func departureGateIntent(wf Workflow, repoRoot, treeHash string) DepartureGate {
+	commands := departureGateCommands(wf)
+	command := strings.Join(commands, " && ")
+	return DepartureGate{Command: command, Profile: firstNonEmpty(wf.Orchestration.Gate.Profile, wf.Orchestration.BatchGate.FeatureProfile), Toolchain: scheduledPromotionToolchainFingerprint(repoRoot, commands), TreeHash: treeHash, Status: "required"}
+}
+
+func departureGateCommands(wf Workflow) []string {
+	commands := wf.Orchestration.Gate.HarvestCommands
+	if len(commands) == 0 {
+		commands = wf.Orchestration.BatchGate.Commands
 	}
-	return DepartureGate{Command: command, Profile: firstNonEmpty(wf.Orchestration.Gate.Profile, wf.Orchestration.BatchGate.FeatureProfile), TreeHash: treeHash, Status: "required"}
+	seen := map[string]bool{}
+	var normalized []string
+	for _, command := range commands {
+		command = strings.TrimSpace(command)
+		if command != "" && !seen[command] {
+			normalized, seen[command] = append(normalized, command), true
+		}
+	}
+	return normalized
 }
 
 func departureFingerprint(parts ...string) string {
@@ -263,7 +277,10 @@ func departureFetch(ctx context.Context, repoRoot, remote, branch string) error 
 	return nil
 }
 
-func departureGateLedgerHit(projectID, treeHash, command, profile string) bool {
+func departureGateLedgerHit(projectID, treeHash string, commands []string, profile, toolchain string) bool {
+	if strings.TrimSpace(toolchain) == "" || len(commands) == 0 {
+		return false
+	}
 	if !fileExists(runtimeStoreDBPath(DefaultStateRoot())) {
 		return false
 	}
@@ -272,6 +289,18 @@ func departureGateLedgerHit(projectID, treeHash, command, profile string) bool {
 		return false
 	}
 	defer store.Close()
-	entry, err := store.FindGateLedger(projectID, treeHash, command, profile)
-	return err == nil && entry != nil
+	return gateLedgerCommandsHit(store, projectID, treeHash, commands, profile, toolchain)
+}
+
+func gateLedgerCommandsHit(store *RuntimeStore, projectID, treeHash string, commands []string, profile, toolchain string) bool {
+	if store == nil || strings.TrimSpace(toolchain) == "" || len(commands) == 0 {
+		return false
+	}
+	for _, command := range commands {
+		entry, err := store.FindGateLedger(projectID, treeHash, command, profile, toolchain)
+		if err != nil || entry == nil {
+			return false
+		}
+	}
+	return true
 }

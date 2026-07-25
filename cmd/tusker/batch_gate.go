@@ -187,13 +187,14 @@ func (d *Daemon) executeBatchGate(project RegisteredProject, policy BatchGatePol
 	}
 	failures := 0
 	firstFailCommand := ""
+	toolchain := scheduledPromotionToolchainFingerprint(project.RepoRoot, policy.Commands)
 	for _, command := range policy.Commands {
 		started := time.Now()
 		output, err := runGateCommand(project.RepoRoot, command)
 		if err == nil {
 			treeHash, hashErr := workspaceTreeStateHash(project.RepoRoot)
 			if hashErr == nil {
-				_ = d.store.RecordGateLedger(GateLedgerEntry{ID: "gate-" + strings.ToLower(newRecordID()), ProjectID: project.ProjectID, TreeHash: treeHash, Command: command, Profile: policy.FeatureProfile, Host: runtimeLeaseHost(), DurationMS: time.Since(started).Milliseconds(), PassedAt: time.Now().UTC().Format(time.RFC3339)})
+				_ = d.store.RecordGateLedger(GateLedgerEntry{ID: "gate-" + strings.ToLower(newRecordID()), ProjectID: project.ProjectID, TreeHash: treeHash, Command: command, Profile: policy.FeatureProfile, Toolchain: toolchain, Host: runtimeLeaseHost(), DurationMS: time.Since(started).Milliseconds(), PassedAt: time.Now().UTC().Format(time.RFC3339)})
 			}
 			continue
 		}
@@ -378,16 +379,31 @@ func actionableGateFailure(output string, runErr error) string {
 }
 
 func createBatchGateRepairTask(vaultPath, gateRunID, command, excerpt, profile string) error {
+	identity := promotionFailureIdentity(PromotionFailurePacket{GateCommand: command, GateProfile: profile, Defects: []GateDefect{{Command: command, Target: command}}})
+	return createPromotionFailureRepairTask(vaultPath, gateRunID, command, excerpt, profile, identity, "", "", false)
+}
+
+// createPromotionFailureRepairTask coalesces repeated red gates by the stable
+// defect identity rather than command alone. A command can contain several
+// unrelated tests; merging their repairs would erase ownership and evidence.
+func createPromotionFailureRepairTask(vaultPath, gateRunID, command, excerpt, profile, identity, owningTask, artifactRef string, held bool) error {
 	if idx, err := loadV7Index(vaultPath); err == nil {
 		for _, existing := range idx.Tasks {
 			status := stringField(existing.Data, "status")
-			if stringField(existing.Data, "batch_gate_command") != command || status == "done" || status == "cancelled" || status == "superseded" {
+			if stringField(existing.Data, "promotion_failure_identity") != identity || status == "done" || status == "cancelled" || status == "superseded" {
 				continue
 			}
 			_, _, updateErr := mutateV7DocumentLocked(existing.AbsolutePath, v7FrontmatterOrder["task"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
 				data["batch_gate_run"] = gateRunID
 				data[buildFailedField] = true
 				data[buildFailedCommandField] = command
+				data["promotion_failure_identity"] = identity
+				if owningTask != "" {
+					data["promotion_failure_owner"] = owningTask
+				}
+				if refs := promotionFailureArtifactRefs([]string{artifactRef}); len(refs) > 0 {
+					data["promotion_failure_artifact"] = refs[0]
+				}
 				if profile != "" {
 					data[buildFailedProfileField] = profile
 				}
@@ -421,6 +437,13 @@ func createBatchGateRepairTask(vaultPath, gateRunID, command, excerpt, profile s
 		data["next_action"] = "Fix the first actionable batch failure and rerun the failed command."
 		data["batch_gate_command"] = command
 		data["batch_gate_run"] = gateRunID
+		data["promotion_failure_identity"] = identity
+		if owningTask != "" {
+			data["promotion_failure_owner"] = owningTask
+		}
+		if refs := promotionFailureArtifactRefs([]string{artifactRef}); len(refs) > 0 {
+			data["promotion_failure_artifact"] = refs[0]
+		}
 		data[buildFailedField] = true
 		data[buildFailedCommandField] = command
 		if profile != "" {
@@ -433,5 +456,21 @@ func createBatchGateRepairTask(vaultPath, gateRunID, command, excerpt, profile s
 	if err != nil {
 		return err
 	}
+	if held {
+		return nil
+	}
 	return statusCmd(Args{"vault": vaultPath, "id": id, "status": "ready", "actor": "tusker:batch-gate", "reason": "unattended batch gate red"})
+}
+
+func promotionFailureRepairTaskID(vaultPath, identity string) string {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return ""
+	}
+	for id, task := range idx.Tasks {
+		if stringField(task.Data, "promotion_failure_identity") == identity && !v7TerminalTaskStatus(stringField(task.Data, "status")) {
+			return id
+		}
+	}
+	return ""
 }

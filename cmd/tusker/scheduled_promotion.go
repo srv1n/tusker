@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -10,8 +11,10 @@ import (
 )
 
 var (
-	scheduledPromotionResourceLeaseTTL = defaultResourceLeaseTTL
-	scheduledPromotionAfterRefUpdate   = func() error { return nil }
+	scheduledPromotionResourceLeaseTTL        = defaultResourceLeaseTTL
+	scheduledPromotionAfterRefUpdate          = func() error { return nil }
+	scheduledPromotionAfterFailureIntent      = func() error { return nil }
+	scheduledPromotionBeforeFailureCompletion = func() error { return nil }
 )
 
 // scheduledPromotionCandidateSnapshot is the immutable input contract for a
@@ -223,6 +226,9 @@ func scheduledPromotionTaskSourceSHA(repoRoot, candidateSHA, integrationBranch s
 
 func scheduledPromotionToolchainFingerprint(repoRoot string, commands []string) string {
 	toolchains := v7LandingToolchainFingerprints(repoRoot, commands)
+	if len(toolchains) == 0 {
+		return ""
+	}
 	parts := make([]string, 0, len(toolchains))
 	for name, value := range toolchains {
 		parts = append(parts, name+"="+value)
@@ -312,6 +318,81 @@ func startScheduledPromotionLeaseHeartbeat(store *RuntimeStore, lease ResourceLe
 	}
 }
 
+// resumePromotionFailureRouting finishes a red-gate route only after its
+// durable departure intent exists. Every mutation below is idempotent, so a
+// crash or CAS loss cannot leave a reworked task without an attributable
+// failure packet, and a later reconciliation can safely resume this phase.
+func resumePromotionFailureRouting(vaultPath string, store *RuntimeStore, run *DepartureRun) error {
+	if store == nil || run == nil || run.State != DepartureStateRepairing || run.Gate.Failure.Identity == "" {
+		return tuskerError(errorInvalidTransition, "promotion repair routing requires a durable repairing departure")
+	}
+	failure := run.Gate.Failure
+	if failure.Class == string(promotionFailureIsolated) && failure.OwningTaskID != "" {
+		affected := failure.AffectedTaskIDs
+		if len(affected) == 0 {
+			affected = promotionFailureHardClosure(vaultPath, failure.OwningTaskID)
+		}
+		for _, id := range affected {
+			if err := statusV7Cmd(Args{"vault": vaultPath, "quiet": "true", "id": id, "status": "rework", "by": "tusker:scheduled-promotion", "reason": "promotion gate red: " + failure.Identity}); err != nil {
+				return err
+			}
+		}
+	} else {
+		excerpt := "see the bounded promotion failure packet"
+		if len(failure.Packet.Defects) > 0 {
+			excerpt = failure.Packet.Defects[0].Excerpt
+		}
+		artifact := ""
+		if len(failure.Packet.ArtifactRefs) > 0 {
+			artifact = failure.Packet.ArtifactRefs[len(failure.Packet.ArtifactRefs)-1]
+		}
+		// This task is deliberately held. A red promotion must not manufacture an
+		// autonomous execution lane outside the project's configured wave/dispatch
+		// authority; the repair packet is ready for the existing explicit release
+		// path to bind it safely.
+		if err := createPromotionFailureRepairTask(vaultPath, run.ID, failure.Packet.GateCommand, excerpt, failure.Packet.GateProfile, failure.Identity, failure.OwningTaskID, artifact, true); err != nil {
+			return err
+		}
+		failure.RepairTaskID = promotionFailureRepairTaskID(vaultPath, failure.Identity)
+	}
+	next := *run
+	next.Gate.Failure = failure
+	next.State = DepartureStateFailed
+	if err := scheduledPromotionBeforeFailureCompletion(); err != nil {
+		return err
+	}
+	changed, err := store.TransitionDepartureRun(next, run.StateRevision)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		latest, readErr := store.FindDepartureRun(run.ID)
+		if readErr != nil {
+			return readErr
+		}
+		if latest != nil && latest.State == DepartureStateFailed && latest.Gate.Failure.Identity == failure.Identity {
+			*run = *latest
+			return nil
+		}
+		return tuskerError(errorInvalidTransition, "promotion repair routing lost its departure CAS; retry reconciliation")
+	}
+	*run = next
+	run.StateRevision++
+	return nil
+}
+
+// withPromotionGateResult preserves packet-harvested fallback defects for
+// setup/execution failures, where a GateTierResult has no command-level
+// defects. When present, the structured result is authoritative because it
+// retains each failed command's identity.
+func withPromotionGateResult(packet PromotionFailurePacket, result GateTierResult) PromotionFailurePacket {
+	packet.GateResult = result
+	if len(result.Defects) > 0 {
+		packet.Defects = append([]GateDefect(nil), result.Defects...)
+	}
+	return packet
+}
+
 func appendScheduledPromotionAudit(vaultPath, waveID, defaultBranch, commit, gateSummary, actor string) error {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
@@ -337,6 +418,12 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	}
 	if store == nil || run == nil {
 		return "", fmt.Errorf("scheduled promotion requires a departure runtime row")
+	}
+	if run.State == DepartureStateRepairing && run.Gate.Failure.Identity != "" {
+		if err := resumePromotionFailureRouting(vaultPath, store, run); err != nil {
+			return "", err
+		}
+		return "", tuskerError(errorInvalidTransition, "promotion gate red: "+run.Gate.Failure.Identity)
 	}
 	if run.Promotion.CommittedRef != "" && run.Promotion.CommittedSHA != "" {
 		repoRoot := v7RepoRoot(vaultPath)
@@ -402,13 +489,85 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	gateStarted := time.Now().UTC()
 	stopHeartbeat := startScheduledPromotionLeaseHeartbeat(store, lease, scheduledPromotionResourceLeaseTTL)
 	defer func() { _ = stopHeartbeat() }()
-	pass, gateSummary := runV7GateTierOnRef(vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+	execution := runV7GateTierOnRef(vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+	// A configured flake rerun is deliberately one-shot. Its second result
+	// replaces the gate attempt; a second red falls through to quarantine.
+	if execution.Err == nil && execution.Result.Outcome == gateOutcomeFailed && strings.TrimSpace(gatePolicy.FlakeFailureAction) == "rerun" {
+		raw, _ := os.ReadFile(execution.ArtifactRef)
+		probe := promotionFailurePacket(before.Candidate, before.Gate, actor, string(raw), nil, gatePolicy, "unknown", "not_run", promotionFailureOwner(before.Candidate), nil, []string{execution.ArtifactRef})
+		if classifyPromotionFailure(probe, gatePolicy).Class == promotionFailureFlake {
+			firstRefs := append([]string(nil), execution.ArtifactRefs...)
+			execution = runV7GateTierOnRef(vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+			execution.ArtifactRefs = append(firstRefs, execution.ArtifactRefs...)
+		}
+	}
+	gateSummary := string(execution.Result.Outcome)
 	gateFinished := time.Now().UTC()
-	if !pass {
+	if execution.Err != nil || (execution.Result.Outcome != gateOutcomePassed && execution.Result.Outcome != gateOutcomeLedgerHit) {
 		if heartbeatErr := stopHeartbeat(); heartbeatErr != nil {
 			return "", heartbeatErr
 		}
-		return "", tuskerError(errorInvalidTransition, "promotion gate red: "+gateSummary)
+		// Red gates never advance main. Persist a compact, replay-safe packet so
+		// triage has the frozen candidate and a durable raw-log reference rather
+		// than rediscovering the failure from mutable branches.
+		artifactRefs := append([]string(nil), execution.ArtifactRefs...)
+		if len(artifactRefs) == 0 {
+			artifactRefs = []string{execution.ArtifactRef}
+		}
+		gateOutput, _ := os.ReadFile(artifactRefs[len(artifactRefs)-1])
+		owner := promotionFailureOwner(before.Candidate)
+		touched, touchStatus := []string(nil), "unavailable"
+		if paths, pathErr := gitCombined(v7RepoRoot(vaultPath), "diff", "--name-only", "-z", before.Candidate.ExpectedDefaultBranchSHA+".."+before.Candidate.CandidateSHA); pathErr == nil {
+			touched = promotionTouchedPathsFromNUL(paths)
+			touchStatus = "proven"
+		}
+		lastGreen := ""
+		lastStatus := "unavailable:no_matching_entry"
+		if entry, ledgerErr := store.LatestCompleteGateLedgerBefore(projectID, gatePolicy.HarvestCommands, before.Gate.Profile, before.Gate.Toolchain, gateStarted.Format(time.RFC3339Nano)); ledgerErr == nil && entry != nil {
+			lastGreen, lastStatus = entry.ID+"@"+entry.TreeHash+"@"+entry.PassedAt, "proven"
+		}
+		packet := promotionFailurePacket(before.Candidate, before.Gate, actor, string(gateOutput), execution.Err, gatePolicy, lastGreen, "", owner, touched, artifactRefs)
+		packet.LastGreenStatus, packet.BisectionStatus, packet.TouchedPathsStatus = lastStatus, "not_run:independent_patch_boundaries_unavailable", touchStatus
+		packet = withPromotionGateResult(packet, execution.Result)
+		route := classifyPromotionFailure(packet, gatePolicy)
+		repairTaskID, action := "", "ambiguous_repair"
+		affected := promotionFailureHardClosure(vaultPath, owner)
+		if route.Class == promotionFailureIsolated && owner != "" {
+			action = "owner_rework"
+		} else {
+			if route.Class == promotionFailureInfrastructure {
+				action = "infrastructure_repair"
+			}
+			if route.Class == promotionFailureFlake {
+				action = "flake_quarantine"
+			}
+		}
+		intent := *run
+		intent.Candidate, intent.Gate = before.Candidate, before.Gate
+		intent.Gate.Status = "failed"
+		intent.Gate.StartedAt, intent.Gate.FinishedAt, intent.Gate.ArtifactRef = gateStarted.Format(time.RFC3339Nano), gateFinished.Format(time.RFC3339Nano), artifactRefs[len(artifactRefs)-1]
+		intent.Gate.Failure = DepartureFailure{Class: string(route.Class), Identity: route.StableIdentity, OwningTaskID: packet.OwningTaskID, BisectionRef: packet.BisectionRef, ArtifactRefs: packet.ArtifactRefs, RepairTaskID: repairTaskID, ModelTriage: route.ModelTriage, Packet: packet, Action: action, AffectedTaskIDs: affected}
+		intent.State = DepartureStateRepairing
+		intent.BlockReason = "promotion gate red: " + route.StableIdentity
+		if changed, persistErr := store.TransitionDepartureRun(intent, run.StateRevision); persistErr != nil {
+			return "", persistErr
+		} else if !changed {
+			return "", tuskerError(errorInvalidTransition, "promotion refusal: departure row changed while recording red gate")
+		}
+		*run = intent
+		run.StateRevision++
+		if err := scheduledPromotionAfterFailureIntent(); err != nil {
+			return "", err
+		}
+		if err := resumePromotionFailureRouting(vaultPath, store, run); err != nil {
+			return "", err
+		}
+		return "", tuskerError(errorInvalidTransition, "promotion gate red: "+safePacketText(string(gateOutput), 320))
+	}
+	if execution.Err == nil && (execution.Result.Outcome == gateOutcomePassed || execution.Result.Outcome == gateOutcomeLedgerHit) {
+		for _, ref := range execution.ArtifactRefs {
+			_ = os.Remove(ref)
+		}
 	}
 	after, err := scheduledPromotionSnapshot(vaultPath, projectID, waveID, wf)
 	if err != nil {

@@ -806,7 +806,80 @@ func v7LandingToolchainFingerprints(workDir string, commands []string) map[strin
 		}
 		out[key] = binary + "|" + version
 	}
+	// Every other executable still matters: a Python, JVM, .NET, C, or repo-local
+	// script gate must never collapse to one reusable empty identity. Resolve
+	// command heads without executing them. If shell syntax makes that impossible,
+	// return no identity and make the proof non-reusable rather than guessing.
+	for i, command := range commands {
+		for j, executable := range gateCommandExecutables(workDir, command) {
+			if executable == "" {
+				return map[string]string{}
+			}
+			out[fmt.Sprintf("exec:%d:%d", i, j)] = executable
+		}
+	}
 	return out
+}
+
+var gateShellBuiltins = map[string]bool{
+	".": true, ":": true, "alias": true, "break": true, "cd": true, "command": true,
+	"continue": true, "echo": true, "eval": true, "exec": true, "exit": true, "export": true,
+	"false": true, "printf": true, "pwd": true, "read": true, "return": true, "set": true,
+	"shift": true, "test": true, "times": true, "true": true, "type": true, "ulimit": true,
+	"umask": true, "unalias": true, "unset": true, "wait": true, "[": true,
+}
+
+func gateCommandExecutables(workDir, command string) []string {
+	if strings.ContainsAny(command, "`$|()") {
+		return []string{""}
+	}
+	command = strings.ReplaceAll(strings.ReplaceAll(command, "&&", ";"), "||", ";")
+	segments := strings.FieldsFunc(command, func(r rune) bool { return r == ';' })
+	if len(segments) == 0 {
+		return []string{""}
+	}
+	var resolved []string
+	for _, segment := range segments {
+		fields := strings.Fields(segment)
+		for len(fields) > 0 && strings.Contains(fields[0], "=") && !strings.HasPrefix(fields[0], "=") {
+			fields = fields[1:]
+		}
+		if len(fields) == 0 {
+			return []string{""}
+		}
+		if fields[0] == "env" {
+			fields = fields[1:]
+			for len(fields) > 0 && (strings.HasPrefix(fields[0], "-") || strings.Contains(fields[0], "=")) {
+				fields = fields[1:]
+			}
+			if len(fields) == 0 {
+				return []string{""}
+			}
+		}
+		name := fields[0]
+		if gateShellBuiltins[name] {
+			name = "/bin/sh"
+		}
+		path := name
+		if !filepath.IsAbs(path) && !strings.ContainsRune(path, filepath.Separator) {
+			var err error
+			path, err = exec.LookPath(path)
+			if err != nil {
+				return []string{""}
+			}
+		} else if !filepath.IsAbs(path) {
+			path = filepath.Join(workDir, path)
+		}
+		if resolvedPath, err := filepath.EvalSymlinks(path); err == nil && resolvedPath != "" {
+			path = resolvedPath
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			return []string{""}
+		}
+		resolved = append(resolved, fmt.Sprintf("%s|%d|%d", path, info.Size(), info.ModTime().UnixNano()))
+	}
+	return resolved
 }
 
 func v7LandingToolchainCorpus(workDir string, commands []string) string {
@@ -1465,10 +1538,27 @@ func runV7LandingGateOnRef(vaultPath, repoRoot, ref string) (bool, string) {
 // runV7GateTierOnRef executes the canonical full gate on a detached frozen
 // candidate. Unlike the focused landing gate, this path uses the shared gate
 // ledger and harvest semantics and is therefore valid promotion proof.
-func runV7GateTierOnRef(vaultPath, repoRoot, ref, projectID string, policy GateTierPolicy, store *RuntimeStore) (bool, string) {
+type promotionGateExecution struct {
+	Result       GateTierResult
+	ArtifactRef  string
+	ArtifactRefs []string
+	Err          error
+}
+
+func runV7GateTierOnRef(vaultPath, repoRoot, ref, projectID string, policy GateTierPolicy, store *RuntimeStore) promotionGateExecution {
+	writeFailure := func(detail string) promotionGateExecution {
+		root := DefaultStateRoot()
+		if store != nil && store.stateRoot != "" {
+			root = store.stateRoot
+		}
+		path := filepath.Join(root, "artifacts", "promotion-gates", strings.ToLower(newRecordID())+".log")
+		_ = os.MkdirAll(filepath.Dir(path), 0o755)
+		_ = os.WriteFile(path, []byte(safePacketText(detail, 4096)+"\n"), 0o600)
+		return promotionGateExecution{ArtifactRef: path, ArtifactRefs: []string{path}, Err: fmt.Errorf("%s", detail)}
+	}
 	tmp, err := os.MkdirTemp("", "tusker-promotion-gate-*")
 	if err != nil {
-		return false, err.Error()
+		return writeFailure("failed to create full-gate temporary workspace: " + err.Error())
 	}
 	removeWorktree := false
 	defer func() {
@@ -1479,20 +1569,31 @@ func runV7GateTierOnRef(vaultPath, repoRoot, ref, projectID string, policy GateT
 		}
 	}()
 	if output, err := gitCombined(repoRoot, "worktree", "add", "--detach", tmp, ref); err != nil {
-		return false, "failed to create full-gate worktree: " + firstActionableLine(output, err.Error())
+		return writeFailure("failed to create full-gate worktree: " + firstActionableLine(output, err.Error()))
 	}
 	removeWorktree = true
 	runtime := defaultGateTierRuntime(store, projectID, tmp)
+	var raw bytes.Buffer
+	execGate := runtime.Exec
+	runtime.Exec = func(workspace, command string) (string, error) {
+		output, runErr := execGate(workspace, command)
+		fmt.Fprintf(&raw, "$ %s\n%s\n", command, output)
+		return output, runErr
+	}
 	result, err := runGateTier(policy, policy.Profile, runtime)
-	if err != nil {
-		return false, err.Error()
+	root := DefaultStateRoot()
+	if store != nil && store.stateRoot != "" {
+		root = store.stateRoot
 	}
-	summary, marshalErr := json.Marshal(result)
-	if marshalErr != nil {
-		return false, marshalErr.Error()
+	path := filepath.Join(root, "artifacts", "promotion-gates", strings.ToLower(newRecordID())+".log")
+	if writeErr := os.MkdirAll(filepath.Dir(path), 0o755); writeErr != nil {
+		if err == nil {
+			err = writeErr
+		}
+	} else if writeErr = os.WriteFile(path, raw.Bytes(), 0o600); writeErr != nil && err == nil {
+		err = writeErr
 	}
-	passed := result.Outcome == gateOutcomePassed || result.Outcome == gateOutcomeLedgerHit
-	return passed, string(summary)
+	return promotionGateExecution{Result: result, ArtifactRef: path, ArtifactRefs: []string{path}, Err: err}
 }
 
 func appendV7WaveLandingAudit(vaultPath, waveID string, entries []v7LandingAuditEntry, actor string) error {
