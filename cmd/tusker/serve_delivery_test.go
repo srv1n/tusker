@@ -1112,6 +1112,82 @@ func TestServeDeliveryPostArmFailureRestoresFullTransaction(t *testing.T) {
 	}
 }
 
+func TestServeDeliveryAuthorizationLockCloseFailureRestoresFullTransaction(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		match func(vault string, lock *v7DocumentLock) bool
+	}{
+		{
+			name: "material",
+			match: func(vault string, lock *v7DocumentLock) bool {
+				return filepath.Clean(lock.path) == filepath.Join(vault, "SKILL.md")
+			},
+		},
+		{
+			name: "wave",
+			match: func(vault string, lock *v7DocumentLock) bool {
+				return filepath.Clean(lock.path) == filepath.Join(vault, "work", "waves", "W-0001.md")
+			},
+		},
+		{
+			name: "member",
+			match: func(vault string, lock *v7DocumentLock) bool {
+				return strings.HasPrefix(filepath.Clean(lock.path), filepath.Join(vault, "work", "tasks")+string(os.PathSeparator))
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, repo := newServeDeliveryFixture(t)
+			vault := server.vaultPath
+			plan := validDeliveryPlanV2()
+			plan.HumanGates = nil
+			path := writeDeliveryV2TestPlan(t, vault, plan)
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rel := filepath.ToSlash(filepath.Join(".tusker", "scratch", filepath.Base(path)))
+			var reviewed deliveryReview
+			serveDecode(t, server, "/api/delivery/review?project=delivery&plan="+rel, &reviewed)
+
+			originalStart := serveDeliveryStartFn
+			serveDeliveryStartFn = func(args Args, source *deliveryPlanSource) (deliveryStartResult, error) {
+				return deliveryStartWithPlanSource(args, fixedWaveEnvironmentInspector(greenWaveEnvironment()), source)
+			}
+			t.Cleanup(func() { serveDeliveryStartFn = originalStart })
+			originalClose := closeV7AuthorizationLock
+			injected := false
+			closeV7AuthorizationLock = func(lock *v7DocumentLock) error {
+				err := originalClose(lock)
+				if err != nil || injected || !tc.match(vault, lock) {
+					return err
+				}
+				injected = true
+				return errors.New("injected " + tc.name + " authorization lock close failure")
+			}
+			t.Cleanup(func() { closeV7AuthorizationLock = originalClose })
+
+			beforeRepo := snapshotTree(t, repo)
+			beforeState := snapshotTree(t, DefaultStateRoot())
+			finishMutations := beginServeDeliveryMutationTracking(t)
+			request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(`{"plan":"`+rel+`","confirm":"`+deliveryFingerprint(raw)+`","planIdentity":"`+reviewed.Start.PlanIdentity+`"}`))
+			request.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, request)
+			mutatedVaults := finishMutations()
+
+			if !injected || recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "authorization locks did not close cleanly") || !strings.Contains(recorder.Body.String(), "exact authorization and import preimages were restored") {
+				t.Fatalf("close failure lost fail-closed rollback contract: injected=%t status=%d body=%s", injected, recorder.Code, recorder.Body.String())
+			}
+			if len(mutatedVaults) != 0 {
+				t.Fatalf("close-failed Start published mutation callbacks: %v", mutatedVaults)
+			}
+			assertSnapshotEqual(t, beforeRepo, snapshotTree(t, repo), "close-failed repository preimages")
+			assertSnapshotEqual(t, beforeState, snapshotTree(t, DefaultStateRoot()), "close-failed runtime state")
+		})
+	}
+}
+
 func TestDeliveryReviewEnvironmentStatesHaveOneTruthfulAction(t *testing.T) {
 	t.Setenv("TUSKER_STATE_ROOT", t.TempDir())
 	base := greenWaveEnvironment()

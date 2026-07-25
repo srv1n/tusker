@@ -18,6 +18,14 @@ const waveAuthorizationSchema = "tusker.wave-authorization/v1"
 
 var deliveryStartAfterArmCommit func() error
 
+// closeV7AuthorizationLock is a narrow seam for exercising the transaction's
+// release failure handling. v7DocumentLock.Close itself always attempts both
+// unlock and file close; this seam must therefore only be used while releasing
+// authorization transaction locks.
+var closeV7AuthorizationLock = func(lock *v7DocumentLock) error {
+	return lock.Close()
+}
+
 type wavePreflightEnvironment struct {
 	ProjectRegistered  bool
 	ProjectEnabled     bool
@@ -589,31 +597,57 @@ func mutateWaveAuthorizationWithInspector(args Args, target string, inspector wa
 		if err != nil {
 			return wavePreflightReport{}, err
 		}
-		defer materialLock.Close()
 	}
 	lock, err := acquireV7DocumentLock(wave.AbsolutePath, v7DocumentLockTimeout)
 	if err != nil {
-		return wavePreflightReport{}, err
+		return wavePreflightReport{}, combineV7AuthorizationLockCloseError(err, closeV7AuthorizationLocks(materialLock, nil, nil))
 	}
-	defer lock.Close()
+	closeLocks := func(taskLocks []*v7DocumentLock) error {
+		return closeV7AuthorizationLocks(materialLock, lock, taskLocks)
+	}
+	finishBeforeMemberLocks := func(report wavePreflightReport, cause error) (wavePreflightReport, error) {
+		return report, combineV7AuthorizationLockCloseError(cause, closeLocks(nil))
+	}
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
-		return wavePreflightReport{}, err
+		return finishBeforeMemberLocks(wavePreflightReport{}, err)
 	}
 	wave = idx.Waves[stringField(wave.Data, "id")]
 	current := fallback(stringField(wave.Data, "authorization"), "disarmed")
 	if target == "paused" && current == "disarmed" {
-		return wavePreflightReport{}, tuskerError(errorInvalidTransition, stringField(wave.Data, "id")+": cannot pause a disarmed wave")
+		return finishBeforeMemberLocks(wavePreflightReport{}, tuskerError(errorInvalidTransition, stringField(wave.Data, "id")+": cannot pause a disarmed wave"))
 	}
 	if target == "armed" {
 		taskLocks, lockErr := lockWaveMemberTasks(idx, wave, authority)
 		if lockErr != nil {
-			return wavePreflightReport{}, lockErr
+			return finishBeforeMemberLocks(wavePreflightReport{}, lockErr)
 		}
-		defer closeV7DocumentLocks(taskLocks)
+		finishFailure := func(report wavePreflightReport, cause error) (wavePreflightReport, error) {
+			cause = rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause)
+			return report, combineV7AuthorizationLockCloseError(cause, closeLocks(taskLocks))
+		}
+		finishSuccess := func(report wavePreflightReport, wroteAuthorization bool) (wavePreflightReport, error) {
+			if closeErr := closeLocks(taskLocks); closeErr != nil {
+				cause := tuskerError(
+					errorInvalidTransition,
+					"delivery Start authorization locks did not close cleanly; delivery is fail-closed pending repair",
+					withHint("stop delivery, inspect the reported authorization locks and transaction paths, then regenerate delivery review"),
+					withContext(map[string]any{"lock": closeErr.Error(), "paths": deliveryStartTransactionPaths(authority)}),
+				)
+				if authority != nil && authority.ImportCommit != nil {
+					return report, refuseDeliveryStartBeforeArm(vaultPath, authority, cause)
+				}
+				return report, handledDeliveryStartRefusal(cause)
+			}
+			if wroteAuthorization && (authority == nil || !authority.PlanBound) {
+				actor := fallback(firstNonEmpty(args.String("by"), args.String("actor")), "human:"+defaultActorName())
+				_ = emitV7Event(vaultPath, report.WaveID, "wave", "updated", actor, map[string]any{"authorization": "armed", "fingerprint": report.Fingerprint, "members": report.Members})
+			}
+			return report, emitWaveAuthorizationResult(args, report.WaveID, report.Authorization, report)
+		}
 		idx, err = loadV7Index(vaultPath)
 		if err != nil {
-			return wavePreflightReport{}, err
+			return finishFailure(wavePreflightReport{}, err)
 		}
 		wave = idx.Waves[stringField(wave.Data, "id")]
 		current = fallback(stringField(wave.Data, "authorization"), "disarmed")
@@ -624,46 +658,47 @@ func mutateWaveAuthorizationWithInspector(args Args, target string, inspector wa
 			env = inspector(vaultPath, wave)
 		}
 		report := buildWavePreflight(vaultPath, idx, wave, env)
-		if err := validateDeliveryStartAuthorityUnderLock(vaultPath, wave, authority); err != nil {
-			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, err)
-		}
 		if authority != nil && authority.WaveID != report.WaveID {
 			cause := tuskerError(errorInvalidTransition, report.WaveID+": reviewed import wave identity changed before authorization; rerun delivery review and Start", withContext(report))
-			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause)
+			return finishFailure(report, cause)
 		}
 		if authority != nil && authority.AuthorizationFingerprint != report.Fingerprint {
 			cause := tuskerError(errorInvalidTransition, report.WaveID+": wave material changed after delivery preflight; rerun delivery review and Start", withContext(report))
-			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause)
+			return finishFailure(report, cause)
 		}
 		if authority != nil && strings.Join(authority.Members, "\x00") != strings.Join(sortedStrings(normalizeList(wave.Data["members"])), "\x00") {
 			cause := tuskerError(errorInvalidTransition, report.WaveID+": wave membership changed after reviewed import; rerun delivery review and Start", withContext(report))
-			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause)
+			return finishFailure(report, cause)
 		}
 		if err := validateDeliveryStartLiveAuthority(idx, wave, authority); err != nil {
-			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, err)
+			return finishFailure(report, err)
+		}
+		if err := validateDeliveryStartAuthorityUnderLock(vaultPath, wave, authority); err != nil {
+			return finishFailure(report, err)
 		}
 		if !report.OK {
 			cause := tuskerError(errorInvalidTransition, report.WaveID+": wave arm blocked: "+strings.Join(report.Blockers, "; "), withContext(report))
-			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause)
+			return finishFailure(report, cause)
 		}
 		if current == "armed" && report.StoredFingerprint == report.Fingerprint {
-			return report, emitWaveAuthorizationResult(args, report.WaveID, current, report)
+			return finishSuccess(report, false)
 		}
 		if err := armWaveAtomicallyGuarded(vaultPath, idx, wave, report, args, authority); err != nil {
-			return report, rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, err)
+			return finishFailure(report, err)
 		}
 		final := report
 		final.Authorization = "armed"
 		final.StoredFingerprint = report.Fingerprint
 		final.AuthorizationStale = false
 		final.Action = waveAuthorizationAction(final)
-		return final, nil
+		return finishSuccess(final, true)
 	}
 	if current == target {
 		report := buildWavePreflight(vaultPath, idx, wave, wavePreflightEnvironment{})
-		return report, emitWaveAuthorizationResult(args, report.WaveID, current, report)
+		report.Authorization = current
+		return finishBeforeMemberLocks(report, emitWaveAuthorizationResult(args, report.WaveID, current, report))
 	}
-	return wavePreflightReport{}, updateWaveAuthorization(vaultPath, wave, target, "", args)
+	return finishBeforeMemberLocks(wavePreflightReport{}, updateWaveAuthorization(vaultPath, wave, target, "", args))
 }
 
 func lockWaveMemberTasks(idx v7Index, wave Note, authority *deliveryStartAuthority) ([]*v7DocumentLock, error) {
@@ -680,8 +715,7 @@ func lockWaveMemberTasks(idx v7Index, wave Note, authority *deliveryStartAuthori
 		}
 		lock, err := acquireV7DocumentLock(task.AbsolutePath, v7DocumentLockTimeout)
 		if err != nil {
-			closeV7DocumentLocks(locks)
-			return nil, err
+			return nil, combineV7AuthorizationLockCloseError(err, closeV7DocumentLocks(locks))
 		}
 		locks = append(locks, lock)
 	}
@@ -831,41 +865,77 @@ func refuseDeliveryStartBeforeArm(vaultPath string, authority *deliveryStartAuth
 		}
 		return handledDeliveryStartRefusal(rolledBack)
 	}
-	defer materialLock.Close()
+	var waveLock *v7DocumentLock
+	var taskLocks []*v7DocumentLock
+	closeLocks := func() error {
+		return closeV7AuthorizationLocks(materialLock, waveLock, taskLocks)
+	}
+	finish := func(cause error) error {
+		return combineV7AuthorizationLockCloseError(cause, closeLocks())
+	}
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
-		return fmt.Errorf("%w; refusal could not load current state for safe readiness cleanup: %v", cause, err)
+		return finish(fmt.Errorf("%w; refusal could not load current state for safe readiness cleanup: %v", cause, err))
 	}
 	wave := idx.Waves[authority.WaveID]
-	var waveLock *v7DocumentLock
 	if wave.AbsolutePath != "" {
 		waveLock, err = acquireV7DocumentLock(wave.AbsolutePath, v7DocumentLockTimeout)
 		if err != nil {
-			return fmt.Errorf("%w; refusal could not lock current wave for safe readiness cleanup: %v", cause, err)
+			return finish(fmt.Errorf("%w; refusal could not lock current wave for safe readiness cleanup: %v", cause, err))
 		}
-		defer waveLock.Close()
 		idx, err = loadV7Index(vaultPath)
 		if err != nil {
-			return fmt.Errorf("%w; refusal could not reload current wave for safe readiness cleanup: %v", cause, err)
+			return finish(fmt.Errorf("%w; refusal could not reload current wave for safe readiness cleanup: %v", cause, err))
 		}
 		wave = idx.Waves[authority.WaveID]
 	}
-	taskLocks, err := lockWaveMemberTasks(idx, wave, authority)
+	taskLocks, err = lockWaveMemberTasks(idx, wave, authority)
 	if err != nil {
-		return fmt.Errorf("%w; refusal could not lock imported members for safe readiness cleanup: %v", cause, err)
+		return finish(fmt.Errorf("%w; refusal could not lock imported members for safe readiness cleanup: %v", cause, err))
 	}
-	defer closeV7DocumentLocks(taskLocks)
 	idx, err = loadV7Index(vaultPath)
 	if err != nil {
-		return fmt.Errorf("%w; refusal could not reload locked members for safe readiness cleanup: %v", cause, err)
+		return finish(fmt.Errorf("%w; refusal could not reload locked members for safe readiness cleanup: %v", cause, err))
 	}
-	return rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause)
+	return finish(rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause))
 }
 
-func closeV7DocumentLocks(locks []*v7DocumentLock) {
+func closeV7DocumentLocks(locks []*v7DocumentLock) error {
+	var errs []error
 	for index := len(locks) - 1; index >= 0; index-- {
-		_ = locks[index].Close()
+		if err := closeV7AuthorizationLock(locks[index]); err != nil {
+			errs = append(errs, fmt.Errorf("member authorization lock %d: %w", index, err))
+		}
 	}
+	return errors.Join(errs...)
+}
+
+func closeV7AuthorizationLocks(materialLock, waveLock *v7DocumentLock, taskLocks []*v7DocumentLock) error {
+	var errs []error
+	if err := closeV7DocumentLocks(taskLocks); err != nil {
+		errs = append(errs, err)
+	}
+	if waveLock != nil {
+		if err := closeV7AuthorizationLock(waveLock); err != nil {
+			errs = append(errs, fmt.Errorf("wave authorization lock: %w", err))
+		}
+	}
+	if materialLock != nil {
+		if err := closeV7AuthorizationLock(materialLock); err != nil {
+			errs = append(errs, fmt.Errorf("material authorization lock: %w", err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func combineV7AuthorizationLockCloseError(cause, closeErr error) error {
+	if closeErr == nil {
+		return cause
+	}
+	if cause == nil {
+		return fmt.Errorf("authorization lock release failed: %w", closeErr)
+	}
+	return errors.Join(cause, fmt.Errorf("authorization lock release also failed: %w", closeErr))
 }
 
 func armWaveAtomically(vaultPath string, idx v7Index, wave Note, report wavePreflightReport, args Args) error {
@@ -940,10 +1010,8 @@ func armWaveAtomicallyGuarded(vaultPath string, idx v7Index, wave Note, report w
 				return err
 			}
 		}
-	} else {
-		_ = emitV7Event(vaultPath, report.WaveID, "wave", "updated", actor, map[string]any{"authorization": "armed", "fingerprint": report.Fingerprint, "members": report.Members})
 	}
-	return emitWaveAuthorizationResult(args, report.WaveID, "armed", report)
+	return nil
 }
 
 func updateWaveAuthorization(vaultPath string, wave Note, target, fingerprint string, args Args) error {
