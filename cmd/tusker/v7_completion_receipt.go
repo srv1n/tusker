@@ -101,7 +101,9 @@ func validateCompletionReceipt(raw []byte, taskPath string, task completionGitTr
 		return fmt.Errorf("completion receipt transaction ID does not bind its result")
 	}
 	fact, ok := v7TaskCloseAuthorityFromAny(taskData["close_authority"])
-	if !ok || validateV7TaskCloseAuthorityFact(fact, tx.ProjectID, result.TaskID, result.Actor, taskBody) != nil || fact.TransactionID != tx.ID || fact.ReceiptID != receipt.ReceiptID || fact.ClosedAt != completionResultTimestamp(result) {
+	// RegisteredProject.ProjectID is runtime-local; the task fact is anchored
+	// to the portable vault project identity recorded in the task tree.
+	if !ok || validateV7TaskCloseAuthorityFact(fact, stringField(taskData, "project"), result.TaskID, result.Actor, taskBody) != nil || fact.TransactionID != tx.ID || fact.ReceiptID != receipt.ReceiptID || fact.ClosedAt != completionResultTimestamp(result) {
 		return fmt.Errorf("completion receipt task fact does not match historical task")
 	}
 	return nil
