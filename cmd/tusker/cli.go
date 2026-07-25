@@ -309,6 +309,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, deliveryPlanningContextCmd(args)
 	case "delivery import":
 		return 0, deliveryImportCmd(args)
+	case "delivery review":
+		return 0, deliveryReviewCmd(args)
 	case "delivery doctor":
 		return 0, deliveryDoctorCmd(args)
 	case "delivery rollout":
