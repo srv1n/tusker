@@ -370,7 +370,6 @@ Task:
 
 Policy:
 - Reviewer actor: {{ reviewer.actor }}
-- Auto-close allowed: {{ reviewer.auto_close_allowed }}
 
 Checklist:
 1. Read the task acceptance contract, proof mode, verification rows, evidence cards, and gates.

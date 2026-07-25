@@ -91,12 +91,21 @@ func TestRenderAttemptPromptUsesReviewerTemplateForReviewLane(t *testing.T) {
 	for _, expected := range []string{
 		"independent Tusker reviewer",
 		"ID: MEM-T-0001",
-		"Auto-close allowed: yes",
 		"Risk alone does not justify a human gate",
-		"tusker close MEM-T-0001 --by agent-reviewer",
+		"tusker review submit MEM-T-0001 --attempt attempt-review --task-rev",
+		"--source-sha",
+		"--work-rev",
+		"--proof-fingerprint",
+		"--gate-fingerprint",
+		"--verdict pass|changes_requested|blocked",
 	} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("expected reviewer prompt to contain %q, got:\n%s", expected, prompt)
+		}
+	}
+	for _, forbidden := range []string{"auto-close", "tusker status", "tusker merge", "tusker land", "tusker close", "tusker rework", "git update-ref", "git checkout"} {
+		if strings.Contains(strings.ToLower(prompt), forbidden) {
+			t.Fatalf("reviewer prompt retained forbidden authority %q:\n%s", forbidden, prompt)
 		}
 	}
 }
@@ -131,10 +140,15 @@ func TestRenderAttemptPromptUsesV7ReviewerActorShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(prompt, "tusker close APP-T-0001 --by reviewer:agent") {
-		t.Fatalf("expected V7 reviewer prompt to use reviewer:agent, got:\n%s", prompt)
+	if !strings.Contains(prompt, "Reviewer actor: reviewer:agent") {
+		t.Fatalf("expected V7 reviewer actor, got:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "tusker verify add APP-T-0001 --by reviewer:agent --covers A1,A2") || strings.Contains(prompt, "tusker verify APP-T-0001") {
-		t.Fatalf("expected V7 reviewer prompt to use verify add, got:\n%s", prompt)
+	if !strings.Contains(prompt, "tusker review submit APP-T-0001 --attempt attempt-review") {
+		t.Fatalf("expected V7 reviewer prompt to use typed result submission, got:\n%s", prompt)
+	}
+	for _, forbidden := range []string{"tusker status", "tusker merge", "tusker land", "tusker close", "tusker rework", "git update-ref", "git checkout"} {
+		if strings.Contains(strings.ToLower(prompt), forbidden) {
+			t.Fatalf("V7 reviewer prompt retained forbidden authority %q:\n%s", forbidden, prompt)
+		}
 	}
 }

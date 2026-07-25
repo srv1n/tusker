@@ -34,10 +34,17 @@ func TestDeliveryPlanReview(t *testing.T) {
 			t.Fatalf("terminal projection missed golden line %q: %s", line, text)
 		}
 	}
-	for _, heading := range []string{"What will be delivered", "How it will be proven", "How work flows", "What needs your decision", "Start boundary"} {
-		if !strings.Contains(text, heading) {
-			t.Fatalf("missing primary section %q: %s", heading, text)
+	wantHeadings := []string{"What will be delivered", "How it will be proven", "How work flows", "What needs your decision", "Start boundary"}
+	var gotHeadings []string
+	for _, line := range strings.Split(strings.TrimSpace(text), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "Delivery review ") {
+			continue
 		}
+		gotHeadings = append(gotHeadings, line)
+	}
+	if strings.Join(gotHeadings, "\x00") != strings.Join(wantHeadings, "\x00") {
+		t.Fatalf("terminal review must contain exactly five primary sections: want=%#v got=%#v\n%s", wantHeadings, gotHeadings, text)
 	}
 	first, _ := json.Marshal(review)
 	second, _ := json.Marshal(review)

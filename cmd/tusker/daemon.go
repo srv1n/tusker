@@ -5741,26 +5741,25 @@ var workflowTemplatePlaceholder = regexp.MustCompile(`{{\s*([A-Za-z0-9_.]+)\s*}}
 
 func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath string, attemptNumber int, attemptID, lane string, run RunStatus, previousRun RunStatus, store *RuntimeStore) (string, error) {
 	values := map[string]string{
-		"project.name":                project.Name,
-		"project.id":                  project.ProjectID,
-		"project.key":                 project.ProjectKey,
-		"vault.path":                  project.VaultRoot,
-		"repo.root":                   project.RepoRoot,
-		"workspace.path":              workspacePath,
-		"workflow.path":               wfFile.Path,
-		"note.id":                     stringField(note.Data, "id"),
-		"note.record_id":              trackerRecordID(note),
-		"note.title":                  stringField(note.Data, "title"),
-		"note.status":                 stringField(note.Data, "status"),
-		"note.type":                   stringField(note.Data, "type"),
-		"note.risk":                   stringField(note.Data, "risk"),
-		"attempt.number":              strconv.Itoa(attemptNumber),
-		"attempt.id":                  attemptID,
-		"review.task_rev":             stringField(note.Data, "state_rev"),
-		"review.source_sha":           firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit")),
-		"review.work_rev":             strconv.Itoa(intField(note.Data, "work_revision")),
-		"reviewer.actor":              reviewerActorForNote(wfFile.Data.Reviewer.Actor, note),
-		"reviewer.auto_close_allowed": yesNo(reviewerMayAutoCloseRisk(wfFile.Data.Reviewer, stringField(note.Data, "risk"))),
+		"project.name":      project.Name,
+		"project.id":        project.ProjectID,
+		"project.key":       project.ProjectKey,
+		"vault.path":        project.VaultRoot,
+		"repo.root":         project.RepoRoot,
+		"workspace.path":    workspacePath,
+		"workflow.path":     wfFile.Path,
+		"note.id":           stringField(note.Data, "id"),
+		"note.record_id":    trackerRecordID(note),
+		"note.title":        stringField(note.Data, "title"),
+		"note.status":       stringField(note.Data, "status"),
+		"note.type":         stringField(note.Data, "type"),
+		"note.risk":         stringField(note.Data, "risk"),
+		"attempt.number":    strconv.Itoa(attemptNumber),
+		"attempt.id":        attemptID,
+		"review.task_rev":   stringField(note.Data, "state_rev"),
+		"review.source_sha": firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit")),
+		"review.work_rev":   strconv.Itoa(intField(note.Data, "work_revision")),
+		"reviewer.actor":    reviewerActorForNote(wfFile.Data.Reviewer.Actor, note),
 	}
 	if lane == runLaneReview {
 		proof, gates, snapshotErr := reviewObjectiveSnapshots(project.VaultRoot, note)
@@ -6022,13 +6021,6 @@ func renderExternalLoopRuntimePromptContext(store *RuntimeStore, projectID, reco
 		}
 	}
 	return strings.Join(lines, "\n")
-}
-
-func yesNo(value bool) string {
-	if value {
-		return "yes"
-	}
-	return "no"
 }
 
 func reviewerActorForNote(configured string, note Note) string {
