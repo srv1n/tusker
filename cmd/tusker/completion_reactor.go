@@ -71,6 +71,15 @@ type completionTransaction struct {
 	UpdatedAt            string `json:"updated_at"`
 }
 
+type persistedReviewResultRow struct {
+	ProjectID    string
+	TaskID       string
+	WorkRevision int
+	AttemptID    string
+	Result       ReviewResult
+	Repair       error
+}
+
 // completionReactorCrashHook is test-only fault injection. Production leaves
 // it nil. Hooks run after an idempotent side effect and before its phase is
 // persisted, which is the only crash window worth proving.
@@ -109,8 +118,11 @@ func completionTransactionID(projectID string, result ReviewResult, integrationB
 }
 
 func (s *RuntimeStore) CompletionTransaction(id string) (*completionTransaction, error) {
-	var raw string
-	err := s.queryRowScan(`SELECT transaction_json FROM completion_transactions WHERE transaction_id=?`, []any{id}, &raw)
+	var rowID, projectID, taskID, resultRevision, phase, raw string
+	err := s.queryRowScan(
+		`SELECT transaction_id,project_id,task_id,result_revision,phase,transaction_json FROM completion_transactions WHERE transaction_id=?`,
+		[]any{id}, &rowID, &projectID, &taskID, &resultRevision, &phase, &raw,
+	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -119,14 +131,28 @@ func (s *RuntimeStore) CompletionTransaction(id string) (*completionTransaction,
 	}
 	var transaction completionTransaction
 	if err := json.Unmarshal([]byte(raw), &transaction); err != nil {
-		return nil, err
+		return nil, completionPersistedRowRepairError(
+			"completion transaction", projectID, taskID, 0, "", resultRevision,
+			"transaction JSON is malformed: "+err.Error(),
+		)
+	}
+	if transaction.ID != rowID || transaction.ProjectID != projectID || transaction.TaskID != taskID ||
+		transaction.ResultRevision != resultRevision || transaction.Phase != phase {
+		return nil, completionPersistedRowRepairError(
+			"completion transaction", projectID, taskID, 0, "", resultRevision,
+			"SQL identity does not match transaction JSON",
+		)
 	}
 	return &transaction, nil
 }
 
 func (s *RuntimeStore) CompletionTransactionForResult(projectID, taskID, resultRevision string) (*completionTransaction, error) {
-	var raw string
-	err := s.queryRowScan(`SELECT transaction_json FROM completion_transactions WHERE project_id=? AND task_id=? AND result_revision=? ORDER BY updated_at DESC LIMIT 1`, []any{projectID, taskID, resultRevision}, &raw)
+	var rowID, rowProjectID, rowTaskID, rowResultRevision, phase, raw string
+	err := s.queryRowScan(
+		`SELECT transaction_id,project_id,task_id,result_revision,phase,transaction_json FROM completion_transactions WHERE project_id=? AND task_id=? AND result_revision=? ORDER BY updated_at DESC LIMIT 1`,
+		[]any{projectID, taskID, resultRevision},
+		&rowID, &rowProjectID, &rowTaskID, &rowResultRevision, &phase, &raw,
+	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -135,7 +161,17 @@ func (s *RuntimeStore) CompletionTransactionForResult(projectID, taskID, resultR
 	}
 	var transaction completionTransaction
 	if err := json.Unmarshal([]byte(raw), &transaction); err != nil {
-		return nil, err
+		return nil, completionPersistedRowRepairError(
+			"completion transaction", rowProjectID, rowTaskID, 0, "", rowResultRevision,
+			"transaction JSON is malformed: "+err.Error(),
+		)
+	}
+	if transaction.ID != rowID || transaction.ProjectID != rowProjectID || transaction.TaskID != rowTaskID ||
+		transaction.ResultRevision != rowResultRevision || transaction.Phase != phase {
+		return nil, completionPersistedRowRepairError(
+			"completion transaction", rowProjectID, rowTaskID, 0, "", rowResultRevision,
+			"SQL identity does not match transaction JSON",
+		)
 	}
 	return &transaction, nil
 }
@@ -156,28 +192,79 @@ func (s *RuntimeStore) SaveCompletionTransaction(transaction *completionTransact
 	return err
 }
 
-func (s *RuntimeStore) ListReviewResults(projectID string) ([]ReviewResult, error) {
-	rows, err := s.query(`SELECT result_json FROM review_results WHERE project_id=? ORDER BY task_id, work_revision, attempt_id`, projectID)
+func (s *RuntimeStore) ListReviewResults(projectID string) ([]persistedReviewResultRow, error) {
+	rows, err := s.query(
+		`SELECT project_id,task_id,work_revision,attempt_id,result_json FROM review_results WHERE project_id=? ORDER BY task_id, work_revision, attempt_id`,
+		projectID,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ReviewResult
+	var out []persistedReviewResultRow
 	for rows.Next() {
+		var row persistedReviewResultRow
+		var rawWorkRevision any
 		var raw string
-		if err := rows.Scan(&raw); err != nil {
+		if err := rows.Scan(&row.ProjectID, &row.TaskID, &rawWorkRevision, &row.AttemptID, &raw); err != nil {
 			return nil, err
 		}
-		var result ReviewResult
-		if err := json.Unmarshal([]byte(raw), &result); err != nil {
-			return nil, err
+		row.WorkRevision = intFromAny(rawWorkRevision)
+		if row.WorkRevision <= 0 {
+			row.Repair = completionPersistedRowRepairError(
+				"review result", row.ProjectID, row.TaskID, 0, row.AttemptID, "",
+				"SQL work_revision identity is invalid",
+			)
+			out = append(out, row)
+			continue
 		}
-		if err := validatePersistedReviewResult(result); err != nil {
-			return nil, tuskerError(errorInvalidTransition, "stored review result failed immutable validation: "+err.Error())
+		if err := json.Unmarshal([]byte(raw), &row.Result); err != nil {
+			row.Repair = completionPersistedRowRepairError(
+				"review result", row.ProjectID, row.TaskID, row.WorkRevision, row.AttemptID, "",
+				"result JSON is malformed: "+err.Error(),
+			)
+			out = append(out, row)
+			continue
 		}
-		out = append(out, result)
+		if row.Result.ProjectID != row.ProjectID || row.Result.TaskID != row.TaskID ||
+			row.Result.WorkRevision != row.WorkRevision || row.Result.AttemptID != row.AttemptID {
+			row.Repair = completionPersistedRowRepairError(
+				"review result", row.ProjectID, row.TaskID, row.WorkRevision, row.AttemptID, row.Result.ResultRevision,
+				"SQL identity does not match signed result JSON",
+			)
+			out = append(out, row)
+			continue
+		}
+		if err := validatePersistedReviewResult(row.Result); err != nil {
+			row.Repair = completionPersistedRowRepairError(
+				"review result", row.ProjectID, row.TaskID, row.WorkRevision, row.AttemptID, row.Result.ResultRevision,
+				"immutable result validation failed: "+err.Error(),
+			)
+		}
+		out = append(out, row)
 	}
 	return out, rows.Err()
+}
+
+func completionPersistedRowRepairError(kind, projectID, taskID string, workRevision int, attemptID, resultRevision, reason string) error {
+	context := map[string]any{
+		"kind": kind, "project": projectID, "task": taskID, "reason": reason,
+	}
+	if workRevision > 0 {
+		context["work_revision"] = workRevision
+	}
+	if attemptID != "" {
+		context["attempt"] = attemptID
+	}
+	if resultRevision != "" {
+		context["result_revision"] = resultRevision
+	}
+	return tuskerError(
+		completionRepairRequiredError,
+		kind+" cannot be authenticated: "+reason,
+		withContext(context),
+		withHint("preserve the suspect row for audit and repair only this task; independent reviewed work may continue"),
+	)
 }
 
 // reconcileReviewCompletion consumes saved typed results.  disabled and
@@ -193,7 +280,14 @@ func (d *Daemon) reconcileReviewCompletion(project RegisteredProject, wf Workflo
 		return err
 	}
 	var parkedRepair error
-	for _, result := range results {
+	for _, row := range results {
+		if row.Repair != nil {
+			if parkedRepair == nil {
+				parkedRepair = row.Repair
+			}
+			continue
+		}
+		result := row.Result
 		if err := d.reactToReviewResult(project, wf, result, mode); err != nil {
 			if errorToIssue(err).Code == completionRepairRequiredError {
 				// A repair is an operator-visible outcome for this transaction, not
@@ -211,7 +305,16 @@ func (d *Daemon) reconcileReviewCompletion(project RegisteredProject, wf Workflo
 
 func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, result ReviewResult, mode completionReactorMode) error {
 	if err := validatePersistedReviewResult(result); err != nil {
-		return tuskerError(errorInvalidTransition, "stored review result failed immutable validation: "+err.Error())
+		return completionPersistedRowRepairError(
+			"review result", result.ProjectID, result.TaskID, result.WorkRevision, result.AttemptID, result.ResultRevision,
+			"immutable result validation failed: "+err.Error(),
+		)
+	}
+	if result.ProjectID != project.ProjectID {
+		return completionPersistedRowRepairError(
+			"review result", project.ProjectID, result.TaskID, result.WorkRevision, result.AttemptID, result.ResultRevision,
+			"signed project identity does not match the reconciled project",
+		)
 	}
 	if result.Schema != reviewResultSchema {
 		// v1 rows remain visible/auditable but their timestamp was outside the
@@ -446,6 +549,9 @@ func completionFrozenAuthorityRepairError(transaction *completionTransaction, re
 func authenticateCompletionFrozenAuthority(projectID string, result ReviewResult, transaction *completionTransaction) error {
 	if transaction == nil || transaction.Schema != completionTransactionSchema {
 		return completionFrozenAuthorityRepairError(transaction, "transaction schema is legacy or missing")
+	}
+	if result.ProjectID != projectID {
+		return completionFrozenAuthorityRepairError(transaction, "typed-result project identity does not match the reconciled project")
 	}
 	if !completionFrozenAuthorityComplete(transaction, result.Verdict == "pass") {
 		return completionFrozenAuthorityRepairError(transaction, "wave or close authority snapshot is missing")
@@ -1359,11 +1465,15 @@ func (d *Daemon) newerReviewOwnsCompletionTask(projectID string, result ReviewRe
 			return true, nil
 		}
 	}
-	results, err := d.store.ListReviewResults(projectID)
+	rows, err := d.store.ListReviewResults(projectID)
 	if err != nil {
 		return false, err
 	}
-	for _, candidate := range results {
+	for _, row := range rows {
+		if row.Repair != nil || row.Result.Schema != reviewResultSchema {
+			continue
+		}
+		candidate := row.Result
 		if candidate.TaskID == result.TaskID && candidate.ResultRevision != result.ResultRevision &&
 			(candidate.WorkRevision > result.WorkRevision ||
 				(candidate.WorkRevision == result.WorkRevision && candidate.AttemptID != result.AttemptID &&
@@ -1773,10 +1883,24 @@ func validateCompletionStagingCandidate(vaultPath, repoRoot, candidate, integrat
 		return tuskerError(errorInvalidTransition, "completion staging receipt is invalid: "+err.Error())
 	}
 	message, err := gitOutputTrim(repoRoot, "show", "-s", "--format=%B", candidate)
-	if err != nil || !strings.Contains(message, "Tusker-Completion: "+transaction.ID) {
+	if err != nil || !completionCommitMessageBindsTransaction(message, transaction.ID) {
 		return tuskerError(errorInvalidTransition, "completion staging ref belongs to another transaction")
 	}
 	return nil
+}
+
+func completionCommitMessageBindsTransaction(message, transactionID string) bool {
+	transactionID = strings.TrimSpace(transactionID)
+	if transactionID == "" {
+		return false
+	}
+	marker := "Tusker-Completion: " + transactionID
+	for _, line := range strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), "\n") {
+		if strings.TrimSpace(line) == marker {
+			return true
+		}
+	}
+	return false
 }
 
 func gateExactReviewCompletion(vaultPath, repoRoot, stagedSHA string, result ReviewResult) (bool, string, error) {

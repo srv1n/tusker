@@ -51,6 +51,151 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		}
 	})
 
+	t.Run("SQL result identity cannot cross project authority", func(t *testing.T) {
+		vault, project, daemon, results := completionChangesRequestedFixture(t, 1)
+		defer daemon.Close()
+		crossProject := results[0]
+		crossProject.ProjectID = "cloned-project"
+		crossProject.ResultRevision = reviewResultFingerprint(crossProject)
+		raw, err := json.Marshal(crossProject)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := daemon.store.exec(
+			`INSERT INTO review_results(project_id,task_id,work_revision,attempt_id,result_json) VALUES(?,?,?,?,?)`,
+			project.ProjectID, crossProject.TaskID, crossProject.WorkRevision, crossProject.AttemptID, string(raw),
+		); err != nil {
+			t.Fatal(err)
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reactToReviewResult(project, wf, crossProject, completionReactorModeAuthoritative); errorToIssue(err).Code != completionRepairRequiredError {
+			t.Fatalf("direct cross-project result error=%v, want %s", err, completionRepairRequiredError)
+		}
+		reconcileErr := daemon.reconcileReviewCompletion(project, wf)
+		if errorToIssue(reconcileErr).Code != completionRepairRequiredError {
+			t.Fatalf("misindexed cross-project row error=%v, want %s", reconcileErr, completionRepairRequiredError)
+		}
+		task, err := resolveV7Note(vault, crossProject.TaskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stringField(task.Data, "status") != "review" || generatedReviewerFindingContent(task.Body) != "" {
+			t.Fatalf("cross-project result mutated target task: %#v", task.Data)
+		}
+		transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, crossProject.TaskID, crossProject.ResultRevision)
+		if err != nil || transaction != nil {
+			t.Fatalf("cross-project result created transaction=%#v err=%v", transaction, err)
+		}
+	})
+
+	t.Run("corrupt result and transaction rows isolate to their tasks", func(t *testing.T) {
+		vault, project, daemon, results := completionChangesRequestedFixture(t, 4)
+		defer daemon.Close()
+		const malformedResult = `{"schema":`
+		if _, err := daemon.store.exec(
+			`INSERT INTO review_results(project_id,task_id,work_revision,attempt_id,result_json) VALUES(?,?,?,?,?)`,
+			project.ProjectID, results[0].TaskID, results[0].WorkRevision, results[0].AttemptID, malformedResult,
+		); err != nil {
+			t.Fatal(err)
+		}
+		badFingerprint := results[1]
+		badFingerprint.ResultRevision = "sha256:" + strings.Repeat("b", 64)
+		badFingerprintRaw, err := json.Marshal(badFingerprint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := daemon.store.exec(
+			`INSERT INTO review_results(project_id,task_id,work_revision,attempt_id,result_json) VALUES(?,?,?,?,?)`,
+			project.ProjectID, badFingerprint.TaskID, badFingerprint.WorkRevision, badFingerprint.AttemptID, string(badFingerprintRaw),
+		); err != nil {
+			t.Fatal(err)
+		}
+		for _, result := range results[2:] {
+			if _, err := daemon.store.SaveReviewResult(result); err != nil {
+				t.Fatal(err)
+			}
+		}
+		const malformedTransaction = `{"schema":`
+		corruptTransactionID := "completion:" + strings.Repeat("a", 64)
+		if _, err := daemon.store.exec(
+			`INSERT INTO completion_transactions(transaction_id,project_id,task_id,result_revision,phase,transaction_json,updated_at) VALUES(?,?,?,?,?,?,?)`,
+			corruptTransactionID, project.ProjectID, results[2].TaskID, results[2].ResultRevision,
+			completionPhasePlanned, malformedTransaction, "2026-07-25T10:00:00Z",
+		); err != nil {
+			t.Fatal(err)
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		reconcileErr := daemon.reconcileReviewCompletion(project, wf)
+		if errorToIssue(reconcileErr).Code != completionRepairRequiredError {
+			t.Fatalf("corrupt row error=%v, want %s", reconcileErr, completionRepairRequiredError)
+		}
+		for index, result := range results {
+			task, err := resolveV7Note(vault, result.TaskID, "task")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "review"
+			if index == 3 {
+				want = "rework"
+			}
+			if stringField(task.Data, "status") != want {
+				t.Fatalf("%s status=%s, want %s", result.TaskID, stringField(task.Data, "status"), want)
+			}
+		}
+		healthyTransaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, results[3].TaskID, results[3].ResultRevision)
+		if err != nil || healthyTransaction == nil || healthyTransaction.Phase != completionPhaseTerminal {
+			t.Fatalf("healthy sibling did not terminalize: transaction=%#v err=%v", healthyTransaction, err)
+		}
+		var persistedResult, persistedTransaction string
+		if err := daemon.store.queryRowScan(
+			`SELECT result_json FROM review_results WHERE project_id=? AND task_id=? AND work_revision=? AND attempt_id=?`,
+			[]any{project.ProjectID, results[0].TaskID, results[0].WorkRevision, results[0].AttemptID},
+			&persistedResult,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if err := daemon.store.queryRowScan(
+			`SELECT transaction_json FROM completion_transactions WHERE transaction_id=?`,
+			[]any{corruptTransactionID}, &persistedTransaction,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if persistedResult != malformedResult || persistedTransaction != malformedTransaction {
+			t.Fatalf("suspect rows were rewritten: result=%q transaction=%q", persistedResult, persistedTransaction)
+		}
+	})
+
+	t.Run("legacy v1 timestamp cannot suppress v2 changes requested handback", func(t *testing.T) {
+		vault, project, daemon, results := completionChangesRequestedFixture(t, 1)
+		defer daemon.Close()
+		current := results[0]
+		if _, err := daemon.store.SaveReviewResult(current); err != nil {
+			t.Fatal(err)
+		}
+		legacy := current
+		legacy.Schema = reviewResultSchemaV1
+		legacy.AttemptID = "review-z-legacy"
+		legacy.CreatedAt = "2099-01-01T00:00:00Z"
+		legacy.Findings = []string{"legacy audit finding"}
+		legacy.ResultRevision = reviewResultFingerprint(legacy)
+		if _, err := daemon.store.SaveReviewResult(legacy); err != nil {
+			t.Fatal(err)
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatal(err)
+		}
+		task, err := resolveV7Note(vault, current.TaskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stringField(task.Data, "status") != "rework" ||
+			!strings.Contains(generatedReviewerFindingContent(task.Body), current.Findings[0]) ||
+			strings.Contains(generatedReviewerFindingContent(task.Body), legacy.Findings[0]) {
+			t.Fatalf("v1 audit timestamp suppressed or replaced v2 handback: status=%s finding=%q", stringField(task.Data, "status"), generatedReviewerFindingContent(task.Body))
+		}
+	})
+
 	t.Run("changes requested crash after handback resumes release and audit", func(t *testing.T) {
 		vault, project, daemon, result := completionReactorFixture(t, false)
 		result.Verdict, result.Blocker, result.Findings = "changes_requested", "", []string{"fix the exact acceptance regression"}
@@ -2094,7 +2239,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid close audit cannot bypass strengthened policy validation", func(t *testing.T) {
+	t.Run("invalid close audit fails closed instead of borrowing current policy", func(t *testing.T) {
 		vault, project, daemon, result := completionReactorFixture(t, true)
 		defer daemon.Close()
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
@@ -2128,8 +2273,121 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		for _, current := range issues {
 			codes[current.Code] = true
 		}
-		if !codes["DONE_TASK_CLOSE_AUTHORITY_INVALID"] || !codes["CLOSE_POLICY_EVIDENCE_MISSING"] {
-			t.Fatalf("invalid frozen audit bypassed mutable close policy: issues=%#v", issues)
+		if !codes["DONE_TASK_CLOSE_AUTHORITY_INVALID"] || codes["CLOSE_POLICY_EVIDENCE_MISSING"] {
+			t.Fatalf("invalid frozen audit was accepted or silently re-authorized by mutable policy: issues=%#v", issues)
+		}
+	})
+
+	t.Run("offline close validation cannot borrow current policy", func(t *testing.T) {
+		vault, project, daemon, result := completionReactorFixture(t, true)
+		defer daemon.Close()
+		if _, err := daemon.store.SaveReviewResult(result); err != nil {
+			t.Fatal(err)
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatal(err)
+		}
+		task, err := resolveV7Note(vault, result.TaskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		wave, err := resolveV7Note(vault, stringField(task.Data, "wave"), "wave")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := gitCombined(project.RepoRoot, "update-ref", "-d", "refs/heads/"+v7WaveIntegrationBranch(wave)); err != nil {
+			t.Fatal(err)
+		}
+		issues, _ := validateV7Note(task, validationContext{VaultPath: vault, RelativePath: task.RelativePath}, task.RelativePath)
+		if !completionIssuesContainCode(issues, "DONE_TASK_CLOSE_AUTHORITY_INVALID") ||
+			completionIssuesContainCode(issues, "CLOSE_POLICY_EVIDENCE_MISSING") {
+			t.Fatalf("offline historical close was silently re-authorized: %#v", issues)
+		}
+	})
+
+	t.Run("raw task and event edits cannot self-mint close authority", func(t *testing.T) {
+		vault, project, daemon, result := completionReactorFixture(t, true)
+		defer daemon.Close()
+		if _, err := daemon.store.SaveReviewResult(result); err != nil {
+			t.Fatal(err)
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatal(err)
+		}
+		task, err := resolveV7Note(vault, result.TaskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, body, err := parseFrontmatterMustRead(task.AbsolutePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		authority, ok := v7TaskCloseAuthorityFromAny(data["close_authority"])
+		if !ok {
+			t.Fatal("completion task lacks close authority")
+		}
+		authority.TransactionID = "completion:" + strings.Repeat("a", 64)
+		authority.ReceiptID = completionReceiptID(authority.TransactionID)
+		authority.BindingFingerprint, err = v7TaskCloseAuthorityBindingFingerprint(authority)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := validateV7TaskCloseAuthorityFact(authority, stringField(data, "project"), result.TaskID, result.Actor, body); err != nil {
+			t.Fatalf("forged projection should remain structurally valid for this adversarial test: %v", err)
+		}
+		data["close_authority"] = authority.mapValue()
+		if _, err := saveV7DocumentCAS(task.AbsolutePath, data, body, v7FrontmatterOrder["task"], stringField(data, "state_rev")); err != nil {
+			t.Fatal(err)
+		}
+		tampered, err := resolveV7Note(vault, result.TaskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		issues, _ := validateV7Note(tampered, validationContext{VaultPath: vault, RelativePath: tampered.RelativePath}, tampered.RelativePath)
+		if !completionIssuesContainCode(issues, "DONE_TASK_CLOSE_AUTHORITY_INVALID") {
+			t.Fatalf("self-minted task close authority passed validation: %#v", issues)
+		}
+
+		eventPaths, err := filepath.Glob(filepath.Join(vault, "events", "*", "*", result.TaskID+"--*--close-*.json"))
+		if err != nil || len(eventPaths) != 1 {
+			t.Fatalf("completion event paths=%#v err=%v", eventPaths, err)
+		}
+		eventRaw, err := os.ReadFile(eventPaths[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var event map[string]any
+		if err := json.Unmarshal(eventRaw, &event); err != nil {
+			t.Fatal(err)
+		}
+		payload := mapField(event, "payload")
+		payload["close_authority"] = authority.mapValue()
+		event["payload"] = payload
+		eventID := "close-" + strings.TrimPrefix(authority.BindingFingerprint, "sha256:")[:32]
+		event["id"] = eventID
+		at, err := time.Parse(time.RFC3339, stringField(event, "at"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		nextEventPath := filepath.Join(
+			filepath.Dir(eventPaths[0]),
+			result.TaskID+"--"+at.UTC().Format("20060102T150405Z")+"--"+eventID+".json",
+		)
+		if err := os.Rename(eventPaths[0], nextEventPath); err != nil {
+			t.Fatal(err)
+		}
+		nextEventRaw, err := json.MarshalIndent(event, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writeText(nextEventPath, string(nextEventRaw)+"\n"); err != nil {
+			t.Fatal(err)
+		}
+		eventIssues, _, _ := validateV7Events(vault)
+		if !completionIssuesContainCode(eventIssues, "EVENT_CLOSE_AUTHORITY_INVALID") {
+			t.Fatalf("self-minted event close authority passed validation: %#v", eventIssues)
 		}
 	})
 }
@@ -2163,6 +2421,37 @@ func completionReactorFixture(t *testing.T, exactSource bool) (string, Registere
 	result := ReviewResult{Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: "APP-T-0001", TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: 1, ImplementationSHA: stringField(note.Data, "source_sha"), AttemptID: "review-1", Actor: "reviewer:agent", Runner: "codex", RunnerProfile: "review", Covers: []string{"A1"}, ProofFingerprint: proof, GateFingerprint: gates, Verdict: "pass", Summary: "objective pass", CreatedAt: "2026-07-25T10:00:00Z"}
 	result.ResultRevision = reviewResultFingerprint(result)
 	return vault, project, daemon, result
+}
+
+func completionChangesRequestedFixture(t *testing.T, taskCount int) (string, RegisteredProject, *Daemon, []ReviewResult) {
+	t.Helper()
+	repo, vault := newLandTestRepo(t, taskCount, "true")
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	project := newRegisteredProject(repo, vault)
+	daemon, err := NewDaemon(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 1; index <= taskCount; index++ {
+		taskID := "APP-T-" + padNumber(index)
+		recordCompletionTestProof(t, vault, taskID)
+		setAutomationV7TaskFields(t, vault, taskID, map[string]any{
+			"status": "review", "readiness": "waiting_on_review",
+			"source_sha": "reviewed-source-" + taskID, "work_revision": 1,
+		})
+	}
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	results := make([]ReviewResult, 0, taskCount)
+	for index := 1; index <= taskCount; index++ {
+		taskID := "APP-T-" + padNumber(index)
+		result := completionResultForReviewedTask(t, vault, project, taskID, "review-"+padNumber(index), "changes requested")
+		result.Verdict = "changes_requested"
+		result.Findings = []string{"fix " + taskID}
+		result.ResultRevision = reviewResultFingerprint(result)
+		results = append(results, result)
+	}
+	return vault, project, daemon, results
 }
 
 func completionResultForReviewedTask(t *testing.T, vault string, project RegisteredProject, taskID, attemptID, summary string) ReviewResult {
@@ -2222,6 +2511,15 @@ func appendCompletionTestClosePolicy(t *testing.T, repoRoot, policy string) {
 	if err := writeText(path, next); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func completionIssuesContainCode(issues []Issue, code string) bool {
+	for _, current := range issues {
+		if current.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func addCompletionTestEvidence(t *testing.T, vault, taskID string) {

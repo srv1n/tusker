@@ -88,8 +88,43 @@ func validateCompletionReceipt(raw []byte, taskPath string, task completionGitTr
 		return fmt.Errorf("completion receipt review does not match consumed review result")
 	}
 	tr := receipt.Transaction
-	if tr.ID != tx.ID || tr.ProjectID != tx.ProjectID || tr.TaskID != result.TaskID || tr.ResultRevision != result.ResultRevision || tr.ReviewedTaskStateRev != result.TaskStateRev || tr.WorkRevision != result.WorkRevision || tr.ImplementationSHA != result.ImplementationSHA || tr.ReviewAttempt != result.AttemptID || tr.IntegrationBase != tx.IntegrationBase || tr.IntegrationRef != tx.IntegrationRef || tr.StagingRef != tx.StagingRef || tr.CloseAuthorityFP != tx.CloseAuthorityFP || tr.WaveID != tx.WaveID || tr.WaveMaterialFP != tx.WaveMaterialFP || tr.WaveAuthorizationFP != tx.WaveAuthorizationFP || tr.WaveAuthorityKind != tx.WaveAuthorityKind {
+	if receipt.Review.ProjectID != tr.ProjectID || result.ProjectID != tr.ProjectID {
+		return fmt.Errorf("completion receipt review and transaction project identities differ")
+	}
+	if tr.ID != tx.ID ||
+		tr.ProjectID != tx.ProjectID ||
+		tr.TaskID != tx.TaskID ||
+		tr.TaskID != result.TaskID ||
+		tr.ResultRevision != tx.ResultRevision ||
+		tr.ResultRevision != result.ResultRevision ||
+		tr.ReviewedTaskStateRev != tx.ReviewedTaskStateRev ||
+		tr.ReviewedTaskStateRev != result.TaskStateRev ||
+		tr.WorkRevision != tx.WorkRevision ||
+		tr.WorkRevision != result.WorkRevision ||
+		tr.ImplementationSHA != tx.ImplementationSHA ||
+		tr.ImplementationSHA != result.ImplementationSHA ||
+		tr.ReviewAttempt != tx.ReviewAttempt ||
+		tr.ReviewAttempt != result.AttemptID ||
+		tr.IntegrationBase != tx.IntegrationBase ||
+		tr.IntegrationRef != tx.IntegrationRef ||
+		tr.StagingRef != tx.StagingRef ||
+		tr.CloseAuthorityFP != tx.CloseAuthorityFP ||
+		tr.WaveID != tx.WaveID ||
+		tr.WaveMaterialFP != tx.WaveMaterialFP ||
+		tr.WaveAuthorizationFP != tx.WaveAuthorizationFP ||
+		tr.WaveAuthorityKind != tx.WaveAuthorityKind {
 		return fmt.Errorf("completion receipt frozen transaction mismatch")
+	}
+	if tr.StagingRef != completionStagingRef(tr.ID) || !completionFrozenAuthorityComplete(tx, true) {
+		return fmt.Errorf("completion receipt frozen authority is incomplete or invalid")
+	}
+	if receipt.Close.Schema != "tusker.completion-close-authority/v2" ||
+		receipt.Close.TaskID != result.TaskID ||
+		receipt.Close.TaskStateRev != result.TaskStateRev ||
+		receipt.Close.Actor != result.Actor ||
+		receipt.Close.ProofFingerprint != result.ProofFingerprint ||
+		receipt.Close.GateFingerprint != result.GateFingerprint {
+		return fmt.Errorf("completion receipt close projection does not bind the reviewed task")
 	}
 	projectionRaw, _ := json.Marshal(receipt.Close)
 	projectionHash := sha256.Sum256(projectionRaw)
@@ -103,8 +138,40 @@ func validateCompletionReceipt(raw []byte, taskPath string, task completionGitTr
 	fact, ok := v7TaskCloseAuthorityFromAny(taskData["close_authority"])
 	// RegisteredProject.ProjectID is runtime-local; the task fact is anchored
 	// to the portable vault project identity recorded in the task tree.
-	if !ok || validateV7TaskCloseAuthorityFact(fact, stringField(taskData, "project"), result.TaskID, result.Actor, taskBody) != nil || fact.TransactionID != tx.ID || fact.ReceiptID != receipt.ReceiptID || fact.ClosedAt != completionResultTimestamp(result) {
+	if !ok ||
+		validateV7TaskCloseAuthorityFact(fact, stringField(taskData, "project"), result.TaskID, result.Actor, taskBody) != nil ||
+		fact.TransactionID != tx.ID ||
+		fact.ReceiptID != receipt.ReceiptID ||
+		fact.ReviewResultRevision != result.ResultRevision ||
+		fact.ReviewedTaskStateRev != tx.ReviewedTaskStateRev ||
+		fact.CloseAuthorityFingerprint != tx.CloseAuthorityFP ||
+		fact.ClosedAt != completionResultTimestamp(result) ||
+		!v7StateRevMatches(taskData, taskBody, stringField(taskData, "state_rev")) ||
+		!completionCanonicalTaskMatches(Note{Data: taskData, Body: taskBody}, result, tx) {
 		return fmt.Errorf("completion receipt task fact does not match historical task")
 	}
 	return nil
+}
+
+func completionTransactionFromReceipt(receipt completionReceipt) *completionTransaction {
+	tr := receipt.Transaction
+	return &completionTransaction{
+		Schema:               completionTransactionSchema,
+		ID:                   tr.ID,
+		ProjectID:            tr.ProjectID,
+		TaskID:               tr.TaskID,
+		WorkRevision:         tr.WorkRevision,
+		ImplementationSHA:    tr.ImplementationSHA,
+		ReviewAttempt:        tr.ReviewAttempt,
+		ResultRevision:       tr.ResultRevision,
+		ReviewedTaskStateRev: tr.ReviewedTaskStateRev,
+		WaveID:               tr.WaveID,
+		WaveAuthorityKind:    tr.WaveAuthorityKind,
+		WaveAuthorizationFP:  tr.WaveAuthorizationFP,
+		WaveMaterialFP:       tr.WaveMaterialFP,
+		CloseAuthorityFP:     tr.CloseAuthorityFP,
+		IntegrationBase:      tr.IntegrationBase,
+		IntegrationRef:       tr.IntegrationRef,
+		StagingRef:           tr.StagingRef,
+	}
 }

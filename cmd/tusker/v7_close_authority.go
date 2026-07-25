@@ -14,12 +14,11 @@ import (
 
 const v7TaskCloseAuthoritySchema = "tusker.task-close-authority/v2"
 
-// v7TaskCloseAuthority is the canonical, protected audit fact for a close
-// whose policy authority was frozen before an external commit boundary. It is
-// deliberately small: the transaction authenticates the full frozen
-// projection, while this fact binds the closed tracker record and event back
-// to that transaction without making later validation depend on mutable
-// close-policy configuration.
+// v7TaskCloseAuthority is the canonical projection of a close whose policy
+// authority was frozen before an external commit boundary. It is deliberately
+// small and self-hashed only for structural integrity. Authority comes from
+// the protected integration commit containing the exact task and receipt; the
+// public binding fingerprint alone never authenticates closure.
 type v7TaskCloseAuthority struct {
 	Schema                    string `json:"schema"`
 	Project                   string `json:"project"`
@@ -201,7 +200,178 @@ func authenticatedV7TaskCloseAuthority(note Note, project string) (v7TaskCloseAu
 	if stringField(note.Data, "closed_at") != fact.ClosedAt || stringField(note.Data, "accepted_at") != fact.ClosedAt {
 		return v7TaskCloseAuthority{}, false, fmt.Errorf("close authority timestamp does not match closed record")
 	}
+	if err := authenticateV7TaskCloseAuthorityCommit(note, fact); err != nil {
+		return v7TaskCloseAuthority{}, false, err
+	}
 	return fact, true, nil
+}
+
+// authenticateV7TaskCloseAuthorityCommit treats the frontmatter fact as a
+// projection only. The authority is the exact task/receipt pair in the
+// deterministic completion commit, reachable from the task wave's protected
+// integration ref. Every digest in the Markdown is public and therefore
+// insufficient on its own.
+func authenticateV7TaskCloseAuthorityCommit(note Note, fact v7TaskCloseAuthority) error {
+	vaultPath := v7VaultRootForDocument(note.AbsolutePath)
+	if strings.TrimSpace(vaultPath) == "" {
+		return fmt.Errorf("close authority cannot locate its vault for protected-ref authentication")
+	}
+	repoRoot := v7RepoRoot(vaultPath)
+	if !v7GitRepo(repoRoot) {
+		return fmt.Errorf("close authority cannot prove protected integration ancestry outside a Git repository")
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return fmt.Errorf("close authority cannot load its wave binding: %w", err)
+	}
+	waveID := strings.TrimSpace(stringField(note.Data, "wave"))
+	wave, ok := idx.Waves[waveID]
+	if !ok || !containsString(normalizeList(wave.Data["members"]), fact.TaskID) {
+		return fmt.Errorf("close authority task is not a member of its recorded wave")
+	}
+	if v7ImplicitDeliveryUnit(wave) {
+		members := normalizeList(wave.Data["members"])
+		if len(members) != 1 || members[0] != fact.TaskID || stringField(wave.Data, "delivery_task") != fact.TaskID {
+			return fmt.Errorf("close authority implicit wave does not bind exactly this task")
+		}
+	}
+	integrationRef := "refs/heads/" + v7WaveIntegrationBranch(wave)
+	if !gitRefExists(repoRoot, integrationRef) {
+		return fmt.Errorf("close authority integration ref is unavailable")
+	}
+	integrationTip, err := gitOutputTrim(repoRoot, "rev-parse", integrationRef)
+	if err != nil || integrationTip == "" {
+		return fmt.Errorf("close authority integration tip is unavailable")
+	}
+	taskRel, err := completionTaskRepoRelativePath(repoRoot, vaultPath, fact.TaskID)
+	if err != nil {
+		return err
+	}
+	currentRaw, err := os.ReadFile(note.AbsolutePath)
+	if err != nil {
+		return fmt.Errorf("close authority current task projection is unavailable: %w", err)
+	}
+	candidates, err := gitOutputTrim(
+		repoRoot,
+		"rev-list",
+		"--fixed-strings",
+		"--grep=Tusker-Completion: "+fact.TransactionID,
+		integrationTip,
+	)
+	if err != nil || strings.TrimSpace(candidates) == "" {
+		return fmt.Errorf("close authority completion commit is not reachable from %s", integrationRef)
+	}
+	var lastErr error
+	for _, candidate := range strings.Fields(candidates) {
+		if !gitMergeBaseAncestor(repoRoot, candidate, integrationTip) {
+			continue
+		}
+		message, messageErr := gitOutputTrim(repoRoot, "show", "-s", "--format=%B", candidate)
+		if messageErr != nil || !completionCommitMessageBindsTransaction(message, fact.TransactionID) {
+			lastErr = fmt.Errorf("completion commit message does not bind transaction")
+			continue
+		}
+		taskEntry, entryErr := completionGitTreeEntryAt(repoRoot, candidate, taskRel)
+		if entryErr != nil {
+			lastErr = entryErr
+			continue
+		}
+		tipEntry, tipErr := completionGitTreeEntryAt(repoRoot, integrationTip, taskRel)
+		if tipErr != nil || tipEntry != taskEntry {
+			lastErr = fmt.Errorf("protected integration projection does not retain the generated task blob")
+			continue
+		}
+		historicalRaw, showErr := gitCombined(repoRoot, "show", candidate+":"+taskRel)
+		if showErr != nil {
+			lastErr = showErr
+			continue
+		}
+		if !bytes.Equal(currentRaw, []byte(historicalRaw)) {
+			lastErr = fmt.Errorf("current task bytes differ from the protected completion projection")
+			continue
+		}
+		taskData, taskBody, parseErr := parseFrontmatter(historicalRaw)
+		if parseErr != nil {
+			lastErr = parseErr
+			continue
+		}
+		historicalFact, factOK := v7TaskCloseAuthorityFromAny(taskData["close_authority"])
+		if !factOK || historicalFact != fact || stringField(taskData, "wave") != waveID {
+			lastErr = fmt.Errorf("protected completion task does not contain the exact projected close fact")
+			continue
+		}
+		receiptRel := completionReceiptRepoPath(fact.ReceiptID)
+		receiptEntry, receiptEntryErr := completionGitTreeEntryAt(repoRoot, candidate, receiptRel)
+		if receiptEntryErr != nil {
+			lastErr = receiptEntryErr
+			continue
+		}
+		receiptRaw, receiptReadErr := gitCombined(repoRoot, "show", candidate+":"+receiptRel)
+		if receiptReadErr != nil {
+			lastErr = receiptReadErr
+			continue
+		}
+		var receipt completionReceipt
+		if unmarshalErr := json.Unmarshal([]byte(receiptRaw), &receipt); unmarshalErr != nil {
+			lastErr = fmt.Errorf("completion receipt is malformed: %w", unmarshalErr)
+			continue
+		}
+		transaction := completionTransactionFromReceipt(receipt)
+		transaction.StagedSHA = candidate
+		transaction.StagedTaskBlob, transaction.StagedTaskMode = taskEntry.OID, taskEntry.Mode
+		transaction.StagedReceiptBlob, transaction.StagedReceiptMode = receiptEntry.OID, receiptEntry.Mode
+		if transaction.ID != fact.TransactionID ||
+			transaction.IntegrationRef != integrationRef ||
+			transaction.WaveID != waveID {
+			lastErr = fmt.Errorf("completion receipt transaction does not bind the task wave and integration ref")
+			continue
+		}
+		if validateErr := validateCompletionStagingCandidate(
+			vaultPath, repoRoot, candidate, transaction.IntegrationBase,
+			receipt.Review, transaction,
+		); validateErr != nil {
+			lastErr = validateErr
+			continue
+		}
+		return nil
+	}
+	if lastErr != nil {
+		return fmt.Errorf("close authority protected completion proof is invalid: %w", lastErr)
+	}
+	return fmt.Errorf("close authority completion commit is not authenticated by %s", integrationRef)
+}
+
+func v7VaultRootForDocument(path string) string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	for current := filepath.Dir(path); current != "." && current != string(filepath.Separator); current = filepath.Dir(current) {
+		if filepath.Base(current) == ".tusker" || filepath.Base(current) == "tusker" {
+			return current
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+	}
+	return ""
+}
+
+func authenticateV7EventCloseAuthority(vaultPath string, fact v7TaskCloseAuthority) error {
+	task, err := resolveV7Note(vaultPath, fact.TaskID, "task")
+	if err != nil {
+		return fmt.Errorf("closed event cannot resolve its task projection: %w", err)
+	}
+	taskFact, present := v7TaskCloseAuthorityFromAny(task.Data["close_authority"])
+	if !present || taskFact != fact {
+		return fmt.Errorf("closed event close authority does not match the canonical task projection")
+	}
+	_, authenticated, err := authenticatedV7TaskCloseAuthority(task, v7ProjectID(vaultPath))
+	if err != nil {
+		return err
+	}
+	if !authenticated {
+		return fmt.Errorf("closed event close authority has no protected completion proof")
+	}
+	return nil
 }
 
 // emitV7TaskClosedEvent preserves the existing close event shape for normal
