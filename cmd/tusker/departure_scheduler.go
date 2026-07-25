@@ -225,6 +225,12 @@ func (d *Daemon) scheduleDepartureIfDue(project RegisteredProject, wf Workflow, 
 	if !policy.Observe {
 		return nil
 	}
+	// A red promotion records its failure intent before it mutates canonical
+	// task state. Resume that idempotent phase before a fresh window: the failed
+	// window may be in the past after a daemon restart.
+	if err := d.resumeRepairingDepartureRoutes(project); err != nil {
+		return err
+	}
 	windows, err := departureWindows(wf)
 	if err != nil {
 		return err
@@ -279,6 +285,25 @@ func (d *Daemon) scheduleDepartureIfDue(project RegisteredProject, wf Workflow, 
 		// evaluating row is its idempotent, restart-safe handoff.
 		return transition(DepartureStateEvaluating, "", "", &decision)
 	}
+}
+
+func (d *Daemon) resumeRepairingDepartureRoutes(project RegisteredProject) error {
+	if d == nil || d.store == nil {
+		return nil
+	}
+	runs, err := d.store.ListDepartureRuns(project.ProjectID)
+	if err != nil {
+		return err
+	}
+	for i := range runs {
+		if runs[i].State != DepartureStateRepairing || runs[i].Gate.Failure.Identity == "" {
+			continue
+		}
+		if err := resumePromotionFailureRouting(project.VaultRoot, d.store, &runs[i]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func departureDecisionReason(decision DepartureDecision) string {

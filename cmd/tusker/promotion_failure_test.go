@@ -168,3 +168,15 @@ func TestPromotionGateSetupFailureWritesArtifact(t *testing.T) {
 		t.Fatalf("artifact unavailable: %v %q", err, raw)
 	}
 }
+
+func TestPromotionFailurePacketKeepsSetupFallbackDefect(t *testing.T) {
+	packet := PromotionFailurePacket{Defects: []GateDefect{{Target: "fallback", Excerpt: "worktree setup failed"}}}
+	got := withPromotionGateResult(packet, GateTierResult{Outcome: gateOutcomeFailed})
+	if len(got.Defects) != 1 || got.Defects[0].Target != "fallback" {
+		t.Fatalf("empty tier result erased setup fallback: %#v", got.Defects)
+	}
+	got = withPromotionGateResult(packet, GateTierResult{Outcome: gateOutcomeFailed, Defects: []GateDefect{{Target: "declared command", Excerpt: "red"}}})
+	if len(got.Defects) != 1 || got.Defects[0].Target != "declared command" {
+		t.Fatalf("structured tier defects were not authoritative: %#v", got.Defects)
+	}
+}

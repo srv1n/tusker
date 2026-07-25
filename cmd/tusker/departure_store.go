@@ -130,7 +130,7 @@ func departureNow() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
 func departureTerminal(state DepartureState) bool {
 	switch state {
-	case DepartureStateSkipped, DepartureStateBlocked, DepartureStatePassed, DepartureStateFailed, DepartureStateRepairing:
+	case DepartureStateSkipped, DepartureStateBlocked, DepartureStatePassed, DepartureStateFailed:
 		return true
 	default:
 		return false

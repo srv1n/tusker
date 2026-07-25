@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -156,6 +157,29 @@ func promotionFailurePacket(candidate DepartureCandidate, gate DepartureGate, ru
 		TouchedPaths: uniqueStrings(touched), TouchedPathsStatus: "unavailable", CandidateTaskIDs: sortedPromotionTaskIDs(candidate), Reproduction: strings.TrimSpace(gate.Command), ArtifactRefs: uniqueStrings(artifacts),
 		ClassificationText: output,
 	}
+}
+
+// Promotion artifacts live in runtime state, not in task contracts or briefs.
+// Keep a portable opaque locator there so a state-root path (and its user name)
+// cannot leak into a repair prompt. The runtime owns resolving this locator.
+func promotionFailureArtifactRefs(refs []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		if !strings.HasPrefix(ref, "runtime://") {
+			ref = "runtime://promotion-gates/" + filepath.Base(ref)
+		}
+		if !seen[ref] {
+			seen[ref] = true
+			out = append(out, ref)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func sortedPromotionTaskIDs(candidate DepartureCandidate) []string {

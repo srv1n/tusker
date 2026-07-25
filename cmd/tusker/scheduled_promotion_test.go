@@ -329,6 +329,77 @@ func TestScheduledPromotionLandingRunsFrozenFullGateContract(t *testing.T) {
 	}
 }
 
+func TestScheduledPromotionRedFailureIntentResumesWithoutHalfAppliedRoute(t *testing.T) {
+	_, vault := newLandReadyForMainAdvanceTest(t, "red-resume.txt", "candidate\n")
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
+	wf := setScheduledPromotionGateForTest(t, vault, []string{"echo red-resume >&2; exit 1"}, "canonical")
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	commitScheduledPromotionWorkflowForTest(t, v7RepoRoot(vault), vault)
+	stateRoot := t.TempDir()
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := newScheduledPromotionRunForTest(t, store, "2026-07-25T20:21:00Z")
+	injected := errors.New("injected after durable red intent")
+	oldHook := scheduledPromotionAfterFailureIntent
+	scheduledPromotionAfterFailureIntent = func() error { return injected }
+	_, err = promoteScheduledWave(vault, "app", "W-0001", wf, store, &run, "daemon:test")
+	scheduledPromotionAfterFailureIntent = oldHook
+	if !errors.Is(err, injected) {
+		t.Fatalf("missing intent interruption: %v", err)
+	}
+	durable, err := store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil || durable.State != DepartureStateRepairing || durable.Gate.Failure.Identity == "" {
+		t.Fatalf("red intent was not durable before canonical mutations: %#v err=%v", durable, err)
+	}
+	owner, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
+	if err != nil || stringField(owner, "status") != "done" {
+		t.Fatalf("interrupted routing mutated task before replay: %#v err=%v", owner, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	// Simulate a concurrent reconciler winning the final state CAS after the
+	// canonical owner mutation. The following daemon pass must finish, rather
+	// than asking an operator to replay the red departure.
+	durable, err = store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil {
+		t.Fatalf("restarted store lost repairing intent: %#v err=%v", durable, err)
+	}
+	oldCompletion := scheduledPromotionBeforeFailureCompletion
+	scheduledPromotionBeforeFailureCompletion = func() error {
+		_, err := store.TransitionDepartureRun(*durable, durable.StateRevision)
+		return err
+	}
+	restarted := &Daemon{store: store}
+	err = restarted.resumeRepairingDepartureRoutes(RegisteredProject{ProjectID: "app", VaultRoot: vault})
+	scheduledPromotionBeforeFailureCompletion = oldCompletion
+	if err == nil || !strings.Contains(err.Error(), "lost its departure CAS") {
+		t.Fatalf("injected final CAS conflict was not surfaced for daemon retry: %v", err)
+	}
+	owner, _, err = parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
+	if err != nil || stringField(owner, "status") != "rework" {
+		t.Fatalf("first daemon route did not apply idempotent owner rework: %#v err=%v", owner, err)
+	}
+	if err := restarted.resumeRepairingDepartureRoutes(RegisteredProject{ProjectID: "app", VaultRoot: vault}); err != nil {
+		t.Fatalf("daemon did not replay durable red route after CAS conflict: %v", err)
+	}
+	durable, err = store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil || durable.State != DepartureStateFailed {
+		t.Fatalf("daemon reconciliation did not reach durable failure: %#v err=%v", durable, err)
+	}
+	owner, _, err = parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
+	if err != nil || stringField(owner, "status") != "rework" {
+		t.Fatalf("replayed isolated route did not rework owner: %#v err=%v", owner, err)
+	}
+}
+
 func TestScheduledPromotionLandingHeartbeatsLongFullGateLease(t *testing.T) {
 	repo, vault := newLandReadyForMainAdvanceTest(t, "long-gate.txt", "candidate\n")
 	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)

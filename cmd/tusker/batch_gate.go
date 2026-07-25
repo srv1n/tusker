@@ -401,8 +401,8 @@ func createPromotionFailureRepairTask(vaultPath, gateRunID, command, excerpt, pr
 				if owningTask != "" {
 					data["promotion_failure_owner"] = owningTask
 				}
-				if artifactRef != "" {
-					data["promotion_failure_artifact"] = artifactRef
+				if refs := promotionFailureArtifactRefs([]string{artifactRef}); len(refs) > 0 {
+					data["promotion_failure_artifact"] = refs[0]
 				}
 				if profile != "" {
 					data[buildFailedProfileField] = profile
@@ -441,8 +441,8 @@ func createPromotionFailureRepairTask(vaultPath, gateRunID, command, excerpt, pr
 		if owningTask != "" {
 			data["promotion_failure_owner"] = owningTask
 		}
-		if artifactRef != "" {
-			data["promotion_failure_artifact"] = artifactRef
+		if refs := promotionFailureArtifactRefs([]string{artifactRef}); len(refs) > 0 {
+			data["promotion_failure_artifact"] = refs[0]
 		}
 		data[buildFailedField] = true
 		data[buildFailedCommandField] = command
