@@ -207,6 +207,9 @@ tasks:
       - cmd/tusker/fair_dispatch_test.go
       - cmd/tusker/daemon.go
       - cmd/tusker/resource_lease.go
+      - cmd/tusker/resource_lease_test.go
+      - cmd/tusker/runtime_store.go
+      - cmd/tusker/scheduled_promotion.go
     concurrency_group: factory-scheduler
     risk: high
     priority: p0

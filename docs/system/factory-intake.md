@@ -1,5 +1,7 @@
 ---
 title: Factory intake contract
+subject: factory-intake
+part_of: overview
 contract: tusker.factory-intake-contract/v1
 contract_version: 1.0.0
 source: skills/tusker/assets/factory-intake-contract.yaml

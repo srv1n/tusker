@@ -110,6 +110,9 @@ tasks:
       - cmd/tusker/delivery_context_cmd.go
       - cmd/tusker/delivery_context_test.go
       - cmd/tusker/delivery_cmd.go
+      - cmd/tusker/delivery_v2.go
+      - cmd/tusker/delivery_v2_test.go
+      - internal/v7schema/schema.go
     concurrency_group: factory-planning
     risk: high
     priority: p0

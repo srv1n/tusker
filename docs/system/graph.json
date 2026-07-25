@@ -15,6 +15,13 @@
       "status": "canonical"
     },
     {
+      "subject": "factory-intake",
+      "kind": "canonical",
+      "path": "docs/system/factory-intake.md",
+      "title": "Factory intake contract",
+      "status": ""
+    },
+    {
       "subject": "gates",
       "kind": "canonical",
       "path": "docs/system/gates.md",
@@ -100,6 +107,11 @@
     },
     {
       "from": "cli",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "factory-intake",
       "to": "overview",
       "kind": "part_of"
     },
