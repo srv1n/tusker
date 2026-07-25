@@ -224,7 +224,10 @@ func v7CloseDependencyIndexAtRef(vaultPath, ref string, task Note, idx v7Index) 
 			return idx, tuskerError(errorInvalidTransition, "frozen close dependency state revision is missing or invalid: "+edge.ID)
 		}
 		if strings.ToLower(strings.TrimSpace(stringField(integrated.Data, "status"))) != "done" {
-			return idx, tuskerError(errorInvalidTransition, "frozen close dependency is not done: "+edge.ID)
+			// Keep the shared close contract stable: callers distinguish a normal
+			// unfinished dependency from malformed/missing frozen evidence. This
+			// is still fail-closed—the live task is never consulted.
+			return idx, tuskerError(errorInvalidTransition, v7ClosePreflightMessage("close", stringField(task.Data, "id"), "blocked by unfinished dependency "+edge.ID))
 		}
 		integrated.AbsolutePath = dependency.AbsolutePath
 		idx.Tasks[edge.ID] = integrated

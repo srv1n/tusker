@@ -214,6 +214,9 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 		return err
 	} else if prior != nil {
 		if err := authenticateCompletionFrozenAuthority(project.ProjectID, result, prior); err != nil {
+			if errorToIssue(err).Code == completionRepairRequiredError {
+				return d.parkCompletionRepair(project, result, prior, err.Error())
+			}
 			return err
 		}
 		if mode == completionReactorModeShadow {
@@ -503,6 +506,13 @@ func completionPhaseRequiresStagedTaskAttestation(transaction *completionTransac
 	if transaction == nil {
 		return false
 	}
+	// staging is an intent phase. A crash or an adversarial staging ref can
+	// leave partial corroboration there; stageExactReviewCompletion classifies
+	// it against a freshly derived candidate before any CAS, rather than making
+	// the row an unactionable authentication dead-end.
+	if transaction.Phase == completionPhaseStaging {
+		return false
+	}
 	if transaction.StagedSHA != "" || transaction.StagedTaskBlob != "" || transaction.StagedTaskMode != "" || transaction.StagedReceiptBlob != "" || transaction.StagedReceiptMode != "" {
 		return true
 	}
@@ -741,6 +751,12 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 			return err
 		}
 	}
+	if transaction.Phase == completionPhaseTerminal {
+		// The branch above has re-proved canonical bytes under the task lock;
+		// authenticateCommittedCompletionRef already proved trusted receipt
+		// ancestry. Terminal replay is therefore an idempotent no-op.
+		return nil
+	}
 
 	if transaction.Phase == completionPhasePlanned {
 		transaction.Phase = completionPhaseStaging
@@ -760,8 +776,8 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 			if isCompletionCrashInterruption(stageErr) {
 				return stageErr
 			}
-			if errorToIssue(stageErr).Code == completionRepairRequiredError {
-				return stageErr
+			if errorToIssue(stageErr).Code == completionRepairRequiredError || gitRefExists(project.RepoRoot, transaction.StagingRef) {
+				return d.parkCompletionRepair(project, result, transaction, stageErr.Error())
 			}
 			return d.failCompletion(project, result, transaction, stageErr.Error())
 		}
@@ -1081,6 +1097,28 @@ func (d *Daemon) failCompletion(project RegisteredProject, result ReviewResult, 
 	}
 	reason = "completion reactor " + transaction.ID + ": " + limitLandingSummary(reason, 500)
 	return d.beginCompletionDisposition(project, result, transaction, "rework", reason)
+}
+
+// parkCompletionRepair records a durable, non-handback repair outcome for
+// corrupt or incomplete authority evidence. In particular, post-CAS evidence
+// loss must never be translated into a task rework: the integrated work stays
+// put while the runtime lease is parked and the audit records the repair.
+func (d *Daemon) parkCompletionRepair(project RegisteredProject, result ReviewResult, transaction *completionTransaction, reason string) error {
+	if transaction == nil {
+		return completionFrozenAuthorityRepairError(nil, "cannot park missing completion transaction")
+	}
+	if transaction.Phase == completionPhaseTerminal {
+		return nil
+	}
+	if !completionFailurePhase(transaction.Phase) {
+		transaction.Disposition = "park"
+		transaction.Failure = "completion repair " + transaction.ID + ": " + limitLandingSummary(reason, 500)
+		transaction.Phase = completionPhaseFailureIntent
+		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
+			return err
+		}
+	}
+	return d.resumeCompletionDisposition(project, result, transaction)
 }
 
 func (d *Daemon) beginCompletionDisposition(project RegisteredProject, result ReviewResult, transaction *completionTransaction, disposition, reason string) error {
@@ -1413,6 +1451,20 @@ func stageExactReviewCompletion(
 		candidateSHA, err := gitOutputTrim(repoRoot, "rev-parse", transaction.StagingRef)
 		if err != nil {
 			return completionStagingCandidate{}, err
+		}
+		// A staging-intent crash predates receipt attestations. Re-derive them
+		// from the deterministic candidate before judging the extant ref, so a
+		// forged ref is classified by its actual parent/tree mismatch instead of
+		// being hidden behind a missing new-field error.
+		if transaction.StagedReceiptBlob == "" || transaction.StagedReceiptMode == "" {
+			expected, buildErr := buildExactReviewCompletionCandidate(vaultPath, repoRoot, integrationBase, result, transaction)
+			if buildErr != nil {
+				return completionStagingCandidate{}, buildErr
+			}
+			if transaction.StagedTaskBlob == "" {
+				transaction.StagedTaskBlob, transaction.StagedTaskMode = expected.TaskBlob, expected.TaskMode
+			}
+			transaction.StagedReceiptBlob, transaction.StagedReceiptMode = expected.ReceiptBlob, expected.ReceiptMode
 		}
 		if err := validateCompletionStagingCandidate(vaultPath, repoRoot, candidateSHA, integrationBase, result, transaction); err != nil {
 			return completionStagingCandidate{}, err
