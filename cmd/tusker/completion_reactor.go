@@ -554,10 +554,11 @@ func completionWaveAuthoritySnapshot(vaultPath string, wave Note) (string, strin
 	if !ok {
 		return "", "", "", tuskerError(errorInvalidTransition, "completion wave binding is missing: "+waveID)
 	}
-	material, stored, compatible := completionWaveAuthorizationCompatibility(vaultPath, idx, current)
 	if v7ImplicitDeliveryUnit(current) {
+		material, _ := waveMaterialFingerprint(vaultPath, idx, current)
 		return "implicit", "", material, nil
 	}
+	material, stored, compatible := completionWaveAuthorizationCompatibility(vaultPath, idx, current)
 	if !compatible || stored == "" {
 		return "", "", "", tuskerError(errorInvalidTransition, "completion wave authorization is not an exact armed material snapshot")
 	}
@@ -641,8 +642,8 @@ func completionPreCASAuthorizedWave(vaultPath string, transaction *completionTra
 	if !ok {
 		return Note{}, tuskerError(errorInvalidTransition, "completion wave binding is missing: "+transaction.WaveID)
 	}
-	material, stored, compatible := completionWaveAuthorizationCompatibility(vaultPath, idx, current)
-	if !compatible || material != transaction.WaveMaterialFP {
+	material, _ := waveMaterialFingerprint(vaultPath, idx, current)
+	if material != transaction.WaveMaterialFP {
 		return Note{}, tuskerError(errorInvalidTransition, "completion wave material drifted from its frozen authorization")
 	}
 	switch transaction.WaveAuthorityKind {
@@ -651,7 +652,8 @@ func completionPreCASAuthorizedWave(vaultPath string, transaction *completionTra
 			return Note{}, tuskerError(errorInvalidTransition, "implicit completion wave drifted from its frozen authority")
 		}
 	case "armed":
-		if stored == "" || stored != transaction.WaveAuthorizationFP {
+		_, stored, compatible := completionWaveAuthorizationCompatibility(vaultPath, idx, current)
+		if !compatible || stored == "" || stored != transaction.WaveAuthorizationFP {
 			return Note{}, tuskerError(errorInvalidTransition, "completion wave authorization drifted from its frozen material authority")
 		}
 	default:

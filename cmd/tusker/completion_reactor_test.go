@@ -834,6 +834,18 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if !ok || !v7ImplicitDeliveryUnit(wave) {
 			t.Fatal("bound standalone task is not an authorized implicit completion unit")
 		}
+		boundIdx, err := loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		boundMaterial, materialIssues := waveMaterialFingerprint(vault, boundIdx, wave)
+		if len(materialIssues) != 0 {
+			t.Fatalf("bound standalone material is invalid: %#v", materialIssues)
+		}
+		boundBase, err := gitOutputTrim(repo, "rev-parse", v7WaveIntegrationBranch(wave))
+		if err != nil {
+			t.Fatal(err)
+		}
 		proof, gates, err := reviewObjectiveSnapshots(vault, reviewed)
 		if err != nil {
 			t.Fatal(err)
@@ -871,11 +883,15 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			t.Fatal("standalone pass did not merge exact reviewed SHA")
 		}
 		transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
-		if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal || transaction.WaveID != stringField(wave.Data, "id") {
+		if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal ||
+			transaction.WaveID != stringField(wave.Data, "id") ||
+			transaction.WaveAuthorityKind != "implicit" || transaction.WaveAuthorizationFP != "" ||
+			transaction.WaveMaterialFP != boundMaterial || transaction.IntegrationBase != boundBase {
 			t.Fatalf("standalone completion did not terminalize on its frozen singleton: transaction=%#v err=%v", transaction, err)
 		}
 		canonical := assertCompletionTerminalProjection(t, vault, result)
 		if stringField(canonical.Data, "status") != "done" ||
+			stringField(canonical.Data, "wave") != transaction.WaveID ||
 			strings.Count(canonical.Body, "[tusker-review-result:"+result.ResultRevision+"]") != 1 ||
 			strings.Contains(canonical.Body, completionHandbackMarker(transaction.ID)) {
 			t.Fatalf("standalone canonical projection is not exactly one pass: %#v", canonical.Data)
