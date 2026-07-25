@@ -445,10 +445,13 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		packet.GateResult = execution.Result
 		route := classifyPromotionFailure(packet, gatePolicy)
 		repairTaskID, action := "", "ambiguous_repair"
+		affected := promotionFailureHardClosure(vaultPath, owner)
 		if route.Class == promotionFailureIsolated && owner != "" {
 			action = "owner_rework"
-			if err := statusV7Cmd(Args{"vault": vaultPath, "quiet": "true", "id": owner, "status": "rework", "by": "tusker:scheduled-promotion", "reason": "promotion gate red: " + route.StableIdentity}); err != nil {
-				return "", err
+			for _, id := range affected {
+				if err := statusV7Cmd(Args{"vault": vaultPath, "quiet": "true", "id": id, "status": "rework", "by": "tusker:scheduled-promotion", "reason": "promotion gate red: " + route.StableIdentity}); err != nil {
+					return "", err
+				}
 			}
 		} else {
 			if route.Class == promotionFailureInfrastructure {
@@ -466,7 +469,6 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		failed.Candidate, failed.Gate = before.Candidate, before.Gate
 		failed.Gate.Status = "failed"
 		failed.Gate.StartedAt, failed.Gate.FinishedAt, failed.Gate.ArtifactRef = gateStarted.Format(time.RFC3339Nano), gateFinished.Format(time.RFC3339Nano), artifactRefs[len(artifactRefs)-1]
-		affected := promotionFailureHardClosure(vaultPath, owner)
 		failed.Gate.Failure = DepartureFailure{Class: string(route.Class), Identity: route.StableIdentity, OwningTaskID: packet.OwningTaskID, BisectionRef: packet.BisectionRef, ArtifactRefs: packet.ArtifactRefs, RepairTaskID: repairTaskID, ModelTriage: route.ModelTriage, Packet: packet, Action: action, AffectedTaskIDs: affected}
 		failed.State = DepartureStateFailed
 		failed.BlockReason = "promotion gate red: " + route.StableIdentity
