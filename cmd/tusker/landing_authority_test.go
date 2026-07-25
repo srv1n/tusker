@@ -18,14 +18,15 @@ import (
 // bypass. Tests that are specifically checking rejection must not use it.
 func landFrozenSourcesAsIssuedDeparture(t *testing.T, repo, vault string, args Args, sources map[string]string) error {
 	t.Helper()
-	if !fileExists(workflowPath(vault)) {
-		if err := writeDefaultWorkflow(vault); err != nil {
+	wf := Workflow{}
+	if fileExists(workflowPath(vault)) {
+		loaded, err := loadWorkflow(vault)
+		if err != nil {
 			return err
 		}
-	}
-	wf, err := loadWorkflow(vault)
-	if err != nil {
-		return err
+		wf = loaded.Data
+	} else {
+		wf.ScheduledPromotion = defaultScheduledPromotionPolicy()
 	}
 	ids := landTargets(args)
 	if len(ids) == 0 {
@@ -68,12 +69,12 @@ func landFrozenSourcesAsIssuedDeparture(t *testing.T, repo, vault string, args A
 	}
 	defer d.Close()
 	window := time.Now().UTC().Format(time.RFC3339Nano)
-	run := DepartureRun{ID: "departure-fixture-" + strings.ToLower(newRecordID()), ProjectID: v7ProjectID(vault), PolicyID: departurePolicyID(wf.Data.ScheduledPromotion.Effective), ScheduledWindow: window, State: DepartureStateStaging, Candidate: candidate}
+	run := DepartureRun{ID: "departure-fixture-" + strings.ToLower(newRecordID()), ProjectID: v7ProjectID(vault), PolicyID: departurePolicyID(wf.ScheduledPromotion.Effective), ScheduledWindow: window, State: DepartureStateStaging, Candidate: candidate}
 	created, _, err := d.store.GetOrCreateDepartureRun(run)
 	if err != nil {
 		return err
 	}
-	authority, err := d.issueV7LandingAuthority(RegisteredProject{ProjectID: created.ProjectID, ProjectKey: created.ProjectID, RepoRoot: repo, VaultRoot: vault, Health: projectHealthHealthy}, wf.Data, created, candidate, v7WaveIntegrationBranch(idx.Waves[waveID]))
+	authority, err := d.issueV7LandingAuthority(RegisteredProject{ProjectID: created.ProjectID, ProjectKey: created.ProjectID, RepoRoot: repo, VaultRoot: vault, Health: projectHealthHealthy}, wf, created, candidate, v7WaveIntegrationBranch(idx.Waves[waveID]))
 	if err != nil {
 		return err
 	}
@@ -119,6 +120,14 @@ func TestV7LandingAuthorityRejectsActorLabelAndFrozenSources(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("actor label and frozen sources minted scheduled landing authority")
+	}
+}
+
+func TestV7LandingAuthorityCandidateBindsWaveSubsetWithoutWideningSources(t *testing.T) {
+	all := DepartureCandidate{CargoTaskIDs: []string{"APP-T-0001", "APP-T-0002"}, WaveIDs: []string{"W-0001", "W-0002"}, TaskStateRevisions: map[string]string{"APP-T-0001": "one", "APP-T-0002": "two"}, TaskSourceSHAs: map[string]string{"APP-T-0001": "source-one", "APP-T-0002": "source-two"}}
+	subset := v7LandingAuthorityCandidate(all, []string{"APP-T-0002"})
+	if len(subset.CargoTaskIDs) != 1 || subset.CargoTaskIDs[0] != "APP-T-0002" || len(subset.TaskSourceSHAs) != 1 || subset.TaskSourceSHAs["APP-T-0002"] != "source-two" || subset.TaskSourceSHAs["APP-T-0001"] != "" {
+		t.Fatalf("authority subset widened frozen cargo: %#v", subset)
 	}
 }
 

@@ -24,7 +24,7 @@ const (
 	v7LandingLockRecoveryGrace  = 30 * time.Second
 	v7LandingAuditProvenance    = "tusker:landing/v2"
 	v7LandingReceiptSchema      = "tusker.landing-receipt/v3"
-	v7LandingReceiptIndexSchema = "tusker.landing-receipt-index/v1"
+	v7LandingReceiptIndexSchema = "tusker.landing-receipt-index/v2"
 	v7LandingGateCacheSchemaV1  = "tusker.landing-gate-cache/v1"
 	v7LandingGateCacheSchemaV2  = "tusker.landing-gate-cache/v2"
 	v7LandingAuthorityDeparture = "scheduled_departure"
@@ -512,7 +512,9 @@ func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v
 				continue
 			}
 			entry := landed.Entry
-			entry.Actor = actor
+			if entry.Actor == "" {
+				entry.Actor = actor
+			}
 			entries = append(entries, entry)
 			summary.Landed = append(summary.Landed, v7LandSummaryRow{
 				Task: entry.Task, Branch: entry.Branch, Target: entry.Target,
@@ -872,7 +874,7 @@ func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string,
 				}})
 				continue
 			}
-			entry, recovered := recoverV7LandingAuditFromReceipt(vaultPath, repoRoot, integrationBranch, task, actor, authority)
+			entry, recovered := recoverV7LandingAuditFromReceipt(vaultPath, repoRoot, integrationBranch, task)
 			if !recovered {
 				return tuskerError(errorInvalidTransition, "landing recovery refusal: verified receipt missing for already-integrated source "+task.ID+"@"+task.SourceSHA)
 			}
@@ -1640,7 +1642,7 @@ func writeV7LandingReceipt(vaultPath string, receipt v7LandingReceipt) error {
 }
 
 func writeV7LandingReceiptIndex(vaultPath string, receipt v7LandingReceipt, task v7LandingReceiptTask) error {
-	path := v7LandingReceiptIndexPath(vaultPath, receipt.Target, task.Task, task.SourceSHA, receipt.Actor, receipt.ControlAuthority)
+	path := v7LandingReceiptIndexPath(vaultPath, receipt.Target, task.Task, task.SourceSHA)
 	if err := ensureDir(filepath.Dir(path)); err != nil {
 		return err
 	}
@@ -1675,29 +1677,50 @@ func writeV7LandingReceiptIndex(vaultPath string, receipt v7LandingReceipt, task
 	return nil
 }
 
-func v7LandingReceiptIndexPath(vaultPath, target, taskID, sourceSHA, actor, authority string) string {
+func v7LandingReceiptIndexPath(vaultPath, target, taskID, sourceSHA string) string {
 	project := fallback(v7ProjectID(vaultPath), "project")
 	sum := sha256.Sum256([]byte(strings.Join([]string{
-		"tusker.landing-receipt-index/v1", target, taskID, sourceSHA, actor, authority,
+		"tusker.landing-receipt-index/v2", project, target, taskID, sourceSHA,
 	}, "\x00")))
 	return filepath.Join(DefaultStateRoot(), "landing-cache", sanitizeWorkspaceKey(project), "by-task", fmt.Sprintf("%x.json", sum))
 }
 
-func indexedV7LandingReceipts(vaultPath, target, taskID, sourceSHA, actor, authority string) []v7LandingReceipt {
-	path := v7LandingReceiptIndexPath(vaultPath, target, taskID, sourceSHA, actor, authority)
+func indexedV7LandingReceipts(vaultPath, target, taskID, sourceSHA string) []v7LandingReceipt {
+	path := v7LandingReceiptIndexPath(vaultPath, target, taskID, sourceSHA)
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	var record v7LandingReceiptIndexRecord
-	if json.Unmarshal(raw, &record) != nil ||
-		record.Schema != v7LandingReceiptIndexSchema {
-		return nil
-	}
 	var receipts []v7LandingReceipt
-	for index := len(record.ReceiptFingerprints) - 1; index >= 0; index-- {
-		if receipt, ok := loadV7LandingReceipt(vaultPath, record.ReceiptFingerprints[index]); ok {
-			receipts = append(receipts, receipt)
+	if err == nil {
+		var record v7LandingReceiptIndexRecord
+		if json.Unmarshal(raw, &record) == nil && record.Schema == v7LandingReceiptIndexSchema {
+			for index := len(record.ReceiptFingerprints) - 1; index >= 0; index-- {
+				if receipt, ok := loadV7LandingReceipt(vaultPath, record.ReceiptFingerprints[index]); ok {
+					receipts = append(receipts, receipt)
+				}
+			}
+		}
+	}
+	// V1 indexes were actor-keyed. A fresh daemon cannot know the historical
+	// actor/session, so use the receipt cache only as discovery and verify every
+	// candidate below. This preserves recoverability without treating cache JSON
+	// as authority.
+	if len(receipts) == 0 {
+		root := filepath.Dir(v7LandingGateCachePath(vaultPath, "placeholder"))
+		entries, _ := os.ReadDir(root)
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+			fingerprint := strings.TrimSuffix(entry.Name(), ".json")
+			receipt, ok := loadV7LandingReceipt(vaultPath, fingerprint)
+			if !ok || receipt.Target != target {
+				continue
+			}
+			for _, proof := range receipt.Tasks {
+				if proof.Task == taskID && proof.SourceSHA == sourceSHA {
+					receipts = append(receipts, receipt)
+					break
+				}
+			}
 		}
 	}
 	return receipts
@@ -1782,12 +1805,9 @@ func isV7LandingFingerprint(value string) bool {
 	return true
 }
 
-func recoverV7LandingAuditFromReceipt(vaultPath, repoRoot, integrationBranch string, task v7LandTask, actor, authority string) (v7LandingAuditEntry, bool) {
-	if !trustedV7LandingControlAuthority(authority, actor) {
-		return v7LandingAuditEntry{}, false
-	}
-	for _, receipt := range indexedV7LandingReceipts(vaultPath, integrationBranch, task.ID, task.SourceSHA, actor, authority) {
-		if receipt.Actor != actor || receipt.ControlAuthority != authority || receipt.Target != integrationBranch {
+func recoverV7LandingAuditFromReceipt(vaultPath, repoRoot, integrationBranch string, task v7LandTask) (v7LandingAuditEntry, bool) {
+	for _, receipt := range indexedV7LandingReceipts(vaultPath, integrationBranch, task.ID, task.SourceSHA) {
+		if receipt.Target != integrationBranch {
 			continue
 		}
 		proof, ok := verifiedV7LandingReceiptTask(repoRoot, integrationBranch, receipt, task.ID)
@@ -1804,7 +1824,7 @@ func recoverV7LandingAuditFromReceipt(vaultPath, repoRoot, integrationBranch str
 			GateFingerprint: receipt.GateFingerprint, ReceiptFingerprint: receipt.Fingerprint,
 			ControlAuthority: receipt.ControlAuthority,
 			Commit:           receipt.BatchHeadSHA, Tree: receipt.BatchTreeSHA,
-			Actor: actor, Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Actor: receipt.Actor, Timestamp: time.Now().UTC().Format(time.RFC3339),
 		}, true
 	}
 	return v7LandingAuditEntry{}, false

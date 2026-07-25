@@ -105,6 +105,10 @@ func (d *Daemon) issueV7LandingAuthority(project RegisteredProject, wf Workflow,
 		return nil, err
 	}
 	issuedAt := time.Now().UTC()
+	generation, err := d.store.NextV7LandingAuthorityGeneration(project.ProjectID, run.ID)
+	if err != nil {
+		return nil, err
+	}
 	candidateSHA, err := gitOutputTrim(project.RepoRoot, "rev-parse", target+"^{commit}")
 	if err != nil {
 		return nil, tuskerError(errorInvalidTransition, "landing authority refusal: candidate ref is unavailable: "+target)
@@ -115,7 +119,7 @@ func (d *Daemon) issueV7LandingAuthority(project RegisteredProject, wf Workflow,
 	}
 	candidate.CandidateSHA, candidate.CandidateTreeHash, candidate.IntegrationBaseSHA = candidateSHA, candidateTree, candidateSHA
 	context := v7LandingAuthorityContext{Schema: v7LandingAuthoritySchema, ProjectID: project.ProjectID, RepoIdentity: repoIdentity, DepartureID: run.ID, PolicyID: run.PolicyID, ScheduledWindow: run.ScheduledWindow, Candidate: candidate, Target: target}
-	issuance := v7LandingAuthorityIssuance{AuthorityID: "landing-authority-" + strings.ToLower(newRecordID()), ProjectID: project.ProjectID, RepoIdentity: repoIdentity, DepartureID: run.ID, PolicyID: run.PolicyID, ScheduledWindow: run.ScheduledWindow, SessionID: "daemon-" + strings.ToLower(newRecordID()), HostIdentity: host, ProcessIdentity: fmt.Sprintf("pid=%d;started=%s", os.Getpid(), started), Generation: 1, Context: context, PublicKey: append([]byte(nil), pub...), IssuedAt: issuedAt.Format(time.RFC3339Nano), ExpiresAt: issuedAt.Add(30 * time.Minute).Format(time.RFC3339Nano)}
+	issuance := v7LandingAuthorityIssuance{AuthorityID: "landing-authority-" + strings.ToLower(newRecordID()), ProjectID: project.ProjectID, RepoIdentity: repoIdentity, DepartureID: run.ID, PolicyID: run.PolicyID, ScheduledWindow: run.ScheduledWindow, SessionID: "daemon-" + strings.ToLower(newRecordID()), HostIdentity: host, ProcessIdentity: fmt.Sprintf("pid=%d;started=%s", os.Getpid(), started), Generation: generation, Context: context, PublicKey: append([]byte(nil), pub...), IssuedAt: issuedAt.Format(time.RFC3339Nano), ExpiresAt: issuedAt.Add(30 * time.Minute).Format(time.RFC3339Nano)}
 	if err := d.store.CreateV7LandingAuthorityIssuance(issuance); err != nil {
 		return nil, err
 	}
@@ -126,6 +130,15 @@ func (d *Daemon) issueV7LandingAuthority(project RegisteredProject, wf Workflow,
 	d.landingAuthorityPrivate[issuance.AuthorityID] = private
 	d.landingAuthorityMu.Unlock()
 	return &v7LandingAuthority{Issuance: issuance, private: private}, nil
+}
+
+func (s *RuntimeStore) NextV7LandingAuthorityGeneration(projectID, departureID string) (int, error) {
+	var generation int
+	err := s.queryRowScan(`SELECT COALESCE(MAX(generation), 0) + 1 FROM landing_authority_issuances WHERE project_id = ? AND departure_id = ?`, []any{projectID, departureID}, &generation)
+	if err != nil {
+		return 0, err
+	}
+	return generation, nil
 }
 
 func (s *RuntimeStore) CreateV7LandingAuthorityIssuance(issuance v7LandingAuthorityIssuance) error {
@@ -183,6 +196,10 @@ func verifyV7LandingReceiptAuthority(repoRoot string, receipt v7LandingReceipt) 
 	if err != nil || issuance == nil || issuance.RevokedAt != "" || len(issuance.PublicKey) != ed25519.PublicKeySize {
 		return false
 	}
+	run, err := store.FindDepartureRun(receipt.DepartureID)
+	if err != nil || run == nil || run.ProjectID != receipt.ProjectID || run.PolicyID != receipt.PolicyID || run.ScheduledWindow != receipt.ScheduledWindow {
+		return false
+	}
 	now := time.Now().UTC()
 	issuedAt, issuedErr := time.Parse(time.RFC3339Nano, issuance.IssuedAt)
 	expiresAt, expiresErr := time.Parse(time.RFC3339Nano, issuance.ExpiresAt)
@@ -197,9 +214,6 @@ func verifyV7LandingReceiptAuthority(repoRoot string, receipt v7LandingReceipt) 
 		issuance.Context.Candidate.CandidateSHA == "" || issuance.Context.Candidate.CandidateTreeHash == "" {
 		return false
 	}
-	if len(issuance.Context.Candidate.CargoTaskIDs) != len(receipt.Tasks) {
-		return false
-	}
 	seen := map[string]bool{}
 	for _, proof := range receipt.Tasks {
 		if issuance.Context.Candidate.TaskSourceSHAs[proof.Task] != proof.SourceSHA || seen[proof.Task] {
@@ -207,8 +221,14 @@ func verifyV7LandingReceiptAuthority(repoRoot string, receipt v7LandingReceipt) 
 		}
 		seen[proof.Task] = true
 	}
-	for _, id := range issuance.Context.Candidate.CargoTaskIDs {
-		if !seen[id] {
+	// One departure can stage several waves. Each signed receipt may therefore
+	// cover a strict, exact subset of the departure's frozen cargo; it must
+	// never introduce a task or source outside that candidate.
+	if len(seen) == 0 {
+		return false
+	}
+	for id := range seen {
+		if !containsString(issuance.Context.Candidate.CargoTaskIDs, id) || run.Candidate.TaskSourceSHAs[id] != issuance.Context.Candidate.TaskSourceSHAs[id] {
 			return false
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -383,20 +384,36 @@ func (d *Daemon) executeDepartureStaging(project RegisteredProject, wf Workflow,
 		return d.blockDepartureRun(run, "departure staging refusal: "+err.Error())
 	}
 	if len(unstaged) > 0 {
-		if len(run.Candidate.WaveIDs) != 1 {
-			return d.blockDepartureRun(run, "departure staging refusal: exact daemon authority requires one atomic cargo wave")
+		idx, idxErr := loadV7Index(project.VaultRoot)
+		if idxErr != nil {
+			return d.blockDepartureRun(run, "departure staging refusal: "+idxErr.Error())
 		}
-		waveID := run.Candidate.WaveIDs[0]
-		authorityCandidate := v7LandingAuthorityCandidate(run.Candidate, unstaged)
-		authority, authorityErr := d.issueV7LandingAuthority(project, wf, run, authorityCandidate, v7IntegrationBranchName(waveID))
-		if authorityErr != nil {
-			return d.blockDepartureRun(run, "departure staging refusal: "+authorityErr.Error())
-		}
-		if err := stageScheduledTasksWithAuthority(project.VaultRoot, unstaged, run.Candidate.TaskSourceSHAs, "daemon:departure:"+run.ID, authority); err != nil {
-			if departureExecutionTransient(err) {
-				return err
+		byWave := map[string][]string{}
+		for _, taskID := range unstaged {
+			waveID := stringField(idx.Tasks[taskID].Data, "wave")
+			if waveID == "" || idx.Waves[waveID].AbsolutePath == "" {
+				return d.blockDepartureRun(run, "departure staging refusal: frozen cargo wave is missing for "+taskID)
 			}
-			return d.blockDepartureRun(run, "departure staging failed: "+err.Error())
+			byWave[waveID] = append(byWave[waveID], taskID)
+		}
+		waveIDs := make([]string, 0, len(byWave))
+		for waveID := range byWave {
+			waveIDs = append(waveIDs, waveID)
+		}
+		sort.Strings(waveIDs)
+		for _, waveID := range waveIDs {
+			taskIDs := byWave[waveID]
+			authorityCandidate := v7LandingAuthorityCandidate(run.Candidate, taskIDs)
+			authority, authorityErr := d.issueV7LandingAuthority(project, wf, run, authorityCandidate, v7WaveIntegrationBranch(idx.Waves[waveID]))
+			if authorityErr != nil {
+				return d.blockDepartureRun(run, "departure staging refusal: "+authorityErr.Error())
+			}
+			if err := stageScheduledTasksWithAuthority(project.VaultRoot, taskIDs, authorityCandidate.TaskSourceSHAs, "daemon:departure:"+run.ID, authority); err != nil {
+				if departureExecutionTransient(err) {
+					return err
+				}
+				return d.blockDepartureRun(run, "departure staging failed: "+err.Error())
+			}
 		}
 	}
 	if !policy.Promote {
