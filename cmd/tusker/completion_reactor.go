@@ -326,6 +326,9 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
 			return err
 		}
+		if err := injectCompletionReactorCrash("staging_intent", transaction); err != nil {
+			return err
+		}
 	}
 	if transaction.Phase == completionPhaseStaging {
 		staged, stageErr := stageExactReviewCompletion(project.VaultRoot, project.RepoRoot, transaction.IntegrationBase, result, transaction)
@@ -714,7 +717,11 @@ func stageExactReviewCompletion(vaultPath, repoRoot, integrationBase string, res
 	message := "Complete reviewed task " + result.TaskID + "\n\nTusker-Completion: " + transaction.ID
 	commit := exec.Command("git", "-C", tmp, "-c", "commit.gpgsign=false", "commit", "-m", message)
 	stamp := completionResultTimestamp(result)
-	commit.Env = append(os.Environ(), "GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)
+	commit.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Tusker", "GIT_AUTHOR_EMAIL=tusker@localhost",
+		"GIT_COMMITTER_NAME=Tusker", "GIT_COMMITTER_EMAIL=tusker@localhost",
+		"GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp,
+	)
 	if output, err := commit.CombinedOutput(); err != nil {
 		return "", tuskerError(errorInvalidTransition, "failed to commit reviewed task closure: "+firstActionableLine(string(output), err.Error()))
 	}
@@ -747,12 +754,10 @@ func completionResultTimestamp(result ReviewResult) string {
 }
 
 func validateCompletionStagingCandidate(vaultPath, repoRoot, candidate, integrationBase string, result ReviewResult, transaction *completionTransaction) error {
-	firstParent, err := gitOutputTrim(repoRoot, "rev-parse", candidate+"^1")
-	if err != nil || firstParent != integrationBase {
-		return tuskerError(errorInvalidTransition, "completion staging ref has the wrong integration parent")
-	}
-	if !gitMergeBaseAncestor(repoRoot, result.ImplementationSHA, candidate) {
-		return tuskerError(errorInvalidTransition, "completion staging ref does not contain the exact reviewed SHA")
+	parents, err := gitOutputTrim(repoRoot, "rev-list", "--parents", "-n", "1", candidate)
+	fields := strings.Fields(parents)
+	if err != nil || len(fields) != 3 || fields[0] != candidate || fields[1] != integrationBase || fields[2] != result.ImplementationSHA {
+		return tuskerError(errorInvalidTransition, "completion staging ref must have the frozen integration base and exact reviewed SHA as its only parents")
 	}
 	rel := filepath.ToSlash(filepath.Join(relativeFromRepo(repoRoot, vaultPath), "work", "tasks", result.TaskID+".md"))
 	raw, err := gitOutputTrim(repoRoot, "show", candidate+":"+rel)

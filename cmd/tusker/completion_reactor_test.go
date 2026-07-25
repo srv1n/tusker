@@ -525,6 +525,14 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 				if capturedSHA == "" {
 					t.Fatalf("%s crash did not expose staged candidate", point)
 				}
+				if point == "staging_commit" {
+					if _, err := gitCombined(project.RepoRoot, "config", "user.name", "Changed Identity"); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := gitCombined(project.RepoRoot, "config", "user.email", "changed@example.invalid"); err != nil {
+						t.Fatal(err)
+					}
+				}
 				stateRoot := daemon.stateRoot
 				if err := daemon.Close(); err != nil {
 					t.Fatal(err)
@@ -565,7 +573,65 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 				if err != nil || len(strings.Fields(commits)) != 1 {
 					t.Fatalf("%s duplicate completion commits visible: %q err=%v", point, commits, err)
 				}
+				parents, err := gitOutputTrim(project.RepoRoot, "rev-list", "--parents", "-n", "1", capturedSHA)
+				parentFields := strings.Fields(parents)
+				if err != nil || len(parentFields) != 3 || parentFields[2] != result.ImplementationSHA {
+					t.Fatalf("%s staged parent contract=%q err=%v", point, parents, err)
+				}
 			})
+		}
+	})
+
+	t.Run("tampered staging ref is classified without integration movement", func(t *testing.T) {
+		vault, project, daemon, result := completionReactorFixture(t, true)
+		defer daemon.Close()
+		if _, err := daemon.store.SaveReviewResult(result); err != nil {
+			t.Fatal(err)
+		}
+		oldHook := completionReactorCrashHook
+		t.Cleanup(func() { completionReactorCrashHook = oldHook })
+		completionReactorCrashHook = func(point string, _ *completionTransaction) error {
+			if point == "staging_intent" {
+				return errors.New("injected crash after staging intent")
+			}
+			return nil
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
+			t.Fatal("expected staging-intent crash")
+		}
+		transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil || transaction.Phase != completionPhaseStaging {
+			t.Fatalf("missing staging intent: transaction=%#v err=%v", transaction, err)
+		}
+		task, err := resolveV7Note(vault, result.TaskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		wave, _, ok := armedWaveForTask(vault, task)
+		if !ok {
+			t.Fatal("missing armed fixture wave")
+		}
+		integrationRef := "refs/heads/" + v7WaveIntegrationBranch(wave)
+		before, err := gitOutputTrim(project.RepoRoot, "rev-parse", integrationRef)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := updateGitRef(project.RepoRoot, transaction.StagingRef, result.ImplementationSHA, strings.Repeat("0", 40)); err != nil {
+			t.Fatal(err)
+		}
+		completionReactorCrashHook = nil
+		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatal(err)
+		}
+		transaction, err = daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal ||
+			!strings.Contains(transaction.Failure, "only parents") {
+			t.Fatalf("tampered ref was not classified: transaction=%#v err=%v", transaction, err)
+		}
+		after, err := gitOutputTrim(project.RepoRoot, "rev-parse", integrationRef)
+		if err != nil || after != before {
+			t.Fatalf("tampered ref moved integration: before=%s after=%s err=%v", before, after, err)
 		}
 	})
 }
