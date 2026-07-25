@@ -333,6 +333,44 @@ func deliveryV2TaskFingerprint(task deliveryPlanTask, gates []deliveryHumanGate)
 	return deliveryFingerprint(raw)
 }
 
+func deliveryV2WaveContractData(plan *deliveryPlanV2) (map[string]any, error) {
+	out := map[string]any{"summary": plan.Summary}
+	fields := []struct {
+		name    string
+		value   any
+		present bool
+	}{
+		{name: "requirements", value: plan.Requirements, present: len(plan.Requirements) > 0},
+		{name: "shared_resources", value: plan.SharedResources, present: len(plan.SharedResources) > 0},
+		{name: "owned_path_overlaps", value: plan.OwnedPathOverlaps, present: len(plan.OwnedPathOverlaps) > 0},
+		{name: "assumptions", value: plan.Assumptions, present: len(plan.Assumptions) > 0},
+		{name: "unresolved_decisions", value: plan.UnresolvedDecisions, present: len(plan.UnresolvedDecisions) > 0},
+	}
+	for _, field := range fields {
+		if !field.present {
+			continue
+		}
+		value, err := deliveryV2StructuredFrontmatter(field.value)
+		if err != nil {
+			return nil, fmt.Errorf("encode V2 delivery %s: %w", field.name, err)
+		}
+		out[field.name] = value
+	}
+	return out, nil
+}
+
+func deliveryV2StructuredFrontmatter(value any) (any, error) {
+	raw, err := yaml.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var out any
+	if err := yaml.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func deliveryV2WriteExtras(vaultPath string, plan deliveryPlan, report deliveryImportReport, writes map[string]string, now, actor string) error {
 	if c := plan.v2.EpicContract; c != nil && !fileExists(filepath.Join(vaultPath, "work", "epics", plan.Epic+".md")) {
 		body := fmt.Sprintf("# %s · %s\n\n## Thesis\n\nImported atomically from delivery plan `%s`.\n", plan.Epic, c.Title, report.PlanFingerprint)
@@ -373,6 +411,9 @@ func deliveryV2WriteExtras(vaultPath string, plan deliveryPlan, report deliveryI
 		}
 		if g.Suggestion != "" {
 			data["suggestion"] = g.Suggestion
+		}
+		if len(g.DependencyClosure) > 0 {
+			data["dependency_closure"] = g.DependencyClosure
 		}
 		data["state_rev"] = v7StateRev(data, body)
 		content, err := serializeDocument(data, body, v7FrontmatterOrder["gate"])

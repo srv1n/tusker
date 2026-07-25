@@ -521,6 +521,15 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 			"concurrency_group": task.ConcurrencyGroup, "knowledge_nodes": task.KnowledgeNodes, "wave": report.WaveID,
 			"created_at": createdAt, "created_by": createdBy, "updated_at": now, "updated_by": actor,
 		}
+		if len(task.GeneratedOutputs) > 0 {
+			data["generated_outputs"] = task.GeneratedOutputs
+		}
+		if len(task.MigrationKeys) > 0 {
+			data["migration_keys"] = task.MigrationKeys
+		}
+		if len(task.ResourceRefs) > 0 {
+			data["resource_refs"] = task.ResourceRefs
+		}
 		if len(task.RequirementRefs) > 0 {
 			data["requirement_refs"] = task.RequirementRefs
 		}
@@ -591,7 +600,13 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 		"runner_profile": plan.RunnerProfile, "created_at": waveCreatedAt, "created_by": waveCreatedBy, "updated_at": now, "updated_by": actor,
 	}
 	if plan.v2 != nil {
-		waveData["requirements"] = plan.v2.Requirements
+		contractData, err := deliveryV2WaveContractData(plan.v2)
+		if err != nil {
+			return err
+		}
+		for field, value := range contractData {
+			waveData[field] = value
+		}
 	}
 	if fileExists(wavePath) {
 		previous, _, _ := parseFrontmatterMustRead(wavePath)
