@@ -8,6 +8,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -36,23 +37,24 @@ const (
 )
 
 type completionTransaction struct {
-	Schema            string `json:"schema"`
-	ID                string `json:"id"`
-	ProjectID         string `json:"project_id"`
-	TaskID            string `json:"task_id"`
-	WorkRevision      int    `json:"work_revision"`
-	ImplementationSHA string `json:"implementation_sha"`
-	ReviewAttempt     string `json:"review_attempt"`
-	ResultRevision    string `json:"result_revision"`
-	IntegrationBase   string `json:"integration_base"`
-	IntegrationRef    string `json:"integration_ref"`
-	StagingRef        string `json:"staging_ref"`
-	Phase             string `json:"phase"`
-	StagedSHA         string `json:"staged_sha,omitempty"`
-	Failure           string `json:"failure,omitempty"`
-	Disposition       string `json:"disposition,omitempty"`
-	CreatedAt         string `json:"created_at"`
-	UpdatedAt         string `json:"updated_at"`
+	Schema               string `json:"schema"`
+	ID                   string `json:"id"`
+	ProjectID            string `json:"project_id"`
+	TaskID               string `json:"task_id"`
+	WorkRevision         int    `json:"work_revision"`
+	ImplementationSHA    string `json:"implementation_sha"`
+	ReviewAttempt        string `json:"review_attempt"`
+	ResultRevision       string `json:"result_revision"`
+	ReviewedTaskStateRev string `json:"reviewed_task_state_rev"`
+	IntegrationBase      string `json:"integration_base"`
+	IntegrationRef       string `json:"integration_ref"`
+	StagingRef           string `json:"staging_ref"`
+	Phase                string `json:"phase"`
+	StagedSHA            string `json:"staged_sha,omitempty"`
+	Failure              string `json:"failure,omitempty"`
+	Disposition          string `json:"disposition,omitempty"`
+	CreatedAt            string `json:"created_at"`
+	UpdatedAt            string `json:"updated_at"`
 }
 
 // completionReactorCrashHook is test-only fault injection. Production leaves
@@ -95,7 +97,7 @@ func (s *RuntimeStore) CompletionTransaction(id string) (*completionTransaction,
 	var raw string
 	err := s.queryRowScan(`SELECT transaction_json FROM completion_transactions WHERE transaction_id=?`, []any{id}, &raw)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -111,7 +113,7 @@ func (s *RuntimeStore) CompletionTransactionForResult(projectID, taskID, resultR
 	var raw string
 	err := s.queryRowScan(`SELECT transaction_json FROM completion_transactions WHERE project_id=? AND task_id=? AND result_revision=? ORDER BY updated_at DESC LIMIT 1`, []any{projectID, taskID, resultRevision}, &raw)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -219,7 +221,8 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 	transaction := completionTransaction{
 		Schema: "tusker.completion-transaction/v1", ProjectID: project.ProjectID, TaskID: result.TaskID,
 		WorkRevision: result.WorkRevision, ImplementationSHA: result.ImplementationSHA, ReviewAttempt: result.AttemptID,
-		ResultRevision: result.ResultRevision, IntegrationBase: base, IntegrationRef: integrationRef, Phase: completionPhasePlanned,
+		ResultRevision: result.ResultRevision, ReviewedTaskStateRev: result.TaskStateRev,
+		IntegrationBase: base, IntegrationRef: integrationRef, Phase: completionPhasePlanned,
 	}
 	transaction.ID = completionTransactionID(project.ProjectID, result, base)
 	transaction.StagingRef = completionStagingRef(transaction.ID)
@@ -230,6 +233,9 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 	}
 	if transaction.StagingRef == "" {
 		transaction.StagingRef = completionStagingRef(transaction.ID)
+	}
+	if transaction.ReviewedTaskStateRev == "" {
+		transaction.ReviewedTaskStateRev = result.TaskStateRev
 	}
 	if err := d.store.SaveCompletionTransaction(&transaction); err != nil {
 		return err
@@ -456,11 +462,17 @@ func (d *Daemon) beginCompletionDisposition(project RegisteredProject, result Re
 	if transaction.Phase == completionPhaseTerminal {
 		return nil
 	}
+	if transaction.ReviewedTaskStateRev == "" {
+		transaction.ReviewedTaskStateRev = result.TaskStateRev
+	}
 	if !completionFailurePhase(transaction.Phase) {
 		transaction.Disposition = disposition
 		transaction.Failure = strings.TrimSpace(reason)
 		transaction.Phase = completionPhaseFailureIntent
 		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
+			return err
+		}
+		if err := injectCompletionReactorCrash("failure_intent", transaction); err != nil {
 			return err
 		}
 	}
@@ -474,7 +486,7 @@ func (d *Daemon) beginCompletionDisposition(project RegisteredProject, result Re
 func (d *Daemon) resumeCompletionDisposition(project RegisteredProject, result ReviewResult, transaction *completionTransaction) error {
 	if transaction.Phase == completionPhaseFailureIntent {
 		if transaction.Disposition == "rework" {
-			if err := returnReviewerFindingToImplementer(project.VaultRoot, transaction.TaskID, transaction.Failure, "daemon:completion-reactor"); err != nil {
+			if err := d.returnCompletionFindingToImplementer(project, result, transaction); err != nil {
 				return err
 			}
 		}
@@ -515,6 +527,93 @@ func (d *Daemon) resumeCompletionDisposition(project RegisteredProject, result R
 		return d.store.SaveCompletionTransaction(transaction)
 	}
 	return nil
+}
+
+func completionHandbackMarker(transactionID string) string {
+	return "<!-- tusker:completion-handback " + strings.TrimSpace(transactionID) + " -->"
+}
+
+func (d *Daemon) returnCompletionFindingToImplementer(project RegisteredProject, result ReviewResult, transaction *completionTransaction) error {
+	task, err := resolveV7Note(project.VaultRoot, result.TaskID, "task")
+	if err != nil {
+		return err
+	}
+	currentWork := intField(task.Data, "work_revision")
+	currentSource := firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit"))
+	currentState := stringField(task.Data, "state_rev")
+	status := stringField(task.Data, "status")
+	marker := completionHandbackMarker(transaction.ID)
+
+	// A later implementation/review owns the task now. The old transaction
+	// still finishes release/audit bookkeeping, but never rewinds that work.
+	newerReview, err := d.newerReviewOwnsCompletionTask(project.ProjectID, result)
+	if err != nil {
+		return err
+	}
+	if currentWork > result.WorkRevision || newerReview {
+		return nil
+	}
+	if currentWork < result.WorkRevision {
+		return tuskerError("CAS_CONFLICT", "completion handback found an older work revision", withContext(map[string]any{"task": result.TaskID, "expected_work_revision": result.WorkRevision, "current_work_revision": currentWork}))
+	}
+	if strings.Contains(task.Body, marker) {
+		switch status {
+		case "rework":
+			return nil
+		case "review":
+			if currentSource != result.ImplementationSHA {
+				return tuskerError("CAS_CONFLICT", "completion handback marker exists on a different source revision")
+			}
+			// This is our own crash between the marker write and status flip.
+			return statusV7Cmd(Args{
+				"vault": project.VaultRoot, "quiet": "true", "local": "true",
+				"id": result.TaskID, "status": "rework", "by": "daemon:completion-reactor",
+				"reason": reviewerFindingReturnReason,
+			})
+		case "done", "cancelled", "superseded":
+			return nil // terminal monotonicity wins over an old handback.
+		default:
+			return tuskerError("CAS_CONFLICT", "completion handback marker found on unrelated same-revision status",
+				withContext(map[string]any{"task": result.TaskID, "status": status}))
+		}
+	}
+	if currentWork == result.WorkRevision && currentSource == result.ImplementationSHA &&
+		currentState == transaction.ReviewedTaskStateRev && status == "review" {
+		finding := marker + "\n\n" + transaction.Failure
+		return returnReviewerFindingToImplementer(project.VaultRoot, result.TaskID, finding, "daemon:completion-reactor")
+	}
+	return tuskerError("CAS_CONFLICT", "completion handback refused unrelated same-revision drift",
+		withContext(map[string]any{
+			"task": result.TaskID, "expected_state_rev": transaction.ReviewedTaskStateRev, "current_state_rev": currentState,
+			"expected_source": result.ImplementationSHA, "current_source": currentSource, "status": status,
+		}),
+		withHint("inspect the newer task/review state; do not replay the old handback over it"))
+}
+
+func (d *Daemon) newerReviewOwnsCompletionTask(projectID string, result ReviewResult) (bool, error) {
+	runs, err := d.store.ListRuns()
+	if err != nil {
+		return false, err
+	}
+	for _, run := range runs {
+		if run.ProjectID == projectID && run.RecordID == result.TaskID && run.Lane == runLaneReview &&
+			run.ActiveAttemptID != "" && run.ActiveAttemptID != result.AttemptID &&
+			(run.WorkRevision >= result.WorkRevision || isDispatchingLeaseState(run.LeaseState)) {
+			return true, nil
+		}
+	}
+	results, err := d.store.ListReviewResults(projectID)
+	if err != nil {
+		return false, err
+	}
+	for _, candidate := range results {
+		if candidate.TaskID == result.TaskID && candidate.ResultRevision != result.ResultRevision &&
+			(candidate.WorkRevision > result.WorkRevision ||
+				(candidate.WorkRevision == result.WorkRevision && candidate.AttemptID != result.AttemptID)) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (d *Daemon) releaseCompletionReviewOwnership(project RegisteredProject, result ReviewResult, transaction *completionTransaction) error {

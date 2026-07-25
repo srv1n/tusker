@@ -199,6 +199,154 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		}
 	})
 
+	t.Run("old handback replay never rewinds a newer review", func(t *testing.T) {
+		vault, project, daemon, result := completionReactorFixture(t, false)
+		defer daemon.Close()
+		result.Verdict, result.Findings = "changes_requested", []string{"old review finding"}
+		result.ResultRevision = reviewResultFingerprint(result)
+		if _, err := daemon.store.SaveReviewResult(result); err != nil {
+			t.Fatal(err)
+		}
+		if err := daemon.store.UpsertRun(RunStatus{
+			ProjectID: project.ProjectID, RecordID: result.TaskID, ItemID: result.TaskID,
+			Runner: "codex", RunnerProfile: "review", Lane: runLaneReview,
+			LeaseState: string(LeaseStateRunning), ActiveAttemptID: result.AttemptID,
+			AttemptOutcome: string(AttemptOutcomeNone), WorkRevision: result.WorkRevision,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		oldHook := completionReactorCrashHook
+		t.Cleanup(func() { completionReactorCrashHook = oldHook })
+		crashed := false
+		completionReactorCrashHook = func(point string, _ *completionTransaction) error {
+			if point == "failure_handback" && !crashed {
+				crashed = true
+				return errors.New("injected old handback crash")
+			}
+			return nil
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
+			t.Fatal("expected old handback crash")
+		}
+		setAutomationV7TaskFields(t, vault, result.TaskID, map[string]any{
+			"status": "review", "readiness": "waiting_on_review", "work_revision": 2,
+			"source_sha": "new-reviewed-source", "proof_status": "satisfied",
+		})
+		if err := daemon.store.UpsertRun(RunStatus{
+			ProjectID: project.ProjectID, RecordID: result.TaskID, ItemID: result.TaskID,
+			Runner: "codex", RunnerProfile: "review", Lane: runLaneReview,
+			LeaseState: string(LeaseStateRunning), ActiveAttemptID: "review-new",
+			AttemptOutcome: string(AttemptOutcomeNone), WorkRevision: 2,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		completionReactorCrashHook = nil
+		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatal(err)
+		}
+		note, err := resolveV7Note(vault, result.TaskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stringField(note.Data, "status") != "review" || intField(note.Data, "work_revision") != 2 || stringField(note.Data, "source_sha") != "new-reviewed-source" {
+			t.Fatalf("old handback rewound newer review: %#v", note.Data)
+		}
+		run, err := daemon.store.FindRun(result.TaskID)
+		if err != nil || run == nil || run.ActiveAttemptID != "review-new" || run.LeaseState != string(LeaseStateRunning) {
+			t.Fatalf("old handback released newer review owner: run=%#v err=%v", run, err)
+		}
+		transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal {
+			t.Fatalf("old handback bookkeeping did not converge: transaction=%#v err=%v", transaction, err)
+		}
+	})
+
+	t.Run("partial same revision handback finishes its own status flip", func(t *testing.T) {
+		vault, project, daemon, result := completionReactorFixture(t, false)
+		defer daemon.Close()
+		result.Verdict, result.Findings = "changes_requested", []string{"partial finding"}
+		result.ResultRevision = reviewResultFingerprint(result)
+		if _, err := daemon.store.SaveReviewResult(result); err != nil {
+			t.Fatal(err)
+		}
+		oldHook := completionReactorCrashHook
+		t.Cleanup(func() { completionReactorCrashHook = oldHook })
+		completionReactorCrashHook = func(point string, _ *completionTransaction) error {
+			if point == "failure_intent" {
+				return errors.New("injected crash before handback")
+			}
+			return nil
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
+			t.Fatal("expected failure-intent crash")
+		}
+		transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil {
+			t.Fatalf("missing handback intent: transaction=%#v err=%v", transaction, err)
+		}
+		taskPath := filepath.Join(vault, "work", "tasks", result.TaskID+".md")
+		data, body, err := parseFrontmatterMustRead(taskPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		section := reviewerFindingGeneratedMarker + "\n\n" + completionHandbackMarker(transaction.ID) + "\n\n" + transaction.Failure
+		body = upsertGeneratedReviewerFindingSection(body, section)
+		if _, err := saveV7DocumentCAS(taskPath, data, body, v7FrontmatterOrder["task"], stringField(data, "state_rev")); err != nil {
+			t.Fatal(err)
+		}
+		completionReactorCrashHook = nil
+		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
+			t.Fatal(err)
+		}
+		note, err := resolveV7Note(vault, result.TaskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stringField(note.Data, "status") != "rework" {
+			t.Fatalf("partial owned handback did not finish: %#v", note.Data)
+		}
+		transaction, err = daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+		if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal {
+			t.Fatalf("partial handback replay did not converge: transaction=%#v err=%v", transaction, err)
+		}
+	})
+
+	t.Run("old handback fails closed on unrelated same revision drift", func(t *testing.T) {
+		vault, project, daemon, result := completionReactorFixture(t, false)
+		defer daemon.Close()
+		result.Verdict, result.Findings = "changes_requested", []string{"fenced finding"}
+		result.ResultRevision = reviewResultFingerprint(result)
+		if _, err := daemon.store.SaveReviewResult(result); err != nil {
+			t.Fatal(err)
+		}
+		oldHook := completionReactorCrashHook
+		t.Cleanup(func() { completionReactorCrashHook = oldHook })
+		completionReactorCrashHook = func(point string, _ *completionTransaction) error {
+			if point == "failure_intent" {
+				return errors.New("injected crash after failure intent")
+			}
+			return nil
+		}
+		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
+			t.Fatal("expected failure-intent crash")
+		}
+		setAutomationV7TaskFields(t, vault, result.TaskID, map[string]any{"next_action": "unrelated operator edit"})
+		completionReactorCrashHook = nil
+		if err := daemon.reconcileReviewCompletion(project, wf); err == nil || !strings.Contains(err.Error(), "same-revision drift") {
+			t.Fatalf("unrelated same-revision drift was not fenced: %v", err)
+		}
+		note, err := resolveV7Note(vault, result.TaskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stringField(note.Data, "status") != "review" || generatedReviewerFindingContent(note.Body) != "" {
+			t.Fatal("fenced handback mutated unrelated same-revision state")
+		}
+	})
+
 	t.Run("pass freezes exact sha and integration CAS", func(t *testing.T) {
 		vault, project, daemon, result := completionReactorFixture(t, true)
 		defer daemon.Close()
