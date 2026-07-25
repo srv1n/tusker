@@ -11,10 +11,26 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
-const tuskerLandMainGuardEnv = "TUSKER_LAND_MAIN_OK"
+const (
+	tuskerLandMainGuardEnv     = "TUSKER_LAND_MAIN_OK"
+	v7LandingLockSchema        = "tusker.landing-lock/v1"
+	v7LandingLockRecoveryGrace = 30 * time.Second
+)
+
+type v7LandingLockOwner struct {
+	Schema               string `json:"schema"`
+	Token                string `json:"token"`
+	PID                  int    `json:"pid"`
+	Host                 string `json:"host"`
+	HostVerified         bool   `json:"host_verified"`
+	ProcessStartedAt     string `json:"process_started_at"`
+	ProcessStartVerified bool   `json:"process_start_verified"`
+	AcquiredAt           string `json:"acquired_at"`
+}
 
 type v7LandTask struct {
 	ID        string
@@ -124,16 +140,162 @@ func acquireV7LandingLock(vaultPath string) (func(), error) {
 	if err := ensureDir(filepath.Dir(lockPath)); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	unlock, err := acquireV7LandingLockRecoveryGuard(lockPath)
 	if err != nil {
-		if os.IsExist(err) {
-			return nil, tuskerError(errorInvalidTransition, "landing lane is already running", withPath(lockPath))
-		}
 		return nil, err
 	}
-	_, _ = fmt.Fprintf(file, "%s\n", time.Now().UTC().Format(time.RFC3339))
-	_ = file.Close()
-	return func() { _ = os.Remove(lockPath) }, nil
+	defer unlock()
+
+	for {
+		file, openErr := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if openErr == nil {
+			now := time.Now().UTC()
+			processStartedAt, verified := processStartTime(os.Getpid())
+			if !verified {
+				processStartedAt = now.Format(time.RFC3339Nano)
+			}
+			host, hostVerified := v7LandingLockHostIdentity()
+			owner := v7LandingLockOwner{
+				Schema:               v7LandingLockSchema,
+				Token:                strings.ToLower(newRecordID()),
+				PID:                  os.Getpid(),
+				Host:                 host,
+				HostVerified:         hostVerified,
+				ProcessStartedAt:     processStartedAt,
+				ProcessStartVerified: verified,
+				AcquiredAt:           now.Format(time.RFC3339Nano),
+			}
+			encodeErr := json.NewEncoder(file).Encode(owner)
+			if encodeErr == nil {
+				encodeErr = file.Sync()
+			}
+			if closeErr := file.Close(); encodeErr == nil {
+				encodeErr = closeErr
+			}
+			if encodeErr != nil {
+				_ = os.Remove(lockPath)
+				return nil, fmt.Errorf("initialize landing lock: %w", encodeErr)
+			}
+			return func() { releaseV7LandingLock(lockPath, owner.Token) }, nil
+		}
+		if !os.IsExist(openErr) {
+			return nil, openErr
+		}
+		recovered, reason, recoverErr := recoverV7LandingLock(lockPath, time.Now().UTC())
+		if recoverErr != nil {
+			return nil, recoverErr
+		}
+		if recovered {
+			continue
+		}
+		message := "landing lane is already running"
+		if reason != "" {
+			message += "; " + reason
+		}
+		return nil, tuskerError(errorInvalidTransition, message, withPath(lockPath))
+	}
+}
+
+func acquireV7LandingLockRecoveryGuard(lockPath string) (func(), error) {
+	guard, err := os.OpenFile(v7LandingLockRecoveryGuardPath(lockPath), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(guard.Fd()), syscall.LOCK_EX); err != nil {
+		_ = guard.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(guard.Fd()), syscall.LOCK_UN)
+		_ = guard.Close()
+	}, nil
+}
+
+func v7LandingLockRecoveryGuardPath(lockPath string) string {
+	canonical, err := filepath.Abs(lockPath)
+	if err != nil {
+		canonical = lockPath
+	}
+	if physicalDir, evalErr := filepath.EvalSymlinks(filepath.Dir(canonical)); evalErr == nil {
+		canonical = filepath.Join(physicalDir, filepath.Base(canonical))
+	}
+	digest := sha256.Sum256([]byte(canonical))
+	return filepath.Join(os.TempDir(), fmt.Sprintf("tusker-landing-lock-%x.guard", digest[:16]))
+}
+
+func recoverV7LandingLock(lockPath string, now time.Time) (bool, string, error) {
+	raw, err := os.ReadFile(lockPath)
+	if err != nil {
+		return false, "", err
+	}
+	info, err := os.Stat(lockPath)
+	if err != nil {
+		return false, "", err
+	}
+	var owner v7LandingLockOwner
+	if err := json.Unmarshal(raw, &owner); err != nil || !validV7LandingLockOwner(owner) {
+		return false, "lock owner metadata is malformed and was not stolen", nil
+	}
+	acquiredAt, _ := time.Parse(time.RFC3339Nano, owner.AcquiredAt)
+	recoveryCutoff := now.Add(-v7LandingLockRecoveryGrace)
+	if acquiredAt.After(recoveryCutoff) || info.ModTime().After(recoveryCutoff) {
+		return false, "lock is too fresh for safe stale recovery", nil
+	}
+	host, hostVerified := v7LandingLockHostIdentity()
+	if !owner.HostVerified || !hostVerified || owner.Host != host {
+		return false, "lock owner is on another host and cannot be proven stale", nil
+	}
+	if processAlive(owner.PID) {
+		if !owner.ProcessStartVerified {
+			return false, fmt.Sprintf("lock owner pid %d is still alive", owner.PID), nil
+		}
+		actualStart, ok := processStartTime(owner.PID)
+		if !ok || actualStart == owner.ProcessStartedAt {
+			return false, fmt.Sprintf("lock owner pid %d is still alive", owner.PID), nil
+		}
+	}
+	if err := os.Remove(lockPath); err != nil {
+		return false, "", fmt.Errorf("recover stale landing lock: %w", err)
+	}
+	return true, "", nil
+}
+
+func v7LandingLockHostIdentity() (string, bool) {
+	host, err := os.Hostname()
+	host = strings.TrimSpace(host)
+	if err != nil || host == "" {
+		return "unknown", false
+	}
+	return host, true
+}
+
+func validV7LandingLockOwner(owner v7LandingLockOwner) bool {
+	if owner.Schema != v7LandingLockSchema ||
+		strings.TrimSpace(owner.Token) == "" ||
+		owner.PID <= 0 ||
+		strings.TrimSpace(owner.Host) == "" ||
+		strings.TrimSpace(owner.ProcessStartedAt) == "" {
+		return false
+	}
+	_, err := time.Parse(time.RFC3339Nano, owner.AcquiredAt)
+	return err == nil
+}
+
+func releaseV7LandingLock(lockPath, token string) {
+	unlock, err := acquireV7LandingLockRecoveryGuard(lockPath)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	raw, err := os.ReadFile(lockPath)
+	if err != nil {
+		return
+	}
+	var owner v7LandingLockOwner
+	if json.Unmarshal(raw, &owner) != nil || owner.Token != token {
+		return
+	}
+	_ = os.Remove(lockPath)
 }
 
 func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v7LandSummary, frozenSources map[string]string) error {

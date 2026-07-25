@@ -2,10 +2,190 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestV7LandingLockRecoversOnlyProvenStaleOwner(t *testing.T) {
+	t.Run("records owner identity and excludes a live owner", func(t *testing.T) {
+		vault := t.TempDir()
+		release, err := acquireV7LandingLock(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lockPath := filepath.Join(vault, "_system", "land.lock")
+		owner := readV7LandingLockOwnerForTest(t, lockPath)
+		if owner.Schema != v7LandingLockSchema ||
+			owner.Token == "" ||
+			owner.PID != os.Getpid() ||
+			owner.Host != runtimeLeaseHost() ||
+			!owner.HostVerified ||
+			owner.ProcessStartedAt == "" ||
+			owner.AcquiredAt == "" {
+			t.Fatalf("landing lock owner identity is incomplete: %#v", owner)
+		}
+		if _, err := acquireV7LandingLock(vault); err == nil || !strings.Contains(err.Error(), "already running") {
+			t.Fatalf("live landing owner was not excluded: %v", err)
+		}
+		release()
+		if _, err := os.Stat(lockPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("owned landing lock was not released: %v", err)
+		}
+		if _, err := os.Stat(lockPath + ".guard"); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("landing recovery guard polluted the vault: %v", err)
+		}
+	})
+
+	t.Run("does not steal malformed metadata", func(t *testing.T) {
+		vault, lockPath := newV7LandingLockFixture(t)
+		legacy := "2026-07-25T00:00:00Z\n"
+		if err := writeText(lockPath, legacy); err != nil {
+			t.Fatal(err)
+		}
+		old := time.Now().Add(-2 * v7LandingLockRecoveryGrace)
+		if err := os.Chtimes(lockPath, old, old); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := acquireV7LandingLock(vault); err == nil || !strings.Contains(err.Error(), "malformed") {
+			t.Fatalf("malformed landing lock was not rejected: %v", err)
+		}
+		if got := mustReadIndexTest(t, lockPath); got != legacy {
+			t.Fatalf("malformed landing lock was stolen: %q", got)
+		}
+	})
+
+	t.Run("does not steal a fresh dead-owner lock", func(t *testing.T) {
+		vault, lockPath := newV7LandingLockFixture(t)
+		owner := v7LandingLockOwnerForTest(time.Now().UTC(), 999999999, "dead-process-start")
+		writeV7LandingLockOwnerForTest(t, lockPath, owner)
+		if _, err := acquireV7LandingLock(vault); err == nil || !strings.Contains(err.Error(), "too fresh") {
+			t.Fatalf("fresh landing lock was not rejected: %v", err)
+		}
+		if got := readV7LandingLockOwnerForTest(t, lockPath); got.Token != owner.Token {
+			t.Fatalf("fresh landing lock was stolen: before=%s after=%s", owner.Token, got.Token)
+		}
+	})
+
+	t.Run("does not steal an old live-owner lock", func(t *testing.T) {
+		vault, lockPath := newV7LandingLockFixture(t)
+		startedAt, ok := processStartTime(os.Getpid())
+		if !ok {
+			t.Skip("process start identity is unavailable")
+		}
+		old := time.Now().UTC().Add(-2 * v7LandingLockRecoveryGrace)
+		owner := v7LandingLockOwnerForTest(old, os.Getpid(), startedAt)
+		writeV7LandingLockOwnerForTest(t, lockPath, owner)
+		if err := os.Chtimes(lockPath, old, old); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := acquireV7LandingLock(vault); err == nil || !strings.Contains(err.Error(), "still alive") {
+			t.Fatalf("live landing owner was not preserved: %v", err)
+		}
+		if got := readV7LandingLockOwnerForTest(t, lockPath); got.Token != owner.Token {
+			t.Fatalf("live landing lock was stolen: before=%s after=%s", owner.Token, got.Token)
+		}
+	})
+
+	t.Run("recovers an old dead-owner lock", func(t *testing.T) {
+		vault, lockPath := newV7LandingLockFixture(t)
+		old := time.Now().UTC().Add(-2 * v7LandingLockRecoveryGrace)
+		stale := v7LandingLockOwnerForTest(old, 999999999, "dead-process-start")
+		writeV7LandingLockOwnerForTest(t, lockPath, stale)
+		if err := os.Chtimes(lockPath, old, old); err != nil {
+			t.Fatal(err)
+		}
+		release, err := acquireV7LandingLock(vault)
+		if err != nil {
+			t.Fatalf("recover stale landing lock: %v", err)
+		}
+		defer release()
+		current := readV7LandingLockOwnerForTest(t, lockPath)
+		if current.Token == stale.Token || current.PID != os.Getpid() {
+			t.Fatalf("stale landing owner was not replaced safely: stale=%#v current=%#v", stale, current)
+		}
+	})
+
+	t.Run("recognizes pid reuse from the process start identity", func(t *testing.T) {
+		vault, lockPath := newV7LandingLockFixture(t)
+		old := time.Now().UTC().Add(-2 * v7LandingLockRecoveryGrace)
+		stale := v7LandingLockOwnerForTest(old, os.Getpid(), "1900-01-01T00:00:00Z")
+		writeV7LandingLockOwnerForTest(t, lockPath, stale)
+		if err := os.Chtimes(lockPath, old, old); err != nil {
+			t.Fatal(err)
+		}
+		release, err := acquireV7LandingLock(vault)
+		if err != nil {
+			t.Fatalf("recover reused-pid landing lock: %v", err)
+		}
+		defer release()
+		if current := readV7LandingLockOwnerForTest(t, lockPath); current.Token == stale.Token {
+			t.Fatalf("reused-pid landing owner was not replaced: %#v", current)
+		}
+	})
+
+	t.Run("release cannot remove a successor identity", func(t *testing.T) {
+		vault := t.TempDir()
+		release, err := acquireV7LandingLock(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lockPath := filepath.Join(vault, "_system", "land.lock")
+		successor := v7LandingLockOwnerForTest(time.Now().UTC(), os.Getpid(), "successor-start")
+		writeV7LandingLockOwnerForTest(t, lockPath, successor)
+		release()
+		if got := readV7LandingLockOwnerForTest(t, lockPath); got.Token != successor.Token {
+			t.Fatalf("former owner removed its successor: %#v", got)
+		}
+	})
+}
+
+func newV7LandingLockFixture(t *testing.T) (string, string) {
+	t.Helper()
+	vault := t.TempDir()
+	lockPath := filepath.Join(vault, "_system", "land.lock")
+	if err := ensureDir(filepath.Dir(lockPath)); err != nil {
+		t.Fatal(err)
+	}
+	return vault, lockPath
+}
+
+func v7LandingLockOwnerForTest(acquiredAt time.Time, pid int, processStartedAt string) v7LandingLockOwner {
+	host, hostVerified := v7LandingLockHostIdentity()
+	return v7LandingLockOwner{
+		Schema:               v7LandingLockSchema,
+		Token:                "lock-owner-" + strings.ToLower(newRecordID()),
+		PID:                  pid,
+		Host:                 host,
+		HostVerified:         hostVerified,
+		ProcessStartedAt:     processStartedAt,
+		ProcessStartVerified: true,
+		AcquiredAt:           acquiredAt.Format(time.RFC3339Nano),
+	}
+}
+
+func writeV7LandingLockOwnerForTest(t *testing.T, path string, owner v7LandingLockOwner) {
+	t.Helper()
+	raw, err := json.Marshal(owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, string(raw)+"\n"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readV7LandingLockOwnerForTest(t *testing.T, path string) v7LandingLockOwner {
+	t.Helper()
+	var owner v7LandingLockOwner
+	if err := json.Unmarshal([]byte(mustReadIndexTest(t, path)), &owner); err != nil {
+		t.Fatal(err)
+	}
+	return owner
+}
 
 // A1: a task with no wave membership gets an actionable refusal that names the
 // exact wave command to run.
