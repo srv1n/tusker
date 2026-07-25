@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+var departureControlNotify = func(stateRoot, projectID, cause string) {
+	request := daemonControlRequest{Command: "reconcile_project", ProjectID: projectID, Cause: cause}
+	if strings.TrimSpace(projectID) == "" {
+		request.Command = "reconcile_registry"
+	}
+	_ = sendDaemonControlOneWay(stateRoot, request, 250*time.Millisecond)
+}
+
 func departureCheckCmd(args Args) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
@@ -129,15 +137,18 @@ func departureHoldCmd(args Args) error {
 	if by == "" {
 		return tuskerError(errorMissingArg, "departure hold requires --by")
 	}
-	store, err := OpenRuntimeStore(firstNonEmpty(strings.TrimSpace(args.String("state-root")), DefaultStateRoot()))
+	stateRoot := firstNonEmpty(strings.TrimSpace(args.String("state-root")), DefaultStateRoot())
+	projectID := strings.TrimSpace(args.String("project"))
+	store, err := OpenRuntimeStore(stateRoot)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-	hold, err := store.SetDepartureHold(strings.TrimSpace(args.String("project")), args.Bool("release-only"), reason, by, time.Now().UTC())
+	hold, err := store.SetDepartureHold(projectID, args.Bool("release-only"), reason, by, time.Now().UTC())
 	if err != nil {
 		return err
 	}
+	departureControlNotify(stateRoot, projectID, "departure_hold")
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "hold": hold})
 		return nil
@@ -151,15 +162,18 @@ func departureResumeCmd(args Args) error {
 	if by == "" {
 		return tuskerError(errorMissingArg, "departure resume requires --by")
 	}
-	store, err := OpenRuntimeStore(firstNonEmpty(strings.TrimSpace(args.String("state-root")), DefaultStateRoot()))
+	stateRoot := firstNonEmpty(strings.TrimSpace(args.String("state-root")), DefaultStateRoot())
+	projectID := strings.TrimSpace(args.String("project"))
+	store, err := OpenRuntimeStore(stateRoot)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-	hold, err := store.ResumeDepartureHold(strings.TrimSpace(args.String("project")), args.Bool("release-only"), by, time.Now().UTC())
+	hold, err := store.ResumeDepartureHold(projectID, args.Bool("release-only"), by, time.Now().UTC())
 	if err != nil {
 		return err
 	}
+	departureControlNotify(stateRoot, projectID, "departure_resume")
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "resumed": hold})
 		return nil

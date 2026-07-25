@@ -1114,7 +1114,7 @@ func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummar
 		return err
 	}
 	if !allowed {
-		return tuskerError(errorInvalidTransition, "scheduled promotion policy refuses default-branch advance; mode must be promote")
+		return tuskerError(errorInvalidTransition, "scheduled promotion policy refuses default-branch advance; configured departures own main promotion")
 	}
 	for _, member := range normalizeList(wave.Data["members"]) {
 		status, found, err := v7WaveIntegrationMemberStatus(vaultPath, wave, member)

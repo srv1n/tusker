@@ -251,22 +251,29 @@ func (d *Daemon) scheduleDepartureIfDue(project RegisteredProject, wf Workflow, 
 	if err != nil || !created {
 		return err
 	}
+	return d.evaluateScheduledDepartureRun(project, wf, run, window, now)
+}
+
+func (d *Daemon) evaluateScheduledDepartureRun(project RegisteredProject, wf Workflow, run DepartureRun, window, now time.Time) error {
+	if run.State != DepartureStateDue {
+		return nil
+	}
 	transition := func(state DepartureState, skip, block string, decision *DepartureDecision) error {
-		next := run
-		next.State, next.SkipReason, next.BlockReason = state, skip, block
-		if decision != nil {
-			next.Candidate, next.Gate = decision.Candidate, decision.GateIntent
-		}
-		_, err := d.store.TransitionDepartureRun(next, run.StateRevision)
+		_, err := d.transitionDepartureRun(run, func(next *DepartureRun) {
+			next.State, next.SkipReason, next.BlockReason = state, skip, block
+			if decision != nil {
+				next.Candidate, next.Gate = decision.Candidate, decision.GateIntent
+			}
+		})
 		return err
 	}
-
 	if hold, err := d.store.departureHold(project.ProjectID, false); err != nil {
 		return err
 	} else if hold != nil {
-		return transition(DepartureStateBlocked, "", "departure held by "+hold.By+": "+hold.Reason+"; resume: "+hold.ResumeAction, nil)
+		return transition(DepartureStateBlocked, "", departureHoldBlockReason(hold), nil)
 	}
 	late := now.Sub(window) > departureWindowGrace
+	policy := wf.ScheduledPromotion.Effective
 	if late && policy.Mode != scheduledPromotionPromote {
 		return transition(DepartureStateSkipped, "missed "+policy.Mode+" window; policy is skip-on-misfire", "", nil)
 	}
@@ -285,6 +292,13 @@ func (d *Daemon) scheduleDepartureIfDue(project RegisteredProject, wf Workflow, 
 		// evaluating row is its idempotent, restart-safe handoff.
 		return transition(DepartureStateEvaluating, "", "", &decision)
 	}
+}
+
+func departureHoldBlockReason(hold *DepartureHold) string {
+	if hold == nil {
+		return ""
+	}
+	return "departure held by " + hold.By + ": " + hold.Reason + "; resume: " + hold.ResumeAction
 }
 
 func (d *Daemon) resumeRepairingDepartureRoutes(project RegisteredProject) error {

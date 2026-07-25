@@ -13,6 +13,7 @@ import (
 var (
 	scheduledPromotionResourceLeaseTTL        = defaultResourceLeaseTTL
 	scheduledPromotionAfterRefUpdate          = func() error { return nil }
+	scheduledPromotionAfterDefaultPrepare     = func() error { return nil }
 	scheduledPromotionAfterFailureIntent      = func() error { return nil }
 	scheduledPromotionBeforeFailureCompletion = func() error { return nil }
 )
@@ -27,9 +28,9 @@ type scheduledPromotionCandidateSnapshot struct {
 	DefaultBranch string
 }
 
-// scheduledPromotionAllowsDefaultAdvance is intentionally permissive for the
-// legacy/manual landing path.  The new policy only takes authority away when a
-// repository explicitly selected a non-promoting scheduled-promotion mode.
+// scheduledPromotionAllowsDefaultAdvance preserves the legacy/manual path only
+// for repositories that did not opt in. Once configured, the durable departure
+// executor is the sole authority allowed to move the default branch.
 func scheduledPromotionAllowsDefaultAdvance(vaultPath string) (bool, error) {
 	// Older V7 repositories predate WORKFLOW.md.  Absence is the same legacy
 	// opt-out as an absent scheduled_promotion stanza: preserve their current
@@ -46,7 +47,7 @@ func scheduledPromotionAllowsDefaultAdvance(vaultPath string) (bool, error) {
 	if !policy.Configured {
 		return true, nil
 	}
-	return policy.Promote, nil
+	return false, nil
 }
 
 // stageScheduledTasks intentionally delegates to tusker land.  That keeps
@@ -120,6 +121,7 @@ func scheduledPromotionSnapshot(vaultPath, projectID, waveID string, wf Workflow
 		return scheduledPromotionCandidateSnapshot{}, err
 	}
 	candidate := DepartureCandidate{
+		WaveIDs:                  []string{waveID},
 		TaskStateRevisions:       map[string]string{},
 		TaskSourceSHAs:           map[string]string{},
 		IntegrationBaseSHA:       candidateSHA,
@@ -140,8 +142,10 @@ func scheduledPromotionSnapshot(vaultPath, projectID, waveID string, wf Workflow
 		}
 		candidate.TaskStateRevisions[id] = stateRev
 		candidate.TaskSourceSHAs[id] = sourceSHA
+		candidate.CargoTaskIDs = append(candidate.CargoTaskIDs, id)
 		memberFacts = append(memberFacts, id+"@"+stateRev+"@"+sourceSHA)
 	}
+	candidate.CargoTaskIDs = uniqueDepartureStrings(candidate.CargoTaskIDs)
 	sort.Strings(memberFacts)
 	if v7ImplicitDeliveryUnit(wave) {
 		members := normalizeList(wave.Data["members"])
@@ -240,6 +244,12 @@ func scheduledPromotionToolchainFingerprint(repoRoot string, commands []string) 
 func scheduledPromotionSnapshotDrift(before, after scheduledPromotionCandidateSnapshot) string {
 	if before.WaveID != after.WaveID {
 		return "wave"
+	}
+	if !sameDepartureStrings(before.Candidate.WaveIDs, after.Candidate.WaveIDs) {
+		return "wave"
+	}
+	if !sameDepartureStrings(before.Candidate.CargoTaskIDs, after.Candidate.CargoTaskIDs) {
+		return "cargo"
 	}
 	if before.Candidate.CandidateSHA != after.Candidate.CandidateSHA || before.Candidate.CandidateTreeHash != after.Candidate.CandidateTreeHash {
 		return "candidate"
@@ -437,6 +447,11 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	if run.Promotion.AttemptedAt != "" {
 		return "", tuskerError(errorInvalidTransition, "promotion refusal: prior ref update outcome is ambiguous; reconcile the departure before retrying")
 	}
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
+	}
 	release, err := acquireV7LandingLock(vaultPath)
 	if err != nil {
 		return "", err
@@ -460,6 +475,12 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	before, err := scheduledPromotionSnapshot(vaultPath, projectID, waveID, wf)
 	if err != nil {
 		return "", err
+	}
+	if run.Candidate.CandidateSHA != "" {
+		expected := scheduledPromotionCandidateSnapshot{WaveID: waveID, Candidate: run.Candidate, Gate: run.Gate, DefaultBranch: before.DefaultBranch}
+		if drift := scheduledPromotionSnapshotDrift(expected, before); drift != "" {
+			return "", tuskerError(errorInvalidTransition, "promotion recompute required: durable_"+drift+"_drift")
+		}
 	}
 	leaseOwner := "departure:" + run.ID
 	lease, acquired, err := store.AcquireResourceLease(ResourceLeaseAcquireInput{
@@ -569,6 +590,11 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 			_ = os.Remove(ref)
 		}
 	}
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
+	}
 	after, err := scheduledPromotionSnapshot(vaultPath, projectID, waveID, wf)
 	if err != nil {
 		return "", err
@@ -591,8 +617,21 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	if drift := scheduledPromotionSnapshotDrift(before, final); drift != "" {
 		return "", tuskerError(errorInvalidTransition, "promotion recompute required: "+drift+"_drift")
 	}
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
+	}
 	if err := prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, before.DefaultBranch, wave); err != nil {
 		return "", err
+	}
+	if err := scheduledPromotionAfterDefaultPrepare(); err != nil {
+		return "", err
+	}
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
 	}
 	if matched, err := store.ResourceLeaseMatches(lease.Name, lease.Owner, lease.Generation); err != nil || !matched {
 		return "", tuskerError(errorInvalidTransition, "promotion refusal: full_gate_lease_fenced_before_ref_update")
@@ -610,6 +649,11 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		AttemptedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	intent.State = DepartureStateGating
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
+	}
 	changed, err := store.TransitionDepartureRun(intent, run.StateRevision)
 	if err != nil {
 		return "", err

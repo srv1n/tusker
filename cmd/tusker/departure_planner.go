@@ -104,7 +104,14 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 		if fact.SourceSHA != "" {
 			decision.Candidate.TaskSourceSHAs[fact.ID] = fact.SourceSHA
 		}
+		if fact.EligibleForCargo {
+			decision.Candidate.CargoTaskIDs = append(decision.Candidate.CargoTaskIDs, fact.ID)
+			if fact.WaveID != "" {
+				decision.Candidate.WaveIDs = append(decision.Candidate.WaveIDs, fact.WaveID)
+			}
+		}
 	}
+	decision.Candidate.WaveIDs = uniqueDepartureStrings(decision.Candidate.WaveIDs)
 	for _, wave := range sortedV7Waves(idx) {
 		decision.Waves = append(decision.Waves, departureWaveFact(vaultPath, idx, wave))
 	}
@@ -145,7 +152,31 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 				decision.Candidate.IntegrationBaseSHA = ref.SHA
 			}
 		}
+		if !cargoWaves[fact.ID] {
+			continue
+		}
+		wave := idx.Waves[fact.ID]
+		for _, taskID := range normalizeList(wave.Data["members"]) {
+			decision.Candidate.CargoTaskIDs = append(decision.Candidate.CargoTaskIDs, taskID)
+			if decision.Candidate.TaskSourceSHAs[taskID] != "" || ref.SHA == "" {
+				continue
+			}
+			task, ok := idx.Tasks[taskID]
+			if !ok {
+				decision.Disposition = "blocked"
+				decision.Reasons = append(decision.Reasons, DepartureReason{Code: "wave_member_missing", Message: "Cargo is blocked because wave " + fact.ID + " references missing task " + taskID + "."})
+				return decision, nil
+			}
+			sourceSHA, sourceErr := scheduledPromotionTaskSourceSHA(repoRoot, ref.SHA, fact.IntegrationRef, wave, task)
+			if sourceErr != nil {
+				decision.Disposition = "blocked"
+				decision.Reasons = append(decision.Reasons, DepartureReason{Code: "wave_member_source_unavailable", Message: sourceErr.Error()})
+				return decision, nil
+			}
+			decision.Candidate.TaskSourceSHAs[taskID] = sourceSHA
+		}
 	}
+	decision.Candidate.CargoTaskIDs = uniqueDepartureStrings(decision.Candidate.CargoTaskIDs)
 	decision.DefaultRef.SHA = decision.Candidate.ExpectedDefaultBranchSHA
 	for _, task := range decision.Tasks {
 		if task.EligibleForCargo {

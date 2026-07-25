@@ -31,6 +31,8 @@ const (
 // revalidate. It contains fingerprints and references only; raw command logs
 // belong in runtime scratch/artifacts, never in a durable departure row.
 type DepartureCandidate struct {
+	CargoTaskIDs             []string          `json:"cargo_task_ids,omitempty"`
+	WaveIDs                  []string          `json:"wave_ids,omitempty"`
 	TaskStateRevisions       map[string]string `json:"task_state_revisions,omitempty"`
 	TaskSourceSHAs           map[string]string `json:"task_source_shas,omitempty"`
 	WaveAuthorization        string            `json:"wave_authorization,omitempty"`
@@ -281,15 +283,17 @@ func (s *RuntimeStore) UpdateDepartureRunIfRevision(next DepartureRun, expectedR
 // ReconcileDepartureRuns is safe to call at startup. It only marks rows
 // blocked where an irreversible external action may have happened but was not
 // durably committed. All other nonterminal rows are returned as resumable.
-func (s *RuntimeStore) ReconcileDepartureRuns(projectID string) ([]DepartureRecovery, error) {
+func (s *RuntimeStore) ReconcileDepartureRuns(projectID string, activeRunIDs ...string) ([]DepartureRecovery, error) {
 	runs, err := s.ListDepartureRuns(projectID)
 	if err != nil {
 		return nil, err
 	}
+	active := makeSet(activeRunIDs...)
 	result := make([]DepartureRecovery, 0, len(runs))
 	for _, run := range runs {
 		recovery := classifyDepartureRecovery(run)
-		if recovery.Disposition == DepartureRecoveryBlocked && run.State != DepartureStateBlocked {
+		_, isActive := active[run.ID]
+		if recovery.Disposition == DepartureRecoveryBlocked && run.State != DepartureStateBlocked && !isActive {
 			next := run
 			next.State = DepartureStateBlocked
 			next.BlockReason = recovery.Reason

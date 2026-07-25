@@ -164,6 +164,23 @@ func TestScheduledPromotionLandingUnconfiguredPolicyPreservesLegacyAdvance(t *te
 	}
 }
 
+func TestScheduledPromotionLandingConfiguredPromoteReservesMainForDeparture(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "reserved-main.txt", "reserved\n")
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
+	before := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
+	allowed, err := scheduledPromotionAllowsDefaultAdvance(vault)
+	if err != nil || allowed {
+		t.Fatalf("configured promote left legacy main authority enabled: allowed=%v err=%v", allowed, err)
+	}
+	err = landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"})
+	if err == nil || !strings.Contains(err.Error(), "configured departures own main promotion") {
+		t.Fatalf("manual wave landing was not fenced: %v", err)
+	}
+	if after := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")); after != before {
+		t.Fatalf("manual configured-policy landing moved main: before=%s after=%s", before, after)
+	}
+}
+
 func TestScheduledPromotionLandingFrozenCandidateCASAndReplay(t *testing.T) {
 	repo, vault := newLandReadyForMainAdvanceTest(t, "promoted.txt", "promoted\n")
 	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)

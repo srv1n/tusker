@@ -19,33 +19,37 @@ import (
 )
 
 type Daemon struct {
-	stateRoot              string
-	store                  *RuntimeStore
-	guard                  *daemonGuard
-	dispatchRefusalReason  string
-	stream                 *serveStreamBroker
-	serve                  *serveServer
-	pollTaskStatuses       map[string]string
-	pollTaskMeta           map[string]serveStreamTaskMeta
-	postSpawnBeforePersist func(RunStatus)
-	beforePollRunPersist   func(RunStatus, RunStatus)
-	beforeRunLeaseClaim    func(RunStatus)
-	fairDispatchRun        func(context.Context, RegisteredProject, WorkflowFile, Note, RunStatus, string, string) (RunStatus, bool, bool, error)
-	diskStat               diskStatFunc
-	notifyMu               sync.Mutex
-	notifyTimers           map[string]*time.Timer
-	notifyWake             chan string
-	frontierMu             sync.Mutex
-	frontiers              map[string]*projectFrontierIndex
-	frontierHints          map[string][]daemonControlChange
-	attentionLastPoll      map[string]time.Time
-	departureMu            sync.Mutex
-	departureSchedules     map[string]departureSchedule
-	departurePlan          func(RegisteredProject, Workflow) (DepartureDecision, error)
-	reconcileMu            sync.Mutex
-	reconcileSchedule      map[string]adaptiveProjectReconcileState
-	processIdentityProbe   func(RunStatus) bool
-	pollProcessIdentity    func(RunStatus) bool
+	stateRoot                  string
+	store                      *RuntimeStore
+	guard                      *daemonGuard
+	dispatchRefusalReason      string
+	stream                     *serveStreamBroker
+	serve                      *serveServer
+	pollTaskStatuses           map[string]string
+	pollTaskMeta               map[string]serveStreamTaskMeta
+	postSpawnBeforePersist     func(RunStatus)
+	beforePollRunPersist       func(RunStatus, RunStatus)
+	beforeRunLeaseClaim        func(RunStatus)
+	fairDispatchRun            func(context.Context, RegisteredProject, WorkflowFile, Note, RunStatus, string, string) (RunStatus, bool, bool, error)
+	diskStat                   diskStatFunc
+	notifyMu                   sync.Mutex
+	notifyTimers               map[string]*time.Timer
+	notifyWake                 chan string
+	frontierMu                 sync.Mutex
+	frontiers                  map[string]*projectFrontierIndex
+	frontierHints              map[string][]daemonControlChange
+	attentionLastPoll          map[string]time.Time
+	departureMu                sync.Mutex
+	departureSchedules         map[string]departureSchedule
+	departureActive            map[string]struct{}
+	departureWorkers           sync.WaitGroup
+	departureClosing           bool
+	departurePlan              func(RegisteredProject, Workflow) (DepartureDecision, error)
+	departureExecutionDisabled bool
+	reconcileMu                sync.Mutex
+	reconcileSchedule          map[string]adaptiveProjectReconcileState
+	processIdentityProbe       func(RunStatus) bool
+	pollProcessIdentity        func(RunStatus) bool
 }
 
 const (
@@ -88,7 +92,7 @@ func NewDaemon(stateRoot string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Daemon{stateRoot: stateRoot, store: store, notifyWake: make(chan string, 256), frontiers: map[string]*projectFrontierIndex{}, frontierHints: map[string][]daemonControlChange{}, departureSchedules: map[string]departureSchedule{}}, nil
+	return &Daemon{stateRoot: stateRoot, store: store, notifyWake: make(chan string, 256), frontiers: map[string]*projectFrontierIndex{}, frontierHints: map[string][]daemonControlChange{}, departureSchedules: map[string]departureSchedule{}, departureActive: map[string]struct{}{}}, nil
 }
 
 func (d *Daemon) Close() error {
@@ -96,12 +100,19 @@ func (d *Daemon) Close() error {
 	if d == nil || d.store == nil {
 		return nil
 	}
+	d.departureMu.Lock()
+	d.departureClosing = true
+	d.departureMu.Unlock()
+	d.departureWorkers.Wait()
 	return d.store.Close()
 }
 
 func (d *Daemon) Run(ctx context.Context, once bool) error {
 	if once && strings.TrimSpace(d.dispatchRefusalReason) == "" {
 		d.dispatchRefusalReason = oneShotDispatchRefusal("tusker daemon run --once")
+	}
+	if once {
+		d.departureExecutionDisabled = true
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -872,6 +883,9 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			return err
 		}
 		if err := d.scheduleDepartureIfDue(project, wfFile.Data, now); err != nil {
+			return err
+		}
+		if err := d.startPendingDepartureExecutions(ctx, project, wfFile.Data); err != nil {
 			return err
 		}
 		skipReviewDispatch := map[string]struct{}{}
