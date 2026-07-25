@@ -30,6 +30,7 @@ type Daemon struct {
 	postSpawnBeforePersist func(RunStatus)
 	beforePollRunPersist   func(RunStatus, RunStatus)
 	beforeRunLeaseClaim    func(RunStatus)
+	fairDispatchRun        func(context.Context, RegisteredProject, WorkflowFile, Note, RunStatus, string, string) (RunStatus, bool, bool, error)
 	diskStat               diskStatFunc
 	notifyMu               sync.Mutex
 	notifyTimers           map[string]*time.Timer
@@ -816,6 +817,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 	if err != nil {
 		return err
 	}
+	dispatchCandidates := make([]daemonDispatchCandidate, 0)
 
 	for _, loaded := range projects {
 		select {
@@ -1112,12 +1114,6 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					projectRuns[recordID] = current
 					continue
 				}
-				if dispatchCapacityLimitReached(globalActiveRuns, globalLimit, current) {
-					continue
-				}
-				if dispatchCapacityLimitReached(projectActiveRuns, projectActiveRunLimit(wfFile.Data), current) {
-					continue
-				}
 				crashLoopReason, err := d.crashLoopDispatchBlocker()
 				if err != nil {
 					return err
@@ -1196,24 +1192,14 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				if stringField(dispatchNote.Data, "work_kind") == "integrator" {
 					dispatchLane = runLaneIntegrator
 				}
-				updated, persisted, err := d.dispatchRun(ctx, project, wfFile, dispatchNote, current, dispatchLane)
-				if !persisted {
-					if err != nil {
-						updated = d.scheduleRetry(updated, wfFile.Data, err.Error())
-					}
-					if err := d.upsertRunWithStream(current, updated); err != nil {
-						return err
-					}
-				} else if err != nil {
-					return err
-				} else {
-					d.emitLeaseTransitionStreamEvent(current, updated)
-				}
-				d.emitDispatchStreamEvent(updated)
-				projectRuns[recordID] = updated
-				globalActiveRuns += dispatchCapacityRunDelta(current, updated)
-				projectActiveRuns += dispatchCapacityRunDelta(current, updated)
-				stateActiveRuns[status] += dispatchCapacityRunDelta(current, updated)
+				dispatchCandidates = append(dispatchCandidates, daemonDispatchCandidate{
+					Project: project, Workflow: wfFile, Note: dispatchNote, NotesByID: dispatchNotesByID, Run: current,
+					Lane: dispatchLane, Status: status,
+					StateActive:  stateActiveRuns[status],
+					ProjectLimit: projectActiveRunLimit(wfFile.Data),
+					StateLimit:   wfFile.Data.Agents.MaxConcurrentAgentsByState[status],
+					RunnerLimit:  fairDispatchRunnerLimit(wfFile.Data),
+				})
 			}
 		}
 
@@ -1317,12 +1303,6 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				projectRuns[recordID] = current
 				continue
 			}
-			if dispatchCapacityLimitReached(globalActiveRuns, globalLimit, current) {
-				continue
-			}
-			if dispatchCapacityLimitReached(projectActiveRuns, projectActiveRunLimit(wfFile.Data), current) {
-				continue
-			}
 			crashLoopReason, err := d.crashLoopDispatchBlocker()
 			if err != nil {
 				return err
@@ -1375,24 +1355,14 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 				return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneReview}))
 			}
-			updated, persisted, err := d.dispatchRun(ctx, project, wfFile, note, current, runLaneReview)
-			if !persisted {
-				if err != nil {
-					updated = d.scheduleRetry(updated, wfFile.Data, err.Error())
-				}
-				if err := d.upsertRunWithStream(current, updated); err != nil {
-					return err
-				}
-			} else if err != nil {
-				return err
-			} else {
-				d.emitLeaseTransitionStreamEvent(current, updated)
-			}
-			d.emitDispatchStreamEvent(updated)
-			projectRuns[recordID] = updated
-			globalActiveRuns += dispatchCapacityRunDelta(current, updated)
-			projectActiveRuns += dispatchCapacityRunDelta(current, updated)
-			stateActiveRuns[status] += dispatchCapacityRunDelta(current, updated)
+			dispatchCandidates = append(dispatchCandidates, daemonDispatchCandidate{
+				Project: project, Workflow: wfFile, Note: note, NotesByID: notesByID, Run: current,
+				Lane: runLaneReview, Status: status,
+				StateActive:  stateActiveRuns[status],
+				ProjectLimit: projectActiveRunLimit(wfFile.Data),
+				StateLimit:   wfFile.Data.Agents.MaxConcurrentAgentsByState[status],
+				RunnerLimit:  fairDispatchRunnerLimit(wfFile.Data),
+			})
 		}
 		if err := drainArmedWavesToMain(project.VaultRoot); err != nil {
 			return err
@@ -1404,6 +1374,9 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		if err := d.store.TouchProjectPoll(project.ProjectID); err != nil {
 			return err
 		}
+	}
+	if err := d.dispatchFairCandidates(ctx, dispatchCandidates, globalLimit); err != nil {
+		return err
 	}
 	currentPollAt := time.Now().UTC().Format(time.RFC3339Nano)
 	if err := d.store.SetSetting("daemon_last_poll_at", currentPollAt); err != nil {
@@ -3399,6 +3372,10 @@ func (d *Daemon) scopeDispatchBlocker(project RegisteredProject, note Note, wf W
 }
 
 func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane string) (RunStatus, bool, error) {
+	return d.dispatchRunWithAttemptID(ctx, project, wfFile, note, run, lane, "")
+}
+
+func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane, requestedAttemptID string) (RunStatus, bool, error) {
 	lane = firstNonEmpty(strings.TrimSpace(lane), runLaneExecute)
 	if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 		return run, false, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": lane}))
@@ -3469,7 +3446,10 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 		run.LastError = ""
 	}
 	ordinal := run.AttemptCount + 1
-	attemptID := newRecordID()
+	attemptID := strings.TrimSpace(requestedAttemptID)
+	if attemptID == "" {
+		attemptID = newRecordID()
+	}
 	started := time.Now().UTC()
 	startedAt := started.Format(time.RFC3339)
 	leaseGeneration := run.LeaseGeneration + 1

@@ -2,9 +2,11 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -73,6 +75,108 @@ const (
 	defaultResourceLeaseTTL = 2 * time.Minute
 )
 
+var resourceLeaseWaiterState = struct {
+	sync.Mutex
+	notify func(stateRoot, resourceName, projectID string)
+}{
+	notify: func(stateRoot, resourceName, projectID string) {
+		_ = sendDaemonControlOneWay(stateRoot, daemonControlRequest{
+			Command: "reconcile_project", ProjectID: projectID, Cause: "resource_release:" + resourceName,
+		}, 250*time.Millisecond)
+	},
+}
+
+func resourceLeaseWaiterSetting(name string) string {
+	return "resource_lease_waiters_v1:" + strings.TrimSpace(name)
+}
+
+// RegisterResourceLeaseWaiter records only the project identity. Task-level
+// eligibility remains rebuildable from canonical notes; the durable waiter set
+// exists solely so a global resource release can target the affected projects.
+func (s *RuntimeStore) RegisterResourceLeaseWaiter(name, projectID string) error {
+	name, projectID = strings.TrimSpace(name), strings.TrimSpace(projectID)
+	if name == "" || projectID == "" {
+		return tuskerError(errorInvalidArg, "resource waiter requires resource name and project_id")
+	}
+	resourceLeaseWaiterState.Lock()
+	defer resourceLeaseWaiterState.Unlock()
+	waiters, err := s.resourceLeaseWaitersLocked(name)
+	if err != nil {
+		return err
+	}
+	if containsString(waiters, projectID) {
+		return nil
+	}
+	waiters = sortedStrings(append(waiters, projectID))
+	raw, err := json.Marshal(waiters)
+	if err != nil {
+		return err
+	}
+	return s.SetSetting(resourceLeaseWaiterSetting(name), string(raw))
+}
+
+func (s *RuntimeStore) ClearResourceLeaseWaiter(name, projectID string) error {
+	name, projectID = strings.TrimSpace(name), strings.TrimSpace(projectID)
+	if name == "" || projectID == "" {
+		return nil
+	}
+	resourceLeaseWaiterState.Lock()
+	defer resourceLeaseWaiterState.Unlock()
+	waiters, err := s.resourceLeaseWaitersLocked(name)
+	if err != nil || !containsString(waiters, projectID) {
+		return err
+	}
+	filtered := make([]string, 0, len(waiters)-1)
+	for _, waiter := range waiters {
+		if waiter != projectID {
+			filtered = append(filtered, waiter)
+		}
+	}
+	raw, err := json.Marshal(filtered)
+	if err != nil {
+		return err
+	}
+	return s.SetSetting(resourceLeaseWaiterSetting(name), string(raw))
+}
+
+func (s *RuntimeStore) resourceLeaseWaitersLocked(name string) ([]string, error) {
+	raw, err := s.GetSetting(resourceLeaseWaiterSetting(name))
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil, err
+	}
+	var waiters []string
+	if err := json.Unmarshal([]byte(raw), &waiters); err != nil {
+		return nil, nil
+	}
+	return sortedStrings(uniqueStrings(waiters)), nil
+}
+
+func (s *RuntimeStore) takeResourceLeaseWaiters(name string) ([]string, error) {
+	resourceLeaseWaiterState.Lock()
+	defer resourceLeaseWaiterState.Unlock()
+	waiters, err := s.resourceLeaseWaitersLocked(name)
+	if err != nil || len(waiters) == 0 {
+		return waiters, err
+	}
+	if err := s.SetSetting(resourceLeaseWaiterSetting(name), "[]"); err != nil {
+		return nil, err
+	}
+	return waiters, nil
+}
+
+func (s *RuntimeStore) notifyResourceLeaseWaiters(name string) {
+	waiters, err := s.takeResourceLeaseWaiters(name)
+	if err != nil {
+		return
+	}
+	resourceLeaseWaiterState.Lock()
+	notify := resourceLeaseWaiterState.notify
+	resourceLeaseWaiterState.Unlock()
+	for _, projectID := range waiters {
+		notify(s.stateRoot, strings.TrimSpace(name), projectID)
+	}
+}
+
 func normalizeResourceLeaseNow(now time.Time) time.Time {
 	if now.IsZero() {
 		now = time.Now()
@@ -96,6 +200,22 @@ func resourceLeaseContention(lease ResourceLease, liveness string) error {
 			"departure_id": lease.DepartureID, "generation": lease.Generation,
 			"expires_at": lease.ExpiresAt, "liveness": liveness,
 		}))
+}
+
+func fairDispatchResourceHolderAliveTx(tx *sql.Tx, lease ResourceLease) (bool, error) {
+	recordID, taskDispatch := fairDispatchResourceRecordID(lease)
+	if !taskDispatch {
+		return false, nil
+	}
+	var count int
+	err := tx.QueryRow(`
+		SELECT COUNT(1)
+		FROM runs
+		WHERE project_id=? AND record_id=? AND lease_owner=?
+			AND terminal=0 AND lease_state IN ('claimed', 'running')`,
+		lease.ProjectID, recordID, lease.Owner,
+	).Scan(&count)
+	return count > 0, err
 }
 
 // AcquireResourceLease atomically acquires one globally named resource. It is
@@ -141,8 +261,22 @@ func (s *RuntimeStore) AcquireResourceLease(input ResourceLeaseAcquireInput) (Re
 					return resourceLeaseContention(current, "fresh")
 				}
 			}
-			if !freshHolder && input.HolderAlive != nil && input.HolderAlive(current) {
-				return resourceLeaseContention(current, "lease_expired_holder_alive")
+			if !freshHolder {
+				holderAlive, err := fairDispatchResourceHolderAliveTx(tx, current)
+				if err != nil {
+					return err
+				}
+				if !holderAlive && input.HolderAlive != nil {
+					holderAlive = input.HolderAlive(current)
+				}
+				if holderAlive {
+					if !sameHolder {
+						return resourceLeaseContention(current, "lease_expired_holder_alive")
+					}
+					// The exact task-run owner is still authoritative. Treat its
+					// expired row as an idempotent heartbeat; no fence changed.
+					freshHolder = true
+				}
 			}
 		}
 		generation := 1
@@ -255,7 +389,13 @@ func (s *RuntimeStore) ReleaseResourceLease(name, owner string, generation int, 
 		return false, err
 	}
 	changed, err := result.RowsAffected()
-	return changed == 1, err
+	if err != nil {
+		return false, err
+	}
+	if changed == 1 {
+		s.notifyResourceLeaseWaiters(name)
+	}
+	return changed == 1, nil
 }
 
 // ReconcileExpiredResourceLeases is startup-safe. A verified-live holder is
@@ -282,6 +422,35 @@ func (s *RuntimeStore) ReconcileExpiredResourceLeases(now time.Time, holderAlive
 		if holderAlive != nil && holderAlive(lease) {
 			result = append(result, ResourceLeaseRecovery{Lease: lease, Reason: "lease expired but holder is verified alive"})
 			continue
+		}
+		if recordID, taskDispatch := fairDispatchResourceRecordID(lease); taskDispatch {
+			runs, runErr := s.ListRuns()
+			if runErr != nil {
+				return nil, runErr
+			}
+			live := false
+			for _, run := range runs {
+				if run.ProjectID == lease.ProjectID && run.RecordID == recordID &&
+					run.LeaseOwner == lease.Owner && runConsumesDispatchCapacity(run) {
+					live = true
+					break
+				}
+			}
+			if live {
+				reacquired, acquired, acquireErr := s.AcquireResourceLease(ResourceLeaseAcquireInput{
+					Name: lease.Name, Owner: lease.Owner, Purpose: lease.Purpose,
+					ProjectID: lease.ProjectID, DepartureID: recordID,
+					TTL: defaultResourceLeaseTTL, Now: now,
+				})
+				if acquireErr != nil {
+					return nil, acquireErr
+				}
+				result = append(result, ResourceLeaseRecovery{
+					Lease: reacquired, Recovered: acquired,
+					Reason: "expired task resource reacquired for its live run owner",
+				})
+				continue
+			}
 		}
 		changed, releaseErr := s.ReleaseResourceLease(lease.Name, lease.Owner, lease.Generation, "daemon restart reconciliation: lease expired", now)
 		if releaseErr != nil {
