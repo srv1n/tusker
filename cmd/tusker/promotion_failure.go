@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"sort"
 	"strings"
 )
 
@@ -24,6 +25,8 @@ type PromotionFailurePacket struct {
 	BisectionStatus    string         `json:"bisection_status"`
 	OwningTaskID       string         `json:"owning_task_id,omitempty"`
 	TouchedPaths       []string       `json:"touched_paths,omitempty"`
+	TouchedPathsStatus string         `json:"touched_paths_status"`
+	CandidateTaskIDs   []string       `json:"candidate_task_ids"`
 	Reproduction       string         `json:"reproduction"`
 	ArtifactRefs       []string       `json:"artifact_refs,omitempty"`
 	GateResult         GateTierResult `json:"gate_result"`
@@ -109,9 +112,18 @@ func promotionFailurePacket(candidate DepartureCandidate, gate DepartureGate, ru
 		GateCommand: gate.Command, GateProfile: gate.Profile, Toolchain: gate.Toolchain, Runner: runner, Defects: defects,
 		LastGreenRef: lastGreenRef, BisectionRef: bisectionRef, OwningTaskID: owningTask,
 		LastGreenStatus: "unknown", BisectionStatus: "not_run",
-		TouchedPaths: uniqueStrings(touched), Reproduction: strings.TrimSpace(gate.Command), ArtifactRefs: uniqueStrings(artifacts),
+		TouchedPaths: uniqueStrings(touched), TouchedPathsStatus: "unavailable", CandidateTaskIDs: sortedPromotionTaskIDs(candidate), Reproduction: strings.TrimSpace(gate.Command), ArtifactRefs: uniqueStrings(artifacts),
 		ClassificationText: output,
 	}
+}
+
+func sortedPromotionTaskIDs(candidate DepartureCandidate) []string {
+	ids := make([]string, 0, len(candidate.TaskStateRevisions))
+	for id := range candidate.TaskStateRevisions {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func containsAny(text string, needles ...string) bool {

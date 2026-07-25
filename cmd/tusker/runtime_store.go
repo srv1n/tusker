@@ -33,6 +33,18 @@ type GateLedgerEntry struct {
 	PassedAt   string `json:"passed_at"`
 }
 
+func (s *RuntimeStore) LatestGateLedgerBefore(projectID, command, profile, before string) (*GateLedgerEntry, error) {
+	var entry GateLedgerEntry
+	err := s.queryRowScan(`SELECT id, project_id, tree_hash, command, profile, host, duration_ms, passed_at FROM gate_ledger WHERE project_id = ? AND command = ? AND profile = ? AND passed_at < ? ORDER BY passed_at DESC LIMIT 1`, []any{projectID, command, profile, before}, &entry.ID, &entry.ProjectID, &entry.TreeHash, &entry.Command, &entry.Profile, &entry.Host, &entry.DurationMS, &entry.PassedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &entry, nil
+}
+
 type BatchGateRun struct {
 	ID           string `json:"id"`
 	ProjectID    string `json:"project_id"`

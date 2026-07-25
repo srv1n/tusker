@@ -430,7 +430,23 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		}
 		gateOutput, _ := os.ReadFile(artifactRefs[len(artifactRefs)-1])
 		owner := promotionFailureOwner(before.Candidate)
-		packet := promotionFailurePacket(before.Candidate, before.Gate, actor, string(gateOutput), execution.Err, gatePolicy, "unknown", "not_run", owner, nil, artifactRefs)
+		touched, touchStatus := []string(nil), "unavailable"
+		if paths, pathErr := gitOutputTrim(v7RepoRoot(vaultPath), "diff", "--name-only", before.Candidate.ExpectedDefaultBranchSHA+".."+before.Candidate.CandidateSHA); pathErr == nil {
+			for _, path := range strings.Split(paths, "\n") {
+				if path = strings.TrimSpace(path); path != "" {
+					touched = append(touched, path)
+				}
+			}
+			sort.Strings(touched)
+			touchStatus = "proven"
+		}
+		lastGreen := ""
+		lastStatus := "unavailable:no_matching_entry"
+		if entry, ledgerErr := store.LatestGateLedgerBefore(projectID, before.Gate.Command, before.Gate.Profile, gateStarted.Format(time.RFC3339Nano)); ledgerErr == nil && entry != nil {
+			lastGreen, lastStatus = entry.ID+"@"+entry.TreeHash+"@"+entry.PassedAt, "proven"
+		}
+		packet := promotionFailurePacket(before.Candidate, before.Gate, actor, string(gateOutput), execution.Err, gatePolicy, lastGreen, "", owner, touched, artifactRefs)
+		packet.LastGreenStatus, packet.BisectionStatus, packet.TouchedPathsStatus = lastStatus, "not_run:independent_patch_boundaries_unavailable", touchStatus
 		packet.GateResult = execution.Result
 		route := classifyPromotionFailure(packet, gatePolicy)
 		repairTaskID, action := "", "ambiguous_repair"
