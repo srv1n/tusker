@@ -928,6 +928,30 @@ func (s *RuntimeStore) Migrate() error {
 			updated_at TEXT NOT NULL,
 			UNIQUE(project_id, policy_id, scheduled_window)
 		);`,
+		// Landing authority issuances deliberately retain public verification
+		// material only. The matching private capability exists solely in the
+		// resident daemon's memory and is never serialised, inherited, or exposed
+		// through a CLI/API. A gate child therefore cannot mint a valid receipt by
+		// editing the cache or this database.
+		`CREATE TABLE IF NOT EXISTS landing_authority_issuances (
+			authority_id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			repo_identity TEXT NOT NULL,
+			departure_id TEXT NOT NULL,
+			policy_id TEXT NOT NULL,
+			scheduled_window TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			host_identity TEXT NOT NULL,
+			process_identity TEXT NOT NULL,
+			generation INTEGER NOT NULL,
+			context_json TEXT NOT NULL,
+			public_key BLOB NOT NULL,
+			issued_at TEXT NOT NULL,
+			expires_at TEXT NOT NULL,
+			revoked_at TEXT NOT NULL DEFAULT '',
+			consumed_at TEXT NOT NULL DEFAULT '',
+			UNIQUE(project_id, departure_id, generation)
+		);`,
 		`CREATE TABLE IF NOT EXISTS external_loop_events (
 			event_id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,

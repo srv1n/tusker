@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -22,7 +23,7 @@ const (
 	v7LandingLockSchema         = "tusker.landing-lock/v1"
 	v7LandingLockRecoveryGrace  = 30 * time.Second
 	v7LandingAuditProvenance    = "tusker:landing/v2"
-	v7LandingReceiptSchema      = "tusker.landing-receipt/v2"
+	v7LandingReceiptSchema      = "tusker.landing-receipt/v3"
 	v7LandingReceiptIndexSchema = "tusker.landing-receipt-index/v1"
 	v7LandingGateCacheSchemaV1  = "tusker.landing-gate-cache/v1"
 	v7LandingGateCacheSchemaV2  = "tusker.landing-gate-cache/v2"
@@ -77,23 +78,44 @@ type v7LandingReceiptTask struct {
 }
 
 type v7LandingReceipt struct {
-	Schema           string                 `json:"schema"`
-	Fingerprint      string                 `json:"fingerprint"`
-	GateFingerprint  string                 `json:"gate_fingerprint"`
-	LaneIdentity     string                 `json:"lane_identity"`
-	Target           string                 `json:"target"`
-	Actor            string                 `json:"actor"`
-	ControlAuthority string                 `json:"control_authority"`
-	BatchBaseSHA     string                 `json:"batch_base_sha"`
-	BatchHeadSHA     string                 `json:"batch_head_sha"`
-	BatchTreeSHA     string                 `json:"batch_tree_sha"`
-	BatchSegment     []string               `json:"batch_segment"`
-	Tasks            []v7LandingReceiptTask `json:"tasks"`
-	Commands         []string               `json:"commands"`
-	Toolchains       map[string]string      `json:"toolchains"`
-	Outcome          string                 `json:"outcome"`
-	GateSummary      string                 `json:"gate_summary"`
-	ReceiptIssuedAt  string                 `json:"receipt_issued_at"`
+	Schema             string                    `json:"schema"`
+	Fingerprint        string                    `json:"fingerprint"`
+	GateFingerprint    string                    `json:"gate_fingerprint"`
+	LaneIdentity       string                    `json:"lane_identity"`
+	Target             string                    `json:"target"`
+	Actor              string                    `json:"actor"`
+	ControlAuthority   string                    `json:"control_authority"`
+	BatchBaseSHA       string                    `json:"batch_base_sha"`
+	BatchHeadSHA       string                    `json:"batch_head_sha"`
+	BatchTreeSHA       string                    `json:"batch_tree_sha"`
+	BatchSegment       []string                  `json:"batch_segment"`
+	Tasks              []v7LandingReceiptTask    `json:"tasks"`
+	Commands           []string                  `json:"commands"`
+	Toolchains         map[string]string         `json:"toolchains"`
+	Outcome            string                    `json:"outcome"`
+	GateSummary        string                    `json:"gate_summary"`
+	ReceiptIssuedAt    string                    `json:"receipt_issued_at"`
+	GateStartedAt      string                    `json:"gate_started_at"`
+	GateFinishedAt     string                    `json:"gate_finished_at"`
+	CommandOutcomes    []v7LandingCommandOutcome `json:"command_outcomes"`
+	ProjectID          string                    `json:"project_id"`
+	RepoIdentity       string                    `json:"repo_identity"`
+	DepartureID        string                    `json:"departure_id"`
+	PolicyID           string                    `json:"policy_id"`
+	ScheduledWindow    string                    `json:"scheduled_window"`
+	DaemonSessionID    string                    `json:"daemon_session_id"`
+	DaemonHost         string                    `json:"daemon_host"`
+	DaemonProcess      string                    `json:"daemon_process"`
+	AuthorityID        string                    `json:"authority_id"`
+	AuthorityGen       int                       `json:"authority_generation"`
+	AuthoritySignature []byte                    `json:"authority_signature"`
+}
+
+type v7LandingCommandOutcome struct {
+	Command    string `json:"command"`
+	Result     string `json:"result"`
+	StartedAt  string `json:"started_at"`
+	FinishedAt string `json:"finished_at"`
 }
 
 type v7LandingGateEvidence struct {
@@ -102,6 +124,9 @@ type v7LandingGateEvidence struct {
 	Fingerprint string
 	Commands    []string
 	Toolchains  map[string]string
+	StartedAt   string
+	FinishedAt  string
+	Outcomes    []v7LandingCommandOutcome
 }
 
 type v7LandingBatchResult struct {
@@ -148,7 +173,7 @@ type v7LandSummaryRow struct {
 }
 
 func landV7Cmd(args Args) error {
-	return landV7CmdWithAuthority(args, nil, "")
+	return landV7CmdWithAuthority(args, nil, "", nil)
 }
 
 func landV7CmdWithFrozenSources(args Args, frozenSources map[string]string) error {
@@ -156,14 +181,21 @@ func landV7CmdWithFrozenSources(args Args, frozenSources map[string]string) erro
 	if frozenSources != nil && strings.HasPrefix(landV7Actor(args), "daemon:departure:") {
 		authority = v7LandingAuthorityDeparture
 	}
-	return landV7CmdWithAuthority(args, frozenSources, authority)
+	return landV7CmdWithAuthority(args, frozenSources, authority, nil)
+}
+
+func landV7CmdWithDepartureAuthority(args Args, frozenSources map[string]string, authority *v7LandingAuthority) error {
+	if authority == nil || len(authority.private) != ed25519.PrivateKeySize {
+		return tuskerError(errorInvalidTransition, "scheduled landing refusal: daemon authority capability is unavailable")
+	}
+	return landV7CmdWithAuthority(args, frozenSources, v7LandingAuthorityDeparture, authority)
 }
 
 func landV7CmdAsWaveDrain(args Args) error {
-	return landV7CmdWithAuthority(args, nil, v7LandingAuthorityWaveDrain)
+	return landV7CmdWithAuthority(args, nil, v7LandingAuthorityWaveDrain, nil)
 }
 
-func landV7CmdWithAuthority(args Args, frozenSources map[string]string, authority string) error {
+func landV7CmdWithAuthority(args Args, frozenSources map[string]string, authority string, capability *v7LandingAuthority) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err
@@ -183,7 +215,7 @@ func landV7CmdWithAuthority(args Args, frozenSources map[string]string, authorit
 		if err := landV7WaveToMain(vaultPath, targets[0], args, summary); err != nil {
 			return err
 		}
-	} else if err := landV7TaskTargets(vaultPath, targets, args, summary, frozenSources, authority); err != nil {
+	} else if err := landV7TaskTargets(vaultPath, targets, args, summary, frozenSources, authority, capability); err != nil {
 		return err
 	}
 	printV7LandingSummary(summary, args)
@@ -370,7 +402,7 @@ func releaseV7LandingLock(lockPath, token string) {
 	_ = os.Remove(lockPath)
 }
 
-func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v7LandSummary, frozenSources map[string]string, authority string) error {
+func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v7LandSummary, frozenSources map[string]string, authority string, capability *v7LandingAuthority) error {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return err
@@ -464,7 +496,7 @@ func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v
 	// the integration ref forward; rework/audit side effects are deferred.
 	acc := &v7BatchAccumulator{}
 	for _, waveID := range waveIDs {
-		if err := stageV7WaveBatch(vaultPath, repoRoot, waveID, byWave[waveID], actor, authority, acc); err != nil {
+		if err := stageV7WaveBatch(vaultPath, repoRoot, waveID, byWave[waveID], actor, authority, capability, acc); err != nil {
 			return err
 		}
 	}
@@ -801,7 +833,7 @@ func v7WorkspaceRecordID(worktreePath string) string {
 	return strings.ToUpper(strings.TrimSpace(meta.RecordID))
 }
 
-func stageV7WaveBatch(vaultPath, repoRoot, waveID string, tasks []v7LandTask, actor, authority string, acc *v7BatchAccumulator) error {
+func stageV7WaveBatch(vaultPath, repoRoot, waveID string, tasks []v7LandTask, actor, authority string, capability *v7LandingAuthority, acc *v7BatchAccumulator) error {
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -820,10 +852,10 @@ func stageV7WaveBatch(vaultPath, repoRoot, waveID string, tasks []v7LandTask, ac
 	if err := ensureV7WaveIntegrationBranch(vaultPath, wave); err != nil {
 		return err
 	}
-	return landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks, actor, authority, acc)
+	return landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks, actor, authority, capability, acc)
 }
 
-func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string, tasks []v7LandTask, actor, authority string, acc *v7BatchAccumulator) error {
+func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string, tasks []v7LandTask, actor, authority string, capability *v7LandingAuthority, acc *v7BatchAccumulator) error {
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -857,7 +889,7 @@ func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string,
 		return nil
 	}
 	tasks = pending
-	result, err := stageV7LandingBatch(vaultPath, repoRoot, integrationBranch, tasks, actor, authority)
+	result, err := stageV7LandingBatch(vaultPath, repoRoot, integrationBranch, tasks, actor, authority, capability)
 	if err != nil {
 		return err
 	}
@@ -884,13 +916,13 @@ func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string,
 		return nil
 	}
 	mid := len(tasks) / 2
-	if err := landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks[:mid], actor, authority, acc); err != nil {
+	if err := landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks[:mid], actor, authority, capability, acc); err != nil {
 		return err
 	}
-	return landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks[mid:], actor, authority, acc)
+	return landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks[mid:], actor, authority, capability, acc)
 }
 
-func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandTask, actor, authority string) (v7LandingBatchResult, error) {
+func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandTask, actor, authority string, capability *v7LandingAuthority) (v7LandingBatchResult, error) {
 	tmp, err := os.MkdirTemp("", "tusker-land-stage-*")
 	if err != nil {
 		return v7LandingBatchResult{}, err
@@ -966,7 +998,7 @@ func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandT
 		return v7LandingBatchResult{}, err
 	}
 	laneIdentity := v7LandingBatchIdentity(tasks)
-	gate := runV7LandingGateEvidence(vaultPath, tmp, laneIdentity)
+	gate := runV7LandingGateEvidenceWithIsolation(vaultPath, tmp, laneIdentity, authority == v7LandingAuthorityDeparture)
 	if !gate.Pass {
 		return v7LandingBatchResult{Summary: gate.Summary}, nil
 	}
@@ -977,8 +1009,24 @@ func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandT
 		BatchSegment: segment, Tasks: proofs, Commands: gate.Commands,
 		Toolchains: gate.Toolchains, Outcome: "pass", GateSummary: gate.Summary,
 		ReceiptIssuedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		GateStartedAt:   gate.StartedAt, GateFinishedAt: gate.FinishedAt,
+		CommandOutcomes: append([]v7LandingCommandOutcome(nil), gate.Outcomes...),
+	}
+	if authority == v7LandingAuthorityDeparture {
+		if capability == nil || capability.Issuance.Context.Target != baseBranch ||
+			capability.Issuance.Context.Candidate.CandidateSHA == "" ||
+			capability.Issuance.Context.Candidate.CandidateTreeHash == "" {
+			return v7LandingBatchResult{}, tuskerError(errorInvalidTransition, "scheduled landing refusal: missing or mismatched daemon authority")
+		}
+		i := capability.Issuance
+		receipt.ProjectID, receipt.RepoIdentity, receipt.DepartureID, receipt.PolicyID, receipt.ScheduledWindow = i.ProjectID, i.RepoIdentity, i.DepartureID, i.PolicyID, i.ScheduledWindow
+		receipt.DaemonSessionID, receipt.DaemonHost, receipt.DaemonProcess = i.SessionID, i.HostIdentity, i.ProcessIdentity
+		receipt.AuthorityID, receipt.AuthorityGen = i.AuthorityID, i.Generation
 	}
 	receipt.Fingerprint = v7LandingReceiptFingerprint(receipt)
+	if capability != nil {
+		receipt.AuthoritySignature = ed25519.Sign(capability.private, []byte(receipt.Fingerprint))
+	}
 	if err := writeV7LandingReceipt(vaultPath, receipt); err != nil {
 		return v7LandingBatchResult{}, err
 	}
@@ -1124,6 +1172,15 @@ func runV7LandingGate(vaultPath, workDir, laneIdentity string) (bool, string) {
 }
 
 func runV7LandingGateEvidence(vaultPath, workDir, laneIdentity string) v7LandingGateEvidence {
+	return runV7LandingGateEvidenceWithIsolation(vaultPath, workDir, laneIdentity, false)
+}
+
+// Scheduled gates execute repository-controlled commands.  They must not be
+// able to read the daemon's runtime state or ask it to mint authority; hosts
+// without the narrow sandbox boundary fail closed instead of treating a hash
+// and an actor label as authority.
+func runV7LandingGateEvidenceWithIsolation(vaultPath, workDir, laneIdentity string, isolated bool) v7LandingGateEvidence {
+	started := time.Now().UTC()
 	commands := backpressureCommands(vaultPath)
 	if len(commands) == 0 {
 		commands = []string{"go build ./...", "go vet ./...", "go test ./... -count=1"}
@@ -1138,27 +1195,69 @@ func runV7LandingGateEvidence(vaultPath, workDir, laneIdentity string) v7Landing
 		Fingerprint: fingerprint,
 		Commands:    append([]string(nil), commands...),
 		Toolchains:  cloneStringStringMap(toolchains),
+		StartedAt:   started.Format(time.RFC3339Nano),
 	}
-	if fingerprint != "" && v7LandingGateCacheHit(vaultPath, fingerprint) {
+	// A cache is discovery only for daemon-authorized receipts.  Reusing an
+	// ordinary JSON cache here would let a prior same-UID gate mint "green"
+	// evidence without crossing the isolated execution boundary.
+	if !isolated && fingerprint != "" && v7LandingGateCacheHit(vaultPath, fingerprint) {
 		evidence.Pass = true
+		evidence.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		for _, command := range commands {
+			evidence.Outcomes = append(evidence.Outcomes, v7LandingCommandOutcome{Command: command, Result: "pass", StartedAt: evidence.StartedAt, FinishedAt: evidence.FinishedAt})
+		}
 		evidence.Summary = "gate cached: " + fingerprint
 		return evidence
 	}
 	for _, command := range commands {
-		cmd := exec.Command("sh", "-c", command)
-		cmd.Dir = workDir
-		output, err := cmd.CombinedOutput()
+		commandStarted := time.Now().UTC()
+		output, err := runV7LandingGateCommand(workDir, command, isolated)
 		if err != nil {
+			evidence.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
+			evidence.Outcomes = append(evidence.Outcomes, v7LandingCommandOutcome{Command: command, Result: "fail", StartedAt: commandStarted.Format(time.RFC3339Nano), FinishedAt: evidence.FinishedAt})
 			evidence.Summary = landingFailureSummary(command, string(output), err)
 			return evidence
 		}
+		evidence.Outcomes = append(evidence.Outcomes, v7LandingCommandOutcome{Command: command, Result: "pass", StartedAt: commandStarted.Format(time.RFC3339Nano), FinishedAt: time.Now().UTC().Format(time.RFC3339Nano)})
 	}
 	if fingerprint != "" {
 		_ = writeV7LandingGateCache(vaultPath, fingerprint, commands)
 	}
 	evidence.Pass = true
+	evidence.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	evidence.Summary = "gate passed: " + strings.Join(commands, " && ")
 	return evidence
+}
+
+func runV7LandingGateCommand(workDir, command string, isolated bool) ([]byte, error) {
+	if !isolated {
+		cmd := exec.Command("sh", "-c", command)
+		cmd.Dir = workDir
+		return cmd.CombinedOutput()
+	}
+	if _, err := exec.LookPath("sandbox-exec"); err != nil {
+		return nil, tuskerError(errorInvalidTransition, "scheduled landing refusal: host cannot isolate gate execution")
+	}
+	scratch, err := os.MkdirTemp("", "tusker-scheduled-gate-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(scratch)
+	// Do not inherit the daemon control/state environment.  The profile admits
+	// only the disposable worktree, a private scratch directory, and immutable
+	// platform toolchain roots.  Project-specific caches must be declared by a
+	// hardened runner; otherwise the gate safely fails.
+	profile := `(version 1) (deny default) (deny network*) (allow process*) ` +
+		`(allow file-read* (subpath "` + sandboxProfilePath(workDir) + `") (subpath "/usr") (subpath "/bin") (subpath "/System") (subpath "/Library/Developer") (subpath "/Applications/Xcode.app")) ` +
+		`(allow file-write* (subpath "` + sandboxProfilePath(workDir) + `") (subpath "` + sandboxProfilePath(scratch) + `"))`
+	cmd := exec.Command("sandbox-exec", "-p", profile, "sh", "-c", command)
+	cmd.Dir = workDir
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + scratch, "TMPDIR=" + scratch, "LANG=C", "LC_ALL=C"}
+	return cmd.CombinedOutput()
+}
+
+func sandboxProfilePath(path string) string {
+	return strings.ReplaceAll(filepath.Clean(path), `"`, `\\"`)
 }
 
 type v7LandingGateCacheRecord struct {
@@ -1548,6 +1647,15 @@ func v7LandingReceiptFingerprint(receipt v7LandingReceipt) string {
 	for _, key := range keys {
 		parts = append(parts, key+"="+receipt.Toolchains[key])
 	}
+	parts = append(parts, receipt.GateStartedAt, receipt.GateFinishedAt)
+	for _, outcome := range receipt.CommandOutcomes {
+		parts = append(parts, outcome.Command, outcome.Result, outcome.StartedAt, outcome.FinishedAt)
+	}
+	parts = append(parts,
+		receipt.ProjectID, receipt.RepoIdentity, receipt.DepartureID, receipt.PolicyID,
+		receipt.ScheduledWindow, receipt.DaemonSessionID, receipt.DaemonHost,
+		receipt.DaemonProcess, receipt.AuthorityID, fmt.Sprintf("%d", receipt.AuthorityGen),
+	)
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return fmt.Sprintf("%x", sum)
 }
@@ -1624,7 +1732,13 @@ func verifiedV7LandingReceiptTask(repoRoot, integrationBranch string, receipt v7
 		len(receipt.BatchSegment) > len(receipt.Tasks)+1 {
 		return v7LandingReceiptTask{}, false
 	}
+	if receipt.ControlAuthority == v7LandingAuthorityDeparture && !verifyV7LandingReceiptAuthority(repoRoot, receipt) {
+		return v7LandingReceiptTask{}, false
+	}
 	if _, err := time.Parse(time.RFC3339Nano, receipt.ReceiptIssuedAt); err != nil {
+		return v7LandingReceiptTask{}, false
+	}
+	if !validV7LandingReceiptOutcomes(receipt) {
 		return v7LandingReceiptTask{}, false
 	}
 	base, baseOK := gitRevParse(repoRoot, receipt.BatchBaseSHA+"^{commit}")
@@ -1693,6 +1807,24 @@ func verifiedV7LandingReceiptTask(repoRoot, integrationBranch string, receipt v7
 		return v7LandingReceiptTask{}, false
 	}
 	return wanted, true
+}
+
+func validV7LandingReceiptOutcomes(receipt v7LandingReceipt) bool {
+	started, startErr := time.Parse(time.RFC3339Nano, receipt.GateStartedAt)
+	finished, finishErr := time.Parse(time.RFC3339Nano, receipt.GateFinishedAt)
+	if startErr != nil || finishErr != nil || finished.Before(started) || len(receipt.CommandOutcomes) != len(receipt.Commands) {
+		return false
+	}
+	previous := started
+	for index, outcome := range receipt.CommandOutcomes {
+		commandStarted, commandStartErr := time.Parse(time.RFC3339Nano, outcome.StartedAt)
+		commandFinished, commandFinishErr := time.Parse(time.RFC3339Nano, outcome.FinishedAt)
+		if commandStartErr != nil || commandFinishErr != nil || outcome.Command != receipt.Commands[index] || outcome.Result != "pass" || commandStarted.Before(previous) || commandFinished.Before(commandStarted) || commandFinished.After(finished) {
+			return false
+		}
+		previous = commandFinished
+	}
+	return true
 }
 
 func v7LandingCommitParents(repoRoot, commit string) ([]string, bool) {

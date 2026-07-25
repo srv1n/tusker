@@ -383,7 +383,16 @@ func (d *Daemon) executeDepartureStaging(project RegisteredProject, wf Workflow,
 		return d.blockDepartureRun(run, "departure staging refusal: "+err.Error())
 	}
 	if len(unstaged) > 0 {
-		if err := stageScheduledTasks(project.VaultRoot, unstaged, run.Candidate.TaskSourceSHAs, "daemon:departure:"+run.ID); err != nil {
+		if len(run.Candidate.WaveIDs) != 1 {
+			return d.blockDepartureRun(run, "departure staging refusal: exact daemon authority requires one atomic cargo wave")
+		}
+		waveID := run.Candidate.WaveIDs[0]
+		authorityCandidate := v7LandingAuthorityCandidate(run.Candidate, unstaged)
+		authority, authorityErr := d.issueV7LandingAuthority(project, wf, run, authorityCandidate, v7IntegrationBranchName(waveID))
+		if authorityErr != nil {
+			return d.blockDepartureRun(run, "departure staging refusal: "+authorityErr.Error())
+		}
+		if err := stageScheduledTasksWithAuthority(project.VaultRoot, unstaged, run.Candidate.TaskSourceSHAs, "daemon:departure:"+run.ID, authority); err != nil {
 			if departureExecutionTransient(err) {
 				return err
 			}

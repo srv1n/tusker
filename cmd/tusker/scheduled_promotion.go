@@ -67,6 +67,10 @@ func scheduledPromotionAllowsDefaultAdvance(vaultPath string) (bool, error) {
 // and landing audit in one engine instead of growing a second "departure"
 // merge path.  In stage mode the policy choke point above leaves main alone.
 func stageScheduledTasks(vaultPath string, taskIDs []string, sourceSHAs map[string]string, actor string) error {
+	return stageScheduledTasksWithAuthority(vaultPath, taskIDs, sourceSHAs, actor, nil)
+}
+
+func stageScheduledTasksWithAuthority(vaultPath string, taskIDs []string, sourceSHAs map[string]string, actor string, authority *v7LandingAuthority) error {
 	wf, err := loadWorkflow(vaultPath)
 	if err != nil {
 		return err
@@ -78,7 +82,10 @@ func stageScheduledTasks(vaultPath string, taskIDs []string, sourceSHAs map[stri
 	for i, id := range taskIDs {
 		args[fmt.Sprintf("_pos%d", i)] = id
 	}
-	return landV7CmdWithFrozenSources(args, sourceSHAs)
+	if authority == nil {
+		return tuskerError(errorInvalidTransition, "scheduled staging refusal: daemon authority capability is required")
+	}
+	return landV7CmdWithDepartureAuthority(args, sourceSHAs, authority)
 }
 
 func scheduledPromotionGatePolicy(vaultPath string, wf Workflow) (GateTierPolicy, error) {

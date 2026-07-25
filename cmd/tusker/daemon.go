@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -47,6 +48,8 @@ type Daemon struct {
 	departureClosing           bool
 	departurePlan              func(RegisteredProject, Workflow) (DepartureDecision, error)
 	departureExecutionDisabled bool
+	landingAuthorityMu         sync.Mutex
+	landingAuthorityPrivate    map[string]ed25519.PrivateKey
 	reconcileMu                sync.Mutex
 	reconcileSchedule          map[string]adaptiveProjectReconcileState
 	processIdentityProbe       func(RunStatus) bool
@@ -93,7 +96,7 @@ func NewDaemon(stateRoot string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Daemon{stateRoot: stateRoot, store: store, notifyWake: make(chan string, 256), frontiers: map[string]*projectFrontierIndex{}, frontierHints: map[string][]daemonControlChange{}, departureSchedules: map[string]departureSchedule{}, departureActive: map[string]struct{}{}, departureCancels: map[string]context.CancelFunc{}}, nil
+	return &Daemon{stateRoot: stateRoot, store: store, notifyWake: make(chan string, 256), frontiers: map[string]*projectFrontierIndex{}, frontierHints: map[string][]daemonControlChange{}, departureSchedules: map[string]departureSchedule{}, departureActive: map[string]struct{}{}, departureCancels: map[string]context.CancelFunc{}, landingAuthorityPrivate: map[string]ed25519.PrivateKey{}}, nil
 }
 
 func (d *Daemon) Close() error {
