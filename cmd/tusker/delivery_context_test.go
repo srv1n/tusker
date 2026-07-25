@@ -216,6 +216,13 @@ Deliver a bounded repository-fact packet. [[APP-D-0001]]
 		if report.Schema != deliveryPlanningContextSchema || report.ContextFingerprint == "" || !report.ReadOnly {
 			t.Fatalf("planning context identity missing: %#v", report)
 		}
+		factory, err := embeddedFactoryIntakeContractProvenance()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.PlanContract.FactoryIntakeContract != factory {
+			t.Fatalf("planning context omitted current factory contract provenance: %#v", report.PlanContract)
+		}
 		if !report.Readiness.NoWorkDispatched || report.Readiness.DispatchAuthorized || !report.Readiness.AutomationEnabled {
 			t.Fatalf("read-only automation projection is unsafe: %#v", report.Readiness)
 		}

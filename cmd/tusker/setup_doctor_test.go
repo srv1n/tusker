@@ -70,15 +70,21 @@ func TestSetupDoctorRepairsGeneratedSkillInstallsFromCanonicalSource(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSetupFinding(t, dry, "skill_install_generated_copy", false)
+	assertSetupFinding(t, dry, "skill_install_missing_provenance", false)
 	assertSetupFinding(t, dry, "skill_install_missing", false)
 
 	first, err := runSetupDoctor(setupDoctorInput{RepoRoot: repo, Source: sourceRoot}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSetupFinding(t, first, "skill_install_generated_copy", true)
+	assertSetupFinding(t, first, "skill_install_missing_provenance", true)
 	assertSetupFinding(t, first, "skill_install_missing", true)
+	for _, code := range []string{"skill_install_missing_provenance", "skill_install_missing"} {
+		finding := findingByCode(first, code)
+		if finding.Provenance == nil || finding.Provenance.Status != "current" {
+			t.Fatalf("repair %s did not report re-inspected current provenance: %#v", code, finding)
+		}
+	}
 	for _, path := range []string{filepath.Join(repo, ".agents", "skills", "tusker"), filepath.Join(repo, ".claude", "skills", "tusker")} {
 		assertIsSymlink(t, path)
 	}
@@ -88,9 +94,95 @@ func TestSetupDoctorRepairsGeneratedSkillInstallsFromCanonicalSource(t *testing.
 		t.Fatal(err)
 	}
 	for _, finding := range second.Findings {
-		if finding.Code == "skill_install_generated_copy" || finding.Code == "skill_install_missing" || finding.Code == "skill_install_stale" {
+		if finding.Code == "skill_install_missing_provenance" || finding.Code == "skill_install_missing" || finding.Code == "skill_install_stale" {
 			t.Fatalf("idempotent repair retained skill drift: %#v", finding)
 		}
+	}
+}
+
+func TestAsymmetricManagedSkillMetadataBlocksClaimedWaveAndSetupRepairs(t *testing.T) {
+	tests := []struct {
+		name string
+		old  string
+		next string
+	}{
+		{name: "wave authorization schema", old: `wave_authorization_schema: "tusker.wave-authorization/v1"`, next: `wave_authorization_schema: "tusker.wave-authorization/v0"`},
+		{name: "workflow version", old: "workflow_version: 1", next: "workflow_version: 2"},
+		{name: "tracker schema version", old: "tracker_schema_version: 7", next: "tracker_schema_version: 6"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			goodRoot := t.TempDir()
+			badRoot := t.TempDir()
+			writeCanonicalTuskerSkillFixture(t, goodRoot)
+			writeCanonicalTuskerSkillFixture(t, badRoot)
+			goodPackage := filepath.Join(goodRoot, "skills", "tusker")
+			badPackage := filepath.Join(badRoot, "skills", "tusker")
+			skillPath := filepath.Join(badPackage, "SKILL.md")
+			raw, err := os.ReadFile(skillPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed := strings.Replace(string(raw), tt.old, tt.next, 1)
+			if changed == string(raw) {
+				t.Fatalf("fixture did not contain %q", tt.old)
+			}
+			if err := writeText(skillPath, changed); err != nil {
+				t.Fatal(err)
+			}
+
+			repo := t.TempDir()
+			agents := filepath.Join(repo, ".agents", "skills", "tusker")
+			claude := filepath.Join(repo, ".claude", "skills", "tusker")
+			for destination, source := range map[string]string{agents: badPackage, claude: goodPackage} {
+				if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(source, destination); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if state := inspectSkillMaterialization(agents); state.Status != "incompatible" {
+				t.Fatalf("invalid .agents compatibility metadata = %#v", state)
+			}
+			if state := inspectSkillMaterialization(claude); state.Status != "current" {
+				t.Fatalf("healthy .claude package = %#v", state)
+			}
+
+			contract, err := embeddedFactoryIntakeContractProvenance()
+			if err != nil {
+				t.Fatal(err)
+			}
+			claimed := Note{Data: map[string]any{
+				"factory_intake_contract_schema":      contract.Schema,
+				"factory_intake_contract_version":     contract.Version,
+				"factory_intake_contract_fingerprint": contract.Fingerprint,
+			}}
+			blockers := strings.Join(waveFactoryIntakeContractBlockers(filepath.Join(repo, ".tusker"), claimed), "\n")
+			if !strings.Contains(blockers, ".agents skill is incompatible") || strings.Contains(blockers, ".claude skill is") {
+				t.Fatalf("asymmetric claimed-wave blockers = %q", blockers)
+			}
+
+			dry, err := runSetupDoctor(setupDoctorInput{RepoRoot: repo, Source: goodRoot}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			finding := findingByCode(dry, "skill_install_incompatible")
+			if dry.OK || finding == nil || finding.Path != agents || !finding.Repairable || finding.Changed {
+				t.Fatalf("asymmetric setup finding = %#v in %#v", finding, dry)
+			}
+			repaired, err := runSetupDoctor(setupDoctorInput{RepoRoot: repo, Source: goodRoot}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			finding = findingByCode(repaired, "skill_install_incompatible")
+			if !repaired.OK || finding == nil || !finding.Changed || finding.Provenance == nil || finding.Provenance.Status != "current" {
+				t.Fatalf("asymmetric setup repair = %#v in %#v", finding, repaired)
+			}
+			if got := waveFactoryIntakeContractBlockers(filepath.Join(repo, ".tusker"), claimed); len(got) != 0 {
+				t.Fatalf("claimed-wave blockers remained after repair: %#v", got)
+			}
+		})
 	}
 }
 
@@ -137,6 +229,116 @@ name: another-skill
 	}
 	assertEqual(t, "canonical", mapString(payload, "skill_source_kind"), "reported skill source kind")
 	assertEqual(t, filepath.Join(canonical, "skills", "tusker"), mapString(payload, "skill_source"), "reported canonical source")
+}
+
+func TestSkillSyncRejectsCanonicalLookalikeWithoutExactFactoryContract(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(string) error
+	}{
+		{name: "missing", mutate: os.Remove},
+		{name: "malformed", mutate: func(path string) error {
+			return writeText(path, "schema: [unterminated\n")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sourceRoot := t.TempDir()
+			writeCanonicalTuskerSkillFixture(t, sourceRoot)
+			source := filepath.Join(sourceRoot, "skills", "tusker")
+			if err := tt.mutate(filepath.Join(source, "assets", "factory-intake-contract.yaml")); err != nil {
+				t.Fatal(err)
+			}
+			if got := classifySkillSyncSource(sourceRoot, "").Kind; got != "invalid" {
+				t.Fatalf("lookalike source kind = %q, want invalid", got)
+			}
+
+			repo := t.TempDir()
+			for _, destination := range []string{filepath.Join(repo, ".agents", "skills", "tusker"), filepath.Join(repo, ".claude", "skills", "tusker")} {
+				if err := writeText(filepath.Join(destination, "SKILL.md"), "preserve existing install\n"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := writeText(filepath.Join(repo, "AGENTS.md"), "preserve repo instructions\n"); err != nil {
+				t.Fatal(err)
+			}
+			if err := skillSyncCmd(Args{"repo": repo, "source": sourceRoot, "quiet": "true"}); err == nil {
+				t.Fatal("skill sync accepted a canonical lookalike without an exact factory contract")
+			}
+			for _, destination := range []string{filepath.Join(repo, ".agents", "skills", "tusker"), filepath.Join(repo, ".claude", "skills", "tusker")} {
+				info, err := os.Lstat(destination)
+				if err != nil || !info.IsDir() {
+					t.Fatalf("managed destination was replaced: %s (%v)", destination, err)
+				}
+				raw, err := os.ReadFile(filepath.Join(destination, "SKILL.md"))
+				if err != nil || string(raw) != "preserve existing install\n" {
+					t.Fatalf("managed destination changed: %s = %q (%v)", destination, raw, err)
+				}
+			}
+			raw, err := os.ReadFile(filepath.Join(repo, "AGENTS.md"))
+			if err != nil || string(raw) != "preserve repo instructions\n" {
+				t.Fatalf("skill sync escaped managed packages: %q (%v)", raw, err)
+			}
+		})
+	}
+}
+
+func TestSetupRepairRejectsCanonicalLookalikeWithoutFalseSuccess(t *testing.T) {
+	sourceRoot := t.TempDir()
+	writeCanonicalTuskerSkillFixture(t, sourceRoot)
+	if err := writeText(filepath.Join(sourceRoot, "skills", "tusker", "assets", "factory-intake-contract.yaml"), "schema: [unterminated\n"); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	existing := filepath.Join(repo, ".agents", "skills", "tusker", "SKILL.md")
+	if err := writeText(existing, "preserve stale install\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := runSetupDoctor(setupDoctorInput{RepoRoot: repo, Source: sourceRoot}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.OK {
+		t.Fatalf("setup repair falsely reported OK: %#v", report)
+	}
+	for _, code := range []string{"skill_install_missing_provenance", "skill_install_missing"} {
+		finding := findingByCode(report, code)
+		if finding == nil || finding.Changed || finding.Repairable {
+			t.Fatalf("lookalike setup finding %s = %#v", code, finding)
+		}
+	}
+	raw, err := os.ReadFile(existing)
+	if err != nil || string(raw) != "preserve stale install\n" {
+		t.Fatalf("setup repair changed existing destination: %q (%v)", raw, err)
+	}
+	if pathExistsIncludingSymlink(filepath.Join(repo, ".claude", "skills", "tusker")) {
+		t.Fatal("setup repair created a destination from the invalid source")
+	}
+}
+
+func TestSymlinkInstallRejectsCanonicalLookalikeBeforeDestinationMutation(t *testing.T) {
+	sourceRoot := t.TempDir()
+	writeCanonicalTuskerSkillFixture(t, sourceRoot)
+	if err := os.Remove(filepath.Join(sourceRoot, "skills", "tusker", "assets", "factory-intake-contract.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "managed", "tusker")
+	existing := filepath.Join(destination, "SKILL.md")
+	if err := writeText(existing, "preserve direct install\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := installSkillPayloadSymlink(destination, sourceRoot); err == nil {
+		t.Fatal("symlink installer accepted a canonical lookalike without its factory contract")
+	}
+	info, err := os.Lstat(destination)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("symlink installer replaced destination before validation: %v", err)
+	}
+	raw, err := os.ReadFile(existing)
+	if err != nil || string(raw) != "preserve direct install\n" {
+		t.Fatalf("symlink installer changed destination before validation: %q (%v)", raw, err)
+	}
 }
 
 func TestSkillSyncCopyUsesEmbeddedCanonicalPayloadOutsideCheckout(t *testing.T) {
@@ -509,6 +711,9 @@ metadata:
   wave_authorization_schema: "tusker.wave-authorization/v1"
   workflow_version: 1
   tracker_schema_version: 7
+  factory_intake_contract_schema: "tusker.factory-intake-contract/v1"
+  factory_intake_contract_version: "1.1.0"
+  factory_intake_contract_fingerprint: "sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c"
 ---
 # Tusker Operator Skill
 `
@@ -519,6 +724,13 @@ metadata:
 		if err := writeText(filepath.Join(root, "references", name), "# "+name+"\n"); err != nil {
 			t.Fatal(err)
 		}
+	}
+	contract, err := os.ReadFile(filepath.Join("..", "..", "skills", "tusker", "assets", "factory-intake-contract.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(root, "assets", "factory-intake-contract.yaml"), string(contract)); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -2,15 +2,52 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	skillbundle "tusker/skills/tusker"
+
 	"gopkg.in/yaml.v3"
 )
 
 const factoryIntakeContractSchema = "tusker.factory-intake-contract/v1"
+
+// factoryIntakeContractFingerprint deliberately binds the one canonical input
+// contract, rather than a whole skill tree. Hashing the whole package would
+// make the advertised metadata self-referential once it contains this value.
+func factoryIntakeContractFingerprint(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+type factoryIntakeContractProvenance struct {
+	Schema      string `yaml:"schema" json:"schema"`
+	Version     string `yaml:"version" json:"version"`
+	Fingerprint string `yaml:"fingerprint" json:"fingerprint"`
+}
+
+func embeddedFactoryIntakeContractProvenance() (factoryIntakeContractProvenance, error) {
+	raw, err := skillbundle.GetAsset("factory-intake-contract.yaml")
+	if err != nil {
+		return factoryIntakeContractProvenance{}, err
+	}
+	return factoryIntakeContractProvenanceFromRaw([]byte(raw))
+}
+
+func factoryIntakeContractProvenanceFromRaw(raw []byte) (factoryIntakeContractProvenance, error) {
+	var contract factoryIntakeContract
+	if err := yaml.Unmarshal(raw, &contract); err != nil {
+		return factoryIntakeContractProvenance{}, fmt.Errorf("parse embedded factory intake contract: %w", err)
+	}
+	if err := validateFactoryIntakeContract(contract); err != nil {
+		return factoryIntakeContractProvenance{}, err
+	}
+	return factoryIntakeContractProvenance{Schema: contract.Schema, Version: contract.ContractVersion, Fingerprint: factoryIntakeContractFingerprint(raw)}, nil
+}
 
 type factoryIntakeContract struct {
 	Schema                     string                  `yaml:"schema"`

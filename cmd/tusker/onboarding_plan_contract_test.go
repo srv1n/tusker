@@ -63,6 +63,9 @@ scope: packet-backed-example/v1
 title: Packet-backed example
 spec_refs: [docs/specs/example.md]
 context_fingerprint: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
 epic_contract:
   source_key: packet-backed-example
   acronym_hint: PBE
@@ -98,6 +101,14 @@ tasks:
 	contextFingerprint, ok := plan["context_fingerprint"].(string)
 	if !ok || !deliveryContextFingerprintValid(contextFingerprint) {
 		t.Fatalf("context_fingerprint = %v, want sha256:<64 lowercase hex>", plan["context_fingerprint"])
+	}
+	contract, err := embeddedFactoryIntakeContractProvenance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotContract := factoryIntakeContractProvenance{Schema: plan["factory_intake_contract_schema"].(string), Version: plan["factory_intake_contract_version"].(string), Fingerprint: plan["factory_intake_contract_fingerprint"].(string)}
+	if gotContract != contract {
+		t.Fatalf("onboarding plan factory provenance = %#v, want %#v", gotContract, contract)
 	}
 	if _, ok := plan["epic_contract"].(map[string]any)["source_key"]; !ok {
 		t.Fatal("V2 skeleton has no epic source_key")

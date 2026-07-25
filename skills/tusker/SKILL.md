@@ -7,6 +7,9 @@ metadata:
   wave_authorization_schema: "tusker.wave-authorization/v1"
   workflow_version: "1"
   tracker_schema_version: "7"
+  factory_intake_contract_schema: "tusker.factory-intake-contract/v1"
+  factory_intake_contract_version: "1.1.0"
+  factory_intake_contract_fingerprint: "sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c"
 ---
 
 # Tusker Operator Skill
