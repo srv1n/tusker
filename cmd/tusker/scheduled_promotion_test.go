@@ -299,6 +299,13 @@ func TestScheduledPromotionLandingRunsFrozenFullGateContract(t *testing.T) {
 	if got := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")); got != beforeMain {
 		t.Fatalf("red full gate moved main: before=%s after=%s", beforeMain, got)
 	}
+	durable, err := store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil || durable.State != DepartureStateFailed || durable.Gate.Status != "failed" || durable.Gate.Failure.Identity == "" || durable.Gate.Failure.RepairTaskID == "" || len(durable.Gate.Failure.ArtifactRefs) != 1 {
+		t.Fatalf("red gate facts were not persisted: run=%#v err=%v", durable, err)
+	}
+	if strings.Contains(durable.Gate.Failure.ArtifactRefs[0], "FULL_GATE_EXECUTED") {
+		t.Fatalf("raw gate output leaked into durable failure: %#v", durable.Gate.Failure)
+	}
 	snapshot, err := scheduledPromotionSnapshot(vault, "app", "W-0001", wf)
 	if err != nil {
 		t.Fatal(err)

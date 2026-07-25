@@ -408,6 +408,31 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		if heartbeatErr := stopHeartbeat(); heartbeatErr != nil {
 			return "", heartbeatErr
 		}
+		// Red gates never advance main. Persist a compact, replay-safe packet so
+		// triage has the frozen candidate and a durable raw-log reference rather
+		// than rediscovering the failure from mutable branches.
+		artifactRef := "departure://" + run.ID + "/full-gate"
+		packet := promotionFailurePacket(before.Candidate, before.Gate, actor, gateSummary, nil, gatePolicy, "", "", "", nil, []string{artifactRef})
+		route := classifyPromotionFailure(packet)
+		repairTaskID := ""
+		if route.Repair {
+			_ = createPromotionFailureRepairTask(vaultPath, run.ID, packet.GateCommand, actionableGateFailure(gateSummary, nil), packet.GateProfile, route.StableIdentity, packet.OwningTaskID, artifactRef)
+			repairTaskID = promotionFailureRepairTaskID(vaultPath, route.StableIdentity)
+		}
+		failed := *run
+		failed.Candidate, failed.Gate = before.Candidate, before.Gate
+		failed.Gate.Status = "failed"
+		failed.Gate.StartedAt, failed.Gate.FinishedAt, failed.Gate.ArtifactRef = gateStarted.Format(time.RFC3339Nano), gateFinished.Format(time.RFC3339Nano), artifactRef
+		failed.Gate.Failure = DepartureFailure{Class: string(route.Class), Identity: route.StableIdentity, OwningTaskID: packet.OwningTaskID, BisectionRef: packet.BisectionRef, ArtifactRefs: packet.ArtifactRefs, RepairTaskID: repairTaskID, ModelTriage: route.ModelTriage}
+		failed.State = DepartureStateFailed
+		failed.BlockReason = "promotion gate red: " + route.StableIdentity
+		if changed, persistErr := store.TransitionDepartureRun(failed, run.StateRevision); persistErr != nil {
+			return "", persistErr
+		} else if !changed {
+			return "", tuskerError(errorInvalidTransition, "promotion refusal: departure row changed while recording red gate")
+		}
+		*run = failed
+		run.StateRevision++
 		return "", tuskerError(errorInvalidTransition, "promotion gate red: "+gateSummary)
 	}
 	after, err := scheduledPromotionSnapshot(vaultPath, projectID, waveID, wf)

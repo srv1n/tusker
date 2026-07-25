@@ -52,6 +52,12 @@ func v7UpstreamMarkerIsDead(dep Note) bool {
 // dependent forever.
 func v7HeldByFailedUpstream(task Note, idx v7Index) (string, bool) {
 	for _, edge := range v7TaskDependencyEdges(task, idx) {
+		// An isolated promotion defect only invalidates work that cannot proceed
+		// without it. Soft relationships remain visible but must not freeze an
+		// otherwise independent lane.
+		if edge.Hardness != v7DependencyHardnessHard {
+			continue
+		}
 		dep, ok := idx.Tasks[edge.ID]
 		if !ok {
 			continue
