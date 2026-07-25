@@ -1388,6 +1388,12 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				RunnerLimit:  fairDispatchRunnerLimit(wfFile.Data),
 			})
 		}
+		// Typed review results are consumed before the ordinary wave drain so an
+		// authoritative project has exactly one completion authority.  Legacy,
+		// disabled, and shadow modes are no-ops inside the reactor.
+		if err := d.reconcileReviewCompletion(project, wfFile.Data); err != nil {
+			return err
+		}
 		if err := drainArmedWavesToMain(project.VaultRoot); err != nil {
 			return err
 		}
@@ -3089,6 +3095,16 @@ func (d *Daemon) finishReviewCompleteRun(project RegisteredProject, note Note, r
 }
 
 func autoLandArmedWaveReviewComplete(project RegisteredProject, note Note, run RunStatus) (bool, error) {
+	wf, err := loadWorkflow(project.VaultRoot)
+	if err != nil {
+		return false, err
+	}
+	if completionReactorMode(wf.Data.CompletionReactor.Effective) == completionReactorModeAuthoritative {
+		// The authoritative completion reactor merges only after a valid typed
+		// review result.  Keeping this old pre-review path live would let an
+		// implementation exit bypass that authority boundary.
+		return false, nil
+	}
 	wave, _, armed := armedWaveForTask(project.VaultRoot, note)
 	if !armed {
 		return false, nil
@@ -3102,7 +3118,7 @@ func autoLandArmedWaveReviewComplete(project RegisteredProject, note Note, run R
 	if landed && integrated {
 		return true, nil
 	}
-	err := landV7Cmd(Args{
+	err = landV7Cmd(Args{
 		"vault": project.VaultRoot,
 		"quiet": "true",
 		"_pos0": taskID,

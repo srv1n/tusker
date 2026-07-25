@@ -772,6 +772,10 @@ func (s *RuntimeStore) Migrate() error {
 			finished_at TEXT NOT NULL DEFAULT ''
 		);`,
 		`CREATE TABLE IF NOT EXISTS review_results (project_id TEXT NOT NULL, task_id TEXT NOT NULL, work_revision INTEGER NOT NULL, attempt_id TEXT NOT NULL, result_json TEXT NOT NULL, PRIMARY KEY(project_id, task_id, work_revision, attempt_id));`,
+		// Completion transactions are intentionally independent of mutable task
+		// branches.  The identity is a frozen review handoff plus the exact
+		// integration tip from which it was staged; replay resumes this row.
+		`CREATE TABLE IF NOT EXISTS completion_transactions (transaction_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT NOT NULL, result_revision TEXT NOT NULL, phase TEXT NOT NULL, transaction_json TEXT NOT NULL, updated_at TEXT NOT NULL);`,
 		`CREATE TABLE IF NOT EXISTS turns (
 			attempt_id TEXT NOT NULL,
 			project_id TEXT NOT NULL,
