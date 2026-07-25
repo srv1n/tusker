@@ -20,6 +20,9 @@ func reviewResultCommandFixture(t *testing.T) (string, Args) {
 	if err := store.SaveAttempt(RunAttempt{AttemptID: "review-1", ProjectID: v7ProjectID(vault), RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: "codex", Lane: runLaneReview, WorkRevision: 2}); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.UpsertRun(RunStatus{ProjectID: v7ProjectID(vault), RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: "codex", RunnerProfile: "review-fixture", Lane: runLaneReview, LeaseState: string(LeaseStateRunning), ActiveAttemptID: "review-1", WorkRevision: 2}); err != nil {
+		t.Fatal(err)
+	}
 	note, err := resolveV7Note(vault, "APP-T-0001", "task")
 	if err != nil {
 		t.Fatal(err)
@@ -28,7 +31,36 @@ func reviewResultCommandFixture(t *testing.T) (string, Args) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return vault, Args{"vault": vault, "id": "APP-T-0001", "attempt": "review-1", "by": "agent-reviewer", "verdict": "changes_requested", "summary": "actionable", "finding": "fix acceptance", "task-rev": stringField(note.Data, "state_rev"), "source-sha": "abc123", "work-rev": "2", "proof-fingerprint": proof, "gate-fingerprint": gates}
+	return vault, Args{"vault": vault, "id": "APP-T-0001", "attempt": "review-1", "by": "reviewer:agent", "verdict": "changes_requested", "summary": "actionable", "finding": "fix acceptance", "task-rev": stringField(note.Data, "state_rev"), "source-sha": "abc123", "work-rev": "2", "proof-fingerprint": proof, "gate-fingerprint": gates}
+}
+
+func cloneReviewArgs(base Args) Args {
+	clone := Args{}
+	for key, value := range base {
+		clone[key] = value
+	}
+	return clone
+}
+
+func validStoredReviewResult() ReviewResult {
+	return ReviewResult{
+		Schema:            reviewResultSchema,
+		ProjectID:         "app",
+		TaskID:            "APP-T-0001",
+		TaskStateRev:      "sha256:task",
+		WorkRevision:      1,
+		ImplementationSHA: "abc123",
+		AttemptID:         "review-1",
+		Actor:             "reviewer:agent",
+		Runner:            "codex",
+		RunnerProfile:     "review",
+		Covers:            []string{"A1"},
+		ProofFingerprint:  "sha256:proof",
+		GateFingerprint:   "sha256:gates",
+		Verdict:           "blocked",
+		Blocker:           "infrastructure",
+		Summary:           "runner unavailable",
+	}
 }
 
 func TestReviewResultProtocolLegacyFindingMigration(t *testing.T) {
@@ -45,7 +77,7 @@ func TestReviewResultProtocolStoreReplayAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	result := ReviewResult{Schema: reviewResultSchema, ProjectID: "app", TaskID: "APP-T-0001", WorkRevision: 1, AttemptID: "review-1", Verdict: "blocked", Summary: "runner unavailable"}
+	result := validStoredReviewResult()
 	replay, err := store.SaveReviewResult(result)
 	if err != nil || replay {
 		t.Fatalf("first save replay=%v err=%v", replay, err)
@@ -58,10 +90,14 @@ func TestReviewResultProtocolStoreReplayAndConflict(t *testing.T) {
 	if _, err := store.SaveReviewResult(result); err == nil {
 		t.Fatal("conflicting second verdict accepted")
 	}
+	result = validStoredReviewResult()
+	result.ResultRevision = "sha256:forged"
+	if _, err := store.SaveReviewResult(result); err == nil {
+		t.Fatal("forged stable revision accepted")
+	}
 }
 
 func TestReviewResultProtocolCommandValidation(t *testing.T) {
-	vault, base := reviewResultCommandFixture(t)
 	for name, mutate := range map[string]func(Args){
 		"invalid changes": func(a Args) { a["finding"] = "" },
 		"invalid blocked": func(a Args) { a["verdict"] = "blocked"; a["blocker"] = "" },
@@ -73,17 +109,40 @@ func TestReviewResultProtocolCommandValidation(t *testing.T) {
 		"stale gate":      func(a Args) { a["gate-fingerprint"] = "sha256:stale" },
 	} {
 		t.Run(name, func(t *testing.T) {
-			a := Args{}
-			for k, v := range base {
-				a[k] = v
-			}
+			_, base := reviewResultCommandFixture(t)
+			a := cloneReviewArgs(base)
 			mutate(a)
 			if err := reviewSubmitCmd(a); err == nil {
 				t.Fatal("accepted invalid review result")
 			}
 		})
 	}
-	_ = vault
+}
+
+func TestReviewResultProtocolCommandAcceptsExactReplay(t *testing.T) {
+	_, base := reviewResultCommandFixture(t)
+	if err := reviewSubmitCmd(base); err != nil {
+		t.Fatalf("accepted result rejected: %v", err)
+	}
+	if err := reviewSubmitCmd(base); err != nil {
+		t.Fatalf("exact replay rejected: %v", err)
+	}
+}
+
+func TestReviewResultProtocolRejectsVerdictPayloadMixing(t *testing.T) {
+	for name, mutate := range map[string]func(Args){
+		"pass with finding":    func(a Args) { a["verdict"] = "pass"; a["covers"] = "A1" },
+		"blocked with finding": func(a Args) { a["verdict"] = "blocked"; a["blocker"] = "machine" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, base := reviewResultCommandFixture(t)
+			a := cloneReviewArgs(base)
+			mutate(a)
+			if err := reviewSubmitCmd(a); err == nil {
+				t.Fatal("accepted verdict payload mixing")
+			}
+		})
+	}
 }
 
 func TestReviewResultProtocolObjectiveSnapshotsDrift(t *testing.T) {
@@ -108,5 +167,16 @@ func TestReviewResultProtocolObjectiveSnapshotsDrift(t *testing.T) {
 	}
 	if proofA == proofB || gateA != gateB {
 		t.Fatalf("proof drift snapshots=%q/%q gates=%q/%q", proofA, proofB, gateA, gateB)
+	}
+	if err := newV7Gate(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "signoff", "owner": "human:product", "action": "Review the subjective artifact.", "verification": "Product owner records acceptance.", "why-agent-cannot": "The approved contract reserves subjective acceptance for the product owner.", "covers": "A1"}); err != nil {
+		t.Fatal(err)
+	}
+	note, _ = resolveV7Note(vault, "APP-T-0001", "task")
+	proofC, gateC, err := reviewObjectiveSnapshots(vault, note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proofB != proofC || gateB == gateC {
+		t.Fatalf("gate drift snapshots=%q/%q gates=%q/%q", proofB, proofC, gateB, gateC)
 	}
 }

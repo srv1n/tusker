@@ -12,10 +12,23 @@ import (
 
 const reviewResultSchema = "tusker.review-result/v1"
 
+const (
+	reviewResultMaxSummary       = 800
+	reviewResultMaxFindings      = 20
+	reviewResultMaxFindingChars  = 800
+	reviewResultMaxEvidenceRefs  = 20
+	reviewResultMaxEvidenceChars = 400
+)
+
 func (s *RuntimeStore) SaveReviewResult(result ReviewResult) (bool, error) {
-	if result.ResultRevision == "" {
-		result.ResultRevision = reviewResultFingerprint(result)
+	if err := normalizeReviewResult(&result); err != nil {
+		return false, err
 	}
+	expectedRevision := reviewResultFingerprint(result)
+	if result.ResultRevision != "" && result.ResultRevision != expectedRevision {
+		return false, tuskerError(errorInvalidArg, "review result revision does not match its immutable payload")
+	}
+	result.ResultRevision = expectedRevision
 	raw, err := json.Marshal(result)
 	if err != nil {
 		return false, err
@@ -70,9 +83,6 @@ func reviewSubmitCmd(args Args) error {
 	summary := strings.TrimSpace(args.String("summary"))
 	findings := uniqueStrings(splitCSV(args.String("finding")))
 	blocker := strings.TrimSpace(args.String("blocker"))
-	if len(summary) > 800 {
-		return tuskerError(errorInvalidArg, "review summary exceeds 800 characters")
-	}
 	switch verdict {
 	case "pass":
 		accepted := uniqueStrings(v7AcceptanceIDs(note.Body))
@@ -133,6 +143,10 @@ func reviewSubmitCmd(args Args) error {
 	if expected := atoiSafe(args.String("work-rev")); expected == 0 || expected != intField(note.Data, "work_revision") || attempt.RecordID != id || attempt.Lane != runLaneReview || attempt.WorkRevision != expected {
 		return tuskerError(errorInvalidTransition, "stale or unauthorized reviewer attempt")
 	}
+	run, err := activeReviewRunForAttempt(store, v7ProjectID(vault), id, attempt)
+	if err != nil {
+		return err
+	}
 	actor := firstNonEmpty(args.String("by"), "reviewer:agent")
 	wf, wfErr := loadWorkflow(vault)
 	if wfErr != nil {
@@ -141,7 +155,10 @@ func reviewSubmitCmd(args Args) error {
 	if actor != reviewerActorForNote(wf.Data.Reviewer.Actor, note) {
 		return tuskerError(errorInvalidTransition, "reviewer actor is not authorized for this task")
 	}
-	result := ReviewResult{Schema: reviewResultSchema, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: attempt.Runner, RunnerProfile: attempt.Runner, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+	result := ReviewResult{Schema: reviewResultSchema, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: run.Runner, RunnerProfile: run.RunnerProfile, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+	if err := normalizeReviewResult(&result); err != nil {
+		return err
+	}
 	result.ResultRevision = reviewResultFingerprint(result)
 	replay, err := store.SaveReviewResult(result)
 	if err != nil {
@@ -153,6 +170,98 @@ func reviewSubmitCmd(args Args) error {
 		fmt.Printf("Recorded %s review result for %s. No merge, landing, close, or ref move occurred.\n", verdict, id)
 	}
 	return nil
+}
+
+func activeReviewRunForAttempt(store *RuntimeStore, projectID, taskID string, attempt RunAttempt) (RunStatus, error) {
+	if attempt.ProjectID != projectID || attempt.RecordID != taskID || attempt.Lane != runLaneReview {
+		return RunStatus{}, tuskerError(errorInvalidTransition, "reviewer attempt is not authorized for this project and task")
+	}
+	runs, err := store.ListRuns()
+	if err != nil {
+		return RunStatus{}, err
+	}
+	for _, run := range runs {
+		if run.ProjectID != projectID || run.RecordID != taskID || run.Lane != runLaneReview || run.WorkRevision != attempt.WorkRevision || run.ActiveAttemptID != attempt.AttemptID {
+			continue
+		}
+		if !isDispatchingLeaseState(run.LeaseState) || run.Runner == "" || run.RunnerProfile == "" || run.Runner != attempt.Runner {
+			break
+		}
+		return run, nil
+	}
+	return RunStatus{}, tuskerError(errorInvalidTransition, "reviewer attempt is not the current active review attempt")
+}
+
+func normalizeReviewResult(result *ReviewResult) error {
+	result.Schema = strings.TrimSpace(result.Schema)
+	result.ProjectID = strings.TrimSpace(result.ProjectID)
+	result.TaskID = strings.TrimSpace(result.TaskID)
+	result.TaskStateRev = strings.TrimSpace(result.TaskStateRev)
+	result.ImplementationSHA = strings.TrimSpace(result.ImplementationSHA)
+	result.AttemptID = strings.TrimSpace(result.AttemptID)
+	result.Actor = strings.TrimSpace(result.Actor)
+	result.Runner = strings.TrimSpace(result.Runner)
+	result.RunnerProfile = strings.TrimSpace(result.RunnerProfile)
+	result.Verdict = strings.TrimSpace(result.Verdict)
+	result.Blocker = strings.TrimSpace(result.Blocker)
+	result.Summary = strings.TrimSpace(result.Summary)
+	result.ProofFingerprint = strings.TrimSpace(result.ProofFingerprint)
+	result.GateFingerprint = strings.TrimSpace(result.GateFingerprint)
+	result.Covers = sortedUniqueStrings(result.Covers)
+	result.Findings = sortedUniqueStrings(result.Findings)
+	result.EvidenceRefs = sortedUniqueStrings(result.EvidenceRefs)
+	if result.Schema != reviewResultSchema || result.ProjectID == "" || result.TaskID == "" || result.TaskStateRev == "" || result.WorkRevision <= 0 || result.ImplementationSHA == "" || result.AttemptID == "" || result.Actor == "" || result.Runner == "" || result.RunnerProfile == "" || result.ProofFingerprint == "" || result.GateFingerprint == "" {
+		return tuskerError(errorInvalidArg, "review result is missing immutable authority fields")
+	}
+	if result.Summary == "" || len(result.Summary) > reviewResultMaxSummary {
+		return tuskerError(errorInvalidArg, "review summary must be non-empty and at most 800 characters")
+	}
+	if len(result.Findings) > reviewResultMaxFindings || len(result.EvidenceRefs) > reviewResultMaxEvidenceRefs {
+		return tuskerError(errorInvalidArg, "review result has too many findings or evidence references")
+	}
+	for _, finding := range result.Findings {
+		if finding == "" || len(finding) > reviewResultMaxFindingChars {
+			return tuskerError(errorInvalidArg, "review finding must be non-empty and at most 800 characters")
+		}
+	}
+	for _, ref := range result.EvidenceRefs {
+		if ref == "" || len(ref) > reviewResultMaxEvidenceChars {
+			return tuskerError(errorInvalidArg, "review evidence reference must be non-empty and at most 400 characters")
+		}
+	}
+	switch result.Verdict {
+	case "pass":
+		if len(result.Covers) == 0 || len(result.Findings) != 0 || result.Blocker != "" {
+			return tuskerError(errorInvalidArg, "pass result cannot carry findings or a blocker and must cover acceptance")
+		}
+	case "changes_requested":
+		if len(result.Findings) == 0 || result.Blocker != "" {
+			return tuskerError(errorInvalidArg, "changes_requested requires findings and cannot carry a blocker")
+		}
+	case "blocked":
+		if len(result.Findings) != 0 || (result.Blocker != "machine" && result.Blocker != "infrastructure" && result.Blocker != "human") {
+			return tuskerError(errorInvalidArg, "blocked requires one typed blocker and cannot carry findings")
+		}
+	default:
+		return tuskerError(errorInvalidArg, "review result verdict is invalid")
+	}
+	return nil
+}
+
+func sortedUniqueStrings(values []string) []string {
+	set := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			set[value] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for value := range set {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 func reviewFingerprint(note Note, scope string) string {
 	sum := sha256.Sum256([]byte(scope + "\x00" + stringField(note.Data, "state_rev") + "\x00" + note.Body))

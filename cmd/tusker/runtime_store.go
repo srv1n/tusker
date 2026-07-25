@@ -298,6 +298,7 @@ type ReviewResult struct {
 	ProofFingerprint  string   `json:"proof_fingerprint"`
 	GateFingerprint   string   `json:"gate_fingerprint"`
 	Verdict           string   `json:"verdict"`
+	Blocker           string   `json:"blocker,omitempty"`
 	Summary           string   `json:"summary"`
 	Findings          []string `json:"findings,omitempty"`
 	EvidenceRefs      []string `json:"evidence_refs,omitempty"`
