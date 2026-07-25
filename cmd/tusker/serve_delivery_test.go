@@ -73,7 +73,7 @@ func TestServeDeliveryRejectsUnsafePathsAndStaleConfirmation(t *testing.T) {
 	}
 
 	before := snapshotDeliveryRecords(t, vault)
-	req := httptest.NewRequest(http.MethodPost, "/api/delivery/start?project=delivery", bytes.NewBufferString(`{"plan":"`+rel+`","confirm":"sha256:stale"}`))
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(`{"plan":"`+rel+`","confirm":"sha256:stale"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -102,7 +102,7 @@ func TestServeDeliveryStartReplaysCanonicalAuthorization(t *testing.T) {
 	t.Cleanup(func() { serveDeliveryStartFn = original })
 
 	post := func() deliveryStartResult {
-		request := httptest.NewRequest(http.MethodPost, "/api/delivery/start?project=delivery", bytes.NewBufferString(`{"plan":"`+rel+`","confirm":"`+confirm+`"}`))
+		request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(`{"plan":"`+rel+`","confirm":"`+confirm+`"}`))
 		request.Header.Set("Content-Type", "application/json")
 		recorder := httptest.NewRecorder()
 		server.ServeHTTP(recorder, request)
