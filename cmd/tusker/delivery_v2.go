@@ -26,11 +26,17 @@ type deliveryPlanV2 struct {
 	// ContextFingerprint binds the proposal to the bounded repository facts
 	// the planner actually saw. It is deliberately authored, not inferred on
 	// import, so a review can reject a plan composed from stale context.
-	ContextFingerprint string                `yaml:"context_fingerprint"`
-	NonGoals           []string              `yaml:"non_goals,omitempty"`
-	Requirements       []deliveryRequirement `yaml:"requirements"`
-	Concurrency        int                   `yaml:"concurrency,omitempty"`
-	RunnerProfile      string                `yaml:"runner_profile,omitempty"`
+	ContextFingerprint string `yaml:"context_fingerprint"`
+	// Factory contract provenance is mandatory for every newly imported V2
+	// plan. Historical waves remain readable, but preflight detects their V2
+	// schema/context and refuses execution until they are replanned.
+	FactoryIntakeContractSchema      string                `yaml:"factory_intake_contract_schema,omitempty"`
+	FactoryIntakeContractVersion     string                `yaml:"factory_intake_contract_version,omitempty"`
+	FactoryIntakeContractFingerprint string                `yaml:"factory_intake_contract_fingerprint,omitempty"`
+	NonGoals                         []string              `yaml:"non_goals,omitempty"`
+	Requirements                     []deliveryRequirement `yaml:"requirements"`
+	Concurrency                      int                   `yaml:"concurrency,omitempty"`
+	RunnerProfile                    string                `yaml:"runner_profile,omitempty"`
 	// SharedResources, overlap strategies, assumptions, unresolved decisions,
 	// and Summary are authored facts.  The doctor must never manufacture them
 	// from filenames or dependency shape.
@@ -172,13 +178,22 @@ func deliveryV2ImportCmd(vaultPath, path string, args Args) error {
 }
 
 func deliveryV2Prepare(vaultPath string, v2 deliveryPlanV2) (deliveryPlan, []string) {
-	plan := deliveryPlan{Schema: deliveryPlanSchema, Scope: v2.Scope, Title: v2.Title, Epic: strings.ToUpper(strings.TrimSpace(v2.Epic)), SpecRefs: v2.SpecRefs, Concurrency: v2.Concurrency, RunnerProfile: v2.RunnerProfile, Tasks: v2.Tasks, v2: &v2}
+	plan := deliveryPlan{Schema: deliveryPlanV2Schema, Scope: v2.Scope, Title: v2.Title, Epic: strings.ToUpper(strings.TrimSpace(v2.Epic)), SpecRefs: v2.SpecRefs, Concurrency: v2.Concurrency, RunnerProfile: v2.RunnerProfile, Tasks: v2.Tasks, v2: &v2}
 	var issues []string
 	if v2.Schema != deliveryPlanV2Schema {
 		issues = append(issues, "schema must be "+deliveryPlanV2Schema)
 	}
 	if !deliveryContextFingerprintValid(v2.ContextFingerprint) {
 		issues = append(issues, "V2 plan requires context_fingerprint in sha256:<64 lowercase hex> form")
+	}
+	wantFactory, factoryErr := embeddedFactoryIntakeContractProvenance()
+	haveFactory := factoryIntakeContractProvenance{Schema: strings.TrimSpace(v2.FactoryIntakeContractSchema), Version: strings.TrimSpace(v2.FactoryIntakeContractVersion), Fingerprint: strings.TrimSpace(v2.FactoryIntakeContractFingerprint)}
+	if factoryErr != nil {
+		issues = append(issues, "current factory-intake contract cannot be loaded: "+factoryErr.Error())
+	} else if haveFactory.Schema == "" || haveFactory.Version == "" || haveFactory.Fingerprint == "" {
+		issues = append(issues, "new V2 plan requires current factory-intake contract schema, version, and fingerprint; regenerate the plan from tusker delivery context")
+	} else if haveFactory != wantFactory {
+		issues = append(issues, "V2 plan factory-intake contract is stale or contradictory; regenerate the plan from tusker delivery context")
 	}
 	if plan.Epic != "" && v2.EpicContract != nil {
 		issues = append(issues, "epic and epic_contract are mutually exclusive")
@@ -361,6 +376,11 @@ func deliveryV2TaskFingerprint(task deliveryPlanTask, gates []deliveryHumanGate)
 
 func deliveryV2WaveContractData(plan *deliveryPlanV2) (map[string]any, error) {
 	out := map[string]any{"summary": plan.Summary, "context_fingerprint": plan.ContextFingerprint}
+	if factoryIntakeContractClaimed(*plan) {
+		out["factory_intake_contract_schema"] = plan.FactoryIntakeContractSchema
+		out["factory_intake_contract_version"] = plan.FactoryIntakeContractVersion
+		out["factory_intake_contract_fingerprint"] = plan.FactoryIntakeContractFingerprint
+	}
 	fields := []struct {
 		name    string
 		value   any
@@ -384,6 +404,10 @@ func deliveryV2WaveContractData(plan *deliveryPlanV2) (map[string]any, error) {
 		out[field.name] = value
 	}
 	return out, nil
+}
+
+func factoryIntakeContractClaimed(plan deliveryPlanV2) bool {
+	return strings.TrimSpace(plan.FactoryIntakeContractSchema) != "" || strings.TrimSpace(plan.FactoryIntakeContractVersion) != "" || strings.TrimSpace(plan.FactoryIntakeContractFingerprint) != ""
 }
 
 func deliveryV2StructuredFrontmatter(value any) (any, error) {

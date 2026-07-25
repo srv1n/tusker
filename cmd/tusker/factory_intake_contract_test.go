@@ -6,6 +6,30 @@ import (
 	"testing"
 )
 
+func TestCanonicalSkillMetadataMatchesFactoryIntakeContract(t *testing.T) {
+	root := filepath.Join("..", "..", "skills", "tusker")
+	data, _, err := parseFrontmatterMustRead(filepath.Join(root, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := embeddedFactoryIntakeContractProvenance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := mapField(data, "metadata")
+	got := factoryIntakeContractProvenance{Schema: stringField(metadata, "factory_intake_contract_schema"), Version: stringField(metadata, "factory_intake_contract_version"), Fingerprint: stringField(metadata, "factory_intake_contract_fingerprint")}
+	if got != want {
+		t.Fatalf("canonical skill contract metadata = %#v, want %#v", got, want)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "assets", "factory-intake-contract.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := factoryIntakeContractFingerprint(raw); got != want.Fingerprint {
+		t.Fatalf("contract content fingerprint = %s, want %s", got, want.Fingerprint)
+	}
+}
+
 func TestFactoryIntakeContractLoadsCanonicalTable(t *testing.T) {
 	contract, err := loadFactoryIntakeContract(factoryIntakeContractPath(filepath.Join("..", "..")))
 	if err != nil {

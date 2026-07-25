@@ -94,6 +94,24 @@ pull/rebuild), `tusker skill sync` (refresh repo-local generated installs,
 symlink-default), `tusker skill bundle` (portable materialized copy for handoff
 packets / cloud runners that can't follow symlinks).
 
+## Freshness and provenance
+
+`SKILL.md` advertises the canonical `tusker.factory-intake-contract/v1` schema,
+version, and exact contract-content fingerprint. Materialized copies and bundles
+also carry `.tusker-skill-provenance.yaml`: it records that contract metadata,
+a portable source identity, and a deterministic payload fingerprint. The payload
+hash excludes the manifest itself and timestamps, avoiding recursive or
+machine-specific hashes.
+
+`tusker skill doctor --package <path> --json`, `tusker setup doctor`, and
+`tusker delivery rollout doctor` report `current`, `stale`, `missing_provenance`,
+`incompatible`, and `locally_modified` installs separately. Repairs are local
+and offline: `tusker skill sync --repo . --source <canonical-tusker-checkout>`.
+Symlinks are always inspected through their live target; no cached manifest can
+make a retargeted symlink look stale. Sync replaces only the managed
+`tusker` package destination and never rewrites project knowledge, repo
+instructions, secrets, unrelated skills, or plugins.
+
 ## What a fresh session discovers
 
 `.tusker/SKILL.md` is the **project-knowledge entry point** — a *generated* V7

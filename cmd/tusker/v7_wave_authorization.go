@@ -174,7 +174,8 @@ func waveSkillCompatible(vaultPath string) bool {
 	for _, path := range []string{filepath.Join(repoRoot, ".agents", "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, ".claude", "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, "skill", "SKILL.md")} {
 		data, _, readErr := parseFrontmatterMustRead(path)
 		metadata := mapField(data, "metadata")
-		if readErr == nil && stringField(metadata, "wave_authorization_schema") == waveAuthorizationSchema && intField(metadata, "workflow_version") == 1 && intField(metadata, "tracker_schema_version") == 7 {
+		want, provenanceErr := embeddedFactoryIntakeContractProvenance()
+		if readErr == nil && provenanceErr == nil && stringField(metadata, "wave_authorization_schema") == waveAuthorizationSchema && intField(metadata, "workflow_version") == 1 && intField(metadata, "tracker_schema_version") == 7 && stringField(metadata, "factory_intake_contract_schema") == want.Schema && stringField(metadata, "factory_intake_contract_version") == want.Version && stringField(metadata, "factory_intake_contract_fingerprint") == want.Fingerprint {
 			return true
 		}
 	}
@@ -250,6 +251,7 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 		Checks:        map[string]bool{"specDag": true, "taskContracts": true, "artifacts": true, "project": env.ProjectRegistered && env.ProjectEnabled && env.ProjectHealthy, "daemon": env.DaemonAlive && env.DaemonReconciling, "runner": env.RunnerCompatible, "skill": env.SkillCompatible, "workflow": env.WorkflowCompatible, "approvalPolicy": env.ApprovalFree, "workspaceIsolation": env.IsolatedWorkspace && env.IntegrationClean},
 	}
 	report.Blockers = append(report.Blockers, fpIssues...)
+	report.Blockers = append(report.Blockers, waveFactoryIntakeContractBlockers(vaultPath, wave)...)
 	graph := map[string][]string{}
 	memberSet := makeSet(members...)
 	for _, id := range members {
@@ -366,7 +368,7 @@ func waveTaskContractBlockers(vaultPath string, task Note) []string {
 }
 
 func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, []string) {
-	material := map[string]any{"schema": waveAuthorizationSchema, "wave": stringField(wave.Data, "id"), "integration_base_sha": stringField(wave.Data, "integration_base_sha"), "members": []any{}, "specs": map[string]any{}}
+	material := map[string]any{"schema": waveAuthorizationSchema, "wave": stringField(wave.Data, "id"), "delivery_plan_schema": stringField(wave.Data, "delivery_plan_schema"), "integration_base_sha": stringField(wave.Data, "integration_base_sha"), "factory_intake_contract": map[string]string{"schema": stringField(wave.Data, "factory_intake_contract_schema"), "version": stringField(wave.Data, "factory_intake_contract_version"), "fingerprint": stringField(wave.Data, "factory_intake_contract_fingerprint")}, "members": []any{}, "specs": map[string]any{}}
 	var issues []string
 	members := uniqueStrings(normalizeList(wave.Data["members"]))
 	sort.Strings(members)
@@ -418,6 +420,52 @@ func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, 
 	raw, _ := yaml.Marshal(material)
 	sum := sha256.Sum256(raw)
 	return "sha256:" + hex.EncodeToString(sum[:]), uniqueStrings(issues)
+}
+
+func waveFactoryIntakeContractBlockers(vaultPath string, wave Note) []string {
+	planned := factoryIntakeContractProvenance{Schema: stringField(wave.Data, "factory_intake_contract_schema"), Version: stringField(wave.Data, "factory_intake_contract_version"), Fingerprint: stringField(wave.Data, "factory_intake_contract_fingerprint")}
+	if planned.Schema == "" && planned.Version == "" && planned.Fingerprint == "" {
+		if stringField(wave.Data, "delivery_plan_schema") == deliveryPlanV2Schema || stringField(wave.Data, "context_fingerprint") != "" {
+			return []string{"factory-intake contract provenance is missing from a V2-derived wave; remedy: regenerate and re-import the V2 plan from tusker delivery context"}
+		}
+		// Manual and V1 waves retain compatibility because neither carries the
+		// V2 schema nor its authored planning-context fingerprint.
+		return nil
+	}
+	if planned.Schema == "" || planned.Version == "" || planned.Fingerprint == "" {
+		return []string{"factory-intake contract provenance is incomplete on this wave; remedy: re-import the V2 plan with schema, version, and fingerprint"}
+	}
+	want, err := embeddedFactoryIntakeContractProvenance()
+	if err != nil {
+		return []string{"factory-intake contract cannot be read from this Tusker build; remedy: " + skillSyncRepairAction()}
+	}
+	if status, _ := factoryContractStatus(planned, want); status != "current" {
+		return []string{"factory-intake plan contract is stale or contradictory; remedy: regenerate the V2 plan under the current factory contract"}
+	}
+	repoRoot := v7RepoRoot(vaultPath)
+	// A claimed factory wave is intentionally stricter than generic skill
+	// discovery: sync owns both managed agent surfaces, so a healthy sibling or
+	// source checkout must not mask a stale/missing Claude or Codex package.
+	var blockers []string
+	for _, managed := range []struct{ name, path string }{
+		{".agents", filepath.Join(repoRoot, ".agents", "skills", "tusker")},
+		{".claude", filepath.Join(repoRoot, ".claude", "skills", "tusker")},
+	} {
+		state := inspectSkillMaterialization(managed.path)
+		if state.Status != "current" {
+			blockers = append(blockers, "factory-intake managed "+managed.name+" skill is "+state.Status+"; remedy: "+skillSyncRepairAction())
+			continue
+		}
+		resolved := managed.path
+		if target, resolveErr := filepath.EvalSymlinks(managed.path); resolveErr == nil {
+			resolved = target
+		}
+		have, metadataErr := readSkillMetadata(resolved)
+		if metadataErr != nil || have != planned {
+			blockers = append(blockers, "factory-intake managed "+managed.name+" skill contradicts the planned contract; remedy: "+skillSyncRepairAction())
+		}
+	}
+	return blockers
 }
 
 func waveMaterialGates(idx v7Index, taskID string) []any {

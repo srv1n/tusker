@@ -16,13 +16,14 @@ import (
 const setupDoctorSchema = "tusker.setup-doctor/v1"
 
 type setupFinding struct {
-	Code       string `json:"code"`
-	Status     string `json:"status"`
-	Path       string `json:"path,omitempty"`
-	Message    string `json:"message"`
-	Action     string `json:"action,omitempty"`
-	Repairable bool   `json:"repairable"`
-	Changed    bool   `json:"changed,omitempty"`
+	Code       string                 `json:"code"`
+	Status     string                 `json:"status"`
+	Path       string                 `json:"path,omitempty"`
+	Message    string                 `json:"message"`
+	Action     string                 `json:"action,omitempty"`
+	Repairable bool                   `json:"repairable"`
+	Changed    bool                   `json:"changed,omitempty"`
+	Provenance *skillProvenanceReport `json:"provenance,omitempty"`
 }
 
 type setupDoctorReport struct {
@@ -183,17 +184,23 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 
 	sourceReport := classifySkillSyncSource(input.Source, repo)
 	for _, destination := range []string{filepath.Join(repo, ".agents", "skills", currentSkillInstallDir), filepath.Join(repo, ".claude", "skills", currentSkillInstallDir)} {
-		status, detail := installedSkillStatus(destination, sourceReport.Path)
-		if status == "current" {
+		provenance := inspectSkillMaterialization(destination)
+		if provenance.Status == "current" {
 			continue
 		}
-		finding := setupFinding{Code: "skill_install_" + status, Status: "error", Path: destination, Message: detail,
-			Action: "run tusker skill sync --repo . --source <canonical-tusker-checkout>", Repairable: sourceReport.Kind == "canonical"}
+		finding := setupFinding{Code: "skill_install_" + provenance.Status, Status: "error", Path: destination, Message: provenance.Message,
+			Action: skillSyncRepairAction(), Repairable: sourceReport.Kind == "canonical", Provenance: &provenance}
 		if apply && finding.Repairable {
 			if err := installSkillPayloadWithModeFrom(destination, skillInstallModeLink, sourceReport.Path); err != nil {
 				return report, err
 			}
-			finding.Changed = true
+			repaired := inspectSkillMaterialization(destination)
+			finding.Provenance = &repaired
+			if repaired.Status == "current" {
+				finding.Changed = true
+			} else {
+				finding.Message = "skill repair did not produce a current canonical package: " + repaired.Message
+			}
 		}
 		add(finding)
 	}
@@ -298,48 +305,15 @@ func classifySkillSyncSource(sourceArg, repo string) skillSourceReport {
 }
 
 func isCanonicalTuskerSkillPackage(path string) bool {
-	raw, err := os.ReadFile(filepath.Join(path, "SKILL.md"))
-	if err != nil {
-		return false
-	}
-	frontmatter, body, err := parseFrontmatter(string(raw))
-	if err != nil || stringField(frontmatter, "name") != "tusker" {
-		return false
-	}
-	metadata, ok := frontmatter["metadata"].(map[string]any)
-	if !ok || stringField(metadata, "wave_authorization_schema") != "tusker.wave-authorization/v1" || intField(metadata, "workflow_version") != 1 || intField(metadata, "tracker_schema_version") != 7 {
-		return false
-	}
-	if !strings.Contains(body, "# Tusker Operator Skill") {
-		return false
-	}
-	for _, rel := range []string{filepath.Join("references", "COMMANDS.md"), filepath.Join("references", "REPO_CONTRACT.md"), filepath.Join("references", "WORKFLOW.md")} {
-		if !fileExists(filepath.Join(path, rel)) {
-			return false
-		}
-	}
-	return true
+	return validateCurrentCanonicalTuskerSkillPackage(path) == nil
 }
 
 func installedSkillStatus(destination, canonicalSource string) (string, string) {
-	info, err := os.Lstat(destination)
-	if os.IsNotExist(err) {
-		return "missing", "generated skill install is missing"
-	}
-	if err != nil {
-		return "invalid", err.Error()
-	}
-	if info.Mode()&os.ModeSymlink == 0 {
-		return "generated_copy", "generated skill install is a materialized copy; local development expects a canonical symlink"
-	}
-	target, err := filepath.EvalSymlinks(destination)
-	if err != nil {
-		return "broken", "generated skill symlink is broken"
-	}
-	if canonicalSource == "" || !sameResolvedFile(target, canonicalSource) {
-		return "stale", "generated skill symlink does not target the selected canonical source"
-	}
-	return "current", ""
+	// Compatibility helper retained for callers/tests outside setup doctor. The
+	// provenance classifier intentionally resolves symlinks live rather than
+	// comparing a cached destination manifest.
+	report := inspectSkillMaterialization(destination)
+	return report.Status, report.Message
 }
 
 func sameResolvedFile(a, b string) bool {

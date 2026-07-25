@@ -206,13 +206,14 @@ type deliveryContextHumanGate struct {
 }
 
 type deliveryContextPlanContract struct {
-	AuthoringSchema     string                       `json:"authoring_schema"`
-	SupportedSchemas    []string                     `json:"supported_schemas"`
-	DoctorSchema        string                       `json:"doctor_schema"`
-	ValidationCommand   string                       `json:"validation_command"`
-	DryRunImportCommand string                       `json:"dry_run_import_command"`
-	ValidationRules     []deliveryPlanValidationRule `json:"validation_rules"`
-	Provenance          []deliveryContextProvenance  `json:"provenance"`
+	AuthoringSchema       string                          `json:"authoring_schema"`
+	SupportedSchemas      []string                        `json:"supported_schemas"`
+	FactoryIntakeContract factoryIntakeContractProvenance `json:"factory_intake_contract"`
+	DoctorSchema          string                          `json:"doctor_schema"`
+	ValidationCommand     string                          `json:"validation_command"`
+	DryRunImportCommand   string                          `json:"dry_run_import_command"`
+	ValidationRules       []deliveryPlanValidationRule    `json:"validation_rules"`
+	Provenance            []deliveryContextProvenance     `json:"provenance"`
 }
 
 type deliveryContextRuntimeReadiness struct {
@@ -1119,12 +1120,14 @@ func deliveryContextResourceClues(tasks []Note, wf Workflow, provenance []delive
 func deliveryContextPlanSchemaContract() deliveryContextPlanContract {
 	rules := deliveryPlanValidationRules()
 	raw, _ := json.Marshal(rules)
+	factory, _ := embeddedFactoryIntakeContractProvenance()
 	return deliveryContextPlanContract{
 		AuthoringSchema: deliveryPlanV2Schema, SupportedSchemas: []string{deliveryPlanV2Schema, deliveryPlanSchema},
-		DoctorSchema:        "tusker.delivery-doctor/v1",
-		ValidationCommand:   "tusker delivery doctor --plan <plan.yaml> --json",
-		DryRunImportCommand: "tusker delivery import --plan <plan.yaml> --dry-run --json",
-		ValidationRules:     rules,
+		FactoryIntakeContract: factory,
+		DoctorSchema:          "tusker.delivery-doctor/v1",
+		ValidationCommand:     "tusker delivery doctor --plan <plan.yaml> --json",
+		DryRunImportCommand:   "tusker delivery import --plan <plan.yaml> --dry-run --json",
+		ValidationRules:       rules,
 		Provenance: []deliveryContextProvenance{
 			{Kind: "compiled_contract", Ref: "cmd/tusker/delivery_cmd.go", Fingerprint: deliveryFingerprint(raw)},
 			{Kind: "compiled_contract", Ref: "cmd/tusker/delivery_doctor.go"},

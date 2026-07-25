@@ -95,6 +95,7 @@ func deliveryPlanValidationRules() []deliveryPlanValidationRule {
 	return []deliveryPlanValidationRule{
 		{ID: "bounded_scope", Fields: []string{"scope", "spec_refs", "tasks"}, Requirement: "scope is stable, governing spec_refs resolve inside the repository, and tasks cover only cited requirements", FailureCode: "PLAN_CONTRACT_INVALID", Remedy: "remove unrelated runnable work and bind every task to the governing scope"},
 		{ID: "planning_context", Fields: []string{"context_fingerprint"}, Requirement: "a V2 proposal records the exact bounded planning-context fingerprint used to author it", FailureCode: "PLAN_CONTRACT_INVALID", Remedy: "regenerate the delivery context for the plan scope and author its fingerprint into the plan"},
+		{ID: "factory_intake_provenance", Fields: []string{"factory_intake_contract_schema", "factory_intake_contract_version", "factory_intake_contract_fingerprint"}, Requirement: "every newly imported V2 proposal records the canonical factory-intake contract schema, version, and exact content fingerprint", FailureCode: "PLAN_CONTRACT_INVALID", Remedy: "copy the factory-intake provenance emitted by the planning context; historical unclaimed waves remain readable but are not executable"},
 		{ID: "source_keys", Fields: []string{"requirements[].id", "tasks[].source_key"}, Requirement: "every requirement and task has a unique stable source key", FailureCode: "PLAN_CONTRACT_INVALID", Remedy: "replace missing, duplicate, or placeholder keys with stable identifiers"},
 		{ID: "requirement_coverage", Fields: []string{"requirements", "tasks[].requirement_refs"}, Requirement: "every requirement is covered by at least one task", FailureCode: "REQUIREMENT_UNCOVERED", Remedy: "map each requirement to a task with observable acceptance"},
 		{ID: "acceptance_proof", Fields: []string{"tasks[].acceptance", "tasks[].verification"}, Requirement: "acceptance is observable and every acceptance ID has an exact command or manual-proof mapping", FailureCode: "ACCEPTANCE_UNMAPPED", Remedy: "add exact verification covering every acceptance ID"},
@@ -244,8 +245,12 @@ func readDeliveryPlan(path string) (deliveryPlan, []byte, error) {
 
 func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]string) {
 	var issues []string
-	if plan.Schema != deliveryPlanSchema {
-		issues = append(issues, "schema must be "+deliveryPlanSchema)
+	expectedSchema := deliveryPlanSchema
+	if plan.v2 != nil {
+		expectedSchema = deliveryPlanV2Schema
+	}
+	if plan.Schema != expectedSchema {
+		issues = append(issues, "schema must be "+expectedSchema)
 	}
 	if deliveryPlaceholder(plan.Scope) || !deliveryScopeValid(plan.Scope) {
 		issues = append(issues, "scope must be an explicit stable identifier using letters, numbers, dot, underscore, slash, colon, or hyphen")
@@ -625,7 +630,7 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 	waveData := map[string]any{
 		"schema": "tusker.wave/v7", "kind": "wave", "id": report.WaveID, "project": v7ProjectID(vaultPath),
 		"title": report.WaveTitle, "status": "open", "authorization": "disarmed", "members": members, "integration_branch": v7IntegrationBranchName(report.WaveID),
-		"spec_refs": plan.SpecRefs, "delivery_plan_scope": report.PlanScope, "delivery_plan_fingerprint": report.PlanFingerprint, "concurrency": report.ExpectedConcurrency,
+		"spec_refs": plan.SpecRefs, "delivery_plan_schema": plan.Schema, "delivery_plan_scope": report.PlanScope, "delivery_plan_fingerprint": report.PlanFingerprint, "concurrency": report.ExpectedConcurrency,
 		"runner_profile": plan.RunnerProfile, "created_at": waveCreatedAt, "created_by": waveCreatedBy, "updated_at": now, "updated_by": actor,
 	}
 	if integrationBase != "" {
