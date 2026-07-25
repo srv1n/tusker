@@ -9,6 +9,8 @@ import (
 	"testing"
 )
 
+const departurePlannerTestSourceSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 func TestDeparturePlannerDisabledHasNoFetch(t *testing.T) {
 	wf := WorkflowFile{Data: defaultWorkflow()}
 	fetched := false
@@ -174,11 +176,101 @@ func TestDeparturePlannerIgnoresUnrelatedHeldAndStaleWaves(t *testing.T) {
 	}
 }
 
+func TestDeparturePlannerDiscoversCompletedWaveFromExactLandingAudits(t *testing.T) {
+	fixture := newMultiMemberDepartureExecutionFixture(t)
+	idx, err := loadV7Index(fixture.vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceOne := gitRevisionForTest(t, fixture.repo, "task/APP-T-0001")
+	sourceTwo := stringField(idx.Tasks["APP-T-0002"].Data, "source_sha")
+	if sourceTwo == "" {
+		t.Fatal("fixture is missing APP-T-0002 exact source")
+	}
+	if err := landV7CmdWithFrozenSources(
+		Args{"vault": fixture.vault, "quiet": "true", "_pos0": "APP-T-0002"},
+		map[string]string{"APP-T-0002": sourceTwo},
+	); err != nil {
+		t.Fatal(err)
+	}
+	clearDepartureTaskSourceForTest(t, fixture.vault, "APP-T-0002")
+	armScheduledPromotionWaveForTest(t, fixture.vault, "W-0001")
+
+	decision, err := fixture.plan(fixture.project, fixture.wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Disposition != "ready" ||
+		!sameDepartureStrings(decision.Candidate.WaveIDs, []string{"W-0001"}) ||
+		!sameDepartureStrings(decision.Candidate.CargoTaskIDs, []string{"APP-T-0001", "APP-T-0002"}) ||
+		decision.Candidate.TaskSourceSHAs["APP-T-0001"] != sourceOne ||
+		decision.Candidate.TaskSourceSHAs["APP-T-0002"] != sourceTwo ||
+		!sameDepartureStrings(decision.ResourceNeeds, []string{"gate:full"}) {
+		t.Fatalf("exact-audit-only completed wave was not discoverable: %#v", decision)
+	}
+	for _, task := range decision.Tasks {
+		if task.EligibleForCargo {
+			t.Fatalf("test did not exercise audit-only wave discovery: %#v", task)
+		}
+	}
+}
+
+func TestDeparturePlannerRejectsForgedLandingAuditProvenance(t *testing.T) {
+	fixture := newMultiMemberDepartureExecutionFixture(t)
+	idx, err := loadV7Index(fixture.vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := stringField(idx.Tasks["APP-T-0002"].Data, "source_sha")
+	integration := gitRevisionForTest(t, fixture.repo, "integration/W-0001")
+	if source == "" || gitMergeBaseAncestor(fixture.repo, source, integration) {
+		t.Fatalf("forged-audit fixture source is already landed: source=%s integration=%s", source, integration)
+	}
+	tree := strings.TrimSpace(gitDirOutput(t, fixture.repo, "rev-parse", integration+"^{tree}"))
+	wavePath := filepath.Join(fixture.vault, "work", "waves", "W-0001.md")
+	data, body, err := parseFrontmatterMustRead(wavePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseRev := stringField(data, "state_rev")
+	data["landings"] = append(normalizeLandingAudit(data["landings"]), map[string]any{
+		"task":         "APP-T-0002",
+		"branch":       "task/APP-T-0002",
+		"source_sha":   source,
+		"target":       "integration/W-0001",
+		"gate_result":  "pass",
+		"gate_summary": "gate passed: forged",
+		"commit":       integration,
+		"tree":         tree,
+		"provenance":   v7LandingAuditProvenance,
+		"actor":        "daemon:departure:forged",
+		"timestamp":    "2026-07-25T23:59:00Z",
+	})
+	if _, err := saveV7DocumentCAS(wavePath, data, body, v7FrontmatterOrder["wave"], baseRev); err != nil {
+		t.Fatal(err)
+	}
+	clearDepartureTaskSourceForTest(t, fixture.vault, "APP-T-0002")
+	armScheduledPromotionWaveForTest(t, fixture.vault, "W-0001")
+
+	decision, err := fixture.plan(fixture.project, fixture.wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Disposition != "empty" ||
+		len(decision.Candidate.CargoTaskIDs) != 0 ||
+		len(decision.Candidate.TaskSourceSHAs) != 0 {
+		t.Fatalf("forged Markdown audit resurrected source-less cargo: %#v", decision)
+	}
+}
+
 func departurePlannerTestPlanner(noRemote, gateHit bool) departurePlanner {
 	planner := defaultDeparturePlanner()
 	planner.remote = func(string) (string, bool) { return "origin", !noRemote }
 	planner.fetch = func(context.Context, string, string, string) error { return nil }
 	planner.rev = func(_ string, ref string) (string, bool) {
+		if strings.HasPrefix(ref, departurePlannerTestSourceSHA) {
+			return departurePlannerTestSourceSHA, true
+		}
 		if strings.Contains(ref, "main") {
 			return "main-sha", true
 		}
@@ -196,7 +288,7 @@ func writeDepartureTestTask(t *testing.T, vault, id, wave string) {
 	if err := ensureDir(filepath.Join(vault, "work", "tasks")); err != nil {
 		t.Fatal(err)
 	}
-	text := "---\nschema: tusker.task/v7\nkind: task\nid: " + id + "\nstatus: done\nstate_rev: sha256:task\nsource_sha: source-sha\n"
+	text := "---\nschema: tusker.task/v7\nkind: task\nid: " + id + "\nstatus: done\nreadiness: done\nproof_status: satisfied\naccepted_by: reviewer:planner\naccepted_at: 2026-07-25T00:00:00Z\nclosed_at: 2026-07-25T00:00:00Z\nstate_rev: sha256:task\nsource_sha: " + departurePlannerTestSourceSHA + "\n"
 	if wave != "" {
 		text += "wave: " + wave + "\n"
 	}
@@ -211,6 +303,7 @@ func writeDepartureTestWave(t *testing.T, vault, id, authorization, fingerprint 
 		t.Fatal(err)
 	}
 	text := "---\nschema: tusker.wave/v7\nkind: wave\nid: " + id + "\nauthorization: " + authorization + "\n"
+	text += "members:\n  - APP-T-0001\n"
 	if fingerprint != "" {
 		text += "authorization_fingerprint: " + fingerprint + "\n"
 	}

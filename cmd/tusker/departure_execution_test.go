@@ -193,9 +193,9 @@ func TestDepartureExecution(t *testing.T) {
 		}
 		blocked := mustDepartureRun(t, store, run.ID)
 		if blocked.State != DepartureStateBlocked ||
-			!strings.Contains(blocked.BlockReason, "source_drift:APP-T-0001") ||
+			!strings.Contains(blocked.BlockReason, "task_source_not_immutable:APP-T-0001") ||
 			!strings.Contains(blocked.BlockReason, "full immutable commit SHA") {
-			t.Fatalf("mutable source did not produce named drift: %#v", blocked)
+			t.Fatalf("mutable source did not produce an actionable immutable-source refusal: %#v", blocked)
 		}
 		if gitRevisionForTest(t, fixture.repo, "main") != mainBefore ||
 			gitRevisionForTest(t, fixture.repo, "integration/W-0001") != integrationBefore ||
@@ -317,6 +317,9 @@ func TestDepartureExecution(t *testing.T) {
 			t.Fatalf("fixture ancestry is not one boarded/one waiting: integration=%s source1=%s source2=%s", integrationBefore, sourceOne, sourceTwo)
 		}
 		firstAuditBefore := departureLandingAuditCount(t, fixture.vault, "W-0001", "APP-T-0001")
+		if firstAuditBefore != 1 {
+			t.Fatalf("already-boarded member exact-source audit count = %d, want 1", firstAuditBefore)
+		}
 		d := &Daemon{store: store, departurePlan: fixture.plan}
 		if err := d.executeDeparture(context.Background(), fixture.project, fixture.wf, run.ID); err != nil {
 			t.Fatal(err)
@@ -331,14 +334,121 @@ func TestDepartureExecution(t *testing.T) {
 			gitShowFile(t, fixture.repo, "main", "member-two.txt") != "two\n" {
 			t.Fatal("multi-member promotion did not contain both members")
 		}
-		if after := departureLandingAuditCount(t, fixture.vault, "W-0001", "APP-T-0001"); after != firstAuditBefore+1 {
-			t.Fatalf("already-boarded member did not gain exact-source audit: before=%d after=%d", firstAuditBefore, after)
+		if after := departureLandingAuditCount(t, fixture.vault, "W-0001", "APP-T-0001"); after != firstAuditBefore {
+			t.Fatalf("already-boarded member duplicated its exact-source audit: before=%d after=%d", firstAuditBefore, after)
 		}
 		if after := departureLandingAuditCount(t, fixture.vault, "W-0001", "APP-T-0002"); after != 1 {
 			t.Fatalf("missing member landing audit count = %d, want 1", after)
 		}
 		assertDepartureLandingSource(t, fixture.vault, "W-0001", "APP-T-0001", sourceOne)
 		assertDepartureLandingSource(t, fixture.vault, "W-0001", "APP-T-0002", sourceTwo)
+	})
+
+	for _, mode := range []string{scheduledPromotionStage, scheduledPromotionPromote} {
+		t.Run(mode+" blocks a frozen wave when an accepted sibling regresses", func(t *testing.T) {
+			fixture := newMultiMemberDepartureExecutionFixture(t)
+			fixture.wf.ScheduledPromotion.Effective = scheduledPromotionProjection(ScheduledPromotionPolicy{Mode: mode}, true, "test")
+			// Keep both exact sources explicit so APP-T-0001 selects the wave
+			// after APP-T-0002 regresses while retaining its own source_sha.
+			setDepartureTaskSourceForTest(t, fixture.vault, "APP-T-0001", gitRevisionForTest(t, fixture.repo, "task/APP-T-0001"))
+			armScheduledPromotionWaveForTest(t, fixture.vault, "W-0001")
+			store, err := OpenRuntimeStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			run := createDepartureExecutionRun(t, store, fixture)
+			if !sameDepartureStrings(run.Candidate.CargoTaskIDs, []string{"APP-T-0001", "APP-T-0002"}) {
+				t.Fatalf("fully accepted wave was not frozen atomically: %#v", run.Candidate)
+			}
+			if changed, err := store.TransitionDepartureRun(withDepartureState(run, DepartureStateStaging), run.StateRevision); err != nil || !changed {
+				t.Fatalf("prepare staging replay: changed=%v err=%v", changed, err)
+			}
+			mainBefore := gitRevisionForTest(t, fixture.repo, "main")
+			integrationBefore := gitRevisionForTest(t, fixture.repo, "integration/W-0001")
+			setWaveTaskState(t, fixture.vault, "APP-T-0002", "ready", "ready", "")
+
+			idx, err := loadV7Index(fixture.vault)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stringField(idx.Tasks["APP-T-0002"].Data, "source_sha") == "" {
+				t.Fatal("regression fixture lost the active sibling's exact source_sha")
+			}
+			decision, err := fixture.plan(fixture.project, fixture.wf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decision.Disposition != "blocked" ||
+				len(decision.Reasons) == 0 ||
+				decision.Reasons[0].Code != "wave_member_not_done" ||
+				containsString(decision.Candidate.CargoTaskIDs, "APP-T-0002") {
+				t.Fatalf("planner widened cargo from membership after sibling regression: %#v", decision)
+			}
+
+			d := &Daemon{store: store, departurePlan: fixture.plan}
+			if err := d.executeDeparture(context.Background(), fixture.project, fixture.wf, run.ID); err != nil {
+				t.Fatal(err)
+			}
+			blocked := mustDepartureRun(t, store, run.ID)
+			if blocked.State != DepartureStateBlocked || !strings.Contains(blocked.BlockReason, "wave_member_not_done:APP-T-0002") {
+				t.Fatalf("staging replay did not enforce accepted full-wave authority: %#v", blocked)
+			}
+			if after := gitRevisionForTest(t, fixture.repo, "integration/W-0001"); after != integrationBefore {
+				t.Fatalf("%s staged a regressed sibling: before=%s after=%s", mode, integrationBefore, after)
+			}
+			if after := gitRevisionForTest(t, fixture.repo, "main"); after != mainBefore {
+				t.Fatalf("%s promoted a wave with an active sibling: before=%s after=%s", mode, mainBefore, after)
+			}
+			if count := departureLandingAuditCount(t, fixture.vault, "W-0001", "APP-T-0002"); count != 0 {
+				t.Fatalf("%s recorded a landing for the regressed sibling: %d", mode, count)
+			}
+		})
+	}
+
+	t.Run("promote blocks a frozen done sibling without a reviewer acceptor", func(t *testing.T) {
+		fixture := newMultiMemberDepartureExecutionFixture(t)
+		setDepartureTaskSourceForTest(t, fixture.vault, "APP-T-0001", gitRevisionForTest(t, fixture.repo, "task/APP-T-0001"))
+		armScheduledPromotionWaveForTest(t, fixture.vault, "W-0001")
+		store, err := OpenRuntimeStore(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		run := createDepartureExecutionRun(t, store, fixture)
+		if changed, err := store.TransitionDepartureRun(withDepartureState(run, DepartureStateStaging), run.StateRevision); err != nil || !changed {
+			t.Fatalf("prepare staging replay: changed=%v err=%v", changed, err)
+		}
+		mainBefore := gitRevisionForTest(t, fixture.repo, "main")
+		integrationBefore := gitRevisionForTest(t, fixture.repo, "integration/W-0001")
+		setDepartureTaskAcceptorForTest(t, fixture.vault, "APP-T-0002", "agent:worker")
+
+		decision, err := fixture.plan(fixture.project, fixture.wf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if decision.Disposition != "blocked" ||
+			len(decision.Reasons) == 0 ||
+			decision.Reasons[0].Code != "wave_member_review_provenance_invalid" {
+			t.Fatalf("planner accepted an unreviewed done sibling: %#v", decision)
+		}
+		d := &Daemon{store: store, departurePlan: fixture.plan}
+		if err := d.executeDeparture(context.Background(), fixture.project, fixture.wf, run.ID); err != nil {
+			t.Fatal(err)
+		}
+		blocked := mustDepartureRun(t, store, run.ID)
+		if blocked.State != DepartureStateBlocked || !strings.Contains(blocked.BlockReason, "task_review_acceptor_invalid:APP-T-0002") {
+			t.Fatalf("executor accepted an unreviewed durable sibling: %#v", blocked)
+		}
+		if after := gitRevisionForTest(t, fixture.repo, "integration/W-0001"); after != integrationBefore {
+			t.Fatalf("unreviewed sibling moved integration: before=%s after=%s", integrationBefore, after)
+		}
+		if after := gitRevisionForTest(t, fixture.repo, "main"); after != mainBefore {
+			t.Fatalf("unreviewed sibling moved main: before=%s after=%s", mainBefore, after)
+		}
+		if count := departureLandingAuditCount(t, fixture.vault, "W-0001", "APP-T-0002"); count != 0 {
+			t.Fatalf("unreviewed sibling gained a landing audit: %d", count)
+		}
 	})
 
 	t.Run("hold after evaluation blocks before side effects", func(t *testing.T) {
@@ -825,6 +935,116 @@ func TestDepartureExecution(t *testing.T) {
 	})
 }
 
+func TestDepartureExecutionFinalAuthorityAfterPreparation(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, wantReason string
+		mutate                 func(map[string]any)
+	}{
+		{
+			name: "disarm", kind: "wave", wantReason: "wave_authorization_not_armed:W-0001",
+			mutate: func(data map[string]any) {
+				data["authorization"] = "disarmed"
+				delete(data, "authorization_fingerprint")
+			},
+		},
+		{
+			name: "task rework", kind: "task", wantReason: "wave_member_not_done:APP-T-0001",
+			mutate: func(data map[string]any) {
+				data["status"] = "rework"
+				data["readiness"] = "ready"
+			},
+		},
+		{
+			name: "proof revocation", kind: "task", wantReason: "task_review_provenance_missing:APP-T-0001",
+			mutate: func(data map[string]any) {
+				data["proof_status"] = "pending"
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newDepartureExecutionFixture(t, scheduledPromotionPromote, "final-authority-"+strings.ReplaceAll(tc.name, " ", "-")+".txt")
+			store, err := OpenRuntimeStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			run := createDepartureExecutionRun(t, store, fixture)
+			mainBefore := gitRevisionForTest(t, fixture.repo, "main")
+			targetID := "APP-T-0001"
+			targetDir := "tasks"
+			if tc.kind == "wave" {
+				targetID, targetDir = "W-0001", "waves"
+			}
+			targetPath := filepath.Join(fixture.vault, "work", targetDir, targetID+".md")
+			var livePreimage, operatorBytes string
+			var operatorMode os.FileMode
+			hookCalls := 0
+			originalBeforeHook := scheduledPromotionBeforeDefaultPrepare
+			scheduledPromotionBeforeDefaultPrepare = func() error {
+				livePreimage = mustReadIndexTest(t, targetPath)
+				return nil
+			}
+			originalAfterHook := scheduledPromotionAfterDefaultPrepare
+			scheduledPromotionAfterDefaultPrepare = func() error {
+				hookCalls++
+				data, body, parseErr := parseFrontmatter(livePreimage)
+				if parseErr != nil {
+					return parseErr
+				}
+				current, _, parseErr := parseFrontmatterMustRead(targetPath)
+				if parseErr != nil {
+					return parseErr
+				}
+				tc.mutate(data)
+				data["updated_by"] = "human:operator"
+				data["updated_at"] = "2026-07-25T23:59:00Z"
+				// This deliberately models an unmanaged/raw edit after
+				// preparation. Managed writers take the material epoch and are
+				// linearized by the dedicated barrier race below.
+				if _, saveErr := saveV7DocumentCASUnderMaterialLock(targetPath, data, body, v7FrontmatterOrder[tc.kind], stringField(current, "state_rev")); saveErr != nil {
+					return saveErr
+				}
+				operatorBytes = mustReadIndexTest(t, targetPath)
+				info, statErr := os.Stat(targetPath)
+				if statErr != nil {
+					return statErr
+				}
+				operatorMode = info.Mode().Perm()
+				return nil
+			}
+			defer func() {
+				scheduledPromotionBeforeDefaultPrepare = originalBeforeHook
+				scheduledPromotionAfterDefaultPrepare = originalAfterHook
+			}()
+
+			d := &Daemon{store: store, departurePlan: fixture.plan}
+			if err := d.executeDeparture(context.Background(), fixture.project, fixture.wf, run.ID); err != nil {
+				t.Fatal(err)
+			}
+			blocked := mustDepartureRun(t, store, run.ID)
+			if hookCalls != 1 ||
+				blocked.State != DepartureStateBlocked ||
+				blocked.Promotion.AttemptedAt == "" ||
+				!strings.Contains(blocked.BlockReason, tc.wantReason) {
+				t.Fatalf("final %s authority was not fenced: hooks=%d run=%#v", tc.name, hookCalls, blocked)
+			}
+			if after := gitRevisionForTest(t, fixture.repo, "main"); after != mainBefore {
+				t.Fatalf("final %s authority moved main: before=%s after=%s", tc.name, mainBefore, after)
+			}
+			if after := mustReadIndexTest(t, targetPath); after != operatorBytes {
+				t.Fatalf("final %s authority overwrote operator bytes", tc.name)
+			}
+			info, err := os.Stat(targetPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != operatorMode {
+				t.Fatalf("final %s authority overwrote operator mode: got=%v want=%v", tc.name, info.Mode().Perm(), operatorMode)
+			}
+		})
+	}
+}
+
 func newDepartureExecutionFixture(t *testing.T, mode, fileName string) departureExecutionFixture {
 	t.Helper()
 	repo, vault := newLandReadyForMainAdvanceTest(t, fileName, "departure\n")
@@ -846,9 +1066,13 @@ func newMultiMemberDepartureExecutionFixture(t *testing.T) departureExecutionFix
 	t.Helper()
 	repo, vault := newLandTestRepo(t, 2, "test -f member-one.txt")
 	sourceOne := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"member-one.txt": "one\n"})
-	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001"}); err != nil {
+	if err := landV7CmdWithFrozenSources(
+		Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001"},
+		map[string]string{"APP-T-0001": sourceOne},
+	); err != nil {
 		t.Fatal(err)
 	}
+	assertDepartureLandingSource(t, vault, "W-0001", "APP-T-0001", sourceOne)
 	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-25T00:00:00Z")
 	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceOne)
 	commitCanonicalTaskStateToIntegration(t, repo, vault, "APP-T-0001")
@@ -987,6 +1211,20 @@ func clearDepartureTaskSourceForTest(t *testing.T, vault, taskID string) {
 	delete(data, "source_sha")
 	delete(data, "source_commit")
 	delete(data, "source_branch_sha")
+	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func setDepartureTaskAcceptorForTest(t *testing.T, vault, taskID, actor string) {
+	t.Helper()
+	path := filepath.Join(vault, "work", "tasks", taskID+".md")
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseRev := stringField(data, "state_rev")
+	data["accepted_by"] = actor
 	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
 		t.Fatal(err)
 	}
@@ -1152,6 +1390,11 @@ func assertDepartureLandingSource(t *testing.T, vault, waveID, taskID, sourceSHA
 			stringField(row, "source_sha") == sourceSHA {
 			if branch := stringField(row, "branch"); branch != "task/"+taskID {
 				t.Fatalf("%s exact landing audit branch = %q", taskID, branch)
+			}
+			if stringField(row, "commit") == "" ||
+				stringField(row, "tree") == "" ||
+				stringField(row, "provenance") != v7LandingAuditProvenance {
+				t.Fatalf("%s exact landing audit is not authenticated: %#v", taskID, row)
 			}
 			return
 		}

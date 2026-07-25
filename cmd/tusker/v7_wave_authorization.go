@@ -429,6 +429,11 @@ func mutateWaveAuthorization(args Args, target string, environment *wavePrefligh
 	if err := ensureV7ControlMutation(vaultPath, args); err != nil {
 		return err
 	}
+	materialLock, err := acquireV7MaterialEpochLock(vaultPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = materialLock.Close() }()
 	lock, err := acquireV7DocumentLock(wave.AbsolutePath, v7DocumentLockTimeout)
 	if err != nil {
 		return err

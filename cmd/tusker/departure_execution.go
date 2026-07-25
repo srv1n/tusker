@@ -379,6 +379,9 @@ func (d *Daemon) executeDepartureStaging(project RegisteredProject, wf Workflow,
 	if err != nil {
 		return d.blockDepartureRun(run, "departure staging refusal: "+err.Error())
 	}
+	if err := validateDepartureDurableCargo(project.VaultRoot, run.Candidate); err != nil {
+		return d.blockDepartureRun(run, "departure staging refusal: "+err.Error())
+	}
 	if len(unstaged) > 0 {
 		if err := stageScheduledTasks(project.VaultRoot, unstaged, run.Candidate.TaskSourceSHAs, "daemon:departure:"+run.ID); err != nil {
 			if departureExecutionTransient(err) {
@@ -399,7 +402,7 @@ func (d *Daemon) executeDepartureStaging(project RegisteredProject, wf Workflow,
 	} else if hold != nil {
 		return d.blockDepartureRun(run, departureHoldBlockReason(hold))
 	}
-	snapshot, err := departurePromotionSnapshotAfterStaging(project, wf, run.Candidate.WaveIDs[0])
+	snapshot, err := departurePromotionSnapshotAfterStaging(project, wf, run.Candidate.WaveIDs[0], run.Candidate)
 	if err != nil {
 		if departureExecutionTransient(err) {
 			return err
@@ -449,26 +452,22 @@ func departureUnstagedCargo(project RegisteredProject, candidate DepartureCandid
 		}
 		integrationBranch := v7WaveIntegrationBranch(wave)
 		if !gitMergeBaseAncestor(project.RepoRoot, sourceSHA, integrationBranch) ||
-			!departureExactLandingAudited(wave, taskID, integrationBranch, sourceSHA) {
+			!departureExactLandingAudited(project.RepoRoot, wave, taskID, integrationBranch, sourceSHA) {
 			unstaged = append(unstaged, taskID)
 		}
 	}
 	return unstaged, nil
 }
 
-func departureExactLandingAudited(wave Note, taskID, integrationBranch, sourceSHA string) bool {
-	for _, row := range normalizeLandingAudit(wave.Data["landings"]) {
-		if stringField(row, "task") == taskID &&
-			stringField(row, "target") == integrationBranch &&
-			stringField(row, "gate_result") == "pass" &&
-			stringField(row, "source_sha") == sourceSHA {
-			return true
-		}
-	}
-	return false
+func departureExactLandingAudited(repoRoot string, wave Note, taskID, integrationBranch, sourceSHA string) bool {
+	audited, ok := authenticatedV7LandingAuditSource(repoRoot, integrationBranch, wave, taskID, gitRevParse)
+	return ok && strings.EqualFold(audited, strings.TrimSpace(sourceSHA))
 }
 
-func departurePromotionSnapshotAfterStaging(project RegisteredProject, wf Workflow, waveID string) (scheduledPromotionCandidateSnapshot, error) {
+func departurePromotionSnapshotAfterStaging(project RegisteredProject, wf Workflow, waveID string, durable DepartureCandidate) (scheduledPromotionCandidateSnapshot, error) {
+	if err := validateDepartureDurableCargo(project.VaultRoot, durable); err != nil {
+		return scheduledPromotionCandidateSnapshot{}, err
+	}
 	idx, err := loadV7Index(project.VaultRoot)
 	if err != nil {
 		return scheduledPromotionCandidateSnapshot{}, err

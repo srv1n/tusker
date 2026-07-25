@@ -21,6 +21,7 @@ const (
 	tuskerLandMainGuardEnv     = "TUSKER_LAND_MAIN_OK"
 	v7LandingLockSchema        = "tusker.landing-lock/v1"
 	v7LandingLockRecoveryGrace = 30 * time.Second
+	v7LandingAuditProvenance   = "tusker:landing/v1"
 )
 
 type v7LandingLockOwner struct {
@@ -48,6 +49,7 @@ type v7LandingAuditEntry struct {
 	GateResult  string
 	GateSummary string
 	Commit      string
+	Tree        string
 	Actor       string
 	Timestamp   string
 }
@@ -686,11 +688,15 @@ func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string,
 		if err := updateGitRef(repoRoot, "refs/heads/"+integrationBranch, commit, ""); err != nil {
 			return err
 		}
+		tree, err := gitOutputTrim(repoRoot, "rev-parse", commit+"^{tree}")
+		if err != nil {
+			return err
+		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		for _, task := range tasks {
 			acc.Landed = append(acc.Landed, v7LandedEntry{WaveID: waveID, Entry: v7LandingAuditEntry{
 				Task: task.ID, Branch: task.Branch, SourceSHA: task.SourceSHA, Target: integrationBranch,
-				GateResult: "pass", GateSummary: summary, Commit: commit, Timestamp: now,
+				GateResult: "pass", GateSummary: summary, Commit: commit, Tree: tree, Timestamp: now,
 			}})
 		}
 		return nil
@@ -1708,31 +1714,42 @@ func v7WaveIntegrationMemberStatus(vaultPath string, wave Note, member string) (
 }
 
 func advanceV7DefaultBranch(repoRoot, defaultBranch, newRev, oldRev string) error {
+	checkouts, err := advanceV7DefaultBranchRef(repoRoot, defaultBranch, newRev, oldRev)
+	if err != nil {
+		return err
+	}
+	return finishV7DefaultBranchAdvance(checkouts)
+}
+
+// advanceV7DefaultBranchRef performs only the checked ref transition. Callers
+// that hold the material epoch can release it after this returns, before
+// derived epic/dashboard reconciliation acquires canonical document locks.
+func advanceV7DefaultBranchRef(repoRoot, defaultBranch, newRev, oldRev string) ([]v7Worktree, error) {
 	checkouts := v7DefaultBranchCheckouts(repoRoot, defaultBranch)
 	if len(checkouts) == 0 {
-		return updateGitRef(repoRoot, "refs/heads/"+defaultBranch, newRev, oldRev)
+		return nil, updateGitRef(repoRoot, "refs/heads/"+defaultBranch, newRev, oldRev)
 	}
 	for _, wt := range checkouts {
 		if err := prepareV7GeneratedStateForDefaultAdvance(wt.Path); err != nil {
-			return err
+			return nil, err
 		}
 		if err := prepareV7IdenticalUntrackedStateForDefaultAdvance(wt.Path, newRev); err != nil {
-			return err
+			return nil, err
 		}
 		dirty, err := inPlaceDirtyPaths(wt.Path)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if len(dirty) > 0 {
-			return tuskerError(errorInvalidTransition, defaultBranch+" is checked out in "+wt.Path+" with dirty paths: "+strings.Join(limitStrings(dirty, 5), ", ")+". Commit, stash, or clean those paths before running tusker land.", withPath(wt.Path))
+			return nil, tuskerError(errorInvalidTransition, defaultBranch+" is checked out in "+wt.Path+" with dirty paths: "+strings.Join(limitStrings(dirty, 5), ", ")+". Commit, stash, or clean those paths before running tusker land.", withPath(wt.Path))
 		}
 	}
 	currentRev, err := gitOutputTrim(repoRoot, "rev-parse", "refs/heads/"+defaultBranch)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if strings.TrimSpace(currentRev) != strings.TrimSpace(oldRev) {
-		return tuskerError(errorInvalidTransition, defaultBranch+" changed while preparing wave land; retry tusker land so the default-branch advance can be checked against the current ref")
+		return nil, tuskerError(errorInvalidTransition, defaultBranch+" changed while preparing wave land; retry tusker land so the default-branch advance can be checked against the current ref")
 	}
 	for _, wt := range checkouts {
 		// Fast-forward-only merge advances the checked-out branch without
@@ -1743,15 +1760,21 @@ func advanceV7DefaultBranch(repoRoot, defaultBranch, newRev, oldRev string) erro
 		if output, err := gitCombined(wt.Path, "merge", "--ff-only", newRev); err != nil {
 			status, _ := gitCombined(wt.Path, "status", "--porcelain")
 			paths := strings.Join(limitStrings(strings.Fields(status), 12), " ")
-			return tuskerError(errorInvalidTransition, "failed to advance checked-out "+defaultBranch+" worktree at "+wt.Path+": "+firstActionableLine(output, err.Error())+"; local status: "+paths, withPath(wt.Path))
+			return nil, tuskerError(errorInvalidTransition, "failed to advance checked-out "+defaultBranch+" worktree at "+wt.Path+": "+firstActionableLine(output, err.Error())+"; local status: "+paths, withPath(wt.Path))
 		}
 		head, err := gitOutputTrim(wt.Path, "rev-parse", "HEAD")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if strings.TrimSpace(head) != strings.TrimSpace(newRev) {
-			return tuskerError(errorInvalidTransition, "checked-out "+defaultBranch+" worktree did not advance to "+shortCommit(newRev), withPath(wt.Path))
+			return nil, tuskerError(errorInvalidTransition, "checked-out "+defaultBranch+" worktree did not advance to "+shortCommit(newRev), withPath(wt.Path))
 		}
+	}
+	return checkouts, nil
+}
+
+func finishV7DefaultBranchAdvance(checkouts []v7Worktree) error {
+	for _, wt := range checkouts {
 		vaultPath := filepath.Join(wt.Path, ".tusker")
 		idx, err := loadV7Index(vaultPath)
 		if err != nil {
@@ -2026,51 +2049,65 @@ func appendV7WaveLandingAudit(vaultPath, waveID string, entries []v7LandingAudit
 	if err != nil {
 		return err
 	}
-	data, body, err := parseFrontmatterMustRead(note.AbsolutePath)
+	nextRev, changed, err := mutateV7DocumentLocked(note.AbsolutePath, v7FrontmatterOrder["wave"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
+		landings := normalizeLandingAudit(data["landings"])
+		seen := map[string]bool{}
+		for _, row := range landings {
+			key := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s",
+				stringField(row, "task"), stringField(row, "branch"), stringField(row, "source_sha"),
+				stringField(row, "target"), stringField(row, "commit"), stringField(row, "tree"), stringField(row, "provenance"))
+			seen[key] = true
+		}
+		before := len(landings)
+		for _, entry := range entries {
+			provenance := ""
+			if entry.Task != "wave" && entry.GateResult == "pass" && entry.SourceSHA != "" && entry.Commit != "" && entry.Tree != "" {
+				provenance = v7LandingAuditProvenance
+			}
+			key := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s",
+				entry.Task, entry.Branch, entry.SourceSHA, entry.Target, entry.Commit, entry.Tree, provenance)
+			if seen[key] {
+				continue
+			}
+			row := map[string]any{
+				"task":        entry.Task,
+				"branch":      entry.Branch,
+				"target":      entry.Target,
+				"gate_result": entry.GateResult,
+				"timestamp":   entry.Timestamp,
+				"actor":       entry.Actor,
+			}
+			if entry.GateSummary != "" {
+				row["gate_summary"] = entry.GateSummary
+			}
+			if entry.SourceSHA != "" {
+				row["source_sha"] = entry.SourceSHA
+			}
+			if entry.Commit != "" {
+				row["commit"] = entry.Commit
+			}
+			if entry.Tree != "" {
+				row["tree"] = entry.Tree
+			}
+			if provenance != "" {
+				row["provenance"] = provenance
+			}
+			landings = append(landings, row)
+			seen[key] = true
+		}
+		if len(landings) == before {
+			return data, body, false, nil
+		}
+		data["landings"] = landings
+		data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+		data["updated_by"] = actor
+		return data, body, true, nil
+	})
 	if err != nil {
 		return err
 	}
-	baseRev := stringField(data, "state_rev")
-	landings := normalizeLandingAudit(data["landings"])
-	seen := map[string]bool{}
-	for _, row := range landings {
-		key := fmt.Sprintf("%s|%s|%s|%s|%s", stringField(row, "task"), stringField(row, "branch"), stringField(row, "source_sha"), stringField(row, "target"), stringField(row, "commit"))
-		seen[key] = true
-	}
-	for _, entry := range entries {
-		key := fmt.Sprintf("%s|%s|%s|%s|%s", entry.Task, entry.Branch, entry.SourceSHA, entry.Target, entry.Commit)
-		if seen[key] {
-			continue
-		}
-		row := map[string]any{
-			"task":        entry.Task,
-			"branch":      entry.Branch,
-			"target":      entry.Target,
-			"gate_result": entry.GateResult,
-			"timestamp":   entry.Timestamp,
-			"actor":       entry.Actor,
-		}
-		if entry.GateSummary != "" {
-			row["gate_summary"] = entry.GateSummary
-		}
-		if entry.SourceSHA != "" {
-			row["source_sha"] = entry.SourceSHA
-		}
-		if entry.Commit != "" {
-			row["commit"] = entry.Commit
-		}
-		landings = append(landings, row)
-		seen[key] = true
-	}
-	if len(landings) == len(normalizeLandingAudit(data["landings"])) {
+	if !changed {
 		return nil
-	}
-	data["landings"] = landings
-	data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
-	data["updated_by"] = actor
-	nextRev, err := saveV7DocumentCAS(note.AbsolutePath, data, body, v7FrontmatterOrder["wave"], baseRev)
-	if err != nil {
-		return err
 	}
 	return emitV7Event(vaultPath, waveID, "wave", "updated", actor, map[string]any{"landing_audit": len(entries), "state_rev": nextRev})
 }

@@ -3778,6 +3778,17 @@ type v7LockedDocumentMutation func(data map[string]any, body string) (map[string
 // lock, then computes the reconciliation change from that current content.
 // Cached Note values are discovery hints and never become write authority.
 func mutateV7DocumentLocked(filePath string, order []string, mutate v7LockedDocumentMutation) (string, bool, error) {
+	materialLock, err := acquireV7MaterialEpochLockForDocument(filePath)
+	if err != nil {
+		return "", false, err
+	}
+	if materialLock != nil {
+		defer func() { _ = materialLock.Close() }()
+	}
+	return mutateV7DocumentUnderMaterialLock(filePath, order, mutate)
+}
+
+func mutateV7DocumentUnderMaterialLock(filePath string, order []string, mutate v7LockedDocumentMutation) (string, bool, error) {
 	lock, err := acquireV7DocumentLock(filePath, v7DocumentLockTimeout)
 	if err != nil {
 		return "", false, err
@@ -3806,6 +3817,17 @@ func mutateV7DocumentLocked(filePath string, order []string, mutate v7LockedDocu
 }
 
 func saveV7DocumentCAS(filePath string, data map[string]any, body string, order []string, baseRev string) (string, error) {
+	materialLock, err := acquireV7MaterialEpochLockForDocument(filePath)
+	if err != nil {
+		return "", err
+	}
+	if materialLock != nil {
+		defer func() { _ = materialLock.Close() }()
+	}
+	return saveV7DocumentCASUnderMaterialLock(filePath, data, body, order, baseRev)
+}
+
+func saveV7DocumentCASUnderMaterialLock(filePath string, data map[string]any, body string, order []string, baseRev string) (string, error) {
 	lock, err := acquireV7DocumentLock(filePath, v7DocumentLockTimeout)
 	if err != nil {
 		return "", err

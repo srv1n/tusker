@@ -17,6 +17,8 @@ type v7DocumentLock struct {
 	file *os.File
 }
 
+var v7MaterialEpochLockObserver func()
+
 func (lock *v7DocumentLock) Close() error {
 	if lock == nil || lock.file == nil {
 		return nil
@@ -68,6 +70,35 @@ func acquireV7DocumentLock(filePath string, timeout time.Duration) (*v7DocumentL
 			return nil, tuskerError("CAS_BUSY", "V7 object is busy: "+filepath.Base(filePath), withPath(filePath), withHint("retry the Tusker control operation after the current writer finishes"))
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// acquireV7MaterialEpochLock serializes transactions whose authorization
+// spans multiple canonical V7 documents. SKILL.md is immutable and always
+// present, so it provides one stable filesystem identity for the vault.
+func acquireV7MaterialEpochLock(vaultPath string) (*v7DocumentLock, error) {
+	if v7MaterialEpochLockObserver != nil {
+		v7MaterialEpochLockObserver()
+	}
+	return acquireV7DocumentLock(filepath.Join(vaultPath, "SKILL.md"), v7DocumentLockTimeout)
+}
+
+func acquireV7MaterialEpochLockForDocument(filePath string) (*v7DocumentLock, error) {
+	abs, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, err
+	}
+	current := filepath.Dir(abs)
+	for {
+		if fileExists(filepath.Join(current, "SKILL.md")) && fileExists(filepath.Join(current, "work")) {
+			return acquireV7MaterialEpochLock(current)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			// Low-level CAS helpers may intentionally operate outside a vault.
+			return nil, nil
+		}
+		current = parent
 	}
 }
 

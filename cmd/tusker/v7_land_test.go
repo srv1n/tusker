@@ -246,8 +246,11 @@ func TestWaveLandSummaryStillReportsMainMove(t *testing.T) {
 func newLandReadyForMainAdvanceTest(t *testing.T, fileName, content string) (string, string) {
 	t.Helper()
 	repo, vault := newLandTestRepo(t, 1, "test -f "+yamlQuoteForShellTest(fileName))
-	commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{fileName: content})
-	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001"}); err != nil {
+	sourceSHA := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{fileName: content})
+	if err := landV7CmdWithFrozenSources(
+		Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001"},
+		map[string]string{"APP-T-0001": sourceSHA},
+	); err != nil {
 		t.Fatalf("task land setup failed: %v", err)
 	}
 	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-07T02:00:00Z")

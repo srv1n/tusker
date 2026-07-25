@@ -121,6 +121,22 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 			cargoWaves[task.WaveID] = true
 		}
 	}
+	// Exact landing audits are durable source provenance too. Use them only as
+	// positive discovery for an authorized, fully completed delivery unit;
+	// incomplete or unrelated waves must not become cargo by historical
+	// membership alone.
+	for _, fact := range decision.Waves {
+		if cargoWaves[fact.ID] ||
+			(!fact.ImplicitSingleton && (fact.Authorization != "armed" || fact.AuthorizationStale)) {
+			continue
+		}
+		wave := idx.Waves[fact.ID]
+		if departureWaveDiscoverableFromExactAudits(repoRoot, fact.IntegrationRef, wave, idx, p.rev) {
+			cargoWaves[fact.ID] = true
+			decision.Candidate.WaveIDs = append(decision.Candidate.WaveIDs, fact.ID)
+		}
+	}
+	decision.Candidate.WaveIDs = uniqueDepartureStrings(decision.Candidate.WaveIDs)
 	remote, hasRemote := p.remote(repoRoot)
 	if hasRemote {
 		decision.Fetch = DepartureFetchFact{Attempted: true, Remote: remote, Ref: defaultBranch}
@@ -141,6 +157,24 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 	} else if sha, ok := p.rev(repoRoot, defaultBranch); ok {
 		decision.Candidate.ExpectedDefaultBranchSHA = sha
 	}
+	for _, fact := range decision.Tasks {
+		if !fact.EligibleForCargo || fact.WaveID != "" {
+			continue
+		}
+		task := idx.Tasks[fact.ID]
+		if err := scheduledPromotionTaskAcceptedReview(vaultPath, task); err != nil {
+			decision.Disposition = "blocked"
+			decision.Reasons = append(decision.Reasons, DepartureReason{Code: "task_review_provenance_invalid", Message: err.Error()})
+			return decision, nil
+		}
+		sourceSHA, sourceErr := scheduledPromotionExactTaskSourceSHA(repoRoot, "", Note{}, task, p.rev)
+		if sourceErr != nil {
+			decision.Disposition = "blocked"
+			decision.Reasons = append(decision.Reasons, DepartureReason{Code: "task_source_unavailable", Message: sourceErr.Error()})
+			return decision, nil
+		}
+		decision.Candidate.TaskSourceSHAs[fact.ID] = sourceSHA
+	}
 	for _, fact := range decision.Waves {
 		ref := DepartureRefFact{WaveID: fact.ID, Name: fact.IntegrationRef}
 		if sha, ok := p.rev(repoRoot, fact.IntegrationRef); ok {
@@ -156,32 +190,65 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 			continue
 		}
 		wave := idx.Waves[fact.ID]
-		for _, taskID := range normalizeList(wave.Data["members"]) {
-			decision.Candidate.CargoTaskIDs = append(decision.Candidate.CargoTaskIDs, taskID)
-			if decision.Candidate.TaskSourceSHAs[taskID] != "" || ref.SHA == "" {
-				continue
+		members := normalizeList(wave.Data["members"])
+		if len(members) == 0 {
+			decision.Disposition = "blocked"
+			decision.Reasons = append(decision.Reasons, DepartureReason{Code: "wave_members_missing", Message: "Cargo is blocked because wave " + fact.ID + " has no atomic member set."})
+			return decision, nil
+		}
+		for _, taskFact := range decision.Tasks {
+			if taskFact.EligibleForCargo && taskFact.WaveID == fact.ID && !containsString(members, taskFact.ID) {
+				decision.Disposition = "blocked"
+				decision.Reasons = append(decision.Reasons, DepartureReason{Code: "wave_membership_mismatch", Message: "Cargo is blocked because done task " + taskFact.ID + " points at wave " + fact.ID + " but is not in its member set."})
+				return decision, nil
 			}
+		}
+		memberSources := make(map[string]string, len(members))
+		for _, taskID := range members {
 			task, ok := idx.Tasks[taskID]
 			if !ok {
 				decision.Disposition = "blocked"
 				decision.Reasons = append(decision.Reasons, DepartureReason{Code: "wave_member_missing", Message: "Cargo is blocked because wave " + fact.ID + " references missing task " + taskID + "."})
 				return decision, nil
 			}
-			sourceSHA, sourceErr := scheduledPromotionTaskSourceSHA(repoRoot, ref.SHA, fact.IntegrationRef, wave, task)
+			if strings.TrimSpace(stringField(task.Data, "wave")) != fact.ID {
+				decision.Disposition = "blocked"
+				decision.Reasons = append(decision.Reasons, DepartureReason{Code: "wave_member_assignment_mismatch", Message: "Cargo is blocked because wave " + fact.ID + " member " + taskID + " is assigned to another delivery unit."})
+				return decision, nil
+			}
+			if strings.ToLower(strings.TrimSpace(stringField(task.Data, "status"))) != "done" {
+				decision.Disposition = "blocked"
+				decision.Reasons = append(decision.Reasons, DepartureReason{Code: "wave_member_not_done", Message: "Cargo is blocked because ordinary wave " + fact.ID + " member " + taskID + " is not done."})
+				return decision, nil
+			}
+			if reviewErr := scheduledPromotionTaskAcceptedReview(vaultPath, task); reviewErr != nil {
+				decision.Disposition = "blocked"
+				decision.Reasons = append(decision.Reasons, DepartureReason{Code: "wave_member_review_provenance_invalid", Message: reviewErr.Error()})
+				return decision, nil
+			}
+			sourceSHA, sourceErr := scheduledPromotionExactTaskSourceSHA(repoRoot, fact.IntegrationRef, wave, task, p.rev)
 			if sourceErr != nil {
 				decision.Disposition = "blocked"
 				decision.Reasons = append(decision.Reasons, DepartureReason{Code: "wave_member_source_unavailable", Message: sourceErr.Error()})
 				return decision, nil
 			}
+			memberSources[taskID] = sourceSHA
+		}
+		// Membership supplies atomic scope, never eligibility. Only after every
+		// member independently proves done + accepted review + immutable source
+		// provenance does the whole wave become cargo.
+		for _, taskID := range members {
+			decision.Candidate.CargoTaskIDs = append(decision.Candidate.CargoTaskIDs, taskID)
+			decision.Candidate.TaskStateRevisions[taskID] = stringField(idx.Tasks[taskID].Data, "state_rev")
+			sourceSHA := memberSources[taskID]
 			decision.Candidate.TaskSourceSHAs[taskID] = sourceSHA
 		}
 	}
 	decision.Candidate.CargoTaskIDs = uniqueDepartureStrings(decision.Candidate.CargoTaskIDs)
+	decision.Candidate.WaveIDs = uniqueDepartureStrings(decision.Candidate.WaveIDs)
 	decision.DefaultRef.SHA = decision.Candidate.ExpectedDefaultBranchSHA
-	for _, task := range decision.Tasks {
-		if task.EligibleForCargo {
-			decision.ResourceNeeds = append(decision.ResourceNeeds, "gate:full")
-		}
+	if len(decision.Candidate.CargoTaskIDs) > 0 {
+		decision.ResourceNeeds = append(decision.ResourceNeeds, "gate:full")
 	}
 	decision.ResourceNeeds = uniqueDepartureStrings(decision.ResourceNeeds)
 	decision.GateIntent = departureGateIntent(wf.Data, repoRoot, firstNonEmpty(decision.Candidate.IntegrationBaseSHA, decision.Candidate.ExpectedDefaultBranchSHA))
@@ -226,6 +293,28 @@ func departureTaskFact(task Note) DepartureTaskFact {
 	fact.EligibleForCargo = state == "done" && fact.SourceSHA != ""
 	fact.ProofFingerprint = departureFingerprint(fact.ID, fact.StateRevision, fact.SourceSHA, state)
 	return fact
+}
+
+func departureWaveDiscoverableFromExactAudits(repoRoot, integrationBranch string, wave Note, idx v7Index, resolve func(string, string) (string, bool)) bool {
+	members := uniqueDepartureStrings(normalizeList(wave.Data["members"]))
+	if len(members) == 0 {
+		return false
+	}
+	if resolve == nil {
+		resolve = gitRevParse
+	}
+	for _, taskID := range members {
+		task, ok := idx.Tasks[taskID]
+		if !ok ||
+			strings.TrimSpace(stringField(task.Data, "wave")) != stringField(wave.Data, "id") ||
+			!strings.EqualFold(strings.TrimSpace(stringField(task.Data, "status")), "done") {
+			return false
+		}
+		if _, authenticated := authenticatedV7LandingAuditSource(repoRoot, integrationBranch, wave, taskID, resolve); !authenticated {
+			return false
+		}
+	}
+	return true
 }
 
 func departureWaveFact(vaultPath string, idx v7Index, wave Note) DepartureWaveFact {

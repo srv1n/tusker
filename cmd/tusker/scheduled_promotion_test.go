@@ -222,8 +222,11 @@ func TestScheduledPromotionLandingImplicitSingletonNeedsNoWaveArm(t *testing.T) 
 	clearWaveBackpointer(t, vault, "APP-T-0001")
 	setSingletonPromotionMode(t, vault, scheduledPromotionStage)
 	setWaveTaskState(t, vault, "APP-T-0001", "review", "review", "")
-	commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"singleton-promoted.txt": "yes\n"})
-	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001"}); err != nil {
+	sourceSHA := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"singleton-promoted.txt": "yes\n"})
+	if err := landV7CmdWithFrozenSources(
+		Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001"},
+		map[string]string{"APP-T-0001": sourceSHA},
+	); err != nil {
 		t.Fatalf("singleton staging failed: %v", err)
 	}
 	task, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
@@ -246,6 +249,11 @@ func TestScheduledPromotionLandingImplicitSingletonNeedsNoWaveArm(t *testing.T) 
 	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
 	wf := setScheduledPromotionGateForTest(t, vault, []string{"test -f singleton-promoted.txt"}, "")
 	commitScheduledPromotionWorkflowForWaveTest(t, repo, vault, waveID)
+	clearWaveBackpointer(t, vault, "APP-T-0001")
+	task, _, err = parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
+	if err != nil || stringField(task, "wave") != "" {
+		t.Fatalf("singleton promotion fixture retained an ordinary wave backpointer: %#v err=%v", task, err)
+	}
 
 	store, err := OpenRuntimeStore(t.TempDir())
 	if err != nil {
@@ -304,6 +312,13 @@ func TestScheduledPromotionLandingRunsFrozenFullGateContract(t *testing.T) {
 	armScheduledPromotionWaveForTest(t, vault, "W-0001")
 	commitScheduledPromotionWorkflowForTest(t, repo, vault)
 	beforeMain := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
+	snapshot, err := scheduledPromotionSnapshot(vault, "app", "W-0001", wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Gate.Command != "echo FULL_GATE_EXECUTED >&2; exit 1" || snapshot.Gate.Profile != "canonical" || snapshot.Gate.Toolchain == "" {
+		t.Fatalf("frozen full-gate identity is incomplete: %#v", snapshot.Gate)
+	}
 
 	store, err := OpenRuntimeStore(t.TempDir())
 	if err != nil {
@@ -336,13 +351,6 @@ func TestScheduledPromotionLandingRunsFrozenFullGateContract(t *testing.T) {
 	owner, _, ownerErr := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
 	if ownerErr != nil || stringField(owner, "status") != "rework" {
 		t.Fatalf("singleton owner was not canonically returned to rework: %#v err=%v", owner, ownerErr)
-	}
-	snapshot, err := scheduledPromotionSnapshot(vault, "app", "W-0001", wf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.Gate.Command != "echo FULL_GATE_EXECUTED >&2; exit 1" || snapshot.Gate.Profile != "canonical" || snapshot.Gate.Toolchain == "" {
-		t.Fatalf("frozen full-gate identity is incomplete: %#v", snapshot.Gate)
 	}
 }
 
@@ -489,6 +497,149 @@ func TestScheduledPromotionLandingCrashBeforeRefUpdateResumesExactIntent(t *test
 	}
 	if commit != durable.Promotion.IntendedSHA || strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")) != durable.Promotion.IntendedSHA {
 		t.Fatalf("pre-ref resume did not commit the exact intended SHA: commit=%s intent=%s", commit, durable.Promotion.IntendedSHA)
+	}
+}
+
+func TestScheduledPromotionPreRefReplayRejectsDisarmedWave(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "pre-ref-disarm.txt", "candidate\n")
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
+	wf := setScheduledPromotionGateForTest(t, vault, []string{"test -f pre-ref-disarm.txt"}, "")
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	commitScheduledPromotionWorkflowForTest(t, repo, vault)
+	mainBefore := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
+
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run := newScheduledPromotionRunForTest(t, store, "2026-07-25T20:39:30Z")
+	injected := errors.New("injected crash before disarm replay")
+	oldHook := scheduledPromotionAfterRefIntent
+	scheduledPromotionAfterRefIntent = func() error { return injected }
+	_, promoteErr := promoteScheduledWave(vault, "app", "W-0001", wf, store, &run, "daemon:test")
+	scheduledPromotionAfterRefIntent = oldHook
+	if !errors.Is(promoteErr, injected) {
+		t.Fatalf("missing injected pre-ref failure: %v", promoteErr)
+	}
+	durable, err := store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil || durable.Promotion.AttemptedAt == "" {
+		t.Fatalf("load durable pre-ref intent: %#v err=%v", durable, err)
+	}
+	if err := mutateWaveAuthorization(Args{
+		"vault": vault, "_pos0": "W-0001",
+		"by": "human:operator", "quiet": "true",
+	}, "disarmed", nil); err != nil {
+		t.Fatal(err)
+	}
+	wavePath := filepath.Join(vault, "work", "waves", "W-0001.md")
+	operatorBytes := mustReadIndexTest(t, wavePath)
+	operatorInfo, err := os.Stat(wavePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resumed := *durable
+	if _, err := promoteScheduledWave(vault, "app", "W-0001", wf, store, &resumed, "daemon:test"); err == nil ||
+		!strings.Contains(err.Error(), "wave_authorization_not_armed:W-0001") {
+		t.Fatalf("pre-ref replay ignored live disarm: %v", err)
+	}
+	if after := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")); after != mainBefore {
+		t.Fatalf("disarmed pre-ref replay moved main: before=%s after=%s", mainBefore, after)
+	}
+	if after := mustReadIndexTest(t, wavePath); after != operatorBytes {
+		t.Fatal("pre-ref replay overwrote disarm bytes")
+	}
+	afterInfo, err := os.Stat(wavePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterInfo.Mode().Perm() != operatorInfo.Mode().Perm() {
+		t.Fatalf("pre-ref replay changed disarm mode: before=%v after=%v", operatorInfo.Mode().Perm(), afterInfo.Mode().Perm())
+	}
+}
+
+func TestScheduledPromotionFinalAuthorityEpochLinearizesManagedDisarm(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "epoch-linearization.txt", "candidate\n")
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
+	wf := setScheduledPromotionGateForTest(t, vault, []string{"test -f epoch-linearization.txt"}, "")
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	commitScheduledPromotionWorkflowForTest(t, repo, vault)
+	mainBefore := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
+
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run := newScheduledPromotionRunForTest(t, store, "2026-07-25T20:39:45Z")
+
+	oldFinalHook := scheduledPromotionAfterFinalAuthority
+	oldEpochObserver := v7MaterialEpochLockObserver
+	defer func() {
+		scheduledPromotionAfterFinalAuthority = oldFinalHook
+		v7MaterialEpochLockObserver = oldEpochObserver
+	}()
+	writerAttempted := make(chan struct{}, 1)
+	writerDone := make(chan error, 1)
+	hookCalls := 0
+	scheduledPromotionAfterFinalAuthority = func() error {
+		hookCalls++
+		v7MaterialEpochLockObserver = func() {
+			writerAttempted <- struct{}{}
+		}
+		go func() {
+			writerDone <- mutateWaveAuthorization(Args{
+				"vault": vault, "_pos0": "W-0001",
+				"by": "human:operator", "quiet": "true",
+			}, "disarmed", nil)
+		}()
+		select {
+		case <-writerAttempted:
+			v7MaterialEpochLockObserver = nil
+		case err := <-writerDone:
+			if err != nil {
+				return errors.New("managed disarm failed before the material epoch: " + err.Error())
+			}
+			return errors.New("managed disarm completed before the material epoch")
+		case <-time.After(5 * time.Second):
+			return errors.New("managed disarm did not reach the material epoch")
+		}
+		select {
+		case err := <-writerDone:
+			if err != nil {
+				return errors.New("managed disarm crossed the held material epoch: " + err.Error())
+			}
+			return errors.New("managed disarm crossed the held material epoch")
+		default:
+			return nil
+		}
+	}
+
+	commit, err := promoteScheduledWave(vault, "app", "W-0001", wf, store, &run, "daemon:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-writerDone:
+		if err != nil {
+			t.Fatalf("managed disarm failed after the ref epoch: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("managed disarm remained blocked after the ref epoch")
+	}
+	if hookCalls != 1 {
+		t.Fatalf("final authority hook calls=%d, want 1", hookCalls)
+	}
+	if after := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")); after != commit || after == mainBefore {
+		t.Fatalf("promotion did not linearize before disarm: before=%s after=%s commit=%s", mainBefore, after, commit)
+	}
+	wave, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "waves", "W-0001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stringField(wave, "authorization"); got != "disarmed" {
+		t.Fatalf("managed disarm did not apply after promotion: authorization=%q", got)
 	}
 }
 
