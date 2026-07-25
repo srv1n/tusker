@@ -13,6 +13,9 @@ import (
 const reviewResultSchema = "tusker.review-result/v1"
 
 func (s *RuntimeStore) SaveReviewResult(result ReviewResult) (bool, error) {
+	if result.ResultRevision == "" {
+		result.ResultRevision = reviewResultFingerprint(result)
+	}
 	raw, err := json.Marshal(result)
 	if err != nil {
 		return false, err
@@ -20,7 +23,8 @@ func (s *RuntimeStore) SaveReviewResult(result ReviewResult) (bool, error) {
 	existing := ""
 	err = s.queryRowScan(`SELECT result_json FROM review_results WHERE project_id=? AND task_id=? AND work_revision=? AND attempt_id=?`, []any{result.ProjectID, result.TaskID, result.WorkRevision, result.AttemptID}, &existing)
 	if err == nil {
-		if existing == string(raw) {
+		var prior ReviewResult
+		if json.Unmarshal([]byte(existing), &prior) == nil && prior.ResultRevision == result.ResultRevision {
 			return true, nil
 		}
 		return false, tuskerError(errorInvalidTransition, "conflicting reviewer verdict already exists")
@@ -101,17 +105,17 @@ func reviewSubmitCmd(args Args) error {
 	if impl == "" {
 		return tuskerError(errorInvalidTransition, "review result requires implementation source SHA")
 	}
-	if expected := strings.TrimSpace(args.String("task-rev")); expected != "" && expected != state {
+	if expected := strings.TrimSpace(args.String("task-rev")); expected == "" || expected != state {
 		return tuskerError(errorInvalidTransition, "stale task revision")
 	}
-	if expected := strings.TrimSpace(args.String("source-sha")); expected != "" && expected != impl {
+	if expected := strings.TrimSpace(args.String("source-sha")); expected == "" || expected != impl {
 		return tuskerError(errorInvalidTransition, "stale implementation source SHA")
 	}
 	proofFingerprint, gateFingerprint := reviewFingerprint(note, "proof"), reviewFingerprint(note, "gates")
-	if expected := strings.TrimSpace(args.String("proof-fingerprint")); expected != "" && expected != proofFingerprint {
+	if expected := strings.TrimSpace(args.String("proof-fingerprint")); expected == "" || expected != proofFingerprint {
 		return tuskerError(errorInvalidTransition, "stale proof fingerprint")
 	}
-	if expected := strings.TrimSpace(args.String("gate-fingerprint")); expected != "" && expected != gateFingerprint {
+	if expected := strings.TrimSpace(args.String("gate-fingerprint")); expected == "" || expected != gateFingerprint {
 		return tuskerError(errorInvalidTransition, "stale gate fingerprint")
 	}
 	store, err := OpenRuntimeStore(DefaultStateRoot())
@@ -123,7 +127,7 @@ func reviewSubmitCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	if attempt.RecordID != id || attempt.Lane != runLaneReview || attempt.WorkRevision != intField(note.Data, "work_revision") {
+	if expected := atoiSafe(args.String("work-rev")); expected == 0 || expected != intField(note.Data, "work_revision") || attempt.RecordID != id || attempt.Lane != runLaneReview || attempt.WorkRevision != expected {
 		return tuskerError(errorInvalidTransition, "stale or unauthorized reviewer attempt")
 	}
 	actor := firstNonEmpty(args.String("by"), "reviewer:agent")
@@ -153,6 +157,7 @@ func reviewFingerprint(note Note, scope string) string {
 }
 func reviewResultFingerprint(r ReviewResult) string {
 	r.ResultRevision = ""
+	r.CreatedAt = ""
 	raw, _ := json.Marshal(r)
 	sum := sha256.Sum256(raw)
 	return "sha256:" + hex.EncodeToString(sum[:])
