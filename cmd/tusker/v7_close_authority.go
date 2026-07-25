@@ -220,22 +220,16 @@ func authenticateV7TaskCloseAuthorityCommit(note Note, fact v7TaskCloseAuthority
 	if !v7GitRepo(repoRoot) {
 		return fmt.Errorf("close authority cannot prove protected integration ancestry outside a Git repository")
 	}
-	idx, err := loadV7Index(vaultPath)
-	if err != nil {
-		return fmt.Errorf("close authority cannot load its wave binding: %w", err)
-	}
 	waveID := strings.TrimSpace(stringField(note.Data, "wave"))
-	wave, ok := idx.Waves[waveID]
-	if !ok || !containsString(normalizeList(wave.Data["members"]), fact.TaskID) {
-		return fmt.Errorf("close authority task is not a member of its recorded wave")
+	if waveID == "" {
+		return fmt.Errorf("close authority task has no historical wave projection")
 	}
-	if v7ImplicitDeliveryUnit(wave) {
-		members := normalizeList(wave.Data["members"])
-		if len(members) != 1 || members[0] != fact.TaskID || stringField(wave.Data, "delivery_task") != fact.TaskID {
-			return fmt.Errorf("close authority implicit wave does not bind exactly this task")
-		}
-	}
-	integrationRef := "refs/heads/" + v7WaveIntegrationBranch(wave)
+	// Wave membership, authorization and gates may legitimately drift after
+	// the integration CAS. The exact committed task and receipt freeze the
+	// historical wave authority. Use only the deterministic protected
+	// integration namespace for discovery; never borrow an arbitrary ref or
+	// current wave document as historical authority.
+	integrationRef := "refs/heads/" + v7IntegrationBranchName(waveID)
 	if !gitRefExists(repoRoot, integrationRef) {
 		return fmt.Errorf("close authority integration ref is unavailable")
 	}
@@ -290,7 +284,7 @@ func authenticateV7TaskCloseAuthorityCommit(note Note, fact v7TaskCloseAuthority
 			lastErr = fmt.Errorf("current task bytes differ from the protected completion projection")
 			continue
 		}
-		taskData, taskBody, parseErr := parseFrontmatter(historicalRaw)
+		taskData, _, parseErr := parseFrontmatter(historicalRaw)
 		if parseErr != nil {
 			lastErr = parseErr
 			continue
