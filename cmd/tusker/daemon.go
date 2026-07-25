@@ -5772,10 +5772,15 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 		"review.task_rev":             stringField(note.Data, "state_rev"),
 		"review.source_sha":           firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit")),
 		"review.work_rev":             strconv.Itoa(intField(note.Data, "work_revision")),
-		"review.proof_fingerprint":    reviewFingerprint(note, "proof"),
-		"review.gate_fingerprint":     reviewFingerprint(note, "gates"),
 		"reviewer.actor":              reviewerActorForNote(wfFile.Data.Reviewer.Actor, note),
 		"reviewer.auto_close_allowed": yesNo(reviewerMayAutoCloseRisk(wfFile.Data.Reviewer, stringField(note.Data, "risk"))),
+	}
+	if lane == runLaneReview {
+		proof, gates, snapshotErr := reviewObjectiveSnapshots(project.VaultRoot, note)
+		if snapshotErr != nil {
+			return "", snapshotErr
+		}
+		values["review.proof_fingerprint"], values["review.gate_fingerprint"] = proof, gates
 	}
 	template := wfFile.Body
 	if lane == runLaneReview {

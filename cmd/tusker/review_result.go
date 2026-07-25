@@ -111,7 +111,10 @@ func reviewSubmitCmd(args Args) error {
 	if expected := strings.TrimSpace(args.String("source-sha")); expected == "" || expected != impl {
 		return tuskerError(errorInvalidTransition, "stale implementation source SHA")
 	}
-	proofFingerprint, gateFingerprint := reviewFingerprint(note, "proof"), reviewFingerprint(note, "gates")
+	proofFingerprint, gateFingerprint, snapshotErr := reviewObjectiveSnapshots(vault, note)
+	if snapshotErr != nil {
+		return snapshotErr
+	}
 	if expected := strings.TrimSpace(args.String("proof-fingerprint")); expected == "" || expected != proofFingerprint {
 		return tuskerError(errorInvalidTransition, "stale proof fingerprint")
 	}
@@ -154,6 +157,42 @@ func reviewSubmitCmd(args Args) error {
 func reviewFingerprint(note Note, scope string) string {
 	sum := sha256.Sum256([]byte(scope + "\x00" + stringField(note.Data, "state_rev") + "\x00" + note.Body))
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func reviewObjectiveSnapshots(vault string, note Note) (string, string, error) {
+	proof, err := loadV7ProofReport(vault, stringField(note.Data, "id"))
+	if err != nil {
+		return "", "", err
+	}
+	proofView := struct {
+		Status                           string
+		Acceptance, Missing, ModeMissing []string
+		Covered                          map[string][]string
+		InlineRows                       []v7VerificationRow
+		Evidence                         []string
+		ProofOwner                       map[string]string
+	}{proof.Status, proof.Acceptance, proof.Missing, proof.ModeMissing, proof.Covered, proof.InlineRows, proof.Evidence, proof.ProofOwner}
+	proofRaw, _ := json.Marshal(proofView)
+	proofSum := sha256.Sum256(proofRaw)
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		return "", "", err
+	}
+	type gateView struct {
+		ID, Status, StateRev, Owner string
+		Blocking                    bool
+		Covers                      []string
+	}
+	gates := []gateView{}
+	for _, gate := range idx.Gates {
+		if v7GateTouchesTask(gate, stringField(note.Data, "id")) {
+			gates = append(gates, gateView{stringField(gate.Data, "id"), stringField(gate.Data, "status"), stringField(gate.Data, "state_rev"), stringField(gate.Data, "owner"), boolField(gate.Data, "blocking"), normalizeList(gate.Data["covers"])})
+		}
+	}
+	sort.Slice(gates, func(i, j int) bool { return gates[i].ID < gates[j].ID })
+	gateRaw, _ := json.Marshal(gates)
+	gateSum := sha256.Sum256(gateRaw)
+	return "sha256:" + hex.EncodeToString(proofSum[:]), "sha256:" + hex.EncodeToString(gateSum[:]), nil
 }
 func reviewResultFingerprint(r ReviewResult) string {
 	r.ResultRevision = ""

@@ -20,7 +20,15 @@ func reviewResultCommandFixture(t *testing.T) (string, Args) {
 	if err := store.SaveAttempt(RunAttempt{AttemptID: "review-1", ProjectID: v7ProjectID(vault), RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: "codex", Lane: runLaneReview, WorkRevision: 2}); err != nil {
 		t.Fatal(err)
 	}
-	return vault, Args{"vault": vault, "id": "APP-T-0001", "attempt": "review-1", "by": "agent-reviewer", "verdict": "changes_requested", "summary": "actionable", "finding": "fix acceptance"}
+	note, err := resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, gates, err := reviewObjectiveSnapshots(vault, note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return vault, Args{"vault": vault, "id": "APP-T-0001", "attempt": "review-1", "by": "agent-reviewer", "verdict": "changes_requested", "summary": "actionable", "finding": "fix acceptance", "task-rev": stringField(note.Data, "state_rev"), "source-sha": "abc123", "work-rev": "2", "proof-fingerprint": proof, "gate-fingerprint": gates}
 }
 
 func TestReviewResultProtocolLegacyFindingMigration(t *testing.T) {
@@ -76,4 +84,29 @@ func TestReviewResultProtocolCommandValidation(t *testing.T) {
 		})
 	}
 	_ = vault
+}
+
+func TestReviewResultProtocolObjectiveSnapshotsDrift(t *testing.T) {
+	vault, _ := reviewResultCommandFixture(t)
+	note, err := resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proofA, gateA, err := reviewObjectiveSnapshots(vault, note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A real verification-row mutation changes proof without inventing gate
+	// drift; frontmatter proof_status is correctly recomputed and ignored.
+	if _, err := upsertV7Verification(vault, "APP-T-0001", v7VerificationRow{CoverText: "A1", Check: "objective snapshot", Result: "pass", Notes: "new objective proof"}, "agent:test"); err != nil {
+		t.Fatal(err)
+	}
+	note, _ = resolveV7Note(vault, "APP-T-0001", "task")
+	proofB, gateB, err := reviewObjectiveSnapshots(vault, note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proofA == proofB || gateA != gateB {
+		t.Fatalf("proof drift snapshots=%q/%q gates=%q/%q", proofA, proofB, gateA, gateB)
+	}
 }
