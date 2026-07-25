@@ -56,3 +56,10 @@ func TestPromotionFailureTimeoutTextIsAmbiguousWithoutConfiguredPattern(t *testi
 		t.Fatalf("incidental test text was misclassified: %#v", route)
 	}
 }
+
+func TestPromotionFailureNotRunBisectionIsNotIsolationEvidence(t *testing.T) {
+	route := classifyPromotionFailure(PromotionFailurePacket{BisectionRef: "not_run", BisectionStatus: "not_run"}, GateTierPolicy{})
+	if route.Class != promotionFailureAmbiguous || !route.ModelTriage {
+		t.Fatalf("sentinel became false isolation: %#v", route)
+	}
+}

@@ -1466,15 +1466,26 @@ func runV7LandingGateOnRef(vaultPath, repoRoot, ref string) (bool, string) {
 // candidate. Unlike the focused landing gate, this path uses the shared gate
 // ledger and harvest semantics and is therefore valid promotion proof.
 type promotionGateExecution struct {
-	Result      GateTierResult
-	ArtifactRef string
-	Err         error
+	Result       GateTierResult
+	ArtifactRef  string
+	ArtifactRefs []string
+	Err          error
 }
 
 func runV7GateTierOnRef(vaultPath, repoRoot, ref, projectID string, policy GateTierPolicy, store *RuntimeStore) promotionGateExecution {
+	writeFailure := func(detail string) promotionGateExecution {
+		root := DefaultStateRoot()
+		if store != nil && store.stateRoot != "" {
+			root = store.stateRoot
+		}
+		path := filepath.Join(root, "artifacts", "promotion-gates", strings.ToLower(newRecordID())+".log")
+		_ = os.MkdirAll(filepath.Dir(path), 0o755)
+		_ = os.WriteFile(path, []byte(safePacketText(detail, 4096)+"\n"), 0o600)
+		return promotionGateExecution{ArtifactRef: path, ArtifactRefs: []string{path}, Err: fmt.Errorf("%s", detail)}
+	}
 	tmp, err := os.MkdirTemp("", "tusker-promotion-gate-*")
 	if err != nil {
-		return promotionGateExecution{Err: err}
+		return writeFailure("failed to create full-gate temporary workspace: " + err.Error())
 	}
 	removeWorktree := false
 	defer func() {
@@ -1485,7 +1496,7 @@ func runV7GateTierOnRef(vaultPath, repoRoot, ref, projectID string, policy GateT
 		}
 	}()
 	if output, err := gitCombined(repoRoot, "worktree", "add", "--detach", tmp, ref); err != nil {
-		return promotionGateExecution{Err: fmt.Errorf("failed to create full-gate worktree: %s", firstActionableLine(output, err.Error()))}
+		return writeFailure("failed to create full-gate worktree: " + firstActionableLine(output, err.Error()))
 	}
 	removeWorktree = true
 	runtime := defaultGateTierRuntime(store, projectID, tmp)
@@ -1509,7 +1520,7 @@ func runV7GateTierOnRef(vaultPath, repoRoot, ref, projectID string, policy GateT
 	} else if writeErr = os.WriteFile(path, raw.Bytes(), 0o600); writeErr != nil && err == nil {
 		err = writeErr
 	}
-	return promotionGateExecution{Result: result, ArtifactRef: path, Err: err}
+	return promotionGateExecution{Result: result, ArtifactRef: path, ArtifactRefs: []string{path}, Err: err}
 }
 
 func appendV7WaveLandingAudit(vaultPath, waveID string, entries []v7LandingAuditEntry, actor string) error {

@@ -410,11 +410,9 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		raw, _ := os.ReadFile(execution.ArtifactRef)
 		probe := promotionFailurePacket(before.Candidate, before.Gate, actor, string(raw), nil, gatePolicy, "unknown", "not_run", promotionFailureOwner(before.Candidate), nil, []string{execution.ArtifactRef})
 		if classifyPromotionFailure(probe, gatePolicy).Class == promotionFailureFlake {
-			first := execution.ArtifactRef
+			firstRefs := append([]string(nil), execution.ArtifactRefs...)
 			execution = runV7GateTierOnRef(vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
-			if execution.Err != nil || execution.Result.Outcome == gateOutcomeFailed {
-				execution.ArtifactRef = first + "," + execution.ArtifactRef
-			}
+			execution.ArtifactRefs = append(firstRefs, execution.ArtifactRefs...)
 		}
 	}
 	gateSummary := string(execution.Result.Outcome)
@@ -426,7 +424,10 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		// Red gates never advance main. Persist a compact, replay-safe packet so
 		// triage has the frozen candidate and a durable raw-log reference rather
 		// than rediscovering the failure from mutable branches.
-		artifactRefs := strings.Split(execution.ArtifactRef, ",")
+		artifactRefs := append([]string(nil), execution.ArtifactRefs...)
+		if len(artifactRefs) == 0 {
+			artifactRefs = []string{execution.ArtifactRef}
+		}
 		gateOutput, _ := os.ReadFile(artifactRefs[len(artifactRefs)-1])
 		owner := promotionFailureOwner(before.Candidate)
 		packet := promotionFailurePacket(before.Candidate, before.Gate, actor, string(gateOutput), execution.Err, gatePolicy, "unknown", "not_run", owner, nil, artifactRefs)
@@ -471,7 +472,9 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		return "", tuskerError(errorInvalidTransition, "promotion gate red: "+safePacketText(string(gateOutput), 320))
 	}
 	if execution.Err == nil && (execution.Result.Outcome == gateOutcomePassed || execution.Result.Outcome == gateOutcomeLedgerHit) {
-		_ = os.Remove(execution.ArtifactRef)
+		for _, ref := range execution.ArtifactRefs {
+			_ = os.Remove(ref)
+		}
 	}
 	after, err := scheduledPromotionSnapshot(vaultPath, projectID, waveID, wf)
 	if err != nil {
