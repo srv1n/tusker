@@ -67,6 +67,37 @@ authorize dispatch.
 When `TUSKER_ATTEMPT_ID` is present, follow the claimed-run protocol, work
 only the claimed task, and do not spawn another runner or daemon.
 
+### Dispatched reviewers
+
+A dispatched review attempt is read-only with respect to implementation files,
+Git refs, and task lifecycle state. Inspect the exact injected task, source,
+work revision, proof, gates, and acceptance contract, then submit exactly one
+attempt-bound result with the command supplied in the review packet:
+
+```bash
+tusker review submit <TASK-ID> \
+  --attempt <ATTEMPT-ID> \
+  --task-rev <TASK-REV> \
+  --source-sha <SOURCE-SHA> \
+  --work-rev <WORK-REV> \
+  --proof-fingerprint <PROOF-FINGERPRINT> \
+  --gate-fingerprint <GATE-FINGERPRINT> \
+  --verdict pass|changes_requested|blocked \
+  --covers <ACCEPTANCE-IDS> \
+  --summary "<BOUNDED-SUMMARY>"
+```
+
+Use `--finding` for each actionable `changes_requested` finding and
+`--blocker machine|infrastructure|human` for `blocked`. A human blocker requires
+a real open human-owned gate. Reviewer prose and process exit are not
+acceptance.
+
+Never merge, land, close, move refs, change task status, satisfy gates, or edit
+implementation files from the review lane. The deterministic control plane
+consumes a valid typed result. If the installed CLI or packet does not support
+the typed command, report the stale contract and stop; do not fall back to
+legacy reviewer choreography.
+
 ## Claimed-run protocol
 
 This protocol applies only to workers launched by the resident daemon. A
@@ -134,7 +165,8 @@ subjective final acceptance, not as a substitute for agent verification.
 
 Risk changes proof depth, reviewer strength, and landing safeguards; risk alone
 does not justify a human gate or human close policy. Independent reviewers may
-close objectively proven work at every tier. Explicit human gates remain binding
+objectively accept work at every tier through a typed result; the deterministic
+control plane performs landing and closure. Explicit human gates remain binding
 for capability, external authority, unresolved intent, and contractually
 subjective acceptance.
 
@@ -165,6 +197,9 @@ test — do not write it.
 - Runtime activity lives in runs, leases, sessions, attempts, and workspaces.
 - Human gates stop the agent. Do not keep validating around them.
 - Proof must map to acceptance. A vague summary is not proof.
+- A dispatched reviewer only submits a typed review result. It never edits
+  implementation, merges, lands, closes, moves refs, or changes task/gate
+  lifecycle state.
 - Abandoned tasks are discarded with `tusker discard`, never physically deleted or moved to `cancelled` by raw status mutation. Inspect the downstream impact first and explicitly detach or discard dependents.
 - When Xcode fails from generated build-state corruption, run `tusker xcode doctor`; if it reports `likely_infrastructure`, do not claim code validation from that failed build.
 - Explainer packets help humans understand and participate; they do not satisfy proof by themselves.
