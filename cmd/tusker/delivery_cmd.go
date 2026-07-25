@@ -79,6 +79,35 @@ type deliveryArtifactContract struct {
 	AcceptanceIDs []string `yaml:"acceptance_ids" json:"acceptance_ids"`
 }
 
+// deliveryPlanValidationRule is the authoring contract projected by
+// `delivery context`. Keep these rules aligned with the base validator and the
+// V2 doctor: a planner should not need to reverse-engineer either implementation
+// before it can author a safe proposal.
+type deliveryPlanValidationRule struct {
+	ID          string   `json:"id"`
+	Fields      []string `json:"fields"`
+	Requirement string   `json:"requirement"`
+	FailureCode string   `json:"failure_code"`
+	Remedy      string   `json:"remedy"`
+}
+
+func deliveryPlanValidationRules() []deliveryPlanValidationRule {
+	return []deliveryPlanValidationRule{
+		{ID: "bounded_scope", Fields: []string{"scope", "spec_refs", "tasks"}, Requirement: "scope is stable, governing spec_refs resolve inside the repository, and tasks cover only cited requirements", FailureCode: "PLAN_CONTRACT_INVALID", Remedy: "remove unrelated runnable work and bind every task to the governing scope"},
+		{ID: "source_keys", Fields: []string{"requirements[].id", "tasks[].source_key"}, Requirement: "every requirement and task has a unique stable source key", FailureCode: "PLAN_CONTRACT_INVALID", Remedy: "replace missing, duplicate, or placeholder keys with stable identifiers"},
+		{ID: "requirement_coverage", Fields: []string{"requirements", "tasks[].requirement_refs"}, Requirement: "every requirement is covered by at least one task", FailureCode: "REQUIREMENT_UNCOVERED", Remedy: "map each requirement to a task with observable acceptance"},
+		{ID: "acceptance_proof", Fields: []string{"tasks[].acceptance", "tasks[].verification"}, Requirement: "acceptance is observable and every acceptance ID has an exact command or manual-proof mapping", FailureCode: "ACCEPTANCE_UNMAPPED", Remedy: "add exact verification covering every acceptance ID"},
+		{ID: "operator_artifact", Fields: []string{"tasks[].artifact"}, Requirement: "every task declares an operator-facing artifact at a repo-relative production path and maps it to acceptance IDs", FailureCode: "ARTIFACT_INVALID", Remedy: "declare a valid visual, behavior, reliability, security, diff, performance, or knowledge artifact"},
+		{ID: "acyclic_dag", Fields: []string{"tasks[].dependencies"}, Requirement: "dependencies reference declared task keys and form an acyclic graph", FailureCode: "DEPENDENCY_CYCLE", Remedy: "remove dangling edges and redirect dependencies until the graph is acyclic"},
+		{ID: "human_gate_authority", Fields: []string{"human_gates"}, Requirement: "human gates are source-keyed and name an owner, action, verification, why the agent cannot act, acceptance IDs, and affected dependency closure", FailureCode: "HUMAN_GATE_PROOF_INVALID", Remedy: "complete the human-owned proof contract and exact downstream closure"},
+		{ID: "shared_resources", Fields: []string{"shared_resources", "tasks[].resource_refs"}, Requirement: "scarce shared resources are declared once with stable keys and capacity", FailureCode: "RESOURCE_UNDECLARED", Remedy: "declare every referenced resource and its measured capacity"},
+		{ID: "overlap_strategy", Fields: []string{"tasks[].owned_paths", "tasks[].generated_outputs", "tasks[].migration_keys", "owned_path_overlaps"}, Requirement: "simultaneously runnable ownership collisions have an explicit serialization or downstream-integrator strategy", FailureCode: "OWNED_PATH_FRONTIER_CONFLICT", Remedy: "serialize colliding tasks or add an integrator that owns the complete collision surface"},
+		{ID: "capacity", Fields: []string{"concurrency", "runner_profile"}, Requirement: "requested frontier concurrency fits configured runner, workspace, and project capacity", FailureCode: "CONCURRENCY_CAP_EXCEEDED", Remedy: "lower concurrency or configure measured capacity before import"},
+		{ID: "runner_profile", Fields: []string{"runner_profile", "tasks[].runner_profile"}, Requirement: "every selected runner profile exists in the resolved project configuration", FailureCode: "UNSUPPORTED_RUNNER", Remedy: "choose a configured profile; never silently substitute an unsupported runner"},
+		{ID: "assumptions", Fields: []string{"assumptions", "unresolved_decisions"}, Requirement: "assumptions and unresolved decisions remain explicitly labeled and are not presented as accepted facts", FailureCode: "ASSUMPTION_PRESENTED_AS_FACT", Remedy: "resolve the fact through a decision or keep it only in the labeled assumption set"},
+	}
+}
+
 type deliveryImportReport struct {
 	PlanFingerprint     string            `json:"planFingerprint"`
 	PlanScope           string            `json:"planScope"`

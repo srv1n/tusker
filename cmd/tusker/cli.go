@@ -305,6 +305,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, waveV7DisarmCmd(args)
 	case "delivery plan":
 		return 0, deliveryPlanCmd(args)
+	case "delivery context":
+		return 0, deliveryPlanningContextCmd(args)
 	case "delivery import":
 		return 0, deliveryImportCmd(args)
 	case "delivery doctor":
@@ -1044,7 +1046,7 @@ func printCommandHelp(command string) bool {
 		printEvidenceHelp()
 	case "migrate vault-root":
 		printMigrateVaultRootHelp()
-	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "wave brief", "wave preflight", "wave arm", "wave pause", "wave resume", "wave disarm", "delivery", "delivery plan", "delivery import", "delivery rollout", "trace", "trace list", "trace show", "trace replay", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy", "migrate close-policy":
+	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "wave brief", "wave preflight", "wave arm", "wave pause", "wave resume", "wave disarm", "delivery", "delivery plan", "delivery context", "delivery import", "delivery rollout", "trace", "trace list", "trace show", "trace replay", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy", "migrate close-policy":
 		printV7Help()
 	case "feedback", "feedback add", "feedback digest", "feedback ingest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()
@@ -1231,6 +1233,7 @@ func printV7Help() {
   tusker new decision --epic HSP --title "Use repo-local branch-safe tracker"
 
   tusker delivery plan --spec docs/specs/example.md --out .tusker/scratch/delivery-plan.yaml
+  tusker delivery context --spec docs/specs/example.md --json
   tusker delivery import --plan .tusker/scratch/delivery-plan.yaml --wave "Example delivery" --dry-run
   tusker delivery import --plan .tusker/scratch/delivery-plan.yaml --wave "Example delivery"
   tusker delivery rollout doctor --json
