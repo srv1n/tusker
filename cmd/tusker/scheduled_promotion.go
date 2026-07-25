@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -402,28 +403,32 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	gateStarted := time.Now().UTC()
 	stopHeartbeat := startScheduledPromotionLeaseHeartbeat(store, lease, scheduledPromotionResourceLeaseTTL)
 	defer func() { _ = stopHeartbeat() }()
-	pass, gateSummary := runV7GateTierOnRef(vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+	execution := runV7GateTierOnRef(vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+	gateSummary := string(execution.Result.Outcome)
 	gateFinished := time.Now().UTC()
-	if !pass {
+	if execution.Err != nil || (execution.Result.Outcome != gateOutcomePassed && execution.Result.Outcome != gateOutcomeLedgerHit) {
 		if heartbeatErr := stopHeartbeat(); heartbeatErr != nil {
 			return "", heartbeatErr
 		}
 		// Red gates never advance main. Persist a compact, replay-safe packet so
 		// triage has the frozen candidate and a durable raw-log reference rather
 		// than rediscovering the failure from mutable branches.
-		artifactRef := "departure://" + run.ID + "/full-gate"
-		packet := promotionFailurePacket(before.Candidate, before.Gate, actor, gateSummary, nil, gatePolicy, "", "", "", nil, []string{artifactRef})
-		route := classifyPromotionFailure(packet)
+		gateOutput, _ := os.ReadFile(execution.ArtifactRef)
+		packet := promotionFailurePacket(before.Candidate, before.Gate, actor, string(gateOutput), execution.Err, gatePolicy, "", "", "", nil, []string{execution.ArtifactRef})
+		packet.GateResult = execution.Result
+		route := classifyPromotionFailure(packet, gatePolicy)
 		repairTaskID := ""
 		if route.Repair {
-			_ = createPromotionFailureRepairTask(vaultPath, run.ID, packet.GateCommand, actionableGateFailure(gateSummary, nil), packet.GateProfile, route.StableIdentity, packet.OwningTaskID, artifactRef)
+			if repairErr := createPromotionFailureRepairTask(vaultPath, run.ID, packet.GateCommand, actionableGateFailure(string(gateOutput), execution.Err), packet.GateProfile, route.StableIdentity, packet.OwningTaskID, execution.ArtifactRef); repairErr != nil {
+				return "", repairErr
+			}
 			repairTaskID = promotionFailureRepairTaskID(vaultPath, route.StableIdentity)
 		}
 		failed := *run
 		failed.Candidate, failed.Gate = before.Candidate, before.Gate
 		failed.Gate.Status = "failed"
-		failed.Gate.StartedAt, failed.Gate.FinishedAt, failed.Gate.ArtifactRef = gateStarted.Format(time.RFC3339Nano), gateFinished.Format(time.RFC3339Nano), artifactRef
-		failed.Gate.Failure = DepartureFailure{Class: string(route.Class), Identity: route.StableIdentity, OwningTaskID: packet.OwningTaskID, BisectionRef: packet.BisectionRef, ArtifactRefs: packet.ArtifactRefs, RepairTaskID: repairTaskID, ModelTriage: route.ModelTriage}
+		failed.Gate.StartedAt, failed.Gate.FinishedAt, failed.Gate.ArtifactRef = gateStarted.Format(time.RFC3339Nano), gateFinished.Format(time.RFC3339Nano), execution.ArtifactRef
+		failed.Gate.Failure = DepartureFailure{Class: string(route.Class), Identity: route.StableIdentity, OwningTaskID: packet.OwningTaskID, BisectionRef: packet.BisectionRef, ArtifactRefs: packet.ArtifactRefs, RepairTaskID: repairTaskID, ModelTriage: route.ModelTriage, Packet: packet}
 		failed.State = DepartureStateFailed
 		failed.BlockReason = "promotion gate red: " + route.StableIdentity
 		if changed, persistErr := store.TransitionDepartureRun(failed, run.StateRevision); persistErr != nil {
@@ -433,7 +438,7 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		}
 		*run = failed
 		run.StateRevision++
-		return "", tuskerError(errorInvalidTransition, "promotion gate red: "+gateSummary)
+		return "", tuskerError(errorInvalidTransition, "promotion gate red: "+safePacketText(string(gateOutput), 320))
 	}
 	after, err := scheduledPromotionSnapshot(vaultPath, projectID, waveID, wf)
 	if err != nil {

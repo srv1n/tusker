@@ -203,6 +203,10 @@ type GateTierPolicy struct {
 	DefectTargetRegex string `yaml:"defect_target_regex,omitempty" json:"defect_target_regex,omitempty"`
 	// DefectLineLimit caps each defect excerpt. Defaults to 12 lines.
 	DefectLineLimit int `yaml:"defect_line_limit,omitempty" json:"defect_line_limit,omitempty"`
+	// PromotionFailurePatterns are explicit project-owned classifications. They
+	// are never inferred from arbitrary test assertion text.
+	InfrastructureFailurePatterns []string `yaml:"infrastructure_failure_patterns,omitempty" json:"infrastructure_failure_patterns,omitempty"`
+	FlakeFailurePatterns          []string `yaml:"flake_failure_patterns,omitempty" json:"flake_failure_patterns,omitempty"`
 	// Scopes map areas of the project to the harvest commands that cover them,
 	// enabling the Stage 1 per-change (selective) gate: `tusker gate --changed`
 	// runs only the scopes a change touched. When empty, only the whole-harvest

@@ -26,13 +26,14 @@ func TestPromotionFailureClassificationEscalationLadder(t *testing.T) {
 		want                 promotionFailureClass
 		model                bool
 	}{
-		{"infrastructure", "", "dial tcp: connection reset", promotionFailureInfrastructure, false},
-		{"flake", "", "flaky test; rerun passed", promotionFailureFlake, false},
+		{"infrastructure", "", "infra-fingerprint", promotionFailureInfrastructure, false},
+		{"flake", "", "flake-fingerprint", promotionFailureFlake, false},
 		{"isolated", "APP-T-0001", "assertion failed", promotionFailureIsolated, false},
 		{"ambiguous", "", "compiler failed", promotionFailureAmbiguous, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			route := classifyPromotionFailure(PromotionFailurePacket{GateCommand: "go test", OwningTaskID: tc.owner, Defects: []GateDefect{{Target: "T", Excerpt: tc.excerpt}}})
+			policy := GateTierPolicy{InfrastructureFailurePatterns: []string{"infra-fingerprint"}, FlakeFailurePatterns: []string{"flake-fingerprint"}}
+			route := classifyPromotionFailure(PromotionFailurePacket{GateCommand: "go test", OwningTaskID: tc.owner, ClassificationText: tc.excerpt, Defects: []GateDefect{{Target: "T", Excerpt: tc.excerpt}}}, policy)
 			if route.Class != tc.want || route.ModelTriage != tc.model {
 				t.Fatalf("route=%#v", route)
 			}
@@ -46,5 +47,12 @@ func TestPromotionFailureIdentityIsStableAcrossRuns(t *testing.T) {
 	second.Defects[0].Excerpt = "different timestamp and raw output"
 	if promotionFailureIdentity(first) != promotionFailureIdentity(second) {
 		t.Fatalf("same defect opened a duplicate identity")
+	}
+}
+
+func TestPromotionFailureTimeoutTextIsAmbiguousWithoutConfiguredPattern(t *testing.T) {
+	route := classifyPromotionFailure(PromotionFailurePacket{ClassificationText: "assertion expected timeout value", Defects: []GateDefect{{Target: "TestTimeout"}}}, GateTierPolicy{})
+	if route.Class != promotionFailureAmbiguous || !route.ModelTriage {
+		t.Fatalf("incidental test text was misclassified: %#v", route)
 	}
 }

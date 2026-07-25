@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -305,6 +307,14 @@ func TestScheduledPromotionLandingRunsFrozenFullGateContract(t *testing.T) {
 	}
 	if strings.Contains(durable.Gate.Failure.ArtifactRefs[0], "FULL_GATE_EXECUTED") {
 		t.Fatalf("raw gate output leaked into durable failure: %#v", durable.Gate.Failure)
+	}
+	raw, readErr := os.ReadFile(durable.Gate.Failure.ArtifactRefs[0])
+	if readErr != nil || !strings.Contains(string(raw), "FULL_GATE_EXECUTED") {
+		t.Fatalf("runtime gate artifact is not resolvable/raw: %q err=%v", raw, readErr)
+	}
+	durableJSON, marshalErr := json.Marshal(durable)
+	if marshalErr != nil || strings.Contains(string(durableJSON), "$ echo FULL_GATE_EXECUTED") {
+		t.Fatalf("raw gate output leaked into departure JSON: %s err=%v", durableJSON, marshalErr)
 	}
 	snapshot, err := scheduledPromotionSnapshot(vault, "app", "W-0001", wf)
 	if err != nil {
