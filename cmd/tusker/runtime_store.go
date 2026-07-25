@@ -45,6 +45,67 @@ func (s *RuntimeStore) LatestGateLedgerBefore(projectID, command, profile, befor
 	return &entry, nil
 }
 
+// LatestCompleteGateLedgerBefore returns the newest tree for which every
+// command in the declared full gate has a green ledger entry before `before`.
+func (s *RuntimeStore) LatestCompleteGateLedgerBefore(projectID string, commands []string, profile, before string) (*GateLedgerEntry, error) {
+	cutoff, err := time.Parse(time.RFC3339Nano, before)
+	if err != nil {
+		return nil, err
+	}
+	need := map[string]bool{}
+	for _, command := range commands {
+		if command = strings.TrimSpace(command); command != "" {
+			need[command] = true
+		}
+	}
+	if len(need) == 0 {
+		return nil, nil
+	}
+	rows, err := s.query(`SELECT id, project_id, tree_hash, command, profile, host, duration_ms, passed_at FROM gate_ledger WHERE project_id = ? AND profile = ?`, projectID, profile)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type bucket struct {
+		seen   map[string]bool
+		latest GateLedgerEntry
+		at     time.Time
+	}
+	buckets := map[string]*bucket{}
+	for rows.Next() {
+		var entry GateLedgerEntry
+		if err := rows.Scan(&entry.ID, &entry.ProjectID, &entry.TreeHash, &entry.Command, &entry.Profile, &entry.Host, &entry.DurationMS, &entry.PassedAt); err != nil {
+			return nil, err
+		}
+		at, parseErr := time.Parse(time.RFC3339Nano, entry.PassedAt)
+		if parseErr != nil || !at.Before(cutoff) || !need[entry.Command] {
+			continue
+		}
+		b := buckets[entry.TreeHash]
+		if b == nil {
+			b = &bucket{seen: map[string]bool{}}
+			buckets[entry.TreeHash] = b
+		}
+		b.seen[entry.Command] = true
+		if at.After(b.at) {
+			b.latest, b.at = entry, at
+		}
+	}
+	var best *bucket
+	for _, b := range buckets {
+		if len(b.seen) != len(need) {
+			continue
+		}
+		if best == nil || b.at.After(best.at) {
+			best = b
+		}
+	}
+	if best == nil {
+		return nil, nil
+	}
+	return &best.latest, nil
+}
+
 type BatchGateRun struct {
 	ID           string `json:"id"`
 	ProjectID    string `json:"project_id"`

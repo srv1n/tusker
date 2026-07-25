@@ -442,7 +442,7 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		}
 		lastGreen := ""
 		lastStatus := "unavailable:no_matching_entry"
-		if entry, ledgerErr := store.LatestGateLedgerBefore(projectID, before.Gate.Command, before.Gate.Profile, gateStarted.Format(time.RFC3339Nano)); ledgerErr == nil && entry != nil {
+		if entry, ledgerErr := store.LatestCompleteGateLedgerBefore(projectID, gatePolicy.HarvestCommands, before.Gate.Profile, gateStarted.Format(time.RFC3339Nano)); ledgerErr == nil && entry != nil {
 			lastGreen, lastStatus = entry.ID+"@"+entry.TreeHash+"@"+entry.PassedAt, "proven"
 		}
 		packet := promotionFailurePacket(before.Candidate, before.Gate, actor, string(gateOutput), execution.Err, gatePolicy, lastGreen, "", owner, touched, artifactRefs)
