@@ -69,11 +69,12 @@ type DepartureDecision struct {
 }
 
 type departurePlanner struct {
-	fetch      func(context.Context, string, string, string) error
-	rev        func(string, string) (string, bool)
-	remote     func(string) (string, bool)
-	now        func() time.Time
-	gateLookup func(projectID, treeHash string, commands []string, profile, toolchain string) bool
+	fetch        func(context.Context, string, string, string) error
+	rev          func(string, string) (string, bool)
+	remote       func(string) (string, bool)
+	now          func() time.Time
+	gateLookup   func(projectID, treeHash string, commands []string, profile, toolchain string) bool
+	receiptStore *RuntimeStore
 }
 
 func defaultDeparturePlanner() departurePlanner {
@@ -132,7 +133,7 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 			continue
 		}
 		wave := idx.Waves[fact.ID]
-		if departureWaveDiscoverableFromExactAudits(repoRoot, fact.IntegrationRef, wave, idx, p.rev) {
+		if departureWaveDiscoverableFromExactAudits(repoRoot, fact.IntegrationRef, wave, idx, p.rev, p.receiptStore) {
 			cargoWaves[fact.ID] = true
 		}
 	}
@@ -166,7 +167,7 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 			decision.Reasons = append(decision.Reasons, DepartureReason{Code: "task_review_provenance_invalid", Message: err.Error()})
 			return decision, nil
 		}
-		sourceSHA, sourceErr := scheduledPromotionExactTaskSourceSHA(repoRoot, "", Note{}, task, p.rev)
+		sourceSHA, sourceErr := scheduledPromotionExactTaskSourceSHAWithStore(repoRoot, "", Note{}, task, p.rev, p.receiptStore)
 		if sourceErr != nil {
 			decision.Disposition = "blocked"
 			decision.Reasons = append(decision.Reasons, DepartureReason{Code: "task_source_unavailable", Message: sourceErr.Error()})
@@ -220,7 +221,7 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 				decision.Reasons = append(decision.Reasons, DepartureReason{Code: "wave_member_review_provenance_invalid", Message: reviewErr.Error()})
 				return decision, nil
 			}
-			sourceSHA, sourceErr := scheduledPromotionExactTaskSourceSHA(repoRoot, fact.IntegrationRef, wave, task, p.rev)
+			sourceSHA, sourceErr := scheduledPromotionExactTaskSourceSHAWithStore(repoRoot, fact.IntegrationRef, wave, task, p.rev, p.receiptStore)
 			if sourceErr != nil {
 				decision.Disposition = "blocked"
 				decision.Reasons = append(decision.Reasons, DepartureReason{Code: "wave_member_source_unavailable", Message: sourceErr.Error()})
@@ -293,7 +294,7 @@ func departureTaskFact(task Note) DepartureTaskFact {
 	return fact
 }
 
-func departureWaveDiscoverableFromExactAudits(repoRoot, integrationBranch string, wave Note, idx v7Index, resolve func(string, string) (string, bool)) bool {
+func departureWaveDiscoverableFromExactAudits(repoRoot, integrationBranch string, wave Note, idx v7Index, resolve func(string, string) (string, bool), trustedStore *RuntimeStore) bool {
 	members := uniqueDepartureStrings(normalizeList(wave.Data["members"]))
 	if len(members) == 0 {
 		return false
@@ -308,7 +309,7 @@ func departureWaveDiscoverableFromExactAudits(repoRoot, integrationBranch string
 			!strings.EqualFold(strings.TrimSpace(stringField(task.Data, "status")), "done") {
 			return false
 		}
-		if _, authenticated := authenticatedV7LandingAuditSource(repoRoot, integrationBranch, wave, taskID, resolve); !authenticated {
+		if _, authenticated := authenticatedV7LandingAuditSourceWithStore(repoRoot, integrationBranch, wave, taskID, resolve, trustedStore); !authenticated {
 			return false
 		}
 	}

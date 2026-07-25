@@ -113,6 +113,10 @@ func scheduledPromotionGatePolicy(vaultPath string, wf Workflow) (GateTierPolicy
 }
 
 func scheduledPromotionSnapshot(vaultPath, projectID, waveID string, wf Workflow) (scheduledPromotionCandidateSnapshot, error) {
+	return scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, nil)
+}
+
+func scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID string, wf Workflow, trustedStore *RuntimeStore) (scheduledPromotionCandidateSnapshot, error) {
 	if strings.TrimSpace(projectID) == "" {
 		return scheduledPromotionCandidateSnapshot{}, tuskerError(errorInvalidArg, "scheduled promotion requires a project identity")
 	}
@@ -175,7 +179,7 @@ func scheduledPromotionSnapshot(vaultPath, projectID, waveID string, wf Workflow
 			return scheduledPromotionCandidateSnapshot{}, err
 		}
 		stateRev := stringField(task.Data, "state_rev")
-		sourceSHA, err := scheduledPromotionTaskSourceSHA(repoRoot, candidateSHA, integrationBranch, wave, task)
+		sourceSHA, err := scheduledPromotionTaskSourceSHAWithStore(repoRoot, candidateSHA, integrationBranch, wave, task, trustedStore)
 		if err != nil {
 			return scheduledPromotionCandidateSnapshot{}, err
 		}
@@ -229,7 +233,11 @@ func scheduledPromotionSnapshot(vaultPath, projectID, waveID string, wf Workflow
 }
 
 func scheduledPromotionTaskSourceSHA(repoRoot, candidateSHA, integrationBranch string, wave, task Note) (string, error) {
-	sourceSHA, err := scheduledPromotionExactTaskSourceSHA(repoRoot, integrationBranch, wave, task, gitRevParse)
+	return scheduledPromotionTaskSourceSHAWithStore(repoRoot, candidateSHA, integrationBranch, wave, task, nil)
+}
+
+func scheduledPromotionTaskSourceSHAWithStore(repoRoot, candidateSHA, integrationBranch string, wave, task Note, trustedStore *RuntimeStore) (string, error) {
+	sourceSHA, err := scheduledPromotionExactTaskSourceSHAWithStore(repoRoot, integrationBranch, wave, task, gitRevParse, trustedStore)
 	if err != nil {
 		return "", err
 	}
@@ -241,14 +249,22 @@ func scheduledPromotionTaskSourceSHA(repoRoot, candidateSHA, integrationBranch s
 }
 
 func validateDepartureDurableCargo(vaultPath string, candidate DepartureCandidate) error {
+	return validateDepartureDurableCargoWithStore(vaultPath, candidate, nil)
+}
+
+func validateDepartureDurableCargoWithStore(vaultPath string, candidate DepartureCandidate, trustedStore *RuntimeStore) error {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return err
 	}
-	return validateDepartureDurableCargoIndex(vaultPath, idx, candidate)
+	return validateDepartureDurableCargoIndexWithStore(vaultPath, idx, candidate, trustedStore)
 }
 
 func validateDepartureDurableCargoIndex(vaultPath string, idx v7Index, candidate DepartureCandidate) error {
+	return validateDepartureDurableCargoIndexWithStore(vaultPath, idx, candidate, nil)
+}
+
+func validateDepartureDurableCargoIndexWithStore(vaultPath string, idx v7Index, candidate DepartureCandidate, trustedStore *RuntimeStore) error {
 	cargo := uniqueDepartureStrings(normalizeList(candidate.CargoTaskIDs))
 	if len(cargo) == 0 {
 		return tuskerError(errorInvalidTransition, "departure recompute required: cargo_missing")
@@ -329,7 +345,7 @@ func validateDepartureDurableCargoIndex(vaultPath string, idx v7Index, candidate
 			if expectedSource == "" || !strings.EqualFold(expectedSource, resolvedExpected) {
 				return tuskerError(errorInvalidTransition, "departure recompute required: task_source_not_immutable:"+taskID+": durable task source must be a full immutable commit SHA")
 			}
-			sourceSHA, err := scheduledPromotionExactTaskSourceSHA(repoRoot, integrationBranch, wave, task, gitRevParse)
+			sourceSHA, err := scheduledPromotionExactTaskSourceSHAWithStore(repoRoot, integrationBranch, wave, task, gitRevParse, trustedStore)
 			if err != nil {
 				return err
 			}
@@ -342,18 +358,26 @@ func validateDepartureDurableCargoIndex(vaultPath string, idx v7Index, candidate
 }
 
 func validateScheduledPromotionDurableCargo(vaultPath, waveID string, candidate DepartureCandidate) error {
+	return validateScheduledPromotionDurableCargoWithStore(vaultPath, waveID, candidate, nil)
+}
+
+func validateScheduledPromotionDurableCargoWithStore(vaultPath, waveID string, candidate DepartureCandidate, trustedStore *RuntimeStore) error {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return err
 	}
-	return validateScheduledPromotionDurableCargoIndex(vaultPath, idx, waveID, candidate)
+	return validateScheduledPromotionDurableCargoIndexWithStore(vaultPath, idx, waveID, candidate, trustedStore)
 }
 
 func validateScheduledPromotionDurableCargoIndex(vaultPath string, idx v7Index, waveID string, candidate DepartureCandidate) error {
+	return validateScheduledPromotionDurableCargoIndexWithStore(vaultPath, idx, waveID, candidate, nil)
+}
+
+func validateScheduledPromotionDurableCargoIndexWithStore(vaultPath string, idx v7Index, waveID string, candidate DepartureCandidate, trustedStore *RuntimeStore) error {
 	if !sameDepartureStrings(uniqueDepartureStrings(normalizeList(candidate.WaveIDs)), []string{waveID}) {
 		return tuskerError(errorInvalidTransition, "promotion recompute required: wave_membership_drift")
 	}
-	if err := validateDepartureDurableCargoIndex(vaultPath, idx, candidate); err != nil {
+	if err := validateDepartureDurableCargoIndexWithStore(vaultPath, idx, candidate, trustedStore); err != nil {
 		return err
 	}
 	repoRoot := v7RepoRoot(vaultPath)
@@ -367,14 +391,22 @@ func validateScheduledPromotionDurableCargoIndex(vaultPath string, idx v7Index, 
 }
 
 func validateScheduledPromotionWaveAuthority(vaultPath, waveID string) error {
+	return validateScheduledPromotionWaveAuthorityWithStore(vaultPath, waveID, nil)
+}
+
+func validateScheduledPromotionWaveAuthorityWithStore(vaultPath, waveID string, trustedStore *RuntimeStore) error {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return err
 	}
-	return validateScheduledPromotionWaveAuthorityIndex(vaultPath, idx, waveID)
+	return validateScheduledPromotionWaveAuthorityIndexWithStore(vaultPath, idx, waveID, trustedStore)
 }
 
 func validateScheduledPromotionWaveAuthorityIndex(vaultPath string, idx v7Index, waveID string) error {
+	return validateScheduledPromotionWaveAuthorityIndexWithStore(vaultPath, idx, waveID, nil)
+}
+
+func validateScheduledPromotionWaveAuthorityIndexWithStore(vaultPath string, idx v7Index, waveID string, trustedStore *RuntimeStore) error {
 	wave, ok := idx.Waves[waveID]
 	if !ok {
 		return tuskerError(errorNotFound, "V7 wave not found: "+waveID)
@@ -413,7 +445,7 @@ func validateScheduledPromotionWaveAuthorityIndex(vaultPath string, idx v7Index,
 		if err := scheduledPromotionTaskAcceptedReview(vaultPath, task); err != nil {
 			return err
 		}
-		if _, err := scheduledPromotionExactTaskSourceSHA(repoRoot, integrationBranch, wave, task, gitRevParse); err != nil {
+		if _, err := scheduledPromotionExactTaskSourceSHAWithStore(repoRoot, integrationBranch, wave, task, gitRevParse, trustedStore); err != nil {
 			return err
 		}
 	}
@@ -421,14 +453,18 @@ func validateScheduledPromotionWaveAuthorityIndex(vaultPath string, idx v7Index,
 }
 
 func validateScheduledPromotionPreparedAuthority(vaultPath, waveID string, candidate DepartureCandidate, preparation *v7WaveMemberPreparation) error {
+	return validateScheduledPromotionPreparedAuthorityWithStore(vaultPath, waveID, candidate, preparation, nil)
+}
+
+func validateScheduledPromotionPreparedAuthorityWithStore(vaultPath, waveID string, candidate DepartureCandidate, preparation *v7WaveMemberPreparation, trustedStore *RuntimeStore) error {
 	idx, changed, err := scheduledPromotionPreparedAuthorityIndex(vaultPath, preparation)
 	if err != nil {
 		return err
 	}
-	if err := validateScheduledPromotionWaveAuthorityIndex(vaultPath, idx, waveID); err != nil {
+	if err := validateScheduledPromotionWaveAuthorityIndexWithStore(vaultPath, idx, waveID, trustedStore); err != nil {
 		return err
 	}
-	if err := validateScheduledPromotionDurableCargoIndex(vaultPath, idx, waveID, candidate); err != nil {
+	if err := validateScheduledPromotionDurableCargoIndexWithStore(vaultPath, idx, waveID, candidate, trustedStore); err != nil {
 		return err
 	}
 	if changed {
@@ -538,10 +574,10 @@ func scheduledPromotionAdvanceRefUnderMaterialEpoch(
 		err = errors.Join(err, materialLock.Close())
 	}()
 
-	if err := validateScheduledPromotionWaveAuthority(vaultPath, waveID); err != nil {
+	if err := validateScheduledPromotionWaveAuthorityWithStore(vaultPath, waveID, store); err != nil {
 		return nil, err
 	}
-	if err := validateScheduledPromotionDurableCargo(vaultPath, waveID, candidate); err != nil {
+	if err := validateScheduledPromotionDurableCargoWithStore(vaultPath, waveID, candidate, store); err != nil {
 		return nil, err
 	}
 	repoRoot := v7RepoRoot(vaultPath)
@@ -566,7 +602,7 @@ func scheduledPromotionAdvanceRefUnderMaterialEpoch(
 	if err := ctx.Err(); err != nil {
 		return nil, restore(err)
 	}
-	if err := validateScheduledPromotionPreparedAuthority(vaultPath, waveID, candidate, preparation); err != nil {
+	if err := validateScheduledPromotionPreparedAuthorityWithStore(vaultPath, waveID, candidate, preparation, store); err != nil {
 		return nil, restore(err)
 	}
 	if err := scheduledPromotionAfterFinalAuthority(); err != nil {
@@ -608,10 +644,14 @@ func scheduledPromotionTaskAcceptedReview(vaultPath string, task Note) error {
 }
 
 func scheduledPromotionExactTaskSourceSHA(repoRoot, integrationBranch string, wave, task Note, resolve func(string, string) (string, bool)) (string, error) {
+	return scheduledPromotionExactTaskSourceSHAWithStore(repoRoot, integrationBranch, wave, task, resolve, nil)
+}
+
+func scheduledPromotionExactTaskSourceSHAWithStore(repoRoot, integrationBranch string, wave, task Note, resolve func(string, string) (string, bool), trustedStore *RuntimeStore) (string, error) {
 	taskID := stringField(task.Data, "id")
 	sourceSHA := firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit"), stringField(task.Data, "source_branch_sha"))
 	if sourceSHA == "" {
-		if exact, ok := authenticatedV7LandingAuditSource(repoRoot, integrationBranch, wave, taskID, resolve); ok {
+		if exact, ok := authenticatedV7LandingAuditSourceWithStore(repoRoot, integrationBranch, wave, taskID, resolve, trustedStore); ok {
 			sourceSHA = exact
 		}
 	}
@@ -636,6 +676,10 @@ func scheduledPromotionExactTaskSourceSHA(repoRoot, integrationBranch string, wa
 // segment, direct merge parents, task-owned source, gate/toolchain facts, and
 // final tree. Recovery never searches historical Git for a plausible merge.
 func authenticatedV7LandingAuditSource(repoRoot, integrationBranch string, wave Note, taskID string, resolve func(string, string) (string, bool)) (string, bool) {
+	return authenticatedV7LandingAuditSourceWithStore(repoRoot, integrationBranch, wave, taskID, resolve, nil)
+}
+
+func authenticatedV7LandingAuditSourceWithStore(repoRoot, integrationBranch string, wave Note, taskID string, resolve func(string, string) (string, bool), trustedStore *RuntimeStore) (string, bool) {
 	if strings.TrimSpace(integrationBranch) == "" {
 		return "", false
 	}
@@ -679,7 +723,7 @@ func authenticatedV7LandingAuditSource(repoRoot, integrationBranch string, wave 
 			receipt.BatchTreeSHA != stringField(row, "tree") {
 			continue
 		}
-		proof, ok := verifiedV7LandingReceiptTask(repoRoot, integrationBranch, receipt, taskID)
+		proof, ok := verifiedV7LandingReceiptTaskWithStore(repoRoot, integrationBranch, receipt, taskID, trustedStore)
 		if !ok ||
 			proof.SourceSHA != stringField(row, "source_sha") ||
 			proof.SourceProvenance != stringField(row, "source_provenance") ||
@@ -1059,7 +1103,7 @@ func resumeScheduledPromotionIntent(ctx context.Context, vaultPath, projectID, w
 	if state != scheduledPromotionIntentPreRef {
 		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: default_ref_drift current="+current+" expected="+run.Promotion.ExpectedSHA+" intended="+run.Promotion.IntendedSHA)
 	}
-	if err := validateScheduledPromotionWaveAuthority(vaultPath, waveID); err != nil {
+	if err := validateScheduledPromotionWaveAuthorityWithStore(vaultPath, waveID, store); err != nil {
 		return "", err
 	}
 	if err := ctx.Err(); err != nil {
@@ -1178,11 +1222,11 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	if !ok {
 		return "", tuskerError(errorNotFound, "V7 wave not found: "+waveID)
 	}
-	if err := validateScheduledPromotionWaveAuthority(vaultPath, waveID); err != nil {
+	if err := validateScheduledPromotionWaveAuthorityWithStore(vaultPath, waveID, store); err != nil {
 		return "", err
 	}
 	if len(run.Candidate.CargoTaskIDs) > 0 {
-		if err := validateScheduledPromotionDurableCargo(vaultPath, waveID, run.Candidate); err != nil {
+		if err := validateScheduledPromotionDurableCargoWithStore(vaultPath, waveID, run.Candidate, store); err != nil {
 			return "", err
 		}
 	}
@@ -1193,7 +1237,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	if err := syncV7WaveControlStateToIntegration(vaultPath, wave, integrationBranch); err != nil {
 		return "", err
 	}
-	before, err := scheduledPromotionSnapshot(vaultPath, projectID, waveID, wf)
+	before, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, store)
 	if err != nil {
 		return "", err
 	}
@@ -1328,7 +1372,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	} else if hold != nil {
 		return "", departureHoldError(hold)
 	}
-	after, err := scheduledPromotionSnapshot(vaultPath, projectID, waveID, wf)
+	after, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, store)
 	if err != nil {
 		return "", err
 	}
@@ -1343,7 +1387,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	}
 	// A final snapshot makes every mutable input explicit. update-ref supplies
 	// the final default-ref CAS even if another writer races after this read.
-	final, err := scheduledPromotionSnapshot(vaultPath, projectID, waveID, wf)
+	final, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, store)
 	if err != nil {
 		return "", err
 	}
@@ -1358,7 +1402,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	if err := scheduledPromotionBeforeDefaultPrepare(); err != nil {
 		return "", err
 	}
-	late, err := scheduledPromotionSnapshot(vaultPath, projectID, waveID, wf)
+	late, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, store)
 	if err != nil {
 		return "", err
 	}

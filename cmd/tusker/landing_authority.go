@@ -52,6 +52,7 @@ type v7LandingAuthorityIssuance struct {
 type v7LandingAuthority struct {
 	Issuance v7LandingAuthorityIssuance
 	private  ed25519.PrivateKey
+	store    *RuntimeStore
 }
 
 func v7LandingAuthorityCandidate(candidate DepartureCandidate, taskIDs []string) DepartureCandidate {
@@ -129,7 +130,7 @@ func (d *Daemon) issueV7LandingAuthority(project RegisteredProject, wf Workflow,
 	}
 	d.landingAuthorityPrivate[issuance.AuthorityID] = private
 	d.landingAuthorityMu.Unlock()
-	return &v7LandingAuthority{Issuance: issuance, private: private}, nil
+	return &v7LandingAuthority{Issuance: issuance, private: private, store: d.store}, nil
 }
 
 func (s *RuntimeStore) NextV7LandingAuthorityGeneration(projectID, departureID string) (int, error) {
@@ -172,11 +173,21 @@ func (s *RuntimeStore) FindV7LandingAuthorityIssuance(id string) (*v7LandingAuth
 	return &issuance, nil
 }
 
-// verifyV7LandingReceiptAuthority deliberately treats receipt/cache/index data
-// as hostile discovery material.  Only a public issuance created before the
-// isolated gate plus its daemon-private signature confers authority.
+// verifyV7LandingReceiptAuthority is the command-path wrapper for the
+// configured canonical daemon store.
 func verifyV7LandingReceiptAuthority(repoRoot string, receipt v7LandingReceipt) bool {
-	if receipt.ControlAuthority != v7LandingAuthorityDeparture || receipt.AuthorityID == "" ||
+	return verifyV7LandingReceiptAuthorityWithStore(repoRoot, receipt, nil)
+}
+
+// verifyV7LandingReceiptAuthorityWithStore deliberately treats
+// receipt/cache/index data as hostile discovery material. Only an issuance in
+// the caller's daemon-held store (or the configured canonical store for a
+// historical daemon), created before the isolated gate, plus its
+// daemon-private signature confers authority.
+func verifyV7LandingReceiptAuthorityWithStore(repoRoot string, receipt v7LandingReceipt, trustedStore *RuntimeStore) bool {
+	if receipt.Schema != v7LandingReceiptSchema ||
+		receipt.Fingerprint != v7LandingReceiptFingerprint(receipt) ||
+		receipt.ControlAuthority != v7LandingAuthorityDeparture || receipt.AuthorityID == "" ||
 		receipt.ProjectID == "" || receipt.RepoIdentity == "" || receipt.DepartureID == "" ||
 		receipt.PolicyID == "" || receipt.ScheduledWindow == "" || receipt.DaemonSessionID == "" ||
 		receipt.DaemonHost == "" || receipt.DaemonProcess == "" || receipt.AuthorityGen <= 0 ||
@@ -187,11 +198,25 @@ func verifyV7LandingReceiptAuthority(repoRoot string, receipt v7LandingReceipt) 
 	if err != nil || repoIdentity != receipt.RepoIdentity {
 		return false
 	}
-	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if trustedStore != nil && verifyV7LandingReceiptAuthorityInStore(receipt, trustedStore) {
+		return true
+	}
+	defaultRoot := DefaultStateRoot()
+	if trustedStore != nil && filepath.Clean(trustedStore.stateRoot) == filepath.Clean(defaultRoot) {
+		return false
+	}
+	store, err := OpenRuntimeStoreReadOnly(defaultRoot)
 	if err != nil {
 		return false
 	}
 	defer store.Close()
+	return verifyV7LandingReceiptAuthorityInStore(receipt, store)
+}
+
+func verifyV7LandingReceiptAuthorityInStore(receipt v7LandingReceipt, store *RuntimeStore) bool {
+	if store == nil {
+		return false
+	}
 	issuance, err := store.FindV7LandingAuthorityIssuance(receipt.AuthorityID)
 	if err != nil || issuance == nil || issuance.RevokedAt != "" || len(issuance.PublicKey) != ed25519.PublicKeySize {
 		return false

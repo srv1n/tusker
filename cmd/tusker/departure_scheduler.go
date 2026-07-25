@@ -214,7 +214,11 @@ func (d *Daemon) planScheduledDeparture(project RegisteredProject, wf Workflow) 
 	if d != nil && d.departurePlan != nil {
 		return d.departurePlan(project, wf)
 	}
-	return defaultDeparturePlanner().PlanDeparture(project.VaultRoot, project.ProjectID, WorkflowFile{Data: wf})
+	planner := defaultDeparturePlanner()
+	if d != nil {
+		planner.receiptStore = d.store
+	}
+	return planner.PlanDeparture(project.VaultRoot, project.ProjectID, WorkflowFile{Data: wf})
 }
 
 func (d *Daemon) scheduleDepartureIfDue(project RegisteredProject, wf Workflow, now time.Time) error {

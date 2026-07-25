@@ -376,11 +376,11 @@ func (d *Daemon) executeDepartureStaging(project RegisteredProject, wf Workflow,
 	if len(run.Candidate.CargoTaskIDs) == 0 {
 		return d.blockDepartureRun(run, "departure refusal: durable cargo task identity is missing")
 	}
-	unstaged, err := departureUnstagedCargo(project, run.Candidate)
+	unstaged, err := departureUnstagedCargo(project, run.Candidate, d.store)
 	if err != nil {
 		return d.blockDepartureRun(run, "departure staging refusal: "+err.Error())
 	}
-	if err := validateDepartureDurableCargo(project.VaultRoot, run.Candidate); err != nil {
+	if err := validateDepartureDurableCargoWithStore(project.VaultRoot, run.Candidate, d.store); err != nil {
 		return d.blockDepartureRun(run, "departure staging refusal: "+err.Error())
 	}
 	if len(unstaged) > 0 {
@@ -428,7 +428,7 @@ func (d *Daemon) executeDepartureStaging(project RegisteredProject, wf Workflow,
 	} else if hold != nil {
 		return d.blockDepartureRun(run, departureHoldBlockReason(hold))
 	}
-	snapshot, err := departurePromotionSnapshotAfterStaging(project, wf, run.Candidate.WaveIDs[0], run.Candidate)
+	snapshot, err := departurePromotionSnapshotAfterStaging(project, wf, run.Candidate.WaveIDs[0], run.Candidate, d.store)
 	if err != nil {
 		if departureExecutionTransient(err) {
 			return err
@@ -451,7 +451,7 @@ func (d *Daemon) executeDepartureStaging(project RegisteredProject, wf Workflow,
 	return err
 }
 
-func departureUnstagedCargo(project RegisteredProject, candidate DepartureCandidate) ([]string, error) {
+func departureUnstagedCargo(project RegisteredProject, candidate DepartureCandidate, trustedStore *RuntimeStore) ([]string, error) {
 	idx, err := loadV7Index(project.VaultRoot)
 	if err != nil {
 		return nil, err
@@ -478,20 +478,20 @@ func departureUnstagedCargo(project RegisteredProject, candidate DepartureCandid
 		}
 		integrationBranch := v7WaveIntegrationBranch(wave)
 		if !gitMergeBaseAncestor(project.RepoRoot, sourceSHA, integrationBranch) ||
-			!departureExactLandingAudited(project.RepoRoot, wave, taskID, integrationBranch, sourceSHA) {
+			!departureExactLandingAudited(project.RepoRoot, wave, taskID, integrationBranch, sourceSHA, trustedStore) {
 			unstaged = append(unstaged, taskID)
 		}
 	}
 	return unstaged, nil
 }
 
-func departureExactLandingAudited(repoRoot string, wave Note, taskID, integrationBranch, sourceSHA string) bool {
-	audited, ok := authenticatedV7LandingAuditSource(repoRoot, integrationBranch, wave, taskID, gitRevParse)
+func departureExactLandingAudited(repoRoot string, wave Note, taskID, integrationBranch, sourceSHA string, trustedStore *RuntimeStore) bool {
+	audited, ok := authenticatedV7LandingAuditSourceWithStore(repoRoot, integrationBranch, wave, taskID, gitRevParse, trustedStore)
 	return ok && strings.EqualFold(audited, strings.TrimSpace(sourceSHA))
 }
 
-func departurePromotionSnapshotAfterStaging(project RegisteredProject, wf Workflow, waveID string, durable DepartureCandidate) (scheduledPromotionCandidateSnapshot, error) {
-	if err := validateDepartureDurableCargo(project.VaultRoot, durable); err != nil {
+func departurePromotionSnapshotAfterStaging(project RegisteredProject, wf Workflow, waveID string, durable DepartureCandidate, trustedStore *RuntimeStore) (scheduledPromotionCandidateSnapshot, error) {
+	if err := validateDepartureDurableCargoWithStore(project.VaultRoot, durable, trustedStore); err != nil {
 		return scheduledPromotionCandidateSnapshot{}, err
 	}
 	idx, err := loadV7Index(project.VaultRoot)
@@ -505,7 +505,7 @@ func departurePromotionSnapshotAfterStaging(project RegisteredProject, wf Workfl
 	if err := syncV7WaveControlStateToIntegration(project.VaultRoot, wave, v7WaveIntegrationBranch(wave)); err != nil {
 		return scheduledPromotionCandidateSnapshot{}, err
 	}
-	return scheduledPromotionSnapshot(project.VaultRoot, project.ProjectID, waveID, wf)
+	return scheduledPromotionSnapshotWithStore(project.VaultRoot, project.ProjectID, waveID, wf, trustedStore)
 }
 
 func departurePostStagingDrift(run DepartureRun, snapshot scheduledPromotionCandidateSnapshot) string {

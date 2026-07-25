@@ -188,7 +188,10 @@ func landV7CmdWithDepartureAuthority(args Args, frozenSources map[string]string,
 }
 
 func landV7CmdAsWaveDrain(args Args) error {
-	return landV7CmdWithAuthority(args, nil, v7LandingAuthorityWaveDrain, nil)
+	// Wave draining is a daemon workflow label, not a signing capability.
+	// Its ordinary landing receipt may support idempotent Git staging, but it
+	// must never become scheduled-departure source authority.
+	return landV7CmdWithAuthority(args, nil, "", nil)
 }
 
 func landV7CmdWithAuthority(args Args, frozenSources map[string]string, authority string, capability *v7LandingAuthority) error {
@@ -626,8 +629,6 @@ func trustedV7LandingControlAuthority(authority, actor string) bool {
 	case v7LandingAuthorityDeparture:
 		return strings.HasPrefix(actor, "daemon:departure:") &&
 			strings.TrimSpace(strings.TrimPrefix(actor, "daemon:departure:")) != ""
-	case v7LandingAuthorityWaveDrain:
-		return strings.TrimSpace(actor) == "daemon:wave-drain"
 	default:
 		return false
 	}
@@ -874,7 +875,11 @@ func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string,
 				}})
 				continue
 			}
-			entry, recovered := recoverV7LandingAuditFromReceipt(vaultPath, repoRoot, integrationBranch, task)
+			var trustedStore *RuntimeStore
+			if capability != nil {
+				trustedStore = capability.store
+			}
+			entry, recovered := recoverV7LandingAuditFromReceipt(vaultPath, repoRoot, integrationBranch, task, trustedStore)
 			if !recovered {
 				return tuskerError(errorInvalidTransition, "landing recovery refusal: verified receipt missing for already-integrated source "+task.ID+"@"+task.SourceSHA)
 			}
@@ -1805,12 +1810,12 @@ func isV7LandingFingerprint(value string) bool {
 	return true
 }
 
-func recoverV7LandingAuditFromReceipt(vaultPath, repoRoot, integrationBranch string, task v7LandTask) (v7LandingAuditEntry, bool) {
+func recoverV7LandingAuditFromReceipt(vaultPath, repoRoot, integrationBranch string, task v7LandTask, trustedStore *RuntimeStore) (v7LandingAuditEntry, bool) {
 	for _, receipt := range indexedV7LandingReceipts(vaultPath, integrationBranch, task.ID, task.SourceSHA) {
 		if receipt.Target != integrationBranch {
 			continue
 		}
-		proof, ok := verifiedV7LandingReceiptTask(repoRoot, integrationBranch, receipt, task.ID)
+		proof, ok := verifiedV7LandingReceiptTaskWithStore(repoRoot, integrationBranch, receipt, task.ID, trustedStore)
 		if !ok ||
 			!strings.EqualFold(proof.SourceSHA, task.SourceSHA) ||
 			proof.Branch != task.Branch {
@@ -1831,6 +1836,10 @@ func recoverV7LandingAuditFromReceipt(vaultPath, repoRoot, integrationBranch str
 }
 
 func verifiedV7LandingReceiptTask(repoRoot, integrationBranch string, receipt v7LandingReceipt, taskID string) (v7LandingReceiptTask, bool) {
+	return verifiedV7LandingReceiptTaskWithStore(repoRoot, integrationBranch, receipt, taskID, nil)
+}
+
+func verifiedV7LandingReceiptTaskWithStore(repoRoot, integrationBranch string, receipt v7LandingReceipt, taskID string, trustedStore *RuntimeStore) (v7LandingReceiptTask, bool) {
 	if receipt.Schema != v7LandingReceiptSchema ||
 		receipt.Outcome != "pass" ||
 		receipt.Target != integrationBranch ||
@@ -1843,7 +1852,7 @@ func verifiedV7LandingReceiptTask(repoRoot, integrationBranch string, receipt v7
 		len(receipt.BatchSegment) > len(receipt.Tasks)+1 {
 		return v7LandingReceiptTask{}, false
 	}
-	if receipt.ControlAuthority == v7LandingAuthorityDeparture && !verifyV7LandingReceiptAuthority(repoRoot, receipt) {
+	if !verifyV7LandingReceiptAuthorityWithStore(repoRoot, receipt, trustedStore) {
 		return v7LandingReceiptTask{}, false
 	}
 	if _, err := time.Parse(time.RFC3339Nano, receipt.ReceiptIssuedAt); err != nil {

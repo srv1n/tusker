@@ -81,10 +81,9 @@ func landFrozenSourcesAsIssuedDeparture(t *testing.T, repo, vault string, args A
 	return landV7CmdWithDepartureAuthority(args, sources, authority)
 }
 
-// These are adversarial boundary tests: receipt/index JSON and daemon-looking
-// labels are not authority.  The positive signing/restart fixture belongs with
-// the scheduled-departure integration matrix because it requires a real
-// registered project and isolated gate runner.
+// These are focused trust-boundary tests: receipt/index JSON and daemon-looking
+// labels are not authority, while a real issuance remains verifiable through
+// the exact daemon store that owns it.
 func TestV7LandingAuthorityRejectsForgedReceiptAndRuntimeRecord(t *testing.T) {
 	repo, _ := newLandTestRepo(t, 1, "true")
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
@@ -120,6 +119,106 @@ func TestV7LandingAuthorityRejectsActorLabelAndFrozenSources(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("actor label and frozen sources minted scheduled landing authority")
+	}
+}
+
+func TestV7LandingAuthorityVerificationUsesIssuingDaemonStore(t *testing.T) {
+	repo, vault := newLandTestRepo(t, 1, "true")
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "unrelated-default"))
+	store, err := OpenRuntimeStore(filepath.Join(t.TempDir(), "issuing-daemon"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	source := gitRevisionForTest(t, repo, "integration/W-0001")
+	window := time.Now().UTC().Format(time.RFC3339Nano)
+	candidate := DepartureCandidate{
+		CargoTaskIDs: []string{"APP-T-0001"}, WaveIDs: []string{"W-0001"},
+		TaskStateRevisions: map[string]string{"APP-T-0001": "task-state"},
+		TaskSourceSHAs:     map[string]string{"APP-T-0001": source},
+	}
+	run, _, err := store.GetOrCreateDepartureRun(DepartureRun{
+		ID: "departure-custom-root", ProjectID: "app", PolicyID: "test-policy",
+		ScheduledWindow: window, State: DepartureStateStaging, Candidate: candidate,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemon := &Daemon{store: store}
+	authority, err := daemon.issueV7LandingAuthority(
+		RegisteredProject{ProjectID: "app", RepoRoot: repo, VaultRoot: vault},
+		Workflow{}, run, candidate, "integration/W-0001",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuance := authority.Issuance
+	receipt := v7LandingReceipt{
+		Schema: v7LandingReceiptSchema, Actor: "daemon:departure:" + run.ID,
+		ControlAuthority: v7LandingAuthorityDeparture, Target: "integration/W-0001",
+		ReceiptIssuedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		Tasks:           []v7LandingReceiptTask{{Task: "APP-T-0001", SourceSHA: source}},
+		ProjectID:       issuance.ProjectID, RepoIdentity: issuance.RepoIdentity, DepartureID: issuance.DepartureID,
+		PolicyID: issuance.PolicyID, ScheduledWindow: issuance.ScheduledWindow,
+		DaemonSessionID: issuance.SessionID, DaemonHost: issuance.HostIdentity, DaemonProcess: issuance.ProcessIdentity,
+		AuthorityID: issuance.AuthorityID, AuthorityGen: issuance.Generation,
+	}
+	receipt.Fingerprint = v7LandingReceiptFingerprint(receipt)
+	receipt.AuthoritySignature = ed25519.Sign(authority.private, []byte(receipt.Fingerprint))
+
+	if verifyV7LandingReceiptAuthority(repo, receipt) {
+		t.Fatal("unrelated default runtime store authenticated another daemon's issuance")
+	}
+	if !verifyV7LandingReceiptAuthorityWithStore(repo, receipt, store) {
+		t.Fatal("issuing daemon store did not authenticate its own signed receipt")
+	}
+}
+
+func TestV7LandingAuthorityRejectsForgedWaveDrainReceiptIndex(t *testing.T) {
+	repo, vault := newLandTestRepo(t, 1, "true")
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
+	source := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"wave-drain-forgery.txt": "forged\n"})
+	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", source)
+	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "actor": "agent:test", "_pos0": "APP-T-0001"}); err != nil {
+		t.Fatal(err)
+	}
+	wave, err := resolveV7Note(vault, "W-0001", "wave")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var original v7LandingReceipt
+	for _, row := range normalizeLandingAudit(wave.Data["landings"]) {
+		if stringField(row, "task") != "APP-T-0001" {
+			continue
+		}
+		original, _ = loadV7LandingReceipt(vault, stringField(row, "receipt_fingerprint"))
+		break
+	}
+	if original.Fingerprint == "" {
+		t.Fatal("forgery fixture did not create a discoverable ordinary receipt")
+	}
+	forged := original
+	forged.Actor = "daemon:wave-drain"
+	forged.ControlAuthority = v7LandingAuthorityWaveDrain
+	forged.Fingerprint = v7LandingReceiptFingerprint(forged)
+	forged.AuthoritySignature = make([]byte, ed25519.SignatureSize)
+	if err := writeV7LandingReceipt(vault, forged); err != nil {
+		t.Fatal(err)
+	}
+	indexed := indexedV7LandingReceipts(vault, "integration/W-0001", "APP-T-0001", source)
+	if len(indexed) == 0 || indexed[0].Fingerprint != forged.Fingerprint {
+		t.Fatalf("forged public receipt was not exercised through the universal index: %#v", indexed)
+	}
+	if trustedV7LandingControlAuthority(forged.ControlAuthority, forged.Actor) {
+		t.Fatal("wave-drain actor label minted trusted landing authority")
+	}
+	if _, recovered := recoverV7LandingAuditFromReceipt(
+		vault, repo, "integration/W-0001",
+		v7LandTask{ID: "APP-T-0001", Branch: "task/APP-T-0001", SourceSHA: source},
+		nil,
+	); recovered {
+		t.Fatal("forged wave-drain receipt/index recovered a control-plane landing audit")
 	}
 }
 
