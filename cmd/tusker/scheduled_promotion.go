@@ -471,10 +471,7 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		failed.Candidate, failed.Gate = before.Candidate, before.Gate
 		failed.Gate.Status = "failed"
 		failed.Gate.StartedAt, failed.Gate.FinishedAt, failed.Gate.ArtifactRef = gateStarted.Format(time.RFC3339Nano), gateFinished.Format(time.RFC3339Nano), artifactRefs[len(artifactRefs)-1]
-		affected := []string{}
-		if owner != "" {
-			affected = append(affected, owner)
-		}
+		affected := promotionFailureHardClosure(vaultPath, owner)
 		failed.Gate.Failure = DepartureFailure{Class: string(route.Class), Identity: route.StableIdentity, OwningTaskID: packet.OwningTaskID, BisectionRef: packet.BisectionRef, ArtifactRefs: packet.ArtifactRefs, RepairTaskID: repairTaskID, ModelTriage: route.ModelTriage, Packet: packet, Action: action, AffectedTaskIDs: affected}
 		failed.State = DepartureStateFailed
 		failed.BlockReason = "promotion gate red: " + route.StableIdentity

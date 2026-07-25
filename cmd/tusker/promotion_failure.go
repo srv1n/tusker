@@ -70,6 +70,36 @@ func promotionFailureTouchedPaths(candidate DepartureCandidate, owner string) ([
 	return []string{}, "none_proven"
 }
 
+func promotionFailureHardClosure(vaultPath, owner string) []string {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil || owner == "" {
+		return nil
+	}
+	seen := map[string]bool{owner: true}
+	changed := true
+	for changed {
+		changed = false
+		for id, task := range idx.Tasks {
+			if seen[id] {
+				continue
+			}
+			for _, edge := range v7TaskDependencyEdges(task, idx) {
+				if edge.Hardness == v7DependencyHardnessHard && seen[edge.ID] {
+					seen[id] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // classifyPromotionFailure is intentionally deterministic. The caller only
 // spends a model when the bounded evidence is genuinely ambiguous.
 func classifyPromotionFailure(packet PromotionFailurePacket, policy GateTierPolicy) promotionFailureRoute {

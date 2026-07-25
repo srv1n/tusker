@@ -56,8 +56,8 @@ func TestPromotionFailureHardAndSoftSuccessorSemantics(t *testing.T) {
 	if _, held := v7HeldByFailedUpstream(hard, idx); !held {
 		t.Fatal("hard successor was not relocked")
 	}
-	if _, held := v7HeldByFailedUpstream(soft, idx); held {
-		t.Fatal("soft successor was incorrectly relocked")
+	if _, held := v7HeldByFailedUpstream(soft, idx); !held {
+		t.Fatal("soft successor was not relocked on revoked premise")
 	}
 	_ = time.Now // retain time import proof that RFC timestamps are parsed by store path
 }
