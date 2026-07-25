@@ -624,10 +624,10 @@ func scheduledPromotionExactTaskSourceSHA(repoRoot, integrationBranch string, wa
 	return resolved, nil
 }
 
-// authenticatedV7LandingAuditSource accepts Markdown only as an index into
-// immutable Git evidence. The row must carry Tusker landing provenance and its
-// source must be a real non-first parent on the recorded landing commit's
-// first-parent history, with that landing still reachable from integration.
+// authenticatedV7LandingAuditSource accepts Markdown only as an index into a
+// user-global Tusker receipt. The receipt names the exact bounded batch
+// segment, direct merge parents, task-owned source, gate/toolchain facts, and
+// final tree. Recovery never searches historical Git for a plausible merge.
 func authenticatedV7LandingAuditSource(repoRoot, integrationBranch string, wave Note, taskID string, resolve func(string, string) (string, bool)) (string, bool) {
 	if strings.TrimSpace(integrationBranch) == "" {
 		return "", false
@@ -639,6 +639,10 @@ func authenticatedV7LandingAuditSource(repoRoot, integrationBranch string, wave 
 	if !ok || integrationSHA == "" {
 		return "", false
 	}
+	vaultPath := v7VaultPathForLandingAudit(wave)
+	if vaultPath == "" {
+		return "", false
+	}
 	landings := normalizeLandingAudit(wave.Data["landings"])
 	for index := len(landings) - 1; index >= 0; index-- {
 		row := landings[index]
@@ -647,29 +651,38 @@ func authenticatedV7LandingAuditSource(repoRoot, integrationBranch string, wave 
 			stringField(row, "target") != integrationBranch ||
 			stringField(row, "gate_result") != "pass" ||
 			stringField(row, "provenance") != v7LandingAuditProvenance ||
-			!trustedV7LandingAuditActor(stringField(row, "actor")) ||
-			!trustedV7LandingGateSummary(stringField(row, "gate_summary")) {
+			!trustedV7LandingControlAuthority(stringField(row, "control_authority"), stringField(row, "actor")) {
 			continue
 		}
 		if _, err := time.Parse(time.RFC3339, stringField(row, "timestamp")); err != nil {
 			continue
 		}
-		source := strings.TrimSpace(stringField(row, "source_sha"))
-		landing := strings.TrimSpace(stringField(row, "commit"))
-		recordedTree := strings.TrimSpace(stringField(row, "tree"))
-		resolvedSource, sourceOK := resolve(repoRoot, source+"^{commit}")
-		resolvedLanding, landingOK := resolve(repoRoot, landing+"^{commit}")
-		actualTree, treeOK := resolve(repoRoot, landing+"^{tree}")
-		if source == "" || landing == "" || recordedTree == "" ||
-			!sourceOK || !landingOK || !treeOK ||
-			!strings.EqualFold(source, resolvedSource) ||
-			!strings.EqualFold(landing, resolvedLanding) ||
-			!strings.EqualFold(recordedTree, actualTree) {
+		fingerprint := stringField(row, "receipt_fingerprint")
+		if fingerprint == "" || stringField(row, "gate_fingerprint") == "" {
 			continue
 		}
-		if !gitMergeBaseAncestor(repoRoot, resolvedLanding, integrationSHA) ||
-			!gitMergeBaseAncestor(repoRoot, resolvedSource, resolvedLanding) ||
-			!v7LandingFirstParentContainsSource(repoRoot, resolvedLanding, resolvedSource) {
+		receipt, ok := loadV7LandingReceipt(vaultPath, fingerprint)
+		if !ok ||
+			receipt.Actor != stringField(row, "actor") ||
+			receipt.ControlAuthority != stringField(row, "control_authority") ||
+			receipt.GateSummary != stringField(row, "gate_summary") ||
+			receipt.GateFingerprint != stringField(row, "gate_fingerprint") ||
+			receipt.BatchBaseSHA == "" ||
+			receipt.BatchHeadSHA != stringField(row, "commit") ||
+			receipt.BatchTreeSHA != stringField(row, "tree") {
+			continue
+		}
+		proof, ok := verifiedV7LandingReceiptTask(repoRoot, integrationBranch, receipt, taskID)
+		if !ok ||
+			proof.SourceSHA != stringField(row, "source_sha") ||
+			proof.SourceProvenance != stringField(row, "source_provenance") ||
+			proof.BaseSHA != stringField(row, "base_sha") ||
+			proof.MergeCommit != stringField(row, "merge_commit") ||
+			!gitMergeBaseAncestor(repoRoot, receipt.BatchHeadSHA, integrationSHA) {
+			continue
+		}
+		resolvedSource, sourceOK := resolve(repoRoot, proof.SourceSHA+"^{commit}")
+		if !sourceOK || !strings.EqualFold(proof.SourceSHA, resolvedSource) {
 			continue
 		}
 		return resolvedSource, true
@@ -677,43 +690,15 @@ func authenticatedV7LandingAuditSource(repoRoot, integrationBranch string, wave 
 	return "", false
 }
 
-func trustedV7LandingAuditActor(actor string) bool {
-	actor = strings.TrimSpace(actor)
-	if actor == "daemon:wave-drain" {
-		return true
+func v7VaultPathForLandingAudit(wave Note) string {
+	if strings.TrimSpace(wave.AbsolutePath) == "" {
+		return ""
 	}
-	for _, prefix := range []string{"daemon:departure:", "agent:", "human:"} {
-		if strings.HasPrefix(actor, prefix) && strings.TrimSpace(strings.TrimPrefix(actor, prefix)) != "" {
-			return true
-		}
+	vaultPath := filepath.Clean(filepath.Join(filepath.Dir(wave.AbsolutePath), "..", ".."))
+	if !fileExists(filepath.Join(vaultPath, "SKILL.md")) {
+		return ""
 	}
-	return false
-}
-
-func trustedV7LandingGateSummary(summary string) bool {
-	summary = strings.TrimSpace(summary)
-	return strings.HasPrefix(summary, "gate passed:") || strings.HasPrefix(summary, "gate cached:")
-}
-
-func v7LandingFirstParentContainsSource(repoRoot, landingSHA, sourceSHA string) bool {
-	output, err := gitOutputTrim(repoRoot, "log", "--first-parent", "--format=%H %P", landingSHA)
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-		for _, parent := range fields[2:] {
-			if !strings.EqualFold(parent, sourceSHA) {
-				continue
-			}
-			tree, ok := gitRevParse(repoRoot, fields[0]+"^{tree}")
-			return ok && strings.TrimSpace(tree) != ""
-		}
-	}
-	return false
+	return vaultPath
 }
 
 func scheduledPromotionToolchainFingerprint(repoRoot string, commands []string) string {

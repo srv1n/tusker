@@ -18,10 +18,16 @@ import (
 )
 
 const (
-	tuskerLandMainGuardEnv     = "TUSKER_LAND_MAIN_OK"
-	v7LandingLockSchema        = "tusker.landing-lock/v1"
-	v7LandingLockRecoveryGrace = 30 * time.Second
-	v7LandingAuditProvenance   = "tusker:landing/v1"
+	tuskerLandMainGuardEnv      = "TUSKER_LAND_MAIN_OK"
+	v7LandingLockSchema         = "tusker.landing-lock/v1"
+	v7LandingLockRecoveryGrace  = 30 * time.Second
+	v7LandingAuditProvenance    = "tusker:landing/v2"
+	v7LandingReceiptSchema      = "tusker.landing-receipt/v2"
+	v7LandingReceiptIndexSchema = "tusker.landing-receipt-index/v1"
+	v7LandingGateCacheSchemaV1  = "tusker.landing-gate-cache/v1"
+	v7LandingGateCacheSchemaV2  = "tusker.landing-gate-cache/v2"
+	v7LandingAuthorityDeparture = "scheduled_departure"
+	v7LandingAuthorityWaveDrain = "wave_drain"
 )
 
 type v7LandingLockOwner struct {
@@ -36,22 +42,72 @@ type v7LandingLockOwner struct {
 }
 
 type v7LandTask struct {
-	ID        string
-	Branch    string
-	SourceSHA string
+	ID               string
+	Branch           string
+	SourceSHA        string
+	SourceProvenance string
 }
 
 type v7LandingAuditEntry struct {
-	Task        string
-	Branch      string
-	SourceSHA   string
-	Target      string
-	GateResult  string
-	GateSummary string
-	Commit      string
-	Tree        string
-	Actor       string
-	Timestamp   string
+	Task               string
+	Branch             string
+	SourceSHA          string
+	SourceProvenance   string
+	Target             string
+	BaseSHA            string
+	MergeCommit        string
+	GateResult         string
+	GateSummary        string
+	GateFingerprint    string
+	ReceiptFingerprint string
+	ControlAuthority   string
+	Commit             string
+	Tree               string
+	Actor              string
+	Timestamp          string
+}
+
+type v7LandingReceiptTask struct {
+	Task             string `json:"task"`
+	Branch           string `json:"branch"`
+	SourceSHA        string `json:"source_sha"`
+	SourceProvenance string `json:"source_provenance"`
+	BaseSHA          string `json:"base_sha"`
+	MergeCommit      string `json:"merge_commit"`
+}
+
+type v7LandingReceipt struct {
+	Schema           string                 `json:"schema"`
+	Fingerprint      string                 `json:"fingerprint"`
+	GateFingerprint  string                 `json:"gate_fingerprint"`
+	LaneIdentity     string                 `json:"lane_identity"`
+	Target           string                 `json:"target"`
+	Actor            string                 `json:"actor"`
+	ControlAuthority string                 `json:"control_authority"`
+	BatchBaseSHA     string                 `json:"batch_base_sha"`
+	BatchHeadSHA     string                 `json:"batch_head_sha"`
+	BatchTreeSHA     string                 `json:"batch_tree_sha"`
+	BatchSegment     []string               `json:"batch_segment"`
+	Tasks            []v7LandingReceiptTask `json:"tasks"`
+	Commands         []string               `json:"commands"`
+	Toolchains       map[string]string      `json:"toolchains"`
+	Outcome          string                 `json:"outcome"`
+	GateSummary      string                 `json:"gate_summary"`
+	ReceiptIssuedAt  string                 `json:"receipt_issued_at"`
+}
+
+type v7LandingGateEvidence struct {
+	Pass        bool
+	Summary     string
+	Fingerprint string
+	Commands    []string
+	Toolchains  map[string]string
+}
+
+type v7LandingBatchResult struct {
+	Pass    bool
+	Summary string
+	Receipt v7LandingReceipt
 }
 
 // v7LandedEntry pairs a landing audit row with the wave it belongs to so the
@@ -92,10 +148,22 @@ type v7LandSummaryRow struct {
 }
 
 func landV7Cmd(args Args) error {
-	return landV7CmdWithFrozenSources(args, nil)
+	return landV7CmdWithAuthority(args, nil, "")
 }
 
 func landV7CmdWithFrozenSources(args Args, frozenSources map[string]string) error {
+	authority := ""
+	if frozenSources != nil && strings.HasPrefix(landV7Actor(args), "daemon:departure:") {
+		authority = v7LandingAuthorityDeparture
+	}
+	return landV7CmdWithAuthority(args, frozenSources, authority)
+}
+
+func landV7CmdAsWaveDrain(args Args) error {
+	return landV7CmdWithAuthority(args, nil, v7LandingAuthorityWaveDrain)
+}
+
+func landV7CmdWithAuthority(args Args, frozenSources map[string]string, authority string) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err
@@ -115,7 +183,7 @@ func landV7CmdWithFrozenSources(args Args, frozenSources map[string]string) erro
 		if err := landV7WaveToMain(vaultPath, targets[0], args, summary); err != nil {
 			return err
 		}
-	} else if err := landV7TaskTargets(vaultPath, targets, args, summary, frozenSources); err != nil {
+	} else if err := landV7TaskTargets(vaultPath, targets, args, summary, frozenSources, authority); err != nil {
 		return err
 	}
 	printV7LandingSummary(summary, args)
@@ -302,12 +370,13 @@ func releaseV7LandingLock(lockPath, token string) {
 	_ = os.Remove(lockPath)
 }
 
-func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v7LandSummary, frozenSources map[string]string) error {
+func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v7LandSummary, frozenSources map[string]string, authority string) error {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return err
 	}
 	repoRoot := v7RepoRoot(vaultPath)
+	actor := landV7Actor(args)
 	byWave := map[string][]v7LandTask{}
 	for _, taskID := range targets {
 		task, ok := idx.Tasks[taskID]
@@ -361,7 +430,29 @@ func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v
 				return err
 			}
 		}
-		byWave[waveID] = append(byWave[waveID], v7LandTask{ID: taskID, Branch: branch, SourceSHA: sourceSHA})
+		if sourceSHA == "" {
+			resolved, resolveErr := gitOutputTrim(repoRoot, "rev-parse", branch+"^{commit}")
+			if resolveErr != nil {
+				return tuskerError(errorInvalidTransition, "landing source is unavailable for "+taskID+": "+firstActionableLine(resolveErr.Error(), resolveErr.Error()))
+			}
+			sourceSHA = resolved
+		}
+		landTask := v7LandTask{ID: taskID, Branch: branch, SourceSHA: sourceSHA}
+		landTask.SourceProvenance = v7LandingSourceProvenance(vaultPath, repoRoot, landTask, args)
+		if landTask.SourceProvenance == "" {
+			if args.Bool("trust-from") || args.Bool("trusted-from") {
+				landTask.SourceProvenance = "trusted_override"
+			} else {
+				return tuskerError(errorInvalidTransition, "refused landing source for "+taskID+": exact commit lacks task-owned provenance")
+			}
+		}
+		if trustedV7LandingControlAuthority(authority, actor) && !trustedV7LandingSourceProvenance(landTask.SourceProvenance) {
+			integrationBranch := v7WaveIntegrationBranch(idx.Waves[waveID])
+			if !gitMergeBaseAncestor(repoRoot, landTask.SourceSHA, integrationBranch) {
+				return tuskerError(errorInvalidTransition, "scheduled landing refusal: task_source_provenance_missing:"+taskID)
+			}
+		}
+		byWave[waveID] = append(byWave[waveID], landTask)
 	}
 	waveIDs := make([]string, 0, len(byWave))
 	for waveID := range byWave {
@@ -373,7 +464,7 @@ func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v
 	// the integration ref forward; rework/audit side effects are deferred.
 	acc := &v7BatchAccumulator{}
 	for _, waveID := range waveIDs {
-		if err := stageV7WaveBatch(vaultPath, repoRoot, waveID, byWave[waveID], acc); err != nil {
+		if err := stageV7WaveBatch(vaultPath, repoRoot, waveID, byWave[waveID], actor, authority, acc); err != nil {
 			return err
 		}
 	}
@@ -386,7 +477,6 @@ func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v
 
 	// Phase 2: apply rework transitions, write landing audit, and build the
 	// human-facing summary now that we know the batch produced real landings.
-	actor := landV7Actor(args)
 	for _, waveID := range waveIDs {
 		var entries []v7LandingAuditEntry
 		for _, landed := range acc.Landed {
@@ -454,6 +544,63 @@ func v7FailedBatchSummary(acc *v7BatchAccumulator) string {
 
 func landV7Actor(args Args) string {
 	return fallback(fallback(args.String("actor"), args.String("by")), "agent:"+defaultActorName())
+}
+
+func v7LandingSourceProvenance(vaultPath, repoRoot string, task v7LandTask, args Args) string {
+	idx, err := loadV7Index(vaultPath)
+	if err == nil {
+		if note, ok := idx.Tasks[task.ID]; ok {
+			recorded := firstNonEmpty(
+				stringField(note.Data, "source_sha"),
+				stringField(note.Data, "source_commit"),
+				stringField(note.Data, "source_branch_sha"),
+			)
+			if strings.EqualFold(strings.TrimSpace(recorded), strings.TrimSpace(task.SourceSHA)) {
+				return "durable_task_source"
+			}
+		}
+	}
+	if strings.EqualFold(v7CommitWorkspaceRecordID(repoRoot, task.SourceSHA), task.ID) {
+		return "workspace_record"
+	}
+	if v7CommitTouchesTaskTracker(repoRoot, task.SourceSHA, task.ID) {
+		return "task_tracker"
+	}
+	if from := strings.TrimSpace(args.String("from")); from != "" {
+		if info, err := os.Stat(from); err == nil && info.IsDir() &&
+			strings.EqualFold(v7WorkspaceRecordID(from), task.ID) {
+			if head, ok := gitRevParse(from, "HEAD^{commit}"); ok && strings.EqualFold(head, task.SourceSHA) {
+				return "workspace_claim"
+			}
+		}
+	}
+	if task.Branch == v7TaskBranchName(task.ID) {
+		if head, ok := gitRevParse(repoRoot, task.Branch+"^{commit}"); ok && strings.EqualFold(head, task.SourceSHA) {
+			return "task_branch_head"
+		}
+	}
+	return ""
+}
+
+func trustedV7LandingSourceProvenance(provenance string) bool {
+	switch strings.TrimSpace(provenance) {
+	case "durable_task_source", "workspace_record", "workspace_claim", "task_tracker":
+		return true
+	default:
+		return false
+	}
+}
+
+func trustedV7LandingControlAuthority(authority, actor string) bool {
+	switch strings.TrimSpace(authority) {
+	case v7LandingAuthorityDeparture:
+		return strings.HasPrefix(actor, "daemon:departure:") &&
+			strings.TrimSpace(strings.TrimPrefix(actor, "daemon:departure:")) != ""
+	case v7LandingAuthorityWaveDrain:
+		return strings.TrimSpace(actor) == "daemon:wave-drain"
+	default:
+		return false
+	}
 }
 
 // ensureV7TaskLandingBranch materializes the task/<ID> branch for a detached
@@ -654,7 +801,7 @@ func v7WorkspaceRecordID(worktreePath string) string {
 	return strings.ToUpper(strings.TrimSpace(meta.RecordID))
 }
 
-func stageV7WaveBatch(vaultPath, repoRoot, waveID string, tasks []v7LandTask, acc *v7BatchAccumulator) error {
+func stageV7WaveBatch(vaultPath, repoRoot, waveID string, tasks []v7LandTask, actor, authority string, acc *v7BatchAccumulator) error {
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -673,49 +820,80 @@ func stageV7WaveBatch(vaultPath, repoRoot, waveID string, tasks []v7LandTask, ac
 	if err := ensureV7WaveIntegrationBranch(vaultPath, wave); err != nil {
 		return err
 	}
-	return landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks, acc)
+	return landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks, actor, authority, acc)
 }
 
-func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string, tasks []v7LandTask, acc *v7BatchAccumulator) error {
+func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string, tasks []v7LandTask, actor, authority string, acc *v7BatchAccumulator) error {
 	if len(tasks) == 0 {
 		return nil
 	}
-	pass, commit, summary, err := stageV7LandingBatch(vaultPath, repoRoot, integrationBranch, tasks)
+	var pending []v7LandTask
+	for _, task := range tasks {
+		if gitMergeBaseAncestor(repoRoot, task.SourceSHA, integrationBranch) {
+			if !trustedV7LandingControlAuthority(authority, actor) {
+				head, headOK := gitRevParse(repoRoot, integrationBranch+"^{commit}")
+				tree, treeOK := gitRevParse(repoRoot, integrationBranch+"^{tree}")
+				if !headOK || !treeOK {
+					return tuskerError(errorInvalidTransition, "landing recovery refusal: integration identity unavailable for "+task.ID)
+				}
+				acc.Landed = append(acc.Landed, v7LandedEntry{WaveID: waveID, Entry: v7LandingAuditEntry{
+					Task: task.ID, Branch: task.Branch, SourceSHA: task.SourceSHA,
+					SourceProvenance: task.SourceProvenance, Target: integrationBranch,
+					GateResult: "pass", GateSummary: "already integrated; no control-plane receipt",
+					Commit: head, Tree: tree, Timestamp: time.Now().UTC().Format(time.RFC3339),
+				}})
+				continue
+			}
+			entry, recovered := recoverV7LandingAuditFromReceipt(vaultPath, repoRoot, integrationBranch, task, actor, authority)
+			if !recovered {
+				return tuskerError(errorInvalidTransition, "landing recovery refusal: verified receipt missing for already-integrated source "+task.ID+"@"+task.SourceSHA)
+			}
+			acc.Landed = append(acc.Landed, v7LandedEntry{WaveID: waveID, Entry: entry})
+			continue
+		}
+		pending = append(pending, task)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	tasks = pending
+	result, err := stageV7LandingBatch(vaultPath, repoRoot, integrationBranch, tasks, actor, authority)
 	if err != nil {
 		return err
 	}
-	if pass {
-		if err := updateGitRef(repoRoot, "refs/heads/"+integrationBranch, commit, ""); err != nil {
-			return err
-		}
-		tree, err := gitOutputTrim(repoRoot, "rev-parse", commit+"^{tree}")
-		if err != nil {
+	if result.Pass {
+		if err := updateGitRef(repoRoot, "refs/heads/"+integrationBranch, result.Receipt.BatchHeadSHA, result.Receipt.BatchBaseSHA); err != nil {
 			return err
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		for _, task := range tasks {
+		for _, proof := range result.Receipt.Tasks {
 			acc.Landed = append(acc.Landed, v7LandedEntry{WaveID: waveID, Entry: v7LandingAuditEntry{
-				Task: task.ID, Branch: task.Branch, SourceSHA: task.SourceSHA, Target: integrationBranch,
-				GateResult: "pass", GateSummary: summary, Commit: commit, Tree: tree, Timestamp: now,
+				Task: proof.Task, Branch: proof.Branch, SourceSHA: proof.SourceSHA,
+				SourceProvenance: proof.SourceProvenance, Target: integrationBranch,
+				BaseSHA: proof.BaseSHA, MergeCommit: proof.MergeCommit,
+				GateResult: "pass", GateSummary: result.Receipt.GateSummary,
+				GateFingerprint: result.Receipt.GateFingerprint, ReceiptFingerprint: result.Receipt.Fingerprint,
+				ControlAuthority: result.Receipt.ControlAuthority,
+				Commit:           result.Receipt.BatchHeadSHA, Tree: result.Receipt.BatchTreeSHA, Timestamp: now,
 			}})
 		}
 		return nil
 	}
 	if len(tasks) == 1 {
-		acc.Failed = append(acc.Failed, v7LandFailure{WaveID: waveID, Task: tasks[0], Summary: summary})
+		acc.Failed = append(acc.Failed, v7LandFailure{WaveID: waveID, Task: tasks[0], Summary: result.Summary})
 		return nil
 	}
 	mid := len(tasks) / 2
-	if err := landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks[:mid], acc); err != nil {
+	if err := landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks[:mid], actor, authority, acc); err != nil {
 		return err
 	}
-	return landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks[mid:], acc)
+	return landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks[mid:], actor, authority, acc)
 }
 
-func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandTask) (bool, string, string, error) {
+func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandTask, actor, authority string) (v7LandingBatchResult, error) {
 	tmp, err := os.MkdirTemp("", "tusker-land-stage-*")
 	if err != nil {
-		return false, "", "", err
+		return v7LandingBatchResult{}, err
 	}
 	removeWorktree := false
 	defer func() {
@@ -726,43 +904,85 @@ func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandT
 		}
 	}()
 	if output, err := gitCombined(repoRoot, "worktree", "add", "--detach", tmp, baseBranch); err != nil {
-		return false, "", "", tuskerError(errorInvalidTransition, "failed to create landing staging worktree: "+firstActionableLine(output, err.Error()))
+		return v7LandingBatchResult{}, tuskerError(errorInvalidTransition, "failed to create landing staging worktree: "+firstActionableLine(output, err.Error()))
 	}
 	removeWorktree = true
+	batchBase, err := gitOutputTrim(tmp, "rev-parse", "HEAD")
+	if err != nil {
+		return v7LandingBatchResult{}, err
+	}
+	segment := make([]string, 0, len(tasks)+1)
+	proofs := make([]v7LandingReceiptTask, 0, len(tasks))
 	for _, task := range tasks {
-		source := firstNonEmpty(strings.TrimSpace(task.SourceSHA), task.Branch)
+		base, err := gitOutputTrim(tmp, "rev-parse", "HEAD")
+		if err != nil {
+			return v7LandingBatchResult{}, err
+		}
+		source := strings.TrimSpace(task.SourceSHA)
 		if output, err := gitCombined(tmp, "merge", "--no-ff", "--no-edit", source); err != nil {
 			resolved, unresolved, resolveErr := resolveV7GeneratedProjectionMerge(tmp)
 			if resolveErr != nil {
-				return false, "", "", resolveErr
+				return v7LandingBatchResult{}, resolveErr
 			}
 			if !resolved {
 				summary := landingFailureSummary("merge "+source, output, err)
 				if unresolved != "" {
 					summary = limitLandingSummary(summary+"; all unmerged paths: "+unresolved, 500)
 				}
-				return false, "", summary, nil
+				return v7LandingBatchResult{Summary: summary}, nil
 			}
 		}
+		mergeCommit, err := gitOutputTrim(tmp, "rev-parse", "HEAD")
+		if err != nil {
+			return v7LandingBatchResult{}, err
+		}
+		if strings.EqualFold(base, mergeCommit) {
+			return v7LandingBatchResult{}, tuskerError(errorInvalidTransition, "landing receipt refusal: "+task.ID+" did not produce an exact merge commit")
+		}
+		segment = append(segment, mergeCommit)
+		proofs = append(proofs, v7LandingReceiptTask{
+			Task: task.ID, Branch: task.Branch, SourceSHA: source,
+			SourceProvenance: task.SourceProvenance, BaseSHA: base, MergeCommit: mergeCommit,
+		})
 		if err := guardV7LandingTerminalTaskRewinds(tmp, baseBranch); err != nil {
-			return false, "", "", err
+			return v7LandingBatchResult{}, err
 		}
 	}
 	if err := removeV7WorkspaceMetadataFromLanding(tmp); err != nil {
-		return false, "", "", err
+		return v7LandingBatchResult{}, err
 	}
 	if err := commitV7LandingCleanup(tmp); err != nil {
-		return false, "", "", err
-	}
-	pass, summary := runV7LandingGate(vaultPath, tmp, v7LandingBatchIdentity(tasks))
-	if !pass {
-		return false, "", summary, nil
+		return v7LandingBatchResult{}, err
 	}
 	commit, err := gitOutputTrim(tmp, "rev-parse", "HEAD")
 	if err != nil {
-		return false, "", "", err
+		return v7LandingBatchResult{}, err
 	}
-	return true, commit, summary, nil
+	if len(segment) == 0 || !strings.EqualFold(segment[len(segment)-1], commit) {
+		segment = append(segment, commit)
+	}
+	tree, err := gitOutputTrim(tmp, "rev-parse", commit+"^{tree}")
+	if err != nil {
+		return v7LandingBatchResult{}, err
+	}
+	laneIdentity := v7LandingBatchIdentity(tasks)
+	gate := runV7LandingGateEvidence(vaultPath, tmp, laneIdentity)
+	if !gate.Pass {
+		return v7LandingBatchResult{Summary: gate.Summary}, nil
+	}
+	receipt := v7LandingReceipt{
+		Schema: v7LandingReceiptSchema, GateFingerprint: gate.Fingerprint,
+		LaneIdentity: laneIdentity, Target: baseBranch, Actor: actor, ControlAuthority: authority,
+		BatchBaseSHA: batchBase, BatchHeadSHA: commit, BatchTreeSHA: tree,
+		BatchSegment: segment, Tasks: proofs, Commands: gate.Commands,
+		Toolchains: gate.Toolchains, Outcome: "pass", GateSummary: gate.Summary,
+		ReceiptIssuedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	receipt.Fingerprint = v7LandingReceiptFingerprint(receipt)
+	if err := writeV7LandingReceipt(vaultPath, receipt); err != nil {
+		return v7LandingBatchResult{}, err
+	}
+	return v7LandingBatchResult{Pass: true, Summary: gate.Summary, Receipt: receipt}, nil
 }
 
 // resolveV7GeneratedProjectionMerge prevents derived Tusker dashboards from
@@ -899,33 +1119,59 @@ func guardV7LandingTerminalTaskRewinds(workDir, baseRef string) error {
 }
 
 func runV7LandingGate(vaultPath, workDir, laneIdentity string) (bool, string) {
+	evidence := runV7LandingGateEvidence(vaultPath, workDir, laneIdentity)
+	return evidence.Pass, evidence.Summary
+}
+
+func runV7LandingGateEvidence(vaultPath, workDir, laneIdentity string) v7LandingGateEvidence {
 	commands := backpressureCommands(vaultPath)
 	if len(commands) == 0 {
 		commands = []string{"go build ./...", "go vet ./...", "go test ./... -count=1"}
 	}
-	fingerprint := v7LandingGateFingerprint(workDir, laneIdentity, commands)
+	toolchains := landingToolchainProbe(workDir, commands)
+	head, err := gitOutputTrim(workDir, "rev-parse", "HEAD")
+	fingerprint := ""
+	if err == nil && head != "" {
+		fingerprint = v7LandingGateFingerprintFromFacts(head, laneIdentity, commands, toolchains)
+	}
+	evidence := v7LandingGateEvidence{
+		Fingerprint: fingerprint,
+		Commands:    append([]string(nil), commands...),
+		Toolchains:  cloneStringStringMap(toolchains),
+	}
 	if fingerprint != "" && v7LandingGateCacheHit(vaultPath, fingerprint) {
-		return true, "gate cached: " + fingerprint
+		evidence.Pass = true
+		evidence.Summary = "gate cached: " + fingerprint
+		return evidence
 	}
 	for _, command := range commands {
 		cmd := exec.Command("sh", "-c", command)
 		cmd.Dir = workDir
 		output, err := cmd.CombinedOutput()
 		if err != nil {
-			return false, landingFailureSummary(command, string(output), err)
+			evidence.Summary = landingFailureSummary(command, string(output), err)
+			return evidence
 		}
 	}
 	if fingerprint != "" {
 		_ = writeV7LandingGateCache(vaultPath, fingerprint, commands)
 	}
-	return true, "gate passed: " + strings.Join(commands, " && ")
+	evidence.Pass = true
+	evidence.Summary = "gate passed: " + strings.Join(commands, " && ")
+	return evidence
 }
 
 type v7LandingGateCacheRecord struct {
-	Schema      string   `json:"schema"`
-	Fingerprint string   `json:"fingerprint"`
-	Commands    []string `json:"commands"`
-	PassedAt    string   `json:"passed_at"`
+	Schema      string            `json:"schema"`
+	Fingerprint string            `json:"fingerprint"`
+	Commands    []string          `json:"commands"`
+	PassedAt    string            `json:"passed_at"`
+	Receipt     *v7LandingReceipt `json:"receipt,omitempty"`
+}
+
+type v7LandingReceiptIndexRecord struct {
+	Schema              string   `json:"schema"`
+	ReceiptFingerprints []string `json:"receipt_fingerprints"`
 }
 
 var landingToolchainProbe = v7LandingToolchainFingerprints
@@ -935,8 +1181,11 @@ func v7LandingGateFingerprint(workDir, laneIdentity string, commands []string) s
 	if err != nil || head == "" {
 		return ""
 	}
+	return v7LandingGateFingerprintFromFacts(head, laneIdentity, commands, landingToolchainProbe(workDir, commands))
+}
+
+func v7LandingGateFingerprintFromFacts(head, laneIdentity string, commands []string, toolchains map[string]string) string {
 	parts := []string{"tusker.landing-gate/v2", head, strings.TrimSpace(laneIdentity)}
-	toolchains := landingToolchainProbe(workDir, commands)
 	keys := make([]string, 0, len(toolchains))
 	for key := range toolchains {
 		keys = append(keys, key)
@@ -948,6 +1197,17 @@ func v7LandingGateFingerprint(workDir, laneIdentity string, commands []string) s
 	parts = append(parts, commands...)
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return fmt.Sprintf("%x", sum)
+}
+
+func cloneStringStringMap(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func v7LandingBatchIdentity(tasks []v7LandTask) string {
@@ -1127,7 +1387,10 @@ func v7LandingGateCacheHit(vaultPath, fingerprint string) bool {
 		return false
 	}
 	var record v7LandingGateCacheRecord
-	return json.Unmarshal(raw, &record) == nil && record.Schema == "tusker.landing-gate-cache/v1" && record.Fingerprint == fingerprint
+	if json.Unmarshal(raw, &record) != nil || record.Fingerprint != fingerprint {
+		return false
+	}
+	return record.Schema == v7LandingGateCacheSchemaV1 || record.Schema == v7LandingGateCacheSchemaV2
 }
 
 func writeV7LandingGateCache(vaultPath, fingerprint string, commands []string) error {
@@ -1135,12 +1398,12 @@ func writeV7LandingGateCache(vaultPath, fingerprint string, commands []string) e
 	if err := ensureDir(filepath.Dir(path)); err != nil {
 		return err
 	}
-	raw, err := json.MarshalIndent(v7LandingGateCacheRecord{Schema: "tusker.landing-gate-cache/v1", Fingerprint: fingerprint, Commands: commands, PassedAt: time.Now().UTC().Format(time.RFC3339)}, "", "  ")
+	raw, err := json.MarshalIndent(v7LandingGateCacheRecord{Schema: v7LandingGateCacheSchemaV1, Fingerprint: fingerprint, Commands: commands, PassedAt: time.Now().UTC().Format(time.RFC3339)}, "", "  ")
 	if err != nil {
 		return err
 	}
 	tmp := path + ".tmp-" + newRecordID()
-	if err := os.WriteFile(tmp, append(raw, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
@@ -1148,6 +1411,300 @@ func writeV7LandingGateCache(vaultPath, fingerprint string, commands []string) e
 		return err
 	}
 	return nil
+}
+
+func writeV7LandingReceipt(vaultPath string, receipt v7LandingReceipt) error {
+	if receipt.Schema != v7LandingReceiptSchema ||
+		receipt.Fingerprint == "" ||
+		receipt.GateFingerprint != v7LandingGateFingerprintFromFacts(receipt.BatchHeadSHA, receipt.LaneIdentity, receipt.Commands, receipt.Toolchains) ||
+		receipt.Fingerprint != v7LandingReceiptFingerprint(receipt) {
+		return tuskerError(errorInvalidTransition, "landing receipt refusal: fingerprints do not bind the batch facts")
+	}
+	path := v7LandingGateCachePath(vaultPath, receipt.Fingerprint)
+	if err := ensureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	record := v7LandingGateCacheRecord{
+		Schema: v7LandingGateCacheSchemaV2, Fingerprint: receipt.Fingerprint,
+		Commands: append([]string(nil), receipt.Commands...),
+		PassedAt: receipt.ReceiptIssuedAt, Receipt: &receipt,
+	}
+	raw, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp-" + newRecordID()
+	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	for _, task := range receipt.Tasks {
+		if err := writeV7LandingReceiptIndex(vaultPath, receipt, task); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeV7LandingReceiptIndex(vaultPath string, receipt v7LandingReceipt, task v7LandingReceiptTask) error {
+	path := v7LandingReceiptIndexPath(vaultPath, receipt.Target, task.Task, task.SourceSHA, receipt.Actor, receipt.ControlAuthority)
+	if err := ensureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	fingerprints := []string{}
+	if existing, err := os.ReadFile(path); err == nil {
+		var record v7LandingReceiptIndexRecord
+		if json.Unmarshal(existing, &record) == nil && record.Schema == v7LandingReceiptIndexSchema {
+			for _, fingerprint := range record.ReceiptFingerprints {
+				if isV7LandingFingerprint(fingerprint) && !containsString(fingerprints, fingerprint) {
+					fingerprints = append(fingerprints, fingerprint)
+				}
+			}
+		}
+	}
+	if !containsString(fingerprints, receipt.Fingerprint) {
+		fingerprints = append(fingerprints, receipt.Fingerprint)
+	}
+	raw, err := json.MarshalIndent(v7LandingReceiptIndexRecord{
+		Schema: v7LandingReceiptIndexSchema, ReceiptFingerprints: fingerprints,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp-" + newRecordID()
+	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+func v7LandingReceiptIndexPath(vaultPath, target, taskID, sourceSHA, actor, authority string) string {
+	project := fallback(v7ProjectID(vaultPath), "project")
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		"tusker.landing-receipt-index/v1", target, taskID, sourceSHA, actor, authority,
+	}, "\x00")))
+	return filepath.Join(DefaultStateRoot(), "landing-cache", sanitizeWorkspaceKey(project), "by-task", fmt.Sprintf("%x.json", sum))
+}
+
+func indexedV7LandingReceipts(vaultPath, target, taskID, sourceSHA, actor, authority string) []v7LandingReceipt {
+	path := v7LandingReceiptIndexPath(vaultPath, target, taskID, sourceSHA, actor, authority)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var record v7LandingReceiptIndexRecord
+	if json.Unmarshal(raw, &record) != nil ||
+		record.Schema != v7LandingReceiptIndexSchema {
+		return nil
+	}
+	var receipts []v7LandingReceipt
+	for index := len(record.ReceiptFingerprints) - 1; index >= 0; index-- {
+		if receipt, ok := loadV7LandingReceipt(vaultPath, record.ReceiptFingerprints[index]); ok {
+			receipts = append(receipts, receipt)
+		}
+	}
+	return receipts
+}
+
+func v7LandingReceiptFingerprint(receipt v7LandingReceipt) string {
+	parts := []string{
+		v7LandingReceiptSchema,
+		receipt.GateFingerprint,
+		receipt.LaneIdentity,
+		receipt.Target,
+		receipt.Actor,
+		receipt.ControlAuthority,
+		receipt.BatchBaseSHA,
+		receipt.BatchHeadSHA,
+		receipt.BatchTreeSHA,
+		receipt.Outcome,
+		receipt.GateSummary,
+		receipt.ReceiptIssuedAt,
+	}
+	parts = append(parts, receipt.BatchSegment...)
+	for _, task := range receipt.Tasks {
+		parts = append(parts,
+			task.Task,
+			task.Branch,
+			task.SourceSHA,
+			task.SourceProvenance,
+			task.BaseSHA,
+			task.MergeCommit,
+		)
+	}
+	parts = append(parts, receipt.Commands...)
+	keys := make([]string, 0, len(receipt.Toolchains))
+	for key := range receipt.Toolchains {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		parts = append(parts, key+"="+receipt.Toolchains[key])
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return fmt.Sprintf("%x", sum)
+}
+
+func loadV7LandingReceipt(vaultPath, fingerprint string) (v7LandingReceipt, bool) {
+	if !isV7LandingFingerprint(fingerprint) {
+		return v7LandingReceipt{}, false
+	}
+	raw, err := os.ReadFile(v7LandingGateCachePath(vaultPath, fingerprint))
+	if err != nil {
+		return v7LandingReceipt{}, false
+	}
+	var record v7LandingGateCacheRecord
+	if json.Unmarshal(raw, &record) != nil ||
+		record.Schema != v7LandingGateCacheSchemaV2 ||
+		record.Fingerprint != fingerprint ||
+		record.Receipt == nil ||
+		record.Receipt.Fingerprint != fingerprint {
+		return v7LandingReceipt{}, false
+	}
+	return *record.Receipt, true
+}
+
+func isV7LandingFingerprint(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	for _, r := range value {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			return false
+		}
+	}
+	return true
+}
+
+func recoverV7LandingAuditFromReceipt(vaultPath, repoRoot, integrationBranch string, task v7LandTask, actor, authority string) (v7LandingAuditEntry, bool) {
+	if !trustedV7LandingControlAuthority(authority, actor) {
+		return v7LandingAuditEntry{}, false
+	}
+	for _, receipt := range indexedV7LandingReceipts(vaultPath, integrationBranch, task.ID, task.SourceSHA, actor, authority) {
+		if receipt.Actor != actor || receipt.ControlAuthority != authority || receipt.Target != integrationBranch {
+			continue
+		}
+		proof, ok := verifiedV7LandingReceiptTask(repoRoot, integrationBranch, receipt, task.ID)
+		if !ok ||
+			!strings.EqualFold(proof.SourceSHA, task.SourceSHA) ||
+			proof.Branch != task.Branch {
+			continue
+		}
+		return v7LandingAuditEntry{
+			Task: proof.Task, Branch: proof.Branch, SourceSHA: proof.SourceSHA,
+			SourceProvenance: proof.SourceProvenance, Target: receipt.Target,
+			BaseSHA: proof.BaseSHA, MergeCommit: proof.MergeCommit,
+			GateResult: "pass", GateSummary: receipt.GateSummary,
+			GateFingerprint: receipt.GateFingerprint, ReceiptFingerprint: receipt.Fingerprint,
+			ControlAuthority: receipt.ControlAuthority,
+			Commit:           receipt.BatchHeadSHA, Tree: receipt.BatchTreeSHA,
+			Actor: actor, Timestamp: time.Now().UTC().Format(time.RFC3339),
+		}, true
+	}
+	return v7LandingAuditEntry{}, false
+}
+
+func verifiedV7LandingReceiptTask(repoRoot, integrationBranch string, receipt v7LandingReceipt, taskID string) (v7LandingReceiptTask, bool) {
+	if receipt.Schema != v7LandingReceiptSchema ||
+		receipt.Outcome != "pass" ||
+		receipt.Target != integrationBranch ||
+		!trustedV7LandingControlAuthority(receipt.ControlAuthority, receipt.Actor) ||
+		receipt.GateFingerprint != v7LandingGateFingerprintFromFacts(receipt.BatchHeadSHA, receipt.LaneIdentity, receipt.Commands, receipt.Toolchains) ||
+		receipt.Fingerprint != v7LandingReceiptFingerprint(receipt) ||
+		len(receipt.Commands) == 0 ||
+		len(receipt.Tasks) == 0 ||
+		len(receipt.BatchSegment) < len(receipt.Tasks) ||
+		len(receipt.BatchSegment) > len(receipt.Tasks)+1 {
+		return v7LandingReceiptTask{}, false
+	}
+	if _, err := time.Parse(time.RFC3339Nano, receipt.ReceiptIssuedAt); err != nil {
+		return v7LandingReceiptTask{}, false
+	}
+	base, baseOK := gitRevParse(repoRoot, receipt.BatchBaseSHA+"^{commit}")
+	head, headOK := gitRevParse(repoRoot, receipt.BatchHeadSHA+"^{commit}")
+	tree, treeOK := gitRevParse(repoRoot, receipt.BatchHeadSHA+"^{tree}")
+	integration, integrationOK := gitRevParse(repoRoot, integrationBranch+"^{commit}")
+	if !baseOK || !headOK || !treeOK || !integrationOK ||
+		!strings.EqualFold(base, receipt.BatchBaseSHA) ||
+		!strings.EqualFold(head, receipt.BatchHeadSHA) ||
+		!strings.EqualFold(tree, receipt.BatchTreeSHA) ||
+		!gitMergeBaseAncestor(repoRoot, head, integration) {
+		return v7LandingReceiptTask{}, false
+	}
+	receiptTasks := make([]v7LandTask, 0, len(receipt.Tasks))
+	proofsByMerge := make(map[string]v7LandingReceiptTask, len(receipt.Tasks))
+	var wanted v7LandingReceiptTask
+	for _, proof := range receipt.Tasks {
+		if proof.Task == "" || proof.Branch != v7TaskBranchName(proof.Task) ||
+			!trustedV7LandingSourceProvenance(proof.SourceProvenance) ||
+			proof.SourceSHA == "" || proof.BaseSHA == "" || proof.MergeCommit == "" ||
+			proofsByMerge[proof.MergeCommit].Task != "" {
+			return v7LandingReceiptTask{}, false
+		}
+		receiptTasks = append(receiptTasks, v7LandTask{ID: proof.Task, Branch: proof.Branch, SourceSHA: proof.SourceSHA})
+		proofsByMerge[proof.MergeCommit] = proof
+		if proof.Task == taskID {
+			wanted = proof
+		}
+	}
+	if wanted.Task == "" || receipt.LaneIdentity != v7LandingBatchIdentity(receiptTasks) {
+		return v7LandingReceiptTask{}, false
+	}
+	current := receipt.BatchBaseSHA
+	seenTasks := map[string]bool{}
+	nonTaskCommits := 0
+	for _, commit := range receipt.BatchSegment {
+		resolved, ok := gitRevParse(repoRoot, commit+"^{commit}")
+		parents, parentsOK := v7LandingCommitParents(repoRoot, commit)
+		if !ok || !parentsOK || !strings.EqualFold(resolved, commit) ||
+			len(parents) == 0 || !strings.EqualFold(parents[0], current) {
+			return v7LandingReceiptTask{}, false
+		}
+		if proof, taskMerge := proofsByMerge[commit]; taskMerge {
+			if len(parents) != 2 ||
+				!strings.EqualFold(proof.BaseSHA, current) ||
+				!strings.EqualFold(parents[1], proof.SourceSHA) ||
+				seenTasks[proof.Task] {
+				return v7LandingReceiptTask{}, false
+			}
+			source, sourceOK := gitRevParse(repoRoot, proof.SourceSHA+"^{commit}")
+			if !sourceOK || !strings.EqualFold(source, proof.SourceSHA) {
+				return v7LandingReceiptTask{}, false
+			}
+			seenTasks[proof.Task] = true
+		} else {
+			if len(parents) != 1 {
+				return v7LandingReceiptTask{}, false
+			}
+			nonTaskCommits++
+		}
+		current = commit
+	}
+	if !strings.EqualFold(current, receipt.BatchHeadSHA) ||
+		len(seenTasks) != len(receipt.Tasks) ||
+		nonTaskCommits > 1 {
+		return v7LandingReceiptTask{}, false
+	}
+	return wanted, true
+}
+
+func v7LandingCommitParents(repoRoot, commit string) ([]string, bool) {
+	output, err := gitOutputTrim(repoRoot, "rev-list", "--parents", "-n", "1", commit)
+	if err != nil {
+		return nil, false
+	}
+	fields := strings.Fields(output)
+	if len(fields) < 2 || !strings.EqualFold(fields[0], commit) {
+		return nil, false
+	}
+	return fields[1:], true
 }
 
 func landingFailureSummary(command, output string, err error) string {
@@ -2053,19 +2610,31 @@ func appendV7WaveLandingAudit(vaultPath, waveID string, entries []v7LandingAudit
 		landings := normalizeLandingAudit(data["landings"])
 		seen := map[string]bool{}
 		for _, row := range landings {
-			key := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s",
+			key := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s",
 				stringField(row, "task"), stringField(row, "branch"), stringField(row, "source_sha"),
-				stringField(row, "target"), stringField(row, "commit"), stringField(row, "tree"), stringField(row, "provenance"))
+				stringField(row, "target"), stringField(row, "base_sha"), stringField(row, "merge_commit"),
+				stringField(row, "commit"), stringField(row, "tree"), stringField(row, "receipt_fingerprint"))
 			seen[key] = true
 		}
 		before := len(landings)
 		for _, entry := range entries {
 			provenance := ""
-			if entry.Task != "wave" && entry.GateResult == "pass" && entry.SourceSHA != "" && entry.Commit != "" && entry.Tree != "" {
+			if entry.Task != "wave" &&
+				entry.GateResult == "pass" &&
+				entry.SourceSHA != "" &&
+				entry.SourceProvenance != "" &&
+				entry.BaseSHA != "" &&
+				entry.MergeCommit != "" &&
+				entry.GateFingerprint != "" &&
+				entry.ReceiptFingerprint != "" &&
+				entry.ControlAuthority != "" &&
+				entry.Commit != "" &&
+				entry.Tree != "" {
 				provenance = v7LandingAuditProvenance
 			}
-			key := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s",
-				entry.Task, entry.Branch, entry.SourceSHA, entry.Target, entry.Commit, entry.Tree, provenance)
+			key := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s",
+				entry.Task, entry.Branch, entry.SourceSHA, entry.Target, entry.BaseSHA,
+				entry.MergeCommit, entry.Commit, entry.Tree, entry.ReceiptFingerprint)
 			if seen[key] {
 				continue
 			}
@@ -2082,6 +2651,24 @@ func appendV7WaveLandingAudit(vaultPath, waveID string, entries []v7LandingAudit
 			}
 			if entry.SourceSHA != "" {
 				row["source_sha"] = entry.SourceSHA
+			}
+			if entry.SourceProvenance != "" {
+				row["source_provenance"] = entry.SourceProvenance
+			}
+			if entry.BaseSHA != "" {
+				row["base_sha"] = entry.BaseSHA
+			}
+			if entry.MergeCommit != "" {
+				row["merge_commit"] = entry.MergeCommit
+			}
+			if entry.GateFingerprint != "" {
+				row["gate_fingerprint"] = entry.GateFingerprint
+			}
+			if entry.ReceiptFingerprint != "" {
+				row["receipt_fingerprint"] = entry.ReceiptFingerprint
+			}
+			if entry.ControlAuthority != "" {
+				row["control_authority"] = entry.ControlAuthority
 			}
 			if entry.Commit != "" {
 				row["commit"] = entry.Commit

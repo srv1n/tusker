@@ -101,17 +101,18 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 		fact := departureTaskFact(task)
 		decision.Tasks = append(decision.Tasks, fact)
 		decision.Candidate.TaskStateRevisions[fact.ID] = fact.StateRevision
-		if fact.SourceSHA != "" {
-			decision.Candidate.TaskSourceSHAs[fact.ID] = fact.SourceSHA
-		}
-		if fact.EligibleForCargo {
-			decision.Candidate.CargoTaskIDs = append(decision.Candidate.CargoTaskIDs, fact.ID)
-			if fact.WaveID != "" {
-				decision.Candidate.WaveIDs = append(decision.Candidate.WaveIDs, fact.WaveID)
+		// Standalone tasks are independent delivery units and may enter the
+		// candidate immediately. Wave-bound tasks remain facts only until every
+		// member of their atomic delivery unit validates below.
+		if fact.WaveID == "" {
+			if fact.SourceSHA != "" {
+				decision.Candidate.TaskSourceSHAs[fact.ID] = fact.SourceSHA
+			}
+			if fact.EligibleForCargo {
+				decision.Candidate.CargoTaskIDs = append(decision.Candidate.CargoTaskIDs, fact.ID)
 			}
 		}
 	}
-	decision.Candidate.WaveIDs = uniqueDepartureStrings(decision.Candidate.WaveIDs)
 	for _, wave := range sortedV7Waves(idx) {
 		decision.Waves = append(decision.Waves, departureWaveFact(vaultPath, idx, wave))
 	}
@@ -133,10 +134,8 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 		wave := idx.Waves[fact.ID]
 		if departureWaveDiscoverableFromExactAudits(repoRoot, fact.IntegrationRef, wave, idx, p.rev) {
 			cargoWaves[fact.ID] = true
-			decision.Candidate.WaveIDs = append(decision.Candidate.WaveIDs, fact.ID)
 		}
 	}
-	decision.Candidate.WaveIDs = uniqueDepartureStrings(decision.Candidate.WaveIDs)
 	remote, hasRemote := p.remote(repoRoot)
 	if hasRemote {
 		decision.Fetch = DepartureFetchFact{Attempted: true, Remote: remote, Ref: defaultBranch}
@@ -181,11 +180,6 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 			ref.SHA = sha
 		}
 		decision.IntegrationRefs = append(decision.IntegrationRefs, ref)
-		if cargoWaves[fact.ID] && fact.IntegrationRef != "" && decision.Candidate.IntegrationBaseSHA == "" {
-			if ref.SHA != "" {
-				decision.Candidate.IntegrationBaseSHA = ref.SHA
-			}
-		}
 		if !cargoWaves[fact.ID] {
 			continue
 		}
@@ -237,6 +231,10 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 		// Membership supplies atomic scope, never eligibility. Only after every
 		// member independently proves done + accepted review + immutable source
 		// provenance does the whole wave become cargo.
+		decision.Candidate.WaveIDs = append(decision.Candidate.WaveIDs, fact.ID)
+		if fact.IntegrationRef != "" && decision.Candidate.IntegrationBaseSHA == "" && ref.SHA != "" {
+			decision.Candidate.IntegrationBaseSHA = ref.SHA
+		}
 		for _, taskID := range members {
 			decision.Candidate.CargoTaskIDs = append(decision.Candidate.CargoTaskIDs, taskID)
 			decision.Candidate.TaskStateRevisions[taskID] = stringField(idx.Tasks[taskID].Data, "state_rev")

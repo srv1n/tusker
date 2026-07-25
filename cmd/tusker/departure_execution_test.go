@@ -1066,8 +1066,9 @@ func newMultiMemberDepartureExecutionFixture(t *testing.T) departureExecutionFix
 	t.Helper()
 	repo, vault := newLandTestRepo(t, 2, "test -f member-one.txt")
 	sourceOne := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"member-one.txt": "one\n"})
+	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceOne)
 	if err := landV7CmdWithFrozenSources(
-		Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001"},
+		Args{"vault": vault, "quiet": "true", "actor": "daemon:departure:fixture-one", "_pos0": "APP-T-0001"},
 		map[string]string{"APP-T-0001": sourceOne},
 	); err != nil {
 		t.Fatal(err)
@@ -1393,6 +1394,12 @@ func assertDepartureLandingSource(t *testing.T, vault, waveID, taskID, sourceSHA
 			}
 			if stringField(row, "commit") == "" ||
 				stringField(row, "tree") == "" ||
+				stringField(row, "base_sha") == "" ||
+				stringField(row, "merge_commit") == "" ||
+				stringField(row, "source_provenance") == "" ||
+				stringField(row, "gate_fingerprint") == "" ||
+				stringField(row, "receipt_fingerprint") == "" ||
+				stringField(row, "control_authority") == "" ||
 				stringField(row, "provenance") != v7LandingAuditProvenance {
 				t.Fatalf("%s exact landing audit is not authenticated: %#v", taskID, row)
 			}

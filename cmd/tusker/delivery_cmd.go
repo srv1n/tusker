@@ -480,9 +480,13 @@ func deliveryFrontiers(plan deliveryPlan) ([][]string, bool) {
 }
 
 func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImportReport, args Args) error {
+	return applyDeliveryImportWithMaterialEpoch(vaultPath, plan, report, args, false)
+}
+
+func applyDeliveryImportWithMaterialEpoch(vaultPath string, plan deliveryPlan, report deliveryImportReport, args Args, materialEpochHeld bool) error {
 	var materialLock *v7DocumentLock
 	var err error
-	if !args.Bool("material-lock-held") {
+	if !materialEpochHeld {
 		materialLock, err = acquireV7MaterialEpochLock(vaultPath)
 		if err != nil {
 			return err

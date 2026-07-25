@@ -123,8 +123,7 @@ func deliveryStart(args Args, inspector wavePreflightEnvironmentInspector) (deli
 	importArgs["skip-integration-branch"] = "true"
 	importArgs["expected-plan-fingerprint"] = authority.PlanFingerprint
 	importArgs["expected-integration-base-sha"] = authority.IntegrationBaseSHA
-	importArgs["material-lock-held"] = "true"
-	if err := deliveryV2ImportCmd(vault, authority.PlanPath, importArgs); err != nil {
+	if err := deliveryV2ImportCmdUnderMaterialEpoch(vault, authority.PlanPath, importArgs); err != nil {
 		_ = materialLock.Close()
 		return deliveryStartResult{}, err
 	}

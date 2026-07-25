@@ -122,6 +122,14 @@ func deliveryPlanSchemaAt(path string) (string, error) {
 }
 
 func deliveryV2ImportCmd(vaultPath, path string, args Args) error {
+	return deliveryV2ImportCmdWithMaterialEpoch(vaultPath, path, args, false)
+}
+
+func deliveryV2ImportCmdUnderMaterialEpoch(vaultPath, path string, args Args) error {
+	return deliveryV2ImportCmdWithMaterialEpoch(vaultPath, path, args, true)
+}
+
+func deliveryV2ImportCmdWithMaterialEpoch(vaultPath, path string, args Args, materialEpochHeld bool) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -170,7 +178,7 @@ func deliveryV2ImportCmd(vaultPath, path string, args Args) error {
 		emitDeliveryImportReport(report, args)
 		return nil
 	}
-	if err := applyDeliveryImport(vaultPath, plan, report, args); err != nil {
+	if err := applyDeliveryImportWithMaterialEpoch(vaultPath, plan, report, args, materialEpochHeld); err != nil {
 		return err
 	}
 	emitDeliveryImportReport(report, args)

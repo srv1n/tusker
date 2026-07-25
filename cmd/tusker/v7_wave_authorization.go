@@ -519,19 +519,11 @@ func mutateWaveAuthorizationWithInspector(args Args, target string, inspector wa
 	if err := ensureV7ControlMutation(vaultPath, args); err != nil {
 		return wavePreflightReport{}, err
 	}
-	var materialLock *v7DocumentLock
-	if target == "armed" {
-		materialLock, err = acquireV7MaterialEpochLock(vaultPath)
-		if err != nil {
-			return wavePreflightReport{}, err
-		}
-		defer materialLock.Close()
-	}
 	materialLock, err := acquireV7MaterialEpochLock(vaultPath)
 	if err != nil {
-		return err
+		return wavePreflightReport{}, err
 	}
-	defer func() { _ = materialLock.Close() }()
+	defer materialLock.Close()
 	lock, err := acquireV7DocumentLock(wave.AbsolutePath, v7DocumentLockTimeout)
 	if err != nil {
 		return wavePreflightReport{}, err

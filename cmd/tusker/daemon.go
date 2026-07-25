@@ -3124,7 +3124,7 @@ func autoLandArmedWaveReviewComplete(project RegisteredProject, note Note, run R
 	if landed && integrated {
 		return true, nil
 	}
-	err := landV7Cmd(Args{
+	err := landV7CmdAsWaveDrain(Args{
 		"vault": project.VaultRoot,
 		"quiet": "true",
 		"_pos0": taskID,
