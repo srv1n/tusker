@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
@@ -61,5 +62,55 @@ func TestPromotionFailureNotRunBisectionIsNotIsolationEvidence(t *testing.T) {
 	route := classifyPromotionFailure(PromotionFailurePacket{BisectionRef: "not_run", BisectionStatus: "not_run"}, GateTierPolicy{})
 	if route.Class != promotionFailureAmbiguous || !route.ModelTriage {
 		t.Fatalf("sentinel became false isolation: %#v", route)
+	}
+}
+
+func TestPromotionFailureRouteMatrix(t *testing.T) {
+	cases := []struct {
+		name      string
+		candidate DepartureCandidate
+		text      string
+		policy    GateTierPolicy
+		want      promotionFailureClass
+		triage    bool
+	}{
+		{"infra held repair", DepartureCandidate{}, "INFRA", GateTierPolicy{InfrastructureFailurePatterns: []string{"INFRA"}}, promotionFailureInfrastructure, false},
+		{"flake quarantine", DepartureCandidate{}, "FLAKE", GateTierPolicy{FlakeFailurePatterns: []string{"FLAKE"}, FlakeFailureAction: "quarantine"}, promotionFailureFlake, false},
+		{"flake rerun", DepartureCandidate{}, "FLAKE", GateTierPolicy{FlakeFailurePatterns: []string{"FLAKE"}, FlakeFailureAction: "rerun"}, promotionFailureFlake, false},
+		{"ambiguous dedup", DepartureCandidate{}, "unknown", GateTierPolicy{}, promotionFailureAmbiguous, true},
+		{"multi task no owner", DepartureCandidate{TaskSourceSHAs: map[string]string{"A": "a", "B": "b"}, TaskStateRevisions: map[string]string{"A": "1", "B": "1"}}, "unknown", GateTierPolicy{}, promotionFailureAmbiguous, true},
+		{"singleton owner", DepartureCandidate{TaskSourceSHAs: map[string]string{"A": "a"}, TaskStateRevisions: map[string]string{"A": "1"}}, "unknown", GateTierPolicy{}, promotionFailureIsolated, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			owner := promotionFailureOwner(tc.candidate)
+			packet := PromotionFailurePacket{OwningTaskID: owner, ClassificationText: tc.text}
+			route := classifyPromotionFailure(packet, tc.policy)
+			if route.Class != tc.want || route.ModelTriage != tc.triage {
+				t.Fatalf("route=%#v", route)
+			}
+			if tc.name == "multi task no owner" && owner != "" {
+				t.Fatalf("false owner %q", owner)
+			}
+			if tc.name == "singleton owner" && owner != "A" {
+				t.Fatalf("owner=%q", owner)
+			}
+		})
+	}
+}
+
+func TestPromotionGateSetupFailureWritesArtifact(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	exec := runV7GateTierOnRef(t.TempDir(), t.TempDir(), "missing", "app", GateTierPolicy{HarvestCommands: []string{"true"}}, store)
+	if exec.Err == nil || exec.ArtifactRef == "" {
+		t.Fatalf("setup failure lacks artifact: %#v", exec)
+	}
+	raw, err := os.ReadFile(exec.ArtifactRef)
+	if err != nil || len(raw) == 0 {
+		t.Fatalf("artifact unavailable: %v %q", err, raw)
 	}
 }
