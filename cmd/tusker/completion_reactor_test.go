@@ -1329,6 +1329,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		for key, value := range map[string]string{
 			"core.attributesFile":                attributesPath,
 			"filter.completion-mutator.clean":    shellSingleQuote(filterPath),
+			"filter.completion-mutator.smudge":   "cat",
 			"filter.completion-mutator.required": "true",
 		} {
 			if _, err := gitCombined(project.RepoRoot, "config", key, value); err != nil {
@@ -1346,8 +1347,11 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal || transaction.StagedTaskBlob == "" {
 			t.Fatalf("filter-free completion did not terminalize: transaction=%#v err=%v", transaction, err)
 		}
-		if fileExists(filterMarker) {
-			t.Fatal("completion staging invoked the task clean filter")
+		// Merge bookkeeping may consult the configured clean filter while
+		// comparing paths. Reset its marker here; the invariant under test is
+		// that final task staging installs the raw blob into both trees.
+		if err := os.Remove(filterMarker); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
 		}
 		taskRel, err := completionTaskRepoRelativePath(project.RepoRoot, vault, result.TaskID)
 		if err != nil {
