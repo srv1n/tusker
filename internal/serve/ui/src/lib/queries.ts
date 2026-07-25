@@ -200,7 +200,7 @@ export const useDeliveryReview = (plan: string, projectId?: string) =>
 
 export const useDeliveryStart = (projectId?: string) => {
   const qc = useQueryClient();
-  return useMutation<DeliveryStartResult, unknown, { plan: string; confirm: string }>({
+  return useMutation<DeliveryStartResult, unknown, { plan: string; confirm: string; planIdentity: string }>({
     mutationFn: (body) => api.deliveryStart(body, projectId),
     onSettled: (_data, _error, variables) => {
       void qc.invalidateQueries({ queryKey: qk.deliveryReview(variables?.plan ?? "", projectId) });

@@ -69,6 +69,10 @@ func deliveryPlanDoctor(vault, path string) (deliveryDoctorReport, error) {
 	if err != nil {
 		return deliveryDoctorReport{}, err
 	}
+	return deliveryPlanDoctorBytes(vault, path, raw)
+}
+
+func deliveryPlanDoctorBytes(vault, path string, raw []byte) (deliveryDoctorReport, error) {
 	report := deliveryDoctorReport{Schema: "tusker.delivery-doctor/v1", Plan: path, DryRun: true, Findings: []deliveryDoctorFinding{}, Frontiers: [][]string{}}
 	var v2 deliveryPlanV2
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))

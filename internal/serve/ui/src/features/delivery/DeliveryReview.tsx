@@ -18,16 +18,18 @@ export function DeliveryReviewPage() {
   const start = useDeliveryStart(projectId);
   const data = review.data;
   const reviewedFingerprint = data?.startBoundary.planFingerprint;
+  const reviewedIdentity = data?.startBoundary.planIdentity;
   const exactConfirmation = !!reviewedFingerprint && confirmation.trim() === reviewedFingerprint;
   const mutationMatchesReview =
     plan.trim() === submittedPlan &&
     start.variables?.plan === submittedPlan &&
-    start.variables?.confirm === reviewedFingerprint;
+    start.variables?.confirm === reviewedFingerprint &&
+    start.variables?.planIdentity === reviewedIdentity;
 
   useEffect(() => {
     start.reset();
     setConfirmation("");
-  }, [plan, submittedPlan, reviewedFingerprint, start.reset]);
+  }, [plan, submittedPlan, reviewedFingerprint, reviewedIdentity, start.reset]);
 
   const refresh = () => {
     setConfirmation("");
@@ -51,7 +53,7 @@ export function DeliveryReviewPage() {
 
         {review.isLoading && <StateCard tone="info" title="Loading delivery review" detail="Reading the canonical product projection." />}
         {review.error && <DeliveryFailure error={review.error} phase="review" />}
-        {data && <ReviewBody review={data} confirmation={confirmation} setConfirmation={setConfirmation} exactConfirmation={exactConfirmation} startResult={mutationMatchesReview ? start.data : undefined} startError={mutationMatchesReview ? start.error : null} starting={mutationMatchesReview && start.isPending} onStart={() => start.mutate({ plan: submittedPlan, confirm: confirmation.trim() })} />}
+        {data && <ReviewBody review={data} confirmation={confirmation} setConfirmation={setConfirmation} exactConfirmation={exactConfirmation} startResult={mutationMatchesReview ? start.data : undefined} startError={mutationMatchesReview ? start.error : null} starting={mutationMatchesReview && start.isPending} onStart={() => start.mutate({ plan: submittedPlan, confirm: confirmation.trim(), planIdentity: reviewedIdentity ?? "" })} />}
       </main>
     </PageScroll>
   );
@@ -59,7 +61,7 @@ export function DeliveryReviewPage() {
 
 function ReviewBody({ review, confirmation, setConfirmation, exactConfirmation, startResult, startError, starting, onStart }: { review: DeliveryReview; confirmation: string; setConfirmation: (value: string) => void; exactConfirmation: boolean; startResult?: DeliveryStartResult; startError: unknown; starting: boolean; onStart: () => void }) {
   const start = review.startBoundary;
-  const canStart = review.ready && start.state === "held" && exactConfirmation && !starting;
+  const canStart = review.ready && start.state === "held" && !!start.planIdentity && exactConfirmation && !starting;
   const nextAction = starting ? "Wait while Tusker imports and authorizes this exact fingerprint." : start.nextAction;
   return <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
     <div className="grid gap-5">

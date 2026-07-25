@@ -234,13 +234,18 @@ func readDeliveryPlan(path string) (deliveryPlan, []byte, error) {
 	if err != nil {
 		return deliveryPlan{}, nil, err
 	}
+	plan, err := readDeliveryPlanBytes(raw)
+	return plan, raw, err
+}
+
+func readDeliveryPlanBytes(raw []byte) (deliveryPlan, error) {
 	var plan deliveryPlan
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&plan); err != nil {
-		return plan, raw, tuskerError(errorInvalidArg, "invalid delivery plan YAML: "+err.Error())
+		return plan, tuskerError(errorInvalidArg, "invalid delivery plan YAML: "+err.Error())
 	}
-	return plan, raw, nil
+	return plan, nil
 }
 
 func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]string) {

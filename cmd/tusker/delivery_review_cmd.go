@@ -95,6 +95,7 @@ type deliveryReviewDecision struct {
 }
 type deliveryReviewStart struct {
 	PlanFingerprint    string   `json:"planFingerprint"`
+	PlanIdentity       string   `json:"planIdentity,omitempty"`
 	ContextFingerprint string   `json:"contextFingerprint,omitempty"`
 	Authorization      string   `json:"authorization"`
 	Readiness          string   `json:"readiness"`
@@ -137,7 +138,15 @@ func buildDeliveryReview(vault, path string) (deliveryReview, error) {
 }
 
 func buildDeliveryReviewWithInspector(vault, path string, inspector wavePreflightEnvironmentInspector) (deliveryReview, error) {
-	plan, raw, preparationIssues, err := readDeliveryReviewPlan(vault, path)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return deliveryReview{}, err
+	}
+	return buildDeliveryReviewBytes(vault, path, raw, inspector)
+}
+
+func buildDeliveryReviewBytes(vault, path string, raw []byte, inspector wavePreflightEnvironmentInspector) (deliveryReview, error) {
+	plan, preparationIssues, err := readDeliveryReviewPlanBytes(vault, raw)
 	if err != nil {
 		return deliveryReview{}, err
 	}
@@ -150,7 +159,7 @@ func buildDeliveryReviewWithInspector(vault, path string, inspector wavePrefligh
 		r.Start.Blockers = append(r.Start.Blockers, issue)
 	}
 	if plan.v2 != nil {
-		findings := deliveryReviewDoctorFindings(vault, path)
+		findings := deliveryReviewDoctorFindings(vault, path, raw)
 		for _, finding := range findings {
 			r.Start.Blockers = append(r.Start.Blockers, finding.Message)
 			if strings.Contains(finding.Code, "CONFLICT") || strings.Contains(finding.Code, "RESOURCE") {
@@ -341,24 +350,29 @@ func readDeliveryReviewPlan(vault, path string) (deliveryPlan, []byte, []string,
 	if err != nil {
 		return deliveryPlan{}, nil, nil, err
 	}
-	if schema, err := deliveryPlanSchemaAt(path); err != nil {
-		return deliveryPlan{}, raw, nil, err
+	plan, issues, err := readDeliveryReviewPlanBytes(vault, raw)
+	return plan, raw, issues, err
+}
+
+func readDeliveryReviewPlanBytes(vault string, raw []byte) (deliveryPlan, []string, error) {
+	if schema, err := deliveryPlanSchemaBytes(raw); err != nil {
+		return deliveryPlan{}, nil, err
 	} else if schema == deliveryPlanV2Schema {
 		var v2 deliveryPlanV2
 		d := yaml.NewDecoder(bytes.NewReader(raw))
 		d.KnownFields(true)
 		if err := d.Decode(&v2); err != nil {
-			return deliveryPlan{}, raw, nil, tuskerError(errorInvalidArg, "invalid V2 delivery plan YAML: "+err.Error())
+			return deliveryPlan{}, nil, tuskerError(errorInvalidArg, "invalid V2 delivery plan YAML: "+err.Error())
 		}
 		plan, issues := deliveryV2Prepare(vault, v2)
-		return plan, raw, issues, nil
+		return plan, issues, nil
 	}
-	plan, _, err := readDeliveryPlan(path)
-	return plan, raw, nil, err
+	plan, err := readDeliveryPlanBytes(raw)
+	return plan, nil, err
 }
 
-func deliveryReviewDoctorFindings(vault, path string) []deliveryDoctorFinding {
-	report, err := deliveryPlanDoctor(vault, path)
+func deliveryReviewDoctorFindings(vault, path string, raw []byte) []deliveryDoctorFinding {
+	report, err := deliveryPlanDoctorBytes(vault, path, raw)
 	if err != nil {
 		return []deliveryDoctorFinding{{Code: "PLAN_UNREADABLE", Message: err.Error()}}
 	}

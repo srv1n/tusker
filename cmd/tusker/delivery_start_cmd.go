@@ -46,8 +46,17 @@ type deliveryStartAuthority struct {
 	PlanPath                  string
 	PlanFingerprint           string
 	PlanBytes                 []byte
+	PlanBound                 bool
+	PlanVerify                func() error
 	ContextFingerprint        string
 	IntegrationBaseSHA        string
+}
+
+type deliveryPlanSource struct {
+	Path           string
+	Raw            []byte
+	BeforeMutation func()
+	Verify         func() error
 }
 
 func deliveryStartCmd(args Args) error {
@@ -69,9 +78,16 @@ func deliveryStartCmd(args Args) error {
 // held and disarmed. Tests can inject a repeatable environment inspector
 // without creating a daemon while production always inspects live state.
 func deliveryStart(args Args, inspector wavePreflightEnvironmentInspector) (deliveryStartResult, error) {
+	return deliveryStartWithPlanSource(args, inspector, nil)
+}
+
+func deliveryStartWithPlanSource(args Args, inspector wavePreflightEnvironmentInspector, source *deliveryPlanSource) (deliveryStartResult, error) {
 	vault, err := resolveVaultPath(args, false)
 	if err != nil {
 		return deliveryStartResult{}, err
+	}
+	if source != nil && source.Verify == nil {
+		return deliveryStartResult{}, tuskerError(errorInvalidTransition, "bound delivery plan snapshot has no path identity verifier")
 	}
 	if err := ensureV7ControlMutation(vault, args); err != nil {
 		return deliveryStartResult{}, err
@@ -80,7 +96,7 @@ func deliveryStart(args Args, inspector wavePreflightEnvironmentInspector) (deli
 	if err != nil {
 		return deliveryStartResult{}, err
 	}
-	path, confirmed, plan, raw, err := deliveryStartPlan(vault, args)
+	path, confirmed, plan, raw, err := deliveryStartPlanInput(vault, args, source)
 	if err != nil {
 		return deliveryStartResult{}, err
 	}
@@ -92,9 +108,10 @@ func deliveryStart(args Args, inspector wavePreflightEnvironmentInspector) (deli
 	if err != nil {
 		return deliveryStartResult{}, err
 	}
-	// Re-read every reviewed input while holding the same material boundary as
-	// import/gate/task mutations. A stale review refuses before any write.
-	pathLocked, confirmedLocked, planLocked, rawLocked, err := deliveryStartPlan(vault, args)
+	// Revalidate every reviewed input while holding the same material boundary
+	// as import/gate/task mutations. CLI callers re-read their path; Serve
+	// reparses its descriptor-bound bytes and verifies the rooted path chain.
+	pathLocked, confirmedLocked, planLocked, rawLocked, err := deliveryStartPlanInput(vault, args, source)
 	if err == nil {
 		context, err = deliveryStartValidateContext(vault, planLocked)
 	}
@@ -105,12 +122,27 @@ func deliveryStart(args Args, inspector wavePreflightEnvironmentInspector) (deli
 		_ = materialLock.Close()
 		return deliveryStartResult{}, err
 	}
+	if source != nil {
+		if source.BeforeMutation != nil {
+			source.BeforeMutation()
+		}
+		if source.Verify != nil {
+			if verifyErr := source.Verify(); verifyErr != nil {
+				_ = materialLock.Close()
+				return deliveryStartResult{}, tuskerError(errorInvalidTransition, "delivery plan identity changed after review; review and confirm the current plan again", withContext(map[string]any{"cause": verifyErr.Error()}))
+			}
+		}
+	}
 	authority := &deliveryStartAuthority{
 		PlanPath:           pathLocked,
 		PlanFingerprint:    confirmedLocked,
 		PlanBytes:          append([]byte(nil), rawLocked...),
+		PlanBound:          source != nil,
 		ContextFingerprint: context.ContextFingerprint,
 		IntegrationBaseSHA: context.IntegrationBase.SHA,
+	}
+	if source != nil {
+		authority.PlanVerify = source.Verify
 	}
 
 	// Reuse the V2 importer, but suppress its integration-branch bootstrap: a
@@ -124,7 +156,7 @@ func deliveryStart(args Args, inspector wavePreflightEnvironmentInspector) (deli
 	importArgs["expected-plan-fingerprint"] = authority.PlanFingerprint
 	importArgs["expected-integration-base-sha"] = authority.IntegrationBaseSHA
 	importArgs["material-lock-held"] = "true"
-	if err := deliveryV2ImportCmd(vault, authority.PlanPath, importArgs); err != nil {
+	if err := deliveryV2ImportBytes(vault, authority.PlanPath, authority.PlanBytes, importArgs); err != nil {
 		_ = materialLock.Close()
 		return deliveryStartResult{}, err
 	}
@@ -169,8 +201,9 @@ func deliveryStart(args Args, inspector wavePreflightEnvironmentInspector) (deli
 	}
 
 	// The plan and bounded context are sampled again after the write for an
-	// early refusal. The final material lock repeats this authority check.
-	_, confirmedAfter, planAfter, rawAfter, err := deliveryStartPlan(vault, Args{"plan": authority.PlanPath, "confirm": authority.PlanFingerprint})
+	// early refusal. Serve keeps parsing the bound bytes; CLI callers re-read
+	// their path. The final material lock repeats this authority check.
+	_, confirmedAfter, planAfter, rawAfter, err := deliveryStartPlanInput(vault, Args{"plan": authority.PlanPath, "confirm": authority.PlanFingerprint}, source)
 	if err != nil {
 		return deliveryStartResult{}, refuseDeliveryStartBeforeArm(vault, authority, err)
 	}
@@ -246,7 +279,22 @@ func validateDeliveryStartAuthorityUnderLock(vault string, wave Note, authority 
 	if authority == nil {
 		return nil
 	}
-	_, confirmed, plan, raw, err := deliveryStartPlan(vault, Args{"plan": authority.PlanPath, "confirm": authority.PlanFingerprint})
+	if authority.PlanBound && authority.PlanVerify != nil {
+		if err := authority.PlanVerify(); err != nil {
+			return tuskerError(errorInvalidTransition, "reviewed delivery plan identity changed before authorization; regenerate delivery review and Start")
+		}
+	}
+	var (
+		confirmed string
+		plan      deliveryPlan
+		raw       []byte
+		err       error
+	)
+	if authority.PlanBound {
+		_, confirmed, plan, raw, err = deliveryStartPlanBytes(vault, Args{"plan": authority.PlanPath, "confirm": authority.PlanFingerprint}, authority.PlanPath, authority.PlanBytes)
+	} else {
+		_, confirmed, plan, raw, err = deliveryStartPlan(vault, Args{"plan": authority.PlanPath, "confirm": authority.PlanFingerprint})
+	}
 	if err != nil {
 		return err
 	}
@@ -286,6 +334,24 @@ func deliveryStartPlan(vault string, args Args) (string, string, deliveryPlan, [
 	if err != nil {
 		return "", "", deliveryPlan{}, nil, err
 	}
+	return deliveryStartPlanBytes(vault, args, path, raw)
+}
+
+func deliveryStartPlanInput(vault string, args Args, source *deliveryPlanSource) (string, string, deliveryPlan, []byte, error) {
+	if source == nil {
+		return deliveryStartPlan(vault, args)
+	}
+	path := strings.TrimSpace(firstNonEmpty(args.String("plan"), args.String("_pos0")))
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(v7RepoRoot(vault), path)
+	}
+	if filepath.Clean(path) != filepath.Clean(source.Path) {
+		return "", "", deliveryPlan{}, nil, tuskerError(errorInvalidTransition, "bound delivery plan path changed before Start; review the plan again")
+	}
+	return deliveryStartPlanBytes(vault, args, source.Path, source.Raw)
+}
+
+func deliveryStartPlanBytes(vault string, args Args, path string, raw []byte) (string, string, deliveryPlan, []byte, error) {
 	confirmed := strings.TrimSpace(args.String("confirm"))
 	if confirmed == "" {
 		return "", "", deliveryPlan{}, nil, tuskerError(errorMissingArg, "delivery start requires --confirm <exact plan fingerprint>")
@@ -293,7 +359,7 @@ func deliveryStartPlan(vault string, args Args) (string, string, deliveryPlan, [
 	if deliveryFingerprint(raw) != confirmed {
 		return "", "", deliveryPlan{}, nil, tuskerError(errorInvalidTransition, "confirmed plan fingerprint differs; rerun delivery review and confirm its exact plan fingerprint")
 	}
-	if schema, err := deliveryPlanSchemaAt(path); err != nil {
+	if schema, err := deliveryPlanSchemaBytes(raw); err != nil {
 		return "", "", deliveryPlan{}, nil, err
 	} else if schema != deliveryPlanV2Schema {
 		return "", "", deliveryPlan{}, nil, tuskerError(errorInvalidArg, "delivery start requires a tusker.delivery-plan/v2 plan; regenerate the reviewed V2 plan")
@@ -311,7 +377,7 @@ func deliveryStartPlan(vault string, args Args) (string, string, deliveryPlan, [
 	if len(issues) > 0 {
 		return "", "", deliveryPlan{}, nil, tuskerError(errorInvalidArg, "delivery plan is invalid: "+issues[0])
 	}
-	doctor, err := deliveryPlanDoctor(vault, path)
+	doctor, err := deliveryPlanDoctorBytes(vault, path, raw)
 	if err != nil {
 		return "", "", deliveryPlan{}, nil, err
 	}
@@ -320,7 +386,7 @@ func deliveryStartPlan(vault string, args Args) (string, string, deliveryPlan, [
 		sort.Slice(findings, func(i, j int) bool { return findings[i].Code < findings[j].Code })
 		return "", "", deliveryPlan{}, nil, tuskerError(errorInvalidArg, "delivery plan is operationally unsafe: "+findings[0].Message)
 	}
-	return path, confirmed, plan, raw, nil
+	return path, confirmed, plan, append([]byte(nil), raw...), nil
 }
 
 func deliveryStartValidateContext(vault string, plan deliveryPlan) (deliveryPlanningContext, error) {

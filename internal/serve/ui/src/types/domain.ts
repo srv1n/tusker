@@ -139,7 +139,7 @@ export interface DeliveryReview {
     taskSourceKey?: string; taskId?: string; acceptanceIds: string[]; verification?: string;
   }>;
   startBoundary: {
-    planFingerprint: string; contextFingerprint?: string; authorization: string; readiness: string;
+    planFingerprint: string; planIdentity?: string; contextFingerprint?: string; authorization: string; readiness: string;
     blockers: string[]; nextAction: string; state: DeliveryReviewState; stateLabel: string; actionHref?: string;
   };
   nonGoals: string[];

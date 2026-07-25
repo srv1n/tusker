@@ -106,6 +106,10 @@ func deliveryPlanSchemaAt(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return deliveryPlanSchemaBytes(raw)
+}
+
+func deliveryPlanSchemaBytes(raw []byte) (string, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(raw, &root); err != nil {
 		return "", tuskerError(errorInvalidArg, "invalid delivery plan YAML: "+err.Error())
@@ -126,6 +130,10 @@ func deliveryV2ImportCmd(vaultPath, path string, args Args) error {
 	if err != nil {
 		return err
 	}
+	return deliveryV2ImportBytes(vaultPath, path, raw, args)
+}
+
+func deliveryV2ImportBytes(vaultPath, path string, raw []byte, args Args) error {
 	if expected := strings.TrimSpace(args.String("expected-plan-fingerprint")); expected != "" && deliveryFingerprint(raw) != expected {
 		return tuskerError(errorInvalidTransition, "delivery plan changed after confirmation; regenerate delivery review and confirm its exact plan fingerprint")
 	}
@@ -143,7 +151,7 @@ func deliveryV2ImportCmd(vaultPath, path string, args Args) error {
 	// ordinary schema/traceability errors first so callers retain their precise
 	// existing remedies.
 	if len(issues) == 0 {
-		if doctor, err := deliveryPlanDoctor(vaultPath, path); err != nil {
+		if doctor, err := deliveryPlanDoctorBytes(vaultPath, path, raw); err != nil {
 			return err
 		} else if !doctor.OK {
 			return tuskerError(errorInvalidArg, "delivery plan is operationally unsafe", withContext(map[string]any{"delivery_doctor": doctor}))

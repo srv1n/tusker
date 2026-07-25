@@ -135,7 +135,7 @@ export const api = {
   deliveryReview: (plan: string, projectId?: string): Promise<DeliveryReview> =>
     deliveryRequest("GET", withProject(`/delivery/review?plan=${encodeURIComponent(plan)}`, projectId)),
 
-  deliveryStart: (body: { plan: string; confirm: string }, projectId?: string): Promise<DeliveryStartResult> =>
+  deliveryStart: (body: { plan: string; confirm: string; planIdentity: string }, projectId?: string): Promise<DeliveryStartResult> =>
     deliveryRequest("POST", withProject("/delivery/start", projectId), body),
 
   // GET /api/daemon

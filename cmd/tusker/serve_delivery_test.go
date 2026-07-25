@@ -57,7 +57,7 @@ func TestServeDeliveryReviewUsesCanonicalProjectionWithoutMutation(t *testing.T)
 
 	var review deliveryReview
 	serveDecode(t, server, "/api/delivery/review?project=delivery&plan="+filepath.ToSlash(filepath.Join(".tusker", "scratch", filepath.Base(path))), &review)
-	if review.Schema != deliveryReviewSchema || !review.ReadOnly || len(review.What) == 0 || len(review.Proof) == 0 || review.Start.PlanFingerprint == "" {
+	if review.Schema != deliveryReviewSchema || !review.ReadOnly || len(review.What) == 0 || len(review.Proof) == 0 || review.Start.PlanFingerprint == "" || review.Start.PlanIdentity == "" {
 		t.Fatalf("Serve did not return the canonical five-section review: %#v", review)
 	}
 	if review.Start.State != "disabled" {
@@ -436,7 +436,9 @@ func TestServeDeliveryRejectsUnsafePathsAndStaleConfirmation(t *testing.T) {
 	}
 
 	before := snapshotDeliveryRecords(t, vault)
-	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(`{"plan":"`+rel+`","confirm":"sha256:stale"}`))
+	var reviewed deliveryReview
+	serveDecode(t, server, "/api/delivery/review?project=delivery&plan="+rel, &reviewed)
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(`{"plan":"`+rel+`","confirm":"sha256:stale","planIdentity":"`+reviewed.Start.PlanIdentity+`"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -492,6 +494,250 @@ func TestServeDeliveryRejectsPlanOwnedByNestedRegisteredProject(t *testing.T) {
 	}
 }
 
+func TestServeDeliveryPlanSnapshotRejectsNoFollowComponentSwaps(t *testing.T) {
+	server, repo := newServeDeliveryFixture(t)
+	vault := server.vaultPath
+	plan := validDeliveryPlanV2()
+	plan.HumanGates = nil
+	canonicalPath := writeDeliveryV2TestPlan(t, vault, plan)
+	raw, err := os.ReadFile(canonicalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planDir := filepath.Join(repo, "plans")
+	planPath := filepath.Join(planDir, "review.yaml")
+	if err := writeText(planPath, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	externalPath := filepath.Join(t.TempDir(), "external.yaml")
+	if err := writeText(externalPath, strings.Replace(string(raw), plan.Summary, "External plan bytes must never be read.", 1)); err != nil {
+		t.Fatal(err)
+	}
+	nestedRepo := filepath.Join(repo, "nested-project")
+	nestedVault := filepath.Join(nestedRepo, ".tusker")
+	nestedPlanDir := filepath.Join(nestedRepo, "plans")
+	nestedPlan := filepath.Join(nestedPlanDir, "review.yaml")
+	if err := writeText(workflowPath(nestedVault), defaultWorkflowMarkdown()); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(nestedPlan, strings.Replace(string(raw), plan.Summary, "Nested-project bytes must never be read.", 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.store.UpsertProject(RegisteredProject{ProjectID: "nested-race", ProjectKey: "nested-race", RepoRoot: nestedRepo, VaultRoot: nestedVault, WorkflowPath: workflowPath(nestedVault)}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		component int
+		swap      func() func()
+	}{
+		{
+			name:      "final file to external symlink",
+			component: 1,
+			swap: func() func() {
+				return swapServeDeliveryPlanWithSymlink(t, planPath, externalPath)
+			},
+		},
+		{
+			name:      "intermediate directory to nested-project symlink",
+			component: 0,
+			swap: func() func() {
+				return swapServeDeliveryPlanWithSymlink(t, planDir, nestedPlanDir)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			beforeRecords := snapshotDeliveryRecords(t, vault)
+			beforeState := snapshotTree(t, DefaultStateRoot())
+			originalHook := serveDeliveryPlanOpenComponentHook
+			var restore func()
+			swapped := false
+			serveDeliveryPlanOpenComponentHook = func(relative string, component int) {
+				if !swapped && relative == filepath.Join("plans", "review.yaml") && component == test.component {
+					swapped = true
+					restore = test.swap()
+				}
+			}
+			defer func() {
+				serveDeliveryPlanOpenComponentHook = originalHook
+				if restore != nil {
+					restore()
+				}
+			}()
+
+			request := httptest.NewRequest(http.MethodGet, "/api/delivery/review?project=delivery&plan=plans/review.yaml", nil)
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, request)
+			if !swapped || recorder.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("component swap accepted: swapped=%t status=%d body=%s", swapped, recorder.Code, recorder.Body.String())
+			}
+			assertEqual(t, beforeRecords, snapshotDeliveryRecords(t, vault), "component swap must not import records")
+			assertSnapshotEqual(t, beforeState, snapshotTree(t, DefaultStateRoot()), "component swap runtime state")
+		})
+	}
+}
+
+func TestServeDeliveryBoundSnapshotSurvivesFormerReopenSwaps(t *testing.T) {
+	for _, phase := range []string{"schema", "review"} {
+		t.Run(phase, func(t *testing.T) {
+			server, _ := newServeDeliveryFixture(t)
+			vault := server.vaultPath
+			plan := validDeliveryPlanV2()
+			plan.HumanGates = nil
+			path := writeDeliveryV2TestPlan(t, vault, plan)
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			external := filepath.Join(t.TempDir(), "external.yaml")
+			if err := writeText(external, strings.Replace(string(raw), plan.Summary, "Untrusted replacement bytes.", 1)); err != nil {
+				t.Fatal(err)
+			}
+			before := snapshotDeliveryRecords(t, vault)
+			originalHook := serveDeliveryPlanPhaseHook
+			var restore func()
+			swapped := false
+			serveDeliveryPlanPhaseHook = func(current string) {
+				if !swapped && current == phase {
+					swapped = true
+					restore = swapServeDeliveryPlanWithSymlink(t, path, external)
+				}
+			}
+			defer func() {
+				serveDeliveryPlanPhaseHook = originalHook
+				if restore != nil {
+					restore()
+				}
+			}()
+
+			var review deliveryReview
+			serveDecode(t, server, "/api/delivery/review?project=delivery&plan=.tusker/scratch/delivery-plan-v2.yaml", &review)
+			if !swapped || review.Start.PlanFingerprint != deliveryFingerprint(raw) || strings.Contains(strings.Join(review.Start.Blockers, "\n"), "Untrusted replacement bytes") {
+				t.Fatalf("%s phase consumed replacement bytes: swapped=%t review=%#v", phase, swapped, review.Start)
+			}
+			assertEqual(t, before, snapshotDeliveryRecords(t, vault), phase+" snapshot must remain read-only")
+		})
+	}
+
+	for _, phase := range []string{"start", "import"} {
+		t.Run(phase, func(t *testing.T) {
+			server, _ := newServeDeliveryFixture(t)
+			vault := server.vaultPath
+			plan := validDeliveryPlanV2()
+			plan.HumanGates = nil
+			path := writeDeliveryV2TestPlan(t, vault, plan)
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			external := filepath.Join(t.TempDir(), "external.yaml")
+			if err := writeText(external, string(raw)); err != nil {
+				t.Fatal(err)
+			}
+			var review deliveryReview
+			serveDecode(t, server, "/api/delivery/review?project=delivery&plan=.tusker/scratch/delivery-plan-v2.yaml", &review)
+			beforeRecords := snapshotDeliveryRecords(t, vault)
+			beforeState := snapshotTree(t, DefaultStateRoot())
+			originalHook := serveDeliveryPlanPhaseHook
+			var restore func()
+			swapped := false
+			serveDeliveryPlanPhaseHook = func(current string) {
+				if !swapped && current == phase {
+					swapped = true
+					restore = swapServeDeliveryPlanWithSymlink(t, path, external)
+				}
+			}
+			defer func() {
+				serveDeliveryPlanPhaseHook = originalHook
+				if restore != nil {
+					restore()
+				}
+			}()
+
+			body := `{"plan":".tusker/scratch/delivery-plan-v2.yaml","confirm":"` + review.Start.PlanFingerprint + `","planIdentity":"` + review.Start.PlanIdentity + `"}`
+			request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(body))
+			request.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, request)
+			if !swapped || recorder.Code != http.StatusConflict {
+				t.Fatalf("%s path swap accepted: swapped=%t status=%d body=%s", phase, swapped, recorder.Code, recorder.Body.String())
+			}
+			assertEqual(t, beforeRecords, snapshotDeliveryRecords(t, vault), phase+" path swap must refuse before import")
+			assertSnapshotEqual(t, beforeState, snapshotTree(t, DefaultStateRoot()), phase+" path swap runtime state")
+		})
+	}
+}
+
+func TestServeDeliveryAtomicEditorReplacementIsChanged(t *testing.T) {
+	server, _ := newServeDeliveryFixture(t)
+	vault := server.vaultPath
+	plan := validDeliveryPlanV2()
+	plan.HumanGates = nil
+	path := writeDeliveryV2TestPlan(t, vault, plan)
+	var reviewed deliveryReview
+	serveDecode(t, server, "/api/delivery/review?project=delivery&plan=.tusker/scratch/delivery-plan-v2.yaml", &reviewed)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := strings.Replace(string(raw), plan.Summary, "Atomic editor replacement.", 1)
+	if replacement == string(raw) {
+		t.Fatal("atomic editor fixture did not change plan bytes")
+	}
+	replacementPath := filepath.Join(filepath.Dir(path), ".delivery-plan-v2.yaml.replacement")
+	if err := writeText(replacementPath, replacement); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacementPath, path); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotDeliveryRecords(t, vault)
+	body := `{"plan":".tusker/scratch/delivery-plan-v2.yaml","confirm":"` + reviewed.Start.PlanFingerprint + `","planIdentity":"` + reviewed.Start.PlanIdentity + `"}`
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusConflict || !strings.Contains(strings.ToLower(recorder.Body.String()), "identity changed") {
+		t.Fatalf("atomic replacement was not reported as changed: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	assertEqual(t, before, snapshotDeliveryRecords(t, vault), "atomic replacement refusal must not import")
+
+	var current deliveryReview
+	serveDecode(t, server, "/api/delivery/review?project=delivery&plan=.tusker/scratch/delivery-plan-v2.yaml", &current)
+	if current.Start.PlanIdentity == reviewed.Start.PlanIdentity || current.Start.PlanFingerprint == reviewed.Start.PlanFingerprint {
+		t.Fatalf("atomic replacement did not produce a fresh identity and fingerprint: before=%#v after=%#v", reviewed.Start, current.Start)
+	}
+}
+
+func swapServeDeliveryPlanWithSymlink(t *testing.T, path, target string) func() {
+	t.Helper()
+	backup := path + ".bound-original"
+	if err := os.Rename(path, backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		_ = os.Rename(backup, path)
+		t.Fatal(err)
+	}
+	restored := false
+	restore := func() {
+		if restored {
+			return
+		}
+		restored = true
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if err := os.Rename(backup, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(restore)
+	return restore
+}
+
 func TestServeDeliveryStartReplaysCanonicalAuthorization(t *testing.T) {
 	server, _ := newServeDeliveryFixture(t)
 	vault := server.vaultPath
@@ -504,14 +750,16 @@ func TestServeDeliveryStartReplaysCanonicalAuthorization(t *testing.T) {
 	}
 	rel := filepath.ToSlash(filepath.Join(".tusker", "scratch", filepath.Base(path)))
 	confirm := deliveryFingerprint(raw)
+	var reviewed deliveryReview
+	serveDecode(t, server, "/api/delivery/review?project=delivery&plan="+rel, &reviewed)
 	original := serveDeliveryStartFn
-	serveDeliveryStartFn = func(args Args) (deliveryStartResult, error) {
-		return deliveryStart(args, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
+	serveDeliveryStartFn = func(args Args, source *deliveryPlanSource) (deliveryStartResult, error) {
+		return deliveryStartWithPlanSource(args, fixedWaveEnvironmentInspector(greenWaveEnvironment()), source)
 	}
 	t.Cleanup(func() { serveDeliveryStartFn = original })
 
 	post := func() deliveryStartResult {
-		request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(`{"plan":"`+rel+`","confirm":"`+confirm+`"}`))
+		request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(`{"plan":"`+rel+`","confirm":"`+confirm+`","planIdentity":"`+reviewed.Start.PlanIdentity+`"}`))
 		request.Header.Set("Content-Type", "application/json")
 		recorder := httptest.NewRecorder()
 		server.ServeHTTP(recorder, request)
@@ -544,15 +792,17 @@ func TestServeDeliveryStartPreservesTypedPreflightRefusal(t *testing.T) {
 		t.Fatal(err)
 	}
 	rel := filepath.ToSlash(filepath.Join(".tusker", "scratch", filepath.Base(path)))
+	var reviewed deliveryReview
+	serveDecode(t, server, "/api/delivery/review?project=delivery&plan="+rel, &reviewed)
 	env := greenWaveEnvironment()
 	env.ProjectEnabled = false
 	original := serveDeliveryStartFn
-	serveDeliveryStartFn = func(args Args) (deliveryStartResult, error) {
-		return deliveryStart(args, fixedWaveEnvironmentInspector(env))
+	serveDeliveryStartFn = func(args Args, source *deliveryPlanSource) (deliveryStartResult, error) {
+		return deliveryStartWithPlanSource(args, fixedWaveEnvironmentInspector(env), source)
 	}
 	t.Cleanup(func() { serveDeliveryStartFn = original })
 
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(`{"plan":"`+rel+`","confirm":"`+deliveryFingerprint(raw)+`"}`))
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", bytes.NewBufferString(`{"plan":"`+rel+`","confirm":"`+deliveryFingerprint(raw)+`","planIdentity":"`+reviewed.Start.PlanIdentity+`"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
