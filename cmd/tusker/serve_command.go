@@ -268,6 +268,8 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleDigest(w, r)
 	case path == "/api/summary":
 		s.handleSummary(w, r)
+	case path == "/api/morning-brief":
+		s.handleScheduledPromotionMorningBrief(w, r)
 	case path == "/api/runs":
 		s.handleRuns(w, r)
 	case strings.HasPrefix(path, "/api/runs/"):
@@ -332,6 +334,27 @@ func (s *serveServer) handleReviewBatch(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	serveJSON(w, http.StatusOK, items)
+}
+
+func (s *serveServer) handleScheduledPromotionMorningBrief(w http.ResponseWriter, r *http.Request) {
+	now := s.now()
+	night, err := scheduledPromotionMorningBriefNight(r.URL.Query().Get("date"), now)
+	if err != nil {
+		serveJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	snap, err := s.loadSnapshotForRequest(r)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	vaultPath := firstNonEmpty(strings.TrimSpace(snap.project.VaultRoot), s.vaultPath)
+	brief, err := buildScheduledPromotionMorningBrief(vaultPath, snap.projectID, snap.workflow, s.store, night, now)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	serveJSON(w, http.StatusOK, brief)
 }
 
 func serveRunInterruptTaskID(path string) (string, bool) {
@@ -1706,6 +1729,7 @@ Endpoints:
   GET /api/projects
   GET /api/needs?project=<id>
   GET /api/summary?project=<id>
+  GET /api/morning-brief?project=<id>[&date=YYYY-MM-DD]
   GET /api/runs?project=<id>
   GET /api/runs/<task-id>
   POST /api/runs/<task-id>/redrive
