@@ -207,6 +207,7 @@ type GateTierPolicy struct {
 	// are never inferred from arbitrary test assertion text.
 	InfrastructureFailurePatterns []string `yaml:"infrastructure_failure_patterns,omitempty" json:"infrastructure_failure_patterns,omitempty"`
 	FlakeFailurePatterns          []string `yaml:"flake_failure_patterns,omitempty" json:"flake_failure_patterns,omitempty"`
+	FlakeFailureAction            string   `yaml:"flake_failure_action,omitempty" json:"flake_failure_action,omitempty"`
 	// Scopes map areas of the project to the harvest commands that cover them,
 	// enabling the Stage 1 per-change (selective) gate: `tusker gate --changed`
 	// runs only the scopes a change touched. When empty, only the whole-harvest

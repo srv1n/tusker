@@ -404,6 +404,19 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	stopHeartbeat := startScheduledPromotionLeaseHeartbeat(store, lease, scheduledPromotionResourceLeaseTTL)
 	defer func() { _ = stopHeartbeat() }()
 	execution := runV7GateTierOnRef(vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+	// A configured flake rerun is deliberately one-shot. Its second result
+	// replaces the gate attempt; a second red falls through to quarantine.
+	if execution.Err == nil && execution.Result.Outcome == gateOutcomeFailed && strings.TrimSpace(gatePolicy.FlakeFailureAction) == "rerun" {
+		raw, _ := os.ReadFile(execution.ArtifactRef)
+		probe := promotionFailurePacket(before.Candidate, before.Gate, actor, string(raw), nil, gatePolicy, "unknown", "not_run", promotionFailureOwner(before.Candidate), nil, []string{execution.ArtifactRef})
+		if classifyPromotionFailure(probe, gatePolicy).Class == promotionFailureFlake {
+			first := execution.ArtifactRef
+			execution = runV7GateTierOnRef(vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+			if execution.Err != nil || execution.Result.Outcome == gateOutcomeFailed {
+				execution.ArtifactRef = first + "," + execution.ArtifactRef
+			}
+		}
+	}
 	gateSummary := string(execution.Result.Outcome)
 	gateFinished := time.Now().UTC()
 	if execution.Err != nil || (execution.Result.Outcome != gateOutcomePassed && execution.Result.Outcome != gateOutcomeLedgerHit) {
@@ -413,15 +426,16 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		// Red gates never advance main. Persist a compact, replay-safe packet so
 		// triage has the frozen candidate and a durable raw-log reference rather
 		// than rediscovering the failure from mutable branches.
-		gateOutput, _ := os.ReadFile(execution.ArtifactRef)
+		artifactRefs := strings.Split(execution.ArtifactRef, ",")
+		gateOutput, _ := os.ReadFile(artifactRefs[len(artifactRefs)-1])
 		owner := promotionFailureOwner(before.Candidate)
-		packet := promotionFailurePacket(before.Candidate, before.Gate, actor, string(gateOutput), execution.Err, gatePolicy, "unknown", "not_run", owner, nil, []string{execution.ArtifactRef})
+		packet := promotionFailurePacket(before.Candidate, before.Gate, actor, string(gateOutput), execution.Err, gatePolicy, "unknown", "not_run", owner, nil, artifactRefs)
 		packet.GateResult = execution.Result
 		route := classifyPromotionFailure(packet, gatePolicy)
 		repairTaskID, action := "", "ambiguous_repair"
 		if route.Class == promotionFailureIsolated && owner != "" {
 			action = "owner_rework"
-			if err := statusV7Cmd(Args{"vault": vaultPath, "quiet": "true", "local": "true", "id": owner, "status": "rework", "by": "tusker:scheduled-promotion", "reason": "promotion gate red: " + route.StableIdentity}); err != nil {
+			if err := statusV7Cmd(Args{"vault": vaultPath, "quiet": "true", "id": owner, "status": "rework", "by": "tusker:scheduled-promotion", "reason": "promotion gate red: " + route.StableIdentity}); err != nil {
 				return "", err
 			}
 		} else {
@@ -431,7 +445,7 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 			if route.Class == promotionFailureFlake {
 				action = "flake_quarantine"
 			}
-			if repairErr := createPromotionFailureRepairTask(vaultPath, run.ID, packet.GateCommand, actionableGateFailure(string(gateOutput), execution.Err), packet.GateProfile, route.StableIdentity, packet.OwningTaskID, execution.ArtifactRef, true); repairErr != nil {
+			if repairErr := createPromotionFailureRepairTask(vaultPath, run.ID, packet.GateCommand, actionableGateFailure(string(gateOutput), execution.Err), packet.GateProfile, route.StableIdentity, packet.OwningTaskID, artifactRefs[len(artifactRefs)-1], true); repairErr != nil {
 				return "", repairErr
 			}
 			repairTaskID = promotionFailureRepairTaskID(vaultPath, route.StableIdentity)
@@ -439,7 +453,7 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		failed := *run
 		failed.Candidate, failed.Gate = before.Candidate, before.Gate
 		failed.Gate.Status = "failed"
-		failed.Gate.StartedAt, failed.Gate.FinishedAt, failed.Gate.ArtifactRef = gateStarted.Format(time.RFC3339Nano), gateFinished.Format(time.RFC3339Nano), execution.ArtifactRef
+		failed.Gate.StartedAt, failed.Gate.FinishedAt, failed.Gate.ArtifactRef = gateStarted.Format(time.RFC3339Nano), gateFinished.Format(time.RFC3339Nano), artifactRefs[len(artifactRefs)-1]
 		affected := []string{}
 		if owner != "" {
 			affected = append(affected, owner)
@@ -455,6 +469,9 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		*run = failed
 		run.StateRevision++
 		return "", tuskerError(errorInvalidTransition, "promotion gate red: "+safePacketText(string(gateOutput), 320))
+	}
+	if execution.Err == nil && (execution.Result.Outcome == gateOutcomePassed || execution.Result.Outcome == gateOutcomeLedgerHit) {
+		_ = os.Remove(execution.ArtifactRef)
 	}
 	after, err := scheduledPromotionSnapshot(vaultPath, projectID, waveID, wf)
 	if err != nil {

@@ -110,6 +110,9 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	if err := validateGateScopes(wf.Orchestration.Gate.Scopes, filePath); err != nil {
 		return err
 	}
+	if action := strings.TrimSpace(wf.Orchestration.Gate.FlakeFailureAction); action != "" && action != "quarantine" && action != "rerun" {
+		return tuskerError(errorConfigInvalid, "orchestration.gate.flake_failure_action must be quarantine or rerun", withPath(filePath))
+	}
 	for _, section := range []string{"## Routing", "## Prompt", "## Retry policy", "## Human override policy"} {
 		if findHeading(body, section) == nil {
 			return tuskerError(errorConfigInvalid, fmt.Sprintf("WORKFLOW.md missing required section %q", section), withPath(filePath))
