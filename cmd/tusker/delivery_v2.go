@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,15 +17,20 @@ const deliveryPlanV2Schema = "tusker.delivery-plan/v2"
 // V2 deliberately has no identity or lifecycle fields. Source keys are the
 // only caller supplied identity; Tusker allocates every durable record ID.
 type deliveryPlanV2 struct {
-	Schema        string                `yaml:"schema"`
-	Scope         string                `yaml:"scope"`
-	Title         string                `yaml:"title"`
-	Epic          string                `yaml:"epic,omitempty"`
-	EpicContract  *deliveryEpicContract `yaml:"epic_contract,omitempty"`
-	SpecRefs      []string              `yaml:"spec_refs"`
-	Requirements  []deliveryRequirement `yaml:"requirements"`
-	Concurrency   int                   `yaml:"concurrency,omitempty"`
-	RunnerProfile string                `yaml:"runner_profile,omitempty"`
+	Schema       string                `yaml:"schema"`
+	Scope        string                `yaml:"scope"`
+	Title        string                `yaml:"title"`
+	Epic         string                `yaml:"epic,omitempty"`
+	EpicContract *deliveryEpicContract `yaml:"epic_contract,omitempty"`
+	SpecRefs     []string              `yaml:"spec_refs"`
+	// ContextFingerprint binds the proposal to the bounded repository facts
+	// the planner actually saw. It is deliberately authored, not inferred on
+	// import, so a review can reject a plan composed from stale context.
+	ContextFingerprint string                `yaml:"context_fingerprint"`
+	NonGoals           []string              `yaml:"non_goals,omitempty"`
+	Requirements       []deliveryRequirement `yaml:"requirements"`
+	Concurrency        int                   `yaml:"concurrency,omitempty"`
+	RunnerProfile      string                `yaml:"runner_profile,omitempty"`
 	// SharedResources, overlap strategies, assumptions, unresolved decisions,
 	// and Summary are authored facts.  The doctor must never manufacture them
 	// from filenames or dependency shape.
@@ -168,6 +174,9 @@ func deliveryV2Prepare(vaultPath string, v2 deliveryPlanV2) (deliveryPlan, []str
 	if v2.Schema != deliveryPlanV2Schema {
 		issues = append(issues, "schema must be "+deliveryPlanV2Schema)
 	}
+	if !deliveryContextFingerprintValid(v2.ContextFingerprint) {
+		issues = append(issues, "V2 plan requires context_fingerprint in sha256:<64 lowercase hex> form")
+	}
 	if plan.Epic != "" && v2.EpicContract != nil {
 		issues = append(issues, "epic and epic_contract are mutually exclusive")
 	}
@@ -214,6 +223,11 @@ func deliveryV2Prepare(vaultPath string, v2 deliveryPlanV2) (deliveryPlan, []str
 	}
 	if len(v2.Requirements) == 0 {
 		issues = append(issues, "V2 plan requires at least one requirement")
+	}
+	for _, nonGoal := range v2.NonGoals {
+		if deliveryPlaceholder(nonGoal) {
+			issues = append(issues, "non_goals must contain concrete statements")
+		}
 	}
 	covered := map[string]bool{}
 	keys := map[string]deliveryPlanTask{}
@@ -267,6 +281,15 @@ func deliveryV2Prepare(vaultPath string, v2 deliveryPlanV2) (deliveryPlan, []str
 		}
 	}
 	return plan, uniqueStrings(issues)
+}
+
+func deliveryContextFingerprintValid(value string) bool {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+64 {
+		return false
+	}
+	decoded, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
+	return err == nil && len(decoded) == 32 && strings.ToLower(value) == value
 }
 
 func deliveryV2GateMapping(vaultPath string, plan deliveryPlan, tasks map[string]string) (map[string]string, error) {
@@ -334,13 +357,14 @@ func deliveryV2TaskFingerprint(task deliveryPlanTask, gates []deliveryHumanGate)
 }
 
 func deliveryV2WaveContractData(plan *deliveryPlanV2) (map[string]any, error) {
-	out := map[string]any{"summary": plan.Summary}
+	out := map[string]any{"summary": plan.Summary, "context_fingerprint": plan.ContextFingerprint}
 	fields := []struct {
 		name    string
 		value   any
 		present bool
 	}{
 		{name: "requirements", value: plan.Requirements, present: len(plan.Requirements) > 0},
+		{name: "non_goals", value: plan.NonGoals, present: len(plan.NonGoals) > 0},
 		{name: "shared_resources", value: plan.SharedResources, present: len(plan.SharedResources) > 0},
 		{name: "owned_path_overlaps", value: plan.OwnedPathOverlaps, present: len(plan.OwnedPathOverlaps) > 0},
 		{name: "assumptions", value: plan.Assumptions, present: len(plan.Assumptions) > 0},

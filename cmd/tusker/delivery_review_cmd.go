@@ -24,6 +24,7 @@ type deliveryReview struct {
 	Flow      deliveryReviewFlow       `json:"howWorkFlows"`
 	Decisions []deliveryReviewDecision `json:"whatNeedsYourDecision"`
 	Start     deliveryReviewStart      `json:"startBoundary"`
+	NonGoals  []string                 `json:"nonGoals"`
 }
 type deliveryReviewOutcome struct {
 	Requirement string   `json:"requirement"`
@@ -38,10 +39,18 @@ type deliveryReviewProof struct {
 	Artifacts    []string `json:"artifacts"`
 }
 type deliveryReviewFlow struct {
-	Frontiers           [][]string `json:"frontiers"`
-	ExpectedConcurrency int        `json:"expectedConcurrency"`
-	Integration         string     `json:"integration"`
-	Warnings            []string   `json:"warnings"`
+	Frontiers           [][]string               `json:"frontiers"`
+	ExpectedConcurrency int                      `json:"expectedConcurrency"`
+	Integration         string                   `json:"integration"`
+	SharedResources     []deliveryReviewResource `json:"sharedResources"`
+	Warnings            []string                 `json:"warnings"`
+}
+type deliveryReviewResource struct {
+	SourceKey      string   `json:"sourceKey"`
+	Kind           string   `json:"kind"`
+	Capacity       *int     `json:"capacity,omitempty"`
+	CapacityStatus string   `json:"capacityStatus"`
+	Constraints    []string `json:"constraints"`
 }
 type deliveryReviewDecision struct {
 	Title  string `json:"title"`
@@ -49,11 +58,12 @@ type deliveryReviewDecision struct {
 	Why    string `json:"why"`
 }
 type deliveryReviewStart struct {
-	PlanFingerprint string   `json:"planFingerprint"`
-	Authorization   string   `json:"authorization"`
-	Readiness       string   `json:"readiness"`
-	Blockers        []string `json:"blockers"`
-	NextAction      string   `json:"nextAction"`
+	PlanFingerprint    string   `json:"planFingerprint"`
+	ContextFingerprint string   `json:"contextFingerprint,omitempty"`
+	Authorization      string   `json:"authorization"`
+	Readiness          string   `json:"readiness"`
+	Blockers           []string `json:"blockers"`
+	NextAction         string   `json:"nextAction"`
 }
 
 func deliveryReviewCmd(args Args) error {
@@ -89,15 +99,26 @@ func buildDeliveryReview(vault, path string) (deliveryReview, error) {
 		return deliveryReview{}, err
 	}
 	issues, frontiers := validateDeliveryPlan(vault, plan)
-	r := deliveryReview{Schema: deliveryReviewSchema, ReadOnly: true, What: []deliveryReviewOutcome{}, Proof: []deliveryReviewProof{}, Decisions: []deliveryReviewDecision{}, Flow: deliveryReviewFlow{Frontiers: deliveryReviewFrontiers(plan, frontiers), ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Integration: "Reviewed work joins one serialized integration phase before landing.", Warnings: []string{}}, Start: deliveryReviewStart{PlanFingerprint: deliveryFingerprint(raw), Authorization: "not imported", Readiness: "review only", Blockers: []string{}}}
+	r := deliveryReview{Schema: deliveryReviewSchema, ReadOnly: true, What: []deliveryReviewOutcome{}, Proof: []deliveryReviewProof{}, Decisions: []deliveryReviewDecision{}, NonGoals: []string{}, Flow: deliveryReviewFlow{Frontiers: deliveryReviewFrontiers(plan, frontiers), ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Integration: "Reviewed work joins one serialized integration phase before landing.", SharedResources: []deliveryReviewResource{}, Warnings: []string{}}, Start: deliveryReviewStart{PlanFingerprint: deliveryFingerprint(raw), Authorization: "not imported", Readiness: "review only", Blockers: []string{}}}
 	for _, issue := range issues {
 		r.Start.Blockers = append(r.Start.Blockers, issue)
 	}
 	if plan.v2 != nil {
-		for _, finding := range deliveryReviewDoctorFindings(vault, path) {
+		findings := deliveryReviewDoctorFindings(vault, path)
+		for _, finding := range findings {
 			r.Start.Blockers = append(r.Start.Blockers, finding.Message)
 			if strings.Contains(finding.Code, "CONFLICT") || strings.Contains(finding.Code, "RESOURCE") {
 				r.Flow.Warnings = append(r.Flow.Warnings, finding.Message)
+			}
+		}
+		r.Flow.SharedResources = deliveryReviewSharedResources(plan.v2.SharedResources, findings)
+		context, contextErr := buildDeliveryPlanningContextForScope(vault, strings.Join(plan.SpecRefs, ","), deliveryPlanScope(plan))
+		if contextErr != nil {
+			r.Start.Blockers = append(r.Start.Blockers, "planning context could not be recomputed: "+contextErr.Error())
+		} else {
+			r.Start.ContextFingerprint = plan.v2.ContextFingerprint
+			if context.ContextFingerprint != plan.v2.ContextFingerprint {
+				r.Start.Blockers = append(r.Start.Blockers, "planning context fingerprint differs; regenerate the plan from current delivery context")
 			}
 		}
 	}
@@ -118,6 +139,8 @@ func buildDeliveryReview(vault, path string) (deliveryReview, error) {
 		for _, req := range plan.v2.Requirements {
 			r.What = append(r.What, deliveryReviewOutcome{Requirement: req.ID, Outcome: req.Outcome, NonGoals: []string{}})
 		}
+		r.NonGoals = deliveryContextCleanStrings(plan.v2.NonGoals)
+		sort.Strings(r.NonGoals)
 		for _, gate := range plan.v2.HumanGates {
 			r.Decisions = append(r.Decisions, deliveryReviewDecision{Title: gate.Title, Action: gate.Action, Why: gate.WhyAgentCannot})
 		}
@@ -153,6 +176,36 @@ func buildDeliveryReview(vault, path string) (deliveryReview, error) {
 		r.Start.Readiness, r.Start.NextAction = "imported and "+r.Start.Authorization, "Review the start boundary; importing and review do not start delivery."
 	}
 	return r, nil
+}
+
+func deliveryReviewSharedResources(resources []deliverySharedResource, findings []deliveryDoctorFinding) []deliveryReviewResource {
+	out := make([]deliveryReviewResource, 0, len(resources))
+	for _, resource := range resources {
+		row := deliveryReviewResource{SourceKey: resource.SourceKey, Kind: resource.Kind, CapacityStatus: "not declared", Constraints: []string{}}
+		if resource.Capacity > 0 {
+			capacity := resource.Capacity
+			row.Capacity = &capacity
+			row.CapacityStatus = "declared"
+		}
+		for _, finding := range findings {
+			if !strings.Contains(finding.Code, "RESOURCE") && !strings.Contains(finding.Code, "CONFLICT") {
+				continue
+			}
+			if containsString(finding.SourceKeys, resource.SourceKey) {
+				row.Constraints = append(row.Constraints, finding.Message)
+			}
+		}
+		row.Constraints = uniqueStrings(row.Constraints)
+		sort.Strings(row.Constraints)
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].SourceKey != out[j].SourceKey {
+			return out[i].SourceKey < out[j].SourceKey
+		}
+		return out[i].Kind < out[j].Kind
+	})
+	return out
 }
 
 func deliveryReviewFrontiers(plan deliveryPlan, frontiers [][]string) [][]string {
@@ -264,6 +317,11 @@ func renderDeliveryReview(r deliveryReview) string {
 	for _, v := range r.What {
 		b.WriteString("- " + v.Outcome + "\n")
 	}
+	if len(r.NonGoals) == 0 {
+		b.WriteString("- Non-goals: None declared.\n")
+	} else {
+		b.WriteString("- Non-goals: " + strings.Join(r.NonGoals, "; ") + "\n")
+	}
 	b.WriteString("\nHow it will be proven\n")
 	if len(r.Proof) == 0 {
 		b.WriteString("- No proof coverage declared.\n")
@@ -276,6 +334,13 @@ func renderDeliveryReview(r deliveryReview) string {
 		b.WriteString(fmt.Sprintf("- Phase %d: %s\n", i+1, strings.Join(f, ", ")))
 	}
 	b.WriteString(fmt.Sprintf("- Expected parallel work: %d; %s\n", r.Flow.ExpectedConcurrency, r.Flow.Integration))
+	for _, resource := range r.Flow.SharedResources {
+		capacity := "capacity not declared"
+		if resource.Capacity != nil {
+			capacity = fmt.Sprintf("capacity %d", *resource.Capacity)
+		}
+		b.WriteString(fmt.Sprintf("- Shared resource %s (%s): %s.\n", resource.SourceKey, resource.Kind, capacity))
+	}
 	b.WriteString("\nWhat needs your decision\n")
 	if len(r.Decisions) == 0 {
 		b.WriteString("- Nothing.\n")
@@ -284,6 +349,10 @@ func renderDeliveryReview(r deliveryReview) string {
 		b.WriteString("- " + d.Title + ": " + d.Action + "\n")
 	}
 	b.WriteString("\nStart boundary\n")
-	b.WriteString("- Plan: " + r.Start.PlanFingerprint + "; authorization: " + r.Start.Authorization + "; readiness: " + r.Start.Readiness + "\n- Next action: " + r.Start.NextAction + "\n")
+	b.WriteString("- Plan: " + r.Start.PlanFingerprint)
+	if r.Start.ContextFingerprint != "" {
+		b.WriteString("; context: " + r.Start.ContextFingerprint)
+	}
+	b.WriteString("; authorization: " + r.Start.Authorization + "; readiness: " + r.Start.Readiness + "\n- Next action: " + r.Start.NextAction + "\n")
 	return b.String()
 }

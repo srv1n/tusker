@@ -1237,7 +1237,7 @@ func printV7Help() {
   tusker new decision --epic HSP --title "Use repo-local branch-safe tracker"
 
   tusker delivery plan --spec docs/specs/example.md --out .tusker/scratch/delivery-plan.yaml
-  tusker delivery context --spec docs/specs/example.md --json
+  tusker delivery context --spec docs/specs/example.md --scope example/v1 --json
   tusker delivery import --plan .tusker/scratch/delivery-plan.yaml --wave "Example delivery" --dry-run
   tusker delivery import --plan .tusker/scratch/delivery-plan.yaml --wave "Example delivery"
   tusker delivery rollout doctor --json

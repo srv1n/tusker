@@ -12,6 +12,7 @@ func TestDeliveryPlanReview(t *testing.T) {
 	vault := deliveryTestVault(t)
 	plan := validDeliveryPlanV2()
 	plan.HumanGates = nil
+	plan.NonGoals = []string{"No background worker is started by review."}
 	path := writeDeliveryV2TestPlan(t, vault, plan)
 	review, err := buildDeliveryReview(vault, path)
 	if err != nil {
@@ -19,6 +20,9 @@ func TestDeliveryPlanReview(t *testing.T) {
 	}
 	if !review.Ready || review.Start.Authorization != "not imported" || len(review.What) != 1 || len(review.Proof) != 1 {
 		t.Fatalf("clean review=%#v", review)
+	}
+	if review.Start.ContextFingerprint == "" || len(review.NonGoals) != 1 || review.NonGoals[0] != plan.NonGoals[0] {
+		t.Fatalf("review did not bind authored planning context/non-goals: %#v", review)
 	}
 	text := renderDeliveryReview(review)
 	golden, err := os.ReadFile(filepath.Join("testdata", "delivery_review", "terminal.golden"))
@@ -96,6 +100,24 @@ func TestDeliveryPlanReviewFailsClosedOnPlanDriftAndCoverageGap(t *testing.T) {
 	if review.Ready || !strings.Contains(strings.Join(review.Start.Blockers, "\n"), "not covered") {
 		t.Fatalf("requirements gap hidden: %#v", review.Start)
 	}
+
+	contextVault := deliveryTestVault(t)
+	contextPlan := validDeliveryPlanV2()
+	contextPlan.HumanGates = nil
+	contextPath := writeDeliveryV2TestPlan(t, contextVault, contextPlan)
+	if err := newV7Task(Args{
+		"vault": contextVault, "quiet": "true", "epic": "APP", "id": "APP-T-0001", "title": "New related work",
+		"risk": "medium", "priority": "p1", "domains": "project", "spec-refs": contextPlan.SpecRefs[0], "v7": "true",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	review, err = buildDeliveryReview(contextVault, contextPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if review.Ready || review.Start.ContextFingerprint == "" || !strings.Contains(strings.Join(review.Start.Blockers, "\n"), "planning context fingerprint differs") {
+		t.Fatalf("stale planning context must fail closed: %#v", review.Start)
+	}
 }
 
 func TestDeliveryPlanReviewShowsOnlyHumanDecisionsAndMaterialWarnings(t *testing.T) {
@@ -108,6 +130,9 @@ func TestDeliveryPlanReviewShowsOnlyHumanDecisionsAndMaterialWarnings(t *testing
 	}
 	if len(review.Decisions) != 2 {
 		t.Fatalf("expected human gate and unresolved product decision, got %#v", review.Decisions)
+	}
+	if len(review.Flow.SharedResources) != 1 || review.Flow.SharedResources[0].Capacity == nil || *review.Flow.SharedResources[0].Capacity != 1 {
+		t.Fatalf("declared shared resource was hidden or misrepresented: %#v", review.Flow.SharedResources)
 	}
 	for _, decision := range review.Decisions {
 		if strings.Contains(strings.ToLower(decision.Title), "task") {
@@ -127,5 +152,8 @@ func TestDeliveryPlanReviewShowsOnlyHumanDecisionsAndMaterialWarnings(t *testing
 	}
 	if review.Ready || len(review.Flow.Warnings) == 0 {
 		t.Fatalf("collision warning missing: %#v", review)
+	}
+	if len(review.Flow.SharedResources) != 1 || len(review.Flow.SharedResources[0].Constraints) == 0 {
+		t.Fatalf("resource conflict was not projected onto its declared resource: %#v", review.Flow.SharedResources)
 	}
 }
