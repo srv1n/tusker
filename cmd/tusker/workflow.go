@@ -378,11 +378,11 @@ Checklist:
 3. Run the smallest verification commands needed to prove the acceptance contract.
 4. Confirm project skill/domain canon changes only when the task changed durable project knowledge.
 5. Risk alone does not justify a human gate. Treat risk as proof depth and landing safeguards, never as implicit human authority. Create or honor a human gate only for a named capability, external authority, unresolved product fact, or contractually subjective acceptance; do not re-approve choices already settled by the task/spec.
-6. If a caveat changes scope, decide whether it is acceptable or requires rework.
+6. If a caveat changes scope, record it as an actionable typed finding.
 
 Submit exactly one result for the injected review attempt: ` + "`tusker review submit {{ note.id }} --attempt {{ attempt.id }} --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary \"<bounded summary>\"`" + `. A pass requires complete objective proof and satisfied gates; changes_requested needs an actionable finding; blocked needs a machine, infrastructure, or genuine-human blocker.
 
-Explicit blocking gates still prevent close until they are satisfied or waived by their authorized owner.`)
+Explicit blocking gates must be reported in the typed result; do not change gate or task state.`)
 }
 
 func reviewerPolicyCoversRisk(policy ReviewerPolicy, risk string) bool {

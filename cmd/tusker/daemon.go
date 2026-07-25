@@ -5772,16 +5772,12 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 		"reviewer.actor":              reviewerActorForNote(wfFile.Data.Reviewer.Actor, note),
 		"reviewer.auto_close_allowed": yesNo(reviewerMayAutoCloseRisk(wfFile.Data.Reviewer, stringField(note.Data, "risk"))),
 	}
-	values["reviewer.verify_command"] = reviewerVerifyCommandForNote(note, values["reviewer.actor"])
-	values["reviewer.land_command"] = fmt.Sprintf("tusker land %s --by %s", stringField(note.Data, "id"), values["reviewer.actor"])
-	values["reviewer.finalize_command"] = values["reviewer.land_command"]
-	values["reviewer.close_command"] = fmt.Sprintf("tusker close %s --by %s --reason \"agent review accepted\"", stringField(note.Data, "id"), values["reviewer.actor"])
 	template := wfFile.Body
 	if lane == runLaneReview {
-		template = firstNonEmpty(wfFile.Data.Reviewer.Prompt, defaultReviewerPrompt())
-		if stringField(note.Data, "wave") != "" && !strings.Contains(template, "reviewer.land_command") {
-			template = strings.TrimSpace(template) + "\n\nArmed-wave landing contract: after objective verification passes, run {{ reviewer.land_command }} before {{ reviewer.close_command }}. A landing gate failure returns the isolated task to rework; do not close it. After close, run {{ reviewer.finalize_command }} so the final member advances the integrated wave to the default branch.\n"
-		}
+		// Custom legacy reviewer templates may contain authority-bearing
+		// choreography. Do not interpolate or execute them: reviewers get the
+		// fixed read-only, result-submit-only contract until explicitly migrated.
+		template = defaultReviewerPrompt()
 	}
 	rendered, err := renderStrictWorkflowTemplate(template, values)
 	if err != nil {
