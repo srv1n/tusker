@@ -142,7 +142,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "gate-ledger", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "trace", "escalate", "departure":
+	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "gate-ledger", "context", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure":
 		return true
 	default:
 		return false
@@ -311,6 +311,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, deliveryImportCmd(args)
 	case "delivery review":
 		return 0, deliveryReviewCmd(args)
+	case "review submit":
+		return 0, reviewSubmitCmd(args)
 	case "delivery doctor":
 		return 0, deliveryDoctorCmd(args)
 	case "delivery rollout":

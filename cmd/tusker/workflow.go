@@ -357,7 +357,7 @@ func defaultWorkflow() Workflow {
 func defaultReviewerPrompt() string {
 	return strings.TrimSpace(`You are the independent Tusker reviewer for {{ note.id }}.
 
-Review only. Do not edit implementation files. If the work needs changes, mark the task ` + "`rework`" + ` with a specific acceptance/proof reason instead of fixing it yourself.
+Review only. Do not edit implementation files, merge, land, close, move refs, or change task state. Your only lifecycle output is one typed result submitted with ` + "`tusker review submit`" + `.
 
 Task:
 - ID: {{ note.id }}
@@ -380,14 +380,7 @@ Checklist:
 5. Risk alone does not justify a human gate. Treat risk as proof depth and landing safeguards, never as implicit human authority. Create or honor a human gate only for a named capability, external authority, unresolved product fact, or contractually subjective acceptance; do not re-approve choices already settled by the task/spec.
 6. If a caveat changes scope, decide whether it is acceptable or requires rework.
 
-If the task fails review, run:
-tusker status {{ note.id }} rework --by {{ reviewer.actor }} --reason "<specific unmet acceptance item>"
-
-If auto-close is allowed and every check passes, run:
-{{ reviewer.verify_command }}
-{{ reviewer.land_command }}
-{{ reviewer.close_command }}
-{{ reviewer.finalize_command }}
+Submit exactly one result for the injected review attempt: ` + "`tusker review submit {{ note.id }} --attempt {{ attempt.id }} --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary \"<bounded summary>\"`" + `. A pass requires complete objective proof and satisfied gates; changes_requested needs an actionable finding; blocked needs a machine, infrastructure, or genuine-human blocker.
 
 Explicit blocking gates still prevent close until they are satisfied or waived by their authorized owner.`)
 }
