@@ -7,6 +7,9 @@ metadata:
   wave_authorization_schema: "tusker.wave-authorization/v1"
   workflow_version: "1"
   tracker_schema_version: "7"
+  factory_intake_contract_schema: "tusker.factory-intake-contract/v1"
+  factory_intake_contract_version: "1.1.0"
+  factory_intake_contract_fingerprint: "sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c"
 ---
 
 # Tusker Operator Skill
@@ -17,23 +20,53 @@ Use this skill when a repository contains a Tusker vault or a task asks you to c
 
 ## Execution Modes
 
-### Spec-to-wave planning
+### Factory intake and delivery DAGs
 
-Models may propose a versioned delivery plan with an explicit stable scope,
-source-keyed tasks, acceptance,
-exact verification, dependencies, artifacts, owned paths, runner/concurrency
-hints, and knowledge nodes. Tusker owns the final records: use `tusker delivery
-import --plan <path> --dry-run` to validate the graph and mapping, then import it
-atomically. Planning and import create held work and never dispatch, promote, or
-authorize execution.
+Route work by semantic scope, even when the user never says “Tusker,” “DAG,”
+“task,” “wave,” or “daemon.” Read-only evaluation stays read-only. One genuinely
+bounded implementation outcome may use the singleton/direct path. Planning,
+decomposition, unattended delivery, or implementation with multiple
+independently provable outcomes **must** be authored as a versioned
+`tusker.delivery-plan/v2` DAG; never hand-create an arbitrary task series.
 
-Before unattended delivery, run `tusker wave preflight <WAVE> --json`, then
-arm once with `tusker wave arm <WAVE> --by human:<name>`. Authorization is
-bound to the material spec/task/gate/dependency fingerprint. A stale, paused,
-or disarmed wave cannot produce new daemon claims; proof/evidence progress
-alone does not invalidate authorization. The arm actor's consent also satisfies
-critical-risk explicit-dispatch policy for members of that exact fingerprint;
-it is not followed by a second per-task authorization prompt.
+Ask the user for product facts only: desired outcomes, observable acceptance,
+important tests and failure cases, constraints, priorities, non-goals, and
+genuine unresolved authority or subjective decisions. Tusker and the agent own
+epic/task/gate IDs, dependency syntax, waves, frontiers, workspaces, runners,
+proof modes, retries, review cycles, and integration mechanics.
+
+A delivery epic groups the product outcome. A wave is a separate,
+fingerprint-bound execution authorization over exact tasks, gates,
+dependencies, and context; an epic is never executable authority. Build the
+bounded context, validate, and render the product review:
+
+```bash
+tusker delivery context --spec <SPEC> --scope <STABLE-SCOPE> --json
+tusker delivery doctor --plan <PLAN.yaml> --json
+tusker delivery review --plan <PLAN.yaml>
+```
+
+Plan creation, context, review, and dry-run are read-only. Import may create or
+reconcile held records. All of them are inert: they never register or enable a
+project, start or install a daemon, dispatch a worker, arm work, move a Git ref,
+satisfy a gate, authorize release, or authorize paid model work.
+
+For unattended delivery, the product review emits one exact Start action. Run
+only that fingerprint-bound action after the human explicitly chooses it:
+
+```bash
+tusker delivery start --plan <PLAN.yaml> \
+  --confirm <PLAN-FINGERPRINT> \
+  --by human:<name>
+```
+
+Start revalidates the plan, bounded context, task/gate/dependency contracts,
+runner/workspace policy, integration base, project opt-in, and resident-daemon
+preflight. It atomically reconciles held records and arms only the resulting
+exact wave. It does not grant missing infrastructure or broader authority.
+Automation remains separately opt-in per project, new projects use
+`automation.dispatch_scope: armed_waves`, and a stale, paused, or disarmed wave
+cannot produce new daemon claims.
 
 ### Interactive work
 
@@ -43,15 +76,29 @@ gates, review, and lifecycle state. When a task ID is available, inspect it
 with `tusker show <TASK-ID> --capsule` or `tusker packet <TASK-ID> --for agent`,
 then read only the routed project-skill/domain files before implementation.
 
+Before modifying a tracked task, atomically open the canonical interactive work
+session:
+
+```bash
+tusker work start <TASK-ID> --by agent:<name> --source codex
+```
+
+Use the returned packet/workspace/revision exactly. A healthy existing owner,
+dependency/gate blocker, stale task revision, or unsafe workspace is a
+coordination refusal, not permission to edit around Tusker. Finish through
+`tusker work submit`, `tusker work fail`, or `tusker work release` with the same
+owner and revision. This work session works while project automation is
+disabled and never launches a model.
+
 Never start `tusker daemon run`, invoke `tusker automation dispatch`, or launch
 nested `codex exec`/`claude -p` workers from this session. Creating, grooming,
 or updating a ready task is inert. Background execution belongs only to an
 independently running resident daemon for projects with automation enabled.
-The interactive session may inspect or change task/project settings, but it
-implements the current user's coding request with its own tools.
-Direct interactive work does not require daemon enablement or a daemon
-lifecycle claim. It checks for a live automated owner before taking over the
-same tracked task, then works directly without manufacturing a daemon claim.
+The interactive session may inspect project settings; it changes automation,
+release, spending, or daemon authority only when the user explicitly requests
+that exact action. It implements the current coding request with its own tools.
+The interactive work session is ownership bookkeeping, not daemon enablement
+or permission to launch a nested worker.
 
 ### Automated work
 
@@ -117,10 +164,12 @@ tusker runs inspect <TASK-ID> --json
 ```
 
 The runner harness owns session attachment, heartbeats, process monitoring, and
-normalized runtime outcomes. The worker owns task implementation, proof, and
-the product-level terminal action: request review when acceptance is proven,
-or record one concrete blocker/human gate when it cannot proceed. It must not
-manually replace the harness's claim, heartbeat, submit, or failure records.
+normalized runtime outcomes. The worker owns task implementation and the
+smallest objective proof mapped to acceptance. It requests review when that
+proof is ready, or records one concrete blocker/human gate when it cannot
+proceed. It never merges, lands, closes, moves refs, or schedules successors,
+and it must not manually replace the harness's claim, heartbeat, submit, or
+failure records.
 
 Abrupt termination is handled later by heartbeat expiry and safe reclaim; do
 not forge a terminal result. The durable task remains `ready` or `rework`
@@ -206,7 +255,8 @@ test — do not write it.
 - Raw logs do not belong in task markdown.
 - Tags are generated projections; typed frontmatter is source of truth.
 - Work spanning more than one lane, worktree, or branch follows
-  `references/INTEGRATION_MERGE.md`: lanes claim before work, shared scarce
+  `references/INTEGRATION_MERGE.md`: lanes open a canonical work session before
+  work, shared scarce
   resources (migration numbers, lockfiles, generated files) belong to a single
   integrator, and full-suite gates run as unattended batch, never inside a lane.
 - Gate-tier proof runs in harvest mode (no fail-fast) behind cheap preflight
@@ -258,9 +308,12 @@ selected file explicitly identifies one as required for the current operation.
 ## Default Agent Loop
 
 ```text
-interactive: task context → routed domain canon → scoped code search → edit → exact verification → proof → optional explainer → review/closeout
-automation (explicit only): plan → packet → dispatch/daemon → configured runner
-dispatched worker: claimed run → packet → routed domain canon → edit → exact verification → normalized proof/outcome
+read-only: bounded context → evidence-backed answer
+multi-unit intake: requirements → V2 delivery DAG → doctor → product review → held import
+interactive tracked work: work start → packet/canon → edit → exact proof → work submit/fail/release
+automation (explicit only): fingerprint-bound Start → resident daemon → claimed implementation → typed review → deterministic integration/close/successor wake
+dispatched worker: verify injected claim → packet/canon → edit → exact proof → review handoff
+dispatched reviewer: immutable inspection → one typed verdict only
 ```
 
 Do not replace this with broad repo scans unless the task explicitly requires discovery.

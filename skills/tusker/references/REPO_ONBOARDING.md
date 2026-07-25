@@ -1,58 +1,53 @@
 # Existing Repository Onboarding
 
-Use this reference when a repository already exists and Tusker needs to be
-installed, bootstrapped, or pre-populated with candidate knowledge and backlog.
+Use this reference when an existing repository needs conservative Tusker knowledge proposals and, only where evidence permits, V2 delivery-plan candidates.
 
 ## Core Rule
-
-Do not use one giant prompt as the system. Use this chain:
 
 ```text
 deterministic setup
   -> curated repo packet
   -> long-context onboarding plan
-  -> deterministic Tusker import
-  -> human promotion
+  -> doctor -> product review -> dry-run/held import
+  -> exact fingerprint-bound Start
 ```
 
-The remote model proposes. Tusker writes valid state.
+The remote model proposes; Tusker validates, allocates identities on import, and retains records held/disarmed. Onboarding is never execution authority: it does not enable automation, arm work, install or start a daemon, authorize release/spend, or satisfy a gate.
 
 ## Setup vs Onboarding
 
 | Concern | Meaning | Owner |
-|---|---|---|
+| --- | --- | --- |
 | Setup | Install repo-local skills, initialize `.tusker`, write config, sync repo contract, update pointers. | Tusker CLI |
-| Onboarding | Analyze an existing repo and propose domains, epics, backlog tasks, gates, and decisions. | Packet + remote model + Tusker import |
-| Promotion | Decide which proposals become trusted canon or runnable work. | Human/reviewer |
+| Onboarding | Analyze an existing repo and propose domains, epic contracts, V2 delivery plans, gates, and decisions. | Packet + remote model + Tusker import |
+| Product review and Start | Review a doctor-valid plan, then explicitly authorize its exact fingerprint. | Human + Tusker |
 
-Global install may install user-level skills and the binary. It must not mutate
-the current repo unless the user passes an explicit repo target.
+Global install may install user-level skills and the binary. It must not mutate the current repo unless the user passes an explicit repo target.
 
 ## Storage Boundary
 
 Machine-shared runtime and portable project truth have different owners:
 
 | Location | Contents |
-|---|---|
+| --- | --- |
 | `~/Library/Application Support/tusker/` on macOS | Daemon database, project registry, global limits, logs, runtime workspaces, and the managed daemon binary. |
 | `<repo>/.tusker/` | `WORKFLOW.md`, task contracts, gates, curated evidence, project knowledge, and generated project views. |
 | `<repo>/tusker.yaml` | Repo-level agent and runner configuration where present. |
 
-Do not copy a project's `WORKFLOW.md` into the shared state root. The daemon,
-agents, worktrees, and reviewers must all observe the same repo-local contract.
+Do not copy a project's `WORKFLOW.md` into shared state. The daemon, agents, worktrees, and reviewers observe the same repo-local contract.
 
 On macOS, prefer `~/Developer`, `~/Code`, or `~/Projects` for repositories.
 LaunchAgents may not inherit Terminal access to `Desktop`, `Documents`,
-`Downloads`, or iCloud Drive. Project add and enable warn for those known
-protected roots. `tusker daemon service install|start` refuses before launch
-unless the project is moved, or the operator grants Full Disk Access to the
-reported service executable and explicitly passes `--allow-protected-projects`.
-Other cloud, network, and removable volumes may also require access; the
-service startup health check remains authoritative for those environments.
+`Downloads`, or iCloud Drive. Project add and enable warn for those protected
+roots. `tusker daemon service install|start` refuses before launch unless the
+project is moved, or the operator grants Full Disk Access to the reported
+service executable and explicitly passes `--allow-protected-projects`. Other
+cloud, network, and removable volumes may also require access; the service
+startup health check remains authoritative.
 
-## Target Setup Command
+## Setup Commands
 
-Planned:
+Planned target surface:
 
 ```bash
 tusker setup --repo . --profile app --yes
@@ -83,9 +78,10 @@ tusker init --yes --fresh --purge-state
 tusker skill sync --repo . --mode symlink --source /path/to/tusker
 ```
 
-`purge` is scoped to generated Tusker state and managed Tusker pointers. It
-must not remove product code. `--source` keeps repo-local skill symlinks pointed
-at the canonical Tusker checkout even when the command is run from another repo.
+`purge` is scoped to generated Tusker state and managed Tusker pointers; it
+must not remove product code. `--source` keeps repo-local skill symlinks
+pointed at canonical Tusker source even from another repository. Fresh
+initialization defaults `automation.enabled` to `false`.
 
 Audit an existing setup without mutating repository or runtime state:
 
@@ -99,11 +95,10 @@ Apply only deterministic local repairs, then rerun until the report is stable:
 tusker setup repair --repo . --source /path/to/tusker --json
 ```
 
-Fresh initialization defaults `automation.enabled` to `false`. For status-only
-daily use, keep that value false and register the project with `tusker projects
-add --repo . --vault ./.tusker`; registry enablement lets the daemon observe
-state while the repo automation setting prevents dispatch. Use the explicit
-Serve automation control when the project is ready for unattended work.
+For status-only daily use, register the project with `tusker projects add
+--repo . --vault ./.tusker`; registry enablement lets the daemon observe state
+while repo automation prevents dispatch. Use the explicit Serve automation
+control only when the project is ready for unattended work.
 
 The doctor recognizes the canonical Tusker package by its manifest contract,
 not merely by finding a `SKILL.md`. For ChatGPT handoff it validates the
@@ -116,21 +111,16 @@ project routing and provider workflow refresh remain explicit operator actions.
 
 ## Existing Repo Packet
 
-Do not upload the whole repository by default. Build a packet that contains
-facts, summaries, selected excerpts, and a skipped-files report.
-
-Target command:
+Do not upload the whole repository. The planned packet surface is:
 
 ```bash
-tusker onboard pack --repo . \
-  --out .tusker/scratch/onboarding/repo-packet.zip \
-  --budget-tokens 120000 \
-  --profile app \
-  --redact \
-  --json
+tusker onboard pack --repo . --out .tusker/scratch/onboarding/repo-packet.zip \
+  --budget-tokens 120000 --profile app --redact --json
 ```
 
-Packet should include:
+Treat this as a target/planned command unless the installed CLI exposes it. A packet contains high-signal facts (README, guidance, manifests, build/CI, schemas, public APIs, representative tests, summaries, redaction and skipped-file reports) and excludes generated output, caches, secrets, raw logs, binaries, and Tusker runtime/generated paths.
+
+Packet contents:
 
 ```text
 repo-profile.json
@@ -151,73 +141,85 @@ skipped-files.md
 redaction-report.md
 ```
 
-Include exact content for small/high-signal files: README, contributing docs,
+Include exact content for small, high-signal files: README, contributing docs,
 agent guidance, package manifests, build files, CI, schemas, examples, routes,
-CLI maps, public APIs, and representative tests.
+CLI maps, public APIs, and representative tests. Exclude generated output,
+dependency caches, secrets, raw logs, binary/media files, and Tusker
+runtime/generated paths.
 
-Exclude generated output, dependency caches, secrets, raw logs, binary/media
-files, and Tusker runtime/generated paths.
+## Long-Context Output Contract
 
-## External Model Contract
-
-Use `assets/templates/onboard-prompt.md` as the prompt source for the remote
-model.
-
-The model returns:
+The prompt source is `assets/templates/onboard-prompt.md`. It produces a versioned `tusker.onboard_plan/v2` with:
 
 ```text
 onboarding-plan/
   manifest.json
   report.md
   domains.yaml
-  epics.yaml
-  tasks.yaml
+  epic-contracts.yaml
+  delivery-plans/                 # zero or more tusker.delivery-plan/v2 files
   gates.yaml
   decisions.yaml
   docs-map.yaml
   assumptions.md
   open-questions.md
+  migration-report.md
+  legacy-compatibility.yaml       # optional, non-executable/read-only adapter
 ```
 
-Hard rules:
+The output has observations/report, domains, source-keyed proposed epic contracts, source-keyed human gates, decisions, documentation map, assumptions/questions, and a migration report. It never emits an executable parallel task-list format.
 
-- Use only packet facts.
-- Mark missing facts as assumptions or open questions.
-- Do not output code patches.
-- Do not output final V7 markdown.
-- Do not compute `state_rev`.
-- Do not create dispatchable implementation work.
-- Tasks default to `status: backlog` and held readiness.
-- Decisions default to `proposed`.
-- Domains default to `draft`.
-- Gates exist only for missing facts that block safe planning or execution.
+An ordinary V2 delivery plan is optional. Emit one only when packet evidence supports source-keyed `epic_contract`, source-keyed tasks, requirement refs, exact observable acceptance, exact verification command, artifact, and dependencies. It contains no final Tusker IDs or lifecycle fields. Unknown commands, ownership, credentials, product choices, and source conflicts remain assumptions, questions, or source-keyed gates—not fake verification or dispatchable placeholders.
 
-## Import Rules
+Use the explicit proposal fields `epic_contract.source_key`, task `source_key`,
+and human-gate `source_key`. These are stable import keys, never final Tusker
+IDs; held import allocates final identities locally.
 
-Target command:
+## Import, Review, and Start Boundaries
+
+Planned target surfaces (not claims about the installed CLI):
 
 ```bash
-tusker onboard import --repo . \
-  --plan onboarding-plan.zip \
-  --as-proposals \
-  --json
+tusker delivery doctor --plan <plan.yaml> --json
+tusker delivery review --plan <plan.yaml>
+tusker delivery import --plan <plan.yaml> --dry-run --json
+tusker delivery import --plan <plan.yaml> --json
+tusker delivery start --plan <plan.yaml> --confirm <plan-fingerprint> --by human:<name>
 ```
 
-Import must:
+Doctor and review are read-only. Dry-run is read-only. Held import may allocate/reconcile IDs but leaves all resulting records held and the wave disarmed. The exact fingerprint-bound Start is the only execution route, and it revalidates the plan and preflight. It cannot enable project automation, install/start a daemon, change runner permissions, satisfy gates, authorize release/spend, or include unrelated work.
 
-- validate the plan before mutation;
-- create records through Tusker constructors/writers;
-- assign IDs and frontmatter locally;
-- compute or reconcile metadata locally;
-- preserve the model report under `work/inbox` or project sources;
-- run `tusker validate` after mutation.
+## Legacy V1 Readability and Migration
 
-No imported task may become runnable unless a human explicitly promotes it and
-verification is concrete.
+V1 packets/plans remain readable through an explicitly non-executable, read-only legacy compatibility adapter. The adapter preserves references and labels unconverted data; it never materializes records or grants authority.
 
-## ChatGPT Handoff Usage
+`migration-report.md` must enumerate fields that cannot be converted without human intent: ambiguous epic mapping, final identities, lifecycle/readiness, ownership, priority/risk, verification/proof, dependencies, gate authority, source conflicts, and unresolved product decisions. Legacy material must pass the same V2 doctor, product review, held import, and fingerprint-bound Start boundaries; it never bypasses them.
 
-Run the combined local setup diagnostic before invoking browser transport:
+## Human Review
+
+After held import, review in this order:
+
+1. `report.md` for broad wrong assumptions.
+2. Domain canon for unsupported claims.
+3. Source-keyed gates and open questions for true human blockers.
+4. V2 delivery-plan acceptance, verification, artifacts, and dependencies.
+5. Proposed epic contracts for useful backlog shape.
+
+A product reviewer may choose to resolve a real gate or explicitly Start a
+doctor-valid plan; they do not promote guesses into verification.
+
+## Skill Integration
+
+Do not create a separate global Tusker onboarding skill. The canonical operator reference and external prompt are:
+
+```text
+skills/tusker/references/REPO_ONBOARDING.md
+skills/tusker/assets/templates/onboard-prompt.md
+```
+
+The ChatGPT handoff package remains transport only. It must not write Tusker state; feed returned output through the review and held-import boundaries above.
+
+Before browser transport, run the combined local setup diagnostic:
 
 ```bash
 tusker setup doctor --repo . --source /path/to/canonical/tusker --json
@@ -229,7 +231,7 @@ skill links, and a missing zip attachment default. It deliberately does not
 invent ChatGPT Project routing, credentials, or claim that a stale browser
 workflow was refreshed; those findings include the exact external action.
 
-The ChatGPT handoff skill is transport. Use it to submit and collect:
+Use ChatGPT handoff to submit and collect only:
 
 ```bash
 chatgpt-handoff doctor
@@ -238,24 +240,9 @@ chatgpt-handoff collect <job-id> --force
 chatgpt-handoff fetch <job-id> --out-dir .tusker/scratch/onboarding/chatgpt-<job-id>
 ```
 
-Do not let ChatGPT handoff write Tusker state. Feed the returned plan to Tusker
-import.
-
 If `chatgpt-handoff doctor` reports stale browser workflows, refresh the
 installed workflow catalog from the canonical browser checkout:
 
 ```bash
 rzn-browser workflow pull --repo-root /path/to/rzn-browser
 ```
-
-## Human Review
-
-After import, review in this order:
-
-1. `report.md` for broad wrong assumptions.
-2. Domain canon for unsupported claims.
-3. Gates and open questions for true human blockers.
-4. Tasks for acceptance/proof quality.
-5. Epics for whether the backlog shape is useful.
-
-Promote only the records that survive review.

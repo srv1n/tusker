@@ -96,9 +96,20 @@ Lanes are the kinds of run the daemon dispatches (`daemon.go:44-47`).
 | Review | `runLaneReview = "review"` | An independent reviewer run, gated by the workflow's `Reviewer` policy. |
 | Integrator | `runLaneIntegrator = "integrator"` | Selected when the task's `work_kind == "integrator"` (`daemon.go:1032`); integrator tasks also inherit the workflow's shared namespaces as owned paths. |
 
-**Review lane.** When the workflow enables a reviewer, the daemon spawns an independent review run (`d.dispatchRun(..., runLaneReview)`, `daemon.go:1210`), capped by `reviewDispatchAllowed`. If the cap is hit the message is *"review dispatch blocked: automated review cycle cap reached (%d/%d); operator intervention required."*
+**Review lane.** When the workflow enables a reviewer, the daemon spawns an
+independent read-only review run, capped by `reviewDispatchAllowed`. The run
+must submit one attempt-bound typed result. Process exit or prose is not
+acceptance; exit without a valid result follows bounded retry and then parks.
+The reviewer never edits implementation, changes task/gate state, merges,
+lands, closes, or moves refs.
 
-**Findings auto-return.** On a completed review run, if the reviewer left a finding (`reviewerFindingFromTask`), the daemon bounces it back to the implementer via `returnReviewerFindingToImplementer`, marks the run `Blocked`, and records a stop-for-audit with reason `reviewer finding returned to implementer` (`reviewer_finding.go:21`). A dirty reviewer workspace takes precedence and blocks with its own reason.
+**Typed result reaction.** `changes_requested` is converted by the deterministic
+completion reactor into an idempotent bounded finding handback through
+`returnReviewerFindingToImplementer`; `blocked` parks a typed
+machine/infrastructure/human cause; `pass` stages the exact reviewed SHA,
+materializes proof/done in the staged tracker, runs the merged-state gate, and
+CAS-updates only the integration ref. Default-branch promotion is a separate
+policy.
 
 ## Run end-states
 
@@ -155,7 +166,8 @@ sequenceDiagram
     participant W as Workspace manager
     participant R as Execute runner
     participant V as Reviewer lane
-    participant G as Batch gate (merge window)
+    participant C as Deterministic completion reactor
+    participant G as Scheduled/full promotion gate
     D->>P: eligible? (blockers, upstream-hold, fail-closed)
     P-->>D: dispatch
     D->>O: claim lease (owned-path check, then CAS)
@@ -167,10 +179,13 @@ sequenceDiagram
     R->>O: submit end-state (branch, sha, verdicts)
     O-->>D: task -> review
     D->>V: spawn independent review run
-    V-->>D: accept (no findings)
-    D->>G: work waits for next merge window
+    V-->>D: typed verdict bound to attempt + SHA
+    D->>C: consume valid result
+    C->>C: exact-SHA stage + merged-state gate + integration CAS
+    C-->>D: done + newly eligible successor closure
+    D->>G: integrated work waits for configured promotion window
     G->>G: shared build-and-test green
-    G-->>D: holds cleared -> work lands
+    G-->>D: default ref promoted by CAS
 ```
 
 ## Diagram 2 — failure paths
@@ -182,9 +197,10 @@ flowchart TD
     Q --> H[Dependents held: 'held for upstream failure']
     Q --> RT[Spawn bounded repair task]
     B -->|green| C[clearBuildFailedMarkers: release matching holds]
-    A --> F{Reviewer finding?}
-    F -->|yes| RB[returnReviewerFindingToImplementer -> run Blocked, rework bounce]
-    F -->|no| OK[accept]
+    A --> F{Typed review verdict?}
+    F -->|changes_requested| RB[deterministic bounded finding handback -> rework]
+    F -->|blocked| BP[park typed machine / infrastructure / genuine-human cause]
+    F -->|pass| OK[deterministic exact-SHA completion transaction]
     A --> X{Worker crashed?}
     X -->|yes| SL[Stale lease left behind]
     SL --> ST{Process verifiably alive?}

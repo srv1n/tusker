@@ -154,6 +154,35 @@ func TestWavePreflightSkillAndIntegrationCompatibility(t *testing.T) {
 	}
 }
 
+func TestWavePreflightProfileApprovalPolicy(t *testing.T) {
+	wf := defaultWorkflow()
+	wf.RunnerProfiles = map[string]RunnerProfileDefinition{
+		"implementation-terra": {
+			Harness:          string(RunnerCodexExec),
+			Model:            "gpt-5.6-terra",
+			Effort:           "high",
+			PermissionPreset: "workspace-write-network",
+			Sandbox:          RunnerSandboxDefinition{Mode: "workspace-write", Network: boolPtr(true)},
+		},
+	}
+	wave := Note{Data: map[string]any{"runner_profile": "implementation-terra"}}
+	for _, policy := range []string{"never", "bypass"} {
+		wf.Codex.ApprovalPolicy = policy
+		env := wavePreflightEnvironment{}
+		applyWaveWorkflowEnvironment(&env, wave, wf)
+		if !env.RunnerCompatible || !env.ApprovalFree {
+			t.Fatalf("approval-free effective Codex policy %q was rejected for workspace-write-network: %#v", policy, env)
+		}
+	}
+
+	wf.Codex.ApprovalPolicy = "on-request"
+	env := wavePreflightEnvironment{}
+	applyWaveWorkflowEnvironment(&env, wave, wf)
+	if env.ApprovalFree {
+		t.Fatalf("workspace-write-network incorrectly bypassed an interactive effective policy: %#v", env)
+	}
+}
+
 func TestWaveArm(t *testing.T) {
 	vault := authorizedWaveTestVault(t)
 	unrelatedPath := filepath.Join(vault, "work", "tasks", "APP-T-0003.md")

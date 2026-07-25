@@ -163,19 +163,20 @@ func buildDeliveryReview(vault, path string) (deliveryReview, error) {
 	if len(r.Start.Blockers) > 0 {
 		r.Start.Readiness = "blocked"
 		if strings.Contains(r.Start.Blockers[0], "canonical import drift") {
-			r.Start.NextAction = "Re-import the reviewed plan: tusker delivery import --plan " + deliveryReviewPlanArg(vault, path)
+			r.Start.NextAction = "Regenerate delivery review, then rerun Start delivery with the exact reviewed fingerprint."
 		} else {
 			r.Start.NextAction = "Resolve the first blocker: " + r.Start.Blockers[0]
 		}
 		return r, nil
 	}
 	r.Ready = true
-	if r.Start.Authorization == "not imported" {
-		r.Start.Readiness, r.Start.NextAction = "ready to import held work", "Import the reviewed plan: tusker delivery import --plan "+deliveryReviewPlanArg(vault, path)
-	} else {
-		r.Start.Readiness, r.Start.NextAction = "imported and "+r.Start.Authorization, "Review the start boundary; importing and review do not start delivery."
-	}
+	r.Start.Readiness = "ready to start delivery"
+	r.Start.NextAction = deliveryReviewStartCommand(vault, path, r.Start.PlanFingerprint)
 	return r, nil
+}
+
+func deliveryReviewStartCommand(vault, path, fingerprint string) string {
+	return "tusker delivery start --plan " + deliveryReviewPlanArg(vault, path) + " --confirm " + fingerprint + " --by human:<name>"
 }
 
 func deliveryReviewSharedResources(resources []deliverySharedResource, findings []deliveryDoctorFinding) []deliveryReviewResource {
@@ -275,7 +276,7 @@ func deliveryReviewCanonical(vault, path string, plan deliveryPlan, r *deliveryR
 	wave := waves[0]
 	r.Start.Authorization = fallback(stringField(wave.Data, "authorization"), "disarmed")
 	if stringField(wave.Data, "delivery_plan_fingerprint") != r.Start.PlanFingerprint {
-		r.Start.Blockers = append(r.Start.Blockers, "canonical import drift: the plan fingerprint differs; re-import the reviewed plan: tusker delivery import --plan "+deliveryReviewPlanArg(vault, path))
+		r.Start.Blockers = append(r.Start.Blockers, "canonical import drift: the plan fingerprint differs; regenerate delivery review, then Start the exact reviewed plan")
 		return
 	}
 	members := map[string]bool{}
@@ -291,7 +292,7 @@ func deliveryReviewCanonical(vault, path string, plan deliveryPlan, r *deliveryR
 			}
 		}
 		if found == "" || !members[found] {
-			r.Start.Blockers = append(r.Start.Blockers, "canonical import drift: a planned outcome is missing from the imported wave; re-import the reviewed plan: tusker delivery import --plan "+deliveryReviewPlanArg(vault, path))
+			r.Start.Blockers = append(r.Start.Blockers, "canonical import drift: a planned outcome is missing from the imported wave; regenerate delivery review, then Start the exact reviewed plan")
 			return
 		}
 	}

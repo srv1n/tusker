@@ -33,8 +33,8 @@ metadata, and promotion.
 |---|---|---|---|
 | Repo setup | Tusker CLI | Install repo-local skills, initialize `.tusker`, sync repo contract files, update pointers, validate. | Mutate a repo during ambient global install. |
 | Repo packet | Tusker CLI | Build a redacted, curated codebase digest for a long-context model. | Upload the whole repo by default. |
-| External analysis | ChatGPT handoff / human | Produce an onboarding plan from the packet. | Generate final V7 markdown with fake IDs or `state_rev`. |
-| Import | Tusker CLI | Convert plan files into draft domains, proposed decisions, held backlog tasks, and gates. | Create dispatchable tasks by default. |
+| External analysis | ChatGPT handoff / human | Produce a `tusker.onboard_plan/v2` from the packet. | Generate final V7 markdown, final identities, lifecycle fields, fake verification, or executable parallel task lists. |
+| Import | Tusker CLI | Doctor/review and import V2 delivery plans as held/disarmed records. | Create dispatchable tasks, enable automation, arm work, start a daemon, or satisfy gates. |
 
 ## Current Repo Facts
 
@@ -144,23 +144,24 @@ Reuse `syncRepoContract`, `upsertRepoTuskerPointers`, `bootstrapV7Profile`, and
 
 ## Existing-Repo Onboarding
 
-Onboarding creates candidate knowledge and backlog. It is not setup, and it is
-not task dispatch.
+Onboarding creates candidate knowledge and optional V2 delivery-plan proposals.
+It is not setup or task dispatch.
 
 Default imports:
 
-| Record | Default state |
+| Record | Import result |
 |---|---|
-| Domains | `draft` |
-| Epics | `draft` or planning `ready` |
-| Tasks | `backlog` plus held readiness |
-| Gates | open, non-blocking unless a specific generated task depends on them |
-| Decisions | `proposed` |
+| Domains and decisions | Imported only as explicit proposals after review. |
+| V2 epic/task/gate contracts | Tusker allocates identities only on held import; no proposed source key is a final record identity. |
+| Delivery wave | Held and disarmed after import. |
 
-No generated onboarding task should be dispatchable unless a human explicitly
-promotes it and the verification contract is concrete.
+No onboarding proposal is dispatchable. The only execution route is doctor,
+product review, dry-run/held import, then an exact fingerprint-bound Start.
 
 ### Target Commands
+
+These are planned target surfaces unless the installed CLI exposes them; this
+spec does not claim they already exist.
 
 ```bash
 tusker onboard pack --repo . \
@@ -178,14 +179,20 @@ tusker onboard prompt --repo . \
 ```
 
 ```bash
-tusker onboard import --repo . \
-  --plan onboarding-plan.zip \
-  --as-proposals \
-  --json
+tusker delivery doctor --plan onboarding-plan/delivery-plans/<plan>.yaml --json
+tusker delivery review --plan onboarding-plan/delivery-plans/<plan>.yaml
+tusker delivery import --plan onboarding-plan/delivery-plans/<plan>.yaml --dry-run --json
+tusker delivery import --plan onboarding-plan/delivery-plans/<plan>.yaml --json
+tusker delivery start --plan onboarding-plan/delivery-plans/<plan>.yaml \
+  --confirm <plan-fingerprint> --by human:<name>
 ```
 
 The import path must use Tusker's real writers so IDs, paths, frontmatter, and
-`state_rev` are valid.
+`state_rev` are valid. Import allocates those identities only after doctor and
+product review, and leaves records held with the wave disarmed. The exact
+fingerprint-bound Start is the only execution route; onboarding never enables
+automation, arms work, installs/starts a daemon, authorizes release/spend, or
+satisfies gates.
 
 ## Packet Contents
 
@@ -233,25 +240,46 @@ Exclude by default:
 
 ## Model Output Contract
 
-The long-context model returns this plan structure:
+The long-context model returns `tusker.onboard_plan/v2`:
 
 ```text
 onboarding-plan/
   manifest.json
   report.md
   domains.yaml
-  epics.yaml
-  tasks.yaml
+  epic-contracts.yaml
+  delivery-plans/                 # zero or more tusker.delivery-plan/v2 files
   gates.yaml
   decisions.yaml
   docs-map.yaml
   assumptions.md
   open-questions.md
+  migration-report.md
+  legacy-compatibility.yaml       # optional, non-executable/read-only V1 adapter
 ```
 
-Every factual statement must either cite packet evidence or be labeled as an
-assumption/open question. Every task must include acceptance and proof. Every
-task defaults to backlog/held.
+It includes observations/report, domains, source-keyed proposed epic contracts,
+source-keyed gates, decisions, docs map, assumptions/questions, and a migration
+report. It does not emit a parallel executable task-list format. An ordinary
+V2 delivery plan is optional and only exists where packet evidence supports its
+source-keyed `epic_contract`, source-keyed tasks, requirement refs, exact
+observable acceptance, exact verification, artifact, and dependencies. It has
+no final Tusker IDs or lifecycle fields. Unknown commands, ownership,
+credentials, product decisions, and source-of-truth conflicts remain explicit
+assumptions, questions, or gates.
+
+The V2 identity contract is explicit: `epic_contract.source_key`, each task
+`source_key`, and each human gate `source_key` are proposal identities only.
+They are not final Tusker IDs; import allocates final epic, task, gate, wave,
+revision, and event identities after doctor and product review.
+
+V1 packets/plans stay readable only through an explicitly non-executable,
+read-only legacy compatibility adapter. `migration-report.md` enumerates fields
+that need human intent before conversion: final identities, ambiguous epic
+mapping, lifecycle/readiness, ownership, priority/risk, proof/verification,
+dependencies, gate authority, source conflict, and product decision. Legacy
+material never bypasses V2 doctor, product review, held import, and
+fingerprint-bound Start.
 
 ## Skill Integration
 
@@ -306,12 +334,11 @@ Tasks:
 2. Add redaction and exclusion policy.
 3. Add selected-excerpt generators.
 4. Add `tusker onboard prompt`.
-5. Define `tusker.onboard_plan/v1`.
-6. Add `tusker onboard import`.
-7. Import domains as draft.
-8. Import tasks as backlog/held.
-9. Add no-ready-by-default guardrail.
-10. Add fixtures for Go, Node, Python, and mixed repos.
+5. Define `tusker.onboard_plan/v2` and the non-executable V1 compatibility adapter.
+6. Add doctor/review/held-import handling for optional V2 delivery plans.
+7. Import domains as draft and delivery records held/disarmed.
+8. Add no-ready-by-default and no-parallel-task-list guardrails.
+9. Add fixtures for Go, Node, Python, and mixed repos.
 
 ## Done Criteria
 
@@ -330,6 +357,9 @@ Onboarding is done when this works without uploading the full repo:
 tusker onboard pack --repo . --out packet.zip --redact
 tusker onboard prompt --repo . --packet packet.zip > prompt.md
 # upload packet.zip + prompt.md through ChatGPT handoff or manually
-tusker onboard import --repo . --plan onboarding-plan.zip --as-proposals
-tusker validate --branch-policy
+tusker delivery doctor --plan onboarding-plan/delivery-plans/<plan>.yaml
+tusker delivery review --plan onboarding-plan/delivery-plans/<plan>.yaml
+tusker delivery import --plan onboarding-plan/delivery-plans/<plan>.yaml --dry-run
+tusker delivery import --plan onboarding-plan/delivery-plans/<plan>.yaml
+# human explicitly runs fingerprint-bound tusker delivery start only after review
 ```

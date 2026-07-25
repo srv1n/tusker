@@ -13,6 +13,7 @@ import (
 func validDeliveryPlanV2() deliveryPlanV2 {
 	return deliveryPlanV2{
 		Schema: deliveryPlanV2Schema, Scope: "v2-delivery", Title: "V2 delivery", SpecRefs: []string{"docs/specs/delivery.md"},
+		FactoryIntakeContractSchema: factoryIntakeContractSchema, FactoryIntakeContractVersion: "1.1.0", FactoryIntakeContractFingerprint: "sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c",
 		Summary:      "Import a held V2 delivery wave with requirements and human-proof traceability.",
 		EpicContract: &deliveryEpicContract{SourceKey: "v2-delivery", AcronymHint: "VTP", Title: "V2 delivery"},
 		Requirements: []deliveryRequirement{{ID: "R1", Outcome: "The delivery plan traces executable work to requirements."}},
@@ -23,6 +24,11 @@ func validDeliveryPlanV2() deliveryPlanV2 {
 
 func writeDeliveryV2TestPlan(t *testing.T, vault string, plan deliveryPlanV2) string {
 	t.Helper()
+	for _, destination := range []string{filepath.Join(v7RepoRoot(vault), ".agents", "skills", "tusker"), filepath.Join(v7RepoRoot(vault), ".claude", "skills", "tusker")} {
+		if err := installSkillPayloadCopy(destination); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if plan.ContextFingerprint == "" {
 		plan.ContextFingerprint = deliveryPlanV2ContextFingerprint(t, vault, plan)
 	}
@@ -168,6 +174,7 @@ func assertDeliveryV2OperationalProjection(t *testing.T, vault string, plan deli
 		t.Fatal(err)
 	}
 	assertEqual(t, plan.Scope, stringField(wave, "delivery_plan_scope"), "wave delivery plan scope provenance")
+	assertEqual(t, deliveryPlanV2Schema, stringField(wave, "delivery_plan_schema"), "wave delivery plan schema provenance")
 	assertEqual(t, deliveryFingerprint(rawPlan), stringField(wave, "delivery_plan_fingerprint"), "wave delivery plan fingerprint provenance")
 	assertEqual(t, plan.ContextFingerprint, stringField(wave, "context_fingerprint"), "wave planning context fingerprint provenance")
 	assertEqual(t, plan.NonGoals, normalizeList(wave["non_goals"]), "wave authored non-goals")
@@ -325,6 +332,14 @@ func TestDeliveryPlanV2RejectsUnknownAndInvalidRequirementsWithoutWrites(t *test
 	path = writeDeliveryV2TestPlan(t, vault, plan)
 	if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "quiet": "true"}); err == nil || !strings.Contains(err.Error(), "context_fingerprint") {
 		t.Fatalf("expected invalid authored context rejection, got %v", err)
+	}
+	plan = validDeliveryPlanV2()
+	plan.FactoryIntakeContractSchema = ""
+	plan.FactoryIntakeContractVersion = ""
+	plan.FactoryIntakeContractFingerprint = ""
+	path = writeDeliveryV2TestPlan(t, vault, plan)
+	if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "quiet": "true"}); err == nil || !strings.Contains(err.Error(), "requires current factory-intake contract") {
+		t.Fatalf("expected unclaimed current V2 rejection, got %v", err)
 	}
 	plan = validDeliveryPlanV2()
 	plan.NonGoals = []string{"TBD"}

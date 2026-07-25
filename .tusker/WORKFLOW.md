@@ -46,8 +46,8 @@ runtime:
             - last_poll_advanced
         fresh_heartbeat_ms: 120000
 workspace:
-    root: .
-    strategy: shared
+    root: workspaces
+    strategy: worktree
 retry:
     max_attempts: 3
     backoff_ms:
@@ -57,7 +57,7 @@ retry:
 reviewer:
     enabled: true
     runner: codex_exec
-    actor: agent:reviewer/codex
+    actor: reviewer:agent
     max_cycles: 3
     auto_close_risks:
         - low
@@ -67,7 +67,7 @@ reviewer:
     prompt: |-
         You are the independent Tusker reviewer for {{ note.id }}.
 
-        Review only. Do not edit implementation files. If the work needs changes, mark the task `rework` with a specific acceptance/proof reason instead of fixing it yourself.
+        Review only. Do not edit implementation files, merge, land, close, move refs, or change task state. Your only lifecycle output is one typed result submitted with `tusker review submit`.
 
         Task:
         - ID: {{ note.id }}
@@ -80,7 +80,6 @@ reviewer:
 
         Policy:
         - Reviewer actor: {{ reviewer.actor }}
-        - Auto-close allowed: {{ reviewer.auto_close_allowed }}
 
         Checklist:
         1. Read the task acceptance contract, proof mode, verification rows, evidence cards, and gates.
@@ -88,18 +87,23 @@ reviewer:
         3. Run the smallest verification commands needed to prove the acceptance contract.
         4. Confirm project skill/domain canon changes only when the task changed durable project knowledge.
         5. Risk alone does not justify a human gate. Treat risk as proof depth and landing safeguards, never as implicit human authority. Create or honor a human gate only for a named capability, external authority, unresolved product fact, or contractually subjective acceptance; do not re-approve choices already settled by the task/spec.
-        6. If a caveat changes scope, decide whether it is acceptable or requires rework.
+        6. If a caveat changes scope, record it as an actionable typed finding.
 
-        If the task fails review, run:
-        tusker status {{ note.id }} rework --by {{ reviewer.actor }} --reason "<specific unmet acceptance item>"
+        Submit exactly one result for the injected review attempt:
+        tusker review submit {{ note.id }} \
+          --attempt {{ attempt.id }} \
+          --task-rev {{ review.task_rev }} \
+          --source-sha {{ review.source_sha }} \
+          --work-rev {{ review.work_rev }} \
+          --proof-fingerprint {{ review.proof_fingerprint }} \
+          --gate-fingerprint {{ review.gate_fingerprint }} \
+          --verdict pass|changes_requested|blocked \
+          --covers <acceptance-ids> \
+          --summary "<bounded summary>"
 
-        If auto-close is allowed and every check passes, run:
-        {{ reviewer.verify_command }}
-        {{ reviewer.land_command }}
-        {{ reviewer.close_command }}
-        {{ reviewer.finalize_command }}
+        A pass requires complete objective proof and satisfied gates; changes_requested needs an actionable --finding; blocked needs --blocker machine|infrastructure|human. A human blocker requires a real open human-owned gate.
 
-        Explicit blocking gates still prevent close until they are satisfied or waived by their authorized owner.
+        Explicit blocking gates must be reported in the typed result; do not change gate or task state.
 external_loop:
     maxcycles: 3
     maxrepaircontinuations: 2
@@ -114,7 +118,7 @@ runners:
         command: codex exec --json --skip-git-repo-check -
 codex:
     command: codex exec --json --skip-git-repo-check -
-    approval_policy: on-request
+    approval_policy: never
     thread_sandbox: workspace-write
     turn_sandbox_policy: workspace-write
     turn_timeout_ms: 600000
@@ -216,7 +220,7 @@ Each dispatched attempt starts with fresh runner context. Use the injected task 
 
 ## Merge lane guard
 
-Do not push or merge directly to the default branch/main. Finish the task proof, then use `tusker land {{ note.id }}`; the serialized landing lane is the only authorized path from task branches into integration branches and main.
+Do not push, merge, land, close, or move refs. Finish task proof and request review. The read-only reviewer submits one typed verdict; deterministic Tusker completion and promotion handlers are the only authorized path from the exact reviewed SHA into integration and the default branch.
 
 ## External Apply Inputs
 

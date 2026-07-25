@@ -222,6 +222,9 @@ title: Settings redesign
 spec_refs:
   - docs/specs/settings-redesign.md
 context_fingerprint: sha256:<planning-context-fingerprint>
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
 non_goals:
   - The redesign does not add new notification channels.
 epic_contract:

@@ -2,15 +2,52 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	skillbundle "tusker/skills/tusker"
+
 	"gopkg.in/yaml.v3"
 )
 
 const factoryIntakeContractSchema = "tusker.factory-intake-contract/v1"
+
+// factoryIntakeContractFingerprint deliberately binds the one canonical input
+// contract, rather than a whole skill tree. Hashing the whole package would
+// make the advertised metadata self-referential once it contains this value.
+func factoryIntakeContractFingerprint(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+type factoryIntakeContractProvenance struct {
+	Schema      string `yaml:"schema" json:"schema"`
+	Version     string `yaml:"version" json:"version"`
+	Fingerprint string `yaml:"fingerprint" json:"fingerprint"`
+}
+
+func embeddedFactoryIntakeContractProvenance() (factoryIntakeContractProvenance, error) {
+	raw, err := skillbundle.GetAsset("factory-intake-contract.yaml")
+	if err != nil {
+		return factoryIntakeContractProvenance{}, err
+	}
+	return factoryIntakeContractProvenanceFromRaw([]byte(raw))
+}
+
+func factoryIntakeContractProvenanceFromRaw(raw []byte) (factoryIntakeContractProvenance, error) {
+	var contract factoryIntakeContract
+	if err := yaml.Unmarshal(raw, &contract); err != nil {
+		return factoryIntakeContractProvenance{}, fmt.Errorf("parse embedded factory intake contract: %w", err)
+	}
+	if err := validateFactoryIntakeContract(contract); err != nil {
+		return factoryIntakeContractProvenance{}, err
+	}
+	return factoryIntakeContractProvenance{Schema: contract.Schema, Version: contract.ContractVersion, Fingerprint: factoryIntakeContractFingerprint(raw)}, nil
+}
 
 type factoryIntakeContract struct {
 	Schema                     string                  `yaml:"schema"`
@@ -151,7 +188,12 @@ func validateFactoryIntakeContract(contract factoryIntakeContract) error {
 		}
 	}
 	requiredGuardrails := []string{
-		"analysis_is_read_only", "import_is_inert", "start_does_not_enable_project_automation",
+		"analysis_is_read_only", "import_is_inert", "tracked_modifying_work_requires_work_start",
+		"dispatched_worker_verifies_existing_claim", "reviewer_submits_typed_result_only",
+		"deterministic_handlers_own_merge_close_and_successor_wake",
+		"epic_is_never_execution_authority",
+		"project_automation_is_separate_explicit_opt_in", "fresh_dispatch_scope_is_armed_waves",
+		"start_does_not_enable_project_automation",
 		"start_does_not_start_or_install_daemon", "start_does_not_authorize_release_or_paid_work",
 		"start_does_not_satisfy_human_gates", "start_does_not_include_unrelated_work", "start_requires_current_plan_fingerprint",
 	}

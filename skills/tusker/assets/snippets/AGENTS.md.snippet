@@ -1,13 +1,31 @@
 ## Tusker workflow contract
 
-Use Tusker for non-trivial tracked work, durable evidence, review gates, and closeout. The task note is the unit of work.
+Use Tusker for planned or tracked work, durable proof, review gates, and
+delivery. Users own requirements, acceptance, important tests, constraints,
+non-goals, and genuine decisions; agents own tracker and factory mechanics.
 
 Default to the lightest lane that preserves truth:
 
 - Lookup/status: use `tusker list`, `tusker search`, one-epic task list, and exact task records only.
 - Bookkeeping: update the named task/follow-up; validate only if schema or lifecycle changed.
-- Implementation: satisfy proof mode, summarize attempt, request review.
+- Multi-unit planning or implementation: author a requirements-traceable
+  `tusker.delivery-plan/v2` DAG, run delivery doctor/review, and keep import
+  held. Never hand-create a task series or treat an epic as execution authority.
+- Interactive tracked implementation: run `tusker work start` first, implement
+  directly with this session's tools, then submit/fail/release the same work
+  session. Never start a daemon, invoke dispatch, or launch a nested model.
+- Dispatched implementation: verify the injected claim, satisfy proof, and
+  request review; never claim again, merge, land, close, or move refs.
+- Dispatched review: inspect read-only and submit exactly one typed
+  `tusker review submit` verdict. Deterministic Tusker handlers own rework,
+  integration, close, and successor wake.
 - Human gate: emit or reference the packet, then stop.
+
+Unattended execution requires one explicit, human-attributable,
+fingerprint-bound `tusker delivery start` action. Project automation and the
+resident daemon remain separate opt-ins; fresh dispatch scope is
+`armed_waves`. Start never grants release, spending, arbitrary scripts, or
+whole-epic authority.
 
 Before continuing an existing task, check whether it is already waiting on human/external action. If `agent_action: stop_until_human_response`, `readiness: held` with `next_owner: human:*`, or `next_owner: human:*` is present, do no tool work. Report the pending gates and last clean validation snapshot.
 
@@ -15,6 +33,9 @@ Rules:
 
 - Use the CLI before direct markdown edits.
 - Do not self-certify implementation work.
+- Do not enable project automation, start/install a daemon, authorize release
+  or paid work, or arm unrelated work unless the user explicitly requests that
+  exact authority.
 - Do not re-run validation against an unchanged clean fingerprint.
 - Do not read attachments, generated indexes, raw runner logs, or full transcripts by default.
 - Do not paste full build/test output into chat. Save logs and read only the failure summary or small tail.

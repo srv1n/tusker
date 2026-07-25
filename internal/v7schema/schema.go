@@ -62,7 +62,8 @@ var FrontmatterOrder = map[string][]string{
 		"schema", "kind", "id", "project", "title", "status", "owner", "priority", "domains", "spec_refs", "delivery_source_key", "delivery_plan_scope", "next_task_number", "next_gate_number", "next_decision_number", "created_at", "updated_at", "state_rev",
 	},
 	"wave": {
-		"schema", "kind", "id", "project", "title", "summary", "status", "members", "integration_branch", "spec_refs", "requirements", "shared_resources", "owned_path_overlaps", "assumptions", "unresolved_decisions", "delivery_plan_scope", "delivery_plan_fingerprint", "concurrency", "runner_profile", "landings", "landed_at",
+		"schema", "kind", "id", "project", "title", "summary", "status", "members", "integration_branch", "integration_base_sha", "spec_refs", "requirements", "shared_resources", "owned_path_overlaps", "assumptions", "unresolved_decisions",
+		"delivery_plan_schema", "context_fingerprint", "factory_intake_contract_schema", "factory_intake_contract_version", "factory_intake_contract_fingerprint", "delivery_plan_scope", "delivery_plan_fingerprint", "concurrency", "runner_profile", "landings", "landed_at",
 		"authorization", "authorization_fingerprint", "authorized_by", "authorized_at", "authorization_reason", "authorization_updated_by", "authorization_updated_at",
 		"created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},

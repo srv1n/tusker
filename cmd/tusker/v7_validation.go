@@ -489,6 +489,9 @@ func validateV7Wave(note Note, ctx validationContext, where string, errors, warn
 	if branch := stringField(data, "integration_branch"); branch != "" && branch != v7IntegrationBranchName(id) {
 		*errors = append(*errors, issue(errorInvalidField, "V7 wave integration_branch must be "+v7IntegrationBranchName(id), where, "", map[string]any{"field": "integration_branch"}))
 	}
+	if base := stringField(data, "integration_base_sha"); base != "" && !v7GitObjectID(base) {
+		*errors = append(*errors, issue(errorInvalidField, "V7 wave integration_base_sha must be a Git object ID", where, "re-import the delivery plan from the configured default branch", map[string]any{"field": "integration_base_sha"}))
+	}
 	if !strings.HasSuffix(filepath.ToSlash(where), "work/waves/"+id+".md") {
 		*errors = append(*errors, issue(errorPathMismatch, "V7 wave path must be .tusker/work/waves/"+id+".md", where, "", nil))
 	}
