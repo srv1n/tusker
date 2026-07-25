@@ -1,6 +1,27 @@
 package main
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
+
+func reviewResultCommandFixture(t *testing.T) (string, Args) {
+	t.Helper()
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Typed review", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "source_sha": "abc123", "work_revision": 2, "proof_status": "satisfied"})
+	state := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", state)
+	store, err := OpenRuntimeStore(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveAttempt(RunAttempt{AttemptID: "review-1", ProjectID: v7ProjectID(vault), RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: "codex", Lane: runLaneReview, WorkRevision: 2}); err != nil {
+		t.Fatal(err)
+	}
+	return vault, Args{"vault": vault, "id": "APP-T-0001", "attempt": "review-1", "by": "agent-reviewer", "verdict": "changes_requested", "summary": "actionable", "finding": "fix acceptance"}
+}
 
 func TestReviewResultProtocolLegacyFindingMigration(t *testing.T) {
 	note := Note{Data: map[string]any{"id": "APP-T-0001", "state_rev": "sha256:state", "work_revision": 2}, Body: "## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | test | fail | " + reviewerFindingRowMarker("review-1") + " actionable regression |\n"}
@@ -29,4 +50,30 @@ func TestReviewResultProtocolStoreReplayAndConflict(t *testing.T) {
 	if _, err := store.SaveReviewResult(result); err == nil {
 		t.Fatal("conflicting second verdict accepted")
 	}
+}
+
+func TestReviewResultProtocolCommandValidation(t *testing.T) {
+	vault, base := reviewResultCommandFixture(t)
+	for name, mutate := range map[string]func(Args){
+		"invalid changes": func(a Args) { a["finding"] = "" },
+		"invalid blocked": func(a Args) { a["verdict"] = "blocked"; a["blocker"] = "" },
+		"wrong actor":     func(a Args) { a["by"] = "agent:implementer" },
+		"stale task":      func(a Args) { a["task-rev"] = "sha256:stale" },
+		"stale source":    func(a Args) { a["source-sha"] = "stale" },
+		"stale work":      func(a Args) { a["attempt"] = "missing" },
+		"stale proof":     func(a Args) { a["proof-fingerprint"] = "sha256:stale" },
+		"stale gate":      func(a Args) { a["gate-fingerprint"] = "sha256:stale" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := Args{}
+			for k, v := range base {
+				a[k] = v
+			}
+			mutate(a)
+			if err := reviewSubmitCmd(a); err == nil {
+				t.Fatal("accepted invalid review result")
+			}
+		})
+	}
+	_ = vault
 }
