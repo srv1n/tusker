@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -45,6 +46,7 @@ type completionTransaction struct {
 	ResultRevision    string `json:"result_revision"`
 	IntegrationBase   string `json:"integration_base"`
 	IntegrationRef    string `json:"integration_ref"`
+	StagingRef        string `json:"staging_ref"`
 	Phase             string `json:"phase"`
 	StagedSHA         string `json:"staged_sha,omitempty"`
 	Failure           string `json:"failure,omitempty"`
@@ -58,11 +60,29 @@ type completionTransaction struct {
 // persisted, which is the only crash window worth proving.
 var completionReactorCrashHook func(string, *completionTransaction) error
 
+type completionCrashInterruption struct {
+	point string
+	err   error
+}
+
+func (e *completionCrashInterruption) Error() string {
+	return "completion crash at " + e.point + ": " + e.err.Error()
+}
+func (e *completionCrashInterruption) Unwrap() error { return e.err }
+
 func injectCompletionReactorCrash(point string, transaction *completionTransaction) error {
 	if completionReactorCrashHook == nil {
 		return nil
 	}
-	return completionReactorCrashHook(point, transaction)
+	if err := completionReactorCrashHook(point, transaction); err != nil {
+		return &completionCrashInterruption{point: point, err: err}
+	}
+	return nil
+}
+
+func isCompletionCrashInterruption(err error) bool {
+	var interruption *completionCrashInterruption
+	return errors.As(err, &interruption)
 }
 
 func completionTransactionID(projectID string, result ReviewResult, integrationBase string) string {
@@ -202,10 +222,14 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 		ResultRevision: result.ResultRevision, IntegrationBase: base, IntegrationRef: integrationRef, Phase: completionPhasePlanned,
 	}
 	transaction.ID = completionTransactionID(project.ProjectID, result, base)
+	transaction.StagingRef = completionStagingRef(transaction.ID)
 	if prior, err := d.store.CompletionTransaction(transaction.ID); err != nil {
 		return err
 	} else if prior != nil {
 		transaction = *prior
+	}
+	if transaction.StagingRef == "" {
+		transaction.StagingRef = completionStagingRef(transaction.ID)
 	}
 	if err := d.store.SaveCompletionTransaction(&transaction); err != nil {
 		return err
@@ -260,6 +284,12 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 	if completionFailurePhase(transaction.Phase) {
 		return d.resumeCompletionDisposition(project, result, transaction)
 	}
+	if transaction.StagingRef == "" {
+		transaction.StagingRef = completionStagingRef(transaction.ID)
+		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
+			return err
+		}
+	}
 	note, err := resolveV7Note(project.VaultRoot, result.TaskID, "task")
 	if err != nil {
 		return err
@@ -292,8 +322,11 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 		}
 	}
 	if transaction.Phase == completionPhaseStaging {
-		staged, stageErr := stageExactReviewCompletion(project.VaultRoot, project.RepoRoot, transaction.IntegrationBase, result)
+		staged, stageErr := stageExactReviewCompletion(project.VaultRoot, project.RepoRoot, transaction.IntegrationBase, result, transaction)
 		if stageErr != nil {
+			if isCompletionCrashInterruption(stageErr) {
+				return stageErr
+			}
 			return d.failCompletion(project, result, transaction, stageErr.Error())
 		}
 		transaction.StagedSHA, transaction.Phase = staged, completionPhaseStaged
@@ -308,6 +341,9 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 		}
 		if !pass {
 			return d.failCompletion(project, result, transaction, summary)
+		}
+		if err := injectCompletionReactorCrash("gate", transaction); err != nil {
+			return err
 		}
 		transaction.Phase = completionPhaseGated
 		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
@@ -332,6 +368,9 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 		} else if currentBase != transaction.StagedSHA {
 			return d.failCompletion(project, result, transaction, "integration ref diverged: expected base "+transaction.IntegrationBase+" or staged "+transaction.StagedSHA+", got "+currentBase)
 		}
+		if err := injectCompletionReactorCrash("ref_commit", transaction); err != nil {
+			return err
+		}
 		transaction.Phase = completionPhaseRefCommitted
 		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
 			return err
@@ -346,6 +385,9 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 		if err := appendV7WaveLandingAudit(project.VaultRoot, stringField(wave.Data, "id"), []v7LandingAuditEntry{entry}, "daemon:completion-reactor"); err != nil {
 			return err
 		}
+		if err := injectCompletionReactorCrash("audit", transaction); err != nil {
+			return err
+		}
 		transaction.Phase = completionPhaseAudited
 		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
 			return err
@@ -354,6 +396,10 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 	if transaction.Phase == completionPhaseAudited {
 		// Reconciliation derives the affected closure and normal capacity policy
 		// picks the frontier.  Do not release/promote a default ref here.
+		d.scheduleProjectReconcile(project.ProjectID)
+		if err := injectCompletionReactorCrash("wake", transaction); err != nil {
+			return err
+		}
 		transaction.Phase = completionPhaseWoken
 		if err := d.store.SaveCompletionTransaction(transaction); err != nil {
 			return err
@@ -525,7 +571,24 @@ func auditCompletionFailure(project RegisteredProject, result ReviewResult, tran
 // reviewed commit (not task/<id>), and writes the integrated done projection.
 // The gate is a separate persisted phase so a crash after staging never needs
 // another merge commit.
-func stageExactReviewCompletion(vaultPath, repoRoot, integrationBase string, result ReviewResult) (string, error) {
+func completionStagingRef(transactionID string) string {
+	return "refs/tusker/completion/" + strings.TrimPrefix(strings.TrimSpace(transactionID), "completion:")
+}
+
+func stageExactReviewCompletion(vaultPath, repoRoot, integrationBase string, result ReviewResult, transaction *completionTransaction) (string, error) {
+	if transaction == nil || transaction.StagingRef == "" {
+		return "", tuskerError(errorInvalidArg, "completion staging requires a persisted transaction ref")
+	}
+	if gitRefExists(repoRoot, transaction.StagingRef) {
+		candidate, err := gitOutputTrim(repoRoot, "rev-parse", transaction.StagingRef)
+		if err != nil {
+			return "", err
+		}
+		if err := validateCompletionStagingCandidate(vaultPath, repoRoot, candidate, integrationBase, result, transaction); err != nil {
+			return "", err
+		}
+		return candidate, nil
+	}
 	tmp, err := os.MkdirTemp("", "tusker-completion-stage-*")
 	if err != nil {
 		return "", err
@@ -537,8 +600,11 @@ func stageExactReviewCompletion(vaultPath, repoRoot, integrationBase string, res
 	if output, err := gitCombined(repoRoot, "worktree", "add", "--detach", tmp, integrationBase); err != nil {
 		return "", tuskerError(errorInvalidTransition, "failed to create completion staging worktree: "+firstActionableLine(output, err.Error()))
 	}
-	if output, err := gitCombined(tmp, "merge", "--no-ff", "--no-edit", result.ImplementationSHA); err != nil {
+	if output, err := gitCombined(tmp, "merge", "--no-ff", "--no-commit", result.ImplementationSHA); err != nil {
 		return "", tuskerError(errorInvalidTransition, landingFailureSummary("merge "+result.ImplementationSHA, output, err))
+	}
+	if err := removeV7WorkspaceMetadataFromLanding(tmp); err != nil {
+		return "", err
 	}
 	if err := materializeReviewedDone(tmp, vaultPath, result); err != nil {
 		return "", err
@@ -546,11 +612,66 @@ func stageExactReviewCompletion(vaultPath, repoRoot, integrationBase string, res
 	if output, err := gitCombined(tmp, "add", "--", filepath.ToSlash(filepath.Join(relativeFromRepo(repoRoot, vaultPath), "work", "tasks", result.TaskID+".md"))); err != nil {
 		return "", tuskerError(errorInvalidTransition, "failed to stage reviewed task closure: "+firstActionableLine(output, err.Error()))
 	}
-	if output, err := gitCombined(tmp, "commit", "-m", "Complete reviewed task "+result.TaskID); err != nil {
-		return "", tuskerError(errorInvalidTransition, "failed to commit reviewed task closure: "+firstActionableLine(output, err.Error()))
+	message := "Complete reviewed task " + result.TaskID + "\n\nTusker-Completion: " + transaction.ID
+	commit := exec.Command("git", "-C", tmp, "-c", "commit.gpgsign=false", "commit", "-m", message)
+	stamp := completionResultTimestamp(result)
+	commit.Env = append(os.Environ(), "GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)
+	if output, err := commit.CombinedOutput(); err != nil {
+		return "", tuskerError(errorInvalidTransition, "failed to commit reviewed task closure: "+firstActionableLine(string(output), err.Error()))
 	}
 	sha, err := gitOutputTrim(tmp, "rev-parse", "HEAD")
-	return sha, err
+	if err != nil {
+		return "", err
+	}
+	transaction.StagedSHA = sha
+	if err := injectCompletionReactorCrash("staging_commit", transaction); err != nil {
+		return "", err
+	}
+	if err := updateGitRef(repoRoot, transaction.StagingRef, sha, strings.Repeat("0", 40)); err != nil {
+		if existing, readErr := gitOutputTrim(repoRoot, "rev-parse", transaction.StagingRef); readErr != nil || existing != sha {
+			return "", tuskerError(errorInvalidTransition, "completion staging ref compare-and-swap failed: "+firstActionableLine("", err.Error()))
+		}
+	}
+	if err := injectCompletionReactorCrash("staging_ref", transaction); err != nil {
+		return "", err
+	}
+	return sha, nil
+}
+
+func completionResultTimestamp(result ReviewResult) string {
+	if parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(result.CreatedAt)); err == nil {
+		return parsed.UTC().Format(time.RFC3339)
+	}
+	// Legacy typed-result fixtures omitted CreatedAt. A fixed epoch keeps their
+	// staged object deterministic without weakening any authority field.
+	return "2000-01-01T00:00:00Z"
+}
+
+func validateCompletionStagingCandidate(vaultPath, repoRoot, candidate, integrationBase string, result ReviewResult, transaction *completionTransaction) error {
+	firstParent, err := gitOutputTrim(repoRoot, "rev-parse", candidate+"^1")
+	if err != nil || firstParent != integrationBase {
+		return tuskerError(errorInvalidTransition, "completion staging ref has the wrong integration parent")
+	}
+	if !gitMergeBaseAncestor(repoRoot, result.ImplementationSHA, candidate) {
+		return tuskerError(errorInvalidTransition, "completion staging ref does not contain the exact reviewed SHA")
+	}
+	rel := filepath.ToSlash(filepath.Join(relativeFromRepo(repoRoot, vaultPath), "work", "tasks", result.TaskID+".md"))
+	raw, err := gitOutputTrim(repoRoot, "show", candidate+":"+rel)
+	if err != nil {
+		return err
+	}
+	data, body, err := parseFrontmatter(raw)
+	if err != nil {
+		return err
+	}
+	if stringField(data, "status") != "done" || !strings.Contains(body, "[tusker-review-result:"+result.ResultRevision+"]") {
+		return tuskerError(errorInvalidTransition, "completion staging ref lacks the reviewed done projection")
+	}
+	message, err := gitOutputTrim(repoRoot, "show", "-s", "--format=%B", candidate)
+	if err != nil || !strings.Contains(message, "Tusker-Completion: "+transaction.ID) {
+		return tuskerError(errorInvalidTransition, "completion staging ref belongs to another transaction")
+	}
+	return nil
 }
 
 func gateExactReviewCompletion(vaultPath, repoRoot, stagedSHA string, result ReviewResult) (bool, string, error) {
@@ -600,7 +721,7 @@ func materializeReviewedDone(stageRoot, vaultPath string, result ReviewResult) e
 	if intField(data, "work_revision") != result.WorkRevision || firstNonEmpty(stringField(data, "source_sha"), stringField(data, "source_commit")) != result.ImplementationSHA {
 		return tuskerError(errorInvalidTransition, "staged task drifted from exact reviewed source")
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := completionResultTimestamp(result)
 	data["status"], data["readiness"] = "done", "complete"
 	data["verified_at"], data["updated_at"], data["updated_by"] = now, now, "daemon:completion-reactor"
 	data["next_owner"], data["next_source"], data["next_ref"], data["next_action"] = "", "completion_reactor", result.ResultRevision, "Integrated after typed review pass."

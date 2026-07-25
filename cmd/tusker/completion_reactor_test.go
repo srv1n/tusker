@@ -346,6 +346,80 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			t.Fatal("ref-less integration omitted reviewed source")
 		}
 	})
+
+	t.Run("phase crash matrix converges on one staged commit", func(t *testing.T) {
+		for _, point := range []string{"staging_commit", "staging_ref", "gate", "ref_commit", "audit", "wake"} {
+			t.Run(point, func(t *testing.T) {
+				vault, project, daemon, result := completionReactorFixture(t, true)
+				if _, err := daemon.store.SaveReviewResult(result); err != nil {
+					t.Fatal(err)
+				}
+				oldHook := completionReactorCrashHook
+				t.Cleanup(func() { completionReactorCrashHook = oldHook })
+				capturedSHA := ""
+				injected := false
+				completionReactorCrashHook = func(got string, transaction *completionTransaction) error {
+					if got == point && !injected {
+						injected = true
+						capturedSHA = transaction.StagedSHA
+						return errors.New("injected completion phase crash")
+					}
+					return nil
+				}
+				wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+				if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
+					t.Fatalf("%s did not inject a crash", point)
+				}
+				transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+				if err != nil || transaction == nil || transaction.Phase == completionPhaseTerminal {
+					t.Fatalf("%s lost resumable phase: transaction=%#v err=%v", point, transaction, err)
+				}
+				if capturedSHA == "" {
+					t.Fatalf("%s crash did not expose staged candidate", point)
+				}
+				stateRoot := daemon.stateRoot
+				if err := daemon.Close(); err != nil {
+					t.Fatal(err)
+				}
+				completionReactorCrashHook = nil
+				restarted, err := NewDaemon(stateRoot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer restarted.Close()
+				if err := restarted.reconcileReviewCompletion(project, wf); err != nil {
+					t.Fatalf("%s replay failed: %v", point, err)
+				}
+				transaction, err = restarted.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+				if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal {
+					t.Fatalf("%s replay did not terminalize last: transaction=%#v err=%v", point, transaction, err)
+				}
+				if transaction.StagedSHA != capturedSHA {
+					t.Fatalf("%s recreated a different staging commit: first=%s replay=%s", point, capturedSHA, transaction.StagedSHA)
+				}
+				stagingSHA, err := gitOutputTrim(project.RepoRoot, "rev-parse", transaction.StagingRef)
+				if err != nil || stagingSHA != capturedSHA {
+					t.Fatalf("%s staging ref lost candidate: got=%s err=%v", point, stagingSHA, err)
+				}
+				task, err := resolveV7Note(vault, result.TaskID, "task")
+				if err != nil {
+					t.Fatal(err)
+				}
+				wave, ok := completionWaveForReviewedTask(vault, task)
+				if !ok {
+					t.Fatal("fixture wave disappeared")
+				}
+				integrated, err := gitOutputTrim(project.RepoRoot, "rev-parse", "refs/heads/"+v7WaveIntegrationBranch(wave))
+				if err != nil || integrated != capturedSHA {
+					t.Fatalf("%s integration candidate=%s, want %s err=%v", point, integrated, capturedSHA, err)
+				}
+				commits, err := gitOutputTrim(project.RepoRoot, "rev-list", "--all", "--grep=Tusker-Completion: "+transaction.ID)
+				if err != nil || len(strings.Fields(commits)) != 1 {
+					t.Fatalf("%s duplicate completion commits visible: %q err=%v", point, commits, err)
+				}
+			})
+		}
+	})
 }
 
 func completionReactorFixture(t *testing.T, exactSource bool) (string, RegisteredProject, *Daemon, ReviewResult) {
