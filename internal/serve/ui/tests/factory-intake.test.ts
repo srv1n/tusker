@@ -14,7 +14,7 @@ test("delivery review renders every canonical section with exact fingerprint con
 test("delivery surface keeps a narrow layout and renders blocked, stale, and started truthfully", () => {
   expect(source).toContain("xl:grid-cols-[minmax(0,1fr)_22rem]");
   expect(source).toContain("sm:grid-cols-2");
-  expect(source).toContain('title="Blocked"');
+  expect(source).toContain('>Blocked</p>');
   expect(source).toContain('title={stale ? "Review is stale"');
   expect(source).toContain('title={startResult.replayed ? "Already started" : "Delivery started"}');
   expect(api).toContain('withProject(`/delivery/review?plan=${encodeURIComponent(plan)}`, projectId)');
