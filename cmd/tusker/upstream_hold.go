@@ -52,6 +52,9 @@ func v7UpstreamMarkerIsDead(dep Note) bool {
 // dependent forever.
 func v7HeldByFailedUpstream(task Note, idx v7Index) (string, bool) {
 	for _, edge := range v7TaskDependencyEdges(task, idx) {
+		if edge.Hardness != v7DependencyHardnessHard {
+			continue
+		}
 		dep, ok := idx.Tasks[edge.ID]
 		if !ok {
 			continue

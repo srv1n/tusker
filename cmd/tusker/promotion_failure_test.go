@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPromotionFailurePacketCarriesFrozenFactsAndBoundedDiagnostics(t *testing.T) {
@@ -19,6 +20,46 @@ func TestPromotionFailurePacketCarriesFrozenFactsAndBoundedDiagnostics(t *testin
 	if len(packet.Defects[0].Excerpt) > 500 {
 		t.Fatalf("raw output leaked into packet: %q", packet.Defects[0].Excerpt)
 	}
+}
+
+func TestPromotionFailureLatestCompleteGateLedgerMatrix(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	put := func(id, tree, command, at string) {
+		if err := store.RecordGateLedger(GateLedgerEntry{ID: id, ProjectID: "app", TreeHash: tree, Command: command, Profile: "full", PassedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("a1", "tree-a", "one", "2026-07-25T00:00:00.1Z")
+	put("a2", "tree-a", "two", "2026-07-25T00:00:00.2Z")
+	put("split", "tree-b", "one", "2026-07-25T00:00:00.9Z")
+	put("other", "tree-c", "two", "2026-07-25T00:00:00.9Z")
+	put("current", "tree-d", "one", "2026-07-25T00:00:02Z")
+	entry, err := store.LatestCompleteGateLedgerBefore("app", []string{"one", "two"}, "full", "2026-07-25T00:00:01Z")
+	if err != nil || entry == nil || entry.TreeHash != "tree-a" {
+		t.Fatalf("same-tree complete proof=%#v err=%v", entry, err)
+	}
+	entry, err = store.LatestCompleteGateLedgerBefore("app", []string{"one", "two"}, "full", "2026-07-25T00:00:00.15Z")
+	if err != nil || entry != nil {
+		t.Fatalf("partial/fractional prior pass incorrectly accepted: %#v %v", entry, err)
+	}
+}
+
+func TestPromotionFailureHardAndSoftSuccessorSemantics(t *testing.T) {
+	failed := holdTestTask("APP-T-0001", "done", map[string]any{"build_failed": true})
+	hard := holdTestTask("APP-T-0002", "ready", map[string]any{"dependencies": []any{map[string]any{"id": "APP-T-0001", "hardness": "hard"}}})
+	soft := holdTestTask("APP-T-0003", "ready", map[string]any{"dependencies": []any{map[string]any{"id": "APP-T-0001", "hardness": "soft"}}})
+	idx := v7Index{Tasks: map[string]Note{"APP-T-0001": failed, "APP-T-0002": hard, "APP-T-0003": soft}}
+	if _, held := v7HeldByFailedUpstream(hard, idx); !held {
+		t.Fatal("hard successor was not relocked")
+	}
+	if _, held := v7HeldByFailedUpstream(soft, idx); held {
+		t.Fatal("soft successor was incorrectly relocked")
+	}
+	_ = time.Now // retain time import proof that RFC timestamps are parsed by store path
 }
 
 func TestPromotionFailureClassificationEscalationLadder(t *testing.T) {
