@@ -277,7 +277,7 @@ func (d *Daemon) executeDepartureStaging(project RegisteredProject, wf Workflow,
 		return d.blockDepartureRun(run, "departure staging refusal: "+err.Error())
 	}
 	if len(unstaged) > 0 {
-		if err := stageScheduledTasks(project.VaultRoot, unstaged, "daemon:departure:"+run.ID); err != nil {
+		if err := stageScheduledTasks(project.VaultRoot, unstaged, run.Candidate.TaskSourceSHAs, "daemon:departure:"+run.ID); err != nil {
 			if departureExecutionTransient(err) {
 				return err
 			}
@@ -340,11 +340,29 @@ func departureUnstagedCargo(project RegisteredProject, candidate DepartureCandid
 			continue
 		}
 		wave, ok := idx.Waves[waveID]
-		if !ok || !gitMergeBaseAncestor(project.RepoRoot, sourceSHA, v7WaveIntegrationBranch(wave)) {
+		if !ok {
+			unstaged = append(unstaged, taskID)
+			continue
+		}
+		integrationBranch := v7WaveIntegrationBranch(wave)
+		if !gitMergeBaseAncestor(project.RepoRoot, sourceSHA, integrationBranch) ||
+			!departureExactLandingAudited(wave, taskID, integrationBranch, sourceSHA) {
 			unstaged = append(unstaged, taskID)
 		}
 	}
 	return unstaged, nil
+}
+
+func departureExactLandingAudited(wave Note, taskID, integrationBranch, sourceSHA string) bool {
+	for _, row := range normalizeLandingAudit(wave.Data["landings"]) {
+		if stringField(row, "task") == taskID &&
+			stringField(row, "target") == integrationBranch &&
+			stringField(row, "gate_result") == "pass" &&
+			stringField(row, "source_sha") == sourceSHA {
+			return true
+		}
+	}
+	return false
 }
 
 func departurePromotionSnapshotAfterStaging(project RegisteredProject, wf Workflow, waveID string) (scheduledPromotionCandidateSnapshot, error) {

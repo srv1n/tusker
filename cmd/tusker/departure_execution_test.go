@@ -28,6 +28,8 @@ func TestDepartureExecution(t *testing.T) {
 		mainBefore := gitRevisionForTest(t, fixture.repo, "main")
 		integrationBefore := gitRevisionForTest(t, fixture.repo, "integration/W-0001")
 		auditBefore := departureLandingAuditCount(t, fixture.vault, "W-0001", "APP-T-0001")
+		sourceSHA := run.Candidate.TaskSourceSHAs["APP-T-0001"]
+		advancedSHA := advanceDepartureTaskBranch(t, fixture.repo, "task/APP-T-0001", map[string]string{"after-freeze.txt": "must stay off integration\n"})
 		d := &Daemon{store: store, departurePlan: fixture.plan}
 		if err := d.executeDeparture(context.Background(), fixture.project, fixture.wf, run.ID); err != nil {
 			t.Fatal(err)
@@ -40,22 +42,163 @@ func TestDepartureExecution(t *testing.T) {
 			t.Fatalf("stage departure moved main: before=%s after=%s", mainBefore, after)
 		}
 		integrationAfter := gitRevisionForTest(t, fixture.repo, "integration/W-0001")
-		sourceSHA := run.Candidate.TaskSourceSHAs["APP-T-0001"]
-		if integrationAfter == integrationBefore || !gitMergeBaseAncestor(fixture.repo, sourceSHA, integrationAfter) {
-			t.Fatalf("eligible cargo was not staged exactly: before=%s after=%s source=%s", integrationBefore, integrationAfter, sourceSHA)
+		if integrationAfter == integrationBefore ||
+			!gitMergeBaseAncestor(fixture.repo, sourceSHA, integrationAfter) ||
+			gitMergeBaseAncestor(fixture.repo, advancedSHA, integrationAfter) {
+			t.Fatalf("eligible cargo was not staged at the frozen source: before=%s after=%s source=%s advanced=%s", integrationBefore, integrationAfter, sourceSHA, advancedSHA)
 		}
 		if got := gitShowFile(t, fixture.repo, "integration/W-0001", "stage-executor.txt"); got != "departure\n" {
 			t.Fatalf("staged content = %q", got)
+		}
+		if gitShowFileOK(fixture.repo, "integration/W-0001", "after-freeze.txt") {
+			t.Fatal("scheduled staging boarded work committed after the frozen source")
+		}
+		if branchHead := gitRevisionForTest(t, fixture.repo, "task/APP-T-0001"); branchHead != advancedSHA {
+			t.Fatalf("scheduled staging moved the user task branch: got=%s want=%s", branchHead, advancedSHA)
 		}
 		auditAfter := departureLandingAuditCount(t, fixture.vault, "W-0001", "APP-T-0001")
 		if auditAfter != auditBefore+1 {
 			t.Fatalf("stage audit count = %d, want %d", auditAfter, auditBefore+1)
 		}
+		assertDepartureLandingSource(t, fixture.vault, "W-0001", "APP-T-0001", sourceSHA)
+		removeDepartureTaskLandingAudit(t, fixture.vault, "W-0001", "APP-T-0001", sourceSHA)
+		current := mustDepartureRun(t, store, run.ID)
+		if changed, err := store.TransitionDepartureRun(withDepartureState(current, DepartureStateStaging), current.StateRevision); err != nil || !changed {
+			t.Fatalf("prepare exact staging replay: changed=%v err=%v", changed, err)
+		}
 		if err := d.executeDeparture(context.Background(), fixture.project, fixture.wf, run.ID); err != nil {
 			t.Fatal(err)
 		}
+		if after := gitRevisionForTest(t, fixture.repo, "integration/W-0001"); after != integrationAfter {
+			t.Fatalf("exact staging replay changed integration: before=%s after=%s", integrationAfter, after)
+		}
 		if after := departureLandingAuditCount(t, fixture.vault, "W-0001", "APP-T-0001"); after != auditAfter {
-			t.Fatalf("stage replay duplicated landing audit: before=%d after=%d", auditAfter, after)
+			t.Fatalf("stage replay audit count: before=%d after=%d", auditAfter, after)
+		}
+		assertDepartureLandingSource(t, fixture.vault, "W-0001", "APP-T-0001", sourceSHA)
+		clearDepartureTaskSourceForTest(t, fixture.vault, "APP-T-0001")
+		idx, err := loadV7Index(fixture.vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		recovered, err := scheduledPromotionTaskSourceSHA(fixture.repo, integrationAfter, "integration/W-0001", idx.Waves["W-0001"], idx.Tasks["APP-T-0001"])
+		if err != nil || recovered != sourceSHA {
+			t.Fatalf("exact audit did not fence mutable branch fallback: recovered=%s want=%s err=%v", recovered, sourceSHA, err)
+		}
+	})
+
+	t.Run("stage batches frozen sources across multiple waves", func(t *testing.T) {
+		fixture := newMultiWaveDepartureExecutionFixture(t)
+		store, err := OpenRuntimeStore(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		run := createDepartureExecutionRun(t, store, fixture)
+		if len(run.Candidate.CargoTaskIDs) != 4 || !sameDepartureStrings(run.Candidate.WaveIDs, []string{"W-0001", "W-0002"}) {
+			t.Fatalf("multi-wave candidate = %#v", run.Candidate)
+		}
+		mainBefore := gitRevisionForTest(t, fixture.repo, "main")
+		integrationBefore := map[string]string{
+			"W-0001": gitRevisionForTest(t, fixture.repo, "integration/W-0001"),
+			"W-0002": gitRevisionForTest(t, fixture.repo, "integration/W-0002"),
+		}
+		advanced := map[string]string{}
+		for _, taskID := range run.Candidate.CargoTaskIDs {
+			advanced[taskID] = advanceDepartureTaskBranch(t, fixture.repo, "task/"+taskID, map[string]string{
+				"after-freeze-" + strings.ToLower(taskID) + ".txt": "must stay off integration\n",
+			})
+		}
+		d := &Daemon{store: store, departurePlan: fixture.plan}
+		if err := d.executeDeparture(context.Background(), fixture.project, fixture.wf, run.ID); err != nil {
+			t.Fatal(err)
+		}
+		if got := mustDepartureRun(t, store, run.ID); got.State != DepartureStatePassed {
+			t.Fatalf("multi-wave stage state = %s", got.State)
+		}
+		if after := gitRevisionForTest(t, fixture.repo, "main"); after != mainBefore {
+			t.Fatalf("multi-wave stage moved main: before=%s after=%s", mainBefore, after)
+		}
+		integrationAfter := map[string]string{}
+		for _, waveID := range []string{"W-0001", "W-0002"} {
+			integrationAfter[waveID] = gitRevisionForTest(t, fixture.repo, "integration/"+waveID)
+			if integrationAfter[waveID] == integrationBefore[waveID] {
+				t.Fatalf("%s integration did not advance", waveID)
+			}
+		}
+		for i, taskID := range run.Candidate.CargoTaskIDs {
+			waveID := "W-0001"
+			if i >= 2 {
+				waveID = "W-0002"
+			}
+			sourceSHA := run.Candidate.TaskSourceSHAs[taskID]
+			if !gitMergeBaseAncestor(fixture.repo, sourceSHA, integrationAfter[waveID]) ||
+				gitMergeBaseAncestor(fixture.repo, advanced[taskID], integrationAfter[waveID]) {
+				t.Fatalf("%s staged source drifted in %s: frozen=%s advanced=%s", taskID, waveID, sourceSHA, advanced[taskID])
+			}
+			if branchHead := gitRevisionForTest(t, fixture.repo, "task/"+taskID); branchHead != advanced[taskID] {
+				t.Fatalf("%s user branch moved: got=%s want=%s", taskID, branchHead, advanced[taskID])
+			}
+			assertDepartureLandingSource(t, fixture.vault, waveID, taskID, sourceSHA)
+		}
+
+		removeDepartureTaskLandingAudit(t, fixture.vault, "W-0001", "APP-T-0001", run.Candidate.TaskSourceSHAs["APP-T-0001"])
+		removeDepartureTaskLandingAudit(t, fixture.vault, "W-0002", "APP-T-0003", run.Candidate.TaskSourceSHAs["APP-T-0003"])
+		current := mustDepartureRun(t, store, run.ID)
+		if changed, err := store.TransitionDepartureRun(withDepartureState(current, DepartureStateStaging), current.StateRevision); err != nil || !changed {
+			t.Fatalf("prepare multi-wave replay: changed=%v err=%v", changed, err)
+		}
+		if err := d.executeDeparture(context.Background(), fixture.project, fixture.wf, run.ID); err != nil {
+			t.Fatal(err)
+		}
+		for _, waveID := range []string{"W-0001", "W-0002"} {
+			if after := gitRevisionForTest(t, fixture.repo, "integration/"+waveID); after != integrationAfter[waveID] {
+				t.Fatalf("%s replay changed integration: before=%s after=%s", waveID, integrationAfter[waveID], after)
+			}
+		}
+		for i, taskID := range run.Candidate.CargoTaskIDs {
+			waveID := "W-0001"
+			if i >= 2 {
+				waveID = "W-0002"
+			}
+			assertDepartureLandingSource(t, fixture.vault, waveID, taskID, run.Candidate.TaskSourceSHAs[taskID])
+			if count := departureLandingAuditCount(t, fixture.vault, waveID, taskID); count != 1 {
+				t.Fatalf("%s replay audit count = %d, want 1", taskID, count)
+			}
+		}
+	})
+
+	t.Run("stage refuses a mutable source ref with named drift", func(t *testing.T) {
+		fixture := newUnstagedDepartureExecutionFixture(t, scheduledPromotionStage, "mutable-source-ref.txt")
+		store, err := OpenRuntimeStore(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		run := createDepartureExecutionRun(t, store, fixture)
+		next := run
+		next.State = DepartureStateStaging
+		next.Candidate.TaskSourceSHAs = map[string]string{"APP-T-0001": "task/APP-T-0001"}
+		if changed, err := store.TransitionDepartureRun(next, run.StateRevision); err != nil || !changed {
+			t.Fatalf("prepare mutable-source refusal: changed=%v err=%v", changed, err)
+		}
+		mainBefore := gitRevisionForTest(t, fixture.repo, "main")
+		integrationBefore := gitRevisionForTest(t, fixture.repo, "integration/W-0001")
+		branchBefore := gitRevisionForTest(t, fixture.repo, "task/APP-T-0001")
+		d := &Daemon{store: store, departurePlan: fixture.plan}
+		if err := d.executeDeparture(context.Background(), fixture.project, fixture.wf, run.ID); err != nil {
+			t.Fatal(err)
+		}
+		blocked := mustDepartureRun(t, store, run.ID)
+		if blocked.State != DepartureStateBlocked ||
+			!strings.Contains(blocked.BlockReason, "source_drift:APP-T-0001") ||
+			!strings.Contains(blocked.BlockReason, "full immutable commit SHA") {
+			t.Fatalf("mutable source did not produce named drift: %#v", blocked)
+		}
+		if gitRevisionForTest(t, fixture.repo, "main") != mainBefore ||
+			gitRevisionForTest(t, fixture.repo, "integration/W-0001") != integrationBefore ||
+			gitRevisionForTest(t, fixture.repo, "task/APP-T-0001") != branchBefore {
+			t.Fatal("mutable-source refusal changed a Git ref")
 		}
 	})
 
@@ -186,12 +329,14 @@ func TestDepartureExecution(t *testing.T) {
 			gitShowFile(t, fixture.repo, "main", "member-two.txt") != "two\n" {
 			t.Fatal("multi-member promotion did not contain both members")
 		}
-		if after := departureLandingAuditCount(t, fixture.vault, "W-0001", "APP-T-0001"); after != firstAuditBefore {
-			t.Fatalf("already-boarded member audit duplicated: before=%d after=%d", firstAuditBefore, after)
+		if after := departureLandingAuditCount(t, fixture.vault, "W-0001", "APP-T-0001"); after != firstAuditBefore+1 {
+			t.Fatalf("already-boarded member did not gain exact-source audit: before=%d after=%d", firstAuditBefore, after)
 		}
 		if after := departureLandingAuditCount(t, fixture.vault, "W-0001", "APP-T-0002"); after != 1 {
 			t.Fatalf("missing member landing audit count = %d, want 1", after)
 		}
+		assertDepartureLandingSource(t, fixture.vault, "W-0001", "APP-T-0001", sourceOne)
+		assertDepartureLandingSource(t, fixture.vault, "W-0001", "APP-T-0002", sourceTwo)
 	})
 
 	t.Run("hold after evaluation blocks before side effects", func(t *testing.T) {
@@ -456,12 +601,67 @@ func newMultiMemberDepartureExecutionFixture(t *testing.T) departureExecutionFix
 	})
 }
 
+func newMultiWaveDepartureExecutionFixture(t *testing.T) departureExecutionFixture {
+	t.Helper()
+	repo := t.TempDir()
+	runGitDir(t, repo, "init", "-b", "main")
+	runGitDir(t, repo, "config", "user.email", "test@example.com")
+	runGitDir(t, repo, "config", "user.name", "Test User")
+	if err := writeText(filepath.Join(repo, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nbranches:\n  default_branch: main\n  control:\n    - main\nruntime:\n  mutation_mode: single_user_local\nautomation:\n  validation:\n    commands:\n      - \"true\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	vault := filepath.Join(repo, ".tusker")
+	mustWave(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
+	mustWave(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Departure source-fence tests.", "v7": "true"}, newV7Epic)
+	for i := 1; i <= 4; i++ {
+		mustWave(t, Args{
+			"vault": vault, "quiet": "true", "epic": "APP",
+			"title": "Task " + padNumber(i), "risk": "low", "priority": "p2", "v7": "true",
+		}, newV7Task)
+	}
+	if err := writeText(filepath.Join(repo, "README.md"), "seed\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "add", ".")
+	runGitDir(t, repo, "commit", "-m", "seed")
+	mustWave(t, Args{"vault": vault, "quiet": "true", "_pos0": "First departure", "_pos1": "APP-T-0001", "_pos2": "APP-T-0002"}, waveV7CreateCmd)
+	mustWave(t, Args{"vault": vault, "quiet": "true", "_pos0": "Second departure", "_pos1": "APP-T-0003", "_pos2": "APP-T-0004"}, waveV7CreateCmd)
+	runGitDir(t, repo, "add", "-A")
+	runGitDir(t, repo, "commit", "-m", "record departure waves")
+	runGitDir(t, repo, "branch", "-f", "integration/W-0001", "main")
+	runGitDir(t, repo, "branch", "-f", "integration/W-0002", "main")
+
+	for i := 1; i <= 4; i++ {
+		taskID := "APP-T-" + padNumber(i)
+		waveID := "W-0001"
+		if i > 2 {
+			waveID = "W-0002"
+		}
+		sourceSHA := commitLandBranch(t, repo, "task/"+taskID, "integration/"+waveID, map[string]string{
+			"frozen-" + strings.ToLower(taskID) + ".txt": "frozen\n",
+		})
+		setWaveTaskState(t, vault, taskID, "done", "done", "2026-07-25T00:00:00Z")
+		setDepartureTaskSourceForTest(t, vault, taskID, sourceSHA)
+	}
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionStage)
+	wf := setScheduledPromotionGateForTest(t, vault, []string{"go version >/dev/null"}, "full")
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	armScheduledPromotionWaveForTest(t, vault, "W-0002")
+	commitScheduledPromotionWorkflowForWavesTest(t, repo, vault, []string{"W-0001", "W-0002"})
+	return departureExecutionFixtureForRepo(t, repo, vault, wf)
+}
+
 func configureDepartureExecutionFixture(t *testing.T, repo, vault, mode string, gateCommands []string) departureExecutionFixture {
 	t.Helper()
 	setScheduledPromotionPolicyForTest(t, vault, mode)
 	wf := setScheduledPromotionGateForTest(t, vault, gateCommands, "full")
 	armScheduledPromotionWaveForTest(t, vault, "W-0001")
 	commitScheduledPromotionWorkflowForTest(t, repo, vault)
+	return departureExecutionFixtureForRepo(t, repo, vault, wf)
+}
+
+func departureExecutionFixtureForRepo(t *testing.T, repo, vault string, wf Workflow) departureExecutionFixture {
+	t.Helper()
 	remote := filepath.Join(t.TempDir(), "origin.git")
 	runGitDir(t, filepath.Dir(remote), "init", "--bare", remote)
 	runGitDir(t, repo, "remote", "add", "origin", remote)
@@ -474,6 +674,26 @@ func configureDepartureExecutionFixture(t *testing.T, repo, vault, mode string, 
 		plan: func(project RegisteredProject, wf Workflow) (DepartureDecision, error) {
 			return planner.PlanDeparture(project.VaultRoot, project.ProjectID, WorkflowFile{Data: wf})
 		},
+	}
+}
+
+func commitScheduledPromotionWorkflowForWavesTest(t *testing.T, repo, vault string, waveIDs []string) {
+	t.Helper()
+	workflow := filepath.ToSlash(filepath.Join(".tusker", "WORKFLOW.md"))
+	runGitDir(t, repo, "add", "--", workflow)
+	runGitDir(t, repo, "commit", "-m", "configure scheduled promotion")
+	for _, waveID := range waveIDs {
+		worktree := filepath.Join(t.TempDir(), "scheduled-promotion-"+strings.ToLower(waveID))
+		branch := "integration/" + waveID
+		runGitDir(t, repo, "worktree", "add", "--detach", worktree, branch)
+		if err := writeText(filepath.Join(worktree, workflow), mustReadIndexTest(t, filepath.Join(vault, "WORKFLOW.md"))); err != nil {
+			t.Fatal(err)
+		}
+		runGitDir(t, worktree, "add", "--", workflow)
+		runGitDir(t, worktree, "commit", "-m", "configure scheduled promotion")
+		next := strings.TrimSpace(gitDirOutput(t, worktree, "rev-parse", "HEAD"))
+		runGitDir(t, repo, "worktree", "remove", "--force", worktree)
+		runGitDir(t, repo, "update-ref", "refs/heads/"+branch, next)
 	}
 }
 
@@ -572,6 +792,66 @@ func departureLandingAuditCount(t *testing.T, vault, waveID, taskID string) int 
 		}
 	}
 	return count
+}
+
+func assertDepartureLandingSource(t *testing.T, vault, waveID, taskID, sourceSHA string) {
+	t.Helper()
+	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "waves", waveID+".md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range normalizeLandingAudit(data["landings"]) {
+		if stringField(row, "task") == taskID &&
+			stringField(row, "gate_result") == "pass" &&
+			stringField(row, "source_sha") == sourceSHA {
+			if branch := stringField(row, "branch"); branch != "task/"+taskID {
+				t.Fatalf("%s exact landing audit branch = %q", taskID, branch)
+			}
+			return
+		}
+	}
+	t.Fatalf("%s/%s has no pass audit bound to source %s", waveID, taskID, sourceSHA)
+}
+
+func removeDepartureTaskLandingAudit(t *testing.T, vault, waveID, taskID, sourceSHA string) {
+	t.Helper()
+	path := filepath.Join(vault, "work", "waves", waveID+".md")
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseRev := stringField(data, "state_rev")
+	var kept []map[string]any
+	for _, row := range normalizeLandingAudit(data["landings"]) {
+		if stringField(row, "task") == taskID && stringField(row, "source_sha") == sourceSHA {
+			continue
+		}
+		kept = append(kept, row)
+	}
+	data["landings"] = kept
+	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["wave"], baseRev); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func advanceDepartureTaskBranch(t *testing.T, repo, branch string, files map[string]string) string {
+	t.Helper()
+	worktree := filepath.Join(t.TempDir(), "advanced-task")
+	runGitDir(t, repo, "worktree", "add", worktree, branch)
+	for path, content := range files {
+		full := filepath.Join(worktree, path)
+		if err := ensureDir(filepath.Dir(full)); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeText(full, content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGitDir(t, worktree, "add", ".")
+	runGitDir(t, worktree, "commit", "-m", "advance "+branch+" after departure freeze")
+	advanced := gitRevisionForTest(t, worktree, "HEAD")
+	runGitDir(t, repo, "worktree", "remove", "--force", worktree)
+	return advanced
 }
 
 func removeDeparturePromotionAudit(t *testing.T, vault, waveID, commit string) {

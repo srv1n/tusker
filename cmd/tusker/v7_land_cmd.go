@@ -17,13 +17,15 @@ import (
 const tuskerLandMainGuardEnv = "TUSKER_LAND_MAIN_OK"
 
 type v7LandTask struct {
-	ID     string
-	Branch string
+	ID        string
+	Branch    string
+	SourceSHA string
 }
 
 type v7LandingAuditEntry struct {
 	Task        string
 	Branch      string
+	SourceSHA   string
 	Target      string
 	GateResult  string
 	GateSummary string
@@ -70,6 +72,10 @@ type v7LandSummaryRow struct {
 }
 
 func landV7Cmd(args Args) error {
+	return landV7CmdWithFrozenSources(args, nil)
+}
+
+func landV7CmdWithFrozenSources(args Args, frozenSources map[string]string) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err
@@ -89,7 +95,7 @@ func landV7Cmd(args Args) error {
 		if err := landV7WaveToMain(vaultPath, targets[0], args, summary); err != nil {
 			return err
 		}
-	} else if err := landV7TaskTargets(vaultPath, targets, args, summary); err != nil {
+	} else if err := landV7TaskTargets(vaultPath, targets, args, summary, frozenSources); err != nil {
 		return err
 	}
 	printV7LandingSummary(summary, args)
@@ -130,7 +136,7 @@ func acquireV7LandingLock(vaultPath string) (func(), error) {
 	return func() { _ = os.Remove(lockPath) }, nil
 }
 
-func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v7LandSummary) error {
+func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v7LandSummary, frozenSources map[string]string) error {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return err
@@ -169,12 +175,27 @@ func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v
 		if len(targets) == 1 {
 			branch = firstNonEmpty(strings.TrimSpace(args.String("branch")), branch)
 		}
-		if v7GitRepo(repoRoot) && !gitBranchExists(repoRoot, branch) {
+		sourceSHA := ""
+		if frozenSources != nil {
+			sourceSHA = strings.TrimSpace(frozenSources[taskID])
+			if sourceSHA == "" {
+				return tuskerError(errorInvalidTransition, "scheduled staging refusal: source_drift:"+taskID+": frozen source is missing")
+			}
+			resolved, resolveErr := gitOutputTrim(repoRoot, "rev-parse", sourceSHA+"^{commit}")
+			if resolveErr != nil {
+				return tuskerError(errorInvalidTransition, "scheduled staging refusal: source_drift:"+taskID+": frozen source is unavailable")
+			}
+			if !strings.EqualFold(sourceSHA, resolved) {
+				return tuskerError(errorInvalidTransition, "scheduled staging refusal: source_drift:"+taskID+": frozen source must be a full immutable commit SHA")
+			}
+			sourceSHA = resolved
+		}
+		if sourceSHA == "" && v7GitRepo(repoRoot) && !gitBranchExists(repoRoot, branch) {
 			if err := ensureV7TaskLandingBranch(repoRoot, taskID, branch, args); err != nil {
 				return err
 			}
 		}
-		byWave[waveID] = append(byWave[waveID], v7LandTask{ID: taskID, Branch: branch})
+		byWave[waveID] = append(byWave[waveID], v7LandTask{ID: taskID, Branch: branch, SourceSHA: sourceSHA})
 	}
 	waveIDs := make([]string, 0, len(byWave))
 	for waveID := range byWave {
@@ -223,7 +244,8 @@ func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v
 			}
 			entries = append(entries, v7LandingAuditEntry{
 				Task: failure.Task.ID, Branch: failure.Task.Branch,
-				Target: v7IntegrationBranchName(waveID), GateResult: "fail",
+				SourceSHA: failure.Task.SourceSHA,
+				Target:    v7IntegrationBranchName(waveID), GateResult: "fail",
 				GateSummary: failure.Summary, Actor: actor,
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 			})
@@ -503,7 +525,7 @@ func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string,
 		now := time.Now().UTC().Format(time.RFC3339)
 		for _, task := range tasks {
 			acc.Landed = append(acc.Landed, v7LandedEntry{WaveID: waveID, Entry: v7LandingAuditEntry{
-				Task: task.ID, Branch: task.Branch, Target: integrationBranch,
+				Task: task.ID, Branch: task.Branch, SourceSHA: task.SourceSHA, Target: integrationBranch,
 				GateResult: "pass", GateSummary: summary, Commit: commit, Timestamp: now,
 			}})
 		}
@@ -538,13 +560,14 @@ func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandT
 	}
 	removeWorktree = true
 	for _, task := range tasks {
-		if output, err := gitCombined(tmp, "merge", "--no-ff", "--no-edit", task.Branch); err != nil {
+		source := firstNonEmpty(strings.TrimSpace(task.SourceSHA), task.Branch)
+		if output, err := gitCombined(tmp, "merge", "--no-ff", "--no-edit", source); err != nil {
 			resolved, unresolved, resolveErr := resolveV7GeneratedProjectionMerge(tmp)
 			if resolveErr != nil {
 				return false, "", "", resolveErr
 			}
 			if !resolved {
-				summary := landingFailureSummary("merge "+task.Branch, output, err)
+				summary := landingFailureSummary("merge "+source, output, err)
 				if unresolved != "" {
 					summary = limitLandingSummary(summary+"; all unmerged paths: "+unresolved, 500)
 				}
@@ -760,7 +783,7 @@ func v7LandingGateFingerprint(workDir, laneIdentity string, commands []string) s
 func v7LandingBatchIdentity(tasks []v7LandTask) string {
 	parts := make([]string, 0, len(tasks))
 	for _, task := range tasks {
-		parts = append(parts, task.ID+"@"+task.Branch)
+		parts = append(parts, task.ID+"@"+task.Branch+"@"+task.SourceSHA)
 	}
 	sort.Strings(parts)
 	return "task-batch:" + strings.Join(parts, ",")
@@ -1612,11 +1635,11 @@ func appendV7WaveLandingAudit(vaultPath, waveID string, entries []v7LandingAudit
 	landings := normalizeLandingAudit(data["landings"])
 	seen := map[string]bool{}
 	for _, row := range landings {
-		key := fmt.Sprintf("%s|%s|%s|%s", stringField(row, "task"), stringField(row, "branch"), stringField(row, "target"), stringField(row, "commit"))
+		key := fmt.Sprintf("%s|%s|%s|%s|%s", stringField(row, "task"), stringField(row, "branch"), stringField(row, "source_sha"), stringField(row, "target"), stringField(row, "commit"))
 		seen[key] = true
 	}
 	for _, entry := range entries {
-		key := fmt.Sprintf("%s|%s|%s|%s", entry.Task, entry.Branch, entry.Target, entry.Commit)
+		key := fmt.Sprintf("%s|%s|%s|%s|%s", entry.Task, entry.Branch, entry.SourceSHA, entry.Target, entry.Commit)
 		if seen[key] {
 			continue
 		}
@@ -1630,6 +1653,9 @@ func appendV7WaveLandingAudit(vaultPath, waveID string, entries []v7LandingAudit
 		}
 		if entry.GateSummary != "" {
 			row["gate_summary"] = entry.GateSummary
+		}
+		if entry.SourceSHA != "" {
+			row["source_sha"] = entry.SourceSHA
 		}
 		if entry.Commit != "" {
 			row["commit"] = entry.Commit

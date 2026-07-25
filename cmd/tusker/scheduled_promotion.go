@@ -54,7 +54,7 @@ func scheduledPromotionAllowsDefaultAdvance(vaultPath string) (bool, error) {
 // serialized staging, the isolated staging worktree, bisection, gate cache,
 // and landing audit in one engine instead of growing a second "departure"
 // merge path.  In stage mode the policy choke point above leaves main alone.
-func stageScheduledTasks(vaultPath string, taskIDs []string, actor string) error {
+func stageScheduledTasks(vaultPath string, taskIDs []string, sourceSHAs map[string]string, actor string) error {
 	wf, err := loadWorkflow(vaultPath)
 	if err != nil {
 		return err
@@ -66,7 +66,7 @@ func stageScheduledTasks(vaultPath string, taskIDs []string, actor string) error
 	for i, id := range taskIDs {
 		args[fmt.Sprintf("_pos%d", i)] = id
 	}
-	return landV7Cmd(args)
+	return landV7CmdWithFrozenSources(args, sourceSHAs)
 }
 
 func scheduledPromotionGatePolicy(vaultPath string, wf Workflow) (GateTierPolicy, error) {
@@ -209,17 +209,24 @@ func scheduledPromotionTaskSourceSHA(repoRoot, candidateSHA, integrationBranch s
 			if stringField(row, "task") == taskID &&
 				stringField(row, "target") == integrationBranch &&
 				stringField(row, "gate_result") == "pass" {
-				sourceRef = stringField(row, "branch")
-				break
+				if exact := stringField(row, "source_sha"); exact != "" {
+					sourceSHA = exact
+					break
+				}
+				if sourceRef == "" {
+					sourceRef = stringField(row, "branch")
+				}
 			}
 		}
-		if sourceRef == "" {
+		if sourceSHA == "" && sourceRef == "" {
 			return "", tuskerError(errorInvalidTransition, "promotion candidate refusal: task_source_provenance_missing:"+taskID)
 		}
-		var err error
-		sourceSHA, err = gitOutputTrim(repoRoot, "rev-parse", sourceRef+"^{commit}")
-		if err != nil {
-			return "", tuskerError(errorInvalidTransition, "promotion candidate refusal: task_source_unavailable:"+taskID)
+		if sourceSHA == "" {
+			var err error
+			sourceSHA, err = gitOutputTrim(repoRoot, "rev-parse", sourceRef+"^{commit}")
+			if err != nil {
+				return "", tuskerError(errorInvalidTransition, "promotion candidate refusal: task_source_unavailable:"+taskID)
+			}
 		}
 	}
 	if execErr := exec.Command("git", "-C", repoRoot, "merge-base", "--is-ancestor", sourceSHA, candidateSHA).Run(); execErr != nil {
