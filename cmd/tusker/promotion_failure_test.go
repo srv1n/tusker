@@ -50,8 +50,8 @@ func TestPromotionFailureLatestCompleteGateLedgerMatrix(t *testing.T) {
 
 func TestPromotionFailureHardAndSoftSuccessorSemantics(t *testing.T) {
 	failed := holdTestTask("APP-T-0001", "done", map[string]any{"build_failed": true})
-	hard := holdTestTask("APP-T-0002", "ready", map[string]any{"dependencies": []any{map[string]any{"id": "APP-T-0001", "hardness": "hard"}}})
-	soft := holdTestTask("APP-T-0003", "ready", map[string]any{"dependencies": []any{map[string]any{"id": "APP-T-0001", "hardness": "soft"}}})
+	hard := holdTestTask("APP-T-0002", "ready", map[string]any{"dependencies": []string{"APP-T-0001:hard"}})
+	soft := holdTestTask("APP-T-0003", "ready", map[string]any{"dependencies": []string{"APP-T-0001:soft"}})
 	idx := v7Index{Tasks: map[string]Note{"APP-T-0001": failed, "APP-T-0002": hard, "APP-T-0003": soft}}
 	if _, held := v7HeldByFailedUpstream(hard, idx); !held {
 		t.Fatal("hard successor was not relocked")
@@ -60,6 +60,13 @@ func TestPromotionFailureHardAndSoftSuccessorSemantics(t *testing.T) {
 		t.Fatal("soft successor was not relocked on revoked premise")
 	}
 	_ = time.Now // retain time import proof that RFC timestamps are parsed by store path
+}
+
+func TestPromotionTouchedPathsPreservesLegalNewlineFilename(t *testing.T) {
+	paths := promotionTouchedPathsFromNUL("zeta\x00dir/line\nbreak.go\x00alpha\x00")
+	if len(paths) != 3 || paths[1] != "dir/line\nbreak.go" {
+		t.Fatalf("NUL path parsing split a legal filename: %#v", paths)
+	}
 }
 
 func TestPromotionFailureClassificationEscalationLadder(t *testing.T) {

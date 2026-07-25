@@ -432,12 +432,7 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		owner := promotionFailureOwner(before.Candidate)
 		touched, touchStatus := []string(nil), "unavailable"
 		if paths, pathErr := gitOutputTrim(v7RepoRoot(vaultPath), "diff", "--name-only", "-z", before.Candidate.ExpectedDefaultBranchSHA+".."+before.Candidate.CandidateSHA); pathErr == nil {
-			for _, path := range strings.Split(paths, "\x00") {
-				if path = strings.TrimSpace(path); path != "" {
-					touched = append(touched, path)
-				}
-			}
-			sort.Strings(touched)
+			touched = promotionTouchedPathsFromNUL(paths)
 			touchStatus = "proven"
 		}
 		lastGreen := ""

@@ -100,6 +100,17 @@ func promotionFailureHardClosure(vaultPath, owner string) []string {
 	return ids
 }
 
+func promotionTouchedPathsFromNUL(raw string) []string {
+	paths := []string{}
+	for _, path := range strings.Split(raw, "\x00") {
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
 // classifyPromotionFailure is intentionally deterministic. The caller only
 // spends a model when the bounded evidence is genuinely ambiguous.
 func classifyPromotionFailure(packet PromotionFailurePacket, policy GateTierPolicy) promotionFailureRoute {
