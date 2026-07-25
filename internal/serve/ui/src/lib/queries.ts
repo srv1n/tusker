@@ -15,7 +15,7 @@ import {
 } from "@/lib/frontmatter";
 import { liveRefetchInterval } from "@/lib/stream";
 import { projectQueryScope } from "@/lib/queryScope";
-import type { DocContent, DocListEntry, RunDetail, TaskCapsule, TaskDetail } from "@/types/domain";
+import type { DeliveryReview, DeliveryStartResult, DocContent, DocListEntry, RunDetail, TaskCapsule, TaskDetail } from "@/types/domain";
 import type {
   DocgraphDocDetail,
   DocgraphSavePayload,
@@ -43,6 +43,7 @@ export const qk = {
   doc: (path: string, projectId?: string) => ["doc", projectId ?? "all", path] as const,
   docgraph: (projectId?: string) => ["docgraph", projectId ?? "all"] as const,
   docgraphDoc: (projectId: string, subject: string) => ["docgraph", "doc", projectId, subject] as const,
+  deliveryReview: (plan: string, projectId?: string) => ["delivery", "review", projectId ?? "all", plan] as const,
 };
 
 export const useDaemon = () =>
@@ -190,6 +191,21 @@ export const useSaveDocgraphDoc = (projectId: string, subject: string) => {
       const { warnings: _warnings, ...detail } = data;
       qc.setQueryData<DocgraphDocDetail>(qk.docgraphDoc(projectId, subject), detail);
       void qc.invalidateQueries({ queryKey: qk.docgraph(projectId) });
+    },
+  });
+};
+
+export const useDeliveryReview = (plan: string, projectId?: string) =>
+  useQuery<DeliveryReview>({ queryKey: qk.deliveryReview(plan, projectId), queryFn: () => api.deliveryReview(plan, projectId), enabled: plan.trim().length > 0 });
+
+export const useDeliveryStart = (projectId?: string) => {
+  const qc = useQueryClient();
+  return useMutation<DeliveryStartResult, unknown, { plan: string; confirm: string }>({
+    mutationFn: (body) => api.deliveryStart(body, projectId),
+    onSettled: (_data, _error, variables) => {
+      void qc.invalidateQueries({ queryKey: qk.deliveryReview(variables?.plan ?? "", projectId) });
+      void qc.invalidateQueries({ queryKey: ["waves"] });
+      void qc.invalidateQueries({ queryKey: ["tasks"] });
     },
   });
 };

@@ -151,6 +151,8 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	switch {
+	case len(parts) == 3 && parts[1] == "delivery" && parts[2] == "start":
+		s.handleDeliveryStart(w, body)
 	case len(parts) == 2 && parts[1] == "projects":
 		s.handleProjectRegisterAction(w, body)
 	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "automation":

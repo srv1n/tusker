@@ -115,6 +115,39 @@ export interface ActionResult {
   discard?: DiscardImpact;
 }
 
+// Delivery intake is deliberately a product projection. These are the exact
+// five CLI review sections, not a second client-side planner.
+export interface DeliveryReview {
+  schema: "tusker.delivery-review/v1";
+  readOnly: true;
+  ready: boolean;
+  whatWillBeDelivered: Array<{ requirement: string; outcome: string; nonGoals: string[] }>;
+  howItWillBeProven: Array<{ requirements: string[]; outcome: string; acceptance: string[]; tests: string[]; artifacts: string[] }>;
+  howWorkFlows: { frontiers: string[][]; expectedConcurrency: number; integration: string; sharedResources: Array<{ sourceKey: string; kind: string; capacity?: number; capacityStatus: string; constraints: string[] }>; warnings: string[] };
+  whatNeedsYourDecision: Array<{ title: string; action: string; why: string }>;
+  startBoundary: { planFingerprint: string; contextFingerprint?: string; authorization: string; readiness: string; blockers: string[]; nextAction: string };
+  nonGoals: string[];
+}
+
+export interface DeliveryStartResult {
+  schema: "tusker.delivery-start/v1";
+  waveId: string;
+  planFingerprint: string;
+  contextFingerprint: string;
+  authorizationFingerprint: string;
+  firstFrontier: string[];
+  expectedConcurrency: number;
+  integrationLane: string;
+  statusLink: string;
+  replayed: boolean;
+  nextAction?: string;
+}
+
+export interface DeliveryErrorPayload {
+  schema: "tusker.serve-delivery-error/v1";
+  error: ActionIssue;
+}
+
 export interface DiscardDependent {
   id: string;
   title: string;

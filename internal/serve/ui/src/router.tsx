@@ -24,6 +24,7 @@ import { RouteFallback } from "@/components/RouteFallback";
     '/p/$projectId/runs'         → redirects to overview (absorbed)
     '/p/$projectId/runs/$taskId' Run detail          (params: projectId, taskId)
     '/p/$projectId/work'         Project work
+    '/p/$projectId/delivery'     Review and start a planned delivery
     '/p/$projectId/ops'          Operator controls
     '/p/$projectId/docs'         Library / document  (search: { path?: string })
     '/p/$projectId/knowledge'            Docs corpus list
@@ -110,6 +111,15 @@ const workRoute = createRoute({
   ),
 });
 
+const deliveryRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "delivery",
+  component: lazyRouteComponent(
+    () => import("@/features/delivery/DeliveryReview"),
+    "DeliveryReviewPage",
+  ),
+});
+
 const opsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "ops",
@@ -179,6 +189,7 @@ const routeTree = rootRoute.addChildren([
     runsRoute,
     runDetailRoute,
     workRoute,
+    deliveryRoute,
     opsRoute,
     docsRoute,
     knowledgeRoute,

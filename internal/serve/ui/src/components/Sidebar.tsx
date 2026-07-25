@@ -11,12 +11,13 @@ import { USE_MOCK } from "@/lib/api";
 import type { ProjectSummary } from "@/types/domain";
 import { openTaskSearch } from "@/features/search/TaskSearch";
 
-// Four items only (SRV-T-0003): Needs-me and Runs folded into Overview; the
+// Delivery is the bounded planning surface; Needs-me and Runs are folded into Overview; the
 // Library file browser moved under Docs as a Files tab. Project settings live
 // behind the "Details" button on the Overview, not as a separate rail item.
 const SUBSECTIONS = [
   { key: "overview", label: "Overview", to: "/p/$projectId" as const },
   { key: "work", label: "Work", to: "/p/$projectId/work" as const },
+  { key: "delivery", label: "Delivery", to: "/p/$projectId/delivery" as const },
   { key: "knowledge", label: "Docs", to: "/p/$projectId/knowledge" as const },
   { key: "ops", label: "Ops", to: "/p/$projectId/ops" as const },
 ];
