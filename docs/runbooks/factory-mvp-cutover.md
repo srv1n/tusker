@@ -1,171 +1,205 @@
 ---
 capsule:
-  what: "MVP cutover readiness: truthful operations, parity proof, then one human-armed wave-of-one shadow/staging run."
+  what: "Exact one-time activation and rollback runbook for the singleton V2 factory MVP."
   use_when:
-    - "Deciding whether Tusker's factory control loop may run its first bounded dogfood wave."
+    - "An operator has explicitly chosen the first Tusker daemon dogfood run."
   skip_when:
-    - "Planning Plan 17/18 strict authority or provider-backend expansion."
+    - "Normal interactive work or phase-two strict/provider expansion."
 ---
 
 # Factory MVP cutover
 
 ## Decision
 
-**Current verdict: NO-GO for activation; code readiness is green.** This is
-deliberately a small cutover, not a back-door authorization for the full
-factory program. The truthful operations projection and parity E2E landed at
-`0ba27aa0f75ae54a0ce295bb5f6011279d8ef8d7`. Activation remains blocked until
-one low-risk task is in an already-created wave containing exactly that task.
-The human must explicitly approve enabling the project, arming that exact
-wave, and starting the daemon for a shadow/staging run.
+**Code readiness is green; activation is deliberately still off.** The target
+is the not-yet-imported V2 contract, whose fresh root dry-run must prospectively
+allocate `ORC-T-0051`, `W-0005`, and `integration/W-0005`. This runbook does not
+grant any action by itself.
 
-The MVP scope is frozen to:
+The MVP is one Terra-medium implementation attempt, configured bounded
+Terra-high read-only review (maximum three cycles), and deterministic
+authoritative staging completion. The existing conductor remains authoritative
+throughout this MVP; any transfer is a separate later human approval. `main`,
+release, spend, provider credentials, and scheduled promotion remain out of
+bounds.
 
-1. the truthful operations surface (CLI/API/Serve/Desktop consume the same
-   projection);
-2. the narrow operations-parity E2E slice; and
-3. one explicitly armed, wave-of-one, shadow/staging run.
+## Current facts
 
-It does **not** authorize broad `all_eligible`, a second project, automatic
-rollout, replacement of the existing authoritative conductor, default-ref
-promotion, release, or paid work.
+- The operations projection and adaptive/cold parity slice are code-green.
+- The installed Tusker binary is stale. Before its separately approved update,
+  use source-built `go run ./cmd/tusker ...` commands.
+- The root project is registered but automation-disabled. No daemon service is
+  installed or live. None of this is permission to repair, enable, arm, or
+  start anything from an interactive agent session.
+- The global registry currently has four unrelated enabled projects:
+  CarelessWhisper, backend, cinta, and rznapp. They must be temporarily
+  disabled for the isolated global-daemon observation, then restored exactly.
+- The previous v1 singleton (`ORC-T-0050` / `W-0004`) was cancelled before any
+  run and remains disarmed. It is historical evidence only, never the target.
 
-## Current blockers
+## Read-only preparation
 
-Evidence on 2026-07-26:
+Run in the registered root repository, not an unregistered authoring worktree:
 
-- The operations CLI/API/Serve/Desktop projection and its adaptive-versus-cold
-  E2E parity proof are implemented and reviewed. Focused integration produced
-  57 passing Go cases, 3 passing Chromium-backed UI cases with 70 assertions,
-  and a clean TypeScript typecheck.
-- Canonical Tusker task state has not been rewritten to pretend that this
-  branch work was daemon-completed. W-0003 therefore remains the historical
-  ten-task program, not an activation candidate.
-- `tusker wave preflight W-0003 --json` is red: W-0003 is disarmed, project
-  automation is disabled, and no managed daemon is alive.
-- `tusker wave brief W-0003 --json` reports 0/10 delivered and 10 parked for
-  machine rework. W-0003 is therefore not the MVP wave to arm.
-- No existing wave-of-one is named. Do not relabel W-0003 or the full
-  multi-project `ORC-T-0047` contract as the MVP dogfood wave; their broader
-  scheduler, review, integration, crash, and compatibility scope is outside
-  this cut.
-- `tusker daemon service status --json` reports no installed/loaded service;
-  `tusker daemon status --json` reports no live daemon. Do not repair either
-  during MVP implementation without a separate human approval.
-- `tusker delivery rollout doctor --json` reports service drift and unrelated
-  registered-project drift. Those findings are not permission to widen this
-  MVP; select one isolated target only after its own preflight is green.
-
-## Read-only preflight
-
-Run these from the intended target repository. They do not install, register,
-enable, arm, start, promote, push, or spend.
-
-```bash
-tusker setup doctor --repo . --json
-tusker skill doctor --strict --json
-tusker validate --json
-tusker projects list --json
-tusker daemon status --json
-tusker daemon service status --json
-tusker automation status --json
-tusker automation queue --repo . --json
-tusker wave preflight <MVP-WAVE-ID> --json
-tusker wave brief <MVP-WAVE-ID> --json
+```sh
+go run ./cmd/tusker delivery context \
+  --spec docs/specs/19-factory-mvp-wave-one.md \
+  --scope factory-mvp-wave-one/v2 --json
+go run ./cmd/tusker delivery doctor \
+  --plan docs/plans/19-factory-mvp-wave-one-v2.yaml --json
+go run ./cmd/tusker delivery import \
+  --plan docs/plans/19-factory-mvp-wave-one-v2.yaml --dry-run --json
+go run ./cmd/tusker setup doctor --repo . --json
+go run ./cmd/tusker skill doctor --strict --json
+go run ./cmd/tusker validate --json
+go run ./cmd/tusker projects list --json
+go run ./cmd/tusker factory operations --json
+go run ./cmd/tusker automation status --json
+go run ./cmd/tusker daemon status --json
+go run ./cmd/tusker daemon service status --json
 ```
 
-`<MVP-WAVE-ID>` is an existing, named wave whose membership is exactly one
-low-risk task. `tusker wave preflight W-0003 --json` is a valid read-only
-command but is evidence of the broader blocked program, not a candidate to
-arm.
+Refuse unless the dry-run maps the source key to exactly `ORC-T-0051`, exactly
+`W-0005`, and concurrency one. It must not move `main` or create an integration
+ref. The plan's authoring-worktree context fingerprint is structural only; the
+root coordinator recomputes and patches it after merge and approved
+configuration, then repeats doctor/dry-run.
 
-The preflight passes only if the target's projection is internally consistent,
-the target is the only project proposed for enablement, the selected wave has
-one member and a current fingerprint, its task is low-risk and has green
-operations/parity proof, the runner is non-interactive with an explicit cap,
-the workspace is isolated, and the integration/default refs are clean. A
-missing feature, red parity test, stale fingerprint, unrelated ready task, or
-ambiguous owner is a stop—not an invitation to improvise.
+## Approval and isolation sequence
 
-## Approval boundaries
+Every numbered mutation below needs the named human approval. No interactive
+agent may start the daemon/service or invoke dispatch.
 
-| Boundary | Human must explicitly approve | Never implied by |
-| --- | --- | --- |
-| Binary/skill install | Exact binary and install/sync target | A green test, doctor, or this runbook |
-| Project enable | One repository, `armed_waves` scope, runner/cap/workspace | Registration, import, or daemon availability |
-| Wave arm | One wave ID, current fingerprint, one task, shadow/staging intent | Project enable or preflight success |
-| Daemon start | Managed service/process and selected target | Wave arm or an agent session |
-| Default-ref promotion | Exact ref and promotion policy after reviewed evidence | Integration success or task closure |
-| Spending | Budget, model/provider, and ceiling | A runner profile or retry |
-| Release | Artifact/environment and release authority | A passing staging run or default-ref promotion |
+1. **Durable prerequisites:** approve Full Disk Access for the managed-service
+   host and the binary update, then apply a reviewed configuration commit that
+   sets all three enable switches: `tusker.yaml` `automation.enabled: true`,
+   `.tusker/WORKFLOW.md` `automation_enabled: true`, and later registry
+   enablement for Tusker project `01KXJNZRC931C7E7FPMXBP7QQ1`. The same reviewed
+   commit must set exactly `automation.completion_reactor.mode: authoritative`
+   and keep scheduled promotion disabled. Only after that approval may the
+   human run `make install-bin`. Until then, the stale installed binary is not
+   a readiness signal.
+2. **Registry isolation:** record the current enabled set, then approve exactly
+   these temporary disables before global-daemon start:
 
-The approval should name the target, wave, task, current fingerprint, cap, and
-expiry. Agents must not execute the corresponding install/enable/arm/start/
-promote/release/spend action merely because it appears in this document.
+   ```sh
+   tusker projects disable --id 01KXFGVD3NQY780QTDCVX933JN --json # CarelessWhisper
+   tusker projects disable --id 01KX5WD37K47F1C19EC08T94PN --json # backend
+   tusker projects disable --id 01KXJXEAAHP5VGTN9ANZ5KE72M --json # cinta
+   tusker projects disable --id 01KXJPZPC9VTEPR66NFYT9JAAZ --json # rznapp
+   ```
 
-## One-task, zero-ceremony path
+   Do not alter kurpod or any other record. After the daemon is stopped, restore
+   precisely the recorded enabled set—no guessed "all enabled" reset.
+3. **Third enable switch and readbacks:** after the reviewed commit, approve
+   only the Tusker registry change:
 
-For ordinary interactive work, do not manufacture a delivery plan, import,
-wave, daemon, or approval ceremony. Use the normal one-task ownership path:
+   ```sh
+   tusker projects enable --id 01KXJNZRC931C7E7FPMXBP7QQ1 --json
+   tusker projects list --json
+   tusker automation status --json
+   tusker factory operations --json
+   ```
 
-```bash
-tusker show <TASK-ID> --capsule
-tusker packet <TASK-ID> --for agent
-tusker work start <TASK-ID> --by agent:<name> --source codex --json
-# implement and run the task's mapped proof
-tusker work submit <TASK-ID> --by agent:<name> --deliverable "<summary>" --verification "<exact proof>" --gate-verdicts <A1=pass> --json
-```
+   Readbacks must show the two repository switches, the registry enablement,
+   `dispatch_scope: armed_waves`, and exactly
+   `completion_reactor.mode: authoritative`; never widen to `all_eligible`.
+4. **Clean authoritative staging:** derive the runtime-store path from the
+   source-built daemon status and require zero rows for the Tusker project in
+   both tables:
 
-`work start` only records interactive ownership; it does not enable automation,
-arm a wave, start a daemon, or launch a worker. Use this path until the MVP
-preconditions below are objectively met.
+   ```sh
+   RUNTIME_STORE_PATH=$(go run ./cmd/tusker daemon status --json | jq -r '.status.runtime_store_path')
+   sqlite3 "$RUNTIME_STORE_PATH" \
+     "SELECT COUNT(*) FROM review_results WHERE project_id='01KXJNZRC931C7E7FPMXBP7QQ1';"
+   sqlite3 "$RUNTIME_STORE_PATH" \
+     "SELECT COUNT(*) FROM completion_transactions WHERE project_id='01KXJNZRC931C7E7FPMXBP7QQ1';"
+   ! rg -n '^delivery_unit:' .tusker/work/waves
+   ```
 
-## The single MVP run
+   Both SQL results must be `0`. This forbids inheriting any stored review or
+   completion transaction, not merely a legacy V3 subset; the ripgrep check
+   forbids implicit delivery units.
+5. **Service first:** source-built automation status and factory operations
+   must show `W-0001` through `W-0004` disarmed, scheduled promotion disabled,
+   and no active runs. The human then starts the managed service—before V2
+   re-fingerprinting, review, import, or delivery start—using exactly:
 
-1. Land and independently review only the operations surface and its parity
-   E2E. Keep the existing conductor authoritative.
-2. Select one low-risk task with no human gate, no provider credential need,
-   no default-ref/release consequence, and a bounded model budget. Create its
-   wave-of-one through normal planning outside this runbook; keep it disarmed.
-3. Run the read-only preflight. Capture the current wave fingerprint and prove
-   that the operations projection shows the same frontier, ownership, blocker,
-   and next action as the E2E fixture.
-4. After the separate approvals above, a human arms exactly that wave. The
-   managed daemon may start only after its separate approval. Observe the run
-   through `tusker wave brief <MVP-WAVE-ID> --json`, `tusker automation status
-   --json`, and `tusker daemon status --json`.
-5. The run is shadow/staging only. The legacy conductor remains authoritative;
-   there must be one owner and one integration transaction. Any disagreement
-   stops new reactor action before it can become authoritative.
+   ```sh
+   tusker daemon service install --allow-protected-projects --json
+   tusker daemon service status --json
+   tusker daemon status --json
+   ```
+
+   Refuse unless the service is alive and reconciling while every wave remains
+   disarmed. Interactive agents never run these commands.
+6. **Re-fingerprint, review, import:** only after the service is healthy, the
+   root coordinator recomputes root context and patches the plan fingerprint,
+   then runs:
+
+   ```sh
+   go run ./cmd/tusker delivery context --spec docs/specs/19-factory-mvp-wave-one.md --scope factory-mvp-wave-one/v2 --json
+   go run ./cmd/tusker delivery doctor --plan docs/plans/19-factory-mvp-wave-one-v2.yaml --json
+   go run ./cmd/tusker delivery review --plan docs/plans/19-factory-mvp-wave-one-v2.yaml --json
+   go run ./cmd/tusker delivery import --plan docs/plans/19-factory-mvp-wave-one-v2.yaml --json
+   ```
+
+   The human separately approves exactly one Terra-medium implementation attempt
+   plus at most three Terra-high read-only review cycles, recording a
+   launch-count and token ceiling. No other implementation, triage, provider,
+   release, or model attempt is authorized.
+7. **Human start:** after review/import, the human alone uses the reviewed plan
+   fingerprint returned by delivery review:
+
+   ```sh
+   tusker delivery start --plan docs/plans/19-factory-mvp-wave-one-v2.yaml \
+     --confirm sha256:<reviewed-plan-fingerprint> --by human:<name>
+   ```
+
+   This arms only `W-0005`; the only expected implementation claim is
+   `ORC-T-0051`. Interactive agents do not start the service or dispatch.
+
+## Observation and success
+
+Observe with source-built `wave brief W-0005`, `wave preflight W-0005`,
+`automation status`, `automation queue --repo .`, `factory operations`, and
+daemon/service status. The worker writes the report and submits. The
+Terra-high reviewer(s) are read-only. The deterministic control plane owns the
+only completion transaction; afterward the coordinator makes one read-only
+audit of review count/verdict, task completion, optional `integration/W-0005`
+advance, and unchanged `main`.
+
+Success means exactly one singleton task was claimed once; no unrelated project
+or claim ran; no broad scope/default ref/release/spend/provider action happened;
+the report and operations surface agree; all temporary registry disables were
+restored only after Tusker returned to baseline; and the legacy conductor
+remained authoritative and usable.
 
 ## Rollback
 
-On a projection mismatch, unexpected claim, budget/cap breach, stale
-fingerprint, daemon-health failure, or integration ambiguity: stop fresh
-claims by having the human disarm the exact MVP wave (or pause it for a short
-diagnostic hold). Do not delete run history, rewrite task state, kill a live
-lease blindly, move refs, or disable the legacy conductor. Preserve the wave
-brief, operations projection, task/review history, and integration revision;
-then return the task to the normal interactive path or resolve the named
-machine/human blocker before another explicitly approved attempt.
+On post-success or on unexpected claim, stale fingerprint, daemon-health
+failure, review-cap breach, transaction row appearing before the authorized
+run, ref ambiguity, or budget breach, a human returns to baseline in exactly
+this order:
 
-## Success criteria
+```sh
+tusker wave disarm W-0005 --reason "factory MVP baseline return"
+tusker daemon service stop --json
+tusker daemon service uninstall --json
+tusker projects disable --id 01KXJNZRC931C7E7FPMXBP7QQ1 --json
+# Apply the reviewed rollback commit: both repository automation switches false,
+# completion_reactor.mode: disabled, scheduled promotion disabled.
+tusker automation status --json
+```
 
-The MVP is complete only when all are true:
+Verify zero active runs, then—and only then—restore the exact recorded
+four-project registry enabled ledger. Preserve history and diagnostics. Do not
+delete history, blindly kill a live lease, rewrite task state, move refs,
+disable or transfer authority away from the legacy conductor, or reactivate the
+historical v1 singleton. The installed binary may remain.
 
-- the operations surface and its E2E parity proof are green and reviewed;
-- read-only preflight is green for one current wave-of-one;
-- the human approvals are recorded separately and match the observed target;
-- exactly one task is claimed once, with no unrelated task, project, ref,
-  release, or spend action;
-- the surface tells the same truthful outcome as the E2E evidence; and
-- the wave can be disarmed/paused without losing live-lease, task, review, or
-  integration facts, while legacy execution remains available.
+## Deferred
 
-## Explicitly deferred: phase two
-
-Plan 18's strict K1–K5 bootstrap and `exact-verification-authority-e2e`, the
-Plan 17 strict convergence transaction, and provider-backend/full-gate
-expansion are phase two. They are neither implemented nor accepted by this
-MVP, and must not be smuggled in as a prerequisite repair or a post-run
-expansion.
+Plan 17 convergence, Plan 18 K1–K5 strict authority, provider backend/full-gate
+expansion, release, paid triage, notifications, and scheduled promotion are
+phase two. They are not repair work for this dogfood run.
