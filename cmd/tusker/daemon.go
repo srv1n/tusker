@@ -91,6 +91,7 @@ func NewDaemon(stateRoot string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
+	registerTrustedCompletionStore(store)
 	return &Daemon{stateRoot: stateRoot, store: store, notifyWake: make(chan string, 256), frontiers: map[string]*projectFrontierIndex{}, frontierHints: map[string][]daemonControlChange{}, departureSchedules: map[string]departureSchedule{}, completionAuthorityKey: map[string]ed25519.PrivateKey{}}, nil
 }
 
@@ -99,6 +100,7 @@ func (d *Daemon) Close() error {
 	if d == nil || d.store == nil {
 		return nil
 	}
+	unregisterTrustedCompletionStore(d.store)
 	return d.store.Close()
 }
 
@@ -2191,26 +2193,6 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	nowTime := time.Now().UTC()
 	now := nowTime.Format(time.RFC3339)
 	sessionResumable := runSessionResumable(wfFile.Data, run)
-	if run.Lane == runLaneReview {
-		note, noteErr := resolveNote(project.VaultRoot, run.RecordID)
-		if noteErr != nil {
-			return run, false, noteErr
-		}
-		if found, refusal := d.harvestReviewProposal(project, note, run); found {
-			if refusal != "" {
-				// A forged, late, or cross-attempt proposal is task-local poison.
-				// Release this one lease for audit; do not fail the daemon poll or
-				// prevent unrelated tasks from making progress.
-				updateRunAttemptFromRun(d.store, run, AttemptOutcomeBlocked, 1, refusal, now)
-				run.LeaseState, run.AttemptOutcome = string(LeaseStateReleased), string(AttemptOutcomeBlocked)
-				run.LastError, run.UpdatedAt, run.Terminal = refusal, now, false
-				clearActiveExecution(&run)
-				return run, true, nil
-			}
-			changed = true
-		}
-	}
-
 	if ingested, err := d.ingestCodexExecRawLog(run); err != nil {
 		return run, false, err
 	} else if ingested {
@@ -2383,6 +2365,20 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				return run, true, nil
 			}
 			if run.Lane == runLaneReview {
+				// A review proposal is only transport until the trusted wrapper has
+				// written its terminal status. Never harvest a live raw log: later
+				// output could conflict with an early marker. Non-zero exits never
+				// authorise a verdict.
+				if found, refusal := d.harvestReviewProposal(project, note, run); found {
+					if refusal != "" {
+						updateRunAttemptFromRun(d.store, run, AttemptOutcomeBlocked, 1, refusal, finished)
+						run.LeaseState, run.AttemptOutcome = string(LeaseStateReleased), string(AttemptOutcomeBlocked)
+						run.LastError, run.UpdatedAt, run.Terminal = refusal, finished, false
+						clearActiveExecution(&run)
+						return run, true, nil
+					}
+					changed = true
+				}
 				// Dirty-workspace handling takes precedence over a findings
 				// bounce: if the reviewer left uncommitted changes, stop for
 				// audit so those changes are never silently abandoned, even

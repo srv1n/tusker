@@ -32,12 +32,6 @@ func (d *Daemon) validateCompletionWorkerAuthority(project RegisteredProject, wf
 	if d == nil || d.store == nil {
 		return fmt.Errorf("completion authority requires the resident daemon store")
 	}
-	// Old persisted completion fixtures predate selected automation profiles.
-	// They are not a runner configuration and must remain readable; real daemon
-	// dispatch always resolves a named profile before an authoritative attempt.
-	if len(wf.RunnerProfiles) == 0 && strings.TrimSpace(wf.RunnerDefaultProfile) == "" {
-		return nil
-	}
 	review, err := resolveRunProfileForLane(note, wf, runLaneReview, result.Runner)
 	if err != nil {
 		return err
@@ -48,6 +42,9 @@ func (d *Daemon) validateCompletionWorkerAuthority(project RegisteredProject, wf
 	execute, err := resolveRunProfileForLane(note, wf, runLaneExecute, "")
 	if err != nil {
 		return err
+	}
+	if execute.Name == "" || review.Name == "" {
+		return fmt.Errorf("completion authority requires explicit named execute and review profiles")
 	}
 	if err := completionWorkerSafety(d.stateRoot, workspaceForCompletionSafety(project, result.TaskID), execute); err != nil {
 		return err

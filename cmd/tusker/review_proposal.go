@@ -20,22 +20,18 @@ func (d *Daemon) harvestReviewProposal(project RegisteredProject, note Note, run
 		return false, ""
 	}
 	path := strings.TrimSpace(run.RawLogPath)
-	if path == "" || !pathWithin(d.stateRoot, path) {
-		return true, "review proposal raw-log path escapes daemon-owned attempt output"
-	}
-	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
+	if path == "" {
 		return false, ""
 	}
-	if err != nil {
-		return true, "review proposal raw log cannot be inspected: " + err.Error()
+	if !pathWithin(d.stateRoot, path) {
+		return true, "review proposal raw-log path escapes daemon-owned attempt output"
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() < 1 {
-		return true, "review proposal raw log is not a regular attempt output"
-	}
-	raw, err := readReviewProposalLog(path, info.Size())
+	raw, present, err := readFrozenReviewProposalLog(path)
 	if err != nil {
 		return true, "review proposal cannot be read: " + err.Error()
+	}
+	if !present {
+		return false, ""
 	}
 	proposal, found, err := reviewProposalFromRawLog(raw)
 	if err != nil {
@@ -91,30 +87,53 @@ func reviewProposalFromRawLog(raw []byte) (reviewProposal, bool, error) {
 	return proposal, found, nil
 }
 
-func readReviewProposalLog(path string, size int64) ([]byte, error) {
+func readFrozenReviewProposalLog(path string) ([]byte, bool, error) {
 	const tailLimit = 2 * reviewProposalMax
+	pathInfo, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() {
+		return nil, false, fmt.Errorf("review proposal raw log is not a regular file")
+	}
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil || !openedInfo.Mode().IsRegular() || !os.SameFile(pathInfo, openedInfo) {
+		return nil, false, fmt.Errorf("review proposal raw log changed while opening")
+	}
+	size := openedInfo.Size()
+	if size == 0 {
+		return nil, false, nil
+	}
 	if size > tailLimit {
 		if _, err := file.Seek(size-tailLimit, 0); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 	raw, err := io.ReadAll(io.LimitReader(file, tailLimit+1))
 	if err != nil || len(raw) > tailLimit {
-		return nil, fmt.Errorf("review proposal log tail is oversized")
+		return nil, false, fmt.Errorf("review proposal log tail is oversized")
+	}
+	afterInfo, err := file.Stat()
+	currentInfo, currentErr := os.Lstat(path)
+	if err != nil || currentErr != nil || afterInfo.Size() != size || !os.SameFile(openedInfo, afterInfo) || !os.SameFile(pathInfo, currentInfo) {
+		return nil, false, fmt.Errorf("review proposal raw log changed while reading")
 	}
 	if size > tailLimit {
 		if cut := bytes.IndexByte(raw, '\n'); cut >= 0 {
 			raw = raw[cut+1:]
 		} else {
-			return nil, fmt.Errorf("review proposal log tail has no complete record")
+			return nil, false, fmt.Errorf("review proposal log tail has no complete record")
 		}
 	}
-	return raw, nil
+	return raw, true, nil
 }
 
 func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, run RunStatus, proposal reviewProposal) error {

@@ -16,8 +16,29 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
+
+var trustedCompletionStores = struct {
+	sync.Mutex
+	stores map[*RuntimeStore]struct{}
+}{stores: map[*RuntimeStore]struct{}{}}
+
+func registerTrustedCompletionStore(store *RuntimeStore) {
+	if store == nil {
+		return
+	}
+	trustedCompletionStores.Lock()
+	trustedCompletionStores.stores[store] = struct{}{}
+	trustedCompletionStores.Unlock()
+}
+
+func unregisterTrustedCompletionStore(store *RuntimeStore) {
+	trustedCompletionStores.Lock()
+	delete(trustedCompletionStores.stores, store)
+	trustedCompletionStores.Unlock()
+}
 
 func completionCanonicalPhysicalDirectory(path string) (string, error) {
 	path = strings.TrimSpace(path)
@@ -294,10 +315,40 @@ func verifyCompletionReceiptAuthority(repoRoot string, receipt completionReceipt
 	return ed25519.Verify(ed25519.PublicKey(i.PublicKey), completionAuthorityPayload(i.Context), receipt.Authority.Signature)
 }
 
-// A caller that lacks the daemon's exact store has no completion authority.
-// Offline commands may report that proof as unavailable, but must never select
-// a store from TUSKER_STATE_ROOT and accidentally turn a worker-controlled
-// look-alike database into a trust anchor.
+// A caller that lacks the daemon's exact store may use only a daemon-registered
+// store in this process or the canonical service root derived without ambient
+// TUSKER_STATE_ROOT. It must never select a worker-provided look-alike store.
 func verifyCompletionReceiptAuthorityWithStore(repoRoot string, receipt completionReceipt, store *RuntimeStore, requireConsumed bool) bool {
-	return store != nil && verifyCompletionReceiptAuthority(repoRoot, receipt, store, requireConsumed)
+	if store != nil {
+		return verifyCompletionReceiptAuthority(repoRoot, receipt, store, requireConsumed)
+	}
+	trustedCompletionStores.Lock()
+	stores := make([]*RuntimeStore, 0, len(trustedCompletionStores.stores))
+	for candidate := range trustedCompletionStores.stores {
+		stores = append(stores, candidate)
+	}
+	trustedCompletionStores.Unlock()
+	for _, candidate := range stores {
+		if verifyCompletionReceiptAuthority(repoRoot, receipt, candidate, requireConsumed) {
+			return true
+		}
+	}
+	root := canonicalOfflineCompletionStateRoot()
+	if root == "" {
+		return false
+	}
+	canonical, err := OpenRuntimeStoreReadOnly(root)
+	if err != nil {
+		return false
+	}
+	defer canonical.Close()
+	return verifyCompletionReceiptAuthority(repoRoot, receipt, canonical, requireConsumed)
+}
+
+func canonicalOfflineCompletionStateRoot() string {
+	home := userHomeDir()
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, "Library", "Application Support", "tusker")
 }

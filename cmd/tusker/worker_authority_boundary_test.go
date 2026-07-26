@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -54,6 +55,20 @@ func TestReviewProposalRequiresCompleteSingleRawLogMarker(t *testing.T) {
 	got, found, err := reviewProposalFromRawLog([]byte(reviewProposalMarker + string(raw) + "\n" + reviewProposalMarker + string(raw) + "\n"))
 	if err != nil || !found || got.AttemptID != p.AttemptID {
 		t.Fatalf("identical replay markers must be idempotent: %#v found=%t err=%v", got, found, err)
+	}
+}
+
+func TestFrozenReviewProposalLogTreatsAbsenceAsNoProposalAndRejectsSymlink(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.raw.log")
+	if raw, present, err := readFrozenReviewProposalLog(missing); err != nil || present || raw != nil {
+		t.Fatalf("missing raw log must be no proposal: raw=%q present=%t err=%v", raw, present, err)
+	}
+	path := filepath.Join(t.TempDir(), "attempt.raw.log")
+	if err := os.Symlink(missing, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, _, err := readFrozenReviewProposalLog(path); err == nil {
+		t.Fatal("symlinked raw log must be rejected")
 	}
 }
 
