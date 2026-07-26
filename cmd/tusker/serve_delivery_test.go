@@ -1188,6 +1188,99 @@ func TestServeDeliveryAuthorizationLockCloseFailureRestoresFullTransaction(t *te
 	}
 }
 
+func TestServeDeliveryDoubleFaultsPreserveEverySafeCause(t *testing.T) {
+	errorChain := func(t *testing.T, issue *Issue) []string {
+		t.Helper()
+		if issue == nil {
+			t.Fatal("missing typed issue")
+		}
+		context, ok := issue.Context.(map[string]any)
+		if !ok {
+			t.Fatalf("missing structured error context: %#v", issue.Context)
+		}
+		chain, ok := context["error_chain"].([]string)
+		if !ok {
+			t.Fatalf("missing safe error chain: %#v", context)
+		}
+		return chain
+	}
+	assertContainsAll := func(t *testing.T, value string, wants ...string) {
+		t.Helper()
+		for _, want := range wants {
+			if !strings.Contains(value, want) {
+				t.Fatalf("%q does not contain %q", value, want)
+			}
+		}
+	}
+
+	t.Run("typed acquisition and material close failures survive successful rollback", func(t *testing.T) {
+		finishMutations := beginServeDeliveryMutationTracking(t)
+		cause := errors.Join(
+			tuskerError("CAS_BUSY", "typed authorization lock acquisition failure"),
+			errors.New("injected material authorization lock close failure"),
+		)
+		authority := &deliveryStartAuthority{ImportCommit: &deliveryImportCommit{}}
+		rolledBack := rollbackDeliveryStartTransaction(authority, cause)
+		result := serveCommandResult("tusker delivery start", "", rolledBack)
+		if result.OK || !result.Refused || result.Issue == nil || result.Issue.Code != "CAS_BUSY" {
+			t.Fatalf("double fault lost primary typed refusal: %#v", result)
+		}
+		assertContainsAll(t, result.Reason, "typed authorization lock acquisition failure", "injected material authorization lock close failure", "exact import preimages were restored")
+		assertContainsAll(t, strings.Join(errorChain(t, result.Issue), " "), "typed authorization lock acquisition failure", "injected material authorization lock close failure")
+
+		recorder := httptest.NewRecorder()
+		serveDeliveryFailure(recorder, rolledBack)
+		var response serveDeliveryError
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Error.Code != "CAS_BUSY" {
+			t.Fatalf("delivery failure lost primary typed code: %#v", response)
+		}
+		assertContainsAll(t, response.Error.Message, "typed authorization lock acquisition failure", "injected material authorization lock close failure")
+		if mutated := finishMutations(); len(mutated) != 0 {
+			t.Fatalf("refusal reporting published mutation callbacks: %v", mutated)
+		}
+	})
+
+	t.Run("rollback CAS and subsequent close failures both reach action reason and context", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "member.md")
+		const concurrent = "concurrent bytes\n"
+		if err := os.WriteFile(path, []byte(concurrent), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		commit := &deliveryImportCommit{
+			Paths: []string{path},
+			Preimages: map[string]deliveryWritePreimage{
+				path: {Content: []byte("preimage\n"), Mode: 0o640, Existed: true},
+			},
+			Written: map[string][]byte{path: []byte("transaction bytes\n")},
+		}
+		rolledBack := rollbackDeliveryStartTransaction(
+			&deliveryStartAuthority{ArmCommit: commit},
+			tuskerError(errorInvalidTransition, "typed delivery refusal"),
+		)
+		combined := errors.Join(rolledBack, errors.New("injected subsequent material close failure"))
+		result := serveCommandResult("tusker delivery start", "", combined)
+		if result.OK || !result.Refused || result.Issue == nil || result.Issue.Code != errorInvalidTransition {
+			t.Fatalf("rollback double fault lost primary typed refusal: %#v", result)
+		}
+		assertContainsAll(t, result.Reason, "exact transaction rollback could not be proven", "committed import bytes changed before restoration", "injected subsequent material close failure")
+		chain := strings.Join(errorChain(t, result.Issue), " ")
+		assertContainsAll(t, chain, "committed import bytes changed before restoration", "injected subsequent material close failure")
+		if strings.Contains(result.Reason, filepath.Dir(path)) {
+			t.Fatalf("safe operator reason leaked an absolute transaction path: %s", result.Reason)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(raw) != concurrent {
+			t.Fatalf("failed CAS rollback changed concurrent bytes: %q", raw)
+		}
+	})
+}
+
 func TestDeliveryReviewEnvironmentStatesHaveOneTruthfulAction(t *testing.T) {
 	t.Setenv("TUSKER_STATE_ROOT", t.TempDir())
 	base := greenWaveEnvironment()

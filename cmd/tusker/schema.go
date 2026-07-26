@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -95,6 +96,186 @@ func errorToIssue(err error) Issue {
 	return Issue{Code: "UNKNOWN", Message: err.Error()}
 }
 
+// annotatePrimaryTuskerError preserves the first typed classification while
+// replacing that leaf with an annotated clone. Every sibling leaf remains in
+// the returned tree, so later operator and Serve formatters cannot silently
+// discard a concurrent cleanup failure.
+func annotatePrimaryTuskerError(err error, annotation string) error {
+	if err == nil {
+		return nil
+	}
+	var primary *TuskerError
+	if !errors.As(err, &primary) {
+		return fmt.Errorf("%w; %s", err, annotation)
+	}
+	cloned := *primary
+	cloned.Message = strings.TrimSuffix(cloned.Message, ".") + "; " + annotation
+	parts := []error{&cloned}
+	for _, leaf := range flattenErrorLeaves(err) {
+		if typed, ok := leaf.(*TuskerError); ok && typed == primary {
+			continue
+		}
+		parts = append(parts, leaf)
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return errors.Join(parts...)
+}
+
+// serveErrorIssue retains the primary typed code/hint/context and adds a
+// deterministic, bounded, redacted rendering of every unique leaf cause.
+// Absolute paths discovered only through error prose are suppressed; existing
+// structured actionable path context remains untouched.
+func serveErrorIssue(err error) Issue {
+	if err == nil {
+		return Issue{}
+	}
+	leaves := flattenErrorLeaves(err)
+	var primary *TuskerError
+	if errors.As(err, &primary) {
+		issue := errorToIssue(primary)
+		issue.Message = safeOperatorErrorText(issue.Message, 640)
+		issue.Hint = safeOperatorErrorText(issue.Hint, 640)
+		return appendServeErrorDetails(issue, leaves, primary)
+	}
+	issue := Issue{Code: "UNKNOWN"}
+	if len(leaves) == 0 {
+		issue.Message = safeOperatorErrorText(err.Error(), 640)
+		return issue
+	}
+	issue.Message = safeOperatorErrorLeaf(leaves[0])
+	return appendServeErrorDetails(issue, leaves, nil)
+}
+
+func flattenErrorLeaves(err error) []error {
+	const maxErrorTreeNodes = 256
+	var (
+		out     []error
+		visited int
+	)
+	var walk func(error)
+	walk = func(current error) {
+		if current == nil || visited >= maxErrorTreeNodes {
+			return
+		}
+		visited++
+		switch wrapped := current.(type) {
+		case interface{ Unwrap() []error }:
+			children := wrapped.Unwrap()
+			if len(children) == 0 {
+				out = append(out, current)
+				return
+			}
+			for _, child := range children {
+				walk(child)
+			}
+		case interface{ Unwrap() error }:
+			child := wrapped.Unwrap()
+			if child == nil {
+				out = append(out, current)
+				return
+			}
+			walk(child)
+		default:
+			out = append(out, current)
+		}
+	}
+	walk(err)
+	return out
+}
+
+func appendServeErrorDetails(issue Issue, leaves []error, primary *TuskerError) Issue {
+	const maxServeErrorLeaves = 16
+	seen := map[string]struct{}{}
+	var (
+		allDetails     []string
+		siblingDetails []string
+	)
+	for _, leaf := range leaves {
+		detail := safeOperatorErrorLeaf(leaf)
+		if detail == "" {
+			continue
+		}
+		if _, exists := seen[detail]; exists {
+			continue
+		}
+		seen[detail] = struct{}{}
+		if len(allDetails) >= maxServeErrorLeaves {
+			continue
+		}
+		allDetails = append(allDetails, detail)
+		isPrimary := false
+		if typed, ok := leaf.(*TuskerError); ok && primary != nil && typed == primary {
+			isPrimary = true
+		} else if primary == nil && len(allDetails) == 1 {
+			isPrimary = true
+		}
+		if !isPrimary {
+			siblingDetails = append(siblingDetails, detail)
+		}
+	}
+	if len(siblingDetails) == 0 {
+		return issue
+	}
+	issue.Message = safePacketText(issue.Message+"; additional causes: "+strings.Join(siblingDetails, "; "), 2048)
+	context := serveIssueContextMap(issue.Context)
+	context["error_chain"] = allDetails
+	issue.Context = context
+	return issue
+}
+
+func serveIssueContextMap(context any) map[string]any {
+	if context == nil {
+		return map[string]any{}
+	}
+	if typed, ok := context.(map[string]any); ok {
+		cloned := make(map[string]any, len(typed)+1)
+		for key, value := range typed {
+			cloned[key] = value
+		}
+		return cloned
+	}
+	raw, err := json.Marshal(context)
+	if err == nil {
+		var object map[string]any
+		if json.Unmarshal(raw, &object) == nil && object != nil {
+			return object
+		}
+	}
+	return map[string]any{"primary_context": context}
+}
+
+func safeOperatorErrorLeaf(err error) string {
+	if err == nil {
+		return ""
+	}
+	if typed, ok := err.(*TuskerError); ok {
+		return safeOperatorErrorText("["+typed.Code+"] "+typed.Message, 320)
+	}
+	return safeOperatorErrorText(err.Error(), 320)
+}
+
+func safeOperatorErrorText(value string, limit int) string {
+	value = safePacketText(value, 0)
+	if value == "" {
+		return ""
+	}
+	fields := strings.Fields(value)
+	for index, field := range fields {
+		token := strings.Trim(field, `"'()[]{}<>,;`)
+		suffix := ""
+		if strings.HasSuffix(token, ":") {
+			token = strings.TrimSuffix(token, ":")
+			suffix = ":"
+		}
+		if filepath.IsAbs(token) || serveErrorWindowsAbsolutePathPattern.MatchString(token) {
+			fields[index] = strings.Replace(field, token+suffix, "[path]"+suffix, 1)
+		}
+	}
+	return safePacketText(strings.Join(fields, " "), limit)
+}
+
 func formatIssue(issue Issue) string {
 	loc := ""
 	if issue.Path != "" {
@@ -165,29 +346,30 @@ const (
 )
 
 var (
-	noteTypes              = makeSet("epic", "task", "doc", "note")
-	taskStatuses           = makeSet("draft", "backlog", "ready", "active", "blocked", "review", "rework", "done", "cancelled")
-	docStatuses            = makeSet("draft", "review", "approved", "published", "archived")
-	publishableDocStatuses = makeSet("approved", "published")
-	docIntents             = makeSet("canon", "companion")
-	canonicalStatuses      = makeSet("draft", "approved", "deprecated", "historical")
-	changeTypes            = makeSet("feature", "bug", "refactor", "migration", "security", "docs", "chore", "research", "incident")
-	sizes                  = makeSet("s", "m", "l", "xl")
-	risks                  = makeSet("low", "medium", "high", "critical")
-	priorities             = makeSet("p0", "p1", "p2", "p3")
-	delegations            = makeSet("execute", "explore", "escalate")
-	aiAssistanceLevels     = makeSet("none", "light", "moderate", "heavy")
-	docAudiences           = makeSet("developer", "user", "operator", "support", "release", "agent", "internal")
-	docModes               = makeSet("tutorial", "how-to", "reference", "explanation")
-	docAgentLayers         = makeSet("none", "capsule", "standalone")
-	publicationLanes       = makeSet("developer", "user", "release-notes", "support", "internal")
-	uiSurfaces             = makeSet("frontend", "desktop", "mobile")
-	epicAcronymPattern     = regexp.MustCompile(`^[A-Z]{3}$`)
-	taskIDPattern          = regexp.MustCompile(`^([A-Z]{3})-T-(\d{4})$`)
-	docIDPattern           = regexp.MustCompile(`^([A-Z]{3})-D-(\d{4})$`)
-	recordIDPattern        = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
-	assetLinkRegex         = regexp.MustCompile(`(!\[.*?\]\(.+?\))|(!\[\[.+?\]\])|(\[.+?\]\((https?:\/\/\S+?)\))`)
-	integerStringPattern   = regexp.MustCompile(`^-?\d+$`)
+	noteTypes                            = makeSet("epic", "task", "doc", "note")
+	taskStatuses                         = makeSet("draft", "backlog", "ready", "active", "blocked", "review", "rework", "done", "cancelled")
+	docStatuses                          = makeSet("draft", "review", "approved", "published", "archived")
+	publishableDocStatuses               = makeSet("approved", "published")
+	docIntents                           = makeSet("canon", "companion")
+	canonicalStatuses                    = makeSet("draft", "approved", "deprecated", "historical")
+	changeTypes                          = makeSet("feature", "bug", "refactor", "migration", "security", "docs", "chore", "research", "incident")
+	sizes                                = makeSet("s", "m", "l", "xl")
+	risks                                = makeSet("low", "medium", "high", "critical")
+	priorities                           = makeSet("p0", "p1", "p2", "p3")
+	delegations                          = makeSet("execute", "explore", "escalate")
+	aiAssistanceLevels                   = makeSet("none", "light", "moderate", "heavy")
+	docAudiences                         = makeSet("developer", "user", "operator", "support", "release", "agent", "internal")
+	docModes                             = makeSet("tutorial", "how-to", "reference", "explanation")
+	docAgentLayers                       = makeSet("none", "capsule", "standalone")
+	publicationLanes                     = makeSet("developer", "user", "release-notes", "support", "internal")
+	uiSurfaces                           = makeSet("frontend", "desktop", "mobile")
+	epicAcronymPattern                   = regexp.MustCompile(`^[A-Z]{3}$`)
+	taskIDPattern                        = regexp.MustCompile(`^([A-Z]{3})-T-(\d{4})$`)
+	docIDPattern                         = regexp.MustCompile(`^([A-Z]{3})-D-(\d{4})$`)
+	recordIDPattern                      = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
+	assetLinkRegex                       = regexp.MustCompile(`(!\[.*?\]\(.+?\))|(!\[\[.+?\]\])|(\[.+?\]\((https?:\/\/\S+?)\))`)
+	integerStringPattern                 = regexp.MustCompile(`^-?\d+$`)
+	serveErrorWindowsAbsolutePathPattern = regexp.MustCompile(`^[A-Za-z]:[\\/].+`)
 )
 
 var statusTransitionDateFields = map[string]string{

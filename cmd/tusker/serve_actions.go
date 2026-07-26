@@ -119,7 +119,7 @@ func serveInvokeCommand(args Args, fn func(Args) error) (output string, runErr e
 
 func serveCommandResult(command, output string, err error) serveActionResult {
 	if err != nil {
-		issue := errorToIssue(err)
+		issue := serveErrorIssue(err)
 		reason := issue.Message
 		if issue.Hint != "" {
 			reason += " Hint: " + issue.Hint

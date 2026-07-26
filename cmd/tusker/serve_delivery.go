@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -29,11 +28,7 @@ type serveDeliveryError struct {
 }
 
 func serveDeliveryFailure(w http.ResponseWriter, err error) {
-	issue := errorToIssue(err)
-	var typed *TuskerError
-	if errors.As(err, &typed) {
-		issue = errorToIssue(typed)
-	}
+	issue := serveErrorIssue(err)
 	status := http.StatusUnprocessableEntity
 	if issue.Code == errorNotFound {
 		status = http.StatusNotFound

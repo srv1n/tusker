@@ -385,37 +385,34 @@ func rollbackDeliveryStartTransaction(authority *deliveryStartAuthority, cause e
 		{name: "authorization", commit: authority.ArmCommit},
 		{name: "import", commit: authority.ImportCommit},
 	}
-	var failures []string
+	var (
+		failures    []string
+		failureErrs []error
+	)
 	for _, step := range steps {
 		if step.commit == nil {
 			continue
 		}
 		if err := step.commit.Restore(); err != nil {
 			failures = append(failures, step.name+": "+err.Error())
+			failureErrs = append(failureErrs, fmt.Errorf("%s rollback: %w", step.name, err))
 		}
 	}
 	paths := deliveryStartTransactionPaths(authority)
 	if len(failures) > 0 {
-		return tuskerError(
+		primary := tuskerError(
 			errorInvalidTransition,
 			"delivery Start was rejected and exact transaction rollback could not be proven; delivery is fail-closed pending repair",
 			withHint("stop delivery, restore every reported path from version control or a verified backup, then regenerate delivery review"),
 			withContext(map[string]any{"cause": cause.Error(), "rollback": failures, "paths": paths}),
 		)
+		return errors.Join(append([]error{primary}, failureErrs...)...)
 	}
 	restored := "exact import preimages were restored"
 	if authority.ArmCommit != nil {
 		restored = "exact authorization and import preimages were restored"
 	}
-	var typed *TuskerError
-	var result error
-	if errors.As(cause, &typed) {
-		cloned := *typed
-		cloned.Message = strings.TrimSuffix(cloned.Message, ".") + "; " + restored
-		result = &cloned
-	} else {
-		result = fmt.Errorf("%w; %s", cause, restored)
-	}
+	result := annotatePrimaryTuskerError(cause, restored)
 	if isDeliveryStartPlanAuthorityChanged(cause) {
 		return deliveryStartPlanAuthorityChanged(result)
 	}
@@ -441,12 +438,13 @@ func refuseDeliveryStartUnderMaterialLock(lock *v7DocumentLock, authority *deliv
 		cause = rollbackDeliveryStartTransaction(authority, cause)
 	}
 	if err := lock.Close(); err != nil {
-		return tuskerError(
+		closeFailure := tuskerError(
 			errorInvalidTransition,
 			"delivery Start refusal could not release the material lock cleanly; delivery is fail-closed pending repair",
 			withHint("stop delivery, inspect the reported lock and transaction paths, then regenerate delivery review"),
-			withContext(map[string]any{"cause": cause.Error(), "lock": err.Error(), "paths": deliveryStartTransactionPaths(authority)}),
+			withContext(map[string]any{"lock": err.Error(), "paths": deliveryStartTransactionPaths(authority)}),
 		)
+		return errors.Join(cause, closeFailure)
 	}
 	return cause
 }

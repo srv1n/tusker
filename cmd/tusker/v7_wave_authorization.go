@@ -856,12 +856,13 @@ func refuseDeliveryStartBeforeArm(vaultPath string, authority *deliveryStartAuth
 	if authority.ImportCommit != nil {
 		rolledBack := rollbackDeliveryStartTransaction(authority, cause)
 		if closeErr := materialLock.Close(); closeErr != nil {
-			return tuskerError(
+			closeFailure := tuskerError(
 				errorInvalidTransition,
-				"delivery Start rollback completed but its material lock did not close cleanly; delivery is fail-closed pending repair",
+				"delivery Start rollback material lock did not close cleanly; delivery is fail-closed pending repair",
 				withHint("stop delivery, inspect the material lock and reported transaction paths, then regenerate delivery review"),
-				withContext(map[string]any{"cause": rolledBack.Error(), "lock": closeErr.Error(), "paths": deliveryStartTransactionPaths(authority)}),
+				withContext(map[string]any{"lock": closeErr.Error(), "paths": deliveryStartTransactionPaths(authority)}),
 			)
+			return handledDeliveryStartRefusal(errors.Join(rolledBack, closeFailure))
 		}
 		return handledDeliveryStartRefusal(rolledBack)
 	}
