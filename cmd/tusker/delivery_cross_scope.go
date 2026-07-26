@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -16,12 +17,13 @@ var deliveryCrossScopeAfterIndexLoad func()
 // deliveryResolveCrossScopeDependencies resolves source identities while the
 // vault-wide material epoch is held.  It never consults plan files or performs
 // recursive imports: an imported, open-wave producer is the only valid target.
-func deliveryResolveCrossScopeDependencies(vault string, idx v7Index, plan deliveryPlan, mapping map[string]string) (map[string][]deliveryCrossScopeDependency, func() error, []string, error) {
+func deliveryResolveCrossScopeDependencies(vault string, idx v7Index, plan deliveryPlan, mapping map[string]string) (map[string][]deliveryCrossScopeDependency, func() error, func(string, []byte), []string, error) {
 	if err := validateDeliveryCrossScopeIndex(idx, v7ProjectID(vault)); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	resolved := map[string][]deliveryCrossScopeDependency{}
 	for _, consumer := range plan.Tasks {
+		resolvedTargets := map[string]bool{}
 		for _, dep := range consumer.Dependencies {
 			scope := strings.TrimSpace(dep.scope)
 			if scope == "" {
@@ -42,7 +44,7 @@ func deliveryResolveCrossScopeDependencies(vault string, idx v7Index, plan deliv
 				}
 			}
 			if len(semanticMatches) > 1 {
-				return nil, nil, nil, tuskerError(errorInvalidTransition, fmt.Sprintf("CROSS_SCOPE_PRODUCER_DUPLICATE scope=%s key=%s consumer=%s", scope, dep.Task, consumer.SourceKey))
+				return nil, nil, nil, nil, tuskerError(errorInvalidTransition, fmt.Sprintf("CROSS_SCOPE_PRODUCER_DUPLICATE scope=%s key=%s consumer=%s", scope, dep.Task, consumer.SourceKey))
 			}
 			if len(matches) != 1 {
 				code := "CROSS_SCOPE_PRODUCER_MISSING"
@@ -59,78 +61,114 @@ func deliveryResolveCrossScopeDependencies(vault string, idx v7Index, plan deliv
 						code = "CROSS_SCOPE_PRODUCER_REMOVED"
 					}
 				}
-				return nil, nil, nil, tuskerError(errorInvalidTransition,
+				return nil, nil, nil, nil, tuskerError(errorInvalidTransition,
 					fmt.Sprintf("%s scope=%s key=%s consumer=%s; import exactly one current producer before this consumer", code, scope, dep.Task, consumer.SourceKey))
 			}
 			producer := matches[0]
+			producerID := stringField(producer.Data, "id")
+			if resolvedTargets[producerID] {
+				return nil, nil, nil, nil, tuskerError(errorInvalidTransition, "CROSS_SCOPE_DUPLICATE_TARGET consumer="+consumer.SourceKey+" target="+producerID)
+			}
+			resolvedTargets[producerID] = true
 			fingerprint := stringField(producer.Data, "delivery_contract_fingerprint")
 			if fingerprint == "" {
-				return nil, nil, nil, tuskerError(errorInvalidTransition,
+				return nil, nil, nil, nil, tuskerError(errorInvalidTransition,
 					fmt.Sprintf("CROSS_SCOPE_PRODUCER_STALE scope=%s key=%s consumer=%s; repair and re-import the producer", scope, dep.Task, consumer.SourceKey))
 			}
 			resolved[consumer.SourceKey] = append(resolved[consumer.SourceKey], deliveryCrossScopeDependency{
-				Scope: scope, Task: dep.Task, TaskID: stringField(producer.Data, "id"), Kind: "hard", TargetContractFingerprint: fingerprint,
+				Scope: scope, Task: dep.Task, TaskID: producerID, Kind: "hard", TargetContractFingerprint: fingerprint,
 			})
 		}
 	}
 	if err := validateDeliveryCrossScopeGraph(idx, plan, mapping, resolved); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	if err := validateDeliveryCrossScopeInboundRemoval(idx, plan, mapping); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	snapshot, paths, err := deliveryCrossScopeSnapshot(idx)
+	snapshot, advance, paths, err := deliveryCrossScopeSnapshot(vault, idx)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	return resolved, snapshot, paths, nil
+	return resolved, snapshot, advance, paths, nil
 }
 
 // The epoch serializes cooperative writers, but raw edits can bypass it.
 // Snapshot every graph document used by resolution and reject any changed or
 // invalid state revision immediately before the atomic writer takes preimages.
-func deliveryCrossScopeSnapshot(idx v7Index) (func() error, []string, error) {
-	type snapshot struct {
-		path string
-		raw  []byte
-	}
-	var snapshots []snapshot
-	for _, task := range idx.Tasks {
-		raw, err := os.ReadFile(task.AbsolutePath)
+func deliveryCrossScopeSnapshot(vault string, idx v7Index) (func() error, func(string, []byte), []string, error) {
+	snapshots := map[string][]byte{}
+	add := func(note Note) error {
+		raw, err := os.ReadFile(note.AbsolutePath)
 		if err != nil {
-			return nil, nil, tuskerError(errorInvalidTransition, "CROSS_SCOPE_SNAPSHOT_READ_FAILED path="+task.AbsolutePath)
+			return tuskerError(errorInvalidTransition, "CROSS_SCOPE_SNAPSHOT_READ_FAILED path="+note.AbsolutePath)
 		}
 		data, body, err := parseFrontmatter(string(raw))
-		if err != nil || stringField(data, "state_rev") != stringField(task.Data, "state_rev") || !v7StateRevMatches(data, body, stringField(data, "state_rev")) {
-			return nil, nil, tuskerError(errorInvalidTransition, "CROSS_SCOPE_STATE_REV_INVALID path="+task.AbsolutePath)
+		strictRev := effectiveV7Kind(note.Data) == "task" || effectiveV7Kind(note.Data) == "wave"
+		if err != nil || stringField(data, "state_rev") != stringField(note.Data, "state_rev") || (strictRev && !v7StateRevMatches(data, body, stringField(data, "state_rev"))) {
+			return tuskerError(errorInvalidTransition, "CROSS_SCOPE_STATE_REV_INVALID path="+note.AbsolutePath)
 		}
-		snapshots = append(snapshots, snapshot{task.AbsolutePath, raw})
+		snapshots[note.AbsolutePath] = raw
+		return nil
 	}
-	for _, wave := range idx.Waves {
-		raw, err := os.ReadFile(wave.AbsolutePath)
+	for _, notes := range []map[string]Note{idx.Tasks, idx.Waves, idx.Gates, idx.Epics} {
+		for _, note := range notes {
+			if err := add(note); err != nil {
+				return nil, nil, nil, err
+			}
+		}
+	}
+	namespaces := map[string][]string{}
+	for _, kind := range []string{"tasks", "waves", "gates", "epics"} {
+		dir := filepath.Join(vault, "work", kind)
+		entries, err := os.ReadDir(dir)
 		if err != nil {
-			return nil, nil, tuskerError(errorInvalidTransition, "CROSS_SCOPE_SNAPSHOT_READ_FAILED path="+wave.AbsolutePath)
+			return nil, nil, nil, tuskerError(errorInvalidTransition, "CROSS_SCOPE_NAMESPACE_READ_FAILED path="+dir)
 		}
-		data, body, err := parseFrontmatter(string(raw))
-		if err != nil || stringField(data, "state_rev") != stringField(wave.Data, "state_rev") || !v7StateRevMatches(data, body, stringField(data, "state_rev")) {
-			return nil, nil, tuskerError(errorInvalidTransition, "CROSS_SCOPE_STATE_REV_INVALID path="+wave.AbsolutePath)
+		for _, entry := range entries {
+			namespaces[dir] = append(namespaces[dir], entry.Name())
 		}
-		snapshots = append(snapshots, snapshot{wave.AbsolutePath, raw})
+		sort.Strings(namespaces[dir])
 	}
 	verify := func() error {
-		for _, s := range snapshots {
-			current, err := os.ReadFile(s.path)
-			if err != nil || !bytes.Equal(current, s.raw) {
-				return tuskerError(errorInvalidTransition, "CROSS_SCOPE_EPOCH_STALE path="+s.path+"; retry import from a fresh material epoch")
+		for path, expected := range snapshots {
+			current, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(current, expected) {
+				return tuskerError(errorInvalidTransition, "CROSS_SCOPE_EPOCH_STALE path="+path+"; retry import from a fresh material epoch")
+			}
+		}
+		for dir, expected := range namespaces {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				return tuskerError(errorInvalidTransition, "CROSS_SCOPE_NAMESPACE_READ_FAILED path="+dir)
+			}
+			var current []string
+			for _, entry := range entries {
+				current = append(current, entry.Name())
+			}
+			sort.Strings(current)
+			if strings.Join(current, "\x00") != strings.Join(expected, "\x00") {
+				return tuskerError(errorInvalidTransition, "CROSS_SCOPE_NAMESPACE_STALE path="+dir)
 			}
 		}
 		return nil
 	}
-	paths := make([]string, 0, len(snapshots))
-	for _, s := range snapshots {
-		paths = append(paths, s.path)
+	advance := func(path string, raw []byte) {
+		snapshots[path] = append([]byte(nil), raw...)
+		dir := filepath.Dir(path)
+		if _, ok := namespaces[dir]; ok {
+			name := filepath.Base(path)
+			if _, exists := makeSet(namespaces[dir]...)[name]; !exists {
+				namespaces[dir] = append(namespaces[dir], name)
+				sort.Strings(namespaces[dir])
+			}
+		}
 	}
-	return verify, paths, nil
+	paths := make([]string, 0, len(snapshots))
+	for path := range snapshots {
+		paths = append(paths, path)
+	}
+	return verify, advance, paths, nil
 }
 
 func deliveryCrossScopeProducerCurrent(task Note, idx v7Index) bool {
@@ -221,6 +259,9 @@ func validateDeliveryCrossScopeIndex(idx v7Index, project string) error {
 		projected := map[string]int{}
 		for _, p := range projections {
 			consumerID := stringField(consumer.Data, "id")
+			if p.Scope == stringField(consumer.Data, "delivery_plan_scope") {
+				return tuskerError(errorInvalidTransition, "CROSS_SCOPE_LOCAL_PROJECTION consumer="+consumerID+"; local edges must not have cross-scope projections")
+			}
 			if p.Scope == "" || p.Task == "" || p.TaskID == "" || p.Kind != "hard" || p.TargetContractFingerprint == "" || p.TargetContractFingerprint != strings.TrimSpace(p.TargetContractFingerprint) {
 				return tuskerError(errorInvalidTransition, "CROSS_SCOPE_PROJECTION_INVALID consumer="+consumerID+"; repair every projection field")
 			}

@@ -19,10 +19,14 @@ const deliveryPlanSchema = "tusker.delivery-plan/v1"
 
 var deliveryImportNow = time.Now
 var deliveryImportRollbackWriteHook func(path string) error
+var deliveryImportAfterPrecheckHook func()
+var deliveryImportAfterWriteHook func(index int, path string)
+var deliveryImportBeforeRenameHook func(path string)
 
 type deliveryImportWriteGuard struct {
 	Verify                  func() error
 	SnapshotVerify          func() error
+	SnapshotAdvance         func(string, []byte)
 	SnapshotPaths           []string
 	AfterPrecheck           func()
 	DelayMutationVisibility bool
@@ -173,20 +177,21 @@ func deliveryPlanValidationRules() []deliveryPlanValidationRule {
 }
 
 type deliveryImportReport struct {
-	PlanFingerprint         string                                    `json:"planFingerprint"`
-	PlanScope               string                                    `json:"planScope"`
-	WaveID                  string                                    `json:"waveId"`
-	WaveTitle               string                                    `json:"waveTitle"`
-	SpecRefs                []string                                  `json:"specRefs"`
-	TaskMapping             map[string]string                         `json:"taskMapping"`
-	Frontiers               [][]string                                `json:"frontiers"`
-	ExpectedConcurrency     int                                       `json:"expectedConcurrency"`
-	Issues                  []string                                  `json:"issues"`
-	DryRun                  bool                                      `json:"dryRun"`
-	CrossScopeDependencies  map[string][]deliveryCrossScopeDependency `json:"-"`
-	CrossScopeSnapshot      func() error                              `json:"-"`
-	CrossScopeSnapshotPaths []string                                  `json:"-"`
-	V2Index                 *v7Index                                  `json:"-"`
+	PlanFingerprint           string                                    `json:"planFingerprint"`
+	PlanScope                 string                                    `json:"planScope"`
+	WaveID                    string                                    `json:"waveId"`
+	WaveTitle                 string                                    `json:"waveTitle"`
+	SpecRefs                  []string                                  `json:"specRefs"`
+	TaskMapping               map[string]string                         `json:"taskMapping"`
+	Frontiers                 [][]string                                `json:"frontiers"`
+	ExpectedConcurrency       int                                       `json:"expectedConcurrency"`
+	Issues                    []string                                  `json:"issues"`
+	DryRun                    bool                                      `json:"dryRun"`
+	CrossScopeDependencies    map[string][]deliveryCrossScopeDependency `json:"-"`
+	CrossScopeSnapshot        func() error                              `json:"-"`
+	CrossScopeSnapshotAdvance func(string, []byte)                      `json:"-"`
+	CrossScopeSnapshotPaths   []string                                  `json:"-"`
+	V2Index                   *v7Index                                  `json:"-"`
 }
 
 func deliveryPlanCmd(args Args) error {
@@ -419,6 +424,7 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]st
 				issues = append(issues, key+": invalid size "+task.Size)
 			}
 		}
+		qualifiedSeen := map[string]bool{}
 		for _, dep := range task.Dependencies {
 			kind := fallback(strings.ToLower(strings.TrimSpace(dep.Kind)), "hard")
 			if kind != "hard" && kind != "soft" {
@@ -435,6 +441,11 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]st
 				if strings.TrimSpace(dep.scope) == strings.TrimSpace(plan.Scope) {
 					issues = append(issues, key+": CROSS_SCOPE_SAME_SCOPE "+dep.scope+"; omit scope for local dependencies")
 				}
+				semantic := strings.TrimSpace(dep.scope) + "\x00" + strings.TrimSpace(dep.Task)
+				if qualifiedSeen[semantic] {
+					issues = append(issues, key+": CROSS_SCOPE_DUPLICATE_DEPENDENCY "+dep.scope+"/"+dep.Task)
+				}
+				qualifiedSeen[semantic] = true
 				if kind != "hard" {
 					issues = append(issues, key+": CROSS_SCOPE_HARD_ONLY "+dep.scope+"/"+dep.Task+"; use kind: hard")
 				}
@@ -864,6 +875,7 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 			return nil
 		}
 		guard.SnapshotPaths = append(guard.SnapshotPaths, report.CrossScopeSnapshotPaths...)
+		guard.SnapshotAdvance = report.CrossScopeSnapshotAdvance
 	}
 	if err := commitDeliveryWritesGuarded(writes, failAfter, guard); err != nil {
 		if !branchExisted && !args.Bool("skip-integration-branch") {
@@ -1009,6 +1021,14 @@ func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard 
 		if guard.AfterPrecheck != nil {
 			guard.AfterPrecheck()
 		}
+		if deliveryImportAfterPrecheckHook != nil {
+			deliveryImportAfterPrecheckHook()
+		}
+		if guard.SnapshotVerify != nil {
+			if err := guard.SnapshotVerify(); err != nil {
+				return err
+			}
+		}
 	}
 
 	rollback := func(cause error, identityChanged bool) error {
@@ -1030,8 +1050,28 @@ func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard 
 		return cause
 	}
 	for i, path := range paths {
-		if err := writeDeliveryTransactionFile(path, []byte(writes[path]), backups[path].Mode); err != nil {
+		if guard != nil && guard.SnapshotVerify != nil {
+			if err := guard.SnapshotVerify(); err != nil {
+				return rollback(err, false)
+			}
+		}
+		if err := writeDeliveryTransactionFileCAS(path, []byte(writes[path]), backups[path]); err != nil {
 			return rollback(err, false)
+		}
+		written, readErr := os.ReadFile(path)
+		if readErr != nil || !bytes.Equal(written, []byte(writes[path])) {
+			return rollback(tuskerError(errorInvalidTransition, "delivery import post-write CAS mismatch", withPath(path)), false)
+		}
+		if guard != nil && guard.SnapshotAdvance != nil {
+			guard.SnapshotAdvance(path, []byte(writes[path]))
+		}
+		if deliveryImportAfterWriteHook != nil {
+			deliveryImportAfterWriteHook(i, path)
+		}
+		if guard != nil && guard.SnapshotVerify != nil {
+			if err := guard.SnapshotVerify(); err != nil {
+				return rollback(err, false)
+			}
 		}
 		if failAfter > 0 && i+1 >= failAfter {
 			return rollback(tuskerError(errorInvalidArg, "forced delivery import write failure"), false)
@@ -1040,6 +1080,11 @@ func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard 
 			if err := guard.Verify(); err != nil {
 				return rollback(err, true)
 			}
+		}
+	}
+	if guard != nil && guard.SnapshotVerify != nil {
+		if err := guard.SnapshotVerify(); err != nil {
+			return rollback(err, false)
 		}
 	}
 	if guard != nil && guard.Verify != nil {
@@ -1067,6 +1112,38 @@ func guardSnapshotPaths(guard *deliveryImportWriteGuard) []string {
 }
 
 func writeDeliveryTransactionFile(path string, content []byte, mode os.FileMode) error {
+	return writeDeliveryTransactionFileUnchecked(path, content, mode)
+}
+
+func writeDeliveryTransactionFileCAS(path string, content []byte, expected deliveryWritePreimage) error {
+	mode := expected.Mode
+	return writeDeliveryTransactionFilePrepared(path, content, mode, func() error {
+		if deliveryImportBeforeRenameHook != nil {
+			deliveryImportBeforeRenameHook(path)
+		}
+		info, err := os.Lstat(path)
+		if !expected.Existed {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return tuskerError(errorInvalidTransition, "delivery import expected absent target changed before rename", withPath(path))
+		}
+		if err != nil || !info.Mode().IsRegular() {
+			return tuskerError(errorInvalidTransition, "delivery import target changed before rename", withPath(path))
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(raw, expected.Content) {
+			return tuskerError(errorInvalidTransition, "delivery import preimage changed before rename", withPath(path))
+		}
+		return nil
+	})
+}
+
+func writeDeliveryTransactionFileUnchecked(path string, content []byte, mode os.FileMode) error {
+	return writeDeliveryTransactionFilePrepared(path, content, mode, nil)
+}
+
+func writeDeliveryTransactionFilePrepared(path string, content []byte, mode os.FileMode, beforeRename func() error) error {
 	if mode.Perm() == 0 {
 		mode = 0o644
 	}
@@ -1095,6 +1172,11 @@ func writeDeliveryTransactionFile(path string, content []byte, mode os.FileMode)
 	}
 	if err := temp.Close(); err != nil {
 		return err
+	}
+	if beforeRename != nil {
+		if err := beforeRename(); err != nil {
+			return err
+		}
 	}
 	if err := os.Rename(tempPath, path); err != nil {
 		return err

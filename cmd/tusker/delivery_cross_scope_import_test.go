@@ -166,6 +166,24 @@ func TestDeliveryCrossScopeFingerprintSemanticTarget(t *testing.T) {
 	}
 }
 
+func TestDeliveryCrossScopePreRenameCASPreservesRawEdit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "task.md")
+	if err := writeText(path, "old"); err != nil {
+		t.Fatal(err)
+	}
+	deliveryImportBeforeRenameHook = func(string) {
+		if err := writeText(path, "raw-edit"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func() { deliveryImportBeforeRenameHook = nil }()
+	err := writeDeliveryTransactionFileCAS(path, []byte("new"), deliveryWritePreimage{Content: []byte("old"), Mode: 0o644, Existed: true})
+	if err == nil || !strings.Contains(err.Error(), "preimage changed") {
+		t.Fatalf("want pre-rename CAS refusal, got %v", err)
+	}
+	assertEqual(t, "raw-edit", mustReadIndexTest(t, path), "raw edit must not be overwritten")
+}
+
 func TestDeliveryCrossScopeAtomicity(t *testing.T) {
 	vault := deliveryTestVault(t)
 	producer := crossScopePlan("producer/v1", "PRD", "provider")
@@ -183,13 +201,13 @@ func TestDeliveryCrossScopeAtomicity(t *testing.T) {
 	consumerPath := filepath.Join(vault, "work", "tasks", "CON-T-0001.md")
 	before := mustReadIndexTest(t, consumerPath)
 	producerPath := filepath.Join(vault, "work", "tasks", "PRD-T-0001.md")
-	deliveryCrossScopeAfterResolution = func() {
+	deliveryImportAfterPrecheckHook = func() {
 		raw := mustReadIndexTest(t, producerPath)
 		if err := writeText(producerPath, raw+"\n<!-- raw drift -->\n"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	defer func() { deliveryCrossScopeAfterResolution = nil }()
+	defer func() { deliveryImportAfterPrecheckHook = nil }()
 	err := deliveryV2ImportCmd(vault, path, Args{"vault": vault, "quiet": "true"})
 	if err == nil || !strings.Contains(err.Error(), "CROSS_SCOPE_EPOCH_STALE") {
 		t.Fatalf("want stale epoch refusal, got %v", err)

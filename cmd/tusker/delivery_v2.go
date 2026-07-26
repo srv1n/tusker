@@ -358,18 +358,19 @@ func deliveryV2ImportBytesGuarded(vaultPath, path string, raw []byte, args Args,
 	}
 	waveID := existingWave
 	if waveID == "" {
-		waveID = nextV7WaveID(vaultPath)
+		waveID = nextV7WaveIDFromIndex(idx)
 	}
 	report := deliveryImportReport{PlanFingerprint: deliveryFingerprint(raw), PlanScope: deliveryPlanScope(plan), WaveID: waveID, WaveTitle: fallback(firstNonEmpty(args.String("wave"), plan.Title), "Imported delivery"), SpecRefs: plan.SpecRefs, TaskMapping: mapping, Frontiers: frontiers, ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Issues: uniqueStrings(issues), DryRun: args.Bool("dry-run")}
 	if len(report.Issues) > 0 {
 		return tuskerError(errorInvalidArg, "delivery plan is invalid: "+strings.Join(report.Issues, "; "), withContext(map[string]any{"delivery": report}))
 	}
-	resolved, snapshot, snapshotPaths, err := deliveryResolveCrossScopeDependencies(vaultPath, idx, plan, mapping)
+	resolved, snapshot, advance, snapshotPaths, err := deliveryResolveCrossScopeDependencies(vaultPath, idx, plan, mapping)
 	if err != nil {
 		return err
 	}
 	report.CrossScopeDependencies = resolved
 	report.CrossScopeSnapshot = snapshot
+	report.CrossScopeSnapshotAdvance = advance
 	report.CrossScopeSnapshotPaths = snapshotPaths
 	report.V2Index = &idx
 	if deliveryCrossScopeAfterResolution != nil {

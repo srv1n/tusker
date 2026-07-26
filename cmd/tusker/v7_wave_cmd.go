@@ -342,6 +342,10 @@ func nextV7WaveID(vaultPath string) string {
 	if err != nil {
 		return "W-0001"
 	}
+	return nextV7WaveIDFromIndex(idx)
+}
+
+func nextV7WaveIDFromIndex(idx v7Index) string {
 	maxSeq := 0
 	for id := range idx.Waves {
 		if match := v7WaveIDPattern.FindStringSubmatch(id); match != nil {
