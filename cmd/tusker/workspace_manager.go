@@ -56,8 +56,9 @@ type WorkspacePrepareRequest struct {
 }
 
 type WorkspacePrepareResult struct {
-	Path     string
-	Metadata WorkspaceMetadata
+	Path              string
+	Metadata          WorkspaceMetadata
+	NewlyMaterialized bool
 }
 
 type WorkspaceMetadata struct {
@@ -325,7 +326,7 @@ func (m *FSWorkspaceManager) prepareAtPath(workspacePath string, req WorkspacePr
 	if err := writeText(metadataPath, string(raw)+"\n"); err != nil {
 		return WorkspacePrepareResult{}, err
 	}
-	return WorkspacePrepareResult{Path: workspacePath, Metadata: metadata}, nil
+	return WorkspacePrepareResult{Path: workspacePath, Metadata: metadata, NewlyMaterialized: created}, nil
 }
 
 func assertWorkspaceWithinRoot(workspacePath, root string) error {

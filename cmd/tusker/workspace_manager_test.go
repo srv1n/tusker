@@ -103,6 +103,28 @@ func TestWorkspaceManagerSeparatesBranchLineageForSameRecord(t *testing.T) {
 	assertEqual(t, "try/parser rewrite", branch.Metadata.BranchName, "branch metadata")
 }
 
+func TestWorkspacePrepareReportsOnlyFirstMaterialization(t *testing.T) {
+	manager := NewWorkspaceManager()
+	req := WorkspacePrepareRequest{
+		ProjectID: "project-1", ProjectKey: "MEM", RecordID: "record-1", ItemID: "MEM-T-0001",
+		RepoRoot: t.TempDir(), StateRoot: t.TempDir(), Strategy: WorkspaceStrategyCopy,
+	}
+	first, err := manager.Prepare(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.NewlyMaterialized {
+		t.Fatal("first workspace preparation must report a new materialization")
+	}
+	second, err := manager.Prepare(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.NewlyMaterialized {
+		t.Fatal("reused workspace must not report a new materialization")
+	}
+}
+
 func TestWorkspaceManagerRejectsMismatchedBranchMetadata(t *testing.T) {
 	stateRoot := t.TempDir()
 	manager := NewWorkspaceManager()

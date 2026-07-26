@@ -3677,6 +3677,9 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 	if err != nil {
 		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 	}
+	if err := seedCanonicalV7TaskForPreparedWorkspace(project.VaultRoot, workspace, workspaceStrategy, run.ItemID); err != nil {
+		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
+	}
 	if err := mirrorApplyInputsIntoWorkspace(d.store, project, run, workspace.Path); err != nil {
 		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 	}
