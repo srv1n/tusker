@@ -13,6 +13,14 @@ work itself and never invokes dispatch or starts nested model processes. Only
 the independently running resident daemon may turn an eligible plan into a
 background worker, and only when project automation is enabled.
 
+For every multi-unit implementation, author a context-bound
+`tusker.delivery-plan/v2` DAG: requirements, tasks, and gates use stable source
+keys; dependencies describe the hard and soft edges. A lone task is still a
+wave of one. Dependencies unlock the runnable frontier, so independent work
+can advance without inventing a serial Markdown checklist. Tusker allocates
+all final IDs during held import. Use Tusker CLI lifecycle commands for task,
+proof, gate, and wave changes; never hand-edit Markdown status fields.
+
 ## Reconciliation and activity
 
 Canonical task, proof, gate, evidence, wave, and closeout mutations go through

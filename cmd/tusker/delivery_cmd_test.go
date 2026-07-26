@@ -9,30 +9,67 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestDeliveryPlanSchemaRoundTrip(t *testing.T) {
+func TestDeliveryPlanV2Scaffold(t *testing.T) {
 	vault := deliveryTestVault(t)
 	out := filepath.Join(v7RepoRoot(vault), ".tusker", "scratch", "plan.yaml")
 	if err := deliveryPlanCmd(Args{"vault": vault, "spec": "docs/specs/delivery.md", "out": out, "epic": "APP", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	plan, raw, err := readDeliveryPlan(out)
+	raw, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, deliveryPlanSchema, plan.Schema, "plan schema")
-	assertEqual(t, []string{"docs/specs/delivery.md"}, plan.SpecRefs, "plan spec refs")
-	if len(plan.Tasks) != 1 || plan.Tasks[0].Artifact.Path == "" || len(plan.Tasks[0].Verification) != 1 {
-		t.Fatalf("template omitted required plan fields: %#v\n%s", plan, raw)
+	var plan deliveryPlanV2
+	decoder := yaml.NewDecoder(strings.NewReader(string(raw)))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Schema != deliveryPlanV2Schema || plan.ContextFingerprint == "" || plan.FactoryIntakeContractFingerprint == "" {
+		t.Fatalf("scaffold omitted V2 context/provenance: %#v", plan)
+	}
+	if plan.Epic != "APP" || plan.EpicContract != nil {
+		t.Fatalf("explicit epic must remain an existing-epic reference: %#v", plan)
+	}
+	if len(plan.Requirements) != 2 || len(plan.Tasks) != 2 || plan.Tasks[1].Dependencies[0] != (deliveryDependency{Task: "replace-me-first", Kind: "hard"}) {
+		t.Fatalf("scaffold omitted requirements or hard dependency: %#v", plan)
+	}
+	if plan.Tasks[0].Artifact.Path == "" || len(plan.Tasks[0].OwnedPaths) == 0 || len(plan.Tasks[0].Verification) != 1 {
+		t.Fatalf("scaffold omitted operator artifact, owned paths, or verification: %#v", plan)
 	}
 	encoded, err := yaml.Marshal(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var roundTrip deliveryPlan
-	if err := yaml.Unmarshal(encoded, &roundTrip); err != nil {
+	var roundTrip deliveryPlanV2
+	decoder = yaml.NewDecoder(strings.NewReader(string(encoded)))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&roundTrip); err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, plan, roundTrip, "delivery plan round trip")
+	assertEqual(t, plan, roundTrip, "V2 scaffold strict round trip")
+	report, err := deliveryPlanDoctor(vault, out)
+	if err != nil || report.OK {
+		t.Fatalf("scaffold must remain inert authoring input: report=%#v err=%v", report, err)
+	}
+
+	withoutEpic := filepath.Join(v7RepoRoot(vault), ".tusker", "scratch", "plan-without-epic.yaml")
+	if err := deliveryPlanCmd(Args{"vault": vault, "spec": "docs/specs/delivery.md", "out": withoutEpic, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(withoutEpic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sourceKeyed deliveryPlanV2
+	decoder = yaml.NewDecoder(strings.NewReader(string(raw)))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&sourceKeyed); err != nil {
+		t.Fatal(err)
+	}
+	if sourceKeyed.Epic != "" || sourceKeyed.EpicContract == nil || sourceKeyed.EpicContract.SourceKey == "" {
+		t.Fatalf("implicit epic must use a source-keyed V2 epic contract: %#v", sourceKeyed)
+	}
 }
 
 func TestDeliveryImportAtomicDedupeAndRollback(t *testing.T) {

@@ -31,6 +31,9 @@ independently provable outcomes **must** be authored as a versioned
 Author each V2 plan with an explicit stable scope. Use source-keyed tasks and
 gates; source keys are the only caller-supplied identities. Tusker owns the final records
 and allocates durable epic, task, gate, wave, revision, and event identities during import.
+A lone task is a wave of one. Dependencies, rather than handwritten status
+lists, unlock the runnable frontier. Use Tusker CLI lifecycle commands for
+task, proof, gate, and wave transitions; never edit Markdown status fields.
 
 Ask the user for product facts only: desired outcomes, observable acceptance,
 important tests and failure cases, constraints, priorities, non-goals, and

@@ -207,15 +207,44 @@ func deliveryPlanCmd(args Args) error {
 	if !deliveryRepoPathExists(vaultPath, spec) {
 		return tuskerError(errorNotFound, "delivery spec does not resolve inside the repository: "+spec)
 	}
-	plan := deliveryPlan{
-		Schema: deliveryPlanSchema, Scope: deliveryGeneratedScope(spec), Title: strings.TrimSuffix(filepath.Base(spec), filepath.Ext(spec)),
-		Epic: strings.ToUpper(args.String("epic")), SpecRefs: []string{spec}, Concurrency: 1,
-		Tasks: []deliveryPlanTask{{
-			SourceKey: "replace-me", Title: "Replace with an observable task", Outcome: "Replace with an observable outcome.",
-			Acceptance:   []deliveryAcceptance{{ID: "A1", Outcome: "Replace with a concrete acceptance outcome."}},
-			Verification: []deliveryVerification{{Covers: "A1", Check: "command: replace-with-an-exact-command"}},
-			Artifact:     deliveryArtifactContract{Kind: "diff_summary", Path: "replace/with/production/path", Summary: "Explain the compact operator artifact.", AcceptanceIDs: []string{"A1"}},
-		}},
+	scope := deliveryGeneratedScope(spec)
+	context, err := buildDeliveryPlanningContextForScope(vaultPath, spec, scope)
+	if err != nil {
+		return err
+	}
+	factory := context.PlanContract.FactoryIntakeContract
+	plan := deliveryPlanV2{
+		Schema: deliveryPlanV2Schema, Scope: scope, Title: strings.TrimSuffix(filepath.Base(spec), filepath.Ext(spec)),
+		SpecRefs: []string{spec}, ContextFingerprint: context.ContextFingerprint,
+		FactoryIntakeContractSchema: factory.Schema, FactoryIntakeContractVersion: factory.Version, FactoryIntakeContractFingerprint: factory.Fingerprint,
+		Summary:      "Replace bounded authoring markers with the reviewed delivery contract before doctor or import.",
+		EpicContract: &deliveryEpicContract{SourceKey: "replace-me-epic", AcronymHint: "REP", Title: "Replace with the delivery epic title"},
+		Requirements: []deliveryRequirement{
+			{ID: "R1", Outcome: "Replace with the first observable requirement."},
+			{ID: "R2", Outcome: "Replace with the dependent observable requirement."},
+		},
+		Concurrency: 1,
+		Tasks: []deliveryPlanTask{
+			{
+				SourceKey: "replace-me-first", RequirementRefs: []string{"R1"}, Title: "Replace with the first observable task", Outcome: "Replace with the first observable outcome.",
+				Acceptance:   []deliveryAcceptance{{ID: "A1", Outcome: "Replace with concrete observable acceptance."}},
+				Verification: []deliveryVerification{{Covers: "A1", Check: "command: replace-with-an-exact-command"}},
+				Artifact:     deliveryArtifactContract{Kind: "diff_summary", Path: "replace/with/owned/path.go", Summary: "Replace with the compact operator artifact.", AcceptanceIDs: []string{"A1"}},
+				OwnedPaths:   []string{"replace/with/owned/path.go"},
+			},
+			{
+				SourceKey: "replace-me-dependent", RequirementRefs: []string{"R2"}, Title: "Replace with the dependent observable task", Outcome: "Replace with the dependent observable outcome.",
+				Acceptance:   []deliveryAcceptance{{ID: "A1", Outcome: "Replace with concrete dependent acceptance."}},
+				Verification: []deliveryVerification{{Covers: "A1", Check: "command: replace-with-an-exact-command"}},
+				Artifact:     deliveryArtifactContract{Kind: "diff_summary", Path: "replace/with/dependent-owned-path.go", Summary: "Replace with the dependent operator artifact.", AcceptanceIDs: []string{"A1"}},
+				OwnedPaths:   []string{"replace/with/dependent-owned-path.go"},
+				Dependencies: []deliveryDependency{{Task: "replace-me-first", Kind: "hard"}},
+			},
+		},
+	}
+	if epic := strings.ToUpper(strings.TrimSpace(args.String("epic"))); epic != "" {
+		plan.Epic = epic
+		plan.EpicContract = nil
 	}
 	raw, err := yaml.Marshal(plan)
 	if err != nil {
@@ -233,7 +262,7 @@ func deliveryPlanCmd(args Args) error {
 		return err
 	}
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "plan": out, "schema": deliveryPlanSchema, "inert": true})
+		emitJSON(map[string]any{"ok": true, "plan": out, "schema": deliveryPlanV2Schema, "inert": true})
 	} else if !args.Bool("quiet") {
 		fmt.Printf("Wrote inert delivery-plan template to %s\n", out)
 	}

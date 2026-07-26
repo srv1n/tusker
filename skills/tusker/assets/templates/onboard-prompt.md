@@ -14,6 +14,7 @@ Packet schema: tusker.onboard_packet/v1
 7. Existing V1 packets and plans remain readable only through the non-executable legacy compatibility adapter. Its migration report must enumerate every field that cannot be converted without human intent. Legacy work never bypasses V2 doctor, product review, held import, and fingerprint-bound Start.
 8. The only execution route is deterministic: doctor → product review → dry-run/held import → exact fingerprint-bound Start. Import allocates IDs and leaves records held/disarmed.
 9. Do not include secrets, env values, keys, tokens, private URLs, raw logs, or user data. Keep records compact.
+10. For multi-unit work, author a source-keyed V2 DAG. A lone task is a wave of one; dependencies unlock runnable frontiers. Use Tusker CLI lifecycle commands after import, never arbitrary Markdown status edits.
 
 ## Input
 
