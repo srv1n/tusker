@@ -272,15 +272,7 @@ func validationTestProcessAlive(pid int) bool {
 	if pid == os.Getpid() {
 		return true
 	}
-	if runtime.GOOS == "windows" {
-		return true
-	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = process.Signal(syscall.Signal(0))
-	return err == nil || errors.Is(err, syscall.EPERM)
+	return validationTestProcessAlivePlatform(pid)
 }
 
 func validationTestLockOlderThan(info os.FileInfo, age time.Duration) bool {
