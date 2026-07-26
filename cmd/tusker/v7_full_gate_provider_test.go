@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestV7FullGateProviderRejectsSandboxExec(t *testing.T) {

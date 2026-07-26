@@ -1093,10 +1093,10 @@ func validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID string
 	if err != nil {
 		return fmt.Errorf("full_gate_workflow_unavailable: %w", err)
 	}
-	if !wf.ScheduledPromotion.Effective.Promote {
+	if !wf.Data.ScheduledPromotion.Effective.Promote {
 		return fmt.Errorf("full_gate_policy_not_promote")
 	}
-	current, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, store)
+	current, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf.Data, store)
 	if err != nil {
 		return fmt.Errorf("full_gate_snapshot_unavailable: %w", err)
 	}
@@ -1107,7 +1107,7 @@ func validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID string
 	if current.Gate.Toolchain == "" || current.Gate.TreeHash == "" {
 		return fmt.Errorf("full_gate_contract_unverifiable")
 	}
-	provider, err := newV7FullGateProvider(wf.ScheduledPromotion.Effective.IsolationProvider, v7RepoRoot(vaultPath), store.stateRoot)
+	provider, err := newV7FullGateProvider(wf.Data.ScheduledPromotion.Effective.IsolationProvider, v7RepoRoot(vaultPath), store.stateRoot)
 	if err != nil {
 		return fmt.Errorf("full_gate_provider_unavailable: %w", err)
 	}
@@ -1120,7 +1120,7 @@ func validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID string
 	if err != nil {
 		return fmt.Errorf("full_gate_ledger_tree_unavailable: %w", err)
 	}
-	policy, err := scheduledPromotionGatePolicy(vaultPath, wf)
+	policy, err := scheduledPromotionGatePolicy(vaultPath, wf.Data)
 	if err != nil {
 		return fmt.Errorf("full_gate_policy_unavailable: %w", err)
 	}
