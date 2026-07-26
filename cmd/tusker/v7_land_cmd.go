@@ -3072,6 +3072,12 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 		root = store.stateRoot
 	}
 	path := filepath.Join(root, "artifacts", "promotion-gates", strings.ToLower(newRecordID())+".log")
+	if err != nil {
+		// The raw provider transcript can be long enough to hide this final
+		// ledger/certification error in callers' bounded excerpts. Keep the
+		// fail-closed cause in the durable artifact itself.
+		fmt.Fprintf(&raw, "# lifecycle_gate_error=%s\n", safePacketText(err.Error(), 4096))
+	}
 	if writeErr := os.MkdirAll(filepath.Dir(path), 0o755); writeErr != nil {
 		if err == nil {
 			err = writeErr

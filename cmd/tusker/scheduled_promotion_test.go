@@ -38,6 +38,14 @@ func setScheduledPromotionPolicyForTest(t *testing.T, vault, mode string) Workfl
 	return wf.Data
 }
 
+func TestScheduledPromotionGateFailureDetailPrefersLifecyclePersistenceError(t *testing.T) {
+	cause := errors.New("full-gate lifecycle provider: persist certified lifecycle receipt for go test: database is read-only")
+	detail := scheduledPromotionGateFailureDetail(cause, "# lifecycle_id=scope receipt_digest=sha256:fixture")
+	if !strings.Contains(detail, "persist certified lifecycle receipt") || strings.Contains(detail, "receipt_digest") {
+		t.Fatalf("gate failure hid its causal persistence error: %q", detail)
+	}
+}
+
 func armScheduledPromotionWaveForTest(t *testing.T, vault, waveID string) {
 	t.Helper()
 	idx, err := loadV7Index(vault)

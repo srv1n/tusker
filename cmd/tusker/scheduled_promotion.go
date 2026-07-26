@@ -1384,7 +1384,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 		if err := resumePromotionFailureRouting(vaultPath, store, run); err != nil {
 			return "", err
 		}
-		return "", tuskerError(errorInvalidTransition, "promotion gate red: "+safePacketText(string(gateOutput), 320))
+		return "", tuskerError(errorInvalidTransition, "promotion gate red: "+scheduledPromotionGateFailureDetail(execution.Err, string(gateOutput)))
 	}
 	if execution.Err == nil && (execution.Result.Outcome == gateOutcomePassed || execution.Result.Outcome == gateOutcomeLedgerHit) {
 		for _, ref := range execution.ArtifactRefs {
@@ -1509,4 +1509,15 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 		return "", err
 	}
 	return mergeCommit, nil
+}
+
+// scheduledPromotionGateFailureDetail keeps the causal execution failure
+// visible to callers. The raw artifact remains the forensic record, but a
+// leading provider receipt can otherwise consume the old 320-byte excerpt and
+// hide the fail-closed ledger or lifecycle reason entirely.
+func scheduledPromotionGateFailureDetail(executionErr error, gateOutput string) string {
+	if executionErr != nil {
+		return safePacketText(executionErr.Error(), 640)
+	}
+	return safePacketText(gateOutput, 320)
 }

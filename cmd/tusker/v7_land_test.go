@@ -377,10 +377,16 @@ type testV7FullGateProvider struct{}
 var testV7FullGateProviderReceipt = GateProviderReceipt{
 	LifecycleID:       "fixture:scope",
 	ReceiptDigest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-	RuntimeDigest:     "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	RuntimeDigest:     "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	PolicyDigest:      "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 	AttestationDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
 	ImageOrVMID:       "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+}
+
+func TestV7FullGateProviderFixtureReceiptSatisfiesLifecycleContract(t *testing.T) {
+	if !v7CertifiedGateProviderReceipt(&testV7FullGateProviderReceipt) {
+		t.Fatalf("fixture receipt is not a valid lifecycle certificate: %#v", testV7FullGateProviderReceipt)
+	}
 }
 
 func (*testV7FullGateProvider) Run(ctx context.Context, workspace, command string) ([]byte, error) {
