@@ -27,12 +27,17 @@ func TestCompletionWorkerSafetyRejectsUnsafeProfiles(t *testing.T) {
 	if err := completionWorkerSafety(state, workspace, unsafe); err == nil {
 		t.Fatal("danger-full-access profile must be rejected")
 	}
+	implementation := ResolvedRunnerProfile{Name: "implementation-terra", Definition: RunnerProfileDefinition{Harness: string(RunnerCodexExec), Sandbox: RunnerSandboxDefinition{Mode: "workspace-write"}}}
+	if err := completionWorkerSafety(state, workspace, implementation); err != nil {
+		t.Fatalf("codex_exec workspace-write must remain admissible: %v", err)
+	}
 	for _, profile := range []ResolvedRunnerProfile{
-		{Name: "implementation-terra", Definition: RunnerProfileDefinition{Harness: string(RunnerCodexExec), Sandbox: RunnerSandboxDefinition{Mode: "workspace-write"}}},
 		{Name: "reviewer-terra", Definition: RunnerProfileDefinition{Harness: string(RunnerClaude), Sandbox: RunnerSandboxDefinition{Mode: "read-only"}}},
+		{Name: "codex-app", Definition: RunnerProfileDefinition{Harness: string(RunnerCodexAppServer), Sandbox: RunnerSandboxDefinition{Mode: "read-only"}}},
+		{Name: "codex-generic", Definition: RunnerProfileDefinition{Harness: string(RunnerCodex), Sandbox: RunnerSandboxDefinition{Mode: "read-only"}}},
 	} {
-		if err := completionWorkerSafety(state, workspace, profile); err != nil {
-			t.Fatalf("%s must remain admissible: %v", profile.Name, err)
+		if err := completionWorkerSafety(state, workspace, profile); err == nil {
+			t.Fatalf("metadata-only sandbox on %s must not authorize completion", profile.Name)
 		}
 	}
 	if err := completionWorkerSafety(filepath.Join(workspace, "state"), workspace, ResolvedRunnerProfile{Name: "inside", Definition: RunnerProfileDefinition{Harness: string(RunnerCodexExec), Sandbox: RunnerSandboxDefinition{Mode: "workspace-write"}}}); err == nil {

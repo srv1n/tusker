@@ -17,10 +17,12 @@ func completionWorkerSafety(stateRoot, workspace string, profile ResolvedRunnerP
 	if strings.TrimSpace(profile.Definition.PermissionPreset) == "danger-full-access" || mode == "danger-full-access" {
 		return fmt.Errorf("completion authority refuses profile %q: danger-full-access is not admissible", profile.Name)
 	}
-	switch RunnerName(strings.TrimSpace(profile.Definition.Harness)) {
-	case RunnerCodex, RunnerCodexAppServer, RunnerCodexExec, RunnerClaude:
-	default:
-		return fmt.Errorf("completion authority refuses profile %q: runner has no locally enforceable sandbox", profile.Name)
+	// Only codex_exec currently translates the resolved policy into Codex's
+	// detached-command sandbox flags.  Codex's generic/app-server paths and
+	// Claude merely receive metadata (Claude defaults to bypassPermissions), so
+	// treating their sandbox strings as authority would be security theatre.
+	if RunnerName(strings.TrimSpace(profile.Definition.Harness)) != RunnerCodexExec {
+		return fmt.Errorf("completion authority refuses profile %q: runner does not mechanically enforce the resolved sandbox", profile.Name)
 	}
 	if strings.TrimSpace(stateRoot) == "" || strings.TrimSpace(workspace) == "" || pathWithin(workspace, stateRoot) {
 		return fmt.Errorf("completion authority requires daemon state root outside worker-writable workspace")
