@@ -18,6 +18,8 @@ import (
 
 const validationLockHeldEnv = "TUSKER_VALIDATION_LOCK_HELD"
 
+var validationTestLockRetireHook func(string) error
+
 func TestMain(m *testing.M) {
 	stateRoot, err := os.MkdirTemp("", "tusker-test-state-*")
 	if err != nil {
@@ -91,6 +93,10 @@ func acquireValidationTestLock() (func() error, error) {
 	if err != nil {
 		return nil, err
 	}
+	initializationGrace, err := validationTestLockInitializationGrace()
+	if err != nil {
+		return nil, err
+	}
 
 	token := fmt.Sprintf("%d-%d-%d", os.Getpid(), time.Now().UnixNano(), os.Getppid())
 	started := time.Now()
@@ -118,7 +124,7 @@ func acquireValidationTestLock() (func() error, error) {
 					if strings.TrimSpace(string(ownerToken)) != token {
 						return
 					}
-					releaseErr = removeValidationTestLock(lockDir)
+					releaseErr = retireValidationTestLock(lockDir, "released")
 				})
 				return releaseErr
 			}, nil
@@ -127,14 +133,19 @@ func acquireValidationTestLock() (func() error, error) {
 			return nil, fmt.Errorf("create validation lock %s: %w", lockDir, err)
 		}
 
+		lockIdentity, identityErr := os.Lstat(lockDir)
 		ownerPID := validationTestLockOwnerPID(lockDir)
 		if ownerPID > 0 && !validationTestProcessAlive(ownerPID) {
-			staleDir := fmt.Sprintf("%s.stale.%d.%d", lockDir, os.Getpid(), time.Now().UnixNano())
-			if err := os.Rename(lockDir, staleDir); err == nil {
-				fmt.Fprintf(os.Stderr, "cmd/tusker test suite: recovered stale validation owner pid %d\n", ownerPID)
-				if err := removeValidationTestLock(staleDir); err != nil {
-					return nil, fmt.Errorf("remove stale validation lock: %w", err)
+			if identityErr == nil {
+				if err := recoverValidationTestLock(lockDir, "stale", lockIdentity, initializationGrace); err == nil {
+					fmt.Fprintf(os.Stderr, "cmd/tusker test suite: recovered stale validation owner pid %d\n", ownerPID)
+					continue
 				}
+			}
+		}
+		if ownerPID == 0 && identityErr == nil && validationTestLockOlderThan(lockIdentity, initializationGrace) {
+			if err := recoverValidationTestLock(lockDir, "abandoned", lockIdentity, initializationGrace); err == nil {
+				fmt.Fprintln(os.Stderr, "cmd/tusker test suite: recovered abandoned validation lock initialization")
 				continue
 			}
 		}
@@ -203,15 +214,33 @@ func validationTestLockTimeout() (time.Duration, error) {
 	return time.Duration(seconds) * time.Second, nil
 }
 
-func writeValidationTestLockMetadata(lockDir, token string) error {
-	metadata := map[string]string{
-		"token":      token + "\n",
-		"pid":        strconv.Itoa(os.Getpid()) + "\n",
-		"cwd":        mustValidationTestCWD() + "\n",
-		"started_at": time.Now().UTC().Format(time.RFC3339) + "\n",
+func validationTestLockInitializationGrace() (time.Duration, error) {
+	value := os.Getenv("TUSKER_VALIDATION_LOCK_INITIALIZATION_GRACE_SECONDS")
+	if value == "" {
+		return 5 * time.Second, nil
 	}
-	for name, value := range metadata {
-		if err := os.WriteFile(filepath.Join(lockDir, name), []byte(value), 0o600); err != nil {
+	grace, err := time.ParseDuration(value + "s")
+	if err != nil || grace <= 0 {
+		return 0, fmt.Errorf("invalid TUSKER_VALIDATION_LOCK_INITIALIZATION_GRACE_SECONDS %q", value)
+	}
+	return grace, nil
+}
+
+func writeValidationTestLockMetadata(lockDir, token string) error {
+	// Publish the owner PID first. A process killed during initialization then
+	// leaves either a recoverable dead owner or, only in the mkdir-to-first-write
+	// window, an ownerless directory recovered after the initialization grace.
+	metadata := []struct {
+		name  string
+		value string
+	}{
+		{name: "pid", value: strconv.Itoa(os.Getpid()) + "\n"},
+		{name: "token", value: token + "\n"},
+		{name: "cwd", value: mustValidationTestCWD() + "\n"},
+		{name: "started_at", value: time.Now().UTC().Format(time.RFC3339) + "\n"},
+	}
+	for _, item := range metadata {
+		if err := os.WriteFile(filepath.Join(lockDir, item.name), []byte(item.value), 0o600); err != nil {
 			return err
 		}
 	}
@@ -227,7 +256,11 @@ func mustValidationTestCWD() string {
 }
 
 func validationTestLockOwnerPID(lockDir string) int {
-	raw, err := os.ReadFile(filepath.Join(lockDir, "pid"))
+	return validationTestLockOwnerPIDFromPath(filepath.Join(lockDir, "pid"))
+}
+
+func validationTestLockOwnerPIDFromPath(path string) int {
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return 0
 	}
@@ -250,8 +283,86 @@ func validationTestProcessAlive(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
+func validationTestLockOlderThan(info os.FileInfo, age time.Duration) bool {
+	return info != nil && time.Since(info.ModTime()) >= age
+}
+
+func recoverValidationTestLock(lockDir, reason string, expected os.FileInfo, claimGrace time.Duration) error {
+	current, err := os.Lstat(lockDir)
+	if err != nil || expected == nil || !os.SameFile(expected, current) {
+		return fmt.Errorf("validation lock identity changed before %s recovery", reason)
+	}
+	claimPath := filepath.Join(lockDir, "recovery")
+	if err := claimValidationTestLockRecovery(lockDir, claimPath, expected, claimGrace); err != nil {
+		return err
+	}
+	current, err = os.Lstat(lockDir)
+	if err != nil || !os.SameFile(expected, current) {
+		return fmt.Errorf("validation lock identity changed while claiming %s recovery", reason)
+	}
+	return retireValidationTestLock(lockDir, reason)
+}
+
+func claimValidationTestLockRecovery(lockDir, claimPath string, expected os.FileInfo, grace time.Duration) error {
+	for attempt := 0; attempt < 3; attempt++ {
+		current, err := os.Lstat(lockDir)
+		if err != nil || !os.SameFile(expected, current) {
+			return errors.New("validation lock identity changed before recovery claim")
+		}
+		claim, err := os.OpenFile(claimPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			if _, err = fmt.Fprintf(claim, "%d\n", os.Getpid()); err == nil {
+				err = claim.Close()
+			} else {
+				_ = claim.Close()
+			}
+			if err != nil {
+				removeValidationTestRecoveryClaim(lockDir, claimPath, expected)
+			}
+			return err
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		info, statErr := os.Lstat(claimPath)
+		ownerPID := validationTestLockOwnerPIDFromPath(claimPath)
+		if statErr != nil || !info.Mode().IsRegular() ||
+			ownerPID > 0 && validationTestProcessAlive(ownerPID) ||
+			ownerPID == 0 && !validationTestLockOlderThan(info, grace) {
+			return errors.New("validation lock recovery is already claimed")
+		}
+		if !removeValidationTestRecoveryClaim(lockDir, claimPath, expected) {
+			return errors.New("validation lock recovery claim changed")
+		}
+	}
+	return errors.New("validation lock recovery claim did not converge")
+}
+
+func removeValidationTestRecoveryClaim(lockDir, claimPath string, expected os.FileInfo) bool {
+	current, err := os.Lstat(lockDir)
+	if err != nil || !os.SameFile(expected, current) {
+		return false
+	}
+	return os.Remove(claimPath) == nil
+}
+
+func retireValidationTestLock(lockDir, reason string) error {
+	retiredDir := fmt.Sprintf("%s.%s.%d.%d", lockDir, reason, os.Getpid(), time.Now().UnixNano())
+	if err := os.Rename(lockDir, retiredDir); err != nil {
+		return err
+	}
+	// The canonical lock name is already free. A kill during cleanup can leave
+	// only an inert, uniquely named tombstone; it cannot block another suite.
+	if validationTestLockRetireHook != nil {
+		if err := validationTestLockRetireHook(retiredDir); err != nil {
+			return err
+		}
+	}
+	return removeValidationTestLock(retiredDir)
+}
+
 func removeValidationTestLock(lockDir string) error {
-	for _, name := range []string{"pid", "token", "cwd", "started_at"} {
+	for _, name := range []string{"pid", "token", "cwd", "started_at", "recovery"} {
 		if err := os.Remove(filepath.Join(lockDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -334,6 +445,111 @@ func TestValidationSuiteLockReleasedOnTERM(t *testing.T) {
 	if output, err := second.CombinedOutput(); err != nil {
 		t.Fatalf("second lock holder could not acquire lock: %v\n%s", err, output)
 	}
+}
+
+func TestValidationSuiteLockRecoversAbandonedInitialization(t *testing.T) {
+	lockDir := filepath.Join(t.TempDir(), "validation.lock")
+	if err := os.Mkdir(lockDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lockDir, "recovery"), []byte("99999999\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(lockDir, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	restoreValidationLockEnv(t)
+	t.Setenv("TUSKER_VALIDATION_LOCK_DIR", lockDir)
+	t.Setenv("TUSKER_VALIDATION_LOCK_POLL_SECONDS", "0.01")
+	t.Setenv("TUSKER_VALIDATION_LOCK_TIMEOUT_SECONDS", "1")
+	t.Setenv("TUSKER_VALIDATION_LOCK_INITIALIZATION_GRACE_SECONDS", "0.01")
+	release, err := acquireValidationTestLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner := validationTestLockOwnerPID(lockDir); owner != os.Getpid() {
+		t.Fatalf("recovered lock owner pid = %d, want %d", owner, os.Getpid())
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(lockDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("released canonical lock remains: %v", err)
+	}
+}
+
+func TestValidationSuiteLockReleaseFreesCanonicalNameBeforeCleanup(t *testing.T) {
+	lockDir := filepath.Join(t.TempDir(), "validation.lock")
+	restoreValidationLockEnv(t)
+	t.Setenv("TUSKER_VALIDATION_LOCK_DIR", lockDir)
+	t.Setenv("TUSKER_VALIDATION_LOCK_POLL_SECONDS", "0.01")
+	t.Setenv("TUSKER_VALIDATION_LOCK_TIMEOUT_SECONDS", "1")
+	release, err := acquireValidationTestLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	injected := errors.New("injected retirement interruption")
+	t.Cleanup(func() { validationTestLockRetireHook = nil })
+	validationTestLockRetireHook = func(string) error { return injected }
+	if err := release(); !errors.Is(err, injected) {
+		t.Fatalf("release error = %v, want injected interruption", err)
+	}
+	validationTestLockRetireHook = nil
+	if _, err := os.Stat(lockDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("canonical lock remains after interrupted tombstone cleanup: %v", err)
+	}
+
+	secondRelease, err := acquireValidationTestLock()
+	if err != nil {
+		t.Fatalf("second suite could not acquire canonical name: %v", err)
+	}
+	if err := secondRelease(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidationSuiteLockRecoveryCannotRetireReplacementOwner(t *testing.T) {
+	root := t.TempDir()
+	lockDir := filepath.Join(root, "validation.lock")
+	if err := os.Mkdir(lockDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	staleIdentity, err := os.Lstat(lockDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retired := filepath.Join(root, "old.lock")
+	if err := os.Rename(lockDir, retired); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(lockDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lockDir, "pid"), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := recoverValidationTestLock(lockDir, "stale", staleIdentity, time.Millisecond); err == nil {
+		t.Fatal("stale recovery retired a replacement owner's lock")
+	}
+	if owner := validationTestLockOwnerPID(lockDir); owner != os.Getpid() {
+		t.Fatalf("replacement lock owner = %d, want %d", owner, os.Getpid())
+	}
+}
+
+func restoreValidationLockEnv(t *testing.T) {
+	t.Helper()
+	original, present := os.LookupEnv(validationLockHeldEnv)
+	t.Cleanup(func() {
+		if present {
+			_ = os.Setenv(validationLockHeldEnv, original)
+		} else {
+			_ = os.Unsetenv(validationLockHeldEnv)
+		}
+	})
 }
 
 func validationTestBinaryCommand(testBinary, lockDir, eventsPath string, holdMillis int) *exec.Cmd {
