@@ -15,6 +15,108 @@ import (
 )
 
 func TestDeliveryPlanningContext(t *testing.T) {
+	t.Run("canonicalizes only exact generated work-stream blocks", func(t *testing.T) {
+		const scope = "context-canonical/v1"
+		base := "# Governing spec\n\nHuman-owned requirements.\n"
+		report := deliveryImportReport{PlanScope: scope, WaveID: "W-0001", TaskMapping: map[string]string{"source": "APP-T-0001"}}
+		expected := deliveryContextWorkStreamExpectation{WaveID: "W-0001", TaskSources: map[string]string{"APP-T-0001": "source"}}
+		want := strings.TrimRight(base, "\n")
+		validNew := renderDeliveryWorkStreams(base, report)
+		if got := string(deliveryContextCanonicalDocumentMaterialWithExpectation([]byte(validNew), scope, expected, true)); got != want {
+			t.Fatalf("new generated block was not canonicalized:\nwant=%q\n got=%q", want, got)
+		}
+
+		begin, end := deliveryScopeMarkers(scope)
+		legacyBlock := strings.Join([]string{
+			begin, "", "- `[[APP-T-0001]]` implements delivery source `source`.", "", "- `[[W-0001]]` is the imported delivery wave.", "", end,
+		}, "\n")
+		validLegacy := strings.TrimRight(base, "\n") + "\n\n## Work streams\n\n" + legacyBlock + "\n"
+		if got := string(deliveryContextCanonicalDocumentMaterialWithExpectation([]byte(validLegacy), scope, expected, true)); got != want {
+			t.Fatalf("legacy generated block was not canonicalized:\nwant=%q\n got=%q", want, got)
+		}
+		if got := deliveryContextCanonicalDocumentMaterialWithExpectation([]byte(validNew), scope, deliveryContextWorkStreamExpectation{}, false); deliveryFingerprint(got) == deliveryFingerprint([]byte(want)) {
+			t.Fatalf("unbound marker was incorrectly treated as generated: %q", string(got))
+		}
+
+		otherScope := "other-context/v1"
+		other := renderDeliveryWorkStreams(base, deliveryImportReport{PlanScope: otherScope, WaveID: "W-0002", TaskMapping: map[string]string{"other": "APP-T-0002"}})
+		cases := map[string]string{
+			"edited payload":               strings.Replace(validNew, "- `[[APP-T-0001]]` implements delivery source `source`.", "- human-edited payload", 1),
+			"valid-looking edited source":  strings.Replace(validNew, "source`.", "renamed-source`.", 1),
+			"extra payload":                strings.Replace(validNew, "\n\n- `[[W-0001]]`", "\n\nhuman payload\n\n- `[[W-0001]]`", 1),
+			"duplicate same-scope block":   validNew + "\n\n" + validNew,
+			"misordered markers":           strings.Replace(validNew, begin, end, 1),
+			"unterminated marker":          strings.Replace(validNew, end, "", 1),
+			"other scope":                  other,
+			"later human terminal heading": validNew + "\n\n## Work streams\n",
+		}
+		for name, raw := range cases {
+			t.Run(name, func(t *testing.T) {
+				got := deliveryContextCanonicalDocumentMaterialWithExpectation([]byte(raw), scope, expected, true)
+				if deliveryFingerprint(got) == deliveryFingerprint([]byte(want)) {
+					t.Fatalf("non-generated or changed payload was incorrectly erased: %q", string(got))
+				}
+			})
+		}
+	})
+
+	t.Run("generated import keeps review context current but human edits still drift", func(t *testing.T) {
+		vault := deliveryContextTestVault(t)
+		plan := validDeliveryPlanV2()
+		plan.HumanGates = nil
+		specPath := filepath.Join(v7RepoRoot(vault), filepath.FromSlash(plan.SpecRefs[0]))
+		if err := writeText(specPath, "# Delivery\n\nA spec with no pre-existing work-stream heading.\n"); err != nil {
+			t.Fatal(err)
+		}
+		path := writeDeliveryV2TestPlan(t, vault, plan)
+		before, err := buildDeliveryPlanningContextForScope(vault, strings.Join(plan.SpecRefs, ","), plan.Scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "quiet": "true"}); err != nil {
+			t.Fatal(err)
+		}
+		after, err := buildDeliveryPlanningContextForScope(vault, strings.Join(plan.SpecRefs, ","), plan.Scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after.ContextFingerprint != before.ContextFingerprint {
+			t.Fatalf("generated delivery-import block changed planning context: before=%s after=%s", before.ContextFingerprint, after.ContextFingerprint)
+		}
+		review, err := buildDeliveryReviewWithInspector(vault, path, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(strings.Join(review.Start.Blockers, "\n"), "planning context fingerprint differs") {
+			t.Fatalf("same plan became stale immediately after import: %#v", review.Start)
+		}
+		if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "quiet": "true"}); err != nil {
+			t.Fatal(err)
+		}
+		review, err = buildDeliveryReviewWithInspector(vault, path, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(strings.Join(review.Start.Blockers, "\n"), "planning context fingerprint differs") {
+			t.Fatalf("idempotent import made the same plan stale: %#v", review.Start)
+		}
+
+		spec, err := readText(specPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writeText(specPath, spec+"\nHuman-authored acceptance changed.\n"); err != nil {
+			t.Fatal(err)
+		}
+		review, err = buildDeliveryReviewWithInspector(vault, path, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(strings.Join(review.Start.Blockers, "\n"), "planning context fingerprint differs") {
+			t.Fatalf("human spec edit did not invalidate reviewed context: %#v", review.Start)
+		}
+	})
+
 	t.Run("plan scope ignores its own imported records but not other work", func(t *testing.T) {
 		vault := deliveryContextTestVault(t)
 		plan := validDeliveryPlanV2()

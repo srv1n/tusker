@@ -187,6 +187,64 @@ func TestDeliveryImportAtomicDedupeAndRollback(t *testing.T) {
 	}
 }
 
+func TestDeliveryImportIsRefInert(t *testing.T) {
+	tests := []struct {
+		name  string
+		plan  func(t *testing.T, vault string) string
+		paths []string
+	}{
+		{
+			name: "v1",
+			plan: func(t *testing.T, vault string) string {
+				return writeDeliveryTestPlan(t, vault, validDeliveryPlan())
+			},
+			paths: []string{"APP-T-0001.md", "APP-T-0002.md"},
+		},
+		{
+			name: "v2",
+			plan: func(t *testing.T, vault string) string {
+				plan := validDeliveryPlanV2()
+				plan.HumanGates = nil
+				return writeDeliveryV2TestPlan(t, vault, plan)
+			},
+			paths: []string{"VTP-T-0001.md"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vault := deliveryTestVault(t)
+			repo := v7RepoRoot(vault)
+			runGitDir(t, repo, "init", "-b", "main")
+			runGitDir(t, repo, "config", "user.email", "tusker-test@example.invalid")
+			runGitDir(t, repo, "config", "user.name", "Tusker Test")
+			runGitDir(t, repo, "add", ".")
+			runGitDir(t, repo, "commit", "-m", "bootstrap delivery import fixture")
+			path := tt.plan(t, vault)
+			beforeRefs := gitDirOutput(t, repo, "show-ref")
+			beforeMain := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "refs/heads/main"))
+
+			if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "quiet": "true"}); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := gitDirOutput(t, repo, "show-ref"); got != beforeRefs {
+				t.Fatalf("actual %s import moved or created a Git ref\nbefore=%safter=%s", tt.name, beforeRefs, got)
+			}
+			if got := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "refs/heads/main")); got != beforeMain {
+				t.Fatalf("actual %s import moved main: before=%s after=%s", tt.name, beforeMain, got)
+			}
+			for _, name := range tt.paths {
+				if !fileExists(filepath.Join(vault, "work", "tasks", name)) {
+					t.Fatalf("actual %s import did not persist task record %s", tt.name, name)
+				}
+			}
+			if !fileExists(filepath.Join(vault, "work", "waves", "W-0001.md")) {
+				t.Fatalf("actual %s import did not persist its held wave", tt.name)
+			}
+		})
+	}
+}
+
 func TestDeliveryManifestRejectsInvalidMatrixWithoutWrites(t *testing.T) {
 	tests := []struct {
 		name   string

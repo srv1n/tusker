@@ -848,16 +848,10 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 	if err := convergeUnchangedDeliveryWrites(writes); err != nil {
 		return err
 	}
-	branch := v7IntegrationBranchName(report.WaveID)
-	repoRoot := v7RepoRoot(vaultPath)
-	branchExisted := !v7GitRepo(repoRoot) || gitRefExists(repoRoot, "refs/heads/"+branch)
-	// Start delivery is an authority transaction, not an integration operation.
-	// It may reconcile held records, but it must not create or move any Git ref.
-	if !args.Bool("skip-integration-branch") {
-		if err := ensureV7IntegrationBranch(vaultPath, branch); err != nil {
-			return err
-		}
-	}
+	// Import records a frozen integration base but is never an integration
+	// operation. In particular, it must not create the named integration ref:
+	// the serialized completion lane creates that ref later with its create-only
+	// CAS, after the wave has actually completed its required work.
 	failAfter := 0
 	if args.Bool("fail-after-first-write") {
 		failAfter = 1
@@ -882,9 +876,6 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 		guard.SnapshotAdvance = report.CrossScopeSnapshotAdvance
 	}
 	if err := commitDeliveryWritesGuarded(writes, failAfter, guard); err != nil {
-		if !branchExisted && !args.Bool("skip-integration-branch") {
-			_, _ = gitCombined(repoRoot, "update-ref", "-d", "refs/heads/"+branch)
-		}
 		return err
 	}
 	return nil
@@ -1467,6 +1458,12 @@ func renderDeliveryWorkStreams(body string, report deliveryImportReport) string 
 	begin, end := deliveryScopeMarkers(report.PlanScope)
 	var lines []string
 	lines = append(lines, begin, "")
+	// Keep a newly-created section heading inside the generated block. That
+	// lets planning-context canonicalization remove the entire import scaffold
+	// without treating a human-authored document edit as non-material.
+	if !strings.Contains(body, "## Work streams") && !strings.Contains(body, "## Work Streams") {
+		lines = append(lines, "## Work streams", "")
+	}
 	keys := make([]string, 0, len(report.TaskMapping))
 	for key := range report.TaskMapping {
 		keys = append(keys, key)
@@ -1481,9 +1478,6 @@ func renderDeliveryWorkStreams(body string, report deliveryImportReport) string 
 		if finish := strings.Index(body[start:], end); finish >= 0 {
 			return body[:start] + block + body[start+finish+len(end):]
 		}
-	}
-	if !strings.Contains(body, "## Work streams") && !strings.Contains(body, "## Work Streams") {
-		body = strings.TrimRight(body, "\n") + "\n\n## Work streams\n"
 	}
 	return strings.TrimRight(body, "\n") + "\n\n" + block + "\n"
 }
