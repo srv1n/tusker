@@ -44,7 +44,7 @@ var FrontmatterOrder = map[string][]string{
 		"proof_mode", "proof_status", "proof_required", "proof_required_owner", "evidence_budget", "raw_artifacts_allowed", "raw_artifacts_reason",
 		"machine_status", "human_status", "closeout_status", "agent_action",
 		"next_owner", "next_source", "next_ref", "next_action", "domains", "spec_refs", "gates", "dependencies", "delivery_cross_scope_dependencies", "evidence_required",
-		"delivery_source_key", "delivery_plan_scope", "delivery_contract_fingerprint", "requirement_refs", "artifact_contract", "work_kind", "owned_paths", "generated_outputs", "migration_keys", "resource_refs", "runner_profile", "concurrency_group", "knowledge_nodes", "batch_gate_command", "batch_gate_run",
+		"delivery_source_key", "delivery_plan_scope", "delivery_contract_fingerprint", "requirement_refs", "artifact_contract", "work_kind", "owned_paths", "generated_outputs", "migration_keys", "resource_refs", "runner_profile", "complexity", "concurrency_group", "knowledge_nodes", "batch_gate_command", "batch_gate_run",
 		"accepted_by", "accepted_at", "closed_at", "close_authority", "superseded_by", "discarded_by", "discarded_at", "discard_reason",
 		"created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},

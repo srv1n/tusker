@@ -96,6 +96,9 @@ func validateV7FrontmatterSize(note Note, ctx validationContext, where string, w
 
 func validateV7Task(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
 	data := note.Data
+	if complexity := strings.TrimSpace(stringField(data, "complexity")); complexity != "" && complexity != "routine" && complexity != "standard" && complexity != "complex" && complexity != "frontier" {
+		*errors = append(*errors, issue(errorInvalidField, "task complexity must be routine, standard, complex, or frontier", where, "omit complexity for compatibility or use a semantic complexity level", map[string]any{"complexity": complexity}))
+	}
 	if workKind := strings.TrimSpace(stringField(data, "work_kind")); workKind != "" && workKind != "implementation" && workKind != "integrator" {
 		*errors = append(*errors, issue(errorInvalidField, "task work_kind must be implementation or integrator", where, "use work_kind: integrator only for the typed merge lane", map[string]any{"work_kind": workKind}))
 	}

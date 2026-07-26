@@ -770,6 +770,12 @@ func newV7Task(args Args) error {
 		}
 		data["work_kind"] = workKind
 	}
+	if complexity := strings.ToLower(strings.TrimSpace(args.String("complexity"))); complexity != "" {
+		if complexity != "routine" && complexity != "standard" && complexity != "complex" && complexity != "frontier" {
+			return tuskerError(errorInvalidArg, "complexity must be routine, standard, complex, or frontier")
+		}
+		data["complexity"] = complexity
+	}
 	if len(specRefs) > 0 {
 		data["spec_refs"] = specRefs
 	}

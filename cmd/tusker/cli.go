@@ -153,7 +153,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "gate-ledger", "context", "config", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory":
+	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "gate-ledger", "context", "config", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory":
 		return true
 	default:
 		return false
@@ -259,6 +259,13 @@ func runInner(command string, args Args) (int, error) {
 		return 0, versionCmd(args)
 	case "runner-wrapper":
 		return 0, runnerWrapperCmd(args)
+	case "runner":
+		printRunnerHelp()
+		return 0, nil
+	case "runner catalog":
+		return 0, runnerCatalogCmd(args)
+	case "runner profiles":
+		return 0, runnerProfilesBootstrapCmd(args)
 	case "new epic":
 		return 0, newV7Epic(args)
 	case "new task":
@@ -1058,6 +1065,8 @@ func printCommandHelp(command string) bool {
 	switch command {
 	case "init":
 		printInitHelp()
+	case "runner", "runner catalog", "runner profiles":
+		printRunnerHelp()
 	case "new", "new epic", "new task", "new bug", "new doc", "new gate", "new decision":
 		printNewHelp()
 	case "status":

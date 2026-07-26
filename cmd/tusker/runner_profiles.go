@@ -423,8 +423,8 @@ func validateRunnerProfileDefinition(name string, profile RunnerProfileDefinitio
 	if !validRunnerModelName(profile.Model) {
 		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.model has unsupported value %q", name, profile.Model), withPath(path), withHint("use a known model family such as gpt-5.x, claude-opus-4-8, claude-fable-5, sonnet-4.6, or glm-5.2"))
 	}
-	if !validRunnerEffort(profile.Effort) {
-		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.effort must be one of low, medium, high", name), withPath(path))
+	if !validRunnerEffort(profile.Effort) || (harness == RunnerClaude && strings.EqualFold(strings.TrimSpace(profile.Effort), "ultra")) {
+		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.effort must be one of low, medium, high, xhigh, max, ultra", name), withPath(path))
 	}
 	if !validRunnerSandboxMode(profile.Sandbox.Mode) {
 		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.sandbox.mode must be one of read-only, workspace-write, danger-full-access", name), withPath(path))
@@ -443,6 +443,9 @@ func validRunnerModelName(model string) bool {
 	if model == "" || strings.ContainsAny(model, " \t\r\n") {
 		return false
 	}
+	if model == "fable" || model == "opus" || model == "sonnet" {
+		return true
+	}
 	for _, prefix := range []string{"gpt-", "claude-", "opus-", "sonnet-", "fable-", "glm-", "o3", "o4"} {
 		if strings.HasPrefix(model, prefix) {
 			return true
@@ -453,7 +456,7 @@ func validRunnerModelName(model string) bool {
 
 func validRunnerEffort(effort string) bool {
 	switch strings.ToLower(strings.TrimSpace(effort)) {
-	case "low", "medium", "high":
+	case "low", "medium", "high", "xhigh", "max", "ultra":
 		return true
 	default:
 		return false
@@ -672,6 +675,9 @@ func commandForRunnerProfile(baseCommand string, selected ResolvedRunnerProfile)
 	case RunnerClaude:
 		if model != "" && !commandHasFlag(command, "--model") {
 			command += " --model " + model
+		}
+		if effort != "" && !commandHasFlag(command, "--effort") {
+			command += " --effort " + effort
 		}
 	}
 	return command
