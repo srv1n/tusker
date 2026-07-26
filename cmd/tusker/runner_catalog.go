@@ -242,7 +242,17 @@ func runnerProfilesBootstrapCmd(args Args) error {
 		automation["default_profile"] = "execute-standard"
 	}
 	automationEnabled := boolAny(automation["enabled"])
-	report := map[string]any{"write": args.Bool("write"), "path": path, "added_profiles": added, "preserved_profiles": sortedBootstrapMapKeys(existing, added), "automation_enabled": automationEnabled}
+	report := map[string]any{
+		"write":               args.Bool("write"),
+		"path":                path,
+		"added_profiles":      added,
+		"preserved_profiles":  sortedBootstrapMapKeys(existing, added),
+		"semantic_profiles":   profiles,
+		"default_profile":     stringAny(automation["default_profile"]),
+		"automation_enabled":  automationEnabled,
+		"selection_policy":    "fast prefers Luna; standard, complex, review, and repair prefer Terra; planner and frontier prefer Sol; every role falls back to a visible capable model and nearest supported effort",
+		"configuration_scope": "project policy; the observed harness catalog remains machine-local",
+	}
 	if args.Bool("write") {
 		out, err := yaml.Marshal(raw)
 		if err != nil {
