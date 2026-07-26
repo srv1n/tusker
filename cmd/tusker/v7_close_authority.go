@@ -220,6 +220,9 @@ func authenticateV7TaskCloseAuthorityCommit(note Note, fact v7TaskCloseAuthority
 }
 
 func authenticateV7TaskCloseAuthorityCommitWithStore(note Note, fact v7TaskCloseAuthority, store *RuntimeStore) error {
+	if store == nil {
+		return fmt.Errorf("close authority requires the exact issuing daemon store")
+	}
 	vaultPath := v7VaultRootForDocument(note.AbsolutePath)
 	if strings.TrimSpace(vaultPath) == "" {
 		return fmt.Errorf("close authority cannot locate its vault for protected-ref authentication")
@@ -366,6 +369,9 @@ func authenticateV7EventCloseAuthority(vaultPath string, fact v7TaskCloseAuthori
 }
 
 func authenticateV7EventCloseAuthorityWithStore(vaultPath string, fact v7TaskCloseAuthority, store *RuntimeStore) error {
+	if store == nil {
+		return fmt.Errorf("closed event requires the exact issuing daemon store")
+	}
 	task, err := resolveV7Note(vaultPath, fact.TaskID, "task")
 	if err != nil {
 		return fmt.Errorf("closed event cannot resolve its task projection: %w", err)
@@ -389,11 +395,21 @@ func authenticateV7EventCloseAuthorityWithStore(vaultPath string, fact v7TaskClo
 // timestamp, making replay after the tracker write idempotent and ensuring the
 // event carries the same authenticated fact as the task.
 func emitV7TaskClosedEvent(vaultPath, taskID, actor, at, from, reason string, authority *v7TaskCloseAuthority) error {
+	return emitV7TaskClosedEventWithStore(vaultPath, taskID, actor, at, from, reason, authority, nil)
+}
+
+func emitV7TaskClosedEventWithStore(vaultPath, taskID, actor, at, from, reason string, authority *v7TaskCloseAuthority, store *RuntimeStore) error {
 	if authority == nil {
 		return emitV7Event(vaultPath, taskID, "task", "closed", actor, map[string]any{"from": from, "reason": reason})
 	}
+	if store == nil {
+		return fmt.Errorf("completion close event requires the exact issuing daemon store")
+	}
 	if err := validateV7TaskCloseAuthorityFact(*authority, v7ProjectID(vaultPath), taskID, actor, "[tusker-review-result:"+authority.ReviewResultRevision+"]"); err != nil {
 		return err
+	}
+	if err := authenticateV7EventCloseAuthorityWithStore(vaultPath, *authority, store); err != nil {
+		return fmt.Errorf("completion close event authority is unauthenticated: %w", err)
 	}
 	parsedAt, err := time.Parse(time.RFC3339, at)
 	if err != nil {

@@ -1046,9 +1046,9 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 		if err != nil {
 			return err
 		}
-		if err := emitV7TaskClosedEvent(
+		if err := emitV7TaskClosedEventWithStore(
 			project.VaultRoot, result.TaskID, result.Actor, authority.ClosedAt,
-			"review", "typed review "+result.ResultRevision, &authority,
+			"review", "typed review "+result.ResultRevision, &authority, d.store,
 		); err != nil {
 			return err
 		}

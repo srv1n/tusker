@@ -20,7 +20,7 @@ func classifyRunnerProcessExit(run RunStatus, status runnerProcessStatus, note N
 		return runnerExitClassification{
 			outcome:      AttemptOutcomeFailed,
 			exitCode:     status.ExitCode,
-			reason:       fmt.Sprintf("runner exited with code %d", status.ExitCode),
+			reason:       firstNonEmpty(strings.TrimSpace(status.Reason), fmt.Sprintf("runner exited with code %d", status.ExitCode)),
 			trackerState: trackerState,
 		}
 	}

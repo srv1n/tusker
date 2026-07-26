@@ -174,6 +174,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		}
 		legacy := current
 		legacy.Schema = reviewResultSchemaV1
+		legacy.WorkerPolicyFP = ""
 		legacy.AttemptID = "review-z-legacy"
 		legacy.CreatedAt = "2099-01-01T00:00:00Z"
 		legacy.Findings = []string{"legacy audit finding"}

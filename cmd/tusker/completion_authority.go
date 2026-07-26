@@ -296,29 +296,6 @@ func verifyCompletionReceiptAuthority(repoRoot string, receipt completionReceipt
 	return ed25519.Verify(ed25519.PublicKey(i.PublicKey), completionAuthorityPayload(i.Context), receipt.Authority.Signature)
 }
 
-// A caller that lacks an explicitly supplied daemon store may use only the
-// canonical service root derived without ambient TUSKER_STATE_ROOT. A custom
-// foreground/test daemon must plumb its exact store explicitly.
 func verifyCompletionReceiptAuthorityWithStore(repoRoot string, receipt completionReceipt, receiptEntry completionGitTreeEntry, store *RuntimeStore, requireConsumed bool) bool {
-	if store != nil {
-		return verifyCompletionReceiptAuthority(repoRoot, receipt, receiptEntry, store, requireConsumed)
-	}
-	root := canonicalOfflineCompletionStateRoot()
-	if root == "" {
-		return false
-	}
-	canonical, err := OpenRuntimeStoreReadOnly(root)
-	if err != nil {
-		return false
-	}
-	defer canonical.Close()
-	return verifyCompletionReceiptAuthority(repoRoot, receipt, receiptEntry, canonical, requireConsumed)
-}
-
-func canonicalOfflineCompletionStateRoot() string {
-	home := userHomeDir()
-	if home == "" {
-		return ""
-	}
-	return filepath.Join(home, "Library", "Application Support", "tusker")
+	return verifyCompletionReceiptAuthority(repoRoot, receipt, receiptEntry, store, requireConsumed)
 }

@@ -11,7 +11,10 @@ import (
 	"strings"
 )
 
-const completionWorkspaceTrustKeyToken = "{{completion_workspace_trust_key}}"
+const (
+	completionWorkspaceTrustKeyToken            = "{{completion_workspace_trust_key}}"
+	completionAuthoritativeRawLogMaxBytes int64 = 16 << 20
+)
 
 // completionWorkerSafety is intentionally stricter than generic automation:
 // completion consumes a reviewer verdict as lifecycle authority, so every
@@ -270,7 +273,21 @@ func completionWorkerPolicyFingerprint(lane, command string, profile ResolvedRun
 	if err != nil {
 		return "", err
 	}
-	payload := strings.Join([]string{"tusker.completion-worker-policy/v3", lane, profile.Name, profile.Source, profile.Definition.Harness, profile.Definition.Model, profile.Definition.Effort, profile.Definition.PermissionPreset, profile.Definition.Sandbox.Mode, fmt.Sprintf("%t", profile.Definition.Sandbox.Network != nil && *profile.Definition.Sandbox.Network), strings.Join(argv, "\x00")}, "\x00")
+	payload := strings.Join([]string{
+		"tusker.completion-worker-policy/v4",
+		lane,
+		profile.Name,
+		profile.Source,
+		profile.Definition.Harness,
+		profile.Definition.Model,
+		profile.Definition.Effort,
+		profile.Definition.PermissionPreset,
+		profile.Definition.Sandbox.Mode,
+		fmt.Sprintf("%t", profile.Definition.Sandbox.Network != nil && *profile.Definition.Sandbox.Network),
+		fmt.Sprintf("raw_log_max_bytes=%d", completionAuthoritativeRawLogMaxBytes),
+		"raw_log_overflow=kill_process_group",
+		strings.Join(argv, "\x00"),
+	}, "\x00")
 	sum := sha256.Sum256([]byte(payload))
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }

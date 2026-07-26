@@ -139,6 +139,7 @@ func TestPersistedReviewResultRejectsTamperedVerdictAndTimestamp(t *testing.T) {
 func TestPersistedReviewResultV1RemainsAuditOnly(t *testing.T) {
 	legacy := validStoredReviewResult()
 	legacy.Schema = reviewResultSchemaV1
+	legacy.WorkerPolicyFP = ""
 	legacy.CreatedAt = "" // v1 did not sign a timestamp.
 	legacy.ResultRevision = reviewResultFingerprint(legacy)
 	if err := validatePersistedReviewResult(legacy); err != nil {
@@ -147,6 +148,29 @@ func TestPersistedReviewResultV1RemainsAuditOnly(t *testing.T) {
 	legacy.CreatedAt = "2026-07-25T11:00:00Z"
 	if err := validatePersistedReviewResult(legacy); err != nil {
 		t.Fatalf("v1 timestamp should remain non-authoritative audit metadata: %v", err)
+	}
+}
+
+func TestReviewResultPolicyFieldMatchesAuthoritySchema(t *testing.T) {
+	v3 := validStoredReviewResult()
+	v3.WorkerPolicyFP = ""
+	if err := normalizeReviewResult(&v3); err == nil {
+		t.Fatal("v3 review result without worker policy authenticated")
+	}
+	v2 := validStoredReviewResult()
+	v2.Schema = reviewResultSchemaV2
+	if err := normalizeReviewResult(&v2); err == nil {
+		t.Fatal("non-authoritative v2 review result carried a worker policy")
+	}
+	v2.WorkerPolicyFP = ""
+	v2.RunnerProfile = ""
+	if err := normalizeReviewResult(&v2); err != nil {
+		t.Fatalf("generic authority-less v2 typed transport rejected: %v", err)
+	}
+	v3 = validStoredReviewResult()
+	v3.RunnerProfile = ""
+	if err := normalizeReviewResult(&v3); err == nil {
+		t.Fatal("v3 review result without an exact runner profile authenticated")
 	}
 }
 

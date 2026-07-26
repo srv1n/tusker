@@ -3449,6 +3449,7 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 	var authoritativeArgv []string
 	var authoritativeExecutableFP string
 	var authoritativeSearchPath string
+	var authoritativeRawLogMaxBytes int64
 	workspaceManager := NewWorkspaceManager()
 	workspaceStrategy := d.workspaceStrategyForDispatch(project, wfFile.Data, run)
 	branchName, branchBase, err := v7WorkspaceBranchForTask(project.VaultRoot, note)
@@ -3488,6 +3489,7 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 		if err != nil {
 			return run, false, tuskerError(errorInvalidTransition, err.Error())
 		}
+		authoritativeRawLogMaxBytes = completionAuthoritativeRawLogMaxBytes
 		policyFP := expectedPolicyFP
 		switch lane {
 		case runLaneExecute:
@@ -3734,6 +3736,7 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 		PromptPath:          promptPath,
 		EventSinkPath:       eventSinkPath,
 		RawLogPath:          rawLogPath,
+		RawLogMaxBytes:      authoritativeRawLogMaxBytes,
 		StatusPath:          statusPath,
 		Command:             command,
 		CommandArgv:         append([]string(nil), authoritativeArgv...),
@@ -3797,6 +3800,7 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 			PromptPath:          startReq.PromptPath,
 			EventSinkPath:       startReq.EventSinkPath,
 			RawLogPath:          startReq.RawLogPath,
+			RawLogMaxBytes:      startReq.RawLogMaxBytes,
 			StatusPath:          startReq.StatusPath,
 			Command:             startReq.Command,
 			CommandArgv:         append([]string(nil), startReq.CommandArgv...),

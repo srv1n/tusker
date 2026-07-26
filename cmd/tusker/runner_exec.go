@@ -28,6 +28,7 @@ type runnerExecRequest struct {
 	PromptPath          string
 	EventSinkPath       string
 	RawLogPath          string
+	RawLogMaxBytes      int64
 	StatusPath          string
 	RunnerPathPrefix    string
 	Command             string
@@ -88,6 +89,24 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 	if err := ensureDir(filepath.Dir(req.StatusPath)); err != nil {
 		return nil, err
 	}
+	if req.RawLogMaxBytes < 0 {
+		return nil, tuskerError(errorConfigInvalid, "runner raw-log byte limit cannot be negative")
+	}
+	if strings.TrimSpace(req.CommandExecutableFP) != "" && req.RawLogMaxBytes != completionAuthoritativeRawLogMaxBytes {
+		return nil, tuskerError(errorConfigInvalid, fmt.Sprintf(
+			"completion authority requires the exact %d-byte raw-log policy",
+			completionAuthoritativeRawLogMaxBytes,
+		))
+	}
+	boundedRawLog := req.RawLogMaxBytes > 0
+	if boundedRawLog {
+		if err := os.Remove(req.StatusPath); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("remove stale runner status before bounded launch: %w", err)
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
 	workspaceCWD, err := runnerWorkspaceCWD(runner, req.WorkspacePath)
 	if err != nil {
 		return nil, err
@@ -141,18 +160,34 @@ payload={"exit_code":code,"completed_at":datetime.datetime.now(datetime.timezone
 open(path,"w",encoding="utf-8").write(json.dumps(payload)+"\n")
 PY
 `, scriptCommand)
+	if boundedRawLog {
+		// The trusted parent owns both output streams and the only writable raw
+		// log descriptor. In particular, the fixed shell does not redirect an
+		// authoritative worker around the byte-budget writer.
+		script = fmt.Sprintf(`( %s ) < "$TUSKER_PROMPT_PATH"
+`, scriptCommand)
+	}
 
-	if err := eventLog.Append("attempt_started", req.AttemptID, runner, map[string]any{
-		"command":     command,
-		"item_id":     req.ItemID,
-		"resume_mode": req.ResumeMode,
-		"session_ref": req.SessionRef,
-	}); err != nil {
+	startedPayload := map[string]any{
+		"command": command, "item_id": req.ItemID,
+		"resume_mode": req.ResumeMode, "session_ref": req.SessionRef,
+	}
+	if boundedRawLog {
+		startedPayload["raw_log_max_bytes"] = req.RawLogMaxBytes
+		startedPayload["raw_log_overflow"] = "kill_process_group"
+	}
+	if err := eventLog.Append("attempt_started", req.AttemptID, runner, startedPayload); err != nil {
 		return nil, fmt.Errorf("record %s attempt_started event: %w", runner, err)
 	}
 
 	cmdArgs := append([]string{shellFlag, script}, commandArgs...)
-	cmd := exec.CommandContext(ctx, shellExecutable, cmdArgs...)
+	var cmd *exec.Cmd
+	if boundedRawLog {
+		cmd = exec.Command(shellExecutable, cmdArgs...)
+		cmd.WaitDelay = boundedRunnerWaitDelay
+	} else {
+		cmd = exec.CommandContext(ctx, shellExecutable, cmdArgs...)
+	}
 	cmd.Dir = workspaceCWD
 	if err := assertRunnerCommandDir(runner, cmd.Dir, req.WorkspacePath); err != nil {
 		return nil, err
@@ -170,25 +205,46 @@ PY
 	})
 	closeStdin := attachDevNullStdin(cmd)
 	defer closeStdin()
-	if file, err := os.OpenFile(req.RawLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+	var authoritativeLog *boundedRawLogWriter
+	if boundedRawLog {
+		authoritativeLog, err = openBoundedRawLog(req.RawLogPath, req.RawLogMaxBytes, req.ResumeMode)
+		if err != nil {
+			return nil, fmt.Errorf("open completion-authoritative raw log: %w", err)
+		}
+		cmd.Stdout = authoritativeLog
+		cmd.Stderr = authoritativeLog
+	} else if file, openErr := os.OpenFile(req.RawLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); openErr == nil {
 		defer file.Close()
 		cmd.Stdout = file
 		cmd.Stderr = file
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
+		if authoritativeLog != nil {
+			_ = authoritativeLog.close()
+		}
 		return nil, err
 	}
 	pid := cmd.Process.Pid
 	pgid := processGroupID(pid)
 	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
-	if err := eventLog.Append("attempt_spawned", req.AttemptID, runner, map[string]any{
-		"pid": pid, "status_path": req.StatusPath,
-	}); err != nil {
+	spawnedPayload := map[string]any{"pid": pid, "status_path": req.StatusPath}
+	if boundedRawLog {
+		spawnedPayload["raw_log_max_bytes"] = req.RawLogMaxBytes
+	}
+	if err := eventLog.Append("attempt_spawned", req.AttemptID, runner, spawnedPayload); err != nil {
 		terminateAndReapRunnerCommand(cmd, pgid)
+		if authoritativeLog != nil {
+			_ = authoritativeLog.close()
+		}
 		return nil, fmt.Errorf("record %s attempt_spawned event for pid %d; launched process was terminated: %w", runner, pid, err)
 	}
-	_ = cmd.Process.Release()
+	if authoritativeLog != nil {
+		authoritativeLog.bindTerminator(func() { killRunnerProcessGroup(cmd, pgid) })
+		go monitorBoundedRunnerCommand(ctx, cmd, pgid, authoritativeLog, req.StatusPath)
+	} else {
+		_ = cmd.Process.Release()
+	}
 
 	return &StartResult{
 		SessionRef:   firstNonEmpty(req.SessionRef, extractSessionRef(req.RawLogPath)),

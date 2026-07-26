@@ -847,6 +847,7 @@ func TestClaudeLiveRunnerCompletesFixtureThroughReviewLane(t *testing.T) {
 	project := registerAutomationTestProject(t, vault)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Claude fixture", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"work_revision": 1})
 	if _, err := upsertV7Verification(vault, "APP-T-0001", v7VerificationRow{CoverText: "A1", Check: "command: true", Result: "pass", Notes: "fixture proof"}, "agent:test"); err != nil {
 		t.Fatal(err)
 	}
@@ -854,7 +855,7 @@ func TestClaudeLiveRunnerCompletesFixtureThroughReviewLane(t *testing.T) {
 
 	scriptPath := filepath.Join(filepath.Dir(vault), "fake-claude.py")
 	script := `#!/usr/bin/env python3
-import json, os, pathlib, subprocess, sys
+import datetime, json, os, pathlib, re, subprocess, sys
 def promote_note_to_review():
     path = pathlib.Path(os.environ["TUSKER_NOTE_PATH"])
     text = path.read_text()
@@ -862,6 +863,45 @@ def promote_note_to_review():
     text = text.replace('readiness: "ready"', 'readiness: "ready"')
     text = text.replace('next_owner: "agent"', 'next_owner: "reviewer:agent"')
     path.write_text(text)
+def prompt_arg(prompt, name):
+    match = re.search(r"--" + re.escape(name) + r"\s+(\S+)", prompt)
+    assert match, (name, prompt)
+    return match.group(1)
+def emit_review_proposal(msg):
+    prompt = msg["message"]["content"]
+    attempt_id = os.environ["TUSKER_ATTEMPT_ID"]
+    actor_match = re.search(r"(?m)^- Reviewer actor:\s*(\S+)\s*$", prompt)
+    assert actor_match, prompt
+    assert prompt_arg(prompt, "attempt") == attempt_id
+    work_revision = int(prompt_arg(prompt, "work-rev"))
+    assert work_revision == int(os.environ["TUSKER_WORK_REVISION"])
+    result = {
+        "schema": "tusker.review-result/v2",
+        "project_id": os.environ["TUSKER_PROJECT_ID"],
+        "task_id": os.environ["TUSKER_RECORD_ID"],
+        "task_state_rev": prompt_arg(prompt, "task-rev"),
+        "work_revision": work_revision,
+        "implementation_sha": prompt_arg(prompt, "source-sha"),
+        "attempt_id": attempt_id,
+        "actor": actor_match.group(1),
+        "runner": "",
+        "runner_profile": "",
+        "worker_policy_fingerprint": "",
+        "covers": [],
+        "proof_fingerprint": prompt_arg(prompt, "proof-fingerprint"),
+        "gate_fingerprint": prompt_arg(prompt, "gate-fingerprint"),
+        "verdict": "changes_requested",
+        "summary": "generic Claude typed review",
+        "findings": ["fixture finding"],
+        "result_revision": "",
+        "created_at": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    }
+    proposal = {
+        "schema": "tusker.review-proposal/v1",
+        "attempt_id": attempt_id,
+        "result": result,
+    }
+    print("TUSKER_REVIEW_PROPOSAL_V1 " + json.dumps(proposal, separators=(",", ":")), flush=True)
 for line in sys.stdin:
     msg=json.loads(line)
     if msg.get("type")=="control_request":
@@ -881,6 +921,7 @@ for line in sys.stdin:
             promote_note_to_review()
         elif lane=="review":
             assert 'status: "review"' in pathlib.Path(os.environ["TUSKER_NOTE_PATH"]).read_text()
+            emit_review_proposal(msg)
         else:
             raise AssertionError(lane)
         print(json.dumps({"type":"assistant","session_id":"claude-fixture-session","message":{"id":"msg-"+lane,"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":4,"output_tokens":2}}}), flush=True)
@@ -917,11 +958,12 @@ for line in sys.stdin:
 	defer store.Close()
 	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
 	executeRun := RunStatus{
-		ProjectID:  project.ProjectID,
-		RecordID:   "APP-T-0001",
-		ItemID:     "APP-T-0001",
-		Runner:     string(RunnerClaude),
-		LeaseState: string(LeaseStateUnclaimed),
+		ProjectID:    project.ProjectID,
+		RecordID:     "APP-T-0001",
+		ItemID:       "APP-T-0001",
+		Runner:       string(RunnerClaude),
+		LeaseState:   string(LeaseStateUnclaimed),
+		WorkRevision: 1,
 	}
 	mustUpsertRun(t, store, executeRun)
 	note, err := resolveNote(vault, "APP-T-0001")
@@ -938,6 +980,11 @@ for line in sys.stdin:
 	}
 	assertEqual(t, string(LeaseStateReleased), executeRun.LeaseState, "execute lease")
 	assertEqual(t, string(AttemptOutcomeSucceeded), executeRun.AttemptOutcome, "execute outcome")
+	implementationSHA := strings.TrimSpace(gitOutput(t, "-C", executeRun.WorkspacePath, "rev-parse", "HEAD"))
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+		"source_sha":    implementationSHA,
+		"work_revision": 1,
+	})
 	updatedNote, err := resolveNote(vault, "APP-T-0001")
 	if err != nil {
 		t.Fatal(err)
@@ -948,13 +995,32 @@ for line in sys.stdin:
 	if err != nil {
 		t.Fatal(err)
 	}
+	reviewRawLogPath := reviewRun.RawLogPath
 	reviewRun = finishDaemonRunForTest(t, daemon, project, wfFile, reviewRun)
 	if reviewRun.AttemptOutcome != string(AttemptOutcomeSucceeded) {
-		t.Fatalf("review completion failed: state=%s outcome=%s error=%s", reviewRun.LeaseState, reviewRun.AttemptOutcome, reviewRun.LastError)
+		raw, _ := readText(reviewRawLogPath)
+		if raw == "" {
+			_ = filepath.WalkDir(DefaultStateRoot(), func(path string, entry os.DirEntry, walkErr error) error {
+				if walkErr == nil && !entry.IsDir() && strings.HasSuffix(path, ".raw.log") {
+					if candidate, readErr := readText(path); readErr == nil {
+						raw += path + ":\n" + candidate + "\n"
+					}
+				}
+				return nil
+			})
+		}
+		t.Fatalf("review completion failed: state=%s outcome=%s error=%s\nraw log:\n%s", reviewRun.LeaseState, reviewRun.AttemptOutcome, reviewRun.LastError, raw)
 	}
 	assertEqual(t, runLaneReview, reviewRun.Lane, "review lane")
 	assertEqual(t, string(LeaseStateReleased), reviewRun.LeaseState, "review lease")
 	assertEqual(t, string(AttemptOutcomeSucceeded), reviewRun.AttemptOutcome, "review outcome")
+	results, err := store.ListReviewResults(project.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Result.Schema != reviewResultSchemaV2 || results[0].Result.WorkerPolicyFP != "" {
+		t.Fatalf("generic Claude review did not persist authority-less typed transport: %#v", results)
+	}
 	turns, err := store.ListTurnsForRun(project.ProjectID, "APP-T-0001")
 	if err != nil {
 		t.Fatal(err)

@@ -75,6 +75,7 @@ type StartRequest struct {
 	PromptPath          string
 	EventSinkPath       string
 	RawLogPath          string
+	RawLogMaxBytes      int64
 	StatusPath          string
 	Command             string
 	CommandArgv         []string
@@ -109,6 +110,7 @@ type ResumeRequest struct {
 	PromptPath          string
 	EventSinkPath       string
 	RawLogPath          string
+	RawLogMaxBytes      int64
 	StatusPath          string
 	Command             string
 	CommandArgv         []string

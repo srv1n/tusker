@@ -214,6 +214,14 @@ func TestWorkerReviewSubmitEmitsProposalWithoutOpeningRuntimeStore(t *testing.T)
 	if !strings.HasPrefix(output, reviewProposalMarker) {
 		t.Fatalf("worker review submit did not emit the bounded proposal marker: %q", output)
 	}
+	var proposal reviewProposal
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(strings.TrimSpace(output), reviewProposalMarker)), &proposal); err != nil {
+		t.Fatal(err)
+	}
+	if proposal.Result.Schema != reviewResultSchemaV2 || proposal.Result.WorkerPolicyFP != "" ||
+		proposal.Result.Runner != "" || proposal.Result.RunnerProfile != "" {
+		t.Fatalf("worker transport proposal claimed daemon authority: %#v", proposal.Result)
+	}
 	if fileExists(runtimeStoreDBPath(stateRoot)) {
 		t.Fatal("worker review submit opened or created the daemon runtime store")
 	}
@@ -243,6 +251,13 @@ func TestReviewProposalDaemonLifecycleBoundary(t *testing.T) {
 			t.Fatalf("terminal proposal did not release a successful review run: %#v", updated)
 		}
 		assertReviewResultCount(t, daemon.store, project.ProjectID, 1)
+		rows, err := daemon.store.ListReviewResults(project.ProjectID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rows[0].Result.Schema != reviewResultSchema || !v7CloseAuthorityDigest(rows[0].Result.WorkerPolicyFP, "sha256:") {
+			t.Fatalf("authoritative exact policies did not upgrade transport to v3: %#v", rows[0].Result)
+		}
 		if _, _, err := daemon.reconcileRun(context.Background(), project, wfFile, run); err != nil {
 			t.Fatal(err)
 		}
@@ -257,6 +272,59 @@ func TestReviewProposalDaemonLifecycleBoundary(t *testing.T) {
 		}
 		if _, _, err := daemon.reconcileRun(context.Background(), project, wfFile, run); err != nil {
 			t.Fatal(err)
+		}
+		assertReviewResultCount(t, daemon.store, project.ProjectID, 0)
+	})
+
+	for name, mutate := range map[string]func(*RunStatus){
+		"one-sided policy rejects instead of downgrading": func(run *RunStatus) {
+			run.ExecutePolicyFP = ""
+		},
+		"malformed policy rejects instead of downgrading": func(run *RunStatus) {
+			run.ExecutePolicyFP = "sha256:not-a-digest"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			project, daemon, wfFile, run := reviewProposalDaemonFixture(t)
+			defer daemon.Close()
+			mutate(&run)
+			if err := daemon.store.UpsertRun(run); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeRunnerStatusFile(run.StatusPath, 0); err != nil {
+				t.Fatal(err)
+			}
+			updated, changed, err := daemon.reconcileRun(context.Background(), project, wfFile, run)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !changed || updated.LeaseState != string(LeaseStateParkedNoProgress) ||
+				!strings.Contains(updated.LastError, "review proposal rejected") {
+				t.Fatalf("invalid claimed policy was not contained: %#v", updated)
+			}
+			assertReviewResultCount(t, daemon.store, project.ProjectID, 0)
+		})
+	}
+
+	t.Run("raw log overflow never saves", func(t *testing.T) {
+		project, daemon, wfFile, run := reviewProposalDaemonFixture(t)
+		defer daemon.Close()
+		if err := writeRunnerStatusFileWithOutcome(
+			run.StatusPath,
+			completionAuthoritativeRawLogOverflowExitCode,
+			AttemptOutcomeFailed,
+			"completion-authoritative raw log exceeded byte limit",
+			0,
+		); err != nil {
+			t.Fatal(err)
+		}
+		updated, _, err := daemon.reconcileRun(context.Background(), project, wfFile, run)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updated.AttemptOutcome == string(AttemptOutcomeSucceeded) ||
+			!strings.Contains(updated.LastError, "raw log exceeded") {
+			t.Fatalf("overflow did not remain a terminal failed transport: %#v", updated)
 		}
 		assertReviewResultCount(t, daemon.store, project.ProjectID, 0)
 	})
@@ -355,7 +423,7 @@ func reviewProposalDaemonFixture(t *testing.T) (RegisteredProject, *Daemon, Work
 		t.Fatal(err)
 	}
 	result := ReviewResult{
-		Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: run.RecordID,
+		Schema: reviewResultSchemaV2, ProjectID: project.ProjectID, TaskID: run.RecordID,
 		TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: run.WorkRevision,
 		ImplementationSHA: "abc123", AttemptID: attemptID,
 		Actor:  reviewerActorForNote(wfFile.Data.Reviewer.Actor, note),
@@ -369,6 +437,10 @@ func reviewProposalDaemonFixture(t *testing.T) (RegisteredProject, *Daemon, Work
 		t.Fatal(err)
 	}
 	if err := writeText(rawLogPath, reviewProposalMarker+string(raw)+"\n"); err != nil {
+		daemon.Close()
+		t.Fatal(err)
+	}
+	if err := os.Chmod(rawLogPath, 0o600); err != nil {
 		daemon.Close()
 		t.Fatal(err)
 	}
