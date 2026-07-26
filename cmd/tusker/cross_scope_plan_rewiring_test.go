@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	programCutoverCloseAuthorityCheck = "command: go test ./cmd/tusker -run '^TestProgramCutoverCloseAuthorityFence$' -count=1"
+	programCutoverCloseAuthorityCheck = "command: go test ./cmd/tusker -run '^TestProgramCutoverCloseAuthorityFence$' -count=1 && go test ./cmd/tusker -run '^TestProgramCutoverHumanControlFence$' -count=1"
 	dogfoodStatusCheck                = "command: tusker program cutover status --scope program-cutover-convergence/v1 --source-key low-risk-authoritative-dogfood --require dogfood-integrated --json"
 	dogfoodManualProof                = "manual proof: accountable operator runs `tusker program cutover authorize-dogfood --scope program-cutover-convergence/v1 --source-key low-risk-authoritative-dogfood --project <project> --wave <wave> --expires-at <rfc3339> --by human:operator --json` and records the resulting grant ID"
 	handoffStatusCheck                = "command: tusker program cutover status --scope program-cutover-convergence/v1 --source-key production-promotion-handoff --require release-handoff-current --dogfood-receipt <receipt> --json"
@@ -51,7 +51,21 @@ func TestCrossScopePlanRewiring(t *testing.T) {
 		{Task: "review-completion-proof-chain", Kind: "hard"},
 		{Task: "proof-operations-surface", Kind: "hard"},
 		{Task: "canonical-proof-guidance", Kind: "hard"},
+		{Task: "strict-close-and-human-control-fence", Kind: "hard"},
+		{Task: "strict-legacy-adoption-and-producer-fence", Kind: "hard"},
 	})
+	bootstrap := crossScopeProgramTask(t, exactAuthority, "strict-bootstrap-capability-fence")
+	if len(bootstrap.Dependencies) != 0 || !stringContainsAll(bootstrap.Acceptance[0].Outcome, "required_capabilities", "reject", "before writes") || !containsString(bootstrap.OwnedPaths, "cmd/tusker/delivery_capabilities.go") {
+		t.Fatalf("Plan 18 strict bootstrap contract drifted: %#v", bootstrap)
+	}
+	legacyFence := crossScopeProgramTask(t, exactAuthority, "strict-legacy-adoption-and-producer-fence")
+	if !stringContainsAll(legacyFence.Acceptance[0].Outcome, "progressed", "terminal", "strict completion-authority fingerprint") || !stringContainsAll(legacyFence.Acceptance[2].Outcome, "delivery proof-contract", "strict completion-authority", "Cross-scope") || !containsString(legacyFence.OwnedPaths, "cmd/tusker/delivery_cross_scope.go") || !containsString(legacyFence.OwnedPaths, "cmd/tusker/v7_dependencies.go") {
+		t.Fatalf("Plan 18 legacy producer fence drifted: %#v", legacyFence)
+	}
+	strictControl := crossScopeProgramTask(t, exactAuthority, "strict-close-and-human-control-fence")
+	if !stringContainsAll(strictControl.Acceptance[0].Outcome, "accept", "close", "finish", "force") || !stringContainsAll(strictControl.Acceptance[2].Outcome, "TUSKER_ATTEMPT_ID", "forged human actor", "strict manual gates") || !containsString(strictControl.OwnedPaths, "cmd/tusker/accept_cmd.go") || !containsString(strictControl.OwnedPaths, "cmd/tusker/v7_close_ceremony.go") || !containsString(strictControl.OwnedPaths, "cmd/tusker/v7_control_cmd.go") || containsString(strictControl.OwnedPaths, "cmd/tusker/program_cutover_human_control_test.go") {
+		t.Fatalf("Plan 18 strict close/manual-control fence drifted: %#v", strictControl)
+	}
 
 	program := plans["17"]
 	if program.Scope != "program-cutover-convergence/v1" {
@@ -68,14 +82,25 @@ func TestCrossScopePlanRewiring(t *testing.T) {
 		crossScopeProgramDependency("exact-verification-authority-e2e", "exact-verification-authority/v1"),
 	})
 	assertCrossScopeProgramVerification(t, transaction, "A1,A2,A3,A4", programCutoverCloseAuthorityCheck)
-	for _, path := range []string{"cmd/tusker/v7_control_cmd.go", "cmd/tusker/v7_proof_cmd.go", "cmd/tusker/v7_closeout_cmd.go", "cmd/tusker/v7_completion_receipt.go", "cmd/tusker/program_cutover_close_authority_test.go"} {
+	for _, path := range []string{"cmd/tusker/program_cutover.go", "cmd/tusker/program_cutover_cmd.go", "cmd/tusker/program_cutover_close_authority_test.go", "cmd/tusker/program_cutover_human_control_test.go"} {
 		if !containsString(transaction.OwnedPaths, path) {
-			t.Fatalf("transaction contract must own close-authority path %q: %#v", path, transaction.OwnedPaths)
+			t.Fatalf("transaction contract must own program-specific close-authority path %q: %#v", path, transaction.OwnedPaths)
+		}
+	}
+	for _, genericPath := range []string{"cmd/tusker/v7_control_cmd.go", "cmd/tusker/v7_proof_cmd.go", "cmd/tusker/v7_closeout_cmd.go", "cmd/tusker/v7_completion_receipt.go"} {
+		if containsString(transaction.OwnedPaths, genericPath) {
+			t.Fatalf("Plan 17 must consume, not own, generic strict authority path %q: %#v", genericPath, transaction.OwnedPaths)
 		}
 	}
 	if len(transaction.Acceptance) != 4 || !stringContainsAll(transaction.Acceptance[2].Outcome, "gate satisfy --evidence", "replacement generic test row", "status prose", "cannot close, unlock, release, or move a ref") || !stringContainsAll(transaction.Acceptance[3].Outcome, "cutover receipts", "does not claim generic V2 exact-proof coverage") {
 		t.Fatalf("transaction close-authority contract drifted: %#v", transaction.Acceptance)
 	}
+	if !stringContainsAll(transaction.Acceptance[0].Outcome, "forged `human:*` actor strings", "dispatched-lane gate control") {
+		t.Fatalf("Plan 17 must consume the generic human-control fence: %#v", transaction.Acceptance[0])
+	}
+	assertCrossScopeProgramNoInternalOwnedPathOverlap(t, program)
+	assertCrossScopeProgramNoInternalOwnedPathOverlap(t, exactAuthority)
+	assertCrossScopeProgramNoOwnedPathOverlap(t, program, exactAuthority)
 	assertCrossScopeProgramTask(t, program, "low-risk-authoritative-dogfood", []deliveryDependency{
 		{Task: "program-cutover-transaction-contract", Kind: "hard"},
 		crossScopeProgramDependency("provider-live-smoke", "full-gate-lifecycle-provider/v1"),
@@ -102,11 +127,16 @@ func TestCrossScopePlanRewiring(t *testing.T) {
 		filepath.Join(repo, "docs", "plans", "12-opt-in-scheduled-promotion-v2.yaml"),
 		filepath.Join(repo, "docs", "plans", "14-opt-in-factory-execution-control-v2.yaml"),
 		filepath.Join(repo, "docs", "plans", "15-opt-in-full-gate-lifecycle-provider-v2.yaml"),
-		filepath.Join(repo, "docs", "plans", "17-program-cutover-convergence-v2.yaml"),
-		filepath.Join(repo, "docs", "plans", "18-exact-verification-contract-authority-v2.yaml"),
 	} {
 		assertCrossScopeProgramPlanCurrent(t, filepath.Join(repo, ".tusker"), path)
 	}
+	for _, path := range []string{
+		filepath.Join(repo, "docs", "plans", "17-program-cutover-convergence-v2.yaml"),
+		filepath.Join(repo, "docs", "plans", "18-exact-verification-contract-authority-v2.yaml"),
+	} {
+		assertCrossScopeProgramBootstrapCapabilityFence(t, filepath.Join(repo, ".tusker"), path)
+	}
+	assertCrossScopeProgramLegacyCapabilityRefusal(t)
 
 	assertCrossScopeProgramImportMigration(t)
 }
@@ -264,6 +294,87 @@ func assertCrossScopeProgramPlanCurrent(t *testing.T, vault, path string) {
 	report, err := deliveryPlanDoctor(vault, path)
 	if err != nil || !report.OK {
 		t.Fatalf("doctor %s = %#v, %v", path, report, err)
+	}
+}
+
+func assertCrossScopeProgramBootstrapCapabilityFence(t *testing.T, vault, path string) {
+	t.Helper()
+	plan := readCrossScopeProgramPlan(t, path)
+	context, err := buildDeliveryPlanningContextForScope(vault, strings.Join(plan.SpecRefs, ","), plan.Scope)
+	if err != nil {
+		t.Fatalf("planning context %s: %v", path, err)
+	}
+	if plan.ContextFingerprint != context.ContextFingerprint {
+		t.Fatalf("stale context fingerprint in %s: got %s want %s", path, plan.ContextFingerprint, context.ContextFingerprint)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "required_capabilities: [strict_v2_proof_authority/v1]") {
+		t.Fatalf("%s does not require strict V2 proof authority", path)
+	}
+	report, err := deliveryPlanDoctor(vault, path)
+	if err == nil || report.OK || !strings.Contains(err.Error(), "required_capabilities") {
+		t.Fatalf("legacy doctor accepted capability-bound %s: %#v, %v", path, report, err)
+	}
+}
+
+func assertCrossScopeProgramLegacyCapabilityRefusal(t *testing.T) {
+	t.Helper()
+	vault := deliveryTestVault(t)
+	path := writeDeliveryV2TestPlan(t, vault, validDeliveryPlanV2())
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilityRaw := string(raw) + "\nrequired_capabilities: [strict_v2_proof_authority/v1]\n"
+	if err := writeText(path, capabilityRaw); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotDeliveryV2Records(t, vault)
+	err = deliveryV2ImportCmd(vault, path, Args{"vault": vault, "quiet": "true"})
+	if err == nil || !strings.Contains(err.Error(), "required_capabilities") {
+		t.Fatalf("legacy import accepted strict capability fixture: %v", err)
+	}
+	assertEqual(t, before, snapshotDeliveryV2Records(t, vault), "legacy capability refusal is inert")
+	_, err = deliveryStart(Args{
+		"vault": vault, "plan": path, "by": "human:fixture",
+		"confirm": deliveryFingerprint([]byte(capabilityRaw)), "quiet": "true",
+	}, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
+	if err == nil || !strings.Contains(err.Error(), "required_capabilities") {
+		t.Fatalf("legacy Start accepted strict capability fixture: %v", err)
+	}
+	assertEqual(t, before, snapshotDeliveryV2Records(t, vault), "legacy Start capability refusal is inert")
+}
+
+func assertCrossScopeProgramNoOwnedPathOverlap(t *testing.T, left, right deliveryPlanV2) {
+	t.Helper()
+	leftOwners := map[string]string{}
+	for _, task := range left.Tasks {
+		for _, path := range task.OwnedPaths {
+			leftOwners[path] = task.SourceKey
+		}
+	}
+	for _, task := range right.Tasks {
+		for _, path := range task.OwnedPaths {
+			if owner := leftOwners[path]; owner != "" {
+				t.Fatalf("owned-path overlap %s/%s and %s/%s at %q", left.Scope, owner, right.Scope, task.SourceKey, path)
+			}
+		}
+	}
+}
+
+func assertCrossScopeProgramNoInternalOwnedPathOverlap(t *testing.T, plan deliveryPlanV2) {
+	t.Helper()
+	owners := map[string]string{}
+	for _, task := range plan.Tasks {
+		for _, path := range task.OwnedPaths {
+			if prior := owners[path]; prior != "" {
+				t.Fatalf("owned-path overlap within %s: %s and %s both own %q", plan.Scope, prior, task.SourceKey, path)
+			}
+			owners[path] = task.SourceKey
+		}
 	}
 }
 
@@ -441,6 +552,11 @@ func readCrossScopeProgramPlan(t *testing.T, path string) deliveryPlanV2 {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The checked-in Plans 17/18 intentionally require a capability this legacy
+	// parser cannot accept. Strip only that bootstrap fence for static topology
+	// inspection; assertCrossScopeProgramBootstrapCapabilityFence separately
+	// proves the real old parser/doctor/import reject it before mutation.
+	raw = []byte(strings.Replace(string(raw), "required_capabilities: [strict_v2_proof_authority/v1]\n", "", 1))
 	var plan deliveryPlanV2
 	if err := yaml.Unmarshal(raw, &plan); err != nil {
 		t.Fatalf("decode %s: %v", path, err)

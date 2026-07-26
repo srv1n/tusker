@@ -9,18 +9,28 @@ capsule:
 
 # Exact verification contract authority
 
-Status: proposed implementation contract  
+Status: proposed implementation contract
 Date: 2026-07-26
 
 ## Outcome
 
 Requirements, acceptance, and important tests are the user's control surface for
-the software factory. An imported V2 task therefore cannot be completed because
-some plausible test passed. Tusker must preserve the exact reviewed acceptance
-and verification rows as immutable task material, accept proof only for those
-rows, bind independent review to that proof snapshot and implementation
-revision, and recheck the same authority immediately before integration and
-close.
+the software factory. An imported strict V2 task therefore cannot be completed
+because some plausible test passed. Tusker must preserve the exact reviewed
+acceptance and verification rows as immutable task material, accept proof only
+for those rows, bind independent review to that proof snapshot and
+implementation revision, and recheck the same authority immediately before
+integration and close.
+
+This contract has a bootstrap boundary. The legacy generic engine is not trusted
+to import, run, review, or close the plan that replaces its proof authority.
+Plan 18 and strict consumers declare `strict_v2_proof_authority/v1`; until that
+capability exists, legacy import and Start reject them before writes. A small
+capability parser/fence and the canonical strict-importer foundation are landed
+and reviewed interactively while automation is off. Only then is this plan's
+provenance regenerated, reviewed again, and its whole held DAG imported strict.
+That local interactive review is a human process boundary, not a cryptographic
+identity claim or a substitute for strict proof.
 
 The authority chain is:
 
@@ -35,7 +45,30 @@ V2 plan
 ```
 
 Every arrow is fail-closed and fingerprint-bound. Markdown remains the readable
-surface, not a second source of authority.
+surface, not a second source of authority. The first strict import happens only
+after the separately reviewed bootstrap foundation exists; old generic receipts
+do not cross this boundary.
+
+## Bootstrap and capability fence
+
+`required_capabilities` is a normalized V2 field. The old importer/doctor/Start
+implementation must deterministically refuse a plan requiring an unavailable
+capability, rather than treating an unknown field, generic focused test, or
+doctor-green report as authority. The bootstrap is deliberately two-stage:
+
+1. With automation off, land and independently review the narrow capability
+   parser/fence and canonical strict-importer foundation interactively. Do not
+   create a Plan-18 task, generic proof row, review result, completion receipt,
+   or gate waiver that claims this work is strict-complete.
+2. The new binary recognizes `strict_v2_proof_authority/v1`. Regenerate this
+   plan's context and provenance with that binary, review the new bytes, then
+   strictly import the complete held DAG. Every task begins pending exact proof
+   and can complete only through the strict review/completion path below.
+
+The capability fence is separately reviewable code, not magic metadata. Before
+it lands, a parser rejection is the required fail-closed state; after it lands,
+an explicit unavailable-capability refusal is required. Plan 17 also requires
+this capability and therefore cannot be used as a legacy bypass.
 
 ## Root cause
 
@@ -96,8 +129,13 @@ For a strict V2 task, `tusker verify add` and worker-result ingestion:
 7. make stale, failed, blocked, and pending rows non-green.
 
 Evidence cards and unrelated passing rows cannot substitute for a canonical
-machine check. Manual rows are green only from the exact current satisfied or
-explicitly waived human gate, including its hard-closure material fingerprint.
+machine check. Manual rows are green only from the exact current typed
+human-control receipt and satisfied (never lane-forged) source-keyed gate,
+including its hard-closure material fingerprint. A literal `--by human:*` actor
+string is not authority. The local interactive control path may record the
+bounded receipt; execute and review lanes identified by `TUSKER_ATTEMPT_ID` or
+lane policy cannot satisfy or waive it, even with `--force`. This is deliberately
+not a claim of cryptographic human identity.
 
 Tusker does not pretend a command receipt is cryptographic proof that the
 underlying program is correct. The independent reviewer remains responsible for
@@ -124,16 +162,26 @@ integration, task close, audit, and successor wake. Crash replay converges on
 one outcome and cannot reuse a stale pass.
 
 No model may edit the canonical contract, choose its own substitute proof, mark
-a manual row passed, integrate, close, or wake successors.
+a manual row passed, integrate, close, or wake successors. Strict tasks also
+reject legacy `accept`, `close`, `finish`, generic `gate satisfy`, and `--force`
+shortcuts unless the deterministic completion handler verifies the current exact
+proof, typed review, current gate closure, and strict completion receipt.
 
-## Adoption and compatibility
+## Adoption, producers, and compatibility
 
-- New V2 imports are strict.
-- Held V2 tasks may be re-imported idempotently.
-- A progressed V2 task may receive a metadata-only strict-contract adoption
-  only when the reviewed source plan still resolves and its exact existing
-  delivery task fingerprint matches. Drift requires explicit rework; Tusker
-  never guesses.
+- A held V2 task may be re-imported to install a strict pending contract
+  idempotently.
+- A progressed or terminal pre-strict V2 task remains legacy and is ineligible
+  for strict dispatch, readiness, gate closure, closeout, or cross-scope
+  production. It must be reopened/reworked, or explicit strict adoption must
+  first invalidate its legacy proof and review, then rerun exact checks on the
+  bound implementation, obtain independent typed review, and record an
+  authenticated strict completion/adoption receipt. Metadata alone never
+  adopts authority.
+- Cross-scope projections, readiness, and gate closure bind the producer's
+  delivery-contract fingerprint, delivery proof-contract fingerprint, and
+  strict completion-authority fingerprint. Missing, legacy, stale, substituted,
+  or drifted values fail closed; a familiar scope/source key is not a rebind.
 - V1 plans, direct singleton tasks, and historical non-V2 work keep their
   existing proof behavior until explicitly adopted.
 - Authoritative completion refuses a V2 task that claims strict factory
@@ -172,17 +220,18 @@ project, arm a wave, start a daemon/runtime, release, spend, or move a ref.
 | Review pass targets prior work revision | Rejected before completion. |
 | Gate is satisfied before hard closure or then drifts | Existing gate guards reject or stale the authority. |
 | Crash after review but before close | Replay rechecks exact current tuple and converges once. |
-| Existing held V2 task is re-imported | Strict projection is added idempotently. |
-| Existing progressed V2 task matches reviewed source exactly | Explicit metadata-only adoption is available. |
-| Existing progressed V2 task drifted | Fail closed with exact rework/adoption action. |
+| Existing held V2 task is re-imported | Strict pending projection is installed idempotently. |
+| Existing progressed/terminal pre-strict V2 task | Legacy-only and ineligible until strict rework or full receipt-backed adoption. |
+| Cross-scope producer lacks strict proof/completion fingerprints | Consumer, readiness, and gate closure refuse. |
+| Legacy importer/Start sees Plan 18 capability | Reject before writes; bootstrap remains interactive and automation-off. |
 | V1 or direct singleton task | Legacy behavior remains available and is labeled non-strict. |
 
 ## Acceptance
 
 | ID | Observable requirement |
 | --- | --- |
-| R1 | V2 import preserves one immutable canonical acceptance/verification contract whose fingerprint participates in wave authority and whose readable Markdown projection cannot drift. |
-| R2 | Proof, review, and completion accept only exact current machine rows and exact human gates bound to the current task, work, source, policy, and dependency material. |
+| R1 | Strict V2 import preserves one immutable canonical acceptance/verification contract whose fingerprint participates in wave authority, while legacy completed work cannot become strict by metadata alone. |
+| R2 | Proof, review, completion, cross-scope production, and manual gates accept only current fingerprints and typed receipts bound to the current task, work, source, policy, and dependency material. |
 | R3 | Operators and installed agents see the exact missing or stale contract in product language without logs or contract-weakening controls. |
-| R4 | A hermetic adversarial fixture proves substitution, injection, manual spoof, stale source, crash replay, adoption, and legacy compatibility without live automation or ref movement. |
-
+| R4 | Hermetic adversarial fixtures prove substitution, injection, forged manual control, legacy-done activation refusal, stale source, crash replay, receipt-backed adoption, and legacy compatibility without live automation or ref movement. |
+| R5 | Legacy import/Start cannot bootstrap Plan 18; an interactive automation-off foundation precedes regenerated strict provenance and held-DAG import. |

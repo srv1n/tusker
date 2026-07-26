@@ -4,23 +4,24 @@ title: Program cutover convergence
 epic: ORC
 spec_refs:
   - docs/specs/17-program-cutover-convergence.md
-context_fingerprint: sha256:0b55ff6074e6a3ec416111a0fe014247bf2430a412763ed5dca7595b0a8583e5
+context_fingerprint: sha256:47bca3e30ed17c699e487050d2da03bb693e45448c25dd9b04a77525ca67d83c
+required_capabilities: [strict_v2_proof_authority/v1]
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
 factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
 summary: >-
-  Import last after independent default-off shadow producers and the exact
-  verification authority frontier, then compose one human-authorized low-risk
-  dogfood and production-promotion handoff.
+  Import last only through the strict V2 importer, after independently strict
+  current shadow producers and the exact-verification authority frontier, then
+  compose one human-authorized low-risk dogfood and promotion handoff.
 non_goals:
-  - This plan does not import producers, enable automation, arm a wave, start a daemon, start or configure a runtime, run a live smoke, release, spend, or move a Git ref.
+  - This plan does not import itself or producers through the legacy importer, enable automation, arm a wave, start a daemon, start or configure a runtime, run a live smoke, release, spend, or move a Git ref.
   - This plan does not reintroduce authority gates in plans 12 or 14; its two human gates are the sole program authority boundary.
-  - This cutover-specific receipt fence does not itself implement generic V2 exact-proof semantics; Plan 18's exact-verification-authority-e2e is a hard imported producer for that broader authority.
+  - This cutover-specific receipt fence does not itself implement generic V2 exact-proof semantics; Plan 18's strictly current exact-verification-authority-e2e is a hard imported producer for that broader authority.
 requirements:
   - id: R1
     outcome: Independent Plan-12, Plan-14, and Plan-15 shadow producers remain default-off and distinguish doctor readiness from setup-gated live smoke.
   - id: R2
-    outcome: Plan 17 imports last after its shadow producers and Plan 18's exact-verification-authority-e2e frontier, resolving every scope-qualified hard dependency before a locked, one-shot dogfood transaction can be authorized or observed.
+    outcome: Plan 17 imports last only after its shadow producers and Plan 18's exact-verification-authority-e2e frontier are strictly current (proof-contract and strict-completion authority bound), resolving every scope-qualified hard dependency before a locked, one-shot dogfood transaction can be authorized or observed.
   - id: R3
     outcome: Typed grants and immutable receipts bind one human auth gate to low-risk dogfood and one human release gate to production handoff, with prior producer authority gates obsolete in this reviewed migration.
 concurrency: 1
@@ -83,7 +84,7 @@ tasks:
       widening operational authority.
     acceptance:
       - id: A1
-        outcome: The task has hard dependencies on local shadow-convergence and exact-verification-authority/v1/exact-verification-authority-e2e; only after both current producer contracts resolve can a human-only authorize-dogfood command record a locked grant bound to the exact auth gate, task source key, project, wave, relevant task and integration revisions, expiry, and actor, rejecting free-form evidence, drift, duplicate live grants, and expired inputs.
+        outcome: The task has hard dependencies on local shadow-convergence and exact-verification-authority/v1/exact-verification-authority-e2e; only after both strictly current producer contracts resolve can a human-only authorize-dogfood command record a locked grant bound to the exact auth gate, task source key, project, wave, relevant task and integration revisions, expiry, and actor, rejecting free-form evidence, drift, duplicate live grants, expired inputs, forged `human:*` actor strings, and dispatched-lane gate control.
       - id: A2
         outcome: Dogfood consumption atomically records before and after state, the observed staging and factory transaction, rollback facts, and one immutable receipt; retry, crash, and duplicate consumption converge without a second transaction or a false integrated receipt.
       - id: A3
@@ -92,7 +93,7 @@ tasks:
         outcome: Read-only status verifies current tuple bindings while every command refuses main or ref promotion, runtime start, global enablement, unrelated wave work, release, spending, and arbitrary evidence as proof; this fence is limited to Plan-17 cutover receipts and does not claim generic V2 exact-proof coverage.
     verification:
       - covers: A1,A2,A3,A4
-        check: "command: go test ./cmd/tusker -run '^TestProgramCutoverCloseAuthorityFence$' -count=1"
+        check: "command: go test ./cmd/tusker -run '^TestProgramCutoverCloseAuthorityFence$' -count=1 && go test ./cmd/tusker -run '^TestProgramCutoverHumanControlFence$' -count=1"
     artifact:
       kind: reliability_timeline
       path: cmd/tusker/program_cutover_close_authority_test.go
@@ -102,10 +103,7 @@ tasks:
       - cmd/tusker/program_cutover.go
       - cmd/tusker/program_cutover_cmd.go
       - cmd/tusker/program_cutover_close_authority_test.go
-      - cmd/tusker/v7_control_cmd.go
-      - cmd/tusker/v7_proof_cmd.go
-      - cmd/tusker/v7_closeout_cmd.go
-      - cmd/tusker/v7_completion_receipt.go
+      - cmd/tusker/program_cutover_human_control_test.go
       - docs/runbooks/program-cutover-dogfood.md
     dependencies:
       - task: shadow-convergence
