@@ -88,3 +88,13 @@ and any normal `integration/W-0004` advance while confirming `main` remains
 unchanged. This check does not edit the reviewed task artifact
 `docs/reports/factory-mvp-first-run.md`, does not create another attempt, and
 does not enable, arm, start, release, promote, spend, or configure a provider.
+
+## Work streams
+
+<!-- tusker:delivery-import:91b2fb97ca8e3122:begin -->
+
+- `[[ORC-T-0050]]` implements delivery source `capture-first-run-readiness`.
+
+- `[[W-0004]]` is the imported delivery wave.
+
+<!-- tusker:delivery-import:91b2fb97ca8e3122:end -->
