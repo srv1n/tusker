@@ -226,6 +226,7 @@ func statusV7Cmd(args Args) error {
 		delete(data, "accepted_by")
 		delete(data, "accepted_at")
 		delete(data, "closed_at")
+		delete(data, "close_authority")
 	}
 	if nextStatus != "cancelled" {
 		delete(data, "discarded_by")
@@ -274,68 +275,25 @@ func closeV7Cmd(args Args) error {
 	if !ok {
 		return tuskerError(errorNotFound, "V7 task not found: "+id)
 	}
-	if prev := stringField(note.Data, "status"); prev != "review" && !args.Bool("force") {
-		return tuskerError(
-			errorInvalidTransition,
-			id+": close requires status review",
-			withHint("run `tusker status "+id+" review` on a control/local branch, or `tusker propose status "+id+" --status review` from an implementation branch"),
-			withContext(map[string]any{"status": prev}),
-		)
-	}
-	for _, gate := range idx.Gates {
-		if stringField(gate.Data, "status") == "open" && boolField(gate.Data, "blocking") && containsString(normalizeList(gate.Data["blocks"]), id) {
-			return tuskerError(errorInvalidTransition, id+": close blocked by open gate "+stringField(gate.Data, "id"))
-		}
-	}
-	idx = v7ReviewerIntegratedDependencyIndex(vaultPath, args, note, idx)
-	if dep, blocked := v7UnclosedDependency(note, idx); blocked {
-		return tuskerError(errorInvalidTransition, id+": close blocked by unfinished dependency "+dep.ID)
-	}
-	if missing := missingRequiredEvidence(vaultPath, id, normalizeList(note.Data["evidence_required"])); len(missing) > 0 {
-		return tuskerError(errorEvidenceGate, id+": close missing required evidence: "+strings.Join(missing, ", "))
-	}
 	actor := fallback(fallback(args.String("actor"), args.String("by")), "reviewer:agent")
-	if err := enforceV7ClosePolicy(vaultPath, note, idx, actor); err != nil {
-		return err
-	}
-	data, body, err := parseFrontmatterMustRead(note.AbsolutePath)
+	preflight, err := v7ClosePreflight(vaultPath, note, idx, v7ClosePreflightRequest{
+		Args: args, Actor: actor, Action: "close", RequireReview: true, Force: args.Bool("force"), ExpectedTaskID: id,
+	})
 	if err != nil {
 		return err
 	}
-	currentNote := note
-	currentNote.Data = data
-	currentNote.Body = body
-	if err := enforceV7AcceptanceClose(vaultPath, currentNote, idx); err != nil {
-		return err
-	}
+	data, body := preflight.Task.Data, preflight.Task.Body
 	baseRev := stringField(data, "state_rev")
 	prev := stringField(data, "status")
 	now := time.Now().UTC().Format(time.RFC3339)
-	data["status"] = "done"
-	data["readiness"] = "done"
-	if stringField(data, "proof_status") != "waived" {
-		data["proof_status"] = "satisfied"
-	}
-	data["next_owner"] = "none"
-	data["next_source"] = "status"
-	data["next_ref"] = ""
-	data["next_action"] = ""
-	data["agent_action"] = ""
-	data["machine_status"] = ""
-	data["human_status"] = ""
-	data["closeout_status"] = ""
-	data["accepted_by"] = actor
-	data["accepted_at"] = now
-	data["closed_at"] = now
-	data["updated_at"] = now
-	data["updated_by"] = actor
-	if _, err := saveV7DocumentCAS(note.AbsolutePath, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
+	applyV7TaskCloseProjection(data, actor, now, nil)
+	if _, err := saveV7CloseProjectionCAS(note.AbsolutePath, data, body, baseRev, id); err != nil {
 		return err
 	}
 	if !args.Bool("quiet") {
 		fmt.Printf("%s: %s -> done\n", id, prev)
 	}
-	if err := emitV7Event(vaultPath, id, "task", "closed", actor, map[string]any{"from": prev, "reason": args.String("reason")}); err != nil {
+	if err := emitV7TaskClosedEvent(vaultPath, id, actor, now, prev, args.String("reason"), nil); err != nil {
 		return err
 	}
 	if _, err := retireCanonicalRuntimeRowsForTask(vaultPath, id, "done", "close ceremony", ""); err != nil {
@@ -361,23 +319,14 @@ func v7ReviewerIntegratedDependencyIndex(vaultPath string, args Args, task Note,
 	if !ok {
 		return idx
 	}
-	repoRoot := v7RepoRoot(vaultPath)
-	for _, edge := range v7TaskDependencyEdges(task, idx) {
-		dependencyID := edge.ID
-		dependency, ok := idx.Tasks[dependencyID]
-		if !ok {
-			continue
-		}
-		rel, err := filepath.Rel(repoRoot, dependency.AbsolutePath)
-		if err != nil || filepath.IsAbs(rel) || strings.HasPrefix(filepath.Clean(rel), "..") {
-			continue
-		}
-		integrated, ok, err := v7GitNoteAtRef(repoRoot, v7WaveIntegrationBranch(wave), filepath.ToSlash(rel))
-		if err == nil && ok {
-			idx.Tasks[dependencyID] = integrated
-		}
+	projected, err := v7CloseDependencyIndexAtRef(vaultPath, v7WaveIntegrationBranch(wave), task, idx)
+	// This legacy helper cannot return an error. Callers which select a frozen
+	// ref (the close ceremony/reactor) use the error-returning function above;
+	// keep the live view here rather than silently manufacturing a projection.
+	if err != nil {
+		return idx
 	}
-	return idx
+	return projected
 }
 
 func enforceV7ClosePolicy(vaultPath string, task Note, idx v7Index, actor string) error {

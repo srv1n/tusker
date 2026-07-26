@@ -731,6 +731,19 @@ func writeServeCloseableReviewTask(t *testing.T, vault, id, risk string) {
 	if err := writeText(filepath.Join(vault, "work", "tasks", id+".md"), body); err != nil {
 		t.Fatal(err)
 	}
+	taskPath := filepath.Join(vault, "work", "tasks", id+".md")
+	data, taskBody, err := parseFrontmatterMustRead(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["state_rev"] = v7StateRev(data, taskBody)
+	content, err := serializeDocument(data, taskBody, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(taskPath, content); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func writeServeGate(t *testing.T, vault string) {

@@ -627,7 +627,7 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 			data["gates"] = deliveryV2TaskGateIDs(plan.v2, task.SourceKey)
 		}
 		if existing != nil && (status != "backlog" || readiness != "held") {
-			for _, field := range []string{"proof_status", "proof_required", "proof_required_owner", "evidence_budget", "gates", "evidence_required", "machine_status", "human_status", "closeout_status", "agent_action", "next_owner", "next_source", "next_ref", "next_action", "accepted_by", "accepted_at", "closed_at"} {
+			for _, field := range []string{"proof_status", "proof_required", "proof_required_owner", "evidence_budget", "gates", "evidence_required", "machine_status", "human_status", "closeout_status", "agent_action", "next_owner", "next_source", "next_ref", "next_action", "accepted_by", "accepted_at", "closed_at", "close_authority"} {
 				if value, ok := existing[field]; ok {
 					data[field] = value
 				}

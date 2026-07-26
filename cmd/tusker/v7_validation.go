@@ -17,7 +17,7 @@ var (
 	v7AcceptanceIDLine      = regexp.MustCompile(`(?i)^A\d+\s*:\s*(.+)$`)
 	v7ProtectedCommonFields = makeSet("schema", "kind", "id", "project", "state_rev")
 	v7ProtectedFieldsByKind = map[string]map[string]struct{}{
-		"task":          makeSet("status", "readiness", "wave", "next_owner", "next_source", "next_ref", "next_action", "accepted_by", "accepted_at", "closed_at", "superseded_by", "discarded_by", "discarded_at", "discard_reason"),
+		"task":          makeSet("status", "readiness", "wave", "next_owner", "next_source", "next_ref", "next_action", "accepted_by", "accepted_at", "closed_at", "close_authority", "superseded_by", "discarded_by", "discarded_at", "discard_reason"),
 		"gate":          makeSet("status", "owner", "blocking", "blocks", "satisfaction_evidence", "satisfaction_evidence_refs", "satisfied_by", "satisfied_at", "waived_by", "waived_at", "waive_reason", "obsolete_reason"),
 		"wave":          makeSet("status", "landed_at", "authorization", "authorization_fingerprint", "authorized_by", "authorized_at", "authorization_reason", "authorization_updated_by", "authorization_updated_at"),
 		"escalation":    makeSet("severity", "status", "stale_bumped_from", "stale_bumped_at", "notified_at", "notification_error", "acknowledged_by", "acknowledged_at"),
@@ -30,7 +30,7 @@ var (
 		"domain":        makeSet("status"),
 		"project_skill": makeSet("status"),
 	}
-	v7EventKinds       = makeSet("created", "updated", "status_changed", "gate_added", "gate_satisfied", "gate_waived", "gate_obsoleted", "claimed", "claim_released", "attempt_started", "attempt_handoff", "attempt_failed", "verification_added", "evidence_added", "review_requested", "review_passed", "review_failed", "closed", "reopened", "superseded", "cancelled", "decision_accepted", "lease_stale", "redaction", "redacted_replacement", "acknowledged", "stale_bumped", "notified")
+	v7EventKinds       = makeSet("created", "updated", "status_changed", "gate_added", "gate_satisfied", "gate_waived", "gate_obsoleted", "claimed", "claim_released", "attempt_started", "attempt_handoff", "attempt_failed", "verification_added", "evidence_added", "review_requested", "review_passed", "review_failed", "closed", "reopened", "superseded", "cancelled", "decision_accepted", "lease_stale", "redaction", "redacted_replacement", "acknowledged", "stale_bumped", "notified", "implicit_delivery_unit_created")
 	v7EventObjectKinds = makeSet("task", "gate", "wave", "escalation", "epic", "decision", "evidence", "attempt", "proposal", "domain", "closeout")
 	v7KnowledgeKinds   = makeSet("runbook", "decision", "invariant", "interface", "glossary", "source")
 )
@@ -193,6 +193,12 @@ func validateV7Task(note Note, ctx validationContext, where string, errors, warn
 func validateV7DoneTaskClosePolicy(note Note, ctx validationContext, where string, errors *[]Issue) {
 	data := note.Data
 	id := stringField(data, "id")
+	if _, authenticated, err := authenticatedV7TaskCloseAuthority(note, v7ProjectID(ctx.VaultPath)); err != nil {
+		*errors = append(*errors, issue("DONE_TASK_CLOSE_AUTHORITY_INVALID", err.Error(), where, "restore the exact protected completion commit/task/receipt projection; current policy cannot authenticate a historical automated close", nil))
+		return
+	} else if authenticated {
+		return
+	}
 	risk := strings.ToLower(fallback(stringField(data, "risk"), "medium"))
 	actor := stringField(data, "accepted_by")
 	policy, err := v7ClosePolicyFor(ctx.VaultPath, risk)
@@ -1614,7 +1620,7 @@ func validateV7Events(vaultPath string) ([]Issue, []Issue, int) {
 			errors = append(errors, issue(errorInvalidField, "invalid V7 event JSON: "+err.Error(), rel, "", nil))
 			return nil
 		}
-		validateV7Event(data, raw, rel, &errors, &warnings)
+		validateV7Event(vaultPath, data, raw, rel, &errors, &warnings)
 		return nil
 	})
 	if err != nil {
@@ -1631,7 +1637,7 @@ func v7RelativeToVault(vaultPath, path string) string {
 	return filepath.ToSlash(rel)
 }
 
-func validateV7Event(data map[string]any, raw, where string, errors, warnings *[]Issue) {
+func validateV7Event(vaultPath string, data map[string]any, raw, where string, errors, warnings *[]Issue) {
 	for _, field := range []string{"schema", "id", "project", "object", "object_kind", "event_kind", "actor", "at"} {
 		if stringField(data, field) == "" {
 			*errors = append(*errors, issue(errorMissingField, fmt.Sprintf(`missing required event field "%s"`, field), where, "", map[string]any{"field": field}))
@@ -1649,6 +1655,24 @@ func validateV7Event(data map[string]any, raw, where string, errors, warnings *[
 	if at := stringField(data, "at"); at != "" {
 		if _, err := time.Parse(time.RFC3339, at); err != nil {
 			*errors = append(*errors, issue(errorInvalidField, "V7 event at must be RFC3339", where, "", map[string]any{"field": "at"}))
+		}
+	}
+	if stringField(data, "event_kind") == "closed" {
+		payload := mapField(data, "payload")
+		if value, present := payload["close_authority"]; present {
+			fact, ok := v7TaskCloseAuthorityFromAny(value)
+			if !ok {
+				*errors = append(*errors, issue("EVENT_CLOSE_AUTHORITY_INVALID", "closed event close_authority must be a mapping", where, "", nil))
+			} else if err := validateV7TaskCloseAuthorityFact(
+				fact, stringField(data, "project"), stringField(data, "object"), stringField(data, "actor"),
+				"[tusker-review-result:"+fact.ReviewResultRevision+"]",
+			); err != nil {
+				*errors = append(*errors, issue("EVENT_CLOSE_AUTHORITY_INVALID", err.Error(), where, "", nil))
+			} else if stringField(data, "at") != fact.ClosedAt {
+				*errors = append(*errors, issue("EVENT_CLOSE_AUTHORITY_INVALID", "closed event timestamp does not match close authority", where, "", nil))
+			} else if err := authenticateV7EventCloseAuthority(vaultPath, fact); err != nil {
+				*errors = append(*errors, issue("EVENT_CLOSE_AUTHORITY_INVALID", err.Error(), where, "restore the canonical task and protected completion ancestry; the public binding hash is structural metadata, not authority", nil))
+			}
 		}
 	}
 	validateV7EventPath(data, where, errors)

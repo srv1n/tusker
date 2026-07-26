@@ -97,7 +97,7 @@ func legacyReviewerFindingResult(note Note, attemptID string) (ReviewResult, boo
 	if !ok {
 		return ReviewResult{}, false
 	}
-	result := ReviewResult{Schema: reviewResultSchema, TaskID: stringField(note.Data, "id"), TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: intField(note.Data, "work_revision"), AttemptID: strings.TrimSpace(attemptID), Verdict: "changes_requested", Summary: "Migrated legacy reviewer finding.", Findings: []string{finding}}
+	result := ReviewResult{Schema: reviewResultSchemaV1, TaskID: stringField(note.Data, "id"), TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: intField(note.Data, "work_revision"), AttemptID: strings.TrimSpace(attemptID), Verdict: "changes_requested", Summary: "Migrated legacy reviewer finding.", Findings: []string{finding}}
 	result.ResultRevision = reviewResultFingerprint(result)
 	return result, true
 }

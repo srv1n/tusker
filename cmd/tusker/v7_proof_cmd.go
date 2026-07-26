@@ -703,7 +703,10 @@ func renderV7VerificationTable(rows []v7VerificationRow) string {
 }
 
 func escapeV7TableCell(value string) string {
-	value = strings.ReplaceAll(strings.TrimSpace(value), "\n", " ")
+	value = strings.ReplaceAll(strings.TrimSpace(value), "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	value = strings.ReplaceAll(value, "\n", " ")
+	value = strings.ReplaceAll(value, `\`, `\\`)
 	value = strings.ReplaceAll(value, "|", `\|`)
 	if value == "" {
 		return "-"
@@ -768,6 +771,8 @@ func v7MarkdownTableCells(line string) []string {
 		if escaped {
 			if ch == '|' {
 				cell.WriteByte('|')
+			} else if ch == '\\' {
+				cell.WriteByte('\\')
 			} else {
 				cell.WriteByte('\\')
 				cell.WriteByte(ch)
