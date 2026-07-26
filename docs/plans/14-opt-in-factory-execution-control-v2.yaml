@@ -32,7 +32,7 @@ tasks:
       - id: A1
         outcome: Fresh setup writes automation disabled with effective dispatch scope armed_waves, and absent setup never produces a background claim.
       - id: A2
-        outcome: An enabled armed_waves project atomically arms through the public control path without recursively reacquiring wave or member locks, dispatches only ready or rework members of an armed, non-stale exact wave fingerprint, and refuses unrelated eligible tasks with a stable reason.
+        outcome: An enabled armed_waves project reuses already-held wave and member locks while preserving sorted acquisition for uncovered paths, atomically persists the exact armed fingerprint and readiness projection, restores eligible readiness on refusal without recursive CAS_BUSY or partial authorization, dispatches only ready or rework members of the current armed wave, and refuses unrelated eligible tasks with a stable reason.
       - id: A3
         outcome: The all_eligible scope is an explicit advanced mode, while existing enabled projects with no scope preserve prior behavior through a visible legacy-effective projection and doctor warning rather than silent authority drift.
       - id: A4
@@ -43,7 +43,7 @@ tasks:
       - covers: A1,A2,A3,A4,A5
         check: "command: go test ./cmd/tusker -run '^TestAutomationDispatchScope' -count=1"
       - covers: A2
-        check: "command: go test ./cmd/tusker -run '^TestWaveArmHeldLockRegression$' -count=1"
+        check: "command: go test ./cmd/tusker -run '^TestWaveArm' -count=1"
     artifact:
       kind: behavior_matrix
       path: cmd/tusker/dispatch_scope_test.go
