@@ -104,8 +104,9 @@ func TestV7FullGateProviderCloseUsesActiveRequestPath(t *testing.T) {
 	requestPath, request := writeV7ProviderRecoveryRequest(t, stateRoot)
 	old := runV7FullGateProviderCleanup
 	defer func() { runV7FullGateProviderCleanup = old }()
-	seen := ""
+	seen, cleanups := "", 0
 	runV7FullGateProviderCleanup = func(_ context.Context, _ string, path string, _ []string, _ io.Writer) error {
+		cleanups++
 		seen = path
 		result := v7FullGateProviderResult{Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: request.RunID, LifecycleID: "fixture-scope", State: "cleaned", ProviderID: request.ProviderID, RequestDigest: request.RequestDigest, RuntimeDigest: request.RuntimeDigest, PolicyDigest: request.PolicyDigest, AttestationDigest: request.AttestationDigest, Capabilities: request.RequiredCapabilities, ImplementationID: request.ImplementationID, CapabilitySchema: request.CapabilitySchema, CandidateReadOnlyMeasured: true, NetworkMode: "none", ControlEnvAbsent: true, ControlMountsAbsent: true, ImageOrVMID: request.ExpectedImageOrVMID}
 		result.ReceiptDigest = v7FullGateProviderResultDigest(result)
@@ -119,8 +120,14 @@ func TestV7FullGateProviderCloseUsesActiveRequestPath(t *testing.T) {
 	if err := provider.Close(); err != nil {
 		t.Fatal(err)
 	}
+	if err := provider.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if seen != requestPath {
 		t.Fatalf("Close cleanup path = %q, want %q", seen, requestPath)
+	}
+	if cleanups != 1 {
+		t.Fatalf("Close issued %d cleanup calls for one scope, want 1", cleanups)
 	}
 	if _, err := os.Stat(requestPath); err != nil {
 		t.Fatalf("Close removed active scope before Run can observe cleanup: %v", err)

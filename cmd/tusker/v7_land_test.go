@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestIntegrationBranchCut(t *testing.T) {
@@ -393,13 +395,45 @@ func (*testV7FullGateProvider) Run(ctx context.Context, workspace, command strin
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	cmd := exec.Command("/bin/sh", "-lc", command)
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", command)
 	cmd.Dir = workspace
 	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return output, ctx.Err()
+	}
 	if err != nil {
 		return output, err
 	}
 	return output, nil
+}
+
+func TestV7FullGateProviderFixtureCancelsBlockingCommand(t *testing.T) {
+	workspace := t.TempDir()
+	started := filepath.Join(workspace, "started")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := (&testV7FullGateProvider{}).Run(ctx, workspace, "touch started; exec sleep 300")
+		done <- err
+	}()
+	deadline := time.After(time.Second)
+	for !fileExists(started) {
+		select {
+		case <-deadline:
+			t.Fatal("fixture gate did not start blocking command")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("fixture cancellation error = %v, want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("fixture gate did not terminate blocking command after cancellation")
+	}
 }
 
 func (*testV7FullGateProvider) Close() error { return nil }

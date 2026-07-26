@@ -189,6 +189,13 @@ type v7ExternalFullGateProvider struct {
 type v7FullGateProviderScope struct {
 	request     v7FullGateProviderRequest
 	requestPath string
+	// Close and Run can race during daemon cancellation. Cache one cleanup
+	// result for this immutable scope so the provider receives exactly one
+	// lifecycle-destruction command; a later daemon recovery owns retries.
+	cleanupMu     sync.Mutex
+	cleanupCalled bool
+	cleanupResult v7FullGateProviderResult
+	cleanupErr    error
 }
 
 type v7FullGateProviderAudit struct {
@@ -356,12 +363,20 @@ func (p *v7ExternalFullGateProvider) Run(ctx context.Context, workspace, command
 		return nil, err
 	}
 	scope := &v7FullGateProviderScope{request: request, requestPath: requestPath}
-	cmd := exec.Command(request.ProviderPath, "--tusker-full-gate-run", requestPath)
+	// CommandContext guarantees that a cancelled daemon context cannot leave
+	// the wrapper process awaited forever. Cancel asks it to terminate first;
+	// WaitDelay then force-reaps it if it ignores SIGTERM.
+	cmd := exec.CommandContext(ctx, request.ProviderPath, "--tusker-full-gate-run", requestPath)
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = v7FullGateCleanTimeout
 	var providerOutput v7GateBoundedOutput
 	providerOutput.max = v7FullGateOutputMaxBytes
 	cmd.Env = v7FullGateProviderEnv()
 	cmd.Stdout, cmd.Stderr = &providerOutput, &providerOutput
 	if err := cmd.Start(); err != nil {
+		// Start failed before the provider existed, so no lifecycle can need
+		// recovery and retaining this record would be a false fail-closed block.
+		_ = p.completeScope(scope)
 		return nil, fmt.Errorf("%w: start provider: %v", errV7FullGateProvider, err)
 	}
 	p.mu.Lock()
@@ -408,13 +423,9 @@ func (p *v7ExternalFullGateProvider) Run(ctx context.Context, workspace, command
 		}
 		return []byte(result.Output), nil
 	case <-ctx.Done():
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-		select {
-		case <-done:
-		case <-time.After(v7FullGateCleanTimeout):
-			_ = cmd.Process.Kill()
-			<-done
-		}
+		// CommandContext's cancel/WaitDelay path terminates and reaps the
+		// wrapper. Do not race a second signal/kill here.
+		<-done
 		_, cleanupErr := p.cleanup(scope)
 		if cleanupErr != nil {
 			return providerOutput.Bytes(), cleanupErr
@@ -516,6 +527,17 @@ func (p *v7ExternalFullGateProvider) cleanup(scope *v7FullGateProviderScope) (v7
 	if scope == nil || strings.TrimSpace(scope.requestPath) == "" {
 		return v7FullGateProviderResult{}, fmt.Errorf("%w: provider recovery cannot locate its trusted request", errV7FullGateProvider)
 	}
+	scope.cleanupMu.Lock()
+	defer scope.cleanupMu.Unlock()
+	if scope.cleanupCalled {
+		return scope.cleanupResult, scope.cleanupErr
+	}
+	result, err := p.cleanupScope(scope)
+	scope.cleanupCalled, scope.cleanupResult, scope.cleanupErr = true, result, err
+	return result, err
+}
+
+func (p *v7ExternalFullGateProvider) cleanupScope(scope *v7FullGateProviderScope) (v7FullGateProviderResult, error) {
 	_, identity, err := verifyV7TrustedProviderExecutable(scope.request.ProviderPath)
 	if err != nil || identity != scope.request.ExecutableID {
 		return v7FullGateProviderResult{}, fmt.Errorf("%w: provider recovery executable identity changed", errV7FullGateProvider)
