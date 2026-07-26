@@ -31,7 +31,7 @@ func v7CloseGateKindSatisfied(idx v7Index, taskID, gateKind string) bool {
 			continue
 		}
 		status := stringField(gate.Data, "status")
-		if status == "satisfied" || status == "waived" {
+		if (status == "satisfied" || status == "waived") && v7GateAuthorityReceiptCurrent(gate, idx) {
 			return true
 		}
 	}

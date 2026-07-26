@@ -334,6 +334,9 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 			report.Blockers = append(report.Blockers, "member task does not resolve: "+id)
 			continue
 		}
+		if edge, blocked := v7CrossScopeIntegrityBlocker(task, idx); blocked {
+			report.Blockers = append(report.Blockers, id+": cross-scope dependency integrity is stale at "+edge.ID)
+		}
 		contractBlockers := waveTaskContractBlockers(vaultPath, task)
 		for _, blocker := range contractBlockers {
 			report.Blockers = append(report.Blockers, id+": "+blocker)
@@ -368,8 +371,17 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 			} else {
 				depNote := idx.Tasks[depID]
 				satisfied := v7DependencySatisfiedForReadiness(edge, depNote, true)
-				report.ExternalDependencies[id] = appendAny(report.ExternalDependencies[id], map[string]any{"id": depID, "hardness": edge.Hardness, "status": stringField(depNote.Data, "status"), "proof": stringField(depNote.Data, "proof_status"), "satisfied": satisfied})
-				if !satisfied {
+				qualified := false
+				if projections, projectionErr := deliveryCrossScopeProjections(task); projectionErr == nil {
+					for _, projection := range projections {
+						if projection.TaskID == depID {
+							qualified = true
+							break
+						}
+					}
+				}
+				report.ExternalDependencies[id] = appendAny(report.ExternalDependencies[id], map[string]any{"id": depID, "hardness": edge.Hardness, "status": stringField(depNote.Data, "status"), "proof": stringField(depNote.Data, "proof_status"), "satisfied": satisfied, "qualified": qualified})
+				if !satisfied && !qualified {
 					report.Blockers = append(report.Blockers, id+": external dependency "+depID+" is not satisfied or authorized by this wave")
 				}
 			}
@@ -380,9 +392,6 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 		report.Blockers = append(report.Blockers, "member dependency graph contains a cycle")
 	}
 	for _, gate := range sortedV7Gates(idx) {
-		if stringField(gate.Data, "status") != "open" || v7ProofOwnerClass(stringField(gate.Data, "owner")) != "human" {
-			continue
-		}
 		var affected []string
 		for _, id := range normalizeList(gate.Data["blocks"]) {
 			if _, ok := memberSet[id]; ok {
@@ -398,6 +407,12 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 			continue
 		}
 		affected = waveAffectedClosure(uniqueStrings(affected), graph)
+		if !v7GateAuthorityReceiptCurrent(gate, idx) {
+			report.Blockers = append(report.Blockers, v7GateAuthorityReceiptStaleCode+" "+stringField(gate.Data, "id")+": auth/release authority receipt does not match the current completed hard dependency material")
+		}
+		if stringField(gate.Data, "status") != "open" || v7ProofOwnerClass(stringField(gate.Data, "owner")) != "human" {
+			continue
+		}
 		if !v7GateHasAgentBoundary(gate) {
 			report.Blockers = append(report.Blockers, stringField(gate.Data, "id")+": human gate does not explain why an agent cannot resolve it")
 		}
@@ -458,8 +473,10 @@ func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, 
 			"dependencies": sortedStrings(normalizeList(task.Data["dependencies"])), "spec_refs": sortedStrings(normalizeList(task.Data["spec_refs"])),
 			"delivery_contract_fingerprint": stringField(task.Data, "delivery_contract_fingerprint"), "artifact_contract": task.Data["artifact_contract"],
 			"owned_paths": sortedStrings(normalizeList(task.Data["owned_paths"])), "runner_profile": stringField(task.Data, "runner_profile"),
-			"proof_contract": map[string]any{"mode": stringField(task.Data, "proof_mode"), "required": sortedStrings(normalizeList(task.Data["proof_required"])), "required_owner": task.Data["proof_required_owner"], "evidence_budget": intField(task.Data, "evidence_budget"), "evidence_required": sortedStrings(normalizeList(task.Data["evidence_required"]))},
-			"gates":          waveMaterialGates(idx, id),
+			"proof_contract":                    map[string]any{"mode": stringField(task.Data, "proof_mode"), "required": sortedStrings(normalizeList(task.Data["proof_required"])), "required_owner": task.Data["proof_required_owner"], "evidence_budget": intField(task.Data, "evidence_budget"), "evidence_required": sortedStrings(normalizeList(task.Data["evidence_required"]))},
+			"gates":                             waveMaterialGates(idx, id),
+			"delivery_cross_scope_dependencies": task.Data["delivery_cross_scope_dependencies"],
+			"delivery_cross_scope_targets":      waveMaterialCrossScopeTargets(task, idx),
 		}
 		// Imported delivery tasks already carry the immutable source-contract
 		// fingerprint. Their live Verification table is also the proof ledger, so
@@ -548,9 +565,42 @@ func waveMaterialGates(idx v7Index, taskID string) []any {
 		if !containsString(normalizeList(gate.Data["blocks"]), taskID) && !containsString(normalizeList(idx.Tasks[taskID].Data["gates"]), stringField(gate.Data, "id")) {
 			continue
 		}
-		out = append(out, map[string]any{"id": stringField(gate.Data, "id"), "status": stringField(gate.Data, "status"), "gate_kind": stringField(gate.Data, "gate_kind"), "owner": stringField(gate.Data, "owner"), "blocking": boolField(gate.Data, "blocking"), "blocks": sortedStrings(normalizeList(gate.Data["blocks"])), "covers": sortedStrings(normalizeList(gate.Data["covers"])), "action": stringField(gate.Data, "action"), "verification": stringField(gate.Data, "verification"), "why_agent_cannot": v7GateBoundaryText(gate), "suggestion": v7GateSuggestionText(gate)})
+		row := map[string]any{"id": stringField(gate.Data, "id"), "status": stringField(gate.Data, "status"), "gate_kind": stringField(gate.Data, "gate_kind"), "owner": stringField(gate.Data, "owner"), "blocking": boolField(gate.Data, "blocking"), "blocks": sortedStrings(normalizeList(gate.Data["blocks"])), "covers": sortedStrings(normalizeList(gate.Data["covers"])), "action": stringField(gate.Data, "action"), "verification": stringField(gate.Data, "verification"), "why_agent_cannot": v7GateBoundaryText(gate), "suggestion": v7GateSuggestionText(gate)}
+		kind := strings.ToLower(stringField(gate.Data, "gate_kind"))
+		status := stringField(gate.Data, "status")
+		if (kind == "auth" || kind == "release") && (status == "satisfied" || status == "waived") {
+			current, incomplete := v7GateHardClosureFingerprint(gate.Data, idx)
+			row["dependency_material_fingerprint"] = stringField(gate.Data, "dependency_material_fingerprint")
+			row["current_dependency_material_fingerprint"] = current
+			row["dependency_material_incomplete"] = sortedStrings(incomplete)
+		}
+		out = append(out, row)
 	}
 	return out
+}
+
+func waveMaterialCrossScopeTargets(task Note, idx v7Index) []any {
+	projections, err := deliveryCrossScopeProjections(task)
+	if err != nil {
+		return []any{map[string]any{"invalid": true}}
+	}
+	rows := make([]any, 0, len(projections))
+	for _, projection := range projections {
+		row := map[string]any{
+			"scope": projection.Scope, "task": projection.Task, "task_id": projection.TaskID,
+			"kind": projection.Kind, "projected_contract_fingerprint": projection.TargetContractFingerprint,
+		}
+		producer, exists := idx.Tasks[projection.TaskID]
+		row["target_exists"] = exists
+		if exists {
+			row["target_scope"] = stringField(producer.Data, "delivery_plan_scope")
+			row["target_source_key"] = stringField(producer.Data, "delivery_source_key")
+			row["target_contract_fingerprint"] = stringField(producer.Data, "delivery_contract_fingerprint")
+			row["target_current"] = deliveryCrossScopeProducerCurrent(producer, idx)
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 func waveMaterialTable(section string, columns []int) []string {
