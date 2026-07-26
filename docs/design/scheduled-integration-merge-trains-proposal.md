@@ -1,6 +1,10 @@
 # Proposal: Scheduled Integration ("Merge Trains") as a Tusker Daemon Capability
 
-Status: draft for discussion. Origin: proven in production shape in the rzn backend repo on 2026-07-24 as a shell conductor + launchd schedule; this proposes lifting it into Tusker as a generic, opt-in, multi-project capability.
+Status: historical proposal, superseded as implementation direction by
+`docs/specs/12-opt-in-scheduled-promotion.md`. Origin: proven in production
+shape in the rzn backend repo on 2026-07-24 as a shell conductor + launchd
+schedule. Keep this document as problem/pilot context; use the binding spec for
+current architecture and accepted production follow-ups.
 
 ## 0. The idea in plain English
 

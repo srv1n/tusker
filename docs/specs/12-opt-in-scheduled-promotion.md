@@ -315,6 +315,122 @@ operator launch controls are in
 - Generic scheduled promotion does not support standing self-merge permission.
   Any exception is one-shot, revision-bound, actor-bound, and expiring.
 
+## 8. Accepted production operability requirements
+
+A production merge-train incident exposed six control-plane gaps after the
+original delivery wave was imported. They are binding requirements for a
+follow-on V2 wave, not retroactive additions to `W-0001`, and do not opt any
+repository into automation or promotion.
+
+Five are factory-wide dependencies surfaced by scheduled promotion. They must
+land as shared Tusker contracts rather than local train-only workarounds. The
+boarding census and boarding receipt are scheduled-promotion contracts.
+
+### 8.1 Typed human break-glass close
+
+Independent review remains the normal objective close path. A broken reviewer
+runner must not make a named human authority powerless. Tusker needs a
+distinct break-glass close—not a generic `--force` flag—that requires:
+
+- a locally accountable human actor with explicit authority;
+- exact task ID, task state revision, implementation revision, and applicable
+  gate/proof fingerprints;
+- the exact review requirement being overridden, a concrete incident reason,
+  and an optional authorization expiry;
+- a permanent append-only receipt visible from task, wave, digest, and Serve;
+  and
+- an explicit downstream/integration risk projection so the override cannot
+  masquerade as an independent-review pass.
+
+Dispatched implementation and review workers cannot mint or consume this
+authority by supplying an actor string. The authorization closes one exact
+revision. It does not enable automation, move a ref, release, or create a
+standing permission.
+
+### 8.2 Runner health before claim
+
+Tusker resolves and health-checks the exact configured runner executable,
+effective PATH, version, permissions, and required command shape before it
+creates a claim or attempt. A missing executable in the daemon environment is
+an infrastructure blocker, not worker no-progress.
+
+Alternate executable locations are explicit project or machine policy. Tusker
+may explain a discovered alternative, but cannot silently replace the
+authorized executable. Plan, queue, runs, wave brief, and Serve report
+`infrastructure_blocked`, the failed executable/PATH source, and one bounded
+operator remedy.
+
+### 8.3 Installed Tusker capability manifest
+
+Orchestrators query the installed binary instead of trusting documentation or
+a dispatch sheet. A read-only `tusker capabilities --json` contract reports:
+
+- binary version and build fingerprint;
+- supported commands, subcommands, and relevant flags;
+- supported task, delivery-plan, review, completion, and receipt schemas;
+- runner adapters and capability-catalog schema;
+- enabled or compiled optional capabilities; and
+- deprecations or replacements for unavailable commands.
+
+Documentation and skills describe intent. The installed capability manifest
+is authoritative for what an orchestrator may invoke.
+
+### 8.4 Canonical task registration across worktrees
+
+A task created on a worker branch cannot remain invisible to the control plane
+that must board it. Task admission from any linked worktree is mediated by one
+canonical control writer: the resident daemon/shared control checkout when
+automation is active, or the explicit interactive control path when it is not.
+
+Tusker either writes the registration through to that canonical surface
+atomically or refuses before creating a branch-local task record. Sweeping
+arbitrary worktree Markdown is diagnostic fallback only and never silently
+chooses between conflicting task identities. Pending registration and its
+remedy are first-class state.
+
+### 8.5 First-class boarding census and atomic boarding receipt
+
+The resident daemon owns departure decisions. A host service manager may keep
+the daemon alive, but does not implement repository scheduling; this avoids
+platform privacy constraints such as macOS TCC turning a healthy schedule into
+an invisible no-op.
+
+Tusker exposes a stable, preferably wave-scoped boarding census JSON
+projection. For each candidate it reports exact task binding, clean/frozen
+revision, proof, review, gates, blockers, claim health, and readiness. The
+deterministic integration handler atomically binds the accepted task
+transition to the exact merge commit in one boarding/completion receipt.
+Conductors and UIs consume this contract instead of reimplementing readiness
+by scraping.
+
+### 8.6 Waiting, parked, and stalled are different states
+
+A parked attempt is not made healthy by emitting heartbeats forever. Tusker
+distinguishes:
+
+- a live worker with a renewable lease and heartbeat;
+- an intentional wait with `next_wake_at`, wake source, and bounded deadline;
+- an infrastructure-blocked terminal attempt with an operator remedy; and
+- no-progress/stalled work that exceeded its progress deadline.
+
+The resident daemon watches those deadlines. An overdue wait or missing live
+heartbeat becomes a loud typed escalation in runs, queue, wave brief, digest,
+and Serve. A terminal parked attempt cannot impersonate a healthy waiting
+process.
+
+### 8.7 Follow-on dependency order
+
+The next V2 wave should land the work in this order:
+
+1. installed capabilities plus runner pre-claim health (`8.2`, `8.3`);
+2. typed run, wait, and escalation state (`8.6`);
+3. canonical task registration (`8.4`);
+4. boarding census and atomic receipt (`8.5`); and
+5. human break-glass close (`8.1`) with independent security review.
+
+This order removes invisible infrastructure failures first, then fixes
+control-plane liveness and registration before changing close authority.
+
 ## Work streams
 
 <!-- tusker:delivery-import:edb3afd7d44a6061:begin -->
