@@ -11,7 +11,7 @@ import (
 // move the integration ref, but cannot obtain the daemon's private capability
 // or transplant the authority into another daemon store.
 func TestCompletionAuthorityRequiresConsumedExactDaemonStore(t *testing.T) {
-	vault, project, daemon, result := completionReactorFixture(t, true)
+	_, project, daemon, result := completionReactorFixture(t, true)
 	defer daemon.Close()
 	if err := daemon.reactToReviewResult(project, Workflow{}, result, completionReactorModeAuthoritative); err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestCompletionAuthorityRequiresConsumedExactDaemonStore(t *testing.T) {
 }
 
 func TestCompletionAuthorityRejectsForgedPublicReceipt(t *testing.T) {
-	vault, project, daemon, result := completionReactorFixture(t, true)
+	_, project, daemon, result := completionReactorFixture(t, true)
 	defer daemon.Close()
 	if err := daemon.reactToReviewResult(project, Workflow{}, result, completionReactorModeAuthoritative); err != nil {
 		t.Fatal(err)
@@ -82,5 +82,4 @@ func TestCompletionAuthorityRejectsForgedPublicReceipt(t *testing.T) {
 	if verifyCompletionReceiptAuthorityWithStore(project.RepoRoot, forged, daemon.store, true) {
 		t.Fatal("forged full receipt authenticated without daemon capability")
 	}
-	_ = vault // fixture also proves the close projection remains reachable.
 }
