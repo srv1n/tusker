@@ -23,7 +23,37 @@ const (
 var runnerLoginShellPath = readRunnerLoginShellPath
 
 func runnerBaseEnv() []string {
-	return setEnvValue(os.Environ(), "PATH", runnerCommandSearchPath())
+	// A runner child is untrusted application code.  In particular it must not
+	// inherit the daemon's state-root override (or test/service variants of it),
+	// because that turns a workspace sandbox escape into control-plane write
+	// authority.  runnerEnv adds the narrow, attempt-owned transport paths that
+	// a child actually needs below.
+	return setEnvValue(workerEnvironment(os.Environ()), "PATH", runnerCommandSearchPath())
+}
+
+func workerEnvironment(env []string) []string {
+	blocked := []string{
+		"TUSKER_STATE_ROOT=", "TUSKER_FIXTURE_STATE_ROOT=", "TUSKER_WRAPPER_EXE=",
+		"TUSKER_DAEMON_", "TUSKER_SERVICE_", "TUSKER_COMPLETION_",
+	}
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		name := entry
+		if i := strings.IndexByte(entry, '='); i >= 0 {
+			name = entry[:i+1]
+		}
+		unsafe := false
+		for _, prefix := range blocked {
+			if strings.HasPrefix(name, prefix) {
+				unsafe = true
+				break
+			}
+		}
+		if !unsafe {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 func runnerCommandSearchPath() string {

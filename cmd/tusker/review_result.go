@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -18,6 +19,21 @@ const (
 	// but it is deliberately re-review-only: its revision did not bind time.
 	reviewResultSchemaV1 = "tusker.review-result/v1"
 )
+
+const (
+	reviewProposalSchema = "tusker.review-proposal/v1"
+	reviewProposalMax    = 64 << 10
+	reviewProposalMarker = "TUSKER_REVIEW_PROPOSAL_V1 "
+)
+
+// reviewProposal is deliberately transport only.  It is never authority: the
+// daemon compares every identity and snapshot in Result with its own run,
+// attempt, task, proof, and gate records before persisting it.
+type reviewProposal struct {
+	Schema    string       `json:"schema"`
+	AttemptID string       `json:"attempt_id"`
+	Result    ReviewResult `json:"result"`
+}
 
 const (
 	reviewResultMaxSummary       = 800
@@ -160,6 +176,37 @@ func reviewSubmitCmd(args Args) error {
 	if expected := strings.TrimSpace(args.String("gate-fingerprint")); expected == "" || expected != gateFingerprint {
 		return tuskerError(errorInvalidTransition, "stale gate fingerprint")
 	}
+	actor := firstNonEmpty(args.String("by"), "reviewer:agent")
+	wf, wfErr := loadWorkflow(vault)
+	if wfErr != nil {
+		return wfErr
+	}
+	if actor != reviewerActorForNote(wf.Data.Reviewer.Actor, note) {
+		return tuskerError(errorInvalidTransition, "reviewer actor is not authorized for this task")
+	}
+	if workerAttempt := strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID")); workerAttempt != "" {
+		if workerAttempt != attemptID {
+			return tuskerError(errorInvalidTransition, "worker review submission does not match its injected attempt")
+		}
+		result := ReviewResult{Schema: reviewResultSchema, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+		if err := normalizeReviewResultProposal(&result); err != nil {
+			return err
+		}
+		raw, err := json.Marshal(reviewProposal{Schema: reviewProposalSchema, AttemptID: attemptID, Result: result})
+		if err != nil {
+			return err
+		}
+		if len(raw) > reviewProposalMax {
+			return tuskerError(errorInvalidArg, "review proposal exceeds bounded transport size")
+		}
+		// stdout is captured by the trusted wrapper into the persisted raw-log
+		// path. A read-only reviewer therefore gets no write capability beyond
+		// one bounded output record; the daemon derives that log path from its
+		// active attempt, not from worker input.
+		fmt.Printf("%s%s\n", reviewProposalMarker, raw)
+		return nil
+	}
+
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return err
@@ -176,14 +223,6 @@ func reviewSubmitCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	actor := firstNonEmpty(args.String("by"), "reviewer:agent")
-	wf, wfErr := loadWorkflow(vault)
-	if wfErr != nil {
-		return wfErr
-	}
-	if actor != reviewerActorForNote(wf.Data.Reviewer.Actor, note) {
-		return tuskerError(errorInvalidTransition, "reviewer actor is not authorized for this task")
-	}
 	result := ReviewResult{Schema: reviewResultSchema, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: run.Runner, RunnerProfile: run.RunnerProfile, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	if err := normalizeReviewResult(&result); err != nil {
 		return err
@@ -198,6 +237,20 @@ func reviewSubmitCmd(args Args) error {
 	} else {
 		fmt.Printf("Recorded %s review result for %s. No merge, landing, close, or ref move occurred.\n", verdict, id)
 	}
+	return nil
+}
+
+func normalizeReviewResultProposal(result *ReviewResult) error {
+	// The daemon supplies these fields from its active run.  A worker is not
+	// allowed to choose a runner or trust profile and cannot create a durable
+	// result until the daemon fills and validates them.
+	result.Runner = "proposal"
+	result.RunnerProfile = "proposal"
+	if err := normalizeReviewResult(result); err != nil {
+		return err
+	}
+	result.Runner, result.RunnerProfile = "", ""
+	result.ResultRevision = ""
 	return nil
 }
 

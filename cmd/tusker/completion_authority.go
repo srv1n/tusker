@@ -190,9 +190,10 @@ func (s *RuntimeStore) consumeCompletionAuthority(authorityID string) error {
 }
 
 func completionAuthorityPayload(c completionAuthorityContext) []byte {
-	// The signature intentionally excludes receipt_blob: it would make the
-	// receipt sign its own Git object. The durable issuance binds that exact
-	// blob after staging, while this signature binds every semantic close input.
+	// The signature intentionally excludes receipt_blob: including it would
+	// make the receipt claim to sign its own Git object.  ReceiptBlob is *not*
+	// signature-covered.  It is instead bound by the daemon-owned issuance and
+	// must be proved against the exact candidate tree entry at every use site.
 	c.TaskBlob, c.ReceiptBlob = "", ""
 	raw, _ := json.Marshal(c)
 	return raw
@@ -293,16 +294,10 @@ func verifyCompletionReceiptAuthority(repoRoot string, receipt completionReceipt
 	return ed25519.Verify(ed25519.PublicKey(i.PublicKey), completionAuthorityPayload(i.Context), receipt.Authority.Signature)
 }
 
-// nil selects the configured canonical daemon store. A supplied store is an
-// exclusive trust domain; callers never fall back to a look-alike store.
+// A caller that lacks the daemon's exact store has no completion authority.
+// Offline commands may report that proof as unavailable, but must never select
+// a store from TUSKER_STATE_ROOT and accidentally turn a worker-controlled
+// look-alike database into a trust anchor.
 func verifyCompletionReceiptAuthorityWithStore(repoRoot string, receipt completionReceipt, store *RuntimeStore, requireConsumed bool) bool {
-	if store != nil {
-		return verifyCompletionReceiptAuthority(repoRoot, receipt, store, requireConsumed)
-	}
-	canonical, err := OpenRuntimeStoreReadOnly(DefaultStateRoot())
-	if err != nil {
-		return false
-	}
-	defer canonical.Close()
-	return verifyCompletionReceiptAuthority(repoRoot, receipt, canonical, requireConsumed)
+	return store != nil && verifyCompletionReceiptAuthority(repoRoot, receipt, store, requireConsumed)
 }

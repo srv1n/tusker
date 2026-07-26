@@ -2191,6 +2191,25 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	nowTime := time.Now().UTC()
 	now := nowTime.Format(time.RFC3339)
 	sessionResumable := runSessionResumable(wfFile.Data, run)
+	if run.Lane == runLaneReview {
+		note, noteErr := resolveNote(project.VaultRoot, run.RecordID)
+		if noteErr != nil {
+			return run, false, noteErr
+		}
+		if found, refusal := d.harvestReviewProposal(project, note, run); found {
+			if refusal != "" {
+				// A forged, late, or cross-attempt proposal is task-local poison.
+				// Release this one lease for audit; do not fail the daemon poll or
+				// prevent unrelated tasks from making progress.
+				updateRunAttemptFromRun(d.store, run, AttemptOutcomeBlocked, 1, refusal, now)
+				run.LeaseState, run.AttemptOutcome = string(LeaseStateReleased), string(AttemptOutcomeBlocked)
+				run.LastError, run.UpdatedAt, run.Terminal = refusal, now, false
+				clearActiveExecution(&run)
+				return run, true, nil
+			}
+			changed = true
+		}
+	}
 
 	if ingested, err := d.ingestCodexExecRawLog(run); err != nil {
 		return run, false, err
@@ -3463,6 +3482,11 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 	selectedWorkspacePath, _, err := workspacePathForRequest(workspaceRequest)
 	if err != nil {
 		return run, false, err
+	}
+	if completionReactorMode(wfFile.Data.CompletionReactor.Effective) == completionReactorModeAuthoritative {
+		if err := completionWorkerSafety(d.stateRoot, selectedWorkspacePath, selectedProfile); err != nil {
+			return run, false, tuskerError(errorInvalidTransition, err.Error())
+		}
 	}
 	diskPressure, err := d.checkDiskPressureForDispatch(selectedWorkspacePath)
 	if err != nil {

@@ -324,6 +324,15 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 		// silent authority grant; a fresh v2 reviewer result is required.
 		return nil
 	}
+	if mode == completionReactorModeAuthoritative {
+		note, noteErr := resolveV7Note(project.VaultRoot, result.TaskID, "task")
+		if noteErr != nil {
+			return noteErr
+		}
+		if err := d.validateCompletionWorkerAuthority(project, wf, note, result); err != nil {
+			return completionPersistedRowRepairError("review result", project.ProjectID, result.TaskID, result.WorkRevision, result.AttemptID, result.ResultRevision, err.Error())
+		}
+	}
 	if prior, err := d.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision); err != nil {
 		return err
 	} else if prior != nil {
@@ -1181,7 +1190,12 @@ func (d *Daemon) consumeCompletionAuthorityAfterCAS(project RegisteredProject, c
 	if err != nil {
 		return err
 	}
-	raw, err := gitCombined(project.RepoRoot, "show", candidate+":"+completionReceiptRepoPath(completionReceiptID(transaction.ID)))
+	receiptRel := completionReceiptRepoPath(completionReceiptID(transaction.ID))
+	receiptEntry, err := completionGitTreeEntryAt(project.RepoRoot, candidate, receiptRel)
+	if err != nil || receiptEntry.Mode != "100644" || receiptEntry.OID != transaction.StagedReceiptBlob {
+		return completionFrozenAuthorityRepairError(transaction, "completion candidate does not retain the exact issued receipt blob")
+	}
+	raw, err := gitCombined(project.RepoRoot, "show", candidate+":"+receiptRel)
 	if err != nil {
 		return err
 	}
