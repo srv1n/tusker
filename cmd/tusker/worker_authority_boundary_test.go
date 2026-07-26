@@ -89,6 +89,9 @@ func TestCompletionCodexBindingUsesPhysicalExecutableWithoutLoginShell(t *testin
 	binDir := filepath.Join(root, "trusted-bin")
 	repo := filepath.Join(root, "repo")
 	workspace := filepath.Join(root, "workspace")
+	if err := ensureDir(binDir); err != nil {
+		t.Fatal(err)
+	}
 	if err := ensureDir(repo); err != nil {
 		t.Fatal(err)
 	}

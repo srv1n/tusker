@@ -1315,7 +1315,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal || transaction.Failure != "" {
 			t.Fatalf("post-CAS gate drift did not terminalize as pass: transaction=%#v err=%v", transaction, err)
 		}
-		canonical := assertCompletionTerminalProjection(t, vault, result, daemon.store)
+		canonical := assertCompletionTerminalProjection(t, vault, result, restarted.store)
 		if stringField(canonical.Data, "status") != "done" ||
 			!strings.Contains(canonical.Body, "[tusker-review-result:"+result.ResultRevision+"]") ||
 			generatedReviewerFindingContent(canonical.Body) != "" {
@@ -2236,7 +2236,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 				if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal || transaction.Failure != "" {
 					t.Fatalf("post-CAS policy replay did not terminalize frozen authority: transaction=%#v err=%v", transaction, err)
 				}
-				task := assertCompletionTerminalProjection(t, vault, result, daemon.store)
+				task := assertCompletionTerminalProjection(t, vault, result, restarted.store)
 				if stringField(task.Data, "status") != "done" ||
 					stringField(task.Data, "accepted_by") != result.Actor ||
 					stringField(task.Data, "accepted_at") != completionResultTimestamp(result) ||
