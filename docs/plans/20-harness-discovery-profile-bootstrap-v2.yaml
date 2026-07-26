@@ -24,6 +24,12 @@ non_goals:
     Discovery does not claim provider permanence. Codex live observations,
     Codex bundled fallback, and Claude declared capabilities retain distinct
     provenance and confidence.
+  - >-
+    Production feedback F1-F6 in the governing spec is accepted follow-on
+    scope, not work in this bootstrap wave. Break-glass close, runner claim
+    health, Tusker self-capabilities, cross-worktree registration, boarding
+    census/receipts, and parked-run escalation require a separate reviewed V2
+    delivery plan after bootstrap dogfood.
 requirements:
   - id: R1
     outcome: A provider-neutral read-only catalog reports locally available harness models, efforts, service tiers when known, defaults, visibility, source, confidence, version, and observation time.
