@@ -224,7 +224,7 @@ func v7GateHardClosureFingerprint(gate map[string]any, idx v7Index) (string, []s
 			}
 			hardTargets[edge.ID] = true
 			dep, exists := idx.Tasks[edge.ID]
-			if !exists || stringField(dep.Data, "status") != "done" {
+			if !v7DependencySatisfiedForReadiness(edge, dep, exists) {
 				incomplete = append(incomplete, edge.ID)
 			}
 			visit(edge.ID)

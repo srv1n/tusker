@@ -66,7 +66,7 @@ func v7DefaultDependencyHardness(dep Note) string {
 }
 
 func v7DependencySatisfiedForReadiness(edge v7DependencyEdge, dep Note, exists bool) bool {
-	if !exists {
+	if !exists || v7BuildFailed(dep) {
 		return false
 	}
 	status := strings.ToLower(strings.TrimSpace(stringField(dep.Data, "status")))

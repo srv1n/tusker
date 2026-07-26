@@ -298,6 +298,43 @@ func TestCrossScopeGateOrdering(t *testing.T) {
 	if !v7GateAuthorityReceiptCurrent(idx.Gates[authID], idx) || v7GateAuthorityReceiptCurrent(idx.Gates[releaseID], idx) {
 		t.Fatal("receipt refresh changed more than the selected authority gate")
 	}
+	refreshedAuthReceipt := stringField(idx.Gates[authID].Data, "dependency_material_fingerprint")
+
+	crossScopeWriteTaskFields(t, fixture.Vault, fixture.ProducerID, map[string]any{buildFailedField: true})
+	idx, err = loadV7Index(fixture.Vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v7GateAuthorityReceiptCurrent(idx.Gates[authID], idx) ||
+		stringField(idx.Gates[authID].Data, "dependency_material_fingerprint") != refreshedAuthReceipt {
+		t.Fatal("red done producer did not stale the previously current authority receipt")
+	}
+	if !v7GateAuthorityReceiptCurrent(idx.Gates[setupID], idx) || !v7GateAuthorityReceiptCurrent(idx.Gates[unrelatedAuthID], idx) {
+		t.Fatal("red done producer invalidated setup or unrelated authority")
+	}
+	assertCrossScopeGateRefusal(t, gateV7Transition(Args{
+		"vault": fixture.Vault, "id": authID, "evidence": "Red material must not refresh authority.", "by": "human:test", "quiet": "true",
+	}, "satisfied"))
+	assertCrossScopeGateRefusal(t, gateV7Cmd(Args{
+		"vault": fixture.Vault, "_pos0": "waive", "_pos1": releaseID, "reason": "Red material must not be waived.", "by": "human:test", "quiet": "true",
+	}))
+	if err := gateV7Cmd(Args{
+		"vault": fixture.Vault, "_pos0": "satisfy", "_pos1": setupID, "evidence": "Runtime setup remains usable.", "by": "human:test", "quiet": "true",
+	}); err != nil {
+		t.Fatalf("setup gate inherited hard-closure policy: %v", err)
+	}
+	idx, err = loadV7Index(fixture.Vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stringField(idx.Gates[authID].Data, "dependency_material_fingerprint") != refreshedAuthReceipt ||
+		v7GateAuthorityReceiptCurrent(idx.Gates[authID], idx) ||
+		v7GateAuthorityReceiptCurrent(idx.Gates[releaseID], idx) {
+		t.Fatal("refused red-closure transitions mutated or refreshed authority receipts")
+	}
+	if !v7GateAuthorityReceiptCurrent(idx.Gates[setupID], idx) || !v7GateAuthorityReceiptCurrent(idx.Gates[unrelatedAuthID], idx) {
+		t.Fatal("red-closure refusal changed setup or unrelated authority")
+	}
 }
 
 func newCrossScopePolicyFixture(t *testing.T, vault string, withGates bool) crossScopePolicyFixture {
