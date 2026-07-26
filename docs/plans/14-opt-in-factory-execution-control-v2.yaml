@@ -32,7 +32,7 @@ tasks:
       - id: A1
         outcome: Fresh setup writes automation disabled with effective dispatch scope armed_waves, and absent setup never produces a background claim.
       - id: A2
-        outcome: An enabled armed_waves project dispatches only ready or rework members of an armed, non-stale exact wave fingerprint and refuses unrelated eligible tasks with a stable reason.
+        outcome: An enabled armed_waves project atomically arms through the public control path without recursively reacquiring wave or member locks, dispatches only ready or rework members of an armed, non-stale exact wave fingerprint, and refuses unrelated eligible tasks with a stable reason.
       - id: A3
         outcome: The all_eligible scope is an explicit advanced mode, while existing enabled projects with no scope preserve prior behavior through a visible legacy-effective projection and doctor warning rather than silent authority drift.
       - id: A4
@@ -42,10 +42,12 @@ tasks:
     verification:
       - covers: A1,A2,A3,A4,A5
         check: "command: go test ./cmd/tusker -run '^TestAutomationDispatchScope' -count=1"
+      - covers: A2
+        check: "command: go test ./cmd/tusker -run '^TestWaveArmHeldLockRegression$' -count=1"
     artifact:
       kind: behavior_matrix
       path: cmd/tusker/dispatch_scope_test.go
-      summary: Absent, disabled, armed-wave, stale-wave, unrelated-ready, explicit all-eligible, legacy-effective, and no-side-effect dispatch authority matrix.
+      summary: Absent, disabled, atomic public arm, stale-wave, unrelated-ready, explicit all-eligible, legacy-effective, and no-side-effect dispatch authority matrix.
       acceptance_ids: [A1, A2, A3, A4, A5]
     owned_paths:
       - cmd/tusker/dispatch_scope.go
@@ -56,6 +58,7 @@ tasks:
       - cmd/tusker/setup_doctor.go
       - cmd/tusker/setup_doctor_test.go
       - cmd/tusker/commands_create.go
+      - cmd/tusker/delivery_cmd.go
       - cmd/tusker/automation_commands_test.go
       - cmd/tusker/v7_wave_authorization.go
       - cmd/tusker/v7_wave_authorization_test.go
