@@ -1260,16 +1260,20 @@ func TestServeDeliveryDoubleFaultsPreserveEverySafeCause(t *testing.T) {
 			&deliveryStartAuthority{ArmCommit: commit},
 			tuskerError(
 				"CAS_BUSY",
-				`typed delivery refusal token=rollback-secret-value {"token":"json-secret-value"}`,
+				`typed delivery refusal token=rollback-secret-value {"token":"json secret value"}`,
 				withContext(map[string]any{
-					path:     "file:" + path,
-					"detail": `path=` + path + ` {"authorization":"Bearer context-secret-value"}`,
+					path: "file:" + path,
+					filepath.Join(filepath.Dir(path), "other"): `\\private-server\share\context.txt`,
+					"token=first-key-secret":                   "first collision value",
+					"token=second-key-secret":                  "second collision value",
+					"error_chain":                              "primary context chain",
+					"detail":                                   `path=` + path + ` {"authorization":"Basic context secret value"}`,
 				}),
 			),
 		)
 		combined := errors.Join(
 			rolledBack,
-			errors.New(`injected subsequent material close failure path=`+path+` {"password":"close-secret-value"}`),
+			errors.New(`injected subsequent material close failure path=`+path+` {"password":"close secret value"}`),
 		)
 		result := serveCommandResult("tusker delivery start", "", combined)
 		if result.OK || !result.Refused || result.Issue == nil || result.Issue.Code != "CAS_BUSY" {
@@ -1278,6 +1282,15 @@ func TestServeDeliveryDoubleFaultsPreserveEverySafeCause(t *testing.T) {
 		assertContainsAll(t, result.Reason, "typed delivery refusal", "[redacted]", "exact transaction rollback could not be proven", "committed import bytes changed before restoration", "injected subsequent material close failure")
 		chain := strings.Join(errorChain(t, result.Issue), " ")
 		assertContainsAll(t, chain, "typed delivery refusal", "committed import bytes changed before restoration", "injected subsequent material close failure")
+		context, ok := result.Issue.Context.(map[string]any)
+		if !ok {
+			t.Fatalf("safe operator context has unexpected shape: %#v", result.Issue.Context)
+		}
+		for _, key := range []string{"[path]", "[path]#2", "token=[redacted]", "token=[redacted]#2", "primary_error_chain", "error_chain"} {
+			if _, exists := context[key]; !exists {
+				t.Fatalf("safe operator context lost colliding or reserved key %q: %#v", key, context)
+			}
+		}
 		if strings.Contains(result.Reason, filepath.Dir(path)) {
 			t.Fatalf("safe operator reason leaked an absolute transaction path: %s", result.Reason)
 		}
@@ -1288,9 +1301,12 @@ func TestServeDeliveryDoubleFaultsPreserveEverySafeCause(t *testing.T) {
 		for _, forbidden := range []string{
 			filepath.Dir(path),
 			"rollback-secret-value",
-			"json-secret-value",
-			"context-secret-value",
-			"close-secret-value",
+			"json secret value",
+			"context secret value",
+			"close secret value",
+			`\\private-server\share`,
+			"first-key-secret",
+			"second-key-secret",
 		} {
 			if !strings.Contains(string(encodedIssue), forbidden) {
 				continue

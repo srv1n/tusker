@@ -223,6 +223,10 @@ func appendServeErrorDetails(issue Issue, leaves []error, primary *TuskerError) 
 	}
 	issue.Message = safePacketText(issue.Message+"; additional causes: "+strings.Join(siblingDetails, "; "), 2048)
 	context := serveIssueContextMap(issue.Context)
+	if existing, present := context["error_chain"]; present {
+		delete(context, "error_chain")
+		context[uniqueServeIssueContextKey(context, "primary_error_chain")] = existing
+	}
 	context["error_chain"] = allDetails
 	issue.Context = context
 	return issue
@@ -289,10 +293,14 @@ func safeServeIssueContext(value any, depth int) any {
 		}
 		out := make(map[string]any, len(keys)+1)
 		for _, key := range keys {
-			out[safeOperatorErrorText(key, 80)] = safeServeIssueContext(typed[key], depth+1)
+			safeKey := safeOperatorErrorText(key, 80)
+			if safeKey == "" {
+				safeKey = "[redacted-key]"
+			}
+			out[uniqueServeIssueContextKey(out, safeKey)] = safeServeIssueContext(typed[key], depth+1)
 		}
 		if len(typed) > len(keys) {
-			out["_truncated"] = true
+			out[uniqueServeIssueContextKey(out, "_truncated")] = true
 		}
 		return out
 	default:
@@ -305,6 +313,18 @@ func safeServeIssueContext(value any, depth int) any {
 			return "[unavailable]"
 		}
 		return safeServeIssueContext(decoded, depth+1)
+	}
+}
+
+func uniqueServeIssueContextKey(values map[string]any, base string) string {
+	if _, exists := values[base]; !exists {
+		return base
+	}
+	for suffix := 2; ; suffix++ {
+		candidate := fmt.Sprintf("%s#%d", base, suffix)
+		if _, exists := values[candidate]; !exists {
+			return candidate
+		}
 	}
 }
 
@@ -327,6 +347,7 @@ func safeOperatorErrorText(value string, limit int) string {
 	value = serveErrorJSONAuthorizationPattern.ReplaceAllString(value, "${1}[redacted]")
 	value = serveErrorUnixAbsolutePathPattern.ReplaceAllString(value, "${1}[path]")
 	value = serveErrorWindowsAbsolutePathPattern.ReplaceAllString(value, "${1}[path]")
+	value = serveErrorWindowsUNCPathPattern.ReplaceAllString(value, "${1}[path]")
 	return safePacketText(value, limit)
 }
 
@@ -425,8 +446,9 @@ var (
 	integerStringPattern                 = regexp.MustCompile(`^-?\d+$`)
 	serveErrorUnixAbsolutePathPattern    = regexp.MustCompile(`(^|[\s=:,"'(\[{])(/[^\s/"'()\[\]{}<>,;][^\s"'()\[\]{}<>,;]*)`)
 	serveErrorWindowsAbsolutePathPattern = regexp.MustCompile(`(^|[\s=,"'(\[{])([A-Za-z]:[\\/][^\s"'()\[\]{}<>,;]+)`)
-	serveErrorJSONSecretPattern          = regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)["']?\s*[:=]\s*["']?)[^"'\s,}\]]+`)
-	serveErrorJSONAuthorizationPattern   = regexp.MustCompile(`(?i)(["']?(?:authorization|proxy-authorization)["']?\s*[:=]\s*["']?(?:bearer\s+)?)[^"'\s,}\]]+`)
+	serveErrorWindowsUNCPathPattern      = regexp.MustCompile(`(^|[\s=,"'(\[{])(\\\\[^\\/\s"'()\[\]{}<>,;]+(?:\\[^\\/\s"'()\[\]{}<>,;]+)+)`)
+	serveErrorJSONSecretPattern          = regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)["']?\s*[:=]\s*["']?)[^"',;}\]]+`)
+	serveErrorJSONAuthorizationPattern   = regexp.MustCompile(`(?i)(["']?(?:authorization|proxy-authorization)["']?\s*[:=]\s*["']?(?:(?:bearer|basic)\s+)?)[^"',;}\]]+`)
 )
 
 var statusTransitionDateFields = map[string]string{
