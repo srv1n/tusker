@@ -295,7 +295,7 @@ tasks:
     outcome: A user can see what delivered, what is working, what is in review or rework, what is blocked, what needs a decision, and what runs next without opening logs or task frontmatter.
     acceptance:
       - id: A1
-        outcome: CLI, stable JSON API, Serve, and desktop consume one versioned projection with ordered Delivered, Working now, In review or rework, Blocked, Needs your decision, and Next frontier sections.
+        outcome: The read-only `tusker factory operations [--json]` command, stable JSON API, Serve, and desktop consume one versioned projection with ordered Delivered, Working now, In review or rework, Blocked, Needs your decision, and Next frontier sections.
       - id: A2
         outcome: Rows use product outcomes, bounded causes, affected dependency closure, automatic next action, accepted artifacts, and integration or default revisions while raw logs, prompts, transcripts, YAML, heartbeats, and token totals stay in diagnostics.
       - id: A3
@@ -320,6 +320,7 @@ tasks:
     owned_paths:
       - cmd/tusker/factory_operations.go
       - cmd/tusker/factory_operations_test.go
+      - cmd/tusker/cli.go
       - cmd/tusker/serve_command.go
       - internal/serve/ui/src
       - internal/serve/ui/tests/factory-operations.test.ts
