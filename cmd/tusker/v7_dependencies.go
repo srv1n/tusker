@@ -79,6 +79,9 @@ func v7DependencySatisfiedForReadiness(edge v7DependencyEdge, dep Note, exists b
 }
 
 func v7BlockingDependencyForReadiness(task Note, idx v7Index) (v7DependencyEdge, bool) {
+	if edge, blocked := v7CrossScopeIntegrityBlocker(task, idx); blocked {
+		return edge, true
+	}
 	for _, edge := range v7TaskDependencyEdges(task, idx) {
 		dep, exists := idx.Tasks[edge.ID]
 		if !v7DependencySatisfiedForReadiness(edge, dep, exists) {
@@ -86,6 +89,56 @@ func v7BlockingDependencyForReadiness(task Note, idx v7Index) (v7DependencyEdge,
 		}
 	}
 	return v7DependencyEdge{}, false
+}
+
+// v7CrossScopeIntegrityBlocker keeps semantic provenance on the same ordinary
+// dependency path used by readiness. It scopes validation to this task's
+// dependency closure so drift parks only affected consumers; the projection
+// never becomes a second scheduler edge.
+func v7CrossScopeIntegrityBlocker(task Note, idx v7Index) (v7DependencyEdge, bool) {
+	if stringField(task.Data, "delivery_plan_scope") == "" && task.Data["delivery_cross_scope_dependencies"] == nil {
+		return v7DependencyEdge{}, false
+	}
+
+	scoped := idx
+	scoped.Tasks = map[string]Note{}
+	seen := map[string]bool{}
+	var visit func(Note)
+	visit = func(current Note) {
+		id := stringField(current.Data, "id")
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		scoped.Tasks[id] = current
+		for _, edge := range v7TaskDependencyEdges(current, idx) {
+			if dependency, ok := idx.Tasks[edge.ID]; ok {
+				visit(dependency)
+			}
+		}
+	}
+	visit(task)
+	if err := validateDeliveryCrossScopeIndex(scoped, stringField(task.Data, "project")); err == nil {
+		return v7DependencyEdge{}, false
+	}
+
+	projections, _ := deliveryCrossScopeProjections(task)
+	projected := map[string]bool{}
+	for _, projection := range projections {
+		projected[projection.TaskID] = true
+	}
+	consumerScope := stringField(task.Data, "delivery_plan_scope")
+	edges := v7TaskDependencyEdges(task, idx)
+	for _, edge := range edges {
+		dependency, exists := idx.Tasks[edge.ID]
+		if projected[edge.ID] || (exists && stringField(dependency.Data, "delivery_plan_scope") != "" && stringField(dependency.Data, "delivery_plan_scope") != consumerScope) {
+			return edge, true
+		}
+	}
+	if len(edges) > 0 {
+		return edges[0], true
+	}
+	return v7DependencyEdge{ID: "cross-scope projection", Hardness: v7DependencyHardnessHard}, true
 }
 
 func v7UnclosedDependency(task Note, idx v7Index) (v7DependencyEdge, bool) {

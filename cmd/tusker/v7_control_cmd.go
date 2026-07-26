@@ -12,6 +12,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	v7GateHardDependencyIncompleteCode = "GATE_HARD_DEPENDENCY_INCOMPLETE"
+	v7GateAuthorityReceiptStaleCode    = "GATE_AUTHORITY_RECEIPT_STALE"
+)
+
 func inferV7ObjectKind(id string) string {
 	switch {
 	case v7EvidenceIDPattern.MatchString(id):
@@ -91,6 +96,16 @@ func gateV7Transition(args Args, status string) error {
 	if err := ensureV7ControlMutation(vaultPath, args); err != nil {
 		return err
 	}
+	materialLock, err := acquireV7MaterialEpochLock(vaultPath)
+	if err != nil {
+		return err
+	}
+	materialLockHeld := true
+	defer func() {
+		if materialLockHeld {
+			_ = materialLock.Close()
+		}
+	}()
 	id, err := requireArg(args, "id")
 	if err != nil {
 		return err
@@ -107,6 +122,18 @@ func gateV7Transition(args Args, status string) error {
 	prev := stringField(data, "status")
 	now := time.Now().UTC().Format(time.RFC3339)
 	actor := fallback(args.String("by"), "agent:"+defaultActorName())
+	gateKind := strings.ToLower(stringField(data, "gate_kind"))
+	if (status == "satisfied" || status == "waived") && (gateKind == "auth" || gateKind == "release") {
+		idx, indexErr := loadV7Index(vaultPath)
+		if indexErr != nil {
+			return indexErr
+		}
+		fingerprint, incomplete := v7GateHardClosureFingerprint(data, idx)
+		if len(incomplete) > 0 {
+			return tuskerError(v7GateHardDependencyIncompleteCode, id+": "+gateKind+" gate cannot be satisfied before hard dependency closure completes: "+strings.Join(sortedStrings(incomplete), ", "), withHint("complete or repair the named hard dependencies, then satisfy the gate against current material"))
+		}
+		data["dependency_material_fingerprint"] = fingerprint
+	}
 	data["status"] = status
 	data["updated_at"] = now
 	data["updated_by"] = actor
@@ -140,8 +167,13 @@ func gateV7Transition(args Args, status string) error {
 		}
 		data["obsolete_reason"] = reason
 	}
-	if _, err := saveV7DocumentCAS(note.AbsolutePath, data, body, v7FrontmatterOrder["gate"], baseRev); err != nil {
+	if _, err := saveV7DocumentCASUnderMaterialLock(note.AbsolutePath, data, body, v7FrontmatterOrder["gate"], baseRev); err != nil {
 		return err
+	}
+	closeErr := materialLock.Close()
+	materialLockHeld = false
+	if closeErr != nil {
+		return closeErr
 	}
 	eventKind := "gate_" + status
 	if status == "obsolete" {
@@ -166,6 +198,79 @@ func gateV7Transition(args Args, status string) error {
 		}
 	}
 	return nil
+}
+
+func v7GateHardClosureFingerprint(gate map[string]any, idx v7Index) (string, []string) {
+	seen := map[string]bool{}
+	hardTargets := map[string]bool{}
+	var incomplete []string
+	var visit func(string)
+	visit = func(id string) {
+		if seen[id] {
+			return
+		}
+		seen[id] = true
+		task, ok := idx.Tasks[id]
+		if !ok {
+			incomplete = append(incomplete, id+" (missing)")
+			return
+		}
+		if edge, blocked := v7CrossScopeIntegrityBlocker(task, idx); blocked {
+			incomplete = append(incomplete, edge.ID+" (stale material)")
+		}
+		for _, edge := range v7TaskDependencyEdges(task, idx) {
+			if edge.Hardness != v7DependencyHardnessHard {
+				continue
+			}
+			hardTargets[edge.ID] = true
+			dep, exists := idx.Tasks[edge.ID]
+			if !exists || stringField(dep.Data, "status") != "done" {
+				incomplete = append(incomplete, edge.ID)
+			}
+			visit(edge.ID)
+		}
+	}
+	for _, id := range sortedStrings(normalizeList(gate["blocks"])) {
+		visit(id)
+	}
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	rows := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		task, ok := idx.Tasks[id]
+		if !ok {
+			continue
+		}
+		row := map[string]any{
+			"id":           id,
+			"contract":     stringField(task.Data, "delivery_contract_fingerprint"),
+			"dependencies": sortedStrings(normalizeList(task.Data["dependencies"])),
+			"cross_scope":  task.Data["delivery_cross_scope_dependencies"],
+		}
+		if hardTargets[id] {
+			row["material_epoch"] = stringField(task.Data, "state_rev")
+		}
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool { return stringField(rows[i], "id") < stringField(rows[j], "id") })
+	raw, _ := yaml.Marshal(rows)
+	return deliveryFingerprint(raw), uniqueStrings(incomplete)
+}
+
+func v7GateAuthorityReceiptCurrent(gate Note, idx v7Index) bool {
+	kind := strings.ToLower(stringField(gate.Data, "gate_kind"))
+	if kind != "auth" && kind != "release" {
+		return true
+	}
+	if status := stringField(gate.Data, "status"); status != "satisfied" && status != "waived" {
+		return true
+	}
+	want := stringField(gate.Data, "dependency_material_fingerprint")
+	have, incomplete := v7GateHardClosureFingerprint(gate.Data, idx)
+	return want != "" && len(incomplete) == 0 && want == have
 }
 
 func statusV7Cmd(args Args) error {

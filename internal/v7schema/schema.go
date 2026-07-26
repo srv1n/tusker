@@ -55,7 +55,7 @@ var FrontmatterOrder = map[string][]string{
 	},
 	"gate": {
 		"schema", "kind", "id", "project", "title", "gate_kind", "status", "owner", "priority", "blocking", "blocks",
-		"covers", "dependency_closure", "delivery_source_key", "delivery_plan_scope", "delivery_contract_fingerprint", "why_agent_cannot", "action", "suggestion", "verification", "satisfaction_evidence", "satisfaction_evidence_refs", "satisfied_by", "satisfied_at", "waived_by", "waived_at", "waive_reason", "obsolete_reason",
+		"covers", "dependency_closure", "dependency_material_fingerprint", "delivery_source_key", "delivery_plan_scope", "delivery_contract_fingerprint", "why_agent_cannot", "action", "suggestion", "verification", "satisfaction_evidence", "satisfaction_evidence_refs", "satisfied_by", "satisfied_at", "waived_by", "waived_at", "waive_reason", "obsolete_reason",
 		"created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
 	"epic": {

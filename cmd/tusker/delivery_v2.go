@@ -691,7 +691,7 @@ func deliveryV2WriteExtras(vaultPath string, plan deliveryPlan, report deliveryI
 		contractFingerprint := deliveryFingerprint(contractRaw)
 		data["delivery_contract_fingerprint"] = contractFingerprint
 		if old != nil && stringField(old, "delivery_contract_fingerprint") == contractFingerprint {
-			for _, field := range []string{"status", "satisfaction_evidence", "satisfaction_evidence_refs", "satisfied_by", "satisfied_at", "waived_by", "waived_at", "waive_reason", "obsolete_reason"} {
+			for _, field := range []string{"status", "dependency_material_fingerprint", "satisfaction_evidence", "satisfaction_evidence_refs", "satisfied_by", "satisfied_at", "waived_by", "waived_at", "waive_reason", "obsolete_reason"} {
 				if value, ok := old[field]; ok {
 					data[field] = value
 				}

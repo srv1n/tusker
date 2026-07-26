@@ -18,7 +18,7 @@ var (
 	v7ProtectedCommonFields = makeSet("schema", "kind", "id", "project", "state_rev")
 	v7ProtectedFieldsByKind = map[string]map[string]struct{}{
 		"task":          makeSet("status", "readiness", "wave", "next_owner", "next_source", "next_ref", "next_action", "accepted_by", "accepted_at", "closed_at", "close_authority", "superseded_by", "discarded_by", "discarded_at", "discard_reason"),
-		"gate":          makeSet("status", "owner", "blocking", "blocks", "satisfaction_evidence", "satisfaction_evidence_refs", "satisfied_by", "satisfied_at", "waived_by", "waived_at", "waive_reason", "obsolete_reason"),
+		"gate":          makeSet("status", "owner", "blocking", "blocks", "dependency_material_fingerprint", "satisfaction_evidence", "satisfaction_evidence_refs", "satisfied_by", "satisfied_at", "waived_by", "waived_at", "waive_reason", "obsolete_reason"),
 		"wave":          makeSet("status", "landed_at", "authorization", "authorization_fingerprint", "authorized_by", "authorized_at", "authorization_reason", "authorization_updated_by", "authorization_updated_at"),
 		"escalation":    makeSet("severity", "status", "stale_bumped_from", "stale_bumped_at", "notified_at", "notification_error", "acknowledged_by", "acknowledged_at"),
 		"epic":          makeSet("status", "owner", "priority", "next_task_number", "next_gate_number", "next_decision_number"),
