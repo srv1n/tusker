@@ -147,6 +147,14 @@ func runnerWrapperExecutable() (string, error) {
 }
 
 func runRunnerWrapper(parent context.Context, req runnerWrapperRequest) error {
+	return runRunnerWrapperWithChildStarter(parent, req, runnerWrapperStartChild)
+}
+
+func runRunnerWrapperWithChildStarter(
+	parent context.Context,
+	req runnerWrapperRequest,
+	startChild func(context.Context, runnerWrapperRequest) (*StartResult, error),
+) error {
 	ctx, stopSignals := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 	stopHeartbeat := make(chan string, 1)
@@ -154,14 +162,19 @@ func runRunnerWrapper(parent context.Context, req runnerWrapperRequest) error {
 	defer cancelHeartbeat()
 	go runnerWrapperHeartbeat(heartbeatCtx, req.Start, stopHeartbeat)
 
-	result, err := runnerWrapperStartChild(ctx, req)
+	result, err := startChild(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
 			_ = appendRawLogLine(runnerWrapperDiagnosticPath(req.Start), "runner wrapper stopping: "+ctx.Err().Error())
-			_ = writeRunnerStatusFile(req.Start.StatusPath, 130)
+			runnerWrapperPublishStatusIfAbsent(
+				req.Start,
+				130,
+				AttemptOutcomeInterrupted,
+				"runner wrapper cancelled before child terminal status",
+			)
 			return nil
 		}
-		_ = writeRunnerStatusFile(req.Start.StatusPath, 1)
+		runnerWrapperPublishStatusIfAbsent(req.Start, 1, AttemptOutcomeFailed, "runner wrapper could not start child: "+err.Error())
 		return err
 	}
 	return runnerWrapperWait(ctx, req, result, stopHeartbeat)
@@ -277,11 +290,15 @@ func runnerWrapperWaitForStatus(req StartRequest, timeout time.Duration) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	if req.RawLogMaxBytes > 0 {
-		_, _ = writeRunnerStatusFileIfAbsentWithOutcome(req.StatusPath, 130, AttemptOutcomeInterrupted, "runner wrapper timed out waiting for bounded child cleanup", 0)
+		runnerWrapperPublishStatusIfAbsent(req, 130, AttemptOutcomeInterrupted, "runner wrapper timed out waiting for bounded child cleanup")
 	} else {
-		_ = writeRunnerStatusFile(req.StatusPath, 130)
+		runnerWrapperPublishStatusIfAbsent(req, 130, AttemptOutcomeInterrupted, "runner wrapper timed out waiting for child cleanup")
 	}
 	return nil
+}
+
+func runnerWrapperPublishStatusIfAbsent(req StartRequest, exitCode int, outcome AttemptOutcome, reason string) {
+	_, _ = writeRunnerStatusFileIfAbsentWithOutcome(req.StatusPath, exitCode, outcome, reason, 0)
 }
 
 func runnerWrapperInterrupt(req runnerWrapperRequest, result *StartResult, reason string) {
