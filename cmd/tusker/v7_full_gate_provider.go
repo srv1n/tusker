@@ -2309,17 +2309,10 @@ func reconcileV7FullGateProviderOutcome(state *v7FullGateStateRoot, store *Runti
 			return publishedErr
 		}
 		if published {
-			if journal.Result.Outcome == v7FullGateOutcomePassed {
-				if err := validateV7FullGateJournalGreen(state, store, *run, *journal); err != nil {
-					return fmt.Errorf("%w: published green provider outcome no longer validates: %v", errV7FullGateProvider, err)
-				}
-				if err := reconcileV7FullGateGreenLedger(store, *journal); err != nil {
-					return err
-				}
-			}
 			// The departure CAS already won. Recovery owns only retirement now;
-			// rewriting gate state here would destroy ordinary-red repair
-			// routing or a successful flake rerun that includes this receipt.
+			// re-adjudicating proof or ledger state here would let later
+			// contract drift wedge startup or destroy an already-published
+			// ordinary-red repair or successful flake rerun.
 			return runV7FullGateRecoveryHook("outcome_target_persisted")
 		}
 	}

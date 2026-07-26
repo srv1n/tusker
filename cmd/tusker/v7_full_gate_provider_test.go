@@ -1176,6 +1176,112 @@ func TestV7FullGateProviderRecoveryRetiresPublishedOutcomeWithoutRewritingDepart
 	}
 }
 
+func TestV7FullGateProviderRecoveryTreatsPublishedGreenAsTerminalAuthority(t *testing.T) {
+	for _, ledgerState := range []string{"missing", "conflicting"} {
+		t.Run(ledgerState+" ledger after contract drift", func(t *testing.T) {
+			stateRoot := t.TempDir()
+			store, run := openV7ProviderRecoveryRun(t, stateRoot, "published-green-"+ledgerState)
+			defer store.Close()
+
+			repo := t.TempDir()
+			runGitDir(t, repo, "init", "-b", "main")
+			runGitDir(t, repo, "config", "user.email", "test@example.com")
+			runGitDir(t, repo, "config", "user.name", "Test User")
+			if err := os.WriteFile(filepath.Join(repo, "drift.txt"), []byte("current tree differs\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			runGitDir(t, repo, "add", ".")
+			runGitDir(t, repo, "commit", "-m", "current drifted tree")
+			currentSHA := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "HEAD"))
+			vault := filepath.Join(repo, ".tusker")
+			if err := os.MkdirAll(vault, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeDefaultWorkflow(vault); err != nil {
+				t.Fatal(err)
+			}
+			setScheduledPromotionGateForTest(t, vault, []string{"go env GOOS >/dev/null"}, "drifted-profile")
+			project := newRegisteredProject(repo, vault)
+			project.ProjectID = run.ProjectID
+			if err := store.UpsertProject(project); err != nil {
+				t.Fatal(err)
+			}
+
+			scope, request, result, receipt := writeV7ProviderOutcomeFixture(t, stateRoot, run.ID, v7FullGateOutcomePassed)
+			if err := persistV7FullGateProviderOutcomeJournal(stateRoot, scope, request, result, receipt); err != nil {
+				t.Fatal(err)
+			}
+			intent := run
+			intent.State = DepartureStateGating
+			intent.Candidate.CandidateSHA = currentSHA
+			intent.Candidate.CandidateTreeHash = "drifted-tree"
+			intent.Gate.Status = "passed"
+			intent.Gate.Profile = "drifted-profile"
+			intent.Gate.Toolchain = "drifted-toolchain"
+			intent.Gate.TreeHash = "drifted-tree"
+			intent.Gate.ArtifactRef = request.ArtifactRef
+			intent.Gate.ArtifactRefs = []string{request.ArtifactRef}
+			intent.Gate.ProviderReceipts = []GateProviderReceipt{receipt}
+			intent.Gate.ProviderOutcomes = []GateProviderReceipt{receipt}
+			changed, err := store.TransitionDepartureRun(intent, run.StateRevision)
+			if err != nil || !changed {
+				t.Fatalf("persist published green departure: changed=%t err=%v", changed, err)
+			}
+			if ledgerState == "conflicting" {
+				conflict := receipt
+				conflict.RequestDigest = "sha256:" + strings.Repeat("8", 64)
+				conflict.ReceiptDigest = "sha256:" + strings.Repeat("9", 64)
+				if err := store.RecordGateLedger(GateLedgerEntry{
+					ID: "conflicting-green", ProjectID: receipt.ProjectID, TreeHash: receipt.CandidateDigest,
+					Command: request.Command, Profile: receipt.Profile, Toolchain: receipt.Toolchain,
+					PassedAt: "2026-07-26T00:00:00Z", ProviderReceipt: &conflict,
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			beforeDeparture, err := store.FindDepartureRun(run.ID)
+			if err != nil || beforeDeparture == nil {
+				t.Fatal(err)
+			}
+			beforeLedger, err := store.FindGateLedger(receipt.ProjectID, receipt.CandidateDigest, request.Command, receipt.Profile, receipt.Toolchain)
+			if err != nil {
+				t.Fatal(err)
+			}
+			departureBytes, _ := json.Marshal(beforeDeparture)
+			ledgerBytes, _ := json.Marshal(beforeLedger)
+
+			if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
+				t.Fatalf("retire published green after drift: %v", err)
+			}
+			if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
+				t.Fatalf("idempotent published green retirement: %v", err)
+			}
+			afterDeparture, err := store.FindDepartureRun(run.ID)
+			if err != nil || afterDeparture == nil {
+				t.Fatal(err)
+			}
+			afterLedger, err := store.FindGateLedger(receipt.ProjectID, receipt.CandidateDigest, request.Command, receipt.Profile, receipt.Toolchain)
+			if err != nil {
+				t.Fatal(err)
+			}
+			afterDepartureBytes, _ := json.Marshal(afterDeparture)
+			afterLedgerBytes, _ := json.Marshal(afterLedger)
+			if !bytes.Equal(departureBytes, afterDepartureBytes) || !bytes.Equal(ledgerBytes, afterLedgerBytes) {
+				t.Fatalf("published terminal authority was re-adjudicated:\ndeparture before=%s\ndeparture after=%s\nledger before=%s\nledger after=%s", departureBytes, afterDepartureBytes, ledgerBytes, afterLedgerBytes)
+			}
+			if _, err := os.Stat(request.ArtifactRef); err != nil {
+				t.Fatalf("published green artifact was removed: %v", err)
+			}
+			if _, err := os.Stat(filepath.Dir(scope.requestPath)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("published green scope remained: %v", err)
+			}
+			if _, err := os.Stat(v7FullGateProviderOutcomeJournalPath(stateRoot, request.DepartureID, request.RequestDigest)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("published green journal remained: %v", err)
+			}
+		})
+	}
+}
+
 func TestV7FullGateProviderArtifactBindingCrashRecoversExactRedEvidence(t *testing.T) {
 	stateRoot := t.TempDir()
 	store, run := openV7ProviderRecoveryRun(t, stateRoot, "artifact-bound-before-departure-cas")
