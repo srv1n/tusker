@@ -570,7 +570,7 @@ func scheduledPromotionAdvanceRefUnderMaterialEpoch(
 	candidate DepartureCandidate,
 	wave Note,
 	defaultBranch, expectedSHA, intendedSHA string,
-	recovery bool,
+	recovery bool, recoveryRun *DepartureRun,
 ) (checkouts []v7Worktree, err error) {
 	materialLock, err := acquireV7MaterialEpochLock(vaultPath)
 	if err != nil {
@@ -612,6 +612,29 @@ func scheduledPromotionAdvanceRefUnderMaterialEpoch(
 		return nil, restore(err)
 	}
 	if err := scheduledPromotionAfterFinalAuthority(); err != nil {
+		return nil, restore(err)
+	}
+	// A pre-ref recovery is allowed to reuse only durable proof that still
+	// matches the live workflow/provider contract. This runs after the final
+	// authority hook while the material epoch excludes managed control writers,
+	// leaving no mutable-policy gap before the irreversible ref CAS.
+	if recovery {
+		if recoveryRun == nil {
+			return nil, restore(tuskerError(errorInvalidTransition, "promotion recovery blocked: full_gate_recovery_record_missing"))
+		}
+		if err := validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID, store, *recoveryRun); err != nil {
+			return nil, restore(tuskerError(errorInvalidTransition, "promotion recovery blocked: "+err.Error()))
+		}
+	}
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return nil, restore(err)
+	} else if hold != nil {
+		return nil, restore(departureHoldError(hold))
+	}
+	if matched, err := store.ResourceLeaseMatches(lease.Name, lease.Owner, lease.Generation); err != nil || !matched {
+		return nil, restore(tuskerError(errorInvalidTransition, "promotion refusal: full_gate_lease_fenced_at_ref_update"))
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, restore(err)
 	}
 	checkouts, err = advanceV7DefaultBranchRef(repoRoot, defaultBranch, intendedSHA, expectedSHA)
@@ -1209,9 +1232,6 @@ func resumeScheduledPromotionIntent(ctx context.Context, vaultPath, projectID, w
 	if state != scheduledPromotionIntentPreRef {
 		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: default_ref_drift current="+current+" expected="+run.Promotion.ExpectedSHA+" intended="+run.Promotion.IntendedSHA)
 	}
-	if err := validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID, store, *run); err != nil {
-		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: "+err.Error())
-	}
 	if err := validateScheduledPromotionWaveAuthorityWithStore(vaultPath, waveID, store); err != nil {
 		return "", err
 	}
@@ -1245,7 +1265,7 @@ func resumeScheduledPromotionIntent(ctx context.Context, vaultPath, projectID, w
 	}
 	checkouts, err := scheduledPromotionAdvanceRefUnderMaterialEpoch(
 		ctx, vaultPath, projectID, waveID, store, lease, run.Candidate, wave,
-		run.Promotion.ExpectedRef, run.Promotion.ExpectedSHA, run.Promotion.IntendedSHA, true,
+		run.Promotion.ExpectedRef, run.Promotion.ExpectedSHA, run.Promotion.IntendedSHA, true, run,
 	)
 	if err != nil {
 		if state, _, inspectErr := inspectScheduledPromotionIntent(repoRoot, run.Promotion); inspectErr == nil && state == scheduledPromotionIntentCommitted {
@@ -1575,7 +1595,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	}
 	checkouts, err := scheduledPromotionAdvanceRefUnderMaterialEpoch(
 		ctx, vaultPath, projectID, waveID, store, lease, before.Candidate, wave,
-		before.DefaultBranch, before.Candidate.ExpectedDefaultBranchSHA, mergeCommit, false,
+		before.DefaultBranch, before.Candidate.ExpectedDefaultBranchSHA, mergeCommit, false, nil,
 	)
 	if err != nil {
 		return "", err

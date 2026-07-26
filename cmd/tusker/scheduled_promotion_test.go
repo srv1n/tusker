@@ -567,6 +567,59 @@ func TestScheduledPromotionPreRefRecoveryRejectsRevokedProviderAndReusesCertifie
 	}
 }
 
+func TestScheduledPromotionPreRefRecoveryRevalidatesPolicyInsideMaterialEpoch(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "pre-ref-epoch-policy.txt", "candidate\n")
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
+	wf := setScheduledPromotionGateForTest(t, vault, []string{"test -f pre-ref-epoch-policy.txt"}, "")
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	commitScheduledPromotionWorkflowForTest(t, repo, vault)
+	mainBefore := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run := newScheduledPromotionRunForTest(t, store, "2026-07-25T20:39:20Z")
+	injected := errors.New("injected pre-ref crash")
+	oldHook := scheduledPromotionAfterRefIntent
+	scheduledPromotionAfterRefIntent = func() error { return injected }
+	_, promoteErr := promoteScheduledWave(vault, "app", "W-0001", wf, store, &run, "daemon:test")
+	scheduledPromotionAfterRefIntent = oldHook
+	if !errors.Is(promoteErr, injected) {
+		t.Fatalf("missing injected pre-ref failure: %v", promoteErr)
+	}
+	durable, err := store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil {
+		t.Fatalf("load durable pre-ref intent: %#v err=%v", durable, err)
+	}
+
+	oldObserver := v7MaterialEpochLockObserver
+	defer func() { v7MaterialEpochLockObserver = oldObserver }()
+	changed := false
+	v7MaterialEpochLockObserver = func() {
+		if changed {
+			return
+		}
+		changed = true
+		writerLock, err := acquireV7MaterialEpochLock(vault)
+		if err != nil {
+			t.Fatalf("acquire policy writer material epoch: %v", err)
+		}
+		defer func() { _ = writerLock.Close() }()
+		setScheduledPromotionGateForTest(t, vault, []string{"test -f policy-revoked.txt"}, "")
+	}
+	resumed := *durable
+	if _, err := promoteScheduledWave(vault, "app", "W-0001", wf, store, &resumed, "daemon:test"); err == nil || !strings.Contains(err.Error(), "full_gate_contract_drift:gate") {
+		t.Fatalf("policy mutation in material-epoch gap did not block recovery: %v", err)
+	}
+	if !changed {
+		t.Fatal("test did not mutate policy at material epoch acquisition")
+	}
+	if after := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")); after != mainBefore {
+		t.Fatalf("epoch policy drift moved main: before=%s after=%s", mainBefore, after)
+	}
+}
+
 func TestValidateV7PromotionGatePolicyBoundsHostileConfig(t *testing.T) {
 	commands := make([]string, v7PromotionGateMaxCommands+1)
 	for i := range commands {
