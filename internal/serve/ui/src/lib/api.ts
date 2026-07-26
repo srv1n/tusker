@@ -31,6 +31,7 @@ import type {
   DocListEntry,
   EpicSummary,
   EvidenceDoc,
+  FactoryOperationsProjection,
   FeedbackDoc,
   GateDetail,
   InterruptResult,
@@ -132,6 +133,10 @@ export class DocSaveError extends ApiError {
 // ----------------------------------------------------------------------------
 
 export const api = {
+  // GET /api/factory-operations?project=
+  factoryOperations: (projectId?: string): Promise<FactoryOperationsProjection> =>
+    real(withProject("/factory-operations", projectId)),
+
   deliveryReview: (plan: string, projectId?: string): Promise<DeliveryReview> =>
     deliveryRequest("GET", withProject(`/delivery/review?plan=${encodeURIComponent(plan)}`, projectId)),
 

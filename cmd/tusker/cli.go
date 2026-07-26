@@ -153,7 +153,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "gate-ledger", "context", "config", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure":
+	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "gate-ledger", "context", "config", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory":
 		return true
 	default:
 		return false
@@ -316,6 +316,11 @@ func runInner(command string, args Args) (int, error) {
 		return 0, waveV7ResumeCmd(args)
 	case "wave disarm":
 		return 0, waveV7DisarmCmd(args)
+	case "factory":
+		printFactoryOperationsHelp()
+		return 0, nil
+	case "factory operations":
+		return 0, factoryOperationsCmd(args)
 	case "delivery plan":
 		return 0, deliveryPlanCmd(args)
 	case "delivery context":
@@ -902,6 +907,9 @@ func runInner(command string, args Args) (int, error) {
 	case "help automation", "help automation status", "help automation queue", "help automation explain", "help automation plan", "help automation dispatch", "help automation collect-external", "help automation external-loop", "help automation advance-external":
 		printAutomationHelp()
 		return 0, nil
+	case "help factory", "help factory operations":
+		printFactoryOperationsHelp()
+		return 0, nil
 	case "help config", "help config resolve":
 		printConfigHelp()
 		return 0, nil
@@ -998,6 +1006,7 @@ Commands:
   daemon              operator loop for registered local projects
   config              inspect resolved Tusker configuration with provenance
   automation          plan, inspect, and manually dispatch daemon automation work
+  factory             inspect the read-only factory operations projection
   projects            register repositories for daemon pickup
   runs                inspect, tail, interrupt, release, and retire daemon runs
   streams             show the generated live/landed orchestration lane board
@@ -1119,6 +1128,8 @@ func printCommandHelp(command string) bool {
 		printConfigHelp()
 	case "automation", "automation status", "automation queue", "automation explain", "automation plan", "automation dispatch", "automation collect-external", "automation external-loop", "automation advance-external":
 		printAutomationHelp()
+	case "factory", "factory operations":
+		printFactoryOperationsHelp()
 	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects remove", "projects prune":
 		printProjectsHelp()
 	case "runs", "runs claim", "runs start", "runs heartbeat", "runs submit", "runs fail", "runs reclaim", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs release", "runs retire", "runs redrive", "redrive":

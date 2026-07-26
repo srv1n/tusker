@@ -272,6 +272,8 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleSummary(w, r)
 	case path == "/api/morning-brief":
 		s.handleScheduledPromotionMorningBrief(w, r)
+	case path == "/api/factory-operations":
+		s.handleFactoryOperations(w, r)
 	case path == "/api/runs":
 		s.handleRuns(w, r)
 	case strings.HasPrefix(path, "/api/runs/"):
@@ -357,6 +359,21 @@ func (s *serveServer) handleScheduledPromotionMorningBrief(w http.ResponseWriter
 		return
 	}
 	serveJSON(w, http.StatusOK, brief)
+}
+
+func (s *serveServer) handleFactoryOperations(w http.ResponseWriter, r *http.Request) {
+	snap, err := s.loadSnapshotForRequest(r)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	vaultPath := firstNonEmpty(strings.TrimSpace(snap.project.VaultRoot), s.vaultPath)
+	projection, err := buildFactoryOperations(vaultPath, snap.project, snap.workflow, s.store, s.now())
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	serveJSON(w, http.StatusOK, projection)
 }
 
 func serveRunInterruptTaskID(path string) (string, bool) {
@@ -567,7 +584,7 @@ func (s *serveServer) loadSnapshotForProjectMode(projectID string, waitFresh boo
 		if wasReady && buildErr == nil && contentHash != previousHash && s.stream != nil {
 			s.stream.Broadcast(serveStreamEvent{
 				Kind: "projection_refreshed", Project: snap.projectID,
-				Keys: []string{"projects", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch"},
+				Keys: []string{"projects", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch", "factory-operations"},
 			})
 		}
 		return snap, buildErr
