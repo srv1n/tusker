@@ -809,9 +809,39 @@ func testFactoryIncrementalCompatibility(t *testing.T) {
 			!reflect.DeepEqual(warmIndex.Frontier, cold.Frontier) {
 			t.Fatalf("adaptive recovery differs from cold rebuild: warm=%#v cold=%#v", warmIndex, cold)
 		}
-		// This root has no factory-operations projection. Graph equality is
-		// product-proven here; operations-brief equality cannot honestly be
-		// asserted until that dependent surface exists.
+
+		// The operations brief is a separate read-only projection of the same
+		// recovered canonical state. Compose it through the production seam with
+		// a fixed clock so this parity check cannot be hidden by generated_at.
+		workflow, err := loadWorkflow(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		briefFacts := func(index v7Index) factoryOperationsFacts {
+			return factoryOperationsFacts{
+				VaultPath: vault, RepoRoot: filepath.Dir(vault), Project: project,
+				Workflow: workflow.Data, Index: index, Runs: map[string]RunStatus{},
+				Completions: map[string]factoryOperationsCompletionFact{},
+				WaveFacts:   map[string]factoryOperationsWaveFact{},
+				Now:         time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC),
+			}
+		}
+		warmBriefIndex, err := loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		coldBriefIndex, err := loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		warmBrief := composeFactoryOperations(briefFacts(warmBriefIndex))
+		coldBrief := composeFactoryOperations(briefFacts(coldBriefIndex))
+		if warmBrief.Schema != factoryOperationsSchema {
+			t.Fatalf("operations brief schema=%q, want %q", warmBrief.Schema, factoryOperationsSchema)
+		}
+		if !reflect.DeepEqual(warmBrief, coldBrief) {
+			t.Fatalf("adaptive recovery operations brief differs from cold rebuild: warm=%#v cold=%#v", warmBrief, coldBrief)
+		}
 	})
 
 	t.Run("explicit_all_eligible_and_V1_import_remain_compatible", func(t *testing.T) {
