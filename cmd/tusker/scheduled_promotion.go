@@ -1107,7 +1107,14 @@ func validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID string
 	if current.Gate.Toolchain == "" || current.Gate.TreeHash == "" {
 		return fmt.Errorf("full_gate_contract_unverifiable")
 	}
-	provider, err := newV7FullGateProvider(wf.Data.ScheduledPromotion.Effective.IsolationProvider, v7RepoRoot(vaultPath), store.stateRoot)
+	policy, err := scheduledPromotionGatePolicy(vaultPath, wf.Data)
+	if err != nil {
+		return fmt.Errorf("full_gate_policy_unavailable: %w", err)
+	}
+	if err := validateV7PromotionGatePolicy(policy); err != nil {
+		return fmt.Errorf("full_gate_policy_invalid: %w", err)
+	}
+	provider, err := newV7FullGateProvider(policy.IsolationProvider, v7RepoRoot(vaultPath), store.stateRoot)
 	if err != nil {
 		return fmt.Errorf("full_gate_provider_unavailable: %w", err)
 	}
@@ -1119,13 +1126,6 @@ func validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID string
 	ledgerTreeHash, err := scheduledPromotionRecoveryLedgerTreeHash(v7RepoRoot(vaultPath), run.Candidate.CandidateSHA)
 	if err != nil {
 		return fmt.Errorf("full_gate_ledger_tree_unavailable: %w", err)
-	}
-	policy, err := scheduledPromotionGatePolicy(vaultPath, wf.Data)
-	if err != nil {
-		return fmt.Errorf("full_gate_policy_unavailable: %w", err)
-	}
-	if err := validateV7PromotionGatePolicy(policy); err != nil {
-		return fmt.Errorf("full_gate_policy_invalid: %w", err)
 	}
 	for _, command := range policy.HarvestCommands {
 		entry, lookupErr := store.FindGateLedger(projectID, ledgerTreeHash, command, current.Gate.Profile, current.Gate.Toolchain)
