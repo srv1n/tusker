@@ -720,28 +720,27 @@ func writeServeTask(t *testing.T, vault string, seed serveTaskSeed) {
 		}
 	}
 	body := "---\nschema: \"tusker.task/v7\"\nkind: \"task\"\nid: \"" + seed.ID + "\"\nproject: \"app\"\ntitle: \"" + seed.Title + "\"\nepic: \"" + seed.Epic + "\"\nstatus: \"" + seed.Status + "\"\nreadiness: \"" + readiness + "\"\npriority: \"" + seed.Priority + "\"\nrisk: \"" + seed.Risk + "\"\nsize: \"m\"\nproof_mode: \"inline\"\nproof_status: \"pending\"\nproof_required:\n  - \"focused_test\"\n" + deps + "gates: []\ncreated_at: \"2026-07-06T06:00:00Z\"\nupdated_at: \"2026-07-06T06:00:00Z\"\nnext_owner: \"agent\"\nnext_action: \"Execute.\"\n" + transitions + "---\n\n# " + seed.ID + " - " + seed.Title + "\n\n## Intent\n\nDo the work.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Works. | Inline verification |\n\n## Non-goals\n\n- None.\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | go test ./cmd/tusker -run TestServe -count=1 | pending | Focused. |\n\n## Evidence\n\nAccepted:\n- None.\n\nPending:\n- None.\n\n## Knowledge delta\n\nNone expected.\n"
-	if err := writeText(filepath.Join(vault, "work", "tasks", seed.ID+".md"), body); err != nil {
-		t.Fatal(err)
-	}
+	writeServeTaskDocument(t, filepath.Join(vault, "work", "tasks", seed.ID+".md"), body)
 }
 
 func writeServeCloseableReviewTask(t *testing.T, vault, id, risk string) {
 	t.Helper()
 	body := "---\nschema: \"tusker.task/v7\"\nkind: \"task\"\nid: \"" + id + "\"\nproject: \"app\"\ntitle: \"Closeable high-risk review\"\nepic: \"APP\"\nstatus: \"review\"\nreadiness: \"waiting_on_review\"\npriority: \"p1\"\nrisk: \"" + risk + "\"\nsize: \"m\"\nproof_mode: \"inline\"\nproof_status: \"satisfied\"\nproof_required:\n  - \"focused_test\"\ndependencies: []\ngates: []\ncreated_at: \"2026-07-06T06:00:00Z\"\nupdated_at: \"2026-07-06T06:00:00Z\"\nnext_owner: \"human:sarav\"\nnext_source: \"close_policy\"\nnext_ref: \"close_policy:human_acceptor\"\nnext_action: \"Accept, waive, or return rework for close_policy:human_acceptor.\"\n---\n\n# " + id + " - Closeable high-risk review\n\n## Intent\n\nExercise the serve review close path for human-required risk.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | The serve review action records a human acceptor when close policy requires human signoff. | focused_test |\n\n## Non-goals\n\n- No runner or daemon behavior.\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | go test ./cmd/tusker -run TestServeCloseDefaultsHumanActorForHumanRequiredRisk -count=1 | pass | Serve close actor proof. |\n\n## Evidence\n\nAccepted:\n- None.\n\nPending:\n- None.\n\n## Knowledge delta\n\nNone expected.\n"
-	if err := writeText(filepath.Join(vault, "work", "tasks", id+".md"), body); err != nil {
-		t.Fatal(err)
-	}
-	taskPath := filepath.Join(vault, "work", "tasks", id+".md")
-	data, taskBody, err := parseFrontmatterMustRead(taskPath)
+	writeServeTaskDocument(t, filepath.Join(vault, "work", "tasks", id+".md"), body)
+}
+
+func writeServeTaskDocument(t *testing.T, path, source string) {
+	t.Helper()
+	data, body, err := parseFrontmatter(source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data["state_rev"] = v7StateRev(data, taskBody)
-	content, err := serializeDocument(data, taskBody, v7FrontmatterOrder["task"])
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(taskPath, content); err != nil {
+	if err := writeText(path, content); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -777,9 +776,7 @@ func writeServeAcceptanceRows(t *testing.T, vault, taskID string) {
 		t.Fatal(err)
 	}
 	text = strings.Replace(text, "| A1 | Works. | Inline verification |", "| A1 | Panel opens. | Inline verification |\n| A2 | Panel fits. | Inline verification |\n| A3 | Panel closes. | Inline verification |", 1)
-	if err := writeText(path, text); err != nil {
-		t.Fatal(err)
-	}
+	writeServeTaskDocument(t, path, text)
 }
 
 func writeServeEvidence(t *testing.T, vault string) {
