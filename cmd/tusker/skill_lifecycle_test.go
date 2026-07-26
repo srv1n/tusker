@@ -11,9 +11,7 @@ import (
 func TestSkillSymlinkTargetIsRelativeInsideTheRepo(t *testing.T) {
 	repo := t.TempDir()
 	source := filepath.Join(repo, "skills", "tusker")
-	if err := writeText(filepath.Join(source, "SKILL.md"), "# skill\n"); err != nil {
-		t.Fatal(err)
-	}
+	writeCanonicalTuskerSkillFixture(t, repo)
 	if err := writeText(filepath.Join(repo, "go.mod"), "module sample\n"); err != nil {
 		t.Fatal(err)
 	}
