@@ -676,7 +676,8 @@ func mutateWaveAuthorizationWithInspector(args Args, target string, inspector wa
 			return finishBeforeMemberLocks(wavePreflightReport{}, lockErr)
 		}
 		finishFailure := func(report wavePreflightReport, cause error) (wavePreflightReport, error) {
-			cause = rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause)
+			heldLocks := append([]*v7DocumentLock{lock}, taskLocks...)
+			cause = rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause, heldLocks)
 			return report, combineV7AuthorizationLockCloseError(cause, closeLocks(taskLocks))
 		}
 		finishSuccess := func(report wavePreflightReport, wroteAuthorization bool) (wavePreflightReport, error) {
@@ -736,7 +737,8 @@ func mutateWaveAuthorizationWithInspector(args Args, target string, inspector wa
 		if current == "armed" && report.StoredFingerprint == report.Fingerprint {
 			return finishSuccess(report, false)
 		}
-		if err := armWaveAtomicallyGuarded(vaultPath, idx, wave, report, args, authority); err != nil {
+		heldLocks := append([]*v7DocumentLock{lock}, taskLocks...)
+		if err := armWaveAtomicallyGuarded(vaultPath, idx, wave, report, args, authority, heldLocks); err != nil {
 			return finishFailure(report, err)
 		}
 		final := report
@@ -834,7 +836,7 @@ func handledDeliveryStartRefusal(err error) error {
 // transaction exactly while the material epoch, wave, and union-member locks
 // are held. Standalone CLI Start has no captured import commit, so it retains
 // the historical readiness-only merge that preserves concurrent progress.
-func rollbackDeliveryStartRefusalUnderLock(vaultPath string, idx v7Index, authority *deliveryStartAuthority, cause error) error {
+func rollbackDeliveryStartRefusalUnderLock(vaultPath string, idx v7Index, authority *deliveryStartAuthority, cause error, heldLocks []*v7DocumentLock) error {
 	if authority == nil {
 		return cause
 	}
@@ -873,7 +875,7 @@ func rollbackDeliveryStartRefusalUnderLock(vaultPath string, idx v7Index, author
 		writes[task.AbsolutePath] = content
 	}
 	if len(writes) > 0 {
-		if err := commitDeliveryWrites(writes, 0); err != nil {
+		if err := commitDeliveryWritesGuardedWithLocks(writes, 0, nil, heldLocks); err != nil {
 			return handledDeliveryStartRefusal(fmt.Errorf("%w; delivery Start readiness rollback failed: %v", cause, err))
 		}
 		_ = emitV7Event(vaultPath, authority.WaveID, "wave", "updated", actor, map[string]any{
@@ -952,7 +954,11 @@ func refuseDeliveryStartBeforeArm(vaultPath string, authority *deliveryStartAuth
 	if err != nil {
 		return finish(fmt.Errorf("%w; refusal could not reload locked members for safe readiness cleanup: %v", cause, err))
 	}
-	return finish(rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause))
+	heldLocks := append([]*v7DocumentLock{}, taskLocks...)
+	if waveLock != nil {
+		heldLocks = append(heldLocks, waveLock)
+	}
+	return finish(rollbackDeliveryStartRefusalUnderLock(vaultPath, idx, authority, cause, heldLocks))
 }
 
 func closeV7DocumentLocks(locks []*v7DocumentLock) error {
@@ -994,10 +1000,10 @@ func combineV7AuthorizationLockCloseError(cause, closeErr error) error {
 }
 
 func armWaveAtomically(vaultPath string, idx v7Index, wave Note, report wavePreflightReport, args Args) error {
-	return armWaveAtomicallyGuarded(vaultPath, idx, wave, report, args, nil)
+	return armWaveAtomicallyGuarded(vaultPath, idx, wave, report, args, nil, nil)
 }
 
-func armWaveAtomicallyGuarded(vaultPath string, idx v7Index, wave Note, report wavePreflightReport, args Args, authority *deliveryStartAuthority) error {
+func armWaveAtomicallyGuarded(vaultPath string, idx v7Index, wave Note, report wavePreflightReport, args Args, authority *deliveryStartAuthority, heldLocks []*v7DocumentLock) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	actor := fallback(firstNonEmpty(args.String("by"), args.String("actor")), "human:"+defaultActorName())
 	writes := map[string]string{}
@@ -1052,7 +1058,7 @@ func armWaveAtomicallyGuarded(vaultPath string, idx v7Index, wave Note, report w
 			DelayMutationVisibility: true,
 		}
 	}
-	if err := commitDeliveryWritesGuarded(writes, failAfter, guard); err != nil {
+	if err := commitDeliveryWritesGuardedWithLocks(writes, failAfter, guard, heldLocks); err != nil {
 		if isDeliveryImportIdentityChanged(err) {
 			return deliveryStartPlanAuthorityChanged(err)
 		}
