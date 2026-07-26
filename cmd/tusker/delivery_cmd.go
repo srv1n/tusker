@@ -22,6 +22,8 @@ var deliveryImportRollbackWriteHook func(path string) error
 
 type deliveryImportWriteGuard struct {
 	Verify                  func() error
+	SnapshotVerify          func() error
+	SnapshotPaths           []string
 	AfterPrecheck           func()
 	DelayMutationVisibility bool
 	Commit                  *deliveryImportCommit
@@ -116,6 +118,19 @@ type deliveryVerification struct {
 type deliveryDependency struct {
 	Task string `yaml:"task" json:"task"`
 	Kind string `yaml:"kind,omitempty" json:"kind,omitempty"`
+	// scope is populated only by the V2 decoder. Keeping it out of the shared
+	// V1 wire model means V1 strict decoding still rejects scope outright.
+	scope string
+}
+
+// deliveryCrossScopeDependency is deliberately a projection, not an alternate
+// scheduler edge.  The normal dependencies field remains authoritative.
+type deliveryCrossScopeDependency struct {
+	Scope                     string `yaml:"scope" json:"scope"`
+	Task                      string `yaml:"task" json:"task"`
+	TaskID                    string `yaml:"task_id" json:"task_id"`
+	Kind                      string `yaml:"kind" json:"kind"`
+	TargetContractFingerprint string `yaml:"target_contract_fingerprint" json:"target_contract_fingerprint"`
 }
 
 type deliveryArtifactContract struct {
@@ -157,16 +172,19 @@ func deliveryPlanValidationRules() []deliveryPlanValidationRule {
 }
 
 type deliveryImportReport struct {
-	PlanFingerprint     string            `json:"planFingerprint"`
-	PlanScope           string            `json:"planScope"`
-	WaveID              string            `json:"waveId"`
-	WaveTitle           string            `json:"waveTitle"`
-	SpecRefs            []string          `json:"specRefs"`
-	TaskMapping         map[string]string `json:"taskMapping"`
-	Frontiers           [][]string        `json:"frontiers"`
-	ExpectedConcurrency int               `json:"expectedConcurrency"`
-	Issues              []string          `json:"issues"`
-	DryRun              bool              `json:"dryRun"`
+	PlanFingerprint         string                                    `json:"planFingerprint"`
+	PlanScope               string                                    `json:"planScope"`
+	WaveID                  string                                    `json:"waveId"`
+	WaveTitle               string                                    `json:"waveTitle"`
+	SpecRefs                []string                                  `json:"specRefs"`
+	TaskMapping             map[string]string                         `json:"taskMapping"`
+	Frontiers               [][]string                                `json:"frontiers"`
+	ExpectedConcurrency     int                                       `json:"expectedConcurrency"`
+	Issues                  []string                                  `json:"issues"`
+	DryRun                  bool                                      `json:"dryRun"`
+	CrossScopeDependencies  map[string][]deliveryCrossScopeDependency `json:"-"`
+	CrossScopeSnapshot      func() error                              `json:"-"`
+	CrossScopeSnapshotPaths []string                                  `json:"-"`
 }
 
 func deliveryPlanCmd(args Args) error {
@@ -404,10 +422,24 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]st
 			if kind != "hard" && kind != "soft" {
 				issues = append(issues, key+": dependency kind must be hard or soft")
 			}
+			if plan.v2 != nil && strings.TrimSpace(dep.scope) != "" {
+				if !deliveryScopeValid(dep.scope) {
+					issues = append(issues, key+": CROSS_SCOPE_INVALID_SCOPE "+dep.scope+"; use a stable producer scope")
+				}
+				if strings.TrimSpace(dep.scope) == strings.TrimSpace(plan.Scope) {
+					issues = append(issues, key+": CROSS_SCOPE_SAME_SCOPE "+dep.scope+"; omit scope for local dependencies")
+				}
+				if kind != "hard" {
+					issues = append(issues, key+": CROSS_SCOPE_HARD_ONLY "+dep.scope+"/"+dep.Task+"; use kind: hard")
+				}
+			}
 		}
 	}
 	for _, task := range plan.Tasks {
 		for _, dep := range task.Dependencies {
+			if plan.v2 != nil && strings.TrimSpace(dep.scope) != "" {
+				continue
+			}
 			if !keys[dep.Task] {
 				issues = append(issues, task.SourceKey+": dangling dependency "+dep.Task)
 			}
@@ -599,7 +631,16 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 		}
 		deps := make([]string, 0, len(task.Dependencies))
 		for _, dep := range task.Dependencies {
-			deps = append(deps, report.TaskMapping[dep.Task]+":"+fallback(strings.ToLower(dep.Kind), "hard"))
+			target := report.TaskMapping[dep.Task]
+			if strings.TrimSpace(dep.scope) != "" {
+				for _, projection := range report.CrossScopeDependencies[task.SourceKey] {
+					if projection.Scope == strings.TrimSpace(dep.scope) && projection.Task == dep.Task {
+						target = projection.TaskID
+						break
+					}
+				}
+			}
+			deps = append(deps, target+":"+fallback(strings.ToLower(dep.Kind), "hard"))
 		}
 		contractFingerprint := deliveryTaskFingerprint(task)
 		if plan.v2 != nil {
@@ -635,6 +676,9 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 		}
 		if plan.v2 != nil {
 			data["gates"] = deliveryV2TaskGateIDs(plan.v2, task.SourceKey)
+			if projections := report.CrossScopeDependencies[task.SourceKey]; len(projections) > 0 {
+				data["delivery_cross_scope_dependencies"] = deliveryCrossScopeProjectionValue(projections)
+			}
 		}
 		if existing != nil && (status != "backlog" || readiness != "held") {
 			for _, field := range []string{"proof_status", "proof_required", "proof_required_owner", "evidence_budget", "gates", "evidence_required", "machine_status", "human_status", "closeout_status", "agent_action", "next_owner", "next_source", "next_ref", "next_action", "accepted_by", "accepted_at", "closed_at", "close_authority"} {
@@ -650,6 +694,18 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 			return err
 		}
 		writes[path] = content
+	}
+	// A producer's contract fingerprint is part of each inbound semantic
+	// projection. Refresh the complete inbound closure here, before any write,
+	// so a failed or corrupt consumer cannot leave a partially rewritten graph.
+	if plan.v2 != nil {
+		idx, err := loadV7Index(vaultPath)
+		if err != nil {
+			return err
+		}
+		if err := deliveryRefreshInboundProjectionWrites(vaultPath, idx, plan, report, writes, now, actor); err != nil {
+			return err
+		}
 	}
 	waveCreatedAt := now
 	waveCreatedBy := actor
@@ -781,6 +837,24 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 	if args.Bool("fail-after-first-write") {
 		failAfter = 1
 	}
+	if report.CrossScopeSnapshot != nil {
+		base := guard
+		guard = &deliveryImportWriteGuard{}
+		if base != nil {
+			*guard = *base
+		}
+		previousSnapshot := guard.SnapshotVerify
+		guard.SnapshotVerify = func() error {
+			if err := report.CrossScopeSnapshot(); err != nil {
+				return err
+			}
+			if previousSnapshot != nil {
+				return previousSnapshot()
+			}
+			return nil
+		}
+		guard.SnapshotPaths = append(guard.SnapshotPaths, report.CrossScopeSnapshotPaths...)
+	}
 	if err := commitDeliveryWritesGuarded(writes, failAfter, guard); err != nil {
 		if !branchExisted && !args.Bool("skip-integration-branch") {
 			_, _ = gitCombined(repoRoot, "update-ref", "-d", "refs/heads/"+branch)
@@ -856,6 +930,27 @@ func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard 
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
+	lockPaths := uniqueStrings(append(append([]string{}, paths...), guardSnapshotPaths(guard)...))
+	sort.Strings(lockPaths)
+	var documentLocks []*v7DocumentLock
+	for _, path := range lockPaths {
+		if !fileExists(path) {
+			continue
+		}
+		lock, err := acquireV7DocumentLock(path, v7DocumentLockTimeout)
+		if err != nil {
+			for i := len(documentLocks) - 1; i >= 0; i-- {
+				_ = documentLocks[i].Close()
+			}
+			return err
+		}
+		documentLocks = append(documentLocks, lock)
+	}
+	defer func() {
+		for i := len(documentLocks) - 1; i >= 0; i-- {
+			_ = documentLocks[i].Close()
+		}
+	}()
 	backups := map[string]deliveryWritePreimage{}
 	for _, path := range paths {
 		parentInfo, err := os.Lstat(filepath.Dir(path))
@@ -883,16 +978,23 @@ func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard 
 		backups[path] = deliveryWritePreimage{Content: raw, Mode: info.Mode().Perm(), Existed: true}
 	}
 	if guard != nil {
-		if guard.Verify == nil {
+		if guard.SnapshotVerify != nil {
+			if err := guard.SnapshotVerify(); err != nil {
+				return err
+			}
+		}
+		if guard.Verify == nil && guard.SnapshotVerify == nil {
 			return tuskerError(errorInvalidTransition, "delivery import write guard has no identity verifier")
 		}
-		if err := guard.Verify(); err != nil {
-			return markDeliveryImportIdentityChanged(tuskerError(
-				errorInvalidTransition,
-				"delivery plan identity changed before import commit; no documents were written",
-				withHint("restore the reviewed plan path, regenerate delivery review, and confirm its current identity"),
-				withContext(map[string]any{"cause": err.Error()}),
-			))
+		if guard.Verify != nil {
+			if err := guard.Verify(); err != nil {
+				return markDeliveryImportIdentityChanged(tuskerError(
+					errorInvalidTransition,
+					"delivery plan identity changed before import commit; no documents were written",
+					withHint("restore the reviewed plan path, regenerate delivery review, and confirm its current identity"),
+					withContext(map[string]any{"cause": err.Error()}),
+				))
+			}
 		}
 		if guard.AfterPrecheck != nil {
 			guard.AfterPrecheck()
@@ -924,13 +1026,13 @@ func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard 
 		if failAfter > 0 && i+1 >= failAfter {
 			return rollback(tuskerError(errorInvalidArg, "forced delivery import write failure"), false)
 		}
-		if guard != nil {
+		if guard != nil && guard.Verify != nil {
 			if err := guard.Verify(); err != nil {
 				return rollback(err, true)
 			}
 		}
 	}
-	if guard != nil {
+	if guard != nil && guard.Verify != nil {
 		if err := guard.Verify(); err != nil {
 			return rollback(err, true)
 		}
@@ -945,6 +1047,13 @@ func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard 
 		}
 	}
 	return nil
+}
+
+func guardSnapshotPaths(guard *deliveryImportWriteGuard) []string {
+	if guard == nil {
+		return nil
+	}
+	return guard.SnapshotPaths
 }
 
 func writeDeliveryTransactionFile(path string, content []byte, mode os.FileMode) error {

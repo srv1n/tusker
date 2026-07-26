@@ -101,6 +101,162 @@ type deliveryHumanGate struct {
 	Suggestion        string   `yaml:"suggestion,omitempty"`
 }
 
+// V2 owns scope-qualified dependency decoding. V1 continues to decode the
+// shared deliveryDependency directly with KnownFields(true), so a scope key in
+// V1 is an unknown-field error rather than a silently widened contract.
+func (v *deliveryPlanV2) UnmarshalYAML(value *yaml.Node) error {
+	root := deliveryYAMLMapping(value)
+	if err := deliveryKnownYAMLFields(root, map[string]bool{"schema": true, "scope": true, "title": true, "epic": true, "epic_contract": true, "spec_refs": true, "context_fingerprint": true, "factory_intake_contract_schema": true, "factory_intake_contract_version": true, "factory_intake_contract_fingerprint": true, "non_goals": true, "requirements": true, "concurrency": true, "runner_profile": true, "shared_resources": true, "owned_path_overlaps": true, "assumptions": true, "unresolved_decisions": true, "summary": true, "tasks": true, "human_gates": true}); err != nil {
+		return err
+	}
+	tasks := deliveryYAMLField(root, "tasks")
+	if tasks != nil {
+		for _, task := range tasks.Content {
+			if err := deliveryKnownYAMLFields(task, map[string]bool{"source_key": true, "title": true, "outcome": true, "acceptance": true, "verification": true, "dependencies": true, "artifact": true, "owned_paths": true, "generated_outputs": true, "migration_keys": true, "resource_refs": true, "runner_profile": true, "concurrency_group": true, "knowledge_nodes": true, "risk": true, "priority": true, "size": true, "domains": true, "requirement_refs": true}); err != nil {
+				return err
+			}
+			if deps := deliveryYAMLField(task, "dependencies"); deps != nil {
+				for _, dep := range deps.Content {
+					if err := deliveryKnownYAMLFields(dep, map[string]bool{"task": true, "kind": true, "scope": true}); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	clean := deliveryCloneYAMLNode(value)
+	cleanRoot := deliveryYAMLMapping(&clean)
+	cleanTasks := deliveryYAMLField(cleanRoot, "tasks")
+	if cleanTasks != nil {
+		for _, task := range cleanTasks.Content {
+			if deps := deliveryYAMLField(task, "dependencies"); deps != nil {
+				for _, dep := range deps.Content {
+					deliveryDeleteYAMLField(dep, "scope")
+				}
+			}
+		}
+	}
+	type plain deliveryPlanV2
+	var decoded plain
+	cleanBytes, err := yaml.Marshal(&clean)
+	if err != nil {
+		return err
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(cleanBytes))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*v = deliveryPlanV2(decoded)
+	if tasks != nil {
+		for i, task := range tasks.Content {
+			if i >= len(v.Tasks) {
+				break
+			}
+			if deps := deliveryYAMLField(task, "dependencies"); deps != nil {
+				for j, dep := range deps.Content {
+					if j < len(v.Tasks[i].Dependencies) {
+						scopeNode := deliveryYAMLField(dep, "scope")
+						if scopeNode != nil && (scopeNode.Kind != yaml.ScalarNode || scopeNode.Tag != "!!str") {
+							return fmt.Errorf("dependency scope must be an explicit string")
+						}
+						v.Tasks[i].Dependencies[j].scope = strings.TrimSpace(deliveryYAMLScalar(scopeNode))
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (v deliveryPlanV2) MarshalYAML() (any, error) {
+	type plain deliveryPlanV2
+	var node yaml.Node
+	if err := node.Encode(plain(v)); err != nil {
+		return nil, err
+	}
+	root := deliveryYAMLMapping(&node)
+	if tasks := deliveryYAMLField(root, "tasks"); tasks != nil {
+		for i, task := range tasks.Content {
+			if i >= len(v.Tasks) {
+				break
+			}
+			if deps := deliveryYAMLField(task, "dependencies"); deps != nil {
+				for j, dep := range deps.Content {
+					if j < len(v.Tasks[i].Dependencies) && v.Tasks[i].Dependencies[j].scope != "" {
+						dep.Content = append(dep.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "scope"}, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v.Tasks[i].Dependencies[j].scope})
+					}
+				}
+			}
+		}
+	}
+	return &node, nil
+}
+
+func deliveryV2DependencyScope(dep *deliveryDependency, scope string) {
+	dep.scope = strings.TrimSpace(scope)
+}
+func deliveryYAMLMapping(n *yaml.Node) *yaml.Node {
+	if n != nil && n.Kind == yaml.DocumentNode && len(n.Content) > 0 {
+		return n.Content[0]
+	}
+	return n
+}
+func deliveryYAMLField(n *yaml.Node, key string) *yaml.Node {
+	n = deliveryYAMLMapping(n)
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			return n.Content[i+1]
+		}
+	}
+	return nil
+}
+func deliveryDeleteYAMLField(n *yaml.Node, key string) {
+	n = deliveryYAMLMapping(n)
+	if n == nil {
+		return
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			n.Content = append(n.Content[:i], n.Content[i+2:]...)
+			return
+		}
+	}
+}
+func deliveryYAMLScalar(n *yaml.Node) string {
+	if n == nil {
+		return ""
+	}
+	return n.Value
+}
+func deliveryKnownYAMLFields(n *yaml.Node, allowed map[string]bool) error {
+	n = deliveryYAMLMapping(n)
+	if n == nil || n.Kind != yaml.MappingNode {
+		return fmt.Errorf("expected mapping")
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if !allowed[n.Content[i].Value] {
+			return fmt.Errorf("field %s not found in type", n.Content[i].Value)
+		}
+	}
+	return nil
+}
+func deliveryCloneYAMLNode(n *yaml.Node) yaml.Node {
+	if n == nil {
+		return yaml.Node{}
+	}
+	out := *n
+	out.Content = make([]*yaml.Node, len(n.Content))
+	for i, child := range n.Content {
+		clone := deliveryCloneYAMLNode(child)
+		out.Content[i] = &clone
+	}
+	return out
+}
+
 func deliveryPlanSchemaAt(path string) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -150,6 +306,19 @@ func deliveryV2ImportBytes(vaultPath, path string, raw []byte, args Args) error 
 }
 
 func deliveryV2ImportBytesGuarded(vaultPath, path string, raw []byte, args Args, guard *deliveryImportWriteGuard) error {
+	// Resolution is material, not planning-time decoration.  Holding this
+	// vault-wide epoch forces mapping, producer lookup, graph validation, and
+	// the write set to observe one snapshot.  Start passes it through instead
+	// of reacquiring it.
+	if !args.Bool("dry-run") && !args.Bool("material-lock-held") {
+		lock, err := acquireV7MaterialEpochLock(vaultPath)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+		args = copyArgsForInternalMutation(args)
+		args["material-lock-held"] = "true"
+	}
 	if expected := strings.TrimSpace(args.String("expected-plan-fingerprint")); expected != "" && deliveryFingerprint(raw) != expected {
 		return tuskerError(errorInvalidTransition, "delivery plan changed after confirmation; regenerate delivery review and confirm its exact plan fingerprint")
 	}
@@ -184,6 +353,16 @@ func deliveryV2ImportBytesGuarded(vaultPath, path string, raw []byte, args Args,
 	report := deliveryImportReport{PlanFingerprint: deliveryFingerprint(raw), PlanScope: deliveryPlanScope(plan), WaveID: waveID, WaveTitle: fallback(firstNonEmpty(args.String("wave"), plan.Title), "Imported delivery"), SpecRefs: plan.SpecRefs, TaskMapping: mapping, Frontiers: frontiers, ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Issues: uniqueStrings(issues), DryRun: args.Bool("dry-run")}
 	if len(report.Issues) > 0 {
 		return tuskerError(errorInvalidArg, "delivery plan is invalid: "+strings.Join(report.Issues, "; "), withContext(map[string]any{"delivery": report}))
+	}
+	resolved, snapshot, snapshotPaths, err := deliveryResolveCrossScopeDependencies(vaultPath, plan, mapping)
+	if err != nil {
+		return err
+	}
+	report.CrossScopeDependencies = resolved
+	report.CrossScopeSnapshot = snapshot
+	report.CrossScopeSnapshotPaths = snapshotPaths
+	if deliveryCrossScopeAfterResolution != nil {
+		deliveryCrossScopeAfterResolution()
 	}
 	gateMapping, err := deliveryV2GateMapping(vaultPath, plan, mapping)
 	if err != nil {
