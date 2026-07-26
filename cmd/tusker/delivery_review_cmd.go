@@ -13,6 +13,7 @@ import (
 )
 
 const deliveryReviewSchema = "tusker.delivery-review/v1"
+const deliveryCrossScopeReviewSchema = "tusker.cross-scope-dependency-review/v1"
 
 // deliveryReview is deliberately a product projection. It contains no task
 // frontmatter, runner instructions, logs, or lifecycle authority.
@@ -64,13 +65,42 @@ type deliveryReviewLink struct {
 	Href  string `json:"href"`
 }
 type deliveryReviewFlow struct {
-	Frontiers           [][]string               `json:"frontiers"`
-	ExpectedConcurrency int                      `json:"expectedConcurrency"`
-	Integration         string                   `json:"integration"`
-	SharedResources     []deliveryReviewResource `json:"sharedResources"`
-	Warnings            []string                 `json:"warnings"`
-	WaveID              string                   `json:"waveId,omitempty"`
-	WaveHref            string                   `json:"waveHref,omitempty"`
+	Frontiers              [][]string                           `json:"frontiers"`
+	ExpectedConcurrency    int                                  `json:"expectedConcurrency"`
+	Integration            string                               `json:"integration"`
+	SharedResources        []deliveryReviewResource             `json:"sharedResources"`
+	CrossScopeDependencies []deliveryCrossScopeReviewDependency `json:"crossScopeDependencies"`
+	Warnings               []string                             `json:"warnings"`
+	WaveID                 string                               `json:"waveId,omitempty"`
+	WaveHref               string                               `json:"waveHref,omitempty"`
+}
+
+// deliveryCrossScopeReviewProjection is the sole operator-facing join between
+// a persisted semantic dependency and its current producer. The ordinary task
+// ID edge remains authoritative; this projection is deterministic and read-only.
+type deliveryCrossScopeReviewProjection struct {
+	Schema       string                               `json:"schema"`
+	ReadOnly     bool                                 `json:"readOnly"`
+	Dependencies []deliveryCrossScopeReviewDependency `json:"dependencies"`
+}
+
+type deliveryCrossScopeReviewDependency struct {
+	ConsumerTaskID               string `json:"consumerTaskId,omitempty"`
+	ConsumerSourceKey            string `json:"consumerSourceKey"`
+	Scope                        string `json:"scope"`
+	SourceKey                    string `json:"sourceKey"`
+	TaskID                       string `json:"taskId,omitempty"`
+	Kind                         string `json:"kind"`
+	PersistedContractFingerprint string `json:"persistedContractFingerprint,omitempty"`
+	ContractProvenance           string `json:"contractProvenance"`
+	TargetIntegrity              string `json:"targetIntegrity"`
+	ProducerState                string `json:"producerState"`
+	ProducerLifecycle            string `json:"producerLifecycle"`
+	BlockerClass                 string `json:"blockerClass"`
+	Satisfied                    bool   `json:"satisfied"`
+	Repair                       string `json:"repair,omitempty"`
+	Implication                  string `json:"implication"`
+	TaskHref                     string `json:"taskHref,omitempty"`
 }
 type deliveryReviewResource struct {
 	SourceKey      string               `json:"sourceKey"`
@@ -153,7 +183,7 @@ func buildDeliveryReviewBytes(vault, path string, raw []byte, inspector wavePref
 	issues, frontiers := validateDeliveryPlan(vault, plan)
 	issues = uniqueStrings(append(preparationIssues, issues...))
 	sort.Strings(issues)
-	r := deliveryReview{Schema: deliveryReviewSchema, ReadOnly: true, What: []deliveryReviewOutcome{}, Proof: []deliveryReviewProof{}, Decisions: []deliveryReviewDecision{}, NonGoals: []string{}, Flow: deliveryReviewFlow{Frontiers: deliveryReviewFrontiers(plan, frontiers), ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Integration: "Reviewed work joins one serialized integration phase before landing.", SharedResources: []deliveryReviewResource{}, Warnings: []string{}}, Start: deliveryReviewStart{PlanFingerprint: deliveryFingerprint(raw), Authorization: "not imported", Readiness: "review only", Blockers: []string{}, State: "held", StateLabel: "Held for review"}}
+	r := deliveryReview{Schema: deliveryReviewSchema, ReadOnly: true, What: []deliveryReviewOutcome{}, Proof: []deliveryReviewProof{}, Decisions: []deliveryReviewDecision{}, NonGoals: []string{}, Flow: deliveryReviewFlow{Frontiers: deliveryReviewFrontiers(plan, frontiers), ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Integration: "Reviewed work joins one serialized integration phase before landing.", SharedResources: []deliveryReviewResource{}, CrossScopeDependencies: []deliveryCrossScopeReviewDependency{}, Warnings: []string{}}, Start: deliveryReviewStart{PlanFingerprint: deliveryFingerprint(raw), Authorization: "not imported", Readiness: "review only", Blockers: []string{}, State: "held", StateLabel: "Held for review"}}
 	integrationBaseSHA := ""
 	for _, issue := range issues {
 		r.Start.Blockers = append(r.Start.Blockers, issue)
@@ -324,6 +354,372 @@ func deliveryReviewSharedResources(resources []deliverySharedResource, tasks []d
 	return out
 }
 
+func deliveryCrossScopeReviewForPlan(idx v7Index, plan deliveryPlan) deliveryCrossScopeReviewProjection {
+	out := newDeliveryCrossScopeReviewProjection()
+	consumerScope := deliveryPlanScope(plan)
+	for _, plannedTask := range plan.Tasks {
+		consumerMatches := deliveryCrossScopeReviewSemanticMatches(idx, consumerScope, plannedTask.SourceKey)
+		for _, dependency := range plannedTask.Dependencies {
+			scope := strings.TrimSpace(dependency.scope)
+			if scope == "" {
+				continue
+			}
+			switch len(consumerMatches) {
+			case 0:
+				out.Dependencies = append(out.Dependencies, deliveryCrossScopeReviewProspectiveRow(idx, plannedTask.SourceKey, scope, dependency.Task))
+			case 1:
+				out.Dependencies = append(out.Dependencies, deliveryCrossScopeReviewPersistedPlanRow(idx, consumerMatches[0], scope, dependency.Task))
+			default:
+				out.Dependencies = append(out.Dependencies, deliveryCrossScopeReviewStructuralRow(
+					"", plannedTask.SourceKey, scope, dependency.Task, "", "", "invalid", "corrupt", "unknown",
+				))
+			}
+		}
+	}
+	sortDeliveryCrossScopeReviewDependencies(out.Dependencies)
+	return out
+}
+
+func deliveryCrossScopeReviewForTask(idx v7Index, task Note) deliveryCrossScopeReviewProjection {
+	out := newDeliveryCrossScopeReviewProjection()
+	projections, err := deliveryCrossScopeProjections(task)
+	if err != nil {
+		for _, edge := range v7TaskDependencyEdges(task, idx) {
+			producer, ok := idx.Tasks[edge.ID]
+			if !ok {
+				continue
+			}
+			scope := stringField(producer.Data, "delivery_plan_scope")
+			if scope == "" || scope == stringField(task.Data, "delivery_plan_scope") {
+				continue
+			}
+			dependency := deliveryCrossScopeDependency{
+				Scope: scope, Task: stringField(producer.Data, "delivery_source_key"), TaskID: edge.ID,
+				Kind: edge.Hardness,
+			}
+			out.Dependencies = append(out.Dependencies, deliveryCrossScopeReviewRow(idx, task, dependency, "invalid", true))
+		}
+		if len(out.Dependencies) == 0 {
+			out.Dependencies = append(out.Dependencies, deliveryCrossScopeReviewStructuralRow(
+				stringField(task.Data, "id"), stringField(task.Data, "delivery_source_key"), "", "", "", "", "invalid", "corrupt", "unknown",
+			))
+		}
+		sortDeliveryCrossScopeReviewDependencies(out.Dependencies)
+		return out
+	}
+
+	projected := map[string]bool{}
+	for _, dependency := range projections {
+		projected[dependency.TaskID] = true
+		out.Dependencies = append(out.Dependencies, deliveryCrossScopeReviewRow(idx, task, dependency, "persisted", true))
+	}
+	for _, edge := range v7TaskDependencyEdges(task, idx) {
+		if projected[edge.ID] {
+			continue
+		}
+		producer, ok := idx.Tasks[edge.ID]
+		if !ok {
+			continue
+		}
+		scope := stringField(producer.Data, "delivery_plan_scope")
+		if scope == "" || scope == stringField(task.Data, "delivery_plan_scope") {
+			continue
+		}
+		dependency := deliveryCrossScopeDependency{
+			Scope: scope, Task: stringField(producer.Data, "delivery_source_key"), TaskID: edge.ID,
+			Kind: edge.Hardness,
+		}
+		out.Dependencies = append(out.Dependencies, deliveryCrossScopeReviewRow(idx, task, dependency, "missing", true))
+	}
+	sortDeliveryCrossScopeReviewDependencies(out.Dependencies)
+	return out
+}
+
+func deliveryCrossScopeReviewForTaskIDs(idx v7Index, taskIDs []string) deliveryCrossScopeReviewProjection {
+	out := newDeliveryCrossScopeReviewProjection()
+	ids := uniqueStrings(taskIDs)
+	sort.Strings(ids)
+	for _, id := range ids {
+		task, ok := idx.Tasks[id]
+		if !ok {
+			continue
+		}
+		projected := deliveryCrossScopeReviewForTask(idx, task)
+		out.Dependencies = append(out.Dependencies, projected.Dependencies...)
+	}
+	sortDeliveryCrossScopeReviewDependencies(out.Dependencies)
+	return out
+}
+
+func deliveryCrossScopeReviewForTaskAtVault(vault string, task Note) (deliveryCrossScopeReviewProjection, error) {
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		return newDeliveryCrossScopeReviewProjection(), err
+	}
+	return deliveryCrossScopeReviewForTask(idx, task), nil
+}
+
+func newDeliveryCrossScopeReviewProjection() deliveryCrossScopeReviewProjection {
+	return deliveryCrossScopeReviewProjection{
+		Schema: deliveryCrossScopeReviewSchema, ReadOnly: true,
+		Dependencies: []deliveryCrossScopeReviewDependency{},
+	}
+}
+
+func deliveryCrossScopeReviewPersistedPlanRow(idx v7Index, consumer Note, scope, sourceKey string) deliveryCrossScopeReviewDependency {
+	projections, err := deliveryCrossScopeProjections(consumer)
+	if err != nil {
+		return deliveryCrossScopeReviewStructuralRow(
+			stringField(consumer.Data, "id"), stringField(consumer.Data, "delivery_source_key"),
+			scope, sourceKey, "", "", "invalid", "corrupt", "unknown",
+		)
+	}
+	for _, dependency := range projections {
+		if dependency.Scope == scope && dependency.Task == sourceKey {
+			return deliveryCrossScopeReviewRow(idx, consumer, dependency, "persisted", true)
+		}
+	}
+	var edgeMatches []Note
+	for _, edge := range v7TaskDependencyEdges(consumer, idx) {
+		producer, ok := idx.Tasks[edge.ID]
+		if !ok || edge.Hardness != v7DependencyHardnessHard {
+			continue
+		}
+		if stringField(producer.Data, "delivery_plan_scope") == scope &&
+			stringField(producer.Data, "delivery_source_key") == sourceKey {
+			edgeMatches = append(edgeMatches, producer)
+		}
+	}
+	if len(edgeMatches) == 1 {
+		dependency := deliveryCrossScopeDependency{
+			Scope: scope, Task: sourceKey, TaskID: stringField(edgeMatches[0].Data, "id"), Kind: v7DependencyHardnessHard,
+		}
+		return deliveryCrossScopeReviewRow(idx, consumer, dependency, "missing", true)
+	}
+	return deliveryCrossScopeReviewStructuralRow(
+		stringField(consumer.Data, "id"), stringField(consumer.Data, "delivery_source_key"),
+		scope, sourceKey, "", "", "missing", "corrupt", "unknown",
+	)
+}
+
+func deliveryCrossScopeReviewProspectiveRow(idx v7Index, consumerSourceKey, scope, sourceKey string) deliveryCrossScopeReviewDependency {
+	matches := deliveryCrossScopeReviewSemanticMatches(idx, scope, sourceKey)
+	switch len(matches) {
+	case 0:
+		return deliveryCrossScopeReviewStructuralRow("", consumerSourceKey, scope, sourceKey, "", "", "prospective", "missing", "missing")
+	case 1:
+		producer := matches[0]
+		if !deliveryCrossScopeProducerCurrent(producer, idx) {
+			return deliveryCrossScopeReviewStructuralRow(
+				"", consumerSourceKey, scope, sourceKey, "", "", "prospective", "missing",
+				deliveryCrossScopeReviewProducerState(producer),
+			)
+		}
+		dependency := deliveryCrossScopeDependency{
+			Scope: scope, Task: sourceKey, TaskID: stringField(producer.Data, "id"), Kind: v7DependencyHardnessHard,
+			TargetContractFingerprint: stringField(producer.Data, "delivery_contract_fingerprint"),
+		}
+		return deliveryCrossScopeReviewRow(idx, Note{Data: map[string]any{"delivery_source_key": consumerSourceKey}}, dependency, "prospective", false)
+	default:
+		return deliveryCrossScopeReviewStructuralRow("", consumerSourceKey, scope, sourceKey, "", "", "prospective", "corrupt", "unknown")
+	}
+}
+
+func deliveryCrossScopeReviewRow(idx v7Index, consumer Note, dependency deliveryCrossScopeDependency, provenance string, requireEdge bool) deliveryCrossScopeReviewDependency {
+	row := deliveryCrossScopeReviewDependency{
+		ConsumerTaskID: stringField(consumer.Data, "id"), ConsumerSourceKey: stringField(consumer.Data, "delivery_source_key"),
+		Scope: dependency.Scope, SourceKey: dependency.Task, TaskID: dependency.TaskID, Kind: dependency.Kind,
+		PersistedContractFingerprint: dependency.TargetContractFingerprint, ContractProvenance: provenance,
+		TargetIntegrity: "resolved", ProducerState: "missing", ProducerLifecycle: "unknown", BlockerClass: "structural",
+	}
+	row.Implication = deliveryCrossScopeReviewImplication(row)
+	if strings.TrimSpace(row.Scope) == "" || strings.TrimSpace(row.SourceKey) == "" || row.Kind != v7DependencyHardnessHard {
+		return deliveryCrossScopeReviewMarkStructural(row, "corrupt")
+	}
+	if requireEdge {
+		consumerScope := stringField(consumer.Data, "delivery_plan_scope")
+		if consumerScope == "" || consumerScope == row.Scope {
+			return deliveryCrossScopeReviewMarkStructural(row, "corrupt")
+		}
+	}
+	if strings.TrimSpace(row.TaskID) == "" {
+		return deliveryCrossScopeReviewMarkStructural(row, "missing")
+	}
+	producer, ok := idx.Tasks[row.TaskID]
+	if !ok {
+		return deliveryCrossScopeReviewMarkStructural(row, "missing")
+	}
+	row.ProducerState = deliveryCrossScopeReviewProducerState(producer)
+	row.ProducerLifecycle = deliveryCrossScopeReviewProducerLifecycle(producer)
+	projectID := firstNonEmpty(stringField(producer.Data, "project"), stringField(consumer.Data, "project"))
+	if projectID != "" {
+		row.TaskHref = taskDeepLink(projectID, row.TaskID)
+	}
+	if requireEdge && (stringField(producer.Data, "project") == "" ||
+		stringField(producer.Data, "project") != stringField(consumer.Data, "project")) {
+		return deliveryCrossScopeReviewMarkStructural(row, "corrupt")
+	}
+	if provenance == "invalid" || provenance == "missing" ||
+		strings.TrimSpace(row.PersistedContractFingerprint) == "" ||
+		stringField(producer.Data, "delivery_plan_scope") != row.Scope ||
+		stringField(producer.Data, "delivery_source_key") != row.SourceKey ||
+		stringField(producer.Data, "delivery_contract_fingerprint") != row.PersistedContractFingerprint {
+		return deliveryCrossScopeReviewMarkStructural(row, "corrupt")
+	}
+	if requireEdge {
+		matches := 0
+		hard := false
+		for _, edge := range v7TaskDependencyEdges(consumer, idx) {
+			if edge.ID != row.TaskID {
+				continue
+			}
+			matches++
+			hard = edge.Hardness == v7DependencyHardnessHard
+		}
+		if matches != 1 || !hard {
+			return deliveryCrossScopeReviewMarkStructural(row, "corrupt")
+		}
+	}
+	if row.ProducerLifecycle == "unknown" {
+		return deliveryCrossScopeReviewMarkStructural(row, "corrupt")
+	}
+	if row.ProducerLifecycle == "failed" {
+		row.BlockerClass = "lifecycle"
+		row.Repair = deliveryCrossScopeReviewLifecycleRepair(row, true)
+		return row
+	}
+	if !deliveryCrossScopeProducerCurrent(producer, idx) {
+		return deliveryCrossScopeReviewMarkStructural(row, "corrupt")
+	}
+	if row.ProducerLifecycle == "complete" {
+		row.BlockerClass = "none"
+		row.Satisfied = true
+		return row
+	}
+	row.BlockerClass = "lifecycle"
+	row.Repair = deliveryCrossScopeReviewLifecycleRepair(row, false)
+	return row
+}
+
+func deliveryCrossScopeReviewStructuralRow(consumerID, consumerSourceKey, scope, sourceKey, taskID, fingerprint, provenance, integrity, producerState string) deliveryCrossScopeReviewDependency {
+	row := deliveryCrossScopeReviewDependency{
+		ConsumerTaskID: consumerID, ConsumerSourceKey: consumerSourceKey,
+		Scope: scope, SourceKey: sourceKey, TaskID: taskID, Kind: v7DependencyHardnessHard,
+		PersistedContractFingerprint: fingerprint, ContractProvenance: provenance,
+		TargetIntegrity: integrity, ProducerState: fallback(producerState, "unknown"), ProducerLifecycle: "unknown",
+		BlockerClass: "structural",
+	}
+	row.Implication = deliveryCrossScopeReviewImplication(row)
+	row.Repair = deliveryCrossScopeReviewStructuralRepair(row, integrity)
+	return row
+}
+
+func deliveryCrossScopeReviewMarkStructural(row deliveryCrossScopeReviewDependency, integrity string) deliveryCrossScopeReviewDependency {
+	row.TargetIntegrity = integrity
+	row.BlockerClass = "structural"
+	row.Satisfied = false
+	row.Repair = deliveryCrossScopeReviewStructuralRepair(row, integrity)
+	return row
+}
+
+func deliveryCrossScopeReviewSemanticMatches(idx v7Index, scope, sourceKey string) []Note {
+	var matches []Note
+	for _, candidate := range idx.Tasks {
+		if stringField(candidate.Data, "delivery_plan_scope") == scope &&
+			stringField(candidate.Data, "delivery_source_key") == sourceKey {
+			matches = append(matches, candidate)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		return stringField(matches[i].Data, "id") < stringField(matches[j].Data, "id")
+	})
+	return matches
+}
+
+func deliveryCrossScopeReviewProducerState(producer Note) string {
+	if stringField(producer.Data, "discarded_at") != "" {
+		return "discarded"
+	}
+	return fallback(strings.ToLower(strings.TrimSpace(stringField(producer.Data, "status"))), "unknown")
+}
+
+func deliveryCrossScopeReviewProducerLifecycle(producer Note) string {
+	state := deliveryCrossScopeReviewProducerState(producer)
+	switch state {
+	case "done":
+		return "complete"
+	case "cancelled", "discarded", "superseded":
+		return "failed"
+	case "idea", "backlog", "ready", "review", "rework":
+		return "incomplete"
+	default:
+		return "unknown"
+	}
+}
+
+func deliveryCrossScopeReviewTarget(row deliveryCrossScopeReviewDependency) string {
+	if row.Scope != "" && row.SourceKey != "" {
+		return row.Scope + "/" + row.SourceKey
+	}
+	return "the named producer"
+}
+
+func deliveryCrossScopeReviewConsumer(row deliveryCrossScopeReviewDependency) string {
+	return firstNonEmpty(row.ConsumerTaskID, row.ConsumerSourceKey, "the consumer")
+}
+
+func deliveryCrossScopeReviewImplication(row deliveryCrossScopeReviewDependency) string {
+	targetID := fallback(row.TaskID, "its durable producer task")
+	return "Import producer " + deliveryCrossScopeReviewTarget(row) + " before " + deliveryCrossScopeReviewConsumer(row) +
+		"; the consumer can run only after hard target " + targetID + " reaches done."
+}
+
+func deliveryCrossScopeReviewStructuralRepair(row deliveryCrossScopeReviewDependency, integrity string) string {
+	if integrity == "missing" {
+		return "Import or restore exactly one producer " + deliveryCrossScopeReviewTarget(row) +
+			", then re-import the consumer plan before retrying " + deliveryCrossScopeReviewConsumer(row) + "."
+	}
+	return "Restore the exact durable hard edge and contract fingerprint for " + deliveryCrossScopeReviewTarget(row) +
+		", then re-import the producer and consumer plans together before retrying " + deliveryCrossScopeReviewConsumer(row) + "."
+}
+
+func deliveryCrossScopeReviewLifecycleRepair(row deliveryCrossScopeReviewDependency, failed bool) string {
+	if failed {
+		return "Repair or reopen producer " + deliveryCrossScopeReviewTarget(row) + " (" + row.TaskID + ") in its owning workflow, then complete it; " +
+			deliveryCrossScopeReviewConsumer(row) + " remains blocked until that ordinary hard dependency reaches done."
+	}
+	return "Complete producer " + deliveryCrossScopeReviewTarget(row) + " (" + row.TaskID + "); " +
+		deliveryCrossScopeReviewConsumer(row) + " remains blocked until its ordinary hard dependency reaches done."
+}
+
+func sortDeliveryCrossScopeReviewDependencies(rows []deliveryCrossScopeReviewDependency) {
+	sort.Slice(rows, func(i, j int) bool {
+		left := rows[i].Scope + "\x00" + rows[i].SourceKey + "\x00" + rows[i].TaskID + "\x00" + rows[i].ConsumerSourceKey + "\x00" + rows[i].ConsumerTaskID
+		right := rows[j].Scope + "\x00" + rows[j].SourceKey + "\x00" + rows[j].TaskID + "\x00" + rows[j].ConsumerSourceKey + "\x00" + rows[j].ConsumerTaskID
+		return left < right
+	})
+}
+
+func renderDeliveryCrossScopeReview(rows []deliveryCrossScopeReviewDependency) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Cross-scope hard dependencies\n")
+	for _, row := range rows {
+		fmt.Fprintf(&b, "- Hard dependency: %s\n", deliveryCrossScopeReviewTarget(row))
+		fmt.Fprintf(&b, "  Durable target: %s (%s; %s; contract %s)\n",
+			fallback(row.TaskID, "missing"), row.ProducerState, row.Kind, fallback(row.PersistedContractFingerprint, "not recorded"))
+		fmt.Fprintf(&b, "  Classification: target=%s lifecycle=%s blocker=%s provenance=%s\n",
+			row.TargetIntegrity, row.ProducerLifecycle, row.BlockerClass, row.ContractProvenance)
+		fmt.Fprintf(&b, "  Producer before consumer: %s\n", row.Implication)
+		if row.Repair != "" {
+			fmt.Fprintf(&b, "  Repair: %s\n", row.Repair)
+		}
+	}
+	return b.String()
+}
+
 func deliveryReviewRepoPathExists(vault, path string) bool {
 	full, ok := safeRepoPath(v7RepoRoot(vault), filepath.ToSlash(strings.TrimSpace(path)))
 	return ok && fileExists(full)
@@ -385,6 +781,7 @@ func deliveryReviewCanonical(vault string, plan deliveryPlan, integrationBaseSHA
 		r.Start.Blockers = append(r.Start.Blockers, err.Error())
 		return
 	}
+	r.Flow.CrossScopeDependencies = deliveryCrossScopeReviewForPlan(idx, plan).Dependencies
 	var waves []Note
 	for _, wave := range idx.Waves {
 		if stringField(wave.Data, "delivery_plan_scope") == deliveryPlanScope(plan) {
@@ -743,6 +1140,9 @@ func renderDeliveryReview(r deliveryReview) string {
 			capacity = fmt.Sprintf("capacity %d", *resource.Capacity)
 		}
 		b.WriteString(fmt.Sprintf("- Shared resource %s (%s): %s.\n", resource.SourceKey, resource.Kind, capacity))
+	}
+	if crossScope := renderDeliveryCrossScopeReview(r.Flow.CrossScopeDependencies); crossScope != "" {
+		b.WriteString(crossScope)
 	}
 	b.WriteString("\nWhat needs your decision\n")
 	if len(r.Decisions) == 0 {

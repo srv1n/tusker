@@ -42,6 +42,8 @@ type wavePreflightEnvironment struct {
 
 type wavePreflightEnvironmentInspector func(vaultPath string, wave Note) wavePreflightEnvironment
 
+type waveCrossScopeProjection = deliveryCrossScopeReviewProjection
+
 type wavePreflightReport struct {
 	Schema               string                            `json:"schema"`
 	WaveID               string                            `json:"waveId"`
@@ -57,6 +59,7 @@ type wavePreflightReport struct {
 	TaskProof            map[string]any                    `json:"taskProof"`
 	Artifacts            map[string]any                    `json:"artifacts"`
 	ExternalDependencies map[string]any                    `json:"externalDependencies"`
+	CrossScopeReview     waveCrossScopeProjection          `json:"crossScopeDependencies"`
 	HumanGates           []map[string]any                  `json:"humanGates"`
 	ExpectedConcurrency  int                               `json:"expectedConcurrency"`
 	ValidationLane       string                            `json:"validationLane"`
@@ -319,7 +322,8 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 		Fingerprint: fingerprint, StoredFingerprint: stringField(wave.Data, "authorization_fingerprint"),
 		Authorization: fallback(stringField(wave.Data, "authorization"), "disarmed"), Members: members,
 		TaskProof: map[string]any{}, Artifacts: map[string]any{}, ExternalDependencies: map[string]any{}, ExpectedConcurrency: maxInt(1, intField(wave.Data, "concurrency")),
-		ValidationLane: "serialized integration validation", IntegrationBranch: stringField(wave.Data, "integration_branch"),
+		CrossScopeReview: deliveryCrossScopeReviewForTaskIDs(idx, members),
+		ValidationLane:   "serialized integration validation", IntegrationBranch: stringField(wave.Data, "integration_branch"),
 		LandingPolicy: "task branches -> wave integration branch -> configured default branch",
 		DispatchScope: dispatchScope,
 		Checks:        map[string]bool{"specDag": true, "taskContracts": true, "artifacts": true, "project": env.ProjectRegistered && env.ProjectEnabled && env.ProjectHealthy, "daemon": env.DaemonAlive && env.DaemonReconciling, "runner": env.RunnerCompatible, "skill": env.SkillCompatible, "workflow": env.WorkflowCompatible, "approvalPolicy": env.ApprovalFree, "workspaceIsolation": env.IsolatedWorkspace && env.IntegrationClean},
@@ -1254,6 +1258,11 @@ func renderWavePreflight(report wavePreflightReport) string {
 	}
 	for i, frontier := range report.Frontiers {
 		fmt.Fprintf(&b, "  frontier %d: %s\n", i+1, strings.Join(frontier, ","))
+	}
+	if rendered := renderDeliveryCrossScopeReview(report.CrossScopeReview.Dependencies); rendered != "" {
+		for _, line := range strings.Split(strings.TrimSuffix(rendered, "\n"), "\n") {
+			b.WriteString("  " + line + "\n")
+		}
 	}
 	for _, gate := range report.HumanGates {
 		fmt.Fprintf(&b, "  human gate: %s affected=%s action=%s\n", stringField(gate, "id"), strings.Join(normalizeList(gate["affected"]), ","), stringField(gate, "action"))

@@ -5,7 +5,7 @@ import { PageScroll } from "@/components/ui/page";
 import { DeliveryError } from "@/lib/api";
 import { useDeliveryReview, useDeliveryStart } from "@/lib/queries";
 import { cn } from "@/lib/cn";
-import type { DeliveryReview, DeliveryStartResult } from "@/types/domain";
+import type { DeliveryCrossScopeDependency, DeliveryReview, DeliveryStartResult } from "@/types/domain";
 
 const defaultPlan = ".tusker/scratch/delivery-plan-v2.yaml";
 
@@ -70,7 +70,19 @@ function ReviewBody({ review, confirmation, setConfirmation, exactConfirmation, 
         {review.nonGoals.length > 0 && <p className="text-sm text-muted">Not included: {review.nonGoals.join(" · ")}</p>}
       </ReviewSection>
       <ReviewSection number="2" title="How it will be proven"><div className="grid gap-3">{review.howItWillBeProven.map((proof) => <article key={proof.sourceKey} className="rounded-xl border border-line p-4"><p className="font-medium text-ink">{proof.taskHref ? <a href={proof.taskHref} className="hover:text-accent hover:underline">{proof.outcome}</a> : proof.outcome}</p><p className="mt-1 font-mono text-[10px] text-faint">Requirements: {proof.requirements.join(", ")}</p><p className="mt-2 text-xs text-muted">Acceptance: {proof.acceptance.join(" · ") || "No acceptance stated"}</p><div className="mt-2 space-y-1">{proof.checks.map((check) => <p key={`${check.covers}-${check.check}`} className="font-mono text-[11px] leading-5 text-muted"><span className="text-ink-soft">{check.covers}</span> · {check.href ? <a href={check.href} className="hover:text-accent hover:underline">{check.check}</a> : check.check}</p>)}</div><div className="mt-2 space-y-1">{proof.artifactRefs.map((artifact) => <p key={`${artifact.kind}-${artifact.path}`} className="text-xs text-muted">{artifact.href ? <a href={artifact.href} className="font-medium text-ink-soft hover:text-accent hover:underline">{artifact.summary}</a> : <span className="font-medium text-ink-soft">{artifact.summary}</span>} · <span className="font-mono text-[10px]">{artifact.path}</span> · covers {artifact.acceptanceIds.join(", ")}</p>)}</div>{proof.resourceRefs.length > 0 && <List label="Shared resources" values={proof.resourceRefs} />}</article>)}</div></ReviewSection>
-      <ReviewSection number="3" title="How work flows"><div className="grid gap-4 lg:grid-cols-2"><div><p className="text-sm text-muted">{review.howWorkFlows.integration}</p><p className="mt-2 text-sm text-ink">Expected concurrency: <strong>{review.howWorkFlows.expectedConcurrency}</strong></p>{review.howWorkFlows.waveHref && <a href={review.howWorkFlows.waveHref} className="mt-2 inline-block font-mono text-xs text-accent hover:underline">{review.howWorkFlows.waveId}</a>}</div><ol className="space-y-2">{review.howWorkFlows.frontiers.map((frontier, index) => <li key={index} className="rounded-lg bg-panel px-3 py-2 text-sm text-ink"><span className="mr-2 font-mono text-xs text-faint">{index + 1}</span>{frontier.join(" → ")}</li>)}</ol></div>{review.howWorkFlows.sharedResources.length > 0 && <div className="mt-4"><p className="text-xs font-semibold uppercase tracking-wide text-faint">Shared resources</p><div className="mt-2 grid gap-2 sm:grid-cols-2">{review.howWorkFlows.sharedResources.map((resource) => <article key={resource.sourceKey} className="rounded-lg border border-line p-3"><p className="font-mono text-xs font-semibold text-ink">{resource.sourceKey}</p><p className="mt-1 text-xs text-muted">{resource.kind} · {resource.capacityStatus}{resource.capacity ? ` (${resource.capacity})` : ""}</p><RecordLinks links={resource.taskLinks} /><List label="Referenced by" values={resource.referencedBy} /><List label="Constraints" values={resource.constraints} /></article>)}</div></div>}{review.howWorkFlows.warnings.map((warning) => <p key={warning} className="rounded-lg bg-warn-soft p-3 text-sm text-warn">{warning}</p>)}</ReviewSection>
+      <ReviewSection number="3" title="How work flows">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div>
+            <p className="text-sm text-muted">{review.howWorkFlows.integration}</p>
+            <p className="mt-2 text-sm text-ink">Expected concurrency: <strong>{review.howWorkFlows.expectedConcurrency}</strong></p>
+            {review.howWorkFlows.waveHref && <a href={review.howWorkFlows.waveHref} className="mt-2 inline-block font-mono text-xs text-accent hover:underline">{review.howWorkFlows.waveId}</a>}
+          </div>
+          <ol className="space-y-2">{review.howWorkFlows.frontiers.map((frontier, index) => <li key={index} className="rounded-lg bg-panel px-3 py-2 text-sm text-ink"><span className="mr-2 font-mono text-xs text-faint">{index + 1}</span>{frontier.join(" → ")}</li>)}</ol>
+        </div>
+        {review.howWorkFlows.crossScopeDependencies.length > 0 && <CrossScopeDependencies dependencies={review.howWorkFlows.crossScopeDependencies} />}
+        {review.howWorkFlows.sharedResources.length > 0 && <div className="mt-4"><p className="text-xs font-semibold uppercase tracking-wide text-faint">Shared resources</p><div className="mt-2 grid gap-2 sm:grid-cols-2">{review.howWorkFlows.sharedResources.map((resource) => <article key={resource.sourceKey} className="rounded-lg border border-line p-3"><p className="font-mono text-xs font-semibold text-ink">{resource.sourceKey}</p><p className="mt-1 text-xs text-muted">{resource.kind} · {resource.capacityStatus}{resource.capacity ? ` (${resource.capacity})` : ""}</p><RecordLinks links={resource.taskLinks} /><List label="Referenced by" values={resource.referencedBy} /><List label="Constraints" values={resource.constraints} /></article>)}</div></div>}
+        {review.howWorkFlows.warnings.map((warning) => <p key={warning} className="rounded-lg bg-warn-soft p-3 text-sm text-warn">{warning}</p>)}
+      </ReviewSection>
       <ReviewSection number="4" title="What needs your decision">{review.whatNeedsYourDecision.length === 0 ? <p className="text-sm text-muted">No product decision is needed to start this exact delivery.</p> : <div className="grid gap-3">{review.whatNeedsYourDecision.map((decision) => <article key={decision.sourceKey || decision.title} className="rounded-xl border border-warn/30 bg-warn-soft p-4"><p className="font-medium text-ink">{decision.gateHref ? <a href={decision.gateHref} className="hover:underline">{decision.gateId} · {decision.title}</a> : decision.title}</p><p className="mt-1 text-sm text-muted">{decision.action}</p><p className="mt-2 text-xs text-warn">Why: {decision.why}</p>{decision.acceptanceIds.length > 0 && <List label="Acceptance" values={decision.acceptanceIds} />}{decision.verification && <p className="mt-2 text-xs text-muted">Verification: {decision.verification}</p>}</article>)}</div>}</ReviewSection>
     </div>
     <aside className="h-fit rounded-2xl border border-line bg-panel p-4 xl:sticky xl:top-4">
@@ -82,8 +94,24 @@ function ReviewBody({ review, confirmation, setConfirmation, exactConfirmation, 
       {start.blockers.length > 0 && <div className="mt-4 rounded-xl bg-warn-soft p-3"><p className="text-sm font-semibold text-warn">Blocked</p><ul className="mt-1 list-disc pl-4 text-xs leading-5 text-warn">{start.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></div>}
       {review.ready && start.state === "held" && <div className="mt-5 border-t border-line pt-4"><label className="block text-xs font-medium text-ink">Type the exact plan fingerprint to confirm<input aria-label="Exact plan fingerprint confirmation" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder={start.planFingerprint} className="mt-2 w-full rounded-lg border border-line bg-surface px-2.5 py-2 font-mono text-[11px] text-ink outline-none focus:border-accent" /></label><button type="button" onClick={onStart} disabled={!canStart} className={cn("mt-3 flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold", canStart ? "bg-accent text-white hover:opacity-90" : "cursor-not-allowed bg-hover text-faint")}><Play size={14} />{starting ? "Starting delivery…" : "Start exact delivery"}</button><p className="mt-2 text-[11px] leading-4 text-faint">This cannot enable automation, start a daemon, satisfy a gate, authorize a release, or approve spend.</p></div>}
       {startResult && <StateCard tone="pass" title={startResult.replayed ? "Already started" : "Delivery started"} detail={`Wave ${startResult.waveId} is ${startResult.replayed ? "already armed for this fingerprint." : "armed for this exact fingerprint."}`} link={startResult.statusLink} />}
-      {startError && <DeliveryFailure error={startError} phase="start" compact />}
+      {startError != null && <DeliveryFailure error={startError} phase="start" compact />}
     </aside>
+  </div>;
+}
+
+function CrossScopeDependencies({ dependencies }: { dependencies: DeliveryCrossScopeDependency[] }) {
+  return <div className="mt-4" aria-label="Cross-scope hard dependencies">
+    <p className="text-xs font-semibold uppercase tracking-wide text-faint">Producer must come first</p>
+    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+      {dependencies.map((dependency) => <article key={`${dependency.consumerSourceKey}-${dependency.scope}-${dependency.sourceKey}-${dependency.taskId ?? "missing"}`} className="rounded-lg border border-line bg-panel p-3">
+        <p className="font-mono text-xs font-semibold text-ink">{dependency.scope}/{dependency.sourceKey}</p>
+        <p className="mt-1 text-xs text-muted">Hard dependency · {dependency.targetIntegrity} · producer {dependency.producerLifecycle}</p>
+        <p className="mt-2 text-xs text-ink-soft">Durable target: {dependency.taskHref ? <a href={dependency.taskHref} className="font-mono text-accent hover:underline">{dependency.taskId}</a> : <span className="font-mono">{dependency.taskId || "missing"}</span>} · state {dependency.producerState}</p>
+        <p className="mt-1 break-all font-mono text-[10px] text-faint">Persisted contract: {dependency.persistedContractFingerprint || "not recorded"} · {dependency.contractProvenance}</p>
+        <p className="mt-2 text-xs leading-5 text-muted">{dependency.implication}</p>
+        {dependency.blockerClass !== "none" && dependency.repair && <p className="mt-2 rounded-md bg-warn-soft px-2 py-1.5 text-xs leading-5 text-warn"><span className="font-semibold">{dependency.blockerClass === "structural" ? "Repair structure:" : "Resolve producer:"}</span> {dependency.repair}</p>}
+      </article>)}
+    </div>
   </div>;
 }
 
