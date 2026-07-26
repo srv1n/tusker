@@ -382,10 +382,14 @@ async function chromiumLayoutProof(url: string, width: number, fixtureRoot: stri
   child.stderr.on("data", (chunk) => { stderr += chunk; });
   try {
     const activePortFile = resolve(profile, "DevToolsActivePort");
-    for (let attempt = 0; attempt < 100 && !existsSync(activePortFile); attempt++) {
+    const startupDeadline = Date.now() + 15_000;
+    while (!existsSync(activePortFile)) {
       if (child.exitCode !== null) throw new Error(`Chromium exited before DevTools was ready: ${stderr}`);
-      await delayMs(50);
+      const remainingMs = startupDeadline - Date.now();
+      if (remainingMs <= 0) break;
+      await delayMs(Math.min(50, remainingMs));
     }
+    if (child.exitCode !== null) throw new Error(`Chromium exited before DevTools was ready: ${stderr}`);
     if (!existsSync(activePortFile)) throw new Error(`Chromium DevTools did not start: ${stderr}`);
     const port = Number(readFileSync(activePortFile, "utf8").split(/\r?\n/)[0]);
     const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json()) as Array<{ type: string; webSocketDebuggerUrl: string }>;
