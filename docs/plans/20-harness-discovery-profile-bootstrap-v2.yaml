@@ -82,6 +82,8 @@ tasks:
       - cmd/tusker/runner_profiles_test.go
       - cmd/tusker/commands_create.go
       - cmd/tusker/commands_create_test.go
+      - cmd/tusker/commands_v7.go
+      - cmd/tusker/v7_validation.go
       - cmd/tusker/cli.go
       - internal/v7schema/schema.go
     concurrency_group: bootstrap-core
@@ -148,6 +150,8 @@ tasks:
     dependencies:
       - task: harness-catalog-profile-bootstrap
         kind: hard
+      - task: v2-planning-scaffold
+        kind: hard
     artifact:
       kind: behavior_matrix
       path: cmd/tusker/runner_route_preview_test.go
@@ -158,7 +162,12 @@ tasks:
       - cmd/tusker/runner_route_preview_test.go
       - cmd/tusker/runner_profiles.go
       - cmd/tusker/runner_profiles_test.go
+      - cmd/tusker/delivery_cmd.go
+      - cmd/tusker/delivery_cmd_test.go
+      - cmd/tusker/delivery_v2.go
+      - cmd/tusker/delivery_v2_test.go
       - cmd/tusker/cli.go
+      - skills/tusker/references/ORCHESTRATION.md
     concurrency_group: route-preview
     risk: medium
     priority: p0
@@ -176,7 +185,12 @@ tasks:
       - id: A1
         outcome: The fixture creates a disposable Git repository, initializes Tusker with automation off, observes catalog provenance, and generates lower-tier `execute-fast` and `execute-standard` profiles without replacing explicit policy.
       - id: A2
-        outcome: The fixture authors a four-frontier V2 DAG with parallel hello/goodbye work, router integration, parallel docs/end-to-end proof, and a final integration gate; doctor, review, and dry-run succeed with deterministic frontiers.
+        outcome: >-
+          The fixture authors a four-frontier V2 DAG with parallel
+          hello/goodbye work, router integration, parallel docs/end-to-end
+          proof, and a final integration gate; doctor and dry-run succeed with
+          deterministic frontiers, while product review renders the complete
+          contract and correctly blocks Start because automation remains off.
       - id: A3
         outcome: Route previews choose the expected lower-tier roles and the final audit proves automation remains off, no daemon/service or run exists, and protected/default refs did not move.
     verification:

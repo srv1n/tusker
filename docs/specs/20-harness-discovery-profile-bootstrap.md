@@ -109,7 +109,8 @@ The disposable-repository proof records:
 3. generated semantic profiles;
 4. a four-frontier V2 DAG (`hello` and `goodbye` in parallel, router, docs and
    end-to-end proof in parallel, final integration gate);
-5. doctor/review/import dry-run success;
+5. doctor and import dry-run success, plus a complete product review whose
+   Start boundary is correctly blocked because automation remains off;
 6. route previews selecting lower-tier execution profiles; and
 7. automation still off, no daemon/service, no runs, and no ref movement.
 
