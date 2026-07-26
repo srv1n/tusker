@@ -586,6 +586,19 @@ func scheduledPromotionAdvanceRefUnderMaterialEpoch(
 	if err := validateScheduledPromotionDurableCargoWithStore(vaultPath, waveID, candidate, store); err != nil {
 		return nil, err
 	}
+	// A pre-ref recovery may reuse durable proof only after re-establishing it
+	// against the live workflow/provider contract while the material epoch is
+	// held. This must happen before preparation temporarily projects control
+	// files away from their pre-CAS done state; the same epoch remains held
+	// through preparation and the irreversible ref update.
+	if recovery {
+		if recoveryRun == nil {
+			return nil, tuskerError(errorInvalidTransition, "promotion recovery blocked: full_gate_recovery_record_missing")
+		}
+		if err := validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID, store, *recoveryRun); err != nil {
+			return nil, tuskerError(errorInvalidTransition, "promotion recovery blocked: "+err.Error())
+		}
+	}
 	repoRoot := v7RepoRoot(vaultPath)
 	preparation, err := prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch, wave)
 	if err != nil {
@@ -613,18 +626,6 @@ func scheduledPromotionAdvanceRefUnderMaterialEpoch(
 	}
 	if err := scheduledPromotionAfterFinalAuthority(); err != nil {
 		return nil, restore(err)
-	}
-	// A pre-ref recovery is allowed to reuse only durable proof that still
-	// matches the live workflow/provider contract. This runs after the final
-	// authority hook while the material epoch excludes managed control writers,
-	// leaving no mutable-policy gap before the irreversible ref CAS.
-	if recovery {
-		if recoveryRun == nil {
-			return nil, restore(tuskerError(errorInvalidTransition, "promotion recovery blocked: full_gate_recovery_record_missing"))
-		}
-		if err := validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID, store, *recoveryRun); err != nil {
-			return nil, restore(tuskerError(errorInvalidTransition, "promotion recovery blocked: "+err.Error()))
-		}
 	}
 	if hold, err := store.departureHold(projectID, false); err != nil {
 		return nil, restore(err)
