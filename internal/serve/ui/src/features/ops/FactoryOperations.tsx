@@ -87,6 +87,11 @@ function OperationsPosture({ projection }: { projection: FactoryOperationsProjec
         <FactLine label="auto source" value={project.automationProvenance} />
         <FactLine label="scope" value={`${project.dispatchScope.configured ?? "unset"} → ${project.dispatchScope.effective}`} />
         <FactLine label="source" value={project.dispatchScope.provenance} />
+        <ModeAdvisory
+          label="Dispatch scope"
+          warning={project.dispatchScope.warning}
+          repair={project.dispatchScope.repair}
+        />
       </PostureCard>
 
       <PostureCard label="Integration & promotion">
@@ -94,6 +99,11 @@ function OperationsPosture({ projection }: { projection: FactoryOperationsProjec
         <FactLine label="promotion" value={`${project.promotionMode.mode} · observe:${project.promotionMode.observe} stage:${project.promotionMode.stage} promote:${project.promotionMode.promote} release:${project.promotionMode.release}`} />
         <FactLine label="source" value={project.promotionMode.provenance || "default"} />
         <FactLine label="default" value={`${authority.defaultRef}${authority.defaultSha ? ` @ ${shortRevision(authority.defaultSha)}` : ""}`} />
+        <ModeAdvisory
+          label="Completion reactor"
+          warning={project.completionMode.warning}
+          repair={project.completionMode.repair}
+        />
       </PostureCard>
 
       <PostureCard label="Capacity">
@@ -158,6 +168,23 @@ function FactLine({ label, value }: { label: string; value: string }) {
       <span className="text-faint">{label}</span>
       <Mono className="min-w-0 break-words text-muted">{value}</Mono>
     </div>
+  );
+}
+
+function ModeAdvisory({ label, warning, repair }: { label: string; warning?: string; repair?: string }) {
+  if (!warning && !repair) return null;
+  return (
+    <aside
+      aria-label={`${label} compatibility warning`}
+      className="min-w-0 rounded-md border border-warn/25 bg-warn-soft px-2 py-1.5 text-[10.5px]"
+    >
+      {warning ? <p className="break-words text-warn">{warning}</p> : null}
+      {repair ? (
+        <p className="mt-1 break-words text-muted">
+          <span className="font-medium text-ink-soft">Repair:</span> {repair}
+        </p>
+      ) : null}
+    </aside>
   );
 }
 
@@ -270,9 +297,9 @@ function humanize(value: string): string {
 }
 
 function stateTone(state: string): "pass" | "warn" | "fail" | "accent" | "neutral" {
-  if (["delivered", "integrated", "promoted"].includes(state)) return "pass";
+  if (["delivered", "integrated", "promoted", "shadow_validated", "staged_only", "promotion_committed"].includes(state)) return "pass";
   if (["running", "ready"].includes(state)) return "accent";
-  if (state.includes("blocked") || state.includes("parked") || state.includes("stale")) return "fail";
+  if (state.includes("blocked") || state.includes("parked") || state.includes("stale") || state.includes("truth_missing") || state.includes("recovery_required")) return "fail";
   if (state.includes("review") || state.includes("rework") || state.includes("waiting")) return "warn";
   return "neutral";
 }

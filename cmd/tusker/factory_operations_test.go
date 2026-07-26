@@ -61,11 +61,25 @@ func TestFactoryOperationsProjection(t *testing.T) {
 			{
 				name: "live run wins over stale authorization",
 				mutate: func(f *factoryOperationsFacts) {
-					run := RunStatus{ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Lane: runLaneExecute, LeaseState: string(LeaseStateRunning), WorkRevision: 3}
+					run := RunStatus{
+						ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Lane: runLaneExecute,
+						LeaseState: string(LeaseStateRunning), LeaseExpiresAt: f.Now.Add(time.Minute).Format(time.RFC3339), WorkRevision: 3,
+					}
 					f.Runs["APP-T-0001"], f.AllRuns = run, []RunStatus{run}
 					f.WaveFacts["W-0001"] = factoryOperationsWaveFact{State: "stale", Stale: true, IntegrationRef: "integration/W-0001"}
 				},
 				section: "working", wantState: "running", wantAction: "tusker runs inspect APP-T-0001 --json",
+			},
+			{
+				name: "expired run is stale not live",
+				mutate: func(f *factoryOperationsFacts) {
+					run := RunStatus{
+						ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Lane: runLaneExecute,
+						LeaseState: string(LeaseStateRunning), LeaseExpiresAt: f.Now.Add(-time.Minute).Format(time.RFC3339), WorkRevision: 3,
+					}
+					f.Runs["APP-T-0001"], f.AllRuns = run, []RunStatus{run}
+				},
+				section: "blocked", wantState: "stale_run", wantAction: "tusker runs inspect APP-T-0001 --json",
 			},
 			{
 				name: "durable retry continuation wins over later authorization drift",
@@ -139,7 +153,10 @@ func TestFactoryOperationsProjection(t *testing.T) {
 				mutate: func(f *factoryOperationsFacts) {
 					f.Workflow.DispatchScope = automationDispatchScopeProjection{Configured: "all_eligible", Effective: "all_eligible", Provenance: configSourceProject}
 					f.GlobalCapacityLimit = 1
-					f.AllRuns = []RunStatus{{ProjectID: "other", RecordID: "OTHER-T-1", LeaseState: string(LeaseStateRunning)}}
+					f.AllRuns = []RunStatus{{
+						ProjectID: "other", RecordID: "OTHER-T-1", LeaseState: string(LeaseStateRunning),
+						LeaseExpiresAt: f.Now.Add(time.Minute).Format(time.RFC3339),
+					}}
 				},
 				section: "next", wantState: "waiting_capacity", wantAction: "tusker runs inspect APP-T-0001 --json",
 			},
@@ -150,7 +167,10 @@ func TestFactoryOperationsProjection(t *testing.T) {
 					task := f.Index.Tasks["APP-T-0001"]
 					task.Data["resource_refs"] = []string{"gpu-a"}
 					f.Index.Tasks["APP-T-0001"] = task
-					f.ResourceLeases = []ResourceLease{{Name: "gpu-a", Purpose: "scheduled full promotion gate", ProjectID: "other", State: resourceLeaseHeld}}
+					f.ResourceLeases = []ResourceLease{{
+						Name: "gpu-a", Purpose: "scheduled full promotion gate", ProjectID: "other", State: resourceLeaseHeld,
+						ExpiresAt: f.Now.Add(time.Minute).Format(time.RFC3339),
+					}}
 				},
 				section: "blocked", wantState: "waiting_resource", wantAction: "tusker runs inspect APP-T-0001 --json",
 			},
@@ -173,6 +193,75 @@ func TestFactoryOperationsProjection(t *testing.T) {
 				}
 				if item.SafeAction != tc.wantAction {
 					t.Fatalf("safe action = %q, want exact %q", item.SafeAction, tc.wantAction)
+				}
+			})
+		}
+	})
+
+	t.Run("freshness controls capacity and resource blockers", func(t *testing.T) {
+		facts := factoryOperationsTestFacts()
+		facts.Workflow.DispatchScope = automationDispatchScopeProjection{Configured: "all_eligible", Effective: "all_eligible", Provenance: configSourceProject}
+		facts.GlobalCapacityLimit = 1
+		facts.AllRuns = []RunStatus{{
+			ProjectID: "other", RecordID: "OTHER-T-1", LeaseState: string(LeaseStateClaimed),
+			LeaseExpiresAt: facts.Now.Add(-time.Second).Format(time.RFC3339),
+		}}
+		task := facts.Index.Tasks["APP-T-0001"]
+		task.Data["resource_refs"] = []string{"gpu-a"}
+		facts.Index.Tasks["APP-T-0001"] = task
+		facts.ResourceLeases = []ResourceLease{{
+			Name: "gpu-a", Purpose: "old holder", ProjectID: "other", State: resourceLeaseHeld,
+			ExpiresAt: facts.Now.Add(-time.Second).Format(time.RFC3339),
+		}}
+		projection := composeFactoryOperations(facts)
+		if projection.Capacity.Global.Active != 0 || projection.Capacity.Global.Available != 1 {
+			t.Fatalf("expired run consumed capacity: %#v", projection.Capacity.Global)
+		}
+		if len(projection.Capacity.ResourceHolds) != 0 {
+			t.Fatalf("expired resource projected held: %#v", projection.Capacity.ResourceHolds)
+		}
+		if item := factoryOperationsFindTask(t, projection, "next", "APP-T-0001"); item.State != "ready" {
+			t.Fatalf("expired capacity/resource blocked frontier: %#v", item)
+		}
+	})
+
+	t.Run("departure outcomes never infer promotion", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			mode       string
+			promotion  DeparturePromotion
+			wantState  string
+			wantPhrase string
+			wantRef    string
+			wantSHA    string
+		}{
+			{name: "shadow validation", mode: scheduledPromotionShadow, wantState: "shadow_validated", wantPhrase: "no integration or default ref was changed"},
+			{name: "staged only", mode: scheduledPromotionStage, wantState: "staged_only", wantPhrase: "default ref was not promoted"},
+			{
+				name: "actual promotion", mode: scheduledPromotionPromote,
+				promotion: DeparturePromotion{CommittedRef: "refs/heads/main", CommittedSHA: "promoted123"},
+				wantState: "promotion_committed", wantPhrase: "were promoted to refs/heads/main at promoted123",
+				wantRef: "refs/heads/main", wantSHA: "promoted123",
+			},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				facts := factoryOperationsTestFacts()
+				departure := DepartureRun{
+					ID: "departure-1", ProjectID: "app", State: DepartureStatePassed,
+					PolicyID:  departurePolicyID(ScheduledPromotionProjection{Mode: tc.mode}),
+					Candidate: DepartureCandidate{CargoTaskIDs: []string{"APP-T-0001"}, CandidateSHA: "candidate123"},
+					Promotion: tc.promotion,
+				}
+				item, section := factoryOperationsDepartureItem(facts, departure)
+				if section != "delivered" || item.State != tc.wantState || !strings.Contains(item.ProductOutcome, tc.wantPhrase) {
+					t.Fatalf("departure projection = section %q item %#v", section, item)
+				}
+				if item.Revisions.DefaultRef != tc.wantRef || item.Revisions.DefaultSHA != tc.wantSHA {
+					t.Fatalf("departure invented default revision: %#v", item.Revisions)
+				}
+				if tc.promotion.CommittedSHA == "" && strings.Contains(item.State, "promoted") {
+					t.Fatalf("non-promotion was labeled promoted: %#v", item)
 				}
 			})
 		}
@@ -212,7 +301,7 @@ func TestFactoryOperationsProjection(t *testing.T) {
 		}
 		if item.Revisions.StateRevision != "sha256:state" || item.Revisions.WorkRevision != 4 ||
 			item.Revisions.ImplementationSHA != "impl456" || item.Revisions.ResultRevision != "review456" ||
-			item.Revisions.IntegrationSHA != "land456" {
+			item.Revisions.IntegrationSHA != "land456" || item.Revisions.DefaultRef != "" || item.Revisions.DefaultSHA != "" {
 			t.Fatalf("revision projection = %#v", item.Revisions)
 		}
 		raw, err := json.Marshal(projection)
@@ -247,6 +336,29 @@ func TestFactoryOperationsProjection(t *testing.T) {
 		} {
 			if !strings.Contains(rendered, expected) {
 				t.Fatalf("plain CLI projection missing %q:\n%s", expected, rendered)
+			}
+		}
+	})
+
+	t.Run("plain output renders compatibility warnings and repairs", func(t *testing.T) {
+		facts := factoryOperationsTestFacts()
+		facts.Workflow.DispatchScope = automationDispatchScopeProjection{
+			Effective: "all_eligible", Provenance: "legacy enabled config without dispatch_scope",
+			Warning: legacyDispatchScopeWarning, Repair: legacyDispatchScopeRepair,
+		}
+		facts.Workflow.CompletionReactor = completionReactorModeProjection{
+			Effective: "legacy", Provenance: "legacy enabled config without completion_reactor.mode",
+			Warning: legacyCompletionReactorModeWarning, Repair: legacyCompletionReactorModeRepair,
+		}
+		rendered := renderFactoryOperations(composeFactoryOperations(facts))
+		for _, expected := range []string{
+			"Dispatch scope warning: " + legacyDispatchScopeWarning,
+			"Dispatch scope repair: " + legacyDispatchScopeRepair,
+			"Completion reactor warning: " + legacyCompletionReactorModeWarning,
+			"Completion reactor repair: " + legacyCompletionReactorModeRepair,
+		} {
+			if !strings.Contains(rendered, expected) {
+				t.Fatalf("plain output omitted %q:\n%s", expected, rendered)
 			}
 		}
 	})
@@ -320,7 +432,15 @@ func TestFactoryOperationsProjection(t *testing.T) {
 		if !reflect.DeepEqual(apiProjection.SectionOrder, factoryOperationsSectionOrder) {
 			t.Fatalf("section order = %#v", apiProjection.SectionOrder)
 		}
-		command, parsed := parseCLI([]string{"tusker", "factory", "operations", "--json", "--vault", server.vaultPath, "--state-root", DefaultStateRoot()})
+		previousWD, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chdir(filepath.Dir(server.vaultPath)); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(previousWD) })
+		command, parsed := parseCLI([]string{"tusker", "factory", "operations", "--json"})
 		if command != "factory operations" || !parsed.Bool("json") {
 			t.Fatalf("parseCLI = %q %#v", command, parsed)
 		}
@@ -369,6 +489,18 @@ func TestFactoryOperationsProjection(t *testing.T) {
 			code, mutationErr := run("factory operations", Args{flag: "true"})
 			if code != 0 || mutationErr == nil || !strings.Contains(mutationErr.Error(), "read-only") {
 				t.Fatalf("--%s refusal: code=%d err=%v", flag, code, mutationErr)
+			}
+		}
+		for _, argv := range [][]string{
+			{"tusker", "factory", "operations", "--wat"},
+			{"tusker", "factory", "operations", "extra"},
+			{"tusker", "factory", "operations", "--json", "false"},
+			{"tusker", "factory", "operations", "--vault", server.vaultPath},
+		} {
+			invalidCommand, invalidArgs := parseCLI(argv)
+			code, invalidErr := run(invalidCommand, invalidArgs)
+			if code != 0 || invalidErr == nil || errorToIssue(invalidErr).Code != errorInvalidArg {
+				t.Fatalf("%v was not refused exactly: code=%d args=%#v err=%v", argv, code, invalidArgs, invalidErr)
 			}
 		}
 		post := httptest.NewRequest(http.MethodPost, "/api/factory-operations?project=app", nil)

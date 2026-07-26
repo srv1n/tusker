@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1040" viewBox="0 0 1440 1040" role="img" aria-labelledby="title desc">
   <title id="title">Factory operations wide and narrow fixture</title>
-  <desc id="desc">A static acceptance fixture proving the same six ordered read-only sections at desktop and narrow widths.</desc>
+  <desc id="desc">A review illustration for the six ordered read-only sections; the executable Chromium test owns viewport and accessibility proof.</desc>
   <rect width="1440" height="1040" fill="#111318"/>
   <style>
     .serif { font: 600 25px Georgia, serif; fill: #f4f1e9 }
@@ -24,14 +24,14 @@
   <rect x="62" y="186" width="204" height="114" rx="10" class="card"/>
   <text x="78" y="211" class="label">Automation</text>
   <text x="78" y="235" class="mono amber">disabled · idle</text>
-  <text x="78" y="255" class="mono">armed_waves · project config</text>
-  <text x="78" y="275" class="body">registered · pickup enabled · healthy</text>
+  <text x="78" y="255" class="mono">legacy all_eligible · repair shown</text>
+  <text x="78" y="275" class="body">registered · pickup enabled · warning visible</text>
 
   <rect x="278" y="186" width="204" height="114" rx="10" class="card"/>
   <text x="294" y="211" class="label">Integration &amp; promotion</text>
-  <text x="294" y="235" class="mono green">authoritative · promote</text>
+  <text x="294" y="235" class="mono amber">legacy reactor · repair shown</text>
   <text x="294" y="255" class="mono">main @ 0123456789ab</text>
-  <text x="294" y="275" class="body">integrated · promoted</text>
+  <text x="294" y="275" class="body">shadow validated · staged only · committed</text>
 
   <rect x="494" y="186" width="204" height="114" rx="10" class="card"/>
   <text x="510" y="211" class="label">Capacity</text>
@@ -47,11 +47,11 @@
 
   <rect x="62" y="322" width="430" height="154" rx="11" class="card"/>
   <text x="79" y="349" class="label">Delivered</text>
-  <text x="456" y="349" class="mono">2</text>
+  <text x="456" y="349" class="mono">4</text>
   <text x="79" y="377" class="mono green">APP-T-0001 · integrated</text>
   <text x="79" y="397" class="body">Accepted factory surface is visible.</text>
-  <text x="79" y="425" class="mono green">APP-T-0002 · promoted</text>
-  <text x="79" y="445" class="body">Default branch contains the accepted revision.</text>
+  <text x="79" y="425" class="mono green">shadow validated · staged only · promotion committed</text>
+  <text x="79" y="445" class="body">Only a committed ref/SHA reports actual promotion.</text>
 
   <rect x="510" y="322" width="430" height="154" rx="11" class="card"/>
   <text x="527" y="349" class="label">Working now</text>
@@ -70,9 +70,9 @@
 
   <rect x="510" y="492" width="430" height="170" rx="11" class="card"/>
   <text x="527" y="519" class="label">Blocked</text>
-  <text x="904" y="519" class="mono">4</text>
-  <text x="527" y="547" class="mono red">disarmed · stale · parked</text>
-  <text x="527" y="568" class="body">Fresh admission is refused by exact canonical causes.</text>
+  <text x="904" y="519" class="mono">5</text>
+  <text x="527" y="547" class="mono red">disarmed · stale auth · stale run · parked</text>
+  <text x="527" y="568" class="body">Expired run leases never appear live or consume capacity.</text>
   <text x="527" y="598" class="mono red">gpu-a · waiting resource</text>
   <text x="527" y="619" class="body">Named resource holds are concrete blockers.</text>
 
@@ -105,12 +105,12 @@
 
   <rect x="1022" y="174" width="350" height="82" rx="10" class="card"/>
   <text x="1038" y="199" class="label">Posture</text>
-  <text x="1038" y="221" class="mono amber">disabled · armed_waves · stale</text>
+  <text x="1038" y="221" class="mono amber">legacy warnings + repairs · stale</text>
   <text x="1038" y="240" class="mono">capacity 2/2 · gpu-a held</text>
 
   <rect x="1022" y="270" width="350" height="92" rx="10" class="card"/>
   <text x="1038" y="295" class="label">Delivered</text>
-  <text x="1038" y="319" class="mono green">integrated · promoted</text>
+  <text x="1038" y="319" class="mono green">shadow · staged only · committed</text>
   <text x="1038" y="341" class="body">Accepted outcome and revisions wrap.</text>
 
   <rect x="1022" y="376" width="350" height="82" rx="10" class="card"/>
@@ -125,7 +125,7 @@
 
   <rect x="1022" y="578" width="350" height="92" rx="10" class="card"/>
   <text x="1038" y="603" class="label">Blocked</text>
-  <text x="1038" y="627" class="mono red">disarmed · stale · parked</text>
+  <text x="1038" y="627" class="mono red">disarmed · stale auth/run · parked</text>
   <text x="1038" y="649" class="body">Resource hold · exact cause and action</text>
 
   <rect x="1022" y="684" width="350" height="116" rx="10" class="card"/>

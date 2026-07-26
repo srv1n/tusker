@@ -178,8 +178,8 @@ type factoryOperationsFacts struct {
 }
 
 func factoryOperationsCmd(args Args) error {
-	if args.Bool("write") || args.Bool("refresh") || args.Bool("dispatch") {
-		return tuskerError(errorInvalidArg, "factory operations is a read-only projection; mutation flags are not supported")
+	if err := validateFactoryOperationsArgs(args); err != nil {
+		return err
 	}
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
@@ -189,8 +189,7 @@ func factoryOperationsCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	stateRoot := firstNonEmpty(strings.TrimSpace(args.String("state-root")), DefaultStateRoot())
-	store, err := OpenRuntimeStoreReadOnly(stateRoot)
+	store, err := OpenRuntimeStoreReadOnly(DefaultStateRoot())
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -221,7 +220,7 @@ func factoryOperationsCmd(args Args) error {
 
 func printFactoryOperationsHelp() {
 	fmt.Println(`Usage:
-  tusker factory operations [--json] [--vault <path>] [--state-root <path>]
+  tusker factory operations [--json]
 
 Purpose:
   Read one bounded operations projection shared with Serve and desktop.
@@ -229,6 +228,25 @@ Purpose:
 The projection is read-only. It reports delivered work, live work, objective
 review/rework, machine blockers, genuine human gates, and the next frontier.
 It never dispatches work, changes lifecycle state, or updates Git refs.`)
+}
+
+func validateFactoryOperationsArgs(args Args) error {
+	for key, value := range args {
+		switch key {
+		case "json":
+			if value != "true" {
+				return tuskerError(errorInvalidArg, "factory operations accepts --json as a switch without a value")
+			}
+		case "_pos", "_pos0", "_pos1", "_pos2":
+			return tuskerError(errorInvalidArg, "factory operations accepts no positional arguments")
+		default:
+			if strings.HasPrefix(key, "_pos") {
+				return tuskerError(errorInvalidArg, "factory operations accepts no positional arguments")
+			}
+			return tuskerError(errorInvalidArg, "factory operations is read-only and does not support --"+key)
+		}
+	}
+	return nil
 }
 
 func buildFactoryOperations(vaultPath string, project RegisteredProject, workflow Workflow, store *RuntimeStore, now time.Time) (factoryOperationsProjection, error) {
@@ -376,7 +394,7 @@ func composeFactoryOperations(facts factoryOperationsFacts) factoryOperationsPro
 	}
 
 	for _, run := range facts.AllRuns {
-		if runConsumesDispatchCapacity(run) {
+		if runConsumesDispatchCapacity(run) && runFreshness(&run, facts.Now) == "fresh" {
 			projection.Capacity.Global.Active++
 			if run.ProjectID == projectID || run.ProjectID == "" {
 				projection.Capacity.Project.Active++
@@ -388,7 +406,7 @@ func composeFactoryOperations(facts factoryOperationsFacts) factoryOperationsPro
 
 	heldResources := map[string]ResourceLease{}
 	for _, lease := range facts.ResourceLeases {
-		if lease.State != resourceLeaseHeld {
+		if !factoryOperationsResourceLeaseFresh(lease, facts.Now) {
 			continue
 		}
 		taskID, taskLease := fairDispatchResourceRecordID(lease)
@@ -470,12 +488,18 @@ func composeFactoryOperations(facts factoryOperationsFacts) factoryOperationsPro
 		status := strings.ToLower(stringField(task.Data, "status"))
 		run := facts.Runs[taskID]
 		switch {
+		case factoryOperationsRunStale(run, facts.Now):
+			item.State = "stale_run"
+			item.Cause = factoryOperationsStaleRunCause(run)
+			item.AutomaticNextAction = "Tusker will reconcile the expired lease and permit a safely fenced reclaim according to run ownership policy."
+			item.SafeAction = "tusker runs inspect " + taskID + " --json"
+			projection.Blocked = append(projection.Blocked, item)
 		case status == "done" || status == "closed":
 			item.State = factoryOperationsDeliveredState(facts, taskID)
 			item.AutomaticNextAction = factoryOperationsDeliveredNextAction(item.State)
 			item.SafeAction = "tusker show " + taskID + " --capsule"
 			projection.Delivered = append(projection.Delivered, item)
-		case runConsumesDispatchCapacity(run):
+		case runConsumesDispatchCapacity(run) && runFreshness(&run, facts.Now) == "fresh":
 			item.SafeAction = "tusker runs inspect " + taskID + " --json"
 			if strings.Contains(strings.ToLower(run.Lane), "review") || status == "review" {
 				item.State = "in_review"
@@ -579,7 +603,6 @@ func factoryOperationsTaskItem(facts factoryOperationsFacts, task Note) factoryO
 	completion := facts.Completions[taskID]
 	revisions := factoryOperationsRevisions{
 		StateRevision: stringField(task.Data, "state_rev"), WorkRevision: intField(task.Data, "work_revision"),
-		DefaultRef: facts.DefaultRef, DefaultSHA: facts.DefaultSHA,
 	}
 	if run, ok := facts.Runs[taskID]; ok && run.WorkRevision > revisions.WorkRevision {
 		revisions.WorkRevision = run.WorkRevision
@@ -603,8 +626,8 @@ func factoryOperationsTaskItem(facts factoryOperationsFacts, task Note) factoryO
 		revisions.IntegrationSHA = firstNonEmpty(waveFact.IntegrationSHA, revisions.IntegrationSHA)
 	}
 	for _, departure := range facts.Departures {
-		if containsString(departure.Candidate.CargoTaskIDs, taskID) && departure.Promotion.CommittedSHA != "" {
-			revisions.DefaultRef = firstNonEmpty(departure.Promotion.CommittedRef, revisions.DefaultRef)
+		if containsString(departure.Candidate.CargoTaskIDs, taskID) && factoryOperationsDepartureCommitted(departure) {
+			revisions.DefaultRef = departure.Promotion.CommittedRef
 			revisions.DefaultSHA = departure.Promotion.CommittedSHA
 		}
 	}
@@ -651,7 +674,7 @@ func factoryOperationsProductOutcome(task Note) string {
 
 func factoryOperationsDeliveredState(facts factoryOperationsFacts, taskID string) string {
 	for _, departure := range facts.Departures {
-		if containsString(departure.Candidate.CargoTaskIDs, taskID) && departure.Promotion.CommittedSHA != "" {
+		if containsString(departure.Candidate.CargoTaskIDs, taskID) && factoryOperationsDepartureCommitted(departure) {
 			return "promoted"
 		}
 	}
@@ -708,6 +731,28 @@ func factoryOperationsRunParked(run RunStatus) bool {
 		return true
 	}
 	return !run.Terminal && (run.AttemptOutcome == string(AttemptOutcomeBlocked) || run.AttemptOutcome == string(AttemptOutcomeBudgetExceeded))
+}
+
+func factoryOperationsRunStale(run RunStatus, now time.Time) bool {
+	return runFreshness(&run, now) == "stale"
+}
+
+func factoryOperationsStaleRunCause(run RunStatus) string {
+	if expiresAt := strings.TrimSpace(run.LeaseExpiresAt); expiresAt != "" {
+		return safePacketText("The "+fallback(run.LeaseState, "claimed")+" lease expired at "+expiresAt+" and is not live.", 320)
+	}
+	return "The claimed run has no valid lease expiry and is not live."
+}
+
+func factoryOperationsResourceLeaseFresh(lease ResourceLease, now time.Time) bool {
+	if lease.State != resourceLeaseHeld {
+		return false
+	}
+	expires, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(lease.ExpiresAt))
+	if err != nil {
+		expires, err = time.Parse(time.RFC3339, strings.TrimSpace(lease.ExpiresAt))
+	}
+	return err == nil && expires.After(now)
 }
 
 func factoryOperationsFrontierState(facts factoryOperationsFacts, task Note, held map[string]ResourceLease, capacity factoryOperationsCapacity) (state, cause, automatic, safeAction string, blocked bool) {
@@ -849,19 +894,50 @@ func factoryOperationsDepartureItem(facts factoryOperationsFacts, departure Depa
 		State: string(departure.State), ProductOutcome: safePacketText(firstNonEmpty(strings.Join(dedupeSortedStrings(outcomes), "; "), fmt.Sprintf("Promote %d accepted task revision(s).", len(taskIDs))), 420),
 		Cause:           safePacketText(firstNonEmpty(departure.BlockReason, departure.ExecutionLastError, departure.SkipReason), 320),
 		AffectedTaskIDs: taskIDs, AcceptedArtifacts: artifacts,
-		Revisions: factoryOperationsRevisions{
-			DefaultRef:     firstNonEmpty(departure.Promotion.CommittedRef, facts.DefaultRef),
-			DefaultSHA:     firstNonEmpty(departure.Promotion.CommittedSHA, facts.DefaultSHA),
-			IntegrationSHA: departure.Candidate.CandidateSHA,
-		},
-		Href: projectOpsDeepLink(facts.Project.ProjectID) + "#promotion-" + departure.ID,
+		Revisions: factoryOperationsRevisions{},
+		Href:      projectOpsDeepLink(facts.Project.ProjectID) + "#promotion-" + departure.ID,
+	}
+	if factoryOperationsDepartureCommitted(departure) {
+		item.Revisions.DefaultRef = departure.Promotion.CommittedRef
+		item.Revisions.DefaultSHA = departure.Promotion.CommittedSHA
 	}
 	switch departure.State {
-	case DepartureStatePromoted, DepartureStatePassed:
-		item.State = "promoted"
-		item.AutomaticNextAction = "Tusker will run only separately authorized release work; otherwise no automatic work remains."
+	case DepartureStatePassed:
+		switch {
+		case factoryOperationsDepartureCommitted(departure):
+			item.State = "promotion_committed"
+			item.ProductOutcome = safePacketText("The accepted revisions were promoted to "+departure.Promotion.CommittedRef+" at "+departure.Promotion.CommittedSHA+".", 420)
+			item.AutomaticNextAction = "No automatic promotion work remains; release still requires its separately configured authority."
+		case factoryOperationsDepartureMode(departure) == scheduledPromotionStage:
+			item.State = "staged_only"
+			item.ProductOutcome = safePacketText("The accepted revisions were staged to integration only; the default ref was not promoted.", 420)
+			item.AutomaticNextAction = "No automatic default-ref promotion follows from staged-only mode."
+		case factoryOperationsDepartureMode(departure) == scheduledPromotionShadow:
+			item.State = "shadow_validated"
+			item.ProductOutcome = safePacketText("Shadow validation passed for the accepted revisions; no integration or default ref was changed.", 420)
+			item.AutomaticNextAction = "No automatic staging or promotion follows from shadow mode."
+		default:
+			item.State = "promotion_truth_missing"
+			item.Cause = "The terminal departure has no committed default ref/SHA and its policy does not explain a shadow or staged-only result."
+			item.AutomaticNextAction = "Tusker will keep this result out of promoted reporting until its durable promotion identity is repaired."
+			item.SafeAction = "tusker logbook --scheduled-promotion --json"
+			return item, "blocked"
+		}
 		item.SafeAction = "tusker logbook --scheduled-promotion --json"
 		return item, "delivered"
+	case DepartureStatePromoted:
+		if !factoryOperationsDepartureCommitted(departure) {
+			item.State = "promotion_recovery_required"
+			item.Cause = "The departure says promotion started but has no committed default ref/SHA."
+			item.AutomaticNextAction = "Tusker will keep release and terminalization stopped until the committed promotion identity is recovered."
+			item.SafeAction = "tusker logbook --scheduled-promotion --json"
+			return item, "blocked"
+		}
+		item.State = "promotion_committed"
+		item.ProductOutcome = safePacketText("The default ref advanced to "+departure.Promotion.CommittedRef+" at "+departure.Promotion.CommittedSHA+"; terminalization or authorized release remains.", 420)
+		item.AutomaticNextAction = "Tusker will terminalize this committed promotion or continue separately authorized release work."
+		item.SafeAction = "tusker logbook --scheduled-promotion --json"
+		return item, "working"
 	case DepartureStateBlocked, DepartureStateFailed:
 		item.State = "promotion_blocked"
 		item.AutomaticNextAction = "Tusker will keep promotion stopped until the recorded machine-owned repair is green."
@@ -875,6 +951,22 @@ func factoryOperationsDepartureItem(facts factoryOperationsFacts, departure Depa
 		item.SafeAction = "tusker logbook --scheduled-promotion --json"
 		return item, "working"
 	}
+}
+
+func factoryOperationsDepartureCommitted(departure DepartureRun) bool {
+	return strings.TrimSpace(departure.Promotion.CommittedRef) != "" &&
+		strings.TrimSpace(departure.Promotion.CommittedSHA) != ""
+}
+
+func factoryOperationsDepartureMode(departure DepartureRun) string {
+	prefix := fmt.Sprintf("scheduled-promotion/v%d/", scheduledPromotionPolicyVersion)
+	policyID := strings.TrimSpace(departure.PolicyID)
+	if strings.HasPrefix(policyID, prefix) {
+		if mode := strings.TrimPrefix(policyID, prefix); mode != "" {
+			return mode
+		}
+	}
+	return ""
 }
 
 func sortFactoryOperationsItems(items []factoryOperationsItem) {
@@ -907,6 +999,8 @@ func renderFactoryOperations(projection factoryOperationsProjection) string {
 		projection.Project.DispatchScope.Effective, projection.Project.DispatchScope.Provenance,
 		fallback(projection.Project.CompletionMode.Configured, "unset"),
 		projection.Project.CompletionMode.Effective, projection.Project.CompletionMode.Provenance)
+	renderFactoryOperationsModeAdvisory(&out, "Dispatch scope", projection.Project.DispatchScope.Warning, projection.Project.DispatchScope.Repair)
+	renderFactoryOperationsModeAdvisory(&out, "Completion reactor", projection.Project.CompletionMode.Warning, projection.Project.CompletionMode.Repair)
 	fmt.Fprintf(&out, "Promotion: mode=%s configured=%t provenance=%s observe=%t stage=%t promote=%t release=%t\n",
 		projection.Project.PromotionMode.Mode, projection.Project.PromotionMode.Configured,
 		fallback(projection.Project.PromotionMode.Provenance, "default"),
@@ -966,6 +1060,18 @@ func renderFactoryOperations(projection factoryOperationsProjection) string {
 	out.WriteString("## Next frontier\n\n")
 	renderFactoryOperationsItems(&out, projection.NextFrontier)
 	return out.String()
+}
+
+func renderFactoryOperationsModeAdvisory(out *strings.Builder, label, warning, repair string) {
+	if warning == "" && repair == "" {
+		return
+	}
+	if warning != "" {
+		fmt.Fprintf(out, "%s warning: %s\n", label, warning)
+	}
+	if repair != "" {
+		fmt.Fprintf(out, "%s repair: %s\n", label, repair)
+	}
 }
 
 func renderFactoryOperationsItems(out *strings.Builder, items []factoryOperationsItem) {
