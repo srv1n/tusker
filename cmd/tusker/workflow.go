@@ -216,6 +216,11 @@ type GateTierPolicy struct {
 	// gate is available. A change touching a path no scope owns fails closed to
 	// the full harvest set rather than being skipped.
 	Scopes []GateScope `yaml:"scopes,omitempty" json:"scopes,omitempty"`
+	// IsolationProvider is the NAME of a user/daemon-owned container/VM profile
+	// required for scheduled full-promotion gates. Repository workflow never
+	// selects an executable: sandbox-exec, process groups, audit sessions, and
+	// ancestry walks are not sufficient to contain a daemonizing gate.
+	IsolationProvider string `yaml:"isolation_provider,omitempty" json:"isolation_provider,omitempty"`
 }
 
 type NamespaceLintPattern struct {

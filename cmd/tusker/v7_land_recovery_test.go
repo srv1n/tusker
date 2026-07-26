@@ -2,10 +2,190 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestV7LandingLockRecoversOnlyProvenStaleOwner(t *testing.T) {
+	t.Run("records owner identity and excludes a live owner", func(t *testing.T) {
+		vault := t.TempDir()
+		release, err := acquireV7LandingLock(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lockPath := filepath.Join(vault, "_system", "land.lock")
+		owner := readV7LandingLockOwnerForTest(t, lockPath)
+		if owner.Schema != v7LandingLockSchema ||
+			owner.Token == "" ||
+			owner.PID != os.Getpid() ||
+			owner.Host != runtimeLeaseHost() ||
+			!owner.HostVerified ||
+			owner.ProcessStartedAt == "" ||
+			owner.AcquiredAt == "" {
+			t.Fatalf("landing lock owner identity is incomplete: %#v", owner)
+		}
+		if _, err := acquireV7LandingLock(vault); err == nil || !strings.Contains(err.Error(), "already running") {
+			t.Fatalf("live landing owner was not excluded: %v", err)
+		}
+		release()
+		if _, err := os.Stat(lockPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("owned landing lock was not released: %v", err)
+		}
+		if _, err := os.Stat(lockPath + ".guard"); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("landing recovery guard polluted the vault: %v", err)
+		}
+	})
+
+	t.Run("does not steal malformed metadata", func(t *testing.T) {
+		vault, lockPath := newV7LandingLockFixture(t)
+		legacy := "2026-07-25T00:00:00Z\n"
+		if err := writeText(lockPath, legacy); err != nil {
+			t.Fatal(err)
+		}
+		old := time.Now().Add(-2 * v7LandingLockRecoveryGrace)
+		if err := os.Chtimes(lockPath, old, old); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := acquireV7LandingLock(vault); err == nil || !strings.Contains(err.Error(), "malformed") {
+			t.Fatalf("malformed landing lock was not rejected: %v", err)
+		}
+		if got := mustReadIndexTest(t, lockPath); got != legacy {
+			t.Fatalf("malformed landing lock was stolen: %q", got)
+		}
+	})
+
+	t.Run("does not steal a fresh dead-owner lock", func(t *testing.T) {
+		vault, lockPath := newV7LandingLockFixture(t)
+		owner := v7LandingLockOwnerForTest(time.Now().UTC(), 999999999, "dead-process-start")
+		writeV7LandingLockOwnerForTest(t, lockPath, owner)
+		if _, err := acquireV7LandingLock(vault); err == nil || !strings.Contains(err.Error(), "too fresh") {
+			t.Fatalf("fresh landing lock was not rejected: %v", err)
+		}
+		if got := readV7LandingLockOwnerForTest(t, lockPath); got.Token != owner.Token {
+			t.Fatalf("fresh landing lock was stolen: before=%s after=%s", owner.Token, got.Token)
+		}
+	})
+
+	t.Run("does not steal an old live-owner lock", func(t *testing.T) {
+		vault, lockPath := newV7LandingLockFixture(t)
+		startedAt, ok := processStartTime(os.Getpid())
+		if !ok {
+			t.Skip("process start identity is unavailable")
+		}
+		old := time.Now().UTC().Add(-2 * v7LandingLockRecoveryGrace)
+		owner := v7LandingLockOwnerForTest(old, os.Getpid(), startedAt)
+		writeV7LandingLockOwnerForTest(t, lockPath, owner)
+		if err := os.Chtimes(lockPath, old, old); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := acquireV7LandingLock(vault); err == nil || !strings.Contains(err.Error(), "still alive") {
+			t.Fatalf("live landing owner was not preserved: %v", err)
+		}
+		if got := readV7LandingLockOwnerForTest(t, lockPath); got.Token != owner.Token {
+			t.Fatalf("live landing lock was stolen: before=%s after=%s", owner.Token, got.Token)
+		}
+	})
+
+	t.Run("recovers an old dead-owner lock", func(t *testing.T) {
+		vault, lockPath := newV7LandingLockFixture(t)
+		old := time.Now().UTC().Add(-2 * v7LandingLockRecoveryGrace)
+		stale := v7LandingLockOwnerForTest(old, 999999999, "dead-process-start")
+		writeV7LandingLockOwnerForTest(t, lockPath, stale)
+		if err := os.Chtimes(lockPath, old, old); err != nil {
+			t.Fatal(err)
+		}
+		release, err := acquireV7LandingLock(vault)
+		if err != nil {
+			t.Fatalf("recover stale landing lock: %v", err)
+		}
+		defer release()
+		current := readV7LandingLockOwnerForTest(t, lockPath)
+		if current.Token == stale.Token || current.PID != os.Getpid() {
+			t.Fatalf("stale landing owner was not replaced safely: stale=%#v current=%#v", stale, current)
+		}
+	})
+
+	t.Run("recognizes pid reuse from the process start identity", func(t *testing.T) {
+		vault, lockPath := newV7LandingLockFixture(t)
+		old := time.Now().UTC().Add(-2 * v7LandingLockRecoveryGrace)
+		stale := v7LandingLockOwnerForTest(old, os.Getpid(), "1900-01-01T00:00:00Z")
+		writeV7LandingLockOwnerForTest(t, lockPath, stale)
+		if err := os.Chtimes(lockPath, old, old); err != nil {
+			t.Fatal(err)
+		}
+		release, err := acquireV7LandingLock(vault)
+		if err != nil {
+			t.Fatalf("recover reused-pid landing lock: %v", err)
+		}
+		defer release()
+		if current := readV7LandingLockOwnerForTest(t, lockPath); current.Token == stale.Token {
+			t.Fatalf("reused-pid landing owner was not replaced: %#v", current)
+		}
+	})
+
+	t.Run("release cannot remove a successor identity", func(t *testing.T) {
+		vault := t.TempDir()
+		release, err := acquireV7LandingLock(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lockPath := filepath.Join(vault, "_system", "land.lock")
+		successor := v7LandingLockOwnerForTest(time.Now().UTC(), os.Getpid(), "successor-start")
+		writeV7LandingLockOwnerForTest(t, lockPath, successor)
+		release()
+		if got := readV7LandingLockOwnerForTest(t, lockPath); got.Token != successor.Token {
+			t.Fatalf("former owner removed its successor: %#v", got)
+		}
+	})
+}
+
+func newV7LandingLockFixture(t *testing.T) (string, string) {
+	t.Helper()
+	vault := t.TempDir()
+	lockPath := filepath.Join(vault, "_system", "land.lock")
+	if err := ensureDir(filepath.Dir(lockPath)); err != nil {
+		t.Fatal(err)
+	}
+	return vault, lockPath
+}
+
+func v7LandingLockOwnerForTest(acquiredAt time.Time, pid int, processStartedAt string) v7LandingLockOwner {
+	host, hostVerified := v7LandingLockHostIdentity()
+	return v7LandingLockOwner{
+		Schema:               v7LandingLockSchema,
+		Token:                "lock-owner-" + strings.ToLower(newRecordID()),
+		PID:                  pid,
+		Host:                 host,
+		HostVerified:         hostVerified,
+		ProcessStartedAt:     processStartedAt,
+		ProcessStartVerified: true,
+		AcquiredAt:           acquiredAt.Format(time.RFC3339Nano),
+	}
+}
+
+func writeV7LandingLockOwnerForTest(t *testing.T, path string, owner v7LandingLockOwner) {
+	t.Helper()
+	raw, err := json.Marshal(owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, string(raw)+"\n"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readV7LandingLockOwnerForTest(t *testing.T, path string) v7LandingLockOwner {
+	t.Helper()
+	var owner v7LandingLockOwner
+	if err := json.Unmarshal([]byte(mustReadIndexTest(t, path)), &owner); err != nil {
+		t.Fatal(err)
+	}
+	return owner
+}
 
 // A1: a task with no wave membership gets an actionable refusal that names the
 // exact wave command to run.
@@ -291,6 +471,178 @@ func TestAdvanceDefaultBranchFfOnlyPreservesStagedTuskerWork(t *testing.T) {
 	if head := strings.TrimSpace(gitDirOutput(t, wt, "rev-parse", "HEAD")); head == strings.TrimSpace(newRev) {
 		t.Fatalf("refused advance must leave the worktree at %s, not newRev %s", oldRev, newRev)
 	}
+}
+
+func TestWaveMemberPreparationFinishesByExactRefOutcome(t *testing.T) {
+	t.Run("third ref race restores original canonical bytes", func(t *testing.T) {
+		repo, vault := newLandReadyForMainAdvanceTest(t, "third-ref-preparation.txt", "candidate\n")
+		idx, err := loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wave := idx.Waves["W-0001"]
+		expected := gitRevisionForTest(t, repo, "main")
+		candidate := gitRevisionForTest(t, repo, "integration/W-0001")
+		intended := strings.TrimSpace(gitDirOutput(t, repo, "commit-tree", candidate+"^{tree}", "-p", expected, "-p", candidate, "-m", "intended promotion"))
+		original := departureWaveMemberBytes(t, vault, "W-0001", "APP-T-0001")
+
+		preparation, err := prepareV7WaveMembersForDefaultAdvance(repo, vault, "main", wave)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prepared := departureWaveMemberBytes(t, vault, "W-0001", "APP-T-0001")
+		if sameStringMap(original, prepared) {
+			t.Fatal("fixture did not produce live canonical bytes for preparation to protect")
+		}
+		third := strings.TrimSpace(gitDirOutput(t, repo, "commit-tree", expected+"^{tree}", "-p", expected, "-m", "external third ref"))
+		runGitDir(t, repo, "update-ref", "refs/heads/main", third, expected)
+
+		if err := preparation.finishAfterRefAttempt(repo, "main", expected, intended); err != nil {
+			t.Fatal(err)
+		}
+		assertDepartureWaveMemberBytes(t, vault, original)
+	})
+
+	t.Run("intended ref ownership does not restore the preimage", func(t *testing.T) {
+		repo, vault := newLandReadyForMainAdvanceTest(t, "intended-ref-preparation.txt", "candidate\n")
+		idx, err := loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wave := idx.Waves["W-0001"]
+		expected := gitRevisionForTest(t, repo, "main")
+		candidate := gitRevisionForTest(t, repo, "integration/W-0001")
+		intended := strings.TrimSpace(gitDirOutput(t, repo, "commit-tree", candidate+"^{tree}", "-p", expected, "-p", candidate, "-m", "intended promotion"))
+		original := departureWaveMemberBytes(t, vault, "W-0001", "APP-T-0001")
+
+		preparation, err := prepareV7WaveMembersForDefaultAdvance(repo, vault, "main", wave)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prepared := departureWaveMemberBytes(t, vault, "W-0001", "APP-T-0001")
+		if sameStringMap(original, prepared) {
+			t.Fatal("fixture did not produce live canonical bytes for preparation to protect")
+		}
+		runGitDir(t, repo, "update-ref", "refs/heads/main", intended, expected)
+
+		if err := preparation.finishAfterRefAttempt(repo, "main", expected, intended); err != nil {
+			t.Fatal(err)
+		}
+		assertDepartureWaveMemberBytes(t, vault, prepared)
+		if sameStringMap(original, departureWaveMemberBytes(t, vault, "W-0001", "APP-T-0001")) {
+			t.Fatal("intended ref observation incorrectly restored the preimage")
+		}
+	})
+}
+
+func TestWaveMemberPreparationRestoreCAS(t *testing.T) {
+	t.Run("restores exact preimage when checkout bytes differ from index blob", func(t *testing.T) {
+		_, _, path, preparation, before, _ := newWaveMemberPreparationCASFixture(t)
+		if err := preparation.restore(); err != nil {
+			t.Fatal(err)
+		}
+		restored, err := v7PreparedWorktreeState(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !sameV7PreparedWaveMemberExactState(restored, before) {
+			t.Fatalf("restored state = bytes %q mode %s, want bytes %q mode %s",
+				string(restored.Bytes), restored.Mode, string(before.Bytes), before.Mode)
+		}
+	})
+
+	t.Run("preserves a concurrent operator worktree edit", func(t *testing.T) {
+		_, _, path, preparation, _, _ := newWaveMemberPreparationCASFixture(t)
+		if err := writeText(path, "operator worktree edit\n"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, 0o604); err != nil {
+			t.Fatal(err)
+		}
+		err := preparation.restore()
+		if err == nil || !strings.Contains(err.Error(), "worktree changed after default-advance preparation") {
+			t.Fatalf("concurrent worktree edit was not fenced: %v", err)
+		}
+		current, stateErr := v7PreparedWorktreeState(path)
+		if stateErr != nil {
+			t.Fatal(stateErr)
+		}
+		if string(current.Bytes) != "operator worktree edit\n" || current.Mode.Perm() != 0o604 {
+			t.Fatalf("operator edit was overwritten: bytes=%q mode=%s", string(current.Bytes), current.Mode)
+		}
+	})
+
+	t.Run("preserves a concurrent index owner", func(t *testing.T) {
+		repo, relative, path, preparation, _, preparedWorktree := newWaveMemberPreparationCASFixture(t)
+		if err := writeText(path, "concurrent index owner\n"); err != nil {
+			t.Fatal(err)
+		}
+		runGitDir(t, repo, "add", "--", relative)
+		if err := os.WriteFile(path, preparedWorktree.Bytes, preparedWorktree.Mode.Perm()); err != nil {
+			t.Fatal(err)
+		}
+		err := preparation.restore()
+		if err == nil || !strings.Contains(err.Error(), "index changed after default-advance preparation") {
+			t.Fatalf("concurrent index owner was not fenced: %v", err)
+		}
+		current, stateErr := v7PreparedWorktreeState(path)
+		if stateErr != nil {
+			t.Fatal(stateErr)
+		}
+		if !sameV7PreparedWaveMemberExactState(current, preparedWorktree) {
+			t.Fatalf("worktree owned by changed index was overwritten: bytes=%q mode=%s", string(current.Bytes), current.Mode)
+		}
+		indexBytes := gitDirOutput(t, repo, "show", ":"+relative)
+		if indexBytes != "concurrent index owner\n" {
+			t.Fatalf("concurrent index blob was overwritten: %q", indexBytes)
+		}
+	})
+}
+
+func newWaveMemberPreparationCASFixture(t *testing.T) (repo, relative, path string, preparation *v7WaveMemberPreparation, before, preparedWorktree v7PreparedWaveMemberState) {
+	t.Helper()
+	repo = t.TempDir()
+	runGitDir(t, repo, "init", "-b", "main")
+	runGitDir(t, repo, "config", "user.email", "test@example.com")
+	runGitDir(t, repo, "config", "user.name", "Test User")
+	relative = ".tusker/work/waves/W-0001.md"
+	path = filepath.Join(repo, filepath.FromSlash(relative))
+	if err := writeText(path, "raw index representation\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "add", "--", relative)
+	runGitDir(t, repo, "commit", "-m", "seed index representation")
+	preparedIndex, tracked, err := v7PreparedIndexState(repo, relative)
+	if err != nil || !tracked {
+		t.Fatalf("capture prepared index: tracked=%v err=%v", tracked, err)
+	}
+	before = v7PreparedWaveMemberState{
+		Exists: true,
+		Mode:   0o600,
+		Bytes:  []byte("exact live preimage\n"),
+	}
+	if err := os.WriteFile(path, []byte("checkout-filtered worktree representation\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	preparedWorktree, err = v7PreparedWorktreeState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sameV7PreparedWaveMemberBytes(preparedIndex, preparedWorktree) {
+		t.Fatal("fixture requires distinct index and post-checkout worktree representations")
+	}
+	preparation = &v7WaveMemberPreparation{paths: []v7PreparedWaveMemberPath{{
+		Absolute:         path,
+		WorkDir:          repo,
+		Relative:         relative,
+		Before:           before,
+		PreparedIndex:    preparedIndex,
+		PreparedWorktree: preparedWorktree,
+	}}}
+	return repo, relative, path, preparation, before, preparedWorktree
 }
 
 func writeWorkspaceRecordForLandTest(t *testing.T, worktree, recordID string) {

@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestIntegrationBranchCut(t *testing.T) {
@@ -244,10 +247,19 @@ func TestWaveLandSummaryStillReportsMainMove(t *testing.T) {
 }
 
 func newLandReadyForMainAdvanceTest(t *testing.T, fileName, content string) (string, string) {
+	return newLandReadyForMainAdvanceTestInStateRoot(t, fileName, content, DefaultStateRoot())
+}
+
+func newLandReadyForMainAdvanceTestInStateRoot(t *testing.T, fileName, content, stateRoot string) (string, string) {
 	t.Helper()
 	repo, vault := newLandTestRepo(t, 1, "test -f "+yamlQuoteForShellTest(fileName))
-	commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{fileName: content})
-	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001"}); err != nil {
+	sourceSHA := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{fileName: content})
+	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)
+	if err := landFrozenSourcesAsIssuedDepartureInStateRoot(t, repo, vault,
+		Args{"vault": vault, "quiet": "true", "actor": "daemon:departure:land-ready-fixture", "_pos0": "APP-T-0001"},
+		map[string]string{"APP-T-0001": sourceSHA},
+		stateRoot,
+	); err != nil {
 		t.Fatalf("task land setup failed: %v", err)
 	}
 	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-07T02:00:00Z")
@@ -313,6 +325,7 @@ func TestMainPushGuard(t *testing.T) {
 
 func newLandTestRepo(t *testing.T, tasks int, gate string) (string, string) {
 	t.Helper()
+	installV7FullGateProviderFixture(t)
 	repo := t.TempDir()
 	runGitDir(t, repo, "init", "-b", "main")
 	runGitDir(t, repo, "config", "user.email", "test@example.com")
@@ -343,6 +356,98 @@ func newLandTestRepo(t *testing.T, tasks int, gate string) (string, string) {
 	runGitDir(t, repo, "commit", "-m", "record landing wave")
 	runGitDir(t, repo, "branch", "-f", "integration/W-0001", "main")
 	return repo, vault
+}
+
+// Existing landing fixtures model a trusted VM/container provider in-process.
+// The production resolver never has this fallback: it requires a named profile
+// in the user/daemon registry. Tests use this seam to exercise promotion state
+// transitions without starting a real container or VM.
+func installV7FullGateProviderFixture(t *testing.T) {
+	t.Helper()
+	previous := newV7FullGateProvider
+	newV7FullGateProvider = func(profile, _, _ string) (v7FullGateProvider, error) {
+		if profile != "test-fixture" {
+			return nil, fmt.Errorf("fixture provider profile %q is unavailable", profile)
+		}
+		return &testV7FullGateProvider{}, nil
+	}
+	t.Cleanup(func() { newV7FullGateProvider = previous })
+}
+
+type testV7FullGateProvider struct{}
+
+var testV7FullGateProviderReceipt = GateProviderReceipt{
+	LifecycleID:       "fixture:scope",
+	ReceiptDigest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	RuntimeDigest:     "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	PolicyDigest:      "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+	AttestationDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+	ImageOrVMID:       "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+}
+
+func TestV7FullGateProviderFixtureReceiptSatisfiesLifecycleContract(t *testing.T) {
+	if !v7CertifiedGateProviderReceipt(&testV7FullGateProviderReceipt) {
+		t.Fatalf("fixture receipt is not a valid lifecycle certificate: %#v", testV7FullGateProviderReceipt)
+	}
+}
+
+func (*testV7FullGateProvider) Run(ctx context.Context, workspace, command string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", command)
+	cmd.Dir = workspace
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return output, ctx.Err()
+	}
+	if err != nil {
+		return output, err
+	}
+	return output, nil
+}
+
+func TestV7FullGateProviderFixtureCancelsBlockingCommand(t *testing.T) {
+	workspace := t.TempDir()
+	started := filepath.Join(workspace, "started")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := (&testV7FullGateProvider{}).Run(ctx, workspace, "touch started; exec sleep 300")
+		done <- err
+	}()
+	deadline := time.After(time.Second)
+	for !fileExists(started) {
+		select {
+		case <-deadline:
+			t.Fatal("fixture gate did not start blocking command")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("fixture cancellation error = %v, want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("fixture gate did not terminate blocking command after cancellation")
+	}
+}
+
+func (*testV7FullGateProvider) Close() error { return nil }
+
+func (*testV7FullGateProvider) LastReceipt() v7FullGateProviderAudit {
+	return v7FullGateProviderAudit{
+		LifecycleID: testV7FullGateProviderReceipt.LifecycleID, ReceiptDigest: testV7FullGateProviderReceipt.ReceiptDigest,
+		RuntimeDigest: testV7FullGateProviderReceipt.RuntimeDigest, PolicyDigest: testV7FullGateProviderReceipt.PolicyDigest,
+		AttestationDigest: testV7FullGateProviderReceipt.AttestationDigest, ImageOrVMID: testV7FullGateProviderReceipt.ImageOrVMID,
+	}
+}
+
+func (*testV7FullGateProvider) MatchesGateProviderReceipt(receipt *GateProviderReceipt) bool {
+	return receipt != nil && *receipt == testV7FullGateProviderReceipt
 }
 
 func yamlQuoteForTest(value string) string {

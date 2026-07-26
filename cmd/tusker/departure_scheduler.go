@@ -214,11 +214,18 @@ func (d *Daemon) planScheduledDeparture(project RegisteredProject, wf Workflow) 
 	if d != nil && d.departurePlan != nil {
 		return d.departurePlan(project, wf)
 	}
-	return defaultDeparturePlanner().PlanDeparture(project.VaultRoot, project.ProjectID, WorkflowFile{Data: wf})
+	planner := defaultDeparturePlanner()
+	if d != nil {
+		planner.receiptStore = d.store
+	}
+	return planner.PlanDeparture(project.VaultRoot, project.ProjectID, WorkflowFile{Data: wf})
 }
 
 func (d *Daemon) scheduleDepartureIfDue(project RegisteredProject, wf Workflow, now time.Time) error {
 	policy := wf.ScheduledPromotion.Effective
+	if _, err := d.store.ReconcileDepartureRunsForProject(project, d.activeDepartureExecutionIDs()...); err != nil {
+		return err
+	}
 	if err := d.refreshDepartureSchedule(project.ProjectID, wf, now); err != nil {
 		return err
 	}
@@ -251,22 +258,29 @@ func (d *Daemon) scheduleDepartureIfDue(project RegisteredProject, wf Workflow, 
 	if err != nil || !created {
 		return err
 	}
+	return d.evaluateScheduledDepartureRun(project, wf, run, window, now)
+}
+
+func (d *Daemon) evaluateScheduledDepartureRun(project RegisteredProject, wf Workflow, run DepartureRun, window, now time.Time) error {
+	if run.State != DepartureStateDue {
+		return nil
+	}
 	transition := func(state DepartureState, skip, block string, decision *DepartureDecision) error {
-		next := run
-		next.State, next.SkipReason, next.BlockReason = state, skip, block
-		if decision != nil {
-			next.Candidate, next.Gate = decision.Candidate, decision.GateIntent
-		}
-		_, err := d.store.TransitionDepartureRun(next, run.StateRevision)
+		_, err := d.transitionDepartureRun(run, func(next *DepartureRun) {
+			next.State, next.SkipReason, next.BlockReason = state, skip, block
+			if decision != nil {
+				next.Candidate, next.Gate = decision.Candidate, decision.GateIntent
+			}
+		})
 		return err
 	}
-
 	if hold, err := d.store.departureHold(project.ProjectID, false); err != nil {
 		return err
 	} else if hold != nil {
-		return transition(DepartureStateBlocked, "", "departure held by "+hold.By+": "+hold.Reason+"; resume: "+hold.ResumeAction, nil)
+		return transition(DepartureStateBlocked, "", departureHoldBlockReason(hold), nil)
 	}
 	late := now.Sub(window) > departureWindowGrace
+	policy := wf.ScheduledPromotion.Effective
 	if late && policy.Mode != scheduledPromotionPromote {
 		return transition(DepartureStateSkipped, "missed "+policy.Mode+" window; policy is skip-on-misfire", "", nil)
 	}
@@ -285,6 +299,13 @@ func (d *Daemon) scheduleDepartureIfDue(project RegisteredProject, wf Workflow, 
 		// evaluating row is its idempotent, restart-safe handoff.
 		return transition(DepartureStateEvaluating, "", "", &decision)
 	}
+}
+
+func departureHoldBlockReason(hold *DepartureHold) string {
+	if hold == nil {
+		return ""
+	}
+	return "departure held by " + hold.By + ": " + hold.Reason + "; resume: " + hold.ResumeAction
 }
 
 func (d *Daemon) resumeRepairingDepartureRoutes(project RegisteredProject) error {

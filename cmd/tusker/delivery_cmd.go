@@ -534,6 +534,16 @@ func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImp
 	return applyDeliveryImportGuarded(vaultPath, plan, report, args, nil)
 }
 
+// applyDeliveryImportWithMaterialEpoch retains the epoch-held entry point
+// while keeping guarded import as the only writer.
+func applyDeliveryImportWithMaterialEpoch(vaultPath string, plan deliveryPlan, report deliveryImportReport, args Args, materialEpochHeld bool) error {
+	if materialEpochHeld {
+		args = copyArgsForInternalMutation(args)
+		args["material-lock-held"] = "true"
+	}
+	return applyDeliveryImportGuarded(vaultPath, plan, report, args, nil)
+}
+
 func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deliveryImportReport, args Args, guard *deliveryImportWriteGuard) error {
 	var materialLock *v7DocumentLock
 	var err error

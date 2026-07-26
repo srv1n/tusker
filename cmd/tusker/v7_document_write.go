@@ -18,6 +18,8 @@ type v7DocumentLock struct {
 	path string
 }
 
+var v7MaterialEpochLockObserver func()
+
 func (lock *v7DocumentLock) Close() error {
 	if lock == nil || lock.file == nil {
 		return nil
@@ -73,9 +75,13 @@ func acquireV7DocumentLock(filePath string, timeout time.Duration) (*v7DocumentL
 }
 
 // acquireV7MaterialEpochLock serializes transactions whose authorization
-// fingerprint spans more than one Markdown document. The project skill is an
-// immutable, always-present lock identity; its contents are never changed.
+// fingerprint spans multiple canonical V7 documents. SKILL.md is immutable
+// and always present, so it provides one stable filesystem identity for the
+// vault. The observer is test-only instrumentation for lock-order assertions.
 func acquireV7MaterialEpochLock(vaultPath string) (*v7DocumentLock, error) {
+	if v7MaterialEpochLockObserver != nil {
+		v7MaterialEpochLockObserver()
+	}
 	return acquireV7DocumentLock(filepath.Join(vaultPath, "SKILL.md"), v7DocumentLockTimeout)
 }
 

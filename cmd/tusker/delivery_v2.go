@@ -126,11 +126,23 @@ func deliveryPlanSchemaBytes(raw []byte) (string, error) {
 }
 
 func deliveryV2ImportCmd(vaultPath, path string, args Args) error {
+	return deliveryV2ImportCmdWithMaterialEpoch(vaultPath, path, args, false)
+}
+
+func deliveryV2ImportCmdUnderMaterialEpoch(vaultPath, path string, args Args) error {
+	return deliveryV2ImportCmdWithMaterialEpoch(vaultPath, path, args, true)
+}
+
+func deliveryV2ImportCmdWithMaterialEpoch(vaultPath, path string, args Args, materialEpochHeld bool) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	return deliveryV2ImportBytes(vaultPath, path, raw, args)
+	if materialEpochHeld {
+		args = copyArgsForInternalMutation(args)
+		args["material-lock-held"] = "true"
+	}
+	return deliveryV2ImportBytesGuarded(vaultPath, path, raw, args, nil)
 }
 
 func deliveryV2ImportBytes(vaultPath, path string, raw []byte, args Args) error {

@@ -35,6 +35,49 @@ func TestGateLedgerToolchainIdentityAndLegacyConservatism(t *testing.T) {
 	}
 }
 
+func TestGateLedgerPersistsStructuredLifecycleProviderReceipt(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	receipt := &GateProviderReceipt{
+		LifecycleID: "container:scope-1", ReceiptDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		RuntimeDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", PolicyDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		AttestationDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", ImageOrVMID: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+	}
+	entry := GateLedgerEntry{ID: "certified", ProjectID: "app", TreeHash: "tree", Command: "go test ./...", Profile: "full", Toolchain: "provider-v3", ProviderReceipt: receipt}
+	if err := store.RecordGateLedger(entry); err != nil {
+		t.Fatal(err)
+	}
+	hit, err := store.FindGateLedger(entry.ProjectID, entry.TreeHash, entry.Command, entry.Profile, entry.Toolchain)
+	if err != nil || hit == nil || hit.ProviderReceipt == nil || *hit.ProviderReceipt != *receipt {
+		t.Fatalf("structured lifecycle receipt was not durable: %#v %v", hit, err)
+	}
+}
+
+func TestFullGateLedgerRejectsReceiptFromDifferentTrustedProfile(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	receipt := &GateProviderReceipt{
+		LifecycleID: "container:scope-1", ReceiptDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		RuntimeDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", PolicyDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		AttestationDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", ImageOrVMID: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+	}
+	entry := GateLedgerEntry{ID: "wrong-policy", ProjectID: "app", TreeHash: "tree", Command: "go test ./...", Profile: "full", Toolchain: "provider-v3", ProviderReceipt: receipt}
+	if err := store.RecordGateLedger(entry); err != nil {
+		t.Fatal(err)
+	}
+	current := &v7ExternalFullGateProvider{runtimeDigest: receipt.RuntimeDigest, policyDigest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", attestationDigest: receipt.AttestationDigest, imageOrVMID: receipt.ImageOrVMID}
+	ledger := v7CertifiedFullGateLedger{store: store, verifier: current}
+	if hit, err := ledger.FindGateLedger(entry.ProjectID, entry.TreeHash, entry.Command, entry.Profile, entry.Toolchain); err != nil || hit != nil {
+		t.Fatalf("different trusted provider policy reused green proof: %#v %v", hit, err)
+	}
+}
+
 func TestGateLedgerMigratesOldUniqueConstraintWithoutReusingProof(t *testing.T) {
 	root := t.TempDir()
 	db, err := sql.Open("sqlite", runtimeStoreSQLiteDSN(filepath.Join(root, "daemon.db"), runtimeStoreBusyTimeout))

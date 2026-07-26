@@ -31,6 +31,8 @@ const (
 // revalidate. It contains fingerprints and references only; raw command logs
 // belong in runtime scratch/artifacts, never in a durable departure row.
 type DepartureCandidate struct {
+	CargoTaskIDs             []string          `json:"cargo_task_ids,omitempty"`
+	WaveIDs                  []string          `json:"wave_ids,omitempty"`
 	TaskStateRevisions       map[string]string `json:"task_state_revisions,omitempty"`
 	TaskSourceSHAs           map[string]string `json:"task_source_shas,omitempty"`
 	WaveAuthorization        string            `json:"wave_authorization,omitempty"`
@@ -41,15 +43,16 @@ type DepartureCandidate struct {
 }
 
 type DepartureGate struct {
-	Command     string           `json:"command,omitempty"`
-	Profile     string           `json:"profile,omitempty"`
-	Toolchain   string           `json:"toolchain,omitempty"`
-	TreeHash    string           `json:"tree_hash,omitempty"`
-	Status      string           `json:"status,omitempty"`
-	StartedAt   string           `json:"started_at,omitempty"`
-	FinishedAt  string           `json:"finished_at,omitempty"`
-	ArtifactRef string           `json:"artifact_ref,omitempty"`
-	Failure     DepartureFailure `json:"failure,omitempty"`
+	Command          string                `json:"command,omitempty"`
+	Profile          string                `json:"profile,omitempty"`
+	Toolchain        string                `json:"toolchain,omitempty"`
+	TreeHash         string                `json:"tree_hash,omitempty"`
+	Status           string                `json:"status,omitempty"`
+	StartedAt        string                `json:"started_at,omitempty"`
+	FinishedAt       string                `json:"finished_at,omitempty"`
+	ArtifactRef      string                `json:"artifact_ref,omitempty"`
+	ProviderReceipts []GateProviderReceipt `json:"provider_receipts,omitempty"`
+	Failure          DepartureFailure      `json:"failure,omitempty"`
 }
 
 // DepartureFailure keeps promotion-red evidence referential and bounded. The
@@ -68,12 +71,13 @@ type DepartureFailure struct {
 	AffectedTaskIDs []string               `json:"affected_task_ids,omitempty"`
 }
 
-// DeparturePromotion distinguishes an intent from an observed committed ref.
-// Recovery treats an intent with no committed ref as ambiguous: retrying a ref
-// move would be unsafe because the process may have died after the remote move.
+// DeparturePromotion distinguishes an exact ref-update intent from an observed
+// committed ref. ExpectedSHA and IntendedSHA make the crash window decidable:
+// project-aware recovery can compare the current ref with both immutable ends.
 type DeparturePromotion struct {
 	ExpectedRef  string `json:"expected_ref,omitempty"`
 	ExpectedSHA  string `json:"expected_sha,omitempty"`
+	IntendedSHA  string `json:"intended_sha,omitempty"`
 	CommittedRef string `json:"committed_ref,omitempty"`
 	CommittedSHA string `json:"committed_sha,omitempty"`
 	AttemptedAt  string `json:"attempted_at,omitempty"`
@@ -106,6 +110,9 @@ type DepartureRun struct {
 	Release              DepartureRelease   `json:"release"`
 	SkipReason           string             `json:"skip_reason"`
 	BlockReason          string             `json:"block_reason"`
+	ExecutionLastError   string             `json:"execution_last_error,omitempty"`
+	ExecutionLastErrorAt string             `json:"execution_last_error_at,omitempty"`
+	ExecutionErrorCount  int                `json:"execution_error_count,omitempty"`
 	ModelInvocationCount int                `json:"model_invocation_count"`
 	CreatedAt            string             `json:"created_at"`
 	UpdatedAt            string             `json:"updated_at"`
@@ -167,12 +174,14 @@ func (s *RuntimeStore) GetOrCreateDepartureRun(input DepartureRun) (DepartureRun
 	result, err := s.exec(`INSERT INTO departure_runs (
 		id, project_id, policy_id, scheduled_window, state, state_revision,
 		candidate_json, gate_json, promotion_json, release_json, skip_reason,
-		block_reason, model_invocation_count, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		block_reason, execution_last_error, execution_last_error_at,
+		execution_error_count, model_invocation_count, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id, policy_id, scheduled_window) DO NOTHING`,
 		input.ID, input.ProjectID, input.PolicyID, input.ScheduledWindow, input.State, input.StateRevision,
 		values.candidate, values.gate, values.promotion, values.release, input.SkipReason,
-		input.BlockReason, input.ModelInvocationCount, input.CreatedAt, input.UpdatedAt)
+		input.BlockReason, input.ExecutionLastError, input.ExecutionLastErrorAt,
+		input.ExecutionErrorCount, input.ModelInvocationCount, input.CreatedAt, input.UpdatedAt)
 	if err != nil {
 		return DepartureRun{}, false, err
 	}
@@ -208,9 +217,12 @@ func (s *RuntimeStore) findDepartureRun(where string, args ...any) (*DepartureRu
 	var candidate, gate, promotion, release string
 	err := s.queryRowScan(`SELECT id, project_id, policy_id, scheduled_window, state, state_revision,
 		candidate_json, gate_json, promotion_json, release_json, skip_reason, block_reason,
+		execution_last_error, execution_last_error_at, execution_error_count,
 		model_invocation_count, created_at, updated_at FROM departure_runs `+where, args,
 		&row.ID, &row.ProjectID, &row.PolicyID, &row.ScheduledWindow, &row.State, &row.StateRevision,
-		&candidate, &gate, &promotion, &release, &row.SkipReason, &row.BlockReason, &row.ModelInvocationCount, &row.CreatedAt, &row.UpdatedAt)
+		&candidate, &gate, &promotion, &release, &row.SkipReason, &row.BlockReason,
+		&row.ExecutionLastError, &row.ExecutionLastErrorAt, &row.ExecutionErrorCount,
+		&row.ModelInvocationCount, &row.CreatedAt, &row.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -224,7 +236,7 @@ func (s *RuntimeStore) findDepartureRun(where string, args ...any) (*DepartureRu
 }
 
 func (s *RuntimeStore) ListDepartureRuns(projectID string) ([]DepartureRun, error) {
-	query := `SELECT id, project_id, policy_id, scheduled_window, state, state_revision, candidate_json, gate_json, promotion_json, release_json, skip_reason, block_reason, model_invocation_count, created_at, updated_at FROM departure_runs`
+	query := `SELECT id, project_id, policy_id, scheduled_window, state, state_revision, candidate_json, gate_json, promotion_json, release_json, skip_reason, block_reason, execution_last_error, execution_last_error_at, execution_error_count, model_invocation_count, created_at, updated_at FROM departure_runs`
 	args := []any{}
 	if projectID != "" {
 		query += ` WHERE project_id = ?`
@@ -259,9 +271,10 @@ func (s *RuntimeStore) TransitionDepartureRun(next DepartureRun, expectedRevisio
 	}
 	nextRevision := expectedRevision + 1
 	now := departureNow()
-	result, err := s.exec(`UPDATE departure_runs SET state = ?, state_revision = ?, candidate_json = ?, gate_json = ?, promotion_json = ?, release_json = ?, skip_reason = ?, block_reason = ?, model_invocation_count = ?, updated_at = ?
+	result, err := s.exec(`UPDATE departure_runs SET state = ?, state_revision = ?, candidate_json = ?, gate_json = ?, promotion_json = ?, release_json = ?, skip_reason = ?, block_reason = ?, execution_last_error = ?, execution_last_error_at = ?, execution_error_count = ?, model_invocation_count = ?, updated_at = ?
 		WHERE id = ? AND state_revision = ?`, next.State, nextRevision, values.candidate, values.gate, values.promotion, values.release,
-		next.SkipReason, next.BlockReason, next.ModelInvocationCount, now, next.ID, expectedRevision)
+		next.SkipReason, next.BlockReason, next.ExecutionLastError, next.ExecutionLastErrorAt,
+		next.ExecutionErrorCount, next.ModelInvocationCount, now, next.ID, expectedRevision)
 	if err != nil {
 		return false, err
 	}
@@ -281,18 +294,46 @@ func (s *RuntimeStore) UpdateDepartureRunIfRevision(next DepartureRun, expectedR
 // ReconcileDepartureRuns is safe to call at startup. It only marks rows
 // blocked where an irreversible external action may have happened but was not
 // durably committed. All other nonterminal rows are returned as resumable.
-func (s *RuntimeStore) ReconcileDepartureRuns(projectID string) ([]DepartureRecovery, error) {
+func (s *RuntimeStore) ReconcileDepartureRuns(projectID string, activeRunIDs ...string) ([]DepartureRecovery, error) {
+	return s.reconcileDepartureRuns(projectID, func(run DepartureRun) (DepartureRecovery, bool) {
+		return classifyDepartureRecovery(run), false
+	}, activeRunIDs...)
+}
+
+// ReconcileDepartureRunsForProject resolves an interrupted ref intent against
+// the registered project's repository. A store-only startup cannot safely do
+// this: identical ref names in different projects are unrelated truths.
+func (s *RuntimeStore) ReconcileDepartureRunsForProject(project RegisteredProject, activeRunIDs ...string) ([]DepartureRecovery, error) {
+	return s.reconcileDepartureRuns(project.ProjectID, func(run DepartureRun) (DepartureRecovery, bool) {
+		return classifyDepartureRecoveryForProject(project, run)
+	}, activeRunIDs...)
+}
+
+func (s *RuntimeStore) reconcileDepartureRuns(projectID string, classify func(DepartureRun) (DepartureRecovery, bool), activeRunIDs ...string) ([]DepartureRecovery, error) {
 	runs, err := s.ListDepartureRuns(projectID)
 	if err != nil {
 		return nil, err
 	}
+	active := makeSet(activeRunIDs...)
 	result := make([]DepartureRecovery, 0, len(runs))
 	for _, run := range runs {
-		recovery := classifyDepartureRecovery(run)
-		if recovery.Disposition == DepartureRecoveryBlocked && run.State != DepartureStateBlocked {
-			next := run
-			next.State = DepartureStateBlocked
-			next.BlockReason = recovery.Reason
+		recovery, persistRecovery := classify(run)
+		_, isActive := active[run.ID]
+		if isActive && persistRecovery {
+			// The in-process owner may be between the ref CAS and its durable
+			// completion write. Do not publish a synthetic recovered state or
+			// race that owner's exact state revision.
+			recovery.Run = run
+			recovery.ResumeState = run.State
+			persistRecovery = false
+		}
+		if !isActive && (persistRecovery || (recovery.Disposition == DepartureRecoveryBlocked && run.State != DepartureStateBlocked)) {
+			next := recovery.Run
+			if !persistRecovery {
+				next = run
+				next.State = DepartureStateBlocked
+				next.BlockReason = recovery.Reason
+			}
 			updated, updateErr := s.TransitionDepartureRun(next, run.StateRevision)
 			if updateErr != nil {
 				return nil, updateErr
@@ -305,7 +346,7 @@ func (s *RuntimeStore) ReconcileDepartureRuns(projectID string) ([]DepartureReco
 					return nil, readErr
 				}
 				if latest != nil {
-					recovery = classifyDepartureRecovery(*latest)
+					recovery, _ = classify(*latest)
 					recovery.Run = *latest
 				}
 			} else {
@@ -317,6 +358,50 @@ func (s *RuntimeStore) ReconcileDepartureRuns(projectID string) ([]DepartureReco
 		result = append(result, recovery)
 	}
 	return result, nil
+}
+
+func classifyDepartureRecoveryForProject(project RegisteredProject, run DepartureRun) (DepartureRecovery, bool) {
+	if departureTerminal(run.State) ||
+		run.Promotion.AttemptedAt == "" ||
+		(run.Promotion.CommittedRef != "" && run.Promotion.CommittedSHA != "") {
+		return classifyDepartureRecovery(run), false
+	}
+	recovery := DepartureRecovery{Run: run}
+	if run.ProjectID != project.ProjectID || strings.TrimSpace(project.RepoRoot) == "" {
+		recovery.Disposition = DepartureRecoveryBlocked
+		recovery.Reason = "promotion recovery blocked: registered project repository is unavailable"
+		return recovery, false
+	}
+	state, _, err := inspectScheduledPromotionIntent(project.RepoRoot, run.Promotion)
+	if err == nil {
+		err = validateScheduledPromotionIntendedCommit(project.RepoRoot, run)
+	}
+	if err != nil {
+		recovery.Disposition = DepartureRecoveryBlocked
+		recovery.Reason = "promotion recovery blocked: " + err.Error()
+		return recovery, false
+	}
+	switch state {
+	case scheduledPromotionIntentPreRef:
+		recovery.Disposition = DepartureRecoveryResumable
+		recovery.ResumeState = DepartureStateGating
+		return recovery, false
+	case scheduledPromotionIntentCommitted:
+		next := run
+		next.Promotion.CommittedRef = run.Promotion.ExpectedRef
+		next.Promotion.CommittedSHA = run.Promotion.IntendedSHA
+		next.Promotion.CommittedAt = departureNow()
+		next.State = DepartureStatePromoted
+		next.BlockReason = ""
+		recovery.Run = next
+		recovery.Disposition = DepartureRecoveryResumable
+		recovery.ResumeState = DepartureStatePromoted
+		return recovery, true
+	default:
+		recovery.Disposition = DepartureRecoveryBlocked
+		recovery.Reason = "promotion recovery blocked: default ref matches neither expected nor intended SHA"
+		return recovery, false
+	}
 }
 
 func classifyDepartureRecovery(run DepartureRun) DepartureRecovery {
@@ -390,7 +475,9 @@ func scanDepartureRun(scanner departureScanner) (DepartureRun, error) {
 	var run DepartureRun
 	var candidate, gate, promotion, release string
 	err := scanner.Scan(&run.ID, &run.ProjectID, &run.PolicyID, &run.ScheduledWindow, &run.State, &run.StateRevision,
-		&candidate, &gate, &promotion, &release, &run.SkipReason, &run.BlockReason, &run.ModelInvocationCount, &run.CreatedAt, &run.UpdatedAt)
+		&candidate, &gate, &promotion, &release, &run.SkipReason, &run.BlockReason,
+		&run.ExecutionLastError, &run.ExecutionLastErrorAt, &run.ExecutionErrorCount,
+		&run.ModelInvocationCount, &run.CreatedAt, &run.UpdatedAt)
 	if err != nil {
 		return DepartureRun{}, err
 	}

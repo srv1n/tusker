@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -331,6 +332,13 @@ func harvestGateDefects(command, output string, runErr error, policy GateTierPol
 }
 
 func defaultGateTierRuntime(store *RuntimeStore, projectID, workspace string) gateTierRuntime {
+	return defaultGateTierRuntimeWithContext(context.Background(), store, projectID, workspace)
+}
+
+func defaultGateTierRuntimeWithContext(ctx context.Context, store *RuntimeStore, projectID, workspace string) gateTierRuntime {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	rt := gateTierRuntime{
 		ProjectID:  projectID,
 		Workspace:  workspace,
@@ -342,8 +350,10 @@ func defaultGateTierRuntime(store *RuntimeStore, projectID, workspace string) ga
 			return gitFactOutput(ws, "status", "--porcelain", "--untracked-files=normal")
 		},
 		DiffPaths: changedGatePaths,
-		Exec:      runGateCommand,
-		Now:       time.Now,
+		Exec: func(workspace, command string) (string, error) {
+			return runGateCommandContext(ctx, workspace, command)
+		},
+		Now: time.Now,
 	}
 	if store != nil {
 		rt.Ledger = store
@@ -365,8 +375,28 @@ func defaultGateTierRuntime(store *RuntimeStore, projectID, workspace string) ga
 // runGateCommand is the single command-execution boundary shared by the
 // Tusker-invoked gate and the unattended batch gate.
 func runGateCommand(workspace, command string) (string, error) {
-	cmd := exec.CommandContext(context.Background(), "/bin/sh", "-lc", command)
+	return runGateCommandContext(context.Background(), workspace, command)
+}
+
+func runGateCommandContext(ctx context.Context, workspace, command string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", command)
 	cmd.Dir = workspace
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err == nil {
+			return nil
+		} else if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return cmd.Process.Kill()
+	}
+	cmd.WaitDelay = 2 * time.Second
 	var output bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &output, &output
 	err := cmd.Run()

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -12,9 +15,21 @@ import (
 
 var (
 	scheduledPromotionResourceLeaseTTL        = defaultResourceLeaseTTL
+	scheduledPromotionAfterRefIntent          = func() error { return nil }
 	scheduledPromotionAfterRefUpdate          = func() error { return nil }
+	scheduledPromotionBeforeDefaultPrepare    = func() error { return nil }
+	scheduledPromotionAfterDefaultPrepare     = func() error { return nil }
+	scheduledPromotionAfterFinalAuthority     = func() error { return nil }
 	scheduledPromotionAfterFailureIntent      = func() error { return nil }
+	scheduledPromotionBeforeCommittedReplay   = func(context.Context) error { return nil }
 	scheduledPromotionBeforeFailureCompletion = func() error { return nil }
+	scheduledPromotionBeforeFullGateCommand   = func(string) {}
+)
+
+const (
+	scheduledPromotionIntentPreRef    = "pre_ref"
+	scheduledPromotionIntentCommitted = "committed"
+	scheduledPromotionIntentDrifted   = "drifted"
 )
 
 // scheduledPromotionCandidateSnapshot is the immutable input contract for a
@@ -27,9 +42,9 @@ type scheduledPromotionCandidateSnapshot struct {
 	DefaultBranch string
 }
 
-// scheduledPromotionAllowsDefaultAdvance is intentionally permissive for the
-// legacy/manual landing path.  The new policy only takes authority away when a
-// repository explicitly selected a non-promoting scheduled-promotion mode.
+// scheduledPromotionAllowsDefaultAdvance preserves the legacy/manual path only
+// for repositories that did not opt in. Once configured, the durable departure
+// executor is the sole authority allowed to move the default branch.
 func scheduledPromotionAllowsDefaultAdvance(vaultPath string) (bool, error) {
 	// Older V7 repositories predate WORKFLOW.md.  Absence is the same legacy
 	// opt-out as an absent scheduled_promotion stanza: preserve their current
@@ -46,14 +61,18 @@ func scheduledPromotionAllowsDefaultAdvance(vaultPath string) (bool, error) {
 	if !policy.Configured {
 		return true, nil
 	}
-	return policy.Promote, nil
+	return false, nil
 }
 
 // stageScheduledTasks intentionally delegates to tusker land.  That keeps
 // serialized staging, the isolated staging worktree, bisection, gate cache,
 // and landing audit in one engine instead of growing a second "departure"
 // merge path.  In stage mode the policy choke point above leaves main alone.
-func stageScheduledTasks(vaultPath string, taskIDs []string, actor string) error {
+func stageScheduledTasks(vaultPath string, taskIDs []string, sourceSHAs map[string]string, actor string) error {
+	return stageScheduledTasksWithAuthority(vaultPath, taskIDs, sourceSHAs, actor, nil)
+}
+
+func stageScheduledTasksWithAuthority(vaultPath string, taskIDs []string, sourceSHAs map[string]string, actor string, authority *v7LandingAuthority) error {
 	wf, err := loadWorkflow(vaultPath)
 	if err != nil {
 		return err
@@ -65,7 +84,10 @@ func stageScheduledTasks(vaultPath string, taskIDs []string, actor string) error
 	for i, id := range taskIDs {
 		args[fmt.Sprintf("_pos%d", i)] = id
 	}
-	return landV7Cmd(args)
+	if authority == nil {
+		return tuskerError(errorInvalidTransition, "scheduled staging refusal: daemon authority capability is required")
+	}
+	return landV7CmdWithDepartureAuthority(args, sourceSHAs, authority)
 }
 
 func scheduledPromotionGatePolicy(vaultPath string, wf Workflow) (GateTierPolicy, error) {
@@ -93,6 +115,10 @@ func scheduledPromotionGatePolicy(vaultPath string, wf Workflow) (GateTierPolicy
 }
 
 func scheduledPromotionSnapshot(vaultPath, projectID, waveID string, wf Workflow) (scheduledPromotionCandidateSnapshot, error) {
+	return scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, nil)
+}
+
+func scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID string, wf Workflow, trustedStore *RuntimeStore) (scheduledPromotionCandidateSnapshot, error) {
 	if strings.TrimSpace(projectID) == "" {
 		return scheduledPromotionCandidateSnapshot{}, tuskerError(errorInvalidArg, "scheduled promotion requires a project identity")
 	}
@@ -120,6 +146,7 @@ func scheduledPromotionSnapshot(vaultPath, projectID, waveID string, wf Workflow
 		return scheduledPromotionCandidateSnapshot{}, err
 	}
 	candidate := DepartureCandidate{
+		WaveIDs:                  []string{waveID},
 		TaskStateRevisions:       map[string]string{},
 		TaskSourceSHAs:           map[string]string{},
 		IntegrationBaseSHA:       candidateSHA,
@@ -127,36 +154,49 @@ func scheduledPromotionSnapshot(vaultPath, projectID, waveID string, wf Workflow
 		CandidateTreeHash:        treeHash,
 		ExpectedDefaultBranchSHA: defaultSHA,
 	}
-	memberFacts := make([]string, 0, len(normalizeList(wave.Data["members"])))
-	for _, id := range normalizeList(wave.Data["members"]) {
+	members := normalizeList(wave.Data["members"])
+	implicitSingleton := v7ImplicitDeliveryUnit(wave)
+	deliveryTask := ""
+	if implicitSingleton {
+		deliveryTask = strings.ToUpper(strings.TrimSpace(stringField(wave.Data, "delivery_task")))
+		if len(members) != 1 || deliveryTask == "" || members[0] != deliveryTask {
+			return scheduledPromotionCandidateSnapshot{}, tuskerError(errorInvalidTransition, "promotion candidate refusal: implicit_singleton_membership:"+waveID)
+		}
+		if boolFromAny(wave.Data["release_authorized"]) {
+			return scheduledPromotionCandidateSnapshot{}, tuskerError(errorInvalidTransition, "promotion candidate refusal: implicit_singleton_release_authority:"+waveID)
+		}
+	}
+	memberFacts := make([]string, 0, len(members))
+	for _, id := range members {
 		task, ok := idx.Tasks[id]
 		if !ok {
 			return scheduledPromotionCandidateSnapshot{}, tuskerError(errorInvalidTransition, "promotion candidate drift: task_missing:"+id)
 		}
+		assignment := strings.TrimSpace(stringField(task.Data, "wave"))
+		if (!implicitSingleton && assignment != waveID) ||
+			(implicitSingleton && assignment != "" && assignment != waveID) {
+			return scheduledPromotionCandidateSnapshot{}, tuskerError(errorInvalidTransition, "promotion candidate refusal: wave_member_assignment_mismatch:"+id)
+		}
+		if err := scheduledPromotionTaskAcceptedReview(vaultPath, task); err != nil {
+			return scheduledPromotionCandidateSnapshot{}, err
+		}
 		stateRev := stringField(task.Data, "state_rev")
-		sourceSHA, err := scheduledPromotionTaskSourceSHA(repoRoot, candidateSHA, integrationBranch, wave, task)
+		sourceSHA, err := scheduledPromotionTaskSourceSHAWithStore(repoRoot, candidateSHA, integrationBranch, wave, task, trustedStore)
 		if err != nil {
 			return scheduledPromotionCandidateSnapshot{}, err
 		}
 		candidate.TaskStateRevisions[id] = stateRev
 		candidate.TaskSourceSHAs[id] = sourceSHA
+		candidate.CargoTaskIDs = append(candidate.CargoTaskIDs, id)
 		memberFacts = append(memberFacts, id+"@"+stateRev+"@"+sourceSHA)
 	}
+	candidate.CargoTaskIDs = uniqueDepartureStrings(candidate.CargoTaskIDs)
 	sort.Strings(memberFacts)
-	if v7ImplicitDeliveryUnit(wave) {
-		members := normalizeList(wave.Data["members"])
-		deliveryTask := strings.ToUpper(strings.TrimSpace(stringField(wave.Data, "delivery_task")))
-		if len(members) != 1 || deliveryTask == "" || members[0] != deliveryTask {
-			return scheduledPromotionCandidateSnapshot{}, tuskerError(errorInvalidTransition, "promotion candidate refusal: implicit_singleton_membership:"+waveID)
-		}
+	if implicitSingleton {
 		task := idx.Tasks[deliveryTask]
 		if strings.ToLower(stringField(task.Data, "status")) != "done" ||
-			stringField(task.Data, "wave") != waveID ||
 			candidate.TaskSourceSHAs[deliveryTask] == "" {
 			return scheduledPromotionCandidateSnapshot{}, tuskerError(errorInvalidTransition, "promotion candidate refusal: implicit_singleton_not_finished:"+deliveryTask)
-		}
-		if boolFromAny(wave.Data["release_authorized"]) {
-			return scheduledPromotionCandidateSnapshot{}, tuskerError(errorInvalidTransition, "promotion candidate refusal: implicit_singleton_release_authority:"+waveID)
 		}
 		// An implicit delivery unit is intentionally disarmed because it is not
 		// dispatch authority. Its landing authority is the exact finished task
@@ -190,38 +230,556 @@ func scheduledPromotionSnapshot(vaultPath, projectID, waveID string, wf Workflow
 	if gate.Command == "" {
 		return scheduledPromotionCandidateSnapshot{}, tuskerError(errorInvalidTransition, "promotion candidate refusal: full_gate_missing")
 	}
-	gate.Toolchain = scheduledPromotionToolchainFingerprint(repoRoot, gatePolicy.HarvestCommands)
+	providerStateRoot := DefaultStateRoot()
+	if trustedStore != nil && strings.TrimSpace(trustedStore.stateRoot) != "" {
+		providerStateRoot = trustedStore.stateRoot
+	}
+	gate.Toolchain = scheduledPromotionFullGateToolchainFingerprint(repoRoot, gatePolicy.HarvestCommands, gatePolicy.IsolationProvider, providerStateRoot)
 	return scheduledPromotionCandidateSnapshot{WaveID: waveID, Candidate: candidate, Gate: gate, DefaultBranch: defaultBranch}, nil
 }
 
 func scheduledPromotionTaskSourceSHA(repoRoot, candidateSHA, integrationBranch string, wave, task Note) (string, error) {
-	taskID := stringField(task.Data, "id")
-	sourceSHA := firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit"), stringField(task.Data, "source_branch_sha"))
-	sourceRef := ""
-	if sourceSHA == "" {
-		landings := normalizeLandingAudit(wave.Data["landings"])
-		for i := len(landings) - 1; i >= 0; i-- {
-			row := landings[i]
-			if stringField(row, "task") == taskID &&
-				stringField(row, "target") == integrationBranch &&
-				stringField(row, "gate_result") == "pass" {
-				sourceRef = stringField(row, "branch")
-				break
-			}
-		}
-		if sourceRef == "" {
-			return "", tuskerError(errorInvalidTransition, "promotion candidate refusal: task_source_provenance_missing:"+taskID)
-		}
-		var err error
-		sourceSHA, err = gitOutputTrim(repoRoot, "rev-parse", sourceRef+"^{commit}")
-		if err != nil {
-			return "", tuskerError(errorInvalidTransition, "promotion candidate refusal: task_source_unavailable:"+taskID)
-		}
+	return scheduledPromotionTaskSourceSHAWithStore(repoRoot, candidateSHA, integrationBranch, wave, task, nil)
+}
+
+func scheduledPromotionTaskSourceSHAWithStore(repoRoot, candidateSHA, integrationBranch string, wave, task Note, trustedStore *RuntimeStore) (string, error) {
+	sourceSHA, err := scheduledPromotionExactTaskSourceSHAWithStore(repoRoot, integrationBranch, wave, task, gitRevParse, trustedStore)
+	if err != nil {
+		return "", err
 	}
-	if execErr := exec.Command("git", "-C", repoRoot, "merge-base", "--is-ancestor", sourceSHA, candidateSHA).Run(); execErr != nil {
+	taskID := stringField(task.Data, "id")
+	if !gitMergeBaseAncestor(repoRoot, sourceSHA, candidateSHA) {
 		return "", tuskerError(errorInvalidTransition, "promotion candidate refusal: task_source_not_integrated:"+taskID)
 	}
 	return sourceSHA, nil
+}
+
+func validateDepartureDurableCargo(vaultPath string, candidate DepartureCandidate) error {
+	return validateDepartureDurableCargoWithStore(vaultPath, candidate, nil)
+}
+
+func validateDepartureDurableCargoWithStore(vaultPath string, candidate DepartureCandidate, trustedStore *RuntimeStore) error {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return err
+	}
+	return validateDepartureDurableCargoIndexWithStore(vaultPath, idx, candidate, trustedStore)
+}
+
+func validateDepartureDurableCargoIndex(vaultPath string, idx v7Index, candidate DepartureCandidate) error {
+	return validateDepartureDurableCargoIndexWithStore(vaultPath, idx, candidate, nil)
+}
+
+func validateDepartureDurableCargoIndexWithStore(vaultPath string, idx v7Index, candidate DepartureCandidate, trustedStore *RuntimeStore) error {
+	cargo := uniqueDepartureStrings(normalizeList(candidate.CargoTaskIDs))
+	if len(cargo) == 0 {
+		return tuskerError(errorInvalidTransition, "departure recompute required: cargo_missing")
+	}
+	expectedWaves := uniqueDepartureStrings(normalizeList(candidate.WaveIDs))
+	implicitWaveByTask := map[string]string{}
+	for _, waveID := range expectedWaves {
+		wave, ok := idx.Waves[waveID]
+		if !ok || !v7ImplicitDeliveryUnit(wave) {
+			continue
+		}
+		members := uniqueDepartureStrings(normalizeList(wave.Data["members"]))
+		deliveryTask := strings.ToUpper(strings.TrimSpace(stringField(wave.Data, "delivery_task")))
+		if len(members) == 1 && deliveryTask != "" && members[0] == deliveryTask {
+			implicitWaveByTask[deliveryTask] = waveID
+		}
+	}
+	cargoByWave := map[string][]string{}
+	for _, taskID := range cargo {
+		task, ok := idx.Tasks[taskID]
+		if !ok {
+			return tuskerError(errorInvalidTransition, "departure recompute required: task_missing:"+taskID)
+		}
+		waveID := strings.TrimSpace(stringField(task.Data, "wave"))
+		if waveID == "" {
+			waveID = implicitWaveByTask[taskID]
+		}
+		cargoByWave[waveID] = append(cargoByWave[waveID], taskID)
+	}
+	actualWaves := make([]string, 0, len(cargoByWave))
+	for waveID := range cargoByWave {
+		if waveID != "" {
+			actualWaves = append(actualWaves, waveID)
+		}
+	}
+	sort.Strings(expectedWaves)
+	sort.Strings(actualWaves)
+	if !sameDepartureStrings(expectedWaves, actualWaves) {
+		return tuskerError(errorInvalidTransition, "departure recompute required: wave_membership_drift")
+	}
+
+	repoRoot := v7RepoRoot(vaultPath)
+	validationWaves := append([]string(nil), actualWaves...)
+	if _, ok := cargoByWave[""]; ok {
+		validationWaves = append([]string{""}, validationWaves...)
+	}
+	for _, waveID := range validationWaves {
+		taskIDs := cargoByWave[waveID]
+		wave := Note{}
+		integrationBranch := ""
+		if waveID != "" {
+			var ok bool
+			wave, ok = idx.Waves[waveID]
+			if !ok {
+				return tuskerError(errorInvalidTransition, "departure recompute required: wave_missing:"+waveID)
+			}
+			members := uniqueDepartureStrings(normalizeList(wave.Data["members"]))
+			sort.Strings(members)
+			sort.Strings(taskIDs)
+			if len(members) == 0 || !sameDepartureStrings(members, taskIDs) {
+				return tuskerError(errorInvalidTransition, "departure recompute required: wave_membership_drift:"+waveID)
+			}
+			integrationBranch = v7WaveIntegrationBranch(wave)
+		}
+		for _, taskID := range taskIDs {
+			task := idx.Tasks[taskID]
+			if err := scheduledPromotionTaskAcceptedReview(vaultPath, task); err != nil {
+				return err
+			}
+			if expected := candidate.TaskStateRevisions[taskID]; expected == "" || expected != stringField(task.Data, "state_rev") {
+				return tuskerError(errorInvalidTransition, "departure recompute required: task_state_drift:"+taskID)
+			}
+			expectedSource := strings.TrimSpace(candidate.TaskSourceSHAs[taskID])
+			resolvedExpected, ok := gitRevParse(repoRoot, expectedSource+"^{commit}")
+			if !ok {
+				return tuskerError(errorInvalidTransition, "departure recompute required: task_source_unavailable:"+taskID+": durable task source must name an available full immutable commit SHA")
+			}
+			if expectedSource == "" || !strings.EqualFold(expectedSource, resolvedExpected) {
+				return tuskerError(errorInvalidTransition, "departure recompute required: task_source_not_immutable:"+taskID+": durable task source must be a full immutable commit SHA")
+			}
+			sourceSHA, err := scheduledPromotionExactTaskSourceSHAWithStore(repoRoot, integrationBranch, wave, task, gitRevParse, trustedStore)
+			if err != nil {
+				return err
+			}
+			if !strings.EqualFold(expectedSource, sourceSHA) {
+				return tuskerError(errorInvalidTransition, "departure recompute required: task_source_drift:"+taskID)
+			}
+		}
+	}
+	return nil
+}
+
+func validateScheduledPromotionDurableCargo(vaultPath, waveID string, candidate DepartureCandidate) error {
+	return validateScheduledPromotionDurableCargoWithStore(vaultPath, waveID, candidate, nil)
+}
+
+func validateScheduledPromotionDurableCargoWithStore(vaultPath, waveID string, candidate DepartureCandidate, trustedStore *RuntimeStore) error {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return err
+	}
+	return validateScheduledPromotionDurableCargoIndexWithStore(vaultPath, idx, waveID, candidate, trustedStore)
+}
+
+func validateScheduledPromotionDurableCargoIndex(vaultPath string, idx v7Index, waveID string, candidate DepartureCandidate) error {
+	return validateScheduledPromotionDurableCargoIndexWithStore(vaultPath, idx, waveID, candidate, nil)
+}
+
+func validateScheduledPromotionDurableCargoIndexWithStore(vaultPath string, idx v7Index, waveID string, candidate DepartureCandidate, trustedStore *RuntimeStore) error {
+	if !sameDepartureStrings(uniqueDepartureStrings(normalizeList(candidate.WaveIDs)), []string{waveID}) {
+		return tuskerError(errorInvalidTransition, "promotion recompute required: wave_membership_drift")
+	}
+	if err := validateDepartureDurableCargoIndexWithStore(vaultPath, idx, candidate, trustedStore); err != nil {
+		return err
+	}
+	repoRoot := v7RepoRoot(vaultPath)
+	for _, taskID := range candidate.CargoTaskIDs {
+		sourceSHA := strings.TrimSpace(candidate.TaskSourceSHAs[taskID])
+		if sourceSHA == "" || !gitMergeBaseAncestor(repoRoot, sourceSHA, candidate.CandidateSHA) {
+			return tuskerError(errorInvalidTransition, "promotion candidate refusal: task_source_not_integrated:"+taskID)
+		}
+	}
+	return nil
+}
+
+func validateScheduledPromotionWaveAuthority(vaultPath, waveID string) error {
+	return validateScheduledPromotionWaveAuthorityWithStore(vaultPath, waveID, nil)
+}
+
+func validateScheduledPromotionWaveAuthorityWithStore(vaultPath, waveID string, trustedStore *RuntimeStore) error {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return err
+	}
+	return validateScheduledPromotionWaveAuthorityIndexWithStore(vaultPath, idx, waveID, trustedStore)
+}
+
+func validateScheduledPromotionWaveAuthorityIndex(vaultPath string, idx v7Index, waveID string) error {
+	return validateScheduledPromotionWaveAuthorityIndexWithStore(vaultPath, idx, waveID, nil)
+}
+
+func validateScheduledPromotionWaveAuthorityIndexWithStore(vaultPath string, idx v7Index, waveID string, trustedStore *RuntimeStore) error {
+	wave, ok := idx.Waves[waveID]
+	if !ok {
+		return tuskerError(errorNotFound, "V7 wave not found: "+waveID)
+	}
+	members := uniqueDepartureStrings(normalizeList(wave.Data["members"]))
+	if len(members) == 0 {
+		return tuskerError(errorInvalidTransition, "promotion candidate refusal: wave_members_missing:"+waveID)
+	}
+	implicitSingleton := v7ImplicitDeliveryUnit(wave)
+	if implicitSingleton {
+		deliveryTask := strings.ToUpper(strings.TrimSpace(stringField(wave.Data, "delivery_task")))
+		if len(members) != 1 || deliveryTask == "" || members[0] != deliveryTask {
+			return tuskerError(errorInvalidTransition, "promotion candidate refusal: implicit_singleton_membership:"+waveID)
+		}
+		if boolFromAny(wave.Data["release_authorized"]) {
+			return tuskerError(errorInvalidTransition, "promotion candidate refusal: implicit_singleton_release_authority:"+waveID)
+		}
+	} else {
+		auth := waveAuthorizationProjection(vaultPath, idx, wave)
+		if stringField(auth, "state") != "armed" || boolFromAny(auth["stale"]) {
+			return tuskerError(errorInvalidTransition, "promotion candidate refusal: wave_authorization_not_armed:"+waveID)
+		}
+	}
+	repoRoot := v7RepoRoot(vaultPath)
+	integrationBranch := v7WaveIntegrationBranch(wave)
+	for _, taskID := range members {
+		task, ok := idx.Tasks[taskID]
+		if !ok {
+			return tuskerError(errorInvalidTransition, "promotion candidate refusal: task_missing:"+taskID)
+		}
+		assignment := strings.TrimSpace(stringField(task.Data, "wave"))
+		if (!implicitSingleton && assignment != waveID) ||
+			(implicitSingleton && assignment != "" && assignment != waveID) {
+			return tuskerError(errorInvalidTransition, "promotion candidate refusal: wave_member_assignment_mismatch:"+taskID)
+		}
+		if err := scheduledPromotionTaskAcceptedReview(vaultPath, task); err != nil {
+			return err
+		}
+		if _, err := scheduledPromotionExactTaskSourceSHAWithStore(repoRoot, integrationBranch, wave, task, gitRevParse, trustedStore); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateScheduledPromotionPreparedAuthority(vaultPath, waveID string, candidate DepartureCandidate, preparation *v7WaveMemberPreparation) error {
+	return validateScheduledPromotionPreparedAuthorityWithStore(vaultPath, waveID, candidate, preparation, nil)
+}
+
+func validateScheduledPromotionPreparedAuthorityWithStore(vaultPath, waveID string, candidate DepartureCandidate, preparation *v7WaveMemberPreparation, trustedStore *RuntimeStore) error {
+	idx, changed, err := scheduledPromotionPreparedAuthorityIndex(vaultPath, preparation)
+	if err != nil {
+		return err
+	}
+	if err := validateScheduledPromotionWaveAuthorityIndexWithStore(vaultPath, idx, waveID, trustedStore); err != nil {
+		return err
+	}
+	if err := validateScheduledPromotionDurableCargoIndexWithStore(vaultPath, idx, waveID, candidate, trustedStore); err != nil {
+		return err
+	}
+	if changed {
+		return tuskerError(errorInvalidTransition, "promotion recompute required: wave_control_changed_after_default_prepare")
+	}
+	return nil
+}
+
+// Default-advance preparation temporarily replaces canonical task/wave files
+// with their checked-in representations. For final authority checks, an
+// unchanged prepared file still means its captured live preimage; a file
+// changed after preparation is a concurrent operator write and must win.
+func scheduledPromotionPreparedAuthorityIndex(vaultPath string, preparation *v7WaveMemberPreparation) (v7Index, bool, error) {
+	if preparation == nil || preparation.finished {
+		return v7Index{}, false, tuskerError(errorInvalidTransition, "promotion refusal: default preparation authority is unavailable")
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return v7Index{}, false, err
+	}
+	repoRoot := v7RepoRoot(vaultPath)
+	vaultRelative, err := filepath.Rel(repoRoot, vaultPath)
+	if err != nil || filepath.IsAbs(vaultRelative) || strings.HasPrefix(filepath.Clean(vaultRelative), "..") {
+		return v7Index{}, false, tuskerError(errorInvalidTransition, "promotion refusal: canonical vault path is unavailable after default preparation")
+	}
+	changed := false
+	for _, path := range preparation.paths {
+		indexState, tracked, stateErr := v7PreparedIndexState(path.WorkDir, path.Relative)
+		if stateErr != nil {
+			return v7Index{}, false, stateErr
+		}
+		if !tracked {
+			indexState = v7PreparedWaveMemberState{}
+		}
+		if !sameV7PreparedWaveMemberIndexState(indexState, path.PreparedIndex) {
+			return v7Index{}, false, tuskerError(errorInvalidTransition, "promotion recompute required: wave_control_index_changed_after_default_prepare")
+		}
+		current, stateErr := v7PreparedWorktreeState(path.Absolute)
+		if stateErr != nil {
+			return v7Index{}, false, stateErr
+		}
+		authority := path.Before
+		if !sameV7PreparedWaveMemberExactState(current, path.PreparedWorktree) {
+			authority = current
+			changed = true
+		}
+		// Git reports physical worktree paths on macOS (for example,
+		// /private/var/...) while callers may retain their equivalent logical
+		// path (/var/...). Compare resolved worktree roots, then derive the
+		// control path from Git's repo-relative identity.
+		if !workspacePathsCompatible(path.WorkDir, repoRoot) {
+			continue
+		}
+		relative, relErr := filepath.Rel(filepath.FromSlash(vaultRelative), filepath.FromSlash(path.Relative))
+		if relErr != nil || filepath.IsAbs(relative) || strings.HasPrefix(filepath.Clean(relative), "..") {
+			return v7Index{}, false, tuskerError(errorInvalidTransition, "promotion recompute required: unexpected_wave_control_path_after_default_prepare:"+path.Relative)
+		}
+		if !authority.Exists {
+			return v7Index{}, false, tuskerError(errorInvalidTransition, "promotion recompute required: wave_control_missing_after_default_prepare")
+		}
+		data, body, parseErr := parseFrontmatter(string(authority.Bytes))
+		if parseErr != nil {
+			return v7Index{}, false, parseErr
+		}
+		id := strings.TrimSuffix(filepath.Base(relative), filepath.Ext(relative))
+		kind := strings.TrimSuffix(filepath.Base(filepath.Dir(relative)), "s")
+		if effectiveV7Kind(data) != kind || stringField(data, "id") != id {
+			return v7Index{}, false, tuskerError(errorInvalidTransition, "promotion recompute required: wave_control_identity_changed_after_default_prepare:"+id)
+		}
+		note := Note{
+			AbsolutePath: filepath.Join(vaultPath, relative),
+			RelativePath: filepath.ToSlash(relative),
+			Data:         data,
+			Body:         body,
+		}
+		switch kind {
+		case "task":
+			idx.Tasks[id] = note
+		case "wave":
+			idx.Waves[id] = note
+		default:
+			return v7Index{}, false, tuskerError(errorInvalidTransition, "promotion recompute required: unexpected_wave_control_kind:"+kind)
+		}
+	}
+	return idx, changed, nil
+}
+
+// scheduledPromotionAdvanceRefUnderMaterialEpoch is the linearization point
+// between mutable control authority and the irreversible default-ref CAS.
+// Managed task, proof, and authorization writers acquire the same epoch first,
+// so they are observed by the pre-prepare validation or happen after the ref.
+func scheduledPromotionAdvanceRefUnderMaterialEpoch(
+	ctx context.Context,
+	vaultPath, projectID, waveID string,
+	store *RuntimeStore,
+	lease ResourceLease,
+	candidate DepartureCandidate,
+	wave Note,
+	defaultBranch, expectedSHA, intendedSHA string,
+	recovery bool, recoveryRun *DepartureRun,
+) (checkouts []v7Worktree, err error) {
+	materialLock, err := acquireV7MaterialEpochLock(vaultPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err = errors.Join(err, materialLock.Close())
+	}()
+
+	if err := validateScheduledPromotionWaveAuthorityWithStore(vaultPath, waveID, store); err != nil {
+		return nil, err
+	}
+	if err := validateScheduledPromotionDurableCargoWithStore(vaultPath, waveID, candidate, store); err != nil {
+		return nil, err
+	}
+	// A pre-ref recovery may reuse durable proof only after re-establishing it
+	// against the live workflow/provider contract while the material epoch is
+	// held. This must happen before preparation temporarily projects control
+	// files away from their pre-CAS done state; the same epoch remains held
+	// through preparation and the irreversible ref update.
+	if recovery {
+		if recoveryRun == nil {
+			return nil, tuskerError(errorInvalidTransition, "promotion recovery blocked: full_gate_recovery_record_missing")
+		}
+		if err := validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID, store, *recoveryRun); err != nil {
+			return nil, tuskerError(errorInvalidTransition, "promotion recovery blocked: "+err.Error())
+		}
+	}
+	repoRoot := v7RepoRoot(vaultPath)
+	preparation, err := prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch, wave)
+	if err != nil {
+		return nil, err
+	}
+	restore := func(cause error) error {
+		return errors.Join(cause, preparation.finishAfterRefAttempt(repoRoot, defaultBranch, expectedSHA, intendedSHA))
+	}
+	if err := scheduledPromotionAfterDefaultPrepare(); err != nil {
+		return nil, restore(err)
+	}
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return nil, restore(err)
+	} else if hold != nil {
+		return nil, restore(departureHoldError(hold))
+	}
+	if matched, err := store.ResourceLeaseMatches(lease.Name, lease.Owner, lease.Generation); err != nil || !matched {
+		return nil, restore(tuskerError(errorInvalidTransition, "promotion refusal: full_gate_lease_fenced_at_ref_update"))
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, restore(err)
+	}
+	if err := validateScheduledPromotionPreparedAuthorityWithStore(vaultPath, waveID, candidate, preparation, store); err != nil {
+		return nil, restore(err)
+	}
+	if err := scheduledPromotionAfterFinalAuthority(); err != nil {
+		return nil, restore(err)
+	}
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return nil, restore(err)
+	} else if hold != nil {
+		return nil, restore(departureHoldError(hold))
+	}
+	if matched, err := store.ResourceLeaseMatches(lease.Name, lease.Owner, lease.Generation); err != nil || !matched {
+		return nil, restore(tuskerError(errorInvalidTransition, "promotion refusal: full_gate_lease_fenced_at_ref_update"))
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, restore(err)
+	}
+	checkouts, err = advanceV7DefaultBranchRef(repoRoot, defaultBranch, intendedSHA, expectedSHA)
+	if err != nil {
+		message := "promotion refusal: default_ref_drift: " + err.Error()
+		if recovery {
+			message = "promotion recovery blocked: default_ref_drift: " + err.Error()
+		}
+		return nil, restore(tuskerError(errorInvalidTransition, message))
+	}
+	preparation.commit()
+	return checkouts, nil
+}
+
+func scheduledPromotionTaskAcceptedReview(vaultPath string, task Note) error {
+	taskID := stringField(task.Data, "id")
+	if strings.ToLower(strings.TrimSpace(stringField(task.Data, "status"))) != "done" {
+		return tuskerError(errorInvalidTransition, "promotion candidate refusal: wave_member_not_done:"+taskID)
+	}
+	proofStatus := strings.ToLower(strings.TrimSpace(stringField(task.Data, "proof_status")))
+	acceptedBy := strings.TrimSpace(stringField(task.Data, "accepted_by"))
+	if (proofStatus != "satisfied" && proofStatus != "waived") ||
+		acceptedBy == "" ||
+		strings.TrimSpace(stringField(task.Data, "accepted_at")) == "" ||
+		strings.TrimSpace(stringField(task.Data, "closed_at")) == "" {
+		return tuskerError(errorInvalidTransition, "promotion candidate refusal: task_review_provenance_missing:"+taskID)
+	}
+	policy, err := v7ClosePolicyFor(vaultPath, strings.ToLower(fallback(stringField(task.Data, "risk"), "medium")))
+	if err != nil {
+		return err
+	}
+	if !v7CloseAcceptorAllowed(acceptedBy, policy.RequiredAcceptor) {
+		return tuskerError(errorInvalidTransition, "promotion candidate refusal: task_review_acceptor_invalid:"+taskID)
+	}
+	return nil
+}
+
+func scheduledPromotionExactTaskSourceSHA(repoRoot, integrationBranch string, wave, task Note, resolve func(string, string) (string, bool)) (string, error) {
+	return scheduledPromotionExactTaskSourceSHAWithStore(repoRoot, integrationBranch, wave, task, resolve, nil)
+}
+
+func scheduledPromotionExactTaskSourceSHAWithStore(repoRoot, integrationBranch string, wave, task Note, resolve func(string, string) (string, bool), trustedStore *RuntimeStore) (string, error) {
+	taskID := stringField(task.Data, "id")
+	sourceSHA := firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit"), stringField(task.Data, "source_branch_sha"))
+	if sourceSHA == "" {
+		if exact, ok := authenticatedV7LandingAuditSourceWithStore(repoRoot, integrationBranch, wave, taskID, resolve, trustedStore); ok {
+			sourceSHA = exact
+		}
+	}
+	if sourceSHA == "" {
+		return "", tuskerError(errorInvalidTransition, "promotion candidate refusal: task_source_provenance_missing:"+taskID)
+	}
+	if resolve == nil {
+		resolve = gitRevParse
+	}
+	resolved, ok := resolve(repoRoot, sourceSHA+"^{commit}")
+	if !ok {
+		return "", tuskerError(errorInvalidTransition, "promotion candidate refusal: task_source_unavailable:"+taskID)
+	}
+	if !strings.EqualFold(strings.TrimSpace(sourceSHA), strings.TrimSpace(resolved)) {
+		return "", tuskerError(errorInvalidTransition, "promotion candidate refusal: task_source_not_immutable:"+taskID+": source provenance must be a full immutable commit SHA")
+	}
+	return resolved, nil
+}
+
+// authenticatedV7LandingAuditSource accepts Markdown only as an index into a
+// user-global Tusker receipt. The receipt names the exact bounded batch
+// segment, direct merge parents, task-owned source, gate/toolchain facts, and
+// final tree. Recovery never searches historical Git for a plausible merge.
+func authenticatedV7LandingAuditSource(repoRoot, integrationBranch string, wave Note, taskID string, resolve func(string, string) (string, bool)) (string, bool) {
+	return authenticatedV7LandingAuditSourceWithStore(repoRoot, integrationBranch, wave, taskID, resolve, nil)
+}
+
+func authenticatedV7LandingAuditSourceWithStore(repoRoot, integrationBranch string, wave Note, taskID string, resolve func(string, string) (string, bool), trustedStore *RuntimeStore) (string, bool) {
+	if strings.TrimSpace(integrationBranch) == "" {
+		return "", false
+	}
+	if resolve == nil {
+		resolve = gitRevParse
+	}
+	integrationSHA, ok := resolve(repoRoot, integrationBranch+"^{commit}")
+	if !ok || integrationSHA == "" {
+		return "", false
+	}
+	vaultPath := v7VaultPathForLandingAudit(wave)
+	if vaultPath == "" {
+		return "", false
+	}
+	landings := normalizeLandingAudit(wave.Data["landings"])
+	for index := len(landings) - 1; index >= 0; index-- {
+		row := landings[index]
+		if stringField(row, "task") != taskID ||
+			stringField(row, "branch") != v7TaskBranchName(taskID) ||
+			stringField(row, "target") != integrationBranch ||
+			stringField(row, "gate_result") != "pass" ||
+			stringField(row, "provenance") != v7LandingAuditProvenance ||
+			!trustedV7LandingControlAuthority(stringField(row, "control_authority"), stringField(row, "actor")) {
+			continue
+		}
+		if _, err := time.Parse(time.RFC3339, stringField(row, "timestamp")); err != nil {
+			continue
+		}
+		fingerprint := stringField(row, "receipt_fingerprint")
+		if fingerprint == "" || stringField(row, "gate_fingerprint") == "" {
+			continue
+		}
+		receipt, ok := loadV7LandingReceipt(vaultPath, fingerprint)
+		if !ok ||
+			receipt.Actor != stringField(row, "actor") ||
+			receipt.ControlAuthority != stringField(row, "control_authority") ||
+			receipt.GateSummary != stringField(row, "gate_summary") ||
+			receipt.GateFingerprint != stringField(row, "gate_fingerprint") ||
+			receipt.BatchBaseSHA == "" ||
+			receipt.BatchHeadSHA != stringField(row, "commit") ||
+			receipt.BatchTreeSHA != stringField(row, "tree") {
+			continue
+		}
+		proof, ok := verifiedV7LandingReceiptTaskWithStore(repoRoot, integrationBranch, receipt, taskID, trustedStore)
+		if !ok ||
+			proof.SourceSHA != stringField(row, "source_sha") ||
+			proof.SourceProvenance != stringField(row, "source_provenance") ||
+			proof.BaseSHA != stringField(row, "base_sha") ||
+			proof.MergeCommit != stringField(row, "merge_commit") ||
+			!gitMergeBaseAncestor(repoRoot, receipt.BatchHeadSHA, integrationSHA) {
+			continue
+		}
+		resolvedSource, sourceOK := resolve(repoRoot, proof.SourceSHA+"^{commit}")
+		if !sourceOK || !strings.EqualFold(proof.SourceSHA, resolvedSource) {
+			continue
+		}
+		return resolvedSource, true
+	}
+	return "", false
+}
+
+func v7VaultPathForLandingAudit(wave Note) string {
+	if strings.TrimSpace(wave.AbsolutePath) == "" {
+		return ""
+	}
+	vaultPath := filepath.Clean(filepath.Join(filepath.Dir(wave.AbsolutePath), "..", ".."))
+	if !fileExists(filepath.Join(vaultPath, "SKILL.md")) {
+		return ""
+	}
+	return vaultPath
 }
 
 func scheduledPromotionToolchainFingerprint(repoRoot string, commands []string) string {
@@ -237,9 +795,30 @@ func scheduledPromotionToolchainFingerprint(repoRoot string, commands []string) 
 	return departureFingerprint(parts...)
 }
 
+// Full-gate ledger proof is valid only under the configured provider contract
+// that produced it. This prevents an old sandbox-exec or unrestricted pass
+// from bypassing the lifecycle boundary before a full promotion.
+func scheduledPromotionFullGateToolchainFingerprint(repoRoot string, commands []string, provider, stateRoot string) string {
+	base := scheduledPromotionToolchainFingerprint(repoRoot, commands)
+	if base == "" {
+		return ""
+	}
+	_, _, identity, _, err := resolveV7TrustedFullGateProvider(provider, stateRoot)
+	if err != nil {
+		return departureFingerprint(v7FullGateIsolationContract, "unavailable", strings.TrimSpace(provider), base)
+	}
+	return departureFingerprint(v7FullGateIsolationContract, identity, base)
+}
+
 func scheduledPromotionSnapshotDrift(before, after scheduledPromotionCandidateSnapshot) string {
 	if before.WaveID != after.WaveID {
 		return "wave"
+	}
+	if !sameDepartureStrings(before.Candidate.WaveIDs, after.Candidate.WaveIDs) {
+		return "wave"
+	}
+	if !sameDepartureStrings(before.Candidate.CargoTaskIDs, after.Candidate.CargoTaskIDs) {
+		return "cargo"
 	}
 	if before.Candidate.CandidateSHA != after.Candidate.CandidateSHA || before.Candidate.CandidateTreeHash != after.Candidate.CandidateTreeHash {
 		return "candidate"
@@ -409,10 +988,324 @@ func appendScheduledPromotionAudit(vaultPath, waveID, defaultBranch, commit, gat
 	}}, actor)
 }
 
+func inspectScheduledPromotionIntent(repoRoot string, promotion DeparturePromotion) (string, string, error) {
+	if strings.TrimSpace(promotion.IntendedSHA) == "" {
+		return "", "", fmt.Errorf("legacy promotion intent lacks intended_sha")
+	}
+	if strings.TrimSpace(promotion.ExpectedRef) == "" || strings.TrimSpace(promotion.ExpectedSHA) == "" {
+		return "", "", fmt.Errorf("promotion intent lacks expected ref identity")
+	}
+	for _, frozen := range []struct {
+		label string
+		sha   string
+	}{
+		{label: "expected_sha", sha: promotion.ExpectedSHA},
+		{label: "intended_sha", sha: promotion.IntendedSHA},
+	} {
+		resolved, err := gitOutputTrim(repoRoot, "rev-parse", frozen.sha+"^{commit}")
+		if err != nil {
+			return "", "", fmt.Errorf("%s is unavailable", frozen.label)
+		}
+		if !strings.EqualFold(strings.TrimSpace(frozen.sha), resolved) {
+			return "", "", fmt.Errorf("%s must be a full immutable commit SHA", frozen.label)
+		}
+	}
+	current, err := gitOutputTrim(repoRoot, "rev-parse", promotion.ExpectedRef+"^{commit}")
+	if err != nil {
+		return "", "", fmt.Errorf("expected ref %s is unavailable", promotion.ExpectedRef)
+	}
+	switch {
+	case strings.EqualFold(current, promotion.ExpectedSHA):
+		return scheduledPromotionIntentPreRef, current, nil
+	case strings.EqualFold(current, promotion.IntendedSHA):
+		return scheduledPromotionIntentCommitted, current, nil
+	default:
+		return scheduledPromotionIntentDrifted, current, nil
+	}
+}
+
+func validateScheduledPromotionIntendedCommit(repoRoot string, run DepartureRun) error {
+	promotion := run.Promotion
+	candidateSHA := strings.TrimSpace(run.Candidate.CandidateSHA)
+	expectedSHA := strings.TrimSpace(run.Candidate.ExpectedDefaultBranchSHA)
+	if candidateSHA == "" || expectedSHA == "" || !strings.EqualFold(expectedSHA, promotion.ExpectedSHA) {
+		return fmt.Errorf("intended_sha provenance does not match the durable candidate")
+	}
+	resolvedCandidate, err := gitOutputTrim(repoRoot, "rev-parse", candidateSHA+"^{commit}")
+	if err != nil || !strings.EqualFold(candidateSHA, resolvedCandidate) {
+		return fmt.Errorf("durable candidate SHA is unavailable or mutable")
+	}
+	intendedTree, err := gitOutputTrim(repoRoot, "rev-parse", promotion.IntendedSHA+"^{tree}")
+	if err != nil {
+		return fmt.Errorf("intended_sha tree is unavailable")
+	}
+	candidateTree, err := gitOutputTrim(repoRoot, "rev-parse", candidateSHA+"^{tree}")
+	if err != nil || intendedTree != candidateTree {
+		return fmt.Errorf("intended_sha tree does not match the durable candidate")
+	}
+	parents, err := gitOutputTrim(repoRoot, "show", "-s", "--format=%P", promotion.IntendedSHA)
+	if err != nil {
+		return fmt.Errorf("intended_sha parents are unavailable")
+	}
+	actualParents := strings.Fields(parents)
+	if len(actualParents) != 2 ||
+		!strings.EqualFold(actualParents[0], promotion.ExpectedSHA) ||
+		!strings.EqualFold(actualParents[1], candidateSHA) {
+		return fmt.Errorf("intended_sha parents do not match the durable promotion")
+	}
+	return nil
+}
+
+func persistScheduledPromotionCommit(store *RuntimeStore, run *DepartureRun, ref, sha string) error {
+	if store == nil || run == nil {
+		return fmt.Errorf("persist promotion commit requires a durable departure")
+	}
+	if intended := strings.TrimSpace(run.Promotion.IntendedSHA); intended != "" && !strings.EqualFold(intended, sha) {
+		return tuskerError(errorInvalidTransition, "promotion recovery blocked: committed SHA differs from intended_sha")
+	}
+	next := *run
+	next.Promotion.CommittedRef = ref
+	next.Promotion.CommittedSHA = sha
+	next.Promotion.CommittedAt = departureNow()
+	next.State = DepartureStatePromoted
+	next.BlockReason = ""
+	changed, err := store.TransitionDepartureRun(next, run.StateRevision)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return tuskerError(errorInvalidTransition, "promotion committed but departure row changed concurrently; recover from committed ref "+sha)
+	}
+	*run = next
+	run.StateRevision++
+	return nil
+}
+
+// scheduledPromotionRecoveryLedgerTreeHash recreates only the disposable,
+// detached candidate needed to address the gate ledger. Recovery must not
+// accept a plausible historical green row on a different tree merely because
+// the durable departure record names the same commit.
+func scheduledPromotionRecoveryLedgerTreeHash(repoRoot, candidateSHA string) (string, error) {
+	tmp, err := os.MkdirTemp("", "tusker-promotion-recovery-ledger-*")
+	if err != nil {
+		return "", err
+	}
+	removeWorktree := false
+	defer func() {
+		if removeWorktree {
+			_ = exec.Command("git", "-C", repoRoot, "worktree", "remove", "--force", tmp).Run()
+			return
+		}
+		_ = os.RemoveAll(tmp)
+	}()
+	if output, err := gitCombined(repoRoot, "worktree", "add", "--detach", tmp, candidateSHA); err != nil {
+		return "", fmt.Errorf("create recovery gate worktree: %s", firstActionableLine(output, err.Error()))
+	}
+	removeWorktree = true
+	return workspaceTreeStateHash(tmp)
+}
+
+// validateScheduledPromotionRecoveryProof re-establishes every mutable gate
+// fact before a pre-ref crash intent can be replayed. The durable intent is an
+// audit record, never authority to bypass a subsequently revoked provider,
+// policy, command set, toolchain, or certified ledger row.
+func validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID string, store *RuntimeStore, run DepartureRun) error {
+	if store == nil || run.Gate.Status != "passed" {
+		return fmt.Errorf("full_gate_status_not_passed")
+	}
+	wf, err := loadWorkflow(vaultPath)
+	if err != nil {
+		return fmt.Errorf("full_gate_workflow_unavailable: %w", err)
+	}
+	if !wf.Data.ScheduledPromotion.Effective.Promote {
+		return fmt.Errorf("full_gate_policy_not_promote")
+	}
+	current, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf.Data, store)
+	if err != nil {
+		return fmt.Errorf("full_gate_snapshot_unavailable: %w", err)
+	}
+	expected := scheduledPromotionCandidateSnapshot{WaveID: waveID, Candidate: run.Candidate, Gate: run.Gate, DefaultBranch: run.Promotion.ExpectedRef}
+	if drift := scheduledPromotionSnapshotDrift(expected, current); drift != "" {
+		return fmt.Errorf("full_gate_contract_drift:%s", drift)
+	}
+	if current.Gate.Toolchain == "" || current.Gate.TreeHash == "" {
+		return fmt.Errorf("full_gate_contract_unverifiable")
+	}
+	policy, err := scheduledPromotionGatePolicy(vaultPath, wf.Data)
+	if err != nil {
+		return fmt.Errorf("full_gate_policy_unavailable: %w", err)
+	}
+	if err := validateV7PromotionGatePolicy(policy); err != nil {
+		return fmt.Errorf("full_gate_policy_invalid: %w", err)
+	}
+	provider, err := newV7FullGateProvider(policy.IsolationProvider, v7RepoRoot(vaultPath), store.stateRoot)
+	if err != nil {
+		return fmt.Errorf("full_gate_provider_unavailable: %w", err)
+	}
+	defer provider.Close()
+	verifier, ok := provider.(v7FullGateReceiptVerifier)
+	if !ok {
+		return fmt.Errorf("full_gate_provider_receipt_verifier_missing")
+	}
+	ledgerTreeHash, err := scheduledPromotionRecoveryLedgerTreeHash(v7RepoRoot(vaultPath), run.Candidate.CandidateSHA)
+	if err != nil {
+		return fmt.Errorf("full_gate_ledger_tree_unavailable: %w", err)
+	}
+	for _, command := range policy.HarvestCommands {
+		entry, lookupErr := store.FindGateLedger(projectID, ledgerTreeHash, command, current.Gate.Profile, current.Gate.Toolchain)
+		if lookupErr != nil {
+			return fmt.Errorf("full_gate_ledger_unavailable:%s: %w", command, lookupErr)
+		}
+		if entry == nil {
+			return fmt.Errorf("full_gate_receipt_missing:%s", command)
+		}
+		if !verifier.MatchesGateProviderReceipt(entry.ProviderReceipt) {
+			return fmt.Errorf("full_gate_receipt_invalid:%s", command)
+		}
+	}
+	return nil
+}
+
+func resumeScheduledPromotionIntent(ctx context.Context, vaultPath, projectID, waveID string, store *RuntimeStore, run *DepartureRun, actor string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if run.ProjectID != projectID {
+		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: departure belongs to another project")
+	}
+	repoRoot := v7RepoRoot(vaultPath)
+	state, current, err := inspectScheduledPromotionIntent(repoRoot, run.Promotion)
+	if err == nil {
+		err = validateScheduledPromotionIntendedCommit(repoRoot, *run)
+	}
+	if err != nil {
+		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: "+err.Error())
+	}
+	if state == scheduledPromotionIntentDrifted {
+		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: default_ref_drift current="+current+" expected="+run.Promotion.ExpectedSHA+" intended="+run.Promotion.IntendedSHA)
+	}
+	complete := func() (string, error) {
+		if err := persistScheduledPromotionCommit(store, run, run.Promotion.ExpectedRef, run.Promotion.IntendedSHA); err != nil {
+			return "", err
+		}
+		if err := appendScheduledPromotionAudit(vaultPath, waveID, run.Promotion.CommittedRef, run.Promotion.CommittedSHA, "durable promotion intent replay: "+run.Gate.Command, actor); err != nil {
+			return "", err
+		}
+		return run.Promotion.CommittedSHA, nil
+	}
+	if state == scheduledPromotionIntentCommitted {
+		if err := finishV7DefaultBranchAdvance(v7DefaultBranchCheckouts(repoRoot, run.Promotion.ExpectedRef)); err != nil {
+			return "", err
+		}
+		return complete()
+	}
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
+	}
+	releaseLanding, err := acquireV7LandingLock(vaultPath)
+	if err != nil {
+		return "", err
+	}
+	defer releaseLanding()
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return "", err
+	}
+	wave, ok := idx.Waves[waveID]
+	if !ok {
+		return "", tuskerError(errorNotFound, "V7 wave not found: "+waveID)
+	}
+	state, current, err = inspectScheduledPromotionIntent(repoRoot, run.Promotion)
+	if err != nil {
+		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: "+err.Error())
+	}
+	if state == scheduledPromotionIntentCommitted {
+		if err := finishV7DefaultBranchAdvance(v7DefaultBranchCheckouts(repoRoot, run.Promotion.ExpectedRef)); err != nil {
+			return "", err
+		}
+		return complete()
+	}
+	if state != scheduledPromotionIntentPreRef {
+		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: default_ref_drift current="+current+" expected="+run.Promotion.ExpectedSHA+" intended="+run.Promotion.IntendedSHA)
+	}
+	if err := validateScheduledPromotionWaveAuthorityWithStore(vaultPath, waveID, store); err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	lease, acquired, err := store.AcquireResourceLease(ResourceLeaseAcquireInput{
+		Name: "gate:full", Owner: "departure:" + run.ID, Purpose: scheduledPromotionResourcePurpose,
+		ProjectID: projectID, DepartureID: run.ID, TTL: scheduledPromotionResourceLeaseTTL,
+	})
+	if err != nil {
+		return "", err
+	}
+	if !acquired {
+		return "", tuskerError(errorInvalidTransition, "promotion refusal: full_gate_lease_unavailable")
+	}
+	leaseOutcome := "promotion intent replay aborted before ref update"
+	defer func() {
+		_, _ = store.ReleaseResourceLease(lease.Name, lease.Owner, lease.Generation, leaseOutcome, time.Now().UTC())
+	}()
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
+	}
+	if matched, err := store.ResourceLeaseMatches(lease.Name, lease.Owner, lease.Generation); err != nil || !matched {
+		return "", tuskerError(errorInvalidTransition, "promotion refusal: full_gate_lease_fenced_at_ref_update")
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	checkouts, err := scheduledPromotionAdvanceRefUnderMaterialEpoch(
+		ctx, vaultPath, projectID, waveID, store, lease, run.Candidate, wave,
+		run.Promotion.ExpectedRef, run.Promotion.ExpectedSHA, run.Promotion.IntendedSHA, true, run,
+	)
+	if err != nil {
+		if state, _, inspectErr := inspectScheduledPromotionIntent(repoRoot, run.Promotion); inspectErr == nil && state == scheduledPromotionIntentCommitted {
+			if finishErr := finishV7DefaultBranchAdvance(v7DefaultBranchCheckouts(repoRoot, run.Promotion.ExpectedRef)); finishErr != nil {
+				return "", finishErr
+			}
+			leaseOutcome = "promotion intent replay observed committed ref"
+			return complete()
+		}
+		return "", err
+	}
+	if err := finishV7DefaultBranchAdvance(checkouts); err != nil {
+		return "", err
+	}
+	if err := scheduledPromotionAfterRefUpdate(); err != nil {
+		return "", err
+	}
+	commit, err := complete()
+	if err != nil {
+		return "", err
+	}
+	leaseOutcome = "promotion passed"
+	return commit, nil
+}
+
 // promoteScheduledWave performs the irreversible half of a departure.  It
 // uses the normal staging worktree/gate implementation; this wrapper adds the
 // immutable candidate contract and the ref CAS that scheduled promotion needs.
 func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, store *RuntimeStore, run *DepartureRun, actor string) (string, error) {
+	return promoteScheduledWaveContext(context.Background(), vaultPath, projectID, waveID, wf, store, run, actor)
+}
+
+func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, waveID string, wf Workflow, store *RuntimeStore, run *DepartureRun, actor string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if !wf.ScheduledPromotion.Effective.Promote {
 		return "", tuskerError(errorInvalidTransition, "scheduled promotion refusal: mode "+wf.ScheduledPromotion.Effective.Mode+" cannot move the default branch")
 	}
@@ -426,16 +1319,25 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		return "", tuskerError(errorInvalidTransition, "promotion gate red: "+run.Gate.Failure.Identity)
 	}
 	if run.Promotion.CommittedRef != "" && run.Promotion.CommittedSHA != "" {
+		if err := scheduledPromotionBeforeCommittedReplay(ctx); err != nil {
+			return "", err
+		}
 		repoRoot := v7RepoRoot(vaultPath)
-		if current, err := gitOutputTrim(repoRoot, "rev-parse", run.Promotion.CommittedRef); err == nil && current == run.Promotion.CommittedSHA {
+		if current, err := gitOutputTrim(repoRoot, "rev-parse", run.Promotion.CommittedRef+"^{commit}"); err == nil && current == run.Promotion.CommittedSHA {
 			if err := appendScheduledPromotionAudit(vaultPath, waveID, run.Promotion.CommittedRef, current, "durable promotion replay: "+run.Gate.Command, actor); err != nil {
 				return "", err
 			}
 			return current, nil
 		}
+		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: committed ref no longer matches its durable SHA")
 	}
 	if run.Promotion.AttemptedAt != "" {
-		return "", tuskerError(errorInvalidTransition, "promotion refusal: prior ref update outcome is ambiguous; reconcile the departure before retrying")
+		return resumeScheduledPromotionIntent(ctx, vaultPath, projectID, waveID, store, run, actor)
+	}
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
 	}
 	release, err := acquireV7LandingLock(vaultPath)
 	if err != nil {
@@ -450,6 +1352,14 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	if !ok {
 		return "", tuskerError(errorNotFound, "V7 wave not found: "+waveID)
 	}
+	if err := validateScheduledPromotionWaveAuthorityWithStore(vaultPath, waveID, store); err != nil {
+		return "", err
+	}
+	if len(run.Candidate.CargoTaskIDs) > 0 {
+		if err := validateScheduledPromotionDurableCargoWithStore(vaultPath, waveID, run.Candidate, store); err != nil {
+			return "", err
+		}
+	}
 	integrationBranch := v7WaveIntegrationBranch(wave)
 	// The integration-side task/wave state is part of the tree that will be
 	// gated, so synchronize it before freezing the candidate rather than
@@ -457,9 +1367,15 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	if err := syncV7WaveControlStateToIntegration(vaultPath, wave, integrationBranch); err != nil {
 		return "", err
 	}
-	before, err := scheduledPromotionSnapshot(vaultPath, projectID, waveID, wf)
+	before, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, store)
 	if err != nil {
 		return "", err
+	}
+	if run.Candidate.CandidateSHA != "" {
+		expected := scheduledPromotionCandidateSnapshot{WaveID: waveID, Candidate: run.Candidate, Gate: run.Gate, DefaultBranch: before.DefaultBranch}
+		if drift := scheduledPromotionSnapshotDrift(expected, before); drift != "" {
+			return "", tuskerError(errorInvalidTransition, "promotion recompute required: durable_"+drift+"_drift")
+		}
 	}
 	leaseOwner := "departure:" + run.ID
 	lease, acquired, err := store.AcquireResourceLease(ResourceLeaseAcquireInput{
@@ -489,7 +1405,16 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	gateStarted := time.Now().UTC()
 	stopHeartbeat := startScheduledPromotionLeaseHeartbeat(store, lease, scheduledPromotionResourceLeaseTTL)
 	defer func() { _ = stopHeartbeat() }()
-	execution := runV7GateTierOnRef(vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+	execution := runV7GateTierOnRefContext(ctx, vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+	if err := ctx.Err(); err != nil {
+		if errors.Is(execution.Err, errV7FullGateProvider) {
+			return "", execution.Err
+		}
+		for _, ref := range execution.ArtifactRefs {
+			_ = os.Remove(ref)
+		}
+		return "", err
+	}
 	// A configured flake rerun is deliberately one-shot. Its second result
 	// replaces the gate attempt; a second red falls through to quarantine.
 	if execution.Err == nil && execution.Result.Outcome == gateOutcomeFailed && strings.TrimSpace(gatePolicy.FlakeFailureAction) == "rerun" {
@@ -497,9 +1422,15 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		probe := promotionFailurePacket(before.Candidate, before.Gate, actor, string(raw), nil, gatePolicy, "unknown", "not_run", promotionFailureOwner(before.Candidate), nil, []string{execution.ArtifactRef})
 		if classifyPromotionFailure(probe, gatePolicy).Class == promotionFailureFlake {
 			firstRefs := append([]string(nil), execution.ArtifactRefs...)
-			execution = runV7GateTierOnRef(vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+			execution = runV7GateTierOnRefContext(ctx, vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
 			execution.ArtifactRefs = append(firstRefs, execution.ArtifactRefs...)
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		for _, ref := range execution.ArtifactRefs {
+			_ = os.Remove(ref)
+		}
+		return "", err
 	}
 	gateSummary := string(execution.Result.Outcome)
 	gateFinished := time.Now().UTC()
@@ -546,6 +1477,7 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		intent.Candidate, intent.Gate = before.Candidate, before.Gate
 		intent.Gate.Status = "failed"
 		intent.Gate.StartedAt, intent.Gate.FinishedAt, intent.Gate.ArtifactRef = gateStarted.Format(time.RFC3339Nano), gateFinished.Format(time.RFC3339Nano), artifactRefs[len(artifactRefs)-1]
+		intent.Gate.ProviderReceipts = append([]GateProviderReceipt(nil), execution.ProviderReceipts...)
 		intent.Gate.Failure = DepartureFailure{Class: string(route.Class), Identity: route.StableIdentity, OwningTaskID: packet.OwningTaskID, BisectionRef: packet.BisectionRef, ArtifactRefs: packet.ArtifactRefs, RepairTaskID: repairTaskID, ModelTriage: route.ModelTriage, Packet: packet, Action: action, AffectedTaskIDs: affected}
 		intent.State = DepartureStateRepairing
 		intent.BlockReason = "promotion gate red: " + route.StableIdentity
@@ -562,14 +1494,19 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		if err := resumePromotionFailureRouting(vaultPath, store, run); err != nil {
 			return "", err
 		}
-		return "", tuskerError(errorInvalidTransition, "promotion gate red: "+safePacketText(string(gateOutput), 320))
+		return "", tuskerError(errorInvalidTransition, "promotion gate red: "+scheduledPromotionGateFailureDetail(execution.Err, string(gateOutput)))
 	}
 	if execution.Err == nil && (execution.Result.Outcome == gateOutcomePassed || execution.Result.Outcome == gateOutcomeLedgerHit) {
 		for _, ref := range execution.ArtifactRefs {
 			_ = os.Remove(ref)
 		}
 	}
-	after, err := scheduledPromotionSnapshot(vaultPath, projectID, waveID, wf)
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
+	}
+	after, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, store)
 	if err != nil {
 		return "", err
 	}
@@ -584,15 +1521,32 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	}
 	// A final snapshot makes every mutable input explicit. update-ref supplies
 	// the final default-ref CAS even if another writer races after this read.
-	final, err := scheduledPromotionSnapshot(vaultPath, projectID, waveID, wf)
+	final, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, store)
 	if err != nil {
 		return "", err
 	}
 	if drift := scheduledPromotionSnapshotDrift(before, final); drift != "" {
 		return "", tuskerError(errorInvalidTransition, "promotion recompute required: "+drift+"_drift")
 	}
-	if err := prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, before.DefaultBranch, wave); err != nil {
+	if hold, err := store.departureHold(projectID, false); err != nil {
 		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
+	}
+	if err := scheduledPromotionBeforeDefaultPrepare(); err != nil {
+		return "", err
+	}
+	late, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, store)
+	if err != nil {
+		return "", err
+	}
+	if drift := scheduledPromotionSnapshotDrift(before, late); drift != "" {
+		return "", tuskerError(errorInvalidTransition, "promotion recompute required: "+drift+"_drift")
+	}
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
 	}
 	if matched, err := store.ResourceLeaseMatches(lease.Name, lease.Owner, lease.Generation); err != nil || !matched {
 		return "", tuskerError(errorInvalidTransition, "promotion refusal: full_gate_lease_fenced_before_ref_update")
@@ -605,11 +1559,18 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	intent.Gate.Status = "passed"
 	intent.Gate.StartedAt = gateStarted.Format(time.RFC3339Nano)
 	intent.Gate.FinishedAt = gateFinished.Format(time.RFC3339Nano)
+	intent.Gate.ProviderReceipts = append([]GateProviderReceipt(nil), execution.ProviderReceipts...)
 	intent.Promotion = DeparturePromotion{
 		ExpectedRef: before.DefaultBranch, ExpectedSHA: before.Candidate.ExpectedDefaultBranchSHA,
+		IntendedSHA: mergeCommit,
 		AttemptedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	intent.State = DepartureStateGating
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
+	}
 	changed, err := store.TransitionDepartureRun(intent, run.StateRevision)
 	if err != nil {
 		return "", err
@@ -619,11 +1580,29 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 	}
 	*run = intent
 	run.StateRevision++
+	if err := scheduledPromotionAfterRefIntent(); err != nil {
+		return "", err
+	}
+	if hold, err := store.departureHold(projectID, false); err != nil {
+		return "", err
+	} else if hold != nil {
+		return "", departureHoldError(hold)
+	}
 	if matched, err := store.ResourceLeaseMatches(lease.Name, lease.Owner, lease.Generation); err != nil || !matched {
 		return "", tuskerError(errorInvalidTransition, "promotion refusal: full_gate_lease_fenced_at_ref_update")
 	}
-	if err := advanceV7DefaultBranch(repoRoot, before.DefaultBranch, mergeCommit, before.Candidate.ExpectedDefaultBranchSHA); err != nil {
-		return "", tuskerError(errorInvalidTransition, "promotion refusal: default_ref_drift: "+err.Error())
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	checkouts, err := scheduledPromotionAdvanceRefUnderMaterialEpoch(
+		ctx, vaultPath, projectID, waveID, store, lease, before.Candidate, wave,
+		before.DefaultBranch, before.Candidate.ExpectedDefaultBranchSHA, mergeCommit, false, nil,
+	)
+	if err != nil {
+		return "", err
+	}
+	if err := finishV7DefaultBranchAdvance(checkouts); err != nil {
+		return "", err
 	}
 	if heartbeatErr := stopHeartbeat(); heartbeatErr != nil {
 		return "", heartbeatErr
@@ -632,23 +1611,23 @@ func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, stor
 		return "", err
 	}
 	// Only durable success after the ref update counts as a promoted revision.
-	next := *run
-	next.Promotion.CommittedRef = before.DefaultBranch
-	next.Promotion.CommittedSHA = mergeCommit
-	next.Promotion.CommittedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	next.State = DepartureStatePromoted
-	changed, err = store.TransitionDepartureRun(next, run.StateRevision)
-	if err != nil {
+	if err := persistScheduledPromotionCommit(store, run, before.DefaultBranch, mergeCommit); err != nil {
 		return "", err
 	}
-	if !changed {
-		return "", tuskerError(errorInvalidTransition, "promotion committed but departure row changed concurrently; recover from committed ref "+mergeCommit)
-	}
-	*run = next
-	run.StateRevision++
 	leaseOutcome = "promotion passed"
 	if err := appendScheduledPromotionAudit(vaultPath, waveID, before.DefaultBranch, mergeCommit, gateSummary, actor); err != nil {
 		return "", err
 	}
 	return mergeCommit, nil
+}
+
+// scheduledPromotionGateFailureDetail keeps the causal execution failure
+// visible to callers. The raw artifact remains the forensic record, but a
+// leading provider receipt can otherwise consume the old 320-byte excerpt and
+// hide the fail-closed ledger or lifecycle reason entirely.
+func scheduledPromotionGateFailureDetail(executionErr error, gateOutput string) string {
+	if executionErr != nil {
+		return safePacketText(executionErr.Error(), 640)
+	}
+	return safePacketText(gateOutput, 320)
 }
