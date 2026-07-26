@@ -1,0 +1,272 @@
+schema: tusker.delivery-plan/v2
+scope: exact-verification-authority/v1
+title: Exact verification contract authority
+epic: ORC
+spec_refs:
+  - docs/specs/18-exact-verification-contract-authority.md
+context_fingerprint: sha256:68ec502609d79187b61b56e4fa8b599ea59d2299b6a176463b216f4c983b7510
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+summary: >-
+  Preserve exact imported V2 acceptance and verification rows as immutable
+  factory authority, bind proof and independent review to the current
+  implementation, and fail closed before deterministic completion.
+non_goals:
+  - This plan does not import itself, enable automation, arm a wave, start a daemon or runtime, dispatch a worker, release, spend, or move a Git ref.
+  - This plan does not make Markdown, worker prose, arbitrary evidence, or a model verdict an independent source of completion authority.
+  - This plan does not silently migrate V1, direct singleton, historical, drifted, or already-progressed V2 work.
+requirements:
+  - id: R1
+    outcome: Every strict V2 task preserves one immutable canonical acceptance and verification contract whose fingerprint participates in wave authority.
+  - id: R2
+    outcome: Proof, typed review, and deterministic completion bind the exact current contract, implementation, work revision, gates, dependencies, and worker policy.
+  - id: R3
+    outcome: Operators and installed agents see exact required, missing, failed, blocked, or stale proof without a contract-weakening control.
+  - id: R4
+    outcome: Hermetic adversarial proof covers substitution, injection, manual spoof, stale source, crash replay, adoption, and legacy compatibility.
+concurrency: 2
+runner_profile: implementation-terra
+tasks:
+  - source_key: canonical-verification-contract
+    requirement_refs: [R1, R4]
+    title: Persist canonical V2 acceptance and verification authority
+    outcome: >-
+      V2 import stores a normalized immutable proof contract and fingerprint,
+      renders a readable mutable-result projection, includes it in wave
+      material, and supports only exact safe adoption.
+    acceptance:
+      - id: A1
+        outcome: New V2 imports persist exact acceptance IDs and outcomes, exact command/manual verification coverage and text, a schema, and a proof-contract fingerprint bound to scope, source key, and delivery task fingerprint.
+      - id: A2
+        outcome: Verification result and bounded notes may change without staling an armed wave, while any acceptance outcome, coverage, check type/text, canonical projection, or proof-contract fingerprint drift blocks dispatch, review, and close and stales authorization.
+      - id: A3
+        outcome: Held re-import is idempotent; progressed V2 adoption is metadata-only and allowed only when the reviewed source task fingerprint is unchanged; absent or drifted source material fails with one exact rework/adoption action.
+      - id: A4
+        outcome: Manual checks map exactly to source-keyed human gates and acceptance IDs, while V1, direct singleton, and historical non-V2 tasks retain explicitly labeled legacy behavior.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^(TestDeliveryCanonicalVerificationContract|TestWaveCanonicalVerificationMaterial|TestDeliveryVerificationContractAdoption)' -count=1"
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/delivery_verification_contract_test.go
+      summary: Canonical import projection, material drift, safe adoption, manual mapping, and compatibility matrix.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/delivery_verification_contract.go
+      - cmd/tusker/delivery_verification_contract_test.go
+      - cmd/tusker/delivery_cmd.go
+      - cmd/tusker/delivery_v2.go
+      - cmd/tusker/delivery_doctor.go
+      - cmd/tusker/v7_validation.go
+      - cmd/tusker/v7_wave_authorization.go
+      - cmd/tusker/v7_wave_authorization_test.go
+    concurrency_group: proof-contract
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: strict-verification-write-path
+    requirement_refs: [R1, R2]
+    title: Accept only exact canonical proof updates
+    outcome: >-
+      Verification writes and proof reports for strict V2 tasks update only
+      declared machine checks, route manual checks to gates, and keep
+      undeclared diagnostics non-authoritative.
+    acceptance:
+      - id: A1
+        outcome: Verify add and worker-result ingestion require the exact canonical coverage and command text and refuse renamed, broadened, substituted, undeclared, or agent-passed manual checks.
+      - id: A2
+        outcome: Canonical pending, failed, blocked, and stale rows remain non-green; evidence and diagnostic rows cannot substitute for a canonical machine row; exact current human gates alone satisfy manual rows.
+      - id: A3
+        outcome: The proof snapshot binds task ID, delivery proof-contract fingerprint, task material/work revision, implementation SHA, attempt, exact row identities, and gate material with deterministic bounded serialization.
+      - id: A4
+        outcome: Legacy non-strict tasks retain existing verification behavior and every strict refusal names the exact expected check or human gate.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^(TestStrictV2VerificationWrite|TestStrictV2ProofReport|TestStrictV2ManualProof|TestLegacyVerificationCompatibility)' -count=1"
+    dependencies:
+      - task: canonical-verification-contract
+        kind: hard
+    artifact:
+      kind: security_summary
+      path: cmd/tusker/v7_proof_contract_test.go
+      summary: Exact proof update, non-authoritative injection, manual ownership, snapshot binding, and legacy compatibility evidence.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/v7_proof_cmd.go
+      - cmd/tusker/v7_proof_contract_test.go
+      - cmd/tusker/run_ownership.go
+      - cmd/tusker/run_ownership_test.go
+    concurrency_group: proof-write
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: review-completion-proof-chain
+    requirement_refs: [R2, R4]
+    title: Bind review and completion to exact current proof
+    outcome: >-
+      Typed review and the completion transaction carry and recheck the exact
+      canonical proof authority through integration, close, audit, and
+      successor wake.
+    acceptance:
+      - id: A1
+        outcome: A review pass binds the exact acceptance set, delivery proof-contract fingerprint, current proof and gate fingerprints, work revision, implementation SHA, attempt, and authenticated execute/review worker-policy chain.
+      - id: A2
+        outcome: Contract, source, task material, proof, gate, dependency, or worker-policy drift rejects replay and requires fresh proof and review rather than downgrading authority.
+      - id: A3
+        outcome: Completion rechecks the full tuple under serialized authority immediately before integration and close, and a mismatch causes no merge, close, audit completion, successor claim, or ref movement.
+      - id: A4
+        outcome: Crash injection before and after result persistence, integration intent, close, audit, and frontier wake converges exactly once and never reuses a stale pass.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^(TestReviewExactVerificationAuthority|TestCompletionExactVerificationAuthority|TestCompletionExactVerificationCrashReplay)' -count=1"
+    dependencies:
+      - task: strict-verification-write-path
+        kind: hard
+    artifact:
+      kind: security_summary
+      path: cmd/tusker/completion_exact_verification_test.go
+      summary: Review tuple, deterministic completion fences, drift rejection, and exactly-once crash timeline.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/review_result.go
+      - cmd/tusker/review_proposal.go
+      - cmd/tusker/completion_reactor.go
+      - cmd/tusker/completion_authority.go
+      - cmd/tusker/v7_completion_receipt.go
+      - cmd/tusker/completion_exact_verification_test.go
+    concurrency_group: proof-completion
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: proof-operations-surface
+    requirement_refs: [R3]
+    title: Show exact proof state in product language
+    outcome: >-
+      Capsules, packets, review/closeout projections, automation plan, and
+      Serve show the exact required or stale check and one safe next action
+      without logs or mutation authority.
+    acceptance:
+      - id: A1
+        outcome: Every strict task surface distinguishes required, passed, pending, failed, blocked, and stale canonical rows plus manual owner/gate and reviewed-revision currentness.
+      - id: A2
+        outcome: Summary views name the first exact next command or human action and never imply that a diagnostic row, generic focused test, or stale review satisfies completion.
+      - id: A3
+        outcome: API and UI fixtures expose bounded product facts only, with no raw logs, secrets, environment values, contract edit, force-pass, enable, arm, dispatch, merge, release, spending, or ref controls.
+    verification:
+      - covers: A1,A2,A3
+        check: "command: go test ./cmd/tusker -run '^TestExactVerificationOperationsSurface' -count=1 && cd internal/serve/ui && bun test src/features/work/ExactVerificationStatus.test.tsx"
+    dependencies:
+      - task: canonical-verification-contract
+        kind: hard
+    artifact:
+      kind: screenshot_set
+      path: internal/serve/ui/src/features/work/ExactVerificationStatus.test.tsx
+      summary: Required, missing, failed, blocked, stale, manual, and current exact-proof product fixtures.
+      acceptance_ids: [A1, A2, A3]
+    owned_paths:
+      - cmd/tusker/commands_show.go
+      - cmd/tusker/commands_open_print.go
+      - cmd/tusker/commands_v7.go
+      - cmd/tusker/v7_capsule.go
+      - cmd/tusker/v7_closeout_cmd.go
+      - cmd/tusker/serve_types.go
+      - cmd/tusker/serve_command.go
+      - cmd/tusker/exact_verification_surface_test.go
+      - internal/serve/ui/src/features/work/ExactVerificationStatus.tsx
+      - internal/serve/ui/src/features/work/ExactVerificationStatus.test.tsx
+      - internal/serve/ui/src/types/domain.ts
+      - internal/serve/ui/src/lib/api.ts
+    concurrency_group: proof-surface
+    risk: high
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: canonical-proof-guidance
+    requirement_refs: [R3]
+    title: Make exact verification the installed agent contract
+    outcome: >-
+      Installed Tusker guidance makes exact DAG checks immutable, routes manual
+      proof to gates, and leaves review, integration, close, and successor
+      scheduling to their deterministic owners.
+    acceptance:
+      - id: A1
+        outcome: Planner guidance requires concrete requirement-linked acceptance and exact command/manual verification rows for every V2 DAG node, including a one-node DAG.
+      - id: A2
+        outcome: Implementation guidance runs and records only declared checks, never edits the canonical contract or marks manual proof, and requests review only after current exact proof.
+      - id: A3
+        outcome: Reviewer and dispatched-worker guidance bind the exact contract and implementation revision and never merge, close, arm, enable, release, spend, start a daemon/runtime, or wake successors.
+      - id: A4
+        outcome: Skill doctor detects stale symlinked, copied, and bundled guidance and preserves legacy non-strict behavior without presenting it as authoritative V2 factory proof.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestExactVerificationSkillContract' -count=1 && make skill-doctor"
+    dependencies:
+      - task: canonical-verification-contract
+        kind: hard
+    artifact:
+      kind: knowledge_link
+      path: skills/tusker/references/EXACT_VERIFICATION.md
+      summary: Canonical planning, implementation, review, compatibility, and deterministic completion guidance.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - skills/tusker/SKILL.md
+      - skills/tusker/references/EXACT_VERIFICATION.md
+      - skills/tusker/references/ORCHESTRATION.md
+      - skills/tusker/references/CLOSEOUT_PROTOCOL.md
+      - cmd/tusker/skill_contract_exact_verification_test.go
+    concurrency_group: proof-guidance
+    risk: high
+    priority: p0
+    size: m
+    domains: [project]
+
+  - source_key: exact-verification-authority-e2e
+    requirement_refs: [R1, R2, R3, R4]
+    title: Prove false completion is impossible end to end
+    outcome: >-
+      A temporary-vault adversarial fixture proves exact V2 import, arm, proof,
+      review, completion, crash replay, successor wake, safe adoption, and
+      legacy compatibility without live authority.
+    acceptance:
+      - id: A1
+        outcome: Check substitution, row injection, acceptance drift, canonical-field drift, agent-authored manual pass, stale source SHA, stale work revision, stale gate, and stale review all refuse before integration or close.
+      - id: A2
+        outcome: Exact current machine proof plus exact human gates and independent review completes once, emits one audit closure, and unlocks each successor once through the real deterministic handlers.
+      - id: A3
+        outcome: Crash injection around proof, review result, integration intent, close, audit, and frontier wake converges without duplicate result, merge, close, successor claim, or ref movement.
+      - id: A4
+        outcome: Held re-import and exact progressed-task adoption are idempotent, drifted adoption fails, and V1/direct singleton behavior remains compatible and visibly non-strict.
+      - id: A5
+        outcome: The fixture and every doctor/review/dry-run probe use temporary state and perform no project enablement, wave arm outside the fixture, daemon/runtime start, model launch, release, spend, network action, or real ref movement.
+    verification:
+      - covers: A1,A2,A3,A4,A5
+        check: "command: go test ./cmd/tusker -run '^TestExactVerificationAuthorityE2E' -count=1"
+    dependencies:
+      - task: strict-verification-write-path
+        kind: hard
+      - task: review-completion-proof-chain
+        kind: hard
+      - task: proof-operations-surface
+        kind: hard
+      - task: canonical-proof-guidance
+        kind: hard
+    artifact:
+      kind: reliability_timeline
+      path: cmd/tusker/exact_verification_authority_e2e_test.go
+      summary: Adversarial contract, proof, review, completion, crash, adoption, and compatibility timeline.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - cmd/tusker/exact_verification_authority_e2e_test.go
+    concurrency_group: proof-e2e
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
