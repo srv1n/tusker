@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -105,7 +106,7 @@ func deliveryCrossScopeSnapshot(vault string, idx v7Index) (func() error, func(s
 		}
 		data, body, err := parseFrontmatter(string(raw))
 		strictRev := effectiveV7Kind(note.Data) == "task" || effectiveV7Kind(note.Data) == "wave"
-		if err != nil || stringField(data, "state_rev") != stringField(note.Data, "state_rev") || (strictRev && !v7StateRevMatches(data, body, stringField(data, "state_rev"))) {
+		if err != nil || !reflect.DeepEqual(data, note.Data) || v7CanonicalBody(body) != v7CanonicalBody(note.Body) || stringField(data, "state_rev") != stringField(note.Data, "state_rev") || (strictRev && !v7StateRevMatches(data, body, stringField(data, "state_rev"))) {
 			return tuskerError(errorInvalidTransition, "CROSS_SCOPE_STATE_REV_INVALID path="+note.AbsolutePath)
 		}
 		snapshots[note.AbsolutePath] = raw

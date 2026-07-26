@@ -1031,9 +1031,10 @@ func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard 
 		}
 	}
 
+	var attemptedPaths []string
 	rollback := func(cause error, identityChanged bool) error {
-		rollbackErr := restoreDeliveryWritePreimages(paths, backups)
-		for _, path := range paths {
+		rollbackErr := restoreDeliveryWritePreimagesOwned(attemptedPaths, backups, writes)
+		for _, path := range attemptedPaths {
 			invalidateCachedNote(path)
 		}
 		if identityChanged {
@@ -1055,6 +1056,7 @@ func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard 
 				return rollback(err, false)
 			}
 		}
+		attemptedPaths = append(attemptedPaths, path)
 		if err := writeDeliveryTransactionFileCAS(path, []byte(writes[path]), backups[path]); err != nil {
 			return rollback(err, false)
 		}
@@ -1100,6 +1102,48 @@ func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard 
 		if guard == nil || !guard.DelayMutationVisibility {
 			recordCLIVaultMutation(path)
 		}
+	}
+	return nil
+}
+
+// restoreDeliveryWritePreimagesOwned restores only paths this transaction
+// attempted and only while the current bytes are either its exact intended
+// bytes or already the original preimage. Third-party bytes are preserved and
+// reported as an unproven rollback.
+func restoreDeliveryWritePreimagesOwned(paths []string, backups map[string]deliveryWritePreimage, intended map[string]string) error {
+	var failures []string
+	for index := len(paths) - 1; index >= 0; index-- {
+		path := paths[index]
+		backup := backups[path]
+		want := []byte(intended[path])
+		current, err := os.ReadFile(path)
+		if backup.Existed {
+			if err == nil && bytes.Equal(current, backup.Content) {
+				continue
+			}
+			if err != nil || !bytes.Equal(current, want) {
+				failures = append(failures, path+": current bytes are not transaction-owned; preserved")
+				continue
+			}
+			if err := writeDeliveryTransactionFile(path, backup.Content, backup.Mode); err != nil {
+				failures = append(failures, path+": "+err.Error())
+			}
+			continue
+		}
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil || !bytes.Equal(current, want) {
+			failures = append(failures, path+": current bytes are not transaction-owned; preserved")
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			failures = append(failures, path+": "+err.Error())
+		}
+	}
+	if len(failures) > 0 {
+		sort.Strings(failures)
+		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
 	return nil
 }

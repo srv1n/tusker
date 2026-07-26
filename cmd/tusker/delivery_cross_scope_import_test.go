@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -182,6 +185,77 @@ func TestDeliveryCrossScopePreRenameCASPreservesRawEdit(t *testing.T) {
 		t.Fatalf("want pre-rename CAS refusal, got %v", err)
 	}
 	assertEqual(t, "raw-edit", mustReadIndexTest(t, path), "raw edit must not be overwritten")
+}
+
+func TestDeliveryCrossScopeRollbackPreservesNonCooperativeBytes(t *testing.T) {
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a.md"), filepath.Join(dir, "b.md")
+	if err := writeText(a, "old-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(b, "old-b"); err != nil {
+		t.Fatal(err)
+	}
+	expected := map[string][]byte{a: []byte("old-a"), b: []byte("old-b")}
+	guard := &deliveryImportWriteGuard{
+		SnapshotVerify: func() error {
+			for path, want := range expected {
+				raw, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(raw, want) {
+					return fmt.Errorf("external drift: %s", path)
+				}
+			}
+			return nil
+		},
+		SnapshotAdvance: func(path string, raw []byte) { expected[path] = append([]byte(nil), raw...) },
+	}
+	deliveryImportAfterWriteHook = func(index int, path string) {
+		if index != 0 {
+			return
+		}
+		if err := writeText(path, "raw-after-write"); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeText(b, "raw-unattempted"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func() { deliveryImportAfterWriteHook = nil }()
+	err := commitDeliveryWritesGuarded(map[string]string{a: "new-a", b: "new-b"}, 0, guard)
+	if err == nil || !strings.Contains(err.Error(), "exact rollback could not be proven") {
+		t.Fatalf("want fail-closed unproven rollback, got %v", err)
+	}
+	assertEqual(t, "raw-after-write", mustReadIndexTest(t, a), "attempted third-party bytes preserved")
+	assertEqual(t, "raw-unattempted", mustReadIndexTest(t, b), "unattempted third-party bytes preserved")
+}
+
+func TestDeliveryCrossScopeAfterIndexGateEpicMutationRefuses(t *testing.T) {
+	vault := deliveryTestVault(t)
+	plan := validDeliveryPlanV2()
+	path := writeDeliveryV2TestPlan(t, vault, plan)
+	if err := deliveryV2ImportCmd(vault, path, Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	epicPath := filepath.Join(vault, "work", "epics", "VTP.md")
+	gatePath := filepath.Join(vault, "work", "gates", "VTP-G-0001.md")
+	deliveryCrossScopeAfterIndexLoad = func() {
+		for _, target := range []string{gatePath, epicPath} {
+			raw := mustReadIndexTest(t, target)
+			if err := writeText(target, raw+"\n<!-- after-index raw edit -->\n"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	defer func() { deliveryCrossScopeAfterIndexLoad = nil }()
+	err := deliveryV2ImportCmd(vault, path, Args{"vault": vault, "quiet": "true"})
+	if err == nil || !strings.Contains(err.Error(), "CROSS_SCOPE_STATE_REV_INVALID") {
+		t.Fatalf("want indexed gate/epic byte binding refusal, got %v", err)
+	}
+	for _, target := range []string{gatePath, epicPath} {
+		if !strings.Contains(mustReadIndexTest(t, target), "after-index raw edit") {
+			t.Fatalf("raw edit overwritten: %s", target)
+		}
+	}
 }
 
 func TestDeliveryCrossScopeAtomicity(t *testing.T) {
