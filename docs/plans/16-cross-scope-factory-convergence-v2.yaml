@@ -4,7 +4,7 @@ title: Cross-scope factory convergence
 epic: ORC
 spec_refs:
   - docs/specs/16-cross-scope-factory-convergence.md
-context_fingerprint: sha256:716eb950a10fcc002b19405c1ad11f1c3ac7db3f1e20b5cf98ccd18db7bc6128
+context_fingerprint: sha256:034b902acefd0de297de11bc605e2b5e7704bd32042c9e3de1541ac68d3fb414
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
 factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
