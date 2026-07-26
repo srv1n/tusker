@@ -159,12 +159,13 @@ func inspectWavePreflightEnvironmentReadOnly(vaultPath string, wave Note) wavePr
 	store, storeErr := OpenRuntimeStoreReadOnly(stateRoot)
 	if storeErr == nil {
 		defer store.Close()
-		projects, projectsErr := store.ListProjects()
+		projects, projectsErr := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
 		if projectsErr == nil {
 			repoRoot := v7RepoRoot(vaultPath)
 			wantedProjectID := stringField(wave.Data, "project")
 			selected := -1
-			for i, project := range projects {
+			for i, loaded := range projects {
+				project := loaded.Project
 				vaultMatch := sameCanonicalProjectPath(project.VaultRoot, vaultPath)
 				repoMatch := sameCanonicalProjectPath(project.RepoRoot, repoRoot)
 				if !vaultMatch && !repoMatch {
@@ -180,11 +181,12 @@ func inspectWavePreflightEnvironmentReadOnly(vaultPath string, wave Note) wavePr
 				}
 			}
 			if selected >= 0 {
-				project := projects[selected]
+				project := projects[selected].Project
 				env.ProjectRegistered = true
 				env.ProjectEnabled = project.Enabled
 				env.ProjectHealthy = project.Health == projectHealthHealthy
-				if wf, workflowErr := loadWorkflow(project.VaultRoot); workflowErr == nil {
+				if loaded, workflowErr := loadProjectContents(store, project, false); workflowErr == nil && registeredProjectIdentityMatches(project, loaded.Project) {
+					wf := loaded.Workflow
 					env.ProjectEnabled = env.ProjectEnabled && wf.Data.AutomationEnabled
 					applyWaveWorkflowEnvironment(&env, wave, wf.Data)
 				}

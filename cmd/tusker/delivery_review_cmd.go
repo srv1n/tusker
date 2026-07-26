@@ -668,7 +668,8 @@ func deliveryReviewRuntimeRuns(vault, projectID string) map[string]RunStatus {
 		return out
 	}
 	defer store.Close()
-	if projects, projectErr := store.ListProjects(); projectErr == nil {
+	if loaded, projectErr := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true}); projectErr == nil {
+		projects := loadedRegisteredProjects(loaded)
 		selectedProjectID := ""
 		for _, project := range projects {
 			vaultMatch := sameCanonicalProjectPath(project.VaultRoot, vault)

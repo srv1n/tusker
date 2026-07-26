@@ -84,10 +84,11 @@ func (s *serveServer) serveDeliveryPlanPath(project RegisteredProject, raw strin
 }
 
 func (s *serveServer) serveDeliveryPlanSnapshot(project RegisteredProject, raw string) (*serveDeliveryPlanSnapshot, error) {
-	projects, err := s.store.ListProjects()
+	loaded, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
 	if err != nil {
 		return nil, err
 	}
+	projects := loadedRegisteredProjects(loaded)
 	selectedRepo := canonicalProjectPath(project.RepoRoot)
 	nestedRoots := []string{}
 	nestedProjects := map[string]RegisteredProject{}

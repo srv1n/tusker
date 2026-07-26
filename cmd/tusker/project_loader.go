@@ -135,6 +135,17 @@ func loadProjectContents(store *RuntimeStore, project RegisteredProject, notes b
 	return loaded, nil
 }
 
+// registeredProjectIdentityMatches prevents an authority decision from mixing
+// a note/run read at poll start with configuration reloaded from a registration
+// that was retargeted during that poll.
+func registeredProjectIdentityMatches(expected, actual RegisteredProject) bool {
+	if strings.TrimSpace(expected.ProjectID) != "" && expected.ProjectID != actual.ProjectID {
+		return false
+	}
+	return sameCanonicalProjectPath(expected.RepoRoot, actual.RepoRoot) &&
+		sameCanonicalProjectPath(expected.VaultRoot, actual.VaultRoot)
+}
+
 func quarantineRegisteredProjectLoadError(store *RuntimeStore, project RegisteredProject, loadErr error) (RegisteredProject, error) {
 	if loadErr == nil {
 		return project, nil

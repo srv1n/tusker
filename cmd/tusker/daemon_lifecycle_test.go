@@ -334,6 +334,33 @@ func TestSharedProjectLoaderAllEntryPoints(t *testing.T) {
 	}
 }
 
+func TestAutoLandArmedWaveRejectsRetargetedProjectRegistration(t *testing.T) {
+	vault := automationTestVault(t)
+	project := registerAutomationTestProject(t, vault)
+	replacementVault := pickupV7TestVault(t)
+	if err := writeDefaultWorkflow(replacementVault); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	replacement := project
+	replacement.RepoRoot = filepath.Dir(replacementVault)
+	replacement.VaultRoot = replacementVault
+	replacement.WorkflowPath = workflowPath(replacementVault)
+	if err := store.UpsertProject(replacement); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = (&Daemon{store: store}).autoLandArmedWaveReviewComplete(project, Note{}, RunStatus{})
+	if err == nil || !strings.Contains(err.Error(), "registered project identity changed") {
+		t.Fatalf("retargeted registration must fail closed before wave landing, got %v", err)
+	}
+}
+
 func TestDaemonProjectSelfHeal(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)

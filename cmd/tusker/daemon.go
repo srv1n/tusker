@@ -3092,7 +3092,7 @@ func (d *Daemon) finishReviewCompleteRun(project RegisteredProject, note Note, r
 	parentSessionRef := run.SessionRef
 	reason = firstNonEmpty(strings.TrimSpace(reason), runnerReviewCompleteAwaitingLandReason)
 	finished = firstNonEmpty(strings.TrimSpace(finished), time.Now().UTC().Format(time.RFC3339))
-	if autoLanded, err := autoLandArmedWaveReviewComplete(project, note, run); err != nil {
+	if autoLanded, err := d.autoLandArmedWaveReviewComplete(project, note, run); err != nil {
 		landReason := "armed-wave auto-land failed: " + err.Error()
 		_ = kickV7LandingTaskToRework(project.VaultRoot, run.ItemID, landReason, "daemon:wave-drain")
 		updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, 1, landReason, finished)
@@ -3133,11 +3133,19 @@ func (d *Daemon) finishReviewCompleteRun(project RegisteredProject, note Note, r
 	return run, true, nil
 }
 
-func autoLandArmedWaveReviewComplete(project RegisteredProject, note Note, run RunStatus) (bool, error) {
-	wf, err := loadWorkflow(project.VaultRoot)
+func (d *Daemon) autoLandArmedWaveReviewComplete(project RegisteredProject, note Note, run RunStatus) (bool, error) {
+	// This is a completion-authority boundary, so the workflow loaded at poll
+	// start is not sufficient: a configuration change can switch completion to
+	// authoritative before this run reaches its landing decision. Reload through
+	// the registered-project boundary to preserve quarantine semantics as well.
+	loaded, err := loadProjectContents(d.store, project, false)
 	if err != nil {
 		return false, err
 	}
+	if !registeredProjectIdentityMatches(project, loaded.Project) {
+		return false, tuskerError(errorConfigInvalid, "registered project identity changed during completion authority check")
+	}
+	wf := loaded.Workflow
 	if completionReactorMode(wf.Data.CompletionReactor.Effective) == completionReactorModeAuthoritative {
 		// The authoritative completion reactor merges only after a valid typed
 		// review result.  Keeping this old pre-review path live would let an

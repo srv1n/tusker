@@ -240,10 +240,14 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 	if result.Schema != reviewResultSchemaV2 {
 		return ReviewResult{}, fmt.Errorf("worker proposal must use the authority-less review result transport schema")
 	}
-	wf, err := loadWorkflow(project.VaultRoot)
+	loaded, err := loadProjectContents(d.store, project, false)
 	if err != nil {
 		return ReviewResult{}, err
 	}
+	if !registeredProjectIdentityMatches(project, loaded.Project) {
+		return ReviewResult{}, tuskerError(errorConfigInvalid, "registered project identity changed during review authority check")
+	}
+	wf := loaded.Workflow
 	result.Schema, result.WorkerPolicyFP, err = reviewResultPolicyForRun(wf.Data, note, run)
 	if err != nil {
 		return ReviewResult{}, err
