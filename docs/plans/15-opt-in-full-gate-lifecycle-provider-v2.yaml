@@ -1,0 +1,362 @@
+schema: tusker.delivery-plan/v2
+scope: full-gate-lifecycle-provider/v1
+title: Opt-in full-gate lifecycle provider
+epic: ORC
+spec_refs:
+  - docs/specs/15-opt-in-full-gate-lifecycle-provider.md
+context_fingerprint: sha256:c2c1b9f05955d41bdaf4bc5155a10878116131f0f0113d1b6fa6333aea15d377
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+summary: >-
+  Build and prove service-owned Docker and Podman lifecycle providers so an
+  explicitly configured repository can run frozen promotion gates without
+  granting repository code network, source writes, daemon authority, runtime
+  control, or permission to leave processes behind.
+non_goals:
+  - The delivery does not install or start Docker, Podman, Docker Desktop, or a Podman machine.
+  - The delivery does not pull an image implicitly during promotion.
+  - The delivery does not enable repository automation, scheduled promotion, release, model spend, or default-branch movement.
+  - The delivery does not support remote TCP, SSH, Kubernetes, or arbitrary third-party providers.
+requirements:
+  - id: R1
+    outcome: Provider setup is service-owned, explicit, attributable, and incapable of enabling any repository or departure authority as a side effect.
+  - id: R2
+    outcome: Docker and Podman can each enforce and measure the same networkless, read-only, non-root, no-control-authority container contract.
+  - id: R3
+    outcome: Success, ordinary gate failure, cancellation, timeout, wrapper failure, daemon close, and crash converge on exact-scope cleanup before a durable outcome.
+  - id: R4
+    outcome: Promotion proof and crash recovery bind the current candidate, commands, provider, client, runtime, policy, attestation, image, cleanup receipt, and aggregate bounds.
+  - id: R5
+    outcome: CLI, doctor, daemon projections, and Serve explain provider readiness and one exact repair without starting or mutating an external runtime.
+  - id: R6
+    outcome: Installed agent guidance and the operator runbook preserve the opt-in boundary and require explicit live-smoke proof before real promotion.
+concurrency: 2
+runner_profile: implementation-terra
+shared_resources:
+  - source_key: local-container-runtime-smoke
+    kind: exclusive_external_runtime
+    capacity: 1
+assumptions:
+  - source_key: fake-runtime-automation
+    statement: Automated provider behavior is proven with deterministic fake runtime clients even when no local container runtime is running.
+unresolved_decisions:
+  - source_key: first-live-backend
+    question: Which supported backend will back the first factory-full-gate profile on this host?
+tasks:
+  - source_key: provider-contract-core
+    requirement_refs: [R3, R4]
+    title: Finish the typed lifecycle and proof contract
+    outcome: >-
+      One common provider core separates repository gate outcomes from
+      containment failures, synchronizes launch and cleanup, bounds hostile
+      input and output, and revalidates current proof before every promotion
+      recovery CAS.
+    acceptance:
+      - id: A1
+        outcome: Gate pass, gate failure, provider failure, cancellation, and timeout are distinct typed results, and only a certified gate pass can enter the reusable full-gate ledger.
+      - id: A2
+        outcome: The request and receipt bind exact candidate, command, provider, client, runtime, policy, attestation, image, measured containment, lifecycle, and cleanup identities.
+      - id: A3
+        outcome: Startup reservation, wrapper exit, Close, cancellation, cleanup, and restart recovery cannot race into an untracked or multiply cleaned lifecycle scope.
+      - id: A4
+        outcome: Command count, command length, per-command output, aggregate transcript, receipt count, runtime, and artifact size are bounded before hostile repository input can exhaust the daemon.
+      - id: A5
+        outcome: Pre-ref crash recovery recomputes the current candidate and gate contract and reverifies every required current-profile receipt, including ledger hits, before compare-and-swap.
+    verification:
+      - covers: A1,A2,A3,A4,A5
+        check: "command: go test ./cmd/tusker -run '^(TestV7FullGateProvider|TestScheduledPromotion.*Recovery|TestPromotionGate.*Bound)' -count=1"
+    artifact:
+      kind: security_summary
+      path: cmd/tusker/v7_full_gate_provider_test.go
+      summary: Typed-result, trust-closure, launch-close race, cancellation, recovery revocation, ledger-hit, and aggregate-exhaustion security matrix.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - cmd/tusker/v7_full_gate_provider.go
+      - cmd/tusker/v7_full_gate_provider_test.go
+      - cmd/tusker/v7_land_cmd.go
+      - cmd/tusker/scheduled_promotion.go
+      - cmd/tusker/scheduled_promotion_test.go
+      - cmd/tusker/gate_tier.go
+      - cmd/tusker/gate_ledger.go
+      - cmd/tusker/runtime_store.go
+    concurrency_group: provider-core
+    knowledge_nodes:
+      - .tusker/knowledge/domains/project/CANON.md
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: docker-lifecycle-backend
+    requirement_refs: [R2, R3, R4]
+    title: Implement the Docker lifecycle backend
+    outcome: A pinned local Docker engine can execute and certify the common provider contract without ambient contexts, mutable tags, writable source, network, or runtime control inside the gate.
+    acceptance:
+      - id: A1
+        outcome: The adapter verifies an absolute native client, local Unix endpoint, current server attestation, immutable local image, exact policy, and pull-never behavior before create.
+      - id: A2
+        outcome: Create, start, wait, inspect, and remove use exact request labels and measured read-only root, read-only candidate, network-none, non-root, cap-drop, no-new-privileges, scratch, and resource settings.
+      - id: A3
+        outcome: Ordinary command exits remain gate defects, while label drift, inspect drift, runtime loss, cleanup failure, or a surviving exact scope remain provider failures.
+      - id: A4
+        outcome: Success, failure, cancel, timeout, wrapper death, and restart fixtures destroy reparented descendants and prove the exact labeled container absent.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestFullGateDockerProvider' -count=1"
+    dependencies:
+      - task: provider-contract-core
+        kind: hard
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/full_gate_provider_docker_test.go
+      summary: Docker argument, measurement, hostile-label, exit-class, cancellation, crash, cleanup, and no-survivor matrix using a deterministic fake client.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/full_gate_provider_docker.go
+      - cmd/tusker/full_gate_provider_docker_test.go
+      - cmd/tusker/full_gate_provider_container.go
+    concurrency_group: provider-docker
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: podman-lifecycle-backend
+    requirement_refs: [R2, R3, R4]
+    title: Implement the Podman lifecycle backend
+    outcome: A pinned local Podman engine can execute and certify the common provider contract without ambient connections, mutable tags, writable source, network, or runtime control inside the gate.
+    acceptance:
+      - id: A1
+        outcome: The adapter verifies an absolute native client, explicit local Unix connection, current server or machine attestation, immutable local image, exact policy, and pull-never behavior before create.
+      - id: A2
+        outcome: Create, start, wait, inspect, and remove use exact request labels and measured read-only root, read-only candidate, network-none, non-root, cap-drop, no-new-privileges, scratch, and resource settings.
+      - id: A3
+        outcome: Ordinary command exits remain gate defects, while label drift, inspect drift, machine loss, cleanup failure, or a surviving exact scope remain provider failures.
+      - id: A4
+        outcome: Success, failure, cancel, timeout, wrapper death, and restart fixtures destroy reparented descendants and prove the exact labeled container absent.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestFullGatePodmanProvider' -count=1"
+    dependencies:
+      - task: provider-contract-core
+        kind: hard
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/full_gate_provider_podman_test.go
+      summary: Podman argument, measurement, hostile-label, exit-class, cancellation, crash, cleanup, and no-survivor matrix using a deterministic fake client.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/full_gate_provider_podman.go
+      - cmd/tusker/full_gate_provider_podman_test.go
+    concurrency_group: provider-podman
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: provider-profile-cli
+    requirement_refs: [R1, R4, R5]
+    title: Add explicit service-owned provider profile commands
+    outcome: Operators can configure, inspect, replace, and remove a pinned provider profile without repository-controlled fields or implicit runtime and automation side effects.
+    acceptance:
+      - id: A1
+        outcome: Configure resolves and records exact provider, client, local endpoint, server, policy, capability, and immutable image identities under the selected daemon state root with atomic restrictive writes.
+      - id: A2
+        outcome: Inspect and doctor are read-only, while replace and remove require explicit attributable commands and make prior proof ineligible for future use.
+      - id: A3
+        outcome: No command installs or starts a runtime or VM, selects an ambient context, pulls an image implicitly, enables automation or promotion, arms work, starts a daemon, releases, spends, or moves a Git ref.
+      - id: A4
+        outcome: Malformed, repository-local, symlinked, group or world writable, remote-endpoint, tag-only, unavailable, or drifted inputs fail closed with one exact repair.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestGateProviderCLI' -count=1"
+    dependencies:
+      - task: provider-contract-core
+        kind: hard
+    artifact:
+      kind: request_response
+      path: cmd/tusker/gate_provider_cmd_test.go
+      summary: Configure, inspect, replace, remove, malformed input, provenance, revocation, and zero-side-effect CLI contract.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/gate_provider_cmd.go
+      - cmd/tusker/gate_provider_cmd_test.go
+      - cmd/tusker/cli.go
+      - cmd/tusker/runner_profiles.go
+    concurrency_group: provider-config
+    risk: critical
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: provider-cutover-doctor
+    requirement_refs: [R4, R5]
+    title: Gate promotion cutover on provider readiness
+    outcome: One read-only cutover projection proves the exact profile, runtime, image, cleanup, command bounds, and recovery state or names the only next operator action.
+    acceptance:
+      - id: A1
+        outcome: Doctor distinguishes absent, stopped, unreachable, drifted, image-missing, policy-mismatched, unresolved-recovery, smoke-required, and ready states without mutating the runtime.
+      - id: A2
+        outcome: Factory cutover and scheduled-promotion preflight refuse promote mode until the current profile has compatible unit, crash-recovery, revocation, and live-smoke proof.
+      - id: A3
+        outcome: Disabled, shadow, and stage repositories remain usable without a provider and show the feature as off or not yet required rather than degraded.
+      - id: A4
+        outcome: Doctor never installs, starts, pulls, configures, enables, dispatches, arms, promotes, releases, spends, or repairs an external runtime.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^(TestGateProviderDoctor|TestFactoryCutoverDoctor.*Provider)' -count=1"
+    dependencies:
+      - task: docker-lifecycle-backend
+        kind: hard
+      - task: podman-lifecycle-backend
+        kind: hard
+      - task: provider-profile-cli
+        kind: hard
+    artifact:
+      kind: reliability_summary
+      path: cmd/tusker/gate_provider_doctor_test.go
+      summary: Provider readiness, drift, unresolved recovery, mode compatibility, zero-side-effect, and exact-remedy cutover matrix.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/gate_provider_doctor.go
+      - cmd/tusker/gate_provider_doctor_test.go
+      - cmd/tusker/setup_doctor.go
+      - cmd/tusker/setup_doctor_test.go
+      - cmd/tusker/workflow_validate.go
+    concurrency_group: provider-cutover
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: provider-operations-ui
+    requirement_refs: [R1, R5]
+    title: Surface provider readiness without adding hidden controls
+    outcome: Serve shows whether promotion containment is not required, unconfigured, blocked, or ready and gives one explicit operator command without installing or starting anything.
+    acceptance:
+      - id: A1
+        outcome: The daemon API and Serve settings project configured profile provenance, current measured status, last smoke, unresolved recovery, promotion impact, and exact next action.
+      - id: A2
+        outcome: Disabled, shadow, and stage modes do not show a false pending or red state, while promote mode cannot appear ready from registry strings alone.
+      - id: A3
+        outcome: The UI has no automatic install, runtime start, image pull, profile creation, promotion enable, release, or spending action.
+      - id: A4
+        outcome: Empty, stopped, drifted, recovery-blocked, and ready fixtures are readable in product language without opening a log.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestServeGateProvider' -count=1 && cd internal/serve/ui && bun test src/features/settings/ProjectSettings.test.tsx"
+    dependencies:
+      - task: provider-cutover-doctor
+        kind: hard
+    artifact:
+      kind: screenshot_set
+      path: internal/serve/ui/src/features/settings/ProjectSettings.test.tsx
+      summary: Serve provider readiness states and exact-action product-language fixtures.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/serve_types.go
+      - cmd/tusker/serve_command.go
+      - cmd/tusker/serve_projects_test.go
+      - internal/serve/ui/src/features/settings/ProjectSettings.tsx
+      - internal/serve/ui/src/features/settings/ProjectSettings.test.tsx
+      - internal/serve/ui/src/types/domain.ts
+      - internal/serve/ui/src/lib/api.ts
+    concurrency_group: provider-surface
+    risk: high
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: provider-skill-guidance
+    requirement_refs: [R1, R6]
+    title: Teach agents the provider and activation boundary
+    outcome: Canonical and installed Tusker guidance makes provider setup operator-owned, keeps interactive agents away from daemon and runtime mutation, and gives dispatched workers exact proof commands.
+    acceptance:
+      - id: A1
+        outcome: The canonical skill routes full-gate provider work to the binding spec and distinguishes unit proof, explicit live smoke, profile configuration, and repository promotion authority.
+      - id: A2
+        outcome: Interactive and dispatched agent guidance forbids implicit runtime install, VM start, image pull, profile mutation, automation enablement, departure execution, and default-branch movement.
+      - id: A3
+        outcome: Skill doctor and materialized Codex and Claude copies preserve the same provider contract and current factory-intake provenance.
+    verification:
+      - covers: A1,A2,A3
+        check: "command: make skill-doctor"
+    dependencies:
+      - task: provider-cutover-doctor
+        kind: hard
+    artifact:
+      kind: documentation
+      path: skills/tusker/references/FULL_GATE_PROVIDER.md
+      summary: Canonical provider setup, proof, failure, recovery, and activation guidance for agents and operators.
+      acceptance_ids: [A1, A2, A3]
+    owned_paths:
+      - skills/tusker/SKILL.md
+      - skills/tusker/references/FULL_GATE_PROVIDER.md
+      - skills/tusker/references/INTEGRATION_MERGE.md
+      - docs/specs/12-opt-in-scheduled-promotion.md
+      - docs/specs/14-opt-in-factory-execution-control.md
+    concurrency_group: provider-guidance
+    risk: high
+    priority: p0
+    size: m
+    domains: [project]
+
+  - source_key: provider-live-smoke
+    requirement_refs: [R2, R3, R5, R6]
+    title: Prove one explicitly selected provider before promotion
+    outcome: The first approved local provider profile has a durable, inspectable live-smoke receipt proving measured isolation and cleanup, while all repository automation remains off.
+    acceptance:
+      - id: A1
+        outcome: The live-smoke command declares its container mutation, uses an inert generated candidate and command, and cannot execute repository gate code or enable any repository setting.
+      - id: A2
+        outcome: Smoke success records exact profile closure, measured isolation, lifecycle cleanup, timestamp, and expiry; failure retains bounded diagnostics and any unresolved recovery scope.
+      - id: A3
+        outcome: An operator chooses Docker or Podman, starts the local runtime or VM, prepares the immutable image explicitly, and observes one green live-smoke receipt for factory-full-gate.
+      - id: A4
+        outcome: After the smoke, automation, completion reactor, scheduled promotion, release, model triage, and spending remain disabled and no repository ref moved.
+    verification:
+      - covers: A1,A2,A4
+        check: "command: go test ./cmd/tusker -run '^TestGateProviderLiveSmokeContract$' -count=1"
+      - covers: A3
+        check: "manual proof: operator runs `tusker gate-provider doctor --profile factory-full-gate --live-smoke --json` and accepts an ok receipt for the chosen local runtime"
+    dependencies:
+      - task: provider-operations-ui
+        kind: hard
+      - task: provider-skill-guidance
+        kind: hard
+    artifact:
+      kind: reliability_timeline
+      path: docs/runbooks/activate-full-gate-provider.md
+      summary: Explicit runtime preparation, live smoke, default-off recheck, rollback, and promotion-readiness timeline.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/gate_provider_live_smoke.go
+      - cmd/tusker/gate_provider_live_smoke_test.go
+      - docs/runbooks/activate-full-gate-provider.md
+    resource_refs:
+      - local-container-runtime-smoke
+    concurrency_group: provider-live-smoke
+    risk: critical
+    priority: p0
+    size: m
+    domains: [project]
+human_gates:
+  - source_key: choose-and-start-local-runtime
+    title: Choose and start the first local full-gate runtime
+    kind: setup
+    owner: human:sarav
+    task_source_key: provider-live-smoke
+    acceptance_ids: [A3]
+    action: >-
+      Choose Docker or Podman for profile factory-full-gate, start that local
+      runtime or VM, explicitly prepare the approved immutable gate image, and
+      run the documented live smoke.
+    verification: >-
+      `tusker gate-provider doctor --profile factory-full-gate --live-smoke
+      --json` returns one current ok receipt and the default-off recheck passes.
+    why_agent_cannot: >-
+      Selecting and starting a host runtime or VM and approving its image are
+      external operator authority; agents must not install, start, pull, or
+      consent on the operator's behalf.
+    suggestion: Use the already installed local runtime you prefer; do not enable repository promotion during this gate.
