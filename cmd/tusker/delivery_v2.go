@@ -27,6 +27,9 @@ type deliveryPlanV2 struct {
 	// the planner actually saw. It is deliberately authored, not inferred on
 	// import, so a review can reject a plan composed from stale context.
 	ContextFingerprint string `yaml:"context_fingerprint"`
+	// RequiredCapabilities is normalized before validation. Capabilities are
+	// binary-enforced authority boundaries, not planner hints.
+	RequiredCapabilities []string `yaml:"required_capabilities,omitempty"`
 	// Factory contract provenance is mandatory for every newly imported V2
 	// plan. Historical waves remain readable, but preflight detects their V2
 	// schema/context and refuses execution until they are replanned.
@@ -106,7 +109,7 @@ type deliveryHumanGate struct {
 // V1 is an unknown-field error rather than a silently widened contract.
 func (v *deliveryPlanV2) UnmarshalYAML(value *yaml.Node) error {
 	root := deliveryYAMLMapping(value)
-	if err := deliveryKnownYAMLFields(root, map[string]bool{"schema": true, "scope": true, "title": true, "epic": true, "epic_contract": true, "spec_refs": true, "context_fingerprint": true, "factory_intake_contract_schema": true, "factory_intake_contract_version": true, "factory_intake_contract_fingerprint": true, "non_goals": true, "requirements": true, "concurrency": true, "runner_profile": true, "shared_resources": true, "owned_path_overlaps": true, "assumptions": true, "unresolved_decisions": true, "summary": true, "tasks": true, "human_gates": true}); err != nil {
+	if err := deliveryKnownYAMLFields(root, map[string]bool{"schema": true, "scope": true, "title": true, "epic": true, "epic_contract": true, "spec_refs": true, "context_fingerprint": true, "required_capabilities": true, "factory_intake_contract_schema": true, "factory_intake_contract_version": true, "factory_intake_contract_fingerprint": true, "non_goals": true, "requirements": true, "concurrency": true, "runner_profile": true, "shared_resources": true, "owned_path_overlaps": true, "assumptions": true, "unresolved_decisions": true, "summary": true, "tasks": true, "human_gates": true}); err != nil {
 		return err
 	}
 	tasks := deliveryYAMLField(root, "tasks")
@@ -148,6 +151,9 @@ func (v *deliveryPlanV2) UnmarshalYAML(value *yaml.Node) error {
 		return err
 	}
 	*v = deliveryPlanV2(decoded)
+	if v.RequiredCapabilities, err = deliveryRequiredCapabilities(v.RequiredCapabilities); err != nil {
+		return err
+	}
 	if tasks != nil {
 		for i, task := range tasks.Content {
 			if i >= len(v.Tasks) {
@@ -308,6 +314,21 @@ func deliveryV2ImportBytes(vaultPath, path string, raw []byte, args Args) error 
 }
 
 func deliveryV2ImportBytesGuarded(vaultPath, path string, raw []byte, args Args, guard *deliveryImportWriteGuard) error {
+	if expected := strings.TrimSpace(args.String("expected-plan-fingerprint")); expected != "" && deliveryFingerprint(raw) != expected {
+		return tuskerError(errorInvalidTransition, "delivery plan changed after confirmation; regenerate delivery review and confirm its exact plan fingerprint")
+	}
+	var v2 deliveryPlanV2
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&v2); err != nil {
+		return tuskerError(errorInvalidArg, "invalid V2 delivery plan YAML: "+err.Error())
+	}
+	// Capability refusal is intentionally before even the material epoch lock:
+	// an unavailable capability must not create a record, arm a wave, or leave
+	// a mutation-adjacent artifact behind.
+	if err := deliveryRequireCapabilities(v2.RequiredCapabilities); err != nil {
+		return tuskerError(errorInvalidArg, err.Error())
+	}
 	// Resolution is material, not planning-time decoration.  Holding this
 	// vault-wide epoch forces mapping, producer lookup, graph validation, and
 	// the write set to observe one snapshot.  Start passes it through instead
@@ -320,15 +341,6 @@ func deliveryV2ImportBytesGuarded(vaultPath, path string, raw []byte, args Args,
 		defer lock.Close()
 		args = copyArgsForInternalMutation(args)
 		args["material-lock-held"] = "true"
-	}
-	if expected := strings.TrimSpace(args.String("expected-plan-fingerprint")); expected != "" && deliveryFingerprint(raw) != expected {
-		return tuskerError(errorInvalidTransition, "delivery plan changed after confirmation; regenerate delivery review and confirm its exact plan fingerprint")
-	}
-	var v2 deliveryPlanV2
-	decoder := yaml.NewDecoder(bytes.NewReader(raw))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&v2); err != nil {
-		return tuskerError(errorInvalidArg, "invalid V2 delivery plan YAML: "+err.Error())
 	}
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
@@ -406,6 +418,11 @@ func deliveryV2PrepareWithIndex(vaultPath string, v2 deliveryPlanV2, idx v7Index
 	var issues []string
 	if v2.Schema != deliveryPlanV2Schema {
 		issues = append(issues, "schema must be "+deliveryPlanV2Schema)
+	}
+	if unavailable, err := deliveryUnavailableCapabilities(v2.RequiredCapabilities); err != nil {
+		issues = append(issues, err.Error())
+	} else if len(unavailable) > 0 {
+		issues = append(issues, "required capability unavailable: "+strings.Join(unavailable, ", "))
 	}
 	if !deliveryContextFingerprintValid(v2.ContextFingerprint) {
 		issues = append(issues, "V2 plan requires context_fingerprint in sha256:<64 lowercase hex> form")

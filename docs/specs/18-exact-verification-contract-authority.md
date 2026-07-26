@@ -24,12 +24,12 @@ integration and close.
 
 This contract has a bootstrap boundary. The legacy generic engine is not trusted
 to import, run, review, or close the plan that replaces its proof authority.
-Plan 18 and strict consumers declare `strict_v2_proof_authority/v1`; until that
-capability exists, legacy import and Start reject them before writes. A small
-capability parser/fence and the canonical strict-importer foundation are landed
-and reviewed interactively while automation is off. Only then is this plan's
-provenance regenerated, reviewed again, and its whole held DAG imported strict.
-That local interactive review is a human process boundary, not a cryptographic
+Plan 18 and strict consumers declare `strict_v2_proof_authority/v1`; until the
+complete strict kernel exists, import and Start reject them before writes. The
+kernel is landed and independently reviewed interactively with automation off.
+Only after its adversarial foundation proof flips the capability is this plan's
+provenance regenerated, reviewed again, and its held DAG imported strict. That
+local interactive review is a human process boundary, not a cryptographic
 identity claim or a substitute for strict proof.
 
 The authority chain is:
@@ -51,24 +51,32 @@ do not cross this boundary.
 
 ## Bootstrap and capability fence
 
-`required_capabilities` is a normalized V2 field. The old importer/doctor/Start
-implementation must deterministically refuse a plan requiring an unavailable
-capability, rather than treating an unknown field, generic focused test, or
-doctor-green report as authority. The bootstrap is deliberately two-stage:
+`required_capabilities` is a normalized V2 field. The importer, doctor, and
+Start path deterministically refuse a plan requiring an unavailable capability,
+rather than treating an unknown field, generic focused test, or doctor-green
+report as authority. The staged kernel is deliberately external to the imported
+Plan-18 DAG: a task cannot truthfully certify the authority needed to import or
+complete itself.
 
-1. With automation off, land and independently review the narrow capability
-   parser/fence and canonical strict-importer foundation interactively. Do not
-   create a Plan-18 task, generic proof row, review result, completion receipt,
-   or gate waiver that claims this work is strict-complete.
-2. The new binary recognizes `strict_v2_proof_authority/v1`. Regenerate this
-   plan's context and provenance with that binary, review the new bytes, then
-   strictly import the complete held DAG. Every task begins pending exact proof
-   and can complete only through the strict review/completion path below.
+| Stage | Automation | Capability | Required boundary |
+|---|---|---|---|
+| K0 | off | false | Parse/normalize `required_capabilities`; doctor, import, and Start refuse the exact unavailable capability before the material epoch or any record write. |
+| K1 | off | false | Land and independently review canonical immutable import/proof-contract material. |
+| K2 | off | false | Land and independently review exact proof writes and snapshots. |
+| K3 | off | false | Land and independently review strict human control and close fencing. |
+| K4 | off | false | Land and independently review typed review/completion binding. |
+| K5 | off | true only after pass | Run the adversarial kernel E2E and record a deterministic foundation fingerprint. Regenerate/re-review Plan 18, then import it strict. |
 
-The capability fence is separately reviewable code, not magic metadata. Before
-it lands, a parser rejection is the required fail-closed state; after it lands,
-an explicit unavailable-capability refusal is required. Plan 17 also requires
-this capability and therefore cannot be used as a legacy bypass.
+No K-stage creates a Plan-18 task, generic proof row, review result, completion
+receipt, gate waiver, wave authorization, daemon/runtime, dispatch, release,
+spend, or ref movement. K5 is not a human actor string or a claim of
+cryptographic identity; it is a bounded reviewed foundation fact. The imported
+Plan-18 DAG begins only after K1-K5 exist, so its initial adoption tasks can use
+the real strict proof/review/completion route instead of self-hosting one.
+
+K0 is the narrow mergeable stage in this change: `delivery_capabilities.go`,
+the V2 decoder, doctor, import, and Start only parse/normalize and refuse. It
+does not stamp strict tasks or modify generic proof/review/close controls.
 
 ## Root cause
 

@@ -176,6 +176,8 @@ func deliveryDoctorContractFinding(issue string) (string, string, []string, stri
 		keys = []string{taskKey}
 	}
 	switch {
+	case strings.Contains(issue, "required capability unavailable"):
+		return "REQUIRED_CAPABILITY_UNAVAILABLE", "required_capabilities", nil, "install or select a binary that enforces the exact required capability"
 	case strings.HasPrefix(issue, "requirement ") && strings.Contains(issue, " is not covered"):
 		id := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(issue, "requirement "), " is not covered by any task"))
 		return "REQUIREMENT_UNCOVERED", "requirements." + id, []string{id}, "map the requirement to at least one task with observable acceptance"

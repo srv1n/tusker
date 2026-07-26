@@ -4,7 +4,7 @@ title: Exact verification contract authority
 epic: ORC
 spec_refs:
   - docs/specs/18-exact-verification-contract-authority.md
-context_fingerprint: sha256:3af538f498ee10c102808f0c47637365c5f70b0544f5b2db2647fc8d29ebe467
+context_fingerprint: sha256:52fa3644f66f16c861db06894f6b27a02d1c39f20367a194be270f6d3df6eabf
 required_capabilities: [strict_v2_proof_authority/v1]
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
@@ -14,7 +14,7 @@ summary: >-
   imported acceptance and verification rows as immutable factory authority and
   fail closed before deterministic completion.
 non_goals:
-  - The legacy delivery importer and Start path must reject this capability-bound plan; this plan does not import itself, enable automation, arm a wave, start a daemon or runtime, dispatch a worker, release, spend, or move a Git ref.
+  - This imported DAG does not bootstrap the capability that admits it. K0 through K5 land and receive independent interactive review with automation off before this capability can become true; until then import and Start reject before writes. This plan does not import itself, enable automation, arm a wave, start a daemon or runtime, dispatch a worker, release, spend, or move a Git ref.
   - This plan does not make Markdown, worker prose, arbitrary evidence, or a model verdict an independent source of completion authority.
   - This plan does not silently migrate V1, direct singleton, historical, drifted, or already-progressed V2 work, or let a generic proof/review/close result self-certify the strict bootstrap.
 requirements:
@@ -27,54 +27,18 @@ requirements:
   - id: R4
     outcome: Hermetic adversarial proof covers substitution, injection, manual spoof, stale source, crash replay, adoption, and legacy compatibility.
   - id: R5
-    outcome: Strict authority begins with a capability-gated, interactive automation-off bootstrap; legacy import/start/close shortcuts cannot activate, complete, or supply manual authority for this plan.
+    outcome: Strict authority begins outside this DAG with a staged automation-off kernel; K0 refuses unavailable capability requests and K1-K5 establish canonical import, exact proof, strict close/manual control, typed completion, and adversarial kernel evidence before capability activation.
 concurrency: 2
 runner_profile: implementation-terra
 tasks:
-  - source_key: strict-bootstrap-capability-fence
-    requirement_refs: [R1, R5]
-    title: Bootstrap the strict importer outside legacy completion
-    outcome: >-
-      A minimal capability parser and import/start/doctor fence reject this
-      plan under the old generic engine; the canonical strict-importer
-      foundation is landed and independently reviewed interactively while
-      automation remains off, before regenerated Plan-18 provenance can enter
-      a held strict DAG.
-    acceptance:
-      - id: A1
-        outcome: V2 accepts a normalized required_capabilities field, while an old or capability-missing importer and Start path deterministically reject strict_v2_proof_authority/v1 before writes, arm, daemon/runtime start, dispatch, release, spending, or ref movement; doctor reports the exact unavailable capability rather than doctor-green safety.
-      - id: A2
-        outcome: The capability parser and canonical strict-importer foundation are landed through a local interactive, automation-off review boundary; generic proof, accept, close, finish, force, or legacy review cannot mark this bootstrap task or Plan-18 E2E complete.
-      - id: A3
-        outcome: Only after the strict importer is available are Plan-18 context/provenance regenerated, independently reviewed, and the entire held DAG imported strict; every resulting strict task starts pending exact proof and no legacy completion receipt is adopted.
-    verification:
-      - covers: A1,A2,A3
-        check: "command: go test ./cmd/tusker -run '^TestDeliveryRequiredCapabilities$' -count=1 && go test ./cmd/tusker -run '^TestDeliveryStrictBootstrapFence$' -count=1 && go test ./cmd/tusker -run '^TestDeliveryStartRequiredCapabilities$' -count=1"
-    artifact:
-      kind: security_summary
-      path: cmd/tusker/delivery_required_capabilities_test.go
-      summary: Capability-missing import/start/doctor refusal and automation-off interactive bootstrap provenance matrix.
-      acceptance_ids: [A1, A2, A3]
-    owned_paths:
-      - cmd/tusker/delivery_capabilities.go
-      - cmd/tusker/delivery_required_capabilities_test.go
-      - cmd/tusker/delivery_cmd.go
-      - cmd/tusker/delivery_v2.go
-      - cmd/tusker/delivery_doctor.go
-      - cmd/tusker/delivery_start_cmd.go
-    concurrency_group: strict-bootstrap
-    risk: critical
-    priority: p0
-    size: xl
-    domains: [project]
-
   - source_key: canonical-verification-contract
     requirement_refs: [R1, R4]
-    title: Persist canonical V2 acceptance and verification authority
+    title: Verify and adopt the pre-landed canonical V2 authority kernel
     outcome: >-
-      V2 import stores a normalized immutable proof contract and fingerprint,
-      renders a readable mutable-result projection, includes it in wave
-      material, and supports only exact safe adoption.
+      The independently reviewed K1 canonical-import kernel is strictly
+      verified and adopted into the first imported DAG; it stores a normalized
+      immutable proof contract and fingerprint and supports only exact safe
+      adoption.
     acceptance:
       - id: A1
         outcome: New V2 imports persist exact acceptance IDs and outcomes, exact command/manual verification coverage and text, a schema, and a proof-contract fingerprint bound to scope, source key, and delivery task fingerprint.
@@ -98,9 +62,6 @@ tasks:
       - cmd/tusker/v7_validation.go
       - cmd/tusker/v7_wave_authorization.go
       - cmd/tusker/v7_wave_authorization_test.go
-    dependencies:
-      - task: strict-bootstrap-capability-fence
-        kind: hard
     concurrency_group: proof-contract
     risk: critical
     priority: p0

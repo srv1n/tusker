@@ -54,9 +54,10 @@ func TestCrossScopePlanRewiring(t *testing.T) {
 		{Task: "strict-close-and-human-control-fence", Kind: "hard"},
 		{Task: "strict-legacy-adoption-and-producer-fence", Kind: "hard"},
 	})
-	bootstrap := crossScopeProgramTask(t, exactAuthority, "strict-bootstrap-capability-fence")
-	if len(bootstrap.Dependencies) != 0 || !stringContainsAll(bootstrap.Acceptance[0].Outcome, "required_capabilities", "reject", "before writes") || !containsString(bootstrap.OwnedPaths, "cmd/tusker/delivery_capabilities.go") {
-		t.Fatalf("Plan 18 strict bootstrap contract drifted: %#v", bootstrap)
+	for _, task := range exactAuthority.Tasks {
+		if task.SourceKey == "strict-bootstrap-capability-fence" {
+			t.Fatalf("Plan 18 must not import a self-hosting strict bootstrap task: %#v", task)
+		}
 	}
 	legacyFence := crossScopeProgramTask(t, exactAuthority, "strict-legacy-adoption-and-producer-fence")
 	if !stringContainsAll(legacyFence.Acceptance[0].Outcome, "progressed", "terminal", "strict completion-authority fingerprint") || !stringContainsAll(legacyFence.Acceptance[2].Outcome, "delivery proof-contract", "strict completion-authority", "Cross-scope") || !containsString(legacyFence.OwnedPaths, "cmd/tusker/delivery_cross_scope.go") || !containsString(legacyFence.OwnedPaths, "cmd/tusker/v7_dependencies.go") {
@@ -315,9 +316,10 @@ func assertCrossScopeProgramBootstrapCapabilityFence(t *testing.T, vault, path s
 		t.Fatalf("%s does not require strict V2 proof authority", path)
 	}
 	report, err := deliveryPlanDoctor(vault, path)
-	if err == nil || report.OK || !strings.Contains(err.Error(), "required_capabilities") {
-		t.Fatalf("legacy doctor accepted capability-bound %s: %#v, %v", path, report, err)
+	if err != nil || report.OK {
+		t.Fatalf("K0 doctor accepted capability-bound %s: %#v, %v", path, report, err)
 	}
+	requireDoctorCodes(t, report, "REQUIRED_CAPABILITY_UNAVAILABLE")
 }
 
 func assertCrossScopeProgramLegacyCapabilityRefusal(t *testing.T) {
@@ -334,16 +336,16 @@ func assertCrossScopeProgramLegacyCapabilityRefusal(t *testing.T) {
 	}
 	before := snapshotDeliveryV2Records(t, vault)
 	err = deliveryV2ImportCmd(vault, path, Args{"vault": vault, "quiet": "true"})
-	if err == nil || !strings.Contains(err.Error(), "required_capabilities") {
-		t.Fatalf("legacy import accepted strict capability fixture: %v", err)
+	if err == nil || !strings.Contains(err.Error(), strictV2ProofAuthorityCapability) {
+		t.Fatalf("K0 import accepted strict capability fixture: %v", err)
 	}
 	assertEqual(t, before, snapshotDeliveryV2Records(t, vault), "legacy capability refusal is inert")
 	_, err = deliveryStart(Args{
 		"vault": vault, "plan": path, "by": "human:fixture",
 		"confirm": deliveryFingerprint([]byte(capabilityRaw)), "quiet": "true",
 	}, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
-	if err == nil || !strings.Contains(err.Error(), "required_capabilities") {
-		t.Fatalf("legacy Start accepted strict capability fixture: %v", err)
+	if err == nil || !strings.Contains(err.Error(), strictV2ProofAuthorityCapability) {
+		t.Fatalf("K0 Start accepted strict capability fixture: %v", err)
 	}
 	assertEqual(t, before, snapshotDeliveryV2Records(t, vault), "legacy Start capability refusal is inert")
 }
@@ -552,11 +554,8 @@ func readCrossScopeProgramPlan(t *testing.T, path string) deliveryPlanV2 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The checked-in Plans 17/18 intentionally require a capability this legacy
-	// parser cannot accept. Strip only that bootstrap fence for static topology
-	// inspection; assertCrossScopeProgramBootstrapCapabilityFence separately
-	// proves the real old parser/doctor/import reject it before mutation.
-	raw = []byte(strings.Replace(string(raw), "required_capabilities: [strict_v2_proof_authority/v1]\n", "", 1))
+	// K0 parses the capability field for static topology, but doctor/import/Start
+	// still refuse it until the external K1-K5 kernel has been reviewed.
 	var plan deliveryPlanV2
 	if err := yaml.Unmarshal(raw, &plan); err != nil {
 		t.Fatalf("decode %s: %v", path, err)
