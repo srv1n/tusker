@@ -342,14 +342,6 @@ func semanticModelFor(role, effort string, models []RunnerCatalogModel) RunnerCa
 	}
 	return RunnerCatalogModel{Model: "gpt-5.x", Efforts: []string{"low", "medium", "high", "xhigh"}}
 }
-func catalogSupportsEffort(models []RunnerCatalogModel, effort string) bool {
-	for _, model := range models {
-		if !model.Hidden && catalogContainsString(model.Efforts, effort) {
-			return true
-		}
-	}
-	return false
-}
 func semanticEffortFor(want string, supported []string) string {
 	if catalogContainsString(supported, want) {
 		return want
