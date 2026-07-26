@@ -1,7 +1,7 @@
 ---
 workflow_version: 1
 tracker_schema_version: 7
-automation_enabled: false
+automation_enabled: true
 tracker:
     kind: tusker_vault
     dispatch_states:
@@ -24,7 +24,7 @@ agents:
 runtime:
     poll_interval_ms: 60000
     lease_ttl_ms: 900000
-    max_active_runs_per_project: 1
+    max_active_runs_per_project: 2
     max_continuation_retries: 3
     budget:
         enabled: false

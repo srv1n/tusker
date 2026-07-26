@@ -1,0 +1,306 @@
+schema: tusker.delivery-plan/v2
+scope: production-operability-followup/v1
+title: Production operability follow-up
+epic: ORC
+spec_refs:
+  - docs/specs/12-opt-in-scheduled-promotion.md
+context_fingerprint: sha256:d72fcfa87dcc30607da97495ad73162320d1cc0722b758ff111bae332803a602
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+summary: >-
+  Close the six production control-plane gaps found by merge-train dogfood in
+  one serially safe V2 DAG: executable truth and pre-claim health first, then
+  run liveness, canonical registration, boarding authority, and a deliberately
+  human-controlled emergency close path.
+non_goals:
+  - >-
+    Authoring, doctor, review, dry-run, and import are inert. This plan does
+    not enable project or registry automation, arm a wave, start/install a
+    daemon, dispatch a runner, move a ref, release, spend, configure
+    credentials, or push.
+  - >-
+    This is shared Tusker control-plane work, not a repository-specific
+    scheduled-promotion rollout. Scheduled promotion remains opt-in and
+    disabled unless an operator separately enables it for one repository.
+  - >-
+    Break-glass is not a generic force flag, standing self-close permission,
+    review-pass substitute, ref-move authority, release authority, or a path
+    for dispatched workers to assert human identity.
+  - >-
+    Worktree discovery is diagnostic only; it must not silently select among
+    conflicting branch-local task identities or mutate a canonical control
+    surface without the declared writer.
+requirements:
+  - id: R1
+    outcome: Before any claim, Tusker exposes installed-binary truth and classifies unavailable authorized runner execution as an actionable infrastructure blocker.
+  - id: R2
+    outcome: Runs distinguish live work, bounded intentional waits, terminal infrastructure blocks, and stalled work, with durable deadlines and loud projections.
+  - id: R3
+    outcome: Every task created from a linked worktree is admitted by one canonical control writer or refused before a branch-local invisible record exists.
+  - id: R4
+    outcome: Daemon and UI consumers receive a stable boarding census and an exact atomic receipt binding accepted completion to its merge commit.
+  - id: R5
+    outcome: A named accountable human can close one exact revision when independent review infrastructure is broken, through a typed, permanent, risk-visible override reviewed independently for security.
+concurrency: 2
+assumptions:
+  - source_key: semantic-profile-bootstrap
+    statement: Semantic complexity profiles and an independent read-only review profile are configured by project policy; this plan does not select provider model identifiers in task contracts.
+tasks:
+  - source_key: runner-preclaim-health
+    requirement_refs: [R1]
+    title: Health-check the authorized runner before claim
+    outcome: >-
+      Claim and attempt creation resolve the configured executable under the
+      daemon's effective PATH, verify executable/version/permission/command
+      shape, and produce an actionable infrastructure blocker before any
+      worker ownership is created when that check fails.
+    acceptance:
+      - id: A1
+        outcome: Missing, non-executable, incompatible, or malformed authorized runner commands refuse before claim or attempt creation and record infrastructure_blocked with executable, PATH provenance, failed check, and one bounded operator remedy.
+      - id: A2
+        outcome: Explicit project or machine alternate-executable policy is honored, while a discovered alternate is only reported and never silently substituted for the authorized command.
+      - id: A3
+        outcome: Automation plan/queue, runs, wave brief, and Serve distinguish infrastructure_blocked from parked_no_progress and expose the same stable remediation projection without launching a model.
+    verification:
+      - covers: A1,A2,A3
+        check: "command: go test ./cmd/tusker -run '^TestRunnerPreclaimHealth$' -count=1 && go test ./cmd/tusker -run '^TestRunnerInfrastructureBlockedProjection$' -count=1"
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/runner_preclaim_health_test.go
+      summary: Authorized-path, daemon-PATH, explicit-alternate, discovered-alternate, permission, version, malformed-command, no-claim, and projection matrix.
+      acceptance_ids: [A1, A2, A3]
+    owned_paths:
+      - cmd/tusker/runner_preclaim_health.go
+      - cmd/tusker/runner_preclaim_health_test.go
+      - cmd/tusker/runner_exec.go
+      - cmd/tusker/automation_commands.go
+      - cmd/tusker/runtime_store.go
+      - cmd/tusker/serve_types.go
+      - cmd/tusker/serve_command.go
+      - cmd/tusker/serve_projects_test.go
+    complexity: standard
+    concurrency_group: operability-foundation
+    risk: high
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: installed-capability-manifest
+    requirement_refs: [R1]
+    title: Make the installed binary describe its own capabilities
+    outcome: >-
+      `tusker capabilities --json` is a read-only, versioned installed-binary
+      manifest that tells orchestrators exactly which command and schema
+      contracts they may invoke rather than asking them to trust stale docs.
+    acceptance:
+      - id: A1
+        outcome: The manifest includes binary version/build fingerprint, command/subcommand/flag inventory, task/delivery/review/completion/receipt schemas, runner adapters, capability-catalog schema, compiled or enabled optional capabilities, and deprecations or replacements.
+      - id: A2
+        outcome: Unsupported commands have a typed unavailable/deprecated entry with a replacement where one exists; the manifest is deterministic for one binary and never reads secrets, writes configuration, claims work, or launches a runner.
+      - id: A3
+        outcome: Installed orchestration guidance identifies the manifest as authoritative executable truth and retains documentation only as intent and explanation.
+    verification:
+      - covers: A1,A2
+        check: "command: go test ./cmd/tusker -run '^TestInstalledCapabilityManifest$' -count=1"
+      - covers: A3
+        check: "command: make skill-doctor"
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/capabilities_cmd_test.go
+      summary: Version, command/flag, schema, adapter, optional-capability, deprecated-command, deterministic, and read-only manifest matrix.
+      acceptance_ids: [A1, A2, A3]
+    owned_paths:
+      - cmd/tusker/capabilities_cmd.go
+      - cmd/tusker/capabilities_cmd_test.go
+      - cmd/tusker/cli.go
+      - cmd/tusker/version.go
+      - skills/tusker/SKILL.md
+      - skills/tusker/references/ORCHESTRATION.md
+    complexity: routine
+    concurrency_group: operability-foundation
+    risk: medium
+    priority: p0
+    size: m
+    domains: [project]
+
+  - source_key: typed-run-wait-stall-state
+    requirement_refs: [R1, R2]
+    title: Make waiting, infrastructure blocks, and stalls first-class run states
+    outcome: >-
+      Runtime state records a live lease heartbeat, bounded intentional wait,
+      terminal infrastructure block, or stalled no-progress condition as
+      mutually exclusive typed facts that the resident daemon reconciles and
+      escalates durably.
+    acceptance:
+      - id: A1
+        outcome: Runs persist typed state, next wake time/source, progress deadline, heartbeat/lease facts, terminal infrastructure remedy, and a bounded transition history; a terminal parked run cannot appear healthy by heartbeat emission.
+      - id: A2
+        outcome: The daemon turns overdue waits and missing live heartbeats into one idempotent typed escalation, while healthy intentional waits remain quiet until their declared deadline.
+      - id: A3
+        outcome: Runs list/inspect, automation queue, wave brief, digest, and Serve expose typed state, deadline, remedy, and escalation consistently and no longer collapse broken infrastructure into ordinary parked work.
+    verification:
+      - covers: A1,A2,A3
+        check: "command: go test ./cmd/tusker -run '^TestTypedRunWaitStallState$' -count=1 && go test ./cmd/tusker -run '^TestRunDeadlineEscalationProjection$' -count=1"
+    dependencies:
+      - task: runner-preclaim-health
+        kind: hard
+      - task: installed-capability-manifest
+        kind: hard
+    artifact:
+      kind: reliability_timeline
+      path: cmd/tusker/run_wait_stall_test.go
+      summary: Live, waiting, overdue, runner-loss, infrastructure-blocked, parked, stalled, restart, deduplicated escalation, and projection timeline.
+      acceptance_ids: [A1, A2, A3]
+    owned_paths:
+      - cmd/tusker/run_state.go
+      - cmd/tusker/run_wait_stall_test.go
+      - cmd/tusker/runtime_store.go
+      - cmd/tusker/daemon.go
+      - cmd/tusker/automation_commands.go
+      - cmd/tusker/commands_v7.go
+      - cmd/tusker/v7_wave_brief.go
+      - cmd/tusker/digest.go
+      - cmd/tusker/serve_types.go
+      - cmd/tusker/serve_command.go
+    complexity: complex
+    concurrency_group: run-liveness
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: canonical-worktree-registration
+    requirement_refs: [R3]
+    title: Admit worktree-created tasks through one canonical control writer
+    outcome: >-
+      A task created from any linked worktree either registers atomically in
+      the canonical control surface or is refused before it can become a
+      branch-local record invisible to the scheduler and boarding control
+      plane.
+    acceptance:
+      - id: A1
+        outcome: With automation active, worktree task creation uses the resident daemon/shared control checkout as the sole writer; with automation inactive, it uses the explicit interactive control path, and both paths return the canonical task identity and revision.
+      - id: A2
+        outcome: Unreachable, stale, or conflicting canonical registration fails before branch-local task creation, preserves existing task state, and reports pending-registration only as an explicit actionable state with one remedy.
+      - id: A3
+        outcome: A reconciler may diagnose known worktrees for pending registration but never silently chooses among conflicting identities, and task/queue/wave surfaces expose registration state without dispatching work.
+    verification:
+      - covers: A1,A2,A3
+        check: "command: go test ./cmd/tusker -run '^TestCanonicalWorktreeTaskRegistration$' -count=1 && go test ./cmd/tusker -run '^TestWorktreeRegistrationConflictRefusal$' -count=1"
+    dependencies:
+      - task: typed-run-wait-stall-state
+        kind: hard
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/worktree_registration_test.go
+      summary: Automation-on daemon writer, automation-off interactive writer, unavailable control writer, stale/conflicting identity, diagnostic sweep, atomicity, and no-dispatch matrix.
+      acceptance_ids: [A1, A2, A3]
+    owned_paths:
+      - cmd/tusker/worktree_registration.go
+      - cmd/tusker/worktree_registration_test.go
+      - cmd/tusker/commands_create.go
+      - cmd/tusker/commands_create_test.go
+      - cmd/tusker/work_session_cmd.go
+      - cmd/tusker/daemon.go
+      - cmd/tusker/runtime_store.go
+      - cmd/tusker/automation_commands.go
+    complexity: complex
+    concurrency_group: canonical-registration
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: boarding-census-and-receipt
+    requirement_refs: [R4]
+    title: Publish boarding readiness and bind completion to the merge atomically
+    outcome: >-
+      The resident daemon exposes a stable wave-scoped boarding census and the
+      deterministic integration handler writes one exact receipt that binds an
+      accepted task transition to its merge commit without conductors scraping
+      readiness or creating split completion records.
+    acceptance:
+      - id: A1
+        outcome: "`tusker board census --wave <id> --json` reports each candidate's task binding, frozen clean revision, proof, review, gates, blockers, claim health, and readiness with stable reason codes and no state mutation."
+      - id: A2
+        outcome: The integration handler atomically records the accepted task transition and exact merge commit in one boarding/completion receipt; crash, retry, stale revision, duplicate trigger, and changed candidate converge or refuse without a false boarded state.
+      - id: A3
+        outcome: Daemon planning, wave brief, Serve, and conductor-facing guidance consume the census/receipt projection instead of independently scraping clean-tree, proof, task-binding, or blocker predicates.
+    verification:
+      - covers: A1,A2,A3
+        check: "command: go test ./cmd/tusker -run '^TestBoardingCensus$' -count=1 && go test ./cmd/tusker -run '^TestAtomicBoardingReceipt$' -count=1"
+    dependencies:
+      - task: canonical-worktree-registration
+        kind: hard
+    artifact:
+      kind: reliability_timeline
+      path: cmd/tusker/boarding_receipt_test.go
+      summary: Read-only census plus exact-success, stale, crash, replay, duplicate-trigger, changed-candidate, and consumer-projection receipt timeline.
+      acceptance_ids: [A1, A2, A3]
+    owned_paths:
+      - cmd/tusker/boarding_census.go
+      - cmd/tusker/boarding_census_test.go
+      - cmd/tusker/boarding_receipt.go
+      - cmd/tusker/boarding_receipt_test.go
+      - cmd/tusker/commands_land.go
+      - cmd/tusker/v7_wave_authorization.go
+      - cmd/tusker/v7_wave_brief.go
+      - cmd/tusker/daemon.go
+      - cmd/tusker/serve_types.go
+      - cmd/tusker/serve_command.go
+      - skills/tusker/references/ORCHESTRATION.md
+    complexity: complex
+    concurrency_group: boarding-authority
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: typed-break-glass-close
+    requirement_refs: [R5]
+    title: Add a revision-bound, audited human break-glass close
+    outcome: >-
+      An accountable human can override a broken independent-review runner for
+      one exact task revision through a separate typed close authority that
+      leaves a permanent receipt and visible downstream risk rather than a
+      fake review pass.
+    acceptance:
+      - id: A1
+        outcome: A dedicated break-glass command requires locally accountable human authority, exact task/state/implementation revisions, applicable proof and gate fingerprints, overridden review requirement, incident reason, and optional expiry; generic force flags and actor strings fail closed.
+      - id: A2
+        outcome: Dispatched implementation/review workers cannot mint, consume, replay, transfer, or extend the authority, and revision, proof, gate, expiry, or reviewer-requirement drift refuses without closing, unlocking, moving a ref, releasing, or enabling automation.
+      - id: A3
+        outcome: One append-only receipt is visible from task, wave, digest, and Serve and projects explicit independent-review override/downstream integration risk; it never reports independent review as passed.
+      - id: A4
+        outcome: An independent read-only security review verifies the final command, receipt schema, authorization boundary, adversarial refusal suite, and operator runbook before this critical close path may be accepted.
+    verification:
+      - covers: A1,A2,A3
+        check: "command: go test ./cmd/tusker -run '^TestTypedBreakGlassClose$' -count=1 && go test ./cmd/tusker -run '^TestBreakGlassCloseSecurityRefusals$' -count=1"
+      - covers: A4
+        check: "command: go test ./cmd/tusker -run '^TestBreakGlassReceiptProjection$' -count=1"
+    dependencies:
+      - task: boarding-census-and-receipt
+        kind: hard
+    artifact:
+      kind: security_summary
+      path: cmd/tusker/break_glass_close_test.go
+      summary: Exact-authority success plus forged actor, worker use, stale revision, stale proof/gate, expiry, replay, generic-force, false-review, ref/release, and receipt-visibility refusal matrix.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/break_glass_close.go
+      - cmd/tusker/break_glass_close_test.go
+      - cmd/tusker/commands_v7.go
+      - cmd/tusker/run_ownership.go
+      - cmd/tusker/v7_wave_authorization.go
+      - cmd/tusker/v7_wave_brief.go
+      - cmd/tusker/digest.go
+      - cmd/tusker/serve_types.go
+      - cmd/tusker/serve_command.go
+      - docs/runbooks/break-glass-close.md
+    complexity: frontier
+    concurrency_group: human-close-authority
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]

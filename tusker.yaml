@@ -1,72 +1,148 @@
-schema: tusker.config/v1
-project_id: tusker
-
-storage:
-  root: .tusker
-  generated_root: .tusker/_generated
-  evidence_root: .tusker/evidence
-  events_root: .tusker/events
-  attempts_root: .tusker/attempts
-
-runtime:
-  lease_backend: local
-  lease_ttl_minutes: 120
-  mutation_mode: single_user_local
-
 automation:
-  # Automation is opt-in. Registration keeps status projections fresh; only
-  # an explicit operator change may authorize daemon dispatch.
-  enabled: false
-  dispatch_scope: armed_waves
-  completion_reactor:
-    mode: disabled
-  trigger_states: [ready, rework]
-  default_runner: codex_exec
-  enabled_runners: [codex_exec, claude-code]
-  profiles:
-    implementation-terra:
-      harness: codex_exec
-      model: gpt-5.6-terra
-      effort: medium
-      permission_preset: workspace-write-offline
-      sandbox:
-        mode: workspace-write
-        network: false
-      subagents:
-        allowed: false
-        max_concurrent: 0
-    reviewer-terra:
-      harness: codex_exec
-      model: gpt-5.6-terra
-      effort: high
-      permission_preset: read-only
-      sandbox:
-        mode: read-only
-        network: false
-      subagents:
-        allowed: false
-        max_concurrent: 0
-  default_profile: implementation-terra
-  lane_profiles:
-    execute: implementation-terra
-    review: reviewer-terra
-  workspace:
-    strategy: worktree
-    root: workspaces
-  concurrency:
-    max_active_runs: 2
-    max_active_runs_per_project: 2
-    max_concurrent_by_state:
-      rework: 1
-  runners:
-    codex_exec:
-      kind: codex_exec
-      command: codex exec --json --skip-git-repo-check -
-    claude-code:
-      kind: claude-code
-      command: claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions
-  fanout:
-    enabled: false
-    max_children: 0
-    allowed_child_types: []
-    merge_rule: manual_review
+    completion_reactor:
+        mode: authoritative
+    concurrency:
+        max_active_runs: 2
+        max_active_runs_per_project: 2
+        max_concurrent_by_state:
+            rework: 1
+    default_profile: execute-standard
+    default_runner: codex_exec
+    dispatch_scope: armed_waves
+    # Explicit dogfood opt-in. Dispatch remains limited to human-armed waves.
+    enabled: true
+    enabled_runners:
+        - codex_exec
+        - claude-code
+    fanout:
+        allowed_child_types: []
+        enabled: false
+        max_children: 0
+        merge_rule: manual_review
+    lane_profiles:
+        review: review-independent
+    profiles:
+        execute-complex:
+            effort: high
+            harness: codex_exec
+            model: gpt-5.6-terra
+            permission_preset: workspace-write-offline
+            sandbox:
+                mode: workspace-write
+                network: false
+            subagents:
+                allowed: false
+                max_concurrent: 0
+        execute-fast:
+            effort: low
+            harness: codex_exec
+            model: gpt-5.6-luna
+            permission_preset: workspace-write-offline
+            sandbox:
+                mode: workspace-write
+                network: false
+            subagents:
+                allowed: false
+                max_concurrent: 0
+        execute-frontier:
+            effort: high
+            harness: codex_exec
+            model: gpt-5.6-terra
+            permission_preset: workspace-write-offline
+            sandbox:
+                mode: workspace-write
+                network: false
+            subagents:
+                allowed: false
+                max_concurrent: 0
+        execute-standard:
+            effort: medium
+            harness: codex_exec
+            model: gpt-5.6-terra
+            permission_preset: workspace-write-offline
+            sandbox:
+                mode: workspace-write
+                network: false
+            subagents:
+                allowed: false
+                max_concurrent: 0
+        implementation-terra:
+            effort: medium
+            harness: codex_exec
+            model: gpt-5.6-terra
+            permission_preset: workspace-write-offline
+            sandbox:
+                mode: workspace-write
+                network: false
+            subagents:
+                allowed: false
+                max_concurrent: 0
+        planner:
+            effort: high
+            harness: codex_exec
+            model: gpt-5.6-sol
+            permission_preset: workspace-write-offline
+            sandbox:
+                mode: workspace-write
+                network: false
+            subagents:
+                allowed: false
+                max_concurrent: 0
+        repair-complex:
+            effort: high
+            harness: codex_exec
+            model: gpt-5.6-terra
+            permission_preset: workspace-write-offline
+            sandbox:
+                mode: workspace-write
+                network: false
+            subagents:
+                allowed: false
+                max_concurrent: 0
+        review-independent:
+            effort: high
+            harness: codex_exec
+            model: gpt-5.6-terra
+            permission_preset: read-only
+            sandbox:
+                mode: read-only
+                network: false
+            subagents:
+                allowed: false
+                max_concurrent: 0
+        reviewer-terra:
+            effort: high
+            harness: codex_exec
+            model: gpt-5.6-terra
+            permission_preset: read-only
+            sandbox:
+                mode: read-only
+                network: false
+            subagents:
+                allowed: false
+                max_concurrent: 0
+    runners:
+        claude-code:
+            command: claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions
+            kind: claude-code
+        codex_exec:
+            command: codex exec --json --skip-git-repo-check -
+            kind: codex_exec
+    trigger_states:
+        - ready
+        - rework
+    workspace:
+        root: workspaces
+        strategy: worktree
+project_id: tusker
+runtime:
+    lease_backend: local
+    lease_ttl_minutes: 120
+    mutation_mode: single_user_local
+schema: tusker.config/v1
+storage:
+    attempts_root: .tusker/attempts
+    events_root: .tusker/events
+    evidence_root: .tusker/evidence
+    generated_root: .tusker/_generated
+    root: .tusker
