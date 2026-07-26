@@ -115,6 +115,25 @@ export interface ActionResult {
   discard?: DiscardImpact;
 }
 
+export interface DeliveryCrossScopeDependency {
+  consumerTaskId?: string;
+  consumerSourceKey: string;
+  scope: string;
+  sourceKey: string;
+  taskId?: string;
+  kind: "hard";
+  persistedContractFingerprint?: string;
+  contractProvenance: "persisted" | "prospective" | "missing" | "invalid";
+  targetIntegrity: "resolved" | "missing" | "corrupt";
+  producerState: string;
+  producerLifecycle: "complete" | "incomplete" | "failed" | "unknown";
+  blockerClass: "none" | "structural" | "lifecycle";
+  satisfied: boolean;
+  repair?: string;
+  implication: string;
+  taskHref?: string;
+}
+
 // Delivery intake is deliberately a product projection. These are the exact
 // five CLI review sections, not a second client-side planner.
 export interface DeliveryReview {
@@ -132,6 +151,7 @@ export interface DeliveryReview {
   howWorkFlows: {
     frontiers: string[][]; expectedConcurrency: number; integration: string;
     sharedResources: Array<{ sourceKey: string; kind: string; capacity?: number; capacityStatus: string; constraints: string[]; referencedBy: string[]; taskLinks: DeliveryReviewLink[] }>;
+    crossScopeDependencies: DeliveryCrossScopeDependency[];
     warnings: string[]; waveId?: string; waveHref?: string;
   };
   whatNeedsYourDecision: Array<{

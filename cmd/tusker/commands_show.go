@@ -6,6 +6,18 @@ import (
 	"strings"
 )
 
+type showTaskStatusProjection struct {
+	Schema                 string                             `json:"schema"`
+	ReadOnly               bool                               `json:"readOnly"`
+	ID                     string                             `json:"id"`
+	Kind                   string                             `json:"kind"`
+	Title                  string                             `json:"title"`
+	Status                 string                             `json:"status"`
+	Readiness              string                             `json:"readiness,omitempty"`
+	Capsule                string                             `json:"capsule"`
+	CrossScopeDependencies deliveryCrossScopeReviewProjection `json:"crossScopeDependencies"`
+}
+
 func showCmd(args Args) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
@@ -28,6 +40,23 @@ func showCmd(args Args) error {
 	}
 	if args.String("section") != "" {
 		mode = "section"
+	}
+	crossScope := newDeliveryCrossScopeReviewProjection()
+	if noteDisplayKind(note.Data) == "task" && (mode == "capsule" || args.Bool("json")) {
+		crossScope, err = deliveryCrossScopeReviewForTaskAtVault(vaultPath, note)
+		if err != nil {
+			return err
+		}
+	}
+	if args.Bool("json") {
+		emitJSON(showTaskStatusProjection{
+			Schema: "tusker.task-status/v1", ReadOnly: true,
+			ID: stringField(note.Data, "id"), Kind: noteDisplayKind(note.Data),
+			Title: stringField(note.Data, "title"), Status: stringField(note.Data, "status"),
+			Readiness: stringField(note.Data, "readiness"), Capsule: strings.TrimSpace(renderCapsuleWithVault(note, vaultPath)),
+			CrossScopeDependencies: crossScope,
+		})
+		return nil
 	}
 	switch mode {
 	case "full":
@@ -56,7 +85,11 @@ func showCmd(args Args) error {
 		}
 		printSectionOrFallback(note, heading)
 	default:
-		fmt.Print(renderCapsuleWithVault(note, vaultPath))
+		content := renderCapsuleWithVault(note, vaultPath)
+		if projected := renderDeliveryCrossScopeReview(crossScope.Dependencies); projected != "" {
+			content += "\n" + projected
+		}
+		fmt.Print(content)
 	}
 	return nil
 }

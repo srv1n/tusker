@@ -11,6 +11,16 @@ import (
 	"time"
 )
 
+type v7PacketStatusProjection struct {
+	Schema                 string                             `json:"schema"`
+	ReadOnly               bool                               `json:"readOnly"`
+	TaskID                 string                             `json:"taskId"`
+	Audience               string                             `json:"audience"`
+	Content                string                             `json:"content"`
+	Path                   string                             `json:"path,omitempty"`
+	CrossScopeDependencies deliveryCrossScopeReviewProjection `json:"crossScopeDependencies"`
+}
+
 func packetV7Cmd(args Args) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
@@ -28,24 +38,14 @@ func packetV7Cmd(args Args) error {
 	if !ok {
 		return tuskerError(errorNotFound, "V7 task not found: "+id)
 	}
+	crossScope := deliveryCrossScopeReviewForTask(idx, task)
 	audience := fallback(args.String("for"), "agent")
 	if audience == "integrator" {
 		if stringField(task.Data, "work_kind") != "integrator" {
 			return tuskerError(errorInvalidArg, id+": integrator packet requires work_kind: integrator")
 		}
-		content := integratorPacket(vaultPath, task, idx)
-		if args.Bool("write") {
-			path := filepath.Join(vaultPath, "_generated", "packets", id+".integrator.md")
-			if err := writeText(path, content); err != nil {
-				return err
-			}
-			if !args.Bool("quiet") {
-				fmt.Println(path)
-			}
-			return nil
-		}
-		fmt.Print(content)
-		return nil
+		content := appendV7PacketCrossScopeProjection(integratorPacket(vaultPath, task, idx), crossScope)
+		return emitV7PacketStatus(args, vaultPath, id, audience, content, crossScope)
 	}
 	if audience == "agent" && !args.Bool("force") {
 		if reasons := v7TaskDispatchBlockers(vaultPath, task); len(reasons) > 0 {
@@ -57,12 +57,35 @@ func packetV7Cmd(args Args) error {
 			)
 		}
 	}
-	content := v7Packet(vaultPath, task, idx, audience)
+	content := appendV7PacketCrossScopeProjection(v7Packet(vaultPath, task, idx, audience), crossScope)
+	return emitV7PacketStatus(args, vaultPath, id, audience, content, crossScope)
+}
+
+func appendV7PacketCrossScopeProjection(content string, projection deliveryCrossScopeReviewProjection) string {
+	if len(projection.Dependencies) == 0 {
+		return content
+	}
+	rendered := renderDeliveryCrossScopeReview(projection.Dependencies)
+	rendered = strings.TrimPrefix(rendered, "Cross-scope hard dependencies\n")
+	return strings.TrimRight(content, "\n") + "\n\n## Cross-scope hard dependencies\n\n" + rendered
+}
+
+func emitV7PacketStatus(args Args, vaultPath, id, audience, content string, crossScope deliveryCrossScopeReviewProjection) error {
+	path := ""
 	if args.Bool("write") {
-		path := filepath.Join(vaultPath, "_generated", "packets", id+"."+audience+".md")
+		path = filepath.Join(vaultPath, "_generated", "packets", id+"."+audience+".md")
 		if err := writeText(path, content); err != nil {
 			return err
 		}
+	}
+	if args.Bool("json") {
+		emitJSON(v7PacketStatusProjection{
+			Schema: "tusker.task-packet/v1", ReadOnly: true, TaskID: id, Audience: audience,
+			Content: content, Path: path, CrossScopeDependencies: crossScope,
+		})
+		return nil
+	}
+	if path != "" {
 		if !args.Bool("quiet") {
 			fmt.Println(path)
 		}
