@@ -430,7 +430,7 @@ func TestV7FullGateLedgerBindsLifecycleProviderContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacyToolchain := scheduledPromotionToolchainFingerprint(repo, commands)
-	isolatedToolchain := scheduledPromotionFullGateToolchainFingerprint(repo, commands, "test-fixture")
+	isolatedToolchain := scheduledPromotionFullGateToolchainFingerprint(repo, commands, "test-fixture", DefaultStateRoot())
 	if legacyToolchain == "" || isolatedToolchain == "" || legacyToolchain == isolatedToolchain {
 		t.Fatalf("provider ledger fixture lacks distinct identities: legacy=%q isolated=%q", legacyToolchain, isolatedToolchain)
 	}

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -82,11 +83,19 @@ func (s *RuntimeStore) RecordGateLedger(entry GateLedgerEntry) error {
 	if strings.TrimSpace(entry.Toolchain) == "" {
 		return tuskerError(errorInvalidArg, "gate ledger requires a non-empty toolchain fingerprint")
 	}
-	_, err := s.exec(`INSERT INTO gate_ledger (id, project_id, tree_hash, command, profile, toolchain, host, duration_ms, passed_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	receiptJSON := ""
+	if entry.ProviderReceipt != nil {
+		raw, err := json.Marshal(entry.ProviderReceipt)
+		if err != nil {
+			return fmt.Errorf("encode gate provider receipt: %w", err)
+		}
+		receiptJSON = string(raw)
+	}
+	_, err := s.exec(`INSERT INTO gate_ledger (id, project_id, tree_hash, command, profile, toolchain, host, duration_ms, passed_at, provider_receipt_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(project_id, tree_hash, command, profile, toolchain) DO UPDATE SET
-			host=excluded.host, duration_ms=excluded.duration_ms, passed_at=excluded.passed_at`,
-		entry.ID, entry.ProjectID, entry.TreeHash, entry.Command, entry.Profile, entry.Toolchain, entry.Host, entry.DurationMS, entry.PassedAt)
+			host=excluded.host, duration_ms=excluded.duration_ms, passed_at=excluded.passed_at, provider_receipt_json=excluded.provider_receipt_json`,
+		entry.ID, entry.ProjectID, entry.TreeHash, entry.Command, entry.Profile, entry.Toolchain, entry.Host, entry.DurationMS, entry.PassedAt, receiptJSON)
 	return err
 }
 
@@ -95,16 +104,32 @@ func (s *RuntimeStore) FindGateLedger(projectID, treeHash, command, profile, too
 		return nil, nil
 	}
 	var entry GateLedgerEntry
-	err := s.queryRowScan(`SELECT id, project_id, tree_hash, command, profile, toolchain, host, duration_ms, passed_at
+	var receiptJSON string
+	err := s.queryRowScan(`SELECT id, project_id, tree_hash, command, profile, toolchain, host, duration_ms, passed_at, provider_receipt_json
 		FROM gate_ledger WHERE project_id = ? AND tree_hash = ? AND command = ? AND profile = ? AND toolchain = ?`,
-		[]any{projectID, treeHash, command, profile, toolchain}, &entry.ID, &entry.ProjectID, &entry.TreeHash, &entry.Command, &entry.Profile, &entry.Toolchain, &entry.Host, &entry.DurationMS, &entry.PassedAt)
+		[]any{projectID, treeHash, command, profile, toolchain}, &entry.ID, &entry.ProjectID, &entry.TreeHash, &entry.Command, &entry.Profile, &entry.Toolchain, &entry.Host, &entry.DurationMS, &entry.PassedAt, &receiptJSON)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
+	if err := decodeGateProviderReceipt(receiptJSON, &entry); err != nil {
+		return nil, err
+	}
 	return &entry, nil
+}
+
+func decodeGateProviderReceipt(raw string, entry *GateLedgerEntry) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var receipt GateProviderReceipt
+	if err := json.Unmarshal([]byte(raw), &receipt); err != nil {
+		return fmt.Errorf("decode gate provider receipt: %w", err)
+	}
+	entry.ProviderReceipt = &receipt
+	return nil
 }
 
 func gateLedgerCmd(args Args, action string) error {

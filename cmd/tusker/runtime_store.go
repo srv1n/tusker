@@ -35,6 +35,19 @@ type GateLedgerEntry struct {
 	Host       string `json:"host"`
 	DurationMS int64  `json:"duration_ms"`
 	PassedAt   string `json:"passed_at"`
+	// ProviderReceipt is the certified lifecycle identity for a green full
+	// promotion gate. It is intentionally structured rather than an artifact
+	// annotation, so reuse can be tied to the provider's measured scope.
+	ProviderReceipt *GateProviderReceipt `json:"provider_receipt,omitempty"`
+}
+
+type GateProviderReceipt struct {
+	LifecycleID       string `json:"lifecycle_id"`
+	ReceiptDigest     string `json:"receipt_digest"`
+	RuntimeDigest     string `json:"runtime_digest"`
+	PolicyDigest      string `json:"policy_digest"`
+	AttestationDigest string `json:"attestation_digest"`
+	ImageOrVMID       string `json:"image_or_vm_id"`
 }
 
 func (s *RuntimeStore) LatestGateLedgerBefore(projectID, command, profile, toolchain, before string) (*GateLedgerEntry, error) {
@@ -42,11 +55,15 @@ func (s *RuntimeStore) LatestGateLedgerBefore(projectID, command, profile, toolc
 	if strings.TrimSpace(toolchain) == "" {
 		return nil, nil
 	}
-	err := s.queryRowScan(`SELECT id, project_id, tree_hash, command, profile, toolchain, host, duration_ms, passed_at FROM gate_ledger WHERE project_id = ? AND command = ? AND profile = ? AND toolchain = ? AND passed_at < ? ORDER BY passed_at DESC LIMIT 1`, []any{projectID, command, profile, toolchain, before}, &entry.ID, &entry.ProjectID, &entry.TreeHash, &entry.Command, &entry.Profile, &entry.Toolchain, &entry.Host, &entry.DurationMS, &entry.PassedAt)
+	var receiptJSON string
+	err := s.queryRowScan(`SELECT id, project_id, tree_hash, command, profile, toolchain, host, duration_ms, passed_at, provider_receipt_json FROM gate_ledger WHERE project_id = ? AND command = ? AND profile = ? AND toolchain = ? AND passed_at < ? ORDER BY passed_at DESC LIMIT 1`, []any{projectID, command, profile, toolchain, before}, &entry.ID, &entry.ProjectID, &entry.TreeHash, &entry.Command, &entry.Profile, &entry.Toolchain, &entry.Host, &entry.DurationMS, &entry.PassedAt, &receiptJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := decodeGateProviderReceipt(receiptJSON, &entry); err != nil {
 		return nil, err
 	}
 	return &entry, nil
@@ -71,7 +88,7 @@ func (s *RuntimeStore) LatestCompleteGateLedgerBefore(projectID string, commands
 	if strings.TrimSpace(toolchain) == "" {
 		return nil, nil
 	}
-	rows, err := s.query(`SELECT id, project_id, tree_hash, command, profile, toolchain, host, duration_ms, passed_at FROM gate_ledger WHERE project_id = ? AND profile = ? AND toolchain = ?`, projectID, profile, toolchain)
+	rows, err := s.query(`SELECT id, project_id, tree_hash, command, profile, toolchain, host, duration_ms, passed_at, provider_receipt_json FROM gate_ledger WHERE project_id = ? AND profile = ? AND toolchain = ?`, projectID, profile, toolchain)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +101,11 @@ func (s *RuntimeStore) LatestCompleteGateLedgerBefore(projectID string, commands
 	buckets := map[string]*bucket{}
 	for rows.Next() {
 		var entry GateLedgerEntry
-		if err := rows.Scan(&entry.ID, &entry.ProjectID, &entry.TreeHash, &entry.Command, &entry.Profile, &entry.Toolchain, &entry.Host, &entry.DurationMS, &entry.PassedAt); err != nil {
+		var receiptJSON string
+		if err := rows.Scan(&entry.ID, &entry.ProjectID, &entry.TreeHash, &entry.Command, &entry.Profile, &entry.Toolchain, &entry.Host, &entry.DurationMS, &entry.PassedAt, &receiptJSON); err != nil {
+			return nil, err
+		}
+		if err := decodeGateProviderReceipt(receiptJSON, &entry); err != nil {
 			return nil, err
 		}
 		at, parseErr := time.Parse(time.RFC3339Nano, entry.PassedAt)
@@ -859,6 +880,7 @@ func (s *RuntimeStore) Migrate() error {
 			host TEXT NOT NULL DEFAULT '',
 			duration_ms INTEGER NOT NULL DEFAULT 0,
 			passed_at TEXT NOT NULL,
+			provider_receipt_json TEXT NOT NULL DEFAULT '',
 			UNIQUE(project_id, tree_hash, command, profile, toolchain)
 		);`,
 		`CREATE TABLE IF NOT EXISTS batch_gate_runs (
@@ -989,6 +1011,9 @@ func (s *RuntimeStore) Migrate() error {
 		}
 	}
 	if err := s.migrateGateLedgerToolchain(); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("gate_ledger", "provider_receipt_json", `ALTER TABLE gate_ledger ADD COLUMN provider_receipt_json TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
 	if err := s.ensureColumn("runs", "work_revision", `ALTER TABLE runs ADD COLUMN work_revision INTEGER NOT NULL DEFAULT 0`); err != nil {
@@ -1232,6 +1257,7 @@ func (s *RuntimeStore) migrateGateLedgerToolchain() error {
 			command TEXT NOT NULL, profile TEXT NOT NULL DEFAULT '',
 			toolchain TEXT NOT NULL DEFAULT '', host TEXT NOT NULL DEFAULT '',
 			duration_ms INTEGER NOT NULL DEFAULT 0, passed_at TEXT NOT NULL,
+			provider_receipt_json TEXT NOT NULL DEFAULT '',
 			UNIQUE(project_id, tree_hash, command, profile, toolchain)
 		)`); err != nil {
 			return err

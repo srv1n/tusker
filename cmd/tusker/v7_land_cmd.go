@@ -2888,10 +2888,39 @@ func runV7LandingGateOnRef(vaultPath, repoRoot, ref string) (bool, string) {
 // candidate. Unlike the focused landing gate, this path uses the shared gate
 // ledger and harvest semantics and is therefore valid promotion proof.
 type promotionGateExecution struct {
-	Result       GateTierResult
-	ArtifactRef  string
-	ArtifactRefs []string
-	Err          error
+	Result           GateTierResult
+	ArtifactRef      string
+	ArtifactRefs     []string
+	ProviderReceipts []GateProviderReceipt
+	Err              error
+}
+
+// v7CertifiedFullGateLedger rejects artifact-only or legacy green rows for a
+// lifecycle-provider toolchain. The receipt is the durable certificate that
+// the measured provider scope was cleaned, not merely a text log annotation.
+type v7FullGateReceiptVerifier interface {
+	MatchesGateProviderReceipt(*GateProviderReceipt) bool
+}
+
+type v7CertifiedFullGateLedger struct {
+	store    *RuntimeStore
+	verifier v7FullGateReceiptVerifier
+}
+
+func (l v7CertifiedFullGateLedger) FindGateLedger(projectID, treeHash, command, profile, toolchain string) (*GateLedgerEntry, error) {
+	entry, err := l.store.FindGateLedger(projectID, treeHash, command, profile, toolchain)
+	if err != nil || entry == nil || l.verifier == nil || !l.verifier.MatchesGateProviderReceipt(entry.ProviderReceipt) {
+		return nil, err
+	}
+	return entry, nil
+}
+
+func v7CertifiedGateProviderReceipt(receipt *GateProviderReceipt) bool {
+	return receipt != nil && strings.TrimSpace(receipt.LifecycleID) != "" && v7FullGateDigest(receipt.ReceiptDigest) && v7FullGateDigest(receipt.RuntimeDigest) && v7FullGateDigest(receipt.PolicyDigest) && v7FullGateDigest(receipt.AttestationDigest) && v7FullGateDigest(receipt.ImageOrVMID)
+}
+
+func v7GateProviderReceiptFromAudit(audit v7FullGateProviderAudit) GateProviderReceipt {
+	return GateProviderReceipt{LifecycleID: audit.LifecycleID, ReceiptDigest: audit.ReceiptDigest, RuntimeDigest: audit.RuntimeDigest, PolicyDigest: audit.PolicyDigest, AttestationDigest: audit.AttestationDigest, ImageOrVMID: audit.ImageOrVMID}
 }
 
 func runV7GateTierOnRef(vaultPath, repoRoot, ref, projectID string, policy GateTierPolicy, store *RuntimeStore) promotionGateExecution {
@@ -2978,22 +3007,63 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	runtime.TreeHash = func(string) (string, error) { return frozenTreeHash, nil }
 	runtime.TreeStatus = func(string) (string, error) { return frozenTreeStatus, nil }
 	runtime.Toolchain = func(repoRoot string, commands []string) string {
-		return scheduledPromotionFullGateToolchainFingerprint(repoRoot, commands, policy.IsolationProvider)
+		return scheduledPromotionFullGateToolchainFingerprint(repoRoot, commands, policy.IsolationProvider, stateRoot)
 	}
 	runtime.DiffPaths = nil
+	verifier, trustedProvider := provider.(v7FullGateReceiptVerifier)
+	if store != nil {
+		runtime.Ledger = v7CertifiedFullGateLedger{store: store, verifier: verifier}
+	}
 	var raw bytes.Buffer
 	var containmentErr error
+	var commandReceipt *GateProviderReceipt
+	var providerReceipts []GateProviderReceipt
+	var ledgerErr error
+	runtime.RecordPass = func(command, treeHash, profile, toolchain string, elapsed time.Duration) {
+		if ledgerErr != nil {
+			return
+		}
+		if store == nil || !trustedProvider || !verifier.MatchesGateProviderReceipt(commandReceipt) {
+			ledgerErr = fmt.Errorf("%w: cannot persist certified lifecycle receipt for %q", errV7FullGateProvider, command)
+			return
+		}
+		receipt := *commandReceipt
+		if err := store.RecordGateLedger(GateLedgerEntry{ProjectID: projectID, TreeHash: treeHash, Command: command, Profile: profile, Toolchain: toolchain, Host: runtimeLeaseHost(), DurationMS: elapsed.Milliseconds(), ProviderReceipt: &receipt}); err != nil {
+			ledgerErr = fmt.Errorf("%w: persist certified lifecycle receipt for %q: %v", errV7FullGateProvider, command, err)
+			return
+		}
+		providerReceipts = append(providerReceipts, receipt)
+		commandReceipt = nil
+	}
 	runtime.Exec = func(workspace, command string) (string, error) {
+		commandReceipt = nil
 		scheduledPromotionBeforeFullGateCommand(command)
 		outputBytes, runErr := provider.Run(ctx, workspace, command)
 		output := string(outputBytes)
 		fmt.Fprintf(&raw, "$ %s\n%s\n", command, output)
+		if audited, ok := provider.(interface {
+			LastReceipt() v7FullGateProviderAudit
+		}); ok {
+			receipt := audited.LastReceipt()
+			if receipt.ReceiptDigest != "" {
+				fmt.Fprintf(&raw, "# lifecycle_id=%s receipt_digest=%s runtime_digest=%s policy_digest=%s attestation_digest=%s image_or_vm_id=%s\n", receipt.LifecycleID, receipt.ReceiptDigest, receipt.RuntimeDigest, receipt.PolicyDigest, receipt.AttestationDigest, receipt.ImageOrVMID)
+				if runErr == nil {
+					candidate := v7GateProviderReceiptFromAudit(receipt)
+					if v7CertifiedGateProviderReceipt(&candidate) {
+						commandReceipt = &candidate
+					}
+				}
+			}
+		}
 		if errors.Is(runErr, errV7FullGateProvider) {
 			containmentErr = runErr
 		}
 		return output, runErr
 	}
 	result, err := runGateTier(policy, policy.Profile, runtime)
+	if err == nil && ledgerErr != nil {
+		err = ledgerErr
+	}
 	if err == nil && containmentErr != nil {
 		err = containmentErr
 	}
@@ -3009,7 +3079,7 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	} else if writeErr = os.WriteFile(path, raw.Bytes(), 0o600); writeErr != nil && err == nil {
 		err = writeErr
 	}
-	return promotionGateExecution{Result: result, ArtifactRef: path, ArtifactRefs: []string{path}, Err: err}
+	return promotionGateExecution{Result: result, ArtifactRef: path, ArtifactRefs: []string{path}, ProviderReceipts: providerReceipts, Err: err}
 }
 
 func appendV7WaveLandingAudit(vaultPath, waveID string, entries []v7LandingAuditEntry, actor string) error {

@@ -43,15 +43,16 @@ type DepartureCandidate struct {
 }
 
 type DepartureGate struct {
-	Command     string           `json:"command,omitempty"`
-	Profile     string           `json:"profile,omitempty"`
-	Toolchain   string           `json:"toolchain,omitempty"`
-	TreeHash    string           `json:"tree_hash,omitempty"`
-	Status      string           `json:"status,omitempty"`
-	StartedAt   string           `json:"started_at,omitempty"`
-	FinishedAt  string           `json:"finished_at,omitempty"`
-	ArtifactRef string           `json:"artifact_ref,omitempty"`
-	Failure     DepartureFailure `json:"failure,omitempty"`
+	Command          string                `json:"command,omitempty"`
+	Profile          string                `json:"profile,omitempty"`
+	Toolchain        string                `json:"toolchain,omitempty"`
+	TreeHash         string                `json:"tree_hash,omitempty"`
+	Status           string                `json:"status,omitempty"`
+	StartedAt        string                `json:"started_at,omitempty"`
+	FinishedAt       string                `json:"finished_at,omitempty"`
+	ArtifactRef      string                `json:"artifact_ref,omitempty"`
+	ProviderReceipts []GateProviderReceipt `json:"provider_receipts,omitempty"`
+	Failure          DepartureFailure      `json:"failure,omitempty"`
 }
 
 // DepartureFailure keeps promotion-red evidence referential and bounded. The

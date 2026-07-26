@@ -229,7 +229,11 @@ func scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID string, wf
 	if gate.Command == "" {
 		return scheduledPromotionCandidateSnapshot{}, tuskerError(errorInvalidTransition, "promotion candidate refusal: full_gate_missing")
 	}
-	gate.Toolchain = scheduledPromotionFullGateToolchainFingerprint(repoRoot, gatePolicy.HarvestCommands, gatePolicy.IsolationProvider)
+	providerStateRoot := DefaultStateRoot()
+	if trustedStore != nil && strings.TrimSpace(trustedStore.stateRoot) != "" {
+		providerStateRoot = trustedStore.stateRoot
+	}
+	gate.Toolchain = scheduledPromotionFullGateToolchainFingerprint(repoRoot, gatePolicy.HarvestCommands, gatePolicy.IsolationProvider, providerStateRoot)
 	return scheduledPromotionCandidateSnapshot{WaveID: waveID, Candidate: candidate, Gate: gate, DefaultBranch: defaultBranch}, nil
 }
 
@@ -769,12 +773,12 @@ func scheduledPromotionToolchainFingerprint(repoRoot string, commands []string) 
 // Full-gate ledger proof is valid only under the configured provider contract
 // that produced it. This prevents an old sandbox-exec or unrestricted pass
 // from bypassing the lifecycle boundary before a full promotion.
-func scheduledPromotionFullGateToolchainFingerprint(repoRoot string, commands []string, provider string) string {
+func scheduledPromotionFullGateToolchainFingerprint(repoRoot string, commands []string, provider, stateRoot string) string {
 	base := scheduledPromotionToolchainFingerprint(repoRoot, commands)
 	if base == "" {
 		return ""
 	}
-	_, _, identity, _, err := resolveV7TrustedFullGateProvider(provider)
+	_, _, identity, _, err := resolveV7TrustedFullGateProvider(provider, stateRoot)
 	if err != nil {
 		return departureFingerprint(v7FullGateIsolationContract, "unavailable", strings.TrimSpace(provider), base)
 	}
@@ -1363,6 +1367,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 		intent.Candidate, intent.Gate = before.Candidate, before.Gate
 		intent.Gate.Status = "failed"
 		intent.Gate.StartedAt, intent.Gate.FinishedAt, intent.Gate.ArtifactRef = gateStarted.Format(time.RFC3339Nano), gateFinished.Format(time.RFC3339Nano), artifactRefs[len(artifactRefs)-1]
+		intent.Gate.ProviderReceipts = append([]GateProviderReceipt(nil), execution.ProviderReceipts...)
 		intent.Gate.Failure = DepartureFailure{Class: string(route.Class), Identity: route.StableIdentity, OwningTaskID: packet.OwningTaskID, BisectionRef: packet.BisectionRef, ArtifactRefs: packet.ArtifactRefs, RepairTaskID: repairTaskID, ModelTriage: route.ModelTriage, Packet: packet, Action: action, AffectedTaskIDs: affected}
 		intent.State = DepartureStateRepairing
 		intent.BlockReason = "promotion gate red: " + route.StableIdentity
@@ -1444,6 +1449,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	intent.Gate.Status = "passed"
 	intent.Gate.StartedAt = gateStarted.Format(time.RFC3339Nano)
 	intent.Gate.FinishedAt = gateFinished.Format(time.RFC3339Nano)
+	intent.Gate.ProviderReceipts = append([]GateProviderReceipt(nil), execution.ProviderReceipts...)
 	intent.Promotion = DeparturePromotion{
 		ExpectedRef: before.DefaultBranch, ExpectedSHA: before.Candidate.ExpectedDefaultBranchSHA,
 		IntendedSHA: mergeCommit,

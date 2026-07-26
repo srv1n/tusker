@@ -374,6 +374,15 @@ func installV7FullGateProviderFixture(t *testing.T) {
 
 type testV7FullGateProvider struct{}
 
+var testV7FullGateProviderReceipt = GateProviderReceipt{
+	LifecycleID:       "fixture:scope",
+	ReceiptDigest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	RuntimeDigest:     "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	PolicyDigest:      "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+	AttestationDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+	ImageOrVMID:       "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+}
+
 func (*testV7FullGateProvider) Run(ctx context.Context, workspace, command string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -388,6 +397,18 @@ func (*testV7FullGateProvider) Run(ctx context.Context, workspace, command strin
 }
 
 func (*testV7FullGateProvider) Close() error { return nil }
+
+func (*testV7FullGateProvider) LastReceipt() v7FullGateProviderAudit {
+	return v7FullGateProviderAudit{
+		LifecycleID: testV7FullGateProviderReceipt.LifecycleID, ReceiptDigest: testV7FullGateProviderReceipt.ReceiptDigest,
+		RuntimeDigest: testV7FullGateProviderReceipt.RuntimeDigest, PolicyDigest: testV7FullGateProviderReceipt.PolicyDigest,
+		AttestationDigest: testV7FullGateProviderReceipt.AttestationDigest, ImageOrVMID: testV7FullGateProviderReceipt.ImageOrVMID,
+	}
+}
+
+func (*testV7FullGateProvider) MatchesGateProviderReceipt(receipt *GateProviderReceipt) bool {
+	return receipt != nil && *receipt == testV7FullGateProviderReceipt
+}
 
 func yamlQuoteForTest(value string) string {
 	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
