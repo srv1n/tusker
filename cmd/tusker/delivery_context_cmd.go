@@ -310,7 +310,15 @@ func buildDeliveryPlanningContextForScope(vault, specArg, excludedPlanScope stri
 	report.Project = deliveryContextProject{ID: projectID, RepoRef: ".", VaultRef: ".tusker", Provenance: configProvenance}
 	report.IntegrationBase, report.Unknowns = deliveryContextResolveIntegrationBase(vault, configProvenance, report.Unknowns)
 
-	specs, decisions, documentDomains, governingRefs, documentUnknowns, err := deliveryContextDocuments(vault, specArg, excludedPlanScope)
+	notes, notesErr := listOperationalNotesFrontmatter(vault)
+	if notesErr != nil {
+		report.Unknowns = append(report.Unknowns, deliveryContextUnknownFact(
+			"tracker", "epic_candidates,duplicate_task_clues,human_gates", "operational frontmatter could not be inspected", "repair invalid .tusker/work frontmatter", []deliveryContextProvenance{{Kind: "frontmatter_scan", Ref: ".tusker/work"}},
+		))
+		notes = nil
+	}
+	expectedWorkStream, expectedWorkStreamKnown := deliveryContextExpectedWorkStream(notes, excludedPlanScope)
+	specs, decisions, documentDomains, governingRefs, documentUnknowns, err := deliveryContextDocuments(vault, specArg, excludedPlanScope, expectedWorkStream, expectedWorkStreamKnown)
 	if err != nil {
 		return report, err
 	}
@@ -325,13 +333,6 @@ func buildDeliveryPlanningContextForScope(vault, specArg, excludedPlanScope stri
 		))
 	}
 
-	notes, notesErr := listOperationalNotesFrontmatter(vault)
-	if notesErr != nil {
-		report.Unknowns = append(report.Unknowns, deliveryContextUnknownFact(
-			"tracker", "epic_candidates,duplicate_task_clues,human_gates", "operational frontmatter could not be inspected", "repair invalid .tusker/work frontmatter", []deliveryContextProvenance{{Kind: "frontmatter_scan", Ref: ".tusker/work"}},
-		))
-		notes = nil
-	}
 	notes = deliveryContextExcludePlanScope(notes, excludedPlanScope)
 	relevantTasks := deliveryContextRelevantTasks(notes, governingRefs)
 	taskDomains := deliveryContextDomainsFromNotes(relevantTasks)
@@ -391,7 +392,7 @@ type deliveryContextDocumentRequest struct {
 	Required bool
 }
 
-func deliveryContextDocuments(vault, specArg, excludedPlanScope string) ([]deliveryContextDocument, []deliveryContextDocument, []string, []string, []deliveryContextUnknown, error) {
+func deliveryContextDocuments(vault, specArg, excludedPlanScope string, expectedWorkStream deliveryContextWorkStreamExpectation, expectedWorkStreamKnown bool) ([]deliveryContextDocument, []deliveryContextDocument, []string, []string, []deliveryContextUnknown, error) {
 	refs := splitCSV(specArg)
 	if len(refs) == 0 {
 		return nil, nil, nil, nil, nil, tuskerError(errorMissingArg, "--spec must name at least one governing specification")
@@ -437,7 +438,13 @@ func deliveryContextDocuments(vault, specArg, excludedPlanScope string) ([]deliv
 			))
 			continue
 		}
-		materialRaw := deliveryContextStripScopeWorkStream(raw, excludedPlanScope)
+		materialRaw := []byte(strings.TrimRight(string(raw), "\n"))
+		// A scope with no uniquely reconstructable imported wave has no trusted
+		// generated payload. Keep any marker content material rather than guessing
+		// that it is Tusker-owned.
+		if strings.TrimSpace(excludedPlanScope) == "" || expectedWorkStreamKnown {
+			materialRaw = deliveryContextCanonicalDocumentMaterialWithExpectation(raw, excludedPlanScope, expectedWorkStream, expectedWorkStreamKnown)
+		}
 		data, body, parseErr := parseFrontmatter(string(materialRaw))
 		if parseErr != nil {
 			if request.Required {
@@ -448,6 +455,12 @@ func deliveryContextDocuments(vault, specArg, excludedPlanScope string) ([]deliv
 			))
 			continue
 		}
+		// A generated delivery-import block is bookkeeping, not authored planning
+		// input. Its renderer intentionally normalizes the end of a document, so
+		// canonicalize only terminal newlines after stripping that block. This
+		// makes import idempotent for a spec that originally had no final newline,
+		// while retaining every human-authored character (including all nonterminal
+		// whitespace) as fingerprint material.
 		fingerprintMaterial := materialRaw
 		// Importing a scoped work-stream into a decision refreshes only decision
 		// bookkeeping (`updated_*` and state revision) in addition to the marker
@@ -514,7 +527,7 @@ func deliveryContextDecisionMaterial(data map[string]any, body string) []byte {
 	raw, _ := json.Marshal(struct {
 		Frontmatter map[string]any `json:"frontmatter"`
 		Body        string         `json:"body"`
-	}{Frontmatter: material, Body: body})
+	}{Frontmatter: material, Body: strings.TrimRight(body, "\n")})
 	return raw
 }
 
@@ -636,26 +649,204 @@ func deliveryContextExcludePlanScope(notes []Note, scope string) []Note {
 	return out
 }
 
-// deliveryContextStripScopeWorkStream removes only Tusker's generated marker
-// for the scoped import before a governing document is fingerprinted. The
-// author-controlled document remains material; other delivery scopes remain
-// material too. A malformed marker is preserved and therefore fails closed as
-// ordinary document drift rather than silently hiding content.
-func deliveryContextStripScopeWorkStream(raw []byte, scope string) []byte {
+type deliveryContextWorkStreamExpectation struct {
+	WaveID      string
+	TaskSources map[string]string
+}
+
+func deliveryContextExpectedWorkStream(notes []Note, scope string) (deliveryContextWorkStreamExpectation, bool) {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		return deliveryContextWorkStreamExpectation{}, false
+	}
+	var wave Note
+	found := 0
+	for _, note := range notes {
+		if effectiveV7Kind(note.Data) == "wave" && stringField(note.Data, "delivery_plan_scope") == scope {
+			wave, found = note, found+1
+		}
+	}
+	if found != 1 {
+		return deliveryContextWorkStreamExpectation{}, false
+	}
+	waveID := stringField(wave.Data, "id")
+	members := normalizeList(wave.Data["members"])
+	if !v7WaveIDPattern.MatchString(waveID) || len(members) == 0 {
+		return deliveryContextWorkStreamExpectation{}, false
+	}
+	tasks := map[string]Note{}
+	for _, note := range notes {
+		if effectiveV7Kind(note.Data) == "task" {
+			tasks[stringField(note.Data, "id")] = note
+		}
+	}
+	expected := deliveryContextWorkStreamExpectation{WaveID: waveID, TaskSources: map[string]string{}}
+	for _, member := range members {
+		task, ok := tasks[member]
+		if !ok || stringField(task.Data, "delivery_plan_scope") != scope || stringField(task.Data, "wave") != waveID {
+			return deliveryContextWorkStreamExpectation{}, false
+		}
+		source := stringField(task.Data, "delivery_source_key")
+		if !v7TaskIDPattern.MatchString(member) || source == "" || expected.TaskSources[member] != "" {
+			return deliveryContextWorkStreamExpectation{}, false
+		}
+		expected.TaskSources[member] = source
+	}
+	return expected, true
+}
+
+type deliveryContextWorkStreamBlock struct {
+	start                 int
+	end                   int
+	legacyHeadingStart    int
+	legacyHeadingDetected bool
+}
+
+// deliveryContextGeneratedWorkStream recognizes exactly one renderer-owned
+// block for one scope. Marker text alone is never authority to remove content:
+// duplicate, mismatched, or hand-edited payload remains fingerprint material.
+func deliveryContextGeneratedWorkStream(text, scope string, expected deliveryContextWorkStreamExpectation, expectedKnown bool) (deliveryContextWorkStreamBlock, bool) {
+	begin, end := deliveryScopeMarkers(scope)
+	if strings.Count(text, begin) != 1 || strings.Count(text, end) != 1 {
+		return deliveryContextWorkStreamBlock{}, false
+	}
+	start := strings.Index(text, begin)
+	endStart := strings.Index(text[start+len(begin):], end)
+	if start < 0 || endStart < 0 {
+		return deliveryContextWorkStreamBlock{}, false
+	}
+	endStart += start + len(begin)
+	blockEnd := endStart + len(end)
+	lines := strings.Split(text[start:blockEnd], "\n")
+	if len(lines) < 7 || lines[0] != begin || lines[1] != "" || lines[len(lines)-1] != end {
+		return deliveryContextWorkStreamBlock{}, false
+	}
+	line := 2
+	if lines[line] == "## Work streams" {
+		line++
+		if line >= len(lines)-1 || lines[line] != "" {
+			return deliveryContextWorkStreamBlock{}, false
+		}
+		line++
+	}
+	seenTasks, seenSources := map[string]bool{}, map[string]bool{}
+	taskSources := map[string]string{}
+	previousSource := ""
+	for line < len(lines)-1 && strings.HasPrefix(lines[line], "- `[[") {
+		id, source, ok := deliveryContextGeneratedTaskLine(lines[line])
+		if !ok || seenTasks[id] || seenSources[source] || (previousSource != "" && source <= previousSource) {
+			return deliveryContextWorkStreamBlock{}, false
+		}
+		seenTasks[id], seenSources[source], taskSources[id], previousSource = true, true, source, source
+		line++
+	}
+	if len(seenTasks) == 0 || line >= len(lines)-1 || lines[line] != "" {
+		return deliveryContextWorkStreamBlock{}, false
+	}
+	line++
+	if line >= len(lines)-1 || !deliveryContextGeneratedWaveLine(lines[line]) {
+		return deliveryContextWorkStreamBlock{}, false
+	}
+	waveID := deliveryContextGeneratedWaveID(lines[line])
+	line++
+	if line != len(lines)-2 || lines[line] != "" {
+		return deliveryContextWorkStreamBlock{}, false
+	}
+	if expectedKnown && !deliveryContextWorkStreamMatchesExpected(taskSources, waveID, expected) {
+		return deliveryContextWorkStreamBlock{}, false
+	}
+
+	block := deliveryContextWorkStreamBlock{start: start, end: blockEnd, legacyHeadingStart: -1}
+	const legacyHeading = "## Work streams\n\n"
+	if before := text[:start]; strings.HasSuffix(before, legacyHeading) {
+		block.legacyHeadingDetected = true
+		block.legacyHeadingStart = len(before) - len(legacyHeading)
+	}
+	return block, true
+}
+
+func deliveryContextGeneratedTaskLine(line string) (string, string, bool) {
+	const prefix = "- `[["
+	const separator = "]]` implements delivery source `"
+	const suffix = "`."
+	if !strings.HasPrefix(line, prefix) || !strings.HasSuffix(line, suffix) {
+		return "", "", false
+	}
+	rest := strings.TrimPrefix(line, prefix)
+	cut := strings.Index(rest, separator)
+	if cut < 1 {
+		return "", "", false
+	}
+	id, source := rest[:cut], strings.TrimSuffix(rest[cut+len(separator):], suffix)
+	if !v7TaskIDPattern.MatchString(id) || source == "" {
+		return "", "", false
+	}
+	return id, source, true
+}
+
+func deliveryContextGeneratedWaveLine(line string) bool {
+	return deliveryContextGeneratedWaveID(line) != ""
+}
+
+func deliveryContextGeneratedWaveID(line string) string {
+	const prefix = "- `[["
+	const suffix = "]]` is the imported delivery wave."
+	if !strings.HasPrefix(line, prefix) || !strings.HasSuffix(line, suffix) {
+		return ""
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(line, prefix), suffix)
+	if !v7WaveIDPattern.MatchString(id) {
+		return ""
+	}
+	return id
+}
+
+func deliveryContextWorkStreamMatchesExpected(actual map[string]string, waveID string, expected deliveryContextWorkStreamExpectation) bool {
+	if waveID != expected.WaveID || len(actual) != len(expected.TaskSources) {
+		return false
+	}
+	for id, source := range actual {
+		if expected.TaskSources[id] != source {
+			return false
+		}
+	}
+	return true
+}
+
+func deliveryContextRemoveGeneratedWorkStream(text string, block deliveryContextWorkStreamBlock) string {
+	left := text[:block.start]
+	if block.legacyHeadingDetected {
+		left = text[:block.legacyHeadingStart]
+	}
+	left = strings.TrimRight(left, "\n")
+	right := strings.TrimLeft(text[block.end:], "\n")
+	if left == "" {
+		return right
+	}
+	if right == "" {
+		return left
+	}
+	return left + "\n\n" + right
+}
+
+// deliveryContextCanonicalDocumentMaterial removes only generated import
+// bookkeeping from planning fingerprints. New blocks carry their heading inside
+// the markers. The terminal-heading clause is narrow compatibility for blocks
+// written by the older renderer, which placed an otherwise empty heading just
+// before its marker. Any authored text under that heading remains material.
+func deliveryContextCanonicalDocumentMaterialWithExpectation(raw []byte, scope string, expected deliveryContextWorkStreamExpectation, expectedKnown bool) []byte {
 	scope = strings.TrimSpace(scope)
 	if scope == "" {
 		return raw
 	}
-	begin, end := deliveryScopeMarkers(scope)
+	if !expectedKnown {
+		return []byte(strings.TrimRight(string(raw), "\n"))
+	}
 	text := string(raw)
-	start := strings.Index(text, begin)
-	if start < 0 {
-		return raw
+	if block, ok := deliveryContextGeneratedWorkStream(text, scope, expected, expectedKnown); ok {
+		text = deliveryContextRemoveGeneratedWorkStream(text, block)
 	}
-	if strings.Index(text[start+len(begin):], end) < 0 {
-		return raw
-	}
-	return []byte(removeDeliveryWorkStreams(text, scope))
+	return []byte(strings.TrimRight(text, "\n"))
 }
 
 func deliveryContextDomainsFromNotes(notes []Note) []string {
