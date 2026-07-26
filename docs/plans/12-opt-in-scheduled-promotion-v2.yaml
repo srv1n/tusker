@@ -22,7 +22,7 @@ requirements:
   - id: R4
     outcome: Operators and agents receive truthful scheduled-promotion status, notification, and guidance without granting operational authority.
   - id: R5
-    outcome: Shadow parity, rollback readiness, and an explicit human authority transfer bound legacy-conductor replacement.
+    outcome: Shadow parity and rollback readiness remain objective, default-off producer evidence for the later program-level authority transfer.
 concurrency: 2
 runner_profile: implementation-terra
 tasks:
@@ -611,8 +611,8 @@ tasks:
 
   - source_key: shadow-cutover-e2e
     requirement_refs: [R5]
-    title: Prove default-off safety, shadow parity, recovery, and cutover
-    outcome: Failure-injection and migration proof demonstrate that Tusker can replace an existing conductor without a cadence gap or unauthorized side effect.
+    title: Prove default-off safety, shadow parity, and recovery readiness
+    outcome: Failure-injection and migration proof demonstrate shadow parity and rollback readiness without replacing the legacy conductor or granting authority.
     acceptance:
       - id: A1
         outcome: A repository with absent or disabled configuration experiences zero departure wakeups, Git fetches, records, branch movement, model launches, release attempts, notifications, or misleading UI pending state.
@@ -625,7 +625,7 @@ tasks:
       - id: A5
         outcome: Two projects contending for one heavy resource serialize correctly while independent light work continues.
       - id: A6
-        outcome: The cutover runbook keeps the legacy conductor authoritative until representative parity passes, disables it only after Tusker becomes authoritative, and preserves one rollback window.
+        outcome: The cutover runbook keeps the legacy conductor authoritative, records representative parity and rollback readiness, and routes any authority transfer to the later Plan-17 program handoff.
     verification:
       - covers: A1,A2,A3,A4,A5
         check: "command: go test ./e2e/... -run '^TestScheduledPromotion' -count=1"
@@ -659,7 +659,7 @@ tasks:
     artifact:
       kind: reliability_timeline
       path: e2e/scheduled_promotion_test.go
-      summary: End-to-end default-off, parity, failure-injection, singleton, cross-project, and conductor-cutover reliability evidence.
+      summary: End-to-end default-off, parity, failure-injection, singleton, cross-project, and conductor-readiness reliability evidence.
       acceptance_ids: [A1, A2, A3, A4, A5, A6]
     owned_paths:
       - e2e/scheduled_promotion_test.go
@@ -672,15 +672,29 @@ tasks:
     size: xl
     domains: [project]
 
-
-human_gates:
-  - source_key: legacy-conductor-production-handoff
-    title: Authorize final legacy-conductor handoff and production promotion authority
-    kind: release
-    owner: human:operator
-    task_source_key: shadow-cutover-e2e
-    acceptance_ids: [A6]
-    dependency_closure: []
-    action: After representative shadow parity and rollback readiness are evidenced, explicitly authorize handoff from the legacy conductor and production promotion authority for the selected project.
-    verification: The accountable production operator records the selected project, parity evidence, rollback window, and explicit handoff authorization.
-    why_agent_cannot: Only the accountable production authority can disable or supersede the legacy conductor and grant production promotion authority.
+  - source_key: scheduled-promotion-shadow-ready
+    requirement_refs: [R5]
+    title: Publish independent scheduled-promotion shadow readiness
+    outcome: Objective staged-promotion and recovery evidence is available as a default-off producer for program convergence without transferring legacy-conductor or promotion authority.
+    acceptance:
+      - id: A1
+        outcome: The task follows shadow-cutover-e2e and proves representative parity, recovery, and rollback readiness while the legacy conductor remains authoritative.
+      - id: A2
+        outcome: Its proof performs no automation enablement, daemon launch, release, spending, notification, default-branch movement, or authority transfer.
+    verification:
+      - covers: A1,A2
+        check: "command: go test ./cmd/tusker -run '^TestCrossScopePlanRewiring' -count=1"
+    artifact:
+      kind: reliability_summary
+      path: e2e/scheduled_promotion_test.go
+      summary: Independent default-off staged-promotion, recovery, parity, and rollback readiness projection.
+      acceptance_ids: [A1, A2]
+    owned_paths: []
+    dependencies:
+      - task: shadow-cutover-e2e
+        kind: hard
+    concurrency_group: integration
+    risk: critical
+    priority: p0
+    size: s
+    domains: [project]

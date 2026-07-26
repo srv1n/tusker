@@ -195,14 +195,14 @@ tasks:
   - source_key: provider-cutover-doctor
     requirement_refs: [R4, R5]
     title: Gate promotion cutover on provider readiness
-    outcome: One read-only cutover projection proves the exact profile, runtime, image, cleanup, command bounds, and recovery state or names the only next operator action.
+    outcome: One read-only cutover projection exposes default-off provider-doctor shadow readiness from profile and fake-runtime evidence, while separately naming any host runtime, image, cleanup, command-bound, recovery, or live-smoke action required for promote readiness.
     acceptance:
       - id: A1
-        outcome: Doctor distinguishes absent, stopped, unreachable, drifted, image-missing, policy-mismatched, unresolved-recovery, smoke-required, and ready states without mutating the runtime.
+        outcome: Doctor distinguishes default-off shadow readiness from absent, stopped, unreachable, drifted, image-missing, policy-mismatched, unresolved-recovery, smoke-required, and promote-ready states without mutating the runtime.
       - id: A2
         outcome: Factory cutover and scheduled-promotion preflight refuse promote mode until the current profile has compatible unit, crash-recovery, revocation, and live-smoke proof.
       - id: A3
-        outcome: Disabled, shadow, and stage repositories remain usable without a provider and show the feature as off or not yet required rather than degraded.
+        outcome: Disabled, shadow, and stage repositories remain usable without a host runtime and show provider-doctor shadow readiness as non-authorizing while promote readiness still requires current live smoke.
       - id: A4
         outcome: Doctor never installs, starts, pulls, configures, enables, dispatches, arms, promotes, releases, spends, or repairs an external runtime.
     verification:

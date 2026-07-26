@@ -1,0 +1,212 @@
+schema: tusker.delivery-plan/v2
+scope: program-cutover-convergence/v1
+title: Program cutover convergence
+epic: ORC
+spec_refs:
+  - docs/specs/17-program-cutover-convergence.md
+context_fingerprint: sha256:47bca3e30ed17c699e487050d2da03bb693e45448c25dd9b04a77525ca67d83c
+required_capabilities: [strict_v2_proof_authority/v1]
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+summary: >-
+  Import last only through the strict V2 importer, after independently strict
+  current shadow producers and the exact-verification authority frontier, then
+  compose one human-authorized low-risk dogfood and promotion handoff.
+non_goals:
+  - This plan does not import itself or producers through the legacy importer, enable automation, arm a wave, start a daemon, start or configure a runtime, run a live smoke, release, spend, or move a Git ref.
+  - This plan does not reintroduce authority gates in plans 12 or 14; its two human gates are the sole program authority boundary.
+  - This cutover-specific receipt fence does not itself implement generic V2 exact-proof semantics; Plan 18's strictly current exact-verification-authority-e2e is a hard imported producer for that broader authority.
+requirements:
+  - id: R1
+    outcome: Independent Plan-12, Plan-14, and Plan-15 shadow producers remain default-off and distinguish doctor readiness from setup-gated live smoke.
+  - id: R2
+    outcome: Plan 17 imports last only after its shadow producers and Plan 18's exact-verification-authority-e2e frontier are strictly current (proof-contract and strict-completion authority bound), resolving every scope-qualified hard dependency before a locked, one-shot dogfood transaction can be authorized or observed.
+  - id: R3
+    outcome: Typed grants and immutable receipts bind one human auth gate to low-risk dogfood and one human release gate to production handoff, with prior producer authority gates obsolete in this reviewed migration.
+concurrency: 1
+runner_profile: implementation-terra
+tasks:
+  - source_key: shadow-convergence
+    requirement_refs: [R1, R2]
+    title: Converge independent default-off shadow readiness
+    outcome: >-
+      An objective program projection joins the imported scheduled-promotion,
+      factory-control, and provider-doctor shadow producers without selecting a
+      project, enabling runtime or automation, or granting any authority.
+    acceptance:
+      - id: A1
+        outcome: The task has hard qualified dependencies on scheduled-promotion-shadow-ready, factory-control-shadow-ready, and provider-cutover-doctor in their exact producer scopes.
+      - id: A2
+        outcome: Each producer remains independently reviewable and importable before this plan, and absent, disabled, or unavailable provider runtime state is reported as doctor readiness rather than triggering setup or live smoke.
+      - id: A3
+        outcome: The reviewed migration has no remaining Plan-12 release gate or Plan-14 auth gate, and this convergence task itself grants no authority.
+    verification:
+      - covers: A1,A2,A3
+        check: "command: go test ./cmd/tusker -run '^TestCrossScopePlanRewiring' -count=1"
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/cross_scope_plan_rewiring_test.go
+      summary: Serialized producer-first plan topology, independent default-off shadow readiness, obsolete producer gates, and no-side-effect contract.
+      acceptance_ids: [A1, A2, A3]
+    owned_paths:
+      - docs/specs/17-program-cutover-convergence.md
+      - docs/plans/17-program-cutover-convergence-v2.yaml
+      - docs/plans/12-opt-in-scheduled-promotion-v2.yaml
+      - docs/plans/14-opt-in-factory-execution-control-v2.yaml
+      - docs/plans/15-opt-in-full-gate-lifecycle-provider-v2.yaml
+      - cmd/tusker/cross_scope_plan_rewiring_test.go
+    dependencies:
+      - task: scheduled-promotion-shadow-ready
+        scope: scheduled-promotion/v1
+        kind: hard
+      - task: factory-control-shadow-ready
+        scope: factory-execution-control/v1
+        kind: hard
+      - task: provider-cutover-doctor
+        scope: full-gate-lifecycle-provider/v1
+        kind: hard
+    concurrency_group: program-cutover
+    risk: critical
+    priority: p0
+    size: m
+    domains: [project]
+
+  - source_key: program-cutover-transaction-contract
+    requirement_refs: [R2, R3]
+    title: Implement the locked program-cutover transaction contract
+    outcome: >-
+      A default-off Tusker program-cutover handler creates typed, expiry-bound
+      human grants and consumes a dogfood grant exactly once to observe the
+      named staging and factory transaction, then fences the serialized
+      close-authority seam with immutable receipts and rollback facts only
+      after the imported Plan-18 exact-verification authority frontier, without
+      widening operational authority.
+    acceptance:
+      - id: A1
+        outcome: The task has hard dependencies on local shadow-convergence and exact-verification-authority/v1/exact-verification-authority-e2e; only after both strictly current producer contracts resolve can a human-only authorize-dogfood command record a locked grant bound to the exact auth gate, task source key, project, wave, relevant task and integration revisions, expiry, and actor, rejecting free-form evidence, drift, duplicate live grants, expired inputs, forged `human:*` actor strings, and dispatched-lane gate control.
+      - id: A2
+        outcome: Dogfood consumption atomically records before and after state, the observed staging and factory transaction, rollback facts, and one immutable receipt; retry, crash, and duplicate consumption converge without a second transaction or a false integrated receipt.
+      - id: A3
+        outcome: The deterministic serialized close path resolves the exact typed auth-grant, dogfood-receipt, and release-handoff tuple for the named Plan-17 source task before satisfying proof or closing it; generic `gate satisfy --evidence`, a substituted or replacement generic test row, missing, stale, wrong-revision, or expired receipts, and status prose all fail closed and cannot close, unlock, release, or move a ref.
+      - id: A4
+        outcome: Read-only status verifies current tuple bindings while every command refuses main or ref promotion, runtime start, global enablement, unrelated wave work, release, spending, and arbitrary evidence as proof; this fence is limited to Plan-17 cutover receipts and does not claim generic V2 exact-proof coverage.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestProgramCutoverCloseAuthorityFence$' -count=1 && go test ./cmd/tusker -run '^TestProgramCutoverHumanControlFence$' -count=1"
+    artifact:
+      kind: reliability_timeline
+      path: cmd/tusker/program_cutover_close_authority_test.go
+      summary: Hermetic serialized-close refusal matrix for free-form evidence, substituted proof rows, receipt drift or expiry, and status prose, plus one exact success and replay path.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/program_cutover.go
+      - cmd/tusker/program_cutover_cmd.go
+      - cmd/tusker/program_cutover_close_authority_test.go
+      - cmd/tusker/program_cutover_human_control_test.go
+      - docs/runbooks/program-cutover-dogfood.md
+    dependencies:
+      - task: shadow-convergence
+        kind: hard
+      - task: exact-verification-authority-e2e
+        scope: exact-verification-authority/v1
+        kind: hard
+    concurrency_group: program-cutover
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: low-risk-authoritative-dogfood
+    requirement_refs: [R2, R3]
+    title: Dogfood one low-risk program under explicit authority
+    outcome: >-
+      After the locked transaction contract and current provider live-smoke
+      proof are integrated, a human may authorize one named low-risk project;
+      the handler, not the gate, then records the one-shot dogfood receipt.
+    acceptance:
+      - id: A1
+        outcome: The task is hard-blocked on program-cutover-transaction-contract and qualified Plan-15 provider-live-smoke; live smoke remains setup-gated and is never treated as shadow proof.
+      - id: A2
+        outcome: The only auth gate requires an accountable human to create one structured, expiry-bound dogfood grant for the exact project and wave; gate satisfaction grants authority only and does not claim or execute dogfood.
+      - id: A3
+        outcome: Completion requires the handler's current dogfood-integrated receipt, and the serialized close-authority fence resolves its exact grant and receipt tuple before proof or closeout; the verifier proves dogfood neither enabled another project nor armed unrelated work, started a daemon or runtime, released, spent, or moved a ref.
+    verification:
+      - covers: A1,A3
+        check: "command: tusker program cutover status --scope program-cutover-convergence/v1 --source-key low-risk-authoritative-dogfood --require dogfood-integrated --json"
+      - covers: A2
+        check: "manual proof: accountable operator runs `tusker program cutover authorize-dogfood --scope program-cutover-convergence/v1 --source-key low-risk-authoritative-dogfood --project <project> --wave <wave> --expires-at <rfc3339> --by human:operator --json` and records the resulting grant ID"
+    artifact:
+      kind: reliability_timeline
+      path: cmd/tusker/program_cutover_close_authority_test.go
+      summary: One-shot project and wave-bound grant consumption, immutable dogfood receipt, rollback facts, and verifier contract supplied by the transaction predecessor.
+      acceptance_ids: [A1, A2, A3]
+    owned_paths: []
+    dependencies:
+      - task: program-cutover-transaction-contract
+        kind: hard
+      - task: provider-live-smoke
+        scope: full-gate-lifecycle-provider/v1
+        kind: hard
+    concurrency_group: program-cutover
+    risk: critical
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: production-promotion-handoff
+    requirement_refs: [R3]
+    title: Hand off production promotion only after dogfood
+    outcome: >-
+      Production promotion remains an explicit release-manager handoff after
+      the exact dogfood receipt is integrated; its typed handoff record is not
+      an effect of shadow readiness, live smoke, grant creation, or import.
+    acceptance:
+      - id: A1
+        outcome: The task has one local hard dependency on low-risk-authoritative-dogfood and no alternate producer authority path; its record binds the exact dogfood receipt, project, wave, revisions, expiry, and actor.
+      - id: A2
+        outcome: The only release gate requires the accountable production authority to create one typed release-handoff record bound to the exact dogfood receipt; it grants handoff authority but does not move a ref or release.
+      - id: A3
+        outcome: The serialized close-authority fence resolves the exact grant, dogfood receipt, and release-handoff tuple before proof or closeout; current release-handoff status refuses stale, absent, duplicate, expired, or free-form-evidence handoffs while review, doctor, dry-run, and unsatisfied gates leave all automation, runtime, release, spending, and ref state unchanged.
+    verification:
+      - covers: A1,A3
+        check: "command: tusker program cutover status --scope program-cutover-convergence/v1 --source-key production-promotion-handoff --require release-handoff-current --dogfood-receipt <receipt> --json"
+      - covers: A2
+        check: "manual proof: accountable production authority runs `tusker program cutover authorize-release-handoff --scope program-cutover-convergence/v1 --source-key production-promotion-handoff --project <project> --wave <wave> --dogfood-receipt <receipt> --expires-at <rfc3339> --by human:operator --json` and records the resulting handoff ID"
+    artifact:
+      kind: reliability_timeline
+      path: cmd/tusker/program_cutover_close_authority_test.go
+      summary: Typed release-handoff record and read-only verifier bound to the immutable dogfood receipt.
+      acceptance_ids: [A1, A2, A3]
+    owned_paths: []
+    dependencies:
+      - task: low-risk-authoritative-dogfood
+        kind: hard
+    concurrency_group: program-cutover
+    risk: critical
+    priority: p0
+    size: s
+    domains: [project]
+human_gates:
+  - source_key: authorize-low-risk-program-dogfood
+    title: Authorize one bounded low-risk program dogfood
+    kind: auth
+    owner: human:operator
+    task_source_key: low-risk-authoritative-dogfood
+    acceptance_ids: [A2]
+    dependency_closure: [production-promotion-handoff]
+    action: "Run `tusker program cutover authorize-dogfood --scope program-cutover-convergence/v1 --source-key low-risk-authoritative-dogfood --project <project> --wave <wave> --expires-at <rfc3339> --by human:operator --json` after current shadow and provider-live-smoke evidence; record its typed grant ID only."
+    verification: "`tusker program cutover status --scope program-cutover-convergence/v1 --source-key low-risk-authoritative-dogfood --project <project> --wave <wave> --require grant-current --json` reports the exact current gate, task, project, wave, revisions, expiry, and grant ID; it does not claim or execute dogfood."
+    why_agent_cannot: Only the accountable operator can choose the project and grant its external authoritative completion boundary.
+    suggestion: This gate creates authority only. Let the locked transaction handler consume it; keep automation, runtime, release, spending, and default-branch movement outside the grant.
+  - source_key: authorize-production-promotion-handoff
+    title: Authorize production promotion handoff
+    kind: release
+    owner: human:operator
+    task_source_key: production-promotion-handoff
+    acceptance_ids: [A2]
+    dependency_closure: []
+    action: "Run `tusker program cutover authorize-release-handoff --scope program-cutover-convergence/v1 --source-key production-promotion-handoff --project <project> --wave <wave> --dogfood-receipt <receipt> --expires-at <rfc3339> --by human:operator --json` for the exact immutable dogfood receipt."
+    verification: "`tusker program cutover status --scope program-cutover-convergence/v1 --source-key production-promotion-handoff --project <project> --wave <wave> --dogfood-receipt <receipt> --require release-handoff-current --json` reports the exact current receipt-bound handoff; it does not move a ref or release."
+    why_agent_cannot: Only the accountable production authority can authorize release-level promotion after the dogfood result.
+    suggestion: This gate creates a receipt-bound handoff record only. Do not treat it as authorization to start a runtime, enable unrelated automation, release, spend, or move a ref.
