@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -137,6 +138,8 @@ func serveErrorIssue(err error) Issue {
 		issue := errorToIssue(primary)
 		issue.Message = safeOperatorErrorText(issue.Message, 640)
 		issue.Hint = safeOperatorErrorText(issue.Hint, 640)
+		issue.Path = safeOperatorErrorText(issue.Path, 320)
+		issue.Context = safeServeIssueContext(issue.Context, 0)
 		return appendServeErrorDetails(issue, leaves, primary)
 	}
 	issue := Issue{Code: "UNKNOWN"}
@@ -229,21 +232,80 @@ func serveIssueContextMap(context any) map[string]any {
 	if context == nil {
 		return map[string]any{}
 	}
-	if typed, ok := context.(map[string]any); ok {
-		cloned := make(map[string]any, len(typed)+1)
-		for key, value := range typed {
-			cloned[key] = value
-		}
-		return cloned
+	safe := safeServeIssueContext(context, 0)
+	if typed, ok := safe.(map[string]any); ok {
+		return typed
 	}
-	raw, err := json.Marshal(context)
-	if err == nil {
-		var object map[string]any
-		if json.Unmarshal(raw, &object) == nil && object != nil {
-			return object
-		}
+	return map[string]any{"primary_context": safe}
+}
+
+func safeServeIssueContext(value any, depth int) any {
+	const (
+		maxDepth   = 6
+		maxEntries = 32
+	)
+	if depth >= maxDepth {
+		return "[truncated]"
 	}
-	return map[string]any{"primary_context": context}
+	switch typed := value.(type) {
+	case nil, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, json.Number:
+		return typed
+	case string:
+		return safeOperatorErrorText(typed, 320)
+	case []string:
+		limit := len(typed)
+		if limit > maxEntries {
+			limit = maxEntries
+		}
+		out := make([]any, 0, limit+1)
+		for _, item := range typed[:limit] {
+			out = append(out, safeServeIssueContext(item, depth+1))
+		}
+		if len(typed) > limit {
+			out = append(out, "[truncated]")
+		}
+		return out
+	case []any:
+		limit := len(typed)
+		if limit > maxEntries {
+			limit = maxEntries
+		}
+		out := make([]any, 0, limit+1)
+		for _, item := range typed[:limit] {
+			out = append(out, safeServeIssueContext(item, depth+1))
+		}
+		if len(typed) > limit {
+			out = append(out, "[truncated]")
+		}
+		return out
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		if len(keys) > maxEntries {
+			keys = keys[:maxEntries]
+		}
+		out := make(map[string]any, len(keys)+1)
+		for _, key := range keys {
+			out[safePacketText(key, 80)] = safeServeIssueContext(typed[key], depth+1)
+		}
+		if len(typed) > len(keys) {
+			out["_truncated"] = true
+		}
+		return out
+	default:
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			return safeOperatorErrorText(fmt.Sprint(typed), 320)
+		}
+		var decoded any
+		if json.Unmarshal(raw, &decoded) != nil {
+			return "[unavailable]"
+		}
+		return safeServeIssueContext(decoded, depth+1)
+	}
 }
 
 func safeOperatorErrorLeaf(err error) string {

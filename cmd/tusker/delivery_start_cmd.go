@@ -400,13 +400,15 @@ func rollbackDeliveryStartTransaction(authority *deliveryStartAuthority, cause e
 	}
 	paths := deliveryStartTransactionPaths(authority)
 	if len(failures) > 0 {
-		primary := tuskerError(
+		rollbackFailure := tuskerError(
 			errorInvalidTransition,
 			"delivery Start was rejected and exact transaction rollback could not be proven; delivery is fail-closed pending repair",
 			withHint("stop delivery, restore every reported path from version control or a verified backup, then regenerate delivery review"),
-			withContext(map[string]any{"cause": cause.Error(), "rollback": failures, "paths": paths}),
+			withContext(map[string]any{"rollback": failures, "paths": paths}),
 		)
-		return errors.Join(append([]error{primary}, failureErrs...)...)
+		joined := []error{cause, rollbackFailure}
+		joined = append(joined, failureErrs...)
+		return errors.Join(joined...)
 	}
 	restored := "exact import preimages were restored"
 	if authority.ArmCommit != nil {

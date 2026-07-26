@@ -1258,18 +1258,25 @@ func TestServeDeliveryDoubleFaultsPreserveEverySafeCause(t *testing.T) {
 		}
 		rolledBack := rollbackDeliveryStartTransaction(
 			&deliveryStartAuthority{ArmCommit: commit},
-			tuskerError(errorInvalidTransition, "typed delivery refusal"),
+			tuskerError("CAS_BUSY", "typed delivery refusal token=rollback-secret-value"),
 		)
 		combined := errors.Join(rolledBack, errors.New("injected subsequent material close failure"))
 		result := serveCommandResult("tusker delivery start", "", combined)
-		if result.OK || !result.Refused || result.Issue == nil || result.Issue.Code != errorInvalidTransition {
+		if result.OK || !result.Refused || result.Issue == nil || result.Issue.Code != "CAS_BUSY" {
 			t.Fatalf("rollback double fault lost primary typed refusal: %#v", result)
 		}
-		assertContainsAll(t, result.Reason, "exact transaction rollback could not be proven", "committed import bytes changed before restoration", "injected subsequent material close failure")
+		assertContainsAll(t, result.Reason, "typed delivery refusal", "[redacted]", "exact transaction rollback could not be proven", "committed import bytes changed before restoration", "injected subsequent material close failure")
 		chain := strings.Join(errorChain(t, result.Issue), " ")
-		assertContainsAll(t, chain, "committed import bytes changed before restoration", "injected subsequent material close failure")
+		assertContainsAll(t, chain, "typed delivery refusal", "committed import bytes changed before restoration", "injected subsequent material close failure")
 		if strings.Contains(result.Reason, filepath.Dir(path)) {
 			t.Fatalf("safe operator reason leaked an absolute transaction path: %s", result.Reason)
+		}
+		encodedIssue, err := json.Marshal(result.Issue)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(encodedIssue), filepath.Dir(path)) || strings.Contains(string(encodedIssue), "rollback-secret-value") {
+			t.Fatalf("safe operator issue leaked an absolute path or secret: %s", encodedIssue)
 		}
 		raw, err := os.ReadFile(path)
 		if err != nil {

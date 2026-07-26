@@ -844,12 +844,13 @@ func refuseDeliveryStartBeforeArm(vaultPath string, authority *deliveryStartAuth
 	materialLock, err := acquireV7MaterialEpochLock(vaultPath)
 	if err != nil {
 		if authority.ImportCommit != nil {
-			return tuskerError(
+			rollbackFailure := tuskerError(
 				errorInvalidTransition,
 				"delivery Start was rejected but its transaction could not be locked for exact rollback; delivery is fail-closed pending repair",
 				withHint("stop delivery, restore every reported path from version control or a verified backup, then regenerate delivery review"),
-				withContext(map[string]any{"cause": cause.Error(), "rollback": err.Error(), "paths": deliveryStartTransactionPaths(authority)}),
+				withContext(map[string]any{"rollback": err.Error(), "paths": deliveryStartTransactionPaths(authority)}),
 			)
+			return errors.Join(cause, rollbackFailure)
 		}
 		return fmt.Errorf("%w; refusal could not lock the material epoch for safe readiness cleanup: %v", cause, err)
 	}
