@@ -608,6 +608,9 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 		}
 		defer materialLock.Close()
 	}
+	if err := ensureDeliveryWorkNamespaces(vaultPath); err != nil {
+		return err
+	}
 	now := deliveryImportNow().UTC().Format(time.RFC3339)
 	actor := fallback(firstNonEmpty(args.String("by"), args.String("actor")), "agent:"+defaultActorName())
 	integrationBase, err := deliveryIntegrationBaseSHA(vaultPath)
@@ -883,6 +886,26 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 			_, _ = gitCombined(repoRoot, "update-ref", "-d", "refs/heads/"+branch)
 		}
 		return err
+	}
+	return nil
+}
+
+func ensureDeliveryWorkNamespaces(vaultPath string) error {
+	for _, kind := range []string{"tasks", "waves", "gates", "epics"} {
+		path := filepath.Join(vaultPath, "work", kind)
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			if err := ensureDir(path); err != nil {
+				return tuskerError(errorInvalidTransition, "delivery import work namespace is unavailable", withPath(path), withContext(map[string]any{"cause": err.Error()}))
+			}
+			continue
+		}
+		if err != nil {
+			return tuskerError(errorInvalidTransition, "delivery import work namespace is unavailable", withPath(path), withContext(map[string]any{"cause": err.Error()}))
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return tuskerError(errorInvalidTransition, "delivery import work namespace is not a real directory", withPath(path))
+		}
 	}
 	return nil
 }

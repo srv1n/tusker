@@ -123,6 +123,13 @@ func deliveryCrossScopeSnapshot(vault string, idx v7Index) (func() error, func(s
 	for _, kind := range []string{"tasks", "waves", "gates", "epics"} {
 		dir := filepath.Join(vault, "work", kind)
 		entries, err := os.ReadDir(dir)
+		if os.IsNotExist(err) {
+			// An absent standard namespace and an existing empty namespace are
+			// graph-equivalent. Dry-run must not create scaffolding merely to
+			// inspect an otherwise valid vault.
+			namespaces[dir] = []string{}
+			continue
+		}
 		if err != nil {
 			return nil, nil, nil, tuskerError(errorInvalidTransition, "CROSS_SCOPE_NAMESPACE_READ_FAILED path="+dir)
 		}
@@ -140,6 +147,9 @@ func deliveryCrossScopeSnapshot(vault string, idx v7Index) (func() error, func(s
 		}
 		for dir, expected := range namespaces {
 			entries, err := os.ReadDir(dir)
+			if os.IsNotExist(err) && len(expected) == 0 {
+				continue
+			}
 			if err != nil {
 				return tuskerError(errorInvalidTransition, "CROSS_SCOPE_NAMESPACE_READ_FAILED path="+dir)
 			}

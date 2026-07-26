@@ -258,6 +258,39 @@ func TestDeliveryCrossScopeAfterIndexGateEpicMutationRefuses(t *testing.T) {
 	}
 }
 
+func TestDeliveryCrossScopeMissingNamespacesRemainDryRunReadOnly(t *testing.T) {
+	vault := deliveryTestVault(t)
+	gatesDir := filepath.Join(vault, "work", "gates")
+	epicsDir := filepath.Join(vault, "work", "epics")
+	if err := os.RemoveAll(gatesDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(epicsDir); err != nil {
+		t.Fatal(err)
+	}
+	plan := validDeliveryPlanV2()
+	path := writeDeliveryV2TestPlan(t, vault, plan)
+	if err := deliveryV2ImportCmd(vault, path, Args{"vault": vault, "dry-run": "true", "quiet": "true"}); err != nil {
+		t.Fatalf("dry-run with absent empty namespaces: %v", err)
+	}
+	for _, dir := range []string{gatesDir, epicsDir} {
+		if _, err := os.Lstat(dir); !os.IsNotExist(err) {
+			t.Fatalf("dry-run created namespace %s: %v", dir, err)
+		}
+	}
+	if err := deliveryV2ImportCmd(vault, path, Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatalf("import with absent empty namespaces: %v", err)
+	}
+	for _, path := range []string{
+		filepath.Join(gatesDir, "VTP-G-0001.md"),
+		filepath.Join(epicsDir, "VTP.md"),
+	} {
+		if !fileExists(path) {
+			t.Fatalf("import did not materialize %s", path)
+		}
+	}
+}
+
 func TestDeliveryCrossScopeRollbackFinalVerification(t *testing.T) {
 	dir := t.TempDir()
 	restored := filepath.Join(dir, "restored.md")
