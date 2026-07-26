@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +46,390 @@ func TestScheduledPromotionGateFailureDetailPrefersLifecyclePersistenceError(t *
 	if !strings.Contains(detail, "persist certified lifecycle receipt") || strings.Contains(detail, "receipt_digest") {
 		t.Fatalf("gate failure hid its causal persistence error: %q", detail)
 	}
+}
+
+func TestV7FullGateAllLedgerHitCollectsReceiptsInCommandOrder(t *testing.T) {
+	repo := t.TempDir()
+	runGitDir(t, repo, "init", "-b", "main")
+	runGitDir(t, repo, "config", "user.email", "test@example.com")
+	runGitDir(t, repo, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repo, "candidate.txt"), []byte("candidate\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "add", ".")
+	runGitDir(t, repo, "commit", "-m", "candidate")
+	stateRoot := t.TempDir()
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	commands := []string{"go version >/dev/null", "go env GOOS >/dev/null"}
+	policy := GateTierPolicy{Profile: "full", HarvestCommands: commands, IsolationProvider: "scripted"}
+	runtime := defaultGateTierRuntime(store, "project", repo)
+	treeHash, err := runtime.TreeHash(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolchain := scheduledPromotionFullGateToolchainFingerprint(repo, commands, policy.IsolationProvider, stateRoot)
+	binding := v7FullGateProviderBinding{ProjectID: "project", DepartureID: "departure-ledger-order", CandidateDigest: treeHash, GateProfile: policy.Profile, ProviderProfile: policy.IsolationProvider, Toolchain: toolchain}
+	want := make([]GateProviderReceipt, len(commands))
+	for index := len(commands) - 1; index >= 0; index-- {
+		want[index] = scriptedV7ProviderReceipt(binding, commands[index], v7FullGateOutcomePassed, index)
+		receipt := want[index]
+		if err := store.RecordGateLedger(GateLedgerEntry{ProjectID: binding.ProjectID, TreeHash: treeHash, Command: commands[index], Profile: policy.Profile, Toolchain: toolchain, ProviderReceipt: &receipt}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := &scriptedV7ProviderState{}
+	previous := newV7FullGateProvider
+	newV7FullGateProvider = func(profile, _, _ string) (v7FullGateProvider, error) {
+		if profile != "scripted" {
+			return nil, fmt.Errorf("unexpected provider %q", profile)
+		}
+		return &scriptedV7FullGateProvider{state: state}, nil
+	}
+	defer func() { newV7FullGateProvider = previous }()
+	ctx := withV7FullGateDeparture(context.Background(), binding.DepartureID)
+	execution := runV7GateTierOnRefContext(ctx, filepath.Join(repo, ".tusker"), repo, "HEAD", binding.ProjectID, policy, store)
+	if execution.Err != nil || execution.Result.Outcome != gateOutcomeLedgerHit {
+		t.Fatalf("all-ledger execution = %#v, %v", execution.Result, execution.Err)
+	}
+	if state.next != 0 {
+		t.Fatalf("all-ledger hit executed %d provider commands", state.next)
+	}
+	if len(execution.ProviderReceipts) != len(want) {
+		t.Fatalf("receipt count = %d, want %d", len(execution.ProviderReceipts), len(want))
+	}
+	for index := range want {
+		if execution.ProviderReceipts[index] != want[index] || execution.ProviderReceipts[index].CommandDigest != v7FullGateTextDigest(commands[index]) {
+			t.Fatalf("receipt[%d] = %#v, want %#v", index, execution.ProviderReceipts[index], want[index])
+		}
+	}
+}
+
+func TestV7FullGateProviderCommandsUseExactOrderedEvidenceRefs(t *testing.T) {
+	repo := t.TempDir()
+	runGitDir(t, repo, "init", "-b", "main")
+	runGitDir(t, repo, "config", "user.email", "test@example.com")
+	runGitDir(t, repo, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repo, "candidate.txt"), []byte("candidate\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "add", ".")
+	runGitDir(t, repo, "commit", "-m", "candidate")
+	stateRoot := t.TempDir()
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	commands := []string{"go version >/dev/null", "go env GOOS >/dev/null"}
+	state := &scriptedV7ProviderState{steps: []scriptedV7ProviderStep{
+		{outcome: v7FullGateOutcomePassed, output: "first output\n"},
+		{outcome: v7FullGateOutcomePassed, output: "second output\n"},
+	}}
+	previous := newV7FullGateProvider
+	newV7FullGateProvider = func(string, string, string) (v7FullGateProvider, error) {
+		return &scriptedV7FullGateProvider{state: state}, nil
+	}
+	defer func() { newV7FullGateProvider = previous }()
+	execution := runV7GateTierOnRefContext(
+		withV7FullGateDeparture(context.Background(), "departure-command-evidence"),
+		filepath.Join(repo, ".tusker"), repo, "HEAD", "project",
+		GateTierPolicy{Profile: "full", HarvestCommands: commands, IsolationProvider: "scripted"},
+		store,
+	)
+	if execution.Err != nil || execution.Result.Outcome != gateOutcomePassed {
+		t.Fatalf("two-command provider execution = %#v, %v", execution.Result, execution.Err)
+	}
+	if len(execution.ArtifactRefs) != 3 || execution.ArtifactRef != execution.ArtifactRefs[2] {
+		t.Fatalf("ordered command evidence refs = %#v primary=%q", execution.ArtifactRefs, execution.ArtifactRef)
+	}
+	first, err := os.ReadFile(execution.ArtifactRefs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(execution.ArtifactRefs[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := os.ReadFile(execution.ArtifactRefs[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(first, []byte(commands[0])) || bytes.Contains(first, []byte(commands[1])) ||
+		!bytes.Contains(second, []byte(commands[1])) || bytes.Contains(second, []byte(commands[0])) ||
+		!bytes.Contains(summary, []byte(commands[0])) || !bytes.Contains(summary, []byte(commands[1])) {
+		t.Fatalf("command evidence composition is ambiguous:\nfirst=%q\nsecond=%q\nsummary=%q", first, second, summary)
+	}
+}
+
+func TestV7ScheduledPromotionFlakeRerunPreservesFirstProviderOutcome(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "flake-rerun.txt", "candidate\n")
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
+	wf := setScheduledPromotionFlakeGateForTest(t, vault, []string{"go version >/dev/null"})
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	commitScheduledPromotionWorkflowForTest(t, repo, vault)
+	state := &scriptedV7ProviderState{steps: []scriptedV7ProviderStep{
+		{outcome: v7FullGateOutcomeFailed, output: "FLAKE intermittent fixture\n"},
+		{outcome: v7FullGateOutcomePassed, output: "stable rerun\n"},
+	}}
+	previous := newV7FullGateProvider
+	previousDurability := v7FullGateDurabilityHook
+	newV7FullGateProvider = func(profile, _, _ string) (v7FullGateProvider, error) {
+		if profile != "scripted" {
+			return nil, fmt.Errorf("unexpected provider %q", profile)
+		}
+		return &scriptedV7FullGateProvider{state: state}, nil
+	}
+	v7FullGateDurabilityHook = func(stage string) error {
+		if stage == "promotion_gate_artifact_synced" {
+			state.artifactSynced = true
+		}
+		return nil
+	}
+	defer func() {
+		newV7FullGateProvider = previous
+		v7FullGateDurabilityHook = previousDurability
+	}()
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run := newScheduledPromotionRunForTest(t, store, "2026-07-26T01:00:00Z")
+	commit, err := promoteScheduledWave(vault, "app", "W-0001", wf, store, &run, "daemon:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commit == "" || state.next != 2 {
+		t.Fatalf("flake rerun commit=%q executions=%d", commit, state.next)
+	}
+	if len(run.Gate.ProviderOutcomes) != 2 || run.Gate.ProviderOutcomes[0].Outcome != string(v7FullGateOutcomeFailed) || run.Gate.ProviderOutcomes[1].Outcome != string(v7FullGateOutcomePassed) {
+		t.Fatalf("flake provider outcomes lost first attempt: %#v", run.Gate.ProviderOutcomes)
+	}
+	if len(run.Gate.ProviderReceipts) != 1 || run.Gate.ProviderReceipts[0] != run.Gate.ProviderOutcomes[1] {
+		t.Fatalf("flake green receipt set = %#v, outcomes %#v", run.Gate.ProviderReceipts, run.Gate.ProviderOutcomes)
+	}
+	if len(run.Gate.ArtifactRefs) != 4 || run.Gate.ArtifactRef != run.Gate.ArtifactRefs[len(run.Gate.ArtifactRefs)-1] {
+		t.Fatalf("flake ordered evidence refs = %#v, primary=%q", run.Gate.ArtifactRefs, run.Gate.ArtifactRef)
+	}
+	seenRefs := make(map[string]struct{})
+	for _, ref := range run.Gate.ArtifactRefs {
+		if _, duplicate := seenRefs[ref]; duplicate {
+			t.Fatalf("flake evidence ref reused across commands/attempts: %#v", run.Gate.ArtifactRefs)
+		}
+		seenRefs[ref] = struct{}{}
+		if _, err := os.Stat(ref); err != nil {
+			t.Fatalf("flake evidence ref is not durable: %s: %v", ref, err)
+		}
+	}
+	if len(state.finalized) != 2 || !containsV7ProviderOutcome(state.finalized, v7FullGateOutcomeFailed) || !containsV7ProviderOutcome(state.finalized, v7FullGateOutcomePassed) {
+		t.Fatalf("flake attempt scopes not both finalized: %#v", state.finalized)
+	}
+	if state.finalizedBeforeArtifact {
+		t.Fatal("flake red outcome was finalized before its artifact fsync")
+	}
+}
+
+func TestV7ScheduledPromotionTypedProviderOutcomesBlockWithoutRepair(t *testing.T) {
+	cases := []struct {
+		name    string
+		outcome v7FullGateOutcome
+		err     error
+		cancel  bool
+	}{
+		{name: "provider failed", outcome: v7FullGateOutcomeProvider, err: fmt.Errorf("%w: fixture provider failure", errV7FullGateProvider)},
+		{name: "cancelled", outcome: v7FullGateOutcomeCanceled, err: context.Canceled, cancel: true},
+		{name: "timed out", outcome: v7FullGateOutcomeTimedOut, err: context.DeadlineExceeded},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, vault := newLandReadyForMainAdvanceTest(t, "typed-provider.txt", "candidate\n")
+			setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
+			wf := setScheduledPromotionGateForTest(t, vault, []string{"scripted-command"}, "full")
+			armScheduledPromotionWaveForTest(t, vault, "W-0001")
+			commitScheduledPromotionWorkflowForTest(t, repo, vault)
+			beforeMain := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			step := scriptedV7ProviderStep{outcome: tc.outcome, output: string(tc.outcome) + "\n", err: tc.err}
+			if tc.cancel {
+				step.onRun = cancel
+			}
+			state := &scriptedV7ProviderState{steps: []scriptedV7ProviderStep{step}}
+			previous := newV7FullGateProvider
+			previousDurability := v7FullGateDurabilityHook
+			newV7FullGateProvider = func(profile, _, _ string) (v7FullGateProvider, error) {
+				if profile != "test-fixture" {
+					return nil, fmt.Errorf("unexpected provider %q", profile)
+				}
+				return &scriptedV7FullGateProvider{state: state}, nil
+			}
+			v7FullGateDurabilityHook = func(stage string) error {
+				if stage == "promotion_gate_artifact_synced" {
+					state.artifactSynced = true
+				}
+				return nil
+			}
+			defer func() {
+				newV7FullGateProvider = previous
+				v7FullGateDurabilityHook = previousDurability
+			}()
+			store, err := OpenRuntimeStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			run := newScheduledPromotionRunForTest(t, store, "2026-07-26T02:00:00Z")
+			if _, err := promoteScheduledWaveContext(ctx, vault, "app", "W-0001", wf, store, &run, "daemon:test"); err == nil {
+				t.Fatal("typed provider outcome unexpectedly promoted")
+			}
+			durable, err := store.FindDepartureRun(run.ID)
+			if err != nil || durable == nil {
+				t.Fatalf("read blocked departure: %#v, %v", durable, err)
+			}
+			if durable.State != DepartureStateBlocked || durable.Gate.Status != string(tc.outcome) || durable.Gate.Failure.Class != "provider" || durable.Gate.Failure.Action != string(tc.outcome) || len(durable.Gate.ProviderOutcomes) != 1 || durable.Gate.ProviderOutcomes[0].Outcome != string(tc.outcome) {
+				t.Fatalf("typed provider routing = %#v", durable)
+			}
+			if durable.Gate.Failure.RepairTaskID != "" || durable.State == DepartureStateRepairing {
+				t.Fatalf("typed provider outcome entered repair routing: %#v", durable.Gate.Failure)
+			}
+			if got := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")); got != beforeMain {
+				t.Fatalf("typed provider outcome moved main: %s -> %s", beforeMain, got)
+			}
+			if len(state.finalized) != 1 || state.finalized[0].Outcome != string(tc.outcome) {
+				t.Fatalf("typed provider outcome was not finalized after durable block: %#v", state.finalized)
+			}
+			if state.finalizedBeforeArtifact {
+				t.Fatal("non-green provider outcome was finalized before its artifact fsync")
+			}
+		})
+	}
+}
+
+type scriptedV7ProviderStep struct {
+	outcome v7FullGateOutcome
+	output  string
+	err     error
+	onRun   func()
+}
+
+type scriptedV7ProviderState struct {
+	steps                   []scriptedV7ProviderStep
+	next                    int
+	finalized               []GateProviderReceipt
+	artifactSynced          bool
+	finalizedBeforeArtifact bool
+}
+
+type scriptedV7FullGateProvider struct {
+	state   *scriptedV7ProviderState
+	binding v7FullGateProviderBinding
+}
+
+func (p *scriptedV7FullGateProvider) BindFullGateProvider(binding v7FullGateProviderBinding) error {
+	p.binding = binding
+	return nil
+}
+
+func (p *scriptedV7FullGateProvider) Run(_ context.Context, _, command string) (v7FullGateProviderInvocation, error) {
+	if p.state == nil || p.state.next >= len(p.state.steps) {
+		return v7FullGateProviderInvocation{Outcome: v7FullGateOutcomeProvider}, fmt.Errorf("%w: scripted provider exhausted", errV7FullGateProvider)
+	}
+	index := p.state.next
+	step := p.state.steps[index]
+	p.state.next++
+	receipt := scriptedV7ProviderReceipt(p.binding, command, step.outcome, index)
+	if step.onRun != nil {
+		step.onRun()
+	}
+	runErr := step.err
+	if runErr == nil && step.outcome != v7FullGateOutcomePassed {
+		switch step.outcome {
+		case v7FullGateOutcomeFailed:
+			runErr = &v7FullGateOutcomeError{Outcome: step.outcome, Cause: errors.New("fixture gate red")}
+		case v7FullGateOutcomeCanceled:
+			runErr = context.Canceled
+		case v7FullGateOutcomeTimedOut:
+			runErr = context.DeadlineExceeded
+		default:
+			runErr = fmt.Errorf("%w: scripted provider failure", errV7FullGateProvider)
+		}
+	}
+	return v7FullGateProviderInvocation{Output: []byte(step.output), Outcome: step.outcome, Receipt: receipt}, runErr
+}
+
+func (p *scriptedV7FullGateProvider) MatchesGateProviderReceipt(receipt *GateProviderReceipt) bool {
+	return receipt != nil && v7CertifiedGateProviderReceipt(receipt) && receipt.ProviderProfile == p.binding.ProviderProfile && receipt.ProviderClosureDigest == testV7FullGateProviderReceipt.ProviderClosureDigest
+}
+
+func (p *scriptedV7FullGateProvider) FinalizeFullGateProviderOutcome(receipt GateProviderReceipt) error {
+	if !p.state.artifactSynced {
+		p.state.finalizedBeforeArtifact = true
+	}
+	p.state.finalized = append(p.state.finalized, receipt)
+	return nil
+}
+
+func (*scriptedV7FullGateProvider) Close() error { return nil }
+
+func scriptedV7ProviderReceipt(binding v7FullGateProviderBinding, command string, outcome v7FullGateOutcome, index int) GateProviderReceipt {
+	receipt := testV7FullGateProviderReceipt
+	receipt.Outcome = string(outcome)
+	receipt.ProjectID = binding.ProjectID
+	receipt.DepartureID = binding.DepartureID
+	receipt.CandidateDigest = binding.CandidateDigest
+	receipt.CommandDigest = v7FullGateTextDigest(command)
+	receipt.Profile = binding.GateProfile
+	receipt.ProviderProfile = binding.ProviderProfile
+	receipt.Toolchain = binding.Toolchain
+	receipt.RequestDigest = v7FullGateTextDigest(fmt.Sprintf("%s\x00%s\x00%d", binding.DepartureID, command, index))
+	receipt.LifecycleID = fmt.Sprintf("scripted:scope:%d", index)
+	receipt.ReceiptDigest = v7FullGateTextDigest("receipt\x00" + receipt.RequestDigest)
+	receipt.ResultDigest = v7FullGateTextDigest("result\x00" + receipt.RequestDigest)
+	receipt.OutputDigest = v7FullGateTextDigest("output\x00" + receipt.RequestDigest)
+	return receipt
+}
+
+func containsV7ProviderOutcome(receipts []GateProviderReceipt, outcome v7FullGateOutcome) bool {
+	for _, receipt := range receipts {
+		if receipt.Outcome == string(outcome) {
+			return true
+		}
+	}
+	return false
+}
+
+func setScheduledPromotionFlakeGateForTest(t *testing.T, vault string, commands []string) Workflow {
+	t.Helper()
+	path := workflowPath(vault)
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["orchestration"] = map[string]any{
+		"gate": map[string]any{
+			"profile":                "full",
+			"harvest_commands":       commands,
+			"isolation_provider":     "scripted",
+			"flake_failure_patterns": []string{"FLAKE"},
+			"flake_failure_action":   "rerun",
+		},
+	}
+	text, err := serializeDocument(data, body, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, text); err != nil {
+		t.Fatal(err)
+	}
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wf.Data
 }
 
 func armScheduledPromotionWaveForTest(t *testing.T, vault, waveID string) {
@@ -564,6 +950,81 @@ func TestScheduledPromotionPreRefRecoveryRejectsRevokedProviderAndReusesCertifie
 	}
 	if got := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")); got == mainBefore {
 		t.Fatal("ledger-only recovery did not promote the exact intent")
+	}
+}
+
+func TestV7ScheduledPromotionNewDepartureLedgerHitCrashAfterIntentReplaysExactProof(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "new-departure-ledger.txt", "candidate\n")
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
+	marker := filepath.Join(t.TempDir(), "gate-runs")
+	command := "printf x >> " + yamlQuoteForShellTest(marker) + "; test -f new-departure-ledger.txt"
+	wf := setScheduledPromotionGateForTest(t, vault, []string{command}, "")
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	commitScheduledPromotionWorkflowForTest(t, repo, vault)
+	stateRoot := t.TempDir()
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := scheduledPromotionGatePolicy(vault, wf)
+	if err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	originalDeparture := "departure-that-produced-reusable-proof"
+	seed := runV7GateTierOnRefContext(withV7FullGateDeparture(context.Background(), originalDeparture), vault, repo, "integration/W-0001", "app", policy, store)
+	if seed.Err != nil || seed.Result.Outcome != gateOutcomePassed || len(seed.ProviderReceipts) != 1 || seed.ProviderReceipts[0].DepartureID != originalDeparture {
+		_ = store.Close()
+		t.Fatalf("seed reusable provider proof = %#v, %v", seed, seed.Err)
+	}
+	if got := mustReadIndexTest(t, marker); got != "x" {
+		_ = store.Close()
+		t.Fatalf("seed gate executions = %q", got)
+	}
+	run := newScheduledPromotionRunForTest(t, store, "2026-07-25T20:39:17Z")
+	if run.ID == originalDeparture {
+		_ = store.Close()
+		t.Fatal("fixture failed to allocate a new departure")
+	}
+	injected := errors.New("injected crash after new-departure ledger-only intent")
+	oldHook := scheduledPromotionAfterRefIntent
+	scheduledPromotionAfterRefIntent = func() error { return injected }
+	_, promoteErr := promoteScheduledWave(vault, "app", "W-0001", wf, store, &run, "daemon:test")
+	scheduledPromotionAfterRefIntent = oldHook
+	if !errors.Is(promoteErr, injected) {
+		_ = store.Close()
+		t.Fatalf("new-departure intent crash = %v", promoteErr)
+	}
+	if got := mustReadIndexTest(t, marker); got != "x" {
+		_ = store.Close()
+		t.Fatalf("all-ledger hit reran provider command: %q", got)
+	}
+	durable, err := store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil || len(durable.Gate.ProviderReceipts) != 1 || durable.Gate.ProviderReceipts[0].DepartureID != originalDeparture {
+		_ = store.Close()
+		t.Fatalf("new departure did not preserve exact reusable proof: %#v, %v", durable, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	resumed, err := restarted.FindDepartureRun(run.ID)
+	if err != nil || resumed == nil {
+		t.Fatalf("restart durable intent: %#v, %v", resumed, err)
+	}
+	commit, err := promoteScheduledWave(vault, "app", "W-0001", wf, restarted, resumed, "daemon:test")
+	if err != nil {
+		t.Fatalf("restart rejected departure-agnostic reusable proof: %v", err)
+	}
+	if commit == "" || strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")) != commit {
+		t.Fatalf("replay did not advance the exact intent: commit=%s", commit)
+	}
+	if got := mustReadIndexTest(t, marker); got != "x" {
+		t.Fatalf("restart reran provider command: %q", got)
 	}
 }
 

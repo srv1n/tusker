@@ -51,7 +51,9 @@ type DepartureGate struct {
 	StartedAt        string                `json:"started_at,omitempty"`
 	FinishedAt       string                `json:"finished_at,omitempty"`
 	ArtifactRef      string                `json:"artifact_ref,omitempty"`
+	ArtifactRefs     []string              `json:"artifact_refs,omitempty"`
 	ProviderReceipts []GateProviderReceipt `json:"provider_receipts,omitempty"`
+	ProviderOutcomes []GateProviderReceipt `json:"provider_outcomes,omitempty"`
 	Failure          DepartureFailure      `json:"failure,omitempty"`
 }
 
