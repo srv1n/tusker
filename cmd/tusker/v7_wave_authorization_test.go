@@ -354,6 +354,35 @@ func TestImportedWaveAuthorizationIgnoresAppendedProofRows(t *testing.T) {
 	}
 }
 
+func TestWaveMaterialFingerprintBindsTaskComplexity(t *testing.T) {
+	vault := deliveryTestVault(t)
+	plan := validDeliveryPlan()
+	plan.Tasks[0].Complexity = "routine"
+	if err := deliveryImportCmd(Args{"vault": vault, "plan": writeDeliveryTestPlan(t, vault, plan), "wave": "Complexity", "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stringField(idx.Tasks["APP-T-0001"].Data, "complexity"); got != "routine" {
+		t.Fatalf("import dropped task complexity: %q", got)
+	}
+	before, issues := waveMaterialFingerprint(vault, idx, idx.Waves["W-0001"])
+	if len(issues) != 0 {
+		t.Fatalf("fingerprint issues: %#v", issues)
+	}
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"complexity": "frontier"})
+	idx, err = loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, issues := waveMaterialFingerprint(vault, idx, idx.Waves["W-0001"])
+	if len(issues) != 0 || after == before {
+		t.Fatalf("complexity did not invalidate material: before=%s after=%s issues=%#v", before, after, issues)
+	}
+}
+
 func TestWavePause(t *testing.T) {
 	vault := authorizedWaveTestVault(t)
 	armWaveForTest(t, vault)

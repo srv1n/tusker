@@ -266,6 +266,9 @@ func runInner(command string, args Args) (int, error) {
 		return 0, runnerCatalogCmd(args)
 	case "runner profiles":
 		return 0, runnerProfilesBootstrapCmd(args)
+	case "runner route":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, runnerRouteCmd(args)
 	case "new epic":
 		return 0, newV7Epic(args)
 	case "new task":
@@ -1065,7 +1068,7 @@ func printCommandHelp(command string) bool {
 	switch command {
 	case "init":
 		printInitHelp()
-	case "runner", "runner catalog", "runner profiles":
+	case "runner", "runner catalog", "runner profiles", "runner route":
 		printRunnerHelp()
 	case "new", "new epic", "new task", "new bug", "new doc", "new gate", "new decision":
 		printNewHelp()

@@ -96,6 +96,7 @@ type deliveryPlanTask struct {
 	MigrationKeys    []string                 `yaml:"migration_keys,omitempty" json:"migration_keys,omitempty"`
 	ResourceRefs     []string                 `yaml:"resource_refs,omitempty" json:"resource_refs,omitempty"`
 	RunnerProfile    string                   `yaml:"runner_profile,omitempty" json:"runner_profile,omitempty"`
+	Complexity       string                   `yaml:"complexity,omitempty" json:"complexity,omitempty"`
 	ConcurrencyGroup string                   `yaml:"concurrency_group,omitempty" json:"concurrency_group,omitempty"`
 	KnowledgeNodes   []string                 `yaml:"knowledge_nodes,omitempty" json:"knowledge_nodes,omitempty"`
 	Risk             string                   `yaml:"risk,omitempty" json:"risk,omitempty"`
@@ -231,6 +232,7 @@ func deliveryPlanCmd(args Args) error {
 				Verification: []deliveryVerification{{Covers: "A1", Check: "command: replace-with-an-exact-command"}},
 				Artifact:     deliveryArtifactContract{Kind: "diff_summary", Path: "replace/with/owned/path.go", Summary: "Replace with the compact operator artifact.", AcceptanceIDs: []string{"A1"}},
 				OwnedPaths:   []string{"replace/with/owned/path.go"},
+				Complexity:   "standard",
 			},
 			{
 				SourceKey: "replace-me-dependent", RequirementRefs: []string{"R2"}, Title: "Replace with the dependent observable task", Outcome: "Replace with the dependent observable outcome.",
@@ -452,6 +454,11 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]st
 		if task.Size != "" {
 			if _, ok := sizes[strings.ToLower(task.Size)]; !ok {
 				issues = append(issues, key+": invalid size "+task.Size)
+			}
+		}
+		if task.Complexity != "" {
+			if _, ok := map[string]bool{"routine": true, "standard": true, "complex": true, "frontier": true}[strings.ToLower(task.Complexity)]; !ok {
+				issues = append(issues, key+": invalid complexity "+task.Complexity)
 			}
 		}
 		qualifiedSeen := map[string]bool{}
@@ -715,6 +722,9 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 			"owned_paths":       task.OwnedPaths, "runner_profile": firstNonEmpty(task.RunnerProfile, plan.RunnerProfile),
 			"concurrency_group": task.ConcurrencyGroup, "knowledge_nodes": task.KnowledgeNodes, "wave": report.WaveID,
 			"created_at": createdAt, "created_by": createdBy, "updated_at": now, "updated_by": actor,
+		}
+		if complexity := strings.ToLower(strings.TrimSpace(task.Complexity)); complexity != "" {
+			data["complexity"] = complexity
 		}
 		if len(task.GeneratedOutputs) > 0 {
 			data["generated_outputs"] = task.GeneratedOutputs

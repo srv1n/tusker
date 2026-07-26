@@ -583,6 +583,9 @@ func runnerDenylistFromSchema(in []v7schema.TuskerAutomationDenyRuleConfig) []Ru
 
 func resolveRunnerProfileForNote(note Note, wf Workflow, lane string) (ResolvedRunnerProfile, error) {
 	lane = firstNonEmpty(strings.TrimSpace(lane), runLaneExecute)
+	if complexity := strings.TrimSpace(stringField(note.Data, "complexity")); complexity != "" && !validTaskComplexity(complexity) {
+		return ResolvedRunnerProfile{}, tuskerError(errorConfigInvalid, "task complexity must be routine, standard, complex, or frontier")
+	}
 	profiles := wf.RunnerProfiles
 	if len(profiles) == 0 {
 		profiles = runnerProfilesFromSchema(builtInTuskerConfig().Automation.Profiles)
@@ -612,6 +615,11 @@ func resolveRunnerProfileForNote(note Note, wf Workflow, lane string) (ResolvedR
 			return selected, err
 		}
 	}
+	if role := semanticRunnerRole(stringField(note.Data, "complexity"), lane); role != "" {
+		if selected, ok, err := pick(role, "task complexity", "semantic complexity role", ""); ok || err != nil {
+			return selected, err
+		}
+	}
 	defaultSource := "automation.default_profile"
 	defaultReason := "project default"
 	if strings.TrimSpace(wf.RunnerDefaultProfile) == "default" {
@@ -623,6 +631,39 @@ func resolveRunnerProfileForNote(note Note, wf Workflow, lane string) (ResolvedR
 	}
 	selected, _, err := pick("default", configSourceBuiltIn, "built-in default", "")
 	return selected, err
+}
+
+func validTaskComplexity(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "routine", "standard", "complex", "frontier":
+		return true
+	default:
+		return false
+	}
+}
+
+// An absent complexity preserves compatibility by using the configured default.
+// Review remains independent when no stronger explicit policy selected a profile.
+func semanticRunnerRole(complexity, lane string) string {
+	complexity = strings.ToLower(strings.TrimSpace(complexity))
+	if complexity == "" {
+		return ""
+	}
+	if strings.TrimSpace(lane) == runLaneReview {
+		return "review-independent"
+	}
+	switch complexity {
+	case "routine":
+		return "execute-fast"
+	case "standard":
+		return "execute-standard"
+	case "complex":
+		return "execute-complex"
+	case "frontier":
+		return "execute-frontier"
+	default:
+		return ""
+	}
 }
 
 func resolveRunProfileForLane(note Note, wf Workflow, lane, legacyRunner string) (ResolvedRunnerProfile, error) {

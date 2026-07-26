@@ -364,6 +364,7 @@ func printRunnerHelp() {
 	fmt.Println(`Usage:
   tusker runner catalog [--bundled] [--json]
   tusker runner profiles [--bundled] [--write] [--json]
+  tusker runner route <TASK-ID> --lane execute|review --json
 
 Catalog observes installed harnesses without authentication or model launch. --bundled
 uses Tusker's explicit offline Codex fallback. Profiles previews an additive semantic

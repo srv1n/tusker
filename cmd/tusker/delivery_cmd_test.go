@@ -37,6 +37,9 @@ func TestDeliveryPlanV2Scaffold(t *testing.T) {
 	if plan.Tasks[0].Artifact.Path == "" || len(plan.Tasks[0].OwnedPaths) == 0 || len(plan.Tasks[0].Verification) != 1 {
 		t.Fatalf("scaffold omitted operator artifact, owned paths, or verification: %#v", plan)
 	}
+	if plan.Tasks[0].Complexity != "standard" {
+		t.Fatalf("scaffold omitted illustrative model-neutral complexity: %#v", plan.Tasks[0])
+	}
 	encoded, err := yaml.Marshal(plan)
 	if err != nil {
 		t.Fatal(err)
@@ -69,6 +72,20 @@ func TestDeliveryPlanV2Scaffold(t *testing.T) {
 	}
 	if sourceKeyed.Epic != "" || sourceKeyed.EpicContract == nil || sourceKeyed.EpicContract.SourceKey == "" {
 		t.Fatalf("implicit epic must use a source-keyed V2 epic contract: %#v", sourceKeyed)
+	}
+}
+
+func TestDeliveryPlanV2RejectsInvalidComplexity(t *testing.T) {
+	vault := deliveryTestVault(t)
+	plan := validDeliveryPlanV2()
+	plan.Tasks[0].Complexity = "turbo"
+	path := writeDeliveryV2TestPlan(t, vault, plan)
+	report, err := deliveryPlanDoctor(vault, path)
+	if err != nil || report.OK {
+		t.Fatalf("doctor accepted invalid complexity: report=%#v err=%v", report, err)
+	}
+	if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "wave": "Invalid", "quiet": "true"}); err == nil {
+		t.Fatal("import accepted invalid complexity")
 	}
 }
 

@@ -60,6 +60,22 @@ proof/gate fingerprints. Reviewers never edit implementation, change task or
 gate state, merge, land, close, or move refs; deterministic Tusker handlers
 consume the result.
 
+## Runner Discovery and Route Preview
+
+`tusker runner catalog --json` observes locally available harness capabilities.
+`tusker runner profiles --json` previews an additive semantic-profile bootstrap;
+`--write` is the one explicit configuration write and preserves existing policy.
+It still cannot enable automation. `tusker runner route <TASK-ID> --lane
+execute|review --json` is read-only and reports the profile dispatch would use,
+its harness/model/effort, source/rule, semantic role, precedence, and blockers.
+
+Tasks may use model-neutral `complexity: routine|standard|complex|frontier`.
+Route precedence is task `runner_profile`, first routing rule, lane profile,
+semantic role, then project/built-in default. Missing semantic profiles block
+routing; Tusker never substitutes a different model silently. Catalog, profile
+preview, and route preview are inert: they do not claim, dispatch, arm, enable
+automation, or move refs.
+
 ## Browser-backed ChatGPT Rule
 
 Treat browser-backed ChatGPT as a reasoning worker and artifact producer. It can return patches, analysis, attachments, and suggested verification. Tusker imports the normalized result and local tools verify it. Browser sessions must not become the durable state machine.

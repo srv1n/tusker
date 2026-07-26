@@ -115,7 +115,7 @@ func (v *deliveryPlanV2) UnmarshalYAML(value *yaml.Node) error {
 	tasks := deliveryYAMLField(root, "tasks")
 	if tasks != nil {
 		for _, task := range tasks.Content {
-			if err := deliveryKnownYAMLFields(task, map[string]bool{"source_key": true, "title": true, "outcome": true, "acceptance": true, "verification": true, "dependencies": true, "artifact": true, "owned_paths": true, "generated_outputs": true, "migration_keys": true, "resource_refs": true, "runner_profile": true, "concurrency_group": true, "knowledge_nodes": true, "risk": true, "priority": true, "size": true, "domains": true, "requirement_refs": true}); err != nil {
+			if err := deliveryKnownYAMLFields(task, map[string]bool{"source_key": true, "title": true, "outcome": true, "acceptance": true, "verification": true, "dependencies": true, "artifact": true, "owned_paths": true, "generated_outputs": true, "migration_keys": true, "resource_refs": true, "runner_profile": true, "complexity": true, "concurrency_group": true, "knowledge_nodes": true, "risk": true, "priority": true, "size": true, "domains": true, "requirement_refs": true}); err != nil {
 				return err
 			}
 			if deps := deliveryYAMLField(task, "dependencies"); deps != nil {
