@@ -135,6 +135,9 @@ automation:
         root: workspaces
         strategy: worktree
 project_id: tusker
+branches:
+    # Temporary immutable dogfood base. Restore `main` after the isolated wave.
+    default_branch: srv1nc/factory-dogfood-base
 runtime:
     lease_backend: local
     lease_ttl_minutes: 120

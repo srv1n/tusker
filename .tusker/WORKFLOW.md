@@ -148,7 +148,8 @@ fanout:
     allowed_child_types: []
     merge_rule: manual_review
 orchestration:
-    default_branch: main
+    # Temporary immutable dogfood base. Restore `main` after the isolated wave.
+    default_branch: srv1nc/factory-dogfood-base
     gate:
         profile: default
         harvest_commands:
