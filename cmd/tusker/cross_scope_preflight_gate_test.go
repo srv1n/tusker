@@ -115,6 +115,41 @@ func TestCrossScopeDependencyEligibility(t *testing.T) {
 		t.Fatalf("stale target did not produce the stable ordinary-edge blocker: %#v blocked=%t", edge, blocked)
 	}
 
+	soft := crossScopeIndexWithTaskFields(stale, fixture.ConsumerID, map[string]any{
+		"status": "review", "readiness": "waiting_on_review", "proof_status": "satisfied",
+	})
+	const softCallerID = "CON-T-0002"
+	softCaller := soft.Tasks[fixture.ConsumerID]
+	softCaller.Data = cloneMap(softCaller.Data)
+	softCaller.Data["id"] = softCallerID
+	softCaller.Data["delivery_source_key"] = "soft-caller"
+	softCaller.Data["delivery_contract_fingerprint"] = "sha256:soft-caller-contract"
+	softCaller.Data["status"] = "ready"
+	softCaller.Data["readiness"] = "ready"
+	softCaller.Data["next_owner"] = "agent"
+	softCaller.Data["wave"] = "W-0099"
+	softCaller.Data["dependencies"] = []string{fixture.ConsumerID + ":soft"}
+	delete(softCaller.Data, "delivery_cross_scope_dependencies")
+	soft.Tasks[softCallerID] = softCaller
+	if edge, blocked := v7BlockingDependencyForReadiness(softCaller, soft); blocked {
+		t.Fatalf("stale material beyond a provisional local soft edge relocked caller: %#v", edge)
+	}
+	if edge, blocked := v7BlockingDependencyForReadiness(soft.Tasks[fixture.ConsumerID], soft); !blocked || edge.ID != fixture.ProducerID {
+		t.Fatalf("precise hard affected consumer lost its stale-material blocker: %#v blocked=%t", edge, blocked)
+	}
+	soft.Waves = cloneNoteMap(soft.Waves)
+	softWave := soft.Waves[fixture.ConsumerWave]
+	softWave.Data = cloneMap(softWave.Data)
+	softWave.Data["id"] = "W-0099"
+	softWave.Data["members"] = []string{softCallerID}
+	softWave.Data["authorization"] = "disarmed"
+	delete(softWave.Data, "authorization_fingerprint")
+	soft.Waves["W-0099"] = softWave
+	softReport := buildWavePreflight(fixture.Vault, soft, softWave, greenWaveEnvironment())
+	if !softReport.OK {
+		t.Fatalf("stale qualified material beyond local soft edge blocked preflight: %#v", softReport.Blockers)
+	}
+
 	recovered := crossScopeIndexWithTaskFields(base, fixture.ProducerID, map[string]any{
 		"status": "done", "readiness": "done", "proof_status": "satisfied", buildFailedField: false,
 	})

@@ -92,9 +92,10 @@ func v7BlockingDependencyForReadiness(task Note, idx v7Index) (v7DependencyEdge,
 }
 
 // v7CrossScopeIntegrityBlocker keeps semantic provenance on the same ordinary
-// dependency path used by readiness. It scopes validation to this task's
-// dependency closure so drift parks only affected consumers; the projection
-// never becomes a second scheduler edge.
+// dependency path used by readiness. It scopes validation to this task's hard
+// dependency closure so drift parks only affected consumers without relocking
+// provisional local soft edges; the projection never becomes a second
+// scheduler edge.
 func v7CrossScopeIntegrityBlocker(task Note, idx v7Index) (v7DependencyEdge, bool) {
 	if stringField(task.Data, "delivery_plan_scope") == "" && task.Data["delivery_cross_scope_dependencies"] == nil {
 		return v7DependencyEdge{}, false
@@ -112,6 +113,9 @@ func v7CrossScopeIntegrityBlocker(task Note, idx v7Index) (v7DependencyEdge, boo
 		seen[id] = true
 		scoped.Tasks[id] = current
 		for _, edge := range v7TaskDependencyEdges(current, idx) {
+			if edge.Hardness != v7DependencyHardnessHard {
+				continue
+			}
 			if dependency, ok := idx.Tasks[edge.ID]; ok {
 				visit(dependency)
 			}
@@ -128,15 +132,19 @@ func v7CrossScopeIntegrityBlocker(task Note, idx v7Index) (v7DependencyEdge, boo
 		projected[projection.TaskID] = true
 	}
 	consumerScope := stringField(task.Data, "delivery_plan_scope")
-	edges := v7TaskDependencyEdges(task, idx)
-	for _, edge := range edges {
+	var hardEdges []v7DependencyEdge
+	for _, edge := range v7TaskDependencyEdges(task, idx) {
+		if edge.Hardness != v7DependencyHardnessHard {
+			continue
+		}
+		hardEdges = append(hardEdges, edge)
 		dependency, exists := idx.Tasks[edge.ID]
 		if projected[edge.ID] || (exists && stringField(dependency.Data, "delivery_plan_scope") != "" && stringField(dependency.Data, "delivery_plan_scope") != consumerScope) {
 			return edge, true
 		}
 	}
-	if len(edges) > 0 {
-		return edges[0], true
+	if len(hardEdges) > 0 {
+		return hardEdges[0], true
 	}
 	return v7DependencyEdge{ID: "cross-scope projection", Hardness: v7DependencyHardnessHard}, true
 }
