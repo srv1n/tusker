@@ -143,35 +143,10 @@ func v7AcceptPreflight(vaultPath string, args Args, task Note, idx v7Index, acto
 		)
 	}
 
-	// Mirror close's reviewer-integrated dependency view so the same edges are judged.
-	idx = v7ReviewerIntegratedDependencyIndex(vaultPath, args, task, idx)
-
-	for _, gate := range idx.Gates {
-		if stringField(gate.Data, "status") == "open" && boolField(gate.Data, "blocking") && containsString(normalizeList(gate.Data["blocks"]), id) {
-			return tuskerError(errorInvalidTransition, id+": accept refused, close blocked by open gate "+stringField(gate.Data, "id"))
-		}
-	}
-	if dep, blocked := v7UnclosedDependency(task, idx); blocked {
-		return tuskerError(errorInvalidTransition, id+": accept refused, close blocked by unfinished dependency "+dep.ID)
-	}
-	if missing := missingRequiredEvidence(vaultPath, id, normalizeList(task.Data["evidence_required"])); len(missing) > 0 {
-		return tuskerError(errorEvidenceGate, id+": accept refused, close missing required evidence: "+strings.Join(missing, ", "))
-	}
-
-	// Risk-policy acceptor, evidence, and gates — the same call close makes.
-	if err := enforceV7ClosePolicy(vaultPath, task, idx, actor); err != nil {
-		return err
-	}
-
-	// Placeholder-acceptance and proof completeness need the packet body.
-	data, body, err := parseFrontmatterMustRead(task.AbsolutePath)
-	if err != nil {
-		return err
-	}
-	current := task
-	current.Data = data
-	current.Body = body
-	return enforceV7AcceptanceClose(vaultPath, current, idx)
+	_, err := v7ClosePreflight(vaultPath, task, idx, v7ClosePreflightRequest{
+		Args: args, Actor: actor, Action: "accept", ExpectedTaskID: id,
+	})
+	return err
 }
 
 // v7ProofGreenForAccept reports whether every proof row is green — the same

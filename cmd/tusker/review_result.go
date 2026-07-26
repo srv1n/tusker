@@ -5,12 +5,39 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
 )
 
-const reviewResultSchema = "tusker.review-result/v1"
+const (
+	// v3 is the only result schema that can drive the completion reactor. Its
+	// revision binds the normalized payload, reviewer timestamp, and the exact
+	// daemon-frozen execute/review worker policy.
+	reviewResultSchema = "tusker.review-result/v3"
+	// v2 remains readable for audit, but it predated worker-policy attestation
+	// and therefore cannot drive authoritative completion.
+	reviewResultSchemaV2 = "tusker.review-result/v2"
+	// v1 remains readable so a pre-upgrade row cannot poison reconciliation,
+	// but it is deliberately re-review-only: its revision did not bind time.
+	reviewResultSchemaV1 = "tusker.review-result/v1"
+)
+
+const (
+	reviewProposalSchema = "tusker.review-proposal/v1"
+	reviewProposalMax    = 64 << 10
+	reviewProposalMarker = "TUSKER_REVIEW_PROPOSAL_V1 "
+)
+
+// reviewProposal is deliberately transport only.  It is never authority: the
+// daemon compares every identity and snapshot in Result with its own run,
+// attempt, task, proof, and gate records before persisting it.
+type reviewProposal struct {
+	Schema    string       `json:"schema"`
+	AttemptID string       `json:"attempt_id"`
+	Result    ReviewResult `json:"result"`
+}
 
 const (
 	reviewResultMaxSummary       = 800
@@ -29,6 +56,9 @@ func (s *RuntimeStore) SaveReviewResult(result ReviewResult) (bool, error) {
 		return false, tuskerError(errorInvalidArg, "review result revision does not match its immutable payload")
 	}
 	result.ResultRevision = expectedRevision
+	if err := validatePersistedReviewResult(result); err != nil {
+		return false, tuskerError(errorInvalidArg, "review result is not a valid persisted authority: "+err.Error())
+	}
 	raw, err := json.Marshal(result)
 	if err != nil {
 		return false, err
@@ -150,6 +180,40 @@ func reviewSubmitCmd(args Args) error {
 	if expected := strings.TrimSpace(args.String("gate-fingerprint")); expected == "" || expected != gateFingerprint {
 		return tuskerError(errorInvalidTransition, "stale gate fingerprint")
 	}
+	actor := firstNonEmpty(args.String("by"), "reviewer:agent")
+	wf, wfErr := loadWorkflow(vault)
+	if wfErr != nil {
+		return wfErr
+	}
+	if actor != reviewerActorForNote(wf.Data.Reviewer.Actor, note) {
+		return tuskerError(errorInvalidTransition, "reviewer actor is not authorized for this task")
+	}
+	if workerAttempt := strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID")); workerAttempt != "" {
+		if workerAttempt != attemptID {
+			return tuskerError(errorInvalidTransition, "worker review submission does not match its injected attempt")
+		}
+		// Worker stdout is an authority-less transport proposal. The daemon
+		// decides whether the exact active run qualifies for v3 completion
+		// policy; generic reviewers are persisted as audit-only v2 results.
+		result := ReviewResult{Schema: reviewResultSchemaV2, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+		if err := normalizeReviewResultProposal(&result); err != nil {
+			return err
+		}
+		raw, err := json.Marshal(reviewProposal{Schema: reviewProposalSchema, AttemptID: attemptID, Result: result})
+		if err != nil {
+			return err
+		}
+		if len(raw) > reviewProposalMax {
+			return tuskerError(errorInvalidArg, "review proposal exceeds bounded transport size")
+		}
+		// stdout is captured by the trusted wrapper into the persisted raw-log
+		// path. A read-only reviewer therefore gets no write capability beyond
+		// one bounded output record; the daemon derives that log path from its
+		// active attempt, not from worker input.
+		fmt.Printf("%s%s\n", reviewProposalMarker, raw)
+		return nil
+	}
+
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return err
@@ -166,15 +230,11 @@ func reviewSubmitCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	actor := firstNonEmpty(args.String("by"), "reviewer:agent")
-	wf, wfErr := loadWorkflow(vault)
-	if wfErr != nil {
-		return wfErr
+	resultSchema, workerPolicyFP, policyErr := reviewResultPolicyForRun(wf.Data, note, run)
+	if policyErr != nil {
+		return tuskerError(errorInvalidTransition, policyErr.Error())
 	}
-	if actor != reviewerActorForNote(wf.Data.Reviewer.Actor, note) {
-		return tuskerError(errorInvalidTransition, "reviewer actor is not authorized for this task")
-	}
-	result := ReviewResult{Schema: reviewResultSchema, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: run.Runner, RunnerProfile: run.RunnerProfile, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+	result := ReviewResult{Schema: resultSchema, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: run.Runner, RunnerProfile: run.RunnerProfile, WorkerPolicyFP: workerPolicyFP, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	if err := normalizeReviewResult(&result); err != nil {
 		return err
 	}
@@ -191,6 +251,61 @@ func reviewSubmitCmd(args Args) error {
 	return nil
 }
 
+func normalizeReviewResultProposal(result *ReviewResult) error {
+	// The daemon supplies these fields from its active run.  A worker is not
+	// allowed to choose a runner or trust profile and cannot create a durable
+	// result until the daemon fills and validates them.
+	result.Runner = "proposal"
+	result.RunnerProfile = "proposal"
+	if err := normalizeReviewResult(result); err != nil {
+		return err
+	}
+	result.Runner, result.RunnerProfile, result.WorkerPolicyFP = "", "", ""
+	result.ResultRevision = ""
+	return nil
+}
+
+// reviewResultPolicyForRun separates typed review transport from completion
+// authority. A generic review run has no policy fingerprints and persists as
+// v2. Any claimed completion policy must be complete, current, and attached to
+// an authoritative workflow; partial or drifted policy is never downgraded.
+func reviewResultPolicyForRun(wf Workflow, note Note, run RunStatus) (string, string, error) {
+	executePolicyFP := strings.TrimSpace(run.ExecutePolicyFP)
+	reviewPolicyFP := strings.TrimSpace(run.WorkerPolicyFP)
+	mode := completionReactorMode(wf.CompletionReactor.Effective)
+	if executePolicyFP == "" && reviewPolicyFP == "" {
+		if mode == completionReactorModeAuthoritative {
+			return "", "", fmt.Errorf("authoritative completion review run is missing exact execute and review worker policy")
+		}
+		return reviewResultSchemaV2, "", nil
+	}
+	if executePolicyFP == "" || reviewPolicyFP == "" {
+		return "", "", fmt.Errorf("review run carries a one-sided completion worker policy")
+	}
+	if mode != completionReactorModeAuthoritative {
+		return "", "", fmt.Errorf("review run carries completion worker policy outside authoritative completion mode")
+	}
+	_, _, expectedExecutePolicyFP, err := completionLaneWorkerPolicy(wf, note, runLaneExecute)
+	if err != nil {
+		return "", "", err
+	}
+	expectedReviewProfile, _, expectedReviewPolicyFP, err := completionLaneWorkerPolicy(wf, note, runLaneReview)
+	if err != nil {
+		return "", "", err
+	}
+	if executePolicyFP != expectedExecutePolicyFP ||
+		reviewPolicyFP != expectedReviewPolicyFP ||
+		run.RunnerProfile != expectedReviewProfile.Name ||
+		run.Runner != expectedReviewProfile.Definition.Harness {
+		return "", "", fmt.Errorf("review run completion worker policy drifted from the current exact lane profiles")
+	}
+	combined, err := completionCombinedWorkerPolicyFingerprint(executePolicyFP, reviewPolicyFP)
+	if err != nil {
+		return "", "", err
+	}
+	return reviewResultSchema, combined, nil
+}
+
 func activeReviewRunForAttempt(store *RuntimeStore, projectID, taskID string, attempt RunAttempt) (RunStatus, error) {
 	if attempt.ProjectID != projectID || attempt.RecordID != taskID || attempt.Lane != runLaneReview {
 		return RunStatus{}, tuskerError(errorInvalidTransition, "reviewer attempt is not authorized for this project and task")
@@ -203,7 +318,7 @@ func activeReviewRunForAttempt(store *RuntimeStore, projectID, taskID string, at
 		if run.ProjectID != projectID || run.RecordID != taskID || run.Lane != runLaneReview || run.WorkRevision != attempt.WorkRevision || run.ActiveAttemptID != attempt.AttemptID {
 			continue
 		}
-		if !isDispatchingLeaseState(run.LeaseState) || run.Runner == "" || run.RunnerProfile == "" || run.Runner != attempt.Runner {
+		if !isDispatchingLeaseState(run.LeaseState) || run.Runner == "" || run.Runner != attempt.Runner {
 			break
 		}
 		return run, nil
@@ -221,6 +336,7 @@ func normalizeReviewResult(result *ReviewResult) error {
 	result.Actor = strings.TrimSpace(result.Actor)
 	result.Runner = strings.TrimSpace(result.Runner)
 	result.RunnerProfile = strings.TrimSpace(result.RunnerProfile)
+	result.WorkerPolicyFP = strings.TrimSpace(result.WorkerPolicyFP)
 	result.Verdict = strings.TrimSpace(result.Verdict)
 	result.Blocker = strings.TrimSpace(result.Blocker)
 	result.Summary = strings.TrimSpace(result.Summary)
@@ -229,8 +345,17 @@ func normalizeReviewResult(result *ReviewResult) error {
 	result.Covers = sortedUniqueStrings(result.Covers)
 	result.Findings = sortedUniqueStrings(result.Findings)
 	result.EvidenceRefs = sortedUniqueStrings(result.EvidenceRefs)
-	if result.Schema != reviewResultSchema || result.ProjectID == "" || result.TaskID == "" || result.TaskStateRev == "" || result.WorkRevision <= 0 || result.ImplementationSHA == "" || result.AttemptID == "" || result.Actor == "" || result.Runner == "" || result.RunnerProfile == "" || result.ProofFingerprint == "" || result.GateFingerprint == "" {
+	if (result.Schema != reviewResultSchema && result.Schema != reviewResultSchemaV2 && result.Schema != reviewResultSchemaV1) || result.ProjectID == "" || result.TaskID == "" || result.TaskStateRev == "" || result.WorkRevision <= 0 || result.ImplementationSHA == "" || result.AttemptID == "" || result.Actor == "" || result.Runner == "" || result.ProofFingerprint == "" || result.GateFingerprint == "" {
 		return tuskerError(errorInvalidArg, "review result is missing immutable authority fields")
+	}
+	if result.Schema == reviewResultSchema && result.RunnerProfile == "" {
+		return tuskerError(errorInvalidArg, "authoritative review result is missing its exact runner profile")
+	}
+	if result.Schema == reviewResultSchema && !v7CloseAuthorityDigest(result.WorkerPolicyFP, "sha256:") {
+		return tuskerError(errorInvalidArg, "review result is missing an authenticated worker policy")
+	}
+	if result.Schema != reviewResultSchema && result.WorkerPolicyFP != "" {
+		return tuskerError(errorInvalidArg, "non-authoritative review result cannot carry a worker policy")
 	}
 	if result.Summary == "" || len(result.Summary) > reviewResultMaxSummary {
 		return tuskerError(errorInvalidArg, "review summary must be non-empty and at most 800 characters")
@@ -340,8 +465,37 @@ func reviewHasOpenHumanBlocker(vaultPath, taskID string) (bool, error) {
 }
 func reviewResultFingerprint(r ReviewResult) string {
 	r.ResultRevision = ""
-	r.CreatedAt = ""
+	if r.Schema == reviewResultSchemaV1 {
+		r.CreatedAt = ""
+	}
 	raw, _ := json.Marshal(r)
 	sum := sha256.Sum256(raw)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// validatePersistedReviewResult treats the durable JSON row as untrusted
+// transport. A stored ResultRevision is not authority on its own: consumers
+// must prove the payload remains normalized and hashes to that revision.
+func validatePersistedReviewResult(result ReviewResult) error {
+	if err := normalizeReviewResult(&result); err != nil {
+		return err
+	}
+	if result.ResultRevision == "" || result.ResultRevision != reviewResultFingerprint(result) {
+		return fmt.Errorf("review result fingerprint does not match immutable payload")
+	}
+	if result.Schema == reviewResultSchemaV1 {
+		// v1's fingerprint intentionally excluded CreatedAt. A syntactically
+		// sound v1 record is retained for audit/re-review but cannot authorise a
+		// timestamped completion.
+		return nil
+	}
+	if result.CreatedAt == "" {
+		return fmt.Errorf("v2 review result created_at is required")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, result.CreatedAt); err != nil {
+		if _, legacyErr := time.Parse(time.RFC3339, result.CreatedAt); legacyErr != nil {
+			return fmt.Errorf("review result created_at is not RFC3339")
+		}
+	}
+	return nil
 }

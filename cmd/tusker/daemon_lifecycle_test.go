@@ -1168,7 +1168,10 @@ func TestCleanFinishReleasesLeaseBothRunnerLanes(t *testing.T) {
 			if _, err := upsertV7Verification(vault, "APP-T-0001", v7VerificationRow{CoverText: "A1", Check: "command: true", Result: "pass", Notes: "fixture proof"}, "agent:test"); err != nil {
 				t.Fatal(err)
 			}
-			setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer"})
+			setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+				"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer",
+				"source_sha": "fixture-source", "work_revision": 1,
+			})
 			project := registerAutomationTestProject(t, vault)
 			store, err := OpenRuntimeStore(DefaultStateRoot())
 			if err != nil {
@@ -1187,6 +1190,7 @@ func TestCleanFinishReleasesLeaseBothRunnerLanes(t *testing.T) {
 				RecordID:        "APP-T-0001",
 				ItemID:          "APP-T-0001",
 				Runner:          string(RunnerClaude),
+				RunnerProfile:   "review-fixture",
 				Lane:            tc.lane,
 				LeaseState:      string(LeaseStateRunning),
 				AttemptOutcome:  string(AttemptOutcomeNone),
@@ -1194,10 +1198,40 @@ func TestCleanFinishReleasesLeaseBothRunnerLanes(t *testing.T) {
 				SessionRef:      "session-clean",
 				WorkspacePath:   workspacePath,
 				StatusPath:      statusPath,
+				WorkRevision:    1,
 				AttemptCount:    1,
 				UpdatedAt:       "2026-07-06T00:00:00Z",
 			}); err != nil {
 				t.Fatal(err)
+			}
+			if tc.lane == runLaneReview {
+				note, err := resolveV7Note(vault, "APP-T-0001", "task")
+				if err != nil {
+					t.Fatal(err)
+				}
+				proof, gates, err := reviewObjectiveSnapshots(vault, note)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.SaveAttempt(RunAttempt{
+					AttemptID: "attempt-clean", ProjectID: project.ProjectID,
+					RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+					Runner: string(RunnerClaude), Lane: runLaneReview, WorkRevision: 1,
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := store.SaveReviewResult(ReviewResult{
+					Schema: reviewResultSchemaV2, ProjectID: project.ProjectID, TaskID: "APP-T-0001",
+					TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: 1,
+					ImplementationSHA: "fixture-source", AttemptID: "attempt-clean",
+					Actor: "reviewer:agent", Runner: string(RunnerClaude), RunnerProfile: "review-fixture",
+					ProofFingerprint: proof, GateFingerprint: gates,
+					Verdict: "changes_requested", Summary: "generic typed review transport",
+					Findings:  []string{"fixture finding"},
+					CreatedAt: "2026-07-25T10:00:00Z",
+				}); err != nil {
+					t.Fatal(err)
+				}
 			}
 			_ = store.Close()
 			daemon, err := NewDaemon(DefaultStateRoot())

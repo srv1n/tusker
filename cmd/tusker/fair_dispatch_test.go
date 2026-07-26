@@ -439,6 +439,81 @@ func TestFairMultiProjectDispatch(t *testing.T) {
 		}
 	})
 
+	t.Run("post-reactor soft dependency relock drops stale all-eligible candidate", func(t *testing.T) {
+		vault := automationTestVault(t)
+		setAllEligibleDispatchScopeForAutomationTest(t, vault)
+		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reviewed premise", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Soft dependent", "risk": "low", "priority": "p1", "dependencies": "APP-T-0001:soft", "v7": "true"}, newV7Task)
+		for _, taskID := range []string{"APP-T-0001", "APP-T-0002"} {
+			makeV7TaskDispatchableForTest(t, vault, taskID)
+		}
+		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+			"status": "review", "readiness": "waiting_on_review", "proof_status": "satisfied",
+			"work_revision": 1, "source_sha": "reviewed-premise",
+		})
+		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
+		stale, err := resolveV7Note(vault, "APP-T-0002", "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stringField(stale.Data, "readiness") != "ready" {
+			t.Fatalf("soft dependent was not initially dispatchable: %#v", stale.Data)
+		}
+		staleNotes, err := listOperationalNotes(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		staleByID, _ := daemonNoteMaps(staleNotes)
+		project := registerAutomationTestProject(t, vault)
+		store, err := OpenRuntimeStore(DefaultStateRoot())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		run := fairDispatchTestRun(project.ProjectID, "APP-T-0002")
+		run.WorkRevision = intField(stale.Data, "work_revision")
+		if err := store.UpsertRun(run); err != nil {
+			t.Fatal(err)
+		}
+		wfFile, err := loadWorkflow(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		candidate := daemonDispatchCandidate{
+			Project: project, Workflow: wfFile, Note: stale, NotesByID: staleByID,
+			Run: run, Lane: runLaneExecute, Status: stringField(stale.Data, "status"),
+			ProjectLimit: 4, RunnerLimit: fairDispatchRunnerLimit(wfFile.Data),
+		}
+
+		// This is the same transition the completion reactor performs after a
+		// changes-requested result, deliberately after candidate capture.
+		mustRunPickupTest(t, Args{
+			"vault": vault, "quiet": "true", "id": "APP-T-0001",
+			"status": "rework", "by": "reviewer:agent", "reason": "Review rejected the soft premise.",
+		}, statusV7Cmd)
+		relocked, err := resolveV7Note(vault, "APP-T-0002", "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stringField(relocked.Data, "readiness") != "blocked_by_dependency" {
+			t.Fatalf("changes-requested transition did not relock dependent: %#v", relocked.Data)
+		}
+
+		daemon := &Daemon{store: store, stateRoot: store.stateRoot}
+		var order []string
+		daemon.fairDispatchRun = fairDispatchRecorder(&order)
+		if err := daemon.dispatchFairCandidates(context.Background(), []daemonDispatchCandidate{candidate}, 2); err != nil {
+			t.Fatal(err)
+		}
+		if len(order) != 0 {
+			t.Fatalf("stale all-eligible candidate reached claim: %#v", order)
+		}
+		blocked := fairDispatchFindRun(t, store, project.ProjectID, "APP-T-0002")
+		if !strings.Contains(blocked.LastError, "blocked_by_dependency") {
+			t.Fatalf("stale candidate lacks post-reactor dependency reason: %#v", blocked)
+		}
+	})
+
 	t.Run("armed_wave_concurrency_guard_is_stable_before_shared_selection", func(t *testing.T) {
 		vault, idx, _ := armedWaveTestFixture(t)
 		review := idx.Tasks["APP-T-0002"]

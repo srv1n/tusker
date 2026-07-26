@@ -334,6 +334,77 @@ func (d *Daemon) runFairDispatchCandidate(ctx context.Context, candidate daemonD
 	return updated, persisted, claimed, err
 }
 
+// refreshFairExecuteCandidate closes the gap between project-local candidate
+// collection and global fair selection. The completion reactor runs in that
+// gap and may relock a proof-green soft dependent. Scope admission alone is
+// insufficient in all_eligible mode, so execute and integrator candidates
+// reload canonical notes and rerun both dependency eligibility and the full
+// automation plan immediately before selection.
+func (d *Daemon) refreshFairExecuteCandidate(candidate daemonDispatchCandidate, run RunStatus, projectRuns map[string]RunStatus) (daemonDispatchCandidate, string, error) {
+	// PollOnce always supplies both canonical paths. Empty paths identify
+	// scheduler-only synthetic candidates, which have no tracker source to
+	// refresh.
+	if (candidate.Lane != runLaneExecute && candidate.Lane != runLaneIntegrator) ||
+		strings.TrimSpace(candidate.Note.AbsolutePath) == "" ||
+		strings.TrimSpace(candidate.Workflow.Path) == "" {
+		return candidate, "", nil
+	}
+	notes, err := listOperationalNotes(candidate.Project.VaultRoot)
+	if err != nil {
+		return candidate, "", err
+	}
+	notesByID, notesByRecordID := daemonNoteMaps(notes)
+	note, ok := notesByRecordID[candidate.Run.RecordID]
+	if !ok {
+		return candidate, "post-reactor task projection is missing", nil
+	}
+	dispatchNote := note
+	dispatchNotes := notes
+	dispatchNotesByID := notesByID
+	dispatchNotesByRecordID := notesByRecordID
+	if projected, projectedIdx, projectedOK, projectionErr := armedWaveDispatchTaskProjection(candidate.Project.VaultRoot, note); projectionErr != nil {
+		return candidate, "", projectionErr
+	} else if projectedOK {
+		dispatchNote = projected
+		dispatchNotes = append([]Note(nil), notes...)
+		dispatchNotesByID = projectedNoteMap(notesByID, projectedIdx)
+		dispatchNotesByRecordID = projectedNoteMap(notesByRecordID, projectedIdx)
+		for i, current := range dispatchNotes {
+			if projectedTask, exists := projectedIdx.Tasks[trackerRecordID(current)]; exists {
+				dispatchNotes[i] = projectedTask
+			}
+		}
+	}
+	candidate.Note = dispatchNote
+	candidate.NotesByID = dispatchNotesByID
+	candidate.Run = run
+	candidate.Status = stringField(dispatchNote.Data, "status")
+	candidate.Lane = runLaneExecute
+	if stringField(dispatchNote.Data, "work_kind") == "integrator" {
+		candidate.Lane = runLaneIntegrator
+	}
+	if !containsString(candidate.Workflow.Data.Tracker.ActiveStates, candidate.Status) {
+		return candidate, "post-reactor tracker status is " + fallback(candidate.Status, "(missing)"), nil
+	}
+	if currentWork := intField(dispatchNote.Data, "work_revision"); run.WorkRevision != currentWork {
+		return candidate, fmt.Sprintf("post-reactor work revision changed from %d to %d", run.WorkRevision, currentWork), nil
+	}
+	if reason, scopeErr := d.scopeDispatchBlocker(candidate.Project, dispatchNote, candidate.Workflow.Data, projectRuns); scopeErr != nil {
+		return candidate, "", scopeErr
+	} else if reason != "" {
+		return candidate, "post-reactor dispatch scope or wave constraint: " + reason, nil
+	}
+	if reason := daemonDispatchBlockedReason(candidate.Project.VaultRoot, dispatchNote, dispatchNotesByID, dispatchNotesByRecordID); reason != "" {
+		return candidate, "post-reactor " + strings.TrimPrefix(reason, "dispatch blocked: "), nil
+	}
+	if blocked, planErr := d.executePlanBlockedReason(candidate.Project, candidate.Workflow, dispatchNotes, dispatchNote, run); planErr != nil {
+		return candidate, "", planErr
+	} else if blocked != "" {
+		return candidate, "post-reactor automation plan do_not_dispatch: " + blocked, nil
+	}
+	return candidate, "", nil
+}
+
 func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemonDispatchCandidate, globalLimit int) error {
 	allRuns, err := d.store.ListRuns()
 	if err != nil {
@@ -391,6 +462,17 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 		if runConsumesDispatchCapacity(run) || !shouldDispatchRun(run, time.Now().UTC()) {
 			continue
 		}
+		projectRunsByRecord, projectRuns := fairDispatchProjectRuns(runs, candidate.Project.ProjectID)
+		candidate, refreshReason, refreshErr := d.refreshFairExecuteCandidate(candidate, run, projectRunsByRecord)
+		if refreshErr != nil {
+			return refreshErr
+		}
+		if refreshReason != "" {
+			if err := d.persistFairDispatchReason(runs, candidate, refreshReason); err != nil {
+				return err
+			}
+			continue
+		}
 
 		projectLimit := candidate.ProjectLimit
 		if projectLimit > 0 && projectActive[candidate.Project.ProjectID] >= projectLimit {
@@ -413,7 +495,7 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 			}
 			continue
 		}
-		projectRunsByRecord, projectRuns := fairDispatchProjectRuns(runs, candidate.Project.ProjectID)
+		projectRunsByRecord, projectRuns = fairDispatchProjectRuns(runs, candidate.Project.ProjectID)
 		if reason, err := d.scopeDispatchBlocker(candidate.Project, candidate.Note, candidate.Workflow.Data, projectRunsByRecord); err != nil {
 			return err
 		} else if reason != "" {

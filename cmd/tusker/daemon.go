@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -46,6 +48,8 @@ type Daemon struct {
 	reconcileSchedule      map[string]adaptiveProjectReconcileState
 	processIdentityProbe   func(RunStatus) bool
 	pollProcessIdentity    func(RunStatus) bool
+	completionAuthorityMu  sync.Mutex
+	completionAuthorityKey map[string]ed25519.PrivateKey
 }
 
 const (
@@ -88,7 +92,7 @@ func NewDaemon(stateRoot string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Daemon{stateRoot: stateRoot, store: store, notifyWake: make(chan string, 256), frontiers: map[string]*projectFrontierIndex{}, frontierHints: map[string][]daemonControlChange{}, departureSchedules: map[string]departureSchedule{}}, nil
+	return &Daemon{stateRoot: stateRoot, store: store, notifyWake: make(chan string, 256), frontiers: map[string]*projectFrontierIndex{}, frontierHints: map[string][]daemonControlChange{}, departureSchedules: map[string]departureSchedule{}, completionAuthorityKey: map[string]ed25519.PrivateKey{}}, nil
 }
 
 func (d *Daemon) Close() error {
@@ -1046,6 +1050,8 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				current.FirstEventAt = ""
 				current.LastHeartbeatAt = ""
 				current.Lane = runLaneExecute
+				current.WorkerPolicyFP = ""
+				current.ExecutePolicyFP = ""
 				current.Terminal = false
 				clearRunCloudRefs(&current)
 				clearActiveExecution(&current)
@@ -1387,6 +1393,14 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				StateLimit:   wfFile.Data.Agents.MaxConcurrentAgentsByState[status],
 				RunnerLimit:  fairDispatchRunnerLimit(wfFile.Data),
 			})
+		}
+		// Typed review results are consumed before the ordinary wave drain so an
+		// authoritative project has exactly one completion authority.  Legacy,
+		// disabled, and shadow modes are no-ops inside the reactor.
+		if err := d.reconcileReviewCompletion(project, wfFile.Data); err != nil {
+			if errorToIssue(err).Code != completionRepairRequiredError {
+				return err
+			}
 		}
 		if err := drainArmedWavesToMain(project.VaultRoot); err != nil {
 			return err
@@ -2180,7 +2194,6 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	nowTime := time.Now().UTC()
 	now := nowTime.Format(time.RFC3339)
 	sessionResumable := runSessionResumable(wfFile.Data, run)
-
 	if ingested, err := d.ingestCodexExecRawLog(run); err != nil {
 		return run, false, err
 	} else if ingested {
@@ -2353,10 +2366,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				return run, true, nil
 			}
 			if run.Lane == runLaneReview {
-				// Dirty-workspace handling takes precedence over a findings
-				// bounce: if the reviewer left uncommitted changes, stop for
-				// audit so those changes are never silently abandoned, even
-				// when a finding row is also present.
+				// A reviewer that changed its worktree cannot submit authority. This
+				// check precedes proposal persistence so dirty output never becomes a
+				// durable review result.
 				if reason := reviewerWorkspaceDirtyReason(run.WorkspacePath); reason != "" {
 					parentAttemptID := run.ActiveAttemptID
 					parentSessionRef := run.SessionRef
@@ -2370,19 +2382,24 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 					if strings.TrimSpace(run.SessionRef) != "" {
 						_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateReleased), "", reason, false)
 					}
-					d.emitSupervisorDecision(SupervisorDecision{
-						ProjectID:        project.ProjectID,
-						RecordID:         run.RecordID,
-						AttemptID:        parentAttemptID,
-						SessionRef:       parentSessionRef,
-						Kind:             string(SupervisorDecisionStopForAudit),
-						Reason:           reason,
-						ParentAttemptID:  parentAttemptID,
-						ParentSessionRef: parentSessionRef,
-						WorkspacePath:    run.WorkspacePath,
-					})
+					d.emitSupervisorDecision(SupervisorDecision{ProjectID: project.ProjectID, RecordID: run.RecordID, AttemptID: parentAttemptID, SessionRef: parentSessionRef, Kind: string(SupervisorDecisionStopForAudit), Reason: reason, ParentAttemptID: parentAttemptID, ParentSessionRef: parentSessionRef, WorkspacePath: run.WorkspacePath})
 					clearActiveExecution(&run)
 					return run, true, nil
+				}
+				// A review proposal is only transport until the trusted wrapper has
+				// written its terminal status. Never harvest a live raw log: later
+				// output could conflict with an early marker. Non-zero exits never
+				// authorise a verdict.
+				if found, refusal := d.harvestReviewProposal(project, note, run); found {
+					if refusal != "" {
+						updateRunAttemptFromRun(d.store, run, AttemptOutcomeBlocked, 1, refusal, finished)
+						run.LeaseState, run.AttemptOutcome = string(LeaseStateParkedNoProgress), string(AttemptOutcomeBlocked)
+						run.NextRetryAt = ""
+						run.LastError, run.UpdatedAt, run.Terminal = refusal, finished, false
+						clearActiveExecution(&run)
+						return run, true, nil
+					}
+					changed = true
 				}
 				if finding, ok := reviewerFindingFromTask(note, run.ActiveAttemptID); ok {
 					if err := returnReviewerFindingToImplementer(project.VaultRoot, run.RecordID, finding, "daemon:reviewer-finding"); err != nil {
@@ -3089,6 +3106,16 @@ func (d *Daemon) finishReviewCompleteRun(project RegisteredProject, note Note, r
 }
 
 func autoLandArmedWaveReviewComplete(project RegisteredProject, note Note, run RunStatus) (bool, error) {
+	wf, err := loadWorkflow(project.VaultRoot)
+	if err != nil {
+		return false, err
+	}
+	if completionReactorMode(wf.Data.CompletionReactor.Effective) == completionReactorModeAuthoritative {
+		// The authoritative completion reactor merges only after a valid typed
+		// review result.  Keeping this old pre-review path live would let an
+		// implementation exit bypass that authority boundary.
+		return false, nil
+	}
 	wave, _, armed := armedWaveForTask(project.VaultRoot, note)
 	if !armed {
 		return false, nil
@@ -3102,7 +3129,7 @@ func autoLandArmedWaveReviewComplete(project RegisteredProject, note Note, run R
 	if landed && integrated {
 		return true, nil
 	}
-	err := landV7Cmd(Args{
+	err = landV7Cmd(Args{
 		"vault": project.VaultRoot,
 		"quiet": "true",
 		"_pos0": taskID,
@@ -3414,11 +3441,15 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 		return run, false, err
 	}
 	run = applyResolvedProfileToRun(run, selectedProfile)
-	runner, command, err := runnerForName(run.Runner, wfFile.Data)
+	runner, baseCommand, err := runnerForName(run.Runner, wfFile.Data)
 	if err != nil {
 		return run, false, err
 	}
-	command = commandForRunnerProfile(command, selectedProfile)
+	command := commandForRunnerProfile(baseCommand, selectedProfile)
+	var authoritativeArgv []string
+	var authoritativeExecutableFP string
+	var authoritativeSearchPath string
+	var authoritativeRawLogMaxBytes int64
 	workspaceManager := NewWorkspaceManager()
 	workspaceStrategy := d.workspaceStrategyForDispatch(project, wfFile.Data, run)
 	branchName, branchBase, err := v7WorkspaceBranchForTask(project.VaultRoot, note)
@@ -3442,6 +3473,53 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 	selectedWorkspacePath, _, err := workspacePathForRequest(workspaceRequest)
 	if err != nil {
 		return run, false, err
+	}
+	if completionReactorMode(wfFile.Data.CompletionReactor.Effective) == completionReactorModeAuthoritative {
+		if err := completionWorkerSafetyForLane(d.stateRoot, selectedWorkspacePath, lane, baseCommand, selectedProfile); err != nil {
+			return run, false, tuskerError(errorInvalidTransition, err.Error())
+		}
+		expectedProfile, expectedArgv, expectedPolicyFP, expectedErr := completionLaneWorkerPolicy(wfFile.Data, note, lane)
+		if expectedErr != nil {
+			return run, false, tuskerError(errorInvalidTransition, expectedErr.Error())
+		}
+		if selectedProfile.Name != expectedProfile.Name || !reflect.DeepEqual(selectedProfile.Definition, expectedProfile.Definition) {
+			return run, false, tuskerError(errorInvalidTransition, "completion authority refuses worker profile routing drift")
+		}
+		authoritativeArgv, authoritativeExecutableFP, authoritativeSearchPath, err = completionBindAuthoritativeCodexExec(baseCommand, expectedArgv, selectedWorkspacePath, project.RepoRoot)
+		if err != nil {
+			return run, false, tuskerError(errorInvalidTransition, err.Error())
+		}
+		authoritativeRawLogMaxBytes = completionAuthoritativeRawLogMaxBytes
+		policyFP := expectedPolicyFP
+		switch lane {
+		case runLaneExecute:
+			if run.WorkerPolicyFP != "" && run.WorkerPolicyFP != policyFP {
+				return run, false, tuskerError(errorInvalidTransition, "completion authority refuses execute policy drift within a work revision")
+			}
+			if run.ExecutePolicyFP != "" && run.ExecutePolicyFP != policyFP {
+				return run, false, tuskerError(errorInvalidTransition, "completion authority refuses execute policy drift within a work revision")
+			}
+			run.WorkerPolicyFP, run.ExecutePolicyFP = policyFP, policyFP
+		case runLaneReview:
+			_, _, expectedExecuteFP, executeErr := completionLaneWorkerPolicy(wfFile.Data, note, runLaneExecute)
+			if executeErr != nil {
+				return run, false, tuskerError(errorInvalidTransition, executeErr.Error())
+			}
+			if run.ExecutePolicyFP == "" {
+				run.ExecutePolicyFP = run.WorkerPolicyFP
+			}
+			if run.ExecutePolicyFP == "" || run.ExecutePolicyFP != expectedExecuteFP {
+				return run, false, tuskerError(errorInvalidTransition, "completion authority requires the exact locally declared execute policy used before review")
+			}
+			if run.WorkerPolicyFP != "" && run.WorkerPolicyFP != run.ExecutePolicyFP && run.WorkerPolicyFP != policyFP {
+				return run, false, tuskerError(errorInvalidTransition, "completion authority refuses review policy drift within a work revision")
+			}
+			run.WorkerPolicyFP = policyFP
+		}
+		command = baseCommand
+		if lane == runLaneReview && (workspaceStrategy == WorkspaceStrategyShared || canonicalPath(selectedWorkspacePath) == canonicalPath(project.RepoRoot)) {
+			return run, false, tuskerError(errorInvalidTransition, "completion authority requires an isolated noncanonical review workspace")
+		}
 	}
 	diskPressure, err := d.checkDiskPressureForDispatch(selectedWorkspacePath)
 	if err != nil {
@@ -3485,7 +3563,7 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 	}
 	attemptIntent := RunAttempt{
 		AttemptID: attemptID, ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
-		Runner: run.Runner, Lane: lane, WorkRevision: run.WorkRevision, WorkspacePath: selectedWorkspacePath,
+		Runner: run.Runner, Lane: lane, WorkerPolicyFP: run.WorkerPolicyFP, WorkRevision: run.WorkRevision, WorkspacePath: selectedWorkspacePath,
 		BranchName: branchName, ParentAttemptID: previousRun.ActiveAttemptID, StartedAt: startedAt,
 	}
 	var claimResult runClaimResult
@@ -3505,12 +3583,31 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 	if err := d.store.SaveRunIdentity(runIdentityForClaim(*claimResult.Run, project.RepoRoot, selectedWorkspacePath, string(workspaceStrategy), branchName)); err != nil {
 		return run, true, err
 	}
-	preflight, reason := runnerCommandPreflight(runner.Name(), command)
+	var preflight runnerCommandPreflightResult
+	var reason string
+	if len(authoritativeArgv) > 0 {
+		preflight, reason = runnerCommandPreflightWithSearchPath(runner.Name(), command, authoritativeSearchPath)
+	} else {
+		preflight, reason = runnerCommandPreflight(runner.Name(), command)
+	}
 	if reason != "" {
 		run.LeaseGeneration = leaseGeneration
 		run.LeaseHost = runtimeLeaseHost()
 		parked := d.parkRunnerPreflightFailure(project, run, reason)
 		return d.updateDispatchRunIfLease(parked, attemptID, leaseGeneration)
+	}
+	if len(authoritativeArgv) > 0 {
+		resolvedExecutable, executableFP, identityErr := completionExecutableIdentity(preflight.ResolvedExecutable, preflight.ExecutableVersion)
+		if identityErr != nil || resolvedExecutable != authoritativeArgv[0] || executableFP != authoritativeExecutableFP {
+			reason := "runner preflight blocked: completion authority refuses codex executable path or identity drift"
+			if identityErr != nil {
+				reason += ": " + identityErr.Error()
+			}
+			run.LeaseGeneration = leaseGeneration
+			run.LeaseHost = runtimeLeaseHost()
+			parked := d.parkRunnerPreflightFailure(project, run, reason)
+			return d.updateDispatchRunIfLease(parked, attemptID, leaseGeneration)
+		}
 	}
 
 	run.LeaseState = string(LeaseStateClaimed)
@@ -3625,31 +3722,35 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 		})
 	}
 	startReq := StartRequest{
-		ProjectID:        project.ProjectID,
-		RecordID:         run.RecordID,
-		ItemID:           run.ItemID,
-		AttemptID:        attemptID,
-		Lane:             lane,
-		WorkRevision:     run.WorkRevision,
-		LeaseGeneration:  run.LeaseGeneration,
-		ActiveStates:     wfFile.Data.Tracker.ActiveStates,
-		WorkingDir:       workspace.Path,
-		WorkspacePath:    workspace.Path,
-		RepoRoot:         project.RepoRoot,
-		PromptPath:       promptPath,
-		EventSinkPath:    eventSinkPath,
-		RawLogPath:       rawLogPath,
-		StatusPath:       statusPath,
-		Command:          command,
-		RunnerPathPrefix: preflight.RunnerPathPrefix,
-		RunnerProfile:    run.RunnerProfile,
-		RunnerHarness:    run.RunnerHarness,
-		RunnerModel:      run.RunnerModel,
-		RunnerEffort:     run.RunnerEffort,
-		NotePath:         note.AbsolutePath,
-		VaultPath:        project.VaultRoot,
-		CodexPolicy:      codexPolicy,
-		ExternalLoop:     externalLaunch,
+		ProjectID:           project.ProjectID,
+		RecordID:            run.RecordID,
+		ItemID:              run.ItemID,
+		AttemptID:           attemptID,
+		Lane:                lane,
+		WorkRevision:        run.WorkRevision,
+		LeaseGeneration:     run.LeaseGeneration,
+		ActiveStates:        wfFile.Data.Tracker.ActiveStates,
+		WorkingDir:          workspace.Path,
+		WorkspacePath:       workspace.Path,
+		RepoRoot:            project.RepoRoot,
+		PromptPath:          promptPath,
+		EventSinkPath:       eventSinkPath,
+		RawLogPath:          rawLogPath,
+		RawLogMaxBytes:      authoritativeRawLogMaxBytes,
+		StatusPath:          statusPath,
+		Command:             command,
+		CommandArgv:         append([]string(nil), authoritativeArgv...),
+		CommandExecutableFP: authoritativeExecutableFP,
+		CommandSearchPath:   authoritativeSearchPath,
+		RunnerPathPrefix:    preflight.RunnerPathPrefix,
+		RunnerProfile:       run.RunnerProfile,
+		RunnerHarness:       run.RunnerHarness,
+		RunnerModel:         run.RunnerModel,
+		RunnerEffort:        run.RunnerEffort,
+		NotePath:            note.AbsolutePath,
+		VaultPath:           project.VaultRoot,
+		CodexPolicy:         codexPolicy,
+		ExternalLoop:        externalLaunch,
 	}
 	resumeSession := resolvedResumeSession{}
 	if runner.Capabilities().ResumeSession {
@@ -3683,33 +3784,37 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 			WorkspacePath:    workspace.Path,
 		})
 		start, err = runner.Resume(ctx, ResumeRequest{
-			ProjectID:        startReq.ProjectID,
-			RecordID:         startReq.RecordID,
-			ItemID:           startReq.ItemID,
-			AttemptID:        startReq.AttemptID,
-			Lane:             startReq.Lane,
-			WorkRevision:     startReq.WorkRevision,
-			LeaseGeneration:  startReq.LeaseGeneration,
-			ActiveStates:     startReq.ActiveStates,
-			SessionRef:       resumeSession.SessionRef,
-			MessageRef:       resumeSession.MessageRef,
-			WorkingDir:       startReq.WorkingDir,
-			WorkspacePath:    startReq.WorkspacePath,
-			RepoRoot:         startReq.RepoRoot,
-			PromptPath:       startReq.PromptPath,
-			EventSinkPath:    startReq.EventSinkPath,
-			RawLogPath:       startReq.RawLogPath,
-			StatusPath:       startReq.StatusPath,
-			Command:          startReq.Command,
-			RunnerPathPrefix: startReq.RunnerPathPrefix,
-			RunnerProfile:    startReq.RunnerProfile,
-			RunnerHarness:    startReq.RunnerHarness,
-			RunnerModel:      startReq.RunnerModel,
-			RunnerEffort:     startReq.RunnerEffort,
-			NotePath:         startReq.NotePath,
-			VaultPath:        startReq.VaultPath,
-			CodexPolicy:      startReq.CodexPolicy,
-			ExternalLoop:     startReq.ExternalLoop,
+			ProjectID:           startReq.ProjectID,
+			RecordID:            startReq.RecordID,
+			ItemID:              startReq.ItemID,
+			AttemptID:           startReq.AttemptID,
+			Lane:                startReq.Lane,
+			WorkRevision:        startReq.WorkRevision,
+			LeaseGeneration:     startReq.LeaseGeneration,
+			ActiveStates:        startReq.ActiveStates,
+			SessionRef:          resumeSession.SessionRef,
+			MessageRef:          resumeSession.MessageRef,
+			WorkingDir:          startReq.WorkingDir,
+			WorkspacePath:       startReq.WorkspacePath,
+			RepoRoot:            startReq.RepoRoot,
+			PromptPath:          startReq.PromptPath,
+			EventSinkPath:       startReq.EventSinkPath,
+			RawLogPath:          startReq.RawLogPath,
+			RawLogMaxBytes:      startReq.RawLogMaxBytes,
+			StatusPath:          startReq.StatusPath,
+			Command:             startReq.Command,
+			CommandArgv:         append([]string(nil), startReq.CommandArgv...),
+			CommandExecutableFP: startReq.CommandExecutableFP,
+			CommandSearchPath:   startReq.CommandSearchPath,
+			RunnerPathPrefix:    startReq.RunnerPathPrefix,
+			RunnerProfile:       startReq.RunnerProfile,
+			RunnerHarness:       startReq.RunnerHarness,
+			RunnerModel:         startReq.RunnerModel,
+			RunnerEffort:        startReq.RunnerEffort,
+			NotePath:            startReq.NotePath,
+			VaultPath:           startReq.VaultPath,
+			CodexPolicy:         startReq.CodexPolicy,
+			ExternalLoop:        startReq.ExternalLoop,
 		})
 	} else {
 		start, err = runner.Start(ctx, startReq)
@@ -4356,6 +4461,7 @@ func updateRunAttemptFromRun(store *RuntimeStore, run RunStatus, outcome Attempt
 		ItemID:             run.ItemID,
 		Runner:             run.Runner,
 		Lane:               run.Lane,
+		WorkerPolicyFP:     run.WorkerPolicyFP,
 		WorkRevision:       run.WorkRevision,
 		WorkspacePath:      run.WorkspacePath,
 		SessionRef:         run.SessionRef,

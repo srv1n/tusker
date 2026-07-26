@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -146,6 +147,103 @@ func TestWrapperStopSignal(t *testing.T) {
 	}
 	assertRunnerStatusExitCode(t, req.Start.StatusPath, 130)
 	waitForFileText(t, req.Start.RawLogPath, "runner wrapper stopping:")
+}
+
+func TestWrapperSignalTerminalStatusPrecedence(t *testing.T) {
+	t.Run("authoritative child terminal status survives cancelled start", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("TUSKER_STATE_ROOT", filepath.Join(dir, "state"))
+		req, err := runnerWrapperRequestForTest(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Start.RawLogMaxBytes = completionAuthoritativeRawLogMaxBytes
+		ctx, cancel := context.WithCancel(context.Background())
+		started := make(chan struct{})
+		done := make(chan error, 1)
+		go func() {
+			done <- runRunnerWrapperWithChildStarter(ctx, req, func(childCtx context.Context, _ runnerWrapperRequest) (*StartResult, error) {
+				close(started)
+				<-childCtx.Done()
+				if wrote, writeErr := writeRunnerStatusFileIfAbsentWithOutcome(
+					req.Start.StatusPath,
+					completionAuthoritativeRawLogOverflowExitCode,
+					AttemptOutcomeFailed,
+					"completion-authoritative raw log exceeded byte limit",
+					0,
+				); writeErr != nil || !wrote {
+					return nil, fmt.Errorf("publish child terminal status: wrote=%t err=%v", wrote, writeErr)
+				}
+				return nil, childCtx.Err()
+			})
+		}()
+		<-started
+		cancel()
+		if err := waitForWrapperDone(t, done); err != nil {
+			t.Fatal(err)
+		}
+		status, err := readRunnerProcessStatus(req.Start.StatusPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.ExitCode != completionAuthoritativeRawLogOverflowExitCode ||
+			AttemptOutcome(status.Outcome) != AttemptOutcomeFailed ||
+			!strings.Contains(status.Reason, "raw log exceeded") {
+			t.Fatalf("wrapper cancellation clobbered child terminal status: %#v", status)
+		}
+	})
+
+	t.Run("cancelled start publishes 130 only when status is absent", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("TUSKER_STATE_ROOT", filepath.Join(dir, "state"))
+		req, err := runnerWrapperRequestForTest(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Start.RawLogMaxBytes = completionAuthoritativeRawLogMaxBytes
+		ctx, cancel := context.WithCancel(context.Background())
+		started := make(chan struct{})
+		done := make(chan error, 1)
+		go func() {
+			done <- runRunnerWrapperWithChildStarter(ctx, req, func(childCtx context.Context, _ runnerWrapperRequest) (*StartResult, error) {
+				close(started)
+				<-childCtx.Done()
+				return nil, childCtx.Err()
+			})
+		}()
+		<-started
+		cancel()
+		if err := waitForWrapperDone(t, done); err != nil {
+			t.Fatal(err)
+		}
+		status, err := readRunnerProcessStatus(req.Start.StatusPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.ExitCode != 130 || AttemptOutcome(status.Outcome) != AttemptOutcomeInterrupted {
+			t.Fatalf("wrapper did not publish the missing cancellation terminal status: %#v", status)
+		}
+	})
+
+	t.Run("real bounded codex exec cancellation publishes one terminal status", func(t *testing.T) {
+		store, req := setupRunnerWrapperRuntime(t)
+		req.Start.RawLogMaxBytes = 1024
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- runRunnerWrapper(ctx, req) }()
+		waitForWrapperHeartbeat(t, store, req)
+		cancel()
+		if err := waitForWrapperDone(t, done); err != nil {
+			t.Fatal(err)
+		}
+		status, err := readRunnerProcessStatus(req.Start.StatusPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.ExitCode != 130 || AttemptOutcome(status.Outcome) != AttemptOutcomeInterrupted {
+			t.Fatalf("bounded CodexExec cancellation did not preserve terminal precedence: %#v", status)
+		}
+	})
 }
 
 func TestWrapperStopSignalDaemonAbsenceContinuesHeartbeat(t *testing.T) {

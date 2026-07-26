@@ -13,33 +13,37 @@ import (
 )
 
 type runnerExecRequest struct {
-	ProjectID        string
-	RecordID         string
-	ItemID           string
-	AttemptID        string
-	Lane             string
-	WorkRevision     int
-	LeaseGeneration  int
-	SessionRef       string
-	MessageRef       string
-	WorkingDir       string
-	WorkspacePath    string
-	RepoRoot         string
-	PromptPath       string
-	EventSinkPath    string
-	RawLogPath       string
-	StatusPath       string
-	RunnerPathPrefix string
-	Command          string
-	RunnerProfile    string
-	RunnerHarness    string
-	RunnerModel      string
-	RunnerEffort     string
-	NotePath         string
-	VaultPath        string
-	ResumeMode       bool
-	CodexPolicy      CodexPolicy
-	ExternalLoop     ExternalLoopLaunchContext
+	ProjectID           string
+	RecordID            string
+	ItemID              string
+	AttemptID           string
+	Lane                string
+	WorkRevision        int
+	LeaseGeneration     int
+	SessionRef          string
+	MessageRef          string
+	WorkingDir          string
+	WorkspacePath       string
+	RepoRoot            string
+	PromptPath          string
+	EventSinkPath       string
+	RawLogPath          string
+	RawLogMaxBytes      int64
+	StatusPath          string
+	RunnerPathPrefix    string
+	Command             string
+	CommandArgv         []string
+	CommandExecutableFP string
+	CommandSearchPath   string
+	RunnerProfile       string
+	RunnerHarness       string
+	RunnerModel         string
+	RunnerEffort        string
+	NotePath            string
+	VaultPath           string
+	ResumeMode          bool
+	CodexPolicy         CodexPolicy
+	ExternalLoop        ExternalLoopLaunchContext
 }
 
 type runnerProcessStatus struct {
@@ -73,10 +77,10 @@ func executeRunnerCommand(ctx context.Context, runner RunnerName, req runnerExec
 
 func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, req runnerExecRequest, capabilities RunnerCapabilities, eventLog runnerEventLog) (*StartResult, error) {
 	command := strings.TrimSpace(req.Command)
-	if command == "" {
+	if command == "" && len(req.CommandArgv) == 0 {
 		return nil, tuskerError(errorConfigInvalid, fmt.Sprintf("%s runner command is empty", runner))
 	}
-	if strings.Contains(command, "app-server") {
+	if strings.Contains(command, "app-server") || containsString(req.CommandArgv, "app-server") {
 		return nil, tuskerError(errorConfigInvalid, fmt.Sprintf("%s command %q is app-server mode; the current daemon runner needs a detached CLI command", runner, command))
 	}
 	if err := ensureDir(filepath.Dir(req.RawLogPath)); err != nil {
@@ -85,12 +89,41 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 	if err := ensureDir(filepath.Dir(req.StatusPath)); err != nil {
 		return nil, err
 	}
+	if req.RawLogMaxBytes < 0 {
+		return nil, tuskerError(errorConfigInvalid, "runner raw-log byte limit cannot be negative")
+	}
+	if strings.TrimSpace(req.CommandExecutableFP) != "" && req.RawLogMaxBytes != completionAuthoritativeRawLogMaxBytes {
+		return nil, tuskerError(errorConfigInvalid, fmt.Sprintf(
+			"completion authority requires the exact %d-byte raw-log policy",
+			completionAuthoritativeRawLogMaxBytes,
+		))
+	}
+	boundedRawLog := req.RawLogMaxBytes > 0
+	if boundedRawLog {
+		if err := os.Remove(req.StatusPath); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("remove stale runner status before bounded launch: %w", err)
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
 	workspaceCWD, err := runnerWorkspaceCWD(runner, req.WorkspacePath)
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(req.CommandExecutableFP) != "" {
+		if len(req.CommandArgv) == 0 || !filepath.IsAbs(req.CommandArgv[0]) {
+			return nil, tuskerError(errorConfigInvalid, "completion authority requires an absolute command argv executable")
+		}
+		if pathWithin(workspaceCWD, req.CommandArgv[0]) || (strings.TrimSpace(req.RepoRoot) != "" && pathWithin(req.RepoRoot, req.CommandArgv[0])) {
+			return nil, tuskerError(errorConfigInvalid, "completion authority refuses an executable from the worker workspace or repository")
+		}
+		if err := completionVerifyExecutableIdentity(req.CommandArgv[0], req.CommandExecutableFP, req.CommandSearchPath); err != nil {
+			return nil, tuskerError(errorConfigInvalid, err.Error())
+		}
+	}
 
-	expanded := replaceTemplateTokens(command, map[string]string{
+	tokens := map[string]string{
 		"{{workspace_path}}":  workspaceCWD,
 		"{{prompt_path}}":     req.PromptPath,
 		"{{event_sink_path}}": req.EventSinkPath,
@@ -100,8 +133,22 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 		"{{vault_path}}":      req.VaultPath,
 		"{{session_ref}}":     req.SessionRef,
 		"{{message_ref}}":     req.MessageRef,
-	})
+	}
+	expanded := replaceTemplateTokens(command, tokens)
 	expanded = runnerCommandWithPathPrefix(expanded, req.RunnerPathPrefix)
+	scriptCommand := expanded
+	commandArgs := []string{"tusker-runner"}
+	shellExecutable := "sh"
+	shellFlag := "-lc"
+	if len(req.CommandArgv) > 0 {
+		scriptCommand = `"$@"`
+		commandArgs = append(commandArgs, replaceTemplateArgv(req.CommandArgv, tokens)...)
+		// Structured argv is already fully resolved by trusted Go code. A fixed
+		// non-login shell only supplies status-file plumbing; it cannot source
+		// repository or operator shell startup files and cannot reparse argv.
+		shellExecutable = "/bin/sh"
+		shellFlag = "-c"
+	}
 	script := fmt.Sprintf(`rm -f "$TUSKER_STATUS_PATH"
 ( %s ) < "$TUSKER_PROMPT_PATH" >> "$TUSKER_RAW_LOG" 2>&1
 code=$?
@@ -112,18 +159,35 @@ code=int(sys.argv[2])
 payload={"exit_code":code,"completed_at":datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z")}
 open(path,"w",encoding="utf-8").write(json.dumps(payload)+"\n")
 PY
-`, expanded)
+`, scriptCommand)
+	if boundedRawLog {
+		// The trusted parent owns both output streams and the only writable raw
+		// log descriptor. In particular, the fixed shell does not redirect an
+		// authoritative worker around the byte-budget writer.
+		script = fmt.Sprintf(`( %s ) < "$TUSKER_PROMPT_PATH"
+`, scriptCommand)
+	}
 
-	if err := eventLog.Append("attempt_started", req.AttemptID, runner, map[string]any{
-		"command":     command,
-		"item_id":     req.ItemID,
-		"resume_mode": req.ResumeMode,
-		"session_ref": req.SessionRef,
-	}); err != nil {
+	startedPayload := map[string]any{
+		"command": command, "item_id": req.ItemID,
+		"resume_mode": req.ResumeMode, "session_ref": req.SessionRef,
+	}
+	if boundedRawLog {
+		startedPayload["raw_log_max_bytes"] = req.RawLogMaxBytes
+		startedPayload["raw_log_overflow"] = "kill_process_group"
+	}
+	if err := eventLog.Append("attempt_started", req.AttemptID, runner, startedPayload); err != nil {
 		return nil, fmt.Errorf("record %s attempt_started event: %w", runner, err)
 	}
 
-	cmd := exec.CommandContext(ctx, "sh", "-lc", script)
+	cmdArgs := append([]string{shellFlag, script}, commandArgs...)
+	var cmd *exec.Cmd
+	if boundedRawLog {
+		cmd = exec.Command(shellExecutable, cmdArgs...)
+		cmd.WaitDelay = boundedRunnerWaitDelay
+	} else {
+		cmd = exec.CommandContext(ctx, shellExecutable, cmdArgs...)
+	}
 	cmd.Dir = workspaceCWD
 	if err := assertRunnerCommandDir(runner, cmd.Dir, req.WorkspacePath); err != nil {
 		return nil, err
@@ -132,33 +196,55 @@ PY
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-		RunnerPathPrefix: req.RunnerPathPrefix,
-		NotePath:         req.NotePath, VaultPath: req.VaultPath, SessionRef: req.SessionRef, MessageRef: req.MessageRef,
+		RunnerPathPrefix:  req.RunnerPathPrefix,
+		CommandSearchPath: req.CommandSearchPath,
+		NotePath:          req.NotePath, VaultPath: req.VaultPath, SessionRef: req.SessionRef, MessageRef: req.MessageRef,
 		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		CodexPolicy:  withDefaultCodexPolicy(req.CodexPolicy),
 		ExternalLoop: req.ExternalLoop,
 	})
 	closeStdin := attachDevNullStdin(cmd)
 	defer closeStdin()
-	if file, err := os.OpenFile(req.RawLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+	var authoritativeLog *boundedRawLogWriter
+	if boundedRawLog {
+		authoritativeLog, err = openBoundedRawLog(req.RawLogPath, req.RawLogMaxBytes, req.ResumeMode)
+		if err != nil {
+			return nil, fmt.Errorf("open completion-authoritative raw log: %w", err)
+		}
+		cmd.Stdout = authoritativeLog
+		cmd.Stderr = authoritativeLog
+	} else if file, openErr := os.OpenFile(req.RawLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); openErr == nil {
 		defer file.Close()
 		cmd.Stdout = file
 		cmd.Stderr = file
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
+		if authoritativeLog != nil {
+			_ = authoritativeLog.close()
+		}
 		return nil, err
 	}
 	pid := cmd.Process.Pid
 	pgid := processGroupID(pid)
 	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
-	if err := eventLog.Append("attempt_spawned", req.AttemptID, runner, map[string]any{
-		"pid": pid, "status_path": req.StatusPath,
-	}); err != nil {
+	spawnedPayload := map[string]any{"pid": pid, "status_path": req.StatusPath}
+	if boundedRawLog {
+		spawnedPayload["raw_log_max_bytes"] = req.RawLogMaxBytes
+	}
+	if err := eventLog.Append("attempt_spawned", req.AttemptID, runner, spawnedPayload); err != nil {
 		terminateAndReapRunnerCommand(cmd, pgid)
+		if authoritativeLog != nil {
+			_ = authoritativeLog.close()
+		}
 		return nil, fmt.Errorf("record %s attempt_spawned event for pid %d; launched process was terminated: %w", runner, pid, err)
 	}
-	_ = cmd.Process.Release()
+	if authoritativeLog != nil {
+		authoritativeLog.bindTerminator(func() { killRunnerProcessGroup(cmd, pgid) })
+		go monitorBoundedRunnerCommand(ctx, cmd, pgid, authoritativeLog, req.StatusPath)
+	} else {
+		_ = cmd.Process.Release()
+	}
 
 	return &StartResult{
 		SessionRef:   firstNonEmpty(req.SessionRef, extractSessionRef(req.RawLogPath)),
@@ -172,6 +258,14 @@ PY
 		Completed:    false,
 		Outcome:      AttemptOutcomeNone,
 	}, nil
+}
+
+func replaceTemplateArgv(argv []string, replacements map[string]string) []string {
+	out := make([]string, len(argv))
+	for i, arg := range argv {
+		out[i] = replaceTemplateTokens(arg, replacements)
+	}
+	return out
 }
 
 func terminateAndReapRunnerCommand(cmd *exec.Cmd, pgid int) {

@@ -24,7 +24,7 @@ func (r *CodexRunner) Start(ctx context.Context, req StartRequest) (*StartResult
 	return executeRunnerCommand(ctx, r.Name(), runnerExecRequest{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
-		RepoRoot: req.RepoRoot, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath, Command: req.Command, RunnerPathPrefix: req.RunnerPathPrefix,
+		RepoRoot: req.RepoRoot, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, RawLogMaxBytes: req.RawLogMaxBytes, StatusPath: req.StatusPath, Command: req.Command, CommandArgv: append([]string(nil), req.CommandArgv...), CommandExecutableFP: req.CommandExecutableFP, CommandSearchPath: req.CommandSearchPath, RunnerPathPrefix: req.RunnerPathPrefix,
 		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy,
 		ExternalLoop: req.ExternalLoop,
@@ -39,8 +39,8 @@ func (r *CodexRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeRes
 	startReq := StartRequest{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, ActiveStates: req.ActiveStates, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
-		EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-		RepoRoot: req.RepoRoot, Command: command, RunnerPathPrefix: req.RunnerPathPrefix, RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
+		EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, RawLogMaxBytes: req.RawLogMaxBytes, StatusPath: req.StatusPath,
+		RepoRoot: req.RepoRoot, Command: command, CommandArgv: append([]string(nil), req.CommandArgv...), CommandExecutableFP: req.CommandExecutableFP, CommandSearchPath: req.CommandSearchPath, RunnerPathPrefix: req.RunnerPathPrefix, RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy, ExternalLoop: req.ExternalLoop,
 	}
 	return r.Start(ctx, startReq)
@@ -83,7 +83,7 @@ func (r *CodexAppServerRunner) Resume(ctx context.Context, req ResumeRequest) (*
 	startReq := StartRequest{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, ActiveStates: req.ActiveStates, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
-		EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
+		EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, RawLogMaxBytes: req.RawLogMaxBytes, StatusPath: req.StatusPath,
 		RepoRoot: req.RepoRoot, Command: req.Command, RunnerPathPrefix: req.RunnerPathPrefix, RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy, ExternalLoop: req.ExternalLoop,
 	}
@@ -105,11 +105,13 @@ func (r *CodexExecRunner) Start(ctx context.Context, req StartRequest) (*StartRe
 	if shouldUseLiveCodex(req.Command) {
 		return nil, tuskerError(errorConfigInvalid, "codex_exec runner requires a detached codex exec command, not app-server")
 	}
-	command, err := codexExecCommandWithPolicy(req.Command, req.CodexPolicy)
-	if err != nil {
-		return nil, err
+	if len(req.CommandArgv) == 0 {
+		command, err := codexExecCommandWithPolicy(req.Command, req.CodexPolicy)
+		if err != nil {
+			return nil, err
+		}
+		req.Command = command
 	}
-	req.Command = command
 	return startDetachedRunnerWrapper(ctx, r.Name(), req, nil, r.Capabilities())
 }
 
@@ -121,19 +123,38 @@ func (r *CodexExecRunner) Resume(ctx context.Context, req ResumeRequest) (*Resum
 	if shouldUseLiveCodex(command) {
 		return nil, tuskerError(errorConfigInvalid, "codex_exec runner requires a detached codex exec resume command, not app-server")
 	}
-	command, err := codexExecCommandWithPolicy(command, req.CodexPolicy)
-	if err != nil {
-		return nil, err
+	if len(req.CommandArgv) > 0 {
+		req.CommandArgv = codexExecResumeArgv(req.CommandArgv, req.SessionRef)
+	} else {
+		var err error
+		command, err = codexExecCommandWithPolicy(command, req.CodexPolicy)
+		if err != nil {
+			return nil, err
+		}
 	}
 	req.Command = command
 	startReq := StartRequest{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, ActiveStates: req.ActiveStates, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
-		EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-		RepoRoot: req.RepoRoot, Command: command, RunnerPathPrefix: req.RunnerPathPrefix, RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
+		EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, RawLogMaxBytes: req.RawLogMaxBytes, StatusPath: req.StatusPath,
+		RepoRoot: req.RepoRoot, Command: command, CommandArgv: append([]string(nil), req.CommandArgv...), CommandExecutableFP: req.CommandExecutableFP, CommandSearchPath: req.CommandSearchPath, RunnerPathPrefix: req.RunnerPathPrefix, RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy, ExternalLoop: req.ExternalLoop,
 	}
 	return startDetachedRunnerWrapper(ctx, r.Name(), startReq, &req, r.Capabilities())
+}
+
+func codexExecResumeArgv(argv []string, sessionRef string) []string {
+	if len(argv) < 3 || argv[1] != "exec" {
+		return append([]string(nil), argv...)
+	}
+	args := append([]string(nil), argv[2:]...)
+	if len(args) > 0 && args[len(args)-1] == "-" {
+		args = args[:len(args)-1]
+	}
+	out := []string{argv[0], "exec", "resume"}
+	out = append(out, args...)
+	out = append(out, sessionRef, "-")
+	return out
 }
 
 func (r *CodexExecRunner) Reconcile(ctx context.Context, req ReconcileRequest) (*ReconcileResult, error) {

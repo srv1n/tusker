@@ -147,6 +147,14 @@ func runnerWrapperExecutable() (string, error) {
 }
 
 func runRunnerWrapper(parent context.Context, req runnerWrapperRequest) error {
+	return runRunnerWrapperWithChildStarter(parent, req, runnerWrapperStartChild)
+}
+
+func runRunnerWrapperWithChildStarter(
+	parent context.Context,
+	req runnerWrapperRequest,
+	startChild func(context.Context, runnerWrapperRequest) (*StartResult, error),
+) error {
 	ctx, stopSignals := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 	stopHeartbeat := make(chan string, 1)
@@ -154,14 +162,19 @@ func runRunnerWrapper(parent context.Context, req runnerWrapperRequest) error {
 	defer cancelHeartbeat()
 	go runnerWrapperHeartbeat(heartbeatCtx, req.Start, stopHeartbeat)
 
-	result, err := runnerWrapperStartChild(ctx, req)
+	result, err := startChild(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
-			_ = appendRawLogLine(req.Start.RawLogPath, "runner wrapper stopping: "+ctx.Err().Error())
-			_ = writeRunnerStatusFile(req.Start.StatusPath, 130)
+			_ = appendRawLogLine(runnerWrapperDiagnosticPath(req.Start), "runner wrapper stopping: "+ctx.Err().Error())
+			runnerWrapperPublishStatusIfAbsent(
+				req.Start,
+				130,
+				AttemptOutcomeInterrupted,
+				"runner wrapper cancelled before child terminal status",
+			)
 			return nil
 		}
-		_ = writeRunnerStatusFile(req.Start.StatusPath, 1)
+		runnerWrapperPublishStatusIfAbsent(req.Start, 1, AttemptOutcomeFailed, "runner wrapper could not start child: "+err.Error())
 		return err
 	}
 	return runnerWrapperWait(ctx, req, result, stopHeartbeat)
@@ -180,8 +193,11 @@ func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*St
 			ProjectID: req.Start.ProjectID, RecordID: req.Start.RecordID, ItemID: req.Start.ItemID, AttemptID: req.Start.AttemptID,
 			Lane: req.Start.Lane, WorkRevision: req.Start.WorkRevision, LeaseGeneration: req.Start.LeaseGeneration, WorkingDir: req.Start.WorkingDir, WorkspacePath: req.Start.WorkspacePath,
 			RepoRoot: req.Start.RepoRoot, PromptPath: req.Start.PromptPath, EventSinkPath: req.Start.EventSinkPath, RawLogPath: req.Start.RawLogPath, StatusPath: req.Start.StatusPath,
+			RawLogMaxBytes:   req.Start.RawLogMaxBytes,
 			RunnerPathPrefix: req.Start.RunnerPathPrefix,
-			Command:          req.Start.Command, NotePath: req.Start.NotePath, VaultPath: req.Start.VaultPath, CodexPolicy: req.Start.CodexPolicy, ExternalLoop: req.Start.ExternalLoop,
+			Command:          req.Start.Command, CommandArgv: append([]string(nil), req.Start.CommandArgv...), CommandExecutableFP: req.Start.CommandExecutableFP, CommandSearchPath: req.Start.CommandSearchPath,
+			RunnerProfile: req.Start.RunnerProfile, RunnerHarness: req.Start.RunnerHarness, RunnerModel: req.Start.RunnerModel, RunnerEffort: req.Start.RunnerEffort,
+			NotePath: req.Start.NotePath, VaultPath: req.Start.VaultPath, CodexPolicy: req.Start.CodexPolicy, ExternalLoop: req.Start.ExternalLoop,
 		}
 		if req.Resume != nil {
 			execReq.SessionRef = req.Resume.SessionRef
@@ -206,12 +222,12 @@ func runnerWrapperWait(ctx context.Context, req runnerWrapperRequest, result *St
 		select {
 		case reason := <-stopHeartbeat:
 			runnerWrapperInterrupt(req, result, reason)
-			err := runnerWrapperWaitForStatus(req.Start.StatusPath, runnerWrapperStopTimeout())
+			err := runnerWrapperWaitForStatus(req.Start, runnerWrapperStopTimeout())
 			runnerWrapperRecordDirectOutcome(req.Start)
 			return err
 		case <-ctx.Done():
 			runnerWrapperInterrupt(req, result, ctx.Err().Error())
-			err := runnerWrapperWaitForStatus(req.Start.StatusPath, runnerWrapperStopTimeout())
+			err := runnerWrapperWaitForStatus(req.Start, runnerWrapperStopTimeout())
 			runnerWrapperRecordDirectOutcome(req.Start)
 			return err
 		case <-ticker.C:
@@ -265,20 +281,28 @@ func runnerWrapperOwnsRun(run RunStatus, req StartRequest) bool {
 	}
 }
 
-func runnerWrapperWaitForStatus(statusPath string, timeout time.Duration) error {
+func runnerWrapperWaitForStatus(req StartRequest, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if fileExists(statusPath) {
+		if fileExists(req.StatusPath) {
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	_ = writeRunnerStatusFile(statusPath, 130)
+	if req.RawLogMaxBytes > 0 {
+		runnerWrapperPublishStatusIfAbsent(req, 130, AttemptOutcomeInterrupted, "runner wrapper timed out waiting for bounded child cleanup")
+	} else {
+		runnerWrapperPublishStatusIfAbsent(req, 130, AttemptOutcomeInterrupted, "runner wrapper timed out waiting for child cleanup")
+	}
 	return nil
 }
 
+func runnerWrapperPublishStatusIfAbsent(req StartRequest, exitCode int, outcome AttemptOutcome, reason string) {
+	_, _ = writeRunnerStatusFileIfAbsentWithOutcome(req.StatusPath, exitCode, outcome, reason, 0)
+}
+
 func runnerWrapperInterrupt(req runnerWrapperRequest, result *StartResult, reason string) {
-	_ = appendRawLogLine(req.Start.RawLogPath, "runner wrapper stopping: "+reason)
+	_ = appendRawLogLine(runnerWrapperDiagnosticPath(req.Start), "runner wrapper stopping: "+reason)
 	if handle := liveRegistry.Find(req.Start.AttemptID); handle != nil {
 		_ = handle.Interrupt(context.Background())
 		return
@@ -292,6 +316,13 @@ func runnerWrapperInterrupt(req runnerWrapperRequest, result *StartResult, reaso
 			_ = syscall.Kill(-result.PGID, syscall.SIGTERM)
 		}
 	}
+}
+
+func runnerWrapperDiagnosticPath(req StartRequest) string {
+	if req.RawLogMaxBytes > 0 {
+		return runnerWrapperLogPath(req)
+	}
+	return req.RawLogPath
 }
 
 func runnerWrapperHeartbeat(ctx context.Context, req StartRequest, stop chan<- string) {
