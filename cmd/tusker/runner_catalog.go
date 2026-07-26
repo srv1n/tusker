@@ -252,7 +252,7 @@ func runnerProfilesBootstrapCmd(args Args) error {
 		"semantic_profiles":   profiles,
 		"default_profile":     stringAny(automation["default_profile"]),
 		"automation_enabled":  automationEnabled,
-		"selection_policy":    "fast prefers Luna; standard, complex, review, and repair prefer Terra; planner and frontier prefer Sol; every role falls back to a visible capable model and nearest supported effort",
+		"selection_policy":    "live or explicitly bundled Codex prefers Luna for fast work, Terra for standard/complex/review/repair, and Sol for planning/frontier; an available Claude-only machine prefers Sonnet, Opus, and Fable by the corresponding role; every role uses a visible capable model and nearest supported effort",
 		"configuration_scope": "project policy; the observed harness catalog remains machine-local",
 	}
 	if args.Bool("write") {
@@ -321,12 +321,14 @@ func hasBootstrapProfile(profiles map[string]any, name string) bool {
 	return ok
 }
 
-// bootstrapCatalogHarness deliberately trusts only an observed live Codex
-// catalog. Claude's aliases are declared rather than discovered, but become a
-// truthful fallback once the local executable is confirmed available.
+// bootstrapCatalogHarness trusts Codex inventory only when the installed CLI
+// returned it, whether from the live endpoint or an explicit --bundled query.
+// A synthetic bundled fallback remains Available=false and is never selected.
+// Claude's aliases are declared rather than discovered, but become a truthful
+// fallback once the local executable is confirmed available.
 func bootstrapCatalogHarness(catalog RunnerCatalog) (string, []RunnerCatalogModel, bool) {
 	for _, entry := range catalog.Harnesses {
-		if entry.Harness == string(RunnerCodexExec) && entry.Source == "live" && entry.Available {
+		if entry.Harness == string(RunnerCodexExec) && (entry.Source == "live" || entry.Source == "bundled") && entry.Available {
 			if models := usableCatalogModels(entry.Harness, entry.Models); len(models) > 0 {
 				return entry.Harness, models, true
 			}

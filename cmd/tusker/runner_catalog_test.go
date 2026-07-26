@@ -97,6 +97,10 @@ func TestRunnerCatalogHarnessIsolationAndBundled(t *testing.T) {
 	if catalog.Harnesses[0].Source != "bundled" || len(catalog.Harnesses[0].Models) != 1 {
 		t.Fatalf("expected bundled catalog: %#v", catalog.Harnesses[0])
 	}
+	profiles := semanticBootstrapProfiles(catalog)
+	if profile, ok := profiles["execute-standard"].(map[string]any); !ok || profile["harness"] != "codex_exec" || profile["model"] != "gpt-5.2" {
+		t.Fatalf("installed --bundled catalog did not produce truthful Codex profiles: %#v", profiles)
+	}
 }
 
 func TestRunnerProfileEffortAndComplexity(t *testing.T) {
