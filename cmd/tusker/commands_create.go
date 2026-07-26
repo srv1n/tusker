@@ -72,11 +72,16 @@ func writeDefaultRootTuskerConfig(vaultPath string) error {
 	}
 	projectID := sanitizeProjectID(filepath.Base(filepath.Dir(vaultPath)))
 	root := filepath.ToSlash(filepath.Base(vaultPath))
-	profileRaw, err := yaml.Marshal(semanticBootstrapProfiles(discoverRunnerCatalog(false)))
+	profiles := semanticBootstrapProfiles(discoverRunnerCatalog(false))
+	profileRaw, err := yaml.Marshal(profiles)
 	if err != nil {
 		return err
 	}
 	profileYAML := indentBootstrapYAML(string(profileRaw), "    ")
+	defaultProfileYAML := ""
+	if hasBootstrapProfile(profiles, "execute-standard") {
+		defaultProfileYAML = "  default_profile: execute-standard\n"
+	}
 	return writeText(configPath, fmt.Sprintf(`schema: tusker.config/v1
 project_id: %s
 
@@ -97,7 +102,7 @@ automation:
   # an explicit operator change may authorize daemon dispatch.
   enabled: false
   # Editable semantic defaults. They are policy, not a machine-local model catalog.
-  default_profile: execute-standard
+%s
   profiles:
 %s
   dispatch_scope: armed_waves
@@ -128,7 +133,7 @@ automation:
     max_children: 0
     allowed_child_types: []
     merge_rule: manual_review
-`, projectID, root, root, root, root, root, profileYAML))
+`, projectID, root, root, root, root, root, defaultProfileYAML, profileYAML))
 }
 
 func indentBootstrapYAML(value, indent string) string {

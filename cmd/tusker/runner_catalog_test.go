@@ -108,9 +108,107 @@ func TestRunnerProfileEffortAndComplexity(t *testing.T) {
 	if validRunnerEffort("turbo") {
 		t.Fatal("unknown effort accepted")
 	}
-	profiles := semanticBootstrapProfiles(RunnerCatalog{Harnesses: []RunnerCatalogHarness{{Harness: "codex_exec", Models: []RunnerCatalogModel{{Model: "hidden", Hidden: true, Efforts: []string{"low"}}, {Model: "terra", Default: true, Efforts: []string{"low", "medium", "high", "xhigh"}}}}}})
+	profiles := semanticBootstrapProfiles(RunnerCatalog{Harnesses: []RunnerCatalogHarness{{Harness: "codex_exec", Source: "live", Available: true, Models: []RunnerCatalogModel{{Model: "hidden", Hidden: true, Efforts: []string{"low"}}, {Model: "gpt-5-terra", Default: true, Efforts: []string{"low", "medium", "high", "xhigh"}}}}}})
 	if profiles["review-independent"].(map[string]any)["permission_preset"] != "read-only" {
 		t.Fatal("review profile must be read-only")
+	}
+}
+
+func TestSemanticBootstrapProfilesClaudeOnly(t *testing.T) {
+	profiles := semanticBootstrapProfiles(RunnerCatalog{Harnesses: []RunnerCatalogHarness{
+		{Harness: "codex_exec", Source: "live", Available: false},
+		{Harness: "claude-code", Source: "declared", Available: true, Models: []RunnerCatalogModel{
+			{Model: "fable", Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
+			{Model: "opus", Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
+			{Model: "sonnet", Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
+		}},
+	}})
+	for role, wantModel := range map[string]string{
+		"execute-fast":       "sonnet",
+		"execute-standard":   "sonnet",
+		"planner":            "fable",
+		"execute-frontier":   "fable",
+		"execute-complex":    "opus",
+		"review-independent": "opus",
+		"repair-complex":     "opus",
+	} {
+		profile, ok := profiles[role].(map[string]any)
+		if !ok || profile["harness"] != "claude-code" || profile["model"] != wantModel {
+			t.Fatalf("%s = %#v, want claude-code/%s", role, profile, wantModel)
+		}
+	}
+}
+
+func TestSemanticBootstrapProfilesNoUsableHarness(t *testing.T) {
+	catalog := RunnerCatalog{Harnesses: []RunnerCatalogHarness{
+		{Harness: "codex_exec", Source: "live", Available: true, Models: []RunnerCatalogModel{{Model: "gpt-5-terra", Efforts: []string{"invalid"}}}},
+		{Harness: "claude-code", Source: "declared", Available: false, Models: []RunnerCatalogModel{{Model: "sonnet", Efforts: []string{"medium"}}}},
+	}}
+	if profiles := semanticBootstrapProfiles(catalog); len(profiles) != 0 {
+		t.Fatalf("profiles=%#v, want none without a usable harness", profiles)
+	}
+}
+
+func TestSemanticEffortForNearestSupportedLevel(t *testing.T) {
+	for _, tc := range []struct {
+		name, harness, want string
+		supported           []string
+		got                 string
+	}{
+		{"exact", "codex_exec", "high", []string{"low", "high"}, "high"},
+		{"tie prefers lower", "codex_exec", "high", []string{"medium", "xhigh"}, "medium"},
+		{"nearest lower", "codex_exec", "xhigh", []string{"low", "medium", "high"}, "high"},
+		{"nearest higher", "codex_exec", "medium", []string{"xhigh"}, "xhigh"},
+		{"claude rejects ultra", "claude-code", "ultra", []string{"ultra", "max"}, "max"},
+		{"no valid effort", "codex_exec", "medium", []string{"turbo"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := semanticEffortFor(tc.harness, tc.want, tc.supported); got != tc.got {
+				t.Fatalf("semanticEffortFor(%q, %q, %q) = %q, want %q", tc.harness, tc.want, tc.supported, got, tc.got)
+			}
+		})
+	}
+}
+
+func TestFreshBootstrapWithoutUsableHarnessOmitsDefaultProfile(t *testing.T) {
+	original := runnerCatalogCommand
+	defer func() { runnerCatalogCommand = original }()
+	runnerCatalogCommand = func(string, ...string) ([]byte, error) { return nil, errCatalogFixture{} }
+	vault := automationTestVault(t)
+	path := filepath.Join(filepath.Dir(vault), "tusker.yaml")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := writeDefaultRootTuskerConfig(vault); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := readText(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, "default_profile: execute-standard") {
+		t.Fatalf("bootstrap fabricated default profile:\n%s", raw)
+	}
+}
+
+func TestProfileReconcileWithoutUsableHarnessOmitsDefaultProfile(t *testing.T) {
+	original := runnerCatalogCommand
+	defer func() { runnerCatalogCommand = original }()
+	runnerCatalogCommand = func(string, ...string) ([]byte, error) { return nil, errCatalogFixture{} }
+	vault := automationTestVault(t)
+	path := filepath.Join(filepath.Dir(vault), "tusker.yaml")
+	if err := writeText(path, "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: false\n  profiles: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runnerProfilesBootstrapCmd(Args{"vault": vault, "write": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := readText(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, "default_profile:") {
+		t.Fatalf("reconcile invented a default profile:\n%s", raw)
 	}
 }
 

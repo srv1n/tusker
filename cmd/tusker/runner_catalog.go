@@ -238,7 +238,9 @@ func runnerProfilesBootstrapCmd(args Args) error {
 	if _, present := automation["enabled"]; !present {
 		automation["enabled"] = false
 	}
-	if _, present := automation["default_profile"]; !present {
+	// Do not create a dangling policy reference on a machine with no usable
+	// harness.  Existing policy remains entirely user-owned.
+	if _, present := automation["default_profile"]; !present && hasBootstrapProfile(profiles, "execute-standard") {
 		automation["default_profile"] = "execute-standard"
 	}
 	automationEnabled := boolAny(automation["enabled"])
@@ -287,18 +289,21 @@ func sortedBootstrapMapKeys(values map[string]any, exclude []string) []string {
 }
 
 func semanticBootstrapProfiles(catalog RunnerCatalog) map[string]any {
-	harness := "codex_exec"
 	efforts := map[string]string{"planner": "high", "execute-fast": "low", "execute-standard": "medium", "execute-complex": "high", "execute-frontier": "xhigh", "review-independent": "high", "repair-complex": "high"}
-	models := []RunnerCatalogModel{{Model: "gpt-5.x", Efforts: []string{"low", "medium", "high", "xhigh"}}}
-	for _, entry := range catalog.Harnesses {
-		if entry.Harness == harness && len(entry.Models) > 0 {
-			models = entry.Models
-			break
-		}
+	harness, models, ok := bootstrapCatalogHarness(catalog)
+	if !ok {
+		return map[string]any{}
 	}
 	out := map[string]any{}
 	for name, effort := range efforts {
-		model := semanticModelFor(name, effort, models)
+		model, ok := semanticModelFor(harness, name, models)
+		if !ok {
+			continue
+		}
+		resolvedEffort := semanticEffortFor(harness, effort, model.Efforts)
+		if resolvedEffort == "" {
+			continue
+		}
 		mode := "workspace-write"
 		preset := "workspace-write-offline"
 		network := false
@@ -306,56 +311,131 @@ func semanticBootstrapProfiles(catalog RunnerCatalog) map[string]any {
 			mode = "read-only"
 			preset = "read-only"
 		}
-		out[name] = map[string]any{"harness": harness, "model": model.Model, "effort": semanticEffortFor(effort, model.Efforts), "permission_preset": preset, "sandbox": map[string]any{"mode": mode, "network": network}, "subagents": map[string]any{"allowed": false, "max_concurrent": 0}}
+		out[name] = map[string]any{"harness": harness, "model": model.Model, "effort": resolvedEffort, "permission_preset": preset, "sandbox": map[string]any{"mode": mode, "network": network}, "subagents": map[string]any{"allowed": false, "max_concurrent": 0}}
 	}
 	return out
 }
 
-func semanticModelFor(role, effort string, models []RunnerCatalogModel) RunnerCatalogModel {
-	preferences := []string{""}
-	switch role {
-	case "execute-fast":
-		preferences = []string{"luna", "mini", "spark", ""}
-	case "planner", "execute-frontier":
-		preferences = []string{"sol", ""}
-	default:
-		preferences = []string{"terra", ""}
-	}
-	for _, preference := range preferences {
-		for _, model := range models {
-			if !model.Hidden && catalogContainsString(model.Efforts, effort) && (preference == "" || strings.Contains(strings.ToLower(model.Model), preference)) {
-				return model
-			}
-		}
-	}
-	for _, preference := range preferences {
-		for _, model := range models {
-			if !model.Hidden && (preference == "" || strings.Contains(strings.ToLower(model.Model), preference)) {
-				return model
-			}
-		}
-	}
-	for _, model := range models {
-		if !model.Hidden {
-			return model
-		}
-	}
-	return RunnerCatalogModel{Model: "gpt-5.x", Efforts: []string{"low", "medium", "high", "xhigh"}}
+func hasBootstrapProfile(profiles map[string]any, name string) bool {
+	_, ok := profiles[name]
+	return ok
 }
-func semanticEffortFor(want string, supported []string) string {
-	if catalogContainsString(supported, want) {
-		return want
-	}
-	for _, effort := range []string{"high", "medium", "low", "xhigh", "max", "ultra"} {
-		if catalogContainsString(supported, effort) {
-			return effort
+
+// bootstrapCatalogHarness deliberately trusts only an observed live Codex
+// catalog. Claude's aliases are declared rather than discovered, but become a
+// truthful fallback once the local executable is confirmed available.
+func bootstrapCatalogHarness(catalog RunnerCatalog) (string, []RunnerCatalogModel, bool) {
+	for _, entry := range catalog.Harnesses {
+		if entry.Harness == string(RunnerCodexExec) && entry.Source == "live" && entry.Available {
+			if models := usableCatalogModels(entry.Harness, entry.Models); len(models) > 0 {
+				return entry.Harness, models, true
+			}
 		}
 	}
-	return "medium"
+	for _, entry := range catalog.Harnesses {
+		if entry.Harness == string(RunnerClaude) && entry.Source == "declared" && entry.Available {
+			if models := usableCatalogModels(entry.Harness, entry.Models); len(models) > 0 {
+				return entry.Harness, models, true
+			}
+		}
+	}
+	return "", nil, false
+}
+
+func usableCatalogModels(harness string, models []RunnerCatalogModel) []RunnerCatalogModel {
+	out := make([]RunnerCatalogModel, 0, len(models))
+	for _, model := range models {
+		if model.Hidden || !validRunnerModelName(model.Model) {
+			continue
+		}
+		for _, effort := range model.Efforts {
+			if validCatalogEffort(harness, effort) {
+				out = append(out, model)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func validCatalogEffort(harness, effort string) bool {
+	return validRunnerEffort(effort) && !(harness == string(RunnerClaude) && strings.EqualFold(strings.TrimSpace(effort), "ultra"))
+}
+
+func semanticModelFor(harness, role string, models []RunnerCatalogModel) (RunnerCatalogModel, bool) {
+	preferences := []string{""}
+	if harness == string(RunnerClaude) {
+		switch role {
+		case "execute-fast":
+			preferences = []string{"sonnet", ""}
+		case "planner", "execute-frontier":
+			preferences = []string{"fable", "opus", ""}
+		case "execute-standard":
+			preferences = []string{"sonnet", "opus", ""}
+		default: // complex execution, independent review, and repair
+			preferences = []string{"opus", "fable", "sonnet", ""}
+		}
+	} else {
+		switch role {
+		case "execute-fast":
+			preferences = []string{"luna", "mini", "spark", ""}
+		case "planner", "execute-frontier":
+			preferences = []string{"sol", ""}
+		default:
+			preferences = []string{"terra", ""}
+		}
+	}
+	for _, preference := range preferences {
+		for _, model := range models {
+			if preference == "" || strings.Contains(strings.ToLower(model.Model), preference) {
+				return model, true
+			}
+		}
+	}
+	return RunnerCatalogModel{}, false
+}
+
+func semanticEffortFor(harness, want string, supported []string) string {
+	levels := []string{"low", "medium", "high", "xhigh", "max", "ultra"}
+	wantIndex := -1
+	for i, level := range levels {
+		if strings.EqualFold(level, strings.TrimSpace(want)) {
+			wantIndex = i
+			break
+		}
+	}
+	if wantIndex < 0 {
+		return ""
+	}
+	best, bestDistance := "", len(levels)+1
+	for i, level := range levels {
+		if !catalogContainsString(supported, level) || !validCatalogEffort(harness, level) {
+			continue
+		}
+		distance := i - wantIndex
+		if distance < 0 {
+			distance = -distance
+		}
+		// Equal-distance ties select the lower effort (smaller i), avoiding an
+		// accidental spend escalation when the exact level is unavailable.
+		if distance < bestDistance || (distance == bestDistance && (best == "" || i < effortLevelIndex(best, levels))) {
+			best, bestDistance = level, distance
+		}
+	}
+	return best
+}
+
+func effortLevelIndex(effort string, levels []string) int {
+	for i, level := range levels {
+		if level == effort {
+			return i
+		}
+	}
+	return len(levels)
 }
 func catalogContainsString(values []string, want string) bool {
 	for _, value := range values {
-		if value == want {
+		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(want)) {
 			return true
 		}
 	}
