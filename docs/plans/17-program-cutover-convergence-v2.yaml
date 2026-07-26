@@ -4,22 +4,23 @@ title: Program cutover convergence
 epic: ORC
 spec_refs:
   - docs/specs/17-program-cutover-convergence.md
-context_fingerprint: sha256:f8bc5c32364feefb05a431fe1697640117a0aa9c867ad0a333a13da8c753417b
+context_fingerprint: sha256:0b55ff6074e6a3ec416111a0fe014247bf2430a412763ed5dca7595b0a8583e5
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
 factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
 summary: >-
-  Import last to compose independent, default-off cross-scope shadow producers
-  into one human-authorized low-risk dogfood and production-promotion handoff.
+  Import last after independent default-off shadow producers and the exact
+  verification authority frontier, then compose one human-authorized low-risk
+  dogfood and production-promotion handoff.
 non_goals:
   - This plan does not import producers, enable automation, arm a wave, start a daemon, start or configure a runtime, run a live smoke, release, spend, or move a Git ref.
   - This plan does not reintroduce authority gates in plans 12 or 14; its two human gates are the sole program authority boundary.
-  - This cutover-specific receipt fence does not claim to solve generic V2 exact-proof semantics; the broader exact-proof contract remains separately owned.
+  - This cutover-specific receipt fence does not itself implement generic V2 exact-proof semantics; Plan 18's exact-verification-authority-e2e is a hard imported producer for that broader authority.
 requirements:
   - id: R1
     outcome: Independent Plan-12, Plan-14, and Plan-15 shadow producers remain default-off and distinguish doctor readiness from setup-gated live smoke.
   - id: R2
-    outcome: Plan 17 imports last and resolves its producer-first, scope-qualified hard dependency topology before a locked, one-shot dogfood transaction can be authorized or observed.
+    outcome: Plan 17 imports last after its shadow producers and Plan 18's exact-verification-authority-e2e frontier, resolving every scope-qualified hard dependency before a locked, one-shot dogfood transaction can be authorized or observed.
   - id: R3
     outcome: Typed grants and immutable receipts bind one human auth gate to low-risk dogfood and one human release gate to production handoff, with prior producer authority gates obsolete in this reviewed migration.
 concurrency: 1
@@ -77,11 +78,12 @@ tasks:
       A default-off Tusker program-cutover handler creates typed, expiry-bound
       human grants and consumes a dogfood grant exactly once to observe the
       named staging and factory transaction, then fences the serialized
-      close-authority seam with immutable receipts and rollback facts without
+      close-authority seam with immutable receipts and rollback facts only
+      after the imported Plan-18 exact-verification authority frontier, without
       widening operational authority.
     acceptance:
       - id: A1
-        outcome: A human-only authorize-dogfood command records a locked grant bound to the exact auth gate, task source key, project, wave, relevant task and integration revisions, expiry, and actor; it rejects free-form evidence, drift, duplicate live grants, and expired inputs.
+        outcome: The task has hard dependencies on local shadow-convergence and exact-verification-authority/v1/exact-verification-authority-e2e; only after both current producer contracts resolve can a human-only authorize-dogfood command record a locked grant bound to the exact auth gate, task source key, project, wave, relevant task and integration revisions, expiry, and actor, rejecting free-form evidence, drift, duplicate live grants, and expired inputs.
       - id: A2
         outcome: Dogfood consumption atomically records before and after state, the observed staging and factory transaction, rollback facts, and one immutable receipt; retry, crash, and duplicate consumption converge without a second transaction or a false integrated receipt.
       - id: A3
@@ -107,6 +109,9 @@ tasks:
       - docs/runbooks/program-cutover-dogfood.md
     dependencies:
       - task: shadow-convergence
+        kind: hard
+      - task: exact-verification-authority-e2e
+        scope: exact-verification-authority/v1
         kind: hard
     concurrency_group: program-cutover
     risk: critical

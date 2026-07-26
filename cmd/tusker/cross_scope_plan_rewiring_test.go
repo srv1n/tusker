@@ -27,6 +27,7 @@ func TestCrossScopePlanRewiring(t *testing.T) {
 		"14": readCrossScopeProgramPlan(t, filepath.Join(repo, "docs", "plans", "14-opt-in-factory-execution-control-v2.yaml")),
 		"15": readCrossScopeProgramPlan(t, filepath.Join(repo, "docs", "plans", "15-opt-in-full-gate-lifecycle-provider-v2.yaml")),
 		"17": readCrossScopeProgramPlan(t, filepath.Join(repo, "docs", "plans", "17-program-cutover-convergence-v2.yaml")),
+		"18": readCrossScopeProgramPlan(t, filepath.Join(repo, "docs", "plans", "18-exact-verification-contract-authority-v2.yaml")),
 	}
 
 	assertCrossScopeProgramTask(t, plans["12"], "scheduled-promotion-shadow-ready", []deliveryDependency{{Task: "shadow-cutover-e2e", Kind: "hard"}})
@@ -41,6 +42,16 @@ func TestCrossScopePlanRewiring(t *testing.T) {
 	if gate := crossScopeProgramGate(t, plans["15"], "choose-and-start-local-runtime"); gate.Kind != "setup" || gate.TaskSourceKey != "provider-live-smoke" {
 		t.Fatalf("provider live smoke must remain setup-gated: %#v", gate)
 	}
+	exactAuthority := plans["18"]
+	if exactAuthority.Scope != "exact-verification-authority/v1" {
+		t.Fatalf("Plan 18 scope = %q", exactAuthority.Scope)
+	}
+	assertCrossScopeProgramTask(t, exactAuthority, "exact-verification-authority-e2e", []deliveryDependency{
+		{Task: "strict-verification-write-path", Kind: "hard"},
+		{Task: "review-completion-proof-chain", Kind: "hard"},
+		{Task: "proof-operations-surface", Kind: "hard"},
+		{Task: "canonical-proof-guidance", Kind: "hard"},
+	})
 
 	program := plans["17"]
 	if program.Scope != "program-cutover-convergence/v1" {
@@ -52,7 +63,10 @@ func TestCrossScopePlanRewiring(t *testing.T) {
 		crossScopeProgramDependency("provider-cutover-doctor", "full-gate-lifecycle-provider/v1"),
 	})
 	transaction := crossScopeProgramTask(t, program, "program-cutover-transaction-contract")
-	assertCrossScopeProgramTask(t, program, "program-cutover-transaction-contract", []deliveryDependency{{Task: "shadow-convergence", Kind: "hard"}})
+	assertCrossScopeProgramTask(t, program, "program-cutover-transaction-contract", []deliveryDependency{
+		{Task: "shadow-convergence", Kind: "hard"},
+		crossScopeProgramDependency("exact-verification-authority-e2e", "exact-verification-authority/v1"),
+	})
 	assertCrossScopeProgramVerification(t, transaction, "A1,A2,A3,A4", programCutoverCloseAuthorityCheck)
 	for _, path := range []string{"cmd/tusker/v7_control_cmd.go", "cmd/tusker/v7_proof_cmd.go", "cmd/tusker/v7_closeout_cmd.go", "cmd/tusker/v7_completion_receipt.go", "cmd/tusker/program_cutover_close_authority_test.go"} {
 		if !containsString(transaction.OwnedPaths, path) {
@@ -89,6 +103,7 @@ func TestCrossScopePlanRewiring(t *testing.T) {
 		filepath.Join(repo, "docs", "plans", "14-opt-in-factory-execution-control-v2.yaml"),
 		filepath.Join(repo, "docs", "plans", "15-opt-in-full-gate-lifecycle-provider-v2.yaml"),
 		filepath.Join(repo, "docs", "plans", "17-program-cutover-convergence-v2.yaml"),
+		filepath.Join(repo, "docs", "plans", "18-exact-verification-contract-authority-v2.yaml"),
 	} {
 		assertCrossScopeProgramPlanCurrent(t, filepath.Join(repo, ".tusker"), path)
 	}
@@ -113,7 +128,12 @@ func assertCrossScopeProgramImportMigration(t *testing.T) {
 		crossScopeProgramFixtureTask("provider-cutover-doctor"),
 		crossScopeProgramFixtureTask("provider-live-smoke", deliveryDependency{Task: "provider-cutover-doctor", Kind: "hard"}),
 	}, []deliveryHumanGate{crossScopeProgramFixtureGate("choose-and-start-local-runtime", "setup", "provider-live-smoke", nil)})
-	transaction := crossScopeProgramFixtureTask("program-cutover-transaction-contract", deliveryDependency{Task: "shadow-convergence", Kind: "hard"})
+	exact18 := crossScopeProgramFixturePlan("exact-verification-authority/v1", []deliveryPlanTask{
+		crossScopeProgramFixtureTask("exact-verification-authority-e2e"),
+	}, nil)
+	transaction := crossScopeProgramFixtureTask("program-cutover-transaction-contract",
+		deliveryDependency{Task: "shadow-convergence", Kind: "hard"},
+		crossScopeProgramDependency("exact-verification-authority-e2e", "exact-verification-authority/v1"))
 	transaction.Verification = []deliveryVerification{{Covers: "A1", Check: programCutoverCloseAuthorityCheck}}
 	dogfood := crossScopeProgramFixtureTask("low-risk-authoritative-dogfood",
 		deliveryDependency{Task: "program-cutover-transaction-contract", Kind: "hard"},
@@ -173,9 +193,18 @@ func assertCrossScopeProgramImportMigration(t *testing.T) {
 
 	crossScopeProgramImportFixturePlan(t, vault, provider15)
 	programPath = writeDeliveryV2TestPlan(t, vault, program17)
+	beforeMissingExactAuthority := snapshotDeliveryV2Records(t, vault)
+	err = deliveryV2ImportCmd(vault, programPath, Args{"vault": vault, "quiet": "true"})
+	if err == nil || !strings.Contains(err.Error(), "CROSS_SCOPE_PRODUCER_MISSING") || !strings.Contains(err.Error(), "exact-verification-authority-e2e") {
+		t.Fatalf("Plan 17 import before Plan 18 = %v, want exact-authority-first refusal", err)
+	}
+	assertEqual(t, beforeMissingExactAuthority, snapshotDeliveryV2Records(t, vault), "missing exact-authority producer import is atomic")
+
+	crossScopeProgramImportFixturePlan(t, vault, exact18)
+	programPath = writeDeliveryV2TestPlan(t, vault, program17)
 	beforeProspectiveReview := snapshotDeliveryV2Records(t, vault)
 	review, err := buildDeliveryReview(vault, programPath)
-	if err != nil || !review.ReadOnly || len(review.Flow.CrossScopeDependencies) != 4 {
+	if err != nil || !review.ReadOnly || len(review.Flow.CrossScopeDependencies) != 5 {
 		t.Fatalf("pre-import Plan 17 review = %#v, %v", review, err)
 	}
 	for _, dependency := range review.Flow.CrossScopeDependencies {
@@ -212,6 +241,14 @@ func assertCrossScopeProgramImportMigration(t *testing.T) {
 		t.Fatalf("program re-import: %v", err)
 	}
 	assertEqual(t, beforeReadOnly, snapshotDeliveryV2Records(t, vault), "program re-import is idempotent")
+
+	crossScopeProgramDriftProducerContract(t, vault, "exact-verification-authority/v1", "exact-verification-authority-e2e")
+	beforeDriftRefusal := snapshotDeliveryV2Records(t, vault)
+	err = deliveryV2ImportCmd(vault, programPath, Args{"vault": vault, "quiet": "true"})
+	if err == nil || !strings.Contains(err.Error(), "CROSS_SCOPE_TARGET_DRIFT") || !strings.Contains(err.Error(), "exact-verification-authority-e2e") {
+		t.Fatalf("Plan 17 import after Plan 18 drift = %v, want exact-authority drift refusal", err)
+	}
+	assertEqual(t, beforeDriftRefusal, snapshotDeliveryV2Records(t, vault), "exact-authority drift refusal is atomic")
 }
 
 func assertCrossScopeProgramPlanCurrent(t *testing.T, vault, path string) {
@@ -277,6 +314,34 @@ func crossScopeProgramImportFixturePlan(t *testing.T, vault string, plan deliver
 	}
 }
 
+func crossScopeProgramDriftProducerContract(t *testing.T, vault, scope, sourceKey string) {
+	t.Helper()
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range idx.Tasks {
+		if stringField(task.Data, "delivery_plan_scope") != scope || stringField(task.Data, "delivery_source_key") != sourceKey {
+			continue
+		}
+		data, body, err := parseFrontmatterMustRead(task.AbsolutePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data["delivery_contract_fingerprint"] = "sha256:drifted-exact-verification-authority"
+		data["state_rev"] = v7StateRev(data, body)
+		content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writeText(task.AbsolutePath, content); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	t.Fatalf("missing producer %s/%s to drift", scope, sourceKey)
+}
+
 func assertCrossScopeProgramObsoleteGate(t *testing.T, idx v7Index, scope, sourceKey string) {
 	t.Helper()
 	for _, gate := range idx.Gates {
@@ -314,6 +379,9 @@ func assertCrossScopeProgramResolvedEdges(t *testing.T, idx v7Index) {
 		"scheduled-promotion/v1/scheduled-promotion-shadow-ready":   producerID("scheduled-promotion/v1", "scheduled-promotion-shadow-ready"),
 		"factory-execution-control/v1/factory-control-shadow-ready": producerID("factory-execution-control/v1", "factory-control-shadow-ready"),
 		"full-gate-lifecycle-provider/v1/provider-cutover-doctor":   producerID("full-gate-lifecycle-provider/v1", "provider-cutover-doctor"),
+	})
+	assertCrossScopeProgramProjection(t, consumer("program-cutover-transaction-contract"), map[string]string{
+		"exact-verification-authority/v1/exact-verification-authority-e2e": producerID("exact-verification-authority/v1", "exact-verification-authority-e2e"),
 	})
 	assertCrossScopeProgramProjection(t, consumer("low-risk-authoritative-dogfood"), map[string]string{
 		"full-gate-lifecycle-provider/v1/provider-live-smoke": producerID("full-gate-lifecycle-provider/v1", "provider-live-smoke"),

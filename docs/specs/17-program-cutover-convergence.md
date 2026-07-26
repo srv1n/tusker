@@ -1,8 +1,8 @@
 ---
 capsule:
-  what: "Defines the Plan-17-last, default-off program cutover that composes independent shadow producers into one human-gated dogfood and promotion handoff."
+  what: "Defines the Plan-17-last, default-off program cutover that composes independent shadow producers and Plan-18 exact-proof authority into one human-gated dogfood and promotion handoff."
   use_when:
-    - "Reviewing or importing the cross-scope cutover program after plans 12, 14, and 15."
+    - "Reviewing or importing the cross-scope cutover program after plans 12, 14, 15, and 18."
   skip_when:
     - "Implementing an individual producer plan without changing program-level authority."
 ---
@@ -14,9 +14,10 @@ Date: 2026-07-26
 
 ## Outcome
 
-Plans 12, 14, and 15 remain independently implementable and default-off. The
-workflow reviews and imports them before Plan 17, but Plan 17 resolves only
-their exact current imported producer contracts through scope-qualified hard
+Plans 12, 14, and 15 remain independently implementable and default-off, and
+Plan 18 owns the generic exact-verification authority frontier. The workflow
+reviews and imports all four before Plan 17, but Plan 17 resolves only their
+exact current imported producer contracts through scope-qualified hard
 dependencies; it does not retain a producer-review attestation. It then makes
 the only program-level authority path explicit:
 
@@ -24,6 +25,9 @@ the only program-level authority path explicit:
 scheduled-promotion/v1/scheduled-promotion-shadow-ready ─┐
 factory-execution-control/v1/factory-control-shadow-ready ├─> shadow-convergence
 full-gate-lifecycle-provider/v1/provider-cutover-doctor ──┘          │
+                                                                    v
+exact-verification-authority/v1/
+exact-verification-authority-e2e ──────────────────────────────────┤
                                                                     v
                          program-cutover-transaction-contract
                                                                     │
@@ -54,26 +58,29 @@ before dogfood or handoff proof can close, it resolves the exact typed grant,
 dogfood receipt, and (for handoff) release receipt against the current task,
 wave, revision, and expiry tuple. Generic gate evidence, replacement test rows,
 missing or stale receipts, and status prose are not substitutes. This is not a
-claim that Plan 17 solves generic V2 exact proof; the broader Plan-18
-exact-proof contract remains responsible for that system-wide concern.
+claim that Plan 17 solves generic V2 exact proof: its transaction is
+structurally blocked on Plan 18's imported `exact-verification-authority-e2e`
+frontier, which remains responsible for that system-wide concern.
 
 ## Migration and ordering
 
-1. Review and import Plan 12, Plan 14, and Plan 15 independently. Their
-   shadow producers are objective and grant no automation, daemon, runtime,
-   release, spending, ref, or production authority.
-2. Review Plan 17 after those producer imports, then import Plan 17 last. It
-   never imports a producer implicitly. Importer validation proves only exact
-   *current imported producer contracts*; it is not a durable attestation that
-   those producers received an independent review.
+1. Review and import Plan 12, Plan 14, Plan 15, and Plan 18 independently.
+   Their shadow and exact-verification producers are objective and grant no
+   automation, daemon, runtime, release, spending, ref, or production
+   authority.
+2. Review Plan 17 after all four producer imports, then import Plan 17 last.
+   It never imports a producer implicitly. Importer validation proves only
+   exact *current imported producer contracts*; it is not a durable attestation
+   that those producers received an independent review.
 3. This reviewed migration obsoletes the former Plan-12 release gate and
    Plan-14 auth gate. They are not moved, removed, or bypassed by producer
    work; the Plan-17 auth and release gates replace them as the only authority
    gates in the composed program.
 4. Shadow convergence is still non-authorizing. The transaction contract
-   cannot be built until every shadow producer is integrated, and dogfood
-   cannot proceed until that contract plus a current Plan-15 live-smoke receipt
-   are integrated. A human must then create the narrow typed auth grant for one
+   cannot be built until every shadow producer and the current Plan-18
+   exact-verification-authority-e2e frontier are integrated, and dogfood cannot
+   proceed until that contract plus a current Plan-15 live-smoke receipt are
+   integrated. A human must then create the narrow typed auth grant for one
    exact project and wave.
 5. Production promotion remains blocked until dogfood has an immutable current
    receipt and the accountable production authority creates a typed,
@@ -100,5 +107,5 @@ review or proof.
 | ID | Observable requirement |
 | --- | --- |
 | R1 | Plans 12 and 14 expose independent default-off shadow producers, while Plan 15 exposes read-only provider-doctor shadow readiness without conflating it with setup-gated live smoke. |
-| R2 | Plan 17, imported after its producers, converges their qualified hard edges before a locked transaction contract and a low-risk dogfood task that is hard-gated by provider live smoke and the only human auth gate. |
+| R2 | Plan 17, imported after its shadow producers and Plan-18 exact-verification-authority-e2e frontier, converges their qualified hard edges before a locked transaction contract and a low-risk dogfood task that is hard-gated by provider live smoke and the only human auth gate. |
 | R3 | Dogfood and production handoff require typed current receipts rather than topology proof, former producer authority gates are obsolete only in this reviewed migration, and all plan checks remain inert and clean. |
