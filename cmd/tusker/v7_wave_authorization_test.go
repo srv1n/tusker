@@ -256,6 +256,36 @@ func TestWaveArm(t *testing.T) {
 	}
 }
 
+func TestWaveArmReusesHeldMemberLocks(t *testing.T) {
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
+	vault := deliveryTestVault(t)
+	path := writeDeliveryTestPlan(t, vault, validDeliveryPlan())
+	if err := deliveryImportCmd(Args{
+		"vault": vault, "plan": path, "wave": "Public arm regression", "quiet": "true",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	green := greenWaveEnvironment()
+	if err := mutateWaveAuthorization(
+		Args{"vault": vault, "_pos0": "W-0001", "by": "human:fixture", "quiet": "true"},
+		"armed",
+		&green,
+	); err != nil {
+		t.Fatalf("public arm path recursively reacquired its member locks: %v", err)
+	}
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wave := idx.Waves["W-0001"]
+	material, issues := waveMaterialFingerprint(vault, idx, wave)
+	if len(issues) != 0 ||
+		stringField(wave.Data, "authorization") != "armed" ||
+		stringField(wave.Data, "authorization_fingerprint") != material {
+		t.Fatalf("public arm did not persist an exact material snapshot: wave=%#v material=%q issues=%#v", wave.Data, material, issues)
+	}
+}
+
 func TestWaveArmAuthorizesCriticalMemberDispatch(t *testing.T) {
 	vault := deliveryTestVault(t)
 	plan := validDeliveryPlan()

@@ -971,6 +971,16 @@ func commitDeliveryWrites(writes map[string]string, failAfter int) error {
 // byte-verifies the whole set before any cache invalidation or mutation
 // notification escapes.
 func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard *deliveryImportWriteGuard) error {
+	return commitDeliveryWritesGuardedWithLocks(writes, failAfter, guard, nil)
+}
+
+// commitDeliveryWritesGuardedWithLocks is the narrow authorization-transaction
+// entry point for callers that already hold some document locks under the V7
+// material epoch. Those exact identities are not reacquired: flock is not
+// recursively owned across separate file descriptors on every supported
+// platform. Snapshot or write paths not covered by a live caller lock retain
+// the normal sorted acquisition below.
+func commitDeliveryWritesGuardedWithLocks(writes map[string]string, failAfter int, guard *deliveryImportWriteGuard, heldLocks []*v7DocumentLock) error {
 	paths := make([]string, 0, len(writes))
 	for path := range writes {
 		paths = append(paths, path)
@@ -978,9 +988,30 @@ func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard 
 	sort.Strings(paths)
 	lockPaths := uniqueStrings(append(append([]string{}, paths...), guardSnapshotPaths(guard)...))
 	sort.Strings(lockPaths)
+	heldIdentities := make(map[string]struct{}, len(heldLocks))
+	for _, lock := range heldLocks {
+		if lock == nil || lock.file == nil || strings.TrimSpace(lock.path) == "" {
+			return tuskerError(errorInvalidArg, "guarded delivery write received an invalid held document lock")
+		}
+		if _, err := lock.file.Stat(); err != nil {
+			return tuskerError(errorInvalidTransition, "guarded delivery write received a closed held document lock", withPath(lock.path))
+		}
+		identity, err := v7DocumentLockIdentity(lock.path)
+		if err != nil {
+			return err
+		}
+		heldIdentities[identity] = struct{}{}
+	}
 	var documentLocks []*v7DocumentLock
 	for _, path := range lockPaths {
 		if !fileExists(path) {
+			continue
+		}
+		identity, err := v7DocumentLockIdentity(path)
+		if err != nil {
+			return err
+		}
+		if _, held := heldIdentities[identity]; held {
 			continue
 		}
 		lock, err := acquireV7DocumentLock(path, v7DocumentLockTimeout)
