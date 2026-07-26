@@ -1165,7 +1165,7 @@ func validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID string
 		if !verifier.MatchesGateProviderReceipt(entry.ProviderReceipt) {
 			return fmt.Errorf("full_gate_receipt_invalid:%s", command)
 		}
-		if run.Gate.ProviderReceipts[index] != *entry.ProviderReceipt || entry.ProviderReceipt.Outcome != string(v7FullGateOutcomePassed) || entry.ProviderReceipt.ProjectID != projectID || entry.ProviderReceipt.DepartureID != run.ID || entry.ProviderReceipt.CandidateDigest != ledgerTreeHash || entry.ProviderReceipt.CommandDigest != v7FullGateTextDigest(command) || entry.ProviderReceipt.Profile != current.Gate.Profile || entry.ProviderReceipt.ProviderProfile != policy.IsolationProvider || entry.ProviderReceipt.Toolchain != current.Gate.Toolchain {
+		if run.Gate.ProviderReceipts[index] != *entry.ProviderReceipt || entry.ProviderReceipt.Outcome != string(v7FullGateOutcomePassed) || entry.ProviderReceipt.ProjectID != projectID || entry.ProviderReceipt.CandidateDigest != ledgerTreeHash || entry.ProviderReceipt.CommandDigest != v7FullGateTextDigest(command) || entry.ProviderReceipt.Profile != current.Gate.Profile || entry.ProviderReceipt.ProviderProfile != policy.IsolationProvider || entry.ProviderReceipt.Toolchain != current.Gate.Toolchain {
 			return fmt.Errorf("full_gate_receipt_contract_invalid:%s", command)
 		}
 	}
@@ -1416,7 +1416,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	if err := ctx.Err(); err != nil {
 		if execution.ProviderOutcome == "" {
 			for _, ref := range execution.ArtifactRefs {
-				_ = os.Remove(ref)
+				_ = removeV7FullGatePromotionArtifact(store.stateRoot, ref)
 			}
 			return "", err
 		}
@@ -1448,7 +1448,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	if err := ctx.Err(); err != nil {
 		if execution.ProviderOutcome == "" {
 			for _, ref := range execution.ArtifactRefs {
-				_ = os.Remove(ref)
+				_ = removeV7FullGatePromotionArtifact(store.stateRoot, ref)
 			}
 			return "", err
 		}
@@ -1549,11 +1549,6 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 		}
 		return "", tuskerError(errorInvalidTransition, "promotion gate red: "+scheduledPromotionGateFailureDetail(execution.Err, string(gateOutput)))
 	}
-	if execution.Err == nil && (execution.Result.Outcome == gateOutcomePassed || execution.Result.Outcome == gateOutcomeLedgerHit) {
-		for _, ref := range execution.ArtifactRefs {
-			_ = os.Remove(ref)
-		}
-	}
 	if hold, err := store.departureHold(projectID, false); err != nil {
 		return "", err
 	} else if hold != nil {
@@ -1612,6 +1607,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	intent.Gate.Status = "passed"
 	intent.Gate.StartedAt = gateStarted.Format(time.RFC3339Nano)
 	intent.Gate.FinishedAt = gateFinished.Format(time.RFC3339Nano)
+	intent.Gate.ArtifactRef = execution.ArtifactRef
 	intent.Gate.ProviderReceipts = append([]GateProviderReceipt(nil), execution.ProviderReceipts...)
 	intent.Gate.ProviderOutcomes = append([]GateProviderReceipt(nil), execution.ProviderOutcomes...)
 	intent.Promotion = DeparturePromotion{

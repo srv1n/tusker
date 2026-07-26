@@ -295,7 +295,7 @@ func (p *scriptedV7FullGateProvider) MatchesGateProviderReceipt(receipt *GatePro
 }
 
 func (p *scriptedV7FullGateProvider) FinalizeFullGateProviderOutcome(receipt GateProviderReceipt) error {
-	if receipt.Outcome != string(v7FullGateOutcomePassed) && !p.state.artifactSynced {
+	if !p.state.artifactSynced {
 		p.state.finalizedBeforeArtifact = true
 	}
 	p.state.finalized = append(p.state.finalized, receipt)
@@ -879,6 +879,81 @@ func TestScheduledPromotionPreRefRecoveryRejectsRevokedProviderAndReusesCertifie
 	}
 	if got := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")); got == mainBefore {
 		t.Fatal("ledger-only recovery did not promote the exact intent")
+	}
+}
+
+func TestV7ScheduledPromotionNewDepartureLedgerHitCrashAfterIntentReplaysExactProof(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "new-departure-ledger.txt", "candidate\n")
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
+	marker := filepath.Join(t.TempDir(), "gate-runs")
+	command := "printf x >> " + yamlQuoteForShellTest(marker) + "; test -f new-departure-ledger.txt"
+	wf := setScheduledPromotionGateForTest(t, vault, []string{command}, "")
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	commitScheduledPromotionWorkflowForTest(t, repo, vault)
+	stateRoot := t.TempDir()
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := scheduledPromotionGatePolicy(vault, wf)
+	if err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	originalDeparture := "departure-that-produced-reusable-proof"
+	seed := runV7GateTierOnRefContext(withV7FullGateDeparture(context.Background(), originalDeparture), vault, repo, "integration/W-0001", "app", policy, store)
+	if seed.Err != nil || seed.Result.Outcome != gateOutcomePassed || len(seed.ProviderReceipts) != 1 || seed.ProviderReceipts[0].DepartureID != originalDeparture {
+		_ = store.Close()
+		t.Fatalf("seed reusable provider proof = %#v, %v", seed, seed.Err)
+	}
+	if got := mustReadIndexTest(t, marker); got != "x" {
+		_ = store.Close()
+		t.Fatalf("seed gate executions = %q", got)
+	}
+	run := newScheduledPromotionRunForTest(t, store, "2026-07-25T20:39:17Z")
+	if run.ID == originalDeparture {
+		_ = store.Close()
+		t.Fatal("fixture failed to allocate a new departure")
+	}
+	injected := errors.New("injected crash after new-departure ledger-only intent")
+	oldHook := scheduledPromotionAfterRefIntent
+	scheduledPromotionAfterRefIntent = func() error { return injected }
+	_, promoteErr := promoteScheduledWave(vault, "app", "W-0001", wf, store, &run, "daemon:test")
+	scheduledPromotionAfterRefIntent = oldHook
+	if !errors.Is(promoteErr, injected) {
+		_ = store.Close()
+		t.Fatalf("new-departure intent crash = %v", promoteErr)
+	}
+	if got := mustReadIndexTest(t, marker); got != "x" {
+		_ = store.Close()
+		t.Fatalf("all-ledger hit reran provider command: %q", got)
+	}
+	durable, err := store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil || len(durable.Gate.ProviderReceipts) != 1 || durable.Gate.ProviderReceipts[0].DepartureID != originalDeparture {
+		_ = store.Close()
+		t.Fatalf("new departure did not preserve exact reusable proof: %#v, %v", durable, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	resumed, err := restarted.FindDepartureRun(run.ID)
+	if err != nil || resumed == nil {
+		t.Fatalf("restart durable intent: %#v, %v", resumed, err)
+	}
+	commit, err := promoteScheduledWave(vault, "app", "W-0001", wf, restarted, resumed, "daemon:test")
+	if err != nil {
+		t.Fatalf("restart rejected departure-agnostic reusable proof: %v", err)
+	}
+	if commit == "" || strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")) != commit {
+		t.Fatalf("replay did not advance the exact intent: commit=%s", commit)
+	}
+	if got := mustReadIndexTest(t, marker); got != "x" {
+		t.Fatalf("restart reran provider command: %q", got)
 	}
 }
 

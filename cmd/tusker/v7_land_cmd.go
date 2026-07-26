@@ -3008,13 +3008,18 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	if err := ctx.Err(); err != nil {
 		return promotionGateExecution{Err: err}
 	}
+	stateRoot := DefaultStateRoot()
+	if store != nil && strings.TrimSpace(store.stateRoot) != "" {
+		stateRoot = store.stateRoot
+	}
+	artifactState, stateErr := openV7FullGateStateRoot(stateRoot)
+	if stateErr != nil {
+		return promotionGateExecution{Err: stateErr, ProviderOutcome: v7FullGateOutcomeProvider}
+	}
+	defer artifactState.Close()
+	path := filepath.Join(artifactState.path, "artifacts", "promotion-gates", strings.ToLower(newRecordID())+".log")
 	writeFailure := func(detail string) promotionGateExecution {
-		root := DefaultStateRoot()
-		if store != nil && store.stateRoot != "" {
-			root = store.stateRoot
-		}
-		path := filepath.Join(root, "artifacts", "promotion-gates", strings.ToLower(newRecordID())+".log")
-		if artifactErr := writeV7DurablePromotionArtifact(path, []byte(safePacketText(detail, 4096)+"\n")); artifactErr != nil {
+		if artifactErr := writeV7DurablePromotionArtifactAtRoot(artifactState, path, []byte(safePacketText(detail, 4096)+"\n")); artifactErr != nil {
 			detail = detail + ": durable artifact: " + artifactErr.Error()
 		}
 		return promotionGateExecution{ArtifactRef: path, ArtifactRefs: []string{path}, Err: fmt.Errorf("%s", detail)}
@@ -3027,13 +3032,15 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	if strings.TrimSpace(policy.Profile) == "" {
 		policy.Profile = "default"
 	}
-	stateRoot := DefaultStateRoot()
-	if store != nil && strings.TrimSpace(store.stateRoot) != "" {
-		stateRoot = store.stateRoot
-	}
 	provider, err := newV7FullGateProvider(policy.IsolationProvider, repoRoot, stateRoot)
 	if err != nil {
 		failure := writeFailure("promotion full-gate refusal: " + err.Error())
+		failure.ProviderOutcome = v7FullGateOutcomeProvider
+		return failure
+	}
+	if external, ok := provider.(*v7ExternalFullGateProvider); ok && !artifactState.sameIdentity(external.state) {
+		_ = provider.Close()
+		failure := writeFailure("promotion full-gate refusal: daemon state root identity changed while resolving the provider")
 		failure.ProviderOutcome = v7FullGateOutcomeProvider
 		return failure
 	}
@@ -3097,7 +3104,7 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	if binder, ok := provider.(v7FullGateProviderBinder); ok {
 		if err := binder.BindFullGateProvider(v7FullGateProviderBinding{
 			ProjectID: projectID, DepartureID: v7FullGateDepartureID(ctx), CandidateDigest: frozenTreeHash, GateProfile: policy.Profile, ProviderProfile: policy.IsolationProvider,
-			Toolchain: runtime.Toolchain(tmp, policy.HarvestCommands),
+			Toolchain: runtime.Toolchain(tmp, policy.HarvestCommands), ArtifactRef: path,
 		}); err != nil {
 			failure := writeFailure("promotion full-gate refusal: " + err.Error())
 			failure.ProviderOutcome = v7FullGateOutcomeProvider
@@ -3135,12 +3142,9 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 			ledgerErr = fmt.Errorf("%w: persist certified lifecycle receipt for %q: %v", errV7FullGateProvider, command, err)
 			return
 		}
-		if finalizer, ok := provider.(v7FullGateProviderFinalizer); ok {
-			if err := finalizer.FinalizeFullGateProviderOutcome(receipt); err != nil {
-				ledgerErr = fmt.Errorf("%w: persist acknowledgement for %q: %v", errV7FullGateProvider, command, err)
-				return
-			}
-		}
+		// Ledger persistence is not the retirement boundary. The shared gate
+		// artifact is written and rebound into every pending journal first;
+		// the caller acknowledges all outcomes only after its departure CAS.
 		providerReceipts = append(providerReceipts, receipt)
 		commandReceipt = nil
 	}
@@ -3202,20 +3206,25 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 			providerReceipts = verified
 		}
 	}
-	root := DefaultStateRoot()
-	if store != nil && store.stateRoot != "" {
-		root = store.stateRoot
-	}
-	path := filepath.Join(root, "artifacts", "promotion-gates", strings.ToLower(newRecordID())+".log")
 	if err != nil {
 		// The raw provider transcript can be long enough to hide this final
 		// ledger/certification error in callers' bounded excerpts. Keep the
 		// fail-closed cause in the durable artifact itself.
 		fmt.Fprintf(&raw, "# lifecycle_gate_error=%s\n", safePacketText(err.Error(), 4096))
 	}
-	writeErr := writeV7DurablePromotionArtifact(path, raw.Bytes())
+	writeErr := writeV7DurablePromotionArtifactAtRoot(artifactState, path, raw.Bytes())
 	if writeErr != nil && err == nil {
 		err = writeErr
+	}
+	if writeErr == nil {
+		if binder, ok := provider.(v7FullGateProviderArtifactBinder); ok {
+			if bindErr := binder.BindFullGateProviderArtifact(path, providerOutcomes); bindErr != nil {
+				writeErr = bindErr
+				if err == nil {
+					err = bindErr
+				}
+			}
+		}
 	}
 	finalizeOutcomes := func() error {
 		if writeErr != nil {
@@ -3227,9 +3236,6 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 		}
 		var errs []error
 		for _, receipt := range providerOutcomes {
-			if receipt.Outcome == string(v7FullGateOutcomePassed) {
-				continue // green was acknowledged only after its ledger write.
-			}
 			if finalizeErr := finalizer.FinalizeFullGateProviderOutcome(receipt); finalizeErr != nil {
 				errs = append(errs, finalizeErr)
 			}

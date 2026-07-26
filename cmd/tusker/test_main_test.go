@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -19,6 +20,9 @@ import (
 const validationLockHeldEnv = "TUSKER_VALIDATION_LOCK_HELD"
 
 func TestMain(m *testing.M) {
+	if os.Getenv("TUSKER_V7_FD_TRANSPORT_HELPER") == "1" {
+		os.Exit(runV7FDTransportProcessHelper())
+	}
 	stateRoot, err := os.MkdirTemp("", "tusker-test-state-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cmd/tusker test suite: create isolated state root: %v\n", err)
@@ -58,6 +62,34 @@ func TestMain(m *testing.M) {
 	stopSignalCleanup()
 	cleanupNotifications()
 	os.Exit(code)
+}
+
+func runV7FDTransportProcessHelper() int {
+	if len(os.Args) != 3 || os.Args[1] != "--tusker-full-gate-run" && os.Args[1] != "--tusker-full-gate-cleanup" || os.Args[2] != "/dev/fd/3" {
+		return 91
+	}
+	raw, err := os.ReadFile(os.Args[2])
+	if err != nil {
+		return 92
+	}
+	var request v7FullGateProviderRequest
+	if json.Unmarshal(raw, &request) != nil || request.ResultPath != "/dev/fd/4" {
+		return 93
+	}
+	if writable, err := os.OpenFile("/dev/fd/3", os.O_WRONLY, 0); err == nil {
+		_ = writable.Close()
+		return 96
+	}
+	for fd := 5; fd < 64; fd++ {
+		if info, err := os.Stat("/dev/fd/" + strconv.Itoa(fd)); err == nil && info.IsDir() {
+			return 95
+		}
+	}
+	if err := os.WriteFile(request.ResultPath, []byte("darwin descriptor transport "+os.Args[1]+"\n"), 0o600); err != nil {
+		fmt.Fprintf(os.Stderr, "write inherited result descriptor: %v\n", err)
+		return 94
+	}
+	return 0
 }
 
 func installValidationTestLockSignalCleanup(release func() error) func() {
