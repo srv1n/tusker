@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1056,6 +1057,91 @@ func persistScheduledPromotionCommit(store *RuntimeStore, run *DepartureRun, ref
 	return nil
 }
 
+// scheduledPromotionRecoveryLedgerTreeHash recreates only the disposable,
+// detached candidate needed to address the gate ledger. Recovery must not
+// accept a plausible historical green row on a different tree merely because
+// the durable departure record names the same commit.
+func scheduledPromotionRecoveryLedgerTreeHash(repoRoot, candidateSHA string) (string, error) {
+	tmp, err := os.MkdirTemp("", "tusker-promotion-recovery-ledger-*")
+	if err != nil {
+		return "", err
+	}
+	removeWorktree := false
+	defer func() {
+		if removeWorktree {
+			_ = exec.Command("git", "-C", repoRoot, "worktree", "remove", "--force", tmp).Run()
+			return
+		}
+		_ = os.RemoveAll(tmp)
+	}()
+	if output, err := gitCombined(repoRoot, "worktree", "add", "--detach", tmp, candidateSHA); err != nil {
+		return "", fmt.Errorf("create recovery gate worktree: %s", firstActionableLine(output, err.Error()))
+	}
+	removeWorktree = true
+	return workspaceTreeStateHash(tmp)
+}
+
+// validateScheduledPromotionRecoveryProof re-establishes every mutable gate
+// fact before a pre-ref crash intent can be replayed. The durable intent is an
+// audit record, never authority to bypass a subsequently revoked provider,
+// policy, command set, toolchain, or certified ledger row.
+func validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID string, store *RuntimeStore, run DepartureRun) error {
+	if store == nil || run.Gate.Status != "passed" {
+		return fmt.Errorf("full_gate_status_not_passed")
+	}
+	wf, err := loadWorkflow(vaultPath)
+	if err != nil {
+		return fmt.Errorf("full_gate_workflow_unavailable: %w", err)
+	}
+	if !wf.ScheduledPromotion.Effective.Promote {
+		return fmt.Errorf("full_gate_policy_not_promote")
+	}
+	current, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, store)
+	if err != nil {
+		return fmt.Errorf("full_gate_snapshot_unavailable: %w", err)
+	}
+	expected := scheduledPromotionCandidateSnapshot{WaveID: waveID, Candidate: run.Candidate, Gate: run.Gate, DefaultBranch: run.Promotion.ExpectedRef}
+	if drift := scheduledPromotionSnapshotDrift(expected, current); drift != "" {
+		return fmt.Errorf("full_gate_contract_drift:%s", drift)
+	}
+	if current.Gate.Toolchain == "" || current.Gate.TreeHash == "" {
+		return fmt.Errorf("full_gate_contract_unverifiable")
+	}
+	provider, err := newV7FullGateProvider(wf.ScheduledPromotion.Effective.IsolationProvider, v7RepoRoot(vaultPath), store.stateRoot)
+	if err != nil {
+		return fmt.Errorf("full_gate_provider_unavailable: %w", err)
+	}
+	defer provider.Close()
+	verifier, ok := provider.(v7FullGateReceiptVerifier)
+	if !ok {
+		return fmt.Errorf("full_gate_provider_receipt_verifier_missing")
+	}
+	ledgerTreeHash, err := scheduledPromotionRecoveryLedgerTreeHash(v7RepoRoot(vaultPath), run.Candidate.CandidateSHA)
+	if err != nil {
+		return fmt.Errorf("full_gate_ledger_tree_unavailable: %w", err)
+	}
+	policy, err := scheduledPromotionGatePolicy(vaultPath, wf)
+	if err != nil {
+		return fmt.Errorf("full_gate_policy_unavailable: %w", err)
+	}
+	if err := validateV7PromotionGatePolicy(policy); err != nil {
+		return fmt.Errorf("full_gate_policy_invalid: %w", err)
+	}
+	for _, command := range policy.HarvestCommands {
+		entry, lookupErr := store.FindGateLedger(projectID, ledgerTreeHash, command, current.Gate.Profile, current.Gate.Toolchain)
+		if lookupErr != nil {
+			return fmt.Errorf("full_gate_ledger_unavailable:%s: %w", command, lookupErr)
+		}
+		if entry == nil {
+			return fmt.Errorf("full_gate_receipt_missing:%s", command)
+		}
+		if !verifier.MatchesGateProviderReceipt(entry.ProviderReceipt) {
+			return fmt.Errorf("full_gate_receipt_invalid:%s", command)
+		}
+	}
+	return nil
+}
+
 func resumeScheduledPromotionIntent(ctx context.Context, vaultPath, projectID, waveID string, store *RuntimeStore, run *DepartureRun, actor string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -1122,6 +1208,9 @@ func resumeScheduledPromotionIntent(ctx context.Context, vaultPath, projectID, w
 	}
 	if state != scheduledPromotionIntentPreRef {
 		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: default_ref_drift current="+current+" expected="+run.Promotion.ExpectedSHA+" intended="+run.Promotion.IntendedSHA)
+	}
+	if err := validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID, store, *run); err != nil {
+		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: "+err.Error())
 	}
 	if err := validateScheduledPromotionWaveAuthorityWithStore(vaultPath, waveID, store); err != nil {
 		return "", err

@@ -134,6 +134,51 @@ func TestV7FullGateProviderCloseUsesActiveRequestPath(t *testing.T) {
 	}
 }
 
+func TestV7FullGateProviderCloseWaitsForPublishedWrapperBeforeCleanup(t *testing.T) {
+	stateRoot := t.TempDir()
+	requestPath, request := writeV7ProviderRecoveryRequest(t, stateRoot)
+	old := runV7FullGateProviderCleanup
+	defer func() { runV7FullGateProviderCleanup = old }()
+	cleanups := 0
+	runV7FullGateProviderCleanup = func(_ context.Context, _ string, _ string, _ []string, _ io.Writer) error {
+		cleanups++
+		result := v7FullGateProviderResult{Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: request.RunID, LifecycleID: "fixture-scope", State: "cleaned", ProviderID: request.ProviderID, RequestDigest: request.RequestDigest, RuntimeDigest: request.RuntimeDigest, PolicyDigest: request.PolicyDigest, AttestationDigest: request.AttestationDigest, Capabilities: request.RequiredCapabilities, ImplementationID: request.ImplementationID, CapabilitySchema: request.CapabilitySchema, CandidateReadOnlyMeasured: true, NetworkMode: "none", ControlEnvAbsent: true, ControlMountsAbsent: true, ImageOrVMID: request.ExpectedImageOrVMID}
+		result.ReceiptDigest = v7FullGateProviderResultDigest(result)
+		raw, err := json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(request.ResultPath, raw, 0o600)
+	}
+	cancelled := make(chan struct{})
+	scope := &v7FullGateProviderScope{request: request, requestPath: requestPath, wrapperDone: make(chan struct{}), runCancel: func() { close(cancelled) }}
+	provider := &v7ExternalFullGateProvider{path: request.ProviderPath, executableIdentity: request.ExecutableID, active: scope}
+	done := make(chan error, 1)
+	go func() { done <- provider.Close() }()
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not cancel the published wrapper")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("Close returned before wrapper exit: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	scope.finishWrapper(nil)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Close after wrapper exit: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close did not finish after wrapper exit")
+	}
+	if cleanups != 1 {
+		t.Fatalf("cleanup count = %d, want 1", cleanups)
+	}
+}
+
 func writeV7ProviderRecoveryRequest(t *testing.T, stateRoot string) (string, v7FullGateProviderRequest) {
 	t.Helper()
 	providerPath := os.Args[0]

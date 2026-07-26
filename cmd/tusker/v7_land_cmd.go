@@ -2895,6 +2895,32 @@ type promotionGateExecution struct {
 	Err              error
 }
 
+const (
+	v7PromotionGateMaxCommands       = 64
+	v7PromotionGateMaxCommandBytes   = 16 << 10
+	v7PromotionGateMaxTranscriptSize = 4 << 20
+	v7PromotionGateMaxReceipts       = v7PromotionGateMaxCommands
+)
+
+// validateV7PromotionGatePolicy bounds repository-controlled gate declarations
+// before provider startup. Harvest mode is intentionally exhaustive, but it
+// must not let an untrusted candidate turn that property into unbounded daemon
+// memory, artifact, or lifecycle work.
+func validateV7PromotionGatePolicy(policy GateTierPolicy) error {
+	if len(policy.HarvestCommands) == 0 {
+		return fmt.Errorf("promotion full-gate refusal: no harvest commands")
+	}
+	if len(policy.HarvestCommands) > v7PromotionGateMaxCommands {
+		return fmt.Errorf("promotion full-gate refusal: harvest command count exceeds %d", v7PromotionGateMaxCommands)
+	}
+	for _, command := range policy.HarvestCommands {
+		if len(command) == 0 || len(command) > v7PromotionGateMaxCommandBytes {
+			return fmt.Errorf("promotion full-gate refusal: harvest command exceeds %d bytes", v7PromotionGateMaxCommandBytes)
+		}
+	}
+	return nil
+}
+
 // v7CertifiedFullGateLedger rejects artifact-only or legacy green rows for a
 // lifecycle-provider toolchain. The receipt is the durable certificate that
 // the measured provider scope was cleaned, not merely a text log annotation.
@@ -2943,6 +2969,9 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 		_ = os.MkdirAll(filepath.Dir(path), 0o755)
 		_ = os.WriteFile(path, []byte(safePacketText(detail, 4096)+"\n"), 0o600)
 		return promotionGateExecution{ArtifactRef: path, ArtifactRefs: []string{path}, Err: fmt.Errorf("%s", detail)}
+	}
+	if err := validateV7PromotionGatePolicy(policy); err != nil {
+		return writeFailure(err.Error())
 	}
 	stateRoot := DefaultStateRoot()
 	if store != nil && strings.TrimSpace(store.stateRoot) != "" {
@@ -3014,7 +3043,9 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	if store != nil {
 		runtime.Ledger = v7CertifiedFullGateLedger{store: store, verifier: verifier}
 	}
-	var raw bytes.Buffer
+	var raw v7GateBoundedOutput
+	raw.max = v7PromotionGateMaxTranscriptSize
+	raw.truncationNotice = "\n[promotion gate transcript truncated]\n"
 	var containmentErr error
 	var commandReceipt *GateProviderReceipt
 	var providerReceipts []GateProviderReceipt
@@ -3030,6 +3061,10 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 		receipt := *commandReceipt
 		if err := store.RecordGateLedger(GateLedgerEntry{ProjectID: projectID, TreeHash: treeHash, Command: command, Profile: profile, Toolchain: toolchain, Host: runtimeLeaseHost(), DurationMS: elapsed.Milliseconds(), ProviderReceipt: &receipt}); err != nil {
 			ledgerErr = fmt.Errorf("%w: persist certified lifecycle receipt for %q: %v", errV7FullGateProvider, command, err)
+			return
+		}
+		if len(providerReceipts) >= v7PromotionGateMaxReceipts {
+			ledgerErr = fmt.Errorf("%w: provider receipt count exceeds %d", errV7FullGateProvider, v7PromotionGateMaxReceipts)
 			return
 		}
 		providerReceipts = append(providerReceipts, receipt)

@@ -35,6 +35,7 @@ const (
 	v7FullGateResultMaxBytes    = 1 << 20
 	v7FullGateOutputMaxBytes    = 1 << 20
 	v7FullGateRecoveryMaxScopes = 128
+	v7FullGateCloseWaitTimeout  = 2 * v7FullGateCleanTimeout
 )
 
 var errV7FullGateProvider = errors.New("full-gate lifecycle provider")
@@ -104,9 +105,10 @@ type v7FullGateProvider interface {
 }
 
 type v7GateBoundedOutput struct {
-	b      bytes.Buffer
-	max    int
-	cutoff bool
+	b                bytes.Buffer
+	max              int
+	cutoff           bool
+	truncationNotice string
 }
 
 func (b *v7GateBoundedOutput) Write(data []byte) (int, error) {
@@ -129,7 +131,11 @@ func (b *v7GateBoundedOutput) Write(data []byte) (int, error) {
 
 func (b *v7GateBoundedOutput) Bytes() []byte {
 	if b.cutoff {
-		return append(append([]byte(nil), b.b.Bytes()...), []byte("\n[provider output truncated]\n")...)
+		notice := b.truncationNotice
+		if notice == "" {
+			notice = "\n[provider output truncated]\n"
+		}
+		return append(append([]byte(nil), b.b.Bytes()...), []byte(notice)...)
 	}
 	return append([]byte(nil), b.b.Bytes()...)
 }
@@ -189,6 +195,13 @@ type v7ExternalFullGateProvider struct {
 type v7FullGateProviderScope struct {
 	request     v7FullGateProviderRequest
 	requestPath string
+	// runCancel and wrapperDone are installed before the wrapper is started.
+	// Close therefore either observes no wrapper at all or can cancel and wait
+	// for the exact wrapper which owns this durable scope.
+	runCancel   context.CancelFunc
+	wrapperDone chan struct{}
+	wrapperMu   sync.Mutex
+	wrapperErr  error
 	// Close and Run can race during daemon cancellation. Cache one cleanup
 	// result for this immutable scope so the provider receives exactly one
 	// lifecycle-destruction command; a later daemon recovery owns retries.
@@ -196,6 +209,34 @@ type v7FullGateProviderScope struct {
 	cleanupCalled bool
 	cleanupResult v7FullGateProviderResult
 	cleanupErr    error
+}
+
+func (s *v7FullGateProviderScope) finishWrapper(err error) {
+	if s == nil || s.wrapperDone == nil {
+		return
+	}
+	s.wrapperMu.Lock()
+	s.wrapperErr = err
+	close(s.wrapperDone)
+	s.wrapperMu.Unlock()
+}
+
+func (s *v7FullGateProviderScope) waitWrapper(timeout time.Duration) (error, error) {
+	if s == nil || s.wrapperDone == nil {
+		return nil, nil
+	}
+	if timeout <= 0 {
+		<-s.wrapperDone
+	} else {
+		select {
+		case <-s.wrapperDone:
+		case <-time.After(timeout):
+			return nil, fmt.Errorf("%w: provider wrapper did not exit within %s", errV7FullGateProvider, timeout)
+		}
+	}
+	s.wrapperMu.Lock()
+	defer s.wrapperMu.Unlock()
+	return s.wrapperErr, nil
 }
 
 type v7FullGateProviderAudit struct {
@@ -362,28 +403,33 @@ func (p *v7ExternalFullGateProvider) Run(ctx context.Context, workspace, command
 	if err != nil {
 		return nil, err
 	}
-	scope := &v7FullGateProviderScope{request: request, requestPath: requestPath}
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+	scope := &v7FullGateProviderScope{request: request, requestPath: requestPath, runCancel: runCancel, wrapperDone: make(chan struct{})}
 	// CommandContext guarantees that a cancelled daemon context cannot leave
 	// the wrapper process awaited forever. Cancel asks it to terminate first;
 	// WaitDelay then force-reaps it if it ignores SIGTERM.
-	cmd := exec.CommandContext(ctx, request.ProviderPath, "--tusker-full-gate-run", requestPath)
+	cmd := exec.CommandContext(runCtx, request.ProviderPath, "--tusker-full-gate-run", requestPath)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = v7FullGateCleanTimeout
 	var providerOutput v7GateBoundedOutput
 	providerOutput.max = v7FullGateOutputMaxBytes
 	cmd.Env = v7FullGateProviderEnv()
 	cmd.Stdout, cmd.Stderr = &providerOutput, &providerOutput
+	// Hold the provider lock across Start and active-scope publication. Close can
+	// no longer observe the old "wrapper exists but active is nil" gap.
+	p.mu.Lock()
+	if p.closed || p.active != nil {
+		p.mu.Unlock()
+		_ = p.completeScope(scope)
+		return nil, fmt.Errorf("%w: provider is closed or already owns an active scope", errV7FullGateProvider)
+	}
 	if err := cmd.Start(); err != nil {
+		p.mu.Unlock()
 		// Start failed before the provider existed, so no lifecycle can need
 		// recovery and retaining this record would be a false fail-closed block.
 		_ = p.completeScope(scope)
 		return nil, fmt.Errorf("%w: start provider: %v", errV7FullGateProvider, err)
-	}
-	p.mu.Lock()
-	if p.closed || p.active != nil {
-		p.mu.Unlock()
-		_, cleanupErr := p.cleanup(scope)
-		return providerOutput.Bytes(), v7JoinProviderErrors(fmt.Errorf("%w: provider was closed before scope registration", errV7FullGateProvider), cleanupErr)
 	}
 	p.active = scope
 	p.mu.Unlock()
@@ -394,10 +440,13 @@ func (p *v7ExternalFullGateProvider) Run(ctx context.Context, workspace, command
 		}
 		p.mu.Unlock()
 	}()
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	go func() { scope.finishWrapper(cmd.Wait()) }()
 	select {
-	case runErr := <-done:
+	case <-scope.wrapperDone:
+		runErr, waitErr := scope.waitWrapper(0)
+		if waitErr != nil {
+			return providerOutput.Bytes(), waitErr
+		}
 		result, receiptErr := readV7FullGateProviderResult(request)
 		if receiptErr != nil {
 			_, cleanupErr := p.cleanup(scope)
@@ -424,8 +473,12 @@ func (p *v7ExternalFullGateProvider) Run(ctx context.Context, workspace, command
 		return []byte(result.Output), nil
 	case <-ctx.Done():
 		// CommandContext's cancel/WaitDelay path terminates and reaps the
-		// wrapper. Do not race a second signal/kill here.
-		<-done
+		// wrapper. Do not race a second signal/kill here. The derived context
+		// makes the same guarantee when Close races cancellation.
+		runCancel()
+		if _, waitErr := scope.waitWrapper(v7FullGateCloseWaitTimeout); waitErr != nil {
+			return providerOutput.Bytes(), waitErr
+		}
 		_, cleanupErr := p.cleanup(scope)
 		if cleanupErr != nil {
 			return providerOutput.Bytes(), cleanupErr
@@ -444,6 +497,12 @@ func (p *v7ExternalFullGateProvider) Close() error {
 	p.mu.Unlock()
 	if active == nil {
 		return nil
+	}
+	if active.runCancel != nil {
+		active.runCancel()
+	}
+	if _, err := active.waitWrapper(v7FullGateCloseWaitTimeout); err != nil {
+		return err
 	}
 	_, err := p.cleanup(active)
 	if err != nil {

@@ -514,6 +514,85 @@ func TestScheduledPromotionLandingCrashBeforeRefUpdateResumesExactIntent(t *test
 	}
 }
 
+func TestScheduledPromotionPreRefRecoveryRejectsRevokedProviderAndReusesCertifiedLedger(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "pre-ref-recovery.txt", "candidate\n")
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
+	marker := filepath.Join(t.TempDir(), "gate-runs")
+	wf := setScheduledPromotionGateForTest(t, vault, []string{"printf x >> " + yamlQuoteForShellTest(marker)}, "")
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	commitScheduledPromotionWorkflowForTest(t, repo, vault)
+	mainBefore := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run := newScheduledPromotionRunForTest(t, store, "2026-07-25T20:39:15Z")
+	injected := errors.New("injected pre-ref crash")
+	oldHook := scheduledPromotionAfterRefIntent
+	scheduledPromotionAfterRefIntent = func() error { return injected }
+	_, promoteErr := promoteScheduledWave(vault, "app", "W-0001", wf, store, &run, "daemon:test")
+	scheduledPromotionAfterRefIntent = oldHook
+	if !errors.Is(promoteErr, injected) {
+		t.Fatalf("missing injected pre-ref failure: %v", promoteErr)
+	}
+	if got := mustReadIndexTest(t, marker); got != "x" {
+		t.Fatalf("initial full gate runs = %q, want one", got)
+	}
+	durable, err := store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil {
+		t.Fatalf("load durable pre-ref intent: %#v err=%v", durable, err)
+	}
+
+	oldProvider := newV7FullGateProvider
+	defer func() { newV7FullGateProvider = oldProvider }()
+	newV7FullGateProvider = func(string, string, string) (v7FullGateProvider, error) {
+		return nil, errors.New("provider revoked")
+	}
+	resumed := *durable
+	if _, err := promoteScheduledWave(vault, "app", "W-0001", wf, store, &resumed, "daemon:test"); err == nil || !strings.Contains(err.Error(), "full_gate_provider_unavailable") {
+		t.Fatalf("revoked provider did not block recovery: %v", err)
+	}
+	newV7FullGateProvider = oldProvider
+
+	resumed = *durable
+	if _, err := promoteScheduledWave(vault, "app", "W-0001", wf, store, &resumed, "daemon:test"); err != nil {
+		t.Fatalf("ledger-only recovery failed: %v", err)
+	}
+	if got := mustReadIndexTest(t, marker); got != "x" {
+		t.Fatalf("recovery reran gate instead of using certified ledger: %q", got)
+	}
+	if got := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")); got == mainBefore {
+		t.Fatal("ledger-only recovery did not promote the exact intent")
+	}
+}
+
+func TestValidateV7PromotionGatePolicyBoundsHostileConfig(t *testing.T) {
+	commands := make([]string, v7PromotionGateMaxCommands+1)
+	for i := range commands {
+		commands[i] = "true"
+	}
+	if err := validateV7PromotionGatePolicy(GateTierPolicy{HarvestCommands: commands}); err == nil {
+		t.Fatal("oversized harvest command list was accepted")
+	}
+	if err := validateV7PromotionGatePolicy(GateTierPolicy{HarvestCommands: []string{strings.Repeat("x", v7PromotionGateMaxCommandBytes+1)}}); err == nil {
+		t.Fatal("oversized harvest command was accepted")
+	}
+}
+
+func TestPromotionGateTranscriptAggregateIsBounded(t *testing.T) {
+	transcript := v7GateBoundedOutput{max: 32, truncationNotice: "[truncated]"}
+	for range 64 {
+		if _, err := transcript.Write([]byte("0123456789")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := string(transcript.Bytes())
+	if !strings.Contains(got, "[truncated]") || len(got) > 32+len("[truncated]") {
+		t.Fatalf("aggregate transcript was not bounded: %d bytes %q", len(got), got)
+	}
+}
+
 func TestScheduledPromotionPreRefReplayRejectsDisarmedWave(t *testing.T) {
 	repo, vault := newLandReadyForMainAdvanceTest(t, "pre-ref-disarm.txt", "candidate\n")
 	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
