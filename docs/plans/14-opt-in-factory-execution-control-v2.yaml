@@ -346,18 +346,19 @@ tasks:
         outcome: Existing direct singleton, explicit all_eligible, V1 delivery-plan, wave landing, and current disabled-project behavior remain compatible.
     verification:
       - covers: A1,A2,A3,A4,A5,A6
-        check: "command: go test ./e2e/... -run '^TestFactoryExecutionControl' -count=1"
+        check: "command: go test ./cmd/tusker -run '^TestFactoryExecutionControl$' -count=1"
     dependencies:
       - task: deterministic-review-completion
         kind: hard
+      - task: factory-operations-surface
+        kind: hard
     artifact:
       kind: reliability_timeline
-      path: e2e/factory_execution_control_test.go
+      path: cmd/tusker/factory_execution_control_e2e_test.go
       summary: Two-project opt-in ownership, DAG frontier, review, rework, integration, crash, fairness, raw-edit recovery, compatibility, and exactly-once timeline.
       acceptance_ids: [A1, A2, A3, A4, A5, A6]
     owned_paths:
-      - e2e/factory_execution_control_test.go
-      - e2e/testdata/factory-execution
+      - cmd/tusker/factory_execution_control_e2e_test.go
     concurrency_group: factory-e2e
     risk: critical
     priority: p0
