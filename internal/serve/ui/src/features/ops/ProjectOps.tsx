@@ -8,6 +8,7 @@ import { Mono } from "@/components/ui/primitives";
 import { PageScroll, SectionLabel } from "@/components/ui/page";
 import { QueryBoundary, SkeletonRows } from "@/components/ui/states";
 import { diskPressurePresentation } from "./daemonStatus";
+import { FactoryOperationsSurface } from "./FactoryOperations";
 import {
   useDaemon,
   useDaemonAction,
@@ -16,6 +17,7 @@ import {
   useEvidenceAdd,
   useFeedback,
   useFeedbackAdd,
+  useFactoryOperations,
   useGateAction,
   useGates,
   useLandWave,
@@ -33,6 +35,7 @@ export function ProjectOps() {
   const decisions = useDecisions(undefined, projectId);
   const feedback = useFeedback(projectId);
   const daemon = useDaemon();
+  const factoryOperations = useFactoryOperations(projectId);
 
   return (
     <PageScroll>
@@ -50,6 +53,12 @@ export function ProjectOps() {
             Work
           </Link>
         </header>
+
+        <QueryBoundary q={factoryOperations} loading={<SkeletonRows rows={6} />}>
+          {(projection) => <FactoryOperationsSurface projection={projection} />}
+        </QueryBoundary>
+
+        <div className="my-7 border-t border-line" aria-hidden="true" />
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="min-w-0 space-y-7">

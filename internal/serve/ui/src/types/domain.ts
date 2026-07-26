@@ -247,6 +247,135 @@ export interface ProjectRegistrationResult extends ActionResult {
   projectId?: string;
 }
 
+// One versioned, read-only operations contract is shared by CLI, Serve, and
+// the desktop shell. Keep these names aligned with factory_operations.go.
+export interface FactoryOperationsProjection {
+  schema: "tusker.factory-operations/v1";
+  readOnly: true;
+  generatedAt: string;
+  project: {
+    id: string;
+    name: string;
+    registered: boolean;
+    enabled: boolean;
+    health: string;
+    automationEnabled: boolean;
+    automationProvenance: string;
+    dispatchScope: FactoryOperationsMode;
+    completionMode: FactoryOperationsMode;
+    promotionMode: {
+      configured: boolean;
+      mode: string;
+      provenance: string;
+      observe: boolean;
+      stage: boolean;
+      promote: boolean;
+      release: boolean;
+    };
+  };
+  authority: {
+    defaultRef: string;
+    defaultSha?: string;
+    waves: FactoryOperationsWaveAuthority[];
+  };
+  capacity: {
+    global: FactoryOperationsCapacityLimit;
+    project: FactoryOperationsCapacityLimit;
+    resourceHolds: FactoryOperationsResourceHold[];
+  };
+  sectionOrder: ["delivered", "workingNow", "reviewOrRework", "blocked", "needsYourDecision", "nextFrontier"];
+  delivered: FactoryOperationsItem[];
+  workingNow: FactoryOperationsItem[];
+  reviewOrRework: FactoryOperationsItem[];
+  blocked: FactoryOperationsItem[];
+  needsYourDecision: FactoryOperationsDecision[];
+  nextFrontier: FactoryOperationsItem[];
+}
+
+export interface FactoryOperationsMode {
+  configured?: string;
+  effective: string;
+  provenance: string;
+  warning?: string;
+  repair?: string;
+}
+
+export interface FactoryOperationsWaveAuthority {
+  waveId: string;
+  title: string;
+  state: string;
+  fingerprintHealth: string;
+  currentFingerprint?: string;
+  authorizedFingerprint?: string;
+  integrationRef: string;
+  integrationSha?: string;
+  safeAction: string;
+  href: string;
+}
+
+export interface FactoryOperationsCapacityLimit {
+  active: number;
+  limit: number;
+  available: number;
+}
+
+export interface FactoryOperationsResourceHold {
+  name: string;
+  purpose: string;
+  projectId: string;
+  taskId?: string;
+}
+
+export interface FactoryOperationsArtifact {
+  taskId: string;
+  taskHref: string;
+  kind: string;
+  priority: number;
+  summary: string;
+  acceptanceIds: string[];
+  evidenceRef: string;
+  artifactRef?: string;
+  evidenceHref: string;
+}
+
+export interface FactoryOperationsItem {
+  id: string;
+  kind: string;
+  taskId?: string;
+  waveId?: string;
+  title: string;
+  state: string;
+  productOutcome: string;
+  cause?: string;
+  affectedTaskIds: string[];
+  automaticNextAction: string;
+  safeAction: string;
+  acceptedArtifacts: FactoryOperationsArtifact[];
+  revisions: {
+    stateRevision?: string;
+    workRevision?: number;
+    implementationSha?: string;
+    resultRevision?: string;
+    integrationRef?: string;
+    integrationSha?: string;
+    defaultRef?: string;
+    defaultSha?: string;
+  };
+  href: string;
+}
+
+export interface FactoryOperationsDecision {
+  gateId: string;
+  owner: string;
+  action: string;
+  verification: string;
+  whyHuman: string;
+  affectedTaskIds: string[];
+  automaticNextAction: string;
+  safeAction: string;
+  href: string;
+}
+
 // ----------------------------------------------------------------------------
 // Needs-me queue
 // ----------------------------------------------------------------------------

@@ -26,6 +26,7 @@ import type {
 export const qk = {
   daemon: ["daemon"] as const,
   projects: ["projects"] as const,
+  factoryOperations: (projectId?: string) => ["factory-operations", ...projectQueryScope(projectId)] as const,
   needs: (projectId?: string) => ["needs", ...projectQueryScope(projectId)] as const,
   runs: (projectId?: string) => ["runs", ...projectQueryScope(projectId)] as const,
   reviewBatch: (projectId?: string) => ["review", "batch", ...projectQueryScope(projectId)] as const,
@@ -51,6 +52,13 @@ export const useDaemon = () =>
 
 export const useProjects = () =>
   useQuery({ queryKey: qk.projects, queryFn: api.projects, refetchInterval: liveRefetchInterval });
+
+export const useFactoryOperations = (projectId?: string) =>
+  useQuery({
+    queryKey: qk.factoryOperations(projectId),
+    queryFn: () => api.factoryOperations(projectId),
+    refetchInterval: liveRefetchInterval,
+  });
 
 export const useRegisterProject = () => {
   const qc = useQueryClient();

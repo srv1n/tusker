@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1040" viewBox="0 0 1440 1040" role="img" aria-labelledby="title desc">
+  <title id="title">Factory operations wide and narrow fixture</title>
+  <desc id="desc">A static acceptance fixture proving the same six ordered read-only sections at desktop and narrow widths.</desc>
+  <rect width="1440" height="1040" fill="#111318"/>
+  <style>
+    .serif { font: 600 25px Georgia, serif; fill: #f4f1e9 }
+    .label { font: 600 12px ui-sans-serif, system-ui; fill: #f4f1e9 }
+    .body { font: 11px ui-sans-serif, system-ui; fill: #abb1bd }
+    .mono { font: 10px ui-monospace, SFMono-Regular, monospace; fill: #8991a0 }
+    .green { fill: #74ba8a }
+    .amber { fill: #d4a85e }
+    .red { fill: #d97878 }
+    .blue { fill: #7ea6df }
+    .panel { fill: #191c23; stroke: #343a46 }
+    .card { fill: #21252e; stroke: #414856 }
+  </style>
+
+  <text x="54" y="45" class="label">Factory operations · wide · 1440 px</text>
+  <rect x="36" y="62" width="930" height="930" rx="16" class="panel"/>
+  <text x="62" y="103" class="mono green">tusker.factory-operations/v1 · READ ONLY</text>
+  <text x="62" y="138" class="serif">Factory operations</text>
+  <text x="62" y="161" class="body">Product outcomes and exact control-plane facts; no runner exhaust.</text>
+
+  <rect x="62" y="186" width="204" height="114" rx="10" class="card"/>
+  <text x="78" y="211" class="label">Automation</text>
+  <text x="78" y="235" class="mono amber">disabled · idle</text>
+  <text x="78" y="255" class="mono">armed_waves · project config</text>
+  <text x="78" y="275" class="body">registered · pickup enabled · healthy</text>
+
+  <rect x="278" y="186" width="204" height="114" rx="10" class="card"/>
+  <text x="294" y="211" class="label">Integration &amp; promotion</text>
+  <text x="294" y="235" class="mono green">authoritative · promote</text>
+  <text x="294" y="255" class="mono">main @ 0123456789ab</text>
+  <text x="294" y="275" class="body">integrated · promoted</text>
+
+  <rect x="494" y="186" width="204" height="114" rx="10" class="card"/>
+  <text x="510" y="211" class="label">Capacity</text>
+  <text x="510" y="235" class="mono amber">project 1/2 · global 2/2</text>
+  <text x="510" y="255" class="mono">gpu-a held</text>
+  <text x="510" y="275" class="body">Pure capacity wakes automatically</text>
+
+  <rect x="710" y="186" width="230" height="114" rx="10" class="card"/>
+  <text x="726" y="211" class="label">Armed fingerprints</text>
+  <text x="726" y="235" class="mono red">W-0001 · stale</text>
+  <text x="726" y="255" class="mono">integration/W-0001</text>
+  <text x="726" y="275" class="body">preflight is shown as text only</text>
+
+  <rect x="62" y="322" width="430" height="154" rx="11" class="card"/>
+  <text x="79" y="349" class="label">Delivered</text>
+  <text x="456" y="349" class="mono">2</text>
+  <text x="79" y="377" class="mono green">APP-T-0001 · integrated</text>
+  <text x="79" y="397" class="body">Accepted factory surface is visible.</text>
+  <text x="79" y="425" class="mono green">APP-T-0002 · promoted</text>
+  <text x="79" y="445" class="body">Default branch contains the accepted revision.</text>
+
+  <rect x="510" y="322" width="430" height="154" rx="11" class="card"/>
+  <text x="527" y="349" class="label">Working now</text>
+  <text x="904" y="349" class="mono">1</text>
+  <text x="527" y="377" class="mono blue">APP-T-0003 · running</text>
+  <text x="527" y="397" class="body">A live implementation lease wins over later auth drift.</text>
+  <text x="527" y="429" class="mono">automatic next · objective review</text>
+
+  <rect x="62" y="492" width="430" height="170" rx="11" class="card"/>
+  <text x="79" y="519" class="label">In review or rework</text>
+  <text x="456" y="519" class="mono">2</text>
+  <text x="79" y="547" class="mono amber">APP-T-0004 · in review</text>
+  <text x="79" y="567" class="body">Objective review is machine-owned.</text>
+  <text x="79" y="597" class="mono amber">APP-T-0005 · rework</text>
+  <text x="79" y="617" class="body">Recorded findings drive the next machine claim.</text>
+
+  <rect x="510" y="492" width="430" height="170" rx="11" class="card"/>
+  <text x="527" y="519" class="label">Blocked</text>
+  <text x="904" y="519" class="mono">4</text>
+  <text x="527" y="547" class="mono red">disarmed · stale · parked</text>
+  <text x="527" y="568" class="body">Fresh admission is refused by exact canonical causes.</text>
+  <text x="527" y="598" class="mono red">gpu-a · waiting resource</text>
+  <text x="527" y="619" class="body">Named resource holds are concrete blockers.</text>
+
+  <rect x="62" y="678" width="430" height="174" rx="11" class="card"/>
+  <text x="79" y="705" class="label">Needs your decision</text>
+  <text x="456" y="705" class="mono">1</text>
+  <text x="79" y="733" class="mono amber">APP-G-0001 · human gate</text>
+  <text x="79" y="754" class="body">Choose the customer-visible retention policy.</text>
+  <text x="79" y="778" class="body">Why human · accountable product authority</text>
+  <text x="79" y="802" class="mono">Affected APP-T-0010 · APP-T-0011</text>
+  <text x="79" y="826" class="mono amber">exact safe action text · not a control</text>
+
+  <rect x="510" y="678" width="430" height="174" rx="11" class="card"/>
+  <text x="527" y="705" class="label">Next frontier</text>
+  <text x="904" y="705" class="mono">2</text>
+  <text x="527" y="733" class="mono">APP-T-0012 · idle</text>
+  <text x="527" y="754" class="body">Automation is disabled; interactive work remains.</text>
+  <text x="527" y="784" class="mono amber">APP-T-0013 · waiting capacity</text>
+  <text x="527" y="805" class="body">Tusker wakes it when a live slot releases.</text>
+
+  <text x="62" y="888" class="mono">Ordered: Delivered → Working now → In review or rework → Blocked → Needs your decision → Next frontier</text>
+  <text x="62" y="920" class="body">Wide layout uses two section columns and four posture cards.</text>
+  <text x="62" y="943" class="body">Artifacts and exact revisions wrap inside each bounded card.</text>
+
+  <text x="1014" y="45" class="label">Factory operations · narrow · 390 px</text>
+  <rect x="1002" y="62" width="390" height="930" rx="16" class="panel"/>
+  <text x="1022" y="94" class="mono green">READ ONLY · v1</text>
+  <text x="1022" y="127" class="serif">Factory operations</text>
+  <text x="1022" y="151" class="body">Single column · wrapped exact facts</text>
+
+  <rect x="1022" y="174" width="350" height="82" rx="10" class="card"/>
+  <text x="1038" y="199" class="label">Posture</text>
+  <text x="1038" y="221" class="mono amber">disabled · armed_waves · stale</text>
+  <text x="1038" y="240" class="mono">capacity 2/2 · gpu-a held</text>
+
+  <rect x="1022" y="270" width="350" height="92" rx="10" class="card"/>
+  <text x="1038" y="295" class="label">Delivered</text>
+  <text x="1038" y="319" class="mono green">integrated · promoted</text>
+  <text x="1038" y="341" class="body">Accepted outcome and revisions wrap.</text>
+
+  <rect x="1022" y="376" width="350" height="82" rx="10" class="card"/>
+  <text x="1038" y="401" class="label">Working now</text>
+  <text x="1038" y="425" class="mono blue">running · automatic review next</text>
+  <text x="1038" y="445" class="body">Live work remains visible.</text>
+
+  <rect x="1022" y="472" width="350" height="92" rx="10" class="card"/>
+  <text x="1038" y="497" class="label">In review or rework</text>
+  <text x="1038" y="521" class="mono amber">in review · rework</text>
+  <text x="1038" y="543" class="body">No routine review enters decisions.</text>
+
+  <rect x="1022" y="578" width="350" height="92" rx="10" class="card"/>
+  <text x="1038" y="603" class="label">Blocked</text>
+  <text x="1038" y="627" class="mono red">disarmed · stale · parked</text>
+  <text x="1038" y="649" class="body">Resource hold · exact cause and action</text>
+
+  <rect x="1022" y="684" width="350" height="116" rx="10" class="card"/>
+  <text x="1038" y="709" class="label">Needs your decision</text>
+  <text x="1038" y="733" class="mono amber">APP-G-0001 · human gate</text>
+  <text x="1038" y="755" class="body">Action, why human, verification, closure</text>
+  <text x="1038" y="779" class="mono">safe text · never a hidden button</text>
+
+  <rect x="1022" y="814" width="350" height="110" rx="10" class="card"/>
+  <text x="1038" y="839" class="label">Next frontier</text>
+  <text x="1038" y="863" class="mono">idle · waiting capacity</text>
+  <text x="1038" y="885" class="body">Automatic wake is explicit.</text>
+  <text x="1038" y="907" class="body">No horizontal clipping at 390 px.</text>
+
+  <text x="1022" y="955" class="mono">6 semantic sections · ordered</text>
+  <text x="1022" y="975" class="body">All commands wrap as plain text.</text>
+</svg>

@@ -64,6 +64,8 @@ export function streamKeyToQueryKeys(key: string, project?: string): QueryKey[] 
       return [["daemon"]];
     case "projects":
       return [["projects"]];
+    case "factory-operations":
+      return [panelScoped("factory-operations")];
     case "needs":
       return [panelScoped("needs")];
     case "runs":
@@ -149,7 +151,7 @@ export function connectLiveStream(
     setStreamStatus({ ...status, connected: true });
     invalidateStreamEvent(queryClient, {
       kind: "stream_open",
-      keys: ["daemon", "projects", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch"],
+      keys: ["daemon", "projects", "factory-operations", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch"],
     });
   };
   source.onmessage = (message) => {
