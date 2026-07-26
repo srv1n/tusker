@@ -96,6 +96,10 @@ func NewDaemon(stateRoot string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := recoverV7FullGateProviderScopes(stateRoot); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
 	return &Daemon{stateRoot: stateRoot, store: store, notifyWake: make(chan string, 256), frontiers: map[string]*projectFrontierIndex{}, frontierHints: map[string][]daemonControlChange{}, departureSchedules: map[string]departureSchedule{}, departureActive: map[string]struct{}{}, departureCancels: map[string]context.CancelFunc{}, landingAuthorityPrivate: map[string]ed25519.PrivateKey{}}, nil
 }
 

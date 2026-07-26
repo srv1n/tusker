@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -322,6 +323,7 @@ func TestMainPushGuard(t *testing.T) {
 
 func newLandTestRepo(t *testing.T, tasks int, gate string) (string, string) {
 	t.Helper()
+	installV7FullGateProviderFixture(t)
 	repo := t.TempDir()
 	runGitDir(t, repo, "init", "-b", "main")
 	runGitDir(t, repo, "config", "user.email", "test@example.com")
@@ -353,6 +355,39 @@ func newLandTestRepo(t *testing.T, tasks int, gate string) (string, string) {
 	runGitDir(t, repo, "branch", "-f", "integration/W-0001", "main")
 	return repo, vault
 }
+
+// Existing landing fixtures model a trusted VM/container provider in-process.
+// The production resolver never has this fallback: it requires a named profile
+// in the user/daemon registry. Tests use this seam to exercise promotion state
+// transitions without starting a real container or VM.
+func installV7FullGateProviderFixture(t *testing.T) {
+	t.Helper()
+	previous := newV7FullGateProvider
+	newV7FullGateProvider = func(profile, _, _ string) (v7FullGateProvider, error) {
+		if profile != "test-fixture" {
+			return nil, fmt.Errorf("fixture provider profile %q is unavailable", profile)
+		}
+		return &testV7FullGateProvider{}, nil
+	}
+	t.Cleanup(func() { newV7FullGateProvider = previous })
+}
+
+type testV7FullGateProvider struct{}
+
+func (*testV7FullGateProvider) Run(ctx context.Context, workspace, command string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	cmd := exec.Command("/bin/sh", "-lc", command)
+	cmd.Dir = workspace
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return output, err
+	}
+	return output, nil
+}
+
+func (*testV7FullGateProvider) Close() error { return nil }
 
 func yamlQuoteForTest(value string) string {
 	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`

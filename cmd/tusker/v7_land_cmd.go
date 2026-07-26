@@ -1353,20 +1353,42 @@ func (s *v7GateSandbox) Run(ctx context.Context, command string) ([]byte, error)
 		"LC_ALL=C",
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	output, err := runV7ContainedGateCommand(ctx, cmd)
+	output, err := runV7SandboxGateCommand(ctx, cmd)
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		// Cancellation is expected during daemon shutdown, but an inability to
-		// prove descendant containment must stay visible to the caller rather
-		// than being rewritten as an ordinary cancelled gate.
-		if err == nil || errors.Is(err, ctxErr) {
-			return output, ctxErr
-		}
-		return output, err
+		return output, ctxErr
 	}
 	if err != nil && len(strings.TrimSpace(string(output))) == 0 {
 		return []byte("sandbox gate aborted or denied (worktree=" + s.worktreePath + "; scratch=" + s.scratchPath + ")"), err
 	}
 	return output, err
+}
+
+// sandbox-exec constrains file/network authority for the focused landing gate,
+// but it is not a lifecycle boundary. This helper deliberately makes only the
+// narrow process-group cancellation claim; scheduled full promotion uses the
+// configured container/VM provider instead.
+func runV7SandboxGateCommand(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+	if cmd == nil {
+		return nil, fmt.Errorf("sandbox gate: nil command")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	if err := cmd.Start(); err != nil {
+		return output.Bytes(), err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		return output.Bytes(), err
+	case <-ctx.Done():
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-done
+		return output.Bytes(), ctx.Err()
+	}
 }
 
 func sandboxCanonicalPath(path string) (string, error) {
@@ -2893,9 +2915,15 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 		_ = os.WriteFile(path, []byte(safePacketText(detail, 4096)+"\n"), 0o600)
 		return promotionGateExecution{ArtifactRef: path, ArtifactRefs: []string{path}, Err: fmt.Errorf("%s", detail)}
 	}
-	if _, err := landingGateSandboxPath(); err != nil {
-		return writeFailure("promotion full-gate refusal: host cannot isolate configured gate execution")
+	stateRoot := DefaultStateRoot()
+	if store != nil && strings.TrimSpace(store.stateRoot) != "" {
+		stateRoot = store.stateRoot
 	}
+	provider, err := newV7FullGateProvider(policy.IsolationProvider, repoRoot, stateRoot)
+	if err != nil {
+		return writeFailure("promotion full-gate refusal: " + err.Error())
+	}
+	defer provider.Close()
 	tmp, err := os.MkdirTemp("", "tusker-promotion-gate-*")
 	if err != nil {
 		return writeFailure("failed to create full-gate temporary workspace: " + err.Error())
@@ -2949,21 +2977,18 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	}()
 	runtime.TreeHash = func(string) (string, error) { return frozenTreeHash, nil }
 	runtime.TreeStatus = func(string) (string, error) { return frozenTreeStatus, nil }
-	runtime.Toolchain = scheduledPromotionFullGateToolchainFingerprint
-	runtime.DiffPaths = nil
-	sandbox, err := newV7GateSandbox(tmp, false)
-	if err != nil {
-		return writeFailure("promotion full-gate refusal: " + err.Error())
+	runtime.Toolchain = func(repoRoot string, commands []string) string {
+		return scheduledPromotionFullGateToolchainFingerprint(repoRoot, commands, policy.IsolationProvider)
 	}
-	defer sandbox.Close()
+	runtime.DiffPaths = nil
 	var raw bytes.Buffer
 	var containmentErr error
 	runtime.Exec = func(workspace, command string) (string, error) {
 		scheduledPromotionBeforeFullGateCommand(command)
-		outputBytes, runErr := sandbox.Run(ctx, command)
+		outputBytes, runErr := provider.Run(ctx, workspace, command)
 		output := string(outputBytes)
 		fmt.Fprintf(&raw, "$ %s\n%s\n", command, output)
-		if errors.Is(runErr, errV7GateContainment) {
+		if errors.Is(runErr, errV7FullGateProvider) {
 			containmentErr = runErr
 		}
 		return output, runErr

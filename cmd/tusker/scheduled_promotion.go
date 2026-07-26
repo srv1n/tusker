@@ -229,7 +229,7 @@ func scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID string, wf
 	if gate.Command == "" {
 		return scheduledPromotionCandidateSnapshot{}, tuskerError(errorInvalidTransition, "promotion candidate refusal: full_gate_missing")
 	}
-	gate.Toolchain = scheduledPromotionFullGateToolchainFingerprint(repoRoot, gatePolicy.HarvestCommands)
+	gate.Toolchain = scheduledPromotionFullGateToolchainFingerprint(repoRoot, gatePolicy.HarvestCommands, gatePolicy.IsolationProvider)
 	return scheduledPromotionCandidateSnapshot{WaveID: waveID, Candidate: candidate, Gate: gate, DefaultBranch: defaultBranch}, nil
 }
 
@@ -766,17 +766,19 @@ func scheduledPromotionToolchainFingerprint(repoRoot string, commands []string) 
 	return departureFingerprint(parts...)
 }
 
-const v7FullGateSandboxContract = "tusker.full-gate-isolation/darwin-sandbox-exec/v1"
-
-// Full-gate ledger proof is valid only under the isolation contract that
-// produced it. Keeping that contract in the toolchain identity prevents a
-// legacy unrestricted pass from bypassing Exec before the sandbox is entered.
-func scheduledPromotionFullGateToolchainFingerprint(repoRoot string, commands []string) string {
+// Full-gate ledger proof is valid only under the configured provider contract
+// that produced it. This prevents an old sandbox-exec or unrestricted pass
+// from bypassing the lifecycle boundary before a full promotion.
+func scheduledPromotionFullGateToolchainFingerprint(repoRoot string, commands []string, provider string) string {
 	base := scheduledPromotionToolchainFingerprint(repoRoot, commands)
 	if base == "" {
 		return ""
 	}
-	return departureFingerprint(v7FullGateSandboxContract, base)
+	_, _, identity, _, err := resolveV7TrustedFullGateProvider(provider)
+	if err != nil {
+		return departureFingerprint(v7FullGateIsolationContract, "unavailable", strings.TrimSpace(provider), base)
+	}
+	return departureFingerprint(v7FullGateIsolationContract, identity, base)
 }
 
 func scheduledPromotionSnapshotDrift(before, after scheduledPromotionCandidateSnapshot) string {
@@ -1291,7 +1293,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	defer func() { _ = stopHeartbeat() }()
 	execution := runV7GateTierOnRefContext(ctx, vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
 	if err := ctx.Err(); err != nil {
-		if errors.Is(execution.Err, errV7GateContainment) {
+		if errors.Is(execution.Err, errV7FullGateProvider) {
 			return "", execution.Err
 		}
 		for _, ref := range execution.ArtifactRefs {

@@ -94,8 +94,9 @@ func setScheduledPromotionGateForTest(t *testing.T, vault string, commands []str
 	}
 	data["orchestration"] = map[string]any{
 		"gate": map[string]any{
-			"profile":          profile,
-			"harvest_commands": commands,
+			"profile":            profile,
+			"harvest_commands":   commands,
+			"isolation_provider": "test-fixture",
 		},
 	}
 	text, err := serializeDocument(data, body, nil)

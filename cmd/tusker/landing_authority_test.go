@@ -5,14 +5,10 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -366,7 +362,7 @@ func TestV7LandingAuthorityRequiresSandboxForScheduledGate(t *testing.T) {
 	}
 }
 
-func TestV7FullGateRefusesUnsupportedSandboxHost(t *testing.T) {
+func TestV7FullGateRefusesMissingLifecycleProvider(t *testing.T) {
 	repo, vault := newLandTestRepo(t, 1, "true")
 	mainBefore := gitRevisionForTest(t, repo, "main")
 	stateRoot := filepath.Join(t.TempDir(), "state")
@@ -378,112 +374,19 @@ func TestV7FullGateRefusesUnsupportedSandboxHost(t *testing.T) {
 	if err := os.WriteFile(sentinel, []byte("unchanged\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	original := landingGateSandboxPath
-	defer func() { landingGateSandboxPath = original }()
-	landingGateSandboxPath = func() (string, error) { return "", os.ErrNotExist }
-
 	execution := runV7GateTierOnRefContext(
 		context.Background(), vault, repo, "main", "app",
 		GateTierPolicy{Profile: "full", HarvestCommands: []string{"printf unrestricted > must-not-exist"}},
 		nil,
 	)
-	if execution.Err == nil || !strings.Contains(execution.Err.Error(), "host cannot isolate") {
-		t.Fatalf("unsupported full-gate host did not fail closed: %#v", execution)
+	if execution.Err == nil || !strings.Contains(execution.Err.Error(), "provider") {
+		t.Fatalf("full gate without a lifecycle provider did not fail closed: %#v", execution)
 	}
 	if got := gitRevisionForTest(t, repo, "main"); got != mainBefore {
 		t.Fatalf("unsupported full gate moved main: before=%s after=%s", mainBefore, got)
 	}
 	if got, err := os.ReadFile(sentinel); err != nil || string(got) != "unchanged\n" {
 		t.Fatalf("unsupported full gate changed daemon state: got=%q err=%v", got, err)
-	}
-}
-
-func TestV7FullGateSandboxDeniesDaemonAndRepositoryAuthority(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("Darwin sandbox-exec contract")
-	}
-	if _, err := landingGateSandboxPath(); err != nil {
-		t.Skip("sandbox-exec unavailable: " + err.Error())
-	}
-	if _, err := exec.LookPath("curl"); err != nil {
-		t.Skip("curl unavailable: " + err.Error())
-	}
-	repo, vault := newLandTestRepo(t, 1, "true")
-	candidate := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"full-gate.txt": "candidate\n"})
-	mainBefore := gitRevisionForTest(t, repo, "main")
-	stateRoot := filepath.Join(t.TempDir(), "state")
-	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	stateSecret := filepath.Join(stateRoot, "authority-secret")
-	controlSecret := filepath.Join(stateRoot, "daemon-control.sock")
-	signingSecret := filepath.Join(stateRoot, "signing.key")
-	for path, content := range map[string]string{
-		stateSecret: "state-secret\n", controlSecret: "control-secret\n", signingSecret: "signing-secret\n",
-	} {
-		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
-	t.Setenv("TUSKER_CONTROL_SOCKET", controlSecret)
-	t.Setenv("SSH_AUTH_SOCK", signingSecret)
-	t.Setenv(tuskerLandMainGuardEnv, "daemon-control-capability")
-	var networkCalls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		networkCalls.Add(1)
-		_, _ = w.Write([]byte("network-leak"))
-	}))
-	defer server.Close()
-
-	envCommand := `test -z "${TUSKER_STATE_ROOT:-}" && test -z "${TUSKER_CONTROL_SOCKET:-}" && test -z "${SSH_AUTH_SOCK:-}" && test -z "${` + tuskerLandMainGuardEnv + `:-}" && printf isolated > "${TMPDIR}/full-gate-local.txt"`
-	stateCommand := "cat " + shellQuoteForSandboxTest(stateSecret) + " " + shellQuoteForSandboxTest(controlSecret) + " " + shellQuoteForSandboxTest(signingSecret)
-	networkCommand := "curl --fail --silent " + shellQuoteForSandboxTest(server.URL)
-	refCommand := "git --git-dir " + shellQuoteForSandboxTest(filepath.Join(repo, ".git")) + " update-ref refs/heads/main " + shellQuoteForSandboxTest(candidate)
-	mutateCommand := `original=$(cat full-gate.txt); printf bypass > full-gate.txt; test bypass = "$(cat full-gate.txt)"; printf '%s' "$original" > full-gate.txt`
-	commands := []string{envCommand, stateCommand, networkCommand, refCommand, mutateCommand}
-	execution := runV7GateTierOnRefContext(
-		context.Background(), vault, repo, candidate, "app",
-		GateTierPolicy{Profile: "full", HarvestCommands: commands},
-		nil,
-	)
-	if execution.Err != nil || execution.Result.Outcome != gateOutcomeFailed ||
-		!sameDepartureStrings(execution.Result.Ran, commands) {
-		t.Fatalf("isolated full gate did not preserve structured harvest results: %#v", execution)
-	}
-	sawMutationDenial := false
-	for _, defect := range execution.Result.Defects {
-		if defect.Command == envCommand {
-			t.Fatalf("full gate inherited daemon control environment: %#v", defect)
-		}
-		if defect.Command == mutateCommand {
-			sawMutationDenial = true
-		}
-	}
-	if len(execution.Result.Defects) != 4 || !sawMutationDenial {
-		t.Fatalf("malicious full gate defects = %#v, want state/network/ref/candidate-mutation denials", execution.Result.Defects)
-	}
-	if networkCalls.Load() != 0 {
-		t.Fatalf("full gate reached the network %d time(s)", networkCalls.Load())
-	}
-	if got := gitRevisionForTest(t, repo, "main"); got != mainBefore {
-		t.Fatalf("sandboxed full gate moved main: before=%s after=%s", mainBefore, got)
-	}
-	for path, want := range map[string]string{
-		stateSecret: "state-secret\n", controlSecret: "control-secret\n", signingSecret: "signing-secret\n",
-	} {
-		if got, err := os.ReadFile(path); err != nil || string(got) != want {
-			t.Fatalf("sandboxed full gate changed %s: got=%q err=%v", path, got, err)
-		}
-	}
-	raw, err := os.ReadFile(execution.ArtifactRef)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, secret := range []string{"state-secret", "control-secret", "signing-secret", "daemon-control-capability"} {
-		if strings.Contains(string(raw), secret) {
-			t.Fatalf("full-gate artifact leaked %q: %s", secret, raw)
-		}
 	}
 }
 
@@ -514,13 +417,7 @@ func TestV7FullGateSandboxCandidateIsReadOnly(t *testing.T) {
 	}
 }
 
-func TestV7FullGateLedgerBindsSandboxContractVersion(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("Darwin sandbox-exec contract")
-	}
-	if _, err := landingGateSandboxPath(); err != nil {
-		t.Skip("sandbox-exec unavailable: " + err.Error())
-	}
+func TestV7FullGateLedgerBindsLifecycleProviderContract(t *testing.T) {
 	repo, vault := newLandTestRepo(t, 1, "true")
 	store, err := OpenRuntimeStore(t.TempDir())
 	if err != nil {
@@ -533,9 +430,9 @@ func TestV7FullGateLedgerBindsSandboxContractVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacyToolchain := scheduledPromotionToolchainFingerprint(repo, commands)
-	isolatedToolchain := scheduledPromotionFullGateToolchainFingerprint(repo, commands)
+	isolatedToolchain := scheduledPromotionFullGateToolchainFingerprint(repo, commands, "test-fixture")
 	if legacyToolchain == "" || isolatedToolchain == "" || legacyToolchain == isolatedToolchain {
-		t.Fatalf("sandbox ledger fixture lacks distinct identities: legacy=%q isolated=%q", legacyToolchain, isolatedToolchain)
+		t.Fatalf("provider ledger fixture lacks distinct identities: legacy=%q isolated=%q", legacyToolchain, isolatedToolchain)
 	}
 	if err := store.RecordGateLedger(GateLedgerEntry{
 		ID: "legacy-unrestricted", ProjectID: "app", TreeHash: treeHash,
@@ -543,12 +440,12 @@ func TestV7FullGateLedgerBindsSandboxContractVersion(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	policy := GateTierPolicy{Profile: "full", HarvestCommands: commands}
+	policy := GateTierPolicy{Profile: "full", HarvestCommands: commands, IsolationProvider: "test-fixture"}
 	first := runV7GateTierOnRefContext(context.Background(), vault, repo, "main", "app", policy, store)
 	if first.Err != nil || first.Result.Outcome != gateOutcomePassed ||
 		!sameDepartureStrings(first.Result.Ran, commands) || len(first.Result.LedgerHits) != 0 ||
 		first.Result.Toolchain != isolatedToolchain {
-		t.Fatalf("legacy unrestricted row bypassed isolated execution: %#v", first)
+		t.Fatalf("legacy unrestricted row bypassed lifecycle-provider execution: %#v", first)
 	}
 	second := runV7GateTierOnRefContext(context.Background(), vault, repo, "main", "app", policy, store)
 	if second.Err != nil || second.Result.Outcome != gateOutcomeLedgerHit ||

@@ -110,6 +110,9 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	if err := validateGateScopes(wf.Orchestration.Gate.Scopes, filePath); err != nil {
 		return err
 	}
+	if err := validateGateIsolationProvider(wf.Orchestration.Gate.IsolationProvider, filePath); err != nil {
+		return err
+	}
 	if action := strings.TrimSpace(wf.Orchestration.Gate.FlakeFailureAction); action != "" && action != "quarantine" && action != "rerun" {
 		return tuskerError(errorConfigInvalid, "orchestration.gate.flake_failure_action must be quarantine or rerun", withPath(filePath))
 	}
@@ -120,6 +123,17 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	}
 	if strings.TrimSpace(wf.Agents.Default) == "" {
 		return tuskerError(errorConfigInvalid, "agents.default is required", withPath(filePath))
+	}
+	return nil
+}
+
+func validateGateIsolationProvider(provider string, filePath string) error {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return nil
+	}
+	if !extensionNamePattern.MatchString(provider) {
+		return tuskerError(errorConfigInvalid, "orchestration.gate.isolation_provider must be a trusted provider profile name", withPath(filePath))
 	}
 	return nil
 }
