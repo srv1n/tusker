@@ -424,7 +424,11 @@ func validateRunnerProfileDefinition(name string, profile RunnerProfileDefinitio
 		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.model has unsupported value %q", name, profile.Model), withPath(path), withHint("use a known model family such as gpt-5.x, claude-opus-4-8, claude-fable-5, sonnet-4.6, or glm-5.2"))
 	}
 	if !validRunnerEffort(profile.Effort) || (harness == RunnerClaude && strings.EqualFold(strings.TrimSpace(profile.Effort), "ultra")) {
-		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.effort must be one of low, medium, high, xhigh, max, ultra", name), withPath(path))
+		allowed := "low, medium, high, xhigh, max, ultra"
+		if harness == RunnerClaude {
+			allowed = "low, medium, high, xhigh, max"
+		}
+		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.effort must be one of %s", name, allowed), withPath(path))
 	}
 	if !validRunnerSandboxMode(profile.Sandbox.Mode) {
 		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.sandbox.mode must be one of read-only, workspace-write, danger-full-access", name), withPath(path))
