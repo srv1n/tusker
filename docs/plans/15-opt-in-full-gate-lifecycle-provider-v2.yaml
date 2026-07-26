@@ -80,6 +80,8 @@ tasks:
       - cmd/tusker/gate_tier.go
       - cmd/tusker/gate_ledger.go
       - cmd/tusker/runtime_store.go
+      - cmd/tusker/departure_store.go
+      - cmd/tusker/daemon.go
     concurrency_group: provider-core
     knowledge_nodes:
       - .tusker/knowledge/domains/project/CANON.md
