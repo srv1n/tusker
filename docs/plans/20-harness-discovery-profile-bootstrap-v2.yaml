@@ -4,7 +4,7 @@ title: Harness discovery and profile bootstrap
 epic: ORC
 spec_refs:
   - docs/specs/20-harness-discovery-profile-bootstrap.md
-context_fingerprint: sha256:f2d5c10ac39fb26dd2d23ef8d1b2fee765de2e4f433ba6ddfdb345d9b5af5c71
+context_fingerprint: sha256:9a82a9b9466acc3f87879c4ea61fb49a9fa3911cc552673410947a431c1ad667
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
 factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c

@@ -4,7 +4,7 @@ title: Production operability follow-up
 epic: ORC
 spec_refs:
   - docs/specs/12-opt-in-scheduled-promotion.md
-context_fingerprint: sha256:d72fcfa87dcc30607da97495ad73162320d1cc0722b758ff111bae332803a602
+context_fingerprint: sha256:91aa68f905d8fb9c4a2a29bddc4d3d917ef289689b2adf82333b3c1a5bcad179
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
 factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
