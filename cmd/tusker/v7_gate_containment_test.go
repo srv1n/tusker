@@ -26,12 +26,18 @@ func TestV7GateSandboxCancellationContainsSetsidChild(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	inner := "echo $$ > " + shellQuoteForSandboxTest(marker) + "; exec sleep 300"
+	inner := fmt.Sprintf(
+		`$p=fork(); if ($p) { waitpid($p, 0); } else { POSIX::setsid(); open(my $f, ">", %q) or die $!; print $f $$; close($f); sleep 300; }`,
+		marker,
+	)
 	go func() {
-		_, runErr := sandbox.Run(ctx, "setsid /bin/sh -c "+shellQuoteForSandboxTest(inner)+" & wait")
+		output, runErr := sandbox.Run(ctx, "/usr/bin/perl -MPOSIX -e "+shellQuoteForSandboxTest(inner))
+		if runErr != nil {
+			runErr = fmt.Errorf("%w: %s", runErr, strings.TrimSpace(string(output)))
+		}
 		done <- runErr
 	}()
-	childPID := waitForV7GatePID(t, marker)
+	childPID := waitForV7GatePID(t, marker, done)
 	if got := processGroupID(childPID); got != childPID {
 		t.Fatalf("setsid child did not escape its original process group: pid=%d pgid=%d", childPID, got)
 	}
@@ -69,7 +75,7 @@ func TestV7GateSandboxCancellationFailsClosedWhenContainmentCannotSnapshot(t *te
 		_, runErr := sandbox.Run(ctx, "echo $$ > "+shellQuoteForSandboxTest(marker)+"; sleep 300")
 		done <- runErr
 	}()
-	childPID := waitForV7GatePID(t, marker)
+	childPID := waitForV7GatePID(t, marker, done)
 	cancel()
 	select {
 	case runErr := <-done:
@@ -84,7 +90,7 @@ func TestV7GateSandboxCancellationFailsClosedWhenContainmentCannotSnapshot(t *te
 	}
 }
 
-func waitForV7GatePID(t *testing.T, marker string) int {
+func waitForV7GatePID(t *testing.T, marker string, done <-chan error) int {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -93,6 +99,11 @@ func waitForV7GatePID(t *testing.T, marker string) int {
 			if parseErr == nil && pid > 0 {
 				return pid
 			}
+		}
+		select {
+		case runErr := <-done:
+			t.Fatalf("gate exited before writing child PID marker %s: %v", marker, runErr)
+		default:
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
