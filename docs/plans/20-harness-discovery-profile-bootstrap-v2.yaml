@@ -4,7 +4,7 @@ title: Harness discovery and profile bootstrap
 epic: ORC
 spec_refs:
   - docs/specs/20-harness-discovery-profile-bootstrap.md
-context_fingerprint: sha256:595b0ff0d03cd7cd90dc332b8a82fc8453a0cc062913ed77c3da3f4437183c50
+context_fingerprint: sha256:f2d5c10ac39fb26dd2d23ef8d1b2fee765de2e4f433ba6ddfdb345d9b5af5c71
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
 factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
@@ -25,11 +25,11 @@ non_goals:
     Codex bundled fallback, and Claude declared capabilities retain distinct
     provenance and confidence.
   - >-
-    Production feedback F1-F6 in the governing spec is accepted follow-on
-    scope, not work in this bootstrap wave. Break-glass close, runner claim
-    health, Tusker self-capabilities, cross-worktree registration, boarding
-    census/receipts, and parked-run escalation require a separate reviewed V2
-    delivery plan after bootstrap dogfood.
+    Production feedback F1-F6 in the canonical scheduled-promotion spec §8 is
+    accepted follow-on scope, not work in this bootstrap wave. Break-glass
+    close, runner claim health, Tusker self-capabilities, cross-worktree
+    registration, boarding census/receipts, and parked-run escalation require
+    a separate reviewed V2 delivery plan after bootstrap dogfood.
 requirements:
   - id: R1
     outcome: A provider-neutral read-only catalog reports locally available harness models, efforts, service tiers when known, defaults, visibility, source, confidence, version, and observation time.
@@ -69,7 +69,7 @@ tasks:
         outcome: Profile validation accepts low, medium, high, xhigh, max, and ultra where configured, rejects unknown effort strings, and task complexity accepts only routine, standard, complex, or frontier.
     verification:
       - covers: A1,A2,A3,A4
-        check: "command: go test ./cmd/tusker -run '^(TestRunnerCatalog|TestRunnerProfileBootstrap|TestRunnerProfileEffortAndComplexity)' -count=1 && go test ./internal/v7schema -count=1"
+        check: "command: go test ./cmd/tusker -run '^(TestRunnerCatalog|TestRunnerProfile|TestSemanticBootstrap|TestSemanticEffort|TestFreshBootstrap|TestProfileReconcile)' -count=1 && go test ./internal/v7schema -count=1"
     artifact:
       kind: behavior_matrix
       path: cmd/tusker/runner_catalog_test.go
