@@ -2941,7 +2941,9 @@ type promotionGateExecution struct {
 	ArtifactRef      string
 	ArtifactRefs     []string
 	ProviderReceipts []GateProviderReceipt
+	ProviderOutcomes []GateProviderReceipt
 	FinalizeOutcomes func() error
+	ProviderOutcome  v7FullGateOutcome
 	Err              error
 }
 
@@ -2992,14 +2994,7 @@ func (l v7CertifiedFullGateLedger) FindGateLedger(projectID, treeHash, command, 
 }
 
 func v7CertifiedGateProviderReceipt(receipt *GateProviderReceipt) bool {
-	return receipt != nil && receipt.Schema == v7FullGateProviderSchema && receipt.Outcome == string(v7FullGateOutcomePassed) && strings.TrimSpace(receipt.ProjectID) != "" && strings.TrimSpace(receipt.DepartureID) != "" && strings.TrimSpace(receipt.CandidateDigest) != "" && strings.TrimSpace(receipt.CommandDigest) != "" && strings.TrimSpace(receipt.Profile) != "" && strings.TrimSpace(receipt.ProviderProfile) != "" && strings.TrimSpace(receipt.Toolchain) != "" && strings.TrimSpace(receipt.LifecycleID) != "" && receipt.CleanupCertified && v7FullGateDigest(receipt.RequestDigest) && v7FullGateDigest(receipt.ProviderDigest) && v7FullGateDigest(receipt.ClientDigest) && v7FullGateDigest(receipt.ReceiptDigest) && v7FullGateDigest(receipt.RuntimeDigest) && v7FullGateDigest(receipt.PolicyDigest) && v7FullGateDigest(receipt.AttestationDigest) && v7FullGateDigest(receipt.ImageOrVMID) && v7FullGateDigest(receipt.CapabilitiesDigest) && v7FullGateDigest(receipt.ContainmentDigest) && v7FullGateDigest(receipt.CleanupDigest) && v7FullGateDigest(receipt.ResultDigest) && v7FullGateDigest(receipt.OutputDigest)
-}
-
-func v7GateProviderReceiptFromAudit(audit v7FullGateProviderAudit) GateProviderReceipt {
-	if audit.Receipt.Schema != "" {
-		return audit.Receipt
-	}
-	return GateProviderReceipt{LifecycleID: audit.LifecycleID, ReceiptDigest: audit.ReceiptDigest, RuntimeDigest: audit.RuntimeDigest, PolicyDigest: audit.PolicyDigest, AttestationDigest: audit.AttestationDigest, ImageOrVMID: audit.ImageOrVMID}
+	return receipt != nil && receipt.Schema == v7FullGateProviderSchema && receipt.Outcome == string(v7FullGateOutcomePassed) && strings.TrimSpace(receipt.ProjectID) != "" && strings.TrimSpace(receipt.DepartureID) != "" && strings.TrimSpace(receipt.CandidateDigest) != "" && strings.TrimSpace(receipt.CommandDigest) != "" && strings.TrimSpace(receipt.Profile) != "" && strings.TrimSpace(receipt.ProviderProfile) != "" && strings.TrimSpace(receipt.Toolchain) != "" && strings.TrimSpace(receipt.LifecycleID) != "" && receipt.CleanupCertified && v7FullGateDigest(receipt.RequestDigest) && v7FullGateDigest(receipt.ProviderDigest) && v7FullGateDigest(receipt.ProviderClosureDigest) && v7FullGateDigest(receipt.ClientDigest) && v7FullGateDigest(receipt.ReceiptDigest) && v7FullGateDigest(receipt.RuntimeDigest) && v7FullGateDigest(receipt.PolicyDigest) && v7FullGateDigest(receipt.AttestationDigest) && v7FullGateDigest(receipt.ImageOrVMID) && v7FullGateDigest(receipt.CapabilitiesDigest) && v7FullGateDigest(receipt.ContainmentDigest) && v7FullGateDigest(receipt.CleanupDigest) && v7FullGateDigest(receipt.ResultDigest) && v7FullGateDigest(receipt.OutputDigest)
 }
 
 func runV7GateTierOnRef(vaultPath, repoRoot, ref, projectID string, policy GateTierPolicy, store *RuntimeStore) promotionGateExecution {
@@ -3019,8 +3014,9 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 			root = store.stateRoot
 		}
 		path := filepath.Join(root, "artifacts", "promotion-gates", strings.ToLower(newRecordID())+".log")
-		_ = os.MkdirAll(filepath.Dir(path), 0o755)
-		_ = os.WriteFile(path, []byte(safePacketText(detail, 4096)+"\n"), 0o600)
+		if artifactErr := writeV7DurablePromotionArtifact(path, []byte(safePacketText(detail, 4096)+"\n")); artifactErr != nil {
+			detail = detail + ": durable artifact: " + artifactErr.Error()
+		}
 		return promotionGateExecution{ArtifactRef: path, ArtifactRefs: []string{path}, Err: fmt.Errorf("%s", detail)}
 	}
 	if err := validateV7PromotionGatePolicy(policy); err != nil {
@@ -3037,7 +3033,9 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	}
 	provider, err := newV7FullGateProvider(policy.IsolationProvider, repoRoot, stateRoot)
 	if err != nil {
-		return writeFailure("promotion full-gate refusal: " + err.Error())
+		failure := writeFailure("promotion full-gate refusal: " + err.Error())
+		failure.ProviderOutcome = v7FullGateOutcomeProvider
+		return failure
 	}
 	defer provider.Close()
 	tmp, err := os.MkdirTemp("", "tusker-promotion-gate-*")
@@ -3101,7 +3099,9 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 			ProjectID: projectID, DepartureID: v7FullGateDepartureID(ctx), CandidateDigest: frozenTreeHash, GateProfile: policy.Profile, ProviderProfile: policy.IsolationProvider,
 			Toolchain: runtime.Toolchain(tmp, policy.HarvestCommands),
 		}); err != nil {
-			return writeFailure("promotion full-gate refusal: " + err.Error())
+			failure := writeFailure("promotion full-gate refusal: " + err.Error())
+			failure.ProviderOutcome = v7FullGateOutcomeProvider
+			return failure
 		}
 	}
 	runtime.DiffPaths = nil
@@ -3112,11 +3112,12 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	var raw v7GateBoundedOutput
 	raw.max = v7PromotionGateMaxTranscriptSize
 	raw.truncationNotice = "\n[promotion gate transcript truncated]\n"
-	var containmentErr error
 	var commandReceipt *GateProviderReceipt
 	var providerReceipts []GateProviderReceipt
 	var providerOutcomes []GateProviderReceipt
 	var ledgerErr error
+	var typedProviderErr error
+	var typedProviderOutcome v7FullGateOutcome
 	runtime.RecordPass = func(command, treeHash, profile, toolchain string, elapsed time.Duration) {
 		if ledgerErr != nil {
 			return
@@ -3145,27 +3146,30 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	}
 	runtime.Exec = func(workspace, command string) (string, error) {
 		commandReceipt = nil
+		if typedProviderOutcome != "" {
+			return "", typedProviderErr
+		}
 		scheduledPromotionBeforeFullGateCommand(command)
-		outputBytes, runErr := provider.Run(ctx, workspace, command)
-		output := string(outputBytes)
+		invocation, runErr := provider.Run(ctx, workspace, command)
+		output := string(invocation.Output)
 		fmt.Fprintf(&raw, "$ %s\n%s\n", command, output)
-		if audited, ok := provider.(interface {
-			LastReceipt() v7FullGateProviderAudit
-		}); ok {
-			receipt := audited.LastReceipt()
-			if receipt.ReceiptDigest != "" {
-				fmt.Fprintf(&raw, "# lifecycle_id=%s receipt_digest=%s runtime_digest=%s policy_digest=%s attestation_digest=%s image_or_vm_id=%s\n", receipt.LifecycleID, receipt.ReceiptDigest, receipt.RuntimeDigest, receipt.PolicyDigest, receipt.AttestationDigest, receipt.ImageOrVMID)
-				if runErr == nil {
-					candidate := v7GateProviderReceiptFromAudit(receipt)
-					if v7CertifiedGateProviderReceipt(&candidate) {
-						commandReceipt = &candidate
-					}
-				}
-				providerOutcomes = append(providerOutcomes, v7GateProviderReceiptFromAudit(receipt))
+		receipt := invocation.Receipt
+		if receipt.ReceiptDigest != "" && receipt.RequestDigest != "" && receipt.Outcome == string(invocation.Outcome) && receipt.CommandDigest == v7FullGateTextDigest(command) && receipt.ProjectID == projectID && receipt.CandidateDigest == frozenTreeHash {
+			fmt.Fprintf(&raw, "# lifecycle_id=%s request_digest=%s receipt_digest=%s outcome=%s\n", receipt.LifecycleID, receipt.RequestDigest, receipt.ReceiptDigest, receipt.Outcome)
+			providerOutcomes = append(providerOutcomes, receipt)
+			if runErr == nil && v7CertifiedGateProviderReceipt(&receipt) {
+				commandReceipt = &receipt
 			}
 		}
-		if errors.Is(runErr, errV7FullGateProvider) {
-			containmentErr = runErr
+		if invocation.Outcome == v7FullGateOutcomeProvider || invocation.Outcome == v7FullGateOutcomeCanceled || invocation.Outcome == v7FullGateOutcomeTimedOut {
+			typedProviderOutcome = invocation.Outcome
+			typedProviderErr = runErr
+		} else if errors.Is(runErr, errV7FullGateProvider) {
+			typedProviderOutcome = v7FullGateOutcomeProvider
+			typedProviderErr = runErr
+		}
+		if typedProviderOutcome != "" && typedProviderErr == nil {
+			typedProviderErr = &v7FullGateOutcomeError{Outcome: typedProviderOutcome}
 		}
 		return output, runErr
 	}
@@ -3173,8 +3177,30 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	if err == nil && ledgerErr != nil {
 		err = ledgerErr
 	}
-	if err == nil && containmentErr != nil {
-		err = containmentErr
+	if typedProviderOutcome == "" && errors.Is(err, errV7FullGateProvider) {
+		typedProviderOutcome = v7FullGateOutcomeProvider
+		typedProviderErr = err
+	}
+	if err == nil && typedProviderOutcome != "" {
+		if typedProviderErr == nil {
+			typedProviderErr = &v7FullGateOutcomeError{Outcome: typedProviderOutcome}
+		}
+		err = typedProviderErr
+	}
+	if err == nil && (result.Outcome == gateOutcomePassed || result.Outcome == gateOutcomeLedgerHit) {
+		verified := make([]GateProviderReceipt, 0, len(policy.HarvestCommands))
+		ledger := v7CertifiedFullGateLedger{store: store, verifier: verifier}
+		for _, command := range policy.HarvestCommands {
+			entry, lookupErr := ledger.FindGateLedger(projectID, frozenTreeHash, command, result.Profile, result.Toolchain)
+			if lookupErr != nil || entry == nil || entry.ProviderReceipt == nil {
+				err = fmt.Errorf("%w: complete full-gate receipt set unavailable for %q: %v", errV7FullGateProvider, command, lookupErr)
+				break
+			}
+			verified = append(verified, *entry.ProviderReceipt)
+		}
+		if err == nil {
+			providerReceipts = verified
+		}
 	}
 	root := DefaultStateRoot()
 	if store != nil && store.stateRoot != "" {
@@ -3187,16 +3213,9 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 		// fail-closed cause in the durable artifact itself.
 		fmt.Fprintf(&raw, "# lifecycle_gate_error=%s\n", safePacketText(err.Error(), 4096))
 	}
-	writeErr := os.MkdirAll(filepath.Dir(path), 0o755)
-	if writeErr != nil {
-		if err == nil {
-			err = writeErr
-		}
-	} else {
-		writeErr = os.WriteFile(path, raw.Bytes(), 0o600)
-		if writeErr != nil && err == nil {
-			err = writeErr
-		}
+	writeErr := writeV7DurablePromotionArtifact(path, raw.Bytes())
+	if writeErr != nil && err == nil {
+		err = writeErr
 	}
 	finalizeOutcomes := func() error {
 		if writeErr != nil {
@@ -3217,7 +3236,7 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 		}
 		return errors.Join(errs...)
 	}
-	return promotionGateExecution{Result: result, ArtifactRef: path, ArtifactRefs: []string{path}, ProviderReceipts: providerOutcomes, FinalizeOutcomes: finalizeOutcomes, Err: err}
+	return promotionGateExecution{Result: result, ArtifactRef: path, ArtifactRefs: []string{path}, ProviderReceipts: providerReceipts, ProviderOutcomes: providerOutcomes, FinalizeOutcomes: finalizeOutcomes, ProviderOutcome: typedProviderOutcome, Err: err}
 }
 
 func appendV7WaveLandingAudit(vaultPath, waveID string, entries []v7LandingAuditEntry, actor string) error {

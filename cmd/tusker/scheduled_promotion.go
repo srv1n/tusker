@@ -1414,13 +1414,12 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	gateCtx := withV7FullGateDeparture(ctx, run.ID)
 	execution := runV7GateTierOnRefContext(gateCtx, vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
 	if err := ctx.Err(); err != nil {
-		if errors.Is(execution.Err, errV7FullGateProvider) {
-			return "", execution.Err
+		if execution.ProviderOutcome == "" {
+			for _, ref := range execution.ArtifactRefs {
+				_ = os.Remove(ref)
+			}
+			return "", err
 		}
-		for _, ref := range execution.ArtifactRefs {
-			_ = os.Remove(ref)
-		}
-		return "", err
 	}
 	// A configured flake rerun is deliberately one-shot. Its second result
 	// replaces the gate attempt; a second red falls through to quarantine.
@@ -1428,19 +1427,60 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 		raw, _ := os.ReadFile(execution.ArtifactRef)
 		probe := promotionFailurePacket(before.Candidate, before.Gate, actor, string(raw), nil, gatePolicy, "unknown", "not_run", promotionFailureOwner(before.Candidate), nil, []string{execution.ArtifactRef})
 		if classifyPromotionFailure(probe, gatePolicy).Class == promotionFailureFlake {
+			first := execution
 			firstRefs := append([]string(nil), execution.ArtifactRefs...)
 			execution = runV7GateTierOnRefContext(gateCtx, vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
 			execution.ArtifactRefs = append(firstRefs, execution.ArtifactRefs...)
+			execution.ProviderOutcomes = append(append([]GateProviderReceipt(nil), first.ProviderOutcomes...), execution.ProviderOutcomes...)
+			secondFinalize := execution.FinalizeOutcomes
+			execution.FinalizeOutcomes = func() error {
+				var errs []error
+				if first.FinalizeOutcomes != nil {
+					errs = append(errs, first.FinalizeOutcomes())
+				}
+				if secondFinalize != nil {
+					errs = append(errs, secondFinalize())
+				}
+				return errors.Join(errs...)
+			}
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		for _, ref := range execution.ArtifactRefs {
-			_ = os.Remove(ref)
+		if execution.ProviderOutcome == "" {
+			for _, ref := range execution.ArtifactRefs {
+				_ = os.Remove(ref)
+			}
+			return "", err
 		}
-		return "", err
 	}
 	gateSummary := string(execution.Result.Outcome)
 	gateFinished := time.Now().UTC()
+	if execution.ProviderOutcome == v7FullGateOutcomeProvider || execution.ProviderOutcome == v7FullGateOutcomeCanceled || execution.ProviderOutcome == v7FullGateOutcomeTimedOut {
+		if heartbeatErr := stopHeartbeat(); heartbeatErr != nil {
+			return "", heartbeatErr
+		}
+		intent := *run
+		intent.Candidate, intent.Gate = before.Candidate, before.Gate
+		intent.Gate.Status = string(execution.ProviderOutcome)
+		intent.Gate.StartedAt, intent.Gate.FinishedAt, intent.Gate.ArtifactRef = gateStarted.Format(time.RFC3339Nano), gateFinished.Format(time.RFC3339Nano), execution.ArtifactRef
+		intent.Gate.ProviderOutcomes = append([]GateProviderReceipt(nil), execution.ProviderOutcomes...)
+		intent.Gate.Failure = DepartureFailure{Class: "provider", Identity: string(execution.ProviderOutcome), Action: string(execution.ProviderOutcome), ArtifactRefs: append([]string(nil), execution.ArtifactRefs...)}
+		intent.State = DepartureStateBlocked
+		intent.BlockReason = "promotion provider outcome: " + string(execution.ProviderOutcome)
+		if changed, persistErr := store.TransitionDepartureRun(intent, run.StateRevision); persistErr != nil {
+			return "", persistErr
+		} else if !changed {
+			return "", tuskerError(errorInvalidTransition, "promotion refusal: departure row changed while recording provider outcome")
+		}
+		if execution.FinalizeOutcomes != nil {
+			if finalizeErr := execution.FinalizeOutcomes(); finalizeErr != nil {
+				return "", fmt.Errorf("persisted provider outcome awaits acknowledgement: %w", finalizeErr)
+			}
+		}
+		*run = intent
+		run.StateRevision++
+		return "", execution.Err
+	}
 	if execution.Err != nil || (execution.Result.Outcome != gateOutcomePassed && execution.Result.Outcome != gateOutcomeLedgerHit) {
 		if heartbeatErr := stopHeartbeat(); heartbeatErr != nil {
 			return "", heartbeatErr
@@ -1485,6 +1525,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 		intent.Gate.Status = "failed"
 		intent.Gate.StartedAt, intent.Gate.FinishedAt, intent.Gate.ArtifactRef = gateStarted.Format(time.RFC3339Nano), gateFinished.Format(time.RFC3339Nano), artifactRefs[len(artifactRefs)-1]
 		intent.Gate.ProviderReceipts = append([]GateProviderReceipt(nil), execution.ProviderReceipts...)
+		intent.Gate.ProviderOutcomes = append([]GateProviderReceipt(nil), execution.ProviderOutcomes...)
 		intent.Gate.Failure = DepartureFailure{Class: string(route.Class), Identity: route.StableIdentity, OwningTaskID: packet.OwningTaskID, BisectionRef: packet.BisectionRef, ArtifactRefs: packet.ArtifactRefs, RepairTaskID: repairTaskID, ModelTriage: route.ModelTriage, Packet: packet, Action: action, AffectedTaskIDs: affected}
 		intent.State = DepartureStateRepairing
 		intent.BlockReason = "promotion gate red: " + route.StableIdentity
@@ -1572,6 +1613,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	intent.Gate.StartedAt = gateStarted.Format(time.RFC3339Nano)
 	intent.Gate.FinishedAt = gateFinished.Format(time.RFC3339Nano)
 	intent.Gate.ProviderReceipts = append([]GateProviderReceipt(nil), execution.ProviderReceipts...)
+	intent.Gate.ProviderOutcomes = append([]GateProviderReceipt(nil), execution.ProviderOutcomes...)
 	intent.Promotion = DeparturePromotion{
 		ExpectedRef: before.DefaultBranch, ExpectedSHA: before.Candidate.ExpectedDefaultBranchSHA,
 		IntendedSHA: mergeCommit,
@@ -1589,6 +1631,11 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	}
 	if !changed {
 		return "", tuskerError(errorInvalidTransition, "promotion refusal: departure row changed before ref update")
+	}
+	if execution.FinalizeOutcomes != nil {
+		if finalizeErr := execution.FinalizeOutcomes(); finalizeErr != nil {
+			return "", fmt.Errorf("persisted promotion intent awaits provider acknowledgement: %w", finalizeErr)
+		}
 	}
 	*run = intent
 	run.StateRevision++

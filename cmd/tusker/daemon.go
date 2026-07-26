@@ -99,7 +99,7 @@ func NewDaemon(stateRoot string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := recoverV7FullGateProviderScopes(stateRoot); err != nil {
+	if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
 		_ = store.Close()
 		return nil, err
 	}

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -38,12 +39,19 @@ const (
 	v7FullGateRuntimeMax        = 2 * time.Hour
 	v7FullGateArtifactMaxBytes  = 16 << 20
 	v7FullGateRecoveryMaxScopes = 128
+	v7FullGateJournalMaxEntries = 128
 	v7FullGateCloseWaitTimeout  = 2 * v7FullGateCleanTimeout
 )
 
 // Kept as a variable solely so the deterministic fake-provider deadline test
 // can use milliseconds; production never configures this from repository data.
 var v7FullGateRuntimeLimit = v7FullGateRuntimeMax
+
+// Deterministic crash/durability seams. Production leaves both nil.
+var (
+	v7FullGateDurabilityHook func(string) error
+	v7FullGateRecoveryHook   func(string) error
+)
 
 var errV7FullGateProvider = errors.New("full-gate lifecycle provider")
 
@@ -158,8 +166,14 @@ type v7FullGateProviderResult struct {
 	ResultDigest              string            `json:"result_digest"`
 }
 
+type v7FullGateProviderInvocation struct {
+	Output  []byte
+	Outcome v7FullGateOutcome
+	Receipt GateProviderReceipt
+}
+
 type v7FullGateProvider interface {
-	Run(context.Context, string, string) ([]byte, error)
+	Run(context.Context, string, string) (v7FullGateProviderInvocation, error)
 	Close() error
 }
 
@@ -230,7 +244,7 @@ var newV7FullGateProvider = func(profile, repoRoot, stateRoot string) (v7FullGat
 	if v7PathWithin(repoRoot, path) {
 		return nil, fmt.Errorf("%w: trusted provider executable must not be repository-local", errV7FullGateProvider)
 	}
-	return &v7ExternalFullGateProvider{path: path, kind: trusted.Kind, identity: identity, executableIdentity: executableIdentity, runtimeDigest: trusted.RuntimeDigest, clientDigest: trusted.ClientDigest, policyDigest: trusted.PolicyDigest, attestationDigest: trusted.AttestationDigest, capabilities: append([]string(nil), trusted.Capabilities...), implementationID: trusted.ImplementationID, capabilitySchema: trusted.CapabilitySchema, imageOrVMID: trusted.ImageOrVMID, profile: profile, recoveryRoot: filepath.Join(stateRoot, "full-gate-recovery")}, nil
+	return &v7ExternalFullGateProvider{path: path, kind: trusted.Kind, identity: identity, executableIdentity: executableIdentity, runtimeDigest: trusted.RuntimeDigest, clientDigest: trusted.ClientDigest, policyDigest: trusted.PolicyDigest, attestationDigest: trusted.AttestationDigest, capabilities: append([]string(nil), trusted.Capabilities...), implementationID: trusted.ImplementationID, capabilitySchema: trusted.CapabilitySchema, imageOrVMID: trusted.ImageOrVMID, profile: profile, stateRoot: stateRoot, recoveryRoot: filepath.Join(stateRoot, "full-gate-recovery")}, nil
 }
 
 type v7ExternalFullGateProvider struct {
@@ -247,12 +261,12 @@ type v7ExternalFullGateProvider struct {
 	imageOrVMID        string
 	clientDigest       string
 	profile            string
+	stateRoot          string
 	binding            v7FullGateProviderBinding
 	recoveryRoot       string
 	mu                 sync.Mutex
 	active             *v7FullGateProviderScope
 	pending            map[string]*v7FullGateProviderScope
-	lastReceipt        v7FullGateProviderAudit
 	closed             bool
 }
 
@@ -343,28 +357,26 @@ func (s *v7FullGateProviderScope) waitWrapper(timeout time.Duration) (error, err
 	return s.wrapperErr, nil
 }
 
-type v7FullGateProviderAudit struct {
-	Receipt           GateProviderReceipt
-	Outcome           v7FullGateOutcome
-	LifecycleID       string
-	ReceiptDigest     string
-	RuntimeDigest     string
-	PolicyDigest      string
-	AttestationDigest string
-	ImageOrVMID       string
-}
+const v7FullGateOutcomeJournalSchema = "tusker.full-gate-provider-outcome/v1"
 
-func (p *v7ExternalFullGateProvider) LastReceipt() v7FullGateProviderAudit {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.lastReceipt
+type v7FullGateProviderOutcomeJournal struct {
+	Schema        string                    `json:"schema"`
+	DepartureID   string                    `json:"departure_id"`
+	RequestDigest string                    `json:"request_digest"`
+	ScopePath     string                    `json:"scope_path"`
+	Request       v7FullGateProviderRequest `json:"request"`
+	Result        v7FullGateProviderResult  `json:"result"`
+	Receipt       GateProviderReceipt       `json:"receipt"`
+	Reconciled    bool                      `json:"reconciled,omitempty"`
+	Action        string                    `json:"action,omitempty"`
+	JournalDigest string                    `json:"journal_digest"`
 }
 
 // MatchesGateProviderReceipt binds ledger reuse to this provider's currently
 // trusted immutable profile. A syntactically valid receipt from another
 // runtime, policy, attestation, or image is not promotion proof here.
 func (p *v7ExternalFullGateProvider) MatchesGateProviderReceipt(receipt *GateProviderReceipt) bool {
-	return v7CertifiedGateProviderReceipt(receipt) && receipt.ProviderDigest == p.executableIdentity && receipt.ClientDigest == p.clientDigest && receipt.RuntimeDigest == p.runtimeDigest && receipt.PolicyDigest == p.policyDigest && receipt.AttestationDigest == p.attestationDigest && receipt.ImageOrVMID == p.imageOrVMID && receipt.ProviderProfile == p.profile
+	return v7CertifiedGateProviderReceipt(receipt) && receipt.ProviderDigest == p.executableIdentity && receipt.ProviderClosureDigest == p.identity && receipt.ClientDigest == p.clientDigest && receipt.RuntimeDigest == p.runtimeDigest && receipt.PolicyDigest == p.policyDigest && receipt.AttestationDigest == p.attestationDigest && receipt.ImageOrVMID == p.imageOrVMID && receipt.ProviderProfile == p.profile
 }
 
 func (p *v7ExternalFullGateProvider) BindFullGateProvider(binding v7FullGateProviderBinding) error {
@@ -380,16 +392,14 @@ func (p *v7ExternalFullGateProvider) BindFullGateProvider(binding v7FullGateProv
 	return nil
 }
 
-func (p *v7ExternalFullGateProvider) recordReceipt(scope *v7FullGateProviderScope, request v7FullGateProviderRequest, result v7FullGateProviderResult) {
-	receipt := GateProviderReceipt{
-		Schema: v7FullGateProviderSchema, Outcome: string(result.Outcome), ProjectID: request.ProjectID, DepartureID: request.DepartureID,
-		RequestDigest: request.RequestDigest, CandidateDigest: request.CandidateDigest, CommandDigest: v7FullGateTextDigest(request.Command), Profile: request.Profile, ProviderProfile: request.ProviderProfile, Toolchain: request.Toolchain,
-		ProviderDigest: request.ExecutableID, ClientDigest: request.ClientDigest, LifecycleID: result.LifecycleID, ReceiptDigest: result.ReceiptDigest,
-		RuntimeDigest: result.RuntimeDigest, PolicyDigest: result.PolicyDigest, AttestationDigest: result.AttestationDigest, ImageOrVMID: result.ImageOrVMID,
-		CapabilitiesDigest: v7FullGateStringsDigest(result.Capabilities), ContainmentDigest: v7FullGateContainmentDigest(result), CleanupDigest: v7FullGateCleanupDigest(result), ResultDigest: result.ResultDigest, OutputDigest: result.OutputDigest, CleanupCertified: result.State == "cleaned",
+func (p *v7ExternalFullGateProvider) recordReceipt(scope *v7FullGateProviderScope, request v7FullGateProviderRequest, result v7FullGateProviderResult) (GateProviderReceipt, error) {
+	receipt := v7GateProviderReceiptForResult(request, result)
+	if scope != nil {
+		if err := persistV7FullGateProviderOutcomeJournal(p.stateRoot, scope, request, result, receipt); err != nil {
+			return receipt, err
+		}
 	}
 	p.mu.Lock()
-	p.lastReceipt = v7FullGateProviderAudit{Receipt: receipt, Outcome: result.Outcome, LifecycleID: result.LifecycleID, ReceiptDigest: result.ReceiptDigest, RuntimeDigest: result.RuntimeDigest, PolicyDigest: result.PolicyDigest, AttestationDigest: result.AttestationDigest, ImageOrVMID: result.ImageOrVMID}
 	if scope != nil {
 		if p.pending == nil {
 			p.pending = make(map[string]*v7FullGateProviderScope)
@@ -397,6 +407,17 @@ func (p *v7ExternalFullGateProvider) recordReceipt(scope *v7FullGateProviderScop
 		p.pending[request.RequestDigest] = scope
 	}
 	p.mu.Unlock()
+	return receipt, nil
+}
+
+func v7GateProviderReceiptForResult(request v7FullGateProviderRequest, result v7FullGateProviderResult) GateProviderReceipt {
+	return GateProviderReceipt{
+		Schema: v7FullGateProviderSchema, Outcome: string(result.Outcome), ProjectID: request.ProjectID, DepartureID: request.DepartureID,
+		RequestDigest: request.RequestDigest, CandidateDigest: request.CandidateDigest, CommandDigest: v7FullGateTextDigest(request.Command), Profile: request.Profile, ProviderProfile: request.ProviderProfile, Toolchain: request.Toolchain,
+		ProviderDigest: request.ExecutableID, ProviderClosureDigest: request.ProviderID, ClientDigest: request.ClientDigest, LifecycleID: result.LifecycleID, ReceiptDigest: result.ReceiptDigest,
+		RuntimeDigest: result.RuntimeDigest, PolicyDigest: result.PolicyDigest, AttestationDigest: result.AttestationDigest, ImageOrVMID: result.ImageOrVMID,
+		CapabilitiesDigest: v7FullGateStringsDigest(result.Capabilities), ContainmentDigest: v7FullGateContainmentDigest(result), CleanupDigest: v7FullGateCleanupDigest(result), ResultDigest: result.ResultDigest, OutputDigest: result.OutputDigest, CleanupCertified: result.State == "cleaned",
+	}
 }
 
 func (p *v7ExternalFullGateProvider) FinalizeFullGateProviderOutcome(receipt GateProviderReceipt) error {
@@ -417,7 +438,16 @@ func (p *v7ExternalFullGateProvider) FinalizeFullGateProviderOutcome(receipt Gat
 		p.mu.Unlock()
 		return err
 	}
-	return nil
+	if err := removeV7FullGateProviderOutcomeJournal(p.stateRoot, receipt); err != nil {
+		p.mu.Lock()
+		if p.pending == nil {
+			p.pending = make(map[string]*v7FullGateProviderScope)
+		}
+		p.pending[receipt.RequestDigest] = scope
+		p.mu.Unlock()
+		return err
+	}
+	return runV7FullGateDurabilityHook("outcome_retired")
 }
 
 func resolveV7TrustedFullGateProvider(profile, stateRoot string) (v7TrustedFullGateProvider, string, string, string, error) {
@@ -545,16 +575,16 @@ func (p *v7ExternalFullGateProvider) verifyIdentity() error {
 	return nil
 }
 
-func (p *v7ExternalFullGateProvider) Run(ctx context.Context, workspace, command string) ([]byte, error) {
+func (p *v7ExternalFullGateProvider) Run(ctx context.Context, workspace, command string) (v7FullGateProviderInvocation, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := p.verifyIdentity(); err != nil {
-		return nil, err
+		return v7FullGateProviderInvocation{Outcome: v7FullGateOutcomeProvider}, err
 	}
 	request, requestPath, err := p.newRequest(workspace, command)
 	if err != nil {
-		return nil, err
+		return v7FullGateProviderInvocation{Outcome: v7FullGateOutcomeProvider}, err
 	}
 	runCtx, runCancel := v7FullGateProviderDeadline(ctx, v7FullGateRuntimeLimit)
 	defer runCancel()
@@ -576,14 +606,14 @@ func (p *v7ExternalFullGateProvider) Run(ctx context.Context, workspace, command
 	if p.closed || p.active != nil {
 		p.mu.Unlock()
 		_ = p.completeScope(scope)
-		return nil, fmt.Errorf("%w: provider is closed or already owns an active scope", errV7FullGateProvider)
+		return v7FullGateProviderInvocation{Outcome: v7FullGateOutcomeProvider}, fmt.Errorf("%w: provider is closed or already owns an active scope", errV7FullGateProvider)
 	}
 	if err := cmd.Start(); err != nil {
 		p.mu.Unlock()
 		// Start failed before the provider existed, so no lifecycle can need
 		// recovery and retaining this record would be a false fail-closed block.
 		_ = p.completeScope(scope)
-		return nil, fmt.Errorf("%w: start provider: %v", errV7FullGateProvider, err)
+		return v7FullGateProviderInvocation{Outcome: v7FullGateOutcomeProvider}, fmt.Errorf("%w: start provider: %v", errV7FullGateProvider, err)
 	}
 	p.active = scope
 	p.mu.Unlock()
@@ -599,50 +629,112 @@ func (p *v7ExternalFullGateProvider) Run(ctx context.Context, workspace, command
 	case <-scope.wrapperDone:
 		runErr, waitErr := scope.waitWrapper(0)
 		if waitErr != nil {
-			return providerOutput.Bytes(), waitErr
+			return v7FullGateProviderInvocation{Output: providerOutput.Bytes(), Outcome: v7FullGateOutcomeProvider}, waitErr
 		}
 		result, receiptErr := readV7FullGateProviderResult(request)
 		if receiptErr != nil {
-			_, cleanupErr := p.cleanup(scope)
-			return providerOutput.Bytes(), v7JoinProviderErrors(receiptErr, cleanupErr)
+			cleanupResult, cleanupErr := p.cleanup(scope)
+			if cleanupErr != nil {
+				return v7FullGateProviderInvocation{Output: providerOutput.Bytes(), Outcome: v7FullGateOutcomeProvider}, v7JoinProviderErrors(receiptErr, cleanupErr)
+			}
+			return p.recordNormalizedProviderFailure(scope, request, cleanupResult, providerOutput.Bytes(), "invalid_run_result_before_certified_cleanup", receiptErr)
 		}
 		if result.State != "root_exited" && result.State != "cleaned" {
-			_, cleanupErr := p.cleanup(scope)
-			return providerOutput.Bytes(), v7JoinProviderErrors(fmt.Errorf("%w: provider returned invalid run state %q", errV7FullGateProvider, result.State), cleanupErr)
+			stateErr := fmt.Errorf("%w: provider returned invalid run state %q", errV7FullGateProvider, result.State)
+			cleanupResult, cleanupErr := p.cleanup(scope)
+			if cleanupErr != nil {
+				return v7FullGateProviderInvocation{Output: providerOutput.Bytes(), Outcome: v7FullGateOutcomeProvider}, v7JoinProviderErrors(stateErr, cleanupErr)
+			}
+			return p.recordNormalizedProviderFailure(scope, request, cleanupResult, providerOutput.Bytes(), "invalid_run_state_before_certified_cleanup", stateErr)
 		}
 		cleanupResult, cleanupErr := p.cleanup(scope)
 		if cleanupErr != nil {
-			return append(providerOutput.Bytes(), []byte(result.Output)...), v7JoinProviderErrors(v7ProviderRunError(runErr), cleanupErr)
+			return v7FullGateProviderInvocation{Output: append(providerOutput.Bytes(), []byte(result.Output)...), Outcome: v7FullGateOutcomeProvider}, v7JoinProviderErrors(v7ProviderRunError(runErr), cleanupErr)
 		}
 		if cleanupResult.LifecycleID != result.LifecycleID {
-			return providerOutput.Bytes(), fmt.Errorf("%w: provider changed lifecycle identity between run and cleanup", errV7FullGateProvider)
+			identityErr := fmt.Errorf("%w: provider changed lifecycle identity between run and cleanup", errV7FullGateProvider)
+			return p.recordNormalizedProviderFailure(scope, request, cleanupResult, providerOutput.Bytes(), "cleanup_lifecycle_identity_mismatch", identityErr)
 		}
+		normalized := false
 		if time.Since(started) > time.Duration(request.MaxRuntimeMS)*time.Millisecond {
-			return []byte(cleanupResult.Output), fmt.Errorf("%w: daemon-measured provider runtime exceeded %s", errV7FullGateProvider, time.Duration(request.MaxRuntimeMS)*time.Millisecond)
+			cleanupResult = normalizedV7FullGateProviderFailure(request, cleanupResult, "daemon_measured_runtime_exceeded")
+			normalized = true
+		} else if cleanupResult.Outcome == v7FullGateOutcomePassed && runErr != nil {
+			cleanupResult = normalizedV7FullGateProviderFailure(request, cleanupResult, "wrapper_failed_after_gate_pass")
+			normalized = true
 		}
-		p.recordReceipt(scope, request, cleanupResult)
+		receipt, journalErr := p.recordReceipt(scope, request, cleanupResult)
+		invocation := v7FullGateProviderInvocation{Output: []byte(cleanupResult.Output), Outcome: cleanupResult.Outcome, Receipt: receipt}
+		if journalErr != nil {
+			invocation.Outcome = v7FullGateOutcomeProvider
+			return invocation, journalErr
+		}
+		// The journal is the crash-recovery authority. Write it before replacing
+		// a backend's contradictory result so a crash can never resurrect a
+		// measured overrun or wrapper/pass mismatch as reusable green proof.
+		if normalized {
+			if err := persistV7FullGateProviderResult(request.ResultPath, cleanupResult); err != nil {
+				return invocation, err
+			}
+		}
 		if cleanupResult.Outcome == v7FullGateOutcomePassed && runErr == nil {
-			return []byte(cleanupResult.Output), nil
+			return invocation, nil
 		}
-		return []byte(cleanupResult.Output), v7FullGateResultError(cleanupResult, runErr, nil)
+		return invocation, v7FullGateResultError(cleanupResult, runErr, nil)
 	case <-runCtx.Done():
 		// CommandContext's cancel/WaitDelay path terminates and reaps the
 		// wrapper. Do not race a second signal/kill here. The derived context
 		// makes the same guarantee when Close races cancellation.
 		runCancel()
 		if _, waitErr := scope.waitWrapper(v7FullGateCloseWaitTimeout); waitErr != nil {
-			return providerOutput.Bytes(), waitErr
+			return v7FullGateProviderInvocation{Output: providerOutput.Bytes(), Outcome: v7FullGateOutcomeProvider}, waitErr
 		}
 		cleanupResult, cleanupErr := p.cleanup(scope)
 		if cleanupErr != nil {
-			return providerOutput.Bytes(), cleanupErr
+			return v7FullGateProviderInvocation{Output: providerOutput.Bytes(), Outcome: v7FullGateOutcomeProvider}, cleanupErr
 		}
-		if cleanupResult.Outcome != v7FullGateOutcomeCanceled && cleanupResult.Outcome != v7FullGateOutcomeTimedOut {
-			return []byte(cleanupResult.Output), fmt.Errorf("%w: provider did not certify cancellation or timeout cleanup", errV7FullGateProvider)
+		expected := v7FullGateOutcomeCanceled
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			expected = v7FullGateOutcomeTimedOut
 		}
-		p.recordReceipt(scope, request, cleanupResult)
-		return []byte(cleanupResult.Output), v7FullGateResultError(cleanupResult, nil, runCtx.Err())
+		normalized := false
+		if cleanupResult.Outcome != expected {
+			cleanupResult = normalizedV7FullGateProviderFailure(request, cleanupResult, "cleanup_outcome_mismatch_expected_"+string(expected))
+			normalized = true
+		}
+		receipt, journalErr := p.recordReceipt(scope, request, cleanupResult)
+		invocation := v7FullGateProviderInvocation{Output: []byte(cleanupResult.Output), Outcome: cleanupResult.Outcome, Receipt: receipt}
+		if journalErr != nil {
+			invocation.Outcome = v7FullGateOutcomeProvider
+			return invocation, journalErr
+		}
+		if normalized {
+			if err := persistV7FullGateProviderResult(request.ResultPath, cleanupResult); err != nil {
+				return invocation, err
+			}
+		}
+		return invocation, v7FullGateResultError(cleanupResult, nil, runCtx.Err())
 	}
+}
+
+func (p *v7ExternalFullGateProvider) recordNormalizedProviderFailure(scope *v7FullGateProviderScope, request v7FullGateProviderRequest, result v7FullGateProviderResult, output []byte, reason string, cause error) (v7FullGateProviderInvocation, error) {
+	result = normalizedV7FullGateProviderFailure(request, result, reason)
+	receipt, journalErr := p.recordReceipt(scope, request, result)
+	invocation := v7FullGateProviderInvocation{Output: append(output, []byte(result.Output)...), Outcome: v7FullGateOutcomeProvider, Receipt: receipt}
+	if journalErr != nil {
+		return invocation, v7JoinProviderErrors(cause, journalErr)
+	}
+	if persistErr := persistV7FullGateProviderResult(request.ResultPath, result); persistErr != nil {
+		return invocation, v7JoinProviderErrors(cause, persistErr)
+	}
+	return invocation, v7FullGateResultError(result, nil, cause)
+}
+
+func normalizedV7FullGateProviderFailure(request v7FullGateProviderRequest, result v7FullGateProviderResult, reason string) v7FullGateProviderResult {
+	result.Outcome = v7FullGateOutcomeProvider
+	result.Error = safePacketText(reason, 512)
+	v7SealFullGateProviderResult(request, &result)
+	return result
 }
 
 func v7FullGateProviderDeadline(parent context.Context, limit time.Duration) (context.Context, context.CancelFunc) {
@@ -687,17 +779,48 @@ func (p *v7ExternalFullGateProvider) newRequest(workspace, command string) (v7Fu
 	if strings.TrimSpace(recoveryRoot) == "" {
 		recoveryRoot = filepath.Join(DefaultStateRoot(), "full-gate-recovery")
 	}
-	if err := os.MkdirAll(recoveryRoot, 0o700); err != nil {
+	created, err := ensureV7DurableDirectory(recoveryRoot, 0o700)
+	if err != nil {
 		return v7FullGateProviderRequest{}, "", err
 	}
-	control, err := os.MkdirTemp(recoveryRoot, "scope-")
+	if created {
+		if err := runV7FullGateDurabilityHook("recovery_root_created_synced"); err != nil {
+			return v7FullGateProviderRequest{}, "", err
+		}
+	}
+	preparationRoot := filepath.Join(filepath.Dir(recoveryRoot), "full-gate-preparing")
+	created, err = ensureV7DurableDirectory(preparationRoot, 0o700)
 	if err != nil {
+		return v7FullGateProviderRequest{}, "", err
+	}
+	if created {
+		if err := runV7FullGateDurabilityHook("preparation_root_created_synced"); err != nil {
+			return v7FullGateProviderRequest{}, "", err
+		}
+	}
+	control, err := os.MkdirTemp(preparationRoot, "scope-")
+	if err != nil {
+		return v7FullGateProviderRequest{}, "", err
+	}
+	publishedControl := filepath.Join(recoveryRoot, filepath.Base(control))
+	if err := syncV7Directory(control); err != nil {
+		_ = os.RemoveAll(control)
+		return v7FullGateProviderRequest{}, "", err
+	}
+	if err := syncV7Directory(preparationRoot); err != nil {
+		_ = os.RemoveAll(control)
+		return v7FullGateProviderRequest{}, "", err
+	}
+	if err := runV7FullGateDurabilityHook("preparation_dentry_synced"); err != nil {
 		return v7FullGateProviderRequest{}, "", err
 	}
 	providerSnapshot := filepath.Join(control, "provider")
 	if err := snapshotV7TrustedProvider(p.path, p.executableIdentity, providerSnapshot); err != nil {
 		// No provider was launched, so this record is not a recovery scope.
 		_ = os.RemoveAll(control)
+		return v7FullGateProviderRequest{}, "", err
+	}
+	if err := runV7FullGateDurabilityHook("provider_snapshot_synced"); err != nil {
 		return v7FullGateProviderRequest{}, "", err
 	}
 	workspace, err = sandboxCanonicalPath(workspace)
@@ -715,7 +838,7 @@ func (p *v7ExternalFullGateProvider) newRequest(workspace, command string) (v7Fu
 	request := v7FullGateProviderRequest{
 		Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract,
 		RunID: strings.ToLower(newRecordID()), Workspace: workspace, Command: command, ProjectID: binding.ProjectID, DepartureID: binding.DepartureID, CandidateDigest: binding.CandidateDigest, Profile: binding.GateProfile, ProviderProfile: binding.ProviderProfile, Toolchain: binding.Toolchain,
-		ResultPath: filepath.Join(control, "result.json"), ProviderKind: p.kind, ProviderID: p.identity, ProviderPath: providerSnapshot, ExecutableID: p.executableIdentity,
+		ResultPath: filepath.Join(publishedControl, "result.json"), ProviderKind: p.kind, ProviderID: p.identity, ProviderPath: filepath.Join(publishedControl, "provider"), ExecutableID: p.executableIdentity,
 		CandidateReadOnly: true, NetworkDenied: true, ControlEnvDenied: true,
 		RuntimeDigest: p.runtimeDigest, ClientDigest: p.clientDigest, PolicyDigest: p.policyDigest, AttestationDigest: p.attestationDigest, RequiredCapabilities: append([]string(nil), p.capabilities...),
 		ImplementationID: p.implementationID, CapabilitySchema: p.capabilitySchema, ExpectedImageOrVMID: p.imageOrVMID,
@@ -736,7 +859,22 @@ func (p *v7ExternalFullGateProvider) newRequest(workspace, command string) (v7Fu
 		_ = os.RemoveAll(control)
 		return v7FullGateProviderRequest{}, "", err
 	}
-	return request, requestPath, nil
+	if err := runV7FullGateDurabilityHook("reservation_synced"); err != nil {
+		return v7FullGateProviderRequest{}, "", err
+	}
+	if err := os.Rename(control, publishedControl); err != nil {
+		return v7FullGateProviderRequest{}, "", err
+	}
+	if err := syncV7Directory(recoveryRoot); err != nil {
+		return v7FullGateProviderRequest{}, "", err
+	}
+	if err := syncV7Directory(preparationRoot); err != nil {
+		return v7FullGateProviderRequest{}, "", err
+	}
+	if err := runV7FullGateDurabilityHook("scope_published_synced"); err != nil {
+		return v7FullGateProviderRequest{}, "", err
+	}
+	return request, filepath.Join(publishedControl, "request.json"), nil
 }
 
 // writeV7FullGateReservation makes the recovery record durable before a
@@ -774,7 +912,21 @@ func snapshotV7TrustedProvider(source, identity, destination string) error {
 	if identity != fmt.Sprintf("sha256:%x", sum[:]) {
 		return fmt.Errorf("%w: provider executable changed before immutable snapshot", errV7FullGateProvider)
 	}
-	if err := os.WriteFile(destination, raw, 0o700); err != nil {
+	f, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
+	if err != nil {
+		return err
+	}
+	if _, err = f.Write(raw); err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err := syncV7Directory(filepath.Dir(destination)); err != nil {
 		return err
 	}
 	_, copiedIdentity, err := verifyV7TrustedProviderExecutable(destination)
@@ -824,10 +976,15 @@ func (p *v7ExternalFullGateProvider) completeScope(scope *v7FullGateProviderScop
 	if scope == nil || strings.TrimSpace(scope.requestPath) == "" {
 		return fmt.Errorf("%w: missing cleanup scope", errV7FullGateProvider)
 	}
-	if err := os.RemoveAll(filepath.Dir(scope.requestPath)); err != nil {
+	dir := filepath.Dir(scope.requestPath)
+	parent := filepath.Dir(dir)
+	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("%w: remove certified provider scope: %v", errV7FullGateProvider, err)
 	}
-	return nil
+	if err := syncV7Directory(parent); err != nil {
+		return fmt.Errorf("%w: sync retired provider scope: %v", errV7FullGateProvider, err)
+	}
+	return runV7FullGateDurabilityHook("scope_retired_synced")
 }
 
 func readV7FullGateProviderResult(request v7FullGateProviderRequest) (v7FullGateProviderResult, error) {
@@ -910,6 +1067,198 @@ func v7SealFullGateProviderResult(request v7FullGateProviderRequest, result *v7F
 	result.ReceiptDigest = v7FullGateReceiptDigest(request, *result)
 }
 
+func v7FullGateProviderOutcomeJournalRoot(stateRoot string) string {
+	return filepath.Join(stateRoot, "full-gate-outcomes")
+}
+
+func v7FullGateProviderOutcomeJournalPath(stateRoot, departureID, requestDigest string) string {
+	key := strings.TrimPrefix(requestDigest, "sha256:")
+	departure := strings.TrimPrefix(v7FullGateTextDigest(departureID), "sha256:")[:16]
+	return filepath.Join(v7FullGateProviderOutcomeJournalRoot(stateRoot), departure+"-"+key+".json")
+}
+
+func v7FullGateProviderOutcomeJournalDigest(journal v7FullGateProviderOutcomeJournal) string {
+	receiptRaw, _ := json.Marshal(journal.Receipt)
+	return v7FullGateTextDigest(strings.Join([]string{journal.Schema, journal.DepartureID, journal.RequestDigest, journal.ScopePath, journal.Request.RequestDigest, journal.Result.ResultDigest, string(receiptRaw), fmt.Sprint(journal.Reconciled), journal.Action}, "\x00"))
+}
+
+func persistV7FullGateProviderOutcomeJournal(stateRoot string, scope *v7FullGateProviderScope, request v7FullGateProviderRequest, result v7FullGateProviderResult, receipt GateProviderReceipt) error {
+	if strings.TrimSpace(stateRoot) == "" {
+		stateRoot = filepath.Dir(filepath.Dir(scope.requestPath))
+	}
+	root := v7FullGateProviderOutcomeJournalRoot(stateRoot)
+	created, err := ensureV7DurableDirectory(root, 0o700)
+	if err != nil {
+		return err
+	}
+	if created {
+		if err := runV7FullGateDurabilityHook("outcome_journal_root_created_synced"); err != nil {
+			return err
+		}
+	}
+	journal := v7FullGateProviderOutcomeJournal{Schema: v7FullGateOutcomeJournalSchema, DepartureID: request.DepartureID, RequestDigest: request.RequestDigest, ScopePath: filepath.Dir(scope.requestPath), Request: request, Result: result, Receipt: receipt}
+	journal.JournalDigest = v7FullGateProviderOutcomeJournalDigest(journal)
+	raw, err := json.Marshal(journal)
+	if err != nil || len(raw) > v7FullGateResultMaxBytes {
+		return fmt.Errorf("%w: provider outcome journal exceeds bound: %v", errV7FullGateProvider, err)
+	}
+	path := v7FullGateProviderOutcomeJournalPath(stateRoot, request.DepartureID, request.RequestDigest)
+	if existing, readErr := readV7FullGateProviderOutcomeJournal(path); readErr == nil {
+		if existing.JournalDigest != journal.JournalDigest {
+			return fmt.Errorf("%w: provider outcome journal identity conflict", errV7FullGateProvider)
+		}
+		return nil
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return readErr
+	}
+	if err := writeV7DurableJSON(path, raw, false); err != nil {
+		return err
+	}
+	return runV7FullGateDurabilityHook("outcome_journal_synced")
+}
+
+func readV7FullGateProviderOutcomeJournal(path string) (v7FullGateProviderOutcomeJournal, error) {
+	raw, err := readV7TrustedRegularFile(path, v7FullGateResultMaxBytes, false)
+	if err != nil {
+		return v7FullGateProviderOutcomeJournal{}, err
+	}
+	var journal v7FullGateProviderOutcomeJournal
+	if err := json.Unmarshal(raw, &journal); err != nil {
+		return v7FullGateProviderOutcomeJournal{}, fmt.Errorf("%w: invalid provider outcome journal", errV7FullGateProvider)
+	}
+	expectedReceipt := v7GateProviderReceiptForResult(journal.Request, journal.Result)
+	if journal.Schema != v7FullGateOutcomeJournalSchema || journal.JournalDigest != v7FullGateProviderOutcomeJournalDigest(journal) || journal.RequestDigest != journal.Request.RequestDigest || journal.RequestDigest != v7FullGateRequestDigest(journal.Request) || journal.DepartureID != journal.Request.DepartureID || journal.Result.RequestDigest != journal.RequestDigest || journal.Result.ResultDigest != v7FullGateProviderResultDigest(journal.Result) || journal.Result.ReceiptDigest != v7FullGateReceiptDigest(journal.Request, journal.Result) || journal.Receipt != expectedReceipt {
+		return v7FullGateProviderOutcomeJournal{}, fmt.Errorf("%w: invalid provider outcome journal", errV7FullGateProvider)
+	}
+	return journal, nil
+}
+
+func removeV7FullGateProviderOutcomeJournal(stateRoot string, receipt GateProviderReceipt) error {
+	path := v7FullGateProviderOutcomeJournalPath(stateRoot, receipt.DepartureID, receipt.RequestDigest)
+	if err := runV7FullGateDurabilityHook("before_outcome_journal_remove"); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return syncV7Directory(filepath.Dir(path))
+}
+
+func persistV7FullGateProviderResult(path string, result v7FullGateProviderResult) error {
+	raw, err := json.Marshal(result)
+	if err != nil || len(raw) > v7FullGateResultMaxBytes {
+		return fmt.Errorf("%w: normalized provider result exceeds bound: %v", errV7FullGateProvider, err)
+	}
+	return writeV7DurableJSON(path, raw, true)
+}
+
+func writeV7DurableJSON(path string, raw []byte, replace bool) error {
+	payload := append(append([]byte(nil), raw...), '\n')
+	return writeV7DurableFile(path, payload, 0o600, replace)
+}
+
+func writeV7DurableFile(path string, raw []byte, mode os.FileMode, replace bool) error {
+	tmp := path + ".tmp-" + strings.ToLower(newRecordID())
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	if _, err = f.Write(raw); err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmp)
+		return closeErr
+	}
+	if !replace {
+		if err := os.Link(tmp, path); err != nil {
+			_ = os.Remove(tmp)
+			return err
+		}
+		if err := os.Remove(tmp); err != nil {
+			return err
+		}
+	} else if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return syncV7Directory(filepath.Dir(path))
+}
+
+func writeV7DurablePromotionArtifact(path string, raw []byte) error {
+	if _, err := ensureV7DurableDirectory(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := writeV7DurableFile(path, raw, 0o600, false); err != nil {
+		return err
+	}
+	return runV7FullGateDurabilityHook("promotion_gate_artifact_synced")
+}
+
+func syncV7Directory(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
+}
+
+// ensureV7DurableDirectory creates a service-owned directory and fsyncs every
+// newly created directory followed by the nearest pre-existing parent. This is
+// stronger than MkdirAll alone: after a power loss, the directory entries
+// needed to discover recovery scopes and outcome journals are durable too.
+func ensureV7DurableDirectory(path string, mode os.FileMode) (bool, error) {
+	path = filepath.Clean(path)
+	missing := make([]string, 0, 2)
+	current := path
+	for {
+		info, err := os.Lstat(current)
+		if err == nil {
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return false, fmt.Errorf("%w: durable directory path is not a directory", errV7FullGateProvider)
+			}
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return false, err
+		}
+		missing = append(missing, current)
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false, fmt.Errorf("%w: durable directory has no existing parent", errV7FullGateProvider)
+		}
+		current = parent
+	}
+	if len(missing) == 0 {
+		return false, nil
+	}
+	if err := os.MkdirAll(path, mode); err != nil {
+		return false, err
+	}
+	for _, created := range missing {
+		if err := syncV7Directory(created); err != nil {
+			return false, err
+		}
+	}
+	if err := syncV7Directory(current); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func runV7FullGateDurabilityHook(stage string) error {
+	if v7FullGateDurabilityHook != nil {
+		return v7FullGateDurabilityHook(stage)
+	}
+	return nil
+}
+
 func v7FullGateReceiptDigest(request v7FullGateProviderRequest, result v7FullGateProviderResult) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{request.RequestDigest, result.ResultDigest, result.LifecycleID, result.State, string(result.Outcome), v7FullGateCleanupDigest(result)}, "\x00")))
 	return fmt.Sprintf("sha256:%x", sum[:])
@@ -936,45 +1285,429 @@ func v7FullGateCleanupDigest(result v7FullGateProviderResult) string {
 // crash can interrupt the parent between provider start and cleanup; durable
 // request records let the next daemon invoke the provider's exact cleanup
 // operation rather than inferring safety from a dead root PID.
-func recoverV7FullGateProviderScopes(stateRoot string) error {
-	root := filepath.Join(stateRoot, "full-gate-recovery")
-	entries, err := os.ReadDir(root)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
+func recoverV7FullGateProviderScopes(stateRoot string, store *RuntimeStore) error {
+	recoveryRoot := filepath.Join(stateRoot, "full-gate-recovery")
+	if err := recoverV7FullGateProviderPreparations(filepath.Join(stateRoot, "full-gate-preparing")); err != nil {
+		return err
 	}
-	if err != nil {
+	journalRoot := v7FullGateProviderOutcomeJournalRoot(stateRoot)
+	journalEntries, err := os.ReadDir(journalRoot)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%w: read provider outcome journals: %v", errV7FullGateProvider, err)
+	}
+	if len(journalEntries) > v7FullGateJournalMaxEntries {
+		return fmt.Errorf("%w: provider outcome journal count exceeds %d", errV7FullGateProvider, v7FullGateJournalMaxEntries)
+	}
+	if len(journalEntries) > 0 {
+		filtered := make([]os.DirEntry, 0, len(journalEntries))
+		removedTemp := false
+		for _, entry := range journalEntries {
+			if v7FullGateOutcomeJournalTemporaryName(entry.Name()) {
+				path := filepath.Join(journalRoot, entry.Name())
+				info, statErr := os.Lstat(path)
+				if statErr != nil || !info.Mode().IsRegular() || info.Mode()&0o022 != 0 {
+					return fmt.Errorf("%w: invalid provider outcome journal temporary %q", errV7FullGateProvider, entry.Name())
+				}
+				if err := os.Remove(path); err != nil {
+					return fmt.Errorf("%w: retire provider outcome journal temporary %q: %v", errV7FullGateProvider, entry.Name(), err)
+				}
+				removedTemp = true
+				continue
+			}
+			filtered = append(filtered, entry)
+		}
+		if removedTemp {
+			if err := syncV7Directory(journalRoot); err != nil {
+				return fmt.Errorf("%w: sync retired provider outcome journal temporaries: %v", errV7FullGateProvider, err)
+			}
+			if err := runV7FullGateRecoveryHook("outcome_journal_temporaries_retired"); err != nil {
+				return err
+			}
+		}
+		journalEntries = filtered
+	}
+	journals := make(map[string]v7FullGateProviderOutcomeJournal)
+	journalPaths := make(map[string]string)
+	journalOrder := make([]string, 0, len(journalEntries))
+	for _, entry := range journalEntries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			return fmt.Errorf("%w: invalid provider outcome journal %q", errV7FullGateProvider, entry.Name())
+		}
+		path := filepath.Join(journalRoot, entry.Name())
+		journal, readErr := readV7FullGateProviderOutcomeJournal(path)
+		if readErr != nil {
+			return readErr
+		}
+		if _, duplicate := journals[journal.RequestDigest]; duplicate {
+			return fmt.Errorf("%w: duplicate provider outcome journal request digest", errV7FullGateProvider)
+		}
+		canonicalPath := v7FullGateProviderOutcomeJournalPath(stateRoot, journal.DepartureID, journal.RequestDigest)
+		if filepath.Clean(path) != filepath.Clean(canonicalPath) {
+			return fmt.Errorf("%w: non-canonical provider outcome journal filename", errV7FullGateProvider)
+		}
+		if strings.TrimSpace(journal.ScopePath) == "" {
+			if !journal.Reconciled {
+				return fmt.Errorf("%w: unreconciled provider outcome journal has no recovery scope", errV7FullGateProvider)
+			}
+		} else if !validV7FullGateRecoveryScopePath(recoveryRoot, journal.ScopePath) {
+			return fmt.Errorf("%w: journal scope escapes recovery root", errV7FullGateProvider)
+		}
+		journals[journal.RequestDigest] = journal
+		journalPaths[journal.RequestDigest] = path
+		journalOrder = append(journalOrder, journal.RequestDigest)
+	}
+	scopeEntries, err := os.ReadDir(recoveryRoot)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("%w: read provider recovery records: %v", errV7FullGateProvider, err)
 	}
-	if len(entries) > v7FullGateRecoveryMaxScopes {
+	if len(scopeEntries) > v7FullGateRecoveryMaxScopes {
 		return fmt.Errorf("%w: provider recovery scope count exceeds %d", errV7FullGateProvider, v7FullGateRecoveryMaxScopes)
 	}
-	for _, entry := range entries {
+	for _, entry := range scopeEntries {
 		if !entry.IsDir() {
 			return fmt.Errorf("%w: invalid provider recovery entry %q", errV7FullGateProvider, entry.Name())
 		}
-		dir := filepath.Join(root, entry.Name())
+		dir := filepath.Join(recoveryRoot, entry.Name())
 		requestPath := filepath.Join(dir, "request.json")
-		raw, readErr := readV7TrustedRegularFile(requestPath, v7FullGateRequestMaxBytes, false)
+		request, readErr := readV7FullGateProviderRequest(requestPath)
 		if readErr != nil {
-			return fmt.Errorf("%w: read provider recovery request: %v", errV7FullGateProvider, readErr)
+			return readErr
 		}
-		var request v7FullGateProviderRequest
-		if err := json.Unmarshal(raw, &request); err != nil || request.RequestDigest != v7FullGateRequestDigest(request) || request.Schema != v7FullGateProviderSchema || request.Contract != v7FullGateIsolationContract {
-			return fmt.Errorf("%w: invalid provider recovery request %q", errV7FullGateProvider, entry.Name())
+		journal, ok := journals[request.RequestDigest]
+		if !ok {
+			result, resultErr := readV7FullGateProviderResult(request)
+			if resultErr != nil || result.State != "cleaned" {
+				_, executableID, verifyErr := verifyV7TrustedProviderExecutable(request.ProviderPath)
+				if verifyErr != nil || executableID != request.ExecutableID {
+					return fmt.Errorf("%w: provider recovery executable unavailable for %q", errV7FullGateProvider, entry.Name())
+				}
+				provider := &v7ExternalFullGateProvider{path: request.ProviderPath, executableIdentity: request.ExecutableID}
+				scope := &v7FullGateProviderScope{request: request, requestPath: requestPath}
+				result, resultErr = provider.cleanup(scope)
+				if resultErr != nil {
+					return resultErr
+				}
+			}
+			normalized := false
+			if result.Outcome == v7FullGateOutcomePassed {
+				// A backend result alone cannot prove that the daemon accepted
+				// its wall-clock runtime, wrapper exit, and outcome agreement.
+				// Only the service-owned journal closes that acceptance window.
+				result = normalizedV7FullGateProviderFailure(request, result, "recovered_cleaned_result_without_service_journal")
+				normalized = true
+			}
+			receipt := v7GateProviderReceiptForResult(request, result)
+			scope := &v7FullGateProviderScope{request: request, requestPath: requestPath}
+			if err := persistV7FullGateProviderOutcomeJournal(stateRoot, scope, request, result, receipt); err != nil {
+				return err
+			}
+			if normalized {
+				if err := persistV7FullGateProviderResult(request.ResultPath, result); err != nil {
+					return err
+				}
+			}
+			journalPath := v7FullGateProviderOutcomeJournalPath(stateRoot, request.DepartureID, request.RequestDigest)
+			journal, readErr = readV7FullGateProviderOutcomeJournal(journalPath)
+			if readErr != nil {
+				return readErr
+			}
+			journals[request.RequestDigest] = journal
+			journalPaths[request.RequestDigest] = journalPath
+			journalOrder = append(journalOrder, request.RequestDigest)
 		}
-		if result, resultErr := readV7FullGateProviderResult(request); resultErr == nil && result.State == "cleaned" {
-			return fmt.Errorf("%w: certified provider scope %q awaits durable outcome acknowledgement (%s)", errV7FullGateProvider, entry.Name(), result.Outcome)
+		if journal.ScopePath != dir {
+			return fmt.Errorf("%w: provider journal scope mismatch", errV7FullGateProvider)
 		}
-		_, executableID, verifyErr := verifyV7TrustedProviderExecutable(request.ProviderPath)
-		if verifyErr != nil || executableID != request.ExecutableID {
-			return fmt.Errorf("%w: provider recovery executable identity is unavailable or changed for %q", errV7FullGateProvider, entry.Name())
+	}
+	sort.Strings(journalOrder)
+	for _, digest := range journalOrder {
+		journal := journals[digest]
+		if journal.Reconciled {
+			if strings.TrimSpace(journal.ScopePath) == "" {
+				continue
+			}
+			if err := retireV7FullGateRecoveredScope(stateRoot, journal); err != nil {
+				return err
+			}
+			journal.ScopePath = ""
+			journal.JournalDigest = v7FullGateProviderOutcomeJournalDigest(journal)
+			raw, marshalErr := json.Marshal(journal)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if err := writeV7DurableJSON(journalPaths[digest], raw, true); err != nil {
+				return err
+			}
+			continue
 		}
-		provider := &v7ExternalFullGateProvider{path: request.ProviderPath, executableIdentity: request.ExecutableID}
-		scope := &v7FullGateProviderScope{request: request, requestPath: requestPath}
-		if _, err := provider.cleanup(scope); err != nil {
+		if err := runV7FullGateRecoveryHook("outcome_journal_ready"); err != nil {
 			return err
 		}
-		return fmt.Errorf("%w: recovered provider scope %q awaits durable outcome acknowledgement", errV7FullGateProvider, entry.Name())
+		if err := reconcileV7FullGateProviderOutcome(stateRoot, store, &journal); err != nil {
+			return err
+		}
+		if journal.Reconciled {
+			journal.JournalDigest = v7FullGateProviderOutcomeJournalDigest(journal)
+			raw, marshalErr := json.Marshal(journal)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if err := writeV7DurableJSON(journalPaths[digest], raw, true); err != nil {
+				return err
+			}
+			if err := runV7FullGateRecoveryHook("outcome_reconciled_synced"); err != nil {
+				return err
+			}
+			if err := retireV7FullGateRecoveredScope(stateRoot, journal); err != nil {
+				return err
+			}
+			journal.ScopePath = ""
+			journal.JournalDigest = v7FullGateProviderOutcomeJournalDigest(journal)
+			raw, marshalErr = json.Marshal(journal)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if err := writeV7DurableJSON(journalPaths[digest], raw, true); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := retireV7FullGateRecoveredOutcome(stateRoot, journal); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func v7FullGateOutcomeJournalTemporaryName(name string) bool {
+	const baseLen = 16 + 1 + 64 + len(".json")
+	marker := strings.LastIndex(name, ".tmp-")
+	if marker != baseLen || marker+len(".tmp-") == len(name) {
+		return false
+	}
+	base := name[:marker]
+	if len(base) != baseLen || base[16] != '-' || base[len(base)-len(".json"):] != ".json" {
+		return false
+	}
+	for index, r := range base[:len(base)-len(".json")] {
+		if index == 16 {
+			continue
+		}
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func recoverV7FullGateProviderPreparations(root string) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("%w: read provider preparations: %v", errV7FullGateProvider, err)
+	}
+	if len(entries) > v7FullGateRecoveryMaxScopes {
+		return fmt.Errorf("%w: provider preparation count exceeds %d", errV7FullGateProvider, v7FullGateRecoveryMaxScopes)
+	}
+	for _, entry := range entries {
+		path := filepath.Join(root, entry.Name())
+		info, statErr := os.Lstat(path)
+		if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !strings.HasPrefix(entry.Name(), "scope-") {
+			return fmt.Errorf("%w: invalid provider preparation %q", errV7FullGateProvider, entry.Name())
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("%w: retire provider preparation %q: %v", errV7FullGateProvider, entry.Name(), err)
+		}
+	}
+	if err := syncV7Directory(root); err != nil {
+		return fmt.Errorf("%w: sync retired provider preparations: %v", errV7FullGateProvider, err)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	return runV7FullGateRecoveryHook("preparation_retired_synced")
+}
+
+func readV7FullGateProviderRequest(path string) (v7FullGateProviderRequest, error) {
+	raw, err := readV7TrustedRegularFile(path, v7FullGateRequestMaxBytes, false)
+	if err != nil {
+		return v7FullGateProviderRequest{}, fmt.Errorf("%w: read provider recovery request: %v", errV7FullGateProvider, err)
+	}
+	var request v7FullGateProviderRequest
+	if err := json.Unmarshal(raw, &request); err != nil || request.RequestDigest != v7FullGateRequestDigest(request) || request.Schema != v7FullGateProviderSchema || request.Contract != v7FullGateIsolationContract {
+		return v7FullGateProviderRequest{}, fmt.Errorf("%w: invalid provider recovery request", errV7FullGateProvider)
+	}
+	return request, nil
+}
+
+func reconcileV7FullGateProviderOutcome(stateRoot string, store *RuntimeStore, journal *v7FullGateProviderOutcomeJournal) error {
+	if store == nil {
+		return fmt.Errorf("%w: provider recovery store unavailable", errV7FullGateProvider)
+	}
+	run, err := store.FindDepartureRun(journal.DepartureID)
+	if err != nil {
+		return err
+	}
+	if journal.Result.Outcome == v7FullGateOutcomePassed {
+		if run != nil {
+			if err := validateV7FullGateJournalGreen(stateRoot, store, *run, *journal); err == nil {
+				existing, lookupErr := store.FindGateLedger(journal.Receipt.ProjectID, journal.Receipt.CandidateDigest, journal.Request.Command, journal.Receipt.Profile, journal.Receipt.Toolchain)
+				if lookupErr != nil {
+					return lookupErr
+				}
+				if existing != nil && (existing.ProviderReceipt == nil || *existing.ProviderReceipt != journal.Receipt) {
+					return blockV7FullGateJournalOutcome(store, run, journal, "conflicting_green_ledger")
+				}
+				if existing == nil {
+					receipt := journal.Receipt
+					if err := store.RecordGateLedger(GateLedgerEntry{ProjectID: receipt.ProjectID, TreeHash: receipt.CandidateDigest, Command: journal.Request.Command, Profile: receipt.Profile, Toolchain: receipt.Toolchain, Host: runtimeLeaseHost(), DurationMS: journal.Result.RuntimeMS, ProviderReceipt: &receipt}); err != nil {
+						return err
+					}
+				}
+				return runV7FullGateRecoveryHook("outcome_target_persisted")
+			}
+		}
+		return blockV7FullGateJournalOutcome(store, run, journal, "green_outcome_no_longer_matches_current_contract")
+	}
+	return blockV7FullGateJournalOutcome(store, run, journal, "recovered_"+string(journal.Result.Outcome))
+}
+
+func validateV7FullGateJournalGreen(stateRoot string, store *RuntimeStore, run DepartureRun, journal v7FullGateProviderOutcomeJournal) error {
+	if run.ProjectID != journal.Receipt.ProjectID || run.ID != journal.DepartureID || run.Candidate.CandidateSHA == "" {
+		return errors.New("departure identity mismatch")
+	}
+	projects, err := store.ListProjects()
+	if err != nil {
+		return err
+	}
+	var project *RegisteredProject
+	for i := range projects {
+		if projects[i].ProjectID == run.ProjectID {
+			project = &projects[i]
+			break
+		}
+	}
+	if project == nil {
+		return errors.New("registered project unavailable")
+	}
+	wf, err := loadWorkflow(project.VaultRoot)
+	if err != nil {
+		return err
+	}
+	policy, err := scheduledPromotionGatePolicy(project.VaultRoot, wf.Data)
+	if err != nil || policy.Profile != journal.Receipt.Profile || policy.IsolationProvider != journal.Receipt.ProviderProfile || scheduledPromotionFullGateToolchainFingerprint(project.RepoRoot, policy.HarvestCommands, policy.IsolationProvider, stateRoot) != journal.Receipt.Toolchain {
+		return errors.New("current gate profile or toolchain mismatch")
+	}
+	commandPresent := false
+	for _, command := range policy.HarvestCommands {
+		commandPresent = commandPresent || command == journal.Request.Command
+	}
+	if !commandPresent || journal.Receipt.CommandDigest != v7FullGateTextDigest(journal.Request.Command) {
+		return errors.New("current command mismatch")
+	}
+	tree, err := scheduledPromotionRecoveryLedgerTreeHash(project.RepoRoot, run.Candidate.CandidateSHA)
+	if err != nil || tree != journal.Receipt.CandidateDigest {
+		return errors.New("current candidate mismatch")
+	}
+	provider, err := newV7FullGateProvider(policy.IsolationProvider, project.RepoRoot, stateRoot)
+	if err != nil {
+		return err
+	}
+	defer provider.Close()
+	verifier, ok := provider.(v7FullGateReceiptVerifier)
+	if !ok || !verifier.MatchesGateProviderReceipt(&journal.Receipt) {
+		return errors.New("current provider closure mismatch")
+	}
+	return nil
+}
+
+func blockV7FullGateJournalOutcome(store *RuntimeStore, run *DepartureRun, journal *v7FullGateProviderOutcomeJournal, reason string) error {
+	if run == nil {
+		journal.Reconciled = true
+		journal.Action = safePacketText(reason+": departure "+journal.DepartureID+" requires operator inspection", 512)
+		return runV7FullGateRecoveryHook("outcome_actionable_recorded")
+	}
+	for _, receipt := range run.Gate.ProviderOutcomes {
+		if receipt == journal.Receipt {
+			return nil
+		}
+	}
+	if len(run.Gate.ProviderOutcomes) >= v7PromotionGateMaxReceipts {
+		return fmt.Errorf("%w: recovered provider outcome count exceeds bound", errV7FullGateProvider)
+	}
+	next := *run
+	next.Gate.ProviderOutcomes = append(append([]GateProviderReceipt(nil), run.Gate.ProviderOutcomes...), journal.Receipt)
+	next.Gate.Status = string(journal.Result.Outcome)
+	next.Gate.Failure = DepartureFailure{Class: "provider", Identity: safePacketText(reason, 256), Action: "operator_inspect_provider_outcome"}
+	next.State = DepartureStateBlocked
+	next.BlockReason = "provider outcome recovery: " + safePacketText(reason, 256)
+	changed, err := store.TransitionDepartureRun(next, run.StateRevision)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		latest, readErr := store.FindDepartureRun(run.ID)
+		if readErr != nil {
+			return readErr
+		}
+		for _, receipt := range latest.Gate.ProviderOutcomes {
+			if receipt == journal.Receipt {
+				return nil
+			}
+		}
+		return fmt.Errorf("%w: departure outcome recovery CAS conflict", errV7FullGateProvider)
+	}
+	return runV7FullGateRecoveryHook("outcome_target_persisted")
+}
+
+func retireV7FullGateRecoveredOutcome(stateRoot string, journal v7FullGateProviderOutcomeJournal) error {
+	if err := retireV7FullGateRecoveredScope(stateRoot, journal); err != nil {
+		return err
+	}
+	if err := removeV7FullGateProviderOutcomeJournal(stateRoot, journal.Receipt); err != nil {
+		return err
+	}
+	return runV7FullGateRecoveryHook("outcome_scope_retired")
+}
+
+func retireV7FullGateRecoveredScope(stateRoot string, journal v7FullGateProviderOutcomeJournal) error {
+	if strings.TrimSpace(journal.ScopePath) != "" {
+		recoveryRoot := filepath.Join(stateRoot, "full-gate-recovery")
+		if !validV7FullGateRecoveryScopePath(recoveryRoot, journal.ScopePath) {
+			return fmt.Errorf("%w: journal scope escapes recovery root", errV7FullGateProvider)
+		}
+		requestPath := filepath.Join(journal.ScopePath, "request.json")
+		if fileExists(requestPath) {
+			provider := &v7ExternalFullGateProvider{}
+			if err := provider.completeScope(&v7FullGateProviderScope{request: journal.Request, requestPath: requestPath}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validV7FullGateRecoveryScopePath(root, scope string) bool {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	scopeAbs, err := filepath.Abs(scope)
+	if err != nil || !filepath.IsAbs(scope) || filepath.Clean(scope) != scope || filepath.Clean(filepath.Dir(scopeAbs)) != filepath.Clean(rootAbs) || !strings.HasPrefix(filepath.Base(scopeAbs), "scope-") {
+		return false
+	}
+	if info, statErr := os.Lstat(scopeAbs); statErr == nil {
+		return info.IsDir() && info.Mode()&os.ModeSymlink == 0
+	} else {
+		return errors.Is(statErr, os.ErrNotExist)
+	}
+}
+
+func runV7FullGateRecoveryHook(stage string) error {
+	if v7FullGateRecoveryHook != nil {
+		return v7FullGateRecoveryHook(stage)
 	}
 	return nil
 }
