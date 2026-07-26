@@ -19,6 +19,7 @@ const deliveryPlanSchema = "tusker.delivery-plan/v1"
 
 var deliveryImportNow = time.Now
 var deliveryImportRollbackWriteHook func(path string) error
+var deliveryImportRollbackAfterRestoreHook func(path string)
 var deliveryImportAfterPrecheckHook func()
 var deliveryImportAfterWriteHook func(index int, path string)
 var deliveryImportBeforeRenameHook func(path string)
@@ -1112,13 +1113,21 @@ func commitDeliveryWritesGuarded(writes map[string]string, failAfter int, guard 
 // reported as an unproven rollback.
 func restoreDeliveryWritePreimagesOwned(paths []string, backups map[string]deliveryWritePreimage, intended map[string]string) error {
 	var failures []string
+	var verifyPaths []string
 	for index := len(paths) - 1; index >= 0; index-- {
 		path := paths[index]
 		backup := backups[path]
 		want := []byte(intended[path])
+		if deliveryImportRollbackWriteHook != nil {
+			if err := deliveryImportRollbackWriteHook(path); err != nil {
+				failures = append(failures, path+": "+err.Error())
+				continue
+			}
+		}
 		current, err := os.ReadFile(path)
 		if backup.Existed {
 			if err == nil && bytes.Equal(current, backup.Content) {
+				verifyPaths = append(verifyPaths, path)
 				continue
 			}
 			if err != nil || !bytes.Equal(current, want) {
@@ -1127,10 +1136,16 @@ func restoreDeliveryWritePreimagesOwned(paths []string, backups map[string]deliv
 			}
 			if err := writeDeliveryTransactionFile(path, backup.Content, backup.Mode); err != nil {
 				failures = append(failures, path+": "+err.Error())
+			} else {
+				verifyPaths = append(verifyPaths, path)
+				if deliveryImportRollbackAfterRestoreHook != nil {
+					deliveryImportRollbackAfterRestoreHook(path)
+				}
 			}
 			continue
 		}
 		if os.IsNotExist(err) {
+			verifyPaths = append(verifyPaths, path)
 			continue
 		}
 		if err != nil || !bytes.Equal(current, want) {
@@ -1139,6 +1154,33 @@ func restoreDeliveryWritePreimagesOwned(paths []string, backups map[string]deliv
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			failures = append(failures, path+": "+err.Error())
+			continue
+		}
+		if err := syncV7DocumentDirectory(filepath.Dir(path)); err != nil {
+			failures = append(failures, path+": sync rollback deletion: "+err.Error())
+			continue
+		}
+		verifyPaths = append(verifyPaths, path)
+		if deliveryImportRollbackAfterRestoreHook != nil {
+			deliveryImportRollbackAfterRestoreHook(path)
+		}
+	}
+	for _, path := range verifyPaths {
+		backup := backups[path]
+		info, err := os.Lstat(path)
+		if !backup.Existed {
+			if err == nil || !os.IsNotExist(err) {
+				failures = append(failures, path+": rollback absence could not be proven")
+			}
+			continue
+		}
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != backup.Mode.Perm() {
+			failures = append(failures, path+": restored identity or mode differs")
+			continue
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(raw, backup.Content) {
+			failures = append(failures, path+": restored bytes differ")
 		}
 	}
 	if len(failures) > 0 {

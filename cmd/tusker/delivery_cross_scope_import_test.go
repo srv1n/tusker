@@ -258,6 +258,52 @@ func TestDeliveryCrossScopeAfterIndexGateEpicMutationRefuses(t *testing.T) {
 	}
 }
 
+func TestDeliveryCrossScopeRollbackFinalVerification(t *testing.T) {
+	dir := t.TempDir()
+	restored := filepath.Join(dir, "restored.md")
+	if err := os.WriteFile(restored, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backup := deliveryWritePreimage{Content: []byte("old"), Mode: 0o600, Existed: true}
+	if err := restoreDeliveryWritePreimagesOwned([]string{restored}, map[string]deliveryWritePreimage{restored: backup}, map[string]string{restored: "new"}); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "old", mustReadIndexTest(t, restored), "rollback bytes")
+	info, err := os.Stat(restored)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("rollback mode = %v err=%v", info.Mode().Perm(), err)
+	}
+
+	deleted := filepath.Join(dir, "deleted.md")
+	if err := writeText(deleted, "new"); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreDeliveryWritePreimagesOwned([]string{deleted}, map[string]deliveryWritePreimage{deleted: {Mode: 0o644}}, map[string]string{deleted: "new"}); err != nil {
+		t.Fatal(err)
+	}
+	if fileExists(deleted) {
+		t.Fatal("rollback-created file still exists")
+	}
+
+	drifted := filepath.Join(dir, "drifted.md")
+	if err := writeText(drifted, "new"); err != nil {
+		t.Fatal(err)
+	}
+	deliveryImportRollbackAfterRestoreHook = func(path string) {
+		if path == drifted {
+			if err := writeText(path, "post-restore-drift"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	defer func() { deliveryImportRollbackAfterRestoreHook = nil }()
+	err = restoreDeliveryWritePreimagesOwned([]string{drifted}, map[string]deliveryWritePreimage{drifted: {Content: []byte("old"), Mode: 0o644, Existed: true}}, map[string]string{drifted: "new"})
+	if err == nil || !strings.Contains(err.Error(), "restored bytes differ") {
+		t.Fatalf("post-restore drift was not detected: %v", err)
+	}
+	assertEqual(t, "post-restore-drift", mustReadIndexTest(t, drifted), "post-restore third-party bytes preserved")
+}
+
 func TestDeliveryCrossScopeAtomicity(t *testing.T) {
 	vault := deliveryTestVault(t)
 	producer := crossScopePlan("producer/v1", "PRD", "provider")
