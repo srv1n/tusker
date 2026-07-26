@@ -28,6 +28,9 @@ bounded implementation outcome may use the singleton/direct path. Planning,
 decomposition, unattended delivery, or implementation with multiple
 independently provable outcomes **must** be authored as a versioned
 `tusker.delivery-plan/v2` DAG; never hand-create an arbitrary task series.
+Author each V2 plan with an explicit stable scope. Use source-keyed tasks and
+gates; source keys are the only caller-supplied identities. Tusker owns the final records
+and allocates durable epic, task, gate, wave, revision, and event identities during import.
 
 Ask the user for product facts only: desired outcomes, observable acceptance,
 important tests and failure cases, constraints, priorities, non-goals, and
@@ -47,9 +50,9 @@ tusker delivery review --plan <PLAN.yaml>
 ```
 
 Plan creation, context, review, and dry-run are read-only. Import may create or
-reconcile held records. All of them are inert: they never register or enable a
-project, start or install a daemon, dispatch a worker, arm work, move a Git ref,
-satisfy a gate, authorize release, or authorize paid model work.
+reconcile held records. All of them are inert: they never dispatch, register or
+enable a project, start or install a daemon, arm work, move a Git ref, satisfy a
+gate, authorize release, or authorize paid model work.
 
 For unattended delivery, the product review emits one exact Start action. Run
 only that fingerprint-bound action after the human explicitly chooses it:
@@ -88,7 +91,8 @@ dependency/gate blocker, stale task revision, or unsafe workspace is a
 coordination refusal, not permission to edit around Tusker. Finish through
 `tusker work submit`, `tusker work fail`, or `tusker work release` with the same
 owner and revision. This work session works while project automation is
-disabled and never launches a model.
+disabled; it does not require daemon enablement or a daemon lifecycle claim,
+and never launches a model.
 
 Never start `tusker daemon run`, invoke `tusker automation dispatch`, or launch
 nested `codex exec`/`claude -p` workers from this session. Creating, grooming,

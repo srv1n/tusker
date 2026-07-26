@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -111,7 +112,11 @@ func TestWavePreflightSkillAndIntegrationCompatibility(t *testing.T) {
 	vault := deliveryTestVault(t)
 	repo := v7RepoRoot(vault)
 	operatorPath := filepath.Join(repo, "skill", "SKILL.md")
-	compatibleSkill := "---\nname: tusker\ndescription: test\nmetadata:\n  wave_authorization_schema: tusker.wave-authorization/v1\n  workflow_version: 1\n  tracker_schema_version: 7\n---\n"
+	provenance, err := embeddedFactoryIntakeContractProvenance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	compatibleSkill := fmt.Sprintf("---\nname: tusker\ndescription: test\nmetadata:\n  wave_authorization_schema: tusker.wave-authorization/v1\n  workflow_version: 1\n  tracker_schema_version: 7\n  factory_intake_contract_schema: %q\n  factory_intake_contract_version: %q\n  factory_intake_contract_fingerprint: %q\n---\n", provenance.Schema, provenance.Version, provenance.Fingerprint)
 	if err := writeText(operatorPath, compatibleSkill); err != nil {
 		t.Fatal(err)
 	}
