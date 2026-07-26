@@ -1,0 +1,105 @@
+schema: tusker.delivery-plan/v2
+scope: factory-mvp-wave-one/v1
+title: Factory MVP wave one
+epic: ORC
+spec_refs:
+  - docs/specs/19-factory-mvp-wave-one.md
+context_fingerprint: sha256:e95d75cda4fff97c2231f1398f92454dc2c146c4c803e26c1a1846db6c98dbb8
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+summary: >-
+  Keep planning and import inert, then let one separately human-approved,
+  shadow/staging-only Terra-medium attempt capture the durable first-run report.
+non_goals:
+  - >-
+    Plan authoring, doctor, review, and import dry-run are inert: they do not
+    enable/register a project, arm a wave, start/install a daemon, dispatch a
+    worker, claim work, move any ref, release, spend, configure provider
+    credentials, or push.
+  - >-
+    The task does not enable the project, arm `W-0004`, start/install the
+    daemon, or install a binary; those are separate explicit human pre-run
+    approvals. The task only observes their exact authorized outcome.
+  - >-
+    This delivery does not widen dispatch to `all_eligible`, another project,
+    another task, or an extra implementation/triage/release/provider attempt.
+    Existing configured bounded reviewer attempt(s) remain enabled; provider
+    credentials, release, default-ref promotion, and runtime feature changes
+    remain out of scope.
+requirements:
+  - id: R1
+    outcome: The worker-owned report proves the already-landed factory operations projection and focused execution-control E2E checks are green in one authorized Terra-medium implementation attempt and records the configured bounded reviewer policy as an expected later boundary.
+  - id: R2
+    outcome: The worker-owned report captures the exact approved enable/arm/start/dispatch tuple, the configured reviewer policy, and read-only operations, automation, daemon, and singleton-wave state.
+  - id: R3
+    outcome: The durable report proves no unrelated claim/project, broad dispatch, default-ref movement, provider credential, release, or extra implementation/triage/release/provider attempt occurred during worker work; a separate coordinator post-run check alone may observe one normal `integration/W-0004` staging advance.
+concurrency: 1
+runner_profile: implementation-terra
+tasks:
+  - source_key: capture-first-run-readiness
+    requirement_refs: [R1, R2, R3]
+    title: Capture factory MVP first-run readiness
+    outcome: >-
+      After separate explicit approval enables one project, arms `W-0004`, and
+      starts the managed daemon, exactly this low-risk Terra-medium task writes
+      the durable report from focused operations/E2E checks and read-only
+      state, recording its existing configured bounded reviewer policy.
+    acceptance:
+      - id: A1
+        outcome: The worker-owned report records passing focused `TestFactoryOperationsProjection` and `TestFactoryExecutionControl` command results against the current source revision from one configured Terra-medium implementation attempt, plus the configured bounded reviewer policy expected after worker submission.
+      - id: A2
+        outcome: The worker-owned report records the separately approved one-project enablement, `W-0004` arm, managed-daemon start, dispatch of only `ORC-T-0050`, and configured bounded reviewer policy, plus repository-built read-only setup/skill/validate/projects/factory/automation/daemon/service/wave surfaces. It captures preflight JSON and independently asserts `ok:true`; a known pre-existing red validate result is recorded as a blocker. Actual reviewer attempt/count/verdict/completion and post-run staging/ref observation belong only to a separate read-only coordinator check that does not modify this artifact.
+      - id: A3
+        outcome: Pre/post active-run and ref snapshots prove no unrelated claim/project, `all_eligible` widening, provider credential, release, default-ref movement, or extra implementation/triage/release/provider attempt occurred during the worker check window; the task refuses cleanly if `integration/W-0004` is absent and proves both it and `main` unchanged. A separate coordinator post-run check may later observe one normal staging advance.
+    verification:
+      - covers: A1
+        check: "command: go test ./cmd/tusker -run '^TestFactoryOperationsProjection$' -count=1 && go test ./cmd/tusker -run '^TestFactoryExecutionControl$' -count=1"
+      - covers: A2,A3
+        check: |-
+          command: sh -ceu '
+          dry=$(go run ./cmd/tusker delivery import --plan docs/plans/19-factory-mvp-wave-one-v2.yaml --dry-run --json)
+          printf "%s" "$dry" | grep -F '"waveId":"W-0004"' >/dev/null
+          printf "%s" "$dry" | grep -F '"capture-first-run-readiness":"ORC-T-0050"' >/dev/null
+          before_main=$(git rev-parse main)
+          before_integration=$(git rev-parse --verify integration/W-0004) || { echo "missing integration/W-0004; refuse before report checks" >&2; exit 1; }
+          before_run=$(go run ./cmd/tusker runs inspect ORC-T-0050 --json)
+          before_queue=$(go run ./cmd/tusker automation queue --repo . --json)
+          go run ./cmd/tusker setup doctor --repo . --json
+          go run ./cmd/tusker skill doctor --strict --json
+          validate_rc=0; go run ./cmd/tusker validate --json || validate_rc=$?
+          go run ./cmd/tusker projects list --json
+          go run ./cmd/tusker factory operations --json
+          go run ./cmd/tusker automation status --json
+          go run ./cmd/tusker daemon status --json
+          go run ./cmd/tusker daemon service status --json
+          go run ./cmd/tusker wave brief W-0004 --json
+          preflight=$(go run ./cmd/tusker wave preflight W-0004 --json)
+          printf "%s" "$preflight" | grep -F '"ok":true' >/dev/null
+          after_run=$(go run ./cmd/tusker runs inspect ORC-T-0050 --json)
+          after_queue=$(go run ./cmd/tusker automation queue --repo . --json)
+          after_main=$(git rev-parse main)
+          after_integration=$(git rev-parse --verify integration/W-0004) || { echo "integration/W-0004 disappeared during report checks" >&2; exit 1; }
+          test "$before_main" = "$after_main"
+          printf "%s\n%s" "$before_run" "$after_run" | grep -F 'ORC-T-0050' >/dev/null
+          ! printf "%s" "$before_queue" | grep -F 'all_eligible' >/dev/null
+          ! printf "%s" "$after_queue" | grep -F 'all_eligible' >/dev/null
+          printf "%s" "$before_queue" | grep -F '"effective":"armed_waves"' >/dev/null
+          printf "%s" "$after_queue" | grep -F '"effective":"armed_waves"' >/dev/null
+          printf "%s" "$before_queue" | grep -F '"active_runs":1' >/dev/null
+          printf "%s" "$after_queue" | grep -F '"active_runs":1' >/dev/null
+          test "$before_integration" = "$after_integration"
+          test "$validate_rc" -eq 0 || true
+          '
+    artifact:
+      kind: document
+      path: docs/reports/factory-mvp-first-run.md
+      summary: Exact dry-run mapping, approved singleton enable/arm/start/dispatch observation, focused operations/E2E proof, read-only preflight state, and active-run/ref boundary record for first shadow/staging dogfood.
+      acceptance_ids: [A1, A2, A3]
+    owned_paths:
+      - docs/reports/factory-mvp-first-run.md
+    concurrency_group: factory-mvp-wave-one
+    risk: low
+    priority: p1
+    size: s
+    domains: [project]
