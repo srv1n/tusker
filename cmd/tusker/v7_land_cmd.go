@@ -1333,7 +1333,7 @@ func (s *v7GateSandbox) Run(ctx context.Context, command string) ([]byte, error)
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	cmd := exec.CommandContext(ctx, s.executable, "-p", s.profile, "/bin/sh", "-c", command)
+	cmd := exec.Command(s.executable, "-p", s.profile, "/bin/sh", "-c", command)
 	cmd.Dir = s.worktreePath
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
@@ -1353,21 +1353,15 @@ func (s *v7GateSandbox) Run(ctx context.Context, command string) ([]byte, error)
 		"LC_ALL=C",
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return os.ErrProcessDone
-		}
-		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err == nil {
-			return nil
-		} else if errors.Is(err, syscall.ESRCH) {
-			return os.ErrProcessDone
-		}
-		return cmd.Process.Kill()
-	}
-	cmd.WaitDelay = 2 * time.Second
-	output, err := cmd.CombinedOutput()
+	output, err := runV7ContainedGateCommand(ctx, cmd)
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return output, ctxErr
+		// Cancellation is expected during daemon shutdown, but an inability to
+		// prove descendant containment must stay visible to the caller rather
+		// than being rewritten as an ordinary cancelled gate.
+		if err == nil || errors.Is(err, ctxErr) {
+			return output, ctxErr
+		}
+		return output, err
 	}
 	if err != nil && len(strings.TrimSpace(string(output))) == 0 {
 		return []byte("sandbox gate aborted or denied (worktree=" + s.worktreePath + "; scratch=" + s.scratchPath + ")"), err
@@ -2963,14 +2957,21 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	}
 	defer sandbox.Close()
 	var raw bytes.Buffer
+	var containmentErr error
 	runtime.Exec = func(workspace, command string) (string, error) {
 		scheduledPromotionBeforeFullGateCommand(command)
 		outputBytes, runErr := sandbox.Run(ctx, command)
 		output := string(outputBytes)
 		fmt.Fprintf(&raw, "$ %s\n%s\n", command, output)
+		if errors.Is(runErr, errV7GateContainment) {
+			containmentErr = runErr
+		}
 		return output, runErr
 	}
 	result, err := runGateTier(policy, policy.Profile, runtime)
+	if err == nil && containmentErr != nil {
+		err = containmentErr
+	}
 	root := DefaultStateRoot()
 	if store != nil && store.stateRoot != "" {
 		root = store.stateRoot

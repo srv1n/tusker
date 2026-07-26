@@ -1291,6 +1291,9 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	defer func() { _ = stopHeartbeat() }()
 	execution := runV7GateTierOnRefContext(ctx, vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
 	if err := ctx.Err(); err != nil {
+		if errors.Is(execution.Err, errV7GateContainment) {
+			return "", execution.Err
+		}
 		for _, ref := range execution.ArtifactRefs {
 			_ = os.Remove(ref)
 		}
