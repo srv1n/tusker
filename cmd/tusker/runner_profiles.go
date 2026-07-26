@@ -490,6 +490,39 @@ func runnerProfilesFromSchema(in map[string]v7schema.TuskerRunnerProfileConfig) 
 	return out
 }
 
+func runnerProfileSourcesFromLayers(profiles map[string]RunnerProfileDefinition, layers []tuskerConfigLayer) map[string]string {
+	out := make(map[string]string, len(profiles))
+	for name := range profiles {
+		source := configSourceBuiltIn
+		for _, layer := range layers {
+			if runnerProfileExplicitInLayer(layer.Raw, name) {
+				source = layer.Name
+			}
+		}
+		out[name] = source
+	}
+	return out
+}
+
+func runnerProfileExplicitInLayer(raw map[string]any, name string) bool {
+	base := "automation.profiles." + name + "."
+	for _, field := range []string{
+		"harness",
+		"model",
+		"effort",
+		"permission_preset",
+		"sandbox.mode",
+		"sandbox.network",
+		"subagents.allowed",
+		"subagents.max_concurrent",
+	} {
+		if _, present := lookupConfigValue(raw, base+field); !present {
+			return false
+		}
+	}
+	return true
+}
+
 func runnerProfileFromSchema(profile v7schema.TuskerRunnerProfileConfig) RunnerProfileDefinition {
 	return RunnerProfileDefinition{
 		Harness:          strings.TrimSpace(profile.Harness),

@@ -61,62 +61,68 @@ type RunnerCapabilities struct {
 }
 
 type StartRequest struct {
-	ProjectID        string
-	RecordID         string
-	ItemID           string
-	AttemptID        string
-	Lane             string
-	WorkRevision     int
-	LeaseGeneration  int
-	ActiveStates     []string
-	WorkingDir       string
-	WorkspacePath    string
-	RepoRoot         string
-	PromptPath       string
-	EventSinkPath    string
-	RawLogPath       string
-	StatusPath       string
-	Command          string
-	RunnerPathPrefix string
-	RunnerProfile    string
-	RunnerHarness    string
-	RunnerModel      string
-	RunnerEffort     string
-	NotePath         string
-	VaultPath        string
-	Budget           map[string]any
-	CodexPolicy      CodexPolicy
-	ExternalLoop     ExternalLoopLaunchContext
+	ProjectID           string
+	RecordID            string
+	ItemID              string
+	AttemptID           string
+	Lane                string
+	WorkRevision        int
+	LeaseGeneration     int
+	ActiveStates        []string
+	WorkingDir          string
+	WorkspacePath       string
+	RepoRoot            string
+	PromptPath          string
+	EventSinkPath       string
+	RawLogPath          string
+	StatusPath          string
+	Command             string
+	CommandArgv         []string
+	CommandExecutableFP string
+	CommandSearchPath   string
+	RunnerPathPrefix    string
+	RunnerProfile       string
+	RunnerHarness       string
+	RunnerModel         string
+	RunnerEffort        string
+	NotePath            string
+	VaultPath           string
+	Budget              map[string]any
+	CodexPolicy         CodexPolicy
+	ExternalLoop        ExternalLoopLaunchContext
 }
 
 type ResumeRequest struct {
-	ProjectID        string
-	RecordID         string
-	ItemID           string
-	AttemptID        string
-	Lane             string
-	WorkRevision     int
-	LeaseGeneration  int
-	ActiveStates     []string
-	SessionRef       string
-	MessageRef       string
-	WorkingDir       string
-	WorkspacePath    string
-	RepoRoot         string
-	PromptPath       string
-	EventSinkPath    string
-	RawLogPath       string
-	StatusPath       string
-	Command          string
-	RunnerPathPrefix string
-	RunnerProfile    string
-	RunnerHarness    string
-	RunnerModel      string
-	RunnerEffort     string
-	NotePath         string
-	VaultPath        string
-	CodexPolicy      CodexPolicy
-	ExternalLoop     ExternalLoopLaunchContext
+	ProjectID           string
+	RecordID            string
+	ItemID              string
+	AttemptID           string
+	Lane                string
+	WorkRevision        int
+	LeaseGeneration     int
+	ActiveStates        []string
+	SessionRef          string
+	MessageRef          string
+	WorkingDir          string
+	WorkspacePath       string
+	RepoRoot            string
+	PromptPath          string
+	EventSinkPath       string
+	RawLogPath          string
+	StatusPath          string
+	Command             string
+	CommandArgv         []string
+	CommandExecutableFP string
+	CommandSearchPath   string
+	RunnerPathPrefix    string
+	RunnerProfile       string
+	RunnerHarness       string
+	RunnerModel         string
+	RunnerEffort        string
+	NotePath            string
+	VaultPath           string
+	CodexPolicy         CodexPolicy
+	ExternalLoop        ExternalLoopLaunchContext
 }
 
 type ExternalLoopLaunchContext struct {
@@ -323,7 +329,15 @@ func assertRunnerCommandDir(runner RunnerName, cmdDir, workspacePath string) err
 func runnerEnv(req runnerLaunchEnv) []string {
 	extensionPolicy := withDefaultExtensionPolicy(req.CodexPolicy.Extensions)
 	extensionPolicyJSON, _ := json.Marshal(extensionPolicy)
-	baseEnv := runnerBaseEnv()
+	var baseEnv []string
+	if searchPath := strings.TrimSpace(req.CommandSearchPath); searchPath != "" {
+		// Authoritative structured argv captures a non-login PATH during
+		// preflight. Reuse it verbatim so the detached wrapper neither sources a
+		// shell profile nor changes transitive shebang resolution.
+		baseEnv = runnerBaseEnvWithSearchPath(searchPath)
+	} else {
+		baseEnv = runnerBaseEnv()
+	}
 	if prefix := strings.TrimSpace(req.RunnerPathPrefix); prefix != "" {
 		path := runnerEnvValue(baseEnv, "PATH")
 		baseEnv = setEnvValue(baseEnv, "PATH", strings.Join(uniquePathStrings([]string{prefix, path}), string(os.PathListSeparator)))
@@ -390,30 +404,31 @@ func withDefaultExtensionPolicy(policy ExtensionPolicy) ExtensionPolicy {
 }
 
 type runnerLaunchEnv struct {
-	ProjectID        string
-	RecordID         string
-	ItemID           string
-	AttemptID        string
-	Lane             string
-	WorkRevision     int
-	LeaseGeneration  int
-	WorkspacePath    string
-	RepoRoot         string
-	PromptPath       string
-	EventSinkPath    string
-	RawLogPath       string
-	StatusPath       string
-	RunnerPathPrefix string
-	NotePath         string
-	VaultPath        string
-	SessionRef       string
-	MessageRef       string
-	RunnerProfile    string
-	RunnerHarness    string
-	RunnerModel      string
-	RunnerEffort     string
-	CodexPolicy      CodexPolicy
-	ExternalLoop     ExternalLoopLaunchContext
+	ProjectID         string
+	RecordID          string
+	ItemID            string
+	AttemptID         string
+	Lane              string
+	WorkRevision      int
+	LeaseGeneration   int
+	WorkspacePath     string
+	RepoRoot          string
+	PromptPath        string
+	EventSinkPath     string
+	RawLogPath        string
+	StatusPath        string
+	RunnerPathPrefix  string
+	CommandSearchPath string
+	NotePath          string
+	VaultPath         string
+	SessionRef        string
+	MessageRef        string
+	RunnerProfile     string
+	RunnerHarness     string
+	RunnerModel       string
+	RunnerEffort      string
+	CodexPolicy       CodexPolicy
+	ExternalLoop      ExternalLoopLaunchContext
 }
 
 func networkAccessEnvValue(value *bool) string {

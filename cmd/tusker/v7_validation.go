@@ -193,7 +193,7 @@ func validateV7Task(note Note, ctx validationContext, where string, errors, warn
 func validateV7DoneTaskClosePolicy(note Note, ctx validationContext, where string, errors *[]Issue) {
 	data := note.Data
 	id := stringField(data, "id")
-	if _, authenticated, err := authenticatedV7TaskCloseAuthority(note, v7ProjectID(ctx.VaultPath)); err != nil {
+	if _, authenticated, err := authenticatedV7TaskCloseAuthorityWithStore(note, v7ProjectID(ctx.VaultPath), ctx.CompletionStore); err != nil {
 		*errors = append(*errors, issue("DONE_TASK_CLOSE_AUTHORITY_INVALID", err.Error(), where, "restore the exact protected completion commit/task/receipt projection; current policy cannot authenticate a historical automated close", nil))
 		return
 	} else if authenticated {
@@ -1593,6 +1593,10 @@ func v7ProposalFieldsEmpty(value any) bool {
 }
 
 func validateV7Events(vaultPath string) ([]Issue, []Issue, int) {
+	return validateV7EventsWithStore(vaultPath, nil)
+}
+
+func validateV7EventsWithStore(vaultPath string, store *RuntimeStore) ([]Issue, []Issue, int) {
 	eventsRoot := filepath.Join(vaultPath, "events")
 	if _, err := os.Stat(eventsRoot); os.IsNotExist(err) {
 		return nil, nil, 0
@@ -1620,7 +1624,7 @@ func validateV7Events(vaultPath string) ([]Issue, []Issue, int) {
 			errors = append(errors, issue(errorInvalidField, "invalid V7 event JSON: "+err.Error(), rel, "", nil))
 			return nil
 		}
-		validateV7Event(vaultPath, data, raw, rel, &errors, &warnings)
+		validateV7Event(vaultPath, data, raw, rel, store, &errors, &warnings)
 		return nil
 	})
 	if err != nil {
@@ -1637,7 +1641,7 @@ func v7RelativeToVault(vaultPath, path string) string {
 	return filepath.ToSlash(rel)
 }
 
-func validateV7Event(vaultPath string, data map[string]any, raw, where string, errors, warnings *[]Issue) {
+func validateV7Event(vaultPath string, data map[string]any, raw, where string, store *RuntimeStore, errors, warnings *[]Issue) {
 	for _, field := range []string{"schema", "id", "project", "object", "object_kind", "event_kind", "actor", "at"} {
 		if stringField(data, field) == "" {
 			*errors = append(*errors, issue(errorMissingField, fmt.Sprintf(`missing required event field "%s"`, field), where, "", map[string]any{"field": field}))
@@ -1670,7 +1674,7 @@ func validateV7Event(vaultPath string, data map[string]any, raw, where string, e
 				*errors = append(*errors, issue("EVENT_CLOSE_AUTHORITY_INVALID", err.Error(), where, "", nil))
 			} else if stringField(data, "at") != fact.ClosedAt {
 				*errors = append(*errors, issue("EVENT_CLOSE_AUTHORITY_INVALID", "closed event timestamp does not match close authority", where, "", nil))
-			} else if err := authenticateV7EventCloseAuthority(vaultPath, fact); err != nil {
+			} else if err := authenticateV7EventCloseAuthorityWithStore(vaultPath, fact, store); err != nil {
 				*errors = append(*errors, issue("EVENT_CLOSE_AUTHORITY_INVALID", err.Error(), where, "restore the canonical task and protected completion ancestry; the public binding hash is structural metadata, not authority", nil))
 			}
 		}

@@ -67,7 +67,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reactToReviewResult(project, wf, crossProject, completionReactorModeAuthoritative); errorToIssue(err).Code != completionRepairRequiredError {
 			t.Fatalf("direct cross-project result error=%v, want %s", err, completionRepairRequiredError)
 		}
@@ -124,7 +124,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		reconcileErr := daemon.reconcileReviewCompletion(project, wf)
 		if errorToIssue(reconcileErr).Code != completionRepairRequiredError {
 			t.Fatalf("corrupt row error=%v, want %s", reconcileErr, completionRepairRequiredError)
@@ -181,7 +181,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if _, err := daemon.store.SaveReviewResult(legacy); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 			t.Fatal(err)
 		}
@@ -221,7 +221,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			}
 			return nil
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
 			t.Fatal("expected injected handback crash")
 		}
@@ -310,7 +310,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			}
 			return nil
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
 			t.Fatal("expected injected audit crash")
 		}
@@ -368,7 +368,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			}
 			return nil
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
 			t.Fatal("expected old handback crash")
 		}
@@ -437,7 +437,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 			t.Fatal(err)
 		}
@@ -473,7 +473,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 					}
 					return nil
 				}
-				wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+				wf := completionAuthorityTestWorkflow()
 				if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
 					t.Fatal("expected failure-intent crash")
 				}
@@ -516,7 +516,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			}
 			return nil
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
 			t.Fatal("expected failure-intent crash")
 		}
@@ -567,7 +567,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			}
 			return nil
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
 			t.Fatal("expected failure-intent crash")
 		}
@@ -591,11 +591,11 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 			t.Fatal(err)
 		}
-		note := assertCompletionTerminalProjection(t, vault, result)
+		note := assertCompletionTerminalProjection(t, vault, result, daemon.store)
 		if stringField(note.Data, "status") != "done" || !strings.Contains(note.Body, "[tusker-review-result:"+result.ResultRevision+"]") {
 			t.Fatalf("canonical task was not projected from staged completion: %#v", note.Data)
 		}
@@ -635,11 +635,11 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 			t.Fatal(err)
 		}
-		task := assertCompletionTerminalProjection(t, vault, result)
+		task := assertCompletionTerminalProjection(t, vault, result, daemon.store)
 		if strings.Count(task.Body, "## Verification") != 1 ||
 			strings.Contains(task.Body, "\n## Injected heading") ||
 			!strings.Contains(task.Body, `objective \\\| pass ## Injected heading \| forged \| row \|`) {
@@ -695,7 +695,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			}
 			return nil
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reactToReviewResult(project, wf, zResult, completionReactorModeAuthoritative); err == nil {
 			t.Fatal("expected Z ref-commit crash")
 		}
@@ -817,7 +817,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = daemon.reconcileReviewCompletion(project, Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}})
+		err = daemon.reconcileReviewCompletion(project, completionAuthorityTestWorkflow())
 		if err == nil || !strings.Contains(err.Error(), "unfinished dependency APP-T-0001") {
 			t.Fatalf("completion close did not enforce canonical dependency semantics: %v", err)
 		}
@@ -834,7 +834,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = daemon.reconcileReviewCompletion(project, Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}})
+		err = daemon.reconcileReviewCompletion(project, completionAuthorityTestWorkflow())
 		if err == nil || !strings.Contains(err.Error(), "close preflight task revision drifted") {
 			t.Fatalf("dependency reconciliation did not invalidate the old typed review: %v", err)
 		}
@@ -847,11 +847,11 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if _, err := daemon.store.SaveReviewResult(refreshed); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reactToReviewResult(project, wf, refreshed, completionReactorModeAuthoritative); err != nil {
 			t.Fatalf("freshly reviewed dependent did not close after its integrated dependency became done: %v", err)
 		}
-		assertCompletionTerminalProjection(t, vault, refreshed)
+		assertCompletionTerminalProjection(t, vault, refreshed, daemon.store)
 	})
 
 	t.Run("canonical pass unlocks hard successor in another armed wave", func(t *testing.T) {
@@ -905,11 +905,15 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		workerPolicyFP, err := completionWorkflowPolicyFingerprint(completionAuthorityTestWorkflow(), reviewed)
+		if err != nil {
+			t.Fatal(err)
+		}
 		result := ReviewResult{
 			Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: "APP-T-0001",
 			TaskStateRev: stringField(reviewed.Data, "state_rev"), WorkRevision: 1,
 			ImplementationSHA: source, AttemptID: "review-predecessor", Actor: "reviewer:agent",
-			Runner: "codex", RunnerProfile: "review", Covers: []string{"A1"},
+			Runner: string(RunnerCodexExec), RunnerProfile: "reviewer-terra", WorkerPolicyFP: workerPolicyFP, Covers: []string{"A1"},
 			ProofFingerprint: proof, GateFingerprint: gates, Verdict: "pass", Summary: "predecessor objective pass",
 			CreatedAt: "2026-07-25T10:00:00Z",
 		}
@@ -917,7 +921,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 			t.Fatal(err)
 		}
@@ -995,6 +999,10 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		workerPolicyFP, err := completionWorkflowPolicyFingerprint(completionAuthorityTestWorkflow(), reviewed)
+		if err != nil {
+			t.Fatal(err)
+		}
 		project := newRegisteredProject(repo, vault)
 		stateRoot := filepath.Join(t.TempDir(), "state")
 		t.Setenv("TUSKER_STATE_ROOT", stateRoot)
@@ -1007,7 +1015,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: "APP-T-0001",
 			TaskStateRev: stringField(reviewed.Data, "state_rev"), WorkRevision: 1,
 			ImplementationSHA: source, AttemptID: "review-standalone", Actor: "reviewer:agent",
-			Runner: "codex", RunnerProfile: "review", Covers: []string{"A1"},
+			Runner: string(RunnerCodexExec), RunnerProfile: "reviewer-terra", WorkerPolicyFP: workerPolicyFP, Covers: []string{"A1"},
 			ProofFingerprint: proof, GateFingerprint: gates, Verdict: "pass", Summary: "standalone objective pass",
 			CreatedAt: "2026-07-25T10:00:00Z",
 		}
@@ -1015,7 +1023,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 			t.Fatal(err)
 		}
@@ -1034,7 +1042,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			transaction.WaveMaterialFP != boundMaterial || transaction.IntegrationBase != boundBase {
 			t.Fatalf("standalone completion did not terminalize on its frozen singleton: transaction=%#v err=%v", transaction, err)
 		}
-		canonical := assertCompletionTerminalProjection(t, vault, result)
+		canonical := assertCompletionTerminalProjection(t, vault, result, daemon.store)
 		if stringField(canonical.Data, "status") != "done" ||
 			stringField(canonical.Data, "wave") != transaction.WaveID ||
 			strings.Count(canonical.Body, "[tusker-review-result:"+result.ResultRevision+"]") != 1 ||
@@ -1099,7 +1107,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 			t.Fatal(err)
 		}
@@ -1135,7 +1143,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 					}
 					return nil
 				}
-				wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+				wf := completionAuthorityTestWorkflow()
 				if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
 					t.Fatalf("%s did not inject a crash", point)
 				}
@@ -1221,7 +1229,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			}
 			return nil
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
 			t.Fatal("expected ref-commit crash")
 		}
@@ -1307,7 +1315,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal || transaction.Failure != "" {
 			t.Fatalf("post-CAS gate drift did not terminalize as pass: transaction=%#v err=%v", transaction, err)
 		}
-		canonical := assertCompletionTerminalProjection(t, vault, result)
+		canonical := assertCompletionTerminalProjection(t, vault, result, daemon.store)
 		if stringField(canonical.Data, "status") != "done" ||
 			!strings.Contains(canonical.Body, "[tusker-review-result:"+result.ResultRevision+"]") ||
 			generatedReviewerFindingContent(canonical.Body) != "" {
@@ -1352,7 +1360,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			}
 			return nil
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
 			t.Fatal("expected ref-commit crash")
 		}
@@ -1420,7 +1428,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			}
 			return nil
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
 			t.Fatal("expected staging-intent crash")
 		}
@@ -1488,7 +1496,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			}
 			return nil
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
 			t.Fatal("expected ref-commit crash")
 		}
@@ -1546,7 +1554,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			}
 			return nil
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
 			t.Fatal("expected staging-intent crash")
 		}
@@ -1672,7 +1680,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 			t.Fatal(err)
 		}
@@ -1716,7 +1724,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 			t.Fatal(err)
 		}
@@ -1740,7 +1748,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if err != nil || stringField(canonical.Data, "status") != "done" {
 			t.Fatalf("hook-free completion lost canonical done projection: task=%#v err=%v", canonical.Data, err)
 		}
-		assertCompletionTerminalProjection(t, vault, result)
+		assertCompletionTerminalProjection(t, vault, result, daemon.store)
 	})
 
 	t.Run("staging task blob bypasses mutating clean filter", func(t *testing.T) {
@@ -1776,7 +1784,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 			t.Fatal(err)
 		}
@@ -1838,7 +1846,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if strings.TrimSpace(filteredBlob) == transaction.StagedTaskBlob || !fileExists(filterMarker) {
 			t.Fatal("clean-filter control did not mutate the generated task blob")
 		}
-		assertCompletionTerminalProjection(t, vault, result)
+		assertCompletionTerminalProjection(t, vault, result, daemon.store)
 	})
 
 	t.Run("legacy transaction missing frozen authority requires repair on both sides of CAS", func(t *testing.T) {
@@ -1867,7 +1875,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 					}
 					return nil
 				}
-				wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+				wf := completionAuthorityTestWorkflow()
 				if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
 					t.Fatal("expected injected crash")
 				}
@@ -1920,7 +1928,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 			t.Fatal(err)
 		}
@@ -1987,7 +1995,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 						return nil
 					}
 				}
-				wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+				wf := completionAuthorityTestWorkflow()
 				err := daemon.reconcileReviewCompletion(project, wf)
 				if !tc.terminal && err == nil {
 					t.Fatal("expected staged attestation crash")
@@ -2045,7 +2053,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = daemon.reconcileReviewCompletion(project, Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}})
+			err = daemon.reconcileReviewCompletion(project, completionAuthorityTestWorkflow())
 			if err == nil || errorToIssue(err).Code != errorConfigInvalid || !strings.Contains(err.Error(), "required_acceptor: human") {
 				t.Fatalf("custom human acceptor policy was not enforced: %v", err)
 			}
@@ -2063,7 +2071,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = daemon.reconcileReviewCompletion(project, Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}})
+			err = daemon.reconcileReviewCompletion(project, completionAuthorityTestWorkflow())
 			if err == nil || errorToIssue(err).Code != errorEvidenceGate || !strings.Contains(err.Error(), "automated_test") {
 				t.Fatalf("required evidence policy was not enforced: %v", err)
 			}
@@ -2084,7 +2092,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = daemon.reconcileReviewCompletion(project, Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}})
+			err = daemon.reconcileReviewCompletion(project, completionAuthorityTestWorkflow())
 			if err == nil || errorToIssue(err).Code != errorInvalidTransition || !strings.Contains(err.Error(), "security gate") {
 				t.Fatalf("required gate-kind policy was not enforced: %v", err)
 			}
@@ -2102,7 +2110,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			if _, err := daemon.store.SaveReviewResult(result); err != nil {
 				t.Fatal(err)
 			}
-			wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+			wf := completionAuthorityTestWorkflow()
 			if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 				t.Fatal(err)
 			}
@@ -2110,7 +2118,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal || transaction.CloseAuthorityFP == "" {
 				t.Fatalf("eligible close policy did not freeze and terminalize: transaction=%#v err=%v", transaction, err)
 			}
-			assertCompletionTerminalProjection(t, vault, result)
+			assertCompletionTerminalProjection(t, vault, result, daemon.store)
 		})
 
 		t.Run("policy drift after freeze but before CAS requires repair", func(t *testing.T) {
@@ -2129,7 +2137,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 				}
 				return nil
 			}
-			wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+			wf := completionAuthorityTestWorkflow()
 			if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
 				t.Fatal("expected gate crash")
 			}
@@ -2196,7 +2204,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 					}
 					return nil
 				}
-				wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+				wf := completionAuthorityTestWorkflow()
 				if err := daemon.reconcileReviewCompletion(project, wf); err == nil {
 					t.Fatal("expected ref-commit crash")
 				}
@@ -2228,7 +2236,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 				if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal || transaction.Failure != "" {
 					t.Fatalf("post-CAS policy replay did not terminalize frozen authority: transaction=%#v err=%v", transaction, err)
 				}
-				task := assertCompletionTerminalProjection(t, vault, result)
+				task := assertCompletionTerminalProjection(t, vault, result, daemon.store)
 				if stringField(task.Data, "status") != "done" ||
 					stringField(task.Data, "accepted_by") != result.Actor ||
 					stringField(task.Data, "accepted_at") != completionResultTimestamp(result) ||
@@ -2245,7 +2253,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 			t.Fatal(err)
 		}
@@ -2284,7 +2292,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 			t.Fatal(err)
 		}
@@ -2312,7 +2320,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
 		}
-		wf := Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}
+		wf := completionAuthorityTestWorkflow()
 		if err := daemon.reconcileReviewCompletion(project, wf); err != nil {
 			t.Fatal(err)
 		}
@@ -2418,7 +2426,11 @@ func completionReactorFixture(t *testing.T, exactSource bool) (string, Registere
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := ReviewResult{Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: "APP-T-0001", TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: 1, ImplementationSHA: stringField(note.Data, "source_sha"), AttemptID: "review-1", Actor: "reviewer:agent", Runner: "codex", RunnerProfile: "review", Covers: []string{"A1"}, ProofFingerprint: proof, GateFingerprint: gates, Verdict: "pass", Summary: "objective pass", CreatedAt: "2026-07-25T10:00:00Z"}
+	workerPolicyFP, err := completionWorkflowPolicyFingerprint(completionAuthorityTestWorkflow(), note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := ReviewResult{Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: "APP-T-0001", TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: 1, ImplementationSHA: stringField(note.Data, "source_sha"), AttemptID: "review-1", Actor: "reviewer:agent", Runner: string(RunnerCodexExec), RunnerProfile: "reviewer-terra", WorkerPolicyFP: workerPolicyFP, Covers: []string{"A1"}, ProofFingerprint: proof, GateFingerprint: gates, Verdict: "pass", Summary: "objective pass", CreatedAt: "2026-07-25T10:00:00Z"}
 	result.ResultRevision = reviewResultFingerprint(result)
 	return vault, project, daemon, result
 }
@@ -2464,17 +2476,43 @@ func completionResultForReviewedTask(t *testing.T, vault string, project Registe
 	if err != nil {
 		t.Fatal(err)
 	}
+	workerPolicyFP, err := completionWorkflowPolicyFingerprint(completionAuthorityTestWorkflow(), task)
+	if err != nil {
+		t.Fatal(err)
+	}
 	result := ReviewResult{
 		Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: taskID,
 		TaskStateRev: stringField(task.Data, "state_rev"), WorkRevision: intField(task.Data, "work_revision"),
 		ImplementationSHA: firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit")),
-		AttemptID:         attemptID, Actor: "reviewer:agent", Runner: "codex", RunnerProfile: "review",
+		AttemptID:         attemptID, Actor: "reviewer:agent", Runner: string(RunnerCodexExec), RunnerProfile: "reviewer-terra", WorkerPolicyFP: workerPolicyFP,
 		Covers: []string{"A1"}, ProofFingerprint: proof, GateFingerprint: gates,
 		Verdict: "pass", Summary: summary,
 		CreatedAt: "2026-07-25T10:00:00Z",
 	}
 	result.ResultRevision = reviewResultFingerprint(result)
 	return result
+}
+
+func completionAuthorityTestWorkflow() Workflow {
+	wf := defaultWorkflow()
+	wf.CompletionReactor = completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}
+	wf.RunnerProfiles = map[string]RunnerProfileDefinition{
+		"implementation-terra": {
+			Harness: string(RunnerCodexExec), Model: "gpt-5.x", Effort: "medium", PermissionPreset: "workspace-write-offline",
+			Sandbox: RunnerSandboxDefinition{Mode: "workspace-write", Network: boolPtr(false)}, Subagents: RunnerSubagentPolicyDefinition{Allowed: boolPtr(false)},
+		},
+		"reviewer-terra": {
+			Harness: string(RunnerCodexExec), Model: "gpt-5.x", Effort: "high", PermissionPreset: "read-only",
+			Sandbox: RunnerSandboxDefinition{Mode: "read-only", Network: boolPtr(false)}, Subagents: RunnerSubagentPolicyDefinition{Allowed: boolPtr(false)},
+		},
+	}
+	wf.RunnerProfileSources = map[string]string{
+		"implementation-terra": configSourceProject,
+		"reviewer-terra":       configSourceProject,
+	}
+	wf.RunnerDefaultProfile = "implementation-terra"
+	wf.RunnerLaneProfiles = map[string]string{runLaneExecute: "implementation-terra", runLaneReview: "reviewer-terra"}
+	return wf
 }
 
 func recordCompletionTestProof(t *testing.T, vault, taskID string) {
@@ -2573,7 +2611,7 @@ func assertCompletionPolicyRefusedWithoutCAS(t *testing.T, vault string, project
 	}
 }
 
-func assertCompletionTerminalProjection(t *testing.T, vault string, result ReviewResult) Note {
+func assertCompletionTerminalProjection(t *testing.T, vault string, result ReviewResult, store *RuntimeStore) Note {
 	t.Helper()
 	task, err := resolveV7Note(vault, result.TaskID, "task")
 	if err != nil {
@@ -2604,18 +2642,18 @@ func assertCompletionTerminalProjection(t *testing.T, vault string, result Revie
 	if report.Status != "satisfied" || len(report.Missing) != 0 || len(report.ModeMissing) != 0 {
 		t.Fatalf("completion projection did not preserve accepted proof: %#v", report)
 	}
-	authority, authenticated, err := authenticatedV7TaskCloseAuthority(task, v7ProjectID(vault))
+	authority, authenticated, err := authenticatedV7TaskCloseAuthorityWithStore(task, v7ProjectID(vault), store)
 	if err != nil || !authenticated ||
 		authority.TaskID != result.TaskID ||
 		authority.ReviewResultRevision != result.ResultRevision ||
 		authority.ReviewedTaskStateRev != result.TaskStateRev {
 		t.Fatalf("completion close authority is not authenticated: authority=%#v authenticated=%v err=%v", authority, authenticated, err)
 	}
-	issues, _ := validateV7Note(task, validationContext{VaultPath: vault, RelativePath: task.RelativePath}, task.RelativePath)
+	issues, _ := validateV7Note(task, validationContext{VaultPath: vault, RelativePath: task.RelativePath, CompletionStore: store}, task.RelativePath)
 	if len(issues) != 0 {
 		t.Fatalf("completion projection is not schema-valid: %#v", issues)
 	}
-	eventIssues, _, _ := validateV7Events(vault)
+	eventIssues, _, _ := validateV7EventsWithStore(vault, store)
 	if len(eventIssues) != 0 {
 		t.Fatalf("completion closed audit event is not schema-valid: %#v", eventIssues)
 	}

@@ -13,33 +13,36 @@ import (
 )
 
 type runnerExecRequest struct {
-	ProjectID        string
-	RecordID         string
-	ItemID           string
-	AttemptID        string
-	Lane             string
-	WorkRevision     int
-	LeaseGeneration  int
-	SessionRef       string
-	MessageRef       string
-	WorkingDir       string
-	WorkspacePath    string
-	RepoRoot         string
-	PromptPath       string
-	EventSinkPath    string
-	RawLogPath       string
-	StatusPath       string
-	RunnerPathPrefix string
-	Command          string
-	RunnerProfile    string
-	RunnerHarness    string
-	RunnerModel      string
-	RunnerEffort     string
-	NotePath         string
-	VaultPath        string
-	ResumeMode       bool
-	CodexPolicy      CodexPolicy
-	ExternalLoop     ExternalLoopLaunchContext
+	ProjectID           string
+	RecordID            string
+	ItemID              string
+	AttemptID           string
+	Lane                string
+	WorkRevision        int
+	LeaseGeneration     int
+	SessionRef          string
+	MessageRef          string
+	WorkingDir          string
+	WorkspacePath       string
+	RepoRoot            string
+	PromptPath          string
+	EventSinkPath       string
+	RawLogPath          string
+	StatusPath          string
+	RunnerPathPrefix    string
+	Command             string
+	CommandArgv         []string
+	CommandExecutableFP string
+	CommandSearchPath   string
+	RunnerProfile       string
+	RunnerHarness       string
+	RunnerModel         string
+	RunnerEffort        string
+	NotePath            string
+	VaultPath           string
+	ResumeMode          bool
+	CodexPolicy         CodexPolicy
+	ExternalLoop        ExternalLoopLaunchContext
 }
 
 type runnerProcessStatus struct {
@@ -73,10 +76,10 @@ func executeRunnerCommand(ctx context.Context, runner RunnerName, req runnerExec
 
 func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, req runnerExecRequest, capabilities RunnerCapabilities, eventLog runnerEventLog) (*StartResult, error) {
 	command := strings.TrimSpace(req.Command)
-	if command == "" {
+	if command == "" && len(req.CommandArgv) == 0 {
 		return nil, tuskerError(errorConfigInvalid, fmt.Sprintf("%s runner command is empty", runner))
 	}
-	if strings.Contains(command, "app-server") {
+	if strings.Contains(command, "app-server") || containsString(req.CommandArgv, "app-server") {
 		return nil, tuskerError(errorConfigInvalid, fmt.Sprintf("%s command %q is app-server mode; the current daemon runner needs a detached CLI command", runner, command))
 	}
 	if err := ensureDir(filepath.Dir(req.RawLogPath)); err != nil {
@@ -89,8 +92,19 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(req.CommandExecutableFP) != "" {
+		if len(req.CommandArgv) == 0 || !filepath.IsAbs(req.CommandArgv[0]) {
+			return nil, tuskerError(errorConfigInvalid, "completion authority requires an absolute command argv executable")
+		}
+		if pathWithin(workspaceCWD, req.CommandArgv[0]) || (strings.TrimSpace(req.RepoRoot) != "" && pathWithin(req.RepoRoot, req.CommandArgv[0])) {
+			return nil, tuskerError(errorConfigInvalid, "completion authority refuses an executable from the worker workspace or repository")
+		}
+		if err := completionVerifyExecutableIdentity(req.CommandArgv[0], req.CommandExecutableFP, req.CommandSearchPath); err != nil {
+			return nil, tuskerError(errorConfigInvalid, err.Error())
+		}
+	}
 
-	expanded := replaceTemplateTokens(command, map[string]string{
+	tokens := map[string]string{
 		"{{workspace_path}}":  workspaceCWD,
 		"{{prompt_path}}":     req.PromptPath,
 		"{{event_sink_path}}": req.EventSinkPath,
@@ -100,8 +114,22 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 		"{{vault_path}}":      req.VaultPath,
 		"{{session_ref}}":     req.SessionRef,
 		"{{message_ref}}":     req.MessageRef,
-	})
+	}
+	expanded := replaceTemplateTokens(command, tokens)
 	expanded = runnerCommandWithPathPrefix(expanded, req.RunnerPathPrefix)
+	scriptCommand := expanded
+	commandArgs := []string{"tusker-runner"}
+	shellExecutable := "sh"
+	shellFlag := "-lc"
+	if len(req.CommandArgv) > 0 {
+		scriptCommand = `"$@"`
+		commandArgs = append(commandArgs, replaceTemplateArgv(req.CommandArgv, tokens)...)
+		// Structured argv is already fully resolved by trusted Go code. A fixed
+		// non-login shell only supplies status-file plumbing; it cannot source
+		// repository or operator shell startup files and cannot reparse argv.
+		shellExecutable = "/bin/sh"
+		shellFlag = "-c"
+	}
 	script := fmt.Sprintf(`rm -f "$TUSKER_STATUS_PATH"
 ( %s ) < "$TUSKER_PROMPT_PATH" >> "$TUSKER_RAW_LOG" 2>&1
 code=$?
@@ -112,7 +140,7 @@ code=int(sys.argv[2])
 payload={"exit_code":code,"completed_at":datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z")}
 open(path,"w",encoding="utf-8").write(json.dumps(payload)+"\n")
 PY
-`, expanded)
+`, scriptCommand)
 
 	if err := eventLog.Append("attempt_started", req.AttemptID, runner, map[string]any{
 		"command":     command,
@@ -123,7 +151,8 @@ PY
 		return nil, fmt.Errorf("record %s attempt_started event: %w", runner, err)
 	}
 
-	cmd := exec.CommandContext(ctx, "sh", "-lc", script)
+	cmdArgs := append([]string{shellFlag, script}, commandArgs...)
+	cmd := exec.CommandContext(ctx, shellExecutable, cmdArgs...)
 	cmd.Dir = workspaceCWD
 	if err := assertRunnerCommandDir(runner, cmd.Dir, req.WorkspacePath); err != nil {
 		return nil, err
@@ -132,8 +161,9 @@ PY
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
-		RunnerPathPrefix: req.RunnerPathPrefix,
-		NotePath:         req.NotePath, VaultPath: req.VaultPath, SessionRef: req.SessionRef, MessageRef: req.MessageRef,
+		RunnerPathPrefix:  req.RunnerPathPrefix,
+		CommandSearchPath: req.CommandSearchPath,
+		NotePath:          req.NotePath, VaultPath: req.VaultPath, SessionRef: req.SessionRef, MessageRef: req.MessageRef,
 		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		CodexPolicy:  withDefaultCodexPolicy(req.CodexPolicy),
 		ExternalLoop: req.ExternalLoop,
@@ -172,6 +202,14 @@ PY
 		Completed:    false,
 		Outcome:      AttemptOutcomeNone,
 	}, nil
+}
+
+func replaceTemplateArgv(argv []string, replacements map[string]string) []string {
+	out := make([]string, len(argv))
+	for i, arg := range argv {
+		out[i] = replaceTemplateTokens(arg, replacements)
+	}
+	return out
 }
 
 func terminateAndReapRunnerCommand(cmd *exec.Cmd, pgid int) {

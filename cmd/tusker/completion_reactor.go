@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	completionTransactionSchema    = "tusker.completion-transaction/v3"
+	completionTransactionSchema    = "tusker.completion-transaction/v4"
 	completionPhasePlanned         = "planned"
 	completionPhaseStaging         = "staging"
 	completionPhaseStaged          = "staged"
@@ -56,6 +56,7 @@ type completionTransaction struct {
 	WaveAuthorizationFP    string `json:"wave_authorization_fingerprint,omitempty"`
 	WaveMaterialFP         string `json:"wave_material_fingerprint"`
 	CloseAuthorityFP       string `json:"close_authority_fingerprint,omitempty"`
+	WorkerPolicyFP         string `json:"worker_policy_fingerprint"`
 	CompletionAuthorityID  string `json:"completion_authority_id,omitempty"`
 	CompletionAuthoritySig []byte `json:"completion_authority_signature,omitempty"`
 	IntegrationBase        string `json:"integration_base"`
@@ -319,9 +320,8 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 		)
 	}
 	if result.Schema != reviewResultSchema {
-		// v1 rows remain visible/auditable but their timestamp was outside the
-		// signed payload. Do not turn an upgrade into a lifecycle outage or a
-		// silent authority grant; a fresh v2 reviewer result is required.
+		// Legacy rows remain visible/auditable, but v1 omitted the timestamp and
+		// v2 omitted worker-policy authority. A fresh v3 review is required.
 		return nil
 	}
 	if mode == completionReactorModeAuthoritative {
@@ -385,12 +385,13 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 			return err
 		}
 	}
+	workerPolicyFP := result.WorkerPolicyFP
 	transaction := completionTransaction{
 		Schema: completionTransactionSchema, ProjectID: project.ProjectID, TaskID: result.TaskID,
 		WorkRevision: result.WorkRevision, ImplementationSHA: result.ImplementationSHA, ReviewAttempt: result.AttemptID,
 		ResultRevision: result.ResultRevision, ReviewedTaskStateRev: result.TaskStateRev,
 		WaveID: stringField(wave.Data, "id"), WaveAuthorityKind: waveAuthorityKind,
-		WaveAuthorizationFP: waveAuthorizationFP, WaveMaterialFP: waveMaterialFP, CloseAuthorityFP: closeAuthorityFP,
+		WaveAuthorizationFP: waveAuthorizationFP, WaveMaterialFP: waveMaterialFP, CloseAuthorityFP: closeAuthorityFP, WorkerPolicyFP: workerPolicyFP,
 		IntegrationBase: base, IntegrationRef: integrationRef, Phase: completionPhasePlanned,
 	}
 	transaction.ID = completionTransactionID(project.ProjectID, result, base, completionFrozenAuthorityParts(&transaction)...)
@@ -528,13 +529,14 @@ func completionFrozenAuthorityParts(transaction *completionTransaction) []string
 		transaction.WaveAuthorizationFP,
 		transaction.WaveMaterialFP,
 		transaction.CloseAuthorityFP,
+		transaction.WorkerPolicyFP,
 		transaction.IntegrationRef,
 	}
 }
 
 func completionFrozenAuthorityComplete(transaction *completionTransaction, requireClose bool) bool {
 	if transaction == nil || transaction.WaveID == "" || transaction.WaveAuthorityKind == "" ||
-		transaction.WaveMaterialFP == "" || transaction.IntegrationRef == "" ||
+		transaction.WaveMaterialFP == "" || transaction.IntegrationRef == "" || transaction.WorkerPolicyFP == "" ||
 		(requireClose && transaction.CloseAuthorityFP == "") {
 		return false
 	}
@@ -574,13 +576,14 @@ func authenticateCompletionFrozenAuthority(projectID string, result ReviewResult
 	}
 	if !v7CloseAuthorityDigest(transaction.WaveMaterialFP, "sha256:") ||
 		(transaction.WaveAuthorityKind == "armed" && !v7CloseAuthorityDigest(transaction.WaveAuthorizationFP, "sha256:")) ||
-		(result.Verdict == "pass" && !v7CloseAuthorityDigest(transaction.CloseAuthorityFP, "sha256:")) {
+		(result.Verdict == "pass" && !v7CloseAuthorityDigest(transaction.CloseAuthorityFP, "sha256:")) ||
+		!v7CloseAuthorityDigest(transaction.WorkerPolicyFP, "sha256:") {
 		return completionFrozenAuthorityRepairError(transaction, "frozen authority fingerprint is malformed")
 	}
 	if transaction.ProjectID != projectID || transaction.TaskID != result.TaskID ||
 		transaction.WorkRevision != result.WorkRevision || transaction.ImplementationSHA != result.ImplementationSHA ||
 		transaction.ReviewAttempt != result.AttemptID || transaction.ResultRevision != result.ResultRevision ||
-		transaction.ReviewedTaskStateRev != result.TaskStateRev {
+		transaction.ReviewedTaskStateRev != result.TaskStateRev || transaction.WorkerPolicyFP != result.WorkerPolicyFP {
 		return completionFrozenAuthorityRepairError(transaction, "immutable typed-result identity drifted")
 	}
 	expected := completionTransactionID(projectID, result, transaction.IntegrationBase, completionFrozenAuthorityParts(transaction)...)
@@ -1203,13 +1206,13 @@ func (d *Daemon) consumeCompletionAuthorityAfterCAS(project RegisteredProject, c
 	if err := json.Unmarshal([]byte(raw), &receipt); err != nil {
 		return completionFrozenAuthorityRepairError(transaction, "completion receipt is malformed after CAS")
 	}
-	if !verifyCompletionReceiptAuthority(project.RepoRoot, receipt, d.store, false) || receipt.TaskBlob != task.OID || receipt.Authority.ID != transaction.CompletionAuthorityID {
+	if !verifyCompletionReceiptAuthority(project.RepoRoot, receipt, receiptEntry, d.store, false) || receipt.TaskBlob != task.OID || receipt.Authority.ID != transaction.CompletionAuthorityID {
 		return completionFrozenAuthorityRepairError(transaction, "integration CAS does not retain the resident-daemon completion authority")
 	}
 	if err := d.store.consumeCompletionAuthority(transaction.CompletionAuthorityID); err != nil {
 		return completionFrozenAuthorityRepairError(transaction, err.Error())
 	}
-	if !verifyCompletionReceiptAuthority(project.RepoRoot, receipt, d.store, true) {
+	if !verifyCompletionReceiptAuthority(project.RepoRoot, receipt, receiptEntry, d.store, true) {
 		return completionFrozenAuthorityRepairError(transaction, "consumed completion authority cannot authenticate its receipt")
 	}
 	return nil

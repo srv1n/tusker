@@ -500,6 +500,7 @@ type validationContext struct {
 	V6KnowledgeNodes map[string]bool
 	V6LinkTargets    map[string]bool
 	V6Freshness      map[string]v6FreshnessRecord
+	CompletionStore  *RuntimeStore
 }
 
 func parseID(id string) *parsedID {

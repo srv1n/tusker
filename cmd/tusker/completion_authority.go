@@ -16,29 +16,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
-
-var trustedCompletionStores = struct {
-	sync.Mutex
-	stores map[*RuntimeStore]struct{}
-}{stores: map[*RuntimeStore]struct{}{}}
-
-func registerTrustedCompletionStore(store *RuntimeStore) {
-	if store == nil {
-		return
-	}
-	trustedCompletionStores.Lock()
-	trustedCompletionStores.stores[store] = struct{}{}
-	trustedCompletionStores.Unlock()
-}
-
-func unregisterTrustedCompletionStore(store *RuntimeStore) {
-	trustedCompletionStores.Lock()
-	delete(trustedCompletionStores.stores, store)
-	trustedCompletionStores.Unlock()
-}
 
 func completionCanonicalPhysicalDirectory(path string) (string, error) {
 	path = strings.TrimSpace(path)
@@ -63,7 +42,7 @@ func completionCanonicalPhysicalDirectory(path string) (string, error) {
 	return filepath.Clean(physical), nil
 }
 
-const completionAuthoritySchema = "tusker.completion-authority-issuance/v1"
+const completionAuthoritySchema = "tusker.completion-authority-issuance/v2"
 
 type completionAuthorityContext struct {
 	Schema          string `json:"schema"`
@@ -77,6 +56,7 @@ type completionAuthorityContext struct {
 	Implementation  string `json:"implementation_sha"`
 	ReviewAttempt   string `json:"review_attempt"`
 	WaveID          string `json:"wave_id"`
+	WorkerPolicyFP  string `json:"worker_policy_fingerprint"`
 	IntegrationRef  string `json:"integration_ref"`
 	IntegrationBase string `json:"integration_base"`
 	TaskBlob        string `json:"task_blob"`
@@ -140,7 +120,7 @@ func completionAuthorityContextFor(project RegisteredProject, result ReviewResul
 	return completionAuthorityContext{Schema: completionAuthoritySchema, ProjectID: project.ProjectID, RepoIdentity: repo,
 		TransactionID: tx.ID, TaskID: tx.TaskID, ResultRevision: tx.ResultRevision, TaskStateRev: tx.ReviewedTaskStateRev,
 		WorkRevision: tx.WorkRevision, Implementation: tx.ImplementationSHA, ReviewAttempt: tx.ReviewAttempt,
-		WaveID: tx.WaveID, IntegrationRef: tx.IntegrationRef, IntegrationBase: tx.IntegrationBase}, nil
+		WaveID: tx.WaveID, WorkerPolicyFP: tx.WorkerPolicyFP, IntegrationRef: tx.IntegrationRef, IntegrationBase: tx.IntegrationBase}, nil
 }
 
 func (s *RuntimeStore) completionAuthorityIssuance(id string) (*completionAuthorityIssuance, error) {
@@ -276,7 +256,7 @@ func (d *Daemon) bindCompletionAuthority(project RegisteredProject, result Revie
 	if i.Context.TaskBlob != "" && i.Context.TaskBlob != taskBlob || i.Context.ReceiptBlob != "" && i.Context.ReceiptBlob != receiptBlob {
 		return completionFrozenAuthorityRepairError(tx, "completion authority object binding drifted")
 	}
-	if i.Context.Schema != expected.Schema || i.Context.ProjectID != expected.ProjectID || i.Context.RepoIdentity != expected.RepoIdentity || i.Context.TransactionID != expected.TransactionID || i.Context.TaskID != expected.TaskID || i.Context.ResultRevision != expected.ResultRevision || i.Context.TaskStateRev != expected.TaskStateRev || i.Context.WorkRevision != expected.WorkRevision || i.Context.Implementation != expected.Implementation || i.Context.ReviewAttempt != expected.ReviewAttempt || i.Context.WaveID != expected.WaveID || i.Context.IntegrationRef != expected.IntegrationRef || i.Context.IntegrationBase != expected.IntegrationBase {
+	if i.Context.Schema != expected.Schema || i.Context.ProjectID != expected.ProjectID || i.Context.RepoIdentity != expected.RepoIdentity || i.Context.TransactionID != expected.TransactionID || i.Context.TaskID != expected.TaskID || i.Context.ResultRevision != expected.ResultRevision || i.Context.TaskStateRev != expected.TaskStateRev || i.Context.WorkRevision != expected.WorkRevision || i.Context.Implementation != expected.Implementation || i.Context.ReviewAttempt != expected.ReviewAttempt || i.Context.WaveID != expected.WaveID || i.Context.WorkerPolicyFP != expected.WorkerPolicyFP || i.Context.IntegrationRef != expected.IntegrationRef || i.Context.IntegrationBase != expected.IntegrationBase {
 		return completionFrozenAuthorityRepairError(tx, "completion authority context drifted")
 	}
 	expected.TaskBlob, expected.ReceiptBlob = taskBlob, receiptBlob
@@ -288,8 +268,9 @@ func (d *Daemon) bindCompletionAuthority(project RegisteredProject, result Revie
 	return nil
 }
 
-func verifyCompletionReceiptAuthority(repoRoot string, receipt completionReceipt, store *RuntimeStore, requireConsumed bool) bool {
-	if store == nil || receipt.Authority.ID == "" || len(receipt.Authority.Signature) != ed25519.SignatureSize {
+func verifyCompletionReceiptAuthority(repoRoot string, receipt completionReceipt, receiptEntry completionGitTreeEntry, store *RuntimeStore, requireConsumed bool) bool {
+	if store == nil || receipt.Authority.ID == "" || len(receipt.Authority.Signature) != ed25519.SignatureSize ||
+		receiptEntry.Type != "blob" || receiptEntry.Mode != "100644" || receiptEntry.OID == "" {
 		return false
 	}
 	i, err := store.completionAuthorityIssuance(receipt.Authority.ID)
@@ -308,30 +289,19 @@ func verifyCompletionReceiptAuthority(repoRoot string, receipt completionReceipt
 		i.Context.ProjectID != tr.ProjectID || i.Context.RepoIdentity != repo || i.Context.TransactionID != tr.ID ||
 		i.Context.TaskID != tr.TaskID || i.Context.ResultRevision != tr.ResultRevision || i.Context.TaskStateRev != tr.ReviewedTaskStateRev ||
 		i.Context.WorkRevision != tr.WorkRevision || i.Context.Implementation != tr.ImplementationSHA || i.Context.ReviewAttempt != tr.ReviewAttempt ||
-		i.Context.WaveID != tr.WaveID || i.Context.IntegrationRef != tr.IntegrationRef || i.Context.IntegrationBase != tr.IntegrationBase ||
-		i.Context.TaskBlob != receipt.TaskBlob || i.Context.ReceiptBlob == "" {
+		i.Context.WaveID != tr.WaveID || i.Context.WorkerPolicyFP != tr.WorkerPolicyFP || i.Context.IntegrationRef != tr.IntegrationRef || i.Context.IntegrationBase != tr.IntegrationBase ||
+		i.Context.TaskBlob != receipt.TaskBlob || i.Context.ReceiptBlob != receiptEntry.OID {
 		return false
 	}
 	return ed25519.Verify(ed25519.PublicKey(i.PublicKey), completionAuthorityPayload(i.Context), receipt.Authority.Signature)
 }
 
-// A caller that lacks the daemon's exact store may use only a daemon-registered
-// store in this process or the canonical service root derived without ambient
-// TUSKER_STATE_ROOT. It must never select a worker-provided look-alike store.
-func verifyCompletionReceiptAuthorityWithStore(repoRoot string, receipt completionReceipt, store *RuntimeStore, requireConsumed bool) bool {
+// A caller that lacks an explicitly supplied daemon store may use only the
+// canonical service root derived without ambient TUSKER_STATE_ROOT. A custom
+// foreground/test daemon must plumb its exact store explicitly.
+func verifyCompletionReceiptAuthorityWithStore(repoRoot string, receipt completionReceipt, receiptEntry completionGitTreeEntry, store *RuntimeStore, requireConsumed bool) bool {
 	if store != nil {
-		return verifyCompletionReceiptAuthority(repoRoot, receipt, store, requireConsumed)
-	}
-	trustedCompletionStores.Lock()
-	stores := make([]*RuntimeStore, 0, len(trustedCompletionStores.stores))
-	for candidate := range trustedCompletionStores.stores {
-		stores = append(stores, candidate)
-	}
-	trustedCompletionStores.Unlock()
-	for _, candidate := range stores {
-		if verifyCompletionReceiptAuthority(repoRoot, receipt, candidate, requireConsumed) {
-			return true
-		}
+		return verifyCompletionReceiptAuthority(repoRoot, receipt, receiptEntry, store, requireConsumed)
 	}
 	root := canonicalOfflineCompletionStateRoot()
 	if root == "" {
@@ -342,7 +312,7 @@ func verifyCompletionReceiptAuthorityWithStore(repoRoot string, receipt completi
 		return false
 	}
 	defer canonical.Close()
-	return verifyCompletionReceiptAuthority(repoRoot, receipt, canonical, requireConsumed)
+	return verifyCompletionReceiptAuthority(repoRoot, receipt, receiptEntry, canonical, requireConsumed)
 }
 
 func canonicalOfflineCompletionStateRoot() string {

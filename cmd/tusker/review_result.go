@@ -12,9 +12,13 @@ import (
 )
 
 const (
-	// v2 is the only result schema that can drive the completion reactor. Its
-	// revision binds the normalized payload *and* the reviewer timestamp.
-	reviewResultSchema = "tusker.review-result/v2"
+	// v3 is the only result schema that can drive the completion reactor. Its
+	// revision binds the normalized payload, reviewer timestamp, and the exact
+	// daemon-frozen execute/review worker policy.
+	reviewResultSchema = "tusker.review-result/v3"
+	// v2 remains readable for audit, but it predated worker-policy attestation
+	// and therefore cannot drive authoritative completion.
+	reviewResultSchemaV2 = "tusker.review-result/v2"
 	// v1 remains readable so a pre-upgrade row cannot poison reconciliation,
 	// but it is deliberately re-review-only: its revision did not bind time.
 	reviewResultSchemaV1 = "tusker.review-result/v1"
@@ -188,7 +192,7 @@ func reviewSubmitCmd(args Args) error {
 		if workerAttempt != attemptID {
 			return tuskerError(errorInvalidTransition, "worker review submission does not match its injected attempt")
 		}
-		result := ReviewResult{Schema: reviewResultSchema, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+		result := ReviewResult{Schema: reviewResultSchema, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, WorkerPolicyFP: "sha256:" + strings.Repeat("0", 64), Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 		if err := normalizeReviewResultProposal(&result); err != nil {
 			return err
 		}
@@ -223,7 +227,15 @@ func reviewSubmitCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	result := ReviewResult{Schema: reviewResultSchema, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: run.Runner, RunnerProfile: run.RunnerProfile, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+	workerPolicyFP, policyErr := completionCombinedWorkerPolicyFingerprint(run.ExecutePolicyFP, run.WorkerPolicyFP)
+	resultSchema := reviewResultSchema
+	if policyErr != nil {
+		// Preserve pre-v3/manual review recording for audit, but deliberately
+		// downgrade it to the non-completing schema when no daemon-frozen worker
+		// policy is available.
+		resultSchema, workerPolicyFP = reviewResultSchemaV2, ""
+	}
+	result := ReviewResult{Schema: resultSchema, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: run.Runner, RunnerProfile: run.RunnerProfile, WorkerPolicyFP: workerPolicyFP, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	if err := normalizeReviewResult(&result); err != nil {
 		return err
 	}
@@ -249,7 +261,7 @@ func normalizeReviewResultProposal(result *ReviewResult) error {
 	if err := normalizeReviewResult(result); err != nil {
 		return err
 	}
-	result.Runner, result.RunnerProfile = "", ""
+	result.Runner, result.RunnerProfile, result.WorkerPolicyFP = "", "", ""
 	result.ResultRevision = ""
 	return nil
 }
@@ -284,6 +296,7 @@ func normalizeReviewResult(result *ReviewResult) error {
 	result.Actor = strings.TrimSpace(result.Actor)
 	result.Runner = strings.TrimSpace(result.Runner)
 	result.RunnerProfile = strings.TrimSpace(result.RunnerProfile)
+	result.WorkerPolicyFP = strings.TrimSpace(result.WorkerPolicyFP)
 	result.Verdict = strings.TrimSpace(result.Verdict)
 	result.Blocker = strings.TrimSpace(result.Blocker)
 	result.Summary = strings.TrimSpace(result.Summary)
@@ -292,8 +305,11 @@ func normalizeReviewResult(result *ReviewResult) error {
 	result.Covers = sortedUniqueStrings(result.Covers)
 	result.Findings = sortedUniqueStrings(result.Findings)
 	result.EvidenceRefs = sortedUniqueStrings(result.EvidenceRefs)
-	if (result.Schema != reviewResultSchema && result.Schema != reviewResultSchemaV1) || result.ProjectID == "" || result.TaskID == "" || result.TaskStateRev == "" || result.WorkRevision <= 0 || result.ImplementationSHA == "" || result.AttemptID == "" || result.Actor == "" || result.Runner == "" || result.RunnerProfile == "" || result.ProofFingerprint == "" || result.GateFingerprint == "" {
+	if (result.Schema != reviewResultSchema && result.Schema != reviewResultSchemaV2 && result.Schema != reviewResultSchemaV1) || result.ProjectID == "" || result.TaskID == "" || result.TaskStateRev == "" || result.WorkRevision <= 0 || result.ImplementationSHA == "" || result.AttemptID == "" || result.Actor == "" || result.Runner == "" || result.RunnerProfile == "" || result.ProofFingerprint == "" || result.GateFingerprint == "" {
 		return tuskerError(errorInvalidArg, "review result is missing immutable authority fields")
+	}
+	if result.Schema == reviewResultSchema && !v7CloseAuthorityDigest(result.WorkerPolicyFP, "sha256:") {
+		return tuskerError(errorInvalidArg, "review result is missing an authenticated worker policy")
 	}
 	if result.Summary == "" || len(result.Summary) > reviewResultMaxSummary {
 		return tuskerError(errorInvalidArg, "review summary must be non-empty and at most 800 characters")

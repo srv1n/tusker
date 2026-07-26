@@ -15,13 +15,14 @@ import (
 	"strings"
 )
 
-const completionReceiptSchema = "tusker.completion-receipt/v1"
+const completionReceiptSchema = "tusker.completion-receipt/v2"
 
 type completionReceiptTransaction struct {
 	ID, ProjectID, TaskID, ResultRevision, ReviewedTaskStateRev                      string
 	WorkRevision                                                                     int
 	ImplementationSHA, ReviewAttempt, IntegrationBase, IntegrationRef, StagingRef    string
 	WaveID, WaveAuthorityKind, WaveAuthorizationFP, WaveMaterialFP, CloseAuthorityFP string
+	WorkerPolicyFP                                                                   string
 }
 
 type completionReceipt struct {
@@ -42,7 +43,7 @@ type completionReceiptAuthority struct {
 }
 
 func completionReceiptID(transactionID string) string {
-	sum := sha256.Sum256([]byte("tusker.completion-receipt/v1\x00" + transactionID))
+	sum := sha256.Sum256([]byte("tusker.completion-receipt/v2\x00" + transactionID))
 	return "receipt:" + hex.EncodeToString(sum[:])
 }
 
@@ -64,7 +65,7 @@ func newCompletionReceipt(vaultPath, taskPath string, task completionGitTreeEntr
 		return completionReceipt{}, nil, fmt.Errorf("completion receipt close projection does not match frozen authority")
 	}
 	r := completionReceipt{Schema: completionReceiptSchema, ReceiptID: completionReceiptID(tx.ID), TaskPath: taskPath, TaskBlob: task.OID, TaskMode: task.Mode, Review: result,
-		Transaction: completionReceiptTransaction{ID: tx.ID, ProjectID: tx.ProjectID, TaskID: tx.TaskID, ResultRevision: tx.ResultRevision, ReviewedTaskStateRev: tx.ReviewedTaskStateRev, WorkRevision: tx.WorkRevision, ImplementationSHA: tx.ImplementationSHA, ReviewAttempt: tx.ReviewAttempt, IntegrationBase: tx.IntegrationBase, IntegrationRef: tx.IntegrationRef, StagingRef: tx.StagingRef, WaveID: tx.WaveID, WaveAuthorityKind: tx.WaveAuthorityKind, WaveAuthorizationFP: tx.WaveAuthorizationFP, WaveMaterialFP: tx.WaveMaterialFP, CloseAuthorityFP: tx.CloseAuthorityFP}, Close: closeProjection, Authority: completionReceiptAuthority{ID: tx.CompletionAuthorityID, Signature: append([]byte(nil), tx.CompletionAuthoritySig...)}}
+		Transaction: completionReceiptTransaction{ID: tx.ID, ProjectID: tx.ProjectID, TaskID: tx.TaskID, ResultRevision: tx.ResultRevision, ReviewedTaskStateRev: tx.ReviewedTaskStateRev, WorkRevision: tx.WorkRevision, ImplementationSHA: tx.ImplementationSHA, ReviewAttempt: tx.ReviewAttempt, IntegrationBase: tx.IntegrationBase, IntegrationRef: tx.IntegrationRef, StagingRef: tx.StagingRef, WaveID: tx.WaveID, WaveAuthorityKind: tx.WaveAuthorityKind, WaveAuthorizationFP: tx.WaveAuthorizationFP, WaveMaterialFP: tx.WaveMaterialFP, CloseAuthorityFP: tx.CloseAuthorityFP, WorkerPolicyFP: tx.WorkerPolicyFP}, Close: closeProjection, Authority: completionReceiptAuthority{ID: tx.CompletionAuthorityID, Signature: append([]byte(nil), tx.CompletionAuthoritySig...)}}
 	raw, err := json.Marshal(r)
 	if err != nil {
 		return completionReceipt{}, nil, err
@@ -118,6 +119,7 @@ func validateCompletionReceipt(raw []byte, taskPath string, task completionGitTr
 		tr.IntegrationRef != tx.IntegrationRef ||
 		tr.StagingRef != tx.StagingRef ||
 		tr.CloseAuthorityFP != tx.CloseAuthorityFP ||
+		tr.WorkerPolicyFP != tx.WorkerPolicyFP ||
 		tr.WaveID != tx.WaveID ||
 		tr.WaveMaterialFP != tx.WaveMaterialFP ||
 		tr.WaveAuthorizationFP != tx.WaveAuthorizationFP ||
@@ -179,6 +181,7 @@ func completionTransactionFromReceipt(receipt completionReceipt) *completionTran
 		WaveAuthorizationFP:    tr.WaveAuthorizationFP,
 		WaveMaterialFP:         tr.WaveMaterialFP,
 		CloseAuthorityFP:       tr.CloseAuthorityFP,
+		WorkerPolicyFP:         tr.WorkerPolicyFP,
 		IntegrationBase:        tr.IntegrationBase,
 		IntegrationRef:         tr.IntegrationRef,
 		StagingRef:             tr.StagingRef,

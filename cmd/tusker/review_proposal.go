@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bytes"
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,18 +26,11 @@ func (d *Daemon) harvestReviewProposal(project RegisteredProject, note Note, run
 	if !pathWithin(d.stateRoot, path) {
 		return true, "review proposal raw-log path escapes daemon-owned attempt output"
 	}
-	raw, present, err := readFrozenReviewProposalLog(path)
+	proposal, present, err := readFrozenReviewProposalLog(path)
 	if err != nil {
 		return true, "review proposal cannot be read: " + err.Error()
 	}
 	if !present {
-		return false, ""
-	}
-	proposal, found, err := reviewProposalFromRawLog(raw)
-	if err != nil {
-		return true, "review proposal is malformed or conflicting"
-	}
-	if !found {
 		return false, ""
 	}
 	if err := d.validateReviewProposal(project, note, run, proposal); err != nil {
@@ -45,6 +38,10 @@ func (d *Daemon) harvestReviewProposal(project RegisteredProject, note Note, run
 	}
 	result := proposal.Result
 	result.Runner, result.RunnerProfile = run.Runner, run.RunnerProfile
+	result.WorkerPolicyFP, err = completionCombinedWorkerPolicyFingerprint(run.ExecutePolicyFP, run.WorkerPolicyFP)
+	if err != nil {
+		return true, "review proposal rejected: terminal review run has no authenticated worker policy"
+	}
 	result.ResultRevision = reviewResultFingerprint(result)
 	if _, err := d.store.SaveReviewResult(result); err != nil {
 		return true, "review proposal could not be recorded: " + firstActionableLine("", err.Error())
@@ -87,53 +84,98 @@ func reviewProposalFromRawLog(raw []byte) (reviewProposal, bool, error) {
 	return proposal, found, nil
 }
 
-func readFrozenReviewProposalLog(path string) ([]byte, bool, error) {
-	const tailLimit = 2 * reviewProposalMax
+func readFrozenReviewProposalLog(path string) (reviewProposal, bool, error) {
 	pathInfo, err := os.Lstat(path)
 	if os.IsNotExist(err) {
-		return nil, false, nil
+		return reviewProposal{}, false, nil
 	}
 	if err != nil {
-		return nil, false, err
+		return reviewProposal{}, false, err
 	}
 	if pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() {
-		return nil, false, fmt.Errorf("review proposal raw log is not a regular file")
+		return reviewProposal{}, false, fmt.Errorf("review proposal raw log is not a regular file")
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, false, err
+		return reviewProposal{}, false, err
 	}
 	defer file.Close()
 	openedInfo, err := file.Stat()
 	if err != nil || !openedInfo.Mode().IsRegular() || !os.SameFile(pathInfo, openedInfo) {
-		return nil, false, fmt.Errorf("review proposal raw log changed while opening")
+		return reviewProposal{}, false, fmt.Errorf("review proposal raw log changed while opening")
 	}
 	size := openedInfo.Size()
 	if size == 0 {
-		return nil, false, nil
+		return reviewProposal{}, false, nil
 	}
-	if size > tailLimit {
-		if _, err := file.Seek(size-tailLimit, 0); err != nil {
-			return nil, false, err
-		}
-	}
-	raw, err := io.ReadAll(io.LimitReader(file, tailLimit+1))
-	if err != nil || len(raw) > tailLimit {
-		return nil, false, fmt.Errorf("review proposal log tail is oversized")
+	proposal, found, err := scanReviewProposalLog(io.LimitReader(file, size))
+	if err != nil {
+		return reviewProposal{}, false, err
 	}
 	afterInfo, err := file.Stat()
 	currentInfo, currentErr := os.Lstat(path)
 	if err != nil || currentErr != nil || afterInfo.Size() != size || !os.SameFile(openedInfo, afterInfo) || !os.SameFile(pathInfo, currentInfo) {
-		return nil, false, fmt.Errorf("review proposal raw log changed while reading")
+		return reviewProposal{}, false, fmt.Errorf("review proposal raw log changed while reading")
 	}
-	if size > tailLimit {
-		if cut := bytes.IndexByte(raw, '\n'); cut >= 0 {
-			raw = raw[cut+1:]
-		} else {
-			return nil, false, fmt.Errorf("review proposal log tail has no complete record")
+	return proposal, found, nil
+}
+
+func scanReviewProposalLog(input io.Reader) (reviewProposal, bool, error) {
+	reader := bufio.NewReaderSize(input, reviewProposalMax+len(reviewProposalMarker)+2)
+	var proposal reviewProposal
+	found := false
+	for {
+		line, err := reader.ReadSlice('\n')
+		if err == bufio.ErrBufferFull {
+			if strings.HasPrefix(string(line), reviewProposalMarker) {
+				return reviewProposal{}, false, fmt.Errorf("proposal marker is oversized")
+			}
+			for err == bufio.ErrBufferFull {
+				_, err = reader.ReadSlice('\n')
+			}
+			if err == io.EOF {
+				return proposal, found, nil
+			}
+			if err != nil {
+				return reviewProposal{}, false, err
+			}
+			continue
+		}
+		if len(line) > 0 && line[len(line)-1] == '\n' {
+			line = line[:len(line)-1]
+			if len(line) > 0 && line[len(line)-1] == '\r' {
+				line = line[:len(line)-1]
+			}
+			if strings.HasPrefix(string(line), reviewProposalMarker) {
+				candidate, ok, parseErr := reviewProposalFromRawLog(append(append([]byte(nil), line...), '\n'))
+				if parseErr != nil || !ok {
+					return reviewProposal{}, false, firstNonNilError(parseErr, fmt.Errorf("proposal marker is malformed"))
+				}
+				if found && !reflect.DeepEqual(candidate, proposal) {
+					return reviewProposal{}, false, fmt.Errorf("conflicting proposal markers")
+				}
+				proposal, found = candidate, true
+			}
+		}
+		if err == io.EOF {
+			if len(line) > 0 && strings.HasPrefix(string(line), reviewProposalMarker) {
+				return reviewProposal{}, false, fmt.Errorf("unterminated proposal marker")
+			}
+			return proposal, found, nil
+		}
+		if err != nil {
+			return reviewProposal{}, false, err
 		}
 	}
-	return raw, true, nil
+}
+
+func firstNonNilError(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, run RunStatus, proposal reviewProposal) error {
@@ -144,27 +186,42 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 	if err != nil {
 		return err
 	}
-	if attempt.ProjectID != project.ProjectID || attempt.RecordID != run.RecordID || attempt.Lane != runLaneReview || attempt.WorkRevision != run.WorkRevision || attempt.Runner != run.Runner {
+	if attempt.ProjectID != project.ProjectID || attempt.RecordID != run.RecordID || attempt.Lane != runLaneReview || attempt.WorkRevision != run.WorkRevision || attempt.Runner != run.Runner || attempt.WorkerPolicyFP != run.WorkerPolicyFP {
 		return fmt.Errorf("proposal attempt does not match the daemon-owned review run")
 	}
 	if run.ProjectID != project.ProjectID || run.RecordID != stringField(note.Data, "id") || run.Lane != runLaneReview || !isDispatchingLeaseState(run.LeaseState) || firstNonEmpty(run.LeaseOwner, run.ActiveAttemptID) != run.ActiveAttemptID {
 		return fmt.Errorf("proposal run lease is no longer authoritative")
 	}
 	result := proposal.Result
-	if result.Runner != "" || result.RunnerProfile != "" || result.ResultRevision != "" {
+	if result.Runner != "" || result.RunnerProfile != "" || result.WorkerPolicyFP != "" || result.ResultRevision != "" {
 		return fmt.Errorf("worker proposal attempted to choose runner authority")
 	}
+	wf, err := loadWorkflow(project.VaultRoot)
+	if err != nil {
+		return err
+	}
+	_, _, executePolicyFP, err := completionLaneWorkerPolicy(wf.Data, note, runLaneExecute)
+	if err != nil {
+		return err
+	}
+	reviewProfile, _, reviewPolicyFP, err := completionLaneWorkerPolicy(wf.Data, note, runLaneReview)
+	if err != nil {
+		return err
+	}
+	if run.ExecutePolicyFP != executePolicyFP || run.WorkerPolicyFP != reviewPolicyFP || run.RunnerProfile != reviewProfile.Name {
+		return fmt.Errorf("proposal worker policy drifted from the current explicit lane profiles")
+	}
 	result.Runner, result.RunnerProfile = run.Runner, run.RunnerProfile
+	result.WorkerPolicyFP, err = completionCombinedWorkerPolicyFingerprint(run.ExecutePolicyFP, run.WorkerPolicyFP)
+	if err != nil {
+		return err
+	}
 	if err := normalizeReviewResult(&result); err != nil {
 		return err
 	}
 	if result.Schema != reviewResultSchema || result.ProjectID != project.ProjectID || result.TaskID != run.RecordID || result.AttemptID != run.ActiveAttemptID || result.WorkRevision != run.WorkRevision ||
 		result.TaskStateRev != stringField(note.Data, "state_rev") || result.ImplementationSHA != firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit")) {
 		return fmt.Errorf("proposal task/work/source snapshot drifted")
-	}
-	wf, err := loadWorkflow(project.VaultRoot)
-	if err != nil {
-		return err
 	}
 	if result.Actor != reviewerActorForNote(wf.Data.Reviewer.Actor, note) {
 		return fmt.Errorf("proposal reviewer actor is not authorized")

@@ -23,12 +23,16 @@ const (
 var runnerLoginShellPath = readRunnerLoginShellPath
 
 func runnerBaseEnv() []string {
+	return runnerBaseEnvWithSearchPath(runnerCommandSearchPath())
+}
+
+func runnerBaseEnvWithSearchPath(searchPath string) []string {
 	// A runner child is untrusted application code.  In particular it must not
 	// inherit the daemon's state-root override (or test/service variants of it),
 	// because that turns a workspace sandbox escape into control-plane write
 	// authority.  runnerEnv adds the narrow, attempt-owned transport paths that
 	// a child actually needs below.
-	return setEnvValue(workerEnvironment(os.Environ()), "PATH", runnerCommandSearchPath())
+	return setEnvValue(workerEnvironment(os.Environ()), "PATH", searchPath)
 }
 
 func workerEnvironment(env []string) []string {
@@ -57,10 +61,18 @@ func workerEnvironment(env []string) []string {
 }
 
 func runnerCommandSearchPath() string {
+	return runnerCommandSearchPathWithLogin(runnerLoginShellPath())
+}
+
+func runnerCommandSearchPathWithoutLogin() string {
+	return runnerCommandSearchPathWithLogin("")
+}
+
+func runnerCommandSearchPathWithLogin(loginPath string) string {
 	parts := []string{}
 	parts = appendPathList(parts, os.Getenv(runnerPathPrefixEnv))
 	parts = appendPathList(parts, os.Getenv("PATH"))
-	parts = appendPathList(parts, runnerLoginShellPath())
+	parts = appendPathList(parts, loginPath)
 	parts = append(parts, runnerPreferredPathDirs()...)
 	parts = append(parts,
 		"/opt/homebrew/bin",
@@ -195,14 +207,20 @@ func runnerCommandPreflightBlocker(runner RunnerName, command string) string {
 
 type runnerCommandPreflightResult struct {
 	ResolvedExecutable string
+	ExecutableVersion  string
 	RunnerPathPrefix   string
+	SearchPath         string
 }
 
 // runnerCommandPreflight validates every candidate for a bare runner command.
 // The first healthy candidate is also returned as a PATH prefix, ensuring the
 // later shell launch executes the same binary that passed preflight.
 func runnerCommandPreflight(runner RunnerName, command string) (runnerCommandPreflightResult, string) {
-	probe, err := runnerCommandPreflightProbe(command, runnerCommandSearchPath())
+	return runnerCommandPreflightWithSearchPath(runner, command, runnerCommandSearchPath())
+}
+
+func runnerCommandPreflightWithSearchPath(runner RunnerName, command, searchPath string) (runnerCommandPreflightResult, string) {
+	probe, err := runnerCommandPreflightProbe(command, searchPath)
 	if err != nil {
 		return runnerCommandPreflightResult{}, "runner preflight blocked: " + err.Error()
 	}
@@ -215,15 +233,18 @@ func runnerCommandPreflight(runner RunnerName, command string) (runnerCommandPre
 	}
 	var firstHealthErr error
 	for _, resolved := range candidates {
+		version := ""
 		if runnerExecutableNeedsHealthCheck(runner, probe.Executable) {
-			if err := runnerExecutableHealthCheck(resolved, probe.SearchPath); err != nil {
+			var healthErr error
+			version, healthErr = runnerExecutableHealthCheck(resolved, probe.SearchPath)
+			if healthErr != nil {
 				if firstHealthErr == nil {
-					firstHealthErr = err
+					firstHealthErr = healthErr
 				}
 				continue
 			}
 		}
-		result := runnerCommandPreflightResult{ResolvedExecutable: resolved}
+		result := runnerCommandPreflightResult{ResolvedExecutable: resolved, ExecutableVersion: version, SearchPath: probe.SearchPath}
 		if !strings.ContainsRune(probe.Executable, os.PathSeparator) {
 			result.RunnerPathPrefix = filepath.Dir(resolved)
 		}
@@ -231,7 +252,7 @@ func runnerCommandPreflight(runner RunnerName, command string) (runnerCommandPre
 	}
 	first := candidates[0]
 	if !runnerExecutableNeedsHealthCheck(runner, probe.Executable) {
-		return runnerCommandPreflightResult{ResolvedExecutable: first}, ""
+		return runnerCommandPreflightResult{ResolvedExecutable: first, SearchPath: probe.SearchPath}, ""
 	}
 	// Report the first candidate's diagnostic: it is normally the stale binary
 	// the operator needs to repair, while still proving no later candidate works.
@@ -456,23 +477,23 @@ func runnerExecutableNeedsHealthCheck(runner RunnerName, executable string) bool
 	}
 }
 
-func runnerExecutableHealthCheck(resolved, searchPath string) error {
+func runnerExecutableHealthCheck(resolved, searchPath string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), runnerPreflightTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, resolved, "--version")
 	cmd.Env = setEnvValue(os.Environ(), "PATH", searchPath)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("--version timed out after %s", runnerPreflightTimeout)
+		return "", fmt.Errorf("--version timed out after %s", runnerPreflightTimeout)
 	}
 	if err != nil {
 		summary := strings.TrimSpace(string(output))
 		if summary != "" {
-			return fmt.Errorf("--version failed: %v: %s", err, truncateRunes(summary, runnerPreflightOutputMaxRune))
+			return "", fmt.Errorf("--version failed: %v: %s", err, truncateRunes(summary, runnerPreflightOutputMaxRune))
 		}
-		return fmt.Errorf("--version failed: %v", err)
+		return "", fmt.Errorf("--version failed: %v", err)
 	}
-	return nil
+	return strings.TrimSpace(string(output)), nil
 }
 
 func truncateRunes(value string, maxRunes int) string {

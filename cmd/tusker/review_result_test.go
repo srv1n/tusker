@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -71,6 +72,7 @@ func validStoredReviewResult() ReviewResult {
 		Actor:             "reviewer:agent",
 		Runner:            "codex",
 		RunnerProfile:     "review",
+		WorkerPolicyFP:    "sha256:" + strings.Repeat("a", 64),
 		Covers:            []string{"A1"},
 		ProofFingerprint:  "sha256:proof",
 		GateFingerprint:   "sha256:gates",

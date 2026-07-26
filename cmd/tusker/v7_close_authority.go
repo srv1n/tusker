@@ -183,6 +183,10 @@ func v7CloseAuthorityDigest(value, prefix string) bool {
 }
 
 func authenticatedV7TaskCloseAuthority(note Note, project string) (v7TaskCloseAuthority, bool, error) {
+	return authenticatedV7TaskCloseAuthorityWithStore(note, project, nil)
+}
+
+func authenticatedV7TaskCloseAuthorityWithStore(note Note, project string, store *RuntimeStore) (v7TaskCloseAuthority, bool, error) {
 	value, present := note.Data["close_authority"]
 	if !present {
 		return v7TaskCloseAuthority{}, false, nil
@@ -200,7 +204,7 @@ func authenticatedV7TaskCloseAuthority(note Note, project string) (v7TaskCloseAu
 	if stringField(note.Data, "closed_at") != fact.ClosedAt || stringField(note.Data, "accepted_at") != fact.ClosedAt {
 		return v7TaskCloseAuthority{}, false, fmt.Errorf("close authority timestamp does not match closed record")
 	}
-	if err := authenticateV7TaskCloseAuthorityCommit(note, fact); err != nil {
+	if err := authenticateV7TaskCloseAuthorityCommitWithStore(note, fact, store); err != nil {
 		return v7TaskCloseAuthority{}, false, err
 	}
 	return fact, true, nil
@@ -212,6 +216,10 @@ func authenticatedV7TaskCloseAuthority(note Note, project string) (v7TaskCloseAu
 // integration ref. Every digest in the Markdown is public and therefore
 // insufficient on its own.
 func authenticateV7TaskCloseAuthorityCommit(note Note, fact v7TaskCloseAuthority) error {
+	return authenticateV7TaskCloseAuthorityCommitWithStore(note, fact, nil)
+}
+
+func authenticateV7TaskCloseAuthorityCommitWithStore(note Note, fact v7TaskCloseAuthority, store *RuntimeStore) error {
 	vaultPath := v7VaultRootForDocument(note.AbsolutePath)
 	if strings.TrimSpace(vaultPath) == "" {
 		return fmt.Errorf("close authority cannot locate its vault for protected-ref authentication")
@@ -327,7 +335,7 @@ func authenticateV7TaskCloseAuthorityCommit(note Note, fact v7TaskCloseAuthority
 			lastErr = validateErr
 			continue
 		}
-		if !verifyCompletionReceiptAuthorityWithStore(repoRoot, receipt, nil, true) {
+		if !verifyCompletionReceiptAuthorityWithStore(repoRoot, receipt, receiptEntry, store, true) {
 			lastErr = fmt.Errorf("completion receipt lacks a consumed resident-daemon authority")
 			continue
 		}
@@ -354,6 +362,10 @@ func v7VaultRootForDocument(path string) string {
 }
 
 func authenticateV7EventCloseAuthority(vaultPath string, fact v7TaskCloseAuthority) error {
+	return authenticateV7EventCloseAuthorityWithStore(vaultPath, fact, nil)
+}
+
+func authenticateV7EventCloseAuthorityWithStore(vaultPath string, fact v7TaskCloseAuthority, store *RuntimeStore) error {
 	task, err := resolveV7Note(vaultPath, fact.TaskID, "task")
 	if err != nil {
 		return fmt.Errorf("closed event cannot resolve its task projection: %w", err)
@@ -362,7 +374,7 @@ func authenticateV7EventCloseAuthority(vaultPath string, fact v7TaskCloseAuthori
 	if !present || taskFact != fact {
 		return fmt.Errorf("closed event close authority does not match the canonical task projection")
 	}
-	_, authenticated, err := authenticatedV7TaskCloseAuthority(task, v7ProjectID(vaultPath))
+	_, authenticated, err := authenticatedV7TaskCloseAuthorityWithStore(task, v7ProjectID(vaultPath), store)
 	if err != nil {
 		return err
 	}
