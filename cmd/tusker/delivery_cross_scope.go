@@ -11,15 +11,12 @@ import (
 )
 
 var deliveryCrossScopeAfterResolution func()
+var deliveryCrossScopeAfterIndexLoad func()
 
 // deliveryResolveCrossScopeDependencies resolves source identities while the
 // vault-wide material epoch is held.  It never consults plan files or performs
 // recursive imports: an imported, open-wave producer is the only valid target.
-func deliveryResolveCrossScopeDependencies(vault string, plan deliveryPlan, mapping map[string]string) (map[string][]deliveryCrossScopeDependency, func() error, []string, error) {
-	idx, err := loadV7Index(vault)
-	if err != nil {
-		return nil, nil, nil, err
-	}
+func deliveryResolveCrossScopeDependencies(vault string, idx v7Index, plan deliveryPlan, mapping map[string]string) (map[string][]deliveryCrossScopeDependency, func() error, []string, error) {
 	if err := validateDeliveryCrossScopeIndex(idx, v7ProjectID(vault)); err != nil {
 		return nil, nil, nil, err
 	}
@@ -30,21 +27,37 @@ func deliveryResolveCrossScopeDependencies(vault string, plan deliveryPlan, mapp
 			if scope == "" {
 				continue
 			}
-			var matches []Note
+			var semanticMatches, matches []Note
 			for _, candidate := range idx.Tasks {
-				if stringField(candidate.Data, "project") != v7ProjectID(vault) ||
-					stringField(candidate.Data, "delivery_plan_scope") != scope ||
+				if stringField(candidate.Data, "delivery_plan_scope") != scope ||
 					stringField(candidate.Data, "delivery_source_key") != dep.Task {
+					continue
+				}
+				semanticMatches = append(semanticMatches, candidate)
+				if stringField(candidate.Data, "project") != v7ProjectID(vault) {
 					continue
 				}
 				if deliveryCrossScopeProducerCurrent(candidate, idx) {
 					matches = append(matches, candidate)
 				}
 			}
+			if len(semanticMatches) > 1 {
+				return nil, nil, nil, tuskerError(errorInvalidTransition, fmt.Sprintf("CROSS_SCOPE_PRODUCER_DUPLICATE scope=%s key=%s consumer=%s", scope, dep.Task, consumer.SourceKey))
+			}
 			if len(matches) != 1 {
 				code := "CROSS_SCOPE_PRODUCER_MISSING"
-				if len(matches) > 1 {
-					code = "CROSS_SCOPE_PRODUCER_DUPLICATE"
+				if len(semanticMatches) == 1 {
+					candidate := semanticMatches[0]
+					switch {
+					case stringField(candidate.Data, "project") != v7ProjectID(vault):
+						code = "CROSS_SCOPE_PRODUCER_FOREIGN_VAULT"
+					case stringField(candidate.Data, "discarded_at") != "" || stringField(candidate.Data, "status") == "cancelled":
+						code = "CROSS_SCOPE_PRODUCER_DISCARDED"
+					case stringField(candidate.Data, "status") == "superseded":
+						code = "CROSS_SCOPE_PRODUCER_OBSOLETE"
+					default:
+						code = "CROSS_SCOPE_PRODUCER_REMOVED"
+					}
 				}
 				return nil, nil, nil, tuskerError(errorInvalidTransition,
 					fmt.Sprintf("%s scope=%s key=%s consumer=%s; import exactly one current producer before this consumer", code, scope, dep.Task, consumer.SourceKey))
@@ -66,28 +79,43 @@ func deliveryResolveCrossScopeDependencies(vault string, plan deliveryPlan, mapp
 	if err := validateDeliveryCrossScopeInboundRemoval(idx, plan, mapping); err != nil {
 		return nil, nil, nil, err
 	}
-	snapshot, paths := deliveryCrossScopeSnapshot(idx)
+	snapshot, paths, err := deliveryCrossScopeSnapshot(idx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	return resolved, snapshot, paths, nil
 }
 
 // The epoch serializes cooperative writers, but raw edits can bypass it.
 // Snapshot every graph document used by resolution and reject any changed or
 // invalid state revision immediately before the atomic writer takes preimages.
-func deliveryCrossScopeSnapshot(idx v7Index) (func() error, []string) {
+func deliveryCrossScopeSnapshot(idx v7Index) (func() error, []string, error) {
 	type snapshot struct {
 		path string
 		raw  []byte
 	}
 	var snapshots []snapshot
 	for _, task := range idx.Tasks {
-		if raw, err := os.ReadFile(task.AbsolutePath); err == nil {
-			snapshots = append(snapshots, snapshot{task.AbsolutePath, raw})
+		raw, err := os.ReadFile(task.AbsolutePath)
+		if err != nil {
+			return nil, nil, tuskerError(errorInvalidTransition, "CROSS_SCOPE_SNAPSHOT_READ_FAILED path="+task.AbsolutePath)
 		}
+		data, body, err := parseFrontmatter(string(raw))
+		if err != nil || stringField(data, "state_rev") != stringField(task.Data, "state_rev") || !v7StateRevMatches(data, body, stringField(data, "state_rev")) {
+			return nil, nil, tuskerError(errorInvalidTransition, "CROSS_SCOPE_STATE_REV_INVALID path="+task.AbsolutePath)
+		}
+		snapshots = append(snapshots, snapshot{task.AbsolutePath, raw})
 	}
 	for _, wave := range idx.Waves {
-		if raw, err := os.ReadFile(wave.AbsolutePath); err == nil {
-			snapshots = append(snapshots, snapshot{wave.AbsolutePath, raw})
+		raw, err := os.ReadFile(wave.AbsolutePath)
+		if err != nil {
+			return nil, nil, tuskerError(errorInvalidTransition, "CROSS_SCOPE_SNAPSHOT_READ_FAILED path="+wave.AbsolutePath)
 		}
+		data, body, err := parseFrontmatter(string(raw))
+		if err != nil || stringField(data, "state_rev") != stringField(wave.Data, "state_rev") || !v7StateRevMatches(data, body, stringField(data, "state_rev")) {
+			return nil, nil, tuskerError(errorInvalidTransition, "CROSS_SCOPE_STATE_REV_INVALID path="+wave.AbsolutePath)
+		}
+		snapshots = append(snapshots, snapshot{wave.AbsolutePath, raw})
 	}
 	verify := func() error {
 		for _, s := range snapshots {
@@ -102,7 +130,7 @@ func deliveryCrossScopeSnapshot(idx v7Index) (func() error, []string) {
 	for _, s := range snapshots {
 		paths = append(paths, s.path)
 	}
-	return verify, paths
+	return verify, paths, nil
 }
 
 func deliveryCrossScopeProducerCurrent(task Note, idx v7Index) bool {
@@ -190,17 +218,35 @@ func validateDeliveryCrossScopeIndex(idx v7Index, project string) error {
 		if err != nil {
 			return tuskerError(errorInvalidTransition, "CROSS_SCOPE_PROJECTION_INVALID consumer="+stringField(consumer.Data, "id")+"; repair the durable projection")
 		}
+		projected := map[string]int{}
 		for _, p := range projections {
 			consumerID := stringField(consumer.Data, "id")
 			if p.Scope == "" || p.Task == "" || p.TaskID == "" || p.Kind != "hard" || p.TargetContractFingerprint == "" || p.TargetContractFingerprint != strings.TrimSpace(p.TargetContractFingerprint) {
 				return tuskerError(errorInvalidTransition, "CROSS_SCOPE_PROJECTION_INVALID consumer="+consumerID+"; repair every projection field")
 			}
-			if !v7TaskDependsOnID(consumer, p.TaskID, idx) {
+			matches := 0
+			for _, edge := range v7TaskDependencyEdges(consumer, idx) {
+				if edge.ID == p.TaskID && edge.Hardness == v7DependencyHardnessHard {
+					matches++
+				}
+			}
+			if matches != 1 {
 				return tuskerError(errorInvalidTransition, "CROSS_SCOPE_EDGE_DRIFT consumer="+consumerID+" target="+p.TaskID+"; restore the ordinary hard edge")
 			}
+			projected[p.TaskID]++
 			producer, ok := idx.Tasks[p.TaskID]
-			if !ok || stringField(producer.Data, "project") != project || stringField(producer.Data, "delivery_plan_scope") != p.Scope || stringField(producer.Data, "delivery_source_key") != p.Task || stringField(producer.Data, "delivery_contract_fingerprint") != p.TargetContractFingerprint {
+			if !ok || stringField(producer.Data, "project") != project || stringField(producer.Data, "delivery_plan_scope") != p.Scope || stringField(producer.Data, "delivery_source_key") != p.Task || stringField(producer.Data, "delivery_contract_fingerprint") != p.TargetContractFingerprint || !deliveryCrossScopeProducerCurrent(producer, idx) {
 				return tuskerError(errorInvalidTransition, fmt.Sprintf("CROSS_SCOPE_TARGET_DRIFT scope=%s key=%s consumer=%s; re-import the original producer and consumer together", p.Scope, p.Task, consumerID))
+			}
+		}
+		consumerScope := stringField(consumer.Data, "delivery_plan_scope")
+		for _, edge := range v7TaskDependencyEdges(consumer, idx) {
+			producer, ok := idx.Tasks[edge.ID]
+			if !ok || stringField(producer.Data, "delivery_plan_scope") == "" || stringField(producer.Data, "delivery_plan_scope") == consumerScope {
+				continue
+			}
+			if edge.Hardness != v7DependencyHardnessHard || projected[edge.ID] != 1 {
+				return tuskerError(errorInvalidTransition, "CROSS_SCOPE_UNPROJECTED_EDGE consumer="+stringField(consumer.Data, "id")+" target="+edge.ID+"; restore the exact projection and hard edge")
 			}
 		}
 	}
@@ -231,22 +277,29 @@ func validateDeliveryCrossScopeGraph(idx v7Index, plan deliveryPlan, mapping map
 		}
 		graph[id] = deps
 	}
-	visiting, visited := map[string]bool{}, map[string]bool{}
+	visiting, visited := map[string]int{}, map[string]bool{}
+	var stack []string
+	var cycle []string
 	var visit func(string) bool
 	visit = func(id string) bool {
-		if visiting[id] {
+		if at, ok := visiting[id]; ok {
+			cycle = append(append([]string{}, stack[at:]...), id)
 			return true
 		}
 		if visited[id] {
 			return false
 		}
-		visiting[id] = true
-		for _, dep := range graph[id] {
+		visiting[id] = len(stack)
+		stack = append(stack, id)
+		deps := append([]string{}, graph[id]...)
+		sort.Strings(deps)
+		for _, dep := range deps {
 			if visit(dep) {
 				return true
 			}
 		}
-		visiting[id] = false
+		stack = stack[:len(stack)-1]
+		delete(visiting, id)
 		visited[id] = true
 		return false
 	}
@@ -257,7 +310,7 @@ func validateDeliveryCrossScopeGraph(idx v7Index, plan deliveryPlan, mapping map
 	sort.Strings(ids)
 	for _, id := range ids {
 		if visit(id) {
-			return tuskerError(errorInvalidArg, "CROSS_SCOPE_GLOBAL_CYCLE; remove the complete durable dependency cycle before import")
+			return tuskerError(errorInvalidArg, "CROSS_SCOPE_GLOBAL_CYCLE path="+strings.Join(cycle, "->")+"; remove the complete durable dependency cycle before import")
 		}
 	}
 	return nil

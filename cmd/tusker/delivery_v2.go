@@ -161,6 +161,7 @@ func (v *deliveryPlanV2) UnmarshalYAML(value *yaml.Node) error {
 							return fmt.Errorf("dependency scope must be an explicit string")
 						}
 						v.Tasks[i].Dependencies[j].scope = strings.TrimSpace(deliveryYAMLScalar(scopeNode))
+						v.Tasks[i].Dependencies[j].scopePresent = scopeNode != nil
 					}
 				}
 			}
@@ -195,6 +196,7 @@ func (v deliveryPlanV2) MarshalYAML() (any, error) {
 
 func deliveryV2DependencyScope(dep *deliveryDependency, scope string) {
 	dep.scope = strings.TrimSpace(scope)
+	dep.scopePresent = true
 }
 func deliveryYAMLMapping(n *yaml.Node) *yaml.Node {
 	if n != nil && n.Kind == yaml.DocumentNode && len(n.Content) > 0 {
@@ -328,7 +330,14 @@ func deliveryV2ImportBytesGuarded(vaultPath, path string, raw []byte, args Args,
 	if err := decoder.Decode(&v2); err != nil {
 		return tuskerError(errorInvalidArg, "invalid V2 delivery plan YAML: "+err.Error())
 	}
-	plan, issues := deliveryV2Prepare(vaultPath, v2)
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return err
+	}
+	if deliveryCrossScopeAfterIndexLoad != nil {
+		deliveryCrossScopeAfterIndexLoad()
+	}
+	plan, issues := deliveryV2PrepareWithIndex(vaultPath, v2, idx)
 	baseIssues, frontiers := validateDeliveryPlan(vaultPath, plan)
 	issues = append(issues, baseIssues...)
 	// Import is deliberately downstream of the doctor. A command caller may
@@ -336,13 +345,14 @@ func deliveryV2ImportBytesGuarded(vaultPath, path string, raw []byte, args Args,
 	// ordinary schema/traceability errors first so callers retain their precise
 	// existing remedies.
 	if len(issues) == 0 {
-		if doctor, err := deliveryPlanDoctorBytes(vaultPath, path, raw); err != nil {
-			return err
-		} else if !doctor.OK {
+		doctor := deliveryDoctorReport{Schema: "tusker.delivery-doctor/v1", Plan: path, DryRun: true, Findings: []deliveryDoctorFinding{}, Frontiers: frontiers, Concurrency: deliveryExpectedConcurrency(plan, frontiers)}
+		doctorOperationalFindings(&doctor, vaultPath, plan)
+		doctor.finish()
+		if !doctor.OK {
 			return tuskerError(errorInvalidArg, "delivery plan is operationally unsafe", withContext(map[string]any{"delivery_doctor": doctor}))
 		}
 	}
-	mapping, existingWave, mapErr := deliveryTaskMapping(vaultPath, plan)
+	mapping, existingWave, mapErr := deliveryTaskMappingFromIndex(idx, plan)
 	if mapErr != nil {
 		return mapErr
 	}
@@ -354,17 +364,18 @@ func deliveryV2ImportBytesGuarded(vaultPath, path string, raw []byte, args Args,
 	if len(report.Issues) > 0 {
 		return tuskerError(errorInvalidArg, "delivery plan is invalid: "+strings.Join(report.Issues, "; "), withContext(map[string]any{"delivery": report}))
 	}
-	resolved, snapshot, snapshotPaths, err := deliveryResolveCrossScopeDependencies(vaultPath, plan, mapping)
+	resolved, snapshot, snapshotPaths, err := deliveryResolveCrossScopeDependencies(vaultPath, idx, plan, mapping)
 	if err != nil {
 		return err
 	}
 	report.CrossScopeDependencies = resolved
 	report.CrossScopeSnapshot = snapshot
 	report.CrossScopeSnapshotPaths = snapshotPaths
+	report.V2Index = &idx
 	if deliveryCrossScopeAfterResolution != nil {
 		deliveryCrossScopeAfterResolution()
 	}
-	gateMapping, err := deliveryV2GateMapping(vaultPath, plan, mapping)
+	gateMapping, err := deliveryV2GateMappingFromIndex(idx, plan, mapping)
 	if err != nil {
 		return err
 	}
@@ -381,6 +392,15 @@ func deliveryV2ImportBytesGuarded(vaultPath, path string, raw []byte, args Args,
 }
 
 func deliveryV2Prepare(vaultPath string, v2 deliveryPlanV2) (deliveryPlan, []string) {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		plan := deliveryPlan{Schema: deliveryPlanV2Schema, Scope: v2.Scope, Title: v2.Title, Epic: strings.ToUpper(strings.TrimSpace(v2.Epic)), SpecRefs: v2.SpecRefs, Concurrency: v2.Concurrency, RunnerProfile: v2.RunnerProfile, Tasks: v2.Tasks, v2: &v2}
+		return plan, []string{"V2 index load failed: " + err.Error()}
+	}
+	return deliveryV2PrepareWithIndex(vaultPath, v2, idx)
+}
+
+func deliveryV2PrepareWithIndex(vaultPath string, v2 deliveryPlanV2, idx v7Index) (deliveryPlan, []string) {
 	plan := deliveryPlan{Schema: deliveryPlanV2Schema, Scope: v2.Scope, Title: v2.Title, Epic: strings.ToUpper(strings.TrimSpace(v2.Epic)), SpecRefs: v2.SpecRefs, Concurrency: v2.Concurrency, RunnerProfile: v2.RunnerProfile, Tasks: v2.Tasks, v2: &v2}
 	var issues []string
 	if v2.Schema != deliveryPlanV2Schema {
@@ -409,10 +429,7 @@ func deliveryV2Prepare(vaultPath string, v2 deliveryPlanV2) (deliveryPlan, []str
 		if strings.TrimSpace(c.SourceKey) == "" || deliveryPlaceholder(c.SourceKey) || !epicAcronymPattern.MatchString(strings.ToUpper(c.AcronymHint)) || deliveryPlaceholder(c.Title) {
 			issues = append(issues, "epic_contract requires stable source_key, three-letter acronym_hint, and concrete title")
 		} else {
-			idx, err := loadV7Index(vaultPath)
-			if err != nil {
-				issues = append(issues, err.Error())
-			} else {
+			{
 				for id, epic := range idx.Epics {
 					if stringField(epic.Data, "delivery_plan_scope") == plan.Scope && stringField(epic.Data, "delivery_source_key") == c.SourceKey {
 						plan.Epic = id
@@ -518,6 +535,9 @@ func deliveryV2GateMapping(vaultPath string, plan deliveryPlan, tasks map[string
 	if err != nil {
 		return nil, err
 	}
+	return deliveryV2GateMappingFromIndex(idx, plan, tasks)
+}
+func deliveryV2GateMappingFromIndex(idx v7Index, plan deliveryPlan, tasks map[string]string) (map[string]string, error) {
 	out := map[string]string{}
 	wanted := map[string]bool{}
 	max := 0
@@ -570,10 +590,23 @@ func deliveryV2TaskFingerprint(task deliveryPlanTask, gates []deliveryHumanGate)
 		}
 	}
 	sort.Slice(bound, func(i, j int) bool { return bound[i].SourceKey < bound[j].SourceKey })
+	type normalizedDependency struct {
+		Task  string `yaml:"task"`
+		Scope string `yaml:"scope,omitempty"`
+		Kind  string `yaml:"kind"`
+	}
+	var normalized map[string]any
+	taskRaw, _ := yaml.Marshal(task)
+	_ = yaml.Unmarshal(taskRaw, &normalized)
+	var dependencies []normalizedDependency
+	for _, dep := range task.Dependencies {
+		dependencies = append(dependencies, normalizedDependency{Task: strings.TrimSpace(dep.Task), Scope: strings.TrimSpace(dep.scope), Kind: fallback(strings.ToLower(strings.TrimSpace(dep.Kind)), "hard")})
+	}
+	normalized["dependencies"] = dependencies
 	raw, _ := yaml.Marshal(struct {
-		Task       deliveryPlanTask    `yaml:"task"`
+		Task       map[string]any      `yaml:"task"`
 		HumanGates []deliveryHumanGate `yaml:"human_gates,omitempty"`
-	}{Task: task, HumanGates: bound})
+	}{Task: normalized, HumanGates: bound})
 	return deliveryFingerprint(raw)
 }
 
@@ -678,10 +711,10 @@ func deliveryV2WriteExtras(vaultPath string, plan deliveryPlan, report deliveryI
 	}
 	// Removed source keyed gates are retained as obsolete history rather than
 	// silently deleting a human decision.
-	idx, err := loadV7Index(vaultPath)
-	if err != nil {
-		return err
+	if report.V2Index == nil {
+		return tuskerError(errorInvalidTransition, "V2 extras missing locked index epoch")
 	}
+	idx := *report.V2Index
 	wanted := map[string]bool{}
 	for _, g := range plan.v2.HumanGates {
 		wanted[g.SourceKey] = true

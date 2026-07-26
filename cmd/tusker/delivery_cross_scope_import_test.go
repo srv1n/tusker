@@ -148,7 +148,25 @@ func TestDeliveryPlanV2RejectsUnknownNestedField(t *testing.T) {
 	}
 }
 
-func TestDeliveryCrossScopeSnapshotRefusesRawMutationBeforeWrite(t *testing.T) {
+func TestDeliveryCrossScopeFingerprintSemanticTarget(t *testing.T) {
+	task := validDeliveryPlanV2().Tasks[0]
+	task.Dependencies = []deliveryDependency{{Task: "producer", Kind: "hard"}}
+	deliveryV2DependencyScope(&task.Dependencies[0], "scope-a/v1")
+	a := deliveryV2TaskFingerprint(task, nil)
+	deliveryV2DependencyScope(&task.Dependencies[0], "scope-b/v1")
+	b := deliveryV2TaskFingerprint(task, nil)
+	if a == b {
+		t.Fatal("semantic scope retarget did not change task contract fingerprint")
+	}
+	task.Dependencies[0].Kind = ""
+	omitted := deliveryV2TaskFingerprint(task, nil)
+	task.Dependencies[0].Kind = "hard"
+	if omitted != deliveryV2TaskFingerprint(task, nil) {
+		t.Fatal("default hard kind was not normalized")
+	}
+}
+
+func TestDeliveryCrossScopeAtomicity(t *testing.T) {
 	vault := deliveryTestVault(t)
 	producer := crossScopePlan("producer/v1", "PRD", "provider")
 	path := writeDeliveryV2TestPlan(t, vault, producer)
@@ -177,4 +195,13 @@ func TestDeliveryCrossScopeSnapshotRefusesRawMutationBeforeWrite(t *testing.T) {
 		t.Fatalf("want stale epoch refusal, got %v", err)
 	}
 	assertEqual(t, before, mustReadIndexTest(t, consumerPath), "raw race cannot overwrite consumer")
+}
+
+func TestDeliveryPlanV1(t *testing.T) {
+	vault := deliveryTestVault(t)
+	issues, _ := validateDeliveryPlan(vault, validDeliveryPlan())
+	if len(issues) != 0 {
+		t.Fatalf("unchanged V1 plan rejected: %v", issues)
+	}
+	TestDeliveryPlanV1RejectsScopedDependency(t)
 }

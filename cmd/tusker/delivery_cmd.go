@@ -120,7 +120,8 @@ type deliveryDependency struct {
 	Kind string `yaml:"kind,omitempty" json:"kind,omitempty"`
 	// scope is populated only by the V2 decoder. Keeping it out of the shared
 	// V1 wire model means V1 strict decoding still rejects scope outright.
-	scope string
+	scope        string
+	scopePresent bool
 }
 
 // deliveryCrossScopeDependency is deliberately a projection, not an alternate
@@ -185,6 +186,7 @@ type deliveryImportReport struct {
 	CrossScopeDependencies  map[string][]deliveryCrossScopeDependency `json:"-"`
 	CrossScopeSnapshot      func() error                              `json:"-"`
 	CrossScopeSnapshotPaths []string                                  `json:"-"`
+	V2Index                 *v7Index                                  `json:"-"`
 }
 
 func deliveryPlanCmd(args Args) error {
@@ -422,7 +424,11 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]st
 			if kind != "hard" && kind != "soft" {
 				issues = append(issues, key+": dependency kind must be hard or soft")
 			}
-			if plan.v2 != nil && strings.TrimSpace(dep.scope) != "" {
+			if plan.v2 != nil && dep.scopePresent {
+				if strings.TrimSpace(dep.scope) == "" {
+					issues = append(issues, key+": CROSS_SCOPE_INVALID_SCOPE; supplied scope must be non-blank")
+					continue
+				}
 				if !deliveryScopeValid(dep.scope) {
 					issues = append(issues, key+": CROSS_SCOPE_INVALID_SCOPE "+dep.scope+"; use a stable producer scope")
 				}
@@ -457,6 +463,10 @@ func deliveryTaskMapping(vaultPath string, plan deliveryPlan) (map[string]string
 	if err != nil {
 		return nil, "", err
 	}
+	return deliveryTaskMappingFromIndex(idx, plan)
+}
+
+func deliveryTaskMappingFromIndex(idx v7Index, plan deliveryPlan) (map[string]string, string, error) {
 	mapping := map[string]string{}
 	waveID := ""
 	scope := deliveryPlanScope(plan)
@@ -699,10 +709,10 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 	// projection. Refresh the complete inbound closure here, before any write,
 	// so a failed or corrupt consumer cannot leave a partially rewritten graph.
 	if plan.v2 != nil {
-		idx, err := loadV7Index(vaultPath)
-		if err != nil {
-			return err
+		if report.V2Index == nil {
+			return tuskerError(errorInvalidTransition, "V2 import missing locked index epoch")
 		}
+		idx := *report.V2Index
 		if err := deliveryRefreshInboundProjectionWrites(vaultPath, idx, plan, report, writes, now, actor); err != nil {
 			return err
 		}
