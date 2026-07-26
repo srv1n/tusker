@@ -20,7 +20,7 @@ requirements:
   - id: R3
     outcome: Operators and agents can verify the factory loop through trustworthy surfaces, end-to-end proof, and canonical guidance.
   - id: R4
-    outcome: A human-controlled low-risk dogfood cutover enables authoritative completion and automation only after shadow parity and rollback readiness.
+    outcome: Shadow parity and rollback readiness remain independent default-off producer evidence for the later program-level dogfood authority transfer.
 concurrency: 2
 runner_profile: implementation-terra
 tasks:
@@ -415,17 +415,17 @@ tasks:
 
   - source_key: factory-execution-dogfood-cutover
     requirement_refs: [R4]
-    title: Dogfood and cut over the factory control loop without a cadence gap
-    outcome: Tusker can enable the new reactor for one low-risk project and then roll it out safely while legacy execution remains authoritative until parity, rollback, and operator visibility are proven.
+    title: Prove factory-control shadow and rollback readiness
+    outcome: Tusker can prove the new reactor's parity, isolation, and rollback readiness while legacy execution remains authoritative and automation stays disabled.
     acceptance:
       - id: A1
         outcome: A read-only doctor checks managed daemon health, project registration, automation and dispatch scope, wave authorization, runner approval, workspace isolation, integration cleanliness, skill version, review-result support, and completion-reactor feature state.
       - id: A2
         outcome: Shadow mode compares frontier, ownership, review reaction, integration decision, and successor wake without claiming, reviewing, mutating tasks, merging, closing, moving refs, or consuming model capacity.
       - id: A3
-        outcome: One low-risk armed wave completes through the new control loop with its operations surface and reliability artifact reviewed before the reactor becomes authoritative for another project.
+        outcome: A low-risk candidate can be assessed through shadow fixtures, operations surface, and reliability evidence without arming a wave, enabling automation, or making the reactor authoritative.
       - id: A4
-        outcome: The cutover keeps current authoritative execution available until representative parity passes and prevents both control loops from owning the same task or integration transaction.
+        outcome: The shadow contract keeps current authoritative execution available, prevents both control loops from owning the same task or integration transaction, and routes any authority transfer to Plan 17.
       - id: A5
         outcome: Rollback stops fresh new-reactor actions while preserving live leases, task and review history, integration refs, audit facts, and one documented recovery path.
       - id: A6
@@ -443,7 +443,7 @@ tasks:
     artifact:
       kind: reliability_summary
       path: docs/runbooks/factory-execution-cutover.md
-      summary: Default-off setup, shadow parity, single-wave dogfood, authority transfer, rollback, and no-cadence-gap proof and operating checklist.
+      summary: Default-off setup, shadow parity, isolation, rollback, and no-cadence-gap readiness proof and operating checklist.
       acceptance_ids: [A1, A2, A3, A4, A5, A6]
     owned_paths:
       - cmd/tusker/factory_execution_doctor.go
@@ -456,15 +456,29 @@ tasks:
     size: xl
     domains: [project]
 
-
-human_gates:
-  - source_key: low-risk-authoritative-factory-cutover
-    title: Select a low-risk project and authorize authoritative factory completion
-    kind: auth
-    owner: human:operator
-    task_source_key: factory-execution-dogfood-cutover
-    acceptance_ids: [A3, A4]
-    dependency_closure: []
-    action: After shadow parity and rollback readiness are evidenced, select one low-risk project and explicitly enable its authoritative completion and automation boundary.
-    verification: The accountable operator records the selected low-risk project, shadow evidence, rollback readiness, and explicit authoritative completion and automation enablement.
-    why_agent_cannot: Only the accountable operator can choose the production project and grant its automation and authoritative completion authority.
+  - source_key: factory-control-shadow-ready
+    requirement_refs: [R4]
+    title: Publish independent factory-control shadow readiness
+    outcome: Objective factory-control parity, isolation, and rollback evidence is available as a default-off producer without authorizing a project, wave, daemon, or completion reactor.
+    acceptance:
+      - id: A1
+        outcome: The task follows factory-execution-dogfood-cutover and proves shadow parity, operator visibility, and rollback readiness while legacy execution remains authoritative.
+      - id: A2
+        outcome: Its proof cannot enable automation, arm a wave, start a daemon, authorize completion, release, spend, or move a default branch.
+    verification:
+      - covers: A1,A2
+        check: "command: go test ./cmd/tusker -run '^TestCrossScopePlanRewiring' -count=1"
+    artifact:
+      kind: reliability_summary
+      path: e2e/factory_execution_cutover_test.go
+      summary: Independent default-off factory-control shadow, isolation, and rollback readiness projection.
+      acceptance_ids: [A1, A2]
+    owned_paths: []
+    dependencies:
+      - task: factory-execution-dogfood-cutover
+        kind: hard
+    concurrency_group: factory-rollout
+    risk: critical
+    priority: p0
+    size: s
+    domains: [project]
