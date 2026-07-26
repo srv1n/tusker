@@ -289,7 +289,7 @@ func safeServeIssueContext(value any, depth int) any {
 		}
 		out := make(map[string]any, len(keys)+1)
 		for _, key := range keys {
-			out[safePacketText(key, 80)] = safeServeIssueContext(typed[key], depth+1)
+			out[safeOperatorErrorText(key, 80)] = safeServeIssueContext(typed[key], depth+1)
 		}
 		if len(typed) > len(keys) {
 			out["_truncated"] = true
@@ -323,19 +323,11 @@ func safeOperatorErrorText(value string, limit int) string {
 	if value == "" {
 		return ""
 	}
-	fields := strings.Fields(value)
-	for index, field := range fields {
-		token := strings.Trim(field, `"'()[]{}<>,;`)
-		suffix := ""
-		if strings.HasSuffix(token, ":") {
-			token = strings.TrimSuffix(token, ":")
-			suffix = ":"
-		}
-		if filepath.IsAbs(token) || serveErrorWindowsAbsolutePathPattern.MatchString(token) {
-			fields[index] = strings.Replace(field, token+suffix, "[path]"+suffix, 1)
-		}
-	}
-	return safePacketText(strings.Join(fields, " "), limit)
+	value = serveErrorJSONSecretPattern.ReplaceAllString(value, "${1}[redacted]")
+	value = serveErrorJSONAuthorizationPattern.ReplaceAllString(value, "${1}[redacted]")
+	value = serveErrorUnixAbsolutePathPattern.ReplaceAllString(value, "${1}[path]")
+	value = serveErrorWindowsAbsolutePathPattern.ReplaceAllString(value, "${1}[path]")
+	return safePacketText(value, limit)
 }
 
 func formatIssue(issue Issue) string {
@@ -431,7 +423,10 @@ var (
 	recordIDPattern                      = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
 	assetLinkRegex                       = regexp.MustCompile(`(!\[.*?\]\(.+?\))|(!\[\[.+?\]\])|(\[.+?\]\((https?:\/\/\S+?)\))`)
 	integerStringPattern                 = regexp.MustCompile(`^-?\d+$`)
-	serveErrorWindowsAbsolutePathPattern = regexp.MustCompile(`^[A-Za-z]:[\\/].+`)
+	serveErrorUnixAbsolutePathPattern    = regexp.MustCompile(`(^|[\s=:,"'(\[{])(/[^\s/"'()\[\]{}<>,;][^\s"'()\[\]{}<>,;]*)`)
+	serveErrorWindowsAbsolutePathPattern = regexp.MustCompile(`(^|[\s=,"'(\[{])([A-Za-z]:[\\/][^\s"'()\[\]{}<>,;]+)`)
+	serveErrorJSONSecretPattern          = regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)["']?\s*[:=]\s*["']?)[^"'\s,}\]]+`)
+	serveErrorJSONAuthorizationPattern   = regexp.MustCompile(`(?i)(["']?(?:authorization|proxy-authorization)["']?\s*[:=]\s*["']?(?:bearer\s+)?)[^"'\s,}\]]+`)
 )
 
 var statusTransitionDateFields = map[string]string{

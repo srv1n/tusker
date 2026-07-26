@@ -1258,9 +1258,19 @@ func TestServeDeliveryDoubleFaultsPreserveEverySafeCause(t *testing.T) {
 		}
 		rolledBack := rollbackDeliveryStartTransaction(
 			&deliveryStartAuthority{ArmCommit: commit},
-			tuskerError("CAS_BUSY", "typed delivery refusal token=rollback-secret-value"),
+			tuskerError(
+				"CAS_BUSY",
+				`typed delivery refusal token=rollback-secret-value {"token":"json-secret-value"}`,
+				withContext(map[string]any{
+					path:     "file:" + path,
+					"detail": `path=` + path + ` {"authorization":"Bearer context-secret-value"}`,
+				}),
+			),
 		)
-		combined := errors.Join(rolledBack, errors.New("injected subsequent material close failure"))
+		combined := errors.Join(
+			rolledBack,
+			errors.New(`injected subsequent material close failure path=`+path+` {"password":"close-secret-value"}`),
+		)
 		result := serveCommandResult("tusker delivery start", "", combined)
 		if result.OK || !result.Refused || result.Issue == nil || result.Issue.Code != "CAS_BUSY" {
 			t.Fatalf("rollback double fault lost primary typed refusal: %#v", result)
@@ -1275,7 +1285,16 @@ func TestServeDeliveryDoubleFaultsPreserveEverySafeCause(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(encodedIssue), filepath.Dir(path)) || strings.Contains(string(encodedIssue), "rollback-secret-value") {
+		for _, forbidden := range []string{
+			filepath.Dir(path),
+			"rollback-secret-value",
+			"json-secret-value",
+			"context-secret-value",
+			"close-secret-value",
+		} {
+			if !strings.Contains(string(encodedIssue), forbidden) {
+				continue
+			}
 			t.Fatalf("safe operator issue leaked an absolute path or secret: %s", encodedIssue)
 		}
 		raw, err := os.ReadFile(path)
