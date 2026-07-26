@@ -1,100 +1,162 @@
 ---
 capsule:
-  what: "Plans one inert MVP import and one separately approved, one-task shadow/staging dogfood observation."
+  what: "One inert V2 contract for a singleton, opt-in Tusker factory dogfood run."
   use_when:
-    - "Preparing or reviewing the first opt-in daemon dogfood wave and its exact execution boundary."
+    - "Preparing the bounded factory MVP activation sequence and its post-run audit."
   skip_when:
     - "Enabling automation, arming a wave, starting a daemon, promoting a ref, releasing, or spending."
 ---
 
 # Factory MVP wave one
 
-Status: proposed delivery contract
+Status: proposed V2 delivery contract
 Date: 2026-07-26
 
-## Outcome
+## Active target
 
-Produce one durable operations report from the first opt-in daemon dogfood
-run. Plan authoring, doctor, and import dry-run are inert. They neither enable
-the project nor create execution authority. A later run may occur only after
-separate explicit human approval has enabled the authorized project, armed
-`W-0004`, and started the managed daemon. The daemon then dispatches exactly
-`ORC-T-0050` once with the configured `implementation-terra` profile (Terra,
-medium effort) for a shadow/staging-only observation.
+The active prospective import is `factory-mvp-wave-one/v2`. Its only delivery
+source is `capture-first-run-readiness`; a fresh source-built dry-run must map
+it to **prospective** `ORC-T-0051` in **prospective** `W-0005`, using
+`integration/W-0005`. Nothing has been imported, armed, enabled, dispatched,
+or run by writing this contract.
+
+After separately approved cutover steps, the daemon may dispatch exactly one
+Terra-medium `implementation-terra` attempt. The worker writes
+`docs/reports/factory-mvp-first-run.md`, then submits to the configured
+`reviewer-terra` profile: Terra high, read-only, and capped at three review
+cycles. The deterministic control plane—not the worker or reviewer—owns
+authoritative staging completion. A coordinator observes the actual review
+and completion result afterward. `main` does not move. The legacy conductor
+remains authoritative throughout this MVP; transfer is a separate later human
+approval, never an outcome of this run.
 
 ## Requirements
 
 | ID | Outcome |
 | --- | --- |
-| R1 | The worker-owned report proves the landed operations projection and focused E2E checks remain green during one authorized Terra-medium implementation attempt, and records the configured bounded reviewer policy as an expected later boundary. |
-| R2 | The worker-owned report captures the approved project enablement, `W-0004` arm, managed-daemon start, one-task dispatch, and configured reviewer policy alongside read-only operations, automation, daemon, and wave state. |
-| R3 | The report proves no unrelated claim/project, `all_eligible` widening, default-ref movement, provider credential use, release, or extra implementation/triage/release/provider attempt occurred. |
+| R1 | One Terra-medium implementation attempt records the two focused operations/control tests in the durable report. |
+| R2 | The report records the exact approved activation and isolation tuple, including the two automation toggles and staging configuration. |
+| R3 | Only bounded Terra-high read-only review follows; the coordinator, after review, observes authoritative staging completion. No default-ref promotion occurs. |
 
-## Constraints and non-goals
+## Binding boundaries
 
-- Exactly one low-risk task; concurrency is one; the implementation runner is
-  Terra at medium effort. Normal configured bounded reviewer attempt(s) remain
-  enabled and are not a second implementation attempt. The worker report
-  records their configured bounded policy, not a reviewer result that has not
-  happened yet.
-- The run is shadow/staging only. The legacy conductor remains authoritative.
-  During the worker's report/check window, both `main` and
-  `integration/W-0004` must remain unchanged. A coordinator's separate
-  post-run cutover check may observe one normal staging-completion advance of
-  `integration/W-0004`; that is runbook success evidence, never a task
-  prerequisite or self-attestation. `main` must not move.
-- This plan has no dependencies or human gates. Separate human approvals are
-  prerequisites for one project enablement, one `W-0004` arm, and one daemon
-  start; the task observes those facts and does not perform them.
-- Binary installation is a separate pre-run approval and is never task work.
-  Use the repository-built `go run ./cmd/tusker ...` command surface while the
-  installed binary is stale.
-- No provider credential, default-ref promotion, release, spend, broad
-  `all_eligible` dispatch, additional project, extra implementation/triage/
-  release/provider attempt, or runtime feature change is in scope.
+- Planning, context, doctor, review, dry-run, and import are inert. They never
+  enable a project, alter the global registry, arm a wave, start/install a
+  daemon, dispatch a worker, move a ref, release, spend, configure credentials,
+  or push.
+- The task is one low-risk node, concurrency one. The worker does not perform
+  enable/disable, arm/disarm, daemon/service, binary, registry, import, or
+  completion/promotion configuration mutations. It only observes the approved
+  state and writes its report.
+- `main` is snapshot-checked during worker work and must not change.
+  `integration/W-0005` snapshots are optional worker context; a post-review
+  integration advance is deterministic-control-plane evidence, never worker
+  proof or self-attestation.
+- No `all_eligible` dispatch, other project, provider credential, provider or
+  release work, paid triage, extra implementation attempt, default-ref
+  promotion, or scheduled promotion is in scope. Scheduled promotion remains
+  disabled.
+- The root coordinator must compute a new context fingerprint after this
+  contract is merged into the registered root repository and after the approved
+  activation configuration is in place. The worktree fingerprint below is only
+  a structural authoring check; it is not activation authority.
 
-## Acceptance and verification
+## One-time cutover diagnostics and activation order
 
-The delivery task must create `docs/reports/factory-mvp-first-run.md` with the
-exact command results, pre/post active-run and ref snapshots, the approved
-event tuple, and all read-only preflight surfaces. It must refuse to proceed
-unless a fresh inert dry-run still maps
-`capture-first-run-readiness -> ORC-T-0050` and `W-0004`.
+These are operator diagnostics, not a recurring product workflow.
+
+1. Approve a durable binary update and Full Disk Access for the managed-service
+   host. Apply the reviewed configuration commit that sets all three enable
+   switches—`tusker.yaml` `automation.enabled: true`,
+   `.tusker/WORKFLOW.md` `automation_enabled: true`, and registry project
+   enablement—and exactly `automation.completion_reactor.mode: authoritative`.
+   That reviewed commit also keeps scheduled promotion disabled. Only then run
+   `make install-bin`; before then, use `go run ./cmd/tusker ...`.
+2. Record the enabled registry set. Before starting the global daemon,
+   temporarily disable exactly these unrelated enabled projects and later
+   restore precisely that recorded set: CarelessWhisper
+   (`01KXFGVD3NQY780QTDCVX933JN`), backend
+   (`01KX5WD37K47F1C19EC08T94PN`), cinta
+   (`01KXJXEAAHP5VGTN9ANZ5KE72M`), and rznapp
+   (`01KXJPZPC9VTEPR66NFYT9JAAZ`). No other registry mutation is authorized.
+3. Read back all three switches and `completion_reactor.mode: authoritative`,
+   keep `dispatch_scope: armed_waves`, and retain zero implicit delivery units
+   (`! rg -n '^delivery_unit:' .tusker/work/waves`). Derive the runtime store
+   and require zero rows for this project in both `review_results` and
+   `completion_transactions`. This is stronger than a V3-only check: no prior
+   stored review or completion transaction is silently inherited.
+4. Source-built operations and automation status must show every pre-existing
+   wave `W-0001` through `W-0004` disarmed. With all waves disarmed, the human
+   starts the service first, exactly:
+
+   ```sh
+   tusker daemon service install --allow-protected-projects --json
+   tusker daemon service status --json
+   tusker daemon status --json
+   ```
+
+   Verify it is alive and reconciling before the V2 plan is re-fingerprinted,
+   reviewed, imported, or started. Interactive agents may inspect state and
+   implement direct work, but cannot start the daemon service or dispatch the
+   factory.
+5. Only after the service is healthy, the root coordinator recomputes the root
+   context fingerprint, patches the V2 plan, then runs doctor/review and inert
+   import. A human separately approves exactly one Terra-medium implementation
+   attempt and at most three Terra-high read-only review cycles, naming the
+   launch-count and token ceiling; no additional implementation, triage, or
+   provider attempt is authorized.
+6. The human issues the one fingerprint-bound `tusker delivery start` action
+   only after the preceding review/import. It is the first point at which the
+   imported singleton may arm.
+
+## Worker verification
+
+The task report records source-built `setup doctor`, strict skill doctor,
+`validate` (including a nonzero exit as a blocker, never false green), projects,
+factory operations, automation status/queue, daemon/service status, and the
+prospective wave brief/preflight. It must prove a fresh inert dry-run maps
+`capture-first-run-readiness -> ORC-T-0051` and `W-0005`, execute:
 
 ```sh
 go test ./cmd/tusker -run '^TestFactoryOperationsProjection$' -count=1
 go test ./cmd/tusker -run '^TestFactoryExecutionControl$' -count=1
 ```
 
-The report must record repository-built output from `setup doctor`, strict
-skill doctor, `validate`, projects list, factory operations, automation
-status/queue, daemon/service status, and `W-0004` brief/preflight. The report
-must capture the preflight JSON and independently assert `ok:true`; a JSON-mode
-command exit alone is not proof. A known
-pre-existing red `validate` result is a recorded blocker, not false green proof
-or permission to repair/widen scope. The active-run snapshots must prove only
-the approved project and `ORC-T-0050` were claimed and distinguish its Terra
-implementation attempt from the configured reviewer policy; the worker refuses cleanly
-if `integration/W-0004` is absent and its ref snapshots prove both it and
-`main` did not move during worker work. A separate coordinator post-run check,
-not this task, may later record one normal `integration/W-0004` staging advance.
+It records before/after run and queue state, confirms `armed_waves`, and proves
+no `all_eligible` widening. The `main` snapshot is mandatory. The integration
+snapshot is optional and cannot be used by the worker to claim staging
+completion.
 
-## Coordinator post-run check
+## Coordinator post-review check
 
-After the worker has submitted and normal review/staging has occurred, a
-coordinator performs one read-only check. It records the actual reviewer
-attempt count, verdict, and completion state, then records the staging result
-and any normal `integration/W-0004` advance while confirming `main` remains
-unchanged. This check does not edit the reviewed task artifact
-`docs/reports/factory-mvp-first-run.md`, does not create another attempt, and
-does not enable, arm, start, release, promote, spend, or configure a provider.
+After the worker submits and the configured review cycles finish, the
+coordinator performs one read-only check: actual reviewer count/verdict,
+deterministic completion state, any normal `integration/W-0005` advance, and
+an unchanged `main`. It does not edit the worker report, create another model
+attempt, change registry/configuration, arm/enable/start anything, promote,
+release, spend, or configure a provider.
 
-## Work streams
+## Return to baseline
+
+Whether the post-review audit succeeds or rolls back, return in this order:
+disarm `W-0005`; stop and uninstall the managed service; disable the Tusker
+registry project; apply a reviewed rollback commit setting both repository
+automation switches false, completion reactor disabled, and scheduled promotion
+disabled; verify zero active runs; only then restore the exact four-project
+registry ledger captured before isolation. The installed binary may remain.
+
+## Historical v1 cancellation (not an active target)
+
+The following generated block is preserved as durable evidence only. The v1
+contract was cancelled before any attempt, review, completion, or ref movement;
+its one task was cancelled and its wave remains disarmed. It must not be used
+for activation or as an alias for the V2 target above.
 
 <!-- tusker:delivery-import:91b2fb97ca8e3122:begin -->
 
-- `[[ORC-T-0050]]` implements delivery source `capture-first-run-readiness`.
+- `[[ORC-T-0050]]` implemented historical delivery source
+  `capture-first-run-readiness`; it was cancelled before any attempt.
 
-- `[[W-0004]]` is the imported delivery wave.
+- `[[W-0004]]` is the disarmed, cancelled-before-run historical delivery wave.
 
 <!-- tusker:delivery-import:91b2fb97ca8e3122:end -->
