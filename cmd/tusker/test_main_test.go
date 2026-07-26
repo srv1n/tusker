@@ -20,6 +20,19 @@ import (
 const validationLockHeldEnv = "TUSKER_VALIDATION_LOCK_HELD"
 
 func TestMain(m *testing.M) {
+	switch os.Getenv("TUSKER_V7_PIPE_HOLDER") {
+	case "parent":
+		child := exec.Command(os.Args[0])
+		child.Env = []string{"TUSKER_V7_PIPE_HOLDER=child"}
+		child.Stdout, child.Stderr = os.Stdout, os.Stderr
+		if err := child.Start(); err != nil {
+			os.Exit(2)
+		}
+		os.Exit(0)
+	case "child":
+		time.Sleep(2 * time.Second)
+		os.Exit(0)
+	}
 	if os.Getenv("TUSKER_V7_FD_TRANSPORT_HELPER") == "1" {
 		os.Exit(runV7FDTransportProcessHelper())
 	}

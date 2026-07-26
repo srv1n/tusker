@@ -49,6 +49,7 @@ const (
 // Kept as a variable solely so the deterministic fake-provider deadline test
 // can use milliseconds; production never configures this from repository data.
 var v7FullGateRuntimeLimit = v7FullGateRuntimeMax
+var v7FullGateProviderPipeWaitDelay = v7FullGateCleanTimeout
 
 // Deterministic crash/durability and adversary seams. Production leaves them
 // nil.
@@ -62,6 +63,7 @@ var (
 )
 
 var errV7FullGateProvider = errors.New("full-gate lifecycle provider")
+var errV7FullGateLedgerConflict = errors.New("full-gate lifecycle provider ledger conflict")
 
 // v7FullGateOutcome is deliberately provider-neutral. A failed repository
 // command is not a broken provider, and neither cancellation nor a timeout may
@@ -571,6 +573,11 @@ func (p *v7ExternalFullGateProvider) BindFullGateProvider(binding v7FullGateProv
 	if err != nil || filepath.Dir(artifactRel) != filepath.Join("artifacts", "promotion-gates") || filepath.Ext(artifactRel) != ".log" {
 		return fmt.Errorf("%w: full-gate artifact target is outside the trusted promotion artifact directory", errV7FullGateProvider)
 	}
+	for _, pending := range p.pending {
+		if pending != nil && filepath.Clean(pending.request.ArtifactRef) == filepath.Clean(binding.ArtifactRef) {
+			return fmt.Errorf("%w: each provider command requires a unique journal-bound artifact", errV7FullGateProvider)
+		}
+	}
 	p.binding = binding
 	return nil
 }
@@ -751,11 +758,13 @@ func verifyV7TrustedProviderExecutable(path string) (string, string, error) {
 	if bytes.HasPrefix(raw, []byte("#!")) {
 		return "", "", fmt.Errorf("%w: provider executable must be a native immutable binary, not an interpreter-selected script", errV7FullGateProvider)
 	}
-	if err := validateV7MachOProvider(raw); err != nil {
+	codeClosure, err := validateV7MachOProvider(raw)
+	if err != nil {
 		return "", "", err
 	}
 	sum := sha256.Sum256(raw)
-	identity := fmt.Sprintf("sha256:%x", sum[:])
+	mainIdentity := fmt.Sprintf("sha256:%x", sum[:])
+	identity := departureFingerprint(append([]string{"tusker.mach-o-provider-closure/v1", mainIdentity}, codeClosure...)...)
 	if v7FullGateAfterExecutableDigestVerified != nil {
 		if err := v7FullGateAfterExecutableDigestVerified(path); err != nil {
 			return "", "", err
@@ -771,32 +780,164 @@ func verifyV7TrustedProviderExecutable(path string) (string, string, error) {
 		return "", "", fmt.Errorf("%w: revalidate immutable provider executable: %v", errV7FullGateProvider, err)
 	}
 	afterSum := sha256.Sum256(after)
-	if identity != fmt.Sprintf("sha256:%x", afterSum[:]) {
+	if mainIdentity != fmt.Sprintf("sha256:%x", afterSum[:]) {
 		return "", "", fmt.Errorf("%w: provider executable changed across immutable launch verification", errV7FullGateProvider)
 	}
 	return path, identity, nil
 }
 
-func validateV7MachOProvider(raw []byte) error {
+func validateV7MachOProvider(raw []byte) ([]string, error) {
 	reader := bytes.NewReader(raw)
 	if thin, err := macho.NewFile(reader); err == nil {
 		defer thin.Close()
-		if thin.Type == macho.TypeExec {
-			return nil
-		}
-		return fmt.Errorf("%w: provider Mach-O is not an executable image", errV7FullGateProvider)
+		return validateV7MachOProviderImage(thin)
 	}
 	fat, err := macho.NewFatFile(reader)
 	if err != nil {
-		return fmt.Errorf("%w: provider executable must be a native Mach-O binary", errV7FullGateProvider)
+		return nil, fmt.Errorf("%w: provider executable must be a native Mach-O binary", errV7FullGateProvider)
 	}
 	defer fat.Close()
+	accepted := make(map[string]struct{})
 	for _, arch := range fat.Arches {
-		if arch.File == nil || arch.File.Type != macho.TypeExec {
-			return fmt.Errorf("%w: provider universal Mach-O contains a non-executable image", errV7FullGateProvider)
+		if arch.File == nil {
+			return nil, fmt.Errorf("%w: provider universal Mach-O contains an invalid image", errV7FullGateProvider)
+		}
+		paths, validateErr := validateV7MachOProviderImage(arch.File)
+		if validateErr != nil {
+			return nil, validateErr
+		}
+		for _, path := range paths {
+			accepted[path] = struct{}{}
 		}
 	}
-	return nil
+	return sortedV7MachOClosure(accepted), nil
+}
+
+const (
+	v7MachOLoadFixedVMLibrary = uint32(0x6)
+	v7MachOLoadFVMFile        = uint32(0x9)
+	v7MachOLoadDylib          = uint32(0xc)
+	v7MachOIDLibrary          = uint32(0xd)
+	v7MachOLoadDylinker       = uint32(0xe)
+	v7MachOIDDynamicLinker    = uint32(0xf)
+	v7MachOPreboundDylib      = uint32(0x10)
+	v7MachOLoadWeakDylib      = uint32(0x80000018)
+	v7MachORPath              = uint32(0x8000001c)
+	v7MachOReexportDylib      = uint32(0x8000001f)
+	v7MachOLazyLoadDylib      = uint32(0x20)
+	v7MachOLoadUpwardDylib    = uint32(0x80000023)
+	v7MachODynamicEnvironment = uint32(0x27)
+)
+
+func validateV7MachOProviderImage(file *macho.File) ([]string, error) {
+	if file == nil || file.Type != macho.TypeExec {
+		return nil, fmt.Errorf("%w: provider Mach-O is not an executable image", errV7FullGateProvider)
+	}
+	accepted := make(map[string]struct{})
+	for _, load := range file.Loads {
+		raw := load.Raw()
+		if len(raw) < 8 {
+			return nil, fmt.Errorf("%w: provider Mach-O contains a truncated load command", errV7FullGateProvider)
+		}
+		command := file.ByteOrder.Uint32(raw[:4])
+		switch command {
+		case v7MachOLoadDylib, v7MachOLoadWeakDylib, v7MachOReexportDylib, v7MachOLazyLoadDylib, v7MachOLoadUpwardDylib:
+			path, err := v7MachOLoadCommandPath(file, raw, 24)
+			if err != nil || !v7SealedSystemLibraryPath(path) {
+				return nil, fmt.Errorf("%w: provider Mach-O imports an unresolved or mutable library %q", errV7FullGateProvider, path)
+			}
+			accepted["dylib:"+path] = struct{}{}
+		case v7MachOLoadDylinker:
+			path, err := v7MachOLoadCommandPath(file, raw, 12)
+			if err != nil || path != "/usr/lib/dyld" {
+				return nil, fmt.Errorf("%w: provider Mach-O selects an unresolved or mutable dynamic linker %q", errV7FullGateProvider, path)
+			}
+			accepted["dylinker:"+path] = struct{}{}
+		case v7MachORPath:
+			return nil, fmt.Errorf("%w: provider Mach-O LC_RPATH is not permitted", errV7FullGateProvider)
+		case v7MachODynamicEnvironment:
+			return nil, fmt.Errorf("%w: provider Mach-O LC_DYLD_ENVIRONMENT is not permitted", errV7FullGateProvider)
+		case v7MachOLoadFixedVMLibrary, v7MachOLoadFVMFile, v7MachOIDLibrary, v7MachOIDDynamicLinker, v7MachOPreboundDylib:
+			return nil, fmt.Errorf("%w: provider Mach-O contains unsupported code-loading command %#x", errV7FullGateProvider, command)
+		case
+			0x1,        // LC_SEGMENT
+			0x2,        // LC_SYMTAB
+			0x4,        // LC_THREAD
+			0x5,        // LC_UNIXTHREAD
+			0xb,        // LC_DYSYMTAB
+			0x11,       // LC_ROUTINES
+			0x16,       // LC_TWOLEVEL_HINTS
+			0x17,       // LC_PREBIND_CKSUM
+			0x19,       // LC_SEGMENT_64
+			0x1a,       // LC_ROUTINES_64
+			0x1b,       // LC_UUID
+			0x1d,       // LC_CODE_SIGNATURE
+			0x1e,       // LC_SEGMENT_SPLIT_INFO
+			0x21,       // LC_ENCRYPTION_INFO
+			0x22,       // LC_DYLD_INFO
+			0x80000022, // LC_DYLD_INFO_ONLY
+			0x24,       // LC_VERSION_MIN_MACOSX
+			0x25,       // LC_VERSION_MIN_IPHONEOS
+			0x26,       // LC_FUNCTION_STARTS
+			0x80000028, // LC_MAIN
+			0x29,       // LC_DATA_IN_CODE
+			0x2a,       // LC_SOURCE_VERSION
+			0x2b,       // LC_DYLIB_CODE_SIGN_DRS
+			0x2c,       // LC_ENCRYPTION_INFO_64
+			0x2e,       // LC_LINKER_OPTIMIZATION_HINT
+			0x2f,       // LC_VERSION_MIN_TVOS
+			0x30,       // LC_VERSION_MIN_WATCHOS
+			0x31,       // LC_NOTE
+			0x32,       // LC_BUILD_VERSION
+			0x80000033, // LC_DYLD_EXPORTS_TRIE
+			0x80000034, // LC_DYLD_CHAINED_FIXUPS
+			0x36,       // LC_ATOM_INFO
+			0x37,       // LC_FUNCTION_VARIANTS
+			0x38,       // LC_FUNCTION_VARIANT_FIXUPS
+			0x39,       // LC_TARGET_TRIPLE
+			0x3a:       // LC_LAZY_LOAD_DYLIB_INFO
+			continue
+		default:
+			return nil, fmt.Errorf("%w: provider Mach-O contains an unrecognized load command %#x", errV7FullGateProvider, command)
+		}
+	}
+	return sortedV7MachOClosure(accepted), nil
+}
+
+func v7MachOLoadCommandPath(file *macho.File, raw []byte, minimumOffset uint32) (string, error) {
+	if file == nil || len(raw) < 12 {
+		return "", errors.New("truncated path load command")
+	}
+	offset := file.ByteOrder.Uint32(raw[8:12])
+	if offset < minimumOffset || offset >= uint32(len(raw)) {
+		return "", errors.New("invalid path load command")
+	}
+	tail := raw[offset:]
+	end := bytes.IndexByte(tail, 0)
+	if end < 0 {
+		return "", errors.New("unterminated path load command")
+	}
+	path := string(tail[:end])
+	if path == "" || strings.TrimSpace(path) != path || strings.ContainsRune(path, 0) {
+		return "", errors.New("invalid path load command")
+	}
+	return path, nil
+}
+
+func v7SealedSystemLibraryPath(path string) bool {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return false
+	}
+	return strings.HasPrefix(path, "/usr/lib/") || strings.HasPrefix(path, "/System/Library/")
+}
+
+func sortedV7MachOClosure(values map[string]struct{}) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 const v7ImmutableProviderSetupPrerequisite = "provider executable setup prerequisite: install a native root-owned binary beneath root-owned non-group/world-writable directories"
@@ -811,6 +952,17 @@ func verifyV7ImmutableProviderAuthority(path string) error {
 		uid, hasUID := v7FileOwnerUID(info)
 		if err != nil || info.Mode()&os.ModeSymlink != 0 || !hasUID || uid != 0 || info.Mode()&0o022 != 0 {
 			return fmt.Errorf("%w: %s (%s)", errV7FullGateProvider, v7ImmutableProviderSetupPrerequisite, current)
+		}
+		file, err := os.Open(current)
+		if err != nil {
+			return fmt.Errorf("%w: %s (%s)", errV7FullGateProvider, v7ImmutableProviderSetupPrerequisite, current)
+		}
+		opened, statErr := file.Stat()
+		mutationACL, aclErr := v7DarwinDescriptorHasMutationACL(file)
+		afterACL, afterErr := file.Stat()
+		closeErr := file.Close()
+		if statErr != nil || !os.SameFile(info, opened) || aclErr != nil || mutationACL || afterErr != nil || !os.SameFile(opened, afterACL) || closeErr != nil {
+			return fmt.Errorf("%w: %s; descriptor ACL/identity validation failed for %s", errV7FullGateProvider, v7ImmutableProviderSetupPrerequisite, current)
 		}
 		if current == string(filepath.Separator) {
 			break
@@ -963,7 +1115,7 @@ func (p *v7ExternalFullGateProvider) Run(ctx context.Context, workspace, command
 	}
 	defer closeTransport()
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
-	cmd.WaitDelay = v7FullGateCleanTimeout
+	cmd.WaitDelay = v7FullGateProviderPipeWaitDelay
 	var providerOutput v7GateBoundedOutput
 	providerOutput.max = v7FullGateOutputMaxBytes
 	cmd.Env = v7FullGateProviderEnv()
@@ -1393,6 +1545,9 @@ func launchV7FullGateProviderCleanup(ctx context.Context, providerPath string, s
 	defer closeTransport()
 	cmd.Env = env
 	cmd.Stdout, cmd.Stderr = output, output
+	// A cleanup wrapper can exit while a reparented descendant still owns the
+	// inherited pipe. Bound that pipe drain as well as the wrapper process.
+	cmd.WaitDelay = v7FullGateProviderPipeWaitDelay
 	return cmd.Run()
 }
 
@@ -1666,6 +1821,86 @@ func removeV7FullGatePromotionArtifact(stateRoot, path string) error {
 	return state.syncDir(filepath.Dir(rel))
 }
 
+// removeV7ProvablyUnboundPromotionArtifacts is deliberately conservative.
+// Cancellation may race the service-owned outcome journal, so a file is a
+// disposable temporary only when no valid journal or published recovery
+// request claims it. Any malformed authority record preserves every file.
+func removeV7ProvablyUnboundPromotionArtifacts(stateRoot string, paths []string) error {
+	state, err := openV7FullGateStateRoot(stateRoot)
+	if err != nil {
+		return err
+	}
+	defer state.Close()
+	claimed := make(map[string]struct{})
+	journalEntries, err := state.readDir("full-gate-outcomes")
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if len(journalEntries) > v7FullGateJournalMaxEntries {
+		return fmt.Errorf("%w: provider outcome journal count exceeds %d", errV7FullGateProvider, v7FullGateJournalMaxEntries)
+	}
+	for _, entry := range journalEntries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			return fmt.Errorf("%w: cannot prove artifacts unbound with invalid outcome journal %q", errV7FullGateProvider, entry.Name())
+		}
+		journal, readErr := readV7FullGateProviderOutcomeJournalAtRoot(state, filepath.Join("full-gate-outcomes", entry.Name()))
+		if readErr != nil {
+			return readErr
+		}
+		if ref := strings.TrimSpace(journal.Request.ArtifactRef); ref != "" {
+			claimed[filepath.Clean(ref)] = struct{}{}
+		}
+	}
+	scopeEntries, err := state.readDir("full-gate-recovery")
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if len(scopeEntries) > v7FullGateRecoveryMaxScopes {
+		return fmt.Errorf("%w: provider recovery scope count exceeds %d", errV7FullGateProvider, v7FullGateRecoveryMaxScopes)
+	}
+	for _, entry := range scopeEntries {
+		scopeRel := filepath.Join("full-gate-recovery", entry.Name())
+		info, statErr := state.lstat(scopeRel)
+		if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode()&0o022 != 0 || !strings.HasPrefix(entry.Name(), "scope-") {
+			return fmt.Errorf("%w: cannot prove artifacts unbound with invalid recovery scope %q", errV7FullGateProvider, entry.Name())
+		}
+		request, readErr := readV7FullGateProviderRequestAtRoot(state, filepath.Join(scopeRel, "request.json"))
+		if readErr != nil {
+			return readErr
+		}
+		if ref := strings.TrimSpace(request.ArtifactRef); ref != "" {
+			claimed[filepath.Clean(ref)] = struct{}{}
+		}
+	}
+	syncArtifactDir := false
+	seen := make(map[string]struct{})
+	for _, path := range paths {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "." || path == "" {
+			continue
+		}
+		if _, duplicate := seen[path]; duplicate {
+			continue
+		}
+		seen[path] = struct{}{}
+		if _, bound := claimed[path]; bound {
+			continue
+		}
+		rel, relErr := state.relative(path)
+		if relErr != nil || filepath.Dir(rel) != filepath.Join("artifacts", "promotion-gates") || filepath.Ext(rel) != ".log" {
+			return fmt.Errorf("%w: promotion artifact removal escapes the trusted artifact directory", errV7FullGateProvider)
+		}
+		if removeErr := state.remove(rel); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			return removeErr
+		}
+		syncArtifactDir = true
+	}
+	if syncArtifactDir {
+		return state.syncDir(filepath.Join("artifacts", "promotion-gates"))
+	}
+	return nil
+}
+
 func ensureV7FullGateJournalArtifactAtRoot(state *v7FullGateStateRoot, journal *v7FullGateProviderOutcomeJournal) error {
 	if state == nil || journal == nil {
 		return fmt.Errorf("%w: provider outcome artifact binding is unavailable", errV7FullGateProvider)
@@ -1900,6 +2135,18 @@ func recoverV7FullGateProviderScopes(stateRoot string, store *RuntimeStore) erro
 			return fmt.Errorf("%w: provider journal scope mismatch", errV7FullGateProvider)
 		}
 	}
+	artifactOwners := make(map[string]string)
+	for digest, journal := range journals {
+		ref := strings.TrimSpace(journal.Request.ArtifactRef)
+		if ref == "" {
+			continue
+		}
+		ref = filepath.Clean(ref)
+		if owner, duplicate := artifactOwners[ref]; duplicate && owner != digest {
+			return fmt.Errorf("%w: multiple provider outcome journals share one artifact target", errV7FullGateProvider)
+		}
+		artifactOwners[ref] = digest
+	}
 	sort.Strings(journalOrder)
 	for _, digest := range journalOrder {
 		journal := journals[digest]
@@ -2056,21 +2303,34 @@ func reconcileV7FullGateProviderOutcome(state *v7FullGateStateRoot, store *Runti
 	if err != nil {
 		return err
 	}
+	if run != nil {
+		published, publishedErr := v7DepartureHasPublishedProviderOutcome(*run, *journal)
+		if publishedErr != nil {
+			return publishedErr
+		}
+		if published {
+			if journal.Result.Outcome == v7FullGateOutcomePassed {
+				if err := validateV7FullGateJournalGreen(state, store, *run, *journal); err != nil {
+					return fmt.Errorf("%w: published green provider outcome no longer validates: %v", errV7FullGateProvider, err)
+				}
+				if err := reconcileV7FullGateGreenLedger(store, *journal); err != nil {
+					return err
+				}
+			}
+			// The departure CAS already won. Recovery owns only retirement now;
+			// rewriting gate state here would destroy ordinary-red repair
+			// routing or a successful flake rerun that includes this receipt.
+			return runV7FullGateRecoveryHook("outcome_target_persisted")
+		}
+	}
 	if journal.Result.Outcome == v7FullGateOutcomePassed {
 		if run != nil {
 			if err := validateV7FullGateJournalGreen(state, store, *run, *journal); err == nil {
-				existing, lookupErr := store.FindGateLedger(journal.Receipt.ProjectID, journal.Receipt.CandidateDigest, journal.Request.Command, journal.Receipt.Profile, journal.Receipt.Toolchain)
-				if lookupErr != nil {
-					return lookupErr
-				}
-				if existing != nil && (existing.ProviderReceipt == nil || *existing.ProviderReceipt != journal.Receipt) {
-					return blockV7FullGateJournalOutcome(store, run, journal, "conflicting_green_ledger")
-				}
-				if existing == nil {
-					receipt := journal.Receipt
-					if err := store.RecordGateLedger(GateLedgerEntry{ProjectID: receipt.ProjectID, TreeHash: receipt.CandidateDigest, Command: journal.Request.Command, Profile: receipt.Profile, Toolchain: receipt.Toolchain, Host: runtimeLeaseHost(), DurationMS: journal.Result.RuntimeMS, ProviderReceipt: &receipt}); err != nil {
-						return err
+				if ledgerErr := reconcileV7FullGateGreenLedger(store, *journal); ledgerErr != nil {
+					if errors.Is(ledgerErr, errV7FullGateLedgerConflict) {
+						return blockV7FullGateJournalOutcome(store, run, journal, "conflicting_green_ledger")
 					}
+					return ledgerErr
 				}
 				return runV7FullGateRecoveryHook("outcome_target_persisted")
 			}
@@ -2078,6 +2338,64 @@ func reconcileV7FullGateProviderOutcome(state *v7FullGateStateRoot, store *Runti
 		return blockV7FullGateJournalOutcome(store, run, journal, "green_outcome_no_longer_matches_current_contract")
 	}
 	return blockV7FullGateJournalOutcome(store, run, journal, "recovered_"+string(journal.Result.Outcome))
+}
+
+func reconcileV7FullGateGreenLedger(store *RuntimeStore, journal v7FullGateProviderOutcomeJournal) error {
+	existing, err := store.FindGateLedger(journal.Receipt.ProjectID, journal.Receipt.CandidateDigest, journal.Request.Command, journal.Receipt.Profile, journal.Receipt.Toolchain)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		if existing.ProviderReceipt == nil || *existing.ProviderReceipt != journal.Receipt {
+			return fmt.Errorf("%w: conflicting green ledger receipt", errV7FullGateLedgerConflict)
+		}
+		return nil
+	}
+	receipt := journal.Receipt
+	return store.RecordGateLedger(GateLedgerEntry{ProjectID: receipt.ProjectID, TreeHash: receipt.CandidateDigest, Command: journal.Request.Command, Profile: receipt.Profile, Toolchain: receipt.Toolchain, Host: runtimeLeaseHost(), DurationMS: journal.Result.RuntimeMS, ProviderReceipt: &receipt})
+}
+
+func v7DepartureHasPublishedProviderOutcome(run DepartureRun, journal v7FullGateProviderOutcomeJournal) (bool, error) {
+	published := false
+	for _, receipt := range run.Gate.ProviderOutcomes {
+		if receipt == journal.Receipt {
+			published = true
+			break
+		}
+	}
+	if !published {
+		return false, nil
+	}
+	artifactRef := strings.TrimSpace(journal.ArtifactRef)
+	if artifactRef == "" {
+		return true, nil
+	}
+	for _, ref := range appendV7UniqueArtifactRefs(appendV7UniqueArtifactRefs(append([]string(nil), run.Gate.ArtifactRefs...), run.Gate.ArtifactRef), run.Gate.Failure.ArtifactRefs...) {
+		if filepath.Clean(ref) == filepath.Clean(artifactRef) {
+			return true, nil
+		}
+	}
+	return false, fmt.Errorf("%w: published provider outcome omits its journal-bound artifact", errV7FullGateProvider)
+}
+
+func appendV7UniqueArtifactRefs(refs []string, values ...string) []string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		duplicate := false
+		for _, existing := range refs {
+			if filepath.Clean(existing) == filepath.Clean(value) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			refs = append(refs, value)
+		}
+	}
+	return refs
 }
 
 func validateV7FullGateJournalGreen(state *v7FullGateStateRoot, store *RuntimeStore, run DepartureRun, journal v7FullGateProviderOutcomeJournal) error {
@@ -2151,15 +2469,17 @@ func blockV7FullGateJournalOutcome(store *RuntimeStore, run *DepartureRun, journ
 		return fmt.Errorf("%w: recovered provider outcome count exceeds bound", errV7FullGateProvider)
 	}
 	next := *run
+	next.Gate.ArtifactRefs = append([]string(nil), run.Gate.ArtifactRefs...)
 	next.Gate.ProviderOutcomes = append([]GateProviderReceipt(nil), run.Gate.ProviderOutcomes...)
 	if !receiptPresent {
 		next.Gate.ProviderOutcomes = append(next.Gate.ProviderOutcomes, journal.Receipt)
 	}
 	next.Gate.Status = string(journal.Result.Outcome)
-	artifactRefs := []string(nil)
+	artifactRefs := append([]string(nil), run.Gate.Failure.ArtifactRefs...)
 	if journal.ArtifactRef != "" {
 		next.Gate.ArtifactRef = journal.ArtifactRef
-		artifactRefs = []string{journal.ArtifactRef}
+		next.Gate.ArtifactRefs = appendV7UniqueArtifactRefs(next.Gate.ArtifactRefs, journal.ArtifactRef)
+		artifactRefs = appendV7UniqueArtifactRefs(artifactRefs, journal.ArtifactRef)
 	}
 	next.Gate.Failure = DepartureFailure{Class: "provider", Identity: safePacketText(reason, 256), Action: "operator_inspect_provider_outcome", ArtifactRefs: artifactRefs}
 	next.State = DepartureStateBlocked
@@ -2173,8 +2493,12 @@ func blockV7FullGateJournalOutcome(store *RuntimeStore, run *DepartureRun, journ
 		if readErr != nil {
 			return readErr
 		}
-		for _, receipt := range latest.Gate.ProviderOutcomes {
-			if receipt == journal.Receipt && (journal.ArtifactRef == "" || latest.Gate.ArtifactRef == journal.ArtifactRef && len(latest.Gate.Failure.ArtifactRefs) == 1 && latest.Gate.Failure.ArtifactRefs[0] == journal.ArtifactRef) {
+		if latest != nil {
+			published, publishErr := v7DepartureHasPublishedProviderOutcome(*latest, *journal)
+			if publishErr != nil {
+				return publishErr
+			}
+			if published {
 				return nil
 			}
 		}

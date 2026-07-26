@@ -75,6 +75,8 @@ tasks:
       acceptance_ids: [A1, A2, A3, A4, A5]
     owned_paths:
       - cmd/tusker/v7_full_gate_provider.go
+      - cmd/tusker/v7_darwin_acl_cgo.go
+      - cmd/tusker/v7_darwin_acl_stub.go
       - cmd/tusker/v7_full_gate_state_root.go
       - cmd/tusker/v7_full_gate_provider_test.go
       - cmd/tusker/test_main_test.go

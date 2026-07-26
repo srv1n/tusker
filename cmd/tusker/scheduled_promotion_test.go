@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -107,6 +108,63 @@ func TestV7FullGateAllLedgerHitCollectsReceiptsInCommandOrder(t *testing.T) {
 	}
 }
 
+func TestV7FullGateProviderCommandsUseExactOrderedEvidenceRefs(t *testing.T) {
+	repo := t.TempDir()
+	runGitDir(t, repo, "init", "-b", "main")
+	runGitDir(t, repo, "config", "user.email", "test@example.com")
+	runGitDir(t, repo, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repo, "candidate.txt"), []byte("candidate\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "add", ".")
+	runGitDir(t, repo, "commit", "-m", "candidate")
+	stateRoot := t.TempDir()
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	commands := []string{"go version >/dev/null", "go env GOOS >/dev/null"}
+	state := &scriptedV7ProviderState{steps: []scriptedV7ProviderStep{
+		{outcome: v7FullGateOutcomePassed, output: "first output\n"},
+		{outcome: v7FullGateOutcomePassed, output: "second output\n"},
+	}}
+	previous := newV7FullGateProvider
+	newV7FullGateProvider = func(string, string, string) (v7FullGateProvider, error) {
+		return &scriptedV7FullGateProvider{state: state}, nil
+	}
+	defer func() { newV7FullGateProvider = previous }()
+	execution := runV7GateTierOnRefContext(
+		withV7FullGateDeparture(context.Background(), "departure-command-evidence"),
+		filepath.Join(repo, ".tusker"), repo, "HEAD", "project",
+		GateTierPolicy{Profile: "full", HarvestCommands: commands, IsolationProvider: "scripted"},
+		store,
+	)
+	if execution.Err != nil || execution.Result.Outcome != gateOutcomePassed {
+		t.Fatalf("two-command provider execution = %#v, %v", execution.Result, execution.Err)
+	}
+	if len(execution.ArtifactRefs) != 3 || execution.ArtifactRef != execution.ArtifactRefs[2] {
+		t.Fatalf("ordered command evidence refs = %#v primary=%q", execution.ArtifactRefs, execution.ArtifactRef)
+	}
+	first, err := os.ReadFile(execution.ArtifactRefs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(execution.ArtifactRefs[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := os.ReadFile(execution.ArtifactRefs[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(first, []byte(commands[0])) || bytes.Contains(first, []byte(commands[1])) ||
+		!bytes.Contains(second, []byte(commands[1])) || bytes.Contains(second, []byte(commands[0])) ||
+		!bytes.Contains(summary, []byte(commands[0])) || !bytes.Contains(summary, []byte(commands[1])) {
+		t.Fatalf("command evidence composition is ambiguous:\nfirst=%q\nsecond=%q\nsummary=%q", first, second, summary)
+	}
+}
+
 func TestV7ScheduledPromotionFlakeRerunPreservesFirstProviderOutcome(t *testing.T) {
 	repo, vault := newLandReadyForMainAdvanceTest(t, "flake-rerun.txt", "candidate\n")
 	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
@@ -153,6 +211,19 @@ func TestV7ScheduledPromotionFlakeRerunPreservesFirstProviderOutcome(t *testing.
 	}
 	if len(run.Gate.ProviderReceipts) != 1 || run.Gate.ProviderReceipts[0] != run.Gate.ProviderOutcomes[1] {
 		t.Fatalf("flake green receipt set = %#v, outcomes %#v", run.Gate.ProviderReceipts, run.Gate.ProviderOutcomes)
+	}
+	if len(run.Gate.ArtifactRefs) != 4 || run.Gate.ArtifactRef != run.Gate.ArtifactRefs[len(run.Gate.ArtifactRefs)-1] {
+		t.Fatalf("flake ordered evidence refs = %#v, primary=%q", run.Gate.ArtifactRefs, run.Gate.ArtifactRef)
+	}
+	seenRefs := make(map[string]struct{})
+	for _, ref := range run.Gate.ArtifactRefs {
+		if _, duplicate := seenRefs[ref]; duplicate {
+			t.Fatalf("flake evidence ref reused across commands/attempts: %#v", run.Gate.ArtifactRefs)
+		}
+		seenRefs[ref] = struct{}{}
+		if _, err := os.Stat(ref); err != nil {
+			t.Fatalf("flake evidence ref is not durable: %s: %v", ref, err)
+		}
 	}
 	if len(state.finalized) != 2 || !containsV7ProviderOutcome(state.finalized, v7FullGateOutcomeFailed) || !containsV7ProviderOutcome(state.finalized, v7FullGateOutcomePassed) {
 		t.Fatalf("flake attempt scopes not both finalized: %#v", state.finalized)

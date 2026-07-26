@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"debug/macho"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,152 @@ import (
 	"testing"
 	"time"
 )
+
+func TestV7FullGateProviderMachOClosureRejectsMutableLoadPaths(t *testing.T) {
+	sealed := v7MachOFixture(t,
+		v7MachOPathLoad(t, v7MachOLoadDylinker, 12, "/usr/lib/dyld"),
+		v7MachOPathLoad(t, v7MachOLoadDylib, 24, "/usr/lib/libSystem.B.dylib"),
+	)
+	closure, err := validateV7MachOProvider(sealed)
+	if err != nil {
+		t.Fatalf("sealed native fixture rejected: %v", err)
+	}
+	if got := strings.Join(closure, ","); got != "dylib:/usr/lib/libSystem.B.dylib,dylinker:/usr/lib/dyld" {
+		t.Fatalf("sealed closure = %q", got)
+	}
+	tests := []struct {
+		name string
+		load []byte
+	}{
+		{name: "relative", load: v7MachOPathLoad(t, v7MachOLoadDylib, 24, "libmutable.dylib")},
+		{name: "rpath import", load: v7MachOPathLoad(t, v7MachOLoadDylib, 24, "@rpath/libmutable.dylib")},
+		{name: "loader path", load: v7MachOPathLoad(t, v7MachOLoadDylib, 24, "@loader_path/libmutable.dylib")},
+		{name: "executable path", load: v7MachOPathLoad(t, v7MachOLoadDylib, 24, "@executable_path/libmutable.dylib")},
+		{name: "mutable absolute", load: v7MachOPathLoad(t, v7MachOLoadDylib, 24, "/opt/provider/libmutable.dylib")},
+		{name: "rpath command", load: v7MachOPathLoad(t, v7MachORPath, 12, "/opt/provider")},
+		{name: "dyld environment", load: v7MachOPathLoad(t, v7MachODynamicEnvironment, 12, "DYLD_LIBRARY_PATH=/opt/provider")},
+		{name: "unknown load command", load: v7MachORawLoad(0x7ffffffe)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := validateV7MachOProvider(v7MachOFixture(t, tc.load)); err == nil {
+				t.Fatal("mutable Mach-O code-loading path was accepted")
+			}
+		})
+	}
+}
+
+func TestV7FullGateProviderDarwinNativeClosureAndACL(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		file, err := os.Open(os.Args[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		if _, err := v7DarwinDescriptorHasMutationACL(file); err == nil {
+			t.Fatal("non-Darwin ACL fallback did not fail closed")
+		}
+		return
+	}
+	path := "/usr/bin/true"
+	systemFile, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, aclSupportErr := v7DarwinDescriptorHasMutationACL(systemFile)
+	_ = systemFile.Close()
+	if aclSupportErr != nil {
+		if _, _, verifyErr := verifyV7TrustedProviderExecutable(path); verifyErr == nil {
+			t.Fatal("Darwin build without descriptor ACL support did not fail closed")
+		}
+		return
+	}
+	_, identity, err := verifyV7TrustedProviderExecutable(path)
+	if err != nil || !v7FullGateDigest(identity) {
+		t.Fatalf("sealed Darwin native helper rejected: identity=%q err=%v", identity, err)
+	}
+	systemRaw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	systemSum := sha256.Sum256(systemRaw)
+	if identity == fmt.Sprintf("sha256:%x", systemSum[:]) {
+		t.Fatal("provider digest binds only the main Mach-O, not its accepted dependency closure")
+	}
+	aclPath := filepath.Join(t.TempDir(), "native-helper")
+	if err := os.WriteFile(aclPath, systemRaw, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	plain, err := os.Open(aclPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutation, aclErr := v7DarwinDescriptorHasMutationACL(plain)
+	_ = plain.Close()
+	if aclErr != nil {
+		t.Fatal(aclErr)
+	}
+	if mutation {
+		t.Fatal("plain native helper unexpectedly has a mutation ACL")
+	}
+	if output, err := exec.Command("/bin/chmod", "+a", "everyone allow write,delete", aclPath).CombinedOutput(); err != nil {
+		t.Skipf("Darwin fixture filesystem does not support extended ACLs: %v: %s", err, output)
+	}
+	withACL, err := os.Open(aclPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutation, aclErr = v7DarwinDescriptorHasMutationACL(withACL)
+	_ = withACL.Close()
+	if aclErr != nil || !mutation {
+		t.Fatalf("descriptor ACL mutation grant accepted: mutation=%t err=%v", mutation, aclErr)
+	}
+}
+
+func v7MachOFixture(t *testing.T, loads ...[]byte) []byte {
+	t.Helper()
+	var commands bytes.Buffer
+	for _, load := range loads {
+		commands.Write(load)
+	}
+	var raw bytes.Buffer
+	header := []uint32{
+		uint32(macho.Magic64),
+		uint32(macho.CpuArm64),
+		0,
+		uint32(macho.TypeExec),
+		uint32(len(loads)),
+		uint32(commands.Len()),
+		0,
+		0,
+	}
+	for _, value := range header {
+		if err := binary.Write(&raw, binary.LittleEndian, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw.Write(commands.Bytes())
+	return raw.Bytes()
+}
+
+func v7MachOPathLoad(t *testing.T, command, offset uint32, path string) []byte {
+	t.Helper()
+	size := int(offset) + len(path) + 1
+	size = (size + 7) &^ 7
+	raw := make([]byte, size)
+	binary.LittleEndian.PutUint32(raw[0:4], command)
+	binary.LittleEndian.PutUint32(raw[4:8], uint32(size))
+	binary.LittleEndian.PutUint32(raw[8:12], offset)
+	copy(raw[offset:], path)
+	return raw
+}
+
+func v7MachORawLoad(command uint32) []byte {
+	raw := make([]byte, 8)
+	binary.LittleEndian.PutUint32(raw[0:4], command)
+	binary.LittleEndian.PutUint32(raw[4:8], uint32(len(raw)))
+	return raw
+}
 
 func TestV7FullGateProviderRejectsSandboxExec(t *testing.T) {
 	registry := filepath.Join(t.TempDir(), "providers.yaml")
@@ -202,11 +350,15 @@ func writeV7ProviderRecoveryRequest(t *testing.T, stateRoot string) (string, v7F
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(rawProvider)
+	executableID := fmt.Sprintf("sha256:%x", sum[:])
+	if _, verified, verifyErr := verifyV7TrustedProviderExecutable(providerPath); verifyErr == nil {
+		executableID = verified
+	}
 	dir := filepath.Join(stateRoot, "full-gate-recovery", "scope-fixture")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	request := v7FullGateProviderRequest{Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: "fixture-run", Workspace: stateRoot, Command: "fixture", ResultPath: filepath.Join(dir, "result.json"), ProviderKind: "container", ProviderID: "fixture-provider", ProviderPath: providerPath, ExecutableID: fmt.Sprintf("sha256:%x", sum[:]), CandidateReadOnly: true, NetworkDenied: true, ControlEnvDenied: true, RuntimeDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PolicyDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", AttestationDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", RequiredCapabilities: []string{"candidate_read_only", "network_denied", "control_env_denied"}, ImplementationID: v7KnownFullGateProvider, CapabilitySchema: v7FullGateCapabilitySchema, ExpectedImageOrVMID: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+	request := v7FullGateProviderRequest{Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: "fixture-run", Workspace: stateRoot, Command: "fixture", ResultPath: filepath.Join(dir, "result.json"), ProviderKind: "container", ProviderID: "fixture-provider", ProviderPath: providerPath, ExecutableID: executableID, CandidateReadOnly: true, NetworkDenied: true, ControlEnvDenied: true, RuntimeDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PolicyDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", AttestationDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", RequiredCapabilities: []string{"candidate_read_only", "network_denied", "control_env_denied"}, ImplementationID: v7KnownFullGateProvider, CapabilitySchema: v7FullGateCapabilitySchema, ExpectedImageOrVMID: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
 	request.RequestDigest = v7FullGateRequestDigest(request)
 	raw, err := json.Marshal(request)
 	if err != nil {
@@ -326,6 +478,39 @@ func TestV7FullGateProviderTimeoutFixture(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("fake provider deadline did not fire")
+	}
+}
+
+func TestV7FullGateProviderCleanupBoundsInheritedPipeDrain(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("descriptor transport is Darwin-only")
+	}
+	stateRoot := t.TempDir()
+	requestPath, request := writeV7ProviderRecoveryRequest(t, stateRoot)
+	if err := os.WriteFile(request.ResultPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scope := &v7FullGateProviderScope{request: request, requestPath: requestPath}
+	state, err := openV7FullGateStateRoot(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	if err := scope.bindState(state); err != nil {
+		t.Fatal(err)
+	}
+	previous := v7FullGateProviderPipeWaitDelay
+	v7FullGateProviderPipeWaitDelay = 25 * time.Millisecond
+	defer func() { v7FullGateProviderPipeWaitDelay = previous }()
+	var output bytes.Buffer
+	started := time.Now()
+	err = launchV7FullGateProviderCleanup(context.Background(), os.Args[0], scope, []string{"TUSKER_V7_PIPE_HOLDER=parent"}, &output)
+	elapsed := time.Since(started)
+	if !errors.Is(err, exec.ErrWaitDelay) {
+		t.Fatalf("cleanup with descendant-held pipes = %v, want exec.ErrWaitDelay", err)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("cleanup pipe drain exceeded bound: %s", elapsed)
 	}
 }
 
@@ -868,6 +1053,129 @@ func TestV7FullGateProviderRecoveryCrashSeamsConverge(t *testing.T) {
 	}
 }
 
+func TestV7FullGateProviderCancellationRemovesOnlyUnboundArtifacts(t *testing.T) {
+	stateRoot := t.TempDir()
+	scope, request, result, receipt := writeV7ProviderOutcomeFixture(t, stateRoot, "departure-cancel-artifact", v7FullGateOutcomeFailed)
+	if err := persistV7FullGateProviderOutcomeJournal(stateRoot, scope, request, result, receipt); err != nil {
+		t.Fatal(err)
+	}
+	unbound := filepath.Join(stateRoot, "artifacts", "promotion-gates", "unbound-summary.log")
+	if err := os.WriteFile(unbound, []byte("unbound summary\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeV7ProvablyUnboundPromotionArtifacts(stateRoot, []string{request.ArtifactRef, unbound}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(request.ArtifactRef); err != nil {
+		t.Fatalf("cancellation removed journal-bound evidence: %v", err)
+	}
+	if _, err := os.Stat(unbound); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("provably unbound cancellation artifact remained: %v", err)
+	}
+}
+
+func TestV7FullGateProviderRecoveryRejectsSharedJournalArtifact(t *testing.T) {
+	stateRoot := t.TempDir()
+	store, run := openV7ProviderRecoveryRun(t, stateRoot, "shared-journal-artifact")
+	defer store.Close()
+	firstScope, firstRequest, firstResult, firstReceipt := writeV7ProviderOutcomeFixture(t, stateRoot, run.ID, v7FullGateOutcomeFailed)
+	if err := persistV7FullGateProviderOutcomeJournal(stateRoot, firstScope, firstRequest, firstResult, firstReceipt); err != nil {
+		t.Fatal(err)
+	}
+	secondDir := filepath.Join(stateRoot, "full-gate-recovery", "scope-second")
+	if err := os.MkdirAll(secondDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	secondRequest := firstRequest
+	secondRequest.RunID = "fixture-run-second"
+	secondRequest.Command = "fixture-second"
+	secondRequest.ResultPath = filepath.Join(secondDir, "result.json")
+	secondRequest.RequestDigest = v7FullGateRequestDigest(secondRequest)
+	secondResult := v7CertifiedProviderResultFixture(secondRequest, v7FullGateOutcomePassed)
+	secondReceipt := v7GateProviderReceiptForResult(secondRequest, secondResult)
+	requestRaw, _ := json.Marshal(secondRequest)
+	resultRaw, _ := json.Marshal(secondResult)
+	secondRequestPath := filepath.Join(secondDir, "request.json")
+	if err := os.WriteFile(secondRequestPath, requestRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secondRequest.ResultPath, resultRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secondScope := &v7FullGateProviderScope{request: secondRequest, requestPath: secondRequestPath}
+	if err := persistV7FullGateProviderOutcomeJournal(stateRoot, secondScope, secondRequest, secondResult, secondReceipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := recoverV7FullGateProviderScopes(stateRoot, store); err == nil || !strings.Contains(err.Error(), "share one artifact target") {
+		t.Fatalf("shared journal artifact recovery = %v", err)
+	}
+	durable, err := store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil || durable.State == DepartureStateBlocked {
+		t.Fatalf("ambiguous shared evidence mutated departure: %#v, %v", durable, err)
+	}
+}
+
+func TestV7FullGateProviderRecoveryRetiresPublishedOutcomeWithoutRewritingDeparture(t *testing.T) {
+	stateRoot := t.TempDir()
+	store, run := openV7ProviderRecoveryRun(t, stateRoot, "published-ordinary-red")
+	defer store.Close()
+	scope, request, result, receipt := writeV7ProviderOutcomeFixture(t, stateRoot, run.ID, v7FullGateOutcomeFailed)
+	if err := persistV7FullGateProviderOutcomeJournal(stateRoot, scope, request, result, receipt); err != nil {
+		t.Fatal(err)
+	}
+	state, err := openV7FullGateStateRoot(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journalRel := v7FullGateProviderOutcomeJournalRelPath(request.DepartureID, request.RequestDigest)
+	journal, err := readV7FullGateProviderOutcomeJournalAtRoot(state, journalRel)
+	if err == nil {
+		err = ensureV7FullGateJournalArtifactAtRoot(state, &journal)
+	}
+	if closeErr := state.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := run
+	intent.State = DepartureStateRepairing
+	intent.Gate.Status = "failed"
+	intent.Gate.ArtifactRef = request.ArtifactRef
+	intent.Gate.ArtifactRefs = []string{request.ArtifactRef}
+	intent.Gate.ProviderOutcomes = []GateProviderReceipt{receipt}
+	intent.Gate.Failure = DepartureFailure{
+		Class: "isolated", Identity: "stable-defect", OwningTaskID: "APP-T-0001", Action: "owner_rework",
+		ArtifactRefs: []string{request.ArtifactRef},
+	}
+	changed, err := store.TransitionDepartureRun(intent, run.StateRevision)
+	if err != nil || !changed {
+		t.Fatalf("persist ordinary-red departure: changed=%t err=%v", changed, err)
+	}
+	before, err := store.FindDepartureRun(run.ID)
+	if err != nil || before == nil {
+		t.Fatal(err)
+	}
+	beforeGate, _ := json.Marshal(before.Gate)
+	if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
+		t.Fatalf("recover exact published outcome: %v", err)
+	}
+	after, err := store.FindDepartureRun(run.ID)
+	if err != nil || after == nil {
+		t.Fatal(err)
+	}
+	afterGate, _ := json.Marshal(after.Gate)
+	if after.State != before.State || after.StateRevision != before.StateRevision || !bytes.Equal(afterGate, beforeGate) || after.BlockReason != before.BlockReason {
+		t.Fatalf("recovery rewrote published departure:\nbefore=%#v\nafter=%#v", before, after)
+	}
+	if _, err := os.Stat(filepath.Dir(scope.requestPath)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("published outcome scope remained: %v", err)
+	}
+	if _, err := os.Stat(v7FullGateProviderOutcomeJournalPath(stateRoot, request.DepartureID, request.RequestDigest)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("published outcome journal remained: %v", err)
+	}
+}
+
 func TestV7FullGateProviderArtifactBindingCrashRecoversExactRedEvidence(t *testing.T) {
 	stateRoot := t.TempDir()
 	store, run := openV7ProviderRecoveryRun(t, stateRoot, "artifact-bound-before-departure-cas")
@@ -1081,9 +1389,13 @@ func newExternalV7ProviderFixture(t *testing.T, path, stateRoot string) *v7Exter
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(raw)
+	executableID := fmt.Sprintf("sha256:%x", sum[:])
+	if _, verified, verifyErr := verifyV7TrustedProviderExecutable(path); verifyErr == nil {
+		executableID = verified
+	}
 	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
 	return &v7ExternalFullGateProvider{
-		path: path, kind: "container", identity: digest('a'), executableIdentity: fmt.Sprintf("sha256:%x", sum[:]),
+		path: path, kind: "container", identity: digest('a'), executableIdentity: executableID,
 		runtimeDigest: digest('b'), clientDigest: digest('c'), policyDigest: digest('d'), attestationDigest: digest('e'),
 		capabilities: []string{"candidate_read_only", "network_denied", "control_env_denied"}, implementationID: v7KnownFullGateProvider,
 		capabilitySchema: v7FullGateCapabilitySchema, imageOrVMID: digest('f'), profile: "fixture", stateRoot: stateRoot,

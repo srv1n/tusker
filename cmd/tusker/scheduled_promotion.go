@@ -1415,8 +1415,8 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	execution := runV7GateTierOnRefContext(gateCtx, vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
 	if err := ctx.Err(); err != nil {
 		if execution.ProviderOutcome == "" {
-			for _, ref := range execution.ArtifactRefs {
-				_ = removeV7FullGatePromotionArtifact(store.stateRoot, ref)
+			if cleanupErr := removeV7ProvablyUnboundPromotionArtifacts(store.stateRoot, execution.ArtifactRefs); cleanupErr != nil {
+				return "", errors.Join(err, cleanupErr)
 			}
 			return "", err
 		}
@@ -1447,8 +1447,8 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	}
 	if err := ctx.Err(); err != nil {
 		if execution.ProviderOutcome == "" {
-			for _, ref := range execution.ArtifactRefs {
-				_ = removeV7FullGatePromotionArtifact(store.stateRoot, ref)
+			if cleanupErr := removeV7ProvablyUnboundPromotionArtifacts(store.stateRoot, execution.ArtifactRefs); cleanupErr != nil {
+				return "", errors.Join(err, cleanupErr)
 			}
 			return "", err
 		}
@@ -1463,6 +1463,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 		intent.Candidate, intent.Gate = before.Candidate, before.Gate
 		intent.Gate.Status = string(execution.ProviderOutcome)
 		intent.Gate.StartedAt, intent.Gate.FinishedAt, intent.Gate.ArtifactRef = gateStarted.Format(time.RFC3339Nano), gateFinished.Format(time.RFC3339Nano), execution.ArtifactRef
+		intent.Gate.ArtifactRefs = append([]string(nil), execution.ArtifactRefs...)
 		intent.Gate.ProviderOutcomes = append([]GateProviderReceipt(nil), execution.ProviderOutcomes...)
 		intent.Gate.Failure = DepartureFailure{Class: "provider", Identity: string(execution.ProviderOutcome), Action: string(execution.ProviderOutcome), ArtifactRefs: append([]string(nil), execution.ArtifactRefs...)}
 		intent.State = DepartureStateBlocked
@@ -1524,6 +1525,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 		intent.Candidate, intent.Gate = before.Candidate, before.Gate
 		intent.Gate.Status = "failed"
 		intent.Gate.StartedAt, intent.Gate.FinishedAt, intent.Gate.ArtifactRef = gateStarted.Format(time.RFC3339Nano), gateFinished.Format(time.RFC3339Nano), artifactRefs[len(artifactRefs)-1]
+		intent.Gate.ArtifactRefs = append([]string(nil), artifactRefs...)
 		intent.Gate.ProviderReceipts = append([]GateProviderReceipt(nil), execution.ProviderReceipts...)
 		intent.Gate.ProviderOutcomes = append([]GateProviderReceipt(nil), execution.ProviderOutcomes...)
 		intent.Gate.Failure = DepartureFailure{Class: string(route.Class), Identity: route.StableIdentity, OwningTaskID: packet.OwningTaskID, BisectionRef: packet.BisectionRef, ArtifactRefs: packet.ArtifactRefs, RepairTaskID: repairTaskID, ModelTriage: route.ModelTriage, Packet: packet, Action: action, AffectedTaskIDs: affected}
@@ -1608,6 +1610,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	intent.Gate.StartedAt = gateStarted.Format(time.RFC3339Nano)
 	intent.Gate.FinishedAt = gateFinished.Format(time.RFC3339Nano)
 	intent.Gate.ArtifactRef = execution.ArtifactRef
+	intent.Gate.ArtifactRefs = append([]string(nil), execution.ArtifactRefs...)
 	intent.Gate.ProviderReceipts = append([]GateProviderReceipt(nil), execution.ProviderReceipts...)
 	intent.Gate.ProviderOutcomes = append([]GateProviderReceipt(nil), execution.ProviderOutcomes...)
 	intent.Promotion = DeparturePromotion{
