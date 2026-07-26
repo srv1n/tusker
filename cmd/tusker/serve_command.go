@@ -256,6 +256,8 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case path == "/api/delivery/review":
+		s.handleDeliveryReview(w, r)
 	case path == "/api/stream":
 		s.handleStream(w, r)
 	case path == "/api/daemon":

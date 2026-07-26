@@ -82,7 +82,7 @@ func TestDeliveryStart(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, path, confirm := newPlan(t, vault)
-		review, err := buildDeliveryReview(vault, path)
+		review, err := buildDeliveryReviewWithInspector(vault, path, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
 		if err != nil || !review.Ready {
 			t.Fatalf("plan was not reviewable at base A: %#v %v", review, err)
 		}

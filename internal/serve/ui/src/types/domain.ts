@@ -115,6 +115,60 @@ export interface ActionResult {
   discard?: DiscardImpact;
 }
 
+// Delivery intake is deliberately a product projection. These are the exact
+// five CLI review sections, not a second client-side planner.
+export interface DeliveryReview {
+  schema: "tusker.delivery-review/v1";
+  readOnly: true;
+  ready: boolean;
+  whatWillBeDelivered: Array<{ requirement: string; outcome: string; nonGoals: string[]; links: DeliveryReviewLink[] }>;
+  howItWillBeProven: Array<{
+    requirements: string[]; outcome: string; acceptance: string[]; tests: string[]; artifacts: string[];
+    sourceKey: string; taskId?: string; taskHref?: string;
+    checks: Array<{ covers: string; check: string; notes?: string; href?: string }>;
+    artifactRefs: Array<{ kind: string; path: string; summary: string; acceptanceIds: string[]; href?: string }>;
+    resourceRefs: string[];
+  }>;
+  howWorkFlows: {
+    frontiers: string[][]; expectedConcurrency: number; integration: string;
+    sharedResources: Array<{ sourceKey: string; kind: string; capacity?: number; capacityStatus: string; constraints: string[]; referencedBy: string[]; taskLinks: DeliveryReviewLink[] }>;
+    warnings: string[]; waveId?: string; waveHref?: string;
+  };
+  whatNeedsYourDecision: Array<{
+    title: string; action: string; why: string; sourceKey?: string; gateId?: string; gateHref?: string;
+    taskSourceKey?: string; taskId?: string; acceptanceIds: string[]; verification?: string;
+  }>;
+  startBoundary: {
+    planFingerprint: string; planIdentity?: string; contextFingerprint?: string; authorization: string; readiness: string;
+    blockers: string[]; nextAction: string; state: DeliveryReviewState; stateLabel: string; actionHref?: string;
+  };
+  nonGoals: string[];
+}
+
+export interface DeliveryReviewLink { label: string; href: string }
+export type DeliveryReviewState =
+  | "held" | "invalid" | "changed" | "disabled" | "daemon-off" | "runner-blocked"
+  | "shared-workspace" | "gated" | "armed" | "running" | "parked" | "completed";
+
+export interface DeliveryStartResult {
+  schema: "tusker.delivery-start/v1";
+  waveId: string;
+  planFingerprint: string;
+  contextFingerprint: string;
+  authorizationFingerprint: string;
+  firstFrontier: string[];
+  expectedConcurrency: number;
+  integrationLane: string;
+  statusLink: string;
+  replayed: boolean;
+  nextAction?: string;
+}
+
+export interface DeliveryErrorPayload {
+  schema: "tusker.serve-delivery-error/v1";
+  error: ActionIssue;
+}
+
 export interface DiscardDependent {
   id: string;
   title: string;

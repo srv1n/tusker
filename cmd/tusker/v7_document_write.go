@@ -15,6 +15,7 @@ const v7DocumentLockTimeout = 5 * time.Second
 
 type v7DocumentLock struct {
 	file *os.File
+	path string
 }
 
 func (lock *v7DocumentLock) Close() error {
@@ -57,7 +58,7 @@ func acquireV7DocumentLock(filePath string, timeout time.Duration) (*v7DocumentL
 	for {
 		err = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
-			return &v7DocumentLock{file: lockFile}, nil
+			return &v7DocumentLock{file: lockFile, path: filePath}, nil
 		}
 		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
 			_ = lockFile.Close()

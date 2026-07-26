@@ -14,7 +14,7 @@ func TestDeliveryPlanReview(t *testing.T) {
 	plan.HumanGates = nil
 	plan.NonGoals = []string{"No background worker is started by review."}
 	path := writeDeliveryV2TestPlan(t, vault, plan)
-	review, err := buildDeliveryReview(vault, path)
+	review, err := buildDeliveryReviewWithInspector(vault, path, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestDeliveryPlanReview(t *testing.T) {
 func TestDeliveryPlanReviewPreservesV1ReadOnlyCompatibility(t *testing.T) {
 	vault := deliveryTestVault(t)
 	path := writeDeliveryTestPlan(t, vault, validDeliveryPlan())
-	review, err := buildDeliveryReview(vault, path)
+	review, err := buildDeliveryReviewWithInspector(vault, path, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
 	if err != nil {
 		t.Fatal(err)
 	}

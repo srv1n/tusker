@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -95,6 +97,260 @@ func errorToIssue(err error) Issue {
 	return Issue{Code: "UNKNOWN", Message: err.Error()}
 }
 
+// annotatePrimaryTuskerError preserves the first typed classification while
+// replacing that leaf with an annotated clone. Every sibling leaf remains in
+// the returned tree, so later operator and Serve formatters cannot silently
+// discard a concurrent cleanup failure.
+func annotatePrimaryTuskerError(err error, annotation string) error {
+	if err == nil {
+		return nil
+	}
+	var primary *TuskerError
+	if !errors.As(err, &primary) {
+		return fmt.Errorf("%w; %s", err, annotation)
+	}
+	cloned := *primary
+	cloned.Message = strings.TrimSuffix(cloned.Message, ".") + "; " + annotation
+	parts := []error{&cloned}
+	for _, leaf := range flattenErrorLeaves(err) {
+		if typed, ok := leaf.(*TuskerError); ok && typed == primary {
+			continue
+		}
+		parts = append(parts, leaf)
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return errors.Join(parts...)
+}
+
+// serveErrorIssue retains the primary typed code/hint/context and adds a
+// deterministic, bounded, redacted rendering of every unique leaf cause.
+// Absolute paths discovered only through error prose are suppressed; existing
+// structured actionable path context remains untouched.
+func serveErrorIssue(err error) Issue {
+	if err == nil {
+		return Issue{}
+	}
+	leaves := flattenErrorLeaves(err)
+	var primary *TuskerError
+	if errors.As(err, &primary) {
+		issue := errorToIssue(primary)
+		issue.Message = safeOperatorErrorText(issue.Message, 640)
+		issue.Hint = safeOperatorErrorText(issue.Hint, 640)
+		issue.Path = safeOperatorErrorText(issue.Path, 320)
+		issue.Context = safeServeIssueContext(issue.Context, 0)
+		return appendServeErrorDetails(issue, leaves, primary)
+	}
+	issue := Issue{Code: "UNKNOWN"}
+	if len(leaves) == 0 {
+		issue.Message = safeOperatorErrorText(err.Error(), 640)
+		return issue
+	}
+	issue.Message = safeOperatorErrorLeaf(leaves[0])
+	return appendServeErrorDetails(issue, leaves, nil)
+}
+
+func flattenErrorLeaves(err error) []error {
+	const maxErrorTreeNodes = 256
+	var (
+		out     []error
+		visited int
+	)
+	var walk func(error)
+	walk = func(current error) {
+		if current == nil || visited >= maxErrorTreeNodes {
+			return
+		}
+		visited++
+		switch wrapped := current.(type) {
+		case interface{ Unwrap() []error }:
+			children := wrapped.Unwrap()
+			if len(children) == 0 {
+				out = append(out, current)
+				return
+			}
+			for _, child := range children {
+				walk(child)
+			}
+		case interface{ Unwrap() error }:
+			child := wrapped.Unwrap()
+			if child == nil {
+				out = append(out, current)
+				return
+			}
+			walk(child)
+		default:
+			out = append(out, current)
+		}
+	}
+	walk(err)
+	return out
+}
+
+func appendServeErrorDetails(issue Issue, leaves []error, primary *TuskerError) Issue {
+	const maxServeErrorLeaves = 16
+	seen := map[string]struct{}{}
+	var (
+		allDetails     []string
+		siblingDetails []string
+	)
+	for _, leaf := range leaves {
+		detail := safeOperatorErrorLeaf(leaf)
+		if detail == "" {
+			continue
+		}
+		if _, exists := seen[detail]; exists {
+			continue
+		}
+		seen[detail] = struct{}{}
+		if len(allDetails) >= maxServeErrorLeaves {
+			continue
+		}
+		allDetails = append(allDetails, detail)
+		isPrimary := false
+		if typed, ok := leaf.(*TuskerError); ok && primary != nil && typed == primary {
+			isPrimary = true
+		} else if primary == nil && len(allDetails) == 1 {
+			isPrimary = true
+		}
+		if !isPrimary {
+			siblingDetails = append(siblingDetails, detail)
+		}
+	}
+	if len(siblingDetails) == 0 {
+		return issue
+	}
+	issue.Message = safePacketText(issue.Message+"; additional causes: "+strings.Join(siblingDetails, "; "), 2048)
+	context := serveIssueContextMap(issue.Context)
+	if existing, present := context["error_chain"]; present {
+		delete(context, "error_chain")
+		context[uniqueServeIssueContextKey(context, "primary_error_chain")] = existing
+	}
+	context["error_chain"] = allDetails
+	issue.Context = context
+	return issue
+}
+
+func serveIssueContextMap(context any) map[string]any {
+	if context == nil {
+		return map[string]any{}
+	}
+	safe := safeServeIssueContext(context, 0)
+	if typed, ok := safe.(map[string]any); ok {
+		return typed
+	}
+	return map[string]any{"primary_context": safe}
+}
+
+func safeServeIssueContext(value any, depth int) any {
+	const (
+		maxDepth   = 6
+		maxEntries = 32
+	)
+	if depth >= maxDepth {
+		return "[truncated]"
+	}
+	switch typed := value.(type) {
+	case nil, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, json.Number:
+		return typed
+	case string:
+		return safeOperatorErrorText(typed, 320)
+	case []string:
+		limit := len(typed)
+		if limit > maxEntries {
+			limit = maxEntries
+		}
+		out := make([]any, 0, limit+1)
+		for _, item := range typed[:limit] {
+			out = append(out, safeServeIssueContext(item, depth+1))
+		}
+		if len(typed) > limit {
+			out = append(out, "[truncated]")
+		}
+		return out
+	case []any:
+		limit := len(typed)
+		if limit > maxEntries {
+			limit = maxEntries
+		}
+		out := make([]any, 0, limit+1)
+		for _, item := range typed[:limit] {
+			out = append(out, safeServeIssueContext(item, depth+1))
+		}
+		if len(typed) > limit {
+			out = append(out, "[truncated]")
+		}
+		return out
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		if len(keys) > maxEntries {
+			keys = keys[:maxEntries]
+		}
+		out := make(map[string]any, len(keys)+1)
+		for _, key := range keys {
+			safeKey := safeOperatorErrorText(key, 80)
+			if safeKey == "" {
+				safeKey = "[redacted-key]"
+			}
+			out[uniqueServeIssueContextKey(out, safeKey)] = safeServeIssueContext(typed[key], depth+1)
+		}
+		if len(typed) > len(keys) {
+			out[uniqueServeIssueContextKey(out, "_truncated")] = true
+		}
+		return out
+	default:
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			return safeOperatorErrorText(fmt.Sprint(typed), 320)
+		}
+		var decoded any
+		if json.Unmarshal(raw, &decoded) != nil {
+			return "[unavailable]"
+		}
+		return safeServeIssueContext(decoded, depth+1)
+	}
+}
+
+func uniqueServeIssueContextKey(values map[string]any, base string) string {
+	if _, exists := values[base]; !exists {
+		return base
+	}
+	for suffix := 2; ; suffix++ {
+		candidate := fmt.Sprintf("%s#%d", base, suffix)
+		if _, exists := values[candidate]; !exists {
+			return candidate
+		}
+	}
+}
+
+func safeOperatorErrorLeaf(err error) string {
+	if err == nil {
+		return ""
+	}
+	if typed, ok := err.(*TuskerError); ok {
+		return safeOperatorErrorText("["+typed.Code+"] "+typed.Message, 320)
+	}
+	return safeOperatorErrorText(err.Error(), 320)
+}
+
+func safeOperatorErrorText(value string, limit int) string {
+	value = safePacketText(value, 0)
+	if value == "" {
+		return ""
+	}
+	value = serveErrorJSONSecretPattern.ReplaceAllString(value, "${1}[redacted]")
+	value = serveErrorJSONAuthorizationPattern.ReplaceAllString(value, "${1}[redacted]")
+	value = serveErrorUnixAbsolutePathPattern.ReplaceAllString(value, "${1}[path]")
+	value = serveErrorWindowsAbsolutePathPattern.ReplaceAllString(value, "${1}[path]")
+	value = serveErrorWindowsUNCPathPattern.ReplaceAllString(value, "${1}[path]")
+	return safePacketText(value, limit)
+}
+
 func formatIssue(issue Issue) string {
 	loc := ""
 	if issue.Path != "" {
@@ -165,29 +421,34 @@ const (
 )
 
 var (
-	noteTypes              = makeSet("epic", "task", "doc", "note")
-	taskStatuses           = makeSet("draft", "backlog", "ready", "active", "blocked", "review", "rework", "done", "cancelled")
-	docStatuses            = makeSet("draft", "review", "approved", "published", "archived")
-	publishableDocStatuses = makeSet("approved", "published")
-	docIntents             = makeSet("canon", "companion")
-	canonicalStatuses      = makeSet("draft", "approved", "deprecated", "historical")
-	changeTypes            = makeSet("feature", "bug", "refactor", "migration", "security", "docs", "chore", "research", "incident")
-	sizes                  = makeSet("s", "m", "l", "xl")
-	risks                  = makeSet("low", "medium", "high", "critical")
-	priorities             = makeSet("p0", "p1", "p2", "p3")
-	delegations            = makeSet("execute", "explore", "escalate")
-	aiAssistanceLevels     = makeSet("none", "light", "moderate", "heavy")
-	docAudiences           = makeSet("developer", "user", "operator", "support", "release", "agent", "internal")
-	docModes               = makeSet("tutorial", "how-to", "reference", "explanation")
-	docAgentLayers         = makeSet("none", "capsule", "standalone")
-	publicationLanes       = makeSet("developer", "user", "release-notes", "support", "internal")
-	uiSurfaces             = makeSet("frontend", "desktop", "mobile")
-	epicAcronymPattern     = regexp.MustCompile(`^[A-Z]{3}$`)
-	taskIDPattern          = regexp.MustCompile(`^([A-Z]{3})-T-(\d{4})$`)
-	docIDPattern           = regexp.MustCompile(`^([A-Z]{3})-D-(\d{4})$`)
-	recordIDPattern        = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
-	assetLinkRegex         = regexp.MustCompile(`(!\[.*?\]\(.+?\))|(!\[\[.+?\]\])|(\[.+?\]\((https?:\/\/\S+?)\))`)
-	integerStringPattern   = regexp.MustCompile(`^-?\d+$`)
+	noteTypes                            = makeSet("epic", "task", "doc", "note")
+	taskStatuses                         = makeSet("draft", "backlog", "ready", "active", "blocked", "review", "rework", "done", "cancelled")
+	docStatuses                          = makeSet("draft", "review", "approved", "published", "archived")
+	publishableDocStatuses               = makeSet("approved", "published")
+	docIntents                           = makeSet("canon", "companion")
+	canonicalStatuses                    = makeSet("draft", "approved", "deprecated", "historical")
+	changeTypes                          = makeSet("feature", "bug", "refactor", "migration", "security", "docs", "chore", "research", "incident")
+	sizes                                = makeSet("s", "m", "l", "xl")
+	risks                                = makeSet("low", "medium", "high", "critical")
+	priorities                           = makeSet("p0", "p1", "p2", "p3")
+	delegations                          = makeSet("execute", "explore", "escalate")
+	aiAssistanceLevels                   = makeSet("none", "light", "moderate", "heavy")
+	docAudiences                         = makeSet("developer", "user", "operator", "support", "release", "agent", "internal")
+	docModes                             = makeSet("tutorial", "how-to", "reference", "explanation")
+	docAgentLayers                       = makeSet("none", "capsule", "standalone")
+	publicationLanes                     = makeSet("developer", "user", "release-notes", "support", "internal")
+	uiSurfaces                           = makeSet("frontend", "desktop", "mobile")
+	epicAcronymPattern                   = regexp.MustCompile(`^[A-Z]{3}$`)
+	taskIDPattern                        = regexp.MustCompile(`^([A-Z]{3})-T-(\d{4})$`)
+	docIDPattern                         = regexp.MustCompile(`^([A-Z]{3})-D-(\d{4})$`)
+	recordIDPattern                      = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
+	assetLinkRegex                       = regexp.MustCompile(`(!\[.*?\]\(.+?\))|(!\[\[.+?\]\])|(\[.+?\]\((https?:\/\/\S+?)\))`)
+	integerStringPattern                 = regexp.MustCompile(`^-?\d+$`)
+	serveErrorUnixAbsolutePathPattern    = regexp.MustCompile(`(^|[\s=:,"'(\[{])(/[^\s/"'()\[\]{}<>,;][^\s"'()\[\]{}<>,;]*)`)
+	serveErrorWindowsAbsolutePathPattern = regexp.MustCompile(`(^|[\s=,"'(\[{])([A-Za-z]:[\\/][^\s"'()\[\]{}<>,;]+)`)
+	serveErrorWindowsUNCPathPattern      = regexp.MustCompile(`(^|[\s=,"'(\[{])(\\\\[^\\/\s"'()\[\]{}<>,;]+(?:\\[^\\/\s"'()\[\]{}<>,;]+)+)`)
+	serveErrorJSONSecretPattern          = regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)["']?\s*[:=]\s*["']?)[^"',;}\]]+`)
+	serveErrorJSONAuthorizationPattern   = regexp.MustCompile(`(?i)(["']?(?:authorization|proxy-authorization)["']?\s*[:=]\s*["']?(?:(?:bearer|basic)\s+)?)[^"',;}\]]+`)
 )
 
 var statusTransitionDateFields = map[string]string{

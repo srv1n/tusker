@@ -218,7 +218,12 @@ func armedWaveTaskHumanBlocked(idx v7Index, task Note) bool {
 }
 
 func armedWaveRunMachineParked(run RunStatus) bool {
-	return LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateParkedNoProgress
+	switch LeaseState(strings.TrimSpace(run.LeaseState)) {
+	case LeaseStateParkedNoProgress, LeaseStateParkedBudget:
+		return true
+	default:
+		return false
+	}
 }
 
 func armedWaveForTask(vaultPath string, task Note) (Note, v7Index, bool) {
