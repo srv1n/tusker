@@ -33,6 +33,12 @@ type completionReceipt struct {
 	Review      ReviewResult                       `json:"review"`
 	Transaction completionReceiptTransaction       `json:"transaction"`
 	Close       completionCloseAuthorityProjection `json:"close_projection"`
+	Authority   completionReceiptAuthority         `json:"completion_authority"`
+}
+
+type completionReceiptAuthority struct {
+	ID        string `json:"id"`
+	Signature []byte `json:"signature"`
 }
 
 func completionReceiptID(transactionID string) string {
@@ -58,7 +64,7 @@ func newCompletionReceipt(vaultPath, taskPath string, task completionGitTreeEntr
 		return completionReceipt{}, nil, fmt.Errorf("completion receipt close projection does not match frozen authority")
 	}
 	r := completionReceipt{Schema: completionReceiptSchema, ReceiptID: completionReceiptID(tx.ID), TaskPath: taskPath, TaskBlob: task.OID, TaskMode: task.Mode, Review: result,
-		Transaction: completionReceiptTransaction{ID: tx.ID, ProjectID: tx.ProjectID, TaskID: tx.TaskID, ResultRevision: tx.ResultRevision, ReviewedTaskStateRev: tx.ReviewedTaskStateRev, WorkRevision: tx.WorkRevision, ImplementationSHA: tx.ImplementationSHA, ReviewAttempt: tx.ReviewAttempt, IntegrationBase: tx.IntegrationBase, IntegrationRef: tx.IntegrationRef, StagingRef: tx.StagingRef, WaveID: tx.WaveID, WaveAuthorityKind: tx.WaveAuthorityKind, WaveAuthorizationFP: tx.WaveAuthorizationFP, WaveMaterialFP: tx.WaveMaterialFP, CloseAuthorityFP: tx.CloseAuthorityFP}, Close: closeProjection}
+		Transaction: completionReceiptTransaction{ID: tx.ID, ProjectID: tx.ProjectID, TaskID: tx.TaskID, ResultRevision: tx.ResultRevision, ReviewedTaskStateRev: tx.ReviewedTaskStateRev, WorkRevision: tx.WorkRevision, ImplementationSHA: tx.ImplementationSHA, ReviewAttempt: tx.ReviewAttempt, IntegrationBase: tx.IntegrationBase, IntegrationRef: tx.IntegrationRef, StagingRef: tx.StagingRef, WaveID: tx.WaveID, WaveAuthorityKind: tx.WaveAuthorityKind, WaveAuthorizationFP: tx.WaveAuthorizationFP, WaveMaterialFP: tx.WaveMaterialFP, CloseAuthorityFP: tx.CloseAuthorityFP}, Close: closeProjection, Authority: completionReceiptAuthority{ID: tx.CompletionAuthorityID, Signature: append([]byte(nil), tx.CompletionAuthoritySig...)}}
 	raw, err := json.Marshal(r)
 	if err != nil {
 		return completionReceipt{}, nil, err
@@ -77,6 +83,9 @@ func validateCompletionReceipt(raw []byte, taskPath string, task completionGitTr
 	}
 	if tx == nil || receipt.Schema != completionReceiptSchema || receipt.ReceiptID != completionReceiptID(tx.ID) || receipt.TaskPath != taskPath || receipt.TaskBlob != task.OID || receipt.TaskMode != "100644" {
 		return fmt.Errorf("completion receipt identity or task entry mismatch")
+	}
+	if receipt.Authority.ID != tx.CompletionAuthorityID || len(receipt.Authority.Signature) != 64 {
+		return fmt.Errorf("completion receipt authority is missing or mismatched")
 	}
 	if err := validatePersistedReviewResult(receipt.Review); err != nil {
 		return fmt.Errorf("completion receipt review invalid: %w", err)
@@ -156,22 +165,24 @@ func validateCompletionReceipt(raw []byte, taskPath string, task completionGitTr
 func completionTransactionFromReceipt(receipt completionReceipt) *completionTransaction {
 	tr := receipt.Transaction
 	return &completionTransaction{
-		Schema:               completionTransactionSchema,
-		ID:                   tr.ID,
-		ProjectID:            tr.ProjectID,
-		TaskID:               tr.TaskID,
-		WorkRevision:         tr.WorkRevision,
-		ImplementationSHA:    tr.ImplementationSHA,
-		ReviewAttempt:        tr.ReviewAttempt,
-		ResultRevision:       tr.ResultRevision,
-		ReviewedTaskStateRev: tr.ReviewedTaskStateRev,
-		WaveID:               tr.WaveID,
-		WaveAuthorityKind:    tr.WaveAuthorityKind,
-		WaveAuthorizationFP:  tr.WaveAuthorizationFP,
-		WaveMaterialFP:       tr.WaveMaterialFP,
-		CloseAuthorityFP:     tr.CloseAuthorityFP,
-		IntegrationBase:      tr.IntegrationBase,
-		IntegrationRef:       tr.IntegrationRef,
-		StagingRef:           tr.StagingRef,
+		Schema:                 completionTransactionSchema,
+		ID:                     tr.ID,
+		ProjectID:              tr.ProjectID,
+		TaskID:                 tr.TaskID,
+		WorkRevision:           tr.WorkRevision,
+		ImplementationSHA:      tr.ImplementationSHA,
+		ReviewAttempt:          tr.ReviewAttempt,
+		ResultRevision:         tr.ResultRevision,
+		ReviewedTaskStateRev:   tr.ReviewedTaskStateRev,
+		WaveID:                 tr.WaveID,
+		WaveAuthorityKind:      tr.WaveAuthorityKind,
+		WaveAuthorizationFP:    tr.WaveAuthorizationFP,
+		WaveMaterialFP:         tr.WaveMaterialFP,
+		CloseAuthorityFP:       tr.CloseAuthorityFP,
+		IntegrationBase:        tr.IntegrationBase,
+		IntegrationRef:         tr.IntegrationRef,
+		StagingRef:             tr.StagingRef,
+		CompletionAuthorityID:  receipt.Authority.ID,
+		CompletionAuthoritySig: append([]byte(nil), receipt.Authority.Signature...),
 	}
 }

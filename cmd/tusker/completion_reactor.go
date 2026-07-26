@@ -42,33 +42,35 @@ const (
 )
 
 type completionTransaction struct {
-	Schema               string `json:"schema"`
-	ID                   string `json:"id"`
-	ProjectID            string `json:"project_id"`
-	TaskID               string `json:"task_id"`
-	WorkRevision         int    `json:"work_revision"`
-	ImplementationSHA    string `json:"implementation_sha"`
-	ReviewAttempt        string `json:"review_attempt"`
-	ResultRevision       string `json:"result_revision"`
-	ReviewedTaskStateRev string `json:"reviewed_task_state_rev"`
-	WaveID               string `json:"wave_id"`
-	WaveAuthorityKind    string `json:"wave_authority_kind"`
-	WaveAuthorizationFP  string `json:"wave_authorization_fingerprint,omitempty"`
-	WaveMaterialFP       string `json:"wave_material_fingerprint"`
-	CloseAuthorityFP     string `json:"close_authority_fingerprint,omitempty"`
-	IntegrationBase      string `json:"integration_base"`
-	IntegrationRef       string `json:"integration_ref"`
-	StagingRef           string `json:"staging_ref"`
-	Phase                string `json:"phase"`
-	StagedSHA            string `json:"staged_sha,omitempty"`
-	StagedTaskBlob       string `json:"staged_task_blob,omitempty"`
-	StagedTaskMode       string `json:"staged_task_mode,omitempty"`
-	StagedReceiptBlob    string `json:"staged_receipt_blob,omitempty"`
-	StagedReceiptMode    string `json:"staged_receipt_mode,omitempty"`
-	Failure              string `json:"failure,omitempty"`
-	Disposition          string `json:"disposition,omitempty"`
-	CreatedAt            string `json:"created_at"`
-	UpdatedAt            string `json:"updated_at"`
+	Schema                 string `json:"schema"`
+	ID                     string `json:"id"`
+	ProjectID              string `json:"project_id"`
+	TaskID                 string `json:"task_id"`
+	WorkRevision           int    `json:"work_revision"`
+	ImplementationSHA      string `json:"implementation_sha"`
+	ReviewAttempt          string `json:"review_attempt"`
+	ResultRevision         string `json:"result_revision"`
+	ReviewedTaskStateRev   string `json:"reviewed_task_state_rev"`
+	WaveID                 string `json:"wave_id"`
+	WaveAuthorityKind      string `json:"wave_authority_kind"`
+	WaveAuthorizationFP    string `json:"wave_authorization_fingerprint,omitempty"`
+	WaveMaterialFP         string `json:"wave_material_fingerprint"`
+	CloseAuthorityFP       string `json:"close_authority_fingerprint,omitempty"`
+	CompletionAuthorityID  string `json:"completion_authority_id,omitempty"`
+	CompletionAuthoritySig []byte `json:"completion_authority_signature,omitempty"`
+	IntegrationBase        string `json:"integration_base"`
+	IntegrationRef         string `json:"integration_ref"`
+	StagingRef             string `json:"staging_ref"`
+	Phase                  string `json:"phase"`
+	StagedSHA              string `json:"staged_sha,omitempty"`
+	StagedTaskBlob         string `json:"staged_task_blob,omitempty"`
+	StagedTaskMode         string `json:"staged_task_mode,omitempty"`
+	StagedReceiptBlob      string `json:"staged_receipt_blob,omitempty"`
+	StagedReceiptMode      string `json:"staged_receipt_mode,omitempty"`
+	Failure                string `json:"failure,omitempty"`
+	Disposition            string `json:"disposition,omitempty"`
+	CreatedAt              string `json:"created_at"`
+	UpdatedAt              string `json:"updated_at"`
 }
 
 type persistedReviewResultRow struct {
@@ -384,6 +386,11 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 	}
 	transaction.ID = completionTransactionID(project.ProjectID, result, base, completionFrozenAuthorityParts(&transaction)...)
 	transaction.StagingRef = completionStagingRef(transaction.ID)
+	if result.Verdict == "pass" {
+		if err := d.issueCompletionAuthority(project, result, &transaction); err != nil {
+			return err
+		}
+	}
 	if prior, err := d.store.CompletionTransaction(transaction.ID); err != nil {
 		return err
 	} else if prior != nil {
@@ -573,6 +580,9 @@ func authenticateCompletionFrozenAuthority(projectID string, result ReviewResult
 	}
 	if transaction.StagingRef == "" || transaction.StagingRef != completionStagingRef(transaction.ID) {
 		return completionFrozenAuthorityRepairError(transaction, "durable staging ref is missing or does not match the transaction")
+	}
+	if result.Verdict == "pass" && (transaction.CompletionAuthorityID == "" || len(transaction.CompletionAuthoritySig) != 64) {
+		return completionFrozenAuthorityRepairError(transaction, "resident-daemon completion authority is missing")
 	}
 	if completionPhaseRequiresStagedTaskAttestation(transaction) &&
 		(transaction.StagedSHA == "" || transaction.StagedTaskBlob == "" || transaction.StagedTaskMode != "100644" || transaction.StagedReceiptBlob == "" || transaction.StagedReceiptMode != "100644") {
@@ -839,7 +849,7 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 		if transaction.StagedSHA == "" || !gitMergeBaseAncestor(project.RepoRoot, transaction.StagedSHA, currentBase) {
 			return completionRefDivergenceError(transaction, currentBase)
 		}
-		if err := authenticateCommittedCompletionRef(project.VaultRoot, project.RepoRoot, currentBase, result, transaction); err != nil {
+		if err := d.authenticateCommittedCompletionRef(project, currentBase, result, transaction); err != nil {
 			return err
 		}
 		transaction.Phase = completionPhaseRefCommitted
@@ -848,7 +858,7 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 		}
 		refCommitted = true
 	} else if refCommitted {
-		if err := authenticateCommittedCompletionRef(project.VaultRoot, project.RepoRoot, currentBase, result, transaction); err != nil {
+		if err := d.authenticateCommittedCompletionRef(project, currentBase, result, transaction); err != nil {
 			return err
 		}
 	} else if refExists && currentBase != transaction.IntegrationBase {
@@ -909,6 +919,9 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 		staged, stageErr := stageExactReviewCompletion(
 			project.VaultRoot, project.RepoRoot, transaction.IntegrationBase, result, transaction,
 			func() error { return d.store.SaveCompletionTransaction(transaction) },
+			func(candidate completionStagingCandidate) error {
+				return d.bindCompletionAuthority(project, result, transaction, candidate.TaskBlob, candidate.ReceiptBlob)
+			},
 		)
 		if stageErr != nil {
 			if isCompletionCrashInterruption(stageErr) {
@@ -972,7 +985,7 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 				}
 			}
 			if observedExists && gitMergeBaseAncestor(project.RepoRoot, transaction.StagedSHA, observed) {
-				if err := authenticateCommittedCompletionRef(project.VaultRoot, project.RepoRoot, observed, result, transaction); err != nil {
+				if err := d.authenticateCommittedCompletionRef(project, observed, result, transaction); err != nil {
 					return err
 				}
 				transaction.Phase = completionPhaseRefCommitted
@@ -986,6 +999,9 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 			}
 		}
 		if transaction.Phase == completionPhaseRefIntent {
+			if err := d.consumeCompletionAuthorityAfterCAS(project, transaction.StagedSHA, result, transaction); err != nil {
+				return err
+			}
 			if err := injectCompletionReactorCrash("ref_commit", transaction); err != nil {
 				return err
 			}
@@ -1102,7 +1118,8 @@ func completionRefDivergenceError(transaction *completionTransaction, current st
 // retention. A later same-wave completion may advance the integration tip, but
 // it must retain this transaction's exact staged task blob and the durable
 // staging ref must still authenticate the reviewed merge object.
-func authenticateCommittedCompletionRef(vaultPath, repoRoot, current string, result ReviewResult, transaction *completionTransaction) error {
+func (d *Daemon) authenticateCommittedCompletionRef(project RegisteredProject, current string, result ReviewResult, transaction *completionTransaction) error {
+	vaultPath, repoRoot := project.VaultRoot, project.RepoRoot
 	if transaction == nil || transaction.StagedSHA == "" || current == "" ||
 		!gitMergeBaseAncestor(repoRoot, transaction.StagedSHA, current) {
 		return completionRefDivergenceError(transaction, current)
@@ -1112,6 +1129,9 @@ func authenticateCommittedCompletionRef(vaultPath, repoRoot, current string, res
 	// is already reachable from the trusted integration history.
 	if err := validateCompletionStagingCandidate(vaultPath, repoRoot, transaction.StagedSHA, transaction.IntegrationBase, result, transaction); err != nil {
 		return tuskerError("CAS_CONFLICT", "committed completion staged object failed authentication: "+err.Error())
+	}
+	if err := d.consumeCompletionAuthorityAfterCAS(project, transaction.StagedSHA, result, transaction); err != nil {
+		return err
 	}
 	taskRel, err := completionTaskRepoRelativePath(repoRoot, vaultPath, result.TaskID)
 	if err != nil {
@@ -1141,6 +1161,42 @@ func authenticateCommittedCompletionRef(vaultPath, repoRoot, current string, res
 				"task": result.TaskID, "staged_blob": stagedEntry.OID, "staged_mode": stagedEntry.Mode,
 				"current_blob": currentEntry.OID, "current_mode": currentEntry.Mode, "current_type": currentEntry.Type,
 			}))
+	}
+	return nil
+}
+
+func (d *Daemon) consumeCompletionAuthorityAfterCAS(project RegisteredProject, candidate string, result ReviewResult, transaction *completionTransaction) error {
+	if d == nil || d.store == nil || transaction == nil || transaction.CompletionAuthorityID == "" {
+		return completionFrozenAuthorityRepairError(transaction, "completion authority is missing after integration CAS")
+	}
+	tip, err := gitOutputTrim(project.RepoRoot, "rev-parse", transaction.IntegrationRef)
+	if err != nil || tip == "" || !gitMergeBaseAncestor(project.RepoRoot, candidate, tip) {
+		return completionFrozenAuthorityRepairError(transaction, "completion candidate is not retained by the integration ref after CAS")
+	}
+	rel, err := completionTaskRepoRelativePath(project.RepoRoot, project.VaultRoot, result.TaskID)
+	if err != nil {
+		return err
+	}
+	task, err := completionGitTreeEntryAt(project.RepoRoot, candidate, rel)
+	if err != nil {
+		return err
+	}
+	raw, err := gitCombined(project.RepoRoot, "show", candidate+":"+completionReceiptRepoPath(completionReceiptID(transaction.ID)))
+	if err != nil {
+		return err
+	}
+	var receipt completionReceipt
+	if err := json.Unmarshal([]byte(raw), &receipt); err != nil {
+		return completionFrozenAuthorityRepairError(transaction, "completion receipt is malformed after CAS")
+	}
+	if !verifyCompletionReceiptAuthority(project.RepoRoot, receipt, d.store, false) || receipt.TaskBlob != task.OID || receipt.Authority.ID != transaction.CompletionAuthorityID {
+		return completionFrozenAuthorityRepairError(transaction, "integration CAS does not retain the resident-daemon completion authority")
+	}
+	if err := d.store.consumeCompletionAuthority(transaction.CompletionAuthorityID); err != nil {
+		return completionFrozenAuthorityRepairError(transaction, err.Error())
+	}
+	if !verifyCompletionReceiptAuthority(project.RepoRoot, receipt, d.store, true) {
+		return completionFrozenAuthorityRepairError(transaction, "consumed completion authority cannot authenticate its receipt")
 	}
 	return nil
 }
@@ -1588,6 +1644,7 @@ func stageExactReviewCompletion(
 	result ReviewResult,
 	transaction *completionTransaction,
 	persistAttestation func() error,
+	bindAuthority func(completionStagingCandidate) error,
 ) (completionStagingCandidate, error) {
 	if transaction == nil || transaction.StagingRef == "" {
 		return completionStagingCandidate{}, tuskerError(errorInvalidArg, "completion staging requires a persisted transaction ref")
@@ -1611,6 +1668,12 @@ func stageExactReviewCompletion(
 			}
 			transaction.StagedReceiptBlob, transaction.StagedReceiptMode = expected.ReceiptBlob, expected.ReceiptMode
 		}
+		if bindAuthority == nil {
+			return completionStagingCandidate{}, tuskerError(errorInvalidArg, "completion staging requires daemon completion authority")
+		}
+		if err := bindAuthority(completionStagingCandidate{TaskBlob: transaction.StagedTaskBlob, ReceiptBlob: transaction.StagedReceiptBlob}); err != nil {
+			return completionStagingCandidate{}, err
+		}
 		if err := validateCompletionStagingCandidate(vaultPath, repoRoot, candidateSHA, integrationBase, result, transaction); err != nil {
 			return completionStagingCandidate{}, err
 		}
@@ -1632,6 +1695,12 @@ func stageExactReviewCompletion(
 	transaction.StagedTaskMode = candidate.TaskMode
 	transaction.StagedReceiptBlob = candidate.ReceiptBlob
 	transaction.StagedReceiptMode = candidate.ReceiptMode
+	if bindAuthority == nil {
+		return completionStagingCandidate{}, tuskerError(errorInvalidArg, "completion staging requires daemon completion authority")
+	}
+	if err := bindAuthority(candidate); err != nil {
+		return completionStagingCandidate{}, err
+	}
 	if err := validateCompletionStagingCandidate(vaultPath, repoRoot, candidate.SHA, integrationBase, result, transaction); err != nil {
 		return completionStagingCandidate{}, err
 	}

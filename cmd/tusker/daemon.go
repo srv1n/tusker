@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -46,6 +47,8 @@ type Daemon struct {
 	reconcileSchedule      map[string]adaptiveProjectReconcileState
 	processIdentityProbe   func(RunStatus) bool
 	pollProcessIdentity    func(RunStatus) bool
+	completionAuthorityMu  sync.Mutex
+	completionAuthorityKey map[string]ed25519.PrivateKey
 }
 
 const (
@@ -88,7 +91,7 @@ func NewDaemon(stateRoot string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Daemon{stateRoot: stateRoot, store: store, notifyWake: make(chan string, 256), frontiers: map[string]*projectFrontierIndex{}, frontierHints: map[string][]daemonControlChange{}, departureSchedules: map[string]departureSchedule{}}, nil
+	return &Daemon{stateRoot: stateRoot, store: store, notifyWake: make(chan string, 256), frontiers: map[string]*projectFrontierIndex{}, frontierHints: map[string][]daemonControlChange{}, departureSchedules: map[string]departureSchedule{}, completionAuthorityKey: map[string]ed25519.PrivateKey{}}, nil
 }
 
 func (d *Daemon) Close() error {

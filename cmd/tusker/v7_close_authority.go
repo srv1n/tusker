@@ -327,6 +327,10 @@ func authenticateV7TaskCloseAuthorityCommit(note Note, fact v7TaskCloseAuthority
 			lastErr = validateErr
 			continue
 		}
+		if !verifyCompletionReceiptAuthorityWithStore(repoRoot, receipt, nil, true) {
+			lastErr = fmt.Errorf("completion receipt lacks a consumed resident-daemon authority")
+			continue
+		}
 		return nil
 	}
 	if lastErr != nil {

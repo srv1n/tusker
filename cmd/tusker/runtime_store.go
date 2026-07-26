@@ -776,6 +776,23 @@ func (s *RuntimeStore) Migrate() error {
 		// branches.  The identity is a frozen review handoff plus the exact
 		// integration tip from which it was staged; replay resumes this row.
 		`CREATE TABLE IF NOT EXISTS completion_transactions (transaction_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT NOT NULL, result_revision TEXT NOT NULL, phase TEXT NOT NULL, transaction_json TEXT NOT NULL, updated_at TEXT NOT NULL);`,
+		// Completion issuances deliberately preserve only a public verifier and
+		// signed context. The private Ed25519 capability stays in the resident
+		// daemon process; a worker which can write Git refs cannot mint a close.
+		`CREATE TABLE IF NOT EXISTS completion_authority_issuances (
+			authority_id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			store_identity TEXT NOT NULL,
+			repo_identity TEXT NOT NULL,
+			transaction_id TEXT NOT NULL,
+			context_json TEXT NOT NULL,
+			public_key BLOB NOT NULL,
+			issued_at TEXT NOT NULL,
+			bound_at TEXT NOT NULL DEFAULT '',
+			consumed_at TEXT NOT NULL DEFAULT '',
+			revoked_at TEXT NOT NULL DEFAULT '',
+			UNIQUE(project_id, transaction_id)
+		);`,
 		`CREATE TABLE IF NOT EXISTS turns (
 			attempt_id TEXT NOT NULL,
 			project_id TEXT NOT NULL,
@@ -957,6 +974,9 @@ func (s *RuntimeStore) Migrate() error {
 		}
 	}
 	if err := s.migrateGateLedgerToolchain(); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("completion_authority_issuances", "store_identity", `ALTER TABLE completion_authority_issuances ADD COLUMN store_identity TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
 	if err := s.ensureColumn("runs", "work_revision", `ALTER TABLE runs ADD COLUMN work_revision INTEGER NOT NULL DEFAULT 0`); err != nil {
