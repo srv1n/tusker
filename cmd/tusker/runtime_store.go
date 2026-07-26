@@ -42,12 +42,30 @@ type GateLedgerEntry struct {
 }
 
 type GateProviderReceipt struct {
-	LifecycleID       string `json:"lifecycle_id"`
-	ReceiptDigest     string `json:"receipt_digest"`
-	RuntimeDigest     string `json:"runtime_digest"`
-	PolicyDigest      string `json:"policy_digest"`
-	AttestationDigest string `json:"attestation_digest"`
-	ImageOrVMID       string `json:"image_or_vm_id"`
+	Schema             string `json:"schema"`
+	Outcome            string `json:"outcome"`
+	ProjectID          string `json:"project_id"`
+	DepartureID        string `json:"departure_id"`
+	RequestDigest      string `json:"request_digest"`
+	CandidateDigest    string `json:"candidate_digest"`
+	CommandDigest      string `json:"command_digest"`
+	Profile            string `json:"profile"`
+	ProviderProfile    string `json:"provider_profile"`
+	Toolchain          string `json:"toolchain"`
+	ProviderDigest     string `json:"provider_digest"`
+	ClientDigest       string `json:"client_digest"`
+	LifecycleID        string `json:"lifecycle_id"`
+	ReceiptDigest      string `json:"receipt_digest"`
+	RuntimeDigest      string `json:"runtime_digest"`
+	PolicyDigest       string `json:"policy_digest"`
+	AttestationDigest  string `json:"attestation_digest"`
+	ImageOrVMID        string `json:"image_or_vm_id"`
+	CapabilitiesDigest string `json:"capabilities_digest"`
+	ContainmentDigest  string `json:"containment_digest"`
+	CleanupDigest      string `json:"cleanup_digest"`
+	ResultDigest       string `json:"result_digest"`
+	OutputDigest       string `json:"output_digest"`
+	CleanupCertified   bool   `json:"cleanup_certified"`
 }
 
 func (s *RuntimeStore) LatestGateLedgerBefore(projectID, command, profile, toolchain, before string) (*GateLedgerEntry, error) {

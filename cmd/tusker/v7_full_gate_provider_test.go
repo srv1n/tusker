@@ -83,20 +83,19 @@ func TestV7FullGateProviderRetainsFailedCleanupRecordUntilRecoverySucceeds(t *te
 	}
 	runV7FullGateProviderCleanup = func(_ context.Context, _ string, _ string, _ []string, _ io.Writer) error {
 		result := v7FullGateProviderResult{Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: request.RunID, LifecycleID: "fixture-scope", State: "cleaned", ProviderID: request.ProviderID, RequestDigest: request.RequestDigest, RuntimeDigest: request.RuntimeDigest, PolicyDigest: request.PolicyDigest, AttestationDigest: request.AttestationDigest, Capabilities: request.RequiredCapabilities, ImplementationID: request.ImplementationID, CapabilitySchema: request.CapabilitySchema, CandidateReadOnlyMeasured: true, NetworkMode: "none", ControlEnvAbsent: true, ControlMountsAbsent: true, ImageOrVMID: request.ExpectedImageOrVMID}
-		result.ReceiptDigest = v7FullGateProviderResultDigest(result)
+		result.Outcome = v7FullGateOutcomeCanceled
+		v7SealFullGateProviderResult(request, &result)
 		raw, err := json.Marshal(result)
 		if err != nil {
 			return err
 		}
 		return os.WriteFile(request.ResultPath, raw, 0o600)
 	}
-	if daemon, err := NewDaemon(stateRoot); err != nil {
-		t.Fatalf("recovered cleanup still refused daemon startup: %v", err)
-	} else {
-		_ = daemon.Close()
+	if _, err := NewDaemon(stateRoot); err == nil || !errors.Is(err, errV7FullGateProvider) {
+		t.Fatalf("unacknowledged certified cleanup did not block daemon startup: %v", err)
 	}
-	if _, err := os.Stat(filepath.Dir(requestPath)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("recovered cleanup did not remove scope: %v", err)
+	if _, err := os.Stat(requestPath); err != nil {
+		t.Fatalf("unacknowledged cleanup record was retired: %v", err)
 	}
 }
 
@@ -110,7 +109,8 @@ func TestV7FullGateProviderCloseUsesActiveRequestPath(t *testing.T) {
 		cleanups++
 		seen = path
 		result := v7FullGateProviderResult{Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: request.RunID, LifecycleID: "fixture-scope", State: "cleaned", ProviderID: request.ProviderID, RequestDigest: request.RequestDigest, RuntimeDigest: request.RuntimeDigest, PolicyDigest: request.PolicyDigest, AttestationDigest: request.AttestationDigest, Capabilities: request.RequiredCapabilities, ImplementationID: request.ImplementationID, CapabilitySchema: request.CapabilitySchema, CandidateReadOnlyMeasured: true, NetworkMode: "none", ControlEnvAbsent: true, ControlMountsAbsent: true, ImageOrVMID: request.ExpectedImageOrVMID}
-		result.ReceiptDigest = v7FullGateProviderResultDigest(result)
+		result.Outcome = v7FullGateOutcomeCanceled
+		v7SealFullGateProviderResult(request, &result)
 		raw, err := json.Marshal(result)
 		if err != nil {
 			return err
@@ -144,7 +144,8 @@ func TestV7FullGateProviderCloseWaitsForPublishedWrapperBeforeCleanup(t *testing
 	runV7FullGateProviderCleanup = func(_ context.Context, _ string, _ string, _ []string, _ io.Writer) error {
 		cleanups++
 		result := v7FullGateProviderResult{Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: request.RunID, LifecycleID: "fixture-scope", State: "cleaned", ProviderID: request.ProviderID, RequestDigest: request.RequestDigest, RuntimeDigest: request.RuntimeDigest, PolicyDigest: request.PolicyDigest, AttestationDigest: request.AttestationDigest, Capabilities: request.RequiredCapabilities, ImplementationID: request.ImplementationID, CapabilitySchema: request.CapabilitySchema, CandidateReadOnlyMeasured: true, NetworkMode: "none", ControlEnvAbsent: true, ControlMountsAbsent: true, ImageOrVMID: request.ExpectedImageOrVMID}
-		result.ReceiptDigest = v7FullGateProviderResultDigest(result)
+		result.Outcome = v7FullGateOutcomeCanceled
+		v7SealFullGateProviderResult(request, &result)
 		raw, err := json.Marshal(result)
 		if err != nil {
 			return err
@@ -226,7 +227,8 @@ func TestV7FullGateProviderReceiptBindsNonReusableScopeIdentity(t *testing.T) {
 	if err := json.Unmarshal(encoded, &result); err != nil {
 		t.Fatal(err)
 	}
-	result.ReceiptDigest = v7FullGateProviderResultDigest(result)
+	result.Outcome = v7FullGateOutcomePassed
+	v7SealFullGateProviderResult(request, &result)
 	encoded, err = json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
@@ -240,6 +242,103 @@ func TestV7FullGateProviderReceiptBindsNonReusableScopeIdentity(t *testing.T) {
 	request.RunID = "run-b" // same PID-like value must not authorize a new scope.
 	if _, err := readV7FullGateProviderResult(request); err == nil {
 		t.Fatal("receipt from a different run was accepted")
+	}
+}
+
+func TestV7FullGateProviderTypedOutcomesGateLedgerCertification(t *testing.T) {
+	for _, outcome := range []v7FullGateOutcome{v7FullGateOutcomePassed, v7FullGateOutcomeFailed, v7FullGateOutcomeProvider, v7FullGateOutcomeCanceled, v7FullGateOutcomeTimedOut} {
+		t.Run(string(outcome), func(t *testing.T) {
+			control := t.TempDir()
+			request := v7FullGateProviderRequest{
+				Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: "run-" + string(outcome), Workspace: control, Command: "go test ./...",
+				ProjectID: "project", DepartureID: "departure", CandidateDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Profile: "full", ProviderProfile: "fixture", Toolchain: "toolchain",
+				ResultPath: filepath.Join(control, "result.json"), ProviderID: "provider", ExecutableID: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", RuntimeDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", ClientDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", PolicyDigest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", AttestationDigest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+				RequiredCapabilities: []string{"candidate_read_only", "network_denied", "control_env_denied"}, ImplementationID: v7KnownFullGateProvider, CapabilitySchema: v7FullGateCapabilitySchema, ExpectedImageOrVMID: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+				MaxCommandBytes: v7FullGateCommandMaxBytes, MaxOutputBytes: 256, MaxRuntimeMS: 1_000, MaxArtifactBytes: 1_024,
+			}
+			request.RequestDigest = v7FullGateRequestDigest(request)
+			result := v7FullGateProviderResult{Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: request.RunID, LifecycleID: "scope-" + string(outcome), State: "cleaned", Outcome: outcome, Output: "bounded", ProviderID: request.ProviderID, RequestDigest: request.RequestDigest, RuntimeDigest: request.RuntimeDigest, PolicyDigest: request.PolicyDigest, AttestationDigest: request.AttestationDigest, Capabilities: request.RequiredCapabilities, ImplementationID: request.ImplementationID, CapabilitySchema: request.CapabilitySchema, CandidateReadOnlyMeasured: true, NetworkMode: "none", ControlEnvAbsent: true, ControlMountsAbsent: true, ImageOrVMID: request.ExpectedImageOrVMID, RuntimeMS: 12, ArtifactBytes: 16}
+			v7SealFullGateProviderResult(request, &result)
+			raw, err := json.Marshal(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(request.ResultPath, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := readV7FullGateProviderResult(request)
+			if err != nil {
+				t.Fatalf("read typed result: %v", err)
+			}
+			provider := &v7ExternalFullGateProvider{executableIdentity: request.ExecutableID, clientDigest: request.ClientDigest, runtimeDigest: request.RuntimeDigest, policyDigest: request.PolicyDigest, attestationDigest: request.AttestationDigest, imageOrVMID: request.ExpectedImageOrVMID, profile: request.ProviderProfile}
+			provider.recordReceipt(nil, request, got)
+			audit := provider.LastReceipt()
+			certified := v7CertifiedGateProviderReceipt(&audit.Receipt)
+			if certified != (outcome == v7FullGateOutcomePassed) {
+				t.Fatalf("outcome %q certified=%t", outcome, certified)
+			}
+		})
+	}
+}
+
+func TestV7FullGateProviderBindingRejectsProfileConfusion(t *testing.T) {
+	provider := &v7ExternalFullGateProvider{profile: "provider-profile"}
+	if err := provider.BindFullGateProvider(v7FullGateProviderBinding{ProjectID: "project", DepartureID: "departure", CandidateDigest: "candidate", GateProfile: "gate-profile", ProviderProfile: "other-provider", Toolchain: "toolchain"}); err == nil {
+		t.Fatal("provider accepted a gate/provider profile confusion")
+	}
+	if err := provider.BindFullGateProvider(v7FullGateProviderBinding{ProjectID: "project", DepartureID: "departure", CandidateDigest: "candidate", GateProfile: "gate-profile", ProviderProfile: "provider-profile", Toolchain: "toolchain"}); err != nil {
+		t.Fatalf("provider rejected exact gate/provider binding: %v", err)
+	}
+}
+
+func TestV7FullGateProviderTimeoutFixture(t *testing.T) {
+	oldLimit := v7FullGateRuntimeLimit
+	v7FullGateRuntimeLimit = 5 * time.Millisecond
+	defer func() { v7FullGateRuntimeLimit = oldLimit }()
+	ctx, cancel := v7FullGateProviderDeadline(context.Background(), v7FullGateRuntimeLimit)
+	defer cancel()
+	select {
+	case <-ctx.Done():
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("deadline outcome = %v", ctx.Err())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("fake provider deadline did not fire")
+	}
+}
+
+func TestV7FullGateProviderReservationIsWrittenBeforeLaunch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scope", "request.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeV7FullGateReservation(path, []byte("reserved\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "reserved\n" {
+		t.Fatalf("durable reservation = %q, %v", got, err)
+	}
+	if err := writeV7FullGateReservation(path, []byte("replacement")); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("reservation replacement error = %v, want os.ErrExist", err)
+	}
+}
+
+func TestV7FullGateProviderRetiresOnlyAfterOutcomeAcknowledgement(t *testing.T) {
+	requestPath, request := writeV7ProviderRecoveryRequest(t, t.TempDir())
+	result := v7FullGateProviderResult{Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: request.RunID, LifecycleID: "ack-scope", State: "cleaned", Outcome: v7FullGateOutcomePassed, ProviderID: request.ProviderID, RequestDigest: request.RequestDigest, RuntimeDigest: request.RuntimeDigest, PolicyDigest: request.PolicyDigest, AttestationDigest: request.AttestationDigest, Capabilities: request.RequiredCapabilities, ImplementationID: request.ImplementationID, CapabilitySchema: request.CapabilitySchema, CandidateReadOnlyMeasured: true, NetworkMode: "none", ControlEnvAbsent: true, ControlMountsAbsent: true, ImageOrVMID: request.ExpectedImageOrVMID}
+	v7SealFullGateProviderResult(request, &result)
+	provider := &v7ExternalFullGateProvider{}
+	scope := &v7FullGateProviderScope{request: request, requestPath: requestPath}
+	provider.recordReceipt(scope, request, result)
+	if _, err := os.Stat(requestPath); err != nil {
+		t.Fatalf("scope vanished before acknowledgement: %v", err)
+	}
+	audit := provider.LastReceipt()
+	if err := provider.FinalizeFullGateProviderOutcome(audit.Receipt); err != nil {
+		t.Fatalf("acknowledge certified outcome: %v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(requestPath)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("acknowledged scope remained: %v", err)
 	}
 }
 

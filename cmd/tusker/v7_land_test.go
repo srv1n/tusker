@@ -374,15 +374,35 @@ func installV7FullGateProviderFixture(t *testing.T) {
 	t.Cleanup(func() { newV7FullGateProvider = previous })
 }
 
-type testV7FullGateProvider struct{}
+type testV7FullGateProvider struct {
+	receipt GateProviderReceipt
+}
 
 var testV7FullGateProviderReceipt = GateProviderReceipt{
-	LifecycleID:       "fixture:scope",
-	ReceiptDigest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-	RuntimeDigest:     "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-	PolicyDigest:      "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-	AttestationDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-	ImageOrVMID:       "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+	Schema:             v7FullGateProviderSchema,
+	Outcome:            string(v7FullGateOutcomePassed),
+	ProjectID:          "app",
+	DepartureID:        "departure-fixture",
+	RequestDigest:      "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+	CandidateDigest:    "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+	CommandDigest:      "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+	Profile:            "full",
+	ProviderProfile:    "test-fixture",
+	Toolchain:          "fixture-toolchain",
+	ProviderDigest:     "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+	ClientDigest:       "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+	LifecycleID:        "fixture:scope",
+	ReceiptDigest:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	RuntimeDigest:      "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	PolicyDigest:       "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+	AttestationDigest:  "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+	ImageOrVMID:        "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+	CapabilitiesDigest: "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+	ContainmentDigest:  "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+	CleanupDigest:      "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+	ResultDigest:       "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+	OutputDigest:       "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	CleanupCertified:   true,
 }
 
 func TestV7FullGateProviderFixtureReceiptSatisfiesLifecycleContract(t *testing.T) {
@@ -391,10 +411,14 @@ func TestV7FullGateProviderFixtureReceiptSatisfiesLifecycleContract(t *testing.T
 	}
 }
 
-func (*testV7FullGateProvider) Run(ctx context.Context, workspace, command string) ([]byte, error) {
+func (p *testV7FullGateProvider) Run(ctx context.Context, workspace, command string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if p.receipt.Schema == "" {
+		p.receipt = testV7FullGateProviderReceipt
+	}
+	p.receipt.CommandDigest = v7FullGateTextDigest(command)
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", command)
 	cmd.Dir = workspace
 	output, err := cmd.CombinedOutput()
@@ -438,16 +462,32 @@ func TestV7FullGateProviderFixtureCancelsBlockingCommand(t *testing.T) {
 
 func (*testV7FullGateProvider) Close() error { return nil }
 
-func (*testV7FullGateProvider) LastReceipt() v7FullGateProviderAudit {
+func (p *testV7FullGateProvider) BindFullGateProvider(binding v7FullGateProviderBinding) error {
+	p.receipt = testV7FullGateProviderReceipt
+	p.receipt.ProjectID = binding.ProjectID
+	p.receipt.DepartureID = binding.DepartureID
+	p.receipt.CandidateDigest = binding.CandidateDigest
+	p.receipt.Profile = binding.GateProfile
+	p.receipt.ProviderProfile = binding.ProviderProfile
+	p.receipt.Toolchain = binding.Toolchain
+	return nil
+}
+
+func (p *testV7FullGateProvider) LastReceipt() v7FullGateProviderAudit {
+	receipt := p.receipt
+	if receipt.Schema == "" {
+		receipt = testV7FullGateProviderReceipt
+	}
 	return v7FullGateProviderAudit{
-		LifecycleID: testV7FullGateProviderReceipt.LifecycleID, ReceiptDigest: testV7FullGateProviderReceipt.ReceiptDigest,
-		RuntimeDigest: testV7FullGateProviderReceipt.RuntimeDigest, PolicyDigest: testV7FullGateProviderReceipt.PolicyDigest,
-		AttestationDigest: testV7FullGateProviderReceipt.AttestationDigest, ImageOrVMID: testV7FullGateProviderReceipt.ImageOrVMID,
+		Receipt: receipt, Outcome: v7FullGateOutcomePassed,
+		LifecycleID: receipt.LifecycleID, ReceiptDigest: receipt.ReceiptDigest,
+		RuntimeDigest: receipt.RuntimeDigest, PolicyDigest: receipt.PolicyDigest,
+		AttestationDigest: receipt.AttestationDigest, ImageOrVMID: receipt.ImageOrVMID,
 	}
 }
 
 func (*testV7FullGateProvider) MatchesGateProviderReceipt(receipt *GateProviderReceipt) bool {
-	return receipt != nil && *receipt == testV7FullGateProviderReceipt
+	return receipt != nil && v7CertifiedGateProviderReceipt(receipt) && receipt.ProviderProfile == "test-fixture"
 }
 
 func yamlQuoteForTest(value string) string {

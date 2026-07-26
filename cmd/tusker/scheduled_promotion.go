@@ -109,7 +109,7 @@ func scheduledPromotionGatePolicy(vaultPath string, wf Workflow) (GateTierPolicy
 		policy.HarvestCommands = declaredCommands
 	}
 	if strings.TrimSpace(stringField(gate, "profile")) == "" && strings.TrimSpace(stringField(batch, "feature_profile")) == "" {
-		policy.Profile = ""
+		policy.Profile = "default"
 	}
 	return policy, nil
 }
@@ -1151,7 +1151,10 @@ func validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID string
 	if err != nil {
 		return fmt.Errorf("full_gate_ledger_tree_unavailable: %w", err)
 	}
-	for _, command := range policy.HarvestCommands {
+	if len(run.Gate.ProviderReceipts) != len(policy.HarvestCommands) {
+		return fmt.Errorf("full_gate_receipt_count_invalid")
+	}
+	for index, command := range policy.HarvestCommands {
 		entry, lookupErr := store.FindGateLedger(projectID, ledgerTreeHash, command, current.Gate.Profile, current.Gate.Toolchain)
 		if lookupErr != nil {
 			return fmt.Errorf("full_gate_ledger_unavailable:%s: %w", command, lookupErr)
@@ -1161,6 +1164,9 @@ func validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID string
 		}
 		if !verifier.MatchesGateProviderReceipt(entry.ProviderReceipt) {
 			return fmt.Errorf("full_gate_receipt_invalid:%s", command)
+		}
+		if run.Gate.ProviderReceipts[index] != *entry.ProviderReceipt || entry.ProviderReceipt.Outcome != string(v7FullGateOutcomePassed) || entry.ProviderReceipt.ProjectID != projectID || entry.ProviderReceipt.DepartureID != run.ID || entry.ProviderReceipt.CandidateDigest != ledgerTreeHash || entry.ProviderReceipt.CommandDigest != v7FullGateTextDigest(command) || entry.ProviderReceipt.Profile != current.Gate.Profile || entry.ProviderReceipt.ProviderProfile != policy.IsolationProvider || entry.ProviderReceipt.Toolchain != current.Gate.Toolchain {
+			return fmt.Errorf("full_gate_receipt_contract_invalid:%s", command)
 		}
 	}
 	return nil
@@ -1405,7 +1411,8 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	gateStarted := time.Now().UTC()
 	stopHeartbeat := startScheduledPromotionLeaseHeartbeat(store, lease, scheduledPromotionResourceLeaseTTL)
 	defer func() { _ = stopHeartbeat() }()
-	execution := runV7GateTierOnRefContext(ctx, vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+	gateCtx := withV7FullGateDeparture(ctx, run.ID)
+	execution := runV7GateTierOnRefContext(gateCtx, vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
 	if err := ctx.Err(); err != nil {
 		if errors.Is(execution.Err, errV7FullGateProvider) {
 			return "", execution.Err
@@ -1422,7 +1429,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 		probe := promotionFailurePacket(before.Candidate, before.Gate, actor, string(raw), nil, gatePolicy, "unknown", "not_run", promotionFailureOwner(before.Candidate), nil, []string{execution.ArtifactRef})
 		if classifyPromotionFailure(probe, gatePolicy).Class == promotionFailureFlake {
 			firstRefs := append([]string(nil), execution.ArtifactRefs...)
-			execution = runV7GateTierOnRefContext(ctx, vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+			execution = runV7GateTierOnRefContext(gateCtx, vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
 			execution.ArtifactRefs = append(firstRefs, execution.ArtifactRefs...)
 		}
 	}
@@ -1485,6 +1492,11 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 			return "", persistErr
 		} else if !changed {
 			return "", tuskerError(errorInvalidTransition, "promotion refusal: departure row changed while recording red gate")
+		}
+		if execution.FinalizeOutcomes != nil {
+			if err := execution.FinalizeOutcomes(); err != nil {
+				return "", fmt.Errorf("persisted promotion failure awaits provider acknowledgement: %w", err)
+			}
 		}
 		*run = intent
 		run.StateRevision++
