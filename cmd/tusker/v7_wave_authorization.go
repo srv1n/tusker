@@ -482,6 +482,12 @@ func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, 
 			"delivery_cross_scope_dependencies": task.Data["delivery_cross_scope_dependencies"],
 			"delivery_cross_scope_targets":      waveMaterialCrossScopeTargets(task, idx),
 		}
+		// Historical and non-strict tasks retain their existing wave material.
+		// A strict projection is authority material, not a mutable status marker.
+		if proofFingerprint := stringField(task.Data, "delivery_proof_contract_fingerprint"); proofFingerprint != "" {
+			row["delivery_proof_contract"] = task.Data["delivery_proof_contract"]
+			row["delivery_proof_contract_fingerprint"] = proofFingerprint
+		}
 		// Imported delivery tasks already carry the immutable source-contract
 		// fingerprint. Their live Verification table is also the proof ledger, so
 		// reviewers may append rows without invalidating one-arm authorization.
@@ -492,6 +498,10 @@ func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, 
 		rows = append(rows, row)
 	}
 	material["members"] = rows
+	if strictLineageFingerprint := stringField(wave.Data, "delivery_strict_import_lineage_fingerprint"); strictLineageFingerprint != "" {
+		material["delivery_strict_import_lineage"] = wave.Data["delivery_strict_import_lineage"]
+		material["delivery_strict_import_lineage_fingerprint"] = strictLineageFingerprint
+	}
 	allSpecRefs := append([]string{}, normalizeList(wave.Data["spec_refs"])...)
 	for _, id := range members {
 		if task, ok := idx.Tasks[id]; ok {

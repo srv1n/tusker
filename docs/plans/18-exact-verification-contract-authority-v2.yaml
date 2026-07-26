@@ -57,6 +57,7 @@ tasks:
       summary: Canonical import projection, material drift, safe adoption, manual mapping, and compatibility matrix.
       acceptance_ids: [A1, A2, A3, A4]
     owned_paths:
+      - cmd/tusker/delivery_cmd.go
       - cmd/tusker/delivery_verification_contract.go
       - cmd/tusker/delivery_verification_contract_test.go
       - cmd/tusker/v7_validation.go

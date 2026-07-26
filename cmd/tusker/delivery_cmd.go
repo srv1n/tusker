@@ -707,6 +707,15 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 		if plan.v2 != nil {
 			contractFingerprint = deliveryV2TaskFingerprint(task, plan.v2.HumanGates)
 		}
+		var strictContract deliveryProofContract
+		strictRequested := deliveryPlanRequiresStrictProofAuthority(plan)
+		if strictRequested {
+			var err error
+			strictContract, err = deliveryCanonicalProofContract(*plan.v2, task)
+			if err != nil {
+				return tuskerError(errorInvalidArg, err.Error())
+			}
+		}
 		if existing != nil && (status != "backlog" || readiness != "held") && stringField(existing, "delivery_contract_fingerprint") != contractFingerprint {
 			return tuskerError(errorInvalidTransition, id+" has progressed beyond held state; changed delivery contract requires an explicit rework/control transition")
 		}
@@ -743,6 +752,18 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 			if projections := report.CrossScopeDependencies[task.SourceKey]; len(projections) > 0 {
 				data["delivery_cross_scope_dependencies"] = deliveryCrossScopeProjectionValue(projections)
 			}
+		}
+		if strictRequested {
+			held := status == "backlog" && readiness == "held"
+			if err := deliveryInstallStrictProofContract(data, existing, held, strictContract); err != nil {
+				return tuskerError(errorInvalidTransition, id+": "+err.Error())
+			}
+			lineage, err := deliveryStrictLineageFor(*plan.v2, task)
+			if err != nil {
+				return tuskerError(errorInvalidArg, id+": "+err.Error())
+			}
+			data["delivery_strict_import_lineage"] = lineage
+			data["delivery_strict_import_lineage_fingerprint"] = lineage.Fingerprint
 		}
 		if existing != nil && (status != "backlog" || readiness != "held") {
 			for _, field := range []string{"proof_status", "proof_required", "proof_required_owner", "evidence_budget", "gates", "evidence_required", "machine_status", "human_status", "closeout_status", "agent_action", "next_owner", "next_source", "next_ref", "next_action", "accepted_by", "accepted_at", "closed_at", "close_authority"} {
@@ -831,6 +852,14 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 		for field, value := range contractData {
 			waveData[field] = value
 		}
+	}
+	if deliveryPlanRequiresStrictProofAuthority(plan) {
+		lineage, err := deliveryStrictWaveLineageFor(plan, report)
+		if err != nil {
+			return tuskerError(errorInvalidArg, err.Error())
+		}
+		waveData["delivery_strict_import_lineage"] = lineage
+		waveData["delivery_strict_import_lineage_fingerprint"] = lineage.Fingerprint
 	}
 	if fileExists(wavePath) {
 		previous, _, _ := parseFrontmatterMustRead(wavePath)
