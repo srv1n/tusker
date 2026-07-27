@@ -171,7 +171,7 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 	run := ctx.effectiveRunForTask(note, explain.Runner)
 	run.ProjectID, run.Runner, run.Lane = ctx.Project.ProjectID, explain.Runner, explain.Lane
 	workspaceStrategy := workspaceStrategyForRun(ctx.Workflow.Data, ctx.Project, run, ctx.projectRunsSlice())
-	branchName, branchBase, err := v7WorkspaceBranchForTask(ctx.Project.VaultRoot, note)
+	branchName, branchBase, err := v7WorkspaceBranchForLane(ctx.Project.VaultRoot, note, run.Lane)
 	if err != nil {
 		return runClaimResult{}, nil, err
 	}

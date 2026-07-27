@@ -47,6 +47,36 @@ func TestWorktreeFromIntegration(t *testing.T) {
 	assertEqual(t, "task/APP-T-0002", strings.TrimSpace(gitDirOutput(t, workspace.Path, "rev-parse", "--abbrev-ref", "HEAD")), "worktree task branch")
 }
 
+func TestReviewWorkspaceIsPinnedToImplementationSource(t *testing.T) {
+	repo, vault := newLandTestRepo(t, 1, "true")
+	sourceSHA := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{
+		"artifacts/delivery/APP-T-0001.svg": "review this exact delivery\n",
+	})
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branchName, branchBase, err := v7WorkspaceBranchForLane(vault, idx.Tasks["APP-T-0001"], runLaneReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, sourceSHA, branchBase, "review workspace source commit")
+	assertEqual(t, v7ReviewBranchName("APP-T-0001", sourceSHA), branchName, "review workspace branch")
+
+	manager := NewWorkspaceManager()
+	workspace, err := manager.Prepare(WorkspacePrepareRequest{
+		ProjectID: "app", ProjectKey: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		BranchName: branchName, BranchBase: branchBase,
+		RepoRoot: repo, StateRoot: t.TempDir(), Strategy: WorkspaceStrategyWorktree,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = manager.Cleanup(workspace.Path) }()
+	assertEqual(t, "review this exact delivery\n", mustReadIndexTest(t, filepath.Join(workspace.Path, "artifacts/delivery/APP-T-0001.svg")), "review workspace artifact")
+	assertEqual(t, branchName, strings.TrimSpace(gitDirOutput(t, workspace.Path, "rev-parse", "--abbrev-ref", "HEAD")), "review workspace branch checkout")
+}
+
 func TestArmedWaveLanding(t *testing.T) {
 	repo, vault := newLandTestRepo(t, 2, "test -f a.txt && test -f b.txt")
 	commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"a.txt": "a\n"})

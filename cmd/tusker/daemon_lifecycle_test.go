@@ -94,7 +94,7 @@ func TestReviewerControlMutationRequiresBoundReviewAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtimeID := "01KXGPREVIEW00000000000000"
-	branch := "task/APP-T-0001"
+	branch := "review/APP-T-0001/source"
 	if _, err := ensureDispatchedV7Attempt(vault, "APP-T-0001", runtimeID, runLaneReview, "codex_exec", workspace, branch); err != nil {
 		t.Fatal(err)
 	}

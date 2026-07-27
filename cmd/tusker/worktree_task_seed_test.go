@@ -75,7 +75,7 @@ func TestSeedCanonicalV7TaskIntoWorkspaceRefusesConflictingRecord(t *testing.T) 
 func TestSeedCanonicalV7TaskForPreparedWorkspaceDoesNotOverwriteReusedLifecycleState(t *testing.T) {
 	canonicalVault, workspace, taskID := frozenTaskWorktreeSeedFixture(t)
 	prepared := WorkspacePrepareResult{Path: workspace, NewlyMaterialized: true}
-	if err := seedCanonicalV7TaskForPreparedWorkspace(canonicalVault, prepared, WorkspaceStrategyWorktree, taskID); err != nil {
+	if err := seedCanonicalV7TaskForPreparedWorkspace(canonicalVault, prepared, WorkspaceStrategyWorktree, runLaneExecute, taskID); err != nil {
 		t.Fatal(err)
 	}
 	targetPath := filepath.Join(runnerWorktreeVaultPath(workspace, canonicalVault), "work", "tasks", taskID+".md")
@@ -99,10 +99,22 @@ func TestSeedCanonicalV7TaskForPreparedWorkspaceDoesNotOverwriteReusedLifecycleS
 	// execute lane's local lifecycle output instead of comparing it to the
 	// canonical ready record or seeding again.
 	prepared.NewlyMaterialized = false
-	if err := seedCanonicalV7TaskForPreparedWorkspace(canonicalVault, prepared, WorkspaceStrategyWorktree, taskID); err != nil {
+	if err := seedCanonicalV7TaskForPreparedWorkspace(canonicalVault, prepared, WorkspaceStrategyWorktree, runLaneReview, taskID); err != nil {
 		t.Fatal(err)
 	}
 	assertEqual(t, localReview, mustReadIndexTest(t, targetPath), "reused review workspace retains local task state")
+}
+
+func TestSeedCanonicalV7TaskForPreparedWorkspaceLeavesFreshReviewSnapshotUntouched(t *testing.T) {
+	canonicalVault, workspace, taskID := frozenTaskWorktreeSeedFixture(t)
+	targetPath := filepath.Join(runnerWorktreeVaultPath(workspace, canonicalVault), "work", "tasks", taskID+".md")
+	prepared := WorkspacePrepareResult{Path: workspace, NewlyMaterialized: true}
+	if err := seedCanonicalV7TaskForPreparedWorkspace(canonicalVault, prepared, WorkspaceStrategyWorktree, runLaneReview, taskID); err != nil {
+		t.Fatal(err)
+	}
+	if fileExists(targetPath) {
+		t.Fatal("fresh review workspace must not receive canonical task state")
+	}
 }
 
 func TestSeedCanonicalV7TaskIntoWorkspaceRejectsInvalidTaskID(t *testing.T) {

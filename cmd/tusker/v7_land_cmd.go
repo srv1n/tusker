@@ -3444,6 +3444,51 @@ func v7WorkspaceBranchForTask(vaultPath string, note Note) (string, string, erro
 	return v7TaskBranchName(taskID), base, nil
 }
 
+// v7WorkspaceBranchForLane resolves an isolated workspace branch for a
+// dispatched lane. Execute work stays on the task branch. Review must instead
+// inspect a separate branch pinned to the exact implementation commit: a
+// second worktree cannot check out the task branch, and falling back to HEAD
+// makes the reviewer inspect a different delivery than the one it is judging.
+func v7WorkspaceBranchForLane(vaultPath string, note Note, lane string) (string, string, error) {
+	branchName, branchBase, err := v7WorkspaceBranchForTask(vaultPath, note)
+	if err != nil || strings.TrimSpace(lane) != runLaneReview {
+		return branchName, branchBase, err
+	}
+	taskID := trackerRecordID(note)
+	repoRoot := v7RepoRoot(vaultPath)
+	if strings.TrimSpace(taskID) == "" || !v7GitRepo(repoRoot) {
+		return branchName, branchBase, nil
+	}
+	sourceSHA := firstNonEmpty(
+		stringField(note.Data, "source_sha"),
+		stringField(note.Data, "source_commit"),
+		stringField(note.Data, "source_branch_sha"),
+	)
+	if sourceSHA != "" {
+		recordedSource := sourceSHA
+		resolvedSource, ok := gitRevParse(repoRoot, sourceSHA+"^{commit}")
+		if !ok {
+			return "", "", tuskerError(errorInvalidTransition, "review workspace requires recorded implementation source "+recordedSource+"; repair the task source identity before review")
+		}
+		sourceSHA = resolvedSource
+		return v7ReviewBranchName(taskID, sourceSHA), sourceSHA, nil
+	}
+	implementationBranch := v7TaskBranchName(taskID)
+	var ok bool
+	sourceSHA, ok = gitRevParse(repoRoot, "refs/heads/"+implementationBranch+"^{commit}")
+	if !ok {
+		return "", "", tuskerError(
+			errorInvalidTransition,
+			"review workspace requires implementation branch "+implementationBranch+"; rerun the execute lane or repair the missing task branch before review",
+		)
+	}
+	return v7ReviewBranchName(taskID, sourceSHA), sourceSHA, nil
+}
+
+func v7ReviewBranchName(taskID, sourceSHA string) string {
+	return "review/" + strings.ToUpper(strings.TrimSpace(taskID)) + "/" + strings.ToLower(strings.TrimSpace(sourceSHA))
+}
+
 func ensureV7WaveIntegrationBranch(vaultPath string, wave Note) error {
 	branch := v7WaveIntegrationBranch(wave)
 	repoRoot := v7RepoRoot(vaultPath)

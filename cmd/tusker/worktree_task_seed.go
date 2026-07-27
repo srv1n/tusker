@@ -78,12 +78,12 @@ func seedCanonicalV7TaskIntoWorkspace(canonicalVault, workspacePath, taskID stri
 	return validateSeededWorktreeTask(targetPath, existing, canonicalRaw, taskID)
 }
 
-// seedCanonicalV7TaskForPreparedWorkspace intentionally seeds only the first
-// materialization. Later lanes reuse the worker's local task state (for example
-// an execute lane moving ready -> review), which is lifecycle output and must
-// never be compared with or overwritten by canonical control-plane input.
-func seedCanonicalV7TaskForPreparedWorkspace(canonicalVault string, workspace WorkspacePrepareResult, strategy WorkspaceStrategy, taskID string) error {
-	if strategy == WorkspaceStrategyShared || !workspace.NewlyMaterialized {
+// seedCanonicalV7TaskForPreparedWorkspace seeds a new execute workspace whose
+// base may predate task registration. A reviewer instead receives an immutable
+// source snapshot: injecting canonical state there would both hide the reviewed
+// source and make an otherwise read-only workspace dirty.
+func seedCanonicalV7TaskForPreparedWorkspace(canonicalVault string, workspace WorkspacePrepareResult, strategy WorkspaceStrategy, lane, taskID string) error {
+	if strategy == WorkspaceStrategyShared || !workspace.NewlyMaterialized || lane == runLaneReview {
 		return nil
 	}
 	return seedCanonicalV7TaskIntoWorkspace(canonicalVault, workspace.Path, taskID)
