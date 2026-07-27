@@ -41,6 +41,53 @@ func TestFactoryBootstrapDisposableDogfood(t *testing.T) {
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.concurrency.max_active_runs_per_project", 2); err != nil {
 		t.Fatal(err)
 	}
+	// Start the reconcile half of the journey with an intentionally incomplete,
+	// user-owned policy. The bootstrapper may add the missing semantic roles, but
+	// it must leave this profile, default, and routing rule byte-for-byte stable
+	// in their canonical JSON representation.
+	userOwnedProfile := RunnerProfileDefinition{
+		Harness: string(RunnerCodexExec), Model: "gpt-5.6-luna", Effort: "medium", PermissionPreset: "workspace-write-offline",
+		Sandbox:   RunnerSandboxDefinition{Mode: "workspace-write", Network: boolPtr(false)},
+		Subagents: RunnerSubagentPolicyDefinition{Allowed: boolPtr(false), MaxConcurrent: 0},
+	}
+	userOwnedRouting := RunnerRoutingRule{Name: "user-owned-high-risk", Profile: "user-owned", Match: RunnerRoutingMatch{Risk: "high"}}
+	userOwnedPolicy := struct {
+		Profile RunnerProfileDefinition `json:"profile"`
+		Default string                  `json:"default"`
+		Routing RunnerRoutingRule       `json:"routing"`
+	}{Profile: userOwnedProfile, Default: "user-owned", Routing: userOwnedRouting}
+	beforeUserOwnedPolicy, err := json.Marshal(userOwnedPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(repo, "tusker.yaml"), `schema: tusker.config/v1
+project_id: fresh-runtime
+automation:
+  enabled: false
+  default_profile: user-owned
+  routing:
+    - name: user-owned-high-risk
+      profile: user-owned
+      match:
+        risk: high
+  profiles:
+    user-owned:
+      harness: codex_exec
+      model: gpt-5.6-luna
+      effort: medium
+      permission_preset: workspace-write-offline
+      sandbox:
+        mode: workspace-write
+        network: false
+      subagents:
+        allowed: false
+        max_concurrent: 0
+`); err != nil {
+		t.Fatal(err)
+	}
+	if err := runnerProfilesBootstrapCmd(Args{"vault": vault, "write": "true"}); err != nil {
+		t.Fatal(err)
+	}
 	runGitDir(t, repo, "init", "-b", "main")
 	runGitDir(t, repo, "config", "user.email", "dogfood@example.invalid")
 	runGitDir(t, repo, "config", "user.name", "Tusker Dogfood")
@@ -53,10 +100,26 @@ func TestFactoryBootstrapDisposableDogfood(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Config.Automation.Enabled == nil || *resolved.Config.Automation.Enabled || resolved.Config.Automation.DefaultProfile != "execute-standard" {
-		t.Fatalf("bootstrap granted authority or picked wrong default: %#v", resolved.Config.Automation)
+	if resolved.Config.Automation.Enabled == nil || *resolved.Config.Automation.Enabled || resolved.Config.Automation.DefaultProfile != "user-owned" {
+		t.Fatalf("reconcile granted authority or replaced user default: %#v", resolved.Config.Automation)
 	}
 	profiles := runnerProfilesFromSchema(resolved.Config.Automation.Profiles)
+	userOwnedAfter, ok := profiles["user-owned"]
+	routingAfter := runnerRoutingFromSchema(resolved.Config.Automation.Routing)
+	if !ok || len(routingAfter) != 1 {
+		t.Fatalf("reconcile lost user-owned policy: %#v", resolved.Config.Automation)
+	}
+	afterUserOwnedPolicy, err := json.Marshal(struct {
+		Profile RunnerProfileDefinition `json:"profile"`
+		Default string                  `json:"default"`
+		Routing RunnerRoutingRule       `json:"routing"`
+	}{Profile: userOwnedAfter, Default: resolved.Config.Automation.DefaultProfile, Routing: routingAfter[0]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterUserOwnedPolicy) != string(beforeUserOwnedPolicy) {
+		t.Fatalf("reconcile replaced user-owned policy:\n before=%s\n  after=%s", beforeUserOwnedPolicy, afterUserOwnedPolicy)
+	}
 	semanticRoles := []string{"planner", "execute-fast", "execute-standard", "execute-complex", "execute-frontier", "review-independent", "repair-complex"}
 	for _, role := range semanticRoles {
 		if _, ok := profiles[role]; !ok {
@@ -80,6 +143,13 @@ func TestFactoryBootstrapDisposableDogfood(t *testing.T) {
 	wf.AutomationEnabled = false
 	wf.RunnerProfiles = profiles
 	wf.RunnerDefaultProfile = resolved.Config.Automation.DefaultProfile
+	wf.RunnerRouting = routingAfter
+	userRoute := routePreviewForNote(Note{Data: map[string]any{
+		"id": "DOG-T-USER", "title": "Preserve explicit policy", "risk": "high",
+	}}, wf, runLaneExecute)
+	if userRoute.Profile != "user-owned" || userRoute.Source != "automation.routing" || userRoute.Rule != "user-owned-high-risk" || userRoute.Model != "gpt-5.6-luna" || len(userRoute.Blockers) != 0 {
+		t.Fatalf("reconcile preserved dead routing text instead of effective policy: %#v", userRoute)
+	}
 
 	spec := filepath.Join(repo, "docs", "specs", "factory-bootstrap-dogfood.md")
 	if err := writeText(spec, "# Factory bootstrap disposable dogfood\n\n## Requirements\n\n- R1 through R7 are proven by the held, automation-off fixture.\n"); err != nil {
