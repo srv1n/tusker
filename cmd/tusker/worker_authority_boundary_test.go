@@ -423,7 +423,9 @@ func reviewProposalDaemonFixture(t *testing.T) (RegisteredProject, *Daemon, Work
 		t.Fatal(err)
 	}
 	result := ReviewResult{
-		Schema: reviewResultSchemaV2, ProjectID: project.ProjectID, TaskID: run.RecordID,
+		// Workers know the canonical vault identity, never the daemon's private
+		// registry row ID. The authority boundary validates then normalizes it.
+		Schema: reviewResultSchemaV2, ProjectID: v7ProjectID(vault), TaskID: run.RecordID,
 		TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: run.WorkRevision,
 		ImplementationSHA: "abc123", AttemptID: attemptID,
 		Actor:  reviewerActorForNote(wfFile.Data.Reviewer.Actor, note),

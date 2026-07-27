@@ -1046,6 +1046,19 @@ func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandT
 // conflict is eligible; any source or task-contract conflict remains a hard
 // landing failure.
 func resolveV7GeneratedProjectionMerge(workDir string) (bool, string, error) {
+	return resolveV7ProjectionMerge(workDir, "")
+}
+
+// resolveV7CompletionProjectionMerge additionally retains the integration
+// copy of unrelated task records. A worker can carry stale control-plane
+// snapshots for other tasks in its worktree; those records are not part of
+// the reviewed implementation and cannot veto its completion. The reviewed
+// task itself is deliberately excluded from this exception.
+func resolveV7CompletionProjectionMerge(workDir, reviewedTaskID string) (bool, string, error) {
+	return resolveV7ProjectionMerge(workDir, strings.ToUpper(strings.TrimSpace(reviewedTaskID)))
+}
+
+func resolveV7ProjectionMerge(workDir, reviewedTaskID string) (bool, string, error) {
 	output, err := gitCombined(workDir, "diff", "--name-only", "--diff-filter=U")
 	if err != nil {
 		return false, "", err
@@ -1054,10 +1067,18 @@ func resolveV7GeneratedProjectionMerge(workDir string) (bool, string, error) {
 	if len(paths) == 0 {
 		return false, "", nil
 	}
+	retainIntegrationTasks := make([]string, 0)
 	for _, path := range paths {
 		generated := path == ".tusker/Dashboard.md" || path == ".tusker/workspace.json" || strings.HasPrefix(path, ".tusker/_generated/") || strings.HasPrefix(path, ".tusker/dashboards/")
 		if strings.HasPrefix(path, ".tusker/work/epics/") && strings.HasSuffix(path, ".md") {
 			generated = v7EpicConflictOnlyTouchesManagedState(workDir, path)
+		}
+		if strings.HasPrefix(path, ".tusker/work/tasks/") && strings.HasSuffix(path, ".md") && reviewedTaskID != "" {
+			taskID := strings.TrimSuffix(filepath.Base(path), ".md")
+			if !strings.EqualFold(taskID, reviewedTaskID) {
+				retainIntegrationTasks = append(retainIntegrationTasks, path)
+				continue
+			}
 		}
 		if !generated {
 			return false, strings.Join(paths, ", "), nil
@@ -1067,6 +1088,11 @@ func resolveV7GeneratedProjectionMerge(workDir string) (bool, string, error) {
 		if strings.HasPrefix(path, ".tusker/work/epics/") {
 			if output, err := gitCombined(workDir, "checkout", "--ours", "--", path); err != nil {
 				return false, "", tuskerError(errorInvalidTransition, "failed to retain epic source while regenerating managed blocks: "+firstActionableLine(output, err.Error()))
+			}
+		}
+		if containsString(retainIntegrationTasks, path) {
+			if output, err := gitCombined(workDir, "checkout", "--ours", "--", path); err != nil {
+				return false, "", tuskerError(errorInvalidTransition, "failed to retain canonical unrelated task while staging reviewed completion: "+firstActionableLine(output, err.Error()))
 			}
 		}
 	}
@@ -1084,7 +1110,9 @@ func resolveV7GeneratedProjectionMerge(workDir string) (bool, string, error) {
 	if _, err := reconcileV7EpicManagedBlocks(vaultPath, idx); err != nil {
 		return false, "", err
 	}
-	if output, err := gitCombined(workDir, "add", ".tusker/Dashboard.md", ".tusker/_generated", ".tusker/dashboards", ".tusker/work/epics"); err != nil {
+	stagePaths := []string{".tusker/Dashboard.md", ".tusker/_generated", ".tusker/dashboards", ".tusker/work/epics"}
+	stagePaths = append(stagePaths, retainIntegrationTasks...)
+	if output, err := gitCombined(workDir, append([]string{"add", "--"}, stagePaths...)...); err != nil {
 		return false, "", tuskerError(errorInvalidTransition, "failed to stage regenerated Tusker projections: "+firstActionableLine(output, err.Error()))
 	}
 	if output, err := gitCombined(workDir, "commit", "--no-edit"); err != nil {

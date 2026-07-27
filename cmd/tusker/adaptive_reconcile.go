@@ -65,8 +65,29 @@ func runtimeRunNeedsHotReconcile(run RunStatus) bool {
 	case LeaseStateUnclaimed:
 		// A clean unclaimed row is runnable work waiting on shared/project
 		// capacity. Keep it live so capacity released by another project is
-		// observed promptly. Policy-blocked rows carry LastError and may back off.
+		// observed promptly. A review handoff is also deliberately unclaimed while
+		// it waits for an upstream DAG edge to land; that is live control-plane
+		// work even when the last pass recorded a dependency blocker. Ordinary
+		// policy-blocked execute rows may still back off.
+		if run.Lane == runLaneReview && run.AttemptOutcome == string(AttemptOutcomeWaitingForReview) {
+			return true
+		}
 		return strings.TrimSpace(run.LastError) == ""
+	case LeaseStateReleased:
+		// A review handoff has no active lease by design, but it is not quiescent
+		// work. Before a reviewer can claim it, an upstream DAG edge may still
+		// need to land on integration. After the reviewer submits, the
+		// authoritative completion reactor must consume that typed receipt. Keep
+		// both durable handoffs live without making every released historical run
+		// poll forever.
+		if run.Lane != runLaneReview {
+			return false
+		}
+		if run.AttemptOutcome == string(AttemptOutcomeWaitingForReview) {
+			return true
+		}
+		return run.AttemptOutcome == string(AttemptOutcomeSucceeded) &&
+			strings.Contains(run.LastError, "typed review result recorded; awaiting review reactor")
 	default:
 		return false
 	}

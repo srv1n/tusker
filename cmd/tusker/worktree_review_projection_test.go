@@ -9,11 +9,12 @@ import (
 func TestProjectCompletedWorktreeReviewToCanonical(t *testing.T) {
 	t.Run("projects exact reviewed source", func(t *testing.T) {
 		canonicalVault, workspace, taskID, run, sourceSHA := preparedWorktreeReviewProjection(t)
-		projected, err := projectCompletedWorktreeReviewToCanonical(canonicalVault, run)
+		projected, workRevision, err := projectCompletedWorktreeReviewToCanonical(canonicalVault, run)
 		if err != nil {
 			t.Fatal(err)
 		}
 		assertEqual(t, sourceSHA, projected, "projected implementation source")
+		assertEqual(t, 1, workRevision, "returned implementation revision")
 		canonical, err := resolveV7Note(canonicalVault, taskID, "task")
 		if err != nil {
 			t.Fatal(err)
@@ -21,6 +22,8 @@ func TestProjectCompletedWorktreeReviewToCanonical(t *testing.T) {
 		assertEqual(t, "review", stringField(canonical.Data, "status"), "canonical review status")
 		assertEqual(t, "satisfied", stringField(canonical.Data, "proof_status"), "canonical proof state")
 		assertEqual(t, sourceSHA, stringField(canonical.Data, "source_sha"), "canonical exact source")
+		assertEqual(t, 1, intField(canonical.Data, "work_revision"), "first completed implementation revision")
+		assertEqual(t, "W-0001", stringField(canonical.Data, "wave"), "canonical wave authority")
 		if !strings.Contains(canonical.Body, "worker verification") {
 			t.Fatal("canonical projection lost worktree verification")
 		}
@@ -43,7 +46,7 @@ func TestProjectCompletedWorktreeReviewToCanonical(t *testing.T) {
 		if _, err := saveV7DocumentCAS(canonical.AbsolutePath, data, body, v7FrontmatterOrder["task"], stringField(data, "state_rev")); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := projectCompletedWorktreeReviewToCanonical(canonicalVault, run); err == nil || !strings.Contains(err.Error(), "changed after dispatch") {
+		if _, _, err := projectCompletedWorktreeReviewToCanonical(canonicalVault, run); err == nil || !strings.Contains(err.Error(), "changed after dispatch") {
 			t.Fatalf("expected canonical drift refusal, got %v", err)
 		}
 	})
@@ -52,6 +55,15 @@ func TestProjectCompletedWorktreeReviewToCanonical(t *testing.T) {
 func preparedWorktreeReviewProjection(t *testing.T) (canonicalVault, workspace, taskID string, run RunStatus, sourceSHA string) {
 	t.Helper()
 	canonicalVault, workspace, taskID = frozenTaskWorktreeSeedFixture(t)
+	canonicalPath := filepath.Join(canonicalVault, "work", "tasks", taskID+".md")
+	canonicalData, canonicalBody, err := parseFrontmatterMustRead(canonicalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalData["wave"] = "W-0001"
+	if _, err := saveV7DocumentCAS(canonicalPath, canonicalData, canonicalBody, v7FrontmatterOrder["task"], stringField(canonicalData, "state_rev")); err != nil {
+		t.Fatal(err)
+	}
 	if err := seedCanonicalV7TaskIntoWorkspace(canonicalVault, workspace, taskID); err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +85,7 @@ func preparedWorktreeReviewProjection(t *testing.T) (canonicalVault, workspace, 
 	localData["readiness"] = "waiting_on_review"
 	localData["next_owner"] = "reviewer:agent"
 	localData["proof_status"] = "satisfied"
+	delete(localData, "wave") // A worker snapshot cannot revoke canonical wave authority.
 	localBody += "\nworker verification\n"
 	if _, err := saveV7DocumentCAS(localTaskPath, localData, localBody, v7FrontmatterOrder["task"], startRevision); err != nil {
 		t.Fatal(err)

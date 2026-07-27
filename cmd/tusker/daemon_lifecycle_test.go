@@ -35,6 +35,130 @@ func TestOneShotDispatchRefusesWithDaemonRequirement(t *testing.T) {
 	}
 }
 
+func TestReviewerWorkspaceDirtyStatusFiltersRuntimeMetadata(t *testing.T) {
+	dirty := reviewerDirtyStatusLines(" M .tusker/workspace.json\n?? .tusker/scratch/review.log\n M src/main.go\n?? notes.txt\nR  old.go -> new.go\n")
+	assertEqual(t, []string{"M src/main.go", "?? notes.txt", "R  old.go -> new.go"}, dirty, "reviewer implementation changes")
+}
+
+func TestReleasedReviewHandoffIsNotResetToExecute(t *testing.T) {
+	pending := RunStatus{
+		Lane: runLaneReview, LeaseState: string(LeaseStateReleased),
+		AttemptOutcome: string(AttemptOutcomeWaitingForReview),
+	}
+	if shouldResumeExecuteFromReleasedReview(pending) {
+		t.Fatalf("pending execute-to-review handoff must stay on the review lane: %#v", pending)
+	}
+
+	rework := pending
+	rework.AttemptOutcome = string(AttemptOutcomeFailed)
+	if !shouldResumeExecuteFromReleasedReview(rework) {
+		t.Fatalf("reviewer rework must resume execute: %#v", rework)
+	}
+}
+
+func TestDaemonPollDispatchesReleasedReviewHandoff(t *testing.T) {
+	vault := automationTestVault(t)
+	setAllEligibleDispatchScopeForAutomationTest(t, vault)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review handoff", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+		"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer",
+		"proof_status": "satisfied", "work_revision": 1,
+	})
+	project := registerAutomationTestProject(t, vault)
+
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(RunStatus{
+		ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		Runner: string(RunnerCodexExec), Lane: runLaneExecute,
+		LeaseState: string(LeaseStateReleased), AttemptOutcome: string(AttemptOutcomeWaitingForReview),
+		AttemptCount: 1, WorkRevision: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	var lanes []string
+	daemon.fairDispatchRun = func(_ context.Context, _ RegisteredProject, _ WorkflowFile, _ Note, run RunStatus, lane, attemptID string) (RunStatus, bool, bool, error) {
+		lanes = append(lanes, lane)
+		run.Lane = lane
+		run.LeaseState = string(LeaseStateClaimed)
+		run.LeaseOwner = attemptID
+		run.LeaseGeneration++
+		return run, false, true, nil
+	}
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, []string{runLaneReview}, lanes, "released execution handoff dispatches exactly one reviewer")
+}
+
+func TestDaemonPollDispatchesReleasedReviewHandoffInsideArmedWave(t *testing.T) {
+	repo, vault := newLandTestRepo(t, 2, "true")
+	if err := writeDefaultWorkflow(vault); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"APP-T-0001", "APP-T-0002"} {
+		makeV7TaskDispatchableForTest(t, vault, id)
+		setAutomationV7TaskFields(t, vault, id, map[string]any{
+			"artifact_contract": map[string]any{
+				"kind": "diff_summary", "path": "cmd/tusker/daemon.go", "summary": "Focused daemon scheduling fixture.",
+			},
+		})
+	}
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+		"status": "done", "readiness": "done", "next_owner": "none", "proof_status": "satisfied",
+	})
+	setAutomationV7TaskFields(t, vault, "APP-T-0002", map[string]any{
+		"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer",
+		"proof_status": "satisfied", "work_revision": 1, "dependencies": []string{"APP-T-0001:hard"},
+	})
+	commitCanonicalTaskStateToIntegration(t, repo, vault, "APP-T-0001")
+	armWaveForTest(t, vault)
+	project := registerAutomationTestProject(t, vault)
+
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(RunStatus{
+		ProjectID: project.ProjectID, RecordID: "APP-T-0002", ItemID: "APP-T-0002",
+		Runner: string(RunnerCodexExec), Lane: runLaneExecute,
+		LeaseState: string(LeaseStateReleased), AttemptOutcome: string(AttemptOutcomeWaitingForReview),
+		AttemptCount: 1, WorkRevision: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	var lanes []string
+	daemon.fairDispatchRun = func(_ context.Context, _ RegisteredProject, _ WorkflowFile, _ Note, run RunStatus, lane, attemptID string) (RunStatus, bool, bool, error) {
+		lanes = append(lanes, lane)
+		run.Lane = lane
+		run.LeaseState = string(LeaseStateClaimed)
+		run.LeaseOwner = attemptID
+		run.LeaseGeneration++
+		return run, false, true, nil
+	}
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, []string{runLaneReview}, lanes, "armed-wave released execution handoff dispatches exactly one reviewer")
+}
+
 func TestEnsureDispatchedV7AttemptBindsRuntimeIdentityIdempotently(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Bound daemon attempt", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)

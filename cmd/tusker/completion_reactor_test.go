@@ -1528,8 +1528,8 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		}
 		completionReactorCrashHook = nil
 		replayErr := daemon.reconcileReviewCompletion(project, wf)
-		if replayErr == nil || errorToIssue(replayErr).Code != "CAS_CONFLICT" {
-			t.Fatalf("same-blob symlink descendant authenticated: %v", replayErr)
+		if replayErr == nil || errorToIssue(replayErr).Code != completionRepairRequiredError {
+			t.Fatalf("same-blob symlink descendant was not isolated for repair: %v", replayErr)
 		}
 		replayed, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
 		if err != nil || replayed == nil || replayed.Phase != completionPhaseRefIntent || replayed.Failure != "" {
@@ -2399,6 +2399,86 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			t.Fatalf("self-minted event close authority passed validation: %#v", eventIssues)
 		}
 	})
+}
+
+func TestCompletionStagingRegeneratesDerivedProjectionConflict(t *testing.T) {
+	vault, project, daemon, result := completionReactorFixture(t, true)
+	defer daemon.Close()
+
+	// A worker and the integration lane can both regenerate these files. That
+	// must not turn an otherwise-independent reviewed source into a rework.
+	source := commitLandBranch(t, project.RepoRoot, "source/generated-projection", result.ImplementationSHA, map[string]string{
+		".tusker/_generated/indexes/dashboard.json": "{\"source\":true}\n",
+	})
+	integrationRef := "refs/heads/integration/W-0001"
+	integrationBase, err := gitOutputTrim(project.RepoRoot, "rev-parse", integrationRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitLandBranch(t, project.RepoRoot, "integration/generated-projection", integrationBase, map[string]string{
+		".tusker/_generated/indexes/dashboard.json": "{\"integration\":true}\n",
+	})
+	setAutomationV7TaskFields(t, vault, result.TaskID, map[string]any{
+		"status": "review", "readiness": "waiting_on_review", "source_sha": source, "work_revision": 1,
+	})
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	refreshed := completionResultForReviewedTask(t, vault, project, result.TaskID, "review-derived-conflict", "derived conflict regenerated")
+	if _, err := daemon.store.SaveReviewResult(refreshed); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.reconcileReviewCompletion(project, completionAuthorityTestWorkflow()); err != nil {
+		t.Fatalf("derived Tusker projection conflict should not fail reviewed completion: %v", err)
+	}
+	assertCompletionTerminalProjection(t, vault, refreshed, daemon.store)
+	landed, err := gitOutputTrim(project.RepoRoot, "rev-parse", integrationRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gitMergeBaseAncestor(project.RepoRoot, source, landed) {
+		t.Fatal("completion staging lost the exact reviewed implementation source")
+	}
+	dashboard, err := gitOutputTrim(project.RepoRoot, "show", landed+":.tusker/_generated/indexes/dashboard.json")
+	if err != nil || !json.Valid([]byte(dashboard)) {
+		t.Fatalf("derived dashboard was not regenerated into valid JSON: %q err=%v", dashboard, err)
+	}
+}
+
+func TestCompletionStagingRetainsUnrelatedIntegrationTaskControls(t *testing.T) {
+	repo, vault := newLandTestRepo(t, 2, "true")
+	state := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", state)
+	project := newRegisteredProject(repo, vault)
+	daemon, err := NewDaemon(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+
+	const siblingPath = ".tusker/work/tasks/APP-T-0002.md"
+	integrationSibling := gitShowFile(t, repo, "integration/W-0001", siblingPath)
+	source := commitLandBranch(t, repo, "source/stale-sibling-control", "integration/W-0001", map[string]string{
+		"reviewed.txt": "exact\n",
+		siblingPath:    integrationSibling + "\n<!-- stale sibling control from worker -->\n",
+	})
+	recordCompletionTestProof(t, vault, "APP-T-0001")
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+		"status": "review", "readiness": "waiting_on_review", "source_sha": source, "work_revision": 1,
+	})
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	result := completionResultForReviewedTask(t, vault, project, "APP-T-0001", "review-stale-sibling", "sibling control retained")
+	if _, err := daemon.store.SaveReviewResult(result); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.reconcileReviewCompletion(project, completionAuthorityTestWorkflow()); err != nil {
+		t.Fatalf("reviewed completion should discard a worker's stale sibling control: %v", err)
+	}
+	tip, err := gitOutputTrim(repo, "rev-parse", "integration/W-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gitShowFile(t, repo, tip, siblingPath); got != integrationSibling {
+		t.Fatalf("completion leaked worker sibling task control into integration:\nwant:\n%s\ngot:\n%s", integrationSibling, got)
+	}
 }
 
 func completionReactorFixture(t *testing.T, exactSource bool) (string, RegisteredProject, *Daemon, ReviewResult) {

@@ -187,27 +187,11 @@ func runDeliveryFixture(tuskerBin string) error {
 		return nil
 	}
 	if lane == "review" {
-		kind, relPath := deliveryEvidenceForTask(taskID)
-		evidenceArgs := []string{"evidence", "add", taskID, "--kind", kind, "--status", "accepted", "--accepted-by", "reviewer:e2e", "--covers", "A1", "--path", relPath, "--summary", "objective fixture artifact inspected", "--local", "--quiet"}
-		if kind == "screenshot" {
-			evidenceArgs = append(evidenceArgs, "--checked-by", "reviewer:e2e")
-		}
-		if err := run(tuskerBin, evidenceArgs...); err != nil {
+		_, relPath := deliveryEvidenceForTask(taskID)
+		if err := run("test", "-s", relPath); err != nil {
 			return err
 		}
-		if err := run(tuskerBin, "verify", "add", taskID, "--by", "reviewer:e2e", "--covers", "A1", "--check", "review: acceptance, evidence, gates, and docs", "--result", "pass", "--note", "independent fixture review", "--local", "--quiet"); err != nil {
-			return err
-		}
-		if err := run("git", "add", ".tusker"); err != nil {
-			return err
-		}
-		if err := run(tuskerBin, "close", taskID, "--by", "reviewer:e2e", "--reason", "fixture acceptance independently verified", "--quiet"); err != nil {
-			return err
-		}
-		if err := run("git", "add", ".tusker"); err != nil {
-			return err
-		}
-		return run("git", "commit", "-m", "review and close "+taskID)
+		return submitDeliveryReview(tuskerBin, taskID)
 	}
 	artifactDir := filepath.Join(workspace, "artifacts", "delivery")
 	docDir := filepath.Join(workspace, "docs", "delivery")
@@ -230,8 +214,17 @@ func runDeliveryFixture(tuskerBin string) error {
 	if err := os.WriteFile(doc, []byte("# "+taskID+" delivery\n\nAcceptance A1 delivered in an isolated workspace.\n"), 0o644); err != nil {
 		return err
 	}
-	focusedCheck := "test -s " + artifactRel
+	// The Verification table is a task contract, not just a runner log. Keep
+	// the explicit command marker when recording the exact shell proof so a
+	// rework attempt remains dispatchable under the authoring grammar.
+	focusedCheck := "command: test -s " + artifactRel
 	if err := run("test", "-s", artifactRel); err != nil {
+		return err
+	}
+	// The delivery plan has an artifact contract. A passing Verification row
+	// proves the command, while this copied evidence record makes the artifact
+	// durable and visible from the integration branch after landing.
+	if err := run(tuskerBin, "evidence", "add", taskID, "--kind", "automated_test", "--covers", "A1", "--path", artifactRel, "--command", focusedCheck, "--result", "pass", "--summary", "durable delivery artifact captured in the isolated workspace", "--by", "agent:e2e", "--local", "--quiet"); err != nil {
 		return err
 	}
 	if err := run(tuskerBin, "verify", "add", taskID, "--by", "agent:e2e", "--covers", "A1", "--check", focusedCheck, "--result", "pass", "--note", "focused artifact test passed in the isolated workspace", "--local", "--quiet"); err != nil {
@@ -247,6 +240,51 @@ func runDeliveryFixture(tuskerBin string) error {
 		return err
 	}
 	return run("git", "commit", "-m", "deliver "+taskID)
+}
+
+func submitDeliveryReview(tuskerBin, taskID string) error {
+	prompt, err := os.ReadFile(os.Getenv("TUSKER_PROMPT_PATH"))
+	if err != nil {
+		return fmt.Errorf("read injected reviewer prompt: %w", err)
+	}
+	value := func(flag string) (string, error) {
+		needle := "--" + flag + " "
+		at := strings.Index(string(prompt), needle)
+		if at < 0 {
+			return "", fmt.Errorf("reviewer prompt omitted %s", flag)
+		}
+		fields := strings.Fields(string(prompt)[at+len(needle):])
+		if len(fields) == 0 {
+			return "", fmt.Errorf("reviewer prompt has empty %s", flag)
+		}
+		return fields[0], nil
+	}
+	actor := "reviewer:agent"
+	for _, line := range strings.Split(string(prompt), "\n") {
+		if strings.HasPrefix(line, "- Reviewer actor:") {
+			if fields := strings.Fields(line); len(fields) > 0 {
+				actor = fields[len(fields)-1]
+			}
+			break
+		}
+	}
+	args := []string{"review", "submit", taskID, "--vault", os.Getenv("TUSKER_VAULT"), "--attempt", os.Getenv("TUSKER_ATTEMPT_ID"), "--by", actor, "--verdict", "pass", "--covers", "A1", "--summary", "objective fixture artifact inspected"}
+	for _, flag := range []string{"task-rev", "source-sha", "work-rev", "proof-fingerprint", "gate-fingerprint"} {
+		item, itemErr := value(flag)
+		if itemErr != nil {
+			return itemErr
+		}
+		args = append(args, "--"+flag, item)
+	}
+	cmd := exec.Command(tuskerBin, args...)
+	cmd.Dir = os.Getenv("TUSKER_WORKSPACE")
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %s: %w: %s", tuskerBin, strings.Join(args, " "), err, out)
+	}
+	_, err = os.Stdout.Write(out)
+	return err
 }
 
 func requireSatisfiedProof(tuskerBin, workspace, taskID string) error {

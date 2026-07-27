@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -351,6 +352,20 @@ func TestImportedWaveAuthorizationIgnoresAppendedProofRows(t *testing.T) {
 	after, issues := waveMaterialFingerprint(vault, idx, idx.Waves["W-0001"])
 	if len(issues) != 0 || after != before {
 		t.Fatalf("proof-only verification row invalidated imported authorization: before=%s after=%s issues=%#v", before, after, issues)
+	}
+}
+
+func TestWaveMaterialTableIgnoresDerivedReviewReceipt(t *testing.T) {
+	contract := `| Covers | Check | Result | Notes |
+|---|---|---|---|
+| A1 | command: test -s artifact.json | pending | Planned proof. |`
+	withReceipt := contract + "\n| A1 | typed review attempt-123 | pass | [tusker-review-result:sha256:receipt] accepted |"
+	if got, want := waveMaterialTable(withReceipt, []int{0, 1}), waveMaterialTable(contract, []int{0, 1}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("derived review receipt changed wave material: got=%#v want=%#v", got, want)
+	}
+	changed := strings.Replace(contract, "artifact.json", "different.json", 1)
+	if reflect.DeepEqual(waveMaterialTable(changed, []int{0, 1}), waveMaterialTable(contract, []int{0, 1})) {
+		t.Fatal("an authored verification command change escaped wave material")
 	}
 }
 

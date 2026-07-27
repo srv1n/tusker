@@ -336,6 +336,9 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	root := h.waitRun("APP-T-0001", crashRunWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "running" && runInt(run, "process_pid") > 0
 	})
+	if runString(root, "worker_policy_fingerprint") == "" || runString(root, "execute_policy_fingerprint") == "" {
+		t.Fatalf("authoritative execute dispatch must persist both exact policy fingerprints: %s", prettyJSON(root))
+	}
 	rootPID, rootGeneration, rootAttempts := runInt(root, "process_pid"), runInt(root, "lease_generation"), runInt(root, "attempt_count")
 	daemon.kill(syscall.SIGKILL)
 	daemon = h.startDaemon("delivery-daemon-restarted")
@@ -381,15 +384,16 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	if runString(brief, "schema") != "tusker.wave-brief/v1" || len(sliceAt(brief, "seeIt")) != 7 || len(sliceAt(brief, "landed")) != 7 || len(sliceAt(brief, "documentation")) != 7 || len(sliceAt(brief, "humanAction")) != 0 {
 		t.Fatalf("artifact-first brief is incomplete: %s", prettyJSON(brief))
 	}
-	eventually(t, 2*time.Minute, time.Second, func() (bool, string) {
-		for i := 1; i <= 7; i++ {
-			id := fmt.Sprintf("APP-T-%04d", i)
-			if _, err := os.Stat(filepath.Join(h.repoDir, "docs", "delivery", strings.ToLower(id)+".md")); err != nil {
-				return false, id + " documentation has not reached the default-branch checkout"
-			}
+	// This fixture arms continuous staging only. Its completed artifacts must be
+	// on the exact integration ref; moving main is deliberately a separate,
+	// explicitly configured scheduled-promotion concern.
+	for i := 1; i <= 7; i++ {
+		id := fmt.Sprintf("APP-T-%04d", i)
+		path := "integration/W-0001:docs/delivery/" + strings.ToLower(id) + ".md"
+		if got := string(h.gitOK("show", path)); !strings.Contains(got, "# "+id+" delivery") {
+			t.Fatalf("%s documentation is absent from the integration snapshot: %q", id, got)
 		}
-		return true, ""
-	})
+	}
 	wave := parseJSON(t, h.cliOK(h.repoDir, "wave", "show", "W-0001", "--vault", h.vaultDir, "--json"))
 	auth := mapAtPath(t, mapAtPath(t, wave, "wave"), "authorization")
 	if runString(auth, "actor") != "human:e2e" || runString(auth, "state") != "armed" {
@@ -453,6 +457,7 @@ func newSmallDeliveryWave(t *testing.T, credentialGate bool) *harness {
 	h.createRunnableTaskID("APP-T-0001", "fixture root", "")
 	h.createRunnableTaskID("APP-T-0002", "contained branch", "APP-T-0001:hard")
 	h.createRunnableTaskID("APP-T-0003", "independent branch", "APP-T-0001:soft")
+	h.setDeliveryFixtureVerificationContracts("APP-T-0001", "APP-T-0002", "APP-T-0003")
 	if credentialGate {
 		h.cliOK(h.repoDir, "new", "gate", "--vault", h.vaultDir, "--blocks", "APP-T-0002", "--kind", "auth", "--owner", "human:e2e", "--action", "Provide fixture credential.", "--verification", "Fixture credential probe succeeds.", "--why-agent-cannot", "Only the fixture account owner can provide this credential.", "--quiet")
 	}
@@ -466,6 +471,21 @@ func newSmallDeliveryWave(t *testing.T, credentialGate bool) *harness {
 	h.gitOK("commit", "-m", "record containment wave")
 	h.gitOK("branch", "-f", "integration/W-0001", "HEAD")
 	return h
+}
+
+func (h *harness) setDeliveryFixtureVerificationContracts(taskIDs ...string) {
+	h.t.Helper()
+	for _, taskID := range taskIDs {
+		path := filepath.Join(h.vaultDir, "work", "tasks", taskID+".md")
+		body := h.readFile(path)
+		artifact := "artifacts/delivery/" + strings.ToLower(taskID) + ".json"
+		if taskID == "APP-T-0001" {
+			artifact = strings.TrimSuffix(artifact, ".json") + ".svg"
+		}
+		body = replaceSection(body, "## Verification", "| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | command: test -s "+artifact+" | pending | Fake runner records the pre-authorized artifact check. |")
+		h.writeFile(path, body)
+	}
+	h.cliOK(h.repoDir, "reconcile", "--vault", h.vaultDir, "--local", "--quiet")
 }
 
 func specToWaveDeliveryPlan() string {
@@ -850,6 +870,33 @@ func (h *harness) configureFakeRunner(cfg fakeRunnerConfig) {
 		}
 		command = "codex exec --json --skip-git-repo-check -"
 	}
+	authoritativeAutomation := ""
+	runnerName := "codex"
+	if cfg.Delivery {
+		runnerName = "codex_exec"
+		authoritativeAutomation = `  completion_reactor:
+    mode: authoritative
+  default_profile: implementation-terra
+  lane_profiles:
+    execute: implementation-terra
+    review: reviewer-terra
+  profiles:
+    implementation-terra:
+      harness: codex_exec
+      model: gpt-5.x
+      effort: medium
+      permission_preset: workspace-write-offline
+      sandbox: {mode: workspace-write, network: false}
+      subagents: {allowed: false, max_concurrent: 0}
+    reviewer-terra:
+      harness: codex_exec
+      model: gpt-5.x
+      effort: high
+      permission_preset: read-only
+      sandbox: {mode: read-only, network: false}
+      subagents: {allowed: false, max_concurrent: 0}
+`
+	}
 	config := fmt.Sprintf(`schema: tusker.config/v1
 project_id: crash-recovery-e2e
 
@@ -866,9 +913,10 @@ runtime:
 
 automation:
   enabled: true
+%s
   trigger_states: [ready, rework]
-  default_runner: codex
-  enabled_runners: [codex]
+  default_runner: %s
+  enabled_runners: [%s]
   workspace:
     strategy: %s
     root: workspaces
@@ -877,7 +925,7 @@ automation:
     max_active_runs_per_project: %d
     max_concurrent_by_state: {}
   runners:
-    codex:
+    %s:
       kind: %s
       command: >-
         %s
@@ -888,7 +936,7 @@ automation:
       read_timeout_ms: 100
       stall_timeout_ms: %d
       max_turns: 1
-`, cfg.WorkspaceStrategy, cfg.MaxActive, cfg.MaxActive, cfg.RunnerKind, command, cfg.StallTimeoutMS)
+`, authoritativeAutomation, runnerName, runnerName, cfg.WorkspaceStrategy, cfg.MaxActive, cfg.MaxActive, runnerName, cfg.RunnerKind, command, cfg.StallTimeoutMS)
 	if cfg.Delivery {
 		config += "  validation:\n    commands:\n      - test -s docs/specs/delivery.md && test -d artifacts/delivery\n"
 	}

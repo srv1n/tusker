@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -1165,14 +1166,12 @@ func (d *Daemon) authenticateCommittedCompletionRef(project RegisteredProject, c
 	}
 	currentEntry, err := completionGitTreeEntryAt(repoRoot, current, taskRel)
 	if err != nil {
-		return tuskerError("CAS_CONFLICT", "completion integration descendant no longer retains the staged task")
+		return completionFrozenAuthorityRepairError(transaction, "integration descendant no longer retains the staged task")
 	}
 	if currentEntry != stagedEntry {
-		return tuskerError("CAS_CONFLICT", "completion integration descendant changed the transaction's staged task entry",
-			withContext(map[string]any{
-				"task": result.TaskID, "staged_blob": stagedEntry.OID, "staged_mode": stagedEntry.Mode,
-				"current_blob": currentEntry.OID, "current_mode": currentEntry.Mode, "current_type": currentEntry.Type,
-			}))
+		return completionFrozenAuthorityRepairError(transaction,
+			"integration descendant changed the transaction's staged task entry for "+result.TaskID+
+				" (staged "+stagedEntry.Mode+":"+stagedEntry.OID+", current "+currentEntry.Mode+":"+currentEntry.OID+":"+currentEntry.Type+")")
 	}
 	return nil
 }
@@ -1761,7 +1760,36 @@ func buildExactReviewCompletionCandidate(vaultPath, repoRoot, integrationBase st
 		return completionStagingCandidate{}, tuskerError(errorInvalidTransition, "failed to create completion staging worktree: "+firstActionableLine(output, err.Error()))
 	}
 	if output, err := gitCombined(tmp, "merge", "--no-ff", "--no-commit", result.ImplementationSHA); err != nil {
-		return completionStagingCandidate{}, tuskerError(errorInvalidTransition, landingFailureSummary("merge "+result.ImplementationSHA, output, err))
+		resolved, unresolved, resolveErr := resolveV7CompletionProjectionMerge(tmp, result.TaskID)
+		if resolveErr != nil {
+			return completionStagingCandidate{}, resolveErr
+		}
+		if !resolved {
+			summary := landingFailureSummary("merge "+result.ImplementationSHA, output, err)
+			if unresolved != "" {
+				summary = limitLandingSummary(summary+"; unmerged paths: "+unresolved, 500)
+			}
+			return completionStagingCandidate{}, tuskerError(errorInvalidTransition, summary)
+		}
+	}
+	// Validate the raw merge before repairing stale sibling controls. A worker
+	// must never be able to hide an attempted rewind of a terminal task behind
+	// the otherwise-safe integration-retention rule below.
+	mergedTree, err := gitOutputTrim(tmp, "write-tree")
+	if err != nil {
+		return completionStagingCandidate{}, tuskerError(errorInvalidTransition, "failed to inspect raw reviewed merge tree: "+err.Error())
+	}
+	if err := guardV7LandingTerminalTaskRewindsAt(tmp, integrationBase, mergedTree); err != nil {
+		return completionStagingCandidate{}, err
+	}
+	// An implementation worktree is allowed to change product sources and its
+	// own task record, never the control records of sibling tasks. Git only
+	// reports overlapping edits as conflicts; a stale sibling record can also
+	// merge cleanly and silently overwrite a previously completed task. Restore
+	// every unrelated task path from the exact integration parent before we
+	// materialize the reviewed task's authenticated close projection.
+	if err := retainIntegrationUnrelatedTaskRecords(tmp, integrationBase, result.TaskID); err != nil {
+		return completionStagingCandidate{}, err
 	}
 	if err := removeV7WorkspaceMetadataFromLanding(tmp); err != nil {
 		return completionStagingCandidate{}, err
@@ -1828,6 +1856,51 @@ func buildExactReviewCompletionCandidate(vaultPath, repoRoot, integrationBase st
 		return completionStagingCandidate{}, tuskerError(errorInvalidTransition, "completion commit does not retain the exact generated receipt entry")
 	}
 	return completionStagingCandidate{SHA: sha, TaskBlob: taskEntry.OID, TaskMode: taskEntry.Mode, ReceiptBlob: receiptEntry.OID, ReceiptMode: receiptEntry.Mode}, nil
+}
+
+func retainIntegrationUnrelatedTaskRecords(worktree, integrationBase, reviewedTaskID string) error {
+	const taskRoot = ".tusker/work/tasks/"
+	reviewedPath := taskRoot + strings.ToUpper(strings.TrimSpace(reviewedTaskID)) + ".md"
+	baseRaw, err := gitOutputTrim(worktree, "ls-tree", "-r", "--name-only", integrationBase, "--", taskRoot)
+	if err != nil {
+		return tuskerError(errorInvalidTransition, "failed to enumerate integration task records: "+err.Error())
+	}
+	currentRaw, err := gitOutputTrim(worktree, "ls-files", "--", taskRoot)
+	if err != nil {
+		return tuskerError(errorInvalidTransition, "failed to enumerate staged task records: "+err.Error())
+	}
+	base := makeSet(strings.Fields(baseRaw)...)
+	paths := makeSet(strings.Fields(baseRaw)...)
+	for _, path := range strings.Fields(currentRaw) {
+		paths[path] = struct{}{}
+	}
+	var retained, removed []string
+	for path := range paths {
+		if path == reviewedPath || !strings.HasPrefix(path, taskRoot) || !strings.HasSuffix(path, ".md") {
+			continue
+		}
+		if _, exists := base[path]; exists {
+			retained = append(retained, path)
+		} else {
+			removed = append(removed, path)
+		}
+	}
+	sort.Strings(retained)
+	sort.Strings(removed)
+	if len(retained) > 0 {
+		if output, err := gitCombined(worktree, append([]string{"checkout", integrationBase, "--"}, retained...)...); err != nil {
+			return tuskerError(errorInvalidTransition, "failed to retain integration task controls: "+firstActionableLine(output, err.Error()))
+		}
+		if output, err := gitCombined(worktree, append([]string{"add", "--"}, retained...)...); err != nil {
+			return tuskerError(errorInvalidTransition, "failed to stage retained integration task controls: "+firstActionableLine(output, err.Error()))
+		}
+	}
+	if len(removed) > 0 {
+		if output, err := gitCombined(worktree, append([]string{"rm", "-f", "--ignore-unmatch", "--"}, removed...)...); err != nil {
+			return tuskerError(errorInvalidTransition, "failed to remove worker-created sibling task controls: "+firstActionableLine(output, err.Error()))
+		}
+	}
+	return nil
 }
 
 // stageExactCompletionTaskBlob bypasses attributes and clean filters entirely.

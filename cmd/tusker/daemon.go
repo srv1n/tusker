@@ -1055,6 +1055,16 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			}
 
 			workRevision := intField(note.Data, "work_revision")
+			// Reconciliation can project a completed worktree into the canonical
+			// vault earlier in this poll. The note slice was loaded before that
+			// projection, so its revision may be one tick behind the live run. A
+			// stale cache must never move a run backwards: that would erase the
+			// execute policy bound to the completed candidate and allow the old
+			// task snapshot to be scheduled again. The next poll reloads the
+			// canonical task and continues from the newer immutable revision.
+			if workRevision < current.WorkRevision {
+				continue
+			}
 			if current.WorkRevision != workRevision {
 				oldRun := current
 				d.emitSupervisorDecision(SupervisorDecision{
@@ -1084,7 +1094,13 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				clearRunCloudRefs(&current)
 				clearActiveExecution(&current)
 			}
-			if current.Lane == runLaneReview && LeaseState(current.LeaseState) == LeaseStateReleased {
+			// `notes` was read before run reconciliation. An execute runner can
+			// therefore project its task to review earlier in this poll while this
+			// loop is still looking at the old ready snapshot. Do not turn that
+			// durable execute→review handoff back into a fresh execute claim. A
+			// reviewer may return work through the same lane/state shape, but it
+			// carries a different outcome and is the only case that resumes execute.
+			if shouldResumeExecuteFromReleasedReview(current) {
 				current = prepareRunForLaneDispatch(current, runLaneExecute, current.Runner)
 				current.UpdatedAt = now.Format(time.RFC3339)
 			}
@@ -1787,6 +1803,12 @@ func prepareRunForLaneDispatch(run RunStatus, lane, runner string) RunStatus {
 	clearRunCloudRefs(&run)
 	clearActiveExecution(&run)
 	return run
+}
+
+func shouldResumeExecuteFromReleasedReview(run RunStatus) bool {
+	return run.Lane == runLaneReview &&
+		LeaseState(run.LeaseState) == LeaseStateReleased &&
+		AttemptOutcome(run.AttemptOutcome) != AttemptOutcomeWaitingForReview
 }
 
 func reviewDispatchAllowed(vaultPath string, note Note, wf Workflow, run RunStatus, reviewCycles int) bool {
@@ -3100,8 +3122,9 @@ func (d *Daemon) finishReviewCompleteRun(project RegisteredProject, note Note, r
 		return run, false, tuskerError(errorConfigInvalid, "registered project identity changed during execution review projection")
 	}
 	authoritativeCompletion := completionReactorMode(loaded.Workflow.Data.CompletionReactor.Effective) == completionReactorModeAuthoritative
+	projectedWorkRevision := 0
 	if authoritativeCompletion {
-		sourceSHA, projectionErr := projectCompletedWorktreeReviewToCanonical(project.VaultRoot, run)
+		sourceSHA, revision, projectionErr := projectCompletedWorktreeReviewToCanonical(project.VaultRoot, run)
 		if projectionErr != nil {
 			projectionReason := projectExecutionReviewProjectionReason(projectionErr)
 			updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, 1, projectionReason, finished)
@@ -3115,6 +3138,7 @@ func (d *Daemon) finishReviewCompleteRun(project RegisteredProject, note Note, r
 			return run, true, nil
 		}
 		reason = "runner requested review; canonical review snapshot pinned to implementation " + sourceSHA
+		projectedWorkRevision = revision
 	} else if autoLanded, err := d.autoLandArmedWaveReviewComplete(project, note, run); err != nil {
 		landReason := "armed-wave auto-land failed: " + err.Error()
 		_ = kickV7LandingTaskToRework(project.VaultRoot, run.ItemID, landReason, "daemon:wave-drain")
@@ -3131,6 +3155,13 @@ func (d *Daemon) finishReviewCompleteRun(project RegisteredProject, note Note, r
 		reason = "runner requested review; daemon landed clean worktree to armed-wave integration"
 	}
 	updateRunAttemptFromRun(d.store, run, AttemptOutcomeWaitingForReview, 0, reason, finished)
+	// The completed execute attempt remains recorded against the revision it
+	// started on. The live run, however, must move to the canonical review
+	// candidate revision before a reviewer is scheduled; otherwise a valid typed
+	// result is rejected as snapshot drift against the stale execute row.
+	if projectedWorkRevision > 0 {
+		run.WorkRevision = projectedWorkRevision
+	}
 	run.LeaseState = string(LeaseStateReleased)
 	run.AttemptOutcome = string(AttemptOutcomeWaitingForReview)
 	run.NextRetryAt = ""
@@ -3700,8 +3731,33 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 	if err != nil {
 		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 	}
+	// The daemon may unlock a soft-dependent task from the canonical DAG even
+	// though a newly-created worktree still contains its older
+	// blocked_by_dependency projection. Materialize that one authoritative task
+	// projection before seeding/starting the local attempt, otherwise `finish`
+	// records a handoff but correctly declines to request review from stale
+	// local dependency state.
+	if lane == runLaneExecute {
+		if _, err := reconcileV7ControlProjections(project.VaultRoot, []string{run.ItemID}, "daemon:dispatch", "dispatch"); err != nil {
+			return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
+		}
+	}
 	if err := seedCanonicalV7TaskForPreparedWorkspace(project.VaultRoot, workspace, workspaceStrategy, lane, run.ItemID); err != nil {
 		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
+	}
+	if lane == runLaneExecute && workspaceStrategy != WorkspaceStrategyShared {
+		taskIDs, err := canonicalV7ExecutionTaskSnapshotIDs(project.VaultRoot, run.ItemID)
+		if err != nil {
+			return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
+		}
+		for _, taskID := range taskIDs {
+			if taskID == run.ItemID {
+				continue // seeded or refreshed immediately above.
+			}
+			if err := syncCanonicalV7TaskIntoWorkspace(project.VaultRoot, workspace.Path, taskID); err != nil {
+				return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
+			}
+		}
 	}
 	if err := mirrorApplyInputsIntoWorkspace(d.store, project, run, workspace.Path); err != nil {
 		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
@@ -4385,22 +4441,24 @@ func reviewerWorkspaceDirtyReason(workspacePath string) string {
 
 func reviewerDirtyStatusLines(output string) []string {
 	var dirty []string
-	for _, line := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for _, raw := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
+		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		path := reviewerStatusPath(line)
+		path := reviewerStatusPath(raw)
 		if path == ".tusker" || strings.HasPrefix(path, ".tusker/") {
 			continue
 		}
-		dirty = append(dirty, line)
+		dirty = append(dirty, strings.TrimSpace(raw))
 	}
 	return dirty
 }
 
 func reviewerStatusPath(line string) string {
-	if len(line) > 3 {
+	// Git porcelain v1 uses two fixed status columns and a separator. Preserve
+	// those columns while slicing: trimming first turns " M .tusker/..." into
+	// "M .tusker/..." and corrupts the first character of the path.
+	if len(line) >= 3 && line[2] == ' ' {
 		line = line[3:]
 	}
 	line = strings.TrimSpace(line)

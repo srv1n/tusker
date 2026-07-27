@@ -592,7 +592,11 @@ func v7WaveMemberGroups(vaultPath string, idx v7Index, wave Note) map[string][]v
 
 func v7WaveRuntimeRuns(vaultPath, projectID string) map[string]RunStatus {
 	out := map[string]RunStatus{}
-	store, err := OpenRuntimeStore(DefaultStateRoot())
+	// Wave show/brief are operator read surfaces. They must not run store
+	// migrations or lease reconciliation just to render a snapshot: that turns a
+	// harmless CLI query into a competing SQLite writer while the daemon owns
+	// the control plane.
+	store, err := OpenRuntimeStoreReadOnly(DefaultStateRoot())
 	if err != nil {
 		return out
 	}

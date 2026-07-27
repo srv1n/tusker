@@ -105,6 +105,42 @@ func TestSeedCanonicalV7TaskForPreparedWorkspaceDoesNotOverwriteReusedLifecycleS
 	assertEqual(t, localReview, mustReadIndexTest(t, targetPath), "reused review workspace retains local task state")
 }
 
+func TestSyncCanonicalV7TaskIntoWorkspaceRefreshesExecuteSnapshot(t *testing.T) {
+	canonicalVault, workspace, taskID := frozenTaskWorktreeSeedFixture(t)
+	if err := seedCanonicalV7TaskIntoWorkspace(canonicalVault, workspace, taskID); err != nil {
+		t.Fatal(err)
+	}
+	canonicalPath := filepath.Join(canonicalVault, "work", "tasks", taskID+".md")
+	canonicalData, canonicalBody, err := parseFrontmatterMustRead(canonicalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalData["readiness"] = "ready"
+	canonicalData["next_owner"] = "agent"
+	canonicalData["next_source"] = "task"
+	canonicalData["next_ref"] = taskID
+	if _, err := saveV7DocumentCAS(canonicalPath, canonicalData, canonicalBody, v7FrontmatterOrder["task"], stringField(canonicalData, "state_rev")); err != nil {
+		t.Fatal(err)
+	}
+	want := mustReadIndexTest(t, canonicalPath)
+
+	targetPath := filepath.Join(runnerWorktreeVaultPath(workspace, canonicalVault), "work", "tasks", taskID+".md")
+	localData, localBody, err := parseFrontmatterMustRead(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	localData["status"] = "review"
+	localData["readiness"] = "waiting_on_review"
+	if _, err := saveV7DocumentCAS(targetPath, localData, localBody, v7FrontmatterOrder["task"], stringField(localData, "state_rev")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := syncCanonicalV7TaskIntoWorkspace(canonicalVault, workspace, taskID); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, want, mustReadIndexTest(t, targetPath), "execute snapshot refreshed from canonical authority")
+}
+
 func TestSeedCanonicalV7TaskForPreparedWorkspaceLeavesFreshReviewSnapshotUntouched(t *testing.T) {
 	canonicalVault, workspace, taskID := frozenTaskWorktreeSeedFixture(t)
 	targetPath := filepath.Join(runnerWorktreeVaultPath(workspace, canonicalVault), "work", "tasks", taskID+".md")

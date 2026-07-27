@@ -628,6 +628,12 @@ func waveMaterialTable(section string, columns []int) []string {
 		if len(cells) == 0 || strings.EqualFold(strings.TrimSpace(cells[0]), "ID") || strings.EqualFold(strings.TrimSpace(cells[0]), "Covers") {
 			continue
 		}
+		// Completion appends this receipt after independent review. It is a
+		// derived lifecycle fact, not an authored verification obligation; hashing
+		// it would stale a manual wave after its first successful landing.
+		if len(cells) > 3 && strings.HasPrefix(strings.TrimSpace(cells[1]), "typed review ") && strings.Contains(cells[3], "[tusker-review-result:") {
+			continue
+		}
 		var selected []string
 		for _, column := range columns {
 			if column < len(cells) {

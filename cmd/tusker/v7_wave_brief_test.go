@@ -2,9 +2,22 @@ package main
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestWaveRuntimeRunsDoesNotCreateOrMutateRuntimeStore(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "runtime")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+
+	if runs := v7WaveRuntimeRuns(t.TempDir(), ""); len(runs) != 0 {
+		t.Fatalf("missing runtime store unexpectedly returned runs: %#v", runs)
+	}
+	if fileExists(stateRoot) {
+		t.Fatalf("wave read path created runtime state at %s", stateRoot)
+	}
+}
 
 func TestWaveBriefArtifactContract(t *testing.T) {
 	kinds := []string{"screenshot", "video", "benchmark_delta", "trace", "replay", "behavior_matrix", "reliability_summary", "security_note", "diff_summary", "knowledge_link"}

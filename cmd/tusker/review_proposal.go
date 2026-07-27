@@ -240,6 +240,19 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 	if result.Schema != reviewResultSchemaV2 {
 		return ReviewResult{}, fmt.Errorf("worker proposal must use the authority-less review result transport schema")
 	}
+	canonicalProjectID, canonicalProjectErr := resolveV7ProjectID(project.VaultRoot)
+	if canonicalProjectErr != nil {
+		return ReviewResult{}, canonicalProjectErr
+	}
+	if result.ProjectID != canonicalProjectID {
+		return ReviewResult{}, fmt.Errorf("proposal canonical project identity %q does not match %q", result.ProjectID, canonicalProjectID)
+	}
+	// The worker signs the durable vault's project identity; the resident
+	// daemon stores runtime records under its registry identity. Validate the
+	// former at the boundary, then bind the accepted result to the latter so
+	// review-result storage, completion transactions, and receipts all use one
+	// stable runtime key. The raw proposal remains the canonical audit input.
+	result.ProjectID = project.ProjectID
 	loaded, err := loadProjectContents(d.store, project, false)
 	if err != nil {
 		return ReviewResult{}, err
@@ -256,9 +269,19 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 	if err := normalizeReviewResult(&result); err != nil {
 		return ReviewResult{}, err
 	}
-	if result.ProjectID != project.ProjectID || result.TaskID != run.RecordID || result.AttemptID != run.ActiveAttemptID || result.WorkRevision != run.WorkRevision ||
-		result.TaskStateRev != stringField(note.Data, "state_rev") || result.ImplementationSHA != firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit")) {
-		return ReviewResult{}, fmt.Errorf("proposal task/work/source snapshot drifted")
+	expectedTaskRevision := stringField(note.Data, "state_rev")
+	expectedSourceSHA := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
+	if result.TaskID != run.RecordID || result.AttemptID != run.ActiveAttemptID || result.WorkRevision != run.WorkRevision ||
+		result.TaskStateRev != expectedTaskRevision || result.ImplementationSHA != expectedSourceSHA {
+		return ReviewResult{}, fmt.Errorf(
+			"proposal task/work/source snapshot drifted: project %q/%q task %q/%q attempt %q/%q work_revision %d/%d task_state_rev %q/%q source_sha %q/%q",
+			result.ProjectID, project.ProjectID,
+			result.TaskID, run.RecordID,
+			result.AttemptID, run.ActiveAttemptID,
+			result.WorkRevision, run.WorkRevision,
+			result.TaskStateRev, expectedTaskRevision,
+			result.ImplementationSHA, expectedSourceSHA,
+		)
 	}
 	if result.Actor != reviewerActorForNote(wf.Data.Reviewer.Actor, note) {
 		return ReviewResult{}, fmt.Errorf("proposal reviewer actor is not authorized")

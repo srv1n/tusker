@@ -79,6 +79,27 @@ func TestV7SoftDependencyUnblocks(t *testing.T) {
 	assertEqual(t, "ready", stringField(mustTaskData(t, vault, "APP-T-0002"), "readiness"), "hard dependency unblocks on done")
 }
 
+func TestV7TargetedControlProjectionMaterializesSoftDependency(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Soft dependency", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent", "risk": "low", "priority": "p0", "dependencies": "APP-T-0001:soft", "v7": "true"}, newV7Task)
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+		"status": "review", "proof_status": "satisfied",
+	})
+	setAutomationV7TaskFields(t, vault, "APP-T-0002", map[string]any{
+		"status": "ready", "readiness": "blocked_by_dependency", "next_owner": "blocked_dependency", "next_source": "dependency", "next_ref": "APP-T-0001",
+	})
+
+	changed, err := reconcileV7ControlProjections(vault, []string{"APP-T-0002"}, "daemon:dispatch", "dispatch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 1, changed, "targeted projection change count")
+	dependent := mustTaskData(t, vault, "APP-T-0002")
+	assertEqual(t, "ready", stringField(dependent, "readiness"), "persisted soft dependency readiness")
+	assertEqual(t, "agent", stringField(dependent, "next_owner"), "persisted soft dependency owner")
+}
+
 func TestV7DependencyHardnessDefaults(t *testing.T) {
 	idx := v7Index{Tasks: map[string]Note{
 		"LOW-T-0001":  {Data: map[string]any{"id": "LOW-T-0001", "risk": "low"}},
