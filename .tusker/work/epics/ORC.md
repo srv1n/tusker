@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-20T03:38:53Z"
-updated_at: "2026-07-27T03:31:44Z"
-state_rev: "sha256:19a9a9444a6d5d54ead6f4171015fdbfb2471133efa0d854e4a75fbd8aaebe93"
+updated_at: "2026-07-27T04:10:55Z"
+state_rev: "sha256:331f9acc8a0af76624c1d24949d9865e21d386c3c181019659190e9aa2caf4fc"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -94,8 +94,6 @@ report-less overnight lane, eight redundant workspace gates).
 | [[ORC-T-0047]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
 | [[ORC-T-0048]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
 | [[ORC-T-0049]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0053]] | ready | agent | Wait for dependency ORC-T-0052 to reach done. |
-| [[ORC-T-0054]] | ready | blocked_dependency | Wait for dependency ORC-T-0053 to reach done. |
 
 ## Recently completed
 
@@ -118,3 +116,5 @@ report-less overnight lane, eight redundant workspace gates).
 | [[ORC-T-0013]] | reviewer:fable | 2026-07-21T06:09:14Z |
 | [[ORC-T-0051]] | reviewer:terra-high | 2026-07-27T03:29:54Z |
 | [[ORC-T-0052]] | reviewer:terra-high | 2026-07-27T03:31:44Z |
+| [[ORC-T-0053]] | reviewer:terra-high | 2026-07-27T03:54:07Z |
+| [[ORC-T-0054]] | reviewer:terra-high | 2026-07-27T04:10:55Z |

@@ -4,7 +4,7 @@ title: Production operability follow-up
 epic: ORC
 spec_refs:
   - docs/specs/12-opt-in-scheduled-promotion.md
-context_fingerprint: sha256:91aa68f905d8fb9c4a2a29bddc4d3d917ef289689b2adf82333b3c1a5bcad179
+context_fingerprint: sha256:a9ca5f7151c228fdceaa8874c60eb1cf242b606f7713f4e05a8bbc43194eb248
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
 factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
@@ -39,7 +39,7 @@ requirements:
   - id: R3
     outcome: Every task created from a linked worktree is admitted by one canonical control writer or refused before a branch-local invisible record exists.
   - id: R4
-    outcome: Daemon and UI consumers receive a stable boarding census and an exact atomic receipt binding accepted completion to its merge commit.
+    outcome: The resident daemon alone owns departure decisions while host service managers only keep it alive, and daemon/UI consumers receive a stable boarding census, exact atomic completion receipt, and actionable PM/Ops projections.
   - id: R5
     outcome: A named accountable human can close one exact revision when independent review infrastructure is broken, through a typed, permanent, risk-visible override reviewed independently for security.
 concurrency: 2
@@ -226,18 +226,24 @@ tasks:
       - id: A2
         outcome: The integration handler atomically records the accepted task transition and exact merge commit in one boarding/completion receipt; crash, retry, stale revision, duplicate trigger, and changed candidate converge or refuse without a false boarded state.
       - id: A3
-        outcome: Daemon planning, wave brief, Serve, and conductor-facing guidance consume the census/receipt projection instead of independently scraping clean-tree, proof, task-binding, or blocker predicates.
+        outcome: The resident daemon alone evaluates and records departure decisions; host service managers may only supervise liveness (start, stop, restart, and keepalive) and cannot evaluate, create, mutate, replay, or authorize a departure. Daemon planning, wave brief, Serve, and conductor-facing guidance consume the census/receipt projection instead of independently scraping clean-tree, proof, task-binding, or blocker predicates.
+      - id: A4
+        outcome: The PM-visible morning/Ops surface distinguishes infrastructure_blocked, pending_registration, stalled, and independent-review override risk; each affected item identifies its named authority, incident, and expiry when applicable and provides exactly one actionable remedy or deep link.
     verification:
-      - covers: A1,A2,A3
+      - covers: A1,A2
         check: "command: go test ./cmd/tusker -run '^TestBoardingCensus$' -count=1 && go test ./cmd/tusker -run '^TestAtomicBoardingReceipt$' -count=1"
+      - covers: A3
+        check: "command: go test ./cmd/tusker -run '^TestResidentDaemonDepartureDecisionAuthority$' -count=1"
+      - covers: A4
+        check: "command: go test ./cmd/tusker -run '^TestProductionOperabilityMorningOpsProjection$' -count=1"
     dependencies:
       - task: canonical-worktree-registration
         kind: hard
     artifact:
       kind: reliability_timeline
       path: cmd/tusker/boarding_receipt_test.go
-      summary: Read-only census plus exact-success, stale, crash, replay, duplicate-trigger, changed-candidate, and consumer-projection receipt timeline.
-      acceptance_ids: [A1, A2, A3]
+      summary: Read-only census plus exact-success, stale, crash, replay, duplicate-trigger, changed-candidate, daemon-only departure authority, and actionable PM/Ops projection timeline.
+      acceptance_ids: [A1, A2, A3, A4]
     owned_paths:
       - cmd/tusker/boarding_census.go
       - cmd/tusker/boarding_census_test.go
@@ -246,6 +252,7 @@ tasks:
       - cmd/tusker/commands_land.go
       - cmd/tusker/v7_wave_authorization.go
       - cmd/tusker/v7_wave_brief.go
+      - cmd/tusker/morning_brief.go
       - cmd/tusker/daemon.go
       - cmd/tusker/serve_types.go
       - cmd/tusker/serve_command.go
@@ -273,7 +280,7 @@ tasks:
       - id: A3
         outcome: One append-only receipt is visible from task, wave, digest, and Serve and projects explicit independent-review override/downstream integration risk; it never reports independent review as passed.
       - id: A4
-        outcome: An independent read-only security review verifies the final command, receipt schema, authorization boundary, adversarial refusal suite, and operator runbook before this critical close path may be accepted.
+        outcome: Before this critical close path is accepted, the critical-risk close policy requires an independent read-only security reviewer to submit a typed pass verdict covering A1,A2,A3,A4 and bound to the exact final task revision, implementation source SHA, work revision, proof fingerprint, and gate fingerprint; the review verifies the final command, receipt schema, authorization boundary, adversarial refusal suite, and operator runbook. A Go test, reviewer prose, or process exit is not this verdict.
     verification:
       - covers: A1,A2,A3
         check: "command: go test ./cmd/tusker -run '^TestTypedBreakGlassClose$' -count=1 && go test ./cmd/tusker -run '^TestBreakGlassCloseSecurityRefusals$' -count=1"

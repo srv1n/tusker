@@ -1,0 +1,146 @@
+schema: tusker.delivery-plan/v2
+scope: pm-first-runner-setup/v1
+title: PM-first runner setup
+epic: SRV
+spec_refs:
+  - docs/specs/22-pm-first-runner-setup.md
+context_fingerprint: sha256:7e2fac9c83aec865ba8f86b794274843f15afd475f7c0305ab42732c7994e4e7
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+summary: >-
+  Replace mock profile/routing settings with a small, provenance-aware Serve
+  runner-setup flow. Configure local policy only; leave automation explicitly
+  separate and unchanged.
+non_goals:
+  - No generic model-priority, cheapest-model, provider-ranking, or cost-control UI.
+  - No Plan 21 factory-operations states, Ops redesign, merge-train work, or daemon lifecycle work.
+  - No automation enablement, dispatch, wave arm/start, run, landing, promotion, release, spending, credentials, or Git mutation.
+  - No committed tusker.yaml rewrite or arbitrary configuration write endpoint.
+requirements:
+  - id: R1
+    outcome: A registered project exposes a real catalog/config/provenance runner-setup read model with explicit diagnostics.
+  - id: R2
+    outcome: Allowlisted local role/profile/routing writes validate and preserve unrelated config while leaving automation unchanged.
+  - id: R3
+    outcome: "Serve provides a progressive PM setup surface: semantic roles first, exact model overrides and routing only in Advanced."
+  - id: R4
+    outcome: Route preview is read-only and explains the resolver's exact precedence decision.
+  - id: R5
+    outcome: A disposable registered project proves the entire policy-only journey with no automation or runtime side effect.
+concurrency: 1
+tasks:
+  - source_key: runner-setup-read-write-api
+    requirement_refs: [R1, R2]
+    title: Expose safe runner setup data and local policy writes
+    outcome: >-
+      Serve returns a truthful project runner-setup read model and accepts only
+      validated local semantic-role/profile/routing policy changes, with
+      resolved readback and an automation-unchanged guarantee.
+    acceptance:
+      - id: A1
+        outcome: GET runner-setup returns per-harness catalog observations, resolved profile definitions, semantic role bindings, ordered routing rules, per-field provenance/inheritance, automation state, and explicit validation diagnostics for one registered project.
+      - id: A2
+        outcome: POST runner-setup accepts only the documented role/profile/routing payload, validates the whole resolved config before write, persists only tusker.local.yaml changes, preserves unrelated config, and returns resolved readback.
+      - id: A3
+        outcome: Writes reject automation/daemon/wave/release/budget/credential/arbitrary-key fields and prove automation.enabled is byte-for-byte unchanged whether it began false or true.
+      - id: A4
+        outcome: Catalog inspection failure for one harness remains represented alongside healthy harness results and produces no authentication, configuration, or runner side effect.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^(TestServeRunnerSetup|TestServeRunnerSetupRejectsAuthorityFields|TestServeRunnerSetupCatalogFailureIsolation)$' -count=1"
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/serve_runner_setup_test.go
+      summary: Registered-project read/write policy matrix covering provenance, local-only writes, rejected authority fields, unchanged automation, and isolated catalog failures.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/serve_runner_setup.go
+      - cmd/tusker/serve_runner_setup_test.go
+      - cmd/tusker/serve_actions.go
+      - cmd/tusker/serve_command.go
+      - cmd/tusker/serve_types.go
+      - cmd/tusker/runner_profiles.go
+    concurrency_group: runner-setup-api
+    risk: medium
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: pm-progressive-runner-setup-ui
+    requirement_refs: [R3]
+    title: Replace mock settings with a progressive PM runner setup surface
+    outcome: >-
+      A PM sees semantic roles and consequences first, can inspect provenance
+      and catalog facts, and enters exact profile/routing overrides only through
+      an explicitly advanced surface.
+    acceptance:
+      - id: A1
+        outcome: The project Settings experience renders the API-backed runner setup with four semantic role cards, profile consequence summary, provenance, and automation state; static profileOptions/routingRules fixtures no longer drive the setup path.
+      - id: A2
+        outcome: Exact harness/model/effort definitions and ordered routing edits are hidden behind Advanced, validate/display API refusals inline, and include reset-to-inherited behavior from API readback.
+      - id: A3
+        outcome: The existing Auto-spawn eligible tasks control remains a separately labeled action and setup save reports policy-only success without toggling automation.
+      - id: A4
+        outcome: The UI contains no generic model-priority/cheapest-model/provider-ranking control and does not add factory-operations state or an Ops dependency.
+    dependencies:
+      - task: runner-setup-read-write-api
+        kind: hard
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: cd internal/serve/ui && bun test tests/projects-settings.test.ts tests/runner-setup.test.ts"
+    artifact:
+      kind: behavior_matrix
+      path: internal/serve/ui/tests/runner-setup.test.ts
+      summary: PM-first role setup, provenance, advanced-only exact override, separate automation authority, and no-priority-UI contract.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - internal/serve/ui/src/features/settings/ProjectSettings.tsx
+      - internal/serve/ui/src/features/settings/project/RunnerSetup.tsx
+      - internal/serve/ui/src/features/settings/project/types.ts
+      - internal/serve/ui/src/lib/api.ts
+      - internal/serve/ui/src/lib/queries.ts
+      - internal/serve/ui/tests/projects-settings.test.ts
+      - internal/serve/ui/tests/runner-setup.test.ts
+    concurrency_group: runner-setup-ui
+    risk: medium
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: runner-setup-route-preview-dogfood
+    requirement_refs: [R4, R5]
+    title: Prove read-only routing and the no-authority PM setup journey
+    outcome: >-
+      The completed Serve setup flow can be dogfooded against a disposable
+      registered project, explaining a route without turning policy configuration
+      into execution authority.
+    acceptance:
+      - id: A1
+        outcome: GET route preview delegates to the canonical runner resolver and returns task/lane, semantic role, selected profile definition, matching rule, precedence, provenance, and validation blockers.
+      - id: A2
+        outcome: Snapshot comparisons prove preview leaves task records, runtime store, automation setting, waves, Git refs, and local configuration unchanged.
+      - id: A3
+        outcome: A disposable registered project records catalog observation, semantic setup save/readback, one advanced override/routing validation, and preview while automation remains false and no daemon/service/run/ref movement occurs.
+    dependencies:
+      - task: pm-progressive-runner-setup-ui
+        kind: hard
+    verification:
+      - covers: A1,A2,A3
+        check: "command: go test ./cmd/tusker -run '^(TestServeRunnerSetupRoutePreview|TestServeRunnerSetupDisposableDogfood)$' -count=1 && cd internal/serve/ui && bun test tests/runner-setup.test.ts"
+    artifact:
+      kind: reliability_timeline
+      path: cmd/tusker/serve_runner_setup_dogfood_test.go
+      summary: Disposable PM setup journey with catalog provenance, local policy readback, canonical route preview, and no-authority state audit.
+      acceptance_ids: [A1, A2, A3]
+    owned_paths:
+      - cmd/tusker/serve_runner_setup.go
+      - cmd/tusker/serve_runner_setup_test.go
+      - cmd/tusker/serve_runner_setup_dogfood_test.go
+      - cmd/tusker/runner_route_preview.go
+      - internal/serve/ui/tests/runner-setup.test.ts
+    concurrency_group: runner-setup-dogfood
+    risk: low
+    priority: p0
+    size: m
+    domains: [project]

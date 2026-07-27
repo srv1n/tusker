@@ -6,6 +6,6 @@
 
 | Task | Priority | Next action |
 |---|---|---|
-| [[ORC-T-0053]] | p0 | Wait for dependency ORC-T-0052 to reach done. |
+
 
 <!-- tusker:generated:end -->
