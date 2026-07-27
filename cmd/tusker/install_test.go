@@ -505,12 +505,15 @@ func TestSkillSyncSymlinkAcceptsExplicitSourceOutsideCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceRoot, err := findRepoRoot(previousWD)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sourceRoot == "" {
-		t.Fatal("expected test to run inside Tusker checkout")
+	sourceRoot := previousWD
+	if !fileExists(filepath.Join(sourceRoot, "skills", "tusker", "SKILL.md")) {
+		sourceRoot, err = findRepoRoot(previousWD)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sourceRoot == "" {
+			t.Fatal("expected test to run from a Tusker source tree")
+		}
 	}
 	outside := t.TempDir()
 	t.Cleanup(func() {
