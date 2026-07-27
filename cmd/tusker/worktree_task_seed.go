@@ -83,7 +83,7 @@ func seedCanonicalV7TaskIntoWorkspace(canonicalVault, workspacePath, taskID stri
 // an execute lane moving ready -> review), which is lifecycle output and must
 // never be compared with or overwritten by canonical control-plane input.
 func seedCanonicalV7TaskForPreparedWorkspace(canonicalVault string, workspace WorkspacePrepareResult, strategy WorkspaceStrategy, taskID string) error {
-	if strategy != WorkspaceStrategyWorktree || !workspace.NewlyMaterialized {
+	if strategy == WorkspaceStrategyShared || !workspace.NewlyMaterialized {
 		return nil
 	}
 	return seedCanonicalV7TaskIntoWorkspace(canonicalVault, workspace.Path, taskID)

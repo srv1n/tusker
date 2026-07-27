@@ -734,8 +734,11 @@ func TestScheduledPromotionLandingRunsFrozenFullGateContract(t *testing.T) {
 		t.Fatalf("red full gate moved main: before=%s after=%s", beforeMain, got)
 	}
 	durable, err := store.FindDepartureRun(run.ID)
-	if err != nil || durable == nil || durable.State != DepartureStateFailed || durable.Gate.Status != "failed" || durable.Gate.Failure.Identity == "" || durable.Gate.Failure.Action != "owner_rework" || durable.Gate.Failure.OwningTaskID != "APP-T-0001" || len(durable.Gate.Failure.ArtifactRefs) != 1 {
+	if err != nil || durable == nil || durable.State != DepartureStateFailed || durable.Gate.Status != "failed" || durable.Gate.Failure.Identity == "" || durable.Gate.Failure.Action != "owner_rework" || durable.Gate.Failure.OwningTaskID != "APP-T-0001" || len(durable.Gate.Failure.ArtifactRefs) != 2 {
 		t.Fatalf("red gate facts were not persisted: run=%#v err=%v", durable, err)
+	}
+	if durable.Gate.Failure.ArtifactRefs[1] != durable.Gate.ArtifactRef {
+		t.Fatalf("red gate summary is not the primary artifact: failure=%#v primary=%q", durable.Gate.Failure.ArtifactRefs, durable.Gate.ArtifactRef)
 	}
 	if strings.Contains(durable.Gate.Failure.ArtifactRefs[0], "FULL_GATE_EXECUTED") {
 		t.Fatalf("raw gate output leaked into durable failure: %#v", durable.Gate.Failure)

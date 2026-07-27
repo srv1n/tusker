@@ -321,8 +321,6 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	if intFromPath(delivery, "expectedConcurrency") != 3 || len(mapping) != 7 || len(sliceAt(delivery, "frontiers")) < 4 {
 		t.Fatalf("import did not preserve the seven-task mixed DAG: %s", prettyJSON(imported))
 	}
-	h.gitOK("add", "-A")
-	h.gitOK("commit", "-m", "import delivery DAG")
 	h.gitOK("branch", "-f", "integration/W-0001", "HEAD")
 	h.touch(filepath.Join(h.tempRoot, "delivery-control", "hold-APP-T-0001"))
 	daemon := h.startDaemon("delivery-daemon")
@@ -509,6 +507,9 @@ metadata:
   wave_authorization_schema: tusker.wave-authorization/v1
   workflow_version: 1
   tracker_schema_version: 7
+  factory_intake_contract_schema: tusker.factory-intake-contract/v1
+  factory_intake_contract_version: 1.1.0
+  factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
 ---
 `)
 }
@@ -920,6 +921,7 @@ automation:
 	if runInt(limits, "max_active_runs") != cfg.MaxActive {
 		h.cliOK(h.repoDir, "daemon", "limits", "--max-active-runs", strconv.Itoa(cfg.MaxActive), "--json")
 	}
+	h.cliOK(h.repoDir, "daemon", "limits", "--disk-pressure-enabled", "false", "--json")
 }
 
 func (h *harness) createRunnableTask(title string) {

@@ -437,6 +437,9 @@ func TestWorkSessionAcceptsOnlyExactDaemonAttemptCapability(t *testing.T) {
 	t.Setenv("TUSKER_LEASE_GENERATION", fmt.Sprintf("%d", claimed.LeaseGeneration))
 	t.Setenv("TUSKER_WORK_REVISION", fmt.Sprintf("%d", workRevision))
 	t.Setenv("TUSKER_WORKSPACE", project.RepoRoot)
+	t.Setenv("TUSKER_REPO_ROOT", project.RepoRoot)
+	t.Setenv("TUSKER_VAULT", vault)
+	t.Setenv("TUSKER_STATUS_PATH", filepath.Join(t.TempDir(), "active.status.json"))
 	t.Setenv("TUSKER_RUN_LANE", runLaneExecute)
 	if err := requireAgentWorkSession(vault, "APP-T-0001", "agent:worker", Args{}); err != nil {
 		t.Fatalf("exact daemon attempt capability was refused: %v", err)
@@ -448,7 +451,14 @@ func TestWorkSessionAcceptsOnlyExactDaemonAttemptCapability(t *testing.T) {
 		"TUSKER_LEASE_GENERATION": fmt.Sprintf("%d", claimed.LeaseGeneration),
 		"TUSKER_WORK_REVISION":    fmt.Sprintf("%d", workRevision),
 		"TUSKER_WORKSPACE":        project.RepoRoot,
+		"TUSKER_REPO_ROOT":        project.RepoRoot,
+		"TUSKER_VAULT":            vault,
+		"TUSKER_STATUS_PATH":      os.Getenv("TUSKER_STATUS_PATH"),
 		"TUSKER_RUN_LANE":         runLaneExecute,
+	}
+	finishedStatusPath := filepath.Join(t.TempDir(), "finished.status.json")
+	if err := os.WriteFile(finishedStatusPath, []byte(`{"exit_code":0}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	mismatches := map[string]string{
 		"TUSKER_ATTEMPT_ID":       attemptID + "-other",
@@ -457,6 +467,9 @@ func TestWorkSessionAcceptsOnlyExactDaemonAttemptCapability(t *testing.T) {
 		"TUSKER_LEASE_GENERATION": fmt.Sprintf("%d", claimed.LeaseGeneration+1),
 		"TUSKER_WORK_REVISION":    fmt.Sprintf("%d", workRevision+1),
 		"TUSKER_WORKSPACE":        filepath.Join(project.RepoRoot, "other"),
+		"TUSKER_REPO_ROOT":        filepath.Join(project.RepoRoot, "other"),
+		"TUSKER_VAULT":            filepath.Join(vault, "other"),
+		"TUSKER_STATUS_PATH":      finishedStatusPath,
 		"TUSKER_RUN_LANE":         runLaneReview,
 	}
 	for key, mismatch := range mismatches {

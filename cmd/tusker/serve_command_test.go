@@ -594,6 +594,9 @@ func newServeFixture(t *testing.T) *serveServer {
 	if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nstorage:\n  root: .tusker\nruntime:\n  mutation_mode: single_user_local\n"); err != nil {
 		t.Fatal(err)
 	}
+	if err := writeText(filepath.Join(vault, "SKILL.md"), "# Tusker fixture\n"); err != nil {
+		t.Fatal(err)
+	}
 	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
 		t.Fatal(err)
 	}
@@ -655,6 +658,9 @@ func newServeEmptyNeedsFixture(t *testing.T) *serveServer {
 		}
 	}
 	if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nstorage:\n  root: .tusker\nruntime:\n  mutation_mode: single_user_local\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(vault, "SKILL.md"), "# Tusker fixture\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {

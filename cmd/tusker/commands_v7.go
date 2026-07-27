@@ -1446,29 +1446,25 @@ func dispatchedWorkerWorkSessionMatches(vaultPath, taskID string, task Note, run
 	projectID := strings.TrimSpace(os.Getenv("TUSKER_PROJECT_ID"))
 	recordID := strings.TrimSpace(os.Getenv("TUSKER_RECORD_ID"))
 	workspace := strings.TrimSpace(os.Getenv("TUSKER_WORKSPACE"))
+	repoRoot := strings.TrimSpace(os.Getenv("TUSKER_REPO_ROOT"))
+	canonicalVault := strings.TrimSpace(os.Getenv("TUSKER_VAULT"))
+	statusPath := strings.TrimSpace(os.Getenv("TUSKER_STATUS_PATH"))
 	generation, generationErr := strconv.Atoi(strings.TrimSpace(os.Getenv("TUSKER_LEASE_GENERATION")))
 	workRevision, revisionErr := strconv.Atoi(strings.TrimSpace(os.Getenv("TUSKER_WORK_REVISION")))
-	if run == nil || store == nil || attemptID == "" || projectID == "" || recordID == "" || workspace == "" ||
+	if attemptID == "" || projectID == "" || recordID == "" || workspace == "" || repoRoot == "" || canonicalVault == "" || statusPath == "" ||
 		generationErr != nil || revisionErr != nil || generation <= 0 ||
 		!strings.EqualFold(recordID, trackerRecordID(task)) ||
-		projectID != run.ProjectID ||
-		!strings.EqualFold(run.LeaseOwner, attemptID) ||
-		!strings.EqualFold(run.ActiveAttemptID, attemptID) ||
-		run.LeaseGeneration != generation ||
-		run.WorkRevision != workRevision ||
 		intField(task.Data, "work_revision") != workRevision ||
-		(LeaseState(run.LeaseState) != LeaseStateClaimed && LeaseState(run.LeaseState) != LeaseStateRunning) ||
-		runFreshness(run, time.Now().UTC()) != "fresh" ||
-		!workspacePathsCompatible(run.WorkspacePath, workspace) ||
-		!workspacePathsCompatible(v7RepoRoot(vaultPath), workspace) {
+		!workspacePathsCompatible(v7RepoRoot(vaultPath), repoRoot) ||
+		!workspacePathsCompatible(vaultPath, canonicalVault) ||
+		fileExists(statusPath) {
 		return false
 	}
-	auth, err := store.LatestRunAuthorization(run.ProjectID, run.RecordID)
-	if err != nil || auth == nil || auth.LeaseGeneration != generation ||
-		(auth.Source != "daemon_auto" && auth.Source != "human_run_directive") {
+	attemptVault := runnerWorktreeVaultPath(workspace, vaultPath)
+	if attemptVault == "" {
 		return false
 	}
-	idx, err := loadV7Index(vaultPath)
+	idx, err := loadV7Index(attemptVault)
 	if err != nil {
 		return false
 	}
@@ -1482,10 +1478,35 @@ func dispatchedWorkerWorkSessionMatches(vaultPath, taskID string, task Note, run
 		return false
 	}
 	attempt := bound[0]
-	return stringField(attempt.Data, "status") == "started" &&
+	if stringField(attempt.Data, "status") != "started" ||
+		!strings.EqualFold(stringField(attempt.Data, "task"), taskID) ||
+		!workspacePathsCompatible(stringField(attempt.Data, "workspace_path"), workspace) ||
+		!strings.EqualFold(stringField(attempt.Data, "lane"), os.Getenv("TUSKER_RUN_LANE")) {
+		return false
+	}
+	// Sandboxed runners intentionally do not receive TUSKER_STATE_ROOT. Their
+	// exact daemon-created attempt record plus the still-unfinished wrapper
+	// status path is the narrow mutation capability; do not expose the runtime
+	// database merely so the child can prove the lease it already owns.
+	if strings.TrimSpace(os.Getenv("TUSKER_STATE_ROOT")) == "" {
+		return true
+	}
+	if run == nil || store == nil ||
+		projectID != run.ProjectID ||
+		!strings.EqualFold(run.LeaseOwner, attemptID) ||
+		!strings.EqualFold(run.ActiveAttemptID, attemptID) ||
+		run.LeaseGeneration != generation ||
+		run.WorkRevision != workRevision ||
+		(LeaseState(run.LeaseState) != LeaseStateClaimed && LeaseState(run.LeaseState) != LeaseStateRunning) ||
+		runFreshness(run, time.Now().UTC()) != "fresh" ||
+		!workspacePathsCompatible(run.WorkspacePath, workspace) {
+		return false
+	}
+	auth, err := store.LatestRunAuthorization(run.ProjectID, run.RecordID)
+	return err == nil && auth != nil && auth.LeaseGeneration == generation &&
+		(auth.Source == "daemon_auto" || auth.Source == "human_run_directive") &&
 		strings.EqualFold(stringField(attempt.Data, "task"), taskID) &&
-		workspacePathsCompatible(stringField(attempt.Data, "workspace_path"), workspace) &&
-		strings.EqualFold(stringField(attempt.Data, "lane"), os.Getenv("TUSKER_RUN_LANE"))
+		workspacePathsCompatible(stringField(attempt.Data, "workspace_path"), workspace)
 }
 
 func ensureV7FinishProofReady(vaultPath, taskID string) error {

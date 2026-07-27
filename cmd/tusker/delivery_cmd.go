@@ -925,10 +925,8 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 		failAfter = 1
 	}
 	if report.CrossScopeSnapshot != nil {
-		base := guard
-		guard = &deliveryImportWriteGuard{}
-		if base != nil {
-			*guard = *base
+		if guard == nil {
+			guard = &deliveryImportWriteGuard{}
 		}
 		previousSnapshot := guard.SnapshotVerify
 		guard.SnapshotVerify = func() error {

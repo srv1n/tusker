@@ -85,7 +85,7 @@ func main() {
 				}
 			}
 			if err := setTaskStatus(*tuskerBin, *completeStatus); err != nil {
-				fmt.Fprintf(os.Stderr, "fake-runner status transition failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "fake-runner status transition failed: %v; capability=%s\n", err, capabilitySummary())
 				os.Exit(17)
 			}
 		}
@@ -95,6 +95,24 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown fake-runner mode %q\n", *mode)
 		os.Exit(64)
 	}
+}
+
+func capabilitySummary() string {
+	workspace := os.Getenv("TUSKER_WORKSPACE")
+	taskID := os.Getenv("TUSKER_ITEM_ID")
+	attemptDir := filepath.Join(workspace, ".tusker", "attempts", taskID)
+	entries, _ := os.ReadDir(attemptDir)
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	_, statusErr := os.Stat(os.Getenv("TUSKER_STATUS_PATH"))
+	return fmt.Sprintf(
+		"state_root_set=%t status_exists=%t attempts=%v project=%q record=%q workspace=%q repo=%q vault=%q lane=%q",
+		os.Getenv("TUSKER_STATE_ROOT") != "", statusErr == nil, names,
+		os.Getenv("TUSKER_PROJECT_ID"), os.Getenv("TUSKER_RECORD_ID"), workspace,
+		os.Getenv("TUSKER_REPO_ROOT"), os.Getenv("TUSKER_VAULT"), os.Getenv("TUSKER_RUN_LANE"),
+	)
 }
 
 func ensureGitEndState() error {
