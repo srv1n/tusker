@@ -41,7 +41,7 @@ func main() {
 			}
 		}
 		if err := runDeliveryFixture(*tuskerBin); err != nil {
-			fmt.Fprintf(os.Stderr, "delivery fixture failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "delivery fixture failed: %v; capability=%s\n", err, capabilitySummary())
 			os.Exit(18)
 		}
 		emitHeartbeat()
@@ -107,12 +107,33 @@ func capabilitySummary() string {
 		names = append(names, entry.Name())
 	}
 	_, statusErr := os.Stat(os.Getenv("TUSKER_STATUS_PATH"))
+	taskRevision := frontmatterField(filepath.Join(workspace, ".tusker", "work", "tasks", taskID+".md"), "work_revision")
+	attemptBindings := make([]string, 0, len(names))
+	for _, name := range names {
+		attemptBindings = append(attemptBindings, name+"="+frontmatterField(filepath.Join(attemptDir, name), "runtime_attempt_id"))
+	}
 	return fmt.Sprintf(
-		"state_root_set=%t status_exists=%t attempts=%v project=%q record=%q workspace=%q repo=%q vault=%q lane=%q",
-		os.Getenv("TUSKER_STATE_ROOT") != "", statusErr == nil, names,
-		os.Getenv("TUSKER_PROJECT_ID"), os.Getenv("TUSKER_RECORD_ID"), workspace,
+		"state_root_set=%t status_exists=%t task_revision=%q attempt_bindings=%v project=%q record=%q generation=%q revision=%q workspace=%q repo=%q vault=%q lane=%q",
+		os.Getenv("TUSKER_STATE_ROOT") != "", statusErr == nil, taskRevision, attemptBindings,
+		os.Getenv("TUSKER_PROJECT_ID"), os.Getenv("TUSKER_RECORD_ID"),
+		os.Getenv("TUSKER_LEASE_GENERATION"), os.Getenv("TUSKER_WORK_REVISION"),
+		workspace,
 		os.Getenv("TUSKER_REPO_ROOT"), os.Getenv("TUSKER_VAULT"), os.Getenv("TUSKER_RUN_LANE"),
 	)
+}
+
+func frontmatterField(path, key string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "<missing>"
+	}
+	prefix := key + ":"
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, prefix)), "\"")
+		}
+	}
+	return "<absent>"
 }
 
 func ensureGitEndState() error {

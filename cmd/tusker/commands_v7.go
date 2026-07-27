@@ -1455,8 +1455,9 @@ func dispatchedWorkerWorkSessionMatches(vaultPath, taskID string, task Note, run
 		generationErr != nil || revisionErr != nil || generation <= 0 ||
 		!strings.EqualFold(recordID, trackerRecordID(task)) ||
 		intField(task.Data, "work_revision") != workRevision ||
-		!workspacePathsCompatible(v7RepoRoot(vaultPath), repoRoot) ||
-		!workspacePathsCompatible(vaultPath, canonicalVault) ||
+		!workspacePathsCompatible(v7RepoRoot(vaultPath), workspace) ||
+		!workspacePathsCompatible(v7RepoRoot(canonicalVault), repoRoot) ||
+		!workspacePathsCompatible(vaultPath, runnerWorktreeVaultPath(workspace, canonicalVault)) ||
 		fileExists(statusPath) {
 		return false
 	}
