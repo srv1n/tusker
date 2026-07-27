@@ -22,7 +22,14 @@ func TestRunnerRoutePreview(t *testing.T) {
 	gitDirOutput(t, repo, "commit", "-m", "fixture")
 	profiles := map[string]RunnerProfileDefinition{}
 	for _, name := range []string{"default", "task", "rule", "lane", "execute-fast", "execute-standard", "execute-complex", "execute-frontier", "review-independent"} {
-		profiles[name] = RunnerProfileDefinition{Harness: string(RunnerCodexExec), Model: name + "-model", Effort: "medium"}
+		profiles[name] = RunnerProfileDefinition{
+			Harness:          string(RunnerCodexExec),
+			Model:            name + "-model",
+			Effort:           "medium",
+			PermissionPreset: "guarded-yolo",
+			Sandbox:          RunnerSandboxDefinition{Mode: "workspace-write", Network: boolPtr(false)},
+			Subagents:        RunnerSubagentPolicyDefinition{Allowed: boolPtr(true), MaxConcurrent: 2},
+		}
 	}
 	wf := defaultWorkflow()
 	wf.RunnerProfiles, wf.RunnerDefaultProfile = profiles, "default"
@@ -47,6 +54,15 @@ func TestRunnerRoutePreview(t *testing.T) {
 			preview := routePreviewForNote(note, local, tc.lane)
 			assertEqual(t, tc.want, preview.Profile, "profile")
 			assertEqual(t, tc.source, preview.Source, "source")
+			assertEqual(t, tc.want+"-model", preview.ProfileDefinition.Model, "profile definition model")
+			assertEqual(t, "guarded-yolo", preview.ProfileDefinition.PermissionPreset, "profile definition permission preset")
+			assertEqual(t, "workspace-write", preview.ProfileDefinition.Sandbox.Mode, "profile definition sandbox mode")
+			if preview.ProfileDefinition.Sandbox.Network == nil || *preview.ProfileDefinition.Sandbox.Network {
+				t.Fatalf("profile definition sandbox network missing or wrong: %#v", preview.ProfileDefinition.Sandbox)
+			}
+			if preview.ProfileDefinition.Subagents.Allowed == nil || !*preview.ProfileDefinition.Subagents.Allowed || preview.ProfileDefinition.Subagents.MaxConcurrent != 2 {
+				t.Fatalf("profile definition subagent policy missing or wrong: %#v", preview.ProfileDefinition.Subagents)
+			}
 			if !preview.ReadOnly || len(preview.Precedence) != 5 || len(preview.Blockers) != 0 {
 				t.Fatalf("bad preview: %#v", preview)
 			}

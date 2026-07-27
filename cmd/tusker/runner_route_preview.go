@@ -12,21 +12,25 @@ type runnerRoutePrecedence struct {
 }
 
 type runnerRoutePreview struct {
-	Schema       string                  `json:"schema"`
-	ReadOnly     bool                    `json:"read_only"`
-	Task         string                  `json:"task"`
-	Lane         string                  `json:"lane"`
-	Complexity   string                  `json:"complexity,omitempty"`
-	SemanticRole string                  `json:"semantic_role,omitempty"`
-	Profile      string                  `json:"profile,omitempty"`
-	Harness      string                  `json:"harness,omitempty"`
-	Model        string                  `json:"model,omitempty"`
-	Effort       string                  `json:"effort,omitempty"`
-	Source       string                  `json:"source,omitempty"`
-	Reason       string                  `json:"reason,omitempty"`
-	Rule         string                  `json:"rule,omitempty"`
-	Precedence   []runnerRoutePrecedence `json:"precedence"`
-	Blockers     []string                `json:"blockers"`
+	Schema       string `json:"schema"`
+	ReadOnly     bool   `json:"read_only"`
+	Task         string `json:"task"`
+	Lane         string `json:"lane"`
+	Complexity   string `json:"complexity,omitempty"`
+	SemanticRole string `json:"semantic_role,omitempty"`
+	Profile      string `json:"profile,omitempty"`
+	// ProfileDefinition exposes the complete resolved execution policy, not
+	// merely its display name. Callers can therefore explain the selected
+	// permission, sandbox, and subagent limits without re-resolving config.
+	ProfileDefinition RunnerProfileDefinition `json:"profile_definition,omitempty"`
+	Harness           string                  `json:"harness,omitempty"`
+	Model             string                  `json:"model,omitempty"`
+	Effort            string                  `json:"effort,omitempty"`
+	Source            string                  `json:"source,omitempty"`
+	Reason            string                  `json:"reason,omitempty"`
+	Rule              string                  `json:"rule,omitempty"`
+	Precedence        []runnerRoutePrecedence `json:"precedence"`
+	Blockers          []string                `json:"blockers"`
 }
 
 // runnerRouteCmd intentionally avoids the automation context and runtime store:
@@ -82,7 +86,8 @@ func routePreviewForNote(note Note, wf Workflow, lane string) runnerRoutePreview
 		preview.Blockers = append(preview.Blockers, err.Error())
 		return preview
 	}
-	preview.Profile, preview.Harness, preview.Model, preview.Effort = selected.Name, selected.Definition.Harness, selected.Definition.Model, selected.Definition.Effort
+	preview.Profile, preview.ProfileDefinition = selected.Name, selected.Definition
+	preview.Harness, preview.Model, preview.Effort = selected.Definition.Harness, selected.Definition.Model, selected.Definition.Effort
 	preview.Source, preview.Reason, preview.Rule = selected.Source, selected.Reason, selected.RuleName
 	preview.Precedence = []runnerRoutePrecedence{
 		{Source: "task frontmatter", Reason: "runner_profile", Selected: selected.Source == "task frontmatter"},
