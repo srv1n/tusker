@@ -552,7 +552,14 @@ func deliveryStartValidateContext(vault string, plan deliveryPlan) (deliveryPlan
 		return deliveryPlanningContext{}, tuskerError(errorInvalidTransition, "planning context could not be recomputed; repair the cited context before Start")
 	}
 	if context.ContextFingerprint != plan.v2.ContextFingerprint {
-		return deliveryPlanningContext{}, tuskerError(errorInvalidTransition, "planning context fingerprint differs; regenerate the plan from current delivery context")
+		return deliveryPlanningContext{}, tuskerError(
+			errorInvalidTransition,
+			"planning context fingerprint differs; regenerate the plan from current delivery context",
+			withContext(map[string]any{
+				"reviewed_context_fingerprint": plan.v2.ContextFingerprint,
+				"current_context_fingerprint":  context.ContextFingerprint,
+			}),
+		)
 	}
 	return context, nil
 }

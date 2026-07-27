@@ -442,9 +442,7 @@ func deliveryContextDocuments(vault, specArg, excludedPlanScope string, expected
 		// A scope with no uniquely reconstructable imported wave has no trusted
 		// generated payload. Keep any marker content material rather than guessing
 		// that it is Tusker-owned.
-		if strings.TrimSpace(excludedPlanScope) == "" || expectedWorkStreamKnown {
-			materialRaw = deliveryContextCanonicalDocumentMaterialWithExpectation(raw, excludedPlanScope, expectedWorkStream, expectedWorkStreamKnown)
-		}
+		materialRaw = deliveryContextCanonicalDocumentMaterialWithExpectation(raw, excludedPlanScope, expectedWorkStream, expectedWorkStreamKnown)
 		data, body, parseErr := parseFrontmatter(string(materialRaw))
 		if parseErr != nil {
 			if request.Required {
@@ -840,7 +838,17 @@ func deliveryContextCanonicalDocumentMaterialWithExpectation(raw []byte, scope s
 		return raw
 	}
 	if !expectedKnown {
-		return []byte(strings.TrimRight(string(raw), "\n"))
+		text := strings.TrimRight(string(raw), "\n")
+		begin, end := deliveryScopeMarkers(scope)
+		if !strings.Contains(text, begin) && !strings.Contains(text, end) {
+			for _, heading := range []string{"## Work streams", "## Work Streams"} {
+				if strings.HasSuffix(text, "\n\n"+heading) {
+					text = strings.TrimSuffix(text, "\n\n"+heading)
+					break
+				}
+			}
+		}
+		return []byte(text)
 	}
 	text := string(raw)
 	if block, ok := deliveryContextGeneratedWorkStream(text, scope, expected, expectedKnown); ok {

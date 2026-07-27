@@ -37,6 +37,10 @@ func TestDeliveryPlanningContext(t *testing.T) {
 		if got := deliveryContextCanonicalDocumentMaterialWithExpectation([]byte(validNew), scope, deliveryContextWorkStreamExpectation{}, false); deliveryFingerprint(got) == deliveryFingerprint([]byte(want)) {
 			t.Fatalf("unbound marker was incorrectly treated as generated: %q", string(got))
 		}
+		emptyScaffold := strings.TrimRight(base, "\n") + "\n\n## Work streams\n"
+		if got := string(deliveryContextCanonicalDocumentMaterialWithExpectation([]byte(emptyScaffold), scope, deliveryContextWorkStreamExpectation{}, false)); got != want {
+			t.Fatalf("empty pre-import work-stream scaffold was not canonicalized:\nwant=%q\n got=%q", want, got)
+		}
 
 		otherScope := "other-context/v1"
 		other := renderDeliveryWorkStreams(base, deliveryImportReport{PlanScope: otherScope, WaveID: "W-0002", TaskMapping: map[string]string{"other": "APP-T-0002"}})
