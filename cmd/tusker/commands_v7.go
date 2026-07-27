@@ -1258,6 +1258,7 @@ func attemptV7StartCmd(args Args) error {
 		"lane":               strings.TrimSpace(args.String("lane")),
 		"project":            v7ProjectID(vaultPath),
 		"task":               taskID,
+		"task_state_rev":     strings.TrimSpace(args.String("task-state-rev")),
 		"runner":             fallback(args.String("runner"), "codex"),
 		"agent_model":        args.String("agent-model"),
 		"workspace_kind":     fallback(args.String("workspace-kind"), "same_checkout"),

@@ -69,6 +69,9 @@ func TestEnsureDispatchedV7AttemptBindsRuntimeIdentityIdempotently(t *testing.T)
 	}
 	assertEqual(t, "01KXGPRUNTIME0000000000000", stringField(data, "runtime_attempt_id"), "runtime attempt binding")
 	assertEqual(t, workspace, stringField(data, "workspace_path"), "attempt workspace")
+	if stringField(data, "task_state_rev") == "" {
+		t.Fatal("daemon attempt omitted immutable task-state revision")
+	}
 
 	data["id"] = "APP-T-0001-A-0003"
 	data["state_rev"] = v7StateRev(data, body)

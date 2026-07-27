@@ -3092,7 +3092,30 @@ func (d *Daemon) finishReviewCompleteRun(project RegisteredProject, note Note, r
 	parentSessionRef := run.SessionRef
 	reason = firstNonEmpty(strings.TrimSpace(reason), runnerReviewCompleteAwaitingLandReason)
 	finished = firstNonEmpty(strings.TrimSpace(finished), time.Now().UTC().Format(time.RFC3339))
-	if autoLanded, err := d.autoLandArmedWaveReviewComplete(project, note, run); err != nil {
+	loaded, loadErr := loadProjectContents(d.store, project, false)
+	if loadErr != nil {
+		return run, false, loadErr
+	}
+	if !registeredProjectIdentityMatches(project, loaded.Project) {
+		return run, false, tuskerError(errorConfigInvalid, "registered project identity changed during execution review projection")
+	}
+	authoritativeCompletion := completionReactorMode(loaded.Workflow.Data.CompletionReactor.Effective) == completionReactorModeAuthoritative
+	if authoritativeCompletion {
+		sourceSHA, projectionErr := projectCompletedWorktreeReviewToCanonical(project.VaultRoot, run)
+		if projectionErr != nil {
+			projectionReason := projectExecutionReviewProjectionReason(projectionErr)
+			updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, 1, projectionReason, finished)
+			run.LeaseState = string(LeaseStateParkedNoProgress)
+			run.AttemptOutcome = string(AttemptOutcomeBlocked)
+			run.NextRetryAt = ""
+			run.LastError = projectionReason
+			run.UpdatedAt = finished
+			run.Terminal = false
+			clearActiveExecution(&run)
+			return run, true, nil
+		}
+		reason = "runner requested review; canonical review snapshot pinned to implementation " + sourceSHA
+	} else if autoLanded, err := d.autoLandArmedWaveReviewComplete(project, note, run); err != nil {
 		landReason := "armed-wave auto-land failed: " + err.Error()
 		_ = kickV7LandingTaskToRework(project.VaultRoot, run.ItemID, landReason, "daemon:wave-drain")
 		updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, 1, landReason, finished)
@@ -4006,7 +4029,8 @@ func ensureDispatchedV7Attempt(canonicalVault, taskID, runtimeAttemptID, lane, r
 	if err != nil {
 		return "", err
 	}
-	if _, ok := idx.Tasks[taskID]; !ok {
+	task, ok := idx.Tasks[taskID]
+	if !ok {
 		return "", nil
 	}
 	var bound []Note
@@ -4033,6 +4057,7 @@ func ensureDispatchedV7Attempt(canonicalVault, taskID, runtimeAttemptID, lane, r
 		"id":                 taskID,
 		"attempt-id":         v7AttemptID,
 		"runtime-attempt-id": runtimeAttemptID,
+		"task-state-rev":     stringField(task.Data, "state_rev"),
 		"lane":               lane,
 		"runner":             runner,
 		"workspace-kind":     "git_worktree",
