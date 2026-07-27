@@ -1413,7 +1413,36 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	defer func() { _ = stopHeartbeat() }()
 	gateCtx := withV7FullGateDeparture(ctx, run.ID)
 	execution := runV7GateTierOnRefContext(gateCtx, vaultPath, v7RepoRoot(vaultPath), before.Candidate.CandidateSHA, projectID, gatePolicy, store)
+	persistShutdownCancellation := func() error {
+		if heartbeatErr := stopHeartbeat(); heartbeatErr != nil {
+			return heartbeatErr
+		}
+		retry := *run
+		retry.Candidate, retry.Gate = before.Candidate, before.Gate
+		retry.Gate.ArtifactRef = execution.ArtifactRef
+		retry.Gate.ArtifactRefs = appendV7UniqueArtifactRefs(retry.Gate.ArtifactRefs, execution.ArtifactRefs...)
+		retry.Gate.ProviderOutcomes = append(retry.Gate.ProviderOutcomes, execution.ProviderOutcomes...)
+		retry.Gate.Failure = DepartureFailure{}
+		retry.State = DepartureStateGating
+		retry.BlockReason = ""
+		if changed, persistErr := store.TransitionDepartureRun(retry, run.StateRevision); persistErr != nil {
+			return persistErr
+		} else if !changed {
+			return tuskerError(errorInvalidTransition, "promotion refusal: departure row changed while recording daemon shutdown")
+		}
+		if execution.FinalizeOutcomes != nil {
+			if finalizeErr := execution.FinalizeOutcomes(); finalizeErr != nil {
+				return fmt.Errorf("persisted daemon-shutdown outcome awaits acknowledgement: %w", finalizeErr)
+			}
+		}
+		*run = retry
+		run.StateRevision++
+		return ctx.Err()
+	}
 	if err := ctx.Err(); err != nil {
+		if errors.Is(context.Cause(ctx), errDaemonDepartureShutdown) {
+			return "", persistShutdownCancellation()
+		}
 		if execution.ProviderOutcome == "" {
 			if cleanupErr := removeV7ProvablyUnboundPromotionArtifacts(store.stateRoot, execution.ArtifactRefs); cleanupErr != nil {
 				return "", errors.Join(err, cleanupErr)
@@ -1446,6 +1475,9 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 		}
 	}
 	if err := ctx.Err(); err != nil {
+		if errors.Is(context.Cause(ctx), errDaemonDepartureShutdown) {
+			return "", persistShutdownCancellation()
+		}
 		if execution.ProviderOutcome == "" {
 			if cleanupErr := removeV7ProvablyUnboundPromotionArtifacts(store.stateRoot, execution.ArtifactRefs); cleanupErr != nil {
 				return "", errors.Join(err, cleanupErr)

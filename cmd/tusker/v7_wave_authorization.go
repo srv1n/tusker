@@ -763,7 +763,7 @@ func mutateWaveAuthorizationWithInspector(args Args, target string, inspector wa
 		report.Authorization = current
 		return finishBeforeMemberLocks(report, emitWaveAuthorizationResult(args, report.WaveID, current, report))
 	}
-	return finishBeforeMemberLocks(wavePreflightReport{}, updateWaveAuthorization(vaultPath, wave, target, "", args))
+	return finishBeforeMemberLocks(wavePreflightReport{}, updateWaveAuthorization(vaultPath, wave, target, "", args, []*v7DocumentLock{lock}))
 }
 
 func lockWaveMemberTasks(idx v7Index, wave Note, authority *deliveryStartAuthority) ([]*v7DocumentLock, error) {
@@ -1085,7 +1085,7 @@ func armWaveAtomicallyGuarded(vaultPath string, idx v7Index, wave Note, report w
 	return nil
 }
 
-func updateWaveAuthorization(vaultPath string, wave Note, target, fingerprint string, args Args) error {
+func updateWaveAuthorization(vaultPath string, wave Note, target, fingerprint string, args Args, heldLocks []*v7DocumentLock) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	actor := fallback(firstNonEmpty(args.String("by"), args.String("actor")), "human:"+defaultActorName())
 	reason := strings.TrimSpace(args.String("reason"))
@@ -1107,7 +1107,7 @@ func updateWaveAuthorization(vaultPath string, wave Note, target, fingerprint st
 	if err != nil {
 		return err
 	}
-	if err := commitDeliveryWrites(map[string]string{wave.AbsolutePath: content}, 0); err != nil {
+	if err := commitDeliveryWritesGuardedWithLocks(map[string]string{wave.AbsolutePath: content}, 0, nil, heldLocks); err != nil {
 		return err
 	}
 	_ = emitV7Event(vaultPath, stringField(data, "id"), "wave", "updated", actor, map[string]any{"authorization": target, "reason": reason})

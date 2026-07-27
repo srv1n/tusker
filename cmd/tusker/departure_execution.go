@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+var errDaemonDepartureShutdown = errors.New("daemon departure shutdown")
+
 const departureHeldError = "DEPARTURE_HELD"
 
 var errDepartureExecutionDeferred = errors.New("departure execution deferred")
@@ -92,7 +94,7 @@ func (d *Daemon) claimDepartureExecutionContext(parent context.Context, runID st
 		d.departureActive = map[string]struct{}{}
 	}
 	if d.departureCancels == nil {
-		d.departureCancels = map[string]context.CancelFunc{}
+		d.departureCancels = map[string]context.CancelCauseFunc{}
 	}
 	if d.departureClosing {
 		return nil, false
@@ -100,7 +102,7 @@ func (d *Daemon) claimDepartureExecutionContext(parent context.Context, runID st
 	if _, exists := d.departureActive[runID]; exists {
 		return nil, false
 	}
-	workerCtx, cancel := context.WithCancel(parent)
+	workerCtx, cancel := context.WithCancelCause(parent)
 	d.departureActive[runID] = struct{}{}
 	d.departureCancels[runID] = cancel
 	d.departureWorkers.Add(1)
@@ -114,7 +116,7 @@ func (d *Daemon) releaseDepartureExecution(runID string) {
 	delete(d.departureCancels, runID)
 	d.departureMu.Unlock()
 	if cancel != nil {
-		cancel()
+		cancel(nil)
 	}
 	d.departureWorkers.Done()
 }
