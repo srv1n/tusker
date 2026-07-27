@@ -2,7 +2,7 @@ automation:
     completion_reactor:
         mode: authoritative
     concurrency:
-        max_active_runs: 2
+        max_active_runs: 4
         max_active_runs_per_project: 2
         max_concurrent_by_state:
             rework: 1
@@ -20,6 +20,7 @@ automation:
         max_children: 0
         merge_rule: manual_review
     lane_profiles:
+        execute: execute-standard
         review: review-independent
     profiles:
         execute-complex:

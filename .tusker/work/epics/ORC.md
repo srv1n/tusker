@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-20T03:38:53Z"
-updated_at: "2026-07-26T11:11:15Z"
-state_rev: "sha256:ae4a488f53e5c14fb3695d6d907795ca154bd34e9c4c70d4175a0c5277c7751b"
+updated_at: "2026-07-26T17:16:07Z"
+state_rev: "sha256:e4b80c3ffb8d88f555abfacecb5ad63ad846987f2dbf3312a16e8df56d509148"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -94,6 +94,10 @@ report-less overnight lane, eight redundant workspace gates).
 | [[ORC-T-0047]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
 | [[ORC-T-0048]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
 | [[ORC-T-0049]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0051]] | review | reviewer | Review evidence and close or return to rework. |
+| [[ORC-T-0052]] | ready | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0053]] | ready | blocked_dependency | Wait for dependency ORC-T-0051 to reach done. |
+| [[ORC-T-0054]] | ready | blocked_dependency | Wait for dependency ORC-T-0052 to reach done. |
 
 ## Recently completed
 

@@ -43,3 +43,21 @@ test("review keeps canonical relationships, links resolvable records, and clears
   expect(source).toContain("mutationMatchesReview ? start.error : null");
   expect(api).toContain("throw new DeliveryError(res.status");
 });
+
+test("delivery waits for an explicit plan path and never shows a stale review for edited input", () => {
+  expect(source).toContain('const defaultPlan = "";');
+  expect(source).toContain("const inputMatchesReview = plan.trim() === submittedPlan");
+  expect(source).toContain('placeholder="docs/plans/example-v2.yaml"');
+  expect(source).toContain("disabled={!plan.trim()}");
+  expect(source).toContain('title="Choose a delivery plan"');
+  expect(source).toContain('title="Review this plan"');
+  expect(source).toContain("inputMatchesReview && review.error");
+  expect(source).toContain("inputMatchesReview && data");
+});
+
+test("delivery tolerates nullable collections from an older daemon", () => {
+  expect(source).toContain("(proof.resourceRefs ?? []).length");
+  expect(source).toContain("(review.howWorkFlows.warnings ?? []).map");
+  expect(source).toContain("(start.blockers ?? []).length");
+  expect(source).toContain("(start.blockers ?? []).map");
+});

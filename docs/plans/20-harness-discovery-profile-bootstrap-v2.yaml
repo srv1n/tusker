@@ -4,7 +4,7 @@ title: Harness discovery and profile bootstrap
 epic: ORC
 spec_refs:
   - docs/specs/20-harness-discovery-profile-bootstrap.md
-context_fingerprint: sha256:9a82a9b9466acc3f87879c4ea61fb49a9fa3911cc552673410947a431c1ad667
+context_fingerprint: sha256:cb2c48897ca9ecbda06815b116eb898beea1de91661fa5c36a71c7c4677b89ec
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
 factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
@@ -96,9 +96,9 @@ tasks:
     requirement_refs: [R5]
     title: Make V2 DAG authoring the installed default
     outcome: >-
-      `tusker delivery plan` emits a context-bound V2 scaffold and installed
-      guidance tells planning agents to use source keys and dependencies for
-      every multi-unit implementation.
+      Tusker generates a context-bound V2 starting plan, and installed guidance
+      tells planning agents to use source keys and dependencies for every
+      multi-unit implementation.
     acceptance:
       - id: A1
         outcome: The generated scaffold declares `tusker.delivery-plan/v2`, the current context and factory-intake provenance, source-keyed requirements/tasks, observable acceptance, exact verification, an operator artifact, owned paths, and a hard-dependency example without final Tusker IDs.

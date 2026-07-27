@@ -118,6 +118,28 @@ final class TuskerBarTests: XCTestCase {
     }
 
     @MainActor
+    func testEditMenuRoutesStandardShortcutsThroughTheFirstResponder() {
+        let menu = TuskerEditMenu.make()
+        let expected: [(String, String, String, NSEvent.ModifierFlags)] = [
+            ("Undo", "undo:", "z", [.command]),
+            ("Redo", "redo:", "z", [.command, .shift]),
+            ("Cut", "cut:", "x", [.command]),
+            ("Copy", "copy:", "c", [.command]),
+            ("Paste", "paste:", "v", [.command]),
+            ("Select All", "selectAll:", "a", [.command]),
+        ]
+
+        XCTAssertEqual(menu.title, "Edit")
+        for (title, action, key, modifiers) in expected {
+            let item = menu.item(withTitle: title)
+            XCTAssertEqual(item?.action, Selector((action)), title)
+            XCTAssertEqual(item?.keyEquivalent, key, title)
+            XCTAssertEqual(item?.keyEquivalentModifierMask, modifiers, title)
+            XCTAssertNil(item?.target, "\(title) must use the first-responder chain")
+        }
+    }
+
+    @MainActor
     func testFolderPickerIsDirectoryOnlyAndSingleSelection() {
         let picker = NSOpenPanel()
         PanelController.configureFolderPicker(picker)

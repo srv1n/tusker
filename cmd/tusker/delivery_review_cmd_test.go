@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -53,6 +54,16 @@ func TestDeliveryPlanReview(t *testing.T) {
 	second, _ := json.Marshal(review)
 	if string(first) != string(second) {
 		t.Fatalf("review JSON is not deterministic")
+	}
+	for _, fragment := range []string{`"resourceRefs":[]`, `"warnings":[]`, `"blockers":[]`} {
+		if !bytes.Contains(first, []byte(fragment)) {
+			t.Fatalf("review JSON must encode empty collections as arrays, missing %s in %s", fragment, first)
+		}
+	}
+	for _, fragment := range []string{`"resourceRefs":null`, `"warnings":null`, `"blockers":null`} {
+		if bytes.Contains(first, []byte(fragment)) {
+			t.Fatalf("review JSON exposed a nullable array contract: %s", fragment)
+		}
 	}
 
 	// Import is still inert; the review reports the disarmed state without

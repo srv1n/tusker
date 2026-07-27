@@ -6,6 +6,6 @@
 
 | Task | Priority | Next action |
 |---|---|---|
-
+| [[ORC-T-0052]] | p0 | Execute the imported delivery contract and satisfy proof mode. |
 
 <!-- tusker:generated:end -->

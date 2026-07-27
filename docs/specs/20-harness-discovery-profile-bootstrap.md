@@ -129,8 +129,6 @@ requirements in their documented dependency order.
 
 <!-- tusker:delivery-import:50c2a909a997cdc9:begin -->
 
-## Work streams
-
 - `[[ORC-T-0053]]` implements delivery source `explain-runner-route`.
 - `[[ORC-T-0051]]` implements delivery source `harness-catalog-profile-bootstrap`.
 - `[[ORC-T-0054]]` implements delivery source `lower-tier-disposable-dogfood`.

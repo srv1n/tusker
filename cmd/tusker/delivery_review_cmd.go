@@ -287,6 +287,7 @@ func buildDeliveryReviewBytes(vault, path string, raw []byte, inspector wavePref
 	if len(r.Decisions) == 0 {
 		r.Decisions = []deliveryReviewDecision{}
 	}
+	normalizeDeliveryReviewCollections(&r)
 	if len(r.Start.Blockers) > 0 {
 		if r.Start.State == "held" {
 			r.Start.State = "invalid"
@@ -311,6 +312,54 @@ func buildDeliveryReviewBytes(vault, path string, raw []byte, inspector wavePref
 		r.Start.Readiness = r.Start.StateLabel
 	}
 	return r, nil
+}
+
+func normalizeDeliveryReviewCollections(r *deliveryReview) {
+	r.What = deliveryReviewNonNil(r.What)
+	for i := range r.What {
+		r.What[i].NonGoals = deliveryReviewNonNil(r.What[i].NonGoals)
+		r.What[i].Links = deliveryReviewNonNil(r.What[i].Links)
+	}
+	r.Proof = deliveryReviewNonNil(r.Proof)
+	for i := range r.Proof {
+		proof := &r.Proof[i]
+		proof.Requirements = deliveryReviewNonNil(proof.Requirements)
+		proof.Acceptance = deliveryReviewNonNil(proof.Acceptance)
+		proof.Tests = deliveryReviewNonNil(proof.Tests)
+		proof.Artifacts = deliveryReviewNonNil(proof.Artifacts)
+		proof.Checks = deliveryReviewNonNil(proof.Checks)
+		proof.ArtifactRefs = deliveryReviewNonNil(proof.ArtifactRefs)
+		proof.ResourceRefs = deliveryReviewNonNil(proof.ResourceRefs)
+		for j := range proof.ArtifactRefs {
+			proof.ArtifactRefs[j].AcceptanceIDs = deliveryReviewNonNil(proof.ArtifactRefs[j].AcceptanceIDs)
+		}
+	}
+	r.Flow.Frontiers = deliveryReviewNonNil(r.Flow.Frontiers)
+	for i := range r.Flow.Frontiers {
+		r.Flow.Frontiers[i] = deliveryReviewNonNil(r.Flow.Frontiers[i])
+	}
+	r.Flow.SharedResources = deliveryReviewNonNil(r.Flow.SharedResources)
+	for i := range r.Flow.SharedResources {
+		resource := &r.Flow.SharedResources[i]
+		resource.Constraints = deliveryReviewNonNil(resource.Constraints)
+		resource.ReferencedBy = deliveryReviewNonNil(resource.ReferencedBy)
+		resource.TaskLinks = deliveryReviewNonNil(resource.TaskLinks)
+	}
+	r.Flow.CrossScopeDependencies = deliveryReviewNonNil(r.Flow.CrossScopeDependencies)
+	r.Flow.Warnings = deliveryReviewNonNil(r.Flow.Warnings)
+	r.Decisions = deliveryReviewNonNil(r.Decisions)
+	for i := range r.Decisions {
+		r.Decisions[i].AcceptanceIDs = deliveryReviewNonNil(r.Decisions[i].AcceptanceIDs)
+	}
+	r.Start.Blockers = deliveryReviewNonNil(r.Start.Blockers)
+	r.NonGoals = deliveryReviewNonNil(r.NonGoals)
+}
+
+func deliveryReviewNonNil[T any](values []T) []T {
+	if values == nil {
+		return []T{}
+	}
+	return values
 }
 
 func deliveryReviewStartCommand(vault, path, fingerprint string) string {

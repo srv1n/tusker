@@ -16,6 +16,36 @@ final class ShellRouter {
 }
 
 @MainActor
+enum TuskerEditMenu {
+    static func make() -> NSMenu {
+        let menu = NSMenu(title: "Edit")
+        add("Undo", action: "undo:", key: "z", to: menu)
+        add("Redo", action: "redo:", key: "z", modifiers: [.command, .shift], to: menu)
+        menu.addItem(.separator())
+        add("Cut", action: "cut:", key: "x", to: menu)
+        add("Copy", action: "copy:", key: "c", to: menu)
+        add("Paste", action: "paste:", key: "v", to: menu)
+        menu.addItem(.separator())
+        add("Select All", action: "selectAll:", key: "a", to: menu)
+        return menu
+    }
+
+    private static func add(
+        _ title: String,
+        action: String,
+        key: String,
+        modifiers: NSEvent.ModifierFlags = [.command],
+        to menu: NSMenu
+    ) {
+        let item = menu.addItem(withTitle: title, action: Selector((action)), keyEquivalent: key)
+        item.keyEquivalentModifierMask = modifiers
+        // A nil target sends the standard editing action through AppKit's
+        // responder chain to the focused WKWebView field.
+        item.target = nil
+    }
+}
+
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let config = AppConfig.shared
     private let settings = SettingsWindowController()
@@ -166,6 +196,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit TuskerBar", action: #selector(quit), keyEquivalent: "q")
         appItem.submenu = appMenu
+
+        let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        editItem.submenu = TuskerEditMenu.make()
+        main.addItem(editItem)
 
         let windowItem = NSMenuItem()
         main.addItem(windowItem)
