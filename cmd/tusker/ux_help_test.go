@@ -94,8 +94,15 @@ func TestRuntimeCommandParsingIncludesOperatorGroups(t *testing.T) {
 		{[]string{"tusker", "daemon", "resume"}, "daemon resume", ""},
 		{[]string{"tusker", "projects", "add", "--repo", "."}, "projects add", ""},
 		{[]string{"tusker", "runs", "inspect", "ORC-T-0018"}, "runs inspect", "ORC-T-0018"},
+		{[]string{"tusker", "work", "start", "ORC-T-0018", "--by", "agent:codex"}, "work start", "ORC-T-0018"},
+		{[]string{"tusker", "work", "status", "ORC-T-0018"}, "work status", "ORC-T-0018"},
+		{[]string{"tusker", "work", "heartbeat", "ORC-T-0018"}, "work heartbeat", "ORC-T-0018"},
+		{[]string{"tusker", "work", "submit", "ORC-T-0018"}, "work submit", "ORC-T-0018"},
+		{[]string{"tusker", "work", "fail", "ORC-T-0018"}, "work fail", "ORC-T-0018"},
+		{[]string{"tusker", "work", "release", "ORC-T-0018"}, "work release", "ORC-T-0018"},
 		{[]string{"tusker", "config", "resolve", "automation.profiles", "--json"}, "config resolve", "automation.profiles"},
 		{[]string{"tusker", "help", "runs", "events"}, "help runs events", ""},
+		{[]string{"tusker", "help", "work", "start"}, "help work start", ""},
 		{[]string{"tusker", "help", "config", "resolve"}, "help config resolve", ""},
 	}
 	for _, tc := range cases {

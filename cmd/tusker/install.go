@@ -829,6 +829,7 @@ func ensureInstallBinarySource() (string, error) {
 		if err := cmd.Run(); err != nil {
 			return "", tuskerError(errorInvalidArg, "Failed to build dist/tusker. Run `go build -o dist/tusker ./cmd/tusker` manually and retry.")
 		}
+		stripMacOSBuildProvenance(binaryPath)
 		return binaryPath, nil
 	}
 

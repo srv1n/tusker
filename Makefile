@@ -34,6 +34,12 @@ build-go: ## Build the Go binary from the prepared embedded assets
 build-go-unlocked:
 	@mkdir -p "$(DIST_DIR)"
 	GOMAXPROCS=$(GO_MAX_PROCS) go build -p=$(GO_PACKAGE_PARALLELISM) -ldflags "-X main.buildVersion=$(VERSION)" -o "$(DIST_BIN)" "$(CMD_DIR)"
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+		for attempt in 1 2 3; do \
+			xattr -d com.apple.provenance "$(DIST_BIN)" 2>/dev/null || true; \
+			sleep 0.1; \
+		done; \
+	fi
 
 mac-app: build ## Build and sign TuskerBar with the current embedded CLI/Serve runtime
 	apps/mac/TuskerBar/scripts/build-app.sh
