@@ -441,13 +441,14 @@ func TestV7FullGateLedgerBindsLifecycleProviderContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy := GateTierPolicy{Profile: "full", HarvestCommands: commands, IsolationProvider: "test-fixture"}
-	first := runV7GateTierOnRefContext(context.Background(), vault, repo, "main", "app", policy, store)
+	gateCtx := withV7FullGateDeparture(context.Background(), "departure-ledger-contract")
+	first := runV7GateTierOnRefContext(gateCtx, vault, repo, "main", "app", policy, store)
 	if first.Err != nil || first.Result.Outcome != gateOutcomePassed ||
 		!sameDepartureStrings(first.Result.Ran, commands) || len(first.Result.LedgerHits) != 0 ||
 		first.Result.Toolchain != isolatedToolchain {
 		t.Fatalf("legacy unrestricted row bypassed lifecycle-provider execution: %#v", first)
 	}
-	second := runV7GateTierOnRefContext(context.Background(), vault, repo, "main", "app", policy, store)
+	second := runV7GateTierOnRefContext(gateCtx, vault, repo, "main", "app", policy, store)
 	if second.Err != nil || second.Result.Outcome != gateOutcomeLedgerHit ||
 		len(second.Result.Ran) != 0 || !sameDepartureStrings(second.Result.LedgerHits, commands) ||
 		second.Result.Toolchain != isolatedToolchain {

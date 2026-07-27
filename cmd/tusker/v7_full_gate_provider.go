@@ -2395,24 +2395,22 @@ func validateV7FullGateJournalGreen(state *v7FullGateStateRoot, store *RuntimeSt
 	if run.ProjectID != journal.Receipt.ProjectID || run.ID != journal.DepartureID || run.Candidate.CandidateSHA == "" {
 		return errors.New("departure identity mismatch")
 	}
-	projects, err := store.ListProjects()
+	loadedProjects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{
+		LoadDisabled: true,
+		ProjectID:    run.ProjectID,
+	})
 	if err != nil {
 		return err
 	}
-	var project *RegisteredProject
-	for i := range projects {
-		if projects[i].ProjectID == run.ProjectID {
-			project = &projects[i]
-			break
-		}
-	}
-	if project == nil {
+	if len(loadedProjects) != 1 {
 		return errors.New("registered project unavailable")
 	}
-	wf, err := loadWorkflow(project.VaultRoot)
-	if err != nil {
-		return err
+	loadedProject := loadedProjects[0]
+	if loadedProject.LoadError != nil {
+		return loadedProject.LoadError
 	}
+	project := loadedProject.Project
+	wf := loadedProject.Workflow
 	policy, err := scheduledPromotionGatePolicy(project.VaultRoot, wf.Data)
 	if err != nil || policy.Profile != journal.Receipt.Profile || policy.IsolationProvider != journal.Receipt.ProviderProfile {
 		return errors.New("current gate profile or toolchain mismatch")

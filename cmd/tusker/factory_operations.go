@@ -265,11 +265,15 @@ func buildFactoryOperations(vaultPath string, project RegisteredProject, workflo
 		facts.AutomationSource = autoReport.Source
 	}
 	if store != nil {
-		projects, listErr := store.ListProjects()
+		loadedProjects, listErr := loadRegisteredProjects(store, registeredProjectLoadOptions{
+			MetadataOnly: true,
+			LoadDisabled: true,
+		})
 		if listErr != nil {
 			return factoryOperationsProjection{}, listErr
 		}
-		for _, registered := range projects {
+		for _, loaded := range loadedProjects {
+			registered := loaded.Project
 			if registered.ProjectID == project.ProjectID || sameCleanPath(registered.VaultRoot, vaultPath) {
 				facts.Project, facts.ProjectRegistered = registered, true
 				break

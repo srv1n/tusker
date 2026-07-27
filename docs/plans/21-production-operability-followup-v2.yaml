@@ -9,10 +9,11 @@ factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
 factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
 summary: >-
-  Close the six production control-plane gaps found by merge-train dogfood in
-  one serially safe V2 DAG: executable truth and pre-claim health first, then
-  run liveness, canonical registration, boarding authority, and a deliberately
-  human-controlled emergency close path.
+  Close the production control-plane gaps found by merge-train dogfood and the
+  rzn backend field report in one serially safe V2 DAG: executable truth and
+  pre-claim health first, then bounded run liveness, canonical registration,
+  boarding authority, a deliberately human-controlled emergency close path,
+  and one read-only divergence sweep over the resulting primitives.
 non_goals:
   - >-
     Authoring, doctor, review, dry-run, and import are inert. This plan does
@@ -31,17 +32,23 @@ non_goals:
     Worktree discovery is diagnostic only; it must not silently select among
     conflicting branch-local task identities or mutate a canonical control
     surface without the declared writer.
+  - >-
+    The unified doctor reports divergence and one bounded remedy; it neither
+    repairs records, kills a process, rewrites a retry budget, substitutes a
+    runner, waives a gate, nor authorizes a departure.
 requirements:
   - id: R1
-    outcome: Before any claim, Tusker exposes installed-binary truth and classifies unavailable authorized runner execution as an actionable infrastructure blocker.
+    outcome: Before any claim, Tusker exposes installed-binary truth, rejects advertised-versus-dispatch capability skew with a typed remedy, and classifies unavailable authorized runner execution as an actionable infrastructure blocker.
   - id: R2
-    outcome: Runs distinguish live work, bounded intentional waits, terminal infrastructure blocks, and stalled work, with durable deadlines and loud projections.
+    outcome: Runs distinguish live work, bounded intentional waits, terminal infrastructure blocks, expired or target-missing retries, and stalled work, with durable deadlines, responsible-runtime identity, and loud projections.
   - id: R3
     outcome: Every task created from a linked worktree is admitted by one canonical control writer or refused before a branch-local invisible record exists.
   - id: R4
-    outcome: The resident daemon alone owns departure decisions while host service managers only keep it alive, and daemon/UI consumers receive a stable boarding census, exact atomic completion receipt, and actionable PM/Ops projections.
+    outcome: The resident daemon alone owns departure decisions while host service managers only keep it alive; service-context repository access is checked before departure; and daemon/UI consumers receive a stable boarding census, exact atomic completion receipt, and actionable PM/Ops projections.
   - id: R5
     outcome: A named accountable human can close one exact revision when independent review infrastructure is broken, through a typed, permanent, risk-visible override reviewed independently for security.
+  - id: R6
+    outcome: A unified read-only doctor sweeps every implemented divergence class with stable reason codes, one remedy or deep link, and a PM/Ops projection without mutating work.
 concurrency: 2
 assumptions:
   - source_key: semantic-profile-bootstrap
@@ -100,16 +107,18 @@ tasks:
         outcome: Unsupported commands have a typed unavailable/deprecated entry with a replacement where one exists; the manifest is deterministic for one binary and never reads secrets, writes configuration, claims work, or launches a runner.
       - id: A3
         outcome: Installed orchestration guidance identifies the manifest as authoritative executable truth and retains documentation only as intent and explanation.
+      - id: A4
+        outcome: When an advertised capability cannot be honored at dispatch, the refusal is machine-readable and names the missing capability, installed build/version, and exactly one upgrade or supported fallback remedy; it never creates a worker claim from the stale advertisement.
     verification:
-      - covers: A1,A2
-        check: "command: go test ./cmd/tusker -run '^TestInstalledCapabilityManifest$' -count=1"
+      - covers: A1,A2,A4
+        check: "command: go test ./cmd/tusker -run '^TestInstalledCapabilityManifest$' -count=1 && go test ./cmd/tusker -run '^TestDispatchCapabilitySkewRefusal$' -count=1"
       - covers: A3
         check: "command: make skill-doctor"
     artifact:
       kind: behavior_matrix
       path: cmd/tusker/capabilities_cmd_test.go
       summary: Version, command/flag, schema, adapter, optional-capability, deprecated-command, deterministic, and read-only manifest matrix.
-      acceptance_ids: [A1, A2, A3]
+      acceptance_ids: [A1, A2, A3, A4]
     owned_paths:
       - cmd/tusker/capabilities_cmd.go
       - cmd/tusker/capabilities_cmd_test.go
@@ -139,9 +148,11 @@ tasks:
         outcome: The daemon turns overdue waits and missing live heartbeats into one idempotent typed escalation, while healthy intentional waits remain quiet until their declared deadline.
       - id: A3
         outcome: Runs list/inspect, automation queue, wave brief, digest, and Serve expose typed state, deadline, remedy, and escalation consistently and no longer collapse broken infrastructure into ordinary parked work.
+      - id: A4
+        outcome: A retrying attempt has a durable TTL or max-retry budget and responsible runtime/process identity. A deleted or missing target reaches target_missing or expired at exhaustion, stops recreating scratch state, parks loudly once, and `tusker runs inspect --json` names the responsible runtime/process and one remedy.
     verification:
-      - covers: A1,A2,A3
-        check: "command: go test ./cmd/tusker -run '^TestTypedRunWaitStallState$' -count=1 && go test ./cmd/tusker -run '^TestRunDeadlineEscalationProjection$' -count=1"
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestTypedRunWaitStallState$' -count=1 && go test ./cmd/tusker -run '^TestRunDeadlineEscalationProjection$' -count=1 && go test ./cmd/tusker -run '^TestAttemptTargetMissingExpiry$' -count=1"
     dependencies:
       - task: runner-preclaim-health
         kind: hard
@@ -150,8 +161,8 @@ tasks:
     artifact:
       kind: reliability_timeline
       path: cmd/tusker/run_wait_stall_test.go
-      summary: Live, waiting, overdue, runner-loss, infrastructure-blocked, parked, stalled, restart, deduplicated escalation, and projection timeline.
-      acceptance_ids: [A1, A2, A3]
+      summary: Live, waiting, overdue, runner-loss, infrastructure-blocked, missing-target retry exhaustion, parked, stalled, restart, responsible-runtime inspection, deduplicated escalation, and projection timeline.
+      acceptance_ids: [A1, A2, A3, A4]
     owned_paths:
       - cmd/tusker/run_state.go
       - cmd/tusker/run_wait_stall_test.go
@@ -229,21 +240,23 @@ tasks:
         outcome: The resident daemon alone evaluates and records departure decisions; host service managers may only supervise liveness (start, stop, restart, and keepalive) and cannot evaluate, create, mutate, replay, or authorize a departure. Daemon planning, wave brief, Serve, and conductor-facing guidance consume the census/receipt projection instead of independently scraping clean-tree, proof, task-binding, or blocker predicates.
       - id: A4
         outcome: The PM-visible morning/Ops surface distinguishes infrastructure_blocked, pending_registration, stalled, and independent-review override risk; each affected item identifies its named authority, incident, and expiry when applicable and provides exactly one actionable remedy or deep link.
+      - id: A5
+        outcome: Before a daemon-owned departure, the daemon validates that its service context can read the configured repository and integration worktree. macOS protected-folder/TCC denial is classified as service_context_repo_access_denied with the service context, repository path, failed probe, and one remedy; it is never recorded as lane or gate work failure.
     verification:
       - covers: A1,A2
         check: "command: go test ./cmd/tusker -run '^TestBoardingCensus$' -count=1 && go test ./cmd/tusker -run '^TestAtomicBoardingReceipt$' -count=1"
       - covers: A3
         check: "command: go test ./cmd/tusker -run '^TestResidentDaemonDepartureDecisionAuthority$' -count=1"
-      - covers: A4
-        check: "command: go test ./cmd/tusker -run '^TestProductionOperabilityMorningOpsProjection$' -count=1"
+      - covers: A4,A5
+        check: "command: go test ./cmd/tusker -run '^TestProductionOperabilityMorningOpsProjection$' -count=1 && go test ./cmd/tusker -run '^TestServiceContextRepositoryAccessPreflight$' -count=1"
     dependencies:
       - task: canonical-worktree-registration
         kind: hard
     artifact:
       kind: reliability_timeline
       path: cmd/tusker/boarding_receipt_test.go
-      summary: Read-only census plus exact-success, stale, crash, replay, duplicate-trigger, changed-candidate, daemon-only departure authority, and actionable PM/Ops projection timeline.
-      acceptance_ids: [A1, A2, A3, A4]
+      summary: Read-only census plus exact-success, stale, crash, replay, duplicate-trigger, changed-candidate, daemon-only departure authority, service-context repository access refusal, and actionable PM/Ops projection timeline.
+      acceptance_ids: [A1, A2, A3, A4, A5]
     owned_paths:
       - cmd/tusker/boarding_census.go
       - cmd/tusker/boarding_census_test.go
@@ -262,6 +275,55 @@ tasks:
     risk: critical
     priority: p0
     size: xl
+    domains: [project]
+
+  - source_key: production-divergence-doctor
+    requirement_refs: [R6]
+    title: Sweep production divergence with one read-only doctor
+    outcome: >-
+      `tusker doctor --json` composes the implemented control-plane probes into
+      one deterministic, read-only operator report so reality diverging from
+      recorded state becomes visible before it silently consumes another run,
+      departure, or morning.
+    acceptance:
+      - id: A1
+        outcome: The report detects runner/PATH health, advertised-versus-dispatch capability skew, stale or missing-target attempts, worktree-invisible or pending-registration records, impossible and human-overridden evidence gates, parked/stalled runs, boarding/receipt split state, and service-context repository access; every finding has a stable reason code, affected identity, severity, evidence summary, and exactly one remedy or deep link.
+      - id: A2
+        outcome: "The report is deterministic and read-only: it neither claims work, launches a runner, changes task/run/gate/wave state, creates scratch state, writes configuration, moves a ref, nor performs an implicit repair; unavailable probes are reported as typed inconclusive findings rather than omitted."
+      - id: A3
+        outcome: Runs inspect, automation queue, wave brief, and the PM Ops surface project the same finding identity and remedy, while retaining their focused views instead of duplicating a second mutable operations model.
+    verification:
+      - covers: A1,A2,A3
+        check: "command: go test ./cmd/tusker -run '^TestProductionDivergenceDoctor$' -count=1 && go test ./cmd/tusker -run '^TestProductionDivergenceDoctorReadOnly$' -count=1"
+    dependencies:
+      - task: runner-preclaim-health
+        kind: hard
+      - task: installed-capability-manifest
+        kind: hard
+      - task: typed-run-wait-stall-state
+        kind: hard
+      - task: canonical-worktree-registration
+        kind: hard
+      - task: boarding-census-and-receipt
+        kind: hard
+      - task: typed-break-glass-close
+        kind: hard
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/production_divergence_doctor_test.go
+      summary: Stable, read-only divergence report matrix for every control-plane reality/record split, including unavailable-probe behavior and PM/Ops projection identity.
+      acceptance_ids: [A1, A2, A3]
+    owned_paths:
+      - cmd/tusker/production_divergence_doctor.go
+      - cmd/tusker/production_divergence_doctor_test.go
+      - cmd/tusker/cli.go
+      - cmd/tusker/serve_types.go
+      - cmd/tusker/serve_command.go
+    complexity: complex
+    concurrency_group: post-primitive-diagnostics
+    risk: high
+    priority: p0
+    size: l
     domains: [project]
 
   - source_key: typed-break-glass-close
