@@ -444,6 +444,18 @@ func TestWorkSessionAcceptsOnlyExactDaemonAttemptCapability(t *testing.T) {
 	if err := requireAgentWorkSession(vault, "APP-T-0001", "agent:worker", Args{}); err != nil {
 		t.Fatalf("exact daemon attempt capability was refused: %v", err)
 	}
+	attemptPath := filepath.Join(vault, "attempts", "APP-T-0001", "APP-T-0001-A-0001.md")
+	attemptData, attemptBody, err := parseFrontmatterMustRead(attemptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attemptData["status"] = "handoff"
+	if _, err := saveV7DocumentCAS(attemptPath, attemptData, attemptBody, v7FrontmatterOrder["attempt"], stringField(attemptData, "state_rev")); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireAgentWorkSession(vault, "APP-T-0001", "agent:worker", Args{}); err != nil {
+		t.Fatalf("handoff daemon attempt capability was refused: %v", err)
+	}
 	exactEnv := map[string]string{
 		"TUSKER_ATTEMPT_ID":       attemptID,
 		"TUSKER_PROJECT_ID":       project.ProjectID,
