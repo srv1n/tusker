@@ -505,15 +505,9 @@ func TestSkillSyncSymlinkAcceptsExplicitSourceOutsideCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceRoot := previousWD
-	if !fileExists(filepath.Join(sourceRoot, "skills", "tusker", "SKILL.md")) {
-		sourceRoot, err = findRepoRoot(previousWD)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if sourceRoot == "" {
-			t.Fatal("expected test to run from a Tusker source tree")
-		}
+	sourceRoot := filepath.Join(t.TempDir(), "canonical-skill")
+	if err := installSkillPayloadCopy(sourceRoot); err != nil {
+		t.Fatal(err)
 	}
 	outside := t.TempDir()
 	t.Cleanup(func() {
@@ -536,7 +530,11 @@ func TestSkillSyncSymlinkAcceptsExplicitSourceOutsideCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, filepath.Join(sourceRoot, "skills", "tusker"), target, "skill symlink target")
+	resolvedSource, err := filepath.EvalSymlinks(sourceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, resolvedSource, target, "skill symlink target")
 }
 
 func TestSkillBundleMaterializesPortableCopies(t *testing.T) {
