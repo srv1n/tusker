@@ -207,10 +207,10 @@ func buildWaveBriefWithRuns(idx v7Index, wave Note, runs map[string]RunStatus) w
 		}
 		if item, ok := waveReworkItem(idx, task, state); ok {
 			b.Rework = append(b.Rework, item)
-		} else if run := runs[taskID]; armedWaveRunMachineParked(run) {
+		} else if run := runs[taskID]; armedWaveRunMachineParked(run) || (run.Infrastructure != nil && run.Infrastructure.State == runnerInfrastructureBlockedState) {
 			b.Rework = append(b.Rework, waveBriefRework{
 				TaskID: taskID, Title: state.Title, TaskHref: state.TaskHref,
-				State: string(LeaseStateParkedNoProgress), Failure: firstNonEmpty(run.LastError, "attempt policy exhausted"),
+				State: firstNonEmpty(run.LeaseState, string(LeaseStateParkedNoProgress)), Failure: firstNonEmpty(run.LastError, runnerInfrastructureBlockReason(run.Infrastructure), "attempt policy exhausted"),
 				AffectedTasks: waveDependentClosure(idx, taskID),
 			})
 		}

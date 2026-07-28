@@ -317,31 +317,32 @@ type serveRunDirective struct {
 }
 
 type serveRunSummary struct {
-	TaskID            string `json:"taskId"`
-	TaskTitle         string `json:"taskTitle"`
-	ProjectID         string `json:"projectId"`
-	Runner            string `json:"runner"`
-	RunnerName        string `json:"runnerName"`
-	RunnerProfile     string `json:"runnerProfile"`
-	Model             any    `json:"model"`
-	Lane              string `json:"lane"`
-	LeaseState        string `json:"leaseState"`
-	LeaseStateRaw     string `json:"leaseStateRaw"`
-	HandRun           bool   `json:"handRun"`
-	ProcessRunning    bool   `json:"processRunning"`
-	Outcome           string `json:"outcome"`
-	ElapsedSec        int    `json:"elapsedSec"`
-	SinceLastEventSec int    `json:"sinceLastEventSec"`
-	Liveness          string `json:"liveness"`
-	AttemptCount      int    `json:"attemptCount"`
-	Terminal          any    `json:"terminal"`
-	Error             any    `json:"error"`
-	LastHeartbeatAt   any    `json:"lastHeartbeatAt"`
-	NextWakeAt        any    `json:"nextWakeAt"`
-	WorkspacePath     string `json:"workspacePath"`
-	WorkspaceMode     string `json:"workspaceMode"`
-	StartedAt         string `json:"startedAt"`
-	UpdatedAt         string `json:"updatedAt"`
+	TaskID            string                     `json:"taskId"`
+	TaskTitle         string                     `json:"taskTitle"`
+	ProjectID         string                     `json:"projectId"`
+	Runner            string                     `json:"runner"`
+	RunnerName        string                     `json:"runnerName"`
+	RunnerProfile     string                     `json:"runnerProfile"`
+	Model             any                        `json:"model"`
+	Lane              string                     `json:"lane"`
+	LeaseState        string                     `json:"leaseState"`
+	LeaseStateRaw     string                     `json:"leaseStateRaw"`
+	HandRun           bool                       `json:"handRun"`
+	ProcessRunning    bool                       `json:"processRunning"`
+	Outcome           string                     `json:"outcome"`
+	ElapsedSec        int                        `json:"elapsedSec"`
+	SinceLastEventSec int                        `json:"sinceLastEventSec"`
+	Liveness          string                     `json:"liveness"`
+	AttemptCount      int                        `json:"attemptCount"`
+	Terminal          any                        `json:"terminal"`
+	Error             any                        `json:"error"`
+	Infrastructure    *RunnerInfrastructureBlock `json:"infrastructure,omitempty"`
+	LastHeartbeatAt   any                        `json:"lastHeartbeatAt"`
+	NextWakeAt        any                        `json:"nextWakeAt"`
+	WorkspacePath     string                     `json:"workspacePath"`
+	WorkspaceMode     string                     `json:"workspaceMode"`
+	StartedAt         string                     `json:"startedAt"`
+	UpdatedAt         string                     `json:"updatedAt"`
 }
 
 type serveAttempt struct {

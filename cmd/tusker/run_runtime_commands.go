@@ -958,6 +958,7 @@ func redriveRuntimeRunWithHook(store *RuntimeStore, run *RunStatus, actor, reaso
 	redriven.LastEventAt = now.Format(time.RFC3339)
 	redriven.UpdatedAt = now.Format(time.RFC3339)
 	redriven.Terminal = false
+	redriven.Infrastructure = nil
 	clearActiveExecution(&redriven)
 	clearRunCloudRefs(&redriven)
 	reset := BudgetRedriveRecord{Actor: actor, Reason: reason, ResetAt: now.Format(time.RFC3339)}

@@ -257,6 +257,8 @@ func runInner(command string, args Args) (int, error) {
 	switch command {
 	case "version", "--version":
 		return 0, versionCmd(args)
+	case "capabilities":
+		return 0, capabilitiesCmd(args)
 	case "runner-wrapper":
 		return 0, runnerWrapperCmd(args)
 	case "runner":
@@ -977,11 +979,13 @@ tusker.yaml, .tusker/work, and .tusker/knowledge/domains.
 
 Start here:
   tusker init --yes
+  tusker capabilities --json
   tusker new epic --vault ./.tusker --acronym APP --title "App foundation"
   tusker new task --vault ./.tusker --epic APP --title "Implement auth" --size m --risk medium
 
 Commands:
   init                initialize or refresh a repo vault
+  capabilities        print the installed-binary capability manifest (JSON only)
   new                 create V7 epics, tasks, gates, and decisions
   list                list work records
   search              search tracker notes without generated files or attachments
@@ -1066,6 +1070,8 @@ Global flags:
 
 func printCommandHelp(command string) bool {
 	switch command {
+	case "capabilities":
+		printCapabilitiesHelp()
 	case "init":
 		printInitHelp()
 	case "runner", "runner catalog", "runner profiles", "runner route":

@@ -116,13 +116,13 @@ exit 127
 	}
 
 	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
-	assertEqual(t, string(LeaseStateParkedNoProgress), run.LeaseState, "preflight lease state")
+	assertEqual(t, runnerInfrastructureBlockedState, run.LeaseState, "preflight lease state")
 	assertEqual(t, string(AttemptOutcomeBlocked), run.AttemptOutcome, "preflight outcome")
 	assertEqual(t, true, run.Terminal, "preflight terminal")
 	assertEqual(t, 0, run.AttemptCount, "preflight attempt count")
 	assertEqual(t, "", run.ActiveAttemptID, "preflight active attempt")
 	assertEqual(t, 0, run.ProcessPID, "preflight process pid")
-	if !strings.Contains(run.LastError, "runner preflight blocked") ||
+	if !strings.Contains(run.LastError, runnerInfrastructureBlockedState) ||
 		!strings.Contains(run.LastError, "failed health check") ||
 		!strings.Contains(run.LastError, "arm64 vendor binary missing") {
 		t.Fatalf("expected clear preflight blocker, got %#v", run)
@@ -134,8 +134,8 @@ exit 127
 	if len(attempts) != 0 {
 		t.Fatalf("expected no attempts after repeated polls, got %#v", attempts)
 	}
-	if blocker := automationRunBlocker(run, time.Now().UTC()); !strings.Contains(blocker, "runner preflight") || !strings.Contains(blocker, "redrive") {
-		t.Fatalf("expected queue blocker to explain runner preflight/redrive, got %q", blocker)
+	if blocker := automationRunBlocker(run, time.Now().UTC()); !strings.Contains(blocker, runnerInfrastructureBlockedState) || !strings.Contains(blocker, "redrive") {
+		t.Fatalf("expected queue blocker to explain infrastructure block/redrive, got %q", blocker)
 	}
 }
 

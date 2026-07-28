@@ -326,8 +326,10 @@ func deliveryV2ImportBytesGuarded(vaultPath, path string, raw []byte, args Args,
 	// Capability refusal is intentionally before even the material epoch lock:
 	// an unavailable capability must not create a record, arm a wave, or leave
 	// a mutation-adjacent artifact behind.
-	if err := deliveryRequireCapabilities(v2.RequiredCapabilities); err != nil {
+	if unavailable, err := deliveryUnavailableCapabilities(v2.RequiredCapabilities); err != nil {
 		return tuskerError(errorInvalidArg, err.Error())
+	} else if len(unavailable) > 0 {
+		return unavailableDeliveryCapabilityError(unavailable)
 	}
 	// Resolution is material, not planning-time decoration.  Holding this
 	// vault-wide epoch forces mapping, producer lookup, graph validation, and

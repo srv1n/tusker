@@ -28,9 +28,7 @@ type VersionProjection struct {
 }
 
 func versionCmd(args Args) error {
-	info, _ := debug.ReadBuildInfo()
-	executable, _ := os.Executable()
-	projection := buildVersionProjection(info, executable)
+	projection := installedVersionProjection()
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "version": projection})
 		return nil
@@ -47,6 +45,12 @@ func versionCmd(args Args) error {
 		fmt.Printf("binary sha256:%s\n", projection.BinarySHA256)
 	}
 	return nil
+}
+
+func installedVersionProjection() VersionProjection {
+	info, _ := debug.ReadBuildInfo()
+	executable, _ := os.Executable()
+	return buildVersionProjection(info, executable)
 }
 
 func buildVersionProjection(info *debug.BuildInfo, executable string) VersionProjection {

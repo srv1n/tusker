@@ -8,6 +8,14 @@ import (
 
 const strictV2ProofAuthorityCapability = "strict_v2_proof_authority/v1"
 
+const unavailableCapabilityRemedy = "install or select a binary that enforces the exact required capability"
+
+type unavailableCapabilityContext struct {
+	MissingCapabilities []string          `json:"missing_capabilities"`
+	Installed           VersionProjection `json:"installed"`
+	Remedy              string            `json:"remedy"`
+}
+
 // deliveryRequiredCapabilities is deliberately small and explicit. A plan may
 // only request capabilities this binary can actually enforce; accepting an
 // opaque string would turn the field into decorative metadata.
@@ -64,4 +72,17 @@ func deliveryRequireCapabilities(required []string) error {
 		return fmt.Errorf("required capability unavailable: %s", strings.Join(unavailable, ", "))
 	}
 	return nil
+}
+
+func unavailableDeliveryCapabilityError(unavailable []string) error {
+	return tuskerError(
+		errorInvalidArg,
+		"required capability unavailable: "+strings.Join(unavailable, ", "),
+		withHint(unavailableCapabilityRemedy),
+		withContext(unavailableCapabilityContext{
+			MissingCapabilities: append([]string(nil), unavailable...),
+			Installed:           installedVersionProjection(),
+			Remedy:              unavailableCapabilityRemedy,
+		}),
+	)
 }

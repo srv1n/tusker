@@ -2,6 +2,12 @@
 
 ## Plan First
 
+Before constructing an invocation, an orchestrator reads `tusker capabilities
+--json`. The versioned, read-only manifest is the installed binary's authority
+for supported commands, schemas, runner adapters, optional capabilities, and
+deprecated replacements. It is not a runner-health check and does not inspect
+or change project state.
+
 ```bash
 tusker automation plan <TASK-ID> --json
 ```

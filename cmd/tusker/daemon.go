@@ -3389,6 +3389,30 @@ func parkNoProgressRun(run RunStatus, reason string) RunStatus {
 	return run
 }
 
+// persistRunnerInfrastructureBlock is deliberately pre-claim. Its snapshot
+// write may record the refusal, but it never creates a lease, authorization,
+// workspace, or attempt.
+func (d *Daemon) persistRunnerInfrastructureBlock(run RunStatus, block *RunnerInfrastructureBlock) (RunStatus, bool, error) {
+	if block == nil {
+		return run, false, nil
+	}
+	expected := run
+	run.LeaseState = runnerInfrastructureBlockedState
+	run.AttemptOutcome = string(AttemptOutcomeBlocked)
+	run.LastError = runnerInfrastructureBlockReason(block)
+	run.NextRetryAt = ""
+	run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	run.Terminal = true
+	run.Infrastructure = block
+	clearActiveExecution(&run)
+	stored, err := d.store.UpsertRunIfSnapshot(expected, run)
+	if err != nil || stored {
+		return run, false, err
+	}
+	latest, err := d.latestDispatchRun(run)
+	return latest, true, err
+}
+
 func (d *Daemon) parkRunnerPreflightFailure(project RegisteredProject, run RunStatus, reason string) RunStatus {
 	parentAttemptID := run.ActiveAttemptID
 	parentSessionRef := run.SessionRef
@@ -3611,6 +3635,31 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 			return run, false, tuskerError(errorInvalidTransition, "completion authority requires an isolated noncanonical review workspace")
 		}
 	}
+	var preflight runnerCommandPreflightResult
+	var health runnerPreclaimHealthResult
+	if len(authoritativeArgv) > 0 {
+		health = runnerPreclaimHealthWithSearchPath(runner.Name(), command, authoritativeSearchPath)
+	} else {
+		health = runnerPreclaimHealth(runner.Name(), command)
+	}
+	if health.Block != nil {
+		return d.persistRunnerInfrastructureBlock(run, health.Block)
+	}
+	preflight = health.Preflight
+	if len(authoritativeArgv) > 0 {
+		resolvedExecutable, executableFP, identityErr := completionExecutableIdentity(preflight.ResolvedExecutable, preflight.ExecutableVersion)
+		if identityErr != nil || resolvedExecutable != authoritativeArgv[0] || executableFP != authoritativeExecutableFP {
+			reason := "completion authority refuses codex executable path or identity drift"
+			if identityErr != nil {
+				reason += ": " + identityErr.Error()
+			}
+			return d.persistRunnerInfrastructureBlock(run, &RunnerInfrastructureBlock{
+				State: runnerInfrastructureBlockedState, Runner: string(runner.Name()), Command: command,
+				Executable: preflight.ResolvedExecutable, PathProvenance: preflight.SearchPath,
+				FailedCheck: "executable_identity", Reason: reason, Remedy: runnerInfrastructureRemedy(runner.Name()),
+			})
+		}
+	}
 	diskPressure, err := d.checkDiskPressureForDispatch(selectedWorkspacePath)
 	if err != nil {
 		return run, false, err
@@ -3673,33 +3722,6 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 	if err := d.store.SaveRunIdentity(runIdentityForClaim(*claimResult.Run, project.RepoRoot, selectedWorkspacePath, string(workspaceStrategy), branchName)); err != nil {
 		return run, true, err
 	}
-	var preflight runnerCommandPreflightResult
-	var reason string
-	if len(authoritativeArgv) > 0 {
-		preflight, reason = runnerCommandPreflightWithSearchPath(runner.Name(), command, authoritativeSearchPath)
-	} else {
-		preflight, reason = runnerCommandPreflight(runner.Name(), command)
-	}
-	if reason != "" {
-		run.LeaseGeneration = leaseGeneration
-		run.LeaseHost = runtimeLeaseHost()
-		parked := d.parkRunnerPreflightFailure(project, run, reason)
-		return d.updateDispatchRunIfLease(parked, attemptID, leaseGeneration)
-	}
-	if len(authoritativeArgv) > 0 {
-		resolvedExecutable, executableFP, identityErr := completionExecutableIdentity(preflight.ResolvedExecutable, preflight.ExecutableVersion)
-		if identityErr != nil || resolvedExecutable != authoritativeArgv[0] || executableFP != authoritativeExecutableFP {
-			reason := "runner preflight blocked: completion authority refuses codex executable path or identity drift"
-			if identityErr != nil {
-				reason += ": " + identityErr.Error()
-			}
-			run.LeaseGeneration = leaseGeneration
-			run.LeaseHost = runtimeLeaseHost()
-			parked := d.parkRunnerPreflightFailure(project, run, reason)
-			return d.updateDispatchRunIfLease(parked, attemptID, leaseGeneration)
-		}
-	}
-
 	run.LeaseState = string(LeaseStateClaimed)
 	run.LeaseOwner = attemptID
 	run.LeaseGeneration = leaseGeneration
@@ -3726,6 +3748,7 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 	clearRunCloudRefs(&run)
 	run.UpdatedAt = startedAt
 	run.LastEventAt = startedAt
+	run.Infrastructure = nil
 
 	workspace, err := workspaceManager.Prepare(workspaceRequest)
 	if err != nil {

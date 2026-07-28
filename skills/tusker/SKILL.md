@@ -18,6 +18,11 @@ metadata:
 
 Use this skill when a repository contains a Tusker vault or a task asks you to create, pick up, dispatch, prove, review, close, or explain Tusker work.
 
+Before an orchestrator invokes Tusker surfaces, query `tusker capabilities --json`.
+That versioned, read-only installed-binary manifest is authoritative for command,
+schema, runner-adapter, and deprecation support; this skill describes intent,
+not an executable compatibility promise.
+
 ## Execution Modes
 
 ### Factory intake and delivery DAGs

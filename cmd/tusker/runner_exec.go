@@ -77,11 +77,8 @@ func executeRunnerCommand(ctx context.Context, runner RunnerName, req runnerExec
 
 func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, req runnerExecRequest, capabilities RunnerCapabilities, eventLog runnerEventLog) (*StartResult, error) {
 	command := strings.TrimSpace(req.Command)
-	if command == "" && len(req.CommandArgv) == 0 {
-		return nil, tuskerError(errorConfigInvalid, fmt.Sprintf("%s runner command is empty", runner))
-	}
-	if strings.Contains(command, "app-server") || containsString(req.CommandArgv, "app-server") {
-		return nil, tuskerError(errorConfigInvalid, fmt.Sprintf("%s command %q is app-server mode; the current daemon runner needs a detached CLI command", runner, command))
+	if err := validateRunnerCommandShape(command, req.CommandArgv); err != nil {
+		return nil, tuskerError(errorConfigInvalid, fmt.Sprintf("%s %s", runner, err))
 	}
 	if err := ensureDir(filepath.Dir(req.RawLogPath)); err != nil {
 		return nil, err

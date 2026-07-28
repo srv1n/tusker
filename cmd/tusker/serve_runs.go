@@ -52,6 +52,7 @@ func (s *serveServer) runSummary(snap serveSnapshot, run RunStatus) serveRunSumm
 		AttemptCount:      maxInt(run.AttemptCount, len(turnsByAttempt(turns))),
 		Terminal:          run.Terminal,
 		Error:             nullIfBlank(run.LastError),
+		Infrastructure:    run.Infrastructure,
 		LastHeartbeatAt:   nullIfBlank(run.LastHeartbeatAt),
 		NextWakeAt:        nullIfBlank(run.NextRetryAt),
 		WorkspacePath:     workspacePath,
@@ -92,6 +93,9 @@ func serveLane(lane string) string {
 }
 
 func serveLeaseState(state string) string {
+	if strings.TrimSpace(state) == runnerInfrastructureBlockedState {
+		return runnerInfrastructureBlockedState
+	}
 	switch LeaseState(strings.TrimSpace(state)) {
 	case LeaseStateUnclaimed, LeaseStateRetryQueued:
 		return "unclaimed"
@@ -161,6 +165,9 @@ func (s *serveServer) handleRunInterrupt(w http.ResponseWriter, r *http.Request,
 }
 
 func serveRunOutcome(run RunStatus, now time.Time) string {
+	if strings.TrimSpace(run.LeaseState) == runnerInfrastructureBlockedState || (run.Infrastructure != nil && run.Infrastructure.State == runnerInfrastructureBlockedState) {
+		return runnerInfrastructureBlockedState
+	}
 	switch LeaseState(strings.TrimSpace(run.LeaseState)) {
 	case LeaseStateUnclaimed:
 		if run.AttemptCount > 0 || strings.TrimSpace(run.AttemptOutcome) != "" && AttemptOutcome(strings.TrimSpace(run.AttemptOutcome)) != AttemptOutcomeNone {
@@ -192,6 +199,9 @@ func serveRunOutcome(run RunStatus, now time.Time) string {
 }
 
 func serveRunOutcomeFromAttempt(outcome, lease string) string {
+	if strings.TrimSpace(lease) == runnerInfrastructureBlockedState {
+		return runnerInfrastructureBlockedState
+	}
 	switch AttemptOutcome(strings.TrimSpace(outcome)) {
 	case AttemptOutcomeSucceeded:
 		return "succeeded"

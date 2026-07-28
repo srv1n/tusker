@@ -527,6 +527,14 @@ func deliveryStartPlanBytes(vault string, args Args, path string, raw []byte) (s
 	if err := decoder.Decode(&v2); err != nil {
 		return "", "", deliveryPlan{}, nil, tuskerError(errorInvalidArg, "invalid V2 delivery plan YAML: "+err.Error())
 	}
+	// Refuse declared-but-unavailable capability before preparing context or
+	// taking the material lock. Start must expose the same typed contract as
+	// import so an orchestrator can repair capability skew without a claim.
+	if unavailable, err := deliveryUnavailableCapabilities(v2.RequiredCapabilities); err != nil {
+		return "", "", deliveryPlan{}, nil, tuskerError(errorInvalidArg, err.Error())
+	} else if len(unavailable) > 0 {
+		return "", "", deliveryPlan{}, nil, unavailableDeliveryCapabilityError(unavailable)
+	}
 	plan, issues := deliveryV2Prepare(vault, v2)
 	baseIssues, _ := validateDeliveryPlan(vault, plan)
 	issues = uniqueStrings(append(issues, baseIssues...))

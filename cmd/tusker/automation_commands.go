@@ -79,6 +79,7 @@ type automationTaskExplanation struct {
 	ProfileRule       string                            `json:"profile_rule,omitempty"`
 	Lane              string                            `json:"lane"`
 	Command           string                            `json:"command"`
+	Infrastructure    *RunnerInfrastructureBlock        `json:"infrastructure,omitempty"`
 	WorkflowPath      string                            `json:"workflow_path"`
 	WorkspacePath     string                            `json:"workspace_path"`
 	WorkspaceStrategy string                            `json:"workspace_strategy"`
@@ -594,10 +595,16 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 		}
 	}
 	runnerObj, configuredCommand, err := runnerForName(runner, ctx.Workflow.Data)
+	var infrastructure *RunnerInfrastructureBlock
 	if err != nil {
 		blockers = append(blockers, "runner config: "+err.Error())
 	} else {
 		command = commandForRunnerProfile(configuredCommand, selectedProfile)
+		health := runnerPreclaimHealth(runnerObj.Name(), command)
+		if health.Block != nil {
+			infrastructure = health.Block
+			blockers = append(blockers, runnerInfrastructureBlockReason(health.Block))
+		}
 		if runnerObj.Capabilities().ExplicitApprovals {
 			requiredApprovals = append(requiredApprovals, "runner explicit approvals")
 		}
@@ -612,6 +619,9 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 		blockers = append(blockers, "multiple external apply inputs require human selection")
 	}
 	selfRun := automationRunIsCurrentAttempt(run)
+	if run.Infrastructure != nil {
+		infrastructure = run.Infrastructure
+	}
 	daemon := &Daemon{stateRoot: ctx.StateRoot, store: ctx.Store}
 	if !selfRun {
 		if reason := automationRunBlocker(run, time.Now().UTC()); reason != "" {
@@ -675,6 +685,7 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 		ProfileRule:       selectedProfile.RuleName,
 		Lane:              lane,
 		Command:           command,
+		Infrastructure:    infrastructure,
 		WorkflowPath:      ctx.Workflow.Path,
 		WorkspacePath:     automationWorkspacePath(ctx.StateRoot, ctx.Project, ctx.Workflow.Data, run, workspaceStrategy),
 		WorkspaceStrategy: string(workspaceStrategy),
@@ -926,10 +937,15 @@ func (ctx *automationCommandContext) effectiveRunForTask(note Note, runner strin
 }
 
 func automationRunBlocker(run RunStatus, now time.Time) string {
+	if run.Infrastructure != nil && run.Infrastructure.State == runnerInfrastructureBlockedState {
+		return runnerInfrastructureBlockReason(run.Infrastructure)
+	}
 	if run.Terminal && LeaseState(strings.TrimSpace(run.LeaseState)) != LeaseStateParkedNoProgress {
 		return "existing run is terminal; update the task revision before redispatch"
 	}
 	switch LeaseState(strings.TrimSpace(run.LeaseState)) {
+	case LeaseState(runnerInfrastructureBlockedState):
+		return firstNonEmpty(run.LastError, "existing run is infrastructure_blocked")
 	case "", LeaseStateUnclaimed:
 		return ""
 	case LeaseStateRetryQueued:
