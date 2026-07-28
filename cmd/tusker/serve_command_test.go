@@ -38,6 +38,32 @@ func TestServeReadOnlyAndLocalhost(t *testing.T) {
 	}
 }
 
+func TestServeQueueSnapshotDoesNotProbeRunner(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Runnable", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	project := registerAutomationTestProject(t, vault)
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.dispatch_scope", "all_eligible"); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	previous := runnerLoginShellPath
+	runnerLoginShellPath = func() string {
+		t.Fatal("Serve must not launch a login shell to render the queue")
+		return ""
+	}
+	t.Cleanup(func() { runnerLoginShellPath = previous })
+
+	queue := (&serveServer{store: store}).loadQueueExplanationsForProject(project)
+	if explanation, ok := queue["APP-T-0001"]; !ok || explanation.ID != "APP-T-0001" {
+		t.Fatalf("expected the durable queue explanation, got %#v", queue)
+	}
+}
+
 func TestServeNeedsSignals(t *testing.T) {
 	server := newServeFixture(t)
 	var needs []map[string]any

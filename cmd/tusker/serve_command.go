@@ -735,7 +735,9 @@ func (s *serveServer) loadQueueExplanationsForProject(project RegisteredProject)
 		return map[string]automationTaskExplanation{}
 	}
 	defer ctx.Close()
-	report := ctx.automationQueueReport()
+	// Serve is a read-only control surface.  Runner preflight belongs at the
+	// claim boundary, not on every dashboard refresh.
+	report := ctx.automationQueueReportWithRunnerHealth(false)
 	out := map[string]automationTaskExplanation{}
 	for _, explanation := range append(report.Eligible, report.Blocked...) {
 		out[explanation.ID] = explanation

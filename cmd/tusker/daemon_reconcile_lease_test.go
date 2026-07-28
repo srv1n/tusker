@@ -78,6 +78,51 @@ func TestPollOnceDoesNotResurrectConcurrentInterrupt(t *testing.T) {
 	assertEqual(t, "", stored.LeaseOwner, "stale poll does not restore lease owner")
 }
 
+func TestPollOnceNeverAutoLandsAnArmedWave(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "daemon-poll.txt", "candidate\n")
+	if err := writeDefaultWorkflow(vault); err != nil {
+		t.Fatal(err)
+	}
+	workflowData, workflowBody, err := parseFrontmatterMustRead(workflowPath(vault))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A repository that predates scheduled promotion retains manual `tusker
+	// land` compatibility.  That compatibility must never become daemon
+	// authority merely because a wave is armed.
+	delete(workflowData, "scheduled_promotion")
+	workflowText, err := serializeDocument(workflowData, workflowBody, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(workflowPath(vault), workflowText); err != nil {
+		t.Fatal(err)
+	}
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	registerAutomationTestProject(t, vault)
+
+	before, err := gitOutputTrim(repo, "rev-parse", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := gitOutputTrim(repo, "rev-parse", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, before, after, "poll must not move main")
+	if !gitBranchExists(repo, "integration/W-0001") {
+		t.Fatal("poll must leave the pending integration branch for an explicit departure")
+	}
+}
+
 func TestPollOnceAbsentInsertRaceLeavesConcurrentLiveClaimUntouched(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)

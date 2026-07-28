@@ -1446,10 +1446,6 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				return err
 			}
 		}
-		if err := drainArmedWavesToMain(project.VaultRoot); err != nil {
-			return err
-		}
-
 		if err := d.store.DeleteRunsNotIn(project.ProjectID, keep); err != nil {
 			return err
 		}
@@ -2093,27 +2089,6 @@ func projectedNoteMap(notes map[string]Note, idx v7Index) map[string]Note {
 		projected[key] = note
 	}
 	return projected
-}
-
-func drainArmedWavesToMain(vaultPath string) error {
-	idx, err := loadV7Index(vaultPath)
-	if err != nil {
-		return err
-	}
-	for _, wave := range sortedV7Waves(idx) {
-		if armedWaveIntegrated(wave) {
-			continue
-		}
-		authorization := waveAuthorizationProjection(vaultPath, idx, wave)
-		if stringField(authorization, "state") != "armed" || boolFromAny(authorization["stale"]) {
-			continue
-		}
-		summary := &v7LandSummary{}
-		if err := landV7WaveToMainIfReady(vaultPath, stringField(wave.Data, "id"), Args{"quiet": "true", "by": "daemon:wave-drain"}, summary); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func completedReviewHandoffCanReconcile(wf Workflow, run RunStatus, trackerState string) bool {

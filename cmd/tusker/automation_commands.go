@@ -443,6 +443,14 @@ func resolveAutomationVaultPath(args Args) (string, error) {
 }
 
 func (ctx *automationCommandContext) automationQueueReport() automationQueueReport {
+	return ctx.automationQueueReportWithRunnerHealth(true)
+}
+
+// automationQueueReportWithRunnerHealth lets passive surfaces render the
+// durable queue without launching runner executables.  A runner is probed
+// immediately before a daemon claim; an observed infrastructure block is
+// already stored on the run and remains visible here.
+func (ctx *automationCommandContext) automationQueueReportWithRunnerHealth(checkRunnerHealth bool) automationQueueReport {
 	notes := append([]Note{}, ctx.Notes...)
 	sortDispatchCandidates(notes)
 	report := automationQueueReport{
@@ -453,7 +461,7 @@ func (ctx *automationCommandContext) automationQueueReport() automationQueueRepo
 		if !ctx.automationQueueIncludes(note) {
 			continue
 		}
-		explanation := ctx.explainTask(note)
+		explanation := ctx.explainTaskWithRunnerHealth(note, checkRunnerHealth)
 		if explanation.Dispatchable {
 			report.Eligible = append(report.Eligible, explanation)
 		} else {
@@ -503,11 +511,15 @@ func (ctx *automationCommandContext) findTask(id string) (Note, error) {
 }
 
 func (ctx *automationCommandContext) explainTask(note Note) automationTaskExplanation {
-	return ctx.explainTaskForRunner(note, automationResolveRunner(note, ctx.Workflow.Data), nil)
+	return ctx.explainTaskWithRunnerHealth(note, true)
+}
+
+func (ctx *automationCommandContext) explainTaskWithRunnerHealth(note Note, checkRunnerHealth bool) automationTaskExplanation {
+	return ctx.explainTaskForRunnerMode(note, automationResolveRunner(note, ctx.Workflow.Data), nil, true, checkRunnerHealth)
 }
 
 func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner string, runOverride *RunStatus) automationTaskExplanation {
-	return ctx.explainTaskForRunnerMode(note, runner, runOverride, true)
+	return ctx.explainTaskForRunnerMode(note, runner, runOverride, true, true)
 }
 
 // explainTaskForInteractiveRun deliberately excludes daemon-only opt-ins. A
@@ -515,10 +527,10 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 // daemon spawning; neither revokes an interactive session's ability to own a
 // task and report its run through the normal runtime store.
 func (ctx *automationCommandContext) explainTaskForInteractiveRun(note Note) automationTaskExplanation {
-	return ctx.explainTaskForRunnerMode(note, automationResolveRunner(note, ctx.Workflow.Data), nil, false)
+	return ctx.explainTaskForRunnerMode(note, automationResolveRunner(note, ctx.Workflow.Data), nil, false, true)
 }
 
-func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner string, runOverride *RunStatus, daemonDispatch bool) automationTaskExplanation {
+func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner string, runOverride *RunStatus, daemonDispatch, checkRunnerHealth bool) automationTaskExplanation {
 	recordID := trackerRecordID(note)
 	runner = firstNonEmpty(strings.TrimSpace(runner), automationResolveRunner(note, ctx.Workflow.Data))
 	run := ctx.effectiveRunForTask(note, runner)
@@ -600,10 +612,12 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 		blockers = append(blockers, "runner config: "+err.Error())
 	} else {
 		command = commandForRunnerProfile(configuredCommand, selectedProfile)
-		health := runnerPreclaimHealth(runnerObj.Name(), command)
-		if health.Block != nil {
-			infrastructure = health.Block
-			blockers = append(blockers, runnerInfrastructureBlockReason(health.Block))
+		if checkRunnerHealth {
+			health := runnerPreclaimHealth(runnerObj.Name(), command)
+			if health.Block != nil {
+				infrastructure = health.Block
+				blockers = append(blockers, runnerInfrastructureBlockReason(health.Block))
+			}
 		}
 		if runnerObj.Capabilities().ExplicitApprovals {
 			requiredApprovals = append(requiredApprovals, "runner explicit approvals")
