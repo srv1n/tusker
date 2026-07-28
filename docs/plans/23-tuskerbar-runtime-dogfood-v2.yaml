@@ -1,0 +1,60 @@
+schema: tusker.delivery-plan/v2
+scope: tuskerbar-runtime-dogfood/v1
+title: TuskerBar runtime dogfood
+epic: SRV
+spec_refs:
+  - docs/specs/23-tuskerbar-runtime-dogfood.md
+context_fingerprint: sha256:6ddab6207630d5ae892d89932ffa57c2b1e984d6a58b4f4c37f84b3fd89803bf
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+summary: >-
+  Prove the ordinary desktop workflow with one low-risk documentation task:
+  TuskerBar owns the local daemon, the PM starts one reviewed wave from Serve,
+  and no scheduled promotion or headless service is involved.
+non_goals:
+  - This wave does not change runner profiles, scheduled-promotion policy,
+    registry automation, service installation, credentials, release, or push.
+  - This wave does not move the configured default branch or add desktop
+    restart controls; those are separate product work.
+requirements:
+  - id: R1
+    outcome: The Mac-app documentation names `make mac-preview` as the normal local workflow and explicitly excludes `tusker daemon service start` from that path.
+  - id: R2
+    outcome: A single low-risk task can be reviewed and started through TuskerBar under existing opt-in policy and lower-tier execution routing.
+  - id: R3
+    outcome: The dogfood proof keeps the configured default branch untouched and verifies the bundled Mac app can be built.
+concurrency: 1
+runner_profile: execute-fast
+tasks:
+  - source_key: desktop-runtime-guide
+    requirement_refs: [R1, R2, R3]
+    title: Document the normal TuskerBar runtime workflow
+    outcome: >-
+      A PM can see the one supported local workflow: preview opens TuskerBar,
+      TuskerBar owns the local daemon, and the CLI service command is not a
+      second required step.
+    acceptance:
+      - id: A1
+        outcome: The main README tells a Mac operator to use `make mac-preview` for the normal local workflow and says not to run `tusker daemon service start` alongside TuskerBar.
+      - id: A2
+        outcome: The text explains that opening TuskerBar starts or reuses its bundled daemon and points readers to the app as the PM control surface.
+      - id: A3
+        outcome: The focused regression proof confirms an ordinary daemon poll cannot move the default branch, and the signed Mac bundle builds successfully.
+    verification:
+      - covers: A1,A2
+        check: "command: rg -F 'make mac-preview' README.md && rg -F 'tusker daemon service start' README.md && rg -F 'bundled daemon' README.md"
+      - covers: A3
+        check: "command: make mac-app && go test ./cmd/tusker -run '^(TestPollOnceNeverAutoLandsAnArmedWave|TestDaemonServeInProcessReportsPidAndPollData)$' -count=1"
+    artifact:
+      kind: knowledge_link
+      path: README.md
+      summary: Operator-facing Mac runtime guidance for the app-owned daemon path.
+      acceptance_ids: [A1, A2, A3]
+    owned_paths:
+      - README.md
+    concurrency_group: tuskerbar-runtime-dogfood
+    risk: low
+    priority: p0
+    size: s
+    domains: [project]
