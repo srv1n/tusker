@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDeliveryRolloutDoctor(t *testing.T) {
@@ -52,7 +53,7 @@ func TestDeliveryRolloutRepair(t *testing.T) {
 	if err := writeText(filepath.Join(repo, "tusker.yaml"), config); err != nil {
 		t.Fatal(err)
 	}
-	first, err := runDeliveryRollout(fixture.input(), true)
+	first, err := runDeliveryRolloutScoped(fixture.input(), deliveryRolloutRepairAutomation, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func TestDeliveryRolloutRepair(t *testing.T) {
 		}
 	}
 	afterFirst := snapshotDeliveryRolloutPaths(t, []string{repo})
-	second, err := runDeliveryRollout(fixture.input(), true)
+	second, err := runDeliveryRolloutScoped(fixture.input(), deliveryRolloutRepairAutomation, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,21 +141,28 @@ func TestDeliveryRolloutQuarantine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"missing", "old-schema", "opaque-runner"} {
+	for _, id := range []string{"missing", "old-schema"} {
 		project := rolloutProjectByID(t, report, id)
 		if project.Status != "quarantined" || project.Action == "" {
 			t.Fatalf("bad quarantine for %s: %#v", id, project)
 		}
+	}
+	opaqueProject := rolloutProjectByID(t, report, "opaque-runner")
+	if opaqueProject.Status != "needs_repair" || opaqueProject.Readiness.Dimensions.Contract.State != ReadinessStateReady || opaqueProject.Readiness.Dimensions.Interactive.State != ReadinessStateReady || opaqueProject.Readiness.Dimensions.Automation.State != ReadinessStateBlocked {
+		t.Fatalf("opaque unattended runner should stay local to automation: %#v", opaqueProject)
 	}
 	if !dirExists(good) {
 		t.Fatal("compatible sibling was damaged")
 	}
 	projects, _ := fixture.store.ListProjects()
 	for _, project := range projects {
-		if project.ProjectID == "missing" || project.ProjectID == "old-schema" || project.ProjectID == "opaque-runner" {
+		if project.ProjectID == "missing" || project.ProjectID == "old-schema" {
 			if project.Health != projectHealthError || !strings.HasPrefix(project.LastError, "delivery rollout quarantine:") {
 				t.Fatalf("quarantine not durable: %#v", project)
 			}
+		}
+		if project.ProjectID == "opaque-runner" && project.Health == projectHealthError {
+			t.Fatalf("automation-only failure quarantined core project state: %#v", project)
 		}
 	}
 	if err := writeText(path, strings.Replace(mustReadIndexTest(t, path), "tracker_schema_version: 6", "tracker_schema_version: 7", 1)); err != nil {
@@ -167,6 +175,103 @@ func TestDeliveryRolloutQuarantine(t *testing.T) {
 	for _, project := range projects {
 		if project.ProjectID == "old-schema" && (project.Health != projectHealthHealthy || project.LastError != "") {
 			t.Fatalf("restored project retained rollout quarantine: %#v", project)
+		}
+	}
+}
+
+func TestScopedFleetRepair(t *testing.T) {
+	fixture := newDeliveryRolloutFixture(t)
+	repo := fixture.addProject("optional", true)
+	stabilizeFleetReadinessFixture(t, fixture)
+	if err := writeText(filepath.Join(repo, ".chatgpt-handoff.json"), "{not json"); err != nil {
+		t.Fatal(err)
+	}
+	workflowPath := workflowPath(filepath.Join(repo, ".tusker"))
+	workflowBefore := mustReadIndexTest(t, workflowPath)
+	serviceCalls := 0
+	input := fixture.input()
+	input.ServiceCheck = func(apply bool) ([]setupFinding, error) {
+		if apply {
+			serviceCalls++
+		}
+		return []setupFinding{{Code: "daemon_service_stale", Status: "error", Message: "stale fixture service", Action: "separate explicit service operation", Repairable: true}}, nil
+	}
+
+	core, err := runDeliveryRollout(input, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := rolloutProjectByID(t, core, "optional")
+	if project.Status != "healthy" || project.Readiness.Dimensions.Contract.State != ReadinessStateReady || project.Readiness.Dimensions.Interactive.State != ReadinessStateReady || project.Readiness.Dimensions.OptionalIntegration.State != ReadinessStateBlocked {
+		t.Fatalf("optional integration drift escaped its dimension: %#v", project)
+	}
+	if core.RepairScope != deliveryRolloutRepairCore || core.ServiceReadiness.Dimensions.Runtime.State != ReadinessStateUnavailable || len(core.ServiceReadiness.Blockers) != 1 {
+		t.Fatalf("fleet service readiness was not projected once and independently: %#v", core)
+	}
+	if mustReadIndexTest(t, workflowPath) != workflowBefore || serviceCalls != 0 {
+		t.Fatal("default core repair changed automation or service state")
+	}
+	projects, _ := fixture.store.ListProjects()
+	for _, registered := range projects {
+		if registered.ProjectID == "optional" && registered.Health == projectHealthError {
+			t.Fatalf("optional integration drift quarantined registration: %#v", registered)
+		}
+	}
+	if _, err := runDeliveryRolloutScoped(input, deliveryRolloutRepairIntegrations, true); err != nil {
+		t.Fatal(err)
+	}
+	if serviceCalls != 0 {
+		t.Fatal("integration repair touched managed service")
+	}
+}
+
+func TestFleetHealthDimensions(t *testing.T) {
+	fixture := newDeliveryRolloutFixture(t)
+	disabled := fixture.addProject("disabled", false)
+	degraded := fixture.addProject("degraded", true)
+	stale := fixture.addProject("stale-runtime", true)
+	stabilizeFleetReadinessFixture(t, fixture)
+	projects, err := fixture.store.ListProjects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, project := range projects {
+		switch project.ProjectID {
+		case "degraded":
+			project.Health, project.LastError = projectHealthDegraded, "fixture runtime degraded"
+		case "stale-runtime":
+			project.LastPollAt = time.Now().UTC().Add(-2 * daemonHeartbeatDeadThreshold).Format(time.RFC3339)
+		}
+		if err := fixture.store.UpsertProject(project); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := runDeliveryRollout(fixture.input(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rolloutProjectByID(t, report, "healthy").Readiness.Dimensions.Runtime.State; got != ReadinessStateReady {
+		t.Fatalf("healthy runtime = %q", got)
+	}
+	if project := rolloutProjectByID(t, report, "disabled"); project.Status != "disabled" || project.Readiness.Dimensions.Runtime.State != ReadinessStateNotApplicable {
+		t.Fatalf("disabled runtime should be inapplicable: %#v", project)
+	}
+	for _, id := range []string{"degraded", "stale-runtime"} {
+		project := rolloutProjectByID(t, report, id)
+		if project.Readiness.Dimensions.Runtime.State != ReadinessStateUnavailable || len(project.Readiness.ReadinessBlockerIDs(ReadinessDimensionRuntime)) == 0 || project.Status == "quarantined" {
+			t.Fatalf("runtime failure escaped its project dimension for %s: %#v", id, project)
+		}
+	}
+	if !dirExists(disabled) || !dirExists(degraded) || !dirExists(stale) {
+		t.Fatal("runtime diagnostics damaged a sibling fixture")
+	}
+}
+
+func stabilizeFleetReadinessFixture(t *testing.T, fixture *deliveryRolloutFixture) {
+	t.Helper()
+	for _, scope := range []deliveryRolloutRepairScope{deliveryRolloutRepairCore, deliveryRolloutRepairAutomation} {
+		if _, err := runDeliveryRolloutScoped(fixture.input(), scope, true); err != nil {
+			t.Fatalf("stabilize %s fixture: %v", scope, err)
 		}
 	}
 }
