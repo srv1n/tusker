@@ -20,6 +20,9 @@ import (
 type RuntimeStore struct {
 	db        *sql.DB
 	stateRoot string
+	// rebindProjectAfterUpdate is a test seam for proving that a failed
+	// persistence step rolls the complete registry mutation back.
+	rebindProjectAfterUpdate func(*sql.Tx) error
 }
 
 type GateLedgerEntry struct {
@@ -697,6 +700,13 @@ func (s *RuntimeStore) Migrate() error {
 			health TEXT NOT NULL DEFAULT 'healthy',
 			last_poll_at TEXT NOT NULL DEFAULT '',
 			last_error TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE TABLE IF NOT EXISTS project_rebind_audit (
+			event_id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			before_json TEXT NOT NULL,
+			after_json TEXT NOT NULL,
+			created_at TEXT NOT NULL
 		);`,
 		`CREATE TABLE IF NOT EXISTS runs (
 			project_id TEXT NOT NULL,
@@ -1538,11 +1548,155 @@ func (s *RuntimeStore) SetProjectEnabled(projectID string, enabled bool) error {
 	return nil
 }
 
+// RebindProjectRegistration changes only the location metadata for an existing
+// disabled project identity. It deliberately never removes or recreates the
+// project row: runtime history is keyed by ProjectID and must survive a move.
+// Preconditions that can race with a daemon are checked in this transaction.
+func (s *RuntimeStore) RebindProjectRegistration(projectID, repoRoot, vaultRoot string) (before RegisteredProject, after RegisteredProject, changed bool, err error) {
+	projectID = strings.TrimSpace(projectID)
+	repoRoot = canonicalProjectPath(repoRoot)
+	vaultRoot = canonicalProjectPath(vaultRoot)
+	if projectID == "" || repoRoot == "" || vaultRoot == "" {
+		return before, after, false, tuskerError(errorInvalidArg, "project rebind requires project_id, repo_root, and vault_root")
+	}
+	err = s.withBusyRetry(func() error {
+		tx, txErr := s.db.Begin()
+		if txErr != nil {
+			return txErr
+		}
+		defer tx.Rollback()
+		before, txErr = registeredProjectByIDTx(tx, projectID)
+		if txErr != nil {
+			return txErr
+		}
+		if before.Enabled {
+			return tuskerError(errorInvalidTransition, "project must be disabled before rebind: "+projectID)
+		}
+		if sameCanonicalProjectPath(before.RepoRoot, repoRoot) && sameCanonicalProjectPath(before.VaultRoot, vaultRoot) {
+			after = before
+			return nil
+		}
+		if sameCanonicalProjectPath(before.RepoRoot, repoRoot) || sameCanonicalProjectPath(before.VaultRoot, vaultRoot) {
+			return tuskerError(errorInvalidArg, "project rebind must change repo_root and vault_root together", withContext(map[string]any{"project_id": projectID, "repo_root": repoRoot, "vault_root": vaultRoot}))
+		}
+		var active int
+		if txErr = tx.QueryRow(`SELECT COUNT(*) FROM runs WHERE project_id = ? AND terminal = 0`, projectID).Scan(&active); txErr != nil {
+			return txErr
+		}
+		if active != 0 {
+			return tuskerError(errorInvalidTransition, fmt.Sprintf("project rebind requires zero non-terminal runs; found %d", active), withContext(map[string]any{"project_id": projectID, "active_run_count": active}))
+		}
+		rows, txErr := tx.Query(`SELECT project_id, repo_root, vault_root FROM projects WHERE project_id <> ?`, projectID)
+		if txErr != nil {
+			return txErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var otherID, otherRepo, otherVault string
+			if txErr = rows.Scan(&otherID, &otherRepo, &otherVault); txErr != nil {
+				return txErr
+			}
+			if sameCanonicalProjectPath(otherRepo, repoRoot) || sameCanonicalProjectPath(otherVault, vaultRoot) {
+				return tuskerError(errorInvalidTransition, "project rebind target is already claimed by project "+otherID, withContext(map[string]any{"project_id": projectID, "conflicting_project_id": otherID, "repo_root": repoRoot, "vault_root": vaultRoot}))
+			}
+		}
+		if txErr = rows.Err(); txErr != nil {
+			return txErr
+		}
+		after = before
+		after.RepoRoot = repoRoot
+		after.VaultRoot = vaultRoot
+		after.WorkflowPath = workflowPath(vaultRoot)
+		after.Health = projectHealthDisabled
+		after.LastError = ""
+		if _, txErr = tx.Exec(`UPDATE projects SET repo_root = ?, vault_root = ?, workflow_path = ?, enabled = ?, health = ?, last_error = ? WHERE project_id = ?`, after.RepoRoot, after.VaultRoot, after.WorkflowPath, 0, string(after.Health), after.LastError, projectID); txErr != nil {
+			return txErr
+		}
+		beforeJSON, marshalErr := json.Marshal(before)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		afterJSON, marshalErr := json.Marshal(after)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if _, txErr = tx.Exec(`INSERT INTO project_rebind_audit(event_id, project_id, before_json, after_json, created_at) VALUES(?,?,?,?,?)`, "rebind-"+strings.ToLower(newRecordID()), projectID, string(beforeJSON), string(afterJSON), time.Now().UTC().Format(time.RFC3339Nano)); txErr != nil {
+			return txErr
+		}
+		if s.rebindProjectAfterUpdate != nil {
+			if txErr = s.rebindProjectAfterUpdate(tx); txErr != nil {
+				return txErr
+			}
+		}
+		if txErr = tx.Commit(); txErr != nil {
+			return txErr
+		}
+		changed = true
+		return nil
+	})
+	return before, after, changed, err
+}
+
+func registeredProjectByIDTx(tx *sql.Tx, projectID string) (RegisteredProject, error) {
+	var project RegisteredProject
+	var enabled int
+	var health string
+	err := tx.QueryRow(`SELECT project_id, project_key, name, repo_root, vault_root, workflow_path, enabled, health, last_poll_at, last_error FROM projects WHERE project_id = ?`, projectID).Scan(
+		&project.ProjectID, &project.ProjectKey, &project.Name, &project.RepoRoot, &project.VaultRoot, &project.WorkflowPath, &enabled, &health, &project.LastPollAt, &project.LastError,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RegisteredProject{}, tuskerError(errorNotFound, "project not found: "+projectID)
+	}
+	if err != nil {
+		return RegisteredProject{}, err
+	}
+	project.Enabled = enabled != 0
+	project.Health = ProjectHealth(health)
+	return project, nil
+}
+
+type ProjectRebindAuditEvent struct {
+	ProjectID string            `json:"project_id"`
+	Before    RegisteredProject `json:"before"`
+	After     RegisteredProject `json:"after"`
+	CreatedAt string            `json:"created_at"`
+}
+
+func (s *RuntimeStore) ListProjectRebindAudit(projectID string) ([]ProjectRebindAuditEvent, error) {
+	rows, err := s.query(`SELECT project_id, before_json, after_json, created_at FROM project_rebind_audit WHERE project_id = ? ORDER BY created_at`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []ProjectRebindAuditEvent
+	for rows.Next() {
+		var event ProjectRebindAuditEvent
+		var beforeJSON, afterJSON string
+		if err := rows.Scan(&event.ProjectID, &beforeJSON, &afterJSON, &event.CreatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(beforeJSON), &event.Before); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(afterJSON), &event.After); err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
 func (s *RuntimeStore) CountProjectActiveRuns(projectID string) (int, error) {
 	var count int
 	err := s.queryRowScan(`SELECT COUNT(*)
 		FROM runs
 		WHERE project_id = ? AND terminal = 0 AND lease_state IN ('claimed', 'running')`, []any{projectID}, &count)
+	return count, err
+}
+
+func (s *RuntimeStore) CountProjectNonTerminalRuns(projectID string) (int, error) {
+	var count int
+	err := s.queryRowScan(`SELECT COUNT(*) FROM runs WHERE project_id = ? AND terminal = 0`, []any{projectID}, &count)
 	return count, err
 }
 
@@ -2170,6 +2324,7 @@ func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generati
 			updated_at = ?,
 			hand_run = ?
 		WHERE project_id = ? AND record_id = ?
+			AND EXISTS (SELECT 1 FROM projects project WHERE project.project_id = runs.project_id AND project.enabled = 1)
 			AND lease_state NOT IN ('claimed', 'running')
 			AND lease_state = ?
 			AND lease_owner = ?
@@ -2259,6 +2414,7 @@ func (s *RuntimeStore) claimRunLeaseWithDirectiveAttempt(run RunStatus, owner st
 				worker_policy_fingerprint = ?, execute_policy_fingerprint = ?, lane = ?,
 				started_at = CASE WHEN started_at = '' THEN ? ELSE started_at END, last_event_at = ?
 			WHERE project_id = ? AND record_id = ?
+				AND EXISTS (SELECT 1 FROM projects project WHERE project.project_id = runs.project_id AND project.enabled = 1)
 				AND lease_state NOT IN ('claimed', 'running') AND lease_state = ? AND lease_owner = ?
 				AND lease_generation = ? AND work_revision = ?
 				AND (? <= 0 OR (SELECT COUNT(1) FROM runs active WHERE active.project_id = ? AND active.lease_state IN ('claimed','running')) < ?)`,
@@ -2339,6 +2495,7 @@ func (s *RuntimeStore) claimRunLeaseWithWorkSessionAttempt(run RunStatus, owner 
 				last_heartbeat_at = ?, updated_at = ?, hand_run = 1, attempt_count = ?, active_attempt_id = ?,
 				runner = ?, lane = ?, started_at = CASE WHEN started_at = '' THEN ? ELSE started_at END, last_event_at = ?
 			WHERE project_id = ? AND record_id = ?
+				AND EXISTS (SELECT 1 FROM projects project WHERE project.project_id = runs.project_id AND project.enabled = 1)
 				AND lease_state NOT IN ('claimed', 'running') AND lease_state = ? AND lease_owner = ?
 				AND lease_generation = ? AND work_revision = ?
 				AND (? <= 0 OR (SELECT COUNT(1) FROM runs active WHERE active.project_id = ? AND active.lease_state IN ('claimed','running')) < ?)`,

@@ -150,9 +150,15 @@ func notifyDaemonForVaultPathWithChanges(vaultPath string, changes []daemonContr
 	_ = sendDaemonControlOneWay(stateRoot, daemonControlRequest{Command: "reconcile_project", ProjectID: projectID, Cause: "cli_mutation", Changes: changes}, 250*time.Millisecond)
 }
 
-func cliCommandMutatesProjectRegistry(command string) bool {
+func cliCommandMutatesProjectRegistry(command string, args Args) bool {
+	if command == "projects rebind" && args.Bool("dry-run") {
+		return false
+	}
+	if command == "projects prune" && (!args.Bool("apply") || args.Bool("dry-run")) {
+		return false
+	}
 	switch command {
-	case "projects add", "projects enable", "projects disable", "projects remove", "projects prune":
+	case "projects add", "projects enable", "projects disable", "projects rebind", "projects remove", "projects prune":
 		return true
 	default:
 		return false

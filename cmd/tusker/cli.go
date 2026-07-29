@@ -216,7 +216,7 @@ func run(command string, args Args) (int, error) {
 		if len(vaults) == 0 && cliCommandMutatesVault(command) {
 			notifyDaemonForVault(args)
 		}
-		if cliCommandMutatesProjectRegistry(command) {
+		if cliCommandMutatesProjectRegistry(command, args) {
 			_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_registry"}, 250*time.Millisecond)
 		}
 	}
@@ -764,6 +764,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, projectsEnableCmd(args)
 	case "projects disable":
 		return 0, projectsDisableCmd(args)
+	case "projects rebind":
+		return 0, projectsRebindCmd(args)
 	case "projects remove":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, projectsRemoveCmd(args)
@@ -925,7 +927,7 @@ func runInner(command string, args Args) (int, error) {
 	case "help config", "help config resolve":
 		printConfigHelp()
 		return 0, nil
-	case "help projects", "help projects add", "help projects list", "help projects limits", "help projects enable", "help projects disable", "help projects remove", "help projects prune":
+	case "help projects", "help projects add", "help projects list", "help projects limits", "help projects enable", "help projects disable", "help projects rebind", "help projects remove", "help projects prune":
 		printProjectsHelp()
 		return 0, nil
 	case "help runs", "help runs inspect", "help runs logs", "help runs events", "help runs interrupt", "help runs release", "help runs retire", "help runs redrive", "help redrive":
@@ -1148,7 +1150,7 @@ func printCommandHelp(command string) bool {
 		printAutomationHelp()
 	case "factory", "factory operations":
 		printFactoryOperationsHelp()
-	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects remove", "projects prune":
+	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects rebind", "projects remove", "projects prune":
 		printProjectsHelp()
 	case "runs", "runs claim", "runs start", "runs heartbeat", "runs submit", "runs fail", "runs reclaim", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs release", "runs retire", "runs redrive", "redrive":
 		printRunsHelp()
@@ -1384,6 +1386,7 @@ func printProjectsHelp() {
   tusker projects limits [--id <project-id>|--repo <path>|--vault <path>] [--max-active-runs <n>] [--json]
   tusker projects enable [--id <project-id>|--repo <path>|--vault <path>] [--json]
   tusker projects disable [--id <project-id>|--repo <path>|--vault <path>] [--json]
+  tusker projects rebind --id <project-id> --repo <canonical-path> --vault <canonical-path> [--dry-run] [--json]
   tusker projects remove <project-id> [--json]
   tusker projects prune [--apply] [--dry-run] [--json]
 
@@ -1395,6 +1398,7 @@ Purpose:
 Behavior:
   - project WORKFLOW.md, tasks, knowledge, and source remain repo-local
   - shared daemon state, logs, limits, and runtime metadata live outside repos
+  - rebind moves one disabled, quiescent project identity to a clean validated repo/vault without replacing its runtime history
   - prune previews registrations whose tracker roots no longer exist and their
     matching dangling Obsidian-vault symlinks; --apply performs the removal
   - on macOS, projects under Desktop, Documents, Downloads, or iCloud Drive
@@ -1404,6 +1408,7 @@ Examples:
   tusker projects add --repo . --vault ./.tusker
   tusker projects list
   tusker projects disable --repo .
+  tusker projects rebind --id <project-id> --repo /repos/backend --vault /repos/backend/.tusker --dry-run
   tusker projects prune
   tusker projects prune --apply`)
 }

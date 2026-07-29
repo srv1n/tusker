@@ -232,7 +232,7 @@ func installedCapabilityCommands() []capabilityCommand {
 		{Command: "knowledge", Subcommands: []string{"new"}},
 		{Command: "migrate", Subcommands: []string{"close-policy", "evidence-policy", "vault-root"}},
 		{Command: "new", Subcommands: []string{"decision", "epic", "gate", "task"}, Flags: []string{"--vault"}}, {Command: "next"}, {Command: "open"}, {Command: "packet"}, {Command: "print"},
-		{Command: "projects", Subcommands: []string{"add", "disable", "enable", "limits", "list", "prune", "remove"}}, {Command: "proof"}, {Command: "proposal"}, {Command: "publish", Subcommands: []string{"skill"}}, {Command: "purge"},
+		{Command: "projects", Subcommands: []string{"add", "disable", "enable", "limits", "list", "prune", "rebind", "remove"}}, {Command: "proof"}, {Command: "proposal"}, {Command: "publish", Subcommands: []string{"skill"}}, {Command: "purge"},
 		{Command: "reconcile"}, {Command: "redact"}, {Command: "redrive"}, {Command: "refresh"}, {Command: "reindex"}, {Command: "release"},
 		{Command: "review", Subcommands: []string{"submit"}, Flags: []string{"--attempt", "--covers", "--gate-fingerprint", "--proof-fingerprint", "--source-sha", "--task-rev", "--verdict", "--work-rev"}},
 		{Command: "runner", Subcommands: []string{"catalog", "profiles", "route"}, Flags: []string{"--bundled", "--json", "--lane", "--write"}}, {Command: "runner-wrapper"},

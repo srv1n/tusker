@@ -62,7 +62,7 @@ Durable statuses: `idea, backlog, ready, review, rework, superseded`
 |---|---|---|
 | `daemon run\|install\|status\|stop\|limits\|resume` | The operator loop for registered local projects | Run/inspect the resident background worker. Interactive sessions must **not** start `daemon run`. |
 | `automation status\|queue\|explain\|plan\|dispatch` | Inspect or control resident-daemon work | `plan`/`explain`/`queue`/`status` are read-only. Interactive sessions never invoke `dispatch`; only the resident daemon may create background workers. |
-| `projects add\|list\|enable\|disable\|remove` | Register repos for daemon pickup | Tell the daemon which repos it may work, and toggle automation per project. |
+| `projects add\|list\|enable\|disable\|rebind\|remove` | Register repos for daemon pickup | Tell the daemon which repos it may work, toggle automation, or atomically rebind one disabled, quiescent ProjectID to a clean validated repo/vault while retaining runtime history. |
 | `runs inspect\|logs\|events\|interrupt\|release\|retire\|redrive` | Inspect and manage daemon runs/leases | Tail, stop, or replay a running/stuck attempt. |
 | `refresh` | Run one daemon poll tick | Nudge the loop once without a resident daemon. |
 | `gate-run --changed --base <ref>` | Run gate-tier proof in harvest mode | Per-change gate: `--changed` runs only the scopes the diff touched (requires configured `orchestration.gate.scopes`); `--base` sets the diff base. Without `--changed`, runs the full harvest. |
