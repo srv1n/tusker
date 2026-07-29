@@ -987,9 +987,9 @@ func deliveryReviewInspectEnvironment(vault string, wave Note, inspector wavePre
 func deliveryReviewEnvironmentState(env wavePreflightEnvironment, statusHref string) (deliveryReviewState, bool) {
 	switch {
 	case !env.ProjectRegistered:
-		return deliveryReviewState{"disabled", "Project is not registered", "Register this project before Start.", ""}, true
+		return deliveryReviewState{"disabled", "Project is not registered", "Register this project in Project Settings, then review the delivery again.", ""}, true
 	case !env.ProjectEnabled:
-		return deliveryReviewState{"disabled", "Project automation is off", "Enable this project's automation before Start.", ""}, true
+		return deliveryReviewState{"disabled", "Project automation is off", "Enable this project's automation in Project Settings, then review the delivery again.", ""}, true
 	case !env.ProjectHealthy:
 		return deliveryReviewState{"disabled", "Project health is blocked", "Repair the project's reported health issue before Start.", ""}, true
 	case !env.WorkflowCompatible:
@@ -997,15 +997,15 @@ func deliveryReviewEnvironmentState(env wavePreflightEnvironment, statusHref str
 	case !env.SkillCompatible:
 		return deliveryReviewState{"invalid", "Project skill is incompatible", "Install or repair the compatible Tusker project skill before Start.", ""}, true
 	case !env.DaemonAlive:
-		return deliveryReviewState{"daemon-off", "Resident daemon is off", "Start the resident daemon before Start.", ""}, true
+		return deliveryReviewState{"daemon-off", "Resident daemon is off", "Start the resident daemon, then review the delivery again.", ""}, true
 	case !env.DaemonReconciling:
 		return deliveryReviewState{"daemon-off", "Resident daemon is not reconciling", "Repair the resident daemon's project polling before Start.", ""}, true
 	case !env.RunnerCompatible:
-		return deliveryReviewState{"runner-blocked", "Runner is incompatible", "Configure a supported unattended runner before Start.", ""}, true
+		return deliveryReviewState{"runner-blocked", "Runner is incompatible", "Configure a supported unattended runner for this wave, then review again.", ""}, true
 	case !env.ApprovalFree:
 		return deliveryReviewState{"runner-blocked", "Runner requires approval", "Configure this runner for approval-free unattended execution before Start.", ""}, true
 	case !env.IsolatedWorkspace:
-		return deliveryReviewState{"shared-workspace", "Workspace is shared", "Select an isolated workspace strategy before Start.", ""}, true
+		return deliveryReviewState{"shared-workspace", "Workspace is shared", "Select an isolated workspace strategy in Project Settings, then review again.", ""}, true
 	case !env.IntegrationClean:
 		return deliveryReviewState{"shared-workspace", "Integration lane is not clean", "Repair the wave integration lane before Start.", statusHref}, true
 	}

@@ -13,6 +13,9 @@ import (
 func TestRunDirectiveRecorded(t *testing.T) {
 	t.Setenv("USER", "test-operator")
 	server := newServeEmptyNeedsFixture(t)
+	if _, err := setProjectLocalConfigWithReadback(server.vaultPath, "automation.dispatch_scope", "all_eligible"); err != nil {
+		t.Fatal(err)
+	}
 	makeServeTaskDispatchable(t, server, "APP-T-0001")
 	guard, err := acquireDaemonGuard(DefaultStateRoot())
 	if err != nil {

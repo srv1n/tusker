@@ -175,7 +175,7 @@ func TestProjectRebindRefusesWorkspaceMountAndPartialSamePath(t *testing.T) {
 	}
 }
 
-func TestDisabledProjectCannotAcquireAnyLeaseKind(t *testing.T) {
+func TestDisabledProjectCannotAcquireAutomatedLeaseKinds(t *testing.T) {
 	store, err := OpenRuntimeStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -209,8 +209,8 @@ func TestDisabledProjectCannotAcquireAnyLeaseKind(t *testing.T) {
 	}
 	interactiveRun, _ := store.FindRun("interactive")
 	identity := RunIdentityMetadata{ProjectID: project.ProjectID, RecordID: "interactive", RepoRoot: project.RepoRoot, WorkspacePath: t.TempDir(), WorkspaceMode: "in_place", Runner: string(RunnerCodexExec)}
-	if claimed, err := store.claimRunLeaseWithWorkSessionAttempt(*interactiveRun, "interactive-attempt", 1, time.Minute, now, RuntimeLeaseClaimPrecondition{ExpectedLeaseState: LeaseStateUnclaimed}, RunAuthorization{Source: "tusker_cli", Actor: "agent:test"}, RunAttempt{AttemptID: "interactive-attempt", Runner: string(RunnerCodexExec), Lane: runLaneExecute}, identity); err != nil || claimed {
-		t.Fatalf("interactive disabled claim=%v err=%v", claimed, err)
+	if claimed, err := store.claimRunLeaseWithWorkSessionAttempt(*interactiveRun, "interactive-attempt", 1, time.Minute, now, RuntimeLeaseClaimPrecondition{ExpectedLeaseState: LeaseStateUnclaimed}, RunAuthorization{Source: "tusker_cli", Actor: "agent:test"}, RunAttempt{AttemptID: "interactive-attempt", Runner: string(RunnerCodexExec), Lane: runLaneExecute}, identity); err != nil || !claimed {
+		t.Fatalf("interactive work must remain available with automation disabled: claim=%v err=%v", claimed, err)
 	}
 }
 

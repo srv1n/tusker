@@ -2333,7 +2333,13 @@ func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generati
 			updated_at = ?,
 			hand_run = ?
 		WHERE project_id = ? AND record_id = ?
-			AND EXISTS (SELECT 1 FROM projects project WHERE project.project_id = runs.project_id AND project.enabled = 1)
+			-- Legacy and low-level callers can own runs before registration.
+			-- Once a project is registered, however, its enabled bit is an
+			-- authoritative lease fence (notably across project rebinds).
+			AND (
+				NOT EXISTS (SELECT 1 FROM projects project WHERE project.project_id = runs.project_id)
+				OR EXISTS (SELECT 1 FROM projects project WHERE project.project_id = runs.project_id AND project.enabled = 1)
+			)
 			AND lease_state NOT IN ('claimed', 'running')
 			AND lease_state = ?
 			AND lease_owner = ?
@@ -2423,7 +2429,10 @@ func (s *RuntimeStore) claimRunLeaseWithDirectiveAttempt(run RunStatus, owner st
 				worker_policy_fingerprint = ?, execute_policy_fingerprint = ?, lane = ?,
 				started_at = CASE WHEN started_at = '' THEN ? ELSE started_at END, last_event_at = ?
 			WHERE project_id = ? AND record_id = ?
-				AND EXISTS (SELECT 1 FROM projects project WHERE project.project_id = runs.project_id AND project.enabled = 1)
+				AND (
+					NOT EXISTS (SELECT 1 FROM projects project WHERE project.project_id = runs.project_id)
+					OR EXISTS (SELECT 1 FROM projects project WHERE project.project_id = runs.project_id AND project.enabled = 1)
+				)
 				AND lease_state NOT IN ('claimed', 'running') AND lease_state = ? AND lease_owner = ?
 				AND lease_generation = ? AND work_revision = ?
 				AND (? <= 0 OR (SELECT COUNT(1) FROM runs active WHERE active.project_id = ? AND active.lease_state IN ('claimed','running')) < ?)`,
@@ -2504,7 +2513,6 @@ func (s *RuntimeStore) claimRunLeaseWithWorkSessionAttempt(run RunStatus, owner 
 				last_heartbeat_at = ?, updated_at = ?, hand_run = 1, attempt_count = ?, active_attempt_id = ?,
 				runner = ?, lane = ?, started_at = CASE WHEN started_at = '' THEN ? ELSE started_at END, last_event_at = ?
 			WHERE project_id = ? AND record_id = ?
-				AND EXISTS (SELECT 1 FROM projects project WHERE project.project_id = runs.project_id AND project.enabled = 1)
 				AND lease_state NOT IN ('claimed', 'running') AND lease_state = ? AND lease_owner = ?
 				AND lease_generation = ? AND work_revision = ?
 				AND (? <= 0 OR (SELECT COUNT(1) FROM runs active WHERE active.project_id = ? AND active.lease_state IN ('claimed','running')) < ?)`,

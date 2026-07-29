@@ -162,7 +162,7 @@ func deliveryReviewAddEnvironmentStartBlockers(r *deliveryReview, env wavePrefli
 func deliveryReviewAddPreflightPhaseBlockers(r *deliveryReview, env wavePreflightEnvironment, report wavePreflightReport, projectID, waveID string) {
 	deliveryReviewAddEnvironmentStartBlockers(r, env, projectID, waveID)
 	if report.AuthorizationStale || report.Authorization == "disarmed" || report.Authorization == "stale" {
-		deliveryReviewAddStartBlocker(r, deliveryReadinessBlocker("delivery-start-authorization", ReadinessBlockerAuthorizationMissing, ReadinessAuthorityAuthorization, []ReadinessDimensionKind{ReadinessDimensionAuthorization}, projectID, waveID, "Wave authorization is not current", "confirm the exact reviewed fingerprint with Start"))
+		deliveryReviewAddStartBlocker(r, deliveryReadinessBlocker("delivery-start-authorization", ReadinessBlockerAuthorizationMissing, ReadinessAuthorityAuthorization, []ReadinessDimensionKind{ReadinessDimensionAuthorization}, projectID, waveID, "Wave has not passed operational preflight", "confirm the exact reviewed fingerprint with Start"))
 	}
 	// These are material validations of the existing held lineage, not runtime
 	// observations. They must still make review/import fail closed.

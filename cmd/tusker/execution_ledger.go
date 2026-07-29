@@ -503,7 +503,11 @@ func insertLegacyExecutionTx(tx *sql.Tx, record ExecutionRecord, parentAttemptID
 	if err := tx.QueryRow(`SELECT execution_id, root_execution_id, parent_execution_id, project_id, node_kind, display_name, search_label, task_id, wave_id, wave_authorization_generation, attempt_id, session_ref, source, provider, provider_session_id, agent_type, provider_child_handle, creator, lease_generation, created_at FROM execution_records WHERE execution_id = ?`, record.ExecutionID).Scan(executionScanDest(&existing)...); err != nil {
 		return err
 	}
-	if existing != record {
+	// A first-class execution may already have been written for this attempt
+	// before a later store reopen runs the legacy backfill. Preserve the richer
+	// row when its durable identity agrees; only a true identity collision is a
+	// migration conflict.
+	if existing != record && !(existing.ProjectID == record.ProjectID && existing.AttemptID == record.AttemptID) {
 		return tuskerError(errorInvalidArg, "execution ledger backfill conflict")
 	}
 	if parentAttemptID != "" {

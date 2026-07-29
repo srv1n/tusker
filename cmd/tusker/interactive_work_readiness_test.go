@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestInteractiveWorkReadinessSeparation(t *testing.T) {
 	t.Run("typed_dependency_with_human_gate_prose", func(t *testing.T) {
@@ -82,6 +85,7 @@ func TestInteractiveWorkRefusalContextPreservesTypedOwnershipAndRevision(t *test
 }
 
 func TestInteractiveWorkStartIgnoresDispatchAuthorityAndCapacity(t *testing.T) {
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
 	vault, project := workSessionFixture(t, 2)
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"risk": "critical"})
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.enabled", false); err != nil {

@@ -1373,7 +1373,11 @@ func TestDetachedRunnerUsesWorkspaceCWDAndRepoRootEnv(t *testing.T) {
 	if err := writeText(promptPath, "Run.\n"); err != nil {
 		t.Fatal(err)
 	}
-	command := `python3 -c 'import os,pathlib; pathlib.Path(os.environ["TUSKER_WORKSPACE"], "cwd.txt").write_text(os.getcwd()+"\n"+os.environ.get("TUSKER_REPO_ROOT",""))'`
+	scriptPath := filepath.Join(tempRoot, "record-workspace.py")
+	if err := writeText(scriptPath, "import os,pathlib\npathlib.Path(os.environ[\"TUSKER_WORKSPACE\"], \"cwd.txt\").write_text(os.getcwd()+\"\\n\"+os.environ.get(\"TUSKER_REPO_ROOT\",\"\"))\n"); err != nil {
+		t.Fatal(err)
+	}
+	command := "python3 " + scriptPath
 	result, err := executeRunnerCommand(context.Background(), RunnerCodex, runnerExecRequest{
 		ProjectID: "project-1", RecordID: "record-1", ItemID: "ITEM-1", AttemptID: "attempt-1",
 		WorkspacePath: workspaceRoot, RepoRoot: repoRoot, PromptPath: promptPath,

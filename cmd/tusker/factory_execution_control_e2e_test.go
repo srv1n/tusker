@@ -235,6 +235,7 @@ func testFactoryExecutionTimeline(t *testing.T) {
 
 func testFactoryOptInAdmission(t *testing.T) {
 	t.Run("public_work_start_works_with_automation_off", func(t *testing.T) {
+		t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
 		vault := automationTestVault(t)
 		mustRunPickupTest(t, Args{
 			"vault": vault, "quiet": "true", "epic": "APP",

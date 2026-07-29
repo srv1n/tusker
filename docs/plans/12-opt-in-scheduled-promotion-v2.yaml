@@ -4,7 +4,7 @@ title: Opt-in scheduled promotion
 epic: ORC
 spec_refs:
   - docs/specs/12-opt-in-scheduled-promotion.md
-context_fingerprint: sha256:d940d20d121d4eac4834a2e666e09815b7d00ef41eab0aabaaca834dc520b2f6
+context_fingerprint: sha256:30d826e8860d6f6f7212944357233881dc70f05af9cdc077c370fe0b67474e35
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
 factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c

@@ -4,7 +4,7 @@ title: Opt-in full-gate lifecycle provider
 epic: ORC
 spec_refs:
   - docs/specs/15-opt-in-full-gate-lifecycle-provider.md
-context_fingerprint: sha256:0328467d526d8962839f6664fefda63de1bf7d315ddd58b5ec5f8ba935d489c4
+context_fingerprint: sha256:518f206820362a248b586974bec5f24df7fb2ece325e791e88de479bf9f6b4f0
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
 factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c

@@ -16,7 +16,11 @@ import (
 func TestRunnerExecAttemptStartedEventFailureDoesNotLaunchProcess(t *testing.T) {
 	req := runnerExecEventRequestForTest(t)
 	launchMarker := filepath.Join(req.WorkspacePath, "launched")
-	req.Command = fmt.Sprintf("echo launched > %q; sleep 30", launchMarker)
+	commandPath := filepath.Join(req.WorkspacePath, "mark-launched")
+	if err := os.WriteFile(commandPath, []byte(fmt.Sprintf("#!/bin/sh\necho launched > %q\nsleep 30\n", launchMarker)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	req.Command = commandPath
 	if err := os.WriteFile(req.EventSinkPath, []byte("{\"seq\":1}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +40,11 @@ func TestRunnerExecAttemptStartedEventFailureDoesNotLaunchProcess(t *testing.T) 
 func TestRunnerExecAttemptSpawnedEventFailureTerminatesAndReapsProcessGroup(t *testing.T) {
 	req := runnerExecEventRequestForTest(t)
 	pidPath := filepath.Join(req.WorkspacePath, "runner-pids")
-	req.Command = fmt.Sprintf("sleep 30 & child=$!; echo \"$$ $child\" > %q; wait \"$child\"", pidPath)
+	commandPath := filepath.Join(req.WorkspacePath, "spawn-child")
+	if err := os.WriteFile(commandPath, []byte(fmt.Sprintf("#!/bin/sh\nsleep 30 &\nchild=$!\necho \"$$ $child\" > %q\nwait \"$child\"\n", pidPath)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	req.Command = commandPath
 	sentinel := errors.New("injected attempt_spawned append failure")
 	eventLog := NewEventLog(req.EventSinkPath)
 	writeCount := 0

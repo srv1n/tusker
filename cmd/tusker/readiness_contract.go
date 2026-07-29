@@ -168,7 +168,7 @@ func ProjectLegacyReadiness(contract ReadinessContract, adapter ReadinessLegacyA
 	if mapped, ok := adapter.ReadinessByState[state]; ok {
 		readiness = mapped
 	}
-	projection := ReadinessLegacyProjection{Readiness: readiness, Dispatchable: true}
+	projection := ReadinessLegacyProjection{Readiness: readiness, Dispatchable: true, Blockers: []string{}}
 	for _, kind := range adapter.DispatchabilityDimensions {
 		if !validReadinessDimensionKind(kind) {
 			return ReadinessLegacyProjection{}, readinessContractError("legacy readiness adapter has an invalid dispatchability dimension")
@@ -190,6 +190,9 @@ func ProjectLegacyReadiness(contract ReadinessContract, adapter ReadinessLegacyA
 	}
 	projection.Blockers = uniqueStrings(projection.Blockers)
 	sort.Strings(projection.Blockers)
+	if projection.Blockers == nil {
+		projection.Blockers = []string{}
+	}
 	return projection, nil
 }
 
