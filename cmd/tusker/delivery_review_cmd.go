@@ -18,15 +18,30 @@ const deliveryCrossScopeReviewSchema = "tusker.cross-scope-dependency-review/v1"
 // deliveryReview is deliberately a product projection. It contains no task
 // frontmatter, runner instructions, logs, or lifecycle authority.
 type deliveryReview struct {
-	Schema    string                   `json:"schema"`
-	ReadOnly  bool                     `json:"readOnly"`
-	Ready     bool                     `json:"ready"`
-	What      []deliveryReviewOutcome  `json:"whatWillBeDelivered"`
-	Proof     []deliveryReviewProof    `json:"howItWillBeProven"`
-	Flow      deliveryReviewFlow       `json:"howWorkFlows"`
-	Decisions []deliveryReviewDecision `json:"whatNeedsYourDecision"`
-	Start     deliveryReviewStart      `json:"startBoundary"`
-	NonGoals  []string                 `json:"nonGoals"`
+	Schema   string `json:"schema"`
+	ReadOnly bool   `json:"readOnly"`
+	// Ready is the legacy Start projection. New callers must choose a phase
+	// explicitly instead of treating it as a universal delivery verdict.
+	Ready         bool                      `json:"ready"`
+	PlanValid     bool                      `json:"planValid"`
+	ImportReady   bool                      `json:"importReady"`
+	StartReady    bool                      `json:"startReady"`
+	Readiness     ReadinessContract         `json:"readiness"`
+	Compatibility ReadinessLegacyProjection `json:"compatibility"`
+	What          []deliveryReviewOutcome   `json:"whatWillBeDelivered"`
+	Proof         []deliveryReviewProof     `json:"howItWillBeProven"`
+	Flow          deliveryReviewFlow        `json:"howWorkFlows"`
+	Decisions     []deliveryReviewDecision  `json:"whatNeedsYourDecision"`
+	Start         deliveryReviewStart       `json:"startBoundary"`
+	NonGoals      []string                  `json:"nonGoals"`
+
+	// Phase-local causes are intentionally kept out of the wire contract until
+	// they are assembled into Readiness. This stops Start-only observations from
+	// changing review/import validity.
+	contractIssues []string
+	importIssues   []string
+	startIssues    []string
+	startBlockers  []ReadinessBlocker
 }
 type deliveryReviewOutcome struct {
 	Requirement string               `json:"requirement"`
@@ -157,7 +172,7 @@ func deliveryReviewCmd(args Args) error {
 	} else {
 		fmt.Print(renderDeliveryReview(review))
 	}
-	if !review.Ready {
+	if !review.PlanValid || !review.ImportReady {
 		return tuskerError(errorInvalidTransition, "delivery review is not ready: "+review.Start.NextAction, withContext(map[string]any{"delivery_review": review}))
 	}
 	return nil
@@ -279,37 +294,20 @@ func buildDeliveryReviewBytes(vault, path string, raw []byte, inspector wavePref
 		r.Start.StateLabel = "Delivery plan is invalid"
 		r.Start.NextAction = "Resolve the first blocker: " + r.Start.Blockers[0]
 	}
+	// Everything accumulated so far is a semantic planning/context fact. The
+	// canonical projection below contributes either held-import or Start-only
+	// facts; it must not overwrite this phase boundary.
+	r.contractIssues = uniqueStrings(append(r.contractIssues, r.Start.Blockers...))
+	r.Start.Blockers = []string{}
 	deliveryReviewCanonical(vault, plan, integrationBaseSHA, inspector, &r)
-	r.Start.Blockers = uniqueStrings(r.Start.Blockers)
-	sort.Strings(r.Start.Blockers)
 	r.Flow.Warnings = uniqueStrings(r.Flow.Warnings)
 	sort.Strings(r.Flow.Warnings)
 	if len(r.Decisions) == 0 {
 		r.Decisions = []deliveryReviewDecision{}
 	}
 	normalizeDeliveryReviewCollections(&r)
-	if len(r.Start.Blockers) > 0 {
-		if r.Start.State == "held" {
-			r.Start.State = "invalid"
-			r.Start.StateLabel = "Delivery plan is invalid"
-		}
-		r.Start.Readiness = "blocked"
-		if r.Start.NextAction != "" {
-			// Canonical state projection already selected one truthful remedy.
-		} else if strings.Contains(r.Start.Blockers[0], "canonical import drift") {
-			r.Start.NextAction = "Regenerate delivery review, then rerun Start delivery with the exact reviewed fingerprint."
-		} else {
-			r.Start.NextAction = "Resolve the first blocker: " + r.Start.Blockers[0]
-		}
-		return r, nil
-	}
-	r.Ready = true
-	if r.Start.State == "held" {
-		r.Start.Readiness = "ready to start delivery"
-		r.Start.StateLabel = "Ready to start"
-		r.Start.NextAction = deliveryReviewStartCommand(vault, path, r.Start.PlanFingerprint)
-	} else if r.Start.Readiness == "review only" {
-		r.Start.Readiness = r.Start.StateLabel
+	if err := finalizeDeliveryReviewReadiness(&r, vault, plan, path); err != nil {
+		return deliveryReview{}, err
 	}
 	return r, nil
 }
@@ -827,7 +825,7 @@ func deliveryReviewDoctorFindings(vault, path string, raw []byte) []deliveryDoct
 func deliveryReviewCanonical(vault string, plan deliveryPlan, integrationBaseSHA string, inspector wavePreflightEnvironmentInspector, r *deliveryReview) {
 	idx, err := loadV7Index(vault)
 	if err != nil {
-		r.Start.Blockers = append(r.Start.Blockers, err.Error())
+		r.importIssues = append(r.importIssues, err.Error())
 		return
 	}
 	r.Flow.CrossScopeDependencies = deliveryCrossScopeReviewForPlan(idx, plan).Dependencies
@@ -845,7 +843,7 @@ func deliveryReviewCanonical(vault string, plan deliveryPlan, integrationBaseSHA
 		env := deliveryReviewInspectEnvironment(vault, prospective, inspector)
 		if state, blocked := deliveryReviewEnvironmentState(env, ""); blocked {
 			deliveryReviewApplyState(r, state)
-			r.Start.Blockers = append(r.Start.Blockers, "operational preflight: "+state.Label)
+			deliveryReviewAddEnvironmentStartBlockers(r, env, v7ProjectID(vault), "")
 		}
 		return
 	}
@@ -853,7 +851,7 @@ func deliveryReviewCanonical(vault string, plan deliveryPlan, integrationBaseSHA
 		r.Start.State = "changed"
 		r.Start.StateLabel = "Delivery changed"
 		r.Start.NextAction = "Resolve duplicate plan-scope ownership, then regenerate delivery review."
-		r.Start.Blockers = append(r.Start.Blockers, "canonical import drift: more than one wave owns this plan scope; re-import the reviewed plan after resolving duplicate scope ownership")
+		r.importIssues = append(r.importIssues, "canonical import drift: more than one wave owns this plan scope; re-import the reviewed plan after resolving duplicate scope ownership")
 		return
 	}
 	wave := waves[0]
@@ -868,7 +866,7 @@ func deliveryReviewCanonical(vault string, plan deliveryPlan, integrationBaseSHA
 		r.Start.State = "changed"
 		r.Start.StateLabel = "Delivery changed"
 		r.Start.NextAction = "Regenerate delivery review, then confirm the new exact plan fingerprint."
-		r.Start.Blockers = append(r.Start.Blockers, "canonical import drift: the plan fingerprint differs; regenerate delivery review, then Start the exact reviewed plan")
+		r.importIssues = append(r.importIssues, "canonical import drift: the plan fingerprint differs; regenerate delivery review, then Start the exact reviewed plan")
 		return
 	}
 	members := map[string]bool{}
@@ -887,7 +885,7 @@ func deliveryReviewCanonical(vault string, plan deliveryPlan, integrationBaseSHA
 			r.Start.State = "changed"
 			r.Start.StateLabel = "Delivery changed"
 			r.Start.NextAction = "Regenerate delivery review, then confirm the new exact plan fingerprint."
-			r.Start.Blockers = append(r.Start.Blockers, "canonical import drift: a planned outcome is missing from the imported wave; regenerate delivery review, then Start the exact reviewed plan")
+			r.importIssues = append(r.importIssues, "canonical import drift: a planned outcome is missing from the imported wave; regenerate delivery review, then Start the exact reviewed plan")
 			return
 		}
 		taskHref := taskDeepLink(projectID, found)
@@ -936,15 +934,7 @@ func deliveryReviewCanonical(vault string, plan deliveryPlan, integrationBaseSHA
 	if r.Start.State != "invalid" && r.Start.State != "changed" {
 		deliveryReviewProjectState(vault, idx, wave, env, preflight, r)
 	}
-	if preflight.AuthorizationStale {
-		r.Start.Blockers = append(r.Start.Blockers, "operational preflight: wave authorization fingerprint is stale")
-	}
-	for _, blocker := range preflight.Blockers {
-		if r.Start.State == "completed" && deliveryReviewEnvironmentPreflightBlocker(blocker) {
-			continue
-		}
-		r.Start.Blockers = append(r.Start.Blockers, "operational preflight: "+blocker)
-	}
+	deliveryReviewAddPreflightPhaseBlockers(r, env, preflight, projectID, waveID)
 }
 
 type deliveryReviewState struct {
@@ -990,27 +980,27 @@ func deliveryReviewInspectEnvironment(vault string, wave Note, inspector wavePre
 func deliveryReviewEnvironmentState(env wavePreflightEnvironment, statusHref string) (deliveryReviewState, bool) {
 	switch {
 	case !env.ProjectRegistered:
-		return deliveryReviewState{"disabled", "Project is not registered", "Register this project in Project Settings, then review the delivery again.", ""}, true
+		return deliveryReviewState{"disabled", "Project is not registered", "Register this project before Start.", ""}, true
 	case !env.ProjectEnabled:
-		return deliveryReviewState{"disabled", "Project automation is off", "Enable this project's automation in Project Settings, then review the delivery again.", ""}, true
+		return deliveryReviewState{"disabled", "Project automation is off", "Enable this project's automation before Start.", ""}, true
 	case !env.ProjectHealthy:
-		return deliveryReviewState{"disabled", "Project health is blocked", "Repair the project's reported health issue, then review the delivery again.", ""}, true
+		return deliveryReviewState{"disabled", "Project health is blocked", "Repair the project's reported health issue before Start.", ""}, true
 	case !env.WorkflowCompatible:
-		return deliveryReviewState{"invalid", "Workflow is incompatible", "Repair the project workflow version and tracker schema, then review the delivery again.", ""}, true
+		return deliveryReviewState{"invalid", "Workflow is incompatible", "Repair the project workflow version and tracker schema before Start.", ""}, true
 	case !env.SkillCompatible:
-		return deliveryReviewState{"invalid", "Project skill is incompatible", "Install or repair the compatible Tusker project skill, then review the delivery again.", ""}, true
+		return deliveryReviewState{"invalid", "Project skill is incompatible", "Install or repair the compatible Tusker project skill before Start.", ""}, true
 	case !env.DaemonAlive:
-		return deliveryReviewState{"daemon-off", "Resident daemon is off", "Start the resident daemon, then review the delivery again.", ""}, true
+		return deliveryReviewState{"daemon-off", "Resident daemon is off", "Start the resident daemon before Start.", ""}, true
 	case !env.DaemonReconciling:
-		return deliveryReviewState{"daemon-off", "Resident daemon is not reconciling", "Repair the resident daemon's project polling, then review the delivery again.", ""}, true
+		return deliveryReviewState{"daemon-off", "Resident daemon is not reconciling", "Repair the resident daemon's project polling before Start.", ""}, true
 	case !env.RunnerCompatible:
-		return deliveryReviewState{"runner-blocked", "Runner is incompatible", "Configure a supported unattended runner for this wave, then review again.", ""}, true
+		return deliveryReviewState{"runner-blocked", "Runner is incompatible", "Configure a supported unattended runner before Start.", ""}, true
 	case !env.ApprovalFree:
-		return deliveryReviewState{"runner-blocked", "Runner requires approval", "Configure this runner for approval-free unattended execution, then review again.", ""}, true
+		return deliveryReviewState{"runner-blocked", "Runner requires approval", "Configure this runner for approval-free unattended execution before Start.", ""}, true
 	case !env.IsolatedWorkspace:
-		return deliveryReviewState{"shared-workspace", "Workspace is shared", "Select an isolated workspace strategy in Project Settings, then review again.", ""}, true
+		return deliveryReviewState{"shared-workspace", "Workspace is shared", "Select an isolated workspace strategy before Start.", ""}, true
 	case !env.IntegrationClean:
-		return deliveryReviewState{"shared-workspace", "Integration lane is not clean", "Repair the wave integration lane, then review again.", statusHref}, true
+		return deliveryReviewState{"shared-workspace", "Integration lane is not clean", "Repair the wave integration lane before Start.", statusHref}, true
 	}
 	return deliveryReviewState{}, false
 }
