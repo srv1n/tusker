@@ -59,11 +59,15 @@ func workSessionStartCmd(args Args) error {
 	}
 	result, ctx, err := claimWorkSession(args)
 	if err != nil {
-		return err
+		return workSessionClaimRefusal(args.String("id"), err)
 	}
 	defer ctx.Close()
 	if !result.Claimed || result.Run == nil {
-		return tuskerError("WORK_SESSION_HEALTHY_OWNER", "work start refused: task already has a healthy owner")
+		owner := ""
+		if result.Run != nil {
+			owner = result.Run.LeaseOwner
+		}
+		return workSessionStartBlocker(workSessionOwnerBlocker(args.String("id"), owner, "A healthy work-session owner already holds this task."))
 	}
 	branch, head := "", ""
 	if identity, identityErr := ctx.Store.RunIdentity(result.Run.ProjectID, result.Run.RecordID); identityErr == nil && identity != nil {
@@ -133,14 +137,14 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 		return runClaimResult{}, nil, findErr
 	} else if current != nil && runFreshness(current, time.Now().UTC()) == "stale" {
 		if _, blocking := holderLiveness(*current, time.Now().UTC()); blocking {
-			return runClaimResult{}, nil, tuskerError("WORK_SESSION_HEALTHY_OWNER", "work start refused: expired holder process is still alive")
+			return runClaimResult{}, nil, workSessionStartBlocker(workSessionOwnerBlocker(stringField(note.Data, "id"), current.LeaseOwner, "The expired holder process is still alive."))
 		}
 		ok, reclaimErr := ctx.Store.ReclaimExpiredRunLease(current.ProjectID, current.RecordID, time.Now().UTC(), defaultRunLeaseTTL, "work-session reclaim after expired heartbeat and failed liveness probe")
 		if reclaimErr != nil {
 			return runClaimResult{}, nil, reclaimErr
 		}
 		if !ok {
-			return runClaimResult{}, nil, tuskerError("WORK_SESSION_RECLAIM_NOT_SAFE", "work start refused: expired holder has not passed reclaim grace")
+			return runClaimResult{}, nil, workSessionStartBlocker(workSessionOwnerBlocker(stringField(note.Data, "id"), current.LeaseOwner, "The expired holder has not passed reclaim grace."))
 		}
 		ctx.Runs, _ = ctx.Store.ListRuns()
 		if ctx.ProjectActiveRuns > 0 {
@@ -158,18 +162,11 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 			ctx.ProjectRuns[trackerRecordID(note)] = projected
 		}
 	}
-	if edge, blocked := v7BlockingDependencyForReadiness(note, workSessionV7Index(ctx.Notes)); blocked {
-		return runClaimResult{}, nil, workSessionStartBlocker([]string{"dependency " + edge.ID + " is not satisfied"})
+	if blockers := workSessionAdmissionBlockers(note, workSessionV7Index(ctx.Notes), ctx.NotesByID, ctx.NotesByRecordID); len(blockers) > 0 {
+		return runClaimResult{}, nil, workSessionStartBlocker(blockers[0])
 	}
-	if reason := unresolvedBlockerReason(note, ctx.NotesByID, ctx.NotesByRecordID); reason != "" {
-		return runClaimResult{}, nil, workSessionStartBlocker([]string{reason})
-	}
-	explain := ctx.explainTaskForInteractiveRun(note)
-	if !explain.Dispatchable {
-		return runClaimResult{}, nil, workSessionStartBlocker(explain.Blockers)
-	}
-	run := ctx.effectiveRunForTask(note, explain.Runner)
-	run.ProjectID, run.Runner, run.Lane = ctx.Project.ProjectID, explain.Runner, explain.Lane
+	run := ctx.effectiveRunForTask(note, automationResolveRunner(note, ctx.Workflow.Data))
+	run.ProjectID = ctx.Project.ProjectID
 	workspaceStrategy := workspaceStrategyForRun(ctx.Workflow.Data, ctx.Project, run, ctx.projectRunsSlice())
 	branchName, branchBase, err := v7WorkspaceBranchForLane(ctx.Project.VaultRoot, note, run.Lane)
 	if err != nil {
@@ -180,14 +177,16 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 	}
 	workspace, err := NewWorkspaceManager().Prepare(WorkspacePrepareRequest{ProjectID: ctx.Project.ProjectID, ProjectKey: ctx.Project.ProjectKey, RecordID: run.RecordID, ItemID: run.ItemID, BranchName: branchName, BranchBase: branchBase, RepoRoot: ctx.Project.RepoRoot, StateRoot: ctx.StateRoot, WorkspaceRoot: ctx.Workflow.Data.Workspace.Root, Strategy: workspaceStrategy, WorkRevision: run.WorkRevision, MaxLiveWorktrees: ctx.Workflow.Data.Workspace.MaxLiveWorktrees})
 	if err != nil {
-		return runClaimResult{}, nil, tuskerError("WORK_SESSION_UNSAFE_WORKSPACE", "work start refused: unsafe workspace state: "+err.Error())
+		return runClaimResult{}, nil, workSessionStartBlocker(workSessionUnsafeWorkspaceBlocker(stringField(note.Data, "id"), err.Error()))
 	}
 	run.WorkspacePath = workspace.Path
 	owner := args.String("owner")
 	service := newRunOwnershipService(ctx.Store)
 	claimNotes := orchestrationOwnedPathNotes(ctx.NotesByID, ctx.Workflow.Data)
 	service.withOwnedPathContext(ctx.Project.VaultRoot, claimNotes[stringField(note.Data, "id")], claimNotes)
-	service.projectConcurrencyLimit = ctx.Workflow.Data.Runtime.MaxActiveRunsPerProject
+	// Interactive work owns a user-directed session, not an unattended dispatch
+	// slot. Same-task and owned-path safety stay in the ownership service.
+	service.projectConcurrencyLimit = 0
 	identity := runIdentityForClaim(run, ctx.Project.RepoRoot, run.WorkspacePath, string(workspaceStrategy), branchName)
 	result, err := service.claimWorkSessionWithAuthorization(run, owner, RunAuthorization{Source: args.String("source"), Actor: owner, Trigger: "work_start", ProjectAutomationEnabled: ctx.Workflow.Data.AutomationEnabled}, identity)
 	if err != nil {
@@ -200,21 +199,40 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 	return result, ctx, nil
 }
 
-func workSessionStartBlocker(blockers []string) error {
-	message := strings.Join(blockers, "; ")
-	lower := strings.ToLower(message)
+func workSessionStartBlocker(blocker ReadinessBlocker) error {
 	code := "WORK_SESSION_NOT_READY"
-	switch {
-	case strings.Contains(lower, "existing run is claimed") || strings.Contains(lower, "existing run is running") || strings.Contains(lower, "live owner"):
+	switch blocker.Kind {
+	case ReadinessBlockerInteractiveOwner:
 		code = "WORK_SESSION_HEALTHY_OWNER"
-	case strings.Contains(lower, "gate") || strings.Contains(lower, "human"):
+	case ReadinessBlockerHumanGateOpen:
 		code = "WORK_SESSION_HUMAN_GATE"
-	case strings.Contains(lower, "terminal") || strings.Contains(lower, "status done") || strings.Contains(lower, "status is done") || strings.Contains(lower, "readiness is done") || strings.Contains(lower, "cancelled") || strings.Contains(lower, "superseded"):
+	case ReadinessBlockerTaskTerminal:
 		code = "WORK_SESSION_TERMINAL"
-	case strings.Contains(lower, "dependency"):
+	case ReadinessBlockerDependencyIncomplete:
 		code = "WORK_SESSION_DEPENDENCY_BLOCKED"
+	case ReadinessBlockerWorkspaceUnsafe:
+		code = "WORK_SESSION_UNSAFE_WORKSPACE"
+	case ReadinessBlockerOwnedPathConflict:
+		code = "OWNED_PATH_CONFLICT"
 	}
-	return tuskerError(code, "work start refused: "+message)
+	return tuskerError(code, "work start refused: "+blocker.Reason, withContext(map[string]any{"readiness_blocker": blocker}))
+}
+
+func workSessionClaimRefusal(taskID string, err error) error {
+	issue := errorToIssue(err)
+	if issue.Code != "OWNED_PATH_CONFLICT" {
+		return err
+	}
+	conflictingTaskID, owner := "", ""
+	if context, ok := issue.Context.(map[string]any); ok {
+		conflictingTaskID, _ = context["task_id"].(string)
+		owner, _ = context["holder"].(string)
+	}
+	return workSessionStartBlocker(ReadinessBlocker{
+		ID: "interactive-owned-path:" + taskID + ":" + conflictingTaskID, Kind: ReadinessBlockerOwnedPathConflict, Authority: ReadinessAuthorityInteractive,
+		Affects: []ReadinessDimensionKind{ReadinessDimensionInteractive}, TaskID: taskID, ConflictingTaskID: conflictingTaskID, Owner: owner,
+		Reason: issue.Message, Remedy: "Wait for the conflicting owner to release its owned path or choose non-overlapping work.",
+	})
 }
 
 func workSessionStatusCmd(args Args) error {
@@ -284,7 +302,7 @@ func requireWorkSessionRevision(args Args) error {
 		return tuskerError(errorNotFound, "work session not found: "+args.String("id"))
 	}
 	if expected := intArg(args, "revision"); expected > 0 && expected != run.WorkRevision {
-		return tuskerError("CAS_CONFLICT", fmt.Sprintf("work revision changed: expected %d, current %d", expected, run.WorkRevision))
+		return workSessionStaleRevisionError("CAS_CONFLICT", args.String("id"), expected, run.WorkRevision)
 	}
 	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{LoadDisabled: true, ProjectID: run.ProjectID})
 	if err != nil {
@@ -296,10 +314,19 @@ func requireWorkSessionRevision(args Args) error {
 			return noteErr
 		}
 		if revision := intField(note.Data, "work_revision"); revision != run.WorkRevision {
-			return tuskerError("WORK_SESSION_STALE", fmt.Sprintf("work revision changed: session %d, task %d", run.WorkRevision, revision))
+			return workSessionStaleRevisionError("WORK_SESSION_STALE", args.String("id"), run.WorkRevision, revision)
 		}
 	}
 	return nil
+}
+
+func workSessionStaleRevisionError(code, taskID string, expected, current int) error {
+	blocker := ReadinessBlocker{
+		ID: "interactive-revision:" + taskID, Kind: ReadinessBlockerWorkRevisionStale, Authority: ReadinessAuthorityInteractive,
+		Affects: []ReadinessDimensionKind{ReadinessDimensionInteractive}, TaskID: taskID,
+		Reason: fmt.Sprintf("Work revision changed: expected %d, current %d.", expected, current), Remedy: "Restart the work session against the current task revision.",
+	}
+	return tuskerError(code, blocker.Reason, withContext(map[string]any{"readiness_blocker": blocker}))
 }
 
 func workSessionNotifyRun(id string) {

@@ -59,6 +59,11 @@ const (
 	ReadinessBlockerOptionalIntegrationMissing ReadinessBlockerKind = "optional_integration_unavailable"
 	ReadinessBlockerDependencyIncomplete       ReadinessBlockerKind = "dependency_incomplete"
 	ReadinessBlockerHumanGateOpen              ReadinessBlockerKind = "human_gate_open"
+	ReadinessBlockerTaskNotReady               ReadinessBlockerKind = "task_not_ready"
+	ReadinessBlockerTaskTerminal               ReadinessBlockerKind = "task_terminal"
+	ReadinessBlockerWorkspaceUnsafe            ReadinessBlockerKind = "workspace_unsafe"
+	ReadinessBlockerOwnedPathConflict          ReadinessBlockerKind = "owned_path_conflict"
+	ReadinessBlockerWorkRevisionStale          ReadinessBlockerKind = "work_revision_stale"
 	ReadinessBlockerIntegrationUnavailable     ReadinessBlockerKind = "integration_unavailable"
 )
 
@@ -88,18 +93,20 @@ type ReadinessDimensions struct {
 // ReadinessBlocker is a structured refusal. Reason and Remedy are bounded so
 // the contract stays safe to expose through CLI and Serve projections.
 type ReadinessBlocker struct {
-	ID               string                   `json:"id"`
-	Kind             ReadinessBlockerKind     `json:"kind"`
-	Authority        ReadinessAuthorityDomain `json:"authority"`
-	Affects          []ReadinessDimensionKind `json:"affects"`
-	TaskID           string                   `json:"task_id,omitempty"`
-	DependencyTaskID string                   `json:"dependency_task_id,omitempty"`
-	GateID           string                   `json:"gate_id,omitempty"`
-	WaveID           string                   `json:"wave_id,omitempty"`
-	ProjectID        string                   `json:"project_id,omitempty"`
-	IntegrationID    string                   `json:"integration_id,omitempty"`
-	Reason           string                   `json:"reason"`
-	Remedy           string                   `json:"remedy"`
+	ID                string                   `json:"id"`
+	Kind              ReadinessBlockerKind     `json:"kind"`
+	Authority         ReadinessAuthorityDomain `json:"authority"`
+	Affects           []ReadinessDimensionKind `json:"affects"`
+	TaskID            string                   `json:"task_id,omitempty"`
+	DependencyTaskID  string                   `json:"dependency_task_id,omitempty"`
+	ConflictingTaskID string                   `json:"conflicting_task_id,omitempty"`
+	Owner             string                   `json:"owner,omitempty"`
+	GateID            string                   `json:"gate_id,omitempty"`
+	WaveID            string                   `json:"wave_id,omitempty"`
+	ProjectID         string                   `json:"project_id,omitempty"`
+	IntegrationID     string                   `json:"integration_id,omitempty"`
+	Reason            string                   `json:"reason"`
+	Remedy            string                   `json:"remedy"`
 }
 
 // ReadinessLegacyProjection retains the existing CLI and Serve field names
@@ -316,7 +323,7 @@ func validReadinessAuthority(authority ReadinessAuthorityDomain) bool {
 
 func validReadinessBlockerKind(kind ReadinessBlockerKind) bool {
 	switch kind {
-	case ReadinessBlockerContractInvalid, ReadinessBlockerImportMissing, ReadinessBlockerInteractiveOwner, ReadinessBlockerAutomationDisabled, ReadinessBlockerAuthorizationMissing, ReadinessBlockerRuntimeUnavailable, ReadinessBlockerOptionalIntegrationMissing, ReadinessBlockerDependencyIncomplete, ReadinessBlockerHumanGateOpen, ReadinessBlockerIntegrationUnavailable:
+	case ReadinessBlockerContractInvalid, ReadinessBlockerImportMissing, ReadinessBlockerInteractiveOwner, ReadinessBlockerAutomationDisabled, ReadinessBlockerAuthorizationMissing, ReadinessBlockerRuntimeUnavailable, ReadinessBlockerOptionalIntegrationMissing, ReadinessBlockerDependencyIncomplete, ReadinessBlockerHumanGateOpen, ReadinessBlockerTaskNotReady, ReadinessBlockerTaskTerminal, ReadinessBlockerWorkspaceUnsafe, ReadinessBlockerOwnedPathConflict, ReadinessBlockerWorkRevisionStale, ReadinessBlockerIntegrationUnavailable:
 		return true
 	default:
 		return false

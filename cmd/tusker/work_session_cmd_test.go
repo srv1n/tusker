@@ -201,7 +201,9 @@ func TestWorkSessionStartRefusalMatrix(t *testing.T) {
 	})
 	t.Run("human_gate", func(t *testing.T) {
 		vault, _ := workSessionFixture(t, 1)
-		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"readiness": "waiting_on_human", "next_owner": "human:sarav"})
+		if err := newV7Gate(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "auth", "owner": "human:sarav", "action": "Complete account authorization.", "verification": "The account authorization is recorded.", "why-agent-cannot": "Only the account owner can authorize this integration."}); err != nil {
+			t.Fatal(err)
+		}
 		if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:a"); workSessionErrorCode(err) != "WORK_SESSION_HUMAN_GATE" {
 			t.Fatalf("human refusal = %v", err)
 		}
