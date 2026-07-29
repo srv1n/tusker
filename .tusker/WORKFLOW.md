@@ -1,7 +1,7 @@
 ---
 workflow_version: 1
 tracker_schema_version: 7
-automation_enabled: true
+automation_enabled: false
 tracker:
     kind: tusker_vault
     dispatch_states:
@@ -148,8 +148,7 @@ fanout:
     allowed_child_types: []
     merge_rule: manual_review
 orchestration:
-    # Temporary immutable dogfood base. Restore `main` after the isolated wave.
-    default_branch: srv1nc/factory-dogfood-base
+    default_branch: main
     gate:
         profile: default
         harvest_commands:

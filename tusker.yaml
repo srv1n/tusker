@@ -9,8 +9,8 @@ automation:
     default_profile: execute-standard
     default_runner: codex_exec
     dispatch_scope: armed_waves
-    # Explicit dogfood opt-in. Dispatch remains limited to human-armed waves.
-    enabled: true
+    # Manual-safe rollout default. Enable only for a supervised armed-wave trial.
+    enabled: false
     enabled_runners:
         - codex_exec
         - claude-code
@@ -137,8 +137,7 @@ automation:
         strategy: worktree
 project_id: tusker
 branches:
-    # Temporary immutable dogfood base. Restore `main` after the isolated wave.
-    default_branch: srv1nc/factory-dogfood-base
+    default_branch: main
 runtime:
     lease_backend: local
     lease_ttl_minutes: 120
