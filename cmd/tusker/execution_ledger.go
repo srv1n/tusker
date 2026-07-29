@@ -711,7 +711,12 @@ func (s *RuntimeStore) backfillExecutionLedger() error {
 		for _, a := range attempts {
 			if a.parent != "" {
 				if _, present := byID[a.parent]; !present {
-					placeholder := ExecutionRecord{ExecutionID: legacyExecutionID(a.parent), RootExecutionID: legacyExecutionID(a.parent), ProjectID: a.project, NodeKind: ExecutionNodeRoot, DisplayName: "legacy parent " + a.parent, Source: "legacy_missing_parent", Creator: "migration:execution-ledger", CreatedAt: firstNonEmpty(a.started, executionNow())}
+					placeholderID := legacyExecutionID(a.parent)
+					createdAt, err := legacyExecutionCreatedAtTx(tx, placeholderID, a.started)
+					if err != nil {
+						return err
+					}
+					placeholder := ExecutionRecord{ExecutionID: placeholderID, RootExecutionID: placeholderID, ProjectID: a.project, NodeKind: ExecutionNodeRoot, DisplayName: "legacy parent " + a.parent, Source: "legacy_missing_parent", Creator: "migration:execution-ledger", CreatedAt: createdAt}
 					placeholder.SearchLabel = normalizeExecutionLabel(placeholder.DisplayName, placeholder.ExecutionID)
 					if err := insertLegacyExecutionTx(tx, placeholder, ""); err != nil {
 						return err
@@ -726,7 +731,12 @@ func (s *RuntimeStore) backfillExecutionLedger() error {
 			if a.parent != "" {
 				kind = ExecutionNodeManagedAttempt
 			}
-			record := ExecutionRecord{ExecutionID: legacyExecutionID(a.id), RootExecutionID: legacyExecutionID(root), ParentExecutionID: legacyExecutionID(a.parent), ProjectID: a.project, NodeKind: kind, TaskID: a.item, AttemptID: a.id, SessionRef: a.session, Source: "legacy_attempt", Provider: a.runner, AgentType: a.childType, Creator: "migration:execution-ledger", CreatedAt: firstNonEmpty(a.started, executionNow())}
+			executionID := legacyExecutionID(a.id)
+			createdAt, err := legacyExecutionCreatedAtTx(tx, executionID, a.started)
+			if err != nil {
+				return err
+			}
+			record := ExecutionRecord{ExecutionID: executionID, RootExecutionID: legacyExecutionID(root), ParentExecutionID: legacyExecutionID(a.parent), ProjectID: a.project, NodeKind: kind, TaskID: a.item, AttemptID: a.id, SessionRef: a.session, Source: "legacy_attempt", Provider: a.runner, AgentType: a.childType, Creator: "migration:execution-ledger", CreatedAt: createdAt}
 			if kind == ExecutionNodeRoot {
 				record.ParentExecutionID = ""
 			}
@@ -737,6 +747,24 @@ func (s *RuntimeStore) backfillExecutionLedger() error {
 		}
 		return tx.Commit()
 	})
+}
+
+func legacyExecutionCreatedAtTx(tx *sql.Tx, executionID, startedAt string) (string, error) {
+	if startedAt = strings.TrimSpace(startedAt); startedAt != "" {
+		return startedAt, nil
+	}
+	var existing string
+	err := tx.QueryRow(`SELECT created_at FROM execution_records WHERE execution_id = ?`, executionID).Scan(&existing)
+	if err == nil && strings.TrimSpace(existing) != "" {
+		return existing, nil
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return "", err
+	}
+	// Some legacy attempts predate started_at. A fixed compatibility timestamp
+	// keeps their first projection deterministic; stores migrated by an older
+	// binary retain the immutable timestamp already recorded above.
+	return "1970-01-01T00:00:00Z", nil
 }
 
 func insertLegacyExecutionTx(tx *sql.Tx, record ExecutionRecord, parentAttemptID string) error {

@@ -270,6 +270,30 @@ func TestExecutionGraphMigration(t *testing.T) {
 	if err := store.SaveAttempt(RunAttempt{AttemptID: "legacy-child", ProjectID: "project-1", RecordID: "record-1", ItemID: "ORC-T-0002", Runner: "codex", ParentAttemptID: "legacy-parent", ChildType: "reviewer", StartedAt: "2026-07-29T00:01:00Z"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.SaveAttempt(RunAttempt{AttemptID: "legacy-without-start", ProjectID: "project-1", RecordID: "record-1", ItemID: "ORC-T-0003", Runner: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAttempt(RunAttempt{AttemptID: "legacy-existing-without-start", ProjectID: "project-1", RecordID: "record-1", ItemID: "ORC-T-0004", Runner: "codex"}); err != nil {
+		t.Fatal(err)
+	}
+	existingID := legacyExecutionID("legacy-existing-without-start")
+	existingTimestamp := "2026-07-01T12:34:56Z"
+	existing := ExecutionRecord{
+		ExecutionID:     existingID,
+		RootExecutionID: existingID,
+		ProjectID:       "project-1",
+		NodeKind:        ExecutionNodeRoot,
+		SearchLabel:     normalizeExecutionLabel("ORC-T-0004", "", "codex", existingID),
+		TaskID:          "ORC-T-0004",
+		AttemptID:       "legacy-existing-without-start",
+		Source:          "legacy_attempt",
+		Provider:        "codex",
+		Creator:         "migration:execution-ledger",
+		CreatedAt:       existingTimestamp,
+	}
+	if err := store.insertExecutionRecord(existing); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.backfillExecutionLedger(); err != nil {
 		t.Fatal(err)
 	}
@@ -279,6 +303,17 @@ func TestExecutionGraphMigration(t *testing.T) {
 	}
 	if child.RootExecutionID != legacyExecutionID("legacy-parent") || child.AttemptID != "legacy-child" || child.NodeKind != ExecutionNodeManagedAttempt {
 		t.Fatalf("legacy projection: %#v", child)
+	}
+	withoutStart, err := store.Execution(legacyExecutionID("legacy-without-start"))
+	if err != nil || withoutStart == nil {
+		t.Fatalf("legacy attempt without start missing: %#v %v", withoutStart, err)
+	}
+	if withoutStart.CreatedAt != "1970-01-01T00:00:00Z" {
+		t.Fatalf("legacy attempt without start should use deterministic timestamp: %#v", withoutStart)
+	}
+	existingWithoutStart, err := store.Execution(existingID)
+	if err != nil || existingWithoutStart == nil || existingWithoutStart.CreatedAt != existingTimestamp {
+		t.Fatalf("legacy projection timestamp should be preserved: %#v %v", existingWithoutStart, err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
@@ -292,14 +327,22 @@ func TestExecutionGraphMigration(t *testing.T) {
 	}
 	defer store.Close()
 	var count int
-	if err := store.queryRowScan(`SELECT COUNT(*) FROM execution_records WHERE attempt_id IN ('legacy-parent', 'legacy-child')`, nil, &count); err != nil {
+	if err := store.queryRowScan(`SELECT COUNT(*) FROM execution_records WHERE attempt_id IN ('legacy-parent', 'legacy-child', 'legacy-without-start', 'legacy-existing-without-start')`, nil, &count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 2 {
+	if count != 4 {
 		t.Fatalf("migration duplicated or lost attempts: %d", count)
 	}
 	attempts, err := store.ListAttemptsForRun("project-1", "record-1")
-	if err != nil || len(attempts) != 2 {
+	if err != nil || len(attempts) != 4 {
 		t.Fatalf("legacy attempts no longer readable: %#v %v", attempts, err)
+	}
+	withoutStart, err = store.Execution(legacyExecutionID("legacy-without-start"))
+	if err != nil || withoutStart == nil || withoutStart.CreatedAt != "1970-01-01T00:00:00Z" {
+		t.Fatalf("legacy timestamp changed after restart: %#v %v", withoutStart, err)
+	}
+	existingWithoutStart, err = store.Execution(existingID)
+	if err != nil || existingWithoutStart == nil || existingWithoutStart.CreatedAt != existingTimestamp {
+		t.Fatalf("existing legacy timestamp changed after restart: %#v %v", existingWithoutStart, err)
 	}
 }
