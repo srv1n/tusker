@@ -1890,7 +1890,7 @@ func reconcileV7TargetedStateRevCmd(vaultPath, targetID string, args Args) error
 		if err != nil {
 			return err
 		}
-		repair, err = prepareV7TargetedStateRevRepair(vaultPath, note, data, body, targetID, time.Now().UTC())
+		repair, err = prepareV7TargetedStateRevRepair(vaultPath, note, data, body, targetID)
 		if err != nil {
 			return err
 		}
@@ -1907,7 +1907,7 @@ func reconcileV7TargetedStateRevCmd(vaultPath, targetID string, args Args) error
 		if err != nil {
 			return err
 		}
-		repair, err = applyV7TargetedStateRevRepairUnderMaterialLock(vaultPath, note, targetID, time.Now().UTC())
+		repair, err = applyV7TargetedStateRevRepairUnderMaterialLock(vaultPath, note, targetID)
 		if err != nil {
 			return err
 		}
@@ -1979,7 +1979,7 @@ func resolveUniqueV7TaskForTargetedReconcile(vaultPath, targetID string) (Note, 
 	return matches[0], nil
 }
 
-func prepareV7TargetedStateRevRepair(vaultPath string, note Note, data map[string]any, body, targetID string, now time.Time) (v7TargetedStateRevRepair, error) {
+func prepareV7TargetedStateRevRepair(vaultPath string, note Note, data map[string]any, body, targetID string) (v7TargetedStateRevRepair, error) {
 	currentID := stringField(data, "id")
 	kind := effectiveV7Kind(data)
 	repair := v7TargetedStateRevRepair{
@@ -2005,21 +2005,15 @@ func prepareV7TargetedStateRevRepair(vaultPath string, note Note, data map[strin
 	if err := guardV7ReconcileTerminalTaskStateRevRepair(vaultPath, currentNote, data); err != nil {
 		return repair, err
 	}
-	if _, ok := data["updated_at"]; ok {
-		data["updated_at"] = now.Format(time.RFC3339)
-	}
-	if _, ok := data["updated_by"]; ok {
-		data["updated_by"] = "tusker:reconcile"
-	}
 	repair.Changed = true
 	repair.AfterStateRev = v7StateRev(data, body)
 	return repair, nil
 }
 
-func applyV7TargetedStateRevRepairUnderMaterialLock(vaultPath string, note Note, targetID string, now time.Time) (v7TargetedStateRevRepair, error) {
+func applyV7TargetedStateRevRepairUnderMaterialLock(vaultPath string, note Note, targetID string) (v7TargetedStateRevRepair, error) {
 	repair := v7TargetedStateRevRepair{ID: targetID, Kind: "task", Path: note.RelativePath}
 	nextRev, updated, err := mutateV7DocumentUnderMaterialLock(note.AbsolutePath, v7FrontmatterOrder["task"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
-		prepared, err := prepareV7TargetedStateRevRepair(vaultPath, note, data, body, targetID, now)
+		prepared, err := prepareV7TargetedStateRevRepair(vaultPath, note, data, body, targetID)
 		repair = prepared
 		if err != nil {
 			return nil, "", false, err

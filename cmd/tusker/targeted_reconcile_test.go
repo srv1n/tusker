@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestV7TargetedReconcileRepairsOnlySelectedTask(t *testing.T) {
@@ -36,9 +37,30 @@ func TestV7TargetedReconcileRepairsOnlySelectedTask(t *testing.T) {
 	if report.BeforeStateRev != firstBeforeRev || report.AfterStateRev == "" || report.AfterStateRev == firstBeforeRev {
 		t.Fatalf("dry-run revision facts are incomplete: %#v", report)
 	}
+	firstDryRun := report
+	nextSecond := time.Now().Truncate(time.Second).Add(time.Second)
+	time.Sleep(time.Until(nextSecond) + 20*time.Millisecond)
+	output = captureTargetedReconcileStdout(t, func() {
+		if err := reconcileV7Cmd(Args{"vault": vault, "id": "APP-T-0001", "dry-run": "true", "json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var repeatedDryRun v7TargetedReconcileReport
+	if err := json.Unmarshal([]byte(output), &repeatedDryRun); err != nil {
+		t.Fatalf("decode repeated dry-run report: %v\n%s", err, output)
+	}
+	if repeatedDryRun.BeforeStateRev != firstDryRun.BeforeStateRev || repeatedDryRun.AfterStateRev != firstDryRun.AfterStateRev {
+		t.Fatalf("identical task content produced clock-dependent dry-run revisions: first=%#v repeated=%#v", firstDryRun, repeatedDryRun)
+	}
 	assertTargetedReconcileSnapshotsEqual(t, beforeDryRun, snapshotTargetedReconcileVault(t, vault))
 
 	beforeRepair := snapshotTargetedReconcileVault(t, vault)
+	beforeData, _, err := parseFrontmatterMustRead(firstPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeUpdatedAt := stringField(beforeData, "updated_at")
+	beforeUpdatedBy := stringField(beforeData, "updated_by")
 	output = captureTargetedReconcileStdout(t, func() {
 		if err := reconcileV7Cmd(Args{"vault": vault, "id": "APP-T-0001", "json": "true"}); err != nil {
 			t.Fatal(err)
@@ -50,6 +72,9 @@ func TestV7TargetedReconcileRepairsOnlySelectedTask(t *testing.T) {
 	if !report.OK || report.DryRun || !report.Changed || report.ID != "APP-T-0001" {
 		t.Fatalf("unexpected repair report: %#v", report)
 	}
+	if report.BeforeStateRev != firstDryRun.BeforeStateRev || report.AfterStateRev != firstDryRun.AfterStateRev {
+		t.Fatalf("apply did not commit the stable dry-run revision: dry_run=%#v apply=%#v", firstDryRun, report)
+	}
 
 	firstData, firstBody, err := parseFrontmatterMustRead(firstPath)
 	if err != nil {
@@ -57,6 +82,12 @@ func TestV7TargetedReconcileRepairsOnlySelectedTask(t *testing.T) {
 	}
 	if stringField(firstData, "state_rev") != v7StateRev(firstData, firstBody) {
 		t.Fatal("selected task state_rev was not repaired from its current content")
+	}
+	if stringField(firstData, "state_rev") != firstDryRun.AfterStateRev {
+		t.Fatalf("committed revision=%s, want dry-run revision=%s", stringField(firstData, "state_rev"), firstDryRun.AfterStateRev)
+	}
+	if stringField(firstData, "updated_at") != beforeUpdatedAt || stringField(firstData, "updated_by") != beforeUpdatedBy {
+		t.Fatalf("targeted state_rev repair changed task semantics: updated_at %q -> %q, updated_by %q -> %q", beforeUpdatedAt, stringField(firstData, "updated_at"), beforeUpdatedBy, stringField(firstData, "updated_by"))
 	}
 	if !strings.Contains(firstBody, "Pinned SDK and bootstrap semantics remain unchanged.") {
 		t.Fatal("selected task body was not preserved")
