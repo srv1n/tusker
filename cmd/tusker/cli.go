@@ -213,7 +213,7 @@ func run(command string, args Args) (int, error) {
 		for _, vault := range vaults {
 			notifyDaemonForVaultPath(vault)
 		}
-		if len(vaults) == 0 && cliCommandMutatesVault(command) {
+		if len(vaults) == 0 && cliCommandMutatesVault(command) && !(command == "reconcile" && args.Bool("dry-run")) {
 			notifyDaemonForVault(args)
 		}
 		if cliCommandMutatesProjectRegistry(command, args) {
@@ -1339,6 +1339,7 @@ func printV7Help() {
   tusker closeout status HSP-T-0001 --json
   tusker dashboard build
   tusker reconcile
+  tusker reconcile --id HSP-T-0001 [--dry-run] [--json]
   tusker state sync [--branch tusker/state] [--push] [--remote origin]
   tusker state import [--branch tusker/state] [--fetch] [--remote origin]
   tusker state export [--dir .tusker-runtime/state]

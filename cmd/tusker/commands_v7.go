@@ -1754,6 +1754,12 @@ func reconcileV7Cmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	if targetID := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0")))); targetID != "" {
+		return reconcileV7TargetedStateRevCmd(vaultPath, targetID, args)
+	}
+	if args.Bool("dry-run") {
+		return tuskerError(errorMissingArg, "targeted reconcile requires --id <TASK-ID>")
+	}
 	if err := ensureV7ControlMutation(vaultPath, args); err != nil {
 		return err
 	}
@@ -1841,6 +1847,188 @@ func reconcileV7Cmd(args Args) error {
 		fmt.Printf("Reconciled %d V7 task projection%s, %d wave projection%s, %d task wave pointer%s, repaired %d stale object rev%s, %d epic managed block%s, %d stale lease%s, and detected %d done/open-gate violation%s.\n", changed, plural(changed), waveChanges, plural(waveChanges), taskWavePointers, plural(taskWavePointers), revRepairs, plural(revRepairs), epicBlocks, plural(epicBlocks), staleLeases, plural(staleLeases), openDoneGates, plural(openDoneGates))
 	}
 	return nil
+}
+
+type v7TargetedReconcileReport struct {
+	Schema         string `json:"schema"`
+	OK             bool   `json:"ok"`
+	ID             string `json:"id"`
+	Kind           string `json:"kind"`
+	Path           string `json:"path"`
+	DryRun         bool   `json:"dry_run"`
+	Changed        bool   `json:"changed"`
+	BeforeStateRev string `json:"before_state_rev"`
+	AfterStateRev  string `json:"after_state_rev"`
+}
+
+type v7TargetedStateRevRepair struct {
+	ID             string
+	Kind           string
+	Path           string
+	BeforeStateRev string
+	AfterStateRev  string
+	Changed        bool
+}
+
+func reconcileV7TargetedStateRevCmd(vaultPath, targetID string, args Args) error {
+	if !v7TaskIDPattern.MatchString(targetID) {
+		return tuskerError(errorIDScheme, "V7 task id must match ABC-T-0001", withContext(map[string]any{"id": targetID}))
+	}
+
+	var repair v7TargetedStateRevRepair
+	if args.Bool("dry-run") {
+		note, err := resolveUniqueV7TaskForTargetedReconcile(vaultPath, targetID)
+		if err != nil {
+			return err
+		}
+		data, body, err := parseFrontmatterMustRead(note.AbsolutePath)
+		if err != nil {
+			return err
+		}
+		repair, err = prepareV7TargetedStateRevRepair(vaultPath, note, data, body, targetID, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+	} else {
+		if err := ensureV7ControlMutation(vaultPath, args); err != nil {
+			return err
+		}
+		materialLock, err := acquireV7MaterialEpochLock(vaultPath)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = materialLock.Close() }()
+		note, err := resolveUniqueV7TaskForTargetedReconcile(vaultPath, targetID)
+		if err != nil {
+			return err
+		}
+		repair, err = applyV7TargetedStateRevRepairUnderMaterialLock(vaultPath, note, targetID, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		if repair.Changed {
+			if err := emitV7Event(vaultPath, repair.ID, repair.Kind, "updated", "tusker:reconcile", map[string]any{
+				"source":             "state_rev_repair",
+				"previous_state_rev": repair.BeforeStateRev,
+				"state_rev":          repair.AfterStateRev,
+				"path":               repair.Path,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
+	report := v7TargetedReconcileReport{
+		Schema:         "tusker.targeted-reconcile/v1",
+		OK:             true,
+		ID:             repair.ID,
+		Kind:           repair.Kind,
+		Path:           repair.Path,
+		DryRun:         args.Bool("dry-run"),
+		Changed:        repair.Changed,
+		BeforeStateRev: repair.BeforeStateRev,
+		AfterStateRev:  repair.AfterStateRev,
+	}
+	if args.Bool("json") {
+		emitJSON(report)
+	} else if args.Bool("quiet") {
+		return nil
+	} else if report.Changed {
+		action := "Would repair"
+		if !report.DryRun {
+			action = "Repaired"
+		}
+		fmt.Printf("%s stale state_rev for %s at %s: %s -> %s\n", action, report.ID, report.Path, report.BeforeStateRev, report.AfterStateRev)
+	} else {
+		fmt.Printf("State_rev is current for %s at %s.\n", report.ID, report.Path)
+	}
+	return nil
+}
+
+func resolveUniqueV7TaskForTargetedReconcile(vaultPath, targetID string) (Note, error) {
+	notes, err := listAllNotes(vaultPath)
+	if err != nil {
+		return Note{}, err
+	}
+	var matches []Note
+	for _, note := range notes {
+		if isV7StoreObject(note.Data) && effectiveV7Kind(note.Data) == "task" && stringField(note.Data, "id") == targetID {
+			matches = append(matches, note)
+		}
+	}
+	if len(matches) == 0 {
+		return Note{}, tuskerError(errorNotFound, "V7 task not found: "+targetID)
+	}
+	if len(matches) > 1 {
+		paths := make([]string, 0, len(matches))
+		for _, note := range matches {
+			paths = append(paths, note.RelativePath)
+		}
+		sort.Strings(paths)
+		return Note{}, tuskerError(errorIDCollision,
+			"targeted reconcile requires exactly one V7 task object for "+targetID,
+			withHint("resolve the duplicate task ID before retrying targeted reconcile"),
+			withContext(map[string]any{"id": targetID, "paths": paths}),
+		)
+	}
+	return matches[0], nil
+}
+
+func prepareV7TargetedStateRevRepair(vaultPath string, note Note, data map[string]any, body, targetID string, now time.Time) (v7TargetedStateRevRepair, error) {
+	currentID := stringField(data, "id")
+	kind := effectiveV7Kind(data)
+	repair := v7TargetedStateRevRepair{
+		ID:             currentID,
+		Kind:           kind,
+		Path:           note.RelativePath,
+		BeforeStateRev: stringField(data, "state_rev"),
+	}
+	if !isV7StoreObject(data) || kind != "task" || currentID != targetID {
+		return repair, tuskerError("CAS_CONFLICT",
+			"targeted reconcile object identity changed before repair: "+targetID,
+			withPath(note.AbsolutePath),
+			withContext(map[string]any{"expected_id": targetID, "actual_id": currentID, "actual_kind": kind}),
+		)
+	}
+	if repair.BeforeStateRev == "" || v7StateRevMatches(data, body, repair.BeforeStateRev) {
+		repair.AfterStateRev = repair.BeforeStateRev
+		return repair, nil
+	}
+	currentNote := note
+	currentNote.Data = data
+	currentNote.Body = body
+	if err := guardV7ReconcileTerminalTaskStateRevRepair(vaultPath, currentNote, data); err != nil {
+		return repair, err
+	}
+	if _, ok := data["updated_at"]; ok {
+		data["updated_at"] = now.Format(time.RFC3339)
+	}
+	if _, ok := data["updated_by"]; ok {
+		data["updated_by"] = "tusker:reconcile"
+	}
+	repair.Changed = true
+	repair.AfterStateRev = v7StateRev(data, body)
+	return repair, nil
+}
+
+func applyV7TargetedStateRevRepairUnderMaterialLock(vaultPath string, note Note, targetID string, now time.Time) (v7TargetedStateRevRepair, error) {
+	repair := v7TargetedStateRevRepair{ID: targetID, Kind: "task", Path: note.RelativePath}
+	nextRev, updated, err := mutateV7DocumentUnderMaterialLock(note.AbsolutePath, v7FrontmatterOrder["task"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
+		prepared, err := prepareV7TargetedStateRevRepair(vaultPath, note, data, body, targetID, now)
+		repair = prepared
+		if err != nil {
+			return nil, "", false, err
+		}
+		return data, body, prepared.Changed, nil
+	})
+	if err != nil {
+		return repair, err
+	}
+	repair.Changed = updated
+	if updated {
+		repair.AfterStateRev = nextRev
+	}
+	return repair, nil
 }
 
 func reconcileV7ControlProjections(vaultPath string, taskIDs []string, actor, source string) (int, error) {
