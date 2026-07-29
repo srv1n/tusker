@@ -3480,8 +3480,9 @@ func resolveRunnerForNote(note Note, wf Workflow) string {
 }
 
 // scopeDispatchBlocker preserves the narrow human-directive exception: a
-// directive may bypass only automation-off and fresh no-wave scope admission.
-// It never weakens dependency, readiness, runner, budget, or circuit checks.
+// directive may bypass automation-off, but never dispatch-scope admission.
+// In particular, armed_waves remains an exact-wave authority boundary for
+// every fresh background claim, including a human-requested one.
 func (d *Daemon) scopeDispatchBlocker(project RegisteredProject, note Note, wf Workflow, runs map[string]RunStatus) (string, error) {
 	reason := armedWaveDispatchBlocker(project.VaultRoot, note, wf, runs)
 	if reason == "" || !runDirectiveBypassableBlocker(reason) {
@@ -6403,13 +6404,15 @@ func daemonStatusCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
-	if _, err := loadRegisteredProjects(store, registeredProjectLoadOptions{}); err != nil {
+	loadedProjects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{LoadDisabled: true})
+	if err != nil {
 		return err
 	}
 	status, err := store.DaemonStatus()
 	if err != nil {
 		return err
 	}
+	status["dispatch_scopes"] = daemonDispatchScopeSummaries(loadedProjects)
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "status": status})
 		return nil
@@ -6423,6 +6426,10 @@ func daemonStatusCmd(args Args) error {
 	}
 	fmt.Printf("Registered projects: %v\n", status["projects"])
 	if projects, ok := status["project_health"].([]RegisteredProject); ok {
+		scopes := map[string]automationDispatchScopeProjection{}
+		for _, projection := range daemonDispatchScopeSummaries(loadedProjects) {
+			scopes[projection.ProjectID] = projection.DispatchScope
+		}
 		for _, project := range projects {
 			state := "enabled"
 			if !project.Enabled {
@@ -6433,6 +6440,12 @@ func daemonStatusCmd(args Args) error {
 				line += " (" + project.LastError + ")"
 			}
 			fmt.Println(line)
+			if scope, ok := scopes[project.ProjectID]; ok {
+				fmt.Printf("    dispatch_scope configured=%s effective=%s provenance=%s\n", fallback(scope.Configured, "-"), scope.Effective, scope.Provenance)
+				if scope.Warning != "" {
+					fmt.Printf("    scope_warning=%s; repair=%s\n", scope.Warning, scope.Repair)
+				}
+			}
 		}
 	}
 	fmt.Printf("Active runs: %v / %v\n", status["activeRuns"], status["max_active_runs"])
@@ -6455,6 +6468,31 @@ func daemonStatusCmd(args Args) error {
 		fmt.Printf("Disk pressure: %s (bytes=%d percent=%.2f paused=%t)\n", diskPressure.State, diskPressure.MinFreeBytes, diskPressure.MinFreePercent, diskPressure.DispatchPaused)
 	}
 	return nil
+}
+
+type daemonDispatchScopeSummary struct {
+	ProjectID     string                            `json:"project_id"`
+	ProjectKey    string                            `json:"project_key"`
+	RepoRoot      string                            `json:"repo_root"`
+	DispatchScope automationDispatchScopeProjection `json:"dispatch_scope"`
+}
+
+func daemonDispatchScopeSummaries(projects []loadedRegisteredProject) []daemonDispatchScopeSummary {
+	summaries := make([]daemonDispatchScopeSummary, 0, len(projects))
+	for _, loaded := range projects {
+		scope := defaultAutomationDispatchScope()
+		if loaded.LoadError == nil && loaded.Workflow.Data.DispatchScope.Effective != "" {
+			scope = loaded.Workflow.Data.DispatchScope
+		}
+		summaries = append(summaries, daemonDispatchScopeSummary{
+			ProjectID: loaded.Project.ProjectID, ProjectKey: loaded.Project.ProjectKey,
+			RepoRoot: loaded.Project.RepoRoot, DispatchScope: scope,
+		})
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		return summaries[i].ProjectID < summaries[j].ProjectID
+	})
+	return summaries
 }
 
 func daemonResumeCmd(args Args) error {

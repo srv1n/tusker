@@ -96,25 +96,11 @@ final class TuskerBarTests: XCTestCase {
         XCTAssertEqual(environment, ["PATH": "/usr/bin"])
     }
 
-    func testRuntimeProbeSequenceRejectsLateHealthCallbacks() {
-        var sequence = RuntimeProbeSequence()
-        let stale = sequence.begin()
-        let current = sequence.begin()
-
-        XCTAssertFalse(sequence.accepts(stale))
-        XCTAssertTrue(sequence.accepts(current))
-    }
-
-    func testVisibleShellProbesEvenWhileRuntimeStateIsTransient() {
-        let transientStates: [ManagedRuntimeState] = [.idle, .checking, .starting, .failed("late startup")]
-
-        for state in transientStates {
-            let plan = RuntimeShellProbePlan.make(for: state)
-            XCTAssertEqual(plan.display, .runtimeState)
-            XCTAssertTrue(plan.shouldProbe)
-        }
-        XCTAssertEqual(RuntimeShellProbePlan.make(for: .running), RuntimeShellProbePlan(display: .connecting, shouldProbe: true))
-        XCTAssertEqual(RuntimeShellProbePlan.make(for: .external), RuntimeShellProbePlan(display: .connecting, shouldProbe: true))
+    func testRuntimeShellLoadsStoredUIOptimisticallyAndNeverCoversCommittedContent() {
+        XCTAssertEqual(RuntimeShellLoadPlan.cachePolicy(for: .optimistic), .returnCacheDataElseLoad)
+        XCTAssertEqual(RuntimeShellLoadPlan.cachePolicy(for: .live), .reloadRevalidatingCacheData)
+        XCTAssertTrue(RuntimeShellLoadPlan.shouldCoverWebView(hasCommittedContent: false))
+        XCTAssertFalse(RuntimeShellLoadPlan.shouldCoverWebView(hasCommittedContent: true))
     }
 
     @MainActor

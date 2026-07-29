@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-20T03:38:53Z"
-updated_at: "2026-07-27T04:10:55Z"
-state_rev: "sha256:331f9acc8a0af76624c1d24949d9865e21d386c3c181019659190e9aa2caf4fc"
+updated_at: "2026-07-29T09:08:34Z"
+state_rev: "sha256:8cb9d641054dfb669351f59cbc8a96108f862bd749f27bfe6751b448a463ccda"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -60,40 +60,51 @@ report-less overnight lane, eight redundant workspace gates).
 |---|---|---|---|
 | [[ORC-T-0014]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
 | [[ORC-T-0015]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0016]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0017]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0018]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0019]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0020]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0021]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0022]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0023]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0024]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0025]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0026]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0027]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0028]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0016]] | backlog | blocked_dependency | Wait for dependency ORC-T-0014 to reach done. |
+| [[ORC-T-0017]] | backlog | blocked_dependency | Wait for dependency ORC-T-0014 to reach done. |
+| [[ORC-T-0018]] | backlog | blocked_dependency | Wait for dependency ORC-T-0016 to reach done. |
+| [[ORC-T-0019]] | backlog | blocked_dependency | Wait for dependency ORC-T-0015 to reach done. |
+| [[ORC-T-0020]] | backlog | blocked_dependency | Wait for dependency ORC-T-0017 to reach done. |
+| [[ORC-T-0021]] | backlog | blocked_dependency | Wait for dependency ORC-T-0020 to reach done. |
+| [[ORC-T-0022]] | backlog | blocked_dependency | Wait for dependency ORC-T-0014 to reach done. |
+| [[ORC-T-0023]] | backlog | blocked_dependency | Wait for dependency ORC-T-0014 to reach done. |
+| [[ORC-T-0024]] | backlog | blocked_dependency | Wait for dependency ORC-T-0015 to reach done. |
+| [[ORC-T-0025]] | backlog | blocked_dependency | Wait for dependency ORC-T-0014 to reach done. |
+| [[ORC-T-0026]] | backlog | blocked_dependency | Wait for dependency ORC-T-0024 to reach done. |
+| [[ORC-T-0027]] | backlog | blocked_dependency | Wait for dependency ORC-T-0020 to reach done. |
+| [[ORC-T-0028]] | backlog | blocked_dependency | Wait for dependency ORC-T-0016 to reach done. |
 | [[ORC-T-0029]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
 | [[ORC-T-0030]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0031]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0032]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0033]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0034]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0035]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0036]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0037]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0038]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0039]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0031]] | backlog | blocked_dependency | Wait for dependency ORC-T-0029 to reach done. |
+| [[ORC-T-0032]] | backlog | blocked_dependency | Wait for dependency ORC-T-0030 to reach done. |
+| [[ORC-T-0033]] | backlog | blocked_dependency | Wait for dependency ORC-T-0031 to reach done. |
+| [[ORC-T-0034]] | backlog | blocked_dependency | Wait for dependency ORC-T-0033 to reach done. |
+| [[ORC-T-0035]] | backlog | blocked_dependency | Wait for dependency ORC-T-0029 to reach done. |
+| [[ORC-T-0036]] | backlog | blocked_dependency | Wait for dependency ORC-T-0033 to reach done. |
+| [[ORC-T-0037]] | backlog | blocked_dependency | Wait for dependency ORC-T-0030 to reach done. |
+| [[ORC-T-0038]] | backlog | blocked_dependency | Wait for dependency ORC-T-0035 to reach done. |
+| [[ORC-T-0039]] | backlog | blocked_dependency | Wait for dependency ORC-T-0029 to reach done. |
 | [[ORC-T-0040]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0041]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0042]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0043]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0044]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0045]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0046]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0047]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0048]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0049]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0041]] | backlog | blocked_dependency | Wait for dependency ORC-T-0040 to reach done. |
+| [[ORC-T-0042]] | backlog | blocked_dependency | Wait for dependency ORC-T-0040 to reach done. |
+| [[ORC-T-0043]] | backlog | blocked_dependency | Wait for dependency ORC-T-0041 to reach done. |
+| [[ORC-T-0044]] | backlog | blocked_dependency | Wait for dependency ORC-T-0042 to reach done. |
+| [[ORC-T-0045]] | backlog | blocked_dependency | Wait for dependency ORC-T-0043 to reach done. |
+| [[ORC-T-0046]] | backlog | blocked_dependency | Wait for dependency ORC-T-0045 to reach done. |
+| [[ORC-T-0047]] | backlog | blocked_dependency | Wait for dependency ORC-T-0045 to reach done. |
+| [[ORC-T-0048]] | backlog | blocked_dependency | Wait for dependency ORC-T-0047 to reach done. |
+| [[ORC-T-0049]] | backlog | blocked_dependency | Wait for dependency ORC-T-0046 to reach done. |
+| [[ORC-T-0066]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0067]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0068]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0069]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0070]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0071]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0072]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0073]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0074]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0075]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0076]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
 
 ## Recently completed
 
@@ -118,3 +129,9 @@ report-less overnight lane, eight redundant workspace gates).
 | [[ORC-T-0052]] | reviewer:terra-high | 2026-07-27T03:31:44Z |
 | [[ORC-T-0053]] | reviewer:terra-high | 2026-07-27T03:54:07Z |
 | [[ORC-T-0054]] | reviewer:terra-high | 2026-07-27T04:10:55Z |
+| [[ORC-T-0083]] | reviewer:codex | 2026-07-29T07:43:13Z |
+| [[ORC-T-0084]] | reviewer:codex | 2026-07-29T08:04:05Z |
+| [[ORC-T-0085]] | reviewer:codex | 2026-07-29T08:04:06Z |
+| [[ORC-T-0086]] | reviewer:codex | 2026-07-29T08:04:06Z |
+| [[ORC-T-0087]] | reviewer:luna | 2026-07-29T08:57:55Z |
+| [[ORC-T-0088]] | reviewer:luna | 2026-07-29T09:08:34Z |

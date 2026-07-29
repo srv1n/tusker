@@ -256,6 +256,8 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case path == "/api/delivery/plans":
+		s.handleDeliveryPlans(w, r)
 	case path == "/api/delivery/review":
 		s.handleDeliveryReview(w, r)
 	case path == "/api/stream":
@@ -421,7 +423,36 @@ func serveStaticFile(w http.ResponseWriter, r *http.Request, assets fs.FS, path 
 	if ctype := mime.TypeByExtension(filepath.Ext(path)); ctype != "" {
 		w.Header().Set("Content-Type", ctype)
 	}
+	w.Header().Set("Cache-Control", serveStaticCacheControl(path))
 	http.ServeContent(w, r, path, info.ModTime(), file.(io.ReadSeeker))
+}
+
+func serveStaticCacheControl(path string) string {
+	clean := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(path)), "/")
+	if strings.HasPrefix(clean, "assets/") && serveAssetIsFingerprinted(clean) {
+		return "public, max-age=31536000, immutable"
+	}
+	// The SPA document may be stored so the native app can render it while the
+	// daemon starts, but a live server must revalidate it before normal reuse.
+	return "no-cache"
+}
+
+func serveAssetIsFingerprinted(path string) bool {
+	base := filepath.Base(path)
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	dash := strings.LastIndex(stem, "-")
+	if dash < 0 || len(stem[dash+1:]) < 8 {
+		return false
+	}
+	for _, char := range stem[dash+1:] {
+		if (char < 'a' || char > 'z') &&
+			(char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') &&
+			char != '_' && char != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func serveFSExists(files fs.FS, path string) bool {

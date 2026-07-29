@@ -713,6 +713,37 @@ func runsReleaseCmd(args Args) error {
 	if run == nil {
 		return tuskerError(errorNotFound, "run not found: "+identity)
 	}
+	// A hand-owned session is governed by the universal work-session protocol.
+	// The legacy release surface must not let an arbitrary shell retire an
+	// interactive lease just because it has no child PID.
+	if run.HandRun && (LeaseState(run.LeaseState) == LeaseStateClaimed || LeaseState(run.LeaseState) == LeaseStateRunning) {
+		if args.Bool("break-glass") {
+			actor := strings.TrimSpace(firstNonEmpty(args.String("by"), args.String("actor")))
+			if !strings.HasPrefix(actor, "human:") || strings.TrimSpace(args.String("reason")) == "" {
+				return tuskerError(errorInvalidArg, "break-glass release requires --by human:<name> and --reason")
+			}
+			if runProcessGroupAlive(*run) {
+				return tuskerError(errorInvalidTransition, "run process is still running; use tusker runs interrupt before release", withContext(map[string]any{"pid": run.ProcessPID}))
+			}
+			// LastError is the durable, structured operator audit field shared by
+			// runs and their terminal attempt projection. Keep the actor adjacent
+			// to the action so a later runtime view can attribute the override.
+			reason := "break_glass actor=" + actor + " reason=" + strings.TrimSpace(args.String("reason"))
+			if err := finishRuntimeRunIfSnapshot(store, run, LeaseStateReleased, AttemptOutcomeAbandoned, 0, reason, false); err != nil {
+				return err
+			}
+			return emitRunsReleaseResult(args, run, actor)
+		}
+		if strings.TrimSpace(firstNonEmpty(args.String("by"), args.String("owner"), args.String("actor"))) == "" {
+			return tuskerError(errorMissingArg, "interactive work release requires --by <owner> and --revision <work-revision>", withHint("use `tusker work release "+run.ItemID+" --by "+run.LeaseOwner+" --revision "+fmt.Sprint(run.WorkRevision)+" --reason <text>`"))
+		}
+		if intArg(args, "revision") <= 0 {
+			return tuskerError(errorMissingArg, "interactive work release requires --revision <work-revision>")
+		}
+		args["id"] = run.ItemID
+		args["owner"] = firstNonEmpty(args.String("by"), args.String("owner"), args.String("actor"))
+		return workSessionLifecycleCmd(args, "release")
+	}
 	if runProcessGroupAlive(*run) {
 		return tuskerError(errorInvalidTransition, "run process is still running; use tusker runs interrupt before release", withContext(map[string]any{"pid": run.ProcessPID}))
 	}
@@ -720,8 +751,16 @@ func runsReleaseCmd(args Args) error {
 	if err := finishRuntimeRun(store, run, LeaseStateReleased, AttemptOutcomeAbandoned, 0, reason, false); err != nil {
 		return err
 	}
+	return emitRunsReleaseResult(args, run, "")
+}
+
+func emitRunsReleaseResult(args Args, run *RunStatus, actor string) error {
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "released": true, "item_id": run.ItemID, "record_id": run.RecordID})
+		result := map[string]any{"ok": true, "released": true, "item_id": run.ItemID, "record_id": run.RecordID}
+		if actor != "" {
+			result["actor"] = actor
+		}
+		emitJSON(result)
 		return nil
 	}
 	fmt.Printf("Released %s\n", firstNonEmpty(run.ItemID, run.RecordID))

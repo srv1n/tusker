@@ -38,6 +38,34 @@ func TestServeReadOnlyAndLocalhost(t *testing.T) {
 	}
 }
 
+func TestServeStaticCachePolicy(t *testing.T) {
+	assets := fstest.MapFS{
+		"index.html":                  {Data: []byte("<html>cached shell</html>"), ModTime: time.Now()},
+		"assets/app-deadbeef.js":      {Data: []byte("export default true"), ModTime: time.Now()},
+		"assets/unversioned-logo.svg": {Data: []byte("<svg/>"), ModTime: time.Now()},
+	}
+	server := &serveServer{assets: assets}
+	for _, test := range []struct {
+		path string
+		want string
+	}{
+		{path: "/", want: "no-cache"},
+		{path: "/p/tusker/work", want: "no-cache"},
+		{path: "/assets/app-deadbeef.js", want: "public, max-age=31536000, immutable"},
+		{path: "/assets/unversioned-logo.svg", want: "no-cache"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, test.path, nil)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		assertEqual(t, http.StatusOK, rec.Code, test.path+" status")
+		assertEqual(t, test.want, rec.Header().Get("Cache-Control"), test.path+" cache policy")
+	}
+
+	rec := httptest.NewRecorder()
+	serveJSON(rec, http.StatusOK, map[string]bool{"ok": true})
+	assertEqual(t, "no-store", rec.Header().Get("Cache-Control"), "API cache policy")
+}
+
 func TestServeQueueSnapshotDoesNotProbeRunner(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Runnable", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)

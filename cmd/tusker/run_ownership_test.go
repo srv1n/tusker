@@ -193,6 +193,66 @@ func TestRunClaimStartHeartbeatSubmitFailInterruptReclaim(t *testing.T) {
 	assertEqual(t, string(AttemptOutcomeInterrupted), latest.AttemptOutcome, "reclaimed outcome")
 }
 
+func TestFinalizeRunLeaseRejectsStaleOwnerWithoutWritingAttempt(t *testing.T) {
+	store, run := ownershipStoreFixture(t, "APP-T-TERMINAL-RACE")
+	service := newRunOwnershipService(store)
+	oldClaim, err := service.claim(run, "agent:old")
+	if err != nil || !oldClaim.Claimed || oldClaim.Run == nil {
+		t.Fatalf("old claim: %#v %v", oldClaim, err)
+	}
+	old := *oldClaim.Run // The old owner has this snapshot just before finalization.
+	if _, err := store.db.Exec(`UPDATE runs SET lease_expires_at = ?, process_pid = 0, process_pgid = 0 WHERE record_id = ?`, time.Now().UTC().Add(-3*defaultRunLeaseTTL).Format(time.RFC3339), run.RecordID); err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed, err := store.ReclaimExpiredRunLease(run.ProjectID, run.RecordID, time.Now().UTC(), defaultRunLeaseTTL, "test takeover"); err != nil || !reclaimed {
+		t.Fatalf("reclaim: reclaimed=%v err=%v", reclaimed, err)
+	}
+	current, err := store.FindRun(run.RecordID)
+	if err != nil || current == nil {
+		t.Fatalf("reclaimed run: %#v %v", current, err)
+	}
+	newClaim, err := service.claim(*current, "agent:new")
+	if err != nil || !newClaim.Claimed || newClaim.Run == nil {
+		t.Fatalf("new claim: %#v %v", newClaim, err)
+	}
+
+	old.LeaseState, old.LeaseOwner, old.LeaseExpiresAt = string(LeaseStateReleased), "", ""
+	old.AttemptOutcome, old.ActiveAttemptID = string(AttemptOutcomeSucceeded), ""
+	old.FinalSummary, old.LogsSummary = "old result", "A1 pass"
+	old.LastEventAt, old.UpdatedAt = time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339)
+	staleAttempt := RunAttempt{AttemptID: "terminal-old", ProjectID: run.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID, Runner: run.Runner, Lane: run.Lane, WorkRevision: old.WorkRevision, Outcome: string(AttemptOutcomeSucceeded)}
+	if finalized, err := store.FinalizeRunLease(old, staleAttempt, "agent:old", old.LeaseGeneration); err != nil || finalized {
+		t.Fatalf("stale finalization must miss without error: finalized=%v err=%v", finalized, err)
+	}
+	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil || len(attempts) != 0 {
+		t.Fatalf("stale finalization wrote attempt: %#v err=%v", attempts, err)
+	}
+	live, _ := store.FindRun(run.RecordID)
+	if live.LeaseOwner != "agent:new" || live.LeaseGeneration != old.LeaseGeneration+1 || LeaseState(live.LeaseState) != LeaseStateClaimed {
+		t.Fatalf("stale finalization changed takeover: %#v", live)
+	}
+
+	winner := *newClaim.Run
+	winner.LeaseState, winner.LeaseOwner, winner.LeaseExpiresAt = string(LeaseStateReleased), "", ""
+	winner.AttemptOutcome, winner.ActiveAttemptID = string(AttemptOutcomeSucceeded), ""
+	winner.FinalSummary, winner.LogsSummary = "new result", "A1 pass"
+	winner.LastEventAt, winner.UpdatedAt = time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339)
+	winnerAttempt := staleAttempt
+	winnerAttempt.AttemptID = "terminal-new"
+	winnerAttempt.FinalSummary = "new result"
+	if finalized, err := store.FinalizeRunLease(winner, winnerAttempt, "agent:new", winner.LeaseGeneration); err != nil || !finalized {
+		t.Fatalf("winner finalization: finalized=%v err=%v", finalized, err)
+	}
+	if finalized, err := store.FinalizeRunLease(winner, winnerAttempt, "agent:new", winner.LeaseGeneration); err != nil || finalized {
+		t.Fatalf("terminal retry must be exactly once: finalized=%v err=%v", finalized, err)
+	}
+	attempts, err = store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil || len(attempts) != 1 || attempts[0].AttemptID != "terminal-new" {
+		t.Fatalf("winner terminal attempt = %#v err=%v", attempts, err)
+	}
+}
+
 func TestHeartbeatLeaseExpiryStaleReclaimPreservesAttempt(t *testing.T) {
 	store, run := ownershipStoreFixture(t, "APP-T-0005")
 	service := newRunOwnershipService(store)

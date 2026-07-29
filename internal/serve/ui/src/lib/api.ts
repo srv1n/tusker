@@ -23,6 +23,7 @@ import type {
   DaemonStatus,
   ActionResult,
   DeliveryErrorPayload,
+  DeliveryPlanList,
   DeliveryReview,
   DeliveryStartResult,
   AttemptDetail,
@@ -136,6 +137,9 @@ export const api = {
   // GET /api/factory-operations?project=
   factoryOperations: (projectId?: string): Promise<FactoryOperationsProjection> =>
     real(withProject("/factory-operations", projectId)),
+
+  deliveryPlans: (projectId?: string): Promise<DeliveryPlanList> =>
+    real(withProject("/delivery/plans", projectId)),
 
   deliveryReview: (plan: string, projectId?: string): Promise<DeliveryReview> =>
     deliveryRequest("GET", withProject(`/delivery/review?plan=${encodeURIComponent(plan)}`, projectId)),

@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="app">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=Source+Code+Pro:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:#FFFFFF;color:#1A1A1A;font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  ::selection{background:#1A1A1A;color:#FFFFFF}
+  button{font-family:inherit;cursor:pointer}
+  textarea{font-family:inherit}
+  .tk-scroll::-webkit-scrollbar{width:10px;height:10px}
+  .tk-scroll::-webkit-scrollbar-thumb{background:rgba(0,0,0,.15);border:3px solid #FFFFFF;border-radius:8px}
+  @keyframes tkIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  @keyframes tkPulse{0%,100%{opacity:1}50%{opacity:.3}}
+</style>
+</helmet>
+<div style="display:flex;height:100vh;width:100%;overflow:hidden;background:#FFFFFF">
+
+  <aside style="width:246px;flex:none;border-right:1px solid #E6E6E6;background:#FAFAFA;display:flex;flex-direction:column;padding:16px 0">
+    <div style="display:flex;align-items:center;gap:9px;padding:0 18px 16px">
+      <span style="width:22px;height:22px;border-radius:6px;background:#1A1A1A;color:#fff;font-family:'Source Serif 4',serif;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center">t</span>
+      <span style="font-family:'Source Serif 4',serif;font-size:17px;font-weight:600;letter-spacing:-.01em">tusker</span>
+      <span style="font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:#B0B0B0;margin-top:3px">serve</span>
+    </div>
+
+    <div style="padding:0 12px">
+      <button onClick="{{ goInbox }}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;border:none;background:{{ inboxBg }};color:{{ inboxFg }};text-align:left;padding:9px 10px;border-radius:7px;font-size:13.5px;font-weight:{{ inboxWeight }}" style-hover="background:#F0F0F0">
+        <span style="display:flex;align-items:center;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:#C63A2A"></span>Needs me · all</span>
+        <sc-if value="{{ hasGlobalNeeds }}" hint-placeholder-val="{{ true }}"><span style="font-family:'Source Code Pro',monospace;font-size:11px;font-weight:600;background:#C63A2A;color:#fff;min-width:19px;height:19px;padding:0 5px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center">{{ globalNeeds }}</span></sc-if>
+      </button>
+      <button style="display:flex;align-items:center;gap:10px;width:100%;border:none;background:transparent;color:#565656;text-align:left;padding:9px 10px;border-radius:7px;font-size:13.5px;font-weight:500" style-hover="background:#F0F0F0"><span style="width:6px;height:6px;border-radius:50%;background:#B0B0B0"></span>Search</button>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 20px 6px">
+      <span style="font-family:'Source Code Pro',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:#B0B0B0">Projects</span>
+      <span style="font-family:'Source Code Pro',monospace;font-size:10.5px;color:#C4C4C4">{{ projectCount }}</span>
+    </div>
+
+    <div class="tk-scroll" style="flex:1;overflow-y:auto;padding:0 12px 8px">
+      <sc-for list="{{ rail }}" as="p" hint-placeholder-count="5">
+        <div style="margin-bottom:3px">
+          <button onClick="{{ p.onSelect }}" style="display:flex;align-items:center;gap:9px;width:100%;border:none;background:{{ p.bg }};text-align:left;padding:8px 10px;border-radius:7px" style-hover="background:#F0F0F0">
+            <span style="color:#B0B0B0;font-size:11px;flex:none">{{ p.caret }}</span>
+            <span style="font-size:13px;font-weight:{{ p.weight }};color:{{ p.nameColor }};flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.name }}</span>
+            <sc-if value="{{ p.glanceCount }}" hint-placeholder-val="{{ false }}"><span style="font-family:'Source Code Pro',monospace;font-size:10px;font-weight:600;background:#C63A2A;color:#fff;min-width:17px;height:17px;padding:0 5px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;flex:none">{{ p.needs }}</span></sc-if>
+            <sc-if value="{{ p.glanceDot }}" hint-placeholder-val="{{ true }}"><span style="width:7px;height:7px;border-radius:50%;background:{{ p.dotColor }};flex:none;animation:{{ p.dotAnim }}"></span></sc-if>
+          </button>
+          <sc-if value="{{ p.selected }}" hint-placeholder-val="{{ false }}">
+            <div style="margin:2px 0 8px 18px;border-left:1px solid #E6E6E6;padding-left:8px;display:flex;flex-direction:column;gap:1px">
+              <sc-for list="{{ p.sections }}" as="sub" hint-placeholder-count="4">
+                <button onClick="{{ sub.onClick }}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;border:none;background:{{ sub.bg }};color:{{ sub.fg }};text-align:left;padding:6px 9px;border-radius:6px;font-size:12.5px;font-weight:{{ sub.weight }}" style-hover="background:#F0F0F0">
+                  <span>{{ sub.label }}</span>
+                  <sc-if value="{{ sub.showBadge }}" hint-placeholder-val="{{ false }}"><span style="font-family:'Source Code Pro',monospace;font-size:10px;font-weight:600;color:{{ sub.badgeFg }};background:{{ sub.badgeBg }};padding:1px 6px;border-radius:8px">{{ sub.badge }}</span></sc-if>
+                </button>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="padding:8px 12px 0"><button onClick="{{ goAppSettings }}" style="display:flex;align-items:center;gap:10px;width:100%;border:none;background:{{ appSetBg }};color:{{ appSetFg }};text-align:left;padding:8px 10px;border-radius:7px;font-size:13.5px;font-weight:500" style-hover="background:#F0F0F0"><span style="width:6px;height:6px;border-radius:50%;background:#B0B0B0"></span>Settings</button></div>
+    <div style="padding:10px 20px 0"><div style="border-top:1px solid #E6E6E6;padding-top:12px;font-family:'Source Code Pro',monospace;font-size:10.5px;line-height:1.7;color:#9A9A9A"><div>daemon <span style="color:#2E7D57">● live</span></div><div>localhost:7420</div></div></div>
+  </aside>
+
+  <main class="tk-scroll" data-screen-label="{{ screenLabel }}" style="flex:1;min-width:0;overflow-y:auto;background:#FFFFFF">
+
+    <!-- ===== GLOBAL INBOX ===== -->
+    <sc-if value="{{ isInbox }}" hint-placeholder-val="{{ false }}">
+    <div style="max-width:960px;margin:0 auto;padding:34px 44px 80px">
+      <header style="margin-bottom:26px">
+        <h1 style="margin:0;font-family:'Source Serif 4',serif;font-size:34px;font-weight:600;letter-spacing:-.02em;line-height:1">Needs me</h1>
+        <p style="margin:9px 0 0;font-size:13.5px;color:#6B6B6B">{{ inboxSummary }}</p>
+        <p style="margin:8px 0 0;font-family:'Source Code Pro',monospace;font-size:11px;color:#B0B0B0"><span style="border:1px solid #DADADA;border-radius:4px;padding:0 5px;color:#6B6B6B">J</span> jump to next · <span style="border:1px solid #DADADA;border-radius:4px;padding:0 5px;color:#6B6B6B">K</span> previous</p>
+      </header>
+      <sc-if value="{{ inboxEmpty }}" hint-placeholder-val="{{ false }}">
+        <div style="border:1px solid #E6E6E6;border-radius:10px;background:#FAFAFA;padding:56px;text-align:center;animation:tkIn .3s ease both">
+          <div style="width:32px;height:32px;border-radius:50%;border:1.5px solid #2E7D57;margin:0 auto 16px;display:flex;align-items:center;justify-content:center;color:#2E7D57">✓</div>
+          <h2 style="margin:0;font-family:'Source Serif 4',serif;font-size:22px;font-weight:600">Nothing needs you</h2>
+          <p style="margin:9px 0 0;font-size:14px;color:#6B6B6B">Across all {{ projectCount }} projects. The machine is running clean.</p>
+          <button onClick="{{ resetGates }}" style="margin-top:20px;border:none;background:none;color:#BDBDBD;font-size:11.5px;text-decoration:underline;font-family:'Source Code Pro',monospace">restore demo queue</button>
+        </div>
+      </sc-if>
+      <sc-if value="{{ inboxNotEmpty }}" hint-placeholder-val="{{ true }}">
+        <div style="border-top:1px solid #D6D6D6">
+          <sc-for list="{{ inboxCards }}" as="c" hint-placeholder-count="6">
+            <div data-fidx="{{ c.idx }}" style="display:grid;grid-template-columns:96px 1fr;gap:24px;padding:22px 12px 24px;border-bottom:1px solid #E6E6E6;border-radius:8px;box-shadow:{{ c.ring }};opacity:{{ c.opacity }};transform:{{ c.transform }};transition:.38s ease;animation:tkIn .34s ease both">
+              <div style="border-left:3px solid {{ c.color }};padding-left:15px">
+                <div style="font-family:'Source Serif 4',serif;font-size:38px;font-weight:600;line-height:.9;color:{{ c.numColor }};letter-spacing:-.03em">{{ c.blk }}</div>
+                <div style="font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#9A9A9A;margin-top:7px;white-space:pre-line;line-height:1.5">{{ c.blkUnit }}</div>
+                <div style="font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:{{ c.color }};margin-top:13px;font-weight:600">{{ c.kindGlyph }} {{ c.kindLabel }}</div>
+              </div>
+              <div>
+                <div style="display:flex;align-items:center;gap:9px;margin-bottom:3px">
+                  <button onClick="{{ c.onProject }}" style="font-family:'Source Code Pro',monospace;font-size:10px;font-weight:600;color:#4A4A4A;background:#EFEFEF;border:none;padding:2px 7px;border-radius:5px" style-hover="background:#E4E4E4">◇ {{ c.project }}</button>
+                  <span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#9A9A9A">{{ c.taskId }}</span>
+                  <span style="margin-left:auto;font-family:'Source Code Pro',monospace;font-size:11px;color:#9A9A9A">{{ c.age }} · {{ c.priority }}</span>
+                </div>
+                <h3 style="margin:0 0 8px;font-family:'Source Serif 4',serif;font-size:20px;font-weight:600;letter-spacing:-.015em;line-height:1.2">{{ c.taskTitle }}</h3>
+                <div style="font-family:'Source Serif 4',serif;font-size:15.5px;line-height:1.55;color:#454545;max-width:66ch">{{ c.body }}</div>
+                <sc-if value="{{ c.hasCheckbox }}" hint-placeholder-val="{{ false }}"><label style="display:flex;align-items:center;gap:9px;margin-top:12px;font-size:13px;color:#454545;cursor:pointer"><input type="checkbox" checked="{{ c.checked }}" onChange="{{ c.onCheck }}" style="width:15px;height:15px;accent-color:#6B5AD1">{{ c.checkLabel }}</label></sc-if>
+                <div style="display:flex;align-items:center;gap:11px;margin-top:15px">
+                  <button onClick="{{ c.onPrimary }}" disabled="{{ c.primaryDisabled }}" style="border:1.5px solid {{ c.color }};background:{{ c.color }};color:#fff;padding:8px 16px;border-radius:7px;font-size:13px;font-weight:600;opacity:{{ c.primaryOpacity }}">{{ c.primaryLabel }}</button>
+                  <button onClick="{{ c.onSecondary }}" style="border:1.5px solid #DADADA;background:none;color:#454545;padding:8px 14px;border-radius:7px;font-size:13px;font-weight:500" style-hover="border-color:#B0B0B0">{{ c.secondaryLabel }}</button>
+                </div>
+                <sc-if value="{{ c.composeOpen }}" hint-placeholder-val="{{ false }}"><div style="margin-top:12px;max-width:66ch"><textarea value="{{ c.draft }}" onInput="{{ c.onDraft }}" placeholder="{{ c.placeholder }}" style="width:100%;min-height:78px;resize:vertical;border:1px solid #DADADA;border-radius:8px;padding:11px 12px;font-size:14px;line-height:1.5;background:#FAFAFA;outline:none" style-focus="border-color:{{ c.color }}"></textarea><div style="margin-top:9px"><button onClick="{{ c.onCompose }}" style="border:none;background:{{ c.color }};color:#fff;padding:8px 15px;border-radius:7px;font-size:12.5px;font-weight:600">{{ c.composeLabel }}</button></div></div></sc-if>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+    </sc-if>
+
+    <!-- ===== PROJECT OVERVIEW ===== -->
+    <sc-if value="{{ isOverview }}" hint-placeholder-val="{{ true }}">
+    <div style="max-width:1280px;margin:0 auto;padding:30px 44px 80px">
+      <header style="display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:22px">
+        <div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:5px"><span style="color:#B0B0B0">◇</span><span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#9A9A9A">{{ proj.path }} · {{ proj.branch }}</span></div>
+          <h1 style="margin:0;font-family:'Source Serif 4',serif;font-size:33px;font-weight:600;letter-spacing:-.02em;line-height:1">{{ proj.name }}</h1>
+        </div>
+        <div style="display:flex;align-items:center;gap:9px">
+          <button onClick="{{ goProjSettings }}" style="display:flex;align-items:center;gap:7px;border:1.5px solid #DADADA;background:#fff;color:#454545;padding:8px 13px;border-radius:8px;font-size:13px;font-weight:500" style-hover="border-color:#B0B0B0"><span style="font-size:13px">⚙</span>Details</button>
+          <button onClick="{{ goProjNeeds }}" style="border:1.5px solid {{ proj.needsBtnBorder }};background:{{ proj.needsBtnBg }};color:{{ proj.needsBtnFg }};padding:8px 15px;border-radius:8px;font-size:13px;font-weight:600">{{ proj.needsBtnLabel }}</button>
+        </div>
+      </header>
+
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#E6E6E6;border:1px solid #E6E6E6;border-radius:10px;overflow:hidden;margin-bottom:24px">
+        <sc-for list="{{ proj.stats }}" as="s" hint-placeholder-count="4">
+          <div style="background:#fff;padding:14px 16px">
+            <div style="font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#A0A0A0">{{ s.label }}</div>
+            <div style="font-family:'Source Serif 4',serif;font-size:26px;font-weight:600;color:{{ s.color }};margin-top:4px;letter-spacing:-.02em">{{ s.value }}</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:18px">
+        <span style="font-family:'Source Code Pro',monospace;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:#B0B0B0;margin-right:4px">Epic</span>
+        <sc-for list="{{ proj.epicPills }}" as="e" hint-placeholder-count="4"><button onClick="{{ e.onClick }}" style="border:1px solid {{ e.border }};background:{{ e.bg }};color:{{ e.fg }};padding:5px 12px;border-radius:16px;font-size:12px;font-weight:{{ e.weight }}">{{ e.label }} <span style="opacity:.55;font-family:'Source Code Pro',monospace;font-size:10.5px">{{ e.count }}</span></button></sc-for>
+      </div>
+
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(272px,316px);gap:26px;align-items:start">
+        <div style="min-width:0">
+          <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-items:start">
+            <sc-for list="{{ proj.columns }}" as="col" hint-placeholder-count="4">
+              <div>
+                <div style="display:flex;align-items:center;gap:7px;padding:0 2px 11px"><span style="width:8px;height:8px;border-radius:2px;background:{{ col.color }}"></span><span style="font-size:12px;font-weight:600">{{ col.label }}</span><span style="font-family:'Source Code Pro',monospace;font-size:10.5px;color:#A8A8A8">{{ col.count }}</span></div>
+                <div style="display:flex;flex-direction:column;gap:9px">
+                  <sc-for list="{{ col.tasks }}" as="t" hint-placeholder-count="2">
+                    <button onClick="{{ t.onClick }}" style="display:block;width:100%;text-align:left;border:1px solid #E6E6E6;border-radius:9px;background:#fff;padding:11px 12px" style-hover="border-color:#C8C8C8">
+                      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px"><span style="font-family:'Source Code Pro',monospace;font-size:9.5px;color:#9A9A9A">{{ t.id }}</span><span style="display:flex;align-items:center;gap:5px"><sc-if value="{{ t.rework }}" hint-placeholder-val="{{ false }}"><span style="font-family:'Source Code Pro',monospace;font-size:8.5px;font-weight:600;color:#B7791F;background:#FBF3E2;padding:1px 5px;border-radius:4px">rework</span></sc-if><sc-if value="{{ t.hasGate }}" hint-placeholder-val="{{ false }}"><span style="color:{{ t.gateColor }};font-size:11px;line-height:1">{{ t.gateGlyph }}</span></sc-if></span></div>
+                      <div style="font-size:13px;font-weight:500;line-height:1.3;margin-bottom:9px">{{ t.title }}</div>
+                      <div style="display:flex;align-items:center;gap:7px"><span style="font-family:'Source Code Pro',monospace;font-size:9px;font-weight:600;color:{{ t.priFg }};border:1px solid {{ t.priBorder }};padding:1px 5px;border-radius:4px">{{ t.priority }}</span><span style="display:flex;align-items:center;gap:4px;font-family:'Source Code Pro',monospace;font-size:9px;color:{{ t.riskFg }}"><span style="width:5px;height:5px;border-radius:50%;background:{{ t.riskFg }}"></span>{{ t.risk }}</span></div>
+                    </button>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:22px">
+          <div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><span style="font-family:'Source Code Pro',monospace;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:#A8A8A8">Blockers · needs you</span><span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#C63A2A;font-weight:600">{{ proj.blockerCount }}</span></div>
+            <sc-if value="{{ proj.noBlockers }}" hint-placeholder-val="{{ false }}"><div style="border:1px dashed #DEDEDE;border-radius:9px;padding:18px;text-align:center;font-size:12.5px;color:#9A9A9A">No human gates. Nothing blocked.</div></sc-if>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <sc-for list="{{ proj.blockers }}" as="b" hint-placeholder-count="3">
+                <button onClick="{{ b.onClick }}" style="display:block;width:100%;text-align:left;border:1px solid #E6E6E6;border-left:3px solid {{ b.color }};border-radius:8px;background:#fff;padding:10px 12px" style-hover="background:#FAFAFA">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-family:'Source Code Pro',monospace;font-size:9px;font-weight:600;text-transform:uppercase;color:{{ b.color }}">{{ b.kindLabel }}</span><span style="font-family:'Source Code Pro',monospace;font-size:10px;color:#A8A8A8">{{ b.taskId }}</span><span style="margin-left:auto;font-family:'Source Code Pro',monospace;font-size:10px;color:{{ b.color }};font-weight:600">{{ b.blkLabel }}</span></div>
+                  <div style="font-size:13px;font-weight:500;color:#2A2A2A">{{ b.taskTitle }}</div>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+
+          <div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><span style="font-family:'Source Code Pro',monospace;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:#A8A8A8">Active runs</span><button onClick="{{ goProjRuns }}" style="border:none;background:none;font-family:'Source Code Pro',monospace;font-size:10.5px;color:#9A9A9A" style-hover="color:#1A1A1A">all →</button></div>
+            <div style="border:1px solid #E6E6E6;border-radius:9px;overflow:hidden">
+              <sc-if value="{{ proj.noRuns }}" hint-placeholder-val="{{ false }}"><div style="padding:16px;text-align:center;font-size:12.5px;color:#9A9A9A">No active runs.</div></sc-if>
+              <sc-for list="{{ proj.activeRuns }}" as="r" hint-placeholder-count="2">
+                <button onClick="{{ r.onClick }}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:none;border-bottom:1px solid #F0F0F0;background:{{ r.rowBg }};padding:10px 12px" style-hover="background:#F7F7F7">
+                  <span style="width:8px;height:8px;border-radius:50%;background:{{ r.liveColor }};flex:none;animation:{{ r.liveAnim }}"></span>
+                  <span style="flex:1;min-width:0"><span style="display:block;font-size:12.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.taskTitle }}</span><span style="display:block;font-family:'Source Code Pro',monospace;font-size:9.5px;color:{{ r.liveColor }}">{{ r.liveLabel }}</span></span>
+                  <span style="font-family:'Source Code Pro',monospace;font-size:9px;font-weight:600;color:{{ r.runnerFg }};background:{{ r.runnerBg }};padding:2px 6px;border-radius:4px;flex:none">{{ r.runner }}</span>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- ===== PROJECT NEEDS ===== -->
+    <sc-if value="{{ isProjNeeds }}" hint-placeholder-val="{{ false }}">
+    <div style="max-width:900px;margin:0 auto;padding:30px 44px 80px">
+      <div style="font-family:'Source Code Pro',monospace;font-size:11px;color:#9A9A9A;margin-bottom:6px">◇ {{ proj.name }}</div>
+      <h1 style="margin:0 0 6px;font-family:'Source Serif 4',serif;font-size:30px;font-weight:600;letter-spacing:-.02em">Needs me</h1>
+      <p style="margin:0 0 20px;font-family:'Source Code Pro',monospace;font-size:11px;color:#B0B0B0"><span style="border:1px solid #DADADA;border-radius:4px;padding:0 5px;color:#6B6B6B">J</span> jump to next · <span style="border:1px solid #DADADA;border-radius:4px;padding:0 5px;color:#6B6B6B">K</span> previous</p>
+      <sc-if value="{{ projNeedsEmpty }}" hint-placeholder-val="{{ false }}"><div style="border:1px solid #E6E6E6;border-radius:10px;background:#FAFAFA;padding:48px;text-align:center;font-size:14px;color:#6B6B6B">Nothing needs you on this project.</div></sc-if>
+      <div style="border-top:1px solid #D6D6D6">
+        <sc-for list="{{ projNeedsCards }}" as="c" hint-placeholder-count="3">
+          <div data-fidx="{{ c.idx }}" style="display:grid;grid-template-columns:96px 1fr;gap:24px;padding:22px 12px 24px;border-bottom:1px solid #E6E6E6;border-radius:8px;box-shadow:{{ c.ring }};opacity:{{ c.opacity }};transform:{{ c.transform }};transition:.38s ease">
+            <div style="border-left:3px solid {{ c.color }};padding-left:15px"><div style="font-family:'Source Serif 4',serif;font-size:38px;font-weight:600;line-height:.9;color:{{ c.numColor }};letter-spacing:-.03em">{{ c.blk }}</div><div style="font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#9A9A9A;margin-top:7px;white-space:pre-line;line-height:1.5">{{ c.blkUnit }}</div><div style="font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:{{ c.color }};margin-top:13px;font-weight:600">{{ c.kindGlyph }} {{ c.kindLabel }}</div></div>
+            <div>
+              <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:3px"><span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#9A9A9A">{{ c.taskId }}</span><span style="margin-left:auto;font-family:'Source Code Pro',monospace;font-size:11px;color:#9A9A9A">{{ c.age }} · {{ c.priority }}</span></div>
+              <h3 style="margin:0 0 8px;font-family:'Source Serif 4',serif;font-size:20px;font-weight:600;letter-spacing:-.015em;line-height:1.2">{{ c.taskTitle }}</h3>
+              <div style="font-family:'Source Serif 4',serif;font-size:15.5px;line-height:1.55;color:#454545;max-width:66ch">{{ c.body }}</div>
+              <sc-if value="{{ c.hasCheckbox }}" hint-placeholder-val="{{ false }}"><label style="display:flex;align-items:center;gap:9px;margin-top:12px;font-size:13px;color:#454545;cursor:pointer"><input type="checkbox" checked="{{ c.checked }}" onChange="{{ c.onCheck }}" style="width:15px;height:15px;accent-color:#6B5AD1">{{ c.checkLabel }}</label></sc-if>
+              <div style="display:flex;align-items:center;gap:11px;margin-top:15px"><button onClick="{{ c.onPrimary }}" disabled="{{ c.primaryDisabled }}" style="border:1.5px solid {{ c.color }};background:{{ c.color }};color:#fff;padding:8px 16px;border-radius:7px;font-size:13px;font-weight:600;opacity:{{ c.primaryOpacity }}">{{ c.primaryLabel }}</button><button onClick="{{ c.onSecondary }}" style="border:1.5px solid #DADADA;background:none;color:#454545;padding:8px 14px;border-radius:7px;font-size:13px;font-weight:500" style-hover="border-color:#B0B0B0">{{ c.secondaryLabel }}</button></div>
+              <sc-if value="{{ c.composeOpen }}" hint-placeholder-val="{{ false }}"><div style="margin-top:12px;max-width:66ch"><textarea value="{{ c.draft }}" onInput="{{ c.onDraft }}" placeholder="{{ c.placeholder }}" style="width:100%;min-height:78px;resize:vertical;border:1px solid #DADADA;border-radius:8px;padding:11px 12px;font-size:14px;background:#FAFAFA;outline:none" style-focus="border-color:{{ c.color }}"></textarea><div style="margin-top:9px"><button onClick="{{ c.onCompose }}" style="border:none;background:{{ c.color }};color:#fff;padding:8px 15px;border-radius:7px;font-size:12.5px;font-weight:600">{{ c.composeLabel }}</button></div></div></sc-if>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- ===== PROJECT RUNS ===== -->
+    <sc-if value="{{ isProjRuns }}" hint-placeholder-val="{{ false }}">
+    <div style="max-width:1120px;margin:0 auto;padding:30px 44px 80px">
+      <div style="font-family:'Source Code Pro',monospace;font-size:11px;color:#9A9A9A;margin-bottom:6px">◇ {{ proj.name }}</div>
+      <header style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:20px"><h1 style="margin:0;font-family:'Source Serif 4',serif;font-size:30px;font-weight:600;letter-spacing:-.02em">Runs</h1><div style="display:flex;gap:14px;font-family:'Source Code Pro',monospace;font-size:10.5px;color:#8C8C8C"><span style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:#2E7D57"></span>live</span><span style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:#B7791F"></span>slowing</span><span style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:#C63A2A"></span>stale</span></div></header>
+      <div style="font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:#A8A8A8;margin-bottom:8px">Active</div>
+      <div style="border:1px solid #E6E6E6;border-radius:10px;overflow:hidden;margin-bottom:24px">
+        <div style="display:grid;grid-template-columns:1fr 120px 82px 90px 116px;gap:12px;padding:9px 16px;background:#FAFAFA;border-bottom:1px solid #E6E6E6;font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#A0A0A0"><span>Task</span><span>Runner</span><span>Lane</span><span>Tokens</span><span>Liveness</span></div>
+        <sc-for list="{{ projRunsActive }}" as="r" hint-placeholder-count="2">
+          <button onClick="{{ r.onClick }}" style="display:grid;grid-template-columns:1fr 120px 82px 90px 116px;gap:12px;align-items:center;width:100%;text-align:left;border:none;border-bottom:1px solid #F0F0F0;background:{{ r.rowBg }};padding:12px 16px" style-hover="background:#F7F7F7">
+            <span style="min-width:0"><span style="display:block;font-family:'Source Code Pro',monospace;font-size:10px;color:#9A9A9A">{{ r.taskId }}</span><span style="display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.taskTitle }}</span></span>
+            <span style="display:flex;flex-direction:column;gap:2px"><span style="font-family:'Source Code Pro',monospace;font-size:9.5px;font-weight:600;color:{{ r.runnerFg }};background:{{ r.runnerBg }};padding:2px 6px;border-radius:4px;align-self:flex-start">{{ r.runner }}</span><span style="font-family:'Source Code Pro',monospace;font-size:9.5px;color:#A8A8A8">{{ r.model }}</span></span>
+            <span style="font-family:'Source Code Pro',monospace;font-size:11px;color:{{ r.laneFg }}">{{ r.lane }}</span>
+            <span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#4A4A4A">{{ r.tokens }}</span>
+            <span><span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:{{ r.liveColor }};animation:{{ r.liveAnim }}"></span><span style="font-family:'Source Code Pro',monospace;font-size:11px;color:{{ r.liveTextColor }};font-weight:{{ r.liveWeight }}">{{ r.elapsed }}</span></span><span style="display:block;font-family:'Source Code Pro',monospace;font-size:9px;color:{{ r.liveColor }};margin-top:2px;margin-left:14px">{{ r.liveLabel }}</span></span>
+          </button>
+        </sc-for>
+      </div>
+      <div style="font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:#A8A8A8;margin-bottom:8px">Recent</div>
+      <div style="border:1px solid #E6E6E6;border-radius:10px;overflow:hidden">
+        <sc-for list="{{ projRunsRecent }}" as="r" hint-placeholder-count="3">
+          <div style="display:grid;grid-template-columns:1fr 120px 82px 90px 116px;gap:12px;align-items:center;border-bottom:1px solid #F0F0F0;padding:11px 16px"><span style="min-width:0"><span style="display:block;font-family:'Source Code Pro',monospace;font-size:10px;color:#9A9A9A">{{ r.taskId }}</span><span style="display:block;font-size:13px;font-weight:500;color:#3A3A3A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.taskTitle }}</span></span><span style="font-family:'Source Code Pro',monospace;font-size:9.5px;font-weight:600;color:{{ r.runnerFg }};background:{{ r.runnerBg }};padding:2px 6px;border-radius:4px;justify-self:start">{{ r.runner }}</span><span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#A8A8A8">{{ r.lane }}</span><span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#8A8A8A">{{ r.tokens }}</span><span style="font-family:'Source Code Pro',monospace;font-size:9.5px;font-weight:600;color:{{ r.outcomeFg }};background:{{ r.outcomeBg }};padding:3px 8px;border-radius:5px;justify-self:start">{{ r.outcome }}</span></div>
+        </sc-for>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- ===== PROJECT WORK ===== -->
+    <sc-if value="{{ isProjWork }}" hint-placeholder-val="{{ false }}">
+    <div style="max-width:1240px;margin:0 auto;padding:30px 44px 80px">
+      <div style="font-family:'Source Code Pro',monospace;font-size:11px;color:#9A9A9A;margin-bottom:6px">◇ {{ proj.name }}</div>
+      <header style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:18px"><h1 style="margin:0;font-family:'Source Serif 4',serif;font-size:30px;font-weight:600;letter-spacing:-.02em">Work</h1><div style="display:inline-flex;border:1px solid #DADADA;border-radius:8px;overflow:hidden;background:#fff"><sc-for list="{{ workViews }}" as="v" hint-placeholder-count="2"><button onClick="{{ v.onClick }}" style="border:none;border-left:{{ v.border }};background:{{ v.bg }};color:{{ v.fg }};padding:7px 15px;font-size:12.5px;font-weight:{{ v.weight }}">{{ v.label }}</button></sc-for></div></header>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:20px"><sc-for list="{{ proj.epicPills }}" as="e" hint-placeholder-count="4"><button onClick="{{ e.onClick }}" style="border:1px solid {{ e.border }};background:{{ e.bg }};color:{{ e.fg }};padding:5px 11px;border-radius:16px;font-size:12px;font-weight:{{ e.weight }}">{{ e.label }}</button></sc-for></div>
+      <sc-if value="{{ wBoard }}" hint-placeholder-val="{{ true }}">
+      <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;align-items:start">
+        <sc-for list="{{ proj.columnsWork }}" as="col" hint-placeholder-count="5">
+          <div>
+            <div style="display:flex;align-items:center;gap:7px;padding:0 2px 12px"><span style="width:8px;height:8px;border-radius:2px;background:{{ col.color }}"></span><span style="font-size:12.5px;font-weight:600">{{ col.label }}</span><span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#A8A8A8">{{ col.count }}</span></div>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <sc-for list="{{ col.tasks }}" as="t" hint-placeholder-count="3"><button onClick="{{ t.onClick }}" style="display:block;width:100%;text-align:left;border:1px solid #E6E6E6;border-radius:9px;background:#fff;padding:12px 13px" style-hover="border-color:#C8C8C8"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><span style="font-family:'Source Code Pro',monospace;font-size:10px;color:#9A9A9A">{{ t.id }}</span><span style="display:flex;align-items:center;gap:5px"><sc-if value="{{ t.rework }}" hint-placeholder-val="{{ false }}"><span style="font-family:'Source Code Pro',monospace;font-size:8.5px;font-weight:600;color:#B7791F;background:#FBF3E2;padding:1px 5px;border-radius:4px">rework</span></sc-if><sc-if value="{{ t.hasGate }}" hint-placeholder-val="{{ false }}"><span style="color:{{ t.gateColor }};font-size:11px;line-height:1">{{ t.gateGlyph }}</span></sc-if></span></div><div style="font-size:13.5px;font-weight:500;line-height:1.3;margin-bottom:11px">{{ t.title }}</div><div style="display:flex;align-items:center;gap:7px"><span style="font-family:'Source Code Pro',monospace;font-size:9.5px;font-weight:600;color:{{ t.priFg }};border:1px solid {{ t.priBorder }};padding:1px 6px;border-radius:4px">{{ t.priority }}</span><span style="display:flex;align-items:center;gap:4px;font-family:'Source Code Pro',monospace;font-size:9.5px;color:{{ t.riskFg }}"><span style="width:6px;height:6px;border-radius:50%;background:{{ t.riskFg }}"></span>{{ t.risk }}</span><span style="margin-left:auto;font-family:'Source Code Pro',monospace;font-size:10px;color:#B0B0B0">{{ t.epic }}</span></div></button></sc-for>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+      </sc-if>
+      <sc-if value="{{ wEpics }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column;gap:24px">
+        <sc-for list="{{ proj.epicGroups }}" as="g" hint-placeholder-count="3">
+          <div>
+            <div style="display:flex;align-items:center;gap:10px;padding-bottom:9px;border-bottom:1px solid #E6E6E6;margin-bottom:4px"><span style="color:#B0B0B0">◇</span><span style="font-size:15px;font-weight:600;letter-spacing:-.01em">{{ g.name }}</span><span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#A8A8A8">{{ g.rollup }}</span></div>
+            <sc-for list="{{ g.tasks }}" as="t" hint-placeholder-count="3"><button onClick="{{ t.onClick }}" style="display:flex;align-items:center;gap:12px;width:100%;text-align:left;border:none;border-radius:7px;background:transparent;padding:9px 10px" style-hover="background:#F5F5F5"><span style="width:7px;height:7px;border-radius:50%;background:{{ t.statusDot }};flex:none"></span><span style="font-size:13.5px;font-weight:500;color:#2A2A2A;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.title }}</span><sc-if value="{{ t.hasGate }}" hint-placeholder-val="{{ false }}"><span style="font-family:'Source Code Pro',monospace;font-size:9px;font-weight:600;color:{{ t.gateColor }};background:{{ t.gateBg }};padding:2px 7px;border-radius:4px;flex:none">{{ t.gateLabel }}</span></sc-if><span style="font-family:'Source Code Pro',monospace;font-size:10.5px;color:#5A5A5A;flex:none;width:44px;text-align:right">{{ t.priority }}</span><span style="font-family:'Source Code Pro',monospace;font-size:10.5px;color:#B0B0B0;flex:none;width:40px;text-align:right">{{ t.updated }}</span></button></sc-for>
+          </div>
+        </sc-for>
+      </div>
+      </sc-if>
+    </div>
+    </sc-if>
+
+    <!-- ===== DOCUMENT (task / spec, markdown) ===== -->
+    <sc-if value="{{ isTask }}" hint-placeholder-val="{{ false }}">
+    <div style="min-width:0">
+      <div style="position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:12px;padding:14px 44px;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid #EFEFEF">
+        <button onClick="{{ backOverview }}" style="border:none;background:none;color:#8C8C8C;font-family:'Source Code Pro',monospace;font-size:11.5px;padding:0" style-hover="color:#1A1A1A">← {{ proj.name }}</button>
+        <span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#B8B8B8">/ {{ doc.path }}</span>
+        <span style="margin-left:auto"></span>
+        <sc-if value="{{ doc.reading }}" hint-placeholder-val="{{ true }}"><button onClick="{{ startEdit }}" style="border:1.5px solid #DADADA;background:#fff;color:#1A1A1A;padding:7px 15px;border-radius:7px;font-size:12.5px;font-weight:600" style-hover="border-color:#B0B0B0">Edit</button></sc-if>
+        <sc-if value="{{ doc.editing }}" hint-placeholder-val="{{ false }}"><span style="font-family:'Source Code Pro',monospace;font-size:10.5px;color:#B7791F;margin-right:4px">editing · markdown</span><button onClick="{{ cancelEdit }}" style="border:1.5px solid #DADADA;background:#fff;color:#454545;padding:7px 13px;border-radius:7px;font-size:12.5px;font-weight:500">Cancel</button><button onClick="{{ saveDoc }}" style="border:1.5px solid #2E7D57;background:#2E7D57;color:#fff;padding:7px 15px;border-radius:7px;font-size:12.5px;font-weight:600">Save</button></sc-if>
+      </div>
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:36px;max-width:1080px;margin:0 auto;padding:26px 44px 90px;align-items:start">
+        <div style="min-width:0">
+          <sc-if value="{{ doc.showApprove }}" hint-placeholder-val="{{ false }}"><div style="display:flex;align-items:center;gap:14px;border:1px solid #B9CEF3;background:#EEF4FE;border-radius:10px;padding:13px 16px;margin-bottom:24px;animation:tkIn .3s ease both"><span style="width:8px;height:8px;border-radius:50%;background:#2D6CDF;flex:none"></span><span style="font-size:13.5px;color:#1A3A6B;flex:1">This spec is awaiting your approval. Six downstream tasks are blocked.</span><button onClick="{{ startEdit }}" style="border:1.5px solid #B9CEF3;background:#fff;color:#2D6CDF;padding:7px 13px;border-radius:7px;font-size:12.5px;font-weight:500">Request changes</button><button onClick="{{ doc.approveFn }}" style="border:1.5px solid #2D6CDF;background:#2D6CDF;color:#fff;padding:7px 15px;border-radius:7px;font-size:12.5px;font-weight:600">Approve spec</button></div></sc-if>
+          <sc-if value="{{ doc.conflict }}" hint-placeholder-val="{{ false }}"><div style="border:1px solid #E7C9A6;background:#FCF6EC;border-radius:10px;padding:16px 18px;margin-bottom:24px;animation:tkIn .3s ease both"><div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><span style="width:8px;height:8px;border-radius:50%;background:#B7791F"></span><span style="font-size:14px;font-weight:600;color:#7A5410">This note changed while you were editing</span></div><p style="margin:0 0 13px;font-size:13px;color:#8A6A2E;line-height:1.5">Agent <b>codex · API-T-0090</b> saved a new revision 40s ago (state_rev 18 → 19). Your save was rejected — nothing is lost.</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:13px"><div style="border:1px solid #E4D6BE;border-radius:8px;overflow:hidden;background:#fff"><div style="font-family:'Source Code Pro',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8A6A2E;padding:7px 12px;border-bottom:1px solid #F0E6D2;background:#FBF5E9">Yours</div><div style="padding:11px 12px;font-family:'Source Code Pro',monospace;font-size:11.5px;line-height:1.7;color:#3A3A3A">Retention: worktrees are <span style="background:#E6F2EA;color:#2E7D57">deleted immediately</span> after lease.</div></div><div style="border:1px solid #E4D6BE;border-radius:8px;overflow:hidden;background:#fff"><div style="font-family:'Source Code Pro',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8A6A2E;padding:7px 12px;border-bottom:1px solid #F0E6D2;background:#FBF5E9">Theirs · rev 19</div><div style="padding:11px 12px;font-family:'Source Code Pro',monospace;font-size:11.5px;line-height:1.7;color:#3A3A3A">Retention: worktrees are <span style="background:#FBE9E5;color:#C63A2A">archived one cycle, then deleted</span> after lease.</div></div></div><div style="display:flex;gap:9px"><button onClick="{{ reconcile }}" style="border:1.5px solid #B7791F;background:#B7791F;color:#fff;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600">Take theirs</button><button onClick="{{ reconcile }}" style="border:1.5px solid #E4D6BE;background:#fff;color:#7A5410;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:500">Keep editing on top</button><button onClick="{{ reconcile }}" style="border:1.5px solid #E4D6BE;background:#fff;color:#7A5410;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:500">Copy my text</button></div></div></sc-if>
+          <sc-if value="{{ doc.invalid }}" hint-placeholder-val="{{ false }}"><div style="border:1px solid #E7B4AC;background:#FCEEEB;border-radius:10px;padding:14px 16px;margin-bottom:24px;animation:tkIn .3s ease both"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><span style="width:8px;height:8px;border-radius:50%;background:#C63A2A"></span><span style="font-size:14px;font-weight:600;color:#8A2318">Save rejected · 1 error, 1 warning</span></div><div style="display:flex;flex-direction:column;gap:6px;font-size:12.5px"><div style="display:flex;gap:9px;color:#8A2318"><span style="font-family:'Source Code Pro',monospace;font-weight:600;flex:none">error</span><span>Acceptance criterion references [[SRV-D-0009]] — no such decision in the vault.</span></div><div style="display:flex;gap:9px;color:#8A6A2E"><span style="font-family:'Source Code Pro',monospace;font-weight:600;flex:none">warn&nbsp;</span><span>Heading “Rollout” is empty — sections should have content before save.</span></div></div><div style="margin-top:12px;display:flex;gap:9px"><button onClick="{{ startEdit }}" style="border:1.5px solid #C63A2A;background:#fff;color:#C63A2A;padding:7px 13px;border-radius:7px;font-size:12.5px;font-weight:600">Fix errors</button><button onClick="{{ cancelEdit }}" style="border:1.5px solid #E7B4AC;background:#fff;color:#8A2318;padding:7px 13px;border-radius:7px;font-size:12.5px;font-weight:500">Discard changes</button></div></div></sc-if>
+          <sc-if value="{{ doc.saved }}" hint-placeholder-val="{{ false }}"><div style="display:flex;align-items:center;gap:10px;border:1px solid #B8DCC6;background:#EAF5EE;border-radius:10px;padding:12px 16px;margin-bottom:24px;animation:tkIn .3s ease both"><span style="width:8px;height:8px;border-radius:50%;background:#2E7D57"></span><span style="font-size:13.5px;color:#1E5A3C">Saved · validated · state_rev 19. Round-tripped to markdown.</span></div></sc-if>
+
+          <sc-if value="{{ doc.isReview }}" hint-placeholder-val="{{ false }}">
+            <div style="border:1px solid #B8DCC6;border-radius:10px;overflow:hidden;margin-bottom:26px">
+              <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:#EAF5EE;border-bottom:1px solid #CBE6D6"><span style="width:8px;height:8px;border-radius:50%;background:#2E7D57"></span><span style="font-size:13.5px;font-weight:600;color:#1E5A3C">Merge-readiness</span><span style="margin-left:auto;font-family:'Source Code Pro',monospace;font-size:11px;color:#2E7D57">{{ doc.checksLabel }}</span></div>
+              <sc-for list="{{ doc.checks }}" as="ck" hint-placeholder-count="6"><div style="display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid #F2F2F2"><span style="width:15px;height:15px;border-radius:50%;background:{{ ck.dotBg }};color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center;flex:none">{{ ck.mark }}</span><span style="font-size:13px;color:#2A2A2A;flex:none;width:118px">{{ ck.label }}</span><span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#7A7A7A">{{ ck.detail }}</span></div></sc-for>
+              <div style="padding:12px 16px;display:flex;align-items:center;gap:11px"><button onClick="{{ doc.primaryFn }}" disabled="{{ doc.primaryDisabled }}" style="border:none;background:#2E7D57;color:#fff;padding:8px 16px;border-radius:7px;font-size:12.5px;font-weight:600;opacity:{{ doc.primaryOpacity }}">Accept &amp; close</button><span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#9A9A9A">{{ doc.closeHint }}</span></div>
+            </div>
+          </sc-if>
+          <div style="font-family:'Source Code Pro',monospace;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:{{ doc.typeColor }};margin-bottom:7px">{{ doc.typeLabel }}</div>
+          <div style="font-family:'Source Code Pro',monospace;font-size:11.5px;color:#9A9A9A;margin-bottom:4px">{{ doc.id }}</div>
+          <h1 style="margin:0 0 18px;font-family:'Source Serif 4',serif;font-size:32px;font-weight:600;letter-spacing:-.02em;line-height:1.08">{{ doc.title }}</h1>
+          <div style="border:1px solid #EAEAEA;border-radius:9px;background:#FAFAFA;padding:12px 15px;margin-bottom:28px"><div style="font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#A8A8A8;margin-bottom:9px">Properties <span style="color:#C0C0C0">· state fields locked</span></div><div style="display:flex;flex-wrap:wrap;gap:8px 18px"><sc-for list="{{ doc.frontmatter }}" as="p" hint-placeholder-count="5"><div style="display:flex;align-items:center;gap:7px"><span style="font-family:'Source Code Pro',monospace;font-size:10.5px;color:#9A9A9A">{{ p.k }}</span><sc-if value="{{ p.locked }}" hint-placeholder-val="{{ true }}"><span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#7A7A7A;background:#EFEFEF;padding:2px 8px;border-radius:5px">{{ p.v }} 🔒</span></sc-if><sc-if value="{{ p.editable }}" hint-placeholder-val="{{ false }}"><span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#1A1A1A;background:#fff;border:1px solid #DADADA;padding:2px 8px;border-radius:5px">{{ p.v }} ▾</span></sc-if></div></sc-for></div></div>
+          <div style="border-left:{{ doc.bodyBorder }};padding-left:{{ doc.bodyPad }};transition:padding .15s">
+            <sc-for list="{{ doc.blocks }}" as="b" hint-placeholder-count="6">
+              <sc-if value="{{ b.isH2 }}" hint-placeholder-val="{{ false }}"><h2 style="font-family:'Source Serif 4',serif;font-size:20px;font-weight:600;letter-spacing:-.01em;margin:30px 0 12px">{{ b.text }}</h2></sc-if>
+              <sc-if value="{{ b.isP }}" hint-placeholder-val="{{ true }}"><p style="font-family:'Source Serif 4',serif;font-size:16.5px;line-height:1.68;color:#33332F;margin:0 0 16px"><sc-for list="{{ b.segs }}" as="s" hint-placeholder-count="1"><sc-if value="{{ s.isText }}" hint-placeholder-val="{{ true }}"><span>{{ s.v }}</span></sc-if><sc-if value="{{ s.isCode }}" hint-placeholder-val="{{ false }}"><span style="font-family:'Source Code Pro',monospace;font-size:13.5px;background:#F0F0EE;border-radius:4px;padding:1px 5px;color:#B4602F">{{ s.v }}</span></sc-if></sc-for></p></sc-if>
+              <sc-if value="{{ b.isUl }}" hint-placeholder-val="{{ false }}"><ul style="margin:0 0 16px;padding-left:22px;font-family:'Source Serif 4',serif;font-size:16px;line-height:1.7;color:#3A3A3A"><sc-for list="{{ b.items }}" as="it" hint-placeholder-count="2"><li>{{ it.text }}</li></sc-for></ul></sc-if>
+              <sc-if value="{{ b.isCode }}" hint-placeholder-val="{{ false }}"><div style="background:#1A1A1A;border-radius:9px;padding:14px 16px;margin:0 0 20px;overflow-x:auto"><div style="font-family:'Source Code Pro',monospace;font-size:9px;color:#6E6E6E;margin-bottom:8px">{{ b.lang }}</div><sc-for list="{{ b.lines }}" as="ln" hint-placeholder-count="3"><div style="font-family:'Source Code Pro',monospace;font-size:12.5px;line-height:1.65;color:#D6D6D6;white-space:pre">{{ ln.text }}</div></sc-for></div></sc-if>
+              <sc-if value="{{ b.isTable }}" hint-placeholder-val="{{ false }}"><div style="border:1px solid #E6E6E6;border-radius:9px;overflow:hidden;margin:0 0 20px"><div style="display:grid;grid-template-columns:{{ b.cols }};background:#FAFAFA;border-bottom:1px solid #E6E6E6"><sc-for list="{{ b.head }}" as="h" hint-placeholder-count="2"><div style="padding:9px 14px;font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:#8C8C8C">{{ h.text }}</div></sc-for></div><sc-for list="{{ b.rows }}" as="row" hint-placeholder-count="2"><div style="display:grid;grid-template-columns:{{ b.cols }};border-bottom:1px solid #F2F2F2"><sc-for list="{{ row.cells }}" as="cell" hint-placeholder-count="2"><div style="padding:9px 14px;font-size:13px;color:#3A3A3A">{{ cell.text }}</div></sc-for></div></sc-for></div></sc-if>
+              <sc-if value="{{ b.isAccept }}" hint-placeholder-val="{{ false }}"><div style="border:1px solid #E6E6E6;border-radius:9px;overflow:hidden;margin:0 0 20px"><sc-for list="{{ b.rows }}" as="r" hint-placeholder-count="3"><div style="display:flex;align-items:flex-start;gap:12px;padding:11px 15px;border-bottom:1px solid #F2F2F2"><span style="font-family:'Source Code Pro',monospace;font-size:9px;font-weight:600;color:{{ r.fg }};background:{{ r.bg }};padding:2px 7px;border-radius:4px;flex:none;margin-top:1px">{{ r.status }}</span><span style="font-size:14px;line-height:1.5;color:#3A3A3A">{{ r.text }}</span></div></sc-for></div></sc-if>
+              <sc-if value="{{ b.isCallout }}" hint-placeholder-val="{{ false }}"><div style="display:flex;gap:11px;border:1px solid {{ b.calloutBorder }};background:{{ b.calloutBg }};border-radius:9px;padding:12px 14px;margin:0 0 20px"><span style="width:7px;height:7px;border-radius:50%;background:{{ b.calloutDot }};flex:none;margin-top:5px"></span><span style="font-size:13.5px;line-height:1.5;color:{{ b.calloutColor }}">{{ b.text }}</span></div></sc-if>
+              <sc-if value="{{ b.isMermaid }}" hint-placeholder-val="{{ false }}"><div style="border:1px solid #E6E6E6;border-radius:9px;background:#FAFAFA;padding:16px;margin:0 0 22px"><div style="font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#A8A8A8;margin-bottom:14px">{{ b.title }}</div><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><sc-for list="{{ b.flow }}" as="n" hint-placeholder-count="4"><span style="display:inline-flex;align-items:center;gap:6px"><span style="border:1px solid #CFCFCF;background:#fff;border-radius:7px;padding:8px 12px;font-family:'Source Code Pro',monospace;font-size:11.5px;color:#2A2A2A">{{ n.label }}</span><sc-if value="{{ n.notLast }}" hint-placeholder-val="{{ true }}"><span style="color:#B0B0B0;font-size:13px">→</span></sc-if></span></sc-for></div></div></sc-if>
+            </sc-for>
+          </div>
+        </div>
+        <aside style="position:sticky;top:80px">
+          <div style="border:1px solid #E6E6E6;border-radius:10px;overflow:hidden;margin-bottom:14px"><sc-for list="{{ doc.facts }}" as="f" hint-placeholder-count="6"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 14px;border-bottom:1px solid #F2F2F2"><span style="font-family:'Source Code Pro',monospace;font-size:10.5px;color:#9A9A9A">{{ f.k }}</span><span style="font-family:'Source Code Pro',monospace;font-size:11.5px;font-weight:600;color:{{ f.color }}">{{ f.v }}</span></div></sc-for></div>
+          <sc-if value="{{ doc.hasDeps }}" hint-placeholder-val="{{ false }}"><div style="font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:#A8A8A8;margin:0 0 7px 2px">Depends on</div><div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px"><sc-for list="{{ doc.deps }}" as="d" hint-placeholder-count="1"><button onClick="{{ d.onClick }}" style="display:flex;align-items:center;gap:8px;border:1px solid #E6E6E6;background:#fff;border-radius:7px;padding:8px 11px;text-align:left" style-hover="border-color:#C8C8C8"><span style="font-family:'Source Code Pro',monospace;font-size:10.5px;color:#8C8C8C">{{ d.id }}</span><span style="font-size:12px;color:#3A3A3A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ d.title }}</span></button></sc-for></div></sc-if>
+          <div style="display:flex;flex-direction:column;gap:8px"><button onClick="{{ doc.primaryFn }}" disabled="{{ doc.primaryDisabled }}" style="width:100%;border:1.5px solid {{ doc.primaryColor }};background:{{ doc.primaryColor }};color:#fff;padding:9px;border-radius:8px;font-size:13px;font-weight:600;opacity:{{ doc.primaryOpacity }}">{{ doc.primaryLabel }}</button><button onClick="{{ startEdit }}" style="width:100%;border:1.5px solid #DADADA;background:#fff;color:#454545;padding:9px;border-radius:8px;font-size:13px;font-weight:500" style-hover="border-color:#B0B0B0">Open in editor</button><button style="width:100%;border:none;background:none;color:#8C8C8C;padding:4px;font-size:12px" style-hover="color:#1A1A1A">{{ doc.altAction }}</button></div>
+        </aside>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- ===== RUN DETAIL ===== -->
+    <sc-if value="{{ isRun }}" hint-placeholder-val="{{ false }}">
+    <div style="max-width:1040px;margin:0 auto;padding:26px 44px 80px">
+      <button onClick="{{ backOverview }}" style="border:none;background:none;color:#8C8C8C;font-family:'Source Code Pro',monospace;font-size:11.5px;padding:0;margin-bottom:16px" style-hover="color:#1A1A1A">← {{ proj.name }}</button>
+      <header style="display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:20px"><div><div style="font-family:'Source Code Pro',monospace;font-size:11.5px;color:#9A9A9A;margin-bottom:5px">{{ run.taskId }}</div><h1 style="margin:0;font-family:'Source Serif 4',serif;font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1.05">{{ run.taskTitle }}</h1><div style="display:flex;align-items:center;gap:10px;margin-top:11px;flex-wrap:wrap"><span style="font-family:'Source Code Pro',monospace;font-size:10.5px;font-weight:600;color:{{ run.runnerFg }};background:{{ run.runnerBg }};padding:3px 8px;border-radius:5px">{{ run.runner }}</span><span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#7A7A7A">{{ run.model }}</span><span style="color:#D6D6D6">·</span><span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#7A7A7A">lane {{ run.lane }}</span><span style="color:#D6D6D6">·</span><span style="display:flex;align-items:center;gap:6px;font-family:'Source Code Pro',monospace;font-size:11px;color:{{ run.liveColor }}"><span style="width:8px;height:8px;border-radius:50%;background:{{ run.liveColor }}"></span>{{ run.stateLabel }}</span></div></div><div style="display:flex;gap:9px;flex:none"><button style="border:1.5px solid #DADADA;background:#fff;color:#454545;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:500" style-hover="border-color:#B0B0B0">Interrupt</button><button style="border:1.5px solid #1A1A1A;background:#1A1A1A;color:#fff;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600">Retry</button></div></header>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#E6E6E6;border:1px solid #E6E6E6;border-radius:10px;overflow:hidden;margin-bottom:24px"><sc-for list="{{ run.stats }}" as="s" hint-placeholder-count="4"><div style="background:#fff;padding:14px 16px"><div style="font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#A0A0A0">{{ s.label }}</div><div style="font-family:'Source Serif 4',serif;font-size:22px;font-weight:600;margin-top:5px;letter-spacing:-.01em">{{ s.value }}</div></div></sc-for></div>
+      <div style="display:grid;grid-template-columns:300px 1fr;gap:32px;align-items:start">
+        <div><div style="font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:#A8A8A8;margin-bottom:12px">Attempts</div><sc-for list="{{ run.attempts }}" as="a" hint-placeholder-count="3"><div style="display:flex;gap:12px;padding-bottom:18px"><div style="display:flex;flex-direction:column;align-items:center;flex:none"><span style="width:11px;height:11px;border-radius:50%;background:{{ a.dot }};border:2px solid #fff;box-shadow:0 0 0 1px {{ a.dot }}"></span><span style="width:1px;flex:1;background:#E6E6E6;margin-top:3px"></span></div><div style="margin-top:-3px"><div style="font-size:13px;font-weight:600">Attempt {{ a.n }} · <span style="color:{{ a.color }}">{{ a.outcome }}</span></div><div style="font-family:'Source Code Pro',monospace;font-size:10.5px;color:#9A9A9A;margin-top:3px">{{ a.meta }}</div><div style="font-size:12.5px;color:#6B6B6B;margin-top:5px;line-height:1.45;max-width:36ch">{{ a.note }}</div></div></div></sc-for><div style="font-family:'Source Code Pro',monospace;font-size:10.5px;color:#9A9A9A;padding-top:12px;border-top:1px solid #EFEFEF;line-height:1.6">workspace<br><span style="color:#2D6CDF;word-break:break-all">{{ run.workspace }}</span></div></div>
+        <div><div style="font-family:'Source Code Pro',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:#A8A8A8;margin-bottom:12px">Event tail · <span style="color:#2E7D57">auto-follow</span></div><div ref="{{ tailRef }}" class="tk-scroll" style="height:360px;overflow-y:auto;background:#1A1A1A;border-radius:10px;padding:14px 16px"><sc-for list="{{ run.events }}" as="ev" hint-placeholder-count="10"><div style="display:flex;gap:10px;font-family:'Source Code Pro',monospace;font-size:11.5px;line-height:1.75"><span style="color:#6E6E6E;flex:none">{{ ev.t }}</span><span style="color:{{ ev.color }};flex:none;width:52px">{{ ev.type }}</span><span style="color:#D6D6D6;min-width:0">{{ ev.text }}</span></div></sc-for></div></div>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- ===== PROJECT SETTINGS / DETAILS ===== -->
+    <sc-if value="{{ isProjSet }}" hint-placeholder-val="{{ false }}">
+    <div style="max-width:860px;margin:0 auto;padding:26px 44px 80px">
+      <button onClick="{{ backOverview }}" style="border:none;background:none;color:#8C8C8C;font-family:'Source Code Pro',monospace;font-size:11.5px;padding:0;margin-bottom:16px" style-hover="color:#1A1A1A">← {{ pset.name }}</button>
+      <h1 style="margin:0 0 4px;font-family:'Source Serif 4',serif;font-size:30px;font-weight:600;letter-spacing:-.02em">Details &amp; settings</h1>
+      <p style="margin:0 0 20px;font-family:'Source Code Pro',monospace;font-size:11.5px;color:#9A9A9A">{{ pset.path }} · {{ pset.branch }}</p>
+      <div style="display:inline-flex;border:1px solid #DADADA;border-radius:8px;overflow:hidden;background:#fff;margin-bottom:26px"><sc-for list="{{ pset.tabs }}" as="t" hint-placeholder-count="4"><button onClick="{{ t.onClick }}" style="border:none;border-left:1px solid #EEE;background:{{ t.bg }};color:{{ t.fg }};padding:7px 14px;font-size:12.5px;font-weight:{{ t.weight }}">{{ t.label }}</button></sc-for></div>
+
+      <sc-if value="{{ pset.isDetails }}" hint-placeholder-val="{{ true }}">
+        <div style="font-family:'Source Code Pro',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#A8A8A8;margin-bottom:10px">Repository</div>
+        <div style="border:1px solid #E6E6E6;border-radius:10px;overflow:hidden;margin-bottom:28px"><sc-for list="{{ pset.repo }}" as="r" hint-placeholder-count="4"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid #F2F2F2"><span style="font-size:13px;color:#2A2A2A">{{ r.k }}</span><span style="display:flex;align-items:center;gap:9px"><sc-if value="{{ r.overridden }}" hint-placeholder-val="{{ false }}"><button onClick="{{ r.onReset }}" style="border:none;background:none;color:#B0B0B0;font-size:11px;font-family:'Source Code Pro',monospace" style-hover="color:#1A1A1A">↺ reset</button></sc-if><span style="font-family:'Source Code Pro',monospace;font-size:9px;font-weight:600;color:{{ r.sourceFg }};background:{{ r.sourceBg }};padding:2px 7px;border-radius:4px">{{ r.source }}</span><sc-if value="{{ r.isSelect }}" hint-placeholder-val="{{ false }}"><span style="font-family:'Source Code Pro',monospace;font-size:11.5px;color:#1A1A1A;background:#fff;border:1px solid #DADADA;padding:3px 9px;border-radius:6px">{{ r.v }} ▾</span></sc-if><sc-if value="{{ r.isText }}" hint-placeholder-val="{{ true }}"><span style="font-family:'Source Code Pro',monospace;font-size:11.5px;color:#3A3A3A">{{ r.v }}</span></sc-if></span></div></sc-for></div>
+        <div style="font-family:'Source Code Pro',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#A8A8A8;margin-bottom:10px">Worktrees</div>
+        <div style="border:1px solid #E6E6E6;border-radius:10px;overflow:hidden;margin-bottom:28px"><sc-if value="{{ pset.noWt }}" hint-placeholder-val="{{ false }}"><div style="padding:16px;text-align:center;font-size:12.5px;color:#9A9A9A">No active worktrees.</div></sc-if><sc-for list="{{ pset.worktrees }}" as="w" hint-placeholder-count="2"><div style="display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid #F2F2F2"><span style="font-family:'Source Code Pro',monospace;font-size:11px;color:#9A9A9A;flex:none;width:96px">{{ w.task }}</span><span style="font-family:'Source Code Pro',monospace;font-size:11.5px;color:#3A3A3A;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ w.path }}</span><span style="font-family:'Source Code Pro',monospace;font-size:10.5px;color:#2E7D57;flex:none">{{ w.lease }}</span></div></sc-for></div>
+        <div style="font-family:'Source Code Pro',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#A8A8A8;margin-bottom:10px">Configuration</div>
+        <div style="border:1px solid #E6E6E6;border-radius:10px;overflow:hidden"><sc-for list="{{ pset.config }}" as="r" hint-placeholder-count="4"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;border-bottom:1px solid #F2F2F2"><span style="font-size:13.5px;color:#2A2A2A">{{ r.k }}</span><span style="display:flex;align-items:center;gap:9px"><sc-if value="{{ r.overridden }}" hint-placeholder-val="{{ false }}"><button onClick="{{ r.onReset }}" style="border:none;background:none;color:#B0B0B0;font-size:11px;font-family:'Source Code Pro',monospace" style-hover="color:#1A1A1A">↺ reset</button></sc-if><span style="font-family:'Source Code Pro',monospace;font-size:9px;font-weight:600;color:{{ r.sourceFg }};background:{{ r.sourceBg }};padding:2px 7px;border-radius:4px">{{ r.source }}</span><sc-if value="{{ r.isToggle }}" hint-placeholder-val="{{ false }}"><span style="font-family:'Source Code Pro',monospace;font-size:10.5px;font-weight:600;color:{{ r.pillFg }};background:{{ r.pillBg }};padding:3px 10px;border-radius:12px">{{ r.onLabel }}</span></sc-if><sc-if value="{{ r.isSelect }}" hint-placeholder-val="{{ false }}"><span style="font-family:'Source Code Pro',monospace;font-size:11.5px;color:#1A1A1A;background:#fff;border:1px solid #DADADA;padding:3px 9px;border-radius:6px">{{ r.v }} ▾</span></sc-if><sc-if value="{{ r.isText }}" hint-placeholder-val="{{ false }}"><span style="font-family:'Source Code Pro',monospace;font-size:11.5px;color:#3A3A3A">{{ r.v }}</span></sc-if></span></div></sc-for></div>
+      </sc-if>
+
+      <sc-if value="{{ pset.isRouting }}" hint-placeholder-val="{{ false }}">
+        <p style="margin:0 0 14px;font-size:13px;color:#6B6B6B;line-height:1.5;max-width:64ch">For each kind of task, use this runner profile. Rules are evaluated top-down; <b style="color:#1A1A1A">first match wins</b>. Every run names which rule picked its profile.</p>
+        <div style="border:1px solid #E6E6E6;border-radius:10px;overflow:hidden"><sc-for list="{{ pset.routing }}" as="r" hint-placeholder-count="3"><div style="display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid #F2F2F2"><span style="color:#C4C4C4;font-size:13px;cursor:grab;flex:none">⋮⋮</span><span style="font-family:'Source Code Pro',monospace;font-size:10px;color:#B0B0B0;flex:none;width:14px">{{ r.order }}</span><span style="font-family:'Source Code Pro',monospace;font-size:12px;color:#2A2A2A;flex:1;min-width:0">{{ r.match }}</span><span style="color:#B0B0B0;flex:none">→</span><span style="font-family:'Source Code Pro',monospace;font-size:11px;font-weight:600;color:#2D6CDF;background:#EAF1FD;padding:3px 9px;border-radius:5px;flex:none">{{ r.profile }}</span></div></sc-for><div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:#FAFAFA"><span style="font-family:'Source Code Pro',monospace;font-size:10px;color:#B0B0B0;flex:none;width:14px">·</span><span style="font-family:'Source Code Pro',monospace;font-size:11.5px;color:#9A9A9A">fallthrough — {{ pset.routingFall }}</span></div></div>
+        <button style="margin-top:12px;border:1px dashed #DADADA;background:#fff;color:#6B6B6B;padding:8px 14px;border-radius:8px;font-size:12.5px" style-hover="border-color:#B0B0B0">+ Add rule</button>
+      </sc-if>
+
+      <sc-if value="{{ pset.isWorkspace }}" hint-placeholder-val="{{ false }}">
+        <p style="margin:0 0 20px;font-size:13px;color:#6B6B6B;line-height:1.5;max-width:64ch">Each parallel worktree is created and torn down with these hooks.</p>
+        <sc-for list="{{ pset.workspace }}" as="w" hint-placeholder-count="3"><div style="margin-bottom:22px"><div style="font-size:13.5px;font-weight:600;color:#1A1A1A;margin-bottom:3px">{{ w.k }}</div><div style="font-size:12px;color:#9A9A9A;margin-bottom:9px;line-height:1.5">{{ w.desc }}</div><div style="background:#1A1A1A;border-radius:9px;padding:13px 15px;font-family:'Source Code Pro',monospace;font-size:12px;line-height:1.7;color:#D6D6D6;white-space:pre-wrap">{{ w.v }}</div></div></sc-for>
+        <div style="display:flex;align-items:center;gap:10px;border:1px solid #E6E6E6;border-radius:9px;background:#FAFAFA;padding:12px 15px"><span style="font-family:'Source Code Pro',monospace;font-size:9px;font-weight:600;color:#9A9A9A;background:#F0F0F0;padding:2px 7px;border-radius:4px">read-only</span><span style="font-size:12.5px;color:#6B6B6B">Ports — {{ pset.portRange }}, so dev servers never collide.</span></div>
+      </sc-if>
+
+      <sc-if value="{{ pset.isLanding }}" hint-placeholder-val="{{ false }}">
+        <p style="margin:0 0 16px;font-size:13px;color:#6B6B6B;line-height:1.5;max-width:64ch">How finished work merges back, and how much runs in parallel.</p>
+        <div style="border:1px solid #E6E6E6;border-radius:10px;overflow:hidden;margin-bottom:18px"><sc-for list="{{ pset.landing }}" as="r" hint-placeholder-count="4"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:13px 16px;border-bottom:1px solid #F2F2F2"><span style="display:flex;flex-direction:column;gap:3px;min-width:0"><span style="font-size:13.5px;color:#2A2A2A">{{ r.k }}</span><sc-if value="{{ r.hasDesc }}" hint-placeholder-val="{{ false }}"><span style="font-size:11.5px;color:#9A9A9A;line-height:1.4;max-width:42ch">{{ r.desc }}</span></sc-if></span><span style="display:flex;align-items:center;gap:9px;flex:none"><sc-if value="{{ r.overridden }}" hint-placeholder-val="{{ false }}"><button onClick="{{ r.onReset }}" style="border:none;background:none;color:#B0B0B0;font-size:11px;font-family:'Source Code Pro',monospace" style-hover="color:#1A1A1A">↺ reset</button></sc-if><span style="font-family:'Source Code Pro',monospace;font-size:9px;font-weight:600;color:{{ r.sourceFg }};background:{{ r.sourceBg }};padding:2px 7px;border-radius:4px">{{ r.source }}</span><sc-if value="{{ r.isToggle }}" hint-placeholder-val="{{ false }}"><span style="font-family:'Source Code Pro',monospace;font-size:10.5px;font-weight:600;color:{{ r.pillFg }};background:{{ r.pillBg }};padding:3px 10px;border-radius:12px">{{ r.onLabel }}</span></sc-if><sc-if value="{{ r.isText }}" hint-placeholder-val="{{ false }}"><span style="font-family:'Source Code Pro',monospace;font-size:11.5px;color:#3A3A3A">{{ r.v }}</span></sc-if><sc-if value="{{ r.isSeg }}" hint-placeholder-val="{{ false }}"><span style="display:inline-flex;border:1px solid #DADADA;border-radius:7px;overflow:hidden"><sc-for list="{{ r.seg }}" as="o" hint-placeholder-count="2"><span style="background:{{ o.bg }};color:{{ o.fg }};font-size:11px;font-weight:{{ o.weight }};padding:4px 10px">{{ o.label }}</span></sc-for></span></sc-if></span></div></sc-for></div>
+        <div style="display:flex;gap:10px;border:1px solid #EAEAEA;background:#FAFAFA;border-radius:9px;padding:12px 15px"><span style="width:6px;height:6px;border-radius:50%;background:#B0B0B0;flex:none;margin-top:5px"></span><span style="font-size:12.5px;color:#6B6B6B;line-height:1.5">{{ pset.overlapNote }}</span></div>
+      </sc-if>
+    </div>
+    </sc-if>
+
+    <!-- ===== APP SETTINGS ===== -->
+    <sc-if value="{{ isAppSet }}" hint-placeholder-val="{{ false }}">
+    <div style="max-width:820px;margin:0 auto;padding:30px 44px 80px">
+      <h1 style="margin:0 0 4px;font-family:'Source Serif 4',serif;font-size:30px;font-weight:600;letter-spacing:-.02em">Settings</h1>
+      <p style="margin:0 0 18px;font-size:13.5px;color:#6B6B6B">Applies across all projects. Each value shows its source; projects can override under their own Details.</p>
+      <div style="display:inline-flex;border:1px solid #DADADA;border-radius:8px;overflow:hidden;background:#fff;margin-bottom:26px"><sc-for list="{{ aset.tabs }}" as="t" hint-placeholder-count="4"><button onClick="{{ t.onClick }}" style="border:none;border-left:1px solid #EEE;background:{{ t.bg }};color:{{ t.fg }};padding:7px 14px;font-size:12.5px;font-weight:{{ t.weight }}">{{ t.label }}</button></sc-for></div>
+
+      <sc-if value="{{ aset.isGeneral }}" hint-placeholder-val="{{ true }}">
+        <div style="font-family:'Source Code Pro',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#A8A8A8;margin-bottom:10px">Appearance</div>
+        <div style="border:1px solid #E6E6E6;border-radius:10px;overflow:hidden;margin-bottom:26px"><sc-for list="{{ aset.appearance }}" as="r" hint-placeholder-count="2"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;border-bottom:1px solid #F2F2F2"><span style="font-size:13.5px;color:#2A2A2A">{{ r.k }}</span><span style="display:flex;align-items:center;gap:9px"><span style="font-family:'Source Code Pro',monospace;font-size:9px;font-weight:600;color:{{ r.sourceFg }};background:{{ r.sourceBg }};padding:2px 7px;border-radius:4px">{{ r.source }}</span><span style="display:inline-flex;border:1px solid #DADADA;border-radius:7px;overflow:hidden"><sc-for list="{{ r.seg }}" as="o" hint-placeholder-count="3"><span style="background:{{ o.bg }};color:{{ o.fg }};font-size:11px;font-weight:{{ o.weight }};padding:5px 11px">{{ o.label }}</span></sc-for></span></span></div></sc-for></div>
+        <div style="font-family:'Source Code Pro',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#A8A8A8;margin-bottom:10px">Defaults</div>
+        <div style="border:1px solid #E6E6E6;border-radius:10px;overflow:hidden;margin-bottom:26px"><sc-for list="{{ aset.defaults }}" as="r" hint-placeholder-count="3"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;border-bottom:1px solid #F2F2F2"><span style="font-size:13.5px;color:#2A2A2A">{{ r.k }}</span><span style="display:flex;align-items:center;gap:9px"><span style="font-family:'Source Code Pro',monospace;font-size:9px;font-weight:600;color:{{ r.sourceFg }};background:{{ r.sourceBg }};padding:2px 7px;border-radius:4px">{{ r.source }}</span><span style="font-family:'Source Code Pro',monospace;font-size:11.5px;color:#1A1A1A;background:#fff;border:1px solid #DADADA;padding:3px 9px;border-radius:6px">{{ r.v }} ▾</span></span></div></sc-for></div>
+        <div style="font-family:'Source Code Pro',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#A8A8A8;margin-bottom:10px">Daemon</div>
+        <div style="border:1px solid #E6E6E6;border-radius:10px;overflow:hidden"><sc-for list="{{ aset.daemon }}" as="r" hint-placeholder-count="4"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;border-bottom:1px solid #F2F2F2"><span style="font-size:13.5px;color:#2A2A2A">{{ r.k }}</span><span style="display:flex;align-items:center;gap:9px"><span style="font-family:'Source Code Pro',monospace;font-size:9px;font-weight:600;color:{{ r.sourceFg }};background:{{ r.sourceBg }};padding:2px 7px;border-radius:4px">{{ r.source }}</span><span style="font-family:'Source Code Pro',monospace;font-size:11.5px;color:#3A3A3A">{{ r.v }}</span></span></div></sc-for></div>
+      </sc-if>
+
+      <sc-if value="{{ aset.isProfiles }}" hint-placeholder-val="{{ false }}">
+        <p style="margin:0 0 16px;font-size:13px;color:#6B6B6B;line-height:1.5;max-width:64ch">A profile is the bundle the daemon uses to launch an agent. Built-ins are editable by copy — duplicating one leaves the original intact.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><sc-for list="{{ aset.profiles }}" as="p" hint-placeholder-count="4"><div style="border:1px solid #E6E6E6;border-radius:10px;padding:15px 16px"><div style="display:flex;align-items:center;gap:9px;margin-bottom:12px"><span style="font-family:'Source Serif 4',serif;font-size:16px;font-weight:600;color:#1A1A1A">{{ p.name }}</span><span style="font-family:'Source Code Pro',monospace;font-size:9.5px;font-weight:600;color:{{ p.harnessFg }};background:{{ p.harnessBg }};padding:2px 7px;border-radius:4px">{{ p.harness }}</span></div><div style="display:flex;flex-direction:column;gap:6px;font-family:'Source Code Pro',monospace;font-size:11px;color:#6B6B6B"><div style="display:flex;justify-content:space-between"><span style="color:#A0A0A0">model</span><span style="color:#2A2A2A">{{ p.model }}</span></div><div style="display:flex;justify-content:space-between"><span style="color:#A0A0A0">effort</span><span style="color:#2A2A2A">{{ p.effort }}</span></div><div style="display:flex;justify-content:space-between"><span style="color:#A0A0A0">permission</span><span style="color:#2A2A2A">{{ p.preset }}</span></div><div style="display:flex;justify-content:space-between"><span style="color:#A0A0A0">subagents</span><span style="color:#2A2A2A">{{ p.subagents }}</span></div></div><div style="margin-top:12px;padding-top:11px;border-top:1px solid #F0F0F0;display:flex;align-items:center;justify-content:space-between"><span style="font-family:'Source Code Pro',monospace;font-size:10px;color:#B0B0B0">{{ p.builtinLabel }}</span><span style="display:flex;gap:8px"><button style="border:none;background:none;color:#6B6B6B;font-size:11.5px" style-hover="color:#1A1A1A">Duplicate</button><button style="border:none;background:none;color:#6B6B6B;font-size:11.5px" style-hover="color:#1A1A1A">Edit</button></span></div></div></sc-for></div>
+        <button style="margin-top:14px;border:1px dashed #DADADA;background:#fff;color:#6B6B6B;padding:8px 14px;border-radius:8px;font-size:12.5px" style-hover="border-color:#B0B0B0">+ New profile</button>
+      </sc-if>
+
+      <sc-if value="{{ aset.isPermissions }}" hint-placeholder-val="{{ false }}">
+        <p style="margin:0 0 16px;font-size:13px;color:#6B6B6B;line-height:1.5;max-width:64ch">How much rope every agent gets. Applies to any profile that doesn&rsquo;t set its own.</p>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:26px"><sc-for list="{{ aset.presets }}" as="p" hint-placeholder-count="3"><div style="display:flex;gap:12px;border:1.5px solid {{ p.ring }};background:{{ p.bg }};border-radius:10px;padding:14px 16px"><span style="width:16px;height:16px;border-radius:50%;border:1.5px solid {{ p.dotBorder }};background:#fff;flex:none;margin-top:1px;display:flex;align-items:center;justify-content:center"><span style="width:8px;height:8px;border-radius:50%;background:{{ p.dotBg }}"></span></span><span style="display:flex;flex-direction:column;gap:3px"><span style="font-size:14px;font-weight:600;color:#1A1A1A">{{ p.label }}</span><span style="font-size:12.5px;color:#6B6B6B;line-height:1.45">{{ p.desc }}</span></span></div></sc-for></div>
+        <div style="font-family:'Source Code Pro',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#A8A8A8;margin-bottom:10px">Denylist <span style="color:#C0C0C0">· blocks these under guarded access</span></div>
+        <div style="border:1px solid #E6E6E6;border-radius:10px;overflow:hidden;margin-bottom:12px"><sc-for list="{{ aset.denylist }}" as="d" hint-placeholder-count="5"><div style="display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid #F2F2F2"><span style="font-family:'Source Code Pro',monospace;font-size:12px;color:#2A2A2A;flex:1;min-width:0">{{ d.pattern }}</span><span style="font-family:'Source Code Pro',monospace;font-size:9px;font-weight:600;color:{{ d.tagFg }};background:{{ d.tagBg }};padding:2px 7px;border-radius:4px;flex:none">{{ d.tag }}</span><sc-if value="{{ d.canDelete }}" hint-placeholder-val="{{ false }}"><button style="border:none;background:none;color:#B0B0B0;font-size:13px;flex:none" style-hover="color:#C63A2A">×</button></sc-if></div></sc-for><div style="padding:10px 16px;background:#FAFAFA"><input placeholder="+ add a pattern…" style="width:100%;border:none;background:none;outline:none;font-family:'Source Code Pro',monospace;font-size:12px;color:#3A3A3A"></div></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;border:1px solid #E6E6E6;border-radius:10px;padding:13px 16px"><span style="display:flex;flex-direction:column;gap:2px"><span style="font-size:13.5px;color:#2A2A2A">Network access</span><span style="font-size:11.5px;color:#9A9A9A">Under workspace-only — lets agents fetch docs and search the web.</span></span><span style="font-family:'Source Code Pro',monospace;font-size:10.5px;font-weight:600;color:#2E7D57;background:#E8F3EC;padding:3px 10px;border-radius:12px">on</span></div>
+      </sc-if>
+
+      <sc-if value="{{ aset.isNotifications }}" hint-placeholder-val="{{ false }}">
+        <div style="border:1px solid #E6E6E6;border-radius:10px;overflow:hidden"><sc-for list="{{ aset.notify }}" as="r" hint-placeholder-count="2"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;border-bottom:1px solid #F2F2F2"><span style="font-size:13.5px;color:#2A2A2A">Notify on {{ r.k }}</span><span style="display:flex;align-items:center;gap:9px"><span style="font-family:'Source Code Pro',monospace;font-size:9px;font-weight:600;color:{{ r.sourceFg }};background:{{ r.sourceBg }};padding:2px 7px;border-radius:4px">{{ r.source }}</span><span style="font-family:'Source Code Pro',monospace;font-size:10.5px;font-weight:600;color:{{ r.pillFg }};background:{{ r.pillBg }};padding:3px 10px;border-radius:12px">{{ r.onLabel }}</span></span></div></sc-for><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px"><span style="font-size:13.5px;color:#2A2A2A">{{ aset.delivery.k }}</span><span style="display:inline-flex;border:1px solid #DADADA;border-radius:7px;overflow:hidden"><sc-for list="{{ aset.delivery.seg }}" as="o" hint-placeholder-count="3"><span style="background:{{ o.bg }};color:{{ o.fg }};font-size:11px;font-weight:{{ o.weight }};padding:5px 11px">{{ o.label }}</span></sc-for></span></div></div>
+      </sc-if>
+    </div>
+    </sc-if>
+
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    view: 'overview', projectId: 'core',
+    workView: 'board', filterEpic: 'all',
+    drafts:{}, expanded:{}, checked:{}, removed:{}, exiting:{},
+    now:0, runsLive:null,
+    taskId:null, runId:null, docMode:'read', saveState:'idle',
+    appTab:'general', projTab:'details', focusIdx:-1,
+  };
+  tailRef=React.createRef();
+
+  KIND = {
+    clarify:{label:'clarify',color:'#B7791F',glyph:'●'}, provision:{label:'provision',color:'#6B5AD1',glyph:'■'},
+    approve:{label:'approve spec',color:'#2D6CDF',glyph:'▲'}, review:{label:'review',color:'#2E7D57',glyph:'◆'}, failed:{label:'failed',color:'#C63A2A',glyph:'✕'},
+  };
+  STATUS = {
+    backlog:{label:'Backlog',dot:'#BDBDBD'}, ready:{label:'Ready',dot:'#2D6CDF'},
+    inprog:{label:'In progress',dot:'#B7791F'}, review:{label:'Review',dot:'#2E7D57'}, done:{label:'Done',dot:'#C4C4C4'},
+  };
+  COLC = {backlog:'#BDBDBD',ready:'#2D6CDF',inprog:'#B7791F',review:'#2E7D57',done:'#C4C4C4'};
+  SRC = {default:{fg:'#9A9A9A',bg:'#F0F0F0'},global:{fg:'#2D6CDF',bg:'#EAF1FD'},project:{fg:'#6B5AD1',bg:'#EFEDFB'},local:{fg:'#B7791F',bg:'#FBF3E2'}};
+  RISK = { high:'#C63A2A', med:'#B7791F', low:'#8A8A8A' };
+  RUNNER = { codex:{bg:'#1A1A1A',fg:'#fff'}, claude:{bg:'#F3E7DF',fg:'#B4602F'} };
+  OUTCOME = { succeeded:{label:'succeeded',fg:'#2E7D57',bg:'#E8F3EC'}, failed:{label:'failed',fg:'#C63A2A',bg:'#FBE9E5'}, interrupted:{label:'interrupted',fg:'#8A8A8A',bg:'#F0F0F0'}, retry:{label:'retry-queued',fg:'#B7791F',bg:'#FBF3E2'} };
+
+  PROJECTS = [
+    { id:'core', name:'tusker-core', path:'~/code/tusker', branch:'main', epics:[['infra','Infra'],['ui','UI'],['cleanup','Cleanup']],
+      tasks:[
+        {id:'SRV-S-0007',title:'Object-storage abstraction',epic:'infra',status:'review',priority:'P1',risk:'med',updated:'3h',gate:{kind:'approve',blk:6,age:'3h',body:'Spec is ready for approval — it defines the S3/R2 driver interface all backup work builds on. Six downstream tasks are blocked pending sign-off.',primary:'Approve',secondary:'Open spec →'}},
+        {id:'CLN-T-0042',title:'Dedupe worktree cleanup',epic:'cleanup',status:'ready',priority:'P2',risk:'med',updated:'22m',gate:{kind:'clarify',blk:3,age:'22m',body:'Retention is ambiguous: delete orphaned worktrees older than the lease immediately, or archive for one cycle first?',primary:'Answer',secondary:'Open task →',reworkLabel:'Send answer',placeholder:'Type your answer — the agent resumes with this…'}},
+        {id:'INF-T-0031',title:'Wire R2 backup target',epic:'infra',status:'ready',priority:'P2',risk:'high',updated:'1h',gate:{kind:'provision',blk:2,age:'1h',body:'The agent needs R2 credentials it cannot generate. Set S3_ACCESS_KEY and S3_SECRET in config/secrets.toml, then resume.',primary:'Resume run',secondary:'Copy path',check:'I\u2019ve set the credentials at config/secrets.toml'}},
+        {id:'INF-T-0029',title:'Restore command',epic:'infra',status:'ready',priority:'P2',risk:'med',updated:'12m',gate:null},
+        {id:'CLN-T-0040',title:'Lease reaper',epic:'cleanup',status:'ready',priority:'P3',risk:'low',updated:'8m',gate:null},
+        {id:'INF-T-0028',title:'Backup scheduler',epic:'infra',status:'ready',priority:'P2',risk:'med',updated:'6h',gate:null,rework:true},
+        {id:'UI-T-0022',title:'Outline nav for specs',epic:'ui',status:'backlog',priority:'P3',risk:'low',updated:'1d',gate:null},
+        {id:'INF-T-0030',title:'Secrets loader',epic:'infra',status:'done',priority:'P2',risk:'med',updated:'2d',gate:null},
+      ],
+      runs:[
+        {taskId:'INF-T-0029',taskTitle:'Restore command',runner:'codex',model:'gpt-5-codex',lane:'execute',elapsed:2418,lastEvent:19,active:true,tokIn:96300,tokOut:14100,stall:true},
+        {taskId:'CLN-T-0040',taskTitle:'Lease reaper',runner:'claude',model:'sonnet-4.6',lane:'execute',elapsed:512,lastEvent:2,active:true,tokIn:22800,tokOut:5100,stall:false},
+        {taskId:'INF-T-0030',taskTitle:'Secrets loader',runner:'claude',model:'sonnet-4.6',lane:'execute',elapsed:330,active:false,outcome:'succeeded',tokIn:16800,tokOut:3400},
+        {taskId:'CLN-T-0042',taskTitle:'Dedupe worktree cleanup',runner:'codex',model:'gpt-5-codex',lane:'execute',elapsed:120,active:false,outcome:'interrupted',tokIn:8200,tokOut:1500},
+      ] },
+    { id:'gw', name:'api-gateway', path:'~/code/gateway', branch:'main', epics:[['edge','Edge'],['ops','Ops']],
+      tasks:[
+        {id:'GW-T-0021',title:'Rate-limit middleware',epic:'edge',status:'review',priority:'P2',risk:'low',updated:'40m',gate:{kind:'review',blk:1,age:'40m',body:'Task complete and routed to review. Acceptance 5/5 pass · Verification 3/3 green · reviewer recommends accept.',primary:'Accept & close',secondary:'Send to rework',reworkLabel:'Send to rework',placeholder:'Optional note for the rework agent…'}},
+        {id:'GW-T-0018',title:'Retry budget',epic:'edge',status:'ready',priority:'P2',risk:'med',updated:'30m',gate:null},
+        {id:'GW-T-0024',title:'Health probe',epic:'ops',status:'ready',priority:'P3',risk:'low',updated:'4h',gate:null},
+        {id:'GW-T-0012',title:'TLS rotation',epic:'ops',status:'done',priority:'P2',risk:'med',updated:'1d',gate:null},
+      ],
+      runs:[
+        {taskId:'GW-T-0018',taskTitle:'Retry budget',runner:'codex',model:'gpt-5-codex',lane:'execute',elapsed:280,lastEvent:5,active:true,tokIn:18200,tokOut:3900,stall:false},
+        {taskId:'GW-T-0012',taskTitle:'TLS rotation',runner:'claude',model:'sonnet-4.6',lane:'execute',elapsed:410,active:false,outcome:'succeeded',tokIn:14200,tokOut:2800},
+      ] },
+    { id:'web', name:'web-console', path:'~/code/console', branch:'dev', epics:[['views','Views'],['editor','Editor']],
+      tasks:[
+        {id:'WC-T-0044',title:'Pagination cursor format',epic:'views',status:'ready',priority:'P2',risk:'low',updated:'15m',gate:{kind:'clarify',blk:1,age:'15m',body:'Opaque base64 cursor or human-readable offset? The spec allows either but SDK naming depends on the choice.',primary:'Answer',secondary:'Open task →',reworkLabel:'Send answer',placeholder:'Type your answer…'}},
+        {id:'WC-T-0031',title:'Conflict banner',epic:'editor',status:'ready',priority:'P3',risk:'high',updated:'2h',gate:{kind:'failed',blk:1,age:'2h',body:'Run exhausted 3/3 retries. Last error: CAS token stale against base branch in src/editor/save.ts.',primary:'Retry',secondary:'Inspect run →'}},
+        {id:'WC-T-0040',title:'Outline sidebar',epic:'editor',status:'ready',priority:'P3',risk:'low',updated:'5h',gate:null},
+        {id:'WC-T-0022',title:'Theme tokens',epic:'views',status:'done',priority:'P3',risk:'low',updated:'2d',gate:null},
+      ],
+      runs:[
+        {taskId:'WC-T-0044',taskTitle:'Pagination cursor format',runner:'claude',model:'sonnet-4.6',lane:'execute',elapsed:190,lastEvent:3,active:true,tokIn:12400,tokOut:2600,stall:false},
+        {taskId:'WC-T-0031',taskTitle:'Conflict banner',runner:'codex',model:'gpt-5-codex',lane:'execute',elapsed:900,active:false,outcome:'retry',tokIn:54000,tokOut:9900},
+      ] },
+    { id:'infra', name:'infra-terraform', path:'~/code/infra', branch:'main', epics:[['storage','Storage'],['ci','CI']],
+      tasks:[
+        {id:'TF-T-0009',title:'R2 bucket module',epic:'storage',status:'ready',priority:'P2',risk:'med',updated:'20m',gate:null},
+        {id:'TF-T-0007',title:'State backend',epic:'storage',status:'backlog',priority:'P2',risk:'med',updated:'3h',gate:null},
+        {id:'TF-T-0004',title:'CI plan gate',epic:'ci',status:'done',priority:'P3',risk:'low',updated:'2d',gate:null},
+      ],
+      runs:[ {taskId:'TF-T-0009',taskTitle:'R2 bucket module',runner:'codex',model:'gpt-5-codex',lane:'execute',elapsed:260,lastEvent:4,active:true,tokIn:15800,tokOut:3100,stall:false} ] },
+    { id:'docs', name:'docs-site', path:'~/code/docs', branch:'main', epics:[['ref','Reference'],['guides','Guides']],
+      tasks:[
+        {id:'DOC-T-0005',title:'API reference',epic:'ref',status:'ready',priority:'P3',risk:'low',updated:'1h',gate:null},
+        {id:'DOC-T-0002',title:'Getting started',epic:'guides',status:'done',priority:'P3',risk:'low',updated:'3d',gate:null},
+      ],
+      runs:[ {taskId:'DOC-T-0005',taskTitle:'API reference',runner:'claude',model:'sonnet-4.6',lane:'execute',elapsed:140,lastEvent:7,active:true,tokIn:8900,tokOut:1700,stall:false} ] },
+  ];
+
+  EVENT_POOL=[{type:'tool',color:'#6BA5E0',text:'read_file src/storage/driver.rs'},{type:'tool',color:'#6BA5E0',text:'apply_patch +34 -8'},{type:'shell',color:'#C8A24B',text:'cargo test storage:: — 12 passed'},{type:'think',color:'#8A8A8A',text:'planning migration shim'},{type:'tool',color:'#6BA5E0',text:'write_file src/storage/r2.rs'},{type:'shell',color:'#C8A24B',text:'cargo build — ok (4.2s)'},{type:'lease',color:'#7FBF9B',text:'lease renewed +120s'}];
+
+  componentDidMount(){
+    const flat=[];
+    this.PROJECTS.forEach(p=>p.runs.forEach(r=>flat.push(Object.assign({pid:p.id, evClock:0, lastEvent:r.lastEvent||0, events:[]},r))));
+    this.setState({runsLive:flat});
+    this._t=setInterval(()=>this.tick(),1000);
+    window.addEventListener('keydown', this.onKey);
+  }
+  componentWillUnmount(){ clearInterval(this._t); window.removeEventListener('keydown', this.onKey); }
+  clock(sec){const m=Math.floor(sec/60),x=sec%60;return String(m).padStart(2,'0')+':'+String(x).padStart(2,'0');}
+  onKey=(e)=>{
+    const v=this.state.view; if(v!=='inbox'&&v!=='needs') return;
+    const tag=(e.target&&e.target.tagName||'').toLowerCase(); if(tag==='input'||tag==='textarea') return;
+    if(e.key==='j'||e.key==='J'||e.key==='ArrowDown'){ e.preventDefault(); this.moveFocus(1); }
+    else if(e.key==='k'||e.key==='K'||e.key==='ArrowUp'){ e.preventDefault(); this.moveFocus(-1); }
+  };
+  moveFocus(d){
+    const v=this.state.view; const len=v==='inbox'?(this.inboxLen||0):(this.needsLen||0); if(!len) return;
+    let i=this.state.focusIdx; i = i<0 ? (d>0?0:len-1) : Math.max(0,Math.min(len-1,i+d));
+    this.setState({focusIdx:i});
+    setTimeout(()=>{const el=document.querySelector('[data-fidx="'+i+'"]'); const m=document.querySelector('main'); if(el&&m){ m.scrollTop = el.offsetTop - 110; }},0);
+  }
+  componentDidUpdate(){ if(this.state.view==='run' && this.tailRef.current){ const el=this.tailRef.current; el.scrollTop=el.scrollHeight; } }
+  tick(){
+    const runs=(this.state.runsLive||[]).map(r=>{
+      if(!r.active) return r;
+      const nr={...r,elapsed:r.elapsed+1,lastEvent:r.lastEvent+1,evClock:r.evClock+1};
+      if(!r.stall && Math.random()<0.24) nr.lastEvent=0;
+      if(nr.evClock>=3){ nr.evClock=0; const p=this.EVENT_POOL[Math.floor(Math.random()*this.EVENT_POOL.length)]; nr.events=[...(r.events||[]),{t:this.clock(nr.elapsed),type:p.type,color:p.color,text:p.text}].slice(-60); }
+      return nr;
+    });
+    this.setState({runsLive:runs, now:this.state.now+1});
+  }
+  fmtDur(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;return h>0?(h+'h '+String(m).padStart(2,'0')+'m'):(m+'m '+String(x).padStart(2,'0')+'s');}
+  fmtTok(n){return n>=1000?(n/1000).toFixed(1)+'k':String(n);}
+  liveness(sec){
+    if(sec<20) return {color:'#2E7D57',label:'live · '+sec+'s ago',text:'#3A3A3A',weight:'400',anim:'none',rowBg:'#fff'};
+    if(sec<50) return {color:'#B7791F',label:'slowing · '+sec+'s ago',text:'#B7791F',weight:'500',anim:'none',rowBg:'#FDFAF3'};
+    return {color:'#C63A2A',label:'STALE · '+sec+'s no events',text:'#C63A2A',weight:'600',anim:'tkPulse 1.4s ease-in-out infinite',rowBg:'#FDF3F1'};
+  }
+
+  proj(){ return this.PROJECTS.find(p=>p.id===this.state.projectId)||this.PROJECTS[0]; }
+  gatedTasks(p){ return p.tasks.filter(t=>t.gate && !this.state.removed[t.id]); }
+  runsFor(pid){ return (this.state.runsLive||[]).filter(r=>r.pid===pid); }
+  staleIn(pid){ return this.runsFor(pid).some(r=>r.active && r.lastEvent>=50); }
+
+  // nav
+  goInbox=()=>this.setState({view:'inbox',focusIdx:-1});
+  selectProject=(id)=>()=>this.setState({view:'overview',projectId:id,filterEpic:'all',focusIdx:-1});
+  goSection=(id,sec)=>()=>this.setState({view:sec,projectId:id,filterEpic:'all',focusIdx:-1});
+  goProjNeeds=()=>this.setState({view:'needs',focusIdx:-1});
+  goProjRuns=()=>this.setState({view:'runs'});
+  setWorkView=(v)=>()=>this.setState({workView:v});
+  setEpic=(e)=>()=>this.setState({filterEpic:e});
+
+  // needs interactions
+  toggleCompose=(id)=>()=>{const e={...this.state.expanded};e[id]=!e[id];this.setState({expanded:e});};
+  onDraft=(id)=>(ev)=>{const d={...this.state.drafts};d[id]=ev.target.value;this.setState({drafts:d});};
+  onCheck=(id)=>(ev)=>{const c={...this.state.checked};c[id]=ev.target.checked;this.setState({checked:c});};
+  resolveGate(id){const ex={...this.state.exiting};ex[id]=true;this.setState({exiting:ex});setTimeout(()=>{const rm={...this.state.removed};rm[id]=true;this.setState({removed:rm});},400);}
+  resolve=(id)=>()=>this.resolveGate(id);
+  reset=()=>this.setState({removed:{},exiting:{},expanded:{},drafts:{},checked:{}});
+  openTask=(id,pid)=>()=>this.setState({view:'task',taskId:id,projectId:pid||this.state.projectId,docMode:'read',saveState:'idle'});
+  openRun=(id,pid)=>()=>this.setState({view:'run',runId:id,projectId:pid||this.state.projectId});
+  goProjSettings=()=>this.setState({view:'projset',projTab:'details'});
+  goAppSettings=()=>this.setState({view:'appset',appTab:'general'});
+  setAppTab=(t)=>()=>this.setState({appTab:t});
+  setProjTab=(t)=>()=>this.setState({projTab:t});
+  closeTask=(id)=>()=>{this.resolveGate(id);this.setState({view:'overview'});};
+  backOverview=()=>this.setState({view:'overview'});
+  startEdit=()=>this.setState({docMode:'edit',saveState:'idle'});
+  cancelEdit=()=>this.setState({docMode:'read',saveState:'idle'});
+  saveDoc=()=>{const seq={idle:'conflict',conflict:'invalid',invalid:'saved',saved:'saved'};const n=seq[this.state.saveState]||'conflict';this.setState({saveState:n,docMode:n==='saved'?'read':'edit'});};
+  reconcile=()=>this.setState({saveState:'invalid'});
+  approveSpec=(id)=>()=>{this.resolveGate(id);this.setState({view:'overview'});};
+
+  buildCard(t, pid, withProject){
+    const g=t.gate, k=this.KIND[g.kind], s=this.state;
+    const expanded=!!s.expanded[t.id], checked=!!s.checked[t.id], exiting=!!s.exiting[t.id];
+    const hasCheckbox=g.kind==='provision';
+    const hasCompose=g.kind==='clarify'||g.kind==='review';
+    const onPrimary=hasCheckbox?(checked?this.resolve(t.id):()=>{}):(g.kind==='clarify'?this.toggleCompose(t.id):this.resolve(t.id));
+    let onSecondary=()=>{};
+    if(g.kind==='review') onSecondary=this.toggleCompose(t.id);
+    else if(g.kind==='failed') onSecondary=this.openRun(t.id,pid);
+    else onSecondary=this.openTask(t.id,pid);
+    const pd=hasCheckbox&&!checked;
+    const pObj=this.PROJECTS.find(p=>p.id===pid)||{};
+    return {
+      id:t.id, color:k.color, kindLabel:k.label, kindGlyph:k.glyph, taskId:t.id, taskTitle:t.title, priority:t.priority, age:g.age, body:g.body,
+      blk:String(g.blk), blkUnit:g.blk===1?'task\nblocked':'tasks\nblocked', numColor:g.blk>=4?'#C63A2A':'#1A1A1A',
+      project: withProject?pObj.name:'', onProject:this.selectProject(pid),
+      hasCheckbox, checked, checkLabel:g.check||'', onCheck:this.onCheck(t.id),
+      primaryLabel:g.primary, secondaryLabel:g.secondary, primaryDisabled:pd, primaryOpacity:pd?'.4':'1', onPrimary, onSecondary,
+      composeOpen:hasCompose&&expanded, composeLabel:g.reworkLabel||'Send', placeholder:g.placeholder||'',
+      draft:s.drafts[t.id]||'', onDraft:this.onDraft(t.id), onCompose:this.resolve(t.id),
+      opacity:exiting?'0':'1', transform:exiting?'translateY(-8px)':'none',
+    };
+  }
+
+  taskRow(t){
+    const k=t.gate?this.KIND[t.gate.kind]:null;
+    const p=this.proj(); const epicName=(p.epics.find(e=>e[0]===t.epic)||[])[1]||t.epic;
+    const dc=this.displayCol(t);
+    return { id:t.id, title:t.title, epic:epicName, priority:t.priority, risk:t.risk, riskFg:this.RISK[t.risk], updated:t.updated,
+      priFg:t.priority==='P1'?'#C63A2A':'#6B6B6B', priBorder:t.priority==='P1'?'#E7B4AC':'#DADADA',
+      statusDot:this.COLC[dc], hasGate:!!t.gate, gateColor:k?k.color:'#C63A2A', gateBg:'#F5F5F5', gateLabel:k?k.label:'gate', gateGlyph:k?k.glyph:'●',
+      rework:!!t.rework, onClick:this.openTask(t.id) };
+  }
+
+  mkRunRow(r){
+    const rn=this.RUNNER[r.runner]; const L=this.liveness(r.lastEvent||0);
+    return { taskId:r.taskId, taskTitle:r.taskTitle, runner:r.runner, runnerBg:rn.bg, runnerFg:rn.fg, model:r.model,
+      lane:r.lane, laneFg:r.lane==='review'?'#2E7D57':'#6B6B6B', tokens:this.fmtTok(r.tokIn+r.tokOut),
+      elapsed:this.fmtDur(r.elapsed), liveColor:L.color, liveLabel:L.label, liveTextColor:L.text, liveWeight:L.weight, liveAnim:L.anim, rowBg:L.rowBg,
+      onClick:this.openRun(r.taskId) };
+  }
+
+  displayCol(t){
+    if(t.status==='done') return 'done';
+    if(t.status==='review') return 'review';
+    if(this.runsFor(this.state.projectId).some(r=>r.active&&r.lane==='execute'&&r.taskId===t.id)) return 'inprog';
+    return t.status;
+  }
+  buildColumns(tasks, includeBacklog){
+    const defs=includeBacklog?[['backlog','Backlog'],['ready','Ready'],['inprog','In progress'],['review','Review'],['done','Done']]:[['ready','Ready'],['inprog','In progress'],['review','Review'],['done','Done']];
+    return defs.map(([c,label])=>{const ts=tasks.filter(t=>this.displayCol(t)===c).map(t=>this.taskRow(t));return {label,color:this.COLC[c],count:String(ts.length),tasks:ts};});
+  }
+  closeoutChecks(t){
+    if(t.status!=='review') return [];
+    return [
+      {label:'Acceptance', detail:'5 / 5 pass', ok:true},
+      {label:'Verification', detail:'3 / 3 green', ok:true},
+      {label:'Review threads', detail:'0 open', ok:true},
+      {label:'Open gates', detail:'none', ok:true},
+      {label:'Git status', detail:'clean · rebased on main', ok:true},
+      {label:'CI checks', detail:'passing', ok:true},
+    ].map(c=>({...c, dotBg:c.ok?'#2E7D57':'#B7791F', mark:c.ok?'✓':'!'}));
+  }
+
+  getDoc(){
+    const P=this.proj(); const id=this.state.taskId; const t=P.tasks.find(x=>x.id===id)||P.tasks[0];
+    const s=this.state; const editing=s.docMode==='edit';
+    const isSpec=t.id.indexOf('-S-')>=0;
+    const st=this.STATUS[t.status]; const k=t.gate?this.KIND[t.gate.kind]:null;
+    const pending=isSpec && !!t.gate && !s.removed[t.id];
+    const depMap={'INF-T-0031':[['SRV-S-0007','Object-storage abstraction']],'INF-T-0028':[['SRV-S-0007','Object-storage abstraction']],'INF-T-0029':[['SRV-S-0007','Object-storage abstraction']]};
+    const deps=(depMap[t.id]||[]).map(d=>({id:d[0],title:d[1],onClick:this.openTask(d[0])}));
+    return {
+      title:t.title, id:t.id,
+      typeLabel:isSpec?'Specification':'Task contract', typeColor:isSpec?'#2D6CDF':'#6B5AD1',
+      path:(isSpec?'specs/':'tasks/')+t.id.toLowerCase()+'.md',
+      reading:!editing, editing,
+      conflict:s.saveState==='conflict', invalid:s.saveState==='invalid', saved:s.saveState==='saved',
+      showApprove: pending && s.docMode==='read' && s.saveState==='idle', approveFn:this.approveSpec(t.id),
+      bodyBorder:editing?'2px solid #F0E6D2':'2px solid transparent', bodyPad:editing?'16px':'0',
+      frontmatter:[
+        {k:'status',v:st.label,locked:true,editable:false},
+        {k:'state_rev',v:'18',locked:true,editable:false},
+        {k:'proof_status',v:t.status==='review'?'passing':'pending',locked:true,editable:false},
+        {k:'priority',v:t.priority,locked:false,editable:true},
+        {k:'risk',v:t.risk,locked:false,editable:true},
+      ],
+      facts:[
+        {k:'status',v:st.label,color:st.dot},
+        {k:'readiness',v:t.status==='ready'?'ready':t.status==='backlog'?'not drafted':'not ready',color:t.status==='ready'?'#2E7D57':'#8A8A8A'},
+        {k:'priority',v:t.priority,color:t.priority==='P1'?'#C63A2A':'#4A4A4A'},
+        {k:'risk',v:t.risk,color:this.RISK[t.risk]},
+        {k:'gate',v:t.gate?k.label:'none',color:t.gate?k.color:'#8A8A8A'},
+        {k:'updated',v:t.updated+' ago',color:'#4A4A4A'},
+      ],
+      deps, hasDeps:deps.length>0,
+      blocks:this.docBlocks(t.id).map(b=>this.buildBlock(b)),
+      isReview:t.status==='review', isBacklog:t.status==='backlog',
+      checks:this.closeoutChecks(t), closeReady:this.closeoutChecks(t).every(c=>c.ok),
+      checksLabel:this.closeoutChecks(t).filter(c=>c.ok).length+' / '+this.closeoutChecks(t).length+' passing',
+      closeHint:this.closeoutChecks(t).every(c=>c.ok)?'all checks green':'resolve remaining checks first',
+      primaryLabel: t.status==='backlog'?'Draft contract':t.status==='ready'?'Start run':t.status==='review'?'Accept & close':'Reopen',
+      primaryFn: t.status==='ready'?this.openRun(t.id):(t.status==='review'?this.closeTask(t.id):()=>{}),
+      primaryColor: t.status==='review'?'#2E7D57':(t.status==='backlog'?'#6B5AD1':'#1A1A1A'),
+      primaryDisabled: t.status==='review' && !this.closeoutChecks(t).every(c=>c.ok),
+      primaryOpacity: (t.status==='review' && !this.closeoutChecks(t).every(c=>c.ok))?'.45':'1',
+      altAction:t.status==='review'?'Send to rework':t.status==='ready'?'Open in editor':t.status==='backlog'?'Hand to planning agent':'Reopen task',
+    };
+  }
+  docBlocks(id){
+    if(id==='SRV-S-0007') return [
+      {type:'h2',text:'Intent'},
+      {type:'p',segs:[{k:'t',v:'One storage driver interface so backup and restore target local disk, S3, or Cloudflare '},{k:'code',v:'R2'},{k:'t',v:' without code change. Unblocks the backup epic.'}]},
+      {type:'mermaid',title:'flowchart · backup path',flow:['tusker backup','ObjectStore trait','driver impl','R2 / S3 / local']},
+      {type:'h2',text:'Interface'},
+      {type:'code',lang:'rust',lines:['trait ObjectStore {','    fn put(&self, key: &str, bytes: &[u8]) -> Result<()>;','    fn get(&self, key: &str) -> Result<Vec<u8>>;','}']},
+      {type:'h2',text:'Acceptance'},
+      {type:'accept',rows:[{s:'ready',t:'Local disk driver reads back byte-identical.'},{s:'ready',t:'S3 driver reads back byte-identical.'},{s:'blocked',t:'R2 driver — blocked on credentials (INF-T-0031).'}]},
+      {type:'callout',tone:'note',text:'Retention semantics follow decision CLN-D-0001 — archive one cycle, then delete.'},
+    ];
+    if(id==='GW-T-0021') return [
+      {type:'h2',text:'Intent'},
+      {type:'p',segs:[{k:'t',v:'Token-bucket rate limiter at the API edge. Per-key, hot-reloadable, fail-open on limiter errors.'}]},
+      {type:'h2',text:'Acceptance'},
+      {type:'accept',rows:[{s:'pass',t:'Over-budget requests get 429 + Retry-After.'},{s:'pass',t:'Limits hot-reload from config, no restart.'},{s:'pass',t:'Limiter errors fail open + warn metric.'},{s:'pass',t:'Bucket state shared across workers.'},{s:'pass',t:'Burst + sustained load test asserts shaping.'}]},
+      {type:'h2',text:'Verification'},
+      {type:'table',cols:'1fr 90px',head:['command','result'],rows:[['cargo test ratelimit::','12 passed'],['k6 run load/ratelimit.js','shaped']]},
+    ];
+    if(id==='INF-T-0031') return [
+      {type:'h2',text:'Intent'},
+      {type:'p',segs:[{k:'t',v:'Wire the R2 bucket as a backup target behind the storage driver. Blocked on credentials the agent cannot generate.'}]},
+      {type:'callout',tone:'warn',text:'Provision gate open: set S3_ACCESS_KEY / S3_SECRET in config/secrets.toml, then resume.'},
+      {type:'h2',text:'Acceptance'},
+      {type:'accept',rows:[{s:'pending',t:'Backup writes to R2 and reads back byte-identical.'},{s:'pending',t:'Credentials load from secrets.toml, never the repo.'}]},
+    ];
+    return [
+      {type:'h2',text:'Intent'},
+      {type:'p',segs:[{k:'t',v:'Contract not yet drafted. Promote to Ready to have an agent draft acceptance criteria and a verification plan from the epic brief.'}]},
+      {type:'accept',rows:[{s:'pending',t:'Acceptance criteria pending.'}]},
+    ];
+  }
+  buildBlock(b){
+    const o={isH2:b.type==='h2',isP:b.type==='p',isUl:b.type==='ul',isCode:b.type==='code',isTable:b.type==='table',isMermaid:b.type==='mermaid',isAccept:b.type==='accept',isCallout:b.type==='callout',text:b.text||''};
+    if(b.type==='p') o.segs=(b.segs||[]).map(x=>({isText:x.k==='t',isCode:x.k==='code',v:x.v}));
+    if(b.type==='ul') o.items=b.items.map(t=>({text:t}));
+    if(b.type==='code'){o.lang=b.lang||'text';o.lines=b.lines.map(t=>({text:t}));}
+    if(b.type==='table'){o.cols=b.cols;o.head=b.head.map(t=>({text:t}));o.rows=b.rows.map(r=>({cells:r.map(c=>({text:c}))}));}
+    if(b.type==='mermaid'){o.title=b.title;o.flow=b.flow.map((n,i)=>({label:n,notLast:i<b.flow.length-1}));}
+    if(b.type==='accept'){const M={pass:{fg:'#2E7D57',bg:'#E8F3EC'},ready:{fg:'#2E7D57',bg:'#E8F3EC'},fail:{fg:'#C63A2A',bg:'#FBE9E5'},blocked:{fg:'#C63A2A',bg:'#FBE9E5'},pending:{fg:'#8A8A8A',bg:'#F0F0F0'}};o.rows=b.rows.map(r=>({status:r.s,text:r.t,fg:M[r.s].fg,bg:M[r.s].bg}));}
+    if(b.type==='callout'){o.calloutBg=b.tone==='warn'?'#FCF6EC':'#EEF4FE';o.calloutBorder=b.tone==='warn'?'#E7C9A6':'#B9CEF3';o.calloutColor=b.tone==='warn'?'#7A5410':'#1A3A6B';o.calloutDot=b.tone==='warn'?'#B7791F':'#2D6CDF';}
+    return o;
+  }
+  getRun(){
+    const rl=this.state.runsLive||[]; const x=rl.find(v=>v.taskId===this.state.runId && v.pid===this.state.projectId)||rl.find(v=>v.taskId===this.state.runId)||rl[0];
+    if(!x) return null;
+    const rn=this.RUNNER[x.runner]; const L=this.liveness(x.lastEvent||0);
+    const attempts = x.stall ? [
+      {n:3,outcome:'running',color:'#B7791F',dot:'#B7791F',meta:this.fmtDur(x.elapsed)+' · '+this.fmtTok(x.tokIn+x.tokOut)+' tok',note:'No events for '+x.lastEvent+'s — process may be wedged.'},
+      {n:2,outcome:'failed',color:'#C63A2A',dot:'#C63A2A',meta:'14m 20s · 48.1k tok',note:'Timed out on network fixture.'},
+      {n:1,outcome:'failed',color:'#C63A2A',dot:'#C63A2A',meta:'9m 02s · 31.0k tok',note:'Compile error, auto-retried.'},
+    ] : [
+      {n:2,outcome:'running',color:'#2E7D57',dot:'#2E7D57',meta:this.fmtDur(x.elapsed)+' · '+this.fmtTok(x.tokIn+x.tokOut)+' tok',note:'In progress, events streaming.'},
+      {n:1,outcome:'retried',color:'#B7791F',dot:'#B7791F',meta:'3m 40s · 12.2k tok',note:'Transient tool error, auto-retried.'},
+    ];
+    return { taskId:x.taskId,taskTitle:x.taskTitle,runner:x.runner,runnerBg:rn.bg,runnerFg:rn.fg,model:x.model,lane:x.lane,
+      liveColor:L.color, stateLabel:x.stall?('stale · '+x.lastEvent+'s no events'):('live · '+x.lastEvent+'s ago'),
+      stats:[{label:'Elapsed',value:this.fmtDur(x.elapsed)},{label:'Tokens in',value:this.fmtTok(x.tokIn)},{label:'Tokens out',value:this.fmtTok(x.tokOut)},{label:'Attempt',value:'#'+attempts[0].n}],
+      attempts, workspace:'.tusker/worktrees/'+x.taskId.toLowerCase(),
+      events:(x.events&&x.events.length)?x.events:[{t:'00:00',type:'lease',color:'#7FBF9B',text:'run started, lease acquired'}] };
+  }
+  normSetting(r){
+    const t=r.kind||'text'; const src=r.source||'default'; const sc=this.SRC[src];
+    return {k:r.k, isToggle:t==='toggle', isSelect:t==='select', isText:t==='text', isSeg:t==='seg', v:r.v||'',
+      onLabel:r.on?'on':'off', pillFg:r.on?'#2E7D57':'#8A8A8A', pillBg:r.on?'#E8F3EC':'#F0F0F0',
+      seg:(r.seg||[]).map(x=>({label:x, bg:x===r.v?'#1A1A1A':'#fff', fg:x===r.v?'#fff':'#6B6B6B', weight:x===r.v?'600':'500'})),
+      source:src, sourceFg:sc.fg, sourceBg:sc.bg, overridden:!!r.overridden,
+      hasDesc:!!r.desc, desc:r.desc||'', onReset:()=>{}};
+  }
+  projSettingsData(){
+    const P=this.proj(); const T=this.state.projTab;
+    const repo=[{k:'remote',v:'github.com/you/'+P.name,source:'project'},{k:'branch',kind:'select',v:P.branch,source:'project'},{k:'HEAD',v:'a1c3f09',source:'local'},{k:'vault',v:'.tusker/',source:'default'}].map(r=>this.normSetting(r));
+    const worktrees=this.runsFor(P.id).filter(r=>r.active).map(r=>({task:r.taskId,path:'.tusker/worktrees/'+r.taskId.toLowerCase(),lease:'held · '+this.fmtDur(r.elapsed)}));
+    const config=[{k:'Default runner',kind:'select',v:'codex',source:'global'},{k:'Default model',kind:'select',v:'gpt-5-codex',source:'global'},{k:'Max retries',v:'3',source:'default'},{k:'Review lane',kind:'toggle',on:true,source:'project',overridden:true}].map(r=>this.normSetting(r));
+    const routing=[{match:'risk: high',profile:'review-frontier'},{match:'epic: docs',profile:'docs-fast'},{match:'keywords: migration, schema',profile:'guarded-yolo'}].map((r,i)=>({order:String(i+1),match:r.match,profile:r.profile}));
+    const workspace=[{k:'Setup script',v:'pnpm install --frozen-lockfile\ncp .env.example .env',desc:'Runs once when a workspace is created. A failure fails the dispatch and shows the output tail.'},{k:'Files to copy',v:'.env*\n.tool-versions',desc:'Glob list of local-only files new workspaces need.'},{k:'Archive script',v:'pnpm store prune',desc:'Cleanup before a workspace is removed.'}];
+    const landing=[{k:'Concurrent runs',v:'4',source:'project',overridden:true},{k:'Auto-merge on green',kind:'toggle',on:false,source:'project'},{k:'Conflict assist',kind:'toggle',on:false,source:'default',desc:'Let an agent attempt conflict resolution before asking you.'},{k:'After landing',kind:'seg',v:'Delete branch',seg:['Keep branch','Delete branch'],source:'project'}].map(r=>this.normSetting(r));
+    return {name:P.name, path:P.path, branch:P.branch, repo, worktrees, config, noWt:worktrees.length===0,
+      routing, routingFall:'lane mapping → project default (default)',
+      workspace, portRange:'each workspace reserves 10 ports from base 4300',
+      landing, overlapNote:'Overlapping-work protection is automatic — if a task is queued because its files overlap a running task, the reason shows on the task card, not here.',
+      tabs:[['details','Details'],['routing','Routing'],['workspace','Workspace'],['landing','Landing']].map(x=>{const on=T===x[0];return {label:x[1],onClick:this.setProjTab(x[0]),bg:on?'#1A1A1A':'#fff',fg:on?'#fff':'#6B6B6B',weight:on?'600':'500'};}),
+      isDetails:T==='details', isRouting:T==='routing', isWorkspace:T==='workspace', isLanding:T==='landing'};
+  }
+  appSettingsData(){
+    const T=this.state.appTab;
+    const appearance=[{k:'Theme',kind:'seg',v:'System',seg:['System','Light','Dark'],source:'global'},{k:'Density',kind:'seg',v:'Comfortable',seg:['Comfortable','Compact'],source:'global'}].map(r=>this.normSetting(r));
+    const defaults=[{k:'Default runner',kind:'select',v:'codex',source:'global'},{k:'Default model',kind:'select',v:'gpt-5-codex',source:'global'},{k:'Reasoning effort',kind:'select',v:'medium',source:'default'}].map(r=>this.normSetting(r));
+    const daemon=[{k:'Port',v:'7420',source:'local'},{k:'Global concurrency',v:'8',source:'global'},{k:'Vault root',v:'~/code',source:'local'},{k:'Event retention',v:'7 days',source:'default'}].map(r=>this.normSetting(r));
+    const profiles=[{name:'default',harness:'codex',model:'gpt-5-codex',effort:'medium',preset:'Full access',subagents:'up to 3',builtin:true},{name:'docs-fast',harness:'claude-code',model:'sonnet-4.6',effort:'low',preset:'Workspace-only',subagents:'none',builtin:true},{name:'review-frontier',harness:'claude-code',model:'opus-4.6',effort:'high',preset:'Guarded full access',subagents:'up to 2',builtin:true},{name:'guarded-yolo',harness:'codex',model:'gpt-5-codex',effort:'high',preset:'Guarded full access',subagents:'up to 5',builtin:true}].map(p=>({name:p.name,harness:p.harness,model:p.model,effort:p.effort,preset:p.preset,subagents:p.subagents,harnessBg:p.harness==='codex'?'#1A1A1A':'#F3E7DF',harnessFg:p.harness==='codex'?'#fff':'#B4602F',builtinLabel:p.builtin?'built-in · copy to edit':'custom'}));
+    const presets=[{key:'full',label:'Full access',desc:'No sandbox, no approvals — the operator\u2019s usual mode.',on:true},{key:'guarded',label:'Guarded full access',desc:'Full filesystem and network, but a denylist blocks destructive commands.',on:false},{key:'workspace',label:'Workspace-only',desc:'Writes confined to the workspace; a separate toggle controls network access.',on:false}].map(p=>({key:p.key,label:p.label,desc:p.desc,on:p.on,ring:p.on?'#2D6CDF':'#DADADA',dotBorder:p.on?'#2D6CDF':'#C4C4C4',dotBg:p.on?'#2D6CDF':'#fff',bg:p.on?'#F5F8FE':'#fff'}));
+    const denylist=[{pattern:'git push --force',builtin:true},{pattern:'rm -rf outside the workspace',builtin:true},{pattern:'git reset --hard',builtin:true},{pattern:'writes to *.env / credential files',builtin:true},{pattern:'curl … | sh',builtin:false}].map(d=>({pattern:d.pattern,tag:d.builtin?'built-in':'custom',tagFg:d.builtin?'#8A8A8A':'#2D6CDF',tagBg:d.builtin?'#F0F0F0':'#EAF1FD',canDelete:!d.builtin}));
+    const notify=[{k:'Human gate',kind:'toggle',on:true,source:'global'},{k:'Stale run',kind:'toggle',on:true,source:'global'}].map(r=>this.normSetting(r));
+    const delivery=this.normSetting({k:'Delivery method',kind:'seg',v:'Both',seg:['macOS','In-app','Both'],source:'global'});
+    return {appearance, defaults, daemon, profiles, presets, denylist, networkOn:true, notify, delivery,
+      tabs:[['general','General'],['profiles','Runner profiles'],['permissions','Permissions'],['notifications','Notifications']].map(x=>{const on=T===x[0];return {label:x[1],onClick:this.setAppTab(x[0]),bg:on?'#1A1A1A':'#fff',fg:on?'#fff':'#6B6B6B',weight:on?'600':'500'};}),
+      isGeneral:T==='general', isProfiles:T==='profiles', isPermissions:T==='permissions', isNotifications:T==='notifications'};
+  }
+
+  renderVals(){
+    const s=this.state, v=s.view;
+    const P=this.proj();
+
+    // rail
+    let globalNeeds=0;
+    const rail=this.PROJECTS.map(p=>{
+      const needs=this.gatedTasks(p).length; globalNeeds+=needs;
+      const selected = p.id===s.projectId && v!=='inbox';
+      const stale=this.staleIn(p.id);
+      const dotColor= needs>0?'#C63A2A' : stale?'#B7791F' : '#B8D4C4';
+      const secDefs=[['overview','Overview'],['needs','Needs me'],['runs','Runs'],['work','Work']];
+      const sections=secDefs.map(([id,label])=>{
+        const active=selected && v===id;
+        const isNeeds=id==='needs', isRuns=id==='runs';
+        return { label, onClick:this.goSection(p.id,id),
+          bg:active?'#EAEAEA':'transparent', fg:active?'#1A1A1A':'#5A5A5A', weight:active?'600':'500',
+          showBadge:(isNeeds&&needs>0)||(isRuns&&this.runsFor(p.id).filter(r=>r.active).length>0),
+          badge: isNeeds?String(needs):String(this.runsFor(p.id).filter(r=>r.active).length),
+          badgeFg: isNeeds?'#fff':'#6B6B6B', badgeBg: isNeeds?'#C63A2A':'#EAEAEA' };
+      });
+      return { name:p.name, needs:String(needs), glanceCount:needs>0&&!selected, glanceDot:!(needs>0&&!selected),
+        dotColor, dotAnim: stale&&needs===0?'tkPulse 1.6s ease-in-out infinite':'none',
+        caret:selected?'▾':'▸', bg:selected?'#EFEFEF':'transparent', weight:selected?'600':'500', nameColor:selected?'#1A1A1A':'#3A3A3A',
+        selected, onSelect:this.selectProject(p.id), sections };
+    });
+
+    // inbox (cross-project)
+    const inboxTasks=[];
+    this.PROJECTS.forEach(p=>this.gatedTasks(p).forEach(t=>inboxTasks.push({t,pid:p.id})));
+    inboxTasks.sort((a,b)=>b.t.gate.blk-a.t.gate.blk);
+    const inboxCards=inboxTasks.map(x=>this.buildCard(x.t,x.pid,true));
+    this.inboxLen=inboxCards.length;
+    inboxCards.forEach((c,i)=>{c.idx=String(i);c.focused=s.focusIdx===i&&v==='inbox';c.ring=c.focused?'0 0 0 2px #1A1A1A':'none';});
+    const activeProjectsWithNeeds=new Set(inboxTasks.map(x=>x.pid)).size;
+
+    // project overview
+    const epicPills=[['all','All']].concat(P.epics).map(e=>{
+      const on=s.filterEpic===e[0];
+      const cnt = e[0]==='all'?P.tasks.length:P.tasks.filter(t=>t.epic===e[0]).length;
+      return { label:e[1], count:String(cnt), onClick:this.setEpic(e[0]), bg:on?'#1A1A1A':'#fff', fg:on?'#fff':'#565656', border:on?'#1A1A1A':'#DADADA', weight:on?'600':'500' };
+    });
+    const ftasks=P.tasks.filter(t=>s.filterEpic==='all'||t.epic===s.filterEpic);
+    const columns=this.buildColumns(ftasks,false);
+    const columnsWork=this.buildColumns(ftasks,true);
+    const gts=this.gatedTasks(P);
+    const blockers=gts.map(t=>{const k=this.KIND[t.gate.kind];return {taskId:t.id,taskTitle:t.title,kindLabel:k.label,glyph:k.glyph,color:k.color,blkLabel:'blocks '+t.gate.blk,onClick:this.goProjNeeds};});
+    const projRuns=this.runsFor(P.id);
+    const activeRunsOv=projRuns.filter(r=>r.active).map(r=>this.mkRunRow(r));
+    const needsN=gts.length, activeN=projRuns.filter(r=>r.active).length, inprogN=P.tasks.filter(t=>this.displayCol(t)==='inprog').length;
+    const stats=[
+      {label:'Needs you', value:String(needsN), color:needsN>0?'#C63A2A':'#2E7D57'},
+      {label:'Active runs', value:String(activeN), color:'#1A1A1A'},
+      {label:'In progress', value:String(inprogN), color:'#1A1A1A'},
+      {label:'Blocked', value:String(gts.reduce((a,t)=>a+t.gate.blk,0)), color:'#B7791F'},
+    ];
+    const epicGroups=P.epics.filter(e=>s.filterEpic==='all'||s.filterEpic===e[0]).map(e=>{
+      const ts=P.tasks.filter(t=>t.epic===e[0]);
+      return { name:e[1], rollup:ts.filter(t=>t.status!=='done').length+' open · '+ts.filter(t=>t.status==='done').length+' done', tasks:ts.map(t=>this.taskRow(t)) };
+    }).filter(g=>g.tasks.length);
+
+    // project runs full
+    const projRunsActive=projRuns.filter(r=>r.active).sort((a,b)=>b.elapsed-a.elapsed).map(r=>this.mkRunRow(r));
+    const projRunsRecent=projRuns.filter(r=>!r.active).map(r=>{const rn=this.RUNNER[r.runner];const o=this.OUTCOME[r.outcome];return {taskId:r.taskId,taskTitle:r.taskTitle,runner:r.runner,runnerBg:rn.bg,runnerFg:rn.fg,lane:r.lane,tokens:this.fmtTok(r.tokIn+r.tokOut),outcome:o.label,outcomeFg:o.fg,outcomeBg:o.bg};});
+
+    const workViews=[['board','Board'],['epics','Epics']].map((x,i)=>{const on=s.workView===x[0];return {label:x[1],onClick:this.setWorkView(x[0]),bg:on?'#1A1A1A':'#fff',fg:on?'#fff':'#6B6B6B',weight:on?'600':'500',border:i===0?'none':'1px solid #EAEAEA'};});
+
+    const projView = {
+      name:P.name, path:P.path, branch:P.branch, stats, epicPills, columns, columnsWork, epicGroups,
+      blockers, blockerCount:String(needsN), noBlockers:needsN===0, noRuns:activeRunsOv.length===0,
+      activeRuns:activeRunsOv,
+      needsBtnLabel: needsN>0?(needsN+' need you →'):'All clear ✓',
+      needsBtnBg: needsN>0?'#C63A2A':'#fff', needsBtnFg: needsN>0?'#fff':'#2E7D57', needsBtnBorder: needsN>0?'#C63A2A':'#B8D4C4',
+    };
+
+    const projNeedsCards=gts.map(t=>this.buildCard(t,P.id,false));
+    this.needsLen=projNeedsCards.length;
+    projNeedsCards.forEach((c,i)=>{c.idx=String(i);c.focused=s.focusIdx===i&&v==='needs';c.ring=c.focused?'0 0 0 2px #1A1A1A':'none';});
+
+    const doc = v==='task' ? this.getDoc() : null;
+    const run = v==='run' ? this.getRun() : null;
+    const pset = v==='projset' ? this.projSettingsData() : null;
+    const aset = v==='appset' ? this.appSettingsData() : null;
+
+    return {
+      screenLabel: v==='inbox'?'inbox':(P.name+' · '+v),
+      isInbox:v==='inbox', isOverview:v==='overview', isProjNeeds:v==='needs', isProjRuns:v==='runs', isProjWork:v==='work',
+      isTask:v==='task', isRun:v==='run', isProjSet:v==='projset', isAppSet:v==='appset',
+      doc, run, pset, aset, tailRef:this.tailRef,
+      backOverview:this.backOverview, goProjSettings:this.goProjSettings, goAppSettings:this.goAppSettings,
+      startEdit:this.startEdit, cancelEdit:this.cancelEdit, saveDoc:this.saveDoc, reconcile:this.reconcile,
+      appSetBg:v==='appset'?'#EDEDED':'transparent', appSetFg:v==='appset'?'#1A1A1A':'#3A3A3A',
+      rail, projectCount:String(this.PROJECTS.length),
+      globalNeeds:String(globalNeeds), hasGlobalNeeds:globalNeeds>0,
+      inboxBg:v==='inbox'?'#EDEDED':'transparent', inboxFg:v==='inbox'?'#1A1A1A':'#3A3A3A', inboxWeight:v==='inbox'?'600':'600',
+      goInbox:this.goInbox, resetGates:this.reset,
+      // inbox
+      inboxSummary: globalNeeds===0?'Queue clear across all projects.':globalNeeds+' items across '+activeProjectsWithNeeds+' projects · ranked by blocked work',
+      inboxEmpty:globalNeeds===0, inboxNotEmpty:globalNeeds>0, inboxCards,
+      // project
+      proj:projView, goProjNeeds:this.goProjNeeds, goProjRuns:this.goProjRuns,
+      projNeedsEmpty:gts.length===0, projNeedsCards,
+      projRunsActive, projRunsRecent,
+      workViews, wBoard:s.workView==='board', wEpics:s.workView==='epics',
+    };
+  }
+}
+</script>
+</body>
+</html>

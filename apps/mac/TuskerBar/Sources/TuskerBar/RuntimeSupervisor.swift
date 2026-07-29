@@ -78,37 +78,26 @@ enum RuntimeLaunchPlan {
     }
 }
 
-struct RuntimeProbeSequence {
-    private(set) var generation = 0
-
-    mutating func begin() -> Int {
-        generation &+= 1
-        return generation
-    }
-
-    func accepts(_ candidate: Int) -> Bool {
-        candidate == generation
-    }
+enum RuntimeShellLoadKind {
+    case optimistic
+    case live
 }
 
-enum RuntimeShellDisplay: Equatable {
-    case runtimeState
-    case connecting
-}
-
-struct RuntimeShellProbePlan: Equatable {
-    let display: RuntimeShellDisplay
-    let shouldProbe: Bool
-
-    static func make(for state: ManagedRuntimeState) -> RuntimeShellProbePlan {
-        switch state {
-        case .running, .external:
-            return RuntimeShellProbePlan(display: .connecting, shouldProbe: true)
-        case .idle, .checking, .starting, .failed:
-            // Runtime state controls the copy, never whether a visible shell
-            // probes health. Notifications are hints and may be missed.
-            return RuntimeShellProbePlan(display: .runtimeState, shouldProbe: true)
+enum RuntimeShellLoadPlan {
+    static func cachePolicy(for kind: RuntimeShellLoadKind) -> URLRequest.CachePolicy {
+        switch kind {
+        case .optimistic:
+            // A warm launch may render the stored SPA shell before localhost is
+            // ready. The page's persisted read cache then supplies bounded stale
+            // data while its normal queries reconnect in the background.
+            return .returnCacheDataElseLoad
+        case .live:
+            return .reloadRevalidatingCacheData
         }
+    }
+
+    static func shouldCoverWebView(hasCommittedContent: Bool) -> Bool {
+        !hasCommittedContent
     }
 }
 

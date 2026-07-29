@@ -98,6 +98,8 @@ If code and these docs disagree, the code wins and the doc is the bug — fix it
 graph TD
   n_build_and_test_economics["Build and test economics: how often we build and test at each stage"]
   n_cli["Tusker CLI reference"]
+  n_execution_observability["Execution observability: names, lineage, and truthful multi-agent tracking"]
+  n_execution_observability_grill["Decision log: execution observability and direct-agent identity"]
   n_factory_intake["Factory intake contract"]
   n_gates["Gates (human gates, the gate tier, and batch merge windows)"]
   n_gates_over_records["Decision log: gates over records"]
@@ -112,6 +114,8 @@ graph TD
   n_tasks_and_proof["Tasks and proof (v7 task model)"]
   n_software_factory --> n_build_and_test_economics
   n_overview --> n_cli
+  n_software_factory --> n_execution_observability
+  n_execution_observability --> n_execution_observability_grill
   n_overview --> n_factory_intake
   n_overview --> n_gates
   n_software_factory --> n_gates_over_records

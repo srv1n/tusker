@@ -15,6 +15,20 @@
       "status": "canonical"
     },
     {
+      "subject": "execution-observability",
+      "kind": "spec",
+      "path": ".tusker/specs/execution-observability.md",
+      "title": "Execution observability: names, lineage, and truthful multi-agent tracking",
+      "status": "canonical"
+    },
+    {
+      "subject": "execution-observability-grill",
+      "kind": "decision",
+      "path": ".tusker/specs/decisions/2026-07-29-execution-observability-grill.md",
+      "title": "Decision log: execution observability and direct-agent identity",
+      "status": "canonical"
+    },
+    {
       "subject": "factory-intake",
       "kind": "canonical",
       "path": "docs/system/factory-intake.md",
@@ -108,6 +122,41 @@
     {
       "from": "cli",
       "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "execution-observability",
+      "to": "software-factory",
+      "kind": "part_of"
+    },
+    {
+      "from": "execution-observability",
+      "to": "docs/system/00-overview.md",
+      "kind": "updates"
+    },
+    {
+      "from": "execution-observability",
+      "to": "docs/system/cli.md",
+      "kind": "updates"
+    },
+    {
+      "from": "execution-observability",
+      "to": "docs/system/orchestration.md",
+      "kind": "updates"
+    },
+    {
+      "from": "execution-observability",
+      "to": "docs/system/serve-ui.md",
+      "kind": "updates"
+    },
+    {
+      "from": "execution-observability-grill",
+      "to": ".tusker/specs/execution-observability.md",
+      "kind": "decides_for"
+    },
+    {
+      "from": "execution-observability-grill",
+      "to": "execution-observability",
       "kind": "part_of"
     },
     {

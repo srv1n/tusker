@@ -687,6 +687,12 @@ func (s *RuntimeStore) Close() error {
 }
 
 func (s *RuntimeStore) Migrate() error {
+	// Keep SQLite integrity features enabled on the sole runtime connection;
+	// execution-ledger triggers are the compatibility-safe boundary for older
+	// tables that predate foreign-key declarations.
+	if _, err := s.exec(`PRAGMA foreign_keys = ON;`); err != nil {
+		return err
+	}
 	statements := []string{
 		`PRAGMA journal_mode = WAL;`,
 		`CREATE TABLE IF NOT EXISTS projects (
@@ -1282,6 +1288,9 @@ func (s *RuntimeStore) Migrate() error {
 		if err := s.ensureColumn("supervisor_decisions", column.name, column.stmt); err != nil {
 			return err
 		}
+	}
+	if err := s.migrateExecutionLedger(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -2798,12 +2807,20 @@ func (s *RuntimeStore) CheckRunLeaseGeneration(projectID, recordID string, gener
 }
 
 func (s *RuntimeStore) SaveAttempt(attempt RunAttempt) error {
+	return saveAttempt(s.db, attempt)
+}
+
+type runtimeAttemptExecutor interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func saveAttempt(executor runtimeAttemptExecutor, attempt RunAttempt) error {
 	if attempt.EndStateJSON == "" && attempt.EndState.Schema != "" {
 		if encoded, err := json.Marshal(attempt.EndState); err == nil {
 			attempt.EndStateJSON = string(encoded)
 		}
 	}
-	_, err := s.exec(`INSERT INTO attempts (
+	_, err := executor.Exec(`INSERT INTO attempts (
 		attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, end_state_json, process_pid, outcome, exit_code, turns_used, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(attempt_id) DO UPDATE SET
@@ -2843,6 +2860,59 @@ func (s *RuntimeStore) SaveAttempt(attempt RunAttempt) error {
 		finished_at=excluded.finished_at`,
 		attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.SessionRef, attempt.ParentAttemptID, attempt.ChildType, attempt.BranchName, attempt.MergeRule, attempt.FanoutGroup, attempt.CloudTaskID, attempt.CloudStatus, attempt.CloudEnvironmentID, attempt.CloudAttemptNumber, attempt.PullRequestURL, attempt.ApplyRef, attempt.LogsSummary, attempt.FinalSummary, attempt.EndStateJSON, attempt.ProcessPID, attempt.Outcome, attempt.ExitCode, attempt.TurnsUsed, attempt.PromptPath, attempt.EventSinkPath, attempt.RawLogPath, attempt.StatusPath, attempt.LastError, attempt.StartedAt, attempt.FinishedAt)
 	return err
+}
+
+// FinalizeRunLease atomically records the terminal attempt and retires its
+// live lease.  The same owner/generation/revision predicate fences a former
+// owner after reclaim or takeover: on a miss neither row is changed.
+func (s *RuntimeStore) FinalizeRunLease(run RunStatus, attempt RunAttempt, owner string, generation int) (bool, error) {
+	if strings.TrimSpace(run.ProjectID) == "" || strings.TrimSpace(run.RecordID) == "" || strings.TrimSpace(owner) == "" || generation <= 0 {
+		return false, tuskerError(errorInvalidArg, "terminal run handoff requires project, task, owner, and lease generation")
+	}
+	claimed := false
+	err := s.withBusyRetry(func() error {
+		claimed = false
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		result, err := tx.Exec(`UPDATE runs SET
+			lease_state = ?, lease_owner = ?, lease_expires_at = ?, attempt_outcome = ?, active_attempt_id = ?,
+			logs_summary = ?, final_summary = ?, process_pid = ?, process_pgid = ?, process_started_at = ?,
+			last_error = ?, last_event_at = ?, updated_at = ?
+			WHERE project_id = ? AND record_id = ? AND lease_state IN ('claimed', 'running')
+				AND lease_owner = ? AND lease_generation = ? AND work_revision = ?`,
+			run.LeaseState, run.LeaseOwner, run.LeaseExpiresAt, run.AttemptOutcome, run.ActiveAttemptID,
+			run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt,
+			run.LastError, run.LastEventAt, run.UpdatedAt,
+			run.ProjectID, run.RecordID, owner, generation, run.WorkRevision)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return nil
+		}
+		if err := saveAttempt(tx, attempt); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		claimed = true
+		return nil
+	})
+	if err != nil || !claimed {
+		return claimed, err
+	}
+	if err := s.releaseInactiveTaskResourceLeases(run.ProjectID, run.RecordID, "run completion released dispatch capacity", time.Now().UTC()); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *RuntimeStore) SaveTurn(turn RunTurn) error {

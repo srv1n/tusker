@@ -12,8 +12,9 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
     private let stateHint = NSTextField(labelWithString: "Checking http://127.0.0.1:7420")
     private var retryWorkItem: DispatchWorkItem?
     private var retryDelay: TimeInterval = 1
-    private var probeSequence = RuntimeProbeSequence()
     private var loaded = false
+    private var hasCommittedContent = false
+    private var currentPath = "/panel?shell=1"
     private var globalMonitor: Any?
     private var localMonitor: Any?
 
@@ -78,7 +79,11 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
             panel.setFrameTopLeftPoint(NSPoint(x: point.x, y: point.y))
         }
         panel.orderFrontRegardless()
-        if !loaded { probeAndLoad(path: path) } else if path != "/panel?shell=1" { navigateInPageOrLoad(path) }
+        if !loaded {
+            load(path: path, kind: .optimistic)
+        } else if path != "/panel?shell=1" {
+            navigateInPageOrLoad(path)
+        }
     }
 
     func hide() { retryWorkItem?.cancel(); panel.orderOut(nil) }
@@ -89,37 +94,21 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         UserDefaults.standard.set(size.height, forKey: "panelHeight")
     }
 
-    private func load(path: String) {
-        guard let url = url(for: path) else { showUnavailable(); return }
-        retryWorkItem?.cancel()
-        loaded = true
-        unavailableView.isHidden = true
-        webView.load(URLRequest(url: url))
-    }
-
-    private func probeAndLoad(path: String) {
-        let probe = probeSequence.begin()
+    private func load(path: String, kind: RuntimeShellLoadKind = .live) {
         let runtime = RuntimeSupervisor.shared
         if runtime.state == .idle { runtime.ensureRunning() }
-        let plan = RuntimeShellProbePlan.make(for: runtime.state)
-        switch plan.display {
-        case .runtimeState:
+        guard let url = url(for: path) else { showUnavailable(); return }
+        retryWorkItem?.cancel()
+        currentPath = path
+        loaded = true
+        if RuntimeShellLoadPlan.shouldCoverWebView(hasCommittedContent: hasCommittedContent) {
             showRuntimeState()
-        case .connecting:
-            showConnecting()
         }
-        guard plan.shouldProbe else { return }
-        let healthURL = config.baseURL.appendingPathComponent("api/summary")
-        URLSession.shared.dataTask(with: healthURL) { [weak self] _, response, error in
-            DispatchQueue.main.async {
-                guard let self, self.probeSequence.accepts(probe) else { return }
-                if error == nil, (response as? HTTPURLResponse)?.statusCode == 200 {
-                    self.load(path: path)
-                } else {
-                    self.showUnavailable()
-                }
-            }
-        }.resume()
+        webView.load(URLRequest(
+            url: url,
+            cachePolicy: RuntimeShellLoadPlan.cachePolicy(for: kind),
+            timeoutInterval: RuntimeLaunchPlan.monitorHealthTimeout
+        ))
     }
 
     private func navigateInPageOrLoad(_ path: String) {
@@ -139,16 +128,30 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
 
     @objc private func configurationChanged() {
         loaded = false
-        if panel.isVisible { probeAndLoad(path: "/panel?shell=1") }
+        hasCommittedContent = false
+        currentPath = "/panel?shell=1"
+        if panel.isVisible { load(path: currentPath, kind: .optimistic) }
     }
 
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        hasCommittedContent = true
+        hideUnavailable()
+    }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        hasCommittedContent = true
+        loaded = true
         if !isConfiguredOrigin(webView.url) { webView.evaluateJavaScript("delete window.tuskerShell") }
         hideUnavailable()
         retryDelay = 1
     }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { showUnavailable() }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { showUnavailable() }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        loaded = false
+        showUnavailable()
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        loaded = false
+        showUnavailable()
+    }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard isConfiguredOrigin(webView.url), message.name == "tuskerShell", let payload = message.body as? [String: Any], let method = payload["method"] as? String else { return }
@@ -200,7 +203,9 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
 
     private func showUnavailable() {
         RuntimeSupervisor.shared.ensureRunning()
-        showRuntimeState()
+        if RuntimeShellLoadPlan.shouldCoverWebView(hasCommittedContent: hasCommittedContent) {
+            showRuntimeState()
+        }
         scheduleRetry()
     }
     private func showRuntimeState() {
@@ -208,22 +213,31 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         stateHint.stringValue = RuntimeSupervisor.shared.hint
         unavailableView.isHidden = false
     }
-    private func showConnecting() {
-        stateTitle.stringValue = "Connecting to Tusker…"
-        stateHint.stringValue = config.baseURL.absoluteString
-        unavailableView.isHidden = false
-    }
     private func hideUnavailable() { unavailableView.isHidden = true; retryWorkItem?.cancel() }
-    @objc private func retryNow() { RuntimeSupervisor.shared.ensureRunning(force: true); retryDelay = 1; loaded = false; probeAndLoad(path: "/panel?shell=1") }
+    @objc private func retryNow() {
+        RuntimeSupervisor.shared.ensureRunning(force: true)
+        retryDelay = 1
+        loaded = false
+        load(path: currentPath, kind: .live)
+    }
     @objc private func runtimeChanged() {
         guard panel.isVisible else { return }
-        loaded = false
-        probeAndLoad(path: "/panel?shell=1")
+        switch RuntimeSupervisor.shared.state {
+        case .running, .external:
+            load(path: currentPath, kind: .live)
+        case .failed:
+            if !hasCommittedContent {
+                loaded = false
+                showRuntimeState()
+            }
+        case .idle, .checking, .starting:
+            break
+        }
     }
     private func scheduleRetry() {
         retryWorkItem?.cancel()
         guard panel.isVisible else { return }
-        let work = DispatchWorkItem { [weak self] in self?.probeAndLoad(path: "/panel?shell=1") }
+        let work = DispatchWorkItem { [weak self] in self?.load(path: self?.currentPath ?? "/panel?shell=1", kind: .optimistic) }
         retryWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + retryDelay, execute: work)
         retryDelay = min(retryDelay * 2, 30)

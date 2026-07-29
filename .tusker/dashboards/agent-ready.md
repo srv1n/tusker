@@ -6,6 +6,6 @@
 
 | Task | Priority | Next action |
 |---|---|---|
-
+| [[SRV-T-0007]] | p1 | Execute the task contract and satisfy proof mode. |
 
 <!-- tusker:generated:end -->

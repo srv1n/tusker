@@ -15,8 +15,11 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    // The real daemon serves the JSON API on :7420. During UI-only dev we run
-    // against the in-browser mock layer, so no proxy is wired yet (see api.ts).
+    // Keep UI development on the same real-data contract as the embedded app.
+    // The proxy is local-only and has no effect on the production bundle.
+    proxy: {
+      "/api": "http://127.0.0.1:7420",
+    },
   },
   build: {
     outDir: "dist",

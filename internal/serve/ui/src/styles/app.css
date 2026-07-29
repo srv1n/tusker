@@ -42,9 +42,9 @@
   --color-accent-soft: var(--k-accent-soft);
 
   /* Type families — self-hosted via @fontsource (no CDN) */
-  --font-sans: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
-  --font-serif: "Source Serif 4", Georgia, serif;
-  --font-mono: "Source Code Pro", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-sans: "Archivo", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  --font-serif: "Archivo", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   /* Motion */
   --animate-rise: tkIn 0.18s ease both;
@@ -53,30 +53,30 @@
 
 /* ---- Light (from design) ---- */
 :root {
-  --k-surface: #ffffff;
-  --k-panel: #fafafa;
+  --k-surface: #fbfaf7;
+  --k-panel: #f2f0e9;
   --k-raised: #ffffff;
-  --k-ink: #1a1a1a;
-  --k-ink-soft: #2a2a2a;
-  --k-muted: #565656;
-  --k-faint: #9a9a9a;
-  --k-fainter: #b0b0b0;
+  --k-ink: #15140f;
+  --k-ink-soft: #302f29;
+  --k-muted: #625f55;
+  --k-faint: #8c897f;
+  --k-fainter: #aaa69b;
 
-  --k-line: #e6e6e6;
-  --k-line-soft: #f0f0f0;
-  --k-hover: #f0f0f0;
-  --k-active: #ebebeb;
+  --k-line: #c9c5b8;
+  --k-line-soft: #e7e4db;
+  --k-hover: #ebe8df;
+  --k-active: #dedbd1;
 
-  --k-fail: #c63a2a;
-  --k-fail-soft: #fbecea;
-  --k-pass: #2e7d57;
-  --k-pass-soft: #e8f3ee;
-  --k-warn: #b7791f;
-  --k-warn-soft: #f8f0e0;
-  --k-info: #2d6cdf;
-  --k-info-soft: #e9f0fc;
-  --k-accent: #6b5ad1;
-  --k-accent-soft: #eeecfa;
+  --k-fail: #b23b2c;
+  --k-fail-soft: #f7e8e3;
+  --k-pass: #2e7a5a;
+  --k-pass-soft: #e3f0e8;
+  --k-warn: #8c5d14;
+  --k-warn-soft: #f4ead7;
+  --k-info: #2f5ca8;
+  --k-info-soft: #e3eaf5;
+  --k-accent: #6550a8;
+  --k-accent-soft: #ece8f6;
 
   color-scheme: light;
 }

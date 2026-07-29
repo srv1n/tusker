@@ -140,9 +140,11 @@ export interface DeliveryReview {
   schema: "tusker.delivery-review/v1";
   readOnly: true;
   ready: boolean;
+  title: string;
+  summary?: string;
   whatWillBeDelivered: Array<{ requirement: string; outcome: string; nonGoals: string[]; links: DeliveryReviewLink[] }>;
   howItWillBeProven: Array<{
-    requirements: string[]; outcome: string; acceptance: string[]; tests: string[]; artifacts: string[];
+    requirements: string[]; title: string; outcome: string; acceptance: string[]; tests: string[]; artifacts: string[];
     sourceKey: string; taskId?: string; taskHref?: string;
     checks: Array<{ covers: string; check: string; notes?: string; href?: string }>;
     artifactRefs: Array<{ kind: string; path: string; summary: string; acceptanceIds: string[]; href?: string }>;
@@ -163,6 +165,25 @@ export interface DeliveryReview {
     blockers: string[]; nextAction: string; state: DeliveryReviewState; stateLabel: string; actionHref?: string;
   };
   nonGoals: string[];
+}
+
+export interface DeliveryPlanList {
+  schema: "tusker.delivery-plan-list/v1";
+  readOnly: true;
+  plans: DeliveryPlanSummary[];
+}
+
+export interface DeliveryPlanSummary {
+  path: string;
+  title: string;
+  summary?: string;
+  specRefs: string[];
+  taskCount: number;
+  expectedConcurrency: number;
+  runnerProfile?: string;
+  tasks: Array<{ sourceKey: string; title: string; runnerProfile?: string; complexity?: string; risk?: string }>;
+  state: "available" | "invalid";
+  issue?: string;
 }
 
 export interface DeliveryReviewLink { label: string; href: string }

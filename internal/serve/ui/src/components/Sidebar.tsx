@@ -1,205 +1,201 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { ChevronDown, ChevronRight, Monitor, Moon, Plus, Search, Sun, X } from "lucide-react";
+import { Bell, ChevronDown, Plus, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { CountBadge, Dot, Mono } from "@/components/ui/primitives";
-import { SectionLabel } from "@/components/ui/page";
-import { useDaemon, useNeeds, useProjects, useRegisterProject } from "@/lib/queries";
-import { formatStreamAge, getStreamStatus, subscribeStreamStatus } from "@/lib/stream";
-import { useTheme } from "@/lib/theme";
-import { USE_MOCK } from "@/lib/api";
-import type { ProjectSummary } from "@/types/domain";
 import { openTaskSearch } from "@/features/search/TaskSearch";
+import { useDaemon, useProjects, useRegisterProject } from "@/lib/queries";
+import type { ProjectSummary } from "@/types/domain";
 
-// Delivery is the bounded planning surface; Needs-me and Runs are folded into Overview; the
-// Library file browser moved under Docs as a Files tab. Project settings live
-// behind the "Details" button on the Overview, not as a separate rail item.
-const SUBSECTIONS = [
-  { key: "overview", label: "Overview", to: "/p/$projectId" as const },
-  { key: "work", label: "Work", to: "/p/$projectId/work" as const },
-  { key: "delivery", label: "Delivery", to: "/p/$projectId/delivery" as const },
-  { key: "knowledge", label: "Docs", to: "/p/$projectId/knowledge" as const },
-  { key: "ops", label: "Ops", to: "/p/$projectId/ops" as const },
+const PROJECT_NAV = [
+  { label: "Today", to: "/p/$projectId" as const },
+  { label: "Plan", to: "/p/$projectId/plan" as const },
+  { label: "Epics", to: "/p/$projectId/epics" as const },
+  { label: "Waves", to: "/p/$projectId/waves" as const },
+  { label: "Tasks", to: "/p/$projectId/tasks" as const },
+  { label: "Trains", to: "/p/$projectId/trains" as const },
+  { label: "Knowledge", to: "/p/$projectId/knowledge" as const },
 ];
 
 export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
   const projects = useProjects();
   const daemon = useDaemon();
-  const globalNeeds = useNeeds();
-  const stream = useSyncExternalStore(subscribeStreamStatus, getStreamStatus, getStreamStatus);
   const activeProject = useParams({ strict: false }).projectId as string | undefined;
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [addingProject, setAddingProject] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const asideRef = useRef<HTMLElement>(null);
 
-  const needsCount = globalNeeds.data?.length ?? 0;
-  const daemonLive = !!daemon.data?.connected && stream.connected;
-  const invariantCircuitOpen = daemon.data?.invariantCircuit?.open === true;
-
-  // Drawer keyboard/focus contract: Escape closes; opening moves focus into
-  // the drawer so keyboard and screen-reader users land where the tap went.
   useEffect(() => {
     if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
+    const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose?.();
     };
-    window.addEventListener("keydown", onKey);
-    if (window.matchMedia("(max-width: 1023px)").matches) {
-      asideRef.current?.focus();
-    }
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", closeOnEscape);
+    asideRef.current?.focus();
+    return () => window.removeEventListener("keydown", closeOnEscape);
   }, [open, onClose]);
+
+  const health = !daemon.data?.connected
+    ? "Offline"
+    : projects.data?.some((project) => project.health !== "healthy")
+      ? "Limited"
+      : "Healthy";
+  const healthTone = health === "Healthy" ? "text-pass" : health === "Limited" ? "text-warn" : "text-fail";
 
   return (
     <>
-      {/* Mobile scrim — tap to dismiss. Hidden ≥lg where the rail is static. */}
-      {open && (
-        <div
-          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
-          onClick={onClose}
-          aria-hidden="true"
-        />
-      )}
+      {open && <button type="button" className="fixed inset-0 z-40 bg-black/35 lg:hidden" onClick={onClose} aria-label="Close navigation overlay" />}
       <aside
         ref={asideRef}
         tabIndex={-1}
         aria-label="Navigation"
         className={cn(
-          // <lg: off-canvas drawer. `invisible` (not display:none) keeps the
-          // slide-out animation and removes the closed drawer from the focus
-          // order and accessibility tree.
-          "fixed inset-y-0 left-0 z-50 flex w-[264px] max-w-[85vw] flex-none flex-col border-r border-line bg-panel pb-4 pl-[env(safe-area-inset-left)] pt-[max(1rem,env(safe-area-inset-top))] transition-[transform,visibility] duration-200 ease-out focus-visible:outline-none",
-          // ≥lg: the original static 246px rail, always visible, no animation.
-          "lg:static lg:z-auto lg:w-[246px] lg:max-w-none lg:translate-x-0 lg:pl-0 lg:pt-4 lg:transition-none lg:visible",
-          open ? "translate-x-0" : "-translate-x-full max-lg:invisible",
+          "fixed inset-y-0 left-0 z-50 flex w-[240px] flex-none flex-col border-r border-line bg-panel transition-transform duration-200 focus:outline-none lg:visible lg:static lg:z-auto lg:translate-x-0",
+          open ? "visible translate-x-0" : "max-lg:invisible -translate-x-full lg:translate-x-0",
         )}
       >
-      {/* Brand */}
-      <div className="flex items-center gap-2.5 px-[18px] pb-4">
-        <span className="flex h-[22px] w-[22px] items-center justify-center rounded-md bg-ink font-serif text-[13px] font-semibold text-surface">
-          t
-        </span>
-        <span className="font-serif text-[17px] font-semibold tracking-[-0.01em] text-ink">tusker</span>
-        <SectionLabel className="mt-[3px] tracking-[0.18em]">serve</SectionLabel>
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close navigation"
-            className="ml-auto flex h-9 w-9 items-center justify-center rounded-lg text-faint transition-colors hover:bg-hover hover:text-ink lg:hidden"
-          >
-            <X size={16} />
-          </button>
-        )}
-      </div>
-
-      {/* Global */}
-      <div className="flex flex-col gap-0.5 px-3">
-        <Link
-          to="/"
-          className={cn(
-            "flex items-center justify-between gap-2 rounded-lg px-2.5 py-[9px] text-[13.5px] transition-colors hover:bg-hover",
-            pathname === "/" ? "bg-hover font-semibold text-ink" : "font-medium text-ink-soft",
+        <div className="flex h-[74px] items-center border-b border-line px-5">
+          <Link to="/" className="flex items-baseline gap-2">
+            <span className="text-[20px] font-bold tracking-[-0.045em] text-ink">tusker</span>
+            <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-faint">factory</span>
+          </Link>
+          {onClose && (
+            <button type="button" onClick={onClose} aria-label="Close navigation" className="ml-auto p-2 text-faint hover:text-ink lg:hidden">
+              <X size={16} />
+            </button>
           )}
-        >
-          <span className="flex items-center gap-2.5">
-            <Dot tone="fail" />
-            Needs me · all
-          </span>
-          {needsCount > 0 && <CountBadge count={needsCount} tone="fail" />}
-        </Link>
-        <button type="button" onClick={openTaskSearch} className="flex items-center gap-2.5 rounded-lg px-2.5 py-[9px] text-left text-[13.5px] font-medium text-muted transition-colors hover:bg-hover">
-          <Search size={13} className="text-faint" />
-          Search
-          <Mono className="ml-auto text-[10px] text-fainter">⌘K</Mono>
-        </button>
-      </div>
+        </div>
 
-      {/* Projects */}
-      <div className="flex items-center justify-between px-5 pb-1.5 pt-[18px]">
-        <SectionLabel>Projects</SectionLabel>
-        <div className="flex items-center gap-2">
-          <Mono className="text-[10.5px] text-fainter">{projects.data?.length ?? 0}</Mono>
+        <nav className="tk-scroll flex-1 overflow-y-auto px-3 py-5">
+          <RailLink active={pathname === "/"} to="/">
+            <span>Today</span>
+            <span className="font-mono text-[10px] text-faint">{projects.data?.reduce((sum, project) => sum + project.needsCount, 0) || ""}</span>
+          </RailLink>
           <button
             type="button"
-            onClick={() => setAddingProject((open) => !open)}
-            className="flex h-5 w-5 items-center justify-center rounded text-faint transition-colors hover:bg-hover hover:text-ink"
+            onClick={openTaskSearch}
+            className="flex w-full items-center gap-3 border-l-2 border-transparent px-3 py-2.5 text-left text-[13px] font-medium text-muted hover:bg-hover hover:text-ink"
+          >
+            <Search size={14} />
+            Search
+            <span className="ml-auto font-mono text-[9px] text-faint">⌘K</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setNotificationsOpen((value) => !value)}
+            aria-expanded={notificationsOpen}
+            className="flex w-full items-center gap-3 border-l-2 border-transparent px-3 py-2.5 text-left text-[13px] font-medium text-muted hover:bg-hover hover:text-ink"
+            title="Notification history is not exposed by the current Serve API"
+          >
+            <Bell size={14} />
+            Notifications
+          </button>
+          {notificationsOpen && (
+            <p role="status" className="mx-3 mt-1 border-l-2 border-warn bg-warn-soft px-3 py-2 text-[11px] leading-4 text-muted">
+              Notification history is not exposed by the current Serve API.
+            </p>
+          )}
+
+          <div className="mb-2 mt-7 flex items-center justify-between px-3">
+            <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-faint">Projects</span>
+            <span className="font-mono text-[9px] text-faint">{projects.data?.length ?? 0}</span>
+          </div>
+
+          {projects.data?.map((project) => (
+            <ProjectGroup
+              key={project.id}
+              project={project}
+              active={project.id === activeProject}
+              pathname={pathname}
+            />
+          ))}
+
+          <button
+            type="button"
+            onClick={() => setAddingProject((value) => !value)}
             aria-label={addingProject ? "Close add project form" : "Add project"}
-            title="Add project"
+            className="mt-2 flex w-full items-center gap-2 border-l-2 border-transparent px-3 py-2.5 text-left text-[12px] font-semibold text-muted hover:bg-hover hover:text-ink"
           >
-            {addingProject ? <X size={12} /> : <Plus size={12} />}
+            {addingProject ? <X size={13} /> : <Plus size={13} />}
+            {addingProject ? "Cancel" : "Add project"}
           </button>
-        </div>
-      </div>
+          {addingProject && <AddProjectForm onDone={() => setAddingProject(false)} />}
+        </nav>
 
-      <div className="tk-scroll flex-1 overflow-y-auto px-3 pb-2">
-        {addingProject && <AddProjectForm onDone={() => setAddingProject(false)} />}
-        {projects.data?.map((p) => (
-          <ProjectRailItem
-            key={p.id}
-            project={p}
-            active={p.id === activeProject}
-            pathname={pathname}
-          />
-        ))}
-      </div>
-
-      {/* App settings */}
-      <div className="px-3 pt-2">
-        <Link
-          to="/settings"
-          className={cn(
-            "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] font-medium transition-colors hover:bg-hover",
-            pathname === "/settings" ? "bg-hover text-ink" : "text-ink-soft",
-          )}
-        >
-          <Dot tone="neutral" />
-          Settings
-        </Link>
-      </div>
-
-      {/* Footer: fixture flag (mock only) + daemon status + theme */}
-      <div className="mx-5 mt-2.5 flex items-end justify-between border-t border-line pt-3">
-        <div className="font-mono text-[10.5px] leading-[1.7] text-faint">
-          {/* Honest badge: the live views (LibraryList / DocReader / DocSourceView /
-              Markdown) are now purged of fixture fallbacks, so fixtures can only
-              render when USE_MOCK is on — exactly when this badge shows. Keep it
-              tied to USE_MOCK; do not surface it in live mode. */}
-          {USE_MOCK && (
-            <div
-              className="mb-1 inline-flex items-center gap-1 rounded bg-warn-soft px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.12em] text-warn"
-              title="Screens render mock fixtures, not live vault data. IDs and counts are illustrative until the serve API lands."
+        <div className="border-t border-line px-3 py-4">
+          <Link to="/settings" className={cn("block border-l-2 px-3 py-2 text-[12px] font-semibold", pathname === "/settings" ? "border-info bg-info-soft text-info" : "border-transparent text-muted hover:bg-hover")}>
+            Settings
+          </Link>
+          {activeProject && (
+            <Link
+              to="/p/$projectId/diagnostics"
+              params={{ projectId: activeProject }}
+              className={cn("block border-l-2 px-3 py-2 text-[12px] font-semibold", pathname.includes("/diagnostics") ? "border-info bg-info-soft text-info" : "border-transparent text-muted hover:bg-hover")}
             >
-              fixture data
-            </div>
+              Diagnostics
+            </Link>
           )}
-          {invariantCircuitOpen && (
-            <div
-              className="mb-1 inline-flex items-center gap-1 rounded bg-fail-soft px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.12em] text-fail"
-              title={daemon.data?.invariantCircuit?.summary ?? "Invariant circuit is open"}
-            >
-              invariant circuit open
-            </div>
-          )}
-          <div className="flex items-center gap-1.5">
-            daemon
-            <span className={daemonLive ? "text-pass" : "text-fail"}>
-              {daemonLive ? "● live" : "● down"}
-            </span>
+          <div className="mt-3 flex items-center justify-between border-t border-line-soft px-3 pt-3 text-[11px]">
+            <span className="text-muted">Factory health</span>
+            <span className={cn("font-semibold", healthTone)}>{health}</span>
           </div>
-          <div className="flex items-center gap-1.5">
-            stream
-            <span className={stream.connected ? "text-pass" : "text-fail"}>
-              {stream.connected ? "● connected" : "● disconnected"}
-            </span>
-          </div>
-          <div>last event {formatStreamAge(stream.lastEventAt)}</div>
-          <div>{daemon.data?.addr ?? "localhost:7420"}</div>
         </div>
-        <ThemeToggle />
-      </div>
       </aside>
     </>
+  );
+}
+
+function RailLink({ active, to, children }: { active: boolean; to: "/"; children: React.ReactNode }) {
+  return (
+    <Link
+      to={to}
+      className={cn(
+        "flex items-center justify-between border-l-2 px-3 py-2.5 text-[13px] font-semibold",
+        active ? "border-info bg-info-soft text-info" : "border-transparent text-ink hover:bg-hover",
+      )}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function ProjectGroup({ project, active, pathname }: { project: ProjectSummary; active: boolean; pathname: string }) {
+  return (
+    <div className="mb-1">
+      <Link
+        to="/p/$projectId"
+        params={{ projectId: project.id }}
+        className={cn(
+          "flex items-center gap-2 border-l-2 px-3 py-2.5 text-[13px] font-semibold",
+          active ? "border-ink bg-active text-ink" : "border-transparent text-ink-soft hover:bg-hover",
+        )}
+      >
+        <ChevronDown size={12} className={active ? "" : "-rotate-90"} />
+        <span className="min-w-0 flex-1 truncate">{project.name}</span>
+        {project.needsCount > 0 && <span className="font-mono text-[9px] text-fail">{project.needsCount}</span>}
+      </Link>
+      {active && (
+        <div className="ml-[18px] border-l border-line pl-2">
+          {PROJECT_NAV.map((item) => {
+            const href = item.to.replace("$projectId", project.id);
+            const selected = item.to.endsWith("$projectId") ? pathname === href : pathname.startsWith(href);
+            return (
+              <Link
+                key={item.label}
+                to={item.to}
+                params={{ projectId: project.id }}
+                className={cn(
+                  "block border-l-2 px-3 py-1.5 text-[11.5px] font-medium",
+                  selected ? "border-info bg-info-soft text-info" : "border-transparent text-muted hover:bg-hover hover:text-ink",
+                )}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -211,7 +207,6 @@ function AddProjectForm({ onDone }: { onDone: () => void }) {
   const register = useRegisterProject();
   const navigate = useNavigate();
   const canBrowseFolders = typeof window.tuskerShell?.pickFolder === "function";
-
   const browseForFolder = async (setValue: (path: string) => void) => {
     const pickFolder = window.tuskerShell?.pickFolder;
     if (!pickFolder) {
@@ -227,7 +222,6 @@ function AddProjectForm({ onDone }: { onDone: () => void }) {
       setBrowsing(false);
     }
   };
-
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     const result = await register.mutateAsync({
@@ -236,154 +230,51 @@ function AddProjectForm({ onDone }: { onDone: () => void }) {
     });
     if (result.ok && result.projectId) {
       onDone();
-      await navigate({ to: "/p/$projectId/settings", params: { projectId: result.projectId } });
+      await navigate({ to: "/p/$projectId", params: { projectId: result.projectId } });
     }
   };
-
-  const message = register.error instanceof Error ? register.error.message : register.data?.reason;
-  const failed = !!register.error || register.data?.ok === false;
-
   return (
-    <form onSubmit={submit} className="mb-2 rounded-lg border border-line bg-surface p-2.5" data-add-project-form>
-      <label className="block font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">
+    <form onSubmit={submit} className="mx-1 mt-2 border border-line bg-raised p-3" data-add-project-form>
+      <label className="font-mono text-[9px] uppercase tracking-[0.12em] text-faint">
         Repository path
-        <div className="mt-1 flex gap-1">
+        <div className="mt-1 flex">
           <input
-            autoFocus
             required
+            autoFocus
             value={repoRoot}
             onChange={(event) => setRepoRoot(event.target.value)}
             placeholder="/Users/me/code/project"
-            className="min-w-0 flex-1 rounded-md border border-line bg-panel px-2 py-1.5 font-mono text-[11px] normal-case tracking-normal text-ink outline-none focus:border-accent"
+            className="min-w-0 flex-1 border border-line bg-surface px-2 py-1.5 font-mono text-[10px] normal-case tracking-normal text-ink outline-none focus:border-info"
           />
-          <button
-            type="button"
-            onClick={() => void browseForFolder(setRepoRoot)}
-            disabled={browsing}
-            aria-label="Browse repository folder"
-            className="rounded-md border border-line px-2 py-1.5 text-[10px] font-semibold normal-case tracking-normal text-ink-soft hover:bg-hover disabled:cursor-wait disabled:opacity-50"
-          >
+          <button type="button" onClick={() => void browseForFolder(setRepoRoot)} disabled={browsing} aria-label="Browse repository folder" className="border border-l-0 border-line px-2 text-[9px] normal-case tracking-normal hover:bg-hover">
             Browse
           </button>
         </div>
       </label>
-      <label className="mt-2 block font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">
-        Vault path <span className="font-normal normal-case tracking-normal">(optional)</span>
-        <div className="mt-1 flex gap-1">
+      <label className="mt-2 block font-mono text-[9px] uppercase tracking-[0.12em] text-faint">
+        Vault path
+        <div className="mt-1 flex">
           <input
             value={vaultRoot}
             onChange={(event) => setVaultRoot(event.target.value)}
             placeholder="defaults to .tusker"
-            className="min-w-0 flex-1 rounded-md border border-line bg-panel px-2 py-1.5 font-mono text-[11px] normal-case tracking-normal text-ink outline-none focus:border-accent"
+            className="min-w-0 flex-1 border border-line bg-surface px-2 py-1.5 font-mono text-[10px] normal-case tracking-normal text-ink outline-none focus:border-info"
           />
-          <button
-            type="button"
-            onClick={() => void browseForFolder(setVaultRoot)}
-            disabled={browsing}
-            aria-label="Browse vault folder"
-            className="rounded-md border border-line px-2 py-1.5 text-[10px] font-semibold normal-case tracking-normal text-ink-soft hover:bg-hover disabled:cursor-wait disabled:opacity-50"
-          >
+          <button type="button" onClick={() => void browseForFolder(setVaultRoot)} disabled={browsing} aria-label="Browse vault folder" className="border border-l-0 border-line px-2 text-[9px] normal-case tracking-normal hover:bg-hover">
             Browse
           </button>
         </div>
       </label>
-      {(!canBrowseFolders || browseHint) && <p className="mt-2 text-[10.5px] leading-snug text-faint" data-folder-browse-help>{browseHint ?? "Browse is available in the Tusker macOS app. In a browser, enter the absolute path manually."}</p>}
-      <p className="mt-2 text-[10.5px] leading-snug text-faint">Registers only. Daemon automation stays off.</p>
-      {message && (
-        <p className={cn("mt-2 text-[10.5px] leading-snug", failed ? "text-fail" : "text-pass")}>{message}</p>
-      )}
+      {(!canBrowseFolders || browseHint) && <p className="mt-2 text-[10px] leading-4 text-faint">{browseHint ?? "Browse is available in the Tusker macOS app. In a browser, enter the absolute path manually."}</p>}
+      <p className="mt-2 text-[10px] leading-4 text-faint">Registers only. Daemon automation stays off.</p>
+      {register.data?.reason && <p className={cn("mt-2 text-[10px]", register.data.ok ? "text-pass" : "text-fail")}>{register.data.reason}</p>}
       <button
         type="submit"
         disabled={!repoRoot.trim() || register.isPending}
-        className="mt-2 w-full rounded-md bg-ink px-2 py-1.5 text-[11px] font-semibold text-surface disabled:cursor-not-allowed disabled:opacity-50"
+        className="mt-3 w-full bg-ink px-2 py-2 text-[10px] font-semibold text-surface disabled:opacity-40"
       >
         {register.isPending ? "Registering…" : "Register project"}
       </button>
     </form>
-  );
-}
-
-function ProjectRailItem({
-  project: p,
-  active,
-  pathname,
-}: {
-  project: ProjectSummary;
-  active: boolean;
-  pathname: string;
-}) {
-  return (
-    <div className="mb-0.5">
-      <Link
-        to="/p/$projectId"
-        params={{ projectId: p.id }}
-        className={cn(
-          "flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition-colors hover:bg-hover",
-          active && "bg-hover",
-        )}
-      >
-        <span className="flex-none text-faint">
-          {active ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        </span>
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate text-[13px]",
-            active ? "font-semibold text-ink" : "font-medium text-ink-soft",
-          )}
-        >
-          {p.name}
-        </span>
-        {p.needsCount > 0 ? (
-          <CountBadge count={p.needsCount} tone="fail" className="h-[17px] min-w-[17px] text-[10px]" />
-        ) : p.activeRuns > 0 && p.worstLiveness ? (
-          <Dot tone={p.worstLiveness === "dead" ? "fail" : p.worstLiveness === "stale" ? "warn" : "pass"} pulse={p.worstLiveness === "fresh"} size={7} />
-        ) : null}
-      </Link>
-
-      {active && (
-        <div className="ml-[18px] mt-0.5 mb-2 flex flex-col gap-px border-l border-line pl-2">
-          {SUBSECTIONS.map((s) => {
-            const to = s.to.replace("$projectId", p.id);
-            const isActive =
-              s.key === "overview" ? pathname === to : pathname.startsWith(to);
-            // Needs now live on the Overview, so its badge rides that item.
-            const badge =
-              s.key === "overview" && p.needsCount > 0 ? p.needsCount : undefined;
-            return (
-              <Link
-                key={s.key}
-                to={s.to}
-                params={{ projectId: p.id }}
-                className={cn(
-                  "flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-[12.5px] transition-colors hover:bg-hover",
-                  isActive ? "bg-hover font-semibold text-ink" : "font-medium text-muted",
-                )}
-              >
-                <span>{s.label}</span>
-                {badge !== undefined && (
-                  <Mono className="rounded-full bg-fail-soft px-1.5 py-px text-[10px] font-semibold text-fail">
-                    {badge}
-                  </Mono>
-                )}
-              </Link>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ThemeToggle() {
-  const { pref, cycle } = useTheme();
-  const Icon = pref === "light" ? Sun : pref === "dark" ? Moon : Monitor;
-  return (
-    <button
-      onClick={cycle}
-      title={`Theme: ${pref} (click to change)`}
-      className="flex h-7 w-7 items-center justify-center rounded-md text-faint transition-colors hover:bg-hover hover:text-ink-soft"
-    >
-      <Icon size={14} />
-    </button>
   );
 }

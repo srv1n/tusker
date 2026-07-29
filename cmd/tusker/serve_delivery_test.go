@@ -105,6 +105,43 @@ func TestServeDeliveryReviewUsesCanonicalProjectionWithoutMutation(t *testing.T)
 	}
 }
 
+func TestServeDeliveryPlansDiscoversProjectPlansWithoutMutation(t *testing.T) {
+	server, repo := newServeDeliveryFixture(t)
+	vault := server.vaultPath
+	plan := validDeliveryPlanV2()
+	plan.HumanGates = nil
+	plan.Title = "PM delivery inbox"
+	plan.Summary = "A PM chooses a named delivery without pasting a path."
+	plan.Tasks[0].Title = "Show the first task title"
+	scratch := writeDeliveryV2TestPlan(t, vault, plan)
+	raw, err := os.ReadFile(scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plansRoot := filepath.Join(repo, "docs", "plans")
+	if err := os.MkdirAll(plansRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(plansRoot, "pm-inbox-v2.yaml"), string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(plansRoot, "legacy.yaml"), "schema: tusker.delivery-plan/v1\n"); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotDeliveryRecords(t, vault)
+
+	var inbox serveDeliveryPlanList
+	serveDecode(t, server, "/api/delivery/plans?project=delivery", &inbox)
+	if inbox.Schema != serveDeliveryPlanListSchema || !inbox.ReadOnly || len(inbox.Plans) != 1 {
+		t.Fatalf("delivery inbox = %#v", inbox)
+	}
+	got := inbox.Plans[0]
+	if got.Path != "docs/plans/pm-inbox-v2.yaml" || got.Title != plan.Title || got.Summary != plan.Summary || got.State != "available" || got.TaskCount != 1 || len(got.Tasks) != 1 || got.Tasks[0].Title != plan.Tasks[0].Title {
+		t.Fatalf("delivery inbox plan = %#v", got)
+	}
+	assertEqual(t, before, snapshotDeliveryRecords(t, vault), "delivery inbox must not import or arm delivery")
+}
+
 func TestDeliveryReviewFreshPlanProjectsProspectiveEnvironmentWithoutMutation(t *testing.T) {
 	server, repo := newServeDeliveryFixture(t)
 	vault := server.vaultPath

@@ -30,7 +30,9 @@ function readPref(): ThemePref {
   } catch {
     /* ignore */
   }
-  return "system";
+  // The v2 reference is an intentionally light editorial canvas. Respect an
+  // explicit saved preference, but make that visual system the first-run view.
+  return "light";
 }
 
 function systemPrefersDark(): boolean {
@@ -61,6 +63,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [systemDark, setSystemDark] = useState<boolean>(() =>
     typeof window === "undefined" ? false : systemPrefersDark(),
   );
+
+  useEffect(() => {
+    apply(pref);
+  }, [pref]);
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");

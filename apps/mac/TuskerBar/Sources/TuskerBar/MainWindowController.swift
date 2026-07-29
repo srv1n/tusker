@@ -11,8 +11,9 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
     private let stateHint = NSTextField(labelWithString: "")
     private var retryWorkItem: DispatchWorkItem?
     private var retryDelay: TimeInterval = 0.25
-    private var probeSequence = RuntimeProbeSequence()
     private var loaded = false
+    private var hasCommittedContent = false
+    private var currentPath = "/"
 
     init(config: AppConfig) {
         self.config = config
@@ -53,9 +54,11 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         if let path {
-            loaded ? load(path: path) : probeAndLoad(path: path)
+            if path != currentPath || !loaded {
+                load(path: path, kind: hasCommittedContent ? .live : .optimistic)
+            }
         } else if !loaded {
-            probeAndLoad(path: "/")
+            load(path: currentPath, kind: .optimistic)
         }
     }
 
@@ -64,45 +67,25 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
         if !window.styleMask.contains(.fullScreen) { window.toggleFullScreen(nil) }
     }
 
-    private func probeAndLoad(path: String) {
-        let probe = probeSequence.begin()
+    private func load(path: String, kind: RuntimeShellLoadKind) {
         let runtime = RuntimeSupervisor.shared
         if runtime.state == .idle { runtime.ensureRunning() }
-        let plan = RuntimeShellProbePlan.make(for: runtime.state)
-        switch plan.display {
-        case .runtimeState:
-            showState(title: runtime.title, hint: runtime.hint)
-        case .connecting:
-            showState(title: "Connecting to Tusker…", hint: config.baseURL.absoluteString)
-        }
-        guard plan.shouldProbe else { return }
-        let healthURL = config.baseURL.appendingPathComponent("api/summary")
-        URLSession.shared.dataTask(with: healthURL) { [weak self] _, response, error in
-            DispatchQueue.main.async {
-                guard let self, self.probeSequence.accepts(probe) else { return }
-                if error == nil, (response as? HTTPURLResponse)?.statusCode == 200 {
-                    self.retryWorkItem?.cancel()
-                    self.retryDelay = 0.25
-                    self.load(path: path)
-                } else {
-                    runtime.ensureRunning()
-                    self.showState(title: runtime.title, hint: runtime.hint)
-                    self.scheduleRetry(path: path)
-                }
-            }
-        }.resume()
-    }
-
-    private func load(path: String) {
         guard var components = URLComponents(url: config.baseURL, resolvingAgainstBaseURL: false) else { return }
         let parts = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
         components.path = String(parts.first ?? "/")
         components.query = parts.count > 1 ? String(parts[1]) : nil
         guard let url = components.url else { return }
         retryWorkItem?.cancel()
+        currentPath = path
         loaded = true
-        stateView.isHidden = true
-        webView.load(URLRequest(url: url))
+        if RuntimeShellLoadPlan.shouldCoverWebView(hasCommittedContent: hasCommittedContent) {
+            showState(title: runtime.title, hint: runtime.hint)
+        }
+        webView.load(URLRequest(
+            url: url,
+            cachePolicy: RuntimeShellLoadPlan.cachePolicy(for: kind),
+            timeoutInterval: RuntimeLaunchPlan.monitorHealthTimeout
+        ))
     }
 
     private func configureStateView() {
@@ -141,34 +124,58 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
         RuntimeSupervisor.shared.ensureRunning(force: true)
         retryDelay = 0.25
         loaded = false
-        probeAndLoad(path: "/")
+        load(path: currentPath, kind: .live)
     }
-    @objc private func configurationChanged() { loaded = false; if window.isVisible { probeAndLoad(path: "/") } }
+    @objc private func configurationChanged() {
+        loaded = false
+        hasCommittedContent = false
+        currentPath = "/"
+        if window.isVisible { load(path: currentPath, kind: .optimistic) }
+    }
     @objc private func runtimeChanged() {
         guard window.isVisible else { return }
-        loaded = false
-        probeAndLoad(path: "/")
+        switch RuntimeSupervisor.shared.state {
+        case .running, .external:
+            load(path: currentPath, kind: .live)
+        case .failed:
+            if !hasCommittedContent {
+                loaded = false
+                showState(title: RuntimeSupervisor.shared.title, hint: RuntimeSupervisor.shared.hint)
+            }
+        case .idle, .checking, .starting:
+            break
+        }
+    }
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        hasCommittedContent = true
+        stateView.isHidden = true
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        hasCommittedContent = true
+        loaded = true
         retryWorkItem?.cancel()
         retryDelay = 0.25
         stateView.isHidden = true
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         loaded = false
-        showState(title: "Tusker failed to load", hint: error.localizedDescription)
-        scheduleRetry(path: "/")
+        if RuntimeShellLoadPlan.shouldCoverWebView(hasCommittedContent: hasCommittedContent) {
+            showState(title: "Tusker failed to load", hint: error.localizedDescription)
+        }
+        scheduleRetry(path: currentPath)
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         loaded = false
-        showState(title: "Tusker failed to load", hint: error.localizedDescription)
-        scheduleRetry(path: "/")
+        if RuntimeShellLoadPlan.shouldCoverWebView(hasCommittedContent: hasCommittedContent) {
+            showState(title: "Tusker failed to load", hint: error.localizedDescription)
+        }
+        scheduleRetry(path: currentPath)
     }
 
     private func scheduleRetry(path: String) {
         retryWorkItem?.cancel()
         guard window.isVisible else { return }
-        let work = DispatchWorkItem { [weak self] in self?.probeAndLoad(path: path) }
+        let work = DispatchWorkItem { [weak self] in self?.load(path: path, kind: .optimistic) }
         retryWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + retryDelay, execute: work)
         retryDelay = min(retryDelay * 2, 5)

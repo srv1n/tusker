@@ -17,9 +17,17 @@ import { RouteFallback } from "@/components/RouteFallback";
 
 /*
   Code-based route tree. Route ids screens use with getRouteApi(...):
-    '/'                          Global inbox
+    '/'                          Global Today
     '/settings'                  App settings
-    '/p/$projectId/'             Project overview   (params: projectId) — hosts attention + runs
+    '/p/$projectId/'             Project Today
+    '/p/$projectId/plan'         Plan inbox / review
+    '/p/$projectId/epics'        Epic portfolio
+    '/p/$projectId/waves'        Delivery waves
+    '/p/$projectId/waves/$waveId' Wave detail
+    '/p/$projectId/tasks'        Task board/list
+    '/p/$projectId/tasks/$taskId' Task product detail
+    '/p/$projectId/trains'       Promotion trains
+    '/p/$projectId/diagnostics'  Runtime diagnostics
     '/p/$projectId/needs'        → redirects to overview (absorbed)
     '/p/$projectId/runs'         → redirects to overview (absorbed)
     '/p/$projectId/runs/$taskId' Run detail          (params: projectId, taskId)
@@ -39,8 +47,8 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   component: lazyRouteComponent(
-    () => import("@/features/inbox/GlobalInbox"),
-    "GlobalInbox",
+    () => import("@/features/v2/TodayScreens"),
+    "GlobalTodayV2",
   ),
 });
 
@@ -69,8 +77,80 @@ const overviewRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/",
   component: lazyRouteComponent(
-    () => import("@/features/overview/ProjectOverview"),
-    "ProjectOverview",
+    () => import("@/features/v2/TodayScreens"),
+    "ProjectTodayV2",
+  ),
+});
+
+const planRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "plan",
+  component: lazyRouteComponent(
+    () => import("@/features/delivery/DeliveryReview"),
+    "DeliveryReviewPage",
+  ),
+});
+
+const epicsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "epics",
+  component: lazyRouteComponent(
+    () => import("@/features/v2/DeliveryScreens"),
+    "EpicsV2",
+  ),
+});
+
+const wavesRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "waves",
+  component: lazyRouteComponent(
+    () => import("@/features/v2/DeliveryScreens"),
+    "WavesV2",
+  ),
+});
+
+const waveDetailRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "waves/$waveId",
+  component: lazyRouteComponent(
+    () => import("@/features/v2/DeliveryScreens"),
+    "WaveDetailV2",
+  ),
+});
+
+const tasksRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "tasks",
+  component: lazyRouteComponent(
+    () => import("@/features/v2/TaskScreens"),
+    "TasksV2",
+  ),
+});
+
+const taskDetailRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "tasks/$taskId",
+  component: lazyRouteComponent(
+    () => import("@/features/v2/TaskScreens"),
+    "TaskDetailV2",
+  ),
+});
+
+const trainsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "trains",
+  component: lazyRouteComponent(
+    () => import("@/features/v2/DeliveryScreens"),
+    "TrainsV2",
+  ),
+});
+
+const diagnosticsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "diagnostics",
+  component: lazyRouteComponent(
+    () => import("@/features/v2/OperationsScreens"),
+    "DiagnosticsV2",
   ),
 });
 
@@ -105,28 +185,25 @@ const runDetailRoute = createRoute({
 const workRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "work",
-  component: lazyRouteComponent(
-    () => import("@/features/work/ProjectWork"),
-    "ProjectWork",
-  ),
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: "/p/$projectId/tasks", params: { projectId: params.projectId } });
+  },
 });
 
 const deliveryRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "delivery",
-  component: lazyRouteComponent(
-    () => import("@/features/delivery/DeliveryReview"),
-    "DeliveryReviewPage",
-  ),
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: "/p/$projectId/plan", params: { projectId: params.projectId } });
+  },
 });
 
 const opsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "ops",
-  component: lazyRouteComponent(
-    () => import("@/features/ops/ProjectOps"),
-    "ProjectOps",
-  ),
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: "/p/$projectId/diagnostics", params: { projectId: params.projectId } });
+  },
 });
 
 const docsRoute = createRoute({
@@ -174,8 +251,8 @@ const projectSettingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "settings",
   component: lazyRouteComponent(
-    () => import("@/features/settings/ProjectSettings"),
-    "ProjectSettings",
+    () => import("@/features/v2/OperationsScreens"),
+    "SettingsV2",
   ),
 });
 
@@ -185,6 +262,14 @@ const routeTree = rootRoute.addChildren([
   panelRoute,
   projectRoute.addChildren([
     overviewRoute,
+    planRoute,
+    epicsRoute,
+    wavesRoute,
+    waveDetailRoute,
+    tasksRoute,
+    taskDetailRoute,
+    trainsRoute,
+    diagnosticsRoute,
     needsRoute,
     runsRoute,
     runDetailRoute,

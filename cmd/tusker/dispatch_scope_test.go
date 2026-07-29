@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -103,4 +104,46 @@ func TestAutomationDispatchScopeFreshConfigAndDoctorWarningAreSideEffectFree(t *
 		t.Fatal(err)
 	}
 	assertEqual(t, before, after, "doctor must not rewrite dispatch authority")
+}
+
+func TestDaemonStatusProjectsExposeDispatchScopeProjectionAndLegacyRepair(t *testing.T) {
+	vault := automationTestVault(t)
+	project := registerAutomationTestProject(t, vault)
+	if err := writeText(filepath.Join(filepath.Dir(vault), "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: true\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := daemonStatusCmd(Args{"json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var payload struct {
+		Status struct {
+			DispatchScopes []daemonDispatchScopeSummary `json:"dispatch_scopes"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Status.DispatchScopes) != 1 {
+		t.Fatalf("expected one dispatch scope projection, got %#v", payload.Status.DispatchScopes)
+	}
+	scope := payload.Status.DispatchScopes[0]
+	assertEqual(t, project.ProjectID, scope.ProjectID, "scope project")
+	assertEqual(t, "", scope.DispatchScope.Configured, "legacy configured scope")
+	assertEqual(t, string(automationDispatchScopeAllEligible), scope.DispatchScope.Effective, "legacy effective scope")
+	assertEqual(t, "legacy enabled config without dispatch_scope", scope.DispatchScope.Provenance, "legacy scope provenance")
+	assertEqual(t, legacyDispatchScopeRepair, scope.DispatchScope.Repair, "legacy scope repair")
+
+	text := captureStdout(t, func() {
+		if err := daemonStatusCmd(Args{}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, want := range []string{"dispatch_scope configured=- effective=all_eligible provenance=legacy enabled config without dispatch_scope", "repair=" + legacyDispatchScopeRepair} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("daemon status missing %q:\n%s", want, text)
+		}
+	}
 }

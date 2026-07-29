@@ -61,7 +61,7 @@ func TestRunDirectiveBypassableBlocker(t *testing.T) {
 		want    bool
 	}{
 		{name: "automation disabled", blocker: "project automation is disabled in its configuration", want: true},
-		{name: "default armed wave membership", blocker: "dispatch scope armed_waves requires task membership in a currently armed wave", want: true},
+		{name: "default armed wave membership", blocker: "dispatch scope armed_waves requires task membership in a currently armed wave", want: false},
 		{name: "explicit wave is not armed", blocker: "wave is not durably armed", want: false},
 		{name: "dependency", blocker: "dependency APP-T-0002 is not done", want: false},
 		{name: "empty", blocker: "", want: false},
@@ -77,6 +77,7 @@ func TestRunDirectiveBypassableBlocker(t *testing.T) {
 
 func TestDaemonHonorsDirectiveWithAutomationOff(t *testing.T) {
 	vault := automationTestVault(t)
+	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Directed", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Not directed", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
@@ -152,6 +153,48 @@ func TestDaemonHonorsDirectiveWithAutomationOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEqual(t, 0, len(otherAttempts), "non-directed task attempt count")
+}
+
+func TestDaemonDirectiveCannotBypassArmedWaveScope(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Unrelated directive", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	initializeOrchestrationGitRepo(t, filepath.Dir(vault))
+	installFakeCodexExec(t, filepath.Dir(vault))
+	project := registerAutomationTestProject(t, vault)
+	daemon, err := NewDaemon(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	diskConfig := defaultDiskPressureConfig()
+	diskConfig.Enabled = false
+	if err := daemon.store.SetDiskPressureConfig(diskConfig); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	queued, err := daemon.store.QueueRunDirective(RunDirective{
+		ProjectID: project.ProjectID, RecordID: "APP-T-0001", Actor: "human:test",
+		CreatedAt: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Minute).Format(time.RFC3339Nano), State: "queued",
+	})
+	if err != nil || !queued {
+		t.Fatalf("queue directive: queued=%t err=%v", queued, err)
+	}
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+	assertEqual(t, 0, run.AttemptCount, "unrelated armed-waves directive attempt count")
+	if !strings.Contains(run.LastError, "dispatch scope armed_waves requires task membership") {
+		t.Fatalf("expected armed-wave scope refusal, got %#v", run)
+	}
+	directive, err := daemon.store.RunDirective(project.ProjectID, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if directive == nil || directive.State != "queued" {
+		t.Fatalf("scope refusal must preserve queued directive, got %#v", directive)
+	}
 }
 
 func TestRunDirectiveRefusals(t *testing.T) {

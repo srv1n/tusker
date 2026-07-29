@@ -28,6 +28,8 @@ type deliveryReview struct {
 	StartReady    bool                      `json:"startReady"`
 	Readiness     ReadinessContract         `json:"readiness"`
 	Compatibility ReadinessLegacyProjection `json:"compatibility"`
+	Title         string                    `json:"title"`
+	Summary       string                    `json:"summary,omitempty"`
 	What          []deliveryReviewOutcome   `json:"whatWillBeDelivered"`
 	Proof         []deliveryReviewProof     `json:"howItWillBeProven"`
 	Flow          deliveryReviewFlow        `json:"howWorkFlows"`
@@ -51,6 +53,7 @@ type deliveryReviewOutcome struct {
 }
 type deliveryReviewProof struct {
 	Requirements []string                 `json:"requirements"`
+	Title        string                   `json:"title"`
 	Outcome      string                   `json:"outcome"`
 	Acceptance   []string                 `json:"acceptance"`
 	Tests        []string                 `json:"tests"`
@@ -198,7 +201,10 @@ func buildDeliveryReviewBytes(vault, path string, raw []byte, inspector wavePref
 	issues, frontiers := validateDeliveryPlan(vault, plan)
 	issues = uniqueStrings(append(preparationIssues, issues...))
 	sort.Strings(issues)
-	r := deliveryReview{Schema: deliveryReviewSchema, ReadOnly: true, What: []deliveryReviewOutcome{}, Proof: []deliveryReviewProof{}, Decisions: []deliveryReviewDecision{}, NonGoals: []string{}, Flow: deliveryReviewFlow{Frontiers: deliveryReviewFrontiers(plan, frontiers), ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Integration: "Reviewed work joins one serialized integration phase before landing.", SharedResources: []deliveryReviewResource{}, CrossScopeDependencies: []deliveryCrossScopeReviewDependency{}, Warnings: []string{}}, Start: deliveryReviewStart{PlanFingerprint: deliveryFingerprint(raw), Authorization: "not imported", Readiness: "review only", Blockers: []string{}, State: "held", StateLabel: "Held for review"}}
+	r := deliveryReview{Schema: deliveryReviewSchema, ReadOnly: true, Title: plan.Title, What: []deliveryReviewOutcome{}, Proof: []deliveryReviewProof{}, Decisions: []deliveryReviewDecision{}, NonGoals: []string{}, Flow: deliveryReviewFlow{Frontiers: deliveryReviewFrontiers(plan, frontiers), ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Integration: "Reviewed work joins one serialized integration phase before landing.", SharedResources: []deliveryReviewResource{}, CrossScopeDependencies: []deliveryCrossScopeReviewDependency{}, Warnings: []string{}}, Start: deliveryReviewStart{PlanFingerprint: deliveryFingerprint(raw), Authorization: "not imported", Readiness: "review only", Blockers: []string{}, State: "held", StateLabel: "Held for review"}}
+	if plan.v2 != nil {
+		r.Summary = plan.v2.Summary
+	}
 	integrationBaseSHA := ""
 	for _, issue := range issues {
 		r.Start.Blockers = append(r.Start.Blockers, issue)
@@ -237,6 +243,7 @@ func buildDeliveryReviewBytes(vault, path string, raw []byte, inspector wavePref
 	for _, task := range plan.Tasks {
 		proof := deliveryReviewProof{
 			Requirements: append([]string(nil), task.RequirementRefs...),
+			Title:        task.Title,
 			Outcome:      task.Outcome, Acceptance: []string{}, Tests: []string{}, Artifacts: []string{},
 			SourceKey: task.SourceKey, Checks: []deliveryReviewCheck{}, ArtifactRefs: []deliveryReviewArtifact{},
 			ResourceRefs: append([]string(nil), task.ResourceRefs...),

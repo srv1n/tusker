@@ -1,0 +1,820 @@
+schema: tusker.delivery-plan/v2
+scope: execution-observability/v2
+title: Execution observability and multi-agent lineage
+epic: ORC
+spec_refs:
+  - docs/specs/24-execution-observability.md
+context_fingerprint: sha256:bf65e8cf42451ff14fb3612ef53cf88964b8bb59e6c2ca1a46e94ff169371368
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+summary: >-
+  Add one durable execution graph above Tusker's existing lease authority:
+  immutable IDs and human names, direct-session registration, provider-native
+  child observation for Codex and Claude, relationship-complete read models,
+  convergent cursor timelines, truthful lifecycle controls, an unbound inbox,
+  and restart/replay proof. The plan reuses the existing ORC work-session and
+  operations foundations instead of creating a second scheduler or generic UI.
+non_goals:
+  - >-
+    Context, doctor, review, dry-run, and import are inert planning operations.
+    This plan does not start delivery, arm or modify authorization for a wave,
+    enable automation, run a daemon, dispatch a model, claim work, move a ref,
+    land, release, spend, push, or change credentials.
+  - >-
+    This plan does not replace SQLite ownership, lease owner/generation fences,
+    PID/PGID/start-time checks, the resident daemon, or the universal claimed
+    work-session protocol.
+  - >-
+    Provider-native children are observable provider-owned work. They do not
+    become Tusker tasks, receive fake leases, gain proof authority, or expose
+    independent controls unless a provider capability proves those controls.
+  - >-
+    A worker may submit managed-child intent for a distinct ready or rework
+    task, but it cannot recursively launch a Tusker runner or daemon.
+  - >-
+    The first provider set is Codex local/app/cloud and Claude Code. Cross-agent
+    chat, peer messaging, automatic task decomposition, and unrelated provider
+    adapters are deferred.
+requirements:
+  - id: R1
+    outcome: >-
+      Every direct invocation or wave-authorization generation has one
+      immutable Tusker execution root, and every observed strand has a durable
+      identity, separate human and provider labels, explicit node kind, and
+      typed lineage without weakening existing ownership authority.
+  - id: R2
+    outcome: >-
+      Direct Codex, Codex Cloud, and Claude work can register or attach, remain
+      visibly unbound, and be renamed or bound through audited conflict-checked
+      operations, while unbound and pre-binding history has no delivery
+      authority.
+  - id: R3
+    outcome: >-
+      A bounded idempotent provider-event contract and Codex and Claude
+      adapters preserve top-level sessions, provider-native children, status,
+      cursors, names, types, parentage, and capabilities without inventing
+      leases or replacing parent resume identity.
+  - id: R4
+    outcome: >-
+      CLI and Serve expose one relationship-complete graph and an authoritative
+      epoch, sequence, and cursor timeline that makes reconnect, retention,
+      replacement, subscriber loss, late events, and restart explicit.
+  - id: R5
+    outcome: >-
+      Delivery, admission, process, provider, outcome, session, and child
+      attention remain distinct evidence dimensions, and cancellation reports
+      provider acknowledgement separately from operating-system settlement.
+  - id: R6
+    outcome: >-
+      The graph-specific operations view supports names, ticket and wave links,
+      provider search, ownership badges, child attention, convergent history,
+      capability-aware controls, and an explicit unbound inbox without
+      duplicating the generic factory operations surface.
+  - id: R7
+    outcome: >-
+      Migration, replay, ordering, provider loss, process loss, parent exit,
+      cancellation races, daemon restart, and cross-provider fan-out have
+      deterministic proof, canonical documentation, and a bounded handoff to
+      the broader ORC operations and end-to-end work.
+concurrency: 2
+owned_path_overlaps:
+  - source_key: execution-runtime-store-serialization
+    tasks:
+      - execution-identity-ledger
+      - direct-execution-registration
+      - provider-observation-envelope
+      - execution-lifecycle-control
+    paths:
+      - cmd/tusker/runtime_store.go
+    strategy: serialize
+  - source_key: execution-cli-serialization
+    tasks:
+      - direct-execution-registration
+      - execution-graph-read-model
+    paths:
+      - cmd/tusker/cli.go
+      - cmd/tusker/execution_commands.go
+    strategy: serialize
+  - source_key: execution-serve-serialization
+    tasks:
+      - execution-graph-read-model
+      - cursor-timeline-projection
+      - execution-lifecycle-control
+    paths:
+      - cmd/tusker/serve_command.go
+      - cmd/tusker/serve_types.go
+      - cmd/tusker/run_runtime_commands.go
+    strategy: serialize
+assumptions:
+  - source_key: superseded-proof-contract-draft
+    statement: >-
+      W-0006 and ORC-T-0055 through ORC-T-0065 are disarmed, never-started
+      audit history. They were superseded after post-import inspection found
+      regex alternation escaped inside Markdown verification rows; this v2
+      scope replaces those exact proof contracts with pipe-free commands.
+  - source_key: universal-work-session-foundation
+    statement: >-
+      ORC-T-0041 lands its existing universal claimed work-session contract
+      without weakening SQLite, generation, lease, or process-identity
+      authority; this plan depends on that contract rather than duplicating it.
+  - source_key: provider-event-availability
+    statement: >-
+      Supported Codex and Claude releases continue to expose stable top-level
+      session or task identifiers and child lifecycle events; adapters must
+      feature-detect missing fields and report typed unavailable or degraded
+      visibility instead of guessing.
+tasks:
+  - source_key: execution-identity-ledger
+    requirement_refs: [R1, R7]
+    title: Establish the durable execution identity and lineage ledger
+    outcome: >-
+      One normalized execution ledger gives every direct invocation and wave
+      authorization generation an immutable root, records every managed or
+      provider-owned strand separately, and preserves existing attempt history
+      without becoming a second ownership system.
+    acceptance:
+      - id: A1
+        outcome: >-
+          Tusker generates immutable execution and root IDs; a new direct
+          invocation receives one root and a new wave authorization generation
+          receives one logical root whose member attempts are independently
+          leased managed children.
+      - id: A2
+        outcome: >-
+          Display name, normalized search label, task, wave, attempt, session,
+          provider session or task, reusable agent type, provider child handle,
+          node kind, creator, and timestamps remain separate typed fields.
+      - id: A3
+        outcome: >-
+          Retry, resume, fork, managed-child, and provider-child edges enforce
+          their distinct ownership semantics; provider-child upsert is
+          idempotent and managed-child creation requires independently admitted
+          ready or rework work.
+      - id: A4
+        outcome: >-
+          Existing attempt relationship rows backfill idempotently, remain
+          readable during compatibility rollout, survive interrupted migration
+          and restart, and cannot weaken work-session, lease generation, or
+          process-identity fences.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestExecutionGraphIdentity$' -count=1 && go test ./cmd/tusker -run '^TestExecutionRelationshipConstraints$' -count=1 && go test ./cmd/tusker -run '^TestExecutionGraphMigration$' -count=1"
+    dependencies:
+      - task: universal-work-session
+        scope: factory-execution-control/v1
+        kind: hard
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/execution_graph_test.go
+      summary: >-
+        Root allocation, field separation, typed edges, idempotent child
+        identity, independent managed ownership, migration, restart, and
+        compatibility matrix.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/execution_graph.go
+      - cmd/tusker/execution_graph_test.go
+      - cmd/tusker/runtime_store.go
+      - cmd/tusker/session_store.go
+    migration_keys:
+      - runtime-schema/execution-graph-v1
+    concurrency_group: execution-identity-ledger
+    complexity: frontier
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: direct-execution-registration
+    requirement_refs: [R1, R2]
+    title: Register, name, and bind work started outside the daemon
+    outcome: >-
+      An operator can register or attach a direct Codex, Codex Cloud, or Claude
+      invocation, recognize it by a human name, find unbound work in one inbox,
+      and bind it later without retroactively granting authority.
+    acceptance:
+      - id: A1
+        outcome: >-
+          Pre-launch registration returns an immutable Tusker execution ID, and
+          post-launch attach idempotently correlates a local session or cloud
+          task ID while keeping operator name, provider label, agent type, and
+          ticket identity separate.
+      - id: A2
+        outcome: >-
+          Unbound direct executions appear in a queryable inbox and cannot
+          contribute proof, request review, land, close, arm a wave, release,
+          spend, or otherwise mutate delivery authority.
+      - id: A3
+        outcome: >-
+          Rename, attach, detach, and rebind are audited and conflict checked;
+          task and wave must agree, a conflicting live owner refuses, and every
+          successful binding creates a generation and time boundary that leaves
+          earlier observations proof-ineligible.
+      - id: A4
+        outcome: >-
+          Direct launch helpers report source and process facts where available
+          but refuse inside dispatched workers or forbidden nested model
+          sessions and never start a daemon, arm a wave, or mint a task claim.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestDirectExecutionRegistration$' -count=1 && go test ./cmd/tusker -run '^TestExecutionBindingAuthority$' -count=1 && go test ./cmd/tusker -run '^TestDirectExecutionLaunchGuard$' -count=1"
+    dependencies:
+      - task: execution-identity-ledger
+        kind: hard
+    artifact:
+      kind: request_response
+      path: cmd/tusker/execution_commands_test.go
+      summary: >-
+        CLI request and stable JSON response fixtures for register, attach,
+        rename, bind, conflict refusal, unbound inbox, and nested-launch guard.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/execution_commands.go
+      - cmd/tusker/execution_commands_test.go
+      - cmd/tusker/cli.go
+      - cmd/tusker/work_session_cmd.go
+      - cmd/tusker/work_session_cmd_test.go
+      - cmd/tusker/runtime_store.go
+    migration_keys:
+      - runtime-schema/execution-binding-v1
+    concurrency_group: direct-execution-registration
+    complexity: complex
+    risk: critical
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: provider-observation-envelope
+    requirement_refs: [R2, R3, R5]
+    title: Admit provider observations through one bounded event contract
+    outcome: >-
+      Local hooks, structured model output, and cloud polling enter Tusker
+      through one replay-safe envelope that can report execution facts but
+      cannot acquire ownership or delivery authority.
+    acceptance:
+      - id: A1
+        outcome: >-
+          A versioned envelope carries provider, source event ID or sequence,
+          source cursor, parent provider session, child handle, agent type,
+          optional label, status, timestamp, capabilities, and bounded
+          provider-specific metadata with deterministic validation.
+      - id: A2
+        outcome: >-
+          Duplicate, replayed, late, and out-of-order events converge
+          idempotently; persisted source checkpoints survive restart; malformed,
+          oversized, unknown, and unsupported input produces a typed refusal or
+          degraded observation without dropping already committed history.
+      - id: A3
+        outcome: >-
+          Provider input cannot claim work, bind an execution, grant proof,
+          finalize an outcome, arm or mutate a wave, move a ref, release, spend,
+          overwrite a parent resume identity, or forge a local process fact.
+      - id: A4
+        outcome: >-
+          Provider-child correlation is unique within its parent and provider,
+          capability facts retain their provenance and freshness, and
+          unsupported independent control remains explicitly false or unknown.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestProviderExecutionEventEnvelope$' -count=1 && go test ./cmd/tusker -run '^TestProviderExecutionEventReplay$' -count=1 && go test ./cmd/tusker -run '^TestProviderObservationAuthorityRefusals$' -count=1"
+    dependencies:
+      - task: direct-execution-registration
+        kind: hard
+    artifact:
+      kind: security_summary
+      path: cmd/tusker/provider_execution_events_test.go
+      summary: >-
+        Schema, size bound, replay, ordering, checkpoint, malformed input,
+        authority escalation, forged process fact, parent identity, and
+        capability provenance refusal matrix.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/provider_execution_events.go
+      - cmd/tusker/provider_execution_events_test.go
+      - cmd/tusker/runtime_store.go
+      - cmd/tusker/run_identity_test.go
+    migration_keys:
+      - runtime-schema/provider-execution-events-v1
+    concurrency_group: provider-observation-envelope
+    complexity: frontier
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: codex-execution-adapter
+    requirement_refs: [R3, R5]
+    title: Track Codex local, app, cloud, and native child executions
+    outcome: >-
+      Codex top-level threads, cloud tasks, and native subagents appear under
+      the correct Tusker root with their real provider identities and truthful
+      control limits.
+    acceptance:
+      - id: A1
+        outcome: >-
+          Local CLI and app event paths capture the top-level thread, provider
+          child ID, reusable agent type, spawn label when available, parentage,
+          lifecycle event, and source sequence without confusing nested IDs
+          with the resumable parent thread.
+      - id: A2
+        outcome: >-
+          Codex Cloud records the durable cloud task, environment, status,
+          provider timestamps, and discoverable children without inventing a
+          local PID, wrapper heartbeat, or operating-system settlement.
+      - id: A3
+        outcome: >-
+          Replay, polling overlap, missing optional fields, malformed hook
+          payloads, lost hook delivery, and provider status regression converge
+          or report degraded visibility with an actionable reason.
+      - id: A4
+        outcome: >-
+          Adapter capability facts distinguish parent interrupt, independent
+          child control, resume, enumeration, and replay support; unavailable
+          capabilities never become controls or fake ownership.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestCodexExecutionAdapter' -count=1"
+    dependencies:
+      - task: provider-observation-envelope
+        kind: hard
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/provider_codex_execution_test.go
+      summary: >-
+        CLI, app, cloud, parent-thread, child-ID, naming, status, replay,
+        malformed/lost event, no-local-process, and capability matrix.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/provider_codex_execution.go
+      - cmd/tusker/provider_codex_execution_test.go
+      - cmd/tusker/runner_codex.go
+      - cmd/tusker/runner_codex_live.go
+      - cmd/tusker/runner_codex_exec_events.go
+      - cmd/tusker/runner_codex_cloud.go
+      - cmd/tusker/runner_codex_cloud_test.go
+      - cmd/tusker/runner_codex_exec_test.go
+    concurrency_group: codex-execution-adapter
+    complexity: complex
+    risk: high
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: claude-execution-adapter
+    requirement_refs: [R3, R5]
+    title: Track named Claude sessions and native child executions
+    outcome: >-
+      Claude top-level sessions and native subagents appear under the correct
+      Tusker root with the operator name, provider child identity, agent type,
+      transcript linkage, and truthful control limits kept distinct.
+    acceptance:
+      - id: A1
+        outcome: >-
+          Top-level name and session metadata plus SubagentStart and
+          SubagentStop events capture child ID, agent type, parent session,
+          transcript reference, status, and final-result facts without
+          confusing nested IDs with the resumable parent session.
+      - id: A2
+        outcome: >-
+          Provider-native and configured reusable names remain labels rather
+          than identity, duplicate hook delivery is harmless, and missing start
+          or stop events reconcile to an explicit partial or lost state.
+      - id: A3
+        outcome: >-
+          Malformed payloads, transcript absence, parent exit before child
+          settlement, interrupted results, and provider status regression
+          preserve committed history and produce bounded actionable reasons.
+      - id: A4
+        outcome: >-
+          Adapter capability facts distinguish parent interrupt, independent
+          child control, resume, enumeration, and replay support; unavailable
+          capabilities never become controls or fake ownership.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestClaudeExecutionAdapter' -count=1"
+    dependencies:
+      - task: provider-observation-envelope
+        kind: hard
+    artifact:
+      kind: behavior_matrix
+      path: cmd/tusker/provider_claude_execution_test.go
+      summary: >-
+        Named session, child hook, transcript, label/identity, replay, missing
+        edge, parent exit, interruption, malformed event, and capability matrix.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/provider_claude_execution.go
+      - cmd/tusker/provider_claude_execution_test.go
+      - cmd/tusker/runner_claude.go
+      - cmd/tusker/runner_claude_live.go
+      - cmd/tusker/runner_live_test.go
+    concurrency_group: claude-execution-adapter
+    complexity: complex
+    risk: high
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: execution-graph-read-model
+    requirement_refs: [R1, R2, R4, R6]
+    title: Publish one relationship-complete execution graph
+    outcome: >-
+      CLI, Serve, and later operator surfaces consume the same stable graph
+      projection for roots, managed attempts, retries, resumes, provider
+      children, names, bindings, ownership, capability, and attention.
+    acceptance:
+      - id: A1
+        outcome: >-
+          List and inspect support execution, root, parent, task, wave, source,
+          provider, provider ID, agent type, binding, lifecycle, name, and
+          attention filters with deterministic ordering and pagination.
+      - id: A2
+        outcome: >-
+          The versioned projection returns typed nodes and edges, stable
+          parent/root/task/wave links, provider ownership and capability facts,
+          active/failed/attention child counts, and explicit partial visibility.
+      - id: A3
+        outcome: >-
+          Existing runs and attempt consumers retain a compatibility projection
+          while the CLI and Serve use one query implementation; retries and
+          resumes never appear as concurrent managed children.
+      - id: A4
+        outcome: >-
+          Graph reads, search, and the unbound inbox are deterministic and
+          read-only and cannot attach work, mutate lifecycle, launch a model,
+          claim a task, or change delivery authority.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestExecutionGraphProjection$' -count=1 && go test ./cmd/tusker -run '^TestExecutionGraphFilters$' -count=1 && go test ./cmd/tusker -run '^TestExecutionGraphReadOnly$' -count=1"
+    dependencies:
+      - task: provider-observation-envelope
+        kind: hard
+    artifact:
+      kind: request_response
+      path: cmd/tusker/serve_execution_graph_test.go
+      summary: >-
+        Stable CLI and Serve graph fixtures for wave roots, direct roots,
+        managed attempts, retry/resume edges, provider children, filters,
+        unbound work, attention, partial visibility, and read-only guarantees.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/execution_commands.go
+      - cmd/tusker/execution_query.go
+      - cmd/tusker/run_runtime_commands.go
+      - cmd/tusker/cli.go
+      - cmd/tusker/serve_execution_graph.go
+      - cmd/tusker/serve_execution_graph_test.go
+      - cmd/tusker/serve_types.go
+      - cmd/tusker/serve_command.go
+    concurrency_group: execution-graph-read-model
+    complexity: complex
+    risk: high
+    priority: p0
+    size: l
+    domains: [project]
+
+  - source_key: cursor-timeline-projection
+    requirement_refs: [R3, R4]
+    title: Make execution history converge with authoritative cursors
+    outcome: >-
+      A client can reconnect to an execution root or wave, prove it reached the
+      committed tail, and recover from event loss or replacement without
+      relying on best-effort notifications.
+    acceptance:
+      - id: A1
+        outcome: >-
+          Every durable source timeline has an epoch and monotonic sequence;
+          tail, before, and after fetches return opaque cursors plus committed
+          tail, has-older, and has-newer facts with deterministic bounds.
+      - id: A2
+        outcome: >-
+          Retention, source replacement, stale cursors, missing ranges,
+          subscriber eviction, and restart return explicit reset, gap, or
+          stale-cursor facts and a bounded recovery action rather than an empty
+          or silently incomplete page.
+      - id: A3
+        outcome: >-
+          Root and wave projections merge multiple sources deterministically
+          while each row retains source execution, source epoch, source
+          sequence, provider event identity, and authoritative versus
+          provisional provenance.
+      - id: A4
+        outcome: >-
+          Streams only notify clients to fetch; a client advances checkpoints
+          only from authoritative fetch results and keeps fetching until it can
+          prove the committed tail, including after late and duplicate events.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestExecutionTimelineCursor$' -count=1 && go test ./cmd/tusker -run '^TestExecutionTimelineRecovery$' -count=1 && go test ./cmd/tusker -run '^TestExecutionTimelineProjection$' -count=1"
+    dependencies:
+      - task: execution-graph-read-model
+        kind: hard
+    artifact:
+      kind: reliability_timeline
+      path: cmd/tusker/serve_execution_timeline_test.go
+      summary: >-
+        Tail, before, after, restart, retention, replacement, stale cursor,
+        explicit gap, subscriber eviction, late event, duplicate event,
+        multi-source merge, and committed-tail convergence timeline.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - cmd/tusker/event_log.go
+      - cmd/tusker/event_log_test.go
+      - cmd/tusker/serve_execution_timeline.go
+      - cmd/tusker/serve_execution_timeline_test.go
+      - cmd/tusker/serve_stream.go
+      - cmd/tusker/serve_stream_test.go
+      - cmd/tusker/serve_types.go
+      - cmd/tusker/serve_command.go
+    migration_keys:
+      - event-log/execution-timeline-epoch-v1
+    concurrency_group: cursor-timeline-projection
+    complexity: frontier
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: execution-lifecycle-control
+    requirement_refs: [R3, R4, R5, R6]
+    title: Reconcile execution lifecycle and capability-aware control
+    outcome: >-
+      Operators can distinguish delivery state from process and provider
+      reality, understand detached parents and unsettled children, and request
+      only controls that Tusker can safely prove.
+    acceptance:
+      - id: A1
+        outcome: >-
+          Delivery, admission, process, provider, outcome, session, and child
+          attention persist as separate evidence dimensions with one documented
+          derived phase and no transition that erases stronger contradictory
+          evidence.
+      - id: A2
+        outcome: >-
+          Cancellation records request, provider acknowledgement, wrapper
+          signal, descendant settlement, timeout, escalation, and final
+          operating-system evidence separately under existing generation and
+          process-identity fences.
+      - id: A3
+        outcome: >-
+          Parent completion, exit, or loss never forges child completion;
+          detached resumable, non-resumable closed, unknown, lost, abandoned,
+          failed-child, and needs-attention states survive restart and remain
+          actionable.
+      - id: A4
+        outcome: >-
+          Parent, managed-child, and provider-child controls are derived from
+          fresh adapter capabilities and ownership facts; independent provider
+          child stop or resume is absent unless specifically proved.
+      - id: A5
+        outcome: >-
+          Reconciliation after daemon crash, wrapper death, provider
+          unavailability, delayed acknowledgement, PID reuse, and duplicate
+          control requests converges idempotently without false success or
+          collateral process termination.
+    verification:
+      - covers: A1,A2,A3,A4,A5
+        check: "command: go test ./cmd/tusker -run '^TestExecutionLifecycleDimensions$' -count=1 && go test ./cmd/tusker -run '^TestExecutionCancellationEvidence$' -count=1 && go test ./cmd/tusker -run '^TestExecutionLifecycleRecovery$' -count=1"
+    dependencies:
+      - task: codex-execution-adapter
+        kind: hard
+      - task: claude-execution-adapter
+        kind: hard
+      - task: cursor-timeline-projection
+        kind: hard
+    artifact:
+      kind: reliability_timeline
+      path: cmd/tusker/execution_lifecycle_test.go
+      summary: >-
+        Lifecycle dimensions plus cancel, acknowledge, signal, settle, timeout,
+        parent exit, detached child, restart, provider loss, PID reuse,
+        duplicate request, and capability-aware control timeline.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - cmd/tusker/execution_lifecycle.go
+      - cmd/tusker/execution_lifecycle_test.go
+      - cmd/tusker/runtime_store.go
+      - cmd/tusker/daemon.go
+      - cmd/tusker/run_runtime_commands.go
+      - cmd/tusker/runner_exit_classification.go
+      - cmd/tusker/provider_codex_execution.go
+      - cmd/tusker/provider_claude_execution.go
+      - cmd/tusker/serve_runs.go
+      - cmd/tusker/serve_types.go
+      - cmd/tusker/serve_command.go
+    migration_keys:
+      - runtime-schema/execution-lifecycle-v1
+    concurrency_group: execution-lifecycle-control
+    complexity: frontier
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: execution-operations-surface
+    requirement_refs: [R2, R4, R5, R6]
+    title: Show the multi-agent execution tree and unbound inbox
+    outcome: >-
+      The existing operations experience gains a focused execution drill-down
+      where operators can recognize named work, follow managed and
+      provider-owned children, repair allowed bindings, and understand gaps or
+      attention without opening raw logs.
+    acceptance:
+      - id: A1
+        outcome: >-
+          Wide and narrow views render wave or direct roots, task attempts,
+          retries and resumes, managed children, provider children, names,
+          ticket and wave links, ownership badges, and active, failed, and
+          needs-attention counts without flattening the graph.
+      - id: A2
+        outcome: >-
+          Search and filters cover execution name, task, wave, provider ID,
+          agent type, source, binding, and lifecycle, and detail views expose
+          the convergent timeline, parent/root links, source cursors,
+          capabilities, and partial-visibility reasons.
+      - id: A3
+        outcome: >-
+          An explicit unbound inbox supports rename and guarded attach flows,
+          previews authority impact, reports conflicts and the binding boundary,
+          and never implies earlier history became proof eligible.
+      - id: A4
+        outcome: >-
+          Controls distinguish Tusker-managed, parent-only provider control,
+          provider-owned read-only, unknown, and stale capability states; no
+          unsupported child stop, resume, proof, claim, arm, land, release, or
+          spending action appears.
+      - id: A5
+        outcome: >-
+          Keyboard, screen-reader, loading, empty, stale, reset, gap, provider
+          unavailable, and large fan-out fixtures remain understandable and
+          reuse the existing generic factory operations navigation rather than
+          adding a competing top-level product.
+    verification:
+      - covers: A1,A2,A3,A4,A5
+        check: "command: cd internal/serve/ui && bun test tests/execution-operations.test.ts && bun run build"
+    dependencies:
+      - task: execution-lifecycle-control
+        kind: hard
+    artifact:
+      kind: screenshot_set
+      path: internal/serve/ui/tests/fixtures/execution-operations.svg
+      summary: >-
+        Wide and narrow objective fixtures for a named wave tree, direct root,
+        retries, managed and provider-owned children, attention, cursor gap,
+        capability-aware controls, and the unbound attach flow.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - internal/serve/ui/src/features/runs
+      - internal/serve/ui/src/types/domain.ts
+      - internal/serve/ui/src/lib/api.ts
+      - internal/serve/ui/src/lib/queries.ts
+      - internal/serve/ui/src/router.tsx
+      - internal/serve/ui/src/styles/app.css
+      - internal/serve/ui/tests/execution-operations.test.ts
+      - internal/serve/ui/tests/fixtures/execution-operations.svg
+    concurrency_group: execution-operations-surface
+    complexity: complex
+    risk: high
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: execution-recovery-dogfood
+    requirement_refs: [R1, R2, R3, R4, R5, R6, R7]
+    title: Prove restart, replay, migration, and cross-provider fan-out
+    outcome: >-
+      Focused end-to-end fixtures demonstrate that named roots, bindings,
+      managed attempts, provider children, timelines, and controls remain
+      truthful through the failures that currently make multi-agent work hard
+      to track.
+    acceptance:
+      - id: A1
+        outcome: >-
+          Fresh install, populated-store migration, interrupted migration,
+          repeated migration, compatibility read, and rollback-to-compatible
+          binary fixtures preserve identity, lineage, bindings, and ownership.
+      - id: A2
+        outcome: >-
+          Duplicate, missing, late, out-of-order, and replayed provider events
+          plus retention, cursor replacement, and subscriber loss converge to
+          an explicit complete, partial, reset, or gap result with no silent
+          missing history.
+      - id: A3
+        outcome: >-
+          One wave root fans out to independently leased task attempts whose
+          Codex and Claude sessions create nested provider children; retries,
+          resumes, parent exit, child continuation, and cross-provider naming
+          retain the correct graph and authority.
+      - id: A4
+        outcome: >-
+          Daemon crash and restart, wrapper death, cloud polling loss, provider
+          outage, cancellation races, PID reuse, and repeated control requests
+          converge without duplicate roots, fake child death, false success,
+          collateral termination, proof leakage, or dispatch.
+      - id: A5
+        outcome: >-
+          Stable fixture output records the graph, lifecycle dimensions,
+          authoritative cursor tail, unbound authority refusals, and operator
+          attention facts in a form the broader ORC factory-loop regression can
+          consume without absorbing this focused implementation task.
+    verification:
+      - covers: A1,A2,A3,A4,A5
+        check: "command: go test ./e2e/executionobservability -run '^TestExecutionObservability' -count=1"
+    dependencies:
+      - task: execution-operations-surface
+        kind: hard
+    artifact:
+      kind: reliability_timeline
+      path: e2e/executionobservability/execution_observability_test.go
+      summary: >-
+        Deterministic migration, multi-provider fan-out, event replay, cursor
+        repair, parent/child divergence, cancel race, process fencing, daemon
+        restart, authority refusal, and operator projection timeline.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - e2e/executionobservability
+    concurrency_group: execution-recovery-dogfood
+    complexity: frontier
+    risk: critical
+    priority: p0
+    size: xl
+    domains: [project]
+
+  - source_key: execution-observability-guidance
+    requirement_refs: [R2, R3, R4, R5, R6, R7]
+    title: Publish execution observability guidance and rollout boundaries
+    outcome: >-
+      Newcomers and operators can understand execution identity, names,
+      bindings, child ownership, timelines, controls, provider limitations,
+      migration, and the handoff to the broader ORC operations work from the
+      canonical system map.
+    acceptance:
+      - id: A1
+        outcome: >-
+          System overview, CLI, orchestration, and Serve documentation describe
+          wave and direct roots, immutable IDs, optional display names, task and
+          wave bindings, the unbound inbox, typed relationships, lifecycle
+          dimensions, and authoritative cursor recovery in product language.
+      - id: A2
+        outcome: >-
+          Provider guidance documents Codex local/app/cloud and Claude identity
+          and child event support, degraded visibility, capability-aware
+          controls, cloud-versus-local evidence, and the rule that hooks are
+          untrusted observations.
+      - id: A3
+        outcome: >-
+          The migration and operations runbook covers backfill, compatibility,
+          restart, stale cursors, orphaned or partial children, binding
+          conflicts, cancellation settlement, and a bounded rollback or
+          disable-observation response without weakening ownership.
+      - id: A4
+        outcome: >-
+          Project canon and skill routing point to the execution contract, and
+          the compatibility note tells ORC-T-0046 to consume the graph-specific
+          projection and ORC-T-0047 to consume the focused reliability fixture
+          rather than duplicating either scope.
+      - id: A5
+        outcome: >-
+          Documentation, knowledge, and task validation pass with the generated
+          system graph current and no claim, dispatch, wave authorization,
+          daemon, provider, ref, release, or spending side effect.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^TestExecutionObservabilityDocumentation$' -count=1"
+      - covers: A4,A5
+        check: "command: make skill-doctor && tusker validate --json"
+    dependencies:
+      - task: execution-recovery-dogfood
+        kind: hard
+    artifact:
+      kind: documentation
+      path: docs/system/orchestration.md
+      summary: >-
+        Canonical operator and newcomer guide to execution roots, names,
+        bindings, relationships, provider visibility, timeline recovery,
+        lifecycle controls, migration, and ORC compatibility.
+      acceptance_ids: [A1, A2, A3, A4, A5]
+    owned_paths:
+      - docs/system/00-overview.md
+      - docs/system/cli.md
+      - docs/system/orchestration.md
+      - docs/system/serve-ui.md
+      - docs/system/graph.json
+      - docs/runbooks/execution-observability.md
+      - skills/tusker/SKILL.md
+      - skills/tusker/references/COMMANDS.md
+      - skills/tusker/references/ORCHESTRATION.md
+      - .tusker/knowledge/domains/project/CANON.md
+      - .tusker/knowledge/domains/project/INDEX.md
+      - cmd/tusker/execution_observability_docs_test.go
+    generated_outputs:
+      - docs/system/graph.json
+    concurrency_group: execution-observability-guidance
+    knowledge_nodes:
+      - project/CANON.md
+    complexity: standard
+    risk: medium
+    priority: p1
+    size: m
+    domains: [project]

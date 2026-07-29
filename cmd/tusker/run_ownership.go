@@ -486,9 +486,6 @@ func (s *runOwnershipService) finishWithEndState(identity, owner string, outcome
 		attempt.EndState = *endState
 		attempt.BranchName = endState.Branch
 	}
-	if ok, err := s.store.SaveAttemptIfRunLease(attempt, owner, run.LeaseGeneration); err != nil || !ok {
-		return nil, firstNonNil(err, tuskerError("CAS_CONFLICT", "run ownership changed before outcome write"))
-	}
 	run.LeaseState = string(LeaseStateReleased)
 	run.LeaseOwner = ""
 	run.LeaseExpiresAt = ""
@@ -500,8 +497,11 @@ func (s *runOwnershipService) finishWithEndState(identity, owner string, outcome
 	run.LastEventAt = now
 	run.UpdatedAt = now
 	run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt = 0, 0, ""
-	if ok, err := s.store.UpdateRunIfLease(*run, owner, run.LeaseGeneration); err != nil || !ok {
-		return nil, firstNonNil(err, tuskerError("CAS_CONFLICT", "run ownership changed before release"))
+	// The outcome and release are one ownership transition.  Persisting the
+	// attempt first used to leave a stale terminal attempt behind if a reclaim
+	// won the lease before the separate release CAS.
+	if ok, err := s.store.FinalizeRunLease(*run, attempt, owner, run.LeaseGeneration); err != nil || !ok {
+		return nil, firstNonNil(err, tuskerError("CAS_CONFLICT", "run ownership changed before terminal handoff"))
 	}
 	return s.store.FindRun(identity)
 }

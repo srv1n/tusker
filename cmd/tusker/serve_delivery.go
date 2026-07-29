@@ -1,12 +1,49 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"net/http"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
 const serveDeliveryErrorSchema = "tusker.serve-delivery-error/v1"
+const serveDeliveryPlanListSchema = "tusker.delivery-plan-list/v1"
+
+// Delivery plans are authored product input, not runtime state. Keep the
+// inbox rooted to the conventional project directory so merely opening Serve
+// cannot wander through arbitrary files or trigger any delivery work.
+const serveDeliveryPlanMaxBytes int64 = 1 << 20
+
+type serveDeliveryPlanList struct {
+	Schema   string                     `json:"schema"`
+	ReadOnly bool                       `json:"readOnly"`
+	Plans    []serveDeliveryPlanSummary `json:"plans"`
+}
+
+type serveDeliveryPlanSummary struct {
+	Path                string                         `json:"path"`
+	Title               string                         `json:"title"`
+	Summary             string                         `json:"summary,omitempty"`
+	SpecRefs            []string                       `json:"specRefs"`
+	TaskCount           int                            `json:"taskCount"`
+	ExpectedConcurrency int                            `json:"expectedConcurrency"`
+	RunnerProfile       string                         `json:"runnerProfile,omitempty"`
+	Tasks               []serveDeliveryPlanTaskSummary `json:"tasks"`
+	State               string                         `json:"state"`
+	Issue               string                         `json:"issue,omitempty"`
+}
+
+type serveDeliveryPlanTaskSummary struct {
+	SourceKey     string `json:"sourceKey"`
+	Title         string `json:"title"`
+	RunnerProfile string `json:"runnerProfile,omitempty"`
+	Complexity    string `json:"complexity,omitempty"`
+	Risk          string `json:"risk,omitempty"`
+}
 
 // The production value is the canonical transaction. Tests substitute only its
 // environment inspector so they can prove HTTP replay behavior without a daemon.
@@ -178,6 +215,111 @@ func (s *serveServer) handleDeliveryReview(w http.ResponseWriter, r *http.Reques
 	// Review is intentionally read-only. In particular, do not refresh, import,
 	// arm, or notify anything from this path.
 	serveJSON(w, http.StatusOK, review)
+}
+
+func (s *serveServer) handleDeliveryPlans(w http.ResponseWriter, r *http.Request) {
+	project, err := s.projectForSnapshot(strings.TrimSpace(r.URL.Query().Get("project")))
+	if err != nil {
+		serveDeliveryFailure(w, err)
+		return
+	}
+	plans, err := serveDeliveryPlans(project)
+	if err != nil {
+		serveDeliveryFailure(w, err)
+		return
+	}
+	serveJSON(w, http.StatusOK, serveDeliveryPlanList{Schema: serveDeliveryPlanListSchema, ReadOnly: true, Plans: plans})
+}
+
+func serveDeliveryPlans(project RegisteredProject) ([]serveDeliveryPlanSummary, error) {
+	root := filepath.Join(project.RepoRoot, "docs", "plans")
+	info, err := os.Stat(root)
+	if os.IsNotExist(err) {
+		return []serveDeliveryPlanSummary{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, tuskerError(errorInvalidArg, "delivery plans path is not a directory", withPath(root))
+	}
+	plans := []serveDeliveryPlanSummary{}
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		if ext != ".yaml" && ext != ".yml" {
+			return nil
+		}
+		raw, readErr := serveReadDeliveryPlan(path)
+		if readErr != nil {
+			plans = append(plans, serveDeliveryPlanSummary{Path: filepath.ToSlash(relativeDeliveryPlanPath(project.RepoRoot, path)), Title: strings.TrimSuffix(entry.Name(), ext), SpecRefs: []string{}, Tasks: []serveDeliveryPlanTaskSummary{}, State: "invalid", Issue: readErr.Error()})
+			return nil
+		}
+		schema, schemaErr := deliveryPlanSchemaBytes(raw)
+		if schemaErr != nil {
+			if bytes.Contains(raw, []byte(deliveryPlanV2Schema)) {
+				plans = append(plans, serveDeliveryPlanSummary{Path: filepath.ToSlash(relativeDeliveryPlanPath(project.RepoRoot, path)), Title: strings.TrimSuffix(entry.Name(), ext), SpecRefs: []string{}, Tasks: []serveDeliveryPlanTaskSummary{}, State: "invalid", Issue: schemaErr.Error()})
+			}
+			return nil
+		}
+		if schema != deliveryPlanV2Schema {
+			return nil
+		}
+		relative, relErr := filepath.Rel(project.RepoRoot, path)
+		if relErr != nil {
+			return relErr
+		}
+		plan, _, planErr := readDeliveryReviewPlanBytes(project.VaultRoot, raw)
+		if planErr != nil {
+			plans = append(plans, serveDeliveryPlanSummary{
+				Path: filepath.ToSlash(relative), Title: strings.TrimSuffix(entry.Name(), ext), SpecRefs: []string{}, Tasks: []serveDeliveryPlanTaskSummary{}, State: "invalid", Issue: planErr.Error(),
+			})
+			return nil
+		}
+		summary := serveDeliveryPlanSummary{Path: filepath.ToSlash(relative), Title: plan.Title, SpecRefs: append([]string(nil), plan.SpecRefs...), TaskCount: len(plan.Tasks), ExpectedConcurrency: deliveryExpectedConcurrency(plan, nil), RunnerProfile: plan.RunnerProfile, Tasks: []serveDeliveryPlanTaskSummary{}, State: "available"}
+		if plan.v2 != nil {
+			summary.Summary = plan.v2.Summary
+		}
+		for _, task := range plan.Tasks {
+			summary.Tasks = append(summary.Tasks, serveDeliveryPlanTaskSummary{SourceKey: task.SourceKey, Title: task.Title, RunnerProfile: firstNonEmpty(task.RunnerProfile, plan.RunnerProfile), Complexity: task.Complexity, Risk: task.Risk})
+		}
+		plans = append(plans, summary)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(plans, func(i, j int) bool { return plans[i].Path < plans[j].Path })
+	return plans, nil
+}
+
+func relativeDeliveryPlanPath(repoRoot, path string) string {
+	relative, err := filepath.Rel(repoRoot, path)
+	if err != nil {
+		return filepath.Base(path)
+	}
+	return relative
+}
+
+func serveReadDeliveryPlan(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(io.LimitReader(file, serveDeliveryPlanMaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > serveDeliveryPlanMaxBytes {
+		return nil, tuskerError(errorInvalidArg, "delivery plan exceeds the 1 MiB inbox limit", withPath(path))
+	}
+	return raw, nil
 }
 
 func (s *serveServer) handleDeliveryStart(w http.ResponseWriter, body serveActionBody) {

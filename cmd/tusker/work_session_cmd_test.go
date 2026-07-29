@@ -315,6 +315,84 @@ func TestWorkSessionLifecycleCASAndExactOnce(t *testing.T) {
 	}
 }
 
+func TestRunsReleaseCannotBypassInteractiveWorkSession(t *testing.T) {
+	vault, _ := workSessionFixture(t, 1)
+	if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runsReleaseCmd(Args{"id": "APP-T-0001", "reason": "bare"}); workSessionErrorCode(err) != errorMissingArg {
+		t.Fatalf("bare legacy release = %v", err)
+	}
+	if err := runsReleaseCmd(Args{"id": "APP-T-0001", "by": "agent:other", "revision": "1", "reason": "foreign"}); err == nil {
+		t.Fatal("foreign legacy release bypassed interactive owner")
+	}
+	if err := runsReleaseCmd(Args{"id": "APP-T-0001", "by": "agent:a", "reason": "missing revision"}); workSessionErrorCode(err) != errorMissingArg {
+		t.Fatalf("legacy release without revision = %v", err)
+	}
+	captureStdout(t, func() {
+		if err := runsReleaseCmd(Args{"id": "APP-T-0001", "by": "agent:a", "revision": "1", "reason": "done"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run, err := store.FindRun("APP-T-0001")
+	if err != nil || run == nil || LeaseState(run.LeaseState) != LeaseStateReleased || run.LeaseOwner != "" {
+		t.Fatalf("exact owner release did not retire session: run=%#v err=%v", run, err)
+	}
+}
+
+func TestRunsReleaseBreakGlassPersistsActorAndFencesStaleSnapshot(t *testing.T) {
+	vault, _ := workSessionFixture(t, 1)
+	if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:a"); err != nil {
+		t.Fatal(err)
+	}
+	output := captureStdout(t, func() {
+		if err := runsReleaseCmd(Args{"id": "APP-T-0001", "break-glass": "true", "by": "human:sarav", "reason": "incident recovery", "json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var response struct {
+		Actor string `json:"actor"`
+	}
+	if err := json.Unmarshal([]byte(output), &response); err != nil || response.Actor != "human:sarav" {
+		t.Fatalf("break-glass response attribution = %#v err=%v", response, err)
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := store.FindRun("APP-T-0001")
+	if err != nil || run == nil || !strings.Contains(run.LastError, "break_glass actor=human:sarav reason=incident recovery") {
+		_ = store.Close()
+		t.Fatalf("durable break-glass attribution = %#v err=%v", run, err)
+	}
+	_ = store.Close()
+
+	store, stale := ownershipStoreFixture(t, "APP-T-BREAK-GLASS-CAS")
+	stale.HandRun = true
+	stale.LeaseState, stale.LeaseOwner, stale.LeaseGeneration = string(LeaseStateClaimed), "agent:old", 1
+	stale.LeaseExpiresAt = time.Now().UTC().Add(time.Minute).Format(time.RFC3339)
+	if err := store.UpsertRun(stale); err != nil {
+		t.Fatal(err)
+	}
+	takeover := stale
+	takeover.LeaseOwner, takeover.LeaseGeneration = "agent:new", 2
+	if ok, err := store.UpdateRunIfLease(takeover, "agent:old", 1); err != nil || !ok {
+		t.Fatalf("takeover: ok=%v err=%v", ok, err)
+	}
+	if err := finishRuntimeRunIfSnapshot(store, &stale, LeaseStateReleased, AttemptOutcomeAbandoned, 0, "break_glass actor=human:sarav reason=late", false); workSessionErrorCode(err) != "CAS_CONFLICT" {
+		t.Fatalf("stale break-glass snapshot = %v", err)
+	}
+	live, err := store.FindRun(stale.RecordID)
+	if err != nil || live == nil || live.LeaseOwner != "agent:new" || live.LeaseGeneration != 2 {
+		t.Fatalf("stale break-glass overwrote takeover: %#v err=%v", live, err)
+	}
+}
+
 func TestWorkSessionHeartbeatAndSubmitCAS(t *testing.T) {
 	vault, _ := workSessionFixture(t, 1)
 	if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:a"); err != nil {

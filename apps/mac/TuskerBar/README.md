@@ -47,8 +47,11 @@ gracefully restarts an older app-bundled daemon so UI and API versions match.
   to dismiss it.
 - Right-click the menu-bar icon for window, full-screen, browser, settings, and
   quit actions. **Quit TuskerBar** exits both surfaces.
-- During startup, both windows show an opaque native progress/retry screen
-  instead of an empty WebKit view. Failures point to
+- During startup, both windows first ask WebKit for the stored Serve shell.
+  Bounded read-only screen data is restored immediately and revalidated through
+  the normal API and event stream once the daemon is ready. Existing content is
+  never covered by runtime-state changes; the native progress/retry screen is
+  reserved for a cold launch with no usable shell. Failures point to
   `~/Library/Application Support/tusker/logs/app-daemon.log`.
 
 Notifications and other user-notification APIs require the signed bundle. A
