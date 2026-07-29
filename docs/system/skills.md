@@ -32,8 +32,12 @@ The canonical source tree (all under version control, all hand-edited here):
 
 | Path | What it is |
 | --- | --- |
-| `SKILL.md` | The operator front-door: when-to-use, execution modes, claimed-run protocol. |
-| `references/*.md` | Deep-dive references (COMMANDS, WORKFLOW, SCHEMA, ORCHESTRATION, CLOSEOUT_PROTOCOL, REPO_CONTRACT…) loaded on demand. |
+| `SKILL.md` | A trigger-complete router: capability check, one-hop mode selection, universal authority boundaries, hard stop, compact loop. |
+| `references/PLAN.md` | Planning, delivery review, held import, and Start. |
+| `references/WORK.md` | Interactive/dispatched work, review, proof, gates, and human wait. |
+| `references/OPERATE.md` | Resident daemon, automation, waves, integration, fleet repair, and recovery. |
+| `references/<rare>.md` | Direct one-hop guides for onboarding, Xcode, documentation publication, and Obsidian. Legacy names are compatibility redirects, not active routes. |
+| `assets/compatibility.yaml` | Machine-readable binary/workflow/factory/source/materialization compatibility contract. |
 | `docs/*.md` | Orchestration runbook, failure classes, operator-intervention, dispatcher pseudocode. |
 | `agents/openai.yaml` | Agent manifest for Codex-side registration. |
 | `assets/templates/*.md` | Note templates (task, epic, gate, domain, daily, dashboard…). |
@@ -96,17 +100,25 @@ packets / cloud runners that can't follow symlinks).
 
 ## Freshness and provenance
 
-`SKILL.md` advertises the canonical `tusker.factory-intake-contract/v1` schema,
-version, and exact contract-content fingerprint. Materialized copies and bundles
-also carry `.tusker-skill-provenance.yaml`: it records that contract metadata,
-a portable source identity, and a deterministic payload fingerprint. The payload
-hash excludes the manifest itself and timestamps, avoiding recursive or
-machine-specific hashes.
+`assets/compatibility.yaml` owns workflow ranges, tracker/wave schemas, the
+factory contract, canonical source, materialization schema, and primary guides.
+`tusker capabilities --json` binds that contract to installed command/schema
+support and the canonical payload with one deterministic compatibility
+fingerprint. `SKILL.md` frontmatter intentionally contains only `name` and a
+trigger-complete `description`.
+
+Materialized copies and bundles carry `.tusker-skill-provenance.yaml`: it
+records the compatibility and canonical-payload fingerprints, portable source
+identity, and deterministic installed-payload fingerprint. Payload hashes
+exclude the manifest and timestamps, avoiding recursive or machine-specific
+hashes.
 
 `tusker skill doctor --package <path> --json`, `tusker setup doctor`, and
-`tusker delivery rollout doctor` report `current`, `stale`, `missing_provenance`,
-`incompatible`, and `locally_modified` installs separately. Repairs are local
-and offline: `tusker skill sync --repo . --source <canonical-tusker-checkout>`.
+`tusker delivery rollout doctor` report `current`, `stale`, `missing`,
+`incompatible`, and `locally_modified` installs separately. Legacy frontmatter
+metadata is classified as stale and is only a migration adapter. Repairs are
+local and offline: `tusker skill sync --repo . --source
+<canonical-tusker-checkout>`.
 Symlinks are always inspected through their live target; no cached manifest can
 make a retargeted symlink look stale. Sync replaces only the managed
 `tusker` package destination and never rewrites project knowledge, repo

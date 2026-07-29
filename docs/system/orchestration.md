@@ -19,6 +19,27 @@ This doc describes how Tusker's orchestration works **today**, drawn from `cmd/t
 
 Tusker separates that *deciding* what should run (read-only, available to anyone) from *doing* it — dispatching a local runner, which happens only inside the operator-started resident daemon.
 
+## Readiness is dimensional
+
+Tusker does not use one aggregate “ready” bit across unrelated authority
+domains. Typed blockers retain a stable kind, affected IDs, provenance, and
+remedy in seven independent dimensions:
+
+| Dimension | Blocks |
+|---|---|
+| `contract` | Invalid plan/task/schema semantics |
+| `import` | Unsafe held-record reconciliation |
+| `interactive` | Direct ownership: task, dependency, gate, owner, revision, workspace |
+| `automation` | Unattended configuration and project opt-in |
+| `authorization` | Exact wave fingerprint authorization |
+| `runtime` | Daemon, runner, workspace, and integration health |
+| `integrations` | Only the optional workflow that uses that adapter |
+
+Delivery review may therefore be plan-valid and import-ready while Start is
+blocked. Held import remains inert. `work start` consults interactive readiness
+only. Unattended Start and daemon claims consume the stricter automation,
+authorization, and runtime facts.
+
 ## Who may do what: daemon vs interactive session
 
 An interactive Claude Code / Codex session opened by the user **implements the work itself** and never starts a daemon or dispatches runners. This is a hard rule in the repo `CLAUDE.md`: "Never start `tusker daemon run`, invoke `tusker automation dispatch`, or launch nested workers from an interactive agent session." The code enforces it: every one-shot CLI entry point that could dispatch is handed a refusal reason.
@@ -29,7 +50,8 @@ An interactive Claude Code / Codex session opened by the user **implements the w
 | Dispatch a local runner | Yes | **Refused** via `oneShotDispatchRefusal` (`daemon.go:1501`) |
 | `tusker automation plan` (read-only decision) | n/a | Yes |
 | `tusker automation dispatch` | Yes (the daemon) | Refused |
-| Claim / start / heartbeat / submit a run by hand | Yes | Yes (hand-run, see below) |
+| `work start` / submit / fail / release | No | Yes; no automation, daemon, or armed-wave prerequisite |
+| Claim / heartbeat / submit a lower-level run | Yes | Yes when the selected protocol requires it |
 | Retry a failed run, inspect streams, replay a trace | Yes | Yes |
 
 `oneShotDispatchRefusal` returns *"&lt;command&gt; cannot dispatch local runners from a one-shot CLI process; start the resident daemon…"* — injected for `daemon run --once`, `refresh`, `automation dispatch`, and `advance-external --dispatch`.
@@ -62,6 +84,21 @@ The daemon's dispatch path re-derives eligibility and, when blocked, stamps `cur
 | Runner declined | `daemon.go:2772` | `automation plan do_not_dispatch: <blockers>` |
 
 **Fail-closed is the design point.** If the dependency index cannot load, the code appends `cannot verify upstream health: <err>` and blocks — the comment reads *"Fail closed: if we cannot load the index we cannot rule out an upstream build failure, so block dispatch."* Wave-auth verification is the same: a load error yields `wave authorization cannot be verified: <err>` rather than an optimistic pass.
+
+## Fleet diagnosis does not widen authority
+
+`delivery rollout doctor` preserves independent core, interactive, automation,
+authorization, runtime, and optional-integration findings. A missing vault or
+incompatible core schema may quarantine that project. Optional provider drift
+disables only the dependent adapter; it cannot quarantine planning or
+interactive work.
+
+`delivery rollout repair` defaults to `--scope core`. The other scopes are
+`automation`, `service`, and `integrations`. A repair scope changes only its
+allowlist and is idempotent. In particular, service repair may repair service
+definition files but never load or start the service; no repair enables a
+project, arms a wave, changes credentials, invokes a provider, moves a ref,
+releases work, or grants spending authority.
 
 ## Claims and leases
 

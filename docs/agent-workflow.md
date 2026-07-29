@@ -15,16 +15,30 @@ The goal is not to make contribution harder. The goal is to make sloppy contribu
 ```text
 idea / report
    ↓
-structured issue
+task contract or delivery DAG
    ↓
-approval or maintainer signal
+read-only review → optional held import
    ↓
-implementation
+interactive work start
+   or
+explicit unattended Start → resident daemon
    ↓
-PR summary + evidence
+implementation → acceptance-mapped proof
    ↓
-review
+independent review → deterministic landing/close
 ```
+
+Review, dry-run, and held import are inert. They do not enable automation,
+start a daemon, arm a wave, dispatch a model, call a provider, move a ref, or
+spend. A user-opened session implements the task itself through `tusker work
+start`; it needs task/dependency/gate/ownership/revision/workspace readiness,
+not daemon authority. Unattended Start is a separate, fingerprint-confirmed
+operation and fails closed until project, runner, workspace, integration,
+daemon, and wave authorization facts pass.
+
+When Tusker refuses, preserve the typed blocker and remedy. Do not collapse a
+dependency, human gate, owner conflict, unsafe workspace, disabled project,
+daemon outage, or optional adapter drift into a generic “not ready.”
 
 ## What we want from contributors
 

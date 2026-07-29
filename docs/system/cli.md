@@ -31,6 +31,16 @@ directory to find the repo-local `.tusker/` vault. Most read commands support
 | `print` | Render a note as terminal-friendly Markdown | You want the fuller note, not just the capsule. |
 | `next` | Show the next pickable task | "What should I work on?" Ranked p0-before-p1, then risk, then id. `--explain` shows why others were skipped. |
 
+## Delivery — separate product review from execution authority
+
+| Command | Plain language | When to reach for it |
+|---|---|---|
+| `delivery context\|doctor\|review` | Build and inspect a delivery contract | Read-only. Review reports `planValid`, `importReady`, and `startReady` independently; unavailable automation does not invalidate a sound plan. |
+| `delivery import [--dry-run]` | Reconcile exact held records | Validates contract/import safety, then writes only held, disarmed records. It does not require project automation or a daemon. |
+| `delivery start --confirm <fingerprint>` | Authorize one exact unattended wave | The only delivery phase that requires project opt-in, runner/workspace/integration health, daemon readiness, and exact authorization material. It never enables missing infrastructure. |
+| `delivery rollout doctor` | Inspect registered-project health by dimension | Reports core, interactive, automation, authorization, runtime, and optional-integration health independently. |
+| `delivery rollout repair --scope <scope>` | Repair one authority domain | Defaults to `core`; `automation`, `service`, and `integrations` are explicit. Repair never enables automation, arms a wave, starts a service, changes credentials, or calls a provider. |
+
 ## Lifecycle — move a task through its states
 
 Durable statuses: `idea, backlog, ready, review, rework, superseded`
@@ -39,7 +49,8 @@ Durable statuses: `idea, backlog, ready, review, rework, superseded`
 | Command | Plain language | When to reach for it |
 |---|---|---|
 | `status <id> <status>` | Move a task through its workflow | Hand-move e.g. to `ready` or `review`; use `discard`/`close` for terminal moves. |
-| `claim` / `next --claim --as <who>` | Take a local lease on a task | Start work; the claim marks it as being worked (and, interactively, "outside the daemon"). |
+| `work start\|submit\|fail\|release` | Own one interactive task revision | The canonical user-opened work session. It enforces task, dependency, gate, owner, revision, and workspace safety without requiring automation, a daemon, or an armed wave. |
+| `claim` / `next --claim --as <who>` | Take a lower-level local lease on a task | Runtime/compatibility paths that explicitly require lease mechanics. Prefer `work start` for interactive implementation. |
 | `verify` / `evidence add` | Record proof rows / evidence cards | Attach the PASS/FAIL and artifacts that prove acceptance. |
 | `close` | Close a task after gates + evidence pass | The task is genuinely done and proven. |
 | `accept <id> --by reviewer:name` | Confirm green proof, record acceptor, and close in one move | A reviewer signs off finished, already-green work. **`--by` must be `reviewer:<name>` or `human:<name>`** — it refuses a bare/default actor and never rubber-stamps unproven proof. |
@@ -50,7 +61,7 @@ Durable statuses: `idea, backlog, ready, review, rework, superseded`
 | Command | Plain language | When to reach for it |
 |---|---|---|
 | `daemon run\|install\|status\|stop\|limits\|resume` | The operator loop for registered local projects | Run/inspect the resident background worker. Interactive sessions must **not** start `daemon run`. |
-| `automation status\|queue\|explain\|plan\|dispatch` | Plan, inspect, and manually dispatch daemon work | `plan`/`explain`/`queue`/`status` are read-only (`plan` is the canonical dispatch decision); `dispatch` actually hands a task to a worker after eligibility checks. |
+| `automation status\|queue\|explain\|plan\|dispatch` | Inspect or control resident-daemon work | `plan`/`explain`/`queue`/`status` are read-only. Interactive sessions never invoke `dispatch`; only the resident daemon may create background workers. |
 | `projects add\|list\|enable\|disable\|remove` | Register repos for daemon pickup | Tell the daemon which repos it may work, and toggle automation per project. |
 | `runs inspect\|logs\|events\|interrupt\|release\|retire\|redrive` | Inspect and manage daemon runs/leases | Tail, stop, or replay a running/stuck attempt. |
 | `refresh` | Run one daemon poll tick | Nudge the loop once without a resident daemon. |
@@ -77,7 +88,8 @@ Durable statuses: `idea, backlog, ready, review, rework, superseded`
 | `reindex` | Rebuild generated indexes | Generated indexes are out of sync with the notes. |
 | `compact` | Remove empty optional metadata and disposable scaffolding | Trim note noise so contracts stay readable. |
 | `feedback add\|digest\|ingest\|review\|promote` | Add agent feedback notes and generate digests | Record concise Tusker/product friction; later triage and promote it. |
-| `skill doctor\|route\|pack\|sync\|bundle` | Doctor/route/pack the V7 project skills | Keep the installed operator and project-knowledge skills healthy. |
+| `capabilities` | Report installed binary and skill compatibility | Check command/schema support, workflow range, factory contract, canonical skill payload, provenance, and primary guide contract before orchestration. |
+| `skill doctor\|route\|pack\|sync\|bundle` | Inspect, route, and materialize skills | Distinguishes current, stale, missing, incompatible, and locally modified installs; sync is the deterministic repair for generated copies. |
 | `setup doctor\|repair` | Diagnose and repair local onboarding drift | Local install/link/hook drift is suspected. |
 | `state sync\|import\|export` | Sync runtime state to/from a git branch | Move runtime state between machines. |
 | `hook install` | Install optional local git hooks | Enforce branch/validate policy at commit/push time. |
