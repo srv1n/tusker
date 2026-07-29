@@ -14,6 +14,15 @@ import (
 
 const deliveryRolloutSchema = "tusker.delivery-rollout/v1"
 
+type deliveryRolloutRepairScope string
+
+const (
+	deliveryRolloutRepairCore         deliveryRolloutRepairScope = "core"
+	deliveryRolloutRepairAutomation   deliveryRolloutRepairScope = "automation"
+	deliveryRolloutRepairService      deliveryRolloutRepairScope = "service"
+	deliveryRolloutRepairIntegrations deliveryRolloutRepairScope = "integrations"
+)
+
 type deliveryRolloutInput struct {
 	Store           *RuntimeStore
 	Source          string
@@ -24,25 +33,28 @@ type deliveryRolloutInput struct {
 }
 
 type deliveryRolloutProject struct {
-	ProjectID string         `json:"project_id"`
-	RepoRoot  string         `json:"repo_root"`
-	Status    string         `json:"status"`
-	Action    string         `json:"action,omitempty"`
-	Findings  []setupFinding `json:"findings"`
+	ProjectID string            `json:"project_id"`
+	RepoRoot  string            `json:"repo_root"`
+	Status    string            `json:"status"`
+	Action    string            `json:"action,omitempty"`
+	Findings  []setupFinding    `json:"findings"`
+	Readiness ReadinessContract `json:"readiness"`
 }
 
 type deliveryRolloutReport struct {
-	Schema   string                   `json:"schema"`
-	DryRun   bool                     `json:"dry_run"`
-	OK       bool                     `json:"ok"`
-	Projects []deliveryRolloutProject `json:"projects"`
-	Service  []setupFinding           `json:"service"`
+	Schema           string                     `json:"schema"`
+	DryRun           bool                       `json:"dry_run"`
+	RepairScope      deliveryRolloutRepairScope `json:"repair_scope"`
+	OK               bool                       `json:"ok"`
+	Projects         []deliveryRolloutProject   `json:"projects"`
+	Service          []setupFinding             `json:"service"`
+	ServiceReadiness ReadinessContract          `json:"service_readiness"`
 }
 
 func deliveryRolloutCmd(args Args) error {
 	action := strings.ToLower(strings.TrimSpace(args.String("_pos0")))
 	if action == "" || action == "help" || args.Bool("help") {
-		fmt.Println("Usage:\n  tusker delivery rollout doctor [--state-root <path>] [--source <canonical-checkout>] [--json]\n  tusker delivery rollout repair [--state-root <path>] [--source <canonical-checkout>] [--dry-run] [--json]")
+		fmt.Println("Usage:\n  tusker delivery rollout doctor [--state-root <path>] [--source <canonical-checkout>] [--json]\n  tusker delivery rollout repair [--scope core|automation|service|integrations] [--state-root <path>] [--source <canonical-checkout>] [--dry-run] [--json]")
 		return nil
 	}
 	if action != "doctor" && action != "repair" {
@@ -54,12 +66,16 @@ func deliveryRolloutCmd(args Args) error {
 	}
 	defer store.Close()
 	apply := action == "repair" && !args.Bool("dry-run")
+	scope, err := deliveryRolloutScope(args.String("scope"))
+	if err != nil {
+		return err
+	}
 	if apply {
 		if err := rejectAgentSpawn("tusker delivery rollout repair"); err != nil {
 			return err
 		}
 	}
-	report, err := runDeliveryRollout(deliveryRolloutInput{Store: store, Source: args.String("source"), WorkflowInspect: inspectRZNWorkflow}, apply)
+	report, err := runDeliveryRolloutScoped(deliveryRolloutInput{Store: store, Source: args.String("source"), WorkflowInspect: inspectRZNWorkflow}, scope, apply)
 	if err != nil {
 		return err
 	}
@@ -77,8 +93,25 @@ func deliveryRolloutCmd(args Args) error {
 	return nil
 }
 
+func deliveryRolloutScope(value string) (deliveryRolloutRepairScope, error) {
+	scope := deliveryRolloutRepairScope(strings.ToLower(strings.TrimSpace(value)))
+	if scope == "" {
+		return deliveryRolloutRepairCore, nil
+	}
+	switch scope {
+	case deliveryRolloutRepairCore, deliveryRolloutRepairAutomation, deliveryRolloutRepairService, deliveryRolloutRepairIntegrations:
+		return scope, nil
+	default:
+		return "", tuskerError(errorInvalidArg, "delivery rollout repair scope must be core, automation, service, or integrations")
+	}
+}
+
 func runDeliveryRollout(input deliveryRolloutInput, apply bool) (deliveryRolloutReport, error) {
-	report := deliveryRolloutReport{Schema: deliveryRolloutSchema, DryRun: !apply, OK: true, Projects: []deliveryRolloutProject{}, Service: []setupFinding{}}
+	return runDeliveryRolloutScoped(input, deliveryRolloutRepairCore, apply)
+}
+
+func runDeliveryRolloutScoped(input deliveryRolloutInput, scope deliveryRolloutRepairScope, apply bool) (deliveryRolloutReport, error) {
+	report := deliveryRolloutReport{Schema: deliveryRolloutSchema, DryRun: !apply, RepairScope: scope, OK: true, Projects: []deliveryRolloutProject{}, Service: []setupFinding{}}
 	if input.Store == nil {
 		return report, tuskerError(errorConfigInvalid, "delivery rollout requires a runtime project registry")
 	}
@@ -96,6 +129,7 @@ func runDeliveryRollout(input deliveryRolloutInput, apply bool) (deliveryRollout
 		if reason, action := deliveryRolloutCompatibility(project); reason != "" {
 			item.Status, item.Action = "quarantined", action
 			item.Findings = append(item.Findings, setupFinding{Code: "project_incompatible", Status: "error", Path: project.RepoRoot, Message: reason, Action: action})
+			item.Readiness = deliveryRolloutReadiness(project, reason, item.Findings)
 			report.OK = false
 			if apply {
 				project.Health = projectHealthError
@@ -110,12 +144,12 @@ func runDeliveryRollout(input deliveryRolloutInput, apply bool) (deliveryRollout
 			continue
 		}
 
-		doctor, err := runSetupDoctor(setupDoctorInput{RepoRoot: project.RepoRoot, Store: input.Store, Source: input.Source, ExecutablePath: input.ExecutablePath, InstalledPath: input.InstalledPath, WorkflowInspect: input.WorkflowInspect, SuppressHandoffRepair: true}, apply)
+		doctor, err := runSetupDoctor(setupDoctorInput{RepoRoot: project.RepoRoot, Store: input.Store, Source: input.Source, ExecutablePath: input.ExecutablePath, InstalledPath: input.InstalledPath, WorkflowInspect: input.WorkflowInspect, SuppressHandoffRepair: scope != deliveryRolloutRepairIntegrations, RepairScope: string(scope)}, apply)
 		if err != nil {
 			return report, err
 		}
 		item.Findings = append(item.Findings, doctor.Findings...)
-		workflowFindings, err := deliveryRolloutWorkflowPolicy(project, apply)
+		workflowFindings, err := deliveryRolloutWorkflowPolicy(project, apply && scope == deliveryRolloutRepairAutomation)
 		if err != nil {
 			item.Status, item.Action = "quarantined", "repair the workflow/config syntax, then rerun delivery rollout repair"
 			item.Findings = append(item.Findings, setupFinding{Code: "workflow_policy_invalid", Status: "error", Path: project.WorkflowPath, Message: err.Error(), Action: item.Action})
@@ -125,17 +159,14 @@ func runDeliveryRollout(input deliveryRolloutInput, apply bool) (deliveryRollout
 				item.Status = "repaired"
 			}
 		}
-		for _, finding := range item.Findings {
-			if finding.Status == "error" && !finding.Changed {
-				if finding.Repairable {
-					if item.Status == "healthy" {
-						item.Status = "needs_repair"
-					}
-				} else {
-					item.Status = "quarantined"
-					item.Action = firstNonEmpty(item.Action, finding.Action)
-				}
-			}
+		item.Readiness = deliveryRolloutReadiness(project, "", item.Findings)
+		if item.Readiness.Dimensions.Contract.State != ReadinessStateReady {
+			item.Status = "quarantined"
+			item.Action = firstNonEmpty(item.Action, deliveryRolloutFirstError(item.Findings), "repair core compatibility before retrying rollout")
+		} else if !project.Enabled {
+			item.Status = "disabled"
+		} else if item.Readiness.Dimensions.Automation.State != ReadinessStateReady && item.Readiness.Dimensions.Automation.State != ReadinessStateNotApplicable {
+			item.Status = "needs_repair"
 		}
 		if item.Status == "quarantined" {
 			report.OK = false
@@ -146,7 +177,7 @@ func runDeliveryRollout(input deliveryRolloutInput, apply bool) (deliveryRollout
 					return report, err
 				}
 			}
-		} else if item.Status == "needs_repair" {
+		} else if item.Status == "needs_repair" || deliveryRolloutHasOutstandingFindings(item.Findings) || deliveryRolloutReadinessHasBlocker(item.Readiness) {
 			report.OK = false
 		}
 		if apply && item.Status != "quarantined" && strings.HasPrefix(project.LastError, "delivery rollout quarantine:") {
@@ -162,13 +193,19 @@ func runDeliveryRollout(input deliveryRolloutInput, apply bool) (deliveryRollout
 		}
 		report.Projects = append(report.Projects, item)
 	}
+	serviceApply := apply && scope == deliveryRolloutRepairService
 	if input.ServiceCheck != nil {
-		report.Service, err = input.ServiceCheck(apply)
+		report.Service, err = input.ServiceCheck(serviceApply)
+		if err != nil {
+			return report, err
+		}
+	} else if serviceApply {
+		report.Service, err = deliveryRolloutServiceDefinitionRepair()
 		if err != nil {
 			return report, err
 		}
 	} else {
-		report.Service, err = deliveryRolloutServiceDoctor(apply)
+		report.Service, err = deliveryRolloutServiceDoctor()
 		if err != nil {
 			return report, err
 		}
@@ -178,6 +215,7 @@ func runDeliveryRollout(input deliveryRolloutInput, apply bool) (deliveryRollout
 			report.OK = false
 		}
 	}
+	report.ServiceReadiness = deliveryRolloutServiceReadiness(report.Service)
 	return report, nil
 }
 
@@ -188,6 +226,203 @@ func deliveryRolloutFirstError(findings []setupFinding) string {
 		}
 	}
 	return ""
+}
+
+func deliveryRolloutHasOutstandingFindings(findings []setupFinding) bool {
+	for _, finding := range findings {
+		if finding.Status == "error" && !finding.Changed {
+			return true
+		}
+	}
+	return false
+}
+
+func deliveryRolloutReadinessHasBlocker(contract ReadinessContract) bool {
+	for _, dimension := range readinessDimensionsByKind(contract.Dimensions) {
+		if dimension.State == ReadinessStateBlocked || dimension.State == ReadinessStateWaiting || dimension.State == ReadinessStateUnavailable {
+			return true
+		}
+	}
+	return false
+}
+
+func deliveryRolloutReadiness(project RegisteredProject, compatibility string, findings []setupFinding) ReadinessContract {
+	projectID := deliveryRolloutProjectID(project)
+	provenance := ReadinessProvenance{Source: "delivery_rollout", Revision: projectID}
+	dimensions := ReadinessDimensions{
+		Contract:            ReadinessDimension{State: ReadinessStateReady, Provenance: provenance},
+		Import:              ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		Interactive:         ReadinessDimension{State: ReadinessStateReady, Provenance: provenance},
+		Automation:          ReadinessDimension{State: ReadinessStateReady, Provenance: provenance},
+		Authorization:       ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		Runtime:             ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		OptionalIntegration: ReadinessDimension{State: ReadinessStateReady, Provenance: provenance},
+	}
+	blockers := []ReadinessBlocker{}
+	add := func(kind ReadinessBlockerKind, authority ReadinessAuthorityDomain, affects []ReadinessDimensionKind, id, reason, remedy string) {
+		blockers = append(blockers, ReadinessBlocker{ID: id, Kind: kind, Authority: authority, Affects: affects, ProjectID: projectID, Reason: deliveryRolloutBoundedReadinessText(reason), Remedy: deliveryRolloutBoundedReadinessText(remedy)})
+		for _, dimension := range affects {
+			switch dimension {
+			case ReadinessDimensionContract:
+				dimensions.Contract.State = ReadinessStateBlocked
+			case ReadinessDimensionInteractive:
+				dimensions.Interactive.State = ReadinessStateBlocked
+			case ReadinessDimensionAutomation:
+				dimensions.Automation.State = ReadinessStateBlocked
+			case ReadinessDimensionAuthorization:
+				dimensions.Authorization.State = ReadinessStateBlocked
+			case ReadinessDimensionRuntime:
+				dimensions.Runtime.State = ReadinessStateUnavailable
+			case ReadinessDimensionOptionalIntegration:
+				dimensions.OptionalIntegration.State = ReadinessStateBlocked
+			}
+		}
+	}
+	if compatibility != "" {
+		add(ReadinessBlockerContractInvalid, ReadinessAuthorityContract, []ReadinessDimensionKind{ReadinessDimensionContract, ReadinessDimensionInteractive}, "core-compatibility", compatibility, "repair the registered vault and supported core schema")
+	}
+	for index, finding := range findings {
+		if finding.Changed || (finding.Status != "error" && !strings.HasPrefix(finding.Code, "handoff_")) {
+			continue
+		}
+		id := fmt.Sprintf("finding-%03d-%s", index, finding.Code)
+		switch {
+		case deliveryRolloutCoreFinding(finding):
+			add(ReadinessBlockerContractInvalid, ReadinessAuthorityContract, []ReadinessDimensionKind{ReadinessDimensionContract, ReadinessDimensionInteractive}, id, finding.Message, firstNonEmpty(finding.Action, "repair core compatibility"))
+		case deliveryRolloutIntegrationFinding(finding):
+			add(ReadinessBlockerOptionalIntegrationMissing, ReadinessAuthorityIntegration, []ReadinessDimensionKind{ReadinessDimensionOptionalIntegration}, id, finding.Message, firstNonEmpty(finding.Action, "repair the optional integration"))
+		default:
+			add(ReadinessBlockerAutomationDisabled, ReadinessAuthorityAutomation, []ReadinessDimensionKind{ReadinessDimensionAutomation}, id, finding.Message, firstNonEmpty(finding.Action, "repair automation configuration"))
+		}
+	}
+	if !project.Enabled {
+		add(ReadinessBlockerAutomationDisabled, ReadinessAuthorityAutomation, []ReadinessDimensionKind{ReadinessDimensionAutomation}, "automation-disabled", "project registration is disabled for unattended automation", "enable project automation only through its explicit control")
+	}
+	deliveryRolloutProjectRuntime(&dimensions, project, add)
+	if index, err := loadV7Index(project.VaultRoot); err != nil {
+		add(ReadinessBlockerAuthorizationMissing, ReadinessAuthorityAuthorization, []ReadinessDimensionKind{ReadinessDimensionAuthorization}, "wave-index", "wave authorization cannot be inspected: "+err.Error(), "repair the local wave records before unattended execution")
+	} else {
+		waveIDs := make([]string, 0, len(index.Waves))
+		for waveID := range index.Waves {
+			waveIDs = append(waveIDs, waveID)
+		}
+		sort.Strings(waveIDs)
+		for _, waveID := range waveIDs {
+			wave := index.Waves[waveID]
+			state := fallback(stringField(wave.Data, "authorization"), "disarmed")
+			if state != "armed" {
+				blocker := ReadinessBlocker{ID: "wave-" + waveID, Kind: ReadinessBlockerAuthorizationMissing, Authority: ReadinessAuthorityAuthorization, Affects: []ReadinessDimensionKind{ReadinessDimensionAuthorization}, ProjectID: projectID, WaveID: waveID, Reason: deliveryRolloutBoundedReadinessText("wave authorization is " + state), Remedy: "arm the exact reviewed wave through the approved control"}
+				blockers = append(blockers, blocker)
+				dimensions.Authorization.State = ReadinessStateBlocked
+			}
+		}
+		if len(index.Waves) > 0 && dimensions.Authorization.State == ReadinessStateNotApplicable {
+			dimensions.Authorization.State = ReadinessStateReady
+		}
+	}
+	contract, err := NewReadinessContract(ReadinessInput{Dimensions: dimensions, Blockers: blockers})
+	if err != nil {
+		return deliveryRolloutReadinessFallback(projectID, provenance, err)
+	}
+	return contract
+}
+
+func deliveryRolloutCoreFinding(finding setupFinding) bool {
+	return finding.Code == "project_incompatible" || finding.Code == "stale_vault_root" || finding.Code == "workflow_path_mismatch" || finding.Code == "workflow_policy_invalid" || finding.Code == "broken_vault_symlink" || strings.HasPrefix(finding.Code, "skill_install_")
+}
+
+func deliveryRolloutIntegrationFinding(finding setupFinding) bool {
+	return strings.HasPrefix(finding.Code, "handoff_")
+}
+
+func deliveryRolloutProjectRuntime(dimensions *ReadinessDimensions, project RegisteredProject, add func(ReadinessBlockerKind, ReadinessAuthorityDomain, []ReadinessDimensionKind, string, string, string)) {
+	if !project.Enabled || project.Health == projectHealthDisabled {
+		dimensions.Runtime.State = ReadinessStateNotApplicable
+		return
+	}
+	dimensions.Runtime.State = ReadinessStateReady
+	if project.Health != "" && project.Health != projectHealthHealthy {
+		add(ReadinessBlockerRuntimeUnavailable, ReadinessAuthorityRuntime, []ReadinessDimensionKind{ReadinessDimensionRuntime}, "project-health", "project runtime health is "+string(project.Health)+": "+firstNonEmpty(project.LastError, "no further detail recorded"), "restore project runtime health before unattended execution")
+		return
+	}
+	if strings.TrimSpace(project.LastPollAt) == "" {
+		return
+	}
+	lastPoll, err := time.Parse(time.RFC3339, project.LastPollAt)
+	if err != nil || lastPoll.Before(time.Now().UTC().Add(-daemonHeartbeatDeadThreshold)) {
+		reason := "project runtime poll is stale"
+		if err != nil {
+			reason = "project runtime poll timestamp is invalid"
+		}
+		add(ReadinessBlockerRuntimeUnavailable, ReadinessAuthorityRuntime, []ReadinessDimensionKind{ReadinessDimensionRuntime}, "project-runtime", reason, "restore managed daemon reconciliation before unattended execution")
+	}
+}
+
+func deliveryRolloutProjectID(project RegisteredProject) string {
+	return firstNonEmpty(strings.TrimSpace(project.ProjectID), strings.TrimSpace(project.ProjectKey), "managed-project")
+}
+
+func deliveryRolloutBoundedReadinessText(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "No additional detail was recorded."
+	}
+	if len(value) <= 320 {
+		return value
+	}
+	return strings.TrimSpace(value[:317]) + "..."
+}
+
+func deliveryRolloutReadinessFallback(projectID string, provenance ReadinessProvenance, cause error) ReadinessContract {
+	dimensions := ReadinessDimensions{
+		Contract:            ReadinessDimension{State: ReadinessStateBlocked, Provenance: provenance},
+		Import:              ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		Interactive:         ReadinessDimension{State: ReadinessStateBlocked, Provenance: provenance},
+		Automation:          ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		Authorization:       ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		Runtime:             ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		OptionalIntegration: ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+	}
+	return ReadinessContract{Schema: ReadinessContractSchema, Version: ReadinessContractVersion, Dimensions: dimensions, Blockers: []ReadinessBlocker{{ID: "readiness-projection", Kind: ReadinessBlockerContractInvalid, Authority: ReadinessAuthorityContract, Affects: []ReadinessDimensionKind{ReadinessDimensionContract, ReadinessDimensionInteractive}, ProjectID: projectID, Reason: deliveryRolloutBoundedReadinessText("rollout readiness projection is invalid: " + cause.Error()), Remedy: "repair the reported core compatibility data and rerun rollout doctor"}}}
+}
+
+func deliveryRolloutServiceReadiness(findings []setupFinding) ReadinessContract {
+	provenance := ReadinessProvenance{Source: "delivery_rollout_service", Revision: "managed-service"}
+	dimensions := ReadinessDimensions{
+		Contract:            ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		Import:              ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		Interactive:         ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		Automation:          ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		Authorization:       ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		Runtime:             ReadinessDimension{State: ReadinessStateReady, Provenance: provenance},
+		OptionalIntegration: ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+	}
+	blockers := []ReadinessBlocker{}
+	for index, finding := range findings {
+		if finding.Status != "error" || finding.Changed {
+			continue
+		}
+		dimensions.Runtime.State = ReadinessStateUnavailable
+		blockers = append(blockers, ReadinessBlocker{ID: fmt.Sprintf("service-%03d-%s", index, finding.Code), Kind: ReadinessBlockerRuntimeUnavailable, Authority: ReadinessAuthorityRuntime, Affects: []ReadinessDimensionKind{ReadinessDimensionRuntime}, ProjectID: "managed-service", Reason: deliveryRolloutBoundedReadinessText(finding.Message), Remedy: deliveryRolloutBoundedReadinessText(firstNonEmpty(finding.Action, "repair the managed service"))})
+	}
+	contract, err := NewReadinessContract(ReadinessInput{Dimensions: dimensions, Blockers: blockers})
+	if err != nil {
+		return deliveryRolloutServiceReadinessFallback(provenance, err)
+	}
+	return contract
+}
+
+func deliveryRolloutServiceReadinessFallback(provenance ReadinessProvenance, cause error) ReadinessContract {
+	dimensions := ReadinessDimensions{
+		Contract:            ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		Import:              ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		Interactive:         ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		Automation:          ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		Authorization:       ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+		Runtime:             ReadinessDimension{State: ReadinessStateUnavailable, Provenance: provenance},
+		OptionalIntegration: ReadinessDimension{State: ReadinessStateNotApplicable, Provenance: provenance},
+	}
+	return ReadinessContract{Schema: ReadinessContractSchema, Version: ReadinessContractVersion, Dimensions: dimensions, Blockers: []ReadinessBlocker{{ID: "service-readiness-projection", Kind: ReadinessBlockerRuntimeUnavailable, Authority: ReadinessAuthorityRuntime, Affects: []ReadinessDimensionKind{ReadinessDimensionRuntime}, ProjectID: "managed-service", Reason: deliveryRolloutBoundedReadinessText("managed service readiness projection is invalid: " + cause.Error()), Remedy: "repair the reported managed service data and rerun rollout doctor"}}}
 }
 
 func deliveryRolloutCompatibility(project RegisteredProject) (string, string) {
@@ -437,7 +672,7 @@ func deliveryRolloutChanged(findings []setupFinding) bool {
 	return false
 }
 
-func deliveryRolloutServiceDoctor(apply bool) ([]setupFinding, error) {
+func deliveryRolloutServiceDoctor() ([]setupFinding, error) {
 	if daemonServiceGOOS != "darwin" {
 		return []setupFinding{{Code: "daemon_service_unsupported", Status: "warning", Message: "managed launchd repair is available only on macOS", Action: "use the platform service manager for tusker daemon run", Repairable: false}}, nil
 	}
@@ -468,17 +703,44 @@ func deliveryRolloutServiceDoctor(apply bool) ([]setupFinding, error) {
 		return []setupFinding{}, nil
 	}
 	finding := setupFinding{Code: "daemon_service_drift", Status: "error", Path: config.plistPath(), Message: fmt.Sprintf("managed daemon drift: plist_current=%t binary_current=%t loaded=%t healthy=%t", plistCurrent, binaryCurrent, loaded, healthy), Action: "refresh the canonical service binary/plist and start a freshly polling managed daemon", Repairable: true}
-	if apply {
-		var repairErr error
-		if !plistCurrent || !binaryCurrent {
-			repairErr = daemonServiceInstall(Args{"quiet": "true"}, config)
-		} else {
-			repairErr = daemonServiceStart(Args{"quiet": "true"}, config)
-		}
-		if repairErr != nil {
-			return nil, repairErr
-		}
-		finding.Changed = true
-	}
 	return []setupFinding{finding}, nil
+}
+
+// deliveryRolloutServiceDefinitionRepair is deliberately file-only. It never
+// talks to launchd, loads a service, or starts a daemon; runtime recovery stays
+// a separate explicit service operation.
+func deliveryRolloutServiceDefinitionRepair() ([]setupFinding, error) {
+	if daemonServiceGOOS != "darwin" {
+		return []setupFinding{{Code: "daemon_service_unsupported", Status: "warning", Message: "managed launchd definition repair is available only on macOS", Action: "use the platform service manager for tusker daemon run", Repairable: false}}, nil
+	}
+	config, err := currentDaemonServiceConfig()
+	if err != nil {
+		return []setupFinding{{Code: "daemon_service_unavailable", Status: "error", Message: err.Error(), Action: "repair the managed daemon service definition", Repairable: false}}, nil
+	}
+	plistCurrent := false
+	if raw, readErr := os.ReadFile(config.plistPath()); readErr == nil {
+		plistCurrent = string(raw) == renderDaemonServicePlist(config)
+	}
+	binaryCurrent := false
+	if source, sourceErr := os.ReadFile(config.SourceExecutable); sourceErr == nil {
+		if installed, installedErr := os.ReadFile(config.Executable); installedErr == nil {
+			binaryCurrent = bytes.Equal(source, installed)
+		}
+	}
+	if plistCurrent && binaryCurrent {
+		return []setupFinding{{Code: "daemon_service_runtime_unchecked", Status: "warning", Path: config.plistPath(), Message: "managed service definition is current; runtime was not inspected or started by repair", Action: "run tusker daemon service status, then explicitly start the service if needed", Repairable: false}}, nil
+	}
+	if err := ensureDir(config.LaunchAgentDir); err != nil {
+		return nil, fmt.Errorf("create LaunchAgents directory: %w", err)
+	}
+	if err := ensureDir(config.logDir()); err != nil {
+		return nil, fmt.Errorf("create daemon service log directory: %w", err)
+	}
+	if err := installDaemonServiceExecutable(config); err != nil {
+		return nil, err
+	}
+	if err := writeDaemonServicePlist(config.plistPath(), renderDaemonServicePlist(config)); err != nil {
+		return nil, err
+	}
+	return []setupFinding{{Code: "daemon_service_definition_drift", Status: "error", Path: config.plistPath(), Message: "managed daemon binary/plist definition was refreshed without loading or starting the service", Action: "run tusker daemon service status, then explicitly start the service if needed", Repairable: true, Changed: true}}, nil
 }

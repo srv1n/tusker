@@ -44,6 +44,13 @@ type setupDoctorInput struct {
 	// SuppressHandoffRepair keeps cross-project rollout inside its preservation
 	// boundary. Standalone setup repair retains its existing handoff repair.
 	SuppressHandoffRepair bool
+	// RepairScope narrows rollout repair authority. Empty retains standalone
+	// setup repair's existing behavior.
+	RepairScope string
+}
+
+func (input setupDoctorInput) repairs(scope string) bool {
+	return input.RepairScope == "" || input.RepairScope == scope
 }
 
 func setupDoctorCmd(args Args, apply bool) error {
@@ -122,7 +129,7 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 				finding := setupFinding{Code: "stale_vault_root", Status: "error", Path: project.VaultRoot, Repairable: true,
 					Message: fmt.Sprintf("registered project %s points at %s instead of %s", project.ProjectID, project.VaultRoot, expectedVault),
 					Action:  "update the registration to the repository's .tusker root"}
-				if apply {
+				if apply && input.repairs("core") {
 					project.VaultRoot = expectedVault
 					project.WorkflowPath = workflowPath(expectedVault)
 					if err := input.Store.UpsertProject(project); err != nil {
@@ -138,7 +145,7 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 				finding := setupFinding{Code: "workflow_path_mismatch", Status: "error", Path: project.WorkflowPath,
 					Message: fmt.Sprintf("registered project %s does not resolve to its WORKFLOW.md", project.ProjectID),
 					Action:  "restore <vault>/WORKFLOW.md, then rerun setup repair", Repairable: fileExists(expectedWorkflow)}
-				if apply && finding.Repairable {
+				if apply && input.repairs("core") && finding.Repairable {
 					project.WorkflowPath = expectedWorkflow
 					if err := input.Store.UpsertProject(project); err != nil {
 						return report, err
@@ -190,7 +197,7 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 		}
 		finding := setupFinding{Code: "skill_install_" + provenance.Status, Status: "error", Path: destination, Message: provenance.Message,
 			Action: skillSyncRepairAction(), Repairable: sourceReport.Kind == "canonical", Provenance: &provenance}
-		if apply && finding.Repairable {
+		if apply && input.repairs("core") && finding.Repairable {
 			if err := installSkillPayloadWithModeFrom(destination, skillInstallModeLink, sourceReport.Path); err != nil {
 				return report, err
 			}
@@ -235,7 +242,7 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 			}
 			zipFinding, nextConfig := diagnoseHandoffZip(repo, config, configPath)
 			if zipFinding != nil {
-				if apply && zipFinding.Repairable && !input.SuppressHandoffRepair {
+				if apply && input.repairs("integrations") && zipFinding.Repairable && !input.SuppressHandoffRepair {
 					if err := writeHandoffConfig(configPath, nextConfig); err != nil {
 						return report, err
 					}
