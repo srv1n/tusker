@@ -12,6 +12,9 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -38,6 +41,7 @@ func TestContractConvergence(t *testing.T) {
 		}
 	}
 	trapBin, trapLog := installAuthorityTraps(t, sandbox)
+	stopSecretSentinel := watchSecretReadSentinel(t, filepath.Join(home, ".env"))
 	before := snapshotRepositoryAuthority(t, repo)
 
 	tests := []string{
@@ -62,6 +66,7 @@ func TestContractConvergence(t *testing.T) {
 		"TestDeliveryRolloutQuarantine",
 		"TestScopedFleetRepair",
 		"TestFleetHealthDimensions",
+		"TestMixedFleetCoreRepairPreservesOtherScopes",
 
 		// Binary/package compatibility, every install shape, deterministic
 		// repair, and bounded progressive disclosure.
@@ -72,6 +77,8 @@ func TestContractConvergence(t *testing.T) {
 		"TestSkillBundleProvenanceIsPortable",
 		"TestSkillSyncCopyUsesValidatedCanonicalSource",
 		"TestSetupDoctorRepairsGeneratedSkillInstallsFromCanonicalSource",
+		"TestSetupDoctorRepairsLocallyModifiedSkillInstall",
+		"TestAsymmetricManagedSkillMetadataBlocksClaimedWaveAndSetupRepairs",
 		"TestSkillContractCompatibility",
 		"TestTuskerSkillProgressiveDisclosure",
 	}
@@ -87,11 +94,15 @@ func TestContractConvergence(t *testing.T) {
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	err = cmd.Run()
+	secretRead := stopSecretSentinel()
 	if ctx.Err() != nil {
 		t.Fatalf("focused convergence suite timed out: %v\n%s", ctx.Err(), output.String())
 	}
 	if err != nil {
 		t.Fatalf("focused convergence suite failed: %v\n%s", err, output.String())
+	}
+	if secretRead {
+		t.Fatal("convergence fixture opened the isolated HOME/.env secret sentinel")
 	}
 	for _, name := range tests {
 		if !strings.Contains(output.String(), "=== RUN   "+name) {
@@ -107,6 +118,42 @@ func TestContractConvergence(t *testing.T) {
 	after := snapshotRepositoryAuthority(t, repo)
 	if before != after {
 		t.Fatalf("convergence fixture changed repository authority\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func watchSecretReadSentinel(t *testing.T, path string) func() bool {
+	t.Helper()
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatalf("create secret-read sentinel: %v", err)
+	}
+	var observed atomic.Bool
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(2 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
+			if err == nil {
+				observed.Store(true)
+				_ = syscall.Close(fd)
+				return
+			}
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return func() bool {
+		once.Do(func() {
+			close(stop)
+			<-done
+		})
+		return observed.Load()
 	}
 }
 
@@ -185,6 +232,9 @@ func contractTestEnvironment(home, stateRoot, tmpRoot, trapBin, trapLog, moduleC
 		"GOAUTH=off",
 		"GOTOOLCHAIN=local",
 		"GOMODCACHE="+moduleCache,
+		"GOPROXY=off",
+		"GOSUMDB=off",
+		"GOVCS=*:off",
 	)
 }
 

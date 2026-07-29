@@ -100,6 +100,38 @@ func TestSetupDoctorRepairsGeneratedSkillInstallsFromCanonicalSource(t *testing.
 	}
 }
 
+func TestSetupDoctorRepairsLocallyModifiedSkillInstall(t *testing.T) {
+	sourceRoot := t.TempDir()
+	writeCanonicalTuskerSkillFixture(t, sourceRoot)
+	repo := t.TempDir()
+	destination := filepath.Join(repo, ".agents", "skills", "tusker")
+	if err := installSkillPayloadCopy(destination); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(destination, "SKILL.md"), "local operator edit\n"); err != nil {
+		t.Fatal(err)
+	}
+	if got := inspectSkillMaterialization(destination); got.Status != "locally_modified" {
+		t.Fatalf("fixture status = %#v", got)
+	}
+
+	dry, err := runSetupDoctor(setupDoctorInput{RepoRoot: repo, Source: sourceRoot}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSetupFinding(t, dry, "skill_install_locally_modified", false)
+
+	repaired, err := runSetupDoctor(setupDoctorInput{RepoRoot: repo, Source: sourceRoot}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finding := findingByCode(repaired, "skill_install_locally_modified")
+	if finding == nil || !finding.Changed || finding.Provenance == nil || finding.Provenance.Status != "current" {
+		t.Fatalf("locally modified repair = %#v in %#v", finding, repaired)
+	}
+	assertIsSymlink(t, destination)
+}
+
 func TestAsymmetricManagedSkillMetadataBlocksClaimedWaveAndSetupRepairs(t *testing.T) {
 	tests := []struct {
 		name string

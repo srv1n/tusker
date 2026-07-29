@@ -267,6 +267,86 @@ func TestFleetHealthDimensions(t *testing.T) {
 	}
 }
 
+func TestMixedFleetCoreRepairPreservesOtherScopes(t *testing.T) {
+	fixture := newDeliveryRolloutFixture(t)
+	missingSkill := fixture.addProject("missing-skill", true)
+	legacyRunner := fixture.addProject("legacy-runner", true)
+	optionalProvider := fixture.addProject("optional-provider", true)
+	disabled := fixture.addProject("disabled", false)
+	stabilizeFleetReadinessFixture(t, fixture)
+
+	for _, destination := range []string{
+		filepath.Join(missingSkill, ".agents", "skills", "tusker"),
+		filepath.Join(missingSkill, ".claude", "skills", "tusker"),
+	} {
+		if err := os.RemoveAll(destination); err != nil {
+			t.Fatal(err)
+		}
+	}
+	legacyConfig := "schema: tusker.config/v1\nproject_id: legacy-runner\nautomation:\n  runners:\n    codex:\n      kind: codex_exec\n      command: custom-human-approval-wrapper\n      approval_policy: on-request\n"
+	legacyConfigPath := filepath.Join(legacyRunner, "tusker.yaml")
+	if err := writeText(legacyConfigPath, legacyConfig); err != nil {
+		t.Fatal(err)
+	}
+	optionalConfigPath := filepath.Join(optionalProvider, ".chatgpt-handoff.json")
+	if err := writeText(optionalConfigPath, "{not json"); err != nil {
+		t.Fatal(err)
+	}
+	legacyBefore := mustReadIndexTest(t, legacyConfigPath)
+	optionalBefore := mustReadIndexTest(t, optionalConfigPath)
+	serviceCalls := 0
+	input := fixture.input()
+	input.ServiceCheck = func(apply bool) ([]setupFinding, error) {
+		if apply {
+			serviceCalls++
+		}
+		return []setupFinding{{Code: "daemon_service_stale", Status: "error", Message: "stale fixture service", Action: "repair service definition explicitly", Repairable: true}}, nil
+	}
+
+	report, err := runDeliveryRolloutScoped(input, deliveryRolloutRepairCore, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project := rolloutProjectByID(t, report, "missing"); project.Status != "quarantined" {
+		t.Fatalf("missing vault did not remain quarantined: %#v", project)
+	}
+	if project := rolloutProjectByID(t, report, "missing-skill"); project.Status != "repaired" || !deliveryRolloutChanged(project.Findings) {
+		t.Fatalf("missing skill did not converge through core repair: %#v", project)
+	}
+	for _, destination := range []string{
+		filepath.Join(missingSkill, ".agents", "skills", "tusker"),
+		filepath.Join(missingSkill, ".claude", "skills", "tusker"),
+	} {
+		if got := inspectSkillMaterialization(destination); got.Status != "current" {
+			t.Fatalf("core repair left %s at %#v", destination, got)
+		}
+	}
+	legacy := rolloutProjectByID(t, report, "legacy-runner")
+	if legacy.Readiness.Dimensions.Automation.State != ReadinessStateBlocked || legacy.Status == "quarantined" || mustReadIndexTest(t, legacyConfigPath) != legacyBefore {
+		t.Fatalf("core repair changed or misclassified legacy runner: %#v", legacy)
+	}
+	optional := rolloutProjectByID(t, report, "optional-provider")
+	if optional.Readiness.Dimensions.OptionalIntegration.State != ReadinessStateBlocked || optional.Status == "quarantined" || mustReadIndexTest(t, optionalConfigPath) != optionalBefore {
+		t.Fatalf("core repair changed or misclassified optional provider: %#v", optional)
+	}
+	disabledProject := rolloutProjectByID(t, report, "disabled")
+	if disabledProject.Status != "disabled" || !dirExists(disabled) {
+		t.Fatalf("core repair changed disabled project: %#v", disabledProject)
+	}
+	registered, err := fixture.store.ListProjects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, project := range registered {
+		if project.ProjectID == "disabled" && project.Enabled {
+			t.Fatal("core repair enabled disabled project")
+		}
+	}
+	if serviceCalls != 0 || report.ServiceReadiness.Dimensions.Runtime.State != ReadinessStateUnavailable {
+		t.Fatalf("core repair touched or hid stale service: calls=%d readiness=%#v", serviceCalls, report.ServiceReadiness)
+	}
+}
+
 func stabilizeFleetReadinessFixture(t *testing.T, fixture *deliveryRolloutFixture) {
 	t.Helper()
 	for _, scope := range []deliveryRolloutRepairScope{deliveryRolloutRepairCore, deliveryRolloutRepairAutomation} {

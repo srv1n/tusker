@@ -24,7 +24,7 @@ directory to find the repo-local `.tusker/` vault. Most read commands support
 | Command | Plain language | When to reach for it |
 |---|---|---|
 | `init` | Initialize or refresh a repo vault | First time setting up Tusker in a repo (`tusker init --yes`). |
-| `new epic\|task\|bug\|doc\|gate\|decision` | Create a V7 record | Cutting new tracked work; `new task --epic APP --size m --risk medium`. |
+| `new epic\|task\|gate\|decision` | Create a V7 record | Cutting new tracked work; `new task --epic APP --size m --risk medium`. `new bug` and `new doc` are removed aliases; use a typed task or `docs new`. |
 | `list` | List work records | Quick scan of what exists; supports filters. |
 | `search` | Search tracker notes (skips generated files/attachments) | Find a task by words without dredging raw logs. |
 | `show` | Show a bounded note *capsule* or one section | The default way to read a task cheaply (`show <id> --capsule`). |
