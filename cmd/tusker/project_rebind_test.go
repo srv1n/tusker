@@ -149,6 +149,15 @@ func TestProjectRebindRefusesWorkspaceMountAndPartialSamePath(t *testing.T) {
 	if err := os.Remove(workspaceConfigPath()); err != nil {
 		t.Fatal(err)
 	}
+	if err := saveWorkspaceVaultConfig(WorkspaceVaultConfig{Projects: []WorkspaceProject{{ProjectID: "other-project", TrackerRoot: newVault, MountPath: filepath.Join(t.TempDir(), "other-mount")}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault}); err == nil || !strings.Contains(err.Error(), "another project") {
+		t.Fatalf("target workspace collision err=%v", err)
+	}
+	if err := os.Remove(workspaceConfigPath()); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, _, err := store.RebindProjectRegistration(project.ProjectID, oldRepo, newVault); err == nil || !strings.Contains(err.Error(), "together") {
 		t.Fatalf("partial same path err=%v", err)
 	}

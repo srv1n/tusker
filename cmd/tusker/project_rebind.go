@@ -149,6 +149,9 @@ func refuseProjectRebindWorkspaceMount(projectID, vaultRoot string) error {
 		return err
 	}
 	for _, mount := range workspace.Projects {
+		if mount.ProjectID != projectID && sameCanonicalProjectPath(mount.TrackerRoot, vaultRoot) {
+			return tuskerError(errorInvalidTransition, "project rebind target vault is already mounted by another project", withContext(map[string]any{"project_id": projectID, "conflicting_project_id": mount.ProjectID, "mount_path": mount.MountPath, "target_vault_root": vaultRoot}), withHint("unmount or repair the conflicting workspace mount first; v1 rebind changes the runtime registry only"))
+		}
 		if mount.ProjectID == projectID && !sameCanonicalProjectPath(mount.TrackerRoot, vaultRoot) {
 			return tuskerError(errorInvalidTransition, "project rebind refuses a mounted workspace target that requires cross-filesystem mutation", withContext(map[string]any{"project_id": projectID, "mount_path": mount.MountPath, "tracker_root": mount.TrackerRoot, "target_vault_root": vaultRoot}), withHint("unmount or repair the workspace mount first; v1 rebind changes the runtime registry only"))
 		}
