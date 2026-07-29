@@ -160,11 +160,11 @@ func refuseProjectRebindWorkspaceMount(projectID, vaultRoot string) error {
 }
 
 func projectByID(store *RuntimeStore, projectID string) (RegisteredProject, error) {
-	projects, err := store.ListProjects()
+	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true, ProjectID: projectID})
 	if err != nil {
 		return RegisteredProject{}, err
 	}
-	for _, project := range projects {
+	for _, project := range loadedRegisteredProjects(loaded) {
 		if project.ProjectID == projectID {
 			return project, nil
 		}
@@ -189,11 +189,11 @@ func validateProjectRebindPreconditions(store *RuntimeStore, before RegisteredPr
 	if active != 0 {
 		return tuskerError(errorInvalidTransition, fmt.Sprintf("project rebind requires zero non-terminal runs; found %d", active))
 	}
-	projects, err := store.ListProjects()
+	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
 	if err != nil {
 		return err
 	}
-	for _, other := range projects {
+	for _, other := range loadedRegisteredProjects(loaded) {
 		if other.ProjectID != before.ProjectID && (sameCanonicalProjectPath(other.RepoRoot, repoRoot) || sameCanonicalProjectPath(other.VaultRoot, vaultRoot)) {
 			return tuskerError(errorInvalidTransition, "project rebind target is already claimed by project "+other.ProjectID)
 		}

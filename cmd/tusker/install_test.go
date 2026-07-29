@@ -282,7 +282,7 @@ func TestInstallSkillPayloadRemovesStaleFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected current commands reference to be installed: %v", err)
 	}
-	if strings.Contains(string(referenceContent), "stale commands") || !strings.Contains(string(referenceContent), "# Tusker Commands") {
+	if strings.Contains(string(referenceContent), "stale commands") || !strings.Contains(string(referenceContent), "# Compatibility redirect") {
 		t.Fatalf("expected stale reference content to be replaced, got:\n%s", string(referenceContent))
 	}
 }

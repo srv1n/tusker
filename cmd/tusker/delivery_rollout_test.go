@@ -11,12 +11,7 @@ import (
 
 func TestDeliveryRolloutDoctor(t *testing.T) {
 	fixture := newDeliveryRolloutFixture(t)
-	stale := fixture.addProject("stale", true)
-	workflow := mustReadIndexTest(t, workflowPath(filepath.Join(stale, ".tusker")))
-	workflow = strings.Replace(workflow, `approval_policy: on-request`, `approval_policy: never`, 1)
-	if err := writeText(workflowPath(filepath.Join(stale, ".tusker")), workflow); err != nil {
-		t.Fatal(err)
-	}
+	fixture.addProject("stale", true)
 	before := snapshotDeliveryRolloutPaths(t, fixture.roots)
 	projectsBefore, _ := fixture.store.ListProjects()
 	report, err := runDeliveryRollout(fixture.input(), false)
@@ -372,7 +367,12 @@ func newDeliveryRolloutFixture(t *testing.T) *deliveryRolloutFixture {
 	source := t.TempDir()
 	writeCanonicalTuskerSkillFixture(t, source)
 	f := &deliveryRolloutFixture{t: t, store: store, source: source, roots: []string{}}
-	f.addProject("healthy", true)
+	healthy := f.addProject("healthy", true)
+	healthyWorkflow := mustReadIndexTest(t, workflowPath(filepath.Join(healthy, ".tusker")))
+	healthyWorkflow = strings.Replace(healthyWorkflow, `approval_policy: on-request`, `approval_policy: never`, 1)
+	if err := writeText(workflowPath(filepath.Join(healthy, ".tusker")), healthyWorkflow); err != nil {
+		t.Fatal(err)
+	}
 	missing := filepath.Join(t.TempDir(), "gone")
 	if err := store.UpsertProject(RegisteredProject{ProjectID: "missing", ProjectKey: "missing", Name: "missing", RepoRoot: missing, VaultRoot: filepath.Join(missing, ".tusker"), WorkflowPath: filepath.Join(missing, ".tusker", "WORKFLOW.md"), Enabled: true, Health: projectHealthHealthy}); err != nil {
 		t.Fatal(err)
@@ -388,6 +388,15 @@ func (f *deliveryRolloutFixture) addProject(id string, enabled bool) string {
 	}
 	if err := writeText(filepath.Join(repo, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: "+id+"\n"); err != nil {
 		f.t.Fatal(err)
+	}
+	canonicalSkill := filepath.Join(f.source, "skills", "tusker")
+	for _, install := range []string{filepath.Join(repo, ".agents", "skills", "tusker"), filepath.Join(repo, ".claude", "skills", "tusker")} {
+		if err := ensureDir(filepath.Dir(install)); err != nil {
+			f.t.Fatal(err)
+		}
+		if err := os.Symlink(canonicalSkill, install); err != nil {
+			f.t.Fatal(err)
+		}
 	}
 	project := RegisteredProject{ProjectID: id, ProjectKey: id, Name: id, RepoRoot: repo, VaultRoot: vault, WorkflowPath: workflowPath(vault), Enabled: enabled, Health: projectHealthHealthy}
 	if !enabled {

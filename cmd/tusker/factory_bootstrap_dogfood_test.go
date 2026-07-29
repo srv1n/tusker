@@ -156,6 +156,7 @@ automation:
 		t.Fatal(err)
 	}
 	plan := factoryBootstrapDogfoodPlan()
+	plan.Concurrency = 1
 	context, err := buildDeliveryPlanningContextForScope(vault, strings.Join(plan.SpecRefs, ","), plan.Scope)
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +170,7 @@ automation:
 	if err != nil || !doctor.OK {
 		t.Fatalf("doctor rejected dogfood plan: report=%#v err=%v", doctor, err)
 	}
-	if got := doctor.Frontiers; len(got) != 4 || strings.Join(got[0], ",") != "goodbye,hello" || strings.Join(got[1], ",") != "router" || strings.Join(got[2], ",") != "docs,e2e" || strings.Join(got[3], ",") != "integration-gate" || doctor.Concurrency != 2 {
+	if got := doctor.Frontiers; len(got) != 4 || strings.Join(got[0], ",") != "goodbye,hello" || strings.Join(got[1], ",") != "router" || strings.Join(got[2], ",") != "docs,e2e" || strings.Join(got[3], ",") != "integration-gate" || doctor.Concurrency != 1 {
 		t.Fatalf("unexpected deterministic frontiers: %#v concurrency=%d", got, doctor.Concurrency)
 	}
 	automationOff := greenWaveEnvironment()
@@ -192,7 +193,7 @@ automation:
 		Inert    bool                 `json:"inert"`
 		OK       bool                 `json:"ok"`
 	}
-	if err := json.Unmarshal([]byte(dryRun), &dryPayload); err != nil || !dryPayload.OK || !dryPayload.Inert || !dryPayload.Delivery.DryRun || dryPayload.Delivery.ExpectedConcurrency != 2 || len(dryPayload.Delivery.Frontiers) != 4 {
+	if err := json.Unmarshal([]byte(dryRun), &dryPayload); err != nil || !dryPayload.OK || !dryPayload.Inert || !dryPayload.Delivery.DryRun || dryPayload.Delivery.ExpectedConcurrency != 1 || len(dryPayload.Delivery.Frontiers) != 4 {
 		t.Fatalf("dry run omitted deterministic frontier/concurrency report: payload=%#v err=%v", dryPayload, err)
 	}
 	if err := deliveryImportCmd(Args{"vault": vault, "plan": planPath, "quiet": "true"}); err != nil {

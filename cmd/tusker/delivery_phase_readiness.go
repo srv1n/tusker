@@ -28,6 +28,13 @@ func finalizeDeliveryReviewReadiness(r *deliveryReview, vault string, plan deliv
 		blockers = append(blockers, deliveryReadinessBlocker(fmt.Sprintf("delivery-import-%03d", i+1), ReadinessBlockerImportMissing, ReadinessAuthorityImport, []ReadinessDimensionKind{ReadinessDimensionImport}, projectID, waveID, issue, "repair the held import lineage or atomic write safety before importing"))
 	}
 	blockers = append(blockers, r.startBlockers...)
+	// A terminal delivery is already beyond Start. Runtime/automation facts may
+	// be disabled afterward without rewriting the delivered outcome. Stale
+	// identity is handled earlier as the non-terminal "changed" state.
+	if r.Start.State == "completed" {
+		blockers = []ReadinessBlocker{}
+		r.startIssues = []string{}
+	}
 
 	contractState := deliveryPhaseState(len(r.contractIssues) == 0)
 	importState := deliveryPhaseState(len(r.importIssues) == 0)
@@ -161,7 +168,9 @@ func deliveryReviewAddEnvironmentStartBlockers(r *deliveryReview, env wavePrefli
 
 func deliveryReviewAddPreflightPhaseBlockers(r *deliveryReview, env wavePreflightEnvironment, report wavePreflightReport, projectID, waveID string) {
 	deliveryReviewAddEnvironmentStartBlockers(r, env, projectID, waveID)
-	if report.AuthorizationStale || report.Authorization == "disarmed" || report.Authorization == "stale" {
+	if report.AuthorizationStale {
+		deliveryReviewAddStartBlocker(r, deliveryReadinessBlocker("delivery-start-authorization", ReadinessBlockerAuthorizationMissing, ReadinessAuthorityAuthorization, []ReadinessDimensionKind{ReadinessDimensionAuthorization}, projectID, waveID, "authorization fingerprint is stale", "regenerate delivery review and confirm the new exact fingerprint"))
+	} else if report.Authorization == "disarmed" || report.Authorization == "stale" {
 		deliveryReviewAddStartBlocker(r, deliveryReadinessBlocker("delivery-start-authorization", ReadinessBlockerAuthorizationMissing, ReadinessAuthorityAuthorization, []ReadinessDimensionKind{ReadinessDimensionAuthorization}, projectID, waveID, "Wave has not passed operational preflight", "confirm the exact reviewed fingerprint with Start"))
 	}
 	// These are material validations of the existing held lineage, not runtime
