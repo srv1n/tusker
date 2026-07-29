@@ -16,7 +16,7 @@ func integratorPacket(vaultPath string, task Note, idx v7Index) string {
 	var b strings.Builder
 	id := stringField(task.Data, "id")
 	fmt.Fprintf(&b, "# %s integrator packet\n\n", id)
-	fmt.Fprintf(&b, "## Required reads\n\n- `references/INTEGRATION_MERGE.md` from the installed Tusker skill\n- `.tusker/SKILL.md`\n\n")
+	fmt.Fprintf(&b, "## Required reads\n\n- `references/OPERATE.md` from the installed Tusker skill\n- `.tusker/SKILL.md`\n\n")
 	wf, _ := loadWorkflow(vaultPath)
 	fmt.Fprintf(&b, "## Shared namespaces owned by this lane\n\n%s\n\n", v7BulletList(wf.Data.Orchestration.SharedNamespaces))
 	reports := integratorDependencyReports(vaultPath, task)

@@ -98,14 +98,14 @@ func TestSymlinkProvenanceReadsLiveTarget(t *testing.T) {
 	if err := writeText(assetPath, staleAsset); err != nil {
 		t.Fatal(err)
 	}
-	skillPath := filepath.Join(second, "SKILL.md")
-	skill, err := os.ReadFile(skillPath)
+	compatibilityPath := filepath.Join(second, "assets", skillCompatibilityFilename)
+	compatibility, err := os.ReadFile(compatibilityPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata := strings.Replace(string(skill), `factory_intake_contract_version: "`+currentContract.Version+`"`, `factory_intake_contract_version: "`+staleContract.Version+`"`, 1)
-	metadata = strings.Replace(metadata, `factory_intake_contract_fingerprint: "`+currentContract.Fingerprint+`"`, `factory_intake_contract_fingerprint: "`+staleContract.Fingerprint+`"`, 1)
-	if err := writeText(skillPath, metadata); err != nil {
+	staleCompatibility := strings.Replace(string(compatibility), "version: "+currentContract.Version, "version: "+staleContract.Version, 1)
+	staleCompatibility = strings.Replace(staleCompatibility, "fingerprint: "+currentContract.Fingerprint, "fingerprint: "+staleContract.Fingerprint, 1)
+	if err := writeText(compatibilityPath, staleCompatibility); err != nil {
 		t.Fatal(err)
 	}
 	if got := inspectSkillMaterialization(link); got.Status != "stale" {

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -22,6 +25,7 @@ type capabilitiesManifest struct {
 	RunnerCatalogSchema  string                   `json:"runner_catalog_schema"`
 	OptionalCapabilities []capabilityAvailability `json:"optional_capabilities"`
 	Deprecations         []capabilityDeprecation  `json:"deprecations"`
+	Compatibility        capabilityCompatibility  `json:"compatibility"`
 }
 
 type capabilityCommand struct {
@@ -46,6 +50,29 @@ type capabilityAvailability struct {
 type capabilityDeprecation struct {
 	Command     string `json:"command"`
 	Replacement string `json:"replacement"`
+}
+
+type capabilityCompatibility struct {
+	Schema                   string                          `json:"schema"`
+	Fingerprint              string                          `json:"fingerprint"`
+	WorkflowMin              int                             `json:"workflow_min"`
+	WorkflowMax              int                             `json:"workflow_max"`
+	TrackerSchemaVersions    []int                           `json:"tracker_schema_versions"`
+	WaveAuthorizationSchemas []string                        `json:"wave_authorization_schemas"`
+	FactoryIntakeContract    factoryIntakeContractProvenance `json:"factory_intake_contract"`
+	CanonicalSkillSource     string                          `json:"canonical_skill_source"`
+	CanonicalPayloadFP       string                          `json:"canonical_payload_fingerprint"`
+	MaterializationSchema    string                          `json:"materialization_schema"`
+	ProvenanceManifest       string                          `json:"provenance_manifest"`
+	PrimaryGuides            []string                        `json:"primary_guides"`
+}
+
+type capabilityCompatibilityMaterial struct {
+	Schema         string                  `json:"schema"`
+	Commands       []capabilityCommand     `json:"commands"`
+	Schemas        capabilitySchemas       `json:"schemas"`
+	RunnerAdapters []string                `json:"runner_adapters"`
+	Contract       capabilityCompatibility `json:"contract"`
 }
 
 func capabilitiesCmd(args Args) error {
@@ -92,7 +119,33 @@ func buildCapabilitiesManifest(info *debug.BuildInfo, executable string) capabil
 		},
 	}
 	sortCapabilitiesManifest(&manifest)
+	manifest.Compatibility = buildCapabilityCompatibility(manifest)
 	return manifest
+}
+
+func buildCapabilityCompatibility(manifest capabilitiesManifest) capabilityCompatibility {
+	contract, _ := embeddedSkillCompatibilityContract()
+	payloadFingerprint, _ := embeddedSkillPayloadFingerprint()
+	projection := capabilityCompatibility{
+		Schema: skillCompatibilitySchema, WorkflowMin: contract.WorkflowMin, WorkflowMax: contract.WorkflowMax,
+		TrackerSchemaVersions:    append([]int(nil), contract.TrackerSchemaVersions...),
+		WaveAuthorizationSchemas: append([]string(nil), contract.WaveAuthorizationSchemas...),
+		FactoryIntakeContract:    contract.FactoryIntakeContract,
+		CanonicalSkillSource:     contract.CanonicalSource, CanonicalPayloadFP: payloadFingerprint,
+		MaterializationSchema: contract.MaterializationSchema, ProvenanceManifest: skillProvenanceFilename,
+		PrimaryGuides: append([]string(nil), contract.PrimaryGuides...),
+	}
+	sort.Ints(projection.TrackerSchemaVersions)
+	sort.Strings(projection.WaveAuthorizationSchemas)
+	sort.Strings(projection.PrimaryGuides)
+	material := capabilityCompatibilityMaterial{
+		Schema: projection.Schema, Commands: manifest.Commands, Schemas: manifest.Schemas,
+		RunnerAdapters: manifest.RunnerAdapters, Contract: projection,
+	}
+	raw, _ := json.Marshal(material)
+	sum := sha256.Sum256(raw)
+	projection.Fingerprint = "sha256:" + hex.EncodeToString(sum[:])
+	return projection
 }
 
 // installedCapabilityCommands is intentionally a complete public CLI inventory,

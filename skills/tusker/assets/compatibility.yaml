@@ -1,0 +1,16 @@
+schema: tusker.skill-compatibility/v1
+version: 1
+workflow_min: 1
+workflow_max: 1
+tracker_schema_versions: [7]
+wave_authorization_schemas: [tusker.wave-authorization/v1]
+factory_intake_contract:
+  schema: tusker.factory-intake-contract/v1
+  version: 1.1.0
+  fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+canonical_source: canonical://skills/tusker
+materialization_schema: tusker.skill-materialization/v1
+primary_guides:
+  - references/PLAN.md
+  - references/WORK.md
+  - references/OPERATE.md

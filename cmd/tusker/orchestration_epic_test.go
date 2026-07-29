@@ -653,7 +653,7 @@ func TestIntegratorPacketMergeBrief(t *testing.T) { TestIntegratorPacketComposes
 
 func TestIntegratorPacketRequiresDoctrine(t *testing.T) {
 	packet := integratorPacket(t.TempDir(), Note{Data: map[string]any{"id": "APP-T-0008"}}, v7Index{})
-	if !strings.Contains(packet, "references/INTEGRATION_MERGE.md") {
+	if !strings.Contains(packet, "references/OPERATE.md") {
 		t.Fatalf("doctrine route missing: %s", packet)
 	}
 }

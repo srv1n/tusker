@@ -57,15 +57,12 @@ func TestSkillSymlinkTargetStaysAbsoluteOutsideTheRepo(t *testing.T) {
 }
 
 func TestSkillExecutionOwnershipProtocol(t *testing.T) {
-	source := filepath.Join("..", "..", "skills", "tusker", "SKILL.md")
-	raw, err := os.ReadFile(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(raw)
+	root := filepath.Join("..", "..", "skills", "tusker")
+	source := filepath.Join(root, "SKILL.md")
+	text := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "WORK.md"))
 	for _, required := range []string{
 		"Never start `tusker daemon run`", "independently running resident daemon",
-		"The daemon atomically claims the task before it creates the worker process",
+		"daemon atomically claims the task before it creates the worker process",
 		"it must not claim again", "tusker runs inspect <TASK-ID>",
 		"runner harness owns session attachment, heartbeats, process monitoring",
 		"heartbeat expiry and safe reclaim", "Never write `active` or", "`in_progress` into task frontmatter",
@@ -93,18 +90,14 @@ func TestSkillExecutionOwnershipProtocol(t *testing.T) {
 }
 
 func TestSkillReservesHumanApprovalForHumanOnlyBoundaries(t *testing.T) {
-	source := filepath.Join("..", "..", "skills", "tusker", "SKILL.md")
-	raw, err := os.ReadFile(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(raw)
+	root := filepath.Join("..", "..", "skills", "tusker")
+	text := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "WORK.md"))
 	for _, required := range []string{
 		"## Human Approval Boundary",
-		"Everything already decided by the task, acceptance criteria, governing spec, or",
+		"Everything already decided by the task, acceptance criteria, governing spec",
 		"final human acceptance of screenshots, recordings, UX feel, brand quality",
-		"Risk changes proof depth, reviewer strength, and landing safeguards; risk alone",
-		"Independent reviewers may",
+		"Risk changes proof depth, reviewer strength, and landing safeguards",
+		"Independent reviewers may objectively accept",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("canonical skill missing human-approval rule %q", required)
@@ -114,16 +107,11 @@ func TestSkillReservesHumanApprovalForHumanOnlyBoundaries(t *testing.T) {
 
 func TestFactoryExecutionSkillContract(t *testing.T) {
 	root := filepath.Join("..", "..", "skills", "tusker")
-	raw, err := os.ReadFile(filepath.Join(root, "SKILL.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(raw)
-	normalizedText := strings.Join(strings.Fields(text), " ")
+	normalizedText := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "PLAN.md"), filepath.Join("references", "WORK.md"), filepath.Join("references", "OPERATE.md"))
 	for _, required := range []string{
 		"`tusker.delivery-plan/v2` DAG",
 		"Tusker and the agent own",
-		"A delivery epic groups the product outcome",
+		"An epic groups a product outcome",
 		"an epic is never executable authority",
 		"`automation.dispatch_scope: armed_waves`",
 		"tusker delivery start --plan <PLAN.yaml>",
@@ -213,4 +201,18 @@ func TestFactoryExecutionSkillContract(t *testing.T) {
 			t.Fatalf("repo bootstrap guidance missing %q", required)
 		}
 	}
+}
+
+func normalizedSkillGuidance(t *testing.T, root string, files ...string) string {
+	t.Helper()
+	var guidance strings.Builder
+	for _, rel := range files {
+		raw, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		guidance.Write(raw)
+		guidance.WriteByte('\n')
+	}
+	return strings.Join(strings.Fields(guidance.String()), " ")
 }

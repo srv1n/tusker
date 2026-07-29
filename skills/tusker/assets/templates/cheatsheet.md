@@ -56,7 +56,6 @@ tusker closeout status <TASK-ID> --json  # when supported
 
 ## What to read
 
-- `references/QUICK_MODE.md` for routine log/resume/close.
-- `references/CLOSEOUT_PROTOCOL.md` for human gates and loop prevention.
-- `references/WORKFLOW.md` for lifecycle state.
-- `references/RISK_AND_EVIDENCE.md` for proof expectations.
+- `references/PLAN.md` for direct-task versus delivery-DAG intake.
+- `references/WORK.md` for implementation, proof, review, and human wait.
+- `references/OPERATE.md` for automation, waves, integration, and recovery.

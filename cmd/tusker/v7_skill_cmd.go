@@ -105,7 +105,7 @@ func skillDoctorIssues(root string, packageMode, strict bool) ([]Issue, []Issue)
 		errs = append(errs, validateCollisionProneNamespaces(root)...)
 		repoRoot := v7RepoRoot(root)
 		if fileExists(filepath.Join(repoRoot, "go.mod")) || fileExists(filepath.Join(repoRoot, "skill")) {
-			for _, rel := range []string{"skills/tusker/SKILL.md", "skills/tusker/README.md", "skills/tusker/references/COMMANDS.md", "skills/tusker/references/WORKFLOW.md"} {
+			for _, rel := range []string{"skills/tusker/SKILL.md", "skills/tusker/README.md", "skills/tusker/references/PLAN.md", "skills/tusker/references/WORK.md", "skills/tusker/references/OPERATE.md"} {
 				if !fileExists(filepath.Join(repoRoot, rel)) {
 					errs = append(errs, issue(errorMissingField, "repo skill source is missing: "+rel, rel, "", nil))
 				}

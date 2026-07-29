@@ -106,9 +106,9 @@ func TestAsymmetricManagedSkillMetadataBlocksClaimedWaveAndSetupRepairs(t *testi
 		old  string
 		next string
 	}{
-		{name: "wave authorization schema", old: `wave_authorization_schema: "tusker.wave-authorization/v1"`, next: `wave_authorization_schema: "tusker.wave-authorization/v0"`},
-		{name: "workflow version", old: "workflow_version: 1", next: "workflow_version: 2"},
-		{name: "tracker schema version", old: "tracker_schema_version: 7", next: "tracker_schema_version: 6"},
+		{name: "wave authorization schema", old: "wave_authorization_schemas: [tusker.wave-authorization/v1]", next: "wave_authorization_schemas: [tusker.wave-authorization/v0]"},
+		{name: "workflow version", old: "workflow_min: 1", next: "workflow_min: 2"},
+		{name: "tracker schema version", old: "tracker_schema_versions: [7]", next: "tracker_schema_versions: [6]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -118,8 +118,8 @@ func TestAsymmetricManagedSkillMetadataBlocksClaimedWaveAndSetupRepairs(t *testi
 			writeCanonicalTuskerSkillFixture(t, badRoot)
 			goodPackage := filepath.Join(goodRoot, "skills", "tusker")
 			badPackage := filepath.Join(badRoot, "skills", "tusker")
-			skillPath := filepath.Join(badPackage, "SKILL.md")
-			raw, err := os.ReadFile(skillPath)
+			compatibilityPath := filepath.Join(badPackage, "assets", skillCompatibilityFilename)
+			raw, err := os.ReadFile(compatibilityPath)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -127,7 +127,7 @@ func TestAsymmetricManagedSkillMetadataBlocksClaimedWaveAndSetupRepairs(t *testi
 			if changed == string(raw) {
 				t.Fatalf("fixture did not contain %q", tt.old)
 			}
-			if err := writeText(skillPath, changed); err != nil {
+			if err := writeText(compatibilityPath, changed); err != nil {
 				t.Fatal(err)
 			}
 
@@ -707,20 +707,14 @@ func writeCanonicalTuskerSkillPackage(t *testing.T, root string) {
 	t.Helper()
 	body := `---
 name: tusker
-metadata:
-  wave_authorization_schema: "tusker.wave-authorization/v1"
-  workflow_version: 1
-  tracker_schema_version: 7
-  factory_intake_contract_schema: "tusker.factory-intake-contract/v1"
-  factory_intake_contract_version: "1.1.0"
-  factory_intake_contract_fingerprint: "sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c"
+description: Operate Tusker.
 ---
-# Tusker Operator Skill
+# Tusker
 `
 	if err := writeText(filepath.Join(root, "SKILL.md"), body); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"COMMANDS.md", "REPO_CONTRACT.md", "WORKFLOW.md"} {
+	for _, name := range []string{"PLAN.md", "WORK.md", "OPERATE.md"} {
 		if err := writeText(filepath.Join(root, "references", name), "# "+name+"\n"); err != nil {
 			t.Fatal(err)
 		}
@@ -730,6 +724,13 @@ metadata:
 		t.Fatal(err)
 	}
 	if err := writeText(filepath.Join(root, "assets", "factory-intake-contract.yaml"), string(contract)); err != nil {
+		t.Fatal(err)
+	}
+	compatibility, err := os.ReadFile(filepath.Join("..", "..", "skills", "tusker", "assets", skillCompatibilityFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(root, "assets", skillCompatibilityFilename), string(compatibility)); err != nil {
 		t.Fatal(err)
 	}
 }

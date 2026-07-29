@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-func TestCanonicalSkillMetadataMatchesFactoryIntakeContract(t *testing.T) {
+func TestCanonicalSkillCompatibilityMatchesFactoryIntakeContract(t *testing.T) {
 	root := filepath.Join("..", "..", "skills", "tusker")
-	data, _, err := parseFrontmatterMustRead(filepath.Join(root, "SKILL.md"))
+	compatibility, err := readSkillCompatibilityContract(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -16,10 +16,9 @@ func TestCanonicalSkillMetadataMatchesFactoryIntakeContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata := mapField(data, "metadata")
-	got := factoryIntakeContractProvenance{Schema: stringField(metadata, "factory_intake_contract_schema"), Version: stringField(metadata, "factory_intake_contract_version"), Fingerprint: stringField(metadata, "factory_intake_contract_fingerprint")}
+	got := compatibility.FactoryIntakeContract
 	if got != want {
-		t.Fatalf("canonical skill contract metadata = %#v, want %#v", got, want)
+		t.Fatalf("canonical skill compatibility contract = %#v, want %#v", got, want)
 	}
 	raw, err := os.ReadFile(filepath.Join(root, "assets", "factory-intake-contract.yaml"))
 	if err != nil {

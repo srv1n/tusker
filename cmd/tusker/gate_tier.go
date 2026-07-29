@@ -15,8 +15,8 @@ import (
 )
 
 // Gate-tier proof economics, mechanized from
-// skills/tusker/references/INTEGRATION_MERGE.md § "Proof Economics For
-// Slow-Compile Ecosystems". Total cost is (compile/link cycles) x (cycle cost),
+// skills/tusker/references/OPERATE.md § "Review and integration". Total cost
+// is (compile/link cycles) x (cycle cost),
 // so a gate invoked through Tusker must (1) refuse before paying a cycle it
 // cannot use, (2) harvest the COMPLETE failure set in one pass instead of
 // failing fast, and (3) hand back a defect list an agent can repair as one

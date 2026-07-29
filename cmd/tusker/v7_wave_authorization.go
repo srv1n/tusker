@@ -249,10 +249,11 @@ func waveSkillCompatible(vaultPath string) bool {
 	}
 	repoRoot := v7RepoRoot(vaultPath)
 	for _, path := range []string{filepath.Join(repoRoot, ".agents", "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, ".claude", "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, "skills", "tusker", "SKILL.md"), filepath.Join(repoRoot, "skill", "SKILL.md")} {
-		data, _, readErr := parseFrontmatterMustRead(path)
-		metadata := mapField(data, "metadata")
+		root := filepath.Dir(path)
+		contract, readErr := readSkillCompatibilityContract(root)
 		want, provenanceErr := embeddedFactoryIntakeContractProvenance()
-		if readErr == nil && provenanceErr == nil && stringField(metadata, "wave_authorization_schema") == waveAuthorizationSchema && intField(metadata, "workflow_version") == 1 && intField(metadata, "tracker_schema_version") == 7 && stringField(metadata, "factory_intake_contract_schema") == want.Schema && stringField(metadata, "factory_intake_contract_version") == want.Version && stringField(metadata, "factory_intake_contract_fingerprint") == want.Fingerprint {
+		status, _ := skillCompatibilityStatusForPackage(root)
+		if readErr == nil && provenanceErr == nil && status == "current" && contract.FactoryIntakeContract == want {
 			return true
 		}
 	}

@@ -1,0 +1,66 @@
+{
+  "schema": "tusker.skill-disclosure-budget/v1",
+  "router": {
+    "path": "SKILL.md",
+    "max_words": 900,
+    "max_lines": 140
+  },
+  "cases": [
+    {
+      "id": "planning",
+      "prompt": "Turn this spec into a reviewed delivery DAG and import it held.",
+      "guide": "references/PLAN.md",
+      "loaded_words": 990,
+      "max_loaded_words": 1100,
+      "required": ["planValid", "importReady", "startReady", "held disarmed"]
+    },
+    {
+      "id": "interactive",
+      "prompt": "Implement this Tusker task directly in my open Codex session.",
+      "guide": "references/WORK.md",
+      "loaded_words": 1122,
+      "max_loaded_words": 1250,
+      "required": ["tusker work start", "project automation is disabled", "work submit"]
+    },
+    {
+      "id": "dispatched_worker",
+      "prompt": "TUSKER_ATTEMPT_ID is set; execute the claimed task.",
+      "guide": "references/WORK.md",
+      "loaded_words": 1122,
+      "max_loaded_words": 1250,
+      "required": ["it must not claim again", "runner harness owns", "never merges, lands, closes"]
+    },
+    {
+      "id": "dispatched_reviewer",
+      "prompt": "Review this dispatched attempt and return the typed verdict.",
+      "guide": "references/WORK.md",
+      "loaded_words": 1122,
+      "max_loaded_words": 1250,
+      "required": ["tusker review submit", "one attempt-bound result", "deterministic control plane"]
+    },
+    {
+      "id": "human_wait",
+      "prompt": "The task is waiting_on_human; tell me the exact next action.",
+      "guide": "references/WORK.md",
+      "loaded_words": 1122,
+      "max_loaded_words": 1250,
+      "required": ["Human Approval Boundary", "Final Response Shape For Human Wait"]
+    },
+    {
+      "id": "onboarding",
+      "prompt": "Wire this existing repository into Tusker without losing project knowledge.",
+      "guide": "references/REPO_ONBOARDING.md",
+      "loaded_words": 1897,
+      "max_loaded_words": 2100,
+      "required": ["Existing Repository Onboarding", "Storage Boundary"]
+    },
+    {
+      "id": "xcode",
+      "prompt": "Xcode failed because generated build state looks corrupted.",
+      "guide": "references/XCODE_BUILD_STATE.md",
+      "loaded_words": 691,
+      "max_loaded_words": 800,
+      "required": ["tusker xcode doctor", "likely_infrastructure"]
+    }
+  ]
+}

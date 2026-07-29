@@ -165,36 +165,22 @@ func TestV7GuardrailSkillPackageEnforcesHardStopCloseoutContract(t *testing.T) {
 			"agent_action: stop_until_human_response",
 			"readiness: waiting_on_human",
 			"Revalidation while waiting on human",
-			"Final Response Shape For Human Wait",
-			"repo `AGENTS.md` / `CLAUDE.md` as bootstrap pointers only",
-			"installed Tusker operator skill owns tracker mechanics",
-			"repo `.tusker/SKILL.md` owns project knowledge routing",
+			"Repo `AGENTS.md` / `CLAUDE.md` are bootstrap pointers only",
+			"installed skill owns tracker mechanics",
+			"`.tusker/SKILL.md` owns project knowledge routing",
 		},
-		"skills/tusker/references/CLOSEOUT_PROTOCOL.md": {
-			"Gap ownership",
-			"Validation cache rule",
-			"Loop guard",
-			"Subagent/audit guard",
-			"machine_complete_waiting_for_human",
-			"Final human-wait response",
-		},
-		"skills/tusker/references/WORKFLOW.md": {
+		"skills/tusker/references/WORK.md": {
 			"idea -> backlog -> ready -> review -> done",
 			"`claimed`, `running`, `leased`, and `interrupted` are runtime states",
 			"Human-only review becomes `readiness: waiting_on_human`",
-		},
-		"skills/tusker/references/SCHEMA.md": {
-			"status: review",
-			"readiness: waiting_on_human",
-			"next_owner: human:sarav",
 			"agent_action: stop_until_human_response",
-			"Do not use `active` as a V7 task status",
+			"Final Response Shape For Human Wait",
 		},
 	}
 	for rel, snippets := range required {
-		text := mustReadGuardrailFile(t, filepath.Join(repo, filepath.FromSlash(rel)))
+		text := strings.Join(strings.Fields(mustReadGuardrailFile(t, filepath.Join(repo, filepath.FromSlash(rel)))), " ")
 		for _, snippet := range snippets {
-			if !strings.Contains(text, snippet) {
+			if !strings.Contains(text, strings.Join(strings.Fields(snippet), " ")) {
 				t.Fatalf("%s is missing finish-contract guardrail %q", rel, snippet)
 			}
 		}

@@ -20,13 +20,16 @@ const skillProvenanceFilename = ".tusker-skill-provenance.yaml"
 // Its payload hash excludes this manifest and timestamps, so it is stable and
 // can detect a local edit without recursively hashing its own output.
 type skillMaterializationProvenance struct {
-	Schema                     string `yaml:"schema" json:"schema"`
-	SourceKind                 string `yaml:"source_kind" json:"source_kind"`
-	SourceIdentity             string `yaml:"source_identity" json:"source_identity"`
-	FactoryContractSchema      string `yaml:"factory_intake_contract_schema" json:"factory_intake_contract_schema"`
-	FactoryContractVersion     string `yaml:"factory_intake_contract_version" json:"factory_intake_contract_version"`
-	FactoryContractFingerprint string `yaml:"factory_intake_contract_fingerprint" json:"factory_intake_contract_fingerprint"`
-	PayloadFingerprint         string `yaml:"payload_fingerprint" json:"payload_fingerprint"`
+	Schema                      string `yaml:"schema" json:"schema"`
+	SourceKind                  string `yaml:"source_kind" json:"source_kind"`
+	SourceIdentity              string `yaml:"source_identity" json:"source_identity"`
+	CompatibilitySchema         string `yaml:"compatibility_schema" json:"compatibility_schema"`
+	CompatibilityFingerprint    string `yaml:"compatibility_fingerprint" json:"compatibility_fingerprint"`
+	CanonicalPayloadFingerprint string `yaml:"canonical_payload_fingerprint" json:"canonical_payload_fingerprint"`
+	FactoryContractSchema       string `yaml:"factory_intake_contract_schema" json:"factory_intake_contract_schema"`
+	FactoryContractVersion      string `yaml:"factory_intake_contract_version" json:"factory_intake_contract_version"`
+	FactoryContractFingerprint  string `yaml:"factory_intake_contract_fingerprint" json:"factory_intake_contract_fingerprint"`
+	PayloadFingerprint          string `yaml:"payload_fingerprint" json:"payload_fingerprint"`
 }
 
 type skillProvenanceReport struct {
@@ -86,9 +89,12 @@ func writeSkillMaterializationProvenanceWithContract(destination, sourceKind, so
 	if err != nil {
 		return err
 	}
+	compatibility := buildCapabilitiesManifest(nil, "").Compatibility
 	manifest := skillMaterializationProvenance{
 		Schema: skillMaterializationSchema, SourceKind: sourceKind, SourceIdentity: sourceIdentity,
-		FactoryContractSchema: contract.Schema, FactoryContractVersion: contract.Version,
+		CompatibilitySchema: compatibility.Schema, CompatibilityFingerprint: compatibility.Fingerprint,
+		CanonicalPayloadFingerprint: compatibility.CanonicalPayloadFP,
+		FactoryContractSchema:       contract.Schema, FactoryContractVersion: contract.Version,
 		FactoryContractFingerprint: contract.Fingerprint, PayloadFingerprint: payload,
 	}
 	raw, err := yaml.Marshal(manifest)
@@ -139,22 +145,9 @@ func validateCurrentCanonicalTuskerSkillPackage(root string) error {
 }
 
 func validateTuskerSkillCompatibilityMetadata(root string) error {
-	data, _, err := parseFrontmatterMustRead(filepath.Join(root, "SKILL.md"))
-	if err != nil {
-		return err
-	}
-	metadata, ok := data["metadata"].(map[string]any)
-	if !ok {
-		return fmt.Errorf("canonical Tusker skill metadata is incompatible")
-	}
-	if stringField(metadata, "wave_authorization_schema") != waveAuthorizationSchema {
-		return fmt.Errorf("canonical Tusker skill wave_authorization_schema is incompatible")
-	}
-	if intField(metadata, "workflow_version") != 1 {
-		return fmt.Errorf("canonical Tusker skill workflow_version is incompatible")
-	}
-	if intField(metadata, "tracker_schema_version") != 7 {
-		return fmt.Errorf("canonical Tusker skill tracker_schema_version is incompatible")
+	status, message := skillCompatibilityStatusForPackage(root)
+	if status != "current" {
+		return fmt.Errorf("canonical Tusker skill compatibility is %s: %s", status, message)
 	}
 	return nil
 }
@@ -164,7 +157,7 @@ func validateTuskerSkillPackageShape(root string) error {
 	if err != nil {
 		return err
 	}
-	if stringField(data, "name") != "tusker" || !strings.Contains(body, "# Tusker Operator Skill") {
+	if stringField(data, "name") != "tusker" || strings.TrimSpace(stringField(data, "description")) == "" || len(data) != 2 || !strings.Contains(body, "# Tusker") {
 		return fmt.Errorf("Tusker skill package identity is invalid")
 	}
 	for _, rel := range []string{".", "references", "assets"} {
@@ -173,7 +166,7 @@ func validateTuskerSkillPackageShape(root string) error {
 			return fmt.Errorf("Tusker skill package requires real directory %s", filepath.ToSlash(rel))
 		}
 	}
-	for _, rel := range []string{"SKILL.md", filepath.Join("references", "COMMANDS.md"), filepath.Join("references", "REPO_CONTRACT.md"), filepath.Join("references", "WORKFLOW.md"), filepath.Join("assets", "factory-intake-contract.yaml")} {
+	for _, rel := range []string{"SKILL.md", filepath.Join("references", "PLAN.md"), filepath.Join("references", "WORK.md"), filepath.Join("references", "OPERATE.md"), filepath.Join("assets", skillCompatibilityFilename), filepath.Join("assets", "factory-intake-contract.yaml")} {
 		info, err := os.Lstat(filepath.Join(root, rel))
 		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 			return fmt.Errorf("Tusker skill package requires regular file %s", filepath.ToSlash(rel))
@@ -183,16 +176,13 @@ func validateTuskerSkillPackageShape(root string) error {
 }
 
 func readSkillMetadata(root string) (factoryIntakeContractProvenance, error) {
-	data, _, err := parseFrontmatterMustRead(filepath.Join(root, "SKILL.md"))
-	if err != nil {
-		return factoryIntakeContractProvenance{}, err
+	contract, err := readSkillCompatibilityContract(root)
+	if err == nil {
+		return contract.FactoryIntakeContract, nil
 	}
-	metadata := mapField(data, "metadata")
-	return factoryIntakeContractProvenance{
-		Schema:      stringField(metadata, "factory_intake_contract_schema"),
-		Version:     stringField(metadata, "factory_intake_contract_version"),
-		Fingerprint: stringField(metadata, "factory_intake_contract_fingerprint"),
-	}, nil
+	// Read legacy frontmatter only as a migration adapter. Current packages are
+	// required to carry assets/compatibility.yaml.
+	return legacySkillMetadata(root)
 }
 
 func factoryContractStatus(have, want factoryIntakeContractProvenance) (string, string) {
@@ -227,8 +217,8 @@ func inspectSkillMaterialization(destination string) skillProvenanceReport {
 		if err != nil {
 			return skillProvenanceReport{Status: "missing", SourceKind: skillInstallModeLink, Message: "managed Tusker skill symlink is broken"}
 		}
-		if err := validateTuskerSkillCompatibilityMetadata(target); err != nil {
-			return skillProvenanceReport{Status: "incompatible", SourceKind: skillInstallModeLink, Message: err.Error()}
+		if status, message := skillCompatibilityStatusForPackage(target); status != "current" {
+			return skillProvenanceReport{Status: status, SourceKind: skillInstallModeLink, Message: message}
 		}
 		have, err := factoryIntakeContractProvenanceFromPackage(target)
 		if err != nil {
@@ -246,7 +236,7 @@ func inspectSkillMaterialization(destination string) skillProvenanceReport {
 		return skillProvenanceReport{Status: "incompatible", SourceKind: skillInstallModeCopy, Message: err.Error()}
 	}
 	var manifest skillMaterializationProvenance
-	if err := yaml.Unmarshal(raw, &manifest); err != nil || manifest.Schema != skillMaterializationSchema || !validSkillProvenanceSource(manifest) || manifest.PayloadFingerprint == "" || manifest.FactoryContractSchema == "" || manifest.FactoryContractVersion == "" || manifest.FactoryContractFingerprint == "" {
+	if err := yaml.Unmarshal(raw, &manifest); err != nil || manifest.Schema != skillMaterializationSchema || !validSkillProvenanceSource(manifest) || manifest.PayloadFingerprint == "" || manifest.CompatibilitySchema == "" || manifest.CompatibilityFingerprint == "" || manifest.CanonicalPayloadFingerprint == "" || manifest.FactoryContractSchema == "" || manifest.FactoryContractVersion == "" || manifest.FactoryContractFingerprint == "" {
 		return skillProvenanceReport{Status: "incompatible", SourceKind: skillInstallModeCopy, Message: "materialized Tusker skill provenance schema is incompatible"}
 	}
 	result := skillProvenanceReport{SourceKind: skillInstallModeCopy, Manifest: &manifest}
@@ -255,8 +245,8 @@ func inspectSkillMaterialization(destination string) skillProvenanceReport {
 		result.Status, result.Message = "locally_modified", "materialized Tusker skill payload differs from its recorded provenance"
 		return result
 	}
-	if err := validateTuskerSkillCompatibilityMetadata(destination); err != nil {
-		result.Status, result.Message = "incompatible", err.Error()
+	if status, message := skillCompatibilityStatusForPackage(destination); status != "current" {
+		result.Status, result.Message = status, message
 		return result
 	}
 	packaged, err := factoryIntakeContractProvenanceFromPackage(destination)
@@ -267,6 +257,15 @@ func inspectSkillMaterialization(destination string) skillProvenanceReport {
 	have := factoryIntakeContractProvenance{Schema: manifest.FactoryContractSchema, Version: manifest.FactoryContractVersion, Fingerprint: manifest.FactoryContractFingerprint}
 	if have != packaged {
 		result.Status, result.Message = "incompatible", "materialized Tusker manifest contradicts its packaged skill contract"
+		return result
+	}
+	compatibility := buildCapabilitiesManifest(nil, "").Compatibility
+	if manifest.CompatibilitySchema != compatibility.Schema {
+		result.Status, result.Message = "incompatible", "materialized Tusker compatibility schema contradicts the installed binary"
+		return result
+	}
+	if manifest.CompatibilityFingerprint != compatibility.Fingerprint || manifest.CanonicalPayloadFingerprint != compatibility.CanonicalPayloadFP {
+		result.Status, result.Message = "stale", "materialized Tusker compatibility fingerprint predates the installed binary"
 		return result
 	}
 	result.Status, result.Message = factoryContractStatus(have, want)
@@ -292,9 +291,12 @@ func inspectTuskerSkillPackage(root string) skillProvenanceReport {
 		if repo, rootErr := findRepoRoot(root); rootErr == nil && sameCleanPath(root, filepath.Join(repo, "skills", currentSkillInstallDir)) {
 			want, wantErr := embeddedFactoryIntakeContractProvenance()
 			have, haveErr := factoryIntakeContractProvenanceFromPackage(root)
-			compatErr := validateTuskerSkillCompatibilityMetadata(root)
-			if wantErr != nil || haveErr != nil || compatErr != nil {
-				return skillProvenanceReport{Status: "incompatible", Message: firstNonEmpty(errorString(wantErr), errorString(haveErr), errorString(compatErr))}
+			compatStatus, compatMessage := skillCompatibilityStatusForPackage(root)
+			if wantErr != nil || haveErr != nil || compatStatus == "incompatible" {
+				return skillProvenanceReport{Status: "incompatible", Message: firstNonEmpty(errorString(wantErr), errorString(haveErr), compatMessage)}
+			}
+			if compatStatus != "current" {
+				return skillProvenanceReport{Status: compatStatus, SourceKind: "canonical", Message: compatMessage}
 			}
 			status, message := factoryContractStatus(have, want)
 			return skillProvenanceReport{Status: status, SourceKind: "canonical", Message: message}

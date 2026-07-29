@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -112,19 +111,17 @@ func TestWavePreflight(t *testing.T) {
 func TestWavePreflightSkillAndIntegrationCompatibility(t *testing.T) {
 	vault := deliveryTestVault(t)
 	repo := v7RepoRoot(vault)
-	operatorPath := filepath.Join(repo, "skill", "SKILL.md")
-	provenance, err := embeddedFactoryIntakeContractProvenance()
-	if err != nil {
-		t.Fatal(err)
-	}
-	compatibleSkill := fmt.Sprintf("---\nname: tusker\ndescription: test\nmetadata:\n  wave_authorization_schema: tusker.wave-authorization/v1\n  workflow_version: 1\n  tracker_schema_version: 7\n  factory_intake_contract_schema: %q\n  factory_intake_contract_version: %q\n  factory_intake_contract_fingerprint: %q\n---\n", provenance.Schema, provenance.Version, provenance.Fingerprint)
-	if err := writeText(operatorPath, compatibleSkill); err != nil {
-		t.Fatal(err)
-	}
+	operatorRoot := filepath.Join(repo, "skill")
+	writeCanonicalTuskerSkillPackage(t, operatorRoot)
 	if !waveSkillCompatible(vault) {
 		t.Fatal("current wave-aware operator skill was rejected")
 	}
-	if err := writeText(operatorPath, strings.Replace(compatibleSkill, "tusker.wave-authorization/v1", "tusker.wave-authorization/v0", 1)); err != nil {
+	compatibilityPath := filepath.Join(operatorRoot, "assets", skillCompatibilityFilename)
+	compatibleSkill, err := os.ReadFile(compatibilityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(compatibilityPath, strings.Replace(string(compatibleSkill), "tusker.wave-authorization/v1", "tusker.wave-authorization/v0", 1)); err != nil {
 		t.Fatal(err)
 	}
 	if waveSkillCompatible(vault) {
