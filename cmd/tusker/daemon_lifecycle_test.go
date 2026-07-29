@@ -488,6 +488,46 @@ func TestAutoLandArmedWaveRejectsRetargetedProjectRegistration(t *testing.T) {
 	}
 }
 
+func TestAutomaticLandingRequiresMergeableWorkspace(t *testing.T) {
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	daemon := &Daemon{store: store}
+
+	if err := store.SaveRunIdentity(RunIdentityMetadata{
+		ProjectID: "project", RecordID: "APP-T-0001",
+		RepoRoot: t.TempDir(), WorkspacePath: t.TempDir(),
+		WorkspaceMode: string(WorkspaceStrategyCopy), Runner: "codex",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	eligible, err := daemon.automaticLandingWorkspaceEligible("project", "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eligible {
+		t.Fatal("copy fallback must wait for an explicit manual landing checkpoint")
+	}
+
+	if err := store.SaveRunIdentity(RunIdentityMetadata{
+		ProjectID: "project", RecordID: "APP-T-0002",
+		RepoRoot: t.TempDir(), WorkspacePath: t.TempDir(),
+		WorkspaceMode: string(WorkspaceStrategyClone), Runner: "codex",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	eligible, err = daemon.automaticLandingWorkspaceEligible("project", "APP-T-0002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !eligible {
+		t.Fatal("clone workspace should remain eligible for automatic landing")
+	}
+}
+
 func TestDaemonProjectSelfHeal(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)

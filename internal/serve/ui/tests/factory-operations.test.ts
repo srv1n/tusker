@@ -383,18 +383,44 @@ async function chromiumLayoutProof(url: string, width: number, fixtureRoot: stri
   try {
     const activePortFile = resolve(profile, "DevToolsActivePort");
     const startupDeadline = Date.now() + 15_000;
-    while (!existsSync(activePortFile)) {
+    let page: { type: string; webSocketDebuggerUrl: string } | undefined;
+    let startupError = "";
+    while (Date.now() < startupDeadline && page === undefined) {
       if (child.exitCode !== null) throw new Error(`Chromium exited before DevTools was ready: ${stderr}`);
-      const remainingMs = startupDeadline - Date.now();
-      if (remainingMs <= 0) break;
-      await delayMs(Math.min(50, remainingMs));
+      if (existsSync(activePortFile)) {
+        try {
+          const port = Number(readFileSync(activePortFile, "utf8").split(/\r?\n/)[0]);
+          if (Number.isInteger(port) && port > 0) {
+            const remainingMs = Math.max(1, startupDeadline - Date.now());
+            const response = await fetch(`http://127.0.0.1:${port}/json/list`, {
+              signal: AbortSignal.timeout(Math.min(500, remainingMs)),
+            });
+            if (response.ok) {
+              const targets = await response.json() as Array<{ type?: unknown; webSocketDebuggerUrl?: unknown }>;
+              if (Array.isArray(targets)) {
+                const candidate = targets.find((target) => target?.type === "page" && typeof target.webSocketDebuggerUrl === "string" && target.webSocketDebuggerUrl !== "");
+                if (candidate) {
+                  page = { type: "page", webSocketDebuggerUrl: candidate.webSocketDebuggerUrl as string };
+                } else {
+                  startupError = "DevTools exposed no usable page target";
+                }
+              } else {
+                startupError = "DevTools target list was not an array";
+              }
+            } else {
+              startupError = `DevTools returned HTTP ${response.status}`;
+            }
+          }
+        } catch (error) {
+          startupError = error instanceof Error ? error.message : String(error);
+        }
+      }
+      if (page === undefined) {
+        await delayMs(Math.max(0, Math.min(50, startupDeadline - Date.now())));
+      }
     }
     if (child.exitCode !== null) throw new Error(`Chromium exited before DevTools was ready: ${stderr}`);
-    if (!existsSync(activePortFile)) throw new Error(`Chromium DevTools did not start: ${stderr}`);
-    const port = Number(readFileSync(activePortFile, "utf8").split(/\r?\n/)[0]);
-    const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json()) as Array<{ type: string; webSocketDebuggerUrl: string }>;
-    const page = targets.find((target) => target.type === "page");
-    if (!page) throw new Error("Chromium exposed no page target");
+    if (page === undefined) throw new Error(`Chromium DevTools did not start: ${startupError}\n${stderr}`);
     const cdp = await connectCDP(page.webSocketDebuggerUrl);
     try {
       await cdp.call("Runtime.enable");

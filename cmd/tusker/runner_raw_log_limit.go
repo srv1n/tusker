@@ -211,12 +211,22 @@ func killRunnerProcessGroup(cmd *exec.Cmd, pgid int) {
 	_ = cmd.Process.Kill()
 }
 
-func monitorBoundedRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, log *boundedRawLogWriter, statusPath string) {
+func killContainedRunnerCommand(cmd *exec.Cmd, pgid int, wrapperContained bool) {
+	if wrapperContained {
+		if cmd != nil && cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		return
+	}
+	killRunnerProcessGroup(cmd, pgid)
+}
+
+func monitorBoundedRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, wrapperContained bool, log *boundedRawLogWriter, statusPath string) {
 	waitDone := make(chan struct{})
 	go func() {
 		select {
 		case <-ctx.Done():
-			killRunnerProcessGroup(cmd, pgid)
+			killContainedRunnerCommand(cmd, pgid, wrapperContained)
 		case <-waitDone:
 		}
 	}()
@@ -226,7 +236,9 @@ func monitorBoundedRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, l
 	// The shell root can exit after leaving a descendant in its process group.
 	// WaitDelay bounds inherited output pipes; this final fence prevents that
 	// descendant from outliving the trusted wrapper after terminal status.
-	killRunnerProcessGroup(cmd, pgid)
+	if !wrapperContained {
+		killRunnerProcessGroup(cmd, pgid)
+	}
 	closeErr := log.close()
 
 	exitCode := 0
@@ -255,6 +267,12 @@ func monitorBoundedRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, l
 		reason = fmt.Sprintf("runner exited with code %d", exitCode)
 	}
 	_, _ = writeRunnerStatusFileIfAbsentWithOutcome(statusPath, exitCode, outcome, reason, 0)
+	if wrapperContained && pgid > 0 {
+		// Persist the terminal status before fencing the containing wrapper group:
+		// SIGKILL necessarily includes this monitor because it runs inside that
+		// wrapper. The daemon consumes the durable status after the group exits.
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	}
 }
 
 func writeRunnerStatusFileIfAbsentWithOutcome(path string, exitCode int, outcome AttemptOutcome, reason string, turnsUsed int) (bool, error) {

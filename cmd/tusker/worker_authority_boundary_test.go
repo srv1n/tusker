@@ -183,14 +183,30 @@ func TestNilStoreCannotAuthenticateCompletionAuthority(t *testing.T) {
 func TestWorkerReviewSubmitEmitsProposalWithoutOpeningRuntimeStore(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Worker proposal", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer", "source_sha": "abc123", "work_revision": 2})
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer", "work_revision": 1})
 	note, err := resolveV7Note(vault, "APP-T-0001", "task")
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, gates, err := reviewObjectiveSnapshots(vault, note)
+	localProof, localGates, err := reviewObjectiveSnapshots(vault, note)
 	if err != nil {
 		t.Fatal(err)
+	}
+	localReport, err := loadV7ProofReport(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if localReport.Status == "satisfied" && len(localReport.OpenGates) == 0 {
+		t.Fatal("test requires a worker-local proof projection that cannot authorize pass")
+	}
+	acceptance := v7AcceptanceIDs(note.Body)
+	if len(acceptance) == 0 {
+		t.Fatal("test requires at least one acceptance ID")
+	}
+	canonicalProof := "sha256:" + strings.Repeat("a", 64)
+	canonicalGates := "sha256:" + strings.Repeat("b", 64)
+	if canonicalProof == localProof || canonicalGates == localGates {
+		t.Fatal("test requires canonical fingerprints distinct from the disposable review workspace")
 	}
 	wfFile, err := loadWorkflow(vault)
 	if err != nil {
@@ -199,13 +215,14 @@ func TestWorkerReviewSubmitEmitsProposalWithoutOpeningRuntimeStore(t *testing.T)
 	stateRoot := filepath.Join(t.TempDir(), "worker-must-not-create-state")
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
 	t.Setenv("TUSKER_ATTEMPT_ID", "review-worker")
+	t.Setenv("TUSKER_CANONICAL_PROJECT_ID", "canonical-project")
 	output := captureStdout(t, func() {
 		err := reviewSubmitCmd(Args{
 			"vault": vault, "id": "APP-T-0001", "attempt": "review-worker",
 			"by":      reviewerActorForNote(wfFile.Data.Reviewer.Actor, note),
-			"verdict": "changes_requested", "summary": "actionable", "finding": "fix acceptance",
-			"task-rev": stringField(note.Data, "state_rev"), "source-sha": "abc123",
-			"proof-fingerprint": proof, "gate-fingerprint": gates,
+			"verdict": "pass", "summary": "canonical objective proof reviewed", "covers": strings.Join(acceptance, ","),
+			"task-rev": "canonical-state-revision", "source-sha": "abc123", "work-rev": "2",
+			"proof-fingerprint": canonicalProof, "gate-fingerprint": canonicalGates,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -221,6 +238,13 @@ func TestWorkerReviewSubmitEmitsProposalWithoutOpeningRuntimeStore(t *testing.T)
 	if proposal.Result.Schema != reviewResultSchemaV2 || proposal.Result.WorkerPolicyFP != "" ||
 		proposal.Result.Runner != "" || proposal.Result.RunnerProfile != "" {
 		t.Fatalf("worker transport proposal claimed daemon authority: %#v", proposal.Result)
+	}
+	if proposal.Result.ProjectID != "canonical-project" || proposal.Result.TaskStateRev != "canonical-state-revision" ||
+		proposal.Result.WorkRevision != 2 || proposal.Result.ImplementationSHA != "abc123" {
+		t.Fatalf("worker transport did not preserve the injected canonical snapshot: %#v", proposal.Result)
+	}
+	if proposal.Result.ProofFingerprint != canonicalProof || proposal.Result.GateFingerprint != canonicalGates {
+		t.Fatalf("worker transport did not preserve the injected canonical proof snapshot: %#v", proposal.Result)
 	}
 	if fileExists(runtimeStoreDBPath(stateRoot)) {
 		t.Fatal("worker review submit opened or created the daemon runtime store")

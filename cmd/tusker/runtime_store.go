@@ -2844,17 +2844,17 @@ func saveAttempt(executor runtimeAttemptExecutor, attempt RunAttempt) error {
 		attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, end_state_json, process_pid, outcome, exit_code, turns_used, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(attempt_id) DO UPDATE SET
-		project_id=excluded.project_id,
-		record_id=excluded.record_id,
-		item_id=excluded.item_id,
-		runner=excluded.runner,
+		project_id=CASE WHEN attempts.project_id != '' THEN attempts.project_id ELSE excluded.project_id END,
+		record_id=CASE WHEN attempts.record_id != '' THEN attempts.record_id ELSE excluded.record_id END,
+		item_id=CASE WHEN attempts.item_id != '' THEN attempts.item_id ELSE excluded.item_id END,
+		runner=CASE WHEN attempts.runner != '' THEN attempts.runner ELSE excluded.runner END,
 		lane=excluded.lane,
 		worker_policy_fingerprint=excluded.worker_policy_fingerprint,
 		work_revision=excluded.work_revision,
 		workspace_path=excluded.workspace_path,
-		session_ref=excluded.session_ref,
-		parent_attempt_id=excluded.parent_attempt_id,
-		child_type=excluded.child_type,
+		session_ref=CASE WHEN excluded.session_ref != '' THEN excluded.session_ref ELSE attempts.session_ref END,
+		parent_attempt_id=CASE WHEN attempts.parent_attempt_id != '' THEN attempts.parent_attempt_id ELSE excluded.parent_attempt_id END,
+		child_type=CASE WHEN attempts.child_type != '' THEN attempts.child_type ELSE excluded.child_type END,
 		branch_name=excluded.branch_name,
 		merge_rule=excluded.merge_rule,
 		fanout_group=excluded.fanout_group,
@@ -2876,7 +2876,7 @@ func saveAttempt(executor runtimeAttemptExecutor, attempt RunAttempt) error {
 		raw_log_path=excluded.raw_log_path,
 		status_path=excluded.status_path,
 		last_error=excluded.last_error,
-		started_at=excluded.started_at,
+		started_at=CASE WHEN attempts.started_at != '' THEN attempts.started_at ELSE excluded.started_at END,
 		finished_at=excluded.finished_at`,
 		attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.SessionRef, attempt.ParentAttemptID, attempt.ChildType, attempt.BranchName, attempt.MergeRule, attempt.FanoutGroup, attempt.CloudTaskID, attempt.CloudStatus, attempt.CloudEnvironmentID, attempt.CloudAttemptNumber, attempt.PullRequestURL, attempt.ApplyRef, attempt.LogsSummary, attempt.FinalSummary, attempt.EndStateJSON, attempt.ProcessPID, attempt.Outcome, attempt.ExitCode, attempt.TurnsUsed, attempt.PromptPath, attempt.EventSinkPath, attempt.RawLogPath, attempt.StatusPath, attempt.LastError, attempt.StartedAt, attempt.FinishedAt)
 	return err

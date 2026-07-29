@@ -108,8 +108,8 @@ Durable statuses: `idea, backlog, ready, review, rework, superseded`
   runs a collective compile+lint+test; the full suite runs nightly. See
   [gates.md](gates.md).
 - **Execution visibility.** `execution register` creates immutable direct-work
-  identity before launch; `attach` correlates a provider session later. `inbox`
-  lists unbound direct work. `bind` derives and checks the task's canonical wave
+  identity before launch; `attach` correlates a provider session later.
+  `tusker execution inbox` lists unbound direct work. `bind` derives and checks the task's canonical wave
   and creates a non-retroactive proof boundary. `list` is the graph search and
   `cancel` succeeds only for a capability-proved target. See
   [execution-observability.md](execution-observability.md).

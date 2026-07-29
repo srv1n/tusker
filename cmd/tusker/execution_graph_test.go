@@ -67,9 +67,21 @@ func TestExecutionGraphFiltersAndReadOnly(t *testing.T) {
 	if err != nil || len(bound.Nodes) != 1 || bound.Nodes[0].ExecutionID != root.ExecutionID || bound.Nodes[0].BoundTaskID != "ORC-T-0071" {
 		t.Fatalf("bound direct filter=%#v err=%v", bound, err)
 	}
-	lifecycle, err := store.ExecutionGraph("project-1", ExecutionGraphFilter{Lifecycle: "unbound"})
+	unboundRoot, err := store.CreateDirectExecution(DirectExecutionInput{ProjectID: "project-1", DisplayName: "Still unbound", Source: "direct_codex", Provider: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle, err := store.ExecutionGraph("project-1", ExecutionGraphFilter{Lifecycle: "bound"})
 	if err != nil || len(lifecycle.Nodes) != 1 || lifecycle.Nodes[0].ExecutionID != root.ExecutionID {
 		t.Fatalf("delivery lifecycle filter=%#v err=%v", lifecycle, err)
+	}
+	unboundLifecycle, err := store.ExecutionGraph("project-1", ExecutionGraphFilter{Lifecycle: "unbound"})
+	if err != nil || len(unboundLifecycle.Nodes) != 1 || unboundLifecycle.Nodes[0].ExecutionID != unboundRoot.ExecutionID {
+		t.Fatalf("inverse delivery lifecycle filter=%#v err=%v", unboundLifecycle, err)
+	}
+	derived, err := store.ExecutionGraph("project-1", ExecutionGraphFilter{TaskID: "ORC-T-0071", Lifecycle: "unsettled"})
+	if err != nil || len(derived.Nodes) != 1 || derived.Nodes[0].ExecutionID != root.ExecutionID {
+		t.Fatalf("derived lifecycle filter=%#v err=%v", derived, err)
 	}
 	var bindings, runs int
 	if err := store.queryRowScan(`SELECT COUNT(*) FROM execution_binding_events`, nil, &bindings); err != nil {

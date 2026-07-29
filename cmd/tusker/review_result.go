@@ -123,6 +123,7 @@ func reviewSubmitCmd(args Args) error {
 	summary := strings.TrimSpace(args.String("summary"))
 	findings := uniqueStrings(splitCSV(args.String("finding")))
 	blocker := strings.TrimSpace(args.String("blocker"))
+	workerAttempt := strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID"))
 	switch verdict {
 	case "pass":
 		accepted := uniqueStrings(v7AcceptanceIDs(note.Body))
@@ -132,12 +133,14 @@ func reviewSubmitCmd(args Args) error {
 		if strings.Join(accepted, ",") != strings.Join(got, ",") {
 			return tuskerError(errorInvalidArg, "pass requires exact complete acceptance coverage")
 		}
-		proof, proofErr := loadV7ProofReport(vault, id)
-		if proofErr != nil {
-			return proofErr
-		}
-		if proof.Status != "satisfied" || len(proof.OpenGates) != 0 {
-			return tuskerError(errorInvalidTransition, "pass requires currently satisfied objective proof and gates")
+		if workerAttempt == "" {
+			proof, proofErr := loadV7ProofReport(vault, id)
+			if proofErr != nil {
+				return proofErr
+			}
+			if proof.Status != "satisfied" || len(proof.OpenGates) != 0 {
+				return tuskerError(errorInvalidTransition, "pass requires currently satisfied objective proof and gates")
+			}
 		}
 	case "changes_requested":
 		if len(findings) == 0 {
@@ -161,24 +164,55 @@ func reviewSubmitCmd(args Args) error {
 	}
 	state := stringField(note.Data, "state_rev")
 	impl := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
-	if impl == "" {
-		return tuskerError(errorInvalidTransition, "review result requires implementation source SHA")
+	workRevision := intField(note.Data, "work_revision")
+	if workerAttempt != "" {
+		// A review worktree is the immutable implementation commit and
+		// deliberately predates the daemon's canonical source/work-revision
+		// projection. The worker transports the injected snapshot identifiers;
+		// the daemon validates every one against its active canonical run before
+		// accepting the proposal.
+		state = strings.TrimSpace(args.String("task-rev"))
+		impl = strings.TrimSpace(args.String("source-sha"))
+		workRevision = atoiSafe(args.String("work-rev"))
+		if state == "" || impl == "" || workRevision <= 0 {
+			return tuskerError(errorInvalidTransition, "worker review submission requires the injected task, work, and source snapshot")
+		}
+	} else {
+		if impl == "" {
+			return tuskerError(errorInvalidTransition, "review result requires implementation source SHA")
+		}
+		if expected := strings.TrimSpace(args.String("task-rev")); expected == "" || expected != state {
+			return tuskerError(errorInvalidTransition, "stale task revision")
+		}
+		if expected := strings.TrimSpace(args.String("source-sha")); expected == "" || expected != impl {
+			return tuskerError(errorInvalidTransition, "stale implementation source SHA")
+		}
 	}
-	if expected := strings.TrimSpace(args.String("task-rev")); expected == "" || expected != state {
-		return tuskerError(errorInvalidTransition, "stale task revision")
-	}
-	if expected := strings.TrimSpace(args.String("source-sha")); expected == "" || expected != impl {
-		return tuskerError(errorInvalidTransition, "stale implementation source SHA")
-	}
-	proofFingerprint, gateFingerprint, snapshotErr := reviewObjectiveSnapshots(vault, note)
-	if snapshotErr != nil {
-		return snapshotErr
-	}
-	if expected := strings.TrimSpace(args.String("proof-fingerprint")); expected == "" || expected != proofFingerprint {
-		return tuskerError(errorInvalidTransition, "stale proof fingerprint")
-	}
-	if expected := strings.TrimSpace(args.String("gate-fingerprint")); expected == "" || expected != gateFingerprint {
-		return tuskerError(errorInvalidTransition, "stale gate fingerprint")
+	var proofFingerprint, gateFingerprint string
+	if workerAttempt != "" {
+		// The review workspace is intentionally an immutable implementation
+		// snapshot. Its local proof projection can differ from the daemon's
+		// later canonical review projection, just like task state and work
+		// revision above. Preserve the injected canonical fingerprints in the
+		// proposal; the daemon validates them against the active canonical run
+		// before granting any authority.
+		proofFingerprint = strings.TrimSpace(args.String("proof-fingerprint"))
+		gateFingerprint = strings.TrimSpace(args.String("gate-fingerprint"))
+		if proofFingerprint == "" || gateFingerprint == "" {
+			return tuskerError(errorInvalidTransition, "worker review submission requires the injected proof and gate snapshot")
+		}
+	} else {
+		var snapshotErr error
+		proofFingerprint, gateFingerprint, snapshotErr = reviewObjectiveSnapshots(vault, note)
+		if snapshotErr != nil {
+			return snapshotErr
+		}
+		if expected := strings.TrimSpace(args.String("proof-fingerprint")); expected == "" || expected != proofFingerprint {
+			return tuskerError(errorInvalidTransition, "stale proof fingerprint")
+		}
+		if expected := strings.TrimSpace(args.String("gate-fingerprint")); expected == "" || expected != gateFingerprint {
+			return tuskerError(errorInvalidTransition, "stale gate fingerprint")
+		}
 	}
 	actor := firstNonEmpty(args.String("by"), "reviewer:agent")
 	wf, wfErr := loadWorkflow(vault)
@@ -188,14 +222,14 @@ func reviewSubmitCmd(args Args) error {
 	if actor != reviewerActorForNote(wf.Data.Reviewer.Actor, note) {
 		return tuskerError(errorInvalidTransition, "reviewer actor is not authorized for this task")
 	}
-	if workerAttempt := strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID")); workerAttempt != "" {
+	if workerAttempt != "" {
 		if workerAttempt != attemptID {
 			return tuskerError(errorInvalidTransition, "worker review submission does not match its injected attempt")
 		}
 		// Worker stdout is an authority-less transport proposal. The daemon
 		// decides whether the exact active run qualifies for v3 completion
 		// policy; generic reviewers are persisted as audit-only v2 results.
-		result := ReviewResult{Schema: reviewResultSchemaV2, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+		result := ReviewResult{Schema: reviewResultSchemaV2, ProjectID: firstNonEmpty(strings.TrimSpace(os.Getenv("TUSKER_CANONICAL_PROJECT_ID")), v7ProjectID(vault)), TaskID: id, TaskStateRev: state, WorkRevision: workRevision, ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 		if err := normalizeReviewResultProposal(&result); err != nil {
 			return err
 		}

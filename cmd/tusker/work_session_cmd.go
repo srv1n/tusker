@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -289,6 +290,10 @@ func workSessionLifecycleCmd(args Args, action string) error {
 }
 
 func requireWorkSessionRevision(args Args) error {
+	expectedRevision, err := workSessionRevisionArg(args)
+	if err != nil {
+		return err
+	}
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return err
@@ -301,8 +306,8 @@ func requireWorkSessionRevision(args Args) error {
 	if run == nil {
 		return tuskerError(errorNotFound, "work session not found: "+args.String("id"))
 	}
-	if expected := intArg(args, "revision"); expected > 0 && expected != run.WorkRevision {
-		return workSessionStaleRevisionError("CAS_CONFLICT", args.String("id"), expected, run.WorkRevision)
+	if expectedRevision != nil && *expectedRevision != run.WorkRevision {
+		return workSessionStaleRevisionError("CAS_CONFLICT", args.String("id"), *expectedRevision, run.WorkRevision)
 	}
 	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{LoadDisabled: true, ProjectID: run.ProjectID})
 	if err != nil {
@@ -318,6 +323,18 @@ func requireWorkSessionRevision(args Args) error {
 		}
 	}
 	return nil
+}
+
+func workSessionRevisionArg(args Args) (*int, error) {
+	raw := strings.TrimSpace(args.String("revision"))
+	if raw == "" {
+		return nil, nil
+	}
+	revision, err := strconv.Atoi(raw)
+	if err != nil || revision < 0 {
+		return nil, tuskerError(errorInvalidArg, "work revision must be a non-negative integer")
+	}
+	return &revision, nil
 }
 
 func workSessionStaleRevisionError(code, taskID string, expected, current int) error {

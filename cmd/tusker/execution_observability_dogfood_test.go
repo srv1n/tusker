@@ -181,7 +181,7 @@ func TestExecutionObservabilityDogfoodFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"schema":"tusker.execution-observability-dogfood/v1","codex_roots":2,"claude_roots":1,"provider_children":5,"managed_attempts":2,"attention_roots":1,"unbound_roots":4,"cursor_converged":true,"unbound_proof_denied":true,"unbound_bind_refused":true,"lifecycle_dimensions":true,"cancellation_facts":5}`
+	const want = `{"schema":"tusker.execution-observability-dogfood/v1","codex_roots":3,"claude_roots":1,"provider_children":5,"managed_attempts":2,"attention_roots":1,"unbound_roots":5,"cursor_converged":true,"unbound_proof_denied":true,"unbound_bind_refused":true,"lifecycle_dimensions":true,"cancellation_facts":5}`
 	if string(got) != want {
 		t.Fatalf("dogfood fixture changed\nwant %s\n got %s", want, got)
 	}

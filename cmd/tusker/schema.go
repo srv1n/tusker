@@ -84,6 +84,9 @@ func withContext(ctx any) func(*TuskerError) {
 }
 
 func errorToIssue(err error) Issue {
+	if err == nil {
+		return Issue{}
+	}
 	if typed, ok := err.(*TuskerError); ok {
 		return Issue{
 			Code:    typed.Code,

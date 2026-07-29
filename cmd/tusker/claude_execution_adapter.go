@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"strconv"
@@ -85,19 +84,7 @@ func (a ClaudeExecutionAdapter) ObserveRunPayload(run RunStatus, payload any, se
 }
 
 func (a ClaudeExecutionAdapter) executionForClaudeRun(run RunStatus, sessionID string) (string, error) {
-	var id string
-	err := a.Store.queryRowScan(`SELECT execution_id FROM execution_records WHERE project_id = ? AND attempt_id = ? LIMIT 1`, []any{run.ProjectID, run.ActiveAttemptID}, &id)
-	if err == nil {
-		return id, nil
-	}
-	if err != nil && err != sql.ErrNoRows {
-		return "", err
-	}
-	err = a.Store.queryRowScan(`SELECT execution_id FROM execution_attachment_events WHERE project_id = ? AND provider = 'claude' AND provider_session_id = ? LIMIT 1`, []any{run.ProjectID, sessionID}, &id)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	return id, err
+	return a.Store.executionForProviderRun(run.ProjectID, "claude", sessionID, run.ActiveAttemptID)
 }
 
 func claudeChildKnown(store *RuntimeStore, projectID, parentID, childID string) bool {
@@ -130,6 +117,11 @@ func (a ClaudeExecutionAdapter) Observe(observation ClaudeExecutionObservation) 
 		capabilities = claudeDefaultCapabilities(occurredAt)
 	}
 	diagnostic := strings.TrimSpace(observation.VisibilityDegradedReason)
+	if childID := strings.TrimSpace(observation.ChildID); childID != "" &&
+		(strings.Contains(strings.ToLower(observation.Kind), "stop") || claudeTerminalProviderStatus(claudeObservationStatus(observation.Status, observation.Kind))) &&
+		!claudeChildKnown(a.Store, observation.ProjectID, strings.TrimSpace(observation.ParentExecutionID), childID) {
+		diagnostic = firstNonEmpty(diagnostic, "subagent_start_missing_or_requires_authoritative_reconciliation")
+	}
 	if !knownClaudeObservationStatus(observation.Status, observation.Kind) {
 		diagnostic = firstNonEmpty(diagnostic, "unrecognized_provider_status_requires_authoritative_fetch")
 	}

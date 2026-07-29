@@ -188,14 +188,20 @@ func (s *RuntimeStore) migrateExecutionLedger() error {
 	if _, err := s.exec(`UPDATE execution_records SET parent_execution_id = COALESCE((SELECT parent_execution_id FROM execution_edges WHERE execution_edges.child_execution_id = execution_records.execution_id), '') WHERE parent_execution_id = '' AND node_kind != 'root'`); err != nil {
 		return err
 	}
-	for _, trigger := range []string{"execution_edges_validate_insert", "execution_edges_validate_update", "execution_edges_prevent_delete", "execution_records_identity_immutable", "execution_records_prevent_delete_with_edges", "execution_records_immutable", "execution_records_prevent_delete", "execution_name_events_validate_insert", "execution_attachment_events_validate_insert", "execution_binding_events_validate_insert", "execution_name_events_immutable", "execution_name_events_prevent_delete", "execution_attachment_events_immutable", "execution_attachment_events_prevent_delete", "execution_binding_events_immutable", "execution_binding_events_prevent_delete"} {
-		if _, err := s.exec(`DROP TRIGGER IF EXISTS ` + trigger); err != nil {
-			return err
-		}
+	if _, err := s.exec(`CREATE TABLE IF NOT EXISTS execution_ledger_migrations (
+		component TEXT PRIMARY KEY,
+		version INTEGER NOT NULL
+	)`); err != nil {
+		return err
 	}
-	for _, statement := range []string{
+	const constraintVersion = 1
+	var installedConstraintVersion int
+	err := s.queryRowScan(`SELECT version FROM execution_ledger_migrations WHERE component = ?`, []any{"constraints"}, &installedConstraintVersion)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	constraintStatements := []string{
 		`CREATE UNIQUE INDEX IF NOT EXISTS execution_records_attempt_id ON execution_records(attempt_id) WHERE attempt_id != '';`,
-		`DROP INDEX IF EXISTS execution_provider_child_identity;`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS execution_provider_child_identity ON execution_records(project_id, parent_execution_id, provider, provider_child_handle) WHERE node_kind = 'provider_child' AND provider != '' AND provider_child_handle != '';`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS execution_edges_one_parent ON execution_edges(child_execution_id);`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS execution_wave_generation_root ON execution_records(project_id, wave_id, wave_authorization_generation) WHERE node_kind = 'root' AND wave_id != '' AND wave_authorization_generation > 0;`,
@@ -234,12 +240,88 @@ func (s *RuntimeStore) migrateExecutionLedger() error {
 		`CREATE TRIGGER IF NOT EXISTS execution_attachment_events_prevent_delete BEFORE DELETE ON execution_attachment_events BEGIN SELECT RAISE(ABORT, 'execution attachment events are immutable'); END;`,
 		`CREATE TRIGGER IF NOT EXISTS execution_binding_events_immutable BEFORE UPDATE ON execution_binding_events BEGIN SELECT RAISE(ABORT, 'execution binding events are immutable'); END;`,
 		`CREATE TRIGGER IF NOT EXISTS execution_binding_events_prevent_delete BEFORE DELETE ON execution_binding_events BEGIN SELECT RAISE(ABORT, 'execution binding events are immutable'); END;`,
-	} {
-		if _, err := s.exec(statement); err != nil {
+	}
+	constraintsCurrent, err := s.executionLedgerConstraintsCurrent(installedConstraintVersion, constraintVersion, constraintStatements)
+	if err != nil {
+		return err
+	}
+	if !constraintsCurrent {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		for _, statement := range constraintStatements {
+			kind, name, err := sqliteSchemaObjectIdentity(statement)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`DROP ` + strings.ToUpper(kind) + ` IF EXISTS ` + name); err != nil {
+				return err
+			}
+		}
+		for _, statement := range constraintStatements {
+			if _, err := tx.Exec(statement); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`INSERT INTO execution_ledger_migrations(component, version) VALUES(?, ?)
+			ON CONFLICT(component) DO UPDATE SET version = excluded.version`, "constraints", constraintVersion); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
 			return err
 		}
 	}
 	return s.backfillExecutionLedger()
+}
+
+func (s *RuntimeStore) executionLedgerConstraintsCurrent(installedVersion, expectedVersion int, statements []string) (bool, error) {
+	if installedVersion != expectedVersion {
+		return false, nil
+	}
+	for _, statement := range statements {
+		kind, name, err := sqliteSchemaObjectIdentity(statement)
+		if err != nil {
+			return false, err
+		}
+		var actual string
+		err = s.queryRowScan(`SELECT sql FROM sqlite_master WHERE type = ? AND name = ?`, []any{kind, name}, &actual)
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if normalizeSQLiteSchemaSQL(actual) != normalizeSQLiteSchemaSQL(statement) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func sqliteSchemaObjectIdentity(statement string) (string, string, error) {
+	fields := strings.Fields(strings.ToLower(statement))
+	for i, field := range fields {
+		if field != "index" && field != "trigger" {
+			continue
+		}
+		j := i + 1
+		if j+2 < len(fields) && fields[j] == "if" && fields[j+1] == "not" && fields[j+2] == "exists" {
+			j += 3
+		}
+		if j < len(fields) {
+			return field, strings.Trim(fields[j], "`\"[];"), nil
+		}
+		break
+	}
+	return "", "", fmt.Errorf("execution ledger constraint has no schema identity: %q", statement)
+}
+
+func normalizeSQLiteSchemaSQL(statement string) string {
+	statement = strings.ToLower(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(statement), ";")))
+	statement = strings.ReplaceAll(statement, "if not exists", "")
+	return strings.Join(strings.Fields(statement), " ")
 }
 
 // CreateDirectExecution allocates the root before a provider launch. It does
@@ -473,18 +555,104 @@ func (s *RuntimeStore) ExecutionView(id string) (*ExecutionView, error) {
 	return view, nil
 }
 
+// executionForProviderRun resolves a provider-owned session to its original
+// execution before considering the current Tusker attempt. A resumed attempt
+// is a new immutable execution in Tusker's lineage, but it does not take
+// ownership of the provider's existing thread/session. Unrelated attempts do
+// not receive this exception and will hit AttachExecution's collision guard.
+func (s *RuntimeStore) executionForProviderRun(projectID, provider, providerSessionID, activeAttemptID string) (string, error) {
+	projectID, provider = strings.TrimSpace(projectID), strings.TrimSpace(provider)
+	providerSessionID, activeAttemptID = strings.TrimSpace(providerSessionID), strings.TrimSpace(activeAttemptID)
+	var attachedExecutionID, attachedAttemptID string
+	attached := false
+	err := s.queryRowScan(`
+		SELECT records.execution_id, records.attempt_id
+		FROM execution_attachment_events attachments
+		JOIN execution_records records ON records.execution_id = attachments.execution_id
+		WHERE attachments.project_id = ? AND attachments.provider = ? AND attachments.provider_session_id = ?
+		LIMIT 1`,
+		[]any{projectID, provider, providerSessionID},
+		&attachedExecutionID, &attachedAttemptID,
+	)
+	if err == nil {
+		attached = true
+		if activeAttemptID == "" || attachedAttemptID == activeAttemptID {
+			return attachedExecutionID, nil
+		}
+		related, relatedErr := s.attemptDescendsFrom(projectID, activeAttemptID, attachedAttemptID)
+		if relatedErr != nil {
+			return "", relatedErr
+		}
+		if related {
+			return attachedExecutionID, nil
+		}
+	} else if err != sql.ErrNoRows {
+		return "", err
+	}
+	if activeAttemptID == "" {
+		return "", nil
+	}
+	var executionID string
+	err = s.queryRowScan(`SELECT execution_id FROM execution_records WHERE project_id = ? AND attempt_id = ? LIMIT 1`, []any{projectID, activeAttemptID}, &executionID)
+	if err == sql.ErrNoRows {
+		if attached {
+			// Direct app/live sessions can report an attempt token before that
+			// token has an independently projected execution. Keep observable
+			// provider facts on the already attached host; this cannot join a
+			// second execution because none exists.
+			return attachedExecutionID, nil
+		}
+		return "", nil
+	}
+	return executionID, err
+}
+
+func (s *RuntimeStore) attemptDescendsFrom(projectID, attemptID, ancestorAttemptID string) (bool, error) {
+	if attemptID == "" || ancestorAttemptID == "" || attemptID == ancestorAttemptID {
+		return false, nil
+	}
+	var related int
+	err := s.queryRowScan(`
+		WITH RECURSIVE ancestors(attempt_id, parent_attempt_id) AS (
+			SELECT attempt_id, parent_attempt_id
+			FROM attempts
+			WHERE project_id = ? AND attempt_id = ?
+			UNION
+			SELECT parent.attempt_id, parent.parent_attempt_id
+			FROM attempts parent
+			JOIN ancestors child ON child.parent_attempt_id = parent.attempt_id
+			WHERE parent.project_id = ?
+		)
+		SELECT COUNT(1) FROM ancestors WHERE attempt_id = ?`,
+		[]any{projectID, attemptID, projectID, ancestorAttemptID},
+		&related,
+	)
+	return related == 1, err
+}
+
 func (s *RuntimeStore) ListUnboundDirectExecutions(projectID string) ([]ExecutionView, error) {
-	rows, err := s.query(`SELECT execution_id FROM execution_records WHERE project_id = ? AND node_kind = 'root' AND source IN ('direct_codex','direct_claude','codex_cloud','direct') ORDER BY created_at DESC`, []any{strings.TrimSpace(projectID)})
+	rows, err := s.query(`SELECT execution_id FROM execution_records WHERE project_id = ? AND node_kind = 'root' AND source IN ('direct_codex','direct_claude','codex_cloud','direct') ORDER BY created_at DESC`, strings.TrimSpace(projectID))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []ExecutionView
+	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
 			return nil, err
 		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	var out []ExecutionView
+	for _, id := range ids {
 		view, err := s.ExecutionView(id)
 		if err != nil {
 			return nil, err
@@ -493,7 +661,7 @@ func (s *RuntimeStore) ListUnboundDirectExecutions(projectID string) ([]Executio
 			out = append(out, *view)
 		}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *RuntimeStore) RenameExecution(projectID, id, displayName, actor string) (*ExecutionView, error) {
@@ -750,9 +918,6 @@ func (s *RuntimeStore) backfillExecutionLedger() error {
 }
 
 func legacyExecutionCreatedAtTx(tx *sql.Tx, executionID, startedAt string) (string, error) {
-	if startedAt = strings.TrimSpace(startedAt); startedAt != "" {
-		return startedAt, nil
-	}
 	var existing string
 	err := tx.QueryRow(`SELECT created_at FROM execution_records WHERE execution_id = ?`, executionID).Scan(&existing)
 	if err == nil && strings.TrimSpace(existing) != "" {
@@ -760,6 +925,9 @@ func legacyExecutionCreatedAtTx(tx *sql.Tx, executionID, startedAt string) (stri
 	}
 	if err != nil && err != sql.ErrNoRows {
 		return "", err
+	}
+	if startedAt = strings.TrimSpace(startedAt); startedAt != "" {
+		return startedAt, nil
 	}
 	// Some legacy attempts predate started_at. A fixed compatibility timestamp
 	// keeps their first projection deterministic; stores migrated by an older
@@ -776,9 +944,13 @@ func insertLegacyExecutionTx(tx *sql.Tx, record ExecutionRecord, parentAttemptID
 	if err := tx.QueryRow(`SELECT execution_id, root_execution_id, parent_execution_id, project_id, node_kind, display_name, search_label, task_id, wave_id, wave_authorization_generation, attempt_id, session_ref, source, provider, provider_session_id, agent_type, provider_child_handle, creator, lease_generation, created_at FROM execution_records WHERE execution_id = ?`, record.ExecutionID).Scan(executionScanDest(&existing)...); err != nil {
 		return err
 	}
-	// Every ledger field is immutable identity or an immutable correlation fact.
-	// Backfill has no enrichment exception: accepting a same-project/attempt row
-	// with different metadata would make restart replay silently rewrite lineage.
+	// Legacy attempts are mutable runtime rows. Session discovery may enrich
+	// them after the first immutable projection, and search_label follows that
+	// session text. Preserve the first projection while still rejecting any
+	// change to identity, lineage, task, provider, or ownership facts.
+	existing.SessionRef, record.SessionRef = "", ""
+	existing.SearchLabel, record.SearchLabel = "", ""
+	existing.CreatedAt, record.CreatedAt = "", ""
 	if existing != record {
 		return tuskerError(errorInvalidArg, "execution ledger backfill conflict")
 	}

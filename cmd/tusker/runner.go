@@ -91,6 +91,7 @@ type StartRequest struct {
 	Budget              map[string]any
 	CodexPolicy         CodexPolicy
 	ExternalLoop        ExternalLoopLaunchContext
+	ContainmentPGID     int
 }
 
 type ResumeRequest struct {
@@ -331,6 +332,13 @@ func assertRunnerCommandDir(runner RunnerName, cmdDir, workspacePath string) err
 func runnerEnv(req runnerLaunchEnv) []string {
 	extensionPolicy := withDefaultExtensionPolicy(req.CodexPolicy.Extensions)
 	extensionPolicyJSON, _ := json.Marshal(extensionPolicy)
+	canonicalProjectID := req.ProjectID
+	if strings.TrimSpace(req.VaultPath) != "" {
+		if resolved, err := resolveV7ProjectID(req.VaultPath); err == nil && strings.TrimSpace(resolved) != "" {
+			canonicalProjectID = resolved
+		}
+	}
+	workspaceVault := runnerWorkspaceVaultPath(req.WorkspacePath, req.VaultPath)
 	var baseEnv []string
 	if searchPath := strings.TrimSpace(req.CommandSearchPath); searchPath != "" {
 		// Authoritative structured argv captures a non-login PATH during
@@ -346,6 +354,7 @@ func runnerEnv(req runnerLaunchEnv) []string {
 	}
 	return append(baseEnv,
 		"TUSKER_PROJECT_ID="+req.ProjectID,
+		"TUSKER_CANONICAL_PROJECT_ID="+canonicalProjectID,
 		"TUSKER_RECORD_ID="+req.RecordID,
 		"TUSKER_ITEM_ID="+req.ItemID,
 		"TUSKER_ATTEMPT_ID="+req.AttemptID,
@@ -360,7 +369,9 @@ func runnerEnv(req runnerLaunchEnv) []string {
 		"TUSKER_RAW_LOG="+req.RawLogPath,
 		"TUSKER_STATUS_PATH="+req.StatusPath,
 		"TUSKER_NOTE_PATH="+req.NotePath,
-		"TUSKER_VAULT="+req.VaultPath,
+		"TUSKER_VAULT="+workspaceVault,
+		"TUSKER_CANONICAL_VAULT="+req.VaultPath,
+		"TUSKER_WORKSPACE_VAULT="+workspaceVault,
 		"TUSKER_SESSION_REF="+req.SessionRef,
 		"TUSKER_MESSAGE_REF="+req.MessageRef,
 		"TUSKER_CODEX_APPROVAL_POLICY="+req.CodexPolicy.ApprovalPolicy,
@@ -431,6 +442,14 @@ type runnerLaunchEnv struct {
 	RunnerEffort      string
 	CodexPolicy       CodexPolicy
 	ExternalLoop      ExternalLoopLaunchContext
+}
+
+func runnerWorkspaceVaultPath(workspacePath, canonicalVaultPath string) string {
+	workspaceVault := runnerWorktreeVaultPath(workspacePath, canonicalVaultPath)
+	if strings.TrimSpace(workspaceVault) == "" {
+		return canonicalVaultPath
+	}
+	return workspaceVault
 }
 
 func networkAccessEnvValue(value *bool) string {

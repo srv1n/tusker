@@ -323,14 +323,14 @@ func TestRunsReleaseCannotBypassInteractiveWorkSession(t *testing.T) {
 	if err := runsReleaseCmd(Args{"id": "APP-T-0001", "reason": "bare"}); workSessionErrorCode(err) != errorMissingArg {
 		t.Fatalf("bare legacy release = %v", err)
 	}
-	if err := runsReleaseCmd(Args{"id": "APP-T-0001", "by": "agent:other", "revision": "1", "reason": "foreign"}); err == nil {
+	if err := runsReleaseCmd(Args{"id": "APP-T-0001", "by": "agent:other", "revision": "0", "reason": "foreign"}); err == nil {
 		t.Fatal("foreign legacy release bypassed interactive owner")
 	}
 	if err := runsReleaseCmd(Args{"id": "APP-T-0001", "by": "agent:a", "reason": "missing revision"}); workSessionErrorCode(err) != errorMissingArg {
 		t.Fatalf("legacy release without revision = %v", err)
 	}
 	captureStdout(t, func() {
-		if err := runsReleaseCmd(Args{"id": "APP-T-0001", "by": "agent:a", "revision": "1", "reason": "done"}); err != nil {
+		if err := runsReleaseCmd(Args{"id": "APP-T-0001", "by": "agent:a", "revision": "0", "reason": "done"}); err != nil {
 			t.Fatal(err)
 		}
 	})

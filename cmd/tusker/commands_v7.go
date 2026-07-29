@@ -1450,7 +1450,12 @@ func dispatchedWorkerWorkSessionMatches(vaultPath, taskID string, task Note, run
 	recordID := strings.TrimSpace(os.Getenv("TUSKER_RECORD_ID"))
 	workspace := strings.TrimSpace(os.Getenv("TUSKER_WORKSPACE"))
 	repoRoot := strings.TrimSpace(os.Getenv("TUSKER_REPO_ROOT"))
-	canonicalVault := strings.TrimSpace(os.Getenv("TUSKER_VAULT"))
+	canonicalVault := strings.TrimSpace(os.Getenv("TUSKER_CANONICAL_VAULT"))
+	if canonicalVault == "" {
+		// Compatibility for shared-workspace runners released before the
+		// worker-local/canonical vault split.
+		canonicalVault = strings.TrimSpace(os.Getenv("TUSKER_VAULT"))
+	}
 	statusPath := strings.TrimSpace(os.Getenv("TUSKER_STATUS_PATH"))
 	generation, generationErr := strconv.Atoi(strings.TrimSpace(os.Getenv("TUSKER_LEASE_GENERATION")))
 	workRevision, revisionErr := strconv.Atoi(strings.TrimSpace(os.Getenv("TUSKER_WORK_REVISION")))

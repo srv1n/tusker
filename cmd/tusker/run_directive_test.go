@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -257,15 +256,20 @@ func TestRunDirectiveRefusals(t *testing.T) {
 func makeServeTaskDispatchable(t *testing.T, server *serveServer, taskID string) {
 	t.Helper()
 	path := filepath.Join(server.vaultPath, "work", "tasks", taskID+".md")
-	raw, err := os.ReadFile(path)
+	data, body, err := parseFrontmatterMustRead(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated := strings.Replace(string(raw), "| A1 | Works. | Inline verification |", "| A1 | The task completes its concrete fixture outcome. | Inline verification |", 1)
-	if updated == string(raw) {
+	updated := strings.Replace(body, "| A1 | Works. | Inline verification |", "| A1 | The task completes its concrete fixture outcome. | Inline verification |", 1)
+	if updated == body {
 		t.Fatalf("fixture acceptance marker not found in %s", path)
 	}
-	if err := writeText(path, updated); err != nil {
+	data["state_rev"] = v7StateRev(data, updated)
+	content, err := serializeDocument(data, updated, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, content); err != nil {
 		t.Fatal(err)
 	}
 	server.invalidateProjectSnapshot("app")

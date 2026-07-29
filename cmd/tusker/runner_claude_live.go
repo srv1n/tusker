@@ -94,7 +94,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		"{{raw_log_path}}":   req.RawLogPath,
 		"{{status_path}}":    req.StatusPath,
 		"{{note_path}}":      req.NotePath,
-		"{{vault_path}}":     req.VaultPath,
+		"{{vault_path}}":     runnerWorkspaceVaultPath(workspaceCWD, req.VaultPath),
 		"{{session_ref}}":    resumeSessionRef(resume),
 		"{{message_ref}}":    resumeMessageRef(resume),
 	})

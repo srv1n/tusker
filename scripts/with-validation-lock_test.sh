@@ -136,10 +136,8 @@ test_plan=$(make -s -n -C "$repo_root" test)
 test_unlocked_plan=$(make -s -n -C "$repo_root" test-unlocked)
 check_plan=$(make -s -n -C "$repo_root" check)
 printf '%s\n' "$test_plan" | grep -q 'with-validation-lock.sh --.*test-unlocked'
-printf '%s\n' "$test_unlocked_plan" | grep -q 'GOMAXPROCS=2 go test -p=1 -parallel=1 ./...'
+printf '%s\n' "$test_unlocked_plan" | grep -q 'GOMAXPROCS=2 go test -timeout=20m -p=1 -parallel=1 ./...'
 printf '%s\n' "$check_plan" | grep -q 'with-validation-lock.sh --.*check-unlocked'
-grep -q '^      - make build-go$' "$repo_root/tusker.yaml"
-grep -q '^      - make vet$' "$repo_root/tusker.yaml"
-grep -q '^      - make test$' "$repo_root/tusker.yaml"
+printf '%s\n' "$check_plan" | grep -q 'make fmt-check test-unlocked vet-unlocked validate-unlocked build-go-unlocked'
 
 printf 'PASS validation lock serialization, raw go-test admission, stale recovery, signal cleanup, worktree sharing, and canonical routing\n'

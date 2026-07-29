@@ -451,6 +451,35 @@ func TestReliableExecutionLifecycleE2E(t *testing.T) {
 	assertEqual(t, 1, len(attempts), "failed history inspectable")
 }
 
+func TestRunFinishExpectedRevisionCASFencesConcurrentAdvance(t *testing.T) {
+	store, run := ownershipStoreFixture(t, "APP-T-REVISION-CAS")
+	service := newRunOwnershipService(store)
+	if result, err := service.claim(run, "actor-1"); err != nil || !result.Claimed {
+		t.Fatalf("claim: %#v %v", result, err)
+	}
+	advanced := false
+	service.now = func() time.Time {
+		if !advanced {
+			advanced = true
+			if _, err := store.exec(`UPDATE runs SET work_revision = 2 WHERE project_id = ? AND record_id = ?`, run.ProjectID, run.RecordID); err != nil {
+				t.Fatalf("advance work revision: %v", err)
+			}
+		}
+		return time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	}
+	expectedRevision := 1
+	if _, err := service.finishWithExpectedRevision(run.RecordID, "actor-1", AttemptOutcomeFailed, "", "", "stale release", &expectedRevision); workSessionErrorCode(err) != "CAS_CONFLICT" {
+		t.Fatalf("stale terminal handoff = %v", err)
+	}
+	current, err := store.FindRun(run.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.WorkRevision != 2 || LeaseState(current.LeaseState) != LeaseStateClaimed || current.LeaseOwner != "actor-1" {
+		t.Fatalf("stale handoff mutated advanced run: %#v", current)
+	}
+}
+
 func ownershipStoreFixture(t *testing.T, recordID string) (*RuntimeStore, RunStatus) {
 	t.Helper()
 	store, err := OpenRuntimeStore(t.TempDir())

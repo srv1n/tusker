@@ -648,8 +648,32 @@ func ensureV7TaskLandingBranch(repoRoot, taskID, branch string, args Args) error
 	if err != nil {
 		return err
 	}
+	if err := importV7LandingCommit(repoRoot, commit, source); err != nil {
+		return err
+	}
 	if _, err := gitCombined(repoRoot, "branch", branch, commit); err != nil {
 		return tuskerError(errorInvalidTransition, "failed to create "+branch+" from "+source+": "+firstActionableLine(err.Error(), err.Error()))
+	}
+	return nil
+}
+
+// importV7LandingCommit makes the exact completed commit available to the
+// canonical repository when --from names an isolated copy/clone workspace.
+// Worktrees already share the object database and take the no-op path.
+func importV7LandingCommit(repoRoot, commit, source string) error {
+	if _, err := gitOutputTrim(repoRoot, "rev-parse", commit+"^{commit}"); err == nil {
+		return nil
+	}
+	info, err := os.Stat(source)
+	if err != nil || !info.IsDir() {
+		return tuskerError(errorInvalidTransition, "landing commit "+commit+" from "+source+" is unavailable in the canonical repository")
+	}
+	if _, err := gitCombined(repoRoot, "fetch", "--no-tags", source, commit); err != nil {
+		return tuskerError(errorInvalidTransition, "failed to import landing commit "+commit+" from "+source+": "+firstActionableLine(err.Error(), err.Error()))
+	}
+	resolved, err := gitOutputTrim(repoRoot, "rev-parse", commit+"^{commit}")
+	if err != nil || !strings.EqualFold(strings.TrimSpace(resolved), strings.TrimSpace(commit)) {
+		return tuskerError(errorInvalidTransition, "landing commit "+commit+" from "+source+" was not imported exactly")
 	}
 	return nil
 }

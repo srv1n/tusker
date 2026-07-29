@@ -88,6 +88,12 @@ func main() {
 				fmt.Fprintf(os.Stderr, "fake-runner status transition failed: %v; capability=%s\n", err, capabilitySummary())
 				os.Exit(17)
 			}
+			if *completeStatus == "review" {
+				if err := commitWorkspaceEndState(); err != nil {
+					fmt.Fprintf(os.Stderr, "fake-runner committed end state failed: %v\n", err)
+					os.Exit(15)
+				}
+			}
 		}
 		emitHeartbeat()
 		os.Exit(0)
@@ -167,6 +173,27 @@ func ensureGitEndState() error {
 		return err
 	}
 	return run("commit", "--allow-empty", "-m", "fixture end state")
+}
+
+func commitWorkspaceEndState() error {
+	workspace := os.Getenv("TUSKER_WORKSPACE")
+	if workspace == "" {
+		return fmt.Errorf("missing TUSKER_WORKSPACE")
+	}
+	run := func(args ...string) error {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = workspace
+		cmd.Env = os.Environ()
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, out)
+		}
+		return nil
+	}
+	if err := run("add", "-A"); err != nil {
+		return err
+	}
+	return run("commit", "--allow-empty", "-m", "fixture reviewed state")
 }
 
 func runDeliveryFixture(tuskerBin string) error {
@@ -268,7 +295,7 @@ func submitDeliveryReview(tuskerBin, taskID string) error {
 			break
 		}
 	}
-	args := []string{"review", "submit", taskID, "--vault", os.Getenv("TUSKER_VAULT"), "--attempt", os.Getenv("TUSKER_ATTEMPT_ID"), "--by", actor, "--verdict", "pass", "--covers", "A1", "--summary", "objective fixture artifact inspected"}
+	args := []string{"review", "submit", taskID, "--vault", workerVault(), "--attempt", os.Getenv("TUSKER_ATTEMPT_ID"), "--by", actor, "--verdict", "pass", "--covers", "A1", "--summary", "objective fixture artifact inspected"}
 	for _, flag := range []string{"task-rev", "source-sha", "work-rev", "proof-fingerprint", "gate-fingerprint"} {
 		item, itemErr := value(flag)
 		if itemErr != nil {
@@ -334,7 +361,7 @@ func deliveryEvidenceForTask(taskID string) (string, string) {
 
 func recordTaskProof(tuskerBin string) error {
 	taskID := os.Getenv("TUSKER_ITEM_ID")
-	vault := os.Getenv("TUSKER_VAULT")
+	vault := workerVault()
 	if taskID == "" || vault == "" {
 		return fmt.Errorf("missing TUSKER_ITEM_ID or TUSKER_VAULT")
 	}
@@ -383,7 +410,10 @@ func runHoldLoop(heartbeatEvery, holdTimeout time.Duration, released func() bool
 }
 
 func emitFirstEvent() {
-	session := "fake-session-" + os.Getenv("TUSKER_ATTEMPT_ID")
+	session := strings.TrimSpace(os.Getenv("TUSKER_FAKE_SESSION_REF"))
+	if session == "" {
+		session = "fake-session-" + os.Getenv("TUSKER_ATTEMPT_ID")
+	}
 	raw := map[string]any{
 		"session_id": session,
 		"event":      "first_event",
@@ -421,7 +451,7 @@ func appendEvent(kind string) {
 
 func setTaskStatus(tuskerBin, status string) error {
 	taskID := os.Getenv("TUSKER_ITEM_ID")
-	vault := os.Getenv("TUSKER_VAULT")
+	vault := workerVault()
 	if taskID == "" || vault == "" {
 		return fmt.Errorf("missing TUSKER_ITEM_ID or TUSKER_VAULT")
 	}
@@ -440,6 +470,18 @@ func setTaskStatus(tuskerBin, status string) error {
 		return fmt.Errorf("%w: %s", err, out)
 	}
 	return nil
+}
+
+func workerVault() string {
+	if vault := strings.TrimSpace(os.Getenv("TUSKER_WORKSPACE_VAULT")); vault != "" {
+		return vault
+	}
+	workspace := strings.TrimSpace(os.Getenv("TUSKER_WORKSPACE"))
+	canonicalVault := strings.TrimSpace(os.Getenv("TUSKER_VAULT"))
+	if workspace == "" || canonicalVault == "" {
+		return canonicalVault
+	}
+	return filepath.Join(workspace, filepath.Base(canonicalVault))
 }
 
 func mustWrite(path, text string) {

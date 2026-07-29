@@ -44,6 +44,7 @@ type runnerExecRequest struct {
 	ResumeMode          bool
 	CodexPolicy         CodexPolicy
 	ExternalLoop        ExternalLoopLaunchContext
+	ContainmentPGID     int
 }
 
 type runnerProcessStatus struct {
@@ -127,7 +128,7 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 		"{{raw_log_path}}":    req.RawLogPath,
 		"{{status_path}}":     req.StatusPath,
 		"{{note_path}}":       req.NotePath,
-		"{{vault_path}}":      req.VaultPath,
+		"{{vault_path}}":      runnerWorkspaceVaultPath(workspaceCWD, req.VaultPath),
 		"{{session_ref}}":     req.SessionRef,
 		"{{message_ref}}":     req.MessageRef,
 	}
@@ -215,7 +216,9 @@ PY
 		cmd.Stdout = file
 		cmd.Stderr = file
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if req.ContainmentPGID <= 0 {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
 	if err := cmd.Start(); err != nil {
 		if authoritativeLog != nil {
 			_ = authoritativeLog.close()
@@ -224,6 +227,10 @@ PY
 	}
 	pid := cmd.Process.Pid
 	pgid := processGroupID(pid)
+	if req.ContainmentPGID > 0 && pgid != req.ContainmentPGID {
+		_ = cmd.Process.Kill()
+		return nil, tuskerError(errorInvalidTransition, fmt.Sprintf("runner child escaped wrapper containment: pid=%d pgid=%d expected=%d", pid, pgid, req.ContainmentPGID))
+	}
 	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
 	spawnedPayload := map[string]any{"pid": pid, "status_path": req.StatusPath}
 	if boundedRawLog {
@@ -237,8 +244,8 @@ PY
 		return nil, fmt.Errorf("record %s attempt_spawned event for pid %d; launched process was terminated: %w", runner, pid, err)
 	}
 	if authoritativeLog != nil {
-		authoritativeLog.bindTerminator(func() { killRunnerProcessGroup(cmd, pgid) })
-		go monitorBoundedRunnerCommand(ctx, cmd, pgid, authoritativeLog, req.StatusPath)
+		authoritativeLog.bindTerminator(func() { killContainedRunnerCommand(cmd, pgid, req.ContainmentPGID > 0) })
+		go monitorBoundedRunnerCommand(ctx, cmd, pgid, req.ContainmentPGID > 0, authoritativeLog, req.StatusPath)
 	} else {
 		_ = cmd.Process.Release()
 	}

@@ -33,9 +33,11 @@ the task explicitly requires them.
 
 ## Authority boundaries
 
-- A user-opened Codex or Claude session implements the request itself. Never
-  start `tusker daemon run`, invoke `tusker automation dispatch`, start a
-  daemon service, or launch nested `codex exec` / `claude -p` workers.
+- A user-opened Codex or Claude session implements the requested work itself.
+  Interactive execution does not require daemon enablement or a daemon
+  lifecycle claim. Never start `tusker daemon run`, invoke
+  `tusker automation dispatch`, start a daemon service, or launch nested
+  `codex exec` / `claude -p` workers.
 - Planning, context, doctor, review, dry-run, task updates, proof, and held
   import are inert. They do not enable automation, arm work, dispatch, call a
   provider, move a ref, release, or spend.

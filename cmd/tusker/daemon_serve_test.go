@@ -248,17 +248,29 @@ func startDaemonRunForTest(t *testing.T, stateRoot string) <-chan error {
 
 func stopDaemonRunForTest(t *testing.T, stateRoot string, errCh <-chan error) {
 	t.Helper()
-	if liveness := readDaemonLiveness(stateRoot, time.Now().UTC()); liveness.Alive {
-		_, _ = sendDaemonControl(stateRoot, daemonControlRequest{Command: "stop"})
-	} else {
+	deadline := time.Now().Add(3 * time.Second)
+	stopRequested := false
+	for time.Now().Before(deadline) {
 		select {
 		case err := <-errCh:
 			if err != nil {
 				t.Fatalf("daemon exited with error: %v", err)
 			}
+			return
 		default:
 		}
-		return
+		if liveness := readDaemonLiveness(stateRoot, time.Now().UTC()); !liveness.Alive {
+			return
+		}
+		resp, err := sendDaemonControlWithTimeout(stateRoot, daemonControlRequest{Command: "stop"}, 250*time.Millisecond)
+		if err == nil && resp.OK {
+			stopRequested = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !stopRequested {
+		t.Fatal("daemon stop request was not accepted")
 	}
 	select {
 	case err := <-errCh:

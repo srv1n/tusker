@@ -1979,7 +1979,10 @@ func (d *Daemon) executePlanBlockedReason(project RegisteredProject, wfFile Work
 	if err != nil {
 		return "", err
 	}
-	explanation := ctx.explainTaskForRunner(note, firstNonEmpty(run.Runner, automationResolveRunner(note, wfFile.Data)), &run)
+	// Plan eligibility and launch health have different persistence semantics.
+	// The actual pre-claim path owns runner health so it can record a structured,
+	// terminal infrastructure block without creating a lease or attempt.
+	explanation := ctx.explainTaskForRunnerMode(note, firstNonEmpty(run.Runner, automationResolveRunner(note, wfFile.Data)), &run, true, false)
 	if explanation.Dispatchable {
 		return "", nil
 	}
@@ -3193,6 +3196,16 @@ func (d *Daemon) autoLandArmedWaveReviewComplete(project RegisteredProject, note
 		// implementation exit bypass that authority boundary.
 		return false, nil
 	}
+	autoLandEligible, err := d.automaticLandingWorkspaceEligible(project.ProjectID, run.RecordID)
+	if err != nil {
+		return false, err
+	}
+	if !autoLandEligible {
+		// `copy` is the non-Git/weird-repository fallback. It does not promise a
+		// source history that can be merged safely, so keep the completed run at
+		// the explicit manual checkpoint instead of manufacturing a landing.
+		return false, nil
+	}
 	wave, _, armed := armedWaveForTask(project.VaultRoot, note)
 	if !armed {
 		return false, nil
@@ -3217,6 +3230,17 @@ func (d *Daemon) autoLandArmedWaveReviewComplete(project RegisteredProject, note
 		return true, err
 	}
 	return true, nil
+}
+
+func (d *Daemon) automaticLandingWorkspaceEligible(projectID, recordID string) (bool, error) {
+	identity, err := d.store.RunIdentity(projectID, recordID)
+	if err != nil {
+		return false, err
+	}
+	if identity == nil {
+		return true, nil
+	}
+	return normalizeWorkspaceStrategy(WorkspaceStrategy(identity.WorkspaceMode)) != WorkspaceStrategyCopy, nil
 }
 
 func trackerStateTerminal(wf Workflow, status string) bool {
@@ -3900,6 +3924,19 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 		return latest, true, err
 	}
 	if strings.TrimSpace(resumeSession.SessionRef) != "" {
+		// Resume identity is resolved from the durable session registry and may
+		// be more complete than the queued run snapshot (which can retain the
+		// session while clearing ActiveAttemptID). Persist that lineage before
+		// the detached wrapper opens the runtime store and projects the new
+		// attempt into the immutable execution ledger.
+		attempt.ParentAttemptID = firstNonEmpty(attempt.ParentAttemptID, resumeSession.ParentAttemptID)
+		attempt.SessionRef = resumeSession.SessionRef
+		if ok, saveErr := d.store.SaveAttemptIfRunLease(attempt, attemptID, leaseGeneration); saveErr != nil {
+			return run, true, saveErr
+		} else if !ok {
+			latest, latestErr := d.latestDispatchRun(run)
+			return latest, true, latestErr
+		}
 		d.emitSupervisorDecision(SupervisorDecision{
 			ProjectID:        project.ProjectID,
 			RecordID:         run.RecordID,

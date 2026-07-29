@@ -274,7 +274,7 @@ func codexCloudCommand(command string, config CodexCloudConfig, req StartRequest
 		"{{raw_log_path}}":           req.RawLogPath,
 		"{{status_path}}":            req.StatusPath,
 		"{{note_path}}":              req.NotePath,
-		"{{vault_path}}":             req.VaultPath,
+		"{{vault_path}}":             runnerWorkspaceVaultPath(req.WorkspacePath, req.VaultPath),
 		"{{environment_id}}":         config.EnvironmentID,
 		"{{apply_mode}}":             config.ApplyMode,
 		"{{pr_mode}}":                config.PRMode,

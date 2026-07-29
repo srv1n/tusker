@@ -150,6 +150,7 @@ func TestExecutionBindingAuthority(t *testing.T) {
 }
 
 func TestDirectExecutionLaunchGuard(t *testing.T) {
+	clearAgentSessionEnvForTest(t)
 	t.Setenv("TUSKER_ATTEMPT_ID", "attempt-1")
 	if err := rejectAgentSpawn("execution launch"); err == nil {
 		t.Fatal("dispatched worker was allowed to launch direct execution")
@@ -174,8 +175,12 @@ func TestDirectExecutionLaunchGuard(t *testing.T) {
 		t.Fatalf("launch guard opened state before refusal: %#v", entries)
 	}
 	os.Unsetenv("TUSKER_ATTEMPT_ID")
-	vault := t.TempDir()
-	if err := os.WriteFile(filepath.Join(vault, "tusker.yaml"), []byte("project_id: project-cloud\n"), 0o600); err != nil {
+	repo := t.TempDir()
+	vault := filepath.Join(repo, ".tusker")
+	if err := os.MkdirAll(vault, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "tusker.yaml"), []byte("project_id: project-cloud\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cloudState := filepath.Join(t.TempDir(), "cloud-state")

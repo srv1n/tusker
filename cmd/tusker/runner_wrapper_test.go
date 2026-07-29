@@ -62,6 +62,28 @@ func TestWrapperDetached(t *testing.T) {
 	assertEqual(t, string(RunnerCodexAppServer), request.Runner, "wrapper request runner")
 }
 
+func TestRunnerWrapperChildInheritsWrapperProcessGroup(t *testing.T) {
+	dir := t.TempDir()
+	req, err := runnerWrapperRequestForTest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Runner = string(RunnerCodexExec)
+	req.Start.Command = "sleep 30"
+	req.ContainmentPGID = processGroupID(os.Getpid())
+	result, err := runnerWrapperStartChild(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = syscall.Kill(result.PID, syscall.SIGKILL) }()
+
+	childPGID := processGroupID(result.PID)
+	wrapperPGID := processGroupID(os.Getpid())
+	if childPGID <= 0 || childPGID != wrapperPGID {
+		t.Fatalf("wrapper child escaped containment: child pid=%d pgid=%d wrapper pgid=%d", result.PID, childPGID, wrapperPGID)
+	}
+}
+
 func TestRunnerWrapperSpawnEventErrorStopsDetachedProcess(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(dir, "state"))

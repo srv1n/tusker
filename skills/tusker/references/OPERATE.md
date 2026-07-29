@@ -98,6 +98,5 @@ acceptance require explicit human authority.
 For direct Codex/Claude execution identity, provider-native child visibility,
 unbound-binding conflicts, timeline cursor reset, or cancellation settlement,
 use `tusker execution inbox|list|show|cancel` and read
-`docs/runbooks/execution-observability.md`. Provider observations remain
-authority-neutral: do not manufacture a lease, retroactively make pre-binding
+`docs/runbooks/execution-observability.md`. Provider observations remain authority-neutral: do not manufacture a lease, retroactively make pre-binding
 history proof-eligible, or infer child/process termination from a parent event.

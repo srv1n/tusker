@@ -152,7 +152,7 @@ func executionGraphMatches(n ExecutionGraphNode, f ExecutionGraphFilter) bool {
 	if !contains(n.ExecutionID, strings.TrimSpace(f.ExecutionID)) || !contains(n.RootExecutionID, strings.TrimSpace(f.RootID)) || !contains(n.ParentExecutionID, strings.TrimSpace(f.ParentID)) || !matchesExecutionGraphAssociation(n.TaskID, n.BoundTaskID, f.TaskID) || !matchesExecutionGraphAssociation(n.WaveID, n.BoundWaveID, f.WaveID) || !contains(n.Source, strings.TrimSpace(f.Source)) || !contains(n.Provider, strings.TrimSpace(f.Provider)) || !contains(n.EffectiveProviderID(), strings.TrimSpace(f.ProviderID)) || !contains(n.AgentType, strings.TrimSpace(f.AgentType)) || !contains(n.EffectiveDisplayName, strings.TrimSpace(f.Name)) {
 		return false
 	}
-	if lifecycle := strings.TrimSpace(f.Lifecycle); lifecycle != "" && !contains(n.ProviderStatus, lifecycle) && !contains(n.Lifecycle.LeaseState, lifecycle) && !contains(n.Lifecycle.AttemptOutcome, lifecycle) && !contains(n.Lifecycle.DeliveryState, lifecycle) {
+	if lifecycle := strings.TrimSpace(f.Lifecycle); lifecycle != "" && !executionGraphLifecycleMatches(n, lifecycle) {
 		return false
 	}
 	if binding := strings.TrimSpace(f.Binding); binding != "" && binding != n.BoundTaskID && binding != n.BoundWaveID {
@@ -167,6 +167,28 @@ func executionGraphMatches(n ExecutionGraphNode, f ExecutionGraphFilter) bool {
 		}
 	}
 	return true
+}
+
+func executionGraphLifecycleMatches(n ExecutionGraphNode, filter string) bool {
+	filter = strings.TrimSpace(filter)
+	for _, value := range []string{
+		n.ProviderStatus,
+		n.Lifecycle.LeaseState,
+		n.Lifecycle.AttemptOutcome,
+		n.Lifecycle.ProviderStatus,
+		n.Lifecycle.DeliveryState,
+		n.Lifecycle.AdmissionState,
+		n.Lifecycle.ProcessState,
+		n.Lifecycle.OutcomeState,
+		n.Lifecycle.SessionState,
+		n.Lifecycle.ChildAttentionState,
+		n.Lifecycle.DerivedPhase,
+	} {
+		if strings.EqualFold(strings.TrimSpace(value), filter) {
+			return true
+		}
+	}
+	return false
 }
 
 func matchesExecutionGraphAssociation(immutable, bound, filter string) bool {

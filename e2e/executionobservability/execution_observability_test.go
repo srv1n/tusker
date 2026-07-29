@@ -122,7 +122,7 @@ func TestExecutionObservability(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, goBinary, "test", "./cmd/tusker", "-run", "^("+strings.Join(all, "|")+")$", "-count=1", "-v")
 	cmd.Dir = repo
-	cmd.Env = executionObservabilityEnvironment(t)
+	cmd.Env = executionObservabilityEnvironment(t, goBinary)
 	var output bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &output, &output
 	if err := cmd.Run(); err != nil {
@@ -154,8 +154,21 @@ func executionObservabilityRepositoryRoot(t *testing.T) string {
 	return repo
 }
 
-func executionObservabilityEnvironment(t *testing.T) []string {
+func executionObservabilityEnvironment(t *testing.T, goBinary string) []string {
 	t.Helper()
+	goEnv := func(name string) string {
+		t.Helper()
+		output, err := exec.Command(goBinary, "env", name).Output()
+		if err != nil {
+			t.Fatalf("resolve %s: %v", name, err)
+		}
+		value := strings.TrimSpace(string(output))
+		if value == "" {
+			t.Fatalf("resolve %s: empty value", name)
+		}
+		return value
+	}
+	moduleCache, buildCache := goEnv("GOMODCACHE"), goEnv("GOCACHE")
 	sandbox := t.TempDir()
 	home := filepath.Join(sandbox, "home")
 	state := filepath.Join(sandbox, "state")
@@ -167,7 +180,7 @@ func executionObservabilityEnvironment(t *testing.T) []string {
 	}
 	env := make([]string, 0, len(os.Environ())+10)
 	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "HOME=") || strings.HasPrefix(entry, "TMPDIR=") || strings.HasPrefix(entry, "TUSKER_STATE_ROOT=") || strings.HasPrefix(entry, "TUSKER_ATTEMPT_ID=") || strings.HasPrefix(entry, "CODEX_") || strings.HasPrefix(entry, "CLAUDE") || strings.HasPrefix(entry, "ANTHROPIC_") || strings.HasPrefix(entry, "OPENAI_") {
+		if strings.HasPrefix(entry, "HOME=") || strings.HasPrefix(entry, "TMPDIR=") || strings.HasPrefix(entry, "TUSKER_STATE_ROOT=") || strings.HasPrefix(entry, "TUSKER_ATTEMPT_ID=") || strings.HasPrefix(entry, "GOMODCACHE=") || strings.HasPrefix(entry, "GOCACHE=") || strings.HasPrefix(entry, "CODEX_") || strings.HasPrefix(entry, "CLAUDE") || strings.HasPrefix(entry, "ANTHROPIC_") || strings.HasPrefix(entry, "OPENAI_") {
 			continue
 		}
 		env = append(env, entry)
@@ -176,6 +189,8 @@ func executionObservabilityEnvironment(t *testing.T) []string {
 		"HOME="+home,
 		"TMPDIR="+tmp,
 		"TUSKER_STATE_ROOT="+state,
+		"GOMODCACHE="+moduleCache,
+		"GOCACHE="+buildCache,
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_CONFIG_SYSTEM="+os.DevNull,
 		"GIT_TERMINAL_PROMPT=0",

@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"strconv"
@@ -87,19 +86,7 @@ func (a CodexExecutionAdapter) ObserveRunPayload(run RunStatus, payload any, seq
 }
 
 func (a CodexExecutionAdapter) executionForCodexRun(run RunStatus, providerHandle string) (string, error) {
-	var id string
-	err := a.Store.queryRowScan(`SELECT execution_id FROM execution_records WHERE project_id = ? AND attempt_id = ? LIMIT 1`, []any{run.ProjectID, run.ActiveAttemptID}, &id)
-	if err == nil {
-		return id, nil
-	}
-	if err != nil && err != sql.ErrNoRows {
-		return "", err
-	}
-	err = a.Store.queryRowScan(`SELECT execution_id FROM execution_attachment_events WHERE project_id = ? AND provider = 'codex' AND provider_session_id = ? LIMIT 1`, []any{run.ProjectID, providerHandle}, &id)
-	if err != nil {
-		return "", nil
-	}
-	return id, nil
+	return a.Store.executionForProviderRun(run.ProjectID, "codex", providerHandle, run.ActiveAttemptID)
 }
 
 func codexPayloadString(value any, keys ...string) string {

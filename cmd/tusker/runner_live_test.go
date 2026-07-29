@@ -877,7 +877,7 @@ def emit_review_proposal(msg):
     assert work_revision == int(os.environ["TUSKER_WORK_REVISION"])
     result = {
         "schema": "tusker.review-result/v2",
-        "project_id": os.environ["TUSKER_PROJECT_ID"],
+        "project_id": os.environ["TUSKER_CANONICAL_PROJECT_ID"],
         "task_id": os.environ["TUSKER_RECORD_ID"],
         "task_state_rev": prompt_arg(prompt, "task-rev"),
         "work_revision": work_revision,
@@ -981,6 +981,10 @@ for line in sys.stdin:
 	assertEqual(t, string(LeaseStateReleased), executeRun.LeaseState, "execute lease")
 	assertEqual(t, string(AttemptOutcomeSucceeded), executeRun.AttemptOutcome, "execute outcome")
 	implementationSHA := strings.TrimSpace(gitOutput(t, "-C", executeRun.WorkspacePath, "rev-parse", "HEAD"))
+	// Copy-mode workspaces have an independent object database. Import the
+	// exact implementation object before asking the review lane to resolve the
+	// recorded source; no branch or canonical working-tree content is moved.
+	runGitDir(t, filepath.Dir(vault), "fetch", executeRun.WorkspacePath, implementationSHA)
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 		"source_sha":    implementationSHA,
 		"work_revision": 1,

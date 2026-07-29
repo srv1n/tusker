@@ -737,7 +737,7 @@ func runsReleaseCmd(args Args) error {
 		if strings.TrimSpace(firstNonEmpty(args.String("by"), args.String("owner"), args.String("actor"))) == "" {
 			return tuskerError(errorMissingArg, "interactive work release requires --by <owner> and --revision <work-revision>", withHint("use `tusker work release "+run.ItemID+" --by "+run.LeaseOwner+" --revision "+fmt.Sprint(run.WorkRevision)+" --reason <text>`"))
 		}
-		if intArg(args, "revision") <= 0 {
+		if strings.TrimSpace(args.String("revision")) == "" {
 			return tuskerError(errorMissingArg, "interactive work release requires --revision <work-revision>")
 		}
 		args["id"] = run.ItemID

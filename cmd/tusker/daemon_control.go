@@ -104,12 +104,21 @@ func (s *daemonControlServer) Close() error {
 }
 
 func sendDaemonControl(stateRoot string, req daemonControlRequest) (daemonControlResponse, error) {
-	conn, err := net.DialTimeout("unix", daemonSocketPath(stateRoot), 1500*time.Millisecond)
+	return sendDaemonControlWithTimeout(stateRoot, req, 6500*time.Millisecond)
+}
+
+func sendDaemonControlWithTimeout(stateRoot string, req daemonControlRequest, timeout time.Duration) (daemonControlResponse, error) {
+	if timeout <= 0 {
+		timeout = 6500 * time.Millisecond
+	}
+	deadline := time.Now().Add(timeout)
+	dialTimeout := min(timeout, 1500*time.Millisecond)
+	conn, err := net.DialTimeout("unix", daemonSocketPath(stateRoot), dialTimeout)
 	if err != nil {
 		return daemonControlResponse{}, err
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(deadline)
 	raw, err := json.Marshal(req)
 	if err != nil {
 		return daemonControlResponse{}, err

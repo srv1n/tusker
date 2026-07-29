@@ -44,13 +44,13 @@ func TestExecutionCancellationManagedPIDFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	managed, err := store.CreateManagedExecution(ManagedExecutionInput{ProjectID: "project-1", ParentExecutionID: root.ExecutionID, TaskID: "MANAGED-T-1", AttemptID: "attempt-fenced", LeaseGeneration: 7, Source: "managed", Provider: "codex"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	pid := os.Getpid()
 	run := RunStatus{ProjectID: "project-1", RecordID: "MANAGED-T-1", ItemID: "MANAGED-T-1", ActiveAttemptID: "attempt-fenced", LeaseGeneration: 7, LeaseState: string(LeaseStateRunning), ProcessPID: pid, ProcessPGID: processGroupID(pid), ProcessStartedAt: "1970-01-01T00:00:00Z", UpdatedAt: executionNow()}
 	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	managed, err := store.CreateManagedExecution(ManagedExecutionInput{ProjectID: "project-1", ParentExecutionID: root.ExecutionID, TaskID: "MANAGED-T-1", AttemptID: "attempt-fenced", LeaseGeneration: 7, Source: "managed", Provider: "codex"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	control, err := store.RequestExecutionCancellation(managed.ExecutionID, "pid-reuse")

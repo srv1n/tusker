@@ -197,7 +197,7 @@ func TestDaemonKillNineAdoptsSurvivingWrapper(t *testing.T) {
 	h.touch(releaseFile)
 	h.waitRun(crashTaskID, crashRunWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "released" &&
-			runString(run, "attempt_outcome") == "succeeded" &&
+			runString(run, "attempt_outcome") == "waiting_for_review" &&
 			runInt(run, "process_pid") == 0
 	})
 	second.stop()
@@ -262,6 +262,7 @@ func TestArmedWaveCrashRestartConverges(t *testing.T) {
 	root := h.waitRun("APP-T-0001", crashRunWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "running" && runInt(run, "attempt_count") == 1
 	})
+	rootChildPID := h.waitRunnerPID(crashRunnerWait)
 	rootPID, rootGeneration := runInt(root, "process_pid"), runInt(root, "lease_generation")
 	first.kill(syscall.SIGKILL)
 	second := h.startDaemon("armed-daemon-2")
@@ -271,6 +272,35 @@ func TestArmedWaveCrashRestartConverges(t *testing.T) {
 	})
 
 	h.touch(filepath.Join(h.tempRoot, "release-APP-T-0001"))
+	h.waitRun("APP-T-0001", crashRunWait, func(run map[string]any) bool {
+		return runString(run, "lease_state") == "released" &&
+			runString(run, "attempt_outcome") == "waiting_for_review" &&
+			runInt(run, "attempt_count") == 1
+	})
+	// A copy workspace is a safe manual-mode fallback, not a mergeable landing
+	// source. Model the explicit human checkpoint that records observed proof
+	// and review readiness before the next frontier.
+	h.cliOK(h.repoDir,
+		"verify", "add", "APP-T-0001",
+		"--vault", h.vaultDir,
+		"--covers", "A1",
+		"--check", "go test ./e2e/crashrecovery",
+		"--result", "pass",
+		"--note", "crash-recovery harness observed the root worker handoff",
+		"--by", "human:e2e",
+		"--local",
+		"--quiet",
+	)
+	h.cliOK(h.repoDir,
+		"status",
+		"--id", "APP-T-0001",
+		"--status", "review",
+		"--vault", h.vaultDir,
+		"--actor", "human:e2e",
+		"--reason", "manual crash-recovery review checkpoint",
+		"--local",
+		"--quiet",
+	)
 	next := h.waitRun("APP-T-0002", crashRunWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "running" && runInt(run, "attempt_count") == 1
 	})
@@ -278,8 +308,15 @@ func TestArmedWaveCrashRestartConverges(t *testing.T) {
 	if nextPID <= 0 {
 		t.Fatalf("next frontier did not receive exactly one claim: %s", prettyJSON(next))
 	}
+	nextChildPID := h.waitRunnerPIDChange(rootChildPID, crashRunnerWait)
 	second.kill(syscall.SIGKILL)
 	h.killProcessGroup(nextPID, syscall.SIGKILL)
+	eventually(t, 3*time.Second, 25*time.Millisecond, func() (bool, string) {
+		if processAlive(nextChildPID) {
+			return false, fmt.Sprintf("runner child %d survived recorded wrapper group kill", nextChildPID)
+		}
+		return true, ""
+	})
 	third := h.startDaemon("armed-daemon-3")
 	reclaimed := h.waitRun("APP-T-0002", crashRunWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "running" && runInt(run, "attempt_count") == 2 && runInt(run, "process_pid") != nextPID
@@ -520,18 +557,13 @@ func specToWaveDeliveryPlan() string {
 
 func (h *harness) installWaveCompatibleOperatorSkill() {
 	h.t.Helper()
-	h.writeFile(filepath.Join(h.repoDir, "skill", "SKILL.md"), `---
-name: tusker
-description: Crash recovery fixture operator contract.
-metadata:
-  wave_authorization_schema: tusker.wave-authorization/v1
-  workflow_version: 1
-  tracker_schema_version: 7
-  factory_intake_contract_schema: tusker.factory-intake-contract/v1
-  factory_intake_contract_version: 1.1.0
-  factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
----
-`)
+	for _, relative := range []string{"SKILL.md", filepath.Join("assets", "compatibility.yaml")} {
+		raw, err := os.ReadFile(filepath.Join(h.repoRoot, "skills", "tusker", relative))
+		if err != nil {
+			h.t.Fatalf("read canonical operator skill %s: %v", relative, err)
+		}
+		h.writeFile(filepath.Join(h.repoDir, "skill", relative), string(raw))
+	}
 }
 
 func TestDeadRunnerMarkedInterruptedOnNextPoll(t *testing.T) {
@@ -864,7 +896,7 @@ func (h *harness) configureFakeRunner(cfg fakeRunnerConfig) {
 		binDir := filepath.Join(h.tempRoot, "bin")
 		h.mustMkdir(binDir)
 		codexShim := filepath.Join(binDir, "codex")
-		h.writeFile(codexShim, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo codex-crashrecovery-shim\n  exit 0\nfi\nexec "+command+"\n")
+		h.writeFile(codexShim, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo codex-crashrecovery-shim\n  exit 0\nfi\nresume_ref=\nif [ \"$1\" = \"exec\" ] && [ \"$2\" = \"resume\" ]; then\n  for arg in \"$@\"; do\n    case \"$arg\" in\n      exec|resume|-|--*) ;;\n      *) resume_ref=\"$arg\" ;;\n    esac\n  done\nfi\nTUSKER_FAKE_SESSION_REF=\"$resume_ref\" exec "+command+"\n")
 		if err := os.Chmod(codexShim, 0o755); err != nil {
 			h.t.Fatal(err)
 		}
@@ -1190,6 +1222,11 @@ func (h *harness) env() []string {
 
 func (h *harness) waitRunnerPID(timeout time.Duration) int {
 	h.t.Helper()
+	return h.waitRunnerPIDChange(0, timeout)
+}
+
+func (h *harness) waitRunnerPIDChange(previous int, timeout time.Duration) int {
+	h.t.Helper()
 	pidPath := filepath.Join(h.tempRoot, "runner.pid")
 	var pid int
 	eventually(h.t, timeout, 100*time.Millisecond, func() (bool, string) {
@@ -1198,7 +1235,7 @@ func (h *harness) waitRunnerPID(timeout time.Duration) int {
 			return false, err.Error()
 		}
 		parsed, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-		if err != nil || parsed <= 0 {
+		if err != nil || parsed <= 0 || parsed == previous {
 			return false, strings.TrimSpace(string(raw))
 		}
 		pid = parsed

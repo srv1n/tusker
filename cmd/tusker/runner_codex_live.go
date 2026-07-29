@@ -36,6 +36,7 @@ type codexLiveHandle struct {
 	policy          CodexPolicy
 	activeStates    []string
 	notePath        string
+	processPGID     int
 
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -98,7 +99,9 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		CodexPolicy: policy,
 	})
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if req.ContainmentPGID <= 0 {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -114,6 +117,11 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
+	childPGID := processGroupID(cmd.Process.Pid)
+	if req.ContainmentPGID > 0 && childPGID != req.ContainmentPGID {
+		_ = cmd.Process.Kill()
+		return nil, tuskerError(errorInvalidTransition, fmt.Sprintf("Codex child escaped wrapper containment: pid=%d pgid=%d expected=%d", cmd.Process.Pid, childPGID, req.ContainmentPGID))
+	}
 	runtimeStore, _ := OpenRuntimeStore(DefaultStateRoot())
 	handle := &codexLiveHandle{
 		projectID:       req.ProjectID,
@@ -128,6 +136,7 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 		policy:          policy,
 		activeStates:    append([]string{}, req.ActiveStates...),
 		notePath:        req.NotePath,
+		processPGID:     childPGID,
 		turnIndex:       -1,
 		eventLog:        NewEventLog(req.EventSinkPath),
 		runtimeStore:    runtimeStore,
@@ -241,7 +250,7 @@ func (h *codexLiveHandle) Interrupt(ctx context.Context) error {
 		}, nil)
 	}
 	if h.cmd != nil && h.cmd.Process != nil {
-		if err := syscall.Kill(-h.cmd.Process.Pid, syscall.SIGINT); err != nil && !errors.Is(err, syscall.ESRCH) {
+		if err := h.signalProcess(syscall.SIGINT); err != nil && !errors.Is(err, syscall.ESRCH) {
 			return err
 		}
 		return nil
@@ -1359,13 +1368,30 @@ func (h *codexLiveHandle) failCriticalRunnerIO(message string, err error) {
 	}
 	h.criticalOnce.Do(func() {
 		_ = appendRawLogLine(h.rawLogPath, message+": "+err.Error())
+		_ = writeRunnerStatusFile(h.statusPath, 1)
 		if h.cmd != nil && h.cmd.Process != nil {
-			_ = syscall.Kill(-h.cmd.Process.Pid, syscall.SIGKILL)
+			_ = h.signalProcess(syscall.SIGKILL)
 		}
 		h.doneOnce.Do(func() {})
-		_ = writeRunnerStatusFile(h.statusPath, 1)
 		liveRegistry.Unregister(h.attemptID)
 	})
+}
+
+func (h *codexLiveHandle) signalProcess(signal syscall.Signal) error {
+	if h == nil || h.cmd == nil || h.cmd.Process == nil {
+		return nil
+	}
+	pgid := h.processPGID
+	if pgid <= 0 {
+		childPGID, err := syscall.Getpgid(h.cmd.Process.Pid)
+		if err == nil && childPGID > 0 && childPGID != processGroupID(os.Getpid()) {
+			pgid = childPGID
+		}
+	}
+	if pgid > 0 {
+		return syscall.Kill(-pgid, signal)
+	}
+	return h.cmd.Process.Signal(signal)
 }
 
 func (h *codexLiveHandle) saveTurn(turn RunTurn) {

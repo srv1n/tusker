@@ -290,6 +290,33 @@ func TestLandDetachedRecoveryFromFlag(t *testing.T) {
 	assertEqual(t, "recovered\n", gitShowFile(t, repo, "integration/W-0001", "recovered.txt"), "integration has the recovered work")
 }
 
+func TestLandImportsCompletedCommitFromCloneWorkspace(t *testing.T) {
+	repo, vault := newLandTestRepo(t, 1, "test -f recovered.txt")
+	setWaveTaskState(t, vault, "APP-T-0001", "review", "review", "")
+
+	workspace := filepath.Join(t.TempDir(), "APP-T-0001__copy")
+	runGitDir(t, t.TempDir(), "clone", "--quiet", repo, workspace)
+	runGitDir(t, workspace, "config", "user.email", "copy@example.com")
+	runGitDir(t, workspace, "config", "user.name", "Copy Workspace")
+	runGitDir(t, workspace, "checkout", "--quiet", "integration/W-0001")
+	writeWorkspaceRecordForLandTest(t, workspace, "APP-T-0001")
+	if err := writeText(filepath.Join(workspace, "recovered.txt"), "copied workspace\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, workspace, "add", ".")
+	runGitDir(t, workspace, "commit", "-m", "copy workspace completed work")
+	completed := strings.TrimSpace(gitDirOutput(t, workspace, "rev-parse", "HEAD"))
+	if _, err := gitOutputTrim(repo, "rev-parse", completed+"^{commit}"); err == nil {
+		t.Fatal("precondition: canonical repository unexpectedly has the copy-only commit")
+	}
+
+	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "from": workspace}); err != nil {
+		t.Fatalf("clone workspace recovery land failed: %v", err)
+	}
+	assertEqual(t, completed, strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "task/APP-T-0001")), "task branch imported exact clone commit")
+	assertEqual(t, "copied workspace\n", gitShowFile(t, repo, "integration/W-0001", "recovered.txt"), "integration has cloned workspace work")
+}
+
 func TestLandFromRefRequiresExactWorkspaceRecordID(t *testing.T) {
 	repo, vault := newLandTestRepo(t, 1, "test -f recovered.txt")
 	wrong := filepath.Join(t.TempDir(), "APP-T-0001-wrong-record")

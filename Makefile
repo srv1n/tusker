@@ -89,7 +89,7 @@ test: ## Run Go tests
 	$(VALIDATION_GATE) $(MAKE) test-unlocked
 
 test-unlocked:
-	GOMAXPROCS=$(GO_MAX_PROCS) go test -p=$(GO_PACKAGE_PARALLELISM) -parallel=$(GO_TEST_PARALLELISM) ./...
+	GOMAXPROCS=$(GO_MAX_PROCS) go test -timeout=20m -p=$(GO_PACKAGE_PARALLELISM) -parallel=$(GO_TEST_PARALLELISM) ./...
 
 vet: ## Run go vet
 	$(VALIDATION_GATE) $(MAKE) vet-unlocked

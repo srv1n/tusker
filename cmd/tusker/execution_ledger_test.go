@@ -101,7 +101,7 @@ func TestExecutionEdgesRejectAdversarialSQL(t *testing.T) {
 }
 
 func TestExecutionBackfillRejectsAnyImmutableMetadataConflictAtomically(t *testing.T) {
-	variants := []string{"root", "parent", "kind", "task", "session", "provider"}
+	variants := []string{"root", "parent", "kind", "task", "provider"}
 	for _, variant := range variants {
 		t.Run(variant, func(t *testing.T) {
 			store := executionLedgerStore(t)
@@ -125,8 +125,6 @@ func TestExecutionBackfillRejectsAnyImmutableMetadataConflictAtomically(t *testi
 				record.NodeKind = ExecutionNodeProviderChild
 			case "task":
 				record.TaskID = "FORGED"
-			case "session":
-				record.SessionRef = "forged-session"
 			case "provider":
 				record.Provider = "claude"
 			}
@@ -344,5 +342,97 @@ func TestExecutionGraphMigration(t *testing.T) {
 	existingWithoutStart, err = store.Execution(existingID)
 	if err != nil || existingWithoutStart == nil || existingWithoutStart.CreatedAt != existingTimestamp {
 		t.Fatalf("existing legacy timestamp changed after restart: %#v %v", existingWithoutStart, err)
+	}
+}
+
+func TestExecutionBackfillPreservesExistingTimestampAfterAttemptStartEnrichment(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state")
+	store, err := OpenRuntimeStore(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	attempt := RunAttempt{AttemptID: "legacy-enriched-start", ProjectID: "project-1", RecordID: "record-1", ItemID: "ORC-T-0005", Runner: "codex"}
+	if err := store.SaveAttempt(attempt); err != nil {
+		t.Fatal(err)
+	}
+	executionID := legacyExecutionID(attempt.AttemptID)
+	createdAt := "2026-07-29T15:54:38.571415Z"
+	existing := ExecutionRecord{
+		ExecutionID: executionID, RootExecutionID: executionID, ProjectID: attempt.ProjectID, NodeKind: ExecutionNodeRoot,
+		SearchLabel: normalizeExecutionLabel(attempt.ItemID, "", attempt.Runner, executionID), TaskID: attempt.ItemID,
+		AttemptID: attempt.AttemptID, Source: "legacy_attempt", Provider: attempt.Runner, Creator: "migration:execution-ledger", CreatedAt: createdAt,
+	}
+	if err := store.insertExecutionRecord(existing); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.backfillExecutionLedger(); err != nil {
+		t.Fatal(err)
+	}
+
+	// An interrupted migration can replay after later runtime enrichment adds a
+	// started_at value. The execution row remains immutable in that replay.
+	attempt.StartedAt = "2026-07-29T15:53:39.415652Z"
+	if err := store.SaveAttempt(attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenRuntimeStore(state)
+	if err != nil {
+		t.Fatalf("backfill replay after started_at enrichment failed: %v", err)
+	}
+	defer store.Close()
+
+	replayed, err := store.Execution(executionID)
+	if err != nil || replayed == nil || replayed.CreatedAt != createdAt {
+		t.Fatalf("immutable execution timestamp changed after enriched replay: %#v %v", replayed, err)
+	}
+}
+
+func TestExecutionBackfillPreservesFirstProjectionAcrossAttemptEnrichment(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state")
+	store, err := OpenRuntimeStore(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAttempt(RunAttempt{AttemptID: "legacy-parent", ProjectID: "project-1", RecordID: "record-1", ItemID: "TASK-P", Runner: "codex", StartedAt: "2026-07-29T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAttempt(RunAttempt{AttemptID: "legacy-child", ProjectID: "project-1", RecordID: "record-1", ItemID: "TASK-C", Runner: "codex", ParentAttemptID: "legacy-parent", ChildType: "worker", StartedAt: "2026-07-29T00:01:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.backfillExecutionLedger(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.Execution(legacyExecutionID("legacy-child"))
+	if err != nil || before == nil {
+		t.Fatalf("first projection=%#v err=%v", before, err)
+	}
+	// Runtime completion writers legitimately know more than initial admission
+	// and may submit a partial attempt. Stable lineage is merged while the
+	// immutable execution snapshot remains unchanged.
+	if err := store.SaveAttempt(RunAttempt{AttemptID: "legacy-child", SessionRef: "session-after-start", FinishedAt: "2026-07-29T00:02:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenRuntimeStore(state)
+	if err != nil {
+		t.Fatalf("reopen after attempt enrichment: %v", err)
+	}
+	defer store.Close()
+	after, err := store.Execution(legacyExecutionID("legacy-child"))
+	if err != nil || after == nil || *after != *before {
+		t.Fatalf("immutable projection changed: before=%#v after=%#v err=%v", before, after, err)
+	}
+	var projectID, itemID, parentID, childType, sessionRef, startedAt string
+	if err := store.queryRowScan(`SELECT project_id, item_id, parent_attempt_id, child_type, session_ref, started_at FROM attempts WHERE attempt_id = ?`, []any{"legacy-child"}, &projectID, &itemID, &parentID, &childType, &sessionRef, &startedAt); err != nil {
+		t.Fatal(err)
+	}
+	if projectID != "project-1" || itemID != "TASK-C" || parentID != "legacy-parent" || childType != "worker" || sessionRef != "session-after-start" || startedAt != "2026-07-29T00:01:00Z" {
+		t.Fatalf("attempt enrichment lost stable facts: project=%q item=%q parent=%q child=%q session=%q started=%q", projectID, itemID, parentID, childType, sessionRef, startedAt)
 	}
 }

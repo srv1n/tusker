@@ -14,9 +14,10 @@ import (
 )
 
 type runnerWrapperRequest struct {
-	Runner string         `json:"runner"`
-	Start  StartRequest   `json:"start"`
-	Resume *ResumeRequest `json:"resume,omitempty"`
+	Runner          string         `json:"runner"`
+	Start           StartRequest   `json:"start"`
+	Resume          *ResumeRequest `json:"resume,omitempty"`
+	ContainmentPGID int            `json:"-"`
 }
 
 func startDetachedRunnerWrapper(ctx context.Context, runner RunnerName, req StartRequest, resume *ResumeRequest, capabilities RunnerCapabilities) (*StartResult, error) {
@@ -136,6 +137,7 @@ func runnerWrapperCmd(args Args) error {
 		_ = writeRunnerStatusFile(req.Start.StatusPath, 1)
 		return fmt.Errorf("register runner wrapper identity: %w", err)
 	}
+	req.ContainmentPGID = pgid
 	return runRunnerWrapper(context.Background(), req)
 }
 
@@ -182,6 +184,10 @@ func runRunnerWrapperWithChildStarter(
 
 func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*StartResult, error) {
 	runner := RunnerName(strings.TrimSpace(req.Runner))
+	// The wrapper's recorded session/PGID is the durable containment boundary.
+	// Its child must stay inside that group so a hard group kill cannot orphan a
+	// worker that later races a reclaimed attempt in the same workspace.
+	req.Start.ContainmentPGID = req.ContainmentPGID
 	switch runner {
 	case RunnerCodexAppServer:
 		if req.Resume != nil {
@@ -198,6 +204,7 @@ func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*St
 			Command:          req.Start.Command, CommandArgv: append([]string(nil), req.Start.CommandArgv...), CommandExecutableFP: req.Start.CommandExecutableFP, CommandSearchPath: req.Start.CommandSearchPath,
 			RunnerProfile: req.Start.RunnerProfile, RunnerHarness: req.Start.RunnerHarness, RunnerModel: req.Start.RunnerModel, RunnerEffort: req.Start.RunnerEffort,
 			NotePath: req.Start.NotePath, VaultPath: req.Start.VaultPath, CodexPolicy: req.Start.CodexPolicy, ExternalLoop: req.Start.ExternalLoop,
+			ContainmentPGID: req.ContainmentPGID,
 		}
 		if req.Resume != nil {
 			execReq.SessionRef = req.Resume.SessionRef

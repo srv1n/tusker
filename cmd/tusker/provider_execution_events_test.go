@@ -128,8 +128,9 @@ func TestProviderObservationAuthorityRefusals(t *testing.T) {
 	}
 	oversized := providerEvent(2, "large")
 	oversized.Metadata = map[string]any{"payload": strings.Repeat("x", providerObservationMaxMetadata+1)}
-	if _, err := store.ApplyProviderExecutionEvent(oversized); errorToIssue(err).Code != providerObservationRefused {
-		t.Fatalf("oversized error=%v", err)
+	truncated, err := store.ApplyProviderExecutionEvent(oversized)
+	if err != nil || !truncated.Degraded || truncated.DegradedReason != "metadata_redacted_or_truncated" {
+		t.Fatalf("bounded metadata result=%#v error=%v", truncated, err)
 	}
 	if _, err := store.ApplyProviderExecutionEvent(providerEvent(3, "good")); err != nil {
 		t.Fatal(err)

@@ -456,13 +456,24 @@ func (s *runOwnershipService) heartbeat(identity, owner string) (*RunStatus, err
 }
 
 func (s *runOwnershipService) finish(identity, owner string, outcome AttemptOutcome, summary, verification, reason string) (*RunStatus, error) {
-	return s.finishWithEndState(identity, owner, outcome, summary, verification, reason, nil)
+	return s.finishWithExpectedRevision(identity, owner, outcome, summary, verification, reason, nil)
 }
 
 func (s *runOwnershipService) finishWithEndState(identity, owner string, outcome AttemptOutcome, summary, verification, reason string, endState *RunEndState) (*RunStatus, error) {
+	return s.finishWithEndStateAtRevision(identity, owner, outcome, summary, verification, reason, endState, nil)
+}
+
+func (s *runOwnershipService) finishWithExpectedRevision(identity, owner string, outcome AttemptOutcome, summary, verification, reason string, expectedRevision *int) (*RunStatus, error) {
+	return s.finishWithEndStateAtRevision(identity, owner, outcome, summary, verification, reason, nil, expectedRevision)
+}
+
+func (s *runOwnershipService) finishWithEndStateAtRevision(identity, owner string, outcome AttemptOutcome, summary, verification, reason string, endState *RunEndState, expectedRevision *int) (*RunStatus, error) {
 	run, err := s.ownedRun(identity, owner)
 	if err != nil {
 		return nil, err
+	}
+	if expectedRevision != nil && run.WorkRevision != *expectedRevision {
+		return nil, workSessionStaleRevisionError("CAS_CONFLICT", identity, *expectedRevision, run.WorkRevision)
 	}
 	if outcome == AttemptOutcomeSucceeded && (strings.TrimSpace(summary) == "" || strings.TrimSpace(verification) == "") {
 		return nil, tuskerError(errorInvalidArg, "successful submission requires deliverable and acceptance-mapped verification summaries")
@@ -500,7 +511,11 @@ func (s *runOwnershipService) finishWithEndState(identity, owner string, outcome
 	// The outcome and release are one ownership transition.  Persisting the
 	// attempt first used to leave a stale terminal attempt behind if a reclaim
 	// won the lease before the separate release CAS.
-	if ok, err := s.store.FinalizeRunLease(*run, attempt, owner, run.LeaseGeneration); err != nil || !ok {
+	finalizeRun := *run
+	if expectedRevision != nil {
+		finalizeRun.WorkRevision = *expectedRevision
+	}
+	if ok, err := s.store.FinalizeRunLease(finalizeRun, attempt, owner, run.LeaseGeneration); err != nil || !ok {
 		return nil, firstNonNil(err, tuskerError("CAS_CONFLICT", "run ownership changed before terminal handoff"))
 	}
 	return s.store.FindRun(identity)
@@ -629,6 +644,10 @@ func runsLifecycleCmd(args Args, action string) error {
 	}
 	defer store.Close()
 	service := newRunOwnershipService(store)
+	expectedRevision, err := workSessionRevisionArg(args)
+	if err != nil {
+		return err
+	}
 	var run *RunStatus
 	switch action {
 	case "start":
@@ -644,11 +663,11 @@ func runsLifecycleCmd(args Args, action string) error {
 		if captureErr != nil {
 			return captureErr
 		}
-		run, err = service.finishWithEndState(id, owner, AttemptOutcomeSucceeded, args.String("deliverable"), args.String("verification"), "", &endState)
+		run, err = service.finishWithEndStateAtRevision(id, owner, AttemptOutcomeSucceeded, args.String("deliverable"), args.String("verification"), "", &endState, expectedRevision)
 	case "fail":
-		run, err = service.finish(id, owner, AttemptOutcomeFailed, "", "", firstNonEmpty(args.String("reason"), "run failed"))
+		run, err = service.finishWithExpectedRevision(id, owner, AttemptOutcomeFailed, "", "", firstNonEmpty(args.String("reason"), "run failed"), expectedRevision)
 	case "release":
-		run, err = service.finish(id, owner, AttemptOutcomeInterrupted, "", "", firstNonEmpty(args.String("reason"), "work session released"))
+		run, err = service.finishWithExpectedRevision(id, owner, AttemptOutcomeInterrupted, "", "", firstNonEmpty(args.String("reason"), "work session released"), expectedRevision)
 	case "reclaim":
 		current, findErr := store.FindRun(id)
 		if findErr != nil || current == nil {

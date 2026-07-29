@@ -71,6 +71,24 @@ func TestRunnerResolutionFallsBackPastBrokenBinary(t *testing.T) {
 	assertEqual(t, goodDir, filepath.SplitList(launchPath)[0], "healthy executable wins at launch")
 }
 
+func TestRunnerEnvSeparatesRuntimeAndCanonicalProjectIdentity(t *testing.T) {
+	repo := t.TempDir()
+	vault := filepath.Join(repo, ".tusker")
+	if err := os.MkdirAll(vault, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "tusker.yaml"), []byte("project_id: canonical-project\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	workspace := filepath.Join(repo, "worktree")
+	env := runnerEnv(runnerLaunchEnv{ProjectID: "runtime-project", WorkspacePath: workspace, VaultPath: vault})
+	assertEqual(t, "runtime-project", runnerEnvValue(env, "TUSKER_PROJECT_ID"), "runtime project identity")
+	assertEqual(t, "canonical-project", runnerEnvValue(env, "TUSKER_CANONICAL_PROJECT_ID"), "canonical project identity")
+	assertEqual(t, filepath.Join(workspace, ".tusker"), runnerEnvValue(env, "TUSKER_VAULT"), "worker-local vault")
+	assertEqual(t, vault, runnerEnvValue(env, "TUSKER_CANONICAL_VAULT"), "canonical vault")
+	assertEqual(t, filepath.Join(workspace, ".tusker"), runnerEnvValue(env, "TUSKER_WORKSPACE_VAULT"), "workspace vault")
+}
+
 func TestRunnerPreferredPathDirsFindsEachSupportedAppBundle(t *testing.T) {
 	standalone := t.TempDir()
 	chatGPT := t.TempDir()
@@ -116,7 +134,9 @@ exit 127
 	}
 
 	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
-	assertEqual(t, runnerInfrastructureBlockedState, run.LeaseState, "preflight lease state")
+	if run.LeaseState != runnerInfrastructureBlockedState {
+		t.Fatalf("preflight lease state: expected %q, got %#v", runnerInfrastructureBlockedState, run)
+	}
 	assertEqual(t, string(AttemptOutcomeBlocked), run.AttemptOutcome, "preflight outcome")
 	assertEqual(t, true, run.Terminal, "preflight terminal")
 	assertEqual(t, 0, run.AttemptCount, "preflight attempt count")

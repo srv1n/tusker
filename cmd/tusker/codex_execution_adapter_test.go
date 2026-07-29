@@ -162,3 +162,77 @@ func TestCodexExecutionAdapterRunPayloadWiresExecAndCloudPolls(t *testing.T) {
 		t.Fatalf("app notification children=%d err=%v", appChildren, err)
 	}
 }
+
+func TestCodexExecutionAdapterKeepsResumedSessionOnOriginalExecution(t *testing.T) {
+	store := executionLedgerStore(t)
+	defer store.Close()
+	parentAttempt := RunAttempt{
+		AttemptID: "attempt-parent", ProjectID: "project-1", RecordID: "APP-T-0001",
+		ItemID: "APP-T-0001", Runner: string(RunnerCodexExec), SessionRef: "thread-resumed",
+		StartedAt: "2026-07-29T12:00:00Z",
+	}
+	resumedAttempt := RunAttempt{
+		AttemptID: "attempt-resumed", ProjectID: "project-1", RecordID: "APP-T-0001",
+		ItemID: "APP-T-0001", Runner: string(RunnerCodexExec),
+		ParentAttemptID: parentAttempt.AttemptID, StartedAt: "2026-07-29T12:01:00Z",
+	}
+	for _, attempt := range []RunAttempt{parentAttempt, resumedAttempt} {
+		if err := store.SaveAttempt(attempt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.backfillExecutionLedger(); err != nil {
+		t.Fatal(err)
+	}
+	parentExecutionID := legacyExecutionID(parentAttempt.AttemptID)
+	if _, _, err := store.AttachExecution(ExecutionAttachmentInput{
+		ProjectID: "project-1", ExecutionID: parentExecutionID, Provider: "codex",
+		ProviderSessionID: "thread-resumed", SessionRef: "thread-resumed", Actor: "daemon",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	adapter := CodexExecutionAdapter{Store: store}
+	changed, err := adapter.ObserveRunPayload(
+		RunStatus{ProjectID: "project-1", Runner: string(RunnerCodexExec), ActiveAttemptID: resumedAttempt.AttemptID, SessionRef: "thread-resumed"},
+		map[string]any{"type": "subagent.started", "child_id": "resume-child", "status": "running", "timestamp": "2026-07-29T12:02:00Z"},
+		1,
+		"codex_exec_jsonl",
+	)
+	if err != nil || !changed {
+		t.Fatalf("resumed provider observation changed=%t err=%v", changed, err)
+	}
+	var attachments int
+	if err := store.queryRowScan(`SELECT COUNT(*) FROM execution_attachment_events WHERE provider_session_id = 'thread-resumed'`, nil, &attachments); err != nil || attachments != 1 {
+		t.Fatalf("resume moved or duplicated the provider attachment: count=%d err=%v", attachments, err)
+	}
+	var observedParent, childParent string
+	if err := store.queryRowScan(`SELECT parent_execution_id FROM provider_execution_observations WHERE child_handle = 'resume-child'`, nil, &observedParent); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.queryRowScan(`SELECT parent_execution_id FROM execution_records WHERE provider_child_handle = 'resume-child'`, nil, &childParent); err != nil {
+		t.Fatal(err)
+	}
+	if observedParent != parentExecutionID || childParent != parentExecutionID {
+		t.Fatalf("resumed session left its original execution: observation=%s child=%s want=%s", observedParent, childParent, parentExecutionID)
+	}
+
+	unrelatedAttempt := RunAttempt{
+		AttemptID: "attempt-unrelated", ProjectID: "project-1", RecordID: "APP-T-0002",
+		ItemID: "APP-T-0002", Runner: string(RunnerCodexExec), SessionRef: "thread-resumed",
+		StartedAt: "2026-07-29T12:03:00Z",
+	}
+	if err := store.SaveAttempt(unrelatedAttempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.backfillExecutionLedger(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adapter.ObserveRunPayload(
+		RunStatus{ProjectID: "project-1", Runner: string(RunnerCodexExec), ActiveAttemptID: unrelatedAttempt.AttemptID, SessionRef: "thread-resumed"},
+		map[string]any{"type": "turn.started", "status": "running", "timestamp": "2026-07-29T12:04:00Z"},
+		2,
+		"codex_exec_jsonl",
+	); err == nil {
+		t.Fatal("unrelated attempt reused an attached provider session")
+	}
+}
