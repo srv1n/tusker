@@ -89,7 +89,11 @@ func writeSkillMaterializationProvenanceWithContract(destination, sourceKind, so
 	if err != nil {
 		return err
 	}
-	compatibility := buildCapabilitiesManifest(nil, "").Compatibility
+	capabilities, err := buildCapabilitiesManifest(nil, "")
+	if err != nil {
+		return err
+	}
+	compatibility := capabilities.Compatibility
 	manifest := skillMaterializationProvenance{
 		Schema: skillMaterializationSchema, SourceKind: sourceKind, SourceIdentity: sourceIdentity,
 		CompatibilitySchema: compatibility.Schema, CompatibilityFingerprint: compatibility.Fingerprint,
@@ -259,7 +263,12 @@ func inspectSkillMaterialization(destination string) skillProvenanceReport {
 		result.Status, result.Message = "incompatible", "materialized Tusker manifest contradicts its packaged skill contract"
 		return result
 	}
-	compatibility := buildCapabilitiesManifest(nil, "").Compatibility
+	capabilities, err := buildCapabilitiesManifest(nil, "")
+	if err != nil {
+		result.Status, result.Message = "incompatible", "installed binary compatibility is unavailable: "+err.Error()
+		return result
+	}
+	compatibility := capabilities.Compatibility
 	if manifest.CompatibilitySchema != compatibility.Schema {
 		result.Status, result.Message = "incompatible", "materialized Tusker compatibility schema contradicts the installed binary"
 		return result

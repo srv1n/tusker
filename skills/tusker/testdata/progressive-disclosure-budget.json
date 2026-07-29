@@ -9,6 +9,7 @@
     {
       "id": "planning",
       "prompt": "Turn this spec into a reviewed delivery DAG and import it held.",
+      "route": "Requirements, decomposition, delivery DAG, review, held import, Start",
       "guide": "references/PLAN.md",
       "loaded_words": 990,
       "max_loaded_words": 1100,
@@ -17,6 +18,7 @@
     {
       "id": "interactive",
       "prompt": "Implement this Tusker task directly in my open Codex session.",
+      "route": "Interactive implementation, dispatched worker/reviewer, proof, gates, human wait",
       "guide": "references/WORK.md",
       "loaded_words": 1122,
       "max_loaded_words": 1250,
@@ -25,6 +27,7 @@
     {
       "id": "dispatched_worker",
       "prompt": "TUSKER_ATTEMPT_ID is set; execute the claimed task.",
+      "route": "Interactive implementation, dispatched worker/reviewer, proof, gates, human wait",
       "guide": "references/WORK.md",
       "loaded_words": 1122,
       "max_loaded_words": 1250,
@@ -33,6 +36,7 @@
     {
       "id": "dispatched_reviewer",
       "prompt": "Review this dispatched attempt and return the typed verdict.",
+      "route": "Interactive implementation, dispatched worker/reviewer, proof, gates, human wait",
       "guide": "references/WORK.md",
       "loaded_words": 1122,
       "max_loaded_words": 1250,
@@ -41,6 +45,7 @@
     {
       "id": "human_wait",
       "prompt": "The task is waiting_on_human; tell me the exact next action.",
+      "route": "Interactive implementation, dispatched worker/reviewer, proof, gates, human wait",
       "guide": "references/WORK.md",
       "loaded_words": 1122,
       "max_loaded_words": 1250,
@@ -49,6 +54,7 @@
     {
       "id": "onboarding",
       "prompt": "Wire this existing repository into Tusker without losing project knowledge.",
+      "route": "Existing-repo onboarding",
       "guide": "references/REPO_ONBOARDING.md",
       "loaded_words": 1897,
       "max_loaded_words": 2100,
@@ -57,6 +63,7 @@
     {
       "id": "xcode",
       "prompt": "Xcode failed because generated build state looks corrupted.",
+      "route": "Xcode generated build-state failure",
       "guide": "references/XCODE_BUILD_STATE.md",
       "loaded_words": 691,
       "max_loaded_words": 800,

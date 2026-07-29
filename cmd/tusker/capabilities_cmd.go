@@ -10,7 +10,10 @@ import (
 	"sort"
 )
 
-const capabilitiesSchema = "tusker.capabilities/v1"
+const (
+	capabilitiesSchema             = "tusker.capabilities/v1"
+	errorCapabilityContractInvalid = "CAPABILITY_CONTRACT_INVALID"
+)
 
 // capabilitiesManifest is the installed-binary contract for an orchestrator.
 // Keep it static: host discovery belongs to runner catalog, and project policy
@@ -68,11 +71,15 @@ type capabilityCompatibility struct {
 }
 
 type capabilityCompatibilityMaterial struct {
-	Schema         string                  `json:"schema"`
-	Commands       []capabilityCommand     `json:"commands"`
-	Schemas        capabilitySchemas       `json:"schemas"`
-	RunnerAdapters []string                `json:"runner_adapters"`
-	Contract       capabilityCompatibility `json:"contract"`
+	Schema               string                   `json:"schema"`
+	ReadOnly             bool                     `json:"read_only"`
+	Commands             []capabilityCommand      `json:"commands"`
+	Schemas              capabilitySchemas        `json:"schemas"`
+	RunnerAdapters       []string                 `json:"runner_adapters"`
+	RunnerCatalogSchema  string                   `json:"runner_catalog_schema"`
+	OptionalCapabilities []capabilityAvailability `json:"optional_capabilities"`
+	Deprecations         []capabilityDeprecation  `json:"deprecations"`
+	Contract             capabilityCompatibility  `json:"contract"`
 }
 
 func capabilitiesCmd(args Args) error {
@@ -81,7 +88,11 @@ func capabilitiesCmd(args Args) error {
 	}
 	info, _ := debugReadBuildInfo()
 	executable, _ := executablePath()
-	emitJSON(buildCapabilitiesManifest(info, executable))
+	manifest, err := buildCapabilitiesManifest(info, executable)
+	if err != nil {
+		return tuskerError(errorCapabilityContractInvalid, "capabilities compatibility is unavailable: "+err.Error())
+	}
+	emitJSON(manifest)
 	return nil
 }
 
@@ -89,8 +100,10 @@ func capabilitiesCmd(args Args) error {
 // test binary's build metadata or location.
 var debugReadBuildInfo = debug.ReadBuildInfo
 var executablePath = os.Executable
+var loadEmbeddedSkillCompatibility = embeddedSkillCompatibilityContract
+var loadEmbeddedSkillPayloadFingerprint = embeddedSkillPayloadFingerprint
 
-func buildCapabilitiesManifest(info *debug.BuildInfo, executable string) capabilitiesManifest {
+func buildCapabilitiesManifest(info *debug.BuildInfo, executable string) (capabilitiesManifest, error) {
 	manifest := capabilitiesManifest{
 		Schema:   capabilitiesSchema,
 		ReadOnly: true,
@@ -116,16 +129,27 @@ func buildCapabilitiesManifest(info *debug.BuildInfo, executable string) capabil
 		},
 		Deprecations: []capabilityDeprecation{
 			{Command: "legacy", Replacement: "V7 commands listed by tusker capabilities --json"},
+			{Command: "propose", Replacement: "proposal"},
 		},
 	}
 	sortCapabilitiesManifest(&manifest)
-	manifest.Compatibility = buildCapabilityCompatibility(manifest)
-	return manifest
+	compatibility, err := buildCapabilityCompatibility(manifest)
+	if err != nil {
+		return capabilitiesManifest{}, err
+	}
+	manifest.Compatibility = compatibility
+	return manifest, nil
 }
 
-func buildCapabilityCompatibility(manifest capabilitiesManifest) capabilityCompatibility {
-	contract, _ := embeddedSkillCompatibilityContract()
-	payloadFingerprint, _ := embeddedSkillPayloadFingerprint()
+func buildCapabilityCompatibility(manifest capabilitiesManifest) (capabilityCompatibility, error) {
+	contract, err := loadEmbeddedSkillCompatibility()
+	if err != nil {
+		return capabilityCompatibility{}, fmt.Errorf("load embedded compatibility contract: %w", err)
+	}
+	payloadFingerprint, err := loadEmbeddedSkillPayloadFingerprint()
+	if err != nil {
+		return capabilityCompatibility{}, fmt.Errorf("fingerprint embedded skill payload: %w", err)
+	}
 	projection := capabilityCompatibility{
 		Schema: skillCompatibilitySchema, WorkflowMin: contract.WorkflowMin, WorkflowMax: contract.WorkflowMax,
 		TrackerSchemaVersions:    append([]int(nil), contract.TrackerSchemaVersions...),
@@ -139,13 +163,19 @@ func buildCapabilityCompatibility(manifest capabilitiesManifest) capabilityCompa
 	sort.Strings(projection.WaveAuthorizationSchemas)
 	sort.Strings(projection.PrimaryGuides)
 	material := capabilityCompatibilityMaterial{
-		Schema: projection.Schema, Commands: manifest.Commands, Schemas: manifest.Schemas,
-		RunnerAdapters: manifest.RunnerAdapters, Contract: projection,
+		Schema: manifest.Schema, ReadOnly: manifest.ReadOnly,
+		Commands: manifest.Commands, Schemas: manifest.Schemas,
+		RunnerAdapters: manifest.RunnerAdapters, RunnerCatalogSchema: manifest.RunnerCatalogSchema,
+		OptionalCapabilities: manifest.OptionalCapabilities, Deprecations: manifest.Deprecations,
+		Contract: projection,
 	}
-	raw, _ := json.Marshal(material)
+	raw, err := json.Marshal(material)
+	if err != nil {
+		return capabilityCompatibility{}, fmt.Errorf("encode compatibility material: %w", err)
+	}
 	sum := sha256.Sum256(raw)
 	projection.Fingerprint = "sha256:" + hex.EncodeToString(sum[:])
-	return projection
+	return projection, nil
 }
 
 // installedCapabilityCommands is intentionally a complete public CLI inventory,
@@ -157,24 +187,28 @@ func installedCapabilityCommands() []capabilityCommand {
 		{Command: "automation", Subcommands: []string{"advance-external", "collect-external", "dispatch", "explain", "external-loop", "plan", "queue", "status"}, Flags: []string{"--json"}},
 		{Command: "brief"}, {Command: "capabilities", Flags: []string{"--json"}}, {Command: "claim"}, {Command: "close"},
 		{Command: "closeout", Subcommands: []string{"status"}}, {Command: "compact"}, {Command: "config", Subcommands: []string{"resolve"}},
-		{Command: "context", Subcommands: []string{"audit"}}, {Command: "daemon", Subcommands: []string{"install", "limits", "resume", "run", "service", "status", "stop"}},
+		{Command: "context", Subcommands: []string{"audit"}}, {Command: "daemon", Subcommands: []string{"install", "limits", "resume", "run", "service", "status", "stop", "uninstall"}},
 		{Command: "dashboard"}, {Command: "delivery", Subcommands: []string{"context", "doctor", "import", "plan", "review", "rollout", "start"}, Flags: []string{"--by", "--confirm", "--json", "--plan", "--scope"}},
 		{Command: "departure", Subcommands: []string{"check", "history", "hold", "resume", "status"}}, {Command: "digest"}, {Command: "discard"},
+		{Command: "docs", Subcommands: []string{"apply", "build", "catalog", "check", "dev", "export", "find", "freshness", "init", "map", "model", "new", "noop", "waive"}},
+		{Command: "domain", Subcommands: []string{"canon", "graph", "list", "new", "show"}},
 		{Command: "evidence"}, {Command: "escalate", Subcommands: []string{"ack"}}, {Command: "factory", Subcommands: []string{"operations"}},
 		{Command: "feedback", Subcommands: []string{"add", "digest", "ingest", "promote", "review", "signals"}}, {Command: "finish"},
 		{Command: "gate"}, {Command: "gate-ledger", Subcommands: []string{"check", "record"}}, {Command: "gate-run"}, {Command: "graph"},
-		{Command: "handoff"}, {Command: "heartbeat"}, {Command: "hook", Subcommands: []string{"install"}}, {Command: "improve", Subcommands: []string{"scan"}},
+		{Command: "handoff"}, {Command: "heartbeat"}, {Command: "help"}, {Command: "hook", Subcommands: []string{"install"}}, {Command: "improve", Subcommands: []string{"scan"}},
 		{Command: "init"}, {Command: "install"}, {Command: "land"}, {Command: "list"}, {Command: "logbook"},
+		{Command: "knowledge", Subcommands: []string{"apply", "check", "freshness", "list", "map", "new", "noop", "route", "show", "waive"}},
 		{Command: "migrate", Subcommands: []string{"close-policy", "evidence-policy", "gates", "v7", "vault-root"}},
-		{Command: "new", Subcommands: []string{"decision", "epic", "gate", "task"}, Flags: []string{"--vault"}}, {Command: "next"}, {Command: "open"}, {Command: "packet"}, {Command: "print"},
-		{Command: "projects", Subcommands: []string{"add", "disable", "enable", "limits", "list", "prune", "remove"}}, {Command: "proof"}, {Command: "proposal"}, {Command: "purge"},
-		{Command: "reconcile"}, {Command: "redact"}, {Command: "redrive"}, {Command: "refresh"}, {Command: "release"},
+		{Command: "new", Subcommands: []string{"bug", "decision", "doc", "epic", "gate", "task"}, Flags: []string{"--vault"}}, {Command: "next"}, {Command: "open"}, {Command: "packet"}, {Command: "print"},
+		{Command: "projects", Subcommands: []string{"add", "disable", "enable", "limits", "list", "prune", "remove"}}, {Command: "proof"}, {Command: "proposal"}, {Command: "publish", Subcommands: []string{"build", "dev", "export", "llms", "skill"}}, {Command: "purge"},
+		{Command: "reconcile"}, {Command: "redact"}, {Command: "redrive"}, {Command: "refresh"}, {Command: "reindex"}, {Command: "release"},
 		{Command: "review", Subcommands: []string{"submit"}, Flags: []string{"--attempt", "--covers", "--gate-fingerprint", "--proof-fingerprint", "--source-sha", "--task-rev", "--verdict", "--work-rev"}},
 		{Command: "runner", Subcommands: []string{"catalog", "profiles", "route"}, Flags: []string{"--bundled", "--json", "--lane", "--write"}}, {Command: "runner-wrapper"},
 		{Command: "runs", Subcommands: []string{"claim", "events", "fail", "heartbeat", "inspect", "interrupt", "logs", "reclaim", "redrive", "release", "retire", "start", "submit"}},
 		{Command: "search"}, {Command: "serve"}, {Command: "setup", Subcommands: []string{"doctor", "repair"}}, {Command: "show"},
 		{Command: "skill", Subcommands: []string{"audit-agent-guidance", "bundle", "doctor", "pack", "route", "sync"}}, {Command: "state"}, {Command: "status"}, {Command: "streams"},
 		{Command: "sync-repo-contract"}, {Command: "trace", Subcommands: []string{"list", "replay", "show"}}, {Command: "update"}, {Command: "validate"},
+		{Command: "verify", Subcommands: []string{"add", "recipe"}},
 		{Command: "vault", Subcommands: []string{"mount", "move", "repair", "set", "status", "unmount"}}, {Command: "version", Flags: []string{"--json"}},
 		{Command: "wave", Subcommands: []string{"add", "arm", "brief", "create", "disarm", "pause", "preflight", "remove", "resume", "show"}},
 		{Command: "work", Subcommands: []string{"fail", "heartbeat", "release", "start", "status", "submit"}, Flags: []string{"--json", "--vault"}}, {Command: "xcode", Subcommands: []string{"doctor"}},

@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -11,11 +13,19 @@ import (
 func TestInstalledCapabilityManifest(t *testing.T) {
 	executable := writeTempExecutable(t, "tusker-capabilities-test-binary")
 	info := &debug.BuildInfo{Main: debug.Module{Version: "v1.2.3-test"}}
-	first, err := json.Marshal(buildCapabilitiesManifest(info, executable))
+	firstManifest, err := buildCapabilitiesManifest(info, executable)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := json.Marshal(buildCapabilitiesManifest(info, executable))
+	first, err := json.Marshal(firstManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondManifest, err := buildCapabilitiesManifest(info, executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := json.Marshal(secondManifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +43,7 @@ func TestInstalledCapabilityManifest(t *testing.T) {
 		t.Fatalf("binary provenance = %#v", manifest.Binary)
 	}
 	assertSortedCapabilities(t, manifest)
-	for _, command := range []string{"automation", "capabilities", "daemon", "delivery", "projects", "runs", "wave", "work"} {
+	for _, command := range []string{"automation", "capabilities", "daemon", "delivery", "docs", "projects", "reindex", "runs", "verify", "wave", "work"} {
 		if !capabilitiesContainCommand(manifest.Commands, command) {
 			t.Fatalf("manifest omitted command family %q", command)
 		}
@@ -46,11 +56,100 @@ func TestInstalledCapabilityManifest(t *testing.T) {
 	}
 }
 
+func TestCapabilityInventoryCoversDispatcher(t *testing.T) {
+	raw, err := os.ReadFile("cli.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := strings.Index(string(raw), "func runInner(")
+	end := strings.Index(string(raw), "\nfunc legacyOnlyCommand(")
+	if start < 0 || end <= start {
+		t.Fatal("cannot isolate runInner dispatcher")
+	}
+	manifest, err := buildCapabilitiesManifest(nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	caseLines := regexp.MustCompile(`(?m)^\s*case ([^\n]+):`).FindAllStringSubmatch(string(raw)[start:end], -1)
+	quoted := regexp.MustCompile(`"([^"]+)"`)
+	for _, caseLine := range caseLines {
+		for _, match := range quoted.FindAllStringSubmatch(caseLine[1], -1) {
+			parts := strings.Fields(match[1])
+			if len(parts) == 0 {
+				continue
+			}
+			command := parts[0]
+			if command == "legacy" || command == "help" || strings.HasPrefix(command, "-") {
+				continue
+			}
+			capability, ok := capabilityCommandNamed(manifest.Commands, command)
+			if !ok {
+				if capabilityDeprecationNamed(manifest.Deprecations, command) {
+					continue
+				}
+				t.Errorf("runInner public command %q is absent from capabilities", command)
+				continue
+			}
+			if len(parts) > 1 && !containsString(capability.Subcommands, parts[1]) {
+				t.Errorf("runInner public command %q subcommand %q is absent from capabilities", command, parts[1])
+			}
+		}
+	}
+}
+
+func capabilityDeprecationNamed(deprecations []capabilityDeprecation, name string) bool {
+	for _, deprecation := range deprecations {
+		if deprecation.Command == name {
+			return true
+		}
+	}
+	return false
+}
+
+func capabilityCommandNamed(commands []capabilityCommand, name string) (capabilityCommand, bool) {
+	for _, command := range commands {
+		if command.Command == name {
+			return command, true
+		}
+	}
+	return capabilityCommand{}, false
+}
+
+func TestCapabilityCompatibilityFailsClosed(t *testing.T) {
+	previousContract := loadEmbeddedSkillCompatibility
+	previousPayload := loadEmbeddedSkillPayloadFingerprint
+	t.Cleanup(func() {
+		loadEmbeddedSkillCompatibility = previousContract
+		loadEmbeddedSkillPayloadFingerprint = previousPayload
+	})
+
+	loadEmbeddedSkillCompatibility = func() (skillCompatibilityContract, error) {
+		return skillCompatibilityContract{}, errors.New("contract fixture failed")
+	}
+	if _, err := buildCapabilitiesManifest(nil, ""); err == nil || !strings.Contains(err.Error(), "contract fixture failed") {
+		t.Fatalf("contract failure was not propagated: %v", err)
+	}
+	if err := capabilitiesCmd(Args{"json": "true"}); err == nil || errorToIssue(err).Code != errorCapabilityContractInvalid {
+		t.Fatalf("capabilities command did not fail closed: %v", err)
+	}
+
+	loadEmbeddedSkillCompatibility = previousContract
+	loadEmbeddedSkillPayloadFingerprint = func() (string, error) {
+		return "", errors.New("payload fixture failed")
+	}
+	if _, err := buildCapabilitiesManifest(nil, ""); err == nil || !strings.Contains(err.Error(), "payload fixture failed") {
+		t.Fatalf("payload failure was not propagated: %v", err)
+	}
+}
+
 // TestDispatchCapabilitySkewRefusal binds the manifest's unavailable state to
 // the actual Start gate. It proves that a caller cannot turn stale capability
 // knowledge into a claim, imported task, or armed wave.
 func TestDispatchCapabilitySkewRefusal(t *testing.T) {
-	manifest := buildCapabilitiesManifest(&debug.BuildInfo{}, writeTempExecutable(t, "tusker-capability-skew"))
+	manifest, err := buildCapabilitiesManifest(&debug.BuildInfo{}, writeTempExecutable(t, "tusker-capability-skew"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(manifest.OptionalCapabilities) != 1 || manifest.OptionalCapabilities[0].Capability != strictV2ProofAuthorityCapability || manifest.OptionalCapabilities[0].Available {
 		t.Fatalf("manifest does not report unavailable strict capability: %#v", manifest.OptionalCapabilities)
 	}

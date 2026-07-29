@@ -24,8 +24,14 @@ func TestSkillContractCompatibility(t *testing.T) {
 		t.Fatalf("compatibility contract = %#v", contract)
 	}
 
-	first := buildCapabilitiesManifest(nil, "")
-	second := buildCapabilitiesManifest(nil, "")
+	first, err := buildCapabilitiesManifest(nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := buildCapabilitiesManifest(nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if first.Compatibility.Schema != skillCompatibilitySchema ||
 		!strings.HasPrefix(first.Compatibility.Fingerprint, "sha256:") ||
 		first.Compatibility.CanonicalPayloadFP == "" ||
@@ -37,8 +43,21 @@ func TestSkillContractCompatibility(t *testing.T) {
 	changed := first
 	changed.Commands = append(append([]capabilityCommand(nil), first.Commands...), capabilityCommand{Command: "future-command"})
 	sortCapabilitiesManifest(&changed)
-	if buildCapabilityCompatibility(changed).Fingerprint == first.Compatibility.Fingerprint {
+	changedCompatibility, err := buildCapabilityCompatibility(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changedCompatibility.Fingerprint == first.Compatibility.Fingerprint {
 		t.Fatal("compatibility fingerprint did not bind command/schema support")
+	}
+	changed = first
+	changed.OptionalCapabilities[0].Available = !changed.OptionalCapabilities[0].Available
+	changedCompatibility, err = buildCapabilityCompatibility(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changedCompatibility.Fingerprint == first.Compatibility.Fingerprint {
+		t.Fatal("compatibility fingerprint did not bind optional capability availability")
 	}
 
 	current := filepath.Join(t.TempDir(), "current")
@@ -128,6 +147,19 @@ func TestTuskerSkillProgressiveDisclosure(t *testing.T) {
 			t.Fatalf("router has broken route %s", match[1])
 		}
 	}
+	routeTable := parseSkillRouteTable(body)
+	expectedRoutes := map[string]string{
+		"Requirements, decomposition, delivery DAG, review, held import, Start":            "references/PLAN.md",
+		"Interactive implementation, dispatched worker/reviewer, proof, gates, human wait": "references/WORK.md",
+		"Resident daemon, automation, waves, integration, fleet repair, recovery":          "references/OPERATE.md",
+		"Existing-repo onboarding":            "references/REPO_ONBOARDING.md",
+		"Xcode generated build-state failure": "references/XCODE_BUILD_STATE.md",
+		"Documentation publication":           "references/DOCS_PUBLICATION.md",
+		"Obsidian/Bases projection":           "references/OBSIDIAN_BASES.md",
+	}
+	if !reflect.DeepEqual(routeTable, expectedRoutes) {
+		t.Fatalf("router table = %#v, want %#v", routeTable, expectedRoutes)
+	}
 	for _, rel := range []string{"references/PLAN.md", "references/WORK.md", "references/OPERATE.md"} {
 		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
@@ -153,6 +185,7 @@ func TestTuskerSkillProgressiveDisclosure(t *testing.T) {
 		Cases []struct {
 			ID             string   `json:"id"`
 			Prompt         string   `json:"prompt"`
+			Route          string   `json:"route"`
 			Guide          string   `json:"guide"`
 			LoadedWords    int      `json:"loaded_words"`
 			MaxLoadedWords int      `json:"max_loaded_words"`
@@ -176,6 +209,9 @@ func TestTuskerSkillProgressiveDisclosure(t *testing.T) {
 			t.Fatalf("invalid disclosure case %#v", testCase)
 		}
 		seen[testCase.ID] = true
+		if routed := routeTable[testCase.Route]; routed == "" || routed != testCase.Guide {
+			t.Fatalf("%s route %q selects %q, want %q", testCase.ID, testCase.Route, routed, testCase.Guide)
+		}
 		guideRaw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(testCase.Guide)))
 		if err != nil {
 			t.Fatal(err)
@@ -209,6 +245,26 @@ func TestTuskerSkillProgressiveDisclosure(t *testing.T) {
 			t.Fatalf("generated install %s fingerprint = %s, want %s (%v)", install, fingerprint, canonicalFingerprint, err)
 		}
 	}
+}
+
+func parseSkillRouteTable(body string) map[string]string {
+	routes := map[string]string{}
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.HasPrefix(line, "|") {
+			continue
+		}
+		columns := strings.Split(strings.Trim(line, "|"), "|")
+		if len(columns) != 2 {
+			continue
+		}
+		request := strings.TrimSpace(columns[0])
+		guide := strings.Trim(strings.TrimSpace(columns[1]), "`")
+		if request == "Request" || strings.HasPrefix(request, "---") || !strings.HasPrefix(guide, "references/") {
+			continue
+		}
+		routes[request] = guide
+	}
+	return routes
 }
 
 func assertNoDuplicateSkillParagraphs(t *testing.T, root string, files []string) {
