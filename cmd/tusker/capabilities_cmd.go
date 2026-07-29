@@ -224,6 +224,7 @@ func installedCapabilityCommands() []capabilityCommand {
 		{Command: "departure", Subcommands: []string{"check", "history", "hold", "resume", "status"}}, {Command: "digest"}, {Command: "discard"},
 		{Command: "docs", Subcommands: []string{"find", "map", "new"}},
 		{Command: "domain", Subcommands: []string{"canon", "list", "new", "show"}},
+		{Command: "execution", Subcommands: []string{"attach", "bind", "detach", "inbox", "launch", "list", "rebind", "register", "rename", "show"}, Flags: []string{"--json"}},
 		{Command: "evidence"}, {Command: "escalate", Subcommands: []string{"ack"}}, {Command: "factory", Subcommands: []string{"operations"}},
 		{Command: "feedback", Subcommands: []string{"add", "digest", "ingest", "promote", "review", "signals"}}, {Command: "finish"},
 		{Command: "gate"}, {Command: "gate-ledger", Subcommands: []string{"check", "record"}}, {Command: "gate-run"},

@@ -78,6 +78,7 @@ Durable statuses: `idea, backlog, ready, review, rework, superseded`
 | `streams` | Show the generated live/landed orchestration lane board | See what is running vs landed across the lanes. |
 | `dashboard build\|open` | Build/open generated dashboards | Regenerate or open the dashboard files under `.tusker/dashboards/`. |
 | `brief` / `packet <id> --for agent\|reviewer\|explainer` | Print a human brief / generate an agent or reviewer packet | Hand a worker or reviewer exactly the context they need. |
+| `execution register\|attach\|rename\|bind\|detach\|rebind\|inbox\|list\|show\|cancel\|launch` | Register and inspect truthful execution visibility | Direct Codex/Claude work, provider correlation, graph search, guarded binding, and capability-aware cancellation. These operations do not claim, dispatch, arm, or grant delivery authority. |
 
 ## Hygiene — keep the vault honest
 
@@ -106,6 +107,12 @@ Durable statuses: `idea, backlog, ready, review, rework, superseded`
 - **Gate tiers.** Per-change gates run on touched scopes only; a wave-end gate
   runs a collective compile+lint+test; the full suite runs nightly. See
   [gates.md](gates.md).
+- **Execution visibility.** `execution register` creates immutable direct-work
+  identity before launch; `attach` correlates a provider session later. `inbox`
+  lists unbound direct work. `bind` derives and checks the task's canonical wave
+  and creates a non-retroactive proof boundary. `list` is the graph search and
+  `cancel` succeeds only for a capability-proved target. See
+  [execution-observability.md](execution-observability.md).
 
 TODO-verify: `gate-run` and `streams` do not register a `tusker help` page;
 descriptions above are drawn from `cli.go` and `gate_tier.go`. Update if help

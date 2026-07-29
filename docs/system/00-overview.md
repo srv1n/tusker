@@ -58,6 +58,7 @@ flowchart TD
 |---|---|---|
 | Tasks & proof | Two-layer contracts, lifecycle status, proof rows, evidence, acceptance | [tasks-and-proof.md](tasks-and-proof.md) |
 | Orchestration | Daemon polling, dispatch, runs/leases, waves, interactive session attach | [orchestration.md](orchestration.md) |
+| Execution observability | Immutable execution identities, direct work, provider children, and convergent timelines | [execution-observability.md](execution-observability.md) |
 | Gates | Per-change / wave-end / nightly gate tiers, gate-ledger, closeout checkpoints | [gates.md](gates.md) |
 | Skills & knowledge | The `tusker` operator skill, per-repo project-knowledge skill, domain canon | [skills.md](skills.md) |
 | Serve UI | Read-only localhost control room (runs, streams, tasks) | [serve-ui.md](serve-ui.md) |
@@ -93,6 +94,23 @@ Three kinds of writing, three jobs — keep them separate:
 
 If code and these docs disagree, the code wins and the doc is the bug — fix it.
 
+## Execution observability
+
+Tasks and waves describe delivery contracts and authorization; an **execution**
+describes one observable strand of work. Tusker gives every execution an
+immutable `exec_…` identity. A friendly display name, task ID, wave ID,
+provider session ID, and reusable agent type are separate correlation fields,
+never substitutes for that identity.
+
+This distinction matters most for direct work. A Codex or Claude session may
+register before it launches or attach after it has a provider ID. Until it is
+bound to a task's canonical wave, it appears in the **unbound inbox** and is
+observation-only: it cannot claim work, prove acceptance, request review, arm
+a wave, land, release, or spend. Binding is audited and creates a new authority
+generation; it never makes earlier history eligible retroactively. The complete
+operator model, limits, and recovery procedure are in
+[execution-observability.md](execution-observability.md).
+
 <!-- tusker:docs-map:begin -->
 ```mermaid
 graph TD
@@ -100,6 +118,7 @@ graph TD
   n_cli["Tusker CLI reference"]
   n_execution_observability["Execution observability: names, lineage, and truthful multi-agent tracking"]
   n_execution_observability_grill["Decision log: execution observability and direct-agent identity"]
+  n_execution_observability_system["Execution observability"]
   n_factory_intake["Factory intake contract"]
   n_gates["Gates (human gates, the gate tier, and batch merge windows)"]
   n_gates_over_records["Decision log: gates over records"]
@@ -116,6 +135,7 @@ graph TD
   n_overview --> n_cli
   n_software_factory --> n_execution_observability
   n_execution_observability --> n_execution_observability_grill
+  n_overview --> n_execution_observability_system
   n_overview --> n_factory_intake
   n_overview --> n_gates
   n_software_factory --> n_gates_over_records

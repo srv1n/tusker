@@ -28,6 +28,7 @@ import { RouteFallback } from "@/components/RouteFallback";
     '/p/$projectId/tasks/$taskId' Task product detail
     '/p/$projectId/trains'       Promotion trains
     '/p/$projectId/diagnostics'  Runtime diagnostics
+    '/p/$projectId/diagnostics/executions' Execution graph beneath Operations
     '/p/$projectId/needs'        → redirects to overview (absorbed)
     '/p/$projectId/runs'         → redirects to overview (absorbed)
     '/p/$projectId/runs/$taskId' Run detail          (params: projectId, taskId)
@@ -154,6 +155,12 @@ const diagnosticsRoute = createRoute({
   ),
 });
 
+const executionsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "diagnostics/executions",
+  component: lazyRouteComponent(() => import("@/features/executions/ExecutionOperations"), "ExecutionOperations"),
+});
+
 // Needs-me and Runs are absorbed into the Overview (SRV-T-0003). Their old
 // URLs redirect to the Overview so bookmarks and in-app links never break; the
 // run-detail route below is kept (it is just no longer a sidebar item).
@@ -269,7 +276,8 @@ const routeTree = rootRoute.addChildren([
     tasksRoute,
     taskDetailRoute,
     trainsRoute,
-    diagnosticsRoute,
+  diagnosticsRoute,
+  executionsRoute,
     needsRoute,
     runsRoute,
     runDetailRoute,

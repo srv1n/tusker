@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { applyFilters, EMPTY_FILTERS, projectLiveExecution } from "../src/features/work/work-utils";
 import { deriveNeeds } from "../src/features/inbox/deriveNeeds";
 
@@ -37,4 +38,11 @@ test("active work hides discarded tombstones and the explicit history filter rev
   const discarded = { ...task, id: "APP-T-2", rawStatus: "cancelled" };
   expect(applyFilters([task, discarded], EMPTY_FILTERS).map((item) => item.id)).toEqual([task.id]);
   expect(applyFilters([task, discarded], { ...EMPTY_FILTERS, visibility: "discarded" }).map((item) => item.id)).toEqual([discarded.id]);
+});
+
+test("the v2 task board promotes fresh runtime work into a Working now lane", () => {
+  const screen = readFileSync(new URL("../src/features/v2/TaskScreens.tsx", import.meta.url), "utf8");
+  expect(screen).toContain("useRuns(projectId)");
+  expect(screen).toContain("projectLiveExecution(tasks.data ?? [], runs.data ?? [])");
+  expect(screen).toContain('return status === "in_progress" ? "Working now"');
 });

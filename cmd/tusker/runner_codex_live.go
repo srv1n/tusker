@@ -1107,6 +1107,7 @@ func (h *codexLiveHandle) recordExtensionToolDispatch(method string, dispatch co
 }
 
 func (h *codexLiveHandle) handleNotification(method string, params json.RawMessage) {
+	h.observeExecutionNotification(method, params)
 	if usage := extractUsageCounters(params); usage.hasAny() {
 		h.recordTurnUsage(method, time.Now().UTC().Format(time.RFC3339), usage)
 	}
@@ -1156,6 +1157,26 @@ func (h *codexLiveHandle) handleNotification(method string, params json.RawMessa
 				h.finalize(1)
 			}
 		}
+	}
+}
+
+// observeExecutionNotification is the app-server counterpart to JSONL replay.
+// It intentionally consumes only notification facts and is safe to replay: the
+// adapter deduplicates its content identity and never changes runner ownership.
+func (h *codexLiveHandle) observeExecutionNotification(method string, params json.RawMessage) {
+	if h.runtimeStore == nil {
+		return
+	}
+	var payload any
+	if json.Unmarshal(params, &payload) != nil {
+		return
+	}
+	threadID, _, _, _ := h.liveState()
+	if _, err := (CodexExecutionAdapter{Store: h.runtimeStore}).ObserveRunPayload(RunStatus{
+		ProjectID: h.projectID, RecordID: h.recordID, ItemID: h.itemID, ActiveAttemptID: h.attemptID,
+		Runner: string(RunnerCodexAppServer), SessionRef: threadID,
+	}, payload, 0, "codex_app_notification:"+method); err != nil {
+		_ = appendRawLogLine(h.rawLogPath, "codex execution observation rejected: "+err.Error())
 	}
 }
 

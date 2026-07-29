@@ -2641,6 +2641,18 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	if result == nil {
 		return run, changed, nil
 	}
+	if RunnerName(run.Runner) == RunnerCodexCloud && strings.TrimSpace(result.CloudTaskID) != "" {
+		observationRun := run
+		observationRun.CloudTaskID = result.CloudTaskID
+		if observed, observeErr := (CodexExecutionAdapter{Store: d.store}).ObserveRunPayload(observationRun, map[string]any{
+			"task_id": result.CloudTaskID, "status": result.CloudStatus,
+			"environment_id": result.CloudEnvironmentID,
+		}, int64(maxInt(run.AttemptCount, 1)), "authoritative_codex_cloud_poll"); observeErr != nil {
+			return run, changed, fmt.Errorf("observe codex cloud poll: %w", observeErr)
+		} else if observed {
+			changed = true
+		}
+	}
 	run.LeaseState = string(result.LeaseState)
 	run.AttemptOutcome = string(result.Outcome)
 	run.LastError = result.Reason

@@ -45,6 +45,10 @@ import type {
   TaskCapsule,
   TaskDetail,
   WaveSummary,
+  ExecutionGraph,
+  ExecutionInbox,
+  ExecutionTimeline,
+  ExecutionBindingPreview,
 } from "@/types/domain";
 
 /** Toggle to true for UI-only Vite work against the in-browser fixture set. */
@@ -134,6 +138,18 @@ export class DocSaveError extends ApiError {
 // ----------------------------------------------------------------------------
 
 export const api = {
+  executions: (params: Record<string, string | undefined>, projectId?: string): Promise<ExecutionGraph> => {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value) as [string, string][]).toString();
+    return real(withProject(`/executions${query ? `?${query}` : ""}`, projectId));
+  },
+  executionInbox: (projectId?: string): Promise<ExecutionInbox> => real(withProject("/executions/inbox", projectId)),
+  executionTimeline: (execution: string, params: Record<string, string | undefined>, projectId?: string): Promise<ExecutionTimeline> => {
+    const query = new URLSearchParams({ execution, ...Object.fromEntries(Object.entries(params).filter(([, value]) => value)) }).toString();
+    return real(withProject(`/executions/timeline?${query}`, projectId));
+  },
+  executionRename: (execution: string, name: string, projectId?: string) => post<{ ok: boolean }>(withProject(`/executions/${encodeURIComponent(execution)}/rename`, projectId), { name }),
+  executionBindingPreview: (execution: string, taskId: string, projectId?: string): Promise<ExecutionBindingPreview> => real(withProject(`/executions/${encodeURIComponent(execution)}/binding-preview?task_id=${encodeURIComponent(taskId)}`, projectId)),
+  executionBind: (execution: string, taskId: string, projectId?: string) => post<{ ok: boolean; proof_boundary: string }>(withProject(`/executions/${encodeURIComponent(execution)}/bind`, projectId), { task_id: taskId }),
   // GET /api/factory-operations?project=
   factoryOperations: (projectId?: string): Promise<FactoryOperationsProjection> =>
     real(withProject("/factory-operations", projectId)),

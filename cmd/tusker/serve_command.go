@@ -238,6 +238,18 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 			s.handleRunInterrupt(w, r, taskID)
 			return
 		}
+		if executionID, ok := serveExecutionCancelID(path); ok {
+			s.handleExecutionCancel(w, r, executionID)
+			return
+		}
+		if executionID, ok := serveExecutionActionID(path, "rename"); ok {
+			s.handleExecutionRename(w, r, executionID)
+			return
+		}
+		if executionID, ok := serveExecutionActionID(path, "bind"); ok {
+			s.handleExecutionBind(w, r, executionID)
+			return
+		}
 	}
 	if r.Method == http.MethodPut && path == "/api/docgraph/doc" {
 		if reason := serveMutationOriginRefusal(r); reason != "" {
@@ -278,6 +290,18 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleFactoryOperations(w, r)
 	case path == "/api/runs":
 		s.handleRuns(w, r)
+	case path == "/api/executions":
+		s.handleExecutionGraph(w, r)
+	case path == "/api/executions/inbox":
+		s.handleExecutionInbox(w, r)
+	case path == "/api/executions/timeline":
+		s.handleExecutionTimeline(w, r)
+	case strings.HasPrefix(path, "/api/executions/"):
+		if executionID, ok := serveExecutionActionID(path, "binding-preview"); ok {
+			s.handleExecutionBindPreview(w, r, executionID)
+			return
+		}
+		serveJSON(w, http.StatusNotFound, map[string]any{"error": "execution endpoint not found"})
 	case strings.HasPrefix(path, "/api/runs/"):
 		s.handleRun(w, r, strings.TrimPrefix(path, "/api/runs/"))
 	case path == "/api/epics":
@@ -1784,6 +1808,8 @@ Endpoints:
   GET /api/morning-brief?project=<id>[&date=YYYY-MM-DD]
   GET /api/runs?project=<id>
   GET /api/runs/<task-id>
+  GET /api/executions?project=<id>[&root=&parent=&task=&wave=&provider=&provider_id=&agent_type=&name=&cursor=&limit=]
+  GET /api/executions/inbox?project=<id>
   POST /api/runs/<task-id>/redrive
   GET /api/epics?project=<id>
   GET /api/waves?project=<id>

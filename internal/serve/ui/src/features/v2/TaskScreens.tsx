@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { Link, useParams } from "@tanstack/react-router";
 import { LayoutGrid, List, ShieldCheck } from "lucide-react";
 import { QueryBoundary } from "@/components/ui/states";
-import { useRun, useTask, useTasks } from "@/lib/queries";
+import { useRun, useRuns, useTask, useTasks } from "@/lib/queries";
+import { projectLiveExecution } from "@/features/work/work-utils";
 import type { TaskCapsule } from "@/types/domain";
 import {
   phaseTone,
@@ -18,6 +19,10 @@ import {
 } from "@/features/v2/shared";
 
 const statusOrder = ["in_progress", "review", "ready", "blocked", "backlog", "done"] as const;
+
+function columnLabel(status: (typeof statusOrder)[number]) {
+  return status === "in_progress" ? "Working now" : status.replaceAll("_", " ");
+}
 
 function statusCopy(task: TaskCapsule): string {
   if (task.liveRun) return "Building now";
@@ -63,9 +68,15 @@ function TaskLink({ projectId, task }: { projectId: string; task: TaskCapsule })
 export function TasksV2() {
   const { projectId } = useParams({ strict: false }) as { projectId: string };
   const tasks = useTasks(projectId);
+  const runs = useRuns(projectId);
   const [view, setView] = useState<"board" | "list">("board");
   const [epic, setEpic] = useState("all");
-  const all = tasks.data ?? [];
+  // Runtime ownership is projected into the board from fresh leases. It is
+  // intentionally not written back as a durable task lifecycle transition.
+  const all = useMemo(
+    () => projectLiveExecution(tasks.data ?? [], runs.data ?? []),
+    [tasks.data, runs.data],
+  );
   const epics = useMemo(() => [...new Set(all.map((task) => task.epicId))].sort(), [all]);
   const filtered = epic === "all" ? all : all.filter((task) => task.epicId === epic);
 
@@ -104,7 +115,8 @@ export function TasksV2() {
       </div>
 
       <QueryBoundary q={tasks} loading={<V2Loading rows={5} />}>
-        {() =>
+        {() => <QueryBoundary q={runs} loading={<V2Loading rows={5} />}>
+          {() =>
           filtered.length === 0 ? (
             <V2Empty title="No tasks in this view" detail="Change the epic filter or author a task contract for this project." />
           ) : view === "list" ? (
@@ -139,7 +151,7 @@ export function TasksV2() {
                 return (
                   <section key={status} className="min-w-0">
                     <div className="mb-2 flex items-center justify-between border-b border-line pb-2">
-                      <V2Label>{status.replaceAll("_", " ")}</V2Label>
+                      <V2Label>{columnLabel(status)}</V2Label>
                       <span className="font-mono text-[10px] text-faint">{column.length}</span>
                     </div>
                     {column.map((task) => <TaskLink key={task.id} projectId={projectId} task={task} />)}
@@ -148,7 +160,8 @@ export function TasksV2() {
               })}
             </div>
           )
-        }
+          }
+        </QueryBoundary>}
       </QueryBoundary>
     </V2Page>
   );

@@ -29,6 +29,13 @@
       "status": "canonical"
     },
     {
+      "subject": "execution-observability-system",
+      "kind": "canonical",
+      "path": "docs/system/execution-observability.md",
+      "title": "Execution observability",
+      "status": "canonical"
+    },
+    {
       "subject": "factory-intake",
       "kind": "canonical",
       "path": "docs/system/factory-intake.md",
@@ -157,6 +164,11 @@
     {
       "from": "execution-observability-grill",
       "to": "execution-observability",
+      "kind": "part_of"
+    },
+    {
+      "from": "execution-observability-system",
+      "to": "overview",
       "kind": "part_of"
     },
     {

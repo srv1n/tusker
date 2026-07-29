@@ -47,6 +47,7 @@ Read `CANON.md` before implementation.
 |---|---|
 | V7-only lifecycle rules | `CANON.md` |
 | Operator skill package | `skills/tusker/SKILL.md` and `skills/tusker/references/` |
+| Execution identity, direct-work visibility, provider children, or timeline recovery | `docs/system/execution-observability.md`, `docs/runbooks/execution-observability.md` |
 | Adaptive reconciliation | `docs/runbooks/adaptive-reconciliation.md`, `cmd/tusker/adaptive_reconcile.go` |
 | Runtime dispatch policy | `cmd/tusker/automation_commands.go`, `cmd/tusker/daemon.go`, `cmd/tusker/workflow.go` |
 | Task/proof validation | `cmd/tusker/v7_validation.go`, `internal/v7schema/schema.go` |

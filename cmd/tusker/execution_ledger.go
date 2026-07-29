@@ -80,6 +80,30 @@ type ProviderChildExecutionInput struct {
 	ProjectID, ParentExecutionID, Provider, ProviderChildHandle, DisplayName, AgentType, ProviderSessionID, Creator string
 }
 
+// ExecutionView combines immutable identity with append-only operator facts.
+// The ledger record is never rewritten: renames, provider correlation and
+// delivery binding all have their own audited history.
+type ExecutionView struct {
+	ExecutionRecord
+	EffectiveDisplayName string `json:"effective_display_name"`
+	EffectiveSearchLabel string `json:"effective_search_label"`
+	BoundTaskID          string `json:"bound_task_id"`
+	BoundWaveID          string `json:"bound_wave_id"`
+	BindingGeneration    int    `json:"binding_generation"`
+	BindingAt            string `json:"binding_at"`
+	ProofEligible        bool   `json:"proof_eligible"`
+	ProviderSessionID    string `json:"effective_provider_session_id"`
+	SessionRef           string `json:"effective_session_ref"`
+}
+
+type ExecutionBindingInput struct {
+	ProjectID, ExecutionID, TaskID, WaveID, Actor string
+}
+
+type ExecutionAttachmentInput struct {
+	ProjectID, ExecutionID, Provider, ProviderSessionID, SessionRef, Source, Actor string
+}
+
 func executionNow() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
 func newExecutionID() string { return "exec_" + newRecordID() }
@@ -129,6 +153,24 @@ func (s *RuntimeStore) migrateExecutionLedger() error {
 			kind TEXT NOT NULL, created_at TEXT NOT NULL,
 			PRIMARY KEY(parent_execution_id, child_execution_id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS execution_name_events (
+			event_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, display_name TEXT NOT NULL,
+			search_label TEXT NOT NULL, actor TEXT NOT NULL, created_at TEXT NOT NULL,
+			UNIQUE(execution_id, display_name, created_at)
+		);`,
+		`CREATE TABLE IF NOT EXISTS execution_attachment_events (
+			event_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, project_id TEXT NOT NULL,
+			provider TEXT NOT NULL, provider_session_id TEXT NOT NULL, session_ref TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT '', actor TEXT NOT NULL, created_at TEXT NOT NULL,
+			UNIQUE(project_id, provider, provider_session_id),
+			UNIQUE(execution_id, provider, provider_session_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS execution_binding_events (
+			event_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, generation INTEGER NOT NULL,
+			action TEXT NOT NULL CHECK(action IN ('bind','detach','rebind')), task_id TEXT NOT NULL DEFAULT '',
+			wave_id TEXT NOT NULL DEFAULT '', actor TEXT NOT NULL, created_at TEXT NOT NULL,
+			UNIQUE(execution_id, generation)
+		);`,
 	}
 	for _, statement := range statements {
 		if _, err := s.exec(statement); err != nil {
@@ -146,6 +188,11 @@ func (s *RuntimeStore) migrateExecutionLedger() error {
 	if _, err := s.exec(`UPDATE execution_records SET parent_execution_id = COALESCE((SELECT parent_execution_id FROM execution_edges WHERE execution_edges.child_execution_id = execution_records.execution_id), '') WHERE parent_execution_id = '' AND node_kind != 'root'`); err != nil {
 		return err
 	}
+	for _, trigger := range []string{"execution_edges_validate_insert", "execution_edges_validate_update", "execution_edges_prevent_delete", "execution_records_identity_immutable", "execution_records_prevent_delete_with_edges", "execution_records_immutable", "execution_records_prevent_delete", "execution_name_events_validate_insert", "execution_attachment_events_validate_insert", "execution_binding_events_validate_insert", "execution_name_events_immutable", "execution_name_events_prevent_delete", "execution_attachment_events_immutable", "execution_attachment_events_prevent_delete", "execution_binding_events_immutable", "execution_binding_events_prevent_delete"} {
+		if _, err := s.exec(`DROP TRIGGER IF EXISTS ` + trigger); err != nil {
+			return err
+		}
+	}
 	for _, statement := range []string{
 		`CREATE UNIQUE INDEX IF NOT EXISTS execution_records_attempt_id ON execution_records(attempt_id) WHERE attempt_id != '';`,
 		`DROP INDEX IF EXISTS execution_provider_child_identity;`,
@@ -153,13 +200,40 @@ func (s *RuntimeStore) migrateExecutionLedger() error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS execution_edges_one_parent ON execution_edges(child_execution_id);`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS execution_wave_generation_root ON execution_records(project_id, wave_id, wave_authorization_generation) WHERE node_kind = 'root' AND wave_id != '' AND wave_authorization_generation > 0;`,
 		`CREATE INDEX IF NOT EXISTS execution_records_root ON execution_records(root_execution_id);`,
+		`CREATE INDEX IF NOT EXISTS execution_binding_events_current ON execution_binding_events(execution_id, generation DESC);`,
+		`CREATE INDEX IF NOT EXISTS execution_attachment_events_execution ON execution_attachment_events(execution_id, created_at DESC);`,
 		`CREATE TRIGGER IF NOT EXISTS execution_edges_validate_insert BEFORE INSERT ON execution_edges BEGIN
 			SELECT CASE WHEN NEW.kind NOT IN ('retry_of','resume_of','fork_of','managed_child_of','provider_child_of') THEN RAISE(ABORT, 'invalid execution edge kind') END;
 			SELECT CASE WHEN NEW.parent_execution_id = NEW.child_execution_id THEN RAISE(ABORT, 'execution edge cannot be self-referential') END;
 			SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.parent_execution_id) OR NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge endpoint not found') END;
 			SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records parent JOIN execution_records child ON parent.project_id = child.project_id AND parent.root_execution_id = child.root_execution_id WHERE parent.execution_id = NEW.parent_execution_id AND child.execution_id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge project/root mismatch') END;
 			SELECT CASE WHEN EXISTS (WITH RECURSIVE ancestors(id) AS (SELECT NEW.parent_execution_id UNION ALL SELECT edge.parent_execution_id FROM execution_edges edge JOIN ancestors ON edge.child_execution_id = ancestors.id) SELECT 1 FROM ancestors WHERE id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge cycle') END;
+			SELECT CASE WHEN EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.child_execution_id AND ((node_kind = 'root') OR (node_kind = 'provider_child' AND NEW.kind != 'provider_child_of') OR (node_kind = 'managed_attempt' AND NEW.kind NOT IN ('managed_child_of','retry_of','resume_of','fork_of')))) THEN RAISE(ABORT, 'execution edge kind does not match child node') END;
 		END;`,
+		`CREATE TRIGGER IF NOT EXISTS execution_edges_validate_update BEFORE UPDATE ON execution_edges BEGIN
+			SELECT CASE WHEN NEW.kind NOT IN ('retry_of','resume_of','fork_of','managed_child_of','provider_child_of') THEN RAISE(ABORT, 'invalid execution edge kind') END;
+			SELECT CASE WHEN NEW.parent_execution_id = NEW.child_execution_id THEN RAISE(ABORT, 'execution edge cannot be self-referential') END;
+			SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.parent_execution_id) OR NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge endpoint not found') END;
+			SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records parent JOIN execution_records child ON parent.project_id = child.project_id AND parent.root_execution_id = child.root_execution_id WHERE parent.execution_id = NEW.parent_execution_id AND child.execution_id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge project/root mismatch') END;
+			SELECT CASE WHEN EXISTS (WITH RECURSIVE ancestors(id) AS (SELECT NEW.parent_execution_id UNION ALL SELECT edge.parent_execution_id FROM execution_edges edge JOIN ancestors ON edge.child_execution_id = ancestors.id WHERE NOT (edge.parent_execution_id = OLD.parent_execution_id AND edge.child_execution_id = OLD.child_execution_id)) SELECT 1 FROM ancestors WHERE id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge cycle') END;
+			SELECT CASE WHEN EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.child_execution_id AND ((node_kind = 'root') OR (node_kind = 'provider_child' AND NEW.kind != 'provider_child_of') OR (node_kind = 'managed_attempt' AND NEW.kind NOT IN ('managed_child_of','retry_of','resume_of','fork_of')))) THEN RAISE(ABORT, 'execution edge kind does not match child node') END;
+			SELECT RAISE(ABORT, 'execution edges are immutable') WHERE NEW.parent_execution_id != OLD.parent_execution_id OR NEW.child_execution_id != OLD.child_execution_id OR NEW.kind != OLD.kind OR NEW.created_at != OLD.created_at;
+		END;`,
+		`CREATE TRIGGER IF NOT EXISTS execution_edges_prevent_delete BEFORE DELETE ON execution_edges BEGIN SELECT RAISE(ABORT, 'execution edges are immutable'); END;`,
+		// Execution records are append-only. Renames and rebindings are later
+		// audited operations that add history; they never rewrite this identity
+		// ledger row or its immutable correlation facts.
+		`CREATE TRIGGER IF NOT EXISTS execution_records_immutable BEFORE UPDATE ON execution_records BEGIN SELECT RAISE(ABORT, 'execution records are immutable'); END;`,
+		`CREATE TRIGGER IF NOT EXISTS execution_records_prevent_delete BEFORE DELETE ON execution_records BEGIN SELECT RAISE(ABORT, 'execution records are immutable'); END;`,
+		`CREATE TRIGGER IF NOT EXISTS execution_name_events_validate_insert BEFORE INSERT ON execution_name_events BEGIN SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.execution_id) THEN RAISE(ABORT, 'execution name event execution not found') END; END;`,
+		`CREATE TRIGGER IF NOT EXISTS execution_attachment_events_validate_insert BEFORE INSERT ON execution_attachment_events BEGIN SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.execution_id AND project_id = NEW.project_id) THEN RAISE(ABORT, 'execution attachment event execution/project mismatch') END; END;`,
+		`CREATE TRIGGER IF NOT EXISTS execution_binding_events_validate_insert BEFORE INSERT ON execution_binding_events BEGIN SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.execution_id) THEN RAISE(ABORT, 'execution binding event execution not found') END; END;`,
+		`CREATE TRIGGER IF NOT EXISTS execution_name_events_immutable BEFORE UPDATE ON execution_name_events BEGIN SELECT RAISE(ABORT, 'execution name events are immutable'); END;`,
+		`CREATE TRIGGER IF NOT EXISTS execution_name_events_prevent_delete BEFORE DELETE ON execution_name_events BEGIN SELECT RAISE(ABORT, 'execution name events are immutable'); END;`,
+		`CREATE TRIGGER IF NOT EXISTS execution_attachment_events_immutable BEFORE UPDATE ON execution_attachment_events BEGIN SELECT RAISE(ABORT, 'execution attachment events are immutable'); END;`,
+		`CREATE TRIGGER IF NOT EXISTS execution_attachment_events_prevent_delete BEFORE DELETE ON execution_attachment_events BEGIN SELECT RAISE(ABORT, 'execution attachment events are immutable'); END;`,
+		`CREATE TRIGGER IF NOT EXISTS execution_binding_events_immutable BEFORE UPDATE ON execution_binding_events BEGIN SELECT RAISE(ABORT, 'execution binding events are immutable'); END;`,
+		`CREATE TRIGGER IF NOT EXISTS execution_binding_events_prevent_delete BEFORE DELETE ON execution_binding_events BEGIN SELECT RAISE(ABORT, 'execution binding events are immutable'); END;`,
 	} {
 		if _, err := s.exec(statement); err != nil {
 			return err
@@ -373,6 +447,177 @@ func (s *RuntimeStore) Execution(id string) (*ExecutionRecord, error) {
 	return &record, nil
 }
 
+// ExecutionView returns the current operator projection without changing the
+// immutable execution identity. A binding only becomes eligible at its own
+// generation boundary; there is intentionally no way to certify prior facts.
+func (s *RuntimeStore) ExecutionView(id string) (*ExecutionView, error) {
+	record, err := s.Execution(id)
+	if err != nil || record == nil {
+		return nil, err
+	}
+	view := &ExecutionView{ExecutionRecord: *record, EffectiveDisplayName: record.DisplayName, EffectiveSearchLabel: record.SearchLabel, ProviderSessionID: record.ProviderSessionID, SessionRef: record.SessionRef}
+	if err := s.queryRowScan(`SELECT display_name, search_label FROM execution_name_events WHERE execution_id = ? ORDER BY created_at DESC, event_id DESC LIMIT 1`, []any{record.ExecutionID}, &view.EffectiveDisplayName, &view.EffectiveSearchLabel); err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	if err := s.queryRowScan(`SELECT provider_session_id, session_ref FROM execution_attachment_events WHERE execution_id = ? ORDER BY created_at DESC, event_id DESC LIMIT 1`, []any{record.ExecutionID}, &view.ProviderSessionID, &view.SessionRef); err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	var action string
+	if err := s.queryRowScan(`SELECT generation, action, task_id, wave_id, created_at FROM execution_binding_events WHERE execution_id = ? ORDER BY generation DESC LIMIT 1`, []any{record.ExecutionID}, &view.BindingGeneration, &action, &view.BoundTaskID, &view.BoundWaveID, &view.BindingAt); err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	if action == "detach" {
+		view.BoundTaskID, view.BoundWaveID = "", ""
+	}
+	view.ProofEligible = view.BindingGeneration > 0 && action != "detach" && view.BoundTaskID != ""
+	return view, nil
+}
+
+func (s *RuntimeStore) ListUnboundDirectExecutions(projectID string) ([]ExecutionView, error) {
+	rows, err := s.query(`SELECT execution_id FROM execution_records WHERE project_id = ? AND node_kind = 'root' AND source IN ('direct_codex','direct_claude','codex_cloud','direct') ORDER BY created_at DESC`, []any{strings.TrimSpace(projectID)})
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ExecutionView
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		view, err := s.ExecutionView(id)
+		if err != nil {
+			return nil, err
+		}
+		if view != nil && !view.ProofEligible {
+			out = append(out, *view)
+		}
+	}
+	return out, rows.Err()
+}
+
+func (s *RuntimeStore) RenameExecution(projectID, id, displayName, actor string) (*ExecutionView, error) {
+	projectID, id, displayName = strings.TrimSpace(projectID), strings.TrimSpace(id), strings.TrimSpace(displayName)
+	if projectID == "" || id == "" || displayName == "" {
+		return nil, tuskerError(errorInvalidArg, "execution rename requires project, id, and display name")
+	}
+	record, err := s.Execution(id)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil || record.ProjectID != projectID {
+		return nil, tuskerError(errorNotFound, "execution not found")
+	}
+	if err := s.withBusyRetry(func() error {
+		_, err := s.exec(`INSERT INTO execution_name_events(event_id, execution_id, display_name, search_label, actor, created_at) VALUES(?,?,?,?,?,?)`, "exec-name-"+strings.ToLower(newRecordID()), id, displayName, normalizeExecutionLabel(displayName), strings.TrimSpace(actor), executionNow())
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	return s.ExecutionView(id)
+}
+
+// AttachExecution correlates a provider-owned session after launch. Replaying
+// the same provider identity is harmless; a provider identity may never be
+// silently moved to a different Tusker execution.
+func (s *RuntimeStore) AttachExecution(input ExecutionAttachmentInput) (*ExecutionView, bool, error) {
+	input.ProjectID, input.ExecutionID, input.Provider, input.ProviderSessionID = strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.ExecutionID), strings.TrimSpace(input.Provider), strings.TrimSpace(input.ProviderSessionID)
+	if input.ProjectID == "" || input.ExecutionID == "" || input.Provider == "" || input.ProviderSessionID == "" {
+		return nil, false, tuskerError(errorInvalidArg, "execution attach requires project, id, provider, and provider session id")
+	}
+	record, err := s.Execution(input.ExecutionID)
+	if err != nil || record == nil {
+		if err == nil {
+			err = tuskerError(errorNotFound, "execution not found")
+		}
+		return nil, false, err
+	}
+	if record.ProjectID != input.ProjectID {
+		return nil, false, tuskerError(errorNotFound, "execution not found")
+	}
+	created := false
+	err = s.withBusyRetry(func() error {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		var existingID string
+		err = tx.QueryRow(`SELECT execution_id FROM execution_attachment_events WHERE project_id = ? AND provider = ? AND provider_session_id = ?`, record.ProjectID, input.Provider, input.ProviderSessionID).Scan(&existingID)
+		if err == nil {
+			if existingID != record.ExecutionID {
+				return tuskerError(errorInvalidTransition, "provider session is already attached to another execution")
+			}
+			return tx.Commit()
+		}
+		if err != sql.ErrNoRows {
+			return err
+		}
+		if _, err = tx.Exec(`INSERT INTO execution_attachment_events(event_id, execution_id, project_id, provider, provider_session_id, session_ref, source, actor, created_at) VALUES(?,?,?,?,?,?,?,?,?)`, "exec-attach-"+strings.ToLower(newRecordID()), record.ExecutionID, record.ProjectID, input.Provider, input.ProviderSessionID, strings.TrimSpace(input.SessionRef), strings.TrimSpace(input.Source), strings.TrimSpace(input.Actor), executionNow()); err != nil {
+			return err
+		}
+		created = true
+		return tx.Commit()
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	view, err := s.ExecutionView(record.ExecutionID)
+	return view, created, err
+}
+
+// BindExecution appends a new authority generation. The task/wave agreement is
+// resolved by the CLI before this call; the store independently fences a live
+// Tusker lease so direct observation cannot steal an active delivery owner.
+func (s *RuntimeStore) BindExecution(input ExecutionBindingInput, action string) (*ExecutionView, error) {
+	input.ProjectID, input.ExecutionID, input.TaskID, input.WaveID = strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.ExecutionID), strings.TrimSpace(input.TaskID), strings.TrimSpace(input.WaveID)
+	if action != "bind" && action != "detach" && action != "rebind" {
+		return nil, tuskerError(errorInvalidArg, "invalid execution binding action")
+	}
+	if input.ProjectID == "" || input.ExecutionID == "" || (action != "detach" && input.TaskID == "") {
+		return nil, tuskerError(errorInvalidArg, "execution binding requires project, id, and task")
+	}
+	record, err := s.Execution(input.ExecutionID)
+	if err != nil || record == nil {
+		if err == nil {
+			err = tuskerError(errorNotFound, "execution not found")
+		}
+		return nil, err
+	}
+	if record.ProjectID != input.ProjectID {
+		return nil, tuskerError(errorNotFound, "execution not found")
+	}
+	err = s.withBusyRetry(func() error {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if action != "detach" {
+			var count int
+			if err = tx.QueryRow(`SELECT COUNT(*) FROM runs WHERE project_id = ? AND (item_id = ? OR record_id = ?) AND terminal = 0 AND lease_state IN ('claimed','running')`, record.ProjectID, input.TaskID, input.TaskID).Scan(&count); err != nil {
+				return err
+			}
+			if count > 0 {
+				return tuskerError(errorInvalidTransition, "execution binding refuses conflicting live task owner")
+			}
+		}
+		var generation int
+		if err = tx.QueryRow(`SELECT COALESCE(MAX(generation), 0) + 1 FROM execution_binding_events WHERE execution_id = ?`, record.ExecutionID).Scan(&generation); err != nil {
+			return err
+		}
+		_, err = tx.Exec(`INSERT INTO execution_binding_events(event_id, execution_id, generation, action, task_id, wave_id, actor, created_at) VALUES(?,?,?,?,?,?,?,?)`, "exec-bind-"+strings.ToLower(newRecordID()), record.ExecutionID, generation, action, input.TaskID, input.WaveID, strings.TrimSpace(input.Actor), executionNow())
+		if err != nil {
+			return err
+		}
+		return tx.Commit()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.ExecutionView(record.ExecutionID)
+}
+
 func (s *RuntimeStore) insertExecutionRecord(record ExecutionRecord) error {
 	return s.insertExecutionWithEdge(record, ExecutionEdge{})
 }
@@ -503,11 +748,10 @@ func insertLegacyExecutionTx(tx *sql.Tx, record ExecutionRecord, parentAttemptID
 	if err := tx.QueryRow(`SELECT execution_id, root_execution_id, parent_execution_id, project_id, node_kind, display_name, search_label, task_id, wave_id, wave_authorization_generation, attempt_id, session_ref, source, provider, provider_session_id, agent_type, provider_child_handle, creator, lease_generation, created_at FROM execution_records WHERE execution_id = ?`, record.ExecutionID).Scan(executionScanDest(&existing)...); err != nil {
 		return err
 	}
-	// A first-class execution may already have been written for this attempt
-	// before a later store reopen runs the legacy backfill. Preserve the richer
-	// row when its durable identity agrees; only a true identity collision is a
-	// migration conflict.
-	if existing != record && !(existing.ProjectID == record.ProjectID && existing.AttemptID == record.AttemptID) {
+	// Every ledger field is immutable identity or an immutable correlation fact.
+	// Backfill has no enrichment exception: accepting a same-project/attempt row
+	// with different metadata would make restart replay silently rewrite lineage.
+	if existing != record {
 		return tuskerError(errorInvalidArg, "execution ledger backfill conflict")
 	}
 	if parentAttemptID != "" {

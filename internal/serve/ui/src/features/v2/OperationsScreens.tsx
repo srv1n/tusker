@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { useParams } from "@tanstack/react-router";
+import { Link, useParams } from "@tanstack/react-router";
 import { AlertTriangle, CircleOff, LockKeyhole } from "lucide-react";
 import { Button, Select, SegmentedControl, TextInput, Toggle } from "@/components/ui/controls";
 import { ActionResultLine } from "@/components/ui/action-feedback";
@@ -181,6 +181,7 @@ export function DiagnosticsV2() {
         <PageHeader
           eyebrow={<Mono className="text-[11px] uppercase tracking-[0.14em] text-faint">tusker / {projectId}</Mono>}
           title="Diagnostics"
+          actions={<Link to="/p/$projectId/diagnostics/executions" params={{ projectId }} className="rounded-lg border border-line px-3 py-2 text-[12px] font-medium text-ink-soft hover:bg-hover">Execution observability</Link>}
           subtitle="Runtime facts and bounded operational evidence. Repair actions appear only when the service exposes a canonical mutation."
         />
         <div className="mb-7 flex flex-wrap gap-1 border-b border-line pb-4">

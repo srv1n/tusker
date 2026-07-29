@@ -153,7 +153,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "gate-ledger", "context", "config", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory", "work":
+	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "gate-ledger", "context", "config", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory", "work", "execution":
 		return true
 	default:
 		return false
@@ -292,6 +292,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, nextCmd(args)
 	case "work start", "work status", "work heartbeat", "work submit", "work fail", "work release":
 		return 0, workSessionCmd(args, strings.TrimPrefix(command, "work "))
+	case "execution", "execution register", "execution attach", "execution rename", "execution bind", "execution detach", "execution rebind", "execution inbox", "execution list", "execution show", "execution cancel", "execution launch":
+		return 0, executionCmd(args, strings.TrimSpace(strings.TrimPrefix(command, "execution")))
 	case "claim":
 		return 0, claimCmd(args)
 	case "heartbeat":
@@ -1088,6 +1090,8 @@ func printCommandHelp(command string) bool {
 		printNextHelp()
 	case "work", "work start", "work status", "work heartbeat", "work submit", "work fail", "work release":
 		printWorkSessionHelp()
+	case "execution", "execution register", "execution attach", "execution rename", "execution bind", "execution detach", "execution rebind", "execution inbox", "execution list", "execution show", "execution cancel", "execution launch":
+		printExecutionHelp()
 	case "claim":
 		printClaimHelp()
 	case "evidence":

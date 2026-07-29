@@ -34,19 +34,20 @@ type claudeLiveHandle struct {
 	stderr io.ReadCloser
 	ioWG   sync.WaitGroup
 
-	writeMu       sync.Mutex
-	nextID        atomic.Int64
-	sessionMu     sync.RWMutex
-	sessionRef    string
-	messageRef    string
-	turnID        string
-	turnIndex     int
-	eventLog      *EventLog
-	runtimeStore  *RuntimeStore
-	interrupted   atomic.Bool
-	turnCompleted atomic.Bool
-	criticalOnce  sync.Once
-	doneOnce      sync.Once
+	writeMu                sync.Mutex
+	nextID                 atomic.Int64
+	sessionMu              sync.RWMutex
+	sessionRef             string
+	messageRef             string
+	turnID                 string
+	turnIndex              int
+	eventLog               *EventLog
+	runtimeStore           *RuntimeStore
+	interrupted            atomic.Bool
+	providerResultObserved atomic.Bool
+	turnCompleted          atomic.Bool
+	criticalOnce           sync.Once
+	doneOnce               sync.Once
 }
 
 func shouldUseLiveClaude(command string) bool {
@@ -343,6 +344,11 @@ func (h *claudeLiveHandle) handleStdoutLine(line string) {
 	if json.Unmarshal([]byte(line), &payload) != nil {
 		return
 	}
+	// Claude stream JSON carries both top-level session metadata and native
+	// subagent hook facts. Persist those through the same untrusted envelope as
+	// replay, never by mutating run ownership or substituting a child id for the
+	// resumable parent session.
+	h.observeExecutionPayload(payload)
 	h.observeStreamPayload(payload)
 	switch strings.TrimSpace(stringValue(payload["type"])) {
 	case "control_request":
@@ -367,6 +373,22 @@ func (h *claudeLiveHandle) handleStdoutLine(line string) {
 			h.recordTurnCompleted(h.ensureTurnID(payload), status, reason, time.Now().UTC().Format(time.RFC3339))
 			h.finalize(0)
 		}
+	}
+}
+
+func (h *claudeLiveHandle) observeExecutionPayload(payload map[string]any) {
+	if h.runtimeStore == nil {
+		return
+	}
+	if _, err := (ClaudeExecutionAdapter{Store: h.runtimeStore}).ObserveRunPayload(RunStatus{
+		ProjectID: h.projectID, RecordID: h.recordID, ItemID: h.itemID, ActiveAttemptID: h.attemptID,
+		Runner: string(RunnerClaude), SessionRef: h.SessionRef(),
+	}, payload, 0, "claude_stream_json"); err != nil {
+		_ = appendRawLogLine(h.rawLogPath, "claude execution observation rejected: "+err.Error())
+	} else if strings.EqualFold(strings.TrimSpace(stringValue(payload["type"])), "result") {
+		// A parsed provider result is stronger than process EOF. Do not append a
+		// second synthetic terminal observation when waitForExit runs afterwards.
+		h.providerResultObserved.Store(true)
 	}
 }
 
@@ -685,6 +707,9 @@ func (h *claudeLiveHandle) ensureTurnID(payload map[string]any) string {
 func (h *claudeLiveHandle) finalize(exitCode int) {
 	h.doneOnce.Do(func() {
 		now := time.Now().UTC().Format(time.RFC3339)
+		if !h.providerResultObserved.Load() {
+			h.observeProcessExitWithoutResult(exitCode, now)
+		}
 		status := "completed"
 		reason := ""
 		switch {
@@ -699,6 +724,34 @@ func (h *claudeLiveHandle) finalize(exitCode int) {
 		_ = writeRunnerStatusFile(h.statusPath, exitCode)
 		liveRegistry.Unregister(h.attemptID)
 	})
+}
+
+// observeProcessExitWithoutResult records that the local stream ended before
+// Claude supplied a typed result. It is a degraded terminal boundary for
+// recovery only, not a provider success/failure claim and never an ownership
+// or process-state mutation for a native child.
+func (h *claudeLiveHandle) observeProcessExitWithoutResult(exitCode int, at string) {
+	if h.runtimeStore == nil || strings.TrimSpace(h.SessionRef()) == "" {
+		return
+	}
+	sessionID := h.SessionRef()
+	parentID, err := (ClaudeExecutionAdapter{Store: h.runtimeStore}).executionForClaudeRun(RunStatus{ProjectID: h.projectID, ActiveAttemptID: h.attemptID}, sessionID)
+	if err != nil || parentID == "" {
+		if err != nil {
+			_ = appendRawLogLine(h.rawLogPath, "claude process-exit observation lookup failed: "+err.Error())
+		}
+		return
+	}
+	_, err = (ClaudeExecutionAdapter{Store: h.runtimeStore}).Observe(ClaudeExecutionObservation{
+		ProjectID: h.projectID, ParentExecutionID: parentID, SessionID: sessionID,
+		SourceEventID: "claude-process-exit:" + h.attemptID + ":" + sessionID,
+		Kind:          "process_exit_without_result", Status: "completed", OccurredAt: at,
+		Metadata:                 map[string]any{"observation_source": "process_exit_without_result", "provider_outcome_claimed": false, "exit_code": exitCode},
+		VisibilityDegradedReason: "process_exit_without_result_requires_authoritative_fetch",
+	})
+	if err != nil {
+		_ = appendRawLogLine(h.rawLogPath, "claude process-exit observation rejected: "+err.Error())
+	}
 }
 
 func (h *claudeLiveHandle) failCriticalRunnerIO(message string, err error) {

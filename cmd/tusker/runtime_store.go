@@ -23,6 +23,9 @@ type RuntimeStore struct {
 	// rebindProjectAfterUpdate is a test seam for proving that a failed
 	// persistence step rolls the complete registry mutation back.
 	rebindProjectAfterUpdate func(*sql.Tx) error
+	// providerObservationBeforePersist is a test seam proving provider child
+	// identity rolls back with the receipt/observation transaction.
+	providerObservationBeforePersist func(*sql.Tx) error
 }
 
 type GateLedgerEntry struct {
@@ -1290,6 +1293,15 @@ func (s *RuntimeStore) Migrate() error {
 		}
 	}
 	if err := s.migrateExecutionLedger(); err != nil {
+		return err
+	}
+	if err := s.migrateProviderExecutionObservations(); err != nil {
+		return err
+	}
+	if err := s.migrateExecutionTimelines(); err != nil {
+		return err
+	}
+	if err := s.migrateExecutionLifecycle(); err != nil {
 		return err
 	}
 	return nil

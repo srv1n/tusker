@@ -60,7 +60,7 @@ func (d *Daemon) ingestCodexExecRawLog(run RunStatus) (bool, error) {
 		return eventLog.Append(kind, run.ActiveAttemptID, RunnerCodexExec, payload)
 	}
 	changed := false
-	for _, line := range strings.Split(text, "\n") {
+	for lineIndex, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -70,6 +70,11 @@ func (d *Daemon) ingestCodexExecRawLog(run RunStatus) (bool, error) {
 			continue
 		}
 		payload, _ := value.(map[string]any)
+		if observed, observeErr := (CodexExecutionAdapter{Store: d.store}).ObserveRunPayload(run, value, int64(lineIndex+1), "codex_exec_jsonl"); observeErr != nil {
+			return changed, fmt.Errorf("observe codex-exec execution event: %w", observeErr)
+		} else if observed {
+			changed = true
+		}
 		kind := normalizeCodexExecEventKind(stringValue(payload["type"]))
 		if kind == "" {
 			kind = normalizeCodexExecEventKind(stringValue(payload["event"]))
@@ -78,7 +83,9 @@ func (d *Daemon) ingestCodexExecRawLog(run RunStatus) (bool, error) {
 			kind = normalizeCodexExecEventKind(stringValue(payload["method"]))
 		}
 		at := firstNonEmpty(codexExecEventTime(payload), time.Now().UTC().Format(time.RFC3339))
-		sessionRef := firstNonEmpty(findSessionRef(value), run.SessionRef)
+		// Prefer the already-established parent session. Nested child identifiers
+		// in JSONL must never replace the resumable Codex thread.
+		sessionRef := firstNonEmpty(run.SessionRef, findSessionRef(value))
 		turnID := codexExecTurnID(value)
 		usage := extractUsageCounters(json.RawMessage(line))
 		if turnID == "" {

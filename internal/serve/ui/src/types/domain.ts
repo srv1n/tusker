@@ -230,6 +230,32 @@ export interface DiscardImpact {
 export type DocKind = "spec" | "decision" | "knowledge" | "task" | "epic" | "dashboard";
 
 // ----------------------------------------------------------------------------
+// Execution observability (read model; lifecycle dimensions never collapse)
+// ----------------------------------------------------------------------------
+
+export interface ExecutionCapability { action: string; available: boolean; target?: string; reason?: string; provider?: string; provider_owned: boolean }
+export interface ProviderCapabilityFact { name: string; state: "true" | "false" | "unknown" | string; provenance: string; fresh_at: string }
+export interface ExecutionLifecycle {
+  lease_state: string; attempt_outcome: string; session_ref: string; provider_status: string; delivery_state: string;
+  process_observed: boolean; admission_state: string; process_state: string; outcome_state: string; session_state: string;
+  child_attention_state: string; derived_phase: string;
+}
+export interface ExecutionNode {
+  execution_id: string; root_execution_id: string; parent_execution_id: string; project_id: string; node_kind: string;
+  display_name: string; effective_display_name: string; task_id: string; wave_id: string; bound_task_id: string; bound_wave_id: string;
+  binding_generation: number; binding_at: string; proof_eligible: boolean; attempt_id: string; source: string; provider: string;
+  provider_session_id: string; effective_provider_session_id: string; provider_child_handle: string; agent_type: string; created_at: string;
+  provider_status: string; provider_owned: boolean; provider_capabilities: ProviderCapabilityFact[]; lifecycle: ExecutionLifecycle;
+  active_children: number; failed_children: number; attention_children: number; partial_visibility: boolean; diagnostics: string[]; controls: ExecutionCapability[];
+}
+export interface ExecutionEdge { parent_execution_id: string; child_execution_id: string; kind: string; created_at: string }
+export interface ExecutionGraph { schema: "tusker.execution-graph/v1"; nodes: ExecutionNode[]; edges: ExecutionEdge[]; next_cursor?: string; partial_visibility: boolean }
+export interface ExecutionTimelineRow { source_execution_id: string; source_epoch: string; source_sequence: number; provider: string; provider_event_id: string; observation_id: string; occurred_at: string; status: string; authoritative: boolean; cursor?: string }
+export interface ExecutionTimeline { schema: "tusker.execution-timeline/v1"; rows: ExecutionTimelineRow[]; next_cursor?: string; previous_cursor?: string; committed_tail?: string; reset?: boolean; gap?: boolean; stale_cursor?: boolean; older?: boolean; newer?: boolean }
+export interface ExecutionInbox { schema: "tusker.execution-graph/v1"; executions: ExecutionNode[]; read_only: boolean }
+export interface ExecutionBindingPreview { ok: boolean; task_id?: string; wave_id?: string; binding_generation?: number; conflicts?: number; proof_boundary: string; error?: string }
+
+// ----------------------------------------------------------------------------
 // Projects & navigation
 // ----------------------------------------------------------------------------
 

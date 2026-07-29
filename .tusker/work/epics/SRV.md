@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-21T14:35:24Z"
-updated_at: "2026-07-28T15:07:12Z"
-state_rev: "sha256:daaf67f0123aabdbbace582b974626bfa039c85311845fe33d3af52a9317b606"
+updated_at: "2026-07-29T11:28:51Z"
+state_rev: "sha256:6f2fc4cf8dc26a9e116d6cf72edd19ee476079bc413963e1a9afa2d44a68ba1b"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -55,6 +55,7 @@ TBD.
 | [[SRV-T-0006]] | review | reviewer | Review evidence and close or return to rework. |
 | [[SRV-T-0007]] | ready | agent | Execute the task contract and satisfy proof mode. |
 | [[SRV-T-0008]] | review | reviewer | Review evidence and close or return to rework. |
+| [[SRV-T-0009]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 

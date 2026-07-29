@@ -19,6 +19,21 @@ This doc describes how Tusker's orchestration works **today**, drawn from `cmd/t
 
 Tusker separates that *deciding* what should run (read-only, available to anyone) from *doing* it — dispatching a local runner, which happens only inside the operator-started resident daemon.
 
+## Execution visibility is not dispatch authority
+
+Each wave authorization generation and direct invocation has a durable
+execution root. Daemon attempts are independently leased managed children;
+provider-native children reported by Codex or Claude are observable but remain
+provider-owned. Provider observations cannot claim or bind a task, and an
+interactive worker cannot turn an observed child into a nested Tusker runner.
+
+Direct sessions may register and attach outside the daemon. They remain in the
+unbound inbox until an audited, conflict-checked bind to a task's canonical
+wave. Binding starts a new authority generation, so earlier observation history
+cannot become proof or delivery authority. The graph, adapter limits, timeline,
+and operator recovery rules live in
+[execution-observability.md](execution-observability.md).
+
 ## Readiness is dimensional
 
 Tusker does not use one aggregate “ready” bit across unrelated authority

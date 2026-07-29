@@ -15,7 +15,7 @@ import {
 } from "@/lib/frontmatter";
 import { liveRefetchInterval } from "@/lib/stream";
 import { projectQueryScope } from "@/lib/queryScope";
-import type { DeliveryPlanList, DeliveryReview, DeliveryStartResult, DocContent, DocListEntry, RunDetail, TaskCapsule, TaskDetail } from "@/types/domain";
+import type { DeliveryPlanList, DeliveryReview, DeliveryStartResult, DocContent, DocListEntry, ExecutionBindingPreview, ExecutionGraph, ExecutionInbox, ExecutionTimeline, RunDetail, TaskCapsule, TaskDetail } from "@/types/domain";
 import type {
   DocgraphDocDetail,
   DocgraphSavePayload,
@@ -46,7 +46,21 @@ export const qk = {
   docgraphDoc: (projectId: string, subject: string) => ["docgraph", "doc", projectId, subject] as const,
   deliveryReview: (plan: string, projectId?: string) => ["delivery", "review", projectId ?? "all", plan] as const,
   deliveryPlans: (projectId?: string) => ["delivery", "plans", projectId ?? "all"] as const,
+  executions: (projectId: string, params: Record<string, string | undefined>) => ["executions", projectId, params] as const,
+  executionInbox: (projectId: string) => ["executions", "inbox", projectId] as const,
+  executionTimeline: (projectId: string, execution: string, params: Record<string, string | undefined>) => ["executions", "timeline", projectId, execution, params] as const,
 };
+
+export const useExecutions = (projectId: string, params: Record<string, string | undefined>) =>
+  useQuery<ExecutionGraph>({ queryKey: qk.executions(projectId, params), queryFn: () => api.executions(params, projectId), refetchInterval: liveRefetchInterval });
+export const useExecutionInbox = (projectId: string) =>
+  useQuery<ExecutionInbox>({ queryKey: qk.executionInbox(projectId), queryFn: () => api.executionInbox(projectId), refetchInterval: liveRefetchInterval });
+export const useExecutionTimeline = (projectId: string, execution: string, params: Record<string, string | undefined>) =>
+  useQuery<ExecutionTimeline>({ enabled: !!execution, queryKey: qk.executionTimeline(projectId, execution, params), queryFn: () => api.executionTimeline(execution, params, projectId), refetchInterval: liveRefetchInterval });
+export const useExecutionBindingPreview = (projectId: string, execution: string, taskId: string) =>
+  useQuery<ExecutionBindingPreview>({ enabled: !!execution && !!taskId, queryKey: ["executions", "binding-preview", projectId, execution, taskId], queryFn: () => api.executionBindingPreview(execution, taskId, projectId) });
+export const useExecutionRename = (projectId: string) => { const qc = useQueryClient(); return useMutation({ mutationFn: ({ execution, name }: { execution: string; name: string }) => api.executionRename(execution, name, projectId), onSettled: () => void qc.invalidateQueries({ queryKey: ["executions"] }) }); };
+export const useExecutionBind = (projectId: string) => { const qc = useQueryClient(); return useMutation({ mutationFn: ({ execution, taskId }: { execution: string; taskId: string }) => api.executionBind(execution, taskId, projectId), onSettled: () => void qc.invalidateQueries({ queryKey: ["executions"] }) }); };
 
 export const useDaemon = () =>
   useQuery({ queryKey: qk.daemon, queryFn: api.daemon, refetchInterval: liveRefetchInterval });
