@@ -70,10 +70,23 @@ func TestCapabilityInventoryCoversDispatcher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	caseLines := regexp.MustCompile(`(?m)^\s*case ([^\n]+):`).FindAllStringSubmatch(string(raw)[start:end], -1)
+	lines := strings.Split(string(raw)[start:end], "\n")
 	quoted := regexp.MustCompile(`"([^"]+)"`)
-	for _, caseLine := range caseLines {
-		for _, match := range quoted.FindAllStringSubmatch(caseLine[1], -1) {
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if !strings.HasPrefix(line, "case ") || !strings.HasSuffix(line, ":") {
+			continue
+		}
+		caseExpression := strings.TrimSuffix(strings.TrimPrefix(line, "case "), ":")
+		j := i + 1
+		for ; j < len(lines); j++ {
+			next := strings.TrimSpace(lines[j])
+			if strings.HasPrefix(next, "case ") || strings.HasPrefix(next, "default:") {
+				break
+			}
+		}
+		refuses := strings.Contains(strings.Join(lines[i+1:j], "\n"), "legacyOnlyCommand(")
+		for _, match := range quoted.FindAllStringSubmatch(caseExpression, -1) {
 			caseName := strings.TrimSpace(match[1])
 			parts := strings.Fields(caseName)
 			if len(parts) == 0 {
@@ -83,7 +96,17 @@ func TestCapabilityInventoryCoversDispatcher(t *testing.T) {
 			if command == "legacy" || command == "help" || strings.HasPrefix(command, "-") {
 				continue
 			}
-			if capabilityDeprecationNamed(manifest.Deprecations, caseName) {
+			deprecated := capabilityDeprecationNamed(manifest.Deprecations, caseName)
+			if refuses {
+				if !deprecated {
+					t.Errorf("refusal route %q is missing a typed deprecation", caseName)
+				}
+				if capabilityAdvertisesCase(manifest.Commands, caseName) {
+					t.Errorf("refusal route %q is advertised as live", caseName)
+				}
+				continue
+			}
+			if deprecated {
 				continue
 			}
 			capability, ok := capabilityCommandNamed(manifest.Commands, command)
@@ -96,6 +119,21 @@ func TestCapabilityInventoryCoversDispatcher(t *testing.T) {
 			}
 		}
 	}
+}
+
+func capabilityAdvertisesCase(commands []capabilityCommand, caseName string) bool {
+	parts := strings.Fields(caseName)
+	if len(parts) == 0 {
+		return false
+	}
+	command, ok := capabilityCommandNamed(commands, parts[0])
+	if !ok {
+		return false
+	}
+	if len(parts) == 1 {
+		return len(command.Subcommands) == 0
+	}
+	return containsString(command.Subcommands, parts[1])
 }
 
 func capabilityDeprecationNamed(deprecations []capabilityDeprecation, name string) bool {
