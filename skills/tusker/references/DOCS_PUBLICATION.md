@@ -1,248 +1,71 @@
-# Docs publication
+# Documentation publication
 
-Use this when the user wants project docs, a public docs site, a user guide, release notes, support docs, runbooks, or agent-readable canon.
+Use this guide for public docs, developer references, guides, runbooks, release
+notes, or agent-readable project canon.
 
-## Read order
+## Capability boundary
 
-1. `README*`, `AGENTS.md`, `CLAUDE.md`, and obvious architecture files.
-2. `tusker/README.md` and the epic roster from `tusker list`.
-3. durable docs under `tusker/docs/**`.
-4. Repo docs registered through `docs/publication.yaml`.
-5. Generated manifests if present:
-   - `site/public/canon-manifest.json`
-   - `site/public/llms.txt`
-   - `site/public/llms-full.txt`
-   - `site/src/generated/content-manifest.json`
+Start with `tusker capabilities --json`. In the V7 CLI, the live docs helpers
+are `docs find`, `docs new`, and `docs map`; project-skill export is
+`publish skill --v7`. Removed docs/knowledge/publication commands appear under
+typed deprecations. Do not invoke or reconstruct them.
 
-If a source file disagrees with `canon-manifest.json`, trust the manifest first and call out the conflict. Do not quietly cite stale archaeology.
+Tusker does not own the repository's site build. Use the build/preview command
+declared by that repo after inspecting its manifest, package scripts, or
+contributor instructions.
 
-## Durable docs model
+## Select the authority
 
-Docs are durable knowledge pages under `tusker/docs/**`.
-
-Tasks carry:
-
-- `domains`: broad areas the work touches
-- `doc_nodes`: exact docs targets from `_config/docs-map.yaml`
-- `## Knowledge delta`: concise high/critical or doc-targeted change in durable understanding
-
-If `doc_nodes` is non-empty, close must prove one of three things:
-
-1. docs were already correct,
-2. docs were updated,
-3. docs update was explicitly waived with a reason.
-
-## Pick the source
-
-| Need | Source |
+| Need | Source of truth |
 |---|---|
-| implementation canon | doc under `tusker/docs/**` with `kind: canon` |
-| user guide | doc with `audience: user` |
-| support/runbook | doc with `audience: support` or `kind: runbook` |
-| release notes | doc with `audience: release` or `kind: release` |
-| repo-native spec or README | explicit `docs/publication.yaml` entry |
-| one-task explanation | companion doc linked to the task |
+| Product/system behavior | Canonical system doc plus executable code/tests |
+| Repo-native spec, guide, or README | Tracked file registered by `docs/publication.yaml` when published |
+| Agent project knowledge | `.tusker/knowledge/domains/<domain>/INDEX.md` and `CANON.md` |
+| Task-specific proof | Task verification/evidence; never publication prose by default |
+| Generated site output | Build artifact only; edit its registered source |
 
-Tasks are execution records, not public docs. Their evidence proves work happened, but does not automatically become publication content.
+If sources disagree, report the conflict. Do not silently prefer a generated
+manifest over newer executable truth or treat historical tasks as canon.
 
-## LLM authoring contract
+## Authoring contract
 
-This is the rule agents must apply before drafting docs, not after review.
+Choose one primary audience and one primary mode before writing:
 
-Documentation tickets are not "copy the task into a page" tickets. For every page, choose:
-
-1. one audience: `user`, `developer`, `agent`, or `internal`
-2. one primary Diátaxis mode: `tutorial`, `how-to`, `reference`, or `explanation`
-3. one source authority set: Tusker D-notes, registered repo docs, or code paths
-
-Human docs are synthesized outputs. Source material is input.
-
-Do not publish these directly as user/developer prose:
-
-- task records
-- evidence logs
-- D-note bodies
-- implementation scratchpads
-- generated manifests
-- agent-only instructions
-- stale or unregistered markdown
-
-For V7, the generated project knowledge skill is a routing surface, not a docs
-dump. Its source truth is `tusker/knowledge/domains/**`; it must not publish
-task bodies, evidence records, attempts, event files, generated manifests,
-packet caches, runtime state, or raw logs as reader-facing docs.
-
-Every exported V7 domain needs a project skill route to that domain's
-`INDEX.md` and `CANON.md`. Tusker regenerates the route table on domain
-creation and `tusker validate` reports `PROJECT_SKILL_DOMAIN_ROUTE_MISSING`
-when the route table drifts.
-
-Use this split:
-
-| Audience | Write for | Keep out by default |
+| Audience | Include | Exclude by default |
 |---|---|---|
-| `user` | outcome, steps, expected result, common fixes | task IDs, stale metadata, internal paths |
-| `developer` | contracts, architecture, extension points, validation | raw work logs unless they prove a claim |
-| `agent` | exact canon, constraints, source paths, stale triggers | polished onboarding prose |
-| `internal` | maintainer decisions, operational risk, migration context | basic tutorial walkthroughs |
+| User | Outcome, steps, expected result, recovery | Internal IDs, work logs, implementation paths |
+| Developer | Contracts, architecture, edge cases, verification | Raw transcripts and redundant task history |
+| Agent | Exact constraints, source paths, stale triggers | Marketing and tutorial padding |
+| Internal/operator | Decisions, authority, migration and recovery | Basic onboarding prose |
 
-Mode contract:
+Modes are tutorial, how-to, reference, or explanation. A page gets one dominant
+mode: tutorials teach safely, how-tos complete a task, references state exact
+facts, and explanations clarify design and tradeoffs.
 
-| Mode | Page shape | Reject if |
-|---|---|---|
-| `tutorial` | guided learning path with a safe result | starts with reference tables |
-| `how-to` | direct steps for completing a task | wanders into background essay |
-| `reference` | exact facts, schemas, commands, contracts, edge cases | hides edge cases in prose |
-| `explanation` | concepts, tradeoffs, why the system works this way | becomes a procedure |
+## Workflow
 
-Quality gate before returning docs:
+1. Inspect the task capsule and acceptance. If it names `doc_nodes`, resolve
+   them with `tusker docs map [DOC-NODE]`; do not invent node IDs.
+2. Read only the owning canon and changed implementation/tests.
+3. Record a concise knowledge delta for high-risk or doc-targeted work.
+4. Edit the canonical source. Keep task records, attempts, events, evidence
+   logs, packet caches, runtime state, and secrets out of reader-facing prose.
+5. Register repo-native published sources in `docs/publication.yaml`; do not
+   make a site crawler discover arbitrary Markdown.
+6. Run the repository-defined validation and publication pipeline. Record the
+   smallest command + PASS/FAIL proof mapped to acceptance.
+7. If a contractually required subjective docs review remains, create or honor
+   the exact human gate and stop. Objective correctness belongs to agent review.
 
-- The first screen makes the reader intent obvious.
-- One primary audience and one primary mode are declared by the page shape.
-- Raw canon has been transformed for the selected reader.
-- User pages avoid internal metadata.
-- Developer pages include contracts, source paths, edge cases, and verification.
-- Agent/internal pages preserve exact IDs, constraints, source paths, and stale triggers.
-- Claims about behavior include a verification path or are marked unverified.
+## Project knowledge is separate
 
-## Diátaxis access model
-
-`_config/docs-map.yaml` is the access layer. Every node must declare:
-
-| Field | Purpose |
-|---|---|
-| `mode` | Dominant reader intent: `tutorial`, `how-to`, `reference`, or `explanation` |
-| `audience` | Primary reader: `developer`, `user`, `operator`, `support`, `release`, `agent`, or `internal` |
-| `agent_layer` | Agent treatment: `none`, `capsule`, or `standalone` |
-| `source_of_truth` | Files that define the page's facts |
-| `stale_when.paths` | Files or globs that should trigger docs freshness review |
-
-Do not force folders to mirror Diátaxis. Tusker uses reader-facing navigation:
-
-| Mode | Default nav |
-|---|---|
-| `tutorial` | Start here |
-| `how-to` | Guides |
-| `reference` | Reference |
-| `explanation` | Concepts |
-
-Agent docs with `audience: agent` or `agent_layer: standalone` appear under For agents. Capsule docs stay in their human-facing section with a small agent note.
-
-## Docs close gate
+The repo `.tusker/SKILL.md` is a generated router, not a docs dump. Domain
+creation/validation keeps its routes aligned with domain `INDEX.md` and
+`CANON.md`. When a portable project-skill package is explicitly required, use:
 
 ```bash
-tusker docs check <TASK-ID>
-tusker docs apply <TASK-ID> --node <DOC-NODE> --reason "<what changed>"
-tusker docs noop <TASK-ID> --node <DOC-NODE> --reason "<why already current>"
-tusker docs waive <TASK-ID> <DOC-NODE> --reason "<why no doc change>"
+tusker publish skill --v7 --out <generated-directory>
 ```
 
-Run this before `tusker close` when `doc_nodes` exists.
-
-High-risk tasks that affect durable understanding need a useful knowledge delta, but docs/changelog work still requires explicit `doc_nodes`:
-
-| Change type | Topic | Before | After | Audience | Target doc nodes | Mode | Status |
-|---|---|---|---|---|---|---|---|
-
-`tusker docs check` reads the task `doc_nodes` and any target nodes in this table. Use existing node IDs from `_config/docs-map.yaml`; unknown nodes are validation failures.
-
-Inspection commands:
-
-| Command | Use |
-|---|---|
-| `tusker docs model` | Explain the docs philosophy, Diátaxis modes, agent layers, and close gate. |
-| `tusker docs map [DOC-NODE]` | Inspect controlled doc nodes and source-of-truth metadata. |
-| `tusker docs catalog` | Show reader-facing IA generated from docs-map. |
-| `tusker docs freshness [--stale]` | Show stale/verified docs, linked tasks, waivers, and stale triggers. |
-
-## Publish vault docs
-
-```bash
-tusker new doc --title "<Guide>" \
-  --node user/guides/<slug> \
-  --audience user \
-  --kind guide \
-  --domains docs \
-  --publish true
-
-tusker docs export --site ./site
-tusker docs build --site ./site
-```
-
-Route rules:
-
-- no leading or trailing slash
-- stable `node` maps to publication route
-- renamed routes need `redirect_from`
-- published canon needs `canonical_status`
-
-## Publish repo docs
-
-Use `docs/publication.yaml` for repo-native docs that should publish:
-
-```yaml
-repo_docs:
-  - source: docs/specs
-    include: "*.md"
-    route_prefix: developer/specs
-    audience: developer
-    section_title: Specs
-    canonical: true
-    canonical_status: draft
-    owner_epic: ORC
-    verified_at: "2026-04-29"
-    tags: [specs]
-```
-
-Do not make Astro crawl random markdown. If it should publish, register it.
-
-## Build and preview
-
-```bash
-tusker docs export --site ./site
-tusker docs dev --site ./site --watch
-tusker docs build --site ./site
-```
-
-Generated output includes:
-
-- `site/src/content/docs/**`
-- `site/src/generated/content-manifest.json`
-- `site/src/generated/canon-manifest.json`
-- `site/public/canon-manifest.json`
-- `site/src/generated/routes-removed.json`
-- `site/public/llms.txt`
-- `site/public/llms-full.txt`
-
-Do not author in `site/src/content/docs/**`. It is generated output.
-
-## Route lifecycle
-
-When a published route is renamed, add the old route to replacement metadata:
-
-```yaml
-redirect_from:
-  - developer/architecture/old-runtime-topology
-```
-
-`tusker validate` should fail while removed routes lack redirects. Fix by restoring the source or adding `redirect_from`, then export again.
-
-## Evidence
-
-Attach execution proof to tasks:
-
-```bash
-tusker evidence <TASK-ID> screenshot <file> --note "<caption>"
-```
-
-Published docs may reference selected local assets, and the exporter can copy/rewrite them. Do not stuff durable explanation into `## Evidence`; create or update a doc.
-
-## Agent rules
-
-- Read `canon-manifest.json` before broad repo-doc archaeology.
-- Use `canonical_status`: `approved` is safe, `draft` needs verification, `deprecated`/`historical` is archaeology.
-- Treat `site/src/content/docs/**` as generated output.
-- Treat `_system/generated/**` as generated indexes.
-- Use `tusker/docs/**` for durable vault docs.
-- Use `docs/publication.yaml` for repo docs.
-- If docs impact is real, set `doc_nodes` and fill knowledge delta. If the same lesson repeats across tasks, use `tusker feedback promote` instead of per-task appends.
+Never hand-edit generated operator-skill installs or exported project-skill
+packages. Patch their canonical sources, then sync or regenerate.

@@ -74,7 +74,8 @@ func TestCapabilityInventoryCoversDispatcher(t *testing.T) {
 	quoted := regexp.MustCompile(`"([^"]+)"`)
 	for _, caseLine := range caseLines {
 		for _, match := range quoted.FindAllStringSubmatch(caseLine[1], -1) {
-			parts := strings.Fields(match[1])
+			caseName := strings.TrimSpace(match[1])
+			parts := strings.Fields(caseName)
 			if len(parts) == 0 {
 				continue
 			}
@@ -82,11 +83,11 @@ func TestCapabilityInventoryCoversDispatcher(t *testing.T) {
 			if command == "legacy" || command == "help" || strings.HasPrefix(command, "-") {
 				continue
 			}
+			if capabilityDeprecationNamed(manifest.Deprecations, caseName) {
+				continue
+			}
 			capability, ok := capabilityCommandNamed(manifest.Commands, command)
 			if !ok {
-				if capabilityDeprecationNamed(manifest.Deprecations, command) {
-					continue
-				}
 				t.Errorf("runInner public command %q is absent from capabilities", command)
 				continue
 			}
