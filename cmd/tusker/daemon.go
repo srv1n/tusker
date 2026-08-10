@@ -4475,6 +4475,7 @@ func classifyRetryFailure(reason string) retryFailureClassification {
 		return retryFailureClassification{retryable: true, outcome: AttemptOutcomeCancelled}
 	}
 	nonRetryable := []string{
+		"delivery_unknown", "delivery unknown", "prompt delivery is unknown",
 		"auth", "authentication", "authorization", "unauthorized", "forbidden", "permission denied",
 		"api key", "token expired", "invalid token", "login required", "not logged in",
 		"sandbox", "approval denied", "approval rejected", "requires approval", "human approval",

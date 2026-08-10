@@ -52,6 +52,12 @@ type Timeouts struct {
 // a decision other than AllowOnce is fail-closed. A nil handler rejects.
 type PermissionHandler func(context.Context, PermissionRequest) (PermissionDecision, error)
 
+// ProcessValidator runs immediately after the ACP adapter starts and before
+// the client exposes it to callers. It lets a process supervisor verify that
+// the adapter stayed inside its already-established containment boundary.
+// The validator must not perform provider I/O or mutate task authority.
+type ProcessValidator func(pid int) error
+
 // Config describes one direct, preinstalled ACP adapter process.
 type Config struct {
 	// Argv is passed directly to exec.Command. Shells and package installers are
@@ -67,6 +73,10 @@ type Config struct {
 	Limits            Limits
 	Timeouts          Timeouts
 	PermissionHandler PermissionHandler
+	// ValidateProcess is an optional containment check invoked synchronously
+	// after exec starts. A rejection kills and reaps the child before Start
+	// returns, so no unverified ACP process can become live.
+	ValidateProcess ProcessValidator
 }
 
 func (c Config) withDefaults() Config {
@@ -316,6 +326,7 @@ type Client struct {
 	permissionCancel      map[string]context.CancelFunc
 	permissionDone        map[string]chan struct{}
 	permissionInvocations int
+	updatesSeen           int
 	cancelledPermissions  map[string]struct{}
 	lastActivity          time.Time
 }
@@ -362,6 +373,15 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 		_ = stdout.Close()
 		return nil, fmt.Errorf("start acp adapter: %w", err)
 	}
+	if cfg.ValidateProcess != nil {
+		if err := cfg.ValidateProcess(cmd.Process.Pid); err != nil {
+			_ = stdin.Close()
+			_ = stdout.Close()
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return nil, fmt.Errorf("validate acp adapter process: %w", err)
+		}
+	}
 	c := &Client{
 		cfg: cfg, cmd: cmd, stdin: stdin, stdout: stdout,
 		pending: make(map[string]*pendingCall), inbound: make(map[string]struct{}),
@@ -373,6 +393,16 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 	go c.readLoop()
 	go c.waitLoop()
 	return c, nil
+}
+
+// ProcessID returns the supervised ACP adapter PID. It is observational
+// process identity only; it conveys no Tusker task, lease, or session
+// authority. A zero result means the client was not started.
+func (c *Client) ProcessID() int {
+	if c == nil || c.cmd == nil || c.cmd.Process == nil {
+		return 0
+	}
+	return c.cmd.Process.Pid
 }
 
 func (c *Client) waitLoop() {
@@ -940,6 +970,9 @@ func (c *Client) handleResponse(msg rpcMessage) {
 func (c *Client) handleRequest(msg rpcMessage) {
 	if len(msg.ID) == 0 {
 		if msg.Method == "session/update" {
+			if !c.recordUpdateObservation() {
+				return
+			}
 			c.enqueueUpdate(Update{Method: msg.Method, Params: append(json.RawMessage(nil), msg.Params...)})
 			return
 		}
@@ -1061,6 +1094,24 @@ func (c *Client) handleRequest(msg rpcMessage) {
 			c.poison(err)
 		}
 	}()
+}
+
+// recordUpdateObservation is a total per-attempt fuse, not merely a queue
+// capacity check. A provider that emits and drains an unbounded stream must
+// still poison this client rather than run indefinitely or consume unbounded
+// supervisor attention.
+func (c *Client) recordUpdateObservation() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.protocolErr != nil {
+		return false
+	}
+	c.updatesSeen++
+	if c.updatesSeen > c.cfg.Limits.MaxUpdates {
+		_ = c.poisonLocked(fmt.Errorf("%w: total session/update limit %d exceeded", ErrProtocol, c.cfg.Limits.MaxUpdates))
+		return false
+	}
+	return true
 }
 
 func allowOnceOption(options []PermissionOption) (string, bool) {

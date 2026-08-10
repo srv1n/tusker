@@ -17,6 +17,9 @@ const (
 	RunnerCodexExec      RunnerName = "codex_exec"
 	RunnerCodexCloud     RunnerName = "codex_cloud"
 	RunnerClaude         RunnerName = "claude-code"
+	// RunnerACP is a distinct persisted local transport kind. It deliberately
+	// does not alias codex_app_server, codex_exec, claude-code, or codex_cloud.
+	RunnerACP RunnerName = "acp_v1"
 )
 
 type LeaseState string
@@ -92,6 +95,11 @@ type StartRequest struct {
 	CodexPolicy         CodexPolicy
 	ExternalLoop        ExternalLoopLaunchContext
 	ContainmentPGID     int
+	// Principal and Actor are optional dispatch provenance supplied by a caller.
+	// The ACP runtime resolves them from the durable lease authorization when
+	// absent; provider identities never fill either field.
+	Principal string
+	Actor     string
 }
 
 type ResumeRequest struct {
@@ -126,6 +134,8 @@ type ResumeRequest struct {
 	VaultPath           string
 	CodexPolicy         CodexPolicy
 	ExternalLoop        ExternalLoopLaunchContext
+	Principal           string
+	Actor               string
 }
 
 type ExternalLoopLaunchContext struct {

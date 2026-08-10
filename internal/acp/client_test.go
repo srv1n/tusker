@@ -207,6 +207,30 @@ func TestACPStartRequiresAbsolutePathsAndEnvironmentAllowlist(t *testing.T) {
 	}
 }
 
+func TestACPStartValidatesAndReapsProcessBeforeExposure(t *testing.T) {
+	called := false
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{
+		Argv:   []string{exe, "-test.run=^TestACPHelperProcess$"},
+		CWD:    t.TempDir(),
+		Env:    []string{"GO_WANT_ACP_HELPER=1", "ACP_HELPER_MODE=silence"},
+		Stderr: io.Discard,
+		ValidateProcess: func(pid int) error {
+			called = pid > 0
+			return errors.New("outside containment")
+		},
+	}
+	if client, err := Start(context.Background(), cfg); err == nil || client != nil {
+		t.Fatalf("unsafe process was exposed: client=%#v err=%v", client, err)
+	}
+	if !called {
+		t.Fatal("process validator did not receive a live PID")
+	}
+}
+
 func TestACPHappyFlowAdvertisesNoOptionalClientSurface(t *testing.T) {
 	c := startTestClient(t, "happy", nil)
 	init := initializeAndSession(t, c)

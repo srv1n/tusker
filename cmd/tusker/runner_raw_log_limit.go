@@ -140,7 +140,11 @@ func (w *boundedRawLogWriter) Write(p []byte) (int, error) {
 	}
 	w.mu.Unlock()
 	if terminate != nil {
-		terminate()
+		// The producer may be an exec stderr copier. Termination closes and
+		// waits on the same child whose pipe writer is currently in this call;
+		// invoke it asynchronously so an overflow can never self-deadlock the
+		// copier before it returns the bounded error.
+		go terminate()
 	}
 	if writeErr != nil {
 		return n, writeErr
@@ -168,7 +172,7 @@ func (w *boundedRawLogWriter) bindTerminator(terminate func()) {
 	}
 	w.mu.Unlock()
 	if overflowed {
-		terminate()
+		go terminate()
 	}
 }
 

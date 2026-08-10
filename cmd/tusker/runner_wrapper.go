@@ -171,9 +171,11 @@ func runRunnerWrapperWithChildStarter(
 				AttemptOutcomeInterrupted,
 				"runner wrapper cancelled before child terminal status",
 			)
+			runnerWrapperReapACPContainmentAfterStatus(req)
 			return nil
 		}
 		runnerWrapperPublishStatusIfAbsent(req.Start, 1, AttemptOutcomeFailed, "runner wrapper could not start child: "+err.Error())
+		runnerWrapperReapACPContainmentAfterStatus(req)
 		return err
 	}
 	return runnerWrapperWait(ctx, cancelChild, req, result, stopHeartbeat)
@@ -210,6 +212,11 @@ func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*St
 			execReq.ResumeMode = true
 		}
 		return executeRunnerCommand(ctx, runner, execReq, RunnerCapabilities{StructuredEvents: true, ResumeSession: true, MachineFinalStatus: true, UsageMetrics: true})
+	case RunnerACP:
+		if req.Resume != nil {
+			return nil, tuskerError(errorInvalidTransition, "acp_v1 wrapper refuses a resume request before a provider adapter enables negotiated resume")
+		}
+		return startLiveACP(ctx, req.Start)
 	default:
 		return nil, tuskerError(errorConfigInvalid, "runner wrapper does not support runner "+string(runner))
 	}
@@ -221,6 +228,18 @@ func runnerWrapperWait(ctx context.Context, cancelChild context.CancelFunc, req 
 	for {
 		if fileExists(req.Start.StatusPath) {
 			runnerWrapperRecordDirectOutcome(req.Start)
+			runnerWrapperReapACPContainmentAfterStatus(req)
+			return nil
+		}
+		// ACP owns its own child wait. If that child has already been reaped
+		// without publishing a terminal status, do not leave this wrapper's
+		// heartbeat renewing the lease forever. Publish one bounded failure and
+		// let the daemon's normal retry/park policy classify it.
+		if RunnerName(strings.TrimSpace(req.Runner)) == RunnerACP && acpChildExitedWithoutStatus(result, req.Start.StatusPath) {
+			cancelChild()
+			runnerWrapperPublishStatusIfAbsent(req.Start, 1, AttemptOutcomeFailed, "acp_v1 child exited without terminal status")
+			runnerWrapperRecordDirectOutcome(req.Start)
+			runnerWrapperReapACPContainmentAfterStatus(req)
 			return nil
 		}
 		select {
@@ -229,16 +248,44 @@ func runnerWrapperWait(ctx context.Context, cancelChild context.CancelFunc, req 
 			runnerWrapperInterrupt(req, result, reason)
 			err := runnerWrapperWaitForStatus(req.Start, runnerWrapperStopTimeout())
 			runnerWrapperRecordDirectOutcome(req.Start)
+			runnerWrapperReapACPContainmentAfterStatus(req)
 			return err
 		case <-ctx.Done():
 			cancelChild()
 			runnerWrapperInterrupt(req, result, ctx.Err().Error())
 			err := runnerWrapperWaitForStatus(req.Start, runnerWrapperStopTimeout())
 			runnerWrapperRecordDirectOutcome(req.Start)
+			runnerWrapperReapACPContainmentAfterStatus(req)
 			return err
 		case <-ticker.C:
 		}
 	}
+}
+
+func acpChildExitedWithoutStatus(result *StartResult, statusPath string) bool {
+	if result == nil || result.PID <= 0 || strings.TrimSpace(statusPath) == "" || fileExists(statusPath) {
+		return false
+	}
+	if strings.TrimSpace(result.ProcessStart) != "" {
+		return !processIdentityMatches(RunStatus{ProcessPID: result.PID, ProcessPGID: result.PGID, ProcessStartedAt: result.ProcessStart})
+	}
+	return !processExists(result.PID)
+}
+
+// The wrapper is the ACP process-group owner. Once an ACP status is durable,
+// kill that group before the wrapper exits so a provider descendant that kept
+// stdout/stderr open cannot outlive its attempt. This intentionally includes
+// the wrapper itself; terminal status was recorded first and is the durable
+// supervisor handoff. Unit tests never enter this branch because only the real
+// runner-wrapper command supplies a containment PGID equal to its own PID.
+func runnerWrapperReapACPContainmentAfterStatus(req runnerWrapperRequest) {
+	if RunnerName(strings.TrimSpace(req.Runner)) != RunnerACP || req.ContainmentPGID <= 0 {
+		return
+	}
+	if req.ContainmentPGID != os.Getpid() || processGroupID(os.Getpid()) != req.ContainmentPGID {
+		return
+	}
+	_ = syscall.Kill(-req.ContainmentPGID, syscall.SIGKILL)
 }
 
 func runnerWrapperRecordDirectOutcome(req StartRequest) {
