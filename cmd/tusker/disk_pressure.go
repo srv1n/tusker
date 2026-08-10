@@ -74,6 +74,12 @@ type diskFilesystemStat struct {
 
 type diskStatFunc func(path string) (diskFilesystemStat, error)
 
+// runtimeDiskStat is the process default and remains the real filesystem
+// probe in production. The test harness replaces this seam with a generous
+// synthetic filesystem; disk-pressure tests opt into d.diskStat explicitly so
+// their refusal/recovery assertions stay authoritative and hermetic.
+var runtimeDiskStat diskStatFunc = defaultDiskStat
+
 func defaultDiskPressureConfig() DiskPressureConfig {
 	return DiskPressureConfig{
 		Enabled:        true,
@@ -499,6 +505,14 @@ func (s *RuntimeStore) mergeAndWriteDiskPressureStatus(decision DiskPressureStat
 		if sameDiskPressureConfig(previous.Config, decision.Config) {
 			status.Filesystems = mergeDiskPressureFilesystems(previous.Filesystems, decision.Filesystems, now)
 			status = summarizeDiskPressureStatus(status)
+			// Callers may carry a recovery transition across a second, narrower
+			// workspace measurement in the same dispatch. Preserve that explicit
+			// transition for the durable status write; the next ordinary check
+			// supplies Recovered=false and naturally consumes the marker.
+			if decision.Recovered && !status.DispatchPaused {
+				status.State = "recovered"
+				status.Recovered = true
+			}
 			if previous.DispatchPaused && status.State == "ok" && diskPressureBlockingObservationsFreshlyRemeasured(previous.Filesystems, decision.Filesystems) {
 				status.State = "recovered"
 				status.Recovered = true
@@ -530,6 +544,16 @@ func (s *RuntimeStore) mergeAndWriteDiskPressureStatus(decision DiskPressureStat
 }
 
 func (d *Daemon) checkDiskPressureForDispatch(workspacePath string) (DiskPressureStatus, error) {
+	return d.checkDiskPressureForDispatchWithState(workspacePath, true)
+}
+
+// checkDiskPressureForDispatchWithState performs a measurement for the
+// selected workspace and, when requested, the daemon state filesystem. The
+// dispatch path may already have a fresh healthy state observation from its
+// early refusal guard; reusing that observation avoids a duplicate stat while
+// retaining a second state measurement whenever the first check was blocked
+// (the recovery transition must be based on a fresh remeasurement).
+func (d *Daemon) checkDiskPressureForDispatchWithState(workspacePath string, includeState bool) (DiskPressureStatus, error) {
 	if d == nil || d.store == nil {
 		return DiskPressureStatus{}, tuskerError(errorConfigInvalid, "runtime store is required for disk pressure check")
 	}
@@ -539,13 +563,23 @@ func (d *Daemon) checkDiskPressureForDispatch(workspacePath string) (DiskPressur
 	}
 	statFn := d.diskStat
 	if statFn == nil {
-		statFn = defaultDiskStat
+		statFn = runtimeDiskStat
 	}
 	now := time.Now().UTC()
-	decision := evaluateDiskPressure(config, []diskPressurePath{
-		{Kind: "state_root", Path: d.stateRoot},
-		{Kind: "workspace", Path: workspacePath},
-	}, statFn, now)
+	paths := make([]diskPressurePath, 0, 2)
+	if includeState {
+		paths = append(paths, diskPressurePath{Kind: "state_root", Path: d.stateRoot})
+	}
+	// An empty workspace is used by the early dispatch guard before the
+	// concrete workspace has been selected. Do not turn it into the process
+	// working directory (nearestExistingDiskPath would do exactly that): doing
+	// so both measures an unrelated filesystem and leaves a stale blocking
+	// observation that cannot participate in recovery once the real workspace
+	// is known.
+	if strings.TrimSpace(workspacePath) != "" {
+		paths = append(paths, diskPressurePath{Kind: "workspace", Path: workspacePath})
+	}
+	decision := evaluateDiskPressure(config, paths, statFn, now)
 	status, err := d.store.mergeAndWriteDiskPressureStatus(decision, now)
 	if err != nil {
 		return status, err

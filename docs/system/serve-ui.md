@@ -1,166 +1,71 @@
 ---
-title: The observation surface — serve, dashboards, logbook, digest
+title: Serve UI and local control plane
 subject: serve-ui
-keywords: [serve, ui, dashboard]
 part_of: overview
 status: canonical
 read_when:
-  - You want to watch what the machine is doing, or route "what needs me" attention.
-  - You are wiring or debugging the serve API / SPA, the stream board, or a projection.
-  - You need to know which views are live-served vs generated files on disk.
-skip_when:
-  - You want the skill/install system — see [skills.md](skills.md).
-  - You only need task lifecycle/proof mechanics — read the installed `tusker` skill.
+  - operating the local Tusker Serve UI or TuskerBar
+  - wiring a Serve endpoint or UI mutation
 ---
 
-# The observation surface
+# Serve UI and local control plane
 
-Tusker has one write path (task contracts, proof, gates) and several **read**
-surfaces that answer "what shipped, what does it mean, what needs me, and what is
-the machine doing right now?" They fall into two families:
+`tusker serve` is a privileged, localhost-only JSON API plus embedded SPA. It
+is not a passive dashboard: task lifecycle, daemon, gate, evidence, project,
+execution, delivery, and document actions can change durable state. The daemon
+and vault are authoritative; the browser is a client and must verify mutation
+readback.
 
-- **Live-served** — `tusker serve` renders a localhost SPA over a fresh snapshot
-  of the vault + daemon runtime store. Nothing is written to disk.
-- **Generated files** — projection commands write Markdown into `.tusker/`
-  (dashboards, streams, logbook, digest) that a human or agent reads as flat
-  files (also viewable in Obsidian). These are **generated; do not hand-edit.**
+## Security boundary
 
-## `tusker serve` — the live control room
+The server binds loopback and admits mutations only with same-origin/loopback
+checks, JSON content type, and the per-process `X-Tusker-Capability` returned by
+`GET /api/capability`. This reduces drive-by cross-site requests but is not
+authentication. A local process that can read the endpoint can use the control
+plane. Responses include CSP, frame denial, MIME sniffing, and referrer-policy
+headers.
 
-`tusker serve [--addr 127.0.0.1:7420] [--vault <path>]` serves an embedded SPA
-plus a JSON API, **localhost-only**, over the repo-local vault and the daemon
-runtime store. It is multi-project and attention-routed: needs-me first. Each
-request loads a fresh project snapshot (`loadSnapshotForRequest`).
+`GET /api/capabilities` is the machine-readable compatibility registry. It
+classifies each surface as `authoritative_mutable`, `authoritative_read_only`,
+`cached_projection`, `local_preference`, or `unavailable`; the UI uses it to
+avoid presenting unsupported controls as live functionality.
 
-Representative API (`cmd/tusker/serve_command.go`, `serve_*.go`):
+## Truth and freshness
 
-| Endpoint | Serves |
-| --- | --- |
-| `GET /api/daemon` · `POST /api/daemon/(start\|stop\|resume\|limits)` | Daemon state + controls. |
-| `GET /api/projects` · `/api/summary` · `/api/needs` | Project list, roll-up, "what needs me". |
-| `GET /api/runs` · `/api/runs/<task-id>` | Runtime runs / leases. |
-| `POST /api/runs/<task-id>/redrive` | Requeue a stalled run (see guard below). |
-| `GET /api/epics` · `/api/waves` · `POST /api/waves/<id>/land` | Epics, waves, wave landing. |
-| `GET /api/tasks` · `/api/tasks/<id>` · `POST /api/tasks/<id>/(status\|discard\|close\|land)` | Task read + lifecycle actions. |
-| `GET /api/gates` · `POST /api/gates/<id>/(satisfy\|waive\|obsolete)` | Human/proof gates. |
-| `GET /api/evidence`, `/api/decisions`, `/api/feedback`, `/api/attempts`, `/api/docs`, `/api/roster` | Supporting records + docs. |
-| `POST /api/review/batch` | Batch review action (wave-boundary review). |
-| `GET /api/stream` | Live event stream. |
+Reads are snapshots/projections of the vault and runtime store. Stream events
+are hints that invalidate queries, not a replayable audit log. During disconnect,
+the UI falls back to bounded polling and must show disconnected/freshness state;
+an event that was not observed is unknown, not proof of absence.
 
-### Redrive with an idempotent guard
+Mutation responses have four distinct outcomes:
 
-`POST /api/runs/:taskId/redrive` resets the attempt window and requeues so the
-daemon spawns a fresh attempt — but it **refuses synchronously** when a redrive
-is meaningless, instead of silently retiring the run behind a stale badge
-(`serveRedriveRefusal`, `serve_runs.go`). Refusal cases:
+1. accepted — the daemon reports success; the UI invalidates and reads back;
+2. refused/validation — often a 2xx `{refused:true}` or `{ok:false}` with a
+   reason; the UI shows the reason and must not mark the action complete;
+3. conflict — HTTP 409/422 typed payloads such as CAS document conflicts;
+4. transport — network, timeout, or 5xx failure; retry only after showing the
+   operator that no durable outcome is known.
 
-- canonical status `review` → "no execution to redrive; use the review/land lane".
-- canonical status `done`/`closed` → "nothing to retry".
-- lease already `retry-queued` → already queued; wait or interrupt first.
-- process group still alive → interrupt before redrive.
+## Execution Operations
 
-The response always carries a human-readable `reason` — a redrive is never
-silent. On success it mirrors `tusker redrive` (`serveRedriveRun`) and records a
-supervisor decision (`context_signal: operator_redrive_serve`).
+Execution views expose bounded projections of runner identity, attempt state,
+lease ownership, process status, and redacted logs. They are diagnostic
+surfaces, not an alternate authority: operators must reconcile any action or
+status with the daemon/runtime read APIs, and an absent event or stale snapshot
+is never proof that execution stopped or completed.
 
-## The SPA (`internal/serve/ui`)
+## Native shell
 
-Bun-only (no npm) · Vite · React 19 · TypeScript strict · TanStack Router /
-Query / Table / Virtual · Tailwind v4 (CSS-first tokens) · self-hosted serif +
-mono fonts · light + dark themes. Markdown/tiptap-friendly for rendering note
-bodies. Built with `make ui-build` (`bun run build`) into `dist/`, which the Go
-serve package embeds via `go:embed`. Layout: `src/routes` + `src/router.tsx`
-shell, `src/features/<screen>` per screen, `src/components/ui` primitives,
-`src/lib/api` the backend seam, `src/types/domain.ts` the API contract. See
-`internal/serve/ui/README.md`, `FOUNDATION.md`, and `BACKEND-GAPS.md`.
+TuskerBar supervises the bundled daemon for the default local endpoint, exposes
+the same-origin UI in WebKit, and listens to SSE for notifications/badge refresh.
+Custom non-local URLs are external mode. Closing the main window leaves the
+menu-bar resident; quitting exits the shell. Native notifications and Spotlight
+are advisory projections and must be reconciled with `/api/summary`/read APIs.
 
-### Execution Operations
+## Unsupported/reference-only surfaces
 
-Operations → Executions is a focused lineage drill-down, not a duplicate
-operations product. It queries the relationship-complete execution graph,
-supports name/task/wave/provider-ID/agent-type search, separates
-Tusker-managed nodes from provider-owned children, and shows active, failed,
-and attention child counts. The explicit unbound inbox exposes direct work that
-is visible but lacks delivery authority. Guarded rename/bind controls explain
-that binding creates a new authority generation and cannot make earlier history
-proof eligible.
-
-The detail view renders delivery, admission, process, provider, outcome,
-session, and child-attention evidence separately. Its timeline uses
-authoritative cursor recovery: a gap, reset, or stale cursor tells the operator
-to reset to the committed tail rather than silently treating missing
-notifications as complete history. Controls are capability-aware; unavailable
-provider-native child controls are shown as unavailable, never faked.
-
-## The stream board (`.tusker/dashboards/streams.md`)
-
-Generated by `tusker streams` / `streams.go` from **runtime leases and
-attempts** — a live picture of what each concurrency lane is doing. One row per
-run, columns: Lane · Task · Runner · Worktree · Branch (with +ahead/-behind) ·
-Owned paths · Heartbeat (with age) · Status · End state. Details:
-
-- **Heartbeats** — freshness from last heartbeat/event/update; `fresh` shows the
-  lease state (e.g. `live`), else `stale`/`released`.
-- **Hand-run origin tags** — runs that originated from a human hand-run are
-  flagged; status renders `… · hand-run` (`runHandRunOrigin`).
-- **Landed lanes** — a released, succeeded run finished within 24h shows
-  `landed` with its captured end-state (SHA, clean/dirty, gate verdicts, and any
-  reported-vs-harness discrepancy count).
-
-Header carries "Generated from runtime leases and attempts. Do not edit."
-
-## Dashboards (`.tusker/dashboards/*.md`)
-
-Generated projections written by `tusker dashboard build` (`v7_state_runtime.go`),
-each attention-scoped and marked `tusker:generated`:
-
-| File | Answers |
-| --- | --- |
-| `agent-ready.md` | Tasks a runnable agent can pick up now (Task · Priority · Next action). |
-| `review-queue.md` | Work waiting on review (Task · Wave · Risk · Next action). |
-| `human-actions.md` | What needs a human. |
-| `active-runs.md` | Currently executing runs (from leases). |
-| `ci-waiting.md` | Work blocked on CI. |
-| `streams.md` | Lane board (above). |
-
-## The logbook (`v7_logbook_cmd.go`)
-
-`tusker logbook [--date YYYY-MM-DD] [--write]` composes a **PM-language** day
-into three plain-language sections — **what shipped**, **what it means** (checks
-passed/total, defects, repairs, evidence links), **what needs you**. It is a pure
-projection over records Tusker already holds (events, tasks, gates, escalations,
-evidence): no proof recomputation, no external calls. Days are **host-local**
-(midnight in `time.Local`). Default prints to stdout; `--write` also writes
-`.tusker/logbook/<date>.md`; `--json` emits the structured form.
-
-## The digest (`v7_escalation_digest_cmd.go`)
-
-`tusker digest` is the terse **dev/escalation cousin** of the logbook: a board of
-what moved since a watermark plus open escalations, with stale-escalation bumps
-applied. Where the logbook is narrative and PM-readable, the digest is a compact
-operator/dev signal board. Marks a watermark by default; `--json` for structured.
-
-## Surface map
-
-| Surface | Audience | Lives at | Refresh |
-| --- | --- | --- | --- |
-| serve SPA + JSON API | PM + operator | `tusker serve` (localhost:7420) | Live snapshot per request. |
-| streams board | operator | `.tusker/dashboards/streams.md` | Generated by `tusker streams`. |
-| agent-ready / review-queue / human-actions / active-runs / ci-waiting | agent + human | `.tusker/dashboards/*.md` | Generated by `tusker dashboard build`. |
-| logbook | PM | stdout / `.tusker/logbook/<date>.md` | `tusker logbook [--write]`, host-local day. |
-| digest | dev / operator | stdout | `tusker digest`, watermark-based. |
-
-Live vs generated at a glance:
-
-```mermaid
-flowchart LR
-  RT["daemon runtime store\n(leases, attempts)"] --> SERVE["tusker serve\n(live SPA + JSON API)"]
-  VAULT[".tusker vault\n(tasks, gates, events, evidence)"] --> SERVE
-  RT --> STREAMS["streams.md (generated)"]
-  VAULT --> DASH["dashboards/*.md (generated)"]
-  VAULT --> LOG["logbook/<date>.md (generated, --write)"]
-  VAULT --> DIG["digest (stdout)"]
-  SERVE -.->|"reads, never writes"| VIEW["operator / PM browser"]
-```
-
-Broader factory context: [../../.tusker/specs/software-factory.md](../../.tusker/specs/software-factory.md).
+Legacy document editing and several app settings still have no durable Serve
+contract. They are intentionally disabled or labeled reference/local. Do not
+describe them as persisted until an endpoint and readback test exist. See
+`internal/serve/ui/BACKEND-GAPS.md` and `GET /api/capabilities` for the current
+registry and remaining work.

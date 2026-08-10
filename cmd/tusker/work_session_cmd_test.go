@@ -20,7 +20,7 @@ func workSessionFixture(t *testing.T, count int) (string, RegisteredProject) {
 	}
 	initializeOrchestrationGitRepo(t, filepath.Dir(vault))
 	project := registerAutomationTestProject(t, vault)
-	configPath := filepath.Join(filepath.Dir(vault), "tusker.yaml")
+	configPath := filepath.Join(vault, "config.yaml")
 	config, err := readText(configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -28,6 +28,9 @@ func workSessionFixture(t *testing.T, count int) (string, RegisteredProject) {
 	config = strings.Replace(config, "mutation_mode: single_user_local", "mutation_mode: control_branch", 1)
 	if err := writeText(configPath, config); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(vault), "tusker.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("work-session fixture created legacy root config: %v", err)
 	}
 	return vault, project
 }

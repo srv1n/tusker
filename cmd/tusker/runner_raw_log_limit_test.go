@@ -493,6 +493,32 @@ func (r *countingInfiniteReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
+func TestOpenBoundedRawLogRejectsSymlinkedParent(t *testing.T) {
+	dir := t.TempDir()
+	safe := filepath.Join(dir, "safe")
+	outside := filepath.Join(dir, "outside")
+	if err := os.Mkdir(safe, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	redirect := filepath.Join(safe, "redirect")
+	if err := os.Symlink(outside, redirect); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := openBoundedRawLog(filepath.Join(redirect, "raw.log"), 64, false); err == nil {
+		t.Fatal("bounded raw log followed a symlinked parent")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("symlink target received bounded raw log: %#v", entries)
+	}
+}
+
 func assertRawLogSize(t *testing.T, path string, want int64) {
 	t.Helper()
 	info, err := os.Stat(path)

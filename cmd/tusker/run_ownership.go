@@ -28,6 +28,7 @@ type runOwnershipService struct {
 	store                   *RuntimeStore
 	now                     func() time.Time
 	projectConcurrencyLimit int
+	projectID               string
 	vaultPath               string
 	candidateNote           Note
 	notesByID               map[string]Note
@@ -165,6 +166,29 @@ func newRunOwnershipService(store *RuntimeStore) *runOwnershipService {
 	return &runOwnershipService{store: store, now: func() time.Time { return time.Now().UTC() }, projectConcurrencyLimit: 1}
 }
 
+func (s *runOwnershipService) withProject(projectID string) *runOwnershipService {
+	s.projectID = strings.TrimSpace(projectID)
+	return s
+}
+
+func (s *runOwnershipService) findRun(identity string) (*RunStatus, error) {
+	if s.projectID != "" {
+		return s.store.FindRunScoped(s.projectID, identity)
+	}
+	return s.store.FindRun(identity)
+}
+
+func findRunScopedRequired(store *RuntimeStore, projectID, recordID, phase string) (*RunStatus, error) {
+	run, err := store.FindRunScoped(projectID, recordID)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, tuskerError(errorNotFound, "run disappeared after "+phase)
+	}
+	return run, nil
+}
+
 func (s *runOwnershipService) withOwnedPathContext(vaultPath string, candidate Note, notes map[string]Note) *runOwnershipService {
 	s.vaultPath, s.candidateNote, s.notesByID = vaultPath, candidate, notes
 	return s
@@ -240,7 +264,7 @@ func (s *runOwnershipService) claimWithAuthorization(run RunStatus, owner string
 	if err := s.store.UpsertRunPreservingLease(run); err != nil {
 		return runClaimResult{}, err
 	}
-	current, err := s.store.FindRun(run.RecordID)
+	current, err := s.store.FindRunScoped(run.ProjectID, run.RecordID)
 	if err != nil || current == nil {
 		return runClaimResult{}, firstNonNil(err, tuskerError(errorNotFound, "run not found after claim preparation"))
 	}
@@ -254,7 +278,7 @@ func (s *runOwnershipService) claimWithAuthorization(run RunStatus, owner string
 	if err != nil {
 		return runClaimResult{}, err
 	}
-	latest, err := s.store.FindRun(current.RecordID)
+	latest, err := s.store.FindRunScoped(current.ProjectID, current.RecordID)
 	if err != nil {
 		return runClaimResult{}, err
 	}
@@ -296,7 +320,7 @@ func (s *runOwnershipService) claimWorkSessionWithAuthorization(run RunStatus, o
 	if err := s.store.UpsertRunPreservingLease(run); err != nil {
 		return runClaimResult{}, err
 	}
-	current, err := s.store.FindRun(run.RecordID)
+	current, err := s.store.FindRunScoped(run.ProjectID, run.RecordID)
 	if err != nil || current == nil {
 		return runClaimResult{}, firstNonNil(err, tuskerError(errorNotFound, "run not found after work-session preparation"))
 	}
@@ -308,7 +332,7 @@ func (s *runOwnershipService) claimWorkSessionWithAuthorization(run RunStatus, o
 	if err != nil {
 		return runClaimResult{}, err
 	}
-	latest, err := s.store.FindRun(current.RecordID)
+	latest, err := s.store.FindRunScoped(current.ProjectID, current.RecordID)
 	if err != nil {
 		return runClaimResult{}, err
 	}
@@ -349,7 +373,7 @@ func (s *runOwnershipService) claimExistingWithAuthorization(run RunStatus, owne
 	if err != nil {
 		return runClaimResult{}, err
 	}
-	latest, err := s.store.FindRun(run.RecordID)
+	latest, err := s.store.FindRunScoped(run.ProjectID, run.RecordID)
 	if err != nil {
 		return runClaimResult{}, err
 	}
@@ -386,7 +410,7 @@ func (s *runOwnershipService) claimExistingWithDirective(run RunStatus, owner st
 	if err != nil {
 		return runClaimResult{}, err
 	}
-	latest, err := s.store.FindRun(run.RecordID)
+	latest, err := s.store.FindRunScoped(run.ProjectID, run.RecordID)
 	if err != nil {
 		return runClaimResult{}, err
 	}
@@ -431,7 +455,11 @@ func (s *runOwnershipService) start(identity, owner, session string, pid, pgid i
 	if err != nil || !ok {
 		return nil, firstNonNil(err, tuskerError("CAS_CONFLICT", "run ownership changed before start"))
 	}
-	run, _ = s.store.FindRun(identity)
+	latest, err := findRunScopedRequired(s.store, run.ProjectID, run.RecordID, "start")
+	if err != nil {
+		return nil, err
+	}
+	run = latest
 	if session != "" {
 		run.SessionRef = session
 		run.UpdatedAt = now.Format(time.RFC3339)
@@ -440,7 +468,7 @@ func (s *runOwnershipService) start(identity, owner, session string, pid, pgid i
 		}
 		_ = s.store.SaveSession(RunnerSession{ProjectID: run.ProjectID, RecordID: run.RecordID, Runner: run.Runner, SessionRef: session, WorkspacePath: run.WorkspacePath, CurrentItemID: run.ItemID, WorkRevision: run.WorkRevision, LastAttemptID: run.ActiveAttemptID, State: "open", Resumable: true, StartedAt: now.Format(time.RFC3339), LastSeenAt: now.Format(time.RFC3339)})
 	}
-	return s.store.FindRun(identity)
+	return findRunScopedRequired(s.store, run.ProjectID, run.RecordID, "start")
 }
 
 func (s *runOwnershipService) heartbeat(identity, owner string) (*RunStatus, error) {
@@ -452,7 +480,7 @@ func (s *runOwnershipService) heartbeat(identity, owner string) (*RunStatus, err
 	if err != nil || !ok {
 		return nil, firstNonNil(err, tuskerError("CAS_CONFLICT", "run ownership changed before heartbeat"))
 	}
-	return s.store.FindRun(identity)
+	return findRunScopedRequired(s.store, run.ProjectID, run.RecordID, "heartbeat")
 }
 
 func (s *runOwnershipService) finish(identity, owner string, outcome AttemptOutcome, summary, verification, reason string) (*RunStatus, error) {
@@ -518,7 +546,7 @@ func (s *runOwnershipService) finishWithEndStateAtRevision(identity, owner strin
 	if ok, err := s.store.FinalizeRunLease(finalizeRun, attempt, owner, run.LeaseGeneration); err != nil || !ok {
 		return nil, firstNonNil(err, tuskerError("CAS_CONFLICT", "run ownership changed before terminal handoff"))
 	}
-	return s.store.FindRun(identity)
+	return findRunScopedRequired(s.store, run.ProjectID, run.RecordID, "finish")
 }
 
 func captureRunEndState(workspace, gateVerdicts, reportedBranch, reportedSHA string, now time.Time) (RunEndState, error) {
@@ -611,7 +639,7 @@ func missingRunEndStateFields(state RunEndState) []string {
 }
 
 func (s *runOwnershipService) ownedRun(identity, owner string) (*RunStatus, error) {
-	run, err := s.store.FindRun(identity)
+	run, err := s.findRun(identity)
 	if err != nil {
 		return nil, err
 	}
@@ -643,7 +671,10 @@ func runsLifecycleCmd(args Args, action string) error {
 		return err
 	}
 	defer store.Close()
-	service := newRunOwnershipService(store)
+	service := newRunOwnershipService(store).withProject(args.String("project"))
+	findRun := func(identity string) (*RunStatus, error) {
+		return service.findRun(identity)
+	}
 	expectedRevision, err := workSessionRevisionArg(args)
 	if err != nil {
 		return err
@@ -655,7 +686,7 @@ func runsLifecycleCmd(args Args, action string) error {
 	case "heartbeat":
 		run, err = service.heartbeat(id, owner)
 	case "submit":
-		current, findErr := store.FindRun(id)
+		current, findErr := findRun(id)
 		if findErr != nil || current == nil {
 			return firstNonNil(findErr, tuskerError(errorNotFound, "run not found: "+id))
 		}
@@ -669,16 +700,22 @@ func runsLifecycleCmd(args Args, action string) error {
 	case "release":
 		run, err = service.finishWithExpectedRevision(id, owner, AttemptOutcomeInterrupted, "", "", firstNonEmpty(args.String("reason"), "work session released"), expectedRevision)
 	case "reclaim":
-		current, findErr := store.FindRun(id)
+		current, findErr := findRun(id)
 		if findErr != nil || current == nil {
 			return firstNonNil(findErr, tuskerError(errorNotFound, "run not found: "+id))
 		}
-		ok, reclaimErr := store.ReclaimExpiredRunLease(current.ProjectID, current.RecordID, time.Now().UTC(), defaultRunLeaseTTL, args.String("reason"))
+		expected, snapshotErr := reclaimSnapshotArgs(args, *current, owner)
+		if snapshotErr != nil {
+			return snapshotErr
+		}
+		ok, reclaimErr := store.ReclaimExpiredRunLeaseIfSnapshot(expected, time.Now().UTC(), defaultRunLeaseTTL, args.String("reason"))
 		err = reclaimErr
 		if err == nil && !ok {
 			err = tuskerError("CAS_CONFLICT", "run is not safely reclaimable")
 		}
-		run, _ = store.FindRun(id)
+		if err == nil {
+			run, err = findRunScopedRequired(store, current.ProjectID, current.RecordID, "reclaim")
+		}
 	}
 	if err != nil {
 		return err
@@ -700,4 +737,38 @@ func runsLifecycleCmd(args Args, action string) error {
 	}
 	emitJSON(map[string]any{"ok": true, "action": action, "run": run})
 	return nil
+}
+
+func reclaimSnapshotArgs(args Args, current RunStatus, owner string) (RunStatus, error) {
+	if strings.TrimSpace(owner) == "" || owner != current.LeaseOwner {
+		return RunStatus{}, tuskerError("CAS_CONFLICT", "run owner changed; reload the exact lease before reclaiming")
+	}
+	requireExact := func(name, actual, supplied string) error {
+		if strings.TrimSpace(supplied) == "" {
+			return tuskerError(errorMissingArg, "runs reclaim requires --"+name+" from the inspected run snapshot")
+		}
+		if supplied != actual {
+			return tuskerError("CAS_CONFLICT", "run "+name+" changed; reload the exact lease before reclaiming")
+		}
+		return nil
+	}
+	if err := requireExact("attempt-id", current.ActiveAttemptID, firstNonEmpty(args.String("attempt-id"), args.String("attempt"))); err != nil {
+		return RunStatus{}, err
+	}
+	if err := requireExact("lease-generation", fmt.Sprintf("%d", current.LeaseGeneration), args.String("lease-generation")); err != nil {
+		return RunStatus{}, err
+	}
+	if err := requireExact("work-revision", fmt.Sprintf("%d", current.WorkRevision), args.String("work-revision")); err != nil {
+		return RunStatus{}, err
+	}
+	if err := requireExact("pid", fmt.Sprintf("%d", current.ProcessPID), args.String("pid")); err != nil {
+		return RunStatus{}, err
+	}
+	if err := requireExact("pgid", fmt.Sprintf("%d", current.ProcessPGID), args.String("pgid")); err != nil {
+		return RunStatus{}, err
+	}
+	if err := requireExact("process-started-at", current.ProcessStartedAt, firstNonEmpty(args.String("process-started-at"), args.String("process-start"))); err != nil {
+		return RunStatus{}, err
+	}
+	return current, nil
 }

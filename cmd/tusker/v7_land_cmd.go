@@ -1437,7 +1437,7 @@ func (s *v7GateSandbox) Run(ctx context.Context, command string) ([]byte, error)
 	cmd := exec.Command(s.executable, "-p", s.profile, "/bin/sh", "-c", command)
 	cmd.Dir = s.worktreePath
 	cmd.Env = []string{
-		"PATH=" + os.Getenv("PATH"),
+		"PATH=" + sandboxToolchainPATH(),
 		"HOME=" + s.scratchPath,
 		"TMPDIR=" + s.scratchPath,
 		"GOCACHE=" + s.goCachePath,
@@ -1516,7 +1516,16 @@ func sandboxGitMetadataPath(workDir string) string {
 }
 
 func sandboxToolchainReadPaths() string {
-	paths := []string{}
+	paths := sandboxToolchainDirs()
+	var out strings.Builder
+	for _, path := range paths {
+		out.WriteString(sandboxProfileSubpath(path))
+	}
+	return out.String()
+}
+
+func sandboxToolchainDirs() []string {
+	paths := []string{"/usr/bin", "/bin"}
 	for _, name := range []string{"go", "git", "sh"} {
 		binary, err := exec.LookPath(name)
 		if err != nil {
@@ -1536,11 +1545,11 @@ func sandboxToolchainReadPaths() string {
 	}
 	paths = uniqueStrings(paths)
 	sort.Strings(paths)
-	var out strings.Builder
-	for _, path := range paths {
-		out.WriteString(sandboxProfileSubpath(path))
-	}
-	return out.String()
+	return paths
+}
+
+func sandboxToolchainPATH() string {
+	return strings.Join(sandboxToolchainDirs(), string(os.PathListSeparator))
 }
 
 func sandboxProfileSubpath(path string) string {

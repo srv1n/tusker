@@ -12,11 +12,12 @@
   state come exclusively from shared API hooks.
 */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { getRouteApi, Link } from "@tanstack/react-router";
 import { useDaemon, useProjectAutomation, useProjectSettings, useProjects, useRuns } from "@/lib/queries";
 import { PageScroll, SectionLabel } from "@/components/ui/page";
 import { EmptyState, QueryBoundary, Skeleton } from "@/components/ui/states";
+import { ActionResultLine } from "@/components/ui/action-feedback";
 import type { ProjectSummary } from "@/types/domain";
 import {
   configurationRows,
@@ -85,6 +86,24 @@ function SettingsBody({ project, projectId }: { project: ProjectSummary; project
   const daemon = daemonQ.data;
   const automation = useProjectAutomation(projectId);
   const settings = useProjectSettings(projectId);
+  const [workspaceMode, setWorkspaceMode] = useState(project.workspaceMode ?? "shared");
+  const [concurrency, setConcurrency] = useState(String(project.maxActiveRunsPerProject ?? 1));
+  useEffect(() => {
+    setWorkspaceMode(project.workspaceMode ?? "shared");
+    setConcurrency(String(project.maxActiveRunsPerProject ?? 1));
+  }, [project.workspaceMode, project.maxActiveRunsPerProject]);
+  const concurrencyNumber = Number(concurrency);
+  const concurrencyValid = Number.isInteger(concurrencyNumber) && concurrencyNumber >= 1 && concurrencyNumber <= 256;
+  const dirty = workspaceMode !== (project.workspaceMode ?? "shared") || concurrency !== String(project.maxActiveRunsPerProject ?? 1);
+  const saveExecution = async () => {
+    if (!concurrencyValid || !["shared", "worktree", "clone", "copy"].includes(workspaceMode)) return;
+    try {
+      await settings.mutateAsync({ workspaceMode, maxActiveRunsPerProject: concurrencyNumber });
+    } catch {
+      // TanStack exposes the typed transport error through settings.error; keep
+      // the draft intact so the operator can correct/retry it.
+    }
+  };
   const runsQ = useRuns(projectId);
   const workspaces = (runsQ.data ?? []).filter((r) => !r.terminal && ["claimed", "starting", "running"].includes(r.leaseStateRaw ?? "")).map((r) => ({
     task: r.taskId, path: r.workspacePath || project.repoRoot, lease: r.liveness, mode: r.workspaceMode || "shared",
@@ -152,14 +171,21 @@ function SettingsBody({ project, projectId }: { project: ProjectSummary; project
             <SectionLabel className="mb-2.5">Execution policy</SectionLabel>
             <div className="mb-7 grid grid-cols-2 gap-3 rounded-lg border border-line bg-panel p-4">
               <label className="text-[12px] text-muted">Workspace mode
-                <select aria-label="Workspace mode" value={project.workspaceMode ?? "shared"} onChange={(e) => settings.mutate({workspaceMode:e.target.value})} className="mt-1 block w-full rounded border border-line bg-canvas p-2 text-ink">
+                <select aria-label="Workspace mode" value={workspaceMode} onChange={(e) => setWorkspaceMode(e.target.value)} className="mt-1 block w-full rounded border border-line bg-canvas p-2 text-ink">
                   <option value="shared">shared repository</option><option value="worktree">worktree</option><option value="clone">clone</option><option value="copy">copy</option>
                 </select><span className="font-mono text-[10px]">{project.workspaceSource}</span>
               </label>
               <label className="text-[12px] text-muted">Project concurrency
-                <input aria-label="Project concurrency" type="number" min={1} value={project.maxActiveRunsPerProject ?? 1} onChange={(e) => settings.mutate({maxActiveRunsPerProject:Number(e.target.value)})} className="mt-1 block w-full rounded border border-line bg-canvas p-2 text-ink" />
+                <input aria-label="Project concurrency" type="number" min={1} max={256} step={1} value={concurrency} onChange={(e) => setConcurrency(e.target.value)} className="mt-1 block w-full rounded border border-line bg-canvas p-2 text-ink" />
                 <span className="font-mono text-[10px]">{project.concurrencySource}</span>
               </label>
+            </div>
+            <div className="mb-7 flex flex-wrap items-center gap-3">
+              <button type="button" disabled={!dirty || !concurrencyValid || settings.isPending} onClick={() => void saveExecution()} className="rounded border border-ink bg-ink px-3 py-2 text-[12px] font-semibold text-surface disabled:cursor-not-allowed disabled:opacity-45">
+                {settings.isPending ? "Saving…" : "Save execution settings"}
+              </button>
+              {dirty && !concurrencyValid && <span className="text-[11px] text-fail">Concurrency must be a whole number from 1 to 256.</span>}
+              <ActionResultLine pending={settings.isPending} error={settings.error} result={settings.data} />
             </div>
 
             <SectionLabel className="mb-2.5">Repository</SectionLabel>

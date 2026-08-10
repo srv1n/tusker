@@ -164,13 +164,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }, onConnection: { [weak self] connected in
             self?.connected = connected
             if connected, let baseURL = self?.config.baseURL { self?.spotlight.refresh(baseURL: baseURL) }
+        }, onReplayMiss: { [weak self] in
+            // A replay miss means the event window is incomplete. Refresh the
+            // authoritative summary immediately; waiting for another event leaves
+            // the menu-bar badge stale indefinitely on a quiet project.
+            self?.refreshSummary()
+            if let baseURL = self?.config.baseURL { self?.spotlight.refresh(baseURL: baseURL) }
         })
         refreshSummary()
     }
 
     private func refreshSummary() {
         let url = config.baseURL.appendingPathComponent("api/summary")
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+        // Native networking is deliberately limited to this unauthenticated,
+        // read-only local summary used for the badge. Mutating/capability-bearing
+        // calls stay inside the origin-scoped WebView bridge.
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
             guard let data, let summary = try? JSONDecoder().decode(TuskerSummary.self, from: data) else { return }
             DispatchQueue.main.async { self?.setBadge(summary.attention + summary.review) }
         }.resume()

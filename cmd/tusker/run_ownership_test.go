@@ -23,6 +23,39 @@ func TestClaimOwnedPathConflict(t *testing.T) {
 	}
 }
 
+func TestRunIdentityRequiresProjectScopeWhenIDsCollide(t *testing.T) {
+	store, first := ownershipStoreFixture(t, "SHARED-T-0001")
+	second := first
+	second.ProjectID = "project-2"
+	second.LeaseState = string(LeaseStateClaimed)
+	second.LeaseOwner = "owner-2"
+	second.LeaseGeneration = 1
+	second.LeaseExpiresAt = time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+	if err := store.UpsertRun(second); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.FindRun("SHARED-T-0001"); err == nil || workSessionErrorCode(err) != "RUN_IDENTITY_AMBIGUOUS" {
+		t.Fatalf("bare lookup should fail closed on cross-project collision: %v", err)
+	}
+	resolved, err := store.FindRunScoped("project-2", "SHARED-T-0001")
+	if err != nil || resolved == nil || resolved.ProjectID != "project-2" {
+		t.Fatalf("scoped lookup selected wrong run: %#v %v", resolved, err)
+	}
+
+	service := newRunOwnershipService(store).withProject("project-2")
+	if _, err := service.heartbeat("SHARED-T-0001", "owner-2"); err != nil {
+		t.Fatalf("project-scoped heartbeat refused: %v", err)
+	}
+	firstAfter, err := store.FindRunScoped(first.ProjectID, first.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstAfter.LeaseOwner != first.LeaseOwner || firstAfter.LeaseState != first.LeaseState {
+		t.Fatalf("heartbeat for project-2 mutated project-1: before=%#v after=%#v", first, firstAfter)
+	}
+}
+
 // submittableEndState is the normalized record a lane owes at submit time.
 // Tests that are not about end-state validation still have to supply one,
 // because a successful submission without it is now refused.
@@ -75,9 +108,13 @@ func TestClaimDisjointOwnedPathsSucceeds(t *testing.T) {
 // the holder's process is provably alive, the claim is still a collision and
 // must be refused with that liveness verdict instead of quietly proceeding.
 func TestClaimStaleLeaseWithLiveProcessRefused(t *testing.T) {
+	if _, ok := processStartTime(os.Getpid()); !ok {
+		t.Skip("platform does not expose a verifiable process start time; fail-closed identity is covered by processIdentityMatches tests")
+	}
 	store, candidateRun, service := ownedPathClaimFixture(t, "APP-T-LIVE-2", "APP-T-LIVE-1", []string{"migrations/0014.sql"}, []string{"migrations"}, func(holder *RunStatus, now time.Time) {
 		holder.LeaseExpiresAt = now.Add(-time.Minute).Format(time.RFC3339)
 		holder.ProcessPID = os.Getpid()
+		holder.ProcessStartedAt = recordedProcessStartTime(os.Getpid(), "")
 	})
 	result, err := service.claim(candidateRun, "lane-b")
 	if err == nil || result.Claimed {

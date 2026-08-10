@@ -54,17 +54,14 @@ func TestExecutionCancellationManagedPIDFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	control, err := store.RequestExecutionCancellation(managed.ExecutionID, "pid-reuse")
-	if err == nil || !control.Available {
-		t.Fatalf("PID reuse must refuse before signal: control=%#v err=%v", control, err)
+	if err != nil || control.Available || !strings.Contains(control.Reason, "identity") {
+		t.Fatalf("PID reuse must be unavailable before signal: control=%#v err=%v", control, err)
 	}
-	var wrapperPID, generation int
-	if err := store.queryRowScan(`SELECT process_pid, lease_generation FROM execution_cancellation_evidence WHERE execution_id=? AND request_key=? AND stage='wrapper_signal'`, []any{managed.ExecutionID, "pid-reuse"}, &wrapperPID, &generation); err != nil || wrapperPID != pid || generation != 7 {
-		t.Fatalf("wrapper fence=%d/%d err=%v", wrapperPID, generation, err)
+	var wrapperSignals int
+	if err := store.queryRowScan(`SELECT COUNT(*) FROM execution_cancellation_evidence WHERE execution_id=? AND request_key=? AND stage='wrapper_signal'`, []any{managed.ExecutionID, "pid-reuse"}, &wrapperSignals); err != nil || wrapperSignals != 0 {
+		t.Fatalf("identity refusal recorded a signal=%d err=%v", wrapperSignals, err)
 	}
-	var escalations, settlements int
-	if err := store.queryRowScan(`SELECT COUNT(*) FROM execution_cancellation_evidence WHERE execution_id=? AND request_key=? AND stage='escalation'`, []any{managed.ExecutionID, "pid-reuse"}, &escalations); err != nil || escalations != 1 {
-		t.Fatalf("escalation=%d err=%v", escalations, err)
-	}
+	var settlements int
 	if err := store.queryRowScan(`SELECT COUNT(*) FROM execution_cancellation_evidence WHERE execution_id=? AND request_key=? AND stage='os_settled'`, []any{managed.ExecutionID, "pid-reuse"}, &settlements); err != nil || settlements != 0 {
 		t.Fatalf("false settlement=%d err=%v", settlements, err)
 	}
@@ -83,8 +80,9 @@ func TestExecutionCancellationEvidenceIsIdempotentAndProviderSafe(t *testing.T) 
 	if err != nil || control.Available {
 		t.Fatalf("unproved provider cancellation=%#v err=%v", control, err)
 	}
-	if _, err = store.RequestExecutionCancellation(root.ExecutionID, "same-request"); err != nil {
-		t.Fatal(err)
+	duplicate, err := store.RequestExecutionCancellation(root.ExecutionID, "same-request")
+	if err != nil || duplicate.Available || duplicate.Reason != control.Reason {
+		t.Fatalf("duplicate did not replay unavailable outcome: %#v err=%v", duplicate, err)
 	}
 	var requests, stages int
 	if err := store.queryRowScan(`SELECT COUNT(*) FROM execution_cancellation_evidence WHERE execution_id=? AND request_key=? AND stage='requested'`, []any{root.ExecutionID, "same-request"}, &requests); err != nil || requests != 1 {

@@ -7,6 +7,11 @@
 # Local toolchains and build outputs.
 .tools/
 .tusker-build/
+/tusker
+/cmd/tusker/.tmp
+
+# Local handoff workspaces; durable research belongs under docs/ or artifacts/.
+/architect/
 
 # Generated handoff/archive artifacts.
 /artifacts/**/*.zip
@@ -28,6 +33,7 @@
 .tusker/_runtime/
 .tusker/scratch/
 .tusker/evidence/**/artifacts/
+.tusker/config.local.yaml
 
 # Local daemon/runtime state.
 .tusker-runtime/

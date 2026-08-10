@@ -7,7 +7,7 @@
 */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, requireAccepted } from "@/lib/api";
 import {
   patchDocFrontmatter,
   patchTaskFrontmatter,
@@ -59,11 +59,14 @@ export const useExecutionTimeline = (projectId: string, execution: string, param
   useQuery<ExecutionTimeline>({ enabled: !!execution, queryKey: qk.executionTimeline(projectId, execution, params), queryFn: () => api.executionTimeline(execution, params, projectId), refetchInterval: liveRefetchInterval });
 export const useExecutionBindingPreview = (projectId: string, execution: string, taskId: string) =>
   useQuery<ExecutionBindingPreview>({ enabled: !!execution && !!taskId, queryKey: ["executions", "binding-preview", projectId, execution, taskId], queryFn: () => api.executionBindingPreview(execution, taskId, projectId) });
-export const useExecutionRename = (projectId: string) => { const qc = useQueryClient(); return useMutation({ mutationFn: ({ execution, name }: { execution: string; name: string }) => api.executionRename(execution, name, projectId), onSettled: () => void qc.invalidateQueries({ queryKey: ["executions"] }) }); };
-export const useExecutionBind = (projectId: string) => { const qc = useQueryClient(); return useMutation({ mutationFn: ({ execution, taskId }: { execution: string; taskId: string }) => api.executionBind(execution, taskId, projectId), onSettled: () => void qc.invalidateQueries({ queryKey: ["executions"] }) }); };
+export const useExecutionRename = (projectId: string) => { const qc = useQueryClient(); return useMutation({ mutationFn: ({ execution, name }: { execution: string; name: string }) => api.executionRename(execution, name, projectId).then(requireAccepted), onSettled: () => void qc.invalidateQueries({ queryKey: ["executions"] }) }); };
+export const useExecutionBind = (projectId: string) => { const qc = useQueryClient(); return useMutation({ mutationFn: ({ execution, taskId }: { execution: string; taskId: string }) => api.executionBind(execution, taskId, projectId).then(requireAccepted), onSettled: () => void qc.invalidateQueries({ queryKey: ["executions"] }) }); };
 
 export const useDaemon = () =>
   useQuery({ queryKey: qk.daemon, queryFn: api.daemon, refetchInterval: liveRefetchInterval });
+
+export const useServeCapabilities = () =>
+  useQuery({ queryKey: ["serve-capabilities"], queryFn: api.capabilities, staleTime: 5 * 60_000 });
 
 export const useProjects = () =>
   useQuery({ queryKey: qk.projects, queryFn: api.projects, refetchInterval: liveRefetchInterval });
@@ -78,7 +81,7 @@ export const useFactoryOperations = (projectId?: string) =>
 export const useRegisterProject = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { repoRoot: string; vaultRoot?: string }) => api.registerProject(body),
+    mutationFn: (body: { repoRoot: string; vaultRoot?: string }) => api.registerProject(body).then(requireAccepted),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: qk.projects });
       void qc.invalidateQueries({ queryKey: qk.daemon });
@@ -89,7 +92,7 @@ export const useRegisterProject = () => {
 export const useProjectAutomation = (projectId: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (enabled: boolean) => api.setProjectAutomation(projectId, enabled),
+    mutationFn: (enabled: boolean) => api.setProjectAutomation(projectId, enabled).then(requireAccepted),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: qk.projects });
       void qc.invalidateQueries({ queryKey: qk.daemon });
@@ -100,14 +103,14 @@ export const useProjectAutomation = (projectId: string) => {
 export const useProjectSettings = (projectId: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { workspaceMode?: string; maxActiveRunsPerProject?: number }) => api.setProjectSettings(projectId, body),
+    mutationFn: (body: { workspaceMode?: string; maxActiveRunsPerProject?: number }) => api.setProjectSettings(projectId, body).then(requireAccepted),
     onSettled: () => void qc.invalidateQueries({ queryKey: qk.projects }),
   });
 };
 
 export const useProjectRefresh = (projectId: string) =>
   useMutation({
-    mutationFn: () => api.refreshProject(projectId),
+    mutationFn: () => api.refreshProject(projectId).then(requireAccepted),
   });
 
 export const useNeeds = (projectId?: string, enabled = true) =>
@@ -247,7 +250,7 @@ export const useRedrive = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
     mutationKey: ["redrive", taskId],
-    mutationFn: () => api.redrive(taskId, projectId),
+    mutationFn: () => api.redrive(taskId, projectId).then(requireAccepted),
     onSettled: () => invalidateRunActionQueries(qc, taskId, projectId),
   });
 };
@@ -263,7 +266,7 @@ export const useAcknowledgeRun = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
     mutationKey: ["acknowledge", taskId],
-    mutationFn: () => api.acknowledgeRun(taskId, projectId),
+    mutationFn: () => api.acknowledgeRun(taskId, projectId).then(requireAccepted),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ["needs"] });
       void qc.invalidateQueries({ queryKey: ["runs"] });
@@ -282,7 +285,7 @@ export const useInterrupt = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
     mutationKey: ["interrupt", taskId],
-    mutationFn: () => api.interrupt(taskId, projectId),
+    mutationFn: () => api.interrupt(taskId, projectId).then(requireAccepted),
     onSettled: () => invalidateRunActionQueries(qc, taskId, projectId),
   });
 };
@@ -320,7 +323,7 @@ function invalidateOperatorState(qc: ReturnType<typeof useQueryClient>, taskId?:
 export const useTaskStatusAction = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { status: string; reason?: string; actor?: string; force?: boolean }) => api.taskStatus(taskId, body, projectId),
+    mutationFn: (body: { status: string; reason?: string; actor?: string; force?: boolean }) => api.taskStatus(taskId, body, projectId).then(requireAccepted),
     onSettled: () => invalidateOperatorState(qc, taskId, projectId),
   });
 };
@@ -328,7 +331,7 @@ export const useTaskStatusAction = (taskId: string, projectId?: string) => {
 export const useRunTask = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.runTask(taskId, projectId),
+    mutationFn: () => api.runTask(taskId, projectId).then(requireAccepted),
     onSettled: () => invalidateOperatorState(qc, taskId, projectId),
   });
 };
@@ -337,7 +340,7 @@ export const useDiscardTask = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { dryRun?: boolean; reason?: string; actor?: string; dependents?: "detach" | "discard" }) =>
-      api.discardTask(taskId, body, projectId),
+      api.discardTask(taskId, body, projectId).then(requireAccepted),
     onSettled: () => invalidateOperatorState(qc, taskId, projectId),
   });
 };
@@ -345,7 +348,7 @@ export const useDiscardTask = (taskId: string, projectId?: string) => {
 export const useCloseTask = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { reason?: string; actor?: string; force?: boolean }) => api.closeTask(taskId, body, projectId),
+    mutationFn: (body: { reason?: string; actor?: string; force?: boolean }) => api.closeTask(taskId, body, projectId).then(requireAccepted),
     onSettled: () => invalidateOperatorState(qc, taskId, projectId),
   });
 };
@@ -353,7 +356,7 @@ export const useCloseTask = (taskId: string, projectId?: string) => {
 export const useLandTask = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body?: { branch?: string; from?: string }) => api.landTask(taskId, body ?? {}, projectId),
+    mutationFn: (body?: { branch?: string; from?: string }) => api.landTask(taskId, body ?? {}, projectId).then(requireAccepted),
     onSettled: () => invalidateOperatorState(qc, taskId, projectId),
   });
 };
@@ -362,7 +365,7 @@ export const useGateAction = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: { gateId: string; action: "satisfy" | "waive" | "obsolete"; body: { reason?: string; evidence?: string; evidenceRefs?: string[]; actor?: string; force?: boolean }; taskId?: string; projectId?: string }) =>
-      api.gateAction(input.gateId, input.action, input.body, input.projectId),
+      api.gateAction(input.gateId, input.action, input.body, input.projectId).then(requireAccepted),
     onSettled: (_data, _err, input) => invalidateOperatorState(qc, input?.taskId, input?.projectId),
   });
 };
@@ -370,7 +373,7 @@ export const useGateAction = () => {
 export const useEvidenceAdd = (taskId?: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.addEvidence(taskId ? { ...body, taskId } : body, projectId),
+    mutationFn: (body: Record<string, unknown>) => api.addEvidence(taskId ? { ...body, taskId } : body, projectId).then(requireAccepted),
     onSettled: () => invalidateOperatorState(qc, taskId, projectId),
   });
 };
@@ -378,7 +381,7 @@ export const useEvidenceAdd = (taskId?: string, projectId?: string) => {
 export const useFeedbackAdd = (projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.addFeedback(body, projectId),
+    mutationFn: (body: Record<string, unknown>) => api.addFeedback(body, projectId).then(requireAccepted),
     onSettled: () => invalidateOperatorState(qc, undefined, projectId),
   });
 };
@@ -386,7 +389,7 @@ export const useFeedbackAdd = (projectId?: string) => {
 export const useLandWave = (projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (waveId: string) => api.landWave(waveId, projectId),
+    mutationFn: (waveId: string) => api.landWave(waveId, projectId).then(requireAccepted),
     onSettled: () => invalidateOperatorState(qc, undefined, projectId),
   });
 };
@@ -394,7 +397,7 @@ export const useLandWave = (projectId?: string) => {
 export const useDaemonAction = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { action: "start" | "stop" | "resume" | "limits"; body?: Record<string, unknown> }) => api.daemonAction(input.action, input.body ?? {}),
+    mutationFn: (input: { action: "start" | "stop" | "resume" | "limits"; body?: Record<string, unknown> }) => api.daemonAction(input.action, input.body ?? {}).then(requireAccepted),
     onSettled: () => invalidateOperatorState(qc),
   });
 };
@@ -433,7 +436,7 @@ export const useFrontmatterUpdate = () => {
   };
 
   return useMutation({
-    mutationFn: (input: FrontmatterUpdateInput) => api.updateFrontmatter(input),
+    mutationFn: (input: FrontmatterUpdateInput) => api.updateFrontmatter(input).then(requireAccepted),
     onSuccess: (result, input) => {
       if (result.ok) apply(input);
     },

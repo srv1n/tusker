@@ -8,7 +8,6 @@
   the rest are locked machine/derived values.
 */
 
-import { useState } from "react";
 import type { ThemePref } from "@/lib/theme";
 import { useTheme } from "@/lib/theme";
 import { useDaemon } from "@/lib/queries";
@@ -17,8 +16,8 @@ import type { SegmentOption } from "@/components/ui/controls";
 import { SectionLabel } from "@/components/ui/page";
 import { Dot, Mono } from "@/components/ui/primitives";
 import { Skeleton } from "@/components/ui/states";
-import { SelectPill, SettingRow, SettingsCard } from "./parts";
-import { daemonRows, defaultRows, densityOptions, type Density } from "./mock";
+import { SettingRow, SettingsCard } from "./parts";
+import { daemonRows, defaultRows } from "./mock";
 
 const themeOptions: SegmentOption<ThemePref>[] = [
   { value: "system", label: "System" },
@@ -26,14 +25,8 @@ const themeOptions: SegmentOption<ThemePref>[] = [
   { value: "dark", label: "Dark" },
 ];
 
-const densitySegments: SegmentOption<Density>[] = densityOptions.map((d) => ({ value: d, label: d }));
-
 export function GeneralSection() {
   const { pref, setPref } = useTheme();
-  const [density, setDensity] = useState<Density>("Comfortable"); // TODO(api): persist to global config
-  const [defaults, setDefaults] = useState<Record<string, string>>(() =>
-    Object.fromEntries(defaultRows.map((r) => [r.key, r.value])),
-  );
   const daemonQ = useDaemon();
   const livePort = daemonQ.data?.addr.split(":").pop();
   const connected = !!daemonQ.data?.connected;
@@ -58,14 +51,9 @@ export function GeneralSection() {
         <SettingRow
           label="Density"
           source="global"
-          control={
-            <SegmentedControl<Density>
-              size="sm"
-              options={densitySegments}
-              value={density}
-              onChange={setDensity}
-            />
-          }
+          locked
+          description="Persistence is not available yet."
+          control={<span className="font-mono text-[11.5px] text-muted">Comfortable · coming soon</span>}
         />
       </SettingsCard>
 
@@ -77,14 +65,9 @@ export function GeneralSection() {
             key={r.key}
             label={r.key}
             source={r.source}
-            control={
-              <SelectPill
-                ariaLabel={r.key}
-                value={defaults[r.key]}
-                options={r.options}
-                onChange={(v) => setDefaults((prev) => ({ ...prev, [r.key]: v }))}
-              />
-            }
+            locked
+            description="Persistence is not available yet."
+            control={<span className="font-mono text-[11.5px] text-muted">{r.value} · coming soon</span>}
           />
         ))}
       </SettingsCard>

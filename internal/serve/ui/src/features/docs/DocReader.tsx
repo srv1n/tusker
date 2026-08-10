@@ -1,11 +1,10 @@
-import { useMemo, useRef, useState } from "react";
-import { Pencil } from "lucide-react";
+import { useMemo } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { cn } from "@/lib/cn";
 import { USE_MOCK } from "@/lib/api";
 import { Mono } from "@/components/ui/primitives";
 import { Skeleton, ErrorState } from "@/components/ui/states";
-import { useDoc, useDocList, useFrontmatterUpdate } from "@/lib/queries";
+import { useDoc, useDocList } from "@/lib/queries";
 import { relativeTime } from "@/lib/time";
 import type { DocContent, DocListEntry } from "@/types/domain";
 import { DocEditor, type EditorRuntimeConfig, type WikilinkTargetLite } from "@/features/editor";
@@ -13,12 +12,7 @@ import { DocShell } from "./DocShell";
 import { Outline } from "./Outline";
 import { PropertyPanel } from "./PropertyPanel";
 import { KindEyebrow } from "./bits";
-import { ApproveBanner, ConflictBanner, SavedBanner, ValidationStrip } from "./banners";
-import { useDocEditor } from "./editor";
-import { approvalContextFor, resolveWikilink, wikilinkTargets } from "./mock";
-
-const barBtn =
-  "rounded-lg px-3.5 py-1.5 text-[12.5px] font-semibold leading-none transition-colors";
+import { resolveWikilink, wikilinkTargets } from "./mock";
 
 /** A live vault entry → the lite wikilink target the editor resolves/links. */
 function docToWikilink(d: DocListEntry): WikilinkTargetLite {
@@ -60,8 +54,8 @@ function stripLeadingH1(md: string): string {
 
 /**
  * Like {@link stripLeadingH1}, but also returns the stripped prefix (the `# `
- * line plus its immediately-following blank lines) so a save can re-attach the
- * title the editor never renders. `joinLeadingH1` is the exact inverse.
+ * line plus its immediately-following blank lines) for callers that need to
+ * render the body without duplicating the title.
  */
 function splitLeadingH1(md: string): { prefix: string; body: string } {
   const body = stripLeadingH1(md);
@@ -72,29 +66,16 @@ function splitLeadingH1(md: string): { prefix: string; body: string } {
   return { prefix, body };
 }
 
-/** Re-attach a split title prefix to an edited body. Inverse of splitLeadingH1. */
-function joinLeadingH1(prefix: string, body: string): string {
-  return prefix ? prefix + "\n" + body : body;
-}
-
 function ReaderBody({ projectId, doc }: { projectId: string; doc: DocContent }) {
-  const ed = useDocEditor(doc);
   const navigate = useNavigate();
   const docsQ = useDocList(projectId);
-  const frontmatterUpdate = useFrontmatterUpdate();
   const liveDocs = docsQ.data;
-  const [approved, setApproved] = useState(false);
-  const editorHostRef = useRef<HTMLDivElement>(null);
-
-  const editing = ed.phase === "editing";
-  const status = fm(doc, "status") ?? "";
   const docId = fm(doc, "id");
-  const approval = approvalContextFor(doc.path, status);
-  const words = ed.content.trim().split(/\s+/).filter(Boolean).length;
+  const words = doc.markdown.trim().split(/\s+/).filter(Boolean).length;
 
   // The leading `# Title` renders separately (big serif). Keep it out of the
-  // editor so it isn't duplicated, and re-attach it on every change.
-  const { prefix, body } = useMemo(() => splitLeadingH1(ed.content), [ed.content]);
+  // read-only body so it isn't duplicated.
+  const { body } = useMemo(() => splitLeadingH1(doc.markdown), [doc.markdown]);
 
   const editorConfig = useMemo<EditorRuntimeConfig>(() => {
     // Wikilinks resolve against the live vault index; fixtures only in USE_MOCK.
@@ -119,77 +100,32 @@ function ReaderBody({ projectId, doc }: { projectId: string; doc: DocContent }) 
     };
   }, [projectId, navigate, liveDocs]);
 
-  // Focus the ProseMirror surface (e.g. the validation strip's "Fix errors").
-  const focusEditor = () =>
-    editorHostRef.current?.querySelector<HTMLElement>(".tk-prose")?.focus();
-
   const bodyEditor = (
     <DocEditor
-      key={`${doc.path}:${ed.stateRev}:${editing ? "edit" : "read"}`}
+      key={doc.path}
       initialMarkdown={body}
-      editable={editing}
+      editable={false}
       config={editorConfig}
-      onChange={(bodyMd) => ed.setDraft(joinLeadingH1(prefix, bodyMd))}
-      className={editing ? "tk-doc-editing" : undefined}
     />
   );
 
-  const actions = editing ? (
-    <>
-      <Mono className="mr-1 text-[10.5px] text-warn">editing · markdown</Mono>
-      <button className={cn(barBtn, "border border-line text-muted hover:bg-hover")} onClick={ed.cancelEdit}>
-        Cancel
-      </button>
-      <button className={cn(barBtn, "bg-pass text-surface hover:opacity-90")} onClick={ed.save}>
-        Save
-      </button>
-    </>
-  ) : (
-    <button
-      className={cn(barBtn, "flex items-center gap-1.5 border border-line bg-raised text-ink-soft hover:border-line-soft hover:bg-hover")}
-      onClick={ed.startEdit}
-    >
-      <Pencil size={13} strokeWidth={2} />
-      Edit
-    </button>
-  );
+  const actions = <Mono className="text-[10.5px] uppercase tracking-[0.08em] text-faint">read-only</Mono>;
 
   return (
     <DocShell projectId={projectId} path={doc.path} actions={actions}>
       <div className="mx-auto flex w-full max-w-[1180px] gap-9 px-4 pb-24 pt-7 sm:px-6 lg:px-11">
         <div className="hidden w-[188px] flex-none xl:block">
-          {!editing && <Outline entries={doc.outline} />}
+          <Outline entries={doc.outline} />
         </div>
 
         <article className="min-w-0 flex-1">
           <div className="mx-auto max-w-[42rem]">
-            {/* Approve / approved confirmation */}
-            {approved ? (
-              <div className="mb-6 flex animate-rise items-center gap-2.5 rounded-xl border border-pass/30 bg-pass-soft px-4 py-3">
-                <span className="h-2 w-2 flex-none rounded-full bg-pass" />
-                <span className="text-[13.5px] text-ink-soft">
-                  Spec approved · gate cleared. Downstream tasks unblocked.
-                </span>
-              </div>
-            ) : (
-              approval &&
-              !editing && (
-                <ApproveBanner
-                  blocked={approval.blocked}
-                  onApprove={() => setApproved(true)}
-                  onRequestChanges={ed.startEdit}
-                />
-              )
-            )}
-
-            {/* Editor state banners */}
-            {ed.banner.type === "conflict" && (
-              <ConflictBanner conflict={ed.banner.conflict} onReconcile={ed.reconcile} />
-            )}
-            {ed.banner.type === "invalid" && (
-              <ValidationStrip issues={ed.banner.issues} onFix={focusEditor} onDiscard={ed.cancelEdit} />
-            )}
-            {ed.banner.type === "saved" && <SavedBanner rev={String(ed.banner.rev)} />}
+            <div className="mb-6 flex items-center gap-2.5 rounded-xl border border-line bg-panel px-4 py-3">
+              <span className="h-2 w-2 flex-none rounded-full bg-faint" />
+              <span className="text-[13.5px] text-muted">
+                This vault document is read-only here. Open the Knowledge editor for documents with durable CAS-backed editing.
+              </span>
+            </div>
 
             {/* Title block */}
             <KindEyebrow kind={doc.kind} className="mb-1.5" />
@@ -200,29 +136,11 @@ function ReaderBody({ projectId, doc }: { projectId: string; doc: DocContent }) 
 
             <PropertyPanel
               frontmatter={doc.frontmatter}
-              onCommit={(key, value) =>
-                frontmatterUpdate.mutate({ target: { kind: "doc", path: doc.path }, key, value })
-              }
-              pendingKey={frontmatterUpdate.isPending ? frontmatterUpdate.variables?.key : null}
+              readOnly
             />
 
-            {/* Body — one inline-WYSIWYG surface for both reading and editing.
-                Markdown stays the source of truth; the editor round-trips it. */}
-            <div ref={editorHostRef}>
-              {editing ? (
-                <div className="animate-rise">
-                  <div className="mb-2 flex items-center justify-between px-0.5">
-                    <Mono className="text-[9.5px] uppercase tracking-[0.12em] text-fainter">
-                      Editing
-                    </Mono>
-                    {ed.isDirty && <Mono className="text-[10px] text-warn">unsaved</Mono>}
-                  </div>
-                  {bodyEditor}
-                </div>
-              ) : (
-                bodyEditor
-              )}
-            </div>
+            {/* Body — a read-only rendering of the vault markdown. */}
+            <div>{bodyEditor}</div>
           </div>
         </article>
 
@@ -231,35 +149,18 @@ function ReaderBody({ projectId, doc }: { projectId: string; doc: DocContent }) 
           <div className="sticky top-6">
             <div className="mb-4 overflow-hidden rounded-xl border border-line">
               <MetaRow k="Updated" v={relativeTime(doc.updatedAt)} />
-              <MetaRow k="Revision" v={`state_rev ${ed.stateRev}`} />
+              <MetaRow k="Revision" v={`state_rev ${fm(doc, "state_rev") ?? "unknown"}`} />
               <MetaRow k="Words" v={words.toLocaleString()} />
               <MetaRow k="Kind" v={doc.kind} last />
             </div>
-            {!editing && (
-              <div className="flex flex-col gap-2">
-                {approval && !approved ? (
-                  <button
-                    className="w-full rounded-lg bg-info py-2.5 text-[13px] font-semibold text-surface transition-opacity hover:opacity-90"
-                    onClick={() => setApproved(true)}
-                  >
-                    Approve spec
-                  </button>
-                ) : (
-                  <button
-                    className="w-full rounded-lg bg-ink py-2.5 text-[13px] font-semibold text-surface transition-opacity hover:opacity-90"
-                    onClick={ed.startEdit}
-                  >
-                    Open in editor
-                  </button>
-                )}
-                <button
-                  className="w-full rounded-lg py-1.5 text-[12px] text-faint transition-colors hover:text-ink"
-                  onClick={() => navigator.clipboard?.writeText(doc.path).catch(() => {})}
-                >
-                  Copy vault path
-                </button>
-              </div>
-            )}
+            <div className="flex flex-col gap-2">
+              <button
+                className="w-full rounded-lg py-1.5 text-[12px] text-faint transition-colors hover:text-ink"
+                onClick={() => navigator.clipboard?.writeText(doc.path).catch(() => {})}
+              >
+                Copy vault path
+              </button>
+            </div>
           </div>
         </aside>
       </div>

@@ -7,21 +7,25 @@ import (
 )
 
 type serveServer struct {
-	vaultPath       string
-	repoRoot        string
-	addr            string
-	store           *RuntimeStore
-	assets          fs.FS
-	now             func() time.Time
-	stream          *serveStreamBroker
-	reconcileStatus func(string) adaptiveProjectReconcileStatus
-	snapshotMu      sync.Mutex
-	snapshots       map[string]*serveSnapshotEntry
-	refreshMu       sync.Mutex
-	refreshedAt     map[string]time.Time
-	summaryMu       sync.Mutex
-	summary         *serveSnapshot
-	summaryAt       time.Time
+	vaultPath         string
+	repoRoot          string
+	addr              string
+	store             *RuntimeStore
+	assets            fs.FS
+	now               func() time.Time
+	stream            *serveStreamBroker
+	reconcileStatus   func(string) adaptiveProjectReconcileStatus
+	snapshotMu        sync.Mutex
+	snapshots         map[string]*serveSnapshotEntry
+	refreshMu         sync.Mutex
+	refreshedAt       map[string]time.Time
+	summaryMu         sync.Mutex
+	summary           *serveSnapshot
+	summaryAt         time.Time
+	mutationToken     string
+	requireCapability bool
+	requestAdmission  chan struct{}
+	streamAdmission   chan struct{}
 }
 
 type serveSnapshotEntry struct {

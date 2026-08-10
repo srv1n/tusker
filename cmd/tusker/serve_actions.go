@@ -61,9 +61,13 @@ func (b serveActionBody) csv(keys ...string) string {
 
 func serveReadActionBody(r *http.Request) (serveActionBody, error) {
 	defer r.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 128*1024))
+	const maxActionBodyBytes = 128 * 1024
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxActionBodyBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(raw) > maxActionBodyBytes {
+		return nil, tuskerError(errorInvalidArg, "action body exceeds 128 KiB")
 	}
 	if len(strings.TrimSpace(string(raw))) == 0 {
 		return serveActionBody{}, nil
@@ -1010,9 +1014,21 @@ func (s *serveServer) handleAttempts(w http.ResponseWriter, r *http.Request) {
 		if taskID != "" && run.ItemID != taskID && run.RecordID != taskID {
 			continue
 		}
-		attempts, _ := s.store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+		attempts, truncated, attemptsErr := s.store.ListAttemptsForRunPage(run.ProjectID, run.RecordID, 200)
+		if attemptsErr != nil {
+			serveJSON(w, http.StatusInternalServerError, map[string]any{"error": attemptsErr.Error()})
+			return
+		}
+		if truncated {
+			w.Header().Set("X-Tusker-Truncated", "true")
+		}
 		for _, attempt := range attempts {
-			out = append(out, s.serveAttemptDetail(run, attempt))
+			detail, detailErr := s.serveAttemptDetailChecked(run, attempt)
+			if detailErr != nil {
+				serveJSON(w, http.StatusInternalServerError, map[string]any{"error": detailErr.Error()})
+				return
+			}
+			out = append(out, detail)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt > out[j].StartedAt })
@@ -1027,10 +1043,19 @@ func (s *serveServer) handleAttempt(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	for _, run := range snap.runs {
-		attempts, _ := s.store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+		attempts, attemptsErr := s.store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+		if attemptsErr != nil {
+			serveJSON(w, http.StatusInternalServerError, map[string]any{"error": attemptsErr.Error()})
+			return
+		}
 		for _, attempt := range attempts {
 			if attempt.AttemptID == id {
-				serveJSON(w, http.StatusOK, s.serveAttemptDetail(run, attempt))
+				detail, detailErr := s.serveAttemptDetailChecked(run, attempt)
+				if detailErr != nil {
+					serveJSON(w, http.StatusInternalServerError, map[string]any{"error": detailErr.Error()})
+					return
+				}
+				serveJSON(w, http.StatusOK, detail)
 				return
 			}
 		}
@@ -1039,7 +1064,15 @@ func (s *serveServer) handleAttempt(w http.ResponseWriter, r *http.Request, id s
 }
 
 func (s *serveServer) serveAttemptDetail(run RunStatus, attempt RunAttempt) serveAttemptDetail {
-	turns, _ := s.store.ListTurnsForAttempt(attempt.AttemptID)
+	result, _ := s.serveAttemptDetailChecked(run, attempt)
+	return result
+}
+
+func (s *serveServer) serveAttemptDetailChecked(run RunStatus, attempt RunAttempt) (serveAttemptDetail, error) {
+	turns, _, err := s.store.ListTurnsForAttemptPage(attempt.AttemptID, 200)
+	if err != nil {
+		return serveAttemptDetail{}, err
+	}
 	return serveAttemptDetail{
 		ID:             attempt.AttemptID,
 		TaskID:         firstNonEmpty(attempt.ItemID, run.ItemID, attempt.RecordID),
@@ -1062,7 +1095,7 @@ func (s *serveServer) serveAttemptDetail(run RunStatus, attempt RunAttempt) serv
 		FinalSummary:   attempt.FinalSummary,
 		Turns:          turns,
 		Events:         serveRunEvents(run, []RunAttempt{attempt}),
-	}
+	}, nil
 }
 
 func serveGateDetailFromNote(gate Note) serveGateDetail {

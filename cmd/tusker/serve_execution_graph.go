@@ -135,12 +135,22 @@ func serveExecutionCancelID(path string) (string, bool) {
 // interrupt: provider acknowledgement is never claimed until a provider
 // adapter has a target-specific control implementation.
 func (s *serveServer) handleExecutionCancel(w http.ResponseWriter, r *http.Request, executionID string) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("project"))
+	if projectID == "" {
+		serveJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "project is required"})
+		return
+	}
+	project, err := s.projectForSnapshot(projectID)
+	if err != nil {
+		serveJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
 	view, err := s.store.ExecutionView(executionID)
 	if err != nil || view == nil {
 		serveJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "execution not found"})
 		return
 	}
-	if project := strings.TrimSpace(r.URL.Query().Get("project")); project != "" && project != view.ProjectID {
+	if view.ProjectID != project.ProjectID {
 		serveJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "execution not found"})
 		return
 	}

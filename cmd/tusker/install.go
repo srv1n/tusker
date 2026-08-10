@@ -1248,7 +1248,7 @@ func printV5MigrationReport(report *v5MigrationReport, args Args) {
 
 func upsertGitignore(vaultPath string) error {
 	marker := "# tusker"
-	block := marker + "\n_system/generated/\n.obsidian/workspace*\n.obsidian/cache\n.trash/\n"
+	block := marker + "\nconfig.local.yaml\n_system/generated/\n.obsidian/workspace*\n.obsidian/cache\n.trash/\n"
 	filePath := filepath.Join(vaultPath, ".gitignore")
 	if !fileExists(filePath) {
 		return writeText(filePath, block)
@@ -1277,6 +1277,7 @@ func renderTuskerPointerBlock(readmeLink string) string {
 		"- Start runnable work with `tusker next`; inspect named work with `tusker show <TASK-ID> --capsule`.",
 		fmt.Sprintf("- Do not read `%s/events`, `_generated`, `attempts`, `evidence`, `Attachments`, raw logs, or full task files unless the task explicitly requires it.", vaultRoot),
 		"- Keep proof compact: use capsules, path-scoped status/search, and command + PASS/FAIL summaries; put noisy logs in `.tusker/scratch/<TASK-ID>/`.",
+		"- Scratch is not durable: it is deleted when the task closes and swept after 14 days regardless. Promote anything worth keeping to evidence before close.",
 		feedbackPointerInstruction(),
 		tuskerPointerEnd,
 	}, "\n")

@@ -78,6 +78,18 @@ func (d *Daemon) upsertRunWithStream(before, after RunStatus) error {
 	after = normalizeRuntimeRunWrite(after)
 	if strings.TrimSpace(before.ProjectID) != "" || strings.TrimSpace(before.RecordID) != "" {
 		before = normalizeRuntimeRunWrite(before)
+		// A dispatch refusal can return a partially projected RunStatus. The
+		// snapshot's identity is authoritative for this update; carry it into
+		// the refusal result before asking the store to perform the CAS write.
+		if strings.TrimSpace(after.ProjectID) == "" {
+			after.ProjectID = before.ProjectID
+		}
+		if strings.TrimSpace(after.RecordID) == "" {
+			after.RecordID = before.RecordID
+		}
+		if strings.TrimSpace(after.ItemID) == "" {
+			after.ItemID = before.ItemID
+		}
 	}
 	if d.beforePollRunPersist != nil {
 		d.beforePollRunPersist(before, after)

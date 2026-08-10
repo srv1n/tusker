@@ -99,6 +99,73 @@ func TestStreamBrokerAssignsMonotonicNotificationIDs(t *testing.T) {
 	}
 }
 
+func TestStreamBrokerReplaysCursorAndReportsMiss(t *testing.T) {
+	broker := newServeStreamBroker()
+	for i := 0; i < serveStreamReplayCapacity+2; i++ {
+		broker.Broadcast(serveStreamEvent{Kind: "task_update", Keys: []string{"tasks"}})
+	}
+	ch, unsubscribe, ok, miss := broker.SubscribeProjectSince("", 1)
+	if !ok || !miss {
+		t.Fatalf("expected an explicit replay miss after cursor fell out of ring: ok=%v miss=%v", ok, miss)
+	}
+	defer unsubscribe()
+	// A cursor inside the retained ring replays without opening a second racey
+	// subscription; the next event is delivered through the same channel.
+	ch, unsubscribe, ok, miss = broker.SubscribeProjectSince("", int64(serveStreamReplayCapacity))
+	if !ok || miss {
+		t.Fatalf("expected retained cursor replay: ok=%v miss=%v", ok, miss)
+	}
+	defer unsubscribe()
+	select {
+	case event := <-ch:
+		if event.ID != int64(serveStreamReplayCapacity+1) {
+			t.Fatalf("replayed event id=%d", event.ID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for replayed event")
+	}
+}
+
+func TestServeStreamCursorParsingIsStrict(t *testing.T) {
+	for _, test := range []struct {
+		raw       string
+		want      int64
+		malformed bool
+	}{
+		{raw: "", want: 0},
+		{raw: "42", want: 42},
+		{raw: " 42 ", want: 42},
+		{raw: "0", malformed: true},
+		{raw: "-1", malformed: true},
+		{raw: "42junk", malformed: true},
+		{raw: "9223372036854775808", malformed: true},
+	} {
+		got, malformed := parseServeStreamCursor(test.raw)
+		if got != test.want || malformed != test.malformed {
+			t.Fatalf("parse cursor %q = (%d,%v), want (%d,%v)", test.raw, got, malformed, test.want, test.malformed)
+		}
+	}
+}
+
+func TestServeStreamAdmissionDoesNotStarveRequests(t *testing.T) {
+	handler := newServeServer(t.TempDir(), t.TempDir(), "127.0.0.1:0", nil, fstest.MapFS{"index.html": {Data: []byte("ok")}})
+	handler.requestAdmission = make(chan struct{}, 1)
+	handler.streamAdmission = make(chan struct{}, 1)
+	handler.streamAdmission <- struct{}{}
+
+	stream := httptest.NewRecorder()
+	handler.ServeHTTP(stream, httptest.NewRequest(http.MethodGet, "/api/stream", nil))
+	if stream.Code != http.StatusServiceUnavailable {
+		t.Fatalf("saturated stream lane status=%d", stream.Code)
+	}
+
+	page := httptest.NewRecorder()
+	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/", nil))
+	if page.Code != http.StatusOK {
+		t.Fatalf("stream saturation starved ordinary request: status=%d body=%s", page.Code, page.Body.String())
+	}
+}
+
 func TestStandaloneServeStreamAvailable(t *testing.T) {
 	stateRoot := t.TempDir()
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)

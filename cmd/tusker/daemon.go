@@ -140,7 +140,7 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 		control, err = startDaemonControlServer(d.stateRoot, func(reqCtx context.Context, req daemonControlRequest) daemonControlResponse {
 			switch req.Command {
 			case "interrupt":
-				if err := d.InterruptRun(reqCtx, req.Identity); err != nil {
+				if err := d.InterruptRunScoped(reqCtx, req.ProjectID, req.Identity); err != nil {
 					return daemonControlResponse{OK: false, Message: err.Error()}
 				}
 				return daemonControlResponse{OK: true}
@@ -403,7 +403,11 @@ func configuredReconcileInterval(raw string) time.Duration {
 }
 
 func (d *Daemon) InterruptRun(ctx context.Context, identity string) error {
-	run, err := d.store.FindRun(identity)
+	return d.InterruptRunScoped(ctx, "", identity)
+}
+
+func (d *Daemon) InterruptRunScoped(ctx context.Context, projectID, identity string) error {
+	run, err := findRunScopedOrAmbiguous(d.store, projectID, identity)
 	if err != nil {
 		return err
 	}
@@ -424,8 +428,12 @@ func (d *Daemon) InterruptRun(ctx context.Context, identity string) error {
 }
 
 func (d *Daemon) ReleaseRun(ctx context.Context, identity string) error {
+	return d.ReleaseRunScoped(ctx, "", identity)
+}
+
+func (d *Daemon) ReleaseRunScoped(ctx context.Context, projectID, identity string) error {
 	_ = ctx
-	run, err := d.store.FindRun(identity)
+	run, err := findRunScopedOrAmbiguous(d.store, projectID, identity)
 	if err != nil {
 		return err
 	}
@@ -529,6 +537,12 @@ func killSpawnedRunProcess(run RunStatus) {
 	_ = syscall.Kill(-pgid, syscall.SIGTERM)
 	if !waitForProcessGroupStop(pgid, 600*time.Millisecond) {
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		// Some launchers report a process-group id that is not signalable on
+		// Darwin (or have already re-parented the group leader). Ensure the
+		// recorded leader is still reaped rather than leaving an orphan behind.
+		if run.ProcessPID > 0 && processExists(run.ProcessPID) {
+			_ = syscall.Kill(run.ProcessPID, syscall.SIGKILL)
+		}
 	}
 }
 
@@ -3539,6 +3553,17 @@ func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfF
 }
 
 func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane, requestedAttemptID string) (RunStatus, bool, error) {
+	var result RunStatus
+	var claimed bool
+	err := withScratchRetentionLock(project.VaultRoot, func() error {
+		var innerErr error
+		result, claimed, innerErr = d.dispatchRunWithAttemptIDUnlocked(ctx, project, wfFile, note, run, lane, requestedAttemptID)
+		return innerErr
+	})
+	return result, claimed, err
+}
+
+func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane, requestedAttemptID string) (RunStatus, bool, error) {
 	lane = firstNonEmpty(strings.TrimSpace(lane), runLaneExecute)
 	if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 		return run, false, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": lane}))
@@ -3547,6 +3572,19 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 	// configuration is the separate, authoritative opt-in for daemon spawning.
 	if !project.Enabled {
 		run.LastError = "daemon auto-spawn disabled for project"
+		return run, false, nil
+	}
+	// Refuse on the daemon state filesystem before touching vault/workspace
+	// inputs. Besides avoiding needless preparation under pressure, this keeps
+	// the safety invariant true for synthetic or partially hydrated candidates:
+	// no lease claim or retry churn should happen when durable runtime writes may
+	// fail. A second check below includes the selected workspace filesystem.
+	earlyDiskPressure, pressureErr := d.checkDiskPressureForDispatch("")
+	if pressureErr != nil {
+		return run, false, pressureErr
+	} else if earlyDiskPressure.DispatchPaused {
+		run.LastError = diskPressureDispatchReason(earlyDiskPressure)
+		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 		return run, false, nil
 	}
 	directive, err := d.store.RunDirective(project.ProjectID, run.RecordID)
@@ -3672,9 +3710,19 @@ func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project Registere
 			})
 		}
 	}
-	diskPressure, err := d.checkDiskPressureForDispatch(selectedWorkspacePath)
+	// A healthy early state check is still fresh for this claim; only repeat
+	// that filesystem measurement when the early check was blocked so recovery
+	// is proven by a new observation. The workspace is always checked here.
+	diskPressure, err := d.checkDiskPressureForDispatchWithState(selectedWorkspacePath, earlyDiskPressure.DispatchPaused)
 	if err != nil {
 		return run, false, err
+	}
+	if earlyDiskPressure.Recovered && !diskPressure.DispatchPaused && diskPressure.State == "ok" {
+		diskPressure.State = "recovered"
+		diskPressure.Recovered = true
+		if _, persistErr := d.store.mergeAndWriteDiskPressureStatus(diskPressure, time.Now().UTC()); persistErr != nil {
+			return run, false, persistErr
+		}
 	}
 	if diskPressure.DispatchPaused {
 		run.LastError = diskPressureDispatchReason(diskPressure)
@@ -5829,6 +5877,10 @@ func recordedProcessStartTime(pid int, fallback string) string {
 	if startedAt, ok := processStartTime(pid); ok {
 		return startedAt
 	}
+	// Preserve an observational timestamp for status and diagnostics when the
+	// platform cannot expose a kernel start-time value. processIdentityMatches
+	// still requires a successful kernel probe, so this fallback is never used
+	// as authority for signalling or lease takeover.
 	return fallback
 }
 
@@ -5857,10 +5909,13 @@ func processIdentityMatches(run RunStatus) bool {
 	if run.ProcessPGID > 0 && processGroupID(run.ProcessPID) != run.ProcessPGID {
 		return false
 	}
-	if expected := strings.TrimSpace(run.ProcessStartedAt); expected != "" {
-		if actual, ok := processStartTime(run.ProcessPID); ok && actual != expected {
-			return false
-		}
+	expected := strings.TrimSpace(run.ProcessStartedAt)
+	if expected == "" {
+		return false
+	}
+	actual, ok := processStartTime(run.ProcessPID)
+	if !ok || actual != expected {
+		return false
 	}
 	return true
 }
@@ -6132,6 +6187,10 @@ func renderRalphAttemptPromptContext(project RegisteredProject, wfFile WorkflowF
 }
 
 func ensureTaskPlanFile(vaultPath, taskID, title string) (taskPlanSnapshot, error) {
+	return ensureTaskPlanFileUnlocked(vaultPath, taskID, title)
+}
+
+func ensureTaskPlanFileUnlocked(vaultPath, taskID, title string) (taskPlanSnapshot, error) {
 	path := taskPlanPath(vaultPath, taskID)
 	display := taskPlanDisplayPath(taskID)
 	if strings.TrimSpace(path) == "" {
@@ -6142,7 +6201,7 @@ func ensureTaskPlanFile(vaultPath, taskID, title string) (taskPlanSnapshot, erro
 		if err := ensureDir(filepath.Dir(path)); err != nil {
 			return taskPlanSnapshot{}, err
 		}
-		if err := writeText(path, defaultTaskPlanContents(taskID, title)); err != nil {
+		if err := secureScratchWriteTextUnlocked(vaultPath, path, defaultTaskPlanContents(taskID, title)); err != nil {
 			return taskPlanSnapshot{}, err
 		}
 		created = true
@@ -6182,18 +6241,6 @@ func defaultTaskPlanContents(taskID, title string) string {
 `, title)
 }
 
-func removeTaskPlanFile(vaultPath, taskID string) error {
-	path := taskPlanPath(vaultPath, taskID)
-	if strings.TrimSpace(path) == "" || !fileExists(path) {
-		return nil
-	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	_ = os.Remove(filepath.Dir(path))
-	return nil
-}
-
 func renderPreviousStructuredOutcome(run RunStatus) string {
 	if !previousRunHasStructuredOutcome(run) {
 		return "- Previous attempt: none"
@@ -6223,19 +6270,23 @@ func previousStructuredOutcomeReason(run RunStatus) string {
 }
 
 func backpressureCommands(vaultPath string) []string {
-	cfg, _, err := readV7TuskerConfig(vaultPath)
-	if err == nil {
-		if commands := normalizeList(cfg.Automation.Validation.Commands); len(commands) > 0 {
-			return commands
-		}
+	resolved, err := resolveTuskerConfig(vaultPath)
+	if err == nil && resolvedConfigKeyPresent(resolved, "automation.validation.commands") {
+		// An explicit empty list is an authority decision, not an absent value
+		// that permits built-in validation to be reintroduced.
+		return normalizeList(resolved.Config.Automation.Validation.Commands)
 	}
 	return []string{"go build ./...", "go vet ./...", "go test ./... -count=1"}
 }
 
 func backpressureCommandSource(vaultPath string) string {
-	cfg, _, err := readV7TuskerConfig(vaultPath)
-	if err == nil && len(normalizeList(cfg.Automation.Validation.Commands)) > 0 {
-		return "`tusker.yaml` automation.validation.commands"
+	resolved, err := resolveTuskerConfig(vaultPath)
+	if err == nil && resolvedConfigKeyPresent(resolved, "automation.validation.commands") {
+		path := sourcePathForConfigKey(resolved.Layers, "automation.validation.commands")
+		if strings.TrimSpace(path) != "" {
+			return fmt.Sprintf("`%s` automation.validation.commands", filepath.Base(path))
+		}
+		return "project config automation.validation.commands"
 	}
 	return "built-in default gate"
 }
@@ -6425,6 +6476,11 @@ func daemonRunCmd(args Args) (returnErr error) {
 	}()
 	if once {
 		daemon.dispatchRefusalReason = oneShotDispatchRefusal("tusker daemon run --once")
+	}
+	var stopLogBound func()
+	if managed {
+		stopLogBound = startDaemonServiceLogBoundGuard(daemonServiceConfig{StateRoot: stateRoot})
+		defer stopLogBound()
 	}
 	err = daemon.Run(context.Background(), once)
 	if err != nil {
@@ -6897,7 +6953,10 @@ func projectsLimitsCmd(args Args) error {
 	} else if loaded.LoadError != nil {
 		return projectQuarantinedError(project)
 	}
-	report, err := configResolveForRepo(project.RepoRoot, true, "runtime.max_active_runs_per_project")
+	// Read back from the registered project's exact vault. Repository discovery
+	// can select a different compatibility vault and hide the local override
+	// just written for this project.
+	report, err := configResolveForPaths(project.RepoRoot, project.VaultRoot, true, "runtime.max_active_runs_per_project")
 	if err != nil {
 		return err
 	}

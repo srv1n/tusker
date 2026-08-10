@@ -4,6 +4,9 @@ set -eu
 TUSKER_REPO="${TUSKER_REPO:-srv1n/tusker}"
 TUSKER_VERSION="${TUSKER_VERSION:-}"
 TUSKER_BIN_DIR="${TUSKER_BIN_DIR:-${HOME}/.local/bin}"
+PINNED_MINISIGN_PUBLIC_KEY='TUSKER_RELEASE_PUBLIC_KEY_NOT_PROVISIONED'
+TUSKER_INSTALL_TEST_MODE="${TUSKER_INSTALL_TEST_MODE:-0}"
+TUSKER_TEST_MINISIGN_PUBLIC_KEY="${TUSKER_TEST_MINISIGN_PUBLIC_KEY:-}"
 INSTALL_CODEX_USER=0
 INSTALL_CLAUDE_USER=0
 INSTALL_REPO_PATH=""
@@ -28,6 +31,9 @@ Notes:
   - This installer supports macOS and Linux.
   - It copies the release binary into BIN_DIR; it does not symlink to a local checkout.
   - Binary installs refresh existing root user skills in ~/.agents, ~/.codex, and ~/.claude.
+  - Release-manifest signatures are mandatory. Until the repository pins the real
+    production public key, installation fails closed. Test trust roots require the
+    explicit TUSKER_INSTALL_TEST_MODE=1 fixture boundary.
 EOF
 }
 
@@ -84,10 +90,60 @@ is_sha256() {
 	return 0
 }
 
+validate_archive() {
+	archive=$1
+	destination=$2
+	expected_root="tusker_${TUSKER_VERSION}_${os}_${arch}"
+	python3 - "$archive" "$expected_root" "$destination" <<'PY'
+import os, pathlib, posixpath, shutil, sys, tarfile
+archive, root, destination = sys.argv[1:]
+seen = set()
+expected = {root, root + "/tusker", root + "/README.md", root + "/LICENSE"}
+with tarfile.open(archive, "r:gz") as tf:
+    members = tf.getmembers()
+    for member in members:
+        name = member.name
+        normalized = posixpath.normpath(name)
+        if normalized in seen:
+            raise SystemExit("duplicate archive member: " + name)
+        seen.add(normalized)
+        if name.startswith("/") or normalized == ".." or normalized.startswith("../"):
+            raise SystemExit("unsafe archive member path: " + name)
+        if normalized not in expected:
+            raise SystemExit("unexpected archive member: " + name)
+        if not (member.isdir() or member.isreg()):
+            raise SystemExit("unsupported archive member type: " + name)
+    missing = expected - seen
+    if missing:
+        raise SystemExit("archive is missing required members: " + ", ".join(sorted(missing)))
+    base = pathlib.Path(destination)
+    base.mkdir(mode=0o700, parents=True, exist_ok=False)
+    for member in members:
+        normalized = posixpath.normpath(member.name)
+        target = base.joinpath(*normalized.split("/"))
+        if member.isdir():
+            target.mkdir(mode=0o755, parents=True, exist_ok=False)
+            continue
+        target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        source = tf.extractfile(member)
+        if source is None:
+            raise SystemExit("unable to read archive member: " + member.name)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(target, flags, 0o755 if normalized.endswith("/tusker") else 0o644)
+        with source, os.fdopen(fd, "wb") as output:
+            shutil.copyfileobj(source, output)
+PY
+}
+
 need_cmd curl
-need_cmd tar
 need_cmd install
 need_cmd awk
+need_cmd python3
+need_cmd minisign
+
+case "$TUSKER_INSTALL_TEST_MODE" in 0|1) ;; *) printf 'TUSKER_INSTALL_TEST_MODE must be 0 or 1.\n' >&2; exit 1;; esac
 
 if command -v shasum >/dev/null 2>&1; then
 	checksum_tool="shasum"
@@ -97,6 +153,10 @@ else
 	printf 'Missing required checksum command: install shasum (macOS) or sha256sum (Linux).\n' >&2
 	exit 1
 fi
+
+minisign_public_key=$PINNED_MINISIGN_PUBLIC_KEY
+if [ "$TUSKER_INSTALL_TEST_MODE" -eq 1 ]; then minisign_public_key=$TUSKER_TEST_MINISIGN_PUBLIC_KEY; fi
+case "$minisign_public_key" in ''|TUSKER_RELEASE_PUBLIC_KEY_NOT_PROVISIONED) printf '%s\n' 'Tusker release public key is not provisioned; installation is blocked.' >&2; exit 1;; esac
 
 uname_s="$(uname -s)"
 case "$uname_s" in
@@ -124,8 +184,7 @@ download_root="${TUSKER_DOWNLOAD_ROOT:-https://github.com/${TUSKER_REPO}/release
 if [ -z "$TUSKER_VERSION" ]; then
 	TUSKER_VERSION="$(
 		curl -fsSL "${api_url}/repos/${TUSKER_REPO}/releases/latest" \
-			| sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' \
-			| head -n 1
+			| python3 -c 'import json, sys; value=json.load(sys.stdin).get("tag_name", ""); print(value if isinstance(value, str) else "")'
 	)"
 fi
 
@@ -133,21 +192,56 @@ if [ -z "$TUSKER_VERSION" ]; then
 	printf 'Failed to resolve the latest release tag for %s\n' "$TUSKER_REPO" >&2
 	exit 1
 fi
+if ! python3 - "$TUSKER_VERSION" <<'PY'
+import re, sys
+identifier = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+pattern = rf"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-{identifier}(?:\.{identifier})*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+raise SystemExit(0 if re.fullmatch(pattern, sys.argv[1]) else 1)
+PY
+then
+	printf 'Invalid release version: %s\n' "$TUSKER_VERSION" >&2
+	exit 1
+fi
 
 asset="tusker_${TUSKER_VERSION}_${os}_${arch}.tar.gz"
 tmpdir="$(mktemp -d 2>/dev/null || mktemp -d -t tusker-install)"
+swapped=0
+committed=0
+had_previous=0
+rollback_binary=''
+final_binary=''
 cleanup() {
+	if [ "$swapped" -eq 1 ] && [ "$committed" -eq 0 ] && [ -n "$final_binary" ]; then
+		if [ "$had_previous" -eq 1 ] && [ -n "$rollback_binary" ] && [ -f "$rollback_binary" ]; then
+			restore="${final_binary}.restore.$$"
+			cp -p "$rollback_binary" "$restore" && mv -f "$restore" "$final_binary" || true
+		elif [ "$had_previous" -eq 0 ]; then
+			rm -f "$final_binary"
+		fi
+	fi
+	[ -z "${staged_binary:-}" ] || rm -f "$staged_binary"
+	[ -z "$rollback_binary" ] || rm -f "$rollback_binary"
 	rm -rf "$tmpdir"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 archive_path="${tmpdir}/${asset}"
-checksums_path="${tmpdir}/checksums.txt"
+manifest_path="${tmpdir}/MANIFEST.sha256"
+signature_path="${tmpdir}/MANIFEST.sha256.minisig"
 extract_dir="${tmpdir}/extract"
 
 printf 'Downloading %s from %s...\n' "$asset" "$TUSKER_REPO"
 curl -fsSL -o "$archive_path" "${download_root}/${TUSKER_VERSION}/${asset}"
-curl -fsSL -o "$checksums_path" "${download_root}/${TUSKER_VERSION}/checksums.txt"
+curl -fsSL -o "$manifest_path" "${download_root}/${TUSKER_VERSION}/MANIFEST.sha256"
+curl -fsSL -o "$signature_path" "${download_root}/${TUSKER_VERSION}/MANIFEST.sha256.minisig"
+minisign -Vm "$manifest_path" -P "$minisign_public_key" -x "$signature_path" >/dev/null
+for required in checksums.txt provenance.json sbom.cdx.json; do
+	entry=$(awk -v name="$required" '$2 == name { count++; checksum=$1 } END { if (count == 1) print checksum }' "$manifest_path")
+	is_sha256 "$entry" || { printf 'Signed release manifest is missing valid %s coverage.\n' "$required" >&2; exit 1; }
+done
 
 case "$checksum_tool" in
 	shasum)
@@ -174,53 +268,15 @@ if ! is_sha256 "$actual_checksum"; then
 	exit 1
 fi
 
-checksum_entry="$(
-	awk -v name="$asset" '
-		{
-			line = $0
-			sub(/\r$/, "", line)
-			checksum = ""
-			filename = line
-			if (line ~ /^[^[:space:]]+[[:space:]]+/) {
-				checksum = line
-				sub(/[[:space:]].*$/, "", checksum)
-				sub(/^[^[:space:]]+[[:space:]]+/, "", filename)
-			} else {
-				sub(/^[[:space:]]+/, "", filename)
-			}
-			if (substr(filename, 1, 1) == "*") {
-				filename = substr(filename, 2)
-			}
-			if (filename == name) {
-				matches++
-				expected = tolower(checksum)
-			}
-		}
-		END {
-			if (matches == 0) {
-				print "missing"
-			} else if (matches > 1) {
-				print "duplicate"
-			} else if (expected == "") {
-				print "empty"
-			} else {
-				print "ok " expected
-			}
-		}
-	' "$checksums_path"
-)"
+checksum_entry="$(awk -v name="$asset" '$2 == name { count++; checksum=tolower($1) } END { if (count == 1) print "ok " checksum; else if (count > 1) print "duplicate"; else print "missing" }' "$manifest_path")"
 
 case "$checksum_entry" in
 	missing)
-		printf 'Checksum entry missing for %s in checksums.txt.\n' "$asset" >&2
+		printf 'Checksum entry missing for %s in signed manifest.\n' "$asset" >&2
 		exit 1
 		;;
 	duplicate)
-		printf 'Duplicate checksum entries for %s in checksums.txt.\n' "$asset" >&2
-		exit 1
-		;;
-	empty)
-		printf 'Checksum entry for %s has an empty SHA-256 value.\n' "$asset" >&2
+		printf 'Duplicate checksum entries for %s in signed manifest.\n' "$asset" >&2
 		exit 1
 		;;
 	ok\ *)
@@ -233,7 +289,7 @@ case "$checksum_entry" in
 esac
 
 if ! is_sha256 "$expected_checksum"; then
-	printf 'Checksum entry for %s has a malformed SHA-256 value.\n' "$asset" >&2
+	printf 'Signed manifest entry for %s has a malformed SHA-256 value.\n' "$asset" >&2
 	exit 1
 fi
 
@@ -242,12 +298,45 @@ if [ "$actual_checksum" != "$expected_checksum" ]; then
 	exit 1
 fi
 
-mkdir -p "$extract_dir" "$TUSKER_BIN_DIR"
-tar -xzf "$archive_path" -C "$extract_dir"
+mkdir -p "$TUSKER_BIN_DIR"
+validate_archive "$archive_path" "$extract_dir"
 binary_path="${extract_dir}/tusker_${TUSKER_VERSION}_${os}_${arch}/tusker"
 
-install -m 0755 "$binary_path" "${TUSKER_BIN_DIR}/tusker"
-printf 'Installed tusker to %s/tusker\n' "$TUSKER_BIN_DIR"
+if [ ! -f "$binary_path" ] || [ -L "$binary_path" ]; then
+	printf 'Release archive did not contain a regular tusker binary.\n' >&2
+	exit 1
+fi
+if [ -L "$TUSKER_BIN_DIR" ]; then printf 'Refusing symlink binary directory: %s\n' "$TUSKER_BIN_DIR" >&2; exit 1; fi
+bin_dir_abs=$(CDPATH= cd -P "$TUSKER_BIN_DIR" && pwd -P)
+final_binary="${bin_dir_abs}/tusker"
+staged_binary="${bin_dir_abs}/.tusker.install.$$"
+rollback_binary="${bin_dir_abs}/.tusker.rollback.$$"
+backup_binary="${bin_dir_abs}/tusker.previous"
+for target in "$final_binary" "$backup_binary"; do
+	[ ! -L "$target" ] || { printf 'Refusing symlink install path: %s\n' "$target" >&2; exit 1; }
+done
+install -m 0755 "$binary_path" "$staged_binary"
+sync
+if ! installed_version=$("$staged_binary" version --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])'); then
+	rm -f "$staged_binary"
+	printf 'Downloaded tusker binary failed health check.\n' >&2
+	exit 1
+fi
+if [ "$installed_version" != "$TUSKER_VERSION" ]; then
+	rm -f "$staged_binary"
+	printf 'Downloaded binary version mismatch: expected %s, got %s.\n' "$TUSKER_VERSION" "$installed_version" >&2
+	exit 1
+fi
+if [ -e "$final_binary" ]; then
+	had_previous=1
+	cp -p "$final_binary" "$rollback_binary"
+fi
+mv -f "$staged_binary" "$final_binary"
+swapped=1
+sync
+post_version=$("$final_binary" version --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+[ "$post_version" = "$TUSKER_VERSION" ] || { printf '%s\n' 'Installed binary failed post-swap version health check.' >&2; exit 1; }
+printf 'Installed tusker to %s\n' "$final_binary"
 
 path_ok=0
 OLD_IFS=$IFS
@@ -269,8 +358,8 @@ if [ -d "${HOME}/.agents/skills/tusker" ] || \
 	[ -d "${HOME}/.agents/skills/obsidian-vault-tracker" ] || \
 	[ -d "${HOME}/.codex/skills/obsidian-vault-tracker" ] || \
 	[ -d "${HOME}/.claude/skills/obsidian-vault-tracker" ]; then
-	if "${TUSKER_BIN_DIR}/tusker" install --help 2>/dev/null | grep -q -- '--refresh-existing-user-skills'; then
-		"${TUSKER_BIN_DIR}/tusker" install --no-bin --refresh-existing-user-skills
+		if "$final_binary" install --help 2>/dev/null | grep -q -- '--refresh-existing-user-skills'; then
+			"$final_binary" install --no-bin --refresh-existing-user-skills
 	else
 		printf 'Existing user skills found, but Tusker %s does not support skill refresh during binary install.\n' "$TUSKER_VERSION"
 	fi
@@ -284,11 +373,13 @@ if [ "$INSTALL_CODEX_USER" -eq 1 ] || [ "$INSTALL_CLAUDE_USER" -eq 1 ]; then
 	if [ "$INSTALL_CLAUDE_USER" -eq 1 ]; then
 		set -- "$@" --claude-user
 	fi
-	"${TUSKER_BIN_DIR}/tusker" "$@"
+	"$final_binary" "$@"
 fi
 
 if [ -n "$INSTALL_REPO_PATH" ]; then
-	"${TUSKER_BIN_DIR}/tusker" install --repo "$INSTALL_REPO_PATH" --no-bin
+	"$final_binary" install --repo "$INSTALL_REPO_PATH" --no-bin
 fi
 
+if [ -f "$rollback_binary" ]; then mv -f "$rollback_binary" "$backup_binary"; fi
+committed=1
 printf 'Tusker %s installed.\n' "$TUSKER_VERSION"

@@ -87,8 +87,8 @@ func TestRunnerRoutePreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	configPath := filepath.Join(v7RepoRoot(vault), "tusker.yaml")
-	beforeConfig, err := os.ReadFile(configPath)
+	configPath := managedTuskerConfigPath(vault)
+	beforeConfig, err := os.ReadFile(managedTuskerConfigPath(vault))
 	if err != nil {
 		t.Fatal(err)
 	}

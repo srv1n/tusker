@@ -248,6 +248,9 @@ func TestRetrySeesThroughMismatchedIdentity(t *testing.T) {
 // A6: a genuinely live process (verified identity) blocks the retry and the
 // no-op names the live attempt.
 func TestRetryReportsLiveAttemptWithID(t *testing.T) {
+	if _, ok := processStartTime(os.Getpid()); !ok {
+		t.Skip("platform does not expose a verifiable process start time")
+	}
 	store := retryTestStore(t)
 	now := time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)
 
@@ -257,7 +260,7 @@ func TestRetryReportsLiveAttemptWithID(t *testing.T) {
 	run.Terminal = false
 	run.ProcessPID = os.Getpid() // verifiably alive: this test process
 	run.ProcessPGID = 0          // skip pgid check
-	run.ProcessStartedAt = ""    // skip start-time check
+	run.ProcessStartedAt = recordedProcessStartTime(os.Getpid(), "")
 	if err := store.UpsertRun(run); err != nil {
 		t.Fatal(err)
 	}

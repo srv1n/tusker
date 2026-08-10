@@ -21,6 +21,8 @@ export function TaskSearch() {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
   const projects = projectsQ.data ?? [];
   const searchableProjects = projects.filter((project) => project.health !== "error");
   const taskQueries = useQueries({
@@ -41,10 +43,11 @@ export function TaskSearch() {
   });
 
   useEffect(() => {
-    const show = () => setOpen(true);
+    const show = () => { openerRef.current = document.activeElement as HTMLElement | null; setOpen(true); };
     const shortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
         event.preventDefault();
+        openerRef.current = document.activeElement as HTMLElement | null;
         setOpen(true);
       }
     };
@@ -61,6 +64,25 @@ export function TaskSearch() {
     setQuery("");
     setActiveIndex(0);
     requestAnimationFrame(() => inputRef.current?.focus());
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpen(false);
+        requestAnimationFrame(() => openerRef.current?.focus());
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const root = dialogRef.current;
+      if (!root) return;
+      const focusable = Array.from(root.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'));
+      if (focusable.length === 0) return;
+      const first = focusable[0]!; const last = focusable[focusable.length - 1]!;
+      if (!root.contains(document.activeElement)) { event.preventDefault(); first.focus(); }
+      else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
   const items = useMemo<SearchRecord[]>(
@@ -96,7 +118,10 @@ export function TaskSearch() {
 
   if (!open) return null;
 
-  const close = () => setOpen(false);
+  const close = () => {
+    setOpen(false);
+    requestAnimationFrame(() => openerRef.current?.focus());
+  };
   const openResult = (item: SearchRecord) => {
     const path = item.kind === "task"
       ? taskDetailPath(item.projectId, item.id)
@@ -142,6 +167,7 @@ export function TaskSearch() {
       <section
         role="dialog"
         aria-modal="true"
+        ref={dialogRef}
         aria-label="Search tasks"
         className="w-full max-w-[640px] overflow-hidden rounded-xl border border-line bg-raised shadow-lg"
       >

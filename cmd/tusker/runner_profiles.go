@@ -16,9 +16,46 @@ import (
 const (
 	configSourceBuiltIn    = "built-in defaults"
 	configSourceUserGlobal = "user-global config"
-	configSourceProject    = "project tusker.yaml"
-	configSourceLocal      = "machine-local tusker.local.yaml"
+	configSourceProject    = "project config"
+	configSourceLocal      = "machine-local config"
 )
+
+const (
+	managedTuskerConfigName      = "config.yaml"
+	managedTuskerLocalConfigName = "config.local.yaml"
+	legacyTuskerConfigName       = "tusker.yaml"
+	legacyTuskerLocalConfigName  = "tusker.local.yaml"
+)
+
+func managedTuskerConfigPath(vaultPath string) string {
+	return filepath.Join(vaultPath, managedTuskerConfigName)
+}
+
+func managedTuskerLocalConfigPath(vaultPath string) string {
+	return filepath.Join(vaultPath, managedTuskerLocalConfigName)
+}
+
+func legacyTuskerConfigPath(repoRoot string) string {
+	return filepath.Join(repoRoot, legacyTuskerConfigName)
+}
+
+func legacyTuskerLocalConfigPath(repoRoot string) string {
+	return filepath.Join(repoRoot, legacyTuskerLocalConfigName)
+}
+
+// preferredTuskerConfigPath retains root-level config only as a compatibility
+// read path. New repositories and all new local overrides live in the vault.
+func preferredTuskerConfigPath(vaultPath string) string {
+	managed := managedTuskerConfigPath(vaultPath)
+	if fileExists(managed) {
+		return managed
+	}
+	legacy := legacyTuskerConfigPath(v7RepoRoot(vaultPath))
+	if fileExists(legacy) {
+		return legacy
+	}
+	return managed
+}
 
 type RunnerSandboxDefinition struct {
 	Mode    string `yaml:"mode" json:"mode"`
@@ -82,6 +119,10 @@ type tuskerConfigLayer struct {
 type resolvedTuskerConfig struct {
 	Config v7TuskerConfigFile
 	Layers []tuskerConfigLayer
+	// Raw is the exact field-presence-aware effective document. Config is its
+	// typed projection; callers that need provenance must never reconstruct it
+	// from Config because Go zero values lose whether a field was set.
+	Raw map[string]any
 }
 
 type configResolveSourceValue struct {
@@ -156,23 +197,50 @@ func builtInTuskerConfig() v7TuskerConfigFile {
 }
 
 func resolveTuskerConfig(vaultPath string) (resolvedTuskerConfig, error) {
-	return resolveTuskerConfigForRepo(v7RepoRoot(vaultPath), true)
+	return resolveTuskerConfigForPaths(v7RepoRoot(vaultPath), vaultPath, true)
 }
 
 func resolveTuskerConfigForRepo(repoRoot string, includeProject bool) (resolvedTuskerConfig, error) {
+	return resolveTuskerConfigForPaths(repoRoot, filepath.Join(repoRoot, defaultRepoVaultDir), includeProject)
+}
+
+func resolveTuskerConfigForPaths(repoRoot, vaultPath string, includeProject bool) (resolvedTuskerConfig, error) {
+	return resolveTuskerConfigForPathsWithOverrides(repoRoot, vaultPath, includeProject, nil)
+}
+
+// resolveTuskerConfigForPathsWithOverrides resolves the same layer stack as
+// the production reader, while allowing setters to validate their complete
+// post-write document before atomically replacing the on-disk file.
+func resolveTuskerConfigForPathsWithOverrides(repoRoot, vaultPath string, includeProject bool, overrides map[string]map[string]any) (resolvedTuskerConfig, error) {
 	layers := []tuskerConfigLayer{
 		{Name: configSourceBuiltIn, Present: true, Config: builtInTuskerConfig()},
 		{Name: configSourceUserGlobal, Path: userGlobalTuskerConfigPath()},
 	}
 	if includeProject {
 		layers = append(layers,
-			tuskerConfigLayer{Name: configSourceProject, Path: filepath.Join(repoRoot, "tusker.yaml")},
-			tuskerConfigLayer{Name: configSourceLocal, Path: filepath.Join(repoRoot, "tusker.local.yaml")},
+			// Old root-level files remain lower-precedence compatibility inputs.
+			tuskerConfigLayer{Name: configSourceProject, Path: legacyTuskerConfigPath(repoRoot)},
+			tuskerConfigLayer{Name: configSourceProject, Path: managedTuskerConfigPath(vaultPath)},
+			tuskerConfigLayer{Name: configSourceLocal, Path: legacyTuskerLocalConfigPath(repoRoot)},
+			tuskerConfigLayer{Name: configSourceLocal, Path: managedTuskerLocalConfigPath(vaultPath)},
 		)
 	}
 	for i := range layers {
 		if layers[i].Name == configSourceBuiltIn {
-			layers[i].Raw = configRawMap(layers[i].Config)
+			layers[i].Raw = builtInTuskerConfigRaw()
+			continue
+		}
+		if raw, ok := overrides[layers[i].Path]; ok {
+			cfg, err := decodeTuskerConfigRaw(raw, layers[i].Path)
+			if err != nil {
+				return resolvedTuskerConfig{}, err
+			}
+			layers[i].Config = cfg
+			layers[i].Raw = cloneConfigRaw(raw)
+			layers[i].Present = true
+			if err := validateTuskerConfigLayer(layers[i]); err != nil {
+				return resolvedTuskerConfig{}, err
+			}
 			continue
 		}
 		cfg, raw, present, err := readTuskerConfigLayer(layers[i].Path)
@@ -186,17 +254,61 @@ func resolveTuskerConfigForRepo(repoRoot string, includeProject bool) (resolvedT
 			return resolvedTuskerConfig{}, err
 		}
 	}
-	effective := layers[0].Config
+	effectiveRaw := cloneConfigRaw(layers[0].Raw)
 	for _, layer := range layers[1:] {
 		if !layer.Present {
 			continue
 		}
-		mergeTuskerAutomationConfig(&effective, layer.Config)
+		mergeConfigRaw(effectiveRaw, layer.Raw)
+	}
+	// A project may explicitly clear the inherited profile map while relying
+	// on machine-local reconciliation to repopulate it.  In that transitional
+	// state an inherited default_profile would be a dangling reference and
+	// should not make the config unreadable before the reconciler can repair it.
+	// Preserve an explicitly configured default_profile so validation still
+	// rejects a genuine user typo.
+	for i := len(layers) - 1; i >= 1; i-- {
+		layer := layers[i]
+		if !layer.Present {
+			continue
+		}
+		automation := mapAny(layer.Raw["automation"])
+		profiles, hasProfiles := automation["profiles"]
+		if !hasProfiles {
+			continue
+		}
+		if profileMap := mapAny(profiles); profileMap != nil && len(profileMap) == 0 {
+			if _, explicitDefault := automation["default_profile"]; !explicitDefault {
+				if effectiveAutomation := mapAny(effectiveRaw["automation"]); effectiveAutomation != nil {
+					delete(effectiveAutomation, "default_profile")
+				}
+			}
+		}
+		break
+	}
+	effective, err := decodeTuskerConfigRaw(effectiveRaw, "effective configuration")
+	if err != nil {
+		return resolvedTuskerConfig{}, err
 	}
 	if err := validateResolvedTuskerConfig(effective, layers); err != nil {
 		return resolvedTuskerConfig{}, err
 	}
-	return resolvedTuskerConfig{Config: effective, Layers: layers}, nil
+	return resolvedTuskerConfig{Config: effective, Layers: layers, Raw: effectiveRaw}, nil
+}
+
+func builtInTuskerConfigRaw() map[string]any {
+	cfg := builtInTuskerConfig()
+	return map[string]any{
+		"automation": map[string]any{
+			"default_profile": "default",
+			"profiles":        configRawMap(cfg)["automation"].(map[string]any)["profiles"],
+			"denylist":        configRawMap(cfg)["automation"].(map[string]any)["denylist"],
+			"concurrency": map[string]any{
+				"max_active_runs":             2,
+				"max_active_runs_per_project": 1,
+			},
+		},
+	}
 }
 
 func readTuskerConfigLayer(path string) (v7TuskerConfigFile, map[string]any, bool, error) {
@@ -226,6 +338,61 @@ func configRawMap(cfg v7TuskerConfigFile) map[string]any {
 	var out map[string]any
 	_ = yaml.Unmarshal(raw, &out)
 	return out
+}
+
+func decodeTuskerConfigRaw(raw map[string]any, path string) (v7TuskerConfigFile, error) {
+	var cfg v7TuskerConfigFile
+	encoded, err := yaml.Marshal(raw)
+	if err != nil {
+		return cfg, err
+	}
+	if err := yaml.Unmarshal(encoded, &cfg); err != nil {
+		return cfg, tuskerError(errorConfigInvalid, "failed to decode config: "+err.Error(), withPath(path))
+	}
+	return cfg, nil
+}
+
+func cloneConfigRaw(raw map[string]any) map[string]any {
+	if raw == nil {
+		return map[string]any{}
+	}
+	encoded, err := yaml.Marshal(raw)
+	if err != nil {
+		return map[string]any{}
+	}
+	var clone map[string]any
+	if yaml.Unmarshal(encoded, &clone) != nil || clone == nil {
+		return map[string]any{}
+	}
+	return clone
+}
+
+// mergeConfigRaw is deliberately defined over YAML values rather than Go
+// structs. A key's presence is authority: false, 0, [], and {} all override
+// lower layers. Non-empty maps merge recursively so a managed partial policy
+// augments (rather than masks) legacy sibling fields.
+func mergeConfigRaw(dst, src map[string]any) {
+	for key, srcValue := range src {
+		srcMap, sourceIsMap := srcValue.(map[string]any)
+		dstMap, destinationIsMap := dst[key].(map[string]any)
+		if sourceIsMap && destinationIsMap && len(srcMap) > 0 {
+			mergeConfigRaw(dstMap, srcMap)
+			continue
+		}
+		dst[key] = cloneConfigValue(srcValue)
+	}
+}
+
+func cloneConfigValue(value any) any {
+	encoded, err := yaml.Marshal(value)
+	if err != nil {
+		return value
+	}
+	var clone any
+	if yaml.Unmarshal(encoded, &clone) != nil {
+		return value
+	}
+	return clone
 }
 
 func userGlobalTuskerConfigPath() string {
@@ -365,11 +532,6 @@ func validateTuskerConfigLayer(layer tuskerConfigLayer) error {
 	if err := validateCompletionReactorModeLayer(layer); err != nil {
 		return err
 	}
-	for name, profile := range layer.Config.Automation.Profiles {
-		if err := validateRunnerProfileDefinition(strings.TrimSpace(name), runnerProfileFromSchema(profile), layer.Path); err != nil {
-			return err
-		}
-	}
 	for _, rule := range layer.Config.Automation.Denylist {
 		if strings.TrimSpace(rule.ID) == "" || strings.TrimSpace(rule.Pattern) == "" {
 			return tuskerError(errorConfigInvalid, "automation.denylist entries require id and pattern", withPath(layer.Path))
@@ -383,6 +545,11 @@ func validateTuskerConfigLayer(layer tuskerConfigLayer) error {
 
 func validateResolvedTuskerConfig(cfg v7TuskerConfigFile, layers []tuskerConfigLayer) error {
 	profiles := runnerProfilesFromSchema(cfg.Automation.Profiles)
+	for name, profile := range profiles {
+		if err := validateRunnerProfileDefinition(strings.TrimSpace(name), profile, sourcePathForConfigKey(layers, "automation.profiles."+strings.TrimSpace(name))); err != nil {
+			return err
+		}
+	}
 	if strings.TrimSpace(cfg.Automation.DefaultProfile) != "" {
 		if _, ok := profiles[strings.TrimSpace(cfg.Automation.DefaultProfile)]; !ok {
 			path := sourcePathForConfigKey(layers, "automation.default_profile")
@@ -856,16 +1023,26 @@ func anyStringOverlap(left, right []string) bool {
 }
 
 func configResolve(vaultPath, key string) (configResolveReport, error) {
-	return configResolveForRepo(v7RepoRoot(vaultPath), true, key)
+	return configResolveForPaths(v7RepoRoot(vaultPath), vaultPath, true, key)
 }
 
 func configResolveForRepo(repoRoot string, includeProject bool, key string) (configResolveReport, error) {
-	resolved, err := resolveTuskerConfigForRepo(repoRoot, includeProject)
+	vaultPath := filepath.Join(repoRoot, defaultRepoVaultDir)
+	if includeProject && strings.TrimSpace(repoRoot) != "" {
+		if discovered, err := discoverVault(repoRoot); err == nil && strings.TrimSpace(discovered) != "" {
+			vaultPath = discovered
+		}
+	}
+	return configResolveForPaths(repoRoot, vaultPath, includeProject, key)
+}
+
+func configResolveForPaths(repoRoot, vaultPath string, includeProject bool, key string) (configResolveReport, error) {
+	resolved, err := resolveTuskerConfigForPaths(repoRoot, vaultPath, includeProject)
 	if err != nil {
 		return configResolveReport{}, err
 	}
 	lookup := canonicalConfigLookupKey(key)
-	effective, _ := lookupConfigValue(configRawMap(resolved.Config), lookup)
+	effective, _ := lookupConfigValue(resolved.Raw, lookup)
 	report := configResolveReport{Key: key, Lookup: lookup, Value: effective}
 	var winner *configResolveSourceValue
 	for _, layer := range resolved.Layers {
@@ -920,7 +1097,39 @@ func writeConfigValue(path, key string, value any) error {
 	if err != nil {
 		return err
 	}
-	return writeText(path, string(out))
+	return writeConfigTextAtomically(path, string(out))
+}
+
+func writeConfigTextAtomically(path, content string) error {
+	if strings.TrimSpace(path) == "" {
+		return tuskerError(errorConfigInvalid, "config path is empty")
+	}
+	if err := ensureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(path), ".config-*.yaml")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if _, err := temp.WriteString(content); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Chmod(0o644); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	invalidateCachedNote(path)
+	recordCLIVaultMutation(path)
+	return nil
 }
 
 func setNestedConfigValue(raw map[string]any, key string, value any) {
@@ -938,25 +1147,75 @@ func setNestedConfigValue(raw map[string]any, key string, value any) {
 }
 
 func setProjectLocalConfigWithReadback(vaultPath, key string, value any) (configResolveReport, error) {
-	before, err := configResolve(vaultPath, key)
+	repoRoot := v7RepoRoot(vaultPath)
+	before, err := configResolveForPaths(repoRoot, vaultPath, true, key)
 	if err != nil {
 		return configResolveReport{}, err
 	}
-	path := filepath.Join(v7RepoRoot(vaultPath), "tusker.local.yaml")
+	path := managedTuskerLocalConfigPath(vaultPath)
+	previous, existed, err := readConfigText(path)
+	if err != nil {
+		return configResolveReport{}, err
+	}
+	postWriteRaw, err := configRawWithValue(path, key, value)
+	if err != nil {
+		return configResolveReport{}, err
+	}
+	if _, err := resolveTuskerConfigForPathsWithOverrides(repoRoot, vaultPath, true, map[string]map[string]any{path: postWriteRaw}); err != nil {
+		return configResolveReport{}, err
+	}
 	if err := writeConfigValue(path, key, value); err != nil {
 		return configResolveReport{}, err
 	}
-	after, err := configResolve(vaultPath, key)
+	after, err := configResolveForPaths(repoRoot, vaultPath, true, key)
 	if err != nil {
+		_ = restoreConfigText(path, previous, existed)
 		return configResolveReport{}, err
 	}
 	if !configValueChanged(before.Value, after.Value) {
+		_ = restoreConfigText(path, previous, existed)
 		return after, tuskerError(errorConfigInvalid, "config setter no-op: effective value for "+key+" is unchanged", withPath(path), withContext(map[string]any{"key": key, "value": after.Value}))
 	}
 	if after.Source != configSourceLocal {
+		_ = restoreConfigText(path, previous, existed)
 		return after, tuskerError(errorConfigInvalid, "config setter failed trigger-eval: machine-local override did not win for "+key, withPath(path), withContext(map[string]any{"key": key, "winner": after.Source, "value": after.Value}))
 	}
 	return after, nil
+}
+
+func readConfigText(path string) (string, bool, error) {
+	if !fileExists(path) {
+		return "", false, nil
+	}
+	text, err := readText(path)
+	return text, true, err
+}
+
+func restoreConfigText(path, content string, existed bool) error {
+	if !existed {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return writeConfigTextAtomically(path, content)
+}
+
+func configRawWithValue(path, key string, value any) (map[string]any, error) {
+	raw := map[string]any{}
+	if fileExists(path) {
+		text, err := readText(path)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(text) != "" {
+			if err := yaml.Unmarshal([]byte(text), &raw); err != nil {
+				return nil, tuskerError(errorConfigInvalid, "failed to parse config before writing: "+err.Error(), withPath(path))
+			}
+		}
+	}
+	setNestedConfigValue(raw, canonicalConfigLookupKey(key), value)
+	return raw, nil
 }
 
 func setUserGlobalConfigWithReadback(key string, value any) (configResolveReport, error) {
@@ -1022,6 +1281,11 @@ func sourcePathForConfigKey(layers []tuskerConfigLayer, key string) string {
 		}
 	}
 	return ""
+}
+
+func resolvedConfigKeyPresent(resolved resolvedTuskerConfig, key string) bool {
+	_, present := lookupConfigValue(resolved.Raw, canonicalConfigLookupKey(key))
+	return present
 }
 
 func configValueChanged(before, after any) bool {

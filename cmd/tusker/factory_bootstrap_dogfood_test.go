@@ -60,7 +60,7 @@ func TestFactoryBootstrapDisposableDogfood(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), `schema: tusker.config/v1
+	if err := writeText(managedTuskerConfigPath(vault), `schema: tusker.config/v1
 project_id: fresh-runtime
 automation:
   enabled: false

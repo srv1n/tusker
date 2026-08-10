@@ -75,7 +75,8 @@ func TestAutomationDispatchScopeFreshConfigAndDoctorWarningAreSideEffectFree(t *
 	if err := writeDefaultRootTuskerConfig(vault); err != nil {
 		t.Fatal(err)
 	}
-	config, err := readText(filepath.Join(root, "tusker.yaml"))
+	configPath := managedTuskerConfigPath(vault)
+	config, err := readText(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,10 +85,13 @@ func TestAutomationDispatchScopeFreshConfigAndDoctorWarningAreSideEffectFree(t *
 			t.Fatalf("fresh config missing %q:\n%s", want, config)
 		}
 	}
-	if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: true\n"); err != nil {
+	if fileExists(filepath.Join(root, "tusker.yaml")) {
+		t.Fatal("fresh bootstrap wrote a root-level tusker.yaml")
+	}
+	if err := writeText(configPath, "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: true\n"); err != nil {
 		t.Fatal(err)
 	}
-	before, err := readText(filepath.Join(root, "tusker.yaml"))
+	before, err := readText(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +103,7 @@ func TestAutomationDispatchScopeFreshConfigAndDoctorWarningAreSideEffectFree(t *
 	if finding == nil || finding.Changed || finding.Repairable || finding.Action != legacyDispatchScopeRepair {
 		t.Fatalf("expected read-only legacy scope warning, got %#v", finding)
 	}
-	after, err := readText(filepath.Join(root, "tusker.yaml"))
+	after, err := readText(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +113,7 @@ func TestAutomationDispatchScopeFreshConfigAndDoctorWarningAreSideEffectFree(t *
 func TestDaemonStatusProjectsExposeDispatchScopeProjectionAndLegacyRepair(t *testing.T) {
 	vault := automationTestVault(t)
 	project := registerAutomationTestProject(t, vault)
-	if err := writeText(filepath.Join(filepath.Dir(vault), "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: true\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: true\n"); err != nil {
 		t.Fatal(err)
 	}
 

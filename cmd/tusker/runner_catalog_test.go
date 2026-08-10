@@ -18,6 +18,9 @@ func TestRunnerProfileBootstrap(t *testing.T) {
 	vault := automationTestVault(t)
 	root := filepath.Dir(vault)
 	path := filepath.Join(root, "tusker.yaml")
+	if err := os.Remove(managedTuskerConfigPath(vault)); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
 	original := "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: true\n  default_profile: custom\n  routing:\n    - name: keep\n      profile: custom\n  profiles:\n    custom:\n      harness: codex_exec\n      model: gpt-5.x\n      effort: low\n      sandbox: {mode: workspace-write, network: false}\n      subagents: {allowed: false, max_concurrent: 0}\n"
 	if err := writeText(path, original); err != nil {
 		t.Fatal(err)
@@ -38,11 +41,69 @@ func TestRunnerProfileBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 	after, err = readText(path)
-	if err != nil || !strings.Contains(after, "default_profile: custom") || !strings.Contains(after, "enabled: true") || !strings.Contains(after, "execute-standard") || !strings.Contains(after, "name: keep") {
-		t.Fatalf("write failed to preserve policy: %v %s", err, after)
+	if err != nil || after != original {
+		t.Fatalf("write mutated legacy compatibility config: %v %q", err, after)
+	}
+	managed, err := readText(managedTuskerConfigPath(vault))
+	if err != nil || !strings.Contains(managed, "default_profile: custom") || !strings.Contains(managed, "enabled: true") || !strings.Contains(managed, "execute-standard") || !strings.Contains(managed, "name: keep") {
+		t.Fatalf("managed write failed to preserve effective policy: %v %s", err, managed)
 	}
 	if _, err := loadWorkflow(vault); err != nil {
 		t.Fatalf("written bootstrap config is invalid: %v", err)
+	}
+}
+
+func TestRunnerProfileBootstrapPreservesManagedDefaultOverLegacy(t *testing.T) {
+	vault := automationTestVault(t)
+	root := filepath.Dir(vault)
+	legacy := `schema: tusker.config/v1
+project_id: app
+automation:
+  enabled: false
+  default_profile: legacy-owned
+  profiles:
+    legacy-owned:
+      harness: codex_exec
+      model: gpt-5.x
+      effort: low
+      sandbox: {mode: workspace-write, network: false}
+      subagents: {allowed: false, max_concurrent: 0}
+`
+	managed := `schema: tusker.config/v1
+project_id: app
+automation:
+  enabled: false
+  default_profile: managed-owned
+  profiles:
+    managed-owned:
+      harness: codex_exec
+      model: gpt-5.x
+      effort: medium
+      sandbox: {mode: workspace-write, network: false}
+      subagents: {allowed: false, max_concurrent: 0}
+`
+	if err := writeText(legacyTuskerConfigPath(root), legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(managedTuskerConfigPath(vault), managed); err != nil {
+		t.Fatal(err)
+	}
+	originalCommand := runnerCatalogCommand
+	defer func() { runnerCatalogCommand = originalCommand }()
+	runnerCatalogCommand = func(string, ...string) ([]byte, error) { return nil, errCatalogFixture{} }
+	if err := runnerProfilesBootstrapCmd(Args{"vault": vault, "write": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := resolveTuskerConfig(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.Config.Automation.DefaultProfile; got != "managed-owned" {
+		t.Fatalf("managed default lost precedence: got %q, want managed-owned", got)
+	}
+	legacyAfter, err := readText(legacyTuskerConfigPath(root))
+	if err != nil || legacyAfter != legacy {
+		t.Fatalf("bootstrap mutated legacy config: %v\n%s", err, legacyAfter)
 	}
 }
 
@@ -56,7 +117,7 @@ func TestRunnerProfileBootstrapFreshInitIncludesAllRoles(t *testing.T) {
 		return []byte("version"), nil
 	}
 	vault := automationTestVault(t)
-	if err := os.Remove(filepath.Join(filepath.Dir(vault), "tusker.yaml")); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(managedTuskerConfigPath(vault)); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
 	if err := writeDefaultRootTuskerConfig(vault); err != nil {
@@ -178,8 +239,11 @@ func TestFreshBootstrapWithoutUsableHarnessOmitsDefaultProfile(t *testing.T) {
 	original := runnerCatalogCommand
 	defer func() { runnerCatalogCommand = original }()
 	runnerCatalogCommand = func(string, ...string) ([]byte, error) { return nil, errCatalogFixture{} }
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	vault := automationTestVault(t)
-	path := filepath.Join(filepath.Dir(vault), "tusker.yaml")
+	path := managedTuskerConfigPath(vault)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
@@ -192,6 +256,19 @@ func TestFreshBootstrapWithoutUsableHarnessOmitsDefaultProfile(t *testing.T) {
 	}
 	if strings.Contains(raw, "default_profile: execute-standard") {
 		t.Fatalf("bootstrap fabricated default profile:\n%s", raw)
+	}
+	if strings.Contains(raw, "profiles: {}") {
+		t.Fatalf("bootstrap emitted an explicit empty profile map that clears built-in policy:\n%s", raw)
+	}
+	resolved, err := resolveTuskerConfig(vault)
+	if err != nil {
+		t.Fatalf("bootstrap without a machine catalog must retain a valid built-in profile: %v", err)
+	}
+	if resolved.Config.Automation.DefaultProfile != "default" {
+		t.Fatalf("default profile = %q, want inherited built-in default", resolved.Config.Automation.DefaultProfile)
+	}
+	if _, ok := resolved.Config.Automation.Profiles["default"]; !ok {
+		t.Fatalf("built-in default profile was cleared: %#v", resolved.Config.Automation.Profiles)
 	}
 }
 

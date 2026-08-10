@@ -38,6 +38,67 @@ func TestServeReadOnlyAndLocalhost(t *testing.T) {
 	}
 }
 
+func TestServeReadActionBodyRejectsOverLimit(t *testing.T) {
+	payload := `{"value":"` + strings.Repeat("x", 128*1024) + `"}`
+	request := httptest.NewRequest(http.MethodPost, "/api/tasks/start", strings.NewReader(payload))
+	if _, err := serveReadActionBody(request); err == nil || !strings.Contains(err.Error(), "exceeds 128 KiB") {
+		t.Fatalf("expected bounded action-body refusal, got %v", err)
+	}
+}
+
+func TestServeCapabilityAndSecurityHeaders(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	server.requireCapability = true
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7420/api/capability", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("capability bootstrap status=%d cache=%q", rec.Code, rec.Header().Get("Cache-Control"))
+	}
+	var payload struct {
+		Capability string `json:"capability"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil || payload.Capability == "" {
+		t.Fatalf("invalid capability bootstrap: %q err=%v", rec.Body.String(), err)
+	}
+	for _, header := range []string{"Content-Security-Policy", "X-Content-Type-Options", "Referrer-Policy", "X-Frame-Options"} {
+		if rec.Header().Get(header) == "" {
+			t.Fatalf("missing security header %s", header)
+		}
+	}
+
+	post := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/projects", strings.NewReader(`{}`))
+	post.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, post)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("no capability mutation status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	post.Header.Set("Origin", "http://127.0.0.1:7420")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, post)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("same-origin request without capability status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	post.Header.Set(serveCapabilityHeader, payload.Capability)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, post)
+	if rec.Code == http.StatusForbidden {
+		t.Fatalf("valid capability was refused: %s", rec.Body.String())
+	}
+
+	crossOrigin := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/projects", strings.NewReader(`{}`))
+	crossOrigin.Header.Set("Content-Type", "application/json")
+	crossOrigin.Header.Set("Origin", "https://evil.example")
+	crossOrigin.Header.Set(serveCapabilityHeader, payload.Capability)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, crossOrigin)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin mutation status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestServeStaticCachePolicy(t *testing.T) {
 	assets := fstest.MapFS{
 		"index.html":                  {Data: []byte("<html>cached shell</html>"), ModTime: time.Now()},
@@ -414,6 +475,29 @@ func TestServeRunsHonest(t *testing.T) {
 	}
 	assertEqual(t, "unclaimed", unclaimed["leaseState"], "unclaimed lease label")
 	assertEqual(t, "idle", unclaimed["outcome"], "unclaimed outcome")
+}
+
+func TestServeRefusesPartialRuntimeSnapshotAtHardCap(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	for i := 0; i < serveSnapshotRunCap+1; i++ {
+		id := fmt.Sprintf("APP-T-CAP-%04d", i)
+		if err := server.store.UpsertRun(RunStatus{
+			ProjectID: "app", RecordID: id, ItemID: id,
+			UpdatedAt: fmt.Sprintf("2026-08-09T00:%02d:%02dZ", (i/60)%60, i%60),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/runs?all=true", nil)
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "exceeds the Serve runtime snapshot limit") {
+		t.Fatalf("expected explicit hard-cap refusal, got %s", recorder.Body.String())
+	}
 }
 
 func TestServeRunsOutcomeLabels(t *testing.T) {

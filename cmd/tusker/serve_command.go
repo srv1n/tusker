@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +24,7 @@ import (
 )
 
 const defaultServeAddr = "127.0.0.1:7420"
+const serveSnapshotRunCap = 1000
 
 func serveCmd(args Args) error {
 	if deferred, err := serveDeferToIncumbentDaemon(args, DefaultStateRoot()); deferred || err != nil {
@@ -45,8 +49,9 @@ func serveCmd(args Args) error {
 	}
 	defer store.Close()
 	server := newServeServer(vaultPath, repoRoot, addr, store, dist)
+	server.requireCapability = true
 	go server.warmRegisteredProjectSnapshots()
-	httpServer := &http.Server{Addr: addr, Handler: server, ReadHeaderTimeout: 5 * time.Second}
+	httpServer := serveHTTPServer(addr, server)
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "addr": addr, "vault": vaultPath})
 	}
@@ -88,15 +93,34 @@ func serveDeferToIncumbentDaemon(args Args, stateRoot string) (bool, error) {
 }
 
 func newServeServer(vaultPath, repoRoot, addr string, store *RuntimeStore, assets fs.FS) *serveServer {
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err != nil {
+		// A server without a cryptographically random mutation capability must
+		// never come up in a partially protected state.
+		panic(fmt.Sprintf("generate serve mutation capability: %v", err))
+	}
 	return &serveServer{
-		vaultPath: vaultPath,
-		repoRoot:  repoRoot,
-		addr:      addr,
-		store:     store,
-		assets:    assets,
-		stream:    newServeStreamBroker(),
-		now:       func() time.Time { return time.Now().UTC() },
-		snapshots: map[string]*serveSnapshotEntry{},
+		vaultPath:        vaultPath,
+		repoRoot:         repoRoot,
+		addr:             addr,
+		store:            store,
+		assets:           assets,
+		stream:           newServeStreamBroker(),
+		now:              func() time.Time { return time.Now().UTC() },
+		snapshots:        map[string]*serveSnapshotEntry{},
+		mutationToken:    base64.RawURLEncoding.EncodeToString(token),
+		requestAdmission: make(chan struct{}, 128),
+		streamAdmission:  make(chan struct{}, 32),
+	}
+}
+
+func serveHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		MaxHeaderBytes:    32 << 10,
+		IdleTimeout:       60 * time.Second,
 	}
 }
 
@@ -155,6 +179,38 @@ func serveMutationOriginRefusal(r *http.Request) string {
 	return ""
 }
 
+const serveCapabilityHeader = "X-Tusker-Capability"
+
+func (s *serveServer) mutationRefusal(r *http.Request) string {
+	if reason := serveMutationOriginRefusal(r); reason != "" {
+		return reason
+	}
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		return "refused mutation method"
+	}
+	if s.requireCapability {
+		contentType := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]))
+		if contentType != "application/json" {
+			return "refused mutation content type"
+		}
+		if s.mutationToken == "" || !secureTokenEqual(r.Header.Get(serveCapabilityHeader), s.mutationToken) {
+			return "refused mutation without serve capability"
+		}
+	}
+	return ""
+}
+
+func secureTokenEqual(got, want string) bool {
+	if strings.TrimSpace(got) == "" || want == "" || len(got) != len(want) {
+		return false
+	}
+	var diff byte
+	for i := range want {
+		diff |= got[i] ^ want[i]
+	}
+	return diff == 0
+}
+
 func serveRequestHostIsLoopback(hostport string) bool {
 	host := strings.TrimSpace(hostport)
 	if host == "" {
@@ -207,10 +263,31 @@ func parseTruthyQuery(value string) bool {
 }
 
 func (s *serveServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	tracked := &serveResponseWriter{ResponseWriter: w}
+	w = tracked
+	serveSecurityHeaders(w)
+	// Long-lived SSE connections must not consume the admission budget reserved
+	// for health, reads, and control mutations. Otherwise enough idle streams can
+	// make the entire local control plane return 503 indefinitely.
+	admission := s.requestAdmission
+	if strings.TrimSuffix(r.URL.Path, "/") == "/api/stream" {
+		admission = s.streamAdmission
+	}
+	if admission != nil {
+		select {
+		case admission <- struct{}{}:
+			defer func() { <-admission }()
+		default:
+			serveJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "serve admission limit reached"})
+			return
+		}
+	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			log.Printf("tusker serve recovered handler panic: path=%s panic=%v", r.URL.Path, recovered)
-			serveJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+			if !responseCommitted(w) {
+				serveJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+			}
 		}
 	}()
 	if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api" {
@@ -220,13 +297,64 @@ func (s *serveServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handleAssets(w, r)
 }
 
+type serveResponseWriter struct {
+	http.ResponseWriter
+	committed bool
+}
+
+func (w *serveResponseWriter) WriteHeader(status int) {
+	w.committed = true
+	w.ResponseWriter.WriteHeader(status)
+}
+func (w *serveResponseWriter) Write(p []byte) (int, error) {
+	if !w.committed {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(p)
+}
+func (w *serveResponseWriter) Committed() bool { return w.committed }
+func (w *serveResponseWriter) Flush() {
+	if !w.committed {
+		w.WriteHeader(http.StatusOK)
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func serveSecurityHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("X-Frame-Options", "DENY")
+}
+
+type responseCommitTracker interface{ Committed() bool }
+
+func responseCommitted(w http.ResponseWriter) bool {
+	if tracker, ok := w.(responseCommitTracker); ok {
+		return tracker.Committed()
+	}
+	return false
+}
+
 func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimSuffix(r.URL.Path, "/")
 	if path == "" {
 		path = "/"
 	}
+	if r.Method == http.MethodGet && path == "/api/capability" {
+		w.Header().Set("Cache-Control", "no-store")
+		serveJSON(w, http.StatusOK, map[string]string{"capability": s.mutationToken})
+		return
+	}
+	if path == "/api/capabilities" {
+		s.handleCapabilities(w, r)
+		return
+	}
 	if r.Method == http.MethodPost {
-		if reason := serveMutationOriginRefusal(r); reason != "" {
+		if reason := s.mutationRefusal(r); reason != "" {
 			serveJSON(w, http.StatusForbidden, serveActionResult{OK: false, Refused: true, Reason: reason})
 			return
 		}
@@ -252,7 +380,7 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if r.Method == http.MethodPut && path == "/api/docgraph/doc" {
-		if reason := serveMutationOriginRefusal(r); reason != "" {
+		if reason := s.mutationRefusal(r); reason != "" {
 			serveJSON(w, http.StatusForbidden, serveActionResult{OK: false, Refused: true, Reason: reason})
 			return
 		}
@@ -739,12 +867,16 @@ func (s *serveServer) buildSnapshotForProject(project RegisteredProject, include
 			Health:       projectHealthHealthy,
 		}
 	}
-	if runs, err := s.store.ListRuns(); err == nil {
-		for _, run := range runs {
-			if run.ProjectID == "" || run.ProjectID == snap.projectID {
-				snap.runs = append(snap.runs, run)
-			}
-		}
+	if runs, truncated, err := s.store.ListRunsForProjectPage(snap.projectID, serveSnapshotRunCap); err != nil {
+		return serveSnapshot{}, err
+	} else if truncated {
+		return serveSnapshot{}, tuskerError(
+			"RUNTIME_RUN_SNAPSHOT_LIMIT",
+			fmt.Sprintf("project %s exceeds the Serve runtime snapshot limit of %d runs", snap.projectID, serveSnapshotRunCap),
+			withHint("archive or remove retired runtime rows before using Serve; partial runtime state is never presented as authoritative"),
+		)
+	} else {
+		snap.runs = runs
 	}
 	if includeQueue {
 		snap.queue = s.loadQueueExplanationsForProject(project)
@@ -1060,7 +1192,21 @@ func (s *serveServer) handleRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := []serveRunSummary{}
+	const defaultLimit, hardLimit = 100, 500
+	limit := defaultLimit
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed > 0 {
+			limit = minInt(parsed, hardLimit)
+		}
+	}
+	offset := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("cursor")); raw != "" {
+		if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
 	includeAll := parseTruthyQuery(r.URL.Query().Get("all"))
+	filtered := make([]RunStatus, 0, len(snap.runs))
 	for _, run := range snap.runs {
 		// A retired run is a cleared record: it leaves the board so an
 		// acknowledged failure stays gone. Its history is still reachable via
@@ -1071,7 +1217,33 @@ func (s *serveServer) handleRuns(w http.ResponseWriter, r *http.Request) {
 		if !includeAll && serveRunHiddenByDefault(run) {
 			continue
 		}
-		out = append(out, s.runSummary(snap, run))
+		filtered = append(filtered, run)
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		if filtered[i].ProjectID != filtered[j].ProjectID {
+			return filtered[i].ProjectID < filtered[j].ProjectID
+		}
+		if filtered[i].RecordID != filtered[j].RecordID {
+			return filtered[i].RecordID < filtered[j].RecordID
+		}
+		return filtered[i].UpdatedAt < filtered[j].UpdatedAt
+	})
+	if offset > len(filtered) {
+		offset = len(filtered)
+	}
+	end := minInt(offset+limit, len(filtered))
+	for _, run := range filtered[offset:end] {
+		summary, summaryErr := s.runSummaryChecked(snap, run)
+		if summaryErr != nil {
+			serveJSON(w, http.StatusInternalServerError, map[string]any{"error": summaryErr.Error()})
+			return
+		}
+		out = append(out, summary)
+	}
+	truncated := end < len(filtered)
+	w.Header().Set("X-Tusker-Truncated", strconv.FormatBool(truncated))
+	if truncated {
+		w.Header().Set("X-Tusker-Next-Cursor", strconv.Itoa(end))
 	}
 	serveJSON(w, http.StatusOK, out)
 }
@@ -1088,12 +1260,32 @@ func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID s
 		serveJSON(w, http.StatusNotFound, map[string]any{"error": "run not found"})
 		return
 	}
-	summary := s.runSummary(snap, run)
-	attempts, _ := s.store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	summary, summaryErr := s.runSummaryChecked(snap, run)
+	if summaryErr != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": summaryErr.Error()})
+		return
+	}
+	attempts, attemptsTruncated, attemptsErr := s.store.ListAttemptsForRunPage(run.ProjectID, run.RecordID, 100)
+	if attemptsErr != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": attemptsErr.Error()})
+		return
+	}
 	sort.Slice(attempts, func(i, j int) bool { return attempts[i].StartedAt < attempts[j].StartedAt })
-	auth, _ := s.store.LatestRunAuthorization(run.ProjectID, run.RecordID)
-	identity, _ := s.store.RunIdentity(run.ProjectID, run.RecordID)
-	session, _ := s.store.LatestSession(run.ProjectID, run.RecordID, run.Runner)
+	auth, authErr := s.store.LatestRunAuthorization(run.ProjectID, run.RecordID)
+	if authErr != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": authErr.Error()})
+		return
+	}
+	identity, identityErr := s.store.RunIdentity(run.ProjectID, run.RecordID)
+	if identityErr != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": identityErr.Error()})
+		return
+	}
+	session, sessionErr := s.store.LatestSession(run.ProjectID, run.RecordID, run.Runner)
+	if sessionErr != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": sessionErr.Error()})
+		return
+	}
 	delivery := serveRunDelivery{Summary: run.FinalSummary, Verification: run.LogsSummary, ProofStatus: "pending", Artifact: run.ApplyRef}
 	if task, found := snap.notesByID[taskID]; found {
 		delivery.ProofStatus = firstNonEmpty(stringField(task.Data, "proof_status"), "pending")
@@ -1108,6 +1300,9 @@ func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID s
 		})
 	}
 	detail.Events = serveRunEvents(run, attempts)
+	if attemptsTruncated {
+		w.Header().Set("X-Tusker-Attempts-Truncated", "true")
+	}
 	serveJSON(w, http.StatusOK, detail)
 }
 
@@ -1136,6 +1331,12 @@ func (s *serveServer) handleRunRedrive(w http.ResponseWriter, r *http.Request, t
 		TaskID:          taskID,
 		CanonicalStatus: strings.ToLower(strings.TrimSpace(rawStatus)),
 		LeaseState:      run.LeaseState,
+	}
+	if endStateErr := refuseInvalidRunEndState(s.store, &run); endStateErr != nil {
+		result.Refused = true
+		result.Reason = endStateErr.Error()
+		serveJSON(w, http.StatusConflict, result)
+		return
 	}
 	if refused, reason := serveRedriveRefusal(rawStatus, run); refused {
 		result.Refused = true

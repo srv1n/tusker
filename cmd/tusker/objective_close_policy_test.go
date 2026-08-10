@@ -232,7 +232,9 @@ func TestClosePolicyMigration(t *testing.T) {
 	if err := writeText(workflowPath(vault), fm+"\n"+body); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(root, "tusker.yaml"), "close_policy:\n  high:\n    required_acceptor: human\n  critical:\n    required_acceptor: human\n    required_gates: [release, security]\n"); err != nil {
+	legacyConfigPath := filepath.Join(root, "tusker.yaml")
+	legacyConfig := "close_policy:\n  high:\n    required_acceptor: human\n  critical:\n    required_acceptor: human\n    required_gates: [release, security]\n"
+	if err := writeText(legacyConfigPath, legacyConfig); err != nil {
 		t.Fatal(err)
 	}
 	gatePath := filepath.Join(vault, "work", "gates", "APP-G-0001.md")
@@ -245,6 +247,9 @@ func TestClosePolicyMigration(t *testing.T) {
 	}
 	if err := migrateClosePolicyCmd(Args{"vault": vault, "quiet": "true", "write": "true"}); err != nil {
 		t.Fatal(err)
+	}
+	if got, err := readText(legacyConfigPath); err != nil || got != legacyConfig {
+		t.Fatalf("migration rewrote legacy compatibility config: got=%q err=%v", got, err)
 	}
 	wf, err := loadWorkflow(vault)
 	if err != nil {
@@ -261,7 +266,7 @@ func TestClosePolicyMigration(t *testing.T) {
 	if changed, _, err := migratedObjectiveWorkflow(workflowPath(vault)); err != nil || changed {
 		t.Fatalf("workflow migration is not idempotent: changed=%v err=%v", changed, err)
 	}
-	if changed, _, err := migratedObjectiveCloseConfig(filepath.Join(root, "tusker.yaml")); err != nil || changed {
+	if changed, _, err := migratedObjectiveCloseConfig(filepath.Join(vault, "config.yaml")); err != nil || changed {
 		t.Fatalf("config migration is not idempotent: changed=%v err=%v", changed, err)
 	}
 }

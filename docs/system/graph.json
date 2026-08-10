@@ -85,10 +85,31 @@
       "status": "canonical"
     },
     {
+      "subject": "platform-support",
+      "kind": "canonical",
+      "path": "docs/system/platform-support.md",
+      "title": "Platform support",
+      "status": "canonical"
+    },
+    {
+      "subject": "scratch-retention",
+      "kind": "spec",
+      "path": ".tusker/specs/scratch-retention.md",
+      "title": "Scratch retention: task scratch is ephemeral and reaps itself",
+      "status": "canonical"
+    },
+    {
+      "subject": "scratch-retention-grill",
+      "kind": "decision",
+      "path": ".tusker/specs/decisions/2026-08-04-scratch-retention-grill.md",
+      "title": "Decision log: scratch retention session, 2026-08-04",
+      "status": "canonical"
+    },
+    {
       "subject": "serve-ui",
       "kind": "canonical",
       "path": "docs/system/serve-ui.md",
-      "title": "The observation surface — serve, dashboards, logbook, digest",
+      "title": "Serve UI and local control plane",
       "status": "canonical"
     },
     {
@@ -219,6 +240,31 @@
     {
       "from": "orchestration",
       "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "platform-support",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "scratch-retention",
+      "to": "software-factory",
+      "kind": "part_of"
+    },
+    {
+      "from": "scratch-retention",
+      "to": "docs/system/gates.md",
+      "kind": "updates"
+    },
+    {
+      "from": "scratch-retention-grill",
+      "to": ".tusker/specs/scratch-retention.md",
+      "kind": "decides_for"
+    },
+    {
+      "from": "scratch-retention-grill",
+      "to": "scratch-retention",
       "kind": "part_of"
     },
     {

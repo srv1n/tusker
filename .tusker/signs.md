@@ -8,7 +8,9 @@
 - Guard refused you with a no-decision remedy (open attempt, use proposal)?
   Apply the remedy, continue, report one line. Do not discuss the guard.
 - Verification is command + PASS/FAIL + first actionable failure. Noisy logs
-  go to .tusker/scratch/<TASK-ID>/, never into task markdown.
+  go to .tusker/scratch/<TASK-ID>/, never into task markdown. Scratch is
+  deleted when the task closes and swept after 14 days regardless; promote
+  anything worth keeping to evidence first.
 - Proof commands must run the package that owns the tests (cmd/tusker, not
   embed-only internal/serve). A green run of zero tests is not proof.
 - Raw `|` inside a markdown table cell splits the row and breaks the

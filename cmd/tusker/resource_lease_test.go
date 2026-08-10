@@ -51,6 +51,30 @@ func TestResourceLeaseAtomicContentionAndUnrelatedResources(t *testing.T) {
 	}
 }
 
+func TestResourceLeaseReleaseAppendsAttributableEvent(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 8, 9, 10, 0, 0, 0, time.UTC)
+	lease, acquired, err := store.AcquireResourceLease(ResourceLeaseAcquireInput{Name: "host:test", Owner: "owner-a", Purpose: "test", ProjectID: "project-a", TTL: time.Minute, Now: now})
+	if err != nil || !acquired {
+		t.Fatalf("acquire: %#v %v %v", lease, acquired, err)
+	}
+	released, err := store.ReleaseResourceLease(lease.Name, lease.Owner, lease.Generation, "terminal test", now.Add(time.Second))
+	if err != nil || !released {
+		t.Fatalf("release: %v %v", released, err)
+	}
+	events, err := store.ListResourceLeaseEvents(lease.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[1].EventType != "released" || events[1].Owner != lease.Owner || events[1].Generation != lease.Generation || events[1].Reason != "terminal test" {
+		t.Fatalf("release event not attributable: %#v", events)
+	}
+}
+
 func TestResourceLeaseAtomicAcrossRuntimeStores(t *testing.T) {
 	stateRoot := t.TempDir()
 	first, err := OpenRuntimeStore(stateRoot)

@@ -224,6 +224,9 @@ func discardV7OneTask(vaultPath, taskID, actor, reason string) error {
 	if status == "done" || status == "superseded" {
 		return tuskerError(errorInvalidTransition, taskID+": cannot discard terminal task in status "+status)
 	}
+	if err := preflightCanonicalRuntimeRetirement(vaultPath, taskID); err != nil {
+		return err
+	}
 	for _, gate := range sortedV7Gates(idx) {
 		if stringField(gate.Data, "status") != "open" || !v7GateTouchesTask(gate, taskID) {
 			continue
@@ -274,9 +277,7 @@ func discardV7OneTask(vaultPath, taskID, actor, reason string) error {
 	if _, err := retireCanonicalRuntimeRowsForTask(vaultPath, taskID, "cancelled", actor, "discard"); err != nil {
 		return err
 	}
-	if err := removeTaskPlanFile(vaultPath, taskID); err != nil {
-		return err
-	}
+	warnScratchReapFailed(taskID, reapTaskScratch(vaultPath, taskID))
 	affected, err := v7TaskIDsForTaskControl(vaultPath, taskID)
 	if err != nil {
 		return err

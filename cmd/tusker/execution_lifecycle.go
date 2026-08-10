@@ -141,7 +141,16 @@ func (s *RuntimeStore) ExecutionLifecycle(executionID string) (ExecutionLifecycl
 		}
 	}
 	var childAttention int
-	if err := s.queryRowScan(`SELECT COUNT(*) FROM provider_execution_observations o JOIN execution_edges e ON e.child_execution_id=o.child_execution_id WHERE e.parent_execution_id=? AND o.status IN ('unknown','interrupt_requested','failed')`, []any{executionID}, &childAttention); err != nil && err != sql.ErrNoRows {
+	// Current attention is derived from the newest fact for each child. Older
+	// failures remain immutable timeline evidence but cannot permanently taint a
+	// child that has since recovered.
+	if err := s.queryRowScan(`SELECT COUNT(*) FROM (
+		SELECT o.child_execution_id, o.status,
+			ROW_NUMBER() OVER (PARTITION BY o.child_execution_id ORDER BY o.occurred_at DESC, o.source_sequence DESC, o.observation_id DESC) AS ordinal
+		FROM provider_execution_observations o
+		JOIN execution_edges e ON e.child_execution_id=o.child_execution_id
+		WHERE e.parent_execution_id=?
+	) WHERE ordinal=1 AND status IN ('unknown','interrupt_requested','failed')`, []any{executionID}, &childAttention); err != nil && err != sql.ErrNoRows {
 		return f, err
 	}
 	if childAttention > 0 {
@@ -159,9 +168,6 @@ func (s *RuntimeStore) ExecutionLifecycle(executionID string) (ExecutionLifecycl
 		}
 		if f.SessionState == "unknown" {
 			f.SessionState = prior.SessionState
-		}
-		if f.ChildAttentionState == "none" && prior.ChildAttentionState == "needs_attention" {
-			f.ChildAttentionState = prior.ChildAttentionState
 		}
 	}
 	f.DerivedPhase = executionDerivedPhase(f)
@@ -186,7 +192,12 @@ func (s *RuntimeStore) executionControl(executionID string) (ExecutionControlAva
 	if run, err := s.executionGraphRun(*v); err != nil {
 		return c, err
 	} else if run != nil && v.NodeKind != ExecutionNodeProviderChild {
-		c.Available, c.Target, c.Reason = true, "managed_run", "Tusker owns this managed run under its lease/process fence"
+		c.Target = "managed_run"
+		if !processIdentityMatches(*run) {
+			c.Reason = "managed run process identity is not currently verifiable"
+			return c, nil
+		}
+		c.Available, c.Reason = true, "Tusker owns this managed run under its immutable lease/process fence"
 		return c, nil
 	}
 	obs, err := s.executionLatestObservation(executionID)
@@ -242,13 +253,10 @@ func (s *RuntimeStore) RequestExecutionCancellation(executionID, requestKey stri
 	if err != nil {
 		return c, err
 	}
-	var prior int
-	if err := s.queryRowScan(`SELECT COUNT(*) FROM execution_cancellation_evidence WHERE execution_id=? AND request_key=? AND stage='requested'`, []any{executionID, requestKey}, &prior); err != nil {
+	if prior, found, err := s.executionCancellationOutcome(executionID, requestKey); err != nil {
 		return c, err
-	}
-	if prior > 0 {
-		c.Reason = "duplicate cancellation request retained; no second signal sent"
-		return c, nil
+	} else if found {
+		return prior, nil
 	}
 	if err := s.recordExecutionCancellation(ExecutionCancellationEvidence{ExecutionID: executionID, RequestKey: requestKey, Target: c.Target, Stage: "requested", Detail: c.Reason}); err != nil {
 		return c, err
@@ -268,7 +276,10 @@ func (s *RuntimeStore) RequestExecutionCancellation(executionID, requestKey stri
 		_ = s.refreshExecutionLifecycle(executionID)
 		return c, nil
 	}
-	v, _ := s.ExecutionView(executionID)
+	v, err := s.ExecutionView(executionID)
+	if err != nil || v == nil {
+		return c, firstNonNil(err, tuskerError(errorNotFound, "execution not found"))
+	}
 	run, err := s.executionGraphRun(*v)
 	if err != nil || run == nil {
 		return c, err
@@ -282,6 +293,42 @@ func (s *RuntimeStore) RequestExecutionCancellation(executionID, requestKey stri
 	_ = s.recordExecutionCancellation(ExecutionCancellationEvidence{ExecutionID: executionID, RequestKey: requestKey, Target: c.Target, Stage: "os_settled", LeaseGeneration: run.LeaseGeneration, Detail: "process group no longer verified live"})
 	_ = s.refreshExecutionLifecycle(executionID)
 	return c, nil
+}
+
+// executionCancellationOutcome replays the durable terminal result for a
+// request key. A duplicate must never be inferred from the run's current
+// controllability: the original request may have failed while the run remains
+// live.
+func (s *RuntimeStore) executionCancellationOutcome(executionID, requestKey string) (ExecutionControlAvailability, bool, error) {
+	var target, stage, detail string
+	err := s.queryRowScan(`SELECT target, stage, detail FROM execution_cancellation_evidence
+		WHERE execution_id=? AND request_key=? AND stage IN ('os_settled','unavailable','escalation')
+		ORDER BY CASE stage WHEN 'os_settled' THEN 3 WHEN 'unavailable' THEN 2 ELSE 1 END DESC, occurred_at DESC LIMIT 1`, []any{executionID, requestKey}, &target, &stage, &detail)
+	if err == sql.ErrNoRows {
+		var requested int
+		if err := s.queryRowScan(`SELECT COUNT(*) FROM execution_cancellation_evidence WHERE execution_id=? AND request_key=? AND stage='requested'`, []any{executionID, requestKey}, &requested); err != nil {
+			return ExecutionControlAvailability{}, false, err
+		}
+		if requested == 0 {
+			return ExecutionControlAvailability{}, false, nil
+		}
+		return ExecutionControlAvailability{Action: "cancel", Target: "managed_run", Reason: "prior cancellation request has no durable terminal outcome; no second signal sent"}, true, nil
+	}
+	if err != nil {
+		return ExecutionControlAvailability{}, false, err
+	}
+	outcome := ExecutionControlAvailability{Action: "cancel", Target: target, Reason: detail}
+	if stage == "os_settled" {
+		outcome.Available = true
+		if outcome.Reason == "" {
+			outcome.Reason = "previous cancellation request settled"
+		}
+		return outcome, true, nil
+	}
+	if outcome.Reason == "" {
+		outcome.Reason = "previous cancellation request did not settle"
+	}
+	return outcome, true, nil
 }
 
 func executionLifecycleJSON(f ExecutionLifecycleEvidence) string {

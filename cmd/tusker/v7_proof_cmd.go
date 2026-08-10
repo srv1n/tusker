@@ -1935,10 +1935,7 @@ func attachmentsV7MigrateCmd(args Args) error {
 		}
 		targetTask := fallback(taskID, "_unmapped")
 		target := filepath.Join(vaultPath, ".tusker", "scratch", targetTask, "legacy-attachments", filepath.Base(path))
-		if err := ensureDir(filepath.Dir(target)); err != nil {
-			return err
-		}
-		if err := os.Rename(path, target); err != nil {
+		if err := secureScratchMove(vaultPath, path, target); err != nil {
 			return err
 		}
 		return nil

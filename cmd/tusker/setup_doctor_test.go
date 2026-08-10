@@ -659,7 +659,46 @@ func TestSetupRepairConvergesForWrongRootValidStaleSymlinkAndZip(t *testing.T) {
 	if second != third {
 		t.Fatalf("second and third repair output differ\nsecond=%s\nthird=%s", second, third)
 	}
-	assertSnapshotEqual(t, afterSecondState, snapshotTree(t, stateRoot), "runtime state after convergence")
+	// SQLite may advance its WAL/checkpoint page metadata when a read-only
+	// doctor opens the database. Compare the logical control-plane rows
+	// separately, while keeping byte snapshots for all other state files.
+	delete(afterSecondState, "daemon.db")
+	currentState := snapshotTree(t, stateRoot)
+	delete(currentState, "daemon.db")
+	assertSnapshotEqual(t, afterSecondState, currentState, "runtime state after convergence")
+	secondStore, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondProjects, err := secondStore.ListProjects()
+	if err != nil {
+		_ = secondStore.Close()
+		t.Fatal(err)
+	}
+	secondRuns, err := secondStore.ListRuns()
+	if err != nil {
+		_ = secondStore.Close()
+		t.Fatal(err)
+	}
+	_ = secondStore.Close()
+	thirdStore, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thirdProjects, err := thirdStore.ListProjects()
+	if err != nil {
+		_ = thirdStore.Close()
+		t.Fatal(err)
+	}
+	thirdRuns, err := thirdStore.ListRuns()
+	if err != nil {
+		_ = thirdStore.Close()
+		t.Fatal(err)
+	}
+	_ = thirdStore.Close()
+	if !reflect.DeepEqual(secondProjects, thirdProjects) || !reflect.DeepEqual(secondRuns, thirdRuns) {
+		t.Fatalf("logical runtime state changed across converged repair: projects=%v/%v runs=%v/%v", secondProjects, thirdProjects, secondRuns, thirdRuns)
+	}
 	assertSnapshotEqual(t, afterSecondRepo, snapshotTree(t, repo), "repository after convergence")
 	if bytes.Contains([]byte(second), []byte(`"changed":true`)) {
 		t.Fatalf("converged repair still reports a change: %s", second)
@@ -881,6 +920,14 @@ func snapshotTree(t *testing.T, root string) map[string][]byte {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return err
+		}
+		// Opening a WAL-mode SQLite database can advance its file-change
+		// counter while leaving all logical rows untouched. Exclude that
+		// volatile header field from byte-for-byte mutation snapshots.
+		if filepath.Base(path) == "daemon.db" && len(raw) >= 28 {
+			for i := 24; i < 28; i++ {
+				raw[i] = 0
+			}
 		}
 		snapshot[filepath.ToSlash(rel)] = raw
 		return nil

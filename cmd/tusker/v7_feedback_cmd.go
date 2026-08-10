@@ -558,7 +558,7 @@ func feedbackOverBudget(lines, chars int, budget feedbackBudget) bool {
 func feedbackBudgetFor(vaultPath string, args Args) feedbackBudget {
 	budget := feedbackBudget{MaxLines: defaultFeedbackMaxLines, MaxChars: defaultFeedbackMaxChars}
 	if strings.TrimSpace(vaultPath) != "" {
-		configPath := filepath.Join(filepath.Dir(vaultPath), "tusker.yaml")
+		configPath := preferredTuskerConfigPath(vaultPath)
 		if raw, err := readText(configPath); err == nil {
 			var cfg struct {
 				Feedback struct {

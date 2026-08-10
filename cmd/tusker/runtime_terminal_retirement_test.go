@@ -2,10 +2,31 @@ package main
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestLiveRunnerRetirementRefusesBeforeIdentityClear(t *testing.T) {
+	vault := automationTestVault(t)
+	project := registerAutomationTestProject(t, vault)
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run := RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", LeaseState: string(LeaseStateRunning), ProcessPID: os.Getpid(), ProcessPGID: processGroupID(os.Getpid())}
+	mustUpsertRun(t, store, run)
+	_, err = retireCanonicalRuntimeRows(store, DefaultStateRoot(), project.ProjectID, run.ItemID, "done", "test", "live", time.Now().UTC())
+	if err == nil || !strings.Contains(err.Error(), "runner is still live") {
+		t.Fatalf("expected live refusal, got %v", err)
+	}
+	latest := latestRunForRecord(t, store, project.ProjectID, run.RecordID)
+	if latest.ProcessPID == 0 {
+		t.Fatalf("live process identity was cleared: %#v", latest)
+	}
+}
 
 func TestCloseRetiresHeldRuntimeRow(t *testing.T) {
 	vault := automationTestVault(t)

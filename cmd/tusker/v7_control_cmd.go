@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +16,17 @@ const (
 	v7GateHardDependencyIncompleteCode = "GATE_HARD_DEPENDENCY_INCOMPLETE"
 	v7GateAuthorityReceiptStaleCode    = "GATE_AUTHORITY_RECEIPT_STALE"
 )
+
+// warnScratchReapFailed reports a failed scratch reap without failing the close
+// that already committed. Reaping is post-commit cleanup: the task is durably
+// closed and the event emitted, so the only honest outcome is a visible warning
+// plus leftover scratch that a later tusker gc reclaims.
+func warnScratchReapFailed(taskID string, err error) {
+	if err == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "warning: could not reap scratch for %s: %v; run tusker gc to reclaim it\n", taskID, err)
+}
 
 func inferV7ObjectKind(id string) string {
 	switch {
@@ -302,6 +313,11 @@ func statusV7Cmd(args Args) error {
 	if nextStatus == "cancelled" {
 		return tuskerError(errorInvalidTransition, "status cannot set cancelled directly; use tusker discard so dependencies, gates, runtime rows, and discard history are handled together")
 	}
+	if canonicalStatusRetiresRuntimeRows(defaultWorkflow(), nextStatus) {
+		if err := preflightCanonicalRuntimeRetirement(vaultPath, id); err != nil {
+			return err
+		}
+	}
 	note, err := resolveV7Note(vaultPath, id, "task")
 	if err != nil {
 		return err
@@ -387,6 +403,9 @@ func closeV7Cmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	if err := preflightCanonicalRuntimeRetirement(vaultPath, id); err != nil {
+		return err
+	}
 	data, body := preflight.Task.Data, preflight.Task.Body
 	baseRev := stringField(data, "state_rev")
 	prev := stringField(data, "status")
@@ -404,9 +423,7 @@ func closeV7Cmd(args Args) error {
 	if _, err := retireCanonicalRuntimeRowsForTask(vaultPath, id, "done", "close ceremony", ""); err != nil {
 		return err
 	}
-	if err := removeTaskPlanFile(vaultPath, id); err != nil {
-		return err
-	}
+	warnScratchReapFailed(id, reapTaskScratch(vaultPath, id))
 	affected, err := v7TaskIDsForTaskControl(vaultPath, id)
 	if err != nil {
 		return err
@@ -478,17 +495,21 @@ func v7CloseAcceptorAllowed(actor, requiredAcceptor string) bool {
 func v7ClosePolicyFor(vaultPath, risk string) (v7ClosePolicy, error) {
 	risk = strings.ToLower(strings.TrimSpace(risk))
 	policy := defaultV7ClosePolicy(risk)
-	configPath := filepath.Join(filepath.Dir(vaultPath), "tusker.yaml")
-	if !fileExists(configPath) {
-		return policy, nil
-	}
-	raw, err := readText(configPath)
+	resolved, err := resolveTuskerConfig(vaultPath)
 	if err != nil {
 		return policy, err
 	}
+	configPath := sourcePathForConfigKey(resolved.Layers, "close_policy."+risk)
+	if configPath == "" {
+		return policy, nil
+	}
 	var cfg v7ClosePolicyConfigFile
-	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
-		return policy, tuskerError(errorConfigInvalid, "failed to parse tusker.yaml close_policy: "+err.Error(), withPath(configPath))
+	raw, err := yaml.Marshal(resolved.Raw)
+	if err != nil {
+		return policy, err
+	}
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		return policy, tuskerError(errorConfigInvalid, "failed to parse project config close_policy: "+err.Error(), withPath(configPath))
 	}
 	rule, ok := cfg.ClosePolicy[risk]
 	if !ok {

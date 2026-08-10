@@ -546,7 +546,8 @@ func TestDispatchCASHappyPathStillDispatches(t *testing.T) {
 	if err := store.UpsertRun(run); err != nil {
 		t.Fatal(err)
 	}
-	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
+	// This test exercises the lease CAS, not platform process introspection.
+	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store, processIdentityProbe: func(RunStatus) bool { return true }}
 	updated, persisted, err := daemon.dispatchRun(context.Background(), project, wfFile, note, run, runLaneExecute)
 	if err != nil {
 		t.Fatal(err)
@@ -612,7 +613,7 @@ func TestDispatchPostSpawnLeaseLossReapsSpawnedProcess(t *testing.T) {
 	if err := store.UpsertRun(run); err != nil {
 		t.Fatal(err)
 	}
-	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
+	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store, processIdentityProbe: func(RunStatus) bool { return true }}
 	spawnedPID := 0
 	hookCalled := false
 	daemon.postSpawnBeforePersist = func(spawned RunStatus) {
@@ -695,6 +696,21 @@ func TestPidReuseGuardBootAdoptionVerified(t *testing.T) {
 	reused.ProcessStartedAt = "1900-01-01T00:00:00Z"
 	if processIdentityMatches(reused) {
 		t.Fatalf("pid reuse guard accepted mismatched start time: %#v", reused)
+	}
+}
+
+func TestProcessIdentityProbeFailureFailsClosed(t *testing.T) {
+	pid := os.Getpid()
+	startedAt, ok := processStartTime(pid)
+	if !ok || startedAt == "" {
+		t.Skip("host cannot provide a process start identity")
+	}
+	// processIdentityMatches must treat a failed start probe as unverified,
+	// never as permission to signal a PID/PGID pair that happens to still exist.
+	t.Setenv("PATH", t.TempDir())
+	run := RunStatus{ProcessPID: pid, ProcessPGID: processGroupID(pid), ProcessStartedAt: startedAt}
+	if processIdentityMatches(run) {
+		t.Fatalf("process identity matched after start probe became unavailable: %#v", run)
 	}
 }
 

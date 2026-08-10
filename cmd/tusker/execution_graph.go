@@ -51,11 +51,12 @@ type ExecutionLifecycleFacts struct {
 }
 
 type ExecutionGraphPage struct {
-	Schema     string               `json:"schema"`
-	Nodes      []ExecutionGraphNode `json:"nodes"`
-	Edges      []ExecutionEdge      `json:"edges"`
-	NextCursor string               `json:"next_cursor,omitempty"`
-	Partial    bool                 `json:"partial_visibility"`
+	Schema          string               `json:"schema"`
+	Nodes           []ExecutionGraphNode `json:"nodes"`
+	Edges           []ExecutionEdge      `json:"edges"`
+	NextCursor      string               `json:"next_cursor,omitempty"`
+	Partial         bool                 `json:"partial_visibility"`
+	TopologyPartial bool                 `json:"topology_partial"`
 }
 
 type executionObservation struct {
@@ -135,11 +136,12 @@ func (s *RuntimeStore) ExecutionGraph(projectID string, filter ExecutionGraphFil
 		ids[node.ExecutionID] = true
 		page.Partial = page.Partial || node.PartialVisibility
 	}
-	edges, err := s.executionGraphEdges(projectID, ids)
+	edges, topologyPartial, err := s.executionGraphEdges(projectID, ids)
 	if err != nil {
 		return page, err
 	}
 	page.Edges = edges
+	page.TopologyPartial = topologyPartial
 	return page, nil
 }
 
@@ -269,12 +271,19 @@ func (s *RuntimeStore) executionLatestObservation(executionID string) (*executio
 }
 
 func (s *RuntimeStore) executionGraphRun(view ExecutionView) (*RunStatus, error) {
+	// A run row is mutable across retries. It may only be used to control an
+	// execution when the immutable execution identity still names its active
+	// attempt and exact lease generation. Task IDs are useful for grouping, but
+	// are never an authority correlation key.
+	if strings.TrimSpace(view.AttemptID) == "" || view.LeaseGeneration <= 0 {
+		return nil, nil
+	}
 	runs, err := s.ListRuns()
 	if err != nil {
 		return nil, err
 	}
 	for _, run := range runs {
-		if run.ProjectID == view.ProjectID && ((view.AttemptID != "" && run.ActiveAttemptID == view.AttemptID) || (view.TaskID != "" && (run.ItemID == view.TaskID || run.RecordID == view.TaskID))) {
+		if run.ProjectID == view.ProjectID && run.ActiveAttemptID == view.AttemptID && run.LeaseGeneration == view.LeaseGeneration && (run.LeaseState == string(LeaseStateClaimed) || run.LeaseState == string(LeaseStateRunning)) {
 			copy := run
 			return &copy, nil
 		}
@@ -324,22 +333,28 @@ func (s *RuntimeStore) executionGraphChildCounts(node *ExecutionGraphNode) error
 	return nil
 }
 
-func (s *RuntimeStore) executionGraphEdges(projectID string, ids map[string]bool) ([]ExecutionEdge, error) {
+func (s *RuntimeStore) executionGraphEdges(projectID string, ids map[string]bool) ([]ExecutionEdge, bool, error) {
 	rows, err := s.query(`SELECT e.parent_execution_id, e.child_execution_id, e.kind, e.created_at FROM execution_edges e JOIN execution_records p ON p.execution_id = e.parent_execution_id WHERE p.project_id = ? ORDER BY e.created_at, e.parent_execution_id, e.child_execution_id`, projectID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 	out := []ExecutionEdge{}
+	topologyPartial := false
 	for rows.Next() {
 		var edge ExecutionEdge
 		if err := rows.Scan(&edge.ParentExecutionID, &edge.ChildExecutionID, &edge.Kind, &edge.CreatedAt); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		// Page edges are closed: an edge is emitted only when both endpoint
 		// nodes are returned. Callers never have to guess at a missing node.
 		if ids[edge.ParentExecutionID] && ids[edge.ChildExecutionID] {
 			out = append(out, edge)
+		} else if ids[edge.ParentExecutionID] || ids[edge.ChildExecutionID] {
+			// Filtering and pagination may omit an ancestor or descendant. Keep
+			// the page edge-closed, but make that loss explicit so consumers do
+			// not promote an orphaned child to a root.
+			topologyPartial = true
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -351,5 +366,5 @@ func (s *RuntimeStore) executionGraphEdges(projectID string, ids map[string]bool
 		}
 		return out[i].ChildExecutionID < out[j].ChildExecutionID
 	})
-	return out, rows.Err()
+	return out, topologyPartial, rows.Err()
 }

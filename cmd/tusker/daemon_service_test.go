@@ -53,6 +53,35 @@ func TestRenderDaemonServicePlist(t *testing.T) {
 	}
 }
 
+func TestEnforceDaemonServiceLogBoundTrimsLiveInode(t *testing.T) {
+	dir := t.TempDir()
+	config := daemonServiceConfig{StateRoot: dir}
+	if err := ensureDir(config.logDir()); err != nil {
+		t.Fatal(err)
+	}
+	payload := append([]byte(strings.Repeat("x", daemonLogMaxBytes)), []byte("TAIL\n")...)
+	if err := os.WriteFile(config.stdoutPath(), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := enforceDaemonServiceLogBound(config); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(config.stdoutPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() > daemonLogMaxBytes/2 {
+		t.Fatalf("live daemon log was not bounded: %d", info.Size())
+	}
+	got, err := os.ReadFile(config.stdoutPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(string(got), "TAIL\n") {
+		t.Fatalf("log tail evidence was lost: suffix=%q", string(got[max(0, len(got)-8):]))
+	}
+}
+
 func TestLaunchdInstallUninstallIdempotentPublicCommands(t *testing.T) {
 	clearAgentSessionEnvForTest(t)
 	dir := t.TempDir()

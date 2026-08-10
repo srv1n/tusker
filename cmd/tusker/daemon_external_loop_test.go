@@ -221,7 +221,6 @@ func TestDaemonAutoAdvanceExternalApplySuccessDispatchesExternalReview(t *testin
 
 func writeDaemonExternalLoopConfig(t *testing.T, vault, applyCommand string) {
 	t.Helper()
-	root := filepath.Dir(vault)
 	body := strings.TrimSpace(`
 schema: tusker.config/v1
 project_id: app
@@ -246,7 +245,7 @@ automation:
       kind: codex_exec
       command: "`+applyCommand+`"
 `) + "\n"
-	if err := writeText(filepath.Join(root, "tusker.yaml"), body); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), body); err != nil {
 		t.Fatal(err)
 	}
 }

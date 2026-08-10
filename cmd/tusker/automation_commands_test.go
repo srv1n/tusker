@@ -221,8 +221,7 @@ func TestPlanGateUsesCanonicalStateFromRunnerWorkspace(t *testing.T) {
 
 func TestAutomationExplainShowsFanoutPolicyAndConflicts(t *testing.T) {
 	vault := automationTestVault(t)
-	root := filepath.Dir(vault)
-	if err := writeText(filepath.Join(root, "tusker.yaml"), strings.TrimSpace(`
+	if err := writeText(managedTuskerConfigPath(vault), strings.TrimSpace(`
 schema: tusker.config/v1
 project_id: app
 automation:

@@ -22,15 +22,8 @@ type runnerWrapperRequest struct {
 
 func startDetachedRunnerWrapper(ctx context.Context, runner RunnerName, req StartRequest, resume *ResumeRequest, capabilities RunnerCapabilities) (*StartResult, error) {
 	_ = ctx
-	if err := ensureDir(filepath.Dir(req.StatusPath)); err != nil {
-		return nil, err
-	}
 	requestPath := req.StatusPath + ".wrapper-request.json"
-	raw, err := json.MarshalIndent(runnerWrapperRequest{Runner: string(runner), Start: req, Resume: resume}, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	if err := writeText(requestPath, string(raw)+"\n"); err != nil {
+	if err := writeRunnerWrapperRequest(requestPath, runnerWrapperRequest{Runner: string(runner), Start: req, Resume: resume}); err != nil {
 		return nil, err
 	}
 	exe, err := runnerWrapperExecutable()
@@ -38,9 +31,6 @@ func startDetachedRunnerWrapper(ctx context.Context, runner RunnerName, req Star
 		return nil, err
 	}
 	wrapperLogPath := runnerWrapperLogPath(req)
-	if err := ensureDir(filepath.Dir(wrapperLogPath)); err != nil {
-		return nil, err
-	}
 	cmd := exec.Command(exe, "runner-wrapper", "--request", requestPath)
 	if cwd, err := runnerWorkspaceCWD(runner, req.WorkspacePath); err == nil {
 		cmd.Dir = cwd
@@ -51,10 +41,12 @@ func startDetachedRunnerWrapper(ctx context.Context, runner RunnerName, req Star
 	}
 	closeStdin := attachDevNullStdin(cmd)
 	defer closeStdin()
-	if file, err := os.OpenFile(wrapperLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+	if file, err := openSecureScratchAppendUnlocked(req.VaultPath, wrapperLogPath); err == nil {
 		defer file.Close()
 		cmd.Stdout = file
 		cmd.Stderr = file
+	} else {
+		return nil, fmt.Errorf("open detached runner wrapper log: %w", err)
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -107,6 +99,9 @@ func runnerWrapperCmd(args Args) error {
 	req, err := readRunnerWrapperRequest(requestPath)
 	if err != nil {
 		return err
+	}
+	if err := removePrivateFile(requestPath); err != nil {
+		return fmt.Errorf("remove consumed wrapper request: %w", err)
 	}
 	pid := os.Getpid()
 	pgid := processGroupID(pid)
@@ -164,7 +159,9 @@ func runRunnerWrapperWithChildStarter(
 	defer cancelHeartbeat()
 	go runnerWrapperHeartbeat(heartbeatCtx, req.Start, stopHeartbeat)
 
-	result, err := startChild(ctx, req)
+	childCtx, cancelChild := context.WithCancel(ctx)
+	defer cancelChild()
+	result, err := startChild(childCtx, req)
 	if err != nil {
 		if ctx.Err() != nil {
 			_ = appendRawLogLine(runnerWrapperDiagnosticPath(req.Start), "runner wrapper stopping: "+ctx.Err().Error())
@@ -179,7 +176,7 @@ func runRunnerWrapperWithChildStarter(
 		runnerWrapperPublishStatusIfAbsent(req.Start, 1, AttemptOutcomeFailed, "runner wrapper could not start child: "+err.Error())
 		return err
 	}
-	return runnerWrapperWait(ctx, req, result, stopHeartbeat)
+	return runnerWrapperWait(ctx, cancelChild, req, result, stopHeartbeat)
 }
 
 func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*StartResult, error) {
@@ -218,7 +215,7 @@ func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*St
 	}
 }
 
-func runnerWrapperWait(ctx context.Context, req runnerWrapperRequest, result *StartResult, stopHeartbeat <-chan string) error {
+func runnerWrapperWait(ctx context.Context, cancelChild context.CancelFunc, req runnerWrapperRequest, result *StartResult, stopHeartbeat <-chan string) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -228,11 +225,13 @@ func runnerWrapperWait(ctx context.Context, req runnerWrapperRequest, result *St
 		}
 		select {
 		case reason := <-stopHeartbeat:
+			cancelChild()
 			runnerWrapperInterrupt(req, result, reason)
 			err := runnerWrapperWaitForStatus(req.Start, runnerWrapperStopTimeout())
 			runnerWrapperRecordDirectOutcome(req.Start)
 			return err
 		case <-ctx.Done():
+			cancelChild()
 			runnerWrapperInterrupt(req, result, ctx.Err().Error())
 			err := runnerWrapperWaitForStatus(req.Start, runnerWrapperStopTimeout())
 			runnerWrapperRecordDirectOutcome(req.Start)
@@ -255,7 +254,7 @@ func runnerWrapperRecordDirectOutcome(req StartRequest) {
 		return
 	}
 	defer store.Close()
-	run, err := store.FindRun(req.RecordID)
+	run, err := findRunScopedOrAmbiguous(store, req.ProjectID, req.RecordID)
 	if err != nil || run == nil || !runnerWrapperOwnsRun(*run, req) {
 		return
 	}
@@ -397,7 +396,7 @@ func runnerWrapperBeat(store *RuntimeStore, req StartRequest) runnerWrapperLease
 }
 
 func runnerWrapperStopSignal(store *RuntimeStore, req StartRequest) runnerWrapperLeaseDecision {
-	run, err := store.FindRun(req.RecordID)
+	run, err := findRunScopedOrAmbiguous(store, req.ProjectID, req.RecordID)
 	if err != nil {
 		return runnerWrapperStop("lease state unavailable: " + err.Error())
 	}
@@ -506,16 +505,16 @@ func writeRunnerWrapperRequest(path string, req runnerWrapperRequest) error {
 	if err != nil {
 		return err
 	}
-	return writeText(path, string(raw)+"\n")
+	return writePrivateFileReplace(path, append(raw, '\n'))
 }
 
 func readRunnerWrapperRequest(path string) (runnerWrapperRequest, error) {
-	raw, err := readText(path)
+	raw, err := readPrivateFile(path, 1<<20)
 	if err != nil {
 		return runnerWrapperRequest{}, err
 	}
 	var req runnerWrapperRequest
-	if err := json.Unmarshal([]byte(raw), &req); err != nil {
+	if err := json.Unmarshal(raw, &req); err != nil {
 		return runnerWrapperRequest{}, err
 	}
 	if strings.TrimSpace(req.Start.AttemptID) == "" {

@@ -297,6 +297,30 @@ func (d *Daemon) persistFairDispatchReason(runs map[string]RunStatus, candidate 
 		return nil
 	}
 	updated := current
+	// Synthetic scheduler candidates may be supplied from a projection whose
+	// persisted row predates the scoped identity fields.  Preserve the
+	// candidate's authoritative key before the conditional update; otherwise a
+	// harmless blocker (for example disk pressure) turns into an internal
+	// "project_id and record_id" error and aborts the whole fair-dispatch pass.
+	if strings.TrimSpace(updated.ProjectID) == "" {
+		updated.ProjectID = candidate.Project.ProjectID
+	}
+	if strings.TrimSpace(updated.RecordID) == "" {
+		updated.RecordID = candidate.Run.RecordID
+	}
+	if strings.TrimSpace(updated.ItemID) == "" {
+		updated.ItemID = candidate.Run.ItemID
+	}
+	// The map key is constructed from the candidate even when a projection
+	// carries an incomplete RunStatus. Use it as the final identity fallback.
+	if parts := strings.SplitN(key, "\x00", 2); len(parts) == 2 {
+		if strings.TrimSpace(updated.ProjectID) == "" {
+			updated.ProjectID = parts[0]
+		}
+		if strings.TrimSpace(updated.RecordID) == "" {
+			updated.RecordID = parts[1]
+		}
+	}
 	updated.LastError = reason
 	updated.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	if err := d.upsertRunWithStream(current, updated); err != nil {
@@ -491,6 +515,16 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 		stateKey := candidate.Project.ProjectID + "\x00" + candidate.Status
 		if candidate.StateLimit > 0 && candidate.StateActive+stateSelected[stateKey] >= candidate.StateLimit {
 			if err := d.persistFairDispatchReason(runs, candidate, fmt.Sprintf("state %q concurrency cap reached (%d/%d)", candidate.Status, candidate.StateActive+stateSelected[stateKey], candidate.StateLimit)); err != nil {
+				return err
+			}
+			continue
+		}
+		// Check durable storage before scope/vault/resource inspection. The
+		// concrete workspace is checked again inside dispatch after selection.
+		if pressure, pressureErr := d.checkDiskPressureForDispatch(candidate.Project.RepoRoot); pressureErr != nil {
+			return pressureErr
+		} else if pressure.DispatchPaused {
+			if err := d.persistFairDispatchReason(runs, candidate, diskPressureDispatchReason(pressure)); err != nil {
 				return err
 			}
 			continue

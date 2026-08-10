@@ -1,11 +1,10 @@
 /*
   API seam.
 
-  Every screen reads data through this module. Today it resolves the in-browser
-  mock dataset with a little artificial latency so loading/skeleton states are
-  exercised. When the daemon's JSON API lands, swap each body for a `fetch` to
-  the corresponding endpoint (documented inline) — the return types are the
-  contract and must not change. See BACKEND-GAPS.md for the endpoint checklist.
+  Every screen reads data through this module. Production mode uses the daemon's
+  JSON API; the in-browser fixture path remains an explicit UI-only opt-in for
+  isolated development. The return types are the contract and must not change.
+  See BACKEND-GAPS.md for the remaining endpoint checklist.
 */
 
 import * as fx from "@/mock/fixtures";
@@ -51,10 +50,60 @@ import type {
   ExecutionBindingPreview,
 } from "@/types/domain";
 
+export type ServeCapabilityClass =
+  | "authoritative_mutable"
+  | "authoritative_read_only"
+  | "cached_projection"
+  | "local_preference"
+  | "unavailable";
+export interface ServeCapability { id: string; class: ServeCapabilityClass; mutable?: boolean; description: string }
+export interface ServeCapabilities { schema: string; capabilities: ServeCapability[] }
+
 /** Toggle to true for UI-only Vite work against the in-browser fixture set. */
 export const USE_MOCK = false;
 
 const LATENCY_MS = 260;
+let capabilityPromise: Promise<string> | null = null;
+
+export function resetServeCapabilityCache(): void {
+  capabilityPromise = null;
+}
+
+async function serveCapability(): Promise<string> {
+  if (capabilityPromise === null) {
+    capabilityPromise = fetch("/api/capability", { headers: { accept: "application/json" }, credentials: "same-origin" })
+      .then(async (res) => {
+        if (!res.ok) throw new ApiError(res.status, `GET /api/capability → ${res.status}`);
+        const payload = await res.json() as { capability?: string };
+        if (!payload.capability) throw new ApiError(500, "Serve capability bootstrap was empty");
+        return payload.capability;
+      })
+      .catch((error) => { capabilityPromise = null; throw error; });
+  }
+  return capabilityPromise;
+}
+
+async function capabilityAuthRefusal(response: Response): Promise<boolean> {
+  if (response.status !== 403) return false;
+  const payload = await response.clone().json().catch(() => null) as { reason?: string; error?: string } | null;
+  return /serve capability/i.test(payload?.reason ?? payload?.error ?? "");
+}
+
+async function capabilityFetch(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  retried = false,
+): Promise<Response> {
+  const capability = await serveCapability();
+  const headers = new Headers(init.headers);
+  headers.set("X-Tusker-Capability", capability);
+  const response = await fetch(input, { ...init, headers });
+  if (!retried && await capabilityAuthRefusal(response)) {
+    resetServeCapabilityCache();
+    return capabilityFetch(input, init, true);
+  }
+  return response;
+}
 
 function delay<T>(value: T, ms = LATENCY_MS): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), ms));
@@ -69,17 +118,26 @@ async function real<T>(path: string): Promise<T> {
 
 /**
  * The one mutating call: POST an action and return its JSON body. A refusal is
- * carried in the body (ok/refused/reason), NOT a non-2xx, so the caller can
- * surface the reason; only transport/5xx failures throw.
+ * carried in the body (ok/refused/reason), NOT necessarily a non-2xx. Convert
+ * it here so every caller observes refusal as a rejected mutation.
  */
-async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`/api${path}`, {
+async function post<T extends { ok?: boolean; refused?: boolean; reason?: string; issue?: { code?: string } }>(path: string, body?: unknown): Promise<T> {
+  const res = await capabilityFetch(`/api${path}`, {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/json" },
+    credentials: "same-origin",
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!res.ok) throw new ApiError(res.status, `POST /api${path} → ${res.status}`);
-  return (await res.json()) as T;
+  const capabilityRefused = !res.ok && await capabilityAuthRefusal(res);
+  const payload = await res.json().catch(() => null) as (T & { error?: string }) | null;
+  if (!res.ok) {
+    if (payload && !capabilityRefused && (payload.refused === true || payload.ok === false)) {
+      throw new ActionRefusalError(payload, res.status);
+    }
+    throw new ApiError(res.status, payload?.reason ?? payload?.error ?? `POST /api${path} → ${res.status}`);
+  }
+  if (payload === null) throw new ApiError(502, `POST /api${path} returned no JSON result`);
+  return requireAccepted(payload);
 }
 
 export function withProject(path: string, projectId?: string): string {
@@ -97,6 +155,23 @@ export class ApiError extends Error {
   }
 }
 
+/** A mutation reached Serve, but the control plane declined it in-band. */
+export type ActionFailureKind = "refused" | "validation";
+export class ActionRefusalError<T extends { reason?: string; refused?: boolean; ok?: boolean; issue?: { code?: string } }> extends ApiError {
+  readonly kind: ActionFailureKind;
+  constructor(public result: T, status = 409) {
+    super(status, result.reason || "The control-plane refused this action.");
+    this.name = "ActionRefusalError";
+    this.kind = /invalid|validation|required/i.test(result.issue?.code ?? "") ? "validation" : "refused";
+  }
+}
+
+/** Convert the wire-level action union into an accepted mutation or a typed refusal. */
+export function requireAccepted<T extends { reason?: string; refused?: boolean; ok?: boolean }>(result: T): T {
+  if (result.refused === true || result.ok === false) throw new ActionRefusalError(result);
+  return result;
+}
+
 export class DeliveryError extends ApiError {
   constructor(status: number, public problem: DeliveryErrorPayload) {
     super(status, problem.error.message);
@@ -105,13 +180,27 @@ export class DeliveryError extends ApiError {
 }
 
 async function deliveryRequest<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`/api${path}`, {
+  const init: RequestInit = {
     method,
-    headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    headers: { accept: "application/json", "content-type": "application/json" },
+    credentials: "same-origin",
     body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const payload = await res.json() as T | DeliveryErrorPayload;
-  if (!res.ok) throw new DeliveryError(res.status, payload as DeliveryErrorPayload);
+  };
+  const res = method === "POST" ? await capabilityFetch(`/api${path}`, init) : await fetch(`/api${path}`, init);
+  const payload = await res.json().catch(() => null) as T | DeliveryErrorPayload | { reason?: string; error?: string } | null;
+  if (!res.ok) {
+    if (payload === null) {
+      throw new ApiError(res.status, `${method} /api${path} returned a non-JSON error response`);
+    }
+    if (typeof (payload as DeliveryErrorPayload).error === "object") {
+      throw new DeliveryError(res.status, payload as DeliveryErrorPayload);
+    }
+    const failure = payload as { reason?: string; error?: string };
+    throw new ApiError(res.status, failure.reason ?? failure.error ?? `${method} /api${path} → ${res.status}`);
+  }
+  if (payload === null) {
+    throw new ApiError(502, `${method} /api${path} returned no JSON result`);
+  }
   return payload as T;
 }
 
@@ -138,6 +227,7 @@ export class DocSaveError extends ApiError {
 // ----------------------------------------------------------------------------
 
 export const api = {
+  capabilities: (): Promise<ServeCapabilities> => real("/capabilities"),
   executions: (params: Record<string, string | undefined>, projectId?: string): Promise<ExecutionGraph> => {
     const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value) as [string, string][]).toString();
     return real(withProject(`/executions${query ? `?${query}` : ""}`, projectId));
@@ -252,15 +342,7 @@ export const api = {
   acknowledgeRun: async (taskId: string, projectId?: string): Promise<ActionResult> => {
     if (USE_MOCK) return delay({ ok: true, reason: "run acknowledged (mock)", taskId });
     const path = withProject(`/runs/${taskId}/acknowledge`, projectId);
-    const res = await fetch(`/api${path}`, {
-      method: "POST",
-      headers: { accept: "application/json", "content-type": "application/json" },
-    });
-    const body = (await res.json().catch(() => null)) as (ActionResult & { error?: string }) | null;
-    if (!res.ok) {
-      throw new ApiError(res.status, body?.reason ?? body?.error ?? `POST /api${path} → ${res.status}`);
-    }
-    return (body ?? { ok: true, reason: "run acknowledged", taskId }) as ActionResult;
+    return post<ActionResult>(path, {});
   },
 
   // POST /api/runs/:taskId/interrupt — shares `tusker runs interrupt` and
@@ -404,9 +486,10 @@ export const api = {
     payload: DocgraphSavePayload,
   ): Promise<DocgraphSaveResponse> => {
     const path = withProject(`/docgraph/doc?subject=${encodeURIComponent(subject)}`, projectId);
-    const res = await fetch(`/api${path}`, {
+    const res = await capabilityFetch(`/api${path}`, {
       method: "PUT",
       headers: { accept: "application/json", "content-type": "application/json" },
+      credentials: "same-origin",
       body: JSON.stringify(payload),
     });
     if (res.ok) return (await res.json()) as DocgraphSaveResponse;

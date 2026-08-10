@@ -29,6 +29,8 @@ struct SettingsView: View {
             Section("Application") {
                 Toggle("Launch at login", isOn: Binding(get: { launchAtLogin }, set: setLaunchAtLogin))
                 Toggle("Show Dock icon", isOn: $config.showDockIcon)
+                Toggle("Enable Web Inspector (developer)", isOn: $config.developerToolsEnabled)
+                Text("Leave this off in normal or shared environments.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Notifications") {
                 Toggle("Attention notifications", isOn: $config.notifyAttention)

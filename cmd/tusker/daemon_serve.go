@@ -49,11 +49,12 @@ func (d *Daemon) startServe(_ context.Context) (*daemonServeServer, error) {
 	stream := newServeStreamBroker()
 	d.stream = stream
 	server := newServeServer(target.project.VaultRoot, target.project.RepoRoot, actualAddr, d.store, dist)
+	server.requireCapability = true
 	server.stream = stream
 	server.reconcileStatus = d.adaptiveReconcileStatus
 	d.serve = server
 	go server.warmRegisteredProjectSnapshots()
-	httpServer := &http.Server{Addr: actualAddr, Handler: server, ReadHeaderTimeout: 5 * time.Second}
+	httpServer := serveHTTPServer(actualAddr, server)
 	daemonServer := &daemonServeServer{
 		addr:       actualAddr,
 		httpServer: httpServer,

@@ -14,6 +14,7 @@ export interface StreamEvent {
   urgency?: "info" | "attention" | "critical";
   deep_link_path?: string;
   occurred_at?: string;
+  replay_miss?: boolean;
 }
 
 export interface StreamStatus {
@@ -155,8 +156,25 @@ export function connectLiveStream(
     });
   };
   source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as StreamEvent;
+    let event: StreamEvent;
+    try {
+      event = JSON.parse(message.data) as StreamEvent;
+    } catch {
+      // A malformed event must not kill the reconnect loop; the fallback
+      // refetch interval remains the convergence path.
+      setStreamStatus({ connected: true, lastEventAt: status.lastEventAt, lastErrorAt: now() });
+      return;
+    }
     setStreamStatus({ connected: true, lastEventAt: now(), lastErrorAt: status.lastErrorAt });
+    if (event.kind === "stream_replay_miss" || event.replay_miss === true) {
+      // The broker could not replay the complete cursor window. Invalidate a
+      // full summary surface so reconnect converges to authoritative state.
+      invalidateStreamEvent(queryClient, {
+        kind: "stream_replay_miss",
+        keys: ["daemon", "projects", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch"],
+        project: event.project,
+      });
+    }
     enqueueInvalidation(event);
   };
   source.onerror = () => {

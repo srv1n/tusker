@@ -206,7 +206,7 @@ func validateV7DoneTaskClosePolicy(note Note, ctx validationContext, where strin
 	actor := stringField(data, "accepted_by")
 	policy, err := v7ClosePolicyFor(ctx.VaultPath, risk)
 	if err != nil {
-		*errors = append(*errors, issue(errorConfigInvalid, err.Error(), "../tusker.yaml", "", map[string]any{"risk": risk}))
+		*errors = append(*errors, issue(errorConfigInvalid, err.Error(), "config.yaml", "", map[string]any{"risk": risk}))
 		return
 	}
 	requiredAcceptor := policy.RequiredAcceptor

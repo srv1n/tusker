@@ -425,11 +425,27 @@ func (s *RuntimeStore) ReleaseResourceLease(name, owner string, generation int, 
 	if reason == "" {
 		reason = "terminal runner outcome"
 	}
-	result, err := s.exec(`UPDATE resource_leases SET state='released', released_at=?, release_reason=?, updated_at=? WHERE resource_name=? AND owner=? AND generation=? AND state='held'`, now.Format(time.RFC3339Nano), reason, now.Format(time.RFC3339Nano), strings.TrimSpace(name), strings.TrimSpace(owner), generation)
-	if err != nil {
-		return false, err
-	}
-	changed, err := result.RowsAffected()
+	var changed int64
+	err := s.withBusyRetry(func() error {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		result, err := tx.Exec(`UPDATE resource_leases SET state='released', released_at=?, release_reason=?, updated_at=? WHERE resource_name=? AND owner=? AND generation=? AND state='held'`, now.Format(time.RFC3339Nano), reason, now.Format(time.RFC3339Nano), strings.TrimSpace(name), strings.TrimSpace(owner), generation)
+		if err != nil {
+			return err
+		}
+		changed, err = result.RowsAffected()
+		if err != nil || changed != 1 {
+			return err
+		}
+		_, err = tx.Exec(`INSERT INTO resource_lease_events (event_id, resource_name, event_type, owner, generation, previous_owner, previous_generation, reason, created_at) VALUES (?, ?, 'released', ?, ?, ?, ?, ?, ?)`, newRecordID(), strings.TrimSpace(name), strings.TrimSpace(owner), generation, strings.TrimSpace(owner), generation, reason, now.Format(time.RFC3339Nano))
+		if err != nil {
+			return err
+		}
+		return tx.Commit()
+	})
 	if err != nil {
 		return false, err
 	}

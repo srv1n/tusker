@@ -260,7 +260,7 @@ func deliveryPlanCmd(args Args) error {
 	if !filepath.IsAbs(out) {
 		out = filepath.Join(v7RepoRoot(vaultPath), out)
 	}
-	if err := writeText(out, string(raw)); err != nil {
+	if err := secureScratchWriteText(vaultPath, out, string(raw)); err != nil {
 		return err
 	}
 	if args.Bool("json") {

@@ -8,11 +8,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -40,35 +41,33 @@ func openBoundedRawLog(path string, max int64, allowExisting bool) (*boundedRawL
 	if max <= 0 {
 		return nil, fmt.Errorf("bounded raw log requires a positive byte limit")
 	}
-	pathInfo, err := os.Lstat(path)
-	exists := err == nil
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	if exists {
-		if !allowExisting {
-			return nil, fmt.Errorf("fresh bounded raw log path already exists")
-		}
-		if err := validateExclusiveRawLog(pathInfo); err != nil {
-			return nil, err
-		}
-		if pathInfo.Size() > max {
-			return nil, fmt.Errorf("bounded raw log already exceeds %d bytes", max)
-		}
-	}
-
-	flags := os.O_WRONLY | os.O_APPEND | syscall.O_NOFOLLOW
-	if !exists {
-		flags |= os.O_CREATE | os.O_EXCL
-	}
-	file, err := os.OpenFile(path, flags, 0o600)
+	parentFD, base, err := openPrivatePathParent(path, true)
 	if err != nil {
 		return nil, err
 	}
+	defer unix.Close(parentFD)
+	var existing unix.Stat_t
+	statErr := unix.Fstatat(parentFD, base, &existing, unix.AT_SYMLINK_NOFOLLOW)
+	exists := statErr == nil
+	if statErr != nil && !errors.Is(statErr, unix.ENOENT) {
+		return nil, statErr
+	}
+	if exists && !allowExisting {
+		return nil, fmt.Errorf("fresh bounded raw log path already exists")
+	}
+	flags := unix.O_WRONLY | unix.O_APPEND | unix.O_CLOEXEC | unix.O_NOFOLLOW
+	if !exists {
+		flags |= unix.O_CREAT | unix.O_EXCL
+	}
+	fd, err := unix.Openat(parentFD, base, flags, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), path)
 	fail := func(err error) (*boundedRawLogWriter, error) {
 		_ = file.Close()
 		if !exists {
-			_ = os.Remove(path)
+			_ = unix.Unlinkat(parentFD, base, 0)
 		}
 		return nil, err
 	}
@@ -82,16 +81,6 @@ func openBoundedRawLog(path string, max int64, allowExisting bool) (*boundedRawL
 		return fail(fmt.Errorf("bounded raw log changed while opening"))
 	}
 	if err := validateExclusiveRawLog(openedInfo); err != nil {
-		return fail(err)
-	}
-	if exists && !os.SameFile(pathInfo, openedInfo) {
-		return fail(fmt.Errorf("bounded raw log changed while opening"))
-	}
-	currentInfo, err := os.Lstat(path)
-	if err != nil || !os.SameFile(openedInfo, currentInfo) {
-		return fail(fmt.Errorf("bounded raw log changed while opening"))
-	}
-	if err := validateExclusiveRawLog(currentInfo); err != nil {
 		return fail(err)
 	}
 	if openedInfo.Size() > max {
@@ -221,22 +210,15 @@ func killContainedRunnerCommand(cmd *exec.Cmd, pgid int, wrapperContained bool) 
 	killRunnerProcessGroup(cmd, pgid)
 }
 
-func monitorBoundedRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, wrapperContained bool, log *boundedRawLogWriter, statusPath string) {
-	waitDone := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			killContainedRunnerCommand(cmd, pgid, wrapperContained)
-		case <-waitDone:
-		}
-	}()
-
+func monitorBoundedRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, wrapperContained bool, log *boundedRawLogWriter, runner RunnerName, req runnerExecRequest, eventLog runnerEventLog) {
 	waitErr := cmd.Wait()
-	close(waitDone)
-	// The shell root can exit after leaving a descendant in its process group.
-	// WaitDelay bounds inherited output pipes; this final fence prevents that
-	// descendant from outliving the trusted wrapper after terminal status.
-	if !wrapperContained {
+	// WaitDelay returns once the root has exited but descendants still hold the
+	// stdout/stderr pipe open.  Fence that still-owned process group before
+	// closing the authoritative log; otherwise an orphaned descendant can keep
+	// the workspace busy indefinitely.  The group was created by this launch,
+	// and the bounded delay is short enough that its numeric identity cannot be
+	// safely treated as reusable until this cleanup completes.
+	if errors.Is(waitErr, exec.ErrWaitDelay) && pgid > 0 {
 		killRunnerProcessGroup(cmd, pgid)
 	}
 	closeErr := log.close()
@@ -266,13 +248,10 @@ func monitorBoundedRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, w
 		outcome = AttemptOutcomeFailed
 		reason = fmt.Sprintf("runner exited with code %d", exitCode)
 	}
-	_, _ = writeRunnerStatusFileIfAbsentWithOutcome(statusPath, exitCode, outcome, reason, 0)
-	if wrapperContained && pgid > 0 {
-		// Persist the terminal status before fencing the containing wrapper group:
-		// SIGKILL necessarily includes this monitor because it runs inside that
-		// wrapper. The daemon consumes the durable status after the group exits.
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-	}
+	publishRunnerTerminalStatus(eventLog, runner, req, exitCode, outcome, reason, 0)
+	// The monitor is not allowed to signal the group after Wait; a reused PGID
+	// could belong to an unrelated process. The trusted launcher owns any
+	// pre-Wait cancellation fence.
 }
 
 func writeRunnerStatusFileIfAbsentWithOutcome(path string, exitCode int, outcome AttemptOutcome, reason string, turnsUsed int) (bool, error) {
@@ -293,35 +272,49 @@ func writeRunnerStatusFileIfAbsentWithOutcome(path string, exitCode int, outcome
 	if err != nil {
 		return false, err
 	}
-	if err := ensureDir(filepath.Dir(path)); err != nil {
-		return false, err
-	}
-	temp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".terminal-*")
+	parentFD, base, err := openPrivatePathParent(path, true)
 	if err != nil {
 		return false, err
 	}
-	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	if err := temp.Chmod(0o600); err != nil {
-		_ = temp.Close()
+	defer unix.Close(parentFD)
+	temp, tempName, err := privateTempFileAt(parentFD, base)
+	if err != nil {
 		return false, err
 	}
+	closed := false
+	defer func() {
+		if !closed {
+			_ = temp.Close()
+		}
+		_ = unix.Unlinkat(parentFD, tempName, 0)
+	}()
 	if _, err := temp.Write(append(raw, '\n')); err != nil {
-		_ = temp.Close()
 		return false, err
 	}
 	if err := temp.Sync(); err != nil {
-		_ = temp.Close()
 		return false, err
 	}
 	if err := temp.Close(); err != nil {
 		return false, err
 	}
-	if err := os.Link(tempPath, path); err != nil {
-		if errors.Is(err, os.ErrExist) {
+	closed = true
+	if err := unix.Linkat(parentFD, tempName, parentFD, base, 0); err != nil {
+		if errors.Is(err, unix.EEXIST) {
+			if validateErr := validatePrivatePathEntryAt(parentFD, base, path); validateErr != nil {
+				return false, validateErr
+			}
 			return false, nil
 		}
 		return false, err
+	}
+	if err := unix.Unlinkat(parentFD, tempName, 0); err != nil {
+		return false, err
+	}
+	if err := validatePrivatePathEntryAt(parentFD, base, path); err != nil {
+		return false, err
+	}
+	if err := unix.Fsync(parentFD); err != nil {
+		return false, fmt.Errorf("sync runner status parent directory: %w", err)
 	}
 	return true, nil
 }

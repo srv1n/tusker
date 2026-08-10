@@ -40,12 +40,16 @@ function ProfileCard({ p }: { p: RunnerProfile }) {
           {/* TODO(api): clone / edit a profile through the settings API */}
           <button
             type="button"
+            disabled
+            title="Runner profile persistence is not available yet"
             className="inline-flex items-center gap-1 text-[11.5px] text-muted transition-colors hover:text-ink"
           >
             <Copy size={12} strokeWidth={2} /> Duplicate
           </button>
           <button
             type="button"
+            disabled
+            title="Runner profile persistence is not available yet"
             className="inline-flex items-center gap-1 text-[11.5px] text-muted transition-colors hover:text-ink"
           >
             <Pencil size={12} strokeWidth={2} /> Edit
@@ -71,7 +75,7 @@ export function ProfilesSection() {
       </div>
 
       {/* TODO(api): create a new profile */}
-      <DashedButton className="mt-3.5 inline-flex items-center gap-1">
+      <DashedButton disabled title="Runner profile persistence is not available yet" className="mt-3.5 inline-flex items-center gap-1">
         <Plus size={13} strokeWidth={2} /> New profile
       </DashedButton>
     </div>

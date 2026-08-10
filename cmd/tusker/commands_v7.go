@@ -3269,8 +3269,12 @@ func v7TaskIDCollisionPaths(vaultPath, id string) []string {
 
 func configuredLegacyTaskRoots(vaultPath string) []string {
 	var roots []string
+	if resolved, err := resolveTuskerConfig(vaultPath); err == nil {
+		for _, rel := range legacyTaskRootsFromConfigMap(resolved.Raw) {
+			roots = append(roots, resolveLegacyTaskRoot(vaultPath, rel))
+		}
+	}
 	configPaths := []string{
-		filepath.Join(v7RepoRoot(vaultPath), "tusker.yaml"),
 		filepath.Join(vaultPath, "_system", "config.yaml"),
 		workflowPath(vaultPath),
 	}
@@ -3704,7 +3708,7 @@ func v7ProjectID(vaultPath string) string {
 func resolveV7ProjectID(vaultPath string) (string, error) {
 	cfg, configPath, err := readV7TuskerConfig(vaultPath)
 	if err != nil {
-		return "", tuskerError(errorConfigInvalid, "failed to parse tusker.yaml project identity: "+err.Error(), withPath(configPath))
+		return "", tuskerError(errorConfigInvalid, "failed to parse project config identity: "+err.Error(), withPath(configPath))
 	}
 	if strings.TrimSpace(cfg.ProjectID) != "" {
 		return strings.TrimSpace(cfg.ProjectID), nil
@@ -3729,10 +3733,10 @@ func resolveV7ProjectID(vaultPath string) (string, error) {
 		return "", err
 	}
 	repoRoot := filepath.Dir(vaultPath)
-	if fileExists(filepath.Join(repoRoot, "tusker.yaml")) || dirExists(filepath.Join(repoRoot, ".git")) || fileExists(filepath.Join(repoRoot, ".git")) {
+	if fileExists(preferredTuskerConfigPath(vaultPath)) || dirExists(filepath.Join(repoRoot, ".git")) || fileExists(filepath.Join(repoRoot, ".git")) {
 		return sanitizeProjectID(filepath.Base(repoRoot)), nil
 	}
-	return "", tuskerError(errorConfigInvalid, "V7 project_id is required in tusker.yaml", withPath(filepath.Join(repoRoot, "tusker.yaml")), withHint("run `tusker init --yes` from the repository root or add project_id to tusker.yaml"))
+	return "", tuskerError(errorConfigInvalid, "V7 project_id is required in .tusker/config.yaml", withPath(managedTuskerConfigPath(vaultPath)), withHint("run `tusker init --yes` from the repository root or add project_id to .tusker/config.yaml"))
 }
 
 func v7StateRev(data map[string]any, body string) string {
@@ -3944,26 +3948,21 @@ func v7MaybeCodeBlock(value string) string {
 }
 
 func readV7TuskerConfig(vaultPath string) (v7TuskerConfigFile, string, error) {
-	configPath := filepath.Join(filepath.Dir(vaultPath), "tusker.yaml")
-	var cfg v7TuskerConfigFile
-	if !fileExists(configPath) {
-		return cfg, configPath, nil
-	}
-	raw, err := readText(configPath)
+	resolved, err := resolveTuskerConfig(vaultPath)
 	if err != nil {
-		return cfg, configPath, err
+		return v7TuskerConfigFile{}, managedTuskerConfigPath(vaultPath), err
 	}
-	var top map[string]any
-	if err := yaml.Unmarshal([]byte(raw), &top); err != nil {
-		return cfg, configPath, err
+	// Prefer a path that actually contributed project-level configuration for
+	// diagnostics. Authority always comes from the resolved full schema.
+	path := managedTuskerConfigPath(vaultPath)
+	for i := len(resolved.Layers) - 1; i >= 0; i-- {
+		layer := resolved.Layers[i]
+		if layer.Present && layer.Path != "" {
+			path = layer.Path
+			break
+		}
 	}
-	if _, ok := top["orchestration"]; ok {
-		return cfg, configPath, tuskerError(errorConfigInvalid, "tusker.yaml uses deprecated top-level orchestration; use automation", withPath(configPath), withHint("rename orchestration: to automation: and keep trigger_states ready,rework"))
-	}
-	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
-		return cfg, configPath, err
-	}
-	return cfg, configPath, nil
+	return resolved.Config, path, nil
 }
 
 func v7BulletList(items []string) string {

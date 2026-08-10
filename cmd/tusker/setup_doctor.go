@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 const setupDoctorSchema = "tusker.setup-doctor/v1"
@@ -163,7 +165,7 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 			add(setupFinding{
 				Code:       "legacy_dispatch_scope",
 				Status:     "warning",
-				Path:       filepath.Join(repo, "tusker.yaml"),
+				Path:       preferredTuskerConfigPath(localVault),
 				Message:    workflow.Data.DispatchScope.Warning,
 				Action:     workflow.Data.DispatchScope.Repair,
 				Repairable: false,
@@ -173,7 +175,7 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 			add(setupFinding{
 				Code:       "legacy_completion_reactor_mode",
 				Status:     "warning",
-				Path:       filepath.Join(repo, "tusker.yaml"),
+				Path:       preferredTuskerConfigPath(localVault),
 				Message:    workflow.Data.CompletionReactor.Warning,
 				Action:     workflow.Data.CompletionReactor.Repair,
 				Repairable: false,
@@ -186,6 +188,63 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 			add(setupFinding{Code: "broken_vault_symlink", Status: "error", Path: localVault, Message: "repo-local .tusker symlink is broken", Action: "recreate the vault link with tusker vault mount", Repairable: false})
 		} else if sameResolvedFile(resolved, filepath.Join(repo, "tusker")) {
 			add(setupFinding{Code: "stale_vault_symlink", Status: "warning", Path: localVault, Message: "repo-local .tusker symlink still targets the legacy repo/tusker vault", Action: "run tusker migrate vault-root --to .tusker and replace the legacy link after verification", Repairable: false})
+		}
+	}
+
+	// One scan, two derived answers: measuring twice lets the total and the stale
+	// set disagree, and a doctor that reports a number it did not establish is
+	// worse than one that says it could not look.
+	entries, scanErr := scanScratchEntries(localVault)
+	switch {
+	case errors.Is(scanErr, errNotTuskerVault):
+		// Not a vault, so there is nothing to claim about its scratch.
+	case scanErr != nil:
+		add(setupFinding{
+			Code:       "scratch_uninspectable",
+			Status:     "warning",
+			Path:       scratchRootPath(localVault),
+			Message:    "scratch could not be inspected: " + scanErr.Error(),
+			Action:     "make <vault>/scratch a real, readable directory, then rerun setup doctor",
+			Repairable: false,
+		})
+	default:
+		total := totalScratchBytes(entries)
+		if total > defaultScratchBudgetBytes {
+			cutoff := time.Now().Add(-defaultScratchTTLDays * 24 * time.Hour)
+			stale := staleScratchEntries(entries, cutoff)
+			var staleBytes int64
+			for _, entry := range stale {
+				staleBytes += entry.Bytes
+			}
+			finding := setupFinding{
+				Code:   "scratch_size",
+				Status: "warning",
+				Path:   scratchRootPath(localVault),
+				Message: fmt.Sprintf("scratch is %.0fM (budget %.0fM); %.0fM is stale (older than %dd) and reclaimable",
+					float64(total)/(1<<20), float64(defaultScratchBudgetBytes)/(1<<20), float64(staleBytes)/(1<<20), defaultScratchTTLDays),
+				Action:     "run tusker gc to reclaim stale scratch",
+				Repairable: true,
+			}
+			if len(stale) == 0 {
+				// Nothing has aged out yet, so the default sweep would delete nothing.
+				// Say that instead of pointing at a repair that is a no-op.
+				finding.Message = fmt.Sprintf("scratch is %.0fM (budget %.0fM) but nothing is older than %dd yet",
+					float64(total)/(1<<20), float64(defaultScratchBudgetBytes)/(1<<20), defaultScratchTTLDays)
+				finding.Action = fmt.Sprintf("promote anything durable to evidence, then run tusker gc --ttl <days> below %d to reclaim early", defaultScratchTTLDays)
+				finding.Repairable = false
+			}
+			if apply && input.repairs("core") && len(stale) > 0 {
+				outcome, gcErr := applyScratchGC(localVault, stale, cutoff)
+				if gcErr != nil {
+					return report, gcErr
+				}
+				// Deleting an aged-out but empty directory reclaims no bytes and is
+				// still a change.
+				if len(outcome.Deleted) > 0 {
+					finding.Changed = true
+				}
+			}
+			add(finding)
 		}
 	}
 

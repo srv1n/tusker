@@ -11,12 +11,15 @@ final class AppConfig: ObservableObject {
         static let showDockIcon = "showDockIcon"
         static let notifyAttention = "notifyAttention"
         static let notifyCritical = "notifyCritical"
+        static let developerToolsEnabled = "developerToolsEnabled"
     }
 
     @Published var baseURLString: String { didSet { save(Key.baseURL, baseURLString) } }
     @Published var showDockIcon: Bool { didSet { save(Key.showDockIcon, showDockIcon) } }
     @Published var notifyAttention: Bool { didSet { save(Key.notifyAttention, notifyAttention) } }
     @Published var notifyCritical: Bool { didSet { save(Key.notifyCritical, notifyCritical) } }
+    /// Release builds keep WebKit inspection disabled unless the user explicitly opts in.
+    @Published var developerToolsEnabled: Bool { didSet { save(Key.developerToolsEnabled, developerToolsEnabled) } }
 
     private let defaults = UserDefaults.standard
 
@@ -25,6 +28,7 @@ final class AppConfig: ObservableObject {
         showDockIcon = defaults.object(forKey: Key.showDockIcon) as? Bool ?? true
         notifyAttention = defaults.object(forKey: Key.notifyAttention) as? Bool ?? true
         notifyCritical = defaults.object(forKey: Key.notifyCritical) as? Bool ?? true
+        developerToolsEnabled = defaults.object(forKey: Key.developerToolsEnabled) as? Bool ?? false
     }
 
     var baseURL: URL { URL(string: baseURLString) ?? URL(string: Self.defaultBaseURL)! }

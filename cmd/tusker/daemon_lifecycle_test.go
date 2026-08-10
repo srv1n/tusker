@@ -1078,6 +1078,9 @@ func TestWorkspaceRootHonoredForWorktreeStrategy(t *testing.T) {
 }
 
 func TestDispatchRecordsProcessIdentity(t *testing.T) {
+	if _, ok := processStartTime(os.Getpid()); !ok {
+		t.Skip("platform does not expose process start times")
+	}
 	vault := automationTestVault(t)
 	installCodexSleepShimForTest(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Identity", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
@@ -1117,27 +1120,36 @@ func TestFirstEventDeadlineInterruptsNeverStartedRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	daemon := &Daemon{stateRoot: stateRoot, store: store}
+	// This fixture verifies first-event watchdog behavior; process identity is
+	// supplied deterministically so the test does not depend on Darwin's
+	// optional kernel start-time probe.
+	daemon := &Daemon{stateRoot: stateRoot, store: store, processIdentityProbe: func(RunStatus) bool { return true }}
 
 	cmd := exec.Command("sleep", "30")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	// The watchdog's clock contract is independent of the host's process-start
+	// probe. The injected identity probe above establishes that this is still
+	// our live child; use an intentionally old recorded spawn time to exercise
+	// the no-first-event deadline deterministically on every supported Unix.
+	spawnedAt := time.Now().UTC().Add(-daemonFirstEventDeadline - time.Minute).Format(time.RFC3339)
 	run := RunStatus{
-		ProjectID:       "project-1",
-		RecordID:        "APP-T-0001",
-		ItemID:          "APP-T-0001",
-		Runner:          string(RunnerCodex),
-		Lane:            runLaneExecute,
-		LeaseState:      string(LeaseStateRunning),
-		AttemptOutcome:  string(AttemptOutcomeNone),
-		ActiveAttemptID: "attempt-1",
-		ProcessPID:      cmd.Process.Pid,
-		ProcessPGID:     processGroupID(cmd.Process.Pid),
-		AttemptCount:    1,
-		StartedAt:       time.Now().UTC().Add(-daemonFirstEventDeadline - time.Minute).Format(time.RFC3339),
-		UpdatedAt:       time.Now().UTC().Add(-daemonFirstEventDeadline - time.Minute).Format(time.RFC3339),
+		ProjectID:        "project-1",
+		RecordID:         "APP-T-0001",
+		ItemID:           "APP-T-0001",
+		Runner:           string(RunnerCodex),
+		Lane:             runLaneExecute,
+		LeaseState:       string(LeaseStateRunning),
+		AttemptOutcome:   string(AttemptOutcomeNone),
+		ActiveAttemptID:  "attempt-1",
+		ProcessPID:       cmd.Process.Pid,
+		ProcessPGID:      processGroupID(cmd.Process.Pid),
+		ProcessStartedAt: spawnedAt,
+		AttemptCount:     1,
+		StartedAt:        spawnedAt,
+		UpdatedAt:        spawnedAt,
 	}
 	defer killRunProcess(run)
 

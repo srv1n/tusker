@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,6 +20,21 @@ type vaultRootMigrationReport struct {
 	Warnings     []string `json:"warnings,omitempty"`
 	DryRun       bool     `json:"dry_run,omitempty"`
 }
+
+type vaultRootMigrationFile struct {
+	path    string
+	exists  bool
+	before  []byte
+	after   []byte
+	mode    os.FileMode
+	changed bool
+}
+
+var (
+	vaultRootMigrationRename = os.Rename
+	vaultRootMigrationRemove = os.Remove
+	vaultRootMigrationWrite  = writeVaultRootMigrationFile
+)
 
 func migrateVaultRootCmd(args Args) error {
 	if args.Bool("help") {
@@ -46,8 +62,12 @@ func migrateVaultRootCmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	if !isDiscoverableVaultDestination(repoRoot, destVault) {
+		return tuskerError(errorInvalidArg, fmt.Sprintf("destination is not a supported discoverable vault root: %s", destVault), withContext(map[string]any{"to": destVault, "supported": []string{defaultRepoVaultDir, legacyRepoVaultDir}}))
+	}
 	configRoot := relativeFromRepo(repoRoot, destVault)
-	configPath := filepath.Join(repoRoot, "tusker.yaml")
+	configPath := preferredTuskerConfigPath(sourceVault)
+	configMovesWithVault := samePath(configPath, managedTuskerConfigPath(sourceVault))
 	report := vaultRootMigrationReport{
 		From:   sourceVault,
 		To:     destVault,
@@ -69,28 +89,42 @@ func migrateVaultRootCmd(args Args) error {
 	if fileExists(destVault) || dirExists(destVault) {
 		return tuskerError(errorInvalidArg, fmt.Sprintf("destination already exists: %s", destVault), withContext(map[string]any{"to": destVault}))
 	}
+	if configMovesWithVault {
+		configPath = managedTuskerConfigPath(destVault)
+		report.Config = configPath
+	}
+	configSourcePath := configPath
+	if configMovesWithVault {
+		configSourcePath = managedTuskerConfigPath(sourceVault)
+	}
+	files, err := planVaultRootMigrationFiles(configSourcePath, configPath, configRoot, repoRoot)
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		if file.changed {
+			report.UpdatedFiles = append(report.UpdatedFiles, file.path)
+		}
+	}
 	if !report.DryRun {
-		if err := os.Rename(sourceVault, destVault); err != nil {
+		if err := vaultRootMigrationRename(sourceVault, destVault); err != nil {
 			return err
 		}
 		report.Moved = true
-		changed, err := patchTuskerStorageRoot(configPath, configRoot)
+		for _, file := range files {
+			if !file.changed {
+				continue
+			}
+			if err := vaultRootMigrationWrite(file.path, file.after, file.mode); err != nil {
+				return vaultRootMigrationFailure(err, sourceVault, destVault, files)
+			}
+		}
+		discovered, err := discoverVault(repoRoot)
 		if err != nil {
-			return err
+			return vaultRootMigrationFailure(err, sourceVault, destVault, files)
 		}
-		if changed {
-			report.UpdatedFiles = append(report.UpdatedFiles, configPath)
-		}
-		readmeLink := filepath.ToSlash(filepath.Join(configRoot, "README.md"))
-		for _, filename := range []string{"AGENTS.md", "CLAUDE.md"} {
-			path := filepath.Join(repoRoot, filename)
-			changed, err := upsertTuskerPointer(path, readmeLink)
-			if err != nil {
-				return err
-			}
-			if changed != "" {
-				report.UpdatedFiles = append(report.UpdatedFiles, path)
-			}
+		if !samePath(discovered, destVault) {
+			return vaultRootMigrationFailure(fmt.Errorf("post-migration discovery resolved %q, want %q", discovered, destVault), sourceVault, destVault, files)
 		}
 	}
 	if args.Bool("json") {
@@ -99,6 +133,152 @@ func migrateVaultRootCmd(args Args) error {
 	}
 	printVaultRootMigrationReport(report)
 	return nil
+}
+
+func isDiscoverableVaultDestination(repoRoot, destVault string) bool {
+	return samePath(destVault, filepath.Join(repoRoot, defaultRepoVaultDir)) ||
+		samePath(destVault, filepath.Join(repoRoot, legacyRepoVaultDir))
+}
+
+func planVaultRootMigrationFiles(configSourcePath, configPath, configRoot, repoRoot string) ([]vaultRootMigrationFile, error) {
+	config, err := planVaultRootMigrationConfig(configSourcePath, configPath, configRoot)
+	if err != nil {
+		return nil, err
+	}
+	files := []vaultRootMigrationFile{config}
+	readmeLink := filepath.ToSlash(filepath.Join(configRoot, "README.md"))
+	for _, filename := range []string{"AGENTS.md", "CLAUDE.md"} {
+		pointer, err := planVaultRootMigrationPointer(filepath.Join(repoRoot, filename), readmeLink)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, pointer)
+	}
+	return files, nil
+}
+
+func planVaultRootMigrationConfig(sourcePath, targetPath, root string) (vaultRootMigrationFile, error) {
+	file := vaultRootMigrationFile{path: targetPath, mode: 0o644}
+	info, err := os.Lstat(sourcePath)
+	if err != nil && !os.IsNotExist(err) {
+		return file, err
+	}
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return file, fmt.Errorf("refusing to migrate non-regular config file: %s", sourcePath)
+		}
+		file.exists = true
+		file.mode = info.Mode().Perm()
+		file.before, err = os.ReadFile(sourcePath)
+		if err != nil {
+			return file, err
+		}
+	}
+	file.after, err = patchedTuskerStorageRoot(file.before, root)
+	if err != nil {
+		return file, err
+	}
+	file.changed = !file.exists || string(file.before) != string(file.after)
+	return file, nil
+}
+
+func planVaultRootMigrationPointer(path, readmeLink string) (vaultRootMigrationFile, error) {
+	file := vaultRootMigrationFile{path: path, mode: 0o644}
+	info, err := os.Lstat(path)
+	if err != nil && !os.IsNotExist(err) {
+		return file, err
+	}
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return file, fmt.Errorf("refusing to migrate non-regular pointer file: %s", path)
+		}
+		file.exists = true
+		file.mode = info.Mode().Perm()
+		file.before, err = os.ReadFile(path)
+		if err != nil {
+			return file, err
+		}
+	}
+	block := renderTuskerPointerBlock(readmeLink)
+	current := string(file.before)
+	begin, end := strings.Index(current, tuskerPointerBegin), strings.Index(current, tuskerPointerEnd)
+	if begin != -1 && end != -1 && end > begin {
+		file.after = []byte(current[:begin] + block + current[end+len(tuskerPointerEnd):])
+	} else if !file.exists {
+		file.after = []byte(block + "\n")
+	} else {
+		file.after = []byte(strings.TrimRight(current, " \t\r\n") + "\n\n" + block + "\n")
+	}
+	file.changed = !file.exists || string(file.before) != string(file.after)
+	return file, nil
+}
+
+func vaultRootMigrationFailure(cause error, sourceVault, destVault string, files []vaultRootMigrationFile) error {
+	var rollbackErrs []error
+	for i := len(files) - 1; i >= 0; i-- {
+		file := files[i]
+		if !file.changed {
+			continue
+		}
+		if err := restoreVaultRootMigrationFile(file); err != nil {
+			rollbackErrs = append(rollbackErrs, err)
+		}
+	}
+	if err := vaultRootMigrationRename(destVault, sourceVault); err != nil {
+		rollbackErrs = append(rollbackErrs, fmt.Errorf("restore vault root: %w", err))
+	}
+	if rollback := errors.Join(rollbackErrs...); rollback != nil {
+		return fmt.Errorf("vault-root migration failed: %w", errors.Join(cause, fmt.Errorf("rollback failed: %w", rollback)))
+	}
+	return fmt.Errorf("vault-root migration failed and was rolled back: %w", cause)
+}
+
+func restoreVaultRootMigrationFile(file vaultRootMigrationFile) error {
+	if !file.exists {
+		if err := vaultRootMigrationRemove(file.path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", file.path, err)
+		}
+		return nil
+	}
+	if err := vaultRootMigrationWrite(file.path, file.before, file.mode); err != nil {
+		return fmt.Errorf("restore %s: %w", file.path, err)
+	}
+	return nil
+}
+
+func writeVaultRootMigrationFile(path string, content []byte, mode os.FileMode) error {
+	if err := ensureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(path), ".vault-root-migration-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	committed := false
+	defer func() {
+		_ = temp.Close()
+		if !committed {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if err := temp.Chmod(mode.Perm()); err != nil {
+		return err
+	}
+	if _, err := temp.Write(content); err != nil {
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := vaultRootMigrationRename(tempPath, path); err != nil {
+		return err
+	}
+	committed = true
+	return syncV7DocumentDirectory(filepath.Dir(path))
 }
 
 func printVaultRootMigrationReport(report vaultRootMigrationReport) {
@@ -121,20 +301,34 @@ func printVaultRootMigrationReport(report vaultRootMigrationReport) {
 }
 
 func patchTuskerStorageRoot(configPath, root string) (bool, error) {
-	root = filepath.ToSlash(strings.TrimSpace(root))
-	if root == "" {
-		root = defaultRepoVaultDir
-	}
 	before := ""
-	doc := yaml.Node{Kind: yaml.DocumentNode}
 	if fileExists(configPath) {
 		raw, err := readText(configPath)
 		if err != nil {
 			return false, err
 		}
 		before = raw
-		if err := yaml.Unmarshal([]byte(raw), &doc); err != nil {
-			return false, err
+	}
+	afterRaw, err := patchedTuskerStorageRoot([]byte(before), root)
+	if err != nil {
+		return false, err
+	}
+	after := string(afterRaw)
+	if before == after {
+		return false, nil
+	}
+	return true, writeText(configPath, after)
+}
+
+func patchedTuskerStorageRoot(before []byte, root string) ([]byte, error) {
+	root = filepath.ToSlash(strings.TrimSpace(root))
+	if root == "" {
+		root = defaultRepoVaultDir
+	}
+	doc := yaml.Node{Kind: yaml.DocumentNode}
+	if len(before) > 0 {
+		if err := yaml.Unmarshal(before, &doc); err != nil {
+			return nil, err
 		}
 	}
 	if len(doc.Content) == 0 {
@@ -154,13 +348,9 @@ func patchTuskerStorageRoot(configPath, root string) (bool, error) {
 	setYAMLScalar(storage, "attempts_root", filepath.ToSlash(filepath.Join(root, "attempts")))
 	raw, err := yaml.Marshal(&doc)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	after := string(raw)
-	if before == after {
-		return false, nil
-	}
-	return true, writeText(configPath, after)
+	return raw, nil
 }
 
 func ensureYAMLMap(parent *yaml.Node, key string) *yaml.Node {

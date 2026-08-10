@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -207,15 +206,14 @@ func runnerProfilesBootstrapCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(v7RepoRoot(vault), "tusker.yaml")
-	rawText, err := readText(path)
+	resolved, err := resolveTuskerConfig(vault)
 	if err != nil {
 		return err
 	}
-	var raw map[string]any
-	if err := yaml.Unmarshal([]byte(rawText), &raw); err != nil {
-		return err
-	}
+	// Bootstrap is a fresh managed write. Seed it with the effective legacy
+	// policy so creating config.yaml cannot erase a coexisting root config.
+	path := managedTuskerConfigPath(vault)
+	raw := cloneConfigRaw(resolved.Raw)
 	profiles := semanticBootstrapProfiles(discoverRunnerCatalog(args.Bool("bundled")))
 	automation := mapAny(raw["automation"])
 	if automation == nil {
@@ -223,6 +221,10 @@ func runnerProfilesBootstrapCmd(args Args) error {
 		raw["automation"] = automation
 	}
 	existing := mapAny(automation["profiles"])
+	profilesExplicitlyEmpty := false
+	if rawProfiles, present := automation["profiles"]; present {
+		profilesExplicitlyEmpty = mapAny(rawProfiles) != nil && len(mapAny(rawProfiles)) == 0
+	}
 	if existing == nil {
 		existing = map[string]any{}
 		automation["profiles"] = existing
@@ -243,6 +245,13 @@ func runnerProfilesBootstrapCmd(args Args) error {
 	if _, present := automation["default_profile"]; !present && hasBootstrapProfile(profiles, "execute-standard") {
 		automation["default_profile"] = "execute-standard"
 	}
+	// An explicit empty profile map is a deliberate project override that
+	// clears the built-in profiles.  Do not leave the inherited built-in
+	// default_profile pointing at a profile that no longer exists when the
+	// machine catalog cannot provide replacements.
+	if profilesExplicitlyEmpty && len(profiles) == 0 {
+		delete(automation, "default_profile")
+	}
 	automationEnabled := boolAny(automation["enabled"])
 	report := map[string]any{
 		"write":               args.Bool("write"),
@@ -260,7 +269,7 @@ func runnerProfilesBootstrapCmd(args Args) error {
 		if err != nil {
 			return err
 		}
-		if err := writeText(path, string(out)); err != nil {
+		if err := writeConfigTextAtomically(path, string(out)); err != nil {
 			return err
 		}
 	}
@@ -452,5 +461,5 @@ func printRunnerHelp() {
 
 Catalog observes installed harnesses without authentication or model launch. --bundled
 uses Tusker's explicit offline Codex fallback. Profiles previews an additive semantic
-profile bootstrap; --write updates tusker.yaml without enabling automation.`)
+profile bootstrap; --write updates the project config without enabling automation.`)
 }

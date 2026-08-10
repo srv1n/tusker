@@ -44,7 +44,13 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         webView.translatesAutoresizingMaskIntoConstraints = false
         webView.navigationDelegate = self
         webView.customUserAgent = "TuskerShell/\(config.appVersion)"
-        if #available(macOS 13.3, *) { webView.isInspectable = true }
+        if #available(macOS 13.3, *) {
+#if DEBUG
+            webView.isInspectable = true
+#else
+            webView.isInspectable = config.developerToolsEnabled
+#endif
+        }
         contentView.addSubview(webView)
         NSLayoutConstraint.activate([
             webView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),

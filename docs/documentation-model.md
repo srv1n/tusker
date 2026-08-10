@@ -5,6 +5,11 @@ description: "How Tusker lays out durable docs, why it uses Diátaxis as metadat
 
 # Tusker Documentation Model
 
+> **Historical V5/V6 publication reference.** V7 retains the documentation
+> freshness ideas, but `tusker docs export`, `docs dev`, and `docs build` are
+> retired surfaces. Current repositories must use their own publication
+> pipeline; the Makefile deliberately does not advertise those commands.
+
 Tusker treats documentation as part of the work system, not as a separate cleanup phase. A task can change code, behavior, workflow, or operator expectations. When it changes durable understanding, the task has to name the docs it affects and prove the docs impact was handled before close.
 
 That is the core idea:
@@ -213,8 +218,8 @@ The docs system is intentionally tucked under the existing `docs` command instea
 | `tusker docs apply <task> --node <node>` | Record that docs were applied. |
 | `tusker docs noop <task> --node <node>` | Record that the doc was checked and already correct. |
 | `tusker docs waive <task> <node> --reason "..."` | Record an explicit no-change decision. |
-| `tusker docs export` | Compile vault docs and registered repo docs into the site tree. |
-| `tusker docs build` | Export, then build the static site. |
+| `tusker docs export` | Retired V5/V6 surface; use the repository publication pipeline. |
+| `tusker docs build` | Retired V5/V6 surface; use the repository publication pipeline. |
 
 Every inspection command supports `--json` where machine output is useful.
 
@@ -288,8 +293,8 @@ When implementation changes docs behavior:
 5. Run `tusker docs check <TASK-ID>`.
 6. Apply, verify no-op, or waive every target node.
 7. Run `tusker reindex`.
-8. Run `tusker docs export --site ./site`.
-9. Run `tusker docs build --site ./site`.
+8. Run the repository-owned documentation export, if one exists.
+9. Run that publication pipeline's build and link checks.
 10. Run `tusker validate`.
 
 That looks like a lot written out. In practice it is mostly two commands at the end, and it prevents an entire class of stale-doc failures.

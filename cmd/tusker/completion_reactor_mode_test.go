@@ -109,7 +109,7 @@ func TestCompletionReactorModeFreshConfigAndDoctorWarningAreSideEffectFree(t *te
 	if err := writeDefaultRootTuskerConfig(vault); err != nil {
 		t.Fatal(err)
 	}
-	configPath := filepath.Join(root, "tusker.yaml")
+	configPath := managedTuskerConfigPath(vault)
 	config, err := readText(configPath)
 	if err != nil {
 		t.Fatal(err)

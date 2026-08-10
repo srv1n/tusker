@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -20,12 +19,23 @@ func migrateClosePolicyCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	report := closePolicyMigrationReport{WorkflowPath: workflowPath(vaultPath), ConfigPath: filepath.Join(filepath.Dir(vaultPath), "tusker.yaml"), Write: args.Bool("write")}
+	// Migration is a managed write seeded from the full effective document. A
+	// root-level compatibility file stays readable and untouched; it cannot be
+	// silently rewritten or become a second authority source.
+	resolved, err := resolveTuskerConfig(vaultPath)
+	if err != nil {
+		return err
+	}
+	configRaw, err := yaml.Marshal(resolved.Raw)
+	if err != nil {
+		return err
+	}
+	report := closePolicyMigrationReport{WorkflowPath: workflowPath(vaultPath), ConfigPath: managedTuskerConfigPath(vaultPath), Write: args.Bool("write")}
 	workflowChanged, workflowText, err := migratedObjectiveWorkflow(report.WorkflowPath)
 	if err != nil {
 		return err
 	}
-	configChanged, configText, err := migratedObjectiveCloseConfig(report.ConfigPath)
+	configChanged, configText, err := migratedObjectiveCloseConfigText(string(configRaw), report.ConfigPath)
 	if err != nil {
 		return err
 	}
@@ -42,7 +52,7 @@ func migrateClosePolicyCmd(args Args) error {
 			}
 		}
 		if configChanged {
-			if err := writeText(report.ConfigPath, configText); err != nil {
+			if err := writeConfigTextAtomically(report.ConfigPath, configText); err != nil {
 				return err
 			}
 		}
@@ -107,9 +117,13 @@ func migratedObjectiveCloseConfig(path string) (bool, string, error) {
 	if err != nil {
 		return false, "", err
 	}
+	return migratedObjectiveCloseConfigText(text, path)
+}
+
+func migratedObjectiveCloseConfigText(text, path string) (bool, string, error) {
 	var data map[string]any
 	if err := yaml.Unmarshal([]byte(text), &data); err != nil {
-		return false, "", tuskerError(errorConfigInvalid, "failed to parse tusker.yaml close_policy: "+err.Error(), withPath(path))
+		return false, "", tuskerError(errorConfigInvalid, "failed to parse project config close_policy: "+err.Error(), withPath(path))
 	}
 	closePolicy, ok := data["close_policy"].(map[string]any)
 	if !ok || closePolicy == nil {

@@ -6,6 +6,9 @@
 
 | Task | Wave | Risk | Next action |
 |---|---|---|---|
+| [[SGC-T-0001]] |  | medium | Review evidence and close or return to rework. |
+| [[SGC-T-0002]] |  | low | Review evidence and close or return to rework. |
+| [[SGC-T-0003]] |  | low | Review evidence and close or return to rework. |
 | [[SRV-T-0002]] |  | medium | Review evidence and close or return to rework. |
 | [[SRV-T-0003]] |  | low | Review evidence and close or return to rework. |
 | [[SRV-T-0004]] |  | low | Review evidence and close or return to rework. |

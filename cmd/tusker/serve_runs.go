@@ -21,13 +21,24 @@ func serveRunHistory(s *serveServer, snap serveSnapshot, taskID string) []serveR
 }
 
 func (s *serveServer) runSummary(snap serveSnapshot, run RunStatus) serveRunSummary {
+	result, _ := s.runSummaryChecked(snap, run)
+	return result
+}
+
+func (s *serveServer) runSummaryChecked(snap serveSnapshot, run RunStatus) (serveRunSummary, error) {
 	taskID := firstNonEmpty(run.ItemID, run.RecordID)
 	taskTitle := taskID
 	if task, ok := snap.notesByID[taskID]; ok {
 		taskTitle = firstNonEmpty(stringField(task.Data, "title"), taskID)
 	}
-	turns, _ := s.store.ListTurnsForRun(run.ProjectID, run.RecordID)
-	identity, _ := s.store.RunIdentity(run.ProjectID, run.RecordID)
+	turns, _, err := s.store.ListTurnsForRunPage(run.ProjectID, run.RecordID, 200)
+	if err != nil {
+		return serveRunSummary{}, err
+	}
+	identity, err := s.store.RunIdentity(run.ProjectID, run.RecordID)
+	if err != nil {
+		return serveRunSummary{}, err
+	}
 	workspacePath, workspaceMode := run.WorkspacePath, "shared"
 	if identity != nil {
 		workspacePath, workspaceMode = identity.WorkspacePath, identity.WorkspaceMode
@@ -59,7 +70,7 @@ func (s *serveServer) runSummary(snap serveSnapshot, run RunStatus) serveRunSumm
 		WorkspaceMode:     workspaceMode,
 		StartedAt:         run.StartedAt,
 		UpdatedAt:         run.UpdatedAt,
-	}
+	}, nil
 }
 
 func serveFindRun(runs []RunStatus, id string) (RunStatus, bool) {

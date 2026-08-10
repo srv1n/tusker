@@ -500,6 +500,8 @@ func runInner(command string, args Args) (int, error) {
 		return validateCmd(args)
 	case "purge":
 		return 0, tuskerPurgeCmd(args)
+	case "gc":
+		return 0, scratchGCCmd(args)
 	case "list":
 		return 0, listCmd(args)
 	case "search":
@@ -979,7 +981,8 @@ func printHelp() {
 
 Vault discovery: if [--vault] is omitted, tusker walks up from the current
 working directory looking for a repo-local .tusker/ vault. V7 markers include
-tusker.yaml, .tusker/work, and .tusker/knowledge/domains.
+.tusker/config.yaml, .tusker/work, and .tusker/knowledge/domains. Root-level
+tusker.yaml is accepted only for compatibility with existing repositories.
 
 Start here:
   tusker init --yes
@@ -1034,6 +1037,7 @@ Commands:
   refresh             run one daemon poll tick
   install             install binary and skill bundles
   purge               dry-run or remove generated Tusker repo state
+  gc                  sweep stale entries out of .tusker/scratch
   close               close a V7 task after gates and evidence pass
   accept              accept, confirm proof, and close a green task in one step
   validate            check vault invariants
@@ -1061,6 +1065,7 @@ Help:
   tusker status --help
   tusker install --help
   tusker purge --help
+  tusker gc --help
   tusker gate --help
   tusker feedback --help
   tusker improve --help
@@ -1128,6 +1133,8 @@ func printCommandHelp(command string) bool {
 		printValidateHelp()
 	case "purge":
 		printPurgeHelp()
+	case "gc":
+		printGCHelp()
 	case "reindex":
 		printReindexHelp()
 	case "docs", "docs init", "docs model", "docs map", "docs catalog", "docs freshness", "docs check", "docs apply", "docs noop", "docs waive", "docs export", "docs dev", "docs build":
@@ -1295,6 +1302,8 @@ func printV7Help() {
   tusker delivery doctor --plan .tusker/scratch/delivery-plan.yaml --json
   tusker delivery rollout doctor --json
   tusker delivery rollout repair --dry-run --json
+  # .tusker/scratch/ is ephemeral: reaped at task close, swept by 'tusker gc'
+  # after 14 days. Promote anything durable to evidence first.
 
   tusker gate list --open [--owner human:sarav]
   tusker gate satisfy HSP-G-0001 --evidence "Provider endpoint returned ready."
@@ -1370,7 +1379,7 @@ func printMigrateVaultRootHelp() {
   tusker migrate vault-root --to .tusker [--vault <path>] [--dry-run] [--json]
 
 Purpose:
-  Explicitly move a repo-local Tusker vault, update tusker.yaml storage roots,
+  Explicitly move a repo-local Tusker vault, update .tusker/config.yaml storage roots,
   and refresh managed AGENTS.md / CLAUDE.md pointer blocks.
 
 Behavior:
@@ -1722,7 +1731,12 @@ func printEvidenceHelp() {
   tusker evidence prune <task-id> --dry-run
 
 Purpose:
-  Add, promote, or prune V7 evidence records. For inline proof, prefer tusker verify add.`)
+  Add, promote, or prune V7 evidence records. For inline proof, prefer tusker verify add.
+
+Scratch retention:
+  .tusker/scratch/ is raw exhaust and is not durable: scratch/<task-id>/ is
+  deleted when the task closes, and 'tusker gc' sweeps anything older than 14
+  days. Promote anything worth keeping to evidence before close.`)
 }
 
 func printVerifyHelp() {

@@ -76,9 +76,10 @@ describe("TaskContract editor surface", () => {
     expect(source).not.toContain("<textarea");
   });
 
-  test("starts editing from the prose click target, not an Edit button", () => {
-    expect(source).toContain("onMouseDown={startFromPointer}");
-    expect(source).toContain("ed.startEdit()");
+  test("renders task prose explicitly read-only until durable save exists", () => {
+    expect(source).toContain("Task contract prose is read-only here");
+    expect(source).toContain("editable={false}");
+    expect(source).not.toContain("ed.startEdit()");
     expect(source).not.toContain(">Edit<");
   });
 

@@ -972,7 +972,11 @@ automation:
 	if cfg.Delivery {
 		config += "  validation:\n    commands:\n      - test -s docs/specs/delivery.md && test -d artifacts/delivery\n"
 	}
-	h.writeFile(filepath.Join(h.repoDir, "tusker.yaml"), config)
+	// Crash-recovery is exercising daemon/process durability, not the legacy
+	// config compatibility reader. Write the authoritative managed config so
+	// the init-generated automation.enabled=false layer cannot mask the fixture's
+	// explicit dispatch authority and runner command.
+	h.writeFile(filepath.Join(h.vaultDir, "config.yaml"), config)
 
 	workflow := h.readFile(filepath.Join(h.vaultDir, "WORKFLOW.md"))
 	// The harness deliberately exercises daemon crash recovery. Keep the local

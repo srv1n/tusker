@@ -16,6 +16,7 @@ import { GeneralSection } from "./app/GeneralSection";
 import { ProfilesSection } from "./app/ProfilesSection";
 import { PermissionsSection } from "./app/PermissionsSection";
 import { NotificationsSection } from "./app/NotificationsSection";
+import { useServeCapabilities } from "@/lib/queries";
 
 type AppTab = "general" | "profiles" | "permissions" | "notifications";
 
@@ -57,6 +58,8 @@ function SectionTabs({ value, onChange }: { value: AppTab; onChange: (t: AppTab)
 
 export function AppSettings() {
   const [tab, setTab] = useState<AppTab>("general");
+  const capabilities = useServeCapabilities();
+  const unavailable = capabilities.data?.capabilities.find((c) => c.id === "profiles" && c.class === "unavailable");
 
   return (
     <div className="tk-scroll h-full overflow-y-auto">
@@ -68,6 +71,11 @@ export function AppSettings() {
         </p>
 
         <SectionTabs value={tab} onChange={setTab} />
+        {unavailable && tab === "profiles" && (
+          <p role="status" className="mb-4 rounded-lg border border-warn/30 bg-warn-soft px-3 py-2 text-[12px] text-warn">
+            Runner profiles are reference-only in this Serve version. {unavailable.description}
+          </p>
+        )}
 
         {tab === "general" && <GeneralSection />}
         {tab === "profiles" && <ProfilesSection />}

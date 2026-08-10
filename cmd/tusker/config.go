@@ -1,17 +1,72 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
+const hookOutputLimit = 64 << 10
+
+var (
+	// Values may be quoted or contain spaces. Stop unquoted values only at a
+	// structural delimiter/newline so `token: secret value` cannot leak its
+	// suffix after redacting the first word.
+	hookSecretPattern      = regexp.MustCompile(`(?i)(["']?)(token|secret|password|api[_-]?key|authorization|capability)\b(["']?)(\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\r\n,;}]+)`)
+	hookQuerySecretPattern = regexp.MustCompile(`(?i)([?&](?:access_token|token|api[_-]?key|secret|password|capability)=)[^&#\s]+`)
+	hookBearerPattern      = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`)
+	hookKnownTokenPattern  = regexp.MustCompile(`(?i)\b(?:ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{16,})\b`)
+)
+
+func redactHookOutput(text string) string {
+	text = hookSecretPattern.ReplaceAllString(text, `$1$2$3$4[REDACTED]`)
+	text = hookQuerySecretPattern.ReplaceAllString(text, `$1[REDACTED]`)
+	text = hookBearerPattern.ReplaceAllString(text, `Bearer [REDACTED]`)
+	return hookKnownTokenPattern.ReplaceAllString(text, `[REDACTED]`)
+}
+
+type boundedHookOutput struct {
+	mu        sync.Mutex
+	buf       bytes.Buffer
+	truncated bool
+}
+
+func (w *boundedHookOutput) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	remaining := hookOutputLimit - w.buf.Len()
+	if remaining <= 0 {
+		w.truncated = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		_, _ = w.buf.Write(p[:remaining])
+		w.truncated = true
+		return len(p), nil
+	}
+	_, _ = w.buf.Write(p)
+	return len(p), nil
+}
+
+func (w *boundedHookOutput) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	text := redactHookOutput(w.buf.String())
+	if w.truncated {
+		text += "\n[hook output truncated]"
+	}
+	return text
+}
+
 func writeDefaultConfig(vaultPath string) error {
-	// V7 stores workflow policy in WORKFLOW.md and tusker.yaml. Do not create
+	// V7 stores workflow policy in WORKFLOW.md and .tusker/config.yaml. Do not create
 	// legacy _system/config.yaml during normal init; that file is only read for
 	// explicit legacy/migration flows.
 	return writeDefaultWorkflow(vaultPath)
@@ -153,8 +208,10 @@ func runHooks(event string, config Config, vaultPath, id, actor, dispatchState s
 	timeout := time.Duration(config.HookTimeoutSeconds) * time.Second
 	for _, command := range commands {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		defer cancel()
 		cmd := exec.CommandContext(ctx, "sh", "-c", command)
+		output := &boundedHookOutput{}
+		cmd.Stdout = output
+		cmd.Stderr = output
 		cmd.Env = append(os.Environ(),
 			"TUSKER_VAULT="+vaultPath,
 			"TUSKER_EVENT="+event,
@@ -162,12 +219,13 @@ func runHooks(event string, config Config, vaultPath, id, actor, dispatchState s
 			"TUSKER_ACTOR="+actor,
 			"TUSKER_DISPATCH_STATE="+dispatchState,
 		)
-		output, err := cmd.CombinedOutput()
+		err := cmd.Run()
+		cancel()
 		if ctx.Err() == context.DeadlineExceeded {
-			return tuskerError(errorHookTimeout, fmt.Sprintf("hook timed out after %ds: %s", config.HookTimeoutSeconds, command), withContext(map[string]any{"event": event, "command": command, "stdout": string(output)}))
+			return tuskerError(errorHookTimeout, fmt.Sprintf("hook timed out after %ds", config.HookTimeoutSeconds), withContext(map[string]any{"event": event, "output": output.String()}))
 		}
 		if err != nil {
-			return tuskerError(errorHookFailed, fmt.Sprintf("hook failed: %s", command), withContext(map[string]any{"event": event, "command": command, "output": string(output)}))
+			return tuskerError(errorHookFailed, "hook failed", withContext(map[string]any{"event": event, "output": output.String()}))
 		}
 	}
 	return nil

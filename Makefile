@@ -7,8 +7,9 @@ BIN_DIR ?= $(HOME)/.local/bin
 MAC_APP_DIR ?= $(HOME)/Applications
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 RELEASE_VERSION ?= $(VERSION)
-RELEASES_DIR := $(DIST_DIR)/releases/$(RELEASE_VERSION)
+export RELEASE_VERSION
 RELEASE_MATRIX ?= darwin/arm64 darwin/amd64 linux/arm64 linux/amd64
+export RELEASE_MATRIX
 SHA256_CMD := $(shell if command -v shasum >/dev/null 2>&1; then echo "shasum -a 256"; elif command -v sha256sum >/dev/null 2>&1; then echo "sha256sum"; fi)
 GREEN := \033[32m
 RESET := \033[0m
@@ -20,7 +21,7 @@ VALIDATION_GATE := sh scripts/with-validation-lock.sh --
 .DEFAULT_GOAL := help
 
 .NOTPARALLEL: check-unlocked ui-check-unlocked
-.PHONY: help build build-go build-go-unlocked mac-app mac-install mac-uninstall mac-open mac-preview ui-install ui-test ui-build ui-check ui-check-unlocked fmt fmt-check test test-unlocked vet vet-unlocked validate validate-unlocked check check-unlocked skill-doctor install install-bin install-user install-repo sync-repo-contract release-artifacts tag-release docs-export docs-dev docs-build docs-check codebasezip codebase zip
+.PHONY: help build build-go build-go-unlocked require-macos mac-app mac-install mac-uninstall mac-open mac-preview ui-install ui-test ui-build ui-check ui-check-unlocked fmt fmt-check test test-unlocked vet vet-unlocked validate validate-unlocked check check-unlocked release-test skill-doctor install install-cli install-bin install-user install-repo sync-repo-contract release-artifacts tag-release codebasezip codebase zip
 
 help: ## Show available make targets
 	@awk 'BEGIN {FS = ":.*## "}; /^[a-zA-Z0-9_.-]+:.*## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -41,19 +42,22 @@ build-go-unlocked:
 		done; \
 	fi
 
-mac-app: build ## Build and sign TuskerBar with the current embedded CLI/Serve runtime
+require-macos:
+	@test "$$(uname -s)" = "Darwin" || (echo "This target requires macOS." >&2; exit 1)
+
+mac-app: require-macos build ## Build and sign TuskerBar with the current embedded CLI/Serve runtime
 	apps/mac/TuskerBar/scripts/build-app.sh
 
 mac-install: mac-app ## Install TuskerBar in ~/Applications (override with MAC_APP_DIR=...)
 	MAC_APP_DIR="$(MAC_APP_DIR)" apps/mac/TuskerBar/scripts/install-app.sh
 
-mac-uninstall: ## Remove TuskerBar from ~/Applications
+mac-uninstall: require-macos ## Remove TuskerBar from ~/Applications
 	MAC_APP_DIR="$(MAC_APP_DIR)" apps/mac/TuskerBar/scripts/uninstall-app.sh
 
-mac-open: ## Open the installed TuskerBar app
+mac-open: require-macos ## Open the installed TuskerBar app
 	open "$(MAC_APP_DIR)/TuskerBar.app"
 
-mac-preview: install ## Build, install, and open the self-starting Tusker Mac app
+mac-preview: install-user mac-install ## Install the CLI/skills and build, install, and open TuskerBar
 	@echo "Tusker is open; the app starts or reuses its bundled daemon automatically."
 
 ui-install: ## Install the pinned Serve UI dependency graph
@@ -110,17 +114,23 @@ check: ## Run the serialized UI + Go release-candidate gate
 	$(VALIDATION_GATE) $(MAKE) check-unlocked
 
 check-unlocked: ui-check-unlocked
-	$(MAKE) fmt-check test-unlocked vet-unlocked validate-unlocked build-go-unlocked
+	$(MAKE) fmt-check test-unlocked vet-unlocked validate-unlocked release-test build-go-unlocked
+
+release-test: ## Run offline release/install integrity fixtures
+	@set -eu; for test_script in scripts/tests/test-release-*.sh scripts/tests/test-mac-atomic-swap.sh; do sh "$$test_script"; done
 
 install-bin: build ## Build/install binary and refresh existing root user skills
 	./"$(DIST_BIN)" update --bin-dir "$(BIN_DIR)"
 	@printf "$(GREEN)OK install-bin complete$(RESET)\n"
 
+install-cli: install-bin ## Alias for the cross-platform CLI install
+	@:
+
 install-user: build ## Build and install binary + Codex/Claude user skills
 	./"$(DIST_BIN)" install --codex-user --claude-user --bin-dir "$(BIN_DIR)" --force
 	@printf "$(GREEN)OK install-user complete$(RESET)\n"
 
-install: install-user mac-install ## Install the CLI/skills and the TuskerBar app
+install: install-user ## Install the cross-platform CLI and Codex/Claude user skills
 	@printf "$(GREEN)OK install complete$(RESET)\n"
 
 install-repo: build ## Install repo-local skills into REPO=/abs/path
@@ -132,48 +142,19 @@ sync-repo-contract: build ## Sync repo helper docs into REPO=/abs/path
 	@test -n "$(REPO)" || (echo "REPO is required: make sync-repo-contract REPO=/abs/path/to/repo" >&2; exit 1)
 	./"$(DIST_BIN)" sync-repo-contract --repo "$(REPO)"
 
-release-artifacts: build ## Build tar.gz release artifacts under dist/releases/$(RELEASE_VERSION)
-	@test -n "$(SHA256_CMD)" || (echo "Need shasum or sha256sum on PATH" >&2; exit 1)
-	@rm -rf "$(RELEASES_DIR)"
-	@mkdir -p "$(RELEASES_DIR)"
-	@set -e; \
-	for target in $(RELEASE_MATRIX); do \
-		GOOS=$${target%/*}; \
-		GOARCH=$${target#*/}; \
-		STEM="$(BIN_NAME)_$(RELEASE_VERSION)_$${GOOS}_$${GOARCH}"; \
-		STAGE="$(RELEASES_DIR)/$$STEM"; \
-		EXT=""; \
-		if [ "$$GOOS" = "windows" ]; then EXT=".exe"; fi; \
-		mkdir -p "$$STAGE"; \
-		CGO_ENABLED=0 GOOS=$$GOOS GOARCH=$$GOARCH go build -ldflags "-X main.buildVersion=$(RELEASE_VERSION)" -o "$$STAGE/$(BIN_NAME)$$EXT" "$(CMD_DIR)"; \
-		cp README.md LICENSE "$$STAGE"/; \
-		tar -C "$(RELEASES_DIR)" -czf "$(RELEASES_DIR)/$$STEM.tar.gz" "$$STEM"; \
-		rm -rf "$$STAGE"; \
-		printf "built %s\n" "$$STEM.tar.gz"; \
-	done
-	@cd "$(RELEASES_DIR)" && $(SHA256_CMD) *.tar.gz > checksums.txt
-	@printf "release artifacts: %s\n" "$(RELEASES_DIR)"
+release-artifacts: ## Build signed reproducible release artifacts from a clean trusted tag
+	@scripts/release-build.sh
 
 tag-release: ## Create annotated git tag RELEASE_VERSION=vX.Y.Z (does not push)
-	@test -n "$(RELEASE_VERSION)" || (echo "RELEASE_VERSION is required, e.g. make tag-release RELEASE_VERSION=v0.1.0" >&2; exit 1)
+	@ scripts/release-validate.sh --check-only
 	@git rev-parse --is-inside-work-tree >/dev/null 2>&1 || (echo "Not inside a git worktree" >&2; exit 1)
-	@git rev-parse "$(RELEASE_VERSION)" >/dev/null 2>&1 && (echo "Tag $(RELEASE_VERSION) already exists" >&2; exit 1) || true
-	git tag -a "$(RELEASE_VERSION)" -m "Release $(RELEASE_VERSION)"
-	@printf "created local tag %s\n" "$(RELEASE_VERSION)"
-	@printf "next: git push origin %s\n" "$(RELEASE_VERSION)"
-
-docs-export: build ## Reindex/export published docs into the local site
-	./"$(DIST_BIN)" docs export --site ./site
-
-docs-dev: build ## Run the docs export and start the local docs dev server
-	./"$(DIST_BIN)" docs dev --site ./site --watch
-
-docs-build: build ## Export docs and build the static docs site
-	./"$(DIST_BIN)" docs build --site ./site
-
-docs-check: build ## Validate the vault and build the docs pipeline end-to-end
-	./"$(DIST_BIN)" validate
-	./"$(DIST_BIN)" docs build --site ./site
+	@git rev-parse "$${RELEASE_VERSION}" >/dev/null 2>&1 && (echo "Tag $${RELEASE_VERSION} already exists" >&2; exit 1) || true
+	@test -f scripts/release-tag-signer.asc || (echo "scripts/release-tag-signer.asc is required" >&2; exit 1)
+	@test -n "$${RELEASE_TRUSTED_TAG_SIGNER:-}" || (echo "RELEASE_TRUSTED_TAG_SIGNER is required" >&2; exit 1)
+	git tag -s "$${RELEASE_VERSION}" -m "Release $${RELEASE_VERSION}"
+	@RELEASE_TRUSTED_TAG_SIGNER="$${RELEASE_TRUSTED_TAG_SIGNER}" scripts/release-verify-tag.sh "$${RELEASE_VERSION}"
+	@printf "created local tag %s\n" "$${RELEASE_VERSION}"
+	@printf "next: git push origin %s\n" "$${RELEASE_VERSION}"
 
 ARTIFACTS_DIR ?= artifacts
 CODEBASEZIP_NAME ?= tusker-codebase-$(shell date -u +%Y%m%dT%H%M%SZ).zip
@@ -185,74 +166,27 @@ codebase: codebasezip ## Alias for codebasezip
 zip: codebasezip ## Alias for codebasezip
 	@:
 
-codebasezip: ## Zip reviewable repository files into ARTIFACTS_DIR
+codebasezip: ## Zip source and build/config files only into ARTIFACTS_DIR
 	@mkdir -p "$(ARTIFACTS_DIR)"
 	@tmp_list=$$(mktemp); \
-	find . \
-		\( \
-			-path './.git' -o \
-			-path './.tools' -o \
-			-path './.tusker/events' -o \
-			-path './.tusker/attempts' -o \
-			-path './.tusker/_generated' -o \
-			-path './.tusker/_runtime' -o \
-			-path './.tusker/scratch' -o \
-			-path './.tusker/workspaces' -o \
-			-path './.tusker-runtime' -o \
-			-path './.tusker-state' -o \
-			-path './.tusker-worktrees' -o \
-			-path './artifacts' -o \
-			-path './build' -o \
-			-path './coverage' -o \
-			-path './dist' -o \
-			-path './node_modules' -o \
-			-path './out' -o \
-			-path './site/.astro' -o \
-			-path './site/dist' -o \
-			-path './site/node_modules' -o \
-			-path './tmp' -o \
-			-path './tusker/.tusker' -o \
-			-path './tusker/events' -o \
-			-path './tusker/attempts' -o \
-			-path './tusker/_generated' -o \
-			-path './tusker/evidence/*/artifacts' -o \
-			-path './.tusker/evidence/*/artifacts' -o \
-			-path './vendor' -o \
-			-name 'node_modules' -o \
-			-name 'dist' -o \
-			-name '.vite' -o \
-			-name '.astro' -o \
-			-name '.cache' -o \
-			-name '.turbo' -o \
-			-name '.next' -o \
-			-name '.svelte-kit' \
-		\) -prune -o \
-		-type f \
-		! -name '.DS_Store' \
-		! -name '*.bin' \
-		! -name '*.dmg' \
-		! -name '*.exe' \
-		! -name '*.log' \
-		! -name '*.mov' \
-		! -name '*.mp4' \
-		! -name '*.out' \
-		! -name '*.pkg' \
-		! -name '*.prof' \
-		! -name '*.tar' \
-		! -name '*.tar.gz' \
-		! -name '*.tgz' \
-		! -name '*.webm' \
-		! -name '*.zip' \
-		-print | sed 's#^\./##' | sort > "$$tmp_list"; \
+	trap 'rm -f "$$tmp_list"' EXIT HUP INT TERM; \
+	git ls-files --cached --others --exclude-standard | \
+	while IFS= read -r file; do \
+		[ -f "$$file" ] || continue; \
+		case "$$file" in \
+			.git/*|.tools/*|.tusker/*|.chatgpt-handoff/*|.tusker-build/*|.tusker-runtime/*|.tusker-state/*|.tusker-worktrees/*|artifacts/*|architect/*|docs/*|feedback/*|research/*|uploads/*|vendor/*|*/node_modules/*|*/.build/*|*/build/*|*/coverage/*|*/dist/*|*/out/*|*/.vite/*|*/.astro/*|*/.cache/*|*/.turbo/*|*/.next/*|*/.svelte-kit/*) continue ;; \
+		esac; \
+		case "$$file" in \
+			Makefile|*/Makefile|Dockerfile|*/Dockerfile|Justfile|*/Justfile|go.mod|*/go.mod|go.sum|*/go.sum|package.json|*/package.json|bun.lock|*/bun.lock|Package.swift|*/Package.swift|Package.resolved|*/Package.resolved|Cargo.toml|*/Cargo.toml|Cargo.lock|*/Cargo.lock|*.go|*.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.css|*.scss|*.html|*.swift|*.c|*.h|*.m|*.mm|*.sh|*.bash|*.zsh|*.py|*.rs|*.sql|*.proto|*.graphql|*.gql|*.svg|*.json|*.toml|*.yaml|*.yml|*.plist|*.entitlements|*.mk|*.env.example) printf '%s\n' "$$file" ;; \
+		esac; \
+	done | LC_ALL=C sort -u > "$$tmp_list"; \
 	if [ ! -s "$$tmp_list" ]; then \
-		rm -f "$$tmp_list"; \
 		echo "No files matched the codebase archive filter." >&2; \
 		exit 1; \
 	fi; \
 	rm -f "$(CODEBASEZIP_PATH)"; \
 	zip -q -r -D "$(CODEBASEZIP_PATH)" -@ < "$$tmp_list"; \
 	file_count=$$(wc -l < "$$tmp_list" | tr -d ' '); \
-	rm -f "$$tmp_list"; \
 	echo "Created $(CODEBASEZIP_PATH) ($$file_count files)"; \
 	if [ "$${CI:-}" != "true" ] && command -v open >/dev/null 2>&1; then \
 		open "$(ARTIFACTS_DIR)" >/dev/null 2>&1 || true; \

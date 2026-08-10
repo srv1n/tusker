@@ -22,6 +22,12 @@ const validationLockHeldEnv = "TUSKER_VALIDATION_LOCK_HELD"
 var validationTestLockRetireHook func(string) error
 
 func TestMain(m *testing.M) {
+	// Keep ordinary daemon fixtures independent of the developer machine's
+	// free-space budget. Dedicated disk-pressure tests inject d.diskStat and
+	// therefore still exercise the real refusal/recovery paths.
+	runtimeDiskStat = func(string) (diskFilesystemStat, error) {
+		return diskFilesystemStat{Blocks: 100, AvailableBlocks: 90, BlockSize: 1 << 30}, nil
+	}
 	switch os.Getenv("TUSKER_V7_PIPE_HOLDER") {
 	case "parent":
 		child := exec.Command(os.Args[0])
@@ -43,27 +49,52 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "cmd/tusker test suite: create isolated state root: %v\n", err)
 		os.Exit(1)
 	}
-	defer os.RemoveAll(stateRoot)
 	if err := os.Setenv("TUSKER_STATE_ROOT", stateRoot); err != nil {
 		fmt.Fprintf(os.Stderr, "cmd/tusker test suite: isolate state root: %v\n", err)
+		_ = os.RemoveAll(stateRoot)
 		os.Exit(1)
+	}
+	// Repository fixtures must not inherit developer-machine hooks, signing
+	// requirements, credential helpers, or interactive prompts. Those settings
+	// made otherwise deterministic git commits execute the host Tusker hook and
+	// fail because the temporary repository intentionally has no vault.
+	for key, value := range map[string]string{
+		"GIT_CONFIG_GLOBAL":   os.DevNull,
+		"GIT_CONFIG_SYSTEM":   os.DevNull,
+		"GIT_TERMINAL_PROMPT": "0",
+		"GCM_INTERACTIVE":     "Never",
+	} {
+		if err := os.Setenv(key, value); err != nil {
+			fmt.Fprintf(os.Stderr, "cmd/tusker test suite: isolate git setting %s: %v\n", key, err)
+			_ = os.RemoveAll(stateRoot)
+			os.Exit(1)
+		}
 	}
 
 	cleanupNotifications, err := installEscalationTestNotifications()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cmd/tusker test suite: configure escalation notifications: %v\n", err)
+		_ = os.RemoveAll(stateRoot)
 		os.Exit(1)
 	}
 
 	if os.Getenv(validationLockHeldEnv) != "" {
 		code := m.Run()
 		cleanupNotifications()
+		if err := os.RemoveAll(stateRoot); err != nil {
+			fmt.Fprintf(os.Stderr, "cmd/tusker test suite: remove isolated state root: %v\n", err)
+			if code == 0 {
+				code = 1
+			}
+		}
 		os.Exit(code)
 	}
 
 	release, err := acquireValidationTestLock()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cmd/tusker test suite: %v\n", err)
+		cleanupNotifications()
+		_ = os.RemoveAll(stateRoot)
 		os.Exit(1)
 	}
 	stopSignalCleanup := installValidationTestLockSignalCleanup(release)
@@ -76,6 +107,12 @@ func TestMain(m *testing.M) {
 	}
 	stopSignalCleanup()
 	cleanupNotifications()
+	if err := os.RemoveAll(stateRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "cmd/tusker test suite: remove isolated state root: %v\n", err)
+		if code == 0 {
+			code = 1
+		}
+	}
 	os.Exit(code)
 }
 

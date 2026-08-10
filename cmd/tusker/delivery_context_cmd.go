@@ -304,7 +304,7 @@ func buildDeliveryPlanningContextForScope(vault, specArg, excludedPlanScope stri
 	if projectErr != nil {
 		projectID = "unknown"
 		report.Unknowns = append(report.Unknowns, deliveryContextUnknownFact(
-			"project", "project.id", "project identity is not configured", "set project_id in tusker.yaml", configProvenance,
+			"project", "project.id", "project identity is not configured", "set project_id in .tusker/config.yaml", configProvenance,
 		))
 	}
 	report.Project = deliveryContextProject{ID: projectID, RepoRef: ".", VaultRef: ".tusker", Provenance: configProvenance}
@@ -1483,8 +1483,10 @@ func deliveryContextConfigProvenance(vault string) []deliveryContextProvenance {
 		path, ref, kind string
 	}{
 		{filepath.Join(vault, "WORKFLOW.md"), ".tusker/WORKFLOW.md", "workflow"},
-		{filepath.Join(repo, "tusker.yaml"), "tusker.yaml", "project_config"},
-		{filepath.Join(repo, "tusker.local.yaml"), "tusker.local.yaml", "project_local_config"},
+		{managedTuskerConfigPath(vault), ".tusker/config.yaml", "project_config"},
+		{managedTuskerLocalConfigPath(vault), ".tusker/config.local.yaml", "project_local_config"},
+		{legacyTuskerConfigPath(repo), "tusker.yaml", "legacy_project_config"},
+		{legacyTuskerLocalConfigPath(repo), "tusker.local.yaml", "legacy_project_local_config"},
 	}
 	out := []deliveryContextProvenance{}
 	for _, candidate := range candidates {

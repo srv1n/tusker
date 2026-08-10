@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 type runnerExecRequest struct {
@@ -147,16 +149,15 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 		shellExecutable = "/bin/sh"
 		shellFlag = "-c"
 	}
-	script := fmt.Sprintf(`rm -f "$TUSKER_STATUS_PATH"
-( %s ) < "$TUSKER_PROMPT_PATH" >> "$TUSKER_RAW_LOG" 2>&1
-code=$?
-python3 - "$TUSKER_STATUS_PATH" "$code" <<'PY'
-import json,sys,datetime
-path=sys.argv[1]
-code=int(sys.argv[2])
-payload={"exit_code":code,"completed_at":datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z")}
-open(path,"w",encoding="utf-8").write(json.dumps(payload)+"\n")
-PY
+	// The parent owns stale-status cleanup and raw-log output through
+	// descriptor-relative, no-follow operations. The shell handles only the
+	// command's prompt input; it never mutates an authority path by name.
+	if !boundedRawLog {
+		if err := removePrivateFileIfExists(req.StatusPath); err != nil {
+			return nil, fmt.Errorf("clear stale runner status: %w", err)
+		}
+	}
+	script := fmt.Sprintf(`( %s ) < "$TUSKER_PROMPT_PATH"
 `, scriptCommand)
 	if boundedRawLog {
 		// The trusted parent owns both output streams and the only writable raw
@@ -180,11 +181,20 @@ PY
 
 	cmdArgs := append([]string{shellFlag, script}, commandArgs...)
 	var cmd *exec.Cmd
+	cmd = exec.CommandContext(ctx, shellExecutable, cmdArgs...)
 	if boundedRawLog {
-		cmd = exec.Command(shellExecutable, cmdArgs...)
 		cmd.WaitDelay = boundedRunnerWaitDelay
-	} else {
-		cmd = exec.CommandContext(ctx, shellExecutable, cmdArgs...)
+	}
+	// CommandContext invokes Cancel before Wait returns. Install the trusted
+	// process-group fence there instead of a watcher goroutine: a watcher can
+	// win a ctx.Done()/Wait race and signal a numerically reused PGID after the
+	// leader has already exited.
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		killContainedRunnerCommand(cmd, processGroupID(cmd.Process.Pid), req.ContainmentPGID > 0)
+		return nil
 	}
 	cmd.Dir = workspaceCWD
 	if err := assertRunnerCommandDir(runner, cmd.Dir, req.WorkspacePath); err != nil {
@@ -204,6 +214,7 @@ PY
 	closeStdin := attachDevNullStdin(cmd)
 	defer closeStdin()
 	var authoritativeLog *boundedRawLogWriter
+	var rawLogFile *os.File
 	if boundedRawLog {
 		authoritativeLog, err = openBoundedRawLog(req.RawLogPath, req.RawLogMaxBytes, req.ResumeMode)
 		if err != nil {
@@ -211,15 +222,22 @@ PY
 		}
 		cmd.Stdout = authoritativeLog
 		cmd.Stderr = authoritativeLog
-	} else if file, openErr := os.OpenFile(req.RawLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); openErr == nil {
-		defer file.Close()
+	} else {
+		file, openErr := openPrivateRunnerAppendFile(req.RawLogPath)
+		if openErr != nil {
+			return nil, openErr
+		}
 		cmd.Stdout = file
 		cmd.Stderr = file
+		rawLogFile = file
 	}
 	if req.ContainmentPGID <= 0 {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
 	if err := cmd.Start(); err != nil {
+		if rawLogFile != nil {
+			_ = rawLogFile.Close()
+		}
 		if authoritativeLog != nil {
 			_ = authoritativeLog.close()
 		}
@@ -238,6 +256,9 @@ PY
 	}
 	if err := eventLog.Append("attempt_spawned", req.AttemptID, runner, spawnedPayload); err != nil {
 		terminateAndReapRunnerCommand(cmd, pgid)
+		if rawLogFile != nil {
+			_ = rawLogFile.Close()
+		}
 		if authoritativeLog != nil {
 			_ = authoritativeLog.close()
 		}
@@ -245,9 +266,11 @@ PY
 	}
 	if authoritativeLog != nil {
 		authoritativeLog.bindTerminator(func() { killContainedRunnerCommand(cmd, pgid, req.ContainmentPGID > 0) })
-		go monitorBoundedRunnerCommand(ctx, cmd, pgid, req.ContainmentPGID > 0, authoritativeLog, req.StatusPath)
+		go monitorBoundedRunnerCommand(ctx, cmd, pgid, req.ContainmentPGID > 0, authoritativeLog, runner, req, eventLog)
 	} else {
-		_ = cmd.Process.Release()
+		// The trusted Go parent owns terminal status publication. Do not depend on
+		// python3 or any worker-controlled interpreter being present in PATH.
+		go monitorRunnerCommand(ctx, cmd, pgid, rawLogFile, runner, req, eventLog)
 	}
 
 	return &StartResult{
@@ -287,6 +310,9 @@ func terminateAndReapRunnerCommand(cmd *exec.Cmd, pgid int) {
 }
 
 func readRunnerProcessStatus(statusPath string) (runnerProcessStatus, error) {
+	if err := validateExistingRunnerStatus(statusPath); err != nil {
+		return runnerProcessStatus{}, err
+	}
 	text, err := readText(statusPath)
 	if err != nil {
 		return runnerProcessStatus{}, err
@@ -296,6 +322,110 @@ func readRunnerProcessStatus(statusPath string) (runnerProcessStatus, error) {
 		return runnerProcessStatus{}, err
 	}
 	return status, nil
+}
+
+func monitorRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, rawLog *os.File, runner RunnerName, req runnerExecRequest, eventLog runnerEventLog) {
+	waitErr := cmd.Wait()
+	if rawLog != nil {
+		_ = rawLog.Sync()
+		_ = rawLog.Close()
+	}
+	exitCode := 0
+	if cmd.ProcessState != nil {
+		exitCode = cmd.ProcessState.ExitCode()
+	}
+	if exitCode < 0 || (waitErr != nil && exitCode == 0) {
+		exitCode = 1
+	}
+	outcome := AttemptOutcomeNone
+	reason := ""
+	if ctx.Err() != nil {
+		exitCode = 130
+		outcome = AttemptOutcomeInterrupted
+		reason = "runner cancelled: " + ctx.Err().Error()
+	} else if exitCode != 0 {
+		outcome = AttemptOutcomeFailed
+		reason = fmt.Sprintf("runner exited with code %d", exitCode)
+	}
+	publishRunnerTerminalStatus(eventLog, runner, req, exitCode, outcome, reason, 0)
+}
+
+func openPrivateRunnerAppendFile(path string) (*os.File, error) {
+	parentFD, base, err := openPrivatePathParent(path, true)
+	if err != nil {
+		return nil, err
+	}
+	defer unix.Close(parentFD)
+	fd, err := unix.Openat(parentFD, base, unix.O_CREAT|unix.O_APPEND|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), path)
+	if err := requirePrivateRunnerFile(file, path); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return file, nil
+}
+
+func requirePrivateRunnerFile(file *os.File, path string) error {
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect runner file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("runner file is not regular: %s", path)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Getuid()) {
+		return fmt.Errorf("runner file is not owned by the current user: %s", path)
+	}
+	if stat.Nlink != 1 {
+		return fmt.Errorf("runner file has unexpected hard links: %s", path)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("runner file is not owner-only: %s", path)
+	}
+	return nil
+}
+
+func validateExistingRunnerStatus(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("runner status is not a regular non-symlink file: %s", path)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Getuid()) {
+		return fmt.Errorf("runner status is not owned by the current user: %s", path)
+	}
+	if stat.Nlink != 1 {
+		return fmt.Errorf("runner status has unexpected hard links: %s", path)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("runner status is not owner-only: %s", path)
+	}
+	return nil
+}
+
+func publishRunnerTerminalStatus(eventLog runnerEventLog, runner RunnerName, req runnerExecRequest, exitCode int, outcome AttemptOutcome, reason string, turnsUsed int) {
+	if _, err := writeRunnerStatusFileIfAbsentWithOutcome(req.StatusPath, exitCode, outcome, reason, turnsUsed); err != nil {
+		message := "publish trusted runner terminal status: " + err.Error()
+		payload := map[string]any{
+			"project_id": req.ProjectID, "record_id": req.RecordID, "item_id": req.ItemID,
+			"status_path": req.StatusPath, "reason": message,
+		}
+		if eventLog == nil || eventLog.Append("attempt_status_publish_failed", req.AttemptID, runner, payload) != nil {
+			// Preserve an observable durable breadcrumb even when the event sink is
+			// unavailable. The raw log is already attempt-scoped and owner-only;
+			// stderr remains a last-resort signal for operators.
+			if err := appendRawLogLine(req.RawLogPath, "infrastructure: "+message); err != nil {
+				fmt.Fprintf(os.Stderr, "tusker: %s attempt=%s (durable evidence unavailable: %v)\n", message, req.AttemptID, err)
+			}
+		}
+	}
 }
 
 func extractSessionRef(rawLogPath string) string {

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -190,7 +189,7 @@ func discoverVault(startDir string) (string, error) {
 			return configured, nil
 		}
 		child := filepath.Join(dir, defaultRepoVaultDir)
-		if isVaultDir(child) || (fileExists(filepath.Join(dir, "tusker.yaml")) && dirExists(child)) {
+		if isVaultDir(child) || (fileExists(managedTuskerConfigPath(child)) && dirExists(child)) || (fileExists(legacyTuskerConfigPath(dir)) && dirExists(child)) {
 			return child, nil
 		}
 		legacyChild := filepath.Join(dir, legacyRepoVaultDir)
@@ -224,23 +223,12 @@ func configuredVaultPathFromRepo(repoPath string) string {
 }
 
 func configuredVaultRoot(repoPath string) string {
-	configPath := filepath.Join(repoPath, "tusker.yaml")
-	if !fileExists(configPath) {
-		return ""
-	}
-	raw, err := readText(configPath)
+	vaultPath := filepath.Join(repoPath, defaultRepoVaultDir)
+	resolved, err := resolveTuskerConfigForPaths(repoPath, vaultPath, true)
 	if err != nil {
 		return ""
 	}
-	var cfg struct {
-		Storage struct {
-			Root string `yaml:"root"`
-		} `yaml:"storage"`
-	}
-	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(filepath.ToSlash(cfg.Storage.Root))
+	return strings.TrimSpace(filepath.ToSlash(resolved.Config.Storage.Root))
 }
 
 func vaultDisplayRoot(vaultPath string) string {

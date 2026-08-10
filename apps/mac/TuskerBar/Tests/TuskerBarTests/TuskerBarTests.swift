@@ -11,6 +11,18 @@ final class TuskerBarTests: XCTestCase {
         XCTAssertEqual(messages[0].data, "{\"id\":7,\n\"kind\":\"task_review\",\"keys\":[\"needs\"]}")
     }
 
+    @MainActor
+    func testSSECursorReconnectAndReplaySemantics() {
+        let event = TuskerStreamEvent(id: 7, kind: "task_review", project: "tusker", taskID: "MAC-T-0001", title: nil, status: nil, urgency: nil, deepLinkPath: nil, occurredAt: nil, keys: ["tasks"])
+        let miss = TuskerStreamEvent(id: 0, kind: "stream_replay_miss", project: nil, taskID: nil, title: nil, status: nil, urgency: nil, deepLinkPath: nil, occurredAt: nil, keys: ["tasks"])
+        var cursor = SSECursor()
+        XCTAssertEqual(cursor.classify(event), .accepted)
+        XCTAssertEqual(cursor.classify(event), .duplicate)
+        XCTAssertEqual(cursor.classify(miss), .replayMiss)
+        XCTAssertEqual(cursor.lastEventID, 7, "replay miss must not move the authoritative cursor")
+        XCTAssertEqual(SSEClient.request(url: URL(string: "http://127.0.0.1:7420/api/stream")!, lastEventID: cursor.lastEventID).value(forHTTPHeaderField: "Last-Event-ID"), "7")
+    }
+
     func testDeepLinksAcceptKnownRoutesOnly() {
         XCTAssertEqual(TuskerDeepLink.parse(URL(string: "tusker://task/RUN-T-0043")!), .task(id: "RUN-T-0043"))
         XCTAssertEqual(TuskerDeepLink.parse(URL(string: "tusker://open?path=%2Fp%2Ftusker%2Fwork")!), .open(path: "/p/tusker/work"))
@@ -52,8 +64,34 @@ final class TuskerBarTests: XCTestCase {
     func testNotificationPlanUsesTaskThreadAndCriticalInterruption() {
         let event = TuskerStreamEvent(id: 8, kind: "task_waiting_human", project: "tusker", taskID: "MAC-T-0001", title: "Panel", status: "review", urgency: "critical", deepLinkPath: "/p/tusker/work?task=MAC-T-0001", occurredAt: nil, keys: [])
         let plan = notificationPlan(for: event, preferences: NotificationPreferences(attentionEnabled: true, criticalEnabled: true))
-        XCTAssertEqual(plan, NotificationPlan(identifier: "MAC-T-0001.task_waiting_human", threadIdentifier: "MAC-T-0001", shouldNotify: true, timeSensitive: true))
+        XCTAssertEqual(plan, NotificationPlan(identifier: "tusker.event-8", threadIdentifier: "MAC-T-0001", shouldNotify: true, timeSensitive: true))
         XCTAssertFalse(notificationPlan(for: event, preferences: NotificationPreferences(attentionEnabled: true, criticalEnabled: false))!.shouldNotify)
+    }
+
+    func testNotificationPlanUsesEventIdentityForRepeatedTaskTransitions() {
+        let base = TuskerStreamEvent(id: 9, kind: "task_waiting_human", project: "tusker", taskID: "MAC-T-0001", title: nil, status: "review", urgency: "attention", deepLinkPath: nil, occurredAt: nil, keys: [])
+        let later = TuskerStreamEvent(id: 10, kind: base.kind, project: base.project, taskID: base.taskID, title: base.title, status: base.status, urgency: base.urgency, deepLinkPath: base.deepLinkPath, occurredAt: base.occurredAt, keys: base.keys)
+        let preferences = NotificationPreferences(attentionEnabled: true, criticalEnabled: false)
+        XCTAssertNotEqual(notificationPlan(for: base, preferences: preferences)?.identifier, notificationPlan(for: later, preferences: preferences)?.identifier)
+    }
+
+    func testNotificationHistoryIsOrderedBoundedAndReplaySafe() {
+        var history = BoundedNotificationHistory(limit: 256)
+        for id in 0..<300 { XCTAssertTrue(history.insert("event-\(id)")) }
+        XCTAssertEqual(history.ordered.count, 256)
+        XCTAssertEqual(history.ordered.first, "event-44")
+        XCTAssertEqual(history.ordered.last, "event-299")
+        XCTAssertFalse(history.contains("event-43"))
+        XCTAssertFalse(history.insert("event-299"), "replayed event must remain suppressed")
+        XCTAssertEqual(history.ordered.last, "event-299")
+
+        history.remove("event-299")
+        XCTAssertTrue(history.insert("event-299"), "failed enqueue rollback must permit a retry")
+        XCTAssertEqual(history.ordered.count, 256)
+
+        let restored = BoundedNotificationHistory(history.ordered + ["event-299"], limit: 256)
+        XCTAssertEqual(restored.ordered.count, 256, "persisted duplicates are collapsed without losing newer history")
+        XCTAssertTrue(restored.contains("event-299"))
     }
 
     func testRuntimeLaunchPlanOnlyOwnsTheDefaultLocalEndpoint() {
@@ -71,6 +109,62 @@ final class TuskerBarTests: XCTestCase {
         XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .running), .restart)
         XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .checking), .ignore)
         XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .failed("boom")), .ignore)
+    }
+
+    func testRuntimeLogRedactionCoversQuotedAndSpacedSecrets() {
+        let raw = #"""
+Authorization: Bearer "bearer value"
+"token": "token value with spaces"
+password='password value with spaces'
+capability = capability-value
+api_key = "api key value"
+safe=visible
+"""#
+        let redacted = String(decoding: RuntimeLogWriter.redact(Data(raw.utf8)), as: UTF8.self)
+        for secret in ["bearer value", "token value", "password value", "capability-value", "api key value"] {
+            XCTAssertFalse(redacted.contains(secret), redacted)
+        }
+        XCTAssertTrue(redacted.contains("[REDACTED]"))
+        XCTAssertTrue(redacted.contains("safe=visible"))
+    }
+
+    func testRuntimeLogWriterRejectsSymlinkHardlinkAndInsecureMode() throws {
+        for fixture in ["symlink", "hardlink", "mode"] {
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("tusker-log-authority-\(fixture)-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: home) }
+            let logs = home.appendingPathComponent("Library/Application Support/tusker/logs")
+            try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: logs.path)
+            let current = logs.appendingPathComponent("app-daemon.log")
+            switch fixture {
+            case "symlink":
+                try FileManager.default.createSymbolicLink(at: current, withDestinationURL: home.appendingPathComponent("elsewhere"))
+            case "hardlink":
+                XCTAssertTrue(FileManager.default.createFile(atPath: current.path, contents: Data(), attributes: [.posixPermissions: 0o600]))
+                try FileManager.default.linkItem(at: current, to: logs.appendingPathComponent("other-link"))
+            default:
+                XCTAssertTrue(FileManager.default.createFile(atPath: current.path, contents: Data(), attributes: [.posixPermissions: 0o644]))
+                try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: current.path)
+            }
+            XCTAssertThrowsError(try RuntimeLogWriter(home: home.path), fixture)
+        }
+    }
+
+    func testRuntimeLogWriterKeepsCurrentAndArchivesStrictlyBounded() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("tusker-log-bound-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let writer = try RuntimeLogWriter(home: home.path)
+        for index in 0..<400 {
+            writer.append(Data("line \(index) \(String(repeating: "x", count: 8_000))\n".utf8))
+        }
+        writer.finish(Data())
+        let logs = home.appendingPathComponent("Library/Application Support/tusker/logs")
+        let files = try FileManager.default.contentsOfDirectory(at: logs, includingPropertiesForKeys: [.fileSizeKey])
+        XCTAssertLessThanOrEqual(files.count, 4)
+        for file in files {
+            let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? Int.max
+            XCTAssertLessThanOrEqual(size, 512 * 1024, file.lastPathComponent)
+        }
     }
 
     func testRuntimeLaunchPlanRequiresExplicitRetryAfterFailure() {

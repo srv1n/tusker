@@ -4,7 +4,7 @@ title: Exact verification contract authority
 epic: ORC
 spec_refs:
   - docs/specs/18-exact-verification-contract-authority.md
-context_fingerprint: sha256:ce6e47008ed89ab8198533de797a5415fea6c23026e73f4f4dfcf2b334d84ea0
+context_fingerprint: sha256:96e9dba20efc6d26e37505c13a11697631ffe58c896e49ee0fa2e8514c4a4366
 required_capabilities: [strict_v2_proof_authority/v1]
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0

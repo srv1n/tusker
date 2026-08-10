@@ -41,6 +41,7 @@ func TestDaemonRetryQueuedSelfBlockDispatchesContinuationAtProjectLimit(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	daemon.processIdentityProbe = func(RunStatus) bool { return true }
 	defer daemon.Close()
 	if err := daemon.PollOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -255,9 +256,9 @@ func installCodexSleepShimForTest(t *testing.T) {
 
 func setProjectActiveRunCapForCapacityTest(t *testing.T, vault string, limit int) {
 	t.Helper()
-	// The bootstrap-written tusker.yaml automation config overlays WORKFLOW.md
+	// The bootstrap-written managed config overlays WORKFLOW.md
 	// (applyTuskerAutomationConfig), so the per-project cap must change there.
-	configPath := filepath.Join(filepath.Dir(vault), "tusker.yaml")
+	configPath := managedTuskerConfigPath(vault)
 	text, err := readText(configPath)
 	if err != nil {
 		t.Fatal(err)

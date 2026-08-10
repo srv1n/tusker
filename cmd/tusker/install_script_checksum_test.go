@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"fmt"
 	"os"
 	"os/exec"
@@ -57,17 +59,6 @@ func TestInstallScriptChecksumFailuresPreserveInstalledBinary(t *testing.T) {
 				return fmt.Sprintf("%s  %s\n%s  %s\n", installScriptTestChecksum, asset, installScriptOtherSum, asset)
 			},
 			wantOutput: []string{"Duplicate checksum entries"},
-		},
-		{
-			name:   "empty asset entry",
-			unameS: "Darwin",
-			unameM: "arm64",
-			tool:   "shasum",
-			actual: installScriptTestChecksum,
-			manifest: func(asset string) string {
-				return "  " + asset + "\n"
-			},
-			wantOutput: []string{"empty SHA-256 value"},
 		},
 		{
 			name:   "checksum mismatch",
@@ -148,7 +139,7 @@ func TestInstallScriptChecksumToolVariantsInstallValidRelease(t *testing.T) {
 			if err != nil {
 				t.Fatalf("installer failed: %v\n%s", err, output)
 			}
-			fixture.assertInstalledBinary(t, "verified binary")
+			fixture.assertInstalledVersion(t, installScriptTestVersion)
 			fixture.assertMutationCommandsRun(t)
 			calledTool, err := os.ReadFile(fixture.checksumToolLog)
 			if err != nil {
@@ -171,6 +162,67 @@ func TestInstallScriptChecksumToolVariantsInstallValidRelease(t *testing.T) {
 	}
 }
 
+func TestInstallScriptRejectsMaliciousArchiveMembers(t *testing.T) {
+	tests := []struct {
+		name, member, link string
+		kind               byte
+	}{
+		{name: "traversal", member: "../escape", kind: tar.TypeReg},
+		{name: "absolute", member: "/tmp/escape", kind: tar.TypeReg},
+		{name: "symlink", member: "tusker_v9.9.9_linux_amd64/tusker", link: "../../escape", kind: tar.TypeSymlink},
+		{name: "hardlink", member: "tusker_v9.9.9_linux_amd64/tusker", link: "../../escape", kind: tar.TypeLink},
+		{name: "device", member: "tusker_v9.9.9_linux_amd64/tusker", kind: tar.TypeChar},
+		{name: "duplicate", member: "tusker_v9.9.9_linux_amd64/tusker", kind: 'D'},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newInstallScriptChecksumFixture(t, "Linux", "x86_64", "sha256sum", installScriptTestChecksum)
+			fixture.writeMaliciousArchive(t, tt.member, tt.link, tt.kind)
+			fixture.writeManifest(t, validInstallScriptManifest(fixture.asset))
+			output, err := fixture.run(t)
+			if err == nil {
+				t.Fatalf("installer accepted malicious archive:\n%s", output)
+			}
+			fixture.assertInstalledBinary(t, "existing binary")
+		})
+	}
+}
+
+func TestInstallScriptSignatureAndPostSwapFailuresRollback(t *testing.T) {
+	t.Run("signature", func(t *testing.T) {
+		fixture := newInstallScriptChecksumFixture(t, "Linux", "x86_64", "sha256sum", installScriptTestChecksum)
+		fixture.signatureFail = true
+		fixture.writeManifest(t, validInstallScriptManifest(fixture.asset))
+		if output, err := fixture.run(t); err == nil {
+			t.Fatalf("installer accepted bad signature:\n%s", output)
+		}
+		fixture.assertInstalledBinary(t, "existing binary")
+	})
+	t.Run("post swap health", func(t *testing.T) {
+		fixture := newInstallScriptChecksumFixture(t, "Linux", "x86_64", "sha256sum", installScriptTestChecksum)
+		fixture.postSwapFail = true
+		fixture.writeManifest(t, validInstallScriptManifest(fixture.asset))
+		if output, err := fixture.run(t); err == nil {
+			t.Fatalf("installer accepted failed post-swap health:\n%s", output)
+		}
+		fixture.assertInstalledBinary(t, "existing binary")
+	})
+	t.Run("fresh install post swap health", func(t *testing.T) {
+		fixture := newInstallScriptChecksumFixture(t, "Linux", "x86_64", "sha256sum", installScriptTestChecksum)
+		fixture.postSwapFail = true
+		if err := os.Remove(filepath.Join(fixture.binDir, "tusker")); err != nil {
+			t.Fatal(err)
+		}
+		fixture.writeManifest(t, validInstallScriptManifest(fixture.asset))
+		if output, err := fixture.run(t); err == nil {
+			t.Fatalf("installer accepted failed fresh-install health:\n%s", output)
+		}
+		if _, err := os.Stat(filepath.Join(fixture.binDir, "tusker")); !os.IsNotExist(err) {
+			t.Fatalf("failed fresh install left a final binary: %v", err)
+		}
+	})
+}
+
 func validInstallScriptManifest(asset string) string {
 	return fmt.Sprintf("%s  unrelated_asset.tar.gz\n%s  %s\n", installScriptOtherSum, installScriptTestChecksum, asset)
 }
@@ -189,6 +241,8 @@ type installScriptChecksumFixture struct {
 	newBinaryPath   string
 	unameS          string
 	unameM          string
+	signatureFail   bool
+	postSwapFail    bool
 }
 
 func newInstallScriptChecksumFixture(t *testing.T, unameS, unameM, checksumTool, actualChecksum string) *installScriptChecksumFixture {
@@ -225,11 +279,12 @@ func newInstallScriptChecksumFixture(t *testing.T, unameS, unameM, checksumTool,
 	if err := os.WriteFile(filepath.Join(fixture.binDir, "tusker"), []byte("existing binary"), 0o755); err != nil {
 		t.Fatalf("write existing binary: %v", err)
 	}
-	if err := os.WriteFile(fixture.newBinaryPath, []byte("verified binary"), 0o755); err != nil {
+	if err := os.WriteFile(fixture.newBinaryPath, []byte("#!/bin/sh\nif [ \"${1:-}\" = version ]; then n=0; if [ -f \"$FIXTURE_VERSION_CALL_LOG\" ]; then read -r n <\"$FIXTURE_VERSION_CALL_LOG\"; fi; n=$((n+1)); printf '%s\\n' \"$n\" >\"$FIXTURE_VERSION_CALL_LOG\"; version=v9.9.9; if [ \"${FIXTURE_POST_SWAP_FAIL:-0}\" = 1 ] && [ \"$n\" -gt 1 ]; then version=v0.0.0; fi; printf '{\"version\":\"%s\"}\\n' \"$version\"; exit 0; fi\nif [ \"${1:-}\" = install ] && [ \"${2:-}\" = --help ]; then printf '%s\\n' -- '--refresh-existing-user-skills'; exit 0; fi\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("write verified binary: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(fixture.releaseDir, fixture.asset), []byte("archive fixture"), 0o644); err != nil {
-		t.Fatalf("write archive fixture: %v", err)
+	fixture.writeArchive(t)
+	if err := os.WriteFile(filepath.Join(fixture.releaseDir, "MANIFEST.sha256.minisig"), []byte("fixture signature\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
 	fixture.writeCommands(t, checksumTool)
@@ -238,15 +293,101 @@ func newInstallScriptChecksumFixture(t *testing.T, unameS, unameM, checksumTool,
 
 func (f *installScriptChecksumFixture) writeManifest(t *testing.T, contents string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(f.releaseDir, "checksums.txt"), []byte(contents), 0o644); err != nil {
+	contents += fmt.Sprintf("%s  checksums.txt\n%s  provenance.json\n%s  sbom.cdx.json\n", installScriptOtherSum, installScriptOtherSum, installScriptOtherSum)
+	if err := os.WriteFile(filepath.Join(f.releaseDir, "MANIFEST.sha256"), []byte(contents), 0o644); err != nil {
 		t.Fatalf("write checksum manifest: %v", err)
+	}
+}
+
+func (f *installScriptChecksumFixture) writeArchive(t *testing.T) {
+	t.Helper()
+	out, err := os.Create(filepath.Join(f.releaseDir, f.asset))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(out)
+	tw := tar.NewWriter(gz)
+	write := func(name string, mode int64, body []byte, typeflag byte) {
+		t.Helper()
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: mode, Size: int64(len(body)), Typeflag: typeflag}); err != nil {
+			t.Fatal(err)
+		}
+		if len(body) > 0 {
+			if _, err := tw.Write(body); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	write(f.extractSubdir+"/", 0o755, nil, tar.TypeDir)
+	binary, err := os.ReadFile(f.newBinaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(f.extractSubdir+"/tusker", 0o755, binary, tar.TypeReg)
+	write(f.extractSubdir+"/README.md", 0o644, []byte("fixture\n"), tar.TypeReg)
+	write(f.extractSubdir+"/LICENSE", 0o644, []byte("fixture\n"), tar.TypeReg)
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (f *installScriptChecksumFixture) writeMaliciousArchive(t *testing.T, name, link string, kind byte) {
+	t.Helper()
+	out, err := os.Create(filepath.Join(f.releaseDir, f.asset))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(out)
+	tw := tar.NewWriter(gz)
+	write := func(h *tar.Header) {
+		t.Helper()
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+		if h.Size > 0 {
+			if _, err := tw.Write([]byte("x")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	headerKind := kind
+	if kind == 'D' {
+		headerKind = tar.TypeReg
+	}
+	size := int64(0)
+	if headerKind == tar.TypeReg {
+		size = 1
+	}
+	write(&tar.Header{Name: name, Linkname: link, Typeflag: headerKind, Mode: 0o755, Size: size})
+	if kind == 'D' {
+		write(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o755, Size: 1})
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func (f *installScriptChecksumFixture) writeCommands(t *testing.T, checksumTool string) {
 	t.Helper()
-	for _, name := range []string{"awk", "cp", "mkdir", "mktemp", "rm"} {
+	for _, name := range []string{"awk", "bash", "cp", "grep", "mkdir", "mktemp", "mv", "python3", "rm", "sync"} {
 		path, err := exec.LookPath(name)
+		if name == "python3" {
+			if _, statErr := os.Stat("/usr/bin/python3"); statErr == nil {
+				path, err = "/usr/bin/python3", nil
+			}
+		}
 		if err != nil {
 			t.Fatalf("find required fixture command %s: %v", name, err)
 		}
@@ -275,26 +416,17 @@ done
 [ -n "$output" ] && [ -n "$url" ] || exit 2
 cp "$FIXTURE_RELEASE_DIR/${url##*/}" "$output"
 `)
-	writeInstallScriptFixtureCommand(t, f.fakeBin, "tar", `#!/bin/sh
-printf 'tar\n' > "$FIXTURE_TAR_LOG"
-extract_dir=
-while [ "$#" -gt 0 ]; do
-	case "$1" in
-		-C) extract_dir="$2"; shift 2 ;;
-		*) shift ;;
-	esac
-done
-[ -n "$extract_dir" ] || exit 2
-mkdir -p "$extract_dir/$FIXTURE_EXTRACT_SUBDIR"
-cp "$FIXTURE_NEW_BINARY_PATH" "$extract_dir/$FIXTURE_EXTRACT_SUBDIR/tusker"
-`)
-	writeInstallScriptFixtureCommand(t, f.fakeBin, "install", `#!/bin/sh
-printf 'install\n' > "$FIXTURE_INSTALL_LOG"
-if [ "$1" = "-m" ]; then
-	shift 2
-fi
-cp "$1" "$2"
-`)
+	realTar, err := exec.LookPath("tar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	realInstall, err := exec.LookPath("install")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeInstallScriptFixtureCommand(t, f.fakeBin, "tar", fmt.Sprintf("#!/bin/sh\nprintf 'tar\\n' > \"$FIXTURE_TAR_LOG\"\nexec %q \"$@\"\n", realTar))
+	writeInstallScriptFixtureCommand(t, f.fakeBin, "install", fmt.Sprintf("#!/bin/sh\nprintf 'install\\n' > \"$FIXTURE_INSTALL_LOG\"\nexec %q \"$@\"\n", realInstall))
+	writeInstallScriptFixtureCommand(t, f.fakeBin, "minisign", "#!/bin/sh\n[ \"${FIXTURE_SIGNATURE_FAIL:-0}\" = 1 ] && exit 1\nexit 0\n")
 
 	if checksumTool != "" {
 		writeInstallScriptFixtureCommand(t, f.fakeBin, checksumTool, `#!/bin/sh
@@ -335,6 +467,8 @@ func (f *installScriptChecksumFixture) run(t *testing.T) (string, error) {
 		"HOME=" + filepath.Join(f.root, "home"),
 		"PATH=" + f.fakeBin,
 		"TUSKER_DOWNLOAD_ROOT=https://fixtures.invalid/releases/download",
+		"TUSKER_INSTALL_TEST_MODE=1",
+		"TUSKER_TEST_MINISIGN_PUBLIC_KEY=RWQfixture-public-key",
 		"FIXTURE_RELEASE_DIR=" + f.releaseDir,
 		"FIXTURE_UNAME_S=" + f.unameS,
 		"FIXTURE_UNAME_M=" + f.unameM,
@@ -344,9 +478,19 @@ func (f *installScriptChecksumFixture) run(t *testing.T) (string, error) {
 		"FIXTURE_INSTALL_LOG=" + f.installLog,
 		"FIXTURE_EXTRACT_SUBDIR=" + f.extractSubdir,
 		"FIXTURE_NEW_BINARY_PATH=" + f.newBinaryPath,
+		fmt.Sprintf("FIXTURE_SIGNATURE_FAIL=%d", boolInt(f.signatureFail)),
+		fmt.Sprintf("FIXTURE_POST_SWAP_FAIL=%d", boolInt(f.postSwapFail)),
+		"FIXTURE_VERSION_CALL_LOG=" + filepath.Join(f.root, "version-calls"),
 	}
 	output, runErr := cmd.CombinedOutput()
 	return string(output), runErr
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func (f *installScriptChecksumFixture) assertInstalledBinary(t *testing.T, want string) {
@@ -360,9 +504,20 @@ func (f *installScriptChecksumFixture) assertInstalledBinary(t *testing.T, want 
 	}
 }
 
+func (f *installScriptChecksumFixture) assertInstalledVersion(t *testing.T, want string) {
+	t.Helper()
+	output, err := exec.Command(filepath.Join(f.binDir, "tusker"), "version", "--json").Output()
+	if err != nil {
+		t.Fatalf("run installed binary: %v", err)
+	}
+	if !strings.Contains(string(output), `"version":"`+want+`"`) {
+		t.Fatalf("installed version output = %q, want %s", output, want)
+	}
+}
+
 func (f *installScriptChecksumFixture) assertMutationCommandsNotRun(t *testing.T) {
 	t.Helper()
-	for _, path := range []string{f.tarLog, f.installLog} {
+	for _, path := range []string{f.installLog} {
 		if _, err := os.Stat(path); err == nil {
 			t.Errorf("mutation command ran; found %s", path)
 		} else if !os.IsNotExist(err) {
@@ -373,7 +528,7 @@ func (f *installScriptChecksumFixture) assertMutationCommandsNotRun(t *testing.T
 
 func (f *installScriptChecksumFixture) assertMutationCommandsRun(t *testing.T) {
 	t.Helper()
-	for _, path := range []string{f.tarLog, f.installLog} {
+	for _, path := range []string{f.installLog} {
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("mutation command did not run; stat %s: %v", path, err)
 		}

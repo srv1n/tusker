@@ -711,12 +711,54 @@ func TestInitDefaultsToDotTuskerVault(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, "tusker")); !os.IsNotExist(err) {
 		t.Fatalf("default init created legacy visible tusker directory: %v", err)
 	}
-	config, err := readText(filepath.Join(repo, "tusker.yaml"))
+	config, err := readText(filepath.Join(repo, ".tusker", "config.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertContainsIndexTest(t, config, "root: .tusker")
 	assertContainsIndexTest(t, config, "events_root: .tusker/events")
+	if _, err := os.Stat(filepath.Join(repo, "tusker.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("fresh init created legacy root config: %v", err)
+	}
+}
+
+func TestInitPreservesLegacyRootConfigAsReadOnlyCompatibilityInput(t *testing.T) {
+	previousWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previousWD); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+
+	repo := t.TempDir()
+	legacyPath := filepath.Join(repo, "tusker.yaml")
+	legacy := "automation:\n  concurrency:\n    max_active_runs: 6\n"
+	if err := writeText(legacyPath, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := initCmd(Args{"yes": "true", "vault-only": "true", "no-mount": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	vault := filepath.Join(repo, ".tusker")
+	if got, err := readText(legacyPath); err != nil || got != legacy {
+		t.Fatalf("init rewrote legacy compatibility config: got=%q err=%v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(vault, "config.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("init created competing managed config alongside legacy input: %v", err)
+	}
+	resolved, err := resolveTuskerConfig(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Config.Automation.Concurrency.MaxActiveRuns != 6 {
+		t.Fatalf("legacy root config is no longer readable: %#v", resolved.Config.Automation.Concurrency)
+	}
 }
 
 func TestMigrateVaultRootMovesLegacyVaultAndUpdatesPointers(t *testing.T) {
@@ -734,12 +776,15 @@ func TestMigrateVaultRootMovesLegacyVaultAndUpdatesPointers(t *testing.T) {
 	if _, err := os.Stat(legacyVault); !os.IsNotExist(err) {
 		t.Fatalf("legacy vault still exists after migration: %v", err)
 	}
-	config, err := readText(filepath.Join(repo, "tusker.yaml"))
+	config, err := readText(filepath.Join(repo, ".tusker", "config.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertContainsIndexTest(t, config, "root: .tusker")
 	assertContainsIndexTest(t, config, "generated_root: .tusker/_generated")
+	if _, err := os.Stat(filepath.Join(repo, "tusker.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("migration created a legacy root config: %v", err)
+	}
 	agents, err := readText(filepath.Join(repo, "AGENTS.md"))
 	if err != nil {
 		t.Fatal(err)

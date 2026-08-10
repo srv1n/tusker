@@ -279,7 +279,7 @@ func writeWorkflowForPreflightTest(t *testing.T, vault string, wf Workflow, body
 
 func writeTuskerYamlRunnerCommandForPreflightTest(t *testing.T, vault, command string) {
 	t.Helper()
-	configPath := filepath.Join(filepath.Dir(vault), "tusker.yaml")
+	configPath := managedTuskerConfigPath(vault)
 	text, err := readText(configPath)
 	if err != nil {
 		t.Fatal(err)

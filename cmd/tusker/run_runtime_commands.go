@@ -45,7 +45,14 @@ type runInspection struct {
 	Authorization            *RunAuthorization           `json:"authorization,omitempty"`
 	Identity                 *RunIdentityMetadata        `json:"identity,omitempty"`
 	Resume                   runResumeCapability         `json:"resume"`
+	Truncated                map[string]bool             `json:"truncated,omitempty"`
 }
+
+const (
+	inspectionAttemptsLimit = 100
+	inspectionTurnsLimit    = 500
+	inspectionEventsLimit   = 500
+)
 
 type runResumeCapability struct {
 	Supported bool   `json:"supported"`
@@ -76,24 +83,119 @@ func resumeCapability(run *RunStatus, session *RunnerSession) runResumeCapabilit
 }
 
 func (s *RuntimeStore) FindRun(identity string) (*RunStatus, error) {
-	rows, err := s.ListRuns()
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return nil, tuskerError(errorInvalidArg, "run lookup requires an identity")
+	}
+	matches, err := s.listRunsQuery(
+		`SELECT `+runtimeRunColumns+` FROM runs WHERE item_id = ? OR record_id = ? ORDER BY updated_at DESC, project_id, item_id LIMIT 3`,
+		identity, identity,
+	)
 	if err != nil {
 		return nil, err
 	}
-	for _, run := range rows {
-		if run.ItemID == identity || run.RecordID == identity {
-			copy := run
-			return &copy, nil
+	if len(matches) > 1 {
+		projects := make([]string, 0, len(matches))
+		for _, run := range matches {
+			projects = append(projects, run.ProjectID)
 		}
+		return nil, tuskerError("RUN_IDENTITY_AMBIGUOUS", "run identity matches multiple projects; supply --project", withContext(map[string]any{
+			"identity": identity,
+			"projects": uniqueStrings(projects),
+		}))
+	}
+	if len(matches) == 1 {
+		copy := matches[0]
+		return &copy, nil
+	}
+	return nil, nil
+}
+
+// findRunScopedOrAmbiguous is the common authority lookup boundary. Callers
+// with a known project must pass it; an empty project deliberately retains the
+// typed ambiguity refusal from FindRun instead of guessing across projects.
+func findRunScopedOrAmbiguous(store *RuntimeStore, projectID, identity string) (*RunStatus, error) {
+	if store == nil {
+		return nil, tuskerError(errorNotFound, "runtime store is unavailable")
+	}
+	if strings.TrimSpace(projectID) != "" {
+		return store.FindRunScoped(projectID, identity)
+	}
+	return store.FindRun(identity)
+}
+
+// FindRunScoped resolves a run only within the named registered project. A
+// bare identity is intentionally not a durable key: record IDs and item IDs
+// are project-local and may legitimately collide across repositories.
+func (s *RuntimeStore) FindRunScoped(projectID, identity string) (*RunStatus, error) {
+	projectID = strings.TrimSpace(projectID)
+	identity = strings.TrimSpace(identity)
+	if projectID == "" || identity == "" {
+		return nil, tuskerError(errorInvalidArg, "project-scoped run lookup requires project and identity")
+	}
+	matches, err := s.listRunsQuery(
+		`SELECT `+runtimeRunColumns+` FROM runs WHERE project_id = ? AND (item_id = ? OR record_id = ?) ORDER BY updated_at DESC, item_id LIMIT 3`,
+		projectID, identity, identity,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) > 1 {
+		return nil, tuskerError("RUN_IDENTITY_AMBIGUOUS", "project contains multiple runs for identity; use record ID", withContext(map[string]any{"project_id": projectID, "identity": identity}))
+	}
+	if len(matches) == 1 {
+		copy := matches[0]
+		return &copy, nil
 	}
 	return nil, nil
 }
 
 func (s *RuntimeStore) ListAttemptsForRun(projectID, recordID string) ([]RunAttempt, error) {
-	rows, err := s.query(`SELECT attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, end_state_json, process_pid, outcome, exit_code, turns_used, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
+	return s.listAttemptsForRun(projectID, recordID, 0)
+}
+
+func refuseInvalidRunEndState(store *RuntimeStore, run *RunStatus) error {
+	if store == nil || run == nil {
+		return nil
+	}
+	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil {
+		return err
+	}
+	for _, attempt := range attempts {
+		if attempt.EndStateInvalid {
+			return tuskerError("END_STATE_INVALID", "authority refused run with corrupt attempt end state", withContext(map[string]any{
+				"project_id": run.ProjectID, "record_id": run.RecordID, "attempt_id": attempt.AttemptID,
+				"error": attempt.EndStateError,
+			}), withHint("repair or quarantine the corrupt end_state_json before completion, landing, close, or retry"))
+		}
+	}
+	return nil
+}
+
+func (s *RuntimeStore) ListAttemptsForRunPage(projectID, recordID string, limit int) ([]RunAttempt, bool, error) {
+	if limit <= 0 {
+		return nil, false, fmt.Errorf("attempt page requires a positive limit")
+	}
+	items, err := s.listAttemptsForRun(projectID, recordID, limit+1)
+	truncated := len(items) > limit
+	if truncated {
+		items = items[:limit]
+	}
+	return items, truncated, err
+}
+
+func (s *RuntimeStore) listAttemptsForRun(projectID, recordID string, limit int) ([]RunAttempt, error) {
+	query := `SELECT attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, end_state_json, process_pid, outcome, exit_code, turns_used, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
 		FROM attempts
 		WHERE project_id = ? AND record_id = ?
-		ORDER BY started_at DESC, attempt_id DESC`, projectID, recordID)
+		ORDER BY started_at DESC, attempt_id DESC`
+	args := []any{projectID, recordID}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +207,11 @@ func (s *RuntimeStore) ListAttemptsForRun(projectID, recordID string) ([]RunAtte
 			return nil, err
 		}
 		if attempt.EndStateJSON != "" {
-			_ = json.Unmarshal([]byte(attempt.EndStateJSON), &attempt.EndState)
+			if err := json.Unmarshal([]byte(attempt.EndStateJSON), &attempt.EndState); err != nil {
+				attempt.EndStateInvalid = true
+				attempt.EndStateError = fmt.Sprintf("invalid end_state_json: %v", err)
+				attempt.LastError = firstNonEmpty(attempt.LastError, attempt.EndStateError)
+			}
 		}
 		out = append(out, attempt)
 	}
@@ -116,11 +222,11 @@ func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, err
 	if run == nil {
 		return runInspection{}, tuskerError(errorNotFound, "run not found")
 	}
-	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	attempts, attemptsTruncated, err := store.ListAttemptsForRunPage(run.ProjectID, run.RecordID, inspectionAttemptsLimit)
 	if err != nil {
 		return runInspection{}, err
 	}
-	turns, err := store.ListTurnsForRun(run.ProjectID, run.RecordID)
+	turns, turnsTruncated, err := store.ListTurnsForRunPage(run.ProjectID, run.RecordID, inspectionTurnsLimit)
 	if err != nil {
 		return runInspection{}, err
 	}
@@ -132,7 +238,7 @@ func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, err
 	if err != nil {
 		return runInspection{}, err
 	}
-	externalLoopEvents, err := store.ListExternalLoopEvents(run.ProjectID, run.RecordID)
+	externalLoopEvents, eventsTruncated, err := store.ListExternalLoopEventsPage(run.ProjectID, run.RecordID, inspectionEventsLimit)
 	if err != nil {
 		return runInspection{}, err
 	}
@@ -146,6 +252,16 @@ func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, err
 		return runInspection{}, err
 	}
 	eventPath := bestRunEventPath(*run, attempts)
+	truncated := map[string]bool{}
+	if attemptsTruncated {
+		truncated["attempts"] = true
+	}
+	if turnsTruncated {
+		truncated["turns"] = true
+	}
+	if eventsTruncated {
+		truncated["external_loop_events"] = true
+	}
 	return runInspection{
 		OK:                       true,
 		Run:                      run,
@@ -172,6 +288,7 @@ func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, err
 		Authorization: authorization,
 		Identity:      identity,
 		Resume:        resumeCapability(run, latestSession),
+		Truncated:     truncated,
 	}, nil
 }
 
@@ -185,7 +302,7 @@ func runsInspectCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
-	run, err := store.FindRun(identity)
+	run, err := findRunScopedOrAmbiguous(store, args.String("project"), identity)
 	if err != nil {
 		return err
 	}
@@ -491,7 +608,7 @@ func runsLogsCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
-	run, err := store.FindRun(identity)
+	run, err := findRunScopedOrAmbiguous(store, args.String("project"), identity)
 	if err != nil {
 		return err
 	}
@@ -541,7 +658,7 @@ func runsEventsCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
-	run, err := store.FindRun(identity)
+	run, err := findRunScopedOrAmbiguous(store, args.String("project"), identity)
 	if err != nil {
 		return err
 	}
@@ -592,7 +709,7 @@ func runsInterruptCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	run, viaDaemon, err := interruptRuntimeRun(DefaultStateRoot(), nil, identity)
+	run, viaDaemon, err := interruptRuntimeRunScoped(DefaultStateRoot(), nil, args.String("project"), identity)
 	if err != nil {
 		return err
 	}
@@ -621,26 +738,34 @@ func runsInterruptCmd(args Args) error {
 // otherwise the runtime store path signals a verified process or retires a dead
 // process row with the same canonical interrupted outcome.
 func interruptRuntimeRun(stateRoot string, store *RuntimeStore, identity string) (*RunStatus, bool, error) {
-	return interruptRuntimeRunWithHook(stateRoot, store, identity, nil)
+	return interruptRuntimeRunScoped(stateRoot, store, "", identity)
+}
+
+func interruptRuntimeRunScoped(stateRoot string, store *RuntimeStore, projectID, identity string) (*RunStatus, bool, error) {
+	return interruptRuntimeRunWithHookScoped(stateRoot, store, projectID, identity, nil)
 }
 
 func interruptRuntimeRunWithHook(stateRoot string, store *RuntimeStore, identity string, afterRead func()) (*RunStatus, bool, error) {
+	return interruptRuntimeRunWithHookScoped(stateRoot, store, "", identity, afterRead)
+}
+
+func interruptRuntimeRunWithHookScoped(stateRoot string, store *RuntimeStore, projectID, identity string, afterRead func()) (*RunStatus, bool, error) {
 	identity = strings.TrimSpace(identity)
 	if identity == "" {
 		return nil, false, tuskerError(errorInvalidArg, "run identity is required")
 	}
 
 	if readDaemonLiveness(stateRoot, time.Now().UTC()).Alive {
-		if resp, err := sendDaemonControl(stateRoot, daemonControlRequest{Command: "interrupt", Identity: identity}); err == nil {
+		if resp, err := sendDaemonControl(stateRoot, daemonControlRequest{Command: "interrupt", Identity: identity, ProjectID: strings.TrimSpace(projectID)}); err == nil {
 			if !resp.OK {
 				return nil, true, tuskerError(errorHookFailed, firstNonEmpty(resp.Message, "daemon interrupt failed"))
 			}
-			run, err := findInterruptRun(stateRoot, store, identity)
+			run, err := findInterruptRunScoped(stateRoot, store, projectID, identity)
 			return run, true, err
 		}
 	}
 
-	run, ownedStore, err := findInterruptRunWithStore(stateRoot, store, identity)
+	run, ownedStore, err := findInterruptRunWithStoreScoped(stateRoot, store, projectID, identity)
 	if err != nil {
 		return nil, false, err
 	}
@@ -663,7 +788,11 @@ func interruptRuntimeRunWithHook(stateRoot string, store *RuntimeStore, identity
 }
 
 func findInterruptRun(stateRoot string, store *RuntimeStore, identity string) (*RunStatus, error) {
-	run, ownedStore, err := findInterruptRunWithStore(stateRoot, store, identity)
+	return findInterruptRunScoped(stateRoot, store, "", identity)
+}
+
+func findInterruptRunScoped(stateRoot string, store *RuntimeStore, projectID, identity string) (*RunStatus, error) {
+	run, ownedStore, err := findInterruptRunWithStoreScoped(stateRoot, store, projectID, identity)
 	if ownedStore != nil {
 		defer ownedStore.Close()
 	}
@@ -671,6 +800,10 @@ func findInterruptRun(stateRoot string, store *RuntimeStore, identity string) (*
 }
 
 func findInterruptRunWithStore(stateRoot string, store *RuntimeStore, identity string) (*RunStatus, *RuntimeStore, error) {
+	return findInterruptRunWithStoreScoped(stateRoot, store, "", identity)
+}
+
+func findInterruptRunWithStoreScoped(stateRoot string, store *RuntimeStore, projectID, identity string) (*RunStatus, *RuntimeStore, error) {
 	ownedStore := (*RuntimeStore)(nil)
 	if store == nil {
 		var err error
@@ -680,7 +813,7 @@ func findInterruptRunWithStore(stateRoot string, store *RuntimeStore, identity s
 		}
 		store = ownedStore
 	}
-	run, err := store.FindRun(identity)
+	run, err := findRunScopedOrAmbiguous(store, projectID, identity)
 	if err != nil {
 		if ownedStore != nil {
 			_ = ownedStore.Close()
@@ -706,7 +839,7 @@ func runsReleaseCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
-	run, err := store.FindRun(identity)
+	run, err := findRunScopedOrAmbiguous(store, args.String("project"), identity)
 	if err != nil {
 		return err
 	}
@@ -781,7 +914,7 @@ func runsRetireCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
-	run, err := store.FindRun(identity)
+	run, err := findRunScopedOrAmbiguous(store, args.String("project"), identity)
 	if err != nil {
 		return err
 	}
@@ -918,12 +1051,15 @@ func redriveCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
-	run, err := store.FindRun(identity)
+	run, err := findRunScopedOrAmbiguous(store, args.String("project"), identity)
 	if err != nil {
 		return err
 	}
 	if run == nil {
 		return tuskerError(errorNotFound, "run not found: "+identity)
+	}
+	if err := refuseInvalidRunEndState(store, run); err != nil {
+		return err
 	}
 	now := time.Now().UTC()
 	actor := firstNonEmpty(strings.TrimSpace(args.String("by")), strings.TrimSpace(args.String("actor")), defaultActorName())
@@ -933,7 +1069,7 @@ func redriveCmd(args Args) error {
 	// instead of double-dispatching a competing attempt. The retry primitive
 	// owns the supervisor-decision audit trail for every requeue/expedite it
 	// applies, so no audit is written here.
-	retry, err := retryFailedRun(store, identity, actor, reason, now)
+	retry, err := retryFailedRunScoped(store, args.String("project"), identity, actor, reason, now)
 	if err != nil {
 		return err
 	}

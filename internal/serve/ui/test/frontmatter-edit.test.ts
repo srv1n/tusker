@@ -116,7 +116,9 @@ describe("frontmatter edit surface", () => {
   test("TaskContract uses one frontmatter source for panel and right-rail chips", () => {
     expect(taskContract).toContain("frontmatterByKey.status");
     expect(taskContract).toContain("<EditableFact");
-    expect(taskContract).toContain("useFrontmatterUpdate");
+    expect(taskContract).toContain("<PropertyPanel");
+    expect(taskContract).toContain("readOnly");
+    expect(taskContract).not.toContain("useFrontmatterUpdate");
   });
 
   test("edits persist through the structured action mutation boundary", () => {

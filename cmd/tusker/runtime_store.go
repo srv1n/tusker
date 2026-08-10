@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	moderncsqlite "modernc.org/sqlite"
@@ -317,6 +318,8 @@ type RunAttempt struct {
 	FinalSummary       string
 	EndStateJSON       string      `json:"-"`
 	EndState           RunEndState `json:"end_state,omitempty"`
+	EndStateInvalid    bool        `json:"end_state_invalid,omitempty"`
+	EndStateError      string      `json:"end_state_error,omitempty"`
 	Outcome            string
 	ExitCode           int
 	TurnsUsed          int
@@ -513,7 +516,18 @@ type RunnerSession struct {
 }
 
 func OpenRuntimeStore(stateRoot string) (*RuntimeStore, error) {
-	if err := ensureDir(stateRoot); err != nil {
+	if info, err := os.Lstat(stateRoot); err == nil && info.Mode().Perm()&0o022 != 0 {
+		return nil, fmt.Errorf("runtime state root is group/world writable: %s", stateRoot)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if err := ensureRuntimeStateRoot(stateRoot); err != nil {
+		return nil, err
+	}
+	// Inspect and tighten the database path before SQLite opens it. This is
+	// deliberately before sql.Open: opening first could follow an attacker-
+	// supplied daemon.db symlink.
+	if err := tightenRuntimeStateFiles(stateRoot); err != nil {
 		return nil, err
 	}
 	dbPath := runtimeStoreDBPath(stateRoot)
@@ -524,6 +538,10 @@ func OpenRuntimeStore(stateRoot string) (*RuntimeStore, error) {
 	db.SetMaxOpenConns(1)
 	store := &RuntimeStore{db: db, stateRoot: stateRoot}
 	if err := store.Migrate(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := tightenRuntimeStateFiles(stateRoot); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -548,13 +566,135 @@ func OpenRuntimeStore(stateRoot string) (*RuntimeStore, error) {
 	return store, nil
 }
 
+const runtimeSchemaVersion = 1
+
+// ensureRuntimeStateRoot establishes a private, non-symlinked state boundary.
+// Existing directories are repaired only when owned by this process user;
+// an insecure or foreign root is refused rather than followed.
+func ensureRuntimeStateRoot(root string) error {
+	if strings.TrimSpace(root) == "" {
+		return fmt.Errorf("runtime state root is empty")
+	}
+	if info, err := os.Lstat(root); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("runtime state root must be a real directory: %s", root)
+		}
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok && uint32(os.Getuid()) != stat.Uid {
+			return fmt.Errorf("runtime state root is not owned by the current user: %s", root)
+		}
+	} else if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			return err
+		}
+	} else {
+		return err
+	}
+	return os.Chmod(root, 0o700)
+}
+
+func validateRuntimeStateRoot(root string, readOnly bool) error {
+	if strings.TrimSpace(root) == "" {
+		return fmt.Errorf("runtime state root is empty")
+	}
+	info, err := os.Lstat(root)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("runtime state root must be a real directory: %s", root)
+	}
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		if uint32(os.Getuid()) != stat.Uid {
+			return fmt.Errorf("runtime state root is not owned by the current user: %s", root)
+		}
+	}
+	perm := info.Mode().Perm()
+	if readOnly && perm&0o077 != 0 {
+		return fmt.Errorf("runtime state root is not owner-readable only: %s", root)
+	}
+	if !readOnly && perm&0o022 != 0 {
+		return fmt.Errorf("runtime state root is group/world writable: %s", root)
+	}
+	return nil
+}
+
+func tightenRuntimeStateFiles(root string) error {
+	for _, name := range []string{"daemon.db", "daemon.db-wal", "daemon.db-shm"} {
+		path := filepath.Join(root, name)
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return fmt.Errorf("runtime database file must be a regular, non-symlink file: %s", path)
+		}
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok && uint32(os.Getuid()) != stat.Uid {
+			return fmt.Errorf("runtime database file is not owned by the current user: %s", path)
+		}
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Nlink > 1 {
+			return fmt.Errorf("runtime database file has unexpected hard links: %s", path)
+		}
+		if info.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("runtime database file is group/world writable: %s", path)
+		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // OpenRuntimeStoreReadOnly opens an existing runtime database without creating
 // directories, running migrations, reconciling rows, or taking a write lock.
 // Diagnostic commands must use this path so observation cannot change state.
 func OpenRuntimeStoreReadOnly(stateRoot string) (*RuntimeStore, error) {
+	if err := validateRuntimeStateRoot(stateRoot, true); err != nil {
+		return nil, err
+	}
 	dbPath := runtimeStoreDBPath(stateRoot)
-	if !fileExists(dbPath) {
-		return nil, os.ErrNotExist
+	info, err := os.Lstat(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("runtime database file must be a regular, non-symlink file: %s", dbPath)
+	}
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		if uint32(os.Getuid()) != stat.Uid {
+			return nil, fmt.Errorf("runtime database file is not owned by the current user: %s", dbPath)
+		}
+		if stat.Nlink > 1 {
+			return nil, fmt.Errorf("runtime database file has unexpected hard links: %s", dbPath)
+		}
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("runtime database file is not owner-readable only: %s", dbPath)
+	}
+	// SQLite may consume WAL/SHM sidecars even for a read-only connection.
+	// Refuse redirected or shared sidecars before handing the path to SQLite;
+	// diagnostics must not follow an attacker-controlled companion file.
+	for _, name := range []string{"daemon.db-wal", "daemon.db-shm"} {
+		path := filepath.Join(stateRoot, name)
+		sidecar, statErr := os.Lstat(path)
+		if errors.Is(statErr, os.ErrNotExist) {
+			continue
+		}
+		if statErr != nil {
+			return nil, statErr
+		}
+		if sidecar.Mode()&os.ModeSymlink != 0 || !sidecar.Mode().IsRegular() {
+			return nil, fmt.Errorf("runtime database sidecar must be a regular, non-symlink file: %s", path)
+		}
+		st, ok := sidecar.Sys().(*syscall.Stat_t)
+		if !ok || st.Uid != uint32(os.Getuid()) || st.Nlink != 1 {
+			return nil, fmt.Errorf("runtime database sidecar is not owned by the current user with one link: %s", path)
+		}
+		if sidecar.Mode().Perm()&0o077 != 0 {
+			return nil, fmt.Errorf("runtime database sidecar is not owner-readable only: %s", path)
+		}
 	}
 	u := url.URL{Scheme: "file", Path: dbPath}
 	q := u.Query()
@@ -695,6 +835,13 @@ func (s *RuntimeStore) Migrate() error {
 	// tables that predate foreign-key declarations.
 	if _, err := s.exec(`PRAGMA foreign_keys = ON;`); err != nil {
 		return err
+	}
+	var version int
+	if err := s.queryRowScan(`PRAGMA user_version`, nil, &version); err != nil {
+		return err
+	}
+	if version >= runtimeSchemaVersion && s.runtimeSchemaComplete() {
+		return nil
 	}
 	statements := []string{
 		`PRAGMA journal_mode = WAL;`,
@@ -1304,7 +1451,69 @@ func (s *RuntimeStore) Migrate() error {
 	if err := s.migrateExecutionLifecycle(); err != nil {
 		return err
 	}
-	return nil
+	_, err := s.exec(fmt.Sprintf(`PRAGMA user_version = %d`, runtimeSchemaVersion))
+	return err
+}
+
+// runtimeSchemaComplete is intentionally conservative. user_version is an
+// optimization marker, not authority: a copied or hand-edited database with
+// a current marker but a missing table/column must still take the legacy
+// migration path.
+func (s *RuntimeStore) runtimeSchemaComplete() bool {
+	for _, table := range []string{
+		"projects", "project_rebind_audit", "runs", "run_authorizations", "run_directives",
+		"run_identity_metadata", "attempts", "turns", "sessions", "supervisor_decisions",
+		"apply_inputs", "review_results", "gate_ledger", "batch_gate_runs", "completion_transactions",
+		"completion_authority_issuances", "resource_leases", "resource_lease_events", "daemon_settings",
+		"departure_runs", "landing_authority_issuances", "external_loop_events",
+	} {
+		var count int
+		if err := s.queryRowScan(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, []any{table}, &count); err != nil || count != 1 {
+			return false
+		}
+	}
+	for _, required := range []struct{ table, column string }{
+		{"projects", "project_id"}, {"projects", "repo_root"}, {"projects", "vault_root"},
+		{"runs", "project_id"}, {"runs", "record_id"}, {"runs", "item_id"}, {"runs", "lease_generation"}, {"runs", "terminal"},
+		{"run_authorizations", "project_id"}, {"run_authorizations", "lease_generation"},
+		{"run_directives", "project_id"}, {"run_directives", "record_id"}, {"run_directives", "expires_at"},
+		{"run_identity_metadata", "project_id"}, {"run_identity_metadata", "record_id"},
+		{"attempts", "attempt_id"}, {"attempts", "project_id"}, {"attempts", "record_id"}, {"attempts", "end_state_json"},
+		{"turns", "attempt_id"}, {"turns", "project_id"}, {"turns", "record_id"},
+		{"sessions", "project_id"}, {"sessions", "record_id"}, {"sessions", "session_ref"},
+		{"supervisor_decisions", "project_id"}, {"supervisor_decisions", "record_id"}, {"supervisor_decisions", "decision_id"},
+		{"apply_inputs", "project_id"}, {"apply_inputs", "record_id"},
+		{"review_results", "project_id"}, {"review_results", "record_id"},
+		{"gate_ledger", "project_id"}, {"gate_ledger", "record_id"},
+		{"resource_leases", "resource_name"}, {"resource_lease_events", "resource_name"},
+		{"external_loop_events", "project_id"}, {"external_loop_events", "record_id"}, {"external_loop_events", "idempotency_key"},
+	} {
+		rows, err := s.query(`PRAGMA table_info(` + required.table + `)`)
+		if err != nil {
+			return false
+		}
+		found := false
+		for rows.Next() {
+			var cid, notNull, pk int
+			var name, kind string
+			var defaultValue any
+			if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &pk); err != nil {
+				_ = rows.Close()
+				return false
+			}
+			found = found || name == required.column
+		}
+		if err := rows.Close(); err != nil || !found {
+			return false
+		}
+	}
+	for _, index := range []string{"projects_repo_root_unique", "projects_vault_root_unique", "resource_lease_events_resource", "external_loop_events_idempotency"} {
+		var count int
+		if err := s.queryRowScan(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, []any{index}, &count); err != nil || count != 1 {
+			return false
+		}
+	}
+	return true
 }
 
 // migrateGateLedgerToolchain rebuilds the one early ledger table whose old
@@ -1743,11 +1952,63 @@ func (s *RuntimeStore) ListProjects() ([]RegisteredProject, error) {
 }
 
 func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
-	rows, err := s.query(`SELECT project_id, record_id, item_id, runner, runner_profile, runner_harness, runner_model, runner_effort, worker_policy_fingerprint, execute_policy_fingerprint, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, infrastructure_json, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at, hand_run FROM runs ORDER BY updated_at DESC, project_id, item_id`)
+	return s.listRunsQuery(`SELECT ` + runtimeRunColumns + ` FROM runs ORDER BY updated_at DESC, project_id, item_id`)
+}
+
+const runtimeRunColumns = `project_id, record_id, item_id, runner, runner_profile, runner_harness, runner_model, runner_effort, worker_policy_fingerprint, execute_policy_fingerprint, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, infrastructure_json, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at, hand_run`
+
+func (s *RuntimeStore) ListRunsPage(limit, offset int) ([]RunStatus, bool, error) {
+	if limit <= 0 || offset < 0 {
+		return nil, false, fmt.Errorf("run page requires a positive limit and non-negative offset")
+	}
+	rows, err := s.query(`SELECT `+runtimeRunColumns+` FROM runs ORDER BY updated_at DESC, project_id, item_id LIMIT ? OFFSET ?`, limit+1, offset)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	items, err := scanRunRows(rows, limit)
+	truncated := len(items) > limit
+	if truncated {
+		items = items[:limit]
+	}
+	return items, truncated, err
+}
+
+// ListRunsForProjectPage bounds the runtime rows loaded for a Serve snapshot.
+// Legacy rows without a project ID are deliberately excluded: once multiple
+// projects exist they cannot be attributed safely and must never be projected
+// into every project's control plane.
+func (s *RuntimeStore) ListRunsForProjectPage(projectID string, limit int) ([]RunStatus, bool, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" || limit <= 0 {
+		return nil, false, fmt.Errorf("project run page requires project and positive limit")
+	}
+	rows, err := s.query(`SELECT `+runtimeRunColumns+` FROM runs WHERE project_id = ? ORDER BY updated_at DESC, item_id LIMIT ?`, projectID, limit+1)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	items, err := scanRunRows(rows, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	truncated := len(items) > limit
+	if truncated {
+		items = items[:limit]
+	}
+	return items, truncated, nil
+}
+
+func (s *RuntimeStore) listRunsQuery(query string, args ...any) ([]RunStatus, error) {
+	rows, err := s.query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanRunRows(rows, 0)
+}
+
+func scanRunRows(rows *sql.Rows, limit int) ([]RunStatus, error) {
 	var out []RunStatus
 	for rows.Next() {
 		var run RunStatus
@@ -1768,6 +2029,9 @@ func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
 		run.HandRun = handRun.Valid && handRun.Int64 != 0
 		run.HandRunStamped = handRun.Valid
 		out = append(out, run)
+		if limit > 0 && len(out) >= limit+1 {
+			break
+		}
 	}
 	return out, rows.Err()
 }
@@ -1814,9 +2078,8 @@ func (s *RuntimeStore) QueueRunDirective(directive RunDirective) (bool, error) {
 }
 
 func (s *RuntimeStore) RunDirective(projectID, recordID string) (*RunDirective, error) {
-	row := s.db.QueryRow(`SELECT project_id, record_id, actor, created_at, expires_at, state, reason FROM run_directives WHERE project_id = ? AND record_id = ?`, projectID, recordID)
 	var directive RunDirective
-	if err := row.Scan(&directive.ProjectID, &directive.RecordID, &directive.Actor, &directive.CreatedAt, &directive.ExpiresAt, &directive.State, &directive.Reason); err != nil {
+	if err := s.queryRowScan(`SELECT project_id, record_id, actor, created_at, expires_at, state, reason FROM run_directives WHERE project_id = ? AND record_id = ?`, []any{projectID, recordID}, &directive.ProjectID, &directive.RecordID, &directive.Actor, &directive.CreatedAt, &directive.ExpiresAt, &directive.State, &directive.Reason); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -2766,6 +3029,27 @@ func (s *RuntimeStore) ReclaimExpiredRunLease(projectID, recordID string, now ti
 	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" {
 		return false, tuskerError(errorInvalidArg, "lease reclaim requires project_id and record_id")
 	}
+	current, err := s.FindRun(recordID)
+	if err != nil {
+		return false, err
+	}
+	if current == nil || current.ProjectID != projectID {
+		return false, nil
+	}
+	return s.reclaimExpiredRunLeaseIfSnapshot(*current, now, ttl, reason)
+}
+
+// ReclaimExpiredRunLeaseIfSnapshot is the operator-facing reclaim primitive.
+// Its immutable lease/process snapshot makes a late manual reclaim a safe
+// no-op instead of clearing a replacement attempt's ownership.
+func (s *RuntimeStore) ReclaimExpiredRunLeaseIfSnapshot(expected RunStatus, now time.Time, ttl time.Duration, reason string) (bool, error) {
+	if strings.TrimSpace(expected.ProjectID) == "" || strings.TrimSpace(expected.RecordID) == "" || strings.TrimSpace(expected.LeaseOwner) == "" || expected.LeaseGeneration <= 0 || strings.TrimSpace(expected.ActiveAttemptID) == "" || expected.ProcessPID <= 0 || expected.ProcessPGID <= 0 || strings.TrimSpace(expected.ProcessStartedAt) == "" {
+		return false, tuskerError(errorInvalidArg, "manual lease reclaim requires exact owner, generation, attempt, and process identity")
+	}
+	return s.reclaimExpiredRunLeaseIfSnapshot(expected, now, ttl, reason)
+}
+
+func (s *RuntimeStore) reclaimExpiredRunLeaseIfSnapshot(expected RunStatus, now time.Time, ttl time.Duration, reason string) (bool, error) {
 	if ttl <= 0 {
 		ttl = defaultRunLeaseTTL
 	}
@@ -2776,6 +3060,14 @@ func (s *RuntimeStore) ReclaimExpiredRunLease(projectID, recordID string, now ti
 	cutoff := now.Add(-2 * ttl).Format(time.RFC3339)
 	if strings.TrimSpace(reason) == "" {
 		reason = "lease expired past reclaim grace"
+	}
+	// A stale heartbeat does not prove process death. Any live PID or process
+	// group is enough to refuse reclaim; a start-time probe failure is also not
+	// a licence to orphan the holder. The manual form additionally rejects an
+	// absent identity above, so it cannot convert uncertainty into dispatch
+	// capacity.
+	if expected.ProcessPID > 0 && (processExists(expected.ProcessPID) || (expected.ProcessPGID > 0 && processGroupExists(expected.ProcessPGID))) {
+		return false, nil
 	}
 	result, err := s.exec(`UPDATE runs
 		SET lease_state = 'interrupted',
@@ -2791,8 +3083,17 @@ func (s *RuntimeStore) ReclaimExpiredRunLease(projectID, recordID string, now ti
 		WHERE project_id = ? AND record_id = ?
 			AND lease_state IN ('claimed', 'running')
 			AND lease_expires_at != ''
-			AND lease_expires_at < ?`,
-		reason, now.Format(time.RFC3339), projectID, recordID, cutoff)
+			AND lease_expires_at < ?
+			AND lease_owner = ?
+			AND lease_generation = ?
+			AND active_attempt_id = ?
+			AND work_revision = ?
+			AND process_pid = ?
+			AND process_pgid = ?
+			AND process_started_at = ?`,
+		reason, now.Format(time.RFC3339), expected.ProjectID, expected.RecordID, cutoff,
+		expected.LeaseOwner, expected.LeaseGeneration, expected.ActiveAttemptID, expected.WorkRevision,
+		expected.ProcessPID, expected.ProcessPGID, expected.ProcessStartedAt)
 	if err != nil {
 		return false, err
 	}
@@ -2801,7 +3102,7 @@ func (s *RuntimeStore) ReclaimExpiredRunLease(projectID, recordID string, now ti
 		return false, err
 	}
 	if affected > 0 {
-		if err := s.releaseInactiveTaskResourceLeases(projectID, recordID, "expired run reclaim released dispatch capacity", now); err != nil {
+		if err := s.releaseInactiveTaskResourceLeases(expected.ProjectID, expected.RecordID, "expired run reclaim released dispatch capacity", now); err != nil {
 			return false, err
 		}
 	}
@@ -2987,10 +3288,32 @@ func (s *RuntimeStore) NextTurnIndex(projectID, recordID, attemptID string) (int
 }
 
 func (s *RuntimeStore) ListTurnsForRun(projectID, recordID string) ([]RunTurn, error) {
-	rows, err := s.query(`SELECT attempt_id, project_id, record_id, turn_id, turn_index, session_ref, status, input_tokens, output_tokens, total_tokens, started_at, completed_at, last_event_at, last_error
+	return s.listTurnsForRun(projectID, recordID, 0)
+}
+
+func (s *RuntimeStore) ListTurnsForRunPage(projectID, recordID string, limit int) ([]RunTurn, bool, error) {
+	if limit <= 0 {
+		return nil, false, fmt.Errorf("turn page requires a positive limit")
+	}
+	items, err := s.listTurnsForRun(projectID, recordID, limit+1)
+	truncated := len(items) > limit
+	if truncated {
+		items = items[:limit]
+	}
+	return items, truncated, err
+}
+
+func (s *RuntimeStore) listTurnsForRun(projectID, recordID string, limit int) ([]RunTurn, error) {
+	query := `SELECT attempt_id, project_id, record_id, turn_id, turn_index, session_ref, status, input_tokens, output_tokens, total_tokens, started_at, completed_at, last_event_at, last_error
 		FROM turns
 		WHERE project_id = ? AND record_id = ?
-		ORDER BY turn_index ASC, started_at ASC, last_event_at ASC, turn_id ASC`, projectID, recordID)
+		ORDER BY turn_index ASC, started_at ASC, last_event_at ASC, turn_id ASC`
+	args := []any{projectID, recordID}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -3007,10 +3330,32 @@ func (s *RuntimeStore) ListTurnsForRun(projectID, recordID string) ([]RunTurn, e
 }
 
 func (s *RuntimeStore) ListTurnsForAttempt(attemptID string) ([]RunTurn, error) {
-	rows, err := s.query(`SELECT attempt_id, project_id, record_id, turn_id, turn_index, session_ref, status, input_tokens, output_tokens, total_tokens, started_at, completed_at, last_event_at, last_error
+	return s.listTurnsForAttempt(attemptID, 0)
+}
+
+func (s *RuntimeStore) ListTurnsForAttemptPage(attemptID string, limit int) ([]RunTurn, bool, error) {
+	if limit <= 0 {
+		return nil, false, fmt.Errorf("turn page requires a positive limit")
+	}
+	items, err := s.listTurnsForAttempt(attemptID, limit+1)
+	truncated := len(items) > limit
+	if truncated {
+		items = items[:limit]
+	}
+	return items, truncated, err
+}
+
+func (s *RuntimeStore) listTurnsForAttempt(attemptID string, limit int) ([]RunTurn, error) {
+	query := `SELECT attempt_id, project_id, record_id, turn_id, turn_index, session_ref, status, input_tokens, output_tokens, total_tokens, started_at, completed_at, last_event_at, last_error
 		FROM turns
 		WHERE attempt_id = ?
-		ORDER BY turn_index ASC, started_at ASC, last_event_at ASC, turn_id ASC`, attemptID)
+		ORDER BY turn_index ASC, started_at ASC, last_event_at ASC, turn_id ASC`
+	args := []any{attemptID}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -3244,10 +3589,32 @@ func (s *RuntimeStore) FindExternalLoopEventByKey(projectID, recordID, idempoten
 }
 
 func (s *RuntimeStore) ListExternalLoopEvents(projectID, recordID string) ([]ExternalLoopEvent, error) {
-	rows, err := s.query(`SELECT event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
+	return s.listExternalLoopEvents(projectID, recordID, 0)
+}
+
+func (s *RuntimeStore) ListExternalLoopEventsPage(projectID, recordID string, limit int) ([]ExternalLoopEvent, bool, error) {
+	if limit <= 0 {
+		return nil, false, fmt.Errorf("external event page requires a positive limit")
+	}
+	items, err := s.listExternalLoopEvents(projectID, recordID, limit+1)
+	truncated := len(items) > limit
+	if truncated {
+		items = items[:limit]
+	}
+	return items, truncated, err
+}
+
+func (s *RuntimeStore) listExternalLoopEvents(projectID, recordID string, limit int) ([]ExternalLoopEvent, error) {
+	query := `SELECT event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
 		FROM external_loop_events
 		WHERE project_id = ? AND record_id = ?
-		ORDER BY created_at ASC, event_id ASC`, projectID, recordID)
+		ORDER BY created_at ASC, event_id ASC`
+	args := []any{projectID, recordID}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.query(query, args...)
 	if err != nil {
 		return nil, err
 	}

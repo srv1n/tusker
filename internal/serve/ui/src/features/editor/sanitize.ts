@@ -58,6 +58,12 @@ const SAFE_HREF = /^(https?:|mailto:|tel:)/i;
 export function isSafeHref(url: string | null | undefined): boolean {
   if (!url) return false;
   const trimmed = url.trim();
+  // Backslashes and control characters are normalized by browsers while
+  // resolving special URLs. In particular, `/\\\\evil.example` can become
+  // a network-path URL (`//evil.example`) even though it does not start with
+  // two literal slashes in the source document.
+  if (/[\\\u0000-\u001F\u007F]/.test(trimmed)) return false;
+  if (trimmed.startsWith("//")) return false;
   if (trimmed.startsWith("#") || trimmed.startsWith("/")) return true;
   return SAFE_HREF.test(trimmed);
 }

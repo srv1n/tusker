@@ -9,7 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -19,6 +21,9 @@ const (
 	daemonLaunchctlPath           = "/bin/launchctl"
 	daemonServiceStartupTimeout   = 5 * time.Second
 	daemonServiceBootstrapRetries = 60
+	daemonLogRetentionCount       = 5
+	daemonLogRetentionAge         = 7 * 24 * time.Hour
+	daemonLogMaxBytes             = 10 << 20
 )
 
 var (
@@ -79,6 +84,184 @@ func (c daemonServiceConfig) stdoutPath() string {
 
 func (c daemonServiceConfig) stderrPath() string {
 	return c.stdoutPath()
+}
+
+// rotateDaemonServiceLogs bounds launchd's append-only log files at service
+// lifecycle boundaries. launchd has no portable native rotation policy; the
+// daemon itself therefore keeps a small, owner-only history whenever it is
+// installed or restarted, retaining crash evidence instead of deleting it.
+func rotateDaemonServiceLogs(c daemonServiceConfig, now time.Time) error {
+	if err := ensureDir(c.logDir()); err != nil {
+		return err
+	}
+	if err := os.Chmod(c.logDir(), 0o700); err != nil {
+		return err
+	}
+	unlock, err := acquireDaemonLogRotationLock(c.logDir())
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	current := c.stdoutPath()
+	if info, err := inspectOwnedDaemonLog(current); err == nil {
+		if err := os.Chmod(current, 0o600); err != nil {
+			return err
+		}
+		if info.Size() >= daemonLogMaxBytes {
+			archive := filepath.Join(c.logDir(), fmt.Sprintf("daemon-%s.log", now.UTC().Format("20060102T150405.000000000Z")))
+			if _, err := os.Lstat(archive); !os.IsNotExist(err) {
+				return fmt.Errorf("daemon log archive already exists: %s", archive)
+			}
+			if err := os.Rename(current, archive); err != nil {
+				return err
+			}
+			if err := os.Chmod(archive, 0o600); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	entries, err := os.ReadDir(c.logDir())
+	if err != nil {
+		return err
+	}
+	type logEntry struct {
+		path string
+		mod  time.Time
+	}
+	var archives []logEntry
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "daemon-") || !strings.HasSuffix(entry.Name(), ".log") {
+			continue
+		}
+		path := filepath.Join(c.logDir(), entry.Name())
+		info, err := inspectOwnedDaemonLog(path)
+		if err != nil {
+			return err
+		}
+		if now.Sub(info.ModTime()) > daemonLogRetentionAge {
+			if err := os.Remove(path); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			return err
+		}
+		archives = append(archives, logEntry{path: path, mod: info.ModTime()})
+	}
+	sort.Slice(archives, func(i, j int) bool { return archives[i].mod.After(archives[j].mod) })
+	if len(archives) > daemonLogRetentionCount {
+		for _, entry := range archives[daemonLogRetentionCount:] {
+			if err := os.Remove(entry.path); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// enforceDaemonServiceLogBound trims the launchd-owned inode in place. A
+// rename-based rotation is not sufficient for a long-running launchd job:
+// launchd keeps the old descriptor open and would continue writing to an
+// unbounded archived inode. Trimming in place keeps the live descriptor and
+// bounds disk usage even when the daemon never restarts.
+func enforceDaemonServiceLogBound(c daemonServiceConfig) error {
+	file, err := os.OpenFile(c.stdoutPath(), os.O_RDWR|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer file.Close()
+	if err := requirePrivateRunnerFile(file, c.stdoutPath()); err != nil {
+		return err
+	}
+	info, err := file.Stat()
+	if err != nil || info.Size() <= daemonLogMaxBytes {
+		return err
+	}
+	keep := int64(daemonLogMaxBytes / 2)
+	if _, err := file.Seek(-keep, io.SeekEnd); err != nil {
+		return err
+	}
+	tail := make([]byte, keep)
+	if _, err := io.ReadFull(file, tail); err != nil {
+		return err
+	}
+	if err := file.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	if _, err := file.Write(tail); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+
+func startDaemonServiceLogBoundGuard(c daemonServiceConfig) func() {
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				_ = enforceDaemonServiceLogBound(c)
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
+		_ = enforceDaemonServiceLogBound(c)
+	}
+}
+
+func inspectOwnedDaemonLog(path string) (os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("daemon log is not a regular non-symlink file: %s", path)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Getuid()) {
+		return nil, fmt.Errorf("daemon log is not owned by the current user: %s", path)
+	}
+	if stat.Nlink != 1 {
+		return nil, fmt.Errorf("daemon log has unexpected hard links: %s", path)
+	}
+	return info, nil
+}
+
+func acquireDaemonLogRotationLock(logDir string) (func(), error) {
+	path := filepath.Join(logDir, ".rotation.lock")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePrivateRunnerFile(file, path); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = file.Close()
+	}, nil
 }
 
 func (c daemonServiceConfig) domainTarget() string {
@@ -268,6 +451,9 @@ func daemonServiceInstall(args Args, config daemonServiceConfig) error {
 	if err := ensureDir(config.logDir()); err != nil {
 		return fmt.Errorf("create daemon service log directory: %w", err)
 	}
+	if err := rotateDaemonServiceLogs(config, time.Now().UTC()); err != nil {
+		return fmt.Errorf("rotate daemon service logs: %w", err)
+	}
 	if err := installDaemonServiceExecutable(config); err != nil {
 		return err
 	}
@@ -293,6 +479,9 @@ func daemonServiceInstall(args Args, config daemonServiceConfig) error {
 }
 
 func daemonServiceStart(args Args, config daemonServiceConfig) error {
+	if err := rotateDaemonServiceLogs(config, time.Now().UTC()); err != nil {
+		return fmt.Errorf("rotate daemon service logs: %w", err)
+	}
 	if _, err := os.Stat(config.plistPath()); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return tuskerError(errorNotFound, "daemon service is not installed", withHint("run `tusker daemon service install` first"))

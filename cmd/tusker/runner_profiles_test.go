@@ -249,11 +249,143 @@ automation:
 	assertEqual(t, true, payload.OK, "projects limits ok")
 	assertEqual(t, 4, payload.Project.MaxActiveRuns, "project max active runs")
 	assertEqual(t, configSourceLocal, payload.Project.Source, "project setter winning source")
-	if !fileExists(filepath.Join(root, "tusker.local.yaml")) {
-		t.Fatal("expected project setter to write tusker.local.yaml")
+	if !fileExists(filepath.Join(vault, "config.local.yaml")) {
+		t.Fatal("expected project setter to write managed config.local.yaml")
+	}
+	if fileExists(filepath.Join(root, "tusker.local.yaml")) {
+		t.Fatal("project setter must not create legacy tusker.local.yaml")
 	}
 	if err := projectsLimitsCmd(Args{"vault": vault, "max-active-runs": "4", "json": "true"}); err == nil {
 		t.Fatal("expected repeat setter to fail as a no-op")
+	}
+}
+
+func TestConfigResolverPreservesExplicitZeroFalseAndEmptyCollections(t *testing.T) {
+	vault := automationTestVault(t)
+	root := filepath.Dir(vault)
+	if err := writeText(filepath.Join(root, "tusker.yaml"), `automation:
+  concurrency:
+    max_active_runs: 7
+    max_concurrent_by_state:
+      ready: 3
+  fanout:
+    enabled: true
+    max_children: 9
+    allowed_child_types: [task]
+  validation:
+    commands: [go test ./...]
+  denylist:
+    - id: inherited
+      pattern: inherited
+`); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(vault, "config.yaml"), `automation:
+  concurrency:
+    max_active_runs: 0
+    max_concurrent_by_state: {}
+  fanout:
+    enabled: false
+    max_children: 0
+    allowed_child_types: []
+  validation:
+    commands: []
+  denylist: []
+`); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := resolveTuskerConfig(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Config.Automation.Concurrency.MaxActiveRuns != 0 || resolved.Config.Automation.Fanout.Enabled || resolved.Config.Automation.Fanout.MaxChildren != 0 {
+		t.Fatalf("explicit scalar overrides lost: %#v", resolved.Config.Automation)
+	}
+	if len(resolved.Config.Automation.Fanout.AllowedChildTypes) != 0 || len(resolved.Config.Automation.Validation.Commands) != 0 || len(resolved.Config.Automation.Denylist) != 0 || len(resolved.Config.Automation.Concurrency.MaxConcurrentByState) != 0 {
+		t.Fatalf("explicit empty collection did not clear inherited policy: %#v", resolved.Config.Automation)
+	}
+	report, err := configResolve(vault, "automation.fanout.enabled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value, ok := report.Value.(bool); !ok || value || report.Path != filepath.Join(vault, "config.yaml") || report.Source != configSourceProject {
+		t.Fatalf("effective value and provenance diverged: %#v", report)
+	}
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Data.Fanout.Enabled || wf.Data.Fanout.MaxChildren != 0 || len(wf.Data.Fanout.AllowedChildTypes) != 0 || wf.Data.Agents.MaxConcurrentAgents != 0 || len(wf.Data.Agents.MaxConcurrentAgentsByState) != 0 {
+		t.Fatalf("workflow consumer ignored explicit cleared policy: %#v", wf.Data)
+	}
+}
+
+func TestManagedConfigAugmentsLegacyClosePolicyWithoutMaskingIt(t *testing.T) {
+	vault := automationTestVault(t)
+	root := filepath.Dir(vault)
+	if err := writeText(filepath.Join(root, "tusker.yaml"), `close_policy:
+  high:
+    required_acceptor: reviewer_agent
+    required_evidence: [automated_test]
+    required_gates: [security]
+branches:
+  default_branch: release
+mutation_mode: protected
+`); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(vault, "config.yaml"), `automation:
+  enabled: false
+branches:
+  state_branch: state
+`); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := v7ClosePolicyFor(vault, "high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.RequiredAcceptor != "reviewer_agent" || strings.Join(policy.RequiredEvidence, ",") != "automated_test" || strings.Join(policy.RequiredGates, ",") != "security" {
+		t.Fatalf("managed partial config masked legacy close policy: %#v", policy)
+	}
+	cfg, _, err := readV7TuskerConfig(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Branches.DefaultBranch != "release" || cfg.Branches.StateBranch != "state" || cfg.MutationMode != "protected" {
+		t.Fatalf("full-schema merge lost safety authority: %#v", cfg)
+	}
+}
+
+func TestProjectSetterUsesExactLegacyVaultAndRollsBackNoop(t *testing.T) {
+	repo := t.TempDir()
+	vault := filepath.Join(repo, "tusker")
+	if err := ensureDir(vault); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(repo, "tusker.yaml"), "automation:\n  concurrency:\n    max_active_runs: 2\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.concurrency.max_active_runs", 4); err != nil {
+		t.Fatal(err)
+	}
+	managed := filepath.Join(vault, "config.local.yaml")
+	if !fileExists(managed) || fileExists(filepath.Join(repo, ".tusker", "config.local.yaml")) {
+		t.Fatalf("setter did not use exact supplied vault: managed=%t default=%t", fileExists(managed), fileExists(filepath.Join(repo, ".tusker", "config.local.yaml")))
+	}
+	before, err := readText(managed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.concurrency.max_active_runs", 4); err == nil {
+		t.Fatal("expected no-op setter failure")
+	}
+	after, err := readText(managed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatalf("failed setter changed authority:\n before=%s\n after=%s", before, after)
 	}
 }
 

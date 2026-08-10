@@ -7,6 +7,7 @@ import { USE_MOCK } from "@/lib/api";
 import { useDocList } from "@/lib/queries";
 import type { DocListEntry } from "@/types/domain";
 import { resolveWikilink, slugify } from "./mock";
+import { isSafeHref } from "@/features/editor/sanitize";
 
 /** The subset a rendered wikilink needs (from the live vault index or mock). */
 type ResolvedLink = { path: string; title: string; kind: string };
@@ -148,10 +149,13 @@ function markdownComponents(
         );
       }
       const external = !!href && /^https?:/.test(href);
+      if (!isSafeHref(href)) {
+        return <span className="text-ink-soft" title="Unsafe link blocked">{children}</span>;
+      }
       return (
         <a
           href={href}
-          {...(external ? { target: "_blank", rel: "noreferrer" } : {})}
+          {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
           className="text-info decoration-info/40 underline decoration-1 underline-offset-2 hover:decoration-info"
         >
           {children}

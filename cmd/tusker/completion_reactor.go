@@ -2184,6 +2184,7 @@ func projectCompletionTaskToCanonical(vaultPath, repoRoot string, result ReviewR
 		return err
 	}
 	if string(currentRaw) == stagedRaw {
+		warnScratchReapFailed(result.TaskID, reapTaskScratch(vaultPath, result.TaskID))
 		return nil
 	}
 	currentData, currentBody, err := parseFrontmatter(string(currentRaw))
@@ -2218,5 +2219,7 @@ func projectCompletionTaskToCanonical(vaultPath, repoRoot string, result ReviewR
 		return err
 	}
 	invalidateCachedNote(taskPath)
+	// Scratch is ephemeral by contract; reaping is best-effort and never fails a close.
+	warnScratchReapFailed(result.TaskID, reapTaskScratch(vaultPath, result.TaskID))
 	return nil
 }

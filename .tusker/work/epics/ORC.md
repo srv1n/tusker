@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-20T03:38:53Z"
-updated_at: "2026-07-29T09:08:34Z"
-state_rev: "sha256:8cb9d641054dfb669351f59cbc8a96108f862bd749f27bfe6751b448a463ccda"
+updated_at: "2026-08-04T06:33:48Z"
+state_rev: "sha256:f559081d902ed840e22f4ede210e2adff9e4b14249fdc9b946b9066471293b8a"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -94,17 +94,17 @@ report-less overnight lane, eight redundant workspace gates).
 | [[ORC-T-0047]] | backlog | blocked_dependency | Wait for dependency ORC-T-0045 to reach done. |
 | [[ORC-T-0048]] | backlog | blocked_dependency | Wait for dependency ORC-T-0047 to reach done. |
 | [[ORC-T-0049]] | backlog | blocked_dependency | Wait for dependency ORC-T-0046 to reach done. |
-| [[ORC-T-0066]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0067]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0068]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0069]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0070]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0071]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0072]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0073]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0074]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0075]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
-| [[ORC-T-0076]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[ORC-T-0066]] | backlog | blocked_dependency | Wait for dependency ORC-T-0041 to reach done. |
+| [[ORC-T-0067]] | backlog | blocked_dependency | Wait for dependency ORC-T-0066 to reach done. |
+| [[ORC-T-0068]] | backlog | blocked_dependency | Wait for dependency ORC-T-0067 to reach done. |
+| [[ORC-T-0069]] | backlog | blocked_dependency | Wait for dependency ORC-T-0068 to reach done. |
+| [[ORC-T-0070]] | backlog | blocked_dependency | Wait for dependency ORC-T-0068 to reach done. |
+| [[ORC-T-0071]] | backlog | blocked_dependency | Wait for dependency ORC-T-0068 to reach done. |
+| [[ORC-T-0072]] | backlog | blocked_dependency | Wait for dependency ORC-T-0071 to reach done. |
+| [[ORC-T-0073]] | backlog | blocked_dependency | Wait for dependency ORC-T-0069 to reach done. |
+| [[ORC-T-0074]] | backlog | blocked_dependency | Wait for dependency ORC-T-0073 to reach done. |
+| [[ORC-T-0075]] | backlog | blocked_dependency | Wait for dependency ORC-T-0074 to reach done. |
+| [[ORC-T-0076]] | backlog | blocked_dependency | Wait for dependency ORC-T-0075 to reach done. |
 
 ## Recently completed
 

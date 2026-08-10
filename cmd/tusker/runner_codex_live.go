@@ -1568,8 +1568,12 @@ func normalizeUsageKey(key string) string {
 }
 
 func appendRawLogLine(path, line string) error {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
+		return err
+	}
+	if err := requirePrivateRunnerFile(file, path); err != nil {
+		_ = file.Close()
 		return err
 	}
 	defer file.Close()
@@ -1582,29 +1586,6 @@ func writeRunnerStatusFile(path string, exitCode int) error {
 }
 
 func writeRunnerStatusFileWithOutcome(path string, exitCode int, outcome AttemptOutcome, reason string, turnsUsed int) error {
-	payload := runnerProcessStatus{
-		ExitCode:    exitCode,
-		CompletedAt: time.Now().UTC().Format(time.RFC3339),
-	}
-	if outcome != "" && outcome != AttemptOutcomeNone {
-		payload.Outcome = string(outcome)
-	}
-	if strings.TrimSpace(reason) != "" {
-		payload.Reason = strings.TrimSpace(reason)
-	}
-	if turnsUsed > 0 {
-		payload.TurnsUsed = turnsUsed
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	if err := ensureDir(filepath.Dir(path)); err != nil {
-		return err
-	}
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, append(raw, '\n'), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
+	_, err := writeRunnerStatusFileIfAbsentWithOutcome(path, exitCode, outcome, reason, turnsUsed)
+	return err
 }

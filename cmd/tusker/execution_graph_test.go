@@ -42,8 +42,8 @@ func TestExecutionGraphProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(limited.Nodes) != 1 || len(limited.Edges) != 0 || limited.NextCursor == "" {
-		t.Fatalf("page must not expose dangling edges: %#v", limited)
+	if len(limited.Nodes) != 1 || len(limited.Edges) != 0 || limited.NextCursor == "" || !limited.TopologyPartial {
+		t.Fatalf("page must disclose omitted topology: %#v", limited)
 	}
 }
 

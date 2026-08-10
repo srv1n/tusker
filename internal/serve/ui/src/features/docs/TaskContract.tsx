@@ -1,11 +1,7 @@
 import {
-  useEffect,
   useMemo,
-  useRef,
   useState,
   type ComponentType,
-  type KeyboardEvent,
-  type MouseEvent,
   type ReactNode,
 } from "react";
 import {
@@ -40,10 +36,8 @@ import { livenessTone, statusTone } from "@/components/ui/tone";
 import {
   useCloseTask,
   useDiscardTask,
-  useDoc,
   useEvidenceAdd,
   useFeedbackAdd,
-  useFrontmatterUpdate,
   useGateAction,
   useLandTask,
   useRunTask,
@@ -58,20 +52,13 @@ import { DocEditor, type EditorRuntimeConfig } from "@/features/editor";
 import { DocShell } from "./DocShell";
 import { FrontmatterInlineControl, PropertyPanel } from "./PropertyPanel";
 import { KindEyebrow, ResultChip } from "./bits";
-import { ConflictBanner, MergeReadiness, SavedBanner, ValidationStrip } from "./banners";
-import { useDocEditor, type DocEditor as DocEditorState } from "./editor";
+import { MergeReadiness } from "./banners";
 import { resolveWikilink, wikilinkTargets } from "./mock";
 import { HumanActionCard } from "@/features/human-action/HumanActionCard";
 import type { MergeCheck } from "./types";
 import {
-  readMarkdownSection,
-  replaceMarkdownSection,
-  taskDetailToDocContent,
   taskDocPath,
 } from "./taskMarkdown";
-
-const barBtn =
-  "rounded-lg px-3.5 py-1.5 text-[12.5px] font-semibold leading-none transition-colors";
 
 export function TaskContract({ projectId, taskId, focusGateId }: { projectId: string; taskId: string; focusGateId?: string }) {
   const q = useTask(taskId, projectId);
@@ -90,22 +77,12 @@ export function TaskContract({ projectId, taskId, focusGateId }: { projectId: st
 
 function ContractBody({ projectId, task, focusGateId }: { projectId: string; task: TaskDetail; focusGateId?: string }) {
   const docPath = taskDocPath(task.id);
-  const docQuery = useDoc(docPath, projectId);
-  const doc = docQuery.data ?? taskDetailToDocContent(task);
-  const ed = useDocEditor(doc);
   const navigate = useNavigate();
-  const editorHostRef = useRef<HTMLDivElement>(null);
-  const draftRef = useRef(ed.draft);
-  const [activeProse, setActiveProse] = useState<string | null>(null);
-  const [focusAt, setFocusAt] = useState<{ x: number; y: number } | null>(null);
   const humanActions = [...(task.humanActions?.length ? task.humanActions : task.humanAction ? [task.humanAction] : [])]
     .sort((a, b) => Number(b.gateId === focusGateId) - Number(a.gateId === focusGateId));
 
-  const editing = ed.phase === "editing";
   const confirm = useConfirm();
   const closeReview = useCloseTask(task.id, projectId);
-  const frontmatterUpdate = useFrontmatterUpdate();
-  const pendingFrontmatterKey = frontmatterUpdate.isPending ? frontmatterUpdate.variables?.key : null;
   const rawStatus =
     task.rawStatus ?? (task.status === "in_progress" || task.status === "blocked" ? "ready" : task.status);
   const rawReadiness =
@@ -149,19 +126,6 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
     { key: "updated_at", value: task.updatedAt.slice(0, 10), locked: true, lockReason: "updated_at is stamped by successful structured actions." },
   ];
   const frontmatterByKey = Object.fromEntries(frontmatter.map((field) => [field.key, field]));
-  const commitFrontmatter = (key: string, value: string) =>
-    frontmatterUpdate.mutate({ target: { kind: "task", id: task.id }, key, value });
-
-  useEffect(() => {
-    draftRef.current = ed.draft;
-  }, [ed.draft]);
-
-  useEffect(() => {
-    if (editing) return;
-    setActiveProse(null);
-    setFocusAt(null);
-  }, [editing]);
-
   const editorConfig = useMemo<EditorRuntimeConfig>(
     () => ({
       resolveWikilink,
@@ -177,44 +141,11 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
     [projectId, navigate],
   );
 
-  const startProseEdit = (heading: string, point: { x: number; y: number } | null) => {
-    if (editing) return;
-    setActiveProse(heading);
-    setFocusAt(point);
-    ed.startEdit();
-  };
-
-  const updateProseSection = (heading: string, markdown: string) => {
-    const next = replaceMarkdownSection(draftRef.current, heading, markdown);
-    draftRef.current = next;
-    ed.setDraft(next);
-  };
-
-  const cancelEdit = () => {
-    ed.cancelEdit();
-    setActiveProse(null);
-    setFocusAt(null);
-  };
-
-  const focusEditor = () =>
-    editorHostRef.current?.querySelector<HTMLElement>(".tk-prose")?.focus();
-
-  const actions = editing ? (
-    <>
-      <Mono className="mr-1 text-[10.5px] text-warn">editing</Mono>
-      {ed.isDirty && <Mono className="text-[10px] text-warn">unsaved</Mono>}
-      <button className={cn(barBtn, "border border-line text-muted hover:bg-hover")} onClick={cancelEdit}>
-        Cancel
-      </button>
-      <button className={cn(barBtn, "bg-pass text-surface hover:opacity-90")} onClick={ed.save}>
-        Save
-      </button>
-    </>
-  ) : (
+  const actions = (
     <Link
       to="/p/$projectId/docs"
       params={{ projectId }}
-      search={{ path: doc.path, view: "source" }}
+      search={{ path: docPath, view: "source" }}
       className="flex items-center gap-1.5 rounded-lg border border-line bg-raised px-3.5 py-1.5 text-[12.5px] font-semibold text-ink-soft transition-colors hover:border-line-soft hover:bg-hover"
     >
       <FileText size={13} strokeWidth={2} />
@@ -229,7 +160,7 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
       actions={actions}
     >
       <div className="mx-auto grid w-full max-w-[1080px] grid-cols-1 gap-9 px-4 pb-24 pt-7 sm:px-6 lg:grid-cols-[minmax(0,1fr)_280px] lg:px-11">
-        <div ref={editorHostRef} className="min-w-0">
+          <div className="min-w-0">
           {checks.length > 0 && (
             <>
               <MergeReadiness checks={checks} onAccept={onAcceptClose} />
@@ -241,13 +172,12 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
               />
             </>
           )}
-          {ed.banner.type === "conflict" && (
-            <ConflictBanner conflict={ed.banner.conflict} onReconcile={ed.reconcile} />
-          )}
-          {ed.banner.type === "invalid" && (
-            <ValidationStrip issues={ed.banner.issues} onFix={focusEditor} onDiscard={cancelEdit} />
-          )}
-          {ed.banner.type === "saved" && <SavedBanner rev={String(ed.banner.rev)} />}
+          <div className="mb-6 flex items-center gap-2.5 rounded-xl border border-line bg-panel px-4 py-3">
+            <span className="h-2 w-2 flex-none rounded-full bg-faint" />
+            <span className="text-[13.5px] text-muted">
+              Task contract prose is read-only here. Durable task-note editing is not available yet.
+            </span>
+          </div>
 
           <KindEyebrow kind="task" className="mb-1.5" />
           <Mono className="mb-1 block text-[11.5px] text-faint">{task.id}</Mono>
@@ -257,8 +187,7 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
 
           <PropertyPanel
             frontmatter={frontmatter}
-            onCommit={commitFrontmatter}
-            pendingKey={pendingFrontmatterKey}
+            readOnly
           />
 
           {humanActions.map((action) => (
@@ -275,13 +204,7 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
             <TaskProseBlock
               heading="Intent"
               fallbackMarkdown={task.intent}
-              ed={ed}
               config={editorConfig}
-              editing={editing}
-              active={activeProse === "Intent"}
-              focusAt={activeProse === "Intent" ? focusAt : undefined}
-              onStart={startProseEdit}
-              onChange={updateProseSection}
             />
           </Section>
 
@@ -362,13 +285,7 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
                   <TaskProseBlock
                     heading="Knowledge delta"
                     fallbackMarkdown={task.knowledgeDelta}
-                    ed={ed}
                     config={editorConfig}
-                    editing={editing}
-                    active={activeProse === "Knowledge delta"}
-                    focusAt={activeProse === "Knowledge delta" ? focusAt : undefined}
-                    onStart={startProseEdit}
-                    onChange={updateProseSection}
                     compact
                   />
                 </div>
@@ -383,8 +300,7 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
             <FactRow k="status">
               <EditableFact
                 field={frontmatterByKey.status}
-                onCommit={commitFrontmatter}
-                pending={pendingFrontmatterKey === "status"}
+                readOnly
               >
                 <StatusChip status={task.rawStatus ?? task.status} />
               </EditableFact>
@@ -392,8 +308,7 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
             <FactRow k="readiness">
               <EditableFact
                 field={frontmatterByKey.readiness}
-                onCommit={commitFrontmatter}
-                pending={pendingFrontmatterKey === "readiness"}
+                readOnly
               >
                 <ReadinessChip readiness={frontmatterByKey.readiness.value} />
               </EditableFact>
@@ -401,8 +316,7 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
             <FactRow k="priority">
               <EditableFact
                 field={frontmatterByKey.priority}
-                onCommit={commitFrontmatter}
-                pending={pendingFrontmatterKey === "priority"}
+                readOnly
               >
                 <PriorityChip priority={frontmatterByKey.priority.value as typeof task.priority} />
               </EditableFact>
@@ -410,8 +324,7 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
             <FactRow k="risk">
               <EditableFact
                 field={frontmatterByKey.risk}
-                onCommit={commitFrontmatter}
-                pending={pendingFrontmatterKey === "risk"}
+                readOnly
               >
                 <RiskChip risk={frontmatterByKey.risk.value as typeof task.risk} />
               </EditableFact>
@@ -489,60 +402,25 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
 function TaskProseBlock({
   heading,
   fallbackMarkdown,
-  ed,
   config,
-  editing,
-  active,
-  focusAt,
-  onStart,
-  onChange,
   compact = false,
 }: {
   heading: string;
   fallbackMarkdown: string;
-  ed: DocEditorState;
   config: EditorRuntimeConfig;
-  editing: boolean;
-  active: boolean;
-  focusAt?: { x: number; y: number } | null;
-  onStart: (heading: string, point: { x: number; y: number } | null) => void;
-  onChange: (heading: string, markdown: string) => void;
   compact?: boolean;
 }) {
-  const activeEditing = editing && active;
-  const source = readMarkdownSection(activeEditing ? ed.draft : ed.content, heading) ?? fallbackMarkdown;
-
-  const startFromPointer = (event: MouseEvent<HTMLDivElement>) => {
-    if (editing) return;
-    onStart(heading, { x: event.clientX, y: event.clientY });
-  };
-
-  const startFromKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (editing || (event.key !== "Enter" && event.key !== " ")) return;
-    event.preventDefault();
-    onStart(heading, null);
-  };
-
   return (
     <div
       data-task-prose-section={heading}
-      tabIndex={editing ? undefined : 0}
-      onMouseDown={startFromPointer}
-      onKeyDown={startFromKeyboard}
-      className={cn(
-        "rounded-lg transition-colors",
-        !editing && "cursor-text hover:bg-hover",
-        activeEditing && "animate-rise",
-      )}
+      className="rounded-lg"
     >
       <DocEditor
-        key={`${heading}:${ed.stateRev}:${activeEditing ? "edit" : "read"}`}
-        initialMarkdown={source}
-        editable={activeEditing}
+        key={heading}
+        initialMarkdown={fallbackMarkdown}
+        editable={false}
         config={config}
-        focusAt={activeEditing ? focusAt : undefined}
-        onChange={activeEditing ? (markdown) => onChange(heading, markdown) : undefined}
-        className={cn(activeEditing && "tk-task-prose-editing", compact && "tk-task-prose-compact")}
+        className={cn("tk-task-prose-read-only", compact && "tk-task-prose-compact")}
       />
     </div>
   );
@@ -929,20 +807,17 @@ function RailLabel({ children }: { children: ReactNode }) {
 
 function EditableFact({
   field,
-  onCommit,
-  pending,
+  readOnly = false,
   children,
 }: {
   field: { key: string; value: string; locked: boolean; lockReason?: string };
-  onCommit: (key: string, value: string) => void;
-  pending: boolean;
+  readOnly?: boolean;
   children: ReactNode;
 }) {
   return (
     <FrontmatterInlineControl
       field={field}
-      onCommit={onCommit}
-      pending={pending}
+      readOnly={readOnly}
       showChevron={false}
       className="border-0 bg-transparent p-0 hover:bg-transparent"
     >

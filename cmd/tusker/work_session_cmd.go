@@ -134,7 +134,7 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 	// its heartbeat is past the reclaim grace and its recorded process identity
 	// no longer exists.  Never let an expired timestamp alone steal a live
 	// interactive workspace.
-	if current, findErr := ctx.Store.FindRun(trackerRecordID(note)); findErr != nil {
+	if current, findErr := ctx.Store.FindRunScoped(ctx.Project.ProjectID, trackerRecordID(note)); findErr != nil {
 		return runClaimResult{}, nil, findErr
 	} else if current != nil && runFreshness(current, time.Now().UTC()) == "stale" {
 		if _, blocking := holderLiveness(*current, time.Now().UTC()); blocking {
@@ -157,7 +157,7 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 		if ctx.StateActiveRuns[current.LeaseState] > 0 {
 			ctx.StateActiveRuns[current.LeaseState]--
 		}
-		if latest, latestErr := ctx.Store.FindRun(trackerRecordID(note)); latestErr == nil && latest != nil {
+		if latest, latestErr := ctx.Store.FindRunScoped(ctx.Project.ProjectID, trackerRecordID(note)); latestErr == nil && latest != nil {
 			projected := *latest
 			projected.LeaseState = string(LeaseStateUnclaimed)
 			ctx.ProjectRuns[trackerRecordID(note)] = projected
@@ -246,7 +246,7 @@ func workSessionStatusCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
-	run, err := store.FindRun(id)
+	run, err := findRunScopedOrAmbiguous(store, args.String("project"), id)
 	if err != nil {
 		return err
 	}
@@ -299,7 +299,7 @@ func requireWorkSessionRevision(args Args) error {
 		return err
 	}
 	defer store.Close()
-	run, err := store.FindRun(args.String("id"))
+	run, err := findRunScopedOrAmbiguous(store, args.String("project"), args.String("id"))
 	if err != nil {
 		return err
 	}

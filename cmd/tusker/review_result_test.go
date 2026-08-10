@@ -111,6 +111,12 @@ func TestReviewResultProtocolStoreReplayAndConflict(t *testing.T) {
 		t.Fatal("conflicting second verdict accepted")
 	}
 	result = validStoredReviewResult()
+	result.CreatedAt = "2026-07-25T11:00:00Z"
+	replay, err = store.SaveReviewResult(result)
+	if err != nil || !replay {
+		t.Fatalf("same verdict with retry timestamp replay=%v err=%v", replay, err)
+	}
+	result = validStoredReviewResult()
 	result.ResultRevision = "sha256:forged"
 	if _, err := store.SaveReviewResult(result); err == nil {
 		t.Fatal("forged stable revision accepted")

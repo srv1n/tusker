@@ -941,7 +941,7 @@ func TestV7AttachmentsMigrateMovesLegacyFilesToScratch(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacyLog := filepath.Join(legacyDir, "raw.log")
-	if err := os.WriteFile(legacyLog, []byte("PASS\n"), 0o644); err != nil {
+	if err := os.WriteFile(legacyLog, []byte("PASS\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := attachmentsV7MigrateCmd(Args{"vault": vault, "_pos0": "migrate", "write": "true", "quiet": "true"}); err != nil {

@@ -95,12 +95,30 @@ make check
 Run `go mod tidy` after first applying this cleanup on a machine with network
 access so `go.sum` is populated.
 
+## Supported platforms
+
+| Platform | Supported surface |
+| --- | --- |
+| macOS 14+ (Apple Silicon and Intel) | CLI, resident daemon, Serve UI, launchd service integration, and TuskerBar |
+| Linux (amd64 and arm64) | CLI, resident daemon, and Serve UI; use the host service manager when running the daemon persistently |
+| Windows | Portable internal Go packages are kept compiling in CI, but the CLI, daemon, installer, and release artifacts are not supported |
+
+The release matrix intentionally contains only macOS and Linux targets. The
+shell installer requires `curl`, Python 3, a SHA-256 tool, and `minisign`; it
+fails closed until the repository owner provisions the production public key.
+
+Install the cross-platform CLI and Codex/Claude user skills with:
+
+```bash
+make install
+```
+
 ## TuskerBar on macOS
 
 Install the CLI, skills, and the signed Mac app with:
 
 ```bash
-make install
+make mac-preview
 ```
 
 `TuskerBar.app` is installed and opened from `~/Applications`. It provides both
@@ -108,5 +126,6 @@ a normal full-screen-capable window and a compact menu-bar panel. To install
 just the app, run `make mac-install`; `make mac-open` reopens it and
 `make mac-uninstall` removes it. The signed app bundles the current Tusker CLI;
 opening it starts or reuses the local daemon and its Serve UI automatically.
-Run `make mac-preview` to build, install, and open the current checkout in one
-command. No separate `tusker serve` terminal is required.
+`make mac-preview` is the normal local macOS workflow. No separate
+`tusker serve` terminal or `tusker daemon service start` process is required;
+TuskerBar owns its bundled daemon lifecycle.

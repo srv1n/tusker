@@ -23,7 +23,7 @@ func bootstrapV7(args Args) error {
 	if err := bootstrapV7Dirs(vaultPath); err != nil {
 		return err
 	}
-	if err := writeDefaultRootTuskerConfig(vaultPath); err != nil {
+	if err := writeDefaultTuskerConfig(vaultPath); err != nil {
 		return err
 	}
 	if err := ensureV7Domain(vaultPath, "project", "Project", "Durable project knowledge."); err != nil {
@@ -65,19 +65,24 @@ func bootstrapLegacy(args Args) error {
 	return tuskerError(errorInvalidArg, "legacy bootstrap has been removed; V7 init is the only supported bootstrap path", withHint("use `tusker init --yes`"))
 }
 
-func writeDefaultRootTuskerConfig(vaultPath string) error {
-	configPath := filepath.Join(filepath.Dir(vaultPath), "tusker.yaml")
-	if fileExists(configPath) {
+func writeDefaultTuskerConfig(vaultPath string) error {
+	// Keep an existing root-level config readable, but never create one. This
+	// prevents init from producing a duplicate competing configuration file.
+	if fileExists(managedTuskerConfigPath(vaultPath)) || fileExists(legacyTuskerConfigPath(v7RepoRoot(vaultPath))) {
 		return nil
 	}
+	configPath := managedTuskerConfigPath(vaultPath)
 	projectID := sanitizeProjectID(filepath.Base(filepath.Dir(vaultPath)))
 	root := filepath.ToSlash(filepath.Base(vaultPath))
 	profiles := semanticBootstrapProfiles(discoverRunnerCatalog(false))
-	profileRaw, err := yaml.Marshal(profiles)
-	if err != nil {
-		return err
+	profileYAML := ""
+	if len(profiles) > 0 {
+		profileRaw, err := yaml.Marshal(profiles)
+		if err != nil {
+			return err
+		}
+		profileYAML = "  profiles:\n" + indentBootstrapYAML(string(profileRaw), "    ") + "\n"
 	}
-	profileYAML := indentBootstrapYAML(string(profileRaw), "    ")
 	defaultProfileYAML := ""
 	if hasBootstrapProfile(profiles, "execute-standard") {
 		defaultProfileYAML = "  default_profile: execute-standard\n"
@@ -103,7 +108,6 @@ automation:
   enabled: false
   # Editable semantic defaults. They are policy, not a machine-local model catalog.
 %s
-  profiles:
 %s
   dispatch_scope: armed_waves
   # The deterministic review-completion reactor is separately opt-in. Its
@@ -134,6 +138,12 @@ automation:
     allowed_child_types: []
     merge_rule: manual_review
 `, projectID, root, root, root, root, root, defaultProfileYAML, profileYAML))
+}
+
+// writeDefaultRootTuskerConfig is retained for in-package compatibility while
+// callers migrate. It no longer writes at repository root.
+func writeDefaultRootTuskerConfig(vaultPath string) error {
+	return writeDefaultTuskerConfig(vaultPath)
 }
 
 func indentBootstrapYAML(value, indent string) string {

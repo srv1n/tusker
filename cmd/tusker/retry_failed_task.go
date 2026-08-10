@@ -129,6 +129,10 @@ func isCASConflict(err error) bool {
 // raw CAS conflict. It resets only the target run, so sibling runs are left
 // exactly as they were.
 func retryFailedRun(store *RuntimeStore, identity, actor, reason string, now time.Time) (retryFailedTaskResult, error) {
+	return retryFailedRunScoped(store, "", identity, actor, reason, now)
+}
+
+func retryFailedRunScoped(store *RuntimeStore, projectID, identity, actor, reason string, now time.Time) (retryFailedTaskResult, error) {
 	if store == nil {
 		return retryFailedTaskResult{}, tuskerError(errorNotFound, "run not found")
 	}
@@ -143,7 +147,7 @@ func retryFailedRun(store *RuntimeStore, identity, actor, reason string, now tim
 	actor = firstNonEmpty(strings.TrimSpace(actor), defaultActorName())
 	reason = firstNonEmpty(strings.TrimSpace(reason), "operator retry")
 
-	run, err := store.FindRun(identity)
+	run, err := findRunScopedOrAmbiguous(store, projectID, identity)
 	if err != nil {
 		return retryFailedTaskResult{}, err
 	}
@@ -168,7 +172,7 @@ func retryFailedRun(store *RuntimeStore, identity, actor, reason string, now tim
 			res, err := expediteQueuedRetry(store, run, actor, reason, now, due)
 			if err != nil {
 				if isCASConflict(err) {
-					return retryConcurrentReadback(store, identity, now)
+					return retryConcurrentReadbackScoped(store, projectID, identity, now)
 				}
 				return retryFailedTaskResult{}, err
 			}
@@ -189,7 +193,7 @@ func retryFailedRun(store *RuntimeStore, identity, actor, reason string, now tim
 		// Concurrent idempotency: a lost CAS race means another retry won. Re-read
 		// and report the winner's outcome as a clean no-op rather than an error.
 		if isCASConflict(err) {
-			return retryConcurrentReadback(store, identity, now)
+			return retryConcurrentReadbackScoped(store, projectID, identity, now)
 		}
 		return retryFailedTaskResult{}, err
 	}
@@ -237,7 +241,11 @@ func expediteQueuedRetry(store *RuntimeStore, run *RunStatus, actor, reason stri
 // winning retry's outcome as a friendly no-op, so the losing caller of a
 // concurrent pair gets a clean result rather than a raw CAS_CONFLICT.
 func retryConcurrentReadback(store *RuntimeStore, identity string, now time.Time) (retryFailedTaskResult, error) {
-	run, err := store.FindRun(identity)
+	return retryConcurrentReadbackScoped(store, "", identity, now)
+}
+
+func retryConcurrentReadbackScoped(store *RuntimeStore, projectID, identity string, now time.Time) (retryFailedTaskResult, error) {
+	run, err := findRunScopedOrAmbiguous(store, projectID, identity)
 	if err != nil {
 		return retryFailedTaskResult{}, err
 	}

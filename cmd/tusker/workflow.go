@@ -595,7 +595,7 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 	}
 	wf.CompletionReactor = mode
 	triggerStates := normalizeList(cfg.Automation.TriggerStates)
-	if len(triggerStates) == 0 {
+	if !resolvedConfigKeyPresent(resolved, "automation.trigger_states") {
 		triggerStates = []string{"ready", "rework"}
 	}
 	if containsString(triggerStates, "active") && strings.TrimSpace(cfg.Automation.LegacyProfile) == "" {
@@ -603,78 +603,84 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 		return wfFile, tuskerError(errorConfigInvalid, "automation.trigger_states must not include legacy active without automation.legacy_profile", withPath(configPath), withHint("use ready,rework or set automation.legacy_profile: legacy_active"))
 	}
 	wf.Tracker.ActiveStates = triggerStates
-	if strings.TrimSpace(cfg.Automation.DefaultRunner) != "" {
+	if resolvedConfigKeyPresent(resolved, "automation.default_runner") {
 		wf.Agents.Default = strings.TrimSpace(cfg.Automation.DefaultRunner)
 	}
-	if len(cfg.Automation.EnabledRunners) > 0 {
+	if resolvedConfigKeyPresent(resolved, "automation.enabled_runners") {
 		wf.Agents.Enabled = normalizeList(cfg.Automation.EnabledRunners)
 	}
 	wf.RunnerProfiles = runnerProfilesFromSchema(cfg.Automation.Profiles)
 	wf.RunnerProfileSources = runnerProfileSourcesFromLayers(wf.RunnerProfiles, resolved.Layers)
 	wf.RunnerDefaultProfile = strings.TrimSpace(cfg.Automation.DefaultProfile)
-	wf.RunnerLaneProfiles = map[string]string{}
-	for lane, profile := range cfg.Automation.LaneProfiles {
-		wf.RunnerLaneProfiles[strings.TrimSpace(lane)] = strings.TrimSpace(profile)
+	if resolvedConfigKeyPresent(resolved, "automation.lane_profiles") {
+		wf.RunnerLaneProfiles = map[string]string{}
+		for lane, profile := range cfg.Automation.LaneProfiles {
+			wf.RunnerLaneProfiles[strings.TrimSpace(lane)] = strings.TrimSpace(profile)
+		}
+		if len(wf.RunnerLaneProfiles) == 0 {
+			wf.RunnerLaneProfiles = nil
+		}
 	}
-	if len(wf.RunnerLaneProfiles) == 0 {
-		wf.RunnerLaneProfiles = nil
+	if resolvedConfigKeyPresent(resolved, "automation.routing") {
+		wf.RunnerRouting = runnerRoutingFromSchema(cfg.Automation.Routing)
 	}
-	wf.RunnerRouting = runnerRoutingFromSchema(cfg.Automation.Routing)
-	wf.RunnerDenylist = runnerDenylistFromSchema(cfg.Automation.Denylist)
+	if resolvedConfigKeyPresent(resolved, "automation.denylist") {
+		wf.RunnerDenylist = runnerDenylistFromSchema(cfg.Automation.Denylist)
+	}
 	if wf.Reviewer.Enabled && !stringListContainsFold(wf.Agents.Enabled, wf.Reviewer.Runner) {
 		wf.Reviewer.Runner = wf.Agents.Default
 	}
-	if cfg.Automation.Concurrency.MaxActiveRuns > 0 {
+	if resolvedConfigKeyPresent(resolved, "automation.concurrency.max_active_runs") {
 		wf.Agents.MaxConcurrentAgents = cfg.Automation.Concurrency.MaxActiveRuns
 	}
-	if cfg.Automation.Concurrency.MaxActiveRunsPerProject > 0 {
+	if resolvedConfigKeyPresent(resolved, "automation.concurrency.max_active_runs_per_project") {
 		wf.Runtime.MaxActiveRunsPerProject = cfg.Automation.Concurrency.MaxActiveRunsPerProject
 	}
-	if cfg.Automation.Concurrency.MaxContinuationRetries > 0 {
+	if resolvedConfigKeyPresent(resolved, "automation.concurrency.max_continuation_retries") {
 		wf.Runtime.MaxContinuationRetries = cfg.Automation.Concurrency.MaxContinuationRetries
 	}
-	if cfg.Automation.Concurrency.MaxConcurrentByState != nil {
+	if resolvedConfigKeyPresent(resolved, "automation.concurrency.max_concurrent_by_state") {
 		wf.Agents.MaxConcurrentAgentsByState = cfg.Automation.Concurrency.MaxConcurrentByState
 	}
 	if cfg.Automation.Budget.Enabled != nil {
 		wf.Runtime.Budget.Enabled = *cfg.Automation.Budget.Enabled
 	}
-	if cfg.Automation.Budget.PerAttemptInputTokens > 0 {
+	if resolvedConfigKeyPresent(resolved, "automation.budget.per_attempt_input_tokens") {
 		wf.Runtime.Budget.PerAttemptInputTokens = cfg.Automation.Budget.PerAttemptInputTokens
 	}
-	if cfg.Automation.Budget.PerAttemptOutputTokens > 0 {
+	if resolvedConfigKeyPresent(resolved, "automation.budget.per_attempt_output_tokens") {
 		wf.Runtime.Budget.PerAttemptOutputTokens = cfg.Automation.Budget.PerAttemptOutputTokens
 	}
-	if cfg.Automation.Budget.PerTaskInputTokens > 0 {
+	if resolvedConfigKeyPresent(resolved, "automation.budget.per_task_input_tokens") {
 		wf.Runtime.Budget.PerTaskInputTokens = cfg.Automation.Budget.PerTaskInputTokens
 	}
-	if cfg.Automation.Budget.PerTaskOutputTokens > 0 {
+	if resolvedConfigKeyPresent(resolved, "automation.budget.per_task_output_tokens") {
 		wf.Runtime.Budget.PerTaskOutputTokens = cfg.Automation.Budget.PerTaskOutputTokens
 	}
-	if cfg.Automation.Budget.DailyInputTokens > 0 {
+	if resolvedConfigKeyPresent(resolved, "automation.budget.daily_input_tokens") {
 		wf.Runtime.Budget.DailyInputTokens = cfg.Automation.Budget.DailyInputTokens
 	}
-	if cfg.Automation.Budget.DailyOutputTokens > 0 {
+	if resolvedConfigKeyPresent(resolved, "automation.budget.daily_output_tokens") {
 		wf.Runtime.Budget.DailyOutputTokens = cfg.Automation.Budget.DailyOutputTokens
 	}
 	wf.Runtime.Budget = withDefaultRuntimeBudgetConfig(wf.Runtime.Budget)
-	if cfg.Automation.ExternalLoop.MaxCycles > 0 {
+	if resolvedConfigKeyPresent(resolved, "automation.external_loop.max_cycles") {
 		wf.ExternalLoop.MaxCycles = cfg.Automation.ExternalLoop.MaxCycles
 	}
-	if cfg.Automation.ExternalLoop.MaxRepairContinuations > 0 {
+	if resolvedConfigKeyPresent(resolved, "automation.external_loop.max_repair_continuations") {
 		wf.ExternalLoop.MaxRepairContinuations = cfg.Automation.ExternalLoop.MaxRepairContinuations
 	}
-	if cfg.Automation.ExternalLoop.MaxExternalThreads > 0 {
+	if resolvedConfigKeyPresent(resolved, "automation.external_loop.max_external_threads") {
 		wf.ExternalLoop.MaxExternalThreads = cfg.Automation.ExternalLoop.MaxExternalThreads
 	}
-	if cfg.Automation.ExternalLoop.WallClockTimeoutHours > 0 {
+	if resolvedConfigKeyPresent(resolved, "automation.external_loop.wall_clock_timeout_hours") {
 		wf.ExternalLoop.WallClockTimeoutHours = cfg.Automation.ExternalLoop.WallClockTimeoutHours
 	}
 	workspaceRootOverride := strings.TrimSpace(cfg.Automation.Workspace.Root)
-	if workspaceRootOverride != "" {
+	if resolvedConfigKeyPresent(resolved, "automation.workspace.root") {
 		wf.Workspace.Root = workspaceRootOverride
 	}
-	if strings.TrimSpace(cfg.Automation.Workspace.Strategy) != "" {
+	if resolvedConfigKeyPresent(resolved, "automation.workspace.strategy") {
 		wf.Workspace.Strategy = strings.TrimSpace(cfg.Automation.Workspace.Strategy)
 		if workspaceStrategyFromWorkflow(wf.Workspace.Strategy) != WorkspaceStrategyShared && workspaceRootOverride == "" && strings.TrimSpace(wf.Workspace.Root) == "." {
 			wf.Workspace.Root = "workspaces"
@@ -707,11 +713,17 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 		wf.Runners[strings.TrimSpace(name)] = definition
 		applyRunnerDefinitionToLegacyBlocks(&wf, definition)
 	}
-	if cfg.Automation.Fanout.Enabled {
-		wf.Fanout.Enabled = true
+	if resolvedConfigKeyPresent(resolved, "automation.fanout.enabled") {
+		wf.Fanout.Enabled = cfg.Automation.Fanout.Enabled
+	}
+	if resolvedConfigKeyPresent(resolved, "automation.fanout.max_children") {
 		wf.Fanout.MaxChildren = cfg.Automation.Fanout.MaxChildren
+	}
+	if resolvedConfigKeyPresent(resolved, "automation.fanout.allowed_child_types") {
 		wf.Fanout.AllowedChildTypes = normalizeList(cfg.Automation.Fanout.AllowedChildTypes)
-		wf.Fanout.MergeRule = firstNonEmpty(strings.TrimSpace(cfg.Automation.Fanout.MergeRule), wf.Fanout.MergeRule)
+	}
+	if resolvedConfigKeyPresent(resolved, "automation.fanout.merge_rule") {
+		wf.Fanout.MergeRule = strings.TrimSpace(cfg.Automation.Fanout.MergeRule)
 	}
 	normalizeWorkflowDispatchStates(&wf)
 	wfFile.Data = wf

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 const (
 	serveStreamHeartbeatInterval = 15 * time.Second
 	serveStreamClientBuffer      = 16
+	serveStreamReplayCapacity    = 128
 )
 
 type serveStreamEvent struct {
@@ -27,6 +29,7 @@ type serveStreamEvent struct {
 	DeepLinkPath string   `json:"deep_link_path,omitempty"`
 	OccurredAt   string   `json:"occurred_at,omitempty"`
 	Keys         []string `json:"keys"`
+	ReplayMiss   bool     `json:"replay_miss,omitempty"`
 }
 
 type serveStreamBroker struct {
@@ -36,6 +39,7 @@ type serveStreamBroker struct {
 	clients           map[int]serveStreamClient
 	closed            bool
 	heartbeatInterval time.Duration
+	history           []serveStreamEvent
 }
 
 type serveStreamClient struct {
@@ -55,19 +59,44 @@ func (b *serveStreamBroker) Subscribe() (<-chan serveStreamEvent, func(), bool) 
 }
 
 func (b *serveStreamBroker) SubscribeProject(projectID string) (<-chan serveStreamEvent, func(), bool) {
+	ch, unsubscribe, ok, _ := b.subscribeProjectSince(projectID, 0)
+	return ch, unsubscribe, ok
+}
+
+func (b *serveStreamBroker) SubscribeProjectSince(projectID string, lastID int64) (<-chan serveStreamEvent, func(), bool, bool) {
+	return b.subscribeProjectSince(projectID, lastID)
+}
+
+func (b *serveStreamBroker) subscribeProjectSince(projectID string, lastID int64) (<-chan serveStreamEvent, func(), bool, bool) {
 	if b == nil {
-		return nil, func() {}, false
+		return nil, func() {}, false, false
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
-		return nil, func() {}, false
+		return nil, func() {}, false, false
 	}
 	b.nextID++
 	id := b.nextID
 	ch := make(chan serveStreamEvent, serveStreamClientBuffer)
+	projectID = strings.TrimSpace(projectID)
+	replayMiss := false
+	if lastID > b.nextEventID || (lastID > 0 && (len(b.history) == 0 || lastID < b.history[0].ID-1)) {
+		replayMiss = true
+	}
+	if lastID > 0 {
+		for _, event := range b.history {
+			if event.ID > lastID && (projectID == "" || event.Project == "" || event.Project == projectID) {
+				select {
+				case ch <- event:
+				default:
+					replayMiss = true
+				}
+			}
+		}
+	}
 	b.clients[id] = serveStreamClient{events: ch, project: strings.TrimSpace(projectID)}
-	return ch, func() { b.remove(id) }, true
+	return ch, func() { b.remove(id) }, true, replayMiss
 }
 
 func (b *serveStreamBroker) Broadcast(event serveStreamEvent) {
@@ -88,6 +117,10 @@ func (b *serveStreamBroker) Broadcast(event serveStreamEvent) {
 	event.ID = b.nextEventID
 	if strings.TrimSpace(event.OccurredAt) == "" {
 		event.OccurredAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	b.history = append(b.history, event)
+	if len(b.history) > serveStreamReplayCapacity {
+		b.history = b.history[len(b.history)-serveStreamReplayCapacity:]
 	}
 	for id, client := range b.clients {
 		if client.project != "" && event.Project != "" && client.project != event.Project {
@@ -180,7 +213,8 @@ func (s *serveServer) handleStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	ch, unsubscribe, ok := s.stream.SubscribeProject(r.URL.Query().Get("project"))
+	lastID, malformedCursor := parseServeStreamCursor(r.Header.Get("Last-Event-ID"))
+	ch, unsubscribe, ok, replayMiss := s.stream.SubscribeProjectSince(r.URL.Query().Get("project"), lastID)
 	if !ok {
 		http.Error(w, "stream closed", http.StatusServiceUnavailable)
 		return
@@ -195,6 +229,12 @@ func (s *serveServer) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	_, _ = fmt.Fprint(w, ": connected\n\n")
 	flusher.Flush()
+	if replayMiss || malformedCursor {
+		miss := serveStreamEvent{Kind: "stream_replay_miss", Keys: []string{"daemon", "projects", "needs", "runs", "tasks", "docs", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch"}, ReplayMiss: true}
+		if err := writeServeStreamEvent(ctxOrRequest(r), w, flusher, miss); err != nil {
+			return
+		}
+	}
 
 	heartbeat := time.NewTicker(s.stream.heartbeatEvery())
 	defer heartbeat.Stop()
@@ -219,6 +259,21 @@ func (s *serveServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// parseServeStreamCursor accepts only the decimal event IDs emitted by this
+// broker. A malformed, negative, or overflowing value forces an authoritative
+// refresh instead of being partially parsed into a plausible cursor.
+func parseServeStreamCursor(raw string) (int64, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, true
+	}
+	return id, false
+}
+
 func writeServeStreamEvent(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, event serveStreamEvent) error {
 	raw, err := json.Marshal(event)
 	if err != nil {
@@ -229,12 +284,14 @@ func writeServeStreamEvent(ctx context.Context, w http.ResponseWriter, flusher h
 		return ctx.Err()
 	default:
 	}
-	if _, err := fmt.Fprintf(w, "data: %s\n\n", raw); err != nil {
+	if _, err := fmt.Fprintf(w, "id: %d\ndata: %s\n\n", event.ID, raw); err != nil {
 		return err
 	}
 	flusher.Flush()
 	return nil
 }
+
+func ctxOrRequest(r *http.Request) context.Context { return r.Context() }
 
 func serveStreamKeys(keys ...string) []string {
 	seen := map[string]struct{}{}

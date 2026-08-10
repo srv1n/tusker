@@ -61,7 +61,8 @@ flowchart TD
 | Execution observability | Immutable execution identities, direct work, provider children, and convergent timelines | [execution-observability.md](execution-observability.md) |
 | Gates | Per-change / wave-end / nightly gate tiers, gate-ledger, closeout checkpoints | [gates.md](gates.md) |
 | Skills & knowledge | The `tusker` operator skill, per-repo project-knowledge skill, domain canon | [skills.md](skills.md) |
-| Serve UI | Read-only localhost control room (runs, streams, tasks) | [serve-ui.md](serve-ui.md) |
+| Serve UI | Privileged localhost control plane with authoritative actions, bounded projections, and explicit read-only surfaces | [serve-ui.md](serve-ui.md) |
+| Platform support | Supported operating systems, release targets, and intentionally unavailable surfaces | [platform-support.md](platform-support.md) |
 | CLI | Every user-facing `tusker` command, grouped by purpose | [cli.md](cli.md) |
 
 ## Where things live
@@ -77,7 +78,12 @@ flowchart TD
 
 Other `.tusker/` subtrees (`events`, `_generated`, `attempts`, `evidence`,
 `Attachments`, raw logs) are machine state — do not read them unless a task
-explicitly requires it.
+explicitly requires it. `.tusker/scratch/<TASK-ID>/` is ephemeral: it is
+reaped when the task closes, and the 14-day retention sweep takes any
+surviving entry after that, so anything worth keeping must be promoted to
+evidence before close.
+`tusker setup doctor` warns (`scratch_size`) when scratch exceeds 200M and
+can repair it with the same sweep.
 
 ## The documentation contract
 
@@ -126,7 +132,10 @@ graph TD
   n_knowledge_graph_grill["Decision log: the knowledge-graph discussion"]
   n_orchestration["Orchestration"]
   n_overview["Tusker system overview"]
-  n_serve_ui["The observation surface — serve, dashboards, logbook, digest"]
+  n_platform_support["Platform support"]
+  n_scratch_retention["Scratch retention: task scratch is ephemeral and reaps itself"]
+  n_scratch_retention_grill["Decision log: scratch retention session, 2026-08-04"]
+  n_serve_ui["Serve UI and local control plane"]
   n_skills["The Tusker skill system"]
   n_software_factory["Software Factory: Tusker as the production loop harness"]
   n_software_factory_grill["Decision log: the factory grill session"]
@@ -142,6 +151,9 @@ graph TD
   n_overview --> n_knowledge_graph
   n_knowledge_graph --> n_knowledge_graph_grill
   n_overview --> n_orchestration
+  n_overview --> n_platform_support
+  n_software_factory --> n_scratch_retention
+  n_scratch_retention --> n_scratch_retention_grill
   n_overview --> n_serve_ui
   n_overview --> n_skills
   n_overview --> n_software_factory

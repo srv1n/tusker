@@ -262,7 +262,7 @@ Deliver a bounded repository-fact packet. [[APP-D-0001]]
 		if err != nil {
 			t.Fatal(err)
 		}
-		localConfigRaw, err := os.ReadFile(filepath.Join(repo, "tusker.local.yaml"))
+		localConfigRaw, err := os.ReadFile(managedTuskerLocalConfigPath(vault))
 		if err != nil {
 			t.Fatal(err)
 		}

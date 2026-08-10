@@ -116,6 +116,8 @@ function ConfirmDialog({
   const [typed, setTyped] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
   const bodyId = useId();
 
@@ -124,6 +126,7 @@ function ConfirmDialog({
   // Land focus on the safest actionable control: the type-to-confirm field
   // when present (nothing is armed yet), otherwise the confirm button.
   useEffect(() => {
+    openerRef.current = document.activeElement as HTMLElement | null;
     if (typeToConfirm) inputRef.current?.focus();
     else confirmRef.current?.focus();
   }, [typeToConfirm]);
@@ -133,20 +136,35 @@ function ConfirmDialog({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onSettle(false);
+        settle(false);
+      } else if (event.key === "Tab") {
+        const root = dialogRef.current;
+        const focusable = root ? Array.from(root.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')) : [];
+        if (focusable.length) {
+          const first = focusable[0]!; const last = focusable[focusable.length - 1]!;
+          if (!root?.contains(document.activeElement)) { event.preventDefault(); first.focus(); }
+          else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+        }
       } else if (event.key === "Enter" && matches) {
         event.preventDefault();
-        onSettle(true);
+        settle(true);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [matches, onSettle]);
+  }, [matches, onSettle, typeToConfirm]);
+
+  const settle = (ok: boolean) => {
+    onSettle(ok);
+    requestAnimationFrame(() => openerRef.current?.focus());
+  };
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={() => onSettle(false)} />
+      <div className="absolute inset-0 bg-black/50" onClick={() => settle(false)} />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -186,7 +204,7 @@ function ConfirmDialog({
         <div className="flex justify-end gap-2">
           <button
             type="button"
-            onClick={() => onSettle(false)}
+            onClick={() => settle(false)}
             className={cn(confirmBtn, "border border-line text-ink-soft hover:bg-hover")}
           >
             {cancelLabel}
@@ -195,7 +213,7 @@ function ConfirmDialog({
             ref={confirmRef}
             type="button"
             disabled={!matches}
-            onClick={() => onSettle(true)}
+            onClick={() => settle(true)}
             className={cn(
               confirmBtn,
               "text-surface hover:opacity-90",

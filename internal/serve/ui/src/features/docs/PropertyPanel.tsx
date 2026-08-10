@@ -23,10 +23,12 @@ export function PropertyPanel({
   frontmatter,
   onCommit,
   pendingKey,
+  readOnly = false,
 }: {
   frontmatter: Frontmatter;
   onCommit?: FrontmatterCommit;
   pendingKey?: string | null;
+  readOnly?: boolean;
 }) {
   if (frontmatter.length === 0) return null;
   return (
@@ -41,6 +43,7 @@ export function PropertyPanel({
             <FrontmatterInlineControl
               field={field}
               onCommit={onCommit}
+              readOnly={readOnly}
               pending={pendingKey === field.key}
               className="font-mono text-[11px]"
             >
@@ -57,6 +60,7 @@ export function FrontmatterInlineControl({
   field,
   onCommit,
   pending = false,
+  readOnly = false,
   showChevron = true,
   className,
   children,
@@ -64,6 +68,7 @@ export function FrontmatterInlineControl({
   field: FrontmatterField;
   onCommit?: FrontmatterCommit;
   pending?: boolean;
+  readOnly?: boolean;
   showChevron?: boolean;
   className?: string;
   children: ReactNode;
@@ -85,7 +90,7 @@ export function FrontmatterInlineControl({
       setMessage(result.reason);
       return;
     }
-    if (!onCommit) {
+    if (readOnly || !onCommit) {
       setMessage("No structured action is wired for this field yet.");
       return;
     }
@@ -119,6 +124,8 @@ export function FrontmatterInlineControl({
       <span className="relative inline-flex">
         <button
           type="button"
+          aria-label={`${field.key} (read-only)`}
+          disabled={readOnly}
           className={cn(
             "inline-flex items-center gap-1 rounded-md bg-hover px-2 py-[3px] text-muted transition-colors hover:bg-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30",
             className,
@@ -137,12 +144,14 @@ export function FrontmatterInlineControl({
     <span className="relative inline-flex">
       <button
         type="button"
-        disabled={pending}
+        aria-label={readOnly ? `${field.key} (read-only)` : field.key}
+        disabled={readOnly || pending}
         className={cn(
           "inline-flex items-center gap-1 rounded-md border border-line bg-raised px-2 py-[3px] text-ink-soft transition-colors hover:border-line-soft hover:bg-hover disabled:cursor-wait disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30",
           className,
         )}
         onClick={() => {
+          if (readOnly) return;
           setMessage(null);
           setDraft(frontmatterControlValue(field.key, field.value));
           setEditing((open) => !open);

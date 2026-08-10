@@ -91,7 +91,8 @@ same file.
 | `make install-user` | `tusker install --codex-user --claude-user --bin-dir … --force` — binary + both user skills. |
 | `make install-repo REPO=/abs/path` | `tusker install --repo <REPO> --bin-dir … --force` — repo-local skills + pointers. |
 | `make install-bin` | Binary + refresh already-installed user skills. |
-| `make install` | `install-user` + the TuskerBar Mac app. |
+| `make install` | Cross-platform alias for `install-user`; installs the CLI and both user skills. |
+| `make mac-preview` | macOS only: `install-user` + build/install/open TuskerBar. |
 
 Related commands: `tusker update` (refresh binary + existing user skills after a
 pull/rebuild), `tusker skill sync` (refresh repo-local generated installs,

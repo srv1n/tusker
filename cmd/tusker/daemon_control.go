@@ -5,13 +5,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
+
+const daemonControlMaxRequestBytes = 64 << 10
+const daemonControlMaxConcurrent = 32
 
 type daemonControlRequest struct {
 	Command   string `json:"command"`
@@ -41,20 +47,59 @@ type daemonControlServer struct {
 	path string
 	ln   net.Listener
 	wg   sync.WaitGroup
+	sem  chan struct{}
 }
 
 func daemonSocketPath(stateRoot string) string {
 	return filepath.Join(stateRoot, "daemon.sock")
 }
 
+func readDaemonControlLine(r *bufio.Reader) ([]byte, error) {
+	var raw []byte
+	for {
+		part, err := r.ReadSlice('\n')
+		if len(part) > daemonControlMaxRequestBytes-len(raw) {
+			return nil, fmt.Errorf("control request too large")
+		}
+		raw = append(raw, part...)
+		if err == nil {
+			return raw, nil
+		}
+		if errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("unterminated control request")
+		}
+		return nil, err
+	}
+}
+
 func startDaemonControlServer(stateRoot string, handler func(context.Context, daemonControlRequest) daemonControlResponse) (*daemonControlServer, error) {
 	path := daemonSocketPath(stateRoot)
-	_ = os.Remove(path)
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("refusing symlink daemon control socket: %s", path)
+		}
+		if info.Mode()&os.ModeSocket == 0 {
+			return nil, fmt.Errorf("refusing non-socket daemon control path: %s", path)
+		}
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok && uint32(os.Getuid()) != stat.Uid {
+			return nil, fmt.Errorf("refusing daemon control socket owned by another user: %s", path)
+		}
+		if err := os.Remove(path); err != nil {
+			return nil, err
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		return nil, err
 	}
-	server := &daemonControlServer{path: path, ln: ln}
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = ln.Close()
+		_ = os.Remove(path)
+		return nil, err
+	}
+	server := &daemonControlServer{path: path, ln: ln, sem: make(chan struct{}, daemonControlMaxConcurrent)}
 	server.wg.Add(1)
 	go func() {
 		defer server.wg.Done()
@@ -66,23 +111,36 @@ func startDaemonControlServer(stateRoot string, handler func(context.Context, da
 				}
 				continue
 			}
+			select {
+			case server.sem <- struct{}{}:
+			default:
+				_ = conn.SetDeadline(time.Now().Add(250 * time.Millisecond))
+				_, _ = conn.Write([]byte(`{"ok":false,"message":"daemon control busy; retry"}` + "\n"))
+				_ = conn.Close()
+				continue
+			}
 			server.wg.Add(1)
 			go func(c net.Conn) {
 				defer server.wg.Done()
 				defer c.Close()
+				defer func() { <-server.sem }()
 				_ = c.SetDeadline(time.Now().Add(5 * time.Second))
-				line, err := bufio.NewReader(c).ReadString('\n')
+				raw, err := readDaemonControlLine(bufio.NewReaderSize(c, daemonControlMaxRequestBytes+1))
 				if err != nil {
 					return
 				}
+				if len(raw) > daemonControlMaxRequestBytes {
+					_, _ = c.Write([]byte(`{"ok":false,"message":"control request too large or unterminated"}` + "\n"))
+					return
+				}
 				var req daemonControlRequest
-				if err := json.Unmarshal([]byte(strings.TrimSpace(line)), &req); err != nil {
+				if err := json.Unmarshal([]byte(strings.TrimSpace(string(raw))), &req); err != nil {
 					_, _ = c.Write([]byte(`{"ok":false,"message":"invalid control request"}` + "\n"))
 					return
 				}
 				resp := handler(context.Background(), req)
-				raw, _ := json.Marshal(resp)
-				_, _ = c.Write(append(raw, '\n'))
+				responseRaw, _ := json.Marshal(resp)
+				_, _ = c.Write(append(responseRaw, '\n'))
 			}(conn)
 		}
 	}()
@@ -126,12 +184,12 @@ func sendDaemonControlWithTimeout(stateRoot string, req daemonControlRequest, ti
 	if _, err := conn.Write(append(raw, '\n')); err != nil {
 		return daemonControlResponse{}, err
 	}
-	line, err := bufio.NewReader(conn).ReadString('\n')
+	rawResponse, err := readDaemonControlLine(bufio.NewReader(conn))
 	if err != nil {
 		return daemonControlResponse{}, err
 	}
 	var resp daemonControlResponse
-	if err := json.Unmarshal([]byte(strings.TrimSpace(line)), &resp); err != nil {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(rawResponse))), &resp); err != nil {
 		return daemonControlResponse{}, err
 	}
 	return resp, nil
