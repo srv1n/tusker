@@ -31,6 +31,7 @@
 !.tusker/_generated/**/.gitkeep
 .tusker/workspaces/
 .tusker/_runtime/
+.tusker/_system/locks/
 .tusker/scratch/
 .tusker/evidence/**/artifacts/
 .tusker/config.local.yaml

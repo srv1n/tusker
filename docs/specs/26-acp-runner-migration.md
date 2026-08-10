@@ -358,3 +358,20 @@ Direct provider lifecycle code may be removed only when all of the following are
 - [`claude-agent-acp`](https://github.com/agentclientprotocol/claude-agent-acp)
 - [Buzz ACP crate at the reviewed commit](https://raw.githubusercontent.com/block/buzz/119a84897f225c1e3213a09cd149abb37dcb3abc/crates/buzz-acp/README.md)
 - [Buzz reviewed commit](https://github.com/block/buzz/commit/119a84897f225c1e3213a09cd149abb37dcb3abc)
+
+<!-- tusker:delivery-import:45c9f4d5ff86d256:begin -->
+
+## Work streams
+
+- `[[ACP-T-0007]]` implements delivery source `acp-catalog-onboarding`.
+- `[[ACP-T-0006]]` implements delivery source `acp-claude-adapter`.
+- `[[ACP-T-0005]]` implements delivery source `acp-codex-adapter`.
+- `[[ACP-T-0002]]` implements delivery source `acp-conformance`.
+- `[[ACP-T-0001]]` implements delivery source `acp-core`.
+- `[[ACP-T-0008]]` implements delivery source `acp-cutover`.
+- `[[ACP-T-0003]]` implements delivery source `acp-permission-broker`.
+- `[[ACP-T-0004]]` implements delivery source `acp-runtime-integration`.
+
+- `[[W-0011]]` is the imported delivery wave.
+
+<!-- tusker:delivery-import:45c9f4d5ff86d256:end -->
