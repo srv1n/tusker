@@ -120,6 +120,8 @@ operator model, limits, and recovery procedure are in
 <!-- tusker:docs-map:begin -->
 ```mermaid
 graph TD
+  n_acp_runner_migration["ACP runner migration: one bounded local agent transport"]
+  n_acp_runner_migration_decision["ACP runner migration decision"]
   n_build_and_test_economics["Build and test economics: how often we build and test at each stage"]
   n_cli["Tusker CLI reference"]
   n_execution_observability["Execution observability: names, lineage, and truthful multi-agent tracking"]
@@ -140,6 +142,8 @@ graph TD
   n_software_factory["Software Factory: Tusker as the production loop harness"]
   n_software_factory_grill["Decision log: the factory grill session"]
   n_tasks_and_proof["Tasks and proof (v7 task model)"]
+  n_software_factory --> n_acp_runner_migration
+  n_acp_runner_migration --> n_acp_runner_migration_decision
   n_software_factory --> n_build_and_test_economics
   n_overview --> n_cli
   n_software_factory --> n_execution_observability

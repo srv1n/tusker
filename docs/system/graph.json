@@ -1,6 +1,20 @@
 {
   "nodes": [
     {
+      "subject": "acp-runner-migration",
+      "kind": "spec",
+      "path": ".tusker/specs/acp-runner-migration.md",
+      "title": "ACP runner migration: one bounded local agent transport",
+      "status": "canonical"
+    },
+    {
+      "subject": "acp-runner-migration-decision",
+      "kind": "decision",
+      "path": ".tusker/specs/decisions/2026-08-10-acp-runner-migration.md",
+      "title": "ACP runner migration decision",
+      "status": "canonical"
+    },
+    {
       "subject": "build-and-test-economics",
       "kind": "spec",
       "path": ".tusker/specs/build-and-test-economics.md",
@@ -142,6 +156,21 @@
     }
   ],
   "edges": [
+    {
+      "from": "acp-runner-migration",
+      "to": "software-factory",
+      "kind": "part_of"
+    },
+    {
+      "from": "acp-runner-migration-decision",
+      "to": "[ACP v1 transport boundary local Codex and Claude runner migration authority and identity separation fallback and deletion gates]",
+      "kind": "decides_for"
+    },
+    {
+      "from": "acp-runner-migration-decision",
+      "to": "acp-runner-migration",
+      "kind": "part_of"
+    },
     {
       "from": "build-and-test-economics",
       "to": "software-factory",
