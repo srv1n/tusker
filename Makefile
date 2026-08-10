@@ -167,27 +167,4 @@ zip: codebasezip ## Alias for codebasezip
 	@:
 
 codebasezip: ## Zip source and build/config files only into ARTIFACTS_DIR
-	@mkdir -p "$(ARTIFACTS_DIR)"
-	@tmp_list=$$(mktemp); \
-	trap 'rm -f "$$tmp_list"' EXIT HUP INT TERM; \
-	git ls-files --cached --others --exclude-standard | \
-	while IFS= read -r file; do \
-		[ -f "$$file" ] || continue; \
-		case "$$file" in \
-			.git/*|.tools/*|.tusker/*|.chatgpt-handoff/*|.tusker-build/*|.tusker-runtime/*|.tusker-state/*|.tusker-worktrees/*|artifacts/*|architect/*|docs/*|feedback/*|research/*|uploads/*|vendor/*|*/node_modules/*|*/.build/*|*/build/*|*/coverage/*|*/dist/*|*/out/*|*/.vite/*|*/.astro/*|*/.cache/*|*/.turbo/*|*/.next/*|*/.svelte-kit/*) continue ;; \
-		esac; \
-		case "$$file" in \
-			Makefile|*/Makefile|Dockerfile|*/Dockerfile|Justfile|*/Justfile|go.mod|*/go.mod|go.sum|*/go.sum|package.json|*/package.json|bun.lock|*/bun.lock|Package.swift|*/Package.swift|Package.resolved|*/Package.resolved|Cargo.toml|*/Cargo.toml|Cargo.lock|*/Cargo.lock|*.go|*.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.css|*.scss|*.html|*.swift|*.c|*.h|*.m|*.mm|*.sh|*.bash|*.zsh|*.py|*.rs|*.sql|*.proto|*.graphql|*.gql|*.svg|*.json|*.toml|*.yaml|*.yml|*.plist|*.entitlements|*.mk|*.env.example) printf '%s\n' "$$file" ;; \
-		esac; \
-	done | LC_ALL=C sort -u > "$$tmp_list"; \
-	if [ ! -s "$$tmp_list" ]; then \
-		echo "No files matched the codebase archive filter." >&2; \
-		exit 1; \
-	fi; \
-	rm -f "$(CODEBASEZIP_PATH)"; \
-	zip -q -r -D "$(CODEBASEZIP_PATH)" -@ < "$$tmp_list"; \
-	file_count=$$(wc -l < "$$tmp_list" | tr -d ' '); \
-	echo "Created $(CODEBASEZIP_PATH) ($$file_count files)"; \
-	if [ "$${CI:-}" != "true" ] && command -v open >/dev/null 2>&1; then \
-		open "$(ARTIFACTS_DIR)" >/dev/null 2>&1 || true; \
-	fi
+	@python3 scripts/codebasezip.py --output "$(CODEBASEZIP_PATH)"
