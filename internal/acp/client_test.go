@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -57,13 +58,25 @@ func TestACPHelperProcess(t *testing.T) {
 			if mode == "wrong-version" {
 				version = 2
 			}
+			capabilities := map[string]any{
+				"loadSession":         false,
+				"sessionCapabilities": map[string]any{},
+			}
+			switch mode {
+			case "load", "both", "load-malformed", "load-mismatch", "load-object", "load-malformed-update":
+				capabilities["loadSession"] = true
+			}
+			switch mode {
+			case "resume", "both", "resume-update", "resume-null":
+				capabilities["sessionCapabilities"] = map[string]any{"resume": map[string]any{}}
+			case "legacy-resume":
+				capabilities["resumeSession"] = true
+				capabilities["session"] = map[string]any{"resumeSession": true}
+			}
 			writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{
-				"protocolVersion": version,
-				"agentInfo":       map[string]string{"name": "test-agent", "version": "1"},
-				"agentCapabilities": map[string]any{
-					"loadSession": false,
-					"session":     map[string]bool{"resumeSession": false},
-				},
+				"protocolVersion":   version,
+				"agentInfo":         map[string]string{"name": "test-agent", "version": "1"},
+				"agentCapabilities": capabilities,
 			}})
 			if mode == "duplicate-response" {
 				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{"protocolVersion": version}})
@@ -76,11 +89,58 @@ func TestACPHelperProcess(t *testing.T) {
 				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Error: map[string]any{"code": -32602, "message": "mcpServers must be empty"}})
 				continue
 			}
-			writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]string{"sessionId": "session-1"}})
+			sessionID := "session-1"
+			if mode == "bad-session-id" {
+				sessionID = "bad\nsession"
+			}
+			writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]string{"sessionId": sessionID}})
 			if mode == "no-read-after-session" {
 				time.Sleep(10 * time.Second)
 				os.Exit(0)
 			}
+		case "session/load", "session/resume":
+			var params struct {
+				SessionID  string `json:"sessionId"`
+				CWD        string `json:"cwd"`
+				MCPServers []any  `json:"mcpServers"`
+			}
+			var rawParams map[string]json.RawMessage
+			_ = json.Unmarshal(msg.Params, &params)
+			_ = json.Unmarshal(msg.Params, &rawParams)
+			if params.SessionID == "" || !filepath.IsAbs(params.CWD) || rawParams["mcpServers"] == nil || len(params.MCPServers) != 0 {
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Error: map[string]any{"code": -32602, "message": "restore params are invalid"}})
+				continue
+			}
+			if msg.Method == "session/load" && mode == "load-malformed" {
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: "not an object"})
+				continue
+			}
+			if msg.Method == "session/load" {
+				switch mode {
+				case "load-mismatch":
+					writeUpdateForSessionForTest("different-session", 0)
+				case "load-malformed-update":
+					writeHelper(helperMessage{JSONRPC: "2.0", Method: "session/update", Params: mustTestJSON(map[string]any{
+						"sessionId": params.SessionID, "update": map[string]any{"kind": "agent_message_chunk"},
+					})})
+				default:
+					writeUpdateForSessionForTest(params.SessionID, 0)
+				}
+				if mode == "load-object" {
+					writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{}})
+					continue
+				}
+				writeHelperNullResult(msg.ID)
+				continue
+			}
+			if mode == "resume-update" {
+				writeUpdateForSessionForTest(params.SessionID, 0)
+			}
+			if mode == "resume-null" {
+				writeHelperNullResult(msg.ID)
+				continue
+			}
+			writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{}})
 		case "session/prompt":
 			promptID = append(json.RawMessage(nil), msg.ID...)
 			switch mode {
@@ -138,13 +198,30 @@ func TestACPHelperProcess(t *testing.T) {
 }
 
 func writeUpdateForTest(n int) {
+	writeUpdateForSessionForTest("session-1", n)
+}
+
+func writeUpdateForSessionForTest(sessionID string, n int) {
 	writeHelper(helperMessage{JSONRPC: "2.0", Method: "session/update", Params: mustTestJSON(map[string]any{
-		"sessionId": "session-1", "update": map[string]any{"kind": "agent_message_chunk", "text": fmt.Sprintf("u%d", n)},
+		"sessionId": sessionID,
+		"update": map[string]any{
+			"sessionUpdate": "agent_message_chunk",
+			"content":       map[string]any{"type": "text", "text": fmt.Sprintf("u%d", n)},
+		},
 	})})
 }
 
 func writeHelper(msg helperMessage) {
 	b, _ := json.Marshal(msg)
+	_, _ = os.Stdout.Write(append(b, '\n'))
+}
+
+func writeHelperNullResult(id json.RawMessage) {
+	b, _ := json.Marshal(struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Result  any             `json:"result"`
+	}{JSONRPC: "2.0", ID: id, Result: nil})
 	_, _ = os.Stdout.Write(append(b, '\n'))
 }
 
@@ -259,6 +336,208 @@ func TestACPHappyFlowAdvertisesNoOptionalClientSurface(t *testing.T) {
 	if result.Outcome != OutcomeCompleted || result.Delivery != DeliveryTerminalReceived || result.TurnID != "turn-1" {
 		t.Fatalf("prompt result=%#v", result)
 	}
+}
+
+func TestACPLoadAndResumeRequireNegotiatedCapability(t *testing.T) {
+	t.Run("load is distinct from resume", func(t *testing.T) {
+		c := startTestClient(t, "load", nil)
+		init, err := c.Initialize(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !init.AgentCapabilities.LoadSession || init.AgentCapabilities.ResumeSession {
+			t.Fatalf("unexpected capabilities: %#v", init.AgentCapabilities)
+		}
+		session, err := c.LoadSession(context.Background(), "loaded-session")
+		if err != nil || session.ID != "loaded-session" {
+			t.Fatalf("load session=%#v err=%v", session, err)
+		}
+		select {
+		case update := <-c.Updates():
+			if update.Method != "session/update" {
+				t.Fatalf("load update method=%q", update.Method)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("load did not replay its bounded observation")
+		}
+		c.mu.Lock()
+		before := c.nextID
+		c.mu.Unlock()
+		if _, err := c.ResumeSession(context.Background(), "loaded-session"); !errors.Is(err, ErrResumeSessionUnsupported) {
+			t.Fatalf("resume err=%v, want capability error", err)
+		}
+		c.mu.Lock()
+		after := c.nextID
+		c.mu.Unlock()
+		if after != before {
+			t.Fatalf("unsupported resume wrote an RPC request: before=%d after=%d", before, after)
+		}
+	})
+
+	t.Run("resume is distinct from load", func(t *testing.T) {
+		c := startTestClient(t, "resume", nil)
+		init, err := c.Initialize(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if init.AgentCapabilities.LoadSession || !init.AgentCapabilities.ResumeSession {
+			t.Fatalf("unexpected capabilities: %#v", init.AgentCapabilities)
+		}
+		session, err := c.ResumeSession(context.Background(), "resumed-session")
+		if err != nil || session.ID != "resumed-session" {
+			t.Fatalf("resume session=%#v err=%v", session, err)
+		}
+		c.mu.Lock()
+		before := c.nextID
+		c.mu.Unlock()
+		if _, err := c.LoadSession(context.Background(), "resumed-session"); !errors.Is(err, ErrLoadSessionUnsupported) {
+			t.Fatalf("load err=%v, want capability error", err)
+		}
+		c.mu.Lock()
+		after := c.nextID
+		c.mu.Unlock()
+		if after != before {
+			t.Fatalf("unsupported load wrote an RPC request: before=%d after=%d", before, after)
+		}
+	})
+
+	t.Run("legacy lookalikes do not negotiate resume", func(t *testing.T) {
+		c := startTestClient(t, "legacy-resume", nil)
+		init, err := c.Initialize(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if init.AgentCapabilities.ResumeSession {
+			t.Fatalf("lookalike capability negotiated resume: %#v", init.AgentCapabilities.Raw)
+		}
+		if _, err := c.ResumeSession(context.Background(), "session-1"); !errors.Is(err, ErrResumeSessionUnsupported) {
+			t.Fatalf("resume err=%v, want capability error", err)
+		}
+	})
+}
+
+func TestACPRestoreSessionValidatesIDsAndFailsClosed(t *testing.T) {
+	t.Run("invalid stored IDs do not write", func(t *testing.T) {
+		c := startTestClient(t, "both", nil)
+		if _, err := c.Initialize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		c.mu.Lock()
+		before := c.nextID
+		c.mu.Unlock()
+		for _, sessionID := range []string{"", " \t ", "has\nnewline", strings.Repeat("x", c.cfg.Limits.MaxFrameBytes)} {
+			if _, err := c.LoadSession(context.Background(), sessionID); err == nil {
+				t.Fatalf("invalid session ID %q was accepted", sessionID)
+			}
+		}
+		c.mu.Lock()
+		after := c.nextID
+		c.mu.Unlock()
+		if after != before {
+			t.Fatalf("invalid session IDs wrote an RPC request: before=%d after=%d", before, after)
+		}
+	})
+
+	t.Run("invalid agent session ID poisons", func(t *testing.T) {
+		c := startTestClient(t, "bad-session-id", nil)
+		if _, err := c.Initialize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.NewSession(context.Background()); err == nil {
+			t.Fatal("invalid agent session ID was accepted")
+		}
+		if _, err := c.NewSession(context.Background()); err == nil {
+			t.Fatal("client remained reusable after invalid agent session ID")
+		}
+	})
+
+	t.Run("malformed restore response poisons", func(t *testing.T) {
+		c := startTestClient(t, "load-malformed", nil)
+		if _, err := c.Initialize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.LoadSession(context.Background(), "loaded-session"); err == nil {
+			t.Fatal("malformed restore result was accepted")
+		}
+		if _, err := c.NewSession(context.Background()); err == nil {
+			t.Fatal("client remained reusable after malformed restore result")
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		mode   string
+		resume bool
+	}{
+		{name: "load update session mismatch", mode: "load-mismatch"},
+		{name: "load update missing discriminator", mode: "load-malformed-update"},
+		{name: "resume update before response", mode: "resume-update", resume: true},
+		{name: "load requires explicit null", mode: "load-object"},
+		{name: "resume rejects null", mode: "resume-null", resume: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := startTestClient(t, tc.mode, nil)
+			if _, err := c.Initialize(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			if tc.resume {
+				_, err = c.ResumeSession(context.Background(), "restored-session")
+			} else {
+				_, err = c.LoadSession(context.Background(), "restored-session")
+			}
+			if err == nil {
+				t.Fatal("invalid restore exchange was accepted")
+			}
+			if _, nextErr := c.NewSession(context.Background()); nextErr == nil {
+				t.Fatal("client remained reusable after invalid restore exchange")
+			}
+		})
+	}
+
+	t.Run("request frame preflight is exact and inert", func(t *testing.T) {
+		longCWD := filepath.Join(t.TempDir(), strings.Repeat("a", 180), strings.Repeat("b", 180), strings.Repeat("c", 180))
+		if err := os.MkdirAll(longCWD, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		const sessionID = "bounded-session"
+		params := map[string]any{"sessionId": sessionID, "cwd": longCWD, "mcpServers": []any{}}
+		requestID := json.RawMessage("2") // initialize is request 1
+		frame, err := json.Marshal(rpcMessage{JSONRPC: "2.0", ID: requestID, Method: "session/load", Params: mustTestJSON(params)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := startTestClient(t, "load", func(cfg *Config) {
+			cfg.CWD = longCWD
+			cfg.Limits.MaxFrameBytes = len(frame) - 1
+		})
+		if _, err := c.Initialize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		c.mu.Lock()
+		beforeID := c.nextID
+		c.mu.Unlock()
+		if _, err := c.LoadSession(context.Background(), sessionID); err == nil {
+			t.Fatal("one-byte oversized restore frame was accepted")
+		}
+		c.mu.Lock()
+		if c.nextID != beforeID || len(c.pending) != 0 || c.restore != nil || c.protocolErr != nil || c.closed {
+			t.Fatalf("preflight mutated client: next=%d pending=%d restore=%#v protocol=%v closed=%v", c.nextID, len(c.pending), c.restore, c.protocolErr, c.closed)
+		}
+		c.mu.Unlock()
+
+		exact := startTestClient(t, "load", func(cfg *Config) {
+			cfg.CWD = longCWD
+			cfg.Limits.MaxFrameBytes = len(frame)
+		})
+		if _, err := exact.Initialize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		session, err := exact.LoadSession(context.Background(), sessionID)
+		if err != nil || session.ID != sessionID {
+			t.Fatalf("exact-limit restore session=%#v err=%v", session, err)
+		}
+	})
 }
 
 func TestACPProtocolFailuresPoisonBeforeContinuation(t *testing.T) {

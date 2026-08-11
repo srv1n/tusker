@@ -5,6 +5,7 @@ package acp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 const protocolVersion = 1
@@ -27,8 +29,14 @@ var (
 	ErrDeliveryUnknown = errors.New("acp prompt delivery is unknown")
 	ErrNotInitialized  = errors.New("acp client is not initialized")
 	ErrNoSession       = errors.New("acp session is not created")
-	ErrPromptActive    = errors.New("acp prompt already in flight")
-	ErrNoPrompt        = errors.New("acp prompt is not in flight")
+	// ErrLoadSessionUnsupported and ErrResumeSessionUnsupported are distinct
+	// because ACP v1 advertises these lifecycle operations independently.
+	// Callers must choose an explicit recovery policy; the client never falls
+	// back from either operation to session/new.
+	ErrLoadSessionUnsupported   = errors.New("acp session/load capability is not negotiated")
+	ErrResumeSessionUnsupported = errors.New("acp session/resume capability is not negotiated")
+	ErrPromptActive             = errors.New("acp prompt already in flight")
+	ErrNoPrompt                 = errors.New("acp prompt is not in flight")
 )
 
 // Limits are finite safety ceilings. Zero values are replaced by defaults.
@@ -264,6 +272,16 @@ type pendingCall struct {
 	prompt     bool
 }
 
+// pendingRestore binds session observations to the exact in-flight lifecycle
+// request. responseSeen is set by the reader before it settles that request so
+// session/resume can reject pre-response history without racing the caller.
+type pendingRestore struct {
+	method       string
+	sessionID    string
+	requestID    string
+	responseSeen bool
+}
+
 func (p *pendingCall) settle() { p.settleOnce.Do(func() { close(p.settled) }) }
 
 func (p *pendingCall) setPhase(v DeliveryPhase) {
@@ -313,6 +331,7 @@ type Client struct {
 	nextID                int64
 	initialized           bool
 	session               *Session
+	restore               *pendingRestore
 	capabilities          AgentCapabilities
 	activePrompt          *pendingCall
 	protocolErr           error
@@ -466,17 +485,13 @@ func (c *Client) Initialize(ctx context.Context) (InitializeResult, error) {
 	var capObj map[string]json.RawMessage
 	if len(wire.AgentCapabilities) != 0 && json.Unmarshal(wire.AgentCapabilities, &capObj) == nil {
 		caps.LoadSession = capabilityBool(capObj["loadSession"])
-		caps.ResumeSession = capabilityBool(capObj["resumeSession"])
-		// Some adapters nest these under session; preserve the exact raw object
-		// while accepting the wire's documented nested capability form.
-		var session map[string]json.RawMessage
-		if json.Unmarshal(capObj["session"], &session) == nil {
-			if raw, ok := session["loadSession"]; ok {
-				caps.LoadSession = capabilityBool(raw)
-			}
-			if raw, ok := session["resumeSession"]; ok {
-				caps.ResumeSession = capabilityBool(raw)
-			}
+		// ACP v1 specifies session/resume under
+		// agentCapabilities.sessionCapabilities.resume. It is an object
+		// capability: omitted, null, booleans, and lookalike legacy fields do
+		// not authorize a resume call.
+		var sessionCapabilities map[string]json.RawMessage
+		if json.Unmarshal(capObj["sessionCapabilities"], &sessionCapabilities) == nil && sessionCapabilities != nil {
+			caps.ResumeSession = capabilityObject(sessionCapabilities["resume"])
 		}
 	}
 	c.mu.Lock()
@@ -491,13 +506,19 @@ func capabilityBool(raw json.RawMessage) bool {
 	return len(raw) > 0 && json.Unmarshal(raw, &value) == nil && value
 }
 
+func capabilityObject(raw json.RawMessage) bool {
+	var value map[string]json.RawMessage
+	return len(raw) > 0 && json.Unmarshal(raw, &value) == nil && value != nil
+}
+
 func (c *Client) Capabilities() AgentCapabilities {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return AgentCapabilities{Raw: append(json.RawMessage(nil), c.capabilities.Raw...), LoadSession: c.capabilities.LoadSession, ResumeSession: c.capabilities.ResumeSession}
 }
 
-// NewSession creates the only fresh session supported by the first kernel.
+// NewSession creates a fresh ACP session. It does not load or resume an
+// existing provider session.
 func (c *Client) NewSession(ctx context.Context) (Session, error) {
 	c.sessionMu.Lock()
 	defer c.sessionMu.Unlock()
@@ -524,14 +545,173 @@ func (c *Client) NewSession(ctx context.Context) (Session, error) {
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return Session{}, c.failCall(err, phase)
 	}
-	if strings.TrimSpace(wire.SessionID) == "" {
-		return Session{}, c.failCall(errors.New("session/new returned empty sessionId"), phase)
+	if err := c.validateSessionID(wire.SessionID); err != nil {
+		return Session{}, c.failCall(fmt.Errorf("invalid session/new sessionId: %w", err), phase)
 	}
 	c.mu.Lock()
 	c.session = &Session{ID: wire.SessionID}
 	s := *c.session
 	c.mu.Unlock()
 	return s, nil
+}
+
+// LoadSession restores an existing ACP session and replays its history through
+// Updates. It is permitted only after initialize negotiated loadSession. The
+// supplied ID remains opaque; Tusker authorization of that stored reference is
+// deliberately the caller's responsibility.
+func (c *Client) LoadSession(ctx context.Context, sessionID string) (Session, error) {
+	return c.restoreSession(ctx, "session/load", sessionID, ErrLoadSessionUnsupported)
+}
+
+// ResumeSession reconnects to an existing ACP session without requesting a
+// history replay. It is permitted only after initialize negotiated the exact
+// sessionCapabilities.resume capability; loadSession alone is insufficient.
+func (c *Client) ResumeSession(ctx context.Context, sessionID string) (Session, error) {
+	return c.restoreSession(ctx, "session/resume", sessionID, ErrResumeSessionUnsupported)
+}
+
+func (c *Client) restoreSession(ctx context.Context, method, sessionID string, unsupported error) (Session, error) {
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+
+	c.mu.Lock()
+	if !c.initialized {
+		c.mu.Unlock()
+		return Session{}, ErrNotInitialized
+	}
+	supported := c.capabilities.LoadSession
+	if method == "session/resume" {
+		supported = c.capabilities.ResumeSession
+	}
+	if !supported {
+		c.mu.Unlock()
+		return Session{}, unsupported
+	}
+	if c.session != nil {
+		s := *c.session
+		c.mu.Unlock()
+		return s, fmt.Errorf("acp session already created or restored: %s", s.ID)
+	}
+	c.mu.Unlock()
+	if err := c.validateSessionID(sessionID); err != nil {
+		return Session{}, fmt.Errorf("invalid %s sessionId: %w", method, err)
+	}
+
+	ctx, cancel := withDeadline(ctx, c.cfg.Timeouts.Request)
+	defer cancel()
+	params := map[string]any{"sessionId": sessionID, "cwd": c.cfg.CWD, "mcpServers": []any{}}
+	call, msg, err := c.prepareCall(method, params, false)
+	if err != nil {
+		return Session{}, err
+	}
+	restore := &pendingRestore{method: method, sessionID: sessionID, requestID: call.id}
+	c.mu.Lock()
+	c.restore = restore
+	c.mu.Unlock()
+	defer c.clearRestore(restore)
+	if err := c.writeMessage(msg, call); err != nil {
+		c.mu.Lock()
+		delete(c.pending, call.id)
+		c.mu.Unlock()
+		call.settle()
+		return Session{}, err
+	}
+	raw, err := c.awaitCall(ctx, call)
+	phase := call.getPhase()
+	if err != nil {
+		return Session{}, err
+	}
+	if method == "session/load" {
+		if !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return Session{}, c.failCall(errors.New("invalid session/load result: expected explicit null"), phase)
+		}
+	} else {
+		var result map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &result); err != nil || result == nil {
+			if err == nil {
+				err = errors.New("expected a non-null object")
+			}
+			return Session{}, c.failCall(fmt.Errorf("invalid session/resume result: %w", err), phase)
+		}
+	}
+	c.mu.Lock()
+	if c.restore != restore {
+		c.mu.Unlock()
+		return Session{}, c.failCall(errors.New("ACP restore lifecycle binding was lost"), phase)
+	}
+	c.session = &Session{ID: sessionID}
+	c.restore = nil
+	s := *c.session
+	c.mu.Unlock()
+	return s, nil
+}
+
+func (c *Client) clearRestore(restore *pendingRestore) {
+	c.mu.Lock()
+	if c.restore == restore {
+		c.restore = nil
+	}
+	c.mu.Unlock()
+}
+
+func (c *Client) validateUpdateEnvelope(params json.RawMessage) error {
+	var envelope struct {
+		SessionID string          `json:"sessionId"`
+		Update    json.RawMessage `json:"update"`
+	}
+	if err := json.Unmarshal(params, &envelope); err != nil {
+		return fmt.Errorf("invalid session/update envelope: %w", err)
+	}
+	if err := c.validateSessionID(envelope.SessionID); err != nil {
+		return fmt.Errorf("invalid session/update sessionId: %w", err)
+	}
+	var update map[string]json.RawMessage
+	if err := json.Unmarshal(envelope.Update, &update); err != nil || update == nil {
+		if err == nil {
+			err = errors.New("update must be a non-null object")
+		}
+		return fmt.Errorf("invalid session/update payload: %w", err)
+	}
+	var discriminator string
+	if err := json.Unmarshal(update["sessionUpdate"], &discriminator); err != nil || strings.TrimSpace(discriminator) == "" {
+		if err == nil {
+			err = errors.New("sessionUpdate discriminator is blank")
+		}
+		return fmt.Errorf("invalid session/update discriminator: %w", err)
+	}
+
+	c.mu.Lock()
+	restore := c.restore
+	session := c.session
+	c.mu.Unlock()
+	if restore != nil {
+		if envelope.SessionID != restore.sessionID {
+			return fmt.Errorf("session/update sessionId %q does not match in-flight %s sessionId %q", envelope.SessionID, restore.method, restore.sessionID)
+		}
+		if restore.method == "session/resume" && !restore.responseSeen {
+			return errors.New("session/update arrived before session/resume response")
+		}
+		return nil
+	}
+	if session == nil {
+		return errors.New("session/update arrived without an active or restoring session")
+	}
+	if envelope.SessionID != session.ID {
+		return fmt.Errorf("session/update sessionId %q does not match active sessionId %q", envelope.SessionID, session.ID)
+	}
+	return nil
+}
+
+func (c *Client) validateSessionID(sessionID string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return errors.New("sessionId is blank")
+	}
+	for _, r := range sessionID {
+		if unicode.IsControl(r) {
+			return errors.New("sessionId contains a control character")
+		}
+	}
+	return nil
 }
 
 // Prompt sends one text prompt. It never retries, including after ambiguous
@@ -714,12 +894,22 @@ func (c *Client) prepareCall(method string, params any, prompt bool) (*pendingCa
 		c.mu.Unlock()
 		return nil, rpcMessage{}, err
 	}
-	c.nextID++
-	id := strconv.FormatInt(c.nextID, 10)
+	nextID := c.nextID + 1
+	id := strconv.FormatInt(nextID, 10)
+	msg := rpcMessage{JSONRPC: "2.0", ID: json.RawMessage(id), Method: method, Params: paramBytes}
+	frame, err := json.Marshal(msg)
+	if err != nil {
+		c.mu.Unlock()
+		return nil, rpcMessage{}, err
+	}
+	if len(frame) > c.cfg.Limits.MaxFrameBytes {
+		c.mu.Unlock()
+		return nil, rpcMessage{}, fmt.Errorf("%w: ACP request frame for %s is %d bytes, limit %d", ErrProtocol, method, len(frame), c.cfg.Limits.MaxFrameBytes)
+	}
+	c.nextID = nextID
 	p := &pendingCall{id: id, done: make(chan callResult, 1), settled: make(chan struct{}), phase: DeliveryNotSent, prompt: prompt}
 	c.pending[id] = p
 	c.mu.Unlock()
-	msg := rpcMessage{JSONRPC: "2.0", ID: json.RawMessage(id), Method: method, Params: paramBytes}
 	return p, msg, nil
 }
 
@@ -937,6 +1127,9 @@ func (c *Client) handleResponse(msg rpcMessage) {
 	p, exists := c.pending[id]
 	if exists {
 		delete(c.pending, id)
+		if c.restore != nil && c.restore.requestID == id {
+			c.restore.responseSeen = true
+		}
 	}
 	c.mu.Unlock()
 	if !exists {
@@ -970,6 +1163,10 @@ func (c *Client) handleResponse(msg rpcMessage) {
 func (c *Client) handleRequest(msg rpcMessage) {
 	if len(msg.ID) == 0 {
 		if msg.Method == "session/update" {
+			if err := c.validateUpdateEnvelope(msg.Params); err != nil {
+				c.poison(fmt.Errorf("%w: %v", ErrProtocol, err))
+				return
+			}
 			if !c.recordUpdateObservation() {
 				return
 			}
