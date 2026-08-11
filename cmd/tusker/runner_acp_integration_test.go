@@ -4,12 +4,71 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"tusker/internal/acp"
 )
+
+func TestCodexACPAgentIdentityRequiresExactNameAndVersion(t *testing.T) {
+	expected := "1.1.14"
+	tests := []struct {
+		name      string
+		info      acp.AgentInfo
+		wantError bool
+	}{
+		{name: "exact", info: acp.AgentInfo{Name: "codex-acp", Version: expected}},
+		{name: "name mismatch", info: acp.AgentInfo{Name: "fake-acp", Version: expected}, wantError: true},
+		{name: "version mismatch", info: acp.AgentInfo{Name: "codex-acp", Version: "1.1.13"}, wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateCodexACPAgentIdentity(test.info, expected)
+			if !test.wantError {
+				if err != nil {
+					t.Fatalf("exact Codex ACP identity rejected: %v", err)
+				}
+				return
+			}
+			if err == nil || errorToIssue(err).Code != errorConfigInvalid {
+				t.Fatalf("identity mismatch was not a typed config refusal: %v", err)
+			}
+			if !strings.Contains(err.Error(), "initialize identity mismatch") {
+				t.Fatalf("identity mismatch omitted the handshake boundary: %v", err)
+			}
+		})
+	}
+}
+
+func TestCodexACPFixtureReportsConfiguredIdentity(t *testing.T) {
+	const version = "1.1.14"
+	client, err := acp.Start(context.Background(), acp.Config{
+		Argv: []string{fakeACPBinary(t)}, CWD: t.TempDir(),
+		Env: []string{
+			`CODEX_CONFIG={"model":"gpt-5.3-codex","model_reasoning_effort":"high"}`,
+			"INITIAL_AGENT_MODE=read-only",
+		},
+		Stderr: io.Discard,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	init, err := client.Initialize(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if init.AgentInfo.Name != "codex-acp" || init.AgentInfo.Version != version {
+		t.Fatalf("fixture reported identity=%#v, want codex-acp/%s", init.AgentInfo, version)
+	}
+	if err := validateCodexACPAgentIdentity(init.AgentInfo, version); err != nil {
+		t.Fatalf("configured fixture identity failed exact gate: %v", err)
+	}
+}
 
 func TestCodexACPFactoryRejectsUnverifiedBundleBeforeLease(t *testing.T) {
 	wf := Workflow{Runners: map[string]RunnerDefinition{
@@ -37,6 +96,11 @@ func TestCodexACPReadOnlyFactoryWrapperVertical(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The production Codex admission revalidates the exact canonical root.
+	// Keep this fixture's serialized bundle path canonical too; macOS may
+	// expose t.TempDir through a /var -> /private/var alias.
+	request.BundleRoot = physicalRoot
+	request.ExpectedFinalRoot = physicalRoot
 	if err := os.Remove(filepath.Join(request.BundleRoot, "adapter.js")); err != nil {
 		t.Fatal(err)
 	}
@@ -241,6 +305,22 @@ runners:
     auth_principal_sha256: %q
 ---
 Codex ACP wrapper fixture.
+
+## Routing
+
+Use the pinned Codex ACP bundle and read-only profile.
+
+## Prompt
+
+Exercise the ACP initialize, session, configuration, and prompt boundary.
+
+## Retry policy
+
+Retry only transient infrastructure failures.
+
+## Human override policy
+
+Humans may override only explicit authority gates.
 `, definition.Kind, definition.BundleRoot, definition.ManifestPath, definition.ManifestSHA256, definition.AdapterVersion, definition.AuthSource, definition.AuthPrincipalSHA256)
 	if err := writeText(workflowPath(vault), workflow); err != nil {
 		t.Fatalf("write canonical Codex ACP workflow: %v", err)

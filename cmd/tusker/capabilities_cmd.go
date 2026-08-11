@@ -215,6 +215,9 @@ func buildCapabilityCompatibility(manifest capabilitiesManifest) (capabilityComp
 // new command families here when they are added to runInner.
 func installedCapabilityCommands() []capabilityCommand {
 	return []capabilityCommand{
+		{Command: "acp", Subcommands: []string{"doctor", "install"}},
+		{Command: "acp doctor", Flags: []string{"--auth-source", "--bundle-digest", "--json"}},
+		{Command: "acp install", Flags: []string{"--artifact", "--artifact-sha256", "--json", "--provider", "--publisher", "--source-url", "--version"}},
 		{Command: "accept"}, {Command: "attachments"}, {Command: "attempt"},
 		{Command: "automation", Subcommands: []string{"advance-external", "collect-external", "dispatch", "explain", "external-loop", "plan", "queue", "status"}, Flags: []string{"--json"}},
 		{Command: "brief"}, {Command: "capabilities", Flags: []string{"--json"}}, {Command: "claim"}, {Command: "close"},

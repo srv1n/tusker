@@ -17,6 +17,8 @@ import (
 	"tusker/internal/acp"
 )
 
+const codexACPAgentName = "codex-acp"
+
 // ACPRunner is the provider-neutral, local ACP v1 transport boundary. It is
 // intentionally not a Codex or Claude adapter: provider descriptors, command
 // construction, and normalized tool decoders arrive only after their separate
@@ -200,6 +202,17 @@ func startLiveACP(ctx context.Context, req StartRequest) (*StartResult, error) {
 	return startLiveACPForRunner(ctx, req, RunnerACP)
 }
 
+func validateCodexACPAgentIdentity(info acp.AgentInfo, expectedVersion string) error {
+	expectedVersion = strings.TrimSpace(expectedVersion)
+	if info.Name != codexACPAgentName || info.Version != expectedVersion {
+		return tuskerError(errorConfigInvalid, fmt.Sprintf(
+			"codex_acp initialize identity mismatch: expected name=%q version=%q, got name=%q version=%q",
+			codexACPAgentName, boundedACPObservation(expectedVersion), boundedACPObservation(info.Name), boundedACPObservation(info.Version),
+		))
+	}
+	return nil
+}
+
 func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerName) (*StartResult, error) {
 	if err := validateACPLaunchRequestForRunner(runner, req); err != nil {
 		return nil, err
@@ -360,6 +373,12 @@ func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerN
 	}); err != nil {
 		handle.close()
 		return nil, err
+	}
+	if codexPlan != nil {
+		if err := validateCodexACPAgentIdentity(init.AgentInfo, codexPlan.AdapterVersion); err != nil {
+			handle.close()
+			return nil, err
+		}
 	}
 	if codexPlan != nil {
 		if err := appendACPEvent(eventLog, "acp_codex_auth_selected", handle.currentProvenance(), map[string]any{

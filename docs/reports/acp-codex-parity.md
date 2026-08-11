@@ -1,8 +1,10 @@
 # Codex ACP parity slice
 
-Status: source-level provider contract and hermetic proof. It is **not** a
-claim that Codex ACP is installed, authenticated, selected by the runner
-factory, or safe to make the default runner yet.
+Status: opt-in, read-only provider integration with hermetic proof. The runner
+factory, pre-claim admission, detached wrapper, exact handshake identity,
+session configuration, and local install/doctor surfaces are wired. This is
+**not** a claim that a real adapter is installed or authenticated, and it is
+not safe to make Codex ACP the default runner yet.
 
 ## What this slice establishes
 
@@ -25,33 +27,43 @@ behavior.
 | Stop semantics | `delivery_unknown` maps to failed with automatic retry and automatic resume both forbidden. Reissuing an ambiguous turn risks duplicate edits. |
 | Updates | ACP updates are decoded as bounded observations and sent through `CodexExecutionAdapter` with the raw provider session only for ledger correlation. They cannot change a run, lease, task, proof, or terminal authority. |
 
-## Required integration seam
+## Upstream distribution reality
 
-The current generic ACP runtime has a single executable fingerprint on
-`StartRequest`, no pinned-bundle receipt, no provider-specific session wrapper,
-and no `configOptions`/`session/set_config_option` API. Do **not** paper over
-that by weakening the generic process checks or by treating environment values
-as verification.
+As of Codex ACP `v1.1.14`, the official ACP registry points to the npm package
+`@agentclientprotocol/codex-acp@1.1.14`. The GitHub release publishes no native
+binary assets, checksums, SBOM, or binary signature. The repository contains
+Bun recipes for building standalone Darwin/Linux binaries, but those build
+outputs are not publisher-hosted release artifacts.
 
-The next shared integration needs to:
+Tusker therefore does not download or invoke npm/npx during an attempt. The
+local `tusker acp install` command accepts an already-built native binary only,
+requires its exact caller-supplied SHA-256, validates its host format and
+architecture, seals it into a complete content-addressed bundle, and labels
+publisher/source fields as `unverified_caller_metadata`. That hash proves which
+bytes were installed; it does not prove who published them.
 
-1. accept a verified generic bundle receipt whose fingerprint covers the native
-   adapter with bundled Codex and the complete declared dependency set, then
-   bind it to the start request; external `CODEX_PATH` must remain refused;
-2. preserve the separate `codex_acp` runner kind through factory validation,
-   dispatch, wrapper execution, persistence, and status/event logging;
-3. pass the descriptor's exact argv and positive environment to the fenced ACP
-   process runtime without falling back to a shell or installer;
-4. expose `configOptions` and `session/set_config_option` in the ACP client,
-   execute and verify `CodexACPConfigPlan` before the first prompt;
-5. use `EncodeSessionRef` only after a negotiated `session/load` or
-   `session/resume` capability, and use `DecodeSessionRef` with a binding built
-   from a durable originating-attempt lookup before either operation; the
-   encoded value alone never authorizes resume; and
-6. wire the provider permission decoder to the already-resolved
-   `ACPPermissionPolicy`, preserving rejection for execute/edit/other and
-   read-only admission until trustworthy target schemas and separately
-   reviewed authorities exist.
+## Current runtime path
+
+The concrete opt-in path now:
+
+1. validates the configured bundle and explicit read-only profile before lease
+   claim;
+2. carries a non-secret exact provider plan through the private detached
+   wrapper request;
+3. reconstructs admission from the registered project's canonical workflow and
+   binds the active attempt, lease generation, work revision, profile, model,
+   effort, and workspace before launch;
+4. immediately revalidates the complete sealed bundle, launches one absolute
+   native argv without a shell, and forwards exactly one selected auth source;
+5. requires ACP v1 plus exact `agentInfo.name=codex-acp` and configured adapter
+   version, creates a fresh session, applies and verifies model/effort/read-only
+   configuration, then sends the prompt; and
+6. records bounded observations only. Permissions remain fail-closed, resume
+   remains disabled, and `delivery_unknown` cannot retry or fall back.
+
+The local doctor proves bundle integrity and selected auth-source presence only.
+It deliberately reports neither workflow configuration nor authentication as
+successful.
 
 ## Evidence
 
@@ -67,7 +79,9 @@ The focused command is:
 go test ./cmd/tusker -run 'CodexACP' -count=1
 ```
 
-Running that command proves the source contract only. A later human-owned live
-gate must use an exact preinstalled adapter release, authenticate it, retain
-the conformance/smoke receipt, and exercise fresh, load/resume, permission,
-interrupt, malformed, crash, and ambiguous-delivery paths.
+Running that command proves the source and hermetic process contract only. The
+remaining human-owned gate must build or otherwise obtain the exact native
+adapter, independently pin its SHA-256 and source provenance, install it, select
+one existing credential source, and authorize a disposable read-only live
+smoke. Resume, writable permissions, automatic fallback, and default cutover
+remain out of scope until separate parity and soak gates pass.

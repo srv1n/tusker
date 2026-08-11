@@ -24,6 +24,7 @@ import (
 
 const (
 	protocolVersion = 1
+	codexACPVersion = "1.1.14"
 	defaultSession  = "fake-session"
 	defaultUpdates  = 1024
 	defaultHoldMS   = 2000
@@ -170,18 +171,33 @@ func (s *server) initialize(req message) {
 	if s.mode == "wrong-version" {
 		version = 2
 	}
+	agentName, agentVersion := "fake-acp", "1"
+	if s.codexConfigMode() {
+		agentName = "codex-acp"
+		agentVersion = codexACPVersion
+	}
 	write(message{
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: map[string]any{
 			"protocolVersion": version,
-			"agentInfo":       map[string]string{"name": "fake-acp", "version": "1"},
+			"agentInfo":       map[string]string{"name": agentName, "version": agentVersion},
 			"agentCapabilities": map[string]any{
 				"loadSession":   false,
 				"resumeSession": false,
 			},
 		},
 	})
+}
+
+func (s *server) codexConfigMode() bool {
+	if strings.TrimSpace(os.Getenv("CODEX_CONFIG")) == "" || strings.TrimSpace(os.Getenv("INITIAL_AGENT_MODE")) == "" {
+		return false
+	}
+	var config struct {
+		Model string `json:"model"`
+	}
+	return json.Unmarshal([]byte(os.Getenv("CODEX_CONFIG")), &config) == nil && strings.TrimSpace(config.Model) != ""
 }
 
 func (s *server) newSession(req message) {

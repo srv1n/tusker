@@ -153,7 +153,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "gate-ledger", "context", "config", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory", "work", "execution":
+	case "acp", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "gate-ledger", "context", "config", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory", "work", "execution":
 		return true
 	default:
 		return false
@@ -259,6 +259,16 @@ func runInner(command string, args Args) (int, error) {
 		return 0, versionCmd(args)
 	case "capabilities":
 		return 0, capabilitiesCmd(args)
+	case "acp":
+		if err := validateACPAdapterCommandArgs(args); err != nil {
+			return 0, tuskerError(errorInvalidArg, err.Error())
+		}
+		printACPAdapterHelp()
+		return 0, nil
+	case "acp install":
+		return 0, acpInstallCommand(args)
+	case "acp doctor":
+		return 0, acpDoctorCommand(args)
 	case "runner-wrapper":
 		return 0, runnerWrapperCmd(args)
 	case "runner":
@@ -1079,6 +1089,8 @@ Global flags:
 
 func printCommandHelp(command string) bool {
 	switch command {
+	case "acp", "acp install", "acp doctor":
+		printACPAdapterHelp()
 	case "capabilities":
 		printCapabilitiesHelp()
 	case "init":
