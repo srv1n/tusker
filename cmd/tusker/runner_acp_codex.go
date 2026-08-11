@@ -42,12 +42,10 @@ type CodexACPImmutableAsset struct {
 	Fingerprint string
 }
 
-// CodexACPDescriptor describes an already-installed codex-acp adapter. The
-// primary production form is the official standalone native binary, so launch
-// is one exact absolute executable rather than npx, Node, JavaScript, a shell,
-// or a package manager. The adapter's bundled Codex is mandatory: external
-// CODEX_PATH overrides are refused because the child could change after the
-// adapter executable was verified.
+// CodexACPDescriptor describes an already-installed codex-acp adapter. Launch
+// is either one exact native executable or an exact bundled Node interpreter
+// plus exact bundled JavaScript entrypoint. It is never npx, a shell, PATH
+// lookup, or a package manager. External CODEX_PATH overrides remain refused.
 //
 // ManifestFingerprint is sha256 over the versioned, canonical local manifest
 // that includes the native adapter with bundled Codex and every declared
@@ -55,7 +53,9 @@ type CodexACPImmutableAsset struct {
 // in persisted session references.
 type CodexACPDescriptor struct {
 	AdapterVersion      string
+	LaunchKind          ACPAdapterBundleLaunchKind
 	Adapter             CodexACPImmutableAsset
+	Entrypoint          CodexACPImmutableAsset
 	Assets              []CodexACPImmutableAsset
 	ManifestFingerprint string
 	Model               string
@@ -86,11 +86,11 @@ type CodexACPReadinessRequirement struct {
 
 func CodexACPReadinessRequirements() []CodexACPReadinessRequirement {
 	return []CodexACPReadinessRequirement{
-		{ID: "adapter_manifest", Required: true, Description: "absolute native adapter and declared runtime assets are present and match the immutable manifest; external CODEX_PATH is unsupported"},
-		{ID: "acp_conformance", Required: true, Description: "the exact manifest fingerprint passed the ACP conformance/authenticated opt-in smoke without a shell or runtime download"},
+		{ID: "adapter_manifest", Required: true, Description: "the pinned adapter runtime and declared assets are present and match the local manifest; external CODEX_PATH is unsupported"},
+		{ID: "acp_conformance", Required: true, Description: "the exact manifest fingerprint passed ACP conformance and an explicitly authorized authenticated smoke without a shell or runtime download"},
 		{ID: "codex_auth", Required: true, Description: "the selected Codex authentication path is available to the adapter process; this may be ChatGPT login or an explicit API credential"},
 		{ID: "task_authorization", Required: true, Description: "a separate Tusker lease, permission policy, and human launch authority exist for the target attempt"},
-		{ID: "permission_parity_read_only", Required: true, Description: "current Codex ACP approval callbacks do not safely authorize execute or edit, so only read-only conformance is supported and production-default admission remains blocked"},
+		{ID: "permission_parity", Required: true, Description: "workspace edits and commands are one-shot-authorized only inside the bound workspace; network remains controlled by the resolved profile"},
 	}
 }
 
@@ -102,7 +102,7 @@ func CodexACPModeForPermissionPreset(preset string) (CodexACPMode, error) {
 	case "read-only":
 		return CodexACPModeReadOnly, nil
 	case "workspace-write-network", "workspace-write-offline":
-		return "", errors.New("codex ACP workspace-write mode is blocked until edit permission parity has a trustworthy target")
+		return CodexACPModeWorkspaceWrite, nil
 	case "danger-full-access":
 		return "", errors.New("codex ACP full-access mode is blocked until execute and edit permission parity is safe")
 	default:
@@ -124,8 +124,8 @@ func (m CodexACPMode) initialAgentMode() (string, error) {
 }
 
 // LaunchArgv revalidates an externally anchored bundle receipt immediately
-// before returning the exact one-part invocation accepted by the generic ACP
-// process runtime. The provider descriptor alone is self-description and must
+// before returning the exact native or interpreter-plus-entrypoint invocation
+// accepted by the generic ACP process runtime. The provider descriptor alone is self-description and must
 // never authorize launch: request carries the separately trusted manifest/root
 // policy, while receipt proves the complete bytes previously admitted by that
 // policy.
@@ -140,10 +140,23 @@ func (d CodexACPDescriptor) LaunchArgv(request ACPAdapterBundleValidationRequest
 	if err != nil {
 		return nil, err
 	}
+	launchKind := d.LaunchKind
+	if launchKind == "" {
+		launchKind = ACPAdapterBundleLaunchNative
+	}
 	if receipt.Schema != ACPAdapterBundleVerificationSchema || receipt.Provider != codexACPProvider || receipt.Adapter != "codex-acp" ||
-		receipt.Version != strings.TrimSpace(d.AdapterVersion) || receipt.Protocol != codexACPProtocol || receipt.LaunchKind != ACPAdapterBundleLaunchNative ||
-		len(receipt.Argv) != 1 || receipt.Argv[0] != adapter {
-		return nil, errors.New("codex ACP launch is not bound to the verified native bundle receipt")
+		receipt.Version != strings.TrimSpace(d.AdapterVersion) || receipt.Protocol != codexACPProtocol ||
+		receipt.LaunchKind != launchKind ||
+		(len(receipt.Argv) != 1 && len(receipt.Argv) != 2) || receipt.Argv[0] != adapter {
+		return nil, errors.New("codex ACP launch is not bound to the verified adapter bundle receipt")
+	}
+	if launchKind == ACPAdapterBundleLaunchInterpreter {
+		entrypoint, resolveErr := codexACPManifestPath(d.Entrypoint.Path)
+		if resolveErr != nil || len(receipt.Argv) != 2 || receipt.Argv[1] != entrypoint {
+			return nil, errors.New("codex ACP interpreter entrypoint is not bound to the verified bundle receipt")
+		}
+	} else if len(receipt.Argv) != 1 {
+		return nil, errors.New("codex ACP native launch receipt has unexpected arguments")
 	}
 	relativeAdapter, err := filepath.Rel(receipt.BundleRoot, adapter)
 	if err != nil || relativeAdapter == "." || relativeAdapter == ".." || strings.HasPrefix(relativeAdapter, ".."+string(filepath.Separator)) {
@@ -160,7 +173,7 @@ func (d CodexACPDescriptor) LaunchArgv(request ACPAdapterBundleValidationRequest
 	if !matched {
 		return nil, errors.New("codex ACP adapter executable is not the verified bundle executable")
 	}
-	return []string{adapter}, nil
+	return append([]string(nil), receipt.Argv...), nil
 }
 
 // Validate verifies both the descriptor's canonical manifest and its present
@@ -171,6 +184,22 @@ func (d CodexACPDescriptor) Validate() error {
 	if !validCodexACPAdapterVersion(d.AdapterVersion) {
 		return fmt.Errorf("invalid codex ACP adapter version")
 	}
+	launchKind := d.LaunchKind
+	if launchKind == "" {
+		launchKind = ACPAdapterBundleLaunchNative
+	}
+	switch launchKind {
+	case ACPAdapterBundleLaunchNative:
+		if !isCodexACPStandaloneAdapter(d.Adapter.Path) {
+			return fmt.Errorf("native codex ACP adapter must be the standalone codex-acp executable")
+		}
+	case ACPAdapterBundleLaunchInterpreter:
+		if strings.ToLower(filepath.Base(d.Adapter.Path)) != "node" || strings.TrimSpace(d.Entrypoint.Path) == "" {
+			return fmt.Errorf("interpreter codex ACP adapter requires exact Node and JavaScript entrypoint assets")
+		}
+	default:
+		return fmt.Errorf("invalid codex ACP launch kind")
+	}
 	if strings.TrimSpace(d.Model) == "" || len(d.Model) > 256 || containsControl(d.Model) {
 		return fmt.Errorf("invalid codex ACP model")
 	}
@@ -180,13 +209,19 @@ func (d CodexACPDescriptor) Validate() error {
 	if _, err := d.Mode.initialAgentMode(); err != nil {
 		return err
 	}
-	if d.Mode != CodexACPModeReadOnly {
-		return errors.New("codex ACP provider slice currently admits read-only mode only")
+	if d.Mode != CodexACPModeReadOnly && d.Mode != CodexACPModeWorkspaceWrite {
+		return errors.New("codex ACP provider slice admits only read-only or workspace-write mode")
 	}
 	if err := validateCodexACPAsset(d.Adapter, "adapter", true); err != nil {
 		return err
 	}
 	seen := map[string]struct{}{filepath.Clean(d.Adapter.Path): {}}
+	if launchKind == ACPAdapterBundleLaunchInterpreter {
+		if err := validateCodexACPAsset(d.Entrypoint, "entrypoint", false); err != nil {
+			return err
+		}
+		seen[filepath.Clean(d.Entrypoint.Path)] = struct{}{}
+	}
 	for index, asset := range d.Assets {
 		path := filepath.Clean(asset.Path)
 		if _, exists := seen[path]; exists {
@@ -221,8 +256,19 @@ func (d CodexACPDescriptor) ManifestFingerprintForDescriptor() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	launchKind := d.LaunchKind
+	if launchKind == "" {
+		launchKind = ACPAdapterBundleLaunchNative
+	}
 	items := []codexACPManifestItem{
 		{Role: "adapter", Path: adapterPath, Fingerprint: strings.TrimSpace(d.Adapter.Fingerprint)},
+	}
+	if launchKind == ACPAdapterBundleLaunchInterpreter {
+		entrypointPath, err := codexACPManifestPath(d.Entrypoint.Path)
+		if err != nil {
+			return "", err
+		}
+		items = append(items, codexACPManifestItem{Role: "entrypoint", Path: entrypointPath, Fingerprint: strings.TrimSpace(d.Entrypoint.Fingerprint)})
 	}
 	for _, asset := range d.Assets {
 		path, err := codexACPManifestPath(asset.Path)
@@ -255,10 +301,11 @@ func (d CodexACPDescriptor) ManifestFingerprintForDescriptor() (string, error) {
 		Provider       string                 `json:"provider"`
 		Protocol       string                 `json:"protocol"`
 		AdapterVersion string                 `json:"adapter_version"`
+		LaunchKind     string                 `json:"launch_kind"`
 		Items          []codexACPManifestItem `json:"items"`
 	}{
 		Schema: codexACPSessionRefVersion + ":manifest", Provider: codexACPProvider, Protocol: codexACPProtocol,
-		AdapterVersion: strings.TrimSpace(d.AdapterVersion), Items: items,
+		AdapterVersion: strings.TrimSpace(d.AdapterVersion), LaunchKind: string(launchKind), Items: items,
 	})
 	if err != nil {
 		return "", err
@@ -303,9 +350,6 @@ func validateCodexACPAsset(asset CodexACPImmutableAsset, role string, executable
 	}
 	if executable && isCodexACPShellOrPackageLauncher(physical) {
 		return fmt.Errorf("codex ACP executable cannot be a shell or package launcher")
-	}
-	if role == "adapter" && !isCodexACPStandaloneAdapter(physical) {
-		return fmt.Errorf("codex ACP adapter must be the standalone codex-acp executable")
 	}
 	return nil
 }
@@ -407,6 +451,17 @@ func (d CodexACPDescriptor) CodexACPEnvironment(inherited []string, auth CodexAC
 		return CodexACPEnvironmentResult{}, errors.New("codex ACP auth contract requires one valid source and non-secret principal digest")
 	}
 	authValue, err := exactCodexACPEnvironmentValue(inherited, authKey)
+	if err != nil && auth.Source == CodexACPAuthChatGPTSession {
+		// The normal Codex installation stores its authenticated session under
+		// ~/.codex even when CODEX_HOME is not exported by the interactive app.
+		// Resolve that conventional local path once and still pass it explicitly;
+		// the adapter never receives ambient HOME or an unbounded environment.
+		candidate := filepath.Join(userHomeDir(), ".codex")
+		if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+			authValue = candidate
+			err = nil
+		}
+	}
 	if err != nil {
 		return CodexACPEnvironmentResult{}, err
 	}
@@ -615,16 +670,17 @@ func (p CodexACPConfigPlan) VerifyApplied(applied []CodexACPAdvertisedConfigOpti
 	return nil
 }
 
-// CodexACPPermissionOperation is the narrow provider vocabulary accepted by
-// the Codex ACP parity layer. Execute has no equivalent authority in the
-// current generic broker and is deliberately retained as execute so the broker
-// rejects it. Edit maps to bounded workspace write. Every other operation
-// remains unknown and is rejected.
+// CodexACPPermissionOperation is the version-pinned provider vocabulary
+// accepted by the Codex ACP parity layer. Execute is authorized against its
+// working directory; edit is authorized against a workspace/grant root; and
+// explicit network requests remain subject to the resolved profile ceiling.
 type CodexACPPermissionOperation string
 
 const (
 	CodexACPPermissionExecute CodexACPPermissionOperation = "execute"
 	CodexACPPermissionEdit    CodexACPPermissionOperation = "edit"
+	CodexACPPermissionRead    CodexACPPermissionOperation = "read"
+	CodexACPPermissionNetwork CodexACPPermissionOperation = "network"
 	CodexACPPermissionOther   CodexACPPermissionOperation = "other"
 )
 
@@ -646,13 +702,24 @@ func (p CodexACPPermission) BrokerRequest(attemptID, boundSessionID, workspace s
 		toolKind = "write"
 	case CodexACPPermissionExecute:
 		toolKind = "execute"
+	case CodexACPPermissionRead:
+		toolKind = "read"
+	case CodexACPPermissionNetwork:
+		toolKind = "network"
 	case CodexACPPermissionOther:
 		toolKind = "other"
+	}
+	target := strings.TrimSpace(p.Target)
+	if p.Operation == CodexACPPermissionEdit && target == "" {
+		// codex-acp 1.1.14 does not expose the individual edit path in the
+		// public toolCall. Its configured `agent` mode mechanically confines
+		// writes to the session workspace, so authorize only that bound root.
+		target = workspace
 	}
 	return ACPPermissionRequest{
 		AttemptID: attemptID, BoundAttemptID: attemptID,
 		SessionID: strings.TrimSpace(p.SessionID), BoundSessionID: strings.TrimSpace(boundSessionID),
-		Workspace: workspace, Target: strings.TrimSpace(p.Target), ToolKind: toolKind,
+		Workspace: workspace, Target: target, ToolKind: toolKind,
 		Options: append([]ACPPermissionOption(nil), p.Options...), Cancelled: cancelled,
 	}
 }
@@ -661,11 +728,10 @@ func (p CodexACPPermission) BrokerRequest(attemptID, boundSessionID, workspace s
 // {sessionId, toolCall:{toolCallId,kind,rawInput:{command,cwd}},options,_meta}.
 // It verifies raw session/tool-call IDs against the ACP client's already-bound
 // values before recognizing a kind. Execute carries only a conservative cwd
-// correlation target and remains rejected by the generic broker. Public edit
-// callbacks do not include a trustworthy file target, so edit normalizes to
-// write with an empty target and fails closed until a separately version-pinned
-// _meta.codex.params schema is implemented and reviewed. Raw commands/prompts
-// never enter the canonical broker request or audit.
+// correlation target. Public edit callbacks do not expose an individual file;
+// for this pinned adapter version their optional grantRoot is accepted only as
+// a narrower hint, otherwise BrokerRequest binds the edit to the workspace.
+// Raw commands/prompts never enter the canonical broker request or audit.
 func DecodeCodexACPPermission(request acp.PermissionRequest) CodexACPPermission {
 	decoded := struct {
 		SessionID string `json:"sessionId"`
@@ -677,6 +743,22 @@ func DecodeCodexACPPermission(request acp.PermissionRequest) CodexACPPermission 
 				CWD     string `json:"cwd"`
 			} `json:"rawInput"`
 		} `json:"toolCall"`
+		Meta struct {
+			Codex struct {
+				Params struct {
+					GrantRoot   string `json:"grantRoot"`
+					Permissions struct {
+						Network *struct {
+							Enabled *bool `json:"enabled"`
+						} `json:"network"`
+						FileSystem *struct {
+							Read  []string `json:"read"`
+							Write []string `json:"write"`
+						} `json:"fileSystem"`
+					} `json:"permissions"`
+				} `json:"params"`
+			} `json:"codex"`
+		} `json:"_meta"`
 	}{}
 	validShape := len(request.Raw) > 0 && len(request.Raw) <= 16<<10 && json.Unmarshal(request.Raw, &decoded) == nil
 	if validShape && (strings.TrimSpace(decoded.SessionID) != strings.TrimSpace(request.SessionID) ||
@@ -694,6 +776,20 @@ func DecodeCodexACPPermission(request acp.PermissionRequest) CodexACPPermission 
 			}
 		case "edit":
 			providerOperation = CodexACPPermissionEdit
+			if root := strings.TrimSpace(decoded.Meta.Codex.Params.GrantRoot); filepath.IsAbs(root) && !containsControl(root) {
+				target = root
+			}
+		case "other":
+			permissions := decoded.Meta.Codex.Params.Permissions
+			filesystem := permissions.FileSystem
+			networkOnly := permissions.Network != nil && permissions.Network.Enabled != nil && *permissions.Network.Enabled && filesystem == nil
+			if networkOnly {
+				providerOperation, target = CodexACPPermissionNetwork, "network"
+			} else if permissions.Network == nil && filesystem != nil && len(filesystem.Write) == 1 && len(filesystem.Read) == 0 {
+				providerOperation, target = CodexACPPermissionEdit, strings.TrimSpace(filesystem.Write[0])
+			} else if permissions.Network == nil && filesystem != nil && len(filesystem.Read) == 1 && len(filesystem.Write) == 0 {
+				providerOperation, target = CodexACPPermissionRead, strings.TrimSpace(filesystem.Read[0])
+			}
 		}
 	}
 	options := make([]ACPPermissionOption, 0, len(request.Options))

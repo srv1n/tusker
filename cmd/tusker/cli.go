@@ -269,6 +269,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, acpInstallCommand(args)
 	case "acp doctor":
 		return 0, acpDoctorCommand(args)
+	case "acp setup":
+		return 0, acpSetupCommand(args)
 	case "runner-wrapper":
 		return 0, runnerWrapperCmd(args)
 	case "runner":
@@ -1089,7 +1091,7 @@ Global flags:
 
 func printCommandHelp(command string) bool {
 	switch command {
-	case "acp", "acp install", "acp doctor":
+	case "acp", "acp install", "acp doctor", "acp setup":
 		printACPAdapterHelp()
 	case "capabilities":
 		printCapabilitiesHelp()

@@ -20,8 +20,9 @@ const (
 	// RunnerACP is a distinct persisted local transport kind. It deliberately
 	// does not alias codex_app_server, codex_exec, claude-code, or codex_cloud.
 	RunnerACP RunnerName = "acp_v1"
-	// RunnerCodexACP is the concrete, opt-in Codex adapter identity. It shares
-	// the fenced ACP transport but is never inferred from legacy runner records.
+	// RunnerCodexACP is the concrete Codex adapter identity and the built-in
+	// local primary. It shares the fenced ACP transport but is never inferred
+	// from legacy runner records.
 	RunnerCodexACP RunnerName = "codex_acp"
 )
 

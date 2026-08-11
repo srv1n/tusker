@@ -214,7 +214,7 @@ func validateRunnerDefinitions(wf Workflow, filePath string) error {
 				return tuskerError(errorConfigInvalid, "runner "+name+" codex_acp is not live-ready; missing explicit admission fields: "+strings.Join(missing, ", "), withPath(filePath))
 			}
 			if strings.TrimSpace(definition.Command) != "" {
-				return tuskerError(errorConfigInvalid, "runner "+name+" codex_acp does not accept command; use a verified native bundle", withPath(filePath))
+				return tuskerError(errorConfigInvalid, "runner "+name+" codex_acp does not accept command; use a verified adapter bundle", withPath(filePath))
 			}
 			if definition.BundleRoot != strings.TrimSpace(definition.BundleRoot) || !filepath.IsAbs(definition.BundleRoot) || filepath.Clean(definition.BundleRoot) != definition.BundleRoot || containsControl(definition.BundleRoot) {
 				return tuskerError(errorConfigInvalid, "runner "+name+" codex_acp bundle_root must be an exact canonical absolute path", withPath(filePath))
@@ -228,6 +228,10 @@ func validateRunnerDefinitions(wf Workflow, filePath string) error {
 			if !validCodexACPAdapterVersion(definition.AdapterVersion) {
 				return tuskerError(errorConfigInvalid, "runner "+name+" codex_acp adapter_version is invalid", withPath(filePath))
 			}
+			launchKind := codexACPDefinitionLaunchKind(definition)
+			if launchKind != ACPAdapterBundleLaunchNative && launchKind != ACPAdapterBundleLaunchInterpreter {
+				return tuskerError(errorConfigInvalid, "runner "+name+" codex_acp adapter_launch_kind must be native or interpreter_entrypoint", withPath(filePath))
+			}
 			switch CodexACPAuthSource(definition.AuthSource) {
 			case CodexACPAuthChatGPTSession, CodexACPAuthCodexAPIKey, CodexACPAuthOpenAIAPIKey:
 			default:
@@ -236,7 +240,7 @@ func validateRunnerDefinitions(wf Workflow, filePath string) error {
 			if !v7CloseAuthorityDigest(definition.AuthPrincipalSHA256, "sha256:") {
 				return tuskerError(errorConfigInvalid, "runner "+name+" codex_acp auth_principal_sha256 must be a non-secret canonical sha256 identity", withPath(filePath))
 			}
-		} else if definition.BundleRoot != "" || definition.ManifestPath != "" || definition.ManifestSHA256 != "" || definition.AdapterVersion != "" || definition.AuthSource != "" || definition.AuthPrincipalSHA256 != "" {
+		} else if definition.BundleRoot != "" || definition.ManifestPath != "" || definition.ManifestSHA256 != "" || definition.AdapterVersion != "" || definition.AdapterLaunchKind != "" || definition.AuthSource != "" || definition.AuthPrincipalSHA256 != "" {
 			return tuskerError(errorConfigInvalid, "runner "+name+" has codex_acp-only admission fields", withPath(filePath))
 		}
 	}

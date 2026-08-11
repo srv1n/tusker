@@ -332,9 +332,9 @@ func hasBootstrapProfile(profiles map[string]any, name string) bool {
 
 // bootstrapCatalogHarness trusts Codex inventory only when the installed CLI
 // returned it, whether from the live endpoint or an explicit --bundled query.
-// A synthetic bundled fallback remains Available=false and is never selected.
-// Claude's aliases are declared rather than discovered, but become a truthful
-// fallback once the local executable is confirmed available.
+// This command is an explicit compatibility/profile-generation action; it is
+// not the runtime default or an automatic fallback from an ACP attempt.
+// Claude's aliases remain a truthful fallback when locally available.
 func bootstrapCatalogHarness(catalog RunnerCatalog) (string, []RunnerCatalogModel, bool) {
 	for _, entry := range catalog.Harnesses {
 		if entry.Harness == string(RunnerCodexExec) && (entry.Source == "live" || entry.Source == "bundled") && entry.Available {

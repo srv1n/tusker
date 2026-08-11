@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,7 +80,12 @@ func TestCodexACPModeAndPositiveEnvironmentMapping(t *testing.T) {
 	if got, err := CodexACPModeForPermissionPreset("read-only"); err != nil || got != CodexACPModeReadOnly {
 		t.Fatalf("read-only mode=%q err=%v", got, err)
 	}
-	for _, blocked := range []string{"workspace-write-network", "workspace-write-offline", "danger-full-access"} {
+	for _, preset := range []string{"workspace-write-network", "workspace-write-offline"} {
+		if got, err := CodexACPModeForPermissionPreset(preset); err != nil || got != CodexACPModeWorkspaceWrite {
+			t.Fatalf("workspace mode for %q=%q err=%v", preset, got, err)
+		}
+	}
+	for _, blocked := range []string{"danger-full-access"} {
 		if _, err := CodexACPModeForPermissionPreset(blocked); err == nil {
 			t.Fatalf("unsafe permission preset %q was admitted", blocked)
 		}
@@ -87,15 +93,17 @@ func TestCodexACPModeAndPositiveEnvironmentMapping(t *testing.T) {
 	if _, err := CodexACPModeForPermissionPreset("unbounded-yolo"); err == nil {
 		t.Fatal("unknown permission preset was mapped")
 	}
-	for _, mode := range []CodexACPMode{CodexACPModeWorkspaceWrite, CodexACPModeFullAccess} {
-		descriptor := codexACPTestDescriptor(t)
-		descriptor.Mode = mode
-		if err := descriptor.Validate(); err == nil || !strings.Contains(err.Error(), "read-only mode only") {
-			t.Fatalf("direct descriptor mode %q bypassed the read-only admission gate: %v", mode, err)
-		}
+	descriptor := codexACPTestDescriptor(t)
+	descriptor.Mode = CodexACPModeWorkspaceWrite
+	if err := descriptor.Validate(); err != nil {
+		t.Fatalf("workspace-write descriptor rejected: %v", err)
+	}
+	descriptor.Mode = CodexACPModeFullAccess
+	if err := descriptor.Validate(); err == nil || !strings.Contains(err.Error(), "read-only or workspace-write") {
+		t.Fatalf("full-access descriptor bypassed admission: %v", err)
 	}
 
-	descriptor := codexACPTestDescriptor(t)
+	descriptor = codexACPTestDescriptor(t)
 	principal := codexACPTestPrincipalDigest("account-1")
 	environment, err := descriptor.CodexACPEnvironment([]string{
 		"HOME=/users/test", "OPENAI_API_KEY=fixture-key", "CODEX_API_KEY=must-not-forward",
@@ -126,6 +134,54 @@ func TestCodexACPModeAndPositiveEnvironmentMapping(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(values["CODEX_CONFIG"]), &config); err != nil || config.Model != descriptor.Model || config.Effort != descriptor.Effort {
 		t.Fatalf("config=%#v err=%v", config, err)
+	}
+}
+
+func TestCodexACPNetworkPolicyBindingIsExact(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		policy   CodexPolicy
+		expected bool
+		wantErr  bool
+	}{
+		{name: "offline explicit", policy: CodexPolicy{TurnSandboxNetwork: boolPtr(false)}, expected: false},
+		{name: "offline default", policy: CodexPolicy{}, expected: false},
+		{name: "offline request widened", policy: CodexPolicy{TurnSandboxNetwork: boolPtr(true)}, expected: false, wantErr: true},
+		{name: "network request omitted", policy: CodexPolicy{}, expected: true, wantErr: true},
+		{name: "network explicit", policy: CodexPolicy{TurnSandboxNetwork: boolPtr(true)}, expected: true},
+		{name: "network request narrowed", policy: CodexPolicy{TurnSandboxNetwork: boolPtr(false)}, expected: true, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateCodexACPNetworkBinding(test.policy, test.expected)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("network binding error=%v, wantErr=%t", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestCodexACPDescriptorRejectsLaunchKindArgvShapeWithoutPanic(t *testing.T) {
+	descriptor, request, receipt := codexACPTestVerifiedBundle(t)
+	plan := CodexACPProviderPlan{
+		Schema:              codexACPProviderPlanSchema,
+		BundleRoot:          request.BundleRoot,
+		ManifestPath:        request.ManifestPath,
+		ManifestSHA256:      request.ExpectedManifestSHA256,
+		AdapterVersion:      descriptor.AdapterVersion,
+		AdapterLaunchKind:   ACPAdapterBundleLaunchInterpreter,
+		AuthSource:          string(CodexACPAuthOpenAIAPIKey),
+		AuthPrincipalSHA256: codexACPTestPrincipalDigest("malformed-argv"),
+		Mode:                CodexACPModeReadOnly,
+		BundleReceipt:       receipt,
+	}
+	plan.BundleReceipt.Argv = []string{receipt.Argv[0]}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("malformed launch argv panicked: %v", recovered)
+		}
+	}()
+	if _, err := plan.descriptor(); err == nil || !strings.Contains(err.Error(), "launch receipt") {
+		t.Fatalf("malformed interpreter argv was not rejected: %v", err)
 	}
 }
 
@@ -196,7 +252,8 @@ func TestCodexACPPermissionNormalizeExecuteEditAndOtherFailClosed(t *testing.T) 
 		Options: []acp.PermissionOption{{ID: "allow_once", Kind: "allow_once"}},
 	}
 	policy := ACPPermissionPolicy{
-		AllowedToolKinds: map[string]bool{"write": true}, BudgetAuthorized: true, AllowWorkspaceWrite: true,
+		AllowedToolKinds: map[string]bool{"read": true, "write": true, "execute": true, "network": true},
+		BudgetAuthorized: true, AllowWorkspaceWrite: true, AllowExecute: true, AllowNetwork: true,
 	}
 	for _, test := range []struct {
 		name       string
@@ -208,8 +265,9 @@ func TestCodexACPPermissionNormalizeExecuteEditAndOtherFailClosed(t *testing.T) 
 		// Public Codex ACP edit callbacks contain no safely scoped file target;
 		// they normalize to write, then the generic broker rejects the missing
 		// target instead of fabricating one from raw arguments.
-		{name: "official edit shape maps then fails closed", raw: `{"sessionId":"session-1","toolCall":{"toolCallId":"tool-1","kind":"edit","rawInput":{}},"options":[],"_meta":{}}`, wantKind: "write", want: ACPPermissionReject, wantReason: ACPPermissionReasonInvalidRequest},
-		{name: "official execute shape remains non-authorizing", raw: `{"sessionId":"session-1","toolCall":{"toolCallId":"tool-1","kind":"execute","rawInput":{"command":"git status","cwd":"/workspace"}},"options":[],"_meta":{}}`, wantKind: "execute", want: ACPPermissionReject, wantReason: ACPPermissionReasonUnknownTool},
+		{name: "official edit shape binds workspace", raw: `{"sessionId":"session-1","toolCall":{"toolCallId":"tool-1","kind":"edit","rawInput":{}},"options":[],"_meta":{}}`, wantKind: "write", want: ACPPermissionAllowOnce, wantReason: ACPPermissionReasonAllowed},
+		{name: "official execute shape binds cwd", raw: fmt.Sprintf(`{"sessionId":"session-1","toolCall":{"toolCallId":"tool-1","kind":"execute","rawInput":{"command":"git status","cwd":%q}},"options":[],"_meta":{}}`, workspace), wantKind: "execute", want: ACPPermissionAllowOnce, wantReason: ACPPermissionReasonAllowed},
+		{name: "official network request remains policy-bound", raw: `{"sessionId":"session-1","toolCall":{"toolCallId":"tool-1","kind":"other","rawInput":{}},"options":[],"_meta":{"codex":{"params":{"permissions":{"network":{"enabled":true}}}}}}`, wantKind: "network", want: ACPPermissionAllowOnce, wantReason: ACPPermissionReasonAllowed},
 		{name: "official other shape remains non-authorizing", raw: `{"sessionId":"session-1","toolCall":{"toolCallId":"tool-1","kind":"other","rawInput":{}},"options":[],"_meta":{}}`, wantKind: "other", want: ACPPermissionReject, wantReason: ACPPermissionReasonInvalidRequest},
 		{name: "mismatched official identity is other", raw: `{"sessionId":"session-1","toolCall":{"toolCallId":"forged","kind":"edit","rawInput":{}},"options":[],"_meta":{}}`, wantKind: "other", want: ACPPermissionReject, wantReason: ACPPermissionReasonInvalidRequest},
 	} {
@@ -313,6 +371,8 @@ func codexACPTestVerifiedBundle(t *testing.T) (CodexACPDescriptor, ACPAdapterBun
 	if err != nil {
 		t.Fatal(err)
 	}
+	request.BundleRoot = physicalRoot
+	request.ExpectedFinalRoot = physicalRoot
 	if err := os.Remove(filepath.Join(request.BundleRoot, "adapter.js")); err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +457,7 @@ func TestCodexACPReadinessSeparatesAuthFromTaskAdmission(t *testing.T) {
 		}
 		joined += requirement.ID + " "
 	}
-	for _, want := range []string{"adapter_manifest", "acp_conformance", "codex_auth", "task_authorization", "permission_parity_read_only"} {
+	for _, want := range []string{"adapter_manifest", "acp_conformance", "codex_auth", "task_authorization", "permission_parity"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("readiness misses %q: %s", want, joined)
 		}

@@ -27,17 +27,21 @@ const codexACPProviderPlanSchema = "tusker.codex-acp-provider-plan/v1"
 // source from its own inherited environment after it has revalidated this
 // bundle receipt and the current durable run identity.
 type CodexACPProviderPlan struct {
-	Schema              string                              `json:"schema"`
-	BundleRoot          string                              `json:"bundle_root"`
-	ManifestPath        string                              `json:"manifest_path"`
-	ManifestSHA256      string                              `json:"manifest_sha256"`
-	AdapterVersion      string                              `json:"adapter_version"`
-	AuthSource          string                              `json:"auth_source"`
-	AuthPrincipalSHA256 string                              `json:"auth_principal_sha256"`
-	Model               string                              `json:"model"`
-	Effort              string                              `json:"effort,omitempty"`
-	Mode                CodexACPMode                        `json:"mode"`
-	BundleReceipt       ACPAdapterBundleVerificationReceipt `json:"bundle_receipt"`
+	Schema              string                     `json:"schema"`
+	BundleRoot          string                     `json:"bundle_root"`
+	ManifestPath        string                     `json:"manifest_path"`
+	ManifestSHA256      string                     `json:"manifest_sha256"`
+	AdapterVersion      string                     `json:"adapter_version"`
+	AdapterLaunchKind   ACPAdapterBundleLaunchKind `json:"adapter_launch_kind"`
+	AuthSource          string                     `json:"auth_source"`
+	AuthPrincipalSHA256 string                     `json:"auth_principal_sha256"`
+	Model               string                     `json:"model"`
+	Effort              string                     `json:"effort,omitempty"`
+	Mode                CodexACPMode               `json:"mode"`
+	// NetworkEnabled is copied from the canonical profile's explicit sandbox
+	// decision and is part of admission identity.
+	NetworkEnabled bool                                `json:"network_enabled"`
+	BundleReceipt  ACPAdapterBundleVerificationReceipt `json:"bundle_receipt"`
 }
 
 func newCodexACPProviderAdmission(definition RunnerDefinition) (CodexACPProviderPlan, error) {
@@ -50,6 +54,7 @@ func newCodexACPProviderAdmission(definition RunnerDefinition) (CodexACPProvider
 		ManifestPath:        definition.ManifestPath,
 		ManifestSHA256:      definition.ManifestSHA256,
 		AdapterVersion:      definition.AdapterVersion,
+		AdapterLaunchKind:   codexACPDefinitionLaunchKind(definition),
 		AuthSource:          definition.AuthSource,
 		AuthPrincipalSHA256: definition.AuthPrincipalSHA256,
 		Mode:                CodexACPModeReadOnly,
@@ -78,6 +83,10 @@ func validateCodexACPDefinition(definition RunnerDefinition) error {
 	if !validACPAdapterBundleDigest(definition.ManifestSHA256) || !validCodexACPAdapterVersion(definition.AdapterVersion) || !v7CloseAuthorityDigest(definition.AuthPrincipalSHA256, "sha256:") {
 		return errors.New("codex ACP admission has invalid immutable identity fields")
 	}
+	launchKind := codexACPDefinitionLaunchKind(definition)
+	if launchKind != ACPAdapterBundleLaunchNative && launchKind != ACPAdapterBundleLaunchInterpreter {
+		return errors.New("codex ACP admission has an unsupported adapter launch kind")
+	}
 	switch CodexACPAuthSource(definition.AuthSource) {
 	case CodexACPAuthChatGPTSession, CodexACPAuthCodexAPIKey, CodexACPAuthOpenAIAPIKey:
 	default:
@@ -86,13 +95,20 @@ func validateCodexACPDefinition(definition RunnerDefinition) error {
 	return nil
 }
 
+func codexACPDefinitionLaunchKind(definition RunnerDefinition) ACPAdapterBundleLaunchKind {
+	if strings.TrimSpace(definition.AdapterLaunchKind) == "" {
+		return ACPAdapterBundleLaunchNative
+	}
+	return ACPAdapterBundleLaunchKind(strings.TrimSpace(definition.AdapterLaunchKind))
+}
+
 func (p CodexACPProviderPlan) bundleRequest() ACPAdapterBundleValidationRequest {
 	return ACPAdapterBundleValidationRequest{
 		BundleRoot:             p.BundleRoot,
 		ManifestPath:           p.ManifestPath,
 		ExpectedManifestSHA256: p.ManifestSHA256,
 		ExpectedDescriptor: ACPAdapterBundleDescriptorPolicy{
-			Provider: codexACPProvider, Adapter: "codex-acp", Version: p.AdapterVersion, LaunchKind: ACPAdapterBundleLaunchNative,
+			Provider: codexACPProvider, Adapter: "codex-acp", Version: p.AdapterVersion, LaunchKind: p.AdapterLaunchKind,
 		},
 		ExpectedFinalRoot:        p.BundleRoot,
 		TrustCurrentUserBoundary: true,
@@ -106,9 +122,30 @@ func (p CodexACPProviderPlan) withProfile(profile ResolvedRunnerProfile) (CodexA
 	if strings.TrimSpace(profile.Definition.Command) != "" {
 		return CodexACPProviderPlan{}, errors.New("codex ACP profiles cannot replace the pinned adapter command")
 	}
-	if strings.TrimSpace(profile.Definition.PermissionPreset) != "read-only" || strings.TrimSpace(profile.Definition.Sandbox.Mode) != "read-only" {
-		return CodexACPProviderPlan{}, errors.New("codex ACP admits only an explicit read-only profile")
+	preset := strings.TrimSpace(profile.Definition.PermissionPreset)
+	mode, err := CodexACPModeForPermissionPreset(preset)
+	if err != nil {
+		return CodexACPProviderPlan{}, err
 	}
+	sandboxMode := strings.TrimSpace(profile.Definition.Sandbox.Mode)
+	switch mode {
+	case CodexACPModeReadOnly:
+		if sandboxMode != "read-only" || (profile.Definition.Sandbox.Network != nil && *profile.Definition.Sandbox.Network) {
+			return CodexACPProviderPlan{}, errors.New("codex ACP read-only preset requires read-only sandbox mode with network disabled")
+		}
+	case CodexACPModeWorkspaceWrite:
+		if sandboxMode != "workspace-write" || profile.Definition.Sandbox.Network == nil {
+			return CodexACPProviderPlan{}, errors.New("codex ACP workspace-write preset requires explicit workspace-write sandbox and network policy")
+		}
+		wantNetwork := preset == "workspace-write-network"
+		if *profile.Definition.Sandbox.Network != wantNetwork {
+			return CodexACPProviderPlan{}, errors.New("codex ACP permission preset and sandbox network policy disagree")
+		}
+	default:
+		return CodexACPProviderPlan{}, errors.New("codex ACP profile mode is unsupported")
+	}
+	p.Mode = mode
+	p.NetworkEnabled = profile.Definition.Sandbox.Network != nil && *profile.Definition.Sandbox.Network
 	p.Model = strings.TrimSpace(profile.Definition.Model)
 	p.Effort = strings.TrimSpace(profile.Definition.Effort)
 	if _, _, err := p.descriptorAndArgv(); err != nil {
@@ -118,12 +155,12 @@ func (p CodexACPProviderPlan) withProfile(profile ResolvedRunnerProfile) (CodexA
 }
 
 func (p CodexACPProviderPlan) descriptorAndArgv() (CodexACPDescriptor, []string, error) {
-	if p.Schema != codexACPProviderPlanSchema || p.Mode != CodexACPModeReadOnly {
-		return CodexACPDescriptor{}, nil, errors.New("invalid or non-read-only Codex ACP provider plan")
+	if p.Schema != codexACPProviderPlanSchema || (p.Mode != CodexACPModeReadOnly && p.Mode != CodexACPModeWorkspaceWrite) {
+		return CodexACPDescriptor{}, nil, errors.New("invalid Codex ACP provider plan mode")
 	}
 	if err := validateCodexACPDefinition(RunnerDefinition{
 		Kind: string(RunnerCodexACP), BundleRoot: p.BundleRoot, ManifestPath: p.ManifestPath, ManifestSHA256: p.ManifestSHA256,
-		AdapterVersion: p.AdapterVersion, AuthSource: p.AuthSource, AuthPrincipalSHA256: p.AuthPrincipalSHA256,
+		AdapterVersion: p.AdapterVersion, AdapterLaunchKind: string(p.AdapterLaunchKind), AuthSource: p.AuthSource, AuthPrincipalSHA256: p.AuthPrincipalSHA256,
 	}); err != nil {
 		return CodexACPDescriptor{}, nil, err
 	}
@@ -152,8 +189,18 @@ func (p CodexACPProviderPlan) descriptor() (CodexACPDescriptor, error) {
 	if len(p.BundleReceipt.Assets) == 0 {
 		return CodexACPDescriptor{}, errors.New("Codex ACP provider plan has no receipt assets")
 	}
-	if len(p.BundleReceipt.Argv) != 1 || !filepath.IsAbs(p.BundleReceipt.Argv[0]) {
-		return CodexACPDescriptor{}, errors.New("Codex ACP provider plan does not contain a one-part native adapter receipt")
+	launchKind := p.AdapterLaunchKind
+	if launchKind == "" {
+		launchKind = ACPAdapterBundleLaunchNative
+	}
+	if (launchKind == ACPAdapterBundleLaunchNative && len(p.BundleReceipt.Argv) != 1) ||
+		(launchKind == ACPAdapterBundleLaunchInterpreter && len(p.BundleReceipt.Argv) != 2) ||
+		(launchKind != ACPAdapterBundleLaunchNative && launchKind != ACPAdapterBundleLaunchInterpreter) ||
+		!filepath.IsAbs(p.BundleReceipt.Argv[0]) {
+		return CodexACPDescriptor{}, errors.New("Codex ACP provider plan does not contain a valid verified launch receipt")
+	}
+	if launchKind == ACPAdapterBundleLaunchInterpreter && !filepath.IsAbs(p.BundleReceipt.Argv[1]) {
+		return CodexACPDescriptor{}, errors.New("Codex ACP provider plan does not contain a valid interpreter entrypoint")
 	}
 	adapterPath := p.BundleReceipt.Argv[0]
 	var adapter CodexACPImmutableAsset
@@ -167,14 +214,30 @@ func (p CodexACPProviderPlan) descriptor() (CodexACPDescriptor, error) {
 			adapter = CodexACPImmutableAsset{Path: path, Fingerprint: asset.SHA256}
 			continue
 		}
+		if launchKind == ACPAdapterBundleLaunchInterpreter && path == p.BundleReceipt.Argv[1] {
+			continue
+		}
 		assets = append(assets, CodexACPImmutableAsset{Path: path, Fingerprint: asset.SHA256})
 	}
 	if adapter.Path == "" {
 		return CodexACPDescriptor{}, errors.New("Codex ACP adapter is missing from the verified receipt")
 	}
 	descriptor := CodexACPDescriptor{
-		AdapterVersion: p.AdapterVersion, Adapter: adapter, Assets: assets,
+		AdapterVersion: p.AdapterVersion, LaunchKind: launchKind, Adapter: adapter, Assets: assets,
 		Model: p.Model, Effort: p.Effort, Mode: p.Mode,
+	}
+	if launchKind == ACPAdapterBundleLaunchInterpreter {
+		entrypointPath := p.BundleReceipt.Argv[1]
+		for _, asset := range p.BundleReceipt.Assets {
+			path := filepath.Join(p.BundleReceipt.BundleRoot, filepath.FromSlash(asset.Path))
+			if path == entrypointPath && asset.Role == "entrypoint" {
+				descriptor.Entrypoint = CodexACPImmutableAsset{Path: path, Fingerprint: asset.SHA256}
+				break
+			}
+		}
+		if descriptor.Entrypoint.Path == "" {
+			return CodexACPDescriptor{}, errors.New("Codex ACP interpreter entrypoint is missing from the verified receipt")
+		}
 	}
 	fingerprint, err := descriptor.ManifestFingerprintForDescriptor()
 	if err != nil {
@@ -254,12 +317,38 @@ func (r *CodexACPRunner) expectedStartAdmission(req StartRequest) (CodexACPProvi
 		strings.TrimSpace(req.RunnerHarness) != string(RunnerCodexACP) || req.RunnerHarness != string(RunnerCodexACP) ||
 		model == "" || model != req.RunnerModel || !validRunnerModelName(model) ||
 		effort == "" || effort != req.RunnerEffort || !validRunnerEffort(effort) {
-		return CodexACPProviderPlan{}, tuskerError(errorConfigInvalid, "codex_acp start requires exact non-empty read-only profile, harness, model, and effort fields")
+		return CodexACPProviderPlan{}, tuskerError(errorConfigInvalid, "codex_acp start requires exact non-empty profile, harness, model, and effort fields")
 	}
 	expected := r.admission
+	if err := validateCodexACPNetworkBinding(req.CodexPolicy, expected.NetworkEnabled); err != nil {
+		return CodexACPProviderPlan{}, err
+	}
 	expected.Model = model
 	expected.Effort = effort
+	mode := req.CodexACP.Mode
+	if mode != CodexACPModeReadOnly && mode != CodexACPModeWorkspaceWrite {
+		return CodexACPProviderPlan{}, tuskerError(errorConfigInvalid, "codex_acp start requires an admitted read-only or workspace-write mode")
+	}
+	wantSandbox := "read-only"
+	if mode == CodexACPModeWorkspaceWrite {
+		wantSandbox = "workspace-write"
+	}
+	if strings.TrimSpace(req.CodexPolicy.TurnSandboxPolicy) != wantSandbox || strings.TrimSpace(req.CodexPolicy.ThreadSandbox) != wantSandbox {
+		return CodexACPProviderPlan{}, tuskerError(errorConfigInvalid, "codex_acp provider mode requires an exact resolved sandbox policy")
+	}
+	expected.Mode = mode
 	return expected, nil
+}
+
+func validateCodexACPNetworkBinding(policy CodexPolicy, expected bool) error {
+	actual := policy.TurnSandboxNetwork != nil && *policy.TurnSandboxNetwork
+	if policy.TurnSandboxNetwork == nil && expected {
+		return tuskerError(errorConfigInvalid, "codex_acp start requires an explicit canonical network policy")
+	}
+	if actual != expected {
+		return tuskerError(errorInvalidTransition, "codex_acp request network policy no longer matches canonical profile admission")
+	}
+	return nil
 }
 
 func (r *CodexACPRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResult, error) {
@@ -312,6 +401,9 @@ func validateCodexACPWrapperRequest(req runnerWrapperRequest) error {
 		return err
 	}
 	if err := req.Start.CodexACP.matchesAdmission(canonicalAdmission); err != nil {
+		return err
+	}
+	if err := validateCodexACPNetworkBinding(req.Start.CodexPolicy, canonicalAdmission.NetworkEnabled); err != nil {
 		return err
 	}
 	if _, _, err := req.Start.CodexACP.descriptorAndArgv(); err != nil {

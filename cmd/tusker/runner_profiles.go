@@ -152,15 +152,15 @@ func builtInTuskerConfig() v7TuskerConfigFile {
 	cfg.Automation.DefaultProfile = "default"
 	cfg.Automation.Profiles = map[string]v7schema.TuskerRunnerProfileConfig{
 		"default": {
-			Harness:          string(RunnerCodexExec),
+			Harness:          string(RunnerCodexACP),
 			Model:            "gpt-5.x",
 			Effort:           "medium",
-			PermissionPreset: "danger-full-access",
-			Sandbox:          v7schema.TuskerRunnerSandboxConfig{Mode: "danger-full-access", Network: boolPtr(true)},
+			PermissionPreset: "workspace-write-offline",
+			Sandbox:          v7schema.TuskerRunnerSandboxConfig{Mode: "workspace-write", Network: boolPtr(false)},
 			Subagents:        v7schema.TuskerRunnerSubagentPolicyConfig{Allowed: boolPtr(true), MaxConcurrent: 2},
 		},
 		"execute-cheap": {
-			Harness:          string(RunnerCodexExec),
+			Harness:          string(RunnerCodexACP),
 			Model:            "gpt-5.x",
 			Effort:           "low",
 			PermissionPreset: "workspace-write-network",
@@ -176,6 +176,8 @@ func builtInTuskerConfig() v7TuskerConfigFile {
 			Subagents:        v7schema.TuskerRunnerSubagentPolicyConfig{Allowed: boolPtr(false), MaxConcurrent: 0},
 		},
 		"unrestricted-high": {
+			// Direct Codex remains an explicit emergency profile. It is never an
+			// automatic retry or fallback after an ACP prompt may have been sent.
 			Harness:          string(RunnerCodexExec),
 			Model:            "gpt-5.x",
 			Effort:           "high",
@@ -924,7 +926,7 @@ func codexPolicyForResolvedProfile(base CodexPolicy, lane string, selected Resol
 		return policy
 	}
 	switch RunnerName(strings.TrimSpace(profile.Harness)) {
-	case RunnerCodex, RunnerCodexAppServer, RunnerCodexExec:
+	case RunnerCodex, RunnerCodexAppServer, RunnerCodexExec, RunnerCodexACP:
 	default:
 		return policy
 	}

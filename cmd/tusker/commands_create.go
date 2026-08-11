@@ -115,8 +115,10 @@ automation:
   completion_reactor:
     mode: disabled
   trigger_states: [ready, rework]
-  default_runner: codex_exec
-  enabled_runners: [codex_exec, claude-code]
+  # Codex ACP is the primary local runner. Run "tusker acp setup" once on the
+  # machine to install/configure its pinned adapter before enabling automation.
+  default_runner: codex_acp
+  enabled_runners: [codex_acp, codex_exec, claude-code]
   workspace:
     strategy: worktree
     root: workspaces

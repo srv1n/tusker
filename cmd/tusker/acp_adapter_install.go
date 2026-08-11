@@ -626,10 +626,15 @@ func acpInstallCommand(args Args) error {
 
 func printACPAdapterHelp() {
 	fmt.Println(`Usage:
+  tusker acp setup --npm-prefix /absolute/npm-prefix [--node /absolute/node] [--auth-source chatgpt_session|codex_api_key|openai_api_key] [--auth-principal NON_SECRET_LABEL] [--vault /absolute/.tusker] --json
   tusker acp install --provider codex --artifact /absolute/local/codex-acp --version VERSION --artifact-sha256 sha256:... --source-url https://... --publisher agentclientprotocol --json
   tusker acp doctor --bundle-digest sha256:... [--auth-source chatgpt_session|codex_api_key|openai_api_key] --json
 
 Purpose:
+  Setup packages an exact already-installed npm prefix into Tusker's sealed
+  runtime and writes machine-local configuration making codex_acp primary.
+  It never runs npm, logs in, starts the daemon, or sends a provider prompt.
+
   Install one already-downloaded, sealed native Codex ACP binary. This command
   never downloads, executes, authenticates, or configures a runner. Doctor
   validates the immutable local bundle and reports source presence separately

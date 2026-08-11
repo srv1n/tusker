@@ -189,8 +189,9 @@ func TestACPAdapterInstallIsLocalOnlyAndCLIIsAdvertised(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	runtimeSource := strings.Split(string(raw), "func printACPAdapterHelp()")[0]
 	for _, forbidden := range []string{"exec.Command", "http.Get", "npx", "npm", "Minisign", "OpenPGP"} {
-		if strings.Contains(string(raw), forbidden) {
+		if strings.Contains(runtimeSource, forbidden) {
 			t.Fatalf("installer unexpectedly contains %q", forbidden)
 		}
 	}

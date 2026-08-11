@@ -124,6 +124,7 @@ type TuskerAutomationRunnerConfig struct {
 	ManifestPath        string `yaml:"manifest_path"`
 	ManifestSHA256      string `yaml:"manifest_sha256"`
 	AdapterVersion      string `yaml:"adapter_version"`
+	AdapterLaunchKind   string `yaml:"adapter_launch_kind"`
 	AuthSource          string `yaml:"auth_source"`
 	AuthPrincipalSHA256 string `yaml:"auth_principal_sha256"`
 }

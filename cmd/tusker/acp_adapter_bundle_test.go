@@ -248,15 +248,15 @@ func TestACPAdapterBundlePhysicalAliasAndRootSymlink(t *testing.T) {
 }
 
 func TestACPAdapterBundleDescriptorCrossShapeAndPreSpawnRevalidation(t *testing.T) {
-	t.Run("codex rejects interpreter shape", func(t *testing.T) {
+	t.Run("codex accepts pinned interpreter shape", func(t *testing.T) {
 		request, manifest := newACPAdapterBundleFixture(t)
 		unsealACPAdapterBundle(t, request.BundleRoot)
 		manifest.Provider, manifest.Adapter = "codex", "codex-acp"
 		request.ExpectedDescriptor = ACPAdapterBundleDescriptorPolicy{Provider: "codex", Adapter: "codex-acp", Version: manifest.Version, LaunchKind: ACPAdapterBundleLaunchInterpreter}
 		writeACPAdapterBundleManifest(t, &request, manifest)
 		sealACPAdapterBundle(t, request.BundleRoot)
-		if _, err := ValidateACPAdapterBundle(request); err == nil || !strings.Contains(err.Error(), "native launch kind") {
-			t.Fatalf("codex interpreter shape was accepted: %v", err)
+		if _, err := ValidateACPAdapterBundle(request); err != nil {
+			t.Fatalf("codex interpreter shape was rejected: %v", err)
 		}
 	})
 

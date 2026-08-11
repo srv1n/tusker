@@ -21,9 +21,9 @@ func TestCodexACPAgentIdentityRequiresExactNameAndVersion(t *testing.T) {
 		info      acp.AgentInfo
 		wantError bool
 	}{
-		{name: "exact", info: acp.AgentInfo{Name: "codex-acp", Version: expected}},
+		{name: "exact", info: acp.AgentInfo{Name: codexACPAgentName, Version: expected}},
 		{name: "name mismatch", info: acp.AgentInfo{Name: "fake-acp", Version: expected}, wantError: true},
-		{name: "version mismatch", info: acp.AgentInfo{Name: "codex-acp", Version: "1.1.13"}, wantError: true},
+		{name: "version mismatch", info: acp.AgentInfo{Name: codexACPAgentName, Version: "1.1.13"}, wantError: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -62,8 +62,8 @@ func TestCodexACPFixtureReportsConfiguredIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if init.AgentInfo.Name != "codex-acp" || init.AgentInfo.Version != version {
-		t.Fatalf("fixture reported identity=%#v, want codex-acp/%s", init.AgentInfo, version)
+	if init.AgentInfo.Name != codexACPAgentName || init.AgentInfo.Version != version {
+		t.Fatalf("fixture reported identity=%#v, want %s/%s", init.AgentInfo, codexACPAgentName, version)
 	}
 	if err := validateCodexACPAgentIdentity(init.AgentInfo, version); err != nil {
 		t.Fatalf("configured fixture identity failed exact gate: %v", err)
@@ -152,7 +152,10 @@ func TestCodexACPReadOnlyFactoryWrapperVertical(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registerCodexACPWrapperAdmission(t, store, wrapper, definition)
+	registerCodexACPWrapperAdmission(t, store, wrapper, definition, ResolvedRunnerProfile{Name: "codex-read-only", Definition: RunnerProfileDefinition{
+		Harness: string(RunnerCodexACP), Model: "gpt-5.3-codex", Effort: "high", PermissionPreset: "read-only",
+		Sandbox: RunnerSandboxDefinition{Mode: "read-only"},
+	}})
 	descriptor, argv, err := plan.descriptorAndArgv()
 	if err != nil {
 		t.Fatal(err)
@@ -194,6 +197,10 @@ func TestCodexACPReadOnlyFactoryWrapperVertical(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("TUSKER_WRAPPER_EXE", stubWrapper)
+	if _, err := runner.Start(context.Background(), wrapper.Start); err == nil || !strings.Contains(err.Error(), "exact resolved sandbox policy") {
+		t.Fatalf("Codex ACP factory accepted missing sandbox authority: %v", err)
+	}
+	wrapper.Start.CodexPolicy = CodexPolicy{ThreadSandbox: "read-only", TurnSandboxPolicy: "read-only"}
 	detachedResult, err := runner.Start(context.Background(), wrapper.Start)
 	if err != nil {
 		t.Fatalf("profile-bound Codex ACP factory start: %v", err)
@@ -222,6 +229,9 @@ func TestCodexACPReadOnlyFactoryWrapperVertical(t *testing.T) {
 	if err := json.Unmarshal(raw, &detached); err != nil {
 		t.Fatalf("deserialize detached Codex ACP wrapper request: %v", err)
 	}
+	// ContainmentPGID is deliberately never serialized; the real wrapper binds
+	// it from its own Setsid process identity after consuming the request.
+	detached.ContainmentPGID = processGroupID(os.Getpid())
 
 	// A separately sealed native bundle may be valid in isolation, but it is
 	// not an admission for this already leased run. The canonical registered
@@ -290,7 +300,7 @@ func TestCodexACPProviderPlanRejectsCorruptReceiptWithoutPanic(t *testing.T) {
 	}
 }
 
-func registerCodexACPWrapperAdmission(t *testing.T, store *RuntimeStore, wrapper runnerWrapperRequest, definition RunnerDefinition) {
+func registerCodexACPWrapperAdmission(t *testing.T, store *RuntimeStore, wrapper runnerWrapperRequest, definition RunnerDefinition, profile ResolvedRunnerProfile) {
 	t.Helper()
 	vault := wrapper.Start.VaultPath
 	workflow := fmt.Sprintf(`---
@@ -301,6 +311,7 @@ runners:
     manifest_path: %q
     manifest_sha256: %q
     adapter_version: %q
+    adapter_launch_kind: %q
     auth_source: %q
     auth_principal_sha256: %q
 ---
@@ -321,24 +332,24 @@ Retry only transient infrastructure failures.
 ## Human override policy
 
 Humans may override only explicit authority gates.
-`, definition.Kind, definition.BundleRoot, definition.ManifestPath, definition.ManifestSHA256, definition.AdapterVersion, definition.AuthSource, definition.AuthPrincipalSHA256)
+`, definition.Kind, definition.BundleRoot, definition.ManifestPath, definition.ManifestSHA256, definition.AdapterVersion, definition.AdapterLaunchKind, definition.AuthSource, definition.AuthPrincipalSHA256)
 	if err := writeText(workflowPath(vault), workflow); err != nil {
 		t.Fatalf("write canonical Codex ACP workflow: %v", err)
 	}
 	config := fmt.Sprintf(`automation:
   profiles:
-    codex-read-only:
+    %s:
       harness: %q
       model: %q
       effort: %q
-      permission_preset: read-only
+      permission_preset: %q
       sandbox:
-        mode: read-only
-        network: false
+        mode: %q
+        network: %t
       subagents:
         allowed: false
         max_concurrent: 0
-`, RunnerCodexACP, "gpt-5.3-codex", "high")
+`, profile.Name, profile.Definition.Harness, profile.Definition.Model, profile.Definition.Effort, profile.Definition.PermissionPreset, profile.Definition.Sandbox.Mode, profile.Definition.Sandbox.Network != nil && *profile.Definition.Sandbox.Network)
 	if err := writeText(managedTuskerConfigPath(vault), config); err != nil {
 		t.Fatalf("write canonical Codex ACP profile: %v", err)
 	}

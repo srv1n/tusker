@@ -3611,8 +3611,8 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	}
 	command := commandForRunnerProfile(baseCommand, selectedProfile)
 	// Codex ACP has no command-string path.  Before a lease exists, bind the
-	// fully validated runner definition to the selected *read-only* profile,
-	// revalidate the complete receipt, and derive the sole native argv.  A bad
+	// fully validated runner definition to the selected bounded profile,
+	// revalidate the complete receipt, and derive the exact launch argv. A bad
 	// bundle/profile/auth contract therefore cannot create a claim that later
 	// fails in the detached child.
 	var codexACPPlan *CodexACPProviderPlan
@@ -3623,21 +3623,17 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		}
 		descriptor, argv, launchErr := plan.descriptorAndArgv()
 		if launchErr != nil {
-			return run, false, tuskerError(errorConfigInvalid, "codex_acp pre-claim native launch binding failed: "+launchErr.Error())
+			return run, false, tuskerError(errorConfigInvalid, "codex_acp pre-claim launch binding failed: "+launchErr.Error())
 		}
-		if len(argv) != 1 || descriptor.Adapter.Fingerprint == "" {
-			return run, false, tuskerError(errorConfigInvalid, "codex_acp pre-claim native launch binding was incomplete")
+		if (len(argv) != 1 && len(argv) != 2) || descriptor.Adapter.Fingerprint == "" {
+			return run, false, tuskerError(errorConfigInvalid, "codex_acp pre-claim launch binding was incomplete")
 		}
 		command = argv[0]
 		codexACPPlan = &plan
-	}
-	if codexACPPlan != nil && completionReactorMode(wfFile.Data.CompletionReactor.Effective) == completionReactorModeAuthoritative {
-		// The completion-authoritative lane has a separate codex_exec worker
-		// contract.  Rebinding that contract to an ACP adapter after its
-		// preclaim receipt would be a silent transport swap, so this opt-in
-		// vertical refuses the combination until its own completion contract
-		// exists.
-		return run, false, tuskerError(errorConfigInvalid, "codex_acp is unavailable while completion_reactor is authoritative")
+		// Start independently compares the serialized wrapper plan against the
+		// factory object. Preserve the complete profile-bound mode/model/effort
+		// admission rather than the definition-only seed.
+		codexRunner.admission = plan
 	}
 	var authoritativeArgv []string
 	var authoritativeExecutableFP string
@@ -3692,9 +3688,15 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		if selectedProfile.Name != expectedProfile.Name || !reflect.DeepEqual(selectedProfile.Definition, expectedProfile.Definition) {
 			return run, false, tuskerError(errorInvalidTransition, "completion authority refuses worker profile routing drift")
 		}
-		authoritativeArgv, authoritativeExecutableFP, authoritativeSearchPath, err = completionBindAuthoritativeCodexExec(baseCommand, expectedArgv, selectedWorkspacePath, project.RepoRoot)
-		if err != nil {
-			return run, false, tuskerError(errorInvalidTransition, err.Error())
+		if codexACPPlan != nil {
+			if !equalStringSlices(authoritativeArgv, expectedArgv) {
+				return run, false, tuskerError(errorInvalidTransition, "completion authority refuses Codex ACP bundle or launch drift")
+			}
+		} else {
+			authoritativeArgv, authoritativeExecutableFP, authoritativeSearchPath, err = completionBindAuthoritativeCodexExec(baseCommand, expectedArgv, selectedWorkspacePath, project.RepoRoot)
+			if err != nil {
+				return run, false, tuskerError(errorInvalidTransition, err.Error())
+			}
 		}
 		authoritativeRawLogMaxBytes = completionAuthoritativeRawLogMaxBytes
 		policyFP := expectedPolicyFP

@@ -39,6 +39,7 @@ type ACPPermissionPolicy struct {
 	ReadOnly            bool
 	AllowNetwork        bool
 	AllowWorkspaceWrite bool
+	AllowExecute        bool
 }
 
 type ACPPermissionOutcome string
@@ -143,9 +144,10 @@ func EvaluateACPPermission(req ACPPermissionRequest, policy ACPPermissionPolicy)
 		return finish(ACPPermissionReject, "", ACPPermissionReasonToolNotAllowed)
 	}
 
-	// Read and write are workspace filesystem operations; verify both their
+	// Read, write, and execute are workspace-scoped operations; verify their
 	// lexical spelling and resolved path to reject traversal and symlink escape.
-	if toolKind == "read" || toolKind == "write" {
+	// Execute's target is its working directory, never the command text.
+	if toolKind == "read" || toolKind == "write" || toolKind == "execute" {
 		valid, reason := acpPermissionWorkspaceTargetValid(req.Workspace, req.Target)
 		if !valid {
 			return finish(ACPPermissionReject, "", reason)
@@ -158,6 +160,9 @@ func EvaluateACPPermission(req ACPPermissionRequest, policy ACPPermissionPolicy)
 		if !policy.AllowWorkspaceWrite {
 			return finish(ACPPermissionReject, "", ACPPermissionReasonWorkspaceWriteNotAllowed)
 		}
+	}
+	if toolKind == "execute" && !policy.AllowExecute {
+		return finish(ACPPermissionReject, "", ACPPermissionReasonToolNotAllowed)
 	}
 	if toolKind == "network" && !policy.AllowNetwork {
 		return finish(ACPPermissionReject, "", ACPPermissionReasonNetworkNotAllowed)
@@ -209,7 +214,7 @@ func normalizeACPPermissionToolKind(kind string) string {
 }
 
 func acpPermissionKnownToolKind(kind string) bool {
-	return kind == "read" || kind == "write" || kind == "network"
+	return kind == "read" || kind == "write" || kind == "execute" || kind == "network"
 }
 
 func acpPermissionWorkspaceTargetValid(workspace, target string) (bool, string) {

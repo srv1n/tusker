@@ -173,7 +173,7 @@ func (s *server) initialize(req message) {
 	}
 	agentName, agentVersion := "fake-acp", "1"
 	if s.codexConfigMode() {
-		agentName = "codex-acp"
+		agentName = "@agentclientprotocol/codex-acp"
 		agentVersion = codexACPVersion
 	}
 	write(message{

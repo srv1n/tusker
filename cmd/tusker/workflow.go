@@ -265,6 +265,7 @@ type RunnerDefinition struct {
 	ManifestPath        string `yaml:"manifest_path,omitempty" json:"manifest_path,omitempty"`
 	ManifestSHA256      string `yaml:"manifest_sha256,omitempty" json:"manifest_sha256,omitempty"`
 	AdapterVersion      string `yaml:"adapter_version,omitempty" json:"adapter_version,omitempty"`
+	AdapterLaunchKind   string `yaml:"adapter_launch_kind,omitempty" json:"adapter_launch_kind,omitempty"`
 	AuthSource          string `yaml:"auth_source,omitempty" json:"auth_source,omitempty"`
 	AuthPrincipalSHA256 string `yaml:"auth_principal_sha256,omitempty" json:"auth_principal_sha256,omitempty"`
 }
@@ -313,8 +314,8 @@ func defaultWorkflow() Workflow {
 	wf.Tracker.ActiveStates = []string{"ready", "rework"}
 	wf.Tracker.ReviewStates = []string{"review"}
 	wf.Tracker.TerminalStates = []string{"done", "cancelled", "superseded"}
-	wf.Agents.Default = string(RunnerCodexExec)
-	wf.Agents.Enabled = []string{string(RunnerCodexExec), string(RunnerClaude)}
+	wf.Agents.Default = string(RunnerCodexACP)
+	wf.Agents.Enabled = []string{string(RunnerCodexACP), string(RunnerCodexExec), string(RunnerClaude)}
 	wf.Agents.MaxConcurrentAgents = 2
 	wf.Agents.MaxConcurrentAgentsByState = map[string]int{"rework": 1}
 	wf.Runtime.PollIntervalMS = int(defaultReconcileTick / time.Millisecond)
@@ -329,7 +330,7 @@ func defaultWorkflow() Workflow {
 	wf.Retry.MaxAttempts = 3
 	wf.Retry.BackoffMS = []int{30000, 120000, 600000}
 	wf.Reviewer.Enabled = true
-	wf.Reviewer.Runner = string(RunnerCodexExec)
+	wf.Reviewer.Runner = string(RunnerCodexACP)
 	wf.Reviewer.Actor = defaultReviewerActor
 	wf.Reviewer.MaxCycles = 3
 	wf.Reviewer.AutoCloseRisks = []string{"low", "medium", "high", "critical"}
@@ -718,6 +719,7 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 			ManifestPath:        runner.ManifestPath,
 			ManifestSHA256:      runner.ManifestSHA256,
 			AdapterVersion:      runner.AdapterVersion,
+			AdapterLaunchKind:   runner.AdapterLaunchKind,
 			AuthSource:          runner.AuthSource,
 			AuthPrincipalSHA256: runner.AuthPrincipalSHA256,
 		}

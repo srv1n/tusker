@@ -17,7 +17,7 @@ import (
 	"tusker/internal/acp"
 )
 
-const codexACPAgentName = "codex-acp"
+const codexACPAgentName = "@agentclientprotocol/codex-acp"
 
 // ACPRunner is the provider-neutral, local ACP v1 transport boundary. It is
 // intentionally not a Codex or Claude adapter: provider descriptors, command
@@ -322,9 +322,9 @@ func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerN
 			if handle == nil {
 				return acp.Reject, nil
 			}
-			// Codex is currently read-only only.  Its public edit callback has no
-			// trustworthy target and execute has no granted authority, so retain
-			// the generic fail-closed broker until permission parity is reviewed.
+			if codexPlan != nil {
+				return evaluateCodexACPTransportPermission(permissionCtx, eventLog, handle.currentProvenance(), request, workspace, codexPlan.Mode, policy)
+			}
 			return evaluateACPTransportPermission(permissionCtx, eventLog, handle.currentProvenance(), request)
 		},
 		ValidateProcess: func(pid int) error {
@@ -701,6 +701,42 @@ func acpCancelDrain(policy CodexPolicy) time.Duration {
 		return value
 	}
 	return 5 * time.Second
+}
+
+func evaluateCodexACPTransportPermission(ctx context.Context, eventLog *EventLog, provenance acpAttemptProvenance, request acp.PermissionRequest, workspace string, mode CodexACPMode, policy CodexPolicy) (acp.PermissionDecision, error) {
+	normalized := DecodeCodexACPPermission(request)
+	allowed := map[string]bool{"read": true}
+	permissionPolicy := ACPPermissionPolicy{AllowedToolKinds: allowed, BudgetAuthorized: true}
+	switch mode {
+	case CodexACPModeReadOnly:
+		permissionPolicy.ReadOnly = true
+	case CodexACPModeWorkspaceWrite:
+		allowed["write"], allowed["execute"] = true, true
+		permissionPolicy.AllowWorkspaceWrite = true
+		permissionPolicy.AllowExecute = true
+		if policy.TurnSandboxNetwork != nil && *policy.TurnSandboxNetwork {
+			allowed["network"] = true
+			permissionPolicy.AllowNetwork = true
+		}
+	default:
+		permissionPolicy.BudgetAuthorized = false
+	}
+	decision := EvaluateACPPermission(normalized.BrokerRequest(provenance.AttemptID, request.SessionID, workspace, ctx.Err() != nil), permissionPolicy)
+	p := provenance
+	p.ToolCall = boundedACPObservation(request.ToolCallID)
+	_ = appendACPEvent(eventLog, "acp_permission_decided", p, map[string]any{
+		"operation_class": decision.Audit.OperationClass,
+		"policy_rule":     decision.Audit.PolicyRule,
+		"outcome":         decision.Audit.Outcome,
+		"reason_code":     decision.Audit.ReasonCode,
+	})
+	if ctx.Err() != nil || decision.Outcome == ACPPermissionCancelled {
+		return acp.Cancelled, nil
+	}
+	if decision.Outcome == ACPPermissionAllowOnce {
+		return acp.AllowOnce, nil
+	}
+	return acp.Reject, nil
 }
 
 func evaluateACPTransportPermission(ctx context.Context, eventLog *EventLog, provenance acpAttemptProvenance, request acp.PermissionRequest) (acp.PermissionDecision, error) {

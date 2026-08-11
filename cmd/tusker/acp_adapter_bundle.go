@@ -58,8 +58,8 @@ type ACPAdapterBundleManifest struct {
 }
 
 // ACPAdapterBundleAsset is content-addressed. Role is executable, entrypoint,
-// or asset. A native manifest has no entrypoint role; an interpreter manifest
-// has exactly one.
+// runtime_executable, or asset. A native manifest has no entrypoint role; an
+// interpreter manifest has exactly one.
 type ACPAdapterBundleAsset struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256"`
@@ -314,8 +314,8 @@ func validateACPAdapterBundleDescriptorPolicy(manifest ACPAdapterBundleManifest,
 	}
 	switch policy.Provider + "/" + policy.Adapter {
 	case "codex/codex-acp":
-		if policy.LaunchKind != ACPAdapterBundleLaunchNative {
-			return fmt.Errorf("codex/codex-acp requires the native launch kind")
+		if policy.LaunchKind != ACPAdapterBundleLaunchNative && policy.LaunchKind != ACPAdapterBundleLaunchInterpreter {
+			return fmt.Errorf("codex/codex-acp requires native or pinned interpreter launch kind")
 		}
 	case "claude/claude-agent-acp":
 		if policy.LaunchKind != ACPAdapterBundleLaunchInterpreter {
@@ -440,7 +440,7 @@ func normalizeACPAdapterBundleAssets(input []ACPAdapterBundleAsset) ([]ACPAdapte
 			return nil, nil, nil, fmt.Errorf("asset %q is not canonical or has invalid sha256", path)
 		}
 		switch assets[index].Role {
-		case "executable", "entrypoint", "asset":
+		case "executable", "entrypoint", "runtime_executable", "asset":
 		default:
 			return nil, nil, nil, fmt.Errorf("asset %q has invalid role", path)
 		}
@@ -502,7 +502,8 @@ func readAndHashACPAdapterBundleFile(path string, limit int64, capture bool, rol
 	if err != nil {
 		return nil, "", 0, nil, fmt.Errorf("%s file %q is missing: %w", role, path, err)
 	}
-	if err := validateACPAdapterBundleFileInfo(before, path, role == "executable"); err != nil {
+	executable := role == "executable" || role == "runtime_executable"
+	if err := validateACPAdapterBundleFileInfo(before, path, executable); err != nil {
 		return nil, "", 0, nil, err
 	}
 	if before.Size() < 0 || before.Size() > limit {
@@ -538,7 +539,7 @@ func readAndHashACPAdapterBundleFile(path string, limit int64, capture bool, rol
 	if err != nil || !os.SameFile(afterFD, afterPath) {
 		return nil, "", 0, nil, fmt.Errorf("%s file %q path identity changed after hashing", role, path)
 	}
-	if err := validateACPAdapterBundleFileInfo(afterPath, path, role == "executable"); err != nil {
+	if err := validateACPAdapterBundleFileInfo(afterPath, path, executable); err != nil {
 		return nil, "", 0, nil, err
 	}
 	digest := acpAdapterBundleDigestPrefix + hex.EncodeToString(hash.Sum(nil))
@@ -679,7 +680,8 @@ func validateACPAdapterBundleTree(root string, assets []ACPAdapterBundleAsset, m
 				if !ok || !os.SameFile(expected, info) || expected.Size() != info.Size() || !expected.ModTime().Equal(info.ModTime()) {
 					return fmt.Errorf("bundle file %q changed during tree verification", childRelative)
 				}
-				if err := validateACPAdapterBundleFileInfo(info, path, roles[childRelative] == "executable"); err != nil {
+				role := roles[childRelative]
+				if err := validateACPAdapterBundleFileInfo(info, path, role == "executable" || role == "runtime_executable"); err != nil {
 					return err
 				}
 				for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {

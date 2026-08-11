@@ -15,6 +15,7 @@ func TestACPPermissionBroker(t *testing.T) {
 
 	allowRead := map[string]bool{"read": true}
 	allowReadWrite := map[string]bool{"read": true, "write": true}
+	allowExecute := map[string]bool{"execute": true}
 	base := ACPPermissionRequest{
 		AttemptID:      "attempt-1",
 		BoundAttemptID: "attempt-1",
@@ -51,6 +52,10 @@ func TestACPPermissionBroker(t *testing.T) {
 			r.ToolKind = "write"
 			p.AllowedToolKinds = allowReadWrite
 		}, want: ACPPermissionReject, wantReason: ACPPermissionReasonWorkspaceWriteNotAllowed},
+		{name: "execute denied by policy", mutate: func(r *ACPPermissionRequest, p *ACPPermissionPolicy) {
+			r.ToolKind, r.Target = "execute", workspace
+			p.AllowedToolKinds = allowExecute
+		}, want: ACPPermissionReject, wantReason: ACPPermissionReasonToolNotAllowed},
 		{name: "missing allow once", mutate: func(r *ACPPermissionRequest, _ *ACPPermissionPolicy) {
 			r.Options = []ACPPermissionOption{{OptionID: "reject_once"}}
 		}, want: ACPPermissionReject, wantReason: ACPPermissionReasonAllowOnceUnavailable},
@@ -64,6 +69,10 @@ func TestACPPermissionBroker(t *testing.T) {
 		{name: "valid write", mutate: func(r *ACPPermissionRequest, p *ACPPermissionPolicy) {
 			r.ToolKind = "write"
 			p.AllowedToolKinds, p.AllowWorkspaceWrite = allowReadWrite, true
+		}, want: ACPPermissionAllowOnce, wantReason: ACPPermissionReasonAllowed, wantOption: "allow_once"},
+		{name: "valid execute", mutate: func(r *ACPPermissionRequest, p *ACPPermissionPolicy) {
+			r.ToolKind, r.Target = "execute", workspace
+			p.AllowedToolKinds, p.AllowExecute = allowExecute, true
 		}, want: ACPPermissionAllowOnce, wantReason: ACPPermissionReasonAllowed, wantOption: "allow_once"},
 		{name: "cancelled", mutate: func(r *ACPPermissionRequest, _ *ACPPermissionPolicy) { r.Cancelled = true }, want: ACPPermissionCancelled, wantReason: ACPPermissionReasonCancelled},
 	}

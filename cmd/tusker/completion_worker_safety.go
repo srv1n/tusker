@@ -31,11 +31,12 @@ func completionWorkerSafety(stateRoot, workspace string, profile ResolvedRunnerP
 	if profile.Definition.Sandbox.Network == nil || *profile.Definition.Sandbox.Network {
 		return fmt.Errorf("completion authority refuses profile %q: worker network must be explicitly disabled", profile.Name)
 	}
-	// Only codex_exec currently translates the resolved policy into Codex's
-	// detached-command sandbox flags.  Codex's generic/app-server paths and
-	// Claude merely receive metadata (Claude defaults to bypassPermissions), so
-	// treating their sandbox strings as authority would be security theatre.
-	if RunnerName(strings.TrimSpace(profile.Definition.Harness)) != RunnerCodexExec {
+	// codex_exec binds sandbox flags into its exact detached argv. codex_acp
+	// binds the same ceiling through an exact adapter receipt, verified session
+	// config, and the one-shot permission broker. Other runners merely receive
+	// metadata and remain inadmissible for completion authority.
+	harness := RunnerName(strings.TrimSpace(profile.Definition.Harness))
+	if harness != RunnerCodexExec && harness != RunnerCodexACP {
 		return fmt.Errorf("completion authority refuses profile %q: runner does not mechanically enforce the resolved sandbox", profile.Name)
 	}
 	if strings.TrimSpace(stateRoot) == "" || strings.TrimSpace(workspace) == "" || pathWithin(workspace, stateRoot) {
@@ -54,8 +55,10 @@ func completionWorkerSafetyForLane(stateRoot, workspace, lane, command string, p
 	if strings.TrimSpace(profile.Definition.Command) != "" {
 		return fmt.Errorf("completion authority refuses profile %q: project-defined runner command is not admissible", profile.Name)
 	}
-	if _, err := completionAuthoritativeCodexExecArgv(command, lane, profile); err != nil {
-		return err
+	if RunnerName(strings.TrimSpace(profile.Definition.Harness)) == RunnerCodexExec {
+		if _, err := completionAuthoritativeCodexExecArgv(command, lane, profile); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -292,6 +295,34 @@ func completionWorkerPolicyFingerprint(lane, command string, profile ResolvedRun
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
+func completionACPWorkerPolicyFingerprint(lane string, profile ResolvedRunnerProfile, plan CodexACPProviderPlan, argv []string) (string, error) {
+	if plan.Schema != codexACPProviderPlanSchema || plan.BundleReceipt.VerifiedContentDigest == "" || len(argv) == 0 {
+		return "", fmt.Errorf("completion authority requires a complete Codex ACP provider receipt")
+	}
+	payload := strings.Join([]string{
+		"tusker.completion-worker-policy/acp-v1",
+		lane,
+		profile.Name,
+		profile.Source,
+		profile.Definition.Harness,
+		profile.Definition.Model,
+		profile.Definition.Effort,
+		profile.Definition.PermissionPreset,
+		profile.Definition.Sandbox.Mode,
+		fmt.Sprintf("%t", profile.Definition.Sandbox.Network != nil && *profile.Definition.Sandbox.Network),
+		string(plan.Mode),
+		plan.AdapterVersion,
+		plan.ManifestSHA256,
+		plan.BundleReceipt.VerifiedContentDigest,
+		plan.AuthPrincipalSHA256,
+		fmt.Sprintf("raw_log_max_bytes=%d", completionAuthoritativeRawLogMaxBytes),
+		"raw_log_overflow=kill_process_group",
+		strings.Join(argv, "\x00"),
+	}, "\x00")
+	sum := sha256.Sum256([]byte(payload))
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
 func completionLaneWorkerPolicy(wf Workflow, note Note, lane string) (ResolvedRunnerProfile, []string, string, error) {
 	profile, err := resolveRunProfileForLane(note, wf, lane, "")
 	if err != nil {
@@ -310,6 +341,29 @@ func completionLaneWorkerPolicy(wf Workflow, note Note, lane string) (ResolvedRu
 	}
 	if err := completionWorkerSafetyForLane("/trusted-state", "/worker", lane, base, profile); err != nil {
 		return ResolvedRunnerProfile{}, nil, "", err
+	}
+	if RunnerName(strings.TrimSpace(profile.Definition.Harness)) == RunnerCodexACP {
+		runner, _, runnerErr := runnerForName(profile.Definition.Harness, wf)
+		if runnerErr != nil {
+			return ResolvedRunnerProfile{}, nil, "", runnerErr
+		}
+		codexRunner, ok := runner.(*CodexACPRunner)
+		if !ok {
+			return ResolvedRunnerProfile{}, nil, "", fmt.Errorf("completion authority resolved codex_acp to the wrong runner type")
+		}
+		plan, planErr := codexRunner.admission.withProfile(profile)
+		if planErr != nil {
+			return ResolvedRunnerProfile{}, nil, "", planErr
+		}
+		_, argv, launchErr := plan.descriptorAndArgv()
+		if launchErr != nil {
+			return ResolvedRunnerProfile{}, nil, "", launchErr
+		}
+		fingerprint, fpErr := completionACPWorkerPolicyFingerprint(lane, profile, plan, argv)
+		if fpErr != nil {
+			return ResolvedRunnerProfile{}, nil, "", fpErr
+		}
+		return profile, argv, fingerprint, nil
 	}
 	argv, err := completionAuthoritativeCodexExecArgv(base, lane, profile)
 	if err != nil {
