@@ -11,7 +11,7 @@
       "prompt": "Turn this spec into a reviewed delivery DAG and import it held.",
       "route": "Requirements, decomposition, delivery DAG, review, held import, Start",
       "guide": "references/PLAN.md",
-      "loaded_words": 1003,
+      "loaded_words": 1037,
       "max_loaded_words": 1100,
       "required": ["planValid", "importReady", "startReady", "held disarmed"]
     },
@@ -20,7 +20,7 @@
       "prompt": "Implement this Tusker task directly in my open Codex session.",
       "route": "Interactive implementation, dispatched worker/reviewer, proof, gates, human wait",
       "guide": "references/WORK.md",
-      "loaded_words": 1135,
+      "loaded_words": 1169,
       "max_loaded_words": 1250,
       "required": ["tusker work start", "project automation is disabled", "work submit"]
     },
@@ -29,7 +29,7 @@
       "prompt": "TUSKER_ATTEMPT_ID is set; execute the claimed task.",
       "route": "Interactive implementation, dispatched worker/reviewer, proof, gates, human wait",
       "guide": "references/WORK.md",
-      "loaded_words": 1135,
+      "loaded_words": 1169,
       "max_loaded_words": 1250,
       "required": ["it must not claim again", "runner harness owns", "never merges, lands, closes"]
     },
@@ -38,7 +38,7 @@
       "prompt": "Review this dispatched attempt and return the typed verdict.",
       "route": "Interactive implementation, dispatched worker/reviewer, proof, gates, human wait",
       "guide": "references/WORK.md",
-      "loaded_words": 1135,
+      "loaded_words": 1169,
       "max_loaded_words": 1250,
       "required": ["tusker review submit", "one attempt-bound result", "deterministic control plane"]
     },
@@ -47,7 +47,7 @@
       "prompt": "The task is waiting_on_human; tell me the exact next action.",
       "route": "Interactive implementation, dispatched worker/reviewer, proof, gates, human wait",
       "guide": "references/WORK.md",
-      "loaded_words": 1135,
+      "loaded_words": 1169,
       "max_loaded_words": 1250,
       "required": ["Human Approval Boundary", "Final Response Shape For Human Wait"]
     },
@@ -56,7 +56,7 @@
       "prompt": "Wire this existing repository into Tusker without losing project knowledge.",
       "route": "Existing-repo onboarding",
       "guide": "references/REPO_ONBOARDING.md",
-      "loaded_words": 1910,
+      "loaded_words": 1944,
       "max_loaded_words": 2100,
       "required": ["Existing Repository Onboarding", "Storage Boundary"]
     },
@@ -65,7 +65,7 @@
       "prompt": "Xcode failed because generated build state looks corrupted.",
       "route": "Xcode generated build-state failure",
       "guide": "references/XCODE_BUILD_STATE.md",
-      "loaded_words": 704,
+      "loaded_words": 738,
       "max_loaded_words": 800,
       "required": ["tusker xcode doctor", "likely_infrastructure"]
     }

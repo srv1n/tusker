@@ -7,11 +7,12 @@ automation:
         max_concurrent_by_state:
             rework: 1
     default_profile: execute-standard
-    default_runner: codex_exec
+    default_runner: codex_acp
     dispatch_scope: armed_waves
     # Manual-safe rollout default. Enable only for a supervised armed-wave trial.
     enabled: false
     enabled_runners:
+        - codex_acp
         - codex_exec
         - claude-code
     fanout:
@@ -25,7 +26,7 @@ automation:
     profiles:
         execute-complex:
             effort: high
-            harness: codex_exec
+            harness: codex_acp
             model: gpt-5.6-terra
             permission_preset: workspace-write-offline
             sandbox:
@@ -36,7 +37,7 @@ automation:
                 max_concurrent: 0
         execute-fast:
             effort: low
-            harness: codex_exec
+            harness: codex_acp
             model: gpt-5.6-luna
             permission_preset: workspace-write-offline
             sandbox:
@@ -47,7 +48,7 @@ automation:
                 max_concurrent: 0
         execute-frontier:
             effort: high
-            harness: codex_exec
+            harness: codex_acp
             model: gpt-5.6-terra
             permission_preset: workspace-write-offline
             sandbox:
@@ -58,7 +59,7 @@ automation:
                 max_concurrent: 0
         execute-standard:
             effort: medium
-            harness: codex_exec
+            harness: codex_acp
             model: gpt-5.6-terra
             permission_preset: workspace-write-offline
             sandbox:
@@ -69,7 +70,7 @@ automation:
                 max_concurrent: 0
         implementation-terra:
             effort: medium
-            harness: codex_exec
+            harness: codex_acp
             model: gpt-5.6-terra
             permission_preset: workspace-write-offline
             sandbox:
@@ -80,7 +81,7 @@ automation:
                 max_concurrent: 0
         planner:
             effort: high
-            harness: codex_exec
+            harness: codex_acp
             model: gpt-5.6-sol
             permission_preset: workspace-write-offline
             sandbox:
@@ -91,7 +92,7 @@ automation:
                 max_concurrent: 0
         repair-complex:
             effort: high
-            harness: codex_exec
+            harness: codex_acp
             model: gpt-5.6-terra
             permission_preset: workspace-write-offline
             sandbox:
@@ -102,7 +103,7 @@ automation:
                 max_concurrent: 0
         review-independent:
             effort: high
-            harness: codex_exec
+            harness: codex_acp
             model: gpt-5.6-terra
             permission_preset: read-only
             sandbox:
@@ -113,12 +114,23 @@ automation:
                 max_concurrent: 0
         reviewer-terra:
             effort: high
-            harness: codex_exec
+            harness: codex_acp
             model: gpt-5.6-terra
             permission_preset: read-only
             sandbox:
                 mode: read-only
                 network: false
+            subagents:
+                allowed: false
+                max_concurrent: 0
+        emergency-codex-exec:
+            effort: high
+            harness: codex_exec
+            model: gpt-5.6-terra
+            permission_preset: danger-full-access
+            sandbox:
+                mode: danger-full-access
+                network: true
             subagents:
                 allowed: false
                 max_concurrent: 0

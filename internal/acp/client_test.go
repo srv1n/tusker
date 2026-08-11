@@ -63,7 +63,7 @@ func TestACPHelperProcess(t *testing.T) {
 				"sessionCapabilities": map[string]any{},
 			}
 			switch mode {
-			case "load", "both", "load-malformed", "load-mismatch", "load-object", "load-malformed-update", "load-config-update":
+			case "load", "both", "load-malformed", "load-mismatch", "load-object", "load-object-config", "load-malformed-update", "load-config-update":
 				capabilities["loadSession"] = true
 			}
 			switch mode {
@@ -171,8 +171,15 @@ func TestACPHelperProcess(t *testing.T) {
 				default:
 					writeUpdateForSessionForTest(params.SessionID, 0)
 				}
-				if mode == "load-object" {
-					writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{}})
+				if mode == "load-object" || mode == "load-object-config" {
+					result := map[string]any{
+						"models": map[string]any{"currentModelId": "gpt-test"},
+						"modes":  map[string]any{"currentModeId": "agent"},
+					}
+					if mode == "load-object-config" {
+						result["configOptions"] = testConfigOptions("ask")
+					}
+					writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: result})
 					continue
 				}
 				writeHelperNullResult(msg.ID)
@@ -273,6 +280,15 @@ func TestACPHelperProcess(t *testing.T) {
 					writeUpdateForTest(i)
 				}
 				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]string{"stopReason": "end_turn"}})
+			case "many-updates":
+				for i := 0; i < 300; i++ {
+					writeUpdateForTest(i)
+					time.Sleep(200 * time.Microsecond)
+				}
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]string{"stopReason": "end_turn"}})
+			case "cancel-order":
+				// The response is emitted only after session/cancel. If cancellation
+				// reaches the wire first, the notification branch exits instead.
 			case "hold-prompt":
 				writeUpdateForTest(0)
 				time.Sleep(250 * time.Millisecond)
@@ -284,6 +300,12 @@ func TestACPHelperProcess(t *testing.T) {
 				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]string{"stopReason": "end_turn", "turnId": "turn-1"}})
 			}
 		case "session/cancel":
+			if mode == "cancel-order" {
+				if promptID == nil {
+					os.Exit(3)
+				}
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: promptID, Result: map[string]string{"stopReason": "cancelled"}})
+			}
 			// ignore-cancel deliberately never settles the prompt.
 		case "":
 			if string(msg.ID) == "91" && promptID != nil {
@@ -818,7 +840,6 @@ func TestACPRestoreSessionValidatesIDsAndFailsClosed(t *testing.T) {
 		{name: "load update session mismatch", mode: "load-mismatch"},
 		{name: "load update missing discriminator", mode: "load-malformed-update"},
 		{name: "resume update before response", mode: "resume-update", resume: true},
-		{name: "load requires explicit null", mode: "load-object"},
 		{name: "resume rejects null", mode: "resume-null", resume: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -837,6 +858,22 @@ func TestACPRestoreSessionValidatesIDsAndFailsClosed(t *testing.T) {
 			}
 			if _, nextErr := c.NewSession(context.Background()); nextErr == nil {
 				t.Fatal("client remained reusable after invalid restore exchange")
+			}
+		})
+	}
+
+	for _, mode := range []string{"load", "load-object", "load-object-config"} {
+		t.Run("load accepts pinned response "+mode, func(t *testing.T) {
+			c := startTestClient(t, mode, nil)
+			if _, err := c.Initialize(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			session, err := c.LoadSession(context.Background(), "restored-session")
+			if err != nil || session.ID != "restored-session" {
+				t.Fatalf("session=%#v err=%v", session, err)
+			}
+			if mode == "load-object-config" && len(session.ConfigOptions) == 0 {
+				t.Fatal("pinned load response configOptions were discarded")
 			}
 		})
 	}
@@ -955,6 +992,75 @@ func TestACPUpdateOverflowPoisonsInsteadOfHidingTerminal(t *testing.T) {
 	if err == nil || (result.Outcome != OutcomeDeliveryUnknown && result.Outcome != OutcomePoisoned) {
 		t.Fatalf("result=%#v err=%v, want explicit poisoned/unknown outcome", result, err)
 	}
+}
+
+func TestACPStreamingUsesQueueAndPerPromptByteBounds(t *testing.T) {
+	t.Run("more than 256 drained updates succeed", func(t *testing.T) {
+		c := startTestClient(t, "many-updates", func(cfg *Config) {
+			cfg.Limits.MaxUpdates = 8
+			cfg.Limits.MaxUpdateBytes = 1 << 20
+			cfg.Timeouts.Prompt = 3 * time.Second
+			cfg.Timeouts.Stall = time.Second
+		})
+		initializeAndSession(t, c)
+		type answer struct {
+			result PromptResult
+			err    error
+		}
+		done := make(chan answer, 1)
+		go func() {
+			result, err := c.Prompt(context.Background(), "stream")
+			done <- answer{result, err}
+		}()
+		count := 0
+		for count < 300 {
+			select {
+			case _, ok := <-c.Updates():
+				if !ok {
+					t.Fatal("update stream closed before terminal response")
+				}
+				count++
+			case <-time.After(3 * time.Second):
+				t.Fatalf("received %d updates, want 300", count)
+			}
+		}
+		got := <-done
+		if got.err != nil || got.result.Outcome != OutcomeCompleted {
+			t.Fatalf("result=%#v err=%v", got.result, got.err)
+		}
+	})
+
+	t.Run("cumulative bytes poison", func(t *testing.T) {
+		c := startTestClient(t, "flood", func(cfg *Config) {
+			cfg.Limits.MaxUpdates = 8
+			cfg.Limits.MaxUpdateBytes = 1
+		})
+		initializeAndSession(t, c)
+		result, err := c.Prompt(context.Background(), "flood")
+		if err == nil || (result.Outcome != OutcomeDeliveryUnknown && result.Outcome != OutcomePoisoned) {
+			t.Fatalf("result=%#v err=%v, want explicit poisoned/unknown outcome", result, err)
+		}
+	})
+
+	t.Run("byte budget resets for each prompt", func(t *testing.T) {
+		oneUpdate := mustTestJSON(map[string]any{
+			"sessionId": "session-1",
+			"update": map[string]any{
+				"sessionUpdate": "agent_message_chunk",
+				"content":       map[string]any{"type": "text", "text": "u0"},
+			},
+		})
+		c := startTestClient(t, "happy", func(cfg *Config) {
+			cfg.Limits.MaxUpdateBytes = len(oneUpdate)
+		})
+		initializeAndSession(t, c)
+		for i := 0; i < 2; i++ {
+			result, err := c.Prompt(context.Background(), "turn")
+			if err != nil || result.Outcome != OutcomeCompleted {
+				t.Fatalf("prompt %d result=%#v err=%v", i+1, result, err)
+			}
+		}
+	})
 }
 
 func TestACPPermissionDefaultsRejectAndNeverSelectsAllowAlways(t *testing.T) {
@@ -1215,6 +1321,45 @@ func TestACPCancelDrainDoesNotStealPromptResponse(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("prompt did not settle after poisoned cancellation")
+	}
+}
+
+func TestACPCancelCannotOvertakePromptOnWire(t *testing.T) {
+	c := startTestClient(t, "cancel-order", nil)
+	initializeAndSession(t, c)
+	promptAtBarrier := make(chan struct{})
+	releasePrompt := make(chan struct{})
+	cancelAtNotify := make(chan struct{})
+	c.beforePromptWrite = func() {
+		close(promptAtBarrier)
+		<-releasePrompt
+	}
+	c.beforeCancelWriteWait = func() { close(cancelAtNotify) }
+	type answer struct {
+		result PromptResult
+		err    error
+	}
+	promptDone := make(chan answer, 1)
+	go func() {
+		result, err := c.Prompt(context.Background(), "ordered")
+		promptDone <- answer{result, err}
+	}()
+	<-promptAtBarrier
+	cancelDone := make(chan error, 1)
+	go func() { cancelDone <- c.Cancel(context.Background()) }()
+	<-cancelAtNotify
+	select {
+	case err := <-cancelDone:
+		t.Fatalf("cancel completed before prompt frame was released: %v", err)
+	default:
+	}
+	close(releasePrompt)
+	if err := <-cancelDone; err != nil {
+		t.Fatalf("ordered cancel failed: %v", err)
+	}
+	got := <-promptDone
+	if got.err != nil || got.result.Outcome != OutcomeCancelled {
+		t.Fatalf("prompt=%#v err=%v, want cancelled after ordered frames", got.result, got.err)
 	}
 }
 

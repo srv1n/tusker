@@ -730,6 +730,7 @@ func fairDispatchPollProject(t *testing.T, store *RuntimeStore, projectID, acron
 	if err := writeDefaultWorkflow(vault); err != nil {
 		t.Fatal(err)
 	}
+	setDirectEmergencyProfileForAutomationTest(t, vault)
 	for key, value := range map[string]any{
 		"automation.enabled":                  true,
 		"automation.dispatch_scope":           "all_eligible",

@@ -33,6 +33,10 @@ func TestLiveCodexACPPrimarySmoke(t *testing.T) {
 	}
 	profileName := "review-independent"
 	writeSmoke := os.Getenv("TUSKER_LIVE_CODEX_ACP_WRITE") == "1"
+	credentialIsolationSmoke := os.Getenv("TUSKER_LIVE_CODEX_ACP_CREDENTIAL_ISOLATION") == "1"
+	if credentialIsolationSmoke {
+		writeSmoke = true
+	}
 	if writeSmoke {
 		profileName = "execute-standard"
 	}
@@ -45,7 +49,21 @@ func TestLiveCodexACPPrimarySmoke(t *testing.T) {
 	store, wrapper := setupRunnerWrapperRuntime(t)
 	prompt := "Reply with a brief confirmation that the ACP smoke turn completed. Do not use tools or modify files.\n"
 	const writeSmokeContent = "tusker codex acp workspace write smoke\n"
-	if writeSmoke {
+	const credentialIsolationContent = "OPENAI_API_KEY=absent\nCODEX_API_KEY=absent\nCODEX_HOME=absent\n"
+	if credentialIsolationSmoke {
+		helper := `#!/bin/sh
+set -eu
+output=auth-env-result.txt
+: > "$output"
+if [ "${OPENAI_API_KEY+x}" = x ]; then echo OPENAI_API_KEY=present >> "$output"; else echo OPENAI_API_KEY=absent >> "$output"; fi
+if [ "${CODEX_API_KEY+x}" = x ]; then echo CODEX_API_KEY=present >> "$output"; else echo CODEX_API_KEY=absent >> "$output"; fi
+if [ "${CODEX_HOME+x}" = x ]; then echo CODEX_HOME=present >> "$output"; else echo CODEX_HOME=absent >> "$output"; fi
+`
+		if err := os.WriteFile(filepath.Join(wrapper.Start.WorkspacePath, "check-auth-env.sh"), []byte(helper), 0o500); err != nil {
+			t.Fatal(err)
+		}
+		prompt = "Run ./check-auth-env.sh exactly once. It must create auth-env-result.txt. Do not print environment values and do not modify any other file.\n"
+	} else if writeSmoke {
 		prompt = "Create a file named acp-write-smoke.txt in the current workspace with exactly this single line and no other changes: tusker codex acp workspace write smoke\n"
 	}
 	if err := writeText(wrapper.Start.PromptPath, prompt); err != nil {
@@ -113,6 +131,10 @@ func TestLiveCodexACPPrimarySmoke(t *testing.T) {
 	}
 	defer func() {
 		if result.PGID > 0 && processExists(result.PID) {
+			if result.PGID == syscall.Getpgrp() {
+				t.Errorf("refusing live-smoke cleanup of the test process group %d", result.PGID)
+				return
+			}
 			_ = syscall.Kill(-result.PGID, syscall.SIGKILL)
 		}
 	}()
@@ -143,7 +165,12 @@ func TestLiveCodexACPPrimarySmoke(t *testing.T) {
 			t.Fatalf("live ACP smoke omitted %s: %s", event, events)
 		}
 	}
-	if writeSmoke {
+	if credentialIsolationSmoke {
+		written, readErr := os.ReadFile(filepath.Join(wrapper.Start.WorkspacePath, "auth-env-result.txt"))
+		if readErr != nil || string(written) != credentialIsolationContent {
+			t.Fatalf("live ACP child credential-isolation proof = %q err=%v", written, readErr)
+		}
+	} else if writeSmoke {
 		written, readErr := os.ReadFile(filepath.Join(wrapper.Start.WorkspacePath, "acp-write-smoke.txt"))
 		if readErr != nil || string(written) != writeSmokeContent {
 			t.Fatalf("live ACP workspace-write proof = %q err=%v", written, readErr)
@@ -155,6 +182,7 @@ func TestLiveCodexACPPrimarySmoke(t *testing.T) {
 			"runner": string(RunnerCodexACP), "adapter_version": definition.AdapterVersion,
 			"profile": profile.Name, "model": profile.Definition.Model, "effort": profile.Definition.Effort,
 			"exit_code": status.ExitCode, "outcome": status.Outcome, "workspace_write": writeSmoke,
+			"credential_isolation": credentialIsolationSmoke,
 		})
 		if marshalErr != nil || os.WriteFile(receiptPath, append(receipt, '\n'), 0o600) != nil {
 			t.Fatal("write live ACP smoke receipt")

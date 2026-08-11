@@ -80,6 +80,80 @@ func TestPackageACPAdapterNPMPublishesCompleteVerifiedBundle(t *testing.T) {
 	}
 }
 
+func TestACPAdapterDoctorRecognizesPackagedNPMBundle(t *testing.T) {
+	prefix, _ := newACPAdapterNPMFixture(t)
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	receipt, err := PackageACPAdapterNPM(ACPAdapterNPMPackageRequest{StateRoot: stateRoot, Prefix: prefix})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = makeACPAdapterBundleWritable(receipt.Bundle.BundleRoot) })
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	report, err := doctorACPAdapter(ACPAdapterDoctorRequest{
+		StateRoot: stateRoot, BundleDigest: receipt.BundleDigest, AuthSource: string(CodexACPAuthChatGPTSession),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Installed || report.Integrity != "valid" || !report.AuthSourcePresent || report.Configured || report.Authenticated || report.ValidationError != "" {
+		t.Fatalf("npm package doctor report = %#v", report)
+	}
+}
+
+func TestPackageACPAdapterNPMRecoveryRecreatesReceiptForExactFinalRoot(t *testing.T) {
+	prefix, _ := newACPAdapterNPMFixture(t)
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	first, err := PackageACPAdapterNPM(ACPAdapterNPMPackageRequest{StateRoot: stateRoot, Prefix: prefix})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = makeACPAdapterBundleWritable(first.Bundle.BundleRoot) })
+	receiptPath := filepath.Join(stateRoot, "acp-adapters", "receipts", "npm-"+acpAdapterInstallDigestName(first.BundleDigest)+".json")
+	if err := os.Remove(receiptPath); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := PackageACPAdapterNPM(ACPAdapterNPMPackageRequest{StateRoot: stateRoot, Prefix: prefix})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(recovered, first) {
+		t.Fatalf("recovered npm receipt drift:\nfirst=%#v\nrecovered=%#v", first, recovered)
+	}
+	if _, err := os.Lstat(receiptPath); err != nil {
+		t.Fatalf("npm receipt was not recreated: %v", err)
+	}
+}
+
+func TestPackageACPAdapterNPMRecoveryRejectsDivergentFinalRoot(t *testing.T) {
+	prefix, _ := newACPAdapterNPMFixture(t)
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	first, err := PackageACPAdapterNPM(ACPAdapterNPMPackageRequest{StateRoot: stateRoot, Prefix: prefix})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = makeACPAdapterBundleWritable(first.Bundle.BundleRoot) })
+	receiptPath := filepath.Join(stateRoot, "acp-adapters", "receipts", "npm-"+acpAdapterInstallDigestName(first.BundleDigest)+".json")
+	if err := os.Remove(receiptPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := makeACPAdapterBundleWritable(first.Bundle.BundleRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(first.Bundle.Argv[1], []byte("divergent entrypoint\n"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := sealACPAdapterNPMTree(first.Bundle.BundleRoot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PackageACPAdapterNPM(ACPAdapterNPMPackageRequest{StateRoot: stateRoot, Prefix: prefix}); err == nil || !strings.Contains(err.Error(), "receipt-less npm ACP adapter final root diverges") {
+		t.Fatalf("divergent receipt-less npm root error = %v", err)
+	}
+	if _, err := os.Lstat(receiptPath); !os.IsNotExist(err) {
+		t.Fatalf("divergent npm root created a receipt: %v", err)
+	}
+}
+
 func TestPackageACPAdapterNPMRejectsUntrustedPackageShapes(t *testing.T) {
 	tests := []struct {
 		name   string

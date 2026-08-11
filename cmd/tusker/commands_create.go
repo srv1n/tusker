@@ -128,6 +128,8 @@ automation:
     max_concurrent_by_state:
       rework: 1
   runners:
+    # Direct Codex remains available only to an explicitly named emergency or
+    # danger profile; safe generated profiles use codex_acp above.
     codex_exec:
       kind: codex_exec
       command: codex exec --json --skip-git-repo-check -

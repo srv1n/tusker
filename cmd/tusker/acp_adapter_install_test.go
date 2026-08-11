@@ -69,6 +69,61 @@ func TestACPAdapterInstallHappyIdempotentAndDoctor(t *testing.T) {
 	}
 }
 
+func TestACPAdapterInstallRecoveryRecreatesReceiptForExactFinalRoot(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	artifact := writeACPAdapterInstallArtifact(t, nil)
+	request := newACPAdapterInstallTestRequest(t, stateRoot, artifact)
+	first, err := installACPAdapter(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = makeACPAdapterBundleWritable(first.Bundle.BundleRoot) })
+	receiptPath := filepath.Join(stateRoot, "acp-adapters", "receipts", acpAdapterInstallDigestName(first.BundleDigest)+".json")
+	if err := os.Remove(receiptPath); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := installACPAdapter(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(recovered, first) {
+		t.Fatalf("recovered receipt drift:\nfirst=%#v\nrecovered=%#v", first, recovered)
+	}
+	if _, err := os.Lstat(receiptPath); err != nil {
+		t.Fatalf("receipt was not recreated: %v", err)
+	}
+}
+
+func TestACPAdapterInstallRecoveryRejectsDivergentFinalRoot(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	artifact := writeACPAdapterInstallArtifact(t, nil)
+	request := newACPAdapterInstallTestRequest(t, stateRoot, artifact)
+	first, err := installACPAdapter(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = makeACPAdapterBundleWritable(first.Bundle.BundleRoot) })
+	receiptPath := filepath.Join(stateRoot, "acp-adapters", "receipts", acpAdapterInstallDigestName(first.BundleDigest)+".json")
+	if err := os.Remove(receiptPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := makeACPAdapterBundleWritable(first.Bundle.BundleRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(first.Bundle.Argv[0], []byte("divergent adapter\n"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if err := sealACPAdapterInstallDirectory(first.Bundle.BundleRoot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := installACPAdapter(request); err == nil || !strings.Contains(err.Error(), "receipt-less ACP adapter final root diverges") {
+		t.Fatalf("divergent receipt-less root error = %v", err)
+	}
+	if _, err := os.Lstat(receiptPath); !os.IsNotExist(err) {
+		t.Fatalf("divergent root created a receipt: %v", err)
+	}
+}
+
 func TestACPAdapterInstallRefusesWrongDigestSymlinkAndHardlink(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	artifact := writeACPAdapterInstallArtifact(t, nil)

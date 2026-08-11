@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -128,12 +127,48 @@ func TestCodexACPModeAndPositiveEnvironmentMapping(t *testing.T) {
 	if values["INITIAL_AGENT_MODE"] != "read-only" {
 		t.Fatalf("initial agent mode=%q", values["INITIAL_AGENT_MODE"])
 	}
-	var config struct {
-		Model  string `json:"model"`
-		Effort string `json:"model_reasoning_effort"`
+	wantConfig := `{"model":"gpt-5.3-codex","model_reasoning_effort":"high","allow_login_shell":false,"shell_environment_policy":{"inherit":"core","ignore_default_excludes":false,"exclude":["OPENAI_API_KEY","CODEX_API_KEY","CODEX_HOME"],"experimental_use_profile":false}}`
+	if values["CODEX_CONFIG"] != wantConfig {
+		t.Fatalf("CODEX_CONFIG=%s, want exact Codex 0.147.0 shell isolation policy %s", values["CODEX_CONFIG"], wantConfig)
 	}
-	if err := json.Unmarshal([]byte(values["CODEX_CONFIG"]), &config); err != nil || config.Model != descriptor.Model || config.Effort != descriptor.Effort {
-		t.Fatalf("config=%#v err=%v", config, err)
+}
+
+func TestCodexACPEnvironmentForwardsExactlySelectedAuth(t *testing.T) {
+	descriptor := codexACPTestDescriptor(t)
+	codexHome := t.TempDir()
+	resolvedCodexHome, err := filepath.EvalSymlinks(codexHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name     string
+		auth     CodexACPAuthContract
+		selected string
+		value    string
+	}{
+		{name: "OpenAI API key", auth: CodexACPAuthContract{Source: CodexACPAuthOpenAIAPIKey, PrincipalDigest: codexACPTestPrincipalDigest("openai")}, selected: "OPENAI_API_KEY", value: "openai-secret"},
+		{name: "Codex API key", auth: CodexACPAuthContract{Source: CodexACPAuthCodexAPIKey, PrincipalDigest: codexACPTestPrincipalDigest("codex")}, selected: "CODEX_API_KEY", value: "codex-secret"},
+		{name: "ChatGPT session", auth: CodexACPAuthContract{Source: CodexACPAuthChatGPTSession, PrincipalDigest: codexACPTestPrincipalDigest("chatgpt")}, selected: "CODEX_HOME", value: resolvedCodexHome},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			environment, err := descriptor.CodexACPEnvironment([]string{
+				"OPENAI_API_KEY=openai-secret", "CODEX_API_KEY=codex-secret", "CODEX_HOME=" + codexHome,
+			}, test.auth)
+			if err != nil {
+				t.Fatal(err)
+			}
+			values := environmentValues(t, environment.Variables)
+			for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_HOME"} {
+				got, exists := values[key]
+				if key == test.selected {
+					if !exists || got != test.value {
+						t.Fatalf("selected adapter auth %s=%q exists=%t, want %q", key, got, exists, test.value)
+					}
+				} else if exists {
+					t.Fatalf("unselected adapter auth %s leaked as %q", key, got)
+				}
+			}
+		})
 	}
 }
 

@@ -584,7 +584,7 @@ func validateRunnerProfileDefinition(name string, profile RunnerProfileDefinitio
 	harness := RunnerName(strings.TrimSpace(profile.Harness))
 	switch harness {
 	case RunnerCodexAppServer:
-		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness uses retired value %q", name, profile.Harness), withPath(path), withHint("run `tusker acp setup` and migrate the profile harness to codex_acp; keep codex_exec only as an explicit fallback"))
+		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness uses retired value %q", name, profile.Harness), withPath(path), withHint("run `tusker acp setup` and migrate the profile harness to codex_acp; keep codex_exec only in an explicit emergency/danger profile"))
 	case RunnerCodex, RunnerCodexExec, RunnerCodexCloud, RunnerClaude, RunnerCodexACP:
 	default:
 		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness has unsupported value %q", name, profile.Harness), withPath(path), withHint("use codex_acp after `tusker acp setup`, or explicitly select codex_exec, codex_cloud, or claude-code"))

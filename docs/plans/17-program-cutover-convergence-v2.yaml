@@ -4,7 +4,7 @@ title: Program cutover convergence
 epic: ORC
 spec_refs:
   - docs/specs/17-program-cutover-convergence.md
-context_fingerprint: sha256:8078b289ba6f0169bcb561ab7bf9d60c97e851f8646758437b77c67d25f008cc
+context_fingerprint: sha256:63daf272ae7e57c356b5ca9532fdddf8b5b2fdf16457b88b0ed0d2e8860fd65f
 required_capabilities: [strict_v2_proof_authority/v1]
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0

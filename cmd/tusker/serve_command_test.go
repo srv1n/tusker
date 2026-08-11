@@ -738,6 +738,22 @@ func newServeFixture(t *testing.T) *serveServer {
 	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
 		t.Fatal(err)
 	}
+	setDirectEmergencyProfileForAutomationTest(t, vault)
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.default_runner", string(RunnerCodexExec)); err != nil {
+		t.Fatal(err)
+	}
+	// Serve fixtures carry a medium task, whose semantic route is
+	// execute-standard rather than the default profile.
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles.execute-standard", directEmergencyRunnerProfileForTest()); err != nil {
+		t.Fatal(err)
+	}
+	workflow, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workflow.Data.Agents.Default != string(RunnerCodexExec) {
+		t.Fatalf("serve legacy fixture did not select explicit direct runner: %#v", workflow.Data.Agents)
+	}
 	writeServeEpic(t, vault, "APP", "App")
 	writeServeEpic(t, vault, "TRC", "Trace")
 	writeServeTask(t, vault, serveTaskSeed{ID: "APP-T-0001", Epic: "APP", Title: "Critical review", Status: "review", Risk: "critical", Priority: "p0"})
@@ -804,8 +820,35 @@ func newServeEmptyNeedsFixture(t *testing.T) *serveServer {
 	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
 		t.Fatal(err)
 	}
+	setDirectEmergencyProfileForAutomationTest(t, vault)
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.default_runner", string(RunnerCodexExec)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles.execute-standard", directEmergencyRunnerProfileForTest()); err != nil {
+		t.Fatal(err)
+	}
+	workflow, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
 	writeServeEpic(t, vault, "APP", "App")
 	writeServeTask(t, vault, serveTaskSeed{ID: "APP-T-0001", Epic: "APP", Title: "Quiet ready task", Status: "ready", Risk: "medium", Priority: "p2"})
+	notes, err := listAllNotes(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, note := range notes {
+		if stringField(note.Data, "id") != "APP-T-0001" {
+			continue
+		}
+		profile, resolveErr := resolveRunProfileForLane(note, workflow.Data, runLaneExecute, "")
+		if resolveErr != nil {
+			t.Fatal(resolveErr)
+		}
+		if RunnerName(profile.Definition.Harness) != RunnerCodexExec {
+			t.Fatalf("serve legacy fixture route %q did not select direct runner: %#v", profile.Name, profile.Definition)
+		}
+	}
 
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {

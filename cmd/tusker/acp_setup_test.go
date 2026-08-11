@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
 	"tusker/internal/v7schema"
 )
 
@@ -52,22 +53,17 @@ func TestPrimaryACPProfileOverridesPreservesNonCodexAndDangerProfiles(t *testing
 		t.Fatalf("non-Codex default profile was retained: %q", defaultProfile)
 	}
 	for name, wantHarness := range map[string]string{
-		"codex-safe":         string(RunnerCodexExec),
 		"codex-safe-offline": string(RunnerCodexACP),
-		"codex-acp":          string(RunnerCodexACP),
-		"claude-review":      string(RunnerClaude),
-		"emergency":          string(RunnerCodexExec),
-		"codex-empty":        string(RunnerCodexExec),
-		"codex-inconsistent": string(RunnerCodexExec),
 	} {
 		profile, ok := overrides[name].(map[string]any)
 		if !ok || profile["harness"] != wantHarness {
 			t.Fatalf("profile %q was not preserved/migrated correctly: %#v", name, overrides[name])
 		}
 	}
-	emergency := overrides["emergency"].(map[string]any)
-	if emergency["permission_preset"] != "danger-full-access" {
-		t.Fatalf("danger profile authority changed: %#v", emergency)
+	for _, name := range []string{"codex-safe", "codex-acp", "claude-review", "emergency", "codex-empty", "codex-inconsistent"} {
+		if _, ok := overrides[name]; ok {
+			t.Fatalf("unchanged profile %q was snapshotted into local overrides: %#v", name, overrides[name])
+		}
 	}
 	if _, ok := overrides["acp-primary"]; !ok {
 		t.Fatalf("safe ACP fallback profile missing: %#v", overrides)
@@ -76,6 +72,26 @@ func TestPrimaryACPProfileOverridesPreservesNonCodexAndDangerProfiles(t *testing
 	repeated, repeatedDefault := primaryACPProfileOverrides(resolved)
 	if repeatedDefault != defaultProfile || !reflect.DeepEqual(repeated, overrides) {
 		t.Fatalf("profile migration is not idempotent: first=%#v/%q second=%#v/%q", overrides, defaultProfile, repeated, repeatedDefault)
+	}
+}
+
+func TestPrimaryACPProfileOverridesKeepsProjectPrimarySparse(t *testing.T) {
+	network := false
+	resolved := resolvedTuskerConfig{Config: v7schema.TuskerConfigFile{Automation: v7schema.TuskerAutomationConfig{
+		DefaultProfile: "claude-review",
+		Profiles: map[string]v7schema.TuskerRunnerProfileConfig{
+			"claude-review": {Harness: string(RunnerClaude), Model: "claude-opus-4-8", PermissionPreset: "read-only", Sandbox: v7schema.TuskerRunnerSandboxConfig{Mode: "read-only"}},
+			"acp-primary":   {Harness: string(RunnerCodexExec), Model: "project-model", Effort: "high", PermissionPreset: "workspace-write-offline", Sandbox: v7schema.TuskerRunnerSandboxConfig{Mode: "workspace-write", Network: &network}},
+		},
+	}}}
+
+	overrides, defaultProfile := primaryACPProfileOverrides(resolved)
+	if defaultProfile != "acp-primary" {
+		t.Fatalf("default profile = %q", defaultProfile)
+	}
+	profile := mapAny(overrides["acp-primary"])
+	if len(profile) != 1 || profile["harness"] != string(RunnerCodexACP) {
+		t.Fatalf("project-owned acp-primary was snapshotted: %#v", profile)
 	}
 }
 
@@ -143,6 +159,109 @@ func TestSetupCodexACPPackagesAndMakesMachineLocalPrimary(t *testing.T) {
 	}
 	if got := RunnerName(wfFile.Data.RunnerProfiles["review-independent"].Harness); got != RunnerCodexACP {
 		t.Fatalf("idempotent setup dropped converted review-independent profile: %s", got)
+	}
+}
+
+func TestACPSetupKeepsProjectProfileFieldsLive(t *testing.T) {
+	previousProbe := acpSetupRuntimeProbe
+	acpSetupRuntimeProbe = func(ACPAdapterNPMPackageReceipt) error { return nil }
+	t.Cleanup(func() { acpSetupRuntimeProbe = previousProbe })
+	vault := automationTestVault(t)
+	if err := os.Remove(managedTuskerConfigPath(vault)); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	projectConfig := `schema: tusker.config/v1
+project_id: app
+automation:
+  default_profile: execute-standard
+  profiles:
+    execute-standard:
+      harness: codex_exec
+      model: gpt-5.6-terra
+      effort: medium
+      permission_preset: workspace-write-offline
+      sandbox: {mode: workspace-write, network: false}
+      subagents: {allowed: false, max_concurrent: 0}
+`
+	projectPath := filepath.Join(filepath.Dir(vault), "tusker.yaml")
+	if err := writeText(projectPath, projectConfig); err != nil {
+		t.Fatal(err)
+	}
+	prefix, _ := newACPAdapterNPMFixture(t)
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_HOME", codexHome)
+	report, err := SetupCodexACP(ACPSetupRequest{StateRoot: DefaultStateRoot(), VaultPath: vault, NPMPrefix: prefix, AuthSource: CodexACPAuthChatGPTSession})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = makeACPAdapterBundleWritable(report.Package.Bundle.BundleRoot) })
+	localText, err := readText(report.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var local map[string]any
+	if err := yaml.Unmarshal([]byte(localText), &local); err != nil {
+		t.Fatal(err)
+	}
+	profiles := mapAny(mapAny(local["automation"])["profiles"])
+	profile := mapAny(profiles["execute-standard"])
+	if len(profile) != 1 || profile["harness"] != string(RunnerCodexACP) {
+		t.Fatalf("setup snapshotted project profile fields: %#v", profile)
+	}
+	projectConfig = strings.Replace(projectConfig, "model: gpt-5.6-terra", "model: gpt-5.6-sol", 1)
+	if err := writeText(projectPath, projectConfig); err != nil {
+		t.Fatal(err)
+	}
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := wf.Data.RunnerProfiles["execute-standard"].Model; got != "gpt-5.6-sol" {
+		t.Fatalf("project profile change was masked by setup: model=%q", got)
+	}
+}
+
+func TestACPSetupRebindsExistingLocalPrimaryAwayFromDirectCLI(t *testing.T) {
+	previousProbe := acpSetupRuntimeProbe
+	acpSetupRuntimeProbe = func(ACPAdapterNPMPackageReceipt) error { return nil }
+	t.Cleanup(func() { acpSetupRuntimeProbe = previousProbe })
+	vault := automationTestVault(t)
+	localPath := managedTuskerLocalConfigPath(vault)
+	localConfig := `schema: tusker.config/v1
+automation:
+  default_profile: acp-primary
+  profiles:
+    acp-primary:
+      harness: codex_exec
+      model: gpt-5.6-terra
+      effort: medium
+      permission_preset: workspace-write-offline
+      sandbox: {mode: workspace-write, network: false}
+      subagents: {allowed: false, max_concurrent: 0}
+`
+	if err := writeText(localPath, localConfig); err != nil {
+		t.Fatal(err)
+	}
+	prefix, _ := newACPAdapterNPMFixture(t)
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_HOME", codexHome)
+	report, err := SetupCodexACP(ACPSetupRequest{StateRoot: DefaultStateRoot(), VaultPath: vault, NPMPrefix: prefix, AuthSource: CodexACPAuthChatGPTSession})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = makeACPAdapterBundleWritable(report.Package.Bundle.BundleRoot) })
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := RunnerName(wf.Data.RunnerProfiles["acp-primary"].Harness); got != RunnerCodexACP {
+		t.Fatalf("setup left machine-local primary on direct CLI: %s", got)
 	}
 }
 

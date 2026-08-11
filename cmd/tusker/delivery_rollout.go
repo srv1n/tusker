@@ -453,7 +453,7 @@ func deliveryRolloutCompatibility(project RegisteredProject) (string, string) {
 func deliveryRolloutWorkflowPolicy(project RegisteredProject, apply bool) ([]setupFinding, error) {
 	findings := []setupFinding{}
 	if opaque := deliveryOpaqueRunnerCommands(project.WorkflowPath); len(opaque) > 0 {
-		findings = append(findings, setupFinding{Code: "runner_harness_opaque", Status: "error", Path: project.WorkflowPath, Message: "unattended runner command is not a canonical enforceable harness: " + strings.Join(opaque, ", "), Action: "replace the opaque wrapper with canonical codex exec or Claude bypassPermissions command", Repairable: false})
+		findings = append(findings, setupFinding{Code: "runner_harness_opaque", Status: "error", Path: project.WorkflowPath, Message: "unattended runner command is not a canonical enforceable harness: " + strings.Join(opaque, ", "), Action: "run tusker acp setup for codex_acp, or keep codex_exec only in an explicit emergency/danger profile; Claude must use bypassPermissions", Repairable: false})
 	}
 	workflowChanged, workflowText, err := migratedObjectiveWorkflow(project.WorkflowPath)
 	if err != nil {
@@ -465,7 +465,7 @@ func deliveryRolloutWorkflowPolicy(project RegisteredProject, apply bool) ([]set
 	}
 	workflowChanged = workflowChanged || workflowChanged2
 	if workflowChanged {
-		finding := setupFinding{Code: "workflow_unattended_policy", Status: "error", Path: project.WorkflowPath, Message: "workflow uses a legacy runner, routine approval policy, or risk-based human close default", Action: "migrate to codex_exec, approval_policy never, and objective reviewer close", Repairable: true}
+		finding := setupFinding{Code: "workflow_unattended_policy", Status: "error", Path: project.WorkflowPath, Message: "workflow uses a legacy runner, routine approval policy, or risk-based human close default", Action: "migrate safe work to codex_acp, run tusker acp setup, keep codex_exec only for explicit emergency/danger profiles, and use objective reviewer close", Repairable: true}
 		if apply {
 			if err := writeText(project.WorkflowPath, workflowText); err != nil {
 				return findings, err
@@ -476,7 +476,7 @@ func deliveryRolloutWorkflowPolicy(project RegisteredProject, apply bool) ([]set
 	}
 	configPath := preferredTuskerConfigPath(project.VaultRoot)
 	if opaque := deliveryOpaqueRunnerCommands(configPath); len(opaque) > 0 {
-		findings = append(findings, setupFinding{Code: "runner_harness_opaque", Status: "error", Path: configPath, Message: "unattended runner command is not a canonical enforceable harness: " + strings.Join(opaque, ", "), Action: "replace the opaque wrapper with canonical codex exec or Claude bypassPermissions command", Repairable: false})
+		findings = append(findings, setupFinding{Code: "runner_harness_opaque", Status: "error", Path: configPath, Message: "unattended runner command is not a canonical enforceable harness: " + strings.Join(opaque, ", "), Action: "run tusker acp setup for codex_acp, or keep codex_exec only in an explicit emergency/danger profile; Claude must use bypassPermissions", Repairable: false})
 	}
 	configChanged, configText, err := migratedObjectiveCloseConfig(configPath)
 	if err != nil {
@@ -488,7 +488,7 @@ func deliveryRolloutWorkflowPolicy(project RegisteredProject, apply bool) ([]set
 	}
 	configChanged = configChanged || configChanged2
 	if configChanged {
-		finding := setupFinding{Code: "config_unattended_policy", Status: "error", Path: configPath, Message: "project config uses a legacy runner, routine approval policy, or invalid close policy", Action: "migrate the known automation and close-policy keys", Repairable: true}
+		finding := setupFinding{Code: "config_unattended_policy", Status: "error", Path: configPath, Message: "project config uses a legacy runner, routine approval policy, or invalid close policy", Action: "migrate safe work to codex_acp, run tusker acp setup, keep codex_exec only for explicit emergency/danger profiles, and repair close-policy keys", Repairable: true}
 		if apply {
 			if err := writeText(configPath, configText); err != nil {
 				return findings, err
@@ -526,8 +526,10 @@ func deliveryOpaqueRunnerCommands(path string) []string {
 		}
 		valid := true
 		switch kind {
-		case "codex", "codex_exec", "codex_app_server":
+		case "codex", "codex_exec":
 			valid = strings.HasPrefix(command, "codex exec ") || command == "codex exec"
+		case "codex_acp":
+			valid = false
 		case "claude", "claude-code":
 			valid = strings.HasPrefix(command, "claude -p ") && strings.Contains(command, "bypassPermissions")
 		}
@@ -595,7 +597,7 @@ func migrateKnownRunnerPolicy(data map[string]any) bool {
 	replaceRunner := func(value any) any {
 		if strings.EqualFold(strings.TrimSpace(fmt.Sprint(value)), "codex_app_server") {
 			changed = true
-			return "codex_exec"
+			return string(RunnerCodexACP)
 		}
 		return value
 	}

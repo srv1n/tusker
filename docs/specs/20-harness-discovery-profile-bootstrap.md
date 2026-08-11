@@ -28,7 +28,7 @@ release, spend, or configure credentials.
 | ID | Outcome |
 | --- | --- |
 | R1 | `tusker runner catalog --json` returns a provider-neutral, machine-readable capability catalog with harness, model, supported effort, service-tier (when known), visibility, default, discovery source, confidence, command version, and observation time. |
-| R2 | Codex discovery uses the installed CLI's live catalog when available and has an explicit bundled/offline fallback; Claude reports only documented aliases/efforts as declared capabilities because its CLI has no model-list API. The output never pretends both sources have equal certainty. |
+| R2 | Codex discovery uses the installed CLI's live catalog when available and has an explicit bundled/offline catalog source for profile generation; neither source is an execution fallback from an ACP attempt. Claude reports only documented aliases/efforts as declared capabilities because its CLI has no model-list API. The output never pretends both sources have equal certainty. |
 | R3 | Fresh initialization and an explicit reconcile/preview command can produce a small semantic role set instead of a model × effort Cartesian explosion. Existing explicit profiles are preserved. Automation remains disabled before and after. |
 | R4 | Runner validation accepts the effort levels actually exposed by supported harnesses, and routing can use a model-neutral task complexity (`routine`, `standard`, `complex`, `frontier`) without embedding a provider model in task contracts. |
 | R5 | `tusker delivery plan` emits `tusker.delivery-plan/v2`, source keys, requirement placeholders, acceptance, verification, artifacts, owned paths, and dependency examples that pass the V2 parser once filled. Installed Tusker guidance tells planning agents to use that path by default for multi-unit work. |
@@ -42,7 +42,8 @@ release, spend, or configure credentials.
 - The catalog is a runtime, machine-local observation. It is not committed to a
   project and is never treated as permanent provider truth.
 - Codex is `live` when the installed CLI returns its catalog. An explicitly
-  requested bundled fallback is `bundled`, with lower freshness.
+  requested bundled catalog source is `bundled`, with lower freshness; it only
+  informs profile generation and never launches or replaces the ACP runner.
 - Claude is `declared` until its CLI exposes a machine-readable catalog.
 - Discovery failures are represented per harness. One missing harness does not
   erase healthy results from another.

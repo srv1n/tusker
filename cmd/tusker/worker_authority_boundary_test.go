@@ -476,6 +476,10 @@ func reviewProposalDaemonFixture(t *testing.T) (RegisteredProject, *Daemon, Work
 func configureCompletionWorkerProfilesForTest(t *testing.T, vault string) {
 	t.Helper()
 	profiles := map[string]any{
+		// The shared automation fixture selects this explicitly named direct
+		// profile so these daemon-boundary tests remain self-contained when the
+		// project profile map is replaced below.
+		"test-emergency-codex-exec": directEmergencyRunnerProfileForTest(),
 		"implementation-terra": map[string]any{
 			"harness": "codex_exec", "model": "gpt-5.x", "effort": "medium", "permission_preset": "workspace-write-offline",
 			"sandbox":   map[string]any{"mode": "workspace-write", "network": false},

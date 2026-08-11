@@ -135,9 +135,12 @@ func TestRunnerProfileBootstrapFreshInitIncludesAllRoles(t *testing.T) {
 	}
 	for _, name := range []string{"planner", "execute-fast", "execute-standard", "execute-complex", "execute-frontier", "review-independent", "repair-complex"} {
 		profile, ok := wf.Data.RunnerProfiles[name]
-		if !ok || profile.Model == "codex-auto-review" {
+		if !ok || profile.Model == "codex-auto-review" || profile.Harness != string(RunnerCodexACP) {
 			t.Fatalf("bad %s profile: %#v", name, profile)
 		}
+	}
+	if _, _, err := runnerForName(string(RunnerCodexACP), wf.Data); err == nil {
+		t.Fatal("fresh init admitted codex_acp before machine-local ACP setup")
 	}
 }
 
@@ -159,7 +162,7 @@ func TestRunnerCatalogHarnessIsolationAndBundled(t *testing.T) {
 		t.Fatalf("expected bundled catalog: %#v", catalog.Harnesses[0])
 	}
 	profiles := semanticBootstrapProfiles(catalog)
-	if profile, ok := profiles["execute-standard"].(map[string]any); !ok || profile["harness"] != "codex_exec" || profile["model"] != "gpt-5.2" {
+	if profile, ok := profiles["execute-standard"].(map[string]any); !ok || profile["harness"] != string(RunnerCodexACP) || profile["model"] != "gpt-5.2" {
 		t.Fatalf("installed --bundled catalog did not produce truthful Codex profiles: %#v", profiles)
 	}
 }

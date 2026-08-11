@@ -9,6 +9,29 @@ import (
 	"time"
 )
 
+func TestDeliveryRolloutMigratesLegacyRunnerToACPAndKeepsExplicitDirectProfile(t *testing.T) {
+	data := map[string]any{
+		"agents": map[string]any{"default": "codex_app_server", "enabled": []any{"codex_app_server"}},
+		"automation": map[string]any{"profiles": map[string]any{
+			"safe":      map[string]any{"harness": "codex_app_server"},
+			"emergency": map[string]any{"harness": "codex_exec", "permission_preset": "danger-full-access"},
+		}},
+	}
+	if !migrateKnownRunnerPolicy(data) {
+		t.Fatal("legacy runner policy was not marked changed")
+	}
+	if got := data["agents"].(map[string]any)["default"]; got != string(RunnerCodexACP) {
+		t.Fatalf("default runner=%v, want %s", got, RunnerCodexACP)
+	}
+	profiles := data["automation"].(map[string]any)["profiles"].(map[string]any)
+	if got := profiles["safe"].(map[string]any)["harness"]; got != string(RunnerCodexACP) {
+		t.Fatalf("safe profile harness=%v, want %s", got, RunnerCodexACP)
+	}
+	if got := profiles["emergency"].(map[string]any)["harness"]; got != string(RunnerCodexExec) {
+		t.Fatalf("emergency profile harness=%v, want %s", got, RunnerCodexExec)
+	}
+}
+
 func TestDeliveryRolloutDoctor(t *testing.T) {
 	fixture := newDeliveryRolloutFixture(t)
 	fixture.addProject("stale", true)

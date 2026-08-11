@@ -209,7 +209,36 @@ func configurePrimaryCodexACP(vault string, packaged ACPAdapterNPMPackageReceipt
 		"auth_principal_sha256": principalDigest,
 	})
 	profiles, defaultProfile := primaryACPProfileOverrides(resolved)
-	setNestedConfigValue(raw, "automation.profiles", profiles)
+	// Keep this layer sparse. Project/global profile fields remain owned by
+	// their source layers so later edits take effect without rerunning setup.
+	automationRaw := mapAny(raw["automation"])
+	localProfiles := mapAny(automationRaw["profiles"])
+	if localProfiles == nil {
+		localProfiles = map[string]any{}
+		if len(profiles) > 0 {
+			setNestedConfigValue(raw, "automation.profiles", localProfiles)
+		}
+	}
+	for name, override := range profiles {
+		if name == "acp-primary" {
+			// Setup owns the primary transport binding. Preserve any local profile
+			// policy fields, but never leave acp-primary pointing at direct CLI.
+			if existing := mapAny(localProfiles[name]); existing != nil {
+				existing["harness"] = string(RunnerCodexACP)
+			} else {
+				localProfiles[name] = override
+			}
+			continue
+		}
+		if profile, ok := override.(map[string]any); ok && len(profile) == 1 && profile["harness"] == string(RunnerCodexACP) {
+			localProfile := mapAny(localProfiles[name])
+			if localProfile == nil {
+				localProfile = map[string]any{}
+				localProfiles[name] = localProfile
+			}
+			localProfile["harness"] = string(RunnerCodexACP)
+		}
+	}
 	setNestedConfigValue(raw, "automation.default_profile", defaultProfile)
 	encoded, err := yaml.Marshal(raw)
 	if err != nil {
@@ -265,9 +294,8 @@ func primaryACPProfileOverrides(resolved resolvedTuskerConfig) (map[string]any, 
 		profile := resolved.Config.Automation.Profiles[name]
 		harness := RunnerName(strings.TrimSpace(profile.Harness))
 		if harness == RunnerCodexExec && acpSetupProfileEligible(runnerProfileFromSchema(profile)) {
-			profile.Harness = string(RunnerCodexACP)
+			overrides[name] = map[string]any{"harness": string(RunnerCodexACP)}
 		}
-		overrides[name] = runnerProfileConfigMap(profile)
 	}
 	defaultProfile := strings.TrimSpace(resolved.Config.Automation.DefaultProfile)
 	defaultDefinition, defaultExists := resolved.Config.Automation.Profiles[defaultProfile]
@@ -275,11 +303,17 @@ func primaryACPProfileOverrides(resolved resolvedTuskerConfig) (map[string]any, 
 	defaultEligible := defaultExists && (defaultHarness == RunnerCodexExec || defaultHarness == RunnerCodexACP) && acpSetupProfileEligible(runnerProfileFromSchema(defaultDefinition))
 	if !defaultEligible {
 		defaultProfile = "acp-primary"
-		overrides[defaultProfile] = map[string]any{
-			"harness": string(RunnerCodexACP), "model": "gpt-5.6-terra", "effort": "medium",
-			"permission_preset": "workspace-write-offline",
-			"sandbox":           map[string]any{"mode": "workspace-write", "network": false},
-			"subagents":         map[string]any{"allowed": false, "max_concurrent": 0},
+		if _, exists := resolved.Config.Automation.Profiles[defaultProfile]; exists {
+			// Preserve a project-owned profile and override only its transport.
+			// Configuration validation will reject incompatible policy fields.
+			overrides[defaultProfile] = map[string]any{"harness": string(RunnerCodexACP)}
+		} else {
+			overrides[defaultProfile] = map[string]any{
+				"harness": string(RunnerCodexACP), "model": "gpt-5.6-terra", "effort": "medium",
+				"permission_preset": "workspace-write-offline",
+				"sandbox":           map[string]any{"mode": "workspace-write", "network": false},
+				"subagents":         map[string]any{"allowed": false, "max_concurrent": 0},
+			}
 		}
 	}
 	return overrides, defaultProfile
@@ -296,16 +330,6 @@ func acpSetupProfileEligible(profile RunnerProfileDefinition) bool {
 	default:
 		return false
 	}
-}
-
-func runnerProfileConfigMap(profile interface {
-}) map[string]any {
-	// Marshal through YAML so field-presence and pointer booleans match the
-	// canonical config decoder instead of maintaining a second struct mapping.
-	raw, _ := yaml.Marshal(profile)
-	out := map[string]any{}
-	_ = yaml.Unmarshal(raw, &out)
-	return out
 }
 
 func acpSetupCommand(args Args) error {

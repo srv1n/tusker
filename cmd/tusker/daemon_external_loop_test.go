@@ -113,6 +113,12 @@ func TestDaemonAutoAdvanceExternalApplyFailureDispatchesRepairContinuation(t *te
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon repair continuation", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
+	// This continuation belongs to the external browser thread. Clear the
+	// legacy fixture's explicit direct profile so profile resolution preserves
+	// the supplied chatgpt-browser runner instead of rewriting it to codex_exec.
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.default_profile", ""); err != nil {
+		t.Fatal(err)
+	}
 	seedCollectedExternalApplyState(t, project, "APP-T-0001", "cgpt-original-failure")
 	seedApplyResultRun(t, project, "APP-T-0001", string(LeaseStateRetryQueued), string(AttemptOutcomeFailed), "git apply conflict in vault picker")
 
@@ -189,6 +195,11 @@ func TestDaemonAutoAdvanceExternalApplySuccessDispatchesExternalReview(t *testin
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "ready", "next_owner": "reviewer:agent"})
 	project := registerAutomationTestProject(t, vault)
+	// Keep the review continuation on the originating external browser runner;
+	// this fixture is not testing the local direct emergency profile.
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.default_profile", ""); err != nil {
+		t.Fatal(err)
+	}
 	seedCollectedExternalApplyState(t, project, "APP-T-0001", "cgpt-original-review")
 	seedApplyResultRun(t, project, "APP-T-0001", string(LeaseStateReleased), string(AttemptOutcomeSucceeded), "")
 

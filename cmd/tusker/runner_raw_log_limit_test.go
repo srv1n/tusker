@@ -60,7 +60,11 @@ func TestBoundedRawLogWriterExactCapAndConcurrentOverflow(t *testing.T) {
 			t.Fatal(err)
 		}
 		var kills atomic.Int32
-		writer.bindTerminator(func() { kills.Add(1) })
+		terminationDone := make(chan struct{})
+		writer.bindTerminator(func() {
+			kills.Add(1)
+			close(terminationDone)
+		})
 		var wg sync.WaitGroup
 		errs := make(chan error, 2)
 		for _, payload := range [][]byte{
@@ -84,8 +88,16 @@ func TestBoundedRawLogWriterExactCapAndConcurrentOverflow(t *testing.T) {
 				t.Fatalf("unexpected bounded-writer error: %v", err)
 			}
 		}
-		if overflowErrors == 0 || !writer.overflowed() || kills.Load() != 1 {
+		if overflowErrors == 0 || !writer.overflowed() {
 			t.Fatalf("cap+1 did not trigger one terminal overflow: errors=%d overflow=%t kills=%d", overflowErrors, writer.overflowed(), kills.Load())
+		}
+		select {
+		case <-terminationDone:
+		case <-time.After(time.Second):
+			t.Fatalf("cap+1 did not trigger async termination: errors=%d overflow=%t kills=%d", overflowErrors, writer.overflowed(), kills.Load())
+		}
+		if kills.Load() != 1 {
+			t.Fatalf("cap+1 triggered unexpected terminal termination count: %d", kills.Load())
 		}
 		if err := writer.close(); err != nil {
 			t.Fatal(err)

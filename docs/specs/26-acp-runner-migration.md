@@ -95,8 +95,10 @@ The protocol boundary follows the ACP v1 [overview](https://agentclientprotocol.
 - Stdout is protocol-only. Adapter diagnostics go to stderr and the existing bounded runner log path.
 - The executable, arguments, environment allowlist, fingerprint, adapter version, and absolute workspace are resolved before process launch and recorded in the attempt receipt.
 - The default maximum serialized ACP frame is 4 MiB, matching the existing direct live-runner scanner ceiling. Larger frames are a protocol failure, not truncation.
-- The default pending-request limit is 64 and the session-update queue limit is 256. Reaching either limit triggers bounded backpressure or a typed overload failure; it cannot discard a terminal result.
-- Initialization and non-turn RPCs have a 30-second deadline. Turn and stall deadlines come from the resolved runner policy; current defaults are ten minutes and two minutes respectively. Cancellation has a five-second drain before process-group termination.
+- The default pending-request limit is 64 and the session-update queue limit is 256. Reaching either limit triggers bounded backpressure or a typed overload failure; it cannot discard a terminal result. The queue limit is independent from the cumulative 32 MiB session-update payload budget, which resets for each prompt; a budget violation poisons the transport rather than treating normal small provider deltas as a lifetime event-count failure.
+- Prompt registration and the `session/prompt` frame are linearized before the active call is exposed to cancellation. A `session/cancel` notification cannot overtake the prompt frame on the wire; if prompt serialization cannot complete within the cancellation deadline, the client poisons the session instead of sending cancellation for a turn the provider has not seen.
+- Initialization and non-turn RPCs have a 30-second deadline. Turn and stall deadlines come from the resolved runner policy; current defaults are ten minutes and two minutes respectively. Cancellation has a five-second ACP drain. During daemon interruption, the detached wrapper receives the first signal and owns protocol cancellation and terminal-status handoff; only after that bounded drain plus a status margin does the supervisor escalate to the complete process group.
+- For the Codex adapter, the parent receives exactly one selected authentication source. Codex model-invoked commands receive an explicit fail-closed shell policy (`inherit: core`, default secret exclusions enabled, `OPENAI_API_KEY`, `CODEX_API_KEY`, and `CODEX_HOME` excluded, `allow_login_shell=false`, and the pinned Codex key `experimental_use_profile=false`).
 - Raw stdout/stderr retention uses the existing configured raw-log byte ceiling. Wire parsing never depends on retained log completeness.
 - One process serves one attempt. On terminal completion or failure, Tusker drains, terminates, and reaps the complete process group. Descendants holding pipes cannot keep collection open indefinitely.
 
@@ -176,6 +178,23 @@ The broker consumes a normalized operation request plus the already resolved Tus
 6. Record adapter, method, normalized operation class, target digest/redaction, policy rule, decision, and latency. Do not retain secrets, full prompts, credentials, or unbounded tool arguments.
 
 Provider permission callbacks remain execution observations. They do not replace Tusker's task authorization, automation opt-in, claim, lease, spend, or release gates.
+
+### Sealed adapter installation and review provenance
+
+`tusker acp setup` is a one-time local bootstrap step. The native and npm
+installers publish a private staging tree, seal it, validate the complete
+manifest and root digest, and only then publish the immutable receipt. If a
+crash leaves an exact receipt-less final root, a later identical setup may
+revalidate its source identity, manifest, executable modes, complete tree, and
+root digest and recreate the receipt atomically. An incomplete or divergent
+root remains a hard failure; setup never overwrites it.
+
+The source-only review archive is independently provenance-verifiable. By
+default `scripts/package-code-review.sh` refuses a dirty worktree. Its explicit
+`--allow-dirty` mode records `HEAD`, the requested base and merge-base, the
+porcelain-v2 state, source classification, and a SHA-256 for every archived
+path, then embeds a verifier that checks the target set and hashes after
+extraction.
 
 ## `codex_cloud` exclusion
 

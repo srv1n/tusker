@@ -257,8 +257,25 @@ func PackageACPAdapterNPM(request ACPAdapterNPMPackageRequest) (ACPAdapterNPMPac
 		}
 		return existing, nil
 	}
+	manifest := ACPAdapterBundleManifest{
+		Schema: ACPAdapterBundleSchema, Provider: acpAdapterInstallProvider, Adapter: acpAdapterInstallAdapter,
+		Version: ACPAdapterNPMAdapterVersion, Protocol: ACPAdapterBundleProtocolV1, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
+		Argv: []string{filepath.Join(finalRoot, "bin", "node"), filepath.Join(finalRoot, filepath.FromSlash(entrypointAsset))}, Assets: assets,
+	}
+	manifestRaw, err := json.Marshal(manifest)
+	if err != nil {
+		return ACPAdapterNPMPackageReceipt{}, err
+	}
+	manifestDigest := acpAdapterBundleDigest(manifestRaw)
 	if _, err := os.Lstat(finalRoot); err == nil {
-		return ACPAdapterNPMPackageReceipt{}, fmt.Errorf("npm ACP adapter final root exists without a matching receipt")
+		recovered, recoverErr := verifyACPAdapterNPMFinalRoot(bundleDigest, nodeDigest, platformName, platformVersion, finalRoot, manifestDigest)
+		if recoverErr != nil {
+			return ACPAdapterNPMPackageReceipt{}, fmt.Errorf("receipt-less npm ACP adapter final root diverges from requested bundle: %w", recoverErr)
+		}
+		if err := writeACPAdapterNPMPackageReceipt(receiptPath, recovered); err != nil {
+			return ACPAdapterNPMPackageReceipt{}, err
+		}
+		return recovered, nil
 	} else if !os.IsNotExist(err) {
 		return ACPAdapterNPMPackageReceipt{}, err
 	}
@@ -288,16 +305,6 @@ func PackageACPAdapterNPM(request ACPAdapterNPMPackageRequest) (ACPAdapterNPMPac
 	if err := validateACPAdapterNativeBinary(filepath.Join(stageRoot, "bin", "node")); err != nil {
 		return ACPAdapterNPMPackageReceipt{}, fmt.Errorf("staged Node executable is invalid: %w", err)
 	}
-	manifest := ACPAdapterBundleManifest{
-		Schema: ACPAdapterBundleSchema, Provider: acpAdapterInstallProvider, Adapter: acpAdapterInstallAdapter,
-		Version: ACPAdapterNPMAdapterVersion, Protocol: ACPAdapterBundleProtocolV1, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
-		Argv: []string{filepath.Join(finalRoot, "bin", "node"), filepath.Join(finalRoot, filepath.FromSlash(entrypointAsset))}, Assets: assets,
-	}
-	manifestRaw, err := json.Marshal(manifest)
-	if err != nil {
-		return ACPAdapterNPMPackageReceipt{}, err
-	}
-	manifestDigest := acpAdapterBundleDigest(manifestRaw)
 	if err := writeACPAdapterInstallFile(filepath.Join(stageRoot, acpAdapterNPMManifestPath), manifestRaw, 0o600); err != nil {
 		return ACPAdapterNPMPackageReceipt{}, err
 	}
@@ -316,20 +323,9 @@ func PackageACPAdapterNPM(request ACPAdapterNPMPackageRequest) (ACPAdapterNPMPac
 	if err := syncACPAdapterInstallDirectory(filepath.Join(installRoot, "bundles")); err != nil {
 		return ACPAdapterNPMPackageReceipt{}, err
 	}
-	finalRootDigest, err := ACPAdapterBundleFinalRootDigest(finalRoot, manifestDigest)
-	if err != nil {
-		return ACPAdapterNPMPackageReceipt{}, err
-	}
-	bundleRequest := acpAdapterNPMValidationRequest(finalRoot, manifestDigest, finalRootDigest)
-	verified, err := ValidateACPAdapterBundle(bundleRequest)
+	receipt, err := verifyACPAdapterNPMFinalRoot(bundleDigest, nodeDigest, platformName, platformVersion, finalRoot, manifestDigest)
 	if err != nil {
 		return ACPAdapterNPMPackageReceipt{}, fmt.Errorf("validate packaged npm ACP adapter: %w", err)
-	}
-	receipt := ACPAdapterNPMPackageReceipt{
-		Schema: acpAdapterNPMReceiptSchema, BundleDigest: bundleDigest, NodeSHA256: nodeDigest,
-		AdapterVersion: ACPAdapterNPMAdapterVersion, CodexVersion: ACPAdapterNPMCodexVersion,
-		PlatformPackage: platformName, PlatformVersion: platformVersion,
-		ManifestSHA256: manifestDigest, FinalRootDigest: finalRootDigest, Bundle: verified,
 	}
 	if err := writeACPAdapterNPMPackageReceipt(receiptPath, receipt); err != nil {
 		return ACPAdapterNPMPackageReceipt{}, err
@@ -860,6 +856,27 @@ func acpAdapterNPMValidationRequest(root, manifestDigest, finalRootDigest string
 	}
 }
 
+func verifyACPAdapterNPMFinalRoot(bundleDigest, nodeDigest, platformName, platformVersion, finalRoot, manifestDigest string) (ACPAdapterNPMPackageReceipt, error) {
+	finalRootDigest, err := ACPAdapterBundleFinalRootDigest(finalRoot, manifestDigest)
+	if err != nil {
+		return ACPAdapterNPMPackageReceipt{}, err
+	}
+	verified, err := ValidateACPAdapterBundle(acpAdapterNPMValidationRequest(finalRoot, manifestDigest, finalRootDigest))
+	if err != nil {
+		return ACPAdapterNPMPackageReceipt{}, err
+	}
+	receipt := ACPAdapterNPMPackageReceipt{
+		Schema: acpAdapterNPMReceiptSchema, BundleDigest: bundleDigest, NodeSHA256: nodeDigest,
+		AdapterVersion: ACPAdapterNPMAdapterVersion, CodexVersion: ACPAdapterNPMCodexVersion,
+		PlatformPackage: platformName, PlatformVersion: platformVersion,
+		ManifestSHA256: manifestDigest, FinalRootDigest: finalRootDigest, Bundle: verified,
+	}
+	if err := validateACPAdapterNPMPackageReceipt(receipt, bundleDigest, finalRoot); err != nil {
+		return ACPAdapterNPMPackageReceipt{}, err
+	}
+	return receipt, nil
+}
+
 func writeACPAdapterNPMPackageReceipt(path string, receipt ACPAdapterNPMPackageReceipt) error {
 	raw, err := json.Marshal(receipt)
 	if err != nil {
@@ -899,6 +916,21 @@ func readACPAdapterNPMPackageReceipt(path string) (ACPAdapterNPMPackageReceipt, 
 		return receipt, true, fmt.Errorf("npm ACP adapter receipt is not exact canonical JSON")
 	}
 	return receipt, true, nil
+}
+
+// validatePackagedACPAdapterInstallation lets the common read-only doctor
+// recognize the exact sealed runtime created by `acp setup`. The native local
+// installer remains independent from package-manager execution or discovery.
+func validatePackagedACPAdapterInstallation(root, bundleDigest string) (bool, error) {
+	name := "npm-" + acpAdapterInstallDigestName(bundleDigest)
+	receipt, exists, err := readACPAdapterNPMPackageReceipt(filepath.Join(root, "receipts", name+".json"))
+	if err != nil || !exists {
+		return exists, err
+	}
+	if err := validateACPAdapterNPMPackageReceipt(receipt, bundleDigest, filepath.Join(root, "bundles", name)); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 func validateACPAdapterNPMPackageReceipt(receipt ACPAdapterNPMPackageReceipt, bundleDigest, finalRoot string) error {

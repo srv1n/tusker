@@ -450,6 +450,9 @@ func interruptRunProcess(store *RuntimeStore, run *RunStatus, liveHandleVerified
 	if run == nil {
 		return tuskerError(errorNotFound, "run not found")
 	}
+	if isACPRunner(RunnerName(run.Runner)) {
+		return interruptACPWrapperProcess(store, run)
+	}
 	pgid := processSignalGroup(*run)
 	if !liveHandleVerified && !processIdentityMatches(*run) && pgid > 0 && processGroupExists(pgid) {
 		return tuskerError(errorInvalidTransition,
@@ -474,6 +477,68 @@ func interruptRunProcess(store *RuntimeStore, run *RunStatus, liveHandleVerified
 		}
 	}
 	return finishRuntimeRunIfSnapshot(store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "interrupt requested by operator", true)
+}
+
+const acpWrapperInterruptStatusMargin = 500 * time.Millisecond
+
+// interruptACPWrapperProcess lets the fenced wrapper drive ACP cancellation
+// before touching its containment group. A group SIGINT would also interrupt
+// the adapter before it can complete its bounded protocol cancel and status
+// handoff, so only verified wrapper identity receives the first signal.
+func interruptACPWrapperProcess(store *RuntimeStore, run *RunStatus) error {
+	pgid := processSignalGroup(*run)
+	if !processIdentityMatches(*run) {
+		if pgid > 0 && processGroupExists(pgid) {
+			return tuskerError(errorInvalidTransition,
+				fmt.Sprintf("refusing to signal ACP wrapper process group %d because recorded wrapper PID %d no longer matches; ownership cannot be verified", pgid, run.ProcessPID),
+				withHint("inspect and stop the process group manually, then retry after no Tusker-owned process remains"),
+				withContext(map[string]any{"pid": run.ProcessPID, "pgid": pgid, "manual_cleanup_required": true}))
+		}
+		return finishRuntimeRunIfSnapshot(store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "interrupt requested by operator; verified ACP wrapper is not running", false)
+	}
+	if err := interruptVerifiedACPWrapper(*run); err != nil {
+		return err
+	}
+	return finishRuntimeRunIfSnapshot(store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "interrupt requested by operator", true)
+}
+
+func interruptVerifiedACPWrapper(run RunStatus) error {
+	pgid := processSignalGroup(run)
+	if err := syscall.Kill(run.ProcessPID, syscall.SIGINT); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	if !waitForACPWrapperDrain(run, acpCancelDrain(CodexPolicy{})+acpWrapperInterruptStatusMargin) ||
+		!waitForProcessGroupStop(pgid, acpWrapperInterruptStatusMargin) {
+		return escalateRunnerProcessGroup(pgid)
+	}
+	return nil
+}
+
+func waitForACPWrapperDrain(run RunStatus, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if fileExists(run.StatusPath) || !processGroupExists(processSignalGroup(run)) {
+			return true
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return fileExists(run.StatusPath) || !processGroupExists(processSignalGroup(run))
+}
+
+func escalateRunnerProcessGroup(pgid int) error {
+	if pgid <= 0 || !processGroupExists(pgid) {
+		return nil
+	}
+	_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	if !waitForProcessGroupStop(pgid, 600*time.Millisecond) {
+		if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return err
+		}
+	}
+	if !waitForProcessGroupStop(pgid, 2*time.Second) {
+		return tuskerError(errorHookFailed, fmt.Sprintf("runner process group %d remained alive after interrupt escalation", pgid), withHint("inspect the process group before retrying the interrupt"))
+	}
+	return nil
 }
 
 func matchingLiveRunHandle(run RunStatus) LiveRunnerHandle {
@@ -5862,6 +5927,12 @@ func parseRunTimestamp(value string) (time.Time, bool) {
 }
 
 func (d *Daemon) stopRunExecution(ctx context.Context, run RunStatus) (bool, error) {
+	if isACPRunner(RunnerName(run.Runner)) {
+		if run.ProcessPID <= 0 || !d.processIdentityMatchesForPoll(run) {
+			return false, nil
+		}
+		return true, interruptVerifiedACPWrapper(run)
+	}
 	if handle := liveRegistry.Find(firstNonEmpty(run.ActiveAttemptID, run.ItemID, run.RecordID)); handle != nil {
 		return true, handle.Interrupt(ctx)
 	}

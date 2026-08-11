@@ -320,7 +320,13 @@ func semanticBootstrapProfiles(catalog RunnerCatalog) map[string]any {
 			mode = "read-only"
 			preset = "read-only"
 		}
-		out[name] = map[string]any{"harness": harness, "model": model.Model, "effort": resolvedEffort, "permission_preset": preset, "sandbox": map[string]any{"mode": mode, "network": network}, "subagents": map[string]any{"allowed": false, "max_concurrent": 0}}
+		// Codex CLI is the catalog source; safe generated profiles are admitted
+		// through the sealed ACP adapter instead of the direct exec transport.
+		profileHarness := harness
+		if harness == string(RunnerCodexExec) {
+			profileHarness = string(RunnerCodexACP)
+		}
+		out[name] = map[string]any{"harness": profileHarness, "model": model.Model, "effort": resolvedEffort, "permission_preset": preset, "sandbox": map[string]any{"mode": mode, "network": network}, "subagents": map[string]any{"allowed": false, "max_concurrent": 0}}
 	}
 	return out
 }
@@ -460,6 +466,8 @@ func printRunnerHelp() {
   tusker runner route <TASK-ID> --lane execute|review --json
 
 Catalog observes installed harnesses without authentication or model launch. --bundled
-uses Tusker's explicit offline Codex fallback. Profiles previews an additive semantic
-profile bootstrap; --write updates the project config without enabling automation.`)
+selects an explicit bundled/offline Codex catalog source; it is not a runtime fallback.
+Profiles previews an additive semantic profile bootstrap; --write updates the project
+config without enabling automation. Safe Codex profiles target codex_acp and require
+tusker acp setup before they can dispatch.`)
 }

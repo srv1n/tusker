@@ -51,7 +51,10 @@ var (
 type Limits struct {
 	MaxFrameBytes      int
 	MaxPendingRequests int
-	MaxUpdates         int
+	// MaxUpdates bounds queued, unread session/update notifications. It is not
+	// a lifetime event count: valid adapters may stream many small deltas.
+	MaxUpdates     int
+	MaxUpdateBytes int
 }
 
 // Timeouts are finite deadlines. Zero values are replaced by defaults.
@@ -104,6 +107,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.Limits.MaxUpdates <= 0 {
 		c.Limits.MaxUpdates = 256
+	}
+	if c.Limits.MaxUpdateBytes <= 0 {
+		c.Limits.MaxUpdateBytes = 32 << 20
 	}
 	if c.Timeouts.Initialize <= 0 {
 		c.Timeouts.Initialize = 30 * time.Second
@@ -309,6 +315,8 @@ type pendingCall struct {
 	done                   chan callResult
 	settled                chan struct{}
 	settleOnce             sync.Once
+	writeDone              chan struct{}
+	writeOnce              sync.Once
 	phaseMu                sync.Mutex
 	phase                  DeliveryPhase
 	responseUpdateSequence uint64
@@ -327,6 +335,8 @@ type pendingRestore struct {
 }
 
 func (p *pendingCall) settle() { p.settleOnce.Do(func() { close(p.settled) }) }
+
+func (p *pendingCall) finishWrite() { p.writeOnce.Do(func() { close(p.writeDone) }) }
 
 func (p *pendingCall) setPhase(v DeliveryPhase) {
 	p.phaseMu.Lock()
@@ -418,12 +428,14 @@ type Client struct {
 	permissionDone          map[string]chan struct{}
 	permissionState         map[string]*permissionRequestState
 	permissionInvocations   int
-	updatesSeen             int
+	updateBytes             int
 	lastActivity            time.Time
 	updateSequence          uint64
 	configSequence          uint64
 	beforePermissionRespond func()
 	beforeConfigCommit      func()
+	beforePromptWrite       func()
+	beforeCancelWriteWait   func()
 }
 
 // Start launches exactly one direct subprocess and starts its bounded reader.
@@ -791,10 +803,39 @@ func (c *Client) restoreSession(ctx context.Context, method, sessionID string, u
 	}
 	var configOptions []ConfigOption
 	if method == "session/load" {
-		if !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return Session{}, c.failCall(errors.New("invalid session/load result: expected explicit null"), phase)
+		trimmed := bytes.TrimSpace(raw)
+		if bytes.Equal(trimmed, []byte("null")) {
+			configOptions = cloneConfigOptions(restore.configOptions)
+		} else {
+			// ACP v1 documents a null load result after history replay. The
+			// pinned codex-acp adapter returns its legacy session state object,
+			// including configOptions, models, and modes. Accept both exact
+			// shapes without weakening malformed-response handling.
+			var result map[string]json.RawMessage
+			if err := json.Unmarshal(trimmed, &result); err != nil || result == nil {
+				if err == nil {
+					err = errors.New("expected null or a non-null object")
+				}
+				return Session{}, c.failCall(fmt.Errorf("invalid session/load result: %w", err), phase)
+			}
+			for _, field := range []string{"models", "modes"} {
+				if value, present := result[field]; present && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+					var object map[string]json.RawMessage
+					if err := json.Unmarshal(value, &object); err != nil || object == nil {
+						return Session{}, c.failCall(fmt.Errorf("invalid session/load %s state", field), phase)
+					}
+				}
+			}
+			if value, present := result["configOptions"]; present {
+				var err error
+				configOptions, err = parseConfigOptions(value)
+				if err != nil {
+					return Session{}, c.failCall(fmt.Errorf("invalid session/load configOptions: %w", err), phase)
+				}
+			} else {
+				configOptions = cloneConfigOptions(restore.configOptions)
+			}
 		}
-		configOptions = cloneConfigOptions(restore.configOptions)
 	} else {
 		var result map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &result); err != nil || result == nil {
@@ -1156,11 +1197,12 @@ func (c *Client) Prompt(ctx context.Context, prompt string) (PromptResult, error
 		c.promptMu.Unlock()
 		return PromptResult{}, err
 	}
-	c.mu.Lock()
-	c.activePrompt = call
-	c.mu.Unlock()
 	c.promptMu.Unlock()
-	if err := c.writeMessage(msg, call); err != nil {
+	if hook := c.beforePromptWrite; hook != nil {
+		hook()
+	}
+	err = c.writeMessage(msg, call)
+	if err != nil {
 		c.mu.Lock()
 		delete(c.pending, call.id)
 		if c.activePrompt == call {
@@ -1216,6 +1258,21 @@ func (c *Client) Cancel(ctx context.Context) error {
 	ctx, cancel := withDeadline(ctx, c.cfg.Timeouts.CancelDrain)
 	defer cancel()
 	permissionDone := c.cancelPendingPermissions()
+	if hook := c.beforeCancelWriteWait; hook != nil {
+		hook()
+	}
+	select {
+	case <-call.writeDone:
+		if phaseRank(call.getPhase()) < phaseRank(DeliveryWriteComplete) {
+			c.poison(ErrDeliveryUnknown)
+			return &OutcomeError{Outcome: OutcomePoisoned, Delivery: call.getPhase(), Err: ErrDeliveryUnknown}
+		}
+	case <-ctx.Done():
+		c.poison(ctx.Err())
+		return &OutcomeError{Outcome: OutcomePoisoned, Delivery: call.getPhase(), Err: ctx.Err()}
+	case <-c.readerDone:
+		return ErrPoisoned
+	}
 	notifyDone := make(chan error, 1)
 	go func() { notifyDone <- c.notify("session/cancel", map[string]any{"sessionId": session.ID}) }()
 	select {
@@ -1300,6 +1357,10 @@ func (c *Client) prepareCall(method string, params any, prompt bool) (*pendingCa
 		c.mu.Unlock()
 		return nil, rpcMessage{}, err
 	}
+	if prompt && c.activePrompt != nil {
+		c.mu.Unlock()
+		return nil, rpcMessage{}, ErrPromptActive
+	}
 	if len(c.pending) >= c.cfg.Limits.MaxPendingRequests {
 		err := c.poisonLocked(fmt.Errorf("%w: pending request limit %d exceeded", ErrProtocol, c.cfg.Limits.MaxPendingRequests))
 		c.mu.Unlock()
@@ -1318,8 +1379,12 @@ func (c *Client) prepareCall(method string, params any, prompt bool) (*pendingCa
 		return nil, rpcMessage{}, fmt.Errorf("%w: ACP request frame for %s is %d bytes, limit %d", ErrProtocol, method, len(frame), c.cfg.Limits.MaxFrameBytes)
 	}
 	c.nextID = nextID
-	p := &pendingCall{id: id, done: make(chan callResult, 1), settled: make(chan struct{}), phase: DeliveryNotSent, prompt: prompt}
+	p := &pendingCall{id: id, done: make(chan callResult, 1), settled: make(chan struct{}), writeDone: make(chan struct{}), phase: DeliveryNotSent, prompt: prompt}
 	c.pending[id] = p
+	if prompt {
+		c.activePrompt = p
+		c.updateBytes = 0
+	}
 	c.mu.Unlock()
 	return p, msg, nil
 }
@@ -1407,6 +1472,13 @@ func (c *Client) awaitCall(ctx context.Context, p *pendingCall) (json.RawMessage
 }
 
 func (c *Client) writeMessage(msg rpcMessage, p *pendingCall) error {
+	defer p.finishWrite()
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.writeMessageLocked(msg, p)
+}
+
+func (c *Client) writeMessageLocked(msg rpcMessage, p *pendingCall) error {
 	b, err := json.Marshal(msg)
 	if err != nil {
 		return err
@@ -1416,8 +1488,6 @@ func (c *Client) writeMessage(msg rpcMessage, p *pendingCall) error {
 		c.poison(fmt.Errorf("acp frame exceeds %d bytes", c.cfg.Limits.MaxFrameBytes))
 		return ErrProtocol
 	}
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
 	p.setPhase(DeliveryWriteStarted)
 	for len(b) > 0 {
 		n, err := c.stdin.Write(b)
@@ -1575,7 +1645,7 @@ func (c *Client) handleResponse(msg rpcMessage) {
 func (c *Client) handleRequest(msg rpcMessage) {
 	if len(msg.ID) == 0 {
 		if msg.Method == "session/update" {
-			sequence, ok := c.recordUpdateObservation()
+			sequence, ok := c.recordUpdateObservation(len(msg.Params))
 			if !ok {
 				return
 			}
@@ -1755,21 +1825,20 @@ func (c *Client) handleRequest(msg rpcMessage) {
 	}()
 }
 
-// recordUpdateObservation is a total per-attempt fuse, not merely a queue
-// capacity check. A provider that emits and drains an unbounded stream must
-// still poison this client rather than run indefinitely or consume unbounded
-// supervisor attention.
-func (c *Client) recordUpdateObservation() (uint64, bool) {
+// recordUpdateObservation bounds cumulative update bytes for the active
+// prompt. Queue occupancy is enforced separately by enqueueUpdate, so normal
+// provider chunking is not mistaken for abuse.
+func (c *Client) recordUpdateObservation(size int) (uint64, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed || c.protocolErr != nil {
 		return 0, false
 	}
-	c.updatesSeen++
-	if c.updatesSeen > c.cfg.Limits.MaxUpdates {
-		_ = c.poisonLocked(fmt.Errorf("%w: total session/update limit %d exceeded", ErrProtocol, c.cfg.Limits.MaxUpdates))
+	if size < 0 || size > c.cfg.Limits.MaxUpdateBytes-c.updateBytes {
+		_ = c.poisonLocked(fmt.Errorf("%w: session/update byte limit %d exceeded", ErrProtocol, c.cfg.Limits.MaxUpdateBytes))
 		return 0, false
 	}
+	c.updateBytes += size
 	c.updateSequence++
 	return c.updateSequence, true
 }

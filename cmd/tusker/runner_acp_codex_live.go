@@ -442,27 +442,20 @@ func codexACPWrapperOwnsRun(run RunStatus, req StartRequest) bool {
 // from the registered project's effective workflow/config. The wrapper never
 // treats its own serialized plan as authority for a bundle path or manifest.
 func canonicalCodexACPWrapperAdmission(store *RuntimeStore, run RunStatus, req StartRequest) (CodexACPProviderPlan, error) {
-	projects, err := store.ListProjects()
+	projects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{LoadDisabled: true, ProjectID: run.ProjectID})
 	if err != nil {
-		return CodexACPProviderPlan{}, fmt.Errorf("list registered projects for codex_acp wrapper: %w", err)
+		return CodexACPProviderPlan{}, fmt.Errorf("load registered project for codex_acp wrapper: %w", err)
 	}
-	var project *RegisteredProject
-	for index := range projects {
-		if projects[index].ProjectID == run.ProjectID {
-			project = &projects[index]
-			break
-		}
+	if len(projects) != 1 || projects[0].LoadError != nil || !projects[0].Project.Enabled {
+		return CodexACPProviderPlan{}, tuskerError(errorInvalidTransition, "codex_acp wrapper refuses an unavailable registered project admission")
 	}
-	if project == nil || !project.Enabled ||
-		!sameCanonicalProjectPath(req.RepoRoot, project.RepoRoot) ||
+	project := projects[0].Project
+	if !sameCanonicalProjectPath(req.RepoRoot, project.RepoRoot) ||
 		!sameCanonicalProjectPath(req.VaultPath, project.VaultRoot) ||
 		!sameCanonicalProjectPath(project.WorkflowPath, workflowPath(project.VaultRoot)) {
 		return CodexACPProviderPlan{}, tuskerError(errorInvalidTransition, "codex_acp wrapper refuses an unregistered or path-rebound project admission")
 	}
-	workflow, err := loadWorkflow(project.VaultRoot)
-	if err != nil {
-		return CodexACPProviderPlan{}, fmt.Errorf("load canonical codex_acp workflow admission: %w", err)
-	}
+	workflow := projects[0].Workflow
 	definition, err := uniqueCodexACPDefinition(workflow.Data.Runners)
 	if err != nil {
 		return CodexACPProviderPlan{}, err

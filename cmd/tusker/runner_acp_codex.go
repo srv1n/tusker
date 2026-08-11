@@ -476,10 +476,30 @@ func (d CodexACPDescriptor) CodexACPEnvironment(inherited []string, auth CodexAC
 		}
 		authValue = filepath.Clean(resolved)
 	}
+	// Codex 0.147.0 applies this policy to model-invoked shell commands. Keep
+	// the adapter's selected credential outside that command environment.
 	config, err := json.Marshal(struct {
-		Model  string `json:"model"`
-		Effort string `json:"model_reasoning_effort,omitempty"`
-	}{Model: strings.TrimSpace(d.Model), Effort: strings.TrimSpace(d.Effort)})
+		Model                  string `json:"model"`
+		Effort                 string `json:"model_reasoning_effort,omitempty"`
+		AllowLoginShell        bool   `json:"allow_login_shell"`
+		ShellEnvironmentPolicy struct {
+			Inherit                string   `json:"inherit"`
+			IgnoreDefaultExcludes  bool     `json:"ignore_default_excludes"`
+			Exclude                []string `json:"exclude"`
+			ExperimentalUseProfile bool     `json:"experimental_use_profile"`
+		} `json:"shell_environment_policy"`
+	}{
+		Model:  strings.TrimSpace(d.Model),
+		Effort: strings.TrimSpace(d.Effort),
+		ShellEnvironmentPolicy: struct {
+			Inherit                string   `json:"inherit"`
+			IgnoreDefaultExcludes  bool     `json:"ignore_default_excludes"`
+			Exclude                []string `json:"exclude"`
+			ExperimentalUseProfile bool     `json:"experimental_use_profile"`
+		}{
+			Inherit: "core", Exclude: []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_HOME"},
+		},
+	})
 	if err != nil {
 		return CodexACPEnvironmentResult{}, err
 	}

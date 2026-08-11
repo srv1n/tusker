@@ -1175,6 +1175,132 @@ func TestFirstEventDeadlineInterruptsNeverStartedRunner(t *testing.T) {
 	}
 }
 
+func TestDaemonACPInterruptLetsWrapperDrainBeforeGroupEscalation(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	statusPath := filepath.Join(t.TempDir(), "acp.status.json")
+	adapterINTPath := filepath.Join(t.TempDir(), "adapter-int")
+	readyPath := filepath.Join(t.TempDir(), "wrapper-ready")
+	script := `
+adapter() {
+  trap 'echo interrupted > "$ADAPTER_INT_PATH"; exit 1' INT
+  trap 'exit 0' TERM
+  while :; do sleep 1; done
+}
+adapter &
+adapter_pid=$!
+trap 'sleep 2; printf "{\\"exit_code\\":130,\\"outcome\\":\\"interrupted\\"}" > "$STATUS_PATH"; kill -TERM "$adapter_pid"; wait "$adapter_pid"; exit 0' INT
+echo ready > "$WRAPPER_READY_PATH"
+wait "$adapter_pid"
+`
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Env = append(os.Environ(), "STATUS_PATH="+statusPath, "ADAPTER_INT_PATH="+adapterINTPath, "WRAPPER_READY_PATH="+readyPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := cmd.Process.Pid
+	pgid := processGroupID(pid)
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	t.Cleanup(func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
+	waitForFileText(t, readyPath, "ready")
+	startedAt, ok := processStartTime(pid)
+	if !ok || startedAt == "" {
+		t.Skip("platform cannot expose the ACP wrapper process start identity")
+	}
+	run := RunStatus{
+		ProjectID: "project-1", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: string(RunnerCodexACP), Lane: runLaneExecute,
+		LeaseState: string(LeaseStateRunning), LeaseOwner: "attempt-acp", LeaseGeneration: 1, ActiveAttemptID: "attempt-acp",
+		ProcessPID: pid, ProcessPGID: pgid, ProcessStartedAt: startedAt, StatusPath: statusPath,
+		StartedAt: time.Now().UTC().Format(time.RFC3339), UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if !processIdentityMatches(run) {
+		t.Fatalf("ACP wrapper fixture identity is not signal-authoritative before interrupt: %#v", run)
+	}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now()
+	if err := (&Daemon{store: store}).InterruptRun(context.Background(), run.RecordID); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed < 1500*time.Millisecond || elapsed >= 5*time.Second {
+		t.Fatalf("ACP wrapper drain took %s, want it to preserve a >1.5s and <5s cancel handoff", elapsed)
+	}
+	if fileExists(adapterINTPath) {
+		t.Fatal("ACP adapter received group SIGINT before its wrapper completed cancellation")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("ACP wrapper did not exit after publishing terminal status")
+	}
+}
+
+func TestDaemonACPInterruptEscalatesIgnoredWrapperCancel(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	readyPath := filepath.Join(t.TempDir(), "wrapper-ready")
+	cmd := exec.Command("sh", "-c", `trap '' INT TERM; echo ready > "$WRAPPER_READY_PATH"; while :; do sleep 1; done`)
+	cmd.Env = append(os.Environ(), "WRAPPER_READY_PATH="+readyPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := cmd.Process.Pid
+	pgid := processGroupID(pid)
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	t.Cleanup(func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
+	waitForFileText(t, readyPath, "ready")
+	startedAt, ok := processStartTime(pid)
+	if !ok || startedAt == "" {
+		t.Skip("platform cannot expose the ACP wrapper process start identity")
+	}
+	run := RunStatus{
+		ProjectID: "project-1", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: string(RunnerACP), Lane: runLaneExecute,
+		LeaseState: string(LeaseStateRunning), LeaseOwner: "attempt-acp", LeaseGeneration: 1, ActiveAttemptID: "attempt-acp",
+		ProcessPID: pid, ProcessPGID: pgid, ProcessStartedAt: startedAt, StatusPath: filepath.Join(t.TempDir(), "acp.status.json"),
+		StartedAt: time.Now().UTC().Format(time.RFC3339), UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if !processIdentityMatches(run) {
+		t.Fatalf("ACP wrapper fixture identity is not signal-authoritative before interrupt: %#v", run)
+	}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Daemon{store: store}).InterruptRun(context.Background(), run.RecordID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("ignored ACP cancellation was not escalated to the containment group")
+	}
+	if processGroupExists(pgid) {
+		t.Fatalf("ignored ACP cancellation left containment group %d alive", pgid)
+	}
+	stored, err := store.FindRun(run.RecordID)
+	if err != nil || stored == nil {
+		t.Fatalf("load interrupted ACP run: %#v %v", stored, err)
+	}
+	if stored.LeaseState != string(LeaseStateInterrupted) || stored.ProcessPID != 0 || stored.ProcessPGID != 0 {
+		t.Fatalf("escalated ACP interrupt did not record canonical stopped state: %#v", stored)
+	}
+}
+
 func TestRetryCircuitBreakerMarksTerminal(t *testing.T) {
 	daemon := &Daemon{}
 	wf := defaultWorkflow()

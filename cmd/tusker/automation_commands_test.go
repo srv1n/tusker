@@ -282,6 +282,7 @@ func automationTestVault(t *testing.T) string {
 
 func registerAutomationTestProject(t *testing.T, vault string) RegisteredProject {
 	t.Helper()
+	setDirectEmergencyProfileForAutomationTest(t, vault)
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.enabled", true); err != nil {
 		t.Fatal(err)
 	}
@@ -298,6 +299,30 @@ func registerAutomationTestProject(t *testing.T, vault string) RegisteredProject
 		t.Fatal(err)
 	}
 	return project
+}
+
+func setDirectEmergencyProfileForAutomationTest(t *testing.T, vault string) {
+	t.Helper()
+	// Legacy daemon fixtures exercise scheduling and lifecycle behavior, not
+	// ACP installation. Select direct Codex explicitly as a test-only emergency
+	// profile so the product's fresh-project ACP default remains fail-closed.
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles.test-emergency-codex-exec", directEmergencyRunnerProfileForTest()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.default_profile", "test-emergency-codex-exec"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func directEmergencyRunnerProfileForTest() map[string]any {
+	return map[string]any{
+		"harness":           string(RunnerCodexExec),
+		"model":             "gpt-5.6-terra",
+		"effort":            "medium",
+		"permission_preset": "workspace-write-offline",
+		"sandbox":           map[string]any{"mode": "workspace-write", "network": false},
+		"subagents":         map[string]any{"allowed": false, "max_concurrent": 0},
+	}
 }
 
 // Legacy automation fixtures exercise behavior other than admission policy.

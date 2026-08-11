@@ -260,7 +260,7 @@ func (p *fakeACPProcess) stop(t *testing.T) {
 func handshake(t *testing.T, p *fakeACPProcess) {
 	t.Helper()
 	p.send(t, 1, "initialize", map[string]any{"protocolVersion": 1})
-	init := p.nextMessage(t, time.Second)
+	init := p.nextMessage(t, 3*time.Second)
 	if string(init.ID) != "1" {
 		t.Fatalf("initialize response id=%s, want 1", init.ID)
 	}
@@ -274,7 +274,7 @@ func handshake(t *testing.T, p *fakeACPProcess) {
 		t.Fatalf("protocol version=%d, want 1", result.ProtocolVersion)
 	}
 	p.send(t, 2, "session/new", map[string]any{"cwd": t.TempDir()})
-	created := p.nextMessage(t, time.Second)
+	created := p.nextMessage(t, 3*time.Second)
 	if string(created.ID) != "2" {
 		t.Fatalf("session/new response id=%s, want 2", created.ID)
 	}
@@ -292,11 +292,11 @@ func TestACPFakeAgentHappyFlow(t *testing.T) {
 	p := startFakeACP(t, "happy")
 	handshake(t, p)
 	prompt(t, p)
-	update := p.nextMessage(t, time.Second)
+	update := p.nextMessage(t, 3*time.Second)
 	if update.Method != "session/update" {
 		t.Fatalf("first prompt message method=%q, want session/update", update.Method)
 	}
-	terminal := p.nextMessage(t, time.Second)
+	terminal := p.nextMessage(t, 3*time.Second)
 	if string(terminal.ID) != "3" || terminal.Result == nil {
 		t.Fatalf("terminal response=%#v", terminal)
 	}

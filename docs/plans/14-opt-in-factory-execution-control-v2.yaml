@@ -4,7 +4,7 @@ title: Opt-in factory execution control
 epic: ORC
 spec_refs:
   - docs/specs/14-opt-in-factory-execution-control.md
-context_fingerprint: sha256:328fd5d576f5008f4b6a02ebff21d21210ad7594642b65041cf8ffa01636f1a4
+context_fingerprint: sha256:0f70e4454bc1a09115d3829548d4e787cf57946c8e0c823df9a6ef16a04a3bbe
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
 factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c

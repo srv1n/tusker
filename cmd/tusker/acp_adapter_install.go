@@ -127,18 +127,35 @@ func installACPAdapter(request ACPAdapterInstallRequest) (ACPAdapterInstallRecei
 		}
 		return existing, nil
 	}
-	if _, err := os.Lstat(finalRoot); err == nil {
-		return ACPAdapterInstallReceipt{}, fmt.Errorf("ACP adapter final root exists without a matching receipt")
-	} else if !os.IsNotExist(err) {
-		return ACPAdapterInstallReceipt{}, fmt.Errorf("inspect ACP adapter final root: %w", err)
-	}
-
 	artifactDigest, err := hashACPAdapterInstallSource(request.ArtifactPath)
 	if err != nil {
 		return ACPAdapterInstallReceipt{}, err
 	}
 	if artifactDigest != identity.ArtifactSHA256 {
 		return ACPAdapterInstallReceipt{}, fmt.Errorf("local ACP adapter artifact sha256 does not match caller-supplied digest")
+	}
+	manifest := ACPAdapterBundleManifest{
+		Schema: ACPAdapterBundleSchema, Provider: acpAdapterInstallProvider, Adapter: acpAdapterInstallAdapter,
+		Version: identity.Version, Protocol: ACPAdapterBundleProtocolV1, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
+		Argv:   []string{filepath.Join(finalRoot, "codex-acp")},
+		Assets: []ACPAdapterBundleAsset{{Path: "codex-acp", SHA256: artifactDigest, Role: "executable"}},
+	}
+	manifestRaw, err := json.Marshal(manifest)
+	if err != nil {
+		return ACPAdapterInstallReceipt{}, err
+	}
+	manifestDigest := acpAdapterBundleDigest(manifestRaw)
+	if _, err := os.Lstat(finalRoot); err == nil {
+		recovered, recoverErr := verifyACPAdapterInstallFinalRoot(identity, bundleDigest, artifactDigest, finalRoot, manifestDigest)
+		if recoverErr != nil {
+			return ACPAdapterInstallReceipt{}, fmt.Errorf("receipt-less ACP adapter final root diverges from requested bundle: %w", recoverErr)
+		}
+		if err := writeACPAdapterInstallReceipt(receiptPath, recovered); err != nil {
+			return ACPAdapterInstallReceipt{}, err
+		}
+		return recovered, nil
+	} else if !os.IsNotExist(err) {
+		return ACPAdapterInstallReceipt{}, fmt.Errorf("inspect ACP adapter final root: %w", err)
 	}
 	stage, err := os.MkdirTemp(filepath.Join(root, ".staging"), "install-")
 	if err != nil {
@@ -176,17 +193,6 @@ func installACPAdapter(request ACPAdapterInstallRequest) (ACPAdapterInstallRecei
 		return ACPAdapterInstallReceipt{}, err
 	}
 
-	manifest := ACPAdapterBundleManifest{
-		Schema: ACPAdapterBundleSchema, Provider: acpAdapterInstallProvider, Adapter: acpAdapterInstallAdapter,
-		Version: identity.Version, Protocol: ACPAdapterBundleProtocolV1, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
-		Argv:   []string{filepath.Join(finalRoot, "codex-acp")},
-		Assets: []ACPAdapterBundleAsset{{Path: "codex-acp", SHA256: artifactDigest, Role: "executable"}},
-	}
-	manifestRaw, err := json.Marshal(manifest)
-	if err != nil {
-		return ACPAdapterInstallReceipt{}, err
-	}
-	manifestDigest := acpAdapterBundleDigest(manifestRaw)
 	if err := writeACPAdapterInstallFile(filepath.Join(stageRoot, acpAdapterInstallManifestPath), manifestRaw, 0o400); err != nil {
 		return ACPAdapterInstallReceipt{}, err
 	}
@@ -206,26 +212,9 @@ func installACPAdapter(request ACPAdapterInstallRequest) (ACPAdapterInstallRecei
 	if err := syncACPAdapterInstallDirectory(filepath.Join(root, "bundles")); err != nil {
 		return ACPAdapterInstallReceipt{}, err
 	}
-	finalRootDigest, err := ACPAdapterBundleFinalRootDigest(finalRoot, manifestDigest)
-	if err != nil {
-		return ACPAdapterInstallReceipt{}, err
-	}
-	validated, err := ValidateACPAdapterBundle(ACPAdapterBundleValidationRequest{
-		BundleRoot: finalRoot, ManifestPath: acpAdapterInstallManifestPath, ExpectedManifestSHA256: manifestDigest,
-		ExpectedDescriptor: ACPAdapterBundleDescriptorPolicy{Provider: acpAdapterInstallProvider, Adapter: acpAdapterInstallAdapter, Version: identity.Version, LaunchKind: ACPAdapterBundleLaunchNative},
-		ExpectedFinalRoot:  finalRoot, ExpectedFinalRootDigest: finalRootDigest, TrustCurrentUserBoundary: true,
-		ProviderAllowed: func(provider string) bool { return provider == acpAdapterInstallProvider },
-	})
+	receipt, err := verifyACPAdapterInstallFinalRoot(identity, bundleDigest, artifactDigest, finalRoot, manifestDigest)
 	if err != nil {
 		return ACPAdapterInstallReceipt{}, fmt.Errorf("validate published ACP adapter bundle: %w", err)
-	}
-	if err := validateACPAdapterInstallBundleBinding(validated, artifactDigest, finalRoot); err != nil {
-		return ACPAdapterInstallReceipt{}, err
-	}
-	receipt := ACPAdapterInstallReceipt{
-		Schema: acpAdapterInstallReceiptSchema, BundleDigest: bundleDigest, ArtifactSHA256: artifactDigest,
-		Publisher: identity.Publisher, PublisherVerification: acpAdapterCallerMetadataStatus,
-		SourceURL: identity.SourceURL, SourceVerification: acpAdapterCallerMetadataStatus, FinalRootDigest: finalRootDigest, Bundle: validated,
 	}
 	if err := writeACPAdapterInstallReceipt(receiptPath, receipt); err != nil {
 		return ACPAdapterInstallReceipt{}, err
@@ -261,14 +250,31 @@ func doctorACPAdapter(request ACPAdapterDoctorRequest) (ACPAdapterDoctorReport, 
 	if err != nil {
 		return report, err
 	}
-	if !exists {
+	if exists {
+		report.Installed = true
+		if err := validateACPAdapterInstallReceipt(root, request.BundleDigest, receipt); err != nil {
+			report.Integrity, report.ValidationError = "invalid", err.Error()
+			return report, nil
+		}
+		// Bundle integrity does not establish a workflow/profile configuration.
+		// This doctor intentionally does not inspect or mutate either.
+		report.Integrity = "valid"
+		return report, nil
+	}
+
+	packaged, err := validatePackagedACPAdapterInstallation(root, request.BundleDigest)
+	if err != nil {
+		report.Installed = packaged
+		if packaged {
+			report.Integrity, report.ValidationError = "invalid", err.Error()
+			return report, nil
+		}
+		return report, err
+	}
+	if !packaged {
 		return report, nil
 	}
 	report.Installed = true
-	if err := validateACPAdapterInstallReceipt(root, request.BundleDigest, receipt); err != nil {
-		report.Integrity, report.ValidationError = "invalid", err.Error()
-		return report, nil
-	}
 	// Bundle integrity does not establish a workflow/profile configuration.
 	// This doctor intentionally does not inspect or mutate either.
 	report.Integrity = "valid"
@@ -596,6 +602,31 @@ func validateACPAdapterInstallReceipt(root, expectedDigest string, receipt ACPAd
 		return err
 	}
 	return validateACPAdapterInstallBundleBinding(receipt.Bundle, receipt.ArtifactSHA256, finalRoot)
+}
+
+func verifyACPAdapterInstallFinalRoot(identity acpAdapterInstallIdentity, bundleDigest, artifactDigest, finalRoot, manifestDigest string) (ACPAdapterInstallReceipt, error) {
+	finalRootDigest, err := ACPAdapterBundleFinalRootDigest(finalRoot, manifestDigest)
+	if err != nil {
+		return ACPAdapterInstallReceipt{}, err
+	}
+	validated, err := ValidateACPAdapterBundle(ACPAdapterBundleValidationRequest{
+		BundleRoot: finalRoot, ManifestPath: acpAdapterInstallManifestPath, ExpectedManifestSHA256: manifestDigest,
+		ExpectedDescriptor: ACPAdapterBundleDescriptorPolicy{Provider: acpAdapterInstallProvider, Adapter: acpAdapterInstallAdapter, Version: identity.Version, LaunchKind: ACPAdapterBundleLaunchNative},
+		ExpectedFinalRoot:  finalRoot, ExpectedFinalRootDigest: finalRootDigest, TrustCurrentUserBoundary: true,
+		ProviderAllowed: func(provider string) bool { return provider == acpAdapterInstallProvider },
+	})
+	if err != nil {
+		return ACPAdapterInstallReceipt{}, err
+	}
+	if err := validateACPAdapterInstallBundleBinding(validated, artifactDigest, finalRoot); err != nil {
+		return ACPAdapterInstallReceipt{}, err
+	}
+	return ACPAdapterInstallReceipt{
+		Schema: acpAdapterInstallReceiptSchema, BundleDigest: bundleDigest, ArtifactSHA256: artifactDigest,
+		Publisher: identity.Publisher, PublisherVerification: acpAdapterCallerMetadataStatus,
+		SourceURL: identity.SourceURL, SourceVerification: acpAdapterCallerMetadataStatus,
+		FinalRootDigest: finalRootDigest, Bundle: validated,
+	}, nil
 }
 
 func validateACPAdapterInstallBundleBinding(bundle ACPAdapterBundleVerificationReceipt, artifactDigest, finalRoot string) error {

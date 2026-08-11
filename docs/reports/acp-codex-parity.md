@@ -20,8 +20,10 @@ behavior.
 | Launch | Launch argv is returned only after immediate revalidation of an externally anchored complete-bundle receipt and exact binding to either one native executable or `[absolute-node, absolute-entrypoint]`. The provider descriptor alone cannot authorize launch. It rejects attempt-time `npx`, shells, PATH lookup, symlinked files, and package-manager launchers. |
 | Bundled Codex only | External `CODEX_PATH` is unsupported and never forwarded. The npm packager seals the exact compatible `@openai/codex` platform package and binds each native support executable in the manifest. |
 | Verified install | The local descriptor fingerprint commits to adapter version, interpreter/entrypoint, and every declared runtime asset. Launch additionally requires the complete sealed tree, host platform, exact manifest/root receipt, and immediate pre-spawn revalidation. This proves local bytes, not publisher identity. |
-| Bootstrap settings | `CODEX_CONFIG` carries model/reasoning. `INITIAL_AGENT_MODE` is explicitly `read-only` or `agent` from the resolved profile; `agent-full-access` remains refused. Bootstrap mode never grants Tusker authority. |
+| Bootstrap settings | `CODEX_CONFIG` carries model/reasoning plus a fail-closed child-process environment policy: core variables only, normal secret exclusions enabled, `OPENAI_API_KEY`/`CODEX_API_KEY`/`CODEX_HOME` explicitly excluded, `allow_login_shell=false`, and the pinned Codex key `experimental_use_profile=false`. Codex itself receives the one selected auth source, but model-invoked commands do not. `INITIAL_AGENT_MODE` is explicitly `read-only` or `agent` from the resolved profile; `agent-full-access` remains refused. Bootstrap mode never grants Tusker authority. |
 | Verified settings | Before prompt, integration must read advertised `configOptions`, require the exact official IDs `model`, `reasoning_effort`, and `mode` with the desired selectable values, call `session/set_config_option`, then require exact returned values from `VerifyApplied`. Aliases, missing options, and coercion fail admission. |
+| Cancellation and streaming bounds | Prompt publication is linearized before the active call is cancellable, so `session/cancel` cannot overtake `session/prompt` on the wire. The ACP queue remains bounded at 256 unread updates, while a separate 32 MiB cumulative update-byte budget resets per prompt. The detached wrapper receives the daemon's first interrupt, drains ACP cancellation and terminal status for up to the configured window, and only then permits process-group escalation. |
+| Crash recovery | Native and npm installers seal and validate the complete content-addressed tree before writing its receipt. A later identical setup can reconstruct a missing receipt only after independently revalidating source identity, manifest, modes, tree, and root digest; divergent or incomplete roots are rejected. |
 | Auth/readiness | The caller selects exactly one auth contract: ChatGPT session (`CODEX_HOME`), `CODEX_API_KEY`, or `OPENAI_API_KEY`. Only that source is forwarded. The non-secret method and principal digest are retained for correlation; credentials are not. Install, conformance, auth, and Tusker task authorization remain separate conditions. |
 | Permission callbacks | The pinned adapter's official nested `toolCall` shapes are normalized into read/write/execute/network requests. Workspace-write operations require exact attempt/session binding, canonical workspace confinement, policy and budget allowance, and an offered `allow_once`; unknown shapes and full access fail closed. |
 | Session references | A local correlation token binds provider session, adapter version/fingerprint, project, canonical workspace, profile, non-secret auth-principal digest, originating attempt, and work revision. Decode requires the expected binding. The token is not resume authority: shared integration must still verify the durable originating attempt and current authorization. |
@@ -64,6 +66,12 @@ The concrete local-primary path now:
    fail-closed, resume remains disabled, and `delivery_unknown` cannot retry or
    fall back to the direct runner.
 
+The review packaging path is also provenance-bound: a clean worktree is
+required by default; `--allow-dirty` is explicit and records `HEAD`, requested
+base, merge-base, porcelain-v2 state, per-file source classification, and
+SHA-256 digests, with an embedded post-extraction verifier. This archive is a
+review handoff, not a release artifact or publisher-signing claim.
+
 The local doctor proves bundle integrity and selected auth-source presence only.
 It deliberately reports neither workflow configuration nor authentication as
 successful.
@@ -82,11 +90,14 @@ The focused command is:
 go test ./cmd/tusker -run 'CodexACP' -count=1
 ```
 
-The local machine additionally passed both modes of the environment-gated
+The local machine additionally passed all three variants of the environment-gated
 `TestLiveCodexACPPrimarySmoke`: exact sealed Node/adapter/Codex launch,
 authenticated initialize, config negotiation, prompt, and durable terminal
 status. The workspace-write mode created and verified one exact file inside a
 disposable workspace using `execute-standard`; the read-only mode used
-`review-independent` without tools. Direct `codex_exec` remains an explicit
+`review-independent` without tools. A second workspace-write smoke ran a bounded
+helper and proved `OPENAI_API_KEY`, `CODEX_API_KEY`, and `CODEX_HOME` were all
+absent from the model-invoked process while ChatGPT-session authentication still
+succeeded. Direct `codex_exec` remains an explicit
 emergency profile only; there is no automatic fallback after prompt delivery.
 Resume and public-distribution gates remain separate future work.
