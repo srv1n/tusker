@@ -12,6 +12,11 @@ installed binary is executable truth; this skill routes intent. If the needed
 capability or compatibility fingerprint is absent, report the exact mismatch
 and supported repair. Do not improvise a legacy workflow.
 
+Local Codex automation requires both the `acp setup` command family and the
+`codex_acp` runner adapter. If either is absent, the installed binary predates
+the ACP-primary source contract: update it instead of silently substituting
+`codex_exec`.
+
 ## Route once
 
 Read only the selected terminal guide:

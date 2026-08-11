@@ -51,6 +51,9 @@ func TestInstalledCapabilityManifest(t *testing.T) {
 	if manifest.RunnerCatalogSchema != "tusker.runner-catalog/v1" {
 		t.Fatalf("runner catalog schema = %q", manifest.RunnerCatalogSchema)
 	}
+	if !containsString(manifest.RunnerAdapters, string(RunnerCodexACP)) {
+		t.Fatalf("manifest omitted primary local runner %q: %#v", RunnerCodexACP, manifest.RunnerAdapters)
+	}
 	if !containsString(manifest.Schemas.Delivery, deliveryPlanV2Schema) || !containsString(manifest.Schemas.Review, reviewResultSchema) || !containsString(manifest.Schemas.Completion, completionTransactionSchema) || !containsString(manifest.Schemas.Receipt, v7LandingReceiptSchema) {
 		t.Fatalf("manifest omitted core schemas: %#v", manifest.Schemas)
 	}

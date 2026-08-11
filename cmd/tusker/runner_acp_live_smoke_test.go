@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// This opt-in test exercises the actual sealed adapter, authenticated Codex
+// This environment-gated test exercises the actual sealed adapter, authenticated Codex
 // session, detached wrapper, config negotiation, prompt, and terminal status.
 // Ordinary unit runs never contact a provider.
 func TestLiveCodexACPPrimarySmoke(t *testing.T) {

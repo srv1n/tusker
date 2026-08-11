@@ -119,6 +119,7 @@ func buildCapabilitiesManifest(info *debug.BuildInfo, executable string) (capabi
 		RunnerAdapters: []string{
 			string(RunnerClaude),
 			string(RunnerCodex),
+			string(RunnerCodexACP),
 			string(RunnerCodexAppServer),
 			string(RunnerCodexCloud),
 			string(RunnerCodexExec),

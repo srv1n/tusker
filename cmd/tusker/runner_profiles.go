@@ -584,10 +584,10 @@ func validateRunnerProfileDefinition(name string, profile RunnerProfileDefinitio
 	harness := RunnerName(strings.TrimSpace(profile.Harness))
 	switch harness {
 	case RunnerCodexAppServer:
-		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness uses retired value %q", name, profile.Harness), withPath(path), withHint("migrate the profile harness to codex_exec"))
+		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness uses retired value %q", name, profile.Harness), withPath(path), withHint("run `tusker acp setup` and migrate the profile harness to codex_acp; keep codex_exec only as an explicit fallback"))
 	case RunnerCodex, RunnerCodexExec, RunnerCodexCloud, RunnerClaude, RunnerCodexACP:
 	default:
-		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness has unsupported value %q", name, profile.Harness), withPath(path), withHint("use codex_exec or claude-code"))
+		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness has unsupported value %q", name, profile.Harness), withPath(path), withHint("use codex_acp after `tusker acp setup`, or explicitly select codex_exec, codex_cloud, or claude-code"))
 	}
 	if !validRunnerModelName(profile.Model) {
 		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.model has unsupported value %q", name, profile.Model), withPath(path), withHint("use a known model family such as gpt-5.x, claude-opus-4-8, claude-fable-5, sonnet-4.6, or glm-5.2"))

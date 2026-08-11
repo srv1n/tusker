@@ -41,7 +41,7 @@ Tusker is the harness that supplies all three. See the driving spec:
 flowchart TD
     spec["Operator / spec session\n(grill → spec + decisions)"] -->|emits| vault["Task contracts\nin the .tusker vault"]
     vault --> claim{"Who claims?"}
-    claim -->|resident daemon| worker["Dispatched worker\n(codex_exec / claude-code)"]
+    claim -->|resident daemon| worker["Dispatched worker\n(codex_acp primary / explicit fallbacks)"]
     claim -->|interactive session| worker2["Hands-on agent\n(claim sets 'worked outside daemon')"]
     worker --> proof["Proof rows + evidence"]
     worker2 --> proof
@@ -58,6 +58,7 @@ flowchart TD
 |---|---|---|
 | Tasks & proof | Two-layer contracts, lifecycle status, proof rows, evidence, acceptance | [tasks-and-proof.md](tasks-and-proof.md) |
 | Orchestration | Daemon polling, dispatch, runs/leases, waves, interactive session attach | [orchestration.md](orchestration.md) |
+| Local coding-agent transport | ACP-primary Codex setup, authority boundary, explicit fallback, and Cloud separation | [ACP migration](../specs/26-acp-runner-migration.md) |
 | Execution observability | Immutable execution identities, direct work, provider children, and convergent timelines | [execution-observability.md](execution-observability.md) |
 | Gates | Per-change / wave-end / nightly gate tiers, gate-ledger, closeout checkpoints | [gates.md](gates.md) |
 | Skills & knowledge | The `tusker` operator skill, per-repo project-knowledge skill, domain canon | [skills.md](skills.md) |

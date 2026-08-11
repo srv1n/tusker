@@ -415,7 +415,7 @@ func validateCodexACPWrapperRequest(req runnerWrapperRequest) error {
 // codexACPWrapperOwnsRun intentionally strengthens the generic wrapper lease
 // predicate. A Codex ACP handoff is valid only for the exact concrete run and
 // its immutable execution selection; permissive empty legacy fields are not a
-// safe compatibility mode for this opt-in provider.
+// safe compatibility mode for the primary local provider.
 func codexACPWrapperOwnsRun(run RunStatus, req StartRequest) bool {
 	if strings.TrimSpace(req.ProjectID) == "" || req.ProjectID != run.ProjectID ||
 		strings.TrimSpace(req.RecordID) == "" || req.RecordID != run.RecordID ||

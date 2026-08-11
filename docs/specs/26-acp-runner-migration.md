@@ -20,6 +20,18 @@ Tusker continues to own task state, claims, leases, attempts, workspace assignme
 
 The point of this migration is deletion: replace duplicated provider-specific session, permission, cancellation, and event plumbing with one bounded ACP client. If the final design adds ACP while retaining equivalent direct lifecycle implementations indefinitely, the migration has failed.
 
+## Implementation status — 2026-08-11
+
+The common ACP v1 client, process supervision, Codex adapter, permission broker,
+sealed npm bootstrap, detached runtime integration, and machine-local setup are
+implemented. Codex ACP is the primary local runner after `tusker acp setup`;
+authenticated read-only and workspace-write smokes passed on the development
+machine. `codex_exec` is an explicitly selected emergency profile only, never
+an automatic retry or fallback after possible delivery. `codex_cloud` remains
+separate. Claude ACP integration, session resume, default-on soak, direct-runner
+deletion, and public-distribution gates remain open; this local cutover does not
+claim those later gates.
+
 ```mermaid
 flowchart TD
     T["Tusker authority<br/>task, lease, attempt, workspace, policy,<br/>budget, evidence, gates, waves"]
@@ -301,7 +313,7 @@ Each provider must prove on the exact pinned adapter fingerprint:
 - fresh session, authorized load/resume when negotiated, prompt, streaming update, tool call, permission allow/reject, interrupt, terminal result, timeout, malformed frame, adapter crash, and descendant cleanup;
 - normalized receipts and execution observations preserve at least the operator-relevant information of the direct runner;
 - model, reasoning/effort, sandbox, approval, workspace, and configured environment semantics are either preserved or explicitly reported as unsupported before launch;
-- one opt-in authenticated smoke test completes without secrets in logs;
+- one environment-gated authenticated smoke test completes without secrets in logs;
 - fallback to the direct runner works for a new attempt, while ambiguous delivery never triggers fallback;
 - a soak covering the agreed production-like task mix shows no leaked processes, unbounded growth, stuck permissions, duplicate prompts, or unexplained outcome drift.
 
@@ -324,7 +336,7 @@ go test ./... -count=1
 ./tusker skill doctor --strict --json
 ```
 
-Authenticated provider smoke tests are separate opt-in evidence because local credentials and installed adapters are environment facts. Hosted CI, packaging, and a human go/no-go remain separate from local test success.
+Authenticated provider smoke tests are separate environment-gated evidence because local credentials and installed adapters are machine facts. Hosted CI, public packaging, and a human release go/no-go remain separate from local test success.
 
 ### Deletion gate
 

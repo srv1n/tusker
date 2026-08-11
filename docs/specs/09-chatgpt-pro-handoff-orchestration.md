@@ -11,9 +11,16 @@ capsule:
 
 Date: 2026-06-04
 
-Status: handoff note for Tusker implementation
+Status: external-handoff contract; local runner details superseded by
+`26-acp-runner-migration.md`
 
 Audience: Tusker runtime, runner, workflow, and skill maintainers
+
+> Current transport note (2026-08-11): ChatGPT handoff remains an external
+> artifact/review transport, but the Tusker-owned local Codex apply lane is now
+> `codex_acp` after `tusker acp setup`. References below to `codex_exec` describe
+> the former implementation or its explicit emergency fallback; they do not
+> authorize automatic fallback after possible ACP prompt delivery.
 
 ## Summary
 
@@ -49,7 +56,7 @@ Do not build a second Tusker-flavored control plane in `chatgpt-handoff`.
 | Live proof case | Kurpod produced a real ChatGPT Pro result with patch, notes, and bundle attachments. Those files were fetched successfully. |
 | Tusker task | Kurpod task `KCR-T-0012` was created under epic `KCR` for "Fix iOS Open Vault crash + streaming encryption perf". It is intentionally backlog until acceptance and verification are added. |
 | Tusker runtime | This checkout contains the V7 automation command surface (`go run ./cmd/tusker automation --help`), but the installed `tusker` on PATH may lag and not expose `automation`. Update/install before relying on PATH. |
-| Codex dispatch | Tusker dispatches one detached `codex exec` process per attempt with workspace prep, cwd invariants, runtime state, events, logs, review packets, and review/rework handling. |
+| Codex dispatch | Tusker dispatches one detached, sealed `codex_acp` process per attempt with workspace prep, authority-bound permissions, runtime state, events, logs, review packets, and review/rework handling. Direct `codex_exec` is explicit emergency fallback only. |
 
 ## Decisions
 
@@ -160,7 +167,7 @@ Tusker collect/resolve step
   |
   v
 Tusker automation dispatch
-  - detached `codex_exec` runner
+  - detached `codex_acp` runner
   - isolated workspace/worktree
   - apply/check/test
   |
@@ -191,8 +198,8 @@ Recommended `tusker.yaml` automation overlay shape:
 ```yaml
 automation:
   trigger_states: [ready, rework]
-  default_runner: codex_exec
-  enabled_runners: [codex_exec, codex_cloud, claude-code]
+  default_runner: codex_acp
+  enabled_runners: [codex_acp, codex_exec, codex_cloud, claude-code]
   workspace:
     root: "workspaces"
     strategy: worktree
@@ -325,7 +332,7 @@ go run ./cmd/tusker automation dispatch KCR-T-0012 --json
 go run ./cmd/tusker runs inspect KCR-T-0012 --json
 ```
 
-Use Tusker's detached `codex_exec` runner rather than spawning Codex outside the run ledger.
+Use Tusker's detached `codex_acp` runner rather than spawning Codex outside the run ledger. Run `tusker acp setup` first so the machine-local bundle and auth identity exist; select `codex_exec` only as a new, explicit emergency attempt.
 
 #### Apply Input Visibility
 

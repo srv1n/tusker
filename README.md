@@ -92,6 +92,25 @@ then runs the Go checks and binary build.
 make check
 ```
 
+## Local Codex ACP setup
+
+Codex ACP is the primary local automation runner. Bootstrap its exact npm
+runtime once, then let Tusker seal and configure it; task attempts never invoke
+npm/npx, a shell, or PATH lookup:
+
+```bash
+ACP_PREFIX="$HOME/.local/share/tusker/codex-acp-1.1.14"
+npm install --prefix "$ACP_PREFIX" --ignore-scripts --no-audit --no-fund --save-exact \
+  @agentclientprotocol/codex-acp@1.1.14 @openai/codex@0.147.0
+tusker acp setup --npm-prefix "$ACP_PREFIX" --node "$(command -v node)" \
+  --auth-source chatgpt_session --vault "$PWD/.tusker" --json
+```
+
+Setup uses the existing ChatGPT session (or one explicitly selected API-key
+source), writes ignored machine-local configuration, and keeps `codex_exec` as
+an explicit emergency profile only. It never automatically falls back after a
+prompt may have been delivered. `codex_cloud` remains a separate remote runner.
+
 Run `go mod tidy` after first applying this cleanup on a machine with network
 access so `go.sum` is populated.
 
@@ -104,8 +123,10 @@ access so `go.sum` is populated.
 | Windows | Portable internal Go packages are kept compiling in CI, but the CLI, daemon, installer, and release artifacts are not supported |
 
 The release matrix intentionally contains only macOS and Linux targets. The
-shell installer requires `curl`, Python 3, a SHA-256 tool, and `minisign`; it
-fails closed until the repository owner provisions the production public key.
+future public-release shell installer requires `curl`, Python 3, a SHA-256
+tool, and `minisign`; it fails closed until the repository owner provisions
+the production public key. Signing is not required for source builds,
+`make install`, or local ACP setup.
 
 Install the cross-platform CLI and Codex/Claude user skills with:
 
