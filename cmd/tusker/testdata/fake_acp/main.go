@@ -89,6 +89,7 @@ type server struct {
 	oversizeByte int
 	in           *bufio.Reader
 	session      string
+	codexConfig  map[string]string
 }
 
 func (s *server) serve() {
@@ -130,6 +131,11 @@ func (s *server) serve() {
 					return
 				}
 				s.newSession(req)
+			case "session/set_config_option":
+				if !initialized {
+					return
+				}
+				s.setConfigOption(req)
 			case "session/prompt":
 				if !initialized {
 					return
@@ -188,11 +194,63 @@ func (s *server) newSession(req message) {
 		}})
 		return
 	}
-	write(message{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"sessionId": s.session}})
+	result := map[string]any{"sessionId": s.session}
+	if s.configureCodexSession() {
+		result["configOptions"] = s.codexConfigOptions()
+	}
+	write(message{JSONRPC: "2.0", ID: req.ID, Result: result})
 	if s.mode == "duplicate-id" {
 		// Duplicate responses are adversarial input; a client must not treat
 		// the second response as a second session transition.
 		write(message{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"sessionId": s.session}})
+	}
+}
+
+func (s *server) configureCodexSession() bool {
+	raw := os.Getenv("CODEX_CONFIG")
+	if raw == "" {
+		return false
+	}
+	var config struct {
+		Model  string `json:"model"`
+		Effort string `json:"model_reasoning_effort"`
+	}
+	if json.Unmarshal([]byte(raw), &config) != nil || strings.TrimSpace(config.Model) == "" {
+		return false
+	}
+	mode := strings.TrimSpace(os.Getenv("INITIAL_AGENT_MODE"))
+	if mode == "" {
+		return false
+	}
+	s.codexConfig = map[string]string{"model": config.Model, "reasoning_effort": config.Effort, "mode": mode}
+	return true
+}
+
+func (s *server) setConfigOption(req message) {
+	if s.codexConfig == nil {
+		write(message{JSONRPC: "2.0", ID: req.ID, Error: map[string]any{"code": -32601, "message": "config unsupported"}})
+		return
+	}
+	params := map[string]any{}
+	paramsBytes, _ := json.Marshal(req.Params)
+	_ = json.Unmarshal(paramsBytes, &params)
+	id, _ := params["configId"].(string)
+	value, _ := params["value"].(string)
+	if _, exists := s.codexConfig[id]; !exists || value != s.codexConfig[id] {
+		write(message{JSONRPC: "2.0", ID: req.ID, Error: map[string]any{"code": -32602, "message": "unexpected config"}})
+		return
+	}
+	write(message{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"configOptions": s.codexConfigOptions()}})
+}
+
+func (s *server) codexConfigOptions() []map[string]any {
+	if s.codexConfig == nil {
+		return nil
+	}
+	return []map[string]any{
+		{"id": "mode", "name": "Mode", "type": "select", "currentValue": s.codexConfig["mode"], "options": []map[string]string{{"value": s.codexConfig["mode"], "name": s.codexConfig["mode"]}}},
+		{"id": "model", "name": "Model", "type": "select", "currentValue": s.codexConfig["model"], "options": []map[string]string{{"value": s.codexConfig["model"], "name": s.codexConfig["model"]}}},
+		{"id": "reasoning_effort", "name": "Reasoning effort", "type": "select", "currentValue": s.codexConfig["reasoning_effort"], "options": []map[string]string{{"value": s.codexConfig["reasoning_effort"], "name": s.codexConfig["reasoning_effort"]}}},
 	}
 }
 

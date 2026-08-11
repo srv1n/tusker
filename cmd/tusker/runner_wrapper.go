@@ -14,7 +14,7 @@ import (
 )
 
 func isACPRunner(runner RunnerName) bool {
-	return runner == RunnerACP
+	return runner == RunnerACP || runner == RunnerCodexACP
 }
 
 type runnerWrapperRequest struct {
@@ -219,6 +219,11 @@ func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*St
 	case RunnerACP:
 		if req.Resume != nil {
 			return nil, tuskerError(errorInvalidTransition, string(runner)+" wrapper refuses a resume request before a provider adapter enables negotiated resume")
+		}
+		return startLiveACPForRunner(ctx, req.Start, runner)
+	case RunnerCodexACP:
+		if err := validateCodexACPWrapperRequest(req); err != nil {
+			return nil, err
 		}
 		return startLiveACPForRunner(ctx, req.Start, runner)
 	default:

@@ -47,7 +47,7 @@ func (r *ACPRunner) Capabilities() RunnerCapabilities {
 // attempt heartbeat, durable PID/PGID receipt, lease fence, and final cleanup;
 // an in-process ACP launch would bypass each of those controls.
 func (r *ACPRunner) Start(ctx context.Context, req StartRequest) (*StartResult, error) {
-	if err := validateACPLaunchRequest(req); err != nil {
+	if err := validateACPLaunchRequestForRunner(r.Name(), req); err != nil {
 		return nil, err
 	}
 	return startDetachedRunnerWrapper(ctx, r.Name(), req, nil, r.Capabilities())
@@ -201,7 +201,7 @@ func startLiveACP(ctx context.Context, req StartRequest) (*StartResult, error) {
 }
 
 func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerName) (*StartResult, error) {
-	if err := validateACPLaunchRequest(req); err != nil {
+	if err := validateACPLaunchRequestForRunner(runner, req); err != nil {
 		return nil, err
 	}
 	if req.ContainmentPGID <= 0 {
@@ -214,9 +214,32 @@ func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerN
 		return nil, tuskerError(errorInvalidTransition, "acp_v1 refuses a pre-existing terminal status path")
 	}
 
-	workspace, argv, adapter, err := resolveACPRunnerLaunch(req)
+	workspace, argv, adapter, err := resolveACPRunnerLaunchForRunner(runner, req)
 	if err != nil {
 		return nil, err
+	}
+	var codexPlan *CodexACPProviderPlan
+	var codexDescriptor CodexACPDescriptor
+	var environment []string
+	if runner == RunnerCodexACP {
+		if req.CodexACP == nil {
+			return nil, tuskerError(errorConfigInvalid, "codex_acp launch is missing its provider plan")
+		}
+		codexPlan = req.CodexACP
+		codexDescriptor, environment, err = codexPlan.wrapperEnvironment()
+		if err != nil {
+			return nil, tuskerError(errorConfigInvalid, "codex_acp launch environment/auth validation failed: "+err.Error())
+		}
+		// descriptorAndArgv revalidates the same receipt immediately before
+		// launch.  Reject any serialized argv drift rather than using a fresh
+		// value hidden from the wrapper request.
+		_, expectedArgv, verifyErr := codexPlan.descriptorAndArgv()
+		if verifyErr != nil || !equalStringSlices(argv, expectedArgv) {
+			if verifyErr == nil {
+				verifyErr = errors.New("serialized Codex ACP argv drift")
+			}
+			return nil, tuskerError(errorConfigInvalid, "codex_acp pre-spawn receipt validation failed: "+verifyErr.Error())
+		}
 	}
 	physical := argv[0]
 	provenance, err := resolveACPAttemptProvenance(req, adapter)
@@ -241,15 +264,42 @@ func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerN
 
 	eventLog := NewEventLog(req.EventSinkPath)
 	policy := codexPolicyForLane(req.CodexPolicy, req.Lane)
+	if codexPlan != nil {
+		if err := appendACPEvent(eventLog, "acp_codex_bundle_verified", acpAttemptProvenance{Runner: runner, AttemptID: req.AttemptID}, map[string]any{
+			"provider": codexACPProvider, "adapter_version": boundedACPObservation(codexPlan.AdapterVersion),
+			"receipt": boundedACPObservation(codexPlan.BundleReceipt.VerifiedContentDigest),
+		}); err != nil {
+			return nil, err
+		}
+	}
 	// Permission callbacks cannot arrive until a prompt is sent below, after
 	// handle receives the exact process and namespaced session provenance.
 	// Keeping this as a handle lookup avoids closing over a stale pre-session
 	// value and makes every tool observation carry the same attempt binding.
 	var handle *acpLiveHandle
+	if codexPlan != nil {
+		// This is deliberately the last filesystem-dependent operation before
+		// acp.Start.  The lower-level client receives only the just-revalidated
+		// direct native argv, never a mutable bundle path it resolves itself.
+		_, launchArgv, launchErr := codexPlan.descriptorAndArgv()
+		if launchErr != nil || !equalStringSlices(argv, launchArgv) {
+			if launchErr == nil {
+				launchErr = errors.New("Codex ACP argv changed before process start")
+			}
+			return nil, tuskerError(errorConfigInvalid, "codex_acp final pre-spawn bundle validation failed: "+launchErr.Error())
+		}
+		argv = launchArgv
+		physical = argv[0]
+	}
 	client, err := acp.Start(ctx, acp.Config{
-		Argv:   argv,
-		CWD:    workspace,
-		Env:    acpRunnerEnvironment(req, workspace, policy),
+		Argv: argv,
+		CWD:  workspace,
+		Env: func() []string {
+			if codexPlan != nil {
+				return environment
+			}
+			return acpRunnerEnvironment(req, workspace, policy)
+		}(),
 		Stderr: acpDiagnosticSink{log: log},
 		Timeouts: acp.Timeouts{
 			Prompt: acpDurationMS(policy.TurnTimeoutMS),
@@ -259,6 +309,9 @@ func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerN
 			if handle == nil {
 				return acp.Reject, nil
 			}
+			// Codex is currently read-only only.  Its public edit callback has no
+			// trustworthy target and execute has no granted authority, so retain
+			// the generic fail-closed broker until permission parity is reviewed.
 			return evaluateACPTransportPermission(permissionCtx, eventLog, handle.currentProvenance(), request)
 		},
 		ValidateProcess: func(pid int) error {
@@ -308,6 +361,15 @@ func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerN
 		handle.close()
 		return nil, err
 	}
+	if codexPlan != nil {
+		if err := appendACPEvent(eventLog, "acp_codex_auth_selected", handle.currentProvenance(), map[string]any{
+			"auth_source": boundedACPObservation(codexPlan.AuthSource), "principal_sha256": boundedACPObservation(codexPlan.AuthPrincipalSHA256),
+			"authenticate_called": false,
+		}); err != nil {
+			handle.close()
+			return nil, err
+		}
+	}
 	session, err := client.NewSession(ctx)
 	if err != nil {
 		handle.close()
@@ -317,7 +379,31 @@ func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerN
 		handle.close()
 		return nil, err
 	}
-	handle.updateProvenance(func(p *acpAttemptProvenance) { p.SessionID = acpStoredSessionRef(adapter, session.ID) })
+	if codexPlan != nil {
+		plan, configErr := applyCodexACPConfig(ctx, client, codexDescriptor, session)
+		if configErr != nil {
+			handle.close()
+			return nil, tuskerError(errorConfigInvalid, "codex_acp configuration was not applied exactly: "+configErr.Error())
+		}
+		if err := appendACPEvent(eventLog, "acp_codex_config_applied", handle.currentProvenance(), map[string]any{
+			"steps": len(plan.Steps), "config_receipt": boundedACPObservation(codexACPConfigReceipt(plan)),
+		}); err != nil {
+			handle.close()
+			return nil, err
+		}
+		binding := CodexACPAuthorityBinding{
+			ProjectID: req.ProjectID, WorkspacePath: workspace, RunnerProfile: req.RunnerProfile,
+			AuthPrincipalDigest: codexPlan.AuthPrincipalSHA256, OriginAttemptID: req.AttemptID, WorkRevision: req.WorkRevision,
+		}
+		stored, sessionErr := codexDescriptor.EncodeSessionRef(session.ID, binding)
+		if sessionErr != nil {
+			handle.close()
+			return nil, tuskerError(errorInvalidTransition, "codex_acp session binding failed: "+sessionErr.Error())
+		}
+		handle.updateProvenance(func(p *acpAttemptProvenance) { p.SessionID = stored })
+	} else {
+		handle.updateProvenance(func(p *acpAttemptProvenance) { p.SessionID = acpStoredSessionRef(adapter, session.ID) })
+	}
 	if err := appendACPEvent(eventLog, "acp_session_bound", handle.currentProvenance(), map[string]any{
 		"session_observation": "bound_to_current_attempt",
 	}); err != nil {
@@ -408,6 +494,10 @@ func acpTerminalStatus(result acp.PromptResult, err error) (AttemptOutcome, int,
 }
 
 func validateACPLaunchRequest(req StartRequest) error {
+	return validateACPLaunchRequestForRunner(RunnerACP, req)
+}
+
+func validateACPLaunchRequestForRunner(runner RunnerName, req StartRequest) error {
 	if strings.TrimSpace(req.AttemptID) == "" || strings.TrimSpace(req.ProjectID) == "" || strings.TrimSpace(req.RecordID) == "" {
 		return tuskerError(errorInvalidArg, "acp_v1 requires project, record, and attempt identities")
 	}
@@ -425,14 +515,18 @@ func validateACPLaunchRequest(req StartRequest) error {
 			return tuskerError(errorConfigInvalid, "acp_v1 argv must be resolved before launch; template expansion is not allowed")
 		}
 	}
-	if _, err := runnerWorkspaceCWD(RunnerACP, req.WorkspacePath); err != nil {
+	if _, err := runnerWorkspaceCWD(runner, req.WorkspacePath); err != nil {
 		return err
 	}
 	return nil
 }
 
 func resolveACPRunnerLaunch(req StartRequest) (string, []string, string, error) {
-	workspace, err := runnerWorkspaceCWD(RunnerACP, req.WorkspacePath)
+	return resolveACPRunnerLaunchForRunner(RunnerACP, req)
+}
+
+func resolveACPRunnerLaunchForRunner(runner RunnerName, req StartRequest) (string, []string, string, error) {
+	workspace, err := runnerWorkspaceCWD(runner, req.WorkspacePath)
 	if err != nil {
 		return "", nil, "", err
 	}

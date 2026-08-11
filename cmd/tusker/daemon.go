@@ -3610,10 +3610,53 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		return run, false, err
 	}
 	command := commandForRunnerProfile(baseCommand, selectedProfile)
+	// Codex ACP has no command-string path.  Before a lease exists, bind the
+	// fully validated runner definition to the selected *read-only* profile,
+	// revalidate the complete receipt, and derive the sole native argv.  A bad
+	// bundle/profile/auth contract therefore cannot create a claim that later
+	// fails in the detached child.
+	var codexACPPlan *CodexACPProviderPlan
+	if codexRunner, ok := runner.(*CodexACPRunner); ok {
+		plan, planErr := codexRunner.admission.withProfile(selectedProfile)
+		if planErr != nil {
+			return run, false, tuskerError(errorConfigInvalid, "codex_acp pre-claim profile admission failed: "+planErr.Error())
+		}
+		descriptor, argv, launchErr := plan.descriptorAndArgv()
+		if launchErr != nil {
+			return run, false, tuskerError(errorConfigInvalid, "codex_acp pre-claim native launch binding failed: "+launchErr.Error())
+		}
+		if len(argv) != 1 || descriptor.Adapter.Fingerprint == "" {
+			return run, false, tuskerError(errorConfigInvalid, "codex_acp pre-claim native launch binding was incomplete")
+		}
+		command = argv[0]
+		codexACPPlan = &plan
+	}
+	if codexACPPlan != nil && completionReactorMode(wfFile.Data.CompletionReactor.Effective) == completionReactorModeAuthoritative {
+		// The completion-authoritative lane has a separate codex_exec worker
+		// contract.  Rebinding that contract to an ACP adapter after its
+		// preclaim receipt would be a silent transport swap, so this opt-in
+		// vertical refuses the combination until its own completion contract
+		// exists.
+		return run, false, tuskerError(errorConfigInvalid, "codex_acp is unavailable while completion_reactor is authoritative")
+	}
 	var authoritativeArgv []string
 	var authoritativeExecutableFP string
 	var authoritativeSearchPath string
 	var authoritativeRawLogMaxBytes int64
+	if codexACPPlan != nil {
+		_, argv, launchErr := codexACPPlan.descriptorAndArgv()
+		if launchErr != nil {
+			return run, false, tuskerError(errorConfigInvalid, "codex_acp pre-claim receipt changed before launch binding: "+launchErr.Error())
+		}
+		descriptor, descriptorErr := codexACPPlan.descriptor()
+		if descriptorErr != nil {
+			return run, false, tuskerError(errorConfigInvalid, "codex_acp pre-claim descriptor reconstruction failed: "+descriptorErr.Error())
+		}
+		authoritativeArgv = append([]string(nil), argv...)
+		authoritativeExecutableFP = descriptor.Adapter.Fingerprint
+		authoritativeSearchPath = codexACPDefaultFixedPath
+		authoritativeRawLogMaxBytes = completionAuthoritativeRawLogMaxBytes
+	}
 	workspaceManager := NewWorkspaceManager()
 	workspaceStrategy := d.workspaceStrategyForDispatch(project, wfFile.Data, run)
 	branchName, branchBase, err := v7WorkspaceBranchForLane(project.VaultRoot, note, lane)
@@ -3687,7 +3730,14 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	}
 	var preflight runnerCommandPreflightResult
 	var health runnerPreclaimHealthResult
-	if len(authoritativeArgv) > 0 {
+	if codexACPPlan != nil {
+		// The bundle verifier/descriptor already proved this exact native path
+		// and fingerprint.  Do not re-parse it as a shell command: a valid
+		// content-addressed installation path may itself contain spaces.
+		health = runnerPreclaimHealthResult{Preflight: runnerCommandPreflightResult{
+			ResolvedExecutable: authoritativeArgv[0], SearchPath: authoritativeSearchPath,
+		}}
+	} else if len(authoritativeArgv) > 0 {
 		health = runnerPreclaimHealthWithSearchPath(runner.Name(), command, authoritativeSearchPath)
 	} else {
 		health = runnerPreclaimHealth(runner.Name(), command)
@@ -3696,7 +3746,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		return d.persistRunnerInfrastructureBlock(run, health.Block)
 	}
 	preflight = health.Preflight
-	if len(authoritativeArgv) > 0 {
+	if len(authoritativeArgv) > 0 && codexACPPlan == nil {
 		resolvedExecutable, executableFP, identityErr := completionExecutableIdentity(preflight.ResolvedExecutable, preflight.ExecutableVersion)
 		if identityErr != nil || resolvedExecutable != authoritativeArgv[0] || executableFP != authoritativeExecutableFP {
 			reason := "completion authority refuses codex executable path or identity drift"
@@ -3952,6 +4002,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		VaultPath:           project.VaultRoot,
 		CodexPolicy:         codexPolicy,
 		ExternalLoop:        externalLaunch,
+		CodexACP:            codexACPPlan,
 	}
 	resumeSession := resolvedResumeSession{}
 	if runner.Capabilities().ResumeSession {
@@ -5986,11 +6037,15 @@ func runnerForName(name string, wf Workflow) (Runner, string, error) {
 	case RunnerClaude:
 		return &ClaudeRunner{}, firstNonEmpty(command, wf.Claude.Command), nil
 	case RunnerCodexACP:
-		// Admission is intentionally fail-closed until the shared factory can
-		// carry the verified bundle receipt, exact auth contract, and provider
-		// config plan into the fenced ACP process. Returning the generic ACP
-		// runner here would falsely imply those guarantees.
-		return nil, "", tuskerError(errorConfigInvalid, "codex_acp is configured but not live-ready: verified bundle receipt and Codex ACP config/auth plan are not wired into dispatch")
+		if !hasDefinition {
+			return nil, "", tuskerError(errorConfigInvalid, "codex_acp requires a complete named runner definition")
+		}
+		definition.Kind = string(RunnerCodexACP)
+		admission, admissionErr := newCodexACPProviderAdmission(definition)
+		if admissionErr != nil {
+			return nil, "", tuskerError(errorConfigInvalid, "codex_acp pre-claim bundle admission failed: "+admissionErr.Error())
+		}
+		return &CodexACPRunner{admission: admission}, "", nil
 	default:
 		return nil, "", tuskerError(errorConfigInvalid, "unsupported runner: "+name)
 	}

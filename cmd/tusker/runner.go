@@ -96,8 +96,11 @@ type StartRequest struct {
 	VaultPath           string
 	Budget              map[string]any
 	CodexPolicy         CodexPolicy
-	ExternalLoop        ExternalLoopLaunchContext
-	ContainmentPGID     int
+	// CodexACP is the serializable, non-secret provider admission plan for the
+	// concrete codex_acp runner.  Generic ACP launches leave it nil.
+	CodexACP        *CodexACPProviderPlan `json:"codex_acp,omitempty"`
+	ExternalLoop    ExternalLoopLaunchContext
+	ContainmentPGID int
 	// Principal and Actor are optional dispatch provenance supplied by a caller.
 	// The ACP runtime resolves them from the durable lease authorization when
 	// absent; provider identities never fill either field.
