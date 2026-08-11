@@ -63,24 +63,53 @@ func TestACPHelperProcess(t *testing.T) {
 				"sessionCapabilities": map[string]any{},
 			}
 			switch mode {
-			case "load", "both", "load-malformed", "load-mismatch", "load-object", "load-malformed-update":
+			case "load", "both", "load-malformed", "load-mismatch", "load-object", "load-malformed-update", "load-config-update":
 				capabilities["loadSession"] = true
 			}
 			switch mode {
-			case "resume", "both", "resume-update", "resume-null":
+			case "resume", "both", "resume-update", "resume-null", "resume-config":
 				capabilities["sessionCapabilities"] = map[string]any{"resume": map[string]any{}}
 			case "legacy-resume":
 				capabilities["resumeSession"] = true
 				capabilities["session"] = map[string]any{"resumeSession": true}
 			}
+			authMethods := []map[string]any{}
+			switch mode {
+			case "auth", "auth-malformed-result":
+				authMethods = append(authMethods, map[string]any{"id": "agent-login", "name": "Agent Login", "type": "agent"})
+			case "auth-duplicate":
+				authMethods = append(authMethods,
+					map[string]any{"id": "agent-login", "name": "Agent Login"},
+					map[string]any{"id": "agent-login", "name": "Duplicate"},
+				)
+			case "auth-wrong-type":
+				authMethods = append(authMethods, map[string]any{"id": "browser-login", "name": "Browser Login", "type": "browser"})
+			case "auth-long-id":
+				authMethods = append(authMethods, map[string]any{"id": strings.Repeat("a", maxACPIdentifierBytes+1), "name": "Too Long"})
+			}
 			writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{
 				"protocolVersion":   version,
 				"agentInfo":         map[string]string{"name": "test-agent", "version": "1"},
 				"agentCapabilities": capabilities,
+				"authMethods":       authMethods,
 			}})
 			if mode == "duplicate-response" {
 				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{"protocolVersion": version}})
 			}
+		case "authenticate":
+			var params struct {
+				MethodID string `json:"methodId"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			if params.MethodID != "agent-login" {
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Error: map[string]any{"code": -32602, "message": "unknown auth method"}})
+				continue
+			}
+			if mode == "auth-malformed-result" {
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: "not-an-object"})
+				continue
+			}
+			writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{"_meta": map[string]any{"fixture": true}, "future": "ignored"}})
 		case "session/new":
 			var params map[string]any
 			_ = json.Unmarshal(msg.Params, &params)
@@ -93,7 +122,21 @@ func TestACPHelperProcess(t *testing.T) {
 			if mode == "bad-session-id" {
 				sessionID = "bad\nsession"
 			}
-			writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]string{"sessionId": sessionID}})
+			result := map[string]any{"sessionId": sessionID}
+			switch mode {
+			case "config", "config-result-missing", "config-result-duplicate", "config-result-mismatch", "config-stale-response", "config-unsupported":
+				result["configOptions"] = testConfigOptions("ask")
+			}
+			if mode == "config-unsupported" {
+				result["configOptions"] = append(testConfigOptions("ask"),
+					map[string]any{"id": "auto-approve", "name": "Auto approve", "type": "boolean", "currentValue": false},
+					map[string]any{
+						"id": "grouped-model", "name": "Grouped model", "type": "select", "currentValue": "model-1",
+						"options": []map[string]any{{"group": "Provider A", "options": []map[string]string{{"value": "model-1", "name": "Model 1"}}}},
+					},
+				)
+			}
+			writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: result})
 			if mode == "no-read-after-session" {
 				time.Sleep(10 * time.Second)
 				os.Exit(0)
@@ -123,6 +166,8 @@ func TestACPHelperProcess(t *testing.T) {
 					writeHelper(helperMessage{JSONRPC: "2.0", Method: "session/update", Params: mustTestJSON(map[string]any{
 						"sessionId": params.SessionID, "update": map[string]any{"kind": "agent_message_chunk"},
 					})})
+				case "load-config-update":
+					writeConfigUpdateForTest(params.SessionID, "ask")
 				default:
 					writeUpdateForSessionForTest(params.SessionID, 0)
 				}
@@ -140,7 +185,37 @@ func TestACPHelperProcess(t *testing.T) {
 				writeHelperNullResult(msg.ID)
 				continue
 			}
-			writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{}})
+			result := map[string]any{}
+			if mode == "resume-config" {
+				result["configOptions"] = testConfigOptions("ask")
+			}
+			writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: result})
+		case "session/set_config_option":
+			var params struct {
+				SessionID string `json:"sessionId"`
+				ConfigID  string `json:"configId"`
+				Value     string `json:"value"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			if params.SessionID != "session-1" || params.ConfigID != "mode" || params.Value != "code" {
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Error: map[string]any{"code": -32602, "message": "invalid config selection"}})
+				continue
+			}
+			switch mode {
+			case "config-result-missing":
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{}})
+			case "config-result-duplicate":
+				options := testConfigOptions("code")
+				options = append(options, options[0])
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{"configOptions": options}})
+			case "config-result-mismatch":
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{"configOptions": testConfigOptions("ask")}})
+			case "config-stale-response":
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{"configOptions": testConfigOptions("code")}})
+				writeConfigUpdateForTest(params.SessionID, "ask")
+			default:
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]any{"configOptions": testConfigOptions("code")}})
+			}
 		case "session/prompt":
 			promptID = append(json.RawMessage(nil), msg.ID...)
 			switch mode {
@@ -152,15 +227,46 @@ func TestACPHelperProcess(t *testing.T) {
 				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Error: map[string]any{"code": -32000, "message": "refused"}})
 			case "missing-result":
 				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID})
-			case "permission":
+			case "permission", "permission-reject-wire":
 				writeHelper(helperMessage{JSONRPC: "2.0", ID: json.RawMessage("91"), Method: "session/request_permission", Params: mustTestJSON(map[string]any{
-					"sessionId": "session-1", "toolCallId": "tool-1",
-					"options": []map[string]string{{"optionId": "allow_always", "kind": "allow_always"}, {"optionId": "allow_once", "kind": "allow_once"}},
+					"sessionId": "session-1",
+					"toolCall":  map[string]any{"toolCallId": "tool-1", "kind": "execute", "rawInput": map[string]any{"command": "go test ./internal/acp"}},
+					"options":   testPermissionOptions(),
+				})})
+			case "permission-unknown-tool":
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: json.RawMessage("91"), Method: "session/request_permission", Params: mustTestJSON(map[string]any{
+					"sessionId": "session-1",
+					"toolCall":  map[string]any{"toolCallId": "tool-1", "kind": "provider_extension", "rawInput": []any{"arbitrary", 1}},
+					"options":   testPermissionOptions(),
+				})})
+			case "permission-omitted-raw", "permission-null-raw":
+				toolCall := map[string]any{"toolCallId": "tool-1", "kind": "read"}
+				if mode == "permission-null-raw" {
+					toolCall["rawInput"] = nil
+				}
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: json.RawMessage("91"), Method: "session/request_permission", Params: mustTestJSON(map[string]any{
+					"sessionId": "session-1", "toolCall": toolCall, "options": testPermissionOptions(),
+				})})
+			case "permission-invalid-options":
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: json.RawMessage("91"), Method: "session/request_permission", Params: mustTestJSON(map[string]any{
+					"sessionId": "session-1", "toolCall": map[string]any{"toolCallId": "tool-1", "kind": "read", "rawInput": nil},
+					"options": []map[string]string{{"optionId": "allow-once", "kind": "ALLOW_ONCE", "name": "Allow"}},
 				})})
 			case "permission-mismatch":
 				writeHelper(helperMessage{JSONRPC: "2.0", ID: json.RawMessage("91"), Method: "session/request_permission", Params: mustTestJSON(map[string]any{
-					"sessionId": "other-session", "toolCallId": "tool-1",
-					"options": []map[string]string{{"optionId": "allow_once", "kind": "allow_once"}},
+					"sessionId": "other-session", "toolCall": map[string]any{"toolCallId": "tool-1", "kind": "read", "rawInput": nil},
+					"options": testPermissionOptions(),
+				})})
+			case "permission-nested-mismatch":
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: json.RawMessage("91"), Method: "session/request_permission", Params: mustTestJSON(map[string]any{
+					"sessionId": "session-1", "toolCallId": "different-tool",
+					"toolCall": map[string]any{"toolCallId": "tool-1", "kind": "read", "rawInput": nil},
+					"options":  testPermissionOptions(),
+				})})
+			case "permission-malformed-tool":
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: json.RawMessage("91"), Method: "session/request_permission", Params: mustTestJSON(map[string]any{
+					"sessionId": "session-1", "toolCall": "not-an-object",
+					"options": testPermissionOptions(),
 				})})
 			case "flood":
 				for i := 0; i < 4; i++ {
@@ -182,12 +288,16 @@ func TestACPHelperProcess(t *testing.T) {
 		case "":
 			if string(msg.ID) == "91" && promptID != nil {
 				var result struct {
-					Outcome  string `json:"outcome"`
-					OptionID string `json:"optionId"`
+					Outcome struct {
+						Outcome  string `json:"outcome"`
+						OptionID string `json:"optionId"`
+					} `json:"outcome"`
 				}
 				_ = json.Unmarshal(mustTestJSON(msg.Result), &result)
 				stop := "refusal"
-				if result.Outcome == "selected" && result.OptionID == "allow_once" {
+				if result.Outcome.Outcome == "selected" && result.Outcome.OptionID == "allow_once" {
+					stop = "end_turn"
+				} else if mode == "permission-reject-wire" && result.Outcome.Outcome == "selected" && result.Outcome.OptionID == "reject_once" {
 					stop = "end_turn"
 				}
 				writeHelper(helperMessage{JSONRPC: "2.0", ID: promptID, Result: map[string]string{"stopReason": stop}})
@@ -195,6 +305,34 @@ func TestACPHelperProcess(t *testing.T) {
 		}
 	}
 	os.Exit(0)
+}
+
+func testConfigOptions(current string) []map[string]any {
+	return []map[string]any{
+		{
+			"id": "mode", "name": "Mode", "category": "mode", "type": "select", "currentValue": current,
+			"options": []map[string]string{{"value": "ask", "name": "Ask"}, {"value": "code", "name": "Code"}},
+		},
+		{
+			"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "fast",
+			"options": []map[string]string{{"value": "fast", "name": "Fast"}, {"value": "strong", "name": "Strong"}},
+		},
+	}
+}
+
+func testPermissionOptions() []map[string]string {
+	return []map[string]string{
+		{"optionId": "allow_always", "kind": "allow_always", "name": "Allow always"},
+		{"optionId": "allow_once", "kind": "allow_once", "name": "Allow once"},
+		{"optionId": "reject_once", "kind": "reject_once", "name": "Reject once"},
+	}
+}
+
+func writeConfigUpdateForTest(sessionID, current string) {
+	writeHelper(helperMessage{JSONRPC: "2.0", Method: "session/update", Params: mustTestJSON(map[string]any{
+		"sessionId": sessionID,
+		"update":    map[string]any{"sessionUpdate": "config_option_update", "configOptions": testConfigOptions(current)},
+	})})
 }
 
 func writeUpdateForTest(n int) {
@@ -336,6 +474,214 @@ func TestACPHappyFlowAdvertisesNoOptionalClientSurface(t *testing.T) {
 	if result.Outcome != OutcomeCompleted || result.Delivery != DeliveryTerminalReceived || result.TurnID != "turn-1" {
 		t.Fatalf("prompt result=%#v", result)
 	}
+}
+
+func TestACPAuthenticateRequiresExactAdvertisedMethod(t *testing.T) {
+	t.Run("explicit advertised method", func(t *testing.T) {
+		c := startTestClient(t, "auth", nil)
+		if _, err := c.Authenticate(context.Background(), "agent-login"); !errors.Is(err, ErrNotInitialized) {
+			t.Fatalf("pre-initialize auth err=%v", err)
+		}
+		init, err := c.Initialize(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(init.AuthMethods) != 1 || init.AuthMethods[0].ID != "agent-login" || init.AuthMethods[0].Type != "agent" {
+			t.Fatalf("auth methods=%#v", init.AuthMethods)
+		}
+		c.mu.Lock()
+		before := c.nextID
+		c.mu.Unlock()
+		if _, err := c.Authenticate(context.Background(), "not-advertised"); err == nil {
+			t.Fatal("unadvertised auth method was accepted")
+		}
+		c.mu.Lock()
+		after := c.nextID
+		c.mu.Unlock()
+		if after != before {
+			t.Fatalf("unadvertised auth wrote a request: before=%d after=%d", before, after)
+		}
+		receipt, err := c.Authenticate(context.Background(), "agent-login")
+		if err != nil || receipt.MethodID != "agent-login" || receipt.MethodType != "agent" {
+			t.Fatalf("receipt=%#v err=%v", receipt, err)
+		}
+		if _, err := c.NewSession(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Authenticate(context.Background(), "agent-login"); err == nil {
+			t.Fatal("authentication after session setup was accepted")
+		}
+	})
+
+	for _, mode := range []string{"auth-duplicate", "auth-wrong-type", "auth-long-id"} {
+		t.Run(mode, func(t *testing.T) {
+			c := startTestClient(t, mode, nil)
+			if _, err := c.Initialize(context.Background()); err == nil {
+				t.Fatal("invalid auth advertisement was accepted")
+			}
+			if _, err := c.NewSession(context.Background()); err == nil {
+				t.Fatal("client remained reusable after invalid auth advertisement")
+			}
+		})
+	}
+
+	t.Run("malformed result poisons", func(t *testing.T) {
+		c := startTestClient(t, "auth-malformed-result", nil)
+		if _, err := c.Initialize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Authenticate(context.Background(), "agent-login"); err == nil {
+			t.Fatal("non-object authenticate result was accepted")
+		}
+		if _, err := c.NewSession(context.Background()); err == nil {
+			t.Fatal("client remained reusable after malformed authenticate result")
+		}
+	})
+}
+
+func TestACPSelectConfigOptionsAreExactAndComplete(t *testing.T) {
+	t.Run("unsupported variants are skipped without poisoning", func(t *testing.T) {
+		c := startTestClient(t, "config-unsupported", nil)
+		if _, err := c.Initialize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		session, err := c.NewSession(context.Background())
+		if err != nil || len(session.ConfigOptions) != 2 {
+			t.Fatalf("session=%#v err=%v", session, err)
+		}
+		c.mu.Lock()
+		poisoned := c.protocolErr != nil
+		c.mu.Unlock()
+		if poisoned {
+			t.Fatal("unsupported config option poisoned client")
+		}
+	})
+
+	t.Run("new session and set", func(t *testing.T) {
+		c := startTestClient(t, "config", nil)
+		if _, err := c.Initialize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		session, err := c.NewSession(context.Background())
+		if err != nil || len(session.ConfigOptions) != 2 || session.ConfigOptions[0].CurrentValue != "ask" {
+			t.Fatalf("session=%#v err=%v", session, err)
+		}
+		c.mu.Lock()
+		before := c.nextID
+		c.mu.Unlock()
+		if _, err := c.SetConfigOption(context.Background(), "unknown", "code"); err == nil {
+			t.Fatal("unknown config id was accepted")
+		}
+		if _, err := c.SetConfigOption(context.Background(), "mode", "unknown"); err == nil {
+			t.Fatal("unknown config value was accepted")
+		}
+		c.mu.Lock()
+		after := c.nextID
+		c.mu.Unlock()
+		if after != before {
+			t.Fatalf("invalid config selection wrote a request: before=%d after=%d", before, after)
+		}
+		session, err = c.SetConfigOption(context.Background(), "mode", "code")
+		if err != nil || len(session.ConfigOptions) != 2 || session.ConfigOptions[0].CurrentValue != "code" {
+			t.Fatalf("updated session=%#v err=%v", session, err)
+		}
+	})
+
+	t.Run("resume returns config state", func(t *testing.T) {
+		c := startTestClient(t, "resume-config", nil)
+		if _, err := c.Initialize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		session, err := c.ResumeSession(context.Background(), "resumed-session")
+		if err != nil || len(session.ConfigOptions) != 2 {
+			t.Fatalf("session=%#v err=%v", session, err)
+		}
+	})
+
+	t.Run("load obtains config only from update", func(t *testing.T) {
+		without := startTestClient(t, "load", nil)
+		if _, err := without.Initialize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		session, err := without.LoadSession(context.Background(), "loaded-session")
+		if err != nil || len(session.ConfigOptions) != 0 {
+			t.Fatalf("plain load session=%#v err=%v", session, err)
+		}
+		with := startTestClient(t, "load-config-update", nil)
+		if _, err := with.Initialize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		session, err = with.LoadSession(context.Background(), "loaded-session")
+		if err != nil || len(session.ConfigOptions) != 2 {
+			t.Fatalf("updated load session=%#v err=%v", session, err)
+		}
+	})
+
+	for _, mode := range []string{"config-result-missing", "config-result-duplicate", "config-result-mismatch"} {
+		t.Run(mode, func(t *testing.T) {
+			c := startTestClient(t, mode, nil)
+			if _, err := c.Initialize(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.NewSession(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.SetConfigOption(context.Background(), "mode", "code"); err == nil {
+				t.Fatal("invalid complete config result was accepted")
+			}
+			c.mu.Lock()
+			poisoned := c.protocolErr != nil
+			c.mu.Unlock()
+			if !poisoned {
+				t.Fatal("invalid config result did not poison client")
+			}
+		})
+	}
+
+	t.Run("newer update wins over stale set response snapshot", func(t *testing.T) {
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		c := startTestClient(t, "config-stale-response", nil)
+		if _, err := c.Initialize(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.NewSession(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		c.beforeConfigCommit = func() {
+			close(entered)
+			<-release
+		}
+		done := make(chan struct {
+			session Session
+			err     error
+		}, 1)
+		go func() {
+			session, err := c.SetConfigOption(context.Background(), "mode", "code")
+			done <- struct {
+				session Session
+				err     error
+			}{session, err}
+		}()
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatal("set response did not reach commit barrier")
+		}
+		select {
+		case update := <-c.Updates():
+			if update.Sequence == 0 {
+				t.Fatal("config update had no inbound sequence")
+			}
+		case <-time.After(time.Second):
+			t.Fatal("newer config update was not observed")
+		}
+		close(release)
+		answer := <-done
+		if answer.err != nil || len(answer.session.ConfigOptions) == 0 || answer.session.ConfigOptions[0].CurrentValue != "ask" {
+			t.Fatalf("session=%#v err=%v, want newer ask snapshot", answer.session, answer.err)
+		}
+	})
 }
 
 func TestACPLoadAndResumeRequireNegotiatedCapability(t *testing.T) {
@@ -620,14 +966,92 @@ func TestACPPermissionDefaultsRejectAndNeverSelectsAllowAlways(t *testing.T) {
 			t.Fatalf("result=%#v err=%v", result, err)
 		}
 	})
+	t.Run("reject selects exact reject_once option", func(t *testing.T) {
+		c := startTestClient(t, "permission-reject-wire", nil)
+		initializeAndSession(t, c)
+		result, err := c.Prompt(context.Background(), "permission")
+		if err != nil || result.Outcome != OutcomeCompleted {
+			t.Fatalf("result=%#v err=%v", result, err)
+		}
+	})
 	t.Run("allow once chooses only allow_once option", func(t *testing.T) {
+		seen := make(chan PermissionRequest, 1)
 		c := startTestClient(t, "permission", func(cfg *Config) {
-			cfg.PermissionHandler = func(context.Context, PermissionRequest) (PermissionDecision, error) { return AllowOnce, nil }
+			cfg.PermissionHandler = func(_ context.Context, request PermissionRequest) (PermissionDecision, error) {
+				seen <- request
+				return AllowOnce, nil
+			}
 		})
 		initializeAndSession(t, c)
 		result, err := c.Prompt(context.Background(), "permission")
 		if err != nil || result.Outcome != OutcomeCompleted {
 			t.Fatalf("result=%#v err=%v", result, err)
+		}
+		request := <-seen
+		if request.ToolCallID != "tool-1" || request.ToolKind != "execute" || !strings.Contains(string(request.RawInput), "go test ./internal/acp") || !strings.Contains(string(request.Raw), `"toolCall"`) {
+			t.Fatalf("permission request=%#v rawInput=%s raw=%s", request, request.RawInput, request.Raw)
+		}
+	})
+}
+
+func TestACPPermissionValidatesOptionsAndNormalizesToolKind(t *testing.T) {
+	t.Run("unknown kind and arbitrary valid raw input", func(t *testing.T) {
+		seen := make(chan PermissionRequest, 1)
+		c := startTestClient(t, "permission-unknown-tool", func(cfg *Config) {
+			cfg.PermissionHandler = func(_ context.Context, request PermissionRequest) (PermissionDecision, error) {
+				seen <- request
+				return AllowOnce, nil
+			}
+		})
+		initializeAndSession(t, c)
+		result, err := c.Prompt(context.Background(), "permission")
+		if err != nil || result.Outcome != OutcomeCompleted {
+			t.Fatalf("result=%#v err=%v", result, err)
+		}
+		request := <-seen
+		if request.ToolKind != "other" || string(request.RawInput) != `["arbitrary",1]` {
+			t.Fatalf("request=%#v rawInput=%s", request, request.RawInput)
+		}
+	})
+
+	for _, mode := range []string{"permission-omitted-raw", "permission-null-raw"} {
+		t.Run(mode, func(t *testing.T) {
+			seen := make(chan PermissionRequest, 1)
+			c := startTestClient(t, mode, func(cfg *Config) {
+				cfg.PermissionHandler = func(_ context.Context, request PermissionRequest) (PermissionDecision, error) {
+					seen <- request
+					return AllowOnce, nil
+				}
+			})
+			initializeAndSession(t, c)
+			result, err := c.Prompt(context.Background(), "permission")
+			if err != nil || result.Outcome != OutcomeCompleted {
+				t.Fatalf("result=%#v err=%v", result, err)
+			}
+			request := <-seen
+			if mode == "permission-omitted-raw" && len(request.RawInput) != 0 {
+				t.Fatalf("omitted rawInput became %s", request.RawInput)
+			}
+			if mode == "permission-null-raw" && string(request.RawInput) != "null" {
+				t.Fatalf("null rawInput became %s", request.RawInput)
+			}
+		})
+	}
+
+	t.Run("invalid case-sensitive option kind poisons", func(t *testing.T) {
+		called := false
+		c := startTestClient(t, "permission-invalid-options", func(cfg *Config) {
+			cfg.PermissionHandler = func(context.Context, PermissionRequest) (PermissionDecision, error) {
+				called = true
+				return AllowOnce, nil
+			}
+		})
+		initializeAndSession(t, c)
+		if _, err := c.Prompt(context.Background(), "permission"); err == nil {
+			t.Fatal("invalid permission option kind was accepted")
+		}
+		if called {
+			t.Fatal("policy handler received invalid options")
 		}
 	})
 }
@@ -647,6 +1071,27 @@ func TestACPPermissionMustMatchActiveSession(t *testing.T) {
 	}
 	if called {
 		t.Fatal("policy handler ran for mismatched session")
+	}
+}
+
+func TestACPPermissionRejectsMalformedNestedToolCall(t *testing.T) {
+	for _, mode := range []string{"permission-nested-mismatch", "permission-malformed-tool"} {
+		t.Run(mode, func(t *testing.T) {
+			called := false
+			c := startTestClient(t, mode, func(cfg *Config) {
+				cfg.PermissionHandler = func(context.Context, PermissionRequest) (PermissionDecision, error) {
+					called = true
+					return AllowOnce, nil
+				}
+			})
+			initializeAndSession(t, c)
+			if _, err := c.Prompt(context.Background(), "permission"); err == nil {
+				t.Fatal("malformed nested permission request was accepted")
+			}
+			if called {
+				t.Fatal("policy handler received malformed nested permission request")
+			}
+		})
 	}
 }
 
@@ -686,6 +1131,63 @@ func TestACPCancelResolvesBlockedPermissionAsCancelled(t *testing.T) {
 	}
 	answer := <-promptDone
 	close(release)
+	if answer.err != nil || answer.result.Outcome != OutcomeRefused {
+		t.Fatalf("prompt=%#v err=%v, want cancelled permission refusal", answer.result, answer.err)
+	}
+}
+
+func TestACPCancelWinsPermissionDecisionResponseEdge(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	c := startTestClient(t, "permission", func(cfg *Config) {
+		cfg.PermissionHandler = func(context.Context, PermissionRequest) (PermissionDecision, error) {
+			return AllowOnce, nil
+		}
+	})
+	c.beforePermissionRespond = func() {
+		close(entered)
+		<-release
+	}
+	initializeAndSession(t, c)
+	type promptAnswer struct {
+		result PromptResult
+		err    error
+	}
+	promptDone := make(chan promptAnswer, 1)
+	go func() {
+		result, err := c.Prompt(context.Background(), "permission")
+		promptDone <- promptAnswer{result, err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("permission response did not reach decision barrier")
+	}
+	cancelDone := make(chan error, 1)
+	go func() { cancelDone <- c.Cancel(context.Background()) }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		c.mu.Lock()
+		var cancelled bool
+		for _, state := range c.permissionState {
+			state.mu.Lock()
+			cancelled = cancelled || state.cancelled
+			state.mu.Unlock()
+		}
+		c.mu.Unlock()
+		if cancelled {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("cancel did not reach pending permission state")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(release)
+	if err := <-cancelDone; err != nil {
+		t.Fatalf("cancel failed: %v", err)
+	}
+	answer := <-promptDone
 	if answer.err != nil || answer.result.Outcome != OutcomeRefused {
 		t.Fatalf("prompt=%#v err=%v, want cancelled permission refusal", answer.result, answer.err)
 	}

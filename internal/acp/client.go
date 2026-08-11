@@ -20,7 +20,15 @@ import (
 	"unicode"
 )
 
-const protocolVersion = 1
+const (
+	protocolVersion          = 1
+	maxACPIdentifierBytes    = 512
+	maxACPAuthMethods        = 64
+	maxACPConfigOptions      = 64
+	maxACPConfigValues       = 256
+	maxACPPermissionOptions  = 32
+	maxACPPermissionRawInput = 256 << 10
+)
 
 var (
 	ErrClosed          = errors.New("acp client is closed")
@@ -192,6 +200,12 @@ type AuthMethod struct {
 	ID          string `json:"id,omitempty"`
 	Name        string `json:"name,omitempty"`
 	Description string `json:"description,omitempty"`
+	Type        string `json:"type,omitempty"`
+}
+
+type AuthenticationReceipt struct {
+	MethodID   string
+	MethodType string
 }
 
 type InitializeResult struct {
@@ -201,7 +215,29 @@ type InitializeResult struct {
 	AuthMethods       []AuthMethod
 }
 
-type Session struct{ ID string }
+type ConfigOptionValue struct {
+	Value       string `json:"value"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// ConfigOption is the ungrouped-select phase-one projection. Boolean, grouped
+// select, and future option variants are skipped locally without poisoning;
+// ClientCapabilities currently makes no config-option support claim.
+type ConfigOption struct {
+	ID           string              `json:"id"`
+	Name         string              `json:"name"`
+	Description  string              `json:"description,omitempty"`
+	Category     string              `json:"category,omitempty"`
+	Type         string              `json:"type"`
+	CurrentValue string              `json:"currentValue"`
+	Options      []ConfigOptionValue `json:"options"`
+}
+
+type Session struct {
+	ID            string
+	ConfigOptions []ConfigOption
+}
 
 type PromptResult struct {
 	Outcome    Outcome
@@ -214,8 +250,9 @@ type PromptResult struct {
 
 // Update is an execution observation. It has no task or authorization power.
 type Update struct {
-	Method string
-	Params json.RawMessage
+	Sequence uint64
+	Method   string
+	Params   json.RawMessage
 }
 
 type PermissionDecision string
@@ -235,9 +272,14 @@ type PermissionOption struct {
 type PermissionRequest struct {
 	SessionID  string
 	ToolCallID string
-	Reason     string
-	Options    []PermissionOption
-	Raw        json.RawMessage
+	ToolKind   string
+	RawInput   json.RawMessage
+	// Reason is retained for source compatibility but ACP v1 does not define a
+	// top-level permission reason. Provider-specific inference is forbidden.
+	Reason  string
+	Options []PermissionOption
+	// Raw is the complete already-frame-bounded permission request.
+	Raw json.RawMessage
 }
 
 type rpcError struct {
@@ -263,23 +305,25 @@ type callResult struct {
 }
 
 type pendingCall struct {
-	id         string
-	done       chan callResult
-	settled    chan struct{}
-	settleOnce sync.Once
-	phaseMu    sync.Mutex
-	phase      DeliveryPhase
-	prompt     bool
+	id                     string
+	done                   chan callResult
+	settled                chan struct{}
+	settleOnce             sync.Once
+	phaseMu                sync.Mutex
+	phase                  DeliveryPhase
+	responseUpdateSequence uint64
+	prompt                 bool
 }
 
 // pendingRestore binds session observations to the exact in-flight lifecycle
 // request. responseSeen is set by the reader before it settles that request so
 // session/resume can reject pre-response history without racing the caller.
 type pendingRestore struct {
-	method       string
-	sessionID    string
-	requestID    string
-	responseSeen bool
+	method        string
+	sessionID     string
+	requestID     string
+	responseSeen  bool
+	configOptions []ConfigOption
 }
 
 func (p *pendingCall) settle() { p.settleOnce.Do(func() { close(p.settled) }) }
@@ -296,6 +340,32 @@ func (p *pendingCall) getPhase() DeliveryPhase {
 	p.phaseMu.Lock()
 	defer p.phaseMu.Unlock()
 	return p.phase
+}
+
+func (p *pendingCall) setResponseUpdateSequence(sequence uint64) {
+	p.phaseMu.Lock()
+	p.responseUpdateSequence = sequence
+	p.phaseMu.Unlock()
+}
+
+func (p *pendingCall) getResponseUpdateSequence() uint64 {
+	p.phaseMu.Lock()
+	defer p.phaseMu.Unlock()
+	return p.responseUpdateSequence
+}
+
+type permissionRequestState struct {
+	mu        sync.Mutex
+	cancelled bool
+	settled   bool
+}
+
+func (s *permissionRequestState) cancel() {
+	s.mu.Lock()
+	if !s.settled {
+		s.cancelled = true
+	}
+	s.mu.Unlock()
 }
 
 func phaseRank(p DeliveryPhase) int {
@@ -321,33 +391,39 @@ type Client struct {
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
 
-	writeMu               sync.Mutex
-	initializeMu          sync.Mutex
-	sessionMu             sync.Mutex
-	promptMu              sync.Mutex
-	mu                    sync.Mutex
-	pending               map[string]*pendingCall
-	inbound               map[string]struct{}
-	nextID                int64
-	initialized           bool
-	session               *Session
-	restore               *pendingRestore
-	capabilities          AgentCapabilities
-	activePrompt          *pendingCall
-	protocolErr           error
-	closed                bool
-	readerDone            chan struct{}
-	processDone           chan struct{}
-	updates               chan Update
-	finishOnce            sync.Once
-	teardownOnce          sync.Once
-	permissionSem         chan struct{}
-	permissionCancel      map[string]context.CancelFunc
-	permissionDone        map[string]chan struct{}
-	permissionInvocations int
-	updatesSeen           int
-	cancelledPermissions  map[string]struct{}
-	lastActivity          time.Time
+	writeMu                 sync.Mutex
+	initializeMu            sync.Mutex
+	sessionMu               sync.Mutex
+	configMu                sync.Mutex
+	promptMu                sync.Mutex
+	mu                      sync.Mutex
+	pending                 map[string]*pendingCall
+	inbound                 map[string]struct{}
+	nextID                  int64
+	initialized             bool
+	session                 *Session
+	restore                 *pendingRestore
+	capabilities            AgentCapabilities
+	authMethods             map[string]AuthMethod
+	activePrompt            *pendingCall
+	protocolErr             error
+	closed                  bool
+	readerDone              chan struct{}
+	processDone             chan struct{}
+	updates                 chan Update
+	finishOnce              sync.Once
+	teardownOnce            sync.Once
+	permissionSem           chan struct{}
+	permissionCancel        map[string]context.CancelFunc
+	permissionDone          map[string]chan struct{}
+	permissionState         map[string]*permissionRequestState
+	permissionInvocations   int
+	updatesSeen             int
+	lastActivity            time.Time
+	updateSequence          uint64
+	configSequence          uint64
+	beforePermissionRespond func()
+	beforeConfigCommit      func()
 }
 
 // Start launches exactly one direct subprocess and starts its bounded reader.
@@ -406,7 +482,7 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 		pending: make(map[string]*pendingCall), inbound: make(map[string]struct{}),
 		readerDone: make(chan struct{}), processDone: make(chan struct{}), updates: make(chan Update, cfg.Limits.MaxUpdates),
 		permissionSem:    make(chan struct{}, cfg.Limits.MaxPendingRequests),
-		permissionCancel: make(map[string]context.CancelFunc), permissionDone: make(map[string]chan struct{}), cancelledPermissions: make(map[string]struct{}),
+		permissionCancel: make(map[string]context.CancelFunc), permissionDone: make(map[string]chan struct{}), permissionState: make(map[string]*permissionRequestState),
 		lastActivity: time.Now(),
 	}
 	go c.readLoop()
@@ -481,6 +557,10 @@ func (c *Client) Initialize(ctx context.Context) (InitializeResult, error) {
 	if wire.ProtocolVersion != protocolVersion {
 		return InitializeResult{}, c.failCall(fmt.Errorf("unsupported negotiated ACP protocol version %d", wire.ProtocolVersion), phase)
 	}
+	authMethods, authIndex, err := normalizeAuthMethods(wire.AuthMethods)
+	if err != nil {
+		return InitializeResult{}, c.failCall(fmt.Errorf("invalid ACP authMethods: %w", err), phase)
+	}
 	caps := AgentCapabilities{Raw: append(json.RawMessage(nil), wire.AgentCapabilities...)}
 	var capObj map[string]json.RawMessage
 	if len(wire.AgentCapabilities) != 0 && json.Unmarshal(wire.AgentCapabilities, &capObj) == nil {
@@ -497,8 +577,52 @@ func (c *Client) Initialize(ctx context.Context) (InitializeResult, error) {
 	c.mu.Lock()
 	c.initialized = true
 	c.capabilities = caps
+	c.authMethods = authIndex
 	c.mu.Unlock()
-	return InitializeResult{ProtocolVersion: wire.ProtocolVersion, AgentInfo: wire.AgentInfo, AgentCapabilities: caps, AuthMethods: wire.AuthMethods}, nil
+	return InitializeResult{ProtocolVersion: wire.ProtocolVersion, AgentInfo: wire.AgentInfo, AgentCapabilities: caps, AuthMethods: authMethods}, nil
+}
+
+func normalizeAuthMethods(methods []AuthMethod) ([]AuthMethod, map[string]AuthMethod, error) {
+	if len(methods) > maxACPAuthMethods {
+		return nil, nil, fmt.Errorf("auth method count %d exceeds limit %d", len(methods), maxACPAuthMethods)
+	}
+	out := make([]AuthMethod, 0, len(methods))
+	index := make(map[string]AuthMethod, len(methods))
+	for _, method := range methods {
+		if err := validateIdentifier("auth method id", method.ID); err != nil {
+			return nil, nil, err
+		}
+		if strings.TrimSpace(method.Name) == "" {
+			return nil, nil, fmt.Errorf("auth method %q has a blank name", method.ID)
+		}
+		if _, duplicate := index[method.ID]; duplicate {
+			return nil, nil, fmt.Errorf("duplicate auth method id %q", method.ID)
+		}
+		if method.Type == "" {
+			method.Type = "agent"
+		}
+		if method.Type != "agent" {
+			return nil, nil, fmt.Errorf("auth method %q has unsupported type %q", method.ID, method.Type)
+		}
+		index[method.ID] = method
+		out = append(out, method)
+	}
+	return out, index, nil
+}
+
+func validateIdentifier(kind, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s is blank", kind)
+	}
+	if len(value) > maxACPIdentifierBytes {
+		return fmt.Errorf("%s exceeds %d bytes", kind, maxACPIdentifierBytes)
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("%s contains a control character", kind)
+		}
+	}
+	return nil
 }
 
 func capabilityBool(raw json.RawMessage) bool {
@@ -517,6 +641,45 @@ func (c *Client) Capabilities() AgentCapabilities {
 	return AgentCapabilities{Raw: append(json.RawMessage(nil), c.capabilities.Raw...), LoadSession: c.capabilities.LoadSession, ResumeSession: c.capabilities.ResumeSession}
 }
 
+// Authenticate invokes one exact method advertised during initialization and
+// returns a non-secret operational receipt. It never auto-selects a method or
+// retries with another method.
+func (c *Client) Authenticate(ctx context.Context, methodID string) (AuthenticationReceipt, error) {
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+	if err := validateIdentifier("auth method id", methodID); err != nil {
+		return AuthenticationReceipt{}, err
+	}
+	c.mu.Lock()
+	if !c.initialized {
+		c.mu.Unlock()
+		return AuthenticationReceipt{}, ErrNotInitialized
+	}
+	if c.session != nil || c.restore != nil {
+		c.mu.Unlock()
+		return AuthenticationReceipt{}, errors.New("ACP authentication is not allowed after session setup")
+	}
+	method, advertised := c.authMethods[methodID]
+	c.mu.Unlock()
+	if !advertised {
+		return AuthenticationReceipt{}, fmt.Errorf("ACP auth method %q was not advertised", methodID)
+	}
+	ctx, cancel := withDeadline(ctx, c.cfg.Timeouts.Request)
+	defer cancel()
+	raw, phase, err := c.call(ctx, "authenticate", map[string]any{"methodId": methodID}, false)
+	if err != nil {
+		return AuthenticationReceipt{}, err
+	}
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &result); err != nil || result == nil {
+		if err == nil {
+			err = errors.New("expected a non-null result object")
+		}
+		return AuthenticationReceipt{}, c.failCall(fmt.Errorf("invalid authenticate result: %w", err), phase)
+	}
+	return AuthenticationReceipt{MethodID: method.ID, MethodType: method.Type}, nil
+}
+
 // NewSession creates a fresh ACP session. It does not load or resume an
 // existing provider session.
 func (c *Client) NewSession(ctx context.Context) (Session, error) {
@@ -528,7 +691,7 @@ func (c *Client) NewSession(ctx context.Context) (Session, error) {
 		return Session{}, ErrNotInitialized
 	}
 	if c.session != nil {
-		s := *c.session
+		s := cloneSession(*c.session)
 		c.mu.Unlock()
 		return s, fmt.Errorf("acp session already created: %s", s.ID)
 	}
@@ -540,7 +703,8 @@ func (c *Client) NewSession(ctx context.Context) (Session, error) {
 		return Session{}, err
 	}
 	var wire struct {
-		SessionID string `json:"sessionId"`
+		SessionID     string          `json:"sessionId"`
+		ConfigOptions json.RawMessage `json:"configOptions"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return Session{}, c.failCall(err, phase)
@@ -548,9 +712,13 @@ func (c *Client) NewSession(ctx context.Context) (Session, error) {
 	if err := c.validateSessionID(wire.SessionID); err != nil {
 		return Session{}, c.failCall(fmt.Errorf("invalid session/new sessionId: %w", err), phase)
 	}
+	configOptions, err := parseConfigOptions(wire.ConfigOptions)
+	if err != nil {
+		return Session{}, c.failCall(fmt.Errorf("invalid session/new configOptions: %w", err), phase)
+	}
 	c.mu.Lock()
-	c.session = &Session{ID: wire.SessionID}
-	s := *c.session
+	c.session = &Session{ID: wire.SessionID, ConfigOptions: cloneConfigOptions(configOptions)}
+	s := cloneSession(*c.session)
 	c.mu.Unlock()
 	return s, nil
 }
@@ -588,7 +756,7 @@ func (c *Client) restoreSession(ctx context.Context, method, sessionID string, u
 		return Session{}, unsupported
 	}
 	if c.session != nil {
-		s := *c.session
+		s := cloneSession(*c.session)
 		c.mu.Unlock()
 		return s, fmt.Errorf("acp session already created or restored: %s", s.ID)
 	}
@@ -621,10 +789,12 @@ func (c *Client) restoreSession(ctx context.Context, method, sessionID string, u
 	if err != nil {
 		return Session{}, err
 	}
+	var configOptions []ConfigOption
 	if method == "session/load" {
 		if !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			return Session{}, c.failCall(errors.New("invalid session/load result: expected explicit null"), phase)
 		}
+		configOptions = cloneConfigOptions(restore.configOptions)
 	} else {
 		var result map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &result); err != nil || result == nil {
@@ -633,17 +803,235 @@ func (c *Client) restoreSession(ctx context.Context, method, sessionID string, u
 			}
 			return Session{}, c.failCall(fmt.Errorf("invalid session/resume result: %w", err), phase)
 		}
+		configOptions, err = parseConfigOptions(result["configOptions"])
+		if err != nil {
+			return Session{}, c.failCall(fmt.Errorf("invalid session/resume configOptions: %w", err), phase)
+		}
 	}
 	c.mu.Lock()
 	if c.restore != restore {
 		c.mu.Unlock()
 		return Session{}, c.failCall(errors.New("ACP restore lifecycle binding was lost"), phase)
 	}
-	c.session = &Session{ID: sessionID}
+	c.session = &Session{ID: sessionID, ConfigOptions: cloneConfigOptions(configOptions)}
+	c.configSequence = call.getResponseUpdateSequence()
 	c.restore = nil
-	s := *c.session
+	s := cloneSession(*c.session)
 	c.mu.Unlock()
 	return s, nil
+}
+
+func parseConfigOptions(raw json.RawMessage) ([]ConfigOption, error) {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, nil
+	}
+	var wire []struct {
+		ID           string          `json:"id"`
+		Name         string          `json:"name"`
+		Description  string          `json:"description"`
+		Category     string          `json:"category"`
+		Type         string          `json:"type"`
+		CurrentValue json.RawMessage `json:"currentValue"`
+		Options      json.RawMessage `json:"options"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil || wire == nil {
+		if err == nil {
+			err = errors.New("configOptions must be an array")
+		}
+		return nil, err
+	}
+	if len(wire) > maxACPConfigOptions {
+		return nil, fmt.Errorf("config option count %d exceeds limit %d", len(wire), maxACPConfigOptions)
+	}
+	seen := make(map[string]struct{}, len(wire))
+	out := make([]ConfigOption, 0, len(wire))
+	for _, option := range wire {
+		if option.Type != "select" {
+			continue
+		}
+		var rawValues []json.RawMessage
+		if err := json.Unmarshal(option.Options, &rawValues); err != nil || rawValues == nil {
+			if err == nil {
+				err = errors.New("options must be an array")
+			}
+			return nil, fmt.Errorf("config option %q: %w", option.ID, err)
+		}
+		grouped := false
+		for _, rawValue := range rawValues {
+			var shape map[string]json.RawMessage
+			if json.Unmarshal(rawValue, &shape) == nil && shape != nil && shape["group"] != nil && shape["options"] != nil {
+				grouped = true
+				break
+			}
+		}
+		if grouped {
+			continue
+		}
+		if err := validateIdentifier("config option id", option.ID); err != nil {
+			return nil, err
+		}
+		if _, duplicate := seen[option.ID]; duplicate {
+			return nil, fmt.Errorf("duplicate config option id %q", option.ID)
+		}
+		seen[option.ID] = struct{}{}
+		if strings.TrimSpace(option.Name) == "" {
+			return nil, fmt.Errorf("config option %q has a blank name", option.ID)
+		}
+		if len(rawValues) == 0 || len(rawValues) > maxACPConfigValues {
+			return nil, fmt.Errorf("config option %q has invalid value count %d", option.ID, len(rawValues))
+		}
+		valuesWire := make([]ConfigOptionValue, len(rawValues))
+		for i, rawValue := range rawValues {
+			if err := json.Unmarshal(rawValue, &valuesWire[i]); err != nil {
+				return nil, fmt.Errorf("config option %q has malformed value: %w", option.ID, err)
+			}
+		}
+		var current string
+		if err := json.Unmarshal(option.CurrentValue, &current); err != nil {
+			return nil, fmt.Errorf("config option %q currentValue must be a string", option.ID)
+		}
+		values := make(map[string]struct{}, len(valuesWire))
+		for _, value := range valuesWire {
+			if err := validateIdentifier("config option value", value.Value); err != nil {
+				return nil, fmt.Errorf("config option %q: %w", option.ID, err)
+			}
+			if strings.TrimSpace(value.Name) == "" {
+				return nil, fmt.Errorf("config option %q value %q has a blank name", option.ID, value.Value)
+			}
+			if _, duplicate := values[value.Value]; duplicate {
+				return nil, fmt.Errorf("config option %q has duplicate value %q", option.ID, value.Value)
+			}
+			values[value.Value] = struct{}{}
+		}
+		if _, valid := values[current]; !valid {
+			return nil, fmt.Errorf("config option %q currentValue %q is not advertised", option.ID, current)
+		}
+		out = append(out, ConfigOption{
+			ID: option.ID, Name: option.Name, Description: option.Description, Category: option.Category,
+			Type: option.Type, CurrentValue: current, Options: append([]ConfigOptionValue(nil), valuesWire...),
+		})
+	}
+	return out, nil
+}
+
+func cloneConfigOptions(options []ConfigOption) []ConfigOption {
+	if options == nil {
+		return nil
+	}
+	out := make([]ConfigOption, len(options))
+	copy(out, options)
+	for i := range out {
+		out[i].Options = append([]ConfigOptionValue(nil), options[i].Options...)
+	}
+	return out
+}
+
+func cloneSession(session Session) Session {
+	session.ConfigOptions = cloneConfigOptions(session.ConfigOptions)
+	return session
+}
+
+// SetConfigOption changes one exact select value advertised for the active
+// session. The complete returned state replaces the local snapshot only after
+// it validates and confirms the requested selection.
+func (c *Client) SetConfigOption(ctx context.Context, configID, value string) (Session, error) {
+	c.configMu.Lock()
+	defer c.configMu.Unlock()
+	if err := validateIdentifier("config option id", configID); err != nil {
+		return Session{}, err
+	}
+	if err := validateIdentifier("config option value", value); err != nil {
+		return Session{}, err
+	}
+	c.mu.Lock()
+	if !c.initialized {
+		c.mu.Unlock()
+		return Session{}, ErrNotInitialized
+	}
+	if c.session == nil {
+		c.mu.Unlock()
+		return Session{}, ErrNoSession
+	}
+	sessionID := c.session.ID
+	var selected *ConfigOption
+	for i := range c.session.ConfigOptions {
+		if c.session.ConfigOptions[i].ID == configID {
+			copy := c.session.ConfigOptions[i]
+			selected = &copy
+			break
+		}
+	}
+	c.mu.Unlock()
+	if selected == nil {
+		return Session{}, fmt.Errorf("ACP config option %q was not advertised", configID)
+	}
+	allowed := false
+	for _, option := range selected.Options {
+		if option.Value == value {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return Session{}, fmt.Errorf("ACP config option %q did not advertise value %q", configID, value)
+	}
+	ctx, cancel := withDeadline(ctx, c.cfg.Timeouts.Request)
+	defer cancel()
+	call, err := c.beginCall("session/set_config_option", map[string]any{
+		"sessionId": sessionID, "configId": configID, "value": value,
+	}, false)
+	if err != nil {
+		return Session{}, err
+	}
+	raw, err := c.awaitCall(ctx, call)
+	phase := call.getPhase()
+	responseSequence := call.getResponseUpdateSequence()
+	if err != nil {
+		return Session{}, err
+	}
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &result); err != nil || result == nil {
+		if err == nil {
+			err = errors.New("expected a non-null object")
+		}
+		return Session{}, c.failCall(fmt.Errorf("invalid session/set_config_option result: %w", err), phase)
+	}
+	configRaw, present := result["configOptions"]
+	if !present || bytes.Equal(bytes.TrimSpace(configRaw), []byte("null")) {
+		return Session{}, c.failCall(errors.New("session/set_config_option omitted complete configOptions"), phase)
+	}
+	options, err := parseConfigOptions(configRaw)
+	if err != nil {
+		return Session{}, c.failCall(fmt.Errorf("invalid session/set_config_option configOptions: %w", err), phase)
+	}
+	matched := false
+	for _, option := range options {
+		if option.ID == configID && option.CurrentValue == value {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return Session{}, c.failCall(fmt.Errorf("session/set_config_option did not confirm %s=%s", configID, value), phase)
+	}
+	c.mu.Lock()
+	hook := c.beforeConfigCommit
+	c.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	c.mu.Lock()
+	if c.session == nil || c.session.ID != sessionID {
+		c.mu.Unlock()
+		return Session{}, c.failCall(errors.New("ACP session changed during config update"), phase)
+	}
+	if c.configSequence <= responseSequence {
+		c.session.ConfigOptions = cloneConfigOptions(options)
+		c.configSequence = responseSequence
+	}
+	session := cloneSession(*c.session)
+	c.mu.Unlock()
+	return session, nil
 }
 
 func (c *Client) clearRestore(restore *pendingRestore) {
@@ -654,7 +1042,7 @@ func (c *Client) clearRestore(restore *pendingRestore) {
 	c.mu.Unlock()
 }
 
-func (c *Client) validateUpdateEnvelope(params json.RawMessage) error {
+func (c *Client) validateUpdateEnvelope(params json.RawMessage, sequence uint64) error {
 	var envelope struct {
 		SessionID string          `json:"sessionId"`
 		Update    json.RawMessage `json:"update"`
@@ -679,25 +1067,46 @@ func (c *Client) validateUpdateEnvelope(params json.RawMessage) error {
 		}
 		return fmt.Errorf("invalid session/update discriminator: %w", err)
 	}
+	var configOptions []ConfigOption
+	if discriminator == "config_option_update" {
+		configRaw, present := update["configOptions"]
+		if !present || bytes.Equal(bytes.TrimSpace(configRaw), []byte("null")) {
+			return errors.New("config_option_update omitted complete configOptions")
+		}
+		var err error
+		configOptions, err = parseConfigOptions(configRaw)
+		if err != nil {
+			return fmt.Errorf("invalid config_option_update configOptions: %w", err)
+		}
+	}
 
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	restore := c.restore
-	session := c.session
-	c.mu.Unlock()
 	if restore != nil {
 		if envelope.SessionID != restore.sessionID {
 			return fmt.Errorf("session/update sessionId %q does not match in-flight %s sessionId %q", envelope.SessionID, restore.method, restore.sessionID)
 		}
-		if restore.method == "session/resume" && !restore.responseSeen {
+		if restore.responseSeen {
+			return errors.New("session/update arrived after restore response but before session commit")
+		}
+		if restore.method == "session/resume" {
 			return errors.New("session/update arrived before session/resume response")
+		}
+		if discriminator == "config_option_update" {
+			restore.configOptions = cloneConfigOptions(configOptions)
 		}
 		return nil
 	}
-	if session == nil {
+	if c.session == nil {
 		return errors.New("session/update arrived without an active or restoring session")
 	}
-	if envelope.SessionID != session.ID {
-		return fmt.Errorf("session/update sessionId %q does not match active sessionId %q", envelope.SessionID, session.ID)
+	if envelope.SessionID != c.session.ID {
+		return fmt.Errorf("session/update sessionId %q does not match active sessionId %q", envelope.SessionID, c.session.ID)
+	}
+	if discriminator == "config_option_update" {
+		c.session.ConfigOptions = cloneConfigOptions(configOptions)
+		c.configSequence = sequence
 	}
 	return nil
 }
@@ -847,7 +1256,9 @@ func (c *Client) Close() error {
 	c.mu.Lock()
 	c.closed = true
 	for id, cancel := range c.permissionCancel {
-		c.cancelledPermissions[id] = struct{}{}
+		if state := c.permissionState[id]; state != nil {
+			state.cancel()
+		}
 		cancel()
 	}
 	c.mu.Unlock()
@@ -1127,6 +1538,7 @@ func (c *Client) handleResponse(msg rpcMessage) {
 	p, exists := c.pending[id]
 	if exists {
 		delete(c.pending, id)
+		p.setResponseUpdateSequence(c.updateSequence)
 		if c.restore != nil && c.restore.requestID == id {
 			c.restore.responseSeen = true
 		}
@@ -1163,14 +1575,15 @@ func (c *Client) handleResponse(msg rpcMessage) {
 func (c *Client) handleRequest(msg rpcMessage) {
 	if len(msg.ID) == 0 {
 		if msg.Method == "session/update" {
-			if err := c.validateUpdateEnvelope(msg.Params); err != nil {
+			sequence, ok := c.recordUpdateObservation()
+			if !ok {
+				return
+			}
+			if err := c.validateUpdateEnvelope(msg.Params, sequence); err != nil {
 				c.poison(fmt.Errorf("%w: %v", ErrProtocol, err))
 				return
 			}
-			if !c.recordUpdateObservation() {
-				return
-			}
-			c.enqueueUpdate(Update{Method: msg.Method, Params: append(json.RawMessage(nil), msg.Params...)})
+			c.enqueueUpdate(Update{Sequence: sequence, Method: msg.Method, Params: append(json.RawMessage(nil), msg.Params...)})
 			return
 		}
 		// Unknown notifications have no response channel. Fail closed rather
@@ -1212,16 +1625,62 @@ func (c *Client) handleRequest(msg rpcMessage) {
 		return
 	}
 	var p struct {
-		SessionID  string             `json:"sessionId"`
-		ToolCallID string             `json:"toolCallId"`
-		Reason     string             `json:"reason"`
-		Options    []PermissionOption `json:"options"`
+		SessionID        string             `json:"sessionId"`
+		ToolCall         json.RawMessage    `json:"toolCall"`
+		TopLevelToolCall json.RawMessage    `json:"toolCallId"`
+		Options          []PermissionOption `json:"options"`
 	}
 	if err := json.Unmarshal(msg.Params, &p); err != nil {
 		<-c.permissionSem
 		if err := c.respond(id, nil, &rpcError{Code: -32602, Message: "invalid permission request"}); err != nil {
 			c.poison(err)
 		}
+		return
+	}
+	var toolCall struct {
+		ToolCallID string          `json:"toolCallId"`
+		Kind       string          `json:"kind"`
+		RawInput   json.RawMessage `json:"rawInput"`
+	}
+	if len(p.ToolCall) == 0 || bytes.Equal(bytes.TrimSpace(p.ToolCall), []byte("null")) || json.Unmarshal(p.ToolCall, &toolCall) != nil {
+		<-c.permissionSem
+		_ = c.respond(id, nil, &rpcError{Code: -32602, Message: "permission request has malformed toolCall"})
+		c.poison(fmt.Errorf("%w: permission request has malformed toolCall", ErrProtocol))
+		return
+	}
+	if err := validateIdentifier("permission toolCallId", toolCall.ToolCallID); err != nil {
+		<-c.permissionSem
+		_ = c.respond(id, nil, &rpcError{Code: -32602, Message: "permission request has invalid toolCallId"})
+		c.poison(fmt.Errorf("%w: %v", ErrProtocol, err))
+		return
+	}
+	if len(p.TopLevelToolCall) != 0 {
+		var topLevel string
+		if json.Unmarshal(p.TopLevelToolCall, &topLevel) != nil || topLevel != toolCall.ToolCallID {
+			<-c.permissionSem
+			_ = c.respond(id, nil, &rpcError{Code: -32602, Message: "permission request toolCallId nesting mismatch"})
+			c.poison(fmt.Errorf("%w: permission request toolCallId nesting mismatch", ErrProtocol))
+			return
+		}
+	}
+	if !isOfficialToolKind(toolCall.Kind) {
+		toolCall.Kind = "other"
+	}
+	rawLimit := c.cfg.Limits.MaxFrameBytes
+	if rawLimit > maxACPPermissionRawInput {
+		rawLimit = maxACPPermissionRawInput
+	}
+	rawInput := bytes.TrimSpace(toolCall.RawInput)
+	if len(rawInput) != 0 && !bytes.Equal(rawInput, []byte("null")) && (len(toolCall.RawInput) > rawLimit || !json.Valid(toolCall.RawInput)) {
+		<-c.permissionSem
+		_ = c.respond(id, nil, &rpcError{Code: -32602, Message: "permission request has invalid rawInput"})
+		c.poison(fmt.Errorf("%w: permission request rawInput is malformed or exceeds %d bytes", ErrProtocol, rawLimit))
+		return
+	}
+	if err := validatePermissionOptions(p.Options); err != nil {
+		<-c.permissionSem
+		_ = c.respond(id, nil, &rpcError{Code: -32602, Message: "permission request has invalid options"})
+		c.poison(fmt.Errorf("%w: %v", ErrProtocol, err))
 		return
 	}
 	c.mu.Lock()
@@ -1231,18 +1690,24 @@ func (c *Client) handleRequest(msg rpcMessage) {
 		currentSession = c.session.ID
 	}
 	c.mu.Unlock()
-	if !active || currentSession == "" || p.SessionID != currentSession || strings.TrimSpace(p.ToolCallID) == "" {
+	if !active || currentSession == "" || p.SessionID != currentSession {
 		<-c.permissionSem
 		_ = c.respond(id, nil, &rpcError{Code: -32602, Message: "permission request is not bound to the active session and turn"})
 		c.poison(fmt.Errorf("%w: permission request is not bound to the active session and turn", ErrProtocol))
 		return
 	}
-	req := PermissionRequest{SessionID: p.SessionID, ToolCallID: p.ToolCallID, Reason: p.Reason, Options: p.Options, Raw: append(json.RawMessage(nil), msg.Params...)}
+	req := PermissionRequest{
+		SessionID: p.SessionID, ToolCallID: toolCall.ToolCallID, ToolKind: toolCall.Kind,
+		RawInput: append(json.RawMessage(nil), toolCall.RawInput...), Options: p.Options,
+		Raw: append(json.RawMessage(nil), msg.Params...),
+	}
 	permissionCtx, permissionCancel := context.WithTimeout(context.Background(), c.cfg.Timeouts.Request)
 	permissionDone := make(chan struct{})
+	state := &permissionRequestState{}
 	c.mu.Lock()
 	c.permissionCancel[id] = permissionCancel
 	c.permissionDone[id] = permissionDone
+	c.permissionState[id] = state
 	c.mu.Unlock()
 	go func() {
 		defer func() {
@@ -1251,6 +1716,7 @@ func (c *Client) handleRequest(msg rpcMessage) {
 			c.mu.Lock()
 			delete(c.permissionCancel, id)
 			delete(c.permissionDone, id)
+			delete(c.permissionState, id)
 			c.mu.Unlock()
 			close(permissionDone)
 		}()
@@ -1274,20 +1740,16 @@ func (c *Client) handleRequest(msg rpcMessage) {
 				decision = Cancelled
 			}
 		}
-		c.mu.Lock()
-		_, cancelled := c.cancelledPermissions[id]
-		delete(c.cancelledPermissions, id)
-		c.mu.Unlock()
-		if cancelled || permissionCtx.Err() != nil {
+		if permissionCtx.Err() != nil {
 			decision = Cancelled
 		}
-		var result any
-		if optionID, ok := allowOnceOption(req.Options); decision == AllowOnce && ok {
-			result = map[string]any{"outcome": "selected", "optionId": optionID}
-		} else {
-			result = map[string]any{"outcome": "cancelled"}
+		c.mu.Lock()
+		hook := c.beforePermissionRespond
+		c.mu.Unlock()
+		if hook != nil {
+			hook()
 		}
-		if err := c.respond(id, result, nil); err != nil {
+		if err := c.respondPermission(id, state, decision, req.Options); err != nil {
 			c.poison(err)
 		}
 	}()
@@ -1297,34 +1759,80 @@ func (c *Client) handleRequest(msg rpcMessage) {
 // capacity check. A provider that emits and drains an unbounded stream must
 // still poison this client rather than run indefinitely or consume unbounded
 // supervisor attention.
-func (c *Client) recordUpdateObservation() bool {
+func (c *Client) recordUpdateObservation() (uint64, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed || c.protocolErr != nil {
-		return false
+		return 0, false
 	}
 	c.updatesSeen++
 	if c.updatesSeen > c.cfg.Limits.MaxUpdates {
 		_ = c.poisonLocked(fmt.Errorf("%w: total session/update limit %d exceeded", ErrProtocol, c.cfg.Limits.MaxUpdates))
-		return false
+		return 0, false
 	}
-	return true
+	c.updateSequence++
+	return c.updateSequence, true
 }
 
 func allowOnceOption(options []PermissionOption) (string, bool) {
 	for _, option := range options {
-		if option.ID != "" && (strings.EqualFold(option.Kind, "allow_once") || (option.Kind == "" && strings.EqualFold(option.ID, "allow_once"))) {
+		if option.Kind == "allow_once" {
 			return option.ID, true
 		}
 	}
 	return "", false
 }
 
+func rejectOnceOption(options []PermissionOption) (string, bool) {
+	for _, option := range options {
+		if option.Kind == "reject_once" {
+			return option.ID, true
+		}
+	}
+	return "", false
+}
+
+func validatePermissionOptions(options []PermissionOption) error {
+	if len(options) == 0 || len(options) > maxACPPermissionOptions {
+		return fmt.Errorf("permission option count %d is outside 1..%d", len(options), maxACPPermissionOptions)
+	}
+	seen := make(map[string]struct{}, len(options))
+	for _, option := range options {
+		if err := validateIdentifier("permission option id", option.ID); err != nil {
+			return err
+		}
+		if _, duplicate := seen[option.ID]; duplicate {
+			return fmt.Errorf("duplicate permission option id %q", option.ID)
+		}
+		seen[option.ID] = struct{}{}
+		if strings.TrimSpace(option.Name) == "" {
+			return fmt.Errorf("permission option %q has a blank name", option.ID)
+		}
+		switch option.Kind {
+		case "allow_once", "allow_always", "reject_once", "reject_always":
+		default:
+			return fmt.Errorf("permission option %q has unsupported kind %q", option.ID, option.Kind)
+		}
+	}
+	return nil
+}
+
+func isOfficialToolKind(kind string) bool {
+	switch kind {
+	case "read", "edit", "delete", "move", "search", "execute", "think", "fetch", "other":
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *Client) cancelPendingPermissions() []<-chan struct{} {
 	c.mu.Lock()
 	done := make([]<-chan struct{}, 0, len(c.permissionDone))
 	for id, cancel := range c.permissionCancel {
-		c.cancelledPermissions[id] = struct{}{}
+		if state := c.permissionState[id]; state != nil {
+			state.cancel()
+		}
 		cancel()
 		if ch := c.permissionDone[id]; ch != nil {
 			done = append(done, ch)
@@ -1347,6 +1855,47 @@ func (c *Client) respond(id string, result any, rpcErr *rpcError) error {
 		msg.Result = b
 	}
 	return c.writeRaw(msg)
+}
+
+// respondPermission linearizes cancellation at the transport write. A cancel
+// that reaches the per-request state before this method owns both the writer
+// and state lock changes the response to cancelled; once those locks are held,
+// the permission response is the operation that wins the wire race.
+func (c *Client) respondPermission(id string, state *permissionRequestState, decision PermissionDecision, options []PermissionOption) error {
+	c.mu.Lock()
+	delete(c.inbound, id)
+	c.mu.Unlock()
+
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.cancelled {
+		decision = Cancelled
+	}
+	var result any
+	if optionID, ok := allowOnceOption(options); decision == AllowOnce && ok {
+		result = map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": optionID}}
+	} else if optionID, ok := rejectOnceOption(options); decision == Reject && ok {
+		result = map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": optionID}}
+	} else {
+		result = map[string]any{"outcome": map[string]any{"outcome": "cancelled"}}
+	}
+	resultBytes, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	msg := rpcMessage{JSONRPC: "2.0", ID: json.RawMessage(id), Result: resultBytes}
+	b, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	if len(b) > c.cfg.Limits.MaxFrameBytes {
+		return fmt.Errorf("acp frame exceeds %d bytes", c.cfg.Limits.MaxFrameBytes)
+	}
+	err = writeAll(c.stdin, append(b, '\n'))
+	state.settled = true
+	return err
 }
 
 func (c *Client) writeRaw(msg rpcMessage) error {
@@ -1422,7 +1971,9 @@ func (c *Client) poisonLocked(err error) error {
 		p.settle()
 	}
 	for id, cancel := range c.permissionCancel {
-		c.cancelledPermissions[id] = struct{}{}
+		if state := c.permissionState[id]; state != nil {
+			state.cancel()
+		}
 		cancel()
 	}
 	c.teardownTransport()
