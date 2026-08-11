@@ -613,6 +613,13 @@ func acpAdapterBundlePOSIXIdentity(info os.FileInfo) (uint64, uint64, bool) {
 }
 
 func validateACPAdapterBundleTree(root string, assets []ACPAdapterBundleAsset, manifestPath string, verifiedFiles map[string]os.FileInfo) error {
+	rootBefore, err := os.Lstat(root)
+	if err != nil {
+		return err
+	}
+	if err := validateACPAdapterBundleDirectoryInfo(rootBefore, root); err != nil {
+		return err
+	}
 	declared := make(map[string]struct{}, len(assets)+1)
 	roles := make(map[string]string, len(assets)+1)
 	declared[manifestPath] = struct{}{}
@@ -691,6 +698,13 @@ func validateACPAdapterBundleTree(root string, assets []ACPAdapterBundleAsset, m
 		}
 	}
 	if err := walkDirectory(root, "", 0); err != nil {
+		return err
+	}
+	rootAfter, err := os.Lstat(root)
+	if err != nil || !os.SameFile(rootBefore, rootAfter) || rootBefore.Mode() != rootAfter.Mode() {
+		return fmt.Errorf("ACP adapter bundle root changed during tree verification")
+	}
+	if err := validateACPAdapterBundleDirectoryInfo(rootAfter, root); err != nil {
 		return err
 	}
 	for _, dir := range directories {
