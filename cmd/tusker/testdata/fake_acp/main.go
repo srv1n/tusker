@@ -283,7 +283,10 @@ func (s *server) prompt(req message) {
 func writeUpdate(session, text string) {
 	write(message{JSONRPC: "2.0", Method: "session/update", Params: map[string]any{
 		"sessionId": session,
-		"update":    map[string]string{"kind": "agent_message_chunk", "text": text},
+		"update": map[string]any{
+			"sessionUpdate": "agent_message_chunk",
+			"content":       map[string]string{"type": "text", "text": text},
+		},
 	}})
 }
 

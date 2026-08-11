@@ -5985,6 +5985,12 @@ func runnerForName(name string, wf Workflow) (Runner, string, error) {
 		return &CodexCloudRunner{Config: config}, firstNonEmpty(command, config.Command), nil
 	case RunnerClaude:
 		return &ClaudeRunner{}, firstNonEmpty(command, wf.Claude.Command), nil
+	case RunnerCodexACP:
+		// Admission is intentionally fail-closed until the shared factory can
+		// carry the verified bundle receipt, exact auth contract, and provider
+		// config plan into the fenced ACP process. Returning the generic ACP
+		// runner here would falsely imply those guarantees.
+		return nil, "", tuskerError(errorConfigInvalid, "codex_acp is configured but not live-ready: verified bundle receipt and Codex ACP config/auth plan are not wired into dispatch")
 	default:
 		return nil, "", tuskerError(errorConfigInvalid, "unsupported runner: "+name)
 	}

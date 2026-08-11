@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+func isACPRunner(runner RunnerName) bool {
+	return runner == RunnerACP
+}
+
 type runnerWrapperRequest struct {
 	Runner          string         `json:"runner"`
 	Start           StartRequest   `json:"start"`
@@ -214,9 +218,9 @@ func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*St
 		return executeRunnerCommand(ctx, runner, execReq, RunnerCapabilities{StructuredEvents: true, ResumeSession: true, MachineFinalStatus: true, UsageMetrics: true})
 	case RunnerACP:
 		if req.Resume != nil {
-			return nil, tuskerError(errorInvalidTransition, "acp_v1 wrapper refuses a resume request before a provider adapter enables negotiated resume")
+			return nil, tuskerError(errorInvalidTransition, string(runner)+" wrapper refuses a resume request before a provider adapter enables negotiated resume")
 		}
-		return startLiveACP(ctx, req.Start)
+		return startLiveACPForRunner(ctx, req.Start, runner)
 	default:
 		return nil, tuskerError(errorConfigInvalid, "runner wrapper does not support runner "+string(runner))
 	}
@@ -235,7 +239,7 @@ func runnerWrapperWait(ctx context.Context, cancelChild context.CancelFunc, req 
 		// without publishing a terminal status, do not leave this wrapper's
 		// heartbeat renewing the lease forever. Publish one bounded failure and
 		// let the daemon's normal retry/park policy classify it.
-		if RunnerName(strings.TrimSpace(req.Runner)) == RunnerACP && acpChildExitedWithoutStatus(result, req.Start.StatusPath) {
+		if isACPRunner(RunnerName(strings.TrimSpace(req.Runner))) && acpChildExitedWithoutStatus(result, req.Start.StatusPath) {
 			cancelChild()
 			runnerWrapperPublishStatusIfAbsent(req.Start, 1, AttemptOutcomeFailed, "acp_v1 child exited without terminal status")
 			runnerWrapperRecordDirectOutcome(req.Start)
@@ -279,7 +283,7 @@ func acpChildExitedWithoutStatus(result *StartResult, statusPath string) bool {
 // supervisor handoff. Unit tests never enter this branch because only the real
 // runner-wrapper command supplies a containment PGID equal to its own PID.
 func runnerWrapperReapACPContainmentAfterStatus(req runnerWrapperRequest) {
-	if RunnerName(strings.TrimSpace(req.Runner)) != RunnerACP || req.ContainmentPGID <= 0 {
+	if !isACPRunner(RunnerName(strings.TrimSpace(req.Runner))) || req.ContainmentPGID <= 0 {
 		return
 	}
 	if req.ContainmentPGID != os.Getpid() || processGroupID(os.Getpid()) != req.ContainmentPGID {

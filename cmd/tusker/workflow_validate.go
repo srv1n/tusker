@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -192,7 +193,7 @@ func validateRunnerDefinitions(wf Workflow, filePath string) error {
 		}
 		kind := RunnerName(firstNonEmpty(strings.TrimSpace(definition.Kind), name))
 		switch kind {
-		case RunnerCodex, RunnerCodexAppServer, RunnerCodexExec, RunnerCodexCloud, RunnerClaude:
+		case RunnerCodex, RunnerCodexAppServer, RunnerCodexExec, RunnerCodexCloud, RunnerClaude, RunnerCodexACP:
 		default:
 			return tuskerError(errorConfigInvalid, "runner "+name+" has unsupported kind "+string(kind), withPath(filePath))
 		}
@@ -201,6 +202,42 @@ func validateRunnerDefinitions(wf Workflow, filePath string) error {
 		}
 		if kind == RunnerCodexAppServer && strings.TrimSpace(definition.Command) != "" && !strings.Contains(definition.Command, "app-server") {
 			return tuskerError(errorConfigInvalid, "runner "+name+" is codex_app_server but command is not app-server", withPath(filePath))
+		}
+		if kind == RunnerCodexACP {
+			missing := []string{}
+			for field, value := range map[string]string{"bundle_root": definition.BundleRoot, "manifest_path": definition.ManifestPath, "manifest_sha256": definition.ManifestSHA256, "adapter_version": definition.AdapterVersion, "auth_source": definition.AuthSource, "auth_principal_sha256": definition.AuthPrincipalSHA256} {
+				if strings.TrimSpace(value) == "" {
+					missing = append(missing, field)
+				}
+			}
+			if len(missing) > 0 {
+				return tuskerError(errorConfigInvalid, "runner "+name+" codex_acp is not live-ready; missing explicit admission fields: "+strings.Join(missing, ", "), withPath(filePath))
+			}
+			if strings.TrimSpace(definition.Command) != "" {
+				return tuskerError(errorConfigInvalid, "runner "+name+" codex_acp does not accept command; use a verified native bundle", withPath(filePath))
+			}
+			if definition.BundleRoot != strings.TrimSpace(definition.BundleRoot) || !filepath.IsAbs(definition.BundleRoot) || filepath.Clean(definition.BundleRoot) != definition.BundleRoot || containsControl(definition.BundleRoot) {
+				return tuskerError(errorConfigInvalid, "runner "+name+" codex_acp bundle_root must be an exact canonical absolute path", withPath(filePath))
+			}
+			if manifest, err := normalizeACPAdapterBundleRelative(definition.ManifestPath); err != nil || manifest != definition.ManifestPath {
+				return tuskerError(errorConfigInvalid, "runner "+name+" codex_acp manifest_path must be a canonical bundle-relative path", withPath(filePath))
+			}
+			if !validACPAdapterBundleDigest(definition.ManifestSHA256) {
+				return tuskerError(errorConfigInvalid, "runner "+name+" codex_acp manifest_sha256 must be a canonical sha256 digest", withPath(filePath))
+			}
+			if !validCodexACPAdapterVersion(definition.AdapterVersion) {
+				return tuskerError(errorConfigInvalid, "runner "+name+" codex_acp adapter_version is invalid", withPath(filePath))
+			}
+			switch CodexACPAuthSource(definition.AuthSource) {
+			case CodexACPAuthChatGPTSession, CodexACPAuthCodexAPIKey, CodexACPAuthOpenAIAPIKey:
+			default:
+				return tuskerError(errorConfigInvalid, "runner "+name+" codex_acp auth_source is unsupported", withPath(filePath))
+			}
+			if !v7CloseAuthorityDigest(definition.AuthPrincipalSHA256, "sha256:") {
+				return tuskerError(errorConfigInvalid, "runner "+name+" codex_acp auth_principal_sha256 must be a non-secret canonical sha256 identity", withPath(filePath))
+			}
+		} else if definition.BundleRoot != "" || definition.ManifestPath != "" || definition.ManifestSHA256 != "" || definition.AdapterVersion != "" || definition.AuthSource != "" || definition.AuthPrincipalSHA256 != "" {
+			return tuskerError(errorConfigInvalid, "runner "+name+" has codex_acp-only admission fields", withPath(filePath))
 		}
 	}
 	return nil

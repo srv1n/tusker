@@ -105,21 +105,27 @@ var FrontmatterOrder = map[string][]string{
 }
 
 type TuskerAutomationRunnerConfig struct {
-	Kind              string `yaml:"kind"`
-	Command           string `yaml:"command"`
-	ApprovalPolicy    string `yaml:"approval_policy"`
-	ThreadSandbox     string `yaml:"thread_sandbox"`
-	TurnSandboxPolicy string `yaml:"turn_sandbox_policy"`
-	TurnTimeoutMS     int    `yaml:"turn_timeout_ms"`
-	ReadTimeoutMS     int    `yaml:"read_timeout_ms"`
-	StallTimeoutMS    int    `yaml:"stall_timeout_ms"`
-	MaxTurns          int    `yaml:"max_turns"`
-	EnvironmentID     string `yaml:"environment_id"`
-	ApplyMode         string `yaml:"apply_mode"`
-	PRMode            string `yaml:"pr_mode"`
-	ExternalCollect   bool   `yaml:"external_collect"`
-	StatusCommand     string `yaml:"status_command"`
-	CollectCommand    string `yaml:"collect_command"`
+	Kind                string `yaml:"kind"`
+	Command             string `yaml:"command"`
+	ApprovalPolicy      string `yaml:"approval_policy"`
+	ThreadSandbox       string `yaml:"thread_sandbox"`
+	TurnSandboxPolicy   string `yaml:"turn_sandbox_policy"`
+	TurnTimeoutMS       int    `yaml:"turn_timeout_ms"`
+	ReadTimeoutMS       int    `yaml:"read_timeout_ms"`
+	StallTimeoutMS      int    `yaml:"stall_timeout_ms"`
+	MaxTurns            int    `yaml:"max_turns"`
+	EnvironmentID       string `yaml:"environment_id"`
+	ApplyMode           string `yaml:"apply_mode"`
+	PRMode              string `yaml:"pr_mode"`
+	ExternalCollect     bool   `yaml:"external_collect"`
+	StatusCommand       string `yaml:"status_command"`
+	CollectCommand      string `yaml:"collect_command"`
+	BundleRoot          string `yaml:"bundle_root"`
+	ManifestPath        string `yaml:"manifest_path"`
+	ManifestSHA256      string `yaml:"manifest_sha256"`
+	AdapterVersion      string `yaml:"adapter_version"`
+	AuthSource          string `yaml:"auth_source"`
+	AuthPrincipalSHA256 string `yaml:"auth_principal_sha256"`
 }
 
 type TuskerRunnerSandboxConfig struct {

@@ -21,9 +21,14 @@ import (
 // intentionally not a Codex or Claude adapter: provider descriptors, command
 // construction, and normalized tool decoders arrive only after their separate
 // parity gates. Until then all unrecognized permission requests are rejected.
-type ACPRunner struct{}
+type ACPRunner struct{ runner RunnerName }
 
-func (r *ACPRunner) Name() RunnerName { return RunnerACP }
+func (r *ACPRunner) Name() RunnerName {
+	if r == nil || r.runner == "" {
+		return RunnerACP
+	}
+	return r.runner
+}
 
 func (r *ACPRunner) Capabilities() RunnerCapabilities {
 	// Session/load and session/resume must remain false until a provider adapter
@@ -79,7 +84,7 @@ func (r *ACPRunner) Interrupt(ctx context.Context, req InterruptRequest) error {
 	if handle == nil {
 		return errLiveHandleNotFound
 	}
-	if handle.Runner() != RunnerACP || handle.AttemptID() != req.AttemptID {
+	if handle.Runner() != r.Name() || handle.AttemptID() != req.AttemptID {
 		return tuskerError(errorInvalidTransition, "attempt is not owned by a live ACP runner")
 	}
 	return handle.Interrupt(ctx)
@@ -94,6 +99,7 @@ func (r *ACPRunner) Collect(ctx context.Context, req CollectRequest) (*CollectRe
 }
 
 type acpAttemptProvenance struct {
+	Runner    RunnerName
 	Principal string
 	Actor     string
 	AttemptID string
@@ -191,6 +197,10 @@ func (h *acpLiveHandle) Interrupt(ctx context.Context) error {
 }
 
 func startLiveACP(ctx context.Context, req StartRequest) (*StartResult, error) {
+	return startLiveACPForRunner(ctx, req, RunnerACP)
+}
+
+func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerName) (*StartResult, error) {
 	if err := validateACPLaunchRequest(req); err != nil {
 		return nil, err
 	}
@@ -213,6 +223,7 @@ func startLiveACP(ctx context.Context, req StartRequest) (*StartResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	provenance.Runner = runner
 	prompt, err := readText(req.PromptPath)
 	if err != nil {
 		return nil, err
@@ -270,7 +281,7 @@ func startLiveACP(ctx context.Context, req StartRequest) (*StartResult, error) {
 		recordID:   req.RecordID,
 		itemID:     req.ItemID,
 		attemptID:  req.AttemptID,
-		runner:     RunnerACP,
+		runner:     runner,
 		client:     client,
 		log:        log,
 		eventLog:   eventLog,
@@ -330,7 +341,7 @@ func startLiveACP(ctx context.Context, req StartRequest) (*StartResult, error) {
 		PGID:         req.ContainmentPGID,
 		ProcessStart: processStartedAt,
 		StatusPath:   req.StatusPath,
-		Capabilities: (&ACPRunner{}).Capabilities(),
+		Capabilities: (&ACPRunner{runner: runner}).Capabilities(),
 		Outcome:      AttemptOutcomeNone,
 	}, nil
 }
@@ -523,7 +534,7 @@ func resolveACPAttemptProvenance(req StartRequest, adapter string) (acpAttemptPr
 		// adapter identity fill the gap.
 		principal = "actor-derived:" + actor
 	}
-	return acpAttemptProvenance{Principal: principal, Actor: actor, AttemptID: req.AttemptID, Adapter: adapter}, nil
+	return acpAttemptProvenance{Runner: RunnerACP, Principal: principal, Actor: actor, AttemptID: req.AttemptID, Adapter: adapter}, nil
 }
 
 func acpRunnerEnvironment(req StartRequest, workspace string, policy CodexPolicy) []string {
@@ -636,7 +647,11 @@ func appendACPEvent(eventLog *EventLog, kind string, provenance acpAttemptProven
 	if eventLog == nil {
 		return nil
 	}
-	return eventLog.Append(kind, provenance.AttemptID, RunnerACP, payload)
+	runner := provenance.Runner
+	if runner == "" {
+		runner = RunnerACP
+	}
+	return eventLog.Append(kind, provenance.AttemptID, runner, payload)
 }
 
 type acpLogSink struct{ writer *boundedRawLogWriter }

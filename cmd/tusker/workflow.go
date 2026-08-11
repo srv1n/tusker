@@ -259,6 +259,14 @@ type RunnerDefinition struct {
 	ExternalCollect   bool   `yaml:"external_collect,omitempty" json:"external_collect,omitempty"`
 	StatusCommand     string `yaml:"status_command,omitempty" json:"status_command,omitempty"`
 	CollectCommand    string `yaml:"collect_command,omitempty" json:"collect_command,omitempty"`
+	// ACP adapter admission is explicit and content-addressed. These fields are
+	// required for codex_acp; secrets are never stored in workflow config.
+	BundleRoot          string `yaml:"bundle_root,omitempty" json:"bundle_root,omitempty"`
+	ManifestPath        string `yaml:"manifest_path,omitempty" json:"manifest_path,omitempty"`
+	ManifestSHA256      string `yaml:"manifest_sha256,omitempty" json:"manifest_sha256,omitempty"`
+	AdapterVersion      string `yaml:"adapter_version,omitempty" json:"adapter_version,omitempty"`
+	AuthSource          string `yaml:"auth_source,omitempty" json:"auth_source,omitempty"`
+	AuthPrincipalSHA256 string `yaml:"auth_principal_sha256,omitempty" json:"auth_principal_sha256,omitempty"`
 }
 
 type FanoutPolicy struct {
@@ -691,21 +699,27 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 	}
 	for name, runner := range cfg.Automation.Runners {
 		definition := RunnerDefinition{
-			Kind:              runner.Kind,
-			Command:           runner.Command,
-			ApprovalPolicy:    runner.ApprovalPolicy,
-			ThreadSandbox:     runner.ThreadSandbox,
-			TurnSandboxPolicy: runner.TurnSandboxPolicy,
-			TurnTimeoutMS:     runner.TurnTimeoutMS,
-			ReadTimeoutMS:     runner.ReadTimeoutMS,
-			StallTimeoutMS:    runner.StallTimeoutMS,
-			MaxTurns:          runner.MaxTurns,
-			EnvironmentID:     runner.EnvironmentID,
-			ApplyMode:         runner.ApplyMode,
-			PRMode:            runner.PRMode,
-			ExternalCollect:   runner.ExternalCollect,
-			StatusCommand:     runner.StatusCommand,
-			CollectCommand:    runner.CollectCommand,
+			Kind:                runner.Kind,
+			Command:             runner.Command,
+			ApprovalPolicy:      runner.ApprovalPolicy,
+			ThreadSandbox:       runner.ThreadSandbox,
+			TurnSandboxPolicy:   runner.TurnSandboxPolicy,
+			TurnTimeoutMS:       runner.TurnTimeoutMS,
+			ReadTimeoutMS:       runner.ReadTimeoutMS,
+			StallTimeoutMS:      runner.StallTimeoutMS,
+			MaxTurns:            runner.MaxTurns,
+			EnvironmentID:       runner.EnvironmentID,
+			ApplyMode:           runner.ApplyMode,
+			PRMode:              runner.PRMode,
+			ExternalCollect:     runner.ExternalCollect,
+			StatusCommand:       runner.StatusCommand,
+			CollectCommand:      runner.CollectCommand,
+			BundleRoot:          runner.BundleRoot,
+			ManifestPath:        runner.ManifestPath,
+			ManifestSHA256:      runner.ManifestSHA256,
+			AdapterVersion:      runner.AdapterVersion,
+			AuthSource:          runner.AuthSource,
+			AuthPrincipalSHA256: runner.AuthPrincipalSHA256,
 		}
 		if strings.TrimSpace(definition.Kind) == "" {
 			definition.Kind = strings.TrimSpace(name)
