@@ -61,10 +61,6 @@ func bootstrapV7(args Args) error {
 	return nil
 }
 
-func bootstrapLegacy(args Args) error {
-	return tuskerError(errorInvalidArg, "legacy bootstrap has been removed; V7 init is the only supported bootstrap path", withHint("use `tusker init --yes`"))
-}
-
 func writeDefaultTuskerConfig(vaultPath string) error {
 	// Keep an existing root-level config readable, but never create one. This
 	// prevents init from producing a duplicate competing configuration file.

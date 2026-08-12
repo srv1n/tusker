@@ -981,25 +981,9 @@ func initCmd(args Args) error {
 		printInitHelp()
 		return nil
 	}
-	profileForMode := strings.TrimSpace(args.String("profile"))
-	if args.Bool("legacy") || args.Bool("migrate-v5") || args.Bool("migrate-v6") || (profileForMode != "" && !strings.EqualFold(profileForMode, "v7")) {
+	profile := strings.TrimSpace(args.String("profile"))
+	if args.Bool("legacy") || args.Bool("migrate-v5") || args.Bool("migrate-v6") || (profile != "" && !strings.EqualFold(profile, "v7")) {
 		return removedSurfaceError("non-V7 init/migration")
-	}
-	if args.Bool("migrate-v5") && args.Bool("dry-run") {
-		report, err := migrateLegacyVaultToV5(args)
-		if err != nil {
-			return err
-		}
-		printV5MigrationReport(report, args)
-		return nil
-	}
-	if args.Bool("migrate-v6") {
-		report, err := migrateV5VaultToV6(args)
-		if err != nil {
-			return err
-		}
-		printV6MigrationReport(report, args)
-		return nil
 	}
 	cwd := mustGetwd()
 	yes := args.Bool("yes")
@@ -1018,10 +1002,6 @@ func initCmd(args Args) error {
 	mountTracker := args.Bool("mount") && !noMount
 	fresh := args.Bool("fresh")
 	vaultOnly := args.Bool("vault-only")
-	profile := strings.TrimSpace(args.String("profile"))
-	useLegacy := args.Bool("legacy") || args.Bool("migrate-v5")
-	useV7 := !useLegacy && (args.Bool("v7") || profile == "" || strings.EqualFold(profile, "v7"))
-	useV6 := !useLegacy && profile != "" && !strings.EqualFold(profile, "v7")
 	interactive := !yes && isTTY(os.Stdin)
 	reader := bufio.NewReader(os.Stdin)
 	ask := func(question string, defaultYes bool) (bool, error) {
@@ -1081,22 +1061,8 @@ func initCmd(args Args) error {
 			return err
 		}
 		if doVault {
-			if useLegacy {
-				if err := bootstrapLegacy(Args{"vault": vaultPath, "quiet": "true"}); err != nil {
-					return err
-				}
-			} else if useV7 {
-				if err := bootstrapV7Profile(vaultPath, profile); err != nil {
-					return err
-				}
-			} else if useV6 {
-				if err := bootstrapV6(Args{"vault": vaultPath, "quiet": "true", "profile": profile}); err != nil {
-					return err
-				}
-			} else {
-				if err := bootstrap(Args{"vault": vaultPath, "quiet": "true"}); err != nil {
-					return err
-				}
+			if err := bootstrapV7Profile(vaultPath, profile); err != nil {
+				return err
 			}
 			fmt.Printf("Initialized vault at %s\n", vaultPath)
 		} else {
@@ -1108,32 +1074,11 @@ func initCmd(args Args) error {
 	if effectiveVault == "" {
 		effectiveVault = vaultPath
 	}
-	if useLegacy {
-		if err := bootstrapLegacy(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
-			return err
-		}
-	} else if useV6 {
-		if err := bootstrapV6(Args{"vault": effectiveVault, "quiet": "true", "profile": profile}); err != nil {
-			return err
-		}
-	} else if useV7 {
-		if err := bootstrapV7Profile(effectiveVault, profile); err != nil {
-			return err
-		}
-	} else {
-		if err := bootstrap(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
-			return err
-		}
+	if err := bootstrapV7Profile(effectiveVault, profile); err != nil {
+		return err
 	}
 	if err := workflowInitCmd(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
 		return err
-	}
-	if args.Bool("migrate-v5") {
-		report, err := migrateLegacyVaultToV5(args)
-		if err != nil {
-			return err
-		}
-		printV5MigrationReport(report, args)
 	}
 	vaultRelative := relativeFromRepo(cwd, effectiveVault)
 	if vaultRelative == "" {
@@ -1201,49 +1146,9 @@ func initCmd(args Args) error {
 	fmt.Println()
 	fmt.Println("Done. Next steps:")
 	fmt.Println("  tusker validate --vault " + effectiveVault)
-	if useV7 {
-		fmt.Println("  tusker domain list --v7 --vault " + effectiveVault)
-		fmt.Println("  tusker publish skill --v7 --vault " + effectiveVault)
-	} else if useV6 {
-		fmt.Println("  tusker domain list --vault " + effectiveVault)
-		fmt.Println("  tusker knowledge route \"change CLI flag\" --vault " + effectiveVault)
-	} else {
-		fmt.Println("  tusker list --vault " + effectiveVault + " --type epic")
-		fmt.Println("  tusker new epic --vault " + effectiveVault + " --acronym APP --title \"App foundation\"")
-	}
+	fmt.Println("  tusker domain list --v7 --vault " + effectiveVault)
+	fmt.Println("  tusker publish skill --v7 --vault " + effectiveVault)
 	return nil
-}
-
-func printV5MigrationReport(report *v5MigrationReport, args Args) {
-	if args.Bool("json") {
-		emitJSON(report)
-		return
-	}
-	mode := "Migrated"
-	if report.DryRun {
-		mode = "Would migrate"
-	}
-	fmt.Printf("%s %d notes in %s\n", mode, report.NotesChanged, report.Vault)
-	if report.BackupPath != "" {
-		fmt.Printf("Backup: %s\n", report.BackupPath)
-	}
-	if report.FilesMoved > 0 || report.DocsMapNodesAdd > 0 {
-		fmt.Printf("Files moved: %d\n", report.FilesMoved)
-		fmt.Printf("Docs-map nodes added: %d\n", report.DocsMapNodesAdd)
-	}
-	if len(report.IDMap) > 0 {
-		fmt.Println("ID mapping:")
-		keys := make([]string, 0, len(report.IDMap))
-		for key := range report.IDMap {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			if report.IDMap[key] != key {
-				fmt.Printf("  %s -> %s\n", key, report.IDMap[key])
-			}
-		}
-	}
 }
 
 func upsertGitignore(vaultPath string) error {

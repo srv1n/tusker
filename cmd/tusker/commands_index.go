@@ -17,12 +17,7 @@ func reindex(args Args) error {
 	if err != nil {
 		return err
 	}
-	v7Vault := isV7VaultLayout(vaultPath)
 	notes, err := listAllNotes(vaultPath)
-	if err != nil {
-		return err
-	}
-	docsMap, err := loadDocsMap(vaultPath)
 	if err != nil {
 		return err
 	}
@@ -91,29 +86,18 @@ func reindex(args Args) error {
 			links = append(links, collectLinks(note)...)
 		case "doc":
 			nodeID := stringField(note.Data, "node")
-			mappedNode, hasMappedNode := DocsMapNode{}, false
-			if docsMap != nil {
-				mappedNode, hasMappedNode = docsMap.Node(nodeID)
-			}
 			epicRef := wikiTarget(note.Data["epic"])
 			base["epic"] = epicRef
 			base["epic_record_id"] = stringField(note.Data, "epic_record_id")
 			base["epicTitle"] = stringField(epicMap[epicRef].Data, "title")
-			base["audience"] = firstNonEmpty(stringField(note.Data, "audience"), mappedNode.Audience)
+			base["audience"] = stringField(note.Data, "audience")
 			base["node"] = nodeID
 			base["kind"] = stringField(note.Data, "kind")
 			base["domains"] = normalizeList(note.Data["domains"])
-			if len(normalizeList(note.Data["domains"])) == 0 && mappedNode.Domain != "" {
-				base["domains"] = []string{mappedNode.Domain}
-			}
-			base["mode"] = firstNonEmpty(stringField(note.Data, "mode"), mappedNode.EffectiveMode())
-			base["agent_layer"] = firstNonEmpty(stringField(note.Data, "agent_layer"), mappedNode.EffectiveAgentLayer())
-			base["source_of_truth"] = firstNonEmptyList(normalizeList(note.Data["source_of_truth"]), mappedNode.SourceOfTruth)
-			base["stale_when_paths"] = firstNonEmptyList(normalizeList(note.Data["stale_when_paths"]), mappedNode.StaleWhen.Paths)
-			base["docs_map_path"] = mappedNode.SourcePath()
-			base["docs_map_role"] = mappedNode.Role
-			base["docs_map_evals"] = mappedNode.Evals
-			base["docs_map_node"] = hasMappedNode
+			base["mode"] = stringField(note.Data, "mode")
+			base["agent_layer"] = stringField(note.Data, "agent_layer")
+			base["source_of_truth"] = normalizeList(note.Data["source_of_truth"])
+			base["stale_when_paths"] = normalizeList(note.Data["stale_when_paths"])
 			base["doc_intent"] = stringField(note.Data, "doc_intent")
 			base["owner_epic"] = wikiTarget(note.Data["owner_epic"])
 			base["canon_for"] = wikiTarget(note.Data["canon_for"])
@@ -124,9 +108,9 @@ func reindex(args Args) error {
 			base["superseded_by"] = stringField(note.Data, "superseded_by")
 			base["redirect_from"] = normalizeList(note.Data["redirect_from"])
 			base["publish"] = boolField(note.Data, "publish")
-			base["publish_lane"] = firstNonEmpty(stringField(note.Data, "publish_lane"), mappedNode.PublishLane)
-			base["publish_path"] = firstNonEmpty(stringField(note.Data, "publish_path"), mappedNode.PublishPath)
-			base["publish_description"] = firstNonEmpty(stringField(note.Data, "publish_description"), mappedNode.PublishDescription)
+			base["publish_lane"] = stringField(note.Data, "publish_lane")
+			base["publish_path"] = stringField(note.Data, "publish_path")
+			base["publish_description"] = stringField(note.Data, "publish_description")
 			base["publish_order"] = optionalIntValue(note.Data["publish_order"])
 			base["publish_section_title"] = stringField(note.Data, "publish_section_title")
 			base["publish_url"] = stringField(note.Data, "publish_url")
@@ -284,7 +268,6 @@ func reindex(args Args) error {
 			"rework":            len(reworkQueue),
 		},
 	}
-	docsCatalog := buildDocsCatalog(docsMap, docs, tasks)
 	dashboard := map[string]any{
 		"generatedAt": generatedAt,
 		"counts":      summary["counts"],
@@ -297,8 +280,7 @@ func reindex(args Args) error {
 			"verification_review": verificationQueue,
 			"publication":         publicationQueue,
 		},
-		"docs_catalog": docsCatalog,
-		"agents":       buildAgentsSection(configData, map[string]int{}),
+		"agents": buildAgentsSection(configData, map[string]int{}),
 	}
 	runtimeSection := loadDashboardRuntime(vaultPath)
 	dashboard["runtime"] = runtimeSection
@@ -335,7 +317,7 @@ func reindex(args Args) error {
 	}{
 		{"epics.index.json", map[string]any{"generatedAt": generatedAt, "items": epics}},
 		{"tasks.index.json", map[string]any{"generatedAt": generatedAt, "items": tasks}},
-		{"docs.index.json", map[string]any{"generatedAt": generatedAt, "items": docs, "catalog": docsCatalog}},
+		{"docs.index.json", map[string]any{"generatedAt": generatedAt, "items": docs}},
 		{"records.index.json", map[string]any{"generatedAt": generatedAt, "items": records}},
 		{"links.index.json", map[string]any{"generatedAt": generatedAt, "items": links}},
 		{"verification.index.json", map[string]any{"generatedAt": generatedAt, "items": verificationQueue}},
@@ -350,21 +332,10 @@ func reindex(args Args) error {
 	for _, stale := range []string{"stories.index.json", "bugs.index.json", "attestation.index.json"} {
 		_ = os.Remove(filepath.Join(generatedDir, stale))
 	}
-	if err := writeV6GeneratedIndexes(vaultPath, true); err != nil {
-		return err
-	}
 	if err := writeVaultReadme(vaultPath, epics, tasks, docs, generatedAt); err != nil {
 		return err
 	}
-	if !v7Vault {
-		if err := writeDashboardNote(vaultPath, runtimeSection, docsCatalog, generatedAt); err != nil {
-			return err
-		}
-	}
-	if err := writeDocsCatalogNote(vaultPath, docsCatalog, generatedAt); err != nil {
-		return err
-	}
-	if v7Vault {
+	if isV7VaultLayout(vaultPath) {
 		idx, err := loadV7Index(vaultPath)
 		if err != nil {
 			return err
@@ -532,207 +503,6 @@ func publicationManifestItem(doc map[string]any) map[string]any {
 	}
 }
 
-func buildDocsCatalog(docsMap *DocsMap, docs, tasks []map[string]any) []map[string]any {
-	if docsMap == nil {
-		return nil
-	}
-	docsByNode := map[string]map[string]any{}
-	docsByMapPath := map[string]map[string]any{}
-	for _, doc := range docs {
-		if node := stringValue(doc["node"]); node != "" {
-			docsByNode[node] = doc
-		}
-		if path := docsNormalizePath(stringValue(doc["path"])); path != "" {
-			docsByMapPath[path] = doc
-		}
-	}
-	var catalog []map[string]any
-	for _, node := range docsMap.Nodes {
-		path := docsNormalizePath(node.SourcePath())
-		doc := docsByNode[node.ID]
-		if doc == nil && path != "" {
-			doc = docsByMapPath[path]
-		}
-		freshness := "missing"
-		updated := ""
-		verifiedAt := ""
-		publishPath := node.PublishPath
-		linkedTasks, waivers, lastEvent := docsCatalogTaskState(tasks, node.ID)
-		if doc != nil {
-			updated = stringValue(doc["updated"])
-			verifiedAt = firstNonEmpty(stringValue(doc["last_verified_at"]), stringValue(doc["verified_at"]))
-			publishPath = firstNonEmpty(stringValue(doc["publish_path"]), publishPath)
-			if verifiedAt != "" {
-				freshness = "verified"
-			} else {
-				freshness = "needs_verification"
-			}
-		}
-		if lastEvent != nil {
-			switch stringValue(lastEvent["status"]) {
-			case "applied", "verified_noop":
-				freshness = "verified_by_task"
-			case "waived":
-				freshness = "waived"
-			}
-			verifiedAt = firstNonEmpty(verifiedAt, stringValue(lastEvent["date"]))
-		}
-		staleDueTo := []string{}
-		if freshness == "missing" || freshness == "needs_verification" {
-			staleDueTo = append(staleDueTo, node.StaleWhen.Paths...)
-		}
-		catalog = append(catalog, map[string]any{
-			"doc_node":            node.ID,
-			"title":               node.CatalogTitle(),
-			"section":             docsCatalogSection(node),
-			"audience":            node.Audience,
-			"mode":                node.EffectiveMode(),
-			"agent_layer":         node.EffectiveAgentLayer(),
-			"domain":              node.Domain,
-			"path":                path,
-			"publish_path":        publishPath,
-			"freshness":           freshness,
-			"updated":             updated,
-			"verified_at":         verifiedAt,
-			"last_verified_event": lastEvent,
-			"linked_tasks":        linkedTasks,
-			"waivers":             waivers,
-			"stale_due_to":        staleDueTo,
-			"source_of_truth":     append([]string{}, node.SourceOfTruth...),
-			"stale_when":          append([]string{}, node.StaleWhen.Paths...),
-			"evals":               append([]string{}, node.Evals...),
-		})
-	}
-	sort.SliceStable(catalog, func(i, j int) bool {
-		left, right := catalog[i], catalog[j]
-		if docsCatalogSectionRank(stringValue(left["section"])) != docsCatalogSectionRank(stringValue(right["section"])) {
-			return docsCatalogSectionRank(stringValue(left["section"])) < docsCatalogSectionRank(stringValue(right["section"]))
-		}
-		return stringValue(left["doc_node"]) < stringValue(right["doc_node"])
-	})
-	return catalog
-}
-
-func docsCatalogTaskState(tasks []map[string]any, node string) ([]string, []map[string]any, map[string]any) {
-	linked := []string{}
-	waivers := []map[string]any{}
-	var lastEvent map[string]any
-	for _, task := range tasks {
-		if !containsString(normalizeList(task["doc_nodes"]), node) {
-			continue
-		}
-		taskID := stringValue(task["id"])
-		linked = append(linked, taskID)
-		for _, raw := range anySlice(task["docs_resolution"]) {
-			row, ok := raw.(map[string]any)
-			if !ok || stringValue(row["node"]) != node {
-				continue
-			}
-			event := map[string]any{
-				"task":   taskID,
-				"status": stringValue(row["status"]),
-				"actor":  stringValue(row["actor"]),
-				"date":   stringValue(row["date"]),
-				"reason": stringValue(row["reason"]),
-			}
-			if stringValue(row["status"]) == "waived" {
-				waivers = append(waivers, event)
-			}
-			if lastEvent == nil || stringValue(event["date"]) >= stringValue(lastEvent["date"]) {
-				lastEvent = event
-			}
-		}
-	}
-	sort.Strings(linked)
-	return linked, waivers, lastEvent
-}
-
-func (n DocsMapNode) CatalogTitle() string {
-	if title := strings.TrimSpace(n.Title); title != "" {
-		return title
-	}
-	return docsTitleizeSegment(filepath.Base(n.ID))
-}
-
-func docsCatalogSection(node DocsMapNode) string {
-	path := strings.ToLower(node.SourcePath())
-	if node.Audience == "agent" || node.EffectiveAgentLayer() == "standalone" {
-		return "For agents"
-	}
-	if strings.Contains(path, "troubleshooting") {
-		return "Troubleshooting"
-	}
-	if strings.Contains(path, "example") {
-		return "Examples"
-	}
-	if strings.Contains(path, "media") {
-		return "Media"
-	}
-	switch node.EffectiveMode() {
-	case "tutorial":
-		return "Start here"
-	case "how-to":
-		return "Guides"
-	case "explanation":
-		return "Concepts"
-	default:
-		return "Reference"
-	}
-}
-
-func docsCatalogSectionRank(section string) int {
-	order := []string{"Start here", "Guides", "Reference", "Concepts", "Troubleshooting", "Examples", "For agents", "Media"}
-	for i, value := range order {
-		if section == value {
-			return i
-		}
-	}
-	return len(order)
-}
-
-func writeDocsCatalogNote(vaultPath string, catalog []map[string]any, generatedAt string) error {
-	if len(catalog) == 0 {
-		return nil
-	}
-	date := generatedAt
-	if len(date) >= 10 {
-		date = date[:10]
-	}
-	var b strings.Builder
-	b.WriteString("---\n")
-	b.WriteString("title: \"Docs Catalog\"\n")
-	b.WriteString("type: \"note\"\n")
-	b.WriteString(fmt.Sprintf("created: \"%s\"\n", date))
-	b.WriteString(fmt.Sprintf("updated: \"%s\"\n", date))
-	b.WriteString("tags: [\"docs-catalog\", \"tusker-generated\"]\n")
-	b.WriteString("---\n\n")
-	b.WriteString("# Docs Catalog\n\n")
-	b.WriteString(fmt.Sprintf("_Auto-generated %s from `_config/docs-map.yaml`. Diátaxis mode is metadata; navigation is grouped by reader intent._\n\n", generatedAt))
-	sections := []string{"Start here", "Guides", "Reference", "Concepts", "Troubleshooting", "Examples", "For agents", "Media"}
-	for _, section := range sections {
-		var rows []map[string]any
-		for _, item := range catalog {
-			if stringValue(item["section"]) == section {
-				rows = append(rows, item)
-			}
-		}
-		if len(rows) == 0 {
-			continue
-		}
-		b.WriteString("## " + section + "\n\n")
-		for _, item := range rows {
-			path := strings.TrimSuffix(stringValue(item["path"]), ".md")
-			link := stringValue(item["title"])
-			if path != "" {
-				link = fmt.Sprintf("[[%s|%s]]", path, stringValue(item["title"]))
-			}
-			b.WriteString(fmt.Sprintf("- %s — `%s` · %s · %s · %s\n", link, stringValue(item["doc_node"]), stringValue(item["mode"]), stringValue(item["audience"]), stringValue(item["freshness"])))
-		}
-		b.WriteByte('\n')
-	}
-	return writeText(filepath.Join(vaultPath, "Docs.md"), b.String())
-}
-
 func optionalIntValue(value any) any {
 	switch current := value.(type) {
 	case nil:
@@ -809,53 +579,16 @@ func validateCmd(args Args) (int, error) {
 		return 0, err
 	}
 	docGraphIssues = append(docGraphIssues, docsMapIssues...)
-	docsMap, err := loadDocsMap(vaultPath)
-	if err != nil {
-		return 0, err
-	}
 	epicAcronyms := map[string]struct{}{}
 	noteIDs := map[string]struct{}{}
 	idToRecordID := map[string]string{}
 	recordIDs := map[string]struct{}{}
-	v6Domains := map[string]bool{}
-	v6KnowledgeNodes := map[string]bool{}
-	v6LinkTargets := map[string]bool{}
-	v6Freshness := map[string]v6FreshnessRecord{}
-	var v6Index v6KnowledgeIndex
-	hasV6Index := false
-	if hasV6Vault(vaultPath) {
-		v6Index, err = v6IndexVault(vaultPath)
-		if err != nil {
-			return 0, err
-		}
-		hasV6Index = true
-		for _, domain := range v6Index.Domains {
-			addV6ValidationLinkTarget(v6LinkTargets, domain.ID)
-			addV6ValidationLinkTarget(v6LinkTargets, domain.ID+"/INDEX")
-			addV6ValidationLinkTarget(v6LinkTargets, domain.ID+"/CANON")
-		}
-		for _, node := range v6Index.KnowledgeNodes {
-			v6KnowledgeNodes[node.Node] = true
-			addV6ValidationLinkTarget(v6LinkTargets, node.Node)
-			addV6ValidationLinkTarget(v6LinkTargets, node.Node+".md")
-			for _, alias := range node.Aliases {
-				addV6ValidationLinkTarget(v6LinkTargets, alias)
-			}
-		}
-		for _, freshness := range v6Index.Freshness {
-			v6Freshness[freshness.Node] = freshness
-		}
-	}
 	for _, note := range notes {
 		if stringField(note.Data, "type") == "epic" {
 			epicAcronyms[stringField(note.Data, "id")] = struct{}{}
 		}
-		if stringField(note.Data, "schema") == "tusker.epic/v6" {
-			epicAcronyms[stringField(note.Data, "id")] = struct{}{}
-		}
 		if id := stringField(note.Data, "id"); id != "" {
 			noteIDs[id] = struct{}{}
-			addV6ValidationLinkTarget(v6LinkTargets, id)
 		}
 		if id := stringField(note.Data, "id"); id != "" && stringField(note.Data, "record_id") != "" {
 			idToRecordID[id] = stringField(note.Data, "record_id")
@@ -863,24 +596,10 @@ func validateCmd(args Args) (int, error) {
 		if recordID := stringField(note.Data, "record_id"); recordID != "" {
 			recordIDs[recordID] = struct{}{}
 		}
-		switch stringField(note.Data, "schema") {
-		case "tusker.domain/v6":
-			v6Domains[stringField(note.Data, "id")] = true
-			addV6ValidationLinkTarget(v6LinkTargets, stringField(note.Data, "id"))
-		case "tusker.knowledge/v6":
-			v6KnowledgeNodes[stringField(note.Data, "node")] = true
-			addV6ValidationLinkTarget(v6LinkTargets, stringField(note.Data, "node"))
-		}
 	}
 	var errs, warns []Issue
 	for _, current := range docGraphIssues {
 		errs = append(errs, issue(current.Code, current.Message, current.Path, "", nil))
-	}
-	errs = append(errs, validateDocsMapConfig(docsMap)...)
-	if hasV6Index {
-		v6Errs, v6Warns := validateV6Vault(vaultPath, v6Index)
-		errs = append(errs, v6Errs...)
-		warns = append(warns, v6Warns...)
 	}
 	v7SkillErrs, v7SkillWarns := validateV7SkillKnowledge(vaultPath)
 	errs = append(errs, v7SkillErrs...)
@@ -927,18 +646,13 @@ func validateCmd(args Args) (int, error) {
 	}
 	for _, note := range notes {
 		noteErrs, noteWarns := validateNote(note, validationContext{
-			RelativePath:     note.RelativePath,
-			Basename:         filepath.Base(note.AbsolutePath),
-			VaultPath:        vaultPath,
-			EpicAcronyms:     epicAcronyms,
-			NoteIDs:          noteIDs,
-			IDToRecordID:     idToRecordID,
-			RecordIDs:        recordIDs,
-			DocsMap:          docsMap,
-			V6Domains:        v6Domains,
-			V6KnowledgeNodes: v6KnowledgeNodes,
-			V6LinkTargets:    v6LinkTargets,
-			V6Freshness:      v6Freshness,
+			RelativePath: note.RelativePath,
+			Basename:     filepath.Base(note.AbsolutePath),
+			VaultPath:    vaultPath,
+			EpicAcronyms: epicAcronyms,
+			NoteIDs:      noteIDs,
+			IDToRecordID: idToRecordID,
+			RecordIDs:    recordIDs,
 		})
 		errs = append(errs, noteErrs...)
 		warns = append(warns, noteWarns...)
@@ -961,15 +675,9 @@ func validateCmd(args Args) (int, error) {
 	if args.Bool("dispatchable") {
 		errs = append(errs, validateV7DispatchableTasks(vaultPath)...)
 	}
-	docsErrs, docsWarns := validateDocsPublicationState(vaultPath, notes)
-	errs = append(errs, docsErrs...)
-	warns = append(warns, docsWarns...)
 	specErrs, specWarns := validateSpecCapsules(vaultPath)
 	errs = append(errs, specErrs...)
 	warns = append(warns, specWarns...)
-	if hasV7ProjectSkill(vaultPath) && hasV7KnowledgeDomains(vaultPath) {
-		errs, warns = fenceLegacyV6DocsImpactForV7(errs, warns)
-	}
 	if args.Bool("json") {
 		emitJSON(map[string]any{
 			"ok":       len(errs) == 0,
@@ -1026,20 +734,6 @@ func v7MixedLayoutTaskIDCollision(paths []string) bool {
 		}
 	}
 	return hasV7Task && hasLegacyTask
-}
-
-func fenceLegacyV6DocsImpactForV7(errs, warns []Issue) ([]Issue, []Issue) {
-	var remaining []Issue
-	for _, current := range errs {
-		if current.Code == errorDocsImpactUnresolved && strings.Contains(strings.ToLower(current.Message), "v6 knowledge_nodes") {
-			current.Code = "LEGACY_V6_DOCS_IMPACT_FENCED"
-			current.Hint = "legacy V6 knowledge freshness is fenced from V7 release validation; V7 project truth is " + defaultRepoVaultDir + "/SKILL.md plus " + defaultRepoVaultDir + "/knowledge/domains/**"
-			warns = append(warns, current)
-			continue
-		}
-		remaining = append(remaining, current)
-	}
-	return remaining, warns
 }
 
 func validateSpecCapsules(vaultPath string) ([]Issue, []Issue) {
@@ -2093,101 +1787,6 @@ func loadDashboardRuntime(vaultPath string) map[string]any {
 	section["active_runs"] = activeRuns
 	section["tracked_runs"] = trackedRuns
 	return section
-}
-
-func writeDashboardNote(vaultPath string, runtime map[string]any, docsCatalog []map[string]any, generatedAt string) error {
-	dashboardPath := filepath.Join(vaultPath, "Dashboard.md")
-	body := ""
-	if fileExists(dashboardPath) {
-		existing, err := readText(dashboardPath)
-		if err != nil {
-			return err
-		}
-		body = existing
-	} else {
-		body = defaultV5DashboardNote(generatedAt[:10])
-	}
-	if !strings.Contains(body, "## Docs catalog") {
-		body += "\n## Docs catalog\n\n![[Docs]]\n"
-	}
-	if !strings.Contains(body, docsFreshnessBegin) || !strings.Contains(body, docsFreshnessEnd) {
-		body += "\n\n## Docs freshness\n\n" + docsFreshnessBegin + "\n" + docsFreshnessEnd + "\n"
-	}
-	if !strings.Contains(body, dashboardRunsBegin) || !strings.Contains(body, dashboardRunsEnd) {
-		body += "\n\n## Live runs\n\n" + dashboardRunsBegin + "\n" + dashboardRunsEnd + "\n"
-	}
-	freshnessBlock := renderDocsFreshnessBlock(docsCatalog, generatedAt)
-	freshBegin := strings.Index(body, docsFreshnessBegin)
-	freshEnd := strings.Index(body, docsFreshnessEnd)
-	if freshBegin != -1 && freshEnd != -1 && freshEnd > freshBegin {
-		body = body[:freshBegin+len(docsFreshnessBegin)] + "\n\n" + freshnessBlock + "\n\n" + body[freshEnd:]
-	}
-	block := renderDashboardRunsBlock(runtime, generatedAt)
-	begin := strings.Index(body, dashboardRunsBegin)
-	end := strings.Index(body, dashboardRunsEnd)
-	if begin == -1 || end == -1 || end < begin {
-		return writeText(dashboardPath, body)
-	}
-	replaced := body[:begin+len(dashboardRunsBegin)] + "\n\n" + block + "\n\n" + body[end:]
-	return writeText(dashboardPath, replaced)
-}
-
-const docsFreshnessBegin = "<!-- tusker:docs-freshness:begin -->"
-const docsFreshnessEnd = "<!-- tusker:docs-freshness:end -->"
-
-func renderDocsFreshnessBlock(catalog []map[string]any, generatedAt string) string {
-	var stale []map[string]any
-	for _, item := range catalog {
-		freshness := stringValue(item["freshness"])
-		if freshness == "verified" || freshness == "verified_by_task" {
-			continue
-		}
-		stale = append(stale, item)
-	}
-	if len(stale) == 0 {
-		return fmt.Sprintf("_Auto-generated %s. No stale docs right now._", generatedAt)
-	}
-	lines := []string{
-		fmt.Sprintf("_Auto-generated %s. Docs needing verification are shown below._", generatedAt),
-		"",
-		"| Doc node | Freshness | Stale due to |",
-		"|---|---|---|",
-	}
-	for _, item := range stale {
-		staleDueTo := strings.Join(normalizeList(item["stale_due_to"]), ", ")
-		lines = append(lines, fmt.Sprintf("| `%s` | `%s` | %s |", stringValue(item["doc_node"]), stringValue(item["freshness"]), fallback(staleDueTo, "—")))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func renderDashboardRunsBlock(runtime map[string]any, generatedAt string) string {
-	activeRuns := anySlice(runtime["active_runs"])
-	if len(activeRuns) == 0 {
-		return fmt.Sprintf("_Auto-generated %s. No live runs right now._", generatedAt)
-	}
-	lines := []string{
-		fmt.Sprintf("_Auto-generated %s. Live daemon activity is shown below._", generatedAt),
-		"",
-		"| Task | Runner | Lease | Session |",
-		"|---|---|---|---|",
-	}
-	for _, row := range activeRuns {
-		run, ok := row.(map[string]any)
-		if !ok {
-			continue
-		}
-		itemID := stringValue(run["item_id"])
-		runner := stringValue(run["runner"])
-		lease := stringValue(run["lease_state"])
-		session := stringValue(run["session_ref"])
-		if session == "" {
-			session = "—"
-		} else if len(session) > 12 {
-			session = session[:12] + "…"
-		}
-		lines = append(lines, fmt.Sprintf("| [[%s]] | `%s` | `%s` | `%s` |", itemID, runner, lease, session))
-	}
-	return strings.Join(lines, "\n")
 }
 
 func anySlice(value any) []any {

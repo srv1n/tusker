@@ -78,15 +78,9 @@ type WorkspaceMetadata struct {
 	PID int `json:"pid,omitempty"`
 }
 
-type WorkspaceManager interface {
-	Prepare(req WorkspacePrepareRequest) (WorkspacePrepareResult, error)
-	Cleanup(path string) error
-	ResetForRework(path string, workRevision int) error
-}
-
 type FSWorkspaceManager struct{}
 
-func NewWorkspaceManager() WorkspaceManager {
+func NewWorkspaceManager() *FSWorkspaceManager {
 	return &FSWorkspaceManager{}
 }
 

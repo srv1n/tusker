@@ -14,6 +14,7 @@ const (
 	readmeOverviewEnd     = "<!-- tusker:overview:end -->"
 	dashboardRunsBegin    = "<!-- tusker:live-runs:begin -->"
 	dashboardRunsEnd      = "<!-- tusker:live-runs:end -->"
+	docsFreshnessBegin    = "<!-- tusker:docs-freshness:begin -->"
 	readmeDefaultOverview = "_Describe this project in 1-3 paragraphs: what it is, who uses it, and what's in scope. Everything between the overview markers is preserved across `tusker reindex` — only the epic roster below is regenerated._"
 	defaultConfigYAML     = `# Tusker per-vault config. Policy surface for the dispatcher + validator.
 # The dispatcher re-reads this on every tick; no restart needed.
@@ -69,6 +70,16 @@ definition_of_done:
 )
 
 type Args map[string]string
+
+var removedCLICommands = makeSet(
+	"new bug", "new doc",
+	"migrate v7", "migrate gates",
+	"docs", "docs init", "docs model", "docs catalog", "docs freshness", "docs check", "docs apply", "docs noop", "docs waive", "docs export", "docs dev", "docs build",
+	"domain graph",
+	"knowledge map", "knowledge list", "knowledge show", "knowledge route", "knowledge freshness", "knowledge check", "knowledge apply", "knowledge noop", "knowledge waive",
+	"publish export", "publish build", "publish dev", "publish llms",
+	"graph",
+)
 
 // copyArgsForInternalMutation keeps composite CLI operations from modifying
 // their caller's parsed argument map while they add private implementation
@@ -254,6 +265,9 @@ func runInner(command string, args Args) (int, error) {
 		}
 		return 1, nil
 	}
+	if _, removed := removedCLICommands[command]; removed {
+		return legacyOnlyCommand(command, "")
+	}
 	switch command {
 	case "version", "--version":
 		return 0, versionCmd(args)
@@ -287,10 +301,6 @@ func runInner(command string, args Args) (int, error) {
 		return 0, newV7Epic(args)
 	case "new task":
 		return 0, newV7Task(args)
-	case "new bug":
-		return legacyOnlyCommand("new bug", "legacy new bug")
-	case "new doc":
-		return legacyOnlyCommand("new doc", "legacy new doc")
 	case "new gate":
 		return 0, newV7Gate(args)
 	case "new decision":
@@ -458,25 +468,6 @@ func runInner(command string, args Args) (int, error) {
 	case "redrive":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, redriveCmd(args)
-	case "legacy new epic":
-		return legacyOnlyCommand("legacy new epic", "")
-	case "legacy new task":
-		return legacyOnlyCommand("legacy new task", "")
-	case "legacy new bug":
-		return legacyOnlyCommand("legacy new bug", "")
-	case "legacy new doc":
-		return legacyOnlyCommand("legacy new doc", "")
-	case "legacy next":
-		return legacyOnlyCommand("legacy next", "")
-	case "legacy verify":
-		return legacyOnlyCommand("legacy verify", "")
-	case "legacy close":
-		return legacyOnlyCommand("legacy close", "")
-	case "legacy":
-		printLegacyHelp()
-		return 0, nil
-	case "legacy init":
-		return legacyOnlyCommand("legacy init", "")
 	case "reconcile":
 		return 0, reconcileV7Cmd(args)
 	case "brief":
@@ -492,20 +483,12 @@ func runInner(command string, args Args) (int, error) {
 	case "hook":
 		printV7Help()
 		return 0, nil
-	case "migrate v7":
-		return legacyOnlyCommand("migrate v7", "legacy migrate v7")
-	case "migrate gates":
-		return legacyOnlyCommand("migrate gates", "legacy migrate gates")
 	case "migrate evidence-policy":
 		return 0, migrateV7EvidencePolicyCmd(args)
 	case "migrate close-policy":
 		return 0, migrateClosePolicyCmd(args)
 	case "migrate vault-root":
 		return 0, migrateVaultRootCmd(args)
-	case "legacy migrate v7":
-		return legacyOnlyCommand("legacy migrate v7", "")
-	case "legacy migrate gates":
-		return legacyOnlyCommand("legacy migrate gates", "")
 	case "reindex":
 		return 0, reindex(args)
 	case "validate":
@@ -534,58 +517,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, docsCmd("find", args)
 	case "docs new":
 		return 0, docsCmd("new", args)
-	case "docs init":
-		return legacyOnlyCommand("docs init", "legacy docs init")
-	case "docs model":
-		return legacyOnlyCommand("docs model", "legacy docs model")
 	case "docs map":
 		return 0, docsCmd("map", args)
-	case "docs catalog":
-		return legacyOnlyCommand("docs catalog", "legacy docs catalog")
-	case "docs freshness":
-		return legacyOnlyCommand("docs freshness", "legacy docs freshness")
-	case "docs check":
-		return legacyOnlyCommand("docs check", "legacy docs check")
-	case "docs apply":
-		return legacyOnlyCommand("docs apply", "legacy docs apply")
-	case "docs noop":
-		return legacyOnlyCommand("docs noop", "legacy docs noop")
-	case "docs waive":
-		return legacyOnlyCommand("docs waive", "legacy docs waive")
-	case "docs export":
-		return legacyOnlyCommand("docs export", "legacy docs export")
-	case "docs dev":
-		return legacyOnlyCommand("docs dev", "legacy docs dev")
-	case "docs build":
-		return legacyOnlyCommand("docs build", "legacy docs build")
-	case "docs":
-		return legacyOnlyCommand("docs", "legacy docs")
-	case "legacy docs init":
-		return legacyOnlyCommand("legacy docs init", "")
-	case "legacy docs model":
-		return legacyOnlyCommand("legacy docs model", "")
-	case "legacy docs map":
-		return legacyOnlyCommand("legacy docs map", "")
-	case "legacy docs catalog":
-		return legacyOnlyCommand("legacy docs catalog", "")
-	case "legacy docs freshness":
-		return legacyOnlyCommand("legacy docs freshness", "")
-	case "legacy docs check":
-		return legacyOnlyCommand("legacy docs check", "")
-	case "legacy docs apply":
-		return legacyOnlyCommand("legacy docs apply", "")
-	case "legacy docs noop":
-		return legacyOnlyCommand("legacy docs noop", "")
-	case "legacy docs waive":
-		return legacyOnlyCommand("legacy docs waive", "")
-	case "legacy docs export":
-		return legacyOnlyCommand("legacy docs export", "")
-	case "legacy docs dev":
-		return legacyOnlyCommand("legacy docs dev", "")
-	case "legacy docs build":
-		return legacyOnlyCommand("legacy docs build", "")
-	case "legacy docs":
-		return legacyOnlyCommand("legacy docs", "")
 	case "domain list":
 		return 0, domainV7ListCmd(args)
 	case "domain show":
@@ -594,41 +527,9 @@ func runInner(command string, args Args) (int, error) {
 		return 0, newV7Domain(args)
 	case "domain canon":
 		return 0, domainV7CanonCmd(args)
-	case "domain graph":
-		return legacyOnlyCommand("domain graph", "")
 	case "domain":
 		printDomainHelp()
 		return 0, nil
-	case "legacy domain list":
-		return legacyOnlyCommand("legacy domain list", "")
-	case "legacy domain show":
-		return legacyOnlyCommand("legacy domain show", "")
-	case "legacy domain new":
-		return legacyOnlyCommand("legacy domain new", "")
-	case "legacy domain canon":
-		return legacyOnlyCommand("legacy domain canon", "")
-	case "legacy domain graph":
-		return legacyOnlyCommand("legacy domain graph", "")
-	case "legacy domain":
-		return legacyOnlyCommand("legacy domain", "")
-	case "knowledge map":
-		return legacyOnlyCommand("knowledge map", "legacy knowledge map")
-	case "knowledge list":
-		return legacyOnlyCommand("knowledge list", "legacy knowledge list")
-	case "knowledge show":
-		return legacyOnlyCommand("knowledge show", "legacy knowledge show")
-	case "knowledge route":
-		return legacyOnlyCommand("knowledge route", "legacy knowledge route")
-	case "knowledge freshness":
-		return legacyOnlyCommand("knowledge freshness", "legacy knowledge freshness")
-	case "knowledge check":
-		return legacyOnlyCommand("knowledge check", "legacy knowledge check")
-	case "knowledge apply":
-		return legacyOnlyCommand("knowledge apply", "legacy knowledge apply")
-	case "knowledge noop":
-		return legacyOnlyCommand("knowledge noop", "legacy knowledge noop")
-	case "knowledge waive":
-		return legacyOnlyCommand("knowledge waive", "legacy knowledge waive")
 	case "knowledge new":
 		return 0, knowledgeV7NewCmd(args)
 	case "skill doctor":
@@ -656,53 +557,11 @@ func runInner(command string, args Args) (int, error) {
 	case "knowledge":
 		printKnowledgeHelp()
 		return 0, nil
-	case "legacy knowledge map":
-		return legacyOnlyCommand("legacy knowledge map", "")
-	case "legacy knowledge list":
-		return legacyOnlyCommand("legacy knowledge list", "")
-	case "legacy knowledge show":
-		return legacyOnlyCommand("legacy knowledge show", "")
-	case "legacy knowledge route":
-		return legacyOnlyCommand("legacy knowledge route", "")
-	case "legacy knowledge freshness":
-		return legacyOnlyCommand("legacy knowledge freshness", "")
-	case "legacy knowledge check":
-		return legacyOnlyCommand("legacy knowledge check", "")
-	case "legacy knowledge apply":
-		return legacyOnlyCommand("legacy knowledge apply", "")
-	case "legacy knowledge noop":
-		return legacyOnlyCommand("legacy knowledge noop", "")
-	case "legacy knowledge waive":
-		return legacyOnlyCommand("legacy knowledge waive", "")
-	case "legacy knowledge new":
-		return legacyOnlyCommand("legacy knowledge new", "")
-	case "legacy knowledge":
-		return legacyOnlyCommand("legacy knowledge", "")
-	case "publish export":
-		return legacyOnlyCommand("publish export", "legacy publish export")
-	case "publish build":
-		return legacyOnlyCommand("publish build", "legacy publish build")
-	case "publish dev":
-		return legacyOnlyCommand("publish dev", "legacy publish dev")
-	case "publish llms":
-		return legacyOnlyCommand("publish llms", "legacy publish llms")
 	case "publish skill":
 		return 0, publishSkillCmd(args)
 	case "publish":
 		printPublishHelp()
 		return 0, nil
-	case "legacy publish export":
-		return legacyOnlyCommand("legacy publish export", "")
-	case "legacy publish build":
-		return legacyOnlyCommand("legacy publish build", "")
-	case "legacy publish dev":
-		return legacyOnlyCommand("legacy publish dev", "")
-	case "legacy publish llms":
-		return legacyOnlyCommand("legacy publish llms", "")
-	case "legacy publish skill":
-		return legacyOnlyCommand("legacy publish skill", "")
-	case "legacy publish":
-		return legacyOnlyCommand("legacy publish", "")
 	case "vault set":
 		return 0, vaultSetCmd(args)
 	case "vault status":
@@ -830,10 +689,6 @@ func runInner(command string, args Args) (int, error) {
 		return 0, nil
 	case "serve":
 		return 0, serveCmd(args)
-	case "graph":
-		return legacyOnlyCommand("graph", "legacy graph")
-	case "legacy graph":
-		return legacyOnlyCommand("legacy graph", "")
 	case "refresh":
 		return 0, refreshCmd(args)
 	case "install":

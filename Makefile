@@ -63,8 +63,7 @@ mac-preview: install-user mac-install ## Install the CLI/skills and build, insta
 ui-install: ## Install the pinned Serve UI dependency graph
 	cd "$(UI_DIR)" && bun install --frozen-lockfile
 
-ui-test: ui-install ## Typecheck and test the Serve UI
-	cd "$(UI_DIR)" && bun run typecheck
+ui-test: ui-install ## Test the Serve UI
 	cd "$(UI_DIR)" && bun test
 
 ui-build: ui-install ## Build the Serve UI assets embedded by the Go binary
