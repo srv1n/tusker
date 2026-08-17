@@ -44,7 +44,7 @@ must never be described as Windows product support.
 
 | Surface | Rule |
 | --- | --- |
-| Certified full-gate provider | The trusted-provider transport is **macOS-only**: `verifyV7TrustedProviderExecutable` and `verifyV7ImmutableProviderAuthority` refuse when `runtime.GOOS != "darwin"` rather than fall back to a pathname check. Promotion gates needing a certified provider receipt therefore only complete on macOS — see [[gates]]. |
+| Certified full-gate provider | The trusted-provider transport is **macOS-only**. Off Darwin every provider path — `newV7FullGateProvider`, `verifyV7TrustedProviderExecutable`, `verifyV7ImmutableProviderAuthority`, the descriptor transport, and the ACL stub — returns the typed `GATE_PROVIDER_UNSUPPORTED_PLATFORM` refusal (`goos`, `supported: [darwin]`) rather than falling back to a pathname check. Promotion gates needing a certified provider receipt therefore only complete on macOS — see [[gates]]. |
 | Daemon service management | launchd install/start/status is macOS-only; other hosts run `tusker daemon run` under their own service manager — see [[orchestration]]. |
 | ACP adapter install | Refused on any host that is not darwin or linux, along with symlinked or group/world-writable trees — see [[runners-and-acp]]. |
 | TuskerBar | macOS only; every `mac-*` Make target depends on `require-macos` (`Makefile:45`) before invoking Swift, codesign, launchd, or `open`. |

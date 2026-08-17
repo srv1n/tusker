@@ -39,12 +39,16 @@ A proof row is one line of the `## Verification` markdown table in the task body
 | Column | Flag | Required | Rule |
 |---|---|---|---|
 | Covers | `--covers` | yes | acceptance IDs: `A1`, `A1,A2`, `A1-A3`, `ALL`, or `TASK:A1`; unknown IDs are dropped (`v7CoversToAcceptanceIDs`) |
-| Check | `--check` | yes | the command or action actually run |
+| Check | `--check` | yes | `command: <exact shell command>`, `manual proof: <exact steps>`, or `ledger: <gate-ledger-id>` — a placeholder (`<…>`, empty, `-`) does not count (`v7VerificationGrammarHint`, `v7_validation.go`) |
 | Result | `--result` (default `pass`) | yes | one of `pass fail blocked skipped waived`; `pending` is rejected on write |
-| Notes | `--note` | no | free text; also fuels `proof_required` keyword matching |
+| Notes | `--note` | no | free text only; never consulted when deciding whether a check proves anything |
 | Blocked By | `--blocked-by` | only when result is `blocked` | path, task ID, or gate ID; its absence is a hard error |
 
 - Only `pass` and `waived` rows cover acceptance (`v7VerificationResultCovers`).
+- A pre-grammar bare command (`go test …`, `rtk …`, `make …`, `cargo …`, `npm …`,
+  `pytest`, `git …`, `tusker …`, …) still validates through a closed legacy prefix
+  list (`v7VerificationLegacyPrefixes`, `cmd/tusker/v7_validation.go`). That list is
+  frozen — write new rows as `command: …`.
 - Upsert key is (Covers, Check), case-insensitive. Rows whose Check is `TBD` or
   whose result is `pending` are dropped on any write.
 - Batch: `--rows "A1|go test ./...|pass|note|blocked_by"` (newline-separated) or
@@ -73,13 +77,43 @@ to the mode defaults.
 
 Default mode is `inline`, or `audit` when `risk: critical`
 (`defaultV7ProofMode`). Each `proof_required` entry is satisfied by an inline row,
-an accepted evidence record, or a satisfied/waived gate whose kind or text matches
-(`v7ProofRequiredClassSatisfied`). Computed `proof_status`: `satisfied` with no
+an accepted evidence record, or a satisfied/waived gate
+(`v7ProofRequiredClassSatisfied`) — under the matching rules below. Computed `proof_status`: `satisfied` with no
 acceptance and no mode gaps, and only when the mode is `none`, the body declares
 acceptance IDs, or `proof_required` is empty; `partial` when anything is covered or
 gates/evidence exist; else `pending`. An explicit `waived` is preserved, and placeholder ("packet
 stub") acceptance without a waiver is forced down to `partial`
 (`v7ComputedProofStatus`, `upsertV7VerificationsLocked`).
+
+### What satisfies a required class
+
+Matching is **structural, never textual** — a row or record that merely mentions
+"test" or "lint" proves nothing.
+
+- **Inline rows.** The Check must yield a command (`v7VerificationCommand`); a
+  `manual proof:` / `ledger:` row never satisfies a machine class. The command is
+  then parsed, not searched: split into segments on `&&`, `||`, `;`, `|` (quote-
+  and escape-aware), leading `VAR=value` assignments and wrapper words (`rtk`,
+  `proxy` — so `rtk proxy go test …` reduces correctly — `env`, `exec`, `command`,
+  `sudo`, `timeout`) stripped, then each segment's basename is looked up in a
+  per-class tool map (`v7CommandInvokesAny`, `v7CommandInvokesTest`). So
+  `focused_test`/`broad_test` take `go test`, `cargo test`, `swift test`,
+  `dotnet test`, `npm|pnpm test` or `run test…`, `yarn test`, `bun test`, `pytest`,
+  `jest`, `vitest`, `make test`, `python[3] -m pytest|unittest`, `npx jest|vitest`;
+  `lint` takes `eslint`/`golangci-lint`/`ruff`/`staticcheck`/`cargo clippy`/
+  `make lint`/`npm|pnpm run lint…`; `build` takes `go build|test`, `cargo
+  build|test`, `swift build`, `xcodebuild`, `tsc`, `npm run build…`, `make build`;
+  `benchmark` needs `go test -bench…` or `cargo bench`. An unlisted class falls
+  back to invoking a tool literally named after it.
+- **Evidence.** Kind matching is exact, with no summary/body text fallback:
+  `focused_test`/`broad_test` need `automated_test`, `unit_test`,
+  `integration_test`, `e2e_test`, or `ci_run`; `typecheck`, `lint`, `build`, and
+  `ci` need `ci_run`; `independent_review` is satisfied only by a `human_review`
+  record (`v7EvidenceSatisfiesProofRequired`).
+- **Gates.** A satisfied/waived gate matches by `gate_kind`
+  (`v7GateKindSatisfiesProofRequired`), or — only for `manual_smoke`,
+  `physical_smoke`, `human_signoff` — by a `verification` field that *starts with*
+  that exact phrase (`v7StartsWithProofPhrase`).
 
 ### Gap ownership
 
@@ -87,8 +121,10 @@ Every gap and open gate is classified `machine | reviewer | human | external`
 (`classifyV7ProofReport`). A gate classifies from its own `owner`/`gate_kind`; an acceptance
 gap from a blocked row's `--blocked-by`, else its covering open blocking gate, else machine;
 a `proof_required:` gap from a blocked row, the task's `proof_required_owner` map, an owning
-open blocking gate, then a keyword default (`human_signoff`, `manual_smoke`,
-`security_review`… → human; `ci`, `provider_probe` → external; else machine). When *only* human gaps
+open blocking gate, then a fixed class default (`human_signoff`, `manual_smoke`,
+`physical_smoke`, `release_smoke`, `security_review`, `privacy_review`,
+`accessibility_review` → human; `independent_review` → reviewer; `ci`,
+`provider_probe` → external; else machine). When *only* human gaps
 remain the report sets `terminal_wait: true` and `agent_action: stop_until_human_response`: stop
 working and emit a closeout. `tusker proof status <TASK-ID> [--json] [--verbose]` prints the report.
 
@@ -106,7 +142,7 @@ declares none of those. Recipes are advice; nothing enforces running them.
 
 | Store | Path | Lifetime | Purpose |
 |---|---|---|---|
-| Evidence | `.tusker/evidence/<TASK-ID>/<ID>.md` (+ `artifacts/`) | durable, committed | proof that survives the task |
+| Evidence | `.tusker/evidence/<TASK-ID>/<ID>.md` (+ `artifacts/<ID>/`) | durable, committed | proof that survives the task |
 | Scratch | `.tusker/scratch/<TASK-ID>/` | ephemeral; reaped at close, swept by `tusker gc` | noisy logs, raw output |
 | Attempts | `.tusker/attempts/<TASK-ID>/<ID>.md` | durable | narrative of one agent run |
 
@@ -116,12 +152,26 @@ evidence not tied to acceptance. Kind defaults to `manual_smoke` and must be in
 `<TASK-ID>-E-NNNN`.
 
 Artifacts (`prepareV7EvidenceArtifacts`): `--path` sources are **copied** into
-`evidence/<TASK-ID>/artifacts/` and recorded vault-relative
+`evidence/<TASK-ID>/artifacts/<EVIDENCE-ID>/` — scoped per record, so two records
+cannot collide on a basename — and recorded vault-relative
 (`artifact_durability: copied`). Refused as non-durable: URLs without
 `--external-url`, absolute paths, `/tmp/…`, paths escaping the workspace,
 directories, missing files. `--external-url` (scheme required) records
 `external:<url>`; `--link-only` records `link-only:<path>` (durability
 `link_only`).
+
+Evidence writes are transactional (`v7_evidence_attempt_cmd.go`). The record lands
+via a synced temp file promoted with `os.Link` — **no-clobber**, so an existing
+path is `ALREADY_EXISTS`, never an overwrite (a filesystem rejecting `link` falls
+back to an `O_EXCL` reservation plus rename, and stale `.<name>.tmp-*` files older
+than an hour are swept). Artifacts copy through the same temp+`fsync` path and
+publish with an atomic rename. When the ID is already taken, `evidence add`
+**resumes** only if every argument matches the record on disk — kind, ordered
+covers, status, summary, artifact request, and a `state_rev` that still verifies —
+and the task simply has not been linked yet; anything else is
+`ALREADY_EXISTS: Evidence ID is taken with different content`. A resume finishes
+the missing half (task proof-status update + `evidence_added` event) instead of
+writing a second record.
 
 Acceptance:
 

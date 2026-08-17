@@ -105,7 +105,7 @@ Frontmatter with more fields than the configured warn limit raises
 | `## Acceptance` | top | `ID / Outcome / Proof` table, one row per outcome |
 | `## Non-goals` | top | explicit out-of-scope |
 | `## Implementation notes` | appendix | file map, moving parts, exact commands |
-| `## Verification` | appendix | proof rows; each Check starts `command:` or `manual proof:` |
+| `## Verification` | appendix | proof rows; each Check starts `command:`, `manual proof:`, or `ledger:` (a frozen legacy bare-command prefix list still validates) |
 | `## Evidence` | appendix | Accepted / Pending links only |
 | `## Knowledge delta` | appendix | what was learned |
 
@@ -154,7 +154,8 @@ the scaffold default warns `ACCEPTANCE_TOO_VAGUE`.
 `tusker status <id> <status>` (`statusV7Cmd`, `cmd/tusker/v7_control_cmd.go`)
 sets any of these **except**:
 
-- `done` — refused; use `tusker close` so close policy runs.
+- `done` — refused; use `tusker close` so close policy runs. Only at adoption
+  `tier: 1` may `status` set `done` directly (see [[cli]]).
 - `cancelled` — refused; use `tusker discard` so dependents, gates, and
   discard metadata are handled.
 - `active` — not a V7 status at all; the error points at the implementation flow.
@@ -272,6 +273,12 @@ with no proof mapping, missing or non-exact `## Verification`, missing
 domains, and a failed upstream dependency. `validateV7DispatchableTasks`
 re-runs this over every task already marked `ready`/`rework` **and**
 `readiness: ready`, and errors `TASK_NOT_DISPATCHABLE`.
+
+All of that is tier-gated. At adoption `tier: 1` (`.tusker/config.yaml`; see
+[[cli]]) `tusker next`, `validate --dispatchable`, and the `create --status ready`
+preflight fall back to `v7TierOneNextBlockers` — status in the trigger states and
+`readiness: ready`, nothing about contracts or proof. Tiers 2+ (and the default,
+5) run the full blocker list above.
 
 ## Writes
 

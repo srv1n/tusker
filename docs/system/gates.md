@@ -198,9 +198,17 @@ config, or signing material, then replaces `gateTierRuntime.Exec` with
   `<state-root>/full-gate-providers.yaml` with `kind: container|vm`, a known
   `implementation_id`, matching capability schema, and well-formed runtime /
   client / policy / attestation / image digests. The executable must be an
-  absolute-path native Mach-O binary (macOS only; other platforms refuse
-  outright), never a script, never `sandbox-exec`; `newV7FullGateProvider` then
-  refuses a repository-local executable path.
+  absolute-path native Mach-O binary, never a script, never `sandbox-exec`;
+  `newV7FullGateProvider` then refuses a repository-local executable path.
+- **Platform.** Every full-gate provider path — construction, trusted-executable
+  verification, immutable-authority walk, descriptor transport, and the Darwin ACL
+  probe — fails closed off macOS with the typed
+  `GATE_PROVIDER_UNSUPPORTED_PLATFORM` refusal carrying `goos` and
+  `supported: [darwin]` (`v7FullGateProviderPlatformError`,
+  `v7_full_gate_provider.go`). It is never a pathname-based fallback and never a
+  pass. Classification unwraps with `errors.As`/`errors.Is`
+  (`isV7FullGateProviderError`), so a refusal joined into another error still
+  reports outcome `provider_failed` rather than a plain gate failure.
 - **State root** (`v7_full_gate_state_root.go`): all provider state is resolved
   through an `os.Root` descriptor over a non-group/world-writable directory, so
   `..` and symlink traversal cannot escape and a swapped pathname is caught as an

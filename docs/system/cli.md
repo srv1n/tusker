@@ -1,7 +1,7 @@
 ---
 title: "Tusker CLI reference"
 subject: cli
-keywords: [cli, commands, flags, json, capsule, capabilities, exit-codes, vault-discovery, config-resolve, deprecations]
+keywords: [cli, commands, flags, json, capsule, capabilities, exit-codes, vault-discovery, config-resolve, deprecations, adoption tier]
 part_of: overview
 status: canonical
 read_when: "You need the command inventory, global flag/output conventions, vault and config resolution, capability reporting, or exit/error semantics of the `tusker` binary."
@@ -178,7 +178,26 @@ same report under `{"ok":true,"resolution":…}`.
 
 Runtime policy itself lives in `WORKFLOW.md` plus `.tusker/config.yaml`;
 `_system/config.yaml` is read only for explicit legacy/migration flows and is not
-written by `init` (`config.go`). Hook commands from that config run as
+written by `init` (`config.go`). `init` generates `.tusker/config.yaml` from
+`writeDefaultTuskerConfig` (`commands_create.go`) and never overwrites an existing
+one; the legacy `Config` struct's own fallbacks live in `defaultConfig()`. There is
+no third, unused default-config template. Hook commands from that config run as
 `sh -c` with `TUSKER_VAULT`, `TUSKER_EVENT`, `TUSKER_ID`, `TUSKER_ACTOR`,
 `TUSKER_DISPATCH_STATE` exported; output is capped at 64 KiB and secret-redacted,
 and a timeout raises `HOOK_TIMEOUT` rather than `HOOK_FAILED`.
+
+### Adoption tier
+
+`.tusker/config.yaml` may declare `tier: 1`–`5` (`TuskerConfigFile.Tier`,
+`internal/v7schema/schema.go`). Absent, out-of-range, or unreadable resolves to
+**5**, the strict default (`tuskerTier`, `commands_v7.go`). The tier is ordinal:
+each lower number relaxes one class of guard. Only these five guards read it;
+`tusker factory operations` reports it per project but does not branch on it.
+
+| Guard | Relaxed at |
+|---|---|
+| `new task --status ready` runs the dispatchability preflight | tier ≥ 2 (tier 1 creates ready tasks with no contract/proof check) |
+| `tusker next` / `validate --dispatchable` use the full dispatch blockers | tier ≥ 2 (tier 1 checks only status ∈ trigger states and `readiness: ready`, `v7TierOneNextBlockers`) |
+| `status <id> done` is refused in favour of `tusker close` | tier ≥ 2 (tier 1 may set `done` directly) |
+| `projects add` requires a loadable `WORKFLOW.md` | tier ≥ 2 (tier 1 registers with a warning) |
+| `runtime.serve.enabled` / `reviewer.enabled` default on | tier ≥ 4 (tiers 1–3 default both off unless the workflow sets them explicitly, `applyTuskerTierWorkflowDefaults`) |

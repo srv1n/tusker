@@ -126,6 +126,12 @@ invalidate its own fingerprint.
 `doctorOperationalFindings`, then sorts+dedupes. Findings are stable
 `{code, path, source_keys, message, remedy, provenance}`.
 
+Contract and validator issues are typed **where they are raised** — every check
+returns `deliveryIssue{Code, Message}` (`delivery_cmd.go:355`), and the doctor only
+maps that code to a path/remedy. No classifier re-derives a code by matching the
+message text; a reworded message cannot change a finding's code. Import prints the
+same issues as plain messages (`deliveryIssueMessages`).
+
 | Group | Codes |
 |---|---|
 | Schema/contract | `UNSUPPORTED_PLAN_SCHEMA`, `PLAN_CONTRACT_INVALID`, `REQUIRED_CAPABILITY_UNAVAILABLE` |

@@ -317,6 +317,15 @@ next action (`record_research_artifact`, `apply_patch`, `request_review_next`,
 `continue_thread_with_failure`, `close_task`, `escalate_human` → nonzero exit). The daemon
 auto-advances the same loop inside `pollOnce` (`daemon_external_loop.go`).
 
+An external verdict never invents proof (`closeExternalLoopTask`). It flips the task's
+**existing** verification rows in place — only rows whose covers resolve to real acceptance
+IDs, and only from `pending`/`pass` to `pass` with the verdict summary as the note, so a
+row's real `command:` check is never replaced by review prose. A `fail` row refuses the
+close outright (`INVALID_TRANSITION`), as does a close whose task still has an unsatisfied
+machine-owned `proof_required` and no covering command row
+(`v7ExternalCloseMachineProofOutstanding`). Only when the task has no covering row at all
+does it append one `manual proof:` row recording the external verdict.
+
 ## Event-log circuit and streams
 
 An event-sink append failure trips a durable failure registry

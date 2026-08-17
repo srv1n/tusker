@@ -168,6 +168,7 @@ are enforced by `EnsureProjectUniqueness`; duplicates are collapsed by
 Commands (`cmd/tusker/cli.go:768`): `projects add|list|limits|enable|disable|rebind|remove|prune`.
 
 - `loadRegisteredProjects` (`cmd/tusker/project_loader.go`) loads workflow + notes per project and **quarantines** a project whose load fails, persisting `LastError` and degrading health. `MetadataOnly` and `LoadDisabled` options exist for lifecycle paths that must see disabled projects.
+- `projects add` loads the target's `WORKFLOW.md` first. At adoption `tier: 1` a missing or invalid workflow only adds the warning `WORKFLOW.md absent or invalid; project registered without workflow validation`; tiers 2+ (including the default 5) refuse the registration — see [[cli]].
 - `projects prune` (`cmd/tusker/project_prune.go`) is **dry-run by default**; `--apply` is required to remove registrations whose tracker root is gone, and it also removes the matching dangling workspace mount.
 - `projects rebind` (`cmd/tusker/project_rebind.go`, schema `tusker.projects-rebind/v1`) repoints an existing project at a new repo/vault path. It requires both directories to exist, requires a clean git repo (`requireCleanGitRepository`), and refuses a target vault that another project already workspace-mounts or that a mount would have to move across filesystems. `RebindProjectRegistration` writes registry row + `project_rebind_audit` in one transaction.
 - `projects enable/disable` toggles polling only. Disabled projects still get lifecycle truth applied — see retirement below.
