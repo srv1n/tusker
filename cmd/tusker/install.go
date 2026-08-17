@@ -32,23 +32,31 @@ type skillInstallResult struct {
 }
 
 func syncRepoContract(args Args) error {
+	_, err := syncRepoContractWithReport(args)
+	return err
+}
+
+func syncRepoContractWithReport(args Args) ([]string, error) {
 	repoPath, err := requirePathArg(args, "repo")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	overwrite := args.Bool("force")
 	var report []string
 	if err := writeEmbeddedTree("repo-contract", repoPath, overwrite, &report); err != nil {
-		return err
+		return nil, err
 	}
 	if path, created, err := ensureFeedbackReadmeForRepoVault(repoPath, args.String("vault")); err != nil {
-		return err
+		return nil, err
 	} else if created {
 		report = append(report, "Created "+path)
 	}
-	pointerUpdates, err := upsertRepoTuskerPointers(repoPath, args.String("vault"))
-	if err != nil {
-		return err
+	var pointerUpdates []repoPointerUpdate
+	if !args.Bool("skip-pointers") {
+		pointerUpdates, err = upsertRepoTuskerPointers(repoPath, args.String("vault"))
+		if err != nil {
+			return nil, err
+		}
 	}
 	if warning := repoAgentGuidanceFlatteningWarning(repoPath, args.String("vault"), pointerUpdates); warning != "" {
 		report = append(report, "Warning: "+warning)
@@ -63,7 +71,7 @@ func syncRepoContract(args Args) error {
 	if len(report) == 0 && len(pointerReport) == 0 {
 		fmt.Printf("No repo-contract files changed in %s\n", repoPath)
 	}
-	return nil
+	return report, nil
 }
 
 func updateCmd(args Args) error {
@@ -75,7 +83,7 @@ func updateCmdWithBinaryPreflight(args Args, preflight func(Args) error) error {
 		printUpdateHelp()
 		return nil
 	}
-	if !args.Bool("no-bin") {
+	if args.Bool("bin") && !args.Bool("no-bin") {
 		if err := preflight(args); err != nil {
 			return err
 		}
@@ -84,8 +92,20 @@ func updateCmdWithBinaryPreflight(args Args, preflight func(Args) error) error {
 	updatedSkills := []string{}
 	destinations := []string{}
 	repoRoot := ""
-	if !args.Bool("repo-only") {
-		destinations = existingUserSkillDestinations()
+	userSkillSelection := args.Bool("all-user-skills") || args.Bool("refresh-existing-user-skills") || args.Bool("codex-user") || args.Bool("claude-user")
+	existingSkills := []string{}
+	if !args.Bool("repo-only") && (args.Bool("all-user-skills") || args.Bool("refresh-existing-user-skills")) {
+		existingSkills = existingUserSkillDestinations()
+		destinations = append(destinations, existingSkills...)
+	}
+	if !args.Bool("repo-only") && args.Bool("codex-user") {
+		destinations = append(destinations, defaultCodexUserSkillDestination())
+	}
+	if !args.Bool("repo-only") && args.Bool("claude-user") {
+		destinations = append(destinations, filepath.Join(userHomeDir(), ".claude", "skills", currentSkillInstallDir))
+	}
+	if !args.Bool("repo-only") && !userSkillSelection {
+		existingSkills = existingUserSkillDestinations()
 	}
 	if repoPath := strings.TrimSpace(args.String("repo")); repoPath != "" {
 		var err error
@@ -135,7 +155,7 @@ func updateCmdWithBinaryPreflight(args Args, preflight func(Args) error) error {
 	}
 
 	binaryUpdated := false
-	if !args.Bool("no-bin") {
+	if args.Bool("bin") && !args.Bool("no-bin") {
 		if err := installBinarySymlink(args); err != nil {
 			return err
 		}
@@ -144,15 +164,16 @@ func updateCmdWithBinaryPreflight(args Args, preflight func(Args) error) error {
 
 	if args.Bool("json") {
 		emitJSON(map[string]any{
-			"ok":                true,
-			"binary_updated":    binaryUpdated,
-			"updated_skills":    updatedSkills,
-			"skill_modes":       installedSkillModes,
-			"updated_pointers":  repoPointerUpdatePaths(pointerUpdates),
-			"feedback_readme":   nullIfEmptyString(feedbackReadme),
-			"guidance_warning":  nullIfEmptyString(guidanceWarning),
-			"skill_source":      nullIfEmptyString(args.String("skill-source")),
-			"skill_source_kind": nullIfEmptyString(args.String("skill-source-kind")),
+			"ok":                   true,
+			"binary_updated":       binaryUpdated,
+			"updated_skills":       updatedSkills,
+			"skill_modes":          installedSkillModes,
+			"updated_pointers":     repoPointerUpdatePaths(pointerUpdates),
+			"feedback_readme":      nullIfEmptyString(feedbackReadme),
+			"guidance_warning":     nullIfEmptyString(guidanceWarning),
+			"skill_source":         nullIfEmptyString(args.String("skill-source")),
+			"skill_source_kind":    nullIfEmptyString(args.String("skill-source-kind")),
+			"existing_user_skills": existingSkills,
 		})
 		return nil
 	}
@@ -169,8 +190,10 @@ func updateCmdWithBinaryPreflight(args Args, preflight func(Args) error) error {
 	if guidanceWarning != "" {
 		fmt.Printf("Warning: %s\n", guidanceWarning)
 	}
-	if len(updatedSkills) == 0 {
-		fmt.Println("No existing user skill installs found to refresh. Pass `--repo <path>` for repo-local skills.")
+	if !args.Bool("repo-only") && !userSkillSelection {
+		printUserSkillRefreshGuidance("update", existingSkills)
+	} else if len(updatedSkills) == 0 {
+		fmt.Println("No install destinations selected.")
 	}
 	return nil
 }
@@ -185,14 +208,20 @@ func installCmd(args Args) error {
 	destinations := []string{}
 	repoPath := strings.TrimSpace(args.String("repo"))
 	repoRoot := ""
-	if repoPath == "" || args.Bool("refresh-existing-user-skills") {
-		destinations = existingUserSkillDestinations()
+	userSkillSelection := args.Bool("all-user-skills") || args.Bool("refresh-existing-user-skills") || args.Bool("codex-user") || args.Bool("claude-user")
+	existingSkills := []string{}
+	if args.Bool("all-user-skills") || args.Bool("refresh-existing-user-skills") {
+		existingSkills = existingUserSkillDestinations()
+		destinations = append(destinations, existingSkills...)
 	}
 	if args.Bool("codex-user") {
 		destinations = append(destinations, defaultCodexUserSkillDestination())
 	}
 	if args.Bool("claude-user") {
 		destinations = append(destinations, filepath.Join(userHomeDir(), ".claude", "skills", currentSkillInstallDir))
+	}
+	if !userSkillSelection {
+		existingSkills = existingUserSkillDestinations()
 	}
 	if repoPath != "" {
 		var err error
@@ -240,7 +269,7 @@ func installCmd(args Args) error {
 	}
 
 	binaryInstalled := false
-	if !args.Bool("no-bin") {
+	if args.Bool("bin") && !args.Bool("no-bin") {
 		if err := installBinarySymlink(args); err != nil {
 			return err
 		}
@@ -249,15 +278,16 @@ func installCmd(args Args) error {
 
 	if args.Bool("json") {
 		emitJSON(map[string]any{
-			"ok":                true,
-			"binary_installed":  binaryInstalled,
-			"installed_skills":  installedSkills,
-			"skill_modes":       installedSkillModes,
-			"updated_pointers":  repoPointerUpdatePaths(pointerUpdates),
-			"feedback_readme":   nullIfEmptyString(feedbackReadme),
-			"guidance_warning":  nullIfEmptyString(guidanceWarning),
-			"skill_source":      nullIfEmptyString(args.String("skill-source")),
-			"skill_source_kind": nullIfEmptyString(args.String("skill-source-kind")),
+			"ok":                   true,
+			"binary_installed":     binaryInstalled,
+			"installed_skills":     installedSkills,
+			"skill_modes":          installedSkillModes,
+			"updated_pointers":     repoPointerUpdatePaths(pointerUpdates),
+			"feedback_readme":      nullIfEmptyString(feedbackReadme),
+			"guidance_warning":     nullIfEmptyString(guidanceWarning),
+			"skill_source":         nullIfEmptyString(args.String("skill-source")),
+			"skill_source_kind":    nullIfEmptyString(args.String("skill-source-kind")),
+			"existing_user_skills": existingSkills,
 		})
 		return nil
 	}
@@ -274,10 +304,24 @@ func installCmd(args Args) error {
 	if guidanceWarning != "" {
 		fmt.Printf("Warning: %s\n", guidanceWarning)
 	}
-	if len(installedSkills) == 0 && args.Bool("no-bin") {
+	if !userSkillSelection {
+		printUserSkillRefreshGuidance("install", existingSkills)
+	} else if len(installedSkills) == 0 {
 		fmt.Println("No install destinations selected.")
 	}
 	return nil
+}
+
+func printUserSkillRefreshGuidance(command string, destinations []string) {
+	if len(destinations) == 0 {
+		fmt.Println("No existing Tusker user skill installs found.")
+	} else {
+		fmt.Println("Existing Tusker user skill installs (not refreshed):")
+		for _, destination := range destinations {
+			fmt.Printf("  %s\n", destination)
+		}
+	}
+	fmt.Printf("Refresh them explicitly with: tusker %s --all-user-skills\n", command)
 }
 
 func uniqueInstallDestinations(values []string) []string {
@@ -711,7 +755,7 @@ func binaryInstallPlanForSource(args Args, binarySource string) (binaryInstallPl
 		binDir = pickBinDir()
 	}
 	if binDir == "" {
-		return binaryInstallPlan{}, tuskerError(errorInvalidArg, "No writable bin dir found on PATH. Pass --bin-dir <path> (e.g. ~/.local/bin), or --no-bin to skip.")
+		return binaryInstallPlan{}, tuskerError(errorInvalidArg, "No writable bin dir found on PATH. Pass --bin --bin-dir <path> (e.g. ~/.local/bin), or --no-bin to skip.")
 	}
 	binDir, err := filepath.Abs(binDir)
 	if err != nil {
@@ -735,7 +779,7 @@ func binaryInstallPlanForSource(args Args, binarySource string) (binaryInstallPl
 		return binaryInstallPlan{}, tuskerError(
 			errorInvalidArg,
 			fmt.Sprintf("refusing to update %s: the binary source and destination are the same file; release-installed Tusker binaries must be updated by rerunning the release installer", target),
-			withHint("Run `curl -fsSL https://raw.githubusercontent.com/srv1n/tusker/main/scripts/install.sh | sh` to install the latest release, or use `tusker update --no-bin` to refresh skills only."),
+			withHint("Run `curl -fsSL https://raw.githubusercontent.com/srv1n/tusker/main/scripts/install.sh | sh` to install the latest release, or use `tusker update --no-bin`; add --all-user-skills when refreshing user skills."),
 		)
 	}
 	return binaryInstallPlan{source: binarySource, target: target}, nil
@@ -877,16 +921,17 @@ func findRepoRoot(start string) (string, error) {
 
 func printUpdateHelp() {
 	fmt.Println(`Usage:
-  tusker update [--bin-dir <path>] [--no-bin] [--repo <path>] [--repo-only] [--skill-mode copy|symlink] [--source <checkout>] [--json]
+  tusker update [--bin-dir <path>] [--bin] [--no-bin] [--all-user-skills] [--codex-user] [--claude-user] [--repo <path>] [--repo-only] [--skill-mode copy|symlink] [--source <checkout>] [--json]
 
 Purpose:
-  Refresh the installed tusker binary link and all existing user skill installs
-  from the currently running binary. This is the command to run after pulling,
-  rebuilding, or replacing the Tusker binary.
+  Refresh selected skill installs from the currently running binary. Use --bin
+  when the PATH symlink should also be updated after pulling, rebuilding, or
+  replacing the Tusker binary.
 
 Behavior:
-  - refreshes existing user skills in ~/.agents, ~/.codex, and ~/.claude
-  - relinks tusker on PATH unless --no-bin is passed
+  - refreshes existing user skills in ~/.agents, ~/.codex, and ~/.claude only
+    with --all-user-skills (or the compatibility alias --refresh-existing-user-skills)
+  - relinks tusker on PATH only with --bin; --no-bin remains accepted as a no-op
   - with --repo, refreshes the repo-local .agents skill install and the
     generated .claude compatibility install for Claude Code; repo-local
     installs default to symlink mode, while user installs default to copy mode
@@ -897,7 +942,8 @@ Behavior:
 
 Examples:
   tusker update
-  tusker update --bin-dir ~/.local/bin
+  tusker update --bin --bin-dir ~/.local/bin
+  tusker update --all-user-skills
   tusker update --repo . --repo-only --no-bin
   tusker update --repo . --repo-only --no-bin --skill-mode copy
   tusker update --repo . --repo-only --no-bin --skill-mode symlink --source ~/src/tusker`)
@@ -905,14 +951,17 @@ Examples:
 
 func printInstallHelp() {
 	fmt.Println(`Usage:
-  tusker install [--bin-dir <path>] [--no-bin] [--codex-user] [--claude-user] [--repo <path>] [--refresh-existing-user-skills] [--skill-mode copy|symlink] [--source <checkout>] [--force] [--json]
+  tusker install [--bin-dir <path>] [--bin] [--no-bin] [--all-user-skills] [--codex-user] [--claude-user] [--repo <path>] [--refresh-existing-user-skills] [--skill-mode copy|symlink] [--source <checkout>] [--force] [--json]
 
 Purpose:
-  Install the Tusker binary link and refresh/install skill bundles from the
-  currently running binary. This is used by make install and the shell installer.
+  Install selected skill bundles from the currently running binary. Use --bin
+  when a PATH symlink should also be created. This is used by make install and
+  the shell installer.
 
 Behavior:
   - refreshes already-installed user skills in ~/.agents, ~/.codex, and ~/.claude
+    only with --all-user-skills, --codex-user, or --claude-user; with no user
+    flag it reports existing installs and prints the exact refresh command
   - --codex-user installs ~/.agents/skills/tusker
   - --claude-user installs ~/.claude/skills/tusker
   - --repo installs the repo-local .agents skill bundle and the generated
@@ -922,11 +971,13 @@ Behavior:
     and refreshes the managed AGENTS.md/CLAUDE.md Tusker bootstrap block
     with compact proof/context guidance
   - --refresh-existing-user-skills also refreshes existing user skills when --repo is used
-  - relinks tusker on PATH unless --no-bin is passed
+  - relinks tusker on PATH only with --bin; --no-bin remains accepted as a no-op
   - --source points symlink mode at a canonical Tusker checkout or skill dir
   - --force is accepted for installer compatibility
 
 Examples:
+  tusker install --bin
+  tusker install --all-user-skills
   tusker install --codex-user --claude-user
   tusker install --repo . --no-bin
   tusker install --repo . --no-bin --skill-mode copy
@@ -1014,8 +1065,9 @@ func initCmd(args Args) error {
 	}
 	registerDaemon := args.Bool("daemon")
 	_, mountArgPresent := args["mount"]
+	_, withMountArgPresent := args["with-mount"]
 	noMount := args.Bool("no-mount")
-	mountTracker := args.Bool("mount") && !noMount
+	mountTracker := (args.Bool("mount") || args.Bool("with-mount")) && !noMount
 	fresh := args.Bool("fresh")
 	vaultOnly := args.Bool("vault-only")
 	profile := strings.TrimSpace(args.String("profile"))
@@ -1026,7 +1078,7 @@ func initCmd(args Args) error {
 	reader := bufio.NewReader(os.Stdin)
 	ask := func(question string, defaultYes bool) (bool, error) {
 		if yes {
-			return true, nil
+			return defaultYes, nil
 		}
 		if !interactive {
 			return false, tuskerError(errorInvalidArg, question+" - stdin is not a TTY; pass --yes to accept all defaults")
@@ -1045,6 +1097,12 @@ func initCmd(args Args) error {
 			return defaultYes, nil
 		}
 		return answer == "y" || answer == "yes", nil
+	}
+	initWrites := []string{}
+	recordWrite := func(path, undo string) {
+		displayed := initPathForDisplay(cwd, path)
+		fmt.Printf("wrote %s — undo: %s\n", displayed, undo)
+		initWrites = append(initWrites, displayed)
 	}
 	vaultPath := filepath.Join(cwd, defaultRepoVaultDir)
 	explicitVault := args.String("vault") != ""
@@ -1128,6 +1186,7 @@ func initCmd(args Args) error {
 	if err := workflowInitCmd(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
 		return err
 	}
+	recordWrite(effectiveVault, "tusker purge --repo . --only-tusker-state --yes")
 	if args.Bool("migrate-v5") {
 		report, err := migrateLegacyVaultToV5(args)
 		if err != nil {
@@ -1147,9 +1206,13 @@ func initCmd(args Args) error {
 			if fileExists(filePath) {
 				question = fmt.Sprintf("Found %s - inject tusker epic-roster pointer?", filename)
 			}
-			doInject, err := ask(question, true)
-			if err != nil {
-				return err
+			doInject := args.Bool("with-pointers")
+			if !doInject {
+				var err error
+				doInject, err = ask(question, false)
+				if err != nil {
+					return err
+				}
 			}
 			if !doInject {
 				continue
@@ -1160,25 +1223,40 @@ func initCmd(args Args) error {
 			}
 			if changed != "" {
 				fmt.Printf("%s %s\n", capitalize(changed), filePath)
+				recordWrite(filename+" pointer block", "tusker purge --repo . --only-tusker-state --yes")
 			}
 		}
 	}
 	if !vaultOnly && !args.Bool("no-contract") {
-		doContract, err := ask("Install repo-contract files (.github templates, agent-workflow docs)?", true)
-		if err != nil {
-			return err
+		doContract := args.Bool("with-contract")
+		if !doContract {
+			var err error
+			doContract, err = ask("Install repo-contract files (.github templates, agent-workflow docs)?", false)
+			if err != nil {
+				return err
+			}
 		}
 		if doContract {
-			if err := syncRepoContract(Args{"repo": cwd, "vault": effectiveVault}); err != nil {
+			report, err := syncRepoContractWithReport(Args{"repo": cwd, "vault": effectiveVault, "skip-pointers": "true"})
+			if err != nil {
 				return err
+			}
+			for _, line := range report {
+				for _, prefix := range []string{"Copied ", "Updated ", "Created "} {
+					if strings.HasPrefix(line, prefix) {
+						recordWrite(strings.TrimPrefix(line, prefix), "remove the generated repo-contract file manually")
+						break
+					}
+				}
 			}
 		}
 	}
 	if err := reindex(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
 		return err
 	}
-	if !mountTracker && !mountArgPresent && !noMount && configuredWorkspaceVaultPath() != "" {
-		doMount, err := ask("Mount this repo tracker in your configured Obsidian vault?", true)
+	recordWrite(filepath.Join(effectiveVault, "_generated"), "tusker purge --repo . --only-tusker-state --yes")
+	if !mountTracker && !mountArgPresent && !withMountArgPresent && !noMount && configuredWorkspaceVaultPath() != "" {
+		doMount, err := ask("Mount this repo tracker in your configured Obsidian vault?", false)
 		if err != nil {
 			return err
 		}
@@ -1192,12 +1270,25 @@ func initCmd(args Args) error {
 		if err := vaultMountCmd(mountArgs); err != nil {
 			return err
 		}
+		mountRoot := configuredWorkspaceVaultPath()
+		mountName := strings.TrimSpace(args.String("mount-name"))
+		if mountName == "" {
+			mountName = defaultMountName(cwd)
+		}
+		recordWrite(filepath.Join(mountRoot, sanitizeMountName(mountName)), "tusker vault unmount --repo .")
 	}
 	if registerDaemon {
 		if err := projectsAddCmd(Args{"repo": cwd, "vault": effectiveVault}); err != nil {
 			return err
 		}
+		recordWrite(workspaceConfigPath(), "tusker projects remove --repo .")
 	}
+	fmt.Println()
+	fmt.Println("Summary of writes:")
+	for _, path := range initWrites {
+		fmt.Printf("  %s\n", path)
+	}
+	fmt.Println("Machine-level state is reversed by `tusker uninstall`.")
 	fmt.Println()
 	fmt.Println("Done. Next steps:")
 	fmt.Println("  tusker validate --vault " + effectiveVault)
@@ -1212,6 +1303,14 @@ func initCmd(args Args) error {
 		fmt.Println("  tusker new epic --vault " + effectiveVault + " --acronym APP --title \"App foundation\"")
 	}
 	return nil
+}
+
+func initPathForDisplay(repoRoot, path string) string {
+	rel, err := filepath.Rel(repoRoot, path)
+	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return filepath.ToSlash(rel)
+	}
+	return path
 }
 
 func printV5MigrationReport(report *v5MigrationReport, args Args) {

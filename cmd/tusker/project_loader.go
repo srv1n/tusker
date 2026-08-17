@@ -27,7 +27,10 @@ type loadedRegisteredProject struct {
 var registeredProjectLoadObserver func(registeredProjectLoadOptions)
 
 func (p loadedRegisteredProject) Loadable() bool {
-	return p.Project.Enabled && p.LoadError == nil
+	// Loadable means the workflow was actually read without error. Disabled
+	// registrations only load under LoadDisabled, so daemon paths using the
+	// default options still never see them as loadable.
+	return p.LoadError == nil && p.Workflow.Path != ""
 }
 
 func loadRegisteredProjects(store *RuntimeStore, opts registeredProjectLoadOptions) ([]loadedRegisteredProject, error) {

@@ -9,6 +9,7 @@ TUSKER_INSTALL_TEST_MODE="${TUSKER_INSTALL_TEST_MODE:-0}"
 TUSKER_TEST_MINISIGN_PUBLIC_KEY="${TUSKER_TEST_MINISIGN_PUBLIC_KEY:-}"
 INSTALL_CODEX_USER=0
 INSTALL_CLAUDE_USER=0
+INSTALL_ALL_USER_SKILLS=0
 INSTALL_REPO_PATH=""
 
 usage() {
@@ -24,13 +25,14 @@ Flags:
   --repo <path>       also install repo-local skills into <path>
   --codex-user        install ~/.agents/skills/tusker
   --claude-user       install ~/.claude/skills/tusker
+  --all-user-skills   refresh all existing Tusker user skill installs
   --github-repo <r>   override GitHub repo slug (default: srv1n/tusker)
   --help              show this help
 
 Notes:
   - This installer supports macOS and Linux.
   - It copies the release binary into BIN_DIR; it does not symlink to a local checkout.
-  - Binary installs refresh existing root user skills in ~/.agents, ~/.codex, and ~/.claude.
+  - Existing user skills are never refreshed unless an explicit user-skill flag is passed.
   - Release-manifest signatures are mandatory. Until the repository pins the real
     production public key, installation fails closed. Test trust roots require the
     explicit TUSKER_INSTALL_TEST_MODE=1 fixture boundary.
@@ -57,6 +59,10 @@ while [ "$#" -gt 0 ]; do
 			;;
 		--claude-user)
 			INSTALL_CLAUDE_USER=1
+			shift
+			;;
+		--all-user-skills)
+			INSTALL_ALL_USER_SKILLS=1
 			shift
 			;;
 		--github-repo)
@@ -352,17 +358,22 @@ if [ "$path_ok" -ne 1 ]; then
 	printf 'Note: %s is not on your PATH.\n' "$TUSKER_BIN_DIR"
 fi
 
-if [ -d "${HOME}/.agents/skills/tusker" ] || \
-	[ -d "${HOME}/.codex/skills/tusker" ] || \
-	[ -d "${HOME}/.claude/skills/tusker" ] || \
-	[ -d "${HOME}/.agents/skills/obsidian-vault-tracker" ] || \
-	[ -d "${HOME}/.codex/skills/obsidian-vault-tracker" ] || \
-	[ -d "${HOME}/.claude/skills/obsidian-vault-tracker" ]; then
-		if "$final_binary" install --help 2>/dev/null | grep -q -- '--refresh-existing-user-skills'; then
-			"$final_binary" install --no-bin --refresh-existing-user-skills
-	else
-		printf 'Existing user skills found, but Tusker %s does not support skill refresh during binary install.\n' "$TUSKER_VERSION"
+existing_user_skills=0
+for user_skill in \
+		"${HOME}/.agents/skills/tusker" \
+		"${HOME}/.codex/skills/tusker" \
+		"${HOME}/.claude/skills/tusker"; do
+	if [ -d "$user_skill" ]; then
+		existing_user_skills=1
+		printf 'Existing Tusker user skill install (not refreshed): %s\n' "$user_skill"
 	fi
+done
+if [ "$existing_user_skills" -eq 1 ] && [ "$INSTALL_ALL_USER_SKILLS" -eq 0 ]; then
+	printf 'Refresh explicitly with: %s install --all-user-skills --no-bin\n' "$final_binary"
+fi
+if [ "$INSTALL_ALL_USER_SKILLS" -eq 1 ]; then
+	set -- install --no-bin --all-user-skills
+	"$final_binary" "$@"
 fi
 
 if [ "$INSTALL_CODEX_USER" -eq 1 ] || [ "$INSTALL_CLAUDE_USER" -eq 1 ]; then

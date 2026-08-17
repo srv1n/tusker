@@ -17,6 +17,8 @@ type serveCapability struct {
 
 var serveCapabilityRegistry = []serveCapability{
 	{ID: "projects", Class: "authoritative_mutable", Mutable: true, Description: "Registered project and automation controls."},
+	{ID: "config", Class: "authoritative_read_only", Description: "Effective configuration values with source provenance."},
+	{ID: "setup", Class: "authoritative_mutable", Mutable: true, Description: "Setup doctor reports and guarded repair."},
 	{ID: "tasks", Class: "authoritative_mutable", Mutable: true, Description: "Task lifecycle and dispatch actions."},
 	{ID: "epics", Class: "authoritative_read_only", Description: "Vault epic projection."},
 	{ID: "waves", Class: "authoritative_mutable", Mutable: true, Description: "Wave review and landing actions."},

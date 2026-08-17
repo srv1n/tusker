@@ -274,6 +274,8 @@ Deliver a bounded repository-fact packet. [[APP-D-0001]]
 			t.Fatal(err)
 		}
 		project := newRegisteredProject(repo, vault)
+		project.Enabled = true
+		project.Health = projectHealthHealthy
 		if err := store.UpsertProject(project); err != nil {
 			_ = store.Close()
 			t.Fatal(err)
@@ -568,6 +570,8 @@ domains:
 				t.Fatal(err)
 			}
 			project := newRegisteredProject(repo, vault)
+			project.Enabled = true
+			project.Health = projectHealthHealthy
 			if err := store.UpsertProject(project); err != nil {
 				_ = store.Close()
 				t.Fatal(err)

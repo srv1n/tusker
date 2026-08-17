@@ -18,7 +18,7 @@ The remote model proposes; Tusker validates, allocates identities on import, and
 
 | Concern | Meaning | Owner |
 | --- | --- | --- |
-| Setup | Install repo-local skills, initialize `.tusker`, write config, sync repo contract, update pointers. | Tusker CLI |
+| Setup | Install repo-local skills and initialize `.tusker`; repo contract, pointers, mounts, and PATH links are explicit opt-ins. | Tusker CLI |
 | Onboarding | Analyze an existing repo and propose domains, epic contracts, V2 delivery plans, gates, and decisions. | Packet + remote model + Tusker import |
 | Product review and Start | Review a doctor-valid plan, then explicitly authorize its exact fingerprint. | Human + Tusker |
 
@@ -47,30 +47,28 @@ startup health check remains authoritative.
 
 ## Setup Commands
 
-Planned target surface:
-
-```bash
-tusker setup --repo . --profile app --yes
-```
-
-Compatibility alias:
-
-```bash
-tusker install --repo . --bootstrap
-```
-
-Until `setup` exists, use:
+Installation is conservative by default: no PATH symlink, no user-level
+skill refresh; repo-local skills install when a repo target is supplied.
 
 ```bash
 tusker purge --repo . --only-tusker-state
-tusker install --repo . --no-bin
+tusker install --repo .
 tusker init --yes
 tusker validate --vault .tusker
 tusker skill doctor --strict
 ```
 
-For a deliberately clean reset of old Tusker state, run the purge plan first,
-then apply it and initialize:
+Opt into extra repo files explicitly:
+
+```bash
+tusker init --yes --with-pointers --with-contract
+```
+
+Opt in with `tusker install --bin` (PATH symlink) or
+`tusker install --all-user-skills` (user skill refresh).
+
+For a clean reset of old Tusker state, run the purge plan, then apply it
+and initialize:
 
 ```bash
 tusker purge --repo . --only-tusker-state --yes
@@ -111,14 +109,16 @@ project routing and provider workflow refresh remain explicit operator actions.
 
 ## Existing Repo Packet
 
-Do not upload the whole repository. The planned packet surface is:
+Do not upload the whole repository. Build a task-scoped packet:
 
 ```bash
-tusker onboard pack --repo . --out .tusker/scratch/onboarding/repo-packet.zip \
-  --budget-tokens 120000 --profile app --redact --json
+tusker skill pack <TASK-ID> --budget 120000 --for agent
 ```
 
-Treat this as a target/planned command unless the installed CLI exposes it. A packet contains high-signal facts (README, guidance, manifests, build/CI, schemas, public APIs, representative tests, summaries, redaction and skipped-file reports) and excludes generated output, caches, secrets, raw logs, binaries, and Tusker runtime/generated paths.
+A packet contains high-signal facts (README, guidance, manifests, build/CI,
+schemas, public APIs, representative tests, summaries, redaction and
+skipped-file reports) and excludes generated output, caches, secrets, raw
+logs, binaries, and Tusker runtime/generated paths.
 
 Packet contents:
 

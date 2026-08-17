@@ -77,19 +77,19 @@ func TestRunDirectiveBypassableBlocker(t *testing.T) {
 	}
 }
 
-func TestDaemonHonorsDirectiveWithAutomationOff(t *testing.T) {
+// Directives on automation-disabled projects are refused (see
+// TestRunDirectiveAutomationDisabledRefused); this covers the enabled
+// success path: the directive claims the task with human authorization
+// and never touches the non-directed, non-dispatchable sibling.
+func TestDaemonHonorsDirectiveWithAutomationEnabled(t *testing.T) {
 	vault := automationTestVault(t)
 	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Directed", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Not directed", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
-	makeV7TaskDispatchableForTest(t, vault, "APP-T-0002")
 	initializeOrchestrationGitRepo(t, filepath.Dir(vault))
 	installFakeCodexExec(t, filepath.Dir(vault))
 	project := registerAutomationTestProject(t, vault)
-	if _, err := setProjectLocalConfigWithReadback(vault, "automation.enabled", false); err != nil {
-		t.Fatal(err)
-	}
 	daemon, err := NewDaemon(DefaultStateRoot())
 	if err != nil {
 		t.Fatal(err)
@@ -368,6 +368,11 @@ func TestDirectedClaimRecoveryRequeuesUnstartedIntent(t *testing.T) {
 		t.Fatalf("registered project: projects=%#v err=%v", projects, err)
 	}
 	project := projects[0]
+	// Directives require the automation opt-in; this test covers recovery
+	// mechanics, not the refusal gate.
+	if _, err := setProjectLocalConfigWithReadback(project.VaultRoot, "automation.enabled", true); err != nil {
+		t.Fatal(err)
+	}
 	wfFile, err := loadWorkflow(project.VaultRoot)
 	if err != nil {
 		t.Fatal(err)

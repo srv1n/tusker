@@ -245,7 +245,7 @@ func installedCapabilityCommands() []capabilityCommand {
 		{Command: "runs", Subcommands: []string{"claim", "events", "fail", "heartbeat", "inspect", "interrupt", "logs", "reclaim", "redrive", "release", "retire", "start", "submit"}},
 		{Command: "search"}, {Command: "serve"}, {Command: "setup", Subcommands: []string{"doctor", "repair"}}, {Command: "show"},
 		{Command: "skill", Subcommands: []string{"audit-agent-guidance", "bundle", "doctor", "pack", "route", "sync"}}, {Command: "state"}, {Command: "status"}, {Command: "streams"},
-		{Command: "sync-repo-contract"}, {Command: "trace", Subcommands: []string{"list", "replay", "show"}}, {Command: "update"}, {Command: "validate"},
+		{Command: "sync-repo-contract"}, {Command: "trace", Subcommands: []string{"list", "replay", "show"}}, {Command: "uninstall", Flags: []string{"--force-state", "--state", "--yes"}}, {Command: "update"}, {Command: "validate"},
 		{Command: "verify", Subcommands: []string{"add", "recipe"}},
 		{Command: "vault", Subcommands: []string{"mount", "move", "repair", "set", "status", "unmount"}}, {Command: "version", Flags: []string{"--json"}},
 		{Command: "wave", Subcommands: []string{"add", "arm", "brief", "create", "disarm", "pause", "preflight", "remove", "resume", "show"}},

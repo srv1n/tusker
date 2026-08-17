@@ -91,8 +91,10 @@ func TestUpdatePreflightsBinaryBeforeRefreshingSkillsOrRepoPointers(t *testing.T
 		t.Fatal(err)
 	}
 
+	// Binary work is opt-in via --bin; only then does the preflight run, and it
+	// must refuse before any skill or pointer refresh.
 	preflightErr := tuskerError(errorInvalidArg, "refusing to update: source and target are the same file")
-	err := updateCmdWithBinaryPreflight(Args{"repo": repo, "repo-only": "true", "quiet": "true"}, func(Args) error {
+	err := updateCmdWithBinaryPreflight(Args{"repo": repo, "bin": "true", "quiet": "true"}, func(Args) error {
 		return preflightErr
 	})
 	if !errors.Is(err, preflightErr) {
@@ -287,7 +289,7 @@ func TestInstallSkillPayloadRemovesStaleFiles(t *testing.T) {
 	}
 }
 
-func TestInstallCommandRefreshesExistingUserSkillsByDefault(t *testing.T) {
+func TestInstallCommandLeavesExistingUserSkillsAloneByDefault(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -302,7 +304,17 @@ func TestInstallCommandRefreshesExistingUserSkillsByDefault(t *testing.T) {
 		}
 	}
 
-	if err := installCmd(Args{"no-bin": "true", "quiet": "true"}); err != nil {
+	if err := installCmd(Args{"quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, destination := range destinations {
+		if got, err := readText(filepath.Join(destination, "assets", "templates", "story.md")); err != nil || got != "stale\n" {
+			t.Fatalf("no-arg install touched user skill at %s: text=%q err=%v", destination, got, err)
+		}
+	}
+
+	if err := installCmd(Args{"all-user-skills": "true", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -310,7 +322,7 @@ func TestInstallCommandRefreshesExistingUserSkillsByDefault(t *testing.T) {
 		assertExists(t, filepath.Join(destination, "SKILL.md"))
 		assertExists(t, filepath.Join(destination, "references", "COMMANDS.md"))
 		if _, err := os.Stat(filepath.Join(destination, "assets", "templates", "story.md")); !os.IsNotExist(err) {
-			t.Fatalf("stale file still exists after default install refresh at %s: %v", destination, err)
+			t.Fatalf("stale file still exists after explicit refresh at %s: %v", destination, err)
 		}
 	}
 }

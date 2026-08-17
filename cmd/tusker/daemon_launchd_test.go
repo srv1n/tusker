@@ -220,6 +220,8 @@ func TestCrashLoopPreRunFailuresLeaveSixthReplacementServingReads(t *testing.T) 
 		t.Fatal(err)
 	}
 	project := newRegisteredProject(filepath.Dir(vault), vault)
+	project.Enabled = true
+	project.Health = projectHealthHealthy
 	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 	if err := store.UpsertProject(project); err != nil {
 		t.Fatal(err)

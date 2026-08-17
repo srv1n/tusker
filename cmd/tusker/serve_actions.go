@@ -161,10 +161,14 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleDeliveryStart(w, body)
 	case len(parts) == 2 && parts[1] == "projects":
 		s.handleProjectRegisterAction(w, body)
+	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "remove":
+		s.handleProjectRemoveAction(w, parts[2])
 	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "automation":
 		s.handleProjectAutomationAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "settings":
 		s.handleProjectSettingsAction(w, parts[2], body)
+	case len(parts) == 3 && parts[1] == "setup" && (parts[2] == "doctor" || parts[2] == "repair"):
+		s.handleSetupDoctorAction(w, body, parts[2] == "repair")
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "redrive":
 		s.handleRunRedrive(w, r, parts[2])
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "acknowledge":
@@ -325,6 +329,50 @@ func (s *serveServer) handleProjectRegisterAction(w http.ResponseWriter, body se
 	})
 }
 
+func (s *serveServer) handleProjectRemoveAction(w http.ResponseWriter, projectID string) {
+	args := serveBaseArgs(s)
+	args["id"] = strings.TrimSpace(projectID)
+	args["json"] = "true"
+	output, err := serveInvokeCommand(args, projectsRemoveCmd)
+	result := serveCommandResult("tusker projects remove "+args["id"], output, err)
+	result.ProjectID = args["id"]
+	if err == nil {
+		s.invalidateProjectSnapshot(args["id"])
+	}
+	serveJSON(w, http.StatusOK, result)
+}
+
+func (s *serveServer) handleSetupDoctorAction(w http.ResponseWriter, body serveActionBody, apply bool) {
+	project, err := s.projectForSnapshot(body.string("projectId", "project_id", "project"))
+	if err != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker setup", "", err))
+		return
+	}
+	args := serveBaseArgs(s)
+	args["repo"] = project.RepoRoot
+	args["json"] = "true"
+	command := "tusker setup doctor"
+	if apply {
+		command = "tusker setup repair"
+	}
+	output, err := serveInvokeCommand(args, func(args Args) error {
+		return setupDoctorCmd(args, apply)
+	})
+	result := serveCommandResult(command, output, err)
+	result.ProjectID = project.ProjectID
+	if err == nil {
+		var report setupDoctorReport
+		if decodeErr := json.Unmarshal([]byte(output), &report); decodeErr == nil {
+			serveJSON(w, http.StatusOK, map[string]any{
+				"ok": true, "reason": result.Reason, "command": result.Command,
+				"output": result.Output, "projectId": result.ProjectID, "report": report,
+			})
+			return
+		}
+	}
+	serveJSON(w, http.StatusOK, result)
+}
+
 func (s *serveServer) handleProjectAutomationAction(w http.ResponseWriter, projectID string, body serveActionBody) {
 	raw, present := body["enabled"]
 	if !present {
@@ -384,27 +432,71 @@ func (s *serveServer) handleProjectSettingsAction(w http.ResponseWriter, project
 		return
 	}
 	project := loaded[0].Project
-	var key string
-	var value any
-	if mode := body.string("workspaceMode"); mode != "" {
-		if !validWorkspaceStrategy(mode) {
-			serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "invalid workspace mode"})
+	key := strings.TrimSpace(body.string("key"))
+	var rawValue any
+	if key != "" {
+		var present bool
+		rawValue, present = body["value"]
+		if !present {
+			serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "setting value is required"})
 			return
 		}
-		key, value = "workspace.strategy", mode
+	} else if mode := body.string("workspaceMode"); mode != "" {
+		key, rawValue = "workspace.strategy", mode
 	} else if limit := body.string("maxActiveRunsPerProject"); limit != "" {
-		n, parseErr := strconv.Atoi(limit)
-		if parseErr != nil || n < 1 {
-			serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "concurrency must be positive"})
-			return
-		}
-		key, value = "runtime.max_active_runs_per_project", n
+		key, rawValue = "runtime.max_active_runs_per_project", limit
 	} else {
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "no supported setting supplied"})
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "no supported setting supplied"})
+		return
+	}
+	validator, ok := serveProjectSettingValidators[key]
+	if !ok {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "unsupported project setting: " + key})
+		return
+	}
+	value, validationErr := validator(rawValue)
+	if validationErr != nil {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: validationErr.Error()})
 		return
 	}
 	_, err = setProjectLocalConfigWithReadback(project.VaultRoot, key, value)
-	serveJSON(w, http.StatusOK, serveCommandResult("tusker projects settings", "", err))
+	result := serveCommandResult("tusker projects settings", "", err)
+	result.ProjectID = projectID
+	serveJSON(w, http.StatusOK, result)
+}
+
+var serveProjectSettingValidators = map[string]func(any) (any, error){
+	"workspace.strategy": func(raw any) (any, error) {
+		value := strings.TrimSpace(toString(raw))
+		if !validWorkspaceStrategy(value) {
+			return nil, fmt.Errorf("invalid workspace mode")
+		}
+		return value, nil
+	},
+	"runtime.max_active_runs_per_project": func(raw any) (any, error) {
+		value, err := strconv.Atoi(strings.TrimSpace(toString(raw)))
+		if err != nil || value < 1 {
+			return nil, fmt.Errorf("concurrency must be positive")
+		}
+		return value, nil
+	},
+	"tier": func(raw any) (any, error) {
+		value, err := strconv.Atoi(strings.TrimSpace(toString(raw)))
+		if err != nil || value < 1 || value > 5 {
+			return nil, fmt.Errorf("tier must be between 1 and 5")
+		}
+		return value, nil
+	},
+	"automation.enabled_runners": func(raw any) (any, error) {
+		if text, ok := raw.(string); ok && strings.Contains(text, ",") {
+			raw = strings.Split(text, ",")
+		}
+		values := normalizeList(raw)
+		if len(values) == 0 {
+			return nil, fmt.Errorf("enabled runners must not be empty")
+		}
+		return values, nil
+	},
 }
 
 func (s *serveServer) handleTaskStatusAction(w http.ResponseWriter, taskID string, body serveActionBody) {

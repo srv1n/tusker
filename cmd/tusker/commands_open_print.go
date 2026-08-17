@@ -264,6 +264,9 @@ func registeredProjects(selector string) ([]RegisteredProject, error) {
 }
 
 func registeredProjectLoads(selector string, opts registeredProjectLoadOptions) ([]loadedRegisteredProject, error) {
+	// Disabled means "no daemon automation", not hidden: interactive read
+	// commands still resolve registrations that were never enabled.
+	opts.LoadDisabled = true
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return nil, err

@@ -456,6 +456,8 @@ func runInner(command string, args Args) (int, error) {
 		return validateCmd(args)
 	case "purge":
 		return 0, tuskerPurgeCmd(args)
+	case "uninstall":
+		return 0, tuskerGlobalUninstallCmd(args)
 	case "gc":
 		return 0, scratchGCCmd(args)
 	case "list":
@@ -990,14 +992,15 @@ Commands:
   gate-ledger         check or record tree-keyed gate results
   serve               serve the read-only localhost control room
   refresh             run one daemon poll tick
-  install             install binary and skill bundles
+  install             install skill bundles; binary link is opt-in with --bin
   purge               dry-run or remove generated Tusker repo state
+  uninstall           dry-run or remove machine-level Tusker state
   gc                  sweep stale entries out of .tusker/scratch
   close               close a V7 task after gates and evidence pass
   accept              accept, confirm proof, and close a green task in one step
   validate            check vault invariants
   reindex             rebuild generated indexes
-  update              refresh the installed binary link and skill bundle
+  update              refresh skill bundles; binary link is opt-in with --bin
   skill               doctor, route, and pack V7 project skills
   setup               diagnose and repair local onboarding drift
 
@@ -1555,15 +1558,16 @@ Examples:
 
 func printInitHelp() {
 	fmt.Println(`Usage:
-  tusker init [--vault <path>] [--yes] [--fresh] [--purge-state]
-  tusker init --profile v7 [--yes] [--fresh] [--purge-state]
+  tusker init [--vault <path>] [--yes] [--fresh] [--purge-state] [--with-pointers] [--with-contract] [--with-mount]
+  tusker init --profile v7 [--yes] [--fresh] [--purge-state] [--with-pointers] [--with-contract] [--with-mount]
 
 What it does:
   1. initializes a V7 repo-local vault under .tusker by default
   2. writes WORKFLOW.md with tracker_schema_version: 7
   3. writes .tusker/SKILL.md and knowledge/domains/** starter canon
-  4. injects Tusker pointers into AGENTS.md / CLAUDE.md unless disabled
-  5. reindexes the vault and refreshes V7 dashboards/Bases
+  4. reindexes the vault and refreshes V7 dashboards/Bases
+  5. optionally injects pointers, installs repo-contract files, and mounts the
+    tracker when explicitly requested
 
 Removed:
   V5 bootstrap, V6 knowledge-graph bootstrap, migration scaffolds, and site publishing
@@ -1572,18 +1576,23 @@ Removed:
 
 Flags:
   --vault <path>    target vault path (default: ./.tusker)
-  --yes             accept defaults without prompts
+  --yes             accept the safe minimum: vault + reindex only
   --fresh           move an existing target vault aside and recreate it cleanly
   --purge-state     delete generated Tusker state first; implies the same safe
                     scope as 'tusker purge --only-tusker-state --yes'
   --profile v7      explicit V7 profile; any other profile is rejected
   --v7              explicit alias for default V7 init
-  --vault-only      update only the vault; skip AGENTS/CLAUDE and repo-contract files
-  --no-pointers     skip AGENTS.md / CLAUDE.md pointer injection
-  --no-contract     skip repo-contract helper docs
+  --vault-only      update only the vault; skip pointers and repo-contract files
+  --with-pointers   opt in to AGENTS.md / CLAUDE.md pointer injection
+  --with-contract   opt in to repo-contract helper docs
+  --with-mount      opt in to mounting the tracker in the configured Obsidian vault
+  --no-pointers     compatibility alias to skip pointer injection
+  --no-contract     compatibility alias to skip repo-contract helper docs
+  --no-mount        compatibility alias to skip Obsidian mounting
 
 Examples:
   tusker init --yes
+  tusker init --yes --with-pointers --with-contract
   tusker init --profile v7 --yes --fresh
   tusker init --yes --fresh --purge-state`)
 }

@@ -406,6 +406,8 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleDaemon(w, r)
 	case path == "/api/projects":
 		s.handleProjects(w, r)
+	case path == "/api/config":
+		s.handleConfig(w, r)
 	case path == "/api/needs":
 		s.handleNeeds(w, r)
 	case path == "/api/digest":
@@ -477,6 +479,28 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 	default:
 		serveJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
 	}
+}
+
+func (s *serveServer) handleConfig(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimSpace(r.URL.Query().Get("key"))
+	if key == "" {
+		serveJSON(w, http.StatusBadRequest, map[string]any{"error": "config key is required"})
+		return
+	}
+	project, err := s.projectForSnapshot(strings.TrimSpace(r.URL.Query().Get("project")))
+	if err != nil {
+		serveJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	report, err := configResolveForPaths(project.RepoRoot, project.VaultRoot, true, key)
+	if err != nil {
+		serveJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	serveJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "key": report.Key, "value": report.Value, "source": report.Source,
+		"path": report.Path, "sources": report.Sources, "resolution": report,
+	})
 }
 
 func (s *serveServer) handleReviewBatch(w http.ResponseWriter, r *http.Request) {
@@ -2036,6 +2060,9 @@ Endpoints:
   GET /api/daemon
   POST /api/daemon/(start|stop|resume|limits)
   GET /api/projects
+  POST /api/projects/<id>/(settings|automation|remove)
+  GET /api/config?project=<id>&key=<key>
+  POST /api/setup/(doctor|repair)
   GET /api/needs?project=<id>
   GET /api/summary?project=<id>
   GET /api/morning-brief?project=<id>[&date=YYYY-MM-DD]

@@ -114,6 +114,10 @@ type tuskerConfigLayer struct {
 	Present bool
 	Config  v7TuskerConfigFile
 	Raw     map[string]any
+	// AppliedRaw is the subset of Raw that this layer is allowed to affect.
+	// User-global config intentionally keeps behavioral declarations visible for
+	// provenance while preventing them from changing a project's policy.
+	AppliedRaw map[string]any
 }
 
 type resolvedTuskerConfig struct {
@@ -131,6 +135,7 @@ type configResolveSourceValue struct {
 	Present bool   `json:"present"`
 	Winning bool   `json:"winning"`
 	Value   any    `json:"value,omitempty"`
+	Note    string `json:"note,omitempty"`
 }
 
 type configResolveReport struct {
@@ -231,27 +236,43 @@ func resolveTuskerConfigForPathsWithOverrides(repoRoot, vaultPath string, includ
 	for i := range layers {
 		if layers[i].Name == configSourceBuiltIn {
 			layers[i].Raw = builtInTuskerConfigRaw()
+			layers[i].AppliedRaw = cloneConfigRaw(layers[i].Raw)
 			continue
 		}
 		if raw, ok := overrides[layers[i].Path]; ok {
-			cfg, err := decodeTuskerConfigRaw(raw, layers[i].Path)
+			layers[i].Raw = cloneConfigRaw(raw)
+			layers[i].AppliedRaw = configLayerAppliedRaw(layers[i].Name, raw)
+			cfg, err := decodeTuskerConfigRaw(layers[i].AppliedRaw, layers[i].Path)
 			if err != nil {
 				return resolvedTuskerConfig{}, err
 			}
 			layers[i].Config = cfg
-			layers[i].Raw = cloneConfigRaw(raw)
 			layers[i].Present = true
 			if err := validateTuskerConfigLayer(layers[i]); err != nil {
 				return resolvedTuskerConfig{}, err
 			}
 			continue
 		}
-		cfg, raw, present, err := readTuskerConfigLayer(layers[i].Path)
+		var (
+			cfg     v7TuskerConfigFile
+			raw     map[string]any
+			present bool
+			err     error
+		)
+		if layers[i].Name == configSourceUserGlobal {
+			raw, present, err = readTuskerConfigRawLayer(layers[i].Path)
+			if err == nil {
+				cfg, err = decodeTuskerConfigRaw(configLayerAppliedRaw(layers[i].Name, raw), layers[i].Path)
+			}
+		} else {
+			cfg, raw, present, err = readTuskerConfigLayer(layers[i].Path)
+		}
 		if err != nil {
 			return resolvedTuskerConfig{}, err
 		}
 		layers[i].Config = cfg
 		layers[i].Raw = raw
+		layers[i].AppliedRaw = configLayerAppliedRaw(layers[i].Name, raw)
 		layers[i].Present = present
 		if err := validateTuskerConfigLayer(layers[i]); err != nil {
 			return resolvedTuskerConfig{}, err
@@ -262,7 +283,7 @@ func resolveTuskerConfigForPathsWithOverrides(repoRoot, vaultPath string, includ
 		if !layer.Present {
 			continue
 		}
-		mergeConfigRaw(effectiveRaw, layer.Raw)
+		mergeConfigRaw(effectiveRaw, appliedConfigRaw(layer))
 	}
 	// A project may explicitly clear the inherited profile map while relying
 	// on machine-local reconciliation to repopulate it.  In that transitional
@@ -275,7 +296,7 @@ func resolveTuskerConfigForPathsWithOverrides(repoRoot, vaultPath string, includ
 		if !layer.Present {
 			continue
 		}
-		automation := mapAny(layer.Raw["automation"])
+		automation := mapAny(appliedConfigRaw(layer)["automation"])
 		profiles, hasProfiles := automation["profiles"]
 		if !hasProfiles {
 			continue
@@ -316,25 +337,37 @@ func builtInTuskerConfigRaw() map[string]any {
 }
 
 func readTuskerConfigLayer(path string) (v7TuskerConfigFile, map[string]any, bool, error) {
+	raw, present, err := readTuskerConfigRawLayer(path)
+	if err != nil || !present {
+		return v7TuskerConfigFile{}, raw, present, err
+	}
 	var cfg v7TuskerConfigFile
-	if strings.TrimSpace(path) == "" || !fileExists(path) {
-		return cfg, nil, false, nil
-	}
-	rawText, err := readText(path)
+	encoded, err := yaml.Marshal(raw)
 	if err != nil {
-		return cfg, nil, false, err
+		return cfg, raw, true, err
 	}
-	var raw map[string]any
-	if err := yaml.Unmarshal([]byte(rawText), &raw); err != nil {
-		return cfg, nil, true, tuskerError(errorConfigInvalid, "failed to parse config: "+err.Error(), withPath(path))
-	}
-	if _, ok := raw["orchestration"]; ok {
-		return cfg, raw, true, tuskerError(errorConfigInvalid, "config uses deprecated top-level orchestration; use automation", withPath(path), withHint("rename orchestration: to automation: and keep trigger_states ready,rework"))
-	}
-	if err := yaml.Unmarshal([]byte(rawText), &cfg); err != nil {
+	if err := yaml.Unmarshal(encoded, &cfg); err != nil {
 		return cfg, raw, true, tuskerError(errorConfigInvalid, "failed to decode config: "+err.Error(), withPath(path))
 	}
 	return cfg, raw, true, nil
+}
+
+func readTuskerConfigRawLayer(path string) (map[string]any, bool, error) {
+	if strings.TrimSpace(path) == "" || !fileExists(path) {
+		return nil, false, nil
+	}
+	rawText, err := readText(path)
+	if err != nil {
+		return nil, false, err
+	}
+	var raw map[string]any
+	if err := yaml.Unmarshal([]byte(rawText), &raw); err != nil {
+		return nil, true, tuskerError(errorConfigInvalid, "failed to parse config: "+err.Error(), withPath(path))
+	}
+	if _, ok := raw["orchestration"]; ok {
+		return raw, true, tuskerError(errorConfigInvalid, "config uses deprecated top-level orchestration; use automation", withPath(path), withHint("rename orchestration: to automation: and keep trigger_states ready,rework"))
+	}
+	return raw, true, nil
 }
 
 func configRawMap(cfg v7TuskerConfigFile) map[string]any {
@@ -397,6 +430,34 @@ func cloneConfigValue(value any) any {
 		return value
 	}
 	return clone
+}
+
+// Keep the machine-wide layer limited to operator-wide capacity knobs. Project
+// behavior belongs in project or machine-local config, even when a global file
+// happens to declare it.
+var userGlobalConfigAllowlist = map[string]struct{}{
+	"automation.concurrency.max_active_runs":             {},
+	"automation.concurrency.max_active_runs_per_project": {},
+}
+
+func configLayerAppliedRaw(layerName string, raw map[string]any) map[string]any {
+	if layerName != configSourceUserGlobal {
+		return cloneConfigRaw(raw)
+	}
+	filtered := map[string]any{}
+	for key := range userGlobalConfigAllowlist {
+		if value, present := lookupConfigValue(raw, key); present {
+			setNestedConfigValue(filtered, key, value)
+		}
+	}
+	return filtered
+}
+
+func appliedConfigRaw(layer tuskerConfigLayer) map[string]any {
+	if layer.AppliedRaw != nil {
+		return layer.AppliedRaw
+	}
+	return layer.Raw
 }
 
 func userGlobalTuskerConfigPath() string {
@@ -533,7 +594,7 @@ func validateTuskerConfigLayer(layer tuskerConfigLayer) error {
 	if !layer.Present {
 		return nil
 	}
-	_, tierPresent := lookupConfigValue(layer.Raw, "tier")
+	_, tierPresent := lookupConfigValue(appliedConfigRaw(layer), "tier")
 	if (tierPresent || layer.Config.Tier != 0) && (layer.Config.Tier < 1 || layer.Config.Tier > 5) {
 		return tuskerError(errorConfigInvalid, "tier must be between 1 and 5", withPath(layer.Path))
 	}
@@ -1050,19 +1111,28 @@ func configResolveForPaths(repoRoot, vaultPath string, includeProject bool, key 
 		return configResolveReport{}, err
 	}
 	lookup := canonicalConfigLookupKey(key)
-	effective, _ := lookupConfigValue(resolved.Raw, lookup)
+	effective, effectivePresent := lookupConfigValue(resolved.Raw, lookup)
+	// Automation is opt-in at the project layer. Keep the resolved API honest
+	// about that default without making the built-in raw document behavioral.
+	if lookup == "automation.enabled" && !effectivePresent {
+		effective = false
+	}
 	report := configResolveReport{Key: key, Lookup: lookup, Value: effective}
 	var winner *configResolveSourceValue
 	for _, layer := range resolved.Layers {
 		value, present := lookupConfigValue(layer.Raw, lookup)
+		_, applied := lookupConfigValue(appliedConfigRaw(layer), lookup)
 		entry := configResolveSourceValue{
 			Source:  layer.Name,
 			Path:    layer.Path,
 			Present: present,
 			Value:   value,
 		}
+		if layer.Name == configSourceUserGlobal && present && !applied {
+			entry.Note = "ignored at user-global layer; behavioral settings must be project-local"
+		}
 		report.Sources = append(report.Sources, entry)
-		if present {
+		if applied {
 			candidate := report.Sources[len(report.Sources)-1]
 			winner = &candidate
 		}
@@ -1227,6 +1297,10 @@ func configRawWithValue(path, key string, value any) (map[string]any, error) {
 }
 
 func setUserGlobalConfigWithReadback(key string, value any) (configResolveReport, error) {
+	canonical := canonicalConfigLookupKey(key)
+	if _, allowed := userGlobalConfigAllowlist[canonical]; !allowed {
+		return configResolveReport{}, tuskerError(errorConfigInvalid, "user-global config does not allow behavioral key "+key)
+	}
 	before, err := configResolveForRepo("", false, key)
 	if err != nil {
 		return configResolveReport{}, err

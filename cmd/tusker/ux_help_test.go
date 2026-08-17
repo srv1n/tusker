@@ -55,8 +55,9 @@ func TestMissingVaultGuidancePreservesStructuredContext(t *testing.T) {
 func TestUpdateHelpExplainsSkillRefresh(t *testing.T) {
 	output := captureStdout(t, printUpdateHelp)
 	for _, expected := range []string{
-		"tusker update [--bin-dir <path>] [--no-bin] [--repo <path>] [--repo-only] [--skill-mode copy|symlink] [--source <checkout>] [--json]",
-		"refreshes existing user skills in ~/.agents, ~/.codex, and ~/.claude",
+		"tusker update [--bin-dir <path>] [--bin] [--no-bin] [--all-user-skills] [--codex-user] [--claude-user] [--repo <path>] [--repo-only] [--skill-mode copy|symlink] [--source <checkout>] [--json]",
+		"refreshes existing user skills in ~/.agents, ~/.codex, and ~/.claude only",
+		"with --all-user-skills",
 		"with --repo, refreshes the repo-local .agents skill install",
 		"installs default to symlink mode",
 		"--source points symlink mode at a canonical Tusker checkout",

@@ -2119,6 +2119,15 @@ func (s *RuntimeStore) RunDirective(projectID, recordID string) (*RunDirective, 
 	return &directive, nil
 }
 
+func (s *RuntimeStore) RefuseRunDirective(projectID, recordID, reason string) error {
+	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" || strings.TrimSpace(reason) == "" {
+		return tuskerError(errorInvalidArg, "run directive refusal requires project, record, and reason")
+	}
+	_, err := s.exec(`UPDATE run_directives SET state = 'refused', reason = ?
+		WHERE project_id = ? AND record_id = ? AND state = 'queued'`, reason, projectID, recordID)
+	return err
+}
+
 func (s *RuntimeStore) ExpireRunDirectives(now time.Time) error {
 	_, err := s.exec(`UPDATE run_directives SET state = 'lapsed', reason = 'daemon did not claim this one-shot run before it expired' WHERE state = 'queued' AND julianday(expires_at) <= julianday(?)`, now.UTC().Format(time.RFC3339Nano))
 	return err
@@ -3948,8 +3957,8 @@ func newRegisteredProject(repoRoot, vaultRoot string) RegisteredProject {
 		RepoRoot:     repoRoot,
 		VaultRoot:    vaultRoot,
 		WorkflowPath: workflowPath(vaultRoot),
-		Enabled:      true,
-		Health:       projectHealthHealthy,
+		Enabled:      false,
+		Health:       projectHealthDisabled,
 	}
 }
 

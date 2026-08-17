@@ -3633,6 +3633,20 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 		return run, false, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": lane}))
 	}
+	directive, err := d.store.RunDirective(project.ProjectID, run.RecordID)
+	if err != nil {
+		return run, false, err
+	}
+	directiveActive := runDirectiveActive(directive, time.Now().UTC())
+	if directiveActive && !wfFile.Data.AutomationEnabled {
+		const reason = "run directive refused: project automation is disabled in its configuration"
+		if err := d.store.RefuseRunDirective(project.ProjectID, run.RecordID, reason); err != nil {
+			return run, false, err
+		}
+		run.LastError = reason
+		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		return run, false, nil
+	}
 	// Registry enablement controls whether this project is polled. The project
 	// configuration is the separate, authoritative opt-in for daemon spawning.
 	if !project.Enabled {
@@ -3652,11 +3666,6 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 		return run, false, nil
 	}
-	directive, err := d.store.RunDirective(project.ProjectID, run.RecordID)
-	if err != nil {
-		return run, false, err
-	}
-	directiveActive := runDirectiveActive(directive, time.Now().UTC())
 	if !wfFile.Data.AutomationEnabled && !directiveActive {
 		run.LastError = "daemon auto-spawn disabled: project automation is disabled in its configuration"
 		return run, false, nil
@@ -3875,7 +3884,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	ownership.projectConcurrencyLimit = wfFile.Data.Runtime.MaxActiveRunsPerProject
 	authorization := RunAuthorization{Source: "daemon_auto", Actor: "daemon", Trigger: "poll", ProjectAutomationEnabled: project.Enabled}
 	if directiveActive {
-		authorization = RunAuthorization{Source: "human_run_directive", Actor: directive.Actor, Trigger: "serve_run", ProjectAutomationEnabled: false}
+		authorization = RunAuthorization{Source: "human_run_directive", Actor: directive.Actor, Trigger: "serve_run", ProjectAutomationEnabled: wfFile.Data.AutomationEnabled}
 	}
 	attemptIntent := RunAttempt{
 		AttemptID: attemptID, ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
@@ -6639,11 +6648,21 @@ func markManagedDaemonProcessFailure(stateRoot string, managed bool, cause strin
 }
 
 func daemonStatusCmd(args Args) error {
-	store, err := OpenRuntimeStore(DefaultStateRoot())
+	store, missing, err := openRuntimeStoreReadOnly(DefaultStateRoot())
 	if err != nil {
 		return err
 	}
+	if missing {
+		if args.Bool("json") {
+			emitJSON(map[string]any{"ok": true, "message": "no runtime state yet", "projects": []RegisteredProject{}})
+			return nil
+		}
+		fmt.Println("No runtime state yet.")
+		return nil
+	}
 	defer store.Close()
+	// Dispatch-scope projections need each project's resolved workflow config,
+	// so this read path cannot use MetadataOnly.
 	loadedProjects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{LoadDisabled: true})
 	if err != nil {
 		return err
@@ -7034,12 +7053,20 @@ func projectsAddCmd(args Args) error {
 }
 
 func projectsListCmd(args Args) error {
-	store, err := OpenRuntimeStore(DefaultStateRoot())
+	store, missing, err := openRuntimeStoreReadOnly(DefaultStateRoot())
 	if err != nil {
 		return err
 	}
+	if missing {
+		if args.Bool("json") {
+			emitJSON(map[string]any{"ok": true, "count": 0, "projects": []loadedRegisteredProject{}, "message": "no runtime state yet"})
+			return nil
+		}
+		fmt.Println("No runtime state yet.")
+		return nil
+	}
 	defer store.Close()
-	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{})
+	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
 	if err != nil {
 		return err
 	}
@@ -7127,13 +7154,34 @@ func projectsDisableCmd(args Args) error {
 	return setProjectEnabledCmd(args, false)
 }
 
+func openRuntimeStoreReadOnly(stateRoot string) (*RuntimeStore, bool, error) {
+	store, err := OpenRuntimeStoreReadOnly(stateRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, true, nil
+	}
+	return store, false, err
+}
+
+func setProjectAutomation(store *RuntimeStore, project RegisteredProject, enabled bool) error {
+	report, err := configResolveForPaths(project.RepoRoot, project.VaultRoot, true, "automation.enabled")
+	if err != nil {
+		return err
+	}
+	if boolFromAny(report.Value) != enabled {
+		if _, err := setProjectLocalConfigWithReadback(project.VaultRoot, "automation.enabled", enabled); err != nil {
+			return err
+		}
+	}
+	return store.SetProjectEnabled(project.ProjectID, enabled)
+}
+
 func setProjectEnabledCmd(args Args, enabled bool) error {
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-	project, err := resolveRegisteredProject(store, args)
+	loaded, err := resolveLoadedRegisteredProject(store, args, registeredProjectLoadOptions{LoadDisabled: true})
 	if err != nil {
 		if !enabled {
 			if typed, ok := err.(*TuskerError); ok && typed.Code == errorNotFound {
@@ -7147,6 +7195,7 @@ func setProjectEnabledCmd(args Args, enabled bool) error {
 		}
 		return err
 	}
+	project := loaded.Project
 	if enabled {
 		if err := validateProjectStorageBoundary(project.RepoRoot, project.VaultRoot); err != nil {
 			return err
@@ -7156,10 +7205,10 @@ func setProjectEnabledCmd(args Args, enabled bool) error {
 	if err != nil {
 		return err
 	}
-	if err := store.SetProjectEnabled(project.ProjectID, enabled); err != nil {
+	if err := setProjectAutomation(store, project, enabled); err != nil {
 		return err
 	}
-	updated := *project
+	updated := project
 	updated.Enabled = enabled
 	if enabled {
 		updated.Health = projectHealthHealthy
@@ -7175,10 +7224,12 @@ func setProjectEnabledCmd(args Args, enabled bool) error {
 	}
 	if args.Bool("json") {
 		emitJSON(map[string]any{
-			"ok":               true,
-			"project":          updated,
-			"active_run_count": activeRuns,
-			"warnings":         warnings,
+			"ok":                 true,
+			"project":            updated,
+			"registry_enabled":   enabled,
+			"automation_enabled": enabled,
+			"active_run_count":   activeRuns,
+			"warnings":           warnings,
 		})
 		return nil
 	}
@@ -7186,7 +7237,7 @@ func setProjectEnabledCmd(args Args, enabled bool) error {
 	if enabled {
 		verb = "Enabled"
 	}
-	fmt.Printf("%s project %s (%s)\n", verb, updated.Name, updated.ProjectID)
+	fmt.Printf("%s project %s (%s); registry.enabled=%t automation.enabled=%t\n", verb, updated.Name, updated.ProjectID, enabled, enabled)
 	if !enabled && activeRuns > 0 {
 		fmt.Printf("Warning: %d active run(s) still exist for this project. They will not be redispatched, but they are still in runtime state.\n", activeRuns)
 	}

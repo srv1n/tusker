@@ -292,6 +292,10 @@ func registerAutomationTestProject(t *testing.T, vault string) RegisteredProject
 	}
 	defer store.Close()
 	project := newRegisteredProject(filepath.Dir(vault), vault)
+	// Registration defaults to disabled; automation fixtures opt in explicitly,
+	// mirroring `tusker projects enable`.
+	project.Enabled = true
+	project.Health = projectHealthHealthy
 	if err := store.UpsertProject(project); err != nil {
 		t.Fatal(err)
 	}
