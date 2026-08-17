@@ -87,7 +87,8 @@ func errorToIssue(err error) Issue {
 	if err == nil {
 		return Issue{}
 	}
-	if typed, ok := err.(*TuskerError); ok {
+	var typed *TuskerError
+	if errors.As(err, &typed) && typed != nil {
 		return Issue{
 			Code:    typed.Code,
 			Message: typed.Message,

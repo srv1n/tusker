@@ -54,8 +54,8 @@ func TestBugfixWaveMaterialReadinessIgnoresBlockerRewording(t *testing.T) {
 
 func TestBugfixDeliveryDoctorUsesTypedCodeAtBoundary(t *testing.T) {
 	var first, second deliveryDoctorReport
-	first.addContractIssueFromCode("artifact wording one", "validator", []string{"task"}, "ARTIFACT_INVALID")
-	second.addContractIssueFromCode("completely reworded validator output", "validator", []string{"task"}, "ARTIFACT_INVALID")
+	first.addContractIssue(deliveryIssue{Code: "ARTIFACT_INVALID", Message: "artifact wording one"}, "validator", []string{"task"})
+	second.addContractIssue(deliveryIssue{Code: "ARTIFACT_INVALID", Message: "completely reworded validator output"}, "validator", []string{"task"})
 	if len(first.Findings) != 1 || len(second.Findings) != 1 {
 		t.Fatalf("unexpected findings: first=%#v second=%#v", first.Findings, second.Findings)
 	}
@@ -84,19 +84,14 @@ func TestBugfixDeliveryDoctorMapsBrokenPlanIssuesByMessage(t *testing.T) {
 		t.Fatalf("test plan unexpectedly failed V2 preparation: %#v", prepIssues)
 	}
 	issues, _ := validateDeliveryPlan(vault, prepared)
-	codes := deliveryDoctorValidatorCodes(vault, prepared, "base")
-	if len(codes) != len(issues) {
-		t.Fatalf("typed code count diverged from validator issues: codes=%#v issues=%#v", codes, issues)
-	}
 	want := map[string]string{
 		"import: verification references unknown acceptance A2":                  "PROOF_ACCEPTANCE_UNKNOWN",
 		"import: verification must use an exact command: or manual proof: check": "PROOF_UNSUPPORTED",
 		"import: acceptance A1 has no mapped verification":                       "ACCEPTANCE_UNMAPPED",
 	}
 	for _, issue := range issues {
-		code, ok := deliveryDoctorCodeMap(codes)[issue]
-		if !ok || code != want[issue] {
-			t.Fatalf("issue %q mapped to %q, want %q; codes=%#v", issue, code, want[issue], codes)
+		if issue.Code != want[issue.Message] {
+			t.Fatalf("issue %q has code %q, want %q; issues=%#v", issue.Message, issue.Code, want[issue.Message], issues)
 		}
 	}
 	for issue, code := range want {
@@ -111,6 +106,31 @@ func TestBugfixDeliveryDoctorMapsBrokenPlanIssuesByMessage(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("doctor omitted issue %q: %#v", issue, report.Findings)
+		}
+	}
+}
+
+func TestBugfixDeliveryDoctorValidatorIssuesCarryCodes(t *testing.T) {
+	vault := deliveryTestVault(t)
+	broken := deliveryPlanV2{
+		Schema: "broken", Scope: "???", ContextFingerprint: "not-a-fingerprint",
+		RequiredCapabilities: []string{"strict_v2_proof_authority/v1"}, EpicContract: &deliveryEpicContract{},
+		Requirements: []deliveryRequirement{{ID: "", Outcome: "TODO"}}, NonGoals: []string{"TBD"},
+		Tasks: []deliveryPlanTask{{
+			RequirementRefs: []string{"missing"},
+			Acceptance:      []deliveryAcceptance{{Outcome: "TODO"}},
+			Verification:    []deliveryVerification{{Covers: "missing", Check: "TODO"}},
+			Dependencies:    []deliveryDependency{{Task: "missing", Kind: "invalid"}},
+			Artifact:        deliveryArtifactContract{Path: "/tmp/invalid", AcceptanceIDs: []string{"missing"}},
+		}},
+		HumanGates:  []deliveryHumanGate{{TaskSourceKey: "missing"}},
+		Assumptions: []deliveryPlanAssumption{{}}, UnresolvedDecisions: []deliveryUnresolvedDecision{{}},
+	}
+	prepared, prepIssues := deliveryV2Prepare(vault, broken)
+	baseIssues, _ := validateDeliveryPlan(vault, prepared)
+	for _, issue := range append(prepIssues, baseIssues...) {
+		if strings.TrimSpace(issue.Code) == "" {
+			t.Fatalf("validator returned uncoded issue: %#v", issue)
 		}
 	}
 }

@@ -1140,6 +1140,9 @@ func validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID string
 	}
 	provider, err := newV7FullGateProvider(policy.IsolationProvider, v7RepoRoot(vaultPath), store.stateRoot)
 	if err != nil {
+		if errorToIssue(err).Code == v7FullGateProviderUnsupportedPlatformCode {
+			return fmt.Errorf("full_gate_provider_unsupported_platform: %w", err)
+		}
 		return fmt.Errorf("full_gate_provider_unavailable: %w", err)
 	}
 	defer provider.Close()

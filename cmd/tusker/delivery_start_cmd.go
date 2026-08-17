@@ -537,10 +537,10 @@ func deliveryStartPlanBytes(vault string, args Args, path string, raw []byte) (s
 	}
 	plan, issues := deliveryV2Prepare(vault, v2)
 	baseIssues, _ := validateDeliveryPlan(vault, plan)
-	issues = uniqueStrings(append(issues, baseIssues...))
-	sort.Strings(issues)
-	if len(issues) > 0 {
-		return "", "", deliveryPlan{}, nil, tuskerError(errorInvalidArg, "delivery plan is invalid: "+issues[0])
+	issueMessages := deliveryIssueMessages(append(issues, baseIssues...))
+	sort.Strings(issueMessages)
+	if len(issueMessages) > 0 {
+		return "", "", deliveryPlan{}, nil, tuskerError(errorInvalidArg, "delivery plan is invalid: "+issueMessages[0])
 	}
 	doctor, err := deliveryPlanDoctorBytes(vault, path, raw)
 	if err != nil {

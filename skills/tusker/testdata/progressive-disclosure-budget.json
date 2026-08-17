@@ -11,63 +11,85 @@
       "prompt": "Turn this request into the smallest useful tracked task.",
       "route": "Requirements, decomposition, or creating tracked work",
       "guide": "references/PLAN.md",
-      "loaded_words": 682,
+      "loaded_words": 744,
       "max_loaded_words": 750,
-      "required": ["One bounded outcome is one task", "tusker new task", "Do not hand-edit protected fields"]
+      "required": [
+        "One bounded outcome is one task",
+        "tusker new task",
+        "Do not hand-edit protected fields"
+      ]
     },
     {
       "id": "task_status",
       "prompt": "Update this task's lifecycle state.",
       "route": "Task status, proof, gates, review state, or closeout",
       "guide": "references/WORK.md",
-      "loaded_words": 787,
+      "loaded_words": 849,
       "max_loaded_words": 850,
-      "required": ["tusker status", "Never write lifecycle fields directly"]
+      "required": [
+        "tusker status",
+        "Never write lifecycle fields directly"
+      ]
     },
     {
       "id": "proof",
       "prompt": "Record the proof for this task.",
       "route": "Task status, proof, gates, review state, or closeout",
       "guide": "references/WORK.md",
-      "loaded_words": 787,
+      "loaded_words": 849,
       "max_loaded_words": 850,
-      "required": ["tusker verify add", "smallest verification set covering acceptance"]
+      "required": [
+        "tusker verify add",
+        "smallest verification set covering acceptance"
+      ]
     },
     {
       "id": "gate",
       "prompt": "Record the missing human authority as a task gate.",
       "route": "Task status, proof, gates, review state, or closeout",
       "guide": "references/WORK.md",
-      "loaded_words": 787,
+      "loaded_words": 849,
       "max_loaded_words": 850,
-      "required": ["Create a gate only when", "tusker new gate"]
+      "required": [
+        "Create a gate only when",
+        "tusker new gate"
+      ]
     },
     {
       "id": "human_wait",
       "prompt": "The task is waiting_on_human; tell me the exact next action.",
       "route": "Task status, proof, gates, review state, or closeout",
       "guide": "references/WORK.md",
-      "loaded_words": 787,
+      "loaded_words": 849,
       "max_loaded_words": 850,
-      "required": ["agent_action: stop_until_human_response", "exact human action"]
+      "required": [
+        "agent_action: stop_until_human_response",
+        "exact human action"
+      ]
     },
     {
       "id": "onboarding",
       "prompt": "Wire this existing repository into Tusker without losing project knowledge.",
       "route": "Existing-repo onboarding",
       "guide": "references/REPO_ONBOARDING.md",
-      "loaded_words": 1831,
+      "loaded_words": 1893,
       "max_loaded_words": 1900,
-      "required": ["Existing Repository Onboarding", "Storage Boundary"]
+      "required": [
+        "Existing Repository Onboarding",
+        "Storage Boundary"
+      ]
     },
     {
       "id": "xcode",
       "prompt": "Xcode failed because generated build state looks corrupted.",
       "route": "Xcode generated build-state failure",
       "guide": "references/XCODE_BUILD_STATE.md",
-      "loaded_words": 626,
+      "loaded_words": 688,
       "max_loaded_words": 700,
-      "required": ["tusker xcode doctor", "likely_infrastructure"]
+      "required": [
+        "tusker xcode doctor",
+        "likely_infrastructure"
+      ]
     }
   ]
 }

@@ -1,14 +1,19 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"tusker/internal/v7policy"
 )
+
+var v7EvidenceBeforeTaskCommitHook func(taskID, evidenceID string) error
 
 func defaultV7ClosePolicy(risk string) v7ClosePolicy {
 	return v7policy.DefaultClosePolicy(risk)
@@ -78,16 +83,19 @@ func evidenceV7AddCmd(args Args) error {
 	if !v7EvidenceIDPattern.MatchString(id) {
 		return tuskerError(errorInvalidArg, "invalid evidence id: "+id)
 	}
-	dir := filepath.Join(vaultPath, "evidence", taskID)
-	path := filepath.Join(dir, id+".md")
-	if fileExists(path) {
-		return tuskerError(errorAlreadyExists, "Evidence already exists: "+id, withPath(path))
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
 	covers := normalizeV7Covers(splitCSV(args.String("covers")))
 	if len(covers) == 0 {
 		return tuskerError(errorMissingArg, "evidence requires --covers A1 or --covers TASK:A1", withHint("tie every evidence record to the acceptance item it proves"))
 	}
+	dir := filepath.Join(vaultPath, "evidence", taskID)
+	path := filepath.Join(dir, id+".md")
+	if fileExists(path) {
+		if resumed, err := resumeV7EvidenceAdd(vaultPath, taskID, id, path, kind, covers, args); resumed {
+			return err
+		}
+		return tuskerError(errorAlreadyExists, "Evidence already exists: "+id, withPath(path))
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
 	artifactPaths, durability, err := prepareV7EvidenceArtifacts(vaultPath, taskID, id, args)
 	if err != nil {
 		return err
@@ -167,17 +175,195 @@ func evidenceV7AddCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	if err := writeText(path, content); err != nil {
+	if err := writeNewV7EvidenceDocument(path, content); err != nil {
+		return err
+	}
+	if v7EvidenceBeforeTaskCommitHook != nil {
+		if err := v7EvidenceBeforeTaskCommitHook(taskID, id); err != nil {
+			return err
+		}
+	}
+	actor := stringField(data, "created_by")
+	if err := updateV7TaskProofStatus(vaultPath, taskID, actor); err != nil {
+		return err
+	}
+	if err := emitV7Event(vaultPath, taskID, "task", "evidence_added", actor, map[string]any{"evidence": id, "kind": kind}); err != nil {
 		return err
 	}
 	if !args.Bool("quiet") {
 		fmt.Printf("Added evidence %s at %s\n", id, path)
 	}
+	return nil
+}
+
+func resumeV7EvidenceAdd(vaultPath, taskID, evidenceID, path, requestedKind string, requestedCovers []string, args Args) (bool, error) {
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil || effectiveV7Kind(data) != "evidence" || stringField(data, "id") != evidenceID || stringField(data, "task") != taskID {
+		return true, v7EvidenceIDTakenError(evidenceID, path)
+	}
+	if rev := stringField(data, "state_rev"); rev == "" || !v7StateRevMatches(data, body, rev) {
+		return true, v7EvidenceIDTakenError(evidenceID, path)
+	}
+	if strings.ToLower(stringField(data, "evidence_kind")) != requestedKind {
+		return true, v7EvidenceIDTakenError(evidenceID, path)
+	}
+	existingCovers := normalizeV7Covers(normalizeList(data["covers"]))
+	if len(existingCovers) != len(requestedCovers) {
+		return true, v7EvidenceIDTakenError(evidenceID, path)
+	}
+	for i := range requestedCovers {
+		if existingCovers[i] != requestedCovers[i] {
+			return true, v7EvidenceIDTakenError(evidenceID, path)
+		}
+	}
+	requestedStatus := fallback(args.String("status"), "accepted")
+	if v7EvidenceRequiresReviewerAcceptance(requestedKind) && args.String("status") == "" {
+		requestedStatus = "pending_review"
+	}
+	if stringField(data, "status") != requestedStatus || strings.TrimSpace(sectionContent(body, "## Summary")) != strings.TrimSpace(fallback(args.String("summary"), "Evidence captured.")) || !v7EvidenceArtifactRequestMatches(taskID, evidenceID, args, normalizeList(data["artifact_paths"])) {
+		return true, v7EvidenceIDTakenError(evidenceID, path)
+	}
+	task, err := resolveV7Note(vaultPath, taskID, "task")
+	if err != nil {
+		return false, nil
+	}
+	if strings.Contains(task.Body, "[["+evidenceID+"]] ") {
+		return false, nil
+	}
+	if v7EvidenceBeforeTaskCommitHook != nil {
+		if err := v7EvidenceBeforeTaskCommitHook(taskID, evidenceID); err != nil {
+			return true, err
+		}
+	}
 	actor := stringField(data, "created_by")
-	if err := emitV7Event(vaultPath, taskID, "task", "evidence_added", actor, map[string]any{"evidence": id, "kind": kind}); err != nil {
+	if err := updateV7TaskProofStatus(vaultPath, taskID, actor); err != nil {
+		return true, err
+	}
+	if err := emitV7Event(vaultPath, taskID, "task", "evidence_added", actor, map[string]any{"evidence": evidenceID, "kind": stringField(data, "evidence_kind")}); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+func writeNewV7EvidenceDocument(path, content string) error {
+	if err := ensureDir(filepath.Dir(path)); err != nil {
 		return err
 	}
-	return updateV7TaskProofStatus(vaultPath, taskID, actor)
+	sweepStaleV7EvidenceTemps(filepath.Dir(path), filepath.Base(path))
+	temp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer func() {
+		_ = temp.Close()
+		_ = os.Remove(tempPath)
+	}()
+	if err := temp.Chmod(0o644); err != nil {
+		return err
+	}
+	if written, err := temp.WriteString(content); err != nil {
+		return err
+	} else if written != len(content) {
+		return fmt.Errorf("write evidence document temporary file: wrote %d of %d bytes", written, len(content))
+	}
+	if err := temp.Sync(); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Link(tempPath, path); err != nil {
+		if os.IsExist(err) {
+			return v7EvidenceAlreadyExistsError(path)
+		}
+		if !errors.Is(err, syscall.ENOTSUP) && !errors.Is(err, syscall.EPERM) {
+			return err
+		}
+		reserved, reserveErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if reserveErr != nil {
+			if os.IsExist(reserveErr) {
+				return v7EvidenceAlreadyExistsError(path)
+			}
+			return reserveErr
+		}
+		if reserveErr := reserved.Close(); reserveErr != nil {
+			return reserveErr
+		}
+		if renameErr := os.Rename(tempPath, path); renameErr != nil {
+			if os.IsExist(renameErr) {
+				return v7EvidenceAlreadyExistsError(path)
+			}
+			return renameErr
+		}
+	}
+	if err := syncV7DocumentDirectory(filepath.Dir(path)); err != nil {
+		return err
+	}
+	invalidateCachedNote(path)
+	recordCLIVaultMutation(path)
+	return nil
+}
+
+func v7EvidenceAlreadyExistsError(path string) error {
+	return tuskerError(errorAlreadyExists, "Evidence already exists at "+path, withPath(path))
+}
+
+func v7EvidenceIDTakenError(evidenceID, path string) error {
+	return tuskerError(errorAlreadyExists, "Evidence ID is taken with different content: "+evidenceID, withPath(path))
+}
+
+func sweepStaleV7EvidenceTemps(dir, base string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	prefix := "." + base + ".tmp-"
+	cutoff := time.Now().Add(-time.Hour)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, entry.Name()))
+	}
+}
+
+func v7EvidenceArtifactRequestMatches(taskID, evidenceID string, args Args, existing []string) bool {
+	var requested []string
+	if externalURL := strings.TrimSpace(args.String("external-url")); externalURL != "" {
+		requested = append(requested, "external:"+externalURL)
+	}
+	inputs := splitCSV(firstNonEmpty(args.String("path"), args.String("artifact-paths")))
+	if args.Bool("link-only") {
+		for _, input := range inputs {
+			requested = append(requested, "link-only:"+strings.TrimSpace(input))
+		}
+	} else {
+		seenNames := map[string]int{}
+		for _, input := range inputs {
+			base := filepath.Base(input)
+			seenNames[base]++
+			if seenNames[base] > 1 {
+				ext := filepath.Ext(base)
+				stem := strings.TrimSuffix(base, ext)
+				base = fmt.Sprintf("%s-%d%s", stem, seenNames[base], ext)
+			}
+			requested = append(requested, filepath.ToSlash(filepath.Join("evidence", taskID, "artifacts", evidenceID, base)))
+		}
+	}
+	if len(requested) != len(existing) {
+		return false
+	}
+	for i := range requested {
+		if requested[i] != existing[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func v7EvidenceRequiresReviewerAcceptance(kind string) bool {
@@ -218,7 +404,7 @@ func prepareV7EvidenceArtifacts(vaultPath, taskID, evidenceID string, args Args)
 		}
 		return paths, "link_only", nil
 	}
-	artifactDir := filepath.Join(vaultPath, "evidence", taskID, "artifacts")
+	artifactDir := filepath.Join(vaultPath, "evidence", taskID, "artifacts", evidenceID)
 	seenNames := map[string]int{}
 	for _, input := range inputs {
 		source, err := resolveDurableEvidenceSource(input)
@@ -233,7 +419,7 @@ func prepareV7EvidenceArtifacts(vaultPath, taskID, evidenceID string, args Args)
 			base = fmt.Sprintf("%s-%d%s", stem, seenNames[base], ext)
 		}
 		target := filepath.Join(artifactDir, base)
-		if err := copyFile(source, target); err != nil {
+		if err := copyV7EvidenceArtifact(source, target); err != nil {
 			return nil, "", err
 		}
 		rel, err := filepath.Rel(vaultPath, target)
@@ -249,6 +435,43 @@ func prepareV7EvidenceArtifacts(vaultPath, taskID, evidenceID string, args Args)
 		return paths, "mixed", nil
 	}
 	return paths, "copied", nil
+}
+
+func copyV7EvidenceArtifact(source, target string) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := ensureDir(filepath.Dir(target)); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer func() {
+		_ = temp.Close()
+		_ = os.Remove(tempPath)
+	}()
+	if err := temp.Chmod(0o644); err != nil {
+		return err
+	}
+	if _, err := io.Copy(temp, in); err != nil {
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	// Publish the fully synced copy atomically.
+	if err := os.Rename(tempPath, target); err != nil {
+		return err
+	}
+	return syncV7DocumentDirectory(filepath.Dir(target))
 }
 
 func resolveDurableEvidenceSource(input string) (string, error) {

@@ -188,6 +188,133 @@ func TestDaemonAutoAdvanceExternalReviewAcceptedClosesLowRiskTask(t *testing.T) 
 	}
 }
 
+func TestDaemonExternalCloseRefusesFailingVerification(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Failing external verification", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "ready", "next_owner": "reviewer:agent"})
+	project := registerAutomationTestProject(t, vault)
+	if _, err := upsertV7Verification(vault, "APP-T-0001", v7VerificationRow{
+		CoverText: "A1",
+		Check:     "command: go test ./cmd/tusker -run TestV7 -count=1",
+		Result:    "fail",
+		Notes:     "The focused check failed.",
+	}, "agent:test"); err != nil {
+		t.Fatal(err)
+	}
+	wfFile, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = (&Daemon{}).closeExternalLoopTask(project, wfFile, note, externalCollectReport{
+		ReviewResult: &externalReviewResult{Verdict: "approve", Risk: "low"},
+	})
+	if err == nil || errorToIssue(err).Code != errorInvalidTransition || !strings.Contains(err.Error(), "external close cannot override a failing verification") {
+		t.Fatalf("expected typed failing-verification refusal, got %v", err)
+	}
+	fresh, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := parseV7VerificationRows(fresh.Body)
+	if len(rows) != 1 || rows[0].Result != "fail" {
+		t.Fatalf("failing row must remain unchanged, got %#v", rows)
+	}
+}
+
+func TestDaemonExternalCloseUsesExactAcceptanceCovers(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Exact external covers", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "ready", "next_owner": "reviewer:agent"})
+	path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = replaceSection(body, "## Acceptance", "| ID | Outcome | Proof |\n|---|---|---|\n| A1 | The first outcome is complete. | Inline verification |\n| A10 | The tenth outcome is complete. | Inline verification |")
+	body = replaceSection(body, "## Verification", "| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A10 | command: go test ./cmd/tusker -run TestV7 -count=1 | pending | Focused test proof. |")
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, content); err != nil {
+		t.Fatal(err)
+	}
+	project := registerAutomationTestProject(t, vault)
+	wfFile, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = (&Daemon{}).closeExternalLoopTask(project, wfFile, note, externalCollectReport{
+		ReviewResult: &externalReviewResult{Verdict: "approve", Risk: "low"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "close proof incomplete: A1") {
+		t.Fatalf("A10 must not satisfy A1 by substring, got %v", err)
+	}
+	fresh, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := parseV7VerificationRows(fresh.Body)
+	if len(rows) != 1 || rows[0].CoverText != "A10" || rows[0].Result != "pass" {
+		t.Fatalf("exact-cover handling must not synthesize an A1 row, got %#v", rows)
+	}
+}
+
+func TestDaemonExternalClosePreservesCombinedVerificationCover(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Combined external covers", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "ready", "next_owner": "reviewer:agent"})
+	path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = replaceSection(body, "## Acceptance", "| ID | Outcome | Proof |\n|---|---|---|\n| A1 | The first outcome is complete. | Inline verification |\n| A2 | The second outcome is complete. | Inline verification |")
+	body = replaceSection(body, "## Verification", "| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1, A2 | command: go test ./cmd/tusker -run TestV7 -count=1 | pending | Focused test proof. |")
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, content); err != nil {
+		t.Fatal(err)
+	}
+	project := registerAutomationTestProject(t, vault)
+	wfFile, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Daemon{}).closeExternalLoopTask(project, wfFile, note, externalCollectReport{
+		ReviewResult: &externalReviewResult{Verdict: "approve", Risk: "low"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := parseV7VerificationRows(fresh.Body)
+	if len(rows) != 1 || rows[0].CoverText != "A1, A2" || rows[0].Result != "pass" {
+		t.Fatalf("combined cover should flip once in place, got %#v", rows)
+	}
+}
+
 func TestDaemonAutoAdvanceExternalApplySuccessDispatchesExternalReview(t *testing.T) {
 	vault := automationTestVault(t)
 	writeDaemonExternalLoopConfig(t, vault, `true`)

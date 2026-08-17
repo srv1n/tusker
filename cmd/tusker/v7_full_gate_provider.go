@@ -51,6 +51,11 @@ const (
 var v7FullGateRuntimeLimit = v7FullGateRuntimeMax
 var v7FullGateProviderPipeWaitDelay = v7FullGateCleanTimeout
 
+// The lifecycle proof currently relies on Darwin's descriptor-bound ACL
+// inspection and inherited descriptor transport. Keep the platform lookup
+// injectable so the refusal path is testable without a second host OS.
+var v7FullGateProviderGOOS = func() string { return runtime.GOOS }
+
 // Deterministic crash/durability and adversary seams. Production leaves them
 // nil.
 var (
@@ -64,6 +69,34 @@ var (
 
 var errV7FullGateProvider = errors.New("full-gate lifecycle provider")
 var errV7FullGateLedgerConflict = errors.New("full-gate lifecycle provider ledger conflict")
+
+const v7FullGateProviderUnsupportedPlatformCode = "GATE_PROVIDER_UNSUPPORTED_PLATFORM"
+
+func v7FullGateProviderUnsupportedPlatformError(platform, detail string) error {
+	platform = strings.TrimSpace(platform)
+	if platform == "" {
+		platform = "unknown"
+	}
+	return tuskerError(
+		v7FullGateProviderUnsupportedPlatformCode,
+		v7FullGateProviderUnsupportedPlatformCode+": full-gate lifecycle provider cannot run on "+platform+": "+detail,
+		withHint("run the full gate on macOS with the configured lifecycle provider; do not treat this refusal as a gate pass"),
+		withContext(map[string]any{"goos": platform, "supported": []string{"darwin"}}),
+	)
+}
+
+func v7FullGateProviderPlatformError() error {
+	platform := v7FullGateProviderGOOS()
+	if platform == "darwin" {
+		return nil
+	}
+	return v7FullGateProviderUnsupportedPlatformError(platform, "Darwin descriptor transport and immutable provider authority are unavailable; refusing pathname-based fallback")
+}
+
+func isV7FullGateProviderError(err error) bool {
+	var typed *TuskerError
+	return errors.Is(err, errV7FullGateProvider) || (errors.As(err, &typed) && typed != nil && typed.Code == v7FullGateProviderUnsupportedPlatformCode)
+}
 
 // v7FullGateOutcome is deliberately provider-neutral. A failed repository
 // command is not a broken provider, and neither cancellation nor a timeout may
@@ -243,6 +276,9 @@ var v7FullGateProviderRegistryPath = func(stateRoot string) string {
 }
 
 var newV7FullGateProvider = func(profile, repoRoot, stateRoot string) (v7FullGateProvider, error) {
+	if err := v7FullGateProviderPlatformError(); err != nil {
+		return nil, err
+	}
 	state, err := openV7FullGateStateRoot(stateRoot)
 	if err != nil {
 		return nil, err
@@ -745,8 +781,8 @@ func v7TrustedProviderStateRoot(stateRoot string) error {
 }
 
 func verifyV7TrustedProviderExecutable(path string) (string, string, error) {
-	if runtime.GOOS != "darwin" {
-		return "", "", fmt.Errorf("%w: inherited descriptor provider transport is unsupported on %s; refusing pathname-based fallback", errV7FullGateProvider, runtime.GOOS)
+	if err := v7FullGateProviderPlatformError(); err != nil {
+		return "", "", err
 	}
 	if !filepath.IsAbs(path) || strings.ContainsAny(path, "\n\r\t ") || filepath.Base(path) == "sandbox-exec" {
 		return "", "", fmt.Errorf("%w: provider executable must be an absolute non-sandbox executable path", errV7FullGateProvider)
@@ -943,8 +979,8 @@ func sortedV7MachOClosure(values map[string]struct{}) []string {
 const v7ImmutableProviderSetupPrerequisite = "provider executable setup prerequisite: install a native root-owned binary beneath root-owned non-group/world-writable directories"
 
 func verifyV7ImmutableProviderAuthority(path string) error {
-	if runtime.GOOS != "darwin" {
-		return fmt.Errorf("%w: inherited descriptor provider transport is unsupported on %s; refusing pathname-based fallback", errV7FullGateProvider, runtime.GOOS)
+	if err := v7FullGateProviderPlatformError(); err != nil {
+		return err
 	}
 	current := filepath.Clean(path)
 	for {
@@ -961,6 +997,9 @@ func verifyV7ImmutableProviderAuthority(path string) error {
 		mutationACL, aclErr := v7DarwinDescriptorHasMutationACL(file)
 		afterACL, afterErr := file.Stat()
 		closeErr := file.Close()
+		if aclErr != nil && errorToIssue(aclErr).Code == v7FullGateProviderUnsupportedPlatformCode {
+			return aclErr
+		}
 		if statErr != nil || !os.SameFile(info, opened) || aclErr != nil || mutationACL || afterErr != nil || !os.SameFile(opened, afterACL) || closeErr != nil {
 			return fmt.Errorf("%w: %s; descriptor ACL/identity validation failed for %s", errV7FullGateProvider, v7ImmutableProviderSetupPrerequisite, current)
 		}
@@ -1478,7 +1517,10 @@ func (p *v7ExternalFullGateProvider) cleanupScope(scope *v7FullGateProviderScope
 		}
 	}
 	_, identity, err := verifyV7TrustedProviderExecutable(scope.request.ProviderPath)
-	if err != nil || identity != scope.request.ExecutableID {
+	if err != nil {
+		return v7FullGateProviderResult{}, err
+	}
+	if identity != scope.request.ExecutableID {
 		return v7FullGateProviderResult{}, fmt.Errorf("%w: provider recovery executable identity changed", errV7FullGateProvider)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), v7FullGateCleanTimeout)
@@ -1520,8 +1562,8 @@ func (p *v7ExternalFullGateProvider) completeScope(scope *v7FullGateProviderScop
 }
 
 func v7FullGateProviderCommand(ctx context.Context, providerPath, operation string, scope *v7FullGateProviderScope) (*exec.Cmd, func(), error) {
-	if runtime.GOOS != "darwin" {
-		return nil, func() {}, fmt.Errorf("%w: inherited descriptor provider transport is unsupported on %s; refusing pathname-based fallback", errV7FullGateProvider, runtime.GOOS)
+	if err := v7FullGateProviderPlatformError(); err != nil {
+		return nil, func() {}, err
 	}
 	requestFile, resultFile, scopeDir, err := scope.openTransport()
 	if err != nil {
@@ -2096,7 +2138,10 @@ func recoverV7FullGateProviderScopes(stateRoot string, store *RuntimeStore) erro
 			result, resultErr := scope.readResult()
 			if resultErr != nil || result.State != "cleaned" {
 				_, executableID, verifyErr := verifyV7TrustedProviderExecutable(request.ProviderPath)
-				if verifyErr != nil || executableID != request.ExecutableID {
+				if verifyErr != nil {
+					return verifyErr
+				}
+				if executableID != request.ExecutableID {
 					return fmt.Errorf("%w: provider recovery executable unavailable for %q", errV7FullGateProvider, entry.Name())
 				}
 				provider := &v7ExternalFullGateProvider{path: request.ProviderPath, executableIdentity: request.ExecutableID, stateRoot: state.path, state: state}

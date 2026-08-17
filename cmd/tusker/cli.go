@@ -15,57 +15,6 @@ const (
 	dashboardRunsBegin    = "<!-- tusker:live-runs:begin -->"
 	dashboardRunsEnd      = "<!-- tusker:live-runs:end -->"
 	readmeDefaultOverview = "_Describe this project in 1-3 paragraphs: what it is, who uses it, and what's in scope. Everything between the overview markers is preserved across `tusker reindex` — only the epic roster below is regenerated._"
-	defaultConfigYAML     = `# Tusker per-vault config. Policy surface for the dispatcher + validator.
-# The dispatcher re-reads this on every tick; no restart needed.
-
-version: 1
-
-agents:
-  # Names that may appear in task.assignee. "sarav" (or any human name) is fine;
-  # only agents listed here are dispatchable.
-  enabled:
-    - sarav
-    - claude-code
-    - codex
-    - gemini
-  # Hard cap on concurrent active runs per agent. 0 means never dispatch (human-only).
-  concurrency:
-    claude-code: 2
-    codex: 1
-    gemini: 1
-    sarav: 0
-
-poll:
-  interval_seconds: 60
-
-# Hook commands run by the dispatcher at lifecycle events. Each entry is a shell
-# command string; env vars include TUSKER_VAULT, TUSKER_ID, TUSKER_EVENT,
-# TUSKER_ACTOR, TUSKER_DISPATCH_STATE. Non-zero exit = hook failure.
-hooks:
-  pre_claim: []
-  post_claim: []
-  pre_release: []
-  on_fail: []
-hook_timeout_seconds: 120
-
-retry:
-  max_attempts: 3
-  backoff_seconds: [30, 120, 600]
-
-budget:
-  monthly_usd_ceiling: null
-  daily_usd_ceiling: null
-
-workspace:
-  # Relative to the vault. Each run gets a subdirectory under this root.
-  root: _system/workspaces
-  # "worktree" creates a git worktree per run; "copy" does a plain copy.
-  isolation: worktree
-
-definition_of_done:
-  require_code_complete: true
-  require_user_verified_for_ui: true
-`
 )
 
 type Args map[string]string
@@ -153,7 +102,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "acp", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "gate-ledger", "context", "config", "migrate", "hook", "legacy", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory", "work", "execution":
+	case "acp", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "gate-ledger", "context", "config", "migrate", "legacy", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory", "work", "execution":
 		return true
 	default:
 		return false
@@ -1029,7 +978,6 @@ Commands:
   dashboard           build/open V7 generated dashboards
   reconcile           recompute V7 readiness and next-action projections
   state               sync/import/export V7 runtime state branch files
-  hook                install optional local Git hooks
   vault               symlink repo trackers into a shared Obsidian vault
   daemon              operator loop for registered local projects
   config              inspect resolved Tusker configuration with provenance

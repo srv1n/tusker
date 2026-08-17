@@ -6997,8 +6997,9 @@ func projectsAddCmd(args Args) error {
 	if err := validateProjectStorageBoundary(repoRoot, vaultPath); err != nil {
 		return err
 	}
-	if _, err := loadWorkflow(vaultPath); err != nil {
-		return err
+	_, workflowErr := loadWorkflow(vaultPath)
+	if workflowErr != nil && tuskerTier(vaultPath) >= 2 {
+		return workflowErr
 	}
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
@@ -7011,6 +7012,9 @@ func projectsAddCmd(args Args) error {
 		return err
 	}
 	warnings := []string{}
+	if workflowErr != nil {
+		warnings = append(warnings, "WORKFLOW.md absent or invalid; project registered without workflow validation")
+	}
 	if warning := macOSProtectedProjectWarning(project); warning != "" {
 		warnings = append(warnings, warning)
 	}
@@ -7020,9 +7024,9 @@ func projectsAddCmd(args Args) error {
 	}
 	if !created {
 		fmt.Printf("Project already registered as %s (%s)\n", project.Name, project.ProjectID)
-		return nil
+	} else {
+		fmt.Printf("Registered project %s (%s)\n", project.Name, project.ProjectID)
 	}
-	fmt.Printf("Registered project %s (%s)\n", project.Name, project.ProjectID)
 	for _, warning := range warnings {
 		fmt.Println("Warning: " + warning)
 	}

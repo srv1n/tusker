@@ -469,6 +469,91 @@ func TestV7ProofRequiredClassesAreEnforced(t *testing.T) {
 	assertEqual(t, "satisfied", stringField(data, "proof_status"), "proof status")
 }
 
+func TestV7ProofMatchingRejectsKeywordTheater(t *testing.T) {
+	if v7EvidenceSatisfiesProofRequired("focused_test", Note{Data: map[string]any{"evidence_kind": "verification_summary"}, Body: "automated test passed"}) {
+		t.Fatal("summary text must not masquerade as typed focused_test evidence")
+	}
+	if !v7EvidenceSatisfiesProofRequired("focused_test", Note{Data: map[string]any{"evidence_kind": "automated_test"}}) {
+		t.Fatal("typed automated_test evidence should satisfy focused_test")
+	}
+	if v7GateTextSatisfiesProofRequirement("manual_smoke", Note{Data: map[string]any{"verification": "This text mentions manual smoke but does not record its result."}}) {
+		t.Fatal("unanchored gate prose must not satisfy manual_smoke")
+	}
+	if !v7GateTextSatisfiesProofRequirement("manual_smoke", Note{Data: map[string]any{"verification": "Manual smoke passed."}}) {
+		t.Fatal("anchored gate verification should satisfy manual_smoke")
+	}
+	vault := filepath.Join(t.TempDir(), "vault")
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Structured proof", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "focused_test", "v7": "true"}, newV7Task)
+
+	// The note and command text mention a test, but the command only prints it.
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "command: echo 'go test ./cmd/tusker -run TestWrong -count=1'", "result": "pass", "note": "go test passed"}, verifyV7AddCmd)
+	report := computeV7ProofReport(vault, mustV7Task(t, vault, "APP-T-0001"), mustIndex(t, vault))
+	if !containsString(report.MachineMissing, "proof_required:focused_test") {
+		t.Fatalf("keyword-only evidence must not satisfy focused_test: %#v", report)
+	}
+
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "command: go test ./cmd/tusker -run TestV7ProofMatchingRejectsKeywordTheater -count=1", "result": "pass", "note": "Focused proof passed."}, verifyV7AddCmd)
+	report = computeV7ProofReport(vault, mustV7Task(t, vault, "APP-T-0001"), mustIndex(t, vault))
+	if containsString(report.MachineMissing, "proof_required:focused_test") {
+		t.Fatalf("an actual test command should satisfy focused_test: %#v", report)
+	}
+}
+
+func TestV7ProofCommandMatcherHandlesWrappedAndPositionedCommands(t *testing.T) {
+	tests := []struct {
+		required string
+		command  string
+		want     bool
+	}{
+		{"focused_test", `rtk proxy go test ./cmd/tusker -run TestX`, true},
+		{"focused_test", `make -j4 test`, true},
+		{"focused_test", `npm run test:unit`, true},
+		{"focused_test", `timeout 600 go test ./...`, true},
+		{"focused_test", `tusker note --body "did X; go test passed"`, false},
+		{"focused_test", `echo go test ./...`, false},
+		{"focused_test", `go test-helper ./...`, false},
+		{"focused_test", `gotest ./...`, false},
+		{"build", `cargo test`, true},
+		{"build", `tsc --noEmit`, true},
+		{"lint", `npm --prefix web run lint:strict`, true},
+		{"lint", `npx eslint web`, true},
+		{"lint", `cargo clippy`, true},
+		{"typecheck", `npx tsc --noEmit`, true},
+		{"benchmark", `go test -run TestX -bench=BenchmarkX ./...`, true},
+		{"benchmark", `cargo bench`, true},
+	}
+	for _, test := range tests {
+		row := v7VerificationRow{Check: "command: " + test.command}
+		if got := v7InlineVerificationSatisfies(test.required, row); got != test.want {
+			t.Errorf("%s %q: got %v, want %v", test.required, test.command, got, test.want)
+		}
+	}
+}
+
+func TestV7AuditProofIsSatisfiableWithTypedReviewEvidence(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "vault")
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Audited proof", "risk": "critical", "priority": "p1", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "command: go test ./cmd/tusker -run TestV7AuditProofIsSatisfiableWithTypedReviewEvidence -count=1", "result": "pass", "note": "Focused proof passed."}, verifyV7AddCmd)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "command: go test ./cmd/tusker -count=1", "result": "pass", "note": "Broad proof passed."}, verifyV7AddCmd)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "human_review", "status": "accepted", "accepted-by": "reviewer:independent", "covers": "A1", "external-url": "https://example.test/review.txt", "summary": "Independent review completed."}, evidenceV7AddCmd)
+
+	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "audit", stringField(data, "proof_mode"), "audit proof mode")
+	assertEqual(t, []string{"focused_test", "broad_test", "independent_review"}, normalizeList(data["proof_required"]), "audit proof requirements")
+	assertEqual(t, "satisfied", stringField(data, "proof_status"), "audit proof status")
+	report := computeV7ProofReport(vault, mustV7Task(t, vault, "APP-T-0001"), mustIndex(t, vault))
+	if len(report.ModeMissing) != 0 || report.Status != "satisfied" {
+		t.Fatalf("typed audit proof should be satisfiable: %#v", report)
+	}
+}
+
 func TestV7ProofReportClassifiesHumanOnlyGapsAsTerminalWait(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)

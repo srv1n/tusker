@@ -427,10 +427,6 @@ func (d *Daemon) closeExternalLoopTask(project RegisteredProject, wfFile Workflo
 		return tuskerError(errorInvalidTransition, taskID+": external review accepted but risk "+firstNonEmpty(risk, "unknown")+" is not reviewer auto-close eligible")
 	}
 	actor := reviewerActorForNote(wfFile.Data.Reviewer.Actor, note)
-	covers := strings.Join(v7AcceptanceIDs(note.Body), ",")
-	if covers == "" {
-		covers = "ALL"
-	}
 	summary := strings.TrimSpace(result.Summary)
 	if summary == "" && len(result.Findings) > 0 {
 		summary = strings.Join(result.Findings, "; ")
@@ -438,18 +434,53 @@ func (d *Daemon) closeExternalLoopTask(project RegisteredProject, wfFile Workflo
 	if summary == "" {
 		summary = "External ChatGPT review accepted the applied result."
 	}
-	if err := verifyV7AddCmd(Args{
-		"vault":  project.VaultRoot,
-		"quiet":  "true",
-		"local":  "true",
-		"id":     taskID,
-		"by":     actor,
-		"covers": covers,
-		"check":  "external ChatGPT review verified focused and broad tests; verdict: " + strings.TrimSpace(result.Verdict),
-		"result": "pass",
-		"note":   summary,
-	}); err != nil {
+	idx, err := loadV7Index(project.VaultRoot)
+	if err != nil {
 		return err
+	}
+	task := note
+	if indexed, ok := idx.Tasks[taskID]; ok {
+		task = indexed
+	}
+	acceptanceIDs := v7AcceptanceIDs(task.Body)
+	existing := parseV7VerificationRows(note.Body)
+	var rows []v7VerificationRow
+	hasCoveringRow := false
+	hasCoveringCommand := false
+	for _, row := range existing {
+		if strings.EqualFold(strings.TrimSpace(row.Result), "fail") {
+			return tuskerError(errorInvalidTransition, taskID+": external close cannot override a failing verification")
+		}
+		covered := v7CoversToAcceptanceIDs(normalizeV7Covers(splitCSV(row.CoverText)), acceptanceIDs)
+		if len(covered) == 0 {
+			continue
+		}
+		hasCoveringRow = true
+		switch strings.ToLower(strings.TrimSpace(row.Result)) {
+		case "pending", "pass":
+			if _, ok := v7VerificationCommand(row.Check); ok {
+				hasCoveringCommand = true
+			}
+			row.Result = "pass"
+			row.Notes = summary
+			rows = append(rows, row)
+		}
+	}
+	if v7ExternalCloseMachineProofOutstanding(task, idx) && !hasCoveringCommand {
+		return tuskerError(errorInvalidTransition, taskID+": external close requires a covering command verification for machine proof")
+	}
+	if len(rows) == 0 && !hasCoveringRow {
+		rows = append(rows, v7VerificationRow{
+			CoverText: "ALL",
+			Check:     "manual proof: external ChatGPT review accepted; verdict: " + strings.TrimSpace(result.Verdict),
+			Result:    "pass",
+			Notes:     summary,
+		})
+	}
+	if len(rows) > 0 {
+		if _, err := upsertV7Verifications(project.VaultRoot, taskID, rows, actor, Args{"vault": project.VaultRoot, "quiet": "true", "local": "true"}); err != nil {
+			return err
+		}
 	}
 	return closeV7Cmd(Args{
 		"vault":  project.VaultRoot,
@@ -459,6 +490,19 @@ func (d *Daemon) closeExternalLoopTask(project RegisteredProject, wfFile Workflo
 		"by":     actor,
 		"reason": "external ChatGPT review accepted: " + summary,
 	})
+}
+
+func v7ExternalCloseMachineProofOutstanding(task Note, idx v7Index) bool {
+	taskID := stringField(task.Data, "id")
+	for _, required := range v7TaskProofRequired(task) {
+		if classifyProofRequirement(required, task, idx) != "machine" {
+			continue
+		}
+		if !v7ProofRequiredClassSatisfied(taskID, required, task, idx) {
+			return true
+		}
+	}
+	return false
 }
 
 func daemonShouldAutoAdvanceExternalRun(wf Workflow, note Note, run RunStatus) bool {

@@ -374,7 +374,7 @@ func deliveryV2ImportBytesGuarded(vaultPath, path string, raw []byte, args Args,
 	if waveID == "" {
 		waveID = nextV7WaveIDFromIndex(idx)
 	}
-	report := deliveryImportReport{PlanFingerprint: deliveryFingerprint(raw), PlanScope: deliveryPlanScope(plan), WaveID: waveID, WaveTitle: fallback(firstNonEmpty(args.String("wave"), plan.Title), "Imported delivery"), SpecRefs: plan.SpecRefs, TaskMapping: mapping, Frontiers: frontiers, ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Issues: uniqueStrings(issues), DryRun: args.Bool("dry-run")}
+	report := deliveryImportReport{PlanFingerprint: deliveryFingerprint(raw), PlanScope: deliveryPlanScope(plan), WaveID: waveID, WaveTitle: fallback(firstNonEmpty(args.String("wave"), plan.Title), "Imported delivery"), SpecRefs: plan.SpecRefs, TaskMapping: mapping, Frontiers: frontiers, ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Issues: deliveryIssueMessages(issues), DryRun: args.Bool("dry-run")}
 	if len(report.Issues) > 0 {
 		return tuskerError(errorInvalidArg, "delivery plan is invalid: "+strings.Join(report.Issues, "; "), withContext(map[string]any{"delivery": report}))
 	}
@@ -406,48 +406,48 @@ func deliveryV2ImportBytesGuarded(vaultPath, path string, raw []byte, args Args,
 	return nil
 }
 
-func deliveryV2Prepare(vaultPath string, v2 deliveryPlanV2) (deliveryPlan, []string) {
+func deliveryV2Prepare(vaultPath string, v2 deliveryPlanV2) (deliveryPlan, []deliveryIssue) {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		plan := deliveryPlan{Schema: deliveryPlanV2Schema, Scope: v2.Scope, Title: v2.Title, Epic: strings.ToUpper(strings.TrimSpace(v2.Epic)), SpecRefs: v2.SpecRefs, Concurrency: v2.Concurrency, RunnerProfile: v2.RunnerProfile, Tasks: v2.Tasks, v2: &v2}
-		return plan, []string{"V2 index load failed: " + err.Error()}
+		return plan, []deliveryIssue{{Code: "PLAN_CONTRACT_INVALID", Message: "V2 index load failed: " + err.Error()}}
 	}
 	return deliveryV2PrepareWithIndex(vaultPath, v2, idx)
 }
 
-func deliveryV2PrepareWithIndex(vaultPath string, v2 deliveryPlanV2, idx v7Index) (deliveryPlan, []string) {
+func deliveryV2PrepareWithIndex(vaultPath string, v2 deliveryPlanV2, idx v7Index) (deliveryPlan, []deliveryIssue) {
 	plan := deliveryPlan{Schema: deliveryPlanV2Schema, Scope: v2.Scope, Title: v2.Title, Epic: strings.ToUpper(strings.TrimSpace(v2.Epic)), SpecRefs: v2.SpecRefs, Concurrency: v2.Concurrency, RunnerProfile: v2.RunnerProfile, Tasks: v2.Tasks, v2: &v2}
-	var issues []string
+	var issues []deliveryIssue
 	if v2.Schema != deliveryPlanV2Schema {
-		issues = append(issues, "schema must be "+deliveryPlanV2Schema)
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "schema must be " + deliveryPlanV2Schema})
 	}
 	if unavailable, err := deliveryUnavailableCapabilities(v2.RequiredCapabilities); err != nil {
-		issues = append(issues, err.Error())
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: err.Error()})
 	} else if len(unavailable) > 0 {
-		issues = append(issues, "required capability unavailable: "+strings.Join(unavailable, ", "))
+		issues = append(issues, deliveryIssue{Code: "REQUIRED_CAPABILITY_UNAVAILABLE", Message: "required capability unavailable: " + strings.Join(unavailable, ", ")})
 	}
 	if !deliveryContextFingerprintValid(v2.ContextFingerprint) {
-		issues = append(issues, "V2 plan requires context_fingerprint in sha256:<64 lowercase hex> form")
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "V2 plan requires context_fingerprint in sha256:<64 lowercase hex> form"})
 	}
 	wantFactory, factoryErr := embeddedFactoryIntakeContractProvenance()
 	haveFactory := factoryIntakeContractProvenance{Schema: strings.TrimSpace(v2.FactoryIntakeContractSchema), Version: strings.TrimSpace(v2.FactoryIntakeContractVersion), Fingerprint: strings.TrimSpace(v2.FactoryIntakeContractFingerprint)}
 	if factoryErr != nil {
-		issues = append(issues, "current factory-intake contract cannot be loaded: "+factoryErr.Error())
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "current factory-intake contract cannot be loaded: " + factoryErr.Error()})
 	} else if haveFactory.Schema == "" || haveFactory.Version == "" || haveFactory.Fingerprint == "" {
-		issues = append(issues, "new V2 plan requires current factory-intake contract schema, version, and fingerprint; regenerate the plan from tusker delivery context")
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "new V2 plan requires current factory-intake contract schema, version, and fingerprint; regenerate the plan from tusker delivery context"})
 	} else if haveFactory != wantFactory {
-		issues = append(issues, "V2 plan factory-intake contract is stale or contradictory; regenerate the plan from tusker delivery context")
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "V2 plan factory-intake contract is stale or contradictory; regenerate the plan from tusker delivery context"})
 	}
 	if plan.Epic != "" && v2.EpicContract != nil {
-		issues = append(issues, "epic and epic_contract are mutually exclusive")
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "epic and epic_contract are mutually exclusive"})
 	}
 	if plan.Epic == "" && v2.EpicContract == nil {
-		issues = append(issues, "V2 plan requires an existing epic or epic_contract")
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "V2 plan requires an existing epic or epic_contract"})
 	}
 	if v2.EpicContract != nil {
 		c := v2.EpicContract
 		if strings.TrimSpace(c.SourceKey) == "" || deliveryPlaceholder(c.SourceKey) || !epicAcronymPattern.MatchString(strings.ToUpper(c.AcronymHint)) || deliveryPlaceholder(c.Title) {
-			issues = append(issues, "epic_contract requires stable source_key, three-letter acronym_hint, and concrete title")
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "epic_contract requires stable source_key, three-letter acronym_hint, and concrete title"})
 		} else {
 			{
 				for id, epic := range idx.Epics {
@@ -459,32 +459,32 @@ func deliveryV2PrepareWithIndex(vaultPath string, v2 deliveryPlanV2, idx v7Index
 				if plan.Epic == "" {
 					plan.Epic = strings.ToUpper(c.AcronymHint)
 					if _, exists := idx.Epics[plan.Epic]; exists {
-						issues = append(issues, "epic acronym collision: "+plan.Epic)
+						issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "epic acronym collision: " + plan.Epic})
 					}
 				}
 			}
 		}
 	}
 	if plan.Epic != "" && v2.EpicContract == nil && !fileExists(filepath.Join(vaultPath, "work", "epics", plan.Epic+".md")) {
-		issues = append(issues, "epic does not exist: "+plan.Epic)
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "epic does not exist: " + plan.Epic})
 	}
 	reqs := map[string]bool{}
 	for _, r := range v2.Requirements {
 		id := strings.TrimSpace(r.ID)
 		if id == "" || deliveryPlaceholder(r.Outcome) {
-			issues = append(issues, "requirements require stable id and concrete outcome")
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "requirements require stable id and concrete outcome"})
 		}
 		if reqs[id] {
-			issues = append(issues, "duplicate requirement id: "+id)
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "duplicate requirement id: " + id})
 		}
 		reqs[id] = true
 	}
 	if len(v2.Requirements) == 0 {
-		issues = append(issues, "V2 plan requires at least one requirement")
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "V2 plan requires at least one requirement"})
 	}
 	for _, nonGoal := range v2.NonGoals {
 		if deliveryPlaceholder(nonGoal) {
-			issues = append(issues, "non_goals must contain concrete statements")
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "non_goals must contain concrete statements"})
 		}
 	}
 	covered := map[string]bool{}
@@ -492,27 +492,27 @@ func deliveryV2PrepareWithIndex(vaultPath string, v2 deliveryPlanV2, idx v7Index
 	for _, task := range plan.Tasks {
 		keys[task.SourceKey] = task
 		if len(task.RequirementRefs) == 0 {
-			issues = append(issues, task.SourceKey+": task must reference at least one requirement")
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: task.SourceKey + ": task must reference at least one requirement"})
 		}
 		for _, ref := range task.RequirementRefs {
 			if !reqs[ref] {
-				issues = append(issues, task.SourceKey+": unknown requirement "+ref)
+				issues = append(issues, deliveryIssue{Code: "REQUIREMENT_REFERENCE_UNKNOWN", Message: task.SourceKey + ": unknown requirement " + ref})
 			}
 			covered[ref] = true
 		}
 	}
 	for id := range reqs {
 		if !covered[id] {
-			issues = append(issues, "requirement "+id+" is not covered by any task")
+			issues = append(issues, deliveryIssue{Code: "REQUIREMENT_UNCOVERED", Message: "requirement " + id + " is not covered by any task"})
 		}
 	}
 	for _, gate := range v2.HumanGates {
 		if _, knownKind := v7GateKinds[strings.ToLower(gate.Kind)]; strings.TrimSpace(gate.SourceKey) == "" || deliveryPlaceholder(gate.Title) || !knownKind || strings.TrimSpace(gate.Owner) == "" || strings.TrimSpace(gate.Action) == "" || strings.TrimSpace(gate.Verification) == "" || strings.TrimSpace(gate.WhyAgentCannot) == "" {
-			issues = append(issues, "human gate requires source_key, title, kind, owner, action, verification, and why_agent_cannot")
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "human gate requires source_key, title, kind, owner, action, verification, and why_agent_cannot"})
 		}
 		task, ok := keys[gate.TaskSourceKey]
 		if !ok {
-			issues = append(issues, "human gate "+gate.SourceKey+": unknown task_source_key "+gate.TaskSourceKey)
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "human gate " + gate.SourceKey + ": unknown task_source_key " + gate.TaskSourceKey})
 			continue
 		}
 		acceptance := map[string]bool{}
@@ -520,25 +520,25 @@ func deliveryV2PrepareWithIndex(vaultPath string, v2 deliveryPlanV2, idx v7Index
 			acceptance[deliveryAcceptanceID(a.ID)] = true
 		}
 		if len(gate.AcceptanceIDs) == 0 {
-			issues = append(issues, "human gate "+gate.SourceKey+": acceptance_ids required")
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "human gate " + gate.SourceKey + ": acceptance_ids required"})
 		}
 		for _, id := range gate.AcceptanceIDs {
 			if !acceptance[deliveryAcceptanceID(id)] {
-				issues = append(issues, "human gate "+gate.SourceKey+": unknown acceptance "+id)
+				issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "human gate " + gate.SourceKey + ": unknown acceptance " + id})
 			}
 		}
 	}
 	for _, assumption := range v2.Assumptions {
 		if deliveryPlaceholder(assumption.SourceKey) || deliveryPlaceholder(assumption.Statement) {
-			issues = append(issues, "assumptions require source_key and concrete statement")
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "assumptions require source_key and concrete statement"})
 		}
 	}
 	for _, decision := range v2.UnresolvedDecisions {
 		if deliveryPlaceholder(decision.SourceKey) || deliveryPlaceholder(decision.Question) {
-			issues = append(issues, "unresolved_decisions require source_key and concrete question")
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "unresolved_decisions require source_key and concrete question"})
 		}
 	}
-	return plan, uniqueStrings(issues)
+	return plan, uniqueDeliveryIssues(issues)
 }
 
 func deliveryContextFingerprintValid(value string) bool {

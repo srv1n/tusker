@@ -3,11 +3,10 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"runtime"
 )
 
 func v7DarwinDescriptorHasMutationACL(*os.File) (bool, error) {
-	return false, fmt.Errorf("descriptor-bound Darwin ACL inspection is unsupported on %s without cgo", runtime.GOOS)
+	return false, v7FullGateProviderUnsupportedPlatformError(runtime.GOOS, "descriptor-bound Darwin ACL inspection requires cgo")
 }

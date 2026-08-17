@@ -2343,7 +2343,7 @@ Not recorded during migration.
 	if err != nil {
 		return err
 	}
-	if err := writeText(filepath.Join(vaultPath, "evidence", taskID, evidenceID+".md"), content); err != nil {
+	if err := writeNewV7EvidenceDocument(filepath.Join(vaultPath, "evidence", taskID, evidenceID+".md"), content); err != nil {
 		return err
 	}
 	return emitV7Event(vaultPath, taskID, "task", "evidence_added", "tusker:migrate-v7", map[string]any{"evidence": evidenceID, "kind": evidenceKind})

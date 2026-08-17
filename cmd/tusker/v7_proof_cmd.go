@@ -1081,6 +1081,8 @@ func classifyProofRequirement(required string, task Note, idx v7Index) string {
 	switch required {
 	case "human_signoff", "manual_smoke", "physical_smoke", "release_smoke", "security_review", "privacy_review", "accessibility_review":
 		return "human"
+	case "independent_review":
+		return "reviewer"
 	case "ci", "provider_probe":
 		return "external"
 	default:
@@ -1115,25 +1117,31 @@ func v7GateCouldOwnProofRequirement(required string, gate Note) bool {
 }
 
 func v7GateTextSatisfiesProofRequirement(required string, gate Note) bool {
-	text := strings.ToLower(strings.Join([]string{
-		stringField(gate.Data, "title"),
-		stringField(gate.Data, "gate_kind"),
-		stringField(gate.Data, "action"),
-		stringField(gate.Data, "verification"),
-		stringField(gate.Data, "satisfaction_evidence"),
-	}, " "))
-	requiredText := strings.ReplaceAll(required, "_", " ")
-	if strings.Contains(text, required) || strings.Contains(text, requiredText) {
-		return true
-	}
+	verification := strings.ToLower(strings.TrimSpace(stringField(gate.Data, "verification")))
 	switch required {
 	case "manual_smoke", "physical_smoke":
-		return strings.Contains(text, "smoke") && (strings.Contains(text, "manual") || strings.Contains(text, "device") || strings.Contains(text, "physical"))
+		return v7StartsWithProofPhrase(verification, strings.ReplaceAll(required, "_", " "))
 	case "human_signoff":
-		return strings.Contains(text, "signoff") || strings.Contains(text, "sign off") || strings.Contains(text, "human")
+		return v7StartsWithProofPhrase(verification, "human signoff") || v7StartsWithProofPhrase(verification, "human sign-off")
 	default:
 		return false
 	}
+}
+
+func v7StartsWithProofPhrase(value, phrase string) bool {
+	value = strings.TrimSpace(strings.ToLower(value))
+	phrase = strings.TrimSpace(strings.ToLower(phrase))
+	if value == "" || phrase == "" {
+		return false
+	}
+	if value == phrase {
+		return true
+	}
+	if !strings.HasPrefix(value, phrase) {
+		return false
+	}
+	remainder := value[len(phrase):]
+	return remainder == "" || strings.ContainsRune(" \t.,:;!?-", rune(remainder[0]))
 }
 
 func classifyV7GateOwner(gate Note) string {
@@ -1391,40 +1399,34 @@ func v7ProofRequiredClassSatisfied(taskID, required string, task Note, idx v7Ind
 }
 
 func v7InlineVerificationSatisfies(required string, row v7VerificationRow) bool {
-	text := strings.ToLower(row.Check + " " + row.Notes)
+	command, ok := v7VerificationCommand(row.Check)
+	if !ok {
+		return false
+	}
 	switch required {
 	case "focused_test", "broad_test":
-		return strings.Contains(text, "test")
+		return v7CommandInvokesTest(command)
 	case "typecheck":
-		return strings.Contains(text, "typecheck") || strings.Contains(text, "tsc") || strings.Contains(text, "cargo check") || strings.Contains(text, "go test") || strings.Contains(text, "swift build")
+		return v7CommandInvokesAny(command, map[string][]string{
+			"cargo": {"check", "test"}, "go": {"test"}, "swift": {"build", "test"}, "tsc": nil, "npx": {"tsc"},
+		})
 	case "lint":
-		return strings.Contains(text, "lint") || strings.Contains(text, "eslint") || strings.Contains(text, "golangci") || strings.Contains(text, "ruff") || strings.Contains(text, "staticcheck")
+		return v7CommandInvokesAny(command, map[string][]string{
+			"eslint": nil, "golangci-lint": nil, "ruff": nil, "staticcheck": nil, "make": {"lint"},
+			"npm": {"run:lint"}, "pnpm": {"run:lint"}, "npx": {"eslint"}, "cargo": {"clippy"},
+		})
 	case "build":
-		return strings.Contains(text, "build") || strings.Contains(text, "xcodebuild") || strings.Contains(text, "go test") || strings.Contains(text, "go build") || strings.Contains(text, "npm run build")
+		return v7CommandInvokesAny(command, map[string][]string{
+			"go": {"build", "test"}, "swift": {"build"}, "xcodebuild": nil, "npm": {"run:build"}, "make": {"build"},
+			"cargo": {"build", "test"}, "tsc": nil,
+		})
 	case "ci":
-		return strings.Contains(text, "ci")
-	case "manual_smoke":
-		return strings.Contains(text, "manual smoke") || strings.Contains(text, "smoke")
-	case "screenshot":
-		return strings.Contains(text, "screenshot")
-	case "video":
-		return strings.Contains(text, "video") || strings.Contains(text, ".mov") || strings.Contains(text, ".mp4") || strings.Contains(text, ".webm")
-	case "trace":
-		return strings.Contains(text, "trace")
-	case "provider_probe":
-		return strings.Contains(text, "provider") || strings.Contains(text, "probe")
+		return v7CommandInvokesAny(command, map[string][]string{"ci": nil, "make": {"ci"}})
 	case "benchmark":
-		return strings.Contains(text, "bench") || strings.Contains(text, "benchmark")
-	case "security_review":
-		return strings.Contains(text, "security review")
-	case "privacy_review":
-		return strings.Contains(text, "privacy review")
-	case "release_smoke":
-		return strings.Contains(text, "release smoke")
-	case "human_signoff":
-		return strings.Contains(text, "human signoff") || strings.Contains(text, "human sign-off")
+		return v7CommandInvokesGoTestBenchmark(command) || v7CommandInvokesAny(command, map[string][]string{"cargo": {"bench"}})
 	default:
-		return strings.Contains(text, required)
+		tool := strings.ReplaceAll(required, "_", "-")
+		return !strings.ContainsAny(tool, " \t") && v7CommandInvokesAny(command, map[string][]string{tool: nil})
 	}
 }
 
@@ -1433,15 +1435,18 @@ func v7EvidenceSatisfiesProofRequired(required string, ev Note) bool {
 	artifactPaths := normalizeList(ev.Data["artifact_paths"])
 	switch required {
 	case "focused_test", "broad_test":
-		return kind == "automated_test" || kind == "unit_test" || kind == "integration_test" || kind == "e2e_test" || kind == "ci_run" || v7EvidenceTextContains(ev, "test", "go test", "pytest", "cargo test", "jest", "vitest")
+		return kind == "automated_test" || kind == "unit_test" || kind == "integration_test" || kind == "e2e_test" || kind == "ci_run"
 	case "typecheck":
-		return kind == "ci_run" || v7EvidenceTextContains(ev, "typecheck", "tsc", "cargo check", "go test", "swift build")
+		return kind == "ci_run"
 	case "lint":
-		return kind == "ci_run" || v7EvidenceTextContains(ev, "lint", "eslint", "golangci", "ruff", "staticcheck")
+		return kind == "ci_run"
 	case "build":
-		return kind == "ci_run" || v7EvidenceTextContains(ev, "build", "xcodebuild", "go test", "go build", "npm run build")
+		return kind == "ci_run"
 	case "ci":
 		return kind == "ci_run"
+	case "independent_review":
+		// Audit names the requirement by role; human_review is the persisted typed record.
+		return kind == "human_review"
 	case "manual_smoke":
 		return kind == "manual_smoke" || kind == "physical_smoke"
 	case "screenshot":
@@ -1483,14 +1488,230 @@ func v7EvidenceSatisfiesRequiredOwner(owner string, ev Note) bool {
 	}
 }
 
-func v7EvidenceTextContains(ev Note, needles ...string) bool {
-	text := strings.ToLower(stringField(ev.Data, "summary") + " " + ev.Body)
-	for _, needle := range needles {
-		if strings.Contains(text, needle) {
+func v7VerificationCommand(check string) (string, bool) {
+	trimmed := strings.TrimSpace(check)
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "command:") {
+		command := strings.TrimSpace(trimmed[len("command:"):])
+		return command, v7VerificationValueIsExact(command)
+	}
+	for _, prefix := range v7VerificationLegacyPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return trimmed, v7VerificationValueIsExact(trimmed)
+		}
+	}
+	return "", false
+}
+
+func v7CommandInvokesTest(command string) bool {
+	return v7CommandInvokesAny(command, map[string][]string{
+		"go": {"test"}, "cargo": {"test"}, "swift": {"test"}, "dotnet": {"test"},
+		"npm": {"test", "run:test"}, "pnpm": {"test", "run:test"}, "yarn": {"test"}, "bun": {"test"},
+		"pytest": nil, "jest": nil, "vitest": nil, "make": {"test"},
+		"python": {"-m:pytest", "-m:unittest"}, "python3": {"-m:pytest", "-m:unittest"},
+		"npx": {"jest", "vitest"},
+	})
+}
+
+type v7ShellCommandInvocation struct {
+	name string
+	args []string
+}
+
+func v7CommandInvokesAny(command string, tools map[string][]string) bool {
+	for _, invocation := range v7ShellCommandInvocations(command) {
+		want, ok := tools[invocation.name]
+		if !ok {
+			continue
+		}
+		if len(want) == 0 {
+			return true
+		}
+		for _, pattern := range want {
+			if strings.HasPrefix(pattern, "-") {
+				parts := strings.SplitN(pattern, ":", 2)
+				if len(parts) == 2 && v7ArgsContainAdjacent(invocation.args, parts[0], parts[1]) {
+					return true
+				}
+				continue
+			}
+			if strings.HasPrefix(pattern, "run:") {
+				suffix := strings.TrimPrefix(pattern, "run:")
+				for i := 0; i+1 < len(invocation.args); i++ {
+					if invocation.args[i] == "run" && strings.HasPrefix(invocation.args[i+1], suffix) {
+						return true
+					}
+				}
+				continue
+			}
+			if v7ArgsContain(invocation.args, pattern) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func v7CommandInvokesGoTestBenchmark(command string) bool {
+	for _, invocation := range v7ShellCommandInvocations(command) {
+		if invocation.name != "go" || !v7ArgsContain(invocation.args, "test") {
+			continue
+		}
+		for _, arg := range invocation.args {
+			if strings.HasPrefix(arg, "-bench") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func v7ArgsContain(args []string, wanted string) bool {
+	for _, arg := range args {
+		if arg == wanted {
 			return true
 		}
 	}
 	return false
+}
+
+func v7ArgsContainAdjacent(args []string, first, second string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == first && args[i+1] == second {
+			return true
+		}
+	}
+	return false
+}
+
+func v7ShellCommandInvocations(command string) []v7ShellCommandInvocation {
+	var invocations []v7ShellCommandInvocation
+	for _, segment := range v7ShellCommandSegments(command) {
+		fields := v7ShellCommandFields(segment)
+		for len(fields) > 0 {
+			if strings.Contains(fields[0], "=") && !strings.HasPrefix(fields[0], "=") {
+				fields = fields[1:]
+				continue
+			}
+			wrapper := v7ShellCommandWrapper(fields[0])
+			if !wrapper {
+				break
+			}
+			name := strings.Trim(strings.ToLower(filepath.Base(fields[0])), "`'\"")
+			fields = fields[1:]
+			if name == "timeout" && len(fields) > 0 && !strings.HasPrefix(fields[0], "-") {
+				fields = fields[1:]
+			}
+		}
+		if len(fields) == 0 {
+			continue
+		}
+		name := strings.ToLower(filepath.Base(fields[0]))
+		invocations = append(invocations, v7ShellCommandInvocation{name: name, args: fields[1:]})
+	}
+	return invocations
+}
+
+func v7ShellCommandSegments(command string) []string {
+	var segments []string
+	var current strings.Builder
+	var quote rune
+	escaped := false
+	for _, r := range command {
+		if escaped {
+			current.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' && quote != '\'' {
+			current.WriteRune(r)
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			current.WriteRune(r)
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = r
+			current.WriteRune(r)
+			continue
+		}
+		if r == '&' || r == ';' || r == '|' {
+			segments = append(segments, current.String())
+			current.Reset()
+			continue
+		}
+		current.WriteRune(r)
+	}
+	segments = append(segments, current.String())
+	return segments
+}
+
+func v7ShellCommandFields(segment string) []string {
+	var fields []string
+	var current strings.Builder
+	var quote rune
+	escaped := false
+	hasToken := false
+	flush := func() {
+		if hasToken {
+			fields = append(fields, strings.ToLower(current.String()))
+			current.Reset()
+			hasToken = false
+		}
+	}
+	for _, r := range segment {
+		if escaped {
+			current.WriteRune(r)
+			hasToken = true
+			escaped = false
+			continue
+		}
+		if r == '\\' && quote != '\'' {
+			escaped = true
+			hasToken = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			} else {
+				current.WriteRune(r)
+			}
+			hasToken = true
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = r
+			hasToken = true
+			continue
+		}
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			flush()
+			continue
+		}
+		current.WriteRune(r)
+		hasToken = true
+	}
+	if escaped {
+		current.WriteByte('\\')
+		hasToken = true
+	}
+	flush()
+	return fields
+}
+
+func v7ShellCommandWrapper(value string) bool {
+	switch strings.Trim(strings.ToLower(value), "`'\"") {
+	case "rtk", "proxy", "env", "exec", "command", "sudo", "timeout":
+		return true
+	default:
+		return false
+	}
 }
 
 func v7EvidenceHasArtifactExt(paths []string, exts ...string) bool {

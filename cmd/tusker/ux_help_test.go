@@ -114,6 +114,18 @@ func TestRuntimeCommandParsingIncludesOperatorGroups(t *testing.T) {
 	}
 }
 
+func TestHookCommandIsNotAdvertisedOrParsedAsSubcommand(t *testing.T) {
+	if output := captureStdout(t, printHelp); strings.Contains(output, "\n  hook ") {
+		t.Fatalf("main help advertises removed hook command:\n%s", output)
+	}
+	if printCommandHelp("hook") {
+		t.Fatal("removed hook command still has a help handler")
+	}
+	command, args := parseCLI([]string{"tusker", "hook", "install"})
+	assertEqual(t, "hook", command, "removed hook command parsing")
+	assertEqual(t, "install", args.String("_pos0"), "removed hook positional argument")
+}
+
 func TestParseCLIHandlesNoCommand(t *testing.T) {
 	for _, argv := range [][]string{
 		nil,

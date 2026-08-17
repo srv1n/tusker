@@ -222,8 +222,11 @@ func archiveV5VerificationLogSection(vaultPath string, note Note, data map[strin
 	}
 	evidenceID := fmt.Sprintf("%s-E-%s", taskID, padNumber(nextV7EvidenceSequence(vaultPath, taskID)))
 	if write {
-		if err := writeMigratedV7EvidenceRecord(vaultPath, note, evidenceID, "log_excerpt", "V5 task Verification log", verificationLog); err != nil {
-			return body, nil, err
+		path := filepath.Join(vaultPath, "evidence", taskID, evidenceID+".md")
+		if !fileExists(path) {
+			if err := writeMigratedV7EvidenceRecord(vaultPath, note, evidenceID, "log_excerpt", "V5 task Verification log", verificationLog); err != nil {
+				return body, nil, err
+			}
 		}
 	}
 	return removeMarkdownSection(body, "## Verification log"), []string{evidenceID}, nil

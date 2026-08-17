@@ -19,6 +19,25 @@ import (
 	"time"
 )
 
+func TestV7FullGateProviderUnsupportedPlatformIsTypedRefusal(t *testing.T) {
+	previous := v7FullGateProviderGOOS
+	v7FullGateProviderGOOS = func() string { return "linux" }
+	defer func() { v7FullGateProviderGOOS = previous }()
+
+	if err := v7FullGateProviderPlatformError(); err == nil || errorToIssue(err).Code != v7FullGateProviderUnsupportedPlatformCode {
+		t.Fatalf("platform refusal = %v, want %s", err, v7FullGateProviderUnsupportedPlatformCode)
+	}
+	provider, err := newV7FullGateProvider("unused", t.TempDir(), t.TempDir())
+	if err == nil || provider != nil || errorToIssue(err).Code != v7FullGateProviderUnsupportedPlatformCode {
+		t.Fatalf("provider resolution = provider=%v err=%v, want typed refusal", provider, err)
+	}
+
+	invocation, runErr := (&v7ExternalFullGateProvider{path: os.Args[0]}).Run(context.Background(), t.TempDir(), "true")
+	if invocation.Outcome != v7FullGateOutcomeProvider || runErr == nil || errorToIssue(runErr).Code != v7FullGateProviderUnsupportedPlatformCode {
+		t.Fatalf("provider run = outcome=%q err=%v, want provider refusal", invocation.Outcome, runErr)
+	}
+}
+
 func TestV7FullGateProviderMachOClosureRejectsMutableLoadPaths(t *testing.T) {
 	sealed := v7MachOFixture(t,
 		v7MachOPathLoad(t, v7MachOLoadDylinker, 12, "/usr/lib/dyld"),
@@ -174,7 +193,7 @@ func TestV7FullGateProviderRejectsSandboxExec(t *testing.T) {
 	v7FullGateProviderRegistryPath = func(string) string { return registry }
 	defer func() { v7FullGateProviderRegistryPath = old }()
 	_, err := newV7FullGateProvider("sandbox", t.TempDir(), t.TempDir())
-	if err == nil || !errors.Is(err, errV7FullGateProvider) {
+	if err == nil || !isV7FullGateProviderError(err) {
 		t.Fatalf("sandbox-exec was accepted as a lifecycle provider: %v", err)
 	}
 }
@@ -196,7 +215,7 @@ func TestV7FullGateProviderRejectsUnavailableProfileAndRepositoryExecutable(t *t
 	if err := os.WriteFile(registry, []byte(registryBody), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newV7FullGateProvider("local", repo, t.TempDir()); err == nil || !errors.Is(err, errV7FullGateProvider) {
+	if _, err := newV7FullGateProvider("local", repo, t.TempDir()); err == nil || !isV7FullGateProviderError(err) {
 		t.Fatalf("repository-local provider executable was accepted: %v", err)
 	}
 }

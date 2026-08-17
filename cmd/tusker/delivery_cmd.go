@@ -300,6 +300,7 @@ func deliveryImportCmd(args Args) error {
 		return err
 	}
 	issues, frontiers := validateDeliveryPlan(vaultPath, plan)
+	issueMessages := deliveryIssueMessages(issues)
 	mapping, existingWave, err := deliveryTaskMapping(vaultPath, plan)
 	if err != nil {
 		return err
@@ -312,12 +313,12 @@ func deliveryImportCmd(args Args) error {
 		PlanFingerprint: deliveryFingerprint(raw), PlanScope: deliveryPlanScope(plan), WaveID: waveID,
 		WaveTitle: fallback(firstNonEmpty(args.String("wave"), plan.Title), "Imported delivery"),
 		SpecRefs:  plan.SpecRefs, TaskMapping: mapping, Frontiers: frontiers,
-		ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Issues: issues, DryRun: args.Bool("dry-run"),
+		ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Issues: issueMessages, DryRun: args.Bool("dry-run"),
 	}
-	if len(issues) > 0 {
+	if len(issueMessages) > 0 {
 		return tuskerError(
 			errorInvalidArg,
-			"delivery plan is invalid: "+strings.Join(issues, "; "),
+			"delivery plan is invalid: "+strings.Join(issueMessages, "; "),
 			withContext(map[string]any{"delivery": report}),
 		)
 	}
@@ -351,140 +352,171 @@ func readDeliveryPlanBytes(raw []byte) (deliveryPlan, error) {
 	return plan, nil
 }
 
-func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]string) {
-	var issues []string
+type deliveryIssue struct {
+	Code    string
+	Message string
+}
+
+func deliveryIssueMessages(issues []deliveryIssue) []string {
+	messages := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		messages = append(messages, issue.Message)
+	}
+	return uniqueStrings(messages)
+}
+
+func uniqueDeliveryIssues(issues []deliveryIssue) []deliveryIssue {
+	seen := map[string]struct{}{}
+	out := make([]deliveryIssue, 0, len(issues))
+	for _, issue := range issues {
+		issue.Message = strings.TrimSpace(issue.Message)
+		if issue.Message == "" {
+			continue
+		}
+		key := issue.Code + "\x00" + issue.Message
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, issue)
+	}
+	return out
+}
+
+func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]deliveryIssue, [][]string) {
+	var issues []deliveryIssue
 	expectedSchema := deliveryPlanSchema
 	if plan.v2 != nil {
 		expectedSchema = deliveryPlanV2Schema
 	}
 	if plan.Schema != expectedSchema {
-		issues = append(issues, "schema must be "+expectedSchema)
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "schema must be " + expectedSchema})
 	}
 	if deliveryPlaceholder(plan.Scope) || !deliveryScopeValid(plan.Scope) {
-		issues = append(issues, "scope must be an explicit stable identifier using letters, numbers, dot, underscore, slash, colon, or hyphen")
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "scope must be an explicit stable identifier using letters, numbers, dot, underscore, slash, colon, or hyphen"})
 	}
 	if !epicAcronymPattern.MatchString(strings.ToUpper(plan.Epic)) {
-		issues = append(issues, "epic must name an existing three-letter V7 epic")
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "epic must name an existing three-letter V7 epic"})
 	} else if (plan.v2 == nil || plan.v2.EpicContract == nil) && !fileExists(filepath.Join(vaultPath, "work", "epics", strings.ToUpper(plan.Epic)+".md")) {
-		issues = append(issues, "epic does not exist: "+strings.ToUpper(plan.Epic))
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "epic does not exist: " + strings.ToUpper(plan.Epic)})
 	}
 	if len(plan.SpecRefs) == 0 {
-		issues = append(issues, "at least one governing spec_ref is required")
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "at least one governing spec_ref is required"})
 	}
 	for _, ref := range plan.SpecRefs {
 		if !deliverySpecRefExists(vaultPath, ref) {
-			issues = append(issues, "spec_ref does not resolve inside the repository: "+ref)
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "spec_ref does not resolve inside the repository: " + ref})
 		}
 	}
 	if len(plan.Tasks) == 0 {
-		issues = append(issues, "at least one task is required")
+		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "at least one task is required"})
 	}
 	keys := map[string]bool{}
 	for _, task := range plan.Tasks {
 		key := strings.TrimSpace(task.SourceKey)
 		if key == "" || deliveryPlaceholder(key) {
-			issues = append(issues, "every task requires a stable non-placeholder source_key")
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "every task requires a stable non-placeholder source_key"})
 		} else if keys[key] {
-			issues = append(issues, "duplicate source_key: "+key)
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "duplicate source_key: " + key})
 		}
 		keys[key] = true
 		if deliveryPlaceholder(task.Title) || deliveryPlaceholder(task.Outcome) {
-			issues = append(issues, key+": title and outcome must be concrete")
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": title and outcome must be concrete"})
 		}
 		acceptance := map[string]bool{}
 		covered := map[string]bool{}
 		for _, row := range task.Acceptance {
 			if strings.TrimSpace(row.ID) == "" || deliveryPlaceholder(row.Outcome) {
-				issues = append(issues, key+": acceptance rows require an id and concrete outcome")
+				issues = append(issues, deliveryIssue{Code: "ACCEPTANCE_INVALID", Message: key + ": acceptance rows require an id and concrete outcome"})
 			}
 			id := deliveryAcceptanceID(row.ID)
 			if acceptance[id] {
-				issues = append(issues, key+": duplicate acceptance id "+row.ID)
+				issues = append(issues, deliveryIssue{Code: "ACCEPTANCE_INVALID", Message: key + ": duplicate acceptance id " + row.ID})
 			}
 			acceptance[id] = true
 		}
 		if len(task.Acceptance) == 0 {
-			issues = append(issues, key+": acceptance is required")
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": acceptance is required"})
 		}
 		for _, row := range task.Verification {
 			check := strings.TrimSpace(row.Check)
 			if deliveryPlaceholder(check) || (!strings.HasPrefix(check, "command: ") && !strings.HasPrefix(check, "manual proof: ")) {
-				issues = append(issues, key+": verification must use an exact command: or manual proof: check")
+				issues = append(issues, deliveryIssue{Code: "PROOF_UNSUPPORTED", Message: key + ": verification must use an exact command: or manual proof: check"})
 			}
 			for _, cover := range splitCSV(row.Covers) {
 				cover = deliveryAcceptanceID(cover)
 				if !acceptance[cover] {
-					issues = append(issues, key+": verification references unknown acceptance "+cover)
+					issues = append(issues, deliveryIssue{Code: "PROOF_ACCEPTANCE_UNKNOWN", Message: key + ": verification references unknown acceptance " + cover})
 				}
 				covered[cover] = true
 			}
 		}
 		if len(task.Verification) == 0 {
-			issues = append(issues, key+": verification is required")
+			issues = append(issues, deliveryIssue{Code: "PROOF_UNFILLED", Message: key + ": verification is required"})
 		}
 		for id := range acceptance {
 			if !covered[id] {
-				issues = append(issues, key+": acceptance "+id+" has no mapped verification")
+				issues = append(issues, deliveryIssue{Code: "ACCEPTANCE_UNMAPPED", Message: key + ": acceptance " + id + " has no mapped verification"})
 			}
 		}
 		if deliveryPlaceholder(task.Artifact.Kind) || deliveryInvalidProductionPath(task.Artifact.Path) || deliveryPlaceholder(task.Artifact.Summary) {
-			issues = append(issues, key+": artifact requires kind, summary, and a repo-relative production path")
+			issues = append(issues, deliveryIssue{Code: "ARTIFACT_INVALID", Message: key + ": artifact requires kind, summary, and a repo-relative production path"})
 		} else if _, ok := v7OperatorArtifactKinds[strings.ToLower(strings.TrimSpace(task.Artifact.Kind))]; !ok {
-			issues = append(issues, key+": artifact kind is not an operator-facing visual, performance, behavior, reliability, security, diff, or knowledge artifact")
+			issues = append(issues, deliveryIssue{Code: "ARTIFACT_INVALID", Message: key + ": artifact kind is not an operator-facing visual, performance, behavior, reliability, security, diff, or knowledge artifact"})
 		}
 		if len(task.Artifact.AcceptanceIDs) == 0 {
-			issues = append(issues, key+": artifact acceptance_ids must name at least one task acceptance outcome")
+			issues = append(issues, deliveryIssue{Code: "ARTIFACT_INVALID", Message: key + ": artifact acceptance_ids must name at least one task acceptance outcome"})
 		} else {
 			for _, id := range task.Artifact.AcceptanceIDs {
 				if !acceptance[deliveryAcceptanceID(id)] {
-					issues = append(issues, key+": artifact acceptance_ids references unknown acceptance "+id)
+					issues = append(issues, deliveryIssue{Code: "ARTIFACT_INVALID", Message: key + ": artifact acceptance_ids references unknown acceptance " + id})
 				}
 			}
 		}
 		if task.Risk != "" {
 			if _, ok := risks[strings.ToLower(task.Risk)]; !ok {
-				issues = append(issues, key+": invalid risk "+task.Risk)
+				issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": invalid risk " + task.Risk})
 			}
 		}
 		if task.Priority != "" {
 			if _, ok := priorities[strings.ToLower(task.Priority)]; !ok {
-				issues = append(issues, key+": invalid priority "+task.Priority)
+				issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": invalid priority " + task.Priority})
 			}
 		}
 		if task.Size != "" {
 			if _, ok := sizes[strings.ToLower(task.Size)]; !ok {
-				issues = append(issues, key+": invalid size "+task.Size)
+				issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": invalid size " + task.Size})
 			}
 		}
 		if task.Complexity != "" {
 			if _, ok := map[string]bool{"routine": true, "standard": true, "complex": true, "frontier": true}[strings.ToLower(task.Complexity)]; !ok {
-				issues = append(issues, key+": invalid complexity "+task.Complexity)
+				issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": invalid complexity " + task.Complexity})
 			}
 		}
 		qualifiedSeen := map[string]bool{}
 		for _, dep := range task.Dependencies {
 			kind := fallback(strings.ToLower(strings.TrimSpace(dep.Kind)), "hard")
 			if kind != "hard" && kind != "soft" {
-				issues = append(issues, key+": dependency kind must be hard or soft")
+				issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": dependency kind must be hard or soft"})
 			}
 			if plan.v2 != nil && dep.scopePresent {
 				if strings.TrimSpace(dep.scope) == "" {
-					issues = append(issues, key+": CROSS_SCOPE_INVALID_SCOPE; supplied scope must be non-blank")
+					issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": CROSS_SCOPE_INVALID_SCOPE; supplied scope must be non-blank"})
 					continue
 				}
 				if !deliveryScopeValid(dep.scope) {
-					issues = append(issues, key+": CROSS_SCOPE_INVALID_SCOPE "+dep.scope+"; use a stable producer scope")
+					issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": CROSS_SCOPE_INVALID_SCOPE " + dep.scope + "; use a stable producer scope"})
 				}
 				if strings.TrimSpace(dep.scope) == strings.TrimSpace(plan.Scope) {
-					issues = append(issues, key+": CROSS_SCOPE_SAME_SCOPE "+dep.scope+"; omit scope for local dependencies")
+					issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": CROSS_SCOPE_SAME_SCOPE " + dep.scope + "; omit scope for local dependencies"})
 				}
 				semantic := strings.TrimSpace(dep.scope) + "\x00" + strings.TrimSpace(dep.Task)
 				if qualifiedSeen[semantic] {
-					issues = append(issues, key+": CROSS_SCOPE_DUPLICATE_DEPENDENCY "+dep.scope+"/"+dep.Task)
+					issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": CROSS_SCOPE_DUPLICATE_DEPENDENCY " + dep.scope + "/" + dep.Task})
 				}
 				qualifiedSeen[semantic] = true
 				if kind != "hard" {
-					issues = append(issues, key+": CROSS_SCOPE_HARD_ONLY "+dep.scope+"/"+dep.Task+"; use kind: hard")
+					issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": CROSS_SCOPE_HARD_ONLY " + dep.scope + "/" + dep.Task + "; use kind: hard"})
 				}
 			}
 		}
@@ -495,15 +527,15 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]string, [][]st
 				continue
 			}
 			if !keys[dep.Task] {
-				issues = append(issues, task.SourceKey+": dangling dependency "+dep.Task)
+				issues = append(issues, deliveryIssue{Code: "DEPENDENCY_DANGLING", Message: task.SourceKey + ": dangling dependency " + dep.Task})
 			}
 		}
 	}
 	frontiers, cycle := deliveryFrontiers(plan)
 	if cycle {
-		issues = append(issues, "task dependency graph contains a cycle")
+		issues = append(issues, deliveryIssue{Code: "DEPENDENCY_CYCLE", Message: "task dependency graph contains a cycle"})
 	}
-	return uniqueStrings(issues), frontiers
+	return uniqueDeliveryIssues(issues), frontiers
 }
 
 func deliveryTaskMapping(vaultPath string, plan deliveryPlan) (map[string]string, string, error) {

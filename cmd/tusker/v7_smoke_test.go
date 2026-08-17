@@ -1840,8 +1840,8 @@ func TestV7EvidenceAddCopiesArtifactsAndMarksExceptions(t *testing.T) {
 	}
 	paths := normalizeList(data["artifact_paths"])
 	assertEqual(t, 1, len(paths), "copied artifact count")
-	assertEqual(t, "evidence/APP-T-0001/artifacts/proof.txt", paths[0], "copied artifact path")
-	assertExists(t, filepath.Join(vault, "evidence", "APP-T-0001", "artifacts", "proof.txt"))
+	assertEqual(t, "evidence/APP-T-0001/artifacts/APP-T-0001-E-0001/proof.txt", paths[0], "copied artifact path")
+	assertExists(t, filepath.Join(vault, "evidence", "APP-T-0001", "artifacts", "APP-T-0001-E-0001", "proof.txt"))
 	assertEqual(t, "copied", stringField(data, "artifact_durability"), "artifact durability")
 
 	err = evidenceV7AddCmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "manual_smoke", "status": "accepted", "accepted-by": "human:sarav", "covers": "A1", "path": "/tmp/proof.txt", "summary": "Tmp artifact."})

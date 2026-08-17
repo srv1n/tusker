@@ -198,8 +198,8 @@ func buildDeliveryReviewBytes(vault, path string, raw []byte, inspector wavePref
 	if err != nil {
 		return deliveryReview{}, err
 	}
-	issues, frontiers := validateDeliveryPlan(vault, plan)
-	issues = uniqueStrings(append(preparationIssues, issues...))
+	validationIssues, frontiers := validateDeliveryPlan(vault, plan)
+	issues := uniqueStrings(append(preparationIssues, deliveryIssueMessages(validationIssues)...))
 	sort.Strings(issues)
 	r := deliveryReview{Schema: deliveryReviewSchema, ReadOnly: true, Title: plan.Title, What: []deliveryReviewOutcome{}, Proof: []deliveryReviewProof{}, Decisions: []deliveryReviewDecision{}, NonGoals: []string{}, Flow: deliveryReviewFlow{Frontiers: deliveryReviewFrontiers(plan, frontiers), ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Integration: "Reviewed work joins one serialized integration phase before landing.", SharedResources: []deliveryReviewResource{}, CrossScopeDependencies: []deliveryCrossScopeReviewDependency{}, Warnings: []string{}}, Start: deliveryReviewStart{PlanFingerprint: deliveryFingerprint(raw), Authorization: "not imported", Readiness: "review only", Blockers: []string{}, State: "held", StateLabel: "Held for review"}}
 	if plan.v2 != nil {
@@ -815,7 +815,7 @@ func readDeliveryReviewPlanBytes(vault string, raw []byte) (deliveryPlan, []stri
 			return deliveryPlan{}, nil, tuskerError(errorInvalidArg, "invalid V2 delivery plan YAML: "+err.Error())
 		}
 		plan, issues := deliveryV2Prepare(vault, v2)
-		return plan, issues, nil
+		return plan, deliveryIssueMessages(issues), nil
 	}
 	plan, err := readDeliveryPlanBytes(raw)
 	return plan, nil, err

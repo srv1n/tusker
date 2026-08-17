@@ -3079,10 +3079,13 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	defer artifactState.Close()
 	path := filepath.Join(artifactState.path, "artifacts", "promotion-gates", strings.ToLower(newRecordID())+".log")
 	writeFailure := func(detail string) promotionGateExecution {
-		if artifactErr := writeV7DurablePromotionArtifactAtRoot(artifactState, path, []byte(safePacketText(detail, 4096)+"\n")); artifactErr != nil {
-			detail = detail + ": durable artifact: " + artifactErr.Error()
+		artifactErr := writeV7DurablePromotionArtifactAtRoot(artifactState, path, []byte(safePacketText(detail, 4096)+"\n"))
+		failureErr := fmt.Errorf("%s", detail)
+		if artifactErr != nil {
+			failureErr = errors.Join(failureErr, fmt.Errorf("durable artifact: %w", artifactErr))
+			return promotionGateExecution{Err: failureErr}
 		}
-		return promotionGateExecution{ArtifactRef: path, ArtifactRefs: []string{path}, Err: fmt.Errorf("%s", detail)}
+		return promotionGateExecution{ArtifactRef: path, ArtifactRefs: []string{path}, Err: failureErr}
 	}
 	if err := validateV7PromotionGatePolicy(policy); err != nil {
 		return writeFailure(err.Error())
@@ -3096,6 +3099,9 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	if err != nil {
 		failure := writeFailure("promotion full-gate refusal: " + err.Error())
 		failure.ProviderOutcome = v7FullGateOutcomeProvider
+		if errorToIssue(err).Code == v7FullGateProviderUnsupportedPlatformCode {
+			failure.Err = errors.Join(err, failure.Err)
+		}
 		return failure
 	}
 	if external, ok := provider.(*v7ExternalFullGateProvider); ok && !artifactState.sameIdentity(external.state) {
@@ -3266,7 +3272,7 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 		if invocation.Outcome == v7FullGateOutcomeProvider || invocation.Outcome == v7FullGateOutcomeCanceled || invocation.Outcome == v7FullGateOutcomeTimedOut {
 			typedProviderOutcome = invocation.Outcome
 			typedProviderErr = runErr
-		} else if errors.Is(runErr, errV7FullGateProvider) {
+		} else if isV7FullGateProviderError(runErr) {
 			typedProviderOutcome = v7FullGateOutcomeProvider
 			typedProviderErr = runErr
 		}
@@ -3279,7 +3285,7 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 	if err == nil && ledgerErr != nil {
 		err = ledgerErr
 	}
-	if typedProviderOutcome == "" && errors.Is(err, errV7FullGateProvider) {
+	if typedProviderOutcome == "" && isV7FullGateProviderError(err) {
 		typedProviderOutcome = v7FullGateOutcomeProvider
 		typedProviderErr = err
 	}
