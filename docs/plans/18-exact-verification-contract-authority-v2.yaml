@@ -4,11 +4,11 @@ title: Exact verification contract authority
 epic: ORC
 spec_refs:
   - docs/specs/18-exact-verification-contract-authority.md
-context_fingerprint: sha256:d84d3dd9ec505d16e44061b017a254915f7130180f2509f90d4719b5af07113a
+context_fingerprint: sha256:7e9f33e8666c04cab81a09fd7e36e9496cdc6c8486297e5e9c24a227b68c0544
 required_capabilities: [strict_v2_proof_authority/v1]
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
-factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
 summary: >-
   Bootstrap strict V2 authority outside the legacy engine, then preserve exact
   imported acceptance and verification rows as immutable factory authority and

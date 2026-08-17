@@ -149,13 +149,13 @@ func TestTuskerSkillProgressiveDisclosure(t *testing.T) {
 	}
 	routeTable := parseSkillRouteTable(body)
 	expectedRoutes := map[string]string{
-		"Requirements, decomposition, delivery DAG, review, held import, Start":            "references/PLAN.md",
-		"Interactive implementation, dispatched worker/reviewer, proof, gates, human wait": "references/WORK.md",
-		"Resident daemon, automation, waves, integration, fleet repair, recovery":          "references/OPERATE.md",
-		"Existing-repo onboarding":            "references/REPO_ONBOARDING.md",
-		"Xcode generated build-state failure": "references/XCODE_BUILD_STATE.md",
-		"Documentation publication":           "references/DOCS_PUBLICATION.md",
-		"Obsidian/Bases projection":           "references/OBSIDIAN_BASES.md",
+		"Requirements, decomposition, or creating tracked work": "references/PLAN.md",
+		"Task status, proof, gates, review state, or closeout":  "references/WORK.md",
+		"Tracker diagnosis or stuck task state":                 "references/OPERATE.md",
+		"Existing-repo onboarding":                              "references/REPO_ONBOARDING.md",
+		"Xcode generated build-state failure":                   "references/XCODE_BUILD_STATE.md",
+		"Documentation publication":                             "references/DOCS_PUBLICATION.md",
+		"Obsidian/Bases projection":                             "references/OBSIDIAN_BASES.md",
 	}
 	if !reflect.DeepEqual(routeTable, expectedRoutes) {
 		t.Fatalf("router table = %#v, want %#v", routeTable, expectedRoutes)

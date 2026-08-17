@@ -307,7 +307,8 @@ func statusV7Cmd(args Args) error {
 		}
 		return tuskerError(errorInvalidField, "invalid V7 task status: "+nextStatus)
 	}
-	if nextStatus == "done" {
+	directDone := nextStatus == "done"
+	if directDone && tuskerTier(vaultPath) >= 2 {
 		return tuskerError(errorInvalidTransition, "status cannot set done directly; use tusker close so close policy, gates, evidence, and acceptance metadata are enforced")
 	}
 	if nextStatus == "cancelled" {
@@ -340,16 +341,23 @@ func statusV7Cmd(args Args) error {
 		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	data["status"] = nextStatus
-	data["updated_at"] = now
-	data["updated_by"] = actor
+	if directDone {
+		applyV7TaskCloseProjection(data, actor, now, nil)
+		delete(data, "discarded_by")
+		delete(data, "discarded_at")
+		delete(data, "discard_reason")
+	} else {
+		data["status"] = nextStatus
+		data["updated_at"] = now
+		data["updated_by"] = actor
+	}
 	if nextStatus != "done" {
 		delete(data, "accepted_by")
 		delete(data, "accepted_at")
 		delete(data, "closed_at")
 		delete(data, "close_authority")
 	}
-	if nextStatus != "cancelled" {
+	if !directDone {
 		delete(data, "discarded_by")
 		delete(data, "discarded_at")
 		delete(data, "discard_reason")

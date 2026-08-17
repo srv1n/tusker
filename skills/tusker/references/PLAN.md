@@ -1,78 +1,36 @@
 # Plan
 
-Use this guide for requirements, decomposition, delivery review, held import,
-and fingerprint-bound Start.
+Use this guide to turn a request into the smallest useful Tusker record.
 
 ## Intake
 
-Ask only for product facts: desired outcomes, observable acceptance, important
-tests and failure cases, constraints, priorities, non-goals, and genuine
-unresolved decisions. Tusker and the agent own IDs, dependency syntax, waves,
-frontiers, runners, workspaces, proof modes, retries, review, and integration.
+Capture the desired outcome, observable acceptance, important failure cases,
+constraints, non-goals, and genuinely unresolved decisions. Do not turn every
+conversation into a task. One bounded outcome is one task; use an epic only
+when several real tasks share a product outcome.
 
-One genuinely bounded implementation outcome may use a direct task. Multiple
-independently provable outcomes, parallel lanes, or unattended delivery require
-a versioned `tusker.delivery-plan/v2` DAG with a stable semantic scope. Use
-source keys; Tusker allocates durable epic, task, gate, wave, revision, and
-event IDs at import.
-
-An epic groups a product outcome; an epic is never executable authority. A
-wave is separate, fingerprint-bound authorization over exact tasks, gates,
-dependencies, context, and policy. A lone task may be a wave of one.
-
-## Build the review
+## Create records through the CLI
 
 ```bash
-tusker delivery context --spec <SPEC> --scope <STABLE-SCOPE> --json
-tusker delivery doctor --plan <PLAN.yaml> --json
-tusker delivery review --plan <PLAN.yaml> --json
-tusker delivery import --plan <PLAN.yaml> --dry-run
-tusker delivery import --plan <PLAN.yaml>
+tusker new epic --vault ./.tusker --acronym APP --title "App foundation"
+tusker new task --vault ./.tusker --epic APP --title "Implement auth" \
+  --status backlog --priority p2 --size m --risk medium
+tusker new gate --vault ./.tusker --blocks APP-T-0001 --kind auth \
+  --owner human:<name> --action "Provision credentials." \
+  --verification "Provider readiness check passes."
 ```
 
-Context and doctor bound the current product/spec/canon inputs. Doctor must
-pass before import. Review is a read-only product projection; it reports
-`planValid`, `importReady`, and `startReady` independently.
+Use dependencies only when one task truly cannot be accepted before another.
+Use gates only for missing human authority, credentials, unresolved product
+intent, or contractually subjective acceptance. Risk alone is not a gate.
 
-Review and held import do not require project automation, daemon liveness,
-runner availability, a clean live integration lane, or an armed wave. Import
-validates contract, context, stable scope, held lineage, and atomic write
-safety, then creates or reconciles held disarmed records. Invalid plans or
-unsafe import material fail with contract/import blockers. Start-only blockers
-remain visible but do not make a valid review fail.
+## Shape the contract
 
-Never hand-create an arbitrary multi-task series, caller-assign final Tusker
-IDs, or hand-edit imported lifecycle fields. Dependencies unlock frontiers;
-handwritten progress lists do not.
+Each task needs a concrete outcome and acceptance that can be observed. Add
+the smallest verification that proves each acceptance item. Unknown commands,
+ownership, credentials, and product choices remain open questions or gates;
+do not fabricate proof or placeholders.
 
-## Start unattended delivery
-
-Start is the only delivery transaction that checks unattended authority:
-
-```bash
-tusker delivery start --plan <PLAN.yaml> \
-  --confirm <PLAN-FINGERPRINT> \
-  --by human:<name>
-```
-
-Run it only after the human explicitly chooses that exact action. Start
-revalidates plan and context fingerprints, imported lineage, project opt-in,
-runner and approval policy, daemon liveness, workspace isolation, integration
-cleanliness, and exact authorization material. It atomically reconciles held
-records and arms only the exact resulting wave. It does not create missing
-infrastructure or wider authority.
-
-New automation remains opt-in and uses
-`automation.dispatch_scope: armed_waves`. A stale, paused, or disarmed wave
-cannot produce new daemon claims.
-
-## Plan proof
-
-Map each task acceptance item to the smallest deterministic check and explicit
-artifact. Give shared generated files, migrations, lockfiles, and integration
-ownership to one lane. Use dependencies for order and a serialized integration
-task for convergence. Run `tusker delivery doctor` again after material plan
-changes; a changed fingerprint requires a new review and exact confirmation.
-
-Planning never enables automation, starts or installs a daemon, dispatches a
-model, calls a provider, reads secrets, moves refs, lands, releases, or spends.
+Use `tusker show <TASK-ID> --capsule` and `--acceptance` to verify the result.
+If the CLI cannot express the requested record, report the exact mismatch and
+stop changing tracker state. Do not hand-edit protected fields.

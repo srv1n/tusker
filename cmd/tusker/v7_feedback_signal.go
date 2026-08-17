@@ -218,15 +218,16 @@ func writeFeedbackSignal(vaultPath string, signal feedbackSignal) (string, error
 }
 
 func feedbackSignalPath(vaultPath string, signal feedbackSignal) string {
+	return filepath.Join(vaultPath, filepath.FromSlash(feedbackSignalRelativePath(signal)))
+}
+
+// feedbackSignalRelativePath must stay the vault-relative form of the real write
+// path, otherwise validation issues and source refs point at files that never exist.
+func feedbackSignalRelativePath(signal feedbackSignal) string {
 	signal = completeFeedbackSignal(signal)
 	hash := feedbackSignalHash(signal.DedupeKey)[:10]
 	base := feedbackSlug(signal.Category+"-"+signal.DedupeKey, "signal")
-	return filepath.Join(vaultPath, "feedback", "signals", signal.Date, base+"-"+hash+".json")
-}
-
-func feedbackSignalRelativePath(signal feedbackSignal) string {
-	signal = completeFeedbackSignal(signal)
-	return filepath.ToSlash(filepath.Join("feedback", "signals", signal.Date, signal.ID+".json"))
+	return filepath.ToSlash(filepath.Join("feedback", "signals", signal.Date, base+"-"+hash+".json"))
 }
 
 func deriveFeedbackSignals(input feedbackSignalReducerInput) []feedbackSignal {

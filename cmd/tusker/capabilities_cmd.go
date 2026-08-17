@@ -233,7 +233,7 @@ func installedCapabilityCommands() []capabilityCommand {
 		{Command: "evidence"}, {Command: "escalate", Subcommands: []string{"ack"}}, {Command: "factory", Subcommands: []string{"operations"}},
 		{Command: "feedback", Subcommands: []string{"add", "digest", "ingest", "promote", "review", "signals"}}, {Command: "finish"},
 		{Command: "gate"}, {Command: "gate-ledger", Subcommands: []string{"check", "record"}}, {Command: "gate-run"}, {Command: "gc", Flags: []string{"--json", "--ttl", "--vault", "--yes"}},
-		{Command: "handoff"}, {Command: "heartbeat"}, {Command: "help"}, {Command: "hook", Subcommands: []string{"install"}}, {Command: "improve", Subcommands: []string{"scan"}},
+		{Command: "handoff"}, {Command: "heartbeat"}, {Command: "help"}, {Command: "improve", Subcommands: []string{"scan"}},
 		{Command: "init"}, {Command: "install"}, {Command: "land"}, {Command: "list"}, {Command: "logbook"},
 		{Command: "knowledge", Subcommands: []string{"new"}},
 		{Command: "migrate", Subcommands: []string{"close-policy", "evidence-policy", "vault-root"}},

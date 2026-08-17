@@ -1,267 +1,329 @@
 ---
 title: Orchestration
 subject: orchestration
-keywords: [orchestration, daemon, runners, worktree, dispatch]
+keywords: [daemon, automation, dispatch, scheduler, departure, launchd, disk-pressure, crash-loop, frontier]
 part_of: overview
 status: canonical
-read_when:
-  - You need to understand how Tusker turns a ready task into merged work.
-  - You are a fresh agent session and must know what a daemon does vs what you may do.
-  - You are debugging why a task will not dispatch, a claim was refused, or a run got stuck.
-skip_when:
-  - You only need task/proof authoring rules (see tasks-and-proof.md).
-  - You only need gate profiles and verdicts (see gates.md).
+read_when: "You need what the resident daemon does each tick, why a task will not dispatch, how fair scheduling and capacity caps arbitrate, or how scheduled promotion (departure) runs, holds, drifts, and recovers."
+skip_when: "You only need runner/harness behavior ([[runners-and-acp]]), wave arming and delivery planning ([[delivery-and-waves]]), or the landing/completion transaction ([[landing-and-completion]])."
+sources:
+  - cmd/tusker/daemon.go
+  - cmd/tusker/daemon_scheduler.go
+  - cmd/tusker/daemon_service.go
+  - cmd/tusker/daemon_launchd.go
+  - cmd/tusker/daemon_guard.go
+  - cmd/tusker/daemon_control.go
+  - cmd/tusker/automation_commands.go
+  - cmd/tusker/dispatch_scope.go
+  - cmd/tusker/adaptive_reconcile.go
+  - cmd/tusker/disk_pressure.go
+  - cmd/tusker/budget.go
+  - cmd/tusker/frontier_index.go
+  - cmd/tusker/departure_scheduler.go
+  - cmd/tusker/departure_execution.go
+  - cmd/tusker/departure_planner.go
+  - cmd/tusker/departure_store.go
+  - cmd/tusker/scheduled_promotion.go
 ---
 
 # Orchestration
 
-This doc describes how Tusker's orchestration works **today**, drawn from `cmd/tusker/`: the daemon poll loop, how work is selected and claimed, workspaces, lanes, run end-states, retries, merge windows, and trace/replay. For the wider factory model see [../../.tusker/specs/software-factory.md](../../.tusker/specs/software-factory.md).
+The resident daemon is the only process that dispatches local runners; everything else —
+planning, explaining, queueing — is read-only. Runner internals: [[runners-and-acp]]. Wave
+arming and delivery planning: [[delivery-and-waves]]. Landing/promotion transaction:
+[[landing-and-completion]]. Observed provider children: [[execution-observability-system]].
+Execution visibility is not dispatch authority: an execution record makes work observable, but
+only the `runs` lease decides who may act.
 
-Tusker separates that *deciding* what should run (read-only, available to anyone) from *doing* it — dispatching a local runner, which happens only inside the operator-started resident daemon.
+## Who may dispatch
 
-## Execution visibility is not dispatch authority
+Two process-level refusals guard dispatch, both evaluated before any task-local blocker:
 
-Each wave authorization generation and direct invocation has a durable
-execution root. Daemon attempts are independently leased managed children;
-provider-native children reported by Codex or Claude are observable but remain
-provider-owned. Provider observations cannot claim or bind a task, and an
-interactive worker cannot turn an observed child into a nested Tusker runner.
-
-Direct sessions may register and attach outside the daemon. They remain in the
-unbound inbox until an audited, conflict-checked bind to a task's canonical
-wave. Binding starts a new authority generation, so earlier observation history
-cannot become proof or delivery authority. The graph, adapter limits, timeline,
-and operator recovery rules live in
-[execution-observability.md](execution-observability.md).
-
-## Readiness is dimensional
-
-Tusker does not use one aggregate “ready” bit across unrelated authority
-domains. Typed blockers retain a stable kind, affected IDs, provenance, and
-remedy in seven independent dimensions:
-
-| Dimension | Blocks |
-|---|---|
-| `contract` | Invalid plan/task/schema semantics |
-| `import` | Unsafe held-record reconciliation |
-| `interactive` | Direct ownership: task, dependency, gate, owner, revision, workspace |
-| `automation` | Unattended configuration and project opt-in |
-| `authorization` | Exact wave fingerprint authorization |
-| `runtime` | Daemon, runner, workspace, and integration health |
-| `integrations` | Only the optional workflow that uses that adapter |
-
-Delivery review may therefore be plan-valid and import-ready while Start is
-blocked. Held import remains inert. `work start` consults interactive readiness
-only. Unattended Start and daemon claims consume the stricter automation,
-authorization, and runtime facts.
-
-## Who may do what: daemon vs interactive session
-
-An interactive Claude Code / Codex session opened by the user **implements the work itself** and never starts a daemon or dispatches runners. This is a hard rule in the repo `CLAUDE.md`: "Never start `tusker daemon run`, invoke `tusker automation dispatch`, or launch nested workers from an interactive agent session." The code enforces it: every one-shot CLI entry point that could dispatch is handed a refusal reason.
-
-| Operation | Resident daemon (`tusker daemon run`) | Interactive / one-shot CLI |
+| Guard | Code | Trips when |
 | --- | --- | --- |
-| Poll loop, control server, serve server, watchdog | Yes (`daemon.go:103-147`) | No — `--once` skips all of them |
-| Dispatch a local runner | Yes | **Refused** via `oneShotDispatchRefusal` (`daemon.go:1501`) |
-| `tusker automation plan` (read-only decision) | n/a | Yes |
-| `tusker automation dispatch` | Yes (the daemon) | Refused |
-| `work start` / submit / fail / release | No | Yes; no automation, daemon, or armed-wave prerequisite |
-| Claim / heartbeat / submit a lower-level run | Yes | Yes when the selected protocol requires it |
-| Retry a failed run, inspect streams, replay a trace | Yes | Yes |
+| Agent-session | `rejectAgentSpawn` (`cmd/tusker/execution_mode.go`) | `TUSKER_ATTEMPT_ID`, `CODEX_SHELL`, `CODEX_THREAD_ID`, `CLAUDECODE`, or `CLAUDE_CODE_ENTRYPOINT` set. Applied to `daemon run`, `daemon service install/start`, `automation dispatch`, `delivery rollout repair`, `execution launch`. |
+| One-shot | `oneShotDispatchRefusal` (`cmd/tusker/daemon.go:1799`) | Injected into `daemon run --once` (`:130`), `tusker refresh` (`:7222`), `automation external-loop --dispatch` (`automation_external_loop.go:98`). |
 
-`oneShotDispatchRefusal` returns *"&lt;command&gt; cannot dispatch local runners from a one-shot CLI process; start the resident daemon…"* — injected for `daemon run --once`, `refresh`, `automation dispatch`, and `advance-external --dispatch`.
+`tusker automation dispatch` **never dispatches**: `automationDispatchCmd`
+(`automation_commands.go:288`) validates the task exists, then returns the one-shot refusal
+unconditionally — there is no success path.
 
-## The daemon poll loop
+| Command | Effect |
+| --- | --- |
+| `automation status` | Fleet summary: daemon liveness/PID/uptime, launchd mode, last restart cause, run counts, crash-loop + invariant circuits, disk pressure, per-project summaries, armed waves (`:176`). |
+| `automation queue` | Non-terminal tasks split into `eligible` / `blocked` with blockers (`:226`, `:453`). |
+| `automation explain <task>` | Per-task blockers, selected runner/profile, workspace, approvals, fanout (`:517`). |
+| `automation plan <task>` | Canonical decision — empty `plan.Blockers` ⇒ dispatchable (`:264`). |
+| `automation dispatch <task>` | Always refused. `collect-external` / `external-loop` / `advance-external`: see below. |
 
-`(d *Daemon) Run(ctx, once)` (`daemon.go:95`) is the entry point.
+All accept `--project <id>` / `--repo <path>` / `--vault <path>`; a registered project loads
+even when the registry has it disabled, because registry state is a polling-cost control, not a
+visibility gate (`:424`).
 
-- `--once`: sets the one-shot dispatch refusal, skips control/serve/watchdog, runs exactly one `PollOnce`, and returns (`daemon.go:96-134`). Useful for reconcile-only sweeps; it cannot dispatch runners.
-- **Resident (**`!once`**)**: starts a control server accepting `interrupt`, `stop`, `reconcile_project`, `reconcile_registry`; starts the serve server and a watchdog; does an initial poll; then loops on a wake channel, an adaptive poll timer (`TUSKER_POLL_INTERVAL_MS`), and an attention ticker (`daemon.go:104-218`).
+## Daemon lifecycle
 
-One cycle is `pollOnce` (`daemon.go:599`). It caches process identity, loads projects and runtime runs, counts dispatch capacity, sorts candidate tasks, and then per task: reconciles execute runs against the plan, evaluates dispatch blockers, dispatches execute / review / integrator runs, and finally records `daemon_last_poll_at`.
+`daemonRunCmd` (`daemon.go:6569`) → `acquireDaemonGuard` → `Daemon.Run` (`:128`).
+**Single instance**: non-blocking `flock` on `<state>/daemon.lock`, plus `<state>/daemon.pid`
+holding pid, started_at, state_root, serve enabled/addr, managed_by_launchd
+(`daemon_guard.go:60`); contention returns `daemonAlreadyRunningError`. **State root**:
+`$TUSKER_STATE_ROOT`, else `~/Library/Application Support/tusker`, else `$TMPDIR/tusker`
+(`:87`). **`--once`** sets the one-shot refusal, disables departure execution, skips control
+server / serve / watchdog, runs exactly one `PollOnce`, returns (`:129-172`). **Resident**:
+control server → serve (if configured) → watchdog → initial full poll → loop.
 
-## Picking work: plan (read-only) vs dispatch
+| Wake source | Behavior |
+| --- | --- |
+| `notifyWake` channel | `"*"` polls everything; a project ID stamps `cli_mutation` activity and polls that project (`:207-227`). |
+| Poll timer | `adaptiveProjectsDue`, then any `departureProjectsDue` not already covered (`:228-250`). |
+| Attention ticker (1s) | Serve only; polls browser-watched projects at most every 20s (`:268`). |
 
-`tusker automation plan <task>` builds a **read-only** decision and never dispatches. It emits a `decision` of `"dispatch"` or `"do_not_dispatch"` plus the list of `blockers` (`automation_commands.go:722`). `tusker automation plan` being read-only "does not authorize dispatch" (repo `CLAUDE.md`).
+Next wait is `min(adaptive wait, next departure window)` (`nextDepartureWait`), floored at 100ms
+by `resetTimer` (`adaptive_reconcile.go:281`). **Control socket**: `<state>/daemon.sock`, mode 0600, ≤64KB/request, ≤32 concurrent; startup
+refuses a symlink, a non-socket path, or a socket owned by another UID (`daemon_control.go:75`).
+Commands: `interrupt`, `stop`, `reconcile_project` (optional change hints), `reconcile_registry`.
+**Watchdog**: ticks 5s; `pollOnce` writes `daemon_watchdog_beat_at`; beat age >
+`3 × adaptiveWatchdogCadence` (smallest live per-project cadence, default 1m) records
+`watchdog_stale` and calls `os.Exit(70)` so launchd restarts (`:315-379`).
 
-The daemon's dispatch path re-derives eligibility and, when blocked, stamps `current.LastError = "dispatch blocked: <reason>"` and skips the task. Blocker sources include:
+### launchd service (macOS only)
 
-| Blocker family | Where | Example reason string |
+`tusker daemon service install|start|stop|status|uninstall` (`daemon_service.go:409`). Label
+`com.tusker.daemon`; plist in `~/Library/LaunchAgents`; stdout **and** stderr both go to
+`<state>/logs/daemon.log`; the executable is copied into `<state>/bin`.
+
+Install/start block when an enabled project sits under a macOS-protected folder;
+`--allow-protected-projects` is the explicit override after Full Disk Access. Both wait ≤5s for
+a poll newer than the start time; `status` reports healthy when the last poll is within 120s
+(`daemonHeartbeatDeadThreshold`). Logs rotate at install/start under an flock: 5 files / 7 days
+/ 10MB (`:93`, `:170`). Non-darwin errors out and points at `tusker daemon run` under your own
+service manager.
+
+### Crash-loop circuit
+
+Only launchd-managed runs participate. `beginManagedDaemonStart` (`daemon_launchd.go:186`)
+consumes pending abnormal-exit causes in one transaction: `stale_pid` (pid file survived —
+inferred SIGKILL), `run_error`, `watchdog_stale`, `clean_start`. More than **5** abnormal starts
+within **600s** opens the circuit; while open `crashLoopDispatchBlocker` returns `daemon circuit
+open: <summary>` for every candidate. `tusker daemon resume` closes it and the invariant circuit.
+
+### Operator commands
+
+| Command | Effect |
+| --- | --- |
+| `daemon status [--json]` | Paths, liveness, per-project health and dispatch-scope projection, active/parked counts, launchd mode, crash-loop / invariant / budget circuits, disk pressure (`:6641`). |
+| `daemon limits [--max-active-runs n] [--disk-pressure-enabled\|-min-free-bytes\|-min-free-percent]` | Reads/writes global `runtime.max_active_runs` (default 2) and the runtime-store disk-pressure config (`:6817`). |
+| `daemon resume` / `daemon stop [--drain]` | Closes invariant + crash-loop circuits; `stop` over the control socket waits 5s for the pid file to clear, `--drain` then waits bounded for detached wrappers (`:6893`). |
+
+## One poll tick
+
+`pollOnce(ctx, projectID)` (`daemon.go:836`); empty `projectID` means every enabled project.
+
+1. Cache process identity; feed the watchdog beat. Load projects — a targeted poll with a
+   usable frontier hint applies the incremental index instead of re-scanning, otherwise
+   frontmatter-only notes. Full task bodies load only for projects with non-terminal tasks or
+   external-loop apply inputs (`:1562`).
+2. Count global dispatch capacity; resolve the global limit.
+3. Per project: refresh budget circuit, `scheduleBatchGateIfDue`, `scheduleDepartureIfDue`,
+   `startPendingDepartureExecutions`.
+4. Per existing run: normalize dead `retry_queued` rows, park at attempt caps, reconcile
+   against plan and tracker, auto-advance the external loop.
+5. Per active-state task: resolve runner profile, reset on `work_revision` change, run the
+   blocker ladder, append a `daemonDispatchCandidate`. Per review-state task: consume typed
+   results, park at reviewer cycle cap, same ladder for the `review` lane.
+6. `reconcileReviewCompletion`, delete runs for vanished records, `TouchProjectPoll`, then
+   `dispatchFairCandidates` across every project's candidates. Write `daemon_last_poll_at`,
+   refresh the invariant sentinel and the Serve snapshot.
+
+A `CAS_CONFLICT` from a poll is not an error — it reschedules and returns (`:303`).
+
+## Blocker ladder
+
+Evaluated per candidate in `pollOnce`, in order; each stamps `run.LastError` and skips.
+
+| # | Check | Source | Reason shape |
+| --- | --- | --- | --- |
+| 1 | Process dispatch refusal | `d.dispatchRefusalReason` | errors the whole poll, not a per-task skip |
+| 2 | Dispatch scope / armed wave | `automationDispatchScopeBlocker` (`dispatch_scope.go:70`) | `dispatch blocked: dispatch scope armed_waves requires task membership in a currently armed wave` |
+| 3 | Readiness / dependencies | `daemonDispatchBlockedReason` | `dispatch blocked: <reason>` |
+| 4 | Crash-loop circuit | `crashLoopDispatchBlocker` | `daemon circuit open: …` |
+| 5 | Budget | `budgetDispatchBlocker` (`budget.go:276`) | **inert — always returns no blocker** |
+| 6 | Invariant sentinel | `invariantDispatchBlocker` | circuit summary |
+| 7 | Per-state cap | `stateDispatchCapReachedForRun` | `dispatch blocked: state %q concurrency cap reached` |
+| 8 | Full automation plan | `executePlanBlockedReason` (`:2056`) | `automation plan do_not_dispatch: <blockers>` |
+
+Review-lane candidates prefix scope failures with `review dispatch blocked: ` and add
+`reviewDispatchAllowed`, the reviewer cycle cap (`review parked: automated review cycle cap
+reached (n/max)`), and `armedWaveReviewDependencyBlocker`.
+
+### Dispatch scope
+
+`automation.dispatch_scope` resolved from the config layer stack (`dispatch_scope.go:42`).
+
+| Configured | Effective | Meaning |
 | --- | --- | --- |
-| Basic runnable | `commands_v7.go:3253` | `kind is not task`, `status is <x>`, `readiness is <x>`, `next_owner is <x>` |
-| Wave authorization | `commands_v7.go:3286-3316` | `<id> is not an authorized member of wave <w>`; `wave does not resolve: <w>` |
-| **Upstream hold** | `upstream_hold.go:79` | `held for upstream failure: <id> failed its build-and-test` |
-| **Cannot-verify (fail closed)** | `commands_v7.go:3326` | `cannot verify upstream health: <err>` |
-| Verification/proof gaps | `commands_v7.go` | `verification missing`, `proof_mode missing`, `proof_required missing` |
-| Critical risk | `daemon.go:1460` | `dispatch blocked: critical risk requires explicit human dispatch` |
-| Capacity caps | `daemon.go:952-1004` | `dispatch blocked: state %q concurrency cap reached` |
-| Crash-loop / budget / invariant | `daemon.go:958-990` | guard-specific reasons |
-| Runner declined | `daemon.go:2772` | `automation plan do_not_dispatch: <blockers>` |
+| `armed_waves` | `armed_waves` | Task must name a wave **and** that wave must authorize it. Also the fresh default for unconfigured, automation-disabled projects. |
+| `all_eligible` | `all_eligible` | No scope constraint beyond ordinary eligibility. |
+| absent + automation enabled | `all_eligible` + warning | Legacy hybrid: waveless tasks pass, wave-bound tasks still need their wave armed. `daemon status` prints the warning and repair line. Anything else is a config error. |
 
-**Fail-closed is the design point.** If the dependency index cannot load, the code appends `cannot verify upstream health: <err>` and blocks — the comment reads *"Fail closed: if we cannot load the index we cannot rule out an upstream build failure, so block dispatch."* Wave-auth verification is the same: a load error yields `wave authorization cannot be verified: <err>` rather than an optimistic pass.
+Scope admits *fresh* work only: a run in `retry_queued`/`claimed`/`running`, or with
+`AttemptCount > 0` and a lane set, is a continuation and bypasses scope (`:94`).
 
-## Fleet diagnosis does not widen authority
+## Fair dispatch scheduler
 
-`delivery rollout doctor` preserves independent core, interactive, automation,
-authorization, runtime, and optional-integration findings. A missing vault or
-incompatible core schema may quarantine that project. Optional provider drift
-disables only the dependent adapter; it cannot quarantine planning or
-interactive work.
+`dispatchFairCandidates` (`daemon_scheduler.go:432`) arbitrates globally contended capacity
+after every project-local check passed; all projects' candidates compete in one pool.
 
-`delivery rollout repair` defaults to `--scope core`. The other scopes are
-`automation`, `service`, and `integrations`. A repair scope changes only its
-allowlist and is idempotent. In particular, service repair may repair service
-definition files but never load or start the service; no repair enables a
-project, arms a wave, changes credentials, invokes a provider, moves a ref,
-releases work, or grants spending authority.
+**Order** (`fairDispatchLess`, `:95`): `priority` rank → least-recent project turn from the
+durable ledger → project ID → item ID → lane. The ledger (`fair_dispatch_ledger_v1` setting) is
+an ordering hint only; a corrupt value silently falls back to stable IDs. **Gates**, each
+persisting `dispatch waiting: <reason>` and moving on:
 
-## Claims and leases
-
-Dispatch claims a lease before any runner touches files (`run_ownership.go`).
-
-- **Owned-path conflict is checked before the lease CAS** (`ownedPathConflict`, `run_ownership.go:69`). A lease protects a task row, not the files two tasks intend to edit. Overlap is prefix-aware (a directory claim conflicts with a file beneath it). A refusal carries `OWNED_PATH_CONFLICT` with holder, path, lease age, and liveness.
-- **Liveness beats lease age** (`holderLiveness`, `run_ownership.go:51`). An aged-out lease whose process is provably alive (`lease_expired_process_alive`) still blocks — it is still editing files. Only a holder that is *both* aged out *and* unprovable is `dead`, and only then may `reclaimDeadOwnedPathHolders`take over.
-- Claims are serialized cross-process by an flock at `<state>/locks/owned-path-claims.lock`. The lease CAS (`ClaimRunLease`) checks expected state, owner, generation, work revision, and per-project concurrency.
-
-### Hand-run origin stamping
-
-Work registers in Tusker no matter who drives it — a daemon dispatch or a human in a live session. A **hand-run** claim is any claim made without `TUSKER_ATTEMPT_ID` in the environment (`claimIsHandRun`, `hand_run_marker.go:40`).
-
-- The daemon claim path stamps `hand_run=false` and clears any stale marker (`claimExistingWithAuthorization`, `run_ownership.go:295`).
-- The authoritative per-run origin is the `HandRun` stamp on the `RunStatus` at claim time. A task-keyed marker file (`<taskID>.hand_run`) is restamped on **every** claim and exists only for legacy runs that predate the stamp and for lease-level introspection — board/web rows read the per-run stamp, not the marker, because the marker only reflects the latest claim (`runHandRunOrigin`, `hand_run_marker.go:88`).
-
-## Workspaces
-
-`FSWorkspaceManager` (`workspace_manager.go`) prepares a work copy per task. Strategies: `shared`/`in_place` (the repo itself, must be clean outside `.tusker`), `worktree`, `clone`, `copy`.
-
-- **Per-task worktree**: for `worktree`, `Prepare` runs `git worktree add` on a branch keyed by `<recordID>__<sanitized-branch>` under the per-project workspace root (`materializeWorkspace`, `:504`).
-- **Live-worktree cap with stale-orphan pruning under flock**: when `MaxLiveWorktrees > 0`, `Prepare` takes an flock on `<root>/.worktree-cap.lock`, then `countLiveWorktrees` counts child dirs holding `.tusker/workspace.json`. A copy whose owning PID is dead (or, for legacy PID-less copies, older than the 24h `staleWorkspaceThreshold`) is **pruned, not counted**(`workspace_manager.go:161-208`). Opening past the cap is refused with `gateRefusalWorktreeCap` before any git worktree is created, so accumulated orphans can never wedge dispatch.
-- **Cleanup** (`cleanupWorkspacePath`, `:466`) detaches the git worktree (`git worktree remove --force`) then removes the directory — the single removal path shared by explicit cleanup and orphan pruning.
-
-## Lanes
-
-Lanes are the kinds of run the daemon dispatches (`daemon.go:44-47`).
-
-| Lane / work-kind | Constant | What it is |
+| Gate | Limit source | Reason |
 | --- | --- | --- |
-| Implementation | `runLaneExecute = "execute"` | The default lane; a runner implements the task. |
-| Review | `runLaneReview = "review"` | An independent reviewer run, gated by the workflow's `Reviewer` policy. |
-| Integrator | `runLaneIntegrator = "integrator"` | Selected when the task's `work_kind == "integrator"` (`daemon.go:1032`); integrator tasks also inherit the workflow's shared namespaces as owned paths. |
+| Global capacity | `runtime.max_active_runs` (default 2) | `global capacity reached (n/m); fair order is priority X then least-recent project turn` — drains the whole remaining list and breaks |
+| Post-reactor refresh | `refreshFairExecuteCandidate` (`:367`) | reloads canonical notes and reruns scope + eligibility + full plan for execute/integrator lanes; `post-reactor …` |
+| Project capacity | `runtime.max_active_runs_per_project` (default 1) | `project capacity reached (n/m)` |
+| Runner capacity | `agents.max_concurrent_agents` | `runner X capacity reached (n/m)` |
+| State capacity | `agents.max_concurrent_agents_by_state[status]` | `state %q concurrency cap reached (n/m)` |
+| Disk pressure | below | `dispatch blocked: disk_pressure: …` |
+| Scope / wave | `scopeDispatchBlocker` | `dispatch scope or wave constraint: …` |
+| Owned-path conflict | `ownedPathConflict` | `owned path conflict: <holder> holds <path> for task <id> (candidate <path>; liveness <state>)` |
+| Named resources | task `resource_refs` + `concurrency_group` | `named resource %q is held by project X owner Y`; loser registers as a waiter |
 
-**Review lane.** When the workflow enables a reviewer, the daemon spawns an
-independent read-only review run, capped by `reviewDispatchAllowed`. The run
-must submit one attempt-bound typed result. Process exit or prose is not
-acceptance; exit without a valid result follows bounded retry and then parks.
-The reviewer never edits implementation, changes task/gate state, merges,
-lands, closes, or moves refs.
+Capacity counts only `claimed`/`running` runs (`runConsumesDispatchCapacity`); queued,
+released, interrupted, and parked rows wait without consuming a slot — counting them live-locks
+dispatch once the queue exceeds the cap (`daemon.go:1599`). Named-resource leases are reserved
+before the claim and released if the claim does not retain capacity; each tick reconciles
+orphaned `task-dispatch:` leases by releasing those whose run is no longer live, renewing the
+rest, and reacquiring for the exact owner after a TTL lapse (`:180`).
 
-**Typed result reaction.** `changes_requested` is converted by the deterministic
-completion reactor into an idempotent bounded finding handback through
-`returnReviewerFindingToImplementer`; `blocked` parks a typed
-machine/infrastructure/human cause; `pass` stages the exact reviewed SHA,
-materializes proof/done in the staged tracker, runs the merged-state gate, and
-CAS-updates only the integration ref. Default-branch promotion is a separate
-policy.
+## Adaptive reconcile
 
-## Run end-states
+Per-project cadence, in memory only (`adaptive_reconcile.go`):
 
-Every successful submit **must** carry a captured end-state; a missing or incomplete one is the same defect (`finishWithEndState`, `run_ownership.go:379`). `captureRunEndState` reads the authoritative facts from the workspace (git branch/HEAD/dirty) rather than trusting the runner's self-report; a mismatch between reported and harness values is recorded as a `Discrepancy`.
-
-| Field | Required | Meaning |
+| Tier | Cadence | Condition |
 | --- | --- | --- |
-| `branch` | yes | Harness-observed branch (`missingRunEndStateFields`, `:498`) |
-| `head_sha` | yes | Harness-observed HEAD SHA |
-| `worktree_path` | yes | The work copy path |
-| `gate_verdicts` | yes (≥1) | Map of gate cover → verdict |
-| `dirty` | captured | Whether the tree was dirty at submit |
-| `reported_*` / `discrepancies` | optional/derived | Runner self-report vs harness, and mismatches |
+| `live` | 5s | any run needs hot reconcile |
+| `hot` | `nextPollInterval()` — default 60s, `TUSKER_POLL_INTERVAL_MS`, floor 5s | idle < 1m |
+| `warm` / `cool` / `cold` | 5m / 10m / 30m | idle < 5m / < 10m / otherwise |
 
-A successful `submit` also requires non-empty deliverable and acceptance-mapped verification summaries, then normalizes the task to `review`(`runsLifecycleCmd`, `run_ownership.go:636`). The Streams board renders each landed run's end-state (`streams.go`).
+Hot-reconcile runs (`runtimeRunNeedsHotReconcile`, `:58`): non-terminal
+`claimed`/`running`/`retry_queued`/`interrupted`; a clean `unclaimed` row with no `LastError`;
+a review-lane row waiting for review; a released review row whose typed result awaits the
+completion reactor. Any CLI mutation notification stamps the project `hot`.
 
-## Retries
+## Frontier index
 
-`retryFailedRun` (`retry_failed_task.go:131`) retries **one** failed run without disturbing neighbours. It is idempotent and scoped to the single record.
+In-memory-only projection per project (`frontier_index.go`); canonical Markdown and the runtime
+store stay authoritative, so discard and rebuild on any doubt. `rebuild(notes)` builds records, forward/reverse dependency edges, wave membership, and per-task
+eligibility. `apply(changed)` replaces only changed records and recomputes the affected closure
+— reverse-dependency closure, the wave's members, and (for evidence, attempt, closeout records)
+the closure of the task they point at (`:162`). `touch(taskIDs)` recomputes when runtime state
+changed but no Markdown did. `eligibility(id)` (`:256`) requires status `ready` or `rework`; a
+named wave `armed` **and** listing the task as a member; no open blocking gate targeting it;
+every forward dependency edge satisfied. `frontierHints` from `reconcile_project` control
+requests let a targeted poll skip the scan when every hinted ID is already known.
 
-- **Sees through a stale lease.** A `Claimed`/`Running` lease counts as a live attempt only if the lease is unexpired **or** the process is verifiably ours and alive (`retryHasLiveAttempt`, `:79`). A crashed worker's expired lease is reapable, so the retry proceeds. Identity verification refuses the bare PGID fallback when a recorded PID mismatches — "dead is dead" (`:48`).
-- **Backoff expedite.** A run already parked in `RetryQueued` with a future `NextRetryAt` is pulled forward to now on operator demand, keeping the attempt counters (`expediteQueuedRetry`, `:211`).
-- **Honest no-ops.** `AlreadyLive` names the in-flight attempt; `AlreadyQueued`reports a parked run with no live attempt. Two concurrent retries converge: the CAS loser re-reads and reports the winner's outcome (`retryConcurrentReadback`, `:239`).
-- **Audit trail.** Every retry writes a `SupervisorDecisionRedrive` decision with the prior attempt count, lease state, and outcome (`recordRetryAudit`, `:265`).
+## Disk pressure
 
-## No-stacking rule and merge windows
+Measured before every dispatch selection (`disk_pressure.go`); enabled by default at
+`min_free_bytes = 2 GiB`, `min_free_percent = 1`. Effective threshold per filesystem is
+`max(min_free_bytes, min_free_percent% of total)`.
 
-The batch gate (`batch_gate.go`) runs the shared build-and-test and is the project's merge-window mechanism. It fires at most once per window and never lets two gates stack.
+| State | Condition | Effect |
+| --- | --- | --- |
+| `ok` / `warning` | available ≥ / < 2 × effective threshold | dispatch continues; `warning` is flagged |
+| `paused` | available < effective threshold | `DispatchPaused` |
+| `error` | stat failed | `DispatchPaused` (fail closed) |
 
-- **Clock windows.** `orchestration.batch_gate.windows` are daily `HH:MM` local wall-clock times, validated and de-duplicated (`parseMergeWindows`, `:30`). `scheduleBatchGateIfDue` fires the window at most once: a run started at or after the current window boundary already consumed it (`:142`).
-- **No stacking / stuck-run grace.** A run still `running` from before the window suppresses a new spawn — but only up to `mergeWindowRunningGrace = 24h`(`:17`, `:150`), so a permanently stuck run cannot wedge the schedule forever. The period-based path (`PeriodHours`) has the equivalent `2*period` guard.
-- **Green releases holds; red quarantines.** On green, `clearBuildFailedMarkers`drops only the holds whose recorded command actually re-ran green. On red, `stampFailedCommandOnActiveWaves` stamps the failing command onto every wave with an in-flight member, so their not-yet-landed dependents hold via `v7HeldByFailedUpstream` (the upstream-hold blocker above). A red gate also spawns bounded repair tasks (`createBatchGateRepairTask`, up to `MaxRepairs`, default 3). See [gates.md](gates.md) for gate profiles and verdicts.
+Paths measured: state root and the selected workspace; an empty workspace path is skipped so the
+early guard cannot leave a stale observation on the process CWD. Status is merged and CAS-written
+(≤64 attempts); observations older than 5m are dropped and status degrades to `unknown` rather
+than staying stuck paused. A paused status that freshly remeasures clean reports `recovered`.
 
-## Replay and traces
+## Budgets — inert
 
-Boundary traces let a completed attempt be re-adjudicated deterministically with **no new model or network calls** — measured, not asserted.
+Token budgets are **diagnostic-only**. `withDefaultRuntimeBudgetConfig` (`budget.go:73`)
+force-sets `Enabled = false` regardless of workflow or task config; `budgetDispatchBlocker` and
+`enforceBudgetForRun` are no-ops; `BudgetCircuitStatus` / `ReadBudgetCircuitStatus` never read
+persisted state. Runs still parked in `parked_budget` are released on sight with
+`legacy token budget park released: token telemetry is diagnostic-only` (`:294`). Turn
+accounting (`SumRunTokens`, `SumAttemptTokens`, `SumTokensSince`) remains for forensics. The one
+live cap here is `enforceTurnCapForRun` (`:305`): for `codex-exec` runs only, observed turns >
+the lane's `max_turns` stops execution, records `turn_cap_exhausted`, schedules a retry.
 
-- **Recording.** `RecordAttemptTraces` (`trace.go:114`) projects an attempt's event sink into boundary records. When the attempt reaches any end state (`Terminal`), it appends a terminal `attempt_closed` **sentinel**(`attemptTraceSentinelRecord`, `trace.go:191`) so an adjudicating replay can tell a complete recording from a crash-truncated one. It is idempotent.
-- **Replay modes** (`trace_replay.go:125`): `mock` (default), `live-tools` (the only mode allowed to reach a live execution path), and `adjudicate`.
-- **Completeness.** Adjudicate mode first runs `checkTraceReplayComplete`: a trail with no `attempt_closed` sentinel, or a boundary that recorded neither output nor error, fails as incomplete. The sentinel itself is skipped as a replay step (`trace_replay.go:176`).
-- **Measured zero-model-call guarantee** (`trace_replay.go:249`). In mock and adjudicate modes the executor stays `nil`, so no live tool runs. Any invocation that *does* reach the live seam increments `NetworkCalls`. Adjudication then checks the counters: if `ModelCalls > 0 || NetworkCalls > 0` it fails with *"adjudication reached a live path: model_calls=… network_calls=…"* rather than printing an unearned zero.
+## Scheduled promotion (departure)
 
-## Escalation reasons
+Daemon-owned system work with a lifecycle deliberately independent of task and attempt states
+(`departure_store.go:14`).
 
-Runner escalations are validated against an enumerable set (`v7_escalation_digest_cmd.go:22`), default `system_error`: `system_error`(tooling/harness failure), `security_concern`, `unresolvable_conflict`, and `stuck_loop`. Daemon-side parks record a fixed kind `"park"` with lease states `LeaseStateParkedNoProgress` / `LeaseStateParkedBudget`; escalations get IDs `ESC-<n>` with open-status dedupe.
+| Mode | Observe | Stage | Promote | Release |
+| --- | --- | --- | --- | --- |
+| `disabled` (default) / `shadow` | — / ✓ | — | — | — |
+| `stage` | ✓ | ✓ | — | — |
+| `promote` | ✓ | ✓ | ✓ | only if `release.authorized` and a profile is named |
 
-## Diagram 1 — happy path
+Once `scheduled_promotion` is configured at all, the departure executor becomes the **sole**
+authority allowed to advance the default branch; unconfigured/legacy repos keep manual `tusker
+land` (`scheduled_promotion.go:48`). **Windows** reuse the batch-gate clock (`orchestration.batch_gate.windows`, daily local
+`HH:MM`); no windows ⇒ inert (`departure_scheduler.go:149`). At most one run per
+`(project, policy_id, window)`, policy ID `scheduled-promotion/v1/<mode>`. A window missed by
+more than 1m (`departureWindowGrace`) is `skipped` unless mode is `promote`, which coalesces on
+its newest missed window.
 
-```mermaid
-sequenceDiagram
-    participant D as Resident daemon (pollOnce)
-    participant P as Plan/eligibility
-    participant O as Run ownership (lease)
-    participant W as Workspace manager
-    participant R as Execute runner
-    participant V as Reviewer lane
-    participant C as Deterministic completion reactor
-    participant G as Scheduled/full promotion gate
-    D->>P: eligible? (blockers, upstream-hold, fail-closed)
-    P-->>D: dispatch
-    D->>O: claim lease (owned-path check, then CAS)
-    O-->>D: claimed (hand_run=false)
-    D->>W: Prepare worktree (under live cap + flock)
-    W-->>D: work copy ready
-    D->>R: dispatch execute run
-    R->>R: implement + run gates
-    R->>O: submit end-state (branch, sha, verdicts)
-    O-->>D: task -> review
-    D->>V: spawn independent review run
-    V-->>D: typed verdict bound to attempt + SHA
-    D->>C: consume valid result
-    C->>C: exact-SHA stage + merged-state gate + integration CAS
-    C-->>D: done + newly eligible successor closure
-    D->>G: integrated work waits for configured promotion window
-    G->>G: shared build-and-test green
-    G-->>D: default ref promoted by CAS
-```
+| State | Meaning |
+| --- | --- |
+| `due` → `evaluating` | created for a window; planner decision accepted (idempotent restart-safe handoff) |
+| `staging` → `gating` → `promoted` | land cargo onto wave integration branches; promotion gate + ref update; ref committed |
+| `releasing`, `repairing` | separate owners (release; red-gate failure routing) |
+| `passed` / `skipped` / `blocked` / `failed` | terminal (`departureTerminal`) |
 
-## Diagram 2 — failure paths
+`executeDeparture` (`departure_execution.go:198`) is a phase loop capped at 16 durable reloads;
+each phase re-reads the row and a lost CAS follows the winner. Execution runs on a goroutine per
+run outside the poll so a long gate cannot stall reconciliation; `Daemon.Close` cancels with
+`errDaemonDepartureShutdown` and waits. `--once` disables departure execution.
 
-```mermaid
-flowchart TD
-    A[Attempt / gate result] --> B{Batch gate verdict}
-    B -->|red| Q[Stamp failing command on active waves]
-    Q --> H[Dependents held: 'held for upstream failure']
-    Q --> RT[Spawn bounded repair task]
-    B -->|green| C[clearBuildFailedMarkers: release matching holds]
-    A --> F{Typed review verdict?}
-    F -->|changes_requested| RB[deterministic bounded finding handback -> rework]
-    F -->|blocked| BP[park typed machine / infrastructure / genuine-human cause]
-    F -->|pass| OK[deterministic exact-SHA completion transaction]
-    A --> X{Worker crashed?}
-    X -->|yes| SL[Stale lease left behind]
-    SL --> ST{Process verifiably alive?}
-    ST -->|no| RE[retryFailedRun sees through stale lease -> requeue + audit]
-    ST -->|yes| BL[lease still blocks: lease_expired_process_alive]
-```
+**Drift is fatal, not recovered.** The candidate pins cargo task IDs, wave IDs, per-task state
+revisions and source SHAs, integration base SHA, candidate SHA/tree hash, and expected default
+SHA. `departurePlanningDrift` and `departurePostStagingDrift` compare re-planned facts against
+the pinned ones and block with
+`departure recompute required: <cargo|wave|task|source|integration|default_ref|gate>_drift`.
 
-## Related docs
+A hold is re-checked at *every* phase boundary; promote mode refuses unless there is exactly one
+cargo wave; contention on the `gate:full` resource lease registers a waiter and defers
+(`errDepartureExecutionDeferred`) rather than failing. `departurePlanner.PlanDeparture` (`departure_planner.go:86`) is read-only apart from a bounded
+fetch of the configured remote-tracking ref; dispositions are `disabled`, `empty`, `ready`,
+`already_gated`, `blocked`, `indeterminate`. Waveless tasks enter the candidate immediately;
+wave-bound tasks stay facts until every member of their atomic delivery unit validates. Staging
+delegates to `tusker land` and requires a daemon-issued landing authority.
 
-- [tasks-and-proof.md](tasks-and-proof.md) — task contracts, acceptance, verification rows.
-- [gates.md](gates.md) — gate profiles, verdicts, and the gate ledger.
-- [../../.tusker/specs/software-factory.md](../../.tusker/specs/software-factory.md) — the factory model this implements. &lt;/content&gt; &lt;/invoke&gt;
+Operator surface, all `--project <id>` (`departure_commands.go`): `check` runs the planner
+read-only and prints disposition + reasons; `status` shows the latest run, count, and active
+hold / release-hold; `history [--limit 1..100]` lists windows newest-first (default 20);
+`hold [--release-only] --reason <why> --by <actor>` writes a durable runtime-DB hold where a
+global hold outranks a project hold; `resume [--release-only] --by <actor>` clears it (`--by`
+mandatory). Hold and resume fire a best-effort `reconcile_project` / `reconcile_registry`
+control notification with a 250ms timeout (`:10`).
+
+## External loop
+
+For runners whose work happens outside the harness (ChatGPT browser). Durable per-task counters
+and policy events; caps default to 3 cycles, 2 repair continuations, 5 external threads, 8h
+wall clock (`automation_external_loop.go:32`). `collect-external --runner chatgpt-browser
+--job <id>` fetches artifacts, records a review packet, and stores patches as apply inputs;
+`external-loop <task>` prints counters/caps/events read-only; `advance-external <task> --job
+<id> | --event apply_failed|apply_succeeded|review_succeeded` applies loop policy and emits the
+next action (`record_research_artifact`, `apply_patch`, `request_review_next`,
+`continue_thread_with_failure`, `close_task`, `escalate_human` → nonzero exit). The daemon
+auto-advances the same loop inside `pollOnce` (`daemon_external_loop.go`).
+
+## Event-log circuit and streams
+
+An event-sink append failure trips a durable failure registry
+(`event_log_persistence_failures`, CAS ≤32 attempts) that merges into the invariant circuit and
+blocks dispatch; recovery probes each failure by priority, replays it, and clears it on success
+(`daemon_event_log_failure.go`). Every run upsert goes through `upsertRunWithStream`, which
+diffs before/after and publishes dispatch, lease-transition, task-status, and review-batch
+events to the Serve broker with deep links (`daemon_stream.go`). Serve starts only for the
+resident daemon and only when a serve target is configured; the pid file records the bound
+address (`daemon_serve.go:30`).

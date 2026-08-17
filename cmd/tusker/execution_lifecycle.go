@@ -127,15 +127,18 @@ func (s *RuntimeStore) ExecutionLifecycle(executionID string) (ExecutionLifecycl
 		if run.AttemptOutcome != "" && run.AttemptOutcome != string(AttemptOutcomeNone) {
 			f.OutcomeState = run.AttemptOutcome
 		}
-		f.SessionState = firstNonEmpty(run.SessionRef, v.SessionRef)
-		if f.SessionState != "" {
+		if firstNonEmpty(run.SessionRef, v.SessionRef) != "" {
 			f.SessionState = "known"
+		} else {
+			f.SessionState = "unknown"
 		}
 	}
 	if obs, err := s.executionLatestObservation(executionID); err != nil {
 		return f, err
 	} else if obs != nil {
-		f.ProviderState = obs.status
+		if strings.TrimSpace(obs.status) != "" {
+			f.ProviderState = obs.status
+		}
 		if obs.degraded {
 			f.ProviderState = "unavailable"
 		}
@@ -157,16 +160,16 @@ func (s *RuntimeStore) ExecutionLifecycle(executionID string) (ExecutionLifecycl
 		f.ChildAttentionState = "needs_attention"
 	}
 	if prior.ExecutionID != "" {
-		if f.OutcomeState == "unknown" {
+		if f.OutcomeState == "unknown" && strings.TrimSpace(prior.OutcomeState) != "" {
 			f.OutcomeState = prior.OutcomeState
 		}
-		if f.ProcessState == "unknown" {
+		if f.ProcessState == "unknown" && strings.TrimSpace(prior.ProcessState) != "" {
 			f.ProcessState = prior.ProcessState
 		}
-		if f.ProviderState == "unknown" {
+		if f.ProviderState == "unknown" && strings.TrimSpace(prior.ProviderState) != "" {
 			f.ProviderState = prior.ProviderState
 		}
-		if f.SessionState == "unknown" {
+		if f.SessionState == "unknown" && strings.TrimSpace(prior.SessionState) != "" {
 			f.SessionState = prior.SessionState
 		}
 	}

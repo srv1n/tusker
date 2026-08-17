@@ -8,56 +8,56 @@
   "cases": [
     {
       "id": "planning",
-      "prompt": "Turn this spec into a reviewed delivery DAG and import it held.",
-      "route": "Requirements, decomposition, delivery DAG, review, held import, Start",
+      "prompt": "Turn this request into the smallest useful tracked task.",
+      "route": "Requirements, decomposition, or creating tracked work",
       "guide": "references/PLAN.md",
-      "loaded_words": 1037,
-      "max_loaded_words": 1100,
-      "required": ["planValid", "importReady", "startReady", "held disarmed"]
+      "loaded_words": 682,
+      "max_loaded_words": 750,
+      "required": ["One bounded outcome is one task", "tusker new task", "Do not hand-edit protected fields"]
     },
     {
-      "id": "interactive",
-      "prompt": "Implement this Tusker task directly in my open Codex session.",
-      "route": "Interactive implementation, dispatched worker/reviewer, proof, gates, human wait",
+      "id": "task_status",
+      "prompt": "Update this task's lifecycle state.",
+      "route": "Task status, proof, gates, review state, or closeout",
       "guide": "references/WORK.md",
-      "loaded_words": 1169,
-      "max_loaded_words": 1250,
-      "required": ["tusker work start", "project automation is disabled", "work submit"]
+      "loaded_words": 787,
+      "max_loaded_words": 850,
+      "required": ["tusker status", "Never write lifecycle fields directly"]
     },
     {
-      "id": "dispatched_worker",
-      "prompt": "TUSKER_ATTEMPT_ID is set; execute the claimed task.",
-      "route": "Interactive implementation, dispatched worker/reviewer, proof, gates, human wait",
+      "id": "proof",
+      "prompt": "Record the proof for this task.",
+      "route": "Task status, proof, gates, review state, or closeout",
       "guide": "references/WORK.md",
-      "loaded_words": 1169,
-      "max_loaded_words": 1250,
-      "required": ["it must not claim again", "runner harness owns", "never merges, lands, closes"]
+      "loaded_words": 787,
+      "max_loaded_words": 850,
+      "required": ["tusker verify add", "smallest verification set covering acceptance"]
     },
     {
-      "id": "dispatched_reviewer",
-      "prompt": "Review this dispatched attempt and return the typed verdict.",
-      "route": "Interactive implementation, dispatched worker/reviewer, proof, gates, human wait",
+      "id": "gate",
+      "prompt": "Record the missing human authority as a task gate.",
+      "route": "Task status, proof, gates, review state, or closeout",
       "guide": "references/WORK.md",
-      "loaded_words": 1169,
-      "max_loaded_words": 1250,
-      "required": ["tusker review submit", "one attempt-bound result", "deterministic control plane"]
+      "loaded_words": 787,
+      "max_loaded_words": 850,
+      "required": ["Create a gate only when", "tusker new gate"]
     },
     {
       "id": "human_wait",
       "prompt": "The task is waiting_on_human; tell me the exact next action.",
-      "route": "Interactive implementation, dispatched worker/reviewer, proof, gates, human wait",
+      "route": "Task status, proof, gates, review state, or closeout",
       "guide": "references/WORK.md",
-      "loaded_words": 1169,
-      "max_loaded_words": 1250,
-      "required": ["Human Approval Boundary", "Final Response Shape For Human Wait"]
+      "loaded_words": 787,
+      "max_loaded_words": 850,
+      "required": ["agent_action: stop_until_human_response", "exact human action"]
     },
     {
       "id": "onboarding",
       "prompt": "Wire this existing repository into Tusker without losing project knowledge.",
       "route": "Existing-repo onboarding",
       "guide": "references/REPO_ONBOARDING.md",
-      "loaded_words": 1944,
-      "max_loaded_words": 2100,
+      "loaded_words": 1831,
+      "max_loaded_words": 1900,
       "required": ["Existing Repository Onboarding", "Storage Boundary"]
     },
     {
@@ -65,8 +65,8 @@
       "prompt": "Xcode failed because generated build state looks corrupted.",
       "route": "Xcode generated build-state failure",
       "guide": "references/XCODE_BUILD_STATE.md",
-      "loaded_words": 738,
-      "max_loaded_words": 800,
+      "loaded_words": 626,
+      "max_loaded_words": 700,
       "required": ["tusker xcode doctor", "likely_infrastructure"]
     }
   ]

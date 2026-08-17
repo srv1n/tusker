@@ -3889,51 +3889,6 @@ func TestV7StateBranchPushAndFetchRemoteLeases(t *testing.T) {
 	assertContainsIndexTest(t, imported, `"owner": "agent:codex"`)
 }
 
-func TestV7HookInstallPreCommitBranchPolicy(t *testing.T) {
-	previousWD, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.Chdir(previousWD); err != nil {
-			t.Fatalf("restore working directory: %v", err)
-		}
-	})
-	repo := filepath.Join(t.TempDir(), "repo")
-	vault := filepath.Join(repo, "tusker")
-	if err := ensureDir(repo); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repo); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, "init", "-b", "main")
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
-		t.Fatal(err)
-	}
-
-	command, args := parseCLI([]string{"tusker", "hook", "install", "pre-commit", "--vault", vault, "--quiet"})
-	assertEqual(t, "hook install", command, "hook command parse")
-	if code, err := run(command, args); err != nil || code != 0 {
-		t.Fatalf("hook install failed: code=%d err=%v", code, err)
-	}
-	hookPath := filepath.Join(repo, ".git", "hooks", "pre-commit")
-	info, err := os.Stat(hookPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode()&0o111 == 0 {
-		t.Fatalf("expected pre-commit hook to be executable, mode=%s", info.Mode())
-	}
-	hook := mustReadIndexTest(t, hookPath)
-	assertContainsIndexTest(t, hook, "tusker:pre-commit-branch-policy")
-	assertContainsIndexTest(t, hook, "validate --staged --branch-policy")
-
-	if code, err := run(command, args); err != nil || code != 0 {
-		t.Fatalf("managed hook reinstall failed: code=%d err=%v", code, err)
-	}
-}
-
 func TestV7StagedBranchPolicyRejectsProtectedStateMutation(t *testing.T) {
 	previousWD, err := os.Getwd()
 	if err != nil {

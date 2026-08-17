@@ -34,7 +34,7 @@ Machine-shared runtime and portable project truth have different owners:
 | `<repo>/.tusker/` | `WORKFLOW.md`, task contracts, gates, curated evidence, project knowledge, and generated project views. |
 | `<repo>/tusker.yaml` | Repo-level agent and runner configuration where present. |
 
-Do not copy a project's `WORKFLOW.md` into shared state. The daemon, agents, worktrees, and reviewers observe the same repo-local contract.
+Do not copy a project's `WORKFLOW.md` into shared state. All Tusker CLI users observe the same repo-local contract.
 
 On macOS, prefer `~/Developer`, `~/Code`, or `~/Projects` for repositories.
 LaunchAgents may not inherit Terminal access to `Desktop`, `Documents`,
@@ -241,7 +241,7 @@ chatgpt-handoff fetch <job-id> --out-dir .tusker/scratch/onboarding/chatgpt-<job
 ```
 
 If `chatgpt-handoff doctor` reports stale browser workflows, refresh the
-installed workflow catalog from the canonical browser checkout:
+installed workflow catalog from the canonical browser source directory:
 
 ```bash
 rzn-browser workflow pull --repo-root /path/to/rzn-browser

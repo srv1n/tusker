@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+const (
+	codexPayloadMaxDepth = 32
+	codexPayloadMaxNodes = 4096
+)
+
 // CodexExecutionObservation is the adapter-local representation of a Codex
 // notification, hook, or authoritative Cloud poll.  It deliberately carries
 // no task, lease, proof, or outcome fields: it is translated into the bounded
@@ -90,26 +95,50 @@ func (a CodexExecutionAdapter) executionForCodexRun(run RunStatus, providerHandl
 }
 
 func codexPayloadString(value any, keys ...string) string {
+	visits := 0
+	candidate, ok := codexPayloadStringBounded(value, keys, 0, &visits)
+	if !ok {
+		return ""
+	}
+	return candidate
+}
+
+func codexPayloadStringBounded(value any, keys []string, depth int, visits *int) (string, bool) {
+	if depth > codexPayloadMaxDepth {
+		return "", true
+	}
+	if *visits >= codexPayloadMaxNodes {
+		return "", false
+	}
+	(*visits)++
 	switch current := value.(type) {
 	case map[string]any:
 		for _, key := range keys {
 			if candidate := strings.TrimSpace(stringValue(current[key])); candidate != "" {
-				return candidate
+				return candidate, true
 			}
 		}
 		for _, nested := range current {
-			if candidate := codexPayloadString(nested, keys...); candidate != "" {
-				return candidate
+			candidate, ok := codexPayloadStringBounded(nested, keys, depth+1, visits)
+			if !ok {
+				return "", false
+			}
+			if candidate != "" {
+				return candidate, true
 			}
 		}
 	case []any:
 		for _, nested := range current {
-			if candidate := codexPayloadString(nested, keys...); candidate != "" {
-				return candidate
+			candidate, ok := codexPayloadStringBounded(nested, keys, depth+1, visits)
+			if !ok {
+				return "", false
+			}
+			if candidate != "" {
+				return candidate, true
 			}
 		}
 	}
-	return ""
+	return "", true
 }
 
 func (a CodexExecutionAdapter) Observe(observation CodexExecutionObservation) (ProviderObservationResult, error) {

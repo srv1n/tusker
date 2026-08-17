@@ -44,6 +44,14 @@ type wavePreflightEnvironmentInspector func(vaultPath string, wave Note) wavePre
 
 type waveCrossScopeProjection = deliveryCrossScopeReviewProjection
 
+type wavePreflightBlockerKey string
+
+const (
+	waveBlockerSpecDAG       wavePreflightBlockerKey = "specDag"
+	waveBlockerTaskContracts wavePreflightBlockerKey = "taskContracts"
+	waveBlockerArtifacts     wavePreflightBlockerKey = "artifacts"
+)
+
 type wavePreflightReport struct {
 	Schema               string                            `json:"schema"`
 	WaveID               string                            `json:"waveId"`
@@ -68,6 +76,23 @@ type wavePreflightReport struct {
 	DispatchScope        automationDispatchScopeProjection `json:"dispatchScope"`
 	Checks               map[string]bool                   `json:"checks"`
 	Blockers             []string                          `json:"blockers"`
+	blockerKeys          map[wavePreflightBlockerKey]struct{}
+}
+
+func (r *wavePreflightReport) addBlocker(key wavePreflightBlockerKey, message string) {
+	r.Blockers = append(r.Blockers, message)
+	if key == "" {
+		return
+	}
+	if r.blockerKeys == nil {
+		r.blockerKeys = map[wavePreflightBlockerKey]struct{}{}
+	}
+	r.blockerKeys[key] = struct{}{}
+}
+
+func (r wavePreflightReport) hasBlockerKey(key wavePreflightBlockerKey) bool {
+	_, ok := r.blockerKeys[key]
+	return ok
 }
 
 func waveV7PreflightCmd(args Args) error {
@@ -329,22 +354,26 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 		DispatchScope: dispatchScope,
 		Checks:        map[string]bool{"specDag": true, "taskContracts": true, "artifacts": true, "project": env.ProjectRegistered && env.ProjectEnabled && env.ProjectHealthy, "daemon": env.DaemonAlive && env.DaemonReconciling, "runner": env.RunnerCompatible, "skill": env.SkillCompatible, "workflow": env.WorkflowCompatible, "approvalPolicy": env.ApprovalFree, "workspaceIsolation": env.IsolatedWorkspace && env.IntegrationClean},
 	}
-	report.Blockers = append(report.Blockers, fpIssues...)
-	report.Blockers = append(report.Blockers, waveFactoryIntakeContractBlockers(vaultPath, wave)...)
+	for _, blocker := range fpIssues {
+		report.addBlocker(waveBlockerSpecDAG, blocker)
+	}
+	for _, blocker := range waveFactoryIntakeContractBlockers(vaultPath, wave) {
+		report.addBlocker("", blocker)
+	}
 	graph := map[string][]string{}
 	memberSet := makeSet(members...)
 	for _, id := range members {
 		task, ok := idx.Tasks[id]
 		if !ok {
-			report.Blockers = append(report.Blockers, "member task does not resolve: "+id)
+			report.addBlocker(waveBlockerSpecDAG, "member task does not resolve: "+id)
 			continue
 		}
 		if edge, blocked := v7CrossScopeIntegrityBlocker(task, idx); blocked {
-			report.Blockers = append(report.Blockers, id+": cross-scope dependency integrity is stale at "+edge.ID)
+			report.addBlocker(waveBlockerSpecDAG, id+": cross-scope dependency integrity is stale at "+edge.ID)
 		}
 		contractBlockers := waveTaskContractBlockers(vaultPath, task)
 		for _, blocker := range contractBlockers {
-			report.Blockers = append(report.Blockers, id+": "+blocker)
+			report.addBlocker(waveBlockerTaskContracts, id+": "+blocker)
 		}
 		report.TaskProof[id] = map[string]any{
 			"acceptance":   waveMaterialTable(sectionContent(task.Body, "## Acceptance"), []int{0, 1}),
@@ -353,13 +382,13 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 		}
 		artifact := mapField(task.Data, "artifact_contract")
 		if deliveryPlaceholder(stringField(artifact, "kind")) || deliveryInvalidProductionPath(stringField(artifact, "path")) || deliveryPlaceholder(stringField(artifact, "summary")) {
-			report.Blockers = append(report.Blockers, id+": artifact contract requires kind, path, and summary")
+			report.addBlocker(waveBlockerArtifacts, id+": artifact contract requires kind, path, and summary")
 		} else {
 			report.Artifacts[id] = artifact
 		}
 		for _, ref := range normalizeList(task.Data["spec_refs"]) {
 			if !deliverySpecRefExists(vaultPath, ref) {
-				report.Blockers = append(report.Blockers, id+": spec_ref does not resolve: "+ref)
+				report.addBlocker(waveBlockerSpecDAG, id+": spec_ref does not resolve: "+ref)
 			}
 		}
 		for _, edge := range v7TaskDependencyEdges(task, idx) {
@@ -368,7 +397,7 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 				continue
 			}
 			if _, exists := idx.Tasks[depID]; !exists {
-				report.Blockers = append(report.Blockers, id+": dependency does not resolve: "+depID)
+				report.addBlocker(waveBlockerSpecDAG, id+": dependency does not resolve: "+depID)
 				continue
 			}
 			if _, inside := memberSet[depID]; inside {
@@ -387,14 +416,14 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 				}
 				report.ExternalDependencies[id] = appendAny(report.ExternalDependencies[id], map[string]any{"id": depID, "hardness": edge.Hardness, "status": stringField(depNote.Data, "status"), "proof": stringField(depNote.Data, "proof_status"), "satisfied": satisfied, "qualified": qualified})
 				if !satisfied && !qualified {
-					report.Blockers = append(report.Blockers, id+": external dependency "+depID+" is not satisfied or authorized by this wave")
+					report.addBlocker(waveBlockerSpecDAG, id+": external dependency "+depID+" is not satisfied or authorized by this wave")
 				}
 			}
 		}
 	}
 	report.Frontiers, _ = waveDependencyFrontiers(members, graph)
 	if len(report.Frontiers) == 0 && len(members) > 0 {
-		report.Blockers = append(report.Blockers, "member dependency graph contains a cycle")
+		report.addBlocker(waveBlockerSpecDAG, "member dependency graph contains a cycle")
 	}
 	for _, gate := range sortedV7Gates(idx) {
 		var affected []string
@@ -413,29 +442,29 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 		}
 		affected = waveAffectedClosure(uniqueStrings(affected), graph)
 		if !v7GateAuthorityReceiptCurrent(gate, idx) {
-			report.Blockers = append(report.Blockers, v7GateAuthorityReceiptStaleCode+" "+stringField(gate.Data, "id")+": auth/release authority receipt does not match the current completed hard dependency material")
+			report.addBlocker("", v7GateAuthorityReceiptStaleCode+" "+stringField(gate.Data, "id")+": auth/release authority receipt does not match the current completed hard dependency material")
 		}
 		if stringField(gate.Data, "status") != "open" || v7ProofOwnerClass(stringField(gate.Data, "owner")) != "human" {
 			continue
 		}
 		if !v7GateHasAgentBoundary(gate) {
-			report.Blockers = append(report.Blockers, stringField(gate.Data, "id")+": human gate does not explain why an agent cannot resolve it")
+			report.addBlocker("", stringField(gate.Data, "id")+": human gate does not explain why an agent cannot resolve it")
 		}
 		if v7HumanGateOwnsAgentCapableWork(stringField(gate.Data, "gate_kind"), stringField(gate.Data, "owner"), stringField(gate.Data, "action"), stringField(gate.Data, "verification"), v7GateBoundaryText(gate), v7GateSuggestionText(gate)) {
-			report.Blockers = append(report.Blockers, stringField(gate.Data, "id")+": human gate owns agent-capable work")
+			report.addBlocker("", stringField(gate.Data, "id")+": human gate owns agent-capable work")
 		}
 		report.HumanGates = append(report.HumanGates, map[string]any{"id": stringField(gate.Data, "id"), "action": stringField(gate.Data, "action"), "affected": affected})
 	}
 	for key, ok := range report.Checks {
 		if !ok {
-			report.Blockers = append(report.Blockers, waveEnvironmentBlocker(key))
+			report.addBlocker("", waveEnvironmentBlocker(key))
 		}
 	}
 	report.Blockers = uniqueStrings(filterStrings(report.Blockers))
 	sort.Strings(report.Blockers)
-	report.Checks["specDag"] = !hasWaveBlocker(report.Blockers, "spec", "dependency", "cycle", "member")
-	report.Checks["taskContracts"] = !hasWaveBlocker(report.Blockers, "acceptance", "verification", "proof_mode", "proof_required")
-	report.Checks["artifacts"] = !hasWaveBlocker(report.Blockers, "artifact contract")
+	report.Checks["specDag"] = !report.hasBlockerKey(waveBlockerSpecDAG)
+	report.Checks["taskContracts"] = !report.hasBlockerKey(waveBlockerTaskContracts)
+	report.Checks["artifacts"] = !report.hasBlockerKey(waveBlockerArtifacts)
 	report.AuthorizationStale = report.StoredFingerprint != "" && report.StoredFingerprint != report.Fingerprint
 	if report.AuthorizationStale {
 		report.Authorization = "stale"
@@ -451,14 +480,7 @@ func waveTaskContractBlockers(vaultPath string, task Note) []string {
 	copy.Data["status"] = "ready"
 	copy.Data["readiness"] = "ready"
 	copy.Data["next_owner"] = "agent"
-	var blockers []string
-	for _, blocker := range v7TaskDispatchBlockers(vaultPath, copy) {
-		if strings.HasPrefix(blocker, "wave ") {
-			continue
-		}
-		blockers = append(blockers, blocker)
-	}
-	return blockers
+	return v7TaskDispatchBlockersScoped(vaultPath, copy, false, false, v7DispatchTriggerStates(vaultPath))
 }
 
 func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, []string) {
@@ -1166,17 +1188,10 @@ func waveAuthorizationAction(report wavePreflightReport) string {
 }
 
 func waveEnvironmentBlocker(key string) string {
-	return map[string]string{"project": "project must be registered, automation-enabled, and healthy", "daemon": "managed daemon must be alive and reconciling", "runner": "runner/profile must resolve to a supported unattended harness", "skill": "installed Tusker operator skill does not support wave authorization", "workflow": "workflow and tracker schema versions are incompatible with wave authorization", "approvalPolicy": "unattended runner approval policy must not pause for routine approvals", "workspaceIsolation": "multi-task wave requires isolated workspaces and a clean integration branch/worktree/base"}[key]
-}
-func hasWaveBlocker(blockers []string, needles ...string) bool {
-	for _, b := range blockers {
-		for _, n := range needles {
-			if strings.Contains(strings.ToLower(b), strings.ToLower(n)) {
-				return true
-			}
-		}
+	if blocker, ok := map[string]string{"project": "project must be registered, automation-enabled, and healthy", "daemon": "managed daemon must be alive and reconciling", "runner": "runner/profile must resolve to a supported unattended harness", "skill": "installed Tusker operator skill does not support wave authorization", "workflow": "workflow and tracker schema versions are incompatible with wave authorization", "approvalPolicy": "unattended runner approval policy must not pause for routine approvals", "workspaceIsolation": "multi-task wave requires isolated workspaces and a clean integration branch/worktree/base"}[key]; ok {
+		return blocker
 	}
-	return false
+	return "environment check failed: " + fallback(strings.TrimSpace(key), "unknown")
 }
 func waveDependencyID(raw string) string {
 	raw = strings.TrimSpace(wikiTarget(raw))

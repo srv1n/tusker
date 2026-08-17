@@ -47,6 +47,7 @@ type factoryOperationsProject struct {
 	Registered           bool                              `json:"registered"`
 	Enabled              bool                              `json:"enabled"`
 	Health               string                            `json:"health"`
+	Tier                 int                               `json:"tier"`
 	AutomationEnabled    bool                              `json:"automationEnabled"`
 	AutomationProvenance string                            `json:"automationProvenance"`
 	DispatchScope        automationDispatchScopeProjection `json:"dispatchScope"`
@@ -376,7 +377,7 @@ func composeFactoryOperations(facts factoryOperationsFacts) factoryOperationsPro
 		Schema: factoryOperationsSchema, ReadOnly: true, GeneratedAt: facts.Now.UTC().Format(time.RFC3339),
 		Project: factoryOperationsProject{
 			ID: projectID, Name: facts.Project.Name, Registered: registered, Enabled: projectEnabled,
-			Health:            string(projectHealth),
+			Health: string(projectHealth), Tier: tuskerTier(facts.VaultPath),
 			AutomationEnabled: facts.Workflow.AutomationEnabled, AutomationProvenance: safePacketText(firstNonEmpty(facts.AutomationSource, configSourceBuiltIn), 120),
 			DispatchScope: facts.Workflow.DispatchScope, CompletionMode: facts.Workflow.CompletionReactor,
 			PromotionMode: factoryOperationsPromotionMode{
@@ -994,8 +995,9 @@ func firstNonEmptyProjectHealth(values ...ProjectHealth) ProjectHealth {
 func renderFactoryOperations(projection factoryOperationsProjection) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# Factory operations · %s\n\n", projection.Project.Name)
-	fmt.Fprintf(&out, "Registry: registered=%t enabled=%t health=%s · automation: %t (%s)\n",
+	fmt.Fprintf(&out, "Registry: registered=%t enabled=%t health=%s · tier=%d · automation: %t (%s)\n",
 		projection.Project.Registered, projection.Project.Enabled, projection.Project.Health,
+		projection.Project.Tier,
 		projection.Project.AutomationEnabled, projection.Project.AutomationProvenance,
 	)
 	fmt.Fprintf(&out, "Dispatch: configured=%s effective=%s provenance=%s · completion: configured=%s effective=%s provenance=%s\n",

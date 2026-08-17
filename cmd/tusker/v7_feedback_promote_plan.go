@@ -430,8 +430,16 @@ func matchFeedbackPromoteDuplicate(source feedbackPromoteSource, existing []feed
 	}
 	sourceTitle := feedbackPromoteTitleKey(source.Title)
 	if sourceTitle != "" {
+		// A bare normalized-title match is far too weak on its own: any note in the
+		// vault that happens to share a title would silently mark real feedback as
+		// already-linked. Only accept it when the existing note is of a kind this
+		// promotion could actually target.
+		targetKinds := feedbackPromoteCandidateKinds(source)
 		for _, current := range normalizedExisting {
 			current = normalizeFeedbackPromoteExistingWork(current)
+			if !targetKinds[current.Kind] {
+				continue
+			}
 			if feedbackPromoteTitleKey(current.Title) == sourceTitle {
 				return feedbackPromoteDuplicateMatch{ID: current.ID, Kind: current.Kind, Path: current.Path, Field: "title", Value: source.Title, Reason: "same normalized title"}, true
 			}
@@ -445,6 +453,18 @@ func matchFeedbackPromoteDuplicate(source feedbackPromoteSource, existing []feed
 		}
 	}
 	return feedbackPromoteDuplicateMatch{}, false
+}
+
+// feedbackPromoteCandidateKinds is the set of note kinds a promotion of this
+// source could actually produce, so title-only duplicate matching stays scoped.
+func feedbackPromoteCandidateKinds(source feedbackPromoteSource) map[string]bool {
+	kinds := map[string]bool{normalizeFeedbackPromoteKind(feedbackPromoteTargetKind(source)): true}
+	if feedbackPromoteNeedsDecision(source) {
+		kinds["decision"] = true
+	}
+	delete(kinds, "")
+	delete(kinds, "skip")
+	return kinds
 }
 
 func normalizeFeedbackPromoteExistingWork(work feedbackPromoteExistingWork) feedbackPromoteExistingWork {

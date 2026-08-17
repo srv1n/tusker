@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -50,7 +51,7 @@ func TestServeRunInterruptUsesRunsInterruptSemanticsAndCanonicalReadback(t *test
 	}
 
 	var result serveInterruptResult
-	servePost(t, server, "/api/runs/APP-T-0001/interrupt", `{}`, &result)
+	servePost(t, server, "/api/runs/APP-T-0001/interrupt?project=app", `{}`, &result)
 	if !result.OK || result.Refused || !result.Interrupted {
 		t.Fatalf("expected confirmed interrupt, got %#v", result)
 	}
@@ -120,7 +121,7 @@ wait "$child"
 	}
 
 	var result serveInterruptResult
-	servePost(t, server, "/api/runs/APP-T-0001/interrupt", `{}`, &result)
+	servePost(t, server, "/api/runs/APP-T-0001/interrupt?project=app", `{}`, &result)
 	if !result.OK || result.ProcessRunning {
 		t.Fatalf("expected confirmed group interrupt, got %#v", result)
 	}
@@ -177,7 +178,7 @@ exit 0
 	}
 
 	var result serveInterruptResult
-	servePost(t, server, "/api/runs/APP-T-0001/interrupt", `{}`, &result)
+	servePost(t, server, "/api/runs/APP-T-0001/interrupt?project=app", `{}`, &result)
 	if result.OK || !result.Refused || !strings.Contains(result.Reason, "ownership cannot be verified") || !strings.Contains(result.Reason, "manually") {
 		t.Fatalf("expected actionable orphaned-group refusal, got %#v", result)
 	}
@@ -356,13 +357,20 @@ func TestRunsInterruptSharedStorePathInterruptsDeadProcessRow(t *testing.T) {
 func TestServeRunInterruptRefusalAndLocalhostGuard(t *testing.T) {
 	server := newServeEmptyNeedsFixture(t)
 
+	missingReq := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/runs/APP-T-9999/interrupt?project=app", bytes.NewBufferString(`{}`))
+	missingReq.Header.Set("Content-Type", "application/json")
+	missingRec := httptest.NewRecorder()
+	server.ServeHTTP(missingRec, missingReq)
+	assertEqual(t, http.StatusNotFound, missingRec.Code, "interrupt missing-run status")
 	var missing serveInterruptResult
-	servePost(t, server, "/api/runs/APP-T-9999/interrupt", `{}`, &missing)
+	if err := json.Unmarshal(missingRec.Body.Bytes(), &missing); err != nil {
+		t.Fatalf("decode missing-run refusal: %v\n%s", err, missingRec.Body.String())
+	}
 	if missing.OK || !missing.Refused || !strings.Contains(missing.Reason, "run not found") {
 		t.Fatalf("expected visible missing-run refusal, got %#v", missing)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/runs/APP-T-0001/interrupt", bytes.NewBufferString(`{}`))
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/runs/APP-T-0001/interrupt?project=app", bytes.NewBufferString(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "https://attacker.example")
 	rec := httptest.NewRecorder()

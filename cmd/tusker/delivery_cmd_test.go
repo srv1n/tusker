@@ -379,11 +379,11 @@ func TestDeliveryHelpSpecRefsAndSkillContract(t *testing.T) {
 		assertContainsIndexTest(t, help, want)
 	}
 	skill := mustReadIndexTest(t, filepath.Join("..", "..", "skills", "tusker", "SKILL.md"))
-	for _, want := range []string{"references/PLAN.md", "held import", "never", "dispatch"} {
+	for _, want := range []string{"references/PLAN.md", "task records only", "through the CLI"} {
 		assertContainsIndexTest(t, skill, want)
 	}
 	planGuide := mustReadIndexTest(t, filepath.Join("..", "..", "skills", "tusker", "references", "PLAN.md"))
-	for _, want := range []string{"stable semantic scope", "source keys", "Tusker allocates durable", "Planning never enables"} {
+	for _, want := range []string{"smallest useful Tusker record", "tusker new task", "Do not hand-edit protected fields"} {
 		assertContainsIndexTest(t, planGuide, want)
 	}
 }

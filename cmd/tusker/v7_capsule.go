@@ -35,10 +35,14 @@ func v7CapsuleFromData(data map[string]any) (v7Capsule, bool, bool) {
 		return v7Capsule{}, true, false
 	}
 	return v7Capsule{
-		What:     strings.Join(strings.Fields(toString(fields["what"])), " "),
-		UseWhen:  strings.Join(strings.Fields(toString(fields["use_when"])), " "),
-		SkipWhen: strings.Join(strings.Fields(toString(fields["skip_when"])), " "),
+		What:     v7CapsuleText(fields["what"]),
+		UseWhen:  v7CapsuleText(fields["use_when"]),
+		SkipWhen: v7CapsuleText(fields["skip_when"]),
 	}, true, true
+}
+
+func v7CapsuleText(value any) string {
+	return strings.Join(strings.Fields(strings.Join(normalizeList(value), "; ")), " ")
 }
 
 func v7CapsuleMap(note Note) map[string]string {
@@ -123,6 +127,9 @@ func validateV7Capsule(note Note, ctx validationContext, where string, errors, w
 
 func v7CapsuleRequired(note Note) bool {
 	schema := stringField(note.Data, "schema")
+	if !strings.HasPrefix(schema, "tusker.") || !isV7StoreObject(note.Data) {
+		return false
+	}
 	kind := effectiveV7Kind(note.Data)
 	switch kind {
 	case "domain", "domain_canon", "knowledge", "project_skill", "epic", "doc", "spec":

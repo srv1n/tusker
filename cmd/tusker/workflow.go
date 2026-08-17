@@ -374,7 +374,7 @@ func defaultWorkflow() Workflow {
 func defaultReviewerPrompt() string {
 	return strings.TrimSpace(`You are the independent Tusker reviewer for {{ note.id }}.
 
-Review only. Do not edit implementation files, merge, land, close, move refs, or change task state. Your only lifecycle output is one typed result submitted with ` + "`tusker review submit`" + `.
+Review the task acceptance, proof, and gates. Tusker does not control repository operations. Your only Tusker lifecycle output is one typed result submitted with ` + "`tusker review submit`" + `.
 
 Task:
 - ID: {{ note.id }}
@@ -390,11 +390,9 @@ Policy:
 
 Checklist:
 1. Read the task acceptance contract, proof mode, verification rows, evidence cards, and gates.
-2. Inspect the current diff against the task scope. Call out surprise files or drive-by refactors.
-3. Run the smallest verification commands needed to prove the acceptance contract.
-4. Confirm project skill/domain canon changes only when the task changed durable project knowledge.
-5. Risk alone does not justify a human gate. Treat risk as proof depth and landing safeguards, never as implicit human authority. Create or honor a human gate only for a named capability, external authority, unresolved product fact, or contractually subjective acceptance; do not re-approve choices already settled by the task/spec.
-6. If a caveat changes scope, record it as an actionable typed finding.
+2. Run the smallest verification needed to prove the acceptance contract.
+3. Risk alone does not justify a human gate. Create or honor one only for a named capability, external authority, unresolved product fact, or contractually subjective acceptance; do not re-approve choices already settled by the task/spec.
+4. Record any acceptance gap as an actionable typed finding.
 
 Submit exactly one result for the injected review attempt: ` + "`tusker review submit {{ note.id }} --attempt {{ attempt.id }} --task-rev {{ review.task_rev }} --source-sha {{ review.source_sha }} --work-rev {{ review.work_rev }} --proof-fingerprint {{ review.proof_fingerprint }} --gate-fingerprint {{ review.gate_fingerprint }} --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary \"<bounded summary>\"`" + `. A pass requires complete objective proof and satisfied gates; changes_requested needs an actionable finding; blocked needs a machine, infrastructure, or genuine-human blocker.
 
@@ -424,6 +422,9 @@ func stringListContainsFold(values []string, target string) bool {
 
 func defaultWorkflowMarkdown() string {
 	wf := defaultWorkflow()
+	// Leave tier-derived controls absent from a fresh WORKFLOW.md. loadWorkflow
+	// starts from the defaults and can then apply the tier policy; serializing
+	// true here would make lookupConfigValue treat the defaults as explicit.
 	// Orchestration is emitted as a hand-written, commented block below so that
 	// the seeded gate stanza and proof policy carry per-field explanations that
 	// yaml.Marshal cannot produce. Zero it here so the struct marshal omits the
@@ -431,9 +432,23 @@ func defaultWorkflowMarkdown() string {
 	orch := wf.Orchestration
 	wf.Orchestration = OrchestrationPolicy{}
 	raw, _ := yaml.Marshal(wf)
+	var seeded map[string]any
+	if yaml.Unmarshal(raw, &seeded) == nil {
+		if runtime, ok := seeded["runtime"].(map[string]any); ok {
+			if serve, ok := runtime["serve"].(map[string]any); ok {
+				delete(serve, "enabled")
+			}
+		}
+		if reviewer, ok := seeded["reviewer"].(map[string]any); ok {
+			delete(reviewer, "enabled")
+		}
+		if encoded, err := yaml.Marshal(seeded); err == nil {
+			raw = encoded
+		}
+	}
 	raw = append(raw, []byte(defaultProofAndGateBlock(orch))...)
 	raw = append(raw, []byte("# runner escalation reasons: system_error|security_concern|unresolvable_conflict|stuck_loop\n")...)
-	return "---\n" + strings.TrimSpace(string(raw)) + "\n---\n\n## Routing\n\nYou are working on {{ note.id }} for {{ project.name }}. Dispatch only makes sense when this task is in a dispatch state (`ready` or `rework`) and the workspace is ready at {{ workspace.path }}.\n\n## Hard stop check\n\nBefore doing work, run `tusker closeout status {{ note.id }} --json` when the V7 closeout command is available. If it reports `agent_action=stop_until_human_response`, do not validate, inspect files, spawn subagents, or modify Tusker records. Reply with the pending human gates/proof and whether the closeout checkpoint or review packet is still needed.\n\nRevalidate only after you edited files, a task/gate/evidence state changed, the closeout fingerprint no longer matches, or the user explicitly asked for fresh validation.\n\n## Prompt\n\nUse the installed Tusker skill bundle for durable task semantics and proof discipline. Work inside {{ workspace.path }}. Treat {{ repo.root }} as the source repository root for context only unless the task explicitly requires comparing against it.\n\nItem: {{ note.title }}\nRecord: {{ note.record_id }}\nType: {{ note.type }}\nAttempt: {{ attempt.number }}\nWorkflow: {{ workflow.path }}\nVault: {{ vault.path }}\n\n## Command budget\n\nUse the smallest command that proves or locates the next fact. Prefer packets/capsules, path-scoped status/search, repo-configured wrappers and build-lock/status commands, and redirected validation logs with small tails. Report validation as command + PASS/FAIL plus the first actionable failure; do not paste raw transcripts or repeat unchanged-state updates. Gates over records: write only artifacts a gate consumes (verify rows covering acceptance) or a human decision. Proof is the smallest row set that covers the contract — one command row is a complete proof for a small task. When a guard refuses with a no-decision remedy (open an attempt, use a proposal), apply the remedy, continue, and report it in one line.\n\n## Worker protocol\n\nEach dispatched attempt starts with fresh runner context. Use the injected task packet, `.tusker/scratch/<TASK-ID>/PLAN.md`, and previous structured outcome as the handoff; do not query or replay predecessor transcripts. Work one task only. Search before implementing, do not add placeholders or stubs, and run the configured backpressure commands serially.\n\n## Merge lane guard\n\nDo not push or merge directly to the default branch/main. Finish the task proof, then use `tusker land {{ note.id }}`; the serialized landing lane is the only authorized path from task branches into integration branches and main.\n\n## External Apply Inputs\n\nSome tasks may have external apply inputs collected by Tusker under `architect/{{ note.id }}/` or a workspace-local mirror of that directory.\n\nWhen that directory contains exactly one `*.patch` or `*.diff` file:\n\n1. inspect the task acceptance and verification contract first;\n2. run `git apply --check --3way <patch>`;\n3. apply with `git apply --3way <patch>` only after the check passes;\n4. resolve conflicts only when the resolution is mechanical and clearly within the task contract;\n5. run the task verification commands;\n6. record compact verification evidence;\n7. use `tusker finish {{ note.id }} --request-review` when machine proof is complete;\n8. create a concrete gate or move to rework/blocked when proof cannot be completed.\n\nIf there are zero patches, multiple patches, a patch outside scope, or an ambiguous conflict, stop and report the blocker through Tusker. Do not invent or silently repair patches.\n\n## Completion contract\n\nSatisfy the task proof mode. For proof_mode=inline, record concise verification rows with `tusker verify add`; do not create evidence files. For card/artifact/audit, create only the evidence the proof mode requires. When machine work is complete and only human-owned proof or gates remain, run `tusker closeout <task-id> --emit-packet --validate \"<command>\"`, then stop. When the work is demonstrably ready for verification, use `tusker finish <task-id> --request-review` so the task reaches `review` or a branch-safe `propose status ... --status review` proposal is created. Attempt handoff alone is not a review request. If proof is blocked, create/propose a gate with a concrete owner, action, and verification instead of appending negative evidence.\n\n## Reviewer contract\n\nIf `reviewer.enabled` is true, tasks in `review` may be dispatched to `reviewer.runner` for independent review. The reviewer must not edit implementation files. Independent reviewers may verify and close every risk tier after required objective proof and explicit gates pass. High and critical risk increase proof depth and landing safeguards; they do not imply human authority.\n\n## Retry policy\n\nRetry only transient infrastructure failures. Human-directed rework creates a new task revision; runtime activity remains in the run/lease store.\n\n## Human override policy\n\nHumans may edit tasks directly, but runtime state belongs to the daemon store.\n"
+	return "---\n" + strings.TrimSpace(string(raw)) + "\n---\n\n## Routing\n\nUse Tusker only for task tracking.\n\n## Prompt\n\nWork on {{ note.id }} using the user request and repository rules. Tusker only tracks the task contract, status, proof, and gates; it does not control repository operations.\n\nItem: {{ note.title }}\nRecord: {{ note.record_id }}\nType: {{ note.type }}\nVault: {{ vault.path }}\n\nInspect only the task context needed, perform the authorized work, and record the smallest truthful task update through the Tusker CLI. If Tusker is broken, report that separately without blocking otherwise-authorized work.\n\n## Retry policy\n\nRetry only failed task-tracking operations when state changed.\n\n## Human override policy\n\nThe user owns authority outside Tusker task records.\n"
 }
 
 // defaultProofAndGateBlock renders the seeded proof policy and the
@@ -551,6 +566,7 @@ func loadWorkflow(vaultPath string) (WorkflowFile, error) {
 	if err := yaml.Unmarshal(raw, &wf); err != nil {
 		return WorkflowFile{}, tuskerError(errorConfigInvalid, fmt.Sprintf("failed to decode WORKFLOW.md: %s", err.Error()), withPath(filePath))
 	}
+	applyTuskerTierWorkflowDefaults(vaultPath, data, &wf)
 	_, configured := data["scheduled_promotion"]
 	provenance := "workflow"
 	if !configured {
@@ -568,6 +584,18 @@ func loadWorkflow(vaultPath string) (WorkflowFile, error) {
 		wfFile = overlaid
 	}
 	return wfFile, nil
+}
+
+func applyTuskerTierWorkflowDefaults(vaultPath string, raw map[string]any, wf *Workflow) {
+	if tuskerTier(vaultPath) >= 4 {
+		return
+	}
+	if _, present := lookupConfigValue(raw, "runtime.serve.enabled"); !present {
+		wf.Runtime.Serve.Enabled = false
+	}
+	if _, present := lookupConfigValue(raw, "reviewer.enabled"); !present {
+		wf.Reviewer.Enabled = false
+	}
 }
 
 func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (WorkflowFile, error) {

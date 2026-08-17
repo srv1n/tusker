@@ -1,162 +1,39 @@
-# Orchestration Runbook
+# Task Management Runbook
 
-Tusker orchestration has four layers:
-
-```text
-markdown work records  -> durable human/task truth
-runtime store/leases   -> local process truth
-events/attempts        -> audit trail
-generated dashboards   -> rebuildable projections
-```
-
-Only markdown work records and accepted evidence/gates should drive lifecycle truth. Runtime state is operational bookkeeping.
-
-## Execution ownership
-
-| Role | Owns | Must never do |
-|---|---|---|
-| Interactive Codex/Claude | One `tusker work start` session, current user's edits, tests, proof, and handoff | Start a foreground daemon, invoke dispatch, bypass ownership, or launch another model runner |
-| Resident daemon | Poll enabled projects and launch eligible background implementation/review workers | Dispatch disabled projects or treat task creation alone as authorization |
-| Implementation worker | One injected task, attempt, workspace, and objective proof handoff | Work another task, launch a daemon/runner, self-review, merge, land, or close |
-| Reviewer worker | Read-only verification and one attempt-bound typed verdict | Edit implementation, change lifecycle state, merge, land, close, move refs, or review forever |
-
-Interactive sessions use the universal work-session ownership service without
-entering the daemon dispatch lifecycle. `tusker work start` refuses a healthy
-existing owner and works while automation is disabled; it never enables
-automation or launches a worker.
-
-## Dispatch eligibility
-
-A daemon or agent runner may pick up a task only when:
+Tusker's supported agent role is deliberately small:
 
 ```text
-effective kind == task
-status in ready|rework
-readiness == ready
-next_owner == agent or agent:<name>
-no valid closeout checkpoint says stop_until_human_response
-no open blocking non-agent gate exists
+request -> task contract -> lifecycle state -> proof/gates -> closeout
 ```
 
-Do not dispatch `review` tasks to implementation workers. Review belongs to reviewer/human lanes.
+## Read
 
-## Runtime loop
-
-```text
-poll:
-  read current task/gate/evidence index
-  reconcile running leases against task state
-  skip terminal, human-wait, external-wait, and reviewer-owned work
-  pick ready/rework agent-owned task
-  claim/lease in runtime store
-  run configured runner
-  collect attempt summary and proof artifacts
-  if machine work complete:
-    request independent typed review
-  if task still agent-owned and machine gaps remain:
-    allow one continuation within budget
-  if only human/external gaps remain:
-    release lease, write stop decision, do not retry
+```bash
+tusker list
+tusker search "<query>"
+tusker show <TASK-ID> --capsule
+tusker show <TASK-ID> --acceptance
 ```
 
-## Closeout path
+Use the smallest useful view. Task records and accepted evidence/gates are
+durable truth; generated dashboards and raw runtime output are not.
 
-```text
-runner exits cleanly
-      |
-      v
-classify proof/gates by owner
-      |
-      +-- machine gaps remain -> one continuation/rework path
-      |
-      +-- reviewer gaps remain -> request reviewer once
-      |
-      +-- human/external gaps only
-              |
-              v
-       emit human-wait packet/checkpoint
-       set/recognize held plus a human/external next_owner
-       release lease
-       supervisor decision: stop_for_human / stop_for_external
-       no continuation retry
-```
+## Mutate
 
-## Review lane
+Use `tusker new`, `tusker status`, `tusker verify add`, `tusker gate`,
+`tusker discard`, and `tusker close`. Never hand-edit protected lifecycle,
+proof, gate, or generated fields.
 
-Reviewer lanes are independent from implementation workers.
+## Human wait
 
-- Every risk tier may be objectively accepted by an independent reviewer through one immutable `tusker review submit` result when proof, gates, docs impact, and policy pass.
-- High/critical risk strengthens proof, reviewer, and landing safeguards; it does not synthesize human acceptance.
-- The reviewer never edits implementation, changes task/gate state, merges,
-  lands, closes, or moves refs. The deterministic completion reactor consumes
-  the typed result.
-- `changes_requested` deterministically returns the exact acceptance gaps to
-  `rework`; `blocked` parks the truthful machine/infrastructure/human blocker.
-- A human blocker is valid only when an open human-owned gate supplies the
-  missing authority or subjective decision.
-- Dispatch at most one reviewer per handoff and three automated review cycles per task. At the cap, leave the task in review for operator intervention.
-
-## Continuation retry rule
-
-A clean runner exit is not automatically a reason to continue.
-
-Continue only when:
-
-```text
-machine_missing is nonempty
-same state has not already consumed continuation budget
-next_owner is agent-owned
-readiness is ready
-```
-
-Do not continue when:
-
-```text
-machine_missing is empty
-human_missing or external_missing is nonempty
-open blocking gates are human/external-owned
-closeout packet exists for current fingerprint
-```
-
-## Validation cache
-
-Validation should be keyed by a state fingerprint:
-
-```text
-git HEAD + dirty hash + task/gate/evidence state + command + tusker version
-```
-
-Same fingerprint plus previous pass means validation is reusable. Do not re-run validation on an unchanged human-wait state.
-
-## Supervisor decisions
-
-Useful normalized decisions:
-
-| Decision | Meaning |
-|---|---|
-| `continue_machine_work` | Machine gaps remain and budget allows continuation. |
-| `request_review` | Machine proof is sufficient; reviewer owns next action. |
-| `stop_for_human` | Only human-owned blockers remain. |
-| `stop_for_external` | Only external system/service blockers remain. |
-| `stop_budget_exceeded` | Machine attempts exceeded configured budget. |
-| `interrupt_stale_state` | Task state changed under a running lease. |
-
-## Human-wait packet
-
-A review packet/checkpoint should contain:
-
-- task ID and title;
-- last clean validation command/result/fingerprint;
-- proof mode and acceptance coverage;
-- machine/reviewer/human/external missing proof lists;
-- open gates with owner/action/verification;
-- artifacts/evidence links;
-- exact human options: accept, waive, reject/rework.
+Stop changing Tusker state when only a human-owned fact, authority, credential,
+or subjective judgment remains. Report the exact task/gate ID and clearing
+action. Do not retry unchanged validation or manufacture proof.
 
 ## Failure containment
 
-- Do not paste raw logs into task bodies.
-- Do not store transcripts as evidence.
-- Do not use generated dashboards as source of truth.
-- Do not spawn repeated subagent audits after a valid closeout packet.
-- Do not let open human gates make a task agent-runnable.
+- Keep raw logs and transcripts out of task bodies.
+- Keep proof to the smallest acceptance-mapped rows.
+- Treat tracker failure separately from implementation or test failure.
+- Do not run setup repair or background execution as a side effect of task
+  management.

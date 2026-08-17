@@ -135,19 +135,6 @@ func capsuleTokenCount(capsule frontmatterCapsule) int {
 	return len(strings.Fields(text))
 }
 
-func capsuleRequiredForNote(note Note) bool {
-	kind := effectiveV7Kind(note.Data)
-	if kind == "" && strings.TrimSpace(stringField(note.Data, "schema")) == "" {
-		return false
-	}
-	switch kind {
-	case "domain", "domain_canon", "knowledge", "project_skill", "epic":
-		return true
-	default:
-		return false
-	}
-}
-
 func capsuleRequiredForSpecPath(path string) bool {
 	normalized := filepath.ToSlash(path)
 	return strings.HasPrefix(normalized, "docs/specs/") && strings.HasSuffix(normalized, ".md")
@@ -169,6 +156,11 @@ func capsuleBudgetFor(vaultPath string) int {
 }
 
 func validateCapsule(note Note, vaultPath, where string, required bool, errors, warnings *[]Issue) {
+	schema := stringField(note.Data, "schema")
+	if strings.HasPrefix(schema, "tusker.") && isV7StoreObject(note.Data) {
+		validateV7Capsule(note, validationContext{VaultPath: vaultPath}, where, errors, warnings)
+		return
+	}
 	value, present := note.Data["capsule"]
 	if !present {
 		if required {

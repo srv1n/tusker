@@ -918,6 +918,7 @@ func (s *RuntimeStore) Migrate() error {
 			updated_at TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY(project_id, record_id)
 		);`,
+		`CREATE INDEX IF NOT EXISTS runs_attempt ON runs(project_id, active_attempt_id, lease_generation);`,
 		`CREATE TABLE IF NOT EXISTS run_authorizations (
 			project_id TEXT NOT NULL,
 			record_id TEXT NOT NULL,
@@ -1953,6 +1954,29 @@ func (s *RuntimeStore) ListProjects() ([]RegisteredProject, error) {
 
 func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
 	return s.listRunsQuery(`SELECT ` + runtimeRunColumns + ` FROM runs ORDER BY updated_at DESC, project_id, item_id`)
+}
+
+// LookupRunForAttempt returns the live runtime row for one immutable execution
+// attempt. The project, attempt, and lease generation are the full authority
+// correlation; no table-wide scan is needed for a graph node.
+func (s *RuntimeStore) LookupRunForAttempt(projectID, attemptID string, generation int) (*RunStatus, error) {
+	projectID, attemptID = strings.TrimSpace(projectID), strings.TrimSpace(attemptID)
+	if projectID == "" || attemptID == "" || generation <= 0 {
+		return nil, nil
+	}
+	rows, err := s.query(`SELECT `+runtimeRunColumns+` FROM runs WHERE project_id = ? AND active_attempt_id = ? AND lease_generation = ? AND lease_state IN (?, ?) ORDER BY updated_at DESC, project_id, item_id LIMIT 1`, projectID, attemptID, generation, string(LeaseStateClaimed), string(LeaseStateRunning))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	runs, err := scanRunRows(rows, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(runs) == 0 {
+		return nil, nil
+	}
+	return &runs[0], nil
 }
 
 const runtimeRunColumns = `project_id, record_id, item_id, runner, runner_profile, runner_harness, runner_model, runner_effort, worker_policy_fingerprint, execute_policy_fingerprint, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, infrastructure_json, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at, hand_run`

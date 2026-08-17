@@ -98,14 +98,13 @@ func TestCodexPolicyForReviewLaneForcesReadOnlyNever(t *testing.T) {
 	}
 }
 
-func TestDefaultWorkflowPromptIncludesCommandBudget(t *testing.T) {
+func TestDefaultWorkflowPromptIsTaskTrackingOnly(t *testing.T) {
 	body := defaultWorkflowMarkdown()
 	for _, expected := range []string{
-		"## Command budget",
-		"path-scoped status/search",
-		"build-lock/status commands",
-		"command + PASS/FAIL",
-		"do not paste raw transcripts",
+		"## Prompt",
+		"Tusker only tracks the task contract, status, proof, and gates",
+		"it does not control repository operations",
+		"If Tusker is broken, report that separately",
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("default workflow missing %q:\n%s", expected, body)

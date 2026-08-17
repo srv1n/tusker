@@ -66,6 +66,50 @@ func scratchRootPath(vaultPath string) string {
 	return filepath.Join(vaultPath, "scratch")
 }
 
+// reclaimLegacyDoubleTuskerPath relocates state that older builds wrote to
+// vaultPath/.tusker/<rel> back to vaultPath/<rel>. vaultPath already IS the
+// .tusker directory, so those joins produced a stray .tusker/.tusker/ tree.
+// Best effort: anything already present at the canonical path wins, and errors
+// are ignored because this is a compat sweep, not the caller's real work.
+// ponytail: file-by-file merge; fine for locks and a handful of stranded
+// attachments, not for a large tree.
+func reclaimLegacyDoubleTuskerPath(vaultPath, rel string) {
+	vaultPath = strings.TrimSpace(vaultPath)
+	if vaultPath == "" || strings.TrimSpace(rel) == "" {
+		return
+	}
+	legacy := filepath.Join(vaultPath, ".tusker", rel)
+	canonical := filepath.Join(vaultPath, rel)
+	info, err := os.Lstat(legacy)
+	if err != nil {
+		return
+	}
+	move := func(from, to string) {
+		if _, err := os.Lstat(to); err == nil {
+			return
+		}
+		if err := ensureDir(filepath.Dir(to)); err != nil {
+			return
+		}
+		_ = os.Rename(from, to)
+	}
+	if !info.IsDir() {
+		move(legacy, canonical)
+		return
+	}
+	_ = filepath.WalkDir(legacy, func(p string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return nil
+		}
+		sub, relErr := filepath.Rel(legacy, p)
+		if relErr != nil {
+			return nil
+		}
+		move(p, filepath.Join(canonical, sub))
+		return nil
+	})
+}
+
 // vaultAuthorizesDeletion is deliberately stricter than isVaultDir: a directory
 // that merely contains work/ is not enough to authorize recursive deletion,
 // because ordinary repositories have one.

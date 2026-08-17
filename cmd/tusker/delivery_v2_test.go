@@ -13,7 +13,7 @@ import (
 func validDeliveryPlanV2() deliveryPlanV2 {
 	return deliveryPlanV2{
 		Schema: deliveryPlanV2Schema, Scope: "v2-delivery", Title: "V2 delivery", SpecRefs: []string{"docs/specs/delivery.md"},
-		FactoryIntakeContractSchema: factoryIntakeContractSchema, FactoryIntakeContractVersion: "1.1.0", FactoryIntakeContractFingerprint: "sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c",
+		FactoryIntakeContractSchema: factoryIntakeContractSchema, FactoryIntakeContractVersion: "1.1.0", FactoryIntakeContractFingerprint: "sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18",
 		Summary:      "Import a held V2 delivery wave with requirements and human-proof traceability.",
 		EpicContract: &deliveryEpicContract{SourceKey: "v2-delivery", AcronymHint: "VTP", Title: "V2 delivery"},
 		Requirements: []deliveryRequirement{{ID: "R1", Outcome: "The delivery plan traces executable work to requirements."}},
@@ -390,7 +390,7 @@ func TestDeliveryPlanV2MigratesHeldV1WaveWithoutIdentityDrift(t *testing.T) {
 
 	v2 := deliveryPlanV2{
 		Schema: deliveryPlanV2Schema, Scope: legacy.Scope, Title: legacy.Title, Epic: legacy.Epic, SpecRefs: legacy.SpecRefs,
-		FactoryIntakeContractSchema: factoryIntakeContractSchema, FactoryIntakeContractVersion: "1.1.0", FactoryIntakeContractFingerprint: "sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c",
+		FactoryIntakeContractSchema: factoryIntakeContractSchema, FactoryIntakeContractVersion: "1.1.0", FactoryIntakeContractFingerprint: "sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18",
 		Summary: "Migrate the held legacy wave without changing its allocated identities or dependency graph.",
 		Requirements: []deliveryRequirement{
 			{ID: "R1", Outcome: "The legacy schema work remains source-keyed and traceable."},
@@ -492,7 +492,7 @@ func TestDeliveryPlanV2RefusesFrozenV1WaveContractSwap(t *testing.T) {
 	}
 	v2 := deliveryPlanV2{
 		Schema: deliveryPlanV2Schema, Scope: legacy.Scope, Title: legacy.Title, Epic: legacy.Epic, SpecRefs: legacy.SpecRefs,
-		FactoryIntakeContractSchema: factoryIntakeContractSchema, FactoryIntakeContractVersion: "1.1.0", FactoryIntakeContractFingerprint: "sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c",
+		FactoryIntakeContractSchema: factoryIntakeContractSchema, FactoryIntakeContractVersion: "1.1.0", FactoryIntakeContractFingerprint: "sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18",
 		Summary: "A V2 contract cannot replace a frozen reviewed V1 wave without explicit controlled migration authority.",
 		Requirements: []deliveryRequirement{
 			{ID: "R1", Outcome: "The frozen legacy schema work remains source-keyed and traceable."},

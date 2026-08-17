@@ -103,8 +103,9 @@ func (s *RuntimeStore) ExecutionGraph(projectID string, filter ExecutionGraphFil
 		return page, err
 	}
 	all := make([]ExecutionGraphNode, 0)
+	memo := make(map[string]ExecutionGraphNode, len(executionIDs))
 	for _, id := range executionIDs {
-		node, err := s.executionGraphNode(id)
+		node, err := s.executionGraphNodeMemo(id, memo)
 		if err != nil {
 			return page, err
 		}
@@ -205,7 +206,10 @@ func (n ExecutionGraphNode) EffectiveProviderID() string {
 	return n.ProviderSessionID
 }
 
-func (s *RuntimeStore) executionGraphNode(id string) (ExecutionGraphNode, error) {
+func (s *RuntimeStore) executionGraphNodeMemo(id string, memo map[string]ExecutionGraphNode) (ExecutionGraphNode, error) {
+	if node, ok := memo[id]; ok {
+		return node, nil
+	}
 	view, err := s.ExecutionView(id)
 	if err != nil || view == nil {
 		return ExecutionGraphNode{}, err
@@ -235,7 +239,11 @@ func (s *RuntimeStore) executionGraphNode(id string) (ExecutionGraphNode, error)
 			node.Lifecycle.DeliveryState = "bound"
 		}
 	}
-	if err := s.executionGraphChildCounts(&node); err != nil {
+	// Mark this node before walking children so a corrupt legacy edge cycle
+	// returns the in-progress projection instead of recursing forever.
+	memo[id] = node
+	if err := s.executionGraphChildCounts(&node, memo); err != nil {
+		delete(memo, id)
 		return node, err
 	}
 	if facts, err := s.ExecutionLifecycle(id); err != nil {
@@ -250,6 +258,7 @@ func (s *RuntimeStore) executionGraphNode(id string) (ExecutionGraphNode, error)
 	} else {
 		return node, err
 	}
+	memo[id] = node
 	return node, nil
 }
 
@@ -278,20 +287,10 @@ func (s *RuntimeStore) executionGraphRun(view ExecutionView) (*RunStatus, error)
 	if strings.TrimSpace(view.AttemptID) == "" || view.LeaseGeneration <= 0 {
 		return nil, nil
 	}
-	runs, err := s.ListRuns()
-	if err != nil {
-		return nil, err
-	}
-	for _, run := range runs {
-		if run.ProjectID == view.ProjectID && run.ActiveAttemptID == view.AttemptID && run.LeaseGeneration == view.LeaseGeneration && (run.LeaseState == string(LeaseStateClaimed) || run.LeaseState == string(LeaseStateRunning)) {
-			copy := run
-			return &copy, nil
-		}
-	}
-	return nil, nil
+	return s.LookupRunForAttempt(view.ProjectID, view.AttemptID, view.LeaseGeneration)
 }
 
-func (s *RuntimeStore) executionGraphChildCounts(node *ExecutionGraphNode) error {
+func (s *RuntimeStore) executionGraphChildCounts(node *ExecutionGraphNode, memo map[string]ExecutionGraphNode) error {
 	rows, err := s.query(`SELECT child_execution_id FROM execution_edges WHERE parent_execution_id = ? ORDER BY child_execution_id`, node.ExecutionID)
 	if err != nil {
 		return err
@@ -313,7 +312,7 @@ func (s *RuntimeStore) executionGraphChildCounts(node *ExecutionGraphNode) error
 		return err
 	}
 	for _, id := range childIDs {
-		child, err := s.executionGraphNode(id)
+		child, err := s.executionGraphNodeMemo(id, memo)
 		if err != nil {
 			return err
 		}

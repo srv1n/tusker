@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -321,35 +320,6 @@ func TestLandIdempotent(t *testing.T) {
 	assertEqual(t, mergeCommit, strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")), "idempotent rerun keeps existing merge commit")
 	if gitBranchExists(repo, "integration/W-0001") {
 		t.Fatal("idempotent rerun should clean up integration branch")
-	}
-}
-
-func TestMainPushGuard(t *testing.T) {
-	repo, vault := newLandTestRepo(t, 1, "true")
-	if err := hookInstallCmd(Args{"vault": vault, "quiet": "true", "_pos0": "pre-push"}); err != nil {
-		t.Fatal(err)
-	}
-	hookPath := filepath.Join(repo, ".git", "hooks", "pre-push")
-	hook := mustReadIndexTest(t, hookPath)
-	for _, want := range []string{"tusker:pre-push-main-guard", "TUSKER_LAND_MAIN_OK", "use tusker land"} {
-		if !strings.Contains(hook, want) {
-			t.Fatalf("pre-push hook missing %q:\n%s", want, hook)
-		}
-	}
-	direct := exec.Command(hookPath, "origin", "git@example.invalid:app.git")
-	direct.Stdin = strings.NewReader("refs/heads/main 1111111111111111111111111111111111111111 refs/heads/main 0000000000000000000000000000000000000000\n")
-	if err := direct.Run(); err == nil {
-		t.Fatal("expected direct main push to be blocked")
-	}
-	guarded := exec.Command(hookPath, "origin", "git@example.invalid:app.git")
-	guarded.Env = append(os.Environ(), tuskerLandMainGuardEnv+"=1")
-	guarded.Stdin = strings.NewReader("refs/heads/main 1111111111111111111111111111111111111111 refs/heads/main 0000000000000000000000000000000000000000\n")
-	if output, err := guarded.CombinedOutput(); err != nil {
-		t.Fatalf("expected land env guard to pass, got %v\n%s", err, string(output))
-	}
-	if !strings.Contains(defaultWorkflowMarkdown(), "Do not push or merge directly to the default branch/main") ||
-		!strings.Contains(defaultWorkflowMarkdown(), "tusker land {{ note.id }}") {
-		t.Fatal("default runner prompt is missing merge-lane guard text")
 	}
 }
 

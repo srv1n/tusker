@@ -190,7 +190,7 @@ func validateFactoryIntakeContract(contract factoryIntakeContract) error {
 	requiredGuardrails := []string{
 		"analysis_is_read_only", "import_is_inert", "tracked_modifying_work_requires_work_start",
 		"dispatched_worker_verifies_existing_claim", "reviewer_submits_typed_result_only",
-		"deterministic_handlers_own_merge_close_and_successor_wake",
+		"deterministic_handlers_own_close_and_successor_wake",
 		"epic_is_never_execution_authority",
 		"project_automation_is_separate_explicit_opt_in", "fresh_dispatch_scope_is_armed_waves",
 		"start_does_not_enable_project_automation",

@@ -908,6 +908,29 @@ func (s *serveServer) invalidateProjectSnapshot(projectID string) {
 	s.summaryMu.Unlock()
 }
 
+// dropProjectSnapshot removes cached entries outright so the next read rebuilds
+// synchronously. Use after a mutation whose effect must be visible immediately;
+// invalidateProjectSnapshot only schedules a background refresh and keeps
+// serving the stale snapshot in the meantime.
+func (s *serveServer) dropProjectSnapshot(projectID string) {
+	projectID = strings.TrimSpace(projectID)
+	s.snapshotMu.Lock()
+	for key, entry := range s.snapshots {
+		if entry.building {
+			entry.invalid = true
+			continue
+		}
+		if projectID == "" || entry.project.ProjectID == projectID || key == projectID {
+			delete(s.snapshots, key)
+		}
+	}
+	s.snapshotMu.Unlock()
+	s.summaryMu.Lock()
+	s.summary = nil
+	s.summaryAt = time.Time{}
+	s.summaryMu.Unlock()
+}
+
 func (s *serveServer) loadQueueExplanations() map[string]automationTaskExplanation {
 	project, err := s.projectForSnapshot("")
 	if err != nil {
@@ -982,6 +1005,9 @@ func (s *serveServer) daemonStatusFromSnapshot(snap serveSnapshot) *serveDaemonS
 	var daemonDownReason any
 	if !daemonAlive {
 		daemonDownReason = "Daemon process is not running. Start the daemon to dispatch queued work."
+		if startErr := lastDaemonStartError(); startErr != "" {
+			daemonDownReason = "Last daemon start failed: " + startErr
+		}
 	}
 	return &serveDaemonStatus{
 		Connected:                  true,
@@ -1011,7 +1037,13 @@ func (s *serveServer) handleDigest(w http.ResponseWriter, r *http.Request) {
 		serveJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	digest, err := buildTuskerDigest(s.vaultPath, s.store, digestBuildOptions{
+	project, err := s.projectForSnapshot(strings.TrimSpace(r.URL.Query().Get("project")))
+	if err != nil {
+		serveJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	vaultPath := firstNonEmpty(strings.TrimSpace(project.VaultRoot), s.vaultPath)
+	digest, err := buildTuskerDigest(vaultPath, s.store, digestBuildOptions{
 		Since:         since,
 		SinceOverride: sinceOverride,
 		Now:           s.now(),

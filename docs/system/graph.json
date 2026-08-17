@@ -29,6 +29,13 @@
       "status": "canonical"
     },
     {
+      "subject": "delivery-and-waves",
+      "kind": "canonical",
+      "path": "docs/system/delivery-and-waves.md",
+      "title": "Delivery plans and waves (author → review → import → arm)",
+      "status": "canonical"
+    },
+    {
       "subject": "execution-observability",
       "kind": "spec",
       "path": ".tusker/specs/execution-observability.md",
@@ -53,14 +60,14 @@
       "subject": "factory-intake",
       "kind": "canonical",
       "path": "docs/system/factory-intake.md",
-      "title": "Factory intake contract",
-      "status": ""
+      "title": "Factory intake and operations",
+      "status": "canonical"
     },
     {
       "subject": "gates",
       "kind": "canonical",
       "path": "docs/system/gates.md",
-      "title": "Gates (human gates, the gate tier, and batch merge windows)",
+      "title": "Gates (human gates, the gate tier, the isolated full gate, and batch merge windows)",
       "status": "canonical"
     },
     {
@@ -68,6 +75,13 @@
       "kind": "decision",
       "path": ".tusker/specs/decisions/2026-07-22-gates-over-records.md",
       "title": "Decision log: gates over records",
+      "status": "canonical"
+    },
+    {
+      "subject": "knowledge-and-feedback",
+      "kind": "canonical",
+      "path": "docs/system/knowledge-and-feedback.md",
+      "title": "Knowledge canon and the feedback loop",
       "status": "canonical"
     },
     {
@@ -82,6 +96,13 @@
       "kind": "decision",
       "path": ".tusker/specs/decisions/2026-07-21-knowledge-graph-grill.md",
       "title": "Decision log: the knowledge-graph discussion",
+      "status": "canonical"
+    },
+    {
+      "subject": "landing-and-completion",
+      "kind": "canonical",
+      "path": "docs/system/landing-and-completion.md",
+      "title": "Landing and completion (how finished work reaches the integration branch and main)",
       "status": "canonical"
     },
     {
@@ -106,6 +127,20 @@
       "status": "canonical"
     },
     {
+      "subject": "proof-and-closeout",
+      "kind": "canonical",
+      "path": "docs/system/proof-and-closeout.md",
+      "title": "Proof recording and closeout",
+      "status": "canonical"
+    },
+    {
+      "subject": "runners-and-acp",
+      "kind": "canonical",
+      "path": "docs/system/runners-and-acp.md",
+      "title": "Runners and the ACP adapter stack",
+      "status": "canonical"
+    },
+    {
       "subject": "scratch-retention",
       "kind": "spec",
       "path": ".tusker/specs/scratch-retention.md",
@@ -123,14 +158,14 @@
       "subject": "serve-ui",
       "kind": "canonical",
       "path": "docs/system/serve-ui.md",
-      "title": "Serve UI and local control plane",
+      "title": "Serve — local control plane and embedded SPA",
       "status": "canonical"
     },
     {
       "subject": "skills",
       "kind": "canonical",
       "path": "docs/system/skills.md",
-      "title": "The Tusker skill system",
+      "title": "Skill packaging and distribution",
       "status": "canonical"
     },
     {
@@ -148,10 +183,17 @@
       "status": "canonical"
     },
     {
+      "subject": "storage-and-runtime",
+      "kind": "canonical",
+      "path": "docs/system/storage-and-runtime.md",
+      "title": "Storage and runtime state",
+      "status": "canonical"
+    },
+    {
       "subject": "tasks-and-proof",
       "kind": "canonical",
       "path": "docs/system/tasks-and-proof.md",
-      "title": "Tasks and proof (v7 task model)",
+      "title": "V7 task model: schema, lifecycle, validation",
       "status": "canonical"
     }
   ],
@@ -178,6 +220,11 @@
     },
     {
       "from": "cli",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "delivery-and-waves",
       "to": "overview",
       "kind": "part_of"
     },
@@ -242,6 +289,11 @@
       "kind": "part_of"
     },
     {
+      "from": "knowledge-and-feedback",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
       "from": "knowledge-graph",
       "to": "overview",
       "kind": "part_of"
@@ -267,12 +319,27 @@
       "kind": "part_of"
     },
     {
+      "from": "landing-and-completion",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
       "from": "orchestration",
       "to": "overview",
       "kind": "part_of"
     },
     {
       "from": "platform-support",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "proof-and-closeout",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "runners-and-acp",
       "to": "overview",
       "kind": "part_of"
     },
@@ -319,6 +386,11 @@
     {
       "from": "software-factory-grill",
       "to": "software-factory",
+      "kind": "part_of"
+    },
+    {
+      "from": "storage-and-runtime",
+      "to": "overview",
       "kind": "part_of"
     },
     {

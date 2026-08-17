@@ -91,10 +91,10 @@ epic_contracts:
     title: Repository foundation
     domains: [project, build]
     thesis: Make the repo understandable, verifiable, and safe for agent work.
-    evidence: [README.md, .github/workflows/ci.yml]
+    evidence: [README.md, ci/config.yml]
     success_criteria:
       - outcome: The focused verification command is documented from packet evidence.
-        evidence: [.github/workflows/ci.yml]
+        evidence: [ci/config.yml]
 ```
 
 ## delivery-plans/

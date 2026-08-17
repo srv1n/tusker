@@ -1,188 +1,212 @@
 ---
-title: The Tusker skill system
+title: Skill packaging and distribution
 subject: skills
-keywords: [skills, agents, routing]
+keywords: [skills, install, provenance, compatibility, fingerprint, symlink, bundle, AGENTS.md, setup doctor]
 part_of: overview
 status: canonical
-read_when:
-  - You are a fresh agent session trying to find how Tusker teaches itself to agents.
-  - You need to know what installs where, and which files are hand-editable source vs generated output.
-  - You are wiring a new repo into Tusker or debugging a skill install.
-skip_when:
-  - You only need task lifecycle/proof/gate mechanics — read the installed `tusker` skill instead.
-  - You want the observation surface (serve/dashboards) — see [serve-ui.md](serve-ui.md).
+read_when: "You are installing, syncing, bundling, diagnosing, or repairing the Tusker operator skill, or you need to know which skill paths are editable source versus generated output and how staleness is detected."
+skip_when: "You want task lifecycle, proof, or gate mechanics (read the installed `tusker` skill and [[tasks-and-proof]]), or the intake routing table ([[factory-intake]])."
+sources:
+  - skills/tusker/bundle.go
+  - cmd/tusker/install.go
+  - cmd/tusker/skill_compatibility.go
+  - cmd/tusker/skill_provenance.go
+  - cmd/tusker/skill_install_safety.go
+  - cmd/tusker/v7_skill_cmd.go
+  - cmd/tusker/v7_skill_guidance_cmd.go
+  - cmd/tusker/setup_doctor.go
+  - cmd/tusker/capabilities_cmd.go
+  - skills/tusker/assets/compatibility.yaml
 ---
 
-# The Tusker skill system
+# Skill packaging and distribution
 
-A "skill" is a folder of Markdown an agent loads on demand: one `SKILL.md`
-front-door plus reference and asset files. Tusker ships **one canonical operator
-skill** (`skills/tusker/`) and installs materialized copies or symlinks into the
-places agents actually look — `~/.claude`, `~/.agents`/`~/.codex`, and a repo's
-`.claude/` and `.agents/`. Everything an agent knows about running Tusker work
-comes from that skill; everything it knows about *this* repo comes from a
-separate generated project-knowledge skill at `.tusker/SKILL.md`.
+One canonical source tree (`skills/tusker/`) is embedded in the binary and
+materialized into the directories agents read. Edit the source; never edit an
+install target.
 
-The golden rule: **there is exactly one editable source per skill, and the
-install targets are outputs. Never hand-edit a generated copy.**
+## Canonical source tree
 
-## What ships in `skills/tusker/`
+`skills/tusker/bundle.go` embeds `SKILL.md LICENSE references docs agents assets`
+via `go:embed`. `testdata/`, `README.md`, and `bundle.go` itself are **not**
+embedded; only a copy install from an explicit `--source` checkout carries them.
 
-The canonical source tree (all under version control, all hand-edited here):
-
-| Path | What it is |
+| Path | Contents |
 | --- | --- |
-| `SKILL.md` | A trigger-complete router: capability check, one-hop mode selection, universal authority boundaries, hard stop, compact loop. |
-| `references/PLAN.md` | Planning, delivery review, held import, and Start. |
-| `references/WORK.md` | Interactive/dispatched work, review, proof, gates, and human wait. |
-| `references/OPERATE.md` | Resident daemon, automation, waves, integration, fleet repair, and recovery. |
-| `references/<rare>.md` | Direct one-hop guides for onboarding, Xcode, documentation publication, and Obsidian. Legacy names are compatibility redirects, not active routes. |
-| `assets/compatibility.yaml` | Machine-readable binary/workflow/factory/source/materialization compatibility contract. |
-| `docs/*.md` | Orchestration runbook, failure classes, operator-intervention, dispatcher pseudocode. |
-| `agents/openai.yaml` | Agent manifest for Codex-side registration. |
-| `assets/templates/*.md` | Note templates (task, epic, gate, domain, daily, dashboard…). |
-| `assets/repo-contract/` | The repo-contract tree copied into a target repo (see below). |
-| `assets/snippets/*.snippet` | `AGENTS.md`/`CLAUDE.md` bootstrap-block snippets. |
-| `assets/icons/`, `assets/gitignore.recommended` | Branding + recommended vault gitignore. |
-| `bundle.go` | Embeds the whole tree (`go:embed`) so the binary can materialize it anywhere. |
+| `SKILL.md` | Router. Frontmatter is exactly two keys (`name: tusker`, `description`); enforced by `validateTuskerSkillPackageShape` in `cmd/tusker/skill_provenance.go`. |
+| `references/*.md` | 24 guides. Seven are live routes (below); the rest are one-hop or legacy targets. |
+| `docs/*.md` | 5 files: orchestration runbook, failure classes, operator intervention, dispatcher pseudocode, README. |
+| `agents/openai.yaml` | Codex-side agent manifest. |
+| `assets/compatibility.yaml` | `tusker.skill-compatibility/v1` contract. |
+| `assets/factory-intake-contract.yaml` | See [[factory-intake]]. |
+| `assets/repo-contract/` | Exactly three files: `AGENTS.workflow-snippet.md`, `docs/agent-workflow.md`, `docs/ai-contribution-policy.md`. |
+| `assets/snippets/{AGENTS,CLAUDE}.md.snippet`, `assets/templates/*.md`, `assets/icons/*.svg`, `assets/README.md` | Snippets, note templates, branding. |
+| `testdata/progressive-disclosure-budget.json` | Test fixture only (not embedded). |
 
-The repo-contract asset tree is what a wired repo receives from
-`tusker sync-repo-contract`:
+`skills/tusker/assets/gitignore.recommended` no longer exists.
 
-- `assets/repo-contract/docs/agent-workflow.md`
-- `assets/repo-contract/docs/ai-contribution-policy.md`
-- `assets/repo-contract/AGENTS.workflow-snippet.md`
+## Install destinations and modes
 
-## How installation works
+`cmd/tusker/install.go` resolves destinations then a per-destination mode.
 
-The binary embeds the skill (via `bundle.go` / `skillbundle.PayloadEntries`), so
-`install`/`update` never need the source checkout to place a **copy**. Symlink
-mode does need a canonical source (`--source` or `TUSKER_SKILL_SOURCE`, else the
-repo root is discovered).
-
-Key flags (`cmd/tusker/install.go`):
-
-| Flag | Effect |
+| Flag | Destination |
 | --- | --- |
-| `--codex-user` | Install `~/.agents/skills/tusker`. |
-| `--claude-user` | Install `~/.claude/skills/tusker`. |
-| `--repo <path>` | Install repo-local `<repo>/.agents/skills/tusker` **and** the generated `<repo>/.claude/skills/tusker` compatibility copy; also upserts `AGENTS.md`/`CLAUDE.md` Tusker pointers. |
-| `--bin-dir <path>` | Where to symlink the `tusker` binary (default: first writable of `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`). |
-| `--no-bin` | Skip the binary symlink; refresh skills only. |
-| `--skill-mode copy\|symlink` | Override the default install mode. |
-| `--source <checkout>` | Canonical skill dir for symlink mode. |
+| `--codex-user` | `~/.agents/skills/tusker` |
+| `--claude-user` | `~/.claude/skills/tusker` |
+| `--repo <path>` | `<repo>/.agents/skills/tusker` **and** `<repo>/.claude/skills/tusker` |
+| (no `--repo`, or `--refresh-existing-user-skills`) | refreshes whichever of `~/.agents`, `~/.codex`, `~/.claude` `skills/tusker` already exist (`existingUserSkillDestinations`) |
 
-**Default mode is context-dependent.** User-home destinations get a **copy**
-(self-contained, portable). Repo-local destinations (`.agents`/`.claude` inside
-the repo) default to **symlink**. Repo-local symlinks are written **relative**
-(`skillSymlinkTarget`): an absolute target only resolves in the checkout that
-wrote it and would point at a foreign tree in every git worktree or fresh clone,
-so a relative target travels with the tree. Installs outside the source repo keep
-the absolute target, since a relative path between unrelated trees is meaningless.
+`~/.codex/skills/tusker` is refreshed if present but is never created: only
+`~/.agents` is a `--codex-user` target (`defaultCodexUserSkillDestination`).
 
-The binary symlink is replaced atomically (staged symlink + `rename`), and
-refuses to clobber a release-installed binary whose source and target are the
-same file.
+Mode (`skillInstallModeForDestination`): explicit `--skill-mode`/`--mode`
+(`copy`|`symlink`|`link`) wins; otherwise repo-local destinations get
+`symlink` and everything else gets `copy`. Both repo-local destinations are
+symlinks — the `.claude` target is not a copy.
 
-### Make targets
+`skillSymlinkTarget` writes a **relative** target when the destination is
+repo-local to the source's own repo, so worktrees and fresh clones resolve;
+otherwise the absolute source path is kept.
 
-| Target | Runs |
+Copy mode reads the embedded payload unless `--source`/`TUSKER_SKILL_SOURCE`
+names a checkout. Symlink mode always needs a source: `canonicalSkillSourceDir`
+accepts a skill dir, a checkout (`<root>/skills/tusker` or `<root>/skill`), or
+discovers the repo root from cwd; with none it errors and suggests
+`--skill-mode copy`.
+
+Other flags: `--bin-dir` (first writable of `~/.local/bin`, `/opt/homebrew/bin`,
+`/usr/local/bin` that is on `PATH`, else `~/.local/bin`), `--no-bin`, `--force`
+(accepted, unused), `--json`, `--repo-only` (update only).
+
+The binary symlink is staged then `rename`d (`replaceBinarySymlinkAtomically`)
+and refuses to run when source and target resolve to the same file — a
+release-installed binary must be reinstalled by the release script.
+
+Make targets: `install-user` (binary + both user skills), `install-repo
+REPO=/abs/path`, `install-bin`, `install` (alias for `install-user`),
+`mac-preview` (`install-user` + TuskerBar).
+
+## Commands
+
+| Command | Behavior |
 | --- | --- |
-| `make install-user` | `tusker install --codex-user --claude-user --bin-dir … --force` — binary + both user skills. |
-| `make install-repo REPO=/abs/path` | `tusker install --repo <REPO> --bin-dir … --force` — repo-local skills + pointers. |
-| `make install-bin` | Binary + refresh already-installed user skills. |
-| `make install` | Cross-platform alias for `install-user`; installs the CLI and both user skills. |
-| `make mac-preview` | macOS only: `install-user` + build/install/open TuskerBar. |
+| `tusker install` / `tusker update` | Install/refresh skills, binary symlink, and the managed `AGENTS.md`/`CLAUDE.md` block; `update` only touches destinations that already exist plus `--repo`. |
+| `tusker skill sync [--repo .] [--mode symlink\|copy] [--source <checkout>]` | Repair path. Rewrites only the two repo-local `skills/tusker` packages. Never touches pointers, project knowledge, secrets, or other skills. Rejects a source classified `generated` or `invalid`. |
+| `tusker skill bundle [--repo .] [--out …]` | Portable copy-mode bundle at `.tusker/_generated/skill-bundle` by default, containing `.agents/` and `.claude/` trees plus a `.tusker-skill-bundle` marker. Refuses an explicit non-default `--out` lacking that marker. |
+| `tusker skill doctor [--package <path>] [--strict] [--json]` | Without `--package`, validates the vault's V7 project skill; with `--package`, validates an Agent-Skills package and reports provenance (`not_tusker` unless the directory is named `tusker`). |
+| `tusker skill route "<intent>" [--json]` | Scores `.tusker/knowledge/domains/*` by id/title/summary/body token overlap and returns `SKILL.md` plus up to three domains' `INDEX.md`+`CANON.md`. |
+| `tusker skill pack <TASK-ID> --for agent [--budget n]` | Thin wrapper over `tusker packet`. |
+| `tusker skill audit-agent-guidance [--repo] [--write\|--draft] [--target feedback\|knowledge]` | Finds non-managed `AGENTS.md`/`CLAUDE.md` content, classifies it, warns on a missing/stale managed block, optionally upserts pointers and writes a migration draft. Exits 1 on any finding; warnings alone exit 1 only under `--json`. |
+| `tusker sync-repo-contract --repo <path> [--vault] [--force]` | Writes `assets/repo-contract/**` into the repo (skipping existing files unless `--force`), ensures the feedback README, and upserts the pointer block. No `.github/` templates ship today. |
+| `tusker setup doctor` / `tusker setup repair [--dry-run] [--source]` | See below. |
 
-Related commands: `tusker update` (refresh binary + existing user skills after a
-pull/rebuild), `tusker skill sync` (refresh repo-local generated installs,
-symlink-default), `tusker skill bundle` (portable materialized copy for handoff
-packets / cloud runners that can't follow symlinks).
+`skill doctor --package` on an Agent-Skills package enforces: `name` matches
+`^[a-z0-9]+(-[a-z0-9]+)*$`, ≤64 chars, equal to the directory name;
+`description` 1–1024 chars; `compatibility` ≤500 chars; string-only `metadata`;
+resolvable `references|scripts|assets` links; ≤500-line body (warning, error
+under `--strict`); and no `work/ epics/ evidence/ attempts/ events/ _generated/
+_system/ dashboards/ Attachments/` paths or local absolute paths.
 
-## Freshness and provenance
+## Compatibility and provenance
 
-`assets/compatibility.yaml` owns workflow ranges, tracker/wave schemas, the
-factory contract, canonical source, materialization schema, and primary guides.
-`tusker capabilities --json` binds that contract to installed command/schema
-support and the canonical payload with one deterministic compatibility
-fingerprint. `SKILL.md` frontmatter intentionally contains only `name` and a
-trigger-complete `description`.
+`assets/compatibility.yaml` (`tusker.skill-compatibility/v1`) declares `schema`,
+`version`, `workflow_min`/`workflow_max`, `tracker_schema_versions`,
+`wave_authorization_schemas`, the factory-intake provenance triple,
+`canonical_source`, `materialization_schema`, and `primary_guides`. It is
+decoded with `KnownFields(true)` — an unknown key is a hard parse error.
 
-Materialized copies and bundles carry `.tusker-skill-provenance.yaml`: it
-records the compatibility and canonical-payload fingerprints, portable source
-identity, and deterministic installed-payload fingerprint. Payload hashes
-exclude the manifest and timestamps, avoiding recursive or machine-specific
-hashes.
+`tusker capabilities --json` (`cmd/tusker/capabilities_cmd.go`) projects that
+contract plus `canonical_payload_fingerprint` (SHA-256 over the embedded
+payload, excluding `.tusker-skill-provenance.yaml`) and hashes the whole
+material — commands, schemas, runner adapters, optional capabilities,
+deprecations, contract — into one `compatibility.fingerprint`. Adding a command
+or flipping an optional capability changes it.
 
-`tusker skill doctor --package <path> --json`, `tusker setup doctor`, and
-`tusker delivery rollout doctor` report `current`, `stale`, `missing`,
-`incompatible`, and `locally_modified` installs separately. Legacy frontmatter
-metadata is classified as stale and is only a migration adapter. Repairs are
-local and offline: `tusker skill sync --repo . --source
-<canonical-tusker-checkout>`.
-Symlinks are always inspected through their live target; no cached manifest can
-make a retargeted symlink look stale. Sync replaces only the managed
-`tusker` package destination and never rewrites project knowledge, repo
-instructions, secrets, unrelated skills, or plugins.
+Materialized copies carry `.tusker-skill-provenance.yaml`
+(`tusker.skill-materialization/v1`) with source kind/identity
+(`embedded://tusker/skills/tusker` or `canonical://skills/tusker`), the
+compatibility schema + fingerprint, the canonical payload fingerprint, the
+factory-contract triple, and a `payload_fingerprint` computed over the
+destination excluding the manifest itself and `.DS_Store`.
 
-## What a fresh session discovers
+`inspectSkillMaterialization` classifies:
 
-`.tusker/SKILL.md` is the **project-knowledge entry point** — a *generated* V7
-project skill (`schema: tusker.project-skill/v7`) that routes an agent to this
-repo's domain canon under `.tusker/knowledge/domains/*`. It is loaded *after* the
-operator skill, only when repo-specific context is needed. The repo's root
-`AGENTS.md`/`CLAUDE.md` carry a managed Tusker pointer block (upserted by install)
-that names the operator skill and links to `.tusker/SKILL.md`.
+| Status | Meaning |
+| --- | --- |
+| `current` | Manifest, payload, compatibility, and contract all match the running binary. |
+| `missing` | Destination absent, or symlink target unresolvable. |
+| `missing_provenance` | Copy with no manifest. |
+| `locally_modified` | Payload hash differs from the recorded one. |
+| `stale` | Compatibility fingerprint or contract version/fingerprint predates the binary; also legacy `SKILL.md` frontmatter metadata instead of `assets/compatibility.yaml`. |
+| `incompatible` | Schema mismatch, unreadable manifest, manifest contradicting the packaged contract, or a compatibility range not covering this binary. |
 
-## The repo-local `/spec` skill
+Symlinks are resolved and their live target inspected — no cached manifest can
+make a retargeted link look current. The canonical in-repo package is detected
+separately (`inspectTuskerSkillPackage`) and reported with `source_kind:
+canonical`. Repair for every non-`current` status is
+`tusker skill sync --repo . --source <canonical-tusker-checkout>`.
 
-`.claude/skills/spec/SKILL.md` is a **repo-local, canonical, hand-edited** skill
-(not shipped from `skills/tusker`, not generated). It runs a grill-protocol spec
-session: interview the operator one question at a time (recommendation-first;
-look up facts, ask only decisions), then produce three-plus artifacts:
+Install writes are transactional (`cmd/tusker/skill_install_safety.go`): a
+`.tusker-*-replace.lock` mkdir lock, populate a staging dir, rename the old
+destination aside, rename staging in, then delete the backup — with rollback if
+activation fails. Every path is confined to a managed boundary derived from the
+`.agents`/`.claude`/`.codex` ancestor; the filesystem root is refused, and no
+ancestor may be a symlink.
 
-1. Canonical spec — `.tusker/specs/<subject>.md` (updated in place, PM-readable top half).
-2. Decision log — `.tusker/specs/decisions/<date>-<subject>-grill.md`.
-3. Canonical system docs stay true — `docs/system/*.md` updated when locked decisions change documented behavior.
-4. Emitted work — `tusker new epic`/`new task` with real dependency edges and `spec_refs`.
+## Managed AGENTS.md / CLAUDE.md block
 
-See the broader factory context in [../../.tusker/specs/software-factory.md](../../.tusker/specs/software-factory.md).
+`renderTuskerPointerBlock` emits a `## Tusker` block between the
+`tuskerPointerBegin`/`tuskerPointerEnd` markers, naming the installed skill,
+`<vault>/SKILL.md`, `tusker next`, the do-not-read list, compact-proof rules,
+scratch non-durability, and the feedback instruction. `upsertTuskerPointer`
+replaces the marked region in place, appends it if the markers are absent, and
+creates the file if missing. `install --repo`, `update --repo`, `sync-repo-contract`,
+`init`, `migrate vault-root`, and `skill audit-agent-guidance --write` all call
+it; `skill sync` and `skill bundle`
+deliberately do not.
 
-## Source vs generated — the map
+If pointers changed but `<vault>/SKILL.md` is missing and non-managed guidance
+exists, install/update print a flattening warning
+(`repoAgentGuidanceFlatteningWarning`).
 
-| Location | Source or generated | Edit here? |
-| --- | --- | --- |
-| `skills/tusker/**` | Canonical source | Yes — the one true copy. |
-| `.claude/skills/spec/SKILL.md` | Canonical source (repo-local) | Yes. |
-| `~/.claude/skills/tusker`, `~/.agents/skills/tusker`, `~/.codex/skills/tusker` | Generated (copy) | No — rerun install/update. |
-| `<repo>/.agents/skills/tusker` | Generated (symlink→source, or copy) | No. |
-| `<repo>/.claude/skills/tusker` | Generated (Claude-compat copy) | No. |
-| `.tusker/SKILL.md` + `knowledge/domains/**` | Generated project skill | Via `tusker publish skill`, not by hand. |
-| `.tusker/_generated/skill-bundle/**` | Generated portable bundle | No. |
-| `<repo>/docs/agent-workflow.md`, `docs/ai-contribution-policy.md`, `.github/*` | Generated from repo-contract assets | No — edit the asset, resync. |
+## Setup doctor and repair
 
-## Flow: canonical sources → install targets → fresh session
+`runSetupDoctor` (`cmd/tusker/setup_doctor.go`) emits a
+`tusker.setup-doctor/v1` report over: registered-project vault root and
+workflow path, legacy dispatch-scope / completion-reactor config warnings,
+broken or legacy `.tusker` symlinks, scratch budget, both repo-local skill
+installs (`skill_install_<status>`, repairable only when the classified source
+is `canonical`), `tusker`-on-`PATH` versus running binary, and ChatGPT-handoff
+config/profile/routing/zip/workflow findings. Skill repair reinstalls in
+**symlink** mode and re-inspects; a repair that does not reach `current` is
+reported, not silently accepted. `tusker delivery rollout doctor` reuses the
+same function with a narrowed `RepairScope`.
 
-```mermaid
-flowchart TD
-  subgraph Source["Canonical source (edit here)"]
-    S1["skills/tusker/ SKILL.md + references + assets"]
-    S2[".claude/skills/spec/SKILL.md"]
-  end
-  S1 -->|"go:embed (bundle.go)"| BIN["tusker binary payload"]
-  BIN -->|"install --codex-user/--claude-user (copy)"| U["~/.claude, ~/.agents, ~/.codex skills/tusker"]
-  BIN -->|"install --repo (symlink, relative)"| RA["repo/.agents/skills/tusker"]
-  BIN -->|"install --repo (copy)"| RC["repo/.claude/skills/tusker"]
-  S1 -->|"sync-repo-contract"| RContract["repo docs/ + .github templates"]
-  PUB["tusker publish skill"] --> PK[".tusker/SKILL.md + knowledge/domains"]
-  subgraph Session["Fresh agent session loads"]
-    L1["operator skill (tusker)"]
-    L2[".tusker/SKILL.md → domain canon"]
-    L3["/spec skill (on request)"]
-  end
-  U --> L1
-  RA --> L1
-  RC --> L1
-  PK --> L2
-  S2 --> L3
-```
+## Source vs generated
+
+| Location | Kind |
+| --- | --- |
+| `skills/tusker/**` | Canonical source — edit here. |
+| `.claude/skills/spec/` | Repo-local hand-edited skill, unrelated to the bundle. |
+| `~/.agents`, `~/.codex`, `~/.claude` `skills/tusker` | Generated copies. |
+| `<repo>/.agents/skills/tusker`, `<repo>/.claude/skills/tusker` | Generated symlinks (copies only with `--skill-mode copy`). |
+| `.tusker/SKILL.md` + `knowledge/domains/**` | Generated `tusker.project-skill/v7` — regenerate with `tusker publish skill --v7`. |
+| `.tusker/_generated/skill-bundle/**` | Generated portable bundle. |
+| `<repo>/docs/agent-workflow.md`, `docs/ai-contribution-policy.md`, `AGENTS.workflow-snippet.md` | Generated from `assets/repo-contract/`. |
+
+## Progressive-disclosure budget
+
+`cmd/tusker/skill_progressive_disclosure_test.go` enforces the router contract
+against `skills/tusker/testdata/progressive-disclosure-budget.json`
+(`tusker.skill-disclosure-budget/v1`): `SKILL.md` body ≤900 words and ≤140
+lines, exactly two frontmatter keys, exactly seven `references/*.md` routes
+matching a fixed route table, no `references/` mention at all inside
+`PLAN.md`/`WORK.md`/`OPERATE.md`, and no duplicated paragraphs across those
+three plus `SKILL.md`.
+
+Each of the seven fixture cases pins router+guide word counts **exactly**
+(`loaded_words`) under a ceiling (`max_loaded_words`) and asserts required
+safety strings survive. Editing a primary guide's length fails the test until
+the fixture is updated. The test also re-derives `skillPayloadFingerprint` for
+the repo's own `.agents` and `.claude` installs and requires them to equal the
+canonical tree's.

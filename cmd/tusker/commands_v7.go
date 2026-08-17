@@ -786,7 +786,7 @@ func newV7Task(args Args) error {
 		data["raw_artifacts_reason"] = reason
 	}
 	body := v7TaskBody(id, title)
-	if status == "ready" && !args.Bool("force-ready") {
+	if status == "ready" && !args.Bool("force-ready") && tuskerTier(vaultPath) >= 2 {
 		synthetic := Note{Data: data, Body: body}
 		if reasons := v7TaskDispatchBlockers(vaultPath, synthetic); len(reasons) > 0 {
 			return tuskerError(
@@ -3642,8 +3642,54 @@ func v7BasicRunnableBlockers(task Note) []string {
 	return reasons
 }
 
+type v7DispatchContext struct {
+	tier          int
+	triggerStates []string
+}
+
+func resolveV7DispatchContext(vaultPath string) v7DispatchContext {
+	return v7DispatchContext{tier: tuskerTier(vaultPath), triggerStates: v7DispatchTriggerStates(vaultPath)}
+}
+
 func isV7DispatchableAgentTask(vaultPath string, task Note) bool {
-	return len(v7TaskDispatchBlockers(vaultPath, task)) == 0
+	return isV7DispatchableAgentTaskWithContext(vaultPath, task, resolveV7DispatchContext(vaultPath))
+}
+
+func isV7DispatchableAgentTaskWithContext(vaultPath string, task Note, context v7DispatchContext) bool {
+	return len(v7NextBlockers(vaultPath, task, context)) == 0
+}
+
+func v7NextBlockers(vaultPath string, task Note, context v7DispatchContext) []string {
+	if context.tier < 2 {
+		return v7TierOneNextBlockers(task, context.triggerStates)
+	}
+	return v7TaskDispatchBlockersWithStates(vaultPath, task, true, context.triggerStates)
+}
+
+func v7TierOneNextBlockers(task Note, triggerStates []string) []string {
+	var reasons []string
+	status := stringField(task.Data, "status")
+	if !containsString(triggerStates, status) {
+		reasons = append(reasons, "status is "+fallback(status, "(missing)"))
+	}
+	if stringField(task.Data, "readiness") != "ready" {
+		reasons = append(reasons, "readiness is "+fallback(stringField(task.Data, "readiness"), "(missing)"))
+	}
+	return reasons
+}
+
+func v7DispatchTriggerStates(vaultPath string) []string {
+	if fileExists(workflowPath(vaultPath)) {
+		if wf, err := loadWorkflow(vaultPath); err == nil && len(wf.Data.Tracker.ActiveStates) > 0 {
+			return wf.Data.Tracker.ActiveStates
+		}
+	}
+	if resolved, err := resolveTuskerConfig(vaultPath); err == nil && resolvedConfigKeyPresent(resolved, "automation.trigger_states") {
+		if states := normalizeList(resolved.Config.Automation.TriggerStates); len(states) > 0 {
+			return states
+		}
+	}
+	return []string{"ready", "rework"}
 }
 
 func v7TaskDispatchBlockers(vaultPath string, task Note) []string {
@@ -3651,22 +3697,35 @@ func v7TaskDispatchBlockers(vaultPath string, task Note) []string {
 }
 
 func v7TaskDispatchBlockersWithAuthorization(vaultPath string, task Note, includeAuthorizationState bool) []string {
-	reasons := append([]string{}, v7BasicRunnableBlockers(task)...)
+	return v7TaskDispatchBlockersWithStates(vaultPath, task, includeAuthorizationState, v7DispatchTriggerStates(vaultPath))
+}
+
+func v7TaskDispatchBlockersWithStates(vaultPath string, task Note, includeAuthorizationState bool, triggerStates []string) []string {
+	return v7TaskDispatchBlockersScoped(vaultPath, task, includeAuthorizationState, true, triggerStates)
+}
+
+// v7TaskDispatchBlockersScoped: includeWaveScope=false keeps the membership
+// blocker but skips wave resolution/authorization blockers. Contract-quality
+// checks (wave reports over cross-scope members) use that mode: a cross-scope
+// task's wave lives in its own vault and can never resolve from the local
+// index, so wave-scope blockers there are noise, not contract defects.
+func v7TaskDispatchBlockersScoped(vaultPath string, task Note, includeAuthorizationState, includeWaveScope bool, triggerStates []string) []string {
+	reasons := append([]string{}, v7DispatchStateBlockers(task, triggerStates)...)
 	if waveID := strings.TrimSpace(stringField(task.Data, "wave")); waveID != "" {
 		if idx, err := loadV7Index(vaultPath); err == nil {
 			if wave, ok := idx.Waves[waveID]; ok {
 				if !containsString(normalizeList(wave.Data["members"]), stringField(task.Data, "id")) {
 					reasons = append(reasons, stringField(task.Data, "id")+" is not an authorized member of wave "+waveID)
-				} else if includeAuthorizationState {
+				} else if includeAuthorizationState && includeWaveScope {
 					auth := waveAuthorizationProjection(vaultPath, idx, wave)
 					if state := stringField(auth, "state"); state != "armed" {
 						reasons = append(reasons, "wave "+waveID+" authorization is "+state+"; "+stringField(auth, "action"))
 					}
 				}
-			} else {
+			} else if includeWaveScope {
 				reasons = append(reasons, "wave does not resolve: "+waveID)
 			}
-		} else {
+		} else if includeWaveScope {
 			reasons = append(reasons, "wave authorization cannot be verified: "+err.Error())
 		}
 	}
@@ -3702,6 +3761,25 @@ func v7TaskDispatchBlockersWithAuthorization(vaultPath string, task Note, includ
 		reasons = append(reasons, "cannot verify upstream health: "+err.Error())
 	}
 	return uniqueStrings(reasons)
+}
+
+func v7DispatchStateBlockers(task Note, triggerStates []string) []string {
+	var reasons []string
+	if noteListKind(task.Data) != "task" {
+		reasons = append(reasons, "kind is not task")
+	}
+	status := stringField(task.Data, "status")
+	if !containsString(triggerStates, status) {
+		reasons = append(reasons, "status is "+fallback(status, "(missing)"))
+	}
+	if stringField(task.Data, "readiness") != "ready" {
+		reasons = append(reasons, "readiness is "+fallback(stringField(task.Data, "readiness"), "(missing)"))
+	}
+	owner := stringField(task.Data, "next_owner")
+	if owner != "agent" && !strings.HasPrefix(owner, "agent:") {
+		reasons = append(reasons, "next_owner is "+fallback(owner, "(missing)"))
+	}
+	return reasons
 }
 
 func v7ReviewTasks(idx v7Index) []Note {
@@ -3742,11 +3820,12 @@ func pickV7Next(vaultPath, epic, owner string) (Note, bool) {
 	if err != nil {
 		return Note{}, false
 	}
+	context := resolveV7DispatchContext(vaultPath)
 	for _, task := range sortedV7Tasks(idx) {
 		if epic != "" && strings.ToUpper(stringField(task.Data, "epic")) != epic {
 			continue
 		}
-		if !isV7DispatchableAgentTask(vaultPath, task) {
+		if !isV7DispatchableAgentTaskWithContext(vaultPath, task, context) {
 			continue
 		}
 		if owner != "" && stringField(task.Data, "next_owner") != owner {
@@ -3762,16 +3841,17 @@ func validateV7DispatchableTasks(vaultPath string) []Issue {
 	if err != nil {
 		return []Issue{issue("DISPATCHABLE_INDEX_FAILED", err.Error(), "", "", nil)}
 	}
+	context := resolveV7DispatchContext(vaultPath)
 	var errs []Issue
 	for _, task := range sortedV7Tasks(idx) {
 		status := stringField(task.Data, "status")
-		if status != "ready" && status != "rework" {
+		if !containsString(context.triggerStates, status) {
 			continue
 		}
 		if stringField(task.Data, "readiness") != "ready" {
 			continue
 		}
-		reasons := v7TaskDispatchBlockers(vaultPath, task)
+		reasons := v7NextBlockers(vaultPath, task, context)
 		if len(reasons) == 0 {
 			continue
 		}
@@ -4262,6 +4342,14 @@ func v7SingleUserLocalMutationMode(vaultPath string) bool {
 		}
 	}
 	return false
+}
+
+func tuskerTier(vaultPath string) int {
+	resolved, err := resolveTuskerConfig(vaultPath)
+	if err != nil || resolved.Config.Tier < 1 || resolved.Config.Tier > 5 {
+		return 5
+	}
+	return resolved.Config.Tier
 }
 
 func normalizeV7MutationMode(mode string) string {

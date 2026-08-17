@@ -487,11 +487,6 @@ func runInner(command string, args Args) (int, error) {
 		return 0, dashboardV7Cmd(args)
 	case "state":
 		return 0, stateV7Cmd(args)
-	case "hook install":
-		return 0, hookInstallCmd(args)
-	case "hook":
-		printV7Help()
-		return 0, nil
 	case "migrate v7":
 		return legacyOnlyCommand("migrate v7", "legacy migrate v7")
 	case "migrate gates":
@@ -865,7 +860,7 @@ func runInner(command string, args Args) (int, error) {
 	case "help migrate vault-root":
 		printMigrateVaultRootHelp()
 		return 0, nil
-	case "help handoff", "help gate", "help wave", "help wave create", "help wave add", "help wave remove", "help wave show", "help wave brief", "help land", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help hook", "help hook install", "help migrate", "help migrate v7", "help migrate gates":
+	case "help handoff", "help gate", "help wave", "help wave create", "help wave add", "help wave remove", "help wave show", "help wave brief", "help land", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help migrate", "help migrate v7", "help migrate gates":
 		printV7Help()
 		return 0, nil
 	case "help feedback":
@@ -1117,7 +1112,7 @@ func printCommandHelp(command string) bool {
 		printEvidenceHelp()
 	case "migrate vault-root":
 		printMigrateVaultRootHelp()
-	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "wave brief", "wave preflight", "wave arm", "wave pause", "wave resume", "wave disarm", "delivery", "delivery plan", "delivery context", "delivery import", "delivery review", "delivery start", "delivery doctor", "delivery rollout", "trace", "trace list", "trace show", "trace replay", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "hook", "hook install", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy", "migrate close-policy":
+	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "wave brief", "wave preflight", "wave arm", "wave pause", "wave resume", "wave disarm", "delivery", "delivery plan", "delivery context", "delivery import", "delivery review", "delivery start", "delivery doctor", "delivery rollout", "trace", "trace list", "trace show", "trace replay", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy", "migrate close-policy":
 		printV7Help()
 	case "feedback", "feedback add", "feedback digest", "feedback ingest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()
@@ -1370,8 +1365,6 @@ func printV7Help() {
   tusker state sync [--branch tusker/state] [--push] [--remote origin]
   tusker state import [--branch tusker/state] [--fetch] [--remote origin]
   tusker state export [--dir .tusker-runtime/state]
-  tusker hook install pre-commit [--force]
-  tusker hook install pre-push [--force]
   tusker validate --branch-policy [--staged]
   tusker migrate v7 --dry-run [--json]
   tusker migrate gates --from-blocked-reason [--write] [--json]

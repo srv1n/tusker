@@ -87,20 +87,9 @@ func (d *Daemon) serveTarget() (daemonServeTarget, bool, error) {
 		right := firstNonEmpty(projects[j].Project.ProjectID, projects[j].Project.Name, projects[j].Project.RepoRoot)
 		return left < right
 	})
-	var selected *RegisteredProject
-	for _, candidate := range projects {
-		if candidate.Project.Enabled {
-			copy := candidate.Project
-			selected = &copy
-			break
-		}
-	}
-	if selected == nil {
-		return daemonServeTarget{}, false, nil
-	}
 	for i := range projects {
 		candidate := projects[i]
-		if !candidate.Loadable() {
+		if !candidate.Project.Enabled || !candidate.Loadable() {
 			continue
 		}
 		cfg := candidate.Workflow.Data.Runtime.Serve

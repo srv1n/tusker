@@ -131,9 +131,10 @@ func pickV7NextWithReport(vaultPath string, filters nextPickFilters) (nextPickRe
 	if err != nil {
 		return nextPickReport{}, false
 	}
+	context := resolveV7DispatchContext(vaultPath)
 	var report nextPickReport
 	for _, task := range sortedV7Tasks(idx) {
-		reasons := v7NextSkipReasons(vaultPath, task, filters)
+		reasons := v7NextSkipReasons(vaultPath, task, filters, context)
 		if len(reasons) == 0 && stringField(report.Selected.Data, "id") == "" {
 			report.Selected = task
 			continue
@@ -151,12 +152,12 @@ func pickV7NextWithReport(vaultPath string, filters nextPickFilters) (nextPickRe
 	return report, stringField(report.Selected.Data, "id") != ""
 }
 
-func v7NextSkipReasons(vaultPath string, task Note, filters nextPickFilters) []string {
+func v7NextSkipReasons(vaultPath string, task Note, filters nextPickFilters, context v7DispatchContext) []string {
 	var reasons []string
 	if filters.Epic != "" && strings.ToUpper(stringField(task.Data, "epic")) != filters.Epic {
 		reasons = append(reasons, "epic "+stringField(task.Data, "epic")+" does not match "+filters.Epic)
 	}
-	reasons = append(reasons, v7TaskDispatchBlockers(vaultPath, task)...)
+	reasons = append(reasons, v7NextBlockers(vaultPath, task, context)...)
 	nextOwner := stringField(task.Data, "next_owner")
 	if filters.Owner != "" && nextOwner != filters.Owner {
 		reasons = append(reasons, "next_owner "+fallback(nextOwner, "(unset)")+" does not match "+filters.Owner)

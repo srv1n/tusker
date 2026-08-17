@@ -48,6 +48,9 @@ func TestInstalledCapabilityManifest(t *testing.T) {
 			t.Fatalf("manifest omitted command family %q", command)
 		}
 	}
+	if capabilitiesContainCommand(manifest.Commands, "hook") {
+		t.Fatal("Tusker must not advertise repository hook installation")
+	}
 	if manifest.RunnerCatalogSchema != "tusker.runner-catalog/v1" {
 		t.Fatalf("runner catalog schema = %q", manifest.RunnerCatalogSchema)
 	}

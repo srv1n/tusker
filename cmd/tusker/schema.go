@@ -727,8 +727,18 @@ func managedNoteType(noteType string) bool {
 	return noteType == "epic" || noteType == "task" || noteType == "doc"
 }
 
+func managedNoteTypeForData(data map[string]any) string {
+	if noteType := stringField(data, "type"); managedNoteType(noteType) {
+		return noteType
+	}
+	if kind := effectiveV7Kind(data); managedNoteType(kind) {
+		return kind
+	}
+	return ""
+}
+
 func sanitizeCanonicalNoteData(data map[string]any) {
-	noteType := stringField(data, "type")
+	noteType := managedNoteTypeForData(data)
 	if !managedNoteType(noteType) {
 		return
 	}

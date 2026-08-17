@@ -80,7 +80,6 @@ func validateV7Note(note Note, ctx validationContext, where string) ([]Issue, []
 	}
 	validateV7Capsule(note, ctx, where, &errors, &warnings)
 	validateV7BodyBudget(note, ctx.VaultPath, where, &errors, &warnings)
-	validateCapsule(note, ctx.VaultPath, where, capsuleRequiredForNote(note), &errors, &warnings)
 	validateV7FrontmatterSize(note, ctx, where, &warnings)
 	validateV7RecordSecrets(note, where, &errors)
 	return errors, warnings
@@ -177,6 +176,9 @@ func validateV7Task(note Note, ctx validationContext, where string, errors, warn
 	lintV7PlainTopLayer(note, where, errors, warnings)
 	if policy.RequireAcceptanceProof && !v7AcceptanceHasProof(note.Body) {
 		*warnings = append(*warnings, issue("ACCEPTANCE_PROOF_MISSING", "V7 task acceptance should include a proof column or proof text", where, "", nil))
+	}
+	if missingIDs := v7AcceptanceBulletsWithoutIDs(note.Body); len(missingIDs) > 0 {
+		*warnings = append(*warnings, issue("ACCEPTANCE_ID_MISSING", "V7 task acceptance bullets should start with an A<n> prefix", where, "prefix each bullet acceptance with A1, A2, and so on", map[string]any{"items": missingIDs}))
 	}
 	if vague := v7VagueAcceptanceItems(note.Body); len(vague) > 0 {
 		*warnings = append(*warnings, issue("ACCEPTANCE_TOO_VAGUE", "V7 task acceptance contains vague criteria: "+strings.Join(vague, ", "), where, "replace vague checks with observable outcomes and proof", map[string]any{"items": vague}))
@@ -312,14 +314,16 @@ func validateV7TaskProofPolicy(note Note, ctx validationContext, where string, e
 			*warnings = append(*warnings, finding)
 		}
 	}
-	budget := intField(data, "evidence_budget")
 	evidenceCount := len(idx.Evidence[stringField(data, "id")])
-	if budget >= 0 && evidenceCount > budget {
-		finding := issue("EVIDENCE_BUDGET_EXCEEDED", fmt.Sprintf("task has %d evidence card%s but evidence_budget is %d", evidenceCount, plural(evidenceCount), budget), where, "use inline verification, one summary card, or move low-signal detail to attempt/scratch", map[string]any{"count": evidenceCount, "budget": budget})
-		if v7ValidationPolicyFor(ctx.VaultPath).StrictProofPolicy {
-			*errors = append(*errors, finding)
-		} else {
-			*warnings = append(*warnings, finding)
+	if _, configured := data["evidence_budget"]; configured {
+		budget := intField(data, "evidence_budget")
+		if evidenceCount > budget {
+			finding := issue("EVIDENCE_BUDGET_EXCEEDED", fmt.Sprintf("task has %d evidence card%s but evidence_budget is %d", evidenceCount, plural(evidenceCount), budget), where, "use inline verification, one summary card, or move low-signal detail to attempt/scratch", map[string]any{"count": evidenceCount, "budget": budget})
+			if v7ValidationPolicyFor(ctx.VaultPath).StrictProofPolicy {
+				*errors = append(*errors, finding)
+			} else {
+				*warnings = append(*warnings, finding)
+			}
 		}
 	}
 	if status != "review" && status != "done" && report.Status == "satisfied" && v7LatestAttemptIsHandoff(idx, stringField(data, "id")) && !v7TaskHasReviewProposal(idx, stringField(data, "id")) && len(report.OpenGates) == 0 {
@@ -2131,6 +2135,31 @@ func v7AcceptanceIDs(body string) []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+func v7AcceptanceBulletsWithoutIDs(body string) []string {
+	content := sectionContent(body, "## Acceptance")
+	seen := map[string]bool{}
+	var missing []string
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if !strings.HasPrefix(lower, "- [ ]") && !strings.HasPrefix(lower, "- [x]") {
+			continue
+		}
+		item := strings.TrimSpace(trimmed[5:])
+		if item == "" {
+			continue
+		}
+		if v7AcceptanceIDFromLine(trimmed) != "" {
+			continue
+		}
+		if !seen[item] {
+			seen[item] = true
+			missing = append(missing, item)
+		}
+	}
+	return missing
 }
 
 func v7AcceptanceIDFromLine(line string) string {

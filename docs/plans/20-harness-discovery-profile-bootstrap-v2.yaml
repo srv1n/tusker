@@ -7,7 +7,7 @@ spec_refs:
 context_fingerprint: sha256:cb2c48897ca9ecbda06815b116eb898beea1de91661fa5c36a71c7c4677b89ec
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
-factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
 summary: >-
   Establish the read-only local harness catalog, semantic runner-profile
   bootstrap, V2-first authoring path, and route preview needed to dogfood

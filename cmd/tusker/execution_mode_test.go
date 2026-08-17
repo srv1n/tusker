@@ -39,7 +39,7 @@ func TestAgentSessionGuardLeavesHumanTerminalCommandsAvailable(t *testing.T) {
 }
 
 func TestExecutionModeInstructionsForbidNestedRunners(t *testing.T) {
-	for _, path := range []string{"../../AGENTS.md", "../../CLAUDE.md", "../../skills/tusker/SKILL.md", "../../docs/specs/reliable-execution-lifecycle.md"} {
+	for _, path := range []string{"../../AGENTS.md", "../../CLAUDE.md", "../../docs/specs/reliable-execution-lifecycle.md"} {
 		body, err := readText(path)
 		if err != nil {
 			t.Fatal(err)
@@ -54,8 +54,10 @@ func TestExecutionModeInstructionsForbidNestedRunners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(skill, "tusker runs claim <TASK-ID>") {
-		t.Fatal("dispatched workers are already claimed before spawn and must not claim again")
+	for _, required := range []string{"task records only", "through the CLI", "authority over repository operations"} {
+		if !strings.Contains(skill, required) {
+			t.Fatalf("task-only skill missing %q", required)
+		}
 	}
 }
 

@@ -11,7 +11,7 @@ product_questions:
   - unresolved authority, credential, legal, or subjective decisions
 factory_mechanics:
   - task and epic identities
-  - dependencies, waves, workspaces, branches, and runners
+  - dependencies, waves, and runners
   - proof modes, evidence locations, retry policy, and daemon lifecycle
   - plan import, preflight, and delivery execution mechanics
 decision_table:
@@ -60,7 +60,7 @@ structural_multi_unit_signals:
   - concurrent_lanes
   - shared_scarce_resource
   - rollout_or_recovery_phase
-  - multiple_implementation_branches
+  - multiple_implementation_units
   - multiple_reviewer_packets
 guardrails:
   - analysis_is_read_only
@@ -68,7 +68,7 @@ guardrails:
   - tracked_modifying_work_requires_work_start
   - dispatched_worker_verifies_existing_claim
   - reviewer_submits_typed_result_only
-  - deterministic_handlers_own_merge_close_and_successor_wake
+  - deterministic_handlers_own_close_and_successor_wake
   - epic_is_never_execution_authority
   - project_automation_is_separate_explicit_opt_in
   - fresh_dispatch_scope_is_armed_waves

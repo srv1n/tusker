@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-20T03:38:53Z"
-updated_at: "2026-08-04T06:33:48Z"
-state_rev: "sha256:f559081d902ed840e22f4ede210e2adff9e4b14249fdc9b946b9066471293b8a"
+updated_at: "2026-08-12T07:27:25Z"
+state_rev: "sha256:3f0f3ef5623acdaeebbae62420a21215f2fe1090926cad841e862213d2960589"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -105,6 +105,9 @@ report-less overnight lane, eight redundant workspace gates).
 | [[ORC-T-0074]] | backlog | blocked_dependency | Wait for dependency ORC-T-0073 to reach done. |
 | [[ORC-T-0075]] | backlog | blocked_dependency | Wait for dependency ORC-T-0074 to reach done. |
 | [[ORC-T-0076]] | backlog | blocked_dependency | Wait for dependency ORC-T-0075 to reach done. |
+| [[ORC-T-0089]] | review | reviewer | Review evidence and close or return to rework. |
+| [[ORC-T-0090]] | review | reviewer | Review evidence and close or return to rework. |
+| [[ORC-T-0091]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 

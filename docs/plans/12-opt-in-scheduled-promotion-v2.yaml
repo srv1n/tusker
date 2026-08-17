@@ -4,10 +4,10 @@ title: Opt-in scheduled promotion
 epic: ORC
 spec_refs:
   - docs/specs/12-opt-in-scheduled-promotion.md
-context_fingerprint: sha256:ebd8c1baf5c381e36338c01ef480d29c8c57b63dbc703bdc074c34ebfdaeb507
+context_fingerprint: sha256:1e16672cbaf31fee39ed6ca837a891a5281f28fd3b15ae94221a2c0c13348c33
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
-factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
 summary: Migrate the default-off scheduled-promotion delivery wave to a requirement-traceable V2 contract without granting release, spending, notification, or production authority.
 non_goals:
   - This migration does not enable scheduled promotion, release, paid model triage, notifications, or default-branch movement.

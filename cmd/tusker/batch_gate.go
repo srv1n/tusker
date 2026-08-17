@@ -119,6 +119,19 @@ func (s *RuntimeStore) saveBatchGateRun(run BatchGateRun) error {
 	return err
 }
 
+// scheduledBatchGateRunTime keeps a malformed StartedAt from becoming an
+// immortal latest row. FinishedAt is a useful fallback for completed runs; if
+// neither timestamp is usable, the row is treated as expired at the caller's
+// existing grace boundary.
+func scheduledBatchGateRunTime(run BatchGateRun, now time.Time, expiredAfter time.Duration) time.Time {
+	for _, raw := range []string{run.StartedAt, run.FinishedAt} {
+		if parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(raw)); err == nil {
+			return parsed
+		}
+	}
+	return now.Add(-expiredAfter)
+}
+
 func (d *Daemon) scheduleBatchGateIfDue(project RegisteredProject, wf Workflow, now time.Time) error {
 	policy := wf.Orchestration.BatchGate
 	if !policy.Enabled || len(policy.Commands) == 0 {
@@ -135,21 +148,20 @@ func (d *Daemon) scheduleBatchGateIfDue(project RegisteredProject, wf Workflow, 
 		}
 		windowStart := mergeWindowMostRecent(windows, now)
 		if latest != nil {
-			if started, tErr := time.Parse(time.RFC3339, latest.StartedAt); tErr == nil {
-				// A run started at or after the current window already consumed
-				// it, so each window fires at most once per day and is a no-op
-				// between windows.
-				if !started.Before(windowStart) {
-					return nil
-				}
-				// A run still in flight from before this window must not be
-				// joined by a second concurrent gate. Mirror the period path's
-				// stuck-run guard: suppress a new spawn while a recent run is
-				// running, but bound it so a permanently stuck run cannot wedge
-				// the schedule forever.
-				if latest.Status == "running" && now.Sub(started) < mergeWindowRunningGrace {
-					return nil
-				}
+			started := scheduledBatchGateRunTime(*latest, now, mergeWindowRunningGrace)
+			// A run started at or after the current window already consumed
+			// it, so each window fires at most once per day and is a no-op
+			// between windows.
+			if !started.Before(windowStart) {
+				return nil
+			}
+			// A run still in flight from before this window must not be
+			// joined by a second concurrent gate. Mirror the period path's
+			// stuck-run guard: suppress a new spawn while a recent run is
+			// running, but bound it so a permanently stuck run cannot wedge
+			// the schedule forever.
+			if latest.Status == "running" && now.Sub(started) < mergeWindowRunningGrace {
+				return nil
 			}
 		}
 	} else {
@@ -158,11 +170,11 @@ func (d *Daemon) scheduleBatchGateIfDue(project RegisteredProject, wf Workflow, 
 			period = 24 * time.Hour
 		}
 		if latest != nil {
-			started, parseErr := time.Parse(time.RFC3339, latest.StartedAt)
-			if parseErr == nil && now.Sub(started) < period {
+			started := scheduledBatchGateRunTime(*latest, now, 2*period)
+			if now.Sub(started) < period {
 				return nil
 			}
-			if latest.Status == "running" && parseErr == nil && now.Sub(started) < 2*period {
+			if latest.Status == "running" && now.Sub(started) < 2*period {
 				return nil
 			}
 		}
@@ -186,28 +198,40 @@ func (d *Daemon) executeBatchGate(project RegisteredProject, policy BatchGatePol
 		maxRepairs = 3
 	}
 	failures := 0
-	firstFailCommand := ""
+	failingCommands := make([]string, 0, len(policy.Commands))
 	toolchain := scheduledPromotionToolchainFingerprint(project.RepoRoot, policy.Commands)
+	beforeTreeHash, beforeHashErr := workspaceTreeStateHash(project.RepoRoot)
 	for _, command := range policy.Commands {
+		if beforeHashErr != nil {
+			beforeTreeHash, beforeHashErr = workspaceTreeStateHash(project.RepoRoot)
+		}
 		started := time.Now()
 		output, err := runGateCommand(project.RepoRoot, command)
+		durationMS := time.Since(started).Milliseconds()
+		afterTreeHash, afterHashErr := workspaceTreeStateHash(project.RepoRoot)
 		if err == nil {
-			treeHash, hashErr := workspaceTreeStateHash(project.RepoRoot)
-			if hashErr == nil {
-				_ = d.store.RecordGateLedger(GateLedgerEntry{ID: "gate-" + strings.ToLower(newRecordID()), ProjectID: project.ProjectID, TreeHash: treeHash, Command: command, Profile: policy.FeatureProfile, Toolchain: toolchain, Host: runtimeLeaseHost(), DurationMS: time.Since(started).Milliseconds(), PassedAt: time.Now().UTC().Format(time.RFC3339)})
+			// A passing command is reusable only when it passed on the exact tree
+			// that was hashed before it started. A concurrent mutation still leaves
+			// the command green, but makes its ledger proof ineligible.
+			if beforeHashErr == nil && afterHashErr == nil && afterTreeHash == beforeTreeHash {
+				_ = d.store.RecordGateLedger(GateLedgerEntry{ID: "gate-" + strings.ToLower(newRecordID()), ProjectID: project.ProjectID, TreeHash: beforeTreeHash, Command: command, Profile: policy.FeatureProfile, Toolchain: toolchain, Host: runtimeLeaseHost(), DurationMS: durationMS, PassedAt: time.Now().UTC().Format(time.RFC3339)})
 			}
-			continue
 		}
-		failures++
-		excerpt := actionableGateFailure(output, err)
-		if run.FirstFailure == "" {
-			run.FirstFailure = excerpt
+		if err != nil {
+			failures++
+			excerpt := actionableGateFailure(output, err)
+			if run.FirstFailure == "" {
+				run.FirstFailure = excerpt
+			}
+			failingCommands = append(failingCommands, command)
+			if failures <= maxRepairs {
+				_ = createBatchGateRepairTask(project.VaultRoot, run.ID, command, excerpt, policy.FeatureProfile)
+			}
 		}
-		if firstFailCommand == "" {
-			firstFailCommand = command
-		}
-		if failures <= maxRepairs {
-			_ = createBatchGateRepairTask(project.VaultRoot, run.ID, command, excerpt, policy.FeatureProfile)
+		if afterHashErr == nil {
+			beforeTreeHash, beforeHashErr = afterTreeHash, nil
+		} else {
+			beforeTreeHash, beforeHashErr = "", afterHashErr
 		}
 	}
 	run.FinishedAt = time.Now().UTC().Format(time.RFC3339)
@@ -220,11 +244,10 @@ func (d *Daemon) executeBatchGate(project RegisteredProject, policy BatchGatePol
 	} else {
 		run.Status = "failed"
 		// The failing piece (repair task or command-tagged task) may have no
-		// dependents of its own, so stamp the red command onto every wave with
-		// in-flight members. Their not-yet-landed members then hold via
-		// v7HeldByFailedUpstream's own-wave reach, so a genuine shared failure
-		// actually quarantines the concurrent work it endangers.
-		_ = stampFailedCommandOnActiveWaves(project.VaultRoot, firstFailCommand, policy.FeatureProfile)
+		// dependents of its own, so stamp the full red command set onto every wave
+		// with in-flight members. Their not-yet-landed members then hold via
+		// v7HeldByFailedUpstream's own-wave reach.
+		_ = stampFailedCommandOnActiveWaves(project.VaultRoot, strings.Join(failingCommands, "\n"), policy.FeatureProfile)
 	}
 	_ = d.store.saveBatchGateRun(run)
 	_ = refreshStreamBoardForVault(project.VaultRoot)
@@ -234,8 +257,8 @@ func (d *Daemon) executeBatchGate(project RegisteredProject, policy BatchGatePol
 // (and profile) the just-passed run actually re-ran green. It is called when a
 // shared build-and-test goes green, releasing only the dependents whose failing
 // command is now healthy again — an unrelated red marker (a different command or
-// feature profile) is left in place. A marker with no recorded command is a
-// legacy marker and is cleared unconditionally for backward compatibility.
+// feature profile) is left in place. A marker with no recorded command is legacy
+// and clears only after the full configured command set passes.
 //
 // The clear loop continues through every task and wave even when an individual
 // mutate fails, collecting errors and returning them joined, so one bad
@@ -250,16 +273,23 @@ func clearBuildFailedMarkers(vaultPath string, greenCommands []string, profile s
 		green[strings.TrimSpace(c)] = struct{}{}
 	}
 	reRanGreen := func(data map[string]any) bool {
-		cmd := strings.TrimSpace(stringField(data, buildFailedCommandField))
-		if cmd == "" {
-			return true // legacy marker: no command recorded, clear it
-		}
-		if _, ok := green[cmd]; !ok {
-			return false
-		}
 		markerProfile := strings.TrimSpace(stringField(data, buildFailedProfileField))
 		if markerProfile != "" && profile != "" && markerProfile != profile {
 			return false
+		}
+		cmd := strings.TrimSpace(stringField(data, buildFailedCommandField))
+		if cmd == "" {
+			// A legacy marker is safe to clear only after a complete configured
+			// command set has passed; executeBatchGate calls this only on an
+			// all-green run.
+			return len(green) > 0
+		}
+		if _, ok := green[cmd]; !ok {
+			for _, markerCommand := range strings.Split(cmd, "\n") {
+				if _, ok := green[strings.TrimSpace(markerCommand)]; !ok {
+					return false
+				}
+			}
 		}
 		return true
 	}
@@ -287,11 +317,11 @@ func clearBuildFailedMarkers(vaultPath string, greenCommands []string, profile s
 		}
 	}
 	for _, wave := range idx.Waves {
-		if wave.AbsolutePath == "" || strings.TrimSpace(stringField(wave.Data, buildFailedCommandField)) == "" || !reRanGreen(wave.Data) {
+		if wave.AbsolutePath == "" || (!boolField(wave.Data, buildFailedField) && strings.TrimSpace(stringField(wave.Data, buildFailedCommandField)) == "") || !reRanGreen(wave.Data) {
 			continue
 		}
 		_, _, mutErr := mutateV7DocumentLocked(wave.AbsolutePath, v7FrontmatterOrder["wave"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
-			if strings.TrimSpace(stringField(data, buildFailedCommandField)) == "" || !reRanGreen(data) {
+			if (!boolField(data, buildFailedField) && strings.TrimSpace(stringField(data, buildFailedCommandField)) == "") || !reRanGreen(data) {
 				return data, body, false, nil
 			}
 			clearFields(data)
@@ -304,12 +334,12 @@ func clearBuildFailedMarkers(vaultPath string, greenCommands []string, profile s
 	return errors.Join(errs...)
 }
 
-// stampFailedCommandOnActiveWaves records a red gate command onto every wave
-// that still has an in-flight (non-terminal) member. Those members' not-yet-
-// landed dependents then hold through v7HeldByFailedUpstream's own-wave reach.
-// Waves whose members have all landed carry nothing new, so the hold stays
-// scoped to work that is actually still in flight rather than freezing the
-// whole project.
+// stampFailedCommandOnActiveWaves records a red gate command or command set
+// onto every wave that still has an in-flight (non-terminal) member. Those
+// members' not-yet-landed dependents then hold through
+// v7HeldByFailedUpstream's own-wave reach. Waves whose members have all landed
+// carry nothing new, so the hold stays scoped to work that is actually still in
+// flight rather than freezing the whole project.
 func stampFailedCommandOnActiveWaves(vaultPath, command, profile string) error {
 	command = strings.TrimSpace(command)
 	if command == "" {

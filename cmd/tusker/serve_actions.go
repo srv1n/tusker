@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -734,9 +736,17 @@ func (s *serveServer) handleDaemonStartAction(w http.ResponseWriter, body serveA
 	if body.bool("once") {
 		args["once"] = "true"
 	}
+	setLastDaemonStartError(nil)
 	done := make(chan error, 1)
 	go func() {
-		done <- daemonRunCmd(args)
+		err := daemonRunCmd(args)
+		// The HTTP response may already have been sent as "start requested"; record
+		// the failure so the next daemon-status read still surfaces it.
+		setLastDaemonStartError(err)
+		if err != nil {
+			log.Printf("tusker serve: daemon start failed: %v", err)
+		}
+		done <- err
 	}()
 	select {
 	case err := <-done:
@@ -746,6 +756,26 @@ func (s *serveServer) handleDaemonStartAction(w http.ResponseWriter, body serveA
 		result := serveActionResult{OK: true, Reason: "daemon start requested", Command: "tusker daemon run"}
 		serveJSON(w, http.StatusOK, result)
 	}
+}
+
+// lastDaemonStartErrorValue holds the most recent failure from a serve-triggered
+// `tusker daemon run` so daemon status can explain why the daemon is down.
+var lastDaemonStartErrorValue atomic.Pointer[string]
+
+func setLastDaemonStartError(err error) {
+	if err == nil {
+		lastDaemonStartErrorValue.Store(nil)
+		return
+	}
+	msg := err.Error()
+	lastDaemonStartErrorValue.Store(&msg)
+}
+
+func lastDaemonStartError() string {
+	if msg := lastDaemonStartErrorValue.Load(); msg != nil {
+		return *msg
+	}
+	return ""
 }
 
 func (s *serveServer) decorateTaskActionResult(result *serveActionResult, taskID string) {

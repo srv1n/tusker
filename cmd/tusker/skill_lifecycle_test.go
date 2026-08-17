@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,23 +55,23 @@ func TestSkillSymlinkTargetStaysAbsoluteOutsideTheRepo(t *testing.T) {
 	}
 }
 
-func TestSkillExecutionOwnershipProtocol(t *testing.T) {
+func TestSkillTaskManagementProtocol(t *testing.T) {
 	root := filepath.Join("..", "..", "skills", "tusker")
 	source := filepath.Join(root, "SKILL.md")
-	text := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "WORK.md"))
+	text := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "PLAN.md"), filepath.Join("references", "WORK.md"), filepath.Join("references", "OPERATE.md"))
 	for _, required := range []string{
-		"Never start `tusker daemon run`", "independently running resident daemon",
-		"daemon atomically claims the task before it creates the worker process",
-		"it must not claim again", "tusker runs inspect <TASK-ID>",
-		"runner harness owns session attachment, heartbeats, process monitoring",
-		"heartbeat expiry and safe reclaim", "Never write `active` or", "`in_progress` into task frontmatter",
+		"task records only", "mutate its records through the CLI",
+		"tusker new task", "tusker status <TASK-ID>", "tusker verify add",
+		"Never hand-edit", "tracker failure is not a source-code failure",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("canonical skill missing %q", required)
 		}
 	}
-	if strings.Contains(text, "tusker runs claim <TASK-ID>") {
-		t.Fatal("dispatched worker instructions must not repeat the daemon's pre-spawn claim")
+	for _, forbidden := range []string{"git ", "worktree", "merge", "landing", "move refs", "source-sha"} {
+		if strings.Contains(strings.ToLower(text), forbidden) {
+			t.Fatalf("task-only skill retained repository authority %q", forbidden)
+		}
 	}
 	for _, installed := range []string{filepath.Join("..", "..", ".agents", "skills", "tusker", "SKILL.md"), filepath.Join("..", "..", ".claude", "skills", "tusker", "SKILL.md")} {
 		resolved, err := filepath.EvalSymlinks(installed)
@@ -91,13 +90,11 @@ func TestSkillExecutionOwnershipProtocol(t *testing.T) {
 
 func TestSkillReservesHumanApprovalForHumanOnlyBoundaries(t *testing.T) {
 	root := filepath.Join("..", "..", "skills", "tusker")
-	text := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "WORK.md"))
+	text := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "PLAN.md"), filepath.Join("references", "WORK.md"))
 	for _, required := range []string{
-		"## Human Approval Boundary",
 		"Everything already decided by the task, acceptance criteria, governing spec",
-		"final human acceptance of screenshots, recordings, UX feel, brand quality",
-		"Risk changes proof depth, reviewer strength, and landing safeguards",
-		"Independent reviewers may objectively accept",
+		"final human acceptance remains appropriate for UX feel, brand quality",
+		"Risk alone is not a gate",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("canonical skill missing human-approval rule %q", required)
@@ -105,63 +102,16 @@ func TestSkillReservesHumanApprovalForHumanOnlyBoundaries(t *testing.T) {
 	}
 }
 
-func TestFactoryExecutionSkillContract(t *testing.T) {
+func TestFactorySkillContractIsTaskScoped(t *testing.T) {
 	root := filepath.Join("..", "..", "skills", "tusker")
 	normalizedText := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "PLAN.md"), filepath.Join("references", "WORK.md"), filepath.Join("references", "OPERATE.md"))
 	for _, required := range []string{
-		"`tusker.delivery-plan/v2` DAG",
-		"Tusker and the agent own",
-		"An epic groups a product outcome",
-		"an epic is never executable authority",
-		"`automation.dispatch_scope: armed_waves`",
-		"tusker delivery start --plan <PLAN.yaml>",
-		"--confirm <PLAN-FINGERPRINT>",
-		"tusker work start <TASK-ID>",
-		"works while project automation is disabled",
-		"it must not claim again",
-		"tusker review submit <TASK-ID>",
-		"The deterministic control plane",
-		"never merges, lands, closes, moves refs, or schedules successors",
-		"desired outcomes, observable acceptance",
-		"important tests and failure cases",
-		"constraints, priorities, non-goals",
+		"desired outcome, observable acceptance", "One bounded outcome is one task",
+		"Use dependencies only when", "Use gates only for missing human authority",
+		"tusker show <TASK-ID> --capsule", "tusker proof status <TASK-ID>",
 	} {
 		if !strings.Contains(normalizedText, required) {
-			t.Fatalf("canonical factory execution skill missing %q", required)
-		}
-	}
-
-	allGuidance := strings.Builder{}
-	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(path), ".md") {
-			return nil
-		}
-		raw, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
-		}
-		allGuidance.Write(raw)
-		allGuidance.WriteByte('\n')
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	guidance := allGuidance.String()
-	for _, forbidden := range []string{
-		"Before unattended delivery, run `tusker wave preflight",
-		"Independent reviewer agents may close",
-		"Independent reviewers may close",
-		"reviewer may close every risk tier",
-		"tusker close <TASK-ID> --by reviewer:",
-		"reviewer.land_command",
-		"reviewer.close_command",
-		"reviewer.finalize_command",
-	} {
-		if strings.Contains(guidance, forbidden) {
-			t.Fatalf("factory guidance retained legacy authority phrase %q", forbidden)
+			t.Fatalf("canonical task-management skill missing %q", required)
 		}
 	}
 
@@ -173,7 +123,7 @@ func TestFactoryExecutionSkillContract(t *testing.T) {
 		"tracked_modifying_work_requires_work_start",
 		"dispatched_worker_verifies_existing_claim",
 		"reviewer_submits_typed_result_only",
-		"deterministic_handlers_own_merge_close_and_successor_wake",
+		"deterministic_handlers_own_close_and_successor_wake",
 		"epic_is_never_execution_authority",
 		"project_automation_is_separate_explicit_opt_in",
 		"fresh_dispatch_scope_is_armed_waves",
@@ -189,13 +139,8 @@ func TestFactoryExecutionSkillContract(t *testing.T) {
 	}
 	bootstrap := strings.Join(strings.Fields(string(bootstrapRaw)), " ")
 	for _, required := range []string{
-		"`tusker.delivery-plan/v2` DAG",
-		"`tusker work start`",
-		"`tusker review submit`",
-		"Deterministic Tusker handlers own",
-		"fingerprint-bound `tusker delivery start`",
-		"`armed_waves`",
-		"whole-epic authority",
+		"Tusker task tracking", "`tusker new epic|task|gate|decision`",
+		"Use the CLI before direct markdown edits", "task records do not grant authority",
 	} {
 		if !strings.Contains(bootstrap, required) {
 			t.Fatalf("repo bootstrap guidance missing %q", required)

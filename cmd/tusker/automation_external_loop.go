@@ -94,9 +94,7 @@ func automationExternalLoopCmd(args Args) error {
 		return err
 	}
 	defer ctx.Close()
-	if args.Bool("dispatch") {
-		ctx.DispatchRefusal = oneShotDispatchRefusal("tusker automation advance-external --dispatch")
-	}
+	// external-loop is read-only status; it has no dispatch path to refuse.
 	note, err := ctx.findTask(taskID)
 	if err != nil {
 		return err
@@ -123,6 +121,11 @@ func automationAdvanceExternalCmd(args Args) error {
 		return err
 	}
 	defer ctx.Close()
+	if args.Bool("dispatch") {
+		// This is the command that actually reaches dispatchExternalApplyInput,
+		// so the one-shot refusal has to be armed here.
+		ctx.DispatchRefusal = oneShotDispatchRefusal("tusker automation advance-external --dispatch")
+	}
 	note, err := ctx.findTask(taskID)
 	if err != nil {
 		return err

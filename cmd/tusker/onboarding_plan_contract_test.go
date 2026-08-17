@@ -65,7 +65,7 @@ spec_refs: [docs/specs/example.md]
 context_fingerprint: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
-factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
 epic_contract:
   source_key: packet-backed-example
   acronym_hint: PBE

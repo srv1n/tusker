@@ -1,120 +1,184 @@
 ---
 title: "Tusker CLI reference"
 subject: cli
-keywords: [cli, commands, reference]
+keywords: [cli, commands, flags, json, capsule, capabilities, exit-codes, vault-discovery, config-resolve, deprecations]
 part_of: overview
 status: canonical
-read_when: "You need to know which `tusker` command does a thing, what it means in plain terms, and when to reach for it."
-skip_when: "You want the mental model or architecture — read the [overview](00-overview.md) first."
+read_when: "You need the command inventory, global flag/output conventions, vault and config resolution, capability reporting, or exit/error semantics of the `tusker` binary."
+skip_when: "You need what a command *means* — lifecycle, proof, gate, wave, landing, or orchestration semantics live in the subject docs this one links to."
+sources:
+  - cmd/tusker/cli.go
+  - cmd/tusker/main.go
+  - cmd/tusker/commands_index.go
+  - cmd/tusker/capabilities_cmd.go
+  - cmd/tusker/removed_surfaces.go
+  - cmd/tusker/helpers.go
+  - cmd/tusker/config_resolve_cmd.go
+  - cmd/tusker/commands_show.go
+  - cmd/tusker/commands_search.go
+  - cmd/tusker/commands_pickup.go
+  - cmd/tusker/commands_open_print.go
+  - cmd/tusker/commands_compact.go
+  - cmd/tusker/commands_context.go
+  - cmd/tusker/terminal_layout.go
 ---
 
 # Tusker CLI reference
 
-Every command below is dispatched by `cmd/tusker/cli.go`. One-line descriptions
-come from each command's own help text (`tusker help` / `tusker <cmd>` usage).
-Run `tusker help <cmd>` for full usage; not every subcommand registers a help
-page yet.
+One binary, one flat dispatch switch (`runInner` in `cmd/tusker/cli.go`). There is
+no flag library: `parseCLI`/`parseArgs` split `argv` into a command string and a
+`map[string]string`, so every flag is `--key value` or a bare `--key` (which
+becomes `"true"`). There are no short flags — `-h` is a top-level *command* word,
+not a flag — and `--key=value` is **not** parsed: it becomes the key `key=value`.
 
-Global: if `--vault <path>` is omitted, Tusker walks up from the current
-directory to find the repo-local `.tusker/` vault. Most read commands support
-`--json`.
+The authoritative inventory is the binary itself:
 
-## Create & inspect — get work in, look at it
+```
+tusker capabilities --json      # read-only; refuses without --json
+```
 
-| Command | Plain language | When to reach for it |
+## Invocation grammar
+
+| Rule | Behavior | Code |
 |---|---|---|
-| `init` | Initialize or refresh a repo vault | First time setting up Tusker in a repo (`tusker init --yes`). |
-| `new epic\|task\|gate\|decision` | Create a V7 record | Cutting new tracked work; `new task --epic APP --size m --risk medium`. `new bug` and `new doc` are removed aliases; use a typed task or `docs new`. |
-| `list` | List work records | Quick scan of what exists; supports filters. |
-| `search` | Search tracker notes (skips generated files/attachments) | Find a task by words without dredging raw logs. |
-| `show` | Show a bounded note *capsule* or one section | The default way to read a task cheaply (`show <id> --capsule`). |
-| `print` | Render a note as terminal-friendly Markdown | You want the fuller note, not just the capsule. |
-| `next` | Show the next pickable task | "What should I work on?" Ranked p0-before-p1, then risk, then id. `--explain` shows why others were skipped. |
+| Command word | `argv[1]`; a second bare word joins it (`work start`) only for commands in `commandTakesSubcommand` | `cli.go` |
+| Positionals | Collected into `_pos` (newline-joined) plus `_pos0`, `_pos1`, … | `parseArgs` |
+| Bare flag | `--json` with no following value (or followed by another `--flag`) parses as `"true"` | `parseArgs` |
+| `help <cmd>` | `tusker help show` and `tusker show --help` reach the same help page | `printCommandHelp` |
+| `legacy …` | Whole namespace refuses: prints legacy help / JSON error, exit 1 | `cli.go` |
+| Unknown | Prints `Unknown command:` + full help, exit 1 | `runInner` default |
 
-## Delivery — separate product review from execution authority
+## Global conventions
 
-| Command | Plain language | When to reach for it |
+| Concern | Contract |
+|---|---|
+| `--vault <path>` | Explicit vault root, made absolute. Accepted by every command that resolves a vault. |
+| Vault discovery | With no `--vault`, `resolveVaultPath` walks up from cwd via `discoverVault`: a vault dir, a repo-configured vault path, `./.tusker`, then the legacy child dir. Failure is `MISSING_ARG` with a `tusker init --yes` hint. `TUSKER_VAULT` is **not** read for discovery — it is only exported *into* hooks and runner workspaces. |
+| `--json` | Success payloads and errors both switch to JSON. Success shape is per-command; the error shape is always `{"ok":false,"error":{code,message,path,hint,context}}` (`main.go`). |
+| `--quiet` | Suppresses human confirmation/summary lines. Honored broadly — ~70 call sites across create, lifecycle, wave, delivery, proof, skill, and read commands. |
+| Terminal width | `--width`, else `TUSKER_WIDTH`, else the tty size, else `COLUMNS`, else 100; clamped to ≥40 (`terminal_layout.go`). |
+| Markdown style | `print` renders through glamour: `--style <name>`, else `GLAMOUR_STYLE`, else `dark`. `--plain` / `--style plain` bypasses rendering. |
+| Daemon nudge | After any successful vault-mutating command, `run()` notifies a resident daemon and, for project-registry mutations, sends `reconcile_registry`. Nothing is dispatched from the CLI itself. |
+| Worker context | `TUSKER_ATTEMPT_ID` marks a dispatched worker process; other `TUSKER_*` vars are runtime/test seams, not a user flag surface. |
+
+### Exit codes and errors
+
+Only three outcomes exist. `main.go` prints `[CODE] path: message` (+ `hint:`) to
+stderr and exits.
+
+| Exit | Meaning |
+|---|---|
+| 0 | Success. |
+| 1 | Any returned error (default when a handler returns exit 0 with an error), unknown command, refused legacy/removed surface, or a clean "checked and found problems" result — `validate` returns 1 on errors without an error object. |
+| >1 | No `runInner` handler returns >1. The only case is `daemon run`'s watchdog, which `os.Exit(70)`s outside this path. |
+
+Error codes are string constants in `cmd/tusker/schema.go` (`MISSING_ARG`,
+`INVALID_ARG`, `NOT_FOUND`, `ALREADY_EXISTS`, `INVALID_TRANSITION`,
+`EVIDENCE_GATE`, `CONFIG_INVALID`, `HOOK_FAILED`, `HOOK_TIMEOUT`, …). Two codes
+live outside that file: `READINESS_CONTRACT_INVALID` (`errors.go`) and
+`CAPABILITY_CONTRACT_INVALID` (`capabilities_cmd.go`).
+
+## Read surfaces (cheap context)
+
+These are the commands an agent should reach for before reading raw files.
+
+| Command | Modes and key flags | Owning file |
 |---|---|---|
-| `delivery context\|doctor\|review` | Build and inspect a delivery contract | Read-only. Review reports `planValid`, `importReady`, and `startReady` independently; unavailable automation does not invalidate a sound plan. |
-| `delivery import [--dry-run]` | Reconcile exact held records | Validates contract/import safety, then writes only held, disarmed records. It does not require project automation or a daemon. |
-| `delivery start --confirm <fingerprint>` | Authorize one exact unattended wave | The only delivery phase that requires project opt-in, runner/workspace/integration health, daemon readiness, and exact authorization material. It never enables missing infrastructure. |
-| `delivery rollout doctor` | Inspect registered-project health by dimension | Reports core, interactive, automation, authorization, runtime, and optional-integration health independently. |
-| `delivery rollout repair --scope <scope>` | Repair one authority domain | Defaults to `core`; `automation`, `service`, and `integrations` are explicit. Repair never enables automation, arms a wave, starts a service, changes credentials, or calls a provider. |
+| `show <ID>` | Default mode is **capsule**. Mode flags: `--full`, `--acceptance`, `--evidence`, `--verification`, `--capsule`; `--section <heading>` (prefixed `## ` unless it starts with `#`). `--json` always emits the `tusker.task-status/v1` projection (id, kind, title, status, readiness, capsule, cross-scope deps) regardless of mode. | `commands_show.go` |
+| `search <text>` | `--query`, `--type`, `--status`, `--epic`, `--limit` (default 20, hard cap 100), `--json`. Skips generated files and attachments. | `commands_search.go` |
+| `list [EPIC]` | `--type`, `--status`, `--epic`, `--wave`, `--assignee`, `--project`, `--limit`, `--format table\|ids`, and the boolean narrowers `--ready --running --review --mine --open --closed --runnable`. A positional epic implies `--type task --open`; any narrower implies `--type task`. | `commands_index.go` |
+| `next` | Ranked pick of runnable work. `--epic`, `--owner`/`--assignee`, `--domain`, `--lane`, `--explain` (per-task skip reasons), `--claim` (delegates to `claim`), `--json`, `--quiet`. Without a pick it errors `NOT_FOUND`, except under `--explain`, which reports the skip list and exits 0. | `commands_pickup.go` |
+| `print <ID>` | Terminal-rendered markdown. Same mode flags as `show` but the **default is `--full`**; `--plain`, `--style`, `--json` (returns the markdown as a field), `--project`. | `commands_open_print.go` |
+| `open <ID>` | Opens in OS handler, `--app <name>`, `--editor` (`$VISUAL`/`$EDITOR`), or `--obsidian` (URI). `--path`/`--print` prints the target instead; `--json` reports `target`/`target_kind`. `--editor` with `--obsidian` is `INVALID_ARG`. | `commands_open_print.go` |
+| `compact [<ID>\|--all]` | **Dry run by default**; `--write` persists. `--archive-logs` moves legacy log sections out of the note; `--verbose` shows unchanged notes under `--all`; `--json`. | `commands_compact.go` |
+| `context audit --file <jsonl>` | Offline audit of a Codex session transcript for tool-output bloat: `--top <n>` (default 12), `--json`. Reads a file path only — it does not touch the vault. | `commands_context.go` |
 
-## Lifecycle — move a task through its states
+`print`/`open` are the only read commands that resolve records **across
+registered projects**: with no `--project`, they try the current vault first,
+then every registered project; an ID present in more than one is `INVALID_ARG`
+asking for `--project` or `--vault`.
 
-Durable statuses: `idea, backlog, ready, review, rework, superseded`
-(plus terminal `done`, `cancelled`). Runtime activity is a lease/run, not a status.
+## Command families
 
-| Command | Plain language | When to reach for it |
-|---|---|---|
-| `status <id> <status>` | Move a task through its workflow | Hand-move e.g. to `ready` or `review`; use `discard`/`close` for terminal moves. |
-| `work start\|submit\|fail\|release` | Own one interactive task revision | The canonical user-opened work session. It enforces task, dependency, gate, owner, revision, and workspace safety without requiring automation, a daemon, or an armed wave. |
-| `claim` / `next --claim --as <who>` | Take a lower-level local lease on a task | Runtime/compatibility paths that explicitly require lease mechanics. Prefer `work start` for interactive implementation. |
-| `verify` / `evidence add` | Record proof rows / evidence cards | Attach the PASS/FAIL and artifacts that prove acceptance. |
-| `close` | Close a task after gates + evidence pass | The task is genuinely done and proven. |
-| `accept <id> --by reviewer:name` | Confirm green proof, record acceptor, and close in one move | A reviewer signs off finished, already-green work. **`--by` must be `reviewer:<name>` or `human:<name>`** — it refuses a bare/default actor and never rubber-stamps unproven proof. |
-| `discard` | Abandon work safely, preserving history | Cancel a task without leaving dangling deps/gates/leases. Prefer this over setting `cancelled` directly. |
+Semantics belong to the subject docs; this table is the routing map.
 
-## Orchestration — the daemon and automated dispatch
+| Family | Purpose | Key subcommands / flags | Owning code | Semantics |
+|---|---|---|---|---|
+| `init`, `install`, `update`, `sync-repo-contract`, `setup doctor\|repair` | Install and wire a repo | `init --yes --fresh --purge-state --vault-only` | `install.go`, `setup_doctor.go` | [[skills]] |
+| `new epic\|task\|gate\|decision`, `knowledge new`, `docs find\|new\|map` | Create records | `new task --epic --size --risk` | `commands_v7.go`, `v7_domain_cmd.go` | [[tasks-and-proof]] |
+| `list`, `search`, `show`, `print`, `open`, `next`, `brief`, `packet` | Read work | see read-surface table | `commands_*.go`, `v7_migration_cmd.go` | [[tasks-and-proof]] |
+| `status`, `discard`, `close`, `accept`, `finish`, `release`, `heartbeat` | Lifecycle moves | `status <ID> <status>` (either order is accepted) | `removed_surfaces.go` shim → `commands_v7.go` | [[tasks-and-proof]] |
+| `work start\|status\|heartbeat\|submit\|fail\|release`, `claim` | One owned interactive session | `--json`, `--vault`; `claim` is a compatibility alias that forwards to `work start` when a workflow file exists | `work_session_cmd.go`, `commands_pickup.go` | [[tasks-and-proof]] |
+| `verify add\|recipe`, `evidence add\|promote\|prune`, `proof`, `attachments`, `redact`, `attempt`, `handoff` | Proof and artifacts | `verify` and `evidence` route on a positional word; a bare `verify` is refused | `v7_proof_cmd.go`, `removed_surfaces.go` | [[proof-and-closeout]] |
+| `gate`, `gate-run`, `gate-ledger check\|record` | Gate tiers and tree-keyed results | `gate-run --changed --base <ref>` | `v7_control_cmd.go`, `gate_tier.go`, `gate_ledger.go` | [[gates]] |
+| `review submit` | Attempt-bound reviewer verdict | `--verdict`, `--attempt`, `--covers`, `--source-sha`, `--task-rev`, `--work-rev`, `--gate-fingerprint`, `--proof-fingerprint` | `review_result.go` | [[gates]] |
+| `wave create\|add\|remove\|show\|brief\|preflight\|arm\|pause\|resume\|disarm` | Named task batches | | `v7_wave_cmd.go` | [[delivery-and-waves]] |
+| `delivery plan\|context\|doctor\|review\|import\|start\|rollout` | Delivery contract and authorization | `--plan`, `--confirm`, `--by`, `--scope`, `--json` | `delivery_cmd.go` | [[delivery-and-waves]] |
+| `land`, `closeout [status]`, `departure check\|status\|history\|hold\|resume` | Merge lane and terminal checkpoints | | `v7_land_cmd.go`, `v7_closeout_cmd.go`, `departure_commands.go` | [[landing-and-completion]] |
+| `daemon run\|install\|uninstall\|status\|stop\|limits\|resume\|service`, `refresh` | Resident operator loop | interactive sessions must not start `daemon run` | `daemon.go` | [[orchestration]] |
+| `automation status\|queue\|explain\|plan\|dispatch\|collect-external\|external-loop\|advance-external` | Daemon work queue | `plan`/`explain`/`queue`/`status` are read-only; `dispatch` is daemon-only | `automation_commands.go` | [[orchestration]] |
+| `projects add\|list\|limits\|enable\|disable\|rebind\|remove\|prune` | Repo registry for daemon pickup | | `daemon.go` | [[orchestration]] |
+| `runs claim\|start\|heartbeat\|submit\|fail\|reclaim\|inspect\|logs\|events\|interrupt\|release\|retire\|redrive`, `redrive` | Run/lease management | | `runs*.go` | [[orchestration]] |
+| `runner catalog\|profiles\|route`, `runner-wrapper`, `acp setup\|install\|doctor` | Runner adapters and local ACP runtime | `runner --lane --bundled --write --json`; `acp setup --npm-prefix --node --auth-source --auth-principal` | `runner_catalog.go`, `runner_wrapper.go`, `acp_setup.go` | [[runners-and-acp]] |
+| `execution register\|attach\|rename\|bind\|detach\|rebind\|inbox\|list\|show\|cancel\|launch` | Direct-work identity and provider correlation (`tusker execution inbox` lists unbound work) | `--json` | `execution_commands.go` | [[execution-observability-system]] |
+| `logbook`, `digest`, `streams`, `dashboard`, `serve`, `trace list\|show\|replay` | Read the state as a human | `logbook --date --write`; `digest --since --json` | `v7_logbook_cmd.go`, `v7_escalation_digest_cmd.go`, `serve_command.go`, `trace.go` | [[serve-ui]] |
+| `validate`, `reconcile`, `reindex`, `compact`, `purge`, `gc`, `state`, `migrate close-policy\|evidence-policy\|vault-root` | Vault hygiene and state movement | `validate --branch-policy-only --json`; `reconcile --id --dry-run --json`; `gc --ttl --yes --json` | `commands_index.go`, `scratch_gc.go`, `purge.go`, `vault_root_migration.go` | [[storage-and-runtime]] |
+| `feedback add\|digest\|ingest\|signals\|review\|promote`, `improve scan`, `escalate ack`, `proposal` | Friction capture and triage | | `v7_feedback_cmd.go`, `v7_improve_cmd.go`, `v7_proposal_cmd.go` | [[knowledge-and-feedback]] |
+| `domain list\|show\|new\|canon` | Project canon | | `v7_domain_cmd.go` | [[knowledge-and-feedback]] |
+| `skill doctor\|route\|pack\|sync\|bundle\|audit-agent-guidance`, `publish skill` | Skill install integrity | `publish skill --v7 --out <dir>` (refuses without `--v7`; refuses unsafe output paths) | `v7_skill_cmd.go`, `removed_surfaces.go` | [[skills]] |
+| `factory operations` | Read-only factory projection | | `factory_operations.go` | [[factory-intake]] |
+| `capabilities`, `version`, `config resolve`, `vault mount\|unmount\|set\|status\|repair\|move`, `xcode doctor` | Introspection and host wiring | `--json` | `capabilities_cmd.go`, `version_cmd.go`, `config_resolve_cmd.go`, `vault_workspace.go`, `xcode_doctor.go` | [[platform-support]] |
 
-| Command | Plain language | When to reach for it |
-|---|---|---|
-| `daemon run\|install\|status\|stop\|limits\|resume` | The operator loop for registered local projects | Run/inspect the resident background worker. Interactive sessions must **not** start `daemon run`. |
-| `automation status\|queue\|explain\|plan\|dispatch` | Inspect or control resident-daemon work | `plan`/`explain`/`queue`/`status` are read-only. Interactive sessions never invoke `dispatch`; only the resident daemon may create background workers. |
-| `projects add\|list\|enable\|disable\|rebind\|remove` | Register repos for daemon pickup | Tell the daemon which repos it may work, toggle automation, or atomically rebind one disabled, quiescent ProjectID to a clean validated repo/vault while retaining runtime history. |
-| `runs inspect\|logs\|events\|interrupt\|release\|retire\|redrive` | Inspect and manage daemon runs/leases | Tail, stop, or replay a running/stuck attempt. |
-| `acp setup\|install\|doctor` | Prepare and inspect the local Codex ACP runtime | `setup` seals an exact existing npm prefix and writes machine-local ACP-primary configuration; it never runs npm, logs in, starts the daemon, or sends a prompt. `install` is the separate local native-artifact path; `doctor` is read-only integrity/auth-source diagnosis. |
-| `refresh` | Run one daemon poll tick | Nudge the loop once without a resident daemon. |
-| `gate-run --changed --base <ref>` | Run gate-tier proof in harvest mode | Per-change gate: `--changed` runs only the scopes the diff touched (requires configured `orchestration.gate.scopes`); `--base` sets the diff base. Without `--changed`, runs the full harvest. |
-| `gate-ledger check\|record` | Check or record tree-keyed gate results | Skip re-running a gate whose result for this exact tree hash is already recorded green. |
-| `closeout <id> [--emit-packet] [--validate ...]` / `closeout status` | Emit or inspect terminal human-wait checkpoints | Produce/inspect the final review checkpoint at the end of a task. |
+## Capability reporting
 
-## Views — read the state as a human
+`tusker capabilities --json` (`capabilities_cmd.go`) is the read-only installed-binary
+contract. It **rejects any other argument shape** — `len(args) != 1 || !--json`
+returns `INVALID_ARG`, so `--vault` cannot be combined with it. Payload
+(`tusker.capabilities/v1`, plus a constant `read_only: true`):
 
-| Command | Plain language | When to reach for it |
-|---|---|---|
-| `logbook` | Render a plain-language daily digest for a product reader | Daily "what happened" in human words. `--date <YYYY-MM-DD>` (host-local, default today); `--write` persists it under `.tusker/logbook/`. |
-| `digest` | Machine/agent activity digest | Broader/older activity summary (`--since <ts>`, `--json`). |
-| `streams` | Show the generated live/landed orchestration lane board | See what is running vs landed across the lanes. |
-| `dashboard build\|open` | Build/open generated dashboards | Regenerate or open the dashboard files under `.tusker/dashboards/`. |
-| `brief` / `packet <id> --for agent\|reviewer\|explainer` | Print a human brief / generate an agent or reviewer packet | Hand a worker or reviewer exactly the context they need. |
-| `execution register\|attach\|rename\|bind\|detach\|rebind\|inbox\|list\|show\|cancel\|launch` | Register and inspect truthful execution visibility | Direct Codex/Claude work, provider correlation, graph search, guarded binding, and capability-aware cancellation. These operations do not claim, dispatch, arm, or grant delivery authority. |
+| Field | Content |
+|---|---|
+| `binary` | `tusker.version/v1` projection: version, revision, `modified`, vcs time, go version, GOOS/GOARCH, binary sha256. Same projection `tusker version --json` prints. |
+| `commands` | Full public inventory, each `{command, subcommands?, flags?}`, sorted. Hand-maintained in `installedCapabilityCommands()`, guarded against `runInner` drift by `capabilities_cmd_test.go`. |
+| `schemas` | Record schema IDs by family: task (`tusker.task/v7`, `epic/v7`, `gate/v1`, `evidence/v1`, `wave/v7`), delivery plan, review, completion, receipt. |
+| `runner_adapters` | `claude-code`, `codex`, `codex_acp`, `codex_app_server`, `codex_cloud`, `codex_exec`. A sibling `runner_catalog_schema` key carries `tusker.runner-catalog/v1`. |
+| `optional_capabilities` | `{capability, available}` pairs — currently only `strict_v2_proof_authority/v1`. |
+| `deprecations` | `{command, replacement}` table (below). |
+| `compatibility` | Skill contract: workflow min/max, tracker schema versions, wave-authorization schemas, factory intake contract version+fingerprint, canonical skill source and payload fingerprint, provenance manifest filename, primary guides, plus a `fingerprint` over the whole manifest. |
 
-## Hygiene — keep the vault honest
+Host discovery and project policy are deliberately excluded: neither can make an
+installed CLI capability appear.
 
-| Command | Plain language | When to reach for it |
-|---|---|---|
-| `validate` | Check vault invariants | Before trusting state, or after editing knowledge/contracts (`validate --json`). |
-| `reconcile` | Recompute readiness and next-action projections | State looks stale after manual edits or merges. |
-| `reindex` | Rebuild generated indexes | Generated indexes are out of sync with the notes. |
-| `compact` | Remove empty optional metadata and disposable scaffolding | Trim note noise so contracts stay readable. |
-| `feedback add\|digest\|ingest\|review\|promote` | Add agent feedback notes and generate digests | Record concise Tusker/product friction; later triage and promote it. |
-| `capabilities` | Report installed binary and skill compatibility | Check command/schema support, workflow range, factory contract, canonical skill payload, provenance, and primary guide contract before orchestration. |
-| `skill doctor\|route\|pack\|sync\|bundle` | Inspect, route, and materialize skills | Distinguishes current, stale, missing, incompatible, and locally modified installs; sync is the deterministic repair for generated copies. |
-| `setup doctor\|repair` | Diagnose and repair local onboarding drift | Local install/link/hook drift is suspected. |
-| `state sync\|import\|export` | Sync runtime state to/from a git branch | Move runtime state between machines. |
-| `hook install` | Install optional local git hooks | Enforce branch/validate policy at commit/push time. |
+## Deprecated and removed surfaces
 
-## Notes on the biggest workflows
+The deprecation table in the manifest is the contract. Every listed command still
+*dispatches* — it returns `INVALID_ARG` "… was removed from the V7-only Tusker
+build" (`removedSurfaceError`) and exit 1, so a stale caller gets a typed refusal
+rather than silent legacy behavior.
 
-- **Reviewer lane.** After a worker submits, an independent reviewer (a different
-  model where configured) checks the exact diff and submits one attempt-bound
-  typed `pass`, `changes_requested`, or `blocked` result. The reviewer never
-  edits implementation, changes lifecycle state, merges, lands, closes, or
-  moves refs. Deterministic Tusker handlers apply rework or integrate/close the
-  exact reviewed SHA. See [gates.md](gates.md) and
-  [orchestration.md](orchestration.md).
-- **Gate tiers.** Per-change gates run on touched scopes only; a wave-end gate
-  runs a collective compile+lint+test; the full suite runs nightly. See
-  [gates.md](gates.md).
-- **Execution visibility.** `execution register` creates immutable direct-work
-  identity before launch; `attach` correlates a provider session later.
-  `tusker execution inbox` lists unbound direct work. `bind` derives and checks the task's canonical wave
-  and creates a non-retroactive proof boundary. `list` is the graph search and
-  `cancel` succeeds only for a capability-proved target. See
-  [execution-observability.md](execution-observability.md).
+| Removed | Use instead |
+|---|---|
+| `docs apply\|build\|catalog\|check\|dev\|export\|freshness\|init\|model\|noop\|waive`, bare `docs` | `docs find\|new\|map`; `validate` for `check`; task proof or a decision for `noop`/`waive`; the repo publication pipeline for build/dev/export |
+| `knowledge apply\|check\|freshness\|list\|map\|noop\|route\|show\|waive` | `domain list\|show`, `docs map`, `skill route`, `show --capsule`, `validate` |
+| `domain graph`, `graph` | `domain list\|show` |
+| `new bug`, `new doc` | `new task`, `docs new` |
+| `migrate gates`, `migrate v7` | `migrate evidence-policy\|close-policy\|vault-root`; V7 is the only tracker |
+| `publish build\|dev\|export\|llms` | repository publication pipeline |
+| `propose` | `proposal` (note: `propose` currently still runs `proposalV7Cmd`, it does not refuse) |
+| bare `verify` | `verify add\|recipe` |
+| `legacy …` (whole namespace) | V7 commands listed by `tusker capabilities --json` |
 
-TODO-verify: `gate-run` and `streams` do not register a `tusker help` page;
-descriptions above are drawn from `cli.go` and `gate_tier.go`. Update if help
-pages are added.
+## Config resolution
+
+`tusker config resolve <key> [--vault <path>] [--json]` (`config_resolve_cmd.go`)
+answers "which layer set this, and which layers lost". Human output prints the
+key, the effective value, the winning source with its path, then every candidate
+source labelled `winning`/`losing` and `unset` where absent. `--json` wraps the
+same report under `{"ok":true,"resolution":…}`.
+
+Runtime policy itself lives in `WORKFLOW.md` plus `.tusker/config.yaml`;
+`_system/config.yaml` is read only for explicit legacy/migration flows and is not
+written by `init` (`config.go`). Hook commands from that config run as
+`sh -c` with `TUSKER_VAULT`, `TUSKER_EVENT`, `TUSKER_ID`, `TUSKER_ACTOR`,
+`TUSKER_DISPATCH_STATE` exported; output is capped at 64 KiB and secret-redacted,
+and a timeout raises `HOOK_TIMEOUT` rather than `HOOK_FAILED`.

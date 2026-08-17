@@ -129,6 +129,9 @@ func normalizeOrderedTransition(value any) orderedMap {
 	}
 }
 
+// Pruning stays keyed on legacy `type` only: V7 records compute state_rev over
+// their full frontmatter at ~40 write sites before serialization, so pruning
+// V7 kinds here would desync the stored rev from the written file (CAS storm).
 func pruneEmptyOptionalFrontmatter(data map[string]any) []string {
 	noteType := stringField(data, "type")
 	if !managedNoteType(noteType) {

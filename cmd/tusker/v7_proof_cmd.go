@@ -539,7 +539,10 @@ func withV7ProofWriteLock(vaultPath, taskID string, args Args, retryCommand stri
 }
 
 func acquireV7ProofWriteLock(vaultPath, taskID string, timeout time.Duration) (func(), error) {
-	lockPath := filepath.Join(vaultPath, ".tusker", "locks", "proof-"+taskID+".lock")
+	lockName := "proof-" + taskID + ".lock"
+	// vaultPath is the .tusker directory; older builds joined ".tusker" again.
+	reclaimLegacyDoubleTuskerPath(vaultPath, filepath.Join("locks", lockName))
+	lockPath := filepath.Join(vaultPath, "locks", lockName)
 	if err := ensureDir(filepath.Dir(lockPath)); err != nil {
 		return nil, err
 	}
@@ -1921,6 +1924,8 @@ func attachmentsV7MigrateCmd(args Args) error {
 	write := args.Bool("write")
 	if write {
 		report["mode"] = "write"
+		// Un-strand attachments an older build moved under .tusker/.tusker/scratch/.
+		reclaimLegacyDoubleTuskerPath(vaultPath, "scratch")
 	}
 	err = filepath.WalkDir(attachments, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -1934,7 +1939,7 @@ func attachmentsV7MigrateCmd(args Args) error {
 			return nil
 		}
 		targetTask := fallback(taskID, "_unmapped")
-		target := filepath.Join(vaultPath, ".tusker", "scratch", targetTask, "legacy-attachments", filepath.Base(path))
+		target := filepath.Join(scratchRootPath(vaultPath), targetTask, "legacy-attachments", filepath.Base(path))
 		if err := secureScratchMove(vaultPath, path, target); err != nil {
 			return err
 		}

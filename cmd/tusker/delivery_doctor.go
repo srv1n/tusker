@@ -87,13 +87,15 @@ func deliveryPlanDoctorBytes(vault, path string, raw []byte) (deliveryDoctorRepo
 	}
 	plan, prep := deliveryV2Prepare(vault, v2)
 	planTaskKeys := doctorPlanTaskKeys(plan)
+	prepCodes := deliveryDoctorValidatorCodes(vault, plan, "v2")
 	for _, issue := range prep {
-		report.addContractIssue(issue, "v2", planTaskKeys)
+		report.addContractIssueWithCodes(issue, "v2", planTaskKeys, prep, prepCodes)
 	}
 	base, frontiers := validateDeliveryPlan(vault, plan)
 	report.Frontiers = frontiers
+	baseCodes := deliveryDoctorValidatorCodes(vault, plan, "base")
 	for _, issue := range base {
-		report.addContractIssue(issue, "base validator", planTaskKeys)
+		report.addContractIssueWithCodes(issue, "base validator", planTaskKeys, base, baseCodes)
 	}
 	report.Concurrency = deliveryExpectedConcurrency(plan, frontiers)
 	doctorOperationalFindings(&report, vault, plan)
@@ -140,6 +142,11 @@ func (r *deliveryDoctorReport) finish() {
 	r.OK = len(r.Findings) == 0
 }
 
+type deliveryDoctorContractCode struct {
+	Message string
+	Code    string
+}
+
 func (r *deliveryDoctorReport) addContractIssue(message, provenance string, allTaskKeys []string) {
 	code, path, keys, remedy := deliveryDoctorContractFinding(message)
 	if code == "DEPENDENCY_CYCLE" {
@@ -148,16 +155,62 @@ func (r *deliveryDoctorReport) addContractIssue(message, provenance string, allT
 	r.add(code, path, keys, message, remedy, provenance)
 }
 
-func doctorPlanTaskKeys(plan deliveryPlan) []string {
-	keys := make([]string, 0, len(plan.Tasks))
-	for _, task := range plan.Tasks {
-		if key := strings.TrimSpace(task.SourceKey); key != "" {
-			keys = append(keys, key)
+func (r *deliveryDoctorReport) addContractIssueFromCode(message, provenance string, allTaskKeys []string, code string) {
+	taskKey := deliveryDoctorTaskKey(message, allTaskKeys)
+	requirementID := deliveryDoctorRequirementID(message, code)
+	findingCode, path, keys, remedy := deliveryDoctorContractFindingForCode(code, taskKey, requirementID, allTaskKeys)
+	r.add(findingCode, path, keys, message, remedy, provenance)
+}
+
+func (r *deliveryDoctorReport) addContractIssueWithCodes(message, provenance string, allTaskKeys []string, issues []string, codes []deliveryDoctorContractCode) {
+	if len(issues) != len(codes) {
+		// The typed adapter is a shadow of the string validators. If it drifts,
+		// keep the old classifier as the loud, safe fallback instead of guessing
+		// by position.
+		r.addContractIssue(message, provenance, allTaskKeys)
+		return
+	}
+	if code, ok := deliveryDoctorCodeMap(codes)[message]; ok {
+		r.addContractIssueFromCode(message, provenance, allTaskKeys, code)
+		return
+	}
+	// Equal lengths do not guarantee equal issue sets; an unmapped message is
+	// another shadow-validator drift and must use the prose classifier.
+	r.addContractIssue(message, provenance, allTaskKeys)
+}
+
+func deliveryDoctorCodeMap(codes []deliveryDoctorContractCode) map[string]string {
+	byMessage := make(map[string]string, len(codes))
+	for _, code := range codes {
+		if code.Message != "" {
+			byMessage[code.Message] = code.Code
 		}
 	}
-	keys = uniqueStrings(keys)
-	sort.Strings(keys)
-	return keys
+	return byMessage
+}
+
+func deliveryDoctorTaskKey(issue string, taskKeys []string) string {
+	for _, key := range taskKeys {
+		if strings.HasPrefix(issue, key+":") {
+			return key
+		}
+	}
+	return ""
+}
+
+func deliveryDoctorRequirementID(issue, code string) string {
+	if code != "REQUIREMENT_UNCOVERED" {
+		return ""
+	}
+	const prefix = "requirement "
+	if !strings.HasPrefix(issue, prefix) {
+		return ""
+	}
+	value := strings.TrimPrefix(issue, prefix)
+	if i := strings.IndexByte(value, ' '); i >= 0 {
+		return strings.TrimSpace(value[:i])
+	}
+	return strings.TrimSpace(value)
 }
 
 func deliveryDoctorContractFinding(issue string) (string, string, []string, string) {
@@ -204,6 +257,345 @@ func deliveryDoctorContractFinding(issue string) (string, string, []string, stri
 	default:
 		return "PLAN_CONTRACT_INVALID", "plan", keys, "repair the reported V2 plan field"
 	}
+}
+
+func deliveryDoctorContractFindingForCode(code, taskKey, requirementID string, allTaskKeys []string) (string, string, []string, string) {
+	taskPath := func(field string) string {
+		if taskKey == "" {
+			return field
+		}
+		return "tasks." + taskKey + "." + field
+	}
+	keys := []string{}
+	if taskKey != "" {
+		keys = []string{taskKey}
+	}
+	switch code {
+	case "REQUIRED_CAPABILITY_UNAVAILABLE":
+		return code, "required_capabilities", nil, "install or select a binary that enforces the exact required capability"
+	case "REQUIREMENT_UNCOVERED":
+		return code, "requirements." + requirementID, []string{requirementID}, "map the requirement to at least one task with observable acceptance"
+	case "ACCEPTANCE_UNMAPPED":
+		return code, taskPath("acceptance"), keys, "add an exact verification row covering the acceptance ID"
+	case "PROOF_ACCEPTANCE_UNKNOWN":
+		return code, taskPath("verification"), keys, "map verification only to declared acceptance IDs"
+	case "PROOF_UNSUPPORTED":
+		return code, taskPath("verification"), keys, "use an exact supported command: or manual proof: check"
+	case "PROOF_UNFILLED":
+		return code, taskPath("verification"), keys, "add exact verification covering every acceptance ID"
+	case "ACCEPTANCE_INVALID":
+		return code, taskPath("acceptance"), keys, "give every acceptance row a unique stable ID and concrete outcome"
+	case "ARTIFACT_INVALID":
+		return code, taskPath("artifact"), keys, "declare a valid operator-facing artifact with covered acceptance IDs"
+	case "DEPENDENCY_CYCLE":
+		return code, "tasks.*.dependencies", allTaskKeys, "remove or redirect dependency edges until the graph is acyclic"
+	case "DEPENDENCY_DANGLING":
+		return code, taskPath("dependencies"), keys, "reference an existing task source_key"
+	case "REQUIREMENT_REFERENCE_UNKNOWN":
+		return code, taskPath("requirement_refs"), keys, "reference a declared requirement ID"
+	case "UNSUPPORTED_RUNNER":
+		return code, taskPath("runner_profile"), keys, "choose a configured runner profile"
+	default:
+		return "PLAN_CONTRACT_INVALID", "plan", keys, "repair the reported V2 plan field"
+	}
+}
+
+// The V2/base validators currently expose []string rather than a code-bearing
+// issue. Keep this boundary adapter driven by their structural predicates so
+// doctor codes do not depend on rewordable English; the validator should own
+// these typed results once its concurrent work is available.
+func deliveryDoctorValidatorCodes(vault string, plan deliveryPlan, source string) []deliveryDoctorContractCode {
+	if source == "v2" {
+		return deliveryDoctorV2Codes(vault, plan)
+	}
+	return deliveryDoctorBaseCodes(vault, plan)
+}
+
+func deliveryDoctorV2Codes(vault string, plan deliveryPlan) []deliveryDoctorContractCode {
+	v2 := plan.v2
+	if v2 == nil {
+		return nil
+	}
+	var out []deliveryDoctorContractCode
+	add := func(message, code string) {
+		out = append(out, deliveryDoctorContractCode{Message: message, Code: code})
+	}
+	if v2.Schema != deliveryPlanV2Schema {
+		add("schema must be "+deliveryPlanV2Schema, "PLAN_CONTRACT_INVALID")
+	}
+	if unavailable, err := deliveryUnavailableCapabilities(v2.RequiredCapabilities); err != nil {
+		add(err.Error(), "PLAN_CONTRACT_INVALID")
+	} else if len(unavailable) > 0 {
+		add("required capability unavailable: "+strings.Join(unavailable, ", "), "REQUIRED_CAPABILITY_UNAVAILABLE")
+	}
+	if !deliveryContextFingerprintValid(v2.ContextFingerprint) {
+		add("V2 plan requires context_fingerprint in sha256:<64 lowercase hex> form", "PLAN_CONTRACT_INVALID")
+	}
+	wantFactory, factoryErr := embeddedFactoryIntakeContractProvenance()
+	haveFactory := factoryIntakeContractProvenance{Schema: strings.TrimSpace(v2.FactoryIntakeContractSchema), Version: strings.TrimSpace(v2.FactoryIntakeContractVersion), Fingerprint: strings.TrimSpace(v2.FactoryIntakeContractFingerprint)}
+	if factoryErr != nil {
+		add("current factory-intake contract cannot be loaded: "+factoryErr.Error(), "PLAN_CONTRACT_INVALID")
+	} else if haveFactory.Schema == "" || haveFactory.Version == "" || haveFactory.Fingerprint == "" {
+		add("new V2 plan requires current factory-intake contract schema, version, and fingerprint; regenerate the plan from tusker delivery context", "PLAN_CONTRACT_INVALID")
+	} else if haveFactory != wantFactory {
+		add("V2 plan factory-intake contract is stale or contradictory; regenerate the plan from tusker delivery context", "PLAN_CONTRACT_INVALID")
+	}
+	if strings.TrimSpace(plan.Epic) != "" && v2.EpicContract != nil {
+		add("epic and epic_contract are mutually exclusive", "PLAN_CONTRACT_INVALID")
+	}
+	if strings.TrimSpace(plan.Epic) == "" && v2.EpicContract == nil {
+		add("V2 plan requires an existing epic or epic_contract", "PLAN_CONTRACT_INVALID")
+	}
+	if v2.EpicContract != nil {
+		c := v2.EpicContract
+		if strings.TrimSpace(c.SourceKey) == "" || deliveryPlaceholder(c.SourceKey) || !epicAcronymPattern.MatchString(strings.ToUpper(c.AcronymHint)) || deliveryPlaceholder(c.Title) {
+			add("epic_contract requires stable source_key, three-letter acronym_hint, and concrete title", "PLAN_CONTRACT_INVALID")
+		}
+	}
+	if strings.TrimSpace(plan.Epic) != "" && v2.EpicContract == nil && !fileExists(filepath.Join(vault, "work", "epics", plan.Epic+".md")) {
+		add("epic does not exist: "+plan.Epic, "PLAN_CONTRACT_INVALID")
+	}
+	reqs := map[string]bool{}
+	for _, requirement := range v2.Requirements {
+		id := strings.TrimSpace(requirement.ID)
+		if id == "" || deliveryPlaceholder(requirement.Outcome) {
+			add("requirements require stable id and concrete outcome", "PLAN_CONTRACT_INVALID")
+		}
+		if reqs[id] {
+			add("duplicate requirement id: "+id, "PLAN_CONTRACT_INVALID")
+		}
+		reqs[id] = true
+	}
+	if len(v2.Requirements) == 0 {
+		add("V2 plan requires at least one requirement", "PLAN_CONTRACT_INVALID")
+	}
+	for _, nonGoal := range v2.NonGoals {
+		if deliveryPlaceholder(nonGoal) {
+			add("non_goals must contain concrete statements", "PLAN_CONTRACT_INVALID")
+		}
+	}
+	covered := map[string]bool{}
+	keys := map[string]deliveryPlanTask{}
+	for _, task := range plan.Tasks {
+		keys[task.SourceKey] = task
+		if len(task.RequirementRefs) == 0 {
+			add(task.SourceKey+": task must reference at least one requirement", "PLAN_CONTRACT_INVALID")
+		}
+		for _, ref := range task.RequirementRefs {
+			if !reqs[ref] {
+				add(task.SourceKey+": unknown requirement "+ref, "REQUIREMENT_REFERENCE_UNKNOWN")
+			}
+			covered[ref] = true
+		}
+	}
+	for id := range reqs {
+		if !covered[id] {
+			add("requirement "+id+" is not covered by any task", "REQUIREMENT_UNCOVERED")
+		}
+	}
+	for _, gate := range v2.HumanGates {
+		if _, knownKind := v7GateKinds[strings.ToLower(gate.Kind)]; strings.TrimSpace(gate.SourceKey) == "" || deliveryPlaceholder(gate.Title) || !knownKind || strings.TrimSpace(gate.Owner) == "" || strings.TrimSpace(gate.Action) == "" || strings.TrimSpace(gate.Verification) == "" || strings.TrimSpace(gate.WhyAgentCannot) == "" {
+			add("human gate requires source_key, title, kind, owner, action, verification, and why_agent_cannot", "PLAN_CONTRACT_INVALID")
+		}
+		task, ok := keys[gate.TaskSourceKey]
+		if !ok {
+			add("human gate "+gate.SourceKey+": unknown task_source_key "+gate.TaskSourceKey, "PLAN_CONTRACT_INVALID")
+			continue
+		}
+		if len(gate.AcceptanceIDs) == 0 {
+			add("human gate "+gate.SourceKey+": acceptance_ids required", "PLAN_CONTRACT_INVALID")
+		}
+		acceptance := map[string]bool{}
+		for _, a := range task.Acceptance {
+			acceptance[deliveryAcceptanceID(a.ID)] = true
+		}
+		for _, id := range gate.AcceptanceIDs {
+			if !acceptance[deliveryAcceptanceID(id)] {
+				add("human gate "+gate.SourceKey+": unknown acceptance "+id, "PLAN_CONTRACT_INVALID")
+			}
+		}
+	}
+	for _, assumption := range v2.Assumptions {
+		if deliveryPlaceholder(assumption.SourceKey) || deliveryPlaceholder(assumption.Statement) {
+			add("assumptions require source_key and concrete statement", "PLAN_CONTRACT_INVALID")
+		}
+	}
+	for _, decision := range v2.UnresolvedDecisions {
+		if deliveryPlaceholder(decision.SourceKey) || deliveryPlaceholder(decision.Question) {
+			add("unresolved_decisions require source_key and concrete question", "PLAN_CONTRACT_INVALID")
+		}
+	}
+	return out
+}
+
+func deliveryDoctorBaseCodes(vault string, plan deliveryPlan) []deliveryDoctorContractCode {
+	var out []deliveryDoctorContractCode
+	add := func(message, code string) {
+		out = append(out, deliveryDoctorContractCode{Message: message, Code: code})
+	}
+	expectedSchema := deliveryPlanSchema
+	if plan.v2 != nil {
+		expectedSchema = deliveryPlanV2Schema
+	}
+	if plan.Schema != expectedSchema {
+		add("schema must be "+expectedSchema, "PLAN_CONTRACT_INVALID")
+	}
+	if deliveryPlaceholder(plan.Scope) || !deliveryScopeValid(plan.Scope) {
+		add("scope must be an explicit stable identifier using letters, numbers, dot, underscore, slash, colon, or hyphen", "PLAN_CONTRACT_INVALID")
+	}
+	if !epicAcronymPattern.MatchString(strings.ToUpper(plan.Epic)) {
+		add("epic must name an existing three-letter V7 epic", "PLAN_CONTRACT_INVALID")
+	} else if (plan.v2 == nil || plan.v2.EpicContract == nil) && !fileExists(filepath.Join(vault, "work", "epics", strings.ToUpper(plan.Epic)+".md")) {
+		add("epic does not exist: "+strings.ToUpper(plan.Epic), "PLAN_CONTRACT_INVALID")
+	}
+	if len(plan.SpecRefs) == 0 {
+		add("at least one governing spec_ref is required", "PLAN_CONTRACT_INVALID")
+	}
+	for _, ref := range plan.SpecRefs {
+		if !deliverySpecRefExists(vault, ref) {
+			add("spec_ref does not resolve inside the repository: "+ref, "PLAN_CONTRACT_INVALID")
+		}
+	}
+	if len(plan.Tasks) == 0 {
+		add("at least one task is required", "PLAN_CONTRACT_INVALID")
+	}
+	keys := map[string]bool{}
+	for _, task := range plan.Tasks {
+		key := strings.TrimSpace(task.SourceKey)
+		if key == "" || deliveryPlaceholder(key) {
+			add("every task requires a stable non-placeholder source_key", "PLAN_CONTRACT_INVALID")
+		} else if keys[key] {
+			add("duplicate source_key: "+key, "PLAN_CONTRACT_INVALID")
+		}
+		keys[key] = true
+		if deliveryPlaceholder(task.Title) || deliveryPlaceholder(task.Outcome) {
+			add(key+": title and outcome must be concrete", "PLAN_CONTRACT_INVALID")
+		}
+		acceptance := map[string]bool{}
+		covered := map[string]bool{}
+		for _, row := range task.Acceptance {
+			if strings.TrimSpace(row.ID) == "" || deliveryPlaceholder(row.Outcome) {
+				add(key+": acceptance rows require an id and concrete outcome", "ACCEPTANCE_INVALID")
+			}
+			id := deliveryAcceptanceID(row.ID)
+			if acceptance[id] {
+				add(key+": duplicate acceptance id "+row.ID, "ACCEPTANCE_INVALID")
+			}
+			acceptance[id] = true
+		}
+		if len(task.Acceptance) == 0 {
+			add(key+": acceptance is required", "PLAN_CONTRACT_INVALID")
+		}
+		for _, row := range task.Verification {
+			check := strings.TrimSpace(row.Check)
+			if deliveryPlaceholder(check) || (!strings.HasPrefix(check, "command: ") && !strings.HasPrefix(check, "manual proof: ")) {
+				add(key+": verification must use an exact command: or manual proof: check", "PROOF_UNSUPPORTED")
+			}
+			for _, cover := range splitCSV(row.Covers) {
+				cover = deliveryAcceptanceID(cover)
+				if !acceptance[cover] {
+					add(key+": verification references unknown acceptance "+cover, "PROOF_ACCEPTANCE_UNKNOWN")
+				}
+				covered[cover] = true
+			}
+		}
+		if len(task.Verification) == 0 {
+			add(key+": verification is required", "PROOF_UNFILLED")
+		}
+		for id := range acceptance {
+			if !covered[id] {
+				add(key+": acceptance "+id+" has no mapped verification", "ACCEPTANCE_UNMAPPED")
+			}
+		}
+		if deliveryPlaceholder(task.Artifact.Kind) || deliveryInvalidProductionPath(task.Artifact.Path) || deliveryPlaceholder(task.Artifact.Summary) {
+			add(key+": artifact requires kind, summary, and a repo-relative production path", "ARTIFACT_INVALID")
+		} else if _, ok := v7OperatorArtifactKinds[strings.ToLower(strings.TrimSpace(task.Artifact.Kind))]; !ok {
+			add(key+": artifact kind is not an operator-facing visual, performance, behavior, reliability, security, diff, or knowledge artifact", "ARTIFACT_INVALID")
+		}
+		if len(task.Artifact.AcceptanceIDs) == 0 {
+			add(key+": artifact acceptance_ids must name at least one task acceptance outcome", "ARTIFACT_INVALID")
+		} else {
+			for _, id := range task.Artifact.AcceptanceIDs {
+				if !acceptance[deliveryAcceptanceID(id)] {
+					add(key+": artifact acceptance_ids references unknown acceptance "+id, "ARTIFACT_INVALID")
+				}
+			}
+		}
+		if task.Risk != "" {
+			if _, ok := risks[strings.ToLower(task.Risk)]; !ok {
+				add(key+": invalid risk "+task.Risk, "PLAN_CONTRACT_INVALID")
+			}
+		}
+		if task.Priority != "" {
+			if _, ok := priorities[strings.ToLower(task.Priority)]; !ok {
+				add(key+": invalid priority "+task.Priority, "PLAN_CONTRACT_INVALID")
+			}
+		}
+		if task.Size != "" {
+			if _, ok := sizes[strings.ToLower(task.Size)]; !ok {
+				add(key+": invalid size "+task.Size, "PLAN_CONTRACT_INVALID")
+			}
+		}
+		if task.Complexity != "" {
+			if _, ok := map[string]bool{"routine": true, "standard": true, "complex": true, "frontier": true}[strings.ToLower(task.Complexity)]; !ok {
+				add(key+": invalid complexity "+task.Complexity, "PLAN_CONTRACT_INVALID")
+			}
+		}
+		qualifiedSeen := map[string]bool{}
+		for _, dep := range task.Dependencies {
+			kind := fallback(strings.ToLower(strings.TrimSpace(dep.Kind)), "hard")
+			if kind != "hard" && kind != "soft" {
+				add(key+": dependency kind must be hard or soft", "PLAN_CONTRACT_INVALID")
+			}
+			if plan.v2 != nil && dep.scopePresent {
+				if strings.TrimSpace(dep.scope) == "" {
+					add(key+": CROSS_SCOPE_INVALID_SCOPE; supplied scope must be non-blank", "PLAN_CONTRACT_INVALID")
+					continue
+				}
+				if !deliveryScopeValid(dep.scope) {
+					add(key+": CROSS_SCOPE_INVALID_SCOPE "+dep.scope+"; use a stable producer scope", "PLAN_CONTRACT_INVALID")
+				}
+				if strings.TrimSpace(dep.scope) == strings.TrimSpace(plan.Scope) {
+					add(key+": CROSS_SCOPE_SAME_SCOPE "+dep.scope+"; omit scope for local dependencies", "PLAN_CONTRACT_INVALID")
+				}
+				semantic := strings.TrimSpace(dep.scope) + "\x00" + strings.TrimSpace(dep.Task)
+				if qualifiedSeen[semantic] {
+					add(key+": CROSS_SCOPE_DUPLICATE_DEPENDENCY "+dep.scope+"/"+dep.Task, "PLAN_CONTRACT_INVALID")
+				}
+				qualifiedSeen[semantic] = true
+				if kind != "hard" {
+					add(key+": CROSS_SCOPE_HARD_ONLY "+dep.scope+"/"+dep.Task+"; use kind: hard", "PLAN_CONTRACT_INVALID")
+				}
+			}
+		}
+	}
+	for _, task := range plan.Tasks {
+		for _, dep := range task.Dependencies {
+			if plan.v2 != nil && strings.TrimSpace(dep.scope) != "" {
+				continue
+			}
+			if !keys[dep.Task] {
+				add(task.SourceKey+": dangling dependency "+dep.Task, "DEPENDENCY_DANGLING")
+			}
+		}
+	}
+	_, cycle := deliveryFrontiers(plan)
+	if cycle {
+		add("task dependency graph contains a cycle", "DEPENDENCY_CYCLE")
+	}
+	return out
+}
+
+func doctorPlanTaskKeys(plan deliveryPlan) []string {
+	keys := make([]string, 0, len(plan.Tasks))
+	for _, task := range plan.Tasks {
+		if key := strings.TrimSpace(task.SourceKey); key != "" {
+			keys = append(keys, key)
+		}
+	}
+	keys = uniqueStrings(keys)
+	sort.Strings(keys)
+	return keys
 }
 
 func doctorOperationalFindings(report *deliveryDoctorReport, vault string, plan deliveryPlan) {

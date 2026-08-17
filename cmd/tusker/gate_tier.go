@@ -189,17 +189,30 @@ func runGateTier(policy GateTierPolicy, requestedProfile string, rt gateTierRunt
 		return result, nil
 	}
 
+	beforeTreeHash := treeHash
+	var beforeHashErr error
 	for _, command := range pending {
+		if beforeHashErr != nil {
+			beforeTreeHash, beforeHashErr = rt.TreeHash(rt.Workspace)
+		}
 		commandStart := rt.now()
 		output, runErr := rt.Exec(rt.Workspace, command)
+		duration := rt.now().Sub(commandStart)
 		result.Ran = append(result.Ran, command)
+		afterTreeHash, afterHashErr := rt.TreeHash(rt.Workspace)
 		if runErr == nil {
-			if rt.RecordPass != nil && result.Toolchain != "" {
-				rt.RecordPass(command, treeHash, profile, result.Toolchain, rt.now().Sub(commandStart))
+			if rt.RecordPass != nil && result.Toolchain != "" && beforeHashErr == nil && afterHashErr == nil && afterTreeHash == beforeTreeHash {
+				rt.RecordPass(command, beforeTreeHash, profile, result.Toolchain, duration)
 			}
-			continue
 		}
-		result.Defects = append(result.Defects, harvestGateDefects(command, output, runErr, policy)...)
+		if afterHashErr == nil {
+			beforeTreeHash, beforeHashErr = afterTreeHash, nil
+		} else {
+			beforeTreeHash, beforeHashErr = "", afterHashErr
+		}
+		if runErr != nil {
+			result.Defects = append(result.Defects, harvestGateDefects(command, output, runErr, policy)...)
+		}
 	}
 	if len(result.Defects) == 0 {
 		result.Outcome = gateOutcomePassed

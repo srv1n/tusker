@@ -135,17 +135,21 @@ type serveInterruptResult struct {
 // not enable Redrive based only on a successful HTTP response.
 func (s *serveServer) handleRunInterrupt(w http.ResponseWriter, r *http.Request, taskID string) {
 	taskID = strings.ToUpper(strings.TrimSpace(taskID))
+	// Interrupt is a mutating, cross-project-dangerous action: without an explicit
+	// project a same-ID run in any other project could be stopped instead.
 	projectID := strings.TrimSpace(r.URL.Query().Get("project"))
-	if projectID != "" {
-		if snap, err := s.loadSnapshotForProject(projectID); err != nil {
-			serveJSON(w, http.StatusNotFound, serveInterruptResult{Refused: true, Reason: "run not found in project", TaskID: taskID})
-			return
-		} else if _, ok := serveFindRun(snap.runs, taskID); !ok {
-			serveJSON(w, http.StatusNotFound, serveInterruptResult{Refused: true, Reason: "run not found in project", TaskID: taskID})
-			return
-		}
+	if projectID == "" {
+		serveJSON(w, http.StatusBadRequest, serveInterruptResult{Refused: true, Reason: "project query parameter is required to interrupt a run", TaskID: taskID})
+		return
 	}
-	run, _, err := interruptRuntimeRun(DefaultStateRoot(), s.store, taskID)
+	if snap, err := s.loadSnapshotForProject(projectID); err != nil {
+		serveJSON(w, http.StatusNotFound, serveInterruptResult{Refused: true, Reason: "run not found in project", TaskID: taskID})
+		return
+	} else if _, ok := serveFindRun(snap.runs, taskID); !ok {
+		serveJSON(w, http.StatusNotFound, serveInterruptResult{Refused: true, Reason: "run not found in project", TaskID: taskID})
+		return
+	}
+	run, _, err := interruptRuntimeRunScoped(DefaultStateRoot(), s.store, projectID, taskID)
 	if err != nil {
 		issue := errorToIssue(err)
 		reason := issue.Message
@@ -155,6 +159,9 @@ func (s *serveServer) handleRunInterrupt(w http.ResponseWriter, r *http.Request,
 		serveJSON(w, http.StatusOK, serveInterruptResult{Refused: true, Reason: reason, TaskID: taskID})
 		return
 	}
+	// The preflight snapshot load above warms the cache pre-mutation; drop it so
+	// follow-up reads see the interrupted lease instead of the stale snapshot.
+	s.dropProjectSnapshot(projectID)
 	processRunning := runProcessGroupAlive(*run)
 	confirmed := LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateInterrupted && !processRunning
 	result := serveInterruptResult{

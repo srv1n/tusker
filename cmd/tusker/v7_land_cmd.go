@@ -20,7 +20,6 @@ import (
 )
 
 const (
-	tuskerLandMainGuardEnv      = "TUSKER_LAND_MAIN_OK"
 	v7LandingLockSchema         = "tusker.landing-lock/v1"
 	v7LandingLockRecoveryGrace  = 30 * time.Second
 	v7LandingAuditProvenance    = "tusker:landing/v2"

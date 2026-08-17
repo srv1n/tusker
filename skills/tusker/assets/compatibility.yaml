@@ -7,7 +7,7 @@ wave_authorization_schemas: [tusker.wave-authorization/v1]
 factory_intake_contract:
   schema: tusker.factory-intake-contract/v1
   version: 1.1.0
-  fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+  fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
 canonical_source: canonical://skills/tusker
 materialization_schema: tusker.skill-materialization/v1
 primary_guides:

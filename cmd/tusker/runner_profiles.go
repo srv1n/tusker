@@ -149,6 +149,7 @@ func boolPtr(value bool) *bool {
 
 func builtInTuskerConfig() v7TuskerConfigFile {
 	var cfg v7TuskerConfigFile
+	cfg.Tier = 5
 	cfg.Automation.DefaultProfile = "default"
 	cfg.Automation.Profiles = map[string]v7schema.TuskerRunnerProfileConfig{
 		"default": {
@@ -301,6 +302,7 @@ func resolveTuskerConfigForPathsWithOverrides(repoRoot, vaultPath string, includ
 func builtInTuskerConfigRaw() map[string]any {
 	cfg := builtInTuskerConfig()
 	return map[string]any{
+		"tier": cfg.Tier,
 		"automation": map[string]any{
 			"default_profile": "default",
 			"profiles":        configRawMap(cfg)["automation"].(map[string]any)["profiles"],
@@ -530,6 +532,10 @@ func mergeTuskerAutomationConfig(dst *v7TuskerConfigFile, src v7TuskerConfigFile
 func validateTuskerConfigLayer(layer tuskerConfigLayer) error {
 	if !layer.Present {
 		return nil
+	}
+	_, tierPresent := lookupConfigValue(layer.Raw, "tier")
+	if (tierPresent || layer.Config.Tier != 0) && (layer.Config.Tier < 1 || layer.Config.Tier > 5) {
+		return tuskerError(errorConfigInvalid, "tier must be between 1 and 5", withPath(layer.Path))
 	}
 	if err := validateCompletionReactorModeLayer(layer); err != nil {
 		return err

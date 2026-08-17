@@ -1,6 +1,6 @@
 ---
 name: tusker
-description: Operate Tusker task contracts, proof, review, gates, delivery plans, interactive work sessions, waves, fleet health, and resident-daemon orchestration. Use when a repo contains .tusker, a Tusker ID is named, work must be planned or tracked, or Tusker must explain why work is blocked.
+description: Track and manage Tusker tasks, acceptance, proof, gates, and lifecycle state through the installed CLI. Use when a repository contains .tusker, a Tusker ID is named, or work must be recorded or updated in Tusker.
 ---
 
 # Tusker
@@ -8,14 +8,20 @@ description: Operate Tusker task contracts, proof, review, gates, delivery plans
 ## Capability check
 
 Run `tusker capabilities --json` before relying on a command or schema. The
-installed binary is executable truth; this skill routes intent. If the needed
-capability or compatibility fingerprint is absent, report the exact mismatch
-and supported repair. Do not improvise a legacy workflow.
+installed binary is executable truth. If a needed task-management command is
+missing or broken, report that tracker failure plainly; do not invent a legacy
+workflow or let tracker repair expand the user's coding request.
 
-Local Codex automation requires both the `acp setup` command family and the
-`codex_acp` runner adapter. If either is absent, the installed binary predates
-the ACP-primary source contract: update it instead of silently substituting
-`codex_exec`.
+## Scope
+
+This skill governs Tusker task records only: requirements, acceptance,
+dependencies, status, proof, gates, review state, and closeout. It grants no
+authority over repository operations, source changes, releases, providers, or
+spending. Those remain governed by the user and the repository's own rules.
+
+When Tusker is used, mutate its records through the CLI. Never hand-edit
+lifecycle, proof, gate, or generated control fields. A tracker failure is not
+a source-code failure and does not revoke an otherwise authorized user request.
 
 ## Route once
 
@@ -23,65 +29,53 @@ Read only the selected terminal guide:
 
 | Request | Read |
 |---|---|
-| Requirements, decomposition, delivery DAG, review, held import, Start | `references/PLAN.md` |
-| Interactive implementation, dispatched worker/reviewer, proof, gates, human wait | `references/WORK.md` |
-| Resident daemon, automation, waves, integration, fleet repair, recovery | `references/OPERATE.md` |
+| Requirements, decomposition, or creating tracked work | `references/PLAN.md` |
+| Task status, proof, gates, review state, or closeout | `references/WORK.md` |
+| Tracker diagnosis or stuck task state | `references/OPERATE.md` |
 | Existing-repo onboarding | `references/REPO_ONBOARDING.md` |
 | Xcode generated build-state failure | `references/XCODE_BUILD_STATE.md` |
 | Documentation publication | `references/DOCS_PUBLICATION.md` |
 | Obsidian/Bases projection | `references/OBSIDIAN_BASES.md` |
 
-For a read-only answer, prefer `tusker show <ID> --capsule`, path-scoped
-status/search, and the smallest project-canon route. Do not scan task history,
-events, attempts, evidence, attachments, generated indexes, or raw logs unless
-the task explicitly requires them.
+For a read-only answer, prefer `tusker show <ID> --capsule`, `tusker list`,
+`tusker search`, and the smallest project-canon route. Do not scan task
+history, attempts, attachments, generated indexes, or raw logs unless the
+request explicitly requires them.
 
-## Authority boundaries
+## CLI-only mutations
 
-- A user-opened Codex or Claude session implements the requested work itself.
-  Interactive execution does not require daemon enablement or a daemon
-  lifecycle claim. Never start `tusker daemon run`, invoke
-  `tusker automation dispatch`, start a daemon service, or launch nested
-  `codex exec` / `claude -p` workers.
-- Planning, context, doctor, review, dry-run, task updates, proof, and held
-  import are inert. They do not enable automation, arm work, dispatch, call a
-  provider, move a ref, release, or spend.
-- Unattended work requires an independently running resident daemon, project
-  opt-in, exact wave authorization, and runtime preflight. Read-only planning
-  never grants those authorities.
-- `TUSKER_ATTEMPT_ID` means the daemon already claimed this dispatched attempt.
-  Work only its task and do not spawn, claim, merge, land, close, or schedule.
-- A dispatched reviewer inspects immutable inputs and submits one typed result.
-  It never edits implementation, changes lifecycle state, or moves refs.
-- Human gates are only for missing human capability/authority, unresolved
-  product intent, or contractually subjective acceptance. Risk alone is not a
-  human gate.
+Use the installed command family for tracker changes:
 
-Use the CLI for lifecycle, proof, gate, wave, and evidence mutations; never
-hand-edit their control fields. The installed skill owns tracker mechanics.
-Repo `AGENTS.md` / `CLAUDE.md` are bootstrap pointers only, and repo
-`.tusker/SKILL.md` owns project knowledge routing. Canonical skill changes
-belong in `skills/tusker/**`; generated installs are repaired by skill sync.
+```bash
+tusker new epic --vault ./.tusker --acronym APP --title "App foundation"
+tusker new task --vault ./.tusker --epic APP --title "Implement auth"
+tusker status <TASK-ID> ready --reason "Contract is actionable."
+tusker verify add <TASK-ID> --covers A1 --check "<CHECK>" --result pass
+tusker proof status <TASK-ID>
+```
 
-## Hard Stop Rule
+Use `tusker new gate`, `tusker gate`, `tusker discard`, and `tusker close`
+for their matching lifecycle operations. Check command help when flags differ
+from the examples; do not patch task markdown around a refusal.
+
+## Hard stop rule
 
 If Tusker reports `agent_action: stop_until_human_response` or
-`readiness: waiting_on_human`, stop. Do not retry validation or spawn more
-agents until the human changes the gate, task, proof, or code. Inspect only:
+`readiness: waiting_on_human`, stop changing Tusker state. Inspect only:
 
 ```bash
 tusker closeout status <TASK-ID> --json
 tusker proof status <TASK-ID>
 ```
 
-Revalidation while waiting on human is noise.
+Report the exact human action and task/gate ID. Do not manufacture proof or
+clear a human-owned gate.
 
 ## Compact loop
 
 ```text
-inspect capability → select one guide → inspect capsule/project canon
-→ perform the smallest authorized action → map proof to acceptance
-→ submit/review/stop on the exact next owner
+check capability -> inspect capsule -> perform the requested work
+-> record the smallest truthful tracker update -> stop
 ```
 
 Keep proof compact: command plus PASS/FAIL, with noisy output in

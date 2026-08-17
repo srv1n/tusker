@@ -4,11 +4,11 @@ title: Program cutover convergence
 epic: ORC
 spec_refs:
   - docs/specs/17-program-cutover-convergence.md
-context_fingerprint: sha256:63daf272ae7e57c356b5ca9532fdddf8b5b2fdf16457b88b0ed0d2e8860fd65f
+context_fingerprint: sha256:5fadc27fdf1ebf80154c7dfc200740d42af766a6896eac88fa59f167e8e66864
 required_capabilities: [strict_v2_proof_authority/v1]
 factory_intake_contract_schema: tusker.factory-intake-contract/v1
 factory_intake_contract_version: 1.1.0
-factory_intake_contract_fingerprint: sha256:0704d5ee907d738c496512b5ae948e96590a7b732c4ab774bee1de1429b5b13c
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
 summary: >-
   Import last only through the strict V2 importer, after independently strict
   current shadow producers and the exact-verification authority frontier, then

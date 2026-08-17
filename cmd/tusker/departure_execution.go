@@ -551,13 +551,17 @@ func (d *Daemon) executeDepartureGating(ctx context.Context, project RegisteredP
 	durable := run
 	_, err := promoteScheduledWaveContext(ctx, project.VaultRoot, project.ProjectID, run.Candidate.WaveIDs[0], wf, d.store, &durable, "daemon:departure:"+run.ID)
 	if err == nil {
-		if run.Promotion.CommittedRef != "" && run.Promotion.CommittedSHA != "" {
-			_, err = d.transitionDepartureRun(run, func(next *DepartureRun) {
+		// promoteScheduledWaveContext mutates `durable` (promotion identity and
+		// state revision); `run` is the stale pre-call copy.
+		// persistScheduledPromotionCommit already lands StatePromoted on the durable
+		// copy; only transition when the state is still lagging the committed refs.
+		if durable.State != DepartureStatePromoted && durable.Promotion.CommittedRef != "" && durable.Promotion.CommittedSHA != "" {
+			_, err = d.transitionDepartureRun(durable, func(next *DepartureRun) {
 				next.State = DepartureStatePromoted
 				next.BlockReason = ""
 			})
 		}
-		return nil
+		return err
 	}
 	var typed *TuskerError
 	if errors.As(err, &typed) && typed.Code == resourceLeaseRefusal {

@@ -210,7 +210,7 @@ func armedWaveTaskHumanBlocked(idx v7Index, task Note) bool {
 	}
 	taskID := stringField(task.Data, "id")
 	for _, gate := range idx.Gates {
-		if stringField(gate.Data, "status") == "open" && v7ProofOwnerClass(stringField(gate.Data, "owner")) == "human" && stringField(gate.Data, "task") == taskID {
+		if stringField(gate.Data, "status") == "open" && v7ProofOwnerClass(stringField(gate.Data, "owner")) == "human" && containsString(normalizeList(gate.Data["blocks"]), taskID) {
 			return true
 		}
 	}

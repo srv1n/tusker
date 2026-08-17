@@ -58,13 +58,13 @@ func TestCapsuleValidationWarnsAndFailsByBudget(t *testing.T) {
 	}}
 	var errs, warns []Issue
 	validateCapsule(note, vault, "knowledge/domains/project/INDEX.md", true, &errs, &warns)
-	if len(errs) != 0 || !issuesContainCode(warns, "CAPSULE_LONG") {
+	if len(errs) != 0 || !issuesContainCode(warns, "CAPSULE_TOKEN_BUDGET_WARN") {
 		t.Fatalf("expected budget warning only, errs=%#v warns=%#v", errs, warns)
 	}
-	note.Data["capsule"] = capsuleBlock("one two three four five six seven eight nine ten", nil, nil)
+	note.Data["capsule"] = capsuleBlock("one two three four five six seven eight nine ten eleven", nil, nil)
 	errs, warns = nil, nil
 	validateCapsule(note, vault, "knowledge/domains/project/INDEX.md", true, &errs, &warns)
-	if !issuesContainCode(errs, "CAPSULE_TOO_LONG") {
+	if !issuesContainCode(errs, "CAPSULE_TOKEN_BUDGET_EXCEEDED") {
 		t.Fatalf("expected hard budget error, errs=%#v warns=%#v", errs, warns)
 	}
 	delete(note.Data, "capsule")
@@ -72,6 +72,26 @@ func TestCapsuleValidationWarnsAndFailsByBudget(t *testing.T) {
 	validateCapsule(note, vault, "knowledge/domains/project/INDEX.md", true, &errs, &warns)
 	if !issuesContainCode(warns, "CAPSULE_MISSING") {
 		t.Fatalf("expected missing capsule warning, errs=%#v warns=%#v", errs, warns)
+	}
+}
+
+func TestCapsuleValidationLeavesForeignV7SchemaOnLegacyPath(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "repo", ".tusker")
+	if err := ensureDir(vault); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(filepath.Dir(vault), "tusker.yaml"), "validation:\n  capsule_token_budget: 5\n"); err != nil {
+		t.Fatal(err)
+	}
+	note := Note{Data: map[string]any{
+		"schema":  "foo.bar/v7",
+		"kind":    "doc",
+		"capsule": capsuleBlock("one two three four five six", nil, nil),
+	}}
+	var errs, warns []Issue
+	validateCapsule(note, vault, "docs/spec.md", true, &errs, &warns)
+	if len(errs) != 0 || !issuesContainCode(warns, "CAPSULE_LONG") || issuesContainCode(warns, "CAPSULE_TOKEN_BUDGET_WARN") {
+		t.Fatalf("foreign V7 schema should use legacy capsule validation, errs=%#v warns=%#v", errs, warns)
 	}
 }
 

@@ -159,22 +159,21 @@ func TestV7GuardrailSkillPackageEnforcesHardStopCloseoutContract(t *testing.T) {
 	repo := repoRootForFreshCloneTest(t)
 	required := map[string][]string{
 		"skills/tusker/SKILL.md": {
-			"Hard Stop Rule",
+			"Hard stop rule",
 			"tusker closeout status <TASK-ID> --json",
 			"tusker proof status <TASK-ID>",
 			"agent_action: stop_until_human_response",
 			"readiness: waiting_on_human",
-			"Revalidation while waiting on human",
-			"Repo `AGENTS.md` / `CLAUDE.md` are bootstrap pointers only",
-			"installed skill owns tracker mechanics",
-			"`.tusker/SKILL.md` owns project knowledge routing",
+			"Do not manufacture proof",
+			"When Tusker is used, mutate its records through the CLI",
+			"tracker failure is not a source-code failure",
 		},
 		"skills/tusker/references/WORK.md": {
 			"idea -> backlog -> ready -> review -> done",
-			"`claimed`, `running`, `leased`, and `interrupted` are runtime states",
-			"Human-only review becomes `readiness: waiting_on_human`",
+			"Runtime activity is not a durable task status",
+			"If the task reports `readiness: waiting_on_human`",
 			"agent_action: stop_until_human_response",
-			"Final Response Shape For Human Wait",
+			"Report what is blocked, the exact human action",
 		},
 	}
 	for rel, snippets := range required {
