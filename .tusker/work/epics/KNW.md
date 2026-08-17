@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-21T11:43:47Z"
-updated_at: "2026-07-21T14:54:18Z"
-state_rev: "sha256:043724868e05b9651a04e6904cb66bf376ff107121f298835170fc47d409a4cc"
+updated_at: "2026-08-17T15:21:54Z"
+state_rev: "sha256:c6701d8f8e59847f50802112e431fbc11485413097aa1bfb35f2e10613d19fae"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -54,6 +54,7 @@ TBD.
 | [[KNW-T-0004]] | backlog | agent | Wait for dependency KNW-T-0002 to reach review with satisfied proof or done. |
 | [[KNW-T-0005]] | backlog | agent | Wait for dependency KNW-T-0002 to reach review with satisfied proof or done. |
 | [[KNW-T-0006]] | backlog | agent | Wait for dependency KNW-T-0002 to reach review with satisfied proof or done. |
+| [[KNW-T-0008]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 

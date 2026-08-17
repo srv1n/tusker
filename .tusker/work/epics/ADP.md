@@ -12,12 +12,12 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-08-17T04:48:21Z"
-updated_at: "2026-08-17T04:48:21Z"
-state_rev: "sha256:6c58aa089fce86e424372ff6e01cecddb80c8d8eebe3876bfc2e42345dd58cc1"
+updated_at: "2026-08-17T15:22:28Z"
+state_rev: "sha256:739d31e1250e12668e7c94ba8f715588f9b92691d1d819bf85706e052e657a43"
 capsule:
-  what: "ADP epic: Progressive adoption tiers."
-  use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
+  use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
+  what: "ADP epic: Progressive adoption tiers."
 ---
 
 # ADP · Progressive adoption tiers
@@ -38,10 +38,28 @@ TBD.
 
 <!-- tusker:generated open-gates -->
 
+| Gate | Owner | Blocks | Action |
+|---|---|---|---|
+| _None._ |  |  |  |
+
 ## Active work
 
 <!-- tusker:generated active-work -->
 
+| Task | Status | Next owner | Next action |
+|---|---|---|---|
+| _None._ |  |  |  |
+
 ## Recently completed
 
 <!-- tusker:generated recently-completed -->
+
+| Task | Accepted by | Closed at |
+|---|---|---|
+| [[ADP-T-0001]] | reviewer:agent | 2026-08-17T15:22:25Z |
+| [[ADP-T-0002]] | reviewer:agent | 2026-08-17T15:22:25Z |
+| [[ADP-T-0003]] | reviewer:agent | 2026-08-17T15:22:26Z |
+| [[ADP-T-0004]] | reviewer:agent | 2026-08-17T15:22:26Z |
+| [[ADP-T-0005]] | reviewer:agent | 2026-08-17T15:22:27Z |
+| [[ADP-T-0006]] | reviewer:agent | 2026-08-17T15:22:27Z |
+| [[ADP-T-0007]] | reviewer:agent | 2026-08-17T15:22:28Z |
