@@ -201,6 +201,9 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 
 // handleTaskRunDirective records an operator's one-shot request. It never
 // launches a runner: only the resident daemon can consume the directive.
+// A directive is deliberate human execution authority, so it queues even when
+// project automation is disabled; automation.enabled gates autonomous
+// dispatch only.
 func (s *serveServer) handleTaskRunDirective(w http.ResponseWriter, taskID string, body serveActionBody) {
 	_, project, err := serveBaseArgsForBody(s, body)
 	if err != nil {
@@ -400,10 +403,7 @@ func (s *serveServer) handleProjectAutomationAction(w http.ResponseWriter, proje
 		err = validateProjectStorageBoundary(project.RepoRoot, project.VaultRoot)
 	}
 	if err == nil {
-		_, err = setProjectLocalConfigWithReadback(project.VaultRoot, "automation.enabled", enabled)
-	}
-	if err == nil {
-		err = s.store.SetProjectEnabled(projectID, enabled)
+		err = setProjectAutomation(s.store, *project, enabled)
 	}
 	if err != nil {
 		result := serveCommandResult("tusker projects automation", "", err)

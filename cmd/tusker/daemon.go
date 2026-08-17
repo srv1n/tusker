@@ -3638,15 +3638,6 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		return run, false, err
 	}
 	directiveActive := runDirectiveActive(directive, time.Now().UTC())
-	if directiveActive && !wfFile.Data.AutomationEnabled {
-		const reason = "run directive refused: project automation is disabled in its configuration"
-		if err := d.store.RefuseRunDirective(project.ProjectID, run.RecordID, reason); err != nil {
-			return run, false, err
-		}
-		run.LastError = reason
-		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-		return run, false, nil
-	}
 	// Registry enablement controls whether this project is polled. The project
 	// configuration is the separate, authoritative opt-in for daemon spawning.
 	if !project.Enabled {
@@ -3666,6 +3657,9 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 		return run, false, nil
 	}
+	// An active run directive is deliberate human execution authority and
+	// bypasses the automation opt-in; automation.enabled gates autonomous
+	// dispatch only.
 	if !wfFile.Data.AutomationEnabled && !directiveActive {
 		run.LastError = "daemon auto-spawn disabled: project automation is disabled in its configuration"
 		return run, false, nil
@@ -7065,8 +7059,16 @@ func projectsListCmd(args Args) error {
 		fmt.Println("No runtime state yet.")
 		return nil
 	}
+	// The read-only open above preserves the fresh-machine no-materialization
+	// guarantee. Existing stores are reopened writable so broken registrations
+	// can be quarantined by the shared loader.
+	_ = store.Close()
+	store, err = OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		return err
+	}
 	defer store.Close()
-	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
+	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{LoadDisabled: true})
 	if err != nil {
 		return err
 	}

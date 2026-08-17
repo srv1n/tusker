@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -56,10 +58,20 @@ func TestGlobalUninstallYesRemovesSkillsAndConfigButNotState(t *testing.T) {
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
 
 	skill := filepath.Join(home, ".codex", "skills", currentSkillInstallDir)
+	legacySkills := []string{
+		filepath.Join(home, ".agents", "skills", "obsidian-vault-tracker"),
+		filepath.Join(home, ".codex", "skills", "obsidian-vault-tracker"),
+		filepath.Join(home, ".claude", "skills", "obsidian-vault-tracker"),
+	}
 	config := filepath.Join(configHome, "tusker", "config.yaml")
 	stateMarker := filepath.Join(stateRoot, "runs", "keep.txt")
 	if err := writeText(filepath.Join(skill, "SKILL.md"), "skill\n"); err != nil {
 		t.Fatal(err)
+	}
+	for _, legacySkill := range legacySkills {
+		if err := writeText(filepath.Join(legacySkill, "SKILL.md"), "legacy\n"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := writeText(config, "tier: one\n"); err != nil {
 		t.Fatal(err)
@@ -76,6 +88,11 @@ func TestGlobalUninstallYesRemovesSkillsAndConfigButNotState(t *testing.T) {
 	}
 	if _, err := os.Lstat(config); !os.IsNotExist(err) {
 		t.Fatalf("config remains: %v", err)
+	}
+	for _, legacySkill := range legacySkills {
+		if _, err := os.Lstat(legacySkill); !os.IsNotExist(err) {
+			t.Fatalf("legacy skill remains at %s: %v", legacySkill, err)
+		}
 	}
 	assertExists(t, stateMarker)
 }
@@ -110,4 +127,104 @@ func TestGlobalUninstallRefusesNonTuskerBinSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertExists(t, link)
+}
+
+func TestGlobalUninstallStateRequiresTuskerMarker(t *testing.T) {
+	home := t.TempDir()
+	stateRoot := filepath.Join(t.TempDir(), "empty-state")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	err := tuskerGlobalUninstallCmd(Args{"state": "true", "force-state": "true", "yes": "true", "quiet": "true"})
+	if err == nil || !strings.Contains(err.Error(), "not a Tusker state root") {
+		t.Fatalf("expected missing-marker refusal, got %v", err)
+	}
+	assertExists(t, stateRoot)
+}
+
+func TestGlobalUninstallStateRefusesHomeEvenWithMarker(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("TUSKER_STATE_ROOT", home)
+	if err := writeText(filepath.Join(home, "daemon.db"), "marker\n"); err != nil {
+		t.Fatal(err)
+	}
+	err := tuskerGlobalUninstallCmd(Args{"state": "true", "force-state": "true", "yes": "true", "quiet": "true"})
+	if err == nil || !strings.Contains(err.Error(), "unsafe Tusker state root") {
+		t.Fatalf("expected home-root refusal, got %v", err)
+	}
+	assertExists(t, filepath.Join(home, "daemon.db"))
+}
+
+func TestGlobalUninstallStateLockIsHeldUntilCallerCloses(t *testing.T) {
+	home := t.TempDir()
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(runtimeStoreDBPath(stateRoot), "marker\n"); err != nil {
+		t.Fatal(err)
+	}
+	lock, busy, err := globalUninstallStateRootBusy(stateRoot)
+	if err != nil || busy || lock == nil {
+		t.Fatalf("acquire state lock: lock=%v busy=%t err=%v", lock, busy, err)
+	}
+	defer func() {
+		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		_ = lock.Close()
+	}()
+	second, busy, err := globalUninstallStateRootBusy(stateRoot)
+	if err != nil || !busy || second != nil {
+		t.Fatalf("second lock acquisition raced prompt: lock=%v busy=%t err=%v", second, busy, err)
+	}
+}
+
+func TestGlobalUninstallJSONReportsApplyErrors(t *testing.T) {
+	home := t.TempDir()
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	launchAgents := filepath.Join(home, "Library", "LaunchAgents")
+	plist := filepath.Join(launchAgents, daemonServiceLabel+".plist")
+	if err := ensureDir(launchAgents); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "plist-target")
+	if err := writeText(target, "plist\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, plist); err != nil {
+		t.Fatal(err)
+	}
+	oldGOOS := daemonServiceGOOS
+	daemonServiceGOOS = "darwin"
+	t.Cleanup(func() { daemonServiceGOOS = oldGOOS })
+	var output string
+	var commandErr error
+	output = captureStdout(t, func() {
+		commandErr = tuskerGlobalUninstallCmd(Args{"yes": "true", "json": "true"})
+	})
+	if commandErr == nil {
+		t.Fatal("expected the symlink service action to fail")
+	}
+	var payload struct {
+		OK       bool                     `json:"ok"`
+		Outcomes []globalUninstallOutcome `json:"outcomes"`
+	}
+	if decodeErr := json.Unmarshal([]byte(output), &payload); decodeErr != nil {
+		t.Fatalf("expected JSON envelope, got %q: %v", output, decodeErr)
+	}
+	if payload.OK {
+		t.Fatalf("apply error reported success: %#v", payload)
+	}
+	if len(payload.Outcomes) == 0 {
+		t.Fatalf("apply error omitted per-action outcomes: %#v", payload)
+	}
 }

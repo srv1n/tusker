@@ -49,11 +49,15 @@ func printConfigResolve(report configResolveReport) {
 		if source.Present {
 			present = oneLineConfigValue(source.Value)
 		}
-		if strings.TrimSpace(source.Path) == "" {
-			fmt.Printf("  - %s [%s]: %s\n", source.Source, status, present)
-		} else {
-			fmt.Printf("  - %s [%s] %s: %s\n", source.Source, status, source.Path, present)
+		line := fmt.Sprintf("  - %s [%s]", source.Source, status)
+		if strings.TrimSpace(source.Path) != "" {
+			line += " " + source.Path
 		}
+		line += ": " + present
+		if strings.TrimSpace(source.Note) != "" {
+			line += " (" + source.Note + ")"
+		}
+		fmt.Println(line)
 	}
 }
 

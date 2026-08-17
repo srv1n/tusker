@@ -1186,7 +1186,11 @@ func initCmd(args Args) error {
 	if err := workflowInitCmd(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
 		return err
 	}
-	recordWrite(effectiveVault, "tusker purge --repo . --only-tusker-state --yes")
+	purgeUndo := fmt.Sprintf("remove the generated Tusker vault manually at %s", effectiveVault)
+	if sameCanonicalProjectPath(effectiveVault, filepath.Join(cwd, defaultRepoVaultDir)) {
+		purgeUndo = "tusker purge --repo . --only-tusker-state --yes"
+	}
+	recordWrite(effectiveVault, purgeUndo)
 	if args.Bool("migrate-v5") {
 		report, err := migrateLegacyVaultToV5(args)
 		if err != nil {
@@ -1223,7 +1227,7 @@ func initCmd(args Args) error {
 			}
 			if changed != "" {
 				fmt.Printf("%s %s\n", capitalize(changed), filePath)
-				recordWrite(filename+" pointer block", "tusker purge --repo . --only-tusker-state --yes")
+				recordWrite(filename+" pointer block", purgeUndo)
 			}
 		}
 	}
@@ -1254,7 +1258,7 @@ func initCmd(args Args) error {
 	if err := reindex(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
 		return err
 	}
-	recordWrite(filepath.Join(effectiveVault, "_generated"), "tusker purge --repo . --only-tusker-state --yes")
+	recordWrite(filepath.Join(effectiveVault, "_generated"), purgeUndo)
 	if !mountTracker && !mountArgPresent && !withMountArgPresent && !noMount && configuredWorkspaceVaultPath() != "" {
 		doMount, err := ask("Mount this repo tracker in your configured Obsidian vault?", false)
 		if err != nil {
@@ -1281,7 +1285,26 @@ func initCmd(args Args) error {
 		if err := projectsAddCmd(Args{"repo": cwd, "vault": effectiveVault}); err != nil {
 			return err
 		}
-		recordWrite(workspaceConfigPath(), "tusker projects remove --repo .")
+		store, err := OpenRuntimeStore(DefaultStateRoot())
+		if err != nil {
+			return err
+		}
+		loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
+		_ = store.Close()
+		if err != nil {
+			return err
+		}
+		projectID := ""
+		for _, project := range loaded {
+			if sameCanonicalProjectPath(project.Project.RepoRoot, cwd) {
+				projectID = project.Project.ProjectID
+				break
+			}
+		}
+		if projectID == "" {
+			return tuskerError(errorNotFound, "project registration was not found after init")
+		}
+		recordWrite(runtimeStoreDBPath(DefaultStateRoot()), "tusker projects remove --id "+projectID)
 	}
 	fmt.Println()
 	fmt.Println("Summary of writes:")

@@ -441,3 +441,20 @@ func TestConfigResolveShowsEffectiveWinnerAndLosingSources(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigResolvePrintsIgnoredGlobalNoteWhenBuiltInWins(t *testing.T) {
+	vault := automationTestVault(t)
+	global := filepath.Join(t.TempDir(), "xdg")
+	t.Setenv("XDG_CONFIG_HOME", global)
+	if err := writeText(filepath.Join(global, "tusker", "config.yaml"), "automation:\n  enabled: true\n"); err != nil {
+		t.Fatal(err)
+	}
+	output := captureStdout(t, func() {
+		if err := configResolveCmd(Args{"vault": vault, "key": "automation.enabled"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(output, "effective: false") || !strings.Contains(output, "ignored at user-global layer; behavioral settings must be project-local") {
+		t.Fatalf("config resolve omitted ignored-layer explanation:\n%s", output)
+	}
+}

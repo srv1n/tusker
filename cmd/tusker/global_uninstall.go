@@ -56,12 +56,10 @@ func planGlobalUninstallWithState(includeStateRoot bool) []tuskerPurgeAction {
 		}
 	}
 
-	for _, path := range []string{
-		filepath.Join(home, ".agents", "skills", currentSkillInstallDir),
-		filepath.Join(home, ".codex", "skills", currentSkillInstallDir),
-		filepath.Join(home, ".claude", "skills", currentSkillInstallDir),
-	} {
-		add("remove_path", path, "user Tusker skill install")
+	for _, skillDir := range []string{currentSkillInstallDir, "obsidian-vault-tracker"} {
+		for _, agentDir := range []string{".agents", ".codex", ".claude"} {
+			add("remove_path", filepath.Join(home, agentDir, "skills", skillDir), "user Tusker skill install")
+		}
 	}
 
 	configPath := userGlobalTuskerConfigPath()
@@ -238,13 +236,27 @@ func tuskerGlobalUninstallCmd(args Args) error {
 		return tuskerError(errorInvalidTransition, "refusing to uninstall through a symlinked Tusker state root", withHint("point TUSKER_STATE_ROOT at the real state directory"))
 	}
 	if args.Bool("state") {
-		busy, err := globalUninstallStateRootBusy(stateRoot)
+		if err := validateGlobalUninstallStateRoot(stateRoot); err != nil {
+			return err
+		}
+	}
+	var stateLock *os.File
+	if args.Bool("state") {
+		var busy bool
+		var err error
+		stateLock, busy, err = globalUninstallStateRootBusy(stateRoot)
 		if err != nil {
 			return tuskerError(errorInvalidTransition, "cannot inspect Tusker daemon liveness", withHint(err.Error()))
 		}
 		if busy {
 			return tuskerError(errorInvalidTransition, "refusing --state while the Tusker daemon is live", withHint("stop the daemon and retry the state-root removal"))
 		}
+		defer func() {
+			if stateLock != nil {
+				_ = syscall.Flock(int(stateLock.Fd()), syscall.LOCK_UN)
+				_ = stateLock.Close()
+			}
+		}()
 	}
 	actions := planGlobalUninstallWithState(args.Bool("state"))
 	projects := globalRegisteredProjects(stateRoot)
@@ -269,43 +281,65 @@ func tuskerGlobalUninstallCmd(args Args) error {
 	}
 
 	outcomes, err := applyGlobalUninstall(actions, stateRoot)
-	if !args.Bool("quiet") {
-		if args.Bool("json") && err == nil {
-			emitJSON(map[string]any{"ok": true, "dry_run": false, "count": len(actions), "actions": globalUninstallJSONActions(actions), "outcomes": outcomes, "registered_projects": projects})
-		} else {
-			fmt.Printf("Tusker global uninstall applied (%d actions).\n", len(actions))
-			printGlobalUninstallOutcomes(outcomes)
-			printGlobalProjectReminder(projects)
-		}
+	if args.Bool("json") {
+		emitJSON(map[string]any{"ok": err == nil, "dry_run": false, "count": len(actions), "actions": globalUninstallJSONActions(actions), "outcomes": outcomes, "registered_projects": projects})
+	} else if !args.Bool("quiet") {
+		fmt.Printf("Tusker global uninstall applied (%d actions).\n", len(actions))
+		printGlobalUninstallOutcomes(outcomes)
+		printGlobalProjectReminder(projects)
 	}
 	return err
 }
 
-func globalUninstallStateRootBusy(stateRoot string) (bool, error) {
-	for _, path := range []string{filepath.Join(stateRoot, daemonPIDFileName), filepath.Join(stateRoot, daemonLockFileName)} {
-		if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
-			return false, fmt.Errorf("daemon liveness marker is a symlink: %s", path)
-		}
+func validateGlobalUninstallStateRoot(stateRoot string) error {
+	stateRoot = filepath.Clean(stateRoot)
+	home := filepath.Clean(userHomeDir())
+	canonicalRoot := canonicalPath(stateRoot)
+	canonicalHome := canonicalPath(home)
+	if filepath.Dir(stateRoot) == stateRoot || stateRoot == home || isWithinPath(home, stateRoot) || canonicalRoot == canonicalHome || isWithinPath(canonicalHome, canonicalRoot) {
+		return tuskerError(errorInvalidTransition, "refusing to remove an unsafe Tusker state root: "+stateRoot, withHint("choose a dedicated state directory below the user home directory"))
 	}
-	if readDaemonLiveness(stateRoot, time.Now().UTC()).Alive {
-		return true, nil
-	}
-	lockPath := filepath.Join(stateRoot, daemonLockFileName)
-	lock, err := os.OpenFile(lockPath, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	info, err := os.Lstat(runtimeStoreDBPath(stateRoot))
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return tuskerError(errorInvalidTransition, "refusing to remove a path that is not a Tusker state root: "+stateRoot, withHint("daemon.db is missing from the requested state root"))
 	}
 	if err != nil {
-		return false, err
+		return tuskerError(errorInvalidTransition, "cannot inspect Tusker state root marker: "+stateRoot, withHint(err.Error()))
 	}
-	defer lock.Close()
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return tuskerError(errorInvalidTransition, "refusing an invalid Tusker state root marker: "+runtimeStoreDBPath(stateRoot), withHint("daemon.db must be a regular file"))
+	}
+	return nil
+}
+
+func globalUninstallStateRootBusy(stateRoot string) (*os.File, bool, error) {
+	for _, path := range []string{filepath.Join(stateRoot, daemonPIDFileName), filepath.Join(stateRoot, daemonLockFileName)} {
+		if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return nil, false, fmt.Errorf("daemon liveness marker is a symlink: %s", path)
+		}
+	}
+	lockPath := filepath.Join(stateRoot, daemonLockFileName)
+	lock, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-			return true, nil
+			_ = lock.Close()
+			return nil, true, nil
 		}
-		return false, err
+		_ = lock.Close()
+		return nil, false, err
 	}
-	return false, nil
+	if readDaemonLiveness(stateRoot, time.Now().UTC()).Alive {
+		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		_ = lock.Close()
+		return nil, true, nil
+	}
+	return lock, false, nil
 }
 
 func confirmGlobalStateRemoval(args Args, stateRoot string) error {

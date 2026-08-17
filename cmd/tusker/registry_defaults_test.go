@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -95,20 +97,17 @@ func assertRegistryAutomationState(t *testing.T, project RegisteredProject, enab
 	}
 }
 
-func TestRunDirectiveAutomationDisabledRefused(t *testing.T) {
+// A run directive is deliberate human execution authority: it dispatches even
+// when project automation is disabled. automation.enabled gates autonomous
+// daemon pickup only.
+func TestDaemonHonorsDirectiveWithAutomationOff(t *testing.T) {
 	vault := automationTestVault(t)
 	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Directed", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	initializeOrchestrationGitRepo(t, filepath.Dir(vault))
+	installFakeCodexExec(t, filepath.Dir(vault))
 	project := registerAutomationTestProject(t, vault)
-	store, err := OpenRuntimeStore(DefaultStateRoot())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SetProjectEnabled(project.ProjectID, true); err != nil {
-		t.Fatal(err)
-	}
-	_ = store.Close()
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.enabled", false); err != nil {
 		t.Fatal(err)
 	}
@@ -134,12 +133,19 @@ func TestRunDirectiveAutomationDisabledRefused(t *testing.T) {
 	if err := daemon.PollOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+	if run.AttemptCount != 1 || run.ActiveAttemptID == "" {
+		t.Fatalf("expected the directive to dispatch one attempt, got %#v", run)
+	}
+	if run.ProcessPGID > 0 {
+		t.Cleanup(func() { _ = syscall.Kill(-run.ProcessPGID, syscall.SIGKILL) })
+	}
 	directive, err := daemon.store.RunDirective(project.ProjectID, "APP-T-0001")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if directive == nil || directive.State != "refused" || !strings.Contains(directive.Reason, "automation is disabled") {
-		t.Fatalf("expected refused directive, got %#v", directive)
+	if directive == nil || directive.State != "consumed" {
+		t.Fatalf("expected consumed directive, got %#v", directive)
 	}
 }
 
@@ -156,5 +162,35 @@ func TestProjectsListFreshStateDoesNotCreateRuntimeState(t *testing.T) {
 	}
 	if _, err := os.Stat(runtimeStoreDBPath(stateRoot)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("projects list created daemon.db: err=%v", err)
+	}
+}
+
+func TestProjectsListQuarantinesBrokenRegistration(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := RegisteredProject{ProjectID: "broken", ProjectKey: "broken", Name: "Broken", RepoRoot: t.TempDir(), VaultRoot: filepath.Join(t.TempDir(), "missing"), Enabled: true, Health: projectHealthHealthy}
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output := captureStdout(t, func() {
+		if err := projectsListCmd(Args{"json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var payload struct {
+		Projects []RegisteredProject `json:"projects"`
+	}
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Projects) != 1 || payload.Projects[0].Health != projectHealthError || payload.Projects[0].LastError == "" {
+		t.Fatalf("broken registration was not quarantined: %#v", payload)
 	}
 }

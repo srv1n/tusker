@@ -734,6 +734,48 @@ func TestInitDefaultsToDotTuskerVault(t *testing.T) {
 	}
 }
 
+func TestInitDaemonUndoUsesProjectIDStateRegistryAndCustomVaultNote(t *testing.T) {
+	previousWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previousWD) })
+	repo := t.TempDir()
+	customVault := filepath.Join(repo, "custom-vault")
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+	customVault, err = filepath.Abs("custom-vault")
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := captureStdout(t, func() {
+		if err := initCmd(Args{"vault": "custom-vault", "daemon": "true", "yes": "true", "no-pointers": "true", "no-contract": "true", "no-mount": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.ListProjects()
+	_ = store.Close()
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("registered project: %#v err=%v", projects, err)
+	}
+	if !strings.Contains(output, "tusker projects remove --id "+projects[0].ProjectID) || strings.Contains(output, "projects remove --repo") {
+		t.Fatalf("init printed invalid project undo:\n%s", output)
+	}
+	if !strings.Contains(output, runtimeStoreDBPath(stateRoot)) {
+		t.Fatalf("init did not record state-root registry path:\n%s", output)
+	}
+	if !strings.Contains(output, "remove the generated Tusker vault manually at "+customVault) || strings.Contains(output, "tusker purge --repo . --only-tusker-state --yes") {
+		t.Fatalf("init printed inaccurate custom-vault purge undo:\n%s", output)
+	}
+}
+
 func TestInitPreservesLegacyRootConfigAsReadOnlyCompatibilityInput(t *testing.T) {
 	previousWD, err := os.Getwd()
 	if err != nil {

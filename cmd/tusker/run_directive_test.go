@@ -56,6 +56,44 @@ func TestRunDirectiveRecorded(t *testing.T) {
 	assertEqual(t, "human:test-operator", directive.Actor, "duplicate must not overwrite actor")
 }
 
+// The play button is deliberate human execution authority: the directive
+// queues even when project automation is disabled. automation.enabled gates
+// autonomous dispatch only.
+func TestServeRunDirectiveQueuesWithAutomationDisabled(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	if _, err := setProjectLocalConfigWithReadback(server.vaultPath, "automation.dispatch_scope", "all_eligible"); err != nil {
+		t.Fatal(err)
+	}
+	// The fixture leaves automation.enabled at its disabled default; assert
+	// that so the scenario cannot silently drift.
+	automation, err := configResolveForPaths(server.repoRoot, server.vaultPath, true, "automation.enabled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if boolFromAny(automation.Value) {
+		t.Fatal("fixture unexpectedly has automation enabled")
+	}
+	makeServeTaskDispatchable(t, server, "APP-T-0001")
+	guard, err := acquireDaemonGuard(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Close()
+
+	var result serveActionResult
+	servePost(t, server, "/api/tasks/APP-T-0001/run?project=app", `{}`, &result)
+	if !result.OK || result.Refused {
+		t.Fatalf("expected queued directive with automation disabled, got %#v", result)
+	}
+	directive, err := server.store.RunDirective("app", "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if directive == nil || directive.State != "queued" {
+		t.Fatalf("expected queued directive, got %#v", directive)
+	}
+}
+
 func TestRunDirectiveBypassableBlocker(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -77,10 +115,10 @@ func TestRunDirectiveBypassableBlocker(t *testing.T) {
 	}
 }
 
-// Directives on automation-disabled projects are refused (see
-// TestRunDirectiveAutomationDisabledRefused); this covers the enabled
-// success path: the directive claims the task with human authorization
-// and never touches the non-directed, non-dispatchable sibling.
+// Covers the automation-enabled success path: the directive claims the task
+// with human authorization and never touches the non-directed,
+// non-dispatchable sibling. TestDaemonHonorsDirectiveWithAutomationOff covers
+// the automation-disabled bypass.
 func TestDaemonHonorsDirectiveWithAutomationEnabled(t *testing.T) {
 	vault := automationTestVault(t)
 	setAllEligibleDispatchScopeForAutomationTest(t, vault)

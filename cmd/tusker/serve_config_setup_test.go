@@ -72,6 +72,33 @@ func TestServeProjectSettingsAllowlistSupportsTierAndRejectsUnknown(t *testing.T
 	}
 }
 
+func TestServeProjectAutomationDisableWithoutExplicitKeyIsIdempotent(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	project, err := server.store.ListProjects()
+	if err != nil || len(project) != 1 {
+		t.Fatalf("fixture project: %v %#v", err, project)
+	}
+	id := project[0].ProjectID
+	if report, err := configResolve(project[0].VaultRoot, "automation.enabled"); err != nil || report.Value != false {
+		t.Fatalf("fixture must omit automation.enabled: %#v err=%v", report, err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		var result serveActionResult
+		servePost(t, server, "/api/projects/"+id+"/automation", `{"enabled":false}`, &result)
+		if !result.OK || result.Refused {
+			t.Fatalf("disable attempt %d failed: %#v", attempt+1, result)
+		}
+	}
+	projects, err := server.store.ListProjects()
+	if err != nil || len(projects) != 1 || projects[0].Enabled {
+		t.Fatalf("registry bit was not cleared: %#v err=%v", projects, err)
+	}
+	report, err := configResolve(project[0].VaultRoot, "automation.enabled")
+	if err != nil || report.Value != false || report.Source == configSourceLocal {
+		t.Fatalf("absent automation key became an unexpected local override: %#v err=%v", report, err)
+	}
+}
+
 func TestServeConfigReturnsValueAndSource(t *testing.T) {
 	server := newServeEmptyNeedsFixture(t)
 	project, err := server.store.ListProjects()
