@@ -953,7 +953,7 @@ func TestV7AttachmentsMigrateMovesLegacyFilesToScratch(t *testing.T) {
 	if dirExists(filepath.Join(vault, "Attachments")) {
 		t.Fatal("expected empty Attachments directory to be removed")
 	}
-	assertExists(t, filepath.Join(vault, ".tusker", "scratch", "APP-T-0001", "legacy-attachments", "raw.log"))
+	assertExists(t, filepath.Join(vault, "scratch", "APP-T-0001", "legacy-attachments", "raw.log"))
 }
 
 func TestV7NoteWalkerSkipsScratchMarkdown(t *testing.T) {
@@ -961,7 +961,7 @@ func TestV7NoteWalkerSkipsScratchMarkdown(t *testing.T) {
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Scratch duplicate", "risk": "low", "priority": "p2", "proof-mode": "none", "v7": "true"}, newV7Task)
-	scratch := filepath.Join(vault, ".tusker", "scratch", "APP-T-0001", "legacy-attachments", "APP-T-0001.md")
+	scratch := filepath.Join(vault, "scratch", "APP-T-0001", "legacy-attachments", "APP-T-0001.md")
 	if err := writeText(scratch, "---\nid: APP-T-0001\nkind: task\n---\n\nscratch copy\n"); err != nil {
 		t.Fatal(err)
 	}

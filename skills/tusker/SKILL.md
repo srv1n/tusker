@@ -23,6 +23,16 @@ When Tusker is used, mutate its records through the CLI. Never hand-edit
 lifecycle, proof, gate, or generated control fields. A tracker failure is not
 a source-code failure and does not revoke an otherwise authorized user request.
 
+## Execution modes
+
+An interactive agent session implements the requested work itself and uses
+Tusker only to record contracts, proof, gates, and lifecycle state. Interactive
+work does not require daemon enablement or a daemon lifecycle claim. Never
+start `tusker daemon run`, invoke `tusker automation dispatch`, or launch
+nested workers from an interactive session; background execution belongs only
+to an independently running resident daemon. When `TUSKER_ATTEMPT_ID` is set,
+follow the claimed-run protocol and work only the claimed task.
+
 ## Route once
 
 Read only the selected terminal guide:
