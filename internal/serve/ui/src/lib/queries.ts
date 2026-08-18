@@ -26,6 +26,7 @@ import type {
 export const qk = {
   daemon: ["daemon"] as const,
   projects: ["projects"] as const,
+  config: (key: string, projectId?: string) => ["config", projectId ?? "all", key] as const,
   factoryOperations: (projectId?: string) => ["factory-operations", ...projectQueryScope(projectId)] as const,
   needs: (projectId?: string) => ["needs", ...projectQueryScope(projectId)] as const,
   runs: (projectId?: string) => ["runs", ...projectQueryScope(projectId)] as const,
@@ -103,8 +104,40 @@ export const useProjectAutomation = (projectId: string) => {
 export const useProjectSettings = (projectId: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { workspaceMode?: string; maxActiveRunsPerProject?: number }) => api.setProjectSettings(projectId, body).then(requireAccepted),
-    onSettled: () => void qc.invalidateQueries({ queryKey: qk.projects }),
+    mutationFn: (body: { workspaceMode?: string; maxActiveRunsPerProject?: number; key?: string; value?: unknown }) =>
+      api.setProjectSettings(projectId, body).then(requireAccepted),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.projects });
+      void qc.invalidateQueries({ queryKey: ["config"] });
+    },
+  });
+};
+
+export const useConfigResolve = (key: string, projectId?: string) =>
+  useQuery({ queryKey: qk.config(key, projectId), queryFn: () => api.configResolve(key, projectId) });
+
+export const useRemoveProject = (projectId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.removeProject(projectId).then(requireAccepted),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.projects });
+      void qc.invalidateQueries({ queryKey: qk.daemon });
+    },
+  });
+};
+
+export const useSetupDoctor = (projectId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ apply }: { apply: boolean }) => api.setupDoctor(projectId, apply).then(requireAccepted),
+    // A repair rewrites local pointers/config; re-resolve anything derived.
+    onSettled: (_data, _error, variables) => {
+      if (variables?.apply) {
+        void qc.invalidateQueries({ queryKey: qk.projects });
+        void qc.invalidateQueries({ queryKey: ["config"] });
+      }
+    },
   });
 };
 

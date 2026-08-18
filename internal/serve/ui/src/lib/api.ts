@@ -21,6 +21,8 @@ import type {
 import type {
   DaemonStatus,
   ActionResult,
+  ConfigResolution,
+  SetupDoctorResult,
   DeliveryErrorPayload,
   DeliveryPlanList,
   DeliveryReview,
@@ -284,8 +286,25 @@ export const api = {
       ? delay({ ok: true, reason: `Daemon automation ${enabled ? "enabled" : "disabled"}`, projectId })
       : post(`/projects/${projectId}/automation`, { enabled }),
 
-  setProjectSettings: (projectId: string, body: { workspaceMode?: string; maxActiveRunsPerProject?: number }): Promise<ActionResult> =>
+  setProjectSettings: (
+    projectId: string,
+    body: { workspaceMode?: string; maxActiveRunsPerProject?: number; key?: string; value?: unknown },
+  ): Promise<ActionResult> =>
     USE_MOCK ? delay({ ok: true, reason: "Project settings saved", projectId }) : post(`/projects/${projectId}/settings`, body),
+
+  removeProject: (projectId: string): Promise<ActionResult> =>
+    USE_MOCK
+      ? delay({ ok: true, reason: "Project registration removed (mock)", projectId })
+      : post(`/projects/${encodeURIComponent(projectId)}/remove`),
+
+  // GET /api/config?key=&project= — layered resolution with provenance notes.
+  configResolve: (key: string, projectId?: string): Promise<ConfigResolution> =>
+    real(withProject(`/config?key=${encodeURIComponent(key)}`, projectId)),
+
+  // POST /api/setup/doctor (read-only audit) or /api/setup/repair (apply
+  // deterministic local repairs). Success carries the structured report.
+  setupDoctor: (projectId: string, apply: boolean): Promise<SetupDoctorResult> =>
+    post(apply ? "/setup/repair" : "/setup/doctor", { projectId }),
 
   refreshProject: (projectId: string): Promise<ActionResult> =>
     USE_MOCK

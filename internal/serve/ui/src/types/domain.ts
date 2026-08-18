@@ -294,6 +294,52 @@ export interface ProjectRegistrationResult extends ActionResult {
   projectId?: string;
 }
 
+// GET /api/config?key= — one config key's layered resolution. Keep the names
+// aligned with configResolveReport / configResolveSourceValue in
+// runner_profiles.go. `note` carries provenance caveats such as a value being
+// ignored at the user-global layer.
+export interface ConfigSourceValue {
+  source: string;
+  path?: string;
+  present: boolean;
+  winning: boolean;
+  value?: unknown;
+  note?: string;
+}
+
+export interface ConfigResolution {
+  ok: boolean;
+  key: string;
+  value: unknown;
+  source: string;
+  path?: string;
+  sources: ConfigSourceValue[];
+}
+
+// POST /api/setup/doctor|repair — mirror setupDoctorReport / setupFinding in
+// setup_doctor.go. Findings with status "ok" describe healthy checks.
+export interface SetupFinding {
+  code: string;
+  status: string;
+  path?: string;
+  message: string;
+  action?: string;
+  repairable: boolean;
+  changed?: boolean;
+}
+
+export interface SetupDoctorReport {
+  schema: string;
+  repo_root: string;
+  dry_run: boolean;
+  ok: boolean;
+  findings: SetupFinding[];
+}
+
+export interface SetupDoctorResult extends ActionResult {
+  report?: SetupDoctorReport;
+}
+
 // One versioned, read-only operations contract is shared by CLI, Serve, and
 // the desktop shell. Keep these names aligned with factory_operations.go.
 export interface FactoryOperationsProjection {

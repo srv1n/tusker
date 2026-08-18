@@ -1,11 +1,9 @@
 /*
   Project Settings / Details — screen-local mock.
 
-  Per-project configuration is NOT in the shared fixtures (src/mock/fixtures.ts),
-  so this module supplies realistic values the screen renders against today.
-  Shapes are deliberately close to what a real
-  `GET /api/projects/:id/settings` response should return; every field the
-  daemon / settings API must own is marked `TODO(api)`.
+  The authoritative repository/config surfaces live in project/sections.tsx.
+  This module keeps the remaining routing, workspace, and landing fixtures
+  screen-local until their endpoints exist.
 
   Provenance model (addendum §1.3): every settings row carries a `source` chip —
   `default` (built-in), `global` (your config), `project` (committed, shared) or
@@ -94,24 +92,6 @@ function mk(
 
 // ---- Option sets -----------------------------------------------------------
 
-const branchOptions: SelectOption[] = [
-  { value: "main", label: "main" },
-  { value: "master", label: "master" },
-  { value: "develop", label: "develop" },
-];
-
-const profileOptions: SelectOption[] = [
-  { value: "default", label: "default" },
-  { value: "docs-fast", label: "docs-fast" },
-  { value: "review-frontier", label: "review-frontier" },
-  { value: "guarded-yolo", label: "guarded-yolo" },
-];
-
-const laneOptions: SelectOption[] = [
-  { value: "execute", label: "execute" },
-  { value: "review", label: "review" },
-];
-
 const concurrencyOptions: SelectOption[] = Array.from({ length: 8 }, (_, i) => ({
   value: String(i + 1),
   label: String(i + 1),
@@ -120,43 +100,6 @@ const concurrencyOptions: SelectOption[] = Array.from({ length: 8 }, (_, i) => (
 const afterLandingOptions: SelectOption[] = [
   { value: "keep", label: "Keep branch" },
   { value: "delete", label: "Delete branch" },
-];
-
-// ---- Details → Repository --------------------------------------------------
-// TODO(api): local path / remote / current branch are derived from the daemon's
-// project registry + git; only defaultBranch and worktrees are editable config.
-
-export const repositoryRows: SettingRowData[] = [
-  mk("repo.path", "Local path", { kind: "readonly" }, "~/Downloads/side/tusker", "local", {
-    desc: "Where this checkout lives on this machine — derived from the daemon registry.",
-  }),
-  mk("repo.remote", "Origin remote", { kind: "readonly" }, "git@github.com:srv1n/tusker.git", "project"),
-  mk("repo.defaultBranch", "Default base branch", { kind: "select", options: branchOptions }, "main", "global", {
-    desc: "New worktrees branch off this.",
-  }),
-  mk("repo.worktrees", "Parallel worktrees", { kind: "toggle" }, true, "project", {
-    desc: "Run tasks in isolated git worktrees so agents never collide.",
-  }),
-];
-
-// ---- Details → Configuration ----------------------------------------------
-// TODO(api): editable project config; writes land as `local` overrides.
-
-export const configurationRows: SettingRowData[] = [
-  mk("cfg.profile", "Default runner profile", { kind: "select", options: profileOptions }, "guarded-yolo", "local", {
-    desc: "Profile the daemon launches when no routing rule matches.",
-    inherited: { value: "default", source: "project" },
-  }),
-  mk("cfg.lane", "Default lane", { kind: "select", options: laneOptions }, "execute", "default"),
-  mk("cfg.autoDraft", "Auto-draft contracts", { kind: "toggle" }, true, "global", {
-    desc: "Hand a new task’s epic brief to a planning agent to draft acceptance criteria.",
-  }),
-  mk("cfg.requireSpecApproval", "Require spec approval", { kind: "toggle" }, true, "project", {
-    desc: "A spec must pass an approve-spec gate before execution starts.",
-  }),
-  mk("cfg.traceability", "Enforce traceability", { kind: "toggle" }, true, "project", {
-    desc: "Every run must name the rule, spec, and acceptance rows it satisfies.",
-  }),
 ];
 
 // ---- Details → Worktrees (live, read-only) --------------------------------

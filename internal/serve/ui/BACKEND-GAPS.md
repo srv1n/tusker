@@ -35,18 +35,26 @@ typed conflict/validation payloads. Network/5xx errors remain transport errors.
 ## Current authoritative surfaces
 
 Tasks, runs, gates, evidence, feedback, daemon actions, project registration /
-automation / settings, execution binding, delivery start, and docgraph CAS
-saves are mutable only through their Serve endpoints. Reads for projects,
+automation / allowlisted project settings, setup doctor/repair, project removal,
+execution binding, delivery start, and docgraph CAS saves are mutable only
+through their Serve endpoints. Reads for projects,
 tasks, runs, docs, graph, operations, and stream events are daemon-owned; stream
 events are invalidation hints, not durable history. Reconnect/polling must be
 treated as a freshness fallback until replay cursors are available.
+
+The project-settings allowlist is `tier`, `automation.enabled_runners`,
+`workspace.strategy`, and `runtime.max_active_runs_per_project`; automation's
+`enabled` flag remains owned by the project automation endpoint.
 
 ## Deliberately unavailable or local-only
 
 Legacy document editor state (`features/docs/editor.ts`) and frontmatter updates
 must not claim persistence until their real CAS/write endpoints are wired.
 Runner profiles, global permissions, notification delivery, density, and other
-settings marked `TODO(api)` are reference/local controls, not daemon config.
+app-level settings marked `TODO(api)` are reference/local controls, not daemon
+config. Project config is authoritative only for the allowlisted keys exposed
+by `/api/projects/:id/settings`; setup doctor/repair and daemon registration
+removal are also authoritative actions.
 The UI now consumes the capability registry and disables unavailable profile
 actions; do not add a success toast to a local-only control.
 
@@ -56,5 +64,6 @@ actions; do not add a success toast to a local-only control.
 - Add authoritative per-surface freshness/revision fields to read responses.
 - Replace legacy docs editor mock save with the docgraph CAS contract or a
   clearly read-only source view.
-- Add backend persistence for app/project settings before enabling controls.
+- Add backend persistence for app-level settings (profiles, permissions,
+  notifications, and density) before enabling those controls.
 - Keep registry IDs, endpoint routes, and UI controls in a drift test.

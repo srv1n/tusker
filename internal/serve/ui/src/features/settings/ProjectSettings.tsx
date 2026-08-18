@@ -1,12 +1,10 @@
 /*
   Project Settings / Details (route: /p/$projectId/settings).
 
-  Per-project configuration: repository facts, live execution workspaces, general config,
-  routing rules, workspace lifecycle, and landing / parallelism. Every editable
-  row carries a provenance chip and — crucially — an edit writes a machine-local
-  override rather than touching committed project config (see useConfigRows in
-  ./project/parts). Derived facts render read-only, so a programmatic edit never
-  *looks* like it rewrote a shared file.
+  Per-project configuration: repository facts, live execution workspaces, real
+  allowlisted config, routing rules, workspace lifecycle, and landing /
+  parallelism. Real mutations go through the daemon hooks; the remaining
+  presentational fixture rows stay screen-local.
 
   Presentational fixture rows remain screen-local; execution policy and runtime
   state come exclusively from shared API hooks.
@@ -20,11 +18,9 @@ import { EmptyState, QueryBoundary, Skeleton } from "@/components/ui/states";
 import { ActionResultLine } from "@/components/ui/action-feedback";
 import type { ProjectSummary } from "@/types/domain";
 import {
-  configurationRows,
   landingRows,
   overlapNote,
   portRange,
-  repositoryRows,
   routingFallthrough,
   routingRules,
   settingsTabs,
@@ -43,6 +39,7 @@ import {
   useConfigRows,
   WorktreeList,
 } from "./project/parts";
+import { ConfigSection, DangerZone, RepositoryFacts, SetupDoctorPanel } from "./project/sections";
 
 const route = getRouteApi("/p/$projectId/settings");
 
@@ -109,9 +106,7 @@ function SettingsBody({ project, projectId }: { project: ProjectSummary; project
     task: r.taskId, path: r.workspacePath || project.repoRoot, lease: r.liveness, mode: r.workspaceMode || "shared",
   }));
 
-  // Three independent override write-paths (edits → local, reset → inherited).
-  const repo = useConfigRows(repositoryRows);
-  const config = useConfigRows(configurationRows);
+  // Landing remains a screen-local mock until its endpoint is authoritative.
   const landing = useConfigRows(landingRows);
 
   return (
@@ -188,10 +183,7 @@ function SettingsBody({ project, projectId }: { project: ProjectSummary; project
               <ActionResultLine pending={settings.isPending} error={settings.error} result={settings.data} />
             </div>
 
-            <SectionLabel className="mb-2.5">Repository</SectionLabel>
-            <div className="mb-7">
-              <SettingList rows={repo.rows} onChange={repo.setValue} onReset={repo.reset} />
-            </div>
+            <RepositoryFacts project={project} />
 
             <div className="mb-2.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
               <SectionLabel>Execution workspaces</SectionLabel>
@@ -206,8 +198,9 @@ function SettingsBody({ project, projectId }: { project: ProjectSummary; project
               <WorktreeList worktrees={daemon && !daemon.connected ? [] : workspaces} />
             </div>
 
-            <SectionLabel className="mb-2.5">Configuration</SectionLabel>
-            <SettingList rows={config.rows} onChange={config.setValue} onReset={config.reset} />
+            <ConfigSection projectId={projectId} />
+            <SetupDoctorPanel projectId={projectId} />
+            <DangerZone project={project} />
           </>
         )}
 
